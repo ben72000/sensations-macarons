@@ -165,6 +165,28 @@ async function renderMaterials(){
   const sups = await db.suppliers.toArray();
   const supName = id => (sups.find(s=>s.id===id)||{}).nom||'—';
   const matName = id => (mats.find(s=>s.id===id)||{}).nom||'(supprimée)';
+  const matUnit = id => (mats.find(s=>s.id===id)||{}).unite||'';
+
+  // Historique des matières consommées : prodConsumption + production + lot + matière
+  const allLots = await db.materialLots.toArray();
+  const lotById = id => allLots.find(l=>l.id===id);
+  const allProds = await db.productions.toArray();
+  const prodById = id => allProds.find(p=>p.id===id);
+  const recipes = await db.recipes.toArray();
+  const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const conso = await db.prodConsumption.toArray();
+  const histo = conso.map(c=>{
+    const lot = lotById(c.materialLotId);
+    const prod = prodById(c.productionId);
+    return {
+      date: prod?prod.date:'',
+      materialId: lot?lot.materialId:null,
+      lotFournisseur: lot?lot.lotFournisseur:'(lot supprimé)',
+      qte: c.qteConsommee,
+      produit: prod?recName(prod.recipeId):'(prod. supprimée)',
+      lotProd: prod?prod.lotProduction:''
+    };
+  }).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,20);
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Matières premières & lots</h1><p>${mats.length} matière(s)</p></div>
@@ -181,6 +203,16 @@ async function renderMaterials(){
        <td>${l.qteRestante} / ${l.qteInitiale}</td><td>${fmtDate(l.dlc)}</td>
        <td style="text-align:right"><span class="act del" onclick="delLot(${l.id})">Suppr.</span></td></tr>`).join('')}</tbody></table>`
      :`<div class="empty">Aucun lot réceptionné.</div>`}
+   </div>
+   <div class="panel"><h2>Dernières matières consommées</h2>
+   ${histo.length?`<table><thead><tr><th>Date prod.</th><th>Matière</th><th>Quantité</th><th>Lot fourn.</th><th>Produit fabriqué</th></tr></thead>
+     <tbody>${histo.map(h=>`<tr>
+       <td>${fmtDate(h.date)}</td>
+       <td><b>${esc(matName(h.materialId))}</b></td>
+       <td><span class="tag out">−${h.qte} ${esc(matUnit(h.materialId))}</span></td>
+       <td>${esc(h.lotFournisseur||'—')}</td>
+       <td>${esc(h.produit)}${h.lotProd?`<br><span style="color:#9a8a82;font-size:.78rem">${esc(h.lotProd)}</span>`:''}</td></tr>`).join('')}</tbody></table>`
+     :`<div class="empty">Aucune consommation. Les sorties apparaissent dès qu'une production est lancée.</div>`}
    </div>`;
 }
 async function matForm(id){
