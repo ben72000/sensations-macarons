@@ -17,11 +17,12 @@
   --green:#3f7d52; --red:#b04a3e; --shadow:rgba(82,37,47,.12);
 }
 *{box-sizing:border-box;margin:0;padding:0}
+html,body{max-width:100%;overflow-x:hidden}
 body{font-family:'Outfit','Segoe UI',system-ui,sans-serif;background:var(--paper);color:var(--ink);
   background-image:radial-gradient(circle at 12% 18%,rgba(170,124,57,.06),transparent 40%),radial-gradient(circle at 88% 82%,rgba(82,37,47,.05),transparent 45%);
   -webkit-font-smoothing:antialiased;}
 h1,h2,h3,.serif{font-family:'Fraunces','Georgia',serif}
-.app{display:flex;min-height:100vh}
+.app{display:flex;min-height:100vh;width:100%;overflow-x:hidden}
 .side{width:230px;background:linear-gradient(180deg,var(--bordeaux),var(--bordeaux-2));
   color:var(--creme);padding:26px 16px;position:fixed;height:100vh;display:flex;flex-direction:column;gap:4px;z-index:10}
 .brand{font-family:'Fraunces',serif;font-size:1.35rem;font-weight:600;line-height:1.15;margin-bottom:4px}
@@ -40,7 +41,7 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia',serif}
 .side-foot{font-size:.66rem;color:rgba(232,221,205,.55);line-height:1.5;margin-top:8px}
 .side-foot .foot-help{display:block;margin-bottom:8px}
 .side-foot .foot-btn{width:100%;margin-top:6px}
-.main{margin-left:230px;flex:1;padding:32px 38px 60px;width:100%}
+.main{margin-left:230px;flex:1;min-width:0;max-width:calc(100% - 230px);padding:32px 38px 60px;overflow-x:hidden}
 .topbar{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:26px;flex-wrap:wrap;gap:12px}
 .topbar h1{font-size:1.9rem;font-weight:600;color:var(--bordeaux)}
 .topbar p{color:#8a7a72;font-size:.9rem;margin-top:2px}
@@ -58,7 +59,7 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia',serif}
 .card .val{font-family:'Fraunces',serif;font-size:2rem;font-weight:600;color:var(--bordeaux);margin-top:6px;line-height:1}
 .card .sub{font-size:.78rem;color:#9a8a82;margin-top:6px}
 .card .corner{position:absolute;top:-12px;right:-12px;font-size:3.2rem;opacity:.08}
-.panel{background:#fff;border-radius:16px;padding:24px;box-shadow:0 4px 20px var(--shadow);border:1px solid rgba(170,124,57,.12);margin-bottom:22px}
+.panel{background:#fff;border-radius:16px;padding:24px;box-shadow:0 4px 20px var(--shadow);border:1px solid rgba(170,124,57,.12);margin-bottom:22px;max-width:100%;overflow-x:auto}
 .panel h2{font-size:1.15rem;color:var(--bordeaux);margin-bottom:16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 table{width:100%;border-collapse:collapse;font-size:.87rem}
 th{text-align:left;padding:11px 12px;color:#9a8a82;font-weight:500;font-size:.72rem;
@@ -175,12 +176,19 @@ tr:hover td{background:var(--creme-2)}
   .nav button.active{background:var(--creme);color:var(--bordeaux)}
   /* Boutons Données dans la barre */
   .side-foot .foot-btn{flex-direction:column;gap:3px;min-width:60px;width:auto;padding:7px 8px;font-size:.6rem;margin:0;border-radius:12px}
-  .main{margin-left:0;padding:16px 14px calc(110px + env(safe-area-inset-bottom));width:100%}
+  .main{margin-left:0;max-width:100%;padding:16px 14px calc(110px + env(safe-area-inset-bottom));width:100%}
   .topbar h1{font-size:1.5rem}
   .row2,.row3{grid-template-columns:1fr}
   table{font-size:.82rem}td,th{padding:9px 7px}
   .modal{width:94vw;padding:20px;max-height:86vh}
   .labels-grid{grid-template-columns:1fr}
+  /* Calendrier compact sur téléphone */
+  .cal-grid{gap:3px}
+  .cal-head{font-size:.58rem;padding:2px}
+  .cal-cell{min-height:54px;padding:3px;border-radius:7px;font-size:.7rem}
+  .cal-num{font-size:.72rem}
+  .cal-ev{font-size:.56rem;padding:1px 3px}
+  .panel{padding:16px}
 }
 /* Très petits écrans : on garde le défilement horizontal */
 @media(max-width:380px){
