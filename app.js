@@ -123,10 +123,20 @@ const VIEWS = {
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
   tracabilite:renderTrace, etiquettes:renderLabels
 };
-document.getElementById('nav').addEventListener('click', e => {
-  const b=e.target.closest('button'); if(!b) return;
+let _navLast=0;
+function navTo(b){
+  if(!b || !b.dataset || !b.dataset.v) return;
+  // anti double-déclenchement (écoute directe + délégation)
+  const now=Date.now(); if(now-_navLast<120 && view===b.dataset.v) return; _navLast=now;
   document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));
   b.classList.add('active'); view=b.dataset.v; render();
+}
+// Écoute directe sur chaque bouton (fiable sur Safari iPad) + délégation de secours
+document.querySelectorAll('#nav button').forEach(btn=>{
+  btn.addEventListener('click', ()=>navTo(btn));
+});
+document.getElementById('nav').addEventListener('click', e => {
+  const b=e.target.closest('button'); if(b) navTo(b);
 });
 function render(){ (VIEWS[view]||renderDash)(); }
 
@@ -1415,14 +1425,36 @@ async function exportData(){
 }
 async function importData(e){
   const f=e.target.files[0]; if(!f)return;
-  if(!confirm('Importer remplacera toutes les données actuelles. Continuer ?')){e.target.value='';return;}
+  let obj;
   try{
-    const obj=JSON.parse(await f.text());
+    const txt = await f.text();
+    obj = JSON.parse(txt);
+  }catch(err){
+    toast('Fichier illisible (JSON invalide)'); e.target.value=''; return;
+  }
+  // Validation : est-ce bien une sauvegarde Sensations Macarons ?
+  const hasAnyTable = obj && typeof obj==='object' && TABLES.some(t=>Array.isArray(obj[t]));
+  const isOurApp = obj && obj._app==='sensations-macarons';
+  if(!hasAnyTable && !isOurApp){
+    toast('Ce fichier n\'est pas une sauvegarde valide'); e.target.value=''; return;
+  }
+  // Résumé de ce qui va être importé
+  const counts = TABLES.map(t=>Array.isArray(obj[t])?obj[t].length:0);
+  const nbOrders = Array.isArray(obj.orders)?obj.orders.length:0;
+  const nbClients = Array.isArray(obj.clients)?obj.clients.length:0;
+  const dateInfo = obj._date ? `\nSauvegarde du ${new Date(obj._date).toLocaleString('fr-FR')}` : '';
+  if(!confirm(`Importer cette sauvegarde ?${dateInfo}\n\n• ${nbClients} client(s)\n• ${nbOrders} commande(s)\n\n⚠ Toutes les données actuelles seront remplacées.`)){
+    e.target.value=''; return;
+  }
+  try{
     await db.transaction('rw',...TABLES.map(t=>db.table(t)),async()=>{
-      for(const t of TABLES){ await db.table(t).clear(); if(Array.isArray(obj[t])) await db.table(t).bulkAdd(obj[t]); }
+      for(const t of TABLES){
+        await db.table(t).clear();
+        if(Array.isArray(obj[t]) && obj[t].length) await db.table(t).bulkAdd(obj[t]);
+      }
     });
     render(); toast('Données importées ✓');
-  }catch(err){ console.error(err); toast('Fichier invalide'); }
+  }catch(err){ console.error('import',err); toast('Erreur pendant l\'import'); }
   e.target.value='';
 }
 function csvDownload(name, rows){
