@@ -51,6 +51,7 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia',serif}
 .btn:hover{background:var(--bordeaux-2);transform:translateY(-1px)}
 .btn.gold{background:var(--caramel)}.btn.gold:hover{background:var(--caramel-2)}
 .btn.ghost{background:transparent;color:var(--bordeaux);border:1.5px solid var(--bordeaux)}
+.btn.danger{background:var(--red,#b0392c);color:#fff}.btn.danger:hover{background:#922e23}
 .btn.ghost:hover{background:var(--bordeaux);color:var(--creme)}
 .btn.sm{padding:6px 12px;font-size:.78rem}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-bottom:28px}
@@ -138,13 +139,13 @@ tr:hover td{background:var(--creme-2)}
 .trace-step{border-left:3px solid var(--caramel);padding:4px 0 4px 14px;margin-left:6px;position:relative}
 .trace-step::before{content:'';position:absolute;left:-7px;top:10px;width:11px;height:11px;border-radius:50%;background:var(--caramel)}
 .labels-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
-.label{background:#fff;border:1.5px solid var(--bordeaux);border-radius:12px;padding:14px;display:flex;gap:12px;align-items:center;page-break-inside:avoid}
+.label{background:#fff;border:1px solid #ddd;border-radius:8px;padding:12px;display:flex;gap:12px;align-items:center;page-break-inside:avoid;position:relative}
 .label .qr{flex-shrink:0}
-.label .qr canvas{display:block;width:96px;height:96px;image-rendering:pixelated}
-.label .info{font-size:.78rem;line-height:1.45;min-width:0}
-.label .info b{color:var(--bordeaux);font-family:'Fraunces',serif;font-size:.95rem}
-.label .info .meta{color:#7a6a62}
-.label .info .brand-tag{font-size:.6rem;letter-spacing:.18em;text-transform:uppercase;color:var(--caramel);font-weight:600;margin-top:4px}
+.label .qr canvas{display:block;width:84px;height:84px;image-rendering:pixelated}
+.label .info{font-size:.8rem;line-height:1.5;min-width:0;display:flex;flex-direction:column;gap:1px;flex:1}
+.label .info b{color:#000;font-family:'Outfit',sans-serif;font-size:.92rem;font-weight:700}
+.label .info .meta{color:#333}
+.label .label-print{flex-shrink:0}
 @media print{
   .side,.topbar .flex,.banner,.toast{display:none!important}
   .main{margin-left:0!important;padding:0!important}
@@ -156,7 +157,53 @@ tr:hover td{background:var(--creme-2)}
   padding:13px 20px;border-radius:11px;font-size:.88rem;box-shadow:0 8px 24px rgba(82,37,47,.3);
   z-index:99;opacity:0;transform:translateY(10px);transition:.3s;pointer-events:none;max-width:80vw}
 .toast.show{opacity:1;transform:translateY(0)}
-/* Version iPad : barre latérale verticale uniquement, pas de mode mobile */
+@media(max-width:820px){
+  /* iPhone : on masque la barre latérale, on utilise la tabbar + feuille menu */
+  .side{display:none}
+  .main{margin-left:0;max-width:100%;width:100%;padding:16px 14px calc(80px + env(safe-area-inset-bottom))}
+  .topbar h1{font-size:1.5rem}
+  .row2,.row3{grid-template-columns:1fr}
+  table{font-size:.82rem}td,th{padding:9px 7px}
+  .modal{width:94vw;padding:20px;max-height:84vh}
+  .labels-grid{grid-template-columns:1fr}
+  .panel{padding:16px}
+  /* Calendrier compact */
+  .cal-grid{gap:3px}
+  .cal-head{font-size:.58rem;padding:2px}
+  .cal-cell{min-height:54px;padding:3px;border-radius:7px;font-size:.7rem}
+  .cal-num{font-size:.72rem}
+  .cal-ev{font-size:.56rem;padding:1px 3px}
+}
+/* La tabbar et la feuille ne s affichent que sur petit écran */
+.tabbar,.sheet-overlay{display:none}
+@media(max-width:820px){
+  .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:40;
+    background:linear-gradient(90deg,var(--bordeaux),var(--bordeaux-2));
+    padding:6px 2px;padding-bottom:calc(6px + env(safe-area-inset-bottom));
+    box-shadow:0 -4px 16px rgba(82,37,47,.22)}
+  .tabbar button{flex:1;appearance:none;-webkit-appearance:none;background:transparent;border:none;
+    cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;
+    color:var(--creme);font-family:inherit;font-size:.6rem;-webkit-tap-highlight-color:transparent;border-radius:12px}
+  .tabbar button *{pointer-events:none}
+  .tabbar button .ico{font-size:1.25rem}
+  .tabbar button.active{background:var(--creme);color:var(--bordeaux)}
+  .sheet-overlay{position:fixed;inset:0;background:rgba(43,26,31,.45);z-index:60;display:none;
+    align-items:flex-end;backdrop-filter:blur(3px)}
+  .sheet-overlay.show{display:flex}
+  .sheet{background:var(--paper);width:100%;border-radius:22px 22px 0 0;padding:10px 18px calc(24px + env(safe-area-inset-bottom));
+    max-height:84vh;overflow-y:auto;box-shadow:0 -10px 40px rgba(82,37,47,.3)}
+  .sheet-grip{width:42px;height:5px;border-radius:3px;background:#d8c9b0;margin:8px auto 14px}
+  .sheet h3{color:var(--bordeaux);font-size:1.2rem;margin-bottom:14px}
+  .sheet-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px}
+  .sheet-grid button{appearance:none;-webkit-appearance:none;border:1.5px solid #e0d5c5;background:#fff;
+    cursor:pointer;display:flex;align-items:center;gap:10px;padding:13px 12px;border-radius:12px;
+    font-family:inherit;font-size:.86rem;color:var(--ink);text-align:left;-webkit-tap-highlight-color:transparent}
+  .sheet-grid button *{pointer-events:none}
+  .sheet-grid button .ico{font-size:1.1rem;color:var(--caramel);width:20px;text-align:center}
+  .sheet-grid button.active{border-color:var(--caramel);background:var(--creme-2);font-weight:600}
+  .sheet-data{display:flex;flex-direction:column;gap:8px}
+  .sheet-data .btn{width:100%}
+}
 </style>
 </head>
 <body>
@@ -177,6 +224,7 @@ tr:hover td{background:var(--creme-2)}
       <button data-v="recettes"><span class="ico">❀</span><span>Recettes (BOM)</span></button>
       <button data-v="productions"><span class="ico">⚙</span><span>Productions</span></button>
       <button data-v="couts"><span class="ico">€</span><span>Coûts & prix</span></button>
+      <button data-v="stats"><span class="ico">📊</span><span>Statistiques</span></button>
       <div class="sep">Qualité</div>
       <button data-v="dlc"><span class="ico">⏰</span><span>Suivi DLC</span></button>
       <button data-v="tracabilite"><span class="ico">⊕</span><span>Traçabilité</span></button>
@@ -190,6 +238,44 @@ tr:hover td{background:var(--creme-2)}
     </div>
   </aside>
   <main class="main" id="main"></main>
+</div>
+
+<!-- Barre d'onglets fixe en bas (iPhone) : 4 raccourcis + Menu -->
+<nav class="tabbar" id="tabbar">
+  <button data-v="dash"><span class="ico">◷</span><span>Accueil</span></button>
+  <button data-v="commandes"><span class="ico">✎</span><span>Commandes</span></button>
+  <button data-v="cal"><span class="ico">▦</span><span>Agenda</span></button>
+  <button data-v="matieres"><span class="ico">⬛</span><span>Stock</span></button>
+  <button id="menuBtn"><span class="ico">☰</span><span>Menu</span></button>
+</nav>
+
+<!-- Feuille « Menu » : toutes les sections -->
+<div class="sheet-overlay" id="sheetOverlay">
+  <div class="sheet" id="sheet">
+    <div class="sheet-grip"></div>
+    <h3>Menu</h3>
+    <div class="sheet-grid" id="sheetGrid">
+      <button data-v="dash"><span class="ico">◷</span>Tableau de bord</button>
+      <button data-v="clients"><span class="ico">♣</span>Clients</button>
+      <button data-v="commandes"><span class="ico">✎</span>Commandes</button>
+      <button data-v="produits"><span class="ico">◫</span>Offre / Coffrets</button>
+      <button data-v="cal"><span class="ico">▦</span>Calendrier</button>
+      <button data-v="fournisseurs"><span class="ico">⚑</span>Fournisseurs</button>
+      <button data-v="matieres"><span class="ico">⬛</span>Matières & lots</button>
+      <button data-v="recettes"><span class="ico">❀</span>Recettes (BOM)</button>
+      <button data-v="productions"><span class="ico">⚙</span>Productions</button>
+      <button data-v="couts"><span class="ico">€</span>Coûts & prix</button>
+      <button data-v="stats"><span class="ico">📊</span>Statistiques</button>
+      <button data-v="dlc"><span class="ico">⏰</span>Suivi DLC</button>
+      <button data-v="tracabilite"><span class="ico">⊕</span>Traçabilité</button>
+      <button data-v="etiquettes"><span class="ico">▤</span>Étiquettes QR</button>
+    </div>
+    <div class="sheet-data">
+      <button class="btn gold" onclick="exportData()">⬇ Exporter les données</button>
+      <button class="btn ghost" onclick="document.getElementById('imp2').click()">⬆ Importer une sauvegarde</button>
+      <input type="file" id="imp2" class="hide" accept=".json" onchange="importData(event)">
+    </div>
+  </div>
 </div>
 
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>

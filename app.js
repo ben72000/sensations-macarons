@@ -123,23 +123,37 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats
 };
 let _navLast=0;
+function setActiveView(v){
+  document.querySelectorAll('.nav button, .tabbar button, .sheet-grid button').forEach(x=>{
+    if(x.dataset && x.dataset.v) x.classList.toggle('active', x.dataset.v===v);
+  });
+}
 function navTo(b){
   if(!b || !b.dataset || !b.dataset.v) return;
-  // anti double-déclenchement (écoute directe + délégation)
-  const now=Date.now(); if(now-_navLast<120 && view===b.dataset.v) return; _navLast=now;
-  document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));
-  b.classList.add('active'); view=b.dataset.v; render();
+  const now=Date.now(); if(now-_navLast<120 && view===b.dataset.v && !document.getElementById('sheetOverlay').classList.contains('show')) return; _navLast=now;
+  view=b.dataset.v; setActiveView(view); render();
+  closeSheet();
 }
-// Écoute directe sur chaque bouton (fiable sur Safari iPad) + délégation de secours
-document.querySelectorAll('#nav button').forEach(btn=>{
-  btn.addEventListener('click', ()=>navTo(btn));
-});
-document.getElementById('nav').addEventListener('click', e => {
-  const b=e.target.closest('button'); if(b) navTo(b);
-});
+function openSheet(){ const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);} }
+function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); }
+
+// Sidebar (iPad / desktop) — écoute directe + délégation
+document.querySelectorAll('#nav button').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
+const navEl=document.getElementById('nav');
+if(navEl) navEl.addEventListener('click', e => { const b=e.target.closest('button'); if(b) navTo(b); });
+
+// Tabbar (iPhone)
+document.querySelectorAll('#tabbar button[data-v]').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
+const menuBtn=document.getElementById('menuBtn'); if(menuBtn) menuBtn.addEventListener('click', openSheet);
+
+// Feuille menu (iPhone)
+document.querySelectorAll('#sheetGrid button[data-v]').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
+const sheetOv=document.getElementById('sheetOverlay');
+if(sheetOv) sheetOv.addEventListener('click', e=>{ if(e.target===sheetOv) closeSheet(); });
+
 function render(){ (VIEWS[view]||renderDash)(); }
 
 // --------- Stock courant calculé depuis les lots ---------
@@ -517,22 +531,25 @@ async function prodForm(){
      <div class="field"><label>Quantité produite</label><input type="number" id="f_qte" value="${recipes[0].rendement}"></div>
      <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}"></div>
    </div>
-   <div class="field"><label>N° lot de production</label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${Math.random().toString(36).slice(2,5).toUpperCase()}"></div>
-   <p class="note">À la validation : les matières sont déduites des lots (DLC la plus proche d'abord). Si le stock est insuffisant, <b>rien</b> n'est enregistré.</p>
+   <div class="row2">
+     <div class="field"><label>N° lot de production</label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${Math.random().toString(36).slice(2,5).toUpperCase()}"></div>
+     <div class="field"><label>DLC produit fini</label><input type="date" id="f_dlcprod" value=""></div>
+   </div>
+   <p class="note">À la validation : les matières sont déduites des lots (DLC la plus proche d'abord). Si le stock est insuffisant, <b>rien</b> n'est enregistré. La DLC du produit fini figure sur l'étiquette.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
 }
 async function saveProd(){
-  const recipeId=+val('f_rec'), qte=+val('f_qte'), date=val('f_date')||today(), lot=val('f_lot');
+  const recipeId=+val('f_rec'), qte=+val('f_qte'), date=val('f_date')||today(), lot=val('f_lot'), dlcProd=val('f_dlcprod')||'';
   if(!qte||qte<=0){toast('Quantité invalide');return;}
   try{
-    await enregistrerProduction(recipeId, qte, date, lot);
+    await enregistrerProduction(recipeId, qte, date, lot, dlcProd);
     closeModal(); renderProductions(); toast('Production enregistrée ✓ — stock mis à jour');
   }catch(err){
     toast(err.message || 'Erreur production');
   }
 }
 // Transaction atomique : consommation FIFO + traçabilité
-async function enregistrerProduction(recipeId, qteProduite, dateProd, lotProduction){
+async function enregistrerProduction(recipeId, qteProduite, dateProd, lotProduction, dlcProduit){
   return db.transaction('rw',
     db.recipes, db.recipeItems, db.materials, db.materialLots, db.productions, db.prodConsumption,
     async () => {
@@ -553,7 +570,7 @@ async function enregistrerProduction(recipeId, qteProduite, dateProd, lotProduct
       }
 
       const prodId = await db.productions.add(
-        { recipeId, lotProduction, date:dateProd, qteProduite, qteRestante:qteProduite });
+        { recipeId, lotProduction, date:dateProd, qteProduite, qteRestante:qteProduite, dlcProduit:dlcProduit||'' });
 
       for(const item of items){
         let besoin = item.qteParBatch * facteur;
@@ -1045,7 +1062,7 @@ async function renderCmd(){
        <td><span class="tag ${paye?'done':'todo'}">${esc(o.paiement||'En attente')}</span>${o.reglement?`<br><span style="color:#9a8a82;font-size:.74rem">${esc(o.reglement)}</span>`:''}</td>
        <td><span class="tag ${o.statut==='Livrée'?'done':'todo'}">${esc(o.statut||'À préparer')}</span></td>
        <td>${nbLies?`<span class="tag ok">${nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
-       <td style="text-align:right"><span class="act" onclick="cmdView(${o.id})">Détail</span><span class="act" onclick="cmdLink(${o.id})">Lier</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`);
+       <td style="text-align:right"><span class="act" onclick="cmdView(${o.id})">Détail</span><span class="act" onclick="exportOrderText(${o.id})">Texte</span><span class="act" onclick="cmdLink(${o.id})">Lier</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`);
   }
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Commandes</h1><p>${orders.length} commande(s)</p></div>
@@ -1103,7 +1120,7 @@ async function cmdView(id){
     <div class="sum-box"><span>Montant total</span><b>${euro(o.montant)}</b></div>
     <div class="sum-box"><span>Paiement</span><b>${esc(o.paiement||'En attente')}${o.reglement?' · '+esc(o.reglement):''}</b></div>
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button></div>`);
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
 function lineTotalStored(ln){
@@ -1141,21 +1158,28 @@ function orderToLines(o){
   return [];
 }
 
-async function cmdForm(id){
+async function cmdForm(id, opts){
+  opts = opts || {};
   cmdClientsCache = await db.clients.toArray();
   cmdProductsCache = (await db.products.toArray()).filter(p=>p.actif!==false).sort((a,b)=>(+a.taille)-(+b.taille));
   const o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
-  cmdLines = orderToLines(o);
-  const clOpts = cmdClientsCache.map(c=>`<option value="${c.id}" ${o.clientId===c.id?'selected':''}>${esc(c.nom)}</option>`).join('');
+  // Préserver les lignes en cours si on rouvre après ajout d'un client
+  if(opts.keepLines && Array.isArray(cmdLines)){ /* cmdLines déjà en mémoire, on le garde */ }
+  else { cmdLines = orderToLines(o); }
+  const preselect = opts.clientId || o.clientId || 0;
+  // trier les clients par nom pour un défilement lisible même à plusieurs centaines
+  cmdClientsCache.sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
+  const clOpts = '<option value="0">— aucun —</option>'+cmdClientsCache.map(c=>`<option value="${c.id}" ${preselect===c.id?'selected':''}>${esc(c.nom)}${c.tel?' · '+esc(c.tel):''}</option>`).join('');
   const stOpts = ['À préparer','En cours','Livrée'].map(s=>`<option ${o.statut===s?'selected':''}>${s}</option>`).join('');
   const payStOpts = PAY_STATUS.map(s=>`<option ${o.paiement===s?'selected':''}>${s}</option>`).join('');
   const regOpts = `<option value="">—</option>`+PAY_METHODS.map(s=>`<option ${o.reglement===s?'selected':''}>${s}</option>`).join('');
   openModal(`<h3>${id?'Modifier':'Nouvelle'} commande</h3>
-   ${cmdClientsCache.length?'':'<p class="note">Astuce : crée d\'abord un client.</p>'}
-   <div class="row2">
-     <div class="field"><label>Client</label><select id="f_cl">${clOpts||'<option value="0">— aucun —</option>'}</select></div>
-     <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}"></div>
+   <div class="field"><label>Client</label>
+     <input class="search" id="f_clsearch" placeholder="Rechercher par nom ou téléphone…" oninput="filterCmdClients(this.value)" value="">
+     <select id="f_cl" style="margin-top:6px">${clOpts||'<option value="0">— aucun —</option>'}</select>
+     <button class="btn ghost sm" style="margin-top:6px" onclick="quickClient(${id||0})">+ Nouveau client</button>
    </div>
+   <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}"></div>
 
    <label style="font-size:.82rem;color:#7a6a62;font-weight:500;display:block;margin-bottom:6px">Produits de la commande</label>
    <div id="linesWrap"></div>
@@ -1184,6 +1208,61 @@ async function cmdForm(id){
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
   const mt=document.getElementById('f_mt'); if(mt && !mt.value) mt.dataset.auto='1';
   drawLines();
+}
+
+// Recherche client instantanée dans le formulaire de commande (nom ou téléphone)
+function filterCmdClients(q){
+  const sel=document.getElementById('f_cl'); if(!sel)return;
+  const cur=sel.value;
+  const term=(q||'').trim().toLowerCase();
+  const norm=s=>(s||'').toLowerCase();
+  const digits=s=>(s||'').replace(/[^0-9]/g,'');
+  const qd=digits(q);
+  const matches = !term ? cmdClientsCache : cmdClientsCache.filter(c=>{
+    const byName = norm(c.nom).includes(term);
+    const byTel = qd && digits(c.tel).includes(qd);
+    return byName || byTel;
+  });
+  sel.innerHTML='<option value="0">— aucun —</option>'+matches.map(c=>`<option value="${c.id}" ${String(c.id)===cur?'selected':''}>${esc(c.nom)}${c.tel?' · '+esc(c.tel):''}</option>`).join('');
+  // si un seul résultat, le présélectionner pour gagner un clic
+  if(matches.length===1) sel.value=String(matches[0].id);
+}
+
+// Ajout rapide d'un client SANS quitter la commande (popup → retour avec client sélectionné)
+let _quickClientReturnId = 0;
+function quickClient(orderId){
+  _quickClientReturnId = orderId||0;
+  openModal(`<h3>Nouveau client</h3>
+    <p class="note">Saisie rapide. Vous pourrez compléter la fiche plus tard depuis l'onglet Clients.</p>
+    <div class="field"><label>Nom / Entreprise *</label><input id="qc_nom" placeholder="ex : Marie Dupont"></div>
+    <div class="field"><label>Téléphone *</label><input id="qc_tel" type="tel" inputmode="tel" placeholder="ex : 06 12 34 56 78"></div>
+    <div class="field"><label>Type</label><select id="qc_type"><option>Particulier</option><option>Pro</option></select></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="cmdForm(${orderId||0},{keepLines:true})">Annuler</button>
+      <button class="btn" onclick="saveQuickClient()">Ajouter et sélectionner</button>
+    </div>`);
+  setTimeout(()=>{const n=document.getElementById('qc_nom'); if(n)n.focus();},100);
+}
+async function saveQuickClient(){
+  const nom=(val('qc_nom')||'').trim();
+  const tel=(val('qc_tel')||'').trim();
+  const type=val('qc_type')||'Particulier';
+  if(!nom){ toast('Le nom est requis'); return; }
+  if(!tel){ toast('Le téléphone est requis'); return; }
+  // Anti-doublon : même nom + même téléphone (chiffres) → on réutilise, on ne crée pas
+  const digits=s=>(s||'').replace(/[^0-9]/g,'');
+  const existing=(await db.clients.toArray()).find(c=>
+    (c.nom||'').trim().toLowerCase()===nom.toLowerCase() && digits(c.tel)===digits(tel));
+  let cid;
+  if(existing){
+    cid=existing.id;
+    toast('Client déjà existant — sélectionné');
+  } else {
+    cid=await db.clients.add({nom, tel, type, email:'', adresse:'', notes:''});
+    toast('Client ajouté ✓');
+  }
+  // rouvrir la commande en préservant les lignes et en sélectionnant le client
+  await cmdForm(_quickClientReturnId, {clientId:cid, keepLines:true});
 }
 
 function addLine(type){
@@ -1429,6 +1508,11 @@ async function cmdLink(orderId){
   openModal(`<h3>Lier des batchs à la commande</h3>
     <div class="sum-box"><span>Macarons de la commande${totDon?` (dont ${totDon} offert${totDon>1?'s':''})`:''}</span><b>${totMac||'—'}</b></div>
     ${totMac?`<div class="sum-box"><span>Déjà affecté depuis le stock</span><b>${dejaLie} / ${totMac}</b></div>`:''}
+    ${existing.length?`<div class="field" style="margin-top:10px"><label>Batchs déjà liés</label>
+      ${existing.map(e=>{const p=prods.find(x=>x.id===e.productionId);
+        return `<div class="sum-box"><span>${p?esc(recName(p.recipeId)):'?'} — ${p?esc(p.lotProduction||''):'(supprimé)'} × ${e.qte}</span>
+          <span class="act del" onclick="unlinkBatch(${e.id},${orderId})">Détacher</span></div>`;}).join('')}
+      </div>`:''}
     ${dispo.length?`
     <div class="field"><label>Ajouter un batch (produit fini disponible)</label>
       <select id="f_prod">${dispo.map(p=>`<option value="${p.id}">${esc(recName(p.recipeId))} — ${esc(p.lotProduction||'')} (reste ${qty(p.qteRestante)})</option>`).join('')}</select></div>
@@ -1463,6 +1547,144 @@ async function saveLink(orderId){
    CALENDRIER
    ============================================================ */
 let calRef=new Date();
+// === insère moteur computeStats (voir stats_engine.js) ===
+/* ============================================================
+   STATISTIQUES  (commandes payées uniquement — recalcul depuis brut)
+   Moteur pur : computeStats(orders, clients, orderToLinesFn)
+   Cohérence garantie : tout dérive d'une seule passe sur les lignes.
+   ============================================================ */
+function computeStats(orders, clients, toLines){
+  // Filtre STRICT : commandes payées uniquement (validées). Les annulées sont
+  // supprimées de la base, donc absentes. Aucune correction n'est agrégée.
+  const valides = (orders||[]).filter(o=>o && o.paiement==='Payé');
+  const clientName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+
+  const global = {
+    parfums:{},        // nom -> nb macarons (coffret+événement+don)
+    produits:{},       // 'Coffret 16','Événement','Grand format: Chocolat'... -> nb pièces
+    coffretsTaille:{}, // taille -> nb de coffrets vendus
+    grandFormat:{},    // nom -> nb pièces
+    parMois:{},        // 'YYYY-MM' -> {ca, macarons, commandes}
+    caTotal:0, nbCommandes:valides.length, nbMacarons:0
+  };
+  const parClient = {}; // clientId -> {nom, parfums:{}, produits:{}, parMois:{}, ca, nbCommandes, macarons}
+
+  const addP=(obj,k,n)=>{ obj[k]=(obj[k]||0)+n; };
+
+  for(const o of valides){
+    const cid=o.clientId||0;
+    if(!parClient[cid]) parClient[cid]={nom:clientName(cid), parfums:{}, produits:{}, coffretsTaille:{}, grandFormat:{}, parMois:{}, ca:0, nbCommandes:0, macarons:0};
+    const C=parClient[cid];
+    C.nbCommandes++; C.ca+=(+o.montant||0); global.caTotal+=(+o.montant||0);
+    const mois=(o.date||'').slice(0,7) || 'inconnu';
+    if(!global.parMois[mois]) global.parMois[mois]={ca:0,macarons:0,commandes:0};
+    if(!C.parMois[mois]) C.parMois[mois]={ca:0,macarons:0,commandes:0};
+    global.parMois[mois].ca+=(+o.montant||0); global.parMois[mois].commandes++;
+    C.parMois[mois].ca+=(+o.montant||0); C.parMois[mois].commandes++;
+
+    const lignes=toLines(o);
+    for(const ln of lignes){
+      if(ln.type==='coffret'){
+        const lbl='Coffret '+ln.taille;
+        addP(global.produits,lbl,1); addP(C.produits,lbl,1);
+        addP(global.coffretsTaille,ln.taille,1); addP(C.coffretsTaille,ln.taille,1);
+        (ln.parfums||[]).forEach(p=>{ if(p.qte>0){ addP(global.parfums,p.nom,p.qte); addP(C.parfums,p.nom,p.qte);
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+      } else if(ln.type==='evenement'){
+        addP(global.produits,'Événement',1); addP(C.produits,'Événement',1);
+        (ln.parfums||[]).forEach(p=>{ if(p.qte>0){ addP(global.parfums,p.nom,p.qte); addP(C.parfums,p.nom,p.qte);
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+      } else if(ln.type==='grand'){
+        (ln.items||[]).forEach(p=>{ if(p.qte>0){ const lbl='Grand format : '+p.nom;
+          addP(global.produits,lbl,p.qte); addP(C.produits,lbl,p.qte);
+          addP(global.grandFormat,p.nom,p.qte); addP(C.grandFormat,p.nom,p.qte);
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+      } else if(ln.type==='don'){
+        // dons : comptés dans la consommation par parfum (sortie de stock réelle), 0 € donc pas de CA
+        addP(global.produits,'Don',1); addP(C.produits,'Don',1);
+        (ln.parfums||[]).forEach(p=>{ if(p.qte>0){ addP(global.parfums,p.nom,p.qte); addP(C.parfums,p.nom,p.qte);
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+        (ln.items||[]).forEach(p=>{ if(p.qte>0){ const lbl='Grand format : '+p.nom;
+          addP(global.grandFormat,p.nom,p.qte);
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+      }
+    }
+  }
+  return {global, parClient, nbValides:valides.length};
+}
+
+
+// Barre horizontale simple (rang) sans dépendance
+function statBars(obj, opt){
+  opt=opt||{};
+  const entries=Object.entries(obj).filter(([k,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+  if(!entries.length) return '<p class="note">Aucune donnée.</p>';
+  const max=entries[0][1];
+  const unit=opt.unit||'';
+  return '<div style="display:flex;flex-direction:column;gap:7px">'+entries.map(([k,v])=>{
+    const pct=Math.round(v/max*100);
+    return `<div style="display:flex;align-items:center;gap:10px">
+      <div style="flex:0 0 42%;font-size:.82rem;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(k)}</div>
+      <div style="flex:1;background:var(--creme-2);border-radius:6px;height:18px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--caramel)"></div></div>
+      <div style="flex:0 0 auto;font-weight:600;color:var(--bordeaux);font-size:.82rem;min-width:36px;text-align:right">${qty(v)}${unit}</div>
+    </div>`;
+  }).join('')+'</div>';
+}
+
+let statClientSel = 0;
+async function renderStats(){
+  const orders = await db.orders.toArray();
+  const clients = await db.clients.toArray();
+  const R = computeStats(orders, clients, orderToLines);
+  const G = R.global;
+  const moisKeys = Object.keys(G.parMois).sort();
+  const fmtMois = k => { const [y,m]=k.split('-'); return ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'][(+m||1)-1]+' '+(y||'').slice(2); };
+
+  // graphe CA mensuel
+  const caSerie={label:'CA', color:'#3f7d52', points:moisKeys.map(k=>({x:k,y:G.parMois[k].ca}))};
+  const macSerie={label:'Macarons', color:'#AA7C39', points:moisKeys.map(k=>({x:k,y:G.parMois[k].macarons}))};
+  const caChart = moisKeys.length ? lineChart([caSerie],{xlabel:fmtMois, ylabel:'€'}) : '<p class="note">Pas encore de données mensuelles.</p>';
+  const macChart = moisKeys.length ? lineChart([macSerie],{xlabel:fmtMois}) : '';
+
+  // sélecteur client
+  const clientsAvecCmd = Object.keys(R.parClient).map(id=>({id:+id, ...R.parClient[id]})).sort((a,b)=>b.ca-a.ca);
+  const clOpts = '<option value="0">— Vue globale —</option>'+clientsAvecCmd.map(c=>`<option value="${c.id}" ${statClientSel===c.id?'selected':''}>${esc(c.nom)} (${euro(c.ca)})</option>`).join('');
+
+  let clientBlock='';
+  if(statClientSel && R.parClient[statClientSel]){
+    const C=R.parClient[statClientSel];
+    const cMois=Object.keys(C.parMois).sort();
+    const cChart = cMois.length ? lineChart([{label:'Macarons', color:'#AA7C39', points:cMois.map(k=>({x:k,y:C.parMois[k].macarons}))}],{xlabel:fmtMois}) : '<p class="note">—</p>';
+    clientBlock=`
+     <div class="panel"><h2>Consommation par parfum — ${esc(C.nom)}</h2>${statBars(C.parfums)}</div>
+     <div class="panel"><h2>Préférences par produit — ${esc(C.nom)}</h2>${statBars(C.produits)}</div>
+     <div class="panel"><h2>Évolution dans le temps — ${esc(C.nom)}</h2>
+       <div class="sum-box"><span>Commandes payées</span><b>${C.nbCommandes}</b></div>
+       <div class="sum-box"><span>Chiffre d'affaires</span><b>${euro(C.ca)}</b></div>
+       <div class="sum-box"><span>Macarons (dons inclus)</span><b>${qty(C.macarons)}</b></div>
+       <div style="margin-top:12px">${cChart}</div></div>`;
+  }
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Statistiques</h1><p>Commandes payées uniquement · ${R.nbValides} commande(s) · ${euro(G.caTotal)}</p></div></div>
+   <div class="banner">📊 <div>Analyse fondée exclusivement sur les commandes <b>payées</b>. Les annulations (supprimées) et les commandes en attente sont exclues. Les dons sont comptés dans la consommation de macarons.</div></div>
+
+   <div class="panel"><h2>Analyse par client</h2>
+     <div class="field"><label>Choisir un client</label><select id="statCl" onchange="statClientSel=+this.value;renderStats()">${clOpts}</select></div>
+     ${statClientSel?'':'<p class="note">Sélectionne un client pour voir sa consommation par parfum, ses préférences produit et son évolution.</p>'}
+   </div>
+   ${clientBlock}
+
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Vue globale</h2>
+   <div class="panel"><h2>Tendances par parfum <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— tous produits, dons inclus</span></h2>${statBars(G.parfums)}</div>
+   <div class="panel"><h2>Produits les plus vendus</h2>${statBars(G.produits, {unit:''})}</div>
+   <div class="panel"><h2>Évolution des coffrets <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— par taille</span></h2>
+     ${Object.keys(G.coffretsTaille).length?statBars(Object.fromEntries(Object.entries(G.coffretsTaille).map(([t,n])=>['Coffret '+t,n]))):'<p class="note">Aucun coffret vendu.</p>'}
+   </div>
+   <div class="panel"><h2>Chiffre d'affaires mensuel</h2>${caChart}</div>
+   <div class="panel"><h2>Macarons écoulés par mois</h2>${macChart||'<p class="note">—</p>'}</div>`;
+}
+
 async function renderCal(){
   const events = await db.events.toArray();
   const y=calRef.getFullYear(),m=calRef.getMonth();
@@ -1482,12 +1704,63 @@ async function renderCal(){
        const t=new Date();const isToday=t.getDate()===d&&t.getMonth()===m&&t.getFullYear()===y;
        const evs=evByDay[d]||[];
        return `<div class="cal-cell ${isToday?'today':''}"><div class="cal-num">${d}</div>
-        ${evs.map(e=>`<div class="cal-ev ${e.type==='cmd'?'cmd':''}" onclick="delEvent(${e.id})" title="Cliquer pour supprimer">${esc(e.titre)}</div>`).join('')}</div>`;
+        ${evs.map(e=>`<div class="cal-ev ${e.type==='cmd'?'cmd':''}" onclick="evView(${e.id})" title="${esc(e.titre)}">${esc(e.titre)}</div>`).join('')}</div>`;
      }).join('')}</div>
-     <p class="note">Clique sur un événement pour le supprimer. Les commandes apparaissent en caramel.</p>
+     <p class="note">Touchez un événement pour voir son détail. Les commandes apparaissent en caramel.</p>
    </div>`;
 }
 function calMove(n){ calRef.setMonth(calRef.getMonth()+n); renderCal(); }
+
+// Vue de détail d'un événement (consultation seule — aucune action destructive directe)
+async function evView(id){
+  const e = await db.events.get(id);
+  if(!e){ toast('Événement introuvable'); return; }
+  if(e.type==='cmd' && e.refId){
+    // Événement issu d'une commande : la suppression se fait via la commande, pas ici
+    const o = await db.orders.get(e.refId);
+    const cl = o && o.clientId ? await db.clients.get(o.clientId) : null;
+    openModal(`<h3>Détail de l'événement</h3>
+      <div class="sum-box"><span>Type</span><b>Commande</b></div>
+      <div class="sum-box"><span>Intitulé</span><b>${esc(e.titre)}</b></div>
+      <div class="sum-box"><span>Date</span><b>${fmtDate(e.date)}</b></div>
+      ${o?`<div class="sum-box"><span>Client</span><b>${esc(cl?cl.nom:'—')}</b></div>
+      <div class="sum-box"><span>Montant</span><b>${euro(o.montant)}</b></div>`:'<p class="note">Commande associée introuvable.</p>'}
+      <p class="note">Cet événement est rattaché à une commande. Pour le retirer du calendrier, supprimez la commande depuis l'onglet Commandes (la suppression y est sécurisée).</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      ${o?`<button class="btn" onclick="closeModal();view='commandes';setActiveView&&setActiveView('commandes');renderCmd();cmdView(${o.id})">Voir la commande</button>`:''}</div>`);
+    return;
+  }
+  // Événement libre : consultation, puis suppression via bouton explicite
+  openModal(`<h3>Détail de l'événement</h3>
+    <div class="sum-box"><span>Intitulé</span><b>${esc(e.titre)}</b></div>
+    <div class="sum-box"><span>Date</span><b>${fmtDate(e.date)}</b></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn ghost" onclick="closeModal();evEdit(${id})">Modifier</button>
+      <button class="btn danger" onclick="confirmDeleteEvent(${id})">Supprimer</button>
+    </div>`);
+}
+// Modification d'un événement libre (depuis la vue détail uniquement)
+async function evEdit(id){
+  const e = await db.events.get(id); if(!e) return;
+  openModal(`<h3>Modifier l'événement</h3>
+   <div class="field"><label>Titre</label><input id="f_t" value="${esc(e.titre||'')}"></div>
+   <div class="field"><label>Date</label><input type="date" id="f_d" value="${e.date||today()}"></div>
+   <div class="modal-actions"><button class="btn ghost" onclick="evView(${id})">Annuler</button><button class="btn" onclick="saveEvEdit(${id})">Enregistrer</button></div>`);
+}
+async function saveEvEdit(id){
+  const t=val('f_t'),d=val('f_d'); if(!t){toast('Titre requis');return;}
+  await db.events.update(id,{titre:t,date:d}); closeModal(); renderCal(); toast('Événement modifié ✓');
+}
+// Suppression : seconde confirmation explicite, jamais en un seul clic depuis le calendrier
+function confirmDeleteEvent(id){
+  openModal(`<h3>Supprimer l'événement ?</h3>
+    <p class="note">Cette action est définitive. L'événement sera retiré du calendrier.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="evView(${id})">Annuler</button>
+      <button class="btn danger" onclick="delEvent(${id})">Supprimer définitivement</button>
+    </div>`);
+}
 function evForm(){
   openModal(`<h3>Nouvel événement</h3>
    <div class="field"><label>Titre</label><input id="f_t" placeholder="Marché de Noël, livraison mariage…"></div>
@@ -1499,8 +1772,7 @@ async function saveEv(){
   await db.events.add({date:d,titre:t,type:'event'}); closeModal(); renderCal(); toast('Événement ajouté ✓');
 }
 async function delEvent(id){
-  if(!confirm('Supprimer cet événement ?'))return;
-  await db.events.delete(id); renderCal();
+  await db.events.delete(id); closeModal(); renderCal(); toast('Événement supprimé');
 }
 
 /* ============================================================
@@ -1516,29 +1788,67 @@ async function renderLabels(){
   const recipes = await db.recipes.toArray();
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'—';
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Étiquettes QR</h1><p>Une étiquette traçable par batch — à imprimer et coller sur les boîtes</p></div>
-     <div class="flex"><button class="btn ghost" onclick="window.print()">⎙ Imprimer</button></div></div>
-   <div class="banner">▤ <div>Chaque QR encode un lien vers la fiche de traçabilité du batch. Scanné avec l'appareil photo de l'iPhone, il ouvre directement la chaîne fournisseur → lot → batch.</div></div>
+   <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 30 mm — Phomemo D520BT</p></div></div>
+   <div class="banner">▤ <div>Étiquettes en noir sur fond blanc, sans décoration, optimisées pour l'impression thermique. Chaque étiquette porte : produit, lot, DLC, date, et le QR de traçabilité. Sélectionne un batch puis « Imprimer ».</div></div>
    <div class="panel">
    ${prods.length?`<div class="labels-grid" id="labelsGrid">
-     ${prods.map(p=>`<div class="label">
+     ${prods.map(p=>`<div class="label" data-prod="${p.id}">
         <div class="qr"><canvas data-lot="${esc(p.lotProduction||'')}"></canvas></div>
         <div class="info">
-          <b>${esc(recName(p.recipeId))}</b><br>
-          <span class="meta">Lot ${esc(p.lotProduction||'—')}</span><br>
-          <span class="meta">Prod. ${fmtDate(p.date)}</span><br>
-          <span class="meta">${p.qteProduite} pièces</span>
-          <div class="brand-tag">Sensations Macarons</div>
+          <b>${esc(recName(p.recipeId))}</b>
+          <span class="meta">Lot : ${esc(p.lotProduction||'—')}</span>
+          <span class="meta">DLC : ${p.dlcProduit?fmtDate(p.dlcProduit):'— à compléter —'}</span>
+          <span class="meta">Fab. : ${fmtDate(p.date)}</span>
         </div>
+        <button class="btn ghost sm label-print" onclick="printLabel(${p.id})">⎙ Imprimer</button>
      </div>`).join('')}
    </div>`:`<div class="empty">Aucun batch produit. Lance une production pour générer ses étiquettes.</div>`}
    </div>`;
-  // dessiner les QR après insertion dans le DOM
   document.querySelectorAll('#labelsGrid canvas').forEach(cv=>{
     const lot = cv.getAttribute('data-lot');
-    try{ QR.render(cv, traceUrl(lot), {scale:4, dark:'#52252F', light:'#ffffff'}); }
+    try{ QR.render(cv, traceUrl(lot), {scale:4, dark:'#000000', light:'#ffffff'}); }
     catch(e){ console.error('QR',e); }
   });
+}
+
+// Impression d'une étiquette unique au format thermique 50×40 mm (noir sur blanc, sans décoration)
+async function printLabel(prodId){
+  const p = await db.productions.get(prodId);
+  if(!p){ toast('Batch introuvable'); return; }
+  const rec = await db.recipes.get(p.recipeId);
+  // QR rendu hors écran puis converti en image
+  const tmp = document.createElement('canvas');
+  try{ QR.render(tmp, traceUrl(p.lotProduction||''), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
+  const qrData = tmp.toDataURL('image/png');
+  const dlc = p.dlcProduit ? fmtDate(p.dlcProduit) : '—';
+  const win = window.open('', '_blank', 'width=400,height=260');
+  if(!win){ toast('Autorise les fenêtres pour imprimer'); return; }
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Étiquette ${esc(p.lotProduction||'')}</title>
+   <style>
+     @page { size: 50mm 30mm; margin: 0; }
+     * { margin:0; padding:0; box-sizing:border-box; }
+     html,body { background:#fff; }
+     .lab { width:50mm; height:30mm; background:#fff; color:#000; padding:1.5mm;
+            font-family:Arial,Helvetica,sans-serif; display:flex; gap:1.5mm; align-items:center; }
+     .lab .q { width:16mm; height:16mm; flex-shrink:0; }
+     .lab .q img { width:16mm; height:16mm; display:block; image-rendering:pixelated; }
+     .lab .t { flex:1; min-width:0; line-height:1.2; }
+     .lab .prod { font-size:3mm; font-weight:bold; }
+     .lab .row { font-size:2.5mm; }
+     .lab .dlc { font-size:2.8mm; font-weight:bold; }
+   </style></head><body>
+   <div class="lab">
+     <div class="q"><img src="${qrData}"></div>
+     <div class="t">
+       <div class="prod">${esc(rec?rec.produitNom:'Produit')}</div>
+       <div class="row">Lot : ${esc(p.lotProduction||'—')}</div>
+       <div class="dlc">DLC : ${dlc}</div>
+       <div class="row">Fab. : ${fmtDate(p.date)}</div>
+     </div>
+   </div>
+   <script>window.onload=function(){setTimeout(function(){window.print();},250);};window.onafterprint=function(){window.close();};<\/script>
+   </body></html>`);
+  win.document.close();
 }
 // Ouvrir une fiche traçabilité à partir de l'ancre #trace=<lot> (QR scanné)
 async function handleTraceAnchor(){
@@ -1632,6 +1942,81 @@ async function exportTraceOrder(orderId){
     }
   }
   csvDownload('tracabilite-commande-'+orderId+'.csv',rows); toast('CSV exporté ✓');
+}
+
+// Export TEXTE d'une commande : fichier .txt + copie instantanée (email / facturation)
+async function buildOrderText(orderId){
+  const o = await db.orders.get(orderId);
+  const cl = o.clientId ? await db.clients.get(o.clientId) : null;
+  const lignes = orderToLines(o);
+  const L=[];
+  L.push('SENSATIONS MACARONS');
+  L.push('Commande du '+fmtDate(o.date));
+  L.push('========================================');
+  L.push('');
+  L.push('CLIENT');
+  L.push('  '+(cl?cl.nom:'—')+(cl&&cl.type?' ('+cl.type+')':''));
+  if(cl&&cl.email) L.push('  '+cl.email);
+  if(cl&&cl.tel) L.push('  '+cl.tel);
+  L.push('');
+  L.push('PRODUITS');
+  lignes.forEach(ln=>{
+    if(ln.type==='coffret'){
+      L.push('  - Coffret '+ln.taille+' macarons');
+      (ln.parfums||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
+    } else if(ln.type==='evenement'){
+      L.push('  - Événement : '+(ln.evQte||0)+' macarons + '+(ln.equip||0)+' présentoir(s)');
+      (ln.parfums||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
+    } else if(ln.type==='grand'){
+      L.push('  - Grand format ('+(ln.tarif||'particulier')+')');
+      (ln.items||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
+    } else if(ln.type==='don'){
+      L.push('  - Don (offert)');
+      (ln.parfums||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' × '+p.qte+' (offert)'));
+      (ln.items||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' (GF) × '+p.qte+' (offert)'));
+    }
+  });
+  L.push('');
+  L.push('MONTANT : '+euro(o.montant));
+  L.push('Paiement : '+(o.paiement||'En attente')+(o.reglement?' ('+o.reglement+')':''));
+  L.push('Statut : '+(o.statut||'À préparer'));
+  if(o.notes){ L.push(''); L.push('NOTES'); L.push('  '+o.notes.replace(/\n/g,'\n  ')); }
+  // Lots utilisés (traçabilité), si la commande est liée à des batchs
+  const items = await db.orderItems.where('orderId').equals(orderId).toArray();
+  if(items.length){
+    L.push('');
+    L.push('LOTS DE PRODUCTION (traçabilité)');
+    for(const it of items){
+      const prod = await db.productions.get(it.productionId);
+      if(!prod) continue;
+      const rec = await db.recipes.get(prod.recipeId);
+      L.push('  - '+(rec?rec.produitNom:'?')+' · lot '+(prod.lotProduction||'—')+' × '+it.qte
+        +(prod.dlcProduit?' · DLC '+fmtDate(prod.dlcProduit):''));
+    }
+  }
+  L.push('');
+  L.push('========================================');
+  L.push('Sensations Macarons — Le Mans');
+  return L.join('\n');
+}
+async function exportOrderText(orderId){
+  const txt = await buildOrderText(orderId);
+  const o = await db.orders.get(orderId);
+  const cl = o.clientId ? await db.clients.get(o.clientId) : null;
+  const slug = (cl?cl.nom:'commande').replace(/[^a-zA-Z0-9]+/g,'-').toLowerCase();
+  const name = 'commande-'+slug+'-'+(o.date||'')+'.txt';
+  // copie instantanée dans le presse-papier (usage email)
+  let copied=false;
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(txt); copied=true; } }catch(e){}
+  // fichier .txt téléchargeable
+  const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  // aperçu + copie manuelle de secours
+  openModal(`<h3>Commande en texte</h3>
+    <p class="note">${copied?'Copié dans le presse-papier ✓ — collez directement dans un email.':'Fichier .txt téléchargé. Vous pouvez aussi copier ci-dessous.'} </p>
+    <textarea id="orderTxt" rows="14" style="width:100%;font-family:monospace;font-size:.78rem;white-space:pre">${esc(txt)}</textarea>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="(function(){const t=document.getElementById('orderTxt');t.select();try{document.execCommand('copy');}catch(e){} toast('Copié ✓');})()">⧉ Copier</button></div>`);
 }
 
 /* ============================================================
