@@ -59,9 +59,11 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia',serif}
 .card .val{font-family:'Fraunces',serif;font-size:2rem;font-weight:600;color:var(--bordeaux);margin-top:6px;line-height:1}
 .card .sub{font-size:.78rem;color:#9a8a82;margin-top:6px}
 .card .corner{position:absolute;top:-12px;right:-12px;font-size:3.2rem;opacity:.08}
-.panel{background:#fff;border-radius:16px;padding:24px;box-shadow:0 4px 20px var(--shadow);border:1px solid rgba(170,124,57,.12);margin-bottom:22px;max-width:100%;overflow-x:auto}
+.panel{background:#fff;border-radius:16px;padding:24px;box-shadow:0 4px 20px var(--shadow);border:1px solid rgba(170,124,57,.12);margin-bottom:22px;max-width:100%;overflow:hidden}
 .panel h2{font-size:1.15rem;color:var(--bordeaux);margin-bottom:16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.table-wrap{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;display:block}
 table{width:100%;border-collapse:collapse;font-size:.87rem}
+.table-wrap table{min-width:max-content}
 th{text-align:left;padding:11px 12px;color:#9a8a82;font-weight:500;font-size:.72rem;
   text-transform:uppercase;letter-spacing:.07em;border-bottom:2px solid var(--creme)}
 td{padding:12px;border-bottom:1px solid #f0eae0;vertical-align:top}

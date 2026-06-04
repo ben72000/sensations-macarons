@@ -206,10 +206,10 @@ async function renderDash(){
    </div>
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
      <div class="panel"><h2>⚠ Matières à réapprovisionner</h2>
-       ${low.length?`<table><tbody>${low.map(s=>`<tr><td>${esc(s.nom)}</td><td style="text-align:right"><span class="tag low">${qty(s.total)} ${esc(s.unite||'')}</span></td><td style="text-align:right;color:#9a8a82">seuil ${qty(s.seuil)}</td></tr>`).join('')}</tbody></table>`:`<div class="empty">Tout est au-dessus du seuil ✓</div>`}
+       ${low.length?`<div class="table-wrap"><table><tbody>${low.map(s=>`<tr><td>${esc(s.nom)}</td><td style="text-align:right"><span class="tag low">${qty(s.total)} ${esc(s.unite||'')}</span></td><td style="text-align:right;color:#9a8a82">seuil ${qty(s.seuil)}</td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">Tout est au-dessus du seuil ✓</div>`}
      </div>
      <div class="panel"><h2>Prochaines échéances</h2>
-       ${upcoming.length?`<table><tbody>${upcoming.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${esc(e.titre)}</td><td style="text-align:right"><span class="tag ${e.type==='cmd'?'todo':'event'}">${e.type==='cmd'?'Commande':'Événement'}</span></td></tr>`).join('')}</tbody></table>`:`<div class="empty">Aucune échéance à venir</div>`}
+       ${upcoming.length?`<div class="table-wrap"><table><tbody>${upcoming.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${esc(e.titre)}</td><td style="text-align:right"><span class="tag ${e.type==='cmd'?'todo':'event'}">${e.type==='cmd'?'Commande':'Événement'}</span></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">Aucune échéance à venir</div>`}
      </div>
    </div>`;
 }
@@ -223,10 +223,10 @@ async function renderSuppliers(){
    <div class="topbar"><div><h1>Fournisseurs</h1><p>${list.length} fournisseur(s)</p></div>
      <button class="btn" onclick="supForm()">+ Nouveau fournisseur</button></div>
    <div class="panel">
-   ${list.length?`<table><thead><tr><th>Nom</th><th>Contact</th><th></th></tr></thead><tbody>
+   ${list.length?`<div class="table-wrap"><table><thead><tr><th>Nom</th><th>Contact</th><th></th></tr></thead><tbody>
      ${list.map(s=>`<tr><td><b>${esc(s.nom)}</b></td><td style="color:#9a8a82">${esc(s.contact||'')}</td>
        <td style="text-align:right"><span class="act" onclick="supForm(${s.id})">Modifier</span><span class="act del" onclick="delSup(${s.id})">Suppr.</span></td></tr>`).join('')}
-   </tbody></table>`:`<div class="empty">Aucun fournisseur. Ajoute tes fournisseurs (nut&me, Calconut…).</div>`}
+   </tbody></table></div>`:`<div class="empty">Aucun fournisseur. Ajoute tes fournisseurs (nut&me, Calconut…).</div>`}
    </div>`;
 }
 async function supForm(id){
@@ -300,26 +300,26 @@ async function renderMaterials(){
    <div class="topbar"><div><h1>Matières premières & lots</h1><p>${mats.length} matière(s)</p></div>
      <div class="flex"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Matière</button></div></div>
    <div class="panel"><h2>Inventaire (stock = somme des lots actifs)</h2>
-   ${mats.length?`<table><thead><tr><th>Matière</th><th>Stock</th><th>Seuil</th><th>Lots actifs</th><th>DLC la + proche</th><th>État</th><th></th></tr></thead>
-     <tbody>${rows.join('')}</tbody></table>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…), puis réceptionne des lots.</div>`}
+   ${mats.length?`<div class="table-wrap"><table><thead><tr><th>Matière</th><th>Stock</th><th>Seuil</th><th>Lots actifs</th><th>DLC la + proche</th><th>État</th><th></th></tr></thead>
+     <tbody>${rows.join('')}</tbody></table></div>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…), puis réceptionne des lots.</div>`}
    </div>
    <div class="panel"><h2>Derniers lots réceptionnés</h2>
-   ${lots.length?`<table><thead><tr><th>Réception</th><th>Matière</th><th>N° lot fourn.</th><th>Fournisseur</th><th>Restant / Initial</th><th>DLC</th><th></th></tr></thead>
+   ${lots.length?`<div class="table-wrap"><table><thead><tr><th>Réception</th><th>Matière</th><th>N° lot fourn.</th><th>Fournisseur</th><th>Restant / Initial</th><th>DLC</th><th></th></tr></thead>
      <tbody>${lots.map(l=>`<tr>
        <td>${fmtDate(l.dateReception)}</td><td>${esc(matName(l.materialId))}</td>
        <td>${esc(l.lotFournisseur||'—')}</td><td>${esc(supName(l.supplierId))}</td>
        <td>${qty(l.qteRestante)} / ${qty(l.qteInitiale)}</td><td>${fmtDate(l.dlc)}</td>
-       <td style="text-align:right"><span class="act del" onclick="delLot(${l.id})">Suppr.</span></td></tr>`).join('')}</tbody></table>`
+       <td style="text-align:right"><span class="act del" onclick="delLot(${l.id})">Suppr.</span></td></tr>`).join('')}</tbody></table></div>`
      :`<div class="empty">Aucun lot réceptionné.</div>`}
    </div>
    <div class="panel"><h2>Dernières matières consommées</h2>
-   ${histo.length?`<table><thead><tr><th>Date prod.</th><th>Matière</th><th>Quantité</th><th>Lot fourn.</th><th>Produit fabriqué</th></tr></thead>
+   ${histo.length?`<div class="table-wrap"><table><thead><tr><th>Date prod.</th><th>Matière</th><th>Quantité</th><th>Lot fourn.</th><th>Produit fabriqué</th></tr></thead>
      <tbody>${histo.map(h=>`<tr>
        <td>${fmtDate(h.date)}</td>
        <td><b>${esc(matName(h.materialId))}</b></td>
        <td><span class="tag out">−${qty(h.qte)} ${esc(matUnit(h.materialId))}</span></td>
        <td>${esc(h.lotFournisseur||'—')}</td>
-       <td>${esc(h.produit)}${h.lotProd?`<br><span style="color:#9a8a82;font-size:.78rem">${esc(h.lotProd)}</span>`:''}</td></tr>`).join('')}</tbody></table>`
+       <td>${esc(h.produit)}${h.lotProd?`<br><span style="color:#9a8a82;font-size:.78rem">${esc(h.lotProd)}</span>`:''}</td></tr>`).join('')}</tbody></table></div>`
      :`<div class="empty">Aucune consommation. Les sorties apparaissent dès qu'une production est lancée.</div>`}
    </div>`;
 }
@@ -413,9 +413,9 @@ async function renderRecipes(){
     const items = await db.recipeItems.where('recipeId').equals(r.id).toArray();
     blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
-      ${items.length?`<table><thead><tr><th>Matière</th><th>Quantité / batch</th></tr></thead><tbody>
+      ${items.length?`<div class="table-wrap"><table><thead><tr><th>Matière</th><th>Quantité / batch</th></tr></thead><tbody>
         ${items.map(it=>`<tr><td>${esc(matName(it.materialId))}</td><td>${qty(it.qteParBatch)} ${esc(matUnit(it.materialId))}</td></tr>`).join('')}
-      </tbody></table>`:`<div class="empty">Aucun ingrédient défini.</div>`}</div>`);
+      </tbody></table></div>`:`<div class="empty">Aucun ingrédient défini.</div>`}</div>`);
   }
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Recettes (BOM)</h1><p>${recipes.length} recette(s) — nomenclature matières</p></div>
@@ -486,12 +486,12 @@ async function renderProductions(){
    <div class="topbar"><div><h1>Productions</h1><p>${prods.length} batch(s) fabriqué(s)</p></div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button></div>
    <div class="panel">
-   ${prods.length?`<table><thead><tr><th>Date</th><th>Produit</th><th>N° lot prod.</th><th>Produit / Restant</th><th></th></tr></thead><tbody>
+   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Produit</th><th>N° lot prod.</th><th>Produit / Restant</th><th></th></tr></thead><tbody>
      ${prods.map(p=>`<tr>
        <td>${fmtDate(p.date)}</td><td><b>${esc(recName(p.recipeId))}</b></td>
        <td>${esc(p.lotProduction||'—')}</td><td>${qty(p.qteProduite)} / <b>${qty(p.qteRestante)}</b></td>
        <td style="text-align:right"><span class="act" onclick="traceProd(${p.id})">Traçabilité</span><span class="act" onclick="view='etiquettes';document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.v==='etiquettes'));renderLabels()">Étiquette</span><span class="act del" onclick="delProd(${p.id})">Suppr.</span></td></tr>`).join('')}
-   </tbody></table>`:`<div class="empty">Aucune production. Une production consomme automatiquement les matières selon la recette (FIFO par DLC).</div>`}
+   </tbody></table></div>`:`<div class="empty">Aucune production. Une production consomme automatiquement les matières selon la recette (FIFO par DLC).</div>`}
    </div>`;
 }
 async function prodForm(){
@@ -693,15 +693,15 @@ async function renderCosts(){
    </div>
 
    <div class="panel"><h2>Prix courant par matière</h2>
-     ${priceRows.length?`<table><thead><tr><th>Matière</th><th>Prix actuel</th><th>Variation depuis le 1ᵉʳ lot</th><th>Réceptions</th></tr></thead><tbody>
+     ${priceRows.length?`<div class="table-wrap"><table><thead><tr><th>Matière</th><th>Prix actuel</th><th>Variation depuis le 1ᵉʳ lot</th><th>Réceptions</th></tr></thead><tbody>
        ${priceRows.map(r=>`<tr><td><b>${esc(r.nom)}</b></td><td>${euro(r.last)} / ${esc(r.unite)}</td>
          <td><span class="tag ${r.varPct>0.5?'low':(r.varPct<-0.5?'ok':'')}">${r.varPct>0?'▲ +':r.varPct<0?'▼ ':''}${r.varPct.toFixed(1)} %</span></td>
-         <td>${r.n}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">Aucun prix enregistré.</div>'}
+         <td>${r.n}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Aucun prix enregistré.</div>'}
    </div>
 
    <div class="panel"><h2>Coût matière par recette</h2>
-     ${recRows.length?`<table><thead><tr><th>Produit</th><th>Rendement</th><th>Coût matière / batch</th><th>Coût matière / pièce</th></tr></thead><tbody>
-       ${recRows.map(r=>`<tr><td><b>${esc(r.nom)}</b></td><td>${r.rendement}</td><td>${euro(r.coutBatch)}</td><td><b>${euro(r.coutUnit)}</b></td></tr>`).join('')}</tbody></table>
+     ${recRows.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>Rendement</th><th>Coût matière / batch</th><th>Coût matière / pièce</th></tr></thead><tbody>
+       ${recRows.map(r=>`<tr><td><b>${esc(r.nom)}</b></td><td>${r.rendement}</td><td>${euro(r.coutBatch)}</td><td><b>${euro(r.coutUnit)}</b></td></tr>`).join('')}</tbody></table></div>
        <p class="note">Calculé au prix d'achat <b>le plus récent</b> de chaque matière. Compare ce coût/pièce à ton prix de vente pour connaître ta marge.</p>`
        :'<div class="empty">Crée des recettes et réceptionne des lots avec prix pour voir les coûts.</div>'}
    </div>
@@ -742,8 +742,8 @@ async function renderDlc(){
    </tr>`;
 
   const bloc = (titre,arr,cls)=> arr.length?`<div class="panel"><h2>${titre} <span class="tag ${cls}">${arr.length}</span></h2>
-     <table><thead><tr><th>Matière</th><th>Restant</th><th>Lot fourn.</th><th>Fournisseur</th><th>DLC</th><th>Échéance</th></tr></thead>
-     <tbody>${arr.map(ligne).join('')}</tbody></table></div>`:'';
+     <div class="table-wrap"><table><thead><tr><th>Matière</th><th>Restant</th><th>Lot fourn.</th><th>Fournisseur</th><th>DLC</th><th>Échéance</th></tr></thead>
+     <tbody>${arr.map(ligne).join('')}</tbody></table></div></div>`:'';
 
   const total = expires.length+urgent.length+proche.length;
   document.getElementById('main').innerHTML=`
@@ -755,8 +755,8 @@ async function renderDlc(){
    ${bloc('À écouler — sous 7 jours', proche, 'low')}
    ${bloc('Plus de 7 jours', ok, 'ok')}
    ${sansDlc.length?`<div class="panel"><h2>Sans DLC renseignée <span class="tag warn">${sansDlc.length}</span></h2>
-     <table><thead><tr><th>Matière</th><th>Restant</th><th>Lot fourn.</th><th>Réception</th></tr></thead>
-     <tbody>${sansDlc.map(l=>`<tr><td><b>${esc(matName(l.materialId))}</b></td><td>${qty(l.qteRestante)} ${esc(matUnit(l.materialId))}</td><td>${esc(l.lotFournisseur||'—')}</td><td>${fmtDate(l.dateReception)}</td></tr>`).join('')}</tbody></table>
+     <div class="table-wrap"><table><thead><tr><th>Matière</th><th>Restant</th><th>Lot fourn.</th><th>Réception</th></tr></thead>
+     <tbody>${sansDlc.map(l=>`<tr><td><b>${esc(matName(l.materialId))}</b></td><td>${qty(l.qteRestante)} ${esc(matUnit(l.materialId))}</td><td>${esc(l.lotFournisseur||'—')}</td><td>${fmtDate(l.dateReception)}</td></tr>`).join('')}</tbody></table></div>
      <p class="note">Pense à renseigner la DLC à la réception pour activer le suivi.</p></div>`:''}
    ${actifs.length===0&&sansDlc.length===0?'<div class="panel"><div class="empty">Aucun lot actif. Réceptionne des lots pour activer le suivi DLC.</div></div>':''}`;
 }
@@ -776,15 +776,15 @@ async function renderTrace(){
    <div class="banner">⊕ <div>La traçabilité répond à trois questions réglementaires : ingrédients d'une commande, origine d'un batch, et usage d'un lot de matière.</div></div>
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
      <div class="panel"><h2>Par commande livrée</h2>
-       ${orders.length?`<table><tbody>${orders.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(o=>`<tr>
+       ${orders.length?`<div class="table-wrap"><table><tbody>${orders.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(o=>`<tr>
          <td>${fmtDate(o.date)}</td><td><b>${esc(clName(o.clientId))}</b></td>
-         <td style="text-align:right"><span class="act" onclick="traceOrder(${o.id})">Tracer</span></td></tr>`).join('')}</tbody></table>`
+         <td style="text-align:right"><span class="act" onclick="traceOrder(${o.id})">Tracer</span></td></tr>`).join('')}</tbody></table></div>`
          :`<div class="empty">Aucune commande.</div>`}
      </div>
      <div class="panel"><h2>Par batch de production</h2>
-       ${prods.length?`<table><tbody>${prods.map(p=>`<tr>
+       ${prods.length?`<div class="table-wrap"><table><tbody>${prods.map(p=>`<tr>
          <td>${fmtDate(p.date)}</td><td><b>${esc(recName(p.recipeId))}</b><br><span style="color:#9a8a82;font-size:.78rem">${esc(p.lotProduction||'')}</span></td>
-         <td style="text-align:right"><span class="act" onclick="traceProd(${p.id})">Tracer</span></td></tr>`).join('')}</tbody></table>`
+         <td style="text-align:right"><span class="act" onclick="traceProd(${p.id})">Tracer</span></td></tr>`).join('')}</tbody></table></div>`
          :`<div class="empty">Aucune production.</div>`}
      </div>
    </div>`;
@@ -859,13 +859,13 @@ async function renderClients(){
    <div class="topbar"><div><h1>Clients</h1><p>${clients.length} fiche(s)</p></div>
      <div class="flex"><input class="search" placeholder="Rechercher…" value="${esc(clientSearch)}" oninput="clientSearch=this.value;renderClients()"><button class="btn" onclick="clientForm()">+ Nouveau client</button></div></div>
    <div class="panel">
-   ${list.length?`<table><thead><tr><th>Nom</th><th>Type</th><th>Contact</th><th>Cmd</th><th>CA cumulé</th><th></th></tr></thead><tbody>
+   ${list.length?`<div class="table-wrap"><table><thead><tr><th>Nom</th><th>Type</th><th>Contact</th><th>Cmd</th><th>CA cumulé</th><th></th></tr></thead><tbody>
      ${list.map(c=>{const cmds=orders.filter(o=>o.clientId===c.id);const ca=cmds.reduce((s,o)=>s+(+o.montant||0),0);
        return `<tr><td><b>${esc(c.nom)}</b></td><td><span class="tag ${c.type==='Pro'?'event':'ok'}">${esc(c.type||'Particulier')}</span></td>
        <td>${esc(c.tel||'')}${c.tel&&c.email?'<br>':''}<span style="color:#9a8a82;font-size:.82rem">${esc(c.email||'')}</span></td>
        <td>${cmds.length}</td><td>${euro(ca)}</td>
        <td style="text-align:right"><span class="act" onclick="clientForm(${c.id})">Modifier</span><span class="act del" onclick="delClient(${c.id})">Suppr.</span></td></tr>`;}).join('')}
-   </tbody></table>`:`<div class="empty">Aucun client. Clique sur « Nouveau client ».</div>`}
+   </tbody></table></div>`:`<div class="empty">Aucun client. Clique sur « Nouveau client ».</div>`}
    </div>`;
 }
 async function clientForm(id){
@@ -899,11 +899,11 @@ async function renderProducts(){
    <div class="topbar"><div><h1>Offre / Coffrets</h1><p>Catalogue de coffrets et parfums proposés</p></div>
      <button class="btn" onclick="prodCatForm()">+ Nouveau coffret</button></div>
    <div class="panel"><h2>Coffrets</h2>
-   ${products.length?`<table><thead><tr><th>Coffret</th><th>Taille</th><th>Prix de base</th><th>Actif</th><th></th></tr></thead><tbody>
+   ${products.length?`<div class="table-wrap"><table><thead><tr><th>Coffret</th><th>Taille</th><th>Prix de base</th><th>Actif</th><th></th></tr></thead><tbody>
      ${products.map(p=>`<tr><td><b>${esc(p.nom)}</b></td><td>${p.taille} macarons</td><td>${euro(p.prix)}</td>
        <td><span class="tag ${p.actif!==false?'ok':'warn'}">${p.actif!==false?'Oui':'Non'}</span></td>
        <td style="text-align:right"><span class="act" onclick="prodCatForm(${p.id})">Modifier</span><span class="act del" onclick="delProdCat(${p.id})">Suppr.</span></td></tr>`).join('')}
-   </tbody></table>`:`<div class="empty">Aucun coffret. Ajoute tes formats (6, 8, 16, 25 macarons).</div>`}
+   </tbody></table></div>`:`<div class="empty">Aucun coffret. Ajoute tes formats (6, 8, 16, 25 macarons).</div>`}
    </div>
    <div class="panel"><h2>Prestation événement</h2>
      <div class="sum-box"><span>Prix par macaron</span><b>${euro(EVENT_PRICE)}</b></div>
@@ -912,9 +912,9 @@ async function renderProducts(){
      <p class="note">Disponible comme type de commande « Événement ». Le prix se calcule automatiquement (macarons + présentoirs).</p>
    </div>
    <div class="panel"><h2>Macarons grand format <span class="tag warn">${BIG_FORMATS.length}</span></h2>
-     <table><thead><tr><th>Produit</th><th>Tarif particulier</th><th>Tarif pro</th></tr></thead><tbody>
+     <div class="table-wrap"><table><thead><tr><th>Produit</th><th>Tarif particulier</th><th>Tarif pro</th></tr></thead><tbody>
        ${BIG_FORMATS.map(f=>`<tr><td><b>${esc(f)}</b></td><td>${euro(BIG_PRICE.particulier)}</td><td>${euro(BIG_PRICE.pro)}</td></tr>`).join('')}
-     </tbody></table>
+     </tbody></table></div>
      <p class="note">Vendus à l'unité via le type de commande « Grand format ». Le tarif (pro / particulier) se choisit à chaque commande.</p>
    </div>
    <div class="panel"><h2>Parfums proposés <span class="tag ok">${FLAVORS.length}</span></h2>
@@ -983,8 +983,8 @@ async function renderCmd(){
    <div class="topbar"><div><h1>Commandes</h1><p>${orders.length} commande(s)</p></div>
      <button class="btn" onclick="cmdForm()">+ Nouvelle commande</button></div>
    <div class="panel">
-   ${rows.length?`<table><thead><tr><th>Date</th><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead><tbody>
-     ${rows.join('')}</tbody></table>`:`<div class="empty">Aucune commande.</div>`}
+   ${rows.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead><tbody>
+     ${rows.join('')}</tbody></table></div>`:`<div class="empty">Aucune commande.</div>`}
    </div>`;
 }
 // Vue détail d'une commande (multi-lignes)
