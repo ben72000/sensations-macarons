@@ -53,6 +53,8 @@ const BIG_PRICE = { pro: 3.20, particulier: 6.00 };
 
 // --------- Helpers ---------
 const euro  = n => (+n || 0).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
+// Quantité : arrondit proprement (max 3 décimales) et supprime les zéros parasites
+const qty = n => { const v = Math.round((+n||0)*1000)/1000; return v.toLocaleString('fr-FR', {maximumFractionDigits:3}); };
 const today = () => new Date().toISOString().slice(0,10);
 const esc   = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function val(id){ const el = document.getElementById(id); return el ? (el.value||'').trim() : ''; }
@@ -190,7 +192,7 @@ async function renderDash(){
    </div>
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
      <div class="panel"><h2>⚠ Matières à réapprovisionner</h2>
-       ${low.length?`<table><tbody>${low.map(s=>`<tr><td>${esc(s.nom)}</td><td style="text-align:right"><span class="tag low">${s.total} ${esc(s.unite||'')}</span></td><td style="text-align:right;color:#9a8a82">seuil ${s.seuil}</td></tr>`).join('')}</tbody></table>`:`<div class="empty">Tout est au-dessus du seuil ✓</div>`}
+       ${low.length?`<table><tbody>${low.map(s=>`<tr><td>${esc(s.nom)}</td><td style="text-align:right"><span class="tag low">${qty(s.total)} ${esc(s.unite||'')}</span></td><td style="text-align:right;color:#9a8a82">seuil ${qty(s.seuil)}</td></tr>`).join('')}</tbody></table>`:`<div class="empty">Tout est au-dessus du seuil ✓</div>`}
      </div>
      <div class="panel"><h2>Prochaines échéances</h2>
        ${upcoming.length?`<table><tbody>${upcoming.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${esc(e.titre)}</td><td style="text-align:right"><span class="tag ${e.type==='cmd'?'todo':'event'}">${e.type==='cmd'?'Commande':'Événement'}</span></td></tr>`).join('')}</tbody></table>`:`<div class="empty">Aucune échéance à venir</div>`}
@@ -243,8 +245,8 @@ async function renderMaterials(){
     const dj = dlcMin?daysTo(dlcMin):null;
     rows.push(`<tr>
       <td><b>${esc(mat.nom)}</b></td>
-      <td>${total} ${esc(mat.unite||'')}</td>
-      <td>${esc(mat.seuil||0)} ${esc(mat.unite||'')}</td>
+      <td>${qty(total)} ${esc(mat.unite||'')}</td>
+      <td>${qty(mat.seuil||0)} ${esc(mat.unite||'')}</td>
       <td>${nbLots}</td>
       <td>${dlcMin?`${fmtDate(dlcMin)} ${dj!==null&&dj<=7?`<span class="tag warn">${dj<=0?'expiré':dj+' j'}</span>`:''}`:'—'}</td>
       <td><span class="tag ${low?'low':'ok'}">${low?'À commander':'OK'}</span></td>
@@ -292,7 +294,7 @@ async function renderMaterials(){
      <tbody>${lots.map(l=>`<tr>
        <td>${fmtDate(l.dateReception)}</td><td>${esc(matName(l.materialId))}</td>
        <td>${esc(l.lotFournisseur||'—')}</td><td>${esc(supName(l.supplierId))}</td>
-       <td>${l.qteRestante} / ${l.qteInitiale}</td><td>${fmtDate(l.dlc)}</td>
+       <td>${qty(l.qteRestante)} / ${qty(l.qteInitiale)}</td><td>${fmtDate(l.dlc)}</td>
        <td style="text-align:right"><span class="act del" onclick="delLot(${l.id})">Suppr.</span></td></tr>`).join('')}</tbody></table>`
      :`<div class="empty">Aucun lot réceptionné.</div>`}
    </div>
@@ -301,7 +303,7 @@ async function renderMaterials(){
      <tbody>${histo.map(h=>`<tr>
        <td>${fmtDate(h.date)}</td>
        <td><b>${esc(matName(h.materialId))}</b></td>
-       <td><span class="tag out">−${h.qte} ${esc(matUnit(h.materialId))}</span></td>
+       <td><span class="tag out">−${qty(h.qte)} ${esc(matUnit(h.materialId))}</span></td>
        <td>${esc(h.lotFournisseur||'—')}</td>
        <td>${esc(h.produit)}${h.lotProd?`<br><span style="color:#9a8a82;font-size:.78rem">${esc(h.lotProd)}</span>`:''}</td></tr>`).join('')}</tbody></table>`
      :`<div class="empty">Aucune consommation. Les sorties apparaissent dès qu'une production est lancée.</div>`}
@@ -398,7 +400,7 @@ async function renderRecipes(){
     blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${items.length?`<table><thead><tr><th>Matière</th><th>Quantité / batch</th></tr></thead><tbody>
-        ${items.map(it=>`<tr><td>${esc(matName(it.materialId))}</td><td>${it.qteParBatch} ${esc(matUnit(it.materialId))}</td></tr>`).join('')}
+        ${items.map(it=>`<tr><td>${esc(matName(it.materialId))}</td><td>${qty(it.qteParBatch)} ${esc(matUnit(it.materialId))}</td></tr>`).join('')}
       </tbody></table>`:`<div class="empty">Aucun ingrédient défini.</div>`}</div>`);
   }
   document.getElementById('main').innerHTML=`
@@ -473,7 +475,7 @@ async function renderProductions(){
    ${prods.length?`<table><thead><tr><th>Date</th><th>Produit</th><th>N° lot prod.</th><th>Produit / Restant</th><th></th></tr></thead><tbody>
      ${prods.map(p=>`<tr>
        <td>${fmtDate(p.date)}</td><td><b>${esc(recName(p.recipeId))}</b></td>
-       <td>${esc(p.lotProduction||'—')}</td><td>${p.qteProduite} / <b>${p.qteRestante}</b></td>
+       <td>${esc(p.lotProduction||'—')}</td><td>${qty(p.qteProduite)} / <b>${qty(p.qteRestante)}</b></td>
        <td style="text-align:right"><span class="act" onclick="traceProd(${p.id})">Traçabilité</span><span class="act" onclick="view='etiquettes';document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.v==='etiquettes'));renderLabels()">Étiquette</span><span class="act del" onclick="delProd(${p.id})">Suppr.</span></td></tr>`).join('')}
    </tbody></table>`:`<div class="empty">Aucune production. Une production consomme automatiquement les matières selon la recette (FIFO par DLC).</div>`}
    </div>`;
@@ -718,7 +720,7 @@ async function renderDlc(){
 
   const ligne = l => `<tr>
      <td><b>${esc(matName(l.materialId))}</b></td>
-     <td>${l.qteRestante} ${esc(matUnit(l.materialId))}</td>
+     <td>${qty(l.qteRestante)} ${esc(matUnit(l.materialId))}</td>
      <td>${esc(l.lotFournisseur||'—')}</td>
      <td>${esc(supName(l.supplierId))}</td>
      <td>${fmtDate(l.dlc)}</td>
@@ -740,7 +742,7 @@ async function renderDlc(){
    ${bloc('Plus de 7 jours', ok, 'ok')}
    ${sansDlc.length?`<div class="panel"><h2>Sans DLC renseignée <span class="tag warn">${sansDlc.length}</span></h2>
      <table><thead><tr><th>Matière</th><th>Restant</th><th>Lot fourn.</th><th>Réception</th></tr></thead>
-     <tbody>${sansDlc.map(l=>`<tr><td><b>${esc(matName(l.materialId))}</b></td><td>${l.qteRestante} ${esc(matUnit(l.materialId))}</td><td>${esc(l.lotFournisseur||'—')}</td><td>${fmtDate(l.dateReception)}</td></tr>`).join('')}</tbody></table>
+     <tbody>${sansDlc.map(l=>`<tr><td><b>${esc(matName(l.materialId))}</b></td><td>${qty(l.qteRestante)} ${esc(matUnit(l.materialId))}</td><td>${esc(l.lotFournisseur||'—')}</td><td>${fmtDate(l.dateReception)}</td></tr>`).join('')}</tbody></table>
      <p class="note">Pense à renseigner la DLC à la réception pour activer le suivi.</p></div>`:''}
    ${actifs.length===0&&sansDlc.length===0?'<div class="panel"><div class="empty">Aucun lot actif. Réceptionne des lots pour activer le suivi DLC.</div></div>':''}`;
 }
@@ -784,7 +786,7 @@ async function traceProd(prodId){
     if(!lot){ lines.push(`<div class="trace-step">Lot supprimé — ${c.qteConsommee}</div>`); continue; }
     const mat = await db.materials.get(lot.materialId);
     const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId) : null;
-    lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'?')}</b> — ${c.qteConsommee} ${esc(mat?mat.unite:'')}<br>
+    lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'?')}</b> — ${qty(c.qteConsommee)} ${esc(mat?mat.unite:'')}<br>
       <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(lot.lotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(lot.dlc)||'—'}</span></div>`);
   }
   // commandes liées
@@ -797,7 +799,7 @@ async function traceProd(prodId){
   });
   openModal(`<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
-    <span style="color:#9a8a82;font-size:.85rem">Produit : ${prod.qteProduite} · Restant : ${prod.qteRestante}</span></p>
+    <span style="color:#9a8a82;font-size:.85rem">Produit : ${qty(prod.qteProduite)} · Restant : ${qty(prod.qteRestante)}</span></p>
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
     ${lines.length?lines.join(''):'<p class="note">Aucune consommation enregistrée.</p>'}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
@@ -1292,7 +1294,7 @@ async function cmdLink(orderId){
       </div>`:''}
     ${dispo.length?`
     <div class="field"><label>Ajouter un batch (produit fini disponible)</label>
-      <select id="f_prod">${dispo.map(p=>`<option value="${p.id}">${esc(recName(p.recipeId))} — ${esc(p.lotProduction||'')} (reste ${p.qteRestante})</option>`).join('')}</select></div>
+      <select id="f_prod">${dispo.map(p=>`<option value="${p.id}">${esc(recName(p.recipeId))} — ${esc(p.lotProduction||'')} (reste ${qty(p.qteRestante)})</option>`).join('')}</select></div>
     <div class="field"><label>Quantité à affecter</label><input type="number" id="f_q" value="1"></div>`
     :'<p class="note">Aucun batch disponible à ajouter. Lance une production d\'abord.</p>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>

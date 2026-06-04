@@ -153,8 +153,8 @@ tr:hover td{background:var(--creme-2)}
   padding:13px 20px;border-radius:11px;font-size:.88rem;box-shadow:0 8px 24px rgba(82,37,47,.3);
   z-index:99;opacity:0;transform:translateY(10px);transition:.3s;pointer-events:none;max-width:80vw}
 .toast.show{opacity:1;transform:translateY(0)}
-@media(max-width:820px){
-  /* Barre de navigation horizontale fixée en bas (pattern iOS) */
+@media(max-width:700px){
+  /* Barre de navigation horizontale fixée en bas (pattern iOS) — téléphones uniquement */
   .app{flex-direction:column}
   .side{
     width:100%;height:auto;left:0;right:0;bottom:0;top:auto;position:fixed;
@@ -175,7 +175,7 @@ tr:hover td{background:var(--creme-2)}
   .nav button.active{background:var(--creme);color:var(--bordeaux)}
   /* Boutons Données dans la barre */
   .side-foot .foot-btn{flex-direction:column;gap:3px;min-width:60px;width:auto;padding:7px 8px;font-size:.6rem;margin:0;border-radius:12px}
-  .main{margin-left:0;padding:16px 14px calc(96px + env(safe-area-inset-bottom));width:100%}
+  .main{margin-left:0;padding:16px 14px calc(110px + env(safe-area-inset-bottom));width:100%}
   .topbar h1{font-size:1.5rem}
   .row2,.row3{grid-template-columns:1fr}
   table{font-size:.82rem}td,th{padding:9px 7px}
