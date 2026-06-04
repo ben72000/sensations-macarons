@@ -338,7 +338,21 @@ async function matForm(id){
 async function saveMat(id){
   const o={nom:val('f_nom'),unite:val('f_unite'),seuil:+val('f_seuil')||0,prixDefaut:+val('f_prix')||0};
   if(!o.nom){toast('Nom requis');return;}
-  if(id) await db.materials.update(id,o); else await db.materials.add(o);
+  if(id){
+    // S3 : interdire le changement d'unité si la matière est déjà utilisée (lots ou recettes)
+    const prev = await db.materials.get(id);
+    if(prev && prev.unite && prev.unite!==o.unite){
+      const nbLots = (await db.materialLots.where('materialId').equals(id).toArray()).length;
+      const nbItems = (await db.recipeItems.where('materialId').equals(id).toArray()).length;
+      if(nbLots || nbItems){
+        toast(`Unité verrouillée : ${nbLots} lot(s) et ${nbItems} recette(s) utilisent « ${prev.unite} »`);
+        return;
+      }
+    }
+    await db.materials.update(id,o);
+  } else {
+    await db.materials.add(o);
+  }
   closeModal(); renderMaterials(); toast('Matière enregistrée ✓');
 }
 async function delMat(id){
@@ -396,7 +410,18 @@ async function saveLot(){
   closeModal(); renderMaterials(); toast('Lot réceptionné ✓');
 }
 async function delLot(id){
-  if(!confirm('Supprimer ce lot ? (Attention à la traçabilité)'))return;
+  // S1 : un lot consommé par une production ne peut pas être supprimé (traçabilité HACCP)
+  const conso = await db.prodConsumption.where('materialLotId').equals(id).toArray();
+  if(conso.length){
+    const prods = await db.productions.toArray();
+    const lots = prods.filter(p=>conso.some(c=>c.productionId===p.id)).map(p=>p.lotProduction||('batch '+p.id));
+    openModal(`<h3>Suppression impossible</h3>
+      <div class="banner" style="background:#f6e3e0;border-color:var(--red);color:#7a2a20">⛔ <div>Ce lot a été consommé par ${conso.length} production(s) : <b>${esc([...new Set(lots)].join(', '))}</b>.</div></div>
+      <p class="note">Pour préserver la traçabilité réglementaire (HACCP), un lot déjà utilisé en production ne peut pas être supprimé. Son historique de consommation doit rester intact.</p>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Compris</button></div>`);
+    return;
+  }
+  if(!confirm('Supprimer ce lot ? (Aucune production ne l\'utilise.)'))return;
   await db.materialLots.delete(id); renderMaterials(); toast('Lot supprimé');
 }
 
@@ -455,7 +480,9 @@ function drawBom(){
 function bomAdd(){ const mats=window._matsCache||[]; bomDraft.push({materialId:mats[0].id,qteParBatch:1}); drawBom(); }
 function bomDel(i){ bomDraft.splice(i,1); drawBom(); }
 async function saveRec(id){
-  const o={produitNom:val('f_nom'),rendement:+val('f_rend')||1};
+  const rend=+val('f_rend');
+  if(!rend || rend<=0){toast('Le rendement doit être supérieur à 0');return;}
+  const o={produitNom:val('f_nom'),rendement:rend};
   if(!o.produitNom){toast('Nom requis');return;}
   if(!bomDraft.length){toast('Ajoute au moins une matière');return;}
   await db.transaction('rw',db.recipes,db.recipeItems,async()=>{
@@ -552,7 +579,10 @@ async function enregistrerProduction(recipeId, qteProduite, dateProd, lotProduct
           if(besoin<=1e-9) break;
           const pris = Math.min(besoin, +lot.qteRestante);
           await db.materialLots.update(lot.id, {qteRestante:+lot.qteRestante - pris});
-          await db.prodConsumption.add({productionId:prodId, materialLotId:lot.id, qteConsommee:pris});
+          // T2 : on fige (dénormalise) l'origine pour que la traçabilité survive à toute suppression future
+          await db.prodConsumption.add({productionId:prodId, materialLotId:lot.id, qteConsommee:pris,
+            snapMaterialId:item.materialId, snapLotFournisseur:lot.lotFournisseur||'',
+            snapSupplierId:lot.supplierId||0, snapDlc:lot.dlc||''});
           besoin -= pris;
         }
       }
@@ -771,6 +801,9 @@ async function renderTrace(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const lots = await db.materialLots.toArray();
+  const mats = await db.materials.toArray();
+  const matName = id => (mats.find(m=>m.id===id)||{}).nom||'—';
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Traçabilité</h1><p>Remonter la chaîne fournisseur → lot → batch → commande</p></div></div>
    <div class="banner">⊕ <div>La traçabilité répond à trois questions réglementaires : ingrédients d'une commande, origine d'un batch, et usage d'un lot de matière.</div></div>
@@ -787,7 +820,42 @@ async function renderTrace(){
          <td style="text-align:right"><span class="act" onclick="traceProd(${p.id})">Tracer</span></td></tr>`).join('')}</tbody></table></div>`
          :`<div class="empty">Aucune production.</div>`}
      </div>
+   </div>
+   <div class="panel" style="margin-top:22px"><h2>Par lot de matière première <span style="font-weight:400;font-size:.82rem;color:#9a8a82">— en cas de rappel fournisseur</span></h2>
+     ${lots.length?`<div class="table-wrap"><table><thead><tr><th>Matière</th><th>N° lot fourn.</th><th>Réception</th><th></th></tr></thead><tbody>${lots.sort((a,b)=>(b.dateReception||'').localeCompare(a.dateReception||'')).map(l=>`<tr>
+       <td><b>${esc(matName(l.materialId))}</b></td><td>${esc(l.lotFournisseur||'—')}</td><td>${fmtDate(l.dateReception)}</td>
+       <td style="text-align:right"><span class="act" onclick="traceLot(${l.id})">Tracer</span></td></tr>`).join('')}</tbody></table></div>`
+       :`<div class="empty">Aucun lot.</div>`}
    </div>`;
+}
+
+// T3 : d'un lot de matière → toutes les productions, commandes et clients impactés (rappel produit)
+async function traceLot(lotId){
+  const lot = await db.materialLots.get(lotId);
+  if(!lot){ toast('Lot introuvable'); return; }
+  const mat = await db.materials.get(lot.materialId);
+  const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId) : null;
+  const conso = await db.prodConsumption.where('materialLotId').equals(lotId).toArray();
+  const orders = await db.orders.toArray();
+  const clients = await db.clients.toArray();
+  const recipes = await db.recipes.toArray();
+  const blocks=[];
+  for(const c of conso){
+    const prod = await db.productions.get(c.productionId);
+    if(!prod){ continue; }
+    const rec = recipes.find(r=>r.id===prod.recipeId);
+    const oi = await db.orderItems.where('productionId').equals(prod.id).toArray();
+    const cmdList = oi.map(it=>{ const o=orders.find(x=>x.id===it.orderId); const cl=o?clients.find(cc=>cc.id===o.clientId):null;
+      return `<div style="font-size:.8rem;color:#6a5a52;padding:2px 0">→ ${esc(cl?cl.nom:'—')} · ${it.qte} pièces · ${o?fmtDate(o.date):''}</div>`; });
+    blocks.push(`<div class="trace-step"><b>${esc(rec?rec.produitNom:'?')}</b> · batch ${esc(prod.lotProduction||'—')} · ${qty(c.qteConsommee)} ${esc(mat?mat.unite:'')} consommé(s)
+      <div style="margin-top:4px">${cmdList.join('')||'<span class="note">Aucune commande servie depuis ce batch.</span>'}</div></div>`);
+  }
+  openModal(`<h3>Traçabilité — lot de matière</h3>
+    <p style="margin-bottom:8px"><b>${esc(mat?mat.nom:'?')}</b> · lot fourn. <b>${esc(lot.lotFournisseur||'—')}</b><br>
+    <span style="color:#9a8a82;font-size:.85rem">${esc(sup?sup.nom:'fournisseur non précisé')} · reçu ${fmtDate(lot.dateReception)} · DLC ${fmtDate(lot.dlc)||'—'}</span></p>
+    <h3 style="font-size:1rem;margin:14px 0 8px">➡ Produits & clients impactés</h3>
+    ${blocks.length?blocks.join(''):'<p class="note">Ce lot n\'a encore été utilisé dans aucune production.</p>'}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 
 async function traceProd(prodId){
@@ -797,7 +865,14 @@ async function traceProd(prodId){
   const lines=[];
   for(const c of conso){
     const lot = await db.materialLots.get(c.materialLotId);
-    if(!lot){ lines.push(`<div class="trace-step">Lot supprimé — ${c.qteConsommee}</div>`); continue; }
+    if(!lot){
+      // T2 : le lot n'existe plus → on s'appuie sur les données figées au moment de la production
+      const mat = c.snapMaterialId ? await db.materials.get(c.snapMaterialId) : null;
+      const sup = c.snapSupplierId ? await db.suppliers.get(c.snapSupplierId) : null;
+      lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'Matière')}</b> — ${qty(c.qteConsommee)} ${esc(mat?mat.unite:'')}<br>
+        <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(c.snapLotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(c.snapDlc)||'—'} <span class="tag warn">lot archivé</span></span></div>`);
+      continue;
+    }
     const mat = await db.materials.get(lot.materialId);
     const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId) : null;
     lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'?')}</b> — ${qty(c.qteConsommee)} ${esc(mat?mat.unite:'')}<br>
@@ -833,7 +908,13 @@ async function traceOrder(orderId){
     const conso = await db.prodConsumption.where('productionId').equals(prod.id).toArray();
     const sub=[];
     for(const c of conso){
-      const lot = await db.materialLots.get(c.materialLotId); if(!lot) continue;
+      const lot = await db.materialLots.get(c.materialLotId);
+      if(!lot){
+        const mat = c.snapMaterialId ? await db.materials.get(c.snapMaterialId) : null;
+        const sup = c.snapSupplierId ? await db.suppliers.get(c.snapSupplierId) : null;
+        sub.push(`<div style="font-size:.8rem;color:#6a5a52;padding:2px 0">• ${esc(mat?mat.nom:'Matière')} — lot ${esc(c.snapLotFournisseur||'—')} (${esc(sup?sup.nom:'?')}) <span class="tag warn">archivé</span></div>`);
+        continue;
+      }
       const mat = await db.materials.get(lot.materialId);
       const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId) : null;
       sub.push(`<div style="font-size:.8rem;color:#6a5a52;padding:2px 0">• ${esc(mat?mat.nom:'?')} — lot ${esc(lot.lotFournisseur||'—')} (${esc(sup?sup.nom:'?')})</div>`);
@@ -960,6 +1041,7 @@ async function renderCmd(){
   const lineLabel = ln => {
     if(ln.type==='evenement') return `Événement ${ln.evQte||0} mac. +${ln.equip||0} pyr.`;
     if(ln.type==='grand'){ const n=(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Grand format ×${n}`; }
+    if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0)+(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Don ×${n} (offert)`; }
     return `Coffret ${ln.taille||'?'}`;
   };
   const rows=[];
@@ -1016,6 +1098,16 @@ async function cmdView(id){
         ${items.length?`<div style="margin-top:6px">${items.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun.</p>'}
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
+    if(ln.type==='don'){
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      const items=(ln.items||[]).filter(p=>p.qte>0);
+      const n=parfums.reduce((s,p)=>s+(+p.qte||0),0)+items.reduce((s,p)=>s+(+p.qte||0),0);
+      return `<div class="cmd-line"><div class="line-type">Don <span class="line-sub">offert · décrémente le stock</span></div>
+        ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:''}
+        ${items.length?`<div style="margin-top:6px">${items.map(p=>`<span class="pill">${esc(p.nom)} (GF) × ${p.qte}</span>`).join('')}</div>`:''}
+        ${!n?'<p class="note">Aucun macaron.</p>':''}
+        <div class="sum-box" style="margin-top:8px"><span>${n} offert(s) · sous-total</span><b>${euro(0)}</b></div></div>`;
+    }
     return '';
   }).join('');
   openModal(`<h3>Détail commande</h3>
@@ -1037,6 +1129,7 @@ function lineTotalStored(ln){
   }
   if(ln.type==='evenement') return (ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE;
   if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); return tot*pu; }
+  if(ln.type==='don') return 0;
   return 0;
 }
 let cmdLines = [];      // lignes de produits de la commande en cours
@@ -1084,6 +1177,7 @@ async function cmdForm(id){
      <button class="btn ghost sm" onclick="addLine('coffret')">+ Coffret</button>
      <button class="btn ghost sm" onclick="addLine('evenement')">+ Événement</button>
      <button class="btn ghost sm" onclick="addLine('grand')">+ Grand format</button>
+     <button class="btn ghost sm" onclick="addLine('don')">+ Don (0 €)</button>
    </div>
 
    <label style="font-size:.82rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin:6px 0"><input type="checkbox" id="f_perso" style="width:auto" ${o.perso?'checked':''}> Personnalisation des couleurs</label>
@@ -1110,17 +1204,19 @@ function addLine(type){
   if(type==='coffret') cmdLines.push({type:'coffret', taille:6, parfums:{}});
   else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:EVENT_MIN_EQUIP, parfums:{}});
   else if(type==='grand') cmdLines.push({type:'grand', tarif:'particulier', items:{}});
+  else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
   drawLines();
 }
 function removeLine(i){ cmdLines.splice(i,1); drawLines(); }
 
 function drawLines(){
   const wrap=document.getElementById('linesWrap'); if(!wrap)return;
-  if(!cmdLines.length){ wrap.innerHTML='<p class="note">Ajoute au moins un produit ci-dessous (coffret, événement ou grand format).</p>'; cmdRecalc(); return; }
+  if(!cmdLines.length){ wrap.innerHTML='<p class="note">Ajoute au moins un produit ci-dessous (coffret, événement, grand format ou don).</p>'; cmdRecalc(); return; }
   wrap.innerHTML = cmdLines.map((ln,i)=>{
     if(ln.type==='coffret') return drawCoffretLine(ln,i);
     if(ln.type==='evenement') return drawEventLine(ln,i);
     if(ln.type==='grand') return drawBigLine(ln,i);
+    if(ln.type==='don') return drawDonLine(ln,i);
     return '';
   }).join('');
   cmdRecalc();
@@ -1203,6 +1299,34 @@ function drawBigLine(ln,i){
 function setBigTarif(i,v){ cmdLines[i].tarif=v; drawLines(); }
 function setBigItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdLines[i].items[f]=q; else delete cmdLines[i].items[f]; drawLines(); }
 
+function drawDonLine(ln,i){
+  if(!ln.parfums) ln.parfums={}; if(!ln.items) ln.items={};
+  const parfRows = FLAVORS.map((f,fi)=>{
+    const q=ln.parfums[f]||0;
+    let opts=''; for(let n=0;n<=60;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
+    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)}</span>
+      <select class="flav-sel" onchange="setDonParfum(${i},${fi},this.value)">${opts}</select></div>`;
+  }).join('');
+  const bigRows = BIG_FORMATS.map((f,fi)=>{
+    const q=ln.items[f]||0;
+    let opts=''; for(let n=0;n<=30;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
+    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)} <span style="color:#9a8a82;font-size:.72rem">(GF)</span></span>
+      <select class="flav-sel" onchange="setDonItem(${i},${fi},this.value)">${opts}</select></div>`;
+  }).join('');
+  const totP=Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
+  const totB=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
+  return `<div class="cmd-line">
+    <div class="line-head"><span class="line-type">Don <span class="line-sub">offert · 0 € · décrémente le stock</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <label style="font-size:.78rem;color:#7a6a62">Macarons offerts (par parfum)</label>
+    <div class="flav-grid">${parfRows}</div>
+    <label style="font-size:.78rem;color:#7a6a62;display:block;margin-top:8px">Grands formats offerts (optionnel)</label>
+    <div class="flav-grid">${bigRows}</div>
+    <div class="sum-box"><span>${totP+totB} macaron(s) offert(s)</span><b>${euro(0)}</b></div>
+  </div>`;
+}
+function setDonParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
+function setDonItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdLines[i].items[f]=q; else delete cmdLines[i].items[f]; drawLines(); }
+
 // Calcule le prix d'une ligne
 function lineTotal(ln){
   if(ln.type==='coffret'){
@@ -1214,6 +1338,7 @@ function lineTotal(ln){
   }
   if(ln.type==='evenement') return (ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE;
   if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return tot*pu; }
+  if(ln.type==='don') return 0;
   return 0;
 }
 function cmdRecalc(){
@@ -1240,12 +1365,17 @@ async function saveCmd(id){
       if(!tot){ toast('Grand format : sélectionne au moins une pièce'); return; }
     }
     if(ln.type==='coffret' && !ln.taille){ toast('Coffret : choisis une taille'); return; }
+    if(ln.type==='don'){
+      const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0)+Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0);
+      if(!tot){ toast('Don : indique au moins un macaron offert'); return; }
+    }
   }
   // normaliser les lignes (parfums/items en tableaux pour stockage propre)
   const lignes = cmdLines.map(ln=>{
     if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+    if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
   });
   const o={
     clientId:+val('f_cl')||0, date:val('f_date'),
@@ -1257,7 +1387,7 @@ async function saveCmd(id){
     // on neutralise les anciens champs mono-type
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[]
   };
-  if(!o.montant){toast('Indique un prix');return;}
+  if(o.montant<0){toast('Le prix ne peut pas être négatif');return;}
   let oid=id;
   if(id) await db.orders.update(id,o); else oid=await db.orders.add(o);
   // calendrier : recréer l'événement lié
@@ -1300,8 +1430,20 @@ async function cmdLink(orderId){
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'?';
   const dispo = prods.filter(p=>+p.qteRestante>0);
   const existing = await db.orderItems.where('orderId').equals(orderId).toArray();
+  // total de macarons de la commande (coffrets + événement + dons ; les grands formats sont à part)
+  const ord = await db.orders.get(orderId);
+  const lignes = orderToLines(ord||{});
+  let totMac=0, totDon=0;
+  lignes.forEach(ln=>{
+    if(ln.type==='coffret') totMac += +ln.taille||0;
+    else if(ln.type==='evenement') totMac += +ln.evQte||0;
+    else if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); totMac+=n; totDon+=n; }
+  });
+  const dejaLie = existing.reduce((s,e)=>s+(+e.qte||0),0);
   openModal(`<h3>Lier des batchs à la commande</h3>
-    ${existing.length?`<div class="field"><label>Batchs déjà liés</label>
+    <div class="sum-box"><span>Macarons de la commande${totDon?` (dont ${totDon} offert${totDon>1?'s':''})`:''}</span><b>${totMac||'—'}</b></div>
+    ${totMac?`<div class="sum-box"><span>Déjà affecté depuis le stock</span><b>${dejaLie} / ${totMac}</b></div>`:''}
+    ${existing.length?`<div class="field" style="margin-top:10px"><label>Batchs déjà liés</label>
       ${existing.map(e=>{const p=prods.find(x=>x.id===e.productionId);
         return `<div class="sum-box"><span>${p?esc(recName(p.recipeId)):'?'} — ${p?esc(p.lotProduction||''):'(supprimé)'} × ${e.qte}</span>
           <span class="act del" onclick="unlinkBatch(${e.id},${orderId})">Détacher</span></div>`;}).join('')}
