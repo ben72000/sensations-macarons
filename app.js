@@ -22,6 +22,10 @@ db.version(1).stores({
 db.version(2).stores({
   products:        '++id, taille'
 });
+// v3 : index refId sur events (pour la suppression en cascade commande → calendrier)
+db.version(3).stores({
+  events:          '++id, date, refId'
+});
 
 // --------- Catalogue de référence ---------
 const FLAVORS = [
@@ -32,6 +36,8 @@ const FLAVORS = [
 ];
 const BOX_SIZES = [6, 8, 16, 25];
 const BOX_PRICES = { 6: 12, 8: 16, 16: 28, 25: 42 }; // prix de base par taille
+const BOX_FLAVOR_LIMIT = { 6: 3, 8: 4, 16: 4, 25: 5 }; // parfums DIFFÉRENTS inclus
+const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire
 const PAY_STATUS = ['En attente', 'Payé'];
 const PAY_METHODS = ['Carte', 'Virement', 'Espèces', 'Chèque', 'PayPal'];
 
@@ -39,6 +45,7 @@ const PAY_METHODS = ['Carte', 'Virement', 'Espèces', 'Chèque', 'PayPal'];
 const EVENT_PRICE = 1.60;       // prix par macaron
 const EVENT_MIN = 35;           // quantité minimale
 const EQUIP_PRICE = 20;         // location présentoir / pyramide (par unité)
+const EVENT_MIN_EQUIP = 1;      // au moins 1 pyramide obligatoire
 
 // Macarons grand format (vente à l'unité), double tarif
 const BIG_FORMATS = ['Chocolat', 'Myrtille framboise', 'Mangue passion', 'Madeleine'];
@@ -924,21 +931,22 @@ async function renderCmd(){
   const orders = (await db.orders.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
   const clName = id => (clients.find(c=>c.id===id)||{}).nom||'—';
-  const typeLabel = o => {
-    if(o.type==='evenement') return `Événement ${o.evQte||0} mac.${o.equip?` +${o.equip} présentoir`:''}`;
-    if(o.type==='grand'){ const n=(o.bigItems||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Grand format ×${n}`; }
-    return o.taille ? `Coffret ${o.taille} mac.` : (o.detail||'—');
+  const lineLabel = ln => {
+    if(ln.type==='evenement') return `Événement ${ln.evQte||0} mac. +${ln.equip||0} pyr.`;
+    if(ln.type==='grand'){ const n=(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Grand format ×${n}`; }
+    return `Coffret ${ln.taille||'?'}`;
   };
-  const typeTag = o => o.type==='evenement'?'<span class="tag event">Événement</span>':o.type==='grand'?'<span class="tag warn">Grand format</span>':'<span class="tag ok">Coffret</span>';
   const rows=[];
   for(const o of orders){
     const items = await db.orderItems.where('orderId').equals(o.id).toArray();
     const nbLies = items.length;
     const paye = o.paiement==='Payé';
+    const lignes = orderToLines(o);
+    const resume = lignes.length ? lignes.map(lineLabel).join(' + ') : '—';
     rows.push(`<tr>
        <td>${fmtDate(o.date)}</td>
        <td><b>${esc(clName(o.clientId))}</b></td>
-       <td>${typeTag(o)}<br><span style="font-size:.78rem;color:#7a6a62">${esc(typeLabel(o))}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
+       <td><span style="font-size:.82rem">${esc(resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
        <td>${euro(+o.montant)}</td>
        <td><span class="tag ${paye?'done':'todo'}">${esc(o.paiement||'En attente')}</span>${o.reglement?`<br><span style="color:#9a8a82;font-size:.74rem">${esc(o.reglement)}</span>`:''}</td>
        <td><span class="tag ${o.statut==='Livrée'?'done':'todo'}">${esc(o.statut||'À préparer')}</span></td>
@@ -949,112 +957,113 @@ async function renderCmd(){
    <div class="topbar"><div><h1>Commandes</h1><p>${orders.length} commande(s)</p></div>
      <button class="btn" onclick="cmdForm()">+ Nouvelle commande</button></div>
    <div class="panel">
-   ${rows.length?`<table><thead><tr><th>Date</th><th>Client</th><th>Type / détail</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead><tbody>
+   ${rows.length?`<table><thead><tr><th>Date</th><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead><tbody>
      ${rows.join('')}</tbody></table>`:`<div class="empty">Aucune commande.</div>`}
    </div>`;
 }
-// Vue détail d'une commande selon le type
+// Vue détail d'une commande (multi-lignes)
 async function cmdView(id){
   const o = await db.orders.get(id);
   const cl = o.clientId ? await db.clients.get(o.clientId) : null;
-  const parfums = (o.parfums||[]).filter(p=>p.qte>0);
-  const totalMac = parfums.reduce((s,p)=>s+(+p.qte||0),0);
-  const bigItems = (o.bigItems||[]).filter(p=>p.qte>0);
-  let specific='';
-  if(o.type==='evenement'){
-    specific=`<div class="sum-box"><span>Type</span><b>Événement</b></div>
-      <div class="sum-box"><span>Macarons</span><b>${o.evQte||0} × ${euro(EVENT_PRICE)}</b></div>
-      <div class="sum-box"><span>Présentoirs / pyramides</span><b>${o.equip||0} × ${euro(EQUIP_PRICE)}</b></div>`;
-  } else if(o.type==='grand'){
-    const pu=BIG_PRICE[o.tarif]||0;
-    specific=`<div class="sum-box"><span>Type</span><b>Grand format (${esc(o.tarif||'particulier')})</b></div>
-      <div class="sum-box"><span>Prix unitaire</span><b>${euro(pu)}</b></div>`;
-  } else {
-    specific=`<div class="sum-box"><span>Type</span><b>Coffret</b></div>
-      <div class="sum-box"><span>Taille</span><b>${o.taille?o.taille+' macarons':'—'}</b></div>`;
-  }
+  const lignes = orderToLines(o);
+  const blocks = lignes.map(ln=>{
+    if(ln.type==='coffret'){
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      const totQ=parfums.reduce((s,p)=>s+(+p.qte||0),0);
+      const nbDiff=parfums.length, limit=BOX_FLAVOR_LIMIT[ln.taille]||0, over=Math.max(0,nbDiff-limit);
+      return `<div class="cmd-line"><div class="line-type">Coffret ${ln.taille} macarons ${over?`<span class="line-sub">+${over} parfum(s) suppl. = +${euro(over*FLAVOR_SURCHARGE)}</span>`:''}</div>
+        ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Parfums non détaillés.</p>'}
+        ${totQ&&totQ!==+ln.taille?`<p class="note" style="color:var(--red)">⚠ ${totQ} macarons pour un coffret de ${ln.taille}.</p>`:''}
+        <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
+    }
+    if(ln.type==='evenement'){
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      return `<div class="cmd-line"><div class="line-type">Événement</div>
+        <div class="sum-box"><span>Macarons</span><b>${ln.evQte||0} × ${euro(EVENT_PRICE)}</b></div>
+        <div class="sum-box"><span>Pyramides / présentoirs</span><b>${ln.equip||0} × ${euro(EQUIP_PRICE)}</b></div>
+        ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:''}
+        <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
+    }
+    if(ln.type==='grand'){
+      const items=(ln.items||[]).filter(p=>p.qte>0);
+      return `<div class="cmd-line"><div class="line-type">Grand format <span class="line-sub">tarif ${esc(ln.tarif||'particulier')}</span></div>
+        ${items.length?`<div style="margin-top:6px">${items.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun.</p>'}
+        <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
+    }
+    return '';
+  }).join('');
   openModal(`<h3>Détail commande</h3>
-    <p style="margin-bottom:6px"><b>${cl?esc(cl.nom):'—'}</b> · ${fmtDate(o.date)}</p>
-    ${specific}
+    <p style="margin-bottom:10px"><b>${cl?esc(cl.nom):'—'}</b> · ${fmtDate(o.date)}</p>
+    ${blocks||'<p class="note">Aucun produit.</p>'}
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${o.perso?'Oui':'Non'}</b></div>
     <div class="sum-box"><span>Montant total</span><b>${euro(o.montant)}</b></div>
     <div class="sum-box"><span>Paiement</span><b>${esc(o.paiement||'En attente')}${o.reglement?' · '+esc(o.reglement):''}</b></div>
-    ${o.type==='grand'?`
-      <h3 style="font-size:1rem;margin:16px 0 6px">Grands formats</h3>
-      ${bigItems.length?`<div>${bigItems.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun.</p>'}`
-    :`
-      <h3 style="font-size:1rem;margin:16px 0 6px">Parfums ${totalMac?`(${totalMac})`:''}</h3>
-      ${parfums.length?`<div>${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun parfum détaillé.</p>'}
-      ${o.type==='coffret'&&o.taille&&totalMac&&totalMac!==+o.taille?`<p class="note" style="color:var(--red)">⚠ Total parfums (${totalMac}) ≠ taille du coffret (${o.taille}).</p>`:''}
-      ${o.type==='evenement'&&totalMac&&o.evQte&&totalMac!==+o.evQte?`<p class="note" style="color:var(--red)">⚠ Total parfums (${totalMac}) ≠ nombre de macarons (${o.evQte}).</p>`:''}`}
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button></div>`);
 }
-let cmdParfums = {};    // {nom: qte} parfums coffret/événement
-let cmdBig = {};        // {nom: qte} grands formats
+// Total d'une ligne stockée (parfums/items en tableaux)
+function lineTotalStored(ln){
+  if(ln.type==='coffret'){
+    const base=(BOX_PRICES[ln.taille]!=null)?BOX_PRICES[ln.taille]:0;
+    const nbDiff=(ln.parfums||[]).filter(p=>p.qte>0).length;
+    const limit=BOX_FLAVOR_LIMIT[ln.taille]||0;
+    return base + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE;
+  }
+  if(ln.type==='evenement') return (ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE;
+  if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); return tot*pu; }
+  return 0;
+}
+let cmdLines = [];      // lignes de produits de la commande en cours
+let cmdProductsCache = [];
+let cmdClientsCache = [];
+
+// Convertit une ancienne commande mono-type en lignes (rétro-compat)
+function orderToLines(o){
+  if(Array.isArray(o.lignes) && o.lignes.length) return JSON.parse(JSON.stringify(o.lignes));
+  // ancien format : un seul type
+  if(o.type==='evenement'){
+    const parfums={}; (o.parfums||[]).forEach(p=>{if(p.qte>0)parfums[p.nom]=p.qte;});
+    return [{type:'evenement', evQte:o.evQte||EVENT_MIN, equip:o.equip||0, parfums}];
+  }
+  if(o.type==='grand'){
+    const items={}; (o.bigItems||[]).forEach(p=>{if(p.qte>0)items[p.nom]=p.qte;});
+    return [{type:'grand', tarif:o.tarif||'particulier', items}];
+  }
+  if(o.type==='coffret' || o.taille){
+    const parfums={}; (o.parfums||[]).forEach(p=>{if(p.qte>0)parfums[p.nom]=p.qte;});
+    return [{type:'coffret', taille:o.taille||6, parfums}];
+  }
+  return [];
+}
+
 async function cmdForm(id){
-  const clients = await db.clients.toArray();
-  const products = (await db.products.toArray()).filter(p=>p.actif!==false).sort((a,b)=>(+a.taille)-(+b.taille));
-  const o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',type:'coffret',taille:'',perso:false,parfums:[],bigItems:[],tarif:'particulier',equip:0};
-  cmdParfums = {}; (o.parfums||[]).forEach(p=>{ if(p.qte>0) cmdParfums[p.nom]=p.qte; });
-  cmdBig = {}; (o.bigItems||[]).forEach(p=>{ if(p.qte>0) cmdBig[p.nom]=p.qte; });
-  window._cmdProducts = products;
-  const type = o.type||'coffret';
-  const clOpts = clients.map(c=>`<option value="${c.id}" ${o.clientId===c.id?'selected':''}>${esc(c.nom)}</option>`).join('');
-  const boxOpts = `<option value="">— choisir —</option>`+products.map(p=>`<option value="${p.taille}" data-prix="${p.prix}" ${(+o.taille===+p.taille)?'selected':''}>${esc(p.nom)} — ${euro(p.prix)}</option>`).join('');
+  cmdClientsCache = await db.clients.toArray();
+  cmdProductsCache = (await db.products.toArray()).filter(p=>p.actif!==false).sort((a,b)=>(+a.taille)-(+b.taille));
+  const o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
+  cmdLines = orderToLines(o);
+  const clOpts = cmdClientsCache.map(c=>`<option value="${c.id}" ${o.clientId===c.id?'selected':''}>${esc(c.nom)}</option>`).join('');
   const stOpts = ['À préparer','En cours','Livrée'].map(s=>`<option ${o.statut===s?'selected':''}>${s}</option>`).join('');
   const payStOpts = PAY_STATUS.map(s=>`<option ${o.paiement===s?'selected':''}>${s}</option>`).join('');
   const regOpts = `<option value="">—</option>`+PAY_METHODS.map(s=>`<option ${o.reglement===s?'selected':''}>${s}</option>`).join('');
-  const typeOpts = [['coffret','Coffret'],['evenement','Événement'],['grand','Grand format']].map(([v,l])=>`<option value="${v}" ${type===v?'selected':''}>${l}</option>`).join('');
   openModal(`<h3>${id?'Modifier':'Nouvelle'} commande</h3>
-   ${clients.length?'':'<p class="note">Astuce : crée d\'abord un client.</p>'}
+   ${cmdClientsCache.length?'':'<p class="note">Astuce : crée d\'abord un client.</p>'}
    <div class="row2">
      <div class="field"><label>Client</label><select id="f_cl">${clOpts||'<option value="0">— aucun —</option>'}</select></div>
      <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}"></div>
    </div>
 
-   <div class="field"><label>Type de commande</label><select id="f_type" onchange="cmdTypeChange()">${typeOpts}</select></div>
-
-   <!-- ===== COFFRET ===== -->
-   <div id="sec_coffret">
-     <div class="field"><label>1 · Coffret</label><select id="f_taille" onchange="cmdRecalc()">${boxOpts}</select></div>
-     <div class="field"><label>2 · Parfums (quantité par parfum)</label>
-       <div class="flav-grid" id="flavGrid"></div>
-       <div class="sum-box"><span>Total parfums sélectionnés</span><b id="flavSum">0</b></div>
-     </div>
-   </div>
-
-   <!-- ===== ÉVÉNEMENT ===== -->
-   <div id="sec_event" class="hide">
-     <div class="banner">🎪 <div>Prestation événement : <b>${euro(EVENT_PRICE)}/macaron</b>, minimum <b>${EVENT_MIN} pièces</b>. Location de présentoir/pyramide à ajouter (<b>${euro(EQUIP_PRICE)}/unité</b>).</div></div>
-     <div class="row2">
-       <div class="field"><label>Nombre de macarons</label><input type="number" id="f_evqte" min="${EVENT_MIN}" value="${o.type==='evenement'?(o.evQte||EVENT_MIN):EVENT_MIN}" oninput="cmdRecalc()"></div>
-       <div class="field"><label>Présentoirs / pyramides</label><input type="number" id="f_equip" min="0" value="${o.equip||0}" oninput="cmdRecalc()"></div>
-     </div>
-     <div class="field"><label>Parfums (quantité par parfum) — optionnel</label>
-       <div class="flav-grid" id="flavGridEv"></div>
-       <div class="sum-box"><span>Total parfums détaillés</span><b id="flavSumEv">0</b></div>
-     </div>
-   </div>
-
-   <!-- ===== GRAND FORMAT ===== -->
-   <div id="sec_big" class="hide">
-     <div class="field"><label>Tarif appliqué</label>
-       <select id="f_tarif" onchange="cmdRecalc()">
-         <option value="particulier" ${o.tarif!=='pro'?'selected':''}>Particulier — ${euro(BIG_PRICE.particulier)}/pièce</option>
-         <option value="pro" ${o.tarif==='pro'?'selected':''}>Pro — ${euro(BIG_PRICE.pro)}/pièce</option>
-       </select>
-     </div>
-     <div class="field"><label>Macarons grand format (quantité par produit)</label>
-       <div class="flav-grid" id="bigGrid"></div>
-       <div class="sum-box"><span>Total grand format</span><b id="bigSum">0</b></div>
-     </div>
+   <label style="font-size:.82rem;color:#7a6a62;font-weight:500;display:block;margin-bottom:6px">Produits de la commande</label>
+   <div id="linesWrap"></div>
+   <div class="add-line-row">
+     <button class="btn ghost sm" onclick="addLine('coffret')">+ Coffret</button>
+     <button class="btn ghost sm" onclick="addLine('evenement')">+ Événement</button>
+     <button class="btn ghost sm" onclick="addLine('grand')">+ Grand format</button>
    </div>
 
    <label style="font-size:.82rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin:6px 0"><input type="checkbox" id="f_perso" style="width:auto" ${o.perso?'checked':''}> Personnalisation des couleurs</label>
 
    <div class="row2">
-     <div class="field"><label>Prix (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0'"></div>
+     <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0'"></div>
      <div class="field"><label>Statut paiement</label><select id="f_pay">${payStOpts}</select></div>
    </div>
    <div class="sum-box" id="priceBreak" style="display:none"></div>
@@ -1063,121 +1072,200 @@ async function cmdForm(id){
      <div class="field"><label>Statut commande</label><select id="f_st">${stOpts}</select></div>
    </div>
 
-   <div class="field"><label>Notes</label><textarea id="f_notes" rows="2" placeholder="Allergies, livraison, demande spéciale…">${esc(o.notes||'')}</textarea></div>
+   <div class="field" style="margin-top:14px"><label>Notes</label><textarea id="f_notes" rows="2" placeholder="Allergies, livraison, demande spéciale…">${esc(o.notes||'')}</textarea></div>
 
    <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_cal" style="width:auto" ${id?'':'checked'}> Ajouter au calendrier</label>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
-  // marquer le prix comme "auto" si vide (pour autoriser le recalcul)
   const mt=document.getElementById('f_mt'); if(mt && !mt.value) mt.dataset.auto='1';
-  drawFlavors(); drawFlavorsEv(); drawBig();
-  cmdTypeChange(true);
+  drawLines();
 }
-function cmdTypeChange(keepPrice){
-  const t=document.getElementById('f_type').value;
-  document.getElementById('sec_coffret').classList.toggle('hide', t!=='coffret');
-  document.getElementById('sec_event').classList.toggle('hide', t!=='evenement');
-  document.getElementById('sec_big').classList.toggle('hide', t!=='grand');
-  // changer de type réautorise le calcul auto du prix (sauf au tout premier appel)
-  if(!keepPrice){ const mt=document.getElementById('f_mt'); if(mt) mt.dataset.auto='1'; }
+
+function addLine(type){
+  if(type==='coffret') cmdLines.push({type:'coffret', taille:6, parfums:{}});
+  else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:EVENT_MIN_EQUIP, parfums:{}});
+  else if(type==='grand') cmdLines.push({type:'grand', tarif:'particulier', items:{}});
+  drawLines();
+}
+function removeLine(i){ cmdLines.splice(i,1); drawLines(); }
+
+function drawLines(){
+  const wrap=document.getElementById('linesWrap'); if(!wrap)return;
+  if(!cmdLines.length){ wrap.innerHTML='<p class="note">Ajoute au moins un produit ci-dessous (coffret, événement ou grand format).</p>'; cmdRecalc(); return; }
+  wrap.innerHTML = cmdLines.map((ln,i)=>{
+    if(ln.type==='coffret') return drawCoffretLine(ln,i);
+    if(ln.type==='evenement') return drawEventLine(ln,i);
+    if(ln.type==='grand') return drawBigLine(ln,i);
+    return '';
+  }).join('');
   cmdRecalc();
 }
-function drawFlavors(){
-  const grid=document.getElementById('flavGrid'); if(!grid)return;
-  grid.innerHTML = FLAVORS.map((f,i)=>{const q=cmdParfums[f]||0;
-    return `<div class="flav-row ${q>0?'on':''}"><input type="checkbox" ${q>0?'checked':''} onchange="flavToggle(${i},this.checked)">
-      <span class="nm">${esc(f)}</span><input type="number" min="0" value="${q}" oninput="flavQty(${i},this.value)"></div>`;}).join('');
-}
-function drawFlavorsEv(){
-  const grid=document.getElementById('flavGridEv'); if(!grid)return;
-  grid.innerHTML = FLAVORS.map((f,i)=>{const q=cmdParfums[f]||0;
-    return `<div class="flav-row ${q>0?'on':''}"><input type="checkbox" ${q>0?'checked':''} onchange="flavToggle(${i},this.checked)">
-      <span class="nm">${esc(f)}</span><input type="number" min="0" value="${q}" oninput="flavQty(${i},this.value)"></div>`;}).join('');
-}
-function drawBig(){
-  const grid=document.getElementById('bigGrid'); if(!grid)return;
-  grid.innerHTML = BIG_FORMATS.map((f,i)=>{const q=cmdBig[f]||0;
-    return `<div class="flav-row ${q>0?'on':''}"><input type="checkbox" ${q>0?'checked':''} onchange="bigToggle(${i},this.checked)">
-      <span class="nm">${esc(f)}</span><input type="number" min="0" value="${q}" oninput="bigQty(${i},this.value)"></div>`;}).join('');
-}
-function flavToggle(i,on){const f=FLAVORS[i];if(on){if(!cmdParfums[f])cmdParfums[f]=1;}else delete cmdParfums[f];drawFlavors();drawFlavorsEv();cmdRecalc();}
-function flavQty(i,v){const f=FLAVORS[i];const q=+v||0;if(q>0)cmdParfums[f]=q;else delete cmdParfums[f];cmdRecalc();}
-function bigToggle(i,on){const f=BIG_FORMATS[i];if(on){if(!cmdBig[f])cmdBig[f]=1;}else delete cmdBig[f];drawBig();cmdRecalc();}
-function bigQty(i,v){const f=BIG_FORMATS[i];const q=+v||0;if(q>0)cmdBig[f]=q;else delete cmdBig[f];cmdRecalc();}
 
-// Recalcule total parfums, grand format, et le prix auto selon le type
-function cmdRecalc(){
-  const t=document.getElementById('f_type')?document.getElementById('f_type').value:'coffret';
-  const totParf=Object.values(cmdParfums).reduce((s,q)=>s+(+q||0),0);
-  const totBig=Object.values(cmdBig).reduce((s,q)=>s+(+q||0),0);
-  const fs=document.getElementById('flavSum'); if(fs)fs.textContent=totParf;
-  const fse=document.getElementById('flavSumEv'); if(fse)fse.textContent=totParf;
-  const bs=document.getElementById('bigSum'); if(bs)bs.textContent=totBig;
-  const mt=document.getElementById('f_mt');
-  const brk=document.getElementById('priceBreak');
-  let auto=0, detail='';
-  if(t==='coffret'){
-    const sel=document.getElementById('f_taille'); const opt=sel&&sel.options[sel.selectedIndex];
-    const taille=sel?+sel.value:0;
-    auto = opt&&opt.dataset.prix?+opt.dataset.prix:0;
-    if(fs) fs.style.color=(taille&&totParf&&totParf!==taille)?'var(--red)':'var(--bordeaux)';
-    detail = auto?`Coffret : ${euro(auto)}`:'';
-  } else if(t==='evenement'){
-    const q=+(document.getElementById('f_evqte')||{}).value||0;
-    const eq=+(document.getElementById('f_equip')||{}).value||0;
-    const mac=q*EVENT_PRICE, loc=eq*EQUIP_PRICE;
-    auto=mac+loc;
-    detail=`${q} × ${euro(EVENT_PRICE)} = ${euro(mac)}${eq?` + ${eq} présentoir(s) × ${euro(EQUIP_PRICE)} = ${euro(loc)}`:''}`;
-    if(fse) fse.style.color=(totParf && q && totParf!==q)?'var(--red)':'var(--bordeaux)';
-  } else if(t==='grand'){
-    const tarif=(document.getElementById('f_tarif')||{}).value||'particulier';
-    const pu=BIG_PRICE[tarif]||0;
-    auto=totBig*pu;
-    detail=`${totBig} × ${euro(pu)} (${tarif}) = ${euro(auto)}`;
-  }
-  if(mt && mt.dataset.auto==='1'){ mt.value = auto?auto.toFixed(2):''; }
-  if(brk){ if(detail){ brk.style.display='flex'; brk.innerHTML=`<span>Détail prix</span><b>${detail}</b>`; } else brk.style.display='none'; }
+function drawCoffretLine(ln,i){
+  const boxOpts = cmdProductsCache.map(p=>`<option value="${p.taille}" data-prix="${p.prix}" ${(+ln.taille===+p.taille)?'selected':''}>${esc(p.nom)} — ${euro(p.prix)}</option>`).join('');
+  const limit = BOX_FLAVOR_LIMIT[ln.taille]||0;
+  // sélecteur de quantité 0..taille pour chaque parfum
+  const flavRows = FLAVORS.map((f,fi)=>{
+    const q=ln.parfums[f]||0;
+    const maxq = ln.taille||25;
+    let opts='';
+    for(let n=0;n<=maxq;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
+    return `<div class="flav-row ${q>0?'on':''}">
+      <span class="nm">${esc(f)}</span>
+      <select class="flav-sel" onchange="setCoffretParfum(${i},${fi},this.value)">${opts}</select></div>`;
+  }).join('');
+  const nbDiff = Object.values(ln.parfums).filter(q=>q>0).length;
+  const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
+  const over = Math.max(0, nbDiff-limit);
+  return `<div class="cmd-line">
+    <div class="line-head"><span class="line-type">Coffret <span class="line-sub">jusqu'à ${limit} parfum(s) inclus</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="field"><label>Taille</label><select onchange="setCoffretTaille(${i},this.value)">${boxOpts}</select></div>
+    <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité par parfum)</label>
+    <div class="flav-grid">${flavRows}</div>
+    <div class="sum-box"><span>${nbDiff} parfum(s) différent(s) · ${totQ}/${ln.taille} macarons</span><b>${over?`+${over} suppl. (${euro(over*FLAVOR_SURCHARGE)})`:'inclus'}</b></div>
+    ${totQ&&totQ!==+ln.taille?`<p class="note" style="color:var(--red)">⚠ ${totQ} macarons sélectionnés pour un coffret de ${ln.taille}.</p>`:''}
+  </div>`;
 }
+function setCoffretTaille(i,v){ cmdLines[i].taille=+v; // purge les parfums au-delà de la nouvelle taille
+  const max=+v; Object.keys(cmdLines[i].parfums).forEach(k=>{ if(cmdLines[i].parfums[k]>max) cmdLines[i].parfums[k]=max; }); drawLines(); }
+function setCoffretParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
+
+function drawEventLine(ln,i){
+  const flavRows = FLAVORS.map((f,fi)=>{
+    const q=ln.parfums[f]||0;
+    let opts=''; for(let n=0;n<=Math.max(ln.evQte,50);n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
+    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)}</span>
+      <select class="flav-sel" onchange="setEventParfum(${i},${fi},this.value)">${opts}</select></div>`;
+  }).join('');
+  const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
+  return `<div class="cmd-line">
+    <div class="line-head"><span class="line-type">Événement <span class="line-sub">${euro(EVENT_PRICE)}/macaron · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="row2">
+      <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
+      <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="${EVENT_MIN_EQUIP}" value="${ln.equip}" oninput="setEventEquip(${i},this.value)"></div>
+    </div>
+    <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
+    <div class="flav-grid">${flavRows}</div>
+    <div class="sum-box"><span>${ln.evQte} macarons · ${ln.equip} pyramide(s)</span><b>${euro(ln.evQte*EVENT_PRICE + ln.equip*EQUIP_PRICE)}</b></div>
+    ${ln.equip<EVENT_MIN_EQUIP?`<p class="note" style="color:var(--red)">⚠ Au moins ${EVENT_MIN_EQUIP} pyramide obligatoire.</p>`:''}
+    ${totQ&&totQ!==+ln.evQte?`<p class="note" style="color:var(--red)">⚠ ${totQ} parfums détaillés ≠ ${ln.evQte} macarons.</p>`:''}
+  </div>`;
+}
+function setEventQte(i,v){ cmdLines[i].evQte=+v||0; cmdRecalc(); }
+function setEventEquip(i,v){ cmdLines[i].equip=+v||0; cmdRecalc(); }
+function setEventParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
+
+function drawBigLine(ln,i){
+  const pu=BIG_PRICE[ln.tarif]||0;
+  const bigRows = BIG_FORMATS.map((f,fi)=>{
+    const q=ln.items[f]||0;
+    let opts=''; for(let n=0;n<=50;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
+    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)}</span>
+      <select class="flav-sel" onchange="setBigItem(${i},${fi},this.value)">${opts}</select></div>`;
+  }).join('');
+  const tot=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
+  return `<div class="cmd-line">
+    <div class="line-head"><span class="line-type">Grand format</span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="field"><label>Tarif</label><select onchange="setBigTarif(${i},this.value)">
+      <option value="particulier" ${ln.tarif!=='pro'?'selected':''}>Particulier — ${euro(BIG_PRICE.particulier)}/pièce</option>
+      <option value="pro" ${ln.tarif==='pro'?'selected':''}>Pro — ${euro(BIG_PRICE.pro)}/pièce</option>
+    </select></div>
+    <label style="font-size:.78rem;color:#7a6a62">Produits (quantité)</label>
+    <div class="flav-grid">${bigRows}</div>
+    <div class="sum-box"><span>${tot} pièce(s) × ${euro(pu)}</span><b>${euro(tot*pu)}</b></div>
+  </div>`;
+}
+function setBigTarif(i,v){ cmdLines[i].tarif=v; drawLines(); }
+function setBigItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdLines[i].items[f]=q; else delete cmdLines[i].items[f]; drawLines(); }
+
+// Calcule le prix d'une ligne
+function lineTotal(ln){
+  if(ln.type==='coffret'){
+    const base = (BOX_PRICES[ln.taille]!=null) ? BOX_PRICES[ln.taille] : (cmdProductsCache.find(p=>+p.taille===+ln.taille)||{}).prix||0;
+    const nbDiff = Object.values(ln.parfums||{}).filter(q=>q>0).length;
+    const limit = BOX_FLAVOR_LIMIT[ln.taille]||0;
+    const over = Math.max(0, nbDiff-limit);
+    return base + over*FLAVOR_SURCHARGE;
+  }
+  if(ln.type==='evenement') return (ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE;
+  if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return tot*pu; }
+  return 0;
+}
+function cmdRecalc(){
+  const total = cmdLines.reduce((s,ln)=>s+lineTotal(ln),0);
+  const mt=document.getElementById('f_mt');
+  if(mt && mt.dataset.auto==='1'){ mt.value = total?total.toFixed(2):''; }
+  const brk=document.getElementById('priceBreak');
+  if(brk){
+    if(cmdLines.length){ brk.style.display='flex'; brk.innerHTML=`<span>Total ${cmdLines.length} produit(s)</span><b>${euro(total)}</b>`; }
+    else brk.style.display='none';
+  }
+}
+
 async function saveCmd(id){
-  const t=val('f_type')||'coffret';
-  const parfums = Object.keys(cmdParfums).map(nom=>({nom, qte:+cmdParfums[nom]||0})).filter(p=>p.qte>0);
-  const bigItems = Object.keys(cmdBig).map(nom=>({nom, qte:+cmdBig[nom]||0})).filter(p=>p.qte>0);
+  // validations par ligne
+  if(!cmdLines.length){ toast('Ajoute au moins un produit'); return; }
+  for(const ln of cmdLines){
+    if(ln.type==='evenement'){
+      if((ln.evQte||0)<EVENT_MIN){ toast(`Événement : minimum ${EVENT_MIN} macarons`); return; }
+      if((ln.equip||0)<EVENT_MIN_EQUIP){ toast(`Événement : au moins ${EVENT_MIN_EQUIP} pyramide obligatoire`); return; }
+    }
+    if(ln.type==='grand'){
+      const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0);
+      if(!tot){ toast('Grand format : sélectionne au moins une pièce'); return; }
+    }
+    if(ln.type==='coffret' && !ln.taille){ toast('Coffret : choisis une taille'); return; }
+  }
+  // normaliser les lignes (parfums/items en tableaux pour stockage propre)
+  const lignes = cmdLines.map(ln=>{
+    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+  });
   const o={
-    clientId:+val('f_cl')||0, date:val('f_date'), type:t,
+    clientId:+val('f_cl')||0, date:val('f_date'),
+    lignes,
     perso:document.getElementById('f_perso').checked,
     montant:+val('f_mt')||0,
     paiement:val('f_pay')||'En attente', reglement:val('f_reg')||'',
     statut:val('f_st'), notes:val('f_notes'),
-    // réinitialise les champs spécifiques puis remplit selon le type
-    taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[]
+    // on neutralise les anciens champs mono-type
+    type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[]
   };
-  if(t==='coffret'){
-    o.taille=+val('f_taille')||0; o.parfums=parfums;
-  } else if(t==='evenement'){
-    const q=+val('f_evqte')||0;
-    if(q<EVENT_MIN){ toast(`Minimum ${EVENT_MIN} macarons pour un événement`); return; }
-    o.evQte=q; o.equip=+val('f_equip')||0; o.parfums=parfums;
-  } else if(t==='grand'){
-    if(!bigItems.length){ toast('Sélectionne au moins un grand format'); return; }
-    o.tarif=val('f_tarif')||'particulier'; o.bigItems=bigItems;
-  }
   if(!o.montant){toast('Indique un prix');return;}
   let oid=id;
   if(id) await db.orders.update(id,o); else oid=await db.orders.add(o);
+  // calendrier : recréer l'événement lié
+  await db.events.where('refId').equals(oid).delete().catch(()=>{});
   const cb=document.getElementById('f_cal');
   if(cb&&cb.checked){
     const cl = o.clientId ? await db.clients.get(o.clientId) : null;
-    const lbl = t==='coffret'?(o.taille?` (${o.taille})`:''):t==='evenement'?` (événement ${o.evQte})`:' (grand format)';
-    await db.events.add({date:o.date,titre:'Cmd '+(cl?cl.nom:'')+lbl,type:'cmd',refId:oid});
+    await db.events.add({date:o.date,titre:'Cmd '+(cl?cl.nom:'')+` (${lignes.length} produit${lignes.length>1?'s':''})`,type:'cmd',refId:oid});
   }
   closeModal(); renderCmd(); toast('Commande enregistrée ✓');
 }
 async function delCmd(id){
-  if(!confirm('Supprimer cette commande ?'))return;
-  await db.transaction('rw',db.orders,db.orderItems,async()=>{
+  // Compter ce qui sera impacté pour informer l'utilisateur
+  const items = await db.orderItems.where('orderId').equals(id).toArray();
+  const totBatch = items.reduce((s,it)=>s+(+it.qte||0),0);
+  const ev = await db.events.where('refId').equals(id).toArray().catch(()=>[]);
+  const msg = `Supprimer cette commande ?` +
+    (totBatch?`\n\n• ${totBatch} macaron(s) de batch(s) lié(s) seront recrédités au stock disponible.`:'') +
+    (ev.length?`\n• L'entrée du calendrier sera supprimée.`:'');
+  if(!confirm(msg))return;
+  await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,async()=>{
+    // 1) recréditer le stock fini des batchs liés
+    for(const it of items){
+      const prod = await db.productions.get(it.productionId);
+      if(prod){ await db.productions.update(prod.id,{qteRestante:(+prod.qteRestante||0)+(+it.qte||0)}); }
+    }
+    // 2) supprimer les liens
     await db.orderItems.where('orderId').equals(id).delete();
+    // 3) supprimer l'événement calendrier lié
+    await db.events.where('refId').equals(id).delete();
+    // 4) supprimer la commande
     await db.orders.delete(id);
   });
-  renderCmd(); toast('Supprimée');
+  renderCmd(); toast(totBatch?`Commande supprimée — ${totBatch} macaron(s) recrédité(s) ✓`:'Commande supprimée ✓');
 }
 // Lier une commande à des batchs (décrémente le stock de produits finis)
 async function cmdLink(orderId){

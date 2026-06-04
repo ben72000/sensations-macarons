@@ -1,4 +1,4 @@
-const CACHE = 'sm-v5';
+const CACHE = 'sm-v6';
 const ASSETS = [
   './',
   './index.html',
