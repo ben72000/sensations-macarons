@@ -17,6 +17,23 @@ db.version(1).stores({
   orderItems:      '++id, orderId, productionId',
   events:          '++id, date'
 });
+// v2 : catalogue de coffrets (offre/produit). Les détails de commande
+// (parfums, perso, paiement) sont stockés directement sur l'objet order.
+db.version(2).stores({
+  products:        '++id, taille'
+});
+
+// --------- Catalogue de référence ---------
+const FLAVORS = [
+  'Citron crémeux','Chocolat au lait','Chocolat noir','Framboise','Vanille',
+  'Pistache','Coco Rafaello','Cannelle noisette','Caramel beurre salé',
+  'Chocolat passion','Nocciolata','Coco citron vert','Praliné noisettes',
+  'Popcorn','Café'
+];
+const BOX_SIZES = [6, 8, 16, 25];
+const BOX_PRICES = { 6: 12, 8: 16, 16: 28, 25: 42 }; // prix de base par taille
+const PAY_STATUS = ['En attente', 'Payé'];
+const PAY_METHODS = ['Carte', 'Virement', 'Espèces', 'Chèque', 'PayPal'];
 
 // --------- Helpers ---------
 const euro  = n => (+n || 0).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
@@ -25,6 +42,54 @@ const esc   = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;',
 function val(id){ const el = document.getElementById(id); return el ? (el.value||'').trim() : ''; }
 function fmtDate(s){ if(!s) return ''; const d = new Date(s); return isNaN(d)?'':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}); }
 function daysTo(s){ if(!s) return null; return Math.ceil((new Date(s) - new Date(today())) / 86400000); }
+
+// --------- Graphique linéaire SVG (sans dépendance) ---------
+// series : [{label, points:[{x:'2026-01', y:12.5}], color}]  — x = clé triable
+function lineChart(series, opt){
+  opt = opt || {};
+  const W = opt.w || 640, H = opt.h || 240, pad = {l:48,r:16,t:16,b:34};
+  const all = series.flatMap(s=>s.points);
+  if(!all.length) return '<div class="empty">Pas encore de données.</div>';
+  // axe X = union triée des clés
+  const xs = [...new Set(all.map(p=>p.x))].sort();
+  const xIdx = {}; xs.forEach((x,i)=>xIdx[x]=i);
+  const xPos = i => xs.length<=1 ? pad.l+(W-pad.l-pad.r)/2 : pad.l + i*(W-pad.l-pad.r)/(xs.length-1);
+  let ymin = Math.min(...all.map(p=>p.y)), ymax = Math.max(...all.map(p=>p.y));
+  if(opt.zero) ymin = Math.min(0,ymin);
+  if(ymin===ymax){ ymax = ymin+1; ymin = Math.max(0,ymin-1); }
+  const pad2 = (ymax-ymin)*0.12; ymax+=pad2; if(ymin>0) ymin=Math.max(0,ymin-pad2);
+  const yPos = v => H-pad.b - (v-ymin)/(ymax-ymin)*(H-pad.t-pad.b);
+  // grille + labels Y (4 lignes)
+  let grid='';
+  for(let i=0;i<=4;i++){
+    const v = ymin+(ymax-ymin)*i/4, y=yPos(v);
+    grid+=`<line x1="${pad.l}" y1="${y}" x2="${W-pad.r}" y2="${y}" stroke="#f0eae0"/>`;
+    grid+=`<text x="${pad.l-6}" y="${y+3}" text-anchor="end" font-size="10" fill="#9a8a82">${opt.fmt?opt.fmt(v):Math.round(v*100)/100}</text>`;
+  }
+  // labels X (max ~6)
+  const step = Math.ceil(xs.length/6);
+  let xlab='';
+  xs.forEach((x,i)=>{ if(i%step===0||i===xs.length-1) xlab+=`<text x="${xPos(i)}" y="${H-pad.b+16}" text-anchor="middle" font-size="10" fill="#9a8a82">${esc(opt.xlabel?opt.xlabel(x):x)}</text>`; });
+  // courbes
+  let paths='';
+  series.forEach(s=>{
+    const col = s.color||'#AA7C39';
+    const pts = s.points.slice().sort((a,b)=>a.x.localeCompare(b.x));
+    if(!pts.length) return;
+    const d = pts.map((p,i)=>`${i?'L':'M'}${xPos(xIdx[p.x]).toFixed(1)},${yPos(p.y).toFixed(1)}`).join(' ');
+    paths+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round"/>`;
+    pts.forEach(p=>{ paths+=`<circle cx="${xPos(xIdx[p.x]).toFixed(1)}" cy="${yPos(p.y).toFixed(1)}" r="3.2" fill="${col}"/>`; });
+  });
+  // légende
+  let leg='';
+  if(series.length>1 || (series[0]&&series[0].label)){
+    leg='<div class="flex" style="gap:16px;margin-top:8px;font-size:.78rem">'+series.map(s=>`<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:3px;background:${s.color||'#AA7C39'};display:inline-block;border-radius:2px"></span>${esc(s.label||'')}</span>`).join('')+'</div>';
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${grid}${xlab}${paths}</svg>${leg}`;
+}
+const ymKey = d => (d||'').slice(0,7);
+const ymLabel = ym => { const [y,m]=ym.split('-'); return new Date(y,+m-1,1).toLocaleDateString('fr-FR',{month:'short',year:'2-digit'}); };
+
 
 // --------- Toast & Modal ---------
 let tt;
@@ -37,9 +102,10 @@ overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(); })
 // --------- Router ---------
 let view='dash';
 const VIEWS = {
-  dash:renderDash, clients:renderClients, commandes:renderCmd, cal:renderCal,
+  dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
-  productions:renderProductions, tracabilite:renderTrace, etiquettes:renderLabels
+  productions:renderProductions, couts:renderCosts, dlc:renderDlc,
+  tracabilite:renderTrace, etiquettes:renderLabels
 };
 document.getElementById('nav').addEventListener('click', e => {
   const b=e.target.closest('button'); if(!b) return;
@@ -245,32 +311,44 @@ async function lotForm(_id, presetMat){
   const mats = await db.materials.toArray();
   const sups = await db.suppliers.toArray();
   if(!mats.length){toast('Crée d\'abord une matière');return;}
-  const matOpts = mats.map(m=>`<option value="${m.id}" ${presetMat===m.id?'selected':''}>${esc(m.nom)} (${esc(m.unite)})</option>`).join('');
+  const matOpts = mats.map(m=>`<option value="${m.id}" data-unite="${esc(m.unite)}" ${presetMat===m.id?'selected':''}>${esc(m.nom)} (${esc(m.unite)})</option>`).join('');
   const supOpts = `<option value="0">— non précisé —</option>`+sups.map(s=>`<option value="${s.id}">${esc(s.nom)}</option>`).join('');
   openModal(`<h3>Réception d'un lot</h3>
-   <div class="field"><label>Matière</label><select id="f_mat">${matOpts}</select></div>
+   <div class="field"><label>Matière</label><select id="f_mat" onchange="majPrixUnit()">${matOpts}</select></div>
    <div class="row2">
      <div class="field"><label>Fournisseur</label><select id="f_sup">${supOpts}</select></div>
      <div class="field"><label>N° lot fournisseur</label><input id="f_lotf" placeholder="ex: NM-2026-0142"></div>
    </div>
    <div class="row2">
-     <div class="field"><label>Quantité reçue</label><input type="number" step="0.01" id="f_qte" value="1"></div>
-     <div class="field"><label>Prix total (€)</label><input type="number" step="0.01" id="f_prix" value="0"></div>
+     <div class="field"><label>Quantité reçue</label><input type="number" step="0.01" id="f_qte" value="1" oninput="majPrixUnit()"></div>
+     <div class="field"><label>Prix total payé (€)</label><input type="number" step="0.01" id="f_prix" value="0" oninput="majPrixUnit()"></div>
    </div>
+   <div class="field"><label>Prix unitaire</label><div id="f_pu" style="padding:10px 12px;background:var(--creme-2);border-radius:10px;font-weight:600;color:var(--bordeaux)">—</div></div>
    <div class="row2">
      <div class="field"><label>Date réception</label><input type="date" id="f_date" value="${today()}"></div>
      <div class="field"><label>DLC / DDM</label><input type="date" id="f_dlc"></div>
    </div>
-   <p class="note">Chaque réception crée un lot tracé. La production puisera dans les lots par <b>DLC la plus proche d'abord (FIFO)</b>.</p>
+   <p class="note">Chaque réception crée un lot tracé. Le <b>prix unitaire</b> est calculé automatiquement et alimente le suivi des prix et de la rentabilité. La production puise dans les lots par <b>DLC la plus proche d'abord (FIFO)</b>.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveLot()">Réceptionner</button></div>`);
+  majPrixUnit();
+}
+function majPrixUnit(){
+  const q=+val('f_qte'), p=+val('f_prix');
+  const el=document.getElementById('f_pu'); if(!el)return;
+  const sel=document.getElementById('f_mat');
+  const unite = sel && sel.options[sel.selectedIndex] ? (sel.options[sel.selectedIndex].dataset.unite||'') : '';
+  if(q>0 && p>0){ el.textContent = euro(p/q)+' / '+unite; }
+  else { el.textContent='—'; }
 }
 async function saveLot(){
   const qte=+val('f_qte');
   if(!qte||qte<=0){toast('Quantité invalide');return;}
+  const prix=+val('f_prix')||0;
   const o={
     materialId:+val('f_mat'), supplierId:+val('f_sup')||0,
     lotFournisseur:val('f_lotf'), qteInitiale:qte, qteRestante:qte,
-    prix:+val('f_prix')||0, dateReception:val('f_date')||today(), dlc:val('f_dlc')||''
+    prix, prixUnitaire: qte>0 ? prix/qte : 0,
+    dateReception:val('f_date')||today(), dlc:val('f_dlc')||''
   };
   await db.materialLots.add(o);
   closeModal(); renderMaterials(); toast('Lot réceptionné ✓');
@@ -440,13 +518,205 @@ async function enregistrerProduction(recipeId, qteProduite, dateProd, lotProduct
     });
 }
 async function delProd(id){
-  if(!confirm('Supprimer cette production ? (le stock consommé ne sera PAS recrédité)'))return;
-  await db.transaction('rw',db.productions,db.prodConsumption,db.orderItems,async()=>{
+  // Garde-fou : production liée à une commande ?
+  const liens = await db.orderItems.where('productionId').equals(id).toArray();
+  if(liens.length){
+    const orders = await db.orders.toArray();
+    const clients = await db.clients.toArray();
+    const noms = liens.map(l=>{ const o=orders.find(x=>x.id===l.orderId); const c=o?clients.find(cl=>cl.id===o.clientId):null; return c?c.nom:(o?fmtDate(o.date):'commande'); });
+    openModal(`<h3>Suppression impossible</h3>
+      <div class="banner" style="background:#f6e3e0;border-color:var(--red);color:#7a2a20">⛔ <div>Cette production est attribuée à ${liens.length} commande(s) : <b>${esc([...new Set(noms)].join(', '))}</b>.</div></div>
+      <p class="note">Pour préserver la traçabilité, tu ne peux pas supprimer un batch déjà rattaché à une commande ou un client. Détache-le d'abord depuis la commande concernée (bouton « Lier ») si tu veux vraiment le supprimer.</p>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Compris</button></div>`);
+    return;
+  }
+  // Sinon : proposer le choix de recréditer ou non
+  const prod = await db.productions.get(id);
+  const conso = await db.prodConsumption.where('productionId').equals(id).toArray();
+  const recap = conso.length ? `${conso.length} ligne(s) de matière consommée` : 'aucune matière consommée';
+  openModal(`<h3>Supprimer la production</h3>
+    <p style="margin-bottom:10px">Batch <b>${esc(prod?prod.lotProduction||'':'')}</b> — ${recap}.</p>
+    <p class="note" style="margin-bottom:16px">Souhaites-tu remettre les ingrédients consommés dans leurs lots d'origine (recréditer le stock) ?</p>
+    <div class="modal-actions" style="flex-direction:column;gap:8px">
+      <button class="btn gold" style="width:100%" onclick="doDelProd(${id},true)">↩ Supprimer ET recréditer le stock</button>
+      <button class="btn" style="width:100%" onclick="doDelProd(${id},false)">Supprimer sans recréditer</button>
+      <button class="btn ghost" style="width:100%" onclick="closeModal()">Annuler</button>
+    </div>`);
+}
+async function doDelProd(id, recrediter){
+  // Re-vérifier le garde-fou (sécurité anti-concurrence)
+  const liens = await db.orderItems.where('productionId').equals(id).toArray();
+  if(liens.length){ closeModal(); toast('Production liée à une commande — suppression annulée'); renderProductions(); return; }
+  await db.transaction('rw',db.productions,db.prodConsumption,db.materialLots,async()=>{
+    if(recrediter){
+      const conso = await db.prodConsumption.where('productionId').equals(id).toArray();
+      for(const c of conso){
+        const lot = await db.materialLots.get(c.materialLotId);
+        if(lot){ await db.materialLots.update(lot.id, { qteRestante: (+lot.qteRestante||0) + (+c.qteConsommee||0) }); }
+      }
+    }
     await db.prodConsumption.where('productionId').equals(id).delete();
-    await db.orderItems.where('productionId').equals(id).delete();
     await db.productions.delete(id);
   });
-  renderProductions(); toast('Production supprimée');
+  closeModal(); renderProductions(); toast(recrediter?'Production supprimée, stock recrédité ✓':'Production supprimée');
+}
+
+/* ============================================================
+   COÛTS & PRIX  (évolution prix matières + rentabilité)
+   ============================================================ */
+// Prix unitaire d'un lot (rétro-compatible si prixUnitaire absent)
+function lotPU(l){
+  if(l.prixUnitaire!=null && !isNaN(l.prixUnitaire)) return +l.prixUnitaire;
+  return (l.qteInitiale>0) ? (+l.prix||0)/l.qteInitiale : 0;
+}
+// Prix unitaire "courant" d'une matière = dernier lot reçu avec prix > 0
+function prixCourant(materialId, lots){
+  const ls = lots.filter(l=>l.materialId===materialId && lotPU(l)>0)
+                 .sort((a,b)=>(b.dateReception||'').localeCompare(a.dateReception||''));
+  return ls.length ? lotPU(ls[0]) : 0;
+}
+// Coût matière théorique d'une recette (par batch) selon prix courants
+function coutRecette(recipeId, items, lots){
+  return items.filter(it=>it.recipeId===recipeId)
+    .reduce((s,it)=>s + it.qteParBatch * prixCourant(it.materialId, lots), 0);
+}
+
+async function renderCosts(){
+  const [lots, mats, recipes, recipeItems, productions, conso, orders] = await Promise.all([
+    db.materialLots.toArray(), db.materials.toArray(), db.recipes.toArray(),
+    db.recipeItems.toArray(), db.productions.toArray(), db.prodConsumption.toArray(), db.orders.toArray()
+  ]);
+  const matName = id => (mats.find(m=>m.id===id)||{}).nom||'—';
+  const matUnit = id => (mats.find(m=>m.id===id)||{}).unite||'';
+  const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const lotById = id => lots.find(l=>l.id===id);
+  const prodById = id => productions.find(p=>p.id===id);
+
+  // ---- Graphe 1 : évolution du prix unitaire par matière (moyenne mensuelle des lots reçus) ----
+  // construit une série par matière qui a au moins 2 points de prix
+  const palette = ['#AA7C39','#52252F','#3f7d52','#b04a3e','#7a4b82','#c6974f','#6e3340'];
+  const series=[];
+  let ci=0;
+  for(const mat of mats){
+    const ls = lots.filter(l=>l.materialId===mat.id && lotPU(l)>0);
+    if(ls.length<1) continue;
+    // moyenne par mois
+    const byMonth={};
+    ls.forEach(l=>{ const k=ymKey(l.dateReception); (byMonth[k]=byMonth[k]||[]).push(lotPU(l)); });
+    const pts = Object.keys(byMonth).sort().map(k=>({x:k, y: byMonth[k].reduce((a,b)=>a+b,0)/byMonth[k].length}));
+    if(pts.length>=1){ series.push({label:mat.nom, color:palette[ci%palette.length], points:pts}); ci++; }
+  }
+
+  // ---- Tableau prix courant + variation par matière ----
+  const priceRows = mats.map(mat=>{
+    const ls = lots.filter(l=>l.materialId===mat.id && lotPU(l)>0)
+                   .sort((a,b)=>(a.dateReception||'').localeCompare(b.dateReception||''));
+    if(!ls.length) return null;
+    const first=lotPU(ls[0]), last=lotPU(ls[ls.length-1]);
+    const varPct = first>0 ? (last-first)/first*100 : 0;
+    return {nom:mat.nom, unite:mat.unite, last, varPct, n:ls.length};
+  }).filter(Boolean);
+
+  // ---- Rentabilité : coût matière théorique par recette + marge si prix de vente connu ----
+  // On déduit un "prix de vente unitaire" implicite via les commandes liées (montant / pièces) — sinon N/A.
+  const recRows = recipes.map(r=>{
+    const coutBatch = coutRecette(r.id, recipeItems, lots);
+    const coutUnit = r.rendement>0 ? coutBatch/r.rendement : 0;
+    return {nom:r.produitNom, rendement:r.rendement, coutBatch, coutUnit};
+  });
+
+  // ---- Graphe 2 : évolution de la rentabilité mensuelle ----
+  // Par mois : CA (somme commandes) - coût matière réel des productions du mois
+  // coût réel d'une production = somme(conso × PU du lot consommé)
+  const prodCost = {};
+  conso.forEach(c=>{
+    const lot=lotById(c.materialLotId); const prod=prodById(c.productionId);
+    if(!lot||!prod) return;
+    prodCost[prod.id] = (prodCost[prod.id]||0) + c.qteConsommee*lotPU(lot);
+  });
+  const moisCA={}, moisCout={};
+  orders.forEach(o=>{ const k=ymKey(o.date); moisCA[k]=(moisCA[k]||0)+(+o.montant||0); });
+  productions.forEach(p=>{ const k=ymKey(p.date); moisCout[k]=(moisCout[k]||0)+(prodCost[p.id]||0); });
+  const moisKeys=[...new Set([...Object.keys(moisCA),...Object.keys(moisCout)])].sort();
+  const serieCA={label:'CA', color:'#3f7d52', points:moisKeys.map(k=>({x:k,y:moisCA[k]||0}))};
+  const serieCout={label:'Coût matière', color:'#b04a3e', points:moisKeys.map(k=>({x:k,y:moisCout[k]||0}))};
+  const serieMarge={label:'Marge brute', color:'#AA7C39', points:moisKeys.map(k=>({x:k,y:(moisCA[k]||0)-(moisCout[k]||0)}))};
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Coûts & prix</h1><p>Évolution des prix d'achat et de la rentabilité</p></div></div>
+
+   <div class="panel"><h2>Évolution du prix d'achat unitaire</h2>
+     ${series.length?lineChart(series,{fmt:v=>euro(v),xlabel:ymLabel,zero:true}):'<div class="empty">Réceptionne des lots avec un prix pour voir la courbe (au moins un point par matière).</div>'}
+     <p class="note">Prix unitaire moyen des lots reçus, par mois. Chaque réception de lot avec un prix alimente cette courbe.</p>
+   </div>
+
+   <div class="panel"><h2>Prix courant par matière</h2>
+     ${priceRows.length?`<table><thead><tr><th>Matière</th><th>Prix actuel</th><th>Variation depuis le 1ᵉʳ lot</th><th>Réceptions</th></tr></thead><tbody>
+       ${priceRows.map(r=>`<tr><td><b>${esc(r.nom)}</b></td><td>${euro(r.last)} / ${esc(r.unite)}</td>
+         <td><span class="tag ${r.varPct>0.5?'low':(r.varPct<-0.5?'ok':'')}">${r.varPct>0?'▲ +':r.varPct<0?'▼ ':''}${r.varPct.toFixed(1)} %</span></td>
+         <td>${r.n}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">Aucun prix enregistré.</div>'}
+   </div>
+
+   <div class="panel"><h2>Coût matière par recette</h2>
+     ${recRows.length?`<table><thead><tr><th>Produit</th><th>Rendement</th><th>Coût matière / batch</th><th>Coût matière / pièce</th></tr></thead><tbody>
+       ${recRows.map(r=>`<tr><td><b>${esc(r.nom)}</b></td><td>${r.rendement}</td><td>${euro(r.coutBatch)}</td><td><b>${euro(r.coutUnit)}</b></td></tr>`).join('')}</tbody></table>
+       <p class="note">Calculé au prix d'achat <b>le plus récent</b> de chaque matière. Compare ce coût/pièce à ton prix de vente pour connaître ta marge.</p>`
+       :'<div class="empty">Crée des recettes et réceptionne des lots avec prix pour voir les coûts.</div>'}
+   </div>
+
+   <div class="panel"><h2>Rentabilité mensuelle</h2>
+     ${moisKeys.length?lineChart([serieCA,serieCout,serieMarge],{fmt:v=>euro(v),xlabel:ymLabel,zero:true}):'<div class="empty">Enregistre des commandes et des productions pour suivre ta rentabilité.</div>'}
+     <p class="note">CA = somme des commandes du mois. Coût matière = valeur réelle des matières consommées par les productions du mois (au prix de leur lot). Marge brute = CA − coût matière.</p>
+   </div>`;
+}
+
+/* ============================================================
+   SUIVI DLC PROACTIF
+   ============================================================ */
+async function renderDlc(){
+  const [lots, mats, sups] = await Promise.all([
+    db.materialLots.toArray(), db.materials.toArray(), db.suppliers.toArray()
+  ]);
+  const matName = id => (mats.find(m=>m.id===id)||{}).nom||'(supprimée)';
+  const matUnit = id => (mats.find(m=>m.id===id)||{}).unite||'';
+  const supName = id => (sups.find(s=>s.id===id)||{}).nom||'—';
+  // lots actifs avec DLC renseignée
+  const actifs = lots.filter(l=>+l.qteRestante>0 && l.dlc)
+    .map(l=>({...l, j:daysTo(l.dlc)}))
+    .sort((a,b)=>(a.dlc||'').localeCompare(b.dlc||''));
+  const expires = actifs.filter(l=>l.j!==null && l.j<0);
+  const urgent  = actifs.filter(l=>l.j!==null && l.j>=0 && l.j<=3);
+  const proche  = actifs.filter(l=>l.j!==null && l.j>3 && l.j<=7);
+  const ok      = actifs.filter(l=>l.j!==null && l.j>7);
+  const sansDlc = lots.filter(l=>+l.qteRestante>0 && !l.dlc);
+
+  const ligne = l => `<tr>
+     <td><b>${esc(matName(l.materialId))}</b></td>
+     <td>${l.qteRestante} ${esc(matUnit(l.materialId))}</td>
+     <td>${esc(l.lotFournisseur||'—')}</td>
+     <td>${esc(supName(l.supplierId))}</td>
+     <td>${fmtDate(l.dlc)}</td>
+     <td>${l.j<0?`<span class="tag out">expiré (${-l.j} j)</span>`:l.j<=3?`<span class="tag out">J−${l.j}</span>`:l.j<=7?`<span class="tag low">J−${l.j}</span>`:`<span class="tag ok">${l.j} j</span>`}</td>
+   </tr>`;
+
+  const bloc = (titre,arr,cls)=> arr.length?`<div class="panel"><h2>${titre} <span class="tag ${cls}">${arr.length}</span></h2>
+     <table><thead><tr><th>Matière</th><th>Restant</th><th>Lot fourn.</th><th>Fournisseur</th><th>DLC</th><th>Échéance</th></tr></thead>
+     <tbody>${arr.map(ligne).join('')}</tbody></table></div>`:'';
+
+  const total = expires.length+urgent.length+proche.length;
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Suivi DLC</h1><p>Lots actifs classés par urgence</p></div></div>
+   ${total?`<div class="banner">⏰ <div><b>${total} lot(s) à surveiller</b> — ${expires.length} expiré(s), ${urgent.length} sous 3 jours, ${proche.length} sous 7 jours. Écoule-les en priorité (la production les utilise déjà en premier via le FIFO).</div></div>`
+     :`<div class="banner" style="background:#e3f0e7;border-color:#3f7d52;color:#2f6040">✓ <div>Aucun lot n'arrive à expiration dans les 7 jours.</div></div>`}
+   ${bloc('Expirés', expires, 'out')}
+   ${bloc('Urgent — sous 3 jours', urgent, 'out')}
+   ${bloc('À écouler — sous 7 jours', proche, 'low')}
+   ${bloc('Plus de 7 jours', ok, 'ok')}
+   ${sansDlc.length?`<div class="panel"><h2>Sans DLC renseignée <span class="tag warn">${sansDlc.length}</span></h2>
+     <table><thead><tr><th>Matière</th><th>Restant</th><th>Lot fourn.</th><th>Réception</th></tr></thead>
+     <tbody>${sansDlc.map(l=>`<tr><td><b>${esc(matName(l.materialId))}</b></td><td>${l.qteRestante} ${esc(matUnit(l.materialId))}</td><td>${esc(l.lotFournisseur||'—')}</td><td>${fmtDate(l.dateReception)}</td></tr>`).join('')}</tbody></table>
+     <p class="note">Pense à renseigner la DLC à la réception pour activer le suivi.</p></div>`:''}
+   ${actifs.length===0&&sansDlc.length===0?'<div class="panel"><div class="empty">Aucun lot actif. Réceptionne des lots pour activer le suivi DLC.</div></div>':''}`;
 }
 
 /* ============================================================
@@ -579,6 +849,54 @@ async function delClient(id){
 }
 
 /* ============================================================
+   OFFRE / COFFRETS  (catalogue préenregistré)
+   ============================================================ */
+async function renderProducts(){
+  const products = (await db.products.toArray()).sort((a,b)=>(+a.taille)-(+b.taille));
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Offre / Coffrets</h1><p>Catalogue de coffrets et parfums proposés</p></div>
+     <button class="btn" onclick="prodCatForm()">+ Nouveau coffret</button></div>
+   <div class="panel"><h2>Coffrets</h2>
+   ${products.length?`<table><thead><tr><th>Coffret</th><th>Taille</th><th>Prix de base</th><th>Actif</th><th></th></tr></thead><tbody>
+     ${products.map(p=>`<tr><td><b>${esc(p.nom)}</b></td><td>${p.taille} macarons</td><td>${euro(p.prix)}</td>
+       <td><span class="tag ${p.actif!==false?'ok':'warn'}">${p.actif!==false?'Oui':'Non'}</span></td>
+       <td style="text-align:right"><span class="act" onclick="prodCatForm(${p.id})">Modifier</span><span class="act del" onclick="delProdCat(${p.id})">Suppr.</span></td></tr>`).join('')}
+   </tbody></table>`:`<div class="empty">Aucun coffret. Ajoute tes formats (6, 8, 16, 25 macarons).</div>`}
+   </div>
+   <div class="panel"><h2>Parfums proposés <span class="tag ok">${FLAVORS.length}</span></h2>
+     <div>${FLAVORS.map(f=>`<span class="pill">${esc(f)}</span>`).join('')}</div>
+     <p class="note">Liste utilisée dans les commandes pour détailler les parfums choisis. (Modifiable dans le code si ta gamme évolue.)</p>
+   </div>
+   <div class="panel"><h2>Options & paiement</h2>
+     <p style="font-size:.86rem;margin-bottom:8px"><b>Personnalisation couleurs :</b> proposée en option sur chaque commande.</p>
+     <p style="font-size:.86rem;margin-bottom:8px"><b>Statut de paiement :</b> ${PAY_STATUS.map(s=>`<span class="pill">${esc(s)}</span>`).join('')}</p>
+     <p style="font-size:.86rem"><b>Modes de règlement :</b> ${PAY_METHODS.map(s=>`<span class="pill">${esc(s)}</span>`).join('')}</p>
+   </div>`;
+}
+async function prodCatForm(id){
+  const p = id ? await db.products.get(id) : {taille:6, prix:BOX_PRICES[6], actif:true};
+  openModal(`<h3>${id?'Modifier':'Nouveau'} coffret</h3>
+   <div class="field"><label>Nom</label><input id="f_nom" value="${esc(p.nom||'')}" placeholder="Coffret 6 macarons"></div>
+   <div class="row2">
+     <div class="field"><label>Taille (nb macarons)</label><input type="number" id="f_taille" value="${p.taille||6}" oninput="(function(){var pr=document.getElementById('f_prix');})()"></div>
+     <div class="field"><label>Prix de base (€)</label><input type="number" step="0.01" id="f_prix" value="${p.prix||0}"></div>
+   </div>
+   <label style="font-size:.82rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_actif" style="width:auto" ${p.actif!==false?'checked':''}> Coffret actif (proposé dans les commandes)</label>
+   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveProdCat(${id||0})">Enregistrer</button></div>`);
+}
+async function saveProdCat(id){
+  const taille=+val('f_taille')||0;
+  const o={nom:val('f_nom')||`Coffret ${taille} macarons`, taille, prix:+val('f_prix')||0, actif:document.getElementById('f_actif').checked};
+  if(!taille){toast('Indique une taille');return;}
+  if(id) await db.products.update(id,o); else await db.products.add(o);
+  closeModal(); renderProducts(); toast('Coffret enregistré ✓');
+}
+async function delProdCat(id){
+  if(!confirm('Supprimer ce coffret du catalogue ?'))return;
+  await db.products.delete(id); renderProducts(); toast('Supprimé');
+}
+
+/* ============================================================
    COMMANDES  (+ liaison aux batchs = traçabilité aval)
    ============================================================ */
 async function renderCmd(){
@@ -589,42 +907,140 @@ async function renderCmd(){
   for(const o of orders){
     const items = await db.orderItems.where('orderId').equals(o.id).toArray();
     const nbLies = items.length;
-    rows.push(`<tr><td>${fmtDate(o.date)}</td><td><b>${esc(clName(o.clientId))}</b></td><td>${esc(o.detail||'')}</td><td>${euro(+o.montant)}</td>
+    const coffret = o.taille ? `${o.taille} mac.` : (o.detail||'—');
+    const paye = o.paiement==='Payé';
+    rows.push(`<tr>
+       <td>${fmtDate(o.date)}</td>
+       <td><b>${esc(clName(o.clientId))}</b></td>
+       <td>${esc(coffret)}${o.perso?' <span class="tag event">perso</span>':''}</td>
+       <td>${euro(+o.montant)}</td>
+       <td><span class="tag ${paye?'done':'todo'}">${esc(o.paiement||'En attente')}</span>${o.reglement?`<br><span style="color:#9a8a82;font-size:.74rem">${esc(o.reglement)}</span>`:''}</td>
        <td><span class="tag ${o.statut==='Livrée'?'done':'todo'}">${esc(o.statut||'À préparer')}</span></td>
        <td>${nbLies?`<span class="tag ok">${nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
-       <td style="text-align:right"><span class="act" onclick="cmdLink(${o.id})">Lier batch</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`);
+       <td style="text-align:right"><span class="act" onclick="cmdView(${o.id})">Détail</span><span class="act" onclick="cmdLink(${o.id})">Lier</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`);
   }
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Commandes</h1><p>${orders.length} commande(s)</p></div>
      <button class="btn" onclick="cmdForm()">+ Nouvelle commande</button></div>
    <div class="panel">
-   ${rows.length?`<table><thead><tr><th>Date</th><th>Client</th><th>Détail</th><th>Montant</th><th>Statut</th><th>Traçabilité</th><th></th></tr></thead><tbody>
+   ${rows.length?`<table><thead><tr><th>Date</th><th>Client</th><th>Coffret</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead><tbody>
      ${rows.join('')}</tbody></table>`:`<div class="empty">Aucune commande.</div>`}
    </div>`;
 }
+// Vue détail d'une commande (parfums, perso, notes)
+async function cmdView(id){
+  const o = await db.orders.get(id);
+  const cl = o.clientId ? await db.clients.get(o.clientId) : null;
+  const parfums = (o.parfums||[]).filter(p=>p.qte>0);
+  const totalMac = parfums.reduce((s,p)=>s+(+p.qte||0),0);
+  openModal(`<h3>Détail commande</h3>
+    <p style="margin-bottom:6px"><b>${cl?esc(cl.nom):'—'}</b> · ${fmtDate(o.date)}</p>
+    <div class="sum-box"><span>Coffret</span><b>${o.taille?o.taille+' macarons':'—'}</b></div>
+    <div class="sum-box"><span>Personnalisation couleurs</span><b>${o.perso?'Oui':'Non'}</b></div>
+    <div class="sum-box"><span>Montant</span><b>${euro(o.montant)}</b></div>
+    <div class="sum-box"><span>Paiement</span><b>${esc(o.paiement||'En attente')}${o.reglement?' · '+esc(o.reglement):''}</b></div>
+    <h3 style="font-size:1rem;margin:16px 0 6px">Parfums ${totalMac?`(${totalMac})`:''}</h3>
+    ${parfums.length?`<div>${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun parfum détaillé.</p>'}
+    ${o.taille&&totalMac&&totalMac!==+o.taille?`<p class="note" style="color:var(--red)">⚠ Total parfums (${totalMac}) ≠ taille du coffret (${o.taille}).</p>`:''}
+    ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button></div>`);
+}
+let cmdParfums = {}; // {nom: qte} en cours d'édition
 async function cmdForm(id){
   const clients = await db.clients.toArray();
-  const o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer'};
-  const opts = clients.map(c=>`<option value="${c.id}" ${o.clientId===c.id?'selected':''}>${esc(c.nom)}</option>`).join('');
+  const products = (await db.products.toArray()).filter(p=>p.actif!==false).sort((a,b)=>(+a.taille)-(+b.taille));
+  const o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',taille:'',perso:false,parfums:[]};
+  // reconstituer l'état parfums
+  cmdParfums = {};
+  (o.parfums||[]).forEach(p=>{ if(p.qte>0) cmdParfums[p.nom]=p.qte; });
+  window._cmdProducts = products;
+  const clOpts = clients.map(c=>`<option value="${c.id}" ${o.clientId===c.id?'selected':''}>${esc(c.nom)}</option>`).join('');
+  const boxOpts = `<option value="">— choisir —</option>`+products.map(p=>`<option value="${p.taille}" data-prix="${p.prix}" ${(+o.taille===+p.taille)?'selected':''}>${esc(p.nom)} — ${euro(p.prix)}</option>`).join('');
+  const stOpts = ['À préparer','En cours','Livrée'].map(s=>`<option ${o.statut===s?'selected':''}>${s}</option>`).join('');
+  const payStOpts = PAY_STATUS.map(s=>`<option ${o.paiement===s?'selected':''}>${s}</option>`).join('');
+  const regOpts = `<option value="">—</option>`+PAY_METHODS.map(s=>`<option ${o.reglement===s?'selected':''}>${s}</option>`).join('');
   openModal(`<h3>${id?'Modifier':'Nouvelle'} commande</h3>
    ${clients.length?'':'<p class="note">Astuce : crée d\'abord un client.</p>'}
-   <div class="field"><label>Client</label><select id="f_cl">${opts||'<option value="0">— aucun —</option>'}</select></div>
-   <div class="row2"><div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}"></div>
-   <div class="field"><label>Montant (€)</label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}"></div></div>
-   <div class="field"><label>Détail (boîtes, parfums…)</label><input id="f_det" value="${esc(o.detail)}"></div>
-   <div class="field"><label>Statut</label><select id="f_st">${['À préparer','En cours','Livrée'].map(s=>`<option ${o.statut===s?'selected':''}>${s}</option>`).join('')}</select></div>
-   <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin-top:4px"><input type="checkbox" id="f_cal" style="width:auto" ${id?'':'checked'}> Ajouter au calendrier</label>
+   <div class="field"><label>Client</label><select id="f_cl">${clOpts||'<option value="0">— aucun —</option>'}</select></div>
+
+   <div class="row2">
+     <div class="field"><label>1 · Coffret</label><select id="f_taille" onchange="cmdBoxChange()">${boxOpts}</select></div>
+     <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}"></div>
+   </div>
+
+   <div class="field"><label>2 · Parfums (quantité par parfum)</label>
+     <div class="flav-grid" id="flavGrid"></div>
+     <div class="sum-box"><span>Total parfums sélectionnés</span><b id="flavSum">0</b></div>
+   </div>
+
+   <label style="font-size:.82rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin:6px 0"><input type="checkbox" id="f_perso" style="width:auto" ${o.perso?'checked':''}> 3 · Personnalisation des couleurs</label>
+
+   <div class="row2">
+     <div class="field"><label>4 · Prix (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}"></div>
+     <div class="field"><label>5 · Statut paiement</label><select id="f_pay">${payStOpts}</select></div>
+   </div>
+   <div class="row2">
+     <div class="field"><label>6 · Règlement</label><select id="f_reg">${regOpts}</select></div>
+     <div class="field"><label>Statut commande</label><select id="f_st">${stOpts}</select></div>
+   </div>
+
+   <div class="field"><label>Notes</label><textarea id="f_notes" rows="2" placeholder="Allergies, livraison, demande spéciale…">${esc(o.notes||'')}</textarea></div>
+
+   <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_cal" style="width:auto" ${id?'':'checked'}> Ajouter au calendrier</label>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
+  drawFlavors();
+}
+function drawFlavors(){
+  const grid=document.getElementById('flavGrid'); if(!grid)return;
+  grid.innerHTML = FLAVORS.map((f,i)=>{
+    const q = cmdParfums[f]||0;
+    return `<div class="flav-row ${q>0?'on':''}">
+      <input type="checkbox" ${q>0?'checked':''} onchange="flavToggle('${i}',this.checked)">
+      <span class="nm">${esc(f)}</span>
+      <input type="number" min="0" value="${q}" oninput="flavQty('${i}',this.value)">
+    </div>`;
+  }).join('');
+  updateFlavSum();
+}
+function flavToggle(i,on){ const f=FLAVORS[i]; if(on){ if(!cmdParfums[f])cmdParfums[f]=1; } else { delete cmdParfums[f]; } drawFlavors(); }
+function flavQty(i,v){ const f=FLAVORS[i]; const q=+v||0; if(q>0)cmdParfums[f]=q; else delete cmdParfums[f]; updateFlavSum(); }
+function updateFlavSum(){
+  const el=document.getElementById('flavSum'); if(!el)return;
+  const tot=Object.values(cmdParfums).reduce((s,q)=>s+(+q||0),0);
+  el.textContent=tot;
+  const sel=document.getElementById('f_taille');
+  const taille=sel?+sel.value:0;
+  el.style.color = (taille && tot && tot!==taille) ? 'var(--red)' : 'var(--bordeaux)';
+}
+function cmdBoxChange(){
+  const sel=document.getElementById('f_taille');
+  const opt=sel.options[sel.selectedIndex];
+  const prix=opt?opt.dataset.prix:null;
+  const mt=document.getElementById('f_mt');
+  // ne remplit le prix que s'il est vide ou si l'utilisateur n'a pas encore saisi
+  if(prix && mt && (!mt.value || mt.dataset.auto==='1')){ mt.value=prix; mt.dataset.auto='1'; }
+  updateFlavSum();
 }
 async function saveCmd(id){
-  const o={clientId:+val('f_cl')||0,date:val('f_date'),montant:+val('f_mt')||0,detail:val('f_det'),statut:val('f_st')};
-  if(!o.montant){toast('Indique un montant');return;}
+  const parfums = Object.keys(cmdParfums).map(nom=>({nom, qte:+cmdParfums[nom]||0})).filter(p=>p.qte>0);
+  const o={
+    clientId:+val('f_cl')||0, date:val('f_date'),
+    taille:+val('f_taille')||0,
+    parfums,
+    perso:document.getElementById('f_perso').checked,
+    montant:+val('f_mt')||0,
+    paiement:val('f_pay')||'En attente',
+    reglement:val('f_reg')||'',
+    statut:val('f_st'),
+    notes:val('f_notes')
+  };
+  if(!o.montant){toast('Indique un prix');return;}
   let oid=id;
   if(id) await db.orders.update(id,o); else oid=await db.orders.add(o);
   const cb=document.getElementById('f_cal');
   if(cb&&cb.checked){
     const cl = o.clientId ? await db.clients.get(o.clientId) : null;
-    await db.events.add({date:o.date,titre:'Cmd '+(cl?cl.nom:''),type:'cmd',refId:oid});
+    await db.events.add({date:o.date,titre:'Cmd '+(cl?cl.nom:'')+(o.taille?` (${o.taille})`:''),type:'cmd',refId:oid});
   }
   closeModal(); renderCmd(); toast('Commande enregistrée ✓');
 }
@@ -644,14 +1060,28 @@ async function cmdLink(orderId){
   const dispo = prods.filter(p=>+p.qteRestante>0);
   const existing = await db.orderItems.where('orderId').equals(orderId).toArray();
   openModal(`<h3>Lier des batchs à la commande</h3>
-    ${existing.length?`<p class="note">Déjà lié : ${existing.map(e=>{const p=prods.find(x=>x.id===e.productionId);return (p?esc(p.lotProduction):'?')+' ('+e.qte+')';}).join(', ')}</p>`:''}
+    ${existing.length?`<div class="field"><label>Batchs déjà liés</label>
+      ${existing.map(e=>{const p=prods.find(x=>x.id===e.productionId);
+        return `<div class="sum-box"><span>${p?esc(recName(p.recipeId)):'?'} — ${p?esc(p.lotProduction||''):'(supprimé)'} × ${e.qte}</span>
+          <span class="act del" onclick="unlinkBatch(${e.id},${orderId})">Détacher</span></div>`;}).join('')}
+      </div>`:''}
     ${dispo.length?`
-    <div class="field"><label>Batch (produit fini disponible)</label>
+    <div class="field"><label>Ajouter un batch (produit fini disponible)</label>
       <select id="f_prod">${dispo.map(p=>`<option value="${p.id}">${esc(recName(p.recipeId))} — ${esc(p.lotProduction||'')} (reste ${p.qteRestante})</option>`).join('')}</select></div>
     <div class="field"><label>Quantité à affecter</label><input type="number" id="f_q" value="1"></div>`
-    :'<p class="note">Aucun batch disponible. Lance une production d\'abord.</p>'}
+    :'<p class="note">Aucun batch disponible à ajouter. Lance une production d\'abord.</p>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
     ${dispo.length?`<button class="btn gold" onclick="saveLink(${orderId})">Lier</button>`:''}</div>`);
+}
+async function unlinkBatch(itemId, orderId){
+  const item = await db.orderItems.get(itemId);
+  if(!item){ cmdLink(orderId); return; }
+  await db.transaction('rw',db.orderItems,db.productions,async()=>{
+    const prod = await db.productions.get(item.productionId);
+    if(prod){ await db.productions.update(prod.id,{qteRestante:(+prod.qteRestante||0)+(+item.qte||0)}); }
+    await db.orderItems.delete(itemId);
+  });
+  toast('Batch détaché — stock fini restitué'); cmdLink(orderId);
 }
 async function saveLink(orderId){
   const prodId=+val('f_prod'), q=+val('f_q');
@@ -759,7 +1189,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products'];
 async function exportData(){
   const dump={_app:'sensations-macarons',_version:1,_date:new Date().toISOString()};
   for(const t of TABLES) dump[t]=await db.table(t).toArray();
@@ -850,6 +1280,16 @@ async function seedIfEmpty(){
   ]);
 }
 
+// Catalogue de coffrets — créé une seule fois, indépendamment du reste
+// (ainsi les utilisateurs existants l'obtiennent aussi).
+async function seedProducts(){
+  const n = await db.products.count();
+  if(n>0) return;
+  for(const t of BOX_SIZES){
+    await db.products.add({ taille:t, nom:`Coffret ${t} macarons`, prix:BOX_PRICES[t], actif:true });
+  }
+}
+
 // Rappel d'export hebdomadaire (parade à la purge iOS d'IndexedDB)
 async function exportReminder(){
   const last = localStorage.getItem('sm_lastExport');
@@ -866,6 +1306,7 @@ if('serviceWorker' in navigator){
 
 (async()=>{
   try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
+  try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
   const opened = await handleTraceAnchor().catch(()=>false);
   if(!opened) render();
   exportReminder();

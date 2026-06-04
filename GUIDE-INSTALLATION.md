@@ -53,6 +53,30 @@ iOS peut **effacer les données d'une PWA après environ 7 jours sans ouverture*
 5. **Commandes** → crée la commande, puis **Lier batch** pour la rattacher à une production.
 6. **Traçabilité** → exporte en CSV les ingrédients d'une commande ou l'origine d'un batch (utile pour un contrôle DDPP).
 7. **Étiquettes QR** → génère une étiquette par batch (QR + nom, lot, date). Bouton **Imprimer** pour les coller sur les boîtes.
+8. **Coûts & prix** → évolution du prix d'achat de chaque matière, prix courant et variation, coût matière par recette (par batch et par pièce), et rentabilité mensuelle (CA − coût matière = marge).
+9. **Suivi DLC** → lots actifs classés par urgence (expirés, sous 3 jours, sous 7 jours), pour écouler en priorité.
+
+## Offre / Coffrets & commandes détaillées
+
+- L'onglet **Offre / Coffrets** contient ton catalogue préenregistré : les coffrets (6, 8, 16, 25 macarons avec leurs prix), les 15 parfums, et les options. Tu peux modifier un prix ou désactiver un coffret.
+- Dans une **commande**, tu choisis : (1) le coffret, (2) les parfums avec une quantité par parfum, (3) la personnalisation des couleurs, (4) le prix — pré-rempli selon le coffret mais modifiable, (5) le statut de paiement (en attente / payé), (6) le mode de règlement, et des notes.
+- Le bouton **Détail** d'une commande affiche le récapitulatif complet, et signale si le total des parfums ne correspond pas à la taille du coffret.
+
+## Suppression d'une production
+
+- Si la production n'est **pas liée** à une commande, tu peux la supprimer **avec ou sans recréditer** les ingrédients dans leurs lots d'origine.
+- Si elle **est attribuée** à une commande, la suppression est **bloquée** pour préserver la traçabilité. Détache d'abord le batch depuis la commande (bouton « Lier » → « Détacher »), ce qui restitue le stock de produit fini.
+
+## Coûts & rentabilité
+
+- À chaque **réception de lot**, saisis la quantité et le **prix total payé** : le prix unitaire est calculé automatiquement et affiché.
+- L'onglet **Coûts & prix** trace l'évolution du prix unitaire de chaque matière dans le temps, et calcule le coût matière de chaque recette au prix d'achat le plus récent.
+- La **rentabilité mensuelle** compare ton chiffre d'affaires (commandes) au coût réel des matières consommées par tes productions.
+- Plus tu réceptionnes de lots avec leur prix, plus les courbes sont précises.
+
+## Mise à jour de l'app (versions futures)
+
+Le cache porte désormais un numéro de version. Quand tu réuploades une nouvelle version sur GitHub, il suffit d'**ouvrir l'app une fois en ligne** : elle se met à jour seule, sans désinstaller. Tes données sont conservées.
 
 ## Étiquettes QR — comment ça marche
 
