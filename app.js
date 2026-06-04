@@ -126,34 +126,20 @@ const VIEWS = {
   tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats
 };
 let _navLast=0;
-function setActiveView(v){
-  document.querySelectorAll('.nav button, .tabbar button, .sheet-grid button').forEach(x=>{
-    if(x.dataset && x.dataset.v) x.classList.toggle('active', x.dataset.v===v);
-  });
-}
 function navTo(b){
   if(!b || !b.dataset || !b.dataset.v) return;
-  const now=Date.now(); if(now-_navLast<120 && view===b.dataset.v && !document.getElementById('sheetOverlay').classList.contains('show')) return; _navLast=now;
-  view=b.dataset.v; setActiveView(view); render();
-  closeSheet();
+  // anti double-déclenchement (écoute directe + délégation)
+  const now=Date.now(); if(now-_navLast<120 && view===b.dataset.v) return; _navLast=now;
+  document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); view=b.dataset.v; render();
 }
-function openSheet(){ const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);} }
-function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); }
-
-// Sidebar (iPad / desktop) — écoute directe + délégation
-document.querySelectorAll('#nav button').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
-const navEl=document.getElementById('nav');
-if(navEl) navEl.addEventListener('click', e => { const b=e.target.closest('button'); if(b) navTo(b); });
-
-// Tabbar (iPhone)
-document.querySelectorAll('#tabbar button[data-v]').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
-const menuBtn=document.getElementById('menuBtn'); if(menuBtn) menuBtn.addEventListener('click', openSheet);
-
-// Feuille menu (iPhone)
-document.querySelectorAll('#sheetGrid button[data-v]').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
-const sheetOv=document.getElementById('sheetOverlay');
-if(sheetOv) sheetOv.addEventListener('click', e=>{ if(e.target===sheetOv) closeSheet(); });
-
+// Écoute directe sur chaque bouton (fiable sur Safari iPad) + délégation de secours
+document.querySelectorAll('#nav button').forEach(btn=>{
+  btn.addEventListener('click', ()=>navTo(btn));
+});
+document.getElementById('nav').addEventListener('click', e => {
+  const b=e.target.closest('button'); if(b) navTo(b);
+});
 function render(){ (VIEWS[view]||renderDash)(); }
 
 // --------- Stock courant calculé depuis les lots ---------
@@ -1508,11 +1494,6 @@ async function cmdLink(orderId){
   openModal(`<h3>Lier des batchs à la commande</h3>
     <div class="sum-box"><span>Macarons de la commande${totDon?` (dont ${totDon} offert${totDon>1?'s':''})`:''}</span><b>${totMac||'—'}</b></div>
     ${totMac?`<div class="sum-box"><span>Déjà affecté depuis le stock</span><b>${dejaLie} / ${totMac}</b></div>`:''}
-    ${existing.length?`<div class="field" style="margin-top:10px"><label>Batchs déjà liés</label>
-      ${existing.map(e=>{const p=prods.find(x=>x.id===e.productionId);
-        return `<div class="sum-box"><span>${p?esc(recName(p.recipeId)):'?'} — ${p?esc(p.lotProduction||''):'(supprimé)'} × ${e.qte}</span>
-          <span class="act del" onclick="unlinkBatch(${e.id},${orderId})">Détacher</span></div>`;}).join('')}
-      </div>`:''}
     ${dispo.length?`
     <div class="field"><label>Ajouter un batch (produit fini disponible)</label>
       <select id="f_prod">${dispo.map(p=>`<option value="${p.id}">${esc(recName(p.recipeId))} — ${esc(p.lotProduction||'')} (reste ${qty(p.qteRestante)})</option>`).join('')}</select></div>
