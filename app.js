@@ -38,6 +38,7 @@ const BOX_SIZES = [6, 8, 16, 25];
 const BOX_PRICES = { 6: 12, 8: 16, 16: 28, 25: 42 }; // prix de base par taille
 const BOX_FLAVOR_LIMIT = { 6: 3, 8: 4, 16: 4, 25: 5 }; // parfums DIFFÉRENTS inclus
 const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire
+const ORDER_STATUS = ['À préparer', 'Terminée', 'Livrée'];
 const PAY_STATUS = ['En attente', 'Payé'];
 const PAY_METHODS = ['Carte', 'Virement', 'Espèces', 'Chèque', 'PayPal'];
 
@@ -123,7 +124,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, assistant:renderAssistant
 };
 let _navLast=0;
 function setActiveView(v){
@@ -1037,6 +1038,31 @@ async function delProdCat(id){
 /* ============================================================
    COMMANDES  (+ liaison aux batchs = traçabilité aval)
    ============================================================ */
+// Normalise l'ancien statut « En cours » vers la nouvelle structure
+function normStatus(st){ return st==='En cours' ? 'À préparer' : (st || 'À préparer'); }
+// Pastille colorée selon le statut
+function statusTag(st){
+  const s = normStatus(st);
+  const cls = s==='Livrée' ? 'done' : (s==='Terminée' ? 'ok' : 'todo');
+  return `<span class="tag ${cls}">${esc(s)}</span>`;
+}
+// Changement rapide : passe au statut suivant (À préparer → Terminée → Livrée → …)
+async function cycleStatus(id){
+  const o = await db.orders.get(id); if(!o) return;
+  const cur = normStatus(o.statut);
+  const i = ORDER_STATUS.indexOf(cur);
+  const next = ORDER_STATUS[(i+1) % ORDER_STATUS.length];
+  await db.orders.update(id, {statut: next});
+  // mise à jour immédiate du calendrier et des stats : ces vues relisent la base à chaque rendu,
+  // il suffit donc de rafraîchir la liste ici ; calendrier/stats seront à jour à leur prochaine ouverture
+  renderCmd();
+  toast('Statut : '+next);
+}
+// Définit un statut précis (depuis la fiche détail)
+async function setOrderStatus(id, statut){
+  await db.orders.update(id, {statut});
+  closeModal(); renderCmd(); toast('Statut : '+statut);
+}
 async function renderCmd(){
   const orders = (await db.orders.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
@@ -1060,7 +1086,7 @@ async function renderCmd(){
        <td><span style="font-size:.82rem">${esc(resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
        <td>${euro(+o.montant)}</td>
        <td><span class="tag ${paye?'done':'todo'}">${esc(o.paiement||'En attente')}</span>${o.reglement?`<br><span style="color:#9a8a82;font-size:.74rem">${esc(o.reglement)}</span>`:''}</td>
-       <td><span class="tag ${o.statut==='Livrée'?'done':'todo'}">${esc(o.statut||'À préparer')}</span></td>
+       <td><span class="act-status" onclick="cycleStatus(${o.id})" title="Toucher pour changer le statut">${statusTag(o.statut)}</span></td>
        <td>${nbLies?`<span class="tag ok">${nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
        <td style="text-align:right"><span class="act" onclick="cmdView(${o.id})">Détail</span><span class="act" onclick="exportOrderText(${o.id})">Texte</span><span class="act" onclick="cmdLink(${o.id})">Lier</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`);
   }
@@ -1119,6 +1145,11 @@ async function cmdView(id){
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${o.perso?'Oui':'Non'}</b></div>
     <div class="sum-box"><span>Montant total</span><b>${euro(o.montant)}</b></div>
     <div class="sum-box"><span>Paiement</span><b>${esc(o.paiement||'En attente')}${o.reglement?' · '+esc(o.reglement):''}</b></div>
+    <h3 style="font-size:1rem;margin:16px 0 8px">Statut de la commande</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${ORDER_STATUS.map(st=>{const cur=normStatus(o.statut)===st;
+        return `<button class="btn ${cur?'':'ghost'} sm" onclick="setOrderStatus(${id},'${st}')" ${cur?'style="pointer-events:none"':''}>${cur?'● ':''}${st}</button>`;}).join('')}
+    </div>
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button></div>`);
 }
@@ -1170,7 +1201,8 @@ async function cmdForm(id, opts){
   // trier les clients par nom pour un défilement lisible même à plusieurs centaines
   cmdClientsCache.sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
   const clOpts = '<option value="0">— aucun —</option>'+cmdClientsCache.map(c=>`<option value="${c.id}" ${preselect===c.id?'selected':''}>${esc(c.nom)}${c.tel?' · '+esc(c.tel):''}</option>`).join('');
-  const stOpts = ['À préparer','En cours','Livrée'].map(s=>`<option ${o.statut===s?'selected':''}>${s}</option>`).join('');
+  const curStatut = o.statut==='En cours' ? 'À préparer' : (o.statut||'À préparer');
+  const stOpts = ORDER_STATUS.map(s=>`<option ${curStatut===s?'selected':''}>${s}</option>`).join('');
   const payStOpts = PAY_STATUS.map(s=>`<option ${o.paiement===s?'selected':''}>${s}</option>`).join('');
   const regOpts = `<option value="">—</option>`+PAY_METHODS.map(s=>`<option ${o.reglement===s?'selected':''}>${s}</option>`).join('');
   openModal(`<h3>${id?'Modifier':'Nouvelle'} commande</h3>
@@ -1685,6 +1717,332 @@ async function renderStats(){
    <div class="panel"><h2>Macarons écoulés par mois</h2>${macChart||'<p class="note">—</p>'}</div>`;
 }
 
+// === insère le moteur parseIntent (voir ai_engine.js) ===
+/* ============================================================
+   ASSISTANT IA INTERNE — analyseur d'intentions hors-ligne
+   parseIntent(texte, ctx) -> {intent, params, critical, label}
+   Aucune dépendance réseau. Reconnaissance par motifs FR.
+   ctx = {flavors:[...], clients:[{id,nom,tel}], materials:[{id,nom}]}
+   ============================================================ */
+function aiNormalize(s){
+  return (s||'').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // enlève accents
+    .replace(/['']/g,"'").replace(/\s+/g,' ').trim();
+}
+// extrait un nombre écrit en chiffres ou en lettres (1..20 + dizaines simples)
+function aiParseNumber(txt){
+  const mots={un:1,une:1,deux:2,trois:3,quatre:4,cinq:5,six:6,sept:7,huit:8,neuf:9,dix:10,
+    onze:11,douze:12,treize:13,quatorze:14,quinze:15,seize:16,vingt:20,trente:30,quarante:40,cinquante:50,cent:100};
+  const m=txt.match(/\b(\d+(?:[.,]\d+)?)\b/);
+  if(m) return parseFloat(m[1].replace(',','.'));
+  for(const k in mots){ if(new RegExp('\\b'+k+'\\b').test(txt)) return mots[k]; }
+  return null;
+}
+// résout une date relative -> 'YYYY-MM-DD'
+function aiParseDate(txt, base){
+  const d = base ? new Date(base) : new Date();
+  const jours={dimanche:0,lundi:1,mardi:2,mercredi:3,jeudi:4,vendredi:5,samedi:6};
+  if(/\baujourd'?hui\b/.test(txt)){ return d.toISOString().slice(0,10); }
+  if(/\bdemain\b/.test(txt)){ d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); }
+  if(/\bapres-demain\b/.test(txt)){ d.setDate(d.getDate()+2); return d.toISOString().slice(0,10); }
+  for(const j in jours){
+    if(new RegExp('\\b'+j+'\\b').test(txt)){
+      // prochain jour de semaine correspondant
+      const target=jours[j]; let delta=(target - d.getDay() + 7) % 7; if(delta===0) delta=7;
+      d.setDate(d.getDate()+delta); return d.toISOString().slice(0,10);
+    }
+  }
+  // date explicite jj/mm ou jj/mm/aaaa
+  const m=txt.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/);
+  if(m){ let y=m[3]?(+m[3]<100?2000+ +m[3]:+m[3]):d.getFullYear(); const mo=String(+m[2]).padStart(2,'0'); const da=String(+m[1]).padStart(2,'0'); return `${y}-${mo}-${da}`; }
+  return null;
+}
+// retrouve un parfum mentionné
+function aiFindFlavor(txt, flavors){
+  for(const f of flavors){ if(aiNormalize(txt).includes(aiNormalize(f))) return f; }
+  // mots-clés partiels
+  const map={chocolat:'Chocolat noir', vanille:'Vanille', framboise:'Framboise', pistache:'Pistache',
+    citron:'Citron crémeux', cafe:'Café', caramel:'Caramel beurre salé', coco:'Coco Rafaello',
+    praline:'Praliné noisettes', popcorn:'Popcorn', cannelle:'Cannelle noisette'};
+  const n=aiNormalize(txt);
+  for(const k in map){ if(n.includes(k) && flavors.includes(map[k])) return map[k]; }
+  return null;
+}
+// retrouve une matière (signale l ambiguite si plusieurs correspondent)
+function aiFindMaterial(txt, materials){
+  const n=aiNormalize(txt);
+  const exacts=materials.filter(m=>n.includes(aiNormalize(m.nom)));
+  if(exacts.length===1) return exacts[0];
+  if(exacts.length>1){ const r=exacts.slice().sort((a,b)=>b.nom.length-a.nom.length)[0]; r._ambig=exacts.map(m=>m.nom); return r; }
+  const kw={chocolat:'chocolat',amande:'amande',sucre:'sucre',oeuf:'oeuf',creme:'creme',vanille:'vanille',colorant:'colorant',praline:'praline'};
+  for(const k in kw){
+    if(n.includes(k)){
+      const matches=materials.filter(m=>aiNormalize(m.nom).includes(k));
+      if(matches.length===1) return matches[0];
+      if(matches.length>1){ const r=matches[0]; r._ambig=matches.map(m=>m.nom); return r; }
+    }
+  }
+  return null;
+}
+// retrouve un client par nom (tolérant : "M. Dupont", "monsieur dupont", "dupont")
+function aiFindClient(txt, clients){
+  const n=aiNormalize(txt).replace(/\b(m|mr|mme|monsieur|madame|melle|mlle)\b\.?/g,' ').replace(/\s+/g,' ').trim();
+  let best=null;
+  for(const c of clients){
+    const cn=aiNormalize(c.nom);
+    if(n.includes(cn)){ if(!best||cn.length>best.score) best={client:c,score:cn.length}; }
+    else { // match sur le dernier mot (nom de famille)
+      const parts=cn.split(' '); const last=parts[parts.length-1];
+      if(last.length>=3 && new RegExp('\\b'+last+'\\b').test(n)){ if(!best) best={client:c,score:last.length}; }
+    }
+  }
+  return best?best.client:null;
+}
+
+function parseIntent(texte, ctx){
+  ctx=ctx||{}; const flavors=ctx.flavors||[]; const clients=ctx.clients||[]; const materials=ctx.materials||[];
+  const raw=texte||''; const t=aiNormalize(raw);
+  if(!t) return {intent:'unknown', params:{}, critical:false};
+
+  // ---- ACTIONS CRITIQUES prioritaires sur les consultations homonymes ----
+  // ajuster le stock (doit passer avant query_stock car contient "stock")
+  if(/\b(ajuste|ajuster|corrige|corriger|fixe|mets|met|regle|regler)\b/.test(t) && /stock/.test(t)){
+    const mat=aiFindMaterial(t,materials); const nb=aiParseNumber(t);
+    return {intent:'adjust_stock', critical:true, params:{material:mat, value:nb},
+      label:`Ajuster le stock${mat?' de '+mat.nom:''}${nb!=null?' à '+nb:''}`};
+  }
+
+  // ---- CONSULTATIONS (non critiques) ----
+  // stock d'une matière
+  if(/\b(stock|combien|reste|il reste|quantite)\b/.test(t) && !/commande/.test(t)){
+    const mat=aiFindMaterial(t,materials);
+    return {intent:'query_stock', params:{material:mat}, critical:false,
+      label: mat?`Consulter le stock de « ${mat.nom} »`:'Consulter le stock'};
+  }
+  // commandes à préparer / à une date
+  if(/\b(commande|commandes)\b/.test(t) && /\b(a preparer|preparer|affiche|montre|liste|voir|quelles)\b/.test(t)){
+    const date=aiParseDate(t);
+    return {intent:'query_orders', params:{date, statut: /preparer/.test(t)?'À préparer':null}, critical:false,
+      label: date?`Afficher les commandes du ${date}`:'Afficher les commandes à préparer'};
+  }
+  // top clients par parfum
+  if(/\b(client|clients)\b/.test(t) && /\b(plus|top|meilleur|commandent|achetent|consomment)\b/.test(t)){
+    const fl=aiFindFlavor(t,flavors);
+    return {intent:'query_top_clients', params:{flavor:fl}, critical:false,
+      label: fl?`Clients qui commandent le plus de « ${fl} »`:'Meilleurs clients'};
+  }
+  // chiffre d'affaires
+  if(/\b(chiffre d'affaires|chiffre d affaires|chiffre|recette|recettes)\b/.test(t)
+     || (/\b(vente|ventes)\b/.test(t) && /\b(combien|total|mois|montant|euros?)\b/.test(t))){
+    return {intent:'query_revenue', params:{}, critical:false, label:'Consulter le chiffre d\'affaires'};
+  }
+
+  // ---- ACTIONS CRITIQUES (validation obligatoire) ----
+  // créer une commande
+  if(/\b(cree|creer|crée|nouvelle commande|ajoute une commande|enregistre une commande)\b/.test(t) && /commande/.test(t)
+     || (/\bcree|creer\b/.test(t) && /commande/.test(t))){
+    const client=aiFindClient(t,clients);
+    const date=aiParseDate(t);
+    const nb=aiParseNumber(t);
+    // taille de coffret évoquée
+    let taille=null; const mm=t.match(/coffret[s]? de (\d+)|(\d+) macaron/);
+    if(mm) taille=+(mm[1]||mm[2]);
+    const fl=aiFindFlavor(t,flavors);
+    return {intent:'create_order', critical:true,
+      params:{client, clientNameRaw: !client?aiExtractName(raw):null, date, taille, qte:nb, flavor:fl},
+      label:`Créer une commande${client?' pour '+client.nom:''}${date?' le '+date:''}`};
+  }
+  // ajouter des coffrets (à une commande en cours de dialogue)
+  if(/\bajoute|ajouter\b/.test(t) && /coffret|macaron/.test(t)){
+    const nb=aiParseNumber(t)||1;
+    const mm=t.match(/de (\d+)|(\d+) macaron/); const taille=mm?+(mm[1]||mm[2]):null;
+    return {intent:'add_box', critical:true, params:{nb, taille},
+      label:`Ajouter ${nb} coffret(s)${taille?' de '+taille:''}`};
+  }
+  // supprimer une commande
+  if(/\b(supprime|supprimer|annule|annuler)\b/.test(t) && /commande/.test(t)){
+    const client=aiFindClient(t,clients);
+    return {intent:'delete_order', critical:true, params:{client},
+      label:`Supprimer/annuler une commande${client?' de '+client.nom:''}`};
+  }
+
+  return {intent:'unknown', params:{}, critical:false};
+}
+// extrait un nom propre candidat après "pour"
+function aiExtractName(raw){
+  const m=raw.match(/\bpour\s+(?:M\.?|Mr\.?|Mme\.?|Monsieur|Madame|Mlle\.?)?\s*([A-ZÉÈÀ][\wéèàâ'\-]+(?:\s+[A-ZÉÈÀ][\wéèàâ'\-]+)?)/);
+  return m?m[1].trim():null;
+}
+
+
+let aiPending = null; // action critique en attente de validation
+function renderAssistant(){
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Assistant</h1><p>Pilotez l'application en langage naturel</p></div></div>
+   <div class="banner">🤖 <div>Écrivez ou dictez (micro du clavier) une instruction. L'assistant fonctionne <b>hors-ligne</b>. Toute action critique (création, suppression, ajustement) demande votre validation.</div></div>
+   <div class="panel">
+     <div class="field"><label>Votre demande</label>
+       <textarea id="aiInput" rows="2" placeholder="ex : Quel est le stock de chocolat ? · Crée une commande pour M. Dupont vendredi · Affiche les commandes à préparer demain"></textarea>
+     </div>
+     <div class="flex" style="gap:8px"><button class="btn" onclick="aiRun()">Envoyer</button>
+       <button class="btn ghost" onclick="document.getElementById('aiInput').value='';document.getElementById('aiOut').innerHTML='';">Effacer</button></div>
+     <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+       ${['Quel est le stock de chocolat ?','Commandes à préparer demain','Quels clients commandent le plus de vanille ?','Chiffre d\'affaires'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
+     </div>
+   </div>
+   <div id="aiOut"></div>`;
+}
+function aiSay(html){ document.getElementById('aiOut').innerHTML = `<div class="panel">${html}</div>`; }
+
+async function aiRun(){
+  const txt=(document.getElementById('aiInput').value||'').trim();
+  if(!txt){ return; }
+  const flavors=FLAVORS;
+  const clients=await db.clients.toArray();
+  const materials=await db.materials.toArray();
+  const r=parseIntent(txt,{flavors,clients,materials});
+  aiPending=null;
+  switch(r.intent){
+    case 'query_stock': return aiQueryStock(r.params);
+    case 'query_orders': return aiQueryOrders(r.params);
+    case 'query_top_clients': return aiQueryTopClients(r.params);
+    case 'query_revenue': return aiQueryRevenue();
+    case 'create_order': return aiConfirmCreateOrder(r);
+    case 'delete_order': return aiConfirmDeleteOrder(r);
+    case 'adjust_stock': return aiConfirmAdjustStock(r);
+    case 'add_box': return aiSay(`<p>Pour ajouter des coffrets, ouvrez d'abord une commande. Dites par exemple : <b>« Crée une commande pour [client] »</b>, puis ajoutez les produits.</p>`);
+    default:
+      return aiSay(`<p>Je n'ai pas compris « ${esc(txt)} ».</p>
+        <p class="note">Exemples : <i>Quel est le stock de chocolat ?</i> · <i>Crée une commande pour M. Dupont vendredi</i> · <i>Affiche les commandes à préparer demain</i> · <i>Quels clients commandent le plus de vanille ?</i></p>`);
+  }
+}
+
+// ---- CONSULTATIONS ----
+async function aiQueryStock(params){
+  const materials=await db.materials.toArray();
+  if(!params.material){
+    // liste tout le stock
+    const rows=[];
+    for(const m of materials){ const lots=await db.materialLots.where('materialId').equals(m.id).toArray();
+      const tot=lots.reduce((s,l)=>s+(+l.qteRestante||0),0); rows.push(`<div class="sum-box"><span>${esc(m.nom)}</span><b>${qty(tot)} ${esc(m.unite||'')}</b></div>`); }
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Stock de toutes les matières</h3>${rows.join('')||'<p class="note">Aucune matière.</p>'}`);
+  }
+  const lots=await db.materialLots.where('materialId').equals(params.material.id).and(l=>+l.qteRestante>0).toArray();
+  const tot=lots.reduce((s,l)=>s+(+l.qteRestante||0),0);
+  const proche=lots.slice().sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999'))[0];
+  const ambig = params.material._ambig && params.material._ambig.length>1 ? `<p class="note">Plusieurs matières correspondent : ${params.material._ambig.map(esc).join(", ")}. Affichage de « ${esc(params.material.nom)} ». Précisez le nom complet pour une autre.</p>` : "";
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Stock — ${esc(params.material.nom)}</h3>${ambig}
+    <div class="sum-box"><span>Quantité disponible</span><b>${qty(tot)} ${esc(params.material.unite||'')}</b></div>
+    <div class="sum-box"><span>Lots actifs</span><b>${lots.length}</b></div>
+    ${proche?`<div class="sum-box"><span>DLC la plus proche</span><b>${fmtDate(proche.dlc)||'—'}</b></div>`:''}
+    ${params.material.seuil&&tot<params.material.seuil?`<p class="note" style="color:var(--red)">⚠ Sous le seuil d'alerte (${qty(params.material.seuil)}).</p>`:''}`);
+}
+async function aiQueryOrders(params){
+  let orders=await db.orders.toArray();
+  const clients=await db.clients.toArray();
+  const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
+  if(params.date) orders=orders.filter(o=>o.date===params.date);
+  if(params.statut) orders=orders.filter(o=>normStatus(o.statut)===params.statut);
+  orders.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const titre=`Commandes${params.statut?' à préparer':''}${params.date?' du '+fmtDate(params.date):''}`;
+  if(!orders.length) return aiSay(`<h3 style="font-size:1rem">${titre}</h3><p class="note">Aucune commande.</p>`);
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">${titre} (${orders.length})</h3>
+    ${orders.map(o=>`<div class="sum-box"><span>${esc(clName(o.clientId))} · ${fmtDate(o.date)}</span><b>${euro(o.montant)} · ${esc(normStatus(o.statut))}</b></div>`).join('')}`);
+}
+async function aiQueryTopClients(params){
+  const orders=await db.orders.toArray();
+  const clients=await db.clients.toArray();
+  const R=computeStats(orders,clients,orderToLines);
+  const fl=params.flavor;
+  const rank=Object.keys(R.parClient).map(id=>({nom:R.parClient[id].nom, n: fl?(R.parClient[id].parfums[fl]||0):R.parClient[id].macarons}))
+    .filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,10);
+  if(!rank.length) return aiSay(`<p class="note">Aucune donnée${fl?' pour « '+esc(fl)+' »':''} (commandes payées uniquement).</p>`);
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Clients — ${fl?'parfum '+esc(fl):'tous macarons'} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
+    ${rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. ${esc(x.nom)}</span><b>${qty(x.n)} macaron(s)</b></div>`).join('')}`);
+}
+async function aiQueryRevenue(){
+  const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
+  const R=computeStats(orders,clients,orderToLines);
+  const mois=Object.keys(R.global.parMois).sort();
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
+    <div class="sum-box"><span>CA total</span><b>${euro(R.global.caTotal)}</b></div>
+    <div class="sum-box"><span>Commandes payées</span><b>${R.nbValides}</b></div>
+    <div class="sum-box"><span>Macarons écoulés</span><b>${qty(R.global.nbMacarons)}</b></div>
+    ${mois.length?mois.map(m=>`<div class="sum-box"><span>${m}</span><b>${euro(R.global.parMois[m].ca)}</b></div>`).join(''):''}`);
+}
+
+// ---- ACTIONS CRITIQUES : résumé + validation explicite ----
+function aiConfirmCreateOrder(r){
+  const p=r.params;
+  const clientLine = p.client ? p.client.nom : (p.clientNameRaw||'(non précisé)');
+  aiPending={type:'create_order', params:p};
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">⚠ Action à valider — Créer une commande</h3>
+    <div class="sum-box"><span>Client</span><b>${esc(clientLine)}${!p.client&&p.clientNameRaw?' (nouveau)':''}</b></div>
+    <div class="sum-box"><span>Date</span><b>${p.date?fmtDate(p.date):'aujourd\'hui'}</b></div>
+    ${p.taille?`<div class="sum-box"><span>Coffret</span><b>${p.taille} macarons</b></div>`:''}
+    <p class="note">L'assistant prépare le formulaire ; vous compléterez les produits et le prix avant l'enregistrement définitif.</p>
+    <div class="flex" style="gap:8px;margin-top:10px"><button class="btn ghost" onclick="document.getElementById('aiOut').innerHTML=''">Annuler</button>
+      <button class="btn" onclick="aiExecute()">Ouvrir le formulaire pré-rempli</button></div>`);
+}
+function aiConfirmDeleteOrder(r){
+  aiPending={type:'delete_order', params:r.params};
+  const c=r.params.client;
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">⚠ Action à valider — Supprimer une commande</h3>
+    ${c?`<div class="sum-box"><span>Client</span><b>${esc(c.nom)}</b></div>`:'<p class="note">Aucun client précisé.</p>'}
+    <p class="note">Pour éviter toute erreur, l'assistant vous montrera la liste des commandes concernées ; vous choisirez laquelle supprimer depuis l'onglet Commandes (suppression sécurisée avec recréditation du stock).</p>
+    <div class="flex" style="gap:8px;margin-top:10px"><button class="btn ghost" onclick="document.getElementById('aiOut').innerHTML=''">Annuler</button>
+      <button class="btn" onclick="aiExecute()">Voir les commandes concernées</button></div>`);
+}
+function aiConfirmAdjustStock(r){
+  const p=r.params;
+  if(!p.material) return aiSay(`<p>Quelle matière ajuster ? Précisez, par exemple : <b>« Ajuste le stock de chocolat à 5 »</b>.</p>`);
+  if(p.value==null) return aiSay(`<p>À quelle valeur ajuster le stock de <b>${esc(p.material.nom)}</b> ? Précisez un nombre.</p>`);
+  aiPending={type:'adjust_stock', params:p};
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">⚠ Action à valider — Ajuster le stock</h3>
+    <div class="sum-box"><span>Matière</span><b>${esc(p.material.nom)}</b></div>
+    <div class="sum-box"><span>Nouvelle valeur cible</span><b>${qty(p.value)} ${esc(p.material.unite||'')}</b></div>
+    <p class="note">L'ajustement crée un lot de correction daté d'aujourd'hui (traçable), il ne modifie pas les lots existants. La traçabilité est préservée.</p>
+    <div class="flex" style="gap:8px;margin-top:10px"><button class="btn ghost" onclick="document.getElementById('aiOut').innerHTML=''">Annuler</button>
+      <button class="btn danger" onclick="aiExecute()">Confirmer l'ajustement</button></div>`);
+}
+
+async function aiExecute(){
+  if(!aiPending){ return; }
+  const {type,params}=aiPending; aiPending=null;
+  if(type==='create_order'){
+    // ouvre le formulaire de commande ; pré-sélectionne le client si connu
+    document.getElementById('aiOut').innerHTML='';
+    if(params.client){ await cmdForm(0,{clientId:params.client.id}); }
+    else { await cmdForm(0); if(params.clientNameRaw){ const s=document.getElementById('f_clsearch'); if(s){ s.value=params.clientNameRaw; } } }
+    // pré-remplir la date si présente
+    setTimeout(()=>{ const d=document.getElementById('f_date'); if(d&&params.date) d.value=params.date; },120);
+    toast('Formulaire prêt — complétez puis enregistrez');
+  } else if(type==='delete_order'){
+    // redirige vers la liste filtrée (sécurité : pas de suppression directe par l'IA)
+    view='commandes'; if(typeof setActiveView==='function') setActiveView('commandes'); renderCmd();
+    toast('Choisissez la commande à supprimer dans la liste');
+  } else if(type==='adjust_stock'){
+    // ajustement = création d'un lot de correction (traçable), jamais d'écrasement
+    const m=params.material; const lots=await db.materialLots.where('materialId').equals(m.id).toArray();
+    const actuel=lots.reduce((s,l)=>s+(+l.qteRestante||0),0);
+    const delta=params.value-actuel;
+    if(Math.abs(delta)<1e-9){ aiSay(`<p>Le stock de <b>${esc(m.nom)}</b> est déjà à ${qty(params.value)} ${esc(m.unite||'')}.</p>`); return; }
+    await db.materialLots.add({materialId:m.id, supplierId:0, lotFournisseur:'AJUST-'+today().replace(/-/g,''),
+      qteInitiale: delta>0?delta:0, qteRestante: delta>0?delta:0,
+      dateReception:today(), dlc:'', prix:0, prixUnitaire:0, note:'Ajustement assistant'});
+    if(delta<0){
+      // décrément : on retire FIFO sur les lots existants
+      let reste=-delta;
+      const actifs=lots.filter(l=>+l.qteRestante>0).sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999'));
+      for(const l of actifs){ if(reste<=0)break; const pris=Math.min(reste,+l.qteRestante); await db.materialLots.update(l.id,{qteRestante:+l.qteRestante-pris}); reste-=pris; }
+    }
+    aiSay(`<h3 style="font-size:1rem">Stock ajusté ✓</h3>
+      <div class="sum-box"><span>${esc(m.nom)}</span><b>${qty(actuel)} → ${qty(params.value)} ${esc(m.unite||'')}</b></div>
+      <p class="note">${delta>0?'Lot de correction (+'+qty(delta)+') créé.':'Décrément FIFO appliqué ('+qty(delta)+').'} Traçable dans Matières &amp; lots.</p>`);
+    toast('Stock ajusté ✓');
+  }
+}
+
 async function renderCal(){
   const events = await db.events.toArray();
   const y=calRef.getFullYear(),m=calRef.getMonth();
@@ -1979,7 +2337,7 @@ async function buildOrderText(orderId){
   L.push('');
   L.push('MONTANT : '+euro(o.montant));
   L.push('Paiement : '+(o.paiement||'En attente')+(o.reglement?' ('+o.reglement+')':''));
-  L.push('Statut : '+(o.statut||'À préparer'));
+  L.push('Statut : '+normStatus(o.statut));
   if(o.notes){ L.push(''); L.push('NOTES'); L.push('  '+o.notes.replace(/\n/g,'\n  ')); }
   // Lots utilisés (traçabilité), si la commande est liée à des batchs
   const items = await db.orderItems.where('orderId').equals(orderId).toArray();
