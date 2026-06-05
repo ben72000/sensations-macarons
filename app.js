@@ -26,6 +26,10 @@ db.version(2).stores({
 db.version(3).stores({
   events:          '++id, date, refId'
 });
+// v4 : historique des sauvegardes internes (JSON complet + somme de contrôle)
+db.version(4).stores({
+  backups:         '++id, date, type'
+});
 
 // --------- Catalogue de référence ---------
 const FLAVORS = [
@@ -124,7 +128,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, analyse:renderAnalyse, previsionnel:renderForecast, assistant:renderAssistant
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, analyse:renderAnalyse, previsionnel:renderForecast, sauvegardes:renderBackups, assistant:renderAssistant
 };
 let _navLast=0;
 function setActiveView(v){
@@ -3248,48 +3252,245 @@ async function handleTraceAnchor(){
 
 
 const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products'];
-async function exportData(){
-  const dump={_app:'sensations-macarons',_version:1,_date:new Date().toISOString()};
+const BACKUP_VERSION = 2;
+const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
+
+// ---- Construction d'un instantané structuré ----
+async function buildDump(){
+  const dump={_app:'sensations-macarons',_version:BACKUP_VERSION,_date:new Date().toISOString()};
   for(const t of TABLES) dump[t]=await db.table(t).toArray();
+  dump._checksum = backupChecksum(dump);
+  return dump;
+}
+// Somme de contrôle simple et déterministe (hash 32 bits, type DJB2) sur les données (hors méta).
+function backupChecksum(dump){
+  let str='';
+  for(const t of TABLES){ str += t+':'+JSON.stringify(dump[t]||[])+';'; }
+  let h=5381;
+  for(let i=0;i<str.length;i++){ h=((h<<5)+h+str.charCodeAt(i))|0; }
+  return (h>>>0).toString(16); // non signé, hexadécimal
+}
+// Compte total d'enregistrements d'un dump.
+function dumpRecordCount(dump){ return TABLES.reduce((s,t)=>s+(Array.isArray(dump[t])?dump[t].length:0),0); }
+
+// ---- Vérification d'intégrité d'une sauvegarde ----
+// Retourne {ok, raisons:[], checksumOk, structureOk, counts}
+function verifyBackup(dump){
+  const raisons=[];
+  if(!dump || typeof dump!=='object'){ return {ok:false, raisons:['Fichier illisible.'], checksumOk:false, structureOk:false}; }
+  const structureOk = dump._app==='sensations-macarons' || TABLES.some(t=>Array.isArray(dump[t]));
+  if(!structureOk) raisons.push("Ce fichier n'a pas la structure d'une sauvegarde Sensations Macarons.");
+  // chaque table présente doit être un tableau
+  TABLES.forEach(t=>{ if(dump[t]!=null && !Array.isArray(dump[t])) raisons.push(`La table « ${t} » est corrompue (format inattendu).`); });
+  // contrôle de cohérence référentielle légère
+  if(Array.isArray(dump.orders) && Array.isArray(dump.clients)){
+    const ids=new Set(dump.clients.map(c=>c.id));
+    const orphelins=dump.orders.filter(o=>o.clientId && !ids.has(o.clientId)).length;
+    if(orphelins>0) raisons.push(`${orphelins} commande(s) référencent un client absent.`);
+  }
+  // somme de contrôle (si présente)
+  let checksumOk=true;
+  if(dump._checksum){
+    const recomputed=backupChecksum(dump);
+    checksumOk = recomputed===dump._checksum;
+    if(!checksumOk) raisons.push('La somme de contrôle ne correspond pas : la sauvegarde a peut-être été modifiée ou tronquée.');
+  }
+  // une sauvegarde sans aucune table de données est suspecte
+  const total=dumpRecordCount(dump);
+  return {ok: structureOk && checksumOk && !raisons.some(r=>r.includes('corrompue')), raisons, checksumOk, structureOk, total};
+}
+
+// ---- Application d'un dump à la base (remplacement atomique) ----
+async function applyDump(dump){
+  await db.transaction('rw',...TABLES.map(t=>db.table(t)),async()=>{
+    for(const t of TABLES){
+      await db.table(t).clear();
+      if(Array.isArray(dump[t]) && dump[t].length) await db.table(t).bulkAdd(dump[t]);
+    }
+  });
+}
+
+// ---- EXPORT MANUEL (fichier .json téléchargé) ----
+async function exportData(){
+  const dump=await buildDump();
   const blob=new Blob([JSON.stringify(dump,null,2)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   a.download='sensations-macarons-sauvegarde-'+today()+'.json'; a.click();
+  localStorage.setItem('sm_lastExport', today());
   toast('Sauvegarde téléchargée ✓');
 }
+// ---- IMPORT MANUEL (depuis un fichier .json) ----
 async function importData(e){
   const f=e.target.files[0]; if(!f)return;
   let obj;
-  try{
-    const txt = await f.text();
-    obj = JSON.parse(txt);
-  }catch(err){
-    toast('Fichier illisible (JSON invalide)'); e.target.value=''; return;
-  }
-  // Validation : est-ce bien une sauvegarde Sensations Macarons ?
-  const hasAnyTable = obj && typeof obj==='object' && TABLES.some(t=>Array.isArray(obj[t]));
-  const isOurApp = obj && obj._app==='sensations-macarons';
-  if(!hasAnyTable && !isOurApp){
-    toast('Ce fichier n\'est pas une sauvegarde valide'); e.target.value=''; return;
-  }
-  // Résumé de ce qui va être importé
-  const counts = TABLES.map(t=>Array.isArray(obj[t])?obj[t].length:0);
+  try{ obj = JSON.parse(await f.text()); }
+  catch(err){ toast('Fichier illisible (JSON invalide)'); e.target.value=''; return; }
+  const v=verifyBackup(obj);
+  if(!v.structureOk){ toast('Ce fichier n\'est pas une sauvegarde valide'); e.target.value=''; return; }
   const nbOrders = Array.isArray(obj.orders)?obj.orders.length:0;
   const nbClients = Array.isArray(obj.clients)?obj.clients.length:0;
   const dateInfo = obj._date ? `\nSauvegarde du ${new Date(obj._date).toLocaleString('fr-FR')}` : '';
-  if(!confirm(`Importer cette sauvegarde ?${dateInfo}\n\n• ${nbClients} client(s)\n• ${nbOrders} commande(s)\n\n⚠ Toutes les données actuelles seront remplacées.`)){
+  const warn = v.raisons.length ? `\n\n⚠ Avertissement(s) :\n- ${v.raisons.join('\n- ')}` : '\n\n✓ Intégrité vérifiée.';
+  if(!confirm(`Importer cette sauvegarde ?${dateInfo}\n\n• ${nbClients} client(s)\n• ${nbOrders} commande(s)${warn}\n\nToutes les données actuelles seront remplacées (une sauvegarde de sécurité sera prise avant).`)){
     e.target.value=''; return;
   }
   try{
-    await db.transaction('rw',...TABLES.map(t=>db.table(t)),async()=>{
-      for(const t of TABLES){
-        await db.table(t).clear();
-        if(Array.isArray(obj[t]) && obj[t].length) await db.table(t).bulkAdd(obj[t]);
-      }
-    });
+    await snapshotBackup('avant-import'); // filet de sécurité avant écrasement
+    await applyDump(obj);
     render(); toast('Données importées ✓');
   }catch(err){ console.error('import',err); toast('Erreur pendant l\'import'); }
   e.target.value='';
 }
+
+// ---- HISTORIQUE INTERNE (sauvegardes stockées dans IndexedDB) ----
+// Enregistre un instantané JSON complet + checksum dans la table backups, puis purge les plus anciens.
+async function snapshotBackup(type){
+  const dump=await buildDump();
+  const payload=JSON.stringify(dump);
+  const rec={ date:new Date().toISOString(), type:type||'manuel',
+    checksum:dump._checksum, count:dumpRecordCount(dump), size:payload.length, payload };
+  const id=await db.backups.add(rec);
+  // purge : ne conserver que les MAX_BACKUPS plus récents
+  const all=await db.backups.orderBy('date').reverse().toArray();
+  if(all.length>MAX_BACKUPS){
+    const surplus=all.slice(MAX_BACKUPS).map(b=>b.id);
+    await db.backups.bulkDelete(surplus);
+  }
+  return id;
+}
+// Sauvegarde automatique quotidienne (au démarrage, une fois par jour).
+async function autoDailyBackup(){
+  try{
+    if(localStorage.getItem('sm_autoBackupDate')===today()) return;
+    // ne pas sauvegarder une base vide (premier lancement)
+    const n=await db.clients.count()+await db.orders.count()+await db.materials.count();
+    if(n===0){ localStorage.setItem('sm_autoBackupDate', today()); return; }
+    await snapshotBackup('auto-quotidienne');
+    localStorage.setItem('sm_autoBackupDate', today());
+  }catch(e){ console.error('autoBackup',e); }
+}
+// Restaure une sauvegarde de l'historique interne (avec filet de sécurité).
+async function restoreBackup(id){
+  const b=await db.backups.get(id); if(!b){ toast('Sauvegarde introuvable'); return; }
+  let dump; try{ dump=JSON.parse(b.payload); }catch(e){ toast('Sauvegarde corrompue (illisible)'); return; }
+  const v=verifyBackup(dump);
+  const warn = v.raisons.length ? `\n\n⚠ ${v.raisons.join(' ')}` : '\n\n✓ Intégrité vérifiée.';
+  if(!confirm(`Restaurer la sauvegarde du ${new Date(b.date).toLocaleString('fr-FR')} ?\n\n• ${b.count} enregistrement(s)${warn}\n\nL'état actuel sera remplacé (une sauvegarde de sécurité est prise avant).`)) return;
+  try{
+    await snapshotBackup('avant-restauration');
+    await applyDump(dump);
+    closeModal(); render(); toast('Sauvegarde restaurée ✓');
+  }catch(e){ console.error('restore',e); toast('Erreur pendant la restauration'); }
+}
+// Télécharge une sauvegarde de l'historique en .json (pour la mettre à l'abri hors appareil).
+async function downloadBackup(id){
+  const b=await db.backups.get(id); if(!b) return;
+  const blob=new Blob([b.payload],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='sensations-sauvegarde-'+b.date.slice(0,10)+'-'+id+'.json'; a.click();
+  toast('Sauvegarde téléchargée ✓');
+}
+async function deleteBackup(id){
+  if(!confirm('Supprimer cette sauvegarde de l\'historique ?')) return;
+  await db.backups.delete(id); renderBackups(); toast('Supprimée');
+}
+
+// ---- ÉCRAN SAUVEGARDE & SÉCURITÉ ----
+async function renderBackups(){
+  const backups = await db.backups.orderBy('date').reverse().toArray();
+  const lastExport = localStorage.getItem('sm_lastExport');
+  const dExp = lastExport ? daysTo(lastExport) : null;
+  const expWarn = (!lastExport || (dExp!==null && dExp<=-7));
+  const typeLabel = t => ({'auto-quotidienne':'Auto (quotidienne)','manuel':'Manuelle','avant-import':'Avant import','avant-restauration':'Avant restauration','avant-reparation':'Avant réparation'}[t]||t||'—');
+  const rows = backups.map(b=>{
+    let integ='—';
+    try{ const d=JSON.parse(b.payload); const v=verifyBackup(d); integ = v.ok ? '<span class="tag ok">vérifiée</span>' : '<span class="tag low">à vérifier</span>'; }
+    catch(e){ integ='<span class="tag low">illisible</span>'; }
+    const ko = Math.round((b.size||0)/1024);
+    return `<tr>
+      <td>${new Date(b.date).toLocaleString('fr-FR')}</td>
+      <td><span class="tag ${b.type==='auto-quotidienne'?'ok':'warn'}">${typeLabel(b.type)}</span></td>
+      <td>${b.count||0} enr.</td><td>${ko} Ko</td><td>${integ}</td>
+      <td style="text-align:right">
+        <span class="act" onclick="restoreBackup(${b.id})">Restaurer</span>
+        <span class="act" onclick="downloadBackup(${b.id})">Télécharger</span>
+        <span class="act del" onclick="deleteBackup(${b.id})">Suppr.</span></td></tr>`;
+  }).join('');
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Sauvegarde & sécurité</h1><p>${backups.length} sauvegarde(s) dans l'historique · max ${MAX_BACKUPS}</p></div></div>
+   ${expWarn?`<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div>${lastExport?`Dernier export manuel il y a ${Math.abs(dExp)} jour(s).`:'Aucun export manuel hors appareil pour le moment.'} Pensez à télécharger une sauvegarde et à la conserver ailleurs (e-mail, cloud) : iOS peut purger les données de l'app.</div></div>`:''}
+   <div class="panel"><h2>Actions</h2>
+     <div class="flex" style="flex-wrap:wrap;gap:8px">
+       <button class="btn gold" onclick="snapshotBackup('manuel').then(()=>{renderBackups();toast('Sauvegarde créée ✓');})">＋ Sauvegarder maintenant</button>
+       <button class="btn" onclick="exportData()">⬇ Exporter (.json)</button>
+       <label class="btn ghost" style="cursor:pointer">⬆ Importer (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
+       <button class="btn ghost" onclick="runConsistencyCheck(true)">🔍 Vérifier l'intégrité</button>
+     </div>
+     <p class="note">La sauvegarde automatique se déclenche une fois par jour à l'ouverture. L'historique est conservé dans l'app ; l'export .json sert à mettre vos données à l'abri hors de l'appareil.</p>
+   </div>
+   <div class="panel"><h2>Historique des sauvegardes</h2>
+   ${backups.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Contenu</th><th>Taille</th><th>Intégrité</th><th></th></tr></thead>
+     <tbody>${rows}</tbody></table></div>`:`<div class="empty">Aucune sauvegarde encore. Cliquez sur « Sauvegarder maintenant » ou attendez la sauvegarde automatique.</div>`}
+   </div>`;
+}
+
+// ---- CONTRÔLE DE COHÉRENCE AU DÉMARRAGE ----
+// Détecte une base corrompue / incohérente et propose une restauration depuis l'historique.
+async function checkDbConsistency(){
+  const issues=[];
+  try{
+    // 1) la base répond-elle ? lecture de chaque table
+    for(const t of TABLES){
+      try{ await db.table(t).count(); }
+      catch(e){ issues.push(`Table « ${t} » inaccessible.`); }
+    }
+    // 2) intégrité référentielle légère (commandes ↔ clients, items ↔ productions)
+    const [orders, clients, items, prods] = await Promise.all([
+      db.orders.toArray(), db.clients.toArray(), db.orderItems.toArray(), db.productions.toArray()
+    ]);
+    const clientIds=new Set(clients.map(c=>c.id));
+    const prodIds=new Set(prods.map(p=>p.id));
+    const ordOrph=orders.filter(o=>o.clientId && !clientIds.has(o.clientId)).length;
+    const itemOrph=items.filter(it=>it.productionId && !prodIds.has(it.productionId)).length;
+    if(ordOrph>0) issues.push(`${ordOrph} commande(s) liées à un client supprimé.`);
+    if(itemOrph>0) issues.push(`${itemOrph} liaison(s) batch pointant vers une production absente.`);
+    // 3) lignes de commande structurellement valides
+    const badLines=orders.filter(o=>o.lignes!=null && !Array.isArray(o.lignes)).length;
+    if(badLines>0) issues.push(`${badLines} commande(s) au format de lignes invalide.`);
+  }catch(e){
+    issues.push('La base de données n\'a pas pu être lue (corruption possible).');
+  }
+  return issues;
+}
+async function runConsistencyCheck(manual){
+  const issues = await checkDbConsistency();
+  if(!issues.length){
+    if(manual) toast('✓ Base cohérente, aucune anomalie détectée');
+    return;
+  }
+  // proposer une restauration depuis la dernière sauvegarde saine
+  let lastGood=null;
+  try{
+    const backups=await db.backups.orderBy('date').reverse().toArray();
+    for(const b of backups){ try{ const d=JSON.parse(b.payload); if(verifyBackup(d).ok){ lastGood=b; break; } }catch(e){} }
+  }catch(e){}
+  openModal(`<h3>⚠ Anomalies détectées dans les données</h3>
+    <p class="note">Un contrôle de cohérence a relevé :</p>
+    ${issues.map(i=>`<div class="sum-box"><span>•</span><b style="font-weight:500">${esc(i)}</b></div>`).join('')}
+    ${lastGood
+      ? `<p class="note" style="margin-top:8px">Une sauvegarde saine du ${new Date(lastGood.date).toLocaleString('fr-FR')} est disponible.</p>
+         <div class="modal-actions">
+           <button class="btn ghost" onclick="closeModal()">Ignorer</button>
+           <button class="btn ghost" onclick="closeModal();view='sauvegardes';setActiveView&&setActiveView('sauvegardes');renderBackups()">Voir l'historique</button>
+           <button class="btn gold" onclick="restoreBackup(${lastGood.id})">Restaurer la sauvegarde saine</button>
+         </div>`
+      : `<p class="note" style="margin-top:8px">Aucune sauvegarde saine n'est disponible dans l'historique. Si vous disposez d'un fichier .json exporté, importez-le.</p>
+         <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+           <button class="btn" onclick="closeModal();view='sauvegardes';setActiveView&&setActiveView('sauvegardes');renderBackups()">Aller aux sauvegardes</button></div>`}`);
+}
+
+
 function csvDownload(name, rows){
   const csv=rows.map(r=>r.map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(';')).join('\n');
   const blob=new Blob(['\ufeff'+csv],{type:'text/csv'});
@@ -3560,6 +3761,8 @@ if('serviceWorker' in navigator){
 // Toujours recalculée sur les données réelles du jour.
 async function showForecastPopup(opts){
   opts=opts||{};
+  // ne pas recouvrir une fenêtre déjà ouverte (ex. alerte de cohérence au démarrage)
+  if(overlay && overlay.classList.contains('show')) return;
   let alertes;
   try{ alertes = await forecastAlerts(); }catch(e){ return; }
   if(!alertes || !alertes.length) return;
@@ -3587,6 +3790,9 @@ async function showForecastPopup(opts){
   const opened = await handleTraceAnchor().catch(()=>false);
   if(!opened) render();
   exportReminder();
+  // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
+  try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
+  try{ await autoDailyBackup(); }catch(e){ console.error('autoBackup',e); }
   // Surveillance quotidienne : réévalue toutes les commandes futures vs stock actuel.
   setTimeout(()=>{ showForecastPopup({daily:true}); }, 600);
 })();
