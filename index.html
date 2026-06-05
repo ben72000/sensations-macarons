@@ -83,6 +83,11 @@ tr:hover td{background:var(--creme-2)}
 .act:hover{text-decoration:underline}.act.del{color:var(--red)}
 .link-name{cursor:pointer;color:var(--bordeaux);border-bottom:1px dotted var(--caramel)}
 .link-name:hover{color:var(--caramel)}
+.pay-toggle{display:inline-flex;gap:6px;flex-wrap:wrap}
+.pay-toggle .pay-opt{display:inline-flex;align-items:center;gap:5px;font-size:.84rem;padding:4px 8px;border:1.5px solid #e0d5c5;border-radius:9px;cursor:pointer;background:#fff}
+.pay-toggle .pay-opt input{width:auto;margin:0}
+.pay-toggle.sm .pay-opt{font-size:.76rem;padding:3px 6px}
+.sel-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fbf4ec;border:1px solid #e8dccd;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:.86rem;font-weight:600;color:var(--bordeaux)}
 .overlay{position:fixed;inset:0;background:rgba(43,26,31,.45);display:none;align-items:center;
   justify-content:center;z-index:50;backdrop-filter:blur(3px)}
 .overlay.show{display:flex}
@@ -229,6 +234,7 @@ tr:hover td{background:var(--creme-2)}
       <button data-v="couts"><span class="ico">€</span><span>Coûts & prix</span></button>
       <button data-v="stats"><span class="ico">📊</span><span>Statistiques</span></button>
       <button data-v="analyse"><span class="ico">🧭</span><span>Analyse &amp; Production</span></button>
+      <button data-v="previsionnel"><span class="ico">🔮</span><span>Prévisionnel stocks</span></button>
       <button data-v="assistant"><span class="ico">🤖</span><span>Assistant</span></button>
       <div class="sep">Qualité</div>
       <button data-v="dlc"><span class="ico">⏰</span><span>Suivi DLC</span></button>
@@ -272,6 +278,7 @@ tr:hover td{background:var(--creme-2)}
       <button data-v="couts"><span class="ico">€</span>Coûts & prix</button>
       <button data-v="stats"><span class="ico">📊</span>Statistiques</button>
       <button data-v="analyse"><span class="ico">🧭</span>Analyse &amp; Production</button>
+      <button data-v="previsionnel"><span class="ico">🔮</span>Prévisionnel stocks</button>
       <button data-v="assistant"><span class="ico">🤖</span>Assistant</button>
       <button data-v="dlc"><span class="ico">⏰</span>Suivi DLC</button>
       <button data-v="tracabilite"><span class="ico">⊕</span>Traçabilité</button>

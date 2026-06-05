@@ -124,7 +124,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, analyse:renderAnalyse, assistant:renderAssistant
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, analyse:renderAnalyse, previsionnel:renderForecast, assistant:renderAssistant
 };
 let _navLast=0;
 function setActiveView(v){
@@ -1376,6 +1376,7 @@ async function markPaid(id, fromModal){
 let cmdSearch='';
 let _cmdCache=null;
 async function renderCmd(){
+  _cmdSel = new Set();   // sélection réinitialisée à chaque ouverture de l'écran
   const orders = (await db.orders.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
   const clById = Object.fromEntries(clients.map(c=>[c.id,c]));
@@ -1412,30 +1413,76 @@ async function renderCmd(){
      <button class="btn" onclick="cmdForm()">+ Nouvelle commande</button></div>
    <div class="panel">
      <input class="search" id="cmdSearch" style="width:100%;margin-bottom:12px" placeholder="N° commande, client, produit, parfum, notes, règlement…" value="${esc(cmdSearch)}" oninput="cmdFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
-     <div class="table-wrap"><table><thead><tr><th>Date</th><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead>
+     <div id="cmdSelBar" class="sel-bar" style="display:none">
+       <span id="cmdSelCount">0 sélectionnée(s)</span>
+       <div class="flex" style="gap:6px">
+         <button class="btn ghost sm" onclick="cmdSelectAllVisible()">Tout cocher</button>
+         <button class="btn ghost sm" onclick="cmdClearSelection()">Tout décocher</button>
+         <button class="btn gold sm" onclick="cmdExportSelection()">⬇ Exporter la sélection (TXT)</button>
+       </div>
+     </div>
+     <div class="table-wrap"><table><thead><tr><th style="width:34px"><input type="checkbox" id="cmdSelHead" onclick="cmdToggleAll(this.checked)" title="Tout sélectionner"></th><th>Date</th><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead>
        <tbody id="cmdBody"></tbody></table></div>
      <div id="cmdEmpty" class="empty" style="display:none">Aucune commande.</div>
    </div>`;
   cmdFilter(cmdSearch);
+  cmdUpdateSelBar();
 }
 function _cmdRow(row){
   const o=row.o; const paye=o.paiement==='Payé';
+  const checked = _cmdSel.has(o.id) ? 'checked' : '';
   return `<tr>
+     <td><input type="checkbox" class="cmd-check" ${checked} onclick="cmdToggleOne(${o.id},this.checked)"></td>
      <td>${fmtDate(o.date)}</td>
      <td>${o.clientId?`<b><span class="link-name" onclick="clientForm(${o.clientId})">${esc(_cmdClName(o.clientId))}</span></b>`:`<b>—</b>`}</td>
      <td><span style="font-size:.82rem">${esc(row.resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
-     <td><span class="tag ${paye?'done':'todo'}">${esc(o.paiement||'En attente')}</span>${o.reglement?`<br><span style="color:#9a8a82;font-size:.74rem">${esc(o.reglement)}</span>`:''}${paye&&o.datePaiement?`<br><span style="color:#9a8a82;font-size:.72rem">le ${fmtDate(o.datePaiement)}</span>`:''}${!paye?`<br><span class="act" style="font-size:.74rem" onclick="markPaid(${o.id})">✓ Payé</span>`:''}</td>
+     <td>
+       <div class="pay-toggle sm">
+         <label class="pay-opt"><input type="radio" name="paylist_${o.id}" ${!paye?'checked':''} onclick="listSetPay(${o.id},'En attente')"><span>En attente</span></label>
+         <label class="pay-opt"><input type="radio" name="paylist_${o.id}" ${paye?'checked':''} onclick="listSetPay(${o.id},'Payé')"><span>Payé</span></label>
+       </div>
+       ${o.reglement?`<span style="color:#9a8a82;font-size:.72rem">${esc(o.reglement)}</span>`:''}${paye&&o.datePaiement?`<span style="color:#9a8a82;font-size:.72rem"> · le ${fmtDate(o.datePaiement)}</span>`:''}
+     </td>
      <td><span class="act-status" onclick="cycleStatus(${o.id})" title="Toucher pour changer le statut">${statusTag(o.statut)}</span></td>
      <td>${row.nbLies?`<span class="tag ok">${row.nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
      <td style="text-align:right"><span class="act" onclick="cmdView(${o.id})">Détail</span><span class="act" onclick="exportOrderText(${o.id})">Texte</span><span class="act" onclick="cmdLink(${o.id})">Lier</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`;
+}
+// ---- Statut paiement instantané depuis la liste (En attente / Payé) ----
+async function listSetPay(id, statut){
+  const o=await db.orders.get(id); if(!o) return;
+  const patch={paiement:statut};
+  if(statut==='Payé'){ patch.datePaiement = o.datePaiement||today(); }
+  await db.orders.update(id, patch);
+  // mise à jour locale du cache pour refléter sans recharger toute la page
+  if(_cmdCache){ const r=_cmdCache.find(x=>x.o.id===id); if(r){ r.o.paiement=statut; if(patch.datePaiement) r.o.datePaiement=patch.datePaiement; } }
+  toast(statut==='Payé'?'Marquée payée ✓':'Repassée en attente');
+  cmdFilter(cmdSearch); // redessine le corps seulement
+}
+// ---- Sélection multiple ----
+let _cmdSel = new Set();
+function cmdToggleOne(id, on){ if(on) _cmdSel.add(id); else _cmdSel.delete(id); cmdUpdateSelBar(); }
+function cmdToggleAll(on){ cmdToggleAllVisible(on); }
+function cmdSelectAllVisible(){ cmdToggleAllVisible(true); }
+function cmdToggleAllVisible(on){
+  // agit sur les commandes actuellement filtrées/affichées
+  const rows = searchRank(_cmdCache||[], cmdSearch);
+  rows.forEach(r=>{ if(on) _cmdSel.add(r.o.id); else _cmdSel.delete(r.o.id); });
+  cmdFilter(cmdSearch); cmdUpdateSelBar();
+}
+function cmdClearSelection(){ _cmdSel.clear(); const h=document.getElementById('cmdSelHead'); if(h)h.checked=false; cmdFilter(cmdSearch); cmdUpdateSelBar(); }
+function cmdUpdateSelBar(){
+  const bar=document.getElementById('cmdSelBar'), cnt=document.getElementById('cmdSelCount');
+  if(!bar) return;
+  if(_cmdSel.size>0){ bar.style.display='flex'; if(cnt) cnt.textContent=`${_cmdSel.size} sélectionnée(s)`; }
+  else { bar.style.display='none'; }
 }
 let _cmdClNameMap={};
 function _cmdClName(id){ return _cmdClNameMap[id]||'—'; }
 function cmdFilter(q){
   cmdSearch=q||'';
   if(!_cmdCache) return;
-  searchRenderBody('cmdBody','cmdCount','cmdEmpty', _cmdCache, q, _cmdRow, 8, 'commande(s)');
+  searchRenderBody('cmdBody','cmdCount','cmdEmpty', _cmdCache, q, _cmdRow, 9, 'commande(s)');
 }
 // Vue détail d'une commande (multi-lignes)
 async function cmdView(id){
@@ -1482,7 +1529,8 @@ async function cmdView(id){
     <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientForm(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}</p>
     ${blocks||'<p class="note">Aucun produit.</p>'}
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${o.perso?'Oui':'Non'}</b></div>
-    <div class="sum-box"><span>Montant total</span><b>${euro(o.montant)}</b></div>
+    ${+o.remiseGlobale>0?`<div class="sum-box"><span>Remise globale</span><b>−${o.remiseGlobale}%</b></div>`:''}
+    <div class="sum-box"><span>Montant total${+o.remiseGlobale>0||lignes.some(l=>+l.remisePct>0)?' (TTC, remises incluses)':''}</span><b>${euro(o.montant)}</b></div>
     <div class="sum-box"><span>Paiement</span><b>${esc(o.paiement||'En attente')}${o.reglement?' · '+esc(o.reglement):''}${o.paiement==='Payé'&&o.datePaiement?' · le '+fmtDate(o.datePaiement):''}</b></div>
     ${o.paiement!=='Payé'?`<button class="btn gold sm" style="margin-top:6px" onclick="markPaid(${id},true)">✓ Marquer payée</button>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">Statut de la commande</h3>
@@ -1510,24 +1558,44 @@ let cmdLines = [];      // lignes de produits de la commande en cours
 let cmdProductsCache = [];
 let cmdClientsCache = [];
 
-// Convertit une ancienne commande mono-type en lignes (rétro-compat)
+// Convertit une ancienne commande mono-type en lignes (rétro-compat).
+// Renvoie les lignes SOUS FORME DE STOCKAGE : parfums/items en TABLEAU [{nom,qte}].
+// (Forme attendue par les lecteurs : liste commandes, analytics, besoins matières, détail.)
 function orderToLines(o){
   if(Array.isArray(o.lignes) && o.lignes.length) return JSON.parse(JSON.stringify(o.lignes));
   // ancien format : un seul type
   if(o.type==='evenement'){
-    const parfums={}; (o.parfums||[]).forEach(p=>{if(p.qte>0)parfums[p.nom]=p.qte;});
+    const parfums=[]; (o.parfums||[]).forEach(p=>{if(p.qte>0)parfums.push({nom:p.nom,qte:p.qte});});
     return [{type:'evenement', evQte:o.evQte||EVENT_MIN, equip:o.equip||0, parfums}];
   }
   if(o.type==='grand'){
-    const items={}; (o.bigItems||[]).forEach(p=>{if(p.qte>0)items[p.nom]=p.qte;});
+    const items=[]; (o.bigItems||[]).forEach(p=>{if(p.qte>0)items.push({nom:p.nom,qte:p.qte});});
     return [{type:'grand', tarif:o.tarif||'particulier', items}];
   }
   if(o.type==='coffret' || o.taille){
-    const parfums={}; (o.parfums||[]).forEach(p=>{if(p.qte>0)parfums[p.nom]=p.qte;});
+    const parfums=[]; (o.parfums||[]).forEach(p=>{if(p.qte>0)parfums.push({nom:p.nom,qte:p.qte});});
     return [{type:'coffret', taille:o.taille||6, parfums}];
   }
   return [];
 }
+// Modèle d'ÉDITION en mémoire : parfums/items en OBJET {nom:qte}. Utilisé uniquement par le
+// formulaire de commande (drawLines & co). Corrige la perte des parfums à la réouverture.
+function _parfumsToObj(p){
+  if(!p) return {};
+  if(Array.isArray(p)){ const o={}; p.forEach(x=>{ if(x && x.nom && +x.qte>0) o[x.nom]=+x.qte; }); return o; }
+  if(typeof p==='object'){ const o={}; Object.keys(p).forEach(k=>{ if(+p[k]>0) o[k]=+p[k]; }); return o; }
+  return {};
+}
+function _lineToEdit(ln){
+  const t=ln.type;
+  if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
+  if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
+  if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0};
+  if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items)};
+  return {...ln};
+}
+// Charge une commande dans le modèle d'édition (objet) sans rien perdre.
+function orderToEditLines(o){ return orderToLines(o).map(_lineToEdit); }
 
 async function cmdForm(id, opts){
   opts = opts || {};
@@ -1536,14 +1604,13 @@ async function cmdForm(id, opts){
   const o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
   // Préserver les lignes en cours si on rouvre après ajout d'un client
   if(opts.keepLines && Array.isArray(cmdLines)){ /* cmdLines déjà en mémoire, on le garde */ }
-  else { cmdLines = orderToLines(o); }
+  else { cmdLines = orderToEditLines(o); }   // forme objet, parfums conservés
   const preselect = opts.clientId || o.clientId || 0;
   // trier les clients par nom pour un défilement lisible même à plusieurs centaines
   cmdClientsCache.sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
   const clOpts = '<option value="0">— aucun —</option>'+cmdClientsCache.map(c=>`<option value="${c.id}" ${preselect===c.id?'selected':''}>${esc(c.nom)}${c.tel?' · '+esc(c.tel):''}</option>`).join('');
   const curStatut = o.statut==='En cours' ? 'À préparer' : (o.statut||'À préparer');
   const stOpts = ORDER_STATUS.map(s=>`<option ${curStatut===s?'selected':''}>${s}</option>`).join('');
-  const payStOpts = PAY_STATUS.map(s=>`<option ${o.paiement===s?'selected':''}>${s}</option>`).join('');
   const regOpts = `<option value="">—</option>`+PAY_METHODS.map(s=>`<option ${o.reglement===s?'selected':''}>${s}</option>`).join('');
   openModal(`<h3>${id?'Modifier':'Nouvelle'} commande</h3>
    <div class="field"><label>Client</label>
@@ -1564,21 +1631,23 @@ async function cmdForm(id, opts){
 
    <label style="font-size:.82rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin:6px 0"><input type="checkbox" id="f_perso" style="width:auto" ${o.perso?'checked':''}> Personnalisation des couleurs</label>
 
-   <div class="row2">
-     <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0'"></div>
-     <div class="field"><label>Statut paiement</label>
-       <div class="flex" style="gap:6px;align-items:stretch">
-         <select id="f_pay" style="flex:1" onchange="cmdSyncPayUI()">${payStOpts}</select>
-         <button type="button" class="btn gold sm" id="f_payBtn" style="white-space:nowrap" onclick="cmdQuickPay()">✓ Payé</button>
-       </div>
+   <div class="field"><label>Statut de paiement</label>
+     <div class="pay-toggle" id="payToggle">
+       <label class="pay-opt"><input type="radio" name="f_pay_radio" value="En attente" ${o.paiement!=='Payé'?'checked':''} onchange="cmdSetPay('En attente')"> <span>En attente</span></label>
+       <label class="pay-opt"><input type="radio" name="f_pay_radio" value="Payé" ${o.paiement==='Payé'?'checked':''} onchange="cmdSetPay('Payé')"> <span>Payé</span></label>
      </div>
+     <input type="hidden" id="f_pay" value="${esc(o.paiement||'En attente')}">
    </div>
    <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin:2px 0 6px"><input type="checkbox" id="f_autopay" style="width:auto" ${autoPayEnabled()?'checked':''} onchange="setAutoPay(this.checked);cmdSyncPayUI()"> Passer automatiquement en « Payé » dès qu'un règlement est saisi</label>
-   <div class="sum-box" id="priceBreak" style="display:none"></div>
    <div class="row2">
      <div class="field"><label>Règlement</label><select id="f_reg" onchange="cmdSyncPayUI()">${regOpts}</select></div>
      <div class="field"><label>Statut commande</label><select id="f_st">${stOpts}</select></div>
    </div>
+   <div class="row2">
+     <div class="field"><label>% de remise globale</label><input type="number" min="0" max="100" step="1" id="f_remiseg" value="${o.remiseGlobale||''}" placeholder="0" oninput="cmdRecalc()"></div>
+     <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0'"></div>
+   </div>
+   <div class="sum-box" id="priceBreak" style="display:none"></div>
 
    <div class="field" style="margin-top:14px"><label>Notes</label><textarea id="f_notes" rows="2" placeholder="Allergies, livraison, demande spéciale…">${esc(o.notes||'')}</textarea></div>
 
@@ -1589,26 +1658,19 @@ async function cmdForm(id, opts){
   drawLines();
 }
 
-// BBC : bouton « ✓ Payé » dans le formulaire — force le statut paiement à Payé sans menu déroulant.
-function cmdQuickPay(){
-  const pay=document.getElementById('f_pay'); if(pay){ pay.value='Payé'; }
-  cmdSyncPayUI();
-  toast('Paiement : Payé (enregistrez pour valider)');
+// Statut de paiement piloté par 2 radios (En attente / Payé), une seule active à la fois.
+function cmdSetPay(v){
+  const hid=document.getElementById('f_pay'); if(hid) hid.value=v;
+  // refléter sur les radios (cas appel programmatique)
+  document.querySelectorAll('input[name="f_pay_radio"]').forEach(r=>{ r.checked = (r.value===v); });
 }
-// Synchronise l'UI paiement : auto-Payé si règlement saisi (option active), état du bouton.
+// Conservé pour compat. : force « Payé ».
+function cmdQuickPay(){ cmdSetPay('Payé'); }
+// Auto-Payé si un règlement est saisi et l'option active. Garantit la cohérence règlement/paiement.
 function cmdSyncPayUI(){
-  const pay=document.getElementById('f_pay');
-  const reg=document.getElementById('f_reg');
-  const btn=document.getElementById('f_payBtn');
-  if(!pay) return;
-  if(autoPayEnabled() && reg && reg.value && pay.value!=='Payé'){ pay.value='Payé'; }
-  if(btn){
-    const paid = pay.value==='Payé';
-    btn.disabled = paid;
-    btn.textContent = paid ? '✓ Payée' : '✓ Payé';
-    btn.style.opacity = paid ? '.55' : '1';
-    btn.style.pointerEvents = paid ? 'none' : 'auto';
-  }
+  const hid=document.getElementById('f_pay'); const reg=document.getElementById('f_reg');
+  if(!hid) return;
+  if(autoPayEnabled() && reg && reg.value && hid.value!=='Payé'){ cmdSetPay('Payé'); toast('Règlement saisi → Payé'); }
 }
 
 // Recherche client instantanée dans le formulaire de commande (nom ou téléphone)
@@ -1711,6 +1773,7 @@ function drawCoffretLine(ln,i){
     <div class="flav-grid">${flavRows}</div>
     <div class="sum-box"><span>${nbDiff} parfum(s) différent(s) · ${totQ}/${ln.taille} macarons</span><b>${over?`+${over} suppl. (${euro(over*FLAVOR_SURCHARGE)})`:'inclus'}</b></div>
     ${totQ&&totQ!==+ln.taille?`<p class="note" style="color:var(--red)">⚠ ${totQ} macarons sélectionnés pour un coffret de ${ln.taille}.</p>`:''}
+    ${lineRemiseRow(ln,i)}
   </div>`;
 }
 function setCoffretTaille(i,v){ cmdLines[i].taille=+v; // purge les parfums au-delà de la nouvelle taille
@@ -1736,6 +1799,7 @@ function drawEventLine(ln,i){
     <div class="sum-box"><span>${ln.evQte} macarons · ${ln.equip} pyramide(s)</span><b>${euro(ln.evQte*EVENT_PRICE + ln.equip*EQUIP_PRICE)}</b></div>
     ${ln.equip<EVENT_MIN_EQUIP?`<p class="note" style="color:var(--red)">⚠ Au moins ${EVENT_MIN_EQUIP} pyramide obligatoire.</p>`:''}
     ${totQ&&totQ!==+ln.evQte?`<p class="note" style="color:var(--red)">⚠ ${totQ} parfums détaillés ≠ ${ln.evQte} macarons.</p>`:''}
+    ${lineRemiseRow(ln,i)}
   </div>`;
 }
 function setEventQte(i,v){ cmdLines[i].evQte=+v||0; cmdRecalc(); }
@@ -1760,6 +1824,7 @@ function drawBigLine(ln,i){
     <label style="font-size:.78rem;color:#7a6a62">Produits (quantité)</label>
     <div class="flav-grid">${bigRows}</div>
     <div class="sum-box"><span>${tot} pièce(s) × ${euro(pu)}</span><b>${euro(tot*pu)}</b></div>
+    ${lineRemiseRow(ln,i)}
   </div>`;
 }
 function setBigTarif(i,v){ cmdLines[i].tarif=v; drawLines(); }
@@ -1793,8 +1858,8 @@ function drawDonLine(ln,i){
 function setDonParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 function setDonItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdLines[i].items[f]=q; else delete cmdLines[i].items[f]; drawLines(); }
 
-// Calcule le prix d'une ligne
-function lineTotal(ln){
+// Prix d'une ligne AVANT remise de ligne
+function lineTotalBase(ln){
   if(ln.type==='coffret'){
     const base = (BOX_PRICES[ln.taille]!=null) ? BOX_PRICES[ln.taille] : (cmdProductsCache.find(p=>+p.taille===+ln.taille)||{}).prix||0;
     const nbDiff = Object.values(ln.parfums||{}).filter(q=>q>0).length;
@@ -1807,14 +1872,49 @@ function lineTotal(ln){
   if(ln.type==='don') return 0;
   return 0;
 }
+// Remise de ligne en € (bornée 0–100 %)
+function lineRemiseEuro(ln){
+  const pct=Math.max(0,Math.min(100,+ln.remisePct||0));
+  return lineTotalBase(ln)*pct/100;
+}
+// Prix d'une ligne APRÈS remise de ligne
+function lineTotal(ln){
+  return Math.max(0, lineTotalBase(ln) - lineRemiseEuro(ln));
+}
+// Bloc d'affichage « remise de ligne » réutilisé par chaque type (sauf don, gratuit)
+function lineRemiseRow(ln,i){
+  if(ln.type==='don') return '';
+  const base=lineTotalBase(ln);
+  const pct=+ln.remisePct||0;
+  const net=lineTotal(ln);
+  return `<div class="row2" style="align-items:end">
+      <div class="field" style="margin:0"><label>% de remise (ligne)</label>
+        <input type="number" min="0" max="100" step="1" value="${pct||''}" placeholder="0"
+          oninput="setLineRemise(${i},this.value)"></div>
+      <div class="sum-box" style="margin:0">${pct>0
+        ? `<span>Avant ${euro(base)} · −${pct}%</span><b>${euro(net)}</b>`
+        : `<span>Montant ligne</span><b>${euro(base)}</b>`}</div>
+    </div>`;
+}
+function setLineRemise(i,v){ let p=+v||0; if(p<0)p=0; if(p>100)p=100; cmdLines[i].remisePct=p; cmdRecalc(); }
 function cmdRecalc(){
-  const total = cmdLines.reduce((s,ln)=>s+lineTotal(ln),0);
+  const sousTotal = cmdLines.reduce((s,ln)=>s+lineTotal(ln),0); // après remises de ligne
+  const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
+  const remiseG = sousTotal*gpct/100;
+  const total = Math.max(0, sousTotal - remiseG);
   const mt=document.getElementById('f_mt');
   if(mt && mt.dataset.auto==='1'){ mt.value = total?total.toFixed(2):''; }
   const brk=document.getElementById('priceBreak');
   if(brk){
-    if(cmdLines.length){ brk.style.display='flex'; brk.innerHTML=`<span>Total ${cmdLines.length} produit(s)</span><b>${euro(total)}</b>`; }
-    else brk.style.display='none';
+    if(cmdLines.length){
+      brk.style.display='block';
+      const remiseLignes = cmdLines.reduce((s,ln)=>s+lineRemiseEuro(ln),0);
+      brk.innerHTML =
+        `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(cmdLines.reduce((s,ln)=>s+lineTotalBase(ln),0))}</b></div>`+
+        (remiseLignes>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
+        (gpct>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseG)}</b></div>`:'')+
+        `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(total)}</b></div>`;
+    } else brk.style.display='none';
   }
 }
 
@@ -1836,16 +1936,18 @@ async function saveCmd(id){
       if(!tot){ toast('Don : indique au moins un macaron offert'); return; }
     }
   }
-  // normaliser les lignes (parfums/items en tableaux pour stockage propre)
+  // normaliser les lignes (parfums/items en tableaux pour stockage propre), remise de ligne conservée
   const lignes = cmdLines.map(ln=>{
-    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+    const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
+    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
   });
+  const remiseGlobale = Math.max(0, Math.min(100, +val('f_remiseg')||0));
   const o={
     clientId:+val('f_cl')||0, date:val('f_date'),
-    lignes,
+    lignes, remiseGlobale,
     perso:document.getElementById('f_perso').checked,
     montant:+val('f_mt')||0,
     paiement:val('f_pay')||'En attente', reglement:val('f_reg')||'',
@@ -1867,6 +1969,30 @@ async function saveCmd(id){
     await db.events.add({date:o.date,titre:'Cmd '+(cl?cl.nom:'')+` (${lignes.length} produit${lignes.length>1?'s':''})`,type:'cmd',refId:oid});
   }
   closeModal(); renderCmd(); toast('Commande enregistrée ✓');
+  // Vérification prévisionnelle immédiate : la commande crée-t-elle un risque sous 8 jours ?
+  await checkForecastForOrder(oid);
+}
+// Contrôle ciblé après création/modif : alerte si CETTE commande (livraison < 8 j) est en stock insuffisant.
+async function checkForecastForOrder(orderId){
+  try{
+    const o = await db.orders.get(orderId);
+    if(!o || !o.date) return;
+    const dans = daysTo(o.date);
+    if(dans===null || dans>=8 || normStatus(o.statut)==='Livrée') return; // hors fenêtre d'alerte
+    const f = await computeForecast({horizon:8});
+    const dem = _orderParfumDemand(o);
+    // y a-t-il un parfum de cette commande en rupture prévisionnelle ?
+    const concernes = f.lignes.filter(l=> dem[l.parfum] && l.soldePrev<0);
+    if(!concernes.length) return;
+    const lignes = concernes.map(l=>`<div class="sum-box"><span>⚠ <b>${esc(l.parfum)}</b></span><b style="color:var(--red,#b3261e)">manque ${qty(l.manque)}</b></div>`).join('');
+    openModal(`<h3>⚠ Stock insuffisant pour cette commande</h3>
+      <p class="note">Livraison ${dans<=0?"aujourd'hui":'dans '+dans+' jour(s)'} (${fmtDate(o.date)}). Le stock fini actuel ne couvre pas les commandes à venir pour :</p>
+      ${lignes}
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal()">OK</button>
+        <button class="btn gold" onclick="closeModal();view='previsionnel';setActiveView&&setActiveView('previsionnel');renderForecast()">Voir le prévisionnel</button>
+      </div>`);
+  }catch(e){ /* silencieux */ }
 }
 async function delCmd(id){
   // Compter ce qui sera impacté pour informer l'utilisateur
@@ -2128,6 +2254,87 @@ function analyzeAnomalies(R){
 
 // Rapproche stock fini (productions.qteRestante) et consommation récente pour
 // détecter les risques de rupture. Retourne par recette un état de couverture.
+// ---- PRÉVISIONNEL STOCKS / COMMANDES ----
+// Construit l'état prévisionnel par parfum : stock fini actuel, réservations datées
+// (commandes futures non livrées), solde prévisionnel et risques de rupture.
+// Tout est calculé sur les données réelles du jour (today()).
+function _orderParfumDemand(o){
+  // renvoie {parfum: qte} pour une commande (coffret/événement/don = macarons ; grand format = pièces)
+  const acc={};
+  orderToLines(o).forEach(ln=>{
+    (ln.parfums||[]).forEach(p=>{ if(+p.qte>0) acc[p.nom]=(acc[p.nom]||0)+(+p.qte); });
+    (ln.items||[]).forEach(p=>{ if(+p.qte>0){ const k=p.nom; acc[k]=(acc[k]||0)+(+p.qte); } });
+  });
+  return acc;
+}
+async function computeForecast(opts){
+  opts=opts||{};
+  const horizon = opts.horizon!=null ? opts.horizon : 8;     // seuil d'alerte en jours
+  const recipes = await db.recipes.toArray();
+  const prods = await db.productions.toArray();
+  const orders = await db.orders.toArray();
+  const norm = s=>aiNormalize(s);
+
+  // 1) STOCK FINI ACTUEL par parfum (somme des batchs restants, regroupés par recette/produitNom)
+  const stockByParfum = {};
+  prods.forEach(p=>{
+    const r = recipes.find(x=>x.id===p.recipeId);
+    const nom = r ? r.produitNom : ('Recette #'+p.recipeId);
+    stockByParfum[nom] = (stockByParfum[nom]||0) + (+p.qteRestante||0);
+  });
+
+  // 2) RÉSERVATIONS : commandes à honorer (date >= aujourd'hui) et non livrées
+  const todayStr = today();
+  const futureOrders = orders.filter(o=> o.date && o.date>=todayStr && normStatus(o.statut)!=='Livrée');
+  // demande par parfum (toutes commandes futures) + détail daté par parfum
+  const reservedByParfum = {};       // parfum -> qte totale réservée
+  const datedByParfum = {};          // parfum -> [{date, qte, orderId, clientId, dans}]
+  futureOrders.forEach(o=>{
+    const dem=_orderParfumDemand(o);
+    const dans = daysTo(o.date); // jours avant livraison (0 = aujourd'hui)
+    for(const nom in dem){
+      reservedByParfum[nom] = (reservedByParfum[nom]||0) + dem[nom];
+      (datedByParfum[nom] ||= []).push({date:o.date, qte:dem[nom], orderId:o.id, clientId:o.clientId||0, dans});
+    }
+  });
+
+  // 3) PROJECTION par parfum : trie les réservations par date, calcule le solde courant
+  const parfums = [...new Set([...Object.keys(stockByParfum), ...Object.keys(reservedByParfum)])];
+  const lignes = parfums.map(nom=>{
+    const stock = stockByParfum[nom]||0;
+    const resv = (datedByParfum[nom]||[]).slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    let solde = stock;
+    let firstShortDate=null, firstShortDans=null, manqueTotal=0;
+    const echeances = resv.map(r=>{
+      solde -= r.qte;
+      const rupture = solde < 0;
+      if(rupture && firstShortDate===null){ firstShortDate=r.date; firstShortDans=r.dans; }
+      return {...r, soldeApres:solde, rupture};
+    });
+    const reserved = resv.reduce((s,r)=>s+r.qte,0);
+    const soldePrev = stock - reserved;
+    if(soldePrev<0) manqueTotal = -soldePrev;
+    // alerte si une rupture survient pour une livraison dans < horizon jours
+    const alerte = echeances.some(e=> e.rupture && e.dans!=null && e.dans < horizon);
+    return {parfum:nom, stock, reserved, soldePrev, manque:manqueTotal,
+      firstShortDate, firstShortDans, alerte, echeances};
+  }).sort((a,b)=>{
+    // priorité : alerte d'abord, puis solde prévisionnel croissant
+    if(a.alerte!==b.alerte) return a.alerte?-1:1;
+    return a.soldePrev-b.soldePrev;
+  });
+
+  const alertes = lignes.filter(l=>l.alerte);
+  return {horizon, todayStr, lignes, alertes,
+    nbFutur:futureOrders.length,
+    nbParfumsRupture: lignes.filter(l=>l.soldePrev<0).length};
+}
+// Résumé court des alertes pour la popup quotidienne.
+async function forecastAlerts(){
+  const f = await computeForecast({horizon:8});
+  return f.alertes;
+}
+
 async function analyzeStockCoverage(orders){
   const recipes=await db.recipes.toArray();
   const prods=await db.productions.toArray();
@@ -2376,6 +2583,56 @@ async function renderAnalyse(){
    ${anoBlock}
    <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Production</h2>
    ${prodBlock}`;
+}
+
+/* ============================================================
+   PRÉVISIONNEL STOCKS / COMMANDES — écran d'anticipation
+   ============================================================ */
+async function renderForecast(){
+  const f = await computeForecast({horizon:8});
+  const dateBadge = (d,dans)=>{
+    if(d==null) return '—';
+    const cls = dans!=null && dans<8 ? 'low' : (dans!=null && dans<=14 ? 'warn' : 'ok');
+    return `${fmtDate(d)} <span class="tag ${cls}">${dans!=null?(dans<=0?"aujourd'hui":'J−'+dans):''}</span>`;
+  };
+  const bannerTxt = f.alertes.length
+    ? `⚠ ${f.alertes.length} parfum(s) en risque de rupture pour une livraison sous ${f.horizon} jours. Planifiez une production.`
+    : `✅ Aucun risque de rupture détecté sous ${f.horizon} jours sur les ${f.nbFutur} commande(s) à venir.`;
+
+  const rows = f.lignes.map(l=>{
+    const soldeColor = l.soldePrev<0 ? 'var(--red,#b3261e)' : (l.soldePrev<=5 ? 'var(--caramel)' : '#3f7d52');
+    const etat = l.alerte
+      ? `<span class="tag low">rupture sous ${f.horizon} j</span>`
+      : (l.soldePrev<0 ? '<span class="tag warn">à produire</span>' : '<span class="tag ok">OK</span>');
+    const dateInfo = l.firstShortDate ? dateBadge(l.firstShortDate, l.firstShortDans) : '—';
+    return `<tr ${l.alerte?'style="background:#fdf3f2"':''}>
+      <td><b>${esc(l.parfum)}</b></td>
+      <td>${qty(l.stock)}</td>
+      <td>${qty(l.reserved)}</td>
+      <td style="font-weight:700;color:${soldeColor}">${qty(l.soldePrev)}</td>
+      <td>${l.manque>0?`<b style="color:var(--red,#b3261e)">${qty(l.manque)}</b>`:'—'}</td>
+      <td>${dateInfo}</td>
+      <td>${etat}</td></tr>`;
+  }).join('');
+
+  // détail des échéances en rupture (pour planifier les journées de production)
+  const detailRupture = f.lignes.filter(l=>l.echeances.some(e=>e.rupture)).map(l=>{
+    const ech = l.echeances.filter(e=>e.rupture).map(e=>
+      `<div class="sum-box"><span>${fmtDate(e.date)} ${e.dans!=null?`<span style="color:#9a8a82">(J−${Math.max(0,e.dans)})</span>`:''} · cmd #${e.orderId}</span><b style="color:var(--red,#b3261e)">manque ${qty(-e.soldeApres)}</b></div>`).join('');
+    return `<div class="panel"><h2>${esc(l.parfum)} <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— stock ${qty(l.stock)}, réservé ${qty(l.reserved)}</span></h2>${ech}</div>`;
+  }).join('');
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Prévisionnel stocks</h1><p>Anticipation des ruptures · données du ${fmtDate(f.todayStr)}</p></div>
+     <button class="btn ghost sm" onclick="renderForecast()">↻ Réévaluer</button></div>
+   <div class="banner" style="${f.alertes.length?'background:#fdf3f2;border-color:#f0c9c4':''}">${f.alertes.length?'⚠':'🔮'} <div>${bannerTxt}</div></div>
+   <div class="panel"><h2>Stock prévisionnel par parfum</h2>
+   ${f.lignes.length?`<div class="table-wrap"><table><thead><tr><th>Parfum</th><th>Stock actuel</th><th>Réservé</th><th>Prévisionnel</th><th>Manque</th><th>1ère rupture</th><th>État</th></tr></thead>
+     <tbody>${rows}</tbody></table></div>
+     <p class="note">« Réservé » = macarons engagés par les commandes à venir non livrées. « Prévisionnel » = stock fini actuel − réservé. Une rupture sous ${f.horizon} jours déclenche une alerte.</p>`
+     :`<div class="empty">Aucune donnée. Lancez des productions et créez des commandes pour activer le prévisionnel.</div>`}
+   </div>
+   ${detailRupture?`<h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
 }
 
 // === insère le moteur parseIntent (voir ai_engine.js) ===
@@ -2699,11 +2956,15 @@ async function aiQueryRupture(){
   const stock={}; lots.forEach(l=>{ stock[l.materialId]=(stock[l.materialId]||0)+(+l.qteRestante||0); });
   const sousSeuil=materials.filter(m=>+m.seuil>0 && (stock[m.id]||0)<=+m.seuil)
     .map(m=>({nom:m.nom, dispo:stock[m.id]||0, seuil:+m.seuil, unite:m.unite||''}));
-  if(!risques.length && !sousSeuil.length)
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3><p class="note">Aucun risque détecté : stocks suffisants pour les commandes à préparer et au-dessus des seuils.</p>`);
+  // ruptures prévisionnelles produits finis (sous 8 jours)
+  let prev=[]; try{ prev=await forecastAlerts(); }catch(e){}
+  if(!risques.length && !sousSeuil.length && !prev.length)
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3><p class="note">Aucun risque détecté : produits finis couverts sous 8 jours, matières suffisantes et au-dessus des seuils.</p>`);
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3>
-    ${risques.length?'<p style="margin:4px 0;font-weight:600;color:var(--red,#b3261e)">Insuffisant pour les commandes planifiées</p>'+risques.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">manque ${qty(m.manque)} ${esc(m.unite)} (${qty(m.dispo)}/${qty(m.requis)})</b></div>`).join(''):''}
-    ${sousSeuil.length?'<p style="margin:10px 0 4px;font-weight:600">Sous le seuil d\'alerte</p>'+sousSeuil.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">${qty(m.dispo)} / seuil ${qty(m.seuil)} ${esc(m.unite)}</b></div>`).join(''):''}`);
+    ${prev.length?'<p style="margin:4px 0;font-weight:600;color:var(--red,#b3261e)">Produits finis — rupture prévue sous 8 jours</p>'+prev.map(a=>`<div class="sum-box"><span>${esc(a.parfum)}${a.firstShortDate?` · ${fmtDate(a.firstShortDate)}`:''}</span><b style="color:var(--red,#b3261e)">manque ${qty(a.manque||0)}</b></div>`).join(''):''}
+    ${risques.length?'<p style="margin:10px 0 4px;font-weight:600;color:var(--red,#b3261e)">Matières insuffisantes pour les commandes planifiées</p>'+risques.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">manque ${qty(m.manque)} ${esc(m.unite)} (${qty(m.dispo)}/${qty(m.requis)})</b></div>`).join(''):''}
+    ${sousSeuil.length?'<p style="margin:10px 0 4px;font-weight:600">Matières sous le seuil d\'alerte</p>'+sousSeuil.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">${qty(m.dispo)} / seuil ${qty(m.seuil)} ${esc(m.unite)}</b></div>`).join(''):''}
+    <p class="note" style="margin-top:8px">Détail dans l'onglet <b>Prévisionnel stocks</b>.</p>`);
 }
 
 // ---- ACTIONS CRITIQUES : résumé + validation explicite ----
@@ -3067,7 +3328,104 @@ async function exportTraceOrder(orderId){
   csvDownload('tracabilite-commande-'+orderId+'.csv',rows); toast('CSV exporté ✓');
 }
 
-// Export TEXTE d'une commande : fichier .txt + copie instantanée (email / facturation)
+/* ============================================================
+   EXPORT DES COMMANDES — architecture extensible
+   collectOrderExport() = source de données unique (structurée).
+   formatOrderTXT() = rendu texte. Prévu pour brancher PDF / Excel / email
+   plus tard sur la MÊME structure sans retoucher la collecte.
+   ============================================================ */
+// Numéro de commande lisible : n°AAAA-NNN (année de la commande + id zéro-paddé).
+function orderNumber(o){
+  const y = (o.date||today()).slice(0,4);
+  return `${y}-${String(o.id||0).padStart(3,'0')}`;
+}
+// Récupère TOUTES les données d'une commande sous forme structurée (réutilisable tous formats).
+async function collectOrderExport(orderId){
+  const o = await db.orders.get(orderId);
+  if(!o) return null;
+  const cl = o.clientId ? await db.clients.get(o.clientId) : null;
+  const lignes = orderToLines(o);
+  const produits = lignes.map(ln=>{
+    if(ln.type==='coffret') return {label:`Coffret ${ln.taille} macarons`, remisePct:+ln.remisePct||0,
+      parfums:(ln.parfums||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte}))};
+    if(ln.type==='evenement') return {label:`Événement : ${ln.evQte||0} macarons + ${ln.equip||0} présentoir(s)`, remisePct:+ln.remisePct||0,
+      parfums:(ln.parfums||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte}))};
+    if(ln.type==='grand') return {label:`Grand format (${ln.tarif||'particulier'})`, remisePct:+ln.remisePct||0,
+      parfums:(ln.items||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte}))};
+    if(ln.type==='don') return {label:'Don (offert)', remisePct:0,
+      parfums:[...(ln.parfums||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte,offert:true})),
+               ...(ln.items||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom+' (GF)',qte:p.qte,offert:true}))]};
+    return {label:ln.type, parfums:[]};
+  });
+  const totalMacarons = lignes.reduce((s,ln)=>{
+    if(ln.type==='coffret'||ln.type==='evenement'||ln.type==='don') s+=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    if(ln.type==='evenement' && (!ln.parfums||!ln.parfums.length)) s+=(+ln.evQte||0);
+    if(ln.type==='grand'||ln.type==='don') s+=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    return s;
+  },0);
+  return {
+    numero: orderNumber(o),
+    date: o.date, dateFmt: fmtDate(o.date),
+    client: { nom: cl?cl.nom:'—', prenom: cl?cl.prenom:'', societe: cl?cl.societe:'',
+      tel: cl?cl.tel:'', email: cl?cl.email:'', ref: cl?cl.ref:'', type: cl?cl.type:'' },
+    produits, totalMacarons,
+    remiseGlobale: +o.remiseGlobale||0,
+    montant: +o.montant||0,
+    paiement: o.paiement||'En attente', reglement: o.reglement||'',
+    statut: normStatus(o.statut),
+    notes: o.notes||''
+  };
+}
+// Rendu TEXTE propre et homogène d'une commande, à partir de la structure.
+function formatOrderTXT(d){
+  const L=[];
+  L.push(`Commande n°${d.numero}`);
+  L.push('');
+  const clLine = [d.client.prenom, d.client.nom].filter(Boolean).join(' ') || d.client.nom;
+  L.push('Client : '+clLine + (d.client.societe?` — ${d.client.societe}`:''));
+  if(d.client.tel) L.push('Téléphone : '+d.client.tel);
+  if(d.client.email) L.push('Email : '+d.client.email);
+  L.push('Date : '+d.dateFmt);
+  L.push('');
+  L.push('Produits :');
+  d.produits.forEach(p=>{
+    L.push('  - '+p.label + (p.remisePct>0?` (remise ${p.remisePct}%)`:''));
+    p.parfums.forEach(f=>L.push(`      ${f.nom} : ${f.qte}`+(f.offert?' (offert)':'')));
+  });
+  L.push('');
+  if(d.remiseGlobale>0) L.push(`Remise globale : −${d.remiseGlobale}%`);
+  L.push('Total : '+euro(d.montant));
+  L.push('Statut : '+d.paiement+(d.reglement?` (${d.reglement})`:''));
+  if(d.notes){ L.push(''); L.push('Commentaires : '+d.notes.replace(/\n/g,' / ')); }
+  return L.join('\n');
+}
+// Export TXT d'une sélection de commandes (séparateur homogène entre commandes).
+async function cmdExportSelection(){
+  const ids=[..._cmdSel];
+  if(!ids.length){ toast('Aucune commande sélectionnée'); return; }
+  // ordre chronologique des sélectionnées
+  const datas=[];
+  for(const id of ids){ const d=await collectOrderExport(id); if(d) datas.push(d); }
+  datas.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const SEP='\n\n────────────────────────────────────────\n\n';
+  const header = `SENSATIONS MACARONS — Export de ${datas.length} commande(s)\n${fmtDate(today())}`;
+  const txt = header + SEP + datas.map(formatOrderTXT).join(SEP) + SEP + 'Sensations Macarons — Le Mans';
+  const name = `commandes-selection-${today()}.txt`;
+  let copied=false;
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(txt); copied=true; } }catch(e){}
+  const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  openModal(`<h3>Export de ${datas.length} commande(s)</h3>
+    <p class="note">${copied?'Copié dans le presse-papier ✓ — collez directement dans un email.':'Fichier .txt téléchargé. Vous pouvez aussi copier ci-dessous.'}</p>
+    <textarea id="selTxt" rows="16" style="width:100%;font-family:monospace;font-size:.76rem;white-space:pre">${esc(txt)}</textarea>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="(function(){const t=document.getElementById('selTxt');t.select();try{document.execCommand('copy');}catch(e){} toast('Copié ✓');})()">⧉ Copier</button>
+    </div>
+    <p class="note" style="margin-top:8px;color:#9a8a82">Exports PDF, Excel et envoi e-mail direct : prévus prochainement (même base de données structurée).</p>`);
+}
+
+// Export TEXTE d'une commande (détaillé, avec traçabilité des lots) : fichier .txt + copie
 async function buildOrderText(orderId){
   const o = await db.orders.get(orderId);
   const cl = o.clientId ? await db.clients.get(o.clientId) : null;
@@ -3198,10 +3556,37 @@ if('serviceWorker' in navigator){
   window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(()=>{}));
 }
 
+// POPUP D'ALERTE PRÉVISIONNELLE — affichée à l'ouverture (1×/jour) et après création/modif de commande.
+// Toujours recalculée sur les données réelles du jour.
+async function showForecastPopup(opts){
+  opts=opts||{};
+  let alertes;
+  try{ alertes = await forecastAlerts(); }catch(e){ return; }
+  if(!alertes || !alertes.length) return;
+  // anti-spam : à l'ouverture, une fois par jour seulement (sauf appel forcé après une commande)
+  if(opts.daily){
+    if(localStorage.getItem('sm_forecastSeen')===today()) return;
+    localStorage.setItem('sm_forecastSeen', today());
+  }
+  const lignes = alertes.slice(0,8).map(a=>{
+    const d = a.firstShortDate ? `${fmtDate(a.firstShortDate)}${a.firstShortDans!=null?` (J−${Math.max(0,a.firstShortDans)})`:''}` : '';
+    return `<div class="sum-box"><span>⚠ <b>${esc(a.parfum)}</b>${d?` · ${d}`:''}</span><b style="color:var(--red,#b3261e)">manque ${qty(a.manque||0)}</b></div>`;
+  }).join('');
+  openModal(`<h3>⚠ Risque de rupture</h3>
+    <p class="note">${alertes.length} parfum(s) risque(nt) la rupture pour une livraison sous 8 jours, d'après le stock fini actuel et les commandes à venir.</p>
+    ${lignes}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Plus tard</button>
+      <button class="btn gold" onclick="closeModal();view='previsionnel';setActiveView&&setActiveView('previsionnel');renderForecast()">Voir le prévisionnel</button>
+    </div>`);
+}
+
 (async()=>{
   try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
   try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
   const opened = await handleTraceAnchor().catch(()=>false);
   if(!opened) render();
   exportReminder();
+  // Surveillance quotidienne : réévalue toutes les commandes futures vs stock actuel.
+  setTimeout(()=>{ showForecastPopup({daily:true}); }, 600);
 })();
