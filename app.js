@@ -57,9 +57,19 @@ const BIG_FORMATS = ['Chocolat', 'Myrtille framboise', 'Mangue passion', 'Madele
 const BIG_PRICE = { pro: 3.20, particulier: 6.00 };
 
 // --------- Helpers ---------
-const euro  = n => (+n || 0).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
+// Arrondis stricts pour éviter la dérive des flottants (ex. 0.1+0.2, soustractions FIFO répétées).
+// money2 : arrondi au centime via entiers de centimes. round3 : quantités de stock (3 décimales).
+const money2 = n => Math.round(((+n)||0)*100)/100;
+const round3  = n => Math.round(((+n)||0)*1000)/1000;
+// Opérations financières/stocks sûres (toujours ré-arrondies après l'opération).
+const addMoney = (...xs) => money2(xs.reduce((s,x)=>s+((+x)||0),0));
+const subMoney = (a,b) => money2(((+a)||0)-((+b)||0));
+const mulMoney = (a,b) => money2(((+a)||0)*((+b)||0));
+const addQty  = (...xs) => round3(xs.reduce((s,x)=>s+((+x)||0),0));
+const subQty  = (a,b) => round3(((+a)||0)-((+b)||0));
+const euro  = n => (money2(n)).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
 // Quantité : arrondit proprement (max 3 décimales) et supprime les zéros parasites
-const qty = n => { const v = Math.round((+n||0)*1000)/1000; return v.toLocaleString('fr-FR', {maximumFractionDigits:3}); };
+const qty = n => { const v = round3(n); return v.toLocaleString('fr-FR', {maximumFractionDigits:3}); };
 const today = () => new Date().toISOString().slice(0,10);
 const esc   = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function val(id){ const el = document.getElementById(id); return el ? (el.value||'').trim() : ''; }
@@ -118,8 +128,18 @@ const ymLabel = ym => { const [y,m]=ym.split('-'); return new Date(y,+m-1,1).toL
 let tt;
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(tt); tt=setTimeout(()=>t.classList.remove('show'),2400); }
 const overlay=document.getElementById('overlay'), modal=document.getElementById('modal');
-function openModal(html){ modal.innerHTML=html; overlay.classList.add('show'); }
-function closeModal(){ overlay.classList.remove('show'); modal.innerHTML=''; }
+function openModal(html){ modal.innerHTML=html; overlay.classList.add('show');
+  if(_histReady && !_popping){ try{ history.pushState({kind:'modal'}, '', '#modal'); }catch(e){} } }
+function closeModal(opts){
+  overlay.classList.remove('show'); modal.innerHTML='';
+  // sécurité : couper toute caméra de scan encore active
+  if(typeof stopScanStream==='function'){ try{ stopScanStream(); }catch(e){} }
+  // si fermeture déclenchée par l'utilisateur (pas par un retour navigateur), consommer l'entrée d'historique
+  opts=opts||{};
+  if(_histReady && !_popping && !opts.fromPop && history.state && history.state.kind==='modal'){
+    try{ history.back(); }catch(e){}
+  }
+}
 overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(); });
 
 // --------- Router ---------
@@ -128,9 +148,11 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, analyse:renderAnalyse, previsionnel:renderForecast, sauvegardes:renderBackups, assistant:renderAssistant
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
 };
 let _navLast=0;
+let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
+let _histReady=false;
 function setActiveView(v){
   document.querySelectorAll('.nav button, .tabbar button, .sheet-grid button').forEach(x=>{
     if(x.dataset && x.dataset.v) x.classList.toggle('active', x.dataset.v===v);
@@ -139,10 +161,21 @@ function setActiveView(v){
 function navTo(b){
   if(!b || !b.dataset || !b.dataset.v) return;
   const now=Date.now(); if(now-_navLast<120 && view===b.dataset.v && !document.getElementById('sheetOverlay').classList.contains('show')) return; _navLast=now;
-  view=b.dataset.v; setActiveView(view); render();
+  goView(b.dataset.v);
   closeSheet();
 }
-function openSheet(){ const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);} }
+// Navigation centralisée : change la vue ET empile une entrée d'historique (bouton Retour iOS).
+function goView(v, opts){
+  opts=opts||{};
+  view=v; setActiveView(view); render();
+  if(_histReady && !_popping && !opts.replace){
+    try{ history.pushState({view:v, kind:'view'}, '', '#'+v); }catch(e){}
+  }
+}
+function openSheet(){
+  const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
+    if(_histReady && !_popping){ try{ history.pushState({kind:'sheet'}, '', '#menu'); }catch(e){} } }
+}
 function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); }
 
 // Sidebar (iPad / desktop) — écoute directe + délégation
@@ -160,6 +193,32 @@ const sheetOv=document.getElementById('sheetOverlay');
 if(sheetOv) sheetOv.addEventListener('click', e=>{ if(e.target===sheetOv) closeSheet(); });
 
 function render(){ (VIEWS[view]||renderDash)(); }
+
+/* ============================================================
+   NAVIGATION HISTORIQUE — bouton « Retour » iOS / Safari
+   Branche la navigation interne sur history.pushState/popstate
+   pour que le geste « retour » revienne à la vue précédente
+   (et ferme d'abord une fenêtre ou le menu ouverts).
+   ============================================================ */
+function initHistoryNav(){
+  // état racine = tableau de bord
+  try{ history.replaceState({view:view, kind:'view'}, '', '#'+view); }catch(e){}
+  _histReady=true;
+  window.addEventListener('popstate', (e)=>{
+    _popping=true;
+    try{
+      // 1) une fenêtre modale ouverte ? le retour la ferme.
+      if(overlay && overlay.classList.contains('show')){ closeModal({fromPop:true}); return; }
+      // 2) le menu (feuille iPhone) ouvert ? le retour le ferme.
+      const sh=document.getElementById('sheetOverlay');
+      if(sh && sh.classList.contains('show')){ closeSheet(); return; }
+      // 3) sinon, restaurer la vue indiquée par l'état (ou le dashboard).
+      const st=e.state;
+      const v=(st && st.view) ? st.view : 'dash';
+      if(VIEWS[v]){ view=v; setActiveView(view); render(); }
+    } finally { _popping=false; }
+  });
+}
 
 // --------- Stock courant calculé depuis les lots ---------
 async function stockParMatiere(materialId){
@@ -434,13 +493,13 @@ function majPrixUnit(){
   else { el.textContent='—'; }
 }
 async function saveLot(){
-  const qte=+val('f_qte');
+  const qte=round3(+val('f_qte'));
   if(!qte||qte<=0){toast('Quantité invalide');return;}
-  const prix=+val('f_prix')||0;
+  const prix=money2(+val('f_prix')||0);
   const o={
     materialId:+val('f_mat'), supplierId:+val('f_sup')||0,
     lotFournisseur:val('f_lotf'), qteInitiale:qte, qteRestante:qte,
-    prix, prixUnitaire: qte>0 ? prix/qte : 0,
+    prix, prixUnitaire: qte>0 ? money2(prix/qte) : 0,
     dateReception:val('f_date')||today(), dlc:val('f_dlc')||''
   };
   await db.materialLots.add(o);
@@ -470,19 +529,59 @@ async function renderRecipes(){
   const mats = await db.materials.toArray();
   const matName = id => (mats.find(m=>m.id===id)||{}).nom||'(supprimée)';
   const matUnit = id => (mats.find(m=>m.id===id)||{}).unite||'';
+  _recipeMultCache = {}; // {recipeId: {rendement, items:[{nom,unite,qteParBatch}]}}
   const blocks=[];
   for(const r of recipes){
     const items = await db.recipeItems.where('recipeId').equals(r.id).toArray();
+    _recipeMultCache[r.id] = { rendement:+r.rendement||1,
+      items: items.map(it=>({nom:matName(it.materialId), unite:matUnit(it.materialId), qteParBatch:+it.qteParBatch||0})) };
+    const rows = items.map((it,idx)=>`<tr>
+        <td>${esc(matName(it.materialId))}</td>
+        <td>${qty(it.qteParBatch)} ${esc(matUnit(it.materialId))}</td>
+        <td id="mult_${r.id}_${idx}"><b>${qty(it.qteParBatch)}</b> ${esc(matUnit(it.materialId))}</td>
+      </tr>`).join('');
     blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
-      ${items.length?`<div class="table-wrap"><table><thead><tr><th>Matière</th><th>Quantité / batch</th></tr></thead><tbody>
-        ${items.map(it=>`<tr><td>${esc(matName(it.materialId))}</td><td>${qty(it.qteParBatch)} ${esc(matUnit(it.materialId))}</td></tr>`).join('')}
-      </tbody></table></div>`:`<div class="empty">Aucun ingrédient défini.</div>`}</div>`);
+      ${items.length?`
+      <div class="mult-bar">
+        <label>Quantité voulue</label>
+        <input type="number" min="1" step="1" id="multQ_${r.id}" value="${r.rendement}" oninput="recipeMultiply(${r.id},this.value)">
+        <span class="note" style="margin:0">pièce(s)</span>
+        <span style="flex:1"></span>
+        ${[0.5,1,2,3].map(m=>`<button type="button" class="btn ghost sm" onclick="recipeMultiplyFactor(${r.id},${m})">×${m}</button>`).join('')}
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Matière</th><th>Par batch (${r.rendement})</th><th id="multHead_${r.id}">Pour ${r.rendement} pièce(s)</th></tr></thead><tbody>
+        ${rows}
+      </tbody></table></div>
+      <p class="note">Recalcul à la volée selon la quantité voulue — la recette de base n'est jamais modifiée.</p>`
+      :`<div class="empty">Aucun ingrédient défini.</div>`}</div>`);
   }
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Recettes (BOM)</h1><p>${recipes.length} recette(s) — nomenclature matières</p></div>
      <button class="btn" onclick="recForm()">+ Nouvelle recette</button></div>
    ${recipes.length?blocks.join(''):`<div class="panel"><div class="empty">Aucune recette. Une recette définit les matières consommées par batch (le « Bill of Materials »).</div></div>`}`;
+}
+// Cache des recettes pour le multiplicateur dynamique (lecture seule, aucune écriture en base)
+let _recipeMultCache={};
+// Recalcule les poids d'ingrédients pour une quantité cible (en pièces).
+function recipeMultiply(recipeId, targetQ){
+  const rec=_recipeMultCache[recipeId]; if(!rec) return;
+  const target=Math.max(0,+targetQ||0);
+  const factor = rec.rendement>0 ? target/rec.rendement : 0;
+  rec.items.forEach((it,idx)=>{
+    const cell=document.getElementById(`mult_${recipeId}_${idx}`);
+    if(cell){ cell.innerHTML=`<b>${qty(round3(it.qteParBatch*factor))}</b> ${esc(it.unite)}`; }
+  });
+  const head=document.getElementById(`multHead_${recipeId}`);
+  if(head) head.textContent = `Pour ${qty(target)} pièce(s)`;
+}
+// Applique un facteur multiplicateur (×0.5, ×2, ×3…) relatif au rendement de base.
+function recipeMultiplyFactor(recipeId, factor){
+  const rec=_recipeMultCache[recipeId]; if(!rec) return;
+  const target=round3(rec.rendement*factor);
+  const input=document.getElementById(`multQ_${recipeId}`);
+  if(input) input.value=target;
+  recipeMultiply(recipeId, target);
 }
 let bomDraft=[];
 async function recForm(id){
@@ -676,20 +775,20 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
       });
 
       for(const item of items){
-        let besoin = item.qteParBatch * facteur;
+        let besoin = round3(item.qteParBatch * facteur);
         const lots = await db.materialLots
           .where('materialId').equals(item.materialId)
           .and(l=>+l.qteRestante>0).toArray();
         lots.sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999')); // FIFO par DLC
         for(const lot of lots){
           if(besoin<=1e-9) break;
-          const pris = Math.min(besoin, +lot.qteRestante);
-          await db.materialLots.update(lot.id, {qteRestante:+lot.qteRestante - pris});
+          const pris = round3(Math.min(besoin, +lot.qteRestante));
+          await db.materialLots.update(lot.id, {qteRestante: subQty(lot.qteRestante, pris)});
           // T2 : on fige (dénormalise) l'origine pour que la traçabilité survive à toute suppression future
           await db.prodConsumption.add({productionId:prodId, materialLotId:lot.id, qteConsommee:pris,
             snapMaterialId:item.materialId, snapLotFournisseur:lot.lotFournisseur||'',
             snapSupplierId:lot.supplierId||0, snapDlc:lot.dlc||''});
-          besoin -= pris;
+          besoin = subQty(besoin, pris);
         }
       }
       return prodId;
@@ -788,7 +887,7 @@ async function doDelProd(id, recrediter){
       const conso = await db.prodConsumption.where('productionId').equals(id).toArray();
       for(const c of conso){
         const lot = await db.materialLots.get(c.materialLotId);
-        if(lot){ await db.materialLots.update(lot.id, { qteRestante: (+lot.qteRestante||0) + (+c.qteConsommee||0) }); }
+        if(lot){ await db.materialLots.update(lot.id, { qteRestante: addQty(lot.qteRestante, c.qteConsommee) }); }
       }
     }
     await db.prodConsumption.where('productionId').equals(id).delete();
@@ -969,8 +1068,10 @@ async function renderTrace(){
   const mats = await db.materials.toArray();
   const matName = id => (mats.find(m=>m.id===id)||{}).nom||'—';
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Traçabilité</h1><p>Remonter la chaîne fournisseur → lot → batch → commande</p></div></div>
-   <div class="banner">⊕ <div>La traçabilité répond à trois questions réglementaires : ingrédients d'une commande, origine d'un batch, et usage d'un lot de matière.</div></div>
+   <div class="topbar"><div><h1>Traçabilité</h1><p>Remonter la chaîne fournisseur → lot → batch → commande</p></div>
+     <div class="flex" style="gap:8px"><button class="btn" onclick="openScanner(lot=>traceLotByNumber(lot))">📷 Scanner un lot</button>
+     <button class="btn" style="background:var(--red,#b3261e)" onclick="openFlashAlert()">⚠ Alerte Sanitaire Flash</button></div></div>
+   <div class="banner">⊕ <div>La traçabilité répond à trois questions réglementaires : ingrédients d'une commande, origine d'un batch, et usage d'un lot de matière. En cas de problème, l'<b>Alerte Sanitaire Flash</b> isole un lot et liste tous les produits et clients concernés.</div></div>
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
      <div class="panel"><h2>Par commande livrée</h2>
        ${orders.length?`<div class="table-wrap"><table><tbody>${orders.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(o=>`<tr>
@@ -1020,6 +1121,197 @@ async function traceLot(lotId){
     <h3 style="font-size:1rem;margin:14px 0 8px">➡ Produits & clients impactés</h3>
     ${blocks.length?blocks.join(''):'<p class="note">Ce lot n\'a encore été utilisé dans aucune production.</p>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+/* ============================================================
+   SCAN QR / CODE-BARRES — intégré, sans quitter l'app, hors-ligne.
+   Utilise l'API native BarcodeDetector (Safari iOS 17+) ; repli sur saisie manuelle.
+   ============================================================ */
+let _scanStream=null, _scanRAF=null, _scanDetector=null;
+function scannerSupported(){ return 'BarcodeDetector' in window; }
+async function openScanner(onResult){
+  // onResult(texte) appelé quand un code est lu (ou saisi manuellement)
+  const supported = scannerSupported();
+  openModal(`<h3>Scanner un lot</h3>
+    ${supported
+      ? `<div class="scan-wrap"><video id="scanVideo" playsinline muted></video><div class="scan-frame"></div></div>
+         <p class="note" id="scanMsg">Visez le QR code ou code-barres du lot…</p>`
+      : `<p class="note">La lecture caméra n'est pas disponible sur cet appareil/navigateur. Saisissez le numéro de lot manuellement :</p>`}
+    <div class="field" style="margin-top:8px"><label>N° de lot (saisie manuelle)</label>
+      <input id="scanManual" placeholder="ex : NM-A-101" autocapitalize="characters" autocomplete="off"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeScanner()">Annuler</button>
+      <button class="btn" onclick="(function(){var v=document.getElementById('scanManual').value.trim(); if(v){ closeScanner(); (window._scanCb&&window._scanCb(v)); } else toast('Saisissez un numéro de lot'); })()">Valider</button>
+    </div>`);
+  window._scanCb = onResult;
+  if(!supported) return;
+  try{
+    _scanDetector = new BarcodeDetector({formats:['qr_code','code_128','ean_13','ean_8','code_39','codabar','upc_a','upc_e']});
+  }catch(e){ _scanDetector=null; }
+  try{
+    _scanStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const video=document.getElementById('scanVideo');
+    if(!video){ stopScanStream(); return; }
+    video.srcObject=_scanStream; await video.play();
+    scanLoop(video);
+  }catch(err){
+    const msg=document.getElementById('scanMsg');
+    if(msg) msg.textContent='Caméra inaccessible (autorisation refusée ?). Utilisez la saisie manuelle.';
+  }
+}
+async function scanLoop(video){
+  if(!_scanStream || !_scanDetector) return;
+  try{
+    const codes = await _scanDetector.detect(video);
+    if(codes && codes.length){
+      const val=(codes[0].rawValue||'').trim();
+      if(val){
+        // un QR d'étiquette peut contenir une URL #trace=LOT ; on extrait alors le lot
+        let lot=val; const m=val.match(/#trace=(.+)$/); if(m) lot=decodeURIComponent(m[1]);
+        const cb=window._scanCb; closeScanner(); if(cb) cb(lot); return;
+      }
+    }
+  }catch(e){ /* frame non décodée, on continue */ }
+  _scanRAF = requestAnimationFrame(()=>scanLoop(video));
+}
+function stopScanStream(){
+  if(_scanRAF){ cancelAnimationFrame(_scanRAF); _scanRAF=null; }
+  if(_scanStream){ _scanStream.getTracks().forEach(t=>t.stop()); _scanStream=null; }
+  _scanDetector=null;
+}
+function closeScanner(){ stopScanStream(); window._scanCb=null; closeModal(); }
+// Lance le scan puis ouvre l'alerte flash sur le lot lu.
+function scanForFlashAlert(){ openScanner(lot=>flashAlert(lot)); }
+// Résout un numéro scanné : lot matière → traceLot, sinon lot de production → traceProd.
+async function traceLotByNumber(code){
+  code=(code||'').trim(); if(!code){ return; }
+  const target=normTxt(code);
+  const lots=await db.materialLots.toArray();
+  const ml=lots.find(l=>normTxt(l.lotFournisseur||'')===target) || lots.find(l=>normTxt(l.lotFournisseur||'').includes(target));
+  if(ml){ traceLot(ml.id); return; }
+  const prods=await db.productions.toArray();
+  const p=prods.find(x=>normTxt(x.lotProduction||'')===target) || prods.find(x=>normTxt(x.lotProduction||'').includes(target));
+  if(p){ traceProd(p.id); return; }
+  toast('Lot « '+code+' » introuvable. Essayez l\'Alerte Flash.');
+}
+
+/* ============================================================
+   ALERTE SANITAIRE FLASH — isole un lot fournisseur et liste
+   instantanément toutes les productions et ventes impactées.
+   ============================================================ */
+// Sélection du lot à isoler (liste + scan), avant l'alerte.
+async function openFlashAlert(){
+  const lots = await db.materialLots.toArray();
+  const mats = await db.materials.toArray();
+  const matName = id => (mats.find(m=>m.id===id)||{}).nom||'—';
+  // regrouper par numéro de lot fournisseur (un même n° peut couvrir plusieurs réceptions)
+  const byLotNum={};
+  lots.forEach(l=>{ const k=(l.lotFournisseur||'(sans numéro)'); (byLotNum[k] ||= []).push(l); });
+  const nums=Object.keys(byLotNum).sort();
+  openModal(`<h3>⚠ Alerte sanitaire flash</h3>
+    <p class="note">Sélectionnez ou scannez le lot fournisseur à isoler. L'app listera instantanément toutes les productions et ventes impactées.</p>
+    <button class="btn gold" style="width:100%;margin-bottom:10px" onclick="scanForFlashAlert()">📷 Scanner le lot</button>
+    <div class="field"><label>Ou choisir un n° de lot fournisseur</label>
+      <select id="flashLotNum">${nums.map(n=>`<option value="${esc(n)}">${esc(n)} — ${esc([...new Set(byLotNum[n].map(l=>matName(l.materialId)))].join(', '))}</option>`).join('')}</select></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="(function(){var v=document.getElementById('flashLotNum').value; closeModal(); flashAlert(v);})()">Déclencher l'alerte</button>
+    </div>`);
+}
+// Cœur de l'alerte : agrège tout l'impact d'un numéro de lot fournisseur.
+async function flashAlert(lotNum){
+  lotNum=(lotNum||'').trim();
+  if(!lotNum){ toast('Aucun lot indiqué'); return; }
+  const [lots, conso, prods, oitems, orders, clients, recipes, mats, sups] = await Promise.all([
+    db.materialLots.toArray(), db.prodConsumption.toArray(), db.productions.toArray(),
+    db.orderItems.toArray(), db.orders.toArray(), db.clients.toArray(),
+    db.recipes.toArray(), db.materials.toArray(), db.suppliers.toArray()
+  ]);
+  const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'—';
+  const matUnit=id=>(mats.find(m=>m.id===id)||{}).unite||'';
+  const recName=id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
+  const supName=id=>(sups.find(s=>s.id===id)||{}).nom||'—';
+
+  // 1) tous les lots de matière portant ce n° fournisseur (recherche tolérante)
+  const target=normTxt(lotNum);
+  const matchedLots = lots.filter(l=> normTxt(l.lotFournisseur||'')===target || normTxt(l.lotFournisseur||'').includes(target));
+  // repli : on a pu scanner un n° de lot de PRODUCTION (étiquette produit fini)
+  const matchedProdsByLabel = prods.filter(p=> normTxt(p.lotProduction||'')===target);
+
+  const lotIds=new Set(matchedLots.map(l=>l.id));
+  // 2) consommations issues de ces lots → productions impactées
+  const impactedProdIds=new Set(matchedProdsByLabel.map(p=>p.id));
+  const consoByProd={};
+  conso.forEach(c=>{ if(lotIds.has(c.materialLotId)){ impactedProdIds.add(c.productionId);
+    (consoByProd[c.productionId] ||= []).push(c); } });
+
+  // 3) ventes (liaisons batch→commande) issues des productions impactées
+  const impactedProds=[...impactedProdIds].map(id=>prods.find(p=>p.id===id)).filter(Boolean);
+  let totalVendu=0, totalStock=0;
+  const prodBlocks = impactedProds.map(p=>{
+    const links = oitems.filter(it=>it.productionId===p.id);
+    const ventes = links.map(it=>{ const o=orders.find(x=>x.id===it.orderId); const cl=o?clName(o.clientId):'—';
+      totalVendu+=(+it.qte||0);
+      return `<div class="trace-step" style="margin:3px 0">→ <b>${esc(cl)}</b> · ${qty(it.qte)} pièce(s) · ${o?fmtDate(o.date):''} · cmd #${it.orderId}
+        ${o&&o.tel?`<br><span class="note">☎ ${esc(o.tel)}${o.email?' · '+esc(o.email):''}</span>`:''}</div>`;
+    });
+    totalStock += (+p.qteRestante||0);
+    const usedMat = (consoByProd[p.id]||[]).map(c=>{ const l=lots.find(x=>x.id===c.materialLotId);
+      return `${esc(matName(l?l.materialId:null))} ${qty(c.qteConsommee)} ${esc(matUnit(l?l.materialId:null))}`; }).join(', ');
+    return `<div class="panel" style="margin:8px 0;border-left:4px solid var(--red,#b3261e)">
+      <b>${esc(recName(p.recipeId))}</b> · batch ${esc(p.lotProduction||'—')} · ${fmtDate(p.date)}
+      <div class="note">Produit ${qty(p.qteProduite!=null?p.qteProduite:p.qteReelle)} · encore en stock ${qty(p.qteRestante)}${usedMat?` · matière incriminée : ${usedMat}`:''}</div>
+      <div style="margin-top:6px">${ventes.join('')||'<span class="note">Aucune vente liée — tout est encore en stock/non distribué.</span>'}</div>
+    </div>`;
+  });
+
+  const supList=[...new Set(matchedLots.map(l=>l.supplierId).filter(Boolean))].map(supName).join(', ');
+  const found = matchedLots.length || matchedProdsByLabel.length;
+  const summary = found
+    ? `<div class="sum-box"><span>Lots matière concernés</span><b>${matchedLots.length}</b></div>
+       <div class="sum-box"><span>Productions impactées</span><b>${impactedProds.length}</b></div>
+       <div class="sum-box"><span>Pièces déjà vendues</span><b style="color:var(--red,#b3261e)">${qty(totalVendu)}</b></div>
+       <div class="sum-box"><span>Pièces encore en stock</span><b>${qty(totalStock)}</b></div>
+       ${supList?`<div class="sum-box"><span>Fournisseur(s)</span><b>${esc(supList)}</b></div>`:''}`
+    : '';
+
+  openModal(`<h3>⚠ Alerte sanitaire — lot « ${esc(lotNum)} »</h3>
+    ${found ? summary : `<p class="note">Aucun lot fournisseur ni batch ne correspond à « ${esc(lotNum)} » sur cet appareil.</p>`}
+    ${impactedProds.length?`<h3 style="font-size:1rem;margin:14px 0 6px">Productions & ventes impactées</h3>${prodBlocks.join('')}`
+      : (found?'<p class="note" style="margin-top:8px">Ce lot n\'a alimenté aucune production : aucun produit fini n\'est concerné.</p>':'')}
+    <div class="modal-actions">
+      ${found?`<button class="btn gold" onclick="exportFlashAlert('${esc(lotNum).replace(/'/g,"\\'")}')">⬇ Exporter le rapport (TXT)</button>`:''}
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+    </div>`);
+}
+// Export texte du rapport d'alerte (réutilise l'agrégation), pour communication/retrait.
+async function exportFlashAlert(lotNum){
+  const [lots, conso, prods, oitems, orders, clients, recipes, mats] = await Promise.all([
+    db.materialLots.toArray(), db.prodConsumption.toArray(), db.productions.toArray(),
+    db.orderItems.toArray(), db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(), db.materials.toArray()
+  ]);
+  const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'—';
+  const recName=id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
+  const target=normTxt(lotNum);
+  const matchedLots=lots.filter(l=>normTxt(l.lotFournisseur||'').includes(target));
+  const lotIds=new Set(matchedLots.map(l=>l.id));
+  const impacted=new Set(prods.filter(p=>normTxt(p.lotProduction||'')===target).map(p=>p.id));
+  conso.forEach(c=>{ if(lotIds.has(c.materialLotId)) impacted.add(c.productionId); });
+  const L=[`ALERTE SANITAIRE — lot fournisseur « ${lotNum} »`, `Édité le ${fmtDate(today())}`, ''];
+  [...impacted].map(id=>prods.find(p=>p.id===id)).filter(Boolean).forEach(p=>{
+    L.push(`■ ${recName(p.recipeId)} — batch ${p.lotProduction||'—'} (${fmtDate(p.date)})`);
+    L.push(`   Produit : ${p.qteProduite!=null?p.qteProduite:p.qteReelle} · encore en stock : ${p.qteRestante}`);
+    oitems.filter(it=>it.productionId===p.id).forEach(it=>{ const o=orders.find(x=>x.id===it.orderId);
+      L.push(`   → ${clName(o?o.clientId:0)} : ${it.qte} pièce(s)${o&&o.tel?' · '+o.tel:''}${o&&o.date?' · '+fmtDate(o.date):''}`); });
+    L.push('');
+  });
+  if(impacted.size===0) L.push('Aucune production impactée.');
+  const blob=new Blob([L.join('\n')],{type:'text/plain;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='alerte-sanitaire-'+lotNum.replace(/[^a-zA-Z0-9_-]/g,'_')+'-'+today()+'.txt'; a.click();
+  toast('Rapport exporté ✓');
 }
 
 async function traceProd(prodId){
@@ -1349,6 +1641,38 @@ async function setOrderStatus(id, statut){
 /* ============================================================
    BBC — PAIEMENT RAPIDE
    ============================================================ */
+// ---- TRAÇABILITÉ DES PAIEMENTS (registre + solde) ----
+// Chaque commande porte un registre paiements:[{date, montant, moyen}].
+// Le solde dû et le statut dérivent de ce registre + du montant total.
+function orderPaid(o){
+  if((!o.paiements || !o.paiements.length) && o.paiement==='Payé'){ return money2(o.montant); } // rétro-compat
+  return money2((o.paiements||[]).reduce((s,p)=>s+((+p.montant)||0),0));
+}
+function orderBalance(o){ return money2(((+o.montant)||0) - orderPaid(o)); }
+// Statut dérivé : Payé (solde ≤ 0), Partiel (encaissé > 0), sinon En attente.
+function orderPayStatus(o){
+  const total=(+o.montant)||0, paid=orderPaid(o);
+  if(total>0 && paid+1e-9>=total) return 'Payé';
+  if(paid>0) return 'Partiel';
+  return 'En attente';
+}
+// Synchronise les champs hérités (paiement/datePaiement/reglement) à partir du registre,
+// pour rester cohérent avec tous les lecteurs existants (liste, export, stats, prévisionnel).
+function syncPaymentFields(o){
+  o.paiements = (o.paiements||[]).filter(p=>p && (+p.montant)||p.moyen||p.date);
+  const st=orderPayStatus(o);
+  o.paiement = (st==='Payé') ? 'Payé' : 'En attente'; // lecteurs binaires : Partiel compte comme non soldé
+  o.statutPaiement = st;                               // statut fin (3 états) pour l'affichage
+  o.soldeDu = orderBalance(o);
+  o.montantEncaisse = orderPaid(o);
+  if(o.paiements.length){
+    const last=o.paiements[o.paiements.length-1];
+    o.datePaiement = (st==='Payé') ? (o.paiements.reduce((d,p)=>p.date&&p.date>d?p.date:d,'')||today()) : (last.date||o.datePaiement||'');
+    o.reglement = last.moyen || o.reglement || '';
+  }
+  return o;
+}
+
 // Réglage : automatisation du statut de paiement quand un règlement est saisi.
 // Stocké dans localStorage, activé par défaut, désactivable par l'utilisateur.
 function autoPayEnabled(){ return localStorage.getItem('sm_autoPay')!=='0'; }
@@ -1367,15 +1691,20 @@ function applyAutoPay(o){
   return o;
 }
 
-// Action rapide « Payé » en un clic depuis la liste ou la fiche détail.
+// Action rapide « Payé » : enregistre un paiement soldant la commande (date obligatoire).
 async function markPaid(id, fromModal){
   const o=await db.orders.get(id); if(!o) return;
-  if(o.paiement==='Payé'){ toast('Déjà payée'); return; }
-  const patch={paiement:'Payé', datePaiement: o.datePaiement||today()};
-  await db.orders.update(id, patch);
+  if(orderPayStatus(o)==='Payé'){ toast('Déjà soldée'); return; }
+  const reste=orderBalance(o);
+  if(reste<=0){ toast('Rien à encaisser'); return; }
+  // paiement soldant : on encaisse le solde restant, daté du jour, moyen = règlement connu ou Carte
+  o.paiements=(o.paiements||[]).concat([{date:today(), montant:reste, moyen:o.reglement||'Carte'}]);
+  syncPaymentFields(o);
+  await db.orders.update(id, {paiements:o.paiements, paiement:o.paiement, statutPaiement:o.statutPaiement,
+    soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement});
   if(fromModal) closeModal();
   renderCmd();
-  toast('Commande marquée payée ✓');
+  toast('Commande soldée ✓ ('+euro(reste)+' le '+fmtDate(today())+')');
 }
 let cmdSearch='';
 let _cmdCache=null;
@@ -1435,6 +1764,8 @@ async function renderCmd(){
 function _cmdRow(row){
   const o=row.o; const paye=o.paiement==='Payé';
   const checked = _cmdSel.has(o.id) ? 'checked' : '';
+  const st = orderPayStatus(o); const solde = orderBalance(o);
+  const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
   return `<tr>
      <td><input type="checkbox" class="cmd-check" ${checked} onclick="cmdToggleOne(${o.id},this.checked)"></td>
      <td>${fmtDate(o.date)}</td>
@@ -1442,26 +1773,18 @@ function _cmdRow(row){
      <td><span style="font-size:.82rem">${esc(row.resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
      <td>
-       <div class="pay-toggle sm">
-         <label class="pay-opt"><input type="radio" name="paylist_${o.id}" ${!paye?'checked':''} onclick="listSetPay(${o.id},'En attente')"><span>En attente</span></label>
-         <label class="pay-opt"><input type="radio" name="paylist_${o.id}" ${paye?'checked':''} onclick="listSetPay(${o.id},'Payé')"><span>Payé</span></label>
-       </div>
-       ${o.reglement?`<span style="color:#9a8a82;font-size:.72rem">${esc(o.reglement)}</span>`:''}${paye&&o.datePaiement?`<span style="color:#9a8a82;font-size:.72rem"> · le ${fmtDate(o.datePaiement)}</span>`:''}
+       <span class="tag ${st==='Payé'?'done':(st==='Partiel'?'event':'todo')}">${st}</span>
+       ${st!=='Payé'&&solde>0?`<br><span style="color:var(--red,#b3261e);font-size:.72rem">solde ${euro(solde)}</span>`:''}
+       ${st==='Payé'&&o.datePaiement?`<br><span style="color:#9a8a82;font-size:.72rem">le ${fmtDate(o.datePaiement)}</span>`:''}
+       ${st!=='Payé'?`<br><span class="act" style="font-size:.72rem" onclick="markPaid(${o.id})">✓ Solder</span>`:''}
      </td>
      <td><span class="act-status" onclick="cycleStatus(${o.id})" title="Toucher pour changer le statut">${statusTag(o.statut)}</span></td>
      <td>${row.nbLies?`<span class="tag ok">${row.nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
      <td style="text-align:right"><span class="act" onclick="cmdView(${o.id})">Détail</span><span class="act" onclick="exportOrderText(${o.id})">Texte</span><span class="act" onclick="cmdLink(${o.id})">Lier</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`;
 }
-// ---- Statut paiement instantané depuis la liste (En attente / Payé) ----
+// ---- Solder une commande depuis la liste (encaisse le solde, daté du jour) ----
 async function listSetPay(id, statut){
-  const o=await db.orders.get(id); if(!o) return;
-  const patch={paiement:statut};
-  if(statut==='Payé'){ patch.datePaiement = o.datePaiement||today(); }
-  await db.orders.update(id, patch);
-  // mise à jour locale du cache pour refléter sans recharger toute la page
-  if(_cmdCache){ const r=_cmdCache.find(x=>x.o.id===id); if(r){ r.o.paiement=statut; if(patch.datePaiement) r.o.datePaiement=patch.datePaiement; } }
-  toast(statut==='Payé'?'Marquée payée ✓':'Repassée en attente');
-  cmdFilter(cmdSearch); // redessine le corps seulement
+  return markPaid(id);
 }
 // ---- Sélection multiple ----
 let _cmdSel = new Set();
@@ -1535,8 +1858,15 @@ async function cmdView(id){
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${o.perso?'Oui':'Non'}</b></div>
     ${+o.remiseGlobale>0?`<div class="sum-box"><span>Remise globale</span><b>−${o.remiseGlobale}%</b></div>`:''}
     <div class="sum-box"><span>Montant total${+o.remiseGlobale>0||lignes.some(l=>+l.remisePct>0)?' (TTC, remises incluses)':''}</span><b>${euro(o.montant)}</b></div>
-    <div class="sum-box"><span>Paiement</span><b>${esc(o.paiement||'En attente')}${o.reglement?' · '+esc(o.reglement):''}${o.paiement==='Payé'&&o.datePaiement?' · le '+fmtDate(o.datePaiement):''}</b></div>
-    ${o.paiement!=='Payé'?`<button class="btn gold sm" style="margin-top:6px" onclick="markPaid(${id},true)">✓ Marquer payée</button>`:''}
+    <h3 style="font-size:1rem;margin:16px 0 8px">Paiements <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— réf. commande n°${esc(orderNumber(o))}</span></h3>
+    ${(o.paiements&&o.paiements.length)
+      ? o.paiements.map(p=>`<div class="sum-box"><span>${fmtDate(p.date)} · ${esc(p.moyen||'—')}</span><b>${euro(p.montant)}</b></div>`).join('')
+      : (o.paiement==='Payé'?`<div class="sum-box"><span>${o.datePaiement?fmtDate(o.datePaiement):'—'} · ${esc(o.reglement||'—')}</span><b>${euro(o.montant)}</b></div>`:'<p class="note">Aucun encaissement enregistré.</p>')}
+    ${(function(){const st=orderPayStatus(o),solde=orderBalance(o),enc=orderPaid(o);
+       const col=st==='Payé'?'#3f7d52':(st==='Partiel'?'var(--caramel)':'var(--red,#b3261e)');
+       return `<div class="sum-box"><span>Encaissé</span><b>${euro(enc)}</b></div>
+         <div class="sum-box"><span><b>Solde restant dû</b> <span class="tag" style="background:${col};color:#fff">${st}</span></span><b style="color:${solde>0?'var(--red,#b3261e)':'#3f7d52'}">${euro(solde)}</b></div>`;})()}
+    ${orderPayStatus(o)!=='Payé'?`<button class="btn gold sm" style="margin-top:6px" onclick="markPaid(${id},true)">✓ Solder (${euro(orderBalance(o))})</button>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">Statut de la commande</h3>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       ${ORDER_STATUS.map(st=>{const cur=normStatus(o.statut)===st;
@@ -1635,47 +1965,82 @@ async function cmdForm(id, opts){
 
    <label style="font-size:.82rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin:6px 0"><input type="checkbox" id="f_perso" style="width:auto" ${o.perso?'checked':''}> Personnalisation des couleurs</label>
 
-   <div class="field"><label>Statut de paiement</label>
-     <div class="pay-toggle" id="payToggle">
-       <label class="pay-opt"><input type="radio" name="f_pay_radio" value="En attente" ${o.paiement!=='Payé'?'checked':''} onchange="cmdSetPay('En attente')"> <span>En attente</span></label>
-       <label class="pay-opt"><input type="radio" name="f_pay_radio" value="Payé" ${o.paiement==='Payé'?'checked':''} onchange="cmdSetPay('Payé')"> <span>Payé</span></label>
-     </div>
-     <input type="hidden" id="f_pay" value="${esc(o.paiement||'En attente')}">
-   </div>
-   <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin:2px 0 6px"><input type="checkbox" id="f_autopay" style="width:auto" ${autoPayEnabled()?'checked':''} onchange="setAutoPay(this.checked);cmdSyncPayUI()"> Passer automatiquement en « Payé » dès qu'un règlement est saisi</label>
-   <div class="row2">
-     <div class="field"><label>Règlement</label><select id="f_reg" onchange="cmdSyncPayUI()">${regOpts}</select></div>
-     <div class="field"><label>Statut commande</label><select id="f_st">${stOpts}</select></div>
-   </div>
+   <div class="field"><label>Statut commande</label><select id="f_st">${stOpts}</select></div>
    <div class="row2">
      <div class="field"><label>% de remise globale</label><input type="number" min="0" max="100" step="1" id="f_remiseg" value="${o.remiseGlobale||''}" placeholder="0" oninput="cmdRecalc()"></div>
-     <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0'"></div>
+     <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0';cmdRecalc()"></div>
    </div>
    <div class="sum-box" id="priceBreak" style="display:none"></div>
+
+   <div class="pay-ledger" style="margin-top:14px">
+     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+       <label style="font-weight:600;color:var(--bordeaux)">Paiements encaissés</label>
+       <label style="font-size:.76rem;color:#7a6a62;display:flex;gap:6px;align-items:center"><input type="checkbox" id="f_autopay" style="width:auto" ${autoPayEnabled()?'checked':''} onchange="setAutoPay(this.checked)"> auto-solder si encaissement</label>
+     </div>
+     <div id="payList"></div>
+     <button type="button" class="btn ghost sm" onclick="cmdAddPayment()">＋ Ajouter un paiement</button>
+     <div class="sum-box" id="paySummary" style="margin-top:8px"></div>
+     <div class="field" style="margin-top:8px"><label>Date prévue du règlement final <span style="color:#9a8a82;font-weight:400">— acomptes / événements</span></label>
+       <input type="date" id="f_dateFinal" value="${esc(o.dateReglementFinal||'')}"></div>
+   </div>
+   <input type="hidden" id="f_pay" value="${esc(o.paiement||'En attente')}">
 
    <div class="field" style="margin-top:14px"><label>Notes</label><textarea id="f_notes" rows="2" placeholder="Allergies, livraison, demande spéciale…">${esc(o.notes||'')}</textarea></div>
 
    <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_cal" style="width:auto" ${id?'':'checked'}> Ajouter au calendrier</label>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
+  // initialise le registre de paiements en mémoire (copie de travail)
+  cmdPayments = JSON.parse(JSON.stringify(o.paiements || ((o.paiement==='Payé') ? [{date:o.datePaiement||today(), montant:+o.montant||0, moyen:o.reglement||'Carte'}] : [])));
   const mt=document.getElementById('f_mt'); if(mt && !mt.value) mt.dataset.auto='1';
-  cmdSyncPayUI();
+  drawPayments();
   drawLines();
 }
+// Registre de paiements en cours d'édition (copie de travail, écrit en base au save)
+let cmdPayments=[];
+function cmdAddPayment(){
+  const reste=cmdCurrentBalance();
+  cmdPayments.push({date:today(), montant: reste>0?reste:0, moyen:'Carte'});
+  drawPayments(); cmdRecalc();
+}
+function cmdRemovePayment(i){ cmdPayments.splice(i,1); drawPayments(); cmdRecalc(); }
+function setPayField(i,field,v){
+  if(!cmdPayments[i]) return;
+  cmdPayments[i][field] = field==='montant' ? (money2(+v||0)) : v;
+  // ne pas redessiner pendant la frappe (garde le focus) ; juste recalculer le résumé
+  cmdUpdatePaySummary();
+}
+// Total commande courant (depuis le champ montant)
+function cmdCurrentTotal(){ return money2(+(document.getElementById('f_mt')?.value)||0); }
+function cmdCurrentPaid(){ return money2(cmdPayments.reduce((s,p)=>s+((+p.montant)||0),0)); }
+function cmdCurrentBalance(){ return money2(cmdCurrentTotal()-cmdCurrentPaid()); }
+const PAY_METHODS_LIST = PAY_METHODS;
+function drawPayments(){
+  const box=document.getElementById('payList'); if(!box) return;
+  box.innerHTML = cmdPayments.length ? cmdPayments.map((p,i)=>`
+    <div class="pay-row">
+      <input type="date" value="${esc(p.date||today())}" onchange="setPayField(${i},'date',this.value)" title="Date de paiement">
+      <input type="number" step="0.01" min="0" value="${p.montant||''}" placeholder="€" oninput="setPayField(${i},'montant',this.value)" title="Montant encaissé">
+      <select onchange="setPayField(${i},'moyen',this.value)" title="Moyen de paiement">${PAY_METHODS_LIST.map(m=>`<option ${p.moyen===m?'selected':''}>${m}</option>`).join('')}</select>
+      <button type="button" class="act del" onclick="cmdRemovePayment(${i})" title="Retirer">✕</button>
+    </div>`).join('') : '<p class="note" style="margin:4px 0">Aucun paiement encaissé pour l\'instant.</p>';
+  cmdUpdatePaySummary();
+}
+function cmdUpdatePaySummary(){
+  const box=document.getElementById('paySummary'); if(!box) return;
+  const total=cmdCurrentTotal(), paid=cmdCurrentPaid(), reste=money2(total-paid);
+  const st = total>0 && paid+1e-9>=total ? 'Payé' : (paid>0?'Partiel':'En attente');
+  const col = st==='Payé'?'#3f7d52':(st==='Partiel'?'var(--caramel)':'var(--red,#b3261e)');
+  box.innerHTML = `<div style="display:flex;justify-content:space-between"><span>Encaissé</span><b>${euro(paid)}</b></div>
+    <div style="display:flex;justify-content:space-between"><span>Total commande</span><b>${euro(total)}</b></div>
+    <div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px">
+      <span><b>Solde restant dû</b> <span class="tag" style="background:${col};color:#fff">${st}</span></span><b style="color:${reste>0?'var(--red,#b3261e)':'#3f7d52'}">${euro(reste)}</b></div>`;
+  const hid=document.getElementById('f_pay'); if(hid) hid.value = (st==='Payé')?'Payé':'En attente';
+}
 
-// Statut de paiement piloté par 2 radios (En attente / Payé), une seule active à la fois.
-function cmdSetPay(v){
-  const hid=document.getElementById('f_pay'); if(hid) hid.value=v;
-  // refléter sur les radios (cas appel programmatique)
-  document.querySelectorAll('input[name="f_pay_radio"]').forEach(r=>{ r.checked = (r.value===v); });
-}
-// Conservé pour compat. : force « Payé ».
-function cmdQuickPay(){ cmdSetPay('Payé'); }
-// Auto-Payé si un règlement est saisi et l'option active. Garantit la cohérence règlement/paiement.
-function cmdSyncPayUI(){
-  const hid=document.getElementById('f_pay'); const reg=document.getElementById('f_reg');
-  if(!hid) return;
-  if(autoPayEnabled() && reg && reg.value && hid.value!=='Payé'){ cmdSetPay('Payé'); toast('Règlement saisi → Payé'); }
-}
+// Compat. : ces helpers existaient pour l'ancien toggle ; le registre de paiements les remplace.
+function cmdSetPay(v){ const hid=document.getElementById('f_pay'); if(hid) hid.value=v; }
+function cmdQuickPay(){ if(typeof cmdAddPayment==='function') cmdAddPayment(); }
+function cmdSyncPayUI(){ if(typeof cmdUpdatePaySummary==='function') cmdUpdatePaySummary(); }
 
 // Recherche client instantanée dans le formulaire de commande (nom ou téléphone)
 function filterCmdClients(q){
@@ -1862,28 +2227,28 @@ function drawDonLine(ln,i){
 function setDonParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 function setDonItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdLines[i].items[f]=q; else delete cmdLines[i].items[f]; drawLines(); }
 
-// Prix d'une ligne AVANT remise de ligne
+// Prix d'une ligne AVANT remise de ligne (arrondi strict au centime)
 function lineTotalBase(ln){
   if(ln.type==='coffret'){
     const base = (BOX_PRICES[ln.taille]!=null) ? BOX_PRICES[ln.taille] : (cmdProductsCache.find(p=>+p.taille===+ln.taille)||{}).prix||0;
     const nbDiff = Object.values(ln.parfums||{}).filter(q=>q>0).length;
     const limit = BOX_FLAVOR_LIMIT[ln.taille]||0;
     const over = Math.max(0, nbDiff-limit);
-    return base + over*FLAVOR_SURCHARGE;
+    return money2(base + over*FLAVOR_SURCHARGE);
   }
-  if(ln.type==='evenement') return (ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE;
-  if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return tot*pu; }
+  if(ln.type==='evenement') return addMoney(mulMoney(ln.evQte||0,EVENT_PRICE), mulMoney(ln.equip||0,EQUIP_PRICE));
+  if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='don') return 0;
   return 0;
 }
-// Remise de ligne en € (bornée 0–100 %)
+// Remise de ligne en € (bornée 0–100 %, arrondie au centime)
 function lineRemiseEuro(ln){
   const pct=Math.max(0,Math.min(100,+ln.remisePct||0));
-  return lineTotalBase(ln)*pct/100;
+  return money2(lineTotalBase(ln)*pct/100);
 }
 // Prix d'une ligne APRÈS remise de ligne
 function lineTotal(ln){
-  return Math.max(0, lineTotalBase(ln) - lineRemiseEuro(ln));
+  return Math.max(0, subMoney(lineTotalBase(ln), lineRemiseEuro(ln)));
 }
 // Bloc d'affichage « remise de ligne » réutilisé par chaque type (sauf don, gratuit)
 function lineRemiseRow(ln,i){
@@ -1902,24 +2267,25 @@ function lineRemiseRow(ln,i){
 }
 function setLineRemise(i,v){ let p=+v||0; if(p<0)p=0; if(p>100)p=100; cmdLines[i].remisePct=p; cmdRecalc(); }
 function cmdRecalc(){
-  const sousTotal = cmdLines.reduce((s,ln)=>s+lineTotal(ln),0); // après remises de ligne
+  const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln))); // après remises de ligne
   const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
-  const remiseG = sousTotal*gpct/100;
-  const total = Math.max(0, sousTotal - remiseG);
+  const remiseG = money2(sousTotal*gpct/100);
+  const total = Math.max(0, subMoney(sousTotal, remiseG));
   const mt=document.getElementById('f_mt');
   if(mt && mt.dataset.auto==='1'){ mt.value = total?total.toFixed(2):''; }
   const brk=document.getElementById('priceBreak');
   if(brk){
     if(cmdLines.length){
       brk.style.display='block';
-      const remiseLignes = cmdLines.reduce((s,ln)=>s+lineRemiseEuro(ln),0);
+      const remiseLignes = addMoney(...cmdLines.map(ln=>lineRemiseEuro(ln)));
       brk.innerHTML =
-        `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(cmdLines.reduce((s,ln)=>s+lineTotalBase(ln),0))}</b></div>`+
+        `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
         (remiseLignes>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
         (gpct>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseG)}</b></div>`:'')+
         `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(total)}</b></div>`;
     } else brk.style.display='none';
   }
+  if(typeof cmdUpdatePaySummary==='function') cmdUpdatePaySummary();
 }
 
 async function saveCmd(id){
@@ -1949,20 +2315,31 @@ async function saveCmd(id){
     if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
   });
   const remiseGlobale = Math.max(0, Math.min(100, +val('f_remiseg')||0));
+  // Registre de paiements : chaque paiement DOIT avoir une date (traçabilité obligatoire).
+  const paiements = (cmdPayments||[]).filter(p=> (+p.montant)>0 || p.moyen).map(p=>({
+    date: p.date||today(), montant: money2(+p.montant||0), moyen: p.moyen||'Carte'
+  }));
+  for(const p of paiements){
+    if(!p.date){ toast('Chaque paiement doit avoir une date'); return; }
+    if(p.montant<=0){ toast('Chaque paiement doit avoir un montant > 0'); return; }
+  }
+  const montant=money2(+val('f_mt')||0);
   const o={
     clientId:+val('f_cl')||0, date:val('f_date'),
     lignes, remiseGlobale,
     perso:document.getElementById('f_perso').checked,
-    montant:+val('f_mt')||0,
-    paiement:val('f_pay')||'En attente', reglement:val('f_reg')||'',
+    montant,
+    paiements,
+    dateReglementFinal: val('f_dateFinal')||'',
     statut:val('f_st'), notes:val('f_notes'),
     // on neutralise les anciens champs mono-type
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[]
   };
-  // BBC : préserver une éventuelle date de paiement existante, puis appliquer l'auto-paiement
-  if(id){ const prev=await db.orders.get(id); if(prev && prev.datePaiement) o.datePaiement=prev.datePaiement; }
-  applyAutoPay(o);
+  // dérive paiement/statutPaiement/soldeDu/montantEncaisse/datePaiement/reglement depuis le registre
+  syncPaymentFields(o);
   if(o.montant<0){toast('Le prix ne peut pas être négatif');return;}
+  // garde-fou : un encaissement sans date ne doit jamais passer (traçabilité)
+  if(orderPayStatus(o)!=='En attente' && !o.datePaiement){ toast('Date de paiement manquante'); return; }
   let oid=id;
   if(id) await db.orders.update(id,o); else oid=await db.orders.add(o);
   // calendrier : recréer l'événement lié
@@ -2011,7 +2388,7 @@ async function delCmd(id){
     // 1) recréditer le stock fini des batchs liés
     for(const it of items){
       const prod = await db.productions.get(it.productionId);
-      if(prod){ await db.productions.update(prod.id,{qteRestante:(+prod.qteRestante||0)+(+it.qte||0)}); }
+      if(prod){ await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, it.qte)}); }
     }
     // 2) supprimer les liens
     await db.orderItems.where('orderId').equals(id).delete();
@@ -2060,7 +2437,7 @@ async function unlinkBatch(itemId, orderId){
   if(!item){ cmdLink(orderId); return; }
   await db.transaction('rw',db.orderItems,db.productions,async()=>{
     const prod = await db.productions.get(item.productionId);
-    if(prod){ await db.productions.update(prod.id,{qteRestante:(+prod.qteRestante||0)+(+item.qte||0)}); }
+    if(prod){ await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, item.qte)}); }
     await db.orderItems.delete(itemId);
   });
   toast('Batch détaché — stock fini restitué'); cmdLink(orderId);
@@ -2068,12 +2445,16 @@ async function unlinkBatch(itemId, orderId){
 async function saveLink(orderId){
   const prodId=+val('f_prod'), q=+val('f_q');
   if(!q||q<=0){toast('Quantité invalide');return;}
-  const prod=await db.productions.get(prodId);
-  if(q>+prod.qteRestante){toast('Quantité > stock du batch');return;}
-  await db.transaction('rw',db.orderItems,db.productions,async()=>{
-    await db.orderItems.add({orderId,productionId:prodId,qte:q});
-    await db.productions.update(prodId,{qteRestante:+prod.qteRestante - q});
-  });
+  try{
+    await db.transaction('rw',db.orderItems,db.productions,async()=>{
+      // lecture + contrôle + écriture DANS la transaction : aucun état asymétrique possible
+      const prod=await db.productions.get(prodId);
+      if(!prod) throw new Error('Batch introuvable');
+      if(round3(q) > round3(+prod.qteRestante)) throw new Error('Quantité > stock du batch');
+      await db.orderItems.add({orderId,productionId:prodId,qte:round3(q)});
+      await db.productions.update(prodId,{qteRestante: subQty(prod.qteRestante, q)});
+    });
+  }catch(err){ toast(err.message||'Erreur de liaison'); return; }
   closeModal(); renderCmd(); toast('Batch lié à la commande ✓');
 }
 
@@ -2337,6 +2718,70 @@ async function computeForecast(opts){
 async function forecastAlerts(){
   const f = await computeForecast({horizon:8});
   return f.alertes;
+}
+
+/* ============================================================
+   PRÉDICTIF — rupture basée sur le RYTHME DE VENTES des mois passés.
+   Distinct du prévisionnel par commandes : ici on projette la
+   consommation moyenne (vélocité) sur le stock actuel pour estimer
+   le nombre de jours avant rupture, par parfum.
+   ============================================================ */
+async function computeSalesVelocity(opts){
+  opts=opts||{};
+  const lookbackMonths = opts.months || 3;   // nb de mois récents pris en compte
+  const horizon = opts.horizonDays || 14;     // seuil d'alerte (jours avant rupture)
+  const recipes = await db.recipes.toArray();
+  const prods = await db.productions.toArray();
+  const orders = await db.orders.toArray();
+
+  // 1) Stock fini actuel par parfum (somme des batchs restants, regroupés par recette)
+  const stockByParfum = {};
+  prods.forEach(p=>{
+    const r = recipes.find(x=>x.id===p.recipeId);
+    const nom = r ? r.produitNom : ('Recette #'+p.recipeId);
+    stockByParfum[nom] = round3((stockByParfum[nom]||0) + (+p.qteRestante||0));
+  });
+
+  // 2) Historique des ventes par parfum et par mois (commandes payées uniquement)
+  const todayD = new Date(today());
+  const startWindow = new Date(todayD); startWindow.setMonth(startWindow.getMonth()-lookbackMonths);
+  const startStr = startWindow.toISOString().slice(0,10);
+  const soldByParfum = {};       // parfum -> total pièces vendues sur la fenêtre
+  let firstSaleDate = null;
+  orders.forEach(o=>{
+    if(o.paiement!=='Payé' || !o.date) return;
+    if(o.date < startStr) return;                 // hors fenêtre récente
+    if(!firstSaleDate || o.date<firstSaleDate) firstSaleDate=o.date;
+    const dem=_orderParfumDemand(o);
+    for(const nom in dem){ soldByParfum[nom]=(soldByParfum[nom]||0)+dem[nom]; }
+  });
+
+  // nombre de jours effectivement observés dans la fenêtre (borne au 1er jour de vente)
+  const obsStart = (firstSaleDate && firstSaleDate>startStr) ? firstSaleDate : startStr;
+  let observedDays = Math.max(1, Math.round((todayD - new Date(obsStart))/86400000));
+
+  // 3) Vélocité (pièces/jour) + projection jours-avant-rupture par parfum
+  const parfums = [...new Set([...Object.keys(stockByParfum), ...Object.keys(soldByParfum)])];
+  const lignes = parfums.map(nom=>{
+    const vendu = soldByParfum[nom]||0;
+    const stock = stockByParfum[nom]||0;
+    const perDay = vendu>0 ? vendu/observedDays : 0;        // vélocité moyenne
+    const perMonth = round3(perDay*30);
+    const joursRestants = perDay>0 ? Math.floor(stock/perDay) : null; // null = aucune vente récente
+    let dateRupture=null;
+    if(joursRestants!=null){ const d=new Date(todayD); d.setDate(d.getDate()+joursRestants); dateRupture=d.toISOString().slice(0,10); }
+    const alerte = joursRestants!=null && joursRestants<=horizon;
+    return {parfum:nom, stock, vendu, perDay:round3(perDay), perMonth, joursRestants, dateRupture, alerte};
+  }).filter(l=>l.stock>0 || l.vendu>0)
+    .sort((a,b)=>{
+      // priorité : ceux qui vont rompre le plus tôt
+      const ja=a.joursRestants==null?Infinity:a.joursRestants;
+      const jb=b.joursRestants==null?Infinity:b.joursRestants;
+      return ja-jb;
+    });
+
+  return {lignes, alertes:lignes.filter(l=>l.alerte), lookbackMonths, horizon, observedDays,
+    hasData: Object.keys(soldByParfum).length>0};
 }
 
 async function analyzeStockCoverage(orders){
@@ -2639,6 +3084,77 @@ async function renderForecast(){
    ${detailRupture?`<h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
 }
 
+/* ============================================================
+   ÉVÉNEMENTS & ACOMPTES — suivi dédié des commandes événementielles
+   ============================================================ */
+function orderIsEvent(o){ return orderToLines(o).some(ln=>ln.type==='evenement'); }
+async function renderEvents(){
+  const orders = await db.orders.toArray();
+  const clients = await db.clients.toArray();
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom||'—';
+  const events = orders.filter(orderIsEvent);
+
+  // construit la fiche acompte de chaque événement
+  const rows = events.map(o=>{
+    const total = money2(o.montant);
+    const paid = orderPaid(o);
+    const solde = orderBalance(o);
+    const st = orderPayStatus(o);
+    const paiements = (o.paiements||[]).slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    const acompte = paiements.length ? paiements[0] : null; // 1er versement = acompte
+    return {o, clientNom:clName(o.clientId), total, paid, solde, st,
+      acompteMontant: acompte?money2(acompte.montant):0,
+      acompteDate: acompte?acompte.date:null,
+      dateFinal: o.dateReglementFinal||'',
+      nbPaiements: paiements.length};
+  }).sort((a,b)=>(b.o.date||'').localeCompare(a.o.date||''));
+
+  const soldes = rows.filter(r=>r.st==='Payé');
+  const avecAcompte = rows.filter(r=>r.st==='Partiel');
+  const aEncaisser = rows.filter(r=>r.st==='En attente');
+
+  const card = r=>{
+    const o=r.o;
+    const stTag = r.st==='Payé'?'<span class="tag done">Soldé</span>'
+      : r.st==='Partiel'?'<span class="tag event">Acompte versé</span>'
+      : '<span class="tag todo">À encaisser</span>';
+    const finalLate = r.dateFinal && r.st!=='Payé' && daysTo(r.dateFinal)!=null && daysTo(r.dateFinal)<0;
+    return `<div class="panel" style="margin:8px 0">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div><b>${o.clientId?`<span class="link-name" onclick="clientForm(${o.clientId})">${esc(r.clientNom)}</span>`:esc(r.clientNom)}</b>
+          <span style="color:#9a8a82;font-size:.8rem"> · n°${esc(orderNumber(o))} · ${fmtDate(o.date)}</span></div>
+        ${stTag}
+      </div>
+      <div class="sum-box"><span>Montant total</span><b>${euro(r.total)}</b></div>
+      ${r.acompteMontant>0?`<div class="sum-box"><span>Acompte ${r.acompteDate?'· '+fmtDate(r.acompteDate):''}</span><b>${euro(r.acompteMontant)}</b></div>`:''}
+      ${r.nbPaiements>1?`<div class="sum-box"><span>Total encaissé (${r.nbPaiements} versements)</span><b>${euro(r.paid)}</b></div>`:''}
+      <div class="sum-box"><span><b>Solde restant dû</b></span><b style="color:${r.solde>0?'var(--red,#b3261e)':'#3f7d52'}">${euro(r.solde)}</b></div>
+      ${r.st!=='Payé'?`<div class="sum-box"><span>Règlement final prévu</span><b ${finalLate?'style="color:var(--red,#b3261e)"':''}>${r.dateFinal?fmtDate(r.dateFinal)+(finalLate?' ⚠ dépassé':''):'— à définir —'}</b></div>`:''}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn ghost sm" onclick="cmdView(${o.id})">Détail</button>
+        ${r.st!=='Payé'?`<button class="btn gold sm" onclick="markPaid(${o.id})">✓ Solder (${euro(r.solde)})</button>`:''}
+        <button class="btn ghost sm" onclick="cmdForm(${o.id})">Modifier</button>
+      </div>
+    </div>`;
+  };
+
+  const section = (titre, list, emptyMsg, color) =>
+    `<h2 style="font-family:'Fraunces',serif;color:${color||'var(--bordeaux)'};margin:18px 0 4px;font-size:1.2rem">${titre} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">(${list.length})</span></h2>
+     ${list.length?list.map(card).join(''):`<p class="note">${emptyMsg}</p>`}`;
+
+  // totaux
+  const totalAEncaisser = money2(avecAcompte.concat(aEncaisser).reduce((s,r)=>s+r.solde,0));
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Événements & acomptes</h1><p>${events.length} commande(s) événementielle(s)</p></div></div>
+   <div class="banner">🎉 <div>Suivi dédié des prestations événementielles : montant total, acompte, solde restant dû et date de règlement final. ${totalAEncaisser>0?`<b>${euro(totalAEncaisser)}</b> restent à encaisser au total.`:'Tout est soldé.'}</div></div>
+   ${events.length?
+     section('À encaisser', aEncaisser, 'Aucun événement sans paiement.', 'var(--red,#b3261e)')+
+     section('Avec acompte', avecAcompte, 'Aucun événement avec acompte partiel.', 'var(--caramel)')+
+     section('Soldés', soldes, 'Aucun événement soldé pour l\'instant.', '#3f7d52')
+     :`<div class="panel"><div class="empty">Aucune commande événementielle. Créez une commande avec une ligne « Événement » pour la suivre ici.</div></div>`}`;
+}
+
 // === insère le moteur parseIntent (voir ai_engine.js) ===
 /* ============================================================
    ASSISTANT IA INTERNE — analyseur d'intentions hors-ligne
@@ -2802,7 +3318,12 @@ function parseIntent(texte, ctx){
      && /\b(faut|besoin|combien|matiere|matieres|premiere|prevoir|planifie|planifier)\b/.test(t)){
     return {intent:'query_production_needs', params:{}, critical:false, label:'Calculer les besoins de production'};
   }
-  // risque de rupture
+  // rupture PRÉDICTIVE (rythme de ventes) : "quand", "combien de temps", "prévision", "tenir"
+  if(/\b(rupture|stock|tenir|epuise|epuiser|tiendra|durera|reste)\b/.test(t)
+     && /\b(quand|combien de temps|prevision|previsions|prevoir|rythme|vais|jusqu|tiendra|durera|tenir)\b/.test(t)){
+    return {intent:'query_predict', params:{}, critical:false, label:'Prévoir les ruptures selon le rythme de ventes'};
+  }
+  // risque de rupture (immédiat : commandes + seuils)
   if(/\b(rupture|risque|manque|manquer|epuise|epuiser|epuisement)\b/.test(t)){
     return {intent:'query_rupture', params:{}, critical:false, label:'Détecter les risques de rupture'};
   }
@@ -2820,6 +3341,7 @@ let aiPending = null; // action critique en attente de validation
 function renderAssistant(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Assistant</h1><p>Pilotez l'application en langage naturel</p></div></div>
+   <div id="aiPredict"><div class="banner">📈 <div>Analyse du rythme de ventes en cours…</div></div></div>
    <div class="banner">🤖 <div>Écrivez ou dictez (micro du clavier) une instruction. L'assistant fonctionne <b>hors-ligne</b>. Toute action critique (création, suppression, ajustement) demande votre validation.</div></div>
    <div class="panel">
      <div class="field"><label>Votre demande</label>
@@ -2828,10 +3350,34 @@ function renderAssistant(){
      <div class="flex" style="gap:8px"><button class="btn" onclick="aiRun()">Envoyer</button>
        <button class="btn ghost" onclick="document.getElementById('aiInput').value='';document.getElementById('aiOut').innerHTML='';">Effacer</button></div>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-       ${['Quel est le stock de chocolat ?','Commandes à préparer demain','Quels clients commandent le plus de vanille ?','Chiffre d\'affaires','Quelles sont les tendances ?','Que faut-il produire ?','Y a-t-il un risque de rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
+       ${['Quel est le stock de chocolat ?','Commandes à préparer demain','Quels clients commandent le plus de vanille ?','Chiffre d\'affaires','Quelles sont les tendances ?','Que faut-il produire ?','Quand vais-je être en rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
      </div>
    </div>
    <div id="aiOut"></div>`;
+  renderPredictiveAlerts();
+}
+// Affiche, en haut de l'assistant, les alertes de rupture PRÉDICTIVES (rythme de ventes).
+async function renderPredictiveAlerts(){
+  const box=document.getElementById('aiPredict'); if(!box) return;
+  let v; try{ v=await computeSalesVelocity({months:3, horizonDays:14}); }catch(e){ box.innerHTML=''; return; }
+  if(!v.hasData){
+    box.innerHTML=`<div class="banner">📈 <div>Pas encore assez d'historique de ventes pour prédire les ruptures. Les prévisions apparaîtront après quelques semaines de commandes payées.</div></div>`;
+    return;
+  }
+  if(!v.alertes.length){
+    box.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Au rythme des ventes des ${v.lookbackMonths} derniers mois, aucun parfum ne devrait manquer dans les ${v.horizon} prochains jours.</div></div>`;
+    return;
+  }
+  const rows=v.alertes.slice(0,8).map(a=>{
+    const urgent = a.joursRestants<=7;
+    return `<div class="sum-box"><span>${urgent?'🔴':'🟠'} <b>${esc(a.parfum)}</b> <span style="color:#9a8a82">— ${qty(a.perMonth)}/mois</span></span>
+      <b style="color:${urgent?'var(--red,#b3261e)':'var(--caramel)'}">~${a.joursRestants} j${a.dateRupture?` · ${fmtDate(a.dateRupture)}`:''}</b></div>`;
+  }).join('');
+  box.innerHTML=`<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4;flex-direction:column;align-items:stretch">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px">⚠ <b>Ruptures prévues (rythme des ${v.lookbackMonths} derniers mois)</b></div>
+    ${rows}
+    <p class="note" style="margin-top:6px">Estimation basée sur la vélocité de vente moyenne et le stock fini actuel. Pensez à planifier une production.</p>
+  </div>`;
 }
 function aiSay(html){ document.getElementById('aiOut').innerHTML = `<div class="panel">${html}</div>`; }
 
@@ -2852,6 +3398,7 @@ async function aiRun(){
     case 'query_anomalies': return aiQueryAnomalies();
     case 'query_production_needs': return aiQueryProductionNeeds();
     case 'query_rupture': return aiQueryRupture();
+    case 'query_predict': return aiQueryPredict();
     case 'create_order': return aiConfirmCreateOrder(r);
     case 'delete_order': return aiConfirmDeleteOrder(r);
     case 'adjust_stock': return aiConfirmAdjustStock(r);
@@ -2950,6 +3497,21 @@ async function aiQueryProductionNeeds(){
     <h3 style="font-size:.95rem;margin:12px 0 6px">Matières premières nécessaires</h3>${mat||'<p class="note">Aucune recette liée.</p>'}
     ${N.sansRecette.length?`<p class="note" style="color:var(--red,#b3261e)">⚠ Sans recette : ${N.sansRecette.map(x=>esc(x.parfum)).join(', ')}.</p>`:''}`);
 }
+// Réponse PRÉDICTIVE : jours avant rupture par parfum, selon le rythme de ventes.
+async function aiQueryPredict(){
+  const v=await computeSalesVelocity({months:3, horizonDays:14});
+  if(!v.hasData) return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Prévision de rupture</h3><p class="note">Pas encore assez d'historique de ventes payées pour estimer un rythme. Reviens après quelques semaines de commandes.</p>`);
+  const withPrev = v.lignes.filter(l=>l.joursRestants!=null);
+  if(!withPrev.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Prévision de rupture</h3><p class="note">Aucune vente récente sur les parfums en stock : impossible d'estimer une vélocité.</p>`);
+  const rows=withPrev.slice(0,15).map(l=>{
+    const col = l.alerte ? (l.joursRestants<=7?'var(--red,#b3261e)':'var(--caramel)') : '#3f7d52';
+    return `<div class="sum-box"><span><b>${esc(l.parfum)}</b> <span style="color:#9a8a82">— stock ${qty(l.stock)} · ${qty(l.perMonth)}/mois</span></span>
+      <b style="color:${col}">~${l.joursRestants} j${l.dateRupture?` · ${fmtDate(l.dateRupture)}`:''}</b></div>`;
+  }).join('');
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Prévision de rupture <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— rythme des ${v.lookbackMonths} derniers mois</span></h3>
+    ${rows}
+    <p class="note" style="margin-top:6px">Jours estimés avant épuisement = stock fini actuel ÷ vélocité de vente moyenne. À planifier en production.</p>`);
+}
 async function aiQueryRupture(){
   const orders=await db.orders.toArray();
   const N=await computeMaterialNeeds(orders);
@@ -3034,7 +3596,7 @@ async function aiExecute(){
       // décrément : on retire FIFO sur les lots existants
       let reste=-delta;
       const actifs=lots.filter(l=>+l.qteRestante>0).sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999'));
-      for(const l of actifs){ if(reste<=0)break; const pris=Math.min(reste,+l.qteRestante); await db.materialLots.update(l.id,{qteRestante:+l.qteRestante-pris}); reste-=pris; }
+      for(const l of actifs){ if(reste<=0)break; const pris=round3(Math.min(reste,+l.qteRestante)); await db.materialLots.update(l.id,{qteRestante: subQty(l.qteRestante,pris)}); reste=subQty(reste,pris); }
     }
     aiSay(`<h3 style="font-size:1rem">Stock ajusté ✓</h3>
       <div class="sum-box"><span>${esc(m.nom)}</span><b>${qty(actuel)} → ${qty(params.value)} ${esc(m.unite||'')}</b></div>
@@ -3175,10 +3737,30 @@ async function renderLabels(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  // commandes ayant des batchs liés (pour l'impression par commande)
+  const oitems = await db.orderItems.toArray();
+  const linkedOrderIds = [...new Set(oitems.map(it=>it.orderId))];
+  const orders = (await db.orders.toArray()).filter(o=>linkedOrderIds.includes(o.id))
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const clients = await db.clients.toArray();
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom||'—';
+  const linkCount = id => oitems.filter(it=>it.orderId===id).length;
+
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 30 mm — Phomemo D520BT</p></div></div>
-   <div class="banner">▤ <div>Étiquettes en noir sur fond blanc, sans décoration, optimisées pour l'impression thermique. Chaque étiquette porte : produit, lot, DLC, date, et le QR de traçabilité. Sélectionne un batch puis « Imprimer ».</div></div>
-   <div class="panel">
+   <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 30 mm — Phomemo D520BT (AirPrint)</p></div></div>
+   <div class="banner">▤ <div>Étiquettes noir sur blanc, sans décoration, optimisées pour l'impression thermique. Chaque étiquette porte : produit, lot, DLC, date, et le QR de traçabilité. Choisis un nombre de copies pour imprimer en lot, ou imprime toutes les étiquettes d'une commande.</div></div>
+
+   ${orders.length?`<div class="panel"><h2>Imprimer les étiquettes d'une commande</h2>
+     <div class="table-wrap"><table><thead><tr><th>Date</th><th>Client</th><th>Batchs liés</th><th></th></tr></thead><tbody>
+       ${orders.map(o=>`<tr><td>${fmtDate(o.date)}</td><td><b>${esc(clName(o.clientId))}</b></td><td>${linkCount(o.id)}</td>
+         <td style="text-align:right">
+           <span class="act" onclick="printOrderLabels(${o.id},'perLink')">1 / produit</span>
+           <span class="act" onclick="printOrderLabels(${o.id},'perPiece')">1 / pièce</span></td></tr>`).join('')}
+     </tbody></table></div>
+     <p class="note">« 1 / produit » : une étiquette par batch lié. « 1 / pièce » : autant d'étiquettes que de pièces commandées.</p>
+   </div>`:''}
+
+   <div class="panel"><h2>Par batch de production</h2>
    ${prods.length?`<div class="labels-grid" id="labelsGrid">
      ${prods.map(p=>`<div class="label" data-prod="${p.id}">
         <div class="qr"><canvas data-lot="${esc(p.lotProduction||'')}"></canvas></div>
@@ -3188,7 +3770,10 @@ async function renderLabels(){
           <span class="meta">DLC : ${p.dlcProduit?fmtDate(p.dlcProduit):'— à compléter —'}</span>
           <span class="meta">Fab. : ${fmtDate(p.date)}</span>
         </div>
-        <button class="btn ghost sm label-print" onclick="printLabel(${p.id})">⎙ Imprimer</button>
+        <div class="label-actions">
+          <label class="copies">Copies <input type="number" id="lblCopies_${p.id}" min="1" max="200" value="1"></label>
+          <button class="btn ghost sm" onclick="printLabelCopies(${p.id})">⎙ Imprimer</button>
+        </div>
      </div>`).join('')}
    </div>`:`<div class="empty">Aucun batch produit. Lance une production pour générer ses étiquettes.</div>`}
    </div>`;
@@ -3199,25 +3784,55 @@ async function renderLabels(){
   });
 }
 
-// Impression d'une étiquette unique au format thermique 50×40 mm (noir sur blanc, sans décoration)
-async function printLabel(prodId){
+/* ============================================================
+   IMPRESSION D'ÉTIQUETTES THERMIQUES 50×30 mm via AirPrint
+   Architecture : buildLabelData (données) → renderLabelHTML (1 étiquette)
+   → printLabelSheet (feuille de N étiquettes, 1 par page 50×30).
+   Web Bluetooth volontairement écarté : non supporté par Safari iOS.
+   Un backend Bluetooth/ESC-POS pourra se brancher ici plus tard (Android/desktop).
+   ============================================================ */
+// Prépare les données d'étiquette d'un batch de production.
+async function buildLabelData(prodId){
   const p = await db.productions.get(prodId);
-  if(!p){ toast('Batch introuvable'); return; }
+  if(!p) return null;
   const rec = await db.recipes.get(p.recipeId);
-  // QR rendu hors écran puis converti en image
   const tmp = document.createElement('canvas');
   try{ QR.render(tmp, traceUrl(p.lotProduction||''), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
-  const qrData = tmp.toDataURL('image/png');
-  const dlc = p.dlcProduit ? fmtDate(p.dlcProduit) : '—';
-  const win = window.open('', '_blank', 'width=400,height=260');
+  return {
+    produit: rec?rec.produitNom:'Produit',
+    lot: p.lotProduction||'—',
+    dlc: p.dlcProduit ? fmtDate(p.dlcProduit) : '—',
+    fab: fmtDate(p.date),
+    qr: tmp.toDataURL('image/png')
+  };
+}
+// HTML d'UNE étiquette (50×30 mm, noir sur blanc, sans décoration).
+function renderLabelHTML(d){
+  return `<div class="lab">
+     <div class="q"><img src="${d.qr}"></div>
+     <div class="t">
+       <div class="prod">${esc(d.produit)}</div>
+       <div class="row">Lot : ${esc(d.lot)}</div>
+       <div class="dlc">DLC : ${esc(d.dlc)}</div>
+       <div class="row">Fab. : ${esc(d.fab)}</div>
+     </div>
+   </div>`;
+}
+// Ouvre une fenêtre d'impression contenant une feuille de plusieurs étiquettes.
+// `labels` = tableau de données d'étiquette (déjà multiplié par le nombre de copies).
+function printLabelSheet(labels, titre){
+  if(!labels || !labels.length){ toast('Aucune étiquette à imprimer'); return; }
+  const win = window.open('', '_blank', 'width=420,height=320');
   if(!win){ toast('Autorise les fenêtres pour imprimer'); return; }
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Étiquette ${esc(p.lotProduction||'')}</title>
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(titre||'Étiquettes')}</title>
    <style>
      @page { size: 50mm 30mm; margin: 0; }
      * { margin:0; padding:0; box-sizing:border-box; }
      html,body { background:#fff; }
      .lab { width:50mm; height:30mm; background:#fff; color:#000; padding:1.5mm;
-            font-family:Arial,Helvetica,sans-serif; display:flex; gap:1.5mm; align-items:center; }
+            font-family:Arial,Helvetica,sans-serif; display:flex; gap:1.5mm; align-items:center;
+            page-break-after:always; break-after:page; }
+     .lab:last-child { page-break-after:auto; break-after:auto; }
      .lab .q { width:16mm; height:16mm; flex-shrink:0; }
      .lab .q img { width:16mm; height:16mm; display:block; image-rendering:pixelated; }
      .lab .t { flex:1; min-width:0; line-height:1.2; }
@@ -3225,18 +3840,41 @@ async function printLabel(prodId){
      .lab .row { font-size:2.5mm; }
      .lab .dlc { font-size:2.8mm; font-weight:bold; }
    </style></head><body>
-   <div class="lab">
-     <div class="q"><img src="${qrData}"></div>
-     <div class="t">
-       <div class="prod">${esc(rec?rec.produitNom:'Produit')}</div>
-       <div class="row">Lot : ${esc(p.lotProduction||'—')}</div>
-       <div class="dlc">DLC : ${dlc}</div>
-       <div class="row">Fab. : ${fmtDate(p.date)}</div>
-     </div>
-   </div>
-   <script>window.onload=function(){setTimeout(function(){window.print();},250);};window.onafterprint=function(){window.close();};<\/script>
+   ${labels.map(renderLabelHTML).join('')}
+   <script>window.onload=function(){setTimeout(function(){window.print();},300);};window.onafterprint=function(){window.close();};<\/script>
    </body></html>`);
   win.document.close();
+}
+// Impression d'une étiquette unique (compat. bouton existant).
+async function printLabel(prodId){
+  const d = await buildLabelData(prodId);
+  if(!d){ toast('Batch introuvable'); return; }
+  printLabelSheet([d], 'Étiquette '+d.lot);
+}
+// Impression EN LOT : N copies d'un même batch.
+async function printLabelCopies(prodId){
+  const n = Math.max(1, Math.min(200, +(document.getElementById('lblCopies_'+prodId)?.value)||1));
+  const d = await buildLabelData(prodId);
+  if(!d){ toast('Batch introuvable'); return; }
+  const sheet=[]; for(let i=0;i<n;i++) sheet.push(d);
+  printLabelSheet(sheet, `${n} étiquette(s) — ${d.lot}`);
+  toast(`${n} étiquette(s) envoyée(s) à l'impression`);
+}
+// Impression des étiquettes liées à UNE commande : un batch par produit lié,
+// nombre d'étiquettes = quantité de pièces liées (ou 1 par lien selon le choix).
+async function printOrderLabels(orderId, mode){
+  const links = await db.orderItems.where('orderId').equals(orderId).toArray();
+  if(!links.length){ toast('Aucun batch lié à cette commande. Liez d\'abord des batchs.'); return; }
+  const sheet=[];
+  for(const it of links){
+    const d = await buildLabelData(it.productionId);
+    if(!d) continue;
+    const n = (mode==='perPiece') ? Math.max(1, Math.round(+it.qte||1)) : 1;
+    for(let i=0;i<n;i++) sheet.push(d);
+  }
+  if(!sheet.length){ toast('Batchs liés introuvables'); return; }
+  printLabelSheet(sheet, 'Étiquettes commande #'+orderId);
+  toast(`${sheet.length} étiquette(s) envoyée(s) à l'impression`);
 }
 // Ouvrir une fiche traçabilité à partir de l'ancre #trace=<lot> (QR scanné)
 async function handleTraceAnchor(){
@@ -3572,7 +4210,9 @@ async function collectOrderExport(orderId){
     produits, totalMacarons,
     remiseGlobale: +o.remiseGlobale||0,
     montant: +o.montant||0,
-    paiement: o.paiement||'En attente', reglement: o.reglement||'',
+    paiement: orderPayStatus(o), reglement: o.reglement||'',
+    paiements: (o.paiements||[]).map(p=>({date:p.date, montant:+p.montant||0, moyen:p.moyen||''})),
+    encaisse: orderPaid(o), solde: orderBalance(o),
     statut: normStatus(o.statut),
     notes: o.notes||''
   };
@@ -3596,7 +4236,13 @@ function formatOrderTXT(d){
   L.push('');
   if(d.remiseGlobale>0) L.push(`Remise globale : −${d.remiseGlobale}%`);
   L.push('Total : '+euro(d.montant));
-  L.push('Statut : '+d.paiement+(d.reglement?` (${d.reglement})`:''));
+  // Traçabilité des paiements
+  if(d.paiements && d.paiements.length){
+    L.push('Paiements :');
+    d.paiements.forEach(p=>L.push(`  - ${fmtDate(p.date)} · ${euro(p.montant)} · ${p.moyen||'—'}`));
+    L.push(`Encaissé : ${euro(d.encaisse)} · Solde dû : ${euro(d.solde)}`);
+  }
+  L.push('Statut : '+d.paiement+(d.reglement&&!(d.paiements&&d.paiements.length)?` (${d.reglement})`:''));
   if(d.notes){ L.push(''); L.push('Commentaires : '+d.notes.replace(/\n/g,' / ')); }
   return L.join('\n');
 }
@@ -3753,8 +4399,49 @@ async function exportReminder(){
   }
 }
 
+/* ============================================================
+   SERVICE WORKER — détection de mise à jour + invite « Recharger »
+   skipWaiting est piloté par l'utilisateur (pas automatique).
+   ============================================================ */
+let _swReg=null, _swReloading=false;
+function showUpdateBanner(worker){
+  if(document.getElementById('updateBanner')) return; // déjà affichée
+  const div=document.createElement('div');
+  div.id='updateBanner';
+  div.innerHTML=`<span>Une nouvelle version est disponible.</span>
+    <button type="button" id="updateReload">Recharger l'application</button>
+    <button type="button" id="updateDismiss" aria-label="Ignorer">✕</button>`;
+  document.body.appendChild(div);
+  div.querySelector('#updateReload').addEventListener('click', ()=>{
+    if(worker){ worker.postMessage({type:'SKIP_WAITING'}); }
+    else { location.reload(); }
+  });
+  div.querySelector('#updateDismiss').addEventListener('click', ()=>div.remove());
+}
 if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(()=>{}));
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('./service-worker.js').then(reg=>{
+      _swReg=reg;
+      // une version est déjà en attente (installée mais pas active) → proposer le rechargement
+      if(reg.waiting && navigator.serviceWorker.controller){ showUpdateBanner(reg.waiting); }
+      // une nouvelle version commence à s'installer → l'attendre puis proposer
+      reg.addEventListener('updatefound', ()=>{
+        const nw=reg.installing; if(!nw) return;
+        nw.addEventListener('statechange', ()=>{
+          // installée + un contrôleur existe déjà = ce n'est pas la 1ère install → maj dispo
+          if(nw.state==='installed' && navigator.serviceWorker.controller){ showUpdateBanner(reg.waiting||nw); }
+        });
+      });
+    }).catch(()=>{});
+    // quand le nouveau SW prend le contrôle (après SKIP_WAITING), on recharge une seule fois
+    navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+      if(_swReloading) return; _swReloading=true; location.reload();
+    });
+  });
+  // vérifie l'existence d'une mise à jour quand l'app revient au premier plan
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState==='visible' && _swReg){ _swReg.update().catch(()=>{}); }
+  });
 }
 
 // POPUP D'ALERTE PRÉVISIONNELLE — affichée à l'ouverture (1×/jour) et après création/modif de commande.
@@ -3789,6 +4476,7 @@ async function showForecastPopup(opts){
   try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
   const opened = await handleTraceAnchor().catch(()=>false);
   if(!opened) render();
+  initHistoryNav();
   exportReminder();
   // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
   try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }

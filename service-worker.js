@@ -1,4 +1,4 @@
-const CACHE = 'sm-iphone-v18';
+const CACHE = 'sm-iphone-v26';
 const ASSETS = [
   './',
   './index.html',
@@ -10,12 +10,15 @@ const ASSETS = [
   './icon-512.png'
 ];
 
+// INSTALL : précache des ressources. PAS de skipWaiting automatique :
+// la nouvelle version attend que l'utilisateur clique « Recharger » dans l'app.
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE).then(c => c.addAll(ASSETS))
   );
 });
 
+// ACTIVATE : purge des anciens caches puis prise de contrôle des onglets.
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
@@ -24,10 +27,33 @@ self.addEventListener('activate', e => {
   );
 });
 
-// Cache-first : tout est servi depuis le cache, le réseau n'est qu'un secours.
+// Permet à l'application de demander l'activation immédiate de la version en attente
+// (déclenché par le bouton « Recharger l'application »).
+self.addEventListener('message', e => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+// FETCH : Stale-While-Revalidate.
+// On répond immédiatement avec le cache (rapidité, hors-ligne), tout en allant
+// chercher une version fraîche en arrière-plan pour mettre le cache à jour.
 self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  let sameOrigin = true;
+  try { sameOrigin = new URL(req.url).origin === self.location.origin; } catch (err) {}
+  if (!sameOrigin) return;
+
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request).catch(() => cached))
+    caches.open(CACHE).then(cache =>
+      cache.match(req).then(cached => {
+        const network = fetch(req).then(res => {
+          if (res && res.status === 200 && res.type === 'basic') {
+            cache.put(req, res.clone());
+          }
+          return res;
+        }).catch(() => cached);
+        return cached || network;
+      })
+    )
   );
 });
