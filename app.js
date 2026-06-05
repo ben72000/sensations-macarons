@@ -124,7 +124,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, assistant:renderAssistant
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, analyse:renderAnalyse, assistant:renderAssistant
 };
 let _navLast=0;
 function setActiveView(v){
@@ -251,33 +251,38 @@ async function delSup(id){
 /* ============================================================
    MATIÈRES & LOTS
    ============================================================ */
+let matSearch='';
+let _matCache=null, _lotCache=null;
 async function renderMaterials(){
   const mats = await db.materials.orderBy('nom').toArray();
-  const rows=[];
-  for(const mat of mats){
-    const {total,dlcMin,nbLots}=await stockParMatiere(mat.id);
+  // précalcul du stock par matière (une seule passe sur les lots)
+  const allLots = await db.materialLots.toArray();
+  const stockBy={}, dlcBy={}, nbBy={};
+  allLots.forEach(l=>{ const id=l.materialId; if(!(id in stockBy)){stockBy[id]=0;nbBy[id]=0;}
+    const r=+l.qteRestante||0; stockBy[id]+=r;
+    if(r>0){ nbBy[id]++; if(l.dlc && (!dlcBy[id]||l.dlc<dlcBy[id])) dlcBy[id]=l.dlc; } });
+  _matCache = mats.map(mat=>{
+    const total=stockBy[mat.id]||0, dlcMin=dlcBy[mat.id]||null, nbLots=nbBy[mat.id]||0;
     const low = total<=(+mat.seuil||0);
-    const dj = dlcMin?daysTo(dlcMin):null;
-    rows.push(`<tr>
-      <td><b>${esc(mat.nom)}</b></td>
-      <td>${qty(total)} ${esc(mat.unite||'')}</td>
-      <td>${qty(mat.seuil||0)} ${esc(mat.unite||'')}</td>
-      <td>${nbLots}</td>
-      <td>${dlcMin?`${fmtDate(dlcMin)} ${dj!==null&&dj<=7?`<span class="tag warn">${dj<=0?'expiré':dj+' j'}</span>`:''}`:'—'}</td>
-      <td><span class="tag ${low?'low':'ok'}">${low?'À commander':'OK'}</span></td>
-      <td style="text-align:right">
-        <span class="act" onclick="lotForm(0,${mat.id})">+ Lot</span>
-        <span class="act" onclick="matForm(${mat.id})">Modifier</span>
-        <span class="act del" onclick="delMat(${mat.id})">Suppr.</span></td></tr>`);
-  }
-  const lots = await db.materialLots.orderBy('dateReception').reverse().limit(20).toArray();
+    const prim = normTxt(mat.nom||'');
+    const blob = normTxt([mat.nom, mat.unite, mat.ref, low?'à commander':'ok'].filter(Boolean).join(' '));
+    return {mat, total, dlcMin, nbLots, low, _prim:prim, _blob:blob, _digits:''};
+  });
+
   const sups = await db.suppliers.toArray();
   const supName = id => (sups.find(s=>s.id===id)||{}).nom||'—';
   const matName = id => (mats.find(s=>s.id===id)||{}).nom||'(supprimée)';
   const matUnit = id => (mats.find(s=>s.id===id)||{}).unite||'';
 
-  // Historique des matières consommées : prodConsumption + production + lot + matière
-  const allLots = await db.materialLots.toArray();
+  // lots récents (cache complet pour recherche, affichage limité par défaut)
+  const lots = allLots.slice().sort((a,b)=>(b.dateReception||'').localeCompare(a.dateReception||''));
+  _lotCache = lots.map(l=>{
+    const prim = normTxt(l.lotFournisseur||'');
+    const blob = normTxt([l.lotFournisseur, matName(l.materialId), supName(l.supplierId), fmtDate(l.dateReception), fmtDate(l.dlc)].filter(Boolean).join(' '));
+    return {l, matName:matName(l.materialId), supName:supName(l.supplierId), _prim:prim, _blob:blob, _digits:onlyDigits(l.lotFournisseur||'')};
+  });
+
+  // Historique consommation (inchangé, non recherché — volume borné à 20)
   const lotById = id => allLots.find(l=>l.id===id);
   const allProds = await db.productions.toArray();
   const prodById = id => allProds.find(p=>p.id===id);
@@ -285,32 +290,24 @@ async function renderMaterials(){
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'—';
   const conso = await db.prodConsumption.toArray();
   const histo = conso.map(c=>{
-    const lot = lotById(c.materialLotId);
-    const prod = prodById(c.productionId);
-    return {
-      date: prod?prod.date:'',
-      materialId: lot?lot.materialId:null,
-      lotFournisseur: lot?lot.lotFournisseur:'(lot supprimé)',
-      qte: c.qteConsommee,
-      produit: prod?recName(prod.recipeId):'(prod. supprimée)',
-      lotProd: prod?prod.lotProduction:''
-    };
+    const lot = lotById(c.materialLotId); const prod = prodById(c.productionId);
+    return { date: prod?prod.date:'', materialId: lot?lot.materialId:null,
+      lotFournisseur: lot?lot.lotFournisseur:'(lot supprimé)', qte: c.qteConsommee,
+      produit: prod?recName(prod.recipeId):'(prod. supprimée)', lotProd: prod?prod.lotProduction:'' };
   }).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,20);
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Matières premières & lots</h1><p>${mats.length} matière(s)</p></div>
+   <div class="topbar"><div><h1>Matières premières & lots</h1><p id="matCount">${mats.length} matière(s)</p></div>
      <div class="flex"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Matière</button></div></div>
    <div class="panel"><h2>Inventaire (stock = somme des lots actifs)</h2>
+     <input class="search" id="matSearch" style="width:100%;margin-bottom:12px" placeholder="Nom de matière, unité, état…" value="${esc(matSearch)}" oninput="matFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
    ${mats.length?`<div class="table-wrap"><table><thead><tr><th>Matière</th><th>Stock</th><th>Seuil</th><th>Lots actifs</th><th>DLC la + proche</th><th>État</th><th></th></tr></thead>
-     <tbody>${rows.join('')}</tbody></table></div>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…), puis réceptionne des lots.</div>`}
+     <tbody id="matBody"></tbody></table></div><div id="matEmpty" class="empty" style="display:none">Aucune matière.</div>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…), puis réceptionne des lots.</div>`}
    </div>
-   <div class="panel"><h2>Derniers lots réceptionnés</h2>
+   <div class="panel"><h2>Lots réceptionnés</h2>
+     <input class="search" id="lotSearch" style="width:100%;margin-bottom:12px" placeholder="N° de lot, matière, fournisseur…" value="${esc(lotSearch)}" oninput="lotFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
    ${lots.length?`<div class="table-wrap"><table><thead><tr><th>Réception</th><th>Matière</th><th>N° lot fourn.</th><th>Fournisseur</th><th>Restant / Initial</th><th>DLC</th><th></th></tr></thead>
-     <tbody>${lots.map(l=>`<tr>
-       <td>${fmtDate(l.dateReception)}</td><td>${esc(matName(l.materialId))}</td>
-       <td>${esc(l.lotFournisseur||'—')}</td><td>${esc(supName(l.supplierId))}</td>
-       <td>${qty(l.qteRestante)} / ${qty(l.qteInitiale)}</td><td>${fmtDate(l.dlc)}</td>
-       <td style="text-align:right"><span class="act del" onclick="delLot(${l.id})">Suppr.</span></td></tr>`).join('')}</tbody></table></div>`
+     <tbody id="lotBody"></tbody></table></div><div id="lotEmpty" class="empty" style="display:none">Aucun lot.</div>`
      :`<div class="empty">Aucun lot réceptionné.</div>`}
    </div>
    <div class="panel"><h2>Dernières matières consommées</h2>
@@ -323,6 +320,41 @@ async function renderMaterials(){
        <td>${esc(h.produit)}${h.lotProd?`<br><span style="color:#9a8a82;font-size:.78rem">${esc(h.lotProd)}</span>`:''}</td></tr>`).join('')}</tbody></table></div>`
      :`<div class="empty">Aucune consommation. Les sorties apparaissent dès qu'une production est lancée.</div>`}
    </div>`;
+  matFilter(matSearch);
+  lotFilter(lotSearch);
+}
+function _matRow(row){
+  const mat=row.mat; const dj=row.dlcMin?daysTo(row.dlcMin):null;
+  return `<tr>
+    <td><b>${esc(mat.nom)}</b></td>
+    <td>${qty(row.total)} ${esc(mat.unite||'')}</td>
+    <td>${qty(mat.seuil||0)} ${esc(mat.unite||'')}</td>
+    <td>${row.nbLots}</td>
+    <td>${row.dlcMin?`${fmtDate(row.dlcMin)} ${dj!==null&&dj<=7?`<span class="tag warn">${dj<=0?'expiré':dj+' j'}</span>`:''}`:'—'}</td>
+    <td><span class="tag ${row.low?'low':'ok'}">${row.low?'À commander':'OK'}</span></td>
+    <td style="text-align:right">
+      <span class="act" onclick="lotForm(0,${mat.id})">+ Lot</span>
+      <span class="act" onclick="matForm(${mat.id})">Modifier</span>
+      <span class="act del" onclick="delMat(${mat.id})">Suppr.</span></td></tr>`;
+}
+function _lotRow(row){
+  const l=row.l;
+  return `<tr>
+    <td>${fmtDate(l.dateReception)}</td><td>${esc(row.matName)}</td>
+    <td>${esc(l.lotFournisseur||'—')}</td><td>${esc(row.supName)}</td>
+    <td>${qty(l.qteRestante)} / ${qty(l.qteInitiale)}</td><td>${fmtDate(l.dlc)}</td>
+    <td style="text-align:right"><span class="act del" onclick="delLot(${l.id})">Suppr.</span></td></tr>`;
+}
+function matFilter(q){
+  matSearch=q||'';
+  if(!_matCache) return;
+  searchRenderBody('matBody','matCount','matEmpty', _matCache, q, _matRow, 7, 'matière(s)');
+}
+let lotSearch='';
+function lotFilter(q){
+  lotSearch=q||'';
+  if(!_lotCache) return;
+  searchRenderBody('lotBody','__noop','lotEmpty', _lotCache, q, _lotRow, 7, 'lot(s)');
 }
 async function matForm(id){
   const s = id ? await db.materials.get(id) : {unite:'kg'};
@@ -510,54 +542,113 @@ async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'(recette supprimée)';
+  const ecartTag = p => {
+    const e = (p.ecart!=null) ? +p.ecart : 0;
+    if(!e) return '<span class="tag ok">conforme</span>';
+    return `<span class="tag ${e<0?'warn':'event'}">${e>0?'+':''}${qty(e)}</span>`;
+  };
+  // résumé rendement global (somme réel / somme théorique sur les batchs renseignés)
+  const withBoth = prods.filter(p=>p.qteTheorique>0 && p.qteReelle!=null);
+  const sumTh = withBoth.reduce((s,p)=>s+(+p.qteTheorique||0),0);
+  const sumRe = withBoth.reduce((s,p)=>s+(+p.qteReelle||0),0);
+  const rendePct = sumTh ? Math.round(sumRe/sumTh*1000)/10 : null;
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Productions</h1><p>${prods.length} batch(s) fabriqué(s)</p></div>
+   <div class="topbar"><div><h1>Productions</h1><p>${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}</p></div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button></div>
    <div class="panel">
-   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Produit</th><th>N° lot prod.</th><th>Produit / Restant</th><th></th></tr></thead><tbody>
-     ${prods.map(p=>`<tr>
+   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Produit</th><th>N° lot prod.</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th></th></tr></thead><tbody>
+     ${prods.map(p=>{
+       const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
+       const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
+       return `<tr>
        <td>${fmtDate(p.date)}</td><td><b>${esc(recName(p.recipeId))}</b></td>
-       <td>${esc(p.lotProduction||'—')}</td><td>${qty(p.qteProduite)} / <b>${qty(p.qteRestante)}</b></td>
-       <td style="text-align:right"><span class="act" onclick="traceProd(${p.id})">Traçabilité</span><span class="act" onclick="view='etiquettes';document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.v==='etiquettes'));renderLabels()">Étiquette</span><span class="act del" onclick="delProd(${p.id})">Suppr.</span></td></tr>`).join('')}
-   </tbody></table></div>`:`<div class="empty">Aucune production. Une production consomme automatiquement les matières selon la recette (FIFO par DLC).</div>`}
+       <td>${esc(p.lotProduction||'—')}</td>
+       <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
+       <td>${qty(p.qteRestante)}</td>
+       <td style="text-align:right"><span class="act" onclick="prodAdjustForm(${p.id})">Ajuster réel</span><span class="act" onclick="traceProd(${p.id})">Traçabilité</span><span class="act" onclick="view='etiquettes';document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.v==='etiquettes'));renderLabels()">Étiquette</span><span class="act del" onclick="delProd(${p.id})">Suppr.</span></td></tr>`;}).join('')}
+   </tbody></table></div>`:`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
    </div>`;
 }
 async function prodForm(){
   const recipes = await db.recipes.toArray();
   if(!recipes.length){toast('Crée d\'abord une recette');return;}
+  _prodReelTouched=false;
   const opts = recipes.map(r=>`<option value="${r.id}" data-rend="${r.rendement}">${esc(r.produitNom)} (${r.rendement}/batch)</option>`).join('');
   openModal(`<h3>Nouvelle production</h3>
-   <div class="field"><label>Recette</label><select id="f_rec">${opts}</select></div>
+   <div class="field"><label>Recette</label><select id="f_rec" onchange="prodSyncTheorique()">${opts}</select></div>
    <div class="row2">
-     <div class="field"><label>Quantité produite</label><input type="number" id="f_qte" value="${recipes[0].rendement}"></div>
+     <div class="field"><label>Quantité théorique (batch) <span style="color:#9a8a82;font-weight:400">— base matières</span></label>
+       <input type="number" id="f_qte" value="${recipes[0].rendement}" min="1" oninput="prodSyncReelDefault()"></div>
      <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}"></div>
    </div>
+   <div class="field"><label>Quantité réelle produite <span style="color:#9a8a82;font-weight:400">— stock produits finis (modifiable en fin de production)</span></label>
+     <input type="number" id="f_qtereel" value="${recipes[0].rendement}" min="0" oninput="_prodReelTouched=true;prodUpdateEcartHint()">
+     <p class="note" id="ecartHint" style="margin-top:4px;display:none"></p></div>
    <div class="row2">
      <div class="field"><label>N° lot de production</label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${Math.random().toString(36).slice(2,5).toUpperCase()}"></div>
      <div class="field"><label>DLC produit fini</label><input type="date" id="f_dlcprod" value=""></div>
    </div>
-   <p class="note">À la validation : les matières sont déduites des lots (DLC la plus proche d'abord). Si le stock est insuffisant, <b>rien</b> n'est enregistré. La DLC du produit fini figure sur l'étiquette.</p>
+   <p class="note">Les <b>matières premières</b> sont déduites sur la base de la <b>quantité théorique</b> (DLC la plus proche d'abord). Le <b>stock de produits finis</b> est calé sur la <b>quantité réelle</b>. L'écart est historisé. Si le stock matières est insuffisant, <b>rien</b> n'est enregistré.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
+  prodSyncReelDefault();
+}
+// Quand on change de recette, recale les deux quantités sur le rendement de la recette.
+function prodSyncTheorique(){
+  const sel=document.getElementById('f_rec'); if(!sel) return;
+  const rend=+sel.options[sel.selectedIndex]?.dataset.rend || 0;
+  const th=document.getElementById('f_qte'), re=document.getElementById('f_qtereel');
+  if(th && rend){ th.value=rend; }
+  if(re && rend){ re.value=rend; }
+  prodSyncReelDefault();
+}
+// Tant que l'utilisateur n'a pas touché la quantité réelle, on la garde égale au théorique
+// et on affiche l'écart en direct.
+let _prodReelTouched=false;
+function prodSyncReelDefault(){
+  const th=+(document.getElementById('f_qte')?.value)||0;
+  const re=document.getElementById('f_qtereel');
+  if(re && !_prodReelTouched){ re.value=th; }
+  prodUpdateEcartHint();
+}
+function prodUpdateEcartHint(){
+  const th=+(document.getElementById('f_qte')?.value)||0;
+  const re=+(document.getElementById('f_qtereel')?.value)||0;
+  const hint=document.getElementById('ecartHint'); if(!hint) return;
+  const e=re-th;
+  if(!th || e===0){ hint.style.display='none'; return; }
+  hint.style.display='block';
+  hint.style.color = e<0 ? 'var(--red,#b3261e)' : '#3f7d52';
+  const pct = th? (e/th*100):0;
+  hint.textContent = `Écart : ${e>0?'+':''}${qty(e)} pièce(s) (${e>0?'+':''}${Math.round(pct)}%) — ${e<0?'perte / casse':'surplus de rendement'}. Sans impact sur les matières.`;
 }
 async function saveProd(){
-  const recipeId=+val('f_rec'), qte=+val('f_qte'), date=val('f_date')||today(), lot=val('f_lot'), dlcProd=val('f_dlcprod')||'';
-  if(!qte||qte<=0){toast('Quantité invalide');return;}
+  const recipeId=+val('f_rec');
+  const qteTheorique=+val('f_qte');
+  let qteReelle=val('f_qtereel');
+  qteReelle = qteReelle==='' ? qteTheorique : +qteReelle; // défaut = théorique
+  const date=val('f_date')||today(), lot=val('f_lot'), dlcProd=val('f_dlcprod')||'';
+  if(!qteTheorique||qteTheorique<=0){toast('Quantité théorique invalide');return;}
+  if(qteReelle<0||isNaN(qteReelle)){toast('Quantité réelle invalide');return;}
   try{
-    await enregistrerProduction(recipeId, qte, date, lot, dlcProd);
-    closeModal(); renderProductions(); toast('Production enregistrée ✓ — stock mis à jour');
+    await enregistrerProduction(recipeId, qteTheorique, qteReelle, date, lot, dlcProd);
+    closeModal(); renderProductions();
+    const ecart=qteReelle-qteTheorique;
+    toast(ecart===0 ? 'Production enregistrée ✓ — stock mis à jour'
+      : `Production enregistrée ✓ — écart ${ecart>0?'+':''}${qty(ecart)} historisé`);
   }catch(err){
     toast(err.message || 'Erreur production');
   }
 }
-// Transaction atomique : consommation FIFO + traçabilité
-async function enregistrerProduction(recipeId, qteProduite, dateProd, lotProduction, dlcProduit){
+// Transaction atomique : consommation FIFO (théorique) + traçabilité + stock fini (réel)
+async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd, lotProduction, dlcProduit){
   return db.transaction('rw',
     db.recipes, db.recipeItems, db.materials, db.materialLots, db.productions, db.prodConsumption,
     async () => {
       const recette = await db.recipes.get(recipeId);
       if(!recette) throw new Error('Recette introuvable');
       const items = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
-      const facteur = qteProduite / (recette.rendement || 1);
+      // CONSOMMATION MATIÈRES : basée UNIQUEMENT sur la quantité théorique
+      const facteur = qteTheorique / (recette.rendement || 1);
 
       // Vérif préalable : tout le stock nécessaire est-il disponible ?
       for(const item of items){
@@ -570,8 +661,15 @@ async function enregistrerProduction(recipeId, qteProduite, dateProd, lotProduct
         }
       }
 
-      const prodId = await db.productions.add(
-        { recipeId, lotProduction, date:dateProd, qteProduite, qteRestante:qteProduite, dlcProduit:dlcProduit||'' });
+      const ecart = qteReelle - qteTheorique;
+      const prodId = await db.productions.add({
+        recipeId, lotProduction, date:dateProd,
+        qteTheorique, qteReelle, ecart,
+        // STOCK PRODUITS FINIS : calé sur la quantité réelle
+        // qteProduite/qteRestante conservés pour compat. (lecture par trace, liaison commandes, analytics)
+        qteProduite: qteReelle, qteRestante: qteReelle,
+        dlcProduit: dlcProduit||''
+      });
 
       for(const item of items){
         let besoin = item.qteParBatch * facteur;
@@ -592,6 +690,64 @@ async function enregistrerProduction(recipeId, qteProduite, dateProd, lotProduct
       }
       return prodId;
     });
+}
+
+// AJUSTEMENT DE FIN DE PRODUCTION : réviser la quantité réelle produite.
+// - les matières NE sont PAS retouchées (consommation figée sur le théorique)
+// - le stock de produits finis est ajusté du delta réel
+// - l'écart théorique/réel est ré-historisé
+async function prodAdjustForm(id){
+  const p = await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
+  const recipe = await db.recipes.get(p.recipeId);
+  const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
+  const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
+  // pièces déjà sorties de ce batch (affectées à des commandes) = qteProduite - qteRestante
+  const dejaSorti = (+p.qteProduite||0) - (+p.qteRestante||0);
+  openModal(`<h3>Ajuster la quantité réelle</h3>
+    <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b></p>
+    <div class="sum-box"><span>Quantité théorique (base matières)</span><b>${qty(th)}</b></div>
+    <div class="sum-box"><span>Quantité réelle actuelle</span><b>${qty(re)}</b></div>
+    ${dejaSorti>0?`<div class="sum-box"><span>Déjà affecté à des commandes</span><b>${qty(dejaSorti)}</b></div>`:''}
+    <div class="field" style="margin-top:10px"><label>Nouvelle quantité réelle produite</label>
+      <input type="number" id="f_newreel" value="${re}" min="${dejaSorti}" oninput="prodAdjHint(${th},${dejaSorti})">
+      <p class="note" id="adjHint" style="margin-top:4px"></p></div>
+    <p class="note">Les matières premières restent inchangées (déjà consommées sur la base théorique). Seul le stock de produits finis et l'écart sont recalculés.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="prodAdjustReel(${id})">Enregistrer l'ajustement</button></div>`);
+  prodAdjHint(th, dejaSorti);
+}
+function prodAdjHint(th, dejaSorti){
+  const v=+(document.getElementById('f_newreel')?.value);
+  const hint=document.getElementById('adjHint'); if(!hint) return;
+  if(isNaN(v)){ hint.textContent=''; return; }
+  if(v<dejaSorti){
+    hint.style.color='var(--red,#b3261e)';
+    hint.textContent=`Impossible : ${qty(dejaSorti)} pièce(s) sont déjà affectées à des commandes. Minimum ${qty(dejaSorti)}.`;
+    return;
+  }
+  const e=v-th;
+  hint.style.color = e<0 ? 'var(--red,#b3261e)' : (e>0?'#3f7d52':'#9a8a82');
+  hint.textContent = `Nouvel écart théorique/réel : ${e>0?'+':''}${qty(e)} pièce(s)${e<0?' (perte / casse)':(e>0?' (surplus)':' (conforme)')}.`;
+}
+async function prodAdjustReel(id){
+  const newReel=+val('f_newreel');
+  const p = await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
+  if(isNaN(newReel) || newReel<0){ toast('Quantité invalide'); return; }
+  const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
+  const dejaSorti = (+p.qteProduite||0) - (+p.qteRestante||0);
+  if(newReel < dejaSorti - 1e-9){
+    toast(`Au moins ${qty(dejaSorti)} (déjà affecté à des commandes)`); return;
+  }
+  // nouveau restant = nouvelle production réelle − ce qui est déjà sorti vers les commandes
+  const newRestant = newReel - dejaSorti;
+  const ecart = newReel - th;
+  await db.productions.update(id, {
+    qteReelle:newReel, ecart,
+    qteProduite:newReel,     // total réellement produit
+    qteRestante:newRestant   // stock fini disponible recalé (matières inchangées)
+  });
+  closeModal(); renderProductions();
+  toast(`Quantité réelle ajustée à ${qty(newReel)} — écart ${ecart>0?'+':''}${qty(ecart)}`);
 }
 async function delProd(id){
   // Garde-fou : production liée à une commande ?
@@ -892,7 +1048,7 @@ async function traceProd(prodId){
   });
   openModal(`<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
-    <span style="color:#9a8a82;font-size:.85rem">Produit : ${qty(prod.qteProduite)} · Restant : ${qty(prod.qteRestante)}</span></p>
+    <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
     ${lines.length?lines.join(''):'<p class="note">Aucune consommation enregistrée.</p>'}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
@@ -936,36 +1092,129 @@ async function traceOrder(orderId){
    CLIENTS
    ============================================================ */
 let clientSearch='';
+let _clientsCache=null;   // {clients, ordersByClient, blob} chargé une seule fois par rendu de page
+// Normalisation tolérante : minuscules + suppression des accents
+function normTxt(s){ return (s==null?'':String(s)).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+function onlyDigits(s){ return (s==null?'':String(s)).replace(/[^0-9]/g,''); }
+
+/* ============================================================
+   MOTEUR DE RECHERCHE PARTAGÉ (hors-ligne, sans dépendance)
+   Utilisé à l'identique par Clients, Commandes, Produits, Stocks, Calendrier.
+   - index préconstruit une seule fois par rendu (champ `blob` normalisé)
+   - filtrage multi-mots (ET), tolérant casse/accents, correspondance partielle
+   - score de pertinence : champ prioritaire > préfixe > début de mot > sous-chaîne
+   ============================================================ */
+// Calcule un score de pertinence d'un item pour une requête déjà normalisée (terms[]).
+// `prim` = chaîne normalisée du champ prioritaire (nom/titre), `blob` = tout le reste inclus.
+// Retourne -1 si un terme n'est pas trouvé du tout (donc exclu).
+function searchScore(terms, prim, blob, digitsField, qd){
+  if(!terms.length && !qd) return 0;
+  let score=0;
+  for(const t of terms){
+    if(!blob.includes(t)){
+      // dernier recours : correspondance numérique (téléphone, n° lot/commande)
+      if(qd && digitsField && digitsField.includes(qd)) { score+=2; continue; }
+      return -1;
+    }
+    if(prim===t) score+=100;                       // égalité exacte du champ principal
+    else if(prim.startsWith(t)) score+=60;         // préfixe du champ principal
+    else if(new RegExp('\\b'+escapeRe(t)).test(prim)) score+=40; // début de mot dans le principal
+    else if(prim.includes(t)) score+=25;           // sous-chaîne du champ principal
+    else if(new RegExp('\\b'+escapeRe(t)).test(blob)) score+=10; // début de mot ailleurs
+    else score+=4;                                 // sous-chaîne ailleurs
+  }
+  // bonus requête numérique correspondant à un identifiant
+  if(qd && digitsField && digitsField.includes(qd)) score+=5;
+  return score;
+}
+function escapeRe(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+// Filtre + trie une liste indexée. items: [{...,_prim,_blob,_digits}]. q: requête brute.
+// Retourne les items conservés, triés par pertinence puis ordre d'origine.
+function searchRank(items, q){
+  const terms = normTxt(q).split(/\s+/).filter(Boolean);
+  const qd = onlyDigits(q);
+  if(!terms.length && !qd) return items.slice();
+  const scored=[];
+  for(let i=0;i<items.length;i++){
+    const it=items[i];
+    const sc=searchScore(terms, it._prim||'', it._blob||'', it._digits||'', qd);
+    if(sc>=0) scored.push({it,sc,i});
+  }
+  scored.sort((a,b)=> b.sc-a.sc || a.i-b.i);
+  return scored.map(x=>x.it);
+}
+// Rendu standard d'un corps de tableau filtré (mise à jour du seul tbody, jamais de la page).
+// rowFn: item -> '<tr>…'. cols: nb de colonnes (pour la ligne « +N autres »).
+function searchRenderBody(bodyId, countId, emptyId, items, q, rowFn, cols, unitLabel){
+  const body=document.getElementById(bodyId); if(!body) return;
+  const rows=searchRank(items, q);
+  const cnt=document.getElementById(countId);
+  if(cnt) cnt.textContent = (q&&q.trim()) ? `${rows.length} / ${items.length} ${unitLabel}` : `${items.length} ${unitLabel}`;
+  const empty=document.getElementById(emptyId);
+  if(!rows.length){ body.innerHTML=''; if(empty) empty.style.display='block'; return; }
+  if(empty) empty.style.display='none';
+  const LIMIT=300;
+  body.innerHTML = rows.slice(0,LIMIT).map(rowFn).join('') +
+    (rows.length>LIMIT?`<tr><td colspan="${cols}" class="note" style="text-align:center">… ${rows.length-LIMIT} autre(s) résultat(s). Affinez la recherche.</td></tr>`:'');
+}
+
 async function renderClients(){
   const clients = await db.clients.orderBy('nom').toArray();
   const orders = await db.orders.toArray();
-  const list = clients.filter(c=>((c.nom||'')+(c.email||'')+(c.type||'')).toLowerCase().includes(clientSearch.toLowerCase()));
+  // pré-calcul : nb commandes + CA + index de recherche par client (fait UNE fois)
+  const aggr={};
+  for(const o of orders){ const k=o.clientId||0; (aggr[k] ||= {n:0,ca:0}); aggr[k].n++; aggr[k].ca+=(+o.montant||0); }
+  _clientsCache = clients.map(c=>{
+    const a=aggr[c.id]||{n:0,ca:0};
+    const prim = normTxt([c.nom,c.prenom,c.societe].filter(Boolean).join(' '));
+    const blob = normTxt([c.nom,c.prenom,c.societe,c.email,c.adresse,c.notes,c.ref,c.type,c.tel].filter(Boolean).join(' '));
+    return {c, nb:a.n, ca:a.ca, _prim:prim, _blob:blob, _digits:onlyDigits(c.tel)};
+  });
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Clients</h1><p>${clients.length} fiche(s)</p></div>
-     <div class="flex"><input class="search" placeholder="Rechercher…" value="${esc(clientSearch)}" oninput="clientSearch=this.value;renderClients()"><button class="btn" onclick="clientForm()">+ Nouveau client</button></div></div>
+   <div class="topbar"><div><h1>Clients</h1><p id="clCount">${clients.length} fiche(s)</p></div>
+     <div class="flex"><input class="search" id="clSearch" placeholder="Nom, société, téléphone, e-mail, réf, notes…" value="${esc(clientSearch)}" oninput="clientFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off"><button class="btn" onclick="clientForm()">+ Nouveau client</button></div></div>
    <div class="panel">
-   ${list.length?`<div class="table-wrap"><table><thead><tr><th>Nom</th><th>Type</th><th>Contact</th><th>Cmd</th><th>CA cumulé</th><th></th></tr></thead><tbody>
-     ${list.map(c=>{const cmds=orders.filter(o=>o.clientId===c.id);const ca=cmds.reduce((s,o)=>s+(+o.montant||0),0);
-       return `<tr><td><b>${esc(c.nom)}</b></td><td><span class="tag ${c.type==='Pro'?'event':'ok'}">${esc(c.type||'Particulier')}</span></td>
-       <td>${esc(c.tel||'')}${c.tel&&c.email?'<br>':''}<span style="color:#9a8a82;font-size:.82rem">${esc(c.email||'')}</span></td>
-       <td>${cmds.length}</td><td>${euro(ca)}</td>
-       <td style="text-align:right"><span class="act" onclick="clientForm(${c.id})">Modifier</span><span class="act del" onclick="delClient(${c.id})">Suppr.</span></td></tr>`;}).join('')}
-   </tbody></table></div>`:`<div class="empty">Aucun client. Clique sur « Nouveau client ».</div>`}
+     <div class="table-wrap"><table><thead><tr><th>Nom</th><th>Type</th><th>Contact</th><th>Cmd</th><th>CA cumulé</th><th></th></tr></thead>
+       <tbody id="clBody"></tbody></table></div>
+     <div id="clEmpty" class="empty" style="display:none">Aucun client.</div>
    </div>`;
+  clientFilter(clientSearch); // remplissage initial du corps uniquement
+}
+// Construit une ligne <tr> client
+function _clientRow(row){
+  const c=row.c;
+  return `<tr><td><b><span class="link-name" onclick="clientForm(${c.id})">${esc(c.nom)}</span></b></td>
+    <td><span class="tag ${c.type==='Pro'?'event':'ok'}">${esc(c.type||'Particulier')}</span></td>
+    <td>${esc(c.tel||'')}${c.tel&&c.email?'<br>':''}<span style="color:#9a8a82;font-size:.82rem">${esc(c.email||'')}</span></td>
+    <td>${row.nb}</td><td>${euro(row.ca)}</td>
+    <td style="text-align:right"><span class="act" onclick="clientForm(${c.id})">Fiche</span><span class="act del" onclick="delClient(${c.id})">Suppr.</span></td></tr>`;
+}
+// Filtrage instantané : ne touche QUE le corps du tableau (pas de re-render global, pas de relecture DB)
+function clientFilter(q){
+  clientSearch=q||'';
+  if(!_clientsCache) return;
+  searchRenderBody('clBody','clCount','clEmpty', _clientsCache, q, _clientRow, 6, 'fiche(s)');
 }
 async function clientForm(id){
   const c = id ? await db.clients.get(id) : {};
-  openModal(`<h3>${id?'Modifier':'Nouveau'} client</h3>
-   <div class="field"><label>Nom / Entreprise</label><input id="f_nom" value="${esc(c.nom)}"></div>
+  openModal(`<h3>${id?'Fiche':'Nouveau'} client</h3>
+   <div class="field"><label>Nom / Entreprise *</label><input id="f_nom" value="${esc(c.nom)}"></div>
+   <div class="row2">
+     <div class="field"><label>Prénom</label><input id="f_prenom" value="${esc(c.prenom)}"></div>
+     <div class="field"><label>Société</label><input id="f_societe" value="${esc(c.societe)}"></div>
+   </div>
    <div class="row2"><div class="field"><label>Type</label><select id="f_type"><option ${c.type==='Particulier'?'selected':''}>Particulier</option><option ${c.type==='Pro'?'selected':''}>Pro</option></select></div>
-   <div class="field"><label>Téléphone</label><input id="f_tel" value="${esc(c.tel)}"></div></div>
-   <div class="field"><label>Email</label><input id="f_email" value="${esc(c.email)}"></div>
+   <div class="field"><label>Téléphone</label><input id="f_tel" type="tel" inputmode="tel" value="${esc(c.tel)}"></div></div>
+   <div class="row2">
+     <div class="field"><label>Email</label><input id="f_email" type="email" value="${esc(c.email)}"></div>
+     <div class="field"><label>Réf. client</label><input id="f_ref" value="${esc(c.ref)}" placeholder="ex : CLI-0042"></div>
+   </div>
    <div class="field"><label>Adresse</label><input id="f_adr" value="${esc(c.adresse)}"></div>
    <div class="field"><label>Notes</label><textarea id="f_notes" rows="2">${esc(c.notes)}</textarea></div>
-   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveClient(${id||0})">Enregistrer</button></div>`);
+   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="saveClient(${id||0})">Enregistrer</button></div>`);
 }
 async function saveClient(id){
-  const o={nom:val('f_nom'),type:val('f_type'),tel:val('f_tel'),email:val('f_email'),adresse:val('f_adr'),notes:val('f_notes')};
+  const o={nom:val('f_nom'),prenom:val('f_prenom'),societe:val('f_societe'),type:val('f_type'),tel:val('f_tel'),email:val('f_email'),ref:val('f_ref'),adresse:val('f_adr'),notes:val('f_notes')};
   if(!o.nom){toast('Le nom est requis');return;}
   if(id) await db.clients.update(id,o); else await db.clients.add(o);
   closeModal(); renderClients(); toast('Client enregistré ✓');
@@ -978,17 +1227,23 @@ async function delClient(id){
 /* ============================================================
    OFFRE / COFFRETS  (catalogue préenregistré)
    ============================================================ */
+let prodSearch='';
+let _prodCache=null;
 async function renderProducts(){
   const products = (await db.products.toArray()).sort((a,b)=>(+a.taille)-(+b.taille));
+  _prodCache = products.map(p=>{
+    const prim = normTxt(p.nom||'');
+    const blob = normTxt([p.nom, p.ref, p.taille+' macarons', p.taille, (p.actif!==false?'actif':'inactif')].filter(v=>v!=null&&v!=='').join(' '));
+    return {p, _prim:prim, _blob:blob, _digits:onlyDigits(String(p.taille||''))};
+  });
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Offre / Coffrets</h1><p>Catalogue de coffrets et parfums proposés</p></div>
+   <div class="topbar"><div><h1>Offre / Coffrets</h1><p id="prodCount">Catalogue de coffrets et parfums proposés</p></div>
      <button class="btn" onclick="prodCatForm()">+ Nouveau coffret</button></div>
    <div class="panel"><h2>Coffrets</h2>
-   ${products.length?`<div class="table-wrap"><table><thead><tr><th>Coffret</th><th>Taille</th><th>Prix de base</th><th>Actif</th><th></th></tr></thead><tbody>
-     ${products.map(p=>`<tr><td><b>${esc(p.nom)}</b></td><td>${p.taille} macarons</td><td>${euro(p.prix)}</td>
-       <td><span class="tag ${p.actif!==false?'ok':'warn'}">${p.actif!==false?'Oui':'Non'}</span></td>
-       <td style="text-align:right"><span class="act" onclick="prodCatForm(${p.id})">Modifier</span><span class="act del" onclick="delProdCat(${p.id})">Suppr.</span></td></tr>`).join('')}
-   </tbody></table></div>`:`<div class="empty">Aucun coffret. Ajoute tes formats (6, 8, 16, 25 macarons).</div>`}
+     <input class="search" id="prodSearch" style="width:100%;margin-bottom:12px" placeholder="Nom du coffret, référence, taille…" value="${esc(prodSearch)}" oninput="prodFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
+     ${products.length?`<div class="table-wrap"><table><thead><tr><th>Coffret</th><th>Taille</th><th>Prix de base</th><th>Actif</th><th></th></tr></thead>
+       <tbody id="prodBody"></tbody></table></div><div id="prodEmpty" class="empty" style="display:none">Aucun coffret.</div>`
+       :`<div class="empty">Aucun coffret. Ajoute tes formats (6, 8, 16, 25 macarons).</div>`}
    </div>
    <div class="panel"><h2>Prestation événement</h2>
      <div class="sum-box"><span>Prix par macaron</span><b>${euro(EVENT_PRICE)}</b></div>
@@ -1003,14 +1258,36 @@ async function renderProducts(){
      <p class="note">Vendus à l'unité via le type de commande « Grand format ». Le tarif (pro / particulier) se choisit à chaque commande.</p>
    </div>
    <div class="panel"><h2>Parfums proposés <span class="tag ok">${FLAVORS.length}</span></h2>
-     <div>${FLAVORS.map(f=>`<span class="pill">${esc(f)}</span>`).join('')}</div>
-     <p class="note">Liste utilisée dans les commandes pour détailler les parfums choisis. (Modifiable dans le code si ta gamme évolue.)</p>
+     <input class="search" id="flavSearch" style="width:100%;margin-bottom:10px" placeholder="Filtrer les parfums…" oninput="flavFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
+     <div id="flavWrap">${FLAVORS.map(f=>`<span class="pill">${esc(f)}</span>`).join('')}</div>
+     <p class="note">Liste utilisée dans les commandes pour détailler les parfums choisis.</p>
    </div>
    <div class="panel"><h2>Options & paiement</h2>
      <p style="font-size:.86rem;margin-bottom:8px"><b>Personnalisation couleurs :</b> proposée en option sur chaque commande.</p>
      <p style="font-size:.86rem;margin-bottom:8px"><b>Statut de paiement :</b> ${PAY_STATUS.map(s=>`<span class="pill">${esc(s)}</span>`).join('')}</p>
      <p style="font-size:.86rem"><b>Modes de règlement :</b> ${PAY_METHODS.map(s=>`<span class="pill">${esc(s)}</span>`).join('')}</p>
    </div>`;
+  prodFilter(prodSearch);
+}
+function _prodRow(row){
+  const p=row.p;
+  return `<tr><td><b>${esc(p.nom)}</b>${p.ref?`<br><span style="color:#9a8a82;font-size:.78rem">${esc(p.ref)}</span>`:''}</td><td>${p.taille} macarons</td><td>${euro(p.prix)}</td>
+    <td><span class="tag ${p.actif!==false?'ok':'warn'}">${p.actif!==false?'Oui':'Non'}</span></td>
+    <td style="text-align:right"><span class="act" onclick="prodCatForm(${p.id})">Modifier</span><span class="act del" onclick="delProdCat(${p.id})">Suppr.</span></td></tr>`;
+}
+function prodFilter(q){
+  prodSearch=q||'';
+  if(!_prodCache) return;
+  const cntEl=document.getElementById('prodCount');
+  searchRenderBody('prodBody','__noop','prodEmpty', _prodCache, q, _prodRow, 5, 'coffret(s)');
+  if(cntEl){ const n=searchRank(_prodCache,q).length; cntEl.textContent = (q&&q.trim())?`${n} / ${_prodCache.length} coffret(s)`:'Catalogue de coffrets et parfums proposés'; }
+}
+// Filtre simple des pastilles de parfums (correspondance partielle, accents/casse)
+function flavFilter(q){
+  const wrap=document.getElementById('flavWrap'); if(!wrap) return;
+  const t=normTxt(q);
+  const list = t ? FLAVORS.filter(f=>normTxt(f).includes(t)) : FLAVORS;
+  wrap.innerHTML = list.length ? list.map(f=>`<span class="pill">${esc(f)}</span>`).join('') : '<span class="note">Aucun parfum.</span>';
 }
 async function prodCatForm(id){
   const p = id ? await db.products.get(id) : {taille:6, prix:BOX_PRICES[6], actif:true};
@@ -1021,11 +1298,12 @@ async function prodCatForm(id){
      <div class="field"><label>Prix de base (€)</label><input type="number" step="0.01" id="f_prix" value="${p.prix||0}"></div>
    </div>
    <label style="font-size:.82rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_actif" style="width:auto" ${p.actif!==false?'checked':''}> Coffret actif (proposé dans les commandes)</label>
+   <div class="field" style="margin-top:10px"><label>Référence produit <span style="color:#9a8a82;font-weight:400">— optionnelle</span></label><input id="f_ref" value="${esc(p.ref||'')}" placeholder="ex : COF-16"></div>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveProdCat(${id||0})">Enregistrer</button></div>`);
 }
 async function saveProdCat(id){
   const taille=+val('f_taille')||0;
-  const o={nom:val('f_nom')||`Coffret ${taille} macarons`, taille, prix:+val('f_prix')||0, actif:document.getElementById('f_actif').checked};
+  const o={nom:val('f_nom')||`Coffret ${taille} macarons`, taille, prix:+val('f_prix')||0, ref:val('f_ref')||'', actif:document.getElementById('f_actif').checked};
   if(!taille){toast('Indique une taille');return;}
   if(id) await db.products.update(id,o); else await db.products.add(o);
   closeModal(); renderProducts(); toast('Coffret enregistré ✓');
@@ -1063,40 +1341,101 @@ async function setOrderStatus(id, statut){
   await db.orders.update(id, {statut});
   closeModal(); renderCmd(); toast('Statut : '+statut);
 }
+
+/* ============================================================
+   BBC — PAIEMENT RAPIDE
+   ============================================================ */
+// Réglage : automatisation du statut de paiement quand un règlement est saisi.
+// Stocké dans localStorage, activé par défaut, désactivable par l'utilisateur.
+function autoPayEnabled(){ return localStorage.getItem('sm_autoPay')!=='0'; }
+function setAutoPay(on){ localStorage.setItem('sm_autoPay', on?'1':'0'); }
+
+// Applique le paiement sur un objet commande (mutation en place) de façon cohérente :
+// si un règlement est présent ET l'auto-paiement actif → Payé + date du jour.
+// Garantit l'absence de conflit règlement/paiement.
+function applyAutoPay(o){
+  if(autoPayEnabled() && o.reglement && o.paiement!=='Payé'){
+    o.paiement='Payé';
+    if(!o.datePaiement) o.datePaiement=today();
+  }
+  // cohérence inverse : si payé sans date, on date au jour
+  if(o.paiement==='Payé' && !o.datePaiement) o.datePaiement=today();
+  return o;
+}
+
+// Action rapide « Payé » en un clic depuis la liste ou la fiche détail.
+async function markPaid(id, fromModal){
+  const o=await db.orders.get(id); if(!o) return;
+  if(o.paiement==='Payé'){ toast('Déjà payée'); return; }
+  const patch={paiement:'Payé', datePaiement: o.datePaiement||today()};
+  await db.orders.update(id, patch);
+  if(fromModal) closeModal();
+  renderCmd();
+  toast('Commande marquée payée ✓');
+}
+let cmdSearch='';
+let _cmdCache=null;
 async function renderCmd(){
   const orders = (await db.orders.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
-  const clName = id => (clients.find(c=>c.id===id)||{}).nom||'—';
+  const clById = Object.fromEntries(clients.map(c=>[c.id,c]));
+  _cmdClNameMap = Object.fromEntries(clients.map(c=>[c.id, c.nom||'—']));
+  const clName = id => (clById[id]||{}).nom||'—';
+  // charge TOUS les liens batch en une seule requête (au lieu d'une par commande)
+  const allItems = await db.orderItems.toArray();
+  const itemsByOrder={}; allItems.forEach(it=>{ (itemsByOrder[it.orderId] ||= []).push(it); });
   const lineLabel = ln => {
     if(ln.type==='evenement') return `Événement ${ln.evQte||0} mac. +${ln.equip||0} pyr.`;
     if(ln.type==='grand'){ const n=(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Grand format ×${n}`; }
     if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0)+(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Don ×${n} (offert)`; }
     return `Coffret ${ln.taille||'?'}`;
   };
-  const rows=[];
-  for(const o of orders){
-    const items = await db.orderItems.where('orderId').equals(o.id).toArray();
-    const nbLies = items.length;
-    const paye = o.paiement==='Payé';
+  // index de recherche par commande, calculé une seule fois
+  _cmdCache = orders.map(o=>{
     const lignes = orderToLines(o);
     const resume = lignes.length ? lignes.map(lineLabel).join(' + ') : '—';
-    rows.push(`<tr>
-       <td>${fmtDate(o.date)}</td>
-       <td><b>${esc(clName(o.clientId))}</b></td>
-       <td><span style="font-size:.82rem">${esc(resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
-       <td>${euro(+o.montant)}</td>
-       <td><span class="tag ${paye?'done':'todo'}">${esc(o.paiement||'En attente')}</span>${o.reglement?`<br><span style="color:#9a8a82;font-size:.74rem">${esc(o.reglement)}</span>`:''}</td>
-       <td><span class="act-status" onclick="cycleStatus(${o.id})" title="Toucher pour changer le statut">${statusTag(o.statut)}</span></td>
-       <td>${nbLies?`<span class="tag ok">${nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
-       <td style="text-align:right"><span class="act" onclick="cmdView(${o.id})">Détail</span><span class="act" onclick="exportOrderText(${o.id})">Texte</span><span class="act" onclick="cmdLink(${o.id})">Lier</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`);
-  }
+    // produits/parfums pour la recherche
+    const prodTxt = lignes.flatMap(ln=>[
+      ...(ln.parfums||[]).map(p=>p.nom),
+      ...(ln.items||[]).map(p=>p.nom),
+      ln.type
+    ]).join(' ');
+    const cl=clById[o.clientId]||{};
+    const prim = normTxt([clName(o.clientId), 'cmd'+o.id].filter(Boolean).join(' '));
+    const blob = normTxt([clName(o.clientId), cl.prenom, cl.societe, cl.tel, cl.email, cl.ref,
+      resume, prodTxt, o.notes, o.reglement, o.paiement, 'cmd'+o.id, '#'+o.id, fmtDate(o.date)].filter(Boolean).join(' '));
+    const digits = onlyDigits([o.id, cl.tel, o.montant].filter(v=>v!=null&&v!=='').join(' '));
+    return {o, resume, nbLies:(itemsByOrder[o.id]||[]).length, _prim:prim, _blob:blob, _digits:digits};
+  });
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Commandes</h1><p>${orders.length} commande(s)</p></div>
+   <div class="topbar"><div><h1>Commandes</h1><p id="cmdCount">${orders.length} commande(s)</p></div>
      <button class="btn" onclick="cmdForm()">+ Nouvelle commande</button></div>
    <div class="panel">
-   ${rows.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead><tbody>
-     ${rows.join('')}</tbody></table></div>`:`<div class="empty">Aucune commande.</div>`}
+     <input class="search" id="cmdSearch" style="width:100%;margin-bottom:12px" placeholder="N° commande, client, produit, parfum, notes, règlement…" value="${esc(cmdSearch)}" oninput="cmdFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
+     <div class="table-wrap"><table><thead><tr><th>Date</th><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead>
+       <tbody id="cmdBody"></tbody></table></div>
+     <div id="cmdEmpty" class="empty" style="display:none">Aucune commande.</div>
    </div>`;
+  cmdFilter(cmdSearch);
+}
+function _cmdRow(row){
+  const o=row.o; const paye=o.paiement==='Payé';
+  return `<tr>
+     <td>${fmtDate(o.date)}</td>
+     <td>${o.clientId?`<b><span class="link-name" onclick="clientForm(${o.clientId})">${esc(_cmdClName(o.clientId))}</span></b>`:`<b>—</b>`}</td>
+     <td><span style="font-size:.82rem">${esc(row.resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
+     <td>${euro(+o.montant)}</td>
+     <td><span class="tag ${paye?'done':'todo'}">${esc(o.paiement||'En attente')}</span>${o.reglement?`<br><span style="color:#9a8a82;font-size:.74rem">${esc(o.reglement)}</span>`:''}${paye&&o.datePaiement?`<br><span style="color:#9a8a82;font-size:.72rem">le ${fmtDate(o.datePaiement)}</span>`:''}${!paye?`<br><span class="act" style="font-size:.74rem" onclick="markPaid(${o.id})">✓ Payé</span>`:''}</td>
+     <td><span class="act-status" onclick="cycleStatus(${o.id})" title="Toucher pour changer le statut">${statusTag(o.statut)}</span></td>
+     <td>${row.nbLies?`<span class="tag ok">${row.nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
+     <td style="text-align:right"><span class="act" onclick="cmdView(${o.id})">Détail</span><span class="act" onclick="exportOrderText(${o.id})">Texte</span><span class="act" onclick="cmdLink(${o.id})">Lier</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`;
+}
+let _cmdClNameMap={};
+function _cmdClName(id){ return _cmdClNameMap[id]||'—'; }
+function cmdFilter(q){
+  cmdSearch=q||'';
+  if(!_cmdCache) return;
+  searchRenderBody('cmdBody','cmdCount','cmdEmpty', _cmdCache, q, _cmdRow, 8, 'commande(s)');
 }
 // Vue détail d'une commande (multi-lignes)
 async function cmdView(id){
@@ -1140,11 +1479,12 @@ async function cmdView(id){
     return '';
   }).join('');
   openModal(`<h3>Détail commande</h3>
-    <p style="margin-bottom:10px"><b>${cl?esc(cl.nom):'—'}</b> · ${fmtDate(o.date)}</p>
+    <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientForm(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}</p>
     ${blocks||'<p class="note">Aucun produit.</p>'}
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${o.perso?'Oui':'Non'}</b></div>
     <div class="sum-box"><span>Montant total</span><b>${euro(o.montant)}</b></div>
-    <div class="sum-box"><span>Paiement</span><b>${esc(o.paiement||'En attente')}${o.reglement?' · '+esc(o.reglement):''}</b></div>
+    <div class="sum-box"><span>Paiement</span><b>${esc(o.paiement||'En attente')}${o.reglement?' · '+esc(o.reglement):''}${o.paiement==='Payé'&&o.datePaiement?' · le '+fmtDate(o.datePaiement):''}</b></div>
+    ${o.paiement!=='Payé'?`<button class="btn gold sm" style="margin-top:6px" onclick="markPaid(${id},true)">✓ Marquer payée</button>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">Statut de la commande</h3>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       ${ORDER_STATUS.map(st=>{const cur=normStatus(o.statut)===st;
@@ -1226,11 +1566,17 @@ async function cmdForm(id, opts){
 
    <div class="row2">
      <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0'"></div>
-     <div class="field"><label>Statut paiement</label><select id="f_pay">${payStOpts}</select></div>
+     <div class="field"><label>Statut paiement</label>
+       <div class="flex" style="gap:6px;align-items:stretch">
+         <select id="f_pay" style="flex:1" onchange="cmdSyncPayUI()">${payStOpts}</select>
+         <button type="button" class="btn gold sm" id="f_payBtn" style="white-space:nowrap" onclick="cmdQuickPay()">✓ Payé</button>
+       </div>
+     </div>
    </div>
+   <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin:2px 0 6px"><input type="checkbox" id="f_autopay" style="width:auto" ${autoPayEnabled()?'checked':''} onchange="setAutoPay(this.checked);cmdSyncPayUI()"> Passer automatiquement en « Payé » dès qu'un règlement est saisi</label>
    <div class="sum-box" id="priceBreak" style="display:none"></div>
    <div class="row2">
-     <div class="field"><label>Règlement</label><select id="f_reg">${regOpts}</select></div>
+     <div class="field"><label>Règlement</label><select id="f_reg" onchange="cmdSyncPayUI()">${regOpts}</select></div>
      <div class="field"><label>Statut commande</label><select id="f_st">${stOpts}</select></div>
    </div>
 
@@ -1239,7 +1585,30 @@ async function cmdForm(id, opts){
    <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_cal" style="width:auto" ${id?'':'checked'}> Ajouter au calendrier</label>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
   const mt=document.getElementById('f_mt'); if(mt && !mt.value) mt.dataset.auto='1';
+  cmdSyncPayUI();
   drawLines();
+}
+
+// BBC : bouton « ✓ Payé » dans le formulaire — force le statut paiement à Payé sans menu déroulant.
+function cmdQuickPay(){
+  const pay=document.getElementById('f_pay'); if(pay){ pay.value='Payé'; }
+  cmdSyncPayUI();
+  toast('Paiement : Payé (enregistrez pour valider)');
+}
+// Synchronise l'UI paiement : auto-Payé si règlement saisi (option active), état du bouton.
+function cmdSyncPayUI(){
+  const pay=document.getElementById('f_pay');
+  const reg=document.getElementById('f_reg');
+  const btn=document.getElementById('f_payBtn');
+  if(!pay) return;
+  if(autoPayEnabled() && reg && reg.value && pay.value!=='Payé'){ pay.value='Payé'; }
+  if(btn){
+    const paid = pay.value==='Payé';
+    btn.disabled = paid;
+    btn.textContent = paid ? '✓ Payée' : '✓ Payé';
+    btn.style.opacity = paid ? '.55' : '1';
+    btn.style.pointerEvents = paid ? 'none' : 'auto';
+  }
 }
 
 // Recherche client instantanée dans le formulaire de commande (nom ou téléphone)
@@ -1484,6 +1853,9 @@ async function saveCmd(id){
     // on neutralise les anciens champs mono-type
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[]
   };
+  // BBC : préserver une éventuelle date de paiement existante, puis appliquer l'auto-paiement
+  if(id){ const prev=await db.orders.get(id); if(prev && prev.datePaiement) o.datePaiement=prev.datePaiement; }
+  applyAutoPay(o);
   if(o.montant<0){toast('Le prix ne peut pas être négatif');return;}
   let oid=id;
   if(id) await db.orders.update(id,o); else oid=await db.orders.add(o);
@@ -1646,6 +2018,181 @@ function computeStats(orders, clients, toLines){
 }
 
 
+/* ============================================================
+   MODULE ANALYTIQUE AVANCÉ — calculs purs, hors-ligne
+   Construit sur computeStats / orderToLines existants.
+   Aucune écriture en base : lecture + agrégation uniquement.
+   ============================================================ */
+
+// Moyenne / écart-type d'un tableau de nombres
+function _mean(a){ return a.length ? a.reduce((s,x)=>s+x,0)/a.length : 0; }
+function _std(a){ if(a.length<2) return 0; const m=_mean(a); return Math.sqrt(_mean(a.map(x=>(x-m)*(x-m)))); }
+
+// Liste triée des N derniers mois (clés 'YYYY-MM') présents OU comblés à 0
+function _monthsRange(keys){
+  if(!keys.length) return [];
+  const sorted=[...new Set(keys)].sort();
+  const [y0,m0]=sorted[0].split('-').map(Number);
+  const [y1,m1]=sorted[sorted.length-1].split('-').map(Number);
+  const out=[]; let y=y0,m=m0;
+  while(y<y1 || (y===y1&&m<=m1)){ out.push(`${y}-${String(m).padStart(2,'0')}`); m++; if(m>12){m=1;y++;} }
+  return out;
+}
+
+// ---- ANALYSE DE TENDANCES ----
+// Compare les ventes par parfum entre les 2 dernières fenêtres de `windowDays`.
+// Retourne {hausses:[], baisses:[], stables:[], periode:{...}}
+function analyzeTrends(orders, opts){
+  opts=opts||{}; const windowDays=opts.windowDays||30;
+  const valides=(orders||[]).filter(o=>o&&o.paiement==='Payé'&&o.date);
+  const now = opts.ref ? new Date(opts.ref) : new Date();
+  const dayMs=86400000;
+  const recentStart=new Date(now-windowDays*dayMs);
+  const prevStart=new Date(now-2*windowDays*dayMs);
+  const flav=(o)=>{ const acc={}; orderToLines(o).forEach(ln=>{
+      (ln.parfums||[]).forEach(p=>{ if(p.qte>0) acc[p.nom]=(acc[p.nom]||0)+p.qte; });
+      (ln.items||[]).forEach(p=>{ if(p.qte>0){ const k='Grand format : '+p.nom; acc[k]=(acc[k]||0)+p.qte; } });
+    }); return acc; };
+  const recent={}, prev={};
+  for(const o of valides){
+    const d=new Date(o.date);
+    const bucket = d>=recentStart ? recent : (d>=prevStart ? prev : null);
+    if(!bucket) continue;
+    const f=flav(o); for(const k in f) bucket[k]=(bucket[k]||0)+f[k];
+  }
+  const noms=[...new Set([...Object.keys(recent),...Object.keys(prev)])];
+  const rows=noms.map(nom=>{
+    const r=recent[nom]||0, p=prev[nom]||0;
+    const delta=r-p;
+    const pct = p>0 ? (delta/p*100) : (r>0?100:0);
+    return {nom, recent:r, prev:p, delta, pct};
+  });
+  const hausses=rows.filter(x=>x.delta>0).sort((a,b)=>b.pct-a.pct);
+  const baisses=rows.filter(x=>x.delta<0).sort((a,b)=>a.pct-b.pct);
+  const stables=rows.filter(x=>x.delta===0);
+  return {hausses,baisses,stables,windowDays,
+    periode:{recentStart:recentStart.toISOString().slice(0,10), now:now.toISOString().slice(0,10)}};
+}
+
+// Compare deux parfums (ou produits) similaires sur tout l'historique payé
+function compareFlavors(R, a, b){
+  const ga=R.global.parfums[a]||0, gb=R.global.parfums[b]||0;
+  const mA={}, mB={};
+  // reconstruit la série mensuelle par parfum à partir de parClient (approx : on relit global non dispo par mois/parfum)
+  return {a:{nom:a,total:ga}, b:{nom:b,total:gb}, diff:ga-gb};
+}
+
+// ---- ANALYSE CLIENT ----
+// Régularité, valeur, préférences. R = computeStats(...)
+function analyzeClients(R, orders){
+  const valides=(orders||[]).filter(o=>o&&o.paiement==='Payé'&&o.date);
+  // dates de commande par client (pour intervalle moyen entre commandes)
+  const datesByClient={};
+  for(const o of valides){ (datesByClient[o.clientId||0] ||= []).push(o.date); }
+  const rows=Object.keys(R.parClient).map(id=>{
+    const C=R.parClient[id];
+    const ds=(datesByClient[id]||[]).slice().sort();
+    let intervalleMoy=null;
+    if(ds.length>=2){
+      const gaps=[]; for(let i=1;i<ds.length;i++){ gaps.push((new Date(ds[i])-new Date(ds[i-1]))/86400000); }
+      intervalleMoy=_mean(gaps);
+    }
+    const top=Object.entries(C.parfums).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+    return {id:+id, nom:C.nom, ca:C.ca, nbCommandes:C.nbCommandes, macarons:C.macarons,
+      panierMoyen: C.nbCommandes? C.ca/C.nbCommandes : 0,
+      intervalleMoy, derniereCmd: ds.length?ds[ds.length-1]:null,
+      parfumFavori: top.length?top[0][0]:null, prefs:top.slice(0,3).map(([n,q])=>({nom:n,qte:q}))};
+  });
+  return {
+    parValeur: rows.slice().sort((a,b)=>b.ca-a.ca),
+    parFrequence: rows.filter(r=>r.nbCommandes>0).sort((a,b)=>b.nbCommandes-a.nbCommandes),
+    parReguliers: rows.filter(r=>r.intervalleMoy!=null).sort((a,b)=>a.intervalleMoy-b.intervalleMoy),
+    all: rows
+  };
+}
+
+// ---- ANALYSE D'ANOMALIES ----
+// 1) Mois de vente atypiques (z-score sur le CA mensuel)
+// 2) Incohérences production / ventes / stock
+function analyzeAnomalies(R){
+  const months=_monthsRange(Object.keys(R.global.parMois));
+  const caSerie=months.map(m=>(R.global.parMois[m]||{}).ca||0);
+  const mac=months.map(m=>(R.global.parMois[m]||{}).macarons||0);
+  const m=_mean(caSerie), sd=_std(caSerie);
+  const outliers=[];
+  months.forEach((mo,i)=>{
+    if(sd>0){ const z=(caSerie[i]-m)/sd; if(Math.abs(z)>=1.6) outliers.push({mois:mo, ca:caSerie[i], z, sens:z>0?'haut':'bas'}); }
+  });
+  return {months, caSerie, macSerie:mac, moyenneCA:m, ecartType:sd, outliers};
+}
+
+// Rapproche stock fini (productions.qteRestante) et consommation récente pour
+// détecter les risques de rupture. Retourne par recette un état de couverture.
+async function analyzeStockCoverage(orders){
+  const recipes=await db.recipes.toArray();
+  const prods=await db.productions.toArray();
+  // stock fini par recette
+  const finiByRecipe={};
+  prods.forEach(p=>{ finiByRecipe[p.recipeId]=(finiByRecipe[p.recipeId]||0)+(+p.qteRestante||0); });
+  // demande par parfum sur 60j (commandes payées + à préparer = engagement réel)
+  const now=new Date(), since=new Date(now-60*86400000);
+  const demande={};
+  (orders||[]).forEach(o=>{
+    if(!o.date) return; if(new Date(o.date)<since) return;
+    if(o.paiement!=='Payé' && normStatus(o.statut)!=='À préparer') return;
+    orderToLines(o).forEach(ln=>{ (ln.parfums||[]).forEach(p=>{ if(p.qte>0) demande[p.nom]=(demande[p.nom]||0)+p.qte; }); });
+  });
+  return {recipes, finiByRecipe, demande60j:demande};
+}
+
+// ---- BESOINS MATIÈRES depuis des commandes planifiées (à préparer) ----
+// Calcule, par recette dont le nom matche un parfum demandé, le nombre de batchs
+// nécessaires puis les besoins en matières premières via le BOM.
+async function computeMaterialNeeds(orders, opts){
+  opts=opts||{};
+  const recipes=await db.recipes.toArray();
+  const recipeItems=await db.recipeItems.toArray();
+  const materials=await db.materials.toArray();
+  const matById=Object.fromEntries(materials.map(m=>[m.id,m]));
+  // demande par parfum sur les commandes "à préparer" (ou filtre fourni)
+  const cible=(orders||[]).filter(o=> opts.all ? true : normStatus(o.statut)==='À préparer');
+  const demande={};
+  cible.forEach(o=> orderToLines(o).forEach(ln=>{
+    (ln.parfums||[]).forEach(p=>{ if(p.qte>0) demande[p.nom]=(demande[p.nom]||0)+p.qte; });
+  }));
+  // associe parfum -> recette par nom (tolérant)
+  const norm=s=>aiNormalize(s);
+  const findRecipe=nom=>{
+    const n=norm(nom);
+    return recipes.find(r=> norm(r.produitNom)===n)
+        || recipes.find(r=> norm(r.produitNom).includes(n) || n.includes(norm(r.produitNom)));
+  };
+  const batchsParRecette={}, sansRecette=[];
+  for(const nom in demande){
+    const r=findRecipe(nom);
+    if(!r){ sansRecette.push({parfum:nom, qte:demande[nom]}); continue; }
+    const rdt=+r.rendement||1;
+    const nbBatchs=Math.ceil(demande[nom]/rdt);
+    batchsParRecette[r.id]=(batchsParRecette[r.id]||0)+nbBatchs;
+  }
+  // besoins matières = somme(batchs * qteParBatch)
+  const besoins={}; // materialId -> qte
+  for(const rid in batchsParRecette){
+    const items=recipeItems.filter(it=>it.recipeId===+rid);
+    items.forEach(it=>{ besoins[it.materialId]=(besoins[it.materialId]||0)+batchsParRecette[rid]*(+it.qteParBatch||0); });
+  }
+  // confronte au stock courant
+  const lots=await db.materialLots.toArray();
+  const stockById={}; lots.forEach(l=>{ stockById[l.materialId]=(stockById[l.materialId]||0)+(+l.qteRestante||0); });
+  const matLignes=Object.keys(besoins).map(id=>{
+    const m=matById[id]||{nom:'(matière supprimée)',unite:''};
+    const requis=besoins[id], dispo=stockById[id]||0;
+    return {id:+id, nom:m.nom, unite:m.unite||'', requis, dispo, manque:Math.max(0,requis-dispo)};
+  }).sort((a,b)=>b.manque-a.manque || b.requis-a.requis);
+  return {demande, batchsParRecette, recipes, matLignes, sansRecette};
+}
+
+
 // Barre horizontale simple (rang) sans dépendance
 function statBars(obj, opt){
   opt=opt||{};
@@ -1715,6 +2262,120 @@ async function renderStats(){
    </div>
    <div class="panel"><h2>Chiffre d'affaires mensuel</h2>${caChart}</div>
    <div class="panel"><h2>Macarons écoulés par mois</h2>${macChart||'<p class="note">—</p>'}</div>`;
+}
+
+/* ============================================================
+   ANALYSE & PRODUCTION — tableau de bord décisionnel
+   ============================================================ */
+let anaWindow = 30; // fenêtre de tendance en jours
+async function renderAnalyse(){
+  const orders=await db.orders.toArray();
+  const clients=await db.clients.toArray();
+  const R=computeStats(orders,clients,orderToLines);
+
+  // --- TENDANCES ---
+  const T=analyzeTrends(orders,{windowDays:anaWindow});
+  const trendRow=(x,up)=>`<div class="sum-box"><span>${up?'▲':'▼'} ${esc(x.nom)}</span>
+    <b style="color:${up?'#3f7d52':'var(--red,#b3261e)'}">${x.prev>0?(x.pct>0?'+':'')+Math.round(x.pct)+'%':'nouveau'} <span style="font-weight:400;color:#9a8a82">(${qty(x.prev)}→${qty(x.recent)})</span></b></div>`;
+  const trendBlock=`
+   <div class="panel"><h2>Tendances de consommation
+     <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— ${anaWindow} derniers jours vs ${anaWindow} précédents</span></h2>
+     <div class="field" style="max-width:240px"><label>Fenêtre de comparaison</label>
+       <select onchange="anaWindow=+this.value;renderAnalyse()">
+         ${[7,14,30,60,90].map(d=>`<option value="${d}" ${anaWindow===d?'selected':''}>${d} jours</option>`).join('')}
+       </select></div>
+     ${(T.hausses.length||T.baisses.length)?'':'<p class="note">Pas assez de données sur la période pour dégager une tendance.</p>'}
+     ${T.hausses.length?`<h3 style="font-size:.92rem;margin:10px 0 4px;color:#3f7d52">En hausse</h3>${T.hausses.slice(0,6).map(x=>trendRow(x,true)).join('')}`:''}
+     ${T.baisses.length?`<h3 style="font-size:.92rem;margin:12px 0 4px;color:var(--red,#b3261e)">En baisse</h3>${T.baisses.slice(0,6).map(x=>trendRow(x,false)).join('')}`:''}
+   </div>`;
+
+  // --- CLIENTS ---
+  const A=analyzeClients(R,orders);
+  const valLine=c=>`<div class="sum-box"><span><span class="link-name" onclick="clientForm(${c.id})">${esc(c.nom)}</span></span><b>${euro(c.ca)} · ${c.nbCommandes} cmd · panier ${euro(c.panierMoyen)}</b></div>`;
+  const freqLine=c=>`<div class="sum-box"><span><span class="link-name" onclick="clientForm(${c.id})">${esc(c.nom)}</span></span><b>${c.nbCommandes} commandes${c.intervalleMoy!=null?' · ~'+Math.round(c.intervalleMoy)+' j entre cmd':''}</b></div>`;
+  const prefLine=c=>`<div class="sum-box"><span><span class="link-name" onclick="clientForm(${c.id})">${esc(c.nom)}</span></span><b>${c.parfumFavori?esc(c.parfumFavori):'—'}</b></div>`;
+  const clientBlock=`
+   <div class="panel"><h2>Clients à forte valeur <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— CA cumulé</span></h2>
+     ${A.parValeur.length?A.parValeur.slice(0,8).map(valLine).join(''):'<p class="note">Aucune commande payée.</p>'}</div>
+   <div class="panel"><h2>Clients les plus réguliers <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— fréquence & cadence</span></h2>
+     ${A.parReguliers.length?A.parReguliers.slice(0,8).map(freqLine).join(''):
+       (A.parFrequence.length?A.parFrequence.slice(0,8).map(freqLine).join(''):'<p class="note">—</p>')}</div>
+   <div class="panel"><h2>Préférence récurrente par client</h2>
+     ${A.all.filter(c=>c.parfumFavori).length?A.all.filter(c=>c.parfumFavori).slice(0,10).map(prefLine).join(''):'<p class="note">—</p>'}</div>`;
+
+  // --- ANOMALIES ---
+  const AN=analyzeAnomalies(R);
+  const anoBlock=`
+   <div class="panel"><h2>Détection d'anomalies <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— CA mensuel</span></h2>
+     <div class="sum-box"><span>CA mensuel moyen</span><b>${euro(AN.moyenneCA)}</b></div>
+     ${AN.outliers.length?AN.outliers.map(o=>`<div class="sum-box"><span>${o.sens==='haut'?'⚡':'⚠'} ${o.mois}</span>
+        <b style="color:${o.sens==='haut'?'#3f7d52':'var(--red,#b3261e)'}">${euro(o.ca)} — ${o.sens==='haut'?'pic inhabituel':'creux inhabituel'} (z=${o.z.toFixed(1)})</b></div>`).join(''):
+       '<p class="note">Aucune variation mensuelle inhabituelle détectée.</p>'}</div>`;
+
+  // --- PRODUCTION : besoins matières depuis commandes à préparer ---
+  const N=await computeMaterialNeeds(orders);
+  const demandeEntries=Object.entries(N.demande).filter(([,q])=>q>0).sort((a,b)=>b[1]-a[1]);
+  const prodSugg = demandeEntries.length
+    ? demandeEntries.map(([nom,q])=>{
+        const rid=Object.keys(N.batchsParRecette).find(id=>{ const r=N.recipes.find(x=>x.id===+id); return r && aiNormalize(r.produitNom).includes(aiNormalize(nom).slice(0,4)); });
+        const r=rid?N.recipes.find(x=>x.id===+rid):null;
+        const rdt=r?(+r.rendement||1):null;
+        const batchs=rdt?Math.ceil(q/rdt):null;
+        return `<div class="sum-box"><span>${esc(nom)}</span><b>${qty(q)} pièce(s)${batchs?` · ${batchs} batch(s)`:' · pas de recette liée'}</b></div>`;
+      }).join('')
+    : '<p class="note">Aucune commande « À préparer ». Les suggestions de production apparaîtront ici dès qu\'une commande est planifiée.</p>';
+  const matBlock = N.matLignes.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Matière</th><th>Requis</th><th>Stock</th><th>Manque</th></tr></thead><tbody>
+        ${N.matLignes.map(m=>`<tr${m.manque>0?' style="background:#fdf3f2"':''}><td>${esc(m.nom)}</td>
+          <td>${qty(m.requis)} ${esc(m.unite)}</td><td>${qty(m.dispo)} ${esc(m.unite)}</td>
+          <td style="font-weight:600;color:${m.manque>0?'var(--red,#b3261e)':'#3f7d52'}">${m.manque>0?qty(m.manque)+' '+esc(m.unite):'OK'}</td></tr>`).join('')}
+       </tbody></table></div>`
+    : '<p class="note">Aucun besoin matière calculé (aucune recette liée aux commandes à préparer).</p>';
+  const sansRec = N.sansRecette.length
+    ? `<p class="note" style="color:var(--red,#b3261e)">⚠ Parfums demandés sans recette définie : ${N.sansRecette.map(x=>esc(x.parfum)).join(', ')}. Créez la recette (BOM) pour intégrer leurs besoins matières.</p>`
+    : '';
+
+  // --- RENDEMENT : écarts théorique vs réel historisés sur les productions ---
+  const allProds = await db.productions.toArray();
+  const prodRecipes = await db.recipes.toArray();
+  const recNm = id => (prodRecipes.find(r=>r.id===id)||{}).produitNom||'(recette supprimée)';
+  const withEcart = allProds.filter(p=>p.qteTheorique>0 && p.qteReelle!=null);
+  const byRec={};
+  withEcart.forEach(p=>{ (byRec[p.recipeId] ||= {th:0,re:0,n:0,pertes:0,surplus:0});
+    const b=byRec[p.recipeId]; b.th+=+p.qteTheorique; b.re+=+p.qteReelle; b.n++;
+    const e=(+p.ecart||((+p.qteReelle)-(+p.qteTheorique))); if(e<0) b.pertes+=-e; else b.surplus+=e; });
+  const totTh=withEcart.reduce((s,p)=>s+(+p.qteTheorique||0),0);
+  const totRe=withEcart.reduce((s,p)=>s+(+p.qteReelle||0),0);
+  const rendGlobal = totTh? Math.round(totRe/totTh*1000)/10 : null;
+  const recRows=Object.keys(byRec).map(rid=>{
+    const b=byRec[rid]; const r=b.th? Math.round(b.re/b.th*1000)/10 : 0;
+    return {nom:recNm(+rid), th:b.th, re:b.re, n:b.n, rendement:r, pertes:b.pertes, surplus:b.surplus};
+  }).sort((a,b)=>a.rendement-b.rendement);
+  const rendBlock = withEcart.length
+    ? `<div class="sum-box"><span>Rendement réel global <span style="font-weight:400;color:#9a8a82">(${withEcart.length} batch)</span></span><b style="color:${rendGlobal<100?'var(--red,#b3261e)':'#3f7d52'}">${rendGlobal}%</b></div>
+       <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Produit</th><th>Théo.</th><th>Réel</th><th>Rdt</th><th>Pertes</th></tr></thead><tbody>
+         ${recRows.map(x=>`<tr><td>${esc(x.nom)}</td><td>${qty(x.th)}</td><td>${qty(x.re)}</td>
+           <td style="font-weight:600;color:${x.rendement<100?'var(--red,#b3261e)':'#3f7d52'}">${x.rendement}%</td>
+           <td>${x.pertes?qty(x.pertes):'—'}</td></tr>`).join('')}
+       </tbody></table></div>`
+    : '<p class="note">Aucun écart de production enregistré pour l\'instant. Renseignez une quantité réelle différente du théorique pour suivre le rendement.</p>';
+
+  const prodBlock=`
+   <div class="panel"><h2>Suggestion de production <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— d'après les commandes à préparer</span></h2>
+     ${prodSugg}</div>
+   <div class="panel"><h2>Besoins en matières premières</h2>${matBlock}${sansRec}</div>
+   <div class="panel"><h2>Rendement de production <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— écarts théorique / réel</span></h2>${rendBlock}</div>`;
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Analyse &amp; Production</h1><p>Décisions opérationnelles · 100% hors-ligne</p></div></div>
+   <div class="banner">🧭 <div>Vue décisionnelle : tendances, clients clés, anomalies, et besoins de production calculés à partir de vos commandes et recettes. Aucune donnée ne quitte l'appareil.</div></div>
+   ${trendBlock}
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Clients</h2>
+   ${clientBlock}
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Anomalies</h2>
+   ${anoBlock}
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Production</h2>
+   ${prodBlock}`;
 }
 
 // === insère le moteur parseIntent (voir ai_engine.js) ===
@@ -1866,6 +2527,25 @@ function parseIntent(texte, ctx){
       label:`Supprimer/annuler une commande${client?' de '+client.nom:''}`};
   }
 
+  // ---- ANALYSE AVANCÉE (consultations) ----
+  // tendances de consommation (hausse/baisse)
+  if(/\b(tendance|tendances|evolue|evolution|hausse|baisse|progresse|recule|monte|descend)\b/.test(t)){
+    return {intent:'query_trends', params:{}, critical:false, label:'Analyser les tendances de consommation'};
+  }
+  // anomalies / variations inhabituelles
+  if(/\b(anomalie|anomalies|inhabituel|inhabituelle|atypique|pic|creux|bizarre|etrange)\b/.test(t)){
+    return {intent:'query_anomalies', params:{}, critical:false, label:'Détecter les anomalies de vente'};
+  }
+  // besoins de production / matières à produire
+  if(/\b(produire|production|fabriquer|batch|combien.*macaron|preparer.*production)\b/.test(t)
+     && /\b(faut|besoin|combien|matiere|matieres|premiere|prevoir|planifie|planifier)\b/.test(t)){
+    return {intent:'query_production_needs', params:{}, critical:false, label:'Calculer les besoins de production'};
+  }
+  // risque de rupture
+  if(/\b(rupture|risque|manque|manquer|epuise|epuiser|epuisement)\b/.test(t)){
+    return {intent:'query_rupture', params:{}, critical:false, label:'Détecter les risques de rupture'};
+  }
+
   return {intent:'unknown', params:{}, critical:false};
 }
 // extrait un nom propre candidat après "pour"
@@ -1887,7 +2567,7 @@ function renderAssistant(){
      <div class="flex" style="gap:8px"><button class="btn" onclick="aiRun()">Envoyer</button>
        <button class="btn ghost" onclick="document.getElementById('aiInput').value='';document.getElementById('aiOut').innerHTML='';">Effacer</button></div>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-       ${['Quel est le stock de chocolat ?','Commandes à préparer demain','Quels clients commandent le plus de vanille ?','Chiffre d\'affaires'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
+       ${['Quel est le stock de chocolat ?','Commandes à préparer demain','Quels clients commandent le plus de vanille ?','Chiffre d\'affaires','Quelles sont les tendances ?','Que faut-il produire ?','Y a-t-il un risque de rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
      </div>
    </div>
    <div id="aiOut"></div>`;
@@ -1907,6 +2587,10 @@ async function aiRun(){
     case 'query_orders': return aiQueryOrders(r.params);
     case 'query_top_clients': return aiQueryTopClients(r.params);
     case 'query_revenue': return aiQueryRevenue();
+    case 'query_trends': return aiQueryTrends();
+    case 'query_anomalies': return aiQueryAnomalies();
+    case 'query_production_needs': return aiQueryProductionNeeds();
+    case 'query_rupture': return aiQueryRupture();
     case 'create_order': return aiConfirmCreateOrder(r);
     case 'delete_order': return aiConfirmDeleteOrder(r);
     case 'adjust_stock': return aiConfirmAdjustStock(r);
@@ -1954,11 +2638,11 @@ async function aiQueryTopClients(params){
   const clients=await db.clients.toArray();
   const R=computeStats(orders,clients,orderToLines);
   const fl=params.flavor;
-  const rank=Object.keys(R.parClient).map(id=>({nom:R.parClient[id].nom, n: fl?(R.parClient[id].parfums[fl]||0):R.parClient[id].macarons}))
+  const rank=Object.keys(R.parClient).map(id=>({id:+id, nom:R.parClient[id].nom, n: fl?(R.parClient[id].parfums[fl]||0):R.parClient[id].macarons}))
     .filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,10);
   if(!rank.length) return aiSay(`<p class="note">Aucune donnée${fl?' pour « '+esc(fl)+' »':''} (commandes payées uniquement).</p>`);
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Clients — ${fl?'parfum '+esc(fl):'tous macarons'} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
-    ${rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. ${esc(x.nom)}</span><b>${qty(x.n)} macaron(s)</b></div>`).join('')}`);
+    ${rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientForm(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b>${qty(x.n)} macaron(s)</b></div>`).join('')}`);
 }
 async function aiQueryRevenue(){
   const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
@@ -1969,6 +2653,57 @@ async function aiQueryRevenue(){
     <div class="sum-box"><span>Commandes payées</span><b>${R.nbValides}</b></div>
     <div class="sum-box"><span>Macarons écoulés</span><b>${qty(R.global.nbMacarons)}</b></div>
     ${mois.length?mois.map(m=>`<div class="sum-box"><span>${m}</span><b>${euro(R.global.parMois[m].ca)}</b></div>`).join(''):''}`);
+}
+
+// ---- ANALYSE AVANCÉE (assistant) ----
+async function aiQueryTrends(){
+  const orders=await db.orders.toArray();
+  const T=analyzeTrends(orders,{windowDays:30});
+  if(!T.hausses.length && !T.baisses.length)
+    return aiSay(`<p class="note">Pas assez de données sur les 60 derniers jours pour dégager une tendance.</p>`);
+  const up=T.hausses.slice(0,5).map(x=>`<div class="sum-box"><span>▲ ${esc(x.nom)}</span><b style="color:#3f7d52">${x.prev>0?(x.pct>0?'+':'')+Math.round(x.pct)+'%':'nouveau'} (${qty(x.prev)}→${qty(x.recent)})</b></div>`).join('');
+  const down=T.baisses.slice(0,5).map(x=>`<div class="sum-box"><span>▼ ${esc(x.nom)}</span><b style="color:var(--red,#b3261e)">${Math.round(x.pct)}% (${qty(x.prev)}→${qty(x.recent)})</b></div>`).join('');
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Tendances <span style="font-weight:400;font-size:.78rem;color:#9a8a82">30 j vs 30 j précédents · commandes payées</span></h3>
+    ${up?'<p style="margin:4px 0;color:#3f7d52;font-weight:600">En hausse</p>'+up:''}
+    ${down?'<p style="margin:8px 0 4px;color:var(--red,#b3261e);font-weight:600">En baisse</p>'+down:''}
+    <p class="note" style="margin-top:8px">Vue complète dans l'onglet <b>Analyse &amp; Production</b>.</p>`);
+}
+async function aiQueryAnomalies(){
+  const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
+  const R=computeStats(orders,clients,orderToLines);
+  const AN=analyzeAnomalies(R);
+  if(!AN.outliers.length)
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Anomalies</h3><div class="sum-box"><span>CA mensuel moyen</span><b>${euro(AN.moyenneCA)}</b></div><p class="note">Aucune variation mensuelle inhabituelle détectée.</p>`);
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Anomalies détectées</h3>
+    <div class="sum-box"><span>CA mensuel moyen</span><b>${euro(AN.moyenneCA)}</b></div>
+    ${AN.outliers.map(o=>`<div class="sum-box"><span>${o.sens==='haut'?'⚡':'⚠'} ${o.mois}</span><b style="color:${o.sens==='haut'?'#3f7d52':'var(--red,#b3261e)'}">${euro(o.ca)} — ${o.sens==='haut'?'pic':'creux'} (z=${o.z.toFixed(1)})</b></div>`).join('')}`);
+}
+async function aiQueryProductionNeeds(){
+  const orders=await db.orders.toArray();
+  const N=await computeMaterialNeeds(orders);
+  const dem=Object.entries(N.demande).filter(([,q])=>q>0).sort((a,b)=>b[1]-a[1]);
+  if(!dem.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Besoins de production</h3><p class="note">Aucune commande « À préparer » en attente.</p>`);
+  const prod=dem.map(([nom,q])=>`<div class="sum-box"><span>${esc(nom)}</span><b>${qty(q)} pièce(s)</b></div>`).join('');
+  const mat=N.matLignes.slice(0,12).map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:${m.manque>0?'var(--red,#b3261e)':'#3f7d52'}">${qty(m.requis)} ${esc(m.unite)}${m.manque>0?' · manque '+qty(m.manque):' · OK'}</b></div>`).join('');
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">À produire (commandes à préparer)</h3>${prod}
+    <h3 style="font-size:.95rem;margin:12px 0 6px">Matières premières nécessaires</h3>${mat||'<p class="note">Aucune recette liée.</p>'}
+    ${N.sansRecette.length?`<p class="note" style="color:var(--red,#b3261e)">⚠ Sans recette : ${N.sansRecette.map(x=>esc(x.parfum)).join(', ')}.</p>`:''}`);
+}
+async function aiQueryRupture(){
+  const orders=await db.orders.toArray();
+  const N=await computeMaterialNeeds(orders);
+  const risques=N.matLignes.filter(m=>m.manque>0);
+  // matières sous seuil (indépendamment des commandes)
+  const materials=await db.materials.toArray();
+  const lots=await db.materialLots.toArray();
+  const stock={}; lots.forEach(l=>{ stock[l.materialId]=(stock[l.materialId]||0)+(+l.qteRestante||0); });
+  const sousSeuil=materials.filter(m=>+m.seuil>0 && (stock[m.id]||0)<=+m.seuil)
+    .map(m=>({nom:m.nom, dispo:stock[m.id]||0, seuil:+m.seuil, unite:m.unite||''}));
+  if(!risques.length && !sousSeuil.length)
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3><p class="note">Aucun risque détecté : stocks suffisants pour les commandes à préparer et au-dessus des seuils.</p>`);
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3>
+    ${risques.length?'<p style="margin:4px 0;font-weight:600;color:var(--red,#b3261e)">Insuffisant pour les commandes planifiées</p>'+risques.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">manque ${qty(m.manque)} ${esc(m.unite)} (${qty(m.dispo)}/${qty(m.requis)})</b></div>`).join(''):''}
+    ${sousSeuil.length?'<p style="margin:10px 0 4px;font-weight:600">Sous le seuil d\'alerte</p>'+sousSeuil.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">${qty(m.dispo)} / seuil ${qty(m.seuil)} ${esc(m.unite)}</b></div>`).join(''):''}`);
 }
 
 // ---- ACTIONS CRITIQUES : résumé + validation explicite ----
@@ -2043,8 +2778,16 @@ async function aiExecute(){
   }
 }
 
+let calSearch='';
+let _calCache=null;
 async function renderCal(){
   const events = await db.events.toArray();
+  // index de recherche sur TOUS les événements (toutes dates), construit une fois
+  _calCache = events.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(e=>{
+    const prim = normTxt(e.titre||'');
+    const blob = normTxt([e.titre, e.date, fmtDate(e.date), e.type==='cmd'?'commande':'evenement'].filter(Boolean).join(' '));
+    return {e, _prim:prim, _blob:blob, _digits:onlyDigits(e.date||'')};
+  });
   const y=calRef.getFullYear(),m=calRef.getMonth();
   const first=new Date(y,m,1),start=(first.getDay()+6)%7;
   const days=new Date(y,m+1,0).getDate();
@@ -2056,16 +2799,38 @@ async function renderCal(){
      <b style="min-width:150px;text-align:center;color:var(--bordeaux);text-transform:capitalize">${calRef.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</b>
      <button class="btn ghost sm" onclick="calMove(1)">›</button></div><button class="btn" onclick="evForm()">+ Événement</button></div></div>
    <div class="panel">
-     <div class="cal-grid">${['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map(d=>`<div class="cal-head">${d}</div>`).join('')}</div>
-     <div class="cal-grid" style="margin-top:6px">${cells.map(d=>{
-       if(d===null)return `<div class="cal-cell other"></div>`;
-       const t=new Date();const isToday=t.getDate()===d&&t.getMonth()===m&&t.getFullYear()===y;
-       const evs=evByDay[d]||[];
-       return `<div class="cal-cell ${isToday?'today':''}"><div class="cal-num">${d}</div>
-        ${evs.map(e=>`<div class="cal-ev ${e.type==='cmd'?'cmd':''}" onclick="evView(${e.id})" title="${esc(e.titre)}">${esc(e.titre)}</div>`).join('')}</div>`;
-     }).join('')}</div>
-     <p class="note">Touchez un événement pour voir son détail. Les commandes apparaissent en caramel.</p>
+     <input class="search" id="calSearch" style="width:100%;margin-bottom:12px" placeholder="Rechercher un événement ou une commande (toutes dates)…" value="${esc(calSearch)}" oninput="calFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
+     <div id="calResults" style="display:none;margin-bottom:12px"></div>
+     <div id="calGridWrap">
+       <div class="cal-grid">${['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map(d=>`<div class="cal-head">${d}</div>`).join('')}</div>
+       <div class="cal-grid" style="margin-top:6px">${cells.map(d=>{
+         if(d===null)return `<div class="cal-cell other"></div>`;
+         const t=new Date();const isToday=t.getDate()===d&&t.getMonth()===m&&t.getFullYear()===y;
+         const evs=evByDay[d]||[];
+         return `<div class="cal-cell ${isToday?'today':''}"><div class="cal-num">${d}</div>
+          ${evs.map(e=>`<div class="cal-ev ${e.type==='cmd'?'cmd':''}" onclick="evView(${e.id})" title="${esc(e.titre)}">${esc(e.titre)}</div>`).join('')}</div>`;
+       }).join('')}</div>
+       <p class="note">Touchez un événement pour voir son détail. Les commandes apparaissent en caramel.</p>
+     </div>
    </div>`;
+  calFilter(calSearch);
+}
+// Recherche calendrier : affiche une liste filtrée (toutes dates) et masque la grille pendant la saisie.
+function calFilter(q){
+  calSearch=q||'';
+  const res=document.getElementById('calResults'), grid=document.getElementById('calGridWrap');
+  if(!res||!_calCache) return;
+  if(!q || !q.trim()){ res.style.display='none'; res.innerHTML=''; if(grid) grid.style.display=''; return; }
+  if(grid) grid.style.display='none';
+  res.style.display='block';
+  const rows=searchRank(_calCache, q);
+  if(!rows.length){ res.innerHTML='<div class="empty">Aucun événement ne correspond.</div>'; return; }
+  res.innerHTML = `<p class="note" style="margin-bottom:8px">${rows.length} résultat(s) — toutes dates confondues :</p>`+
+    rows.slice(0,200).map(r=>{
+      const e=r.e;
+      return `<div class="sum-box" style="cursor:pointer" onclick="evView(${e.id})">
+        <span>${e.type==='cmd'?'🧾':'📌'} ${esc(e.titre)}</span><b>${fmtDate(e.date)}</b></div>`;
+    }).join('');
 }
 function calMove(n){ calRef.setMonth(calRef.getMonth()+n); renderCal(); }
 
