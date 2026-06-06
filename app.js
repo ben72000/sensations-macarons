@@ -5221,6 +5221,56 @@ function verifyBackup(dump){
   return {ok: structureOk && checksumOk && !raisons.some(r=>r.includes('corrompue')), raisons, checksumOk, structureOk, total};
 }
 
+// ---- FUSION d'un dump (AJOUT sans écrasement) ----
+// Ajoute les enregistrements d'un dump à la base existante, sans rien effacer.
+// Les ID entrants sont ré-attribués automatiquement pour éviter toute collision,
+// et les clés étrangères internes au dump sont remappées (clientId, marketId, recipeId, etc.).
+// Retourne un récapitulatif {table:nbAjouté}.
+async function mergeDump(dump){
+  const added={};
+  // ordre d'insertion : les "parents" d'abord pour pouvoir remapper les enfants
+  const order=['suppliers','materials','clients','recipes','products','events',
+               'materialLots','recipeItems','productions','prodConsumption',
+               'orders','orderItems','charges','markets','marketMoves'];
+  const idMap={}; order.forEach(t=>idMap[t]={}); // old id -> new id, par table
+  // table parent d'une clé étrangère donnée
+  const FK={
+    materialLots:{materialId:'materials', supplierId:'suppliers'},
+    recipeItems:{recipeId:'recipes', materialId:'materials'},
+    productions:{recipeId:'recipes'},
+    prodConsumption:{productionId:'productions', materialLotId:'materialLots'},
+    orders:{clientId:'clients'},
+    orderItems:{orderId:'orders', productionId:'productions'},
+    marketMoves:{marketId:'markets', productionId:'productions'}
+  };
+  await db.transaction('rw',...order.map(t=>db.table(t)),async()=>{
+    for(const t of order){
+      const rows=dump[t]; if(!Array.isArray(rows)||!rows.length) continue;
+      let n=0;
+      for(const row of rows){
+        const rec=Object.assign({},row);
+        const oldId=rec.id; delete rec.id;             // laisse IndexedDB attribuer un nouvel id
+        // remap des clés étrangères internes au dump
+        const fk=FK[t]||{};
+        for(const field in fk){
+          const parentTable=fk[field];
+          const oldRef=rec[field];
+          if(oldRef!=null && idMap[parentTable] && idMap[parentTable][oldRef]!=null){
+            rec[field]=idMap[parentTable][oldRef]; // référence remappée vers le nouvel id
+          }
+          // si la référence ne correspond à rien d'importé, on la laisse telle quelle
+          // (ex : marketMoves.productionId sans lot → l'affichage retombe sur le nom du parfum)
+        }
+        const newId=await db.table(t).add(rec);
+        if(oldId!=null) idMap[t][oldId]=newId;
+        n++;
+      }
+      added[t]=n;
+    }
+  });
+  return added;
+}
+
 // ---- Application d'un dump à la base (remplacement atomique) ----
 async function applyDump(dump){
   await db.transaction('rw',...TABLES.map(t=>db.table(t)),async()=>{
@@ -5263,7 +5313,31 @@ async function importData(e){
   e.target.value='';
 }
 
-// ---- HISTORIQUE INTERNE (sauvegardes stockées dans IndexedDB) ----
+// ---- IMPORT FUSION (ajoute sans écraser) ----
+async function importDataMerge(e){
+  const f=e.target.files[0]; if(!f)return;
+  let obj;
+  try{ obj = JSON.parse(await f.text()); }
+  catch(err){ toast('Fichier illisible (JSON invalide)'); e.target.value=''; return; }
+  const v=verifyBackup(obj);
+  if(!v.structureOk){ toast('Ce fichier n\'est pas un fichier Sensations Macarons valide'); e.target.value=''; return; }
+  // récapitulatif de ce qui sera ajouté
+  const parts=[];
+  TABLES.forEach(t=>{ const n=Array.isArray(obj[t])?obj[t].length:0; if(n>0){
+    const labels={clients:'client(s)',orders:'commande(s)',markets:'marché(s)',marketMoves:'mouvement(s) marché',charges:'charge(s)',productions:'production(s)',recipes:'recette(s)',materials:'matière(s)',materialLots:'lot(s) matière',products:'produit(s) catalogue',events:'événement(s)'};
+    parts.push(`• ${n} ${labels[t]||t}`); } });
+  const dateInfo = obj._date ? `\nFichier du ${new Date(obj._date).toLocaleString('fr-FR')}` : '';
+  if(!confirm(`Fusionner ce fichier avec vos données ?${dateInfo}\n\nCe contenu sera AJOUTÉ (rien ne sera effacé) :\n${parts.join('\n')||'• (aucune donnée détectée)'}\n\nUne sauvegarde de sécurité sera prise avant.`)){
+    e.target.value=''; return;
+  }
+  try{
+    await snapshotBackup('avant-fusion');
+    const added=await mergeDump(obj);
+    const tot=Object.values(added).reduce((s,n)=>s+n,0);
+    render(); toast(`Fusion réussie : ${tot} enregistrement(s) ajouté(s) ✓`);
+  }catch(err){ console.error('merge',err); toast('Erreur pendant la fusion'); }
+  e.target.value='';
+}
 // Enregistre un instantané JSON complet + checksum dans la table backups, puis purge les plus anciens.
 async function snapshotBackup(type){
   const dump=await buildDump();
@@ -5346,9 +5420,10 @@ async function renderBackups(){
        <button class="btn gold" onclick="snapshotBackup('manuel').then(()=>{renderBackups();toast('Sauvegarde créée ✓');})">＋ Sauvegarder maintenant</button>
        <button class="btn" onclick="exportData()">⬇ Exporter (.json)</button>
        <label class="btn ghost" style="cursor:pointer">⬆ Importer (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
+       <label class="btn ghost" style="cursor:pointer">➕ Importer en fusion (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importDataMerge(event)"></label>
        <button class="btn ghost" onclick="runConsistencyCheck(true)">🔍 Vérifier l'intégrité</button>
      </div>
-     <p class="note">La sauvegarde automatique se déclenche une fois par jour à l'ouverture. L'historique est conservé dans l'app ; l'export .json sert à mettre vos données à l'abri hors de l'appareil.</p>
+     <p class="note">L'import « Importer » <b>remplace</b> tout ; l'import « en fusion » <b>ajoute</b> sans rien effacer (idéal pour intégrer un fichier de saisies préparé à part). La sauvegarde automatique se déclenche une fois par jour à l'ouverture.</p>
    </div>
    <div class="panel"><h2>Historique des sauvegardes</h2>
    ${backups.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Contenu</th><th>Taille</th><th>Intégrité</th><th></th></tr></thead>
@@ -5706,6 +5781,7 @@ if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{
     navigator.serviceWorker.register('./service-worker.js').then(reg=>{
       _swReg=reg;
+      reg.update().catch(()=>{}); // vérifie tout de suite s'il existe une version plus récente
       // une version est déjà en attente (installée mais pas active) → proposer le rechargement
       if(reg.waiting && navigator.serviceWorker.controller){ showUpdateBanner(reg.waiting); }
       // une nouvelle version commence à s'installer → l'attendre puis proposer
