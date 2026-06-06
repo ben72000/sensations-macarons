@@ -315,13 +315,22 @@ async function stockParMatiere(materialId){
    ============================================================ */
 async function renderDash(){
   const now=new Date(), m=now.getMonth(), y=now.getFullYear();
-  const [orders, clients, materials, productions, events] = await Promise.all([
+  const [orders, clients, materials, productions, events, markets] = await Promise.all([
     db.orders.toArray(), db.clients.toArray(), db.materials.toArray(),
-    db.productions.toArray(), db.events.toArray()
+    db.productions.toArray(), db.events.toArray(),
+    (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[])
   ]);
-  const caMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).reduce((s,c)=>s+(+c.montant||0),0);
+  // CA des marchés clôturés (somme espèces+CB+autre), rattaché à leur date de clôture.
+  const closedMk = (markets||[]).filter(k=>k.statut==='clos').map(k=>{
+    const ca=k.ca||{}; return {date:(k.dateCloture||k.date||''), montant:money2((+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0))};
+  }).filter(k=>k.montant>0);
+  const mkInMonth = d => { const dt=new Date(d); return dt.getMonth()===m && dt.getFullYear()===y; };
+
+  const caCmdMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).reduce((s,c)=>s+(+c.montant||0),0);
+  const caMkMonth = closedMk.filter(k=>mkInMonth(k.date)).reduce((s,k)=>s+k.montant,0);
+  const caMonth = money2(caCmdMonth + caMkMonth);
   const nbMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).length;
-  const caTotal = orders.reduce((s,c)=>s+(+c.montant||0),0);
+  const caTotal = money2(orders.reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
 
   // alertes stock & DLC
   let low=[], dlcAlert=[];
@@ -334,7 +343,10 @@ async function renderDash(){
 
   const upcoming = events.filter(e=>e.date>=today()).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
   const months=[]; for(let i=5;i>=0;i--){const d=new Date(y,m-i,1);months.push({k:d.toISOString().slice(0,7),l:d.toLocaleDateString('fr-FR',{month:'short'})});}
-  const data=months.map(mo=>({...mo,v:orders.filter(c=>c.date&&c.date.slice(0,7)===mo.k).reduce((s,c)=>s+(+c.montant||0),0)}));
+  const data=months.map(mo=>({...mo,v: money2(
+    orders.filter(c=>c.date&&c.date.slice(0,7)===mo.k).reduce((s,c)=>s+(+c.montant||0),0)
+    + closedMk.filter(k=>k.date&&k.date.slice(0,7)===mo.k).reduce((s,k)=>s+k.montant,0)
+  )}));
   const max=Math.max(...data.map(d=>d.v),1);
 
   document.getElementById('main').innerHTML=`
