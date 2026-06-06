@@ -34,6 +34,11 @@ db.version(4).stores({
 db.version(5).stores({
   charges:         '++id, date, categorie'
 });
+// v6 : marchés / ventes itinérantes + mouvements (sortie, don, perte, retour, vente)
+db.version(6).stores({
+  markets:         '++id, date, nom',
+  marketMoves:     '++id, marketId, productionId, type'   // type: sortie | don | perte | retour
+});
 
 // --------- Catalogue de référence ---------
 const FLAVORS = [
@@ -64,19 +69,27 @@ const EVENT_MIN_EQUIP = 1;      // au moins 1 pyramide obligatoire
 const SETTINGS_DEFAULTS = {
   socialGoods: 12.3,     // % charges sociales sur vente de marchandise (produit fini)
   socialService: 25.6,   // % charges sociales sur prestation de service
-  packaging: { 6:0.50, 8:0.60, 16:1.00, 25:1.50 } // € emballage/consommable par coffret
+  packaging: { 6:0.50, 8:0.60, 16:1.00, 25:1.50 }, // € emballage/consommable par coffret (commandes)
+  // Types d'emballage pour le comptage avant/après marché (delta) : {nom, cout unitaire €}
+  packTypes: [
+    {nom:'Boîte 6', cout:0.50},
+    {nom:'Boîte 12', cout:0.80},
+    {nom:'Sachet individuel', cout:0.15},
+    {nom:'Pochon kraft', cout:0.30}
+  ]
 };
 function getSettings(){
   try{ const s=JSON.parse(localStorage.getItem('sm_settings')||'{}');
     return {
       socialGoods: s.socialGoods!=null?+s.socialGoods:SETTINGS_DEFAULTS.socialGoods,
       socialService: s.socialService!=null?+s.socialService:SETTINGS_DEFAULTS.socialService,
-      packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{})
+      packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
+      packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes))
     };
   }catch(e){ return JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)); }
 }
 function saveSettings(s){ localStorage.setItem('sm_settings', JSON.stringify(s)); }
-// Coût emballage d'un coffret selon sa taille
+// Coût emballage d'un coffret selon sa taille (commandes)
 function packagingCost(taille){ const s=getSettings(); return money2(s.packaging[taille]!=null?s.packaging[taille]:0); }
 
 
@@ -176,7 +189,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -220,7 +233,25 @@ document.querySelectorAll('#sheetGrid button[data-v]').forEach(btn=>{ btn.addEve
 const sheetOv=document.getElementById('sheetOverlay');
 if(sheetOv) sheetOv.addEventListener('click', e=>{ if(e.target===sheetOv) closeSheet(); });
 
-function render(){ (VIEWS[view]||renderDash)(); }
+function render(){
+  const fn = VIEWS[view] || renderDash;
+  try {
+    const r = fn();
+    // les vues sont asynchrones : on capture aussi un rejet de promesse (sinon écran blanc silencieux)
+    if (r && typeof r.catch === 'function') r.catch(err => renderViewError(view, err));
+  } catch (err) {
+    renderViewError(view, err);
+  }
+}
+// Affiche une erreur de rendu dans le conteneur principal au lieu de laisser un écran vide.
+function renderViewError(v, err){
+  console.error('Erreur de rendu vue', v, err);
+  const main=document.getElementById('main'); if(!main) return;
+  main.innerHTML = `<div class="topbar"><div><h1>Affichage indisponible</h1><p>Vue « ${esc(v)} »</p></div></div>
+    <div class="panel"><div class="empty">Une erreur est survenue à l'affichage de cette vue.<br>
+      <span style="color:#9a8a82;font-size:.8rem">${esc((err&&err.message)||String(err)||'erreur inconnue')}</span><br><br>
+      <button class="btn ghost sm" onclick="render()">Réessayer</button></div></div>`;
+}
 
 /* ============================================================
    NAVIGATION HISTORIQUE — bouton « Retour » iOS / Safari
@@ -2619,6 +2650,7 @@ async function computeAccounting(opts){
   const recipes = await db.recipes.toArray();
   const recipeItems = await db.recipeItems.toArray();
   const lots = await db.materialLots.toArray();
+  const markets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
 
   // 1) ENCAISSEMENTS par date réelle de paiement (cash basis)
   //    Chaque ligne de paiement {date, montant, moyen} compte au mois de SA date.
@@ -2642,6 +2674,23 @@ async function computeAccounting(opts){
       encByMethod[p.moyen||'—']=money2((encByMethod[p.moyen||'—']||0)+v);
       totalEncaisse=money2(totalEncaisse+v);
     });
+  });
+
+  // 1b) VENTES DE MARCHÉ (clôturées) : encaissement immédiat → facturé = encaissé au mois de clôture.
+  //     Réparti par mode de paiement (Espèces / Carte / Autre). Évite tout double comptage :
+  //     les ventes de marché ne passent jamais par la table orders.
+  let totalMarches=0;
+  markets.forEach(mk=>{
+    if(mk.statut!=='clos') return;
+    const ca=mk.ca||{}; const esp=money2(ca.especes||0), cb=money2(ca.cb||0), au=money2(ca.autre||0);
+    const tot=money2(esp+cb+au); if(tot<=0) return;
+    const m=monthKey(mk.dateCloture||mk.date); if(!m) return;
+    encByMonth[m]=money2((encByMonth[m]||0)+tot);
+    factByMonth[m]=money2((factByMonth[m]||0)+tot);
+    totalEncaisse=money2(totalEncaisse+tot); totalFacture=money2(totalFacture+tot); totalMarches=money2(totalMarches+tot);
+    if(esp>0) encByMethod['Espèces']=money2((encByMethod['Espèces']||0)+esp);
+    if(cb>0) encByMethod['Carte']=money2((encByMethod['Carte']||0)+cb);
+    if(au>0) encByMethod['Autre (marché)']=money2((encByMethod['Autre (marché)']||0)+au);
   });
 
   // 2) CHARGES par mois (date de la charge) + par catégorie
@@ -2670,6 +2719,21 @@ async function computeAccounting(opts){
     });
   });
 
+  // 3b) Coûts des marchés clôturés (matière des vendus + emballages delta), au mois de clôture.
+  const avgUnitMat = avgMacaronCost(recipes, recipeItems, lots);
+  // (chargement des mouvements pour le coût matière marché)
+  const allMoves = await (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]);
+  const movesByMk={}; allMoves.forEach(mv=>{ (movesByMk[mv.marketId] ||= []).push(mv); });
+  let totalCoutMarches=0;
+  markets.forEach(mk=>{
+    if(mk.statut!=='clos') return;
+    const T=marketTotals(mk, movesByMk[mk.id]||[], avgUnitMat);
+    const m=monthKey(mk.dateCloture||mk.date); if(!m) return;
+    const c=money2(T.coutMat+T.coutEmb);
+    costByMonth[m]=money2((costByMonth[m]||0)+c);
+    totalCoutMarches=money2(totalCoutMarches+c);
+  });
+
   // 4) Série mensuelle consolidée
   const months=[...new Set([...Object.keys(encByMonth),...Object.keys(chargeByMonth),...Object.keys(factByMonth)])].sort();
   const serie=months.map(m=>{
@@ -2686,6 +2750,7 @@ async function computeAccounting(opts){
   return {
     serie, encByMethod, chargeByCat,
     totalEncaisse, totalFacture, totalCharges, totalCoutMatieres:totalCout,
+    totalMarches,
     margeBrute: money2(totalEncaisse-totalCout),
     resultat: money2(totalEncaisse-totalCharges-totalCout),
     creances,
@@ -2772,6 +2837,112 @@ function profitScale(tauxNet){
   if(tauxNet>=15) return {label:'Moyennement rentable', col:'#caa23b', rank:3};
   if(tauxNet>=0)  return {label:'Peu rentable', col:'#d98324', rank:2};
   return {label:'Non rentable', col:'#b3261e', rank:1};
+}
+
+/* ============================================================
+   MARCHÉS / VENTES ITINÉRANTES — moteur
+   Stock fini = productions.qteRestante. Une SORTIE décrémente (départ marché),
+   un RETOUR ré-incrémente (invendus rapportés). Dons/pertes ne reviennent pas en stock.
+   Vendu = embarqué − retour − don − perte (calculé).
+   Tous les mouvements sont ACID (transaction Dexie) et historisés.
+   ============================================================ */
+// Enregistre une SORTIE de stock vers un marché (décrément ACID du batch).
+async function marketAddSortie(marketId, productionId, qte, parfum){
+  qte=round3(qte);
+  if(qte<=0) throw new Error('Quantité invalide');
+  await db.transaction('rw', db.productions, db.marketMoves, async()=>{
+    const p=await db.productions.get(productionId);
+    if(!p) throw new Error('Lot introuvable');
+    if(qte > round3(+p.qteRestante)) throw new Error('Quantité > stock atelier du lot');
+    const stockAvant=round3(+p.qteRestante);
+    await db.productions.update(productionId, {qteRestante: subQty(p.qteRestante, qte)});
+    await db.marketMoves.add({marketId, productionId, type:'sortie', qte, parfum:parfum||'', motif:'',
+      date:today(), stockAvant, stockApres:subQty(stockAvant,qte)});
+  });
+}
+// Enregistre un don ou une perte (sort définitivement du stock embarqué, pas de retour atelier).
+async function marketAddLoss(marketId, productionId, qte, type, parfum, motif){
+  qte=round3(qte);
+  if(qte<=0) throw new Error('Quantité invalide');
+  if(type!=='don' && type!=='perte') throw new Error('Type invalide');
+  await db.marketMoves.add({marketId, productionId, type, qte, parfum:parfum||'', motif:motif||'', date:today()});
+}
+// Enregistre un RETOUR d'invendus (ré-incrémente le stock atelier, ACID).
+async function marketAddRetour(marketId, productionId, qte, parfum){
+  qte=round3(qte);
+  if(qte<0) throw new Error('Quantité invalide');
+  await db.transaction('rw', db.productions, db.marketMoves, async()=>{
+    const p=await db.productions.get(productionId);
+    if(!p) throw new Error('Lot introuvable');
+    await db.productions.update(productionId, {qteRestante: addQty(p.qteRestante, qte)});
+    await db.marketMoves.add({marketId, productionId, type:'retour', qte, parfum:parfum||'', motif:'', date:today()});
+  });
+}
+// Agrège les mouvements d'un marché par lot/parfum : embarqué, retour, don, perte, vendu.
+function marketLineSummary(moves){
+  // clé = productionId
+  const byProd={};
+  moves.forEach(mv=>{
+    const k=mv.productionId;
+    (byProd[k] ||= {productionId:k, parfum:mv.parfum||'', sortie:0, retour:0, don:0, perte:0});
+    const b=byProd[k];
+    if(mv.parfum && !b.parfum) b.parfum=mv.parfum;
+    if(mv.type==='sortie') b.sortie=addQty(b.sortie,mv.qte);
+    else if(mv.type==='retour') b.retour=addQty(b.retour,mv.qte);
+    else if(mv.type==='don') b.don=addQty(b.don,mv.qte);
+    else if(mv.type==='perte') b.perte=addQty(b.perte,mv.qte);
+  });
+  return Object.values(byProd).map(b=>{
+    b.vendu = Math.max(0, subQty(subQty(subQty(b.sortie,b.retour),b.don),b.perte));
+    b.incoherent = (subQty(subQty(subQty(b.sortie,b.retour),b.don),b.perte) < 0);
+    return b;
+  });
+}
+// Coût emballages d'un marché par delta avant/après : Σ((avant − après) × coût unitaire).
+function marketPackagingCost(market){
+  const pk=(market && market.packaging) || [];
+  let used=0, cost=0;
+  pk.forEach(p=>{ const u=Math.max(0, round3((+p.before||0)-(+p.after||0))); used+=u; cost=money2(cost+u*(+p.cost||0)); });
+  return {used:round3(used), cost:money2(cost)};
+}
+// Totaux d'un marché (quantités + CA + pertes + coûts + marges).
+// avgUnitMat = coût matière moyen par macaron (fourni par l'appelant qui a accès aux recettes).
+function marketTotals(market, moves, avgUnitMat){
+  const lines=marketLineSummary(moves);
+  const embarque=lines.reduce((s,l)=>s+l.sortie,0);
+  const retour=lines.reduce((s,l)=>s+l.retour,0);
+  const don=lines.reduce((s,l)=>s+l.don,0);
+  const perte=lines.reduce((s,l)=>s+l.perte,0);
+  const vendu=lines.reduce((s,l)=>s+l.vendu,0);
+  const ca=market.ca||{};
+  const caEspeces=money2(ca.especes||0), caCB=money2(ca.cb||0), caAutre=money2(ca.autre||0);
+  const caTotal=addMoney(caEspeces,caCB,caAutre);
+  const tauxInvendus = embarque>0 ? Math.round((retour+don+perte)/embarque*1000)/10 : 0;
+  const tauxPerte = embarque>0 ? Math.round(perte/embarque*1000)/10 : 0;
+  // Coûts : matière sur les macarons SORTIS (matière engagée ; les invendus restent mangeables mais
+  // le coût matière est déjà supporté) — on rattache au vendu pour une marge sur ventes réelles.
+  const unit = +avgUnitMat||0;
+  const coutMat = money2(vendu*unit);
+  const pkg = marketPackagingCost(market);
+  const coutEmb = pkg.cost;
+  const s=getSettings();
+  const margeBrute = money2(caTotal - coutMat - coutEmb);
+  const tauxBrut = caTotal>0?Math.round(margeBrute/caTotal*1000)/10:0;
+  // marché = vente de marchandise → charges sociales "goods"
+  const chargesSociales = money2(caTotal*s.socialGoods/100);
+  const margeNette = money2(margeBrute - chargesSociales);
+  const tauxNet = caTotal>0?Math.round(margeNette/caTotal*1000)/10:0;
+  return {lines, embarque:round3(embarque), retour:round3(retour), don:round3(don), perte:round3(perte), vendu:round3(vendu),
+    caEspeces, caCB, caAutre, caTotal,
+    pctCB: caTotal>0?Math.round(caCB/caTotal*100):0, pctEspeces: caTotal>0?Math.round(caEspeces/caTotal*100):0,
+    tauxInvendus, tauxPerte,
+    caParHeure: (market.heures>0)?money2(caTotal/market.heures):0,
+    coutMat, coutEmb, pkgUsed:pkg.used, margeBrute, tauxBrut, chargesSociales, margeNette, tauxNet};
+}
+// Coût matière moyen par macaron (helper réutilisable, nécessite recipes+items+lots).
+function avgMacaronCost(recipes, recipeItems, lots){
+  const per = recipes.map(r=>{ const cb=coutRecette(r.id, recipeItems, lots); return r.rendement>0?cb/r.rendement:0; }).filter(x=>x>0);
+  return per.length ? per.reduce((a,x)=>a+x,0)/per.length : 0;
 }
 
 // === insère moteur computeStats (voir stats_engine.js) ===
@@ -3377,6 +3548,7 @@ async function renderStats(){
    ============================================================ */
 const CHARGE_CATS = ['Matières premières','Emballages','Équipement','Loyer','Énergie','Transport','Marketing','Frais bancaires','Cotisations / impôts','Formation','Autre'];
 async function renderCompta(){
+ try {
   const A = await computeAccounting();
   const fmtPct = (n,d)=> d>0 ? Math.round(n/d*100) : 0;
 
@@ -3407,7 +3579,7 @@ async function renderCompta(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Comptabilité</h1><p>Pilotage en trésorerie — CA comptabilisé à l'encaissement réel</p></div>
      <button class="btn gold" onclick="chargeForm()">＋ Charge</button></div>
-   <div class="banner">📒 <div>Deux lectures du chiffre d'affaires : le <b>CA facturé</b> (total des commandes, à leur date) et le <b>CA encaissé</b> (règlements reçus, à leur date réelle). Une commande « en attente de paiement » est facturée mais n'entre pas dans le CA encaissé. Le résultat se base sur l'encaissé.</div></div>
+   <div class="banner">📒 <div>Deux lectures du chiffre d'affaires : le <b>CA facturé</b> (total des commandes, à leur date) et le <b>CA encaissé</b> (règlements reçus, à leur date réelle). Une commande « en attente de paiement » est facturée mais n'entre pas dans le CA encaissé. Le CA des <b>marchés clôturés</b> est inclus (à leur date de clôture).${A.totalMarches>0?` Dont marchés : <b>${euro(A.totalMarches)}</b>.`:''}</div></div>
    <div class="flex" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
      <button class="btn" onclick="view='rentabilite';setActiveView&&setActiveView('rentabilite');renderProfit()">📈 Analyse de rentabilité</button>
      <button class="btn ghost" onclick="settingsForm()">⚙ Paramètres (taux, emballages)</button>
@@ -3437,6 +3609,7 @@ async function renderCompta(){
      <button class="btn ghost sm" style="margin-top:8px" onclick="renderChargesList()">Voir / gérer les charges</button></div>
 
    <p class="note" style="margin-top:10px">Le coût matières est une estimation moyenne (coût recette ÷ rendement) pour donner une marge indicative. Pour la comptabilité officielle, appuyez-vous sur vos charges saisies et l'export.</p>`;
+ } catch(err){ renderViewError('compta', err); }
 }
 // Liste détaillée des charges (gestion : éditer / supprimer)
 async function renderChargesList(){
@@ -3475,6 +3648,7 @@ async function delCharge(id){
    TABLEAU DE BORD STRATÉGIQUE — centre de pilotage financier
    ============================================================ */
 async function renderPilotage(){
+ try {
   const S = await computeStrategic();
   const I = generateInsights(S);
   const evoBadge = (v)=>{ const up=v>=0; return `<span style="color:${up?'#3f7d52':'var(--red,#b3261e)'};font-size:.8rem">${up?'▲':'▼'} ${Math.abs(v)}%</span>`; };
@@ -3523,7 +3697,8 @@ async function renderPilotage(){
    <div class="panel"><h2>Saisonnalité</h2>
      ${I.saison.length?`<p style="margin-bottom:6px">Meilleurs mois (CA encaissé moyen) : ${saison}</p>`:'<p class="note">Pas encore assez d\'historique pour dégager une saisonnalité.</p>'}</div>
 
-   <p class="note" style="margin-top:8px">Centre de pilotage : tout est recalculé en temps réel depuis vos commandes, encaissements et charges. Marge nette = après charges sociales (12,3 % / 25,6 %).</p>`;
+   <p class="note" style="margin-top:8px">Centre de pilotage : tout est recalculé en temps réel depuis vos commandes, encaissements, charges et marchés clôturés. Le CA inclut les marchés ; les marges sont calculées sur les commandes (les marchés ont leur propre tableau de bord avec taux d'invendus). Marge nette = après charges sociales (12,3 % / 25,6 %).</p>`;
+ } catch(err){ renderViewError('pilotage', err); }
 }
 
 /* ============================================================
@@ -3599,6 +3774,11 @@ function settingsForm(){
     <div class="row2">
       ${BOX_SIZES.map(t=>`<div class="field"><label>Coffret ${t}</label><input type="number" step="0.01" id="set_pk_${t}" value="${s.packaging[t]!=null?s.packaging[t]:0}"></div>`).join('')}
     </div>
+    <p class="note" style="margin-top:8px">Types d'emballage pour le comptage avant/après en marché (nom + coût unitaire €). Laissez le nom vide pour retirer une ligne.</p>
+    <div id="set_pktypes">
+      ${(s.packTypes||[]).concat([{nom:'',cout:''}]).map((t,i)=>`<div class="pay-row"><input id="set_pt_n_${i}" value="${esc(t.nom||'')}" placeholder="nom (ex: Boîte 6)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="${t.cout!==''&&t.cout!=null?t.cout:''}" placeholder="€/u" style="width:90px"></div>`).join('')}
+    </div>
+    <input type="hidden" id="set_pt_n" value="${(s.packTypes||[]).length+1}">
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveSettingsForm()">Enregistrer</button></div>`);
 }
 function saveSettingsForm(){
@@ -3606,10 +3786,394 @@ function saveSettingsForm(){
   s.socialGoods=Math.max(0,+val('set_sg')||0);
   s.socialService=Math.max(0,+val('set_ss')||0);
   s.packaging={}; BOX_SIZES.forEach(t=>{ s.packaging[t]=money2(+val('set_pk_'+t)||0); });
+  // types d'emballage (on lit toutes les lignes, on garde celles avec un nom)
+  const n=+val('set_pt_n')||0; const pts=[];
+  for(let i=0;i<n;i++){ const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue; pts.push({nom, cout:money2(+val('set_pt_c_'+i)||0)}); }
+  s.packTypes=pts.length?pts:SETTINGS_DEFAULTS.packTypes;
   saveSettings(s);
   closeModal();
-  if(view==='rentabilite') renderProfit(); else if(view==='compta') renderCompta(); else toast('Paramètres enregistrés ✓');
+  if(view==='rentabilite') renderProfit(); else if(view==='compta') renderCompta(); else if(view==='marches') renderMarkets(); else toast('Paramètres enregistrés ✓');
   toast('Paramètres enregistrés ✓');
+}
+
+/* ============================================================
+   MARCHÉS / VENTES ITINÉRANTES — écrans
+   ============================================================ */
+async function renderMarkets(){
+  const markets=(await db.markets.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const moves=await db.marketMoves.toArray();
+  const movesByMarket={}; moves.forEach(mv=>{ (movesByMarket[mv.marketId] ||= []).push(mv); });
+  const [recipes, recipeItems, lots] = await Promise.all([db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()]);
+  const avgUnit = avgMacaronCost(recipes, recipeItems, lots);
+
+  // tableau de bord global
+  let caTotal=0, venduTotal=0, nbClos=0, sumInvendus=0, margeNetteTotal=0;
+  const perMarket=markets.map(mk=>{ const T=marketTotals(mk, movesByMarket[mk.id]||[], avgUnit);
+    if(mk.statut==='clos'){ caTotal=addMoney(caTotal,T.caTotal); venduTotal=round3(venduTotal+T.vendu); nbClos++; sumInvendus+=T.tauxInvendus; margeNetteTotal=addMoney(margeNetteTotal,T.margeNette); }
+    return {mk,T}; });
+  const caMoyen = nbClos>0?money2(caTotal/nbClos):0;
+  const invMoyen = nbClos>0?Math.round(sumInvendus/nbClos*10)/10:0;
+
+  const rows=perMarket.map(({mk,T})=>`<tr>
+     <td>${fmtDate(mk.date)}</td>
+     <td><b>${esc(mk.nom||'—')}</b><br><span style="color:#9a8a82;font-size:.75rem">${esc(mk.lieu||'')}</span></td>
+     <td>${mk.statut==='clos'?`<span class="tag done">Clos</span>`:`<span class="tag todo">Ouvert</span>`}</td>
+     <td>${mk.statut==='clos'?euro(T.caTotal):'—'}</td>
+     <td>${T.vendu>0||mk.statut==='clos'?qty(T.vendu):'—'}</td>
+     <td>${mk.statut==='clos'?T.tauxInvendus+'%':'—'}</td>
+     <td style="text-align:right"><span class="act" onclick="marketDetail(${mk.id})">Ouvrir</span><span class="act del" onclick="delMarket(${mk.id})">Suppr.</span></td></tr>`).join('');
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Marchés</h1><p>${markets.length} marché(s) · ventes itinérantes</p></div>
+     <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="renderMarketStats()">📊 Statistiques</button>
+     <button class="btn" onclick="marketForm()">+ Nouveau marché</button></div></div>
+   ${nbClos>0?`<div class="kpi-grid">
+     <div class="kpi"><span>CA marchés (clos)</span><b>${euro(caTotal)}</b><span>${nbClos} marché(s)</span></div>
+     <div class="kpi"><span>CA moyen / marché</span><b>${euro(caMoyen)}</b></div>
+     <div class="kpi"><span>Marge nette marchés</span><b style="color:${margeNetteTotal>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(margeNetteTotal)}</b></div>
+     <div class="kpi"><span>Macarons vendus</span><b>${qty(venduTotal)}</b></div>
+     <div class="kpi"><span>Taux d'invendus moyen</span><b>${invMoyen}%</b></div>
+   </div>`:''}
+   <div class="panel">
+   ${markets.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Marché</th><th>Statut</th><th>CA</th><th>Vendus</th><th>Invendus</th><th></th></tr></thead>
+     <tbody>${rows}</tbody></table></div>`:`<div class="empty">Aucun marché. Créez une fiche avant votre prochain marché pour suivre stocks, ventes et performances.</div>`}
+   </div>
+   <div class="flex" style="gap:8px;margin-top:12px"><button class="btn ghost" onclick="renderMarketForecast()">🔮 Prévisions de production marché</button></div>`;
+}
+
+async function marketForm(id){
+  const mk = id ? await db.markets.get(id) : {date:today(), statut:'ouvert'};
+  openModal(`<h3>${id?'Modifier':'Nouveau'} marché</h3>
+    <div class="field"><label>Nom du marché *</label><input id="mk_nom" value="${esc(mk.nom||'')}" placeholder="ex : Marché de Noël du Mans"></div>
+    <div class="row2">
+      <div class="field"><label>Date *</label><input type="date" id="mk_date" value="${esc(mk.date||today())}"></div>
+      <div class="field"><label>Lieu</label><input id="mk_lieu" value="${esc(mk.lieu||'')}" placeholder="Place, ville"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Horaires</label><input id="mk_horaires" value="${esc(mk.horaires||'')}" placeholder="ex : 9h–18h"></div>
+      <div class="field"><label>Durée (heures)</label><input type="number" step="0.5" min="0" id="mk_heures" value="${mk.heures||''}" placeholder="ex : 8"></div>
+    </div>
+    <div class="field"><label>Météo (optionnel)</label><input id="mk_meteo" value="${esc(mk.meteo||'')}" placeholder="ex : Ensoleillé, 18°C"></div>
+    <div class="field"><label>Commentaires</label><textarea id="mk_notes" rows="2">${esc(mk.notes||'')}</textarea></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveMarket(${id||0})">Enregistrer</button></div>`);
+}
+async function saveMarket(id){
+  const nom=val('mk_nom'), date=val('mk_date');
+  if(!nom){ toast('Nom obligatoire'); return; }
+  if(!date){ toast('Date obligatoire'); return; }
+  const o={nom, date, lieu:val('mk_lieu'), horaires:val('mk_horaires'), heures:+val('mk_heures')||0,
+    meteo:val('mk_meteo'), notes:val('mk_notes')};
+  if(id){ await db.markets.update(id,o); }
+  else { o.statut='ouvert'; o.ca={especes:0,cb:0,autre:0}; await db.markets.add(o); }
+  closeModal(); renderMarkets(); toast('Marché enregistré ✓');
+}
+async function delMarket(id){
+  if(!confirm('Supprimer ce marché et son historique ? Les invendus non retournés ne seront pas recrédités.')) return;
+  await db.transaction('rw', db.markets, db.marketMoves, async()=>{
+    await db.marketMoves.where('marketId').equals(id).delete();
+    await db.markets.delete(id);
+  });
+  renderMarkets(); toast('Marché supprimé');
+}
+
+// Fiche détaillée d'un marché : sorties, dons/pertes, retours, CA, clôture.
+async function marketDetail(id){
+  const mk=await db.markets.get(id); if(!mk){ toast('Marché introuvable'); return; }
+  const moves=await db.marketMoves.where('marketId').equals(id).toArray();
+  const prods=await db.productions.toArray();
+  const recipes=await db.recipes.toArray();
+  const recipeItems=await db.recipeItems.toArray();
+  const lots=await db.materialLots.toArray();
+  const T=marketTotals(mk, moves, avgMacaronCost(recipes, recipeItems, lots));
+  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
+  const prodLabel=p=>`${recName(p.recipeId)} · lot ${p.lotProduction||p.id}`;
+
+  const lineRows=T.lines.map(l=>{ const p=prods.find(x=>x.id===l.productionId);
+    return `<tr ${l.incoherent?'style="background:#fdf3f2"':''}>
+      <td>${esc(p?prodLabel(p):'lot #'+l.productionId)}</td>
+      <td>${qty(l.sortie)}</td><td>${qty(l.retour)}</td><td>${qty(l.don)}</td><td>${qty(l.perte)}</td>
+      <td><b>${qty(l.vendu)}</b>${l.incoherent?' <span class="tag low">incohérent</span>':''}</td></tr>`;}).join('');
+
+  const clos = mk.statut==='clos';
+  openModal(`<h3>${esc(mk.nom)} <span style="font-weight:400;font-size:.8rem;color:#9a8a82">${fmtDate(mk.date)}${mk.lieu?' · '+esc(mk.lieu):''}</span></h3>
+    ${mk.horaires||mk.meteo?`<p class="note">${esc(mk.horaires||'')}${mk.meteo?' · '+esc(mk.meteo):''}</p>`:''}
+    ${!clos?`<div class="flex" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn gold sm" onclick="marketSortieForm(${id})">＋ Sortie stock</button>
+      <button class="btn ghost sm" onclick="marketMoveForm(${id},'don')">＋ Don</button>
+      <button class="btn ghost sm" onclick="marketMoveForm(${id},'perte')">＋ Perte/casse</button>
+      <button class="btn ghost sm" onclick="marketRetourForm(${id})">↩ Retour de marché</button>
+    </div>`:''}
+    <div class="table-wrap"><table><thead><tr><th>Lot</th><th>Emb.</th><th>Ret.</th><th>Don</th><th>Perte</th><th>Vendu</th></tr></thead>
+      <tbody>${lineRows||'<tr><td colspan="6" class="empty">Aucune sortie enregistrée.</td></tr>'}</tbody></table></div>
+    <div class="sum-box"><span>Embarqué</span><b>${qty(T.embarque)}</b></div>
+    <div class="sum-box"><span>Vendu</span><b>${qty(T.vendu)}</b></div>
+    <div class="sum-box"><span>Retour / Don / Perte</span><b>${qty(T.retour)} / ${qty(T.don)} / ${qty(T.perte)}</b></div>
+    ${clos?`<div class="sum-box"><span>CA encaissé</span><b>${euro(T.caTotal)}</b></div>
+      <div class="sum-box"><span>Espèces / CB / Autre</span><b>${euro(T.caEspeces)} / ${euro(T.caCB)} / ${euro(T.caAutre)}</b></div>
+      <div class="sum-box"><span>Répartition</span><b>CB ${T.pctCB}% · Espèces ${T.pctEspeces}%</b></div>
+      <div class="sum-box"><span>Taux d'invendus / pertes</span><b>${T.tauxInvendus}% / ${T.tauxPerte}%</b></div>
+      ${mk.heures>0?`<div class="sum-box"><span>CA / heure</span><b>${euro(T.caParHeure)}</b></div>`:''}
+      <h3 style="font-size:.95rem;margin:12px 0 6px">Rentabilité</h3>
+      <div class="sum-box"><span>Coût matières (${qty(T.vendu)} vendus)</span><b>−${euro(T.coutMat)}</b></div>
+      <div class="sum-box"><span>Coût emballages (delta ${qty(T.pkgUsed)} u.)</span><b>−${euro(T.coutEmb)}</b></div>
+      <div class="sum-box"><span>Marge brute</span><b>${euro(T.margeBrute)} <span style="color:#9a8a82;font-weight:400">(${T.tauxBrut}%)</span></b></div>
+      <div class="sum-box"><span>Charges sociales (${getSettings().socialGoods}%)</span><b>−${euro(T.chargesSociales)}</b></div>
+      <div class="sum-box"><span><b>Marge nette</b></span><b style="color:${T.margeNette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(T.margeNette)} (${T.tauxNet}%)</b></div>
+      <button class="btn ghost sm" style="margin-top:8px" onclick="marketPackagingForm(${id})">📦 Comptage emballages (avant/après)</button>`
+     :`<button class="btn gold" style="width:100%;margin-top:10px" onclick="marketCloseForm(${id})">Clôturer le marché (saisir le CA)</button>`}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn ghost" onclick="marketForm(${id})">Modifier la fiche</button></div>`);
+}
+
+// Sortie de stock : choix du lot + quantité (stock théorique affiché).
+async function marketSortieForm(marketId){
+  const prods=(await db.productions.toArray()).filter(p=>+p.qteRestante>0);
+  const recipes=await db.recipes.toArray();
+  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
+  if(!prods.length){ toast('Aucun stock fini disponible à l\'atelier'); return; }
+  const opts=prods.map(p=>`<option value="${p.id}" data-parfum="${esc(recName(p.recipeId))}" data-stock="${p.qteRestante}">${esc(recName(p.recipeId))} · lot ${esc(p.lotProduction||String(p.id))} · stock ${qty(p.qteRestante)}</option>`).join('');
+  openModal(`<h3>Sortie de stock</h3>
+    <div class="field"><label>Lot / parfum</label><select id="ms_prod" onchange="marketSortieStock()">${opts}</select></div>
+    <p class="note" id="ms_stockinfo"></p>
+    <div class="field"><label>Quantité embarquée</label><input type="number" step="1" min="1" id="ms_qte" placeholder="0"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
+      <button class="btn" onclick="marketDoSortie(${marketId})">Embarquer</button></div>`);
+  marketSortieStock();
+}
+function marketSortieStock(){
+  const sel=document.getElementById('ms_prod'); const info=document.getElementById('ms_stockinfo');
+  if(sel&&info){ const opt=sel.options[sel.selectedIndex]; const stock=opt?opt.getAttribute('data-stock'):0;
+    info.innerHTML=`Stock théorique atelier : <b>${qty(stock)}</b> · ce qui restera après embarquement s'affiche au stock atelier.`; }
+}
+async function marketDoSortie(marketId){
+  const sel=document.getElementById('ms_prod'); const pid=+sel.value;
+  const parfum=sel.options[sel.selectedIndex].getAttribute('data-parfum');
+  const qte=+val('ms_qte')||0;
+  try{ await marketAddSortie(marketId, pid, qte, parfum); }catch(e){ toast(e.message||'Erreur'); return; }
+  toast('Sortie enregistrée ✓'); marketDetail(marketId);
+}
+
+// Don / perte
+async function marketMoveForm(marketId, type){
+  const moves=await db.marketMoves.where('marketId').equals(marketId).toArray();
+  const lines=marketLineSummary(moves);
+  const prods=await db.productions.toArray();
+  const recipes=await db.recipes.toArray();
+  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
+  if(!lines.length){ toast('Faites d\'abord une sortie de stock'); return; }
+  const opts=lines.map(l=>{ const p=prods.find(x=>x.id===l.productionId);
+    return `<option value="${l.productionId}" data-parfum="${esc(l.parfum||recName(p?p.recipeId:0))}">${esc(p?recName(p.recipeId):'lot')} · lot ${esc(p?(p.lotProduction||p.id):l.productionId)} · embarqué ${qty(l.sortie)}</option>`;}).join('');
+  openModal(`<h3>${type==='don'?'Don':'Perte / casse'}</h3>
+    <div class="field"><label>Lot / parfum</label><select id="mv_prod">${opts}</select></div>
+    <div class="field"><label>Quantité ${type==='don'?'donnée':'perdue'}</label><input type="number" step="1" min="1" id="mv_qte" placeholder="0"></div>
+    <div class="field"><label>Motif ${type==='perte'?'':'(optionnel)'}</label><input id="mv_motif" placeholder="${type==='don'?'ex : dégustation, geste commercial':'ex : casse transport, chaleur'}"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
+      <button class="btn" onclick="marketDoMove(${marketId},'${type}')">Enregistrer</button></div>`);
+}
+async function marketDoMove(marketId, type){
+  const sel=document.getElementById('mv_prod'); const pid=+sel.value;
+  const parfum=sel.options[sel.selectedIndex].getAttribute('data-parfum');
+  const qte=+val('mv_qte')||0; const motif=val('mv_motif');
+  try{ await marketAddLoss(marketId, pid, qte, type, parfum, motif); }catch(e){ toast(e.message||'Erreur'); return; }
+  toast((type==='don'?'Don':'Perte')+' enregistré ✓'); marketDetail(marketId);
+}
+
+// Retour de marché : saisie des invendus par lot (vendu recalculé).
+async function marketRetourForm(marketId){
+  const moves=await db.marketMoves.where('marketId').equals(marketId).toArray();
+  const lines=marketLineSummary(moves).filter(l=>l.sortie>0);
+  const prods=await db.productions.toArray();
+  const recipes=await db.recipes.toArray();
+  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
+  if(!lines.length){ toast('Aucune sortie à retourner'); return; }
+  const rows=lines.map((l,i)=>{ const p=prods.find(x=>x.id===l.productionId);
+    const restant=subQty(subQty(subQty(l.sortie,l.retour),l.don),l.perte);
+    return `<div class="pay-row" style="flex-wrap:wrap">
+      <span style="flex:1;min-width:120px">${esc(p?recName(p.recipeId):'lot')} · lot ${esc(p?(p.lotProduction||p.id):l.productionId)}<br><span class="note">embarqué ${qty(l.sortie)}, déjà retourné ${qty(l.retour)}</span></span>
+      <input type="number" step="1" min="0" max="${restant}" id="mr_${i}" data-prod="${l.productionId}" data-parfum="${esc(l.parfum)}" placeholder="invendus" style="width:100px">
+    </div>`;}).join('');
+  openModal(`<h3>Retour de marché</h3>
+    <p class="note">Saisissez les invendus rapportés par lot. Ils sont recrédités au stock atelier. Le vendu se recalcule automatiquement.</p>
+    ${rows}
+    <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
+      <button class="btn" onclick="marketDoRetour(${marketId},${lines.length})">Valider les retours</button></div>`);
+}
+async function marketDoRetour(marketId, n){
+  let done=0;
+  for(let i=0;i<n;i++){ const el=document.getElementById('mr_'+i); if(!el) continue;
+    const q=+el.value||0; if(q<=0) continue;
+    const pid=+el.getAttribute('data-prod'); const parfum=el.getAttribute('data-parfum');
+    try{ await marketAddRetour(marketId, pid, q, parfum); done++; }catch(e){ toast(e.message||'Erreur'); }
+  }
+  toast(done?`${done} retour(s) enregistré(s) ✓`:'Aucun retour saisi'); marketDetail(marketId);
+}
+
+// Clôture : saisie du CA par mode + contrôle de cohérence vs quantités vendues.
+async function marketCloseForm(marketId){
+  const mk=await db.markets.get(marketId);
+  const moves=await db.marketMoves.where('marketId').equals(marketId).toArray();
+  const T=marketTotals(mk, moves);
+  openModal(`<h3>Clôture du marché</h3>
+    <p class="note">Quantité vendue calculée : <b>${qty(T.vendu)}</b> macaron(s). Saisissez les encaissements par mode de paiement.</p>
+    <div class="field"><label>Espèces (€)</label><input type="number" step="0.01" min="0" id="mc_esp" value="${(mk.ca&&mk.ca.especes)||''}"></div>
+    <div class="field"><label>Carte bancaire (€)</label><input type="number" step="0.01" min="0" id="mc_cb" value="${(mk.ca&&mk.ca.cb)||''}"></div>
+    <div class="field"><label>Autres (€) — optionnel</label><input type="number" step="0.01" min="0" id="mc_autre" value="${(mk.ca&&mk.ca.autre)||''}"></div>
+    <div class="sum-box" id="mc_summary"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Annuler</button>
+      <button class="btn gold" onclick="marketDoClose(${marketId},${T.vendu})">Clôturer</button></div>`);
+  ['mc_esp','mc_cb','mc_autre'].forEach(idf=>{ const el=document.getElementById(idf); if(el) el.oninput=()=>marketCloseSummary(T.vendu); });
+  marketCloseSummary(T.vendu);
+}
+function marketCloseSummary(vendu){
+  const esp=+(document.getElementById('mc_esp')?.value)||0, cb=+(document.getElementById('mc_cb')?.value)||0, au=+(document.getElementById('mc_autre')?.value)||0;
+  const tot=addMoney(esp,cb,au); const box=document.getElementById('mc_summary'); if(!box) return;
+  const ppu = vendu>0 ? money2(tot/vendu) : 0;
+  // cohérence : prix moyen par macaron plausible entre 0,80 € et 5 € (sinon alerte)
+  let warn='';
+  if(vendu>0 && tot>0 && (ppu<0.8 || ppu>5)) warn=`<div style="color:var(--red,#b3261e);margin-top:4px">⚠ Prix moyen ${euro(ppu)}/macaron : écart inhabituel, vérifiez le CA ou les quantités.</div>`;
+  if(vendu>0 && tot===0) warn=`<div style="color:var(--red,#b3261e);margin-top:4px">⚠ ${qty(vendu)} vendus mais 0 € encaissé.</div>`;
+  box.innerHTML=`<div style="display:flex;justify-content:space-between"><span>Total encaissé</span><b>${euro(tot)}</b></div>
+    <div style="display:flex;justify-content:space-between"><span>CB / Espèces</span><b>${tot>0?Math.round(cb/tot*100):0}% / ${tot>0?Math.round(esp/tot*100):0}%</b></div>
+    ${vendu>0?`<div style="display:flex;justify-content:space-between"><span>Prix moyen / macaron</span><b>${euro(ppu)}</b></div>`:''}${warn}`;
+}
+async function marketDoClose(marketId, vendu){
+  const esp=money2(+val('mc_esp')||0), cb=money2(+val('mc_cb')||0), au=money2(+val('mc_autre')||0);
+  const tot=addMoney(esp,cb,au);
+  if(tot<=0 && vendu>0){ if(!confirm('Aucun encaissement saisi alors que des ventes sont calculées. Clôturer quand même ?')) return; }
+  await db.markets.update(marketId, {ca:{especes:esp,cb:cb,autre:au}, statut:'clos', dateCloture:today()});
+  toast('Marché clôturé ✓'); marketDetail(marketId);
+}
+
+// Comptage des emballages avant/après le marché : le coût consommé = Σ((avant−après) × coût unitaire).
+async function marketPackagingForm(marketId){
+  const mk=await db.markets.get(marketId); if(!mk) return;
+  const types=getSettings().packTypes||[];
+  // initialise depuis l'existant ou les types paramétrés
+  let pk = (mk.packaging && mk.packaging.length) ? mk.packaging
+    : types.map(t=>({nom:t.nom, cost:+t.cout||0, before:'', after:''}));
+  // fusionne d'éventuels nouveaux types paramétrés non encore présents
+  types.forEach(t=>{ if(!pk.some(p=>p.nom===t.nom)) pk.push({nom:t.nom, cost:+t.cout||0, before:'', after:''}); });
+  const rows = pk.map((p,i)=>`<div class="pay-row" style="flex-wrap:wrap;align-items:center">
+      <span style="flex:1;min-width:130px">${esc(p.nom)} <span class="note">(${euro(p.cost)}/u)</span></span>
+      <input type="number" step="1" min="0" id="pk_b_${i}" value="${p.before!==''&&p.before!=null?p.before:''}" placeholder="avant" style="width:80px">
+      <input type="number" step="1" min="0" id="pk_a_${i}" value="${p.after!==''&&p.after!=null?p.after:''}" placeholder="après" style="width:80px">
+    </div>`).join('');
+  openModal(`<h3>Comptage emballages</h3>
+    <p class="note">Saisissez le stock d'emballages embarqué (avant) et rapporté (après). Le coût consommé = (avant − après) × coût unitaire. Les types et coûts se règlent dans ⚙ Paramètres.</p>
+    <div class="pay-row" style="font-weight:600;color:#9a8a82"><span style="flex:1;min-width:130px">Type</span><span style="width:80px">Avant</span><span style="width:80px">Après</span></div>
+    ${rows||'<p class="note">Aucun type d\'emballage paramétré.</p>'}
+    <input type="hidden" id="pk_n" value="${pk.length}">
+    <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
+      <button class="btn" onclick="marketDoPackaging(${marketId})">Enregistrer le comptage</button></div>`);
+  // stocke les noms/coûts pour la sauvegarde
+  window._pkDraft = pk;
+}
+async function marketDoPackaging(marketId){
+  const pk=(window._pkDraft||[]).map((p,i)=>({
+    nom:p.nom, cost:+p.cost||0,
+    before: val('pk_b_'+i)!==''?(+val('pk_b_'+i)||0):'',
+    after: val('pk_a_'+i)!==''?(+val('pk_a_'+i)||0):''
+  }));
+  // contrôle de cohérence : après ne doit pas dépasser avant
+  for(const p of pk){ if(p.before!=='' && p.after!=='' && (+p.after)>(+p.before)){ toast(`« ${p.nom} » : le stock après (${p.after}) dépasse l'avant (${p.before}).`); return; } }
+  await db.markets.update(marketId, {packaging:pk});
+  window._pkDraft=null;
+  toast('Comptage emballages enregistré ✓'); marketDetail(marketId);
+}
+
+// Tableau de bord statistique des marchés.
+async function renderMarketStats(){
+  const markets=(await db.markets.toArray()).filter(m=>m.statut==='clos');
+  const moves=await db.marketMoves.toArray();
+  const movesByMarket={}; moves.forEach(mv=>{ (movesByMarket[mv.marketId] ||= []).push(mv); });
+  if(!markets.length){ document.getElementById('main').innerHTML=`<div class="topbar"><div><h1>Statistiques marchés</h1></div><button class="btn ghost sm" onclick="renderMarkets()">← Marchés</button></div><div class="panel"><div class="empty">Aucun marché clôturé. Clôturez un marché pour voir ses statistiques.</div></div>`; return; }
+
+  const [recipes, recipeItems, lots] = await Promise.all([db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()]);
+  const avgUnit = avgMacaronCost(recipes, recipeItems, lots);
+  const data=markets.map(mk=>({mk, T:marketTotals(mk, movesByMarket[mk.id]||[], avgUnit)})).sort((a,b)=>(a.mk.date||'').localeCompare(b.mk.date||''));
+  const caTotal=data.reduce((s,d)=>addMoney(s,d.T.caTotal),0);
+  const margeNetteTot=data.reduce((s,d)=>addMoney(s,d.T.margeNette),0);
+  const venduTotal=data.reduce((s,d)=>round3(s+d.T.vendu),0);
+  const caMoyen=money2(caTotal/data.length);
+
+  // CA par marché (classement)
+  const ranking=data.slice().sort((a,b)=>b.T.caTotal-a.T.caTotal);
+  const rankRows=ranking.map((d,i)=>`<div class="sum-box"><span>${i+1}. ${esc(d.mk.nom)} <span style="color:#9a8a82;font-size:.74rem">${fmtDate(d.mk.date)}</span></span><b>${euro(d.T.caTotal)}</b></div>`).join('');
+
+  // CA par mois
+  const byMonth={}; data.forEach(d=>{ const m=monthKey(d.mk.date); byMonth[m]=addMoney(byMonth[m]||0,d.T.caTotal); });
+  const months=Object.keys(byMonth).sort();
+  let chart=''; if(months.length) chart=lineChart([{name:'CA marchés', points:months.map((m,i)=>({x:i,y:byMonth[m]})), color:'#52252F'}], {zero:true, xlabel:i=>monthLabel(months[i]), fmt:v=>Math.round(v)+'€'});
+
+  // parfums les + / - vendus (somme vendu par parfum)
+  const byParfum={};
+  data.forEach(d=>d.T.lines.forEach(l=>{ const k=l.parfum||'(?)'; byParfum[k]=round3((byParfum[k]||0)+l.vendu); }));
+  const parfRank=Object.entries(byParfum).map(([k,v])=>({nom:k,v})).sort((a,b)=>b.v-a.v);
+  const topParf=parfRank.slice(0,5).map(p=>`<div class="sum-box"><span>${esc(p.nom)}</span><b>${qty(p.v)}</b></div>`).join('');
+  const lowParf=parfRank.slice(-3).reverse().map(p=>`<div class="sum-box"><span>${esc(p.nom)}</span><b>${qty(p.v)}</b></div>`).join('');
+
+  // meilleures journées (CA/heure si dispo, sinon CA)
+  const bestDays=data.slice().sort((a,b)=>(b.T.caParHeure||b.T.caTotal)-(a.T.caParHeure||a.T.caTotal)).slice(0,3)
+    .map(d=>`<div class="sum-box"><span>${esc(d.mk.nom)} ${d.mk.heures?`<span style="color:#9a8a82;font-size:.74rem">${d.mk.heures}h</span>`:''}</span><b>${d.mk.heures?euro(d.T.caParHeure)+'/h':euro(d.T.caTotal)}</b></div>`).join('');
+
+  const totEmb=data.reduce((s,d)=>s+d.T.embarque,0), totInv=data.reduce((s,d)=>s+d.T.retour+d.T.don+d.T.perte,0);
+  const tauxInvGlobal=totEmb>0?Math.round(totInv/totEmb*1000)/10:0;
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Statistiques marchés</h1><p>${data.length} marché(s) clôturé(s)</p></div><button class="btn ghost sm" onclick="renderMarkets()">← Marchés</button></div>
+   <div class="kpi-grid">
+     <div class="kpi"><span>CA total marchés</span><b>${euro(caTotal)}</b></div>
+     <div class="kpi"><span>CA moyen / marché</span><b>${euro(caMoyen)}</b></div>
+     <div class="kpi"><span>Marge nette totale</span><b style="color:${margeNetteTot>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(margeNetteTot)}</b></div>
+     <div class="kpi"><span>Macarons vendus</span><b>${qty(venduTotal)}</b></div>
+     <div class="kpi"><span>Taux d'invendus global</span><b>${tauxInvGlobal}%</b></div>
+   </div>
+   ${months.length>1?`<div class="panel"><h2>CA marchés par mois</h2>${chart}</div>`:''}
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+     <div class="panel"><h2>Classement des marchés (CA)</h2>${rankRows}</div>
+     <div class="panel"><h2>Meilleures journées (CA/h)</h2>${bestDays}</div>
+     <div class="panel"><h2>Parfums les plus vendus</h2>${topParf||'<p class="note">—</p>'}</div>
+     <div class="panel"><h2>Parfums les moins vendus</h2>${lowParf||'<p class="note">—</p>'}</div>
+   </div>`;
+}
+
+// Prévisions : à partir de l'historique des marchés clos, suggérer quantités & répartition.
+async function renderMarketForecast(){
+  const markets=(await db.markets.toArray()).filter(m=>m.statut==='clos');
+  const moves=await db.marketMoves.toArray();
+  const movesByMarket={}; moves.forEach(mv=>{ (movesByMarket[mv.marketId] ||= []).push(mv); });
+  document.getElementById('main').innerHTML=`<div class="topbar"><div><h1>Prévisions marché</h1><p>Basées sur ${markets.length} marché(s) clôturé(s)</p></div><button class="btn ghost sm" onclick="renderMarkets()">← Marchés</button></div><div id="mfBody"></div>`;
+  const body=document.getElementById('mfBody');
+  if(markets.length<1){ body.innerHTML=`<div class="panel"><div class="empty">Pas encore d'historique. Clôturez quelques marchés pour obtenir des suggestions de production.</div></div>`; return; }
+
+  // moyennes par parfum : vendu moyen, invendu moyen
+  const sumVendu={}, sumEmb={}; let nb=markets.length;
+  markets.forEach(mk=>{ const T=marketTotals(mk, movesByMarket[mk.id]||[]);
+    T.lines.forEach(l=>{ const k=l.parfum||'(?)'; sumVendu[k]=(sumVendu[k]||0)+l.vendu; sumEmb[k]=(sumEmb[k]||0)+l.sortie; }); });
+  const parfums=Object.keys(sumVendu);
+  const venduMoyenTotal=parfums.reduce((s,k)=>s+sumVendu[k]/nb,0);
+
+  const rows=parfums.map(k=>{
+    const vMoy=sumVendu[k]/nb, eMoy=sumEmb[k]/nb;
+    const tauxEcoul = eMoy>0?vMoy/eMoy:0;
+    // suggestion : viser le vendu moyen + marge de sécurité 15%, arrondi à 5
+    const suggere=Math.ceil((vMoy*1.15)/5)*5;
+    const part = venduMoyenTotal>0?Math.round(vMoy/venduMoyenTotal*100):0;
+    let risque='';
+    if(tauxEcoul>=0.9) risque='<span class="tag low">risque rupture</span>';
+    else if(tauxEcoul>0 && tauxEcoul<0.5) risque='<span class="tag warn">risque invendus</span>';
+    else risque='<span class="tag ok">équilibré</span>';
+    return {k, vMoy:round3(vMoy), suggere, part, risque, tauxEcoul};
+  }).sort((a,b)=>b.vMoy-a.vMoy);
+
+  const totSuggere=rows.reduce((s,r)=>s+r.suggere,0);
+  body.innerHTML=`
+   <div class="banner">🔮 <div>Suggestions pour un marché similaire, calculées sur la moyenne de vos marchés passés (+15 % de sécurité). Total suggéré : <b>${totSuggere}</b> macarons.</div></div>
+   <div class="panel"><h2>Quantités à produire & répartition par parfum</h2>
+     <div class="table-wrap"><table><thead><tr><th>Parfum</th><th>Vendu moyen</th><th>Part</th><th>À produire</th><th>Risque</th></tr></thead>
+       <tbody>${rows.map(r=>`<tr><td><b>${esc(r.k)}</b></td><td>${qty(r.vMoy)}</td><td>${r.part}%</td><td><b>${r.suggere}</b></td><td>${r.risque}</td></tr>`).join('')}</tbody></table></div>
+     <p class="note">« Risque rupture » : tu écoulais presque tout (produis plus). « Risque invendus » : tu rapportais beaucoup (produis moins).</p>
+   </div>`;
 }
 
 
@@ -4582,7 +5146,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
