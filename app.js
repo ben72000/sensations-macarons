@@ -56,6 +56,30 @@ const EVENT_MIN = 35;           // quantité minimale
 const EQUIP_PRICE = 20;         // location présentoir / pyramide (par unité)
 const EVENT_MIN_EQUIP = 1;      // au moins 1 pyramide obligatoire
 
+/* ============================================================
+   PARAMÈTRES DE GESTION (réglables, persistés en localStorage)
+   - Taux de charges sociales : marchandise (produit fini) vs prestation de service
+   - Coût emballages/consommables par coffret selon la taille
+   ============================================================ */
+const SETTINGS_DEFAULTS = {
+  socialGoods: 12.3,     // % charges sociales sur vente de marchandise (produit fini)
+  socialService: 25.6,   // % charges sociales sur prestation de service
+  packaging: { 6:0.50, 8:0.60, 16:1.00, 25:1.50 } // € emballage/consommable par coffret
+};
+function getSettings(){
+  try{ const s=JSON.parse(localStorage.getItem('sm_settings')||'{}');
+    return {
+      socialGoods: s.socialGoods!=null?+s.socialGoods:SETTINGS_DEFAULTS.socialGoods,
+      socialService: s.socialService!=null?+s.socialService:SETTINGS_DEFAULTS.socialService,
+      packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{})
+    };
+  }catch(e){ return JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)); }
+}
+function saveSettings(s){ localStorage.setItem('sm_settings', JSON.stringify(s)); }
+// Coût emballage d'un coffret selon sa taille
+function packagingCost(taille){ const s=getSettings(); return money2(s.packaging[taille]!=null?s.packaging[taille]:0); }
+
+
 // Macarons grand format (vente à l'unité), double tarif
 const BIG_FORMATS = ['Chocolat', 'Myrtille framboise', 'Mangue passion', 'Madeleine'];
 const BIG_PRICE = { pro: 3.20, particulier: 6.00 };
@@ -152,7 +176,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -1745,6 +1769,7 @@ async function renderCmd(){
     if(ln.type==='evenement') return `Événement ${ln.evQte||0} mac. +${ln.equip||0} pyr.`;
     if(ln.type==='grand'){ const n=(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Grand format ×${n}`; }
     if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0)+(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Don ×${n} (offert)`; }
+    if(ln.type==='prestation') return `Prestation${ln.libelle?' : '+ln.libelle:''}`;
     return `Coffret ${ln.taille||'?'}`;
   };
   // index de recherche par commande, calculé une seule fois
@@ -1873,6 +1898,13 @@ async function cmdView(id){
         ${!n?'<p class="note">Aucun macaron.</p>':''}
         <div class="sum-box" style="margin-top:8px"><span>${n} offert(s) · sous-total</span><b>${euro(0)}</b></div></div>`;
     }
+    if(ln.type==='prestation'){
+      const base=money2(+ln.montantHT||0); const net=lineTotalStored(ln);
+      const remTxt = ln.remiseType==='euro' ? (ln.remiseEuro>0?`remise ${euro(ln.remiseEuro)}`:'') : (ln.remisePct>0?`remise ${ln.remisePct}%`:'');
+      return `<div class="cmd-line"><div class="line-type">Prestation / Coaching <span class="line-sub">service</span></div>
+        <p style="margin-top:4px">${esc(ln.libelle||'Prestation')}</p>
+        <div class="sum-box" style="margin-top:8px"><span>${base!==net?`Avant remise ${euro(base)}${remTxt?' · '+remTxt:''}`:'Montant'}</span><b>${euro(net)}</b></div></div>`;
+    }
     return '';
   }).join('');
   openModal(`<h3>Détail commande</h3>
@@ -1912,6 +1944,11 @@ function lineTotalStored(ln){
   if(ln.type==='evenement') return money2((ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE);
   if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); return money2(tot*pu); }
   if(ln.type==='don') return 0;
+  if(ln.type==='prestation'){
+    const base=money2(+ln.montantHT||0);
+    const rem = ln.remiseType==='euro' ? Math.min(base,money2(+ln.remiseEuro||0)) : money2(base*Math.max(0,Math.min(100,+ln.remisePct||0))/100);
+    return Math.max(0, money2(base-rem));
+  }
   return 0;
 }
 let cmdLines = [];      // lignes de produits de la commande en cours
@@ -1952,6 +1989,7 @@ function _lineToEdit(ln){
   if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items)};
+  if(t==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0};
   return {...ln};
 }
 // Charge une commande dans le modèle d'édition (objet) sans rien perdre.
@@ -1986,6 +2024,7 @@ async function cmdForm(id, opts){
      <button class="btn ghost sm" onclick="addLine('coffret')">+ Coffret</button>
      <button class="btn ghost sm" onclick="addLine('evenement')">+ Événement</button>
      <button class="btn ghost sm" onclick="addLine('grand')">+ Grand format</button>
+     <button class="btn ghost sm" onclick="addLine('prestation')">+ Prestation / Coaching</button>
      <button class="btn ghost sm" onclick="addLine('don')">+ Don (0 €)</button>
    </div>
 
@@ -2145,18 +2184,20 @@ function addLine(type){
   else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:EVENT_MIN_EQUIP, parfums:{}});
   else if(type==='grand') cmdLines.push({type:'grand', tarif:'particulier', items:{}});
   else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
+  else if(type==='prestation') cmdLines.push({type:'prestation', libelle:'', montantHT:0, remiseType:'pct', remisePct:0, remiseEuro:0});
   drawLines();
 }
 function removeLine(i){ cmdLines.splice(i,1); drawLines(); }
 
 function drawLines(){
   const wrap=document.getElementById('linesWrap'); if(!wrap)return;
-  if(!cmdLines.length){ wrap.innerHTML='<p class="note">Ajoute au moins un produit ci-dessous (coffret, événement, grand format ou don).</p>'; cmdRecalc(); return; }
+  if(!cmdLines.length){ wrap.innerHTML='<p class="note">Ajoute au moins un produit ci-dessous (coffret, événement, grand format, prestation ou don).</p>'; cmdRecalc(); return; }
   wrap.innerHTML = cmdLines.map((ln,i)=>{
     if(ln.type==='coffret') return drawCoffretLine(ln,i);
     if(ln.type==='evenement') return drawEventLine(ln,i);
     if(ln.type==='grand') return drawBigLine(ln,i);
     if(ln.type==='don') return drawDonLine(ln,i);
+    if(ln.type==='prestation') return drawPrestationLine(ln,i);
     return '';
   }).join('');
   cmdRecalc();
@@ -2269,6 +2310,38 @@ function drawDonLine(ln,i){
     <div class="sum-box"><span>${totP+totB} macaron(s) offert(s)</span><b>${euro(0)}</b></div>
   </div>`;
 }
+function drawPrestationLine(ln,i){
+  if(ln.remiseType==null) ln.remiseType='pct';
+  const base=money2(+ln.montantHT||0);
+  const net=lineTotal(ln);
+  return `<div class="cmd-line">
+    <div class="line-head"><span class="line-type">Prestation / Coaching <span class="line-sub">service · charges sociales ${getSettings().socialService}%</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="field" style="margin:6px 0"><label>Libellé de la prestation</label>
+      <input value="${esc(ln.libelle||'')}" placeholder="ex : Coaching macarons (2 h), déplacement…" oninput="setPrestaField(${i},'libelle',this.value)"></div>
+    <div class="row2">
+      <div class="field" style="margin:0"><label>Montant (€)</label>
+        <input type="number" step="0.01" min="0" value="${ln.montantHT||''}" placeholder="0" oninput="setPrestaField(${i},'montantHT',this.value)"></div>
+      <div class="field" style="margin:0"><label>Type de remise</label>
+        <select onchange="setPrestaField(${i},'remiseType',this.value)">
+          <option value="pct" ${ln.remiseType==='pct'?'selected':''}>Pourcentage (%)</option>
+          <option value="euro" ${ln.remiseType==='euro'?'selected':''}>Fixe (€)</option>
+        </select></div>
+    </div>
+    <div class="field" style="margin:6px 0 0">
+      ${ln.remiseType==='euro'
+        ? `<label>Remise (€)</label><input type="number" step="0.01" min="0" value="${ln.remiseEuro||''}" placeholder="0" oninput="setPrestaField(${i},'remiseEuro',this.value)">`
+        : `<label>Remise (%)</label><input type="number" step="1" min="0" max="100" value="${ln.remisePct||''}" placeholder="0" oninput="setPrestaField(${i},'remisePct',this.value)">`}
+    </div>
+    <div class="sum-box">${(base!==net)?`<span>Avant remise ${euro(base)}</span><b>${euro(net)}</b>`:`<span>Montant prestation</span><b>${euro(base)}</b>`}</div>
+  </div>`;
+}
+function setPrestaField(i,field,v){
+  if(!cmdLines[i]) return;
+  if(field==='montantHT'||field==='remiseEuro') cmdLines[i][field]=money2(+v||0);
+  else if(field==='remisePct'){ let p=+v||0; cmdLines[i][field]=Math.max(0,Math.min(100,p)); }
+  else cmdLines[i][field]=v;
+  if(field==='remiseType') drawLines(); else cmdRecalc();
+}
 function setDonParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 function setDonItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdLines[i].items[f]=q; else delete cmdLines[i].items[f]; drawLines(); }
 
@@ -2284,6 +2357,7 @@ function lineTotalBase(ln){
   if(ln.type==='evenement') return addMoney(mulMoney(ln.evQte||0,EVENT_PRICE), mulMoney(ln.equip||0,EQUIP_PRICE));
   if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='don') return 0;
+  if(ln.type==='prestation') return money2(+ln.montantHT||0);
   return 0;
 }
 // Prix unitaire d'un coffret, par ordre de priorité :
@@ -2298,8 +2372,14 @@ function coffretUnitPrice(ln){
 }
 // Remise de ligne en € (bornée 0–100 %, arrondie au centime)
 function lineRemiseEuro(ln){
+  const base=lineTotalBase(ln);
+  if(ln.type==='prestation'){
+    if(ln.remiseType==='euro') return Math.min(base, money2(+ln.remiseEuro||0));
+    const pct=Math.max(0,Math.min(100,+ln.remisePct||0));
+    return money2(base*pct/100);
+  }
   const pct=Math.max(0,Math.min(100,+ln.remisePct||0));
-  return money2(lineTotalBase(ln)*pct/100);
+  return money2(base*pct/100);
 }
 // Prix d'une ligne APRÈS remise de ligne
 function lineTotal(ln){
@@ -2368,6 +2448,7 @@ async function saveCmd(id){
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+    if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0)};
   });
   const remiseGlobale = Math.max(0, Math.min(100, +val('f_remiseg')||0));
   // Registre de paiements : chaque encaissement exige montant>0 + date + mode. AUCUNE date auto-générée.
@@ -2544,8 +2625,12 @@ async function computeAccounting(opts){
   const encByMonth={};      // 'YYYY-MM' -> total encaissé
   const encByMethod={};     // moyen -> total
   let totalEncaisse=0;
-  const acomptes=[];        // encaissements partiels (commande non soldée à cette date)
+  // CA FACTURÉ (accrual) : montant total de la commande, à la date de commande.
+  // Une commande "En attente de paiement" est facturée mais PAS encaissée → exclue du CA encaissé.
+  const factByMonth={}; let totalFacture=0;
   orders.forEach(o=>{
+    const mF=monthKey(o.date); const tot=money2(o.montant);
+    if(mF && tot>0){ factByMonth[mF]=money2((factByMonth[mF]||0)+tot); totalFacture=money2(totalFacture+tot); }
     const pays = (o.paiements||[]);
     // rétro-compat : ancienne commande "Payé" sans registre → on rattache au datePaiement connu
     const list = pays.length ? pays
@@ -2586,10 +2671,10 @@ async function computeAccounting(opts){
   });
 
   // 4) Série mensuelle consolidée
-  const months=[...new Set([...Object.keys(encByMonth),...Object.keys(chargeByMonth)])].sort();
+  const months=[...new Set([...Object.keys(encByMonth),...Object.keys(chargeByMonth),...Object.keys(factByMonth)])].sort();
   const serie=months.map(m=>{
-    const ca=encByMonth[m]||0, ch=chargeByMonth[m]||0, cout=costByMonth[m]||0;
-    return {mois:m, ca, charges:ch, coutMatieres:money2(cout),
+    const ca=encByMonth[m]||0, fact=factByMonth[m]||0, ch=chargeByMonth[m]||0, cout=costByMonth[m]||0;
+    return {mois:m, ca, caFacture:fact, charges:ch, coutMatieres:money2(cout),
       margeBrute:money2(ca-cout), resultat:money2(ca-ch-cout)};
   });
 
@@ -2600,7 +2685,7 @@ async function computeAccounting(opts){
   const totalCout=money2(serie.reduce((s,x)=>s+x.coutMatieres,0));
   return {
     serie, encByMethod, chargeByCat,
-    totalEncaisse, totalCharges, totalCoutMatieres:totalCout,
+    totalEncaisse, totalFacture, totalCharges, totalCoutMatieres:totalCout,
     margeBrute: money2(totalEncaisse-totalCout),
     resultat: money2(totalEncaisse-totalCharges-totalCout),
     creances,
@@ -2627,7 +2712,209 @@ function estimateOrderMaterialCost(o, recipes, recipeItems, lots){
   return money2(cost);
 }
 
+/* ============================================================
+   MARGES — rentabilité réelle d'une vente
+   Brute  = prix de vente − coût matières − coût emballages − consommables
+   Nette  = brute − charges sociales (12,3% marchandise / 25,6% prestation)
+   La fiscalité/frais annexes seront ajoutés plus tard (au choix de l'utilisateur).
+   ============================================================ */
+function computeOrderMargins(o, recipes, recipeItems, lots){
+  const s=getSettings();
+  const lignes = orderToLines(o);
+  // coût unitaire matière moyen (toutes recettes)
+  const perRecipeUnit = recipes.map(r=>{ const cb=coutRecette(r.id, recipeItems, lots); return r.rendement>0?cb/r.rendement:0; }).filter(x=>x>0);
+  const avgUnit = perRecipeUnit.length ? perRecipeUnit.reduce((a,x)=>a+x,0)/perRecipeUnit.length : 0;
+
+  let caGoods=0, caService=0;        // répartition du CA par régime social
+  let coutMat=0, coutEmb=0;          // coûts matières / emballages
+  lignes.forEach(ln=>{
+    const net = lineTotalStored(ln); // prix de vente net de remises de ligne
+    if(ln.type==='prestation'){ caService=money2(caService+net); return; } // service : pas de matière/emballage
+    if(ln.type==='evenement'){
+      // l'événement mêle marchandise (macarons) et service (location pyramide/déplacement)
+      const maca = money2((+ln.evQte||0)*EVENT_PRICE);
+      const presta = money2((+ln.equip||0)*EQUIP_PRICE);
+      caGoods=money2(caGoods+maca); caService=money2(caService+presta);
+      coutMat=money2(coutMat+(+ln.evQte||0)*avgUnit);
+      return;
+    }
+    // coffret / grand / don : marchandise
+    caGoods=money2(caGoods+net);
+    let pieces=0;
+    if(ln.type==='coffret'){ pieces=+ln.taille||0; coutEmb=money2(coutEmb+packagingCost(ln.taille)); }
+    else if(ln.type==='grand') pieces=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    coutMat=money2(coutMat+pieces*avgUnit);
+  });
+
+  const ca = money2(caGoods+caService);           // = montant commande (hors remise globale éventuelle)
+  // remise globale éventuelle appliquée au prorata
+  const totalLignes = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
+  const gpct = Math.max(0,Math.min(100,+o.remiseGlobale||0));
+  const factor = gpct>0 ? (1-gpct/100) : 1;
+  const caNet = money2(ca*factor), caGoodsN=money2(caGoods*factor), caServiceN=money2(caService*factor);
+
+  const margeBrute = money2(caNet - coutMat - coutEmb);
+  const tauxBrut = caNet>0 ? Math.round(margeBrute/caNet*1000)/10 : 0;
+
+  const chargesSociales = money2(caGoodsN*s.socialGoods/100 + caServiceN*s.socialService/100);
+  const margeNette = money2(margeBrute - chargesSociales);
+  const tauxNet = caNet>0 ? Math.round(margeNette/caNet*1000)/10 : 0;
+
+  return {ca:caNet, caGoods:caGoodsN, caService:caServiceN,
+    coutMat, coutEmb, margeBrute, tauxBrut,
+    chargesSociales, margeNette, tauxNet};
+}
+// Échelle de rentabilité d'après le taux de marge nette.
+function profitScale(tauxNet){
+  if(tauxNet>=50) return {label:'Très rentable', col:'#2e7d32', rank:5};
+  if(tauxNet>=30) return {label:'Rentable', col:'#3f7d52', rank:4};
+  if(tauxNet>=15) return {label:'Moyennement rentable', col:'#caa23b', rank:3};
+  if(tauxNet>=0)  return {label:'Peu rentable', col:'#d98324', rank:2};
+  return {label:'Non rentable', col:'#b3261e', rank:1};
+}
+
 // === insère moteur computeStats (voir stats_engine.js) ===
+/* ============================================================
+   PILOTAGE STRATÉGIQUE — consolidation des indicateurs + recommandations
+   S'appuie sur computeAccounting (CA encaissé/facturé) et computeOrderMargins.
+   ============================================================ */
+async function computeStrategic(){
+  const [orders, clients, recipes, recipeItems, lots, products] = await Promise.all([
+    db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(),
+    db.recipeItems.toArray(), db.materialLots.toArray(), db.products.toArray()
+  ]);
+  const A = await computeAccounting();
+  const now=new Date(); const curM=now.toISOString().slice(0,7); const curY=String(now.getFullYear());
+  const prevMonthD=new Date(now.getFullYear(), now.getMonth()-1, 1); const prevM=prevMonthD.toISOString().slice(0,7);
+  const prevY=String(now.getFullYear()-1);
+
+  // CA encaissé mensuel / annuel + évolutions (depuis la série de computeAccounting)
+  const caByMonth={}; A.serie.forEach(s=>caByMonth[s.mois]=s.ca);
+  const caByYear={}; A.serie.forEach(s=>{ const y=s.mois.slice(0,4); caByYear[y]=money2((caByYear[y]||0)+s.ca); });
+  const caMonth=caByMonth[curM]||0, caPrevMonth=caByMonth[prevM]||0;
+  const caYear=caByYear[curY]||0, caPrevYear=caByYear[prevY]||0;
+  const evoMonth = caPrevMonth>0 ? Math.round((caMonth-caPrevMonth)/caPrevMonth*1000)/10 : (caMonth>0?100:0);
+  const evoYear = caPrevYear>0 ? Math.round((caYear-caPrevYear)/caPrevYear*1000)/10 : (caYear>0?100:0);
+
+  // Marges globales (somme des marges par commande payée)
+  let margeBrute=0, margeNette=0, caPaye=0;
+  const paid = orders.filter(o=>o.paiement==='Payé');
+  paid.forEach(o=>{ const m=computeOrderMargins(o,recipes,recipeItems,lots); margeBrute=money2(margeBrute+m.margeBrute); margeNette=money2(margeNette+m.margeNette); caPaye=money2(caPaye+m.ca); });
+  const tauxBrut = caPaye>0?Math.round(margeBrute/caPaye*1000)/10:0;
+  const tauxNet = caPaye>0?Math.round(margeNette/caPaye*1000)/10:0;
+
+  // Panier moyen + nb commandes + clients actifs (90 j)
+  const nbCmd = paid.length;
+  const panier = nbCmd>0 ? money2(caPaye/nbCmd) : 0;
+  const since=new Date(now-90*86400000).toISOString().slice(0,10);
+  const activeClients = new Set(paid.filter(o=>o.date&&o.date>=since && o.clientId).map(o=>o.clientId)).size;
+  const totalClients = clients.length;
+
+  return {
+    caMonth, caPrevMonth, evoMonth, caYear, caPrevYear, evoYear,
+    margeBrute, margeNette, tauxBrut, tauxNet,
+    panier, nbCmd, activeClients, totalClients,
+    caEncaisse:A.totalEncaisse, caFacture:A.totalFacture, creances:A.creances,
+    serie:A.serie,
+    _ctx:{orders, clients, recipes, recipeItems, lots, products, paid}
+  };
+}
+
+// Analyses + recommandations automatiques fondées sur la rentabilité réelle.
+function generateInsights(S){
+  const {orders, clients, recipes, recipeItems, lots, products, paid} = S._ctx;
+  const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
+
+  // --- rentabilité par "produit" (type/format de ligne) ---
+  const prodAgg={}; // clé lisible -> {ca, brute, nette, n}
+  paid.forEach(o=>{
+    const m=computeOrderMargins(o,recipes,recipeItems,lots);
+    orderToLines(o).forEach(ln=>{
+      let key;
+      if(ln.type==='coffret') key=`Coffret ${ln.taille}`;
+      else if(ln.type==='evenement') key='Événement';
+      else if(ln.type==='grand') key='Grand format';
+      else if(ln.type==='prestation') key='Prestation / Coaching';
+      else key='Don';
+      const lt=lineTotalStored(ln);
+      (prodAgg[key] ||= {ca:0,n:0}); prodAgg[key].ca=money2(prodAgg[key].ca+lt); prodAgg[key].n++;
+    });
+  });
+  const produits=Object.entries(prodAgg).map(([k,v])=>({nom:k, ca:v.ca, n:v.n})).sort((a,b)=>b.ca-a.ca);
+
+  // --- clients les plus rentables (marge nette) ---
+  const byClient={};
+  paid.forEach(o=>{ const m=computeOrderMargins(o,recipes,recipeItems,lots); const k=o.clientId||0;
+    (byClient[k] ||= {nom:clName(k), ca:0, nette:0, n:0}); const c=byClient[k];
+    c.ca=money2(c.ca+m.ca); c.nette=money2(c.nette+m.margeNette); c.n++; });
+  const clientsTop=Object.values(byClient).map(c=>({...c, tauxNet:c.ca>0?Math.round(c.nette/c.ca*1000)/10:0})).sort((a,b)=>b.nette-a.nette);
+
+  // --- événements les plus rentables ---
+  const events=paid.filter(orderIsEvent).map(o=>{ const m=computeOrderMargins(o,recipes,recipeItems,lots);
+    return {nom:clName(o.clientId), date:o.date, ca:m.ca, nette:m.margeNette, taux:m.tauxNet}; }).sort((a,b)=>b.nette-a.nette);
+
+  // --- tendances & saisonnalité ---
+  const trends=analyzeTrends(orders,{windowDays:30});
+  // saisonnalité : CA encaissé moyen par mois calendaire
+  const moisCA={}; const moisN={};
+  S.serie.forEach(s=>{ const mm=+s.mois.slice(5,7); moisCA[mm]=(moisCA[mm]||0)+s.ca; moisN[mm]=(moisN[mm]||0)+1; });
+  const noms=['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Août','Sep','Oct','Nov','Déc'];
+  const saison=Object.keys(moisCA).map(mm=>({mois:+mm, nom:noms[mm-1], moy:money2(moisCA[mm]/moisN[mm])})).sort((a,b)=>b.moy-a.moy);
+
+  // --- recommandations concrètes ---
+  const reco=[];
+  // produit le plus / moins rentable
+  if(produits.length>=1){
+    reco.push({type:'avant', txt:`Mettez en avant « ${produits[0].nom} » : c'est votre plus gros contributeur au CA (${euro(produits[0].ca)}).`});
+  }
+  if(produits.length>=3){
+    const last=produits[produits.length-1];
+    reco.push({type:'revoir', txt:`« ${last.nom} » génère peu de CA (${euro(last.ca)}). À revoir : tarif, visibilité, ou retrait de l'offre.`});
+  }
+  // marge nette globale
+  if(S.tauxNet<15 && S.caEncaisse>0){
+    reco.push({type:'marge', txt:`Votre marge nette globale est de ${S.tauxNet}%. Pour l'améliorer : revoyez les tarifs des produits à faible marge, négociez vos matières, ou réduisez les remises.`});
+  } else if(S.tauxNet>=30){
+    reco.push({type:'marge', txt:`Bonne marge nette globale (${S.tauxNet}%). Vous avez de la marge pour investir (communication, équipement) ou absorber une hausse de coûts.`});
+  }
+  // tarifs : coffret le plus vendu vs prix
+  const coffretProd=produits.find(p=>p.nom.startsWith('Coffret'));
+  if(coffretProd){
+    reco.push({type:'tarif', txt:`« ${coffretProd.nom} » est très demandé (${coffretProd.n} ventes). Testez une légère hausse de prix : l'élasticité est souvent faible sur un produit installé.`});
+  }
+  // client fidèle
+  if(clientsTop.length>=1 && clientsTop[0].n>=2){
+    reco.push({type:'oppo', txt:`${clientsTop[0].nom} est votre client le plus rentable (${euro(clientsTop[0].nette)} de marge nette sur ${clientsTop[0].n} commandes). Proposez-lui une offre fidélité ou un événement dédié.`});
+  }
+  // prestations
+  const presta=produits.find(p=>p.nom.includes('Prestation'));
+  if(presta){
+    reco.push({type:'oppo', txt:`Les prestations/coaching rapportent ${euro(presta.ca)} : développez ce service à forte marge (peu de coût matière).`});
+  } else {
+    reco.push({type:'oppo', txt:`Vous ne facturez pas encore de prestation/coaching : c'est un service à très forte marge nette (peu de coût matière) à développer.`});
+  }
+  // créances
+  if(S.creances>0){
+    reco.push({type:'action', txt:`${euro(S.creances)} restent à encaisser (créances clients). Relancez les soldes en attente pour améliorer votre trésorerie.`});
+  }
+  // tendance
+  if(trends.hausses.length){
+    reco.push({type:'avant', txt:`En hausse ce mois : ${trends.hausses.slice(0,3).map(h=>h.nom).join(', ')}. Capitalisez (mise en avant, stock anticipé).`});
+  }
+  if(trends.baisses.length){
+    reco.push({type:'revoir', txt:`En baisse : ${trends.baisses.slice(0,3).map(b=>b.nom).join(', ')}. Vérifiez la qualité, le prix ou relancez par une promo ciblée.`});
+  }
+  // évolution CA
+  if(S.evoMonth<0){
+    reco.push({type:'action', txt:`CA en baisse de ${Math.abs(S.evoMonth)}% vs le mois dernier. Action : relance clients dormants, opération commerciale, ou présence accrue (Instagram, événements).`});
+  } else if(S.evoMonth>0){
+    reco.push({type:'action', txt:`CA en hausse de ${S.evoMonth}% vs le mois dernier. Maintenez la dynamique et sécurisez vos approvisionnements.`});
+  }
+
+  return {produits, clientsTop, events, trends, saison, reco};
+}
+
 /* ============================================================
    STATISTIQUES  (commandes payées uniquement — recalcul depuis brut)
    Moteur pur : computeStats(orders, clients, orderToLinesFn)
@@ -3099,16 +3386,16 @@ async function renderCompta(){
     const mkPts = sel => A.serie.map((s,i)=>({x:i, y:sel(s)}));
     const labelByIdx = A.serie.map(s=>monthLabel(s.mois));
     chart = lineChart([
+      {name:'CA facturé', points:mkPts(s=>s.caFacture), color:'#c9a227'},
       {name:'CA encaissé', points:mkPts(s=>s.ca), color:'#52252F'},
-      {name:'Charges', points:mkPts(s=>s.charges), color:'#b3261e'},
       {name:'Résultat', points:mkPts(s=>s.resultat), color:'#3f7d52'}
     ], {zero:true, xlabel:i=>labelByIdx[i]||'', fmt:v=>Math.round(v)+'€'});
   }
 
   const serieRows = A.serie.slice().reverse().map(s=>`<tr>
      <td>${monthLabel(s.mois)}</td>
+     <td>${euro(s.caFacture)}</td>
      <td>${euro(s.ca)}</td>
-     <td>${euro(s.coutMatieres)}</td>
      <td>${euro(s.charges)}</td>
      <td style="font-weight:600;color:${s.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(s.resultat)}</td></tr>`).join('');
 
@@ -3120,21 +3407,25 @@ async function renderCompta(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Comptabilité</h1><p>Pilotage en trésorerie — CA comptabilisé à l'encaissement réel</p></div>
      <button class="btn gold" onclick="chargeForm()">＋ Charge</button></div>
-   <div class="banner">📒 <div>Le chiffre d'affaires est comptabilisé à la <b>date réelle d'encaissement</b> de chaque règlement (et non à la date de commande ou de livraison). Un paiement de juin pour une vente livrée en mai compte donc en juin.</div></div>
+   <div class="banner">📒 <div>Deux lectures du chiffre d'affaires : le <b>CA facturé</b> (total des commandes, à leur date) et le <b>CA encaissé</b> (règlements reçus, à leur date réelle). Une commande « en attente de paiement » est facturée mais n'entre pas dans le CA encaissé. Le résultat se base sur l'encaissé.</div></div>
+   <div class="flex" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
+     <button class="btn" onclick="view='rentabilite';setActiveView&&setActiveView('rentabilite');renderProfit()">📈 Analyse de rentabilité</button>
+     <button class="btn ghost" onclick="settingsForm()">⚙ Paramètres (taux, emballages)</button>
+   </div>
 
    <div class="kpi-grid">
+     <div class="kpi"><span>CA facturé</span><b>${euro(A.totalFacture)}</b></div>
      <div class="kpi"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b></div>
      <div class="kpi"><span>Charges</span><b>${euro(A.totalCharges)}</b></div>
      <div class="kpi"><span>Coût matières (est.)</span><b>${euro(A.totalCoutMatieres)}</b></div>
-     <div class="kpi"><span>Résultat</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b></div>
-     <div class="kpi"><span>Marge brute</span><b>${euro(A.margeBrute)} <span style="font-size:.7rem;color:#9a8a82">(${fmtPct(A.margeBrute,A.totalEncaisse)}%)</span></b></div>
+     <div class="kpi"><span>Résultat (encaissé)</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b></div>
      <div class="kpi"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b></div>
    </div>
 
    ${A.serie.length?`<div class="panel"><h2>CA encaissé, charges & résultat par mois</h2>${chart}</div>`:''}
 
-   <div class="panel"><h2>Détail mensuel (trésorerie)</h2>
-   ${A.serie.length?`<div class="table-wrap"><table><thead><tr><th>Mois</th><th>CA encaissé</th><th>Coût mat.</th><th>Charges</th><th>Résultat</th></tr></thead>
+   <div class="panel"><h2>Détail mensuel (facturé vs encaissé)</h2>
+   ${A.serie.length?`<div class="table-wrap"><table><thead><tr><th>Mois</th><th>CA facturé</th><th>CA encaissé</th><th>Charges</th><th>Résultat</th></tr></thead>
      <tbody>${serieRows}</tbody></table></div>`:`<div class="empty">Aucun encaissement ni charge enregistré.</div>`}
    </div>
 
@@ -3179,6 +3470,148 @@ async function delCharge(id){
   if(!confirm('Supprimer cette charge ?')) return;
   await db.charges.delete(id); closeModal(); renderCompta(); toast('Charge supprimée');
 }
+
+/* ============================================================
+   TABLEAU DE BORD STRATÉGIQUE — centre de pilotage financier
+   ============================================================ */
+async function renderPilotage(){
+  const S = await computeStrategic();
+  const I = generateInsights(S);
+  const evoBadge = (v)=>{ const up=v>=0; return `<span style="color:${up?'#3f7d52':'var(--red,#b3261e)'};font-size:.8rem">${up?'▲':'▼'} ${Math.abs(v)}%</span>`; };
+
+  // mini-courbe CA encaissé
+  let chart='';
+  if(S.serie.length){
+    chart = lineChart([{name:'CA encaissé', points:S.serie.map((s,i)=>({x:i,y:s.ca})), color:'#52252F'}],
+      {zero:true, xlabel:i=>monthLabel(S.serie[i]?.mois)||'', fmt:v=>Math.round(v)+'€'});
+  }
+
+  const recoIcon={avant:'⭐',revoir:'🔧',marge:'📊',tarif:'🏷️',oppo:'💡',action:'🎯'};
+  const recoCards = I.reco.map(r=>`<div class="sum-box" style="align-items:flex-start"><span>${recoIcon[r.type]||'•'}</span><span style="flex:1">${esc(r.txt)}</span></div>`).join('');
+
+  const topProd = I.produits.slice(0,5).map(p=>`<div class="sum-box"><span>${esc(p.nom)} <span style="color:#9a8a82;font-size:.74rem">(${p.n} ventes)</span></span><b>${euro(p.ca)}</b></div>`).join('');
+  const lowProd = I.produits.slice(-3).reverse().map(p=>`<div class="sum-box"><span>${esc(p.nom)}</span><b>${euro(p.ca)}</b></div>`).join('');
+  const topClients = I.clientsTop.slice(0,5).map(c=>`<div class="sum-box"><span>${esc(c.nom)} <span style="color:#9a8a82;font-size:.74rem">(${c.n} cmd)</span></span><b style="color:${c.nette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(c.nette)} <span style="color:#9a8a82;font-weight:400;font-size:.72rem">marge nette</span></b></div>`).join('');
+  const topEvents = I.events.slice(0,5).map(e=>`<div class="sum-box"><span>${esc(e.nom)} <span style="color:#9a8a82;font-size:.74rem">${fmtDate(e.date)}</span></span><b style="color:${e.nette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(e.nette)} (${e.taux}%)</b></div>`).join('');
+  const saison = I.saison.slice(0,3).map(s=>`<span class="pill">${s.nom} : ${euro(s.moy)}/mois</span>`).join(' ');
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Pilotage stratégique</h1><p>Centre de pilotage financier — temps réel</p></div>
+     <button class="btn ghost sm" onclick="renderProfit()">Rentabilité détaillée →</button></div>
+
+   <div class="kpi-grid">
+     <div class="kpi"><span>CA ce mois</span><b>${euro(S.caMonth)}</b><span>${evoBadge(S.evoMonth)} vs mois dernier</span></div>
+     <div class="kpi"><span>CA cette année</span><b>${euro(S.caYear)}</b><span>${evoBadge(S.evoYear)} vs an dernier</span></div>
+     <div class="kpi"><span>Marge brute</span><b>${euro(S.margeBrute)}</b><span>${S.tauxBrut}% du CA</span></div>
+     <div class="kpi"><span>Marge nette</span><b style="color:${S.margeNette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(S.margeNette)}</b><span>${S.tauxNet}% du CA</span></div>
+     <div class="kpi"><span>Panier moyen</span><b>${euro(S.panier)}</b><span>${S.nbCmd} commande(s)</span></div>
+     <div class="kpi"><span>Clients actifs</span><b>${S.activeClients}</b><span>sur ${S.totalClients} (90 j)</span></div>
+   </div>
+
+   ${S.serie.length?`<div class="panel"><h2>Évolution du CA encaissé</h2>${chart}</div>`:''}
+
+   <div class="panel" style="border-left:4px solid var(--bordeaux)"><h2>💡 Recommandations</h2>
+     ${recoCards||'<p class="note">Pas encore assez de données pour des recommandations. Enregistrez des ventes payées.</p>'}</div>
+
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+     <div class="panel"><h2>Produits les plus rentables</h2>${topProd||'<p class="note">—</p>'}</div>
+     <div class="panel"><h2>Produits à revoir</h2>${lowProd||'<p class="note">—</p>'}</div>
+     <div class="panel"><h2>Clients les plus rentables</h2>${topClients||'<p class="note">—</p>'}</div>
+     <div class="panel"><h2>Événements les plus rentables</h2>${topEvents||'<p class="note">Aucun événement.</p>'}</div>
+   </div>
+
+   <div class="panel"><h2>Saisonnalité</h2>
+     ${I.saison.length?`<p style="margin-bottom:6px">Meilleurs mois (CA encaissé moyen) : ${saison}</p>`:'<p class="note">Pas encore assez d\'historique pour dégager une saisonnalité.</p>'}</div>
+
+   <p class="note" style="margin-top:8px">Centre de pilotage : tout est recalculé en temps réel depuis vos commandes, encaissements et charges. Marge nette = après charges sociales (12,3 % / 25,6 %).</p>`;
+}
+
+/* ============================================================
+   ANALYSE DE RENTABILITÉ — par client et par événement, avec échelle
+   ============================================================ */
+async function renderProfit(){
+  const [orders, clients, recipes, recipeItems, lots] = await Promise.all([
+    db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()
+  ]);
+  const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
+
+  // marge par commande (toutes commandes confirmées)
+  const withM = orders.map(o=>({o, m:computeOrderMargins(o, recipes, recipeItems, lots)}));
+
+  // --- par client ---
+  const byClient={};
+  withM.forEach(({o,m})=>{
+    const k=o.clientId||0;
+    (byClient[k] ||= {clientId:k, nom:clName(k), ca:0, nb:0, brute:0, nette:0});
+    const c=byClient[k]; c.ca=money2(c.ca+m.ca); c.nb++; c.brute=money2(c.brute+m.margeBrute); c.nette=money2(c.nette+m.margeNette);
+  });
+  const clientRows=Object.values(byClient).map(c=>{
+    c.panier=c.nb>0?money2(c.ca/c.nb):0;
+    c.tauxNet=c.ca>0?Math.round(c.nette/c.ca*1000)/10:0;
+    c.scale=profitScale(c.tauxNet);
+    return c;
+  }).sort((a,b)=>b.ca-a.ca);
+
+  // --- par événement ---
+  const eventsM = withM.filter(({o})=>orderIsEvent(o)).map(({o,m})=>{
+    const sc=profitScale(m.tauxNet);
+    return {o, m, sc, nom:clName(o.clientId)};
+  }).sort((a,b)=>b.m.ca-a.m.ca);
+
+  const clientTable = clientRows.length?`<div class="table-wrap"><table><thead><tr><th>Client</th><th>CA</th><th>Cmd</th><th>Panier moy.</th><th>Marge nette</th><th>Rentabilité</th></tr></thead>
+    <tbody>${clientRows.map(c=>`<tr>
+      <td><b>${c.clientId?`<span class="link-name" onclick="clientForm(${c.clientId})">${esc(c.nom)}</span>`:esc(c.nom)}</b></td>
+      <td>${euro(c.ca)}</td><td>${c.nb}</td><td>${euro(c.panier)}</td>
+      <td style="color:${c.nette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(c.nette)} <span style="color:#9a8a82;font-size:.72rem">(${c.tauxNet}%)</span></td>
+      <td><span class="tag" style="background:${c.scale.col};color:#fff">${c.scale.label}</span></td></tr>`).join('')}</tbody></table></div>`
+    :'<div class="empty">Aucune commande.</div>';
+
+  const eventCards = eventsM.length?eventsM.map(({o,m,sc,nom})=>`<div class="panel" style="margin:8px 0;border-left:4px solid ${sc.col}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start"><div><b>${esc(nom)}</b> <span style="color:#9a8a82;font-size:.8rem">· n°${esc(orderNumber(o))} · ${fmtDate(o.date)}</span></div>
+        <span class="tag" style="background:${sc.col};color:#fff">${sc.label}</span></div>
+      <div class="sum-box"><span>Chiffre d'affaires</span><b>${euro(m.ca)}</b></div>
+      <div class="sum-box"><span>Coût production (matières + emballages)</span><b>${euro(money2(m.coutMat+m.coutEmb))}</b></div>
+      <div class="sum-box"><span>Marge brute</span><b>${euro(m.margeBrute)} <span style="color:#9a8a82;font-weight:400">(${m.tauxBrut}%)</span></b></div>
+      <div class="sum-box"><span>Charges sociales</span><b>−${euro(m.chargesSociales)}</b></div>
+      <div class="sum-box"><span><b>Marge nette</b></span><b style="color:${m.margeNette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(m.margeNette)} (${m.tauxNet}%)</b></div>
+    </div>`).join('')
+    :'<p class="note">Aucune commande événementielle.</p>';
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Analyse de rentabilité</h1><p>Marge brute & nette · classement par rentabilité</p></div>
+     <button class="btn ghost sm" onclick="settingsForm()">⚙ Paramètres</button></div>
+   <div class="banner">📈 <div>Marge brute = prix de vente − matières − emballages. Marge nette = marge brute − charges sociales (${getSettings().socialGoods}% marchandise, ${getSettings().socialService}% prestation). L'échelle de rentabilité se base sur le taux de marge nette.</div></div>
+   <div class="panel"><h2>Classement clients par rentabilité</h2>${clientTable}</div>
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:18px 0 4px;font-size:1.2rem">Rentabilité par événement</h2>
+   ${eventCards}`;
+}
+
+// Paramètres : taux de charges sociales + coûts d'emballage par taille de coffret.
+function settingsForm(){
+  const s=getSettings();
+  openModal(`<h3>Paramètres de gestion</h3>
+    <p class="note">Charges sociales appliquées au calcul de la marge nette.</p>
+    <div class="row2">
+      <div class="field"><label>Charges sociales — marchandise (%)</label><input type="number" step="0.1" id="set_sg" value="${s.socialGoods}"></div>
+      <div class="field"><label>Charges sociales — prestation (%)</label><input type="number" step="0.1" id="set_ss" value="${s.socialService}"></div>
+    </div>
+    <p class="note" style="margin-top:8px">Coût emballage / consommables par coffret (€).</p>
+    <div class="row2">
+      ${BOX_SIZES.map(t=>`<div class="field"><label>Coffret ${t}</label><input type="number" step="0.01" id="set_pk_${t}" value="${s.packaging[t]!=null?s.packaging[t]:0}"></div>`).join('')}
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveSettingsForm()">Enregistrer</button></div>`);
+}
+function saveSettingsForm(){
+  const s=getSettings();
+  s.socialGoods=Math.max(0,+val('set_sg')||0);
+  s.socialService=Math.max(0,+val('set_ss')||0);
+  s.packaging={}; BOX_SIZES.forEach(t=>{ s.packaging[t]=money2(+val('set_pk_'+t)||0); });
+  saveSettings(s);
+  closeModal();
+  if(view==='rentabilite') renderProfit(); else if(view==='compta') renderCompta(); else toast('Paramètres enregistrés ✓');
+  toast('Paramètres enregistrés ✓');
+}
+
 
 /* ============================================================
    ANALYSE & PRODUCTION — tableau de bord décisionnel
@@ -4454,6 +4887,7 @@ async function collectOrderExport(orderId){
     if(ln.type==='don') return {label:'Don (offert)', remisePct:0,
       parfums:[...(ln.parfums||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte,offert:true})),
                ...(ln.items||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom+' (GF)',qte:p.qte,offert:true}))]};
+    if(ln.type==='prestation') return {label:`Prestation : ${ln.libelle||'service'}`, remisePct:(ln.remiseType==='pct'?+ln.remisePct||0:0), parfums:[]};
     return {label:ln.type, parfums:[]};
   });
   const totalMacarons = lignes.reduce((s,ln)=>{
