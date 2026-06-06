@@ -30,6 +30,10 @@ db.version(3).stores({
 db.version(4).stores({
   backups:         '++id, date, type'
 });
+// v5 : charges / dépenses (comptabilité)
+db.version(5).stores({
+  charges:         '++id, date, categorie'
+});
 
 // --------- Catalogue de référence ---------
 const FLAVORS = [
@@ -148,7 +152,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -1667,7 +1671,8 @@ function syncPaymentFields(o){
   o.montantEncaisse = orderPaid(o);
   if(o.paiements.length){
     const last=o.paiements[o.paiements.length-1];
-    o.datePaiement = (st==='Payé') ? (o.paiements.reduce((d,p)=>p.date&&p.date>d?p.date:d,'')||today()) : (last.date||o.datePaiement||'');
+    // datePaiement = date du dernier règlement (ou la plus tardive si soldé). Jamais auto-générée.
+    o.datePaiement = (st==='Payé') ? (o.paiements.reduce((d,p)=>p.date&&p.date>d?p.date:d,'')) : (last.date||'');
     o.reglement = last.moyen || o.reglement || '';
   }
   return o;
@@ -1691,20 +1696,38 @@ function applyAutoPay(o){
   return o;
 }
 
-// Action rapide « Payé » : enregistre un paiement soldant la commande (date obligatoire).
+// Action « Solder » : ouvre un encaissement du solde, SANS date auto — l'utilisateur saisit date + mode.
 async function markPaid(id, fromModal){
   const o=await db.orders.get(id); if(!o) return;
   if(orderPayStatus(o)==='Payé'){ toast('Déjà soldée'); return; }
   const reste=orderBalance(o);
   if(reste<=0){ toast('Rien à encaisser'); return; }
-  // paiement soldant : on encaisse le solde restant, daté du jour, moyen = règlement connu ou Carte
-  o.paiements=(o.paiements||[]).concat([{date:today(), montant:reste, moyen:o.reglement||'Carte'}]);
+  openModal(`<h3>Encaisser le solde</h3>
+    <p class="note">Solde restant dû : <b>${euro(reste)}</b>. Renseignez la date réelle du règlement (libre) et le mode.</p>
+    <div class="field"><label>Montant encaissé (€)</label><input type="number" step="0.01" min="0" id="solde_mt" value="${reste}"></div>
+    <div class="field"><label>Date de règlement</label><input type="date" id="solde_date" value=""></div>
+    <div class="field"><label>Mode de paiement</label>
+      <select id="solde_moyen"><option value="">— mode —</option>${PAY_METHODS.map(m=>`<option>${m}</option>`).join('')}</select></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="confirmMarkPaid(${id},${fromModal?1:0})">Enregistrer l'encaissement</button>
+    </div>`);
+}
+async function confirmMarkPaid(id, fromModal){
+  const mt=money2(+(document.getElementById('solde_mt')?.value)||0);
+  const date=document.getElementById('solde_date')?.value||'';
+  const moyen=document.getElementById('solde_moyen')?.value||'';
+  if(mt<=0){ toast('Montant requis'); return; }
+  if(!date){ toast('Date de règlement obligatoire'); return; }
+  if(!moyen){ toast('Mode de paiement obligatoire'); return; }
+  const o=await db.orders.get(id); if(!o) return;
+  o.paiements=(o.paiements||[]).concat([{date, montant:mt, moyen}]);
   syncPaymentFields(o);
   await db.orders.update(id, {paiements:o.paiements, paiement:o.paiement, statutPaiement:o.statutPaiement,
     soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement});
-  if(fromModal) closeModal();
+  closeModal();
   renderCmd();
-  toast('Commande soldée ✓ ('+euro(reste)+' le '+fmtDate(today())+')');
+  toast('Encaissement enregistré ✓ ('+euro(mt)+' le '+fmtDate(date)+')');
 }
 let cmdSearch='';
 let _cmdCache=null;
@@ -1878,13 +1901,16 @@ async function cmdView(id){
 // Total d'une ligne stockée (parfums/items en tableaux)
 function lineTotalStored(ln){
   if(ln.type==='coffret'){
-    const base=(BOX_PRICES[ln.taille]!=null)?BOX_PRICES[ln.taille]:0;
+    // priorité au prix scellé dans la commande (immunise les ventes passées)
+    const base = (ln.prixUnitaireApplique!=null && +ln.prixUnitaireApplique>=0)
+      ? +ln.prixUnitaireApplique
+      : ((BOX_PRICES[ln.taille]!=null)?BOX_PRICES[ln.taille]:0);
     const nbDiff=(ln.parfums||[]).filter(p=>p.qte>0).length;
     const limit=BOX_FLAVOR_LIMIT[ln.taille]||0;
-    return base + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE;
+    return money2(base + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE);
   }
-  if(ln.type==='evenement') return (ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE;
-  if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); return tot*pu; }
+  if(ln.type==='evenement') return money2((ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE);
+  if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); return money2(tot*pu); }
   if(ln.type==='don') return 0;
   return 0;
 }
@@ -1922,7 +1948,7 @@ function _parfumsToObj(p){
 }
 function _lineToEdit(ln){
   const t=ln.type;
-  if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
+  if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null)};
   if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items)};
@@ -1990,7 +2016,13 @@ async function cmdForm(id, opts){
    <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_cal" style="width:auto" ${id?'':'checked'}> Ajouter au calendrier</label>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
   // initialise le registre de paiements en mémoire (copie de travail)
-  cmdPayments = JSON.parse(JSON.stringify(o.paiements || ((o.paiement==='Payé') ? [{date:o.datePaiement||today(), montant:+o.montant||0, moyen:o.reglement||'Carte'}] : [])));
+  // Initialise le registre d'édition. Pour une ancienne commande « Payé » sans registre,
+  // on reconstitue une ligne à partir des données réellement enregistrées (date/mode si connus),
+  // sans jamais inventer une date.
+  cmdPayments = JSON.parse(JSON.stringify(
+    (o.paiements && o.paiements.length) ? o.paiements
+    : (o.paiement==='Payé' ? [{date:o.datePaiement||'', montant:+o.montant||0, moyen:o.reglement||''}] : [])
+  ));
   const mt=document.getElementById('f_mt'); if(mt && !mt.value) mt.dataset.auto='1';
   drawPayments();
   drawLines();
@@ -1999,30 +2031,41 @@ async function cmdForm(id, opts){
 let cmdPayments=[];
 function cmdAddPayment(){
   const reste=cmdCurrentBalance();
-  cmdPayments.push({date:today(), montant: reste>0?reste:0, moyen:'Carte'});
+  // Aucune donnée auto-générée : date et mode vides, à saisir manuellement.
+  // Seul le montant est pré-suggéré au solde restant (modifiable, et zéro accepté tant que non validé).
+  cmdPayments.push({date:'', montant: reste>0?reste:'', moyen:''});
   drawPayments(); cmdRecalc();
 }
 function cmdRemovePayment(i){ cmdPayments.splice(i,1); drawPayments(); cmdRecalc(); }
 function setPayField(i,field,v){
   if(!cmdPayments[i]) return;
-  cmdPayments[i][field] = field==='montant' ? (money2(+v||0)) : v;
-  // ne pas redessiner pendant la frappe (garde le focus) ; juste recalculer le résumé
-  cmdUpdatePaySummary();
+  cmdPayments[i][field] = field==='montant' ? (v===''?'':money2(+v||0)) : v;
+  // redessine seulement pour la validation visuelle des champs date/mode ; le montant garde le focus
+  if(field==='montant') cmdUpdatePaySummary(); else drawPayments();
 }
 // Total commande courant (depuis le champ montant)
 function cmdCurrentTotal(){ return money2(+(document.getElementById('f_mt')?.value)||0); }
 function cmdCurrentPaid(){ return money2(cmdPayments.reduce((s,p)=>s+((+p.montant)||0),0)); }
 function cmdCurrentBalance(){ return money2(cmdCurrentTotal()-cmdCurrentPaid()); }
 const PAY_METHODS_LIST = PAY_METHODS;
+// Une ligne d'encaissement est valide si montant>0 ET date ET mode renseignés.
+function payRowValid(p){ return (+p.montant)>0 && !!p.date && !!p.moyen; }
 function drawPayments(){
   const box=document.getElementById('payList'); if(!box) return;
-  box.innerHTML = cmdPayments.length ? cmdPayments.map((p,i)=>`
-    <div class="pay-row">
-      <input type="date" value="${esc(p.date||today())}" onchange="setPayField(${i},'date',this.value)" title="Date de paiement">
-      <input type="number" step="0.01" min="0" value="${p.montant||''}" placeholder="€" oninput="setPayField(${i},'montant',this.value)" title="Montant encaissé">
-      <select onchange="setPayField(${i},'moyen',this.value)" title="Moyen de paiement">${PAY_METHODS_LIST.map(m=>`<option ${p.moyen===m?'selected':''}>${m}</option>`).join('')}</select>
+  box.innerHTML = cmdPayments.length ? cmdPayments.map((p,i)=>{
+    const missing = !payRowValid(p);
+    return `
+    <div class="pay-row${missing?' pay-row-err':''}">
+      <input type="date" value="${esc(p.date||'')}" onchange="setPayField(${i},'date',this.value)" title="Date de règlement (obligatoire)" ${!p.date?'style="border-color:var(--red,#b3261e)"':''}>
+      <input type="number" step="0.01" min="0" value="${p.montant===''?'':p.montant}" placeholder="€" oninput="setPayField(${i},'montant',this.value)" title="Montant encaissé (obligatoire)" ${!((+p.montant)>0)?'style="border-color:var(--red,#b3261e)"':''}>
+      <select onchange="setPayField(${i},'moyen',this.value)" title="Mode de paiement (obligatoire)" ${!p.moyen?'style="border-color:var(--red,#b3261e)"':''}>
+        <option value="" ${!p.moyen?'selected':''}>— mode —</option>
+        ${PAY_METHODS_LIST.map(m=>`<option ${p.moyen===m?'selected':''}>${m}</option>`).join('')}</select>
       <button type="button" class="act del" onclick="cmdRemovePayment(${i})" title="Retirer">✕</button>
-    </div>`).join('') : '<p class="note" style="margin:4px 0">Aucun paiement encaissé pour l\'instant.</p>';
+    </div>`;
+  }).join('') : '<p class="note" style="margin:4px 0">Aucun encaissement. Cliquez « Ajouter un paiement » pour enregistrer un règlement (partiel ou total).</p>';
+  const anyMissing = cmdPayments.some(p=>!payRowValid(p));
+  if(anyMissing){ box.insertAdjacentHTML('beforeend', '<p class="note" style="color:var(--red,#b3261e);margin-top:4px">⚠ Chaque encaissement exige un montant, une date et un mode de paiement.</p>'); }
   cmdUpdatePaySummary();
 }
 function cmdUpdatePaySummary(){
@@ -2145,7 +2188,9 @@ function drawCoffretLine(ln,i){
     ${lineRemiseRow(ln,i)}
   </div>`;
 }
-function setCoffretTaille(i,v){ cmdLines[i].taille=+v; // purge les parfums au-delà de la nouvelle taille
+function setCoffretTaille(i,v){ cmdLines[i].taille=+v;
+  cmdLines[i].prixUnitaireApplique=null; // taille changée → re-tarifer au prix courant du catalogue
+  // purge les parfums au-delà de la nouvelle taille
   const max=+v; Object.keys(cmdLines[i].parfums).forEach(k=>{ if(cmdLines[i].parfums[k]>max) cmdLines[i].parfums[k]=max; }); drawLines(); }
 function setCoffretParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 
@@ -2230,7 +2275,7 @@ function setDonItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdL
 // Prix d'une ligne AVANT remise de ligne (arrondi strict au centime)
 function lineTotalBase(ln){
   if(ln.type==='coffret'){
-    const base = (BOX_PRICES[ln.taille]!=null) ? BOX_PRICES[ln.taille] : (cmdProductsCache.find(p=>+p.taille===+ln.taille)||{}).prix||0;
+    const base = coffretUnitPrice(ln);
     const nbDiff = Object.values(ln.parfums||{}).filter(q=>q>0).length;
     const limit = BOX_FLAVOR_LIMIT[ln.taille]||0;
     const over = Math.max(0, nbDiff-limit);
@@ -2240,6 +2285,16 @@ function lineTotalBase(ln){
   if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='don') return 0;
   return 0;
+}
+// Prix unitaire d'un coffret, par ordre de priorité :
+//  1) prix SCELLÉ sur la ligne (prixUnitaireApplique) — protège les commandes passées
+//  2) catalogue dynamique (db.products via cmdProductsCache) — priorité aux tarifs saisis dans l'app
+//  3) constante BOX_PRICES — repli historique uniquement
+function coffretUnitPrice(ln){
+  if(ln && ln.prixUnitaireApplique!=null && +ln.prixUnitaireApplique>=0) return +ln.prixUnitaireApplique;
+  const cat = (typeof cmdProductsCache!=='undefined' ? cmdProductsCache : []).find(p=>+p.taille===+(ln&&ln.taille));
+  if(cat && cat.prix!=null) return +cat.prix;
+  return (BOX_PRICES[ln&&ln.taille]!=null) ? BOX_PRICES[ln.taille] : 0;
 }
 // Remise de ligne en € (bornée 0–100 %, arrondie au centime)
 function lineRemiseEuro(ln){
@@ -2309,20 +2364,21 @@ async function saveCmd(id){
   // normaliser les lignes (parfums/items en tableaux pour stockage propre), remise de ligne conservée
   const lignes = cmdLines.map(ln=>{
     const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
-    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
   });
   const remiseGlobale = Math.max(0, Math.min(100, +val('f_remiseg')||0));
-  // Registre de paiements : chaque paiement DOIT avoir une date (traçabilité obligatoire).
-  const paiements = (cmdPayments||[]).filter(p=> (+p.montant)>0 || p.moyen).map(p=>({
-    date: p.date||today(), montant: money2(+p.montant||0), moyen: p.moyen||'Carte'
-  }));
-  for(const p of paiements){
-    if(!p.date){ toast('Chaque paiement doit avoir une date'); return; }
-    if(p.montant<=0){ toast('Chaque paiement doit avoir un montant > 0'); return; }
+  // Registre de paiements : chaque encaissement exige montant>0 + date + mode. AUCUNE date auto-générée.
+  // On considère "entamé" tout encaissement où au moins un champ a été touché.
+  const touched = (cmdPayments||[]).filter(p=> (+p.montant)>0 || p.date || p.moyen);
+  for(const p of touched){
+    if(!((+p.montant)>0)){ toast('Chaque encaissement doit avoir un montant > 0'); return; }
+    if(!p.date){ toast('Chaque encaissement doit avoir une date de règlement'); return; }
+    if(!p.moyen){ toast('Chaque encaissement doit avoir un mode de paiement'); return; }
   }
+  const paiements = touched.map(p=>({ date:p.date, montant:money2(+p.montant||0), moyen:p.moyen }));
   const montant=money2(+val('f_mt')||0);
   const o={
     clientId:+val('f_cl')||0, date:val('f_date'),
@@ -2462,6 +2518,115 @@ async function saveLink(orderId){
    CALENDRIER
    ============================================================ */
 let calRef=new Date();
+
+/* ============================================================
+   COMPTABILITÉ — moteur en TRÉSORERIE (cash basis)
+   Principe clé : le CA est comptabilisé à la DATE RÉELLE D'ENCAISSEMENT
+   (date de chaque ligne de paiement), pas à la date de commande/livraison.
+   Indépendant des modules Commandes/Stocks : ne lit que les données brutes.
+   ============================================================ */
+function monthKey(d){ return (d||'').slice(0,7); }   // 'YYYY-MM'
+function monthLabel(k){
+  if(!k) return '—';
+  const [y,m]=k.split('-'); const noms=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
+  return `${noms[(+m)-1]||m} ${y}`;
+}
+async function computeAccounting(opts){
+  opts=opts||{};
+  const orders = await db.orders.toArray();
+  const charges = await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
+  const recipes = await db.recipes.toArray();
+  const recipeItems = await db.recipeItems.toArray();
+  const lots = await db.materialLots.toArray();
+
+  // 1) ENCAISSEMENTS par date réelle de paiement (cash basis)
+  //    Chaque ligne de paiement {date, montant, moyen} compte au mois de SA date.
+  const encByMonth={};      // 'YYYY-MM' -> total encaissé
+  const encByMethod={};     // moyen -> total
+  let totalEncaisse=0;
+  const acomptes=[];        // encaissements partiels (commande non soldée à cette date)
+  orders.forEach(o=>{
+    const pays = (o.paiements||[]);
+    // rétro-compat : ancienne commande "Payé" sans registre → on rattache au datePaiement connu
+    const list = pays.length ? pays
+      : (o.paiement==='Payé' && o.datePaiement ? [{date:o.datePaiement, montant:+o.montant||0, moyen:o.reglement||'—'}] : []);
+    list.forEach(p=>{
+      const m=monthKey(p.date); if(!m) return;
+      const v=money2(p.montant);
+      encByMonth[m]=money2((encByMonth[m]||0)+v);
+      encByMethod[p.moyen||'—']=money2((encByMethod[p.moyen||'—']||0)+v);
+      totalEncaisse=money2(totalEncaisse+v);
+    });
+  });
+
+  // 2) CHARGES par mois (date de la charge) + par catégorie
+  const chargeByMonth={}, chargeByCat={};
+  let totalCharges=0;
+  charges.forEach(c=>{
+    const m=monthKey(c.date); const v=money2(c.montant);
+    if(m) chargeByMonth[m]=money2((chargeByMonth[m]||0)+v);
+    chargeByCat[c.categorie||'Autre']=money2((chargeByCat[c.categorie||'Autre']||0)+v);
+    totalCharges=money2(totalCharges+v);
+  });
+
+  // 3) Coût matières des commandes (pour marge brute indicative) — au mois d'encaissement
+  //    On rattache le coût matière estimé d'une commande au(x) mois où elle est encaissée,
+  //    au prorata du montant encaissé.
+  const costByMonth={};
+  orders.forEach(o=>{
+    const total=money2(o.montant); if(total<=0) return;
+    const coutMat = estimateOrderMaterialCost(o, recipes, recipeItems, lots);
+    const pays = (o.paiements&&o.paiements.length)?o.paiements
+      :(o.paiement==='Payé'&&o.datePaiement?[{date:o.datePaiement,montant:total}]:[]);
+    pays.forEach(p=>{
+      const m=monthKey(p.date); if(!m) return;
+      const ratio=total>0?(money2(p.montant)/total):0;
+      costByMonth[m]=money2((costByMonth[m]||0)+coutMat*ratio);
+    });
+  });
+
+  // 4) Série mensuelle consolidée
+  const months=[...new Set([...Object.keys(encByMonth),...Object.keys(chargeByMonth)])].sort();
+  const serie=months.map(m=>{
+    const ca=encByMonth[m]||0, ch=chargeByMonth[m]||0, cout=costByMonth[m]||0;
+    return {mois:m, ca, charges:ch, coutMatieres:money2(cout),
+      margeBrute:money2(ca-cout), resultat:money2(ca-ch-cout)};
+  });
+
+  // 5) Solde clients dû (créances) = total commandes − encaissé, pour les non soldées
+  let creances=0;
+  orders.forEach(o=>{ const b=orderBalance(o); if(b>0) creances=money2(creances+b); });
+
+  const totalCout=money2(serie.reduce((s,x)=>s+x.coutMatieres,0));
+  return {
+    serie, encByMethod, chargeByCat,
+    totalEncaisse, totalCharges, totalCoutMatieres:totalCout,
+    margeBrute: money2(totalEncaisse-totalCout),
+    resultat: money2(totalEncaisse-totalCharges-totalCout),
+    creances,
+    nbCharges: charges.length
+  };
+}
+// Coût matières estimé d'une commande (somme sur ses lignes coffret/événement via les recettes).
+function estimateOrderMaterialCost(o, recipes, recipeItems, lots){
+  // coût unitaire matière par recette (réutilise coutRecette/ rendement)
+  let cost=0;
+  const lignes = orderToLines(o);
+  lignes.forEach(ln=>{
+    let pieces=0;
+    if(ln.type==='coffret') pieces=+ln.taille||0;
+    else if(ln.type==='evenement') pieces=+ln.evQte||0;
+    else if(ln.type==='grand') pieces=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
+    else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0);
+    if(pieces<=0) return;
+    // coût unitaire moyen toutes recettes confondues (approximation si parfum↔recette non résolu)
+    const perRecipeUnit = recipes.map(r=>{ const cb=coutRecette(r.id, recipeItems, lots); return r.rendement>0?cb/r.rendement:0; }).filter(x=>x>0);
+    const avgUnit = perRecipeUnit.length ? perRecipeUnit.reduce((s,x)=>s+x,0)/perRecipeUnit.length : 0;
+    cost += pieces*avgUnit;
+  });
+  return money2(cost);
+}
+
 // === insère moteur computeStats (voir stats_engine.js) ===
 /* ============================================================
    STATISTIQUES  (commandes payées uniquement — recalcul depuis brut)
@@ -2918,6 +3083,101 @@ async function renderStats(){
    </div>
    <div class="panel"><h2>Chiffre d'affaires mensuel</h2>${caChart}</div>
    <div class="panel"><h2>Macarons écoulés par mois</h2>${macChart||'<p class="note">—</p>'}</div>`;
+}
+
+/* ============================================================
+   COMPTABILITÉ — écran de pilotage (CA encaissé, charges, marges)
+   ============================================================ */
+const CHARGE_CATS = ['Matières premières','Emballages','Équipement','Loyer','Énergie','Transport','Marketing','Frais bancaires','Cotisations / impôts','Formation','Autre'];
+async function renderCompta(){
+  const A = await computeAccounting();
+  const fmtPct = (n,d)=> d>0 ? Math.round(n/d*100) : 0;
+
+  // graphe CA encaissé vs charges par mois (lineChart attend des séries de points {x,y})
+  let chart='';
+  if(A.serie.length){
+    const mkPts = sel => A.serie.map((s,i)=>({x:i, y:sel(s)}));
+    const labelByIdx = A.serie.map(s=>monthLabel(s.mois));
+    chart = lineChart([
+      {name:'CA encaissé', points:mkPts(s=>s.ca), color:'#52252F'},
+      {name:'Charges', points:mkPts(s=>s.charges), color:'#b3261e'},
+      {name:'Résultat', points:mkPts(s=>s.resultat), color:'#3f7d52'}
+    ], {zero:true, xlabel:i=>labelByIdx[i]||'', fmt:v=>Math.round(v)+'€'});
+  }
+
+  const serieRows = A.serie.slice().reverse().map(s=>`<tr>
+     <td>${monthLabel(s.mois)}</td>
+     <td>${euro(s.ca)}</td>
+     <td>${euro(s.coutMatieres)}</td>
+     <td>${euro(s.charges)}</td>
+     <td style="font-weight:600;color:${s.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(s.resultat)}</td></tr>`).join('');
+
+  const methodRows = Object.entries(A.encByMethod).sort((a,b)=>b[1]-a[1])
+    .map(([m,v])=>`<div class="sum-box"><span>${esc(m)}</span><b>${euro(v)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(v,A.totalEncaisse)}%)</span></b></div>`).join('');
+  const catRows = Object.entries(A.chargeByCat).sort((a,b)=>b[1]-a[1])
+    .map(([c,v])=>`<div class="sum-box"><span>${esc(c)}</span><b>${euro(v)}</b></div>`).join('');
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Comptabilité</h1><p>Pilotage en trésorerie — CA comptabilisé à l'encaissement réel</p></div>
+     <button class="btn gold" onclick="chargeForm()">＋ Charge</button></div>
+   <div class="banner">📒 <div>Le chiffre d'affaires est comptabilisé à la <b>date réelle d'encaissement</b> de chaque règlement (et non à la date de commande ou de livraison). Un paiement de juin pour une vente livrée en mai compte donc en juin.</div></div>
+
+   <div class="kpi-grid">
+     <div class="kpi"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b></div>
+     <div class="kpi"><span>Charges</span><b>${euro(A.totalCharges)}</b></div>
+     <div class="kpi"><span>Coût matières (est.)</span><b>${euro(A.totalCoutMatieres)}</b></div>
+     <div class="kpi"><span>Résultat</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b></div>
+     <div class="kpi"><span>Marge brute</span><b>${euro(A.margeBrute)} <span style="font-size:.7rem;color:#9a8a82">(${fmtPct(A.margeBrute,A.totalEncaisse)}%)</span></b></div>
+     <div class="kpi"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b></div>
+   </div>
+
+   ${A.serie.length?`<div class="panel"><h2>CA encaissé, charges & résultat par mois</h2>${chart}</div>`:''}
+
+   <div class="panel"><h2>Détail mensuel (trésorerie)</h2>
+   ${A.serie.length?`<div class="table-wrap"><table><thead><tr><th>Mois</th><th>CA encaissé</th><th>Coût mat.</th><th>Charges</th><th>Résultat</th></tr></thead>
+     <tbody>${serieRows}</tbody></table></div>`:`<div class="empty">Aucun encaissement ni charge enregistré.</div>`}
+   </div>
+
+   <div class="panel"><h2>Encaissements par mode de paiement</h2>
+     ${methodRows||'<p class="note">Aucun encaissement.</p>'}</div>
+
+   <div class="panel"><h2>Charges par catégorie <span class="tag warn">${A.nbCharges}</span></h2>
+     ${catRows||'<p class="note">Aucune charge. Ajoutez vos dépenses (matières, emballages, loyer…) pour suivre votre résultat réel.</p>'}
+     <button class="btn ghost sm" style="margin-top:8px" onclick="renderChargesList()">Voir / gérer les charges</button></div>
+
+   <p class="note" style="margin-top:10px">Le coût matières est une estimation moyenne (coût recette ÷ rendement) pour donner une marge indicative. Pour la comptabilité officielle, appuyez-vous sur vos charges saisies et l'export.</p>`;
+}
+// Liste détaillée des charges (gestion : éditer / supprimer)
+async function renderChargesList(){
+  const charges = (await db.charges.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  openModal(`<h3>Charges / dépenses</h3>
+    <button class="btn gold sm" style="margin-bottom:8px" onclick="chargeForm()">＋ Nouvelle charge</button>
+    ${charges.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Catégorie</th><th>Libellé</th><th>Montant</th><th></th></tr></thead>
+      <tbody>${charges.map(c=>`<tr><td>${fmtDate(c.date)}</td><td>${esc(c.categorie||'—')}</td><td>${esc(c.libelle||'')}</td><td>${euro(c.montant)}</td>
+        <td style="text-align:right"><span class="act" onclick="chargeForm(${c.id})">Modifier</span><span class="act del" onclick="delCharge(${c.id})">Suppr.</span></td></tr>`).join('')}</tbody></table></div>`
+      :'<p class="note">Aucune charge enregistrée.</p>'}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+async function chargeForm(id){
+  const c = id ? await db.charges.get(id) : {};
+  openModal(`<h3>${id?'Modifier':'Nouvelle'} charge</h3>
+    <div class="field"><label>Date *</label><input type="date" id="ch_date" value="${esc(c.date||'')}"></div>
+    <div class="field"><label>Catégorie *</label><select id="ch_cat">${CHARGE_CATS.map(x=>`<option ${c.categorie===x?'selected':''}>${x}</option>`).join('')}</select></div>
+    <div class="field"><label>Libellé</label><input id="ch_lib" value="${esc(c.libelle||'')}" placeholder="ex : Achat poudre d'amande"></div>
+    <div class="field"><label>Montant (€) *</label><input type="number" step="0.01" min="0" id="ch_mt" value="${c.montant||''}"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCharge(${id||0})">Enregistrer</button></div>`);
+}
+async function saveCharge(id){
+  const date=val('ch_date'), categorie=val('ch_cat'), libelle=val('ch_lib'), montant=money2(+val('ch_mt')||0);
+  if(!date){ toast('Date obligatoire'); return; }
+  if(montant<=0){ toast('Montant obligatoire'); return; }
+  const o={date, categorie, libelle, montant};
+  if(id) await db.charges.update(id,o); else await db.charges.add(o);
+  closeModal(); renderCompta(); toast('Charge enregistrée ✓');
+}
+async function delCharge(id){
+  if(!confirm('Supprimer cette charge ?')) return;
+  await db.charges.delete(id); closeModal(); renderCompta(); toast('Charge supprimée');
 }
 
 /* ============================================================
@@ -3889,7 +4149,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
