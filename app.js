@@ -108,9 +108,30 @@ const subMoney = (a,b) => money2(((+a)||0)-((+b)||0));
 const mulMoney = (a,b) => money2(((+a)||0)*((+b)||0));
 const addQty  = (...xs) => round3(xs.reduce((s,x)=>s+((+x)||0),0));
 const subQty  = (a,b) => round3(((+a)||0)-((+b)||0));
-const euro  = n => (money2(n)).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
+// ---- MODE DISCRET / CONFIDENTIALITÉ ----
+// Masque les chiffres sensibles (CA, montants, volumes de stock) d'un simple clic,
+// utile devant un client ou un fournisseur. Persisté dans localStorage (comme sm_autoPay).
+function privacyModeEnabled(){ return localStorage.getItem('sm_privacyMode')==='1'; }
+function setPrivacyMode(on){ localStorage.setItem('sm_privacyMode', on?'1':'0'); }
+function togglePrivacyMode(){ setPrivacyMode(!privacyModeEnabled()); render(); }
+
+// Suspension ponctuelle du masquage : la SAISIE et le DÉTAIL d'une commande restent
+// toujours en clair (on a besoin de voir les prix face au client), même en mode discret.
+// _privacySuspend>0 ⇒ euro()/qtyP() n'appliquent pas le masquage.
+let _privacySuspend = 0;
+function privacyMasked(){ return privacyModeEnabled() && _privacySuspend<=0; }
+// Exécute fn() avec le masquage suspendu (utilisé pour le rendu HTML synchrone d'une modale).
+function withClearMoney(fn){ _privacySuspend++; try{ return fn(); } finally{ _privacySuspend--; } }
+
+// euro() est privacy-aware : en mode discret, tous les montants deviennent « ••• € »,
+// SAUF pendant une suspension (saisie/détail de commande).
+// Comme tous les écrans passent par euro(), un seul interrupteur masque l'argent partout.
+const euro = n => privacyMasked() ? '••• €'
+  : (money2(n)).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
 // Quantité : arrondit proprement (max 3 décimales) et supprime les zéros parasites
 const qty = n => { const v = round3(n); return v.toLocaleString('fr-FR', {maximumFractionDigits:3}); };
+// Masque un volume de stock en mode discret (sauf suspension).
+const qtyP = n => privacyMasked() ? '•••' : qty(n);
 const today = () => new Date().toISOString().slice(0,10);
 const esc   = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function val(id){ const el = document.getElementById(id); return el ? (el.value||'').trim() : ''; }
@@ -173,6 +194,7 @@ function openModal(html){ modal.innerHTML=html; overlay.classList.add('show');
   if(_histReady && !_popping){ try{ history.pushState({kind:'modal'}, '', '#modal'); }catch(e){} } }
 function closeModal(opts){
   overlay.classList.remove('show'); modal.innerHTML='';
+  _privacySuspend=0; // fin d'une éventuelle suspension du masquage (saisie/détail commande)
   // sécurité : couper toute caméra de scan encore active
   if(typeof stopScanStream==='function'){ try{ stopScanStream(); }catch(e){} }
   // si fermeture déclenchée par l'utilisateur (pas par un retour navigateur), consommer l'entrée d'historique
@@ -316,16 +338,18 @@ async function renderDash(){
   const max=Math.max(...data.map(d=>d.v),1);
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div></div>
+   <div class="topbar"><div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div>
+     <button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div>
+   ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    <div class="cards">
      <div class="card"><div class="corner">€</div><div class="lbl">CA ce mois</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s)</div></div>
      <div class="card"><div class="corner">∑</div><div class="lbl">CA total</div><div class="val">${euro(caTotal)}</div><div class="sub">depuis le début</div></div>
-     <div class="card"><div class="corner">⚙</div><div class="lbl">Macarons en stock</div><div class="val">${finis}</div><div class="sub">${productions.length} batch(s)</div></div>
+     <div class="card"><div class="corner">⚙</div><div class="lbl">Macarons en stock</div><div class="val">${qtyP(finis)}</div><div class="sub">${productions.length} batch(s)</div></div>
      <div class="card"><div class="corner">⬛</div><div class="lbl">Alertes stock</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil</div></div>
    </div>
-   <div class="panel"><h2>Chiffre d'affaires — 6 derniers mois</h2>
-     <div class="bar-wrap">${data.map(d=>`<div class="bar-col"><div class="bar-val">${d.v>0?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
+   <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
+     <div class="bar-wrap">${data.map(d=>`<div class="bar-col"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
    </div>
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
      <div class="panel"><h2>⚠ Matières à réapprovisionner</h2>
@@ -1892,6 +1916,7 @@ function cmdFilter(q){
 }
 // Vue détail d'une commande (multi-lignes)
 async function cmdView(id){
+  _privacySuspend=1; // détail de commande toujours en clair, même en mode discret
   const o = await db.orders.get(id);
   const cl = o.clientId ? await db.clients.get(o.clientId) : null;
   const lignes = orderToLines(o);
@@ -2028,6 +2053,7 @@ function orderToEditLines(o){ return orderToLines(o).map(_lineToEdit); }
 
 async function cmdForm(id, opts){
   opts = opts || {};
+  _privacySuspend=1; // saisie de commande toujours en clair, même en mode discret
   cmdClientsCache = await db.clients.toArray();
   cmdProductsCache = (await db.products.toArray()).filter(p=>p.actif!==false).sort((a,b)=>(+a.taille)-(+b.taille));
   const o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
@@ -3578,7 +3604,7 @@ async function renderCompta(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Comptabilité</h1><p>Pilotage en trésorerie — CA comptabilisé à l'encaissement réel</p></div>
-     <button class="btn gold" onclick="chargeForm()">＋ Charge</button></div>
+     <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️':'🙈'}</button><button class="btn gold" onclick="chargeForm()">＋ Charge</button></div></div>
    <div class="banner">📒 <div>Deux lectures du chiffre d'affaires : le <b>CA facturé</b> (total des commandes, à leur date) et le <b>CA encaissé</b> (règlements reçus, à leur date réelle). Une commande « en attente de paiement » est facturée mais n'entre pas dans le CA encaissé. Le CA des <b>marchés clôturés</b> est inclus (à leur date de clôture).${A.totalMarches>0?` Dont marchés : <b>${euro(A.totalMarches)}</b>.`:''}</div></div>
    <div class="flex" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
      <button class="btn" onclick="view='rentabilite';setActiveView&&setActiveView('rentabilite');renderProfit()">📈 Analyse de rentabilité</button>
@@ -3594,7 +3620,7 @@ async function renderCompta(){
      <div class="kpi"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b></div>
    </div>
 
-   ${A.serie.length?`<div class="panel"><h2>CA encaissé, charges & résultat par mois</h2>${chart}</div>`:''}
+   ${A.serie.length?`<div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none"':''}><h2>CA encaissé, charges & résultat par mois</h2>${chart}</div>`:''}
 
    <div class="panel"><h2>Détail mensuel (facturé vs encaissé)</h2>
    ${A.serie.length?`<div class="table-wrap"><table><thead><tr><th>Mois</th><th>CA facturé</th><th>CA encaissé</th><th>Charges</th><th>Résultat</th></tr></thead>
@@ -3671,7 +3697,7 @@ async function renderPilotage(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Pilotage stratégique</h1><p>Centre de pilotage financier — temps réel</p></div>
-     <button class="btn ghost sm" onclick="renderProfit()">Rentabilité détaillée →</button></div>
+     <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️':'🙈'}</button><button class="btn ghost sm" onclick="renderProfit()">Rentabilité détaillée →</button></div></div>
 
    <div class="kpi-grid">
      <div class="kpi"><span>CA ce mois</span><b>${euro(S.caMonth)}</b><span>${evoBadge(S.evoMonth)} vs mois dernier</span></div>
@@ -3682,7 +3708,7 @@ async function renderPilotage(){
      <div class="kpi"><span>Clients actifs</span><b>${S.activeClients}</b><span>sur ${S.totalClients} (90 j)</span></div>
    </div>
 
-   ${S.serie.length?`<div class="panel"><h2>Évolution du CA encaissé</h2>${chart}</div>`:''}
+   ${S.serie.length?`<div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none"':''}><h2>Évolution du CA encaissé</h2>${chart}</div>`:''}
 
    <div class="panel" style="border-left:4px solid var(--bordeaux)"><h2>💡 Recommandations</h2>
      ${recoCards||'<p class="note">Pas encore assez de données pour des recommandations. Enregistrez des ventes payées.</p>'}</div>
