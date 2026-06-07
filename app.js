@@ -133,6 +133,60 @@ const qty = n => { const v = round3(n); return v.toLocaleString('fr-FR', {maximu
 // Masque un volume de stock en mode discret (sauf suspension).
 const qtyP = n => privacyMasked() ? '•••' : qty(n);
 const today = () => new Date().toISOString().slice(0,10);
+// Calcule la DLC selon l'emplacement, à partir d'un horodatage (calcul SIMPLE, sans historique).
+// Règle de base : frigo = +7 jours ; congélateur = +4 mois.
+function computeDlc(emplacement, baseIso){
+  const d = baseIso ? new Date(baseIso) : new Date();
+  if(emplacement==='congelateur'){ d.setMonth(d.getMonth()+4); }
+  else { d.setDate(d.getDate()+7); } // frigo (et défaut prudent)
+  return d.toISOString().slice(0,10);
+}
+const FRIGO_DAYS = 7;        // durée de vie totale au frigo (jours)
+const CONGELO_MONTHS = 4;    // durée de vie au congélateur (mois)
+const MS_DAY = 86400000;
+// Calcule la DLC en TENANT COMPTE de l'historique des emplacements.
+// Principe sanitaire : le frigo dispose d'un budget total de 7 jours qui se CONSOMME
+// à chaque séjour au frigo (avant ET après congélation). La congélation met le compteur
+// en pause (le froid négatif ne consomme pas le budget frigo) et ajoute sa propre limite
+// de 4 mois tant que le produit reste congelé.
+// hist = [{lieu:'frigo'|'congelateur', ts:ISO, ...}] dans l'ordre chronologique.
+// refIso = instant "de référence" (le dernier déplacement, ou maintenant) à partir duquel
+// on projette le temps restant pour le segment courant.
+function computeDlcFromHistory(hist, refIso){
+  if(!Array.isArray(hist) || !hist.length) return null;
+  const segs = hist.slice().sort((a,b)=>(a.ts||'').localeCompare(b.ts||''));
+  const ref = new Date(refIso||new Date().toISOString());
+  let frigoConsumedMs = 0;        // temps frigo déjà consommé (segments clos)
+  // parcourt les segments fermés (du début jusqu'à l'avant-dernier) pour cumuler le temps frigo écoulé
+  for(let i=0;i<segs.length-1;i++){
+    if(segs[i].lieu==='frigo'){
+      const start=new Date(segs[i].ts), end=new Date(segs[i+1].ts);
+      const dur=end-start; if(dur>0) frigoConsumedMs+=dur;
+    }
+  }
+  const last=segs[segs.length-1];
+  const lastStart=new Date(last.ts);
+  if(last.lieu==='congelateur'){
+    // DLC = entrée au congélo + 4 mois (le budget frigo restant est gelé jusqu'à la décongélation)
+    const d=new Date(lastStart); d.setMonth(d.getMonth()+CONGELO_MONTHS);
+    return d.toISOString().slice(0,10);
+  }
+  // segment courant = frigo : budget restant = 7j - temps frigo déjà consommé (segments précédents)
+  // + temps déjà écoulé dans le segment frigo courant (entre lastStart et ref)
+  const currentFrigoElapsed = Math.max(0, ref - lastStart);
+  const totalFrigoConsumed = frigoConsumedMs + currentFrigoElapsed;
+  const resteMs = Math.max(0, FRIGO_DAYS*MS_DAY - totalFrigoConsumed);
+  const dlc=new Date(ref.getTime()+resteMs);
+  return dlc.toISOString().slice(0,10);
+}
+// Horodatage lisible "le JJ/MM/AAAA à HHhMM" à partir d'un ISO.
+function fmtDateTime(iso){
+  if(!iso) return '—';
+  const d=new Date(iso); if(isNaN(d)) return '—';
+  const date=d.toLocaleDateString('fr-FR');
+  const h=String(d.getHours()).padStart(2,'0'), mn=String(d.getMinutes()).padStart(2,'0');
+  return `${date} à ${h}h${mn}`;
+}
 const esc   = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function val(id){ const el = document.getElementById(id); return el ? (el.value||'').trim() : ''; }
 function fmtDate(s){ if(!s) return ''; const d = new Date(s); return isNaN(d)?'':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}); }
@@ -315,11 +369,13 @@ async function stockParMatiere(materialId){
    ============================================================ */
 async function renderDash(){
   const now=new Date(), m=now.getMonth(), y=now.getFullYear();
-  const [orders, clients, materials, productions, events, markets] = await Promise.all([
+  const [orders, clients, materials, productions, events, markets, recipes] = await Promise.all([
     db.orders.toArray(), db.clients.toArray(), db.materials.toArray(),
     db.productions.toArray(), db.events.toArray(),
-    (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[])
+    (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]),
+    db.recipes.toArray()
   ]);
+  const recName = rid => (recipes.find(r=>r.id===rid)||{}).produitNom||'Produit';
   // CA des marchés clôturés (somme espèces+CB+autre), rattaché à leur date de clôture.
   const closedMk = (markets||[]).filter(k=>k.statut==='clos').map(k=>{
     const ca=k.ca||{}; return {date:(k.dateCloture||k.date||''), montant:money2((+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0))};
@@ -341,6 +397,20 @@ async function renderDash(){
   }
   const finis = productions.reduce((s,p)=>s+(+p.qteRestante||0),0);
 
+  // Alertes DLC produits finis (suivi en sourdine) : seuil adapté à l'emplacement.
+  // Frigo : alerte à ≤2 jours. Congélateur : alerte à ≤14 jours. Expiré = priorité.
+  const prodDlcAlert=[];
+  productions.forEach(p=>{
+    if(round3(+p.qteRestante)<=0 || !p.dlcProduit) return;
+    const j=daysTo(p.dlcProduit); if(j===null) return;
+    const seuil = p.emplacement==='congelateur' ? 14 : 2;
+    if(j<=seuil){
+      prodDlcAlert.push({nom:recName(p.recipeId), lot:p.lotProduction||('#'+p.id),
+        dlc:p.dlcProduit, j, emplacement:p.emplacement||'', qte:round3(+p.qteRestante)});
+    }
+  });
+  prodDlcAlert.sort((a,b)=>a.j-b.j);
+
   const upcoming = events.filter(e=>e.date>=today()).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
   const months=[]; for(let i=5;i>=0;i--){const d=new Date(y,m-i,1);months.push({k:d.toISOString().slice(0,7),l:d.toLocaleDateString('fr-FR',{month:'short'})});}
   const data=months.map(mo=>({...mo,v: money2(
@@ -353,7 +423,8 @@ async function renderDash(){
    <div class="topbar"><div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div>
      <button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
-   ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
+   ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
+   ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${a.emplacement==='congelateur'?'❄️':'🧊'} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
      <div class="card"><div class="corner">€</div><div class="lbl">CA ce mois</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s)</div></div>
      <div class="card"><div class="corner">∑</div><div class="lbl">CA total</div><div class="val">${euro(caTotal)}</div><div class="sub">depuis le début</div></div>
@@ -754,18 +825,58 @@ async function renderProductions(){
    <div class="topbar"><div><h1>Productions</h1><p>${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}</p></div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button></div>
    <div class="panel">
-   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Produit</th><th>N° lot prod.</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th></th></tr></thead><tbody>
+   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Produit</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th></th></tr></thead><tbody>
      ${prods.map(p=>{
        const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
        const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
+       const emp = p.emplacement;
+       const empTag = emp==='congelateur' ? '<span class="tag" style="background:#3b6ea5;color:#fff">❄️ Congélateur</span>'
+         : emp==='frigo' ? '<span class="tag" style="background:#6aa3a0;color:#fff">🧊 Frigo</span>'
+         : '<span class="tag warn">non renseigné</span>';
+       const blocked = p.venuDuCongelateur ? ' title="A séjourné au congélateur : ne peut y retourner"' : '';
        return `<tr>
        <td>${fmtDate(p.date)}</td><td><b>${esc(recName(p.recipeId))}</b></td>
        <td>${esc(p.lotProduction||'—')}</td>
+       <td>${empTag}${emp?`<br><span class="act" onclick="toggleEmplacement(${p.id})"${blocked}>↔ ${emp==='frigo'?'mettre au congélo':'mettre au frigo'}</span>`:`<br><span class="act" onclick="setEmplacement(${p.id})">renseigner</span>`}</td>
        <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
        <td>${qty(p.qteRestante)}</td>
-       <td style="text-align:right"><span class="act" onclick="prodAdjustForm(${p.id})">Ajuster réel</span><span class="act" onclick="traceProd(${p.id})">Traçabilité</span><span class="act" onclick="view='etiquettes';document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.v==='etiquettes'));renderLabels()">Étiquette</span><span class="act del" onclick="delProd(${p.id})">Suppr.</span></td></tr>`;}).join('')}
+       <td style="text-align:right"><span class="act" onclick="prodAdjustForm(${p.id})">Ajuster réel</span><span class="act" onclick="traceProd(${p.id})">Traçabilité</span><span class="act del" onclick="delProd(${p.id})">Suppr.</span></td></tr>`;}).join('')}
    </tbody></table></div>`:`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
    </div>`;
+}
+// Change l'emplacement frigo↔congélateur d'un batch (avec journal).
+async function toggleEmplacement(id){
+  const p=await db.productions.get(id); if(!p) return;
+  const cible = p.emplacement==='frigo' ? 'congelateur' : 'frigo';
+  const nowIso=new Date().toISOString();
+  const hist=(p.histEmplacement||[]).concat([{lieu:cible, ts:nowIso, motif:'déplacement manuel'}]);
+  const patch={emplacement:cible, emplacementMaj:nowIso, histEmplacement:hist};
+  if(cible==='congelateur') patch.venuDuCongelateur=true; // dès qu'il passe au congélo, le drapeau reste
+  // DLC recalculée si elle est en mode auto : +7j frigo / +4 mois congélo, à partir de maintenant
+  if(p.dlcAuto!==false){ patch.dlcProduit=computeDlcFromHistory(hist, nowIso); patch.dlcAuto=true; }
+  await db.productions.update(id, patch);
+  renderProductions(); toast(`Déplacé vers ${cible==='frigo'?'le frigo 🧊':'le congélateur ❄️'} · DLC ${fmtDate(patch.dlcProduit||p.dlcProduit)}`);
+}
+// Renseigne l'emplacement d'un batch ancien (sans emplacement) — choix obligatoire.
+async function setEmplacement(id){
+  openModal(`<h3>Renseigner l'emplacement</h3>
+    <div class="field"><div class="pay-toggle">
+      <label class="pay-opt"><input type="radio" name="se_dest" value="frigo"> <span>🧊 Frigo</span></label>
+      <label class="pay-opt"><input type="radio" name="se_dest" value="congelateur"> <span>❄️ Congélateur</span></label>
+    </div></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveEmplacement(${id})">Enregistrer</button></div>`);
+}
+async function saveEmplacement(id){
+  const dest=(document.querySelector('input[name="se_dest"]:checked')||{}).value||'';
+  if(dest!=='frigo'&&dest!=='congelateur'){ toast('Choisissez frigo ou congélateur'); return; }
+  const p=await db.productions.get(id); if(!p) return;
+  const nowIso=new Date().toISOString();
+  const hist=(p.histEmplacement||[]).concat([{lieu:dest, ts:nowIso, motif:'saisie a posteriori'}]);
+  const patch={emplacement:dest, emplacementMaj:nowIso, histEmplacement:hist};
+  if(dest==='congelateur') patch.venuDuCongelateur=true;
+  if(p.dlcAuto!==false){ patch.dlcProduit=computeDlcFromHistory(hist, nowIso); patch.dlcAuto=true; }
+  await db.productions.update(id, patch);
+  closeModal(); renderProductions(); toast('Emplacement renseigné ✓');
 }
 async function prodForm(){
   const recipes = await db.recipes.toArray();
@@ -782,13 +893,28 @@ async function prodForm(){
    <div class="field"><label>Quantité réelle produite <span style="color:#9a8a82;font-weight:400">— stock produits finis (modifiable en fin de production)</span></label>
      <input type="number" id="f_qtereel" value="${recipes[0].rendement}" min="0" oninput="_prodReelTouched=true;prodUpdateEcartHint()">
      <p class="note" id="ecartHint" style="margin-top:4px;display:none"></p></div>
-   <div class="row2">
-     <div class="field"><label>N° lot de production</label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${Math.random().toString(36).slice(2,5).toUpperCase()}"></div>
-     <div class="field"><label>DLC produit fini</label><input type="date" id="f_dlcprod" value=""></div>
+   <div class="field"><label>N° lot de production</label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${Math.random().toString(36).slice(2,5).toUpperCase()}"></div>
+   <div class="field"><label>Destination après production *</label>
+     <div class="pay-toggle" id="prodDest">
+       <label class="pay-opt"><input type="radio" name="f_dest" value="frigo" onchange="prodDlcHint()"> <span>🧊 Frigo</span></label>
+       <label class="pay-opt"><input type="radio" name="f_dest" value="congelateur" onchange="prodDlcHint()"> <span>❄️ Congélateur</span></label>
+     </div>
+     <p class="note" id="dlcHint">La DLC est calculée automatiquement : <b>+7 jours</b> au frigo, <b>+4 mois</b> au congélateur. L'horodatage (date + heure) est enregistré automatiquement.</p>
    </div>
    <p class="note">Les <b>matières premières</b> sont déduites sur la base de la <b>quantité théorique</b> (DLC la plus proche d'abord). Le <b>stock de produits finis</b> est calé sur la <b>quantité réelle</b>. L'écart est historisé. Si le stock matières est insuffisant, <b>rien</b> n'est enregistré.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
   prodSyncReelDefault();
+}
+// Aperçu live de la DLC calculée selon la destination choisie.
+function prodDlcHint(){
+  const dest=(document.querySelector('input[name="f_dest"]:checked')||{}).value||'';
+  const el=document.getElementById('dlcHint'); if(!el) return;
+  if(dest==='frigo'||dest==='congelateur'){
+    const dlc=computeDlc(dest, new Date().toISOString());
+    el.innerHTML=`DLC calculée automatiquement : <b>${fmtDate(dlc)}</b> (${dest==='frigo'?'+7 jours, frigo':'+4 mois, congélateur'}). Horodatage à l'enregistrement.`;
+  } else {
+    el.innerHTML=`La DLC est calculée automatiquement : <b>+7 jours</b> au frigo, <b>+4 mois</b> au congélateur. L'horodatage (date + heure) est enregistré automatiquement.`;
+  }
 }
 // Quand on change de recette, recale les deux quantités sur le rendement de la recette.
 function prodSyncTheorique(){
@@ -824,11 +950,13 @@ async function saveProd(){
   const qteTheorique=+val('f_qte');
   let qteReelle=val('f_qtereel');
   qteReelle = qteReelle==='' ? qteTheorique : +qteReelle; // défaut = théorique
-  const date=val('f_date')||today(), lot=val('f_lot'), dlcProd=val('f_dlcprod')||'';
+  const date=val('f_date')||today(), lot=val('f_lot');
+  const dest=(document.querySelector('input[name="f_dest"]:checked')||{}).value||'';
   if(!qteTheorique||qteTheorique<=0){toast('Quantité théorique invalide');return;}
   if(qteReelle<0||isNaN(qteReelle)){toast('Quantité réelle invalide');return;}
+  if(dest!=='frigo' && dest!=='congelateur'){ toast('Choisissez une destination : frigo ou congélateur'); return; }
   try{
-    await enregistrerProduction(recipeId, qteTheorique, qteReelle, date, lot, dlcProd);
+    await enregistrerProduction(recipeId, qteTheorique, qteReelle, date, lot, '', dest);
     closeModal(); renderProductions();
     const ecart=qteReelle-qteTheorique;
     toast(ecart===0 ? 'Production enregistrée ✓ — stock mis à jour'
@@ -838,12 +966,13 @@ async function saveProd(){
   }
 }
 // Transaction atomique : consommation FIFO (théorique) + traçabilité + stock fini (réel)
-async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd, lotProduction, dlcProduit){
+async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd, lotProduction, dlcProduit, emplacement){
   return db.transaction('rw',
     db.recipes, db.recipeItems, db.materials, db.materialLots, db.productions, db.prodConsumption,
     async () => {
       const recette = await db.recipes.get(recipeId);
       if(!recette) throw new Error('Recette introuvable');
+      if(emplacement!=='frigo' && emplacement!=='congelateur') throw new Error('Destination (frigo/congélateur) obligatoire');
       const items = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
       // CONSOMMATION MATIÈRES : basée UNIQUEMENT sur la quantité théorique
       const facteur = qteTheorique / (recette.rendement || 1);
@@ -860,13 +989,24 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
       }
 
       const ecart = qteReelle - qteTheorique;
+      const nowIso = new Date().toISOString();
+      // DLC calculée automatiquement selon l'emplacement (frigo +7j / congélo +4 mois),
+      // à partir de l'horodatage réel de production. Plus de saisie manuelle.
+      const dlcAuto = computeDlc(emplacement, nowIso);
       const prodId = await db.productions.add({
         recipeId, lotProduction, date:dateProd,
         qteTheorique, qteReelle, ecart,
         // STOCK PRODUITS FINIS : calé sur la quantité réelle
         // qteProduite/qteRestante conservés pour compat. (lecture par trace, liaison commandes, analytics)
         qteProduite: qteReelle, qteRestante: qteReelle,
-        dlcProduit: dlcProduit||''
+        dlcProduit: dlcAuto,            // DLC auto (recalculée si l'emplacement change)
+        dlcAuto: true,                  // marque une DLC calculée automatiquement
+        // Traçabilité conservation : horodatage + emplacement + journal des déplacements
+        prodTimestamp: nowIso,          // date + HEURE réelles de production (horodatage auto)
+        emplacement,                    // 'frigo' | 'congelateur'
+        emplacementMaj: nowIso,         // date/heure du dernier changement d'emplacement
+        venuDuCongelateur: emplacement==='congelateur', // a séjourné au congélo (interdit d'y retourner après décongélation)
+        histEmplacement: [{lieu:emplacement, ts:nowIso, motif:'production'}]
       });
 
       for(const item of items){
@@ -2898,6 +3038,50 @@ async function marketAddSortie(marketId, productionId, qte, parfum){
       date:today(), stockAvant, stockApres:subQty(stockAvant,qte)});
   });
 }
+
+// Stock fini disponible AGRÉGÉ PAR PARFUM (sans se soucier des lots).
+// Retourne [{parfum, dispo, recipeId, batches:[{id,qteRestante,date}]}] trié par parfum.
+async function stockFiniParParfum(){
+  const prods=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0);
+  const recipes=await db.recipes.toArray();
+  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'(parfum ?)';
+  const byParfum={};
+  prods.forEach(p=>{
+    const nom=recName(p.recipeId);
+    (byParfum[nom] ||= {parfum:nom, recipeId:p.recipeId, dispo:0, batches:[]});
+    byParfum[nom].dispo=addQty(byParfum[nom].dispo, p.qteRestante);
+    byParfum[nom].batches.push({id:p.id, qteRestante:round3(+p.qteRestante), date:p.date||'', lot:p.lotProduction||String(p.id)});
+  });
+  // FIFO : batches triés par date (DLC/ancienneté) croissante
+  Object.values(byParfum).forEach(b=>b.batches.sort((a,c)=>(a.date||'').localeCompare(c.date||'')));
+  return Object.values(byParfum).sort((a,b)=>a.parfum.localeCompare(b.parfum));
+}
+
+// Sortie d'une quantité d'un PARFUM, répartie en FIFO sur ses lots (le plus ancien d'abord).
+// L'utilisateur ne voit pas les lots ; la traçabilité et le stock atelier restent corrects.
+async function marketAddSortieParfum(marketId, parfum, qteDemandee){
+  let reste=round3(qteDemandee);
+  if(reste<=0) throw new Error('Quantité invalide');
+  await db.transaction('rw', db.productions, db.recipes, db.marketMoves, async()=>{
+    const recipes=await db.recipes.toArray();
+    const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'';
+    // tous les lots de ce parfum avec du stock, triés FIFO (date croissante)
+    const all=(await db.productions.toArray())
+      .filter(p=>round3(+p.qteRestante)>0 && recName(p.recipeId)===parfum)
+      .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    const dispo=all.reduce((s,p)=>addQty(s,p.qteRestante),0);
+    if(reste>round3(dispo)) throw new Error(`Stock insuffisant pour ${parfum} (dispo ${qty(dispo)})`);
+    for(const p of all){
+      if(reste<=0) break;
+      const pris=Math.min(round3(+p.qteRestante), reste);
+      const stockAvant=round3(+p.qteRestante);
+      await db.productions.update(p.id, {qteRestante: subQty(p.qteRestante, pris)});
+      await db.marketMoves.add({marketId, productionId:p.id, type:'sortie', qte:pris, parfum, motif:'',
+        date:today(), stockAvant, stockApres:subQty(stockAvant,pris)});
+      reste=subQty(reste, pris);
+    }
+  });
+}
 // Enregistre un don ou une perte (sort définitivement du stock embarqué, pas de retour atelier).
 async function marketAddLoss(marketId, productionId, qte, type, parfum, motif){
   qte=round3(qte);
@@ -2906,35 +3090,48 @@ async function marketAddLoss(marketId, productionId, qte, type, parfum, motif){
   await db.marketMoves.add({marketId, productionId, type, qte, parfum:parfum||'', motif:motif||'', date:today()});
 }
 // Enregistre un RETOUR d'invendus (ré-incrémente le stock atelier, ACID).
-async function marketAddRetour(marketId, productionId, qte, parfum){
+async function marketAddRetour(marketId, productionId, qte, parfum, destination){
   qte=round3(qte);
   if(qte<0) throw new Error('Quantité invalide');
+  if(destination!=='frigo' && destination!=='congelateur') throw new Error('Destination du retour obligatoire');
   await db.transaction('rw', db.productions, db.marketMoves, async()=>{
     const p=await db.productions.get(productionId);
     if(!p) throw new Error('Lot introuvable');
-    await db.productions.update(productionId, {qteRestante: addQty(p.qteRestante, qte)});
-    await db.marketMoves.add({marketId, productionId, type:'retour', qte, parfum:parfum||'', motif:'', date:today()});
+    // RÈGLE SÉCURITÉ ALIMENTAIRE : un produit venu du congélateur ne peut pas y retourner.
+    if(destination==='congelateur' && p.venuDuCongelateur){
+      throw new Error(`${parfum||'Ce lot'} vient du congélateur : recongélation interdite. Choisissez le frigo.`);
+    }
+    const nowIso=new Date().toISOString();
+    const hist=(p.histEmplacement||[]).concat([{lieu:destination, ts:nowIso, motif:'retour marché'}]);
+    const patch={qteRestante: addQty(p.qteRestante, qte), emplacement:destination, emplacementMaj:nowIso, histEmplacement:hist};
+    if(destination==='congelateur') patch.venuDuCongelateur=true;
+    if(p.dlcAuto!==false){ patch.dlcProduit=computeDlcFromHistory(hist, nowIso); patch.dlcAuto=true; }
+    await db.productions.update(productionId, patch);
+    await db.marketMoves.add({marketId, productionId, type:'retour', qte, parfum:parfum||'', motif:'', date:today(), destination});
   });
 }
 // Agrège les mouvements d'un marché par lot/parfum : embarqué, retour, don, perte, vendu.
 function marketLineSummary(moves){
-  // clé = productionId
-  const byProd={};
+  // clé = parfum (l'utilisateur raisonne par parfum, pas par lot).
+  // On conserve la liste des productionId concernés pour la traçabilité éventuelle.
+  const byParfum={};
   moves.forEach(mv=>{
-    const k=mv.productionId;
-    (byProd[k] ||= {productionId:k, parfum:mv.parfum||'', sortie:0, retour:0, don:0, perte:0});
-    const b=byProd[k];
+    const k=mv.parfum||('lot#'+mv.productionId);
+    (byParfum[k] ||= {parfum:mv.parfum||'', productionIds:[], sortie:0, retour:0, don:0, perte:0});
+    const b=byParfum[k];
     if(mv.parfum && !b.parfum) b.parfum=mv.parfum;
+    if(mv.productionId!=null && !b.productionIds.includes(mv.productionId)) b.productionIds.push(mv.productionId);
     if(mv.type==='sortie') b.sortie=addQty(b.sortie,mv.qte);
     else if(mv.type==='retour') b.retour=addQty(b.retour,mv.qte);
     else if(mv.type==='don') b.don=addQty(b.don,mv.qte);
     else if(mv.type==='perte') b.perte=addQty(b.perte,mv.qte);
   });
-  return Object.values(byProd).map(b=>{
+  return Object.values(byParfum).map(b=>{
+    b.productionId = b.productionIds[0]; // compat affichage
     b.vendu = Math.max(0, subQty(subQty(subQty(b.sortie,b.retour),b.don),b.perte));
     b.incoherent = (subQty(subQty(subQty(b.sortie,b.retour),b.don),b.perte) < 0);
     return b;
-  });
+  }).sort((a,c)=>(a.parfum||'').localeCompare(c.parfum||''));
 }
 // Coût emballages d'un marché par delta avant/après : Σ((avant − après) × coût unitaire).
 function marketPackagingCost(market){
@@ -3926,10 +4123,10 @@ async function marketDetail(id){
   const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
   const prodLabel=p=>`${recName(p.recipeId)} · lot ${p.lotProduction||p.id}`;
 
-  const lineRows=T.lines.map(l=>{ const p=prods.find(x=>x.id===l.productionId);
+  const lineRows=T.lines.map(l=>{
     return `<tr ${l.incoherent?'style="background:#fdf3f2"':''}>
-      <td>${esc(p?prodLabel(p):'lot #'+l.productionId)}</td>
-      <td>${qty(l.sortie)}</td><td>${qty(l.retour)}</td><td>${qty(l.don)}</td><td>${qty(l.perte)}</td>
+      <td>${esc(l.parfum||'(parfum ?)')}</td>
+      <td>${qty(l.sortie)}</td><td>${qty(l.retour)}</td><td>${qty(addQty(l.don,l.perte))}</td>
       <td><b>${qty(l.vendu)}</b>${l.incoherent?' <span class="tag low">incohérent</span>':''}</td></tr>`;}).join('');
 
   const clos = mk.statut==='clos';
@@ -3937,11 +4134,10 @@ async function marketDetail(id){
     ${mk.horaires||mk.meteo?`<p class="note">${esc(mk.horaires||'')}${mk.meteo?' · '+esc(mk.meteo):''}</p>`:''}
     ${!clos?`<div class="flex" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">
       <button class="btn gold sm" onclick="marketSortieForm(${id})">＋ Sortie stock</button>
-      <button class="btn ghost sm" onclick="marketMoveForm(${id},'don')">＋ Don</button>
-      <button class="btn ghost sm" onclick="marketMoveForm(${id},'perte')">＋ Perte/casse</button>
+      <button class="btn ghost sm" onclick="marketMoveForm(${id},'perte')">＋ Don / Perte / Casse</button>
       <button class="btn ghost sm" onclick="marketRetourForm(${id})">↩ Retour de marché</button>
     </div>`:''}
-    <div class="table-wrap"><table><thead><tr><th>Lot</th><th>Emb.</th><th>Ret.</th><th>Don</th><th>Perte</th><th>Vendu</th></tr></thead>
+    <div class="table-wrap"><table><thead><tr><th>Parfum</th><th>Emb.</th><th>Ret.</th><th>Don/Perte</th><th>Vendu</th></tr></thead>
       <tbody>${lineRows||'<tr><td colspan="6" class="empty">Aucune sortie enregistrée.</td></tr>'}</tbody></table></div>
     <div class="sum-box"><span>Embarqué</span><b>${qty(T.embarque)}</b></div>
     <div class="sum-box"><span>Vendu</span><b>${qty(T.vendu)}</b></div>
@@ -3965,55 +4161,66 @@ async function marketDetail(id){
 
 // Sortie de stock : choix du lot + quantité (stock théorique affiché).
 async function marketSortieForm(marketId){
-  const prods=(await db.productions.toArray()).filter(p=>+p.qteRestante>0);
-  const recipes=await db.recipes.toArray();
-  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
-  if(!prods.length){ toast('Aucun stock fini disponible à l\'atelier'); return; }
-  const opts=prods.map(p=>`<option value="${p.id}" data-parfum="${esc(recName(p.recipeId))}" data-stock="${p.qteRestante}">${esc(recName(p.recipeId))} · lot ${esc(p.lotProduction||String(p.id))} · stock ${qty(p.qteRestante)}</option>`).join('');
-  openModal(`<h3>Sortie de stock</h3>
-    <div class="field"><label>Lot / parfum</label><select id="ms_prod" onchange="marketSortieStock()">${opts}</select></div>
-    <p class="note" id="ms_stockinfo"></p>
-    <div class="field"><label>Quantité embarquée</label><input type="number" step="1" min="1" id="ms_qte" placeholder="0"></div>
+  const stock=await stockFiniParParfum();
+  if(!stock.length){ toast('Aucun stock fini disponible à l\'atelier'); return; }
+  const rows=stock.map((s,i)=>`<div class="pay-row" style="align-items:center">
+      <span style="flex:1;min-width:140px">${esc(s.parfum)} <span class="note">dispo ${qty(s.dispo)}</span></span>
+      <input type="number" step="1" min="0" max="${s.dispo}" id="ms_${i}" data-parfum="${esc(s.parfum)}" data-dispo="${s.dispo}"
+        placeholder="0" oninput="marketSortieClamp(${i})" style="width:90px">
+    </div>`).join('');
+  openModal(`<h3>Sortie de stock pour le marché</h3>
+    <p class="note">Saisissez la quantité à embarquer par parfum. Vous ne pouvez pas dépasser le stock disponible. La répartition entre lots se fait automatiquement (du plus ancien au plus récent).</p>
+    <div class="pay-row" style="font-weight:600;color:#9a8a82"><span style="flex:1;min-width:140px">Parfum</span><span style="width:90px">Quantité</span></div>
+    ${rows}
+    <input type="hidden" id="ms_n" value="${stock.length}">
     <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
       <button class="btn" onclick="marketDoSortie(${marketId})">Embarquer</button></div>`);
-  marketSortieStock();
 }
-function marketSortieStock(){
-  const sel=document.getElementById('ms_prod'); const info=document.getElementById('ms_stockinfo');
-  if(sel&&info){ const opt=sel.options[sel.selectedIndex]; const stock=opt?opt.getAttribute('data-stock'):0;
-    info.innerHTML=`Stock théorique atelier : <b>${qty(stock)}</b> · ce qui restera après embarquement s'affiche au stock atelier.`; }
+// borne la saisie au stock disponible du parfum
+function marketSortieClamp(i){
+  const el=document.getElementById('ms_'+i); if(!el) return;
+  const dispo=+el.getAttribute('data-dispo')||0;
+  let v=+el.value||0; if(v<0) v=0; if(v>dispo){ v=dispo; toast('Limité au stock disponible : '+qty(dispo)); }
+  if(String(v)!==el.value) el.value=v?v:'';
 }
 async function marketDoSortie(marketId){
-  const sel=document.getElementById('ms_prod'); const pid=+sel.value;
-  const parfum=sel.options[sel.selectedIndex].getAttribute('data-parfum');
-  const qte=+val('ms_qte')||0;
-  try{ await marketAddSortie(marketId, pid, qte, parfum); }catch(e){ toast(e.message||'Erreur'); return; }
-  toast('Sortie enregistrée ✓'); marketDetail(marketId);
+  const n=+val('ms_n')||0; let done=0, total=0;
+  for(let i=0;i<n;i++){ const el=document.getElementById('ms_'+i); if(!el) continue;
+    const q=+el.value||0; if(q<=0) continue;
+    const parfum=el.getAttribute('data-parfum');
+    try{ await marketAddSortieParfum(marketId, parfum, q); done++; total+=q; }
+    catch(e){ toast(e.message||'Erreur sur '+parfum); }
+  }
+  if(done) toast(`${done} parfum(s) embarqué(s) · ${qty(total)} macarons ✓`); else toast('Aucune quantité saisie');
+  marketDetail(marketId);
 }
 
-// Don / perte
+// Don / Perte / Casse — mouvement unique (exclu des ventes)
 async function marketMoveForm(marketId, type){
   const moves=await db.marketMoves.where('marketId').equals(marketId).toArray();
   const lines=marketLineSummary(moves);
-  const prods=await db.productions.toArray();
-  const recipes=await db.recipes.toArray();
-  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
   if(!lines.length){ toast('Faites d\'abord une sortie de stock'); return; }
-  const opts=lines.map(l=>{ const p=prods.find(x=>x.id===l.productionId);
-    return `<option value="${l.productionId}" data-parfum="${esc(l.parfum||recName(p?p.recipeId:0))}">${esc(p?recName(p.recipeId):'lot')} · lot ${esc(p?(p.lotProduction||p.id):l.productionId)} · embarqué ${qty(l.sortie)}</option>`;}).join('');
-  openModal(`<h3>${type==='don'?'Don':'Perte / casse'}</h3>
-    <div class="field"><label>Lot / parfum</label><select id="mv_prod">${opts}</select></div>
-    <div class="field"><label>Quantité ${type==='don'?'donnée':'perdue'}</label><input type="number" step="1" min="1" id="mv_qte" placeholder="0"></div>
-    <div class="field"><label>Motif ${type==='perte'?'':'(optionnel)'}</label><input id="mv_motif" placeholder="${type==='don'?'ex : dégustation, geste commercial':'ex : casse transport, chaleur'}"></div>
+  const opts=lines.map(l=>{
+    const restant=subQty(subQty(subQty(l.sortie,l.retour),l.don),l.perte);
+    return `<option value="${l.productionId}" data-parfum="${esc(l.parfum)}">${esc(l.parfum||'(parfum ?)')} · embarqué ${qty(l.sortie)} · reste ${qty(restant)}</option>`;}).join('');
+  openModal(`<h3>Don / Perte / Casse</h3>
+    <p class="note">Mouvement non vendu (retiré des ventes). Précisez la raison.</p>
+    <div class="field"><label>Parfum</label><select id="mv_prod">${opts}</select></div>
+    <div class="field"><label>Quantité</label><input type="number" step="1" min="1" id="mv_qte" placeholder="0"></div>
+    <div class="field"><label>Raison</label>
+      <select id="mv_raison"><option value="Don">Don</option><option value="Perte">Perte</option><option value="Casse">Casse</option></select></div>
+    <div class="field"><label>Détail (optionnel)</label><input id="mv_motif" placeholder="ex : dégustation, casse transport, chaleur…"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
-      <button class="btn" onclick="marketDoMove(${marketId},'${type}')">Enregistrer</button></div>`);
+      <button class="btn" onclick="marketDoMove(${marketId})">Enregistrer</button></div>`);
 }
-async function marketDoMove(marketId, type){
+async function marketDoMove(marketId){
   const sel=document.getElementById('mv_prod'); const pid=+sel.value;
   const parfum=sel.options[sel.selectedIndex].getAttribute('data-parfum');
-  const qte=+val('mv_qte')||0; const motif=val('mv_motif');
-  try{ await marketAddLoss(marketId, pid, qte, type, parfum, motif); }catch(e){ toast(e.message||'Erreur'); return; }
-  toast((type==='don'?'Don':'Perte')+' enregistré ✓'); marketDetail(marketId);
+  const qte=+val('mv_qte')||0; const raison=val('mv_raison')||'Perte'; const detail=val('mv_motif');
+  const motif=(raison+(detail?' — '+detail:''));
+  // un seul type interne 'perte' (don/casse inclus) : tout est exclu des ventes de façon homogène
+  try{ await marketAddLoss(marketId, pid, qte, 'perte', parfum, motif); }catch(e){ toast(e.message||'Erreur'); return; }
+  toast(raison+' enregistré ✓'); marketDetail(marketId);
 }
 
 // Retour de marché : saisie des invendus par lot (vendu recalculé).
@@ -4024,14 +4231,20 @@ async function marketRetourForm(marketId){
   const recipes=await db.recipes.toArray();
   const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
   if(!lines.length){ toast('Aucune sortie à retourner'); return; }
-  const rows=lines.map((l,i)=>{ const p=prods.find(x=>x.id===l.productionId);
+  const rows=lines.map((l,i)=>{
     const restant=subQty(subQty(subQty(l.sortie,l.retour),l.don),l.perte);
-    return `<div class="pay-row" style="flex-wrap:wrap">
-      <span style="flex:1;min-width:120px">${esc(p?recName(p.recipeId):'lot')} · lot ${esc(p?(p.lotProduction||p.id):l.productionId)}<br><span class="note">embarqué ${qty(l.sortie)}, déjà retourné ${qty(l.retour)}</span></span>
-      <input type="number" step="1" min="0" max="${restant}" id="mr_${i}" data-prod="${l.productionId}" data-parfum="${esc(l.parfum)}" placeholder="invendus" style="width:100px">
+    const p=prods.find(x=>x.id===l.productionId);
+    const fromFreezer = p && p.venuDuCongelateur;
+    return `<div class="pay-row" style="flex-wrap:wrap;align-items:flex-start">
+      <span style="flex:1;min-width:120px">${esc(l.parfum||'(parfum ?)')}<br><span class="note">embarqué ${qty(l.sortie)}, déjà retourné ${qty(l.retour)}${fromFreezer?' · ❄️ vient du congélo':''}</span></span>
+      <input type="number" step="1" min="0" max="${restant}" id="mr_${i}" data-prod="${l.productionId}" data-parfum="${esc(l.parfum)}" data-freezer="${fromFreezer?1:0}" placeholder="invendus" style="width:80px">
+      <select id="md_${i}" style="width:120px">
+        <option value="frigo">🧊 Frigo</option>
+        <option value="congelateur" ${fromFreezer?'disabled':''}>❄️ Congélateur${fromFreezer?' (interdit)':''}</option>
+      </select>
     </div>`;}).join('');
   openModal(`<h3>Retour de marché</h3>
-    <p class="note">Saisissez les invendus rapportés par lot. Ils sont recrédités au stock atelier. Le vendu se recalcule automatiquement.</p>
+    <p class="note">Saisissez les invendus rapportés par parfum et leur destination. Ils sont recrédités au stock atelier. ⚠️ Un produit <b>issu du congélateur</b> ne peut pas y retourner (décongélation → recongélation interdite).</p>
     ${rows}
     <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
       <button class="btn" onclick="marketDoRetour(${marketId},${lines.length})">Valider les retours</button></div>`);
@@ -4041,7 +4254,8 @@ async function marketDoRetour(marketId, n){
   for(let i=0;i<n;i++){ const el=document.getElementById('mr_'+i); if(!el) continue;
     const q=+el.value||0; if(q<=0) continue;
     const pid=+el.getAttribute('data-prod'); const parfum=el.getAttribute('data-parfum');
-    try{ await marketAddRetour(marketId, pid, q, parfum); done++; }catch(e){ toast(e.message||'Erreur'); }
+    const dest=(document.getElementById('md_'+i)||{}).value||'frigo';
+    try{ await marketAddRetour(marketId, pid, q, parfum, dest); done++; }catch(e){ toast(e.message||'Erreur'); }
   }
   toast(done?`${done} retour(s) enregistré(s) ✓`:'Aucun retour saisi'); marketDetail(marketId);
 }
@@ -5097,7 +5311,9 @@ async function buildLabelData(prodId){
     produit: rec?rec.produitNom:'Produit',
     lot: p.lotProduction||'—',
     dlc: p.dlcProduit ? fmtDate(p.dlcProduit) : '—',
-    fab: fmtDate(p.date),
+    // Fabrication : horodatage automatique (date + heure) si disponible, sinon la date saisie
+    fab: p.prodTimestamp ? fmtDateTime(p.prodTimestamp) : fmtDate(p.date),
+    emplacement: p.emplacement==='congelateur'?'Congélateur':(p.emplacement==='frigo'?'Frigo':''),
     qr: tmp.toDataURL('image/png')
   };
 }
