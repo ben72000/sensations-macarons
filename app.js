@@ -2029,7 +2029,7 @@ async function renderCmd(){
          <button class="btn gold sm" onclick="cmdExportSelection()">⬇ Exporter la sélection (TXT)</button>
        </div>
      </div>
-     <div class="table-wrap"><table><thead><tr><th style="width:34px"><input type="checkbox" id="cmdSelHead" onclick="cmdToggleAll(this.checked)" title="Tout sélectionner"></th><th>Date</th><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th></th></tr></thead>
+     <div class="table-wrap"><table><thead><tr><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th>Actions</th><th style="width:34px" title="Sélection"><input type="checkbox" id="cmdSelHead" onclick="cmdToggleAll(this.checked)" title="Tout sélectionner"></th></tr></thead>
        <tbody id="cmdBody"></tbody></table></div>
      <div id="cmdEmpty" class="empty" style="display:none">Aucune commande.</div>
    </div>`;
@@ -2042,9 +2042,7 @@ function _cmdRow(row){
   const st = orderPayStatus(o); const solde = orderBalance(o);
   const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
   return `<tr>
-     <td><input type="checkbox" class="cmd-check" ${checked} onclick="cmdToggleOne(${o.id},this.checked)"></td>
-     <td>${fmtDate(o.date)}</td>
-     <td>${o.clientId?`<b><span class="link-name" onclick="clientForm(${o.clientId})">${esc(_cmdClName(o.clientId))}</span></b>`:`<b>—</b>`}</td>
+     <td><b>${o.clientId?`<span class="link-name" onclick="clientForm(${o.clientId})">${esc(_cmdClName(o.clientId))}</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}</span></td>
      <td><span style="font-size:.82rem">${esc(row.resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
      <td>
@@ -2062,7 +2060,8 @@ function _cmdRow(row){
        <button class="qa" onclick="exportOrderText(${o.id})" title="Exporter en texte">⤓ Texte</button>
        <button class="qa" onclick="cmdLink(${o.id})" title="Lier à une production">🔗 Lier</button>
        <button class="qa del" onclick="delCmd(${o.id})" title="Supprimer">🗑</button>
-     </div></td></tr>`;
+     </div></td>
+     <td><input type="checkbox" class="cmd-check" ${checked} onclick="cmdToggleOne(${o.id},this.checked)"></td></tr>`;
 }
 // ---- Solder une commande depuis la liste (encaisse le solde, daté du jour) ----
 async function listSetPay(id, statut){
