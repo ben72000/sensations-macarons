@@ -42,6 +42,9 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia',serif}
 .side-foot .foot-help{display:block;margin-bottom:8px}
 .side-foot .foot-btn{width:100%;margin-top:6px}
 .main{margin-left:230px;flex:1;min-width:0;max-width:calc(100% - 230px);padding:32px 38px 60px;overflow-x:hidden}
+@keyframes viewIn{ from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+.main.view-in{ animation:viewIn .22s ease-out }
+@media (prefers-reduced-motion: reduce){ .main.view-in{ animation:none } }
 .topbar{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:26px;flex-wrap:wrap;gap:12px}
 .topbar h1{font-size:1.9rem;font-weight:600;color:var(--bordeaux)}
 .topbar p{color:#8a7a72;font-size:.9rem;margin-top:2px}
@@ -62,9 +65,21 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia',serif}
 .card .corner{position:absolute;top:-12px;right:-12px;font-size:3.2rem;opacity:.08}
 .panel{background:#fff;border-radius:16px;padding:24px;box-shadow:0 4px 20px var(--shadow);border:1px solid rgba(170,124,57,.12);margin-bottom:22px;max-width:100%;overflow:hidden}
 .panel h2{font-size:1.15rem;color:var(--bordeaux);margin-bottom:16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-.table-wrap{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;display:block}
-table{width:100%;border-collapse:collapse;font-size:.87rem}
+.table-wrap{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;display:block;overscroll-behavior-x:contain}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:.87rem}
 .table-wrap table{min-width:max-content}
+/* Première colonne FIGÉE lors du défilement horizontal (type Excel) :
+   la colonne d'identification (nom, lot, produit, client…) reste toujours visible. */
+.table-wrap th:first-child,
+.table-wrap td:first-child{
+  position:sticky; left:0; z-index:2;
+  background:#fff;
+  box-shadow:1px 0 0 #f0eae0;
+}
+.table-wrap thead th:first-child{ z-index:3; background:#fff; }
+.table-wrap tr:hover td:first-child{ background:var(--creme-2); }
+.table-wrap.no-freeze th:first-child,
+.table-wrap.no-freeze td:first-child{ position:static; box-shadow:none; }
 th{text-align:left;padding:11px 12px;color:#9a8a82;font-weight:500;font-size:.72rem;
   text-transform:uppercase;letter-spacing:.07em;border-bottom:2px solid var(--creme)}
 td{padding:12px;border-bottom:1px solid #f0eae0;vertical-align:top}
@@ -81,6 +96,14 @@ tr:hover td{background:var(--creme-2)}
 .empty{text-align:center;padding:40px;color:#b3a59c;font-style:italic}
 .act{cursor:pointer;color:var(--caramel);font-weight:600;font-size:.8rem;margin-right:10px;white-space:nowrap}
 .act:hover{text-decoration:underline}.act.del{color:var(--red)}
+/* Boutons d'action rapide sur les lignes (mobile-friendly, faciles à toucher) */
+.qa{display:inline-flex;align-items:center;gap:3px;padding:5px 9px;margin:2px 3px 2px 0;border:1.5px solid #e0d5c5;border-radius:9px;background:#fff;color:var(--bordeaux);font-size:.76rem;font-weight:600;cursor:pointer;white-space:nowrap;line-height:1}
+.qa:active{transform:scale(.96)}
+.qa.pay{border-color:#bfe0c8;color:#2e7d32}
+.qa.status{border-color:#e4cf9a;color:#9a7b1f}
+.qa.edit{border-color:#d9c8e0;color:#7a4b82}
+.qa.del{border-color:#f0cfc9;color:var(--red)}
+.qa-row{display:flex;flex-wrap:wrap;gap:2px;justify-content:flex-end}
 .link-name{cursor:pointer;color:var(--bordeaux);border-bottom:1px dotted var(--caramel)}
 .link-name:hover{color:var(--caramel)}
 .pay-toggle{display:inline-flex;gap:6px;flex-wrap:wrap}

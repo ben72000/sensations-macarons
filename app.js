@@ -309,8 +309,27 @@ document.querySelectorAll('#sheetGrid button[data-v]').forEach(btn=>{ btn.addEve
 const sheetOv=document.getElementById('sheetOverlay');
 if(sheetOv) sheetOv.addEventListener('click', e=>{ if(e.target===sheetOv) closeSheet(); });
 
+// FLUIDITÉ DE NAVIGATION : sur mobile, dès que l'utilisateur fait défiler la page,
+// on retire le focus du champ actif (clavier qui se referme) pour ne plus avoir à
+// toucher une zone vide. On ne le fait PAS si le scroll vient d'une liste défilante
+// interne (ex. .table-wrap) ni d'un champ multi-ligne en cours d'édition volontaire.
+let _scrollBlurTimer=null;
+window.addEventListener('scroll', ()=>{
+  const a=document.activeElement;
+  if(!a) return;
+  const tag=a.tagName;
+  if(tag==='INPUT' || tag==='SELECT'){
+    // un léger délai évite de fermer le clavier sur un micro-scroll involontaire
+    clearTimeout(_scrollBlurTimer);
+    _scrollBlurTimer=setTimeout(()=>{ if(document.activeElement===a) a.blur(); }, 120);
+  }
+}, {passive:true});
+
 function render(){
   const fn = VIEWS[view] || renderDash;
+  // transition légère : on relance l'animation de fondu/glissement du conteneur
+  const main=document.getElementById('main');
+  if(main){ main.classList.remove('view-in'); void main.offsetWidth; main.classList.add('view-in'); }
   try {
     const r = fn();
     // les vues sont asynchrones : on capture aussi un rejet de promesse (sinon écran blanc silencieux)
@@ -561,10 +580,11 @@ function _matRow(row){
     <td>${row.nbLots}</td>
     <td>${row.dlcMin?`${fmtDate(row.dlcMin)} ${dj!==null&&dj<=7?`<span class="tag warn">${dj<=0?'expiré':dj+' j'}</span>`:''}`:'—'}</td>
     <td><span class="tag ${row.low?'low':'ok'}">${row.low?'À commander':'OK'}</span></td>
-    <td style="text-align:right">
-      <span class="act" onclick="lotForm(0,${mat.id})">+ Lot</span>
-      <span class="act" onclick="matForm(${mat.id})">Modifier</span>
-      <span class="act del" onclick="delMat(${mat.id})">Suppr.</span></td></tr>`;
+    <td><div class="qa-row">
+      <button class="qa pay" onclick="lotForm(0,${mat.id})" title="Ajouter un lot">＋ Lot</button>
+      <button class="qa edit" onclick="matForm(${mat.id})" title="Modifier la matière">✎ Modifier</button>
+      <button class="qa del" onclick="delMat(${mat.id})" title="Supprimer">🗑</button>
+    </div></td></tr>`;
 }
 function _lotRow(row){
   const l=row.l;
@@ -572,7 +592,7 @@ function _lotRow(row){
     <td>${fmtDate(l.dateReception)}</td><td>${esc(row.matName)}</td>
     <td>${esc(l.lotFournisseur||'—')}</td><td>${esc(row.supName)}</td>
     <td>${qty(l.qteRestante)} / ${qty(l.qteInitiale)}</td><td>${fmtDate(l.dlc)}</td>
-    <td style="text-align:right"><span class="act del" onclick="delLot(${l.id})">Suppr.</span></td></tr>`;
+    <td><div class="qa-row"><button class="qa del" onclick="delLot(${l.id})" title="Supprimer le lot">🗑 Suppr.</button></div></td></tr>`;
 }
 function matFilter(q){
   matSearch=q||'';
@@ -2031,11 +2051,18 @@ function _cmdRow(row){
        <span class="tag ${st==='Payé'?'done':(st==='Partiel'?'event':'todo')}">${st}</span>
        ${st!=='Payé'&&solde>0?`<br><span style="color:var(--red,#b3261e);font-size:.72rem">solde ${euro(solde)}</span>`:''}
        ${st==='Payé'&&o.datePaiement?`<br><span style="color:#9a8a82;font-size:.72rem">le ${fmtDate(o.datePaiement)}</span>`:''}
-       ${st!=='Payé'?`<br><span class="act" style="font-size:.72rem" onclick="markPaid(${o.id})">✓ Solder</span>`:''}
      </td>
      <td><span class="act-status" onclick="cycleStatus(${o.id})" title="Toucher pour changer le statut">${statusTag(o.statut)}</span></td>
      <td>${row.nbLies?`<span class="tag ok">${row.nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
-     <td style="text-align:right"><span class="act" onclick="cmdView(${o.id})">Détail</span><span class="act" onclick="exportOrderText(${o.id})">Texte</span><span class="act" onclick="cmdLink(${o.id})">Lier</span><span class="act" onclick="cmdForm(${o.id})">Modifier</span><span class="act del" onclick="delCmd(${o.id})">Suppr.</span></td></tr>`;
+     <td><div class="qa-row">
+       ${st!=='Payé'?`<button class="qa pay" onclick="markPaid(${o.id})" title="Encaisser le solde">✓ Solder</button>`:''}
+       <button class="qa status" onclick="cycleStatus(${o.id})" title="Changer le statut">⟳ Statut</button>
+       <button class="qa" onclick="cmdView(${o.id})" title="Voir le détail">👁 Détail</button>
+       <button class="qa edit" onclick="cmdForm(${o.id})" title="Modifier">✎ Modifier</button>
+       <button class="qa" onclick="exportOrderText(${o.id})" title="Exporter en texte">⤓ Texte</button>
+       <button class="qa" onclick="cmdLink(${o.id})" title="Lier à une production">🔗 Lier</button>
+       <button class="qa del" onclick="delCmd(${o.id})" title="Supprimer">🗑</button>
+     </div></td></tr>`;
 }
 // ---- Solder une commande depuis la liste (encaisse le solde, daté du jour) ----
 async function listSetPay(id, statut){
