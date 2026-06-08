@@ -309,21 +309,33 @@ document.querySelectorAll('#sheetGrid button[data-v]').forEach(btn=>{ btn.addEve
 const sheetOv=document.getElementById('sheetOverlay');
 if(sheetOv) sheetOv.addEventListener('click', e=>{ if(e.target===sheetOv) closeSheet(); });
 
-// FLUIDITÉ DE NAVIGATION : sur mobile, dès que l'utilisateur fait défiler la page,
+// FLUIDITÉ DE NAVIGATION : sur mobile, dès que l'utilisateur fait défiler la PAGE DE FOND,
 // on retire le focus du champ actif (clavier qui se referme) pour ne plus avoir à
-// toucher une zone vide. On ne le fait PAS si le scroll vient d'une liste défilante
-// interne (ex. .table-wrap) ni d'un champ multi-ligne en cours d'édition volontaire.
+// toucher une zone vide. IMPORTANT : on ne le fait JAMAIS quand une modale de saisie est
+// ouverte (sinon le clavier qui s'ouvre déclenche un scroll et le champ perd le focus =
+// « ça quitte dès qu'on tape »), ni pour les zones de texte multi-lignes.
 let _scrollBlurTimer=null;
-window.addEventListener('scroll', ()=>{
+document.addEventListener('scroll', (e)=>{
+  // une modale est ouverte ? on ne touche à rien (saisie protégée)
+  if(overlay && overlay.classList.contains('show')) return;
+  // le scroll vient-il d'une liste interne (tableau) plutôt que de la page ? on ignore
+  const tgt=e.target;
+  if(tgt && tgt.closest && tgt.closest('.table-wrap')) return;
   const a=document.activeElement;
   if(!a) return;
+  // ne jamais retirer le focus d'un champ texte/area en cours de frappe
   const tag=a.tagName;
-  if(tag==='INPUT' || tag==='SELECT'){
-    // un léger délai évite de fermer le clavier sur un micro-scroll involontaire
-    clearTimeout(_scrollBlurTimer);
-    _scrollBlurTimer=setTimeout(()=>{ if(document.activeElement===a) a.blur(); }, 120);
+  if(tag==='TEXTAREA') return;
+  if(tag==='INPUT'){
+    const t=(a.getAttribute('type')||'text').toLowerCase();
+    // champs de SAISIE TEXTE : on laisse l'utilisateur taper tranquillement
+    if(['text','number','tel','email','search','date','password','url'].includes(t)) return;
   }
-}, {passive:true});
+  if(tag==='INPUT' || tag==='SELECT'){
+    clearTimeout(_scrollBlurTimer);
+    _scrollBlurTimer=setTimeout(()=>{ if(document.activeElement===a) a.blur(); }, 150);
+  }
+}, {passive:true, capture:true});
 
 function render(){
   const fn = VIEWS[view] || renderDash;
