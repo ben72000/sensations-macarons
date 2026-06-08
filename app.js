@@ -4279,7 +4279,7 @@ async function computeAccounting(opts){
     if(mk.statut!=='clos') return;
     const T=marketTotals(mk, movesByMk[mk.id]||[], avgUnitMat);
     const m=monthKey(mk.dateCloture||mk.date); if(!m) return;
-    const c=money2(T.coutMat+T.coutEmb);
+    const c=money2(T.coutMat+T.coutEmb+(T.coutMarche||0));
     costByMonth[m]=money2((costByMonth[m]||0)+c);
     totalCoutMarches=money2(totalCoutMarches+c);
   });
@@ -4658,7 +4658,11 @@ function marketTotals(market, moves, avgUnitMat){
   const pkg = marketPackagingCost(market);
   const coutEmb = pkg.cost;
   const s=getSettings();
-  const margeBrute = money2(caTotal - coutMat - coutEmb);
+  // Charges propres au marché : prix du stand + déplacement (carburant A/R + temps de route).
+  const coutStand = money2(+market.coutStand||0);
+  const deplacement = computeDeliveryCost({distanceKm:+market.distanceKm||0, prixCarburant:+market.prixCarburant||0, tempsLivraisonMin:+market.tempsRouteMin||0});
+  const coutMarche = money2(coutStand + deplacement.total);   // total des frais spécifiques au marché
+  const margeBrute = money2(caTotal - coutMat - coutEmb - coutMarche);
   const tauxBrut = caTotal>0?Math.round(margeBrute/caTotal*1000)/10:0;
   // marché = vente de marchandise → charges sociales "goods"
   const chargesSociales = money2(caTotal*s.socialGoods/100);
@@ -4669,7 +4673,7 @@ function marketTotals(market, moves, avgUnitMat){
     pctCB: caTotal>0?Math.round(caCB/caTotal*100):0, pctEspeces: caTotal>0?Math.round(caEspeces/caTotal*100):0,
     tauxInvendus, tauxPerte,
     caParHeure: (market.heures>0)?money2(caTotal/market.heures):0,
-    coutMat, coutEmb, pkgUsed:pkg.used, margeBrute, tauxBrut, chargesSociales, margeNette, tauxNet};
+    coutMat, coutEmb, coutStand, deplacement, coutMarche, pkgUsed:pkg.used, margeBrute, tauxBrut, chargesSociales, margeNette, tauxNet};
 }
 // Coût matière moyen par macaron (helper réutilisable, nécessite recipes+items+lots).
 function avgMacaronCost(recipes, recipeItems, lots){
@@ -5695,12 +5699,110 @@ async function renderCompta(){
  } catch(err){ renderViewError('compta', err); }
 }
 // Liste détaillée des charges (gestion : éditer / supprimer)
+/* ============================================================
+   CHARGES RÉCURRENTES MENSUELLES (assurance, hébergement web, abos…)
+   Modèles stockés en localStorage ; chaque mois, on matérialise une vraie
+   charge dans db.charges (idempotent) → elle alimente la compta normalement.
+   ============================================================ */
+const RECUR_KEY = 'sm_recurringCharges';
+function getRecurringCharges(){
+  try{ const a=JSON.parse(localStorage.getItem(RECUR_KEY)||'[]'); return Array.isArray(a)?a:[]; }catch(e){ return []; }
+}
+function saveRecurringCharges(a){ localStorage.setItem(RECUR_KEY, JSON.stringify(a||[])); }
+// Liste des mois "AAAA-MM" entre le mois de début (ou 12 mois en arrière) et le mois courant.
+function _monthsUpToNow(startYM){
+  const now=new Date(); const cur=new Date(now.getFullYear(), now.getMonth(), 1);
+  let d;
+  if(startYM && /^\d{4}-\d{2}$/.test(startYM)){ const [y,m]=startYM.split('-').map(Number); d=new Date(y, m-1, 1); }
+  else { d=new Date(now.getFullYear(), now.getMonth()-11, 1); }   // par défaut : 12 derniers mois
+  const out=[];
+  while(d<=cur){ out.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')); d.setMonth(d.getMonth()+1); }
+  return out;
+}
+// Matérialise les charges récurrentes manquantes (une par mois et par modèle actif).
+// Idempotent : on tague chaque charge générée (recurId+ym) pour ne jamais doublonner.
+async function materializeRecurringCharges(){
+  const models = getRecurringCharges().filter(m=>m.actif!==false && +m.montant>0);
+  if(!models.length) return 0;
+  const existing = await db.charges.toArray();
+  const seen = new Set(existing.filter(c=>c.recurId).map(c=>c.recurId+'|'+(c.date||'').slice(0,7)));
+  let created=0;
+  for(const m of models){
+    const jour = Math.min(28, Math.max(1, +m.jourMois||1));   // 28 pour éviter les mois courts
+    for(const ym of _monthsUpToNow(m.debut)){
+      const key=m.id+'|'+ym;
+      if(seen.has(key)) continue;
+      const date = ym+'-'+String(jour).padStart(2,'0');
+      await db.charges.add({date, categorie:m.categorie||'Autre', libelle:m.libelle||'Charge récurrente',
+        montant:money2(+m.montant||0), recurId:m.id});
+      seen.add(key); created++;
+    }
+  }
+  return created;
+}
+// Éditeur des charges récurrentes (modèles).
+async function recurringChargesForm(){
+  const models = getRecurringCharges();
+  const rows = models.map((m,i)=>`<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px">
+    <div style="display:flex;justify-content:space-between"><b>${esc(m.libelle||'—')}</b><b>${euro(m.montant)}/mois</b></div>
+    <div style="display:flex;justify-content:space-between;font-size:.8rem;color:#9a8a82">
+      <span>${esc(m.categorie||'Autre')} · le ${m.jourMois||1} du mois${m.actif===false?' · ⏸ en pause':''}</span>
+      <span><span class="act" onclick="recurEdit(${i})">Modifier</span> <span class="act del" onclick="recurDel(${i})">Suppr.</span></span></div>
+  </div>`).join('');
+  openModal(`<h3>Charges mensuelles récurrentes</h3>
+    <p class="note">Assurance pro, hébergement du site, abonnements… Saisies une fois, elles sont reportées automatiquement chaque mois dans la comptabilité.</p>
+    <button class="btn gold sm" style="margin-bottom:8px" onclick="recurEdit(-1)">＋ Nouvelle charge récurrente</button>
+    ${rows||'<p class="note">Aucune charge récurrente.</p>'}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="recurApplyNow()">Reporter maintenant</button></div>`);
+}
+function recurEdit(i){
+  const models=getRecurringCharges();
+  const m = i>=0 ? models[i] : {libelle:'', categorie:'Cotisations / impôts', montant:'', jourMois:1, debut:today().slice(0,7), actif:true};
+  openModal(`<h3>${i>=0?'Modifier':'Nouvelle'} charge récurrente</h3>
+    <div class="field"><label>Libellé *</label><input id="rc_lib" value="${esc(m.libelle||'')}" placeholder="ex : Assurance pro, Hébergement site web"></div>
+    <div class="field"><label>Catégorie</label><select id="rc_cat">${CHARGE_CATS.map(x=>`<option ${m.categorie===x?'selected':''}>${x}</option>`).join('')}</select></div>
+    <div class="row2">
+      <div class="field"><label>Montant mensuel (€) *</label><input type="number" step="0.01" min="0" id="rc_mt" value="${m.montant||''}"></div>
+      <div class="field"><label>Jour du mois</label><input type="number" min="1" max="28" id="rc_jour" value="${m.jourMois||1}"></div>
+    </div>
+    <div class="field"><label>À partir de (mois)</label><input type="month" id="rc_debut" value="${esc(m.debut||today().slice(0,7))}"></div>
+    <label class="switch-row"><input type="checkbox" id="rc_actif" ${m.actif!==false?'checked':''}> Active (décochez pour mettre en pause)</label>
+    <div class="modal-actions"><button class="btn ghost" onclick="recurringChargesForm()">Annuler</button>
+      <button class="btn" onclick="recurSave(${i})">Enregistrer</button></div>`);
+}
+async function recurSave(i){
+  const models=getRecurringCharges();
+  const lib=val('rc_lib'), mt=money2(+val('rc_mt')||0);
+  if(!lib){ toast('Libellé requis'); return; }
+  if(mt<=0){ toast('Montant requis'); return; }
+  const m={ id: (i>=0 && models[i].id) ? models[i].id : ('rc'+Date.now()),
+    libelle:lib, categorie:val('rc_cat'), montant:mt,
+    jourMois: Math.min(28,Math.max(1,+val('rc_jour')||1)), debut:val('rc_debut')||today().slice(0,7),
+    actif: document.getElementById('rc_actif').checked };
+  if(i>=0) models[i]=m; else models.push(m);
+  saveRecurringCharges(models);
+  const n=await materializeRecurringCharges();
+  closeModal(); recurringChargesForm(); toast(`Charge récurrente enregistrée ✓${n?` · ${n} mois reporté(s)`:''}`);
+}
+async function recurDel(i){
+  const models=getRecurringCharges();
+  if(!confirm('Supprimer ce modèle ? Les charges déjà reportées dans la compta sont conservées.')) return;
+  models.splice(i,1); saveRecurringCharges(models);
+  recurringChargesForm(); toast('Modèle supprimé');
+}
+async function recurApplyNow(){
+  const n=await materializeRecurringCharges();
+  closeModal(); renderCompta(); toast(n?`${n} charge(s) reportée(s) ✓`:'Tout est déjà à jour ✓');
+}
+
 async function renderChargesList(){
   const charges = (await db.charges.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   openModal(`<h3>Charges / dépenses</h3>
-    <button class="btn gold sm" style="margin-bottom:8px" onclick="chargeForm()">＋ Nouvelle charge</button>
+    <div class="flex" style="gap:6px;margin-bottom:8px"><button class="btn gold sm" onclick="chargeForm()">＋ Nouvelle charge</button>
+      <button class="btn ghost sm" onclick="recurringChargesForm()">🔁 Charges récurrentes</button></div>
     ${charges.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Catégorie</th><th>Libellé</th><th>Montant</th><th></th></tr></thead>
-      <tbody>${charges.map(c=>`<tr><td>${fmtDate(c.date)}</td><td>${esc(c.categorie||'—')}</td><td>${esc(c.libelle||'')}</td><td>${euro(c.montant)}</td>
+      <tbody>${charges.map(c=>`<tr><td>${fmtDate(c.date)}</td><td>${esc(c.categorie||'—')}</td><td>${esc(c.libelle||'')}${c.recurId?' <span class="tag" style="background:#7a6a9a;color:#fff">🔁</span>':''}</td><td>${euro(c.montant)}</td>
         <td style="text-align:right"><span class="act" onclick="chargeForm(${c.id})">Modifier</span><span class="act del" onclick="delCharge(${c.id})">Suppr.</span></td></tr>`).join('')}</tbody></table></div>`
       :'<p class="note">Aucune charge enregistrée.</p>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
@@ -6356,6 +6458,17 @@ async function marketForm(id){
     <div class="field"><label>Météo (optionnel)</label><input id="mk_meteo" value="${esc(mk.meteo||'')}" placeholder="ex : Ensoleillé, 18°C"></div>
     <div class="field"><label>Fond de caisse au départ (€) <span style="color:#9a8a82;font-weight:400">— déduit automatiquement du résultat</span></label>
       <input type="number" min="0" step="1" id="mk_fond" value="${mk.fondCaisse!=null?esc(mk.fondCaisse):''}" placeholder="ex : 50"></div>
+    <h4 style="margin:14px 0 4px;color:var(--bordeaux)">Charges du marché</h4>
+    <div class="field"><label>Prix du stand / emplacement (€)</label>
+      <input type="number" min="0" step="0.5" id="mk_stand" value="${mk.coutStand!=null?esc(mk.coutStand):''}" placeholder="ex : 25"></div>
+    <div class="row2">
+      <div class="field"><label>Distance aller (km) <span style="color:#9a8a82;font-weight:400">— A/R calculé</span></label>
+        <input type="number" min="0" step="0.1" id="mk_dist" value="${mk.distanceKm!=null?esc(mk.distanceKm):''}" placeholder="ex : 18"></div>
+      <div class="field"><label>Prix carburant (€/L)</label>
+        <input type="number" min="0" step="0.001" id="mk_carbu" value="${mk.prixCarburant!=null?esc(mk.prixCarburant):''}" placeholder="ex : 1.85"></div>
+    </div>
+    <div class="field"><label>Temps de route (min, A/R) <span style="color:#9a8a82;font-weight:400">— valorisé au taux horaire</span></label>
+      <input type="number" min="0" step="1" id="mk_route" value="${mk.tempsRouteMin!=null?esc(mk.tempsRouteMin):''}" placeholder="ex : 60"></div>
     <div class="field"><label>Quantité prévue à emporter (macarons) <span style="color:#9a8a82;font-weight:400">— pour la planification intelligente</span></label>
       <input type="number" min="0" step="10" id="mk_prevu" value="${mk.prevuQte!=null?esc(mk.prevuQte):''}" placeholder="ex : 300">
       <p class="note" id="mk_prevuHint" style="margin-top:4px"></p></div>
@@ -6382,7 +6495,8 @@ async function saveMarket(id){
   if(!nom){ toast('Nom obligatoire'); return; }
   if(!date){ toast('Date obligatoire'); return; }
   const o={nom, date, lieu:val('mk_lieu'), horaires:val('mk_horaires'), heures:+val('mk_heures')||0,
-    meteo:val('mk_meteo'), notes:val('mk_notes'), prevuQte:+val('mk_prevu')||0, fondCaisse:+val('mk_fond')||0};
+    meteo:val('mk_meteo'), notes:val('mk_notes'), prevuQte:+val('mk_prevu')||0, fondCaisse:+val('mk_fond')||0,
+    coutStand:+val('mk_stand')||0, distanceKm:+val('mk_dist')||0, prixCarburant:+val('mk_carbu')||0, tempsRouteMin:+val('mk_route')||0};
   if(id){ await db.markets.update(id,o); }
   else { o.statut='ouvert'; o.ca={especes:0,cb:0,autre:0}; id=await db.markets.add(o); }
   // Connexion calendrier : un marché planifié apparaît dans l'agenda (type 'marche').
@@ -6450,6 +6564,8 @@ async function marketDetail(id){
       <h3 style="font-size:.95rem;margin:12px 0 6px">Rentabilité</h3>
       <div class="sum-box"><span>Coût matières (${qty(T.vendu)} vendus)</span><b>−${euro(T.coutMat)}</b></div>
       <div class="sum-box"><span>Coût emballages (delta ${qty(T.pkgUsed)} u.)</span><b>−${euro(T.coutEmb)}</b></div>
+      ${T.coutStand>0?`<div class="sum-box"><span>Prix du stand</span><b>−${euro(T.coutStand)}</b></div>`:''}
+      ${T.deplacement&&T.deplacement.total>0?`<div class="sum-box"><span>Déplacement (A/R ${T.deplacement.distAR} km${T.deplacement.minutes?` · ${T.deplacement.minutes} min`:''})</span><b>−${euro(T.deplacement.total)}</b></div>`:''}
       <div class="sum-box"><span>Marge brute</span><b>${euro(T.margeBrute)} <span style="color:#9a8a82;font-weight:400">(${T.tauxBrut}%)</span></b></div>
       <div class="sum-box"><span>Charges sociales (${getSettings().socialGoods}%)</span><b>−${euro(T.chargesSociales)}</b></div>
       <div class="sum-box"><span><b>Marge nette</b></span><b style="color:${T.margeNette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(T.margeNette)} (${T.tauxNet}%)</b></div>
@@ -9265,7 +9381,15 @@ function mrpFindRecipe(recipes, parfum){
 // GÉNÉRATION DU PLAN DE PRODUCTION pour une période [startDate, endDate].
 async function generateProductionOrder(startDate, endDate, tempsDisponibleMinutes){
   // requête ciblée sur l'index date (bornée) plutôt qu'un scan global
-  const orders = await db.orders.where('date').between(startDate, endDate, true, true).toArray();
+  // Requête bornée sur l'index date ; repli sur un filtre mémoire si l'index
+  // n'est pas (encore) disponible dans la base locale (ancienne version non migrée).
+  let orders;
+  try{
+    orders = await db.orders.where('date').between(startDate, endDate, true, true).toArray();
+  }catch(e){
+    const all = await db.orders.toArray();
+    orders = all.filter(o=> o.date && o.date>=startDate && o.date<=endDate);
+  }
   const {stock, recipes} = await mrpCurrentStockByParfum();
   const times = getMrpTimes();
   // 1) Besoin brut agrégé par parfum
@@ -9720,6 +9844,7 @@ async function pmsExportDDPP(){
   try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
   try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
   try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
+  try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
   const opened = await handleTraceAnchor().catch(()=>false);
   if(!opened) render();
   initHistoryNav();
