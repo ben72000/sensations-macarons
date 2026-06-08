@@ -717,6 +717,7 @@ async function renderDash(){
   // Alerte : productions encore « démarrées » (DLC non lancée) et celles dépassant 4 jours.
   const prodOuvertes = productions.filter(p=>prodStatut(p)==='demarre');
   const prodEnRetard = prodOuvertes.filter(prodOpenOverdue);
+  const prodSugg = assemblySuggestions(productions, recName);
 
   const upcoming = events.filter(e=>e.date>=today()).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
   const months=[]; for(let i=5;i>=0;i--){const d=new Date(y,m-i,1);months.push({k:d.toISOString().slice(0,7),l:d.toLocaleDateString('fr-FR',{month:'short'})});}
@@ -732,6 +733,7 @@ async function renderDash(){
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
    ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
+   ${prodSugg.length?`<div class="banner" style="background:#f4faf5;border-color:#cfe3d4">🔗 <div><b>${prodSugg.length} assemblage(s) à finaliser</b> — des coques et ganaches en stock peuvent être réunies (${prodSugg.slice(0,3).map(s=>esc(s.coqRec)+' '+qty(s.assemblable)+' mac.').join(' · ')}${prodSugg.length>3?' …':''}). <span class="act" onclick="goView('productions')">Assembler →</span></div></div>`:''}
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
@@ -1385,6 +1387,47 @@ async function delRec(id){
    ============================================================ */
 let prodnSearch='';
 let _prodnCache=null;
+// Suggestions de rapprochement coques ↔ ganache (sous-lots non assemblés, avec stock).
+// Priorité : même lot de base, puis même recette (parfum). Allocation gloutonne pour
+// ne pas proposer deux fois la même ganache/coque.
+function assemblySuggestions(prods, recName){
+  recName = recName || (id=>String(id));
+  const coques = prods.filter(p=>prodComposant(p)==='coques' && round3(+p.qteRestante)>0)
+    .map(p=>({p, mac: Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON)}))
+    .filter(x=>x.mac>0);
+  let ganaches = prods.filter(p=>prodComposant(p)==='ganache' && round3(+p.qteRestante)>0)
+    .map(p=>({p, mac: round3(+p.qteRestante), used:0}));
+  if(!coques.length || !ganaches.length) return [];
+  const out=[];
+  for(const c of coques){
+    // cherche une ganache : même lotBase d'abord, puis même recette, puis n'importe laquelle
+    const score = g => {
+      const dispo = g.mac - g.used; if(dispo<=0) return -1;
+      let s=0;
+      if(c.p.lotBase && g.p.lotBase && c.p.lotBase===g.p.lotBase) s+=100;
+      if(c.p.recipeId===g.p.recipeId) s+=10;
+      return s;
+    };
+    let best=null, bestS=-1;
+    for(const g of ganaches){ const sc=score(g); if(sc>bestS){ bestS=sc; best=g; } }
+    if(!best || bestS<0) continue;
+    const dispoGan = best.mac - best.used;
+    const assemblable = Math.min(c.mac, dispoGan);
+    if(assemblable<=0) continue;
+    best.used += assemblable;
+    out.push({
+      coqId: c.p.id, ganId: best.p.id,
+      coqRec: recName(c.p.recipeId), ganRec: recName(best.p.recipeId),
+      coqLot: c.p.lotProduction||('#'+c.p.id), ganLot: best.p.lotProduction||('#'+best.p.id),
+      coqMac: c.mac, ganMac: best.mac, assemblable,
+      sameBase: !!(c.p.lotBase && best.p.lotBase && c.p.lotBase===best.p.lotBase),
+      sameRec: c.p.recipeId===best.p.recipeId
+    });
+  }
+  // les rapprochements "même lot / même parfum" d'abord
+  out.sort((a,b)=> (b.sameBase-a.sameBase) || (b.sameRec-a.sameRec) || (b.assemblable-a.assemblable));
+  return out;
+}
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
@@ -1400,6 +1443,8 @@ async function renderProductions(){
   const rendePct = sumTh ? Math.round(sumRe/sumTh*1000)/10 : null;
   const ouvertes = prods.filter(p=>prodStatut(p)==='demarre');
   const enRetard = ouvertes.filter(prodOpenOverdue);
+  // ---- SURVEILLANCE : coques & ganache non assemblées → suggestions de rapprochement ----
+  const sugg = assemblySuggestions(prods, recName);
   // index de recherche : lot, parfum/recette, date (plusieurs formats), emplacement (nom + LETTRE), statut
   _prodnCache = prods.map(p=>{
     const nom = recName(p.recipeId);
@@ -1423,6 +1468,18 @@ async function renderProductions(){
    </div>`:''}
    ${enRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${enRetard.length} production(s) ouverte(s) depuis plus de ${PROD_OPEN_MAX_DAYS} jours.</b> Une production ne peut pas rester « démarrée » au-delà de ${PROD_OPEN_MAX_DAYS} jours : terminez-la (✓ Terminer) pour figer la DLC, ou supprimez-la.</div></div>`:''}
    ${ouvertes.length && !enRetard.length?`<div class="banner">▶ <div><b>${ouvertes.length} production(s) en cours.</b> La DLC de 7 j ne démarre qu'au passage en « terminée ».</div></div>`:''}
+   ${sugg.length?`<div class="panel" style="border:1.5px solid #cfe3d4;background:#f4faf5">
+     <h2 style="color:#2e7d32">🔗 Assemblages à finaliser <span style="font-weight:400;font-size:.82rem;color:#6a8a72">— ${sugg.length} rapprochement(s) possible(s)</span></h2>
+     <p class="note" style="margin-bottom:8px">Des <b>coques</b> et des <b>ganaches</b> en stock peuvent être assemblées pour terminer la production. Vérifie le parfum avant de valider.</p>
+     ${sugg.map(s=>`<div class="sugg-row">
+        <div class="sugg-main">
+          <div><b>🟤 ${esc(s.coqRec)}</b> <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.64rem">${qty(s.coqMac)} mac. dispo</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.coqLot)}</span></div>
+          <div style="margin-top:2px"><b>🍫 ${esc(s.ganRec)}</b> <span class="tag" style="background:#5a3a2a;color:#fff;font-size:.64rem">${qty(s.ganMac)} dispo</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.ganLot)}</span></div>
+          <div style="margin-top:3px;font-size:.8rem;color:#2e7d32">➜ assemblables : <b>${qty(s.assemblable)} macaron(s)</b>${s.sameBase?' · <span class="tag ok" style="font-size:.62rem">même lot</span>':''}${s.sameRec?'':' · <span class="tag warn" style="font-size:.62rem">parfum différent</span>'}</div>
+        </div>
+        <button class="btn gold sm" onclick="prodAssembleForm(${s.coqId})" title="Assembler ces composants">🔗 Assembler</button>
+      </div>`).join('')}
+   </div>`:''}
    <div class="panel">
      <input class="search" id="prodbatSearch" style="width:100%;margin-bottom:6px" placeholder="N° lot, parfum, date, emplacement (F/B/C/A)…" value="${esc(prodnSearch)}" oninput="prodbatFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
      <div class="prod-emp-chips" style="margin-bottom:12px">
@@ -3829,7 +3886,7 @@ function _cmdRow(row){
   const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
   return `<tr>
      <td><b>${o.clientId?`${nameP(_cmdClName(o.clientId))} <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Voir la fiche client">→</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
-     <td><span class="cmd-jump" onclick="cmdView(${o.id})" title="Voir le détail de la commande">${esc(row.resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
+     <td><span style="font-size:.82rem">${esc(row.resume)}</span> <span class="jump-arrow" onclick="cmdView(${o.id})" title="Voir le détail de la commande">→</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
      <td>
        <span class="tag ${st==='Payé'?'done':(st==='Partiel'?'event':'todo')}">${st}</span>
@@ -4027,7 +4084,7 @@ async function cmdView(id){
         return `<button class="btn ${cur?'':'ghost'} sm" onclick="setOrderStatus(${id},'${st}')" ${cur?'style="pointer-events:none"':''}>${cur?'● ':''}${st}</button>`;}).join('')}
     </div>
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
 function lineTotalStored(ln){
@@ -8404,7 +8461,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v111';
+const APP_VERSION = 'v113';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -8471,7 +8528,7 @@ const APP_KB = [
     r:`<p>Demande à l'assistant « <b>où sont mes macarons vanille ?</b> ». Il ouvre une <b>popup</b> qui liste, par emplacement (Frigo F, Congélateurs B/C/A), chaque <b>batch</b> en stock avec sa quantité, son n° de lot, sa DLC et son statut (prêt / en cours). Sans parfum précisé, il propose la liste des parfums en stock.</p>` },
   { id:'composants', titre:'Production par composants (coques / ganache) & assemblage',
     tags:'composant composants coques ganache assemblage assembler sous-lot souslot lot ambiant congelateur frigo degustation echantillon offert marche surplus casse garni perte',
-    r:`<p>Au lancement d'une production, choisis <b>« Par composants »</b> pour démarrer par les <b>coques</b> ou la <b>ganache</b> (sous-lots <b>-CO</b> / <b>-GA</b> sous le même n° de lot de base). Tu saisis toujours la quantité <b>en macarons</b> : pour les coques, l'app stocke automatiquement <b>2 coques par macaron</b> (60 macarons → <b>120 coques</b>), tout en calculant les matières sur le nombre de macarons. Règle d'assemblage : <b>1 macaron = 2 coques + 1 ganache</b>. Tu peux <b>terminer</b> la production de coques (choix de l'emplacement à la fin), <b>déclarer pertes et écarts</b> théorie/réel sur les coques, puis utiliser <b>🔗 Assembler</b> pour réunir coques + ganache en un macaron assemblé (assemblage partiel possible). Coche <b>« dégustation »</b> pour un assemblage offert non vendable ; les <b>cassés mais garnis</b> basculent en dégustation depuis « ⚠ Perte ». Coques, ganache et dégustations ne comptent jamais comme stock vendable.</p>` },
+    r:`<p>Au lancement d'une production, choisis <b>« Par composants »</b> pour démarrer par les <b>coques</b> ou la <b>ganache</b> (sous-lots <b>-CO</b> / <b>-GA</b> sous le même n° de lot de base). Tu saisis toujours la quantité <b>en macarons</b> : pour les coques, l'app stocke automatiquement <b>2 coques par macaron</b> (60 macarons → <b>120 coques</b>), tout en calculant les matières sur le nombre de macarons. Règle d'assemblage : <b>1 macaron = 2 coques + 1 ganache</b>. Tu peux <b>terminer</b> la production de coques (choix de l'emplacement à la fin), <b>déclarer pertes et écarts</b> théorie/réel sur les coques, puis utiliser <b>🔗 Assembler</b> pour réunir coques + ganache en un macaron assemblé (assemblage partiel possible). L'application <b>surveille les coques et ganaches non assemblées</b> : un bloc <b>« Assemblages à finaliser »</b> (dans Productions et sur le tableau de bord) te <b>suggère les rapprochements</b> possibles (même lot de base et même parfum en priorité) avec le nombre de macarons assemblables, et un bouton direct pour finaliser. Coche <b>« dégustation »</b> pour un assemblage offert non vendable ; les <b>cassés mais garnis</b> basculent en dégustation depuis « ⚠ Perte ». Coques, ganache et dégustations ne comptent jamais comme stock vendable.</p>` },
   { id:'suppressions', titre:'Supprimer une entrée (commande, production, marché, client, événement)',
     tags:'supprimer suppression effacer raison motif confirmation perte recrediter congelateur retour chaine froid decongelation annuler annulation undo',
     r:`<p>Chaque fiche complète a un bouton <b>🗑 Supprimer</b> (à droite de Modifier) avec <b>confirmation</b>. Pour une <b>commande</b> ou une <b>production</b>, une <b>raison</b> est demandée. À la suppression d'une production, tu choisis : recréditer le stock matières, ou — si des pièces finies restent — les <b>déclarer en pertes</b>. Après une suppression, une barre <b>↩ Annuler</b> s'affiche quelques secondes pour <b>revenir en arrière immédiatement</b>. Règle chaîne du froid : une production sortie du congélateur ne peut y retourner que dans l'heure ; au-delà le retour A/B/C est bloqué.</p>` }
