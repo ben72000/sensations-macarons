@@ -123,6 +123,7 @@ const EVENT_MIN_EQUIP = 1;      // au moins 1 pyramide obligatoire
    - Taux de charges sociales : marchandise (produit fini) vs prestation de service
    - Coût emballages/consommables par coffret selon la taille
    ============================================================ */
+const EXPORT_REMINDER_DAYS_DEFAULT = 3;   // fréquence par défaut du rappel d'export (jours)
 const SETTINGS_DEFAULTS = {
   socialGoods: 12.3,     // % charges sociales sur vente de marchandise (produit fini)
   socialService: 25.6,   // % charges sociales sur prestation de service
@@ -165,7 +166,8 @@ function getSettings(){
       prixMacaronProStd: s.prixMacaronProStd!=null?+s.prixMacaronProStd:SETTINGS_DEFAULTS.prixMacaronProStd,
       prixGrandFormatPro: s.prixGrandFormatPro!=null?+s.prixGrandFormatPro:SETTINGS_DEFAULTS.prixGrandFormatPro,
       packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
-      packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes))
+      packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes)),
+      exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT
     };
   }catch(e){ return JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)); }
 }
@@ -531,7 +533,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant, pms:renderPMS
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -887,7 +889,10 @@ let matSearch='';
 let _matCatFilter='all';   // 'all' | 'denree' | 'emballage'
 let _matCache=null, _lotCache=null;
 async function renderMaterials(){
-  const mats = await db.materials.orderBy('nom').toArray();
+  // Tri alphabétique STRICT par nom, insensible à la casse et aux accents,
+  // indépendant de l'ordre de saisie (l'index IndexedDB trie mal les accents/majuscules).
+  const mats = (await db.materials.toArray())
+    .sort((a,b)=> normTxt(a.nom||'').localeCompare(normTxt(b.nom||''), 'fr', {numeric:true}));
   window._allMatsCache = mats;   // cache pour le coût emballage réel (calculs synchrones)
   // précalcul du stock par matière (une seule passe sur les lots)
   const allLots = await db.materialLots.toArray();
@@ -900,7 +905,7 @@ async function renderMaterials(){
     const low = total<=(+mat.seuil||0);
     const cat = mat.categorie||'denree';
     const prim = normTxt(mat.nom||'');
-    const blob = normTxt([mat.nom, mat.unite, mat.ref, cat==='emballage'?'emballage':'denree', low?'à commander':'ok'].filter(Boolean).join(' '));
+    const blob = normTxt([mat.nom, mat.marque, mat.unite, mat.ref, cat==='emballage'?'emballage':'denree', low?'à commander':'ok'].filter(Boolean).join(' '));
     return {mat, total, dlcMin, nbLots, low, cat, _prim:prim, _blob:blob, _digits:''};
   });
 
@@ -917,19 +922,48 @@ async function renderMaterials(){
     return {l, matName:matName(l.materialId), supName:supName(l.supplierId), _prim:prim, _blob:blob, _digits:onlyDigits(l.lotFournisseur||'')};
   });
 
-  // Historique consommation (inchangé, non recherché — volume borné à 20)
+  // Historique consommation : regroupé PAR BATCH (1 recette = 1 titre + ses ingrédients).
+  // Les batchs supprimés n'ont plus de prodConsumption (nettoyés à la suppression) ; par
+  // sécurité on ignore aussi toute conso dont la production n'existe plus.
   const lotById = id => allLots.find(l=>l.id===id);
   const allProds = await db.productions.toArray();
   const prodById = id => allProds.find(p=>p.id===id);
   const recipes = await db.recipes.toArray();
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const matCatById = id => (mats.find(m=>m.id===id)||{}).categorie||'denree';
   const conso = await db.prodConsumption.toArray();
-  const histo = conso.map(c=>{
-    const lot = lotById(c.materialLotId); const prod = prodById(c.productionId);
-    return { date: prod?prod.date:'', materialId: lot?lot.materialId:null,
-      lotFournisseur: lot?lot.lotFournisseur:'(lot supprimé)', qte: c.qteConsommee,
-      produit: prod?recName(prod.recipeId):'(prod. supprimée)', lotProd: prod?prod.lotProduction:'' };
-  }).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,20);
+  // Consommables non rattachés à un batch (papier sulfurisé, film étirable, emballages…)
+  const isConsumable = (matId)=>{
+    const m = mats.find(x=>x.id===matId);
+    if(!m) return false;
+    if((m.categorie||'denree')==='emballage') return true;
+    return /sulfuris|papier|film|cellophane|étirable|etirable|aluminium|alu\b/i.test(m.nom||'');
+  };
+  // Regroupe par batch (production existante uniquement)
+  const batchMap = new Map();
+  const consumablesAgg = new Map(); // matId -> total (hors batch)
+  for(const c of conso){
+    const lot = lotById(c.materialLotId);
+    const matId = lot ? lot.materialId : (c.snapMaterialId||null);
+    if(isConsumable(matId)){
+      const prev=consumablesAgg.get(matId)||0; consumablesAgg.set(matId, prev+(+c.qteConsommee||0));
+      continue;
+    }
+    const prod = prodById(c.productionId);
+    if(!prod) continue; // batch supprimé → on n'affiche pas
+    if(!batchMap.has(prod.id)) batchMap.set(prod.id, {prod, items:[]});
+    batchMap.get(prod.id).items.push({
+      materialId: matId,
+      lotFournisseur: lot ? lot.lotFournisseur : (c.snapLotFournisseur||'(lot archivé)'),
+      qte: c.qteConsommee
+    });
+  }
+  // Tri des batchs : du plus récent au plus ancien (par heure de fab. ou date)
+  const tsOf = p => p.prodTermineTs || p.prodDebutTs || p.prodTimestamp || (p.date?p.date+'T00:00':'');
+  const batches = Array.from(batchMap.values())
+    .sort((a,b)=> String(tsOf(b.prod)).localeCompare(String(tsOf(a.prod)))).slice(0,30);
+  const consumablesList = Array.from(consumablesAgg.entries()).map(([id,total])=>({id,total}))
+    .sort((a,b)=> (matName(a.id)||'').localeCompare(matName(b.id)||''));
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Matières & emballages</h1><p id="matCount">${mats.length} référence(s)</p></div>
@@ -950,16 +984,33 @@ async function renderMaterials(){
      <tbody id="lotBody"></tbody></table></div><div id="lotEmpty" class="empty" style="display:none">Aucun lot.</div>`
      :`<div class="empty">Aucun lot réceptionné.</div>`}
    </div>
-   <div class="panel"><h2>Dernières matières consommées</h2>
-   ${histo.length?`<div class="table-wrap"><table><thead><tr><th>Date prod.</th><th>Matière</th><th>Quantité</th><th>Lot fourn.</th><th>Produit fabriqué</th></tr></thead>
-     <tbody>${histo.map(h=>`<tr>
-       <td>${fmtDate(h.date)}</td>
-       <td><b>${esc(matName(h.materialId))}</b></td>
-       <td><span class="tag out">−${qty(h.qte)} ${esc(matUnit(h.materialId))}</span></td>
-       <td>${esc(h.lotFournisseur||'—')}</td>
-       <td>${esc(h.produit)}${h.lotProd?`<br><span style="color:#9a8a82;font-size:.78rem">${esc(h.lotProd)}</span>`:''}</td></tr>`).join('')}</tbody></table></div>`
-     :`<div class="empty">Aucune consommation. Les sorties apparaissent dès qu'une production est lancée.</div>`}
-   </div>`;
+   <div class="panel"><h2>Matières consommées par batch</h2>
+   ${batches.length?batches.map(b=>{
+     const p=b.prod;
+     const deb = p.prodDebutTs||p.prodTimestamp||'';
+     const fin = p.prodTermineTs||'';
+     const dur = (deb&&fin)?ttFormat(new Date(fin)-new Date(deb)):'';
+     const compTag = prodComposant(p)!=='complet'?` <span class="tag" style="background:${prodComposant(p)==='assemble'?'#3f7d52':prodComposant(p)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff;font-size:.66rem">${prodComposant(p)==='coques'?'coques':prodComposant(p)==='ganache'?'ganache':prodComposant(p)==='degustation'?'dégustation':'assemblé'}</span>`:'';
+     return `<div class="trace-step" style="margin-bottom:12px">
+       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+         <div><b>${esc(recName(p.recipeId))}</b>${compTag}<br>
+           <span style="color:#9a8a82;font-size:.78rem">lot ${esc(p.lotProduction||('#'+p.id))}</span></div>
+         <button class="btn ghost sm" onclick="closeModal&&closeModal();traceProd(${p.id})" title="Détail du batch">🔎</button>
+       </div>
+       <div style="font-size:.8rem;color:#6b5a52;margin:4px 0 6px">
+         ⏱ ${deb?`Début ${fmtDateTime(deb)}`:'Début —'}${fin?` · Fin ${fmtDateTime(fin)}`:(prodStatut(p)==='demarre'?' · <span class="tag event" style="font-size:.62rem">en cours</span>':'')}${dur?` · durée ${dur}`:''}
+         <button class="btn ghost sm" style="margin-left:6px;padding:1px 7px" onclick="prodEditTimes(${p.id})">✎ Heures</button>
+       </div>
+       ${b.items.map(it=>`<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:2px 0;border-top:1px solid #f0e8da">
+         <span>${esc(matName(it.materialId))} <span style="color:#9a8a82">· lot ${esc(it.lotFournisseur||'—')}</span></span>
+         <span class="tag out">−${qty(it.qte)} ${esc(matUnit(it.materialId))}</span></div>`).join('')}
+     </div>`;
+   }).join(''):`<div class="empty">Aucune consommation rattachée à un batch.</div>`}
+   </div>
+   ${consumablesList.length?`<div class="panel"><h2>Consommables <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— non rattachés à un batch (papier, film, emballages…)</span></h2>
+     <div class="table-wrap"><table><thead><tr><th>Consommable</th><th>Total consommé</th></tr></thead><tbody>
+     ${consumablesList.map(c=>`<tr><td><b>${esc(matName(c.id))}</b></td><td><span class="tag out">−${qty(c.total)} ${esc(matUnit(c.id))}</span></td></tr>`).join('')}
+     </tbody></table></div></div>`:''}`;
   matFilter(matSearch);
   lotFilter(lotSearch);
 }
@@ -967,7 +1018,7 @@ function _matRow(row){
   const mat=row.mat; const dj=row.dlcMin?daysTo(row.dlcMin):null;
   const emb = row.cat==='emballage';
   return `<tr>
-    <td><b>${esc(mat.nom)}</b></td>
+    <td><b>${esc(mat.nom)}</b>${mat.marque?`<br><span style="color:#9a8a82;font-size:.74rem">🏷️ ${esc(mat.marque)}</span>`:''}</td>
     <td><span class="tag" style="background:${emb?'#7a6a9a':'#6aa3a0'};color:#fff">${emb?'📦':'🥚'}</span></td>
     <td>${qty(row.total)} ${esc(mat.unite||'')}</td>
     <td>${qty(mat.seuil||0)} ${esc(mat.unite||'')}</td>
@@ -1005,40 +1056,63 @@ function lotFilter(q){
 async function matForm(id){
   const s = id ? await db.materials.get(id) : {unite:'kg', categorie:'denree'};
   const cat = s.categorie || 'denree';
-  openModal(`<h3>${id?'Modifier':'Nouvelle'} ${cat==='emballage'?'emballage':'matière'}</h3>
+  const isEmb = cat==='emballage';
+  // Denrées alimentaires : tout au KILOGRAMME (prix, stock, recettes) pour une lecture homogène.
+  // Emballages : à l'unité.
+  openModal(`<h3>${id?'Modifier':'Nouvelle'} ${isEmb?'emballage':'matière'}</h3>
    <div class="field"><label>Catégorie</label>
      <select id="f_cat" onchange="matCatSwitch(this.value)">
        <option value="denree" ${cat==='denree'?'selected':''}>Denrée alimentaire</option>
        <option value="emballage" ${cat==='emballage'?'selected':''}>Emballage</option>
      </select></div>
-   <div class="field"><label>Nom</label><input id="f_nom" value="${esc(s.nom)}" placeholder="${cat==='emballage'?'ex : Boîte 8 macarons kraft':'ex : Poudre amande'}"></div>
+   <div class="field"><label>Nom</label><input id="f_nom" value="${esc(s.nom)}" placeholder="${isEmb?'ex : Boîte 8 macarons kraft':'ex : Poudre amande'}"></div>
+   <div class="field"><label>Marque du produit <span style="color:#9a8a82;font-weight:400">— optionnel (ex : Valrhona)</span></label><input id="f_marque" value="${esc(s.marque||'')}" placeholder="${isEmb?'ex : marque de l’emballage':'ex : Valrhona'}"></div>
    <div class="row2">
-     <div class="field"><label>Unité</label><select id="f_unite">${['kg','g','L','mL','unité','sachet'].map(u=>`<option ${s.unite===u?'selected':''}>${u}</option>`).join('')}</select></div>
-     <div class="field"><label>Seuil d'alerte</label><input type="number" step="0.01" id="f_seuil" value="${s.seuil||0}"></div>
+     <div class="field" id="f_uniteWrap"><label>Unité</label>
+       <select id="f_unite" ${isEmb?'':'disabled'}>${(isEmb?['unité','sachet']:['kg']).map(u=>`<option ${ (s.unite===u)||(!isEmb&&u==='kg')?'selected':''}>${u}</option>`).join('')}</select>
+       <p class="note" id="uniteNote" style="margin-top:4px">${isEmb?'Emballages : comptés à l’unité.':'Les denrées sont gérées <b>au kilogramme</b> (prix, stock et recettes en kg).'}</p></div>
+     <div class="field"><label>Seuil d'alerte ${isEmb?'(unités)':'(kg)'}</label><input type="number" step="0.01" id="f_seuil" value="${s.seuil||0}"></div>
    </div>
-   <div class="field"><label>Prix indicatif / unité (€)</label><input type="number" step="0.01" id="f_prix" value="${s.prixDefaut||0}"></div>
-   <div class="field" id="f_capWrap" style="${cat==='emballage'?'':'display:none'}"><label>Capacité (nb de macarons) <span style="color:#9a8a82;font-weight:400">— relie l'emballage à un format de coffret</span></label>
+   <div class="field"><label>${isEmb?'Prix indicatif / unité (€)':'Prix indicatif au kilo (€/kg)'}</label><input type="number" step="0.01" id="f_prix" value="${s.prixDefaut||0}"></div>
+   <div class="field" id="f_capWrap" style="${isEmb?'':'display:none'}"><label>Capacité (nb de macarons) <span style="color:#9a8a82;font-weight:400">— relie l'emballage à un format de coffret</span></label>
      <input type="number" min="0" step="1" id="f_cap" value="${s.capacite!=null?esc(s.capacite):''}" placeholder="ex : 8"></div>
-   <div id="f_periWrap" style="${cat==='emballage'?'display:none':''}">
+   <div id="f_periWrap" style="${isEmb?'display:none':''}">
      <label class="switch-row"><input type="checkbox" id="f_peri" ${s.perissableOuvert?'checked':''} onchange="matPeriSwitch(this.checked)"> Périssable une fois ouvert (crème, lait…)</label>
      <div class="field" id="f_periDaysWrap" style="${s.perissableOuvert?'':'display:none'}"><label>Durée après ouverture (jours) <span style="color:#9a8a82;font-weight:400">— DLC déclenchée dès la 1ʳᵉ utilisation en production</span></label>
        <input type="number" min="1" step="1" id="f_periDays" value="${s.joursApresOuverture!=null?s.joursApresOuverture:7}" placeholder="7"></div>
    </div>
-   <p class="note">Le stock réel se gère par <b>lots</b> (bouton « Réception lot »). Ici tu définis seulement ${cat==='emballage'?"l'emballage":'la matière'} et son seuil.</p>
+   <p class="note">Le stock réel se gère par <b>lots</b> (bouton « Réception lot »). Ici tu définis seulement ${isEmb?"l'emballage":'la matière'} et son seuil.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveMat(${id||0})">Enregistrer</button></div>`);
 }
-// Bascule l'unité par défaut sur « unité » quand on passe en emballage (modifiable).
+// Bascule unité/champs selon la catégorie. Denrée → kg verrouillé ; emballage → unité.
 function matCatSwitch(cat){
   const u=document.getElementById('f_unite');
-  if(u && cat==='emballage' && (u.value==='kg'||u.value==='g'||u.value==='L'||u.value==='mL')) u.value='unité';
+  const note=document.getElementById('uniteNote');
+  if(u){
+    if(cat==='emballage'){
+      u.disabled=false;
+      u.innerHTML=['unité','sachet'].map(x=>`<option ${x==='unité'?'selected':''}>${x}</option>`).join('');
+      if(note) note.innerHTML='Emballages : comptés à l’unité.';
+    } else {
+      u.innerHTML='<option selected>kg</option>'; u.value='kg'; u.disabled=true;
+      if(note) note.innerHTML='Les denrées sont gérées <b>au kilogramme</b> (prix, stock et recettes en kg).';
+    }
+  }
   const cw=document.getElementById('f_capWrap'); if(cw) cw.style.display = cat==='emballage' ? 'block' : 'none';
   const pw=document.getElementById('f_periWrap'); if(pw) pw.style.display = cat==='emballage' ? 'none' : 'block';
+  // met à jour le libellé du prix
+  const prixField=document.getElementById('f_prix');
+  if(prixField){ const lab=prixField.closest('.field')?.querySelector('label');
+    if(lab) lab.textContent = cat==='emballage' ? 'Prix indicatif / unité (€)' : 'Prix indicatif au kilo (€/kg)'; }
+  const seuilLab=document.getElementById('f_seuil')?.closest('.field')?.querySelector('label');
+  if(seuilLab) seuilLab.textContent = cat==='emballage' ? "Seuil d'alerte (unités)" : "Seuil d'alerte (kg)";
 }
 function matPeriSwitch(on){ const d=document.getElementById('f_periDaysWrap'); if(d) d.style.display = on?'block':'none'; }
 async function saveMat(id){
   const isEmb = val('f_cat')==='emballage';
   const peri = !isEmb && document.getElementById('f_peri')?.checked;
-  const o={nom:val('f_nom'),unite:val('f_unite'),seuil:+val('f_seuil')||0,prixDefaut:+val('f_prix')||0,
+  const unite = isEmb ? (val('f_unite')||'unité') : 'kg';   // denrées toujours en kg
+  const o={nom:val('f_nom'),marque:(val('f_marque')||'').trim(),unite,seuil:+val('f_seuil')||0,prixDefaut:+val('f_prix')||0,
     categorie: isEmb?'emballage':'denree', capacite: isEmb ? (+val('f_cap')||0) : undefined,
     perissableOuvert: !!peri, joursApresOuverture: peri ? (Math.max(1,+val('f_periDays')||7)) : undefined};
   if(!o.nom){toast('Nom requis');return;}
@@ -1071,7 +1145,7 @@ async function lotForm(_id, presetMat){
   const mats = await db.materials.toArray();
   const sups = await db.suppliers.toArray();
   if(!mats.length){toast('Crée d\'abord une matière');return;}
-  const matOpts = mats.map(m=>`<option value="${m.id}" data-unite="${esc(m.unite)}" ${presetMat===m.id?'selected':''}>${esc(m.nom)} (${esc(m.unite)})</option>`).join('');
+  const matOpts = mats.map(m=>`<option value="${m.id}" data-unite="${esc(m.unite)}" ${presetMat===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (${esc(m.unite)})</option>`).join('');
   const supOpts = `<option value="0">— non précisé —</option>`+sups.map(s=>`<option value="${s.id}">${esc(s.nom)}</option>`).join('');
   openModal(`<h3>Réception d'un lot</h3>
    <div class="field"><label>Matière</label><select id="f_mat" onchange="majPrixUnit()">${matOpts}</select></div>
@@ -1080,7 +1154,7 @@ async function lotForm(_id, presetMat){
      <div class="field"><label>N° lot fournisseur</label><input id="f_lotf" placeholder="ex: NM-2026-0142"></div>
    </div>
    <div class="row2">
-     <div class="field"><label>Quantité reçue</label><input type="number" step="0.01" id="f_qte" value="1" oninput="majPrixUnit()"></div>
+     <div class="field"><label>Quantité reçue <span id="qteUniteHint" style="color:#9a8a82;font-weight:400"></span></label><input type="number" step="0.01" id="f_qte" value="1" oninput="majPrixUnit()"></div>
      <div class="field"><label>Prix total payé (€)</label><input type="number" step="0.01" id="f_prix" value="0" oninput="majPrixUnit()"></div>
    </div>
    <div class="field"><label>Prix unitaire</label><div id="f_pu" style="padding:10px 12px;background:var(--creme-2);border-radius:10px;font-weight:600;color:var(--bordeaux)">—</div></div>
@@ -1101,6 +1175,7 @@ function majPrixUnit(){
   const el=document.getElementById('f_pu'); if(!el)return;
   const sel=document.getElementById('f_mat');
   const unite = sel && sel.options[sel.selectedIndex] ? (sel.options[sel.selectedIndex].dataset.unite||'') : '';
+  const hint=document.getElementById('qteUniteHint'); if(hint) hint.textContent = unite?`— en ${unite}`:'';
   if(q>0 && p>0){ el.textContent = euro(p/q)+' / '+unite; }
   else { el.textContent='—'; }
 }
@@ -1152,17 +1227,19 @@ async function renderRecipes(){
   const _settings = getSettings();
   const _A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats, orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, settings:_settings});
   const _rowByRec = {}; _A.rows.forEach(r=>{ _rowByRec[r.recipeId]=r; });
-  _recipeMultCache = {}; // {recipeId: {rendement, items:[{nom,unite,qteParBatch}]}}
+  _recipeMultCache = {}; // {recipeId: {rendement, items:[{nom,unite,qteParBatch(affichée),base}]}}
+  // Affichage : denrées (kg) → grammes ; autres → unité native.
+  const dispOf = id => { const u=matUnit(id); const m=(mats.find(x=>x.id===id)||{}); const kg=(m.categorie!=='emballage'&&u==='kg'); return kg?{u:'g',f:1000}:{u,f:1}; };
   const blocks=[];
   for(const r of recipes){
     const items = await db.recipeItems.where('recipeId').equals(r.id).toArray();
     _recipeMultCache[r.id] = { rendement:+r.rendement||1,
-      items: items.map(it=>({nom:matName(it.materialId), unite:matUnit(it.materialId), qteParBatch:+it.qteParBatch||0})) };
-    const rows = items.map((it,idx)=>`<tr>
+      items: items.map(it=>{ const d=dispOf(it.materialId); return {nom:matName(it.materialId), unite:d.u, qteParBatch:round3((+it.qteParBatch||0)*d.f)}; }) };
+    const rows = items.map((it,idx)=>{ const d=dispOf(it.materialId); const shown=round3((+it.qteParBatch||0)*d.f); return `<tr>
         <td>${esc(matName(it.materialId))}</td>
-        <td>${qty(it.qteParBatch)} ${esc(matUnit(it.materialId))}</td>
-        <td id="mult_${r.id}_${idx}"><b>${qty(it.qteParBatch)}</b> ${esc(matUnit(it.materialId))}</td>
-      </tr>`).join('');
+        <td>${qty(shown)} ${esc(d.u)}</td>
+        <td id="mult_${r.id}_${idx}"><b>${qty(shown)}</b> ${esc(d.u)}</td>
+      </tr>`; }).join('');
     blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
@@ -1236,19 +1313,45 @@ async function recForm(id){
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveRec(${id||0})">Enregistrer</button></div>`);
   drawBom();
 }
+// Unité d'affichage/saisie d'une matière en recette :
+//  - denrée (stockée en kg) → saisie en GRAMMES (facteur 1000)
+//  - emballage / autre      → unité native (facteur 1)
+function bomDisplay(materialId){
+  const mats=window._matsCache||[];
+  const m=mats.find(x=>x.id===materialId);
+  const isKg = m && (m.categorie!=='emballage') && (m.unite==='kg');
+  return { unit: isKg?'g':(m?m.unite:''), factor: isKg?1000:1 };
+}
 function drawBom(){
   const mats=window._matsCache||[];
-  document.getElementById('bomList').innerHTML = bomDraft.map((b,i)=>`
+  document.getElementById('bomList').innerHTML = bomDraft.map((b,i)=>{
+    const d=bomDisplay(b.materialId);
+    const shown = round3((+b.qteParBatch||0)*d.factor);   // kg → g pour l'affichage
+    return `
     <div class="bom-line">
-      <select onchange="bomDraft[${i}].materialId=+this.value">
-        ${mats.map(m=>`<option value="${m.id}" ${b.materialId===m.id?'selected':''}>${esc(m.nom)} (${esc(m.unite)})</option>`).join('')}
+      <select onchange="bomSetMat(${i}, +this.value)">
+        ${mats.map(m=>`<option value="${m.id}" ${b.materialId===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (saisie en ${bomDisplay(m.id).unit})</option>`).join('')}
       </select>
-      <input type="number" step="0.001" value="${b.qteParBatch}" oninput="bomDraft[${i}].qteParBatch=+this.value" placeholder="qté">
-      <span style="font-size:.75rem;color:#9a8a82">/ batch</span>
+      <input type="number" step="${d.factor===1000?'1':'0.001'}" value="${shown}" oninput="bomSetQte(${i}, +this.value)" placeholder="qté">
+      <span style="font-size:.75rem;color:#9a8a82">${esc(d.unit)} / batch</span>
       <span class="x" onclick="bomDel(${i})">×</span>
-    </div>`).join('') || '<p class="note">Aucune matière ajoutée.</p>';
+    </div>`; }).join('') || '<p class="note">Aucune matière ajoutée.</p>';
 }
-function bomAdd(){ const mats=window._matsCache||[]; bomDraft.push({materialId:mats[0].id,qteParBatch:1}); drawBom(); }
+// Saisie utilisateur (en g pour les denrées) → stockée en unité de base (kg).
+function bomSetQte(i, shownVal){
+  const d=bomDisplay(bomDraft[i].materialId);
+  bomDraft[i].qteParBatch = round3((+shownVal||0)/d.factor);
+}
+// Changement de matière : on conserve la valeur affichée et on reconvertit dans la bonne unité.
+function bomSetMat(i, newId){
+  const oldD=bomDisplay(bomDraft[i].materialId);
+  const shown = (+bomDraft[i].qteParBatch||0)*oldD.factor;   // valeur telle qu'affichée
+  bomDraft[i].materialId=newId;
+  const newD=bomDisplay(newId);
+  bomDraft[i].qteParBatch = round3(shown/newD.factor);
+  drawBom();
+}
+function bomAdd(){ const mats=window._matsCache||[]; bomDraft.push({materialId:mats[0].id,qteParBatch:bomDisplay(mats[0].id).factor===1000?0.001:1}); drawBom(); }
 function bomDel(i){ bomDraft.splice(i,1); drawBom(); }
 async function saveRec(id){
   const rend=+val('f_rend');
@@ -1376,7 +1479,7 @@ function _prodbatRow(row){
      <td><b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span style="color:#9a8a82;font-size:.68rem">base ${esc(p.lotBase)}</span>`:''}</td>
      <td>${empTag}<br><span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></td>
      <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
-     <td>${qty(p.qteRestante)}${lossByProd[p.id]?`<br><span class="tag out" style="font-size:.68rem">−${qty(lossByProd[p.id])} perte</span>`:''}</td>
+     <td>${qty(p.qteRestante)}${comp==='coques'?' <span style="color:#9a8a82;font-size:.66rem">coques</span>':''}${lossByProd[p.id]?`<br><span class="tag out" style="font-size:.68rem">−${qty(lossByProd[p.id])} perte</span>`:''}</td>
      <td><div class="qa-row">${assembleBtn}${degBtn}<button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button><button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;
 }
 // Recherche intelligente des productions. Une seule lettre d'emplacement (F/B/C/A)
@@ -1995,29 +2098,65 @@ async function prodDoSplit(){
 async function prodSetTermine(id){
   const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
   if(prodStatut(p)==='termine'){ toast('Production déjà terminée — retour en arrière impossible'); return; }
+  const comp=prodComposant(p);
+  const decongele=aDejaDecongele(p);
+  // Emplacements proposés selon le composant (centralisés dans un tableau lisible) :
+  //  - coques  : ambiant ou congélateur (jamais frigo)
+  //  - ganache : frigo uniquement
+  //  - complet/assemble : F / B / C / A (pas d'ambiant)
+  const choices=[];
+  EMPLACEMENTS.forEach(e=>{
+    const freezer=e.type!=='frigo';
+    let ok=true;
+    if(comp==='coques') ok = freezer;            // congélateur (les coques ambiantes → option dédiée ci-dessous)
+    else if(comp==='ganache') ok = (e.type==='frigo');
+    if(comp==='ganache' && e.type!=='frigo') ok=false;
+    if(decongele && freezer) ok=false;           // recongélation interdite
+    if(ok) choices.push({key:e.key, lettre:e.lettre, icon:e.icon, nom:e.nom, freezer});
+  });
+  if(comp==='coques'){ choices.push({key:'ambiant', lettre:'T°', icon:'🌡️', nom:'Température ambiante', freezer:false}); }
+  const rows=choices.map(c=>`<label class="opt-row">
+     <input type="radio" name="f_destEnd" value="${c.key}">
+     <b class="opt-emp" style="background:${c.freezer?'#3b6ea5':(c.key==='ambiant'?'#caa23b':'#6aa3a0')}">${c.lettre}</b>
+     <span class="opt-main"><b>${c.icon} ${esc(c.nom)}</b><br><span class="opt-sub">${c.freezer?'+4 mois':(c.key==='ambiant'?'sans DLC frigo (coques sèches)':'+7 j')}</span></span></label>`).join('');
+  openModal(`<h3>✓ Terminer la production</h3>
+    <p style="margin-bottom:8px"><b>${esc((await db.recipes.get(p.recipeId))?.produitNom||'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${comp!=='complet'?` · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp}</span>`:''}</p>
+    <div class="field"><label>Emplacement de rangement *</label>
+      <div class="opt-table" id="prodDestEnd">${rows||'<p class="note">Aucun emplacement disponible (recongélation interdite).</p>'}</div></div>
+    ${decongele?'<p class="note" style="color:#b3261e">⚠️ Déjà décongelé : le congélateur est désactivé (recongélation interdite).</p>':''}
+    <p class="note">La <b>DLC démarre maintenant</b> selon l'emplacement choisi. La lettre s'ajoute au n° de lot.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="prodTermineConfirm(${id})">Terminer</button></div>`);
+}
+async function prodTermineConfirm(id){
+  const dest=(document.querySelector('input[name="f_destEnd"]:checked')||{}).value||'';
+  if(!dest){ toast('Choisis un emplacement'); return; }
+  const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
+  const comp=prodComposant(p);
+  // garde-fous de cohérence
+  if(comp==='coques' && dest==='frigo'){ toast('Les coques ne vont pas au frigo.'); return; }
+  if(comp==='ganache' && dest!=='frigo'){ toast('La ganache va uniquement au frigo.'); return; }
+  if(isFreezer(dest) && aDejaDecongele(p)){ toast('Recongélation interdite.'); return; }
   const nowIso=new Date().toISOString();
-  const hist=(p.histEmplacement||[]).slice();
-  const patch={ prodStatut:'termine', prodTermineTs:nowIso };
-  // La DLC commence MAINTENANT (passage en terminée), pas à l'horodatage de production.
+  // ajoute la lettre d'emplacement au lot (base + éventuel suffixe composant déjà présent)
+  const newLot = lotAvecEmplacement(p.lotProduction||'', dest);
+  const hist=[{lieu:dest, ts:nowIso, motif:'fin de production'}];
+  const patch={
+    prodStatut:'termine', prodTermineTs:nowIso,
+    emplacement:dest, emplacementMaj:nowIso, lotProduction:newLot,
+    venuDuCongelateur: isFreezer(dest) || !!p.venuDuCongelateur,
+    histEmplacement: hist
+  };
   if(p.dlcAuto!==false){
-    // On réancre l'historique d'emplacement sur l'instant de fin pour que le budget
-    // frigo de 7 j parte bien de maintenant.
-    const reanchored = hist.length
-      ? hist.map((h,i)=> i===hist.length-1 ? {...h, ts:nowIso} : h)
-      : [{lieu:p.emplacement||'frigo', ts:nowIso, motif:'fin de production'}];
-    patch.histEmplacement = reanchored;
-    patch.emplacementMaj = nowIso;
-    patch.dlcProduit = computeDlcFromHistory(reanchored, nowIso);
-    // Au plus prudent : si une crème/lait ouvert impose une DLC plus courte, on l'applique.
+    patch.dlcProduit = computeDlcFromHistory(hist, nowIso);
     if(p.dlcContrainteOuverture && (!patch.dlcProduit || p.dlcContrainteOuverture < patch.dlcProduit)){
-      patch.dlcProduit = p.dlcContrainteOuverture;
-      patch.dlcLimiteeParOuverture = true;
+      patch.dlcProduit = p.dlcContrainteOuverture; patch.dlcLimiteeParOuverture = true;
     }
     patch.dlcAuto = true;
   }
   await db.productions.update(id, patch);
-  renderProductions();
-  toast(`Production terminée ✓${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
+  closeModal(); renderProductions();
+  toast(`Production terminée ✓ · ${empLettre(dest)}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
 }
 
 // ====== ASSEMBLAGE coques + ganache → macaron assemblé (vendable) ======
@@ -2172,33 +2311,21 @@ async function prodForm(){
      </select></div>
    <div class="field"><label>Recette</label><select id="f_rec" onchange="prodSyncTheorique()">${opts}</select></div>
    <div class="field" id="f_compWrap" style="display:none"><label>Composant à produire</label>
-     <div style="display:flex;gap:6px">
-       <label class="pay-opt" style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_comp" value="coques" checked onchange="prodCompSwitch()"> 🟤 Coques</label>
-       <label class="pay-opt" style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_comp" value="ganache" onchange="prodCompSwitch()"> 🍫 Ganache</label>
-     </div>
-     <p class="note" id="compHint">Les coques vides : <b>jamais au frigo</b> (température ambiante ou congélateur). La ganache terminée : <b>toujours au frigo</b>. L'assemblage réunira coques + ganache du même n° de lot.</p></div>
+     <div class="opt-table">
+       <label class="opt-row"><input type="radio" name="f_comp" value="coques" checked onchange="prodCompSwitch()"> <span class="opt-ico">🟤</span> <span class="opt-main"><b>Coques</b><br><span class="opt-sub">rangement : ambiant ou congélateur (jamais frigo)</span></span></label>
+       <label class="opt-row"><input type="radio" name="f_comp" value="ganache" onchange="prodCompSwitch()"> <span class="opt-ico">🍫</span> <span class="opt-main"><b>Ganache</b><br><span class="opt-sub">rangement : frigo uniquement</span></span></label>
+     </div></div>
    <div class="row2">
-     <div class="field"><label>Quantité théorique (batch) <span style="color:#9a8a82;font-weight:400">— base matières</span></label>
+     <div class="field"><label>Quantité théorique <span style="color:#9a8a82;font-weight:400" id="qteUnit">— en macarons (base matières)</span></label>
        <input type="number" id="f_qte" value="${recipes[0].rendement}" min="1" oninput="prodSyncReelDefault()"></div>
      <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}"></div>
    </div>
+   <p class="note" id="coqueHint" style="display:none;margin:-4px 0 8px;color:#8a6d3b"></p>
    <div class="field"><label>Quantité réelle produite <span style="color:#9a8a82;font-weight:400">— stock produits finis (modifiable en fin de production)</span></label>
      <input type="number" id="f_qtereel" value="${recipes[0].rendement}" min="0" oninput="_prodReelTouched=true;prodUpdateEcartHint()">
      <p class="note" id="ecartHint" style="margin-top:4px;display:none"></p></div>
-   <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoute automatiquement</span></label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${genLotCode(3)}"></div>
-   <div class="field"><label>Emplacement de rangement *</label>
-     <div id="prodDest" style="display:flex;flex-wrap:wrap;gap:6px">
-       ${EMPLACEMENTS.map((e,i)=>`<label class="pay-opt prod-dest-opt" data-emp="${e.key}" data-freezer="${e.type!=='frigo'?'1':'0'}" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer">
-         <input type="radio" name="f_dest" value="${e.key}" onchange="prodDlcHint()">
-         <b style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
-         <span>${e.icon} ${esc(e.nom)}</span></label>`).join('')}
-       <label class="pay-opt prod-dest-opt" data-emp="ambiant" data-freezer="0" style="flex:1;min-width:46%;display:none;align-items:center;gap:6px;cursor:pointer">
-         <input type="radio" name="f_dest" value="ambiant" onchange="prodDlcHint()">
-         <b style="background:#caa23b;color:#fff;border-radius:6px;padding:0 7px">T°</b>
-         <span>🌡️ Température ambiante</span></label>
-     </div>
-     <p class="note" id="dlcHint">La production démarre au statut <b>« démarrée »</b>. La DLC (<b>+7 j</b> au frigo, <b>+4 mois</b> au congélateur) ne court qu'au passage en <b>« terminée »</b>.</p>
-   </div>
+   <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoutera à la fin</span></label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${genLotCode(3)}"></div>
+   <p class="note" id="dlcHint">La production démarre au statut <b>« démarrée »</b>. Tu choisiras l'<b>emplacement de rangement</b> au moment de la <b>fin de production</b> (« ✓ Terminer »), et la DLC (<b>+7 j</b> frigo, <b>+4 mois</b> congélateur) ne courra qu'à ce moment-là.</p>
    <p class="note">Les <b>matières premières</b> sont déduites sur la base de la <b>quantité théorique</b> (DLC la plus proche d'abord). Le <b>stock de produits finis</b> est calé sur la <b>quantité réelle</b>. L'écart est historisé. Si le stock matières est insuffisant, <b>rien</b> n'est enregistré.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
   prodSyncReelDefault();
@@ -2208,43 +2335,28 @@ function prodModeSwitch(mode){
   const w=document.getElementById('f_compWrap'); if(w) w.style.display = mode==='composant'?'block':'none';
   prodCompSwitch();
 }
-// Applique les contraintes d'emplacement selon le composant choisi (mode composant) :
-//  - coques : ambiant ou congélateur (PAS de frigo)
-//  - ganache : frigo uniquement
+// Met à jour la note « coques » (1 macaron = 2 coques) selon le composant choisi.
 function prodCompSwitch(){
   const mode=document.getElementById('f_mode')?.value||'complet';
   const comp=(document.querySelector('input[name="f_comp"]:checked')||{}).value||'coques';
-  const opts=document.querySelectorAll('.prod-dest-opt');
-  opts.forEach(o=>{
-    const emp=o.getAttribute('data-emp'); const freezer=o.getAttribute('data-freezer')==='1';
-    let show=true;
-    if(mode==='composant'){
-      if(comp==='coques') show = (emp==='ambiant' || freezer);      // jamais frigo
-      else if(comp==='ganache') show = (emp==='frigo');             // frigo uniquement
-    } else {
-      show = (emp!=='ambiant');   // batch complet : pas d'ambiant
-    }
-    o.style.display = show ? 'flex' : 'none';
-    if(!show){ const r=o.querySelector('input'); if(r) r.checked=false; }
-  });
-  const hint=document.getElementById('compHint');
-  if(hint && mode==='composant'){
-    hint.innerHTML = comp==='coques'
-      ? 'Coques vides : <b>température ambiante</b> ou <b>congélateur</b> (jamais frigo). Tu pourras les diviser et dispatcher différemment.'
-      : 'Ganache terminée : <b>frigo uniquement</b> (jamais congélateur seule). Elle ira au froid/congélateur une fois <b>assemblée</b> dans le macaron.';
+  const hint=document.getElementById('coqueHint');
+  const unit=document.getElementById('qteUnit');
+  const isCoques = (mode==='composant' && comp==='coques');
+  if(unit) unit.textContent = isCoques ? '— en macarons (× 2 coques)' : '— en macarons (base matières)';
+  if(hint){
+    if(isCoques){
+      hint.style.display='block';
+      prodUpdateCoqueHint();
+    } else { hint.style.display='none'; }
   }
 }
-// Aperçu live de la DLC calculée selon la destination choisie.
-function prodDlcHint(){
-  const dest=(document.querySelector('input[name="f_dest"]:checked')||{}).value||'';
-  const el=document.getElementById('dlcHint'); if(!el) return;
-  if(EMP_BY_KEY[dest]){
-    const e=empInfo(dest);
-    el.innerHTML=`Rangement : <b>${esc(e.nom)} (${e.lettre})</b> — ${isFreezer(dest)?'+4 mois':'+7 j'}. La lettre <b>${e.lettre}</b> sera ajoutée au lot. ⚠️ La DLC démarre au passage en <b>« terminée »</b>.`;
-  } else {
-    el.innerHTML=`La production démarre au statut <b>« démarrée »</b>. La DLC (<b>+7 j</b> frigo, <b>+4 mois</b> congélateur) ne court qu'au passage en <b>« terminée »</b>.`;
-  }
+function prodUpdateCoqueHint(){
+  const hint=document.getElementById('coqueHint'); if(!hint) return;
+  const q=+(document.getElementById('f_qte')?.value)||0;
+  hint.innerHTML = `🟤 1 macaron = <b>2 coques</b> → ce batch produira <b>${qty(q*COQUES_PAR_MACARON)} coques</b> (pour ${qty(q)} macarons).`;
 }
+// Aperçu live de la DLC : désormais informatif (l'emplacement est choisi à la fin).
+function prodDlcHint(){ /* l'emplacement et la DLC sont fixés à la fin de production */ }
 // Quand on change de recette, recale les deux quantités sur le rendement de la recette.
 function prodSyncTheorique(){
   const sel=document.getElementById('f_rec'); if(!sel) return;
@@ -2253,6 +2365,7 @@ function prodSyncTheorique(){
   if(th && rend){ th.value=rend; }
   if(re && rend){ re.value=rend; }
   prodSyncReelDefault();
+  prodUpdateCoqueHint();
 }
 // Tant que l'utilisateur n'a pas touché la quantité réelle, on la garde égale au théorique
 // et on affiche l'écart en direct.
@@ -2262,6 +2375,7 @@ function prodSyncReelDefault(){
   const re=document.getElementById('f_qtereel');
   if(re && !_prodReelTouched){ re.value=th; }
   prodUpdateEcartHint();
+  prodUpdateCoqueHint();
 }
 function prodUpdateEcartHint(){
   const th=+(document.getElementById('f_qte')?.value)||0;
@@ -2280,18 +2394,12 @@ async function saveProd(){
   let qteReelle=val('f_qtereel');
   qteReelle = qteReelle==='' ? qteTheorique : +qteReelle; // défaut = théorique
   const date=val('f_date')||today(); let lot=val('f_lot');
-  const dest=(document.querySelector('input[name="f_dest"]:checked')||{}).value||'';
   const mode=document.getElementById('f_mode')?.value||'complet';
   const comp=(document.querySelector('input[name="f_comp"]:checked')||{}).value||'coques';
   const composant = mode==='composant' ? comp : 'complet';
   if(!qteTheorique||qteTheorique<=0){toast('Quantité théorique invalide');return;}
   if(qteReelle<0||isNaN(qteReelle)){toast('Quantité réelle invalide');return;}
-  // Validation emplacement selon le composant
-  const destOk = EMP_BY_KEY[dest] || dest==='ambiant';
-  if(!destOk){ toast('Choisissez un emplacement de rangement'); return; }
-  if(composant==='coques' && dest==='frigo'){ toast('Les coques vides ne vont jamais au frigo (ambiant ou congélateur).'); return; }
-  if(composant==='ganache' && dest!=='frigo'){ toast('La ganache terminée va uniquement au frigo.'); return; }
-  if(composant==='complet' && !EMP_BY_KEY[dest]){ toast('Choisissez un emplacement (F / B / C / A).'); return; }
+  // L'emplacement n'est plus demandé au lancement : il sera choisi à la fin de production.
   // Nettoyage des lettres ambiguës (I, L, O) sur la PARTIE VARIABLE uniquement
   const baseLot = lotBaseSansSuffixe(val('f_lot'));
   const m = baseLot.match(/^(L-\d{8}-)(.*)$/i);
@@ -2302,17 +2410,25 @@ async function saveProd(){
   if(san.changed) toast('Lettres ambiguës (I, L, O) retirées du n° de lot.');
   let cleanBase = lotPrefix + san.lot;
   if(!san.lot){ cleanBase = lotPrefix + genLotCode(3); }
-  // suffixe composant (CO/GA) AVANT la lettre d'emplacement, pour garder le même n° de lot de base
+  // suffixe composant (CO/GA) — la lettre d'emplacement sera ajoutée à la fin de production
   const suffComp = composant==='coques' ? '-CO' : (composant==='ganache' ? '-GA' : '');
-  lot = lotAvecEmplacement(cleanBase+suffComp, dest);
+  lot = cleanBase + suffComp;   // pas encore de lettre d'emplacement
   if(!lotBaseSansSuffixe(lot)){ toast('N° de lot vide — saisissez un identifiant.'); return; }
+  // COQUES : 1 macaron = 2 coques. La quantité SAISIE est en macarons (rendement recette) ;
+  // on stocke le nombre de COQUES (×2). Les matières restent calées sur le nombre de macarons.
+  let qTh=qteTheorique, qRe=qteReelle, facteurQte=qteTheorique;
+  if(composant==='coques'){
+    qTh = qteTheorique*COQUES_PAR_MACARON;
+    qRe = qteReelle*COQUES_PAR_MACARON;
+    facteurQte = qteTheorique;   // matières basées sur les macarons (pas les coques)
+  }
   try{
-    await enregistrerProduction(recipeId, qteTheorique, qteReelle, date, lot, '', dest,
-      {composant, lotBase:cleanBase});
+    await enregistrerProduction(recipeId, qTh, qRe, date, lot, '', '',
+      {composant, lotBase:cleanBase, facteurQte});
     closeModal(); renderProductions();
-    const ecart=qteReelle-qteTheorique;
     const lbl = composant==='coques'?'Coques':composant==='ganache'?'Ganache':'Production';
-    toast(`${lbl} enregistrée ✓${ecart!==0?` — écart ${ecart>0?'+':''}${qty(ecart)} historisé`:' — stock mis à jour'}`);
+    const extra = composant==='coques'?` (${qty(qTh)} coques pour ${qty(qteTheorique)} macarons)`:'';
+    toast(`${lbl} démarrée ✓${extra} — choisis l'emplacement à la fin (✓ Terminer)`);
   }catch(err){
     toast(err.message || 'Erreur production');
   }
@@ -2325,10 +2441,12 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
     async () => {
       const recette = await db.recipes.get(recipeId);
       if(!recette) throw new Error('Recette introuvable');
-      if(!EMP_BY_KEY[emplacement] && emplacement!=='ambiant') throw new Error('Emplacement de rangement obligatoire');
+      if(!EMP_BY_KEY[emplacement] && emplacement!=='ambiant' && emplacement!=='') throw new Error('Emplacement de rangement invalide');
       const items = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
-      // CONSOMMATION MATIÈRES : basée UNIQUEMENT sur la quantité théorique
-      const facteur = qteTheorique / (recette.rendement || 1);
+      // CONSOMMATION MATIÈRES : basée sur la quantité de MACARONS-équivalent.
+      // Pour les coques, qteTheorique est en COQUES ; meta.facteurQte donne le nb de macarons.
+      const baseFacteur = (meta.facteurQte!=null) ? meta.facteurQte : qteTheorique;
+      const facteur = baseFacteur / (recette.rendement || 1);
 
       // Vérif préalable : tout le stock nécessaire est-il disponible ?
       for(const item of items){
@@ -2362,10 +2480,10 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
         prodTermineTs: '',              // horodatage de passage en « terminée » (déclenche la DLC)
         // Traçabilité conservation : horodatage + emplacement + journal des déplacements
         prodTimestamp: nowIso,          // date + HEURE réelles de production (horodatage auto)
-        emplacement,                    // 'frigo' | 'bahut' | 'colonne' | 'petit'
+        emplacement,                    // '' au démarrage ; choisi à la fin de production
         emplacementMaj: nowIso,         // date/heure du dernier changement d'emplacement
         venuDuCongelateur: isFreezer(emplacement), // a séjourné au congélo (suivi de la règle de décongélation)
-        histEmplacement: [{lieu:emplacement, ts:nowIso, motif:'production'}]
+        histEmplacement: emplacement ? [{lieu:emplacement, ts:nowIso, motif:'production'}] : []
       });
 
       let dlcOuvertureMin = '';   // DLC la plus courte issue d'une matière périssable ouverte
@@ -2417,15 +2535,19 @@ async function prodAdjustForm(id){
   const recipe = await db.recipes.get(p.recipeId);
   const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
   const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
+  const estCoques = prodComposant(p)==='coques';
+  const u = estCoques ? 'coques' : 'macarons';
   // pièces déjà sorties de ce batch (affectées à des commandes) = qteProduite - qteRestante
   const dejaSorti = (+p.qteProduite||0) - (+p.qteRestante||0);
   openModal(`<h3>Ajuster la quantité réelle</h3>
-    <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b></p>
-    <div class="sum-box"><span>Quantité théorique (base matières)</span><b>${qty(th)}</b></div>
-    <div class="sum-box"><span>Quantité réelle actuelle</span><b>${qty(re)}</b></div>
-    ${dejaSorti>0?`<div class="sum-box"><span>Déjà affecté à des commandes</span><b>${qty(dejaSorti)}</b></div>`:''}
-    <div class="field" style="margin-top:10px"><label>Nouvelle quantité réelle produite</label>
+    <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${estCoques?' · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">🟤 coques</span>':''}</p>
+    ${estCoques?`<p class="note" style="margin-bottom:8px">🟤 Les quantités sont en <b>coques</b> (1 macaron = 2 coques).</p>`:''}
+    <div class="sum-box"><span>Quantité théorique (base matières)</span><b>${qty(th)} ${u}</b></div>
+    <div class="sum-box"><span>Quantité réelle actuelle</span><b>${qty(re)} ${u}</b></div>
+    ${dejaSorti>0?`<div class="sum-box"><span>Déjà affecté à des commandes</span><b>${qty(dejaSorti)} ${u}</b></div>`:''}
+    <div class="field" style="margin-top:10px"><label>Nouvelle quantité réelle produite (${u})</label>
       <input type="number" id="f_newreel" value="${re}" min="${dejaSorti}" oninput="prodAdjHint(${th},${dejaSorti})">
+      ${estCoques?`<button class="btn ghost sm" style="margin-top:6px" onclick="document.getElementById('f_newreel').value=Math.round((+document.getElementById('f_newreel').value||0)*2);prodAdjHint(${th},${dejaSorti})">×2 — convertir macarons → coques (ancien lot)</button>`:''}
       <p class="note" id="adjHint" style="margin-top:4px"></p></div>
     <p class="note">Les matières premières restent inchangées (déjà consommées sur la base théorique). Seul le stock de produits finis et l'écart sont recalculés.</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
@@ -2478,10 +2600,11 @@ async function declareLossForm(prodId){
   const dispo = round3(+p.qteRestante||0);
   if(dispo<=0){ toast('Aucune pièce disponible dans ce batch'); return; }
   const motifOpts = LOSS_REASONS.map(m=>`<option>${esc(m)}</option>`).join('');
+  const uLoss = prodComposant(p)==='coques' ? 'coques' : 'pièces';
   openModal(`<h3>Déclarer une perte</h3>
-    <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b></p>
-    <div class="sum-box"><span>Stock disponible de ce batch</span><b>${qty(dispo)}</b></div>
-    <div class="field" style="margin-top:10px"><label>Quantité perdue</label>
+    <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${prodComposant(p)==='coques'?' · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">🟤 coques</span>':''}</p>
+    <div class="sum-box"><span>Stock disponible de ce batch</span><b>${qty(dispo)} ${uLoss}</b></div>
+    <div class="field" style="margin-top:10px"><label>Quantité perdue (${uLoss})</label>
       <input type="number" id="f_lossQte" min="0" max="${dispo}" step="1" value="" placeholder="ex : 3"></div>
     <div class="field"><label>Motif</label><select id="f_lossMotif">${motifOpts}</select></div>
     <label class="switch-row"><input type="checkbox" id="f_lossDeg" onchange="lossDegSwitch(this.checked)"> 🥄 Cassé mais garni → bascule en dégustation (offert, non perdu)</label>
@@ -3077,6 +3200,39 @@ async function exportFlashAlert(lotNum){
   toast('Rapport exporté ✓');
 }
 
+// Convertit un ISO en valeur d'input datetime-local (heure locale, sans secondes).
+function isoToLocalInput(iso){
+  if(!iso) return '';
+  const d=new Date(iso); if(isNaN(d)) return '';
+  const off=d.getTimezoneOffset();
+  const loc=new Date(d.getTime()-off*60000);
+  return loc.toISOString().slice(0,16);
+}
+function localInputToIso(v){ if(!v) return ''; const d=new Date(v); return isNaN(d)?'':d.toISOString(); }
+// Edition manuelle des heures de debut/fin d'un batch (tracking temps au reel).
+async function prodEditTimes(prodId){
+  const p=await db.productions.get(prodId); if(!p){ toast('Batch introuvable'); return; }
+  const deb=isoToLocalInput(p.prodDebutTs||p.prodTimestamp||'');
+  const fin=isoToLocalInput(p.prodTermineTs||'');
+  openModal(`<h3>\u270e Heures du batch</h3>
+    <p class="note" style="margin-bottom:10px">Ajuste le debut et la fin reels de la production. Sert a mesurer le temps de fabrication au plus juste.</p>
+    <div class="field"><label>Debut de production</label><input type="datetime-local" id="f_pDebut" value="${deb}"></div>
+    <div class="field"><label>Fin de production ${prodStatut(p)==='demarre'?'(laisser vide si en cours)':''}</label><input type="datetime-local" id="f_pFin" value="${fin}"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="prodSaveTimes(${prodId})">Enregistrer</button></div>`);
+}
+async function prodSaveTimes(prodId){
+  const debIso=localInputToIso(val('f_pDebut'));
+  const finIso=localInputToIso(val('f_pFin'));
+  if(debIso && finIso && new Date(finIso)<new Date(debIso)){ toast('La fin est avant le debut'); return; }
+  const patch={};
+  if(debIso){ patch.prodDebutTs=debIso; }
+  if(finIso){ patch.prodTermineTs=finIso; } else { patch.prodTermineTs=''; }
+  await db.productions.update(prodId, patch);
+  closeModal();
+  if(view==='matieres') renderMaterials(); else if(view==='productions') renderProductions();
+  toast('Heures mises a jour \u2713');
+}
 async function traceProd(prodId){
   const prod = await db.productions.get(prodId);
   const recipe = await db.recipes.get(prod.recipeId);
@@ -3113,10 +3269,12 @@ async function traceProd(prodId){
           `<div class="trace-step">${qty(l.qte)} pièce(s) · ${esc(l.motif||'—')} · ${fmtDate(l.date)}${l.coutTotal?` · ${euro(l.coutTotal)}`:''}${l.note?`<br><span style="font-size:.8rem;color:#9a8a82">${esc(l.note)}</span>`:''}</div>`
         ).join('')
     : '';
+  const _deb=prod.prodDebutTs||prod.prodTimestamp||''; const _fin=prod.prodTermineTs||'';
+  const _dur=(_deb&&_fin)?ttFormat(new Date(_fin)-new Date(_deb)):'';
   openModal(`<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
     <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prodComposant(prod)!=='complet'?` · <span class="tag" style="background:${prodComposant(prod)==='assemble'?'#3f7d52':prodComposant(prod)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff">${prodComposant(prod)==='coques'?'🟤 Coques':prodComposant(prod)==='ganache'?'🍫 Ganache':prodComposant(prod)==='degustation'?'🥄 Dégustation (offert)':'✓ Assemblé'}</span>`:''}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
-    <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'')}</span><br>
+    <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${_dur?` · <b>durée ${_dur}</b>`:''}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'')}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
     ${(prod.histEmplacement&&prod.histEmplacement.length>1)?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span style="font-weight:600">Parcours de conservation</span>${prod.histEmplacement.map(h=>`<span style="font-size:.8rem;color:#6b5a52">${empIcon(h.lieu)} ${esc(empNom(h.lieu))} (${empLettre(h.lieu)}) — ${fmtDateTime(h.ts)}${h.motif?` · ${esc(h.motif)}`:''}</span>`).join('')}</div>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
@@ -3125,7 +3283,7 @@ async function traceProd(prodId){
     ${lossBlock}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
     ${cmdLines.length?cmdLines.join(''):'<p class="note">Ce batch n\'est lié à aucune commande pour l\'instant.</p>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button><button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
 }
 
 async function traceOrder(orderId){
@@ -3603,7 +3761,9 @@ let cmdSearch='';
 let _cmdCache=null;
 async function renderCmd(){
   _cmdSel = new Set();   // sélection réinitialisée à chaque ouverture de l'écran
-  const orders = (await db.orders.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  // Les commandes "historiques" (reprise/migration) ne s'affichent pas ici :
+  // elles comptent dans le CA mais ne sont pas opérationnelles.
+  const orders = (await db.orders.toArray()).filter(o=>!o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
   const clById = Object.fromEntries(clients.map(c=>[c.id,c]));
   _cmdClNameMap = Object.fromEntries(clients.map(c=>[c.id, c.nom||'—']));
@@ -3668,8 +3828,8 @@ function _cmdRow(row){
   const st = orderPayStatus(o); const solde = orderBalance(o);
   const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
   return `<tr>
-     <td><b>${o.clientId?`<span class="link-name" onclick="clientPopup(${o.clientId})">${nameP(_cmdClName(o.clientId))}</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
-     <td><span style="font-size:.82rem">${esc(row.resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
+     <td><b>${o.clientId?`${nameP(_cmdClName(o.clientId))} <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Voir la fiche client">→</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
+     <td><span class="cmd-jump" onclick="cmdView(${o.id})" title="Voir le détail de la commande">${esc(row.resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
      <td>
        <span class="tag ${st==='Payé'?'done':(st==='Partiel'?'event':'todo')}">${st}</span>
@@ -3985,6 +4145,8 @@ async function cmdForm(id, opts){
    </div>
    <div class="field"><label>Temps de trajet aller (min) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé (×2)</span></label>
      <input type="number" min="0" step="1" id="f_tempsLiv" value="${o.tempsLivraisonMin!=null?esc(o.tempsLivraisonMin):''}" placeholder="ex : 15" oninput="cmdDeliveryRecalc()"></div>
+   <div class="field"><label>Consommation réelle du véhicule (L/100 km) <span style="color:#9a8a82;font-weight:400">— laisser vide = réglage par défaut (${getSettings().vehicleConso} L)</span></label>
+     <input type="number" min="0" step="0.1" id="f_conso" value="${o.consoVehicule!=null&&o.consoVehicule!==''?esc(o.consoVehicule):''}" placeholder="ex : 7.2" oninput="cmdDeliveryRecalc()"></div>
    <div class="sum-box" id="deliveryImpact" style="display:none;flex-direction:column;align-items:stretch;gap:4px"></div>
 
    <label style="font-size:.82rem;color:#7a6a62;font-weight:500;display:block;margin-bottom:6px">Produits de la commande</label>
@@ -4500,17 +4662,20 @@ function cmdDeliveryRecalc(){
     remiseGlobale: Math.max(0,Math.min(100,+(document.getElementById('f_remiseg')?.value)||0)),
     distanceKm: +val('f_distKm')||0,
     prixCarburant: +val('f_carbu')||0,
-    tempsLivraisonMin: +val('f_tempsLiv')||0
+    tempsLivraisonMin: +val('f_tempsLiv')||0,
+    consoVehicule: val('f_conso')!==''?+val('f_conso'):null
   };
   const liv = computeDeliveryCost(o);
   if(!liv.actif){ box.style.display='none'; return; }
   const c=_cmdMarginCache||{};
   const m = computeOrderMargins(o, c.recipes||[], c.recipeItems||[], c.lots||[]);
   const baisse = Math.max(0, m.tauxNet - m.tauxNetApresLiv);
+  const defConso = getSettings().vehicleConso;
   box.style.display='flex';
   box.innerHTML =
     `<div style="display:flex;justify-content:space-between"><span>🚚 Coût livraison (A/R ${liv.distAR} km${liv.minutes?` · ${liv.minutes} min`:''})</span><b>${euro(liv.total)}</b></div>`+
     `<div style="display:flex;justify-content:space-between;color:#8a7a72;font-size:.82rem"><span>dont carburant / temps</span><span>${euro(liv.coutCarburant)} · ${euro(liv.coutTemps)}</span></div>`+
+    `<div style="display:flex;justify-content:space-between;color:#8a7a72;font-size:.78rem"><span>conso retenue</span><span>${liv.conso} L/100${(o.consoVehicule&&o.consoVehicule!=defConso)?' (réelle)':' (défaut)'}</span></div>`+
     `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span>Marge nette <b>sans</b> livraison</span><b>${euro(m.margeNette)} (${m.tauxNet}%)</b></div>`+
     `<div style="display:flex;justify-content:space-between"><span>Marge nette <b>après</b> livraison</span><b style="color:${m.margeNetteApresLiv<0?'#b3261e':(baisse>0?'#d98324':'#2e7d32')}">${euro(m.margeNetteApresLiv)} (${m.tauxNetApresLiv}%)</b></div>`+
     (baisse>0?`<div style="display:flex;justify-content:space-between;color:#b3261e;font-size:.82rem"><span>Impact sur le taux de marge</span><b>−${baisse.toFixed(1)} pt</b></div>`:'')+
@@ -4561,6 +4726,7 @@ async function saveCmd(id){
     clientId:+val('f_cl')||0, date:val('f_date'),
     heureLivraison: val('f_heure')||'', lieuLivraison: val('f_lieu')||'',
     distanceKm: +val('f_distKm')||0, prixCarburant: +val('f_carbu')||0, tempsLivraisonMin: +val('f_tempsLiv')||0,
+    consoVehicule: val('f_conso')!==''?(+val('f_conso')||0):null,
     lignes, remiseGlobale,
     perso:document.getElementById('f_perso').checked,
     persoMacarons: cmdPersoCount(),
@@ -4923,13 +5089,16 @@ function computeDeliveryCost(o){
   const distAller = Math.max(0, +o.distanceKm||0);
   const distAR = distAller*2;                       // aller-retour
   const prixL = Math.max(0, +o.prixCarburant||0);
-  const conso = Math.max(0, +s.vehicleConso||0);
+  // Consommation : valeur RÉELLE saisie pour cette livraison si fournie, sinon réglage global.
+  const conso = (o.consoVehicule!=null && o.consoVehicule!=='' && +o.consoVehicule>0)
+    ? Math.max(0, +o.consoVehicule)
+    : Math.max(0, +s.vehicleConso||0);
   const coutCarburant = money2(distAR * (conso/100) * prixL);
   const minutesAller = Math.max(0, +o.tempsLivraisonMin||0);
   const minutes = minutesAller*2;                   // aller-retour (comme la distance)
   const coutTemps = money2((minutes/60) * (+s.laborRate||0));
   const total = money2(coutCarburant + coutTemps);
-  return {distAller, distAR, coutCarburant, coutTemps, minutesAller, minutes, total, actif: (distAller>0||minutesAller>0)};
+  return {distAller, distAR, coutCarburant, coutTemps, minutesAller, minutes, conso, total, actif: (distAller>0||minutesAller>0)};
 }
 /* ============================================================
    MARGES — rentabilité réelle d'une vente
@@ -5242,7 +5411,7 @@ function marketTotals(market, moves, avgUnitMat){
   const s=getSettings();
   // Charges propres au marché : prix du stand + déplacement (carburant A/R + temps de route).
   const coutStand = money2(+market.coutStand||0);
-  const deplacement = computeDeliveryCost({distanceKm:+market.distanceKm||0, prixCarburant:+market.prixCarburant||0, tempsLivraisonMin:+market.tempsRouteMin||0});
+  const deplacement = computeDeliveryCost({distanceKm:+market.distanceKm||0, prixCarburant:+market.prixCarburant||0, tempsLivraisonMin:+market.tempsRouteMin||0, consoVehicule:market.consoVehicule!=null?market.consoVehicule:null});
   const coutMarche = money2(coutStand + deplacement.total);   // total des frais spécifiques au marché
   const margeBrute = money2(caTotal - coutMat - coutEmb - coutMarche);
   const tauxBrut = caTotal>0?Math.round(margeBrute/caTotal*1000)/10:0;
@@ -7061,6 +7230,8 @@ async function marketForm(id){
     </div>
     <div class="field"><label>Temps de route aller (min) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé (×2), valorisé au taux horaire</span></label>
       <input type="number" min="0" step="1" id="mk_route" value="${mk.tempsRouteMin!=null?esc(mk.tempsRouteMin):''}" placeholder="ex : 30"></div>
+    <div class="field"><label>Consommation réelle du véhicule (L/100 km) <span style="color:#9a8a82;font-weight:400">— vide = défaut (${getSettings().vehicleConso} L)</span></label>
+      <input type="number" min="0" step="0.1" id="mk_conso" value="${mk.consoVehicule!=null&&mk.consoVehicule!==''?esc(mk.consoVehicule):''}" placeholder="ex : 7.2"></div>
     <div class="field"><label>Quantité prévue à emporter (macarons) <span style="color:#9a8a82;font-weight:400">— pour la planification intelligente</span></label>
       <input type="number" min="0" step="10" id="mk_prevu" value="${mk.prevuQte!=null?esc(mk.prevuQte):''}" placeholder="ex : 300">
       <p class="note" id="mk_prevuHint" style="margin-top:4px"></p></div>
@@ -7088,7 +7259,7 @@ async function saveMarket(id){
   if(!date){ toast('Date obligatoire'); return; }
   const o={nom, date, lieu:val('mk_lieu'), horaires:val('mk_horaires'), heures:+val('mk_heures')||0,
     meteo:val('mk_meteo'), notes:val('mk_notes'), prevuQte:+val('mk_prevu')||0, fondCaisse:+val('mk_fond')||0,
-    coutStand:+val('mk_stand')||0, distanceKm:+val('mk_dist')||0, prixCarburant:+val('mk_carbu')||0, tempsRouteMin:+val('mk_route')||0};
+    coutStand:+val('mk_stand')||0, distanceKm:+val('mk_dist')||0, prixCarburant:+val('mk_carbu')||0, tempsRouteMin:+val('mk_route')||0, consoVehicule: val('mk_conso')!==''?(+val('mk_conso')||0):null};
   if(id){ await db.markets.update(id,o); }
   else { o.statut='ouvert'; o.ca={especes:0,cb:0,autre:0}; id=await db.markets.add(o); }
   // Connexion calendrier : un marché planifié apparaît dans l'agenda (type 'marche').
@@ -8233,7 +8404,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v97';
+const APP_VERSION = 'v111';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -8242,11 +8413,11 @@ const APP_KB = [
     tags:'personnalisation couleur couleurs perso facturation supplement 0.25 macaron personnalise',
     r:`<p>Dans la commande, coche <b>« Personnalisation des couleurs »</b> : un champ apparaît pour saisir le <b>nombre de macarons personnalisés</b> (pas forcément le total). Le surcoût de <b>0,25 €/macaron</b> s'ajoute au total. La personnalisation est spécifique à la commande et lève la règle « 1 couleur = 1 parfum ».</p>` },
   { id:'livraison', titre:'Coût de livraison',
-    tags:'livraison deplacement distance carburant cout transport km temps aller retour adresse suggestion',
-    r:`<p>Dans la commande, renseigne la <b>distance aller</b> et le <b>temps de trajet aller</b> : l'app double automatiquement les deux pour l'aller-retour. Avec le prix du carburant et la consommation du véhicule (réglages), elle calcule le coût (carburant A/R + temps A/R valorisé au taux horaire) et propose un prix de livraison qui préserve la marge. Le champ adresse suggère les adresses de tes clients et tes lieux habituels au fur et à mesure que tu tapes.</p>` },
+    tags:'livraison deplacement distance carburant cout transport km temps aller retour adresse suggestion consommation vehicule litres',
+    r:`<p>Dans la commande, renseigne la <b>distance aller</b> et le <b>temps de trajet aller</b> : l'app double automatiquement les deux pour l'aller-retour. Avec le prix du carburant et la consommation du véhicule, elle calcule le coût (carburant A/R + temps A/R valorisé au taux horaire) et propose un prix de livraison qui préserve la marge. Tu peux saisir une <b>consommation réelle (L/100 km) propre à cette livraison</b> (ou ce marché) pour un coût au plus juste ; si tu la laisses vide, c'est la consommation par défaut des réglages qui s'applique. Le champ adresse suggère les adresses de tes clients et tes lieux habituels.</p>` },
   { id:'stock-matieres', titre:'Matières premières & emballages (lots)',
     tags:'matiere matieres emballage emballages lot lots reception stock denree capacite reference',
-    r:`<p>Onglet <b>Matières & emballages</b>. Crée tes références (catégorie <i>denrée</i> ou <i>emballage</i>), puis enregistre des <b>lots</b> à réception (prix, fournisseur, quantité, DLC, référence/commentaire). Le stock = somme des lots actifs. Les emballages portent une <b>capacité</b> (ex. 8) qui les relie aux coffrets. <b>Ne saisis jamais les matières/emballages en charges</b> (double comptage) : uniquement en lots.</p>` },
+    r:`<p>Onglet <b>Matières & emballages</b>. Les références sont toujours affichées dans l'<b>ordre alphabétique</b>, quel que soit l'ordre de saisie. Tu peux renseigner une <b>marque de produit</b> (ex : Valrhona) distincte du <b>fournisseur</b> : la marque se définit sur la fiche matière, le fournisseur se choisit à la <b>réception du lot</b> (ex : fournisseur « Délice et Création », marque « Valrhona »). Les <b>denrées alimentaires</b> sont achetées et valorisées <b>au kilogramme</b> (prix indicatif en <b>€/kg</b>, stock en kg, réception du lot en kg → prix au kg réel), mais dans les <b>recettes</b> tu saisis les quantités <b>en grammes</b> (l'app convertit automatiquement pour le coût et le stock). Les <b>emballages</b> restent comptés <b>à l'unité</b> et portent une <b>capacité</b> (nb de macarons) qui les relie aux coffrets. Le stock réel se gère par <b>lots</b> (réception) — ne saisis jamais les matières/emballages en charges (double comptage).</p>` },
   { id:'productions', titre:'Productions (batchs) & recherche',
     tags:'production productions batch fabrication lot emplacement recherche parfum dlc rendement',
     r:`<p>Onglet <b>Productions</b>. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock fini suit la quantité <b>réelle</b>. La barre de recherche filtre par n° de lot, parfum, date, statut ; une seule <b>lettre d'emplacement</b> (F/B/C/A) ou les puces de zone filtrent par emplacement. Tu peux découper un batch, ajuster le réel, déclarer une perte, imprimer l'étiquette.</p>` },
@@ -8284,11 +8455,14 @@ const APP_KB = [
     tags:'tracabilite tracage etiquette lot dlc impression label origine ddpp confidentialite quantite recette ingredient',
     r:`<p>La <b>traçabilité</b> relie chaque batch aux lots de matières consommés (FIFO). Tu peux imprimer une <b>étiquette</b> par batch (parfum, lot, DLC) depuis Productions ou l'onglet Étiquettes. La traçabilité destinée à la <b>DDPP</b> (écrans et exports CSV) conserve toutes les informations — matières, lots fournisseurs, fournisseurs, DLC, origine — mais <b>masque les quantités d'ingrédients</b> pour préserver la confidentialité de tes recettes.</p>` },
   { id:'pointeuse', titre:'Pointeuse / temps de travail & activités',
-    tags:'pointeuse temps travail session heures chrono pause activite ganache meringue macaronnage pochage vaisselle nettoyage optimisation analyse',
-    r:`<p>La <b>pointeuse</b> (bouton flottant) enregistre tes sessions (démarrer / pause / arrêter). Au démarrage, choisis d'un tap la <b>nature de l'activité</b> (ganache, meringue, macaronnage, pochage, cuisson, garnissage, vaisselle, nettoyage fin de prod, conditionnement…). Cela n'a <b>aucun impact sur les productions</b> mais alimente, dans <b>Analyse → Temps de travail</b>, une répartition de ton temps par activité et des <b>conseils d'optimisation</b>.</p>` },
+    tags:'pointeuse temps travail session heures chrono pause activite parallele simultane pesees pesee ganache meringue macaronnage pochage cuisson vaisselle nettoyage autre optimisation analyse',
+    r:`<p>La <b>pointeuse</b> (bandeau flottant) permet de lancer <b>plusieurs chronos en parallèle</b>, chacun avec sa <b>nature d'activité</b> : Pesées, Ganache, Meringue, Macaronnage, Pochage, Cuisson, Garnissage/Montage, Vaisselle, Nettoyage fin de prod, Conditionnement, ou <b>Autre</b> (que tu peux <b>préciser</b> librement). Chaque chrono a sa <b>pause</b> et son <b>stop</b> indépendants — tu peux faire tourner « Cuisson » et « Macaronnage » en même temps, ou deux « Cuisson » à la fois. Le bouton <b>▶ Ajouter une activité</b> démarre un chrono sans interrompre les autres. À l'arrêt, tu renseignes le taux horaire et la session est enregistrée. Dans <b>Analyse → Temps de travail</b> : répartition par activité + conseils. Sans aucun impact sur les productions.</p>` },
+  { id:'migration', titre:'Reprise / migration (historique & stock de départ)',
+    tags:'migration reprise historique demarrage debut ancienne donnee ca chiffre affaire stock depart inventaire import',
+    r:`<p>L'onglet <b>Reprise / migration</b> sert à démarrer avec ton historique. Tu peux saisir des <b>commandes historiques</b> (date, montant, client ou libellé) : elles <b>comptent dans le chiffre d'affaires</b> et les stats, mais sont marquées « historique » — l'app ne demande <b>ni production, ni picking, ni matières</b> et ne génère <b>aucune alerte</b> dessus (elles n'apparaissent pas dans la liste des commandes opérationnelles). Tu peux aussi enregistrer ton <b>stock de départ de produits finis</b> (lot déjà « terminé », sans consommer de matières) et, pour les matières premières, utiliser la <b>réception de lot</b> habituelle dans Matières &amp; emballages.</p>` },
   { id:'sauvegarde', titre:'Sauvegarde & restauration',
-    tags:'sauvegarde backup restauration export import donnees fichier',
-    r:`<p>Onglet <b>Sauvegardes</b>. Exporte toutes tes données dans un fichier, et réimporte-le pour restaurer. Pense à sauvegarder régulièrement : les données sont stockées localement sur ton appareil.</p>` },
+    tags:'sauvegarde backup restauration export import donnees fichier rappel ios safari perte purge securite',
+    r:`<p>Onglet <b>Sauvegarde &amp; sécurité</b>. <b>Exporte</b> toutes tes données dans un fichier .json et range-le ailleurs (Fichiers, iCloud, e-mail), puis <b>réimporte</b>-le pour restaurer (remplacement ou fusion). ⚠️ Important : effacer l'historique Safari <b>supprime aussi la base de l'app</b> (limite iOS) — seul un export hors appareil te protège. L'app fait une <b>sauvegarde automatique quotidienne</b> dans son historique interne et te <b>rappelle automatiquement</b> d'exporter (fréquence réglable, 3 jours par défaut). Exporte avant toute mise à jour ou nettoyage de Safari.</p>` },
   { id:'assistant', titre:'Assistant IA (hors-ligne)',
     tags:'assistant ia aide question stock commande tendance rupture comment fonctionne localiser ou sont joindre piece fichier photo txt notes coller',
     r:`<p>L'assistant fonctionne <b>hors-ligne</b>. Il sait : <b>localiser tes macarons</b> (« où sont mes macarons vanille ? »), <b>créer une commande en langage naturel</b>, répondre sur le stock, le CA, les tendances, les ruptures, et expliquer le fonctionnement. Tu peux <b>📎 Joindre</b> un <b>fichier texte (.txt)</b> : son contenu est ajouté à ta demande. Une <b>photo</b> peut être jointe comme simple <b>aperçu visuel temporaire</b> (l'assistant ne lit pas son contenu, et rien n'est enregistré dans l'app). Depuis l'app Notes de l'iPhone, fais <b>Copier</b> puis colle le texte dans le champ (l'accès direct aux notes Apple n'est pas possible). Toute action critique demande validation. Envoi : touche <b>Entrée</b>.</p>` },
@@ -8297,7 +8471,7 @@ const APP_KB = [
     r:`<p>Demande à l'assistant « <b>où sont mes macarons vanille ?</b> ». Il ouvre une <b>popup</b> qui liste, par emplacement (Frigo F, Congélateurs B/C/A), chaque <b>batch</b> en stock avec sa quantité, son n° de lot, sa DLC et son statut (prêt / en cours). Sans parfum précisé, il propose la liste des parfums en stock.</p>` },
   { id:'composants', titre:'Production par composants (coques / ganache) & assemblage',
     tags:'composant composants coques ganache assemblage assembler sous-lot souslot lot ambiant congelateur frigo degustation echantillon offert marche surplus casse garni perte',
-    r:`<p>Au lancement d'une production, choisis <b>« Par composants »</b> pour démarrer par les <b>coques</b> ou la <b>ganache</b> : deux sous-lots sous le même n° de lot (<b>-CO</b> / <b>-GA</b>). Les <b>coques</b> se comptent en <b>coques</b>, la <b>ganache</b> en <b>macarons garnissables</b>. Règle d'assemblage : <b>1 macaron = 2 coques + 1 ganache</b>. Le bouton <b>🔗 Assembler</b> réunit coques + ganache → macaron assemblé (vendable, frigo DLC 7 j ou congélateur) ; l'assemblage partiel est possible (ex. 20 macarons consomment 40 coques et 20 ganache, le reste de ganache reste au frigo). Coques vides → ambiant/congélateur (jamais frigo) ; ganache terminée → frigo. Coche <b>« dégustation »</b> pour assembler sans correspondance couleur/parfum (offert, non vendable, stock séparé décrémenté via <b>🥄 Distribué</b>). Les <b>cassés mais garnis</b> basculent aussi en dégustation depuis « ⚠ Perte ». Coques, ganache et dégustations ne comptent jamais comme stock vendable.</p>` },
+    r:`<p>Au lancement d'une production, choisis <b>« Par composants »</b> pour démarrer par les <b>coques</b> ou la <b>ganache</b> (sous-lots <b>-CO</b> / <b>-GA</b> sous le même n° de lot de base). Tu saisis toujours la quantité <b>en macarons</b> : pour les coques, l'app stocke automatiquement <b>2 coques par macaron</b> (60 macarons → <b>120 coques</b>), tout en calculant les matières sur le nombre de macarons. Règle d'assemblage : <b>1 macaron = 2 coques + 1 ganache</b>. Tu peux <b>terminer</b> la production de coques (choix de l'emplacement à la fin), <b>déclarer pertes et écarts</b> théorie/réel sur les coques, puis utiliser <b>🔗 Assembler</b> pour réunir coques + ganache en un macaron assemblé (assemblage partiel possible). Coche <b>« dégustation »</b> pour un assemblage offert non vendable ; les <b>cassés mais garnis</b> basculent en dégustation depuis « ⚠ Perte ». Coques, ganache et dégustations ne comptent jamais comme stock vendable.</p>` },
   { id:'suppressions', titre:'Supprimer une entrée (commande, production, marché, client, événement)',
     tags:'supprimer suppression effacer raison motif confirmation perte recrediter congelateur retour chaine froid decongelation annuler annulation undo',
     r:`<p>Chaque fiche complète a un bouton <b>🗑 Supprimer</b> (à droite de Modifier) avec <b>confirmation</b>. Pour une <b>commande</b> ou une <b>production</b>, une <b>raison</b> est demandée. À la suppression d'une production, tu choisis : recréditer le stock matières, ou — si des pièces finies restent — les <b>déclarer en pertes</b>. Après une suppression, une barre <b>↩ Annuler</b> s'affiche quelques secondes pour <b>revenir en arrière immédiatement</b>. Règle chaîne du froid : une production sortie du congélateur ne peut y retourner que dans l'heure ; au-delà le retour A/B/C est bloqué.</p>` }
@@ -8355,12 +8529,12 @@ function renderAssistant(){
        <textarea id="aiInput" rows="2" placeholder="ex : Comment fonctionne le picking ? · Quel est le stock de chocolat ? · Crée une commande pour M. Dupont vendredi" onkeydown="aiInputKey(event)"></textarea>
      </div>
      <div id="aiAttachWrap" style="display:none;margin-bottom:8px"></div>
-     <input type="file" id="aiFileInput" accept=".txt,.csv,.md,.text,text/plain,text/csv,text/markdown,image/*" style="display:none" onchange="aiAttachFile(this.files)">
+     <input type="file" id="aiFileInput" accept=".txt,.csv,.md,.text,.pdf,text/plain,text/csv,text/markdown,application/pdf,image/*" style="display:none" onchange="aiAttachFile(this.files)">
      <div class="flex" style="gap:8px;flex-wrap:wrap"><button class="btn" onclick="aiRun()">Envoyer</button>
        <button class="btn ghost" onclick="document.getElementById('aiFileInput').click()" title="Joindre un fichier texte (.txt) ou une photo (support visuel)">📎 Joindre</button>
        <button class="btn gold" onclick="document.getElementById('aiInput').value='aide';aiRun()">❓ Aide</button>
        <button class="btn ghost" onclick="aiClearAll()">Effacer</button></div>
-     <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> est lu et ajouté à ta demande ; une <b>photo</b> reste un aperçu temporaire (non lue, non enregistrée). Astuce : depuis l'app Notes, fais <b>Copier</b> puis colle ici. Base d'aide : <b>${APP_VERSION}</b>.</p>
+     <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> ou un <b>PDF</b> (généré par ordi) est lu et ajouté à ta demande ; une <b>photo</b> ou un PDF scanné reste un aperçu temporaire (non lu, non enregistré). Astuce : depuis l'app Notes, fais <b>Copier</b> puis colle ici. Base d'aide : <b>${APP_VERSION}</b>.</p>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
        ${['Aide','Comment fonctionne le picking ?','Quel est le stock de chocolat ?','Commandes à préparer demain','Chiffre d\'affaires','Que faut-il produire ?','Quand vais-je être en rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
      </div>
@@ -8472,8 +8646,11 @@ function aiInputKey(ev){
 function aiAttachFile(files){
   const f=files&&files[0]; if(!f){ return; }
   const isImage=(f.type||'').startsWith('image/');
+  const isPdf = (f.type||'')==='application/pdf' || /\.pdf$/i.test(f.name||'');
   const isText = /^(text\/|application\/(json|csv))/.test(f.type||'') || /\.(txt|csv|md|text|json)$/i.test(f.name||'');
-  if(isImage){
+  if(isPdf){
+    aiAttachPdf(f);
+  } else if(isImage){
     // Limite douce : on n'affiche un aperçu que pour des images raisonnables (évite de saturer la RAM).
     if(f.size > 12*1024*1024){ toast('Image trop lourde pour l\'aperçu (max ~12 Mo)'); document.getElementById('aiFileInput').value=''; return; }
     const reader=new FileReader();
@@ -8499,6 +8676,44 @@ function aiAttachFile(files){
     toast('Format non géré : utilise un .txt ou une photo');
   }
   // réinitialise l'input pour permettre de re-sélectionner le même fichier
+  const fi=document.getElementById('aiFileInput'); if(fi) fi.value='';
+}
+// ---- PIÈCE JOINTE PDF (module isolé, chargé à la demande) ----
+let _pdfModuleLoading=null;
+function aiLoadPdfModule(){
+  if(window.PDFTextExtractor) return Promise.resolve(true);
+  if(_pdfModuleLoading) return _pdfModuleLoading;
+  _pdfModuleLoading=new Promise((resolve)=>{
+    const s=document.createElement('script');
+    s.src='./pdf_extract.js';
+    s.onload=()=>resolve(!!window.PDFTextExtractor);
+    s.onerror=()=>resolve(false);
+    document.head.appendChild(s);
+  });
+  return _pdfModuleLoading;
+}
+async function aiAttachPdf(f){
+  if(f.size > 20*1024*1024){ toast('PDF trop lourd (max ~20 Mo)'); return; }
+  toast('Lecture du PDF…');
+  const ok=await aiLoadPdfModule();
+  if(!ok || !window.PDFTextExtractor){ toast('Module PDF indisponible'); return; }
+  let text='';
+  try{ text=await window.PDFTextExtractor.extractText(f); }catch(e){ text=''; }
+  if(text && text.trim().length>=3){
+    const ta=document.getElementById('aiInput');
+    if(ta){ const sep=ta.value.trim()?'\n\n':''; ta.value=ta.value+sep+text.trim(); ta.focus(); }
+    toast(`Texte de « ${f.name} » ajouté ✓`);
+  } else {
+    // PDF scanné/sans texte exploitable : on l'indique sans rien stocker.
+    const w=document.getElementById('aiAttachWrap');
+    if(w){ w.style.display='block';
+      w.innerHTML=`<div style="display:flex;align-items:center;gap:10px;background:var(--paper,#f7f1e7);border:1px solid #e6dac8;border-radius:10px;padding:8px">
+        <span style="font-size:1.4rem">📄</span>
+        <div style="flex:1;font-size:.82rem;color:#6a5a52;min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</b><span class="note">PDF sans texte détecté (scan ?) · tape les détails à la main</span></div>
+        <button class="btn ghost sm" onclick="aiRemovePhoto()">✕ Retirer</button></div>`;
+    }
+    toast('Aucun texte détecté dans ce PDF');
+  }
   const fi=document.getElementById('aiFileInput'); if(fi) fi.value='';
 }
 // Affiche l'aperçu photo temporaire (en RAM) avec bouton de retrait.
@@ -9367,6 +9582,7 @@ async function exportData(){
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   a.download='sensations-macarons-sauvegarde-'+today()+'.json'; a.click();
   localStorage.setItem('sm_lastExport', today());
+  localStorage.removeItem('sm_exportSnooze');
   toast('Sauvegarde téléchargée ✓');
 }
 // ---- IMPORT MANUEL (depuis un fichier .json) ----
@@ -9470,6 +9686,111 @@ async function deleteBackup(id){
 }
 
 // ---- ÉCRAN SAUVEGARDE & SÉCURITÉ ----
+// ============================================================
+//  REPRISE / MIGRATION — saisie de l'historique sans déclencher
+//  la mécanique opérationnelle (production, picking, alertes).
+//  Une commande "historique" : {histo:true, statut:'Livrée',
+//  paiement:'Payé', montant, date} → compte dans le CA, mais
+//  l'app NE demande NI production NI picking NI matières.
+// ============================================================
+async function renderMigration(){
+  const orders = await db.orders.toArray();
+  const histo = orders.filter(o=>o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const clients = await db.clients.toArray();
+  const cname = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  const totCA = histo.reduce((s,o)=>s+(+o.montant||0),0);
+  const byMonth={};
+  histo.forEach(o=>{ const m=(o.date||'').slice(0,7)||'?'; byMonth[m]=(byMonth[m]||0)+(+o.montant||0); });
+  const moisRows = Object.keys(byMonth).sort().reverse().map(m=>`<tr><td>${esc(m)}</td><td><b>${euro(byMonth[m])}</b></td></tr>`).join('');
+  const clientOpts = clients.slice().sort((a,b)=>(a.nom||'').localeCompare(b.nom||''))
+    .map(c=>`<option value="${c.id}">${esc(c.nom)}</option>`).join('');
+  const rows = histo.slice(0,60).map(o=>`<tr>
+      <td>${fmtDate(o.date)}</td>
+      <td>${esc(o.clientId?cname(o.clientId):(o.histoLabel||'—'))}</td>
+      <td><b>${euro(o.montant)}</b></td>
+      <td style="text-align:right"><span class="act del" onclick="migDeleteOrder(${o.id})">Suppr.</span></td></tr>`).join('');
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Reprise / migration</h1><p>Saisis ton historique sans déclencher la production</p></div></div>
+   <div class="banner">📥 <div>Ce mode te permet de comptabiliser ton <b>chiffre d'affaires passé</b> et ton <b>stock de départ</b>. Les commandes saisies ici sont marquées <b>« historique »</b> : elles comptent dans le CA et les stats, mais l'application ne demande <b>ni production, ni picking, ni matières</b> et ne génère <b>aucune alerte</b> dessus.</div></div>
+
+   <div class="panel"><h2>1 · Commande historique (déjà réalisée)</h2>
+     <div class="row2">
+       <div class="field"><label>Date</label><input type="date" id="mig_date" value="${today()}"></div>
+       <div class="field"><label>Montant encaissé (€)</label><input type="number" min="0" step="0.01" id="mig_montant" placeholder="ex : 48.00"></div>
+     </div>
+     <div class="field"><label>Client (optionnel)</label>
+       <select id="mig_client"><option value="">— sans client / divers —</option>${clientOpts}</select></div>
+     <div class="field"><label>Libellé si sans client (optionnel)</label><input id="mig_label" placeholder="ex : Marché de Noël, ventes diverses…"></div>
+     <button class="btn gold" style="width:100%" onclick="migSaveOrder()">＋ Ajouter au chiffre d'affaires</button>
+     <p class="note">Astuce : pour un mois entier, tu peux saisir une seule ligne au total du mois (avec un libellé), ou plusieurs commandes détaillées — comme tu préfères.</p>
+   </div>
+
+   <div class="panel"><h2>2 · Stock de départ — produits finis</h2>
+     <p class="note" style="margin-bottom:8px">Crée un lot de produits finis déjà en stock (compté comme « terminé », sans consommer de matières). Idéal pour partir avec ton stock réel d'aujourd'hui.</p>
+     <div class="field"><label>Parfum / recette</label><select id="mig_rec">${(await db.recipes.toArray()).map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('')||'<option value="">(crée d\'abord une recette)</option>'}</select></div>
+     <div class="row2">
+       <div class="field"><label>Quantité en stock (macarons)</label><input type="number" min="1" id="mig_qte" placeholder="ex : 24"></div>
+       <div class="field"><label>DLC (optionnel)</label><input type="date" id="mig_dlc"></div>
+     </div>
+     <div class="field"><label>Emplacement</label>
+       <div class="opt-table">
+         ${EMPLACEMENTS.map((e,i)=>`<label class="opt-row"><input type="radio" name="mig_emp" value="${e.key}" ${i===0?'checked':''}> <b class="opt-emp" style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'}">${e.lettre}</b> <span class="opt-main"><b>${e.icon} ${esc(e.nom)}</b></span></label>`).join('')}
+       </div></div>
+     <button class="btn" style="width:100%" onclick="migSaveStock()">＋ Ajouter au stock de produits finis</button>
+     <p class="note">Pour le <b>stock de matières premières</b>, utilise l'onglet <b>Matières &amp; emballages → Réception lot</b> : c'est le même geste qu'une réception normale.</p>
+   </div>
+
+   <div class="panel"><h2>Chiffre d'affaires historique saisi</h2>
+     <div class="sum-box"><span>Total CA historique</span><b>${euro(totCA)} · ${histo.length} ligne(s)</b></div>
+     ${moisRows?`<div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Mois</th><th>CA</th></tr></thead><tbody>${moisRows}</tbody></table></div>`:''}
+     ${rows?`<h3 style="font-size:.95rem;margin:14px 0 6px">Détail</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Client / libellé</th><th>Montant</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${histo.length>60?'<p class="note">60 dernières lignes affichées.</p>':''}`:'<div class="empty">Aucune commande historique saisie pour l\'instant.</div>'}
+   </div>`;
+}
+async function migSaveOrder(){
+  const date=val('mig_date')||today();
+  const montant=+val('mig_montant')||0;
+  const clientId=+val('mig_client')||0;
+  const label=(val('mig_label')||'').trim();
+  if(montant<=0){ toast('Indique un montant encaissé'); return; }
+  const o={ clientId:clientId||null, date, montant:money2(montant),
+    statut:'Livrée', paiement:'Payé', histo:true, histoLabel:label||'',
+    lignes:[], paiements:[], notes:'(reprise / historique)' };
+  await db.orders.add(o);
+  toast(`Ajouté au CA : ${euro(montant)} ✓`);
+  renderMigration();
+}
+async function migDeleteOrder(id){
+  const o=await db.orders.get(id);
+  if(!o||!o.histo){ toast('Ligne introuvable'); return; }
+  if(!confirm('Supprimer cette ligne historique ?')) return;
+  await db.orders.delete(id);
+  renderMigration();
+}
+async function migSaveStock(){
+  const recipeId=+val('mig_rec');
+  const qte=+val('mig_qte')||0;
+  const dlc=val('mig_dlc')||'';
+  const dest=(document.querySelector('input[name="mig_emp"]:checked')||{}).value||'frigo';
+  if(!recipeId){ toast('Choisis un parfum/recette'); return; }
+  if(qte<=0){ toast('Indique une quantité'); return; }
+  const nowIso=new Date().toISOString();
+  const base='L-'+today().replace(/-/g,'')+'-'+genLotCode(3);
+  const lot=lotAvecEmplacement(base, dest);
+  // Production "historique" déjà terminée, SANS consommation de matières.
+  await db.productions.add({
+    recipeId, lotProduction:lot, lotBase:base, date:today(),
+    composant:'complet', histo:true,
+    qteTheorique:qte, qteReelle:qte, ecart:0, qteProduite:qte, qteRestante:qte,
+    dlcProduit:dlc||'', dlcAuto:!dlc,
+    prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
+    emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
+    histEmplacement:[{lieu:dest, ts:nowIso, motif:'stock de départ (reprise)'}]
+  });
+  toast(`Stock ajouté : ${qty(qte)} ✓`);
+  renderMigration();
+}
+
 async function renderBackups(){
   const backups = await db.backups.orderBy('date').reverse().toArray();
   const lastExport = localStorage.getItem('sm_lastExport');
@@ -9503,6 +9824,11 @@ async function renderBackups(){
        <button class="btn ghost" onclick="runConsistencyCheck(true)">🔍 Vérifier l'intégrité</button>
      </div>
      <p class="note">L'import « Importer » <b>remplace</b> tout ; l'import « en fusion » <b>ajoute</b> sans rien effacer (idéal pour intégrer un fichier de saisies préparé à part). La sauvegarde automatique se déclenche une fois par jour à l'ouverture.</p>
+   </div>
+   <div class="panel"><h2>Rappel d'export</h2>
+     <p class="note" style="margin-bottom:8px">${lastExport?`Dernier export hors appareil : <b>${fmtDate(lastExport)}</b>${dExp!==null?` (il y a ${Math.abs(dExp)} j)`:''}.`:'Aucun export hors appareil enregistré.'} L'app te le rappellera automatiquement à l'ouverture.</p>
+     <div class="field"><label>Me rappeler d'exporter tous les… (jours)</label>
+       <input type="number" min="1" max="60" id="set_expReminder" value="${exportReminderDays()}" onchange="saveExportReminderDays(this.value)"></div>
    </div>
    <div class="panel"><h2>Historique des sauvegardes</h2>
    ${backups.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Contenu</th><th>Taille</th><th>Intégrité</th><th></th></tr></thead>
@@ -9834,14 +10160,50 @@ async function seedProducts(){
   }
 }
 
-// Rappel d'export hebdomadaire (parade à la purge iOS d'IndexedDB)
+// Rappel d'export automatique (parade à la purge iOS d'IndexedDB).
+// Réglable : fréquence en jours. Affiche une MODALE actionnable (pas un simple toast
+// qu'on rate). Se déclenche au démarrage si l'export hors-appareil est en retard.
+function saveExportReminderDays(v){
+  const n=parseInt(v,10);
+  if(!n||n<1){ toast('Valeur invalide'); return; }
+  const s=getSettings(); s.exportReminderDays=Math.min(60,n); saveSettings(s);
+  localStorage.removeItem('sm_exportSnooze');
+  toast(`Rappel tous les ${Math.min(60,n)} jour(s) ✓`);
+}
+function exportReminderDays(){
+  const s=getSettings();
+  const n=parseInt(s.exportReminderDays,10);
+  return (n&&n>0)?n:EXPORT_REMINDER_DAYS_DEFAULT;
+}
 async function exportReminder(){
+  const freq=exportReminderDays();
   const last = localStorage.getItem('sm_lastExport');
-  if(!last){ localStorage.setItem('sm_lastExport', today()); return; }
-  const diff = daysTo(last); // négatif = passé
-  if(diff!==null && diff<=-7){
-    toast('💾 Pense à exporter ta sauvegarde (bouton ⬇).');
+  const snooze = localStorage.getItem('sm_exportSnooze'); // date jusqu'à laquelle on ne redemande pas
+  if(snooze){ const ds=daysTo(snooze); if(ds!==null && ds>=0) return; } // encore en sommeil
+  // nombre d'enregistrements à risque (donne du poids au message)
+  let nb=0; try{ for(const t of ['orders','productions','clients','materialLots']){ nb+=await db.table(t).count(); } }catch(e){}
+  let overdue=false, ageTxt='';
+  if(!last){ overdue = nb>0; ageTxt='Aucun export hors de cet appareil pour le moment.'; }
+  else {
+    const diff=daysTo(last); // négatif = dans le passé
+    if(diff!==null && diff<=-freq){ overdue=true; ageTxt=`Dernier export il y a ${Math.abs(diff)} jour(s).`; }
   }
+  if(!overdue) return;
+  openModal(`<h3>💾 Sauvegarde recommandée</h3>
+    <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4"><div>${ageTxt} iOS peut purger les données de l'app (effacer l'historique Safari supprime aussi la base). Exporte un fichier et range-le ailleurs (Fichiers, iCloud, e-mail).</div></div>
+    <p class="note" style="margin:8px 0">${nb} enregistrement(s) clés actuellement sur l'appareil.</p>
+    <div class="modal-actions" style="flex-direction:column;gap:8px">
+      <button class="btn gold" style="width:100%" onclick="closeModal();exportData()">⬇ Exporter maintenant (.json)</button>
+      <button class="btn ghost" style="width:100%" onclick="closeModal();goView('sauvegardes')">Ouvrir Sauvegarde &amp; sécurité</button>
+      <button class="btn ghost" style="width:100%" onclick="exportSnooze(1)">Me le rappeler demain</button>
+    </div>`);
+}
+// Reporte le rappel de n jours.
+function exportSnooze(days){
+  const d=new Date(); d.setDate(d.getDate()+(days||1));
+  localStorage.setItem('sm_exportSnooze', d.toISOString().slice(0,10));
+  closeModal();
+  toast('Rappel reporté ✓');
 }
 
 /* ============================================================
@@ -9926,76 +10288,88 @@ async function showForecastPopup(opts){
    se fige quand iOS suspend l'app). Le tick ne sert qu'à rafraîchir
    l'affichage ; la source de vérité reste le timestamp stocké.
    ============================================================ */
-const TT_KEY = 'sm_workSession_start';   // timestamp (ms) de la session en cours
-const TT_PAUSED_KEY = 'sm_workSession_paused';   // ms de pause CUMULÉS (pauses terminées)
-const TT_PAUSE_AT_KEY = 'sm_workSession_pauseAt'; // timestamp du début de la pause en cours (0 si non en pause)
-const TT_ACT_KEY = 'sm_workSession_act';  // nature d'activité de la session en cours
-// Natures d'activité du chrono (pour l'analyse d'optimisation des temps). Sans impact production.
-const TT_ACTIVITIES = ['Ganache','Meringue','Macaronnage','Pochage','Cuisson','Garnissage/Montage','Vaisselle','Nettoyage fin de prod','Conditionnement','Autre'];
-let _ttTick = null;                       // id du setInterval d'affichage
+// ===== POINTEUSE MULTI-CHRONOS (sessions parallèles indépendantes) =====
+// Chaque chrono : {id, start(ms), activite, pausedAccum(ms), pauseAt(ms|0)}.
+// Stocké en JSON dans localStorage. Chacun a sa pause et son stop individuels.
+const TT_SESSIONS_KEY = 'sm_ttSessions';
+// Anciennes clés (mono-session) — pour migration au démarrage.
+const TT_KEY = 'sm_workSession_start';
+const TT_PAUSED_KEY = 'sm_workSession_paused';
+const TT_PAUSE_AT_KEY = 'sm_workSession_pauseAt';
+const TT_ACT_KEY = 'sm_workSession_act';
+const TT_ACTIVITIES = ['Pesées','Ganache','Meringue','Macaronnage','Pochage','Cuisson','Garnissage/Montage','Vaisselle','Nettoyage fin de prod','Conditionnement','Autre'];
+let _ttTick = null;
 
-// État de pause courant.
-function ttIsPaused(){ return (+localStorage.getItem(TT_PAUSE_AT_KEY)||0) > 0; }
-// Temps NET travaillé (ms) = écoulé − pauses cumulées − pause en cours.
-// Toujours recalculé depuis les timestamps : résilient à la veille iOS.
-function ttNetElapsed(){
-  const start = +localStorage.getItem(TT_KEY)||0;
-  if(!start) return 0;
-  const accumPause = +localStorage.getItem(TT_PAUSED_KEY)||0;
-  const pauseAt = +localStorage.getItem(TT_PAUSE_AT_KEY)||0;
-  const curPause = pauseAt>0 ? Math.max(0, Date.now()-pauseAt) : 0;
-  return Math.max(0, Date.now() - start - accumPause - curPause);
+function ttLoad(){
+  try{ const a=JSON.parse(localStorage.getItem(TT_SESSIONS_KEY)||'[]'); return Array.isArray(a)?a:[]; }
+  catch(e){ return []; }
+}
+function ttSave(arr){ localStorage.setItem(TT_SESSIONS_KEY, JSON.stringify(arr||[])); }
+function ttGet(id){ return ttLoad().find(s=>s.id===id); }
+function ttUpsert(sess){ const a=ttLoad(); const i=a.findIndex(s=>s.id===sess.id); if(i>=0) a[i]=sess; else a.push(sess); ttSave(a); }
+function ttRemove(id){ ttSave(ttLoad().filter(s=>s.id!==id)); }
+function ttSessionPaused(s){ return s && (+s.pauseAt||0)>0; }
+// Temps net d'UN chrono (ms) — recalculé depuis les timestamps (résilient à la veille iOS).
+function ttSessionNet(s){
+  if(!s||!s.start) return 0;
+  const accum=+s.pausedAccum||0;
+  const cur=(+s.pauseAt||0)>0 ? Math.max(0, Date.now()-(+s.pauseAt)) : 0;
+  return Math.max(0, Date.now()-s.start-accum-cur);
+}
+function ttAnyRunning(){ return ttLoad().some(s=>!ttSessionPaused(s)); }
+
+// Migration : convertit une éventuelle ancienne session mono en multi.
+function ttMigrateLegacy(){
+  const start=+localStorage.getItem(TT_KEY)||0;
+  if(start>0 && !ttLoad().length){
+    ttUpsert({ id:'tt'+start, start, activite:localStorage.getItem(TT_ACT_KEY)||'',
+      pausedAccum:+localStorage.getItem(TT_PAUSED_KEY)||0, pauseAt:+localStorage.getItem(TT_PAUSE_AT_KEY)||0 });
+  }
+  [TT_KEY,TT_PAUSED_KEY,TT_PAUSE_AT_KEY,TT_ACT_KEY].forEach(k=>localStorage.removeItem(k));
 }
 
-// Formate une durée (ms) en "01h 24m" (et secondes si < 1 min pour le feedback).
 function ttFormat(ms){
   const totalMin = Math.floor(ms/60000);
-  const h = Math.floor(totalMin/60);
-  const m = totalMin%60;
+  const h = Math.floor(totalMin/60), m = totalMin%60;
   if(totalMin<1){ const s=Math.floor(ms/1000); return `00h 00m ${String(s).padStart(2,'0')}s`; }
   return `${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m`;
 }
-// Rafraîchit l'UI à partir de l'état stocké (appelé au boot, au tick, et aux clics).
-function ttRefresh(){
-  const bar = document.getElementById('timeTracker');
-  const btn = document.getElementById('ttBtn');
-  const time = document.getElementById('ttTime');
-  const lbl = document.getElementById('ttLbl');
-  const pauseBtn = document.getElementById('ttPauseBtn');
-  if(!bar || !btn || !time) return;
-  const start = +localStorage.getItem(TT_KEY) || 0;
-  if(start>0){
-    const paused = ttIsPaused();
-    bar.classList.add('run');
-    bar.classList.toggle('paused', paused);
-    btn.classList.remove('start'); btn.classList.add('stop');
-    time.textContent = ttFormat(ttNetElapsed());
-    btn.textContent = '⏹ Terminer';
-    const act = localStorage.getItem(TT_ACT_KEY)||'';
-    if(lbl) lbl.textContent = paused ? 'En pause' : (act||'Production');
-    if(pauseBtn){ pauseBtn.style.display=''; pauseBtn.textContent = paused ? '▶' : '⏸'; pauseBtn.title = paused ? 'Reprendre' : 'Mettre en pause'; }
-  } else {
-    bar.classList.remove('run','paused');
-    btn.classList.remove('stop'); btn.classList.add('start');
-    time.textContent = '00h 00m';
-    btn.textContent = '▶ Démarrer la production';
-    if(lbl) lbl.textContent = 'Production';
-    if(pauseBtn){ pauseBtn.style.display='none'; }
-  }
-}
-// Démarre/arrête le tick d'affichage (1 s). Le tick ne fait QUE rafraîchir l'UI.
-function ttStartTicking(){ ttStopTicking(); _ttTick = setInterval(ttRefresh, 1000); }
-function ttStopTicking(){ if(_ttTick){ clearInterval(_ttTick); _ttTick=null; } }
 
-// Clic sur le bouton : démarre si inactif, sinon arrête.
-function ttToggle(){
-  const start = +localStorage.getItem(TT_KEY) || 0;
-  if(start>0) ttStop(); else ttStart();
+// Rendu du bandeau : une puce par chrono actif + bouton « + ».
+function ttRefresh(){
+  const bar=document.getElementById('timeTracker'); if(!bar) return;
+  const sessions=ttLoad();
+  bar.classList.toggle('run', sessions.length>0);
+  const chips = sessions.map(s=>{
+    const paused=ttSessionPaused(s);
+    return `<div class="tt-chip${paused?' paused':''}">
+      <span class="tt-dot"></span>
+      <div class="tt-info">
+        <span class="tt-lbl">${esc(s.activite||'Production')}${paused?' · pause':''}</span>
+        <span class="tt-time" data-tt="${s.id}">${ttFormat(ttSessionNet(s))}</span>
+      </div>
+      <button type="button" class="tt-pause" onclick="ttPause('${s.id}')" title="${paused?'Reprendre':'Pause'}">${paused?'▶':'⏸'}</button>
+      <button type="button" class="tt-btn stop" onclick="ttStop('${s.id}')" title="Terminer ce chrono">⏹</button>
+    </div>`;
+  }).join('');
+  bar.innerHTML = `<div class="tt-list">${chips}</div>
+    <div class="tt-actions">
+      <button type="button" class="tt-btn start" onclick="ttStart()">▶ ${sessions.length?'Ajouter une activité':'Démarrer'}</button>
+      <button type="button" class="tt-log" onclick="ttOpenHistory()" title="Historique des sessions">🗒</button>
+    </div>`;
 }
+function ttStartTicking(){ ttStopTicking(); _ttTick=setInterval(ttTick,1000); }
+function ttStopTicking(){ if(_ttTick){ clearInterval(_ttTick); _ttTick=null; } }
+// Tick léger : met à jour uniquement les chronos non en pause (pas de re-render complet).
+function ttTick(){
+  const sessions=ttLoad(); if(!sessions.length){ ttStopTicking(); return; }
+  sessions.forEach(s=>{ const el=document.querySelector(`.tt-time[data-tt="${s.id}"]`); if(el && !ttSessionPaused(s)) el.textContent=ttFormat(ttSessionNet(s)); });
+}
+
+// Démarre un NOUVEAU chrono (choix rapide d'activité). N'interrompt pas les autres.
 function ttStart(){
-  // Choix RAPIDE de la nature d'activité (un tap suffit). Sans impact sur les productions.
-  openModal(`<h3>⏱ Démarrer — nature de l'activité ?</h3>
-    <p class="note">Un tap pour démarrer. Sert uniquement à analyser et optimiser tes temps plus tard.</p>
+  openModal(`<h3>⏱ Nouvelle activité</h3>
+    <p class="note">Un tap pour démarrer un chrono. Plusieurs activités peuvent tourner en parallèle.</p>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
       ${TT_ACTIVITIES.map(a=>`<button class="btn ghost" style="flex:1;min-width:44%" onclick="ttStartWith(${JSON.stringify(a).replace(/"/g,'&quot;')})">${esc(a)}</button>`).join('')}
     </div>
@@ -10003,99 +10377,83 @@ function ttStart(){
       <button class="btn" onclick="ttStartWith('')">Démarrer sans préciser</button></div>`);
 }
 function ttStartWith(activite){
-  localStorage.setItem(TT_KEY, String(Date.now()));
-  localStorage.setItem(TT_PAUSED_KEY, '0');     // pauses cumulées = 0
-  localStorage.removeItem(TT_PAUSE_AT_KEY);      // pas de pause en cours
-  localStorage.setItem(TT_ACT_KEY, activite||'');
-  closeModal();
-  ttRefresh(); ttStartTicking();
-  toast(activite ? `⏱ ${activite} démarré` : 'Production démarrée ⏱');
+  // « Autre » → demander une précision libre avant de démarrer.
+  if(activite==='Autre'){ ttStartAutre(); return; }
+  const id='tt'+Date.now()+'-'+Math.floor(Math.random()*1000);
+  ttUpsert({id, start:Date.now(), activite:activite||'', pausedAccum:0, pauseAt:0});
+  closeModal(); ttRefresh(); ttStartTicking();
+  toast(activite?`⏱ ${activite} démarré`:'Chrono démarré ⏱');
 }
-// Bascule pause / reprise. La pause fige le temps net en mémorisant le moment
-// du début de pause ; la reprise ajoute la durée de pause au cumul. Aucun
-// compteur continu : tout est recalculé depuis les timestamps.
-function ttPause(){
-  const start = +localStorage.getItem(TT_KEY)||0;
-  if(!start) return;
-  const pauseAt = +localStorage.getItem(TT_PAUSE_AT_KEY)||0;
-  if(pauseAt>0){
-    // REPRISE : on cumule la durée de la pause qui s'achève
-    const accum = +localStorage.getItem(TT_PAUSED_KEY)||0;
-    localStorage.setItem(TT_PAUSED_KEY, String(accum + Math.max(0, Date.now()-pauseAt)));
-    localStorage.removeItem(TT_PAUSE_AT_KEY);
-    ttRefresh(); ttStartTicking();
-    toast('Reprise ▶');
+// Saisie d'une précision pour l'activité « Autre ».
+function ttStartAutre(){
+  openModal(`<h3>⏱ Autre activité</h3>
+    <div class="field"><label>Précise l'activité</label>
+      <input id="tt_autre" placeholder="ex : préparation décor, livraison, courses…" onkeydown="if(event.key==='Enter'){event.preventDefault();ttStartAutreGo();}"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="ttStart()">Retour</button>
+      <button class="btn" onclick="ttStartAutreGo()">Démarrer</button></div>`);
+  const i=document.getElementById('tt_autre'); if(i) i.focus();
+}
+function ttStartAutreGo(){
+  const txt=(val('tt_autre')||'').trim();
+  const label = txt ? `Autre : ${txt}` : 'Autre';
+  const id='tt'+Date.now()+'-'+Math.floor(Math.random()*1000);
+  ttUpsert({id, start:Date.now(), activite:label, pausedAccum:0, pauseAt:0});
+  closeModal(); ttRefresh(); ttStartTicking();
+  toast(`⏱ ${label} démarré`);
+}
+// Pause / reprise d'UN chrono donné.
+function ttPause(id){
+  const s=ttGet(id); if(!s) return;
+  if((+s.pauseAt||0)>0){
+    s.pausedAccum=(+s.pausedAccum||0)+Math.max(0,Date.now()-(+s.pauseAt)); s.pauseAt=0;
+    ttUpsert(s); ttRefresh(); ttStartTicking(); toast('Reprise ▶');
   } else {
-    // PAUSE : on mémorise l'instant de mise en pause et on stoppe le tick d'affichage
-    localStorage.setItem(TT_PAUSE_AT_KEY, String(Date.now()));
-    ttStopTicking();
-    ttRefresh();
+    s.pauseAt=Date.now(); ttUpsert(s); ttRefresh();
+    if(!ttAnyRunning()) ttStopTicking();
     toast('En pause ⏸');
   }
 }
-// Arrêt : fige la durée, demande le taux horaire, calcule et enregistre la session.
-function ttStop(){
-  const start = +localStorage.getItem(TT_KEY) || 0;
-  if(!start){ ttRefresh(); return; }
-  const end = Date.now();
-  // Temps NET (pauses déduites, y compris une pause encore ouverte au moment du Stop).
-  const ms = ttNetElapsed();
-  ttStopTicking();
-  // Durée décimale (heures) pour le calcul du coût, arrondie à 2 décimales.
-  const heuresDec = Math.round(ms/3600000*100)/100;
-  const dureeTxt = ttFormat(ms);
-  // Total des pauses (pour information dans la modale).
-  const accumPause = +localStorage.getItem(TT_PAUSED_KEY)||0;
-  const pauseAt = +localStorage.getItem(TT_PAUSE_AT_KEY)||0;
-  const pauseMs = accumPause + (pauseAt>0 ? Math.max(0, Date.now()-pauseAt) : 0);
-  const s = getSettings();
-  const tauxDefaut = +s.laborRate || 0;
-  const curAct = localStorage.getItem(TT_ACT_KEY)||'';
-  const actOpts = ['',...TT_ACTIVITIES].map(a=>`<option value="${esc(a)}" ${a===curAct?'selected':''}>${a?esc(a):'— non précisé —'}</option>`).join('');
-  openModal(`<h3>Fin de session</h3>
-    <div class="sum-box"><span>Temps travaillé (pauses déduites)</span><b>${dureeTxt}</b></div>
+// Arrêt d'UN chrono : fige la durée, demande le taux, enregistre la session.
+function ttStop(id){
+  const s=ttGet(id); if(!s){ ttRefresh(); return; }
+  const start=s.start, end=Date.now();
+  const ms=ttSessionNet(s);
+  const heuresDec=Math.round(ms/3600000*100)/100;
+  const accum=+s.pausedAccum||0; const pauseMs=accum+((+s.pauseAt||0)>0?Math.max(0,Date.now()-(+s.pauseAt)):0);
+  const set=getSettings(); const tauxDefaut=+set.laborRate||0;
+  const curAct=s.activite||'';
+  // inclut la valeur courante même si personnalisée (ex. « Autre : … »)
+  const baseActs=['',...TT_ACTIVITIES];
+  if(curAct && !baseActs.includes(curAct)) baseActs.push(curAct);
+  const actOpts=baseActs.map(a=>`<option value="${esc(a)}" ${a===curAct?'selected':''}>${a?esc(a):'— non précisé —'}</option>`).join('');
+  openModal(`<h3>Fin de chrono</h3>
+    <div class="sum-box"><span>Temps travaillé (pauses déduites)</span><b>${ttFormat(ms)}</b></div>
     ${pauseMs>=60000?`<div class="sum-box"><span>Dont pauses déduites</span><b>${ttFormat(pauseMs)}</b></div>`:''}
     <div class="sum-box"><span>Soit en heures</span><b>${heuresDec.toFixed(2)} h</b></div>
-    <div class="field" style="margin-top:12px"><label>Nature de l'activité</label>
-      <select id="tt_act">${actOpts}</select></div>
+    <div class="field" style="margin-top:12px"><label>Nature de l'activité</label><select id="tt_act">${actOpts}</select></div>
     <div class="field"><label>Taux horaire de cette session (€/h)</label>
       <input type="number" min="0" step="0.5" id="tt_rate" value="${tauxDefaut||''}" placeholder="ex : 12"></div>
     <p class="note" id="tt_cost" style="margin-top:4px"></p>
     <div class="modal-actions">
-      <button class="btn ghost" onclick="ttCancelStop()">Annuler</button>
-      <button class="btn" onclick="ttConfirmStop(${start},${end},${ms},${pauseMs})">Enregistrer la session</button>
+      <button class="btn ghost" onclick="closeModal();ttRefresh()">Annuler</button>
+      <button class="btn" onclick="ttConfirmStop('${id}',${start},${end},${ms},${pauseMs})">Enregistrer</button>
     </div>`);
-  // aperçu live du coût
   const rate=document.getElementById('tt_rate'), cost=document.getElementById('tt_cost');
-  const upd=()=>{ const t=+rate.value||0; cost.textContent = t>0?`Coût de main-d'œuvre : ${euro(money2(heuresDec*t))}`:''; };
-  if(rate){ rate.addEventListener('input', upd); upd(); rate.focus(); }
+  const upd=()=>{ const t=+rate.value||0; cost.textContent=t>0?`Coût de main-d'œuvre : ${euro(money2(heuresDec*t))}`:''; };
+  if(rate){ rate.addEventListener('input',upd); upd(); rate.focus(); }
 }
-// L'utilisateur annule l'arrêt : la session continue (les timestamps n'ont pas été touchés).
-function ttCancelStop(){ closeModal(); ttRefresh(); if(!ttIsPaused()) ttStartTicking(); }
-// Confirme l'arrêt : enregistre la session en base et nettoie le localStorage.
-async function ttConfirmStop(start, end, ms, pauseMs){
-  const taux = Math.max(0, +val('tt_rate')||0);
-  ms = Math.max(0, +ms||0);
-  pauseMs = Math.max(0, +pauseMs||0);
-  const heuresDec = Math.round(ms/3600000*100)/100;
-  const totalMin = Math.floor(ms/60000);
-  const session = {
-    date: today(),
-    debut: new Date(start).toISOString(),
-    fin: new Date(end).toISOString(),
-    dureeMin: totalMin,
-    dureeHeures: heuresDec,
-    pauseMin: Math.floor(pauseMs/60000),
-    activite: val('tt_act')||'',
-    tauxHoraire: money2(taux),
-    coutTotal: money2(heuresDec*taux)
-  };
+async function ttConfirmStop(id, start, end, ms, pauseMs){
+  const taux=Math.max(0,+val('tt_rate')||0);
+  ms=Math.max(0,+ms||0); pauseMs=Math.max(0,+pauseMs||0);
+  const heuresDec=Math.round(ms/3600000*100)/100;
+  const totalMin=Math.floor(ms/60000);
+  const session={ date:today(), debut:new Date(start).toISOString(), fin:new Date(end).toISOString(),
+    dureeMin:totalMin, dureeHeures:heuresDec, pauseMin:Math.floor(pauseMs/60000),
+    activite:val('tt_act')||'', tauxHoraire:money2(taux), coutTotal:money2(heuresDec*taux) };
   try{ await db.workSessions.add(session); }catch(e){ console.error('workSession',e); }
-  localStorage.removeItem(TT_KEY);
-  localStorage.removeItem(TT_PAUSED_KEY);
-  localStorage.removeItem(TT_PAUSE_AT_KEY);
-  localStorage.removeItem(TT_ACT_KEY);
+  ttRemove(id);
   closeModal(); ttRefresh();
+  if(!ttAnyRunning()) ttStopTicking();
   toast(`Session enregistrée${session.activite?` · ${session.activite}`:''} : ${ttFormat(ms)} · ${euro(session.coutTotal)}`);
   if(view==='pointeuse' && typeof renderTimeTracker==='function') renderTimeTracker();
 }
@@ -10127,12 +10485,12 @@ async function ttDeleteSession(id){
   ttOpenHistory();
   if(view==='pointeuse' && typeof renderTimeTracker==='function') renderTimeTracker();
 }
-// Initialisation au boot : reprend une session en cours si présente.
+// Initialisation au boot : migre une éventuelle session mono, reprend les chronos en cours.
 function ttInit(){
+  ttMigrateLegacy();
   ttRefresh();
-  if(+localStorage.getItem(TT_KEY)>0 && !ttIsPaused()) ttStartTicking();
-  // recalage immédiat quand l'app revient au premier plan (iOS a pu suspendre le tick)
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') ttRefresh(); });
+  if(ttAnyRunning()) ttStartTicking();
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ ttRefresh(); if(ttAnyRunning()) ttStartTicking(); } });
 }
 
 /* ============================================================
@@ -11129,14 +11487,15 @@ async function pmsRenderTemp(){
 
   const card = eq=>{
     const prev = logByEq[eq.id];
-    const val = prev && prev.temperature!=null ? prev.temperature : '';
+    const cur = prev && prev.temperature!=null ? +prev.temperature : null;
     const corr = prev && prev.actionCorrective ? prev.actionCorrective : '';
-    const plage = `${eq.tempMin}°C à ${eq.tempMax}°C`;
+    const plage = `${fmtTempSigned(eq.tempMin)} à ${fmtTempSigned(eq.tempMax)}`;
     return `<div class="pms-eq" id="pmsEq_${eq.id}" data-min="${eq.tempMin}" data-max="${eq.tempMax}">
       <div class="pms-eq-head"><div class="pms-eq-nom">${esc(eq.nom)}</div><div class="pms-eq-plage">${plage}</div></div>
       <div class="pms-eq-row">
-        <input type="number" inputmode="decimal" step="0.1" id="pmsT_${eq.id}" class="pms-temp-input"
-          value="${val!==''?esc(val):''}" placeholder="–" oninput="pmsCheckTemp(${eq.id})">
+        <select id="pmsT_${eq.id}" class="pms-temp-input" onchange="pmsCheckTemp(${eq.id})">
+          ${tempOptions(eq.tempMin, eq.tempMax, cur)}
+        </select>
         <span class="pms-unit">°C</span>
       </div>
       <div class="pms-corr" id="pmsCorr_${eq.id}" style="display:none">
@@ -11163,6 +11522,39 @@ async function pmsRenderTemp(){
    </div>`:''}`;
   // applique l'état hors-plage initial
   [...labo, ...vitrine].forEach(eq=>pmsCheckTemp(eq.id));
+}
+// Format température signé, toujours avec signe et 1 décimale : +04.0 / -18.0
+function fmtTempSigned(t){
+  const v=+t; if(isNaN(v)) return '';
+  const sign = v<0 ? '-' : '+';
+  const abs = Math.abs(v);
+  const intp = String(Math.floor(abs)).padStart(2,'0');
+  const dec = Math.round((abs-Math.floor(abs))*10);
+  return `${sign}${intp}.${dec}`;
+}
+// Génère les <option> d'un menu déroulant de températures (pas de 0,5°),
+// sur une plage élargie autour de [min..max] pour permettre le hors-plage (alerte).
+function tempOptions(min, max, current){
+  min=+min; max=+max;
+  if(isNaN(min)) min=0; if(isNaN(max)) max=8;
+  // marge de ±3° autour de la plage (pas de 0,1° → liste raisonnable),
+  // pour pouvoir saisir un hors-plage réaliste qui déclenche l'action corrective.
+  let lo=Math.floor(min)-3, hi=Math.ceil(max)+3;
+  lo=Math.max(lo,-40); hi=Math.min(hi,60);
+  const round1 = x => Math.round(x*10)/10;        // évite les imprécisions flottantes
+  const cur = current!=null ? round1(+current) : null;
+  const opts=['<option value="">—</option>'];
+  // du plus chaud au plus froid (lecture naturelle : positifs en haut), pas de 0,1°
+  for(let i=Math.round(hi*10); i>=Math.round(lo*10); i--){
+    const v=round1(i/10);
+    const sel = (cur!=null && Math.abs(v-cur)<1e-9) ? ' selected' : '';
+    opts.push(`<option value="${v}"${sel}>${fmtTempSigned(v)}</option>`);
+  }
+  // si la valeur enregistrée tombe hors de la plage générée (ancienne saisie), on l'ajoute en tête
+  if(cur!=null && (cur>hi || cur<lo)){
+    opts.splice(1,0,`<option value="${cur}" selected>${fmtTempSigned(cur)}</option>`);
+  }
+  return opts.join('');
 }
 // Affiche/masque le menu correctif si la température est hors plage.
 function pmsCheckTemp(eqId){
@@ -11278,7 +11670,7 @@ async function pmsExportDDPP(){
       if(l.date!==curDate){ curDate=l.date; L.push(''); L.push('  '+fmtDate(l.date)); }
       const eq=eqById[l.equipmentId]||{nom:'Équipement #'+l.equipmentId, tempMin:'?', tempMax:'?'};
       const conf = (l.conforme===false) ? 'NON CONFORME' : 'OK';
-      let line=`    [${l.periode||'—'}] ${eq.nom} : ${l.temperature}°C (plage ${eq.tempMin}/${eq.tempMax}) → ${conf}`;
+      let line=`    [${l.periode||'—'}] ${eq.nom} : ${fmtTempSigned(l.temperature)}°C (plage ${fmtTempSigned(eq.tempMin)}/${fmtTempSigned(eq.tempMax)}) → ${conf}`;
       if(l.conforme===false && l.actionCorrective) line+=` | Action : ${l.actionCorrective}`;
       L.push(line);
     });
@@ -11318,10 +11710,12 @@ async function pmsExportDDPP(){
   ttInit();
   mascotInit();
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
-  exportReminder();
   // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
   try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
   try{ await autoDailyBackup(); }catch(e){ console.error('autoBackup',e); }
+  // Rappel d'export en DERNIER (et seulement si aucune autre modale n'est ouverte),
+  // pour qu'il ne soit pas masqué par un autre message de démarrage.
+  setTimeout(()=>{ try{ if(!document.getElementById('overlay')?.classList.contains('show')) exportReminder(); }catch(e){} }, 1200);
   // Surveillance quotidienne : réévalue toutes les commandes futures vs stock actuel.
   setTimeout(()=>{ showForecastPopup({daily:true}); }, 600);
 })();
