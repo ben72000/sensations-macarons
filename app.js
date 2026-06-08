@@ -187,6 +187,27 @@ function fmtDateTime(iso){
   const h=String(d.getHours()).padStart(2,'0'), mn=String(d.getMinutes()).padStart(2,'0');
   return `${date} à ${h}h${mn}`;
 }
+// --------- Statut de production : démarré / terminé ---------
+// Plafond de temps autorisé en statut « démarré » avant blocage (4 jours).
+const PROD_OPEN_MAX_DAYS = 4;
+// Statut effectif d'une prod (rétro-compat : les anciennes prods sans statut
+// sont considérées comme « terminée », avec leur DLC déjà figée).
+function prodStatut(p){ return p && p.prodStatut ? p.prodStatut : 'termine'; }
+// Heure d'ancrage de la DLC frigo : le moment où la prod est passée « terminée »
+// (ou, pour les anciennes prods, l'horodatage de production).
+function prodDlcAnchor(p){ return (p && (p.prodTermineTs || (prodStatut(p)==='termine' ? p.prodTimestamp : ''))) || ''; }
+// Heures écoulées depuis le démarrage d'une prod « démarrée ».
+function prodOpenHours(p){
+  const start = p && (p.prodDebutTs || p.prodTimestamp);
+  if(!start) return null;
+  return (Date.now() - new Date(start).getTime()) / 3600000;
+}
+// Une prod « démarrée » dépasse-t-elle le plafond des 4 jours ?
+function prodOpenOverdue(p){
+  if(prodStatut(p)!=='demarre') return false;
+  const h = prodOpenHours(p);
+  return h!=null && h > PROD_OPEN_MAX_DAYS*24;
+}
 const esc   = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function val(id){ const el = document.getElementById(id); return el ? (el.value||'').trim() : ''; }
 function fmtDate(s){ if(!s) return ''; const d = new Date(s); return isNaN(d)?'':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}); }
@@ -442,6 +463,10 @@ async function renderDash(){
   });
   prodDlcAlert.sort((a,b)=>a.j-b.j);
 
+  // Alerte : productions encore « démarrées » (DLC non lancée) et celles dépassant 4 jours.
+  const prodOuvertes = productions.filter(p=>prodStatut(p)==='demarre');
+  const prodEnRetard = prodOuvertes.filter(prodOpenOverdue);
+
   const upcoming = events.filter(e=>e.date>=today()).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
   const months=[]; for(let i=5;i>=0;i--){const d=new Date(y,m-i,1);months.push({k:d.toISOString().slice(0,7),l:d.toLocaleDateString('fr-FR',{month:'short'})});}
   const data=months.map(mo=>({...mo,v: money2(
@@ -454,6 +479,8 @@ async function renderDash(){
    <div class="topbar"><div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div>
      <button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
+   ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
+   ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${a.emplacement==='congelateur'?'❄️':'🧊'} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
@@ -853,11 +880,16 @@ async function renderProductions(){
   const sumTh = withBoth.reduce((s,p)=>s+(+p.qteTheorique||0),0);
   const sumRe = withBoth.reduce((s,p)=>s+(+p.qteReelle||0),0);
   const rendePct = sumTh ? Math.round(sumRe/sumTh*1000)/10 : null;
+  // Productions encore « démarrées » + celles dépassant le plafond des 4 jours.
+  const ouvertes = prods.filter(p=>prodStatut(p)==='demarre');
+  const enRetard = ouvertes.filter(prodOpenOverdue);
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Productions</h1><p>${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}</p></div>
+   <div class="topbar"><div><h1>Productions</h1><p>${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p></div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button></div>
+   ${enRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${enRetard.length} production(s) ouverte(s) depuis plus de ${PROD_OPEN_MAX_DAYS} jours.</b> Une production ne peut pas rester « démarrée » au-delà de ${PROD_OPEN_MAX_DAYS} jours : terminez-la (✓ Terminer) pour figer la DLC, ou supprimez-la.</div></div>`:''}
+   ${ouvertes.length && !enRetard.length?`<div class="banner">▶ <div><b>${ouvertes.length} production(s) en cours.</b> La DLC de 7 j ne démarre qu'au passage en « terminée ».</div></div>`:''}
    <div class="panel">
-   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead><tbody>
+   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>Statut</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead><tbody>
      ${prods.map(p=>{
        const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
        const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
@@ -866,8 +898,26 @@ async function renderProductions(){
          : emp==='frigo' ? '<span class="tag" style="background:#6aa3a0;color:#fff">🧊 Frigo</span>'
          : '<span class="tag warn">non renseigné</span>';
        const blocked = p.venuDuCongelateur ? ' title="A séjourné au congélateur : ne peut y retourner"' : '';
-       return `<tr>
-       <td><b>${esc(recName(p.recipeId))}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span></td>
+       // --- Statut de production : démarré / terminé ---
+       const st = prodStatut(p);
+       const heureFab = (p.prodDebutTs||p.prodTimestamp) ? fmtDateTime(p.prodDebutTs||p.prodTimestamp) : '';
+       const overdue = prodOpenOverdue(p);
+       let statutCell;
+       if(st==='termine'){
+         const anchor = prodDlcAnchor(p);
+         statutCell = `<span class="tag ok">✓ Terminée</span>`
+           + (p.prodTermineTs?`<br><span style="color:#9a8a82;font-size:.72rem">le ${fmtDateTime(p.prodTermineTs)}</span>`:'')
+           + (p.dlcProduit?`<br><span style="color:#9a8a82;font-size:.72rem">DLC ${fmtDate(p.dlcProduit)}</span>`:'');
+       } else {
+         const oh = prodOpenHours(p);
+         const ouvertTxt = oh!=null ? (oh<24?`${Math.floor(oh)} h`:`${Math.floor(oh/24)} j ${Math.floor(oh%24)} h`) : '';
+         statutCell = `<span class="tag ${overdue?'warn':'event'}">▶ Démarrée</span>`
+           + (ouvertTxt?`<br><span style="font-size:.72rem;color:${overdue?'#b3261e':'#9a8a82'}">ouverte ${ouvertTxt}${overdue?' · &gt; 4 j !':''}</span>`:'')
+           + `<br><button class="qa edit" style="margin-top:3px" onclick="prodSetTermine(${p.id})" title="Passer en terminée — démarre la DLC">✓ Terminer</button>`;
+       }
+       return `<tr${overdue?' style="background:#fdf3f2"':''}>
+       <td><b>${esc(recName(p.recipeId))}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span>${heureFab?`<br><span style="color:#9a8a82;font-size:.72rem">🕒 ${heureFab}</span>`:''}</td>
+       <td>${statutCell}</td>
        <td>${esc(p.lotProduction||'—')}</td>
        <td>${empTag}${emp?`<br><span class="act" onclick="toggleEmplacement(${p.id})"${blocked}>↔ ${emp==='frigo'?'mettre au congélo':'mettre au frigo'}</span>`:`<br><span class="act" onclick="setEmplacement(${p.id})">renseigner</span>`}</td>
        <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
@@ -884,10 +934,14 @@ async function toggleEmplacement(id){
   const hist=(p.histEmplacement||[]).concat([{lieu:cible, ts:nowIso, motif:'déplacement manuel'}]);
   const patch={emplacement:cible, emplacementMaj:nowIso, histEmplacement:hist};
   if(cible==='congelateur') patch.venuDuCongelateur=true; // dès qu'il passe au congélo, le drapeau reste
-  // DLC recalculée si elle est en mode auto : +7j frigo / +4 mois congélo, à partir de maintenant
-  if(p.dlcAuto!==false){ patch.dlcProduit=computeDlcFromHistory(hist, nowIso); patch.dlcAuto=true; }
+  // DLC recalculée si elle est en mode auto : +7j frigo / +4 mois congélo.
+  // Tant que la prod est « démarrée », la DLC ne court pas encore (reste vide).
+  if(p.dlcAuto!==false){
+    patch.dlcAuto=true;
+    patch.dlcProduit = prodStatut(p)==='termine' ? computeDlcFromHistory(hist, nowIso) : '';
+  }
   await db.productions.update(id, patch);
-  renderProductions(); toast(`Déplacé vers ${cible==='frigo'?'le frigo 🧊':'le congélateur ❄️'} · DLC ${fmtDate(patch.dlcProduit||p.dlcProduit)}`);
+  renderProductions(); toast(`Déplacé vers ${cible==='frigo'?'le frigo 🧊':'le congélateur ❄️'}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:' · DLC non active (prod en cours)'}`);
 }
 // Renseigne l'emplacement d'un batch ancien (sans emplacement) — choix obligatoire.
 async function setEmplacement(id){
@@ -906,13 +960,49 @@ async function saveEmplacement(id){
   const hist=(p.histEmplacement||[]).concat([{lieu:dest, ts:nowIso, motif:'saisie a posteriori'}]);
   const patch={emplacement:dest, emplacementMaj:nowIso, histEmplacement:hist};
   if(dest==='congelateur') patch.venuDuCongelateur=true;
-  if(p.dlcAuto!==false){ patch.dlcProduit=computeDlcFromHistory(hist, nowIso); patch.dlcAuto=true; }
+  if(p.dlcAuto!==false){
+    patch.dlcAuto=true;
+    patch.dlcProduit = prodStatut(p)==='termine' ? computeDlcFromHistory(hist, nowIso) : '';
+  }
   await db.productions.update(id, patch);
   closeModal(); renderProductions(); toast('Emplacement renseigné ✓');
+}
+// STATUT : passe une production de « démarré » à « terminé ».
+// C'est CE moment qui déclenche la DLC (7 j au frigo, 4 mois au congélateur).
+// Règle : on NE PEUT PAS revenir en arrière (terminé → démarré interdit).
+async function prodSetTermine(id){
+  const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
+  if(prodStatut(p)==='termine'){ toast('Production déjà terminée — retour en arrière impossible'); return; }
+  const nowIso=new Date().toISOString();
+  const hist=(p.histEmplacement||[]).slice();
+  const patch={ prodStatut:'termine', prodTermineTs:nowIso };
+  // La DLC commence MAINTENANT (passage en terminée), pas à l'horodatage de production.
+  if(p.dlcAuto!==false){
+    // On réancre l'historique d'emplacement sur l'instant de fin pour que le budget
+    // frigo de 7 j parte bien de maintenant.
+    const reanchored = hist.length
+      ? hist.map((h,i)=> i===hist.length-1 ? {...h, ts:nowIso} : h)
+      : [{lieu:p.emplacement||'frigo', ts:nowIso, motif:'fin de production'}];
+    patch.histEmplacement = reanchored;
+    patch.emplacementMaj = nowIso;
+    patch.dlcProduit = computeDlcFromHistory(reanchored, nowIso);
+    patch.dlcAuto = true;
+  }
+  await db.productions.update(id, patch);
+  renderProductions();
+  toast(`Production terminée ✓${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
 }
 async function prodForm(){
   const recipes = await db.recipes.toArray();
   if(!recipes.length){toast('Crée d\'abord une recette');return;}
+  // Garde-fou : on ne peut pas démarrer une nouvelle production tant qu'une
+  // production reste « démarrée » depuis plus de 4 jours (à terminer ou supprimer).
+  const allProds = await db.productions.toArray();
+  const enRetard = allProds.filter(prodOpenOverdue);
+  if(enRetard.length){
+    toast(`${enRetard.length} production(s) ouverte(s) depuis plus de ${PROD_OPEN_MAX_DAYS} j : terminez-les ou supprimez-les avant d'en lancer une nouvelle.`);
+    return;
+  }
   _prodReelTouched=false;
   const opts = recipes.map(r=>`<option value="${r.id}" data-rend="${r.rendement}">${esc(r.produitNom)} (${r.rendement}/batch)</option>`).join('');
   openModal(`<h3>Nouvelle production</h3>
@@ -931,7 +1021,7 @@ async function prodForm(){
        <label class="pay-opt"><input type="radio" name="f_dest" value="frigo" onchange="prodDlcHint()"> <span>🧊 Frigo</span></label>
        <label class="pay-opt"><input type="radio" name="f_dest" value="congelateur" onchange="prodDlcHint()"> <span>❄️ Congélateur</span></label>
      </div>
-     <p class="note" id="dlcHint">La DLC est calculée automatiquement : <b>+7 jours</b> au frigo, <b>+4 mois</b> au congélateur. L'horodatage (date + heure) est enregistré automatiquement.</p>
+     <p class="note" id="dlcHint">La production démarre au statut <b>« démarrée »</b>. La DLC (<b>+7 j</b> au frigo, <b>+4 mois</b> au congélateur) ne court qu'au passage en <b>« terminée »</b>.</p>
    </div>
    <p class="note">Les <b>matières premières</b> sont déduites sur la base de la <b>quantité théorique</b> (DLC la plus proche d'abord). Le <b>stock de produits finis</b> est calé sur la <b>quantité réelle</b>. L'écart est historisé. Si le stock matières est insuffisant, <b>rien</b> n'est enregistré.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
@@ -942,10 +1032,9 @@ function prodDlcHint(){
   const dest=(document.querySelector('input[name="f_dest"]:checked')||{}).value||'';
   const el=document.getElementById('dlcHint'); if(!el) return;
   if(dest==='frigo'||dest==='congelateur'){
-    const dlc=computeDlc(dest, new Date().toISOString());
-    el.innerHTML=`DLC calculée automatiquement : <b>${fmtDate(dlc)}</b> (${dest==='frigo'?'+7 jours, frigo':'+4 mois, congélateur'}). Horodatage à l'enregistrement.`;
+    el.innerHTML=`Destination <b>${dest==='frigo'?'frigo (+7 j)':'congélateur (+4 mois)'}</b>. ⚠️ La DLC ne démarre qu'au passage de la production en <b>« terminée »</b>, pas maintenant.`;
   } else {
-    el.innerHTML=`La DLC est calculée automatiquement : <b>+7 jours</b> au frigo, <b>+4 mois</b> au congélateur. L'horodatage (date + heure) est enregistré automatiquement.`;
+    el.innerHTML=`La production démarre au statut <b>« démarrée »</b>. La DLC (<b>+7 j</b> frigo, <b>+4 mois</b> congélateur) ne court qu'au passage en <b>« terminée »</b>.`;
   }
 }
 // Quand on change de recette, recale les deux quantités sur le rendement de la recette.
@@ -1022,17 +1111,21 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
 
       const ecart = qteReelle - qteTheorique;
       const nowIso = new Date().toISOString();
-      // DLC calculée automatiquement selon l'emplacement (frigo +7j / congélo +4 mois),
-      // à partir de l'horodatage réel de production. Plus de saisie manuelle.
-      const dlcAuto = computeDlc(emplacement, nowIso);
+      // STATUT : toute nouvelle production démarre au statut « démarré ».
+      // La DLC (7 j frigo) ne court qu'à partir du passage en « terminée ».
+      // Tant que la prod est « démarrée », aucune DLC n'est figée.
       const prodId = await db.productions.add({
         recipeId, lotProduction, date:dateProd,
         qteTheorique, qteReelle, ecart,
         // STOCK PRODUITS FINIS : calé sur la quantité réelle
         // qteProduite/qteRestante conservés pour compat. (lecture par trace, liaison commandes, analytics)
         qteProduite: qteReelle, qteRestante: qteReelle,
-        dlcProduit: dlcAuto,            // DLC auto (recalculée si l'emplacement change)
-        dlcAuto: true,                  // marque une DLC calculée automatiquement
+        dlcProduit: '',                 // DLC non encore active (production en cours)
+        dlcAuto: true,                  // marque une DLC calculée automatiquement (dès la fin de prod)
+        // STATUT DE PRODUCTION : 'demarre' | 'termine'
+        prodStatut: 'demarre',          // démarre toujours « en cours »
+        prodDebutTs: nowIso,            // horodatage de démarrage (sert au plafond des 4 jours)
+        prodTermineTs: '',              // horodatage de passage en « terminée » (déclenche la DLC)
         // Traçabilité conservation : horodatage + emplacement + journal des déplacements
         prodTimestamp: nowIso,          // date + HEURE réelles de production (horodatage auto)
         emplacement,                    // 'frigo' | 'congelateur'
@@ -1611,6 +1704,7 @@ async function traceProd(prodId){
   });
   openModal(`<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
+    <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'')}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
     ${lines.length?lines.join(''):'<p class="note">Aucune consommation enregistrée.</p>'}
@@ -5335,19 +5429,23 @@ async function renderLabels(){
 
    <div class="panel"><h2>Par batch de production</h2>
    ${prods.length?`<div class="labels-grid" id="labelsGrid">
-     ${prods.map(p=>`<div class="label" data-prod="${p.id}">
+     ${prods.map(p=>{
+       const st = prodStatut(p);
+       const dlcTxt = st!=='termine' ? '⏳ démarre à la fin de prod' : (p.dlcProduit?fmtDate(p.dlcProduit):'— à compléter —');
+       return `<div class="label" data-prod="${p.id}">
         <div class="qr"><canvas data-lot="${esc(p.lotProduction||'')}"></canvas></div>
         <div class="info">
           <b>${esc(recName(p.recipeId))}</b>
           <span class="meta">Lot : ${esc(p.lotProduction||'—')}</span>
-          <span class="meta">DLC : ${p.dlcProduit?fmtDate(p.dlcProduit):'— à compléter —'}</span>
+          <span class="meta">Statut : ${st==='termine'?'✓ Terminée':'▶ Démarrée'}</span>
+          <span class="meta">DLC : ${dlcTxt}</span>
           <span class="meta">Fab. : ${fmtDate(p.date)}</span>
         </div>
         <div class="label-actions">
           <label class="copies">Copies <input type="number" id="lblCopies_${p.id}" min="1" max="200" value="1"></label>
           <button class="btn ghost sm" onclick="printLabelCopies(${p.id})">⎙ Imprimer</button>
         </div>
-     </div>`).join('')}
+     </div>`;}).join('')}
    </div>`:`<div class="empty">Aucun batch produit. Lance une production pour générer ses étiquettes.</div>`}
    </div>`;
   document.querySelectorAll('#labelsGrid canvas').forEach(cv=>{
@@ -5429,6 +5527,10 @@ async function printLabel(prodId){
 // Impression EN LOT : N copies d'un même batch.
 async function printLabelCopies(prodId){
   const n = Math.max(1, Math.min(200, +(document.getElementById('lblCopies_'+prodId)?.value)||1));
+  const p = await db.productions.get(prodId);
+  if(p && prodStatut(p)!=='termine'){
+    if(!confirm('Cette production est encore « démarrée » : sa DLC n\'est pas figée. Imprimer quand même une étiquette sans DLC ?')) return;
+  }
   const d = await buildLabelData(prodId);
   if(!d){ toast('Batch introuvable'); return; }
   const sheet=[]; for(let i=0;i<n;i++) sheet.push(d);
