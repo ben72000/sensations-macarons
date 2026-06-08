@@ -13,7 +13,7 @@
 <style>
 :root{
   --bordeaux:#52252F; --bordeaux-2:#6e3340; --creme:#E8DDCD; --creme-2:#F5F0E8;
-  --caramel:#AA7C39; --caramel-2:#c6974f; --ink:#2b1a1f; --paper:#fbf8f3;
+  --caramel:#AA7C39; --caramel-2:#c6974f; --gold:#AA7C39; --ink:#2b1a1f; --paper:#fbf8f3;
   --green:#3f7d52; --red:#b04a3e; --shadow:rgba(82,37,47,.12);
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -303,6 +303,102 @@ tr:hover td{background:var(--creme-2)}
 .gaspi-head{font-size:1rem;color:var(--ink);margin-bottom:4px}
 .gaspi-body{font-size:.88rem;color:#6a5a52;line-height:1.4}
 .gaspi-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+/* ---- Mascotte chat (reflet de la jauge de sérénité) ---- */
+#mascot{position:fixed;right:14px;bottom:calc(140px + env(safe-area-inset-bottom,0px));z-index:48;
+  width:60px;height:60px;border-radius:50%;background:#fff;
+  border:2.5px solid var(--mascot-col,#3f7d52);box-shadow:0 6px 20px rgba(82,37,47,.22);
+  cursor:grab;touch-action:none;-webkit-tap-highlight-color:transparent;
+  display:flex;align-items:center;justify-content:center;transition:opacity .2s,transform .12s;user-select:none}
+#mascot .mascot-face{width:48px;height:48px;pointer-events:none}
+#mascot .mascot-badge{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);
+  font-size:.6rem;font-weight:700;color:#fff;background:#3f7d52;border-radius:9px;
+  padding:1px 6px;line-height:1.3;box-shadow:0 2px 6px rgba(0,0,0,.18);pointer-events:none;white-space:nowrap}
+#mascot.dragging{cursor:grabbing;opacity:.55;transform:scale(1.05)}
+#mascot:active{transform:scale(.96)}
+/* léger tremblement en zone de stress */
+#mascot.alarm{animation:mascotShake 2.4s ease-in-out infinite}
+@keyframes mascotShake{0%,92%,100%{transform:translateX(0)}94%{transform:translateX(-2px)}96%{transform:translateX(2px)}98%{transform:translateX(-1px)}}
+@media (prefers-reduced-motion: reduce){ #mascot.alarm{animation:none} }
+/* s'estompe quand l'utilisateur survole/approche pour ne pas gêner la lecture */
+#mascot:hover{opacity:.35}
+@media(max-width:820px){ #mascot{width:54px;height:54px;right:10px;bottom:calc(150px + env(safe-area-inset-bottom,0px))} #mascot .mascot-face{width:42px;height:42px} }
+/* ---- HACCP / PMS : relevés de température ---- */
+.pms-periode{display:flex;gap:8px;margin-bottom:14px}
+.pms-periode button{flex:1;appearance:none;-webkit-appearance:none;cursor:pointer;border:1.5px solid #e0d5c5;
+  background:#fff;color:var(--bordeaux);font-family:inherit;font-weight:600;font-size:.95rem;
+  padding:12px;border-radius:12px;-webkit-tap-highlight-color:transparent}
+.pms-periode button.active{background:var(--caramel);color:#fff;border-color:var(--caramel)}
+.pms-eq{border:1.5px solid #ece2d4;border-radius:14px;padding:14px;margin-bottom:12px;background:#fff;transition:.15s}
+.pms-eq.nc{border-color:var(--red,#b04a3e);background:#fdf3f2}
+.pms-eq-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.pms-eq-nom{font-weight:600;color:var(--ink);font-size:1.02rem}
+.pms-eq-plage{font-size:.78rem;color:#9a8a82}
+.pms-eq-row{display:flex;align-items:center;gap:10px}
+.pms-temp-input{flex:1;font-size:1.6rem;font-weight:600;text-align:center;padding:12px;
+  border:2px solid #e0d5c5;border-radius:12px;font-family:'Fraunces',serif;color:var(--bordeaux);width:100%}
+.pms-eq.nc .pms-temp-input{border-color:var(--red,#b04a3e);color:var(--red,#b04a3e)}
+.pms-unit{font-size:1.2rem;color:#9a8a82;font-weight:600}
+.pms-corr{margin-top:10px}
+.pms-corr label{display:block;font-size:.82rem;color:var(--red,#b04a3e);font-weight:600;margin-bottom:5px}
+.pms-corr select{width:100%;padding:11px;border:1.5px solid var(--red,#b04a3e);border-radius:10px;
+  font-family:inherit;font-size:.9rem;background:#fff;color:var(--ink)}
+/* ---- CRM : cartes KPI client ---- */
+.crm-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:4px 0 12px}
+.crm-kpi{background:var(--creme-2,#F5F0E8);border-radius:12px;padding:12px 8px;text-align:center}
+.crm-emo{font-size:1.3rem;line-height:1}
+.crm-val{font-family:'Fraunces',serif;font-weight:600;color:var(--bordeaux);margin-top:4px;font-size:1.05rem;word-break:break-word;line-height:1.15}
+.crm-lbl{font-size:.66rem;text-transform:uppercase;letter-spacing:.08em;color:#9a8a82;margin-top:3px}
+/* ---- MRP : jauge de capacité ---- */
+.mrp-gauge-meta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:.85rem;color:#7a6a62;margin-bottom:8px}
+.mrp-gauge{height:16px;border-radius:9px;background:#efe7da;overflow:hidden}
+.mrp-gauge>span{display:block;height:100%;border-radius:9px;transition:width .4s ease}
+/* ---- Optimisation des achats : cartes comparateur ---- */
+.achat-card{background:#fff;border:1px solid rgba(170,124,57,.14);border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 2px 8px rgba(82,37,47,.05)}
+.achat-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.achat-mat{font-family:'Fraunces',serif;font-weight:600;font-size:1.1rem;color:var(--bordeaux)}
+.achat-best{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  background:#eef6ee;border:1px solid #cfe6d3;border-radius:10px;padding:9px 11px;margin-bottom:6px}
+.achat-best-sup{font-weight:600;color:var(--green,#3f7d52)}
+.achat-best-prix{font-family:'Fraunces',serif;font-weight:600;color:var(--green,#3f7d52);white-space:nowrap}
+.achat-alt{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:7px 11px;border-bottom:1px solid #f0e9dd}
+.achat-alt-sup{color:#7a6a62;font-size:.9rem}
+.achat-alt-prix{font-weight:600;white-space:nowrap}
+.achat-eco{margin-top:9px;font-size:.85rem;color:#7a6a62;background:var(--creme,#F5F0E8);border-radius:8px;padding:7px 10px}
+/* ---- Faisabilité de commande (verdict instantané) ---- */
+.feasibility{border:1.5px solid;border-radius:12px;padding:11px 13px;margin:4px 0 12px}
+.feas-msg{font-weight:600;font-size:.92rem;line-height:1.35}
+.feas-meta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:.8rem;color:#7a6a62;margin-top:6px}
+/* ---- Éditeur de disponibilités ---- */
+.avail-anchor{font-size:.82rem;color:#7a6a62;background:var(--creme,#F5F0E8);border-radius:8px;padding:7px 10px;margin-bottom:4px}
+.avail-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.avail-row label{flex:0 0 78px;font-size:.85rem;color:#7a6a62;font-weight:600}
+.avail-row input{flex:1;padding:9px 10px;border:1.5px solid #e0d5c5;border-radius:9px;font-family:inherit;font-size:.88rem}
+/* ---- Filtre catégorie matières / emballages ---- */
+.mat-cat-chips{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.mat-cat-chips button{appearance:none;-webkit-appearance:none;cursor:pointer;border:1.5px solid #e0d5c5;
+  background:#fff;color:var(--bordeaux);font-family:inherit;font-weight:600;font-size:.85rem;
+  padding:8px 14px;border-radius:20px;-webkit-tap-highlight-color:transparent}
+.mat-cat-chips button.active{background:var(--bordeaux);color:#fff;border-color:var(--bordeaux)}
+/* ---- Bilan financier mensuel (stats) ---- */
+.bilan-mois{border:1px solid #ece2d4;border-radius:12px;padding:12px;margin-bottom:10px;background:#fff}
+.bilan-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;font-size:1.02rem;color:var(--bordeaux)}
+.bilan-row{display:flex;justify-content:space-between;gap:10px;font-size:.9rem;padding:3px 0;color:#6a5a52}
+.bilan-net{border-top:1px dashed #d8cab8;margin-top:5px;padding-top:6px;font-weight:600;color:var(--ink)}
+/* ---- Séparateurs temporels de la liste des commandes ---- */
+.cmd-sep>td{padding:6px 0 2px !important;border:none}
+.cmd-sep-in{background:var(--sep-col,#52252F);color:#fff;padding:9px 12px;border-radius:8px;
+  display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.cmd-sep-lbl{font-family:'Fraunces',serif;font-weight:600;font-size:1rem;letter-spacing:.01em}
+.cmd-sep-meta{font-size:.78rem;opacity:.92}
+.cmd-sep-week>td{padding:0 0 2px !important;border:none}
+.cmd-sep-week-in{background:var(--creme,#F5F0E8);color:#7a6a62;padding:5px 12px;
+  font-size:.78rem;font-weight:600;border-left:3px solid var(--caramel,#AA7C39);border-radius:0 6px 6px 0}
+/* ---- Mode discret : floutage des noms sensibles ---- */
+.sheet-privacy{width:100%;margin-bottom:12px;appearance:none;-webkit-appearance:none;cursor:pointer;
+  border:1.5px solid var(--bordeaux);background:#fff;color:var(--bordeaux);font-family:inherit;
+  font-weight:600;font-size:.95rem;padding:11px;border-radius:12px;-webkit-tap-highlight-color:transparent}
+.blur-name{filter:blur(5px);transition:filter .15s;user-select:none;cursor:pointer}
+.blur-name:hover,.blur-name:active{filter:blur(0)}
 .toast{position:fixed;bottom:24px;right:24px;background:var(--bordeaux);color:var(--creme);
   padding:13px 20px;border-radius:11px;font-size:.88rem;box-shadow:0 8px 24px rgba(82,37,47,.3);
   z-index:99;opacity:0;transform:translateY(10px);transition:.3s;pointer-events:none;max-width:80vw}
@@ -370,10 +466,12 @@ tr:hover td{background:var(--creme-2)}
       <button data-v="cal"><span class="ico">▦</span><span>Calendrier</span></button>
       <div class="sep">Production</div>
       <button data-v="fournisseurs"><span class="ico">⚑</span><span>Fournisseurs</span></button>
+      <button data-v="achats"><span class="ico">🛒</span><span>Optimisation achats</span></button>
       <button data-v="matieres"><span class="ico">⬛</span><span>Matières & lots</span></button>
       <button data-v="recettes"><span class="ico">❀</span><span>Recettes (BOM)</span></button>
       <button data-v="productions"><span class="ico">⚙</span><span>Productions</span></button>
       <button data-v="picking"><span class="ico">📦</span><span>Préparation / Picking</span></button>
+      <button data-v="mrp"><span class="ico">🏭</span><span>Plan de production</span></button>
       <button data-v="couts"><span class="ico">€</span><span>Coûts & prix</span></button>
       <button data-v="rentaparfum"><span class="ico">🎯</span><span>Rentabilité parfums</span></button>
       <button data-v="pilotage"><span class="ico">📈</span><span>Pilotage stratégique</span></button>
@@ -386,6 +484,7 @@ tr:hover td{background:var(--creme-2)}
       <button data-v="sauvegardes"><span class="ico">🛟</span><span>Sauvegarde &amp; sécurité</span></button>
       <button data-v="assistant"><span class="ico">🤖</span><span>Assistant</span></button>
       <div class="sep">Qualité</div>
+      <button data-v="pms"><span class="ico">🧼</span><span>HACCP / PMS</span></button>
       <button data-v="dlc"><span class="ico">⏰</span><span>Suivi DLC</span></button>
       <button data-v="tracabilite"><span class="ico">⊕</span><span>Traçabilité</span></button>
       <button data-v="etiquettes"><span class="ico">▤</span><span>Étiquettes QR</span></button>
@@ -414,6 +513,7 @@ tr:hover td{background:var(--creme-2)}
   <div class="sheet" id="sheet">
     <div class="sheet-grip"></div>
     <h3>Menu</h3>
+    <button class="sheet-privacy" onclick="togglePrivacyMode();closeSheet&&closeSheet()" id="sheetPrivacyBtn">🙈 Mode discret</button>
     <div class="sheet-grid" id="sheetGrid">
       <button data-v="dash"><span class="ico">◷</span>Tableau de bord</button>
       <button data-v="clients"><span class="ico">♣</span>Clients</button>
@@ -421,10 +521,12 @@ tr:hover td{background:var(--creme-2)}
       <button data-v="produits"><span class="ico">◫</span>Offre / Coffrets</button>
       <button data-v="cal"><span class="ico">▦</span>Calendrier</button>
       <button data-v="fournisseurs"><span class="ico">⚑</span>Fournisseurs</button>
+      <button data-v="achats"><span class="ico">🛒</span>Optimisation achats</button>
       <button data-v="matieres"><span class="ico">⬛</span>Matières & lots</button>
       <button data-v="recettes"><span class="ico">❀</span>Recettes (BOM)</button>
       <button data-v="productions"><span class="ico">⚙</span>Productions</button>
       <button data-v="picking"><span class="ico">📦</span>Préparation / Picking</button>
+      <button data-v="mrp"><span class="ico">🏭</span>Plan de production</button>
       <button data-v="couts"><span class="ico">€</span>Coûts & prix</button>
       <button data-v="rentaparfum"><span class="ico">🎯</span>Rentabilité parfums</button>
       <button data-v="pilotage"><span class="ico">📈</span>Pilotage stratégique</button>
@@ -436,6 +538,7 @@ tr:hover td{background:var(--creme-2)}
       <button data-v="marches"><span class="ico">⛺</span>Marchés</button>
       <button data-v="sauvegardes"><span class="ico">🛟</span>Sauvegarde &amp; sécurité</button>
       <button data-v="assistant"><span class="ico">🤖</span>Assistant</button>
+      <button data-v="pms"><span class="ico">🧼</span>HACCP / PMS</button>
       <button data-v="dlc"><span class="ico">⏰</span>Suivi DLC</button>
       <button data-v="tracabilite"><span class="ico">⊕</span>Traçabilité</button>
       <button data-v="etiquettes"><span class="ico">▤</span>Étiquettes QR</button>
