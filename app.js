@@ -151,9 +151,67 @@ const today = () => new Date().toISOString().slice(0,10);
 // Règle de base : frigo = +7 jours ; congélateur = +4 mois.
 function computeDlc(emplacement, baseIso){
   const d = baseIso ? new Date(baseIso) : new Date();
-  if(emplacement==='congelateur'){ d.setMonth(d.getMonth()+4); }
+  if(isFreezer(emplacement)){ d.setMonth(d.getMonth()+4); }
   else { d.setDate(d.getDate()+7); } // frigo (et défaut prudent)
   return d.toISOString().slice(0,10);
+}
+// ---- EMPLACEMENTS DE STOCKAGE ----
+// 1 frigo + 3 congélateurs, chacun identifié par une LETTRE qui s'ajoute au n° de lot
+// et apparaît sur l'étiquette pour localiser physiquement la production.
+const EMPLACEMENTS = [
+  {key:'frigo',   lettre:'F', nom:'Frigo',                type:'frigo',      icon:'🧊'},
+  {key:'bahut',   lettre:'B', nom:'Congélateur bahut',    type:'congelateur',icon:'❄️'},
+  {key:'colonne', lettre:'C', nom:'Congélateur colonne',  type:'congelateur',icon:'❄️'},
+  {key:'petit',   lettre:'A', nom:'Petit congélateur',    type:'congelateur',icon:'❄️'}
+];
+const EMP_BY_KEY = Object.fromEntries(EMPLACEMENTS.map(e=>[e.key,e]));
+const EMP_BY_LETTRE = Object.fromEntries(EMPLACEMENTS.map(e=>[e.lettre,e]));
+// Un emplacement est-il un congélateur ? (B, C, A) — sinon frigo (F).
+function isFreezer(key){ const e=EMP_BY_KEY[key]; return e ? e.type==='congelateur' : key==='congelateur'; }
+// Libellé/lettre/icône d'un emplacement (rétro-compat : 'congelateur' générique → bahut par défaut d'affichage).
+function empInfo(key){
+  if(EMP_BY_KEY[key]) return EMP_BY_KEY[key];
+  if(key==='congelateur') return {key:'congelateur', lettre:'B', nom:'Congélateur', type:'congelateur', icon:'❄️'};
+  if(key==='frigo') return EMP_BY_KEY.frigo;
+  return {key:key||'', lettre:'?', nom:'—', type:'', icon:''};
+}
+function empLettre(key){ return empInfo(key).lettre; }
+function empNom(key){ return empInfo(key).nom; }
+function empIcon(key){ return empInfo(key).icon; }
+// Tag HTML coloré d'un emplacement (avec sa lettre).
+function empTagHtml(key){
+  const e=empInfo(key);
+  if(!e.key) return '<span class="tag warn">non renseigné</span>';
+  const bg = e.type==='frigo' ? '#6aa3a0' : '#3b6ea5';
+  return `<span class="tag" style="background:${bg};color:#fff">${e.icon} ${esc(e.nom)} · ${e.lettre}</span>`;
+}
+// Applique/relève la lettre d'emplacement au numéro de lot : « L-…-EMR » + « -A ».
+// On retire d'abord un éventuel suffixe -X existant, puis on ajoute la nouvelle lettre.
+const EMP_LETTERS = EMPLACEMENTS.map(e=>e.lettre).join(''); // "FBCA"
+function lotBaseSansSuffixe(lot){
+  if(!lot) return '';
+  return String(lot).replace(new RegExp('-[' + EMP_LETTERS + ']$'), '');
+}
+function lotAvecEmplacement(lot, key){
+  const base = lotBaseSansSuffixe(lot);
+  const l = empLettre(key);
+  return (l && l!=='?') ? `${base}-${l}` : base;
+}
+// Génère un code aléatoire pour le n° de lot SANS les lettres ambiguës I, L, O
+// (confusion avec 1 / 1 / 0). Alphabet : A–Z sauf I/L/O + chiffres 2–9 (0 et 1 exclus aussi).
+const LOT_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // pas de I,L,O ni 0,1
+function genLotCode(n){
+  n = n||3;
+  let s='';
+  for(let i=0;i<n;i++) s += LOT_ALPHABET[Math.floor(Math.random()*LOT_ALPHABET.length)];
+  return s;
+}
+// Nettoie un n° de lot saisi : met en majuscules et retire les lettres ambiguës I, L, O.
+// Renvoie {lot, changed} pour pouvoir prévenir l'utilisateur si une correction a eu lieu.
+function sanitizeLot(lot){
+  const up = String(lot||'').toUpperCase();
+  const cleaned = up.replace(/[ILO]/g, '');
+  return {lot:cleaned, changed: cleaned!==up};
 }
 const FRIGO_DAYS = 7;        // durée de vie totale au frigo (jours)
 const CONGELO_MONTHS = 4;    // durée de vie au congélateur (mois)
@@ -173,14 +231,14 @@ function computeDlcFromHistory(hist, refIso){
   let frigoConsumedMs = 0;        // temps frigo déjà consommé (segments clos)
   // parcourt les segments fermés (du début jusqu'à l'avant-dernier) pour cumuler le temps frigo écoulé
   for(let i=0;i<segs.length-1;i++){
-    if(segs[i].lieu==='frigo'){
+    if(!isFreezer(segs[i].lieu)){
       const start=new Date(segs[i].ts), end=new Date(segs[i+1].ts);
       const dur=end-start; if(dur>0) frigoConsumedMs+=dur;
     }
   }
   const last=segs[segs.length-1];
   const lastStart=new Date(last.ts);
-  if(last.lieu==='congelateur'){
+  if(isFreezer(last.lieu)){
     // DLC = entrée au congélo + 4 mois (le budget frigo restant est gelé jusqu'à la décongélation)
     const d=new Date(lastStart); d.setMonth(d.getMonth()+CONGELO_MONTHS);
     return d.toISOString().slice(0,10);
@@ -469,7 +527,7 @@ async function renderDash(){
   productions.forEach(p=>{
     if(round3(+p.qteRestante)<=0 || !p.dlcProduit) return;
     const j=daysTo(p.dlcProduit); if(j===null) return;
-    const seuil = p.emplacement==='congelateur' ? 14 : 2;
+    const seuil = isFreezer(p.emplacement) ? 14 : 2;
     if(j<=seuil){
       prodDlcAlert.push({nom:recName(p.recipeId), lot:p.lotProduction||('#'+p.id),
         dlc:p.dlcProduit, j, emplacement:p.emplacement||'', qte:round3(+p.qteRestante)});
@@ -496,7 +554,7 @@ async function renderDash(){
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
    ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
-   ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${a.emplacement==='congelateur'?'❄️':'🧊'} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
+   ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
      <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
      <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">∑</div><div class="lbl">CA total</div><div class="val">${euro(caTotal)}</div><div class="sub">depuis le début ›</div></div>
@@ -932,10 +990,7 @@ async function renderProductions(){
        const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
        const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
        const emp = p.emplacement;
-       const empTag = emp==='congelateur' ? '<span class="tag" style="background:#3b6ea5;color:#fff">❄️ Congélateur</span>'
-         : emp==='frigo' ? '<span class="tag" style="background:#6aa3a0;color:#fff">🧊 Frigo</span>'
-         : '<span class="tag warn">non renseigné</span>';
-       const blocked = p.venuDuCongelateur ? ' title="A séjourné au congélateur : ne peut y retourner"' : '';
+       const empTag = empTagHtml(emp);
        // --- Statut de production : démarré / terminé ---
        const st = prodStatut(p);
        const heureFab = (p.prodDebutTs||p.prodTimestamp) ? fmtDateTime(p.prodDebutTs||p.prodTimestamp) : '';
@@ -953,57 +1008,185 @@ async function renderProductions(){
            + (ouvertTxt?`<br><span style="font-size:.72rem;color:${overdue?'#b3261e':'#9a8a82'}">ouverte ${ouvertTxt}${overdue?' · &gt; 4 j !':''}</span>`:'')
            + `<br><button class="qa edit" style="margin-top:3px" onclick="prodSetTermine(${p.id})" title="Passer en terminée — démarre la DLC">✓ Terminer</button>`;
        }
+       const partTag = p.parentProdId ? `<br><span class="tag" style="background:#ece2d4;color:#6b5a52">partie</span>` : '';
        return `<tr${overdue?' style="background:#fdf3f2"':''}>
-       <td><b>${esc(recName(p.recipeId))}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span>${heureFab?`<br><span style="color:#9a8a82;font-size:.72rem">🕒 ${heureFab}</span>`:''}</td>
+       <td><b>${esc(recName(p.recipeId))}</b>${partTag}<br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span>${heureFab?`<br><span style="color:#9a8a82;font-size:.72rem">🕒 ${heureFab}</span>`:''}</td>
        <td>${statutCell}</td>
-       <td>${esc(p.lotProduction||'—')}</td>
-       <td>${empTag}${emp?`<br><span class="act" onclick="toggleEmplacement(${p.id})"${blocked}>↔ ${emp==='frigo'?'mettre au congélo':'mettre au frigo'}</span>`:`<br><span class="act" onclick="setEmplacement(${p.id})">renseigner</span>`}</td>
+       <td><b>${esc(p.lotProduction||'—')}</b></td>
+       <td>${empTag}<br><span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></td>
        <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
        <td>${qty(p.qteRestante)}</td>
-       <td><div class="qa-row"><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Traça.</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;}).join('')}
+       <td><div class="qa-row"><button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;}).join('')}
    </tbody></table></div>`:`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
    </div>`;
 }
-// Change l'emplacement frigo↔congélateur d'un batch (avec journal).
-async function toggleEmplacement(id){
-  const p=await db.productions.get(id); if(!p) return;
-  const cible = p.emplacement==='frigo' ? 'congelateur' : 'frigo';
-  const nowIso=new Date().toISOString();
-  const hist=(p.histEmplacement||[]).concat([{lieu:cible, ts:nowIso, motif:'déplacement manuel'}]);
-  const patch={emplacement:cible, emplacementMaj:nowIso, histEmplacement:hist};
-  if(cible==='congelateur') patch.venuDuCongelateur=true; // dès qu'il passe au congélo, le drapeau reste
-  // DLC recalculée si elle est en mode auto : +7j frigo / +4 mois congélo.
-  // Tant que la prod est « démarrée », la DLC ne court pas encore (reste vide).
-  if(p.dlcAuto!==false){
-    patch.dlcAuto=true;
-    patch.dlcProduit = prodStatut(p)==='termine' ? computeDlcFromHistory(hist, nowIso) : '';
+// Une production a-t-elle déjà suivi le chemin congélateur → frigo ?
+// Si oui, toute recongélation est INTERDITE (congélateur>frigo>congélateur 🚫).
+function aDejaDecongele(p){
+  const hist=(p&&p.histEmplacement)||[];
+  let vuCongelo=false;
+  for(const seg of hist){
+    if(isFreezer(seg.lieu)) vuCongelo=true;
+    else if(vuCongelo) return true; // un séjour frigo APRÈS un congélo = décongélation faite
   }
-  await db.productions.update(id, patch);
-  renderProductions(); toast(`Déplacé vers ${cible==='frigo'?'le frigo 🧊':'le congélateur ❄️'}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:' · DLC non active (prod en cours)'}`);
+  // repli sur l'ancien drapeau si l'historique est incomplet
+  return false;
 }
-// Renseigne l'emplacement d'un batch ancien (sans emplacement) — choix obligatoire.
+// Ouvre le sélecteur d'emplacement (4 cases : F / B / C / A) pour une production.
 async function setEmplacement(id){
-  openModal(`<h3>Renseigner l'emplacement</h3>
-    <div class="field"><div class="pay-toggle">
-      <label class="pay-opt"><input type="radio" name="se_dest" value="frigo"> <span>🧊 Frigo</span></label>
-      <label class="pay-opt"><input type="radio" name="se_dest" value="congelateur"> <span>❄️ Congélateur</span></label>
-    </div></div>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveEmplacement(${id})">Enregistrer</button></div>`);
+  const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
+  const decongele = aDejaDecongele(p);
+  const courant = p.emplacement||'';
+  const opts = EMPLACEMENTS.map(e=>{
+    const estCongelo = e.type==='congelateur';
+    const interdit = estCongelo && decongele; // recongélation interdite
+    const actif = courant===e.key;
+    return `<button class="btn ${actif?'gold':'ghost'} sm" ${interdit?'disabled title="Déjà décongelé : recongélation interdite"':''}
+       style="${interdit?'opacity:.45':''};min-width:46%;margin:3px 0;justify-content:flex-start;display:flex;gap:6px"
+       onclick="doMoveEmplacement(${id},'${e.key}')">
+       <b style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
+       <span>${e.icon} ${esc(e.nom)}</span>${actif?' <span class="tag ok" style="margin-left:auto">actuel</span>':''}${interdit?' <span class="tag warn" style="margin-left:auto">🚫</span>':''}</button>`;
+  }).join('');
+  openModal(`<h3>Emplacement de stockage</h3>
+    <p class="note">${courant?`Actuellement : <b>${esc(empNom(courant))} (${empLettre(courant)})</b>.`:'Choisissez où ranger cette production.'} La lettre s'ajoute au n° de lot et à l'étiquette.</p>
+    ${decongele?'<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⚠️ Cette production est déjà passée par le frigo après congélation : <b>recongélation interdite</b>.</div></div>':''}
+    <div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:space-between">${opts}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
-async function saveEmplacement(id){
-  const dest=(document.querySelector('input[name="se_dest"]:checked')||{}).value||'';
-  if(dest!=='frigo'&&dest!=='congelateur'){ toast('Choisissez frigo ou congélateur'); return; }
-  const p=await db.productions.get(id); if(!p) return;
+// Déplacement central d'une production vers un emplacement (frigo / B / C / A).
+// Applique : règle anti-recongélation, journal, DLC (frigo↔congélo), MAJ de la lettre de lot,
+// régénération implicite de l'étiquette (le lot et l'emplacement changent).
+async function doMoveEmplacement(id, dest){
+  if(!EMP_BY_KEY[dest]){ toast('Emplacement inconnu'); return; }
+  const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
+  if(p.emplacement===dest){ closeModal(); toast('Déjà dans cet emplacement'); return; }
+  // RÈGLE SÉCURITÉ ALIMENTAIRE : interdiction de recongeler après décongélation.
+  if(isFreezer(dest) && aDejaDecongele(p)){
+    toast('Recongélation interdite : cette production est déjà passée congélateur → frigo.');
+    return;
+  }
   const nowIso=new Date().toISOString();
-  const hist=(p.histEmplacement||[]).concat([{lieu:dest, ts:nowIso, motif:'saisie a posteriori'}]);
-  const patch={emplacement:dest, emplacementMaj:nowIso, histEmplacement:hist};
-  if(dest==='congelateur') patch.venuDuCongelateur=true;
+  const hist=(p.histEmplacement||[]).concat([{lieu:dest, ts:nowIso, motif:'transfert'}]);
+  const nouveauLot = lotAvecEmplacement(p.lotProduction, dest);
+  const patch={ emplacement:dest, emplacementMaj:nowIso, histEmplacement:hist, lotProduction:nouveauLot };
+  if(isFreezer(dest)) patch.venuDuCongelateur=true; // a séjourné au congélo
+  // DLC : recalculée en mode auto ; reste vide tant que la prod est « démarrée »
   if(p.dlcAuto!==false){
     patch.dlcAuto=true;
     patch.dlcProduit = prodStatut(p)==='termine' ? computeDlcFromHistory(hist, nowIso) : '';
   }
   await db.productions.update(id, patch);
-  closeModal(); renderProductions(); toast('Emplacement renseigné ✓');
+  closeModal(); renderProductions();
+  const e=empInfo(dest);
+  toast(`Rangé en ${e.nom} (${e.lettre}) · lot ${nouveauLot}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
+}
+// Compat : ancien point d'entrée « toggle » → ouvre désormais le sélecteur complet.
+async function toggleEmplacement(id){ return setEmplacement(id); }
+async function saveEmplacement(id){ return setEmplacement(id); }
+
+// ---- DÉCOUPE D'UNE PRODUCTION EN PLUSIEURS PARTIES ----
+// Chaque partie devient une production « enfant » : même recette, même base de lot,
+// même horodatage et mêmes liens de traçabilité (parentProdId), mais quantité,
+// emplacement (lettre de lot), DLC et historique PROPRES. Le stock restant de la
+// production d'origine est diminué d'autant. Réutilise toute la mécanique existante.
+let _splitDraft=[];
+async function prodSplitForm(id){
+  const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
+  const dispo=round3(+p.qteRestante||0);
+  if(dispo<=0){ toast('Aucun stock restant à découper sur cette production'); return; }
+  const recipes=await db.recipes.toArray();
+  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
+  const decongele=aDejaDecongele(p);
+  // 2 parts par défaut
+  _splitDraft=[{qte:'',dest:p.emplacement||'frigo'},{qte:'',dest:''}];
+  window._splitCtx={id, dispo, decongele, base:lotBaseSansSuffixe(p.lotProduction), recipeId:p.recipeId, recName:recName(p.recipeId)};
+  openModal(`<h3>✂ Découper la production</h3>
+    <p class="note"><b>${esc(window._splitCtx.recName)}</b> · lot <b>${esc(window._splitCtx.base)}</b> · stock à répartir : <b>${qty(dispo)}</b> pièce(s).</p>
+    <p class="note">Indiquez chaque partie : sa quantité et son emplacement. Chaque partie reçoit la lettre de son emplacement dans son n° de lot (ex : ${esc(window._splitCtx.base)}-A). Le reste non réparti demeure sur la production d'origine.</p>
+    ${decongele?'<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⚠️ Production déjà décongelée : les parties ne peuvent pas aller au congélateur.</div></div>':''}
+    <div id="splitRows"></div>
+    <button class="btn ghost sm" style="margin-top:6px" onclick="splitAddRow()">+ Ajouter une partie</button>
+    <div class="sum-box" id="splitSummary" style="margin-top:8px"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="prodDoSplit()">Découper</button></div>`);
+  drawSplitRows();
+}
+function drawSplitRows(){
+  const ctx=window._splitCtx||{}; const box=document.getElementById('splitRows'); if(!box) return;
+  const empOpts=dest=>EMPLACEMENTS.map(e=>{
+    const interdit=ctx.decongele && e.type==='congelateur';
+    return `<option value="${e.key}" ${dest===e.key?'selected':''} ${interdit?'disabled':''}>${e.icon} ${esc(e.nom)} (${e.lettre})${interdit?' — interdit':''}</option>`;
+  }).join('');
+  box.innerHTML=_splitDraft.map((r,i)=>`<div class="pay-row" style="align-items:center;gap:6px">
+      <input type="number" step="1" min="0" id="sp_q_${i}" value="${r.qte!==''&&r.qte!=null?r.qte:''}" placeholder="qté" style="width:80px" oninput="_splitDraft[${i}].qte=this.value;splitSummary()">
+      <select id="sp_d_${i}" style="flex:1;min-width:150px" onchange="_splitDraft[${i}].dest=this.value;splitSummary()"><option value="">— emplacement —</option>${empOpts(r.dest)}</select>
+      ${_splitDraft.length>1?`<span class="x" onclick="splitDelRow(${i})">×</span>`:''}
+    </div>`).join('');
+  splitSummary();
+}
+function splitAddRow(){ _splitDraft.push({qte:'',dest:''}); drawSplitRows(); }
+function splitDelRow(i){ _splitDraft.splice(i,1); drawSplitRows(); }
+function splitSummary(){
+  const ctx=window._splitCtx||{}; const box=document.getElementById('splitSummary'); if(!box) return;
+  let total=0; _splitDraft.forEach(r=>{ total+=Math.max(0,+r.qte||0); });
+  total=round3(total);
+  const reste=round3((ctx.dispo||0)-total);
+  const over=reste<0;
+  box.innerHTML=`<div style="display:flex;justify-content:space-between"><span>Réparti / disponible</span><b>${qty(total)} / ${qty(ctx.dispo||0)}</b></div>
+    <div style="display:flex;justify-content:space-between"><span>Reste sur la production d'origine</span><b style="color:${over?'#b3261e':'#3f7d52'}">${over?'dépassement '+qty(-reste):qty(reste)}</b></div>`;
+}
+async function prodDoSplit(){
+  const ctx=window._splitCtx; if(!ctx){ return; }
+  const p=await db.productions.get(ctx.id); if(!p){ toast('Production introuvable'); return; }
+  // lecture + validation
+  const parts=[];
+  for(let i=0;i<_splitDraft.length;i++){
+    const q=round3(+val('sp_q_'+i)||0); const dest=val('sp_d_'+i)||_splitDraft[i].dest||'';
+    if(q<=0) continue;
+    if(!EMP_BY_KEY[dest]){ toast(`Partie ${i+1} : choisissez un emplacement.`); return; }
+    if(isFreezer(dest) && ctx.decongele){ toast(`Partie ${i+1} : recongélation interdite.`); return; }
+    parts.push({qte:q, dest});
+  }
+  if(!parts.length){ toast('Renseignez au moins une partie (quantité + emplacement).'); return; }
+  const total=round3(parts.reduce((s,x)=>s+x.qte,0));
+  if(total>round3(+p.qteRestante||0)){ toast('La somme des parties dépasse le stock restant.'); return; }
+
+  const nowIso=new Date().toISOString();
+  const base=lotBaseSansSuffixe(p.lotProduction);
+  await db.transaction('rw', db.productions, async()=>{
+    for(const part of parts){
+      const hist=[{lieu:part.dest, ts:nowIso, motif:'découpe de production'}];
+      const child={
+        recipeId:p.recipeId,
+        parentProdId:p.parentProdId||p.id,           // rattachement à la prod mère (traçabilité)
+        lotBase:base,
+        lotProduction:lotAvecEmplacement(base, part.dest),
+        date:p.date,
+        // quantités : la partie porte sa propre quantité, sans écart (issue d'une prod déjà mesurée)
+        qteTheorique:part.qte, qteReelle:part.qte, ecart:0,
+        qteProduite:part.qte, qteRestante:part.qte,
+        // statut & horodatage hérités (la DLC court selon le statut de la mère)
+        prodStatut:prodStatut(p),
+        prodDebutTs:p.prodDebutTs||p.prodTimestamp||nowIso,
+        prodTermineTs:p.prodTermineTs||'',
+        prodTimestamp:p.prodTimestamp||nowIso,
+        dlcAuto:p.dlcAuto!==false,
+        emplacement:part.dest, emplacementMaj:nowIso,
+        venuDuCongelateur: isFreezer(part.dest) || !!p.venuDuCongelateur,
+        histEmplacement:hist
+      };
+      // DLC de la partie : selon son emplacement, ancrée à la fin de prod (ou vide si démarrée)
+      child.dlcProduit = (child.prodStatut==='termine' && child.dlcAuto)
+        ? computeDlcFromHistory([{lieu:part.dest, ts:(p.prodTermineTs||p.prodTimestamp||nowIso)}], (p.prodTermineTs||p.prodTimestamp||nowIso))
+        : '';
+      await db.productions.add(child);
+    }
+    // diminue le stock restant de la production d'origine
+    const reste=subQty(p.qteRestante, total);
+    await db.productions.update(p.id, {qteRestante:reste});
+  });
+  window._splitCtx=null; _splitDraft=[];
+  closeModal(); renderProductions();
+  toast(`${parts.length} partie(s) créée(s) · ${parts.map(x=>`${qty(x.qte)} en ${empLettre(x.dest)}`).join(', ')}`);
 }
 // STATUT : passe une production de « démarré » à « terminé ».
 // C'est CE moment qui déclenche la DLC (7 j au frigo, 4 mois au congélateur).
@@ -1053,11 +1236,13 @@ async function prodForm(){
    <div class="field"><label>Quantité réelle produite <span style="color:#9a8a82;font-weight:400">— stock produits finis (modifiable en fin de production)</span></label>
      <input type="number" id="f_qtereel" value="${recipes[0].rendement}" min="0" oninput="_prodReelTouched=true;prodUpdateEcartHint()">
      <p class="note" id="ecartHint" style="margin-top:4px;display:none"></p></div>
-   <div class="field"><label>N° lot de production</label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${Math.random().toString(36).slice(2,5).toUpperCase()}"></div>
-   <div class="field"><label>Destination après production *</label>
-     <div class="pay-toggle" id="prodDest">
-       <label class="pay-opt"><input type="radio" name="f_dest" value="frigo" onchange="prodDlcHint()"> <span>🧊 Frigo</span></label>
-       <label class="pay-opt"><input type="radio" name="f_dest" value="congelateur" onchange="prodDlcHint()"> <span>❄️ Congélateur</span></label>
+   <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoute automatiquement</span></label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${genLotCode(3)}"></div>
+   <div class="field"><label>Emplacement de rangement *</label>
+     <div id="prodDest" style="display:flex;flex-wrap:wrap;gap:6px">
+       ${EMPLACEMENTS.map((e,i)=>`<label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer">
+         <input type="radio" name="f_dest" value="${e.key}" onchange="prodDlcHint()">
+         <b style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
+         <span>${e.icon} ${esc(e.nom)}</span></label>`).join('')}
      </div>
      <p class="note" id="dlcHint">La production démarre au statut <b>« démarrée »</b>. La DLC (<b>+7 j</b> au frigo, <b>+4 mois</b> au congélateur) ne court qu'au passage en <b>« terminée »</b>.</p>
    </div>
@@ -1069,8 +1254,9 @@ async function prodForm(){
 function prodDlcHint(){
   const dest=(document.querySelector('input[name="f_dest"]:checked')||{}).value||'';
   const el=document.getElementById('dlcHint'); if(!el) return;
-  if(dest==='frigo'||dest==='congelateur'){
-    el.innerHTML=`Destination <b>${dest==='frigo'?'frigo (+7 j)':'congélateur (+4 mois)'}</b>. ⚠️ La DLC ne démarre qu'au passage de la production en <b>« terminée »</b>, pas maintenant.`;
+  if(EMP_BY_KEY[dest]){
+    const e=empInfo(dest);
+    el.innerHTML=`Rangement : <b>${esc(e.nom)} (${e.lettre})</b> — ${isFreezer(dest)?'+4 mois':'+7 j'}. La lettre <b>${e.lettre}</b> sera ajoutée au lot. ⚠️ La DLC démarre au passage en <b>« terminée »</b>.`;
   } else {
     el.innerHTML=`La production démarre au statut <b>« démarrée »</b>. La DLC (<b>+7 j</b> frigo, <b>+4 mois</b> congélateur) ne court qu'au passage en <b>« terminée »</b>.`;
   }
@@ -1109,11 +1295,24 @@ async function saveProd(){
   const qteTheorique=+val('f_qte');
   let qteReelle=val('f_qtereel');
   qteReelle = qteReelle==='' ? qteTheorique : +qteReelle; // défaut = théorique
-  const date=val('f_date')||today(), lot=val('f_lot');
+  const date=val('f_date')||today(); let lot=val('f_lot');
   const dest=(document.querySelector('input[name="f_dest"]:checked')||{}).value||'';
   if(!qteTheorique||qteTheorique<=0){toast('Quantité théorique invalide');return;}
   if(qteReelle<0||isNaN(qteReelle)){toast('Quantité réelle invalide');return;}
-  if(dest!=='frigo' && dest!=='congelateur'){ toast('Choisissez une destination : frigo ou congélateur'); return; }
+  if(!EMP_BY_KEY[dest]){ toast('Choisissez un emplacement de rangement (F / B / C / A)'); return; }
+  // Nettoyage des lettres ambiguës (I, L, O) sur la PARTIE VARIABLE uniquement :
+  // on préserve le préfixe « L- » et la date, on ne nettoie que ce qui suit.
+  const baseLot = lotBaseSansSuffixe(val('f_lot'));
+  const m = baseLot.match(/^(L-\d{8}-)(.*)$/i);
+  let lotPrefix, lotCode;
+  if(m){ lotPrefix=m[1].toUpperCase(); lotCode=m[2]; }
+  else { lotPrefix=''; lotCode=baseLot; } // format libre : on nettoie tout
+  const san=sanitizeLot(lotCode);
+  if(san.changed) toast('Lettres ambiguës (I, L, O) retirées du n° de lot.');
+  let cleanBase = lotPrefix + san.lot;
+  if(!san.lot){ cleanBase = lotPrefix + genLotCode(3); } // si le code devient vide, on en régénère un
+  lot = lotAvecEmplacement(cleanBase, dest);   // + lettre d'emplacement
+  if(!lotBaseSansSuffixe(lot)){ toast('N° de lot vide — saisissez un identifiant.'); return; }
   try{
     await enregistrerProduction(recipeId, qteTheorique, qteReelle, date, lot, '', dest);
     closeModal(); renderProductions();
@@ -1131,7 +1330,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
     async () => {
       const recette = await db.recipes.get(recipeId);
       if(!recette) throw new Error('Recette introuvable');
-      if(emplacement!=='frigo' && emplacement!=='congelateur') throw new Error('Destination (frigo/congélateur) obligatoire');
+      if(!EMP_BY_KEY[emplacement]) throw new Error('Emplacement de rangement (F / B / C / A) obligatoire');
       const items = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
       // CONSOMMATION MATIÈRES : basée UNIQUEMENT sur la quantité théorique
       const facteur = qteTheorique / (recette.rendement || 1);
@@ -1166,9 +1365,9 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
         prodTermineTs: '',              // horodatage de passage en « terminée » (déclenche la DLC)
         // Traçabilité conservation : horodatage + emplacement + journal des déplacements
         prodTimestamp: nowIso,          // date + HEURE réelles de production (horodatage auto)
-        emplacement,                    // 'frigo' | 'congelateur'
+        emplacement,                    // 'frigo' | 'bahut' | 'colonne' | 'petit'
         emplacementMaj: nowIso,         // date/heure du dernier changement d'emplacement
-        venuDuCongelateur: emplacement==='congelateur', // a séjourné au congélo (interdit d'y retourner après décongélation)
+        venuDuCongelateur: isFreezer(emplacement), // a séjourné au congélo (suivi de la règle de décongélation)
         histEmplacement: [{lieu:emplacement, ts:nowIso, motif:'production'}]
       });
 
@@ -1743,8 +1942,10 @@ async function traceProd(prodId){
   });
   openModal(`<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
+    <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'')}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
+    ${(prod.histEmplacement&&prod.histEmplacement.length>1)?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span style="font-weight:600">Parcours de conservation</span>${prod.histEmplacement.map(h=>`<span style="font-size:.8rem;color:#6b5a52">${empIcon(h.lieu)} ${esc(empNom(h.lieu))} (${empLettre(h.lieu)}) — ${fmtDateTime(h.ts)}${h.motif?` · ${esc(h.motif)}`:''}</span>`).join('')}</div>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
     ${lines.length?lines.join(''):'<p class="note">Aucune consommation enregistrée.</p>'}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
@@ -3290,18 +3491,19 @@ async function marketAddLoss(marketId, productionId, qte, type, parfum, motif){
 async function marketAddRetour(marketId, productionId, qte, parfum, destination){
   qte=round3(qte);
   if(qte<0) throw new Error('Quantité invalide');
-  if(destination!=='frigo' && destination!=='congelateur') throw new Error('Destination du retour obligatoire');
+  if(!EMP_BY_KEY[destination]) throw new Error('Emplacement de rangement du retour obligatoire');
   await db.transaction('rw', db.productions, db.marketMoves, async()=>{
     const p=await db.productions.get(productionId);
     if(!p) throw new Error('Lot introuvable');
-    // RÈGLE SÉCURITÉ ALIMENTAIRE : un produit venu du congélateur ne peut pas y retourner.
-    if(destination==='congelateur' && p.venuDuCongelateur){
-      throw new Error(`${parfum||'Ce lot'} vient du congélateur : recongélation interdite. Choisissez le frigo.`);
+    // RÈGLE SÉCURITÉ ALIMENTAIRE : interdiction de recongeler après décongélation (congélo → frigo → congélo).
+    if(isFreezer(destination) && aDejaDecongele(p)){
+      throw new Error(`${parfum||'Ce lot'} est déjà décongelé : recongélation interdite. Choisissez le frigo.`);
     }
     const nowIso=new Date().toISOString();
     const hist=(p.histEmplacement||[]).concat([{lieu:destination, ts:nowIso, motif:'retour marché'}]);
-    const patch={qteRestante: addQty(p.qteRestante, qte), emplacement:destination, emplacementMaj:nowIso, histEmplacement:hist};
-    if(destination==='congelateur') patch.venuDuCongelateur=true;
+    const nouveauLot=lotAvecEmplacement(p.lotProduction, destination);
+    const patch={qteRestante: addQty(p.qteRestante, qte), emplacement:destination, emplacementMaj:nowIso, histEmplacement:hist, lotProduction:nouveauLot};
+    if(isFreezer(destination)) patch.venuDuCongelateur=true;
     if(p.dlcAuto!==false){ patch.dlcProduit=computeDlcFromHistory(hist, nowIso); patch.dlcAuto=true; }
     await db.productions.update(productionId, patch);
     await db.marketMoves.add({marketId, productionId, type:'retour', qte, parfum:parfum||'', motif:'', date:today(), destination});
@@ -5243,17 +5445,18 @@ async function marketRetourForm(marketId){
   const rows=lines.map((l,i)=>{
     const restant=subQty(subQty(subQty(l.sortie,l.retour),l.don),l.perte);
     const p=prods.find(x=>x.id===l.productionId);
-    const fromFreezer = p && p.venuDuCongelateur;
+    const decongele = p && aDejaDecongele(p);
+    const empOpts = EMPLACEMENTS.map(e=>{
+      const interdit = e.type==='congelateur' && decongele;
+      return `<option value="${e.key}" ${interdit?'disabled':''}>${e.icon} ${esc(e.nom)} (${e.lettre})${interdit?' — interdit':''}</option>`;
+    }).join('');
     return `<div class="pay-row" style="flex-wrap:wrap;align-items:flex-start">
-      <span style="flex:1;min-width:120px">${esc(l.parfum||'(parfum ?)')}<br><span class="note">embarqué ${qty(l.sortie)}, déjà retourné ${qty(l.retour)}${fromFreezer?' · ❄️ vient du congélo':''}</span></span>
-      <input type="number" step="1" min="0" max="${restant}" id="mr_${i}" data-prod="${l.productionId}" data-parfum="${esc(l.parfum)}" data-freezer="${fromFreezer?1:0}" placeholder="invendus" style="width:80px">
-      <select id="md_${i}" style="width:120px">
-        <option value="frigo">🧊 Frigo</option>
-        <option value="congelateur" ${fromFreezer?'disabled':''}>❄️ Congélateur${fromFreezer?' (interdit)':''}</option>
-      </select>
+      <span style="flex:1;min-width:120px">${esc(l.parfum||'(parfum ?)')}<br><span class="note">embarqué ${qty(l.sortie)}, déjà retourné ${qty(l.retour)}${decongele?' · ❄️→🧊 décongelé':''}</span></span>
+      <input type="number" step="1" min="0" max="${restant}" id="mr_${i}" data-prod="${l.productionId}" data-parfum="${esc(l.parfum)}" placeholder="invendus" style="width:80px">
+      <select id="md_${i}" style="width:150px">${empOpts}</select>
     </div>`;}).join('');
   openModal(`<h3>Retour de marché</h3>
-    <p class="note">Saisissez les invendus rapportés par parfum et leur destination. Ils sont recrédités au stock atelier. ⚠️ Un produit <b>issu du congélateur</b> ne peut pas y retourner (décongélation → recongélation interdite).</p>
+    <p class="note">Saisissez les invendus rapportés par parfum et leur emplacement de rangement. Ils sont recrédités au stock atelier. ⚠️ Un produit <b>déjà décongelé</b> (congélateur → frigo) ne peut pas retourner au congélateur.</p>
     ${rows}
     <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
       <button class="btn" onclick="marketDoRetour(${marketId},${lines.length})">Valider les retours</button></div>`);
@@ -6319,6 +6522,7 @@ async function renderLabels(){
         <div class="info">
           <b>${esc(recName(p.recipeId))}</b>
           <span class="meta">Lot : ${esc(p.lotProduction||'—')}</span>
+          <span class="meta">Emplacement : ${p.emplacement?`${empIcon(p.emplacement)} ${esc(empNom(p.emplacement))} (${empLettre(p.emplacement)})`:'—'}</span>
           <span class="meta">Statut : ${st==='termine'?'✓ Terminée':'▶ Démarrée'}</span>
           <span class="meta">DLC : ${dlcTxt}</span>
           <span class="meta">Fab. : ${fmtDate(p.date)}</span>
@@ -6357,16 +6561,20 @@ async function buildLabelData(prodId){
     dlc: p.dlcProduit ? fmtDate(p.dlcProduit) : '—',
     // Fabrication : horodatage automatique (date + heure) si disponible, sinon la date saisie
     fab: p.prodTimestamp ? fmtDateTime(p.prodTimestamp) : fmtDate(p.date),
-    emplacement: p.emplacement==='congelateur'?'Congélateur':(p.emplacement==='frigo'?'Frigo':''),
+    emplacement: p.emplacement ? empNom(p.emplacement) : '',
+    empLettre: p.emplacement ? empLettre(p.emplacement) : '',
+    empType: p.emplacement ? empInfo(p.emplacement).type : '',
     qr: tmp.toDataURL('image/png')
   };
 }
 // HTML d'UNE étiquette (50×25 mm, noir sur blanc, QR à gauche / infos à droite).
+// La lettre d'emplacement est affichée dans une pastille pour localiser la production.
 function renderLabelHTML(d){
+  const pastille = d.empLettre ? `<span class="emp">${esc(d.empLettre)}</span>` : '';
   return `<div class="lab">
      <div class="q"><img src="${d.qr}"></div>
      <div class="t">
-       <div class="prod">${esc(d.produit)}</div>
+       <div class="prod">${esc(d.produit)}${pastille}</div>
        <div class="row">Lot ${esc(d.lot)}</div>
        <div class="dlc">DLC ${esc(d.dlc)}</div>
        <div class="row">Fab. ${esc(d.fab)}</div>
@@ -6394,6 +6602,7 @@ function printLabelSheet(labels, titre){
      .lab .q img { width:21mm; height:21mm; display:block; image-rendering:pixelated; }
      .lab .t { flex:1; min-width:0; line-height:1.15; overflow:hidden; }
      .lab .prod { font-size:2.9mm; font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+     .lab .prod .emp { display:inline-block; border:0.3mm solid #000; border-radius:1mm; padding:0 0.8mm; margin-left:1mm; font-size:2.6mm; line-height:1; }
      .lab .row { font-size:2.3mm; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
      .lab .dlc { font-size:2.7mm; font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
    </style></head><body>
