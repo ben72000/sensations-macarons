@@ -39,6 +39,14 @@ db.version(6).stores({
   markets:         '++id, date, nom',
   marketMoves:     '++id, marketId, productionId, type'   // type: sortie | don | perte | retour
 });
+// v7 : pertes / casse sur stock fini (déclaration explicite, traçable, KPI taux de perte)
+db.version(7).stores({
+  losses:          '++id, productionId, date, motif'
+});
+// v8 : pointeuse de laboratoire — sessions de travail (temps global, décorrélé recettes/commandes)
+db.version(8).stores({
+  workSessions:    '++id, date'
+});
 
 // --------- Catalogue de référence ---------
 const FLAVORS = [
@@ -52,8 +60,40 @@ const BOX_PRICES = { 6: 12, 8: 16, 16: 28, 25: 42 }; // prix de base par taille
 const BOX_FLAVOR_LIMIT = { 6: 3, 8: 4, 16: 4, 25: 5 }; // parfums DIFFÉRENTS inclus
 const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire
 const ORDER_STATUS = ['À préparer', 'Terminée', 'Livrée'];
+// Motifs de perte / casse sur stock fini (déclaration explicite)
+const LOSS_REASONS = ['Raté / casse', 'Invendable / DLC dépassée', 'Chute de production', 'Offert / dégustation', 'Autre'];
 const PAY_STATUS = ['En attente', 'Payé'];
 const PAY_METHODS = ['Carte', 'Virement', 'Espèces', 'Chèque', 'PayPal'];
+
+// Lieux de livraison habituels préenregistrés. À ceux-ci s'ajoutent automatiquement
+// les adresses déjà saisies dans les commandes passées (voir usualDeliveryPlaces()).
+const PRESET_DELIVERY_PLACES = [
+  'Leclerc Sargé',
+  'Intermarché Av Bollée',
+  'Place des Jacobins',
+  'Place de la République',
+  'Carrefour Market Boulevard Mutuel',
+  'Lidl Allonnes'
+];
+// Construit la liste dédupliquée des lieux à suggérer : presets + lieux déjà
+// utilisés dans des commandes (les plus fréquents/récents d'abord), hors doublons.
+async function usualDeliveryPlaces(){
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const freq = {};
+  orders.forEach(o=>{
+    const v = (o.lieuLivraison||'').trim();
+    if(v) freq[v] = (freq[v]||0) + 1;
+  });
+  // lieux issus des commandes, triés par fréquence décroissante
+  const fromOrders = Object.keys(freq).sort((a,b)=>freq[b]-freq[a]);
+  // fusion sans doublon (insensible à la casse), presets d'abord
+  const seen = new Set(), out = [];
+  [...PRESET_DELIVERY_PLACES, ...fromOrders].forEach(v=>{
+    const k = v.toLowerCase();
+    if(!seen.has(k)){ seen.add(k); out.push(v); }
+  });
+  return out;
+}
 
 // Prestation événement
 const EVENT_PRICE = 1.60;       // prix par macaron
@@ -73,6 +113,9 @@ const SETTINGS_DEFAULTS = {
   // Main-d'œuvre (optionnelle) : prise en compte dans le coût de revient si activée.
   laborEnabled: false,   // active/désactive l'ajout du coût de main-d'œuvre
   laborRate: 12.0,       // coût horaire main-d'œuvre (€/h) chargé
+  // Livraison : consommation moyenne du véhicule (L/100 km), pour chiffrer le carburant.
+  // Le coût du temps de livraison réutilise laborRate (€/h).
+  vehicleConso: 6.5,     // litres aux 100 km
   // PRIX DE VENTE PAR FORMAT (dégressif) — € par macaron selon la taille du coffret.
   // Sert à estimer un prix moyen pondéré et à détecter les incohérences de CA.
   // Le CA réel reste toujours le CA ENCAISSÉ ; cette grille n'établit pas le CA.
@@ -95,6 +138,7 @@ function getSettings(){
       socialService: s.socialService!=null?+s.socialService:SETTINGS_DEFAULTS.socialService,
       laborEnabled: s.laborEnabled===true,
       laborRate: s.laborRate!=null?+s.laborRate:SETTINGS_DEFAULTS.laborRate,
+      vehicleConso: s.vehicleConso!=null?+s.vehicleConso:SETTINGS_DEFAULTS.vehicleConso,
       prixParFormat: Object.assign({}, SETTINGS_DEFAULTS.prixParFormat, s.prixParFormat||{}),
       prixVenteUnitaire: s.prixVenteUnitaire!=null?+s.prixVenteUnitaire:SETTINGS_DEFAULTS.prixVenteUnitaire,
       packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
@@ -252,12 +296,18 @@ function computeDlcFromHistory(hist, refIso){
   return dlc.toISOString().slice(0,10);
 }
 // Horodatage lisible "le JJ/MM/AAAA à HHhMM" à partir d'un ISO.
+// Heure seule au format 00:00 (ex : 10:02). Renvoie '' si non valide.
+function fmtTime(iso){
+  if(!iso) return '';
+  const d=new Date(iso); if(isNaN(d)) return '';
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
 function fmtDateTime(iso){
   if(!iso) return '—';
   const d=new Date(iso); if(isNaN(d)) return '—';
   const date=d.toLocaleDateString('fr-FR');
-  const h=String(d.getHours()).padStart(2,'0'), mn=String(d.getMinutes()).padStart(2,'0');
-  return `${date} à ${h}h${mn}`;
+  // Heure au format 00:00 (ex : 10:02)
+  return `${date} à ${fmtTime(iso)}`;
 }
 // --------- Statut de production : démarré / terminé ---------
 // Plafond de temps autorisé en statut « démarré » avant blocage (4 jours).
@@ -357,7 +407,7 @@ let view='dash';
 const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
-  productions:renderProductions, couts:renderCosts, dlc:renderDlc,
+  productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking,
   tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
 };
 let _navLast=0;
@@ -965,6 +1015,9 @@ async function delRec(id){
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
+  const losses = await db.losses.toArray().catch(()=>[]);
+  const kpi = await lossKPIs();
+  const lossByProd = {}; losses.forEach(l=>{ lossByProd[l.productionId]=(lossByProd[l.productionId]||0)+(+l.qte||0); });
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'(recette supprimée)';
   const ecartTag = p => {
     const e = (p.ecart!=null) ? +p.ecart : 0;
@@ -982,6 +1035,10 @@ async function renderProductions(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Productions</h1><p>${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p></div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button></div>
+   ${kpi.count?`<div class="cards" style="margin-bottom:18px">
+     <div class="card"><div class="lbl">Taux de perte</div><div class="val" style="color:${kpi.taux>=10?'#b3261e':(kpi.taux>=5?'#d98324':'#2e7d32')}">${kpi.taux}%</div><div class="sub">${qty(kpi.totalPerdu)} perdues / ${qty(kpi.totalProduit)} produites</div></div>
+     <div class="card"><div class="lbl">Valeur perdue (casse)</div><div class="val">${euro(kpi.valeurPerdue)}</div><div class="sub">${kpi.count} déclaration(s) · imputé au coût de revient</div></div>
+   </div>`:''}
    ${enRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${enRetard.length} production(s) ouverte(s) depuis plus de ${PROD_OPEN_MAX_DAYS} jours.</b> Une production ne peut pas rester « démarrée » au-delà de ${PROD_OPEN_MAX_DAYS} jours : terminez-la (✓ Terminer) pour figer la DLC, ou supprimez-la.</div></div>`:''}
    ${ouvertes.length && !enRetard.length?`<div class="banner">▶ <div><b>${ouvertes.length} production(s) en cours.</b> La DLC de 7 j ne démarre qu'au passage en « terminée ».</div></div>`:''}
    <div class="panel">
@@ -993,7 +1050,9 @@ async function renderProductions(){
        const empTag = empTagHtml(emp);
        // --- Statut de production : démarré / terminé ---
        const st = prodStatut(p);
-       const heureFab = (p.prodDebutTs||p.prodTimestamp) ? fmtDateTime(p.prodDebutTs||p.prodTimestamp) : '';
+       // Heure affichée : fin de prod si terminée (= heure de fabrication), sinon démarrage. Format 00:00.
+       const tsFab = st==='termine' ? (p.prodTermineTs||p.prodTimestamp) : (p.prodDebutTs||p.prodTimestamp);
+       const heureFab = tsFab ? fmtDateTime(tsFab) : '';
        const overdue = prodOpenOverdue(p);
        let statutCell;
        if(st==='termine'){
@@ -1015,11 +1074,383 @@ async function renderProductions(){
        <td><b>${esc(p.lotProduction||'—')}</b></td>
        <td>${empTag}<br><span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></td>
        <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
-       <td>${qty(p.qteRestante)}</td>
-       <td><div class="qa-row"><button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;}).join('')}
+       <td>${qty(p.qteRestante)}${lossByProd[p.id]?`<br><span class="tag out" style="font-size:.68rem">−${qty(lossByProd[p.id])} perte</span>`:''}</td>
+       <td><div class="qa-row"><button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button><button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;}).join('')}
    </tbody></table></div>`:`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
    </div>`;
 }
+
+/* ============================================================
+   PRÉPARATION / PICKING — piloté par les BATCHS, optimisé par ZONE
+   ------------------------------------------------------------
+   Principe : on ne lie plus les batchs en amont. Le picking calcule
+   les besoins en macarons (par parfum) d'une date, puis AFFECTE les
+   batchs disponibles : FIFO par DLC, regroupés par EMPLACEMENT pour
+   limiter les allers-retours et les chocs thermiques. Si un batch ne
+   couvre pas le besoin, on enchaîne sur le suivant (zone adéquate).
+   La liaison commande↔batch est créée AUTOMATIQUEMENT à la validation
+   « Commande prête » (réutilise la décrémentation de stock existante).
+   ============================================================ */
+let _pickMode = 'commandes';     // 'commandes' | 'marche'
+let _pickDate = '';              // date sélectionnée (YYYY-MM-DD)
+let _pickConsolidated = false;   // vue par zone (consolidée) vs par commande
+let _pickConsDone = new Set();   // cases cochées en vue consolidée (aide au tri, en mémoire)
+
+// Le parfum d'une commande (ex. "Vanille") correspond-il à la recette d'un batch
+// (ex. "Macaron vanille") ? Correspondance normalisée par inclusion.
+function pickFlavorMatch(flavorNom, recipeNom){
+  const a=normTxt(flavorNom), b=normTxt(recipeNom);
+  if(!a||!b) return false;
+  return a===b || b.includes(a) || a.includes(b);
+}
+// Besoins en macarons par parfum pour une commande (coffrets + événement + don).
+function orderFlavorNeeds(o){
+  const needs={};
+  orderToLines(o).forEach(ln=>{
+    if(ln.type==='coffret'||ln.type==='evenement'||ln.type==='don'){
+      (ln.parfums||[]).forEach(p=>{ if(+p.qte>0) needs[p.nom]=(needs[p.nom]||0)+(+p.qte||0); });
+    }
+  });
+  return needs;
+}
+// Emballages d'une commande (coffrets par taille + pyramides + grands formats).
+function orderPackaging(o){
+  const boxes={}; let pyramides=0; const bigItems={};
+  orderToLines(o).forEach(ln=>{
+    if(ln.type==='coffret') boxes[ln.taille]=(boxes[ln.taille]||0)+1;
+    else if(ln.type==='evenement') pyramides+=(+ln.equip||0);
+    else if(ln.type==='grand') (ln.items||[]).forEach(p=>{ if(+p.qte>0) bigItems[p.nom]=(bigItems[p.nom]||0)+(+p.qte||0); });
+    else if(ln.type==='don') (ln.items||[]).forEach(p=>{ if(+p.qte>0) bigItems[p.nom]=(bigItems[p.nom]||0)+(+p.qte||0); });
+  });
+  return {boxes, pyramides, bigItems};
+}
+
+// MOTEUR D'AFFECTATION : pour une carte de besoins {parfum: qte}, alloue les
+// batchs disponibles en optimisant par ZONE.
+// Retourne { byZone: [{emp, lettre, nom, icon, picks:[{flavor, prodId, lot, qte, dlc}]}],
+//            shortages: [{flavor, manque}], plan: [{flavor, prodId, qte}] }
+function allocateBatches(needs, prods, recipes){
+  const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'';
+  // candidats par parfum : batchs avec stock, triés FIFO (DLC la plus proche d'abord)
+  const remaining = {}; Object.keys(needs).forEach(f=>remaining[f]=needs[f]);
+  // index des batchs disponibles avec quantité restante "virtuelle" (on déduit au fur et à mesure)
+  const stock = prods.filter(p=>round3(+p.qteRestante)>0).map(p=>({
+    id:p.id, emp:p.emplacement||'', lot:p.lotProduction||'', dlc:p.dlcProduit||'',
+    rec:recName(p.recipeId), dispo:round3(+p.qteRestante)
+  }));
+  // Quels parfums chaque zone peut-elle servir ? (pour prioriser les zones polyvalentes)
+  const flavorsNeeded = Object.keys(needs).filter(f=>needs[f]>0);
+  const zoneScore = {};   // emp -> nb de parfums distincts (parmi les besoins) présents dans la zone
+  EMPLACEMENTS.forEach(e=>{ zoneScore[e.key]=0; });
+  flavorsNeeded.forEach(f=>{
+    const zones=new Set(stock.filter(s=>pickFlavorMatch(f, s.rec)).map(s=>s.emp));
+    zones.forEach(z=>{ if(zoneScore[z]!=null) zoneScore[z]++; else zoneScore[z]=1; });
+  });
+  // ordre des zones : score décroissant, puis ordre physique (F,B,C,A)
+  const zoneOrder = [...new Set([...EMPLACEMENTS.map(e=>e.key), ...stock.map(s=>s.emp)])]
+    .filter(z=>z!=='')
+    .sort((a,b)=>(zoneScore[b]||0)-(zoneScore[a]||0));
+  const plan=[];           // {flavor, prodId, qte, emp, lot, dlc}
+  // On parcourt les zones les plus polyvalentes d'abord ; dans chaque zone, FIFO par DLC.
+  zoneOrder.forEach(z=>{
+    flavorsNeeded.forEach(f=>{
+      if(remaining[f]<=0) return;
+      const cands=stock.filter(s=>s.emp===z && s.dispo>0 && pickFlavorMatch(f, s.rec))
+        .sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999')); // FIFO
+      for(const s of cands){
+        if(remaining[f]<=0) break;
+        const take=Math.min(remaining[f], s.dispo);
+        if(take>0){
+          plan.push({flavor:f, prodId:s.id, qte:round3(take), emp:s.emp, lot:s.lot, dlc:s.dlc});
+          s.dispo=round3(s.dispo-take); remaining[f]=round3(remaining[f]-take);
+        }
+      }
+    });
+  });
+  // regroupement du plan par zone (dans l'ordre de zoneOrder)
+  const byZone=[];
+  zoneOrder.forEach(z=>{
+    const picks=plan.filter(pk=>pk.emp===z);
+    if(picks.length){ const e=empInfo(z); byZone.push({emp:z, lettre:e.lettre, nom:e.nom, icon:e.icon, picks}); }
+  });
+  const shortages=flavorsNeeded.filter(f=>remaining[f]>0).map(f=>({flavor:f, manque:round3(remaining[f])}));
+  return {byZone, shortages, plan};
+}
+
+async function renderPicking(){
+  if(!_pickDate) _pickDate = today();
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Préparation / Picking</h1><p>Affectation des batchs optimisée par emplacement</p></div></div>
+   <div class="pick-tabs">
+     <button class="${_pickMode==='commandes'?'active':''}" onclick="pickSetMode('commandes')">📋 Commandes</button>
+     <button class="${_pickMode==='marche'?'active':''}" onclick="pickSetMode('marche')">⛺ Départ marché</button>
+   </div>
+   <div id="pickBody"></div>`;
+  if(_pickMode==='commandes') await pickRenderOrders();
+  else await pickRenderMarket();
+}
+function pickSetMode(m){ _pickMode=m; _pickConsolidated=false; renderPicking(); }
+function pickSetDate(v){ _pickDate=v; if(_pickMode==='commandes') pickRenderOrders(); else pickRenderMarket(); }
+function pickToggleConsolidated(){ _pickConsolidated=!_pickConsolidated; pickRenderOrders(); }
+
+// ---------- MODE COMMANDES ----------
+async function pickRenderOrders(){
+  const body=document.getElementById('pickBody'); if(!body) return;
+  const allOrders = await db.orders.toArray();
+  const clients = await db.clients.toArray();
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom||'Client';
+  const prods = await db.productions.toArray();
+  const recipes = await db.recipes.toArray();
+  // commandes de la date, non encore livrées (PLUS BESOIN d'être liées en amont)
+  const orders = allOrders.filter(o=>o.date===_pickDate && normStatus(o.statut)!=='Livrée');
+  // besoins consolidés de la journée
+  const allNeeds={};
+  orders.forEach(o=>{ const n=orderFlavorNeeds(o); Object.keys(n).forEach(f=>allNeeds[f]=(allNeeds[f]||0)+n[f]); });
+  const alloc = allocateBatches(allNeeds, prods, recipes);
+
+  body.innerHTML=`
+   <div class="pick-date">
+     <label style="font-weight:600;color:#7a6a62">Date</label>
+     <input type="date" value="${_pickDate}" onchange="pickSetDate(this.value)">
+     <button class="btn ${_pickConsolidated?'':'ghost'}" onclick="pickToggleConsolidated()">${_pickConsolidated?'📋 Par commande':'📦 Tout sortir (par zone)'}</button>
+   </div>
+   ${!orders.length?`<div class="empty">Aucune commande à préparer pour le ${fmtDate(_pickDate)}.</div>`:
+     _pickConsolidated ? pickConsolidatedHtml(alloc, orders) : orders.map(o=>pickOrderCard(o, clName(o.clientId), prods, recipes)).join('')
+   }`;
+}
+
+// Vue « Tout sortir » : un parcours par ZONE (emplacements polyvalents en premier).
+function pickConsolidatedHtml(alloc, orders){
+  if(!alloc.byZone.length && !alloc.shortages.length) return '<div class="empty">Rien à préparer (aucun macaron demandé).</div>';
+  const zones = alloc.byZone.map(z=>{
+    const lines = z.picks.map(pk=>{
+      const key='z:'+z.emp+':'+pk.prodId+':'+pk.flavor;
+      const done=_pickConsDone.has(key);
+      return `<div class="pick-row${done?' done':''}" onclick="pickToggleCons('${key.replace(/'/g,"\\'")}')">
+        <div class="pick-check">${done?'✓':''}</div>
+        <div class="pick-main"><div class="pick-name">${esc(pk.flavor)}</div>
+          <div class="pick-sub">lot ${esc(pk.lot||'—')}${pk.dlc?` · DLC ${fmtDate(pk.dlc)}`:''}</div></div>
+        <button class="pick-scan" onclick="event.stopPropagation();pickScanConfirm('${esc(pk.flavor).replace(/'/g,"\\'")}','${esc(pk.lot||'').replace(/'/g,"\\'")}')" title="Scanner ce bac">📷</button>
+        <div class="pick-qty">${pk.qte}</div></div>`;
+    }).join('');
+    return `<div class="panel"><h2>${z.icon} ${esc(z.nom)} <span class="tag" style="background:${empInfo(z.emp).type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff">${z.lettre}</span></h2>
+      <p class="note" style="margin-bottom:10px">Sors tous ces bacs en une fois depuis cet emplacement.</p>${lines}</div>`;
+  }).join('');
+  const short = alloc.shortages.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>Stock insuffisant :</b> ${alloc.shortages.map(s=>`${esc(s.flavor)} (manque ${qty(s.manque)})`).join(' · ')}. Lance une production.</div></div>`:'';
+  // emballages consolidés
+  const pack={}; let pyr=0; const bigs={};
+  orders.forEach(o=>{ const pk=orderPackaging(o);
+    Object.keys(pk.boxes).forEach(t=>pack[t]=(pack[t]||0)+pk.boxes[t]); pyr+=pk.pyramides;
+    Object.keys(pk.bigItems).forEach(b=>bigs[b]=(bigs[b]||0)+pk.bigItems[b]); });
+  const packRows=[
+    ...Object.keys(pack).sort((a,b)=>(+a)-(+b)).map(t=>({label:`Coffret ${t} macarons`, qte:pack[t]})),
+    ...(pyr>0?[{label:'Pyramide / présentoir', qte:pyr}]:[]),
+    ...Object.keys(bigs).sort().map(b=>({label:b+' (grand format)', qte:bigs[b]}))
+  ];
+  const packHtml = packRows.length?`<div class="panel"><h2>📦 Emballages</h2>${packRows.map(r=>{
+    const key='pack:'+r.label; const done=_pickConsDone.has(key);
+    return `<div class="pick-row${done?' done':''}" onclick="pickToggleCons('${key.replace(/'/g,"\\'")}')">
+      <div class="pick-check">${done?'✓':''}</div>
+      <div class="pick-main"><div class="pick-name">${esc(r.label)}</div><div class="pick-sub">emballage</div></div>
+      <div class="pick-qty">${r.qte}</div></div>`;
+  }).join('')}</div>`:'';
+  return short + zones + packHtml;
+}
+
+// Carte d'une commande : checklist tactile, AVEC l'affectation batch+zone proposée.
+function pickOrderCard(o, nom, prods, recipes){
+  const needs=orderFlavorNeeds(o);
+  const alloc=allocateBatches(needs, prods, recipes);
+  const pack=orderPackaging(o);
+  const state=o.pickState||{};
+  // lignes = emballages + (par zone) parfums affectés
+  const rows=[];
+  Object.keys(pack.boxes).sort((a,b)=>(+a)-(+b)).forEach(t=>rows.push({key:'box'+t, kind:'pack', label:`Coffret ${t} macarons`, qte:pack.boxes[t], sub:'emballage'}));
+  if(pack.pyramides>0) rows.push({key:'pyr', kind:'pack', label:'Pyramide / présentoir', qte:pack.pyramides, sub:'emballage'});
+  Object.keys(pack.bigItems).sort().forEach(b=>rows.push({key:'gf:'+b, kind:'pack', label:b+' (grand format)', qte:pack.bigItems[b], sub:'emballage'}));
+  // parfums affectés, regroupés par zone (zones polyvalentes d'abord)
+  alloc.byZone.forEach(z=>{
+    z.picks.forEach(pk=>{
+      rows.push({key:'pick:'+pk.prodId+':'+pk.flavor, kind:'mac', label:pk.flavor, qte:pk.qte,
+        emp:z.emp, lettre:z.lettre, zoneNom:z.nom, icon:z.icon, lot:pk.lot, dlc:pk.dlc, prodId:pk.prodId});
+    });
+  });
+  const totalLines=rows.length;
+  const doneLines=rows.filter(r=>state[r.key]).length;
+  const pct=totalLines?Math.round(doneLines/totalLines*100):0;
+  const allDone=totalLines>0 && doneLines===totalLines;
+  const ready=normStatus(o.statut)==='Terminée' || o._pickDone===true;
+  const hasShort=alloc.shortages.length>0;
+  // regroupe visuellement par zone : on insère un mini en-tête quand la zone change
+  let lastZone=null;
+  const rowsHtml=rows.map(r=>{
+    let header='';
+    if(r.kind==='mac' && r.emp!==lastZone){
+      lastZone=r.emp;
+      header=`<div class="pick-zone-head">${r.icon} ${esc(r.zoneNom)} <span class="tag" style="background:${empInfo(r.emp).type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff">${r.lettre}</span></div>`;
+    }
+    const done=!!state[r.key];
+    const scan = r.kind==='mac'?`<button class="pick-scan" onclick="event.stopPropagation();pickScanConfirm('${esc(r.label).replace(/'/g,"\\'")}','${esc(r.lot||'').replace(/'/g,"\\'")}')" title="Scanner ce bac">📷</button>`:'';
+    const sub = r.kind==='mac'?`lot ${esc(r.lot||'—')}${r.dlc?` · DLC ${fmtDate(r.dlc)}`:''}`:r.sub;
+    return header+`<div class="pick-row${done?' done':''}" onclick="pickToggleLine(${o.id},'${r.key.replace(/'/g,"\\'")}')">
+      <div class="pick-check">${done?'✓':''}</div>
+      <div class="pick-main"><div class="pick-name">${esc(r.label)}</div><div class="pick-sub">${sub}</div></div>
+      ${scan}<div class="pick-qty">${r.qte}</div></div>`;
+  }).join('');
+  return `<div class="pick-order-card${ready?' ready':''}">
+    <div class="pick-order-head">
+      <h3>${esc(nom)}${o.heureLivraison?` <span style="font-size:.8rem;color:#9a8a82;font-weight:400">${esc(o.heureLivraison)}</span>`:''}</h3>
+      <span class="tag ${ready?'done':'todo'}">${ready?'✓ Prête':doneLines+'/'+totalLines}</span>
+    </div>
+    <div class="pick-progress"><span style="width:${pct}%"></span></div>
+    ${hasShort?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-bottom:10px">⛔ <div>Stock insuffisant : ${alloc.shortages.map(s=>`${esc(s.flavor)} (manque ${qty(s.manque)})`).join(' · ')}</div></div>`:''}
+    ${rowsHtml||'<p class="note">Aucun macaron/emballage à préparer.</p>'}
+    <button class="pick-big-btn ${(allDone||ready)&&!hasShort?'ready':'wait'}" style="margin-top:12px" onclick="pickMarkReady(${o.id})">
+      ${ready?'✓ Commande prête':(hasShort?'Stock insuffisant':(allDone?'✓ Marquer « Commande prête »':`Cochez tout (${doneLines}/${totalLines})`))}</button>
+  </div>`;
+}
+
+async function pickToggleLine(orderId, key){
+  const o=await db.orders.get(orderId); if(!o) return;
+  const st=Object.assign({}, o.pickState||{});
+  st[key]=!st[key];
+  await db.orders.update(orderId, {pickState:st});
+  pickRenderOrders();
+}
+function pickToggleCons(key){
+  if(_pickConsDone.has(key)) _pickConsDone.delete(key); else _pickConsDone.add(key);
+  pickRenderOrders();
+}
+
+// VALIDATION : crée AUTOMATIQUEMENT les liaisons commande↔batch d'après le plan
+// d'affectation, décrémente le stock (réutilise la logique existante), puis passe
+// la commande en « Terminée ». Idempotent : ne relie pas ce qui l'est déjà.
+async function pickMarkReady(orderId){
+  const o=await db.orders.get(orderId); if(!o) return;
+  if(normStatus(o.statut)==='Terminée'){ toast('Commande déjà prête'); return; }
+  const prods=await db.productions.toArray();
+  const recipes=await db.recipes.toArray();
+  const needs=orderFlavorNeeds(o);
+  const rows=[]; const pack=orderPackaging(o);
+  // reconstruit la liste des clés pour vérifier que tout est coché
+  Object.keys(pack.boxes).forEach(t=>rows.push('box'+t));
+  if(pack.pyramides>0) rows.push('pyr');
+  Object.keys(pack.bigItems).forEach(b=>rows.push('gf:'+b));
+  const alloc=allocateBatches(needs, prods, recipes);
+  alloc.byZone.forEach(z=>z.picks.forEach(pk=>rows.push('pick:'+pk.prodId+':'+pk.flavor)));
+  if(alloc.shortages.length){ toast('Stock insuffisant pour cette commande'); return; }
+  const state=o.pickState||{};
+  const allDone=rows.length>0 && rows.every(k=>state[k]);
+  if(!allDone){ toast('Coche toutes les lignes avant de valider'); return; }
+  // déjà liés ? (évite un double décrément si l'utilisateur avait lié à la main)
+  const existing=await db.orderItems.where('orderId').equals(orderId).toArray();
+  const dejaLie=existing.reduce((s,e)=>s+(+e.qte||0),0);
+  try{
+    await db.transaction('rw', db.orderItems, db.productions, async()=>{
+      if(dejaLie<=0){
+        // affecte chaque pick : crée le lien + décrémente le stock fini du batch
+        for(const pk of alloc.plan){
+          const prod=await db.productions.get(pk.prodId);
+          if(!prod) continue;
+          const take=Math.min(round3(+pk.qte), round3(+prod.qteRestante));
+          if(take<=0) continue;
+          await db.orderItems.add({orderId, productionId:pk.prodId, qte:round3(take)});
+          await db.productions.update(pk.prodId, {qteRestante: subQty(prod.qteRestante, take)});
+        }
+      }
+      await db.orders.update(orderId, {statut:'Terminée'});
+    });
+  }catch(err){ toast(err.message||'Erreur à la validation'); return; }
+  toast(dejaLie>0?'Commande prête ✓':'Commande prête ✓ — batchs affectés');
+  pickRenderOrders();
+}
+
+// Bonus QR : confirme que le lot scanné correspond au parfum ET au bac attendu.
+async function pickScanConfirm(flavor, expectedLot){
+  if(typeof openScanner!=='function'){ toast('Scanner indisponible'); return; }
+  openScanner(async (lot)=>{
+    const prods=await db.productions.toArray();
+    const recipes=await db.recipes.toArray();
+    const p=prods.find(x=>normTxt(x.lotProduction||'')===normTxt(lot));
+    if(!p){ toast('Lot '+lot+' introuvable'); return; }
+    const rec=(recipes.find(r=>r.id===p.recipeId)||{}).produitNom||'?';
+    if(expectedLot && normTxt(lot)===normTxt(expectedLot)){
+      toast(`✓ Bon bac : ${rec} (lot ${p.lotProduction})`);
+    } else if(pickFlavorMatch(flavor, rec)){
+      toast(`✓ Parfum OK (${rec}) — lot ${p.lotProduction}${expectedLot?` (attendu : ${expectedLot})`:''}`);
+    } else {
+      toast(`⚠ Ce lot est « ${rec} », pas « ${flavor} »`);
+    }
+  });
+}
+
+// ---------- MODE DÉPART MARCHÉ ----------
+async function pickRenderMarket(){
+  const body=document.getElementById('pickBody'); if(!body) return;
+  const markets=(await db.markets.toArray().catch(()=>[])).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const ouverts=markets.filter(m=>m.statut!=='clos');
+  const moves=await db.marketMoves.toArray().catch(()=>[]);
+  const prods=await db.productions.toArray();
+  const recipes=await db.recipes.toArray();
+  const recName=id=>(recipes.find(r=>r.id===id)||{}).produitNom||'?';
+  const movesByMarket={}; moves.forEach(mv=>{(movesByMarket[mv.marketId] ||= []).push(mv);});
+  body.innerHTML=`
+   <p class="note" style="margin-bottom:14px">Checklist de chargement du camion. Les bacs « sortis » (écran Marchés) forment ton stock de départ ; coche ici ce qui est physiquement chargé.</p>
+   ${!ouverts.length?`<div class="empty">Aucun marché ouvert.<br><span style="font-size:.82rem">Crée un marché depuis l'écran Marchés, puis reviens préparer ton chargement.</span></div>`:
+     ouverts.map(mk=>{
+       const mvs=(movesByMarket[mk.id]||[]).filter(v=>v.type==='sortie');
+       const load=mk.loadState||{};
+       // regroupe les bacs sortis par EMPLACEMENT d'origine du batch
+       const byZone={};
+       mvs.forEach(v=>{ const p=prods.find(x=>x.id===v.productionId); const emp=p?p.emplacement||'':''; (byZone[emp] ||= []).push({v,p}); });
+       const extra=[{key:'pres', label:'Présentoirs / pyramides', sub:'matériel'},
+                    {key:'emb', label:'Emballages (boîtes, sachets)', sub:'matériel'},
+                    {key:'caisse', label:'Caisse / monnaie / TPE', sub:'logistique'}];
+       const allKeys=[...mvs.map(v=>'mv'+v.id), ...extra.map(e=>e.key)];
+       const done=allKeys.filter(k=>load[k]).length;
+       const ready=mk.loadReady===true;
+       const zonesHtml=Object.keys(byZone).map(z=>{
+         const e=empInfo(z);
+         const head=z?`<div class="pick-zone-head">${e.icon} ${esc(e.nom)} <span class="tag" style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff">${e.lettre}</span></div>`:'';
+         return head+byZone[z].map(({v,p})=>{
+           const k='mv'+v.id; const d=!!load[k];
+           const nom=v.parfum||(p?recName(p.recipeId):'?');
+           return `<div class="pick-row${d?' done':''}" onclick="pickToggleMarket(${mk.id},'${k}')">
+             <div class="pick-check">${d?'✓':''}</div>
+             <div class="pick-main"><div class="pick-name">${esc(nom)}</div><div class="pick-sub">bac · lot ${esc(p?p.lotProduction||'':'')}</div></div>
+             <div class="pick-qty">${v.qte}</div></div>`;
+         }).join('');
+       }).join('');
+       const extraHtml=extra.map(r=>{
+         const d=!!load[r.key];
+         return `<div class="pick-row${d?' done':''}" onclick="pickToggleMarket(${mk.id},'${r.key}')">
+           <div class="pick-check">${d?'✓':''}</div>
+           <div class="pick-main"><div class="pick-name">${esc(r.label)}</div><div class="pick-sub">${esc(r.sub)}</div></div></div>`;
+       }).join('');
+       return `<div class="pick-order-card${ready?' ready':''}">
+         <div class="pick-order-head"><h3>${esc(mk.nom||'Marché')} <span style="font-size:.8rem;color:#9a8a82;font-weight:400">${fmtDate(mk.date)}</span></h3>
+           <span class="tag ${ready?'done':'todo'}">${ready?'✓ Chargé':done+'/'+allKeys.length}</span></div>
+         ${!mvs.length?`<p class="note" style="margin-bottom:10px">Aucun bac « sorti » pour ce marché. Enregistre tes sorties de stock depuis l'écran Marchés.</p>`:zonesHtml}
+         ${extraHtml}
+         <button class="pick-big-btn ${ready?'ready':'wait'}" style="margin-top:12px" onclick="pickMarketReady(${mk.id})">${ready?'✓ Camion chargé':'✓ Valider le chargement'}</button>
+       </div>`;
+     }).join('')
+   }`;
+}
+async function pickToggleMarket(marketId, key){
+  const mk=await db.markets.get(marketId); if(!mk) return;
+  const load=Object.assign({}, mk.loadState||{});
+  load[key]=!load[key];
+  await db.markets.update(marketId, {loadState:load});
+  pickRenderMarket();
+}
+async function pickMarketReady(marketId){
+  const mk=await db.markets.get(marketId); if(!mk) return;
+  await db.markets.update(marketId, {loadReady:!(mk.loadReady===true)});
+  toast(mk.loadReady===true?'Chargement rouvert':'Camion chargé ✓');
+  pickRenderMarket();
+}
+
 // Une production a-t-elle déjà suivi le chemin congélateur → frigo ?
 // Si oui, toute recongélation est INTERDITE (congélateur>frigo>congélateur 🚫).
 function aDejaDecongele(p){
@@ -1449,6 +1880,68 @@ async function prodAdjustReel(id){
   closeModal(); renderProductions();
   toast(`Quantité réelle ajustée à ${qty(newReel)} — écart ${ecart>0?'+':''}${qty(ecart)}`);
 }
+
+/* ------------------------------------------------------------
+   DÉCLARATION DE PERTE / CASSE sur stock fini.
+   Décrémente le stock disponible (qteRestante) du batch et enregistre
+   un événement de perte traçable (date, motif, quantité, coût unitaire figé).
+   Le coût unitaire est snapshoté pour le KPI et l'imputation au coût de revient.
+   ------------------------------------------------------------ */
+async function declareLossForm(prodId){
+  const p = await db.productions.get(prodId); if(!p){ toast('Production introuvable'); return; }
+  const recipe = await db.recipes.get(p.recipeId);
+  const dispo = round3(+p.qteRestante||0);
+  if(dispo<=0){ toast('Aucune pièce disponible dans ce batch'); return; }
+  const motifOpts = LOSS_REASONS.map(m=>`<option>${esc(m)}</option>`).join('');
+  openModal(`<h3>Déclarer une perte</h3>
+    <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b></p>
+    <div class="sum-box"><span>Stock disponible de ce batch</span><b>${qty(dispo)}</b></div>
+    <div class="field" style="margin-top:10px"><label>Quantité perdue</label>
+      <input type="number" id="f_lossQte" min="0" max="${dispo}" step="1" value="" placeholder="ex : 3"></div>
+    <div class="field"><label>Motif</label><select id="f_lossMotif">${motifOpts}</select></div>
+    <div class="field"><label>Date</label><input type="date" id="f_lossDate" value="${today()}"></div>
+    <div class="field"><label>Note (facultatif)</label><input id="f_lossNote" placeholder="détail, circonstances…"></div>
+    <p class="note">La perte sort définitivement du stock fini et alimente le taux de perte. Le coût des pièces perdues est imputé au coût de revient global.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn danger" onclick="saveLoss(${prodId})">Déclarer la perte</button></div>`);
+}
+async function saveLoss(prodId){
+  const qteP = +val('f_lossQte');
+  const p = await db.productions.get(prodId); if(!p){ toast('Production introuvable'); return; }
+  const dispo = round3(+p.qteRestante||0);
+  if(isNaN(qteP) || qteP<=0){ toast('Indique une quantité perdue'); return; }
+  if(qteP > dispo + 1e-9){ toast(`Maximum ${qty(dispo)} pièce(s) disponibles`); return; }
+  // coût unitaire de revient figé pour ce batch (matières + conso + MO selon paramètres)
+  const recipe = await db.recipes.get(p.recipeId);
+  const [recipeItems, lots] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray()]);
+  let coutUnit = 0;
+  if(recipe){ const cr = coutRevientRecette(recipe, recipeItems, lots); coutUnit = +cr.coutRevientUnit||0; }
+  const loss = {
+    productionId: prodId, recipeId: p.recipeId,
+    lotProduction: p.lotProduction||'',
+    date: val('f_lossDate')||today(),
+    motif: val('f_lossMotif')||LOSS_REASONS[0],
+    note: val('f_lossNote')||'',
+    qte: round3(qteP),
+    coutUnit: money2(coutUnit),
+    coutTotal: money2(coutUnit*qteP)
+  };
+  await db.transaction('rw', db.losses, db.productions, async()=>{
+    await db.losses.add(loss);
+    await db.productions.update(prodId, {qteRestante: subQty(p.qteRestante, qteP)});
+  });
+  closeModal(); renderProductions();
+  toast(`Perte déclarée : ${qty(qteP)} pièce(s) · ${euro(loss.coutTotal)}`);
+}
+// KPI agrégés de perte (sur l'ensemble des productions / pertes déclarées).
+async function lossKPIs(){
+  const [prods, losses] = await Promise.all([db.productions.toArray(), db.losses.toArray().catch(()=>[])]);
+  const totalProduit = prods.reduce((s,p)=>s+(+p.qteProduite||0),0);
+  const totalPerdu = losses.reduce((s,l)=>s+(+l.qte||0),0);
+  const valeurPerdue = losses.reduce((s,l)=>s+(+l.coutTotal||0),0);
+  const taux = totalProduit>0 ? Math.round(totalPerdu/totalProduit*1000)/10 : 0;
+  return {totalProduit:round3(totalProduit), totalPerdu:round3(totalPerdu), valeurPerdue:money2(valeurPerdue), taux, count:losses.length};
+}
 async function delProd(id){
   // Garde-fou : production liée à une commande ?
   const liens = await db.orderItems.where('productionId').equals(id).toArray();
@@ -1479,7 +1972,7 @@ async function doDelProd(id, recrediter){
   // Re-vérifier le garde-fou (sécurité anti-concurrence)
   const liens = await db.orderItems.where('productionId').equals(id).toArray();
   if(liens.length){ closeModal(); toast('Production liée à une commande — suppression annulée'); renderProductions(); return; }
-  await db.transaction('rw',db.productions,db.prodConsumption,db.materialLots,async()=>{
+  await db.transaction('rw',db.productions,db.prodConsumption,db.materialLots,db.losses,async()=>{
     if(recrediter){
       const conso = await db.prodConsumption.where('productionId').equals(id).toArray();
       for(const c of conso){
@@ -1488,6 +1981,7 @@ async function doDelProd(id, recrediter){
       }
     }
     await db.prodConsumption.where('productionId').equals(id).delete();
+    await db.losses.where('productionId').equals(id).delete().catch(()=>{});
     await db.productions.delete(id);
   });
   closeModal(); renderProductions(); toast(recrediter?'Production supprimée, stock recrédité ✓':'Production supprimée');
@@ -1680,7 +2174,7 @@ async function renderTrace(){
      <div class="panel"><h2>Par batch de production</h2>
        ${prods.length?`<div class="table-wrap"><table><tbody>${prods.map(p=>`<tr>
          <td>${fmtDate(p.date)}</td><td><b>${esc(recName(p.recipeId))}</b><br><span style="color:#9a8a82;font-size:.78rem">${esc(p.lotProduction||'')}</span></td>
-         <td style="text-align:right"><span class="act" onclick="traceProd(${p.id})">Tracer</span></td></tr>`).join('')}</tbody></table></div>`
+         <td style="text-align:right"><span class="act" onclick="printLabel(${p.id})">⎙ Étiquette</span> <span class="act" onclick="traceProd(${p.id})">Tracer</span></td></tr>`).join('')}</tbody></table></div>`
          :`<div class="empty">Aucune production.</div>`}
      </div>
    </div>
@@ -1940,6 +2434,14 @@ async function traceProd(prodId){
     const o=orders.find(x=>x.id===it.orderId); const cl=o?clients.find(c=>c.id===o.clientId):null;
     return `<div class="trace-step">${cl?esc(cl.nom):'—'} — ${it.qte} pièces · ${o?fmtDate(o.date):''}</div>`;
   });
+  // pertes déclarées sur ce batch
+  const lossList = await db.losses.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  const lossBlock = lossList.length
+    ? `<h3 style="font-size:1rem;margin:18px 0 8px">⚠ Pertes / casse déclarées</h3>`
+      + lossList.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(l=>
+          `<div class="trace-step">${qty(l.qte)} pièce(s) · ${esc(l.motif||'—')} · ${fmtDate(l.date)}${l.coutTotal?` · ${euro(l.coutTotal)}`:''}${l.note?`<br><span style="font-size:.8rem;color:#9a8a82">${esc(l.note)}</span>`:''}</div>`
+        ).join('')
+    : '';
   openModal(`<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
     <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
@@ -1948,9 +2450,10 @@ async function traceProd(prodId){
     ${(prod.histEmplacement&&prod.histEmplacement.length>1)?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span style="font-weight:600">Parcours de conservation</span>${prod.histEmplacement.map(h=>`<span style="font-size:.8rem;color:#6b5a52">${empIcon(h.lieu)} ${esc(empNom(h.lieu))} (${empLettre(h.lieu)}) — ${fmtDateTime(h.ts)}${h.motif?` · ${esc(h.motif)}`:''}</span>`).join('')}</div>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
     ${lines.length?lines.join(''):'<p class="note">Aucune consommation enregistrée.</p>'}
+    ${lossBlock}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
     ${cmdLines.length?cmdLines.join(''):'<p class="note">Ce batch n\'est lié à aucune commande pour l\'instant.</p>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
 }
 
 async function traceOrder(orderId){
@@ -2414,7 +2917,7 @@ function _cmdRow(row){
   const st = orderPayStatus(o); const solde = orderBalance(o);
   const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
   return `<tr>
-     <td><b>${o.clientId?`<span class="link-name" onclick="clientPopup(${o.clientId})">${esc(_cmdClName(o.clientId))}</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}</span></td>
+     <td><b>${o.clientId?`<span class="link-name" onclick="clientPopup(${o.clientId})">${esc(_cmdClName(o.clientId))}</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${esc(o.lieuLivraison)}</span>`:''}</td>
      <td><span style="font-size:.82rem">${esc(row.resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
      <td>
@@ -2469,6 +2972,20 @@ async function cmdView(id){
   _privacySuspend=1; // détail de commande toujours en clair, même en mode discret
   const o = await db.orders.get(id);
   const cl = o.clientId ? await db.clients.get(o.clientId) : null;
+  const _liv = computeDeliveryCost(o);
+  let _livBlock = '';
+  if(_liv.actif){
+    const _rec = await db.recipes.toArray(), _ri = await db.recipeItems.toArray(), _lo = await db.materialLots.toArray();
+    const _m = computeOrderMargins(o, _rec, _ri, _lo);
+    const _baisse = Math.max(0, _m.tauxNet - _m.tauxNetApresLiv);
+    _livBlock = `<h3 style="font-size:1rem;margin:16px 0 8px">🚚 Livraison & rentabilité</h3>`+
+      `<div class="sum-box"><span>Coût livraison (A/R ${_liv.distAR} km${_liv.minutes?` · ${_liv.minutes} min`:''})</span><b>${euro(_liv.total)}</b></div>`+
+      `<div class="sum-box" style="font-size:.82rem;color:#8a7a72"><span>dont carburant / temps</span><span>${euro(_liv.coutCarburant)} · ${euro(_liv.coutTemps)}</span></div>`+
+      `<div class="sum-box"><span>Marge nette sans livraison</span><b>${euro(_m.margeNette)} (${_m.tauxNet}%)</b></div>`+
+      `<div class="sum-box"><span>Marge nette après livraison</span><b style="color:${_m.margeNetteApresLiv<0?'#b3261e':(_baisse>0?'#d98324':'#2e7d32')}">${euro(_m.margeNetteApresLiv)} (${_m.tauxNetApresLiv}%)</b></div>`+
+      (_baisse>0?`<div class="sum-box" style="font-size:.82rem;color:#b3261e"><span>Impact sur le taux de marge</span><b>−${_baisse.toFixed(1)} pt</b></div>`:'')+
+      (_m.suggLivraison>0?`<p class="note">💡 Prix de livraison conseillé pour préserver la marge : <b>${euro(_m.suggLivraison)}</b>.</p>`:'');
+  }
   const lignes = orderToLines(o);
   const blocks = lignes.map(ln=>{
     if(ln.type==='coffret'){
@@ -2514,7 +3031,8 @@ async function cmdView(id){
     return '';
   }).join('');
   openModal(`<h3>Détail commande</h3>
-    <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientForm(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}</p>
+    <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientForm(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</p>
+    ${o.lieuLivraison?`<div class="sum-box"><span>📍 Livraison</span><b>${esc(o.lieuLivraison)}</b></div>`:''}
     ${blocks||'<p class="note">Aucun produit.</p>'}
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${o.perso?'Oui':'Non'}</b></div>
     ${+o.remiseGlobale>0?`<div class="sum-box"><span>Remise globale</span><b>−${o.remiseGlobale}%</b></div>`:''}
@@ -2528,6 +3046,7 @@ async function cmdView(id){
        return `<div class="sum-box"><span>Encaissé</span><b>${euro(enc)}</b></div>
          <div class="sum-box"><span><b>Solde restant dû</b> <span class="tag" style="background:${col};color:#fff">${st}</span></span><b style="color:${solde>0?'var(--red,#b3261e)':'#3f7d52'}">${euro(solde)}</b></div>`;})()}
     ${orderPayStatus(o)!=='Payé'?`<button class="btn gold sm" style="margin-top:6px" onclick="markPaid(${id},true)">✓ Solder (${euro(orderBalance(o))})</button>`:''}
+    ${_livBlock}
     <h3 style="font-size:1rem;margin:16px 0 8px">Statut de la commande</h3>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       ${ORDER_STATUS.map(st=>{const cur=normStatus(o.statut)===st;
@@ -2559,6 +3078,7 @@ function lineTotalStored(ln){
 }
 let cmdLines = [];      // lignes de produits de la commande en cours
 let cmdProductsCache = [];
+let _cmdMarginCache = {recipes:[], recipeItems:[], lots:[]};
 let cmdClientsCache = [];
 
 // Convertit une ancienne commande mono-type en lignes (rétro-compat).
@@ -2606,6 +3126,12 @@ async function cmdForm(id, opts){
   _privacySuspend=1; // saisie de commande toujours en clair, même en mode discret
   cmdClientsCache = await db.clients.toArray();
   cmdProductsCache = (await db.products.toArray()).filter(p=>p.actif!==false).sort((a,b)=>(+a.taille)-(+b.taille));
+  // caches pour le calcul de marge en direct (impact livraison)
+  _cmdMarginCache = {
+    recipes: await db.recipes.toArray(),
+    recipeItems: await db.recipeItems.toArray(),
+    lots: await db.materialLots.toArray()
+  };
   const o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
   // Préserver les lignes en cours si on rouvre après ajout d'un client
   if(opts.keepLines && Array.isArray(cmdLines)){ /* cmdLines déjà en mémoire, on le garde */ }
@@ -2617,13 +3143,32 @@ async function cmdForm(id, opts){
   const curStatut = o.statut==='En cours' ? 'À préparer' : (o.statut||'À préparer');
   const stOpts = ORDER_STATUS.map(s=>`<option ${curStatut===s?'selected':''}>${s}</option>`).join('');
   const regOpts = `<option value="">—</option>`+PAY_METHODS.map(s=>`<option ${o.reglement===s?'selected':''}>${s}</option>`).join('');
+  // Suggestions de lieux de livraison : presets + lieux des commandes passées.
+  const places = await usualDeliveryPlaces();
+  const placesOpts = places.map(p=>`<option value="${esc(p)}">`).join('');
   openModal(`<h3>${id?'Modifier':'Nouvelle'} commande</h3>
    <div class="field"><label>Client</label>
      <input class="search" id="f_clsearch" placeholder="Rechercher par nom ou téléphone…" oninput="filterCmdClients(this.value)" value="">
-     <select id="f_cl" style="margin-top:6px">${clOpts||'<option value="0">— aucun —</option>'}</select>
+     <select id="f_cl" style="margin-top:6px" onchange="cmdSuggestClientAddress()">${clOpts||'<option value="0">— aucun —</option>'}</select>
      <button class="btn ghost sm" style="margin-top:6px" onclick="quickClient(${id||0})">+ Nouveau client</button>
    </div>
-   <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}"></div>
+   <div class="row2">
+     <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}"></div>
+     <div class="field"><label>Heure de livraison</label><input type="time" id="f_heure" value="${esc(o.heureLivraison||'')}"></div>
+   </div>
+   <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— adresse du client ou lieu habituel</span></label>
+     <input id="f_lieu" list="lieuxLivraison" autocomplete="off" placeholder="Choisir ou saisir un lieu…" value="${esc(o.lieuLivraison||'')}">
+     <datalist id="lieuxLivraison">${placesOpts}</datalist>
+   </div>
+   <div class="row2">
+     <div class="field"><label>Distance aller (km) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé</span></label>
+       <input type="number" min="0" step="0.1" id="f_distKm" value="${o.distanceKm!=null?esc(o.distanceKm):''}" placeholder="ex : 8" oninput="cmdDeliveryRecalc()"></div>
+     <div class="field"><label>Prix carburant (€/L)</label>
+       <input type="number" min="0" step="0.001" id="f_carbu" value="${o.prixCarburant!=null?esc(o.prixCarburant):''}" placeholder="ex : 1.85" oninput="cmdDeliveryRecalc()"></div>
+   </div>
+   <div class="field"><label>Temps de livraison (min) <span style="color:#9a8a82;font-weight:400">— aller-retour, impacte le temps de travail</span></label>
+     <input type="number" min="0" step="1" id="f_tempsLiv" value="${o.tempsLivraisonMin!=null?esc(o.tempsLivraisonMin):''}" placeholder="ex : 30" oninput="cmdDeliveryRecalc()"></div>
+   <div class="sum-box" id="deliveryImpact" style="display:none;flex-direction:column;align-items:stretch;gap:4px"></div>
 
    <label style="font-size:.82rem;color:#7a6a62;font-weight:500;display:block;margin-bottom:6px">Produits de la commande</label>
    <div id="linesWrap"></div>
@@ -2746,7 +3291,18 @@ function filterCmdClients(q){
   });
   sel.innerHTML='<option value="0">— aucun —</option>'+matches.map(c=>`<option value="${c.id}" ${String(c.id)===cur?'selected':''}>${esc(c.nom)}${c.tel?' · '+esc(c.tel):''}</option>`).join('');
   // si un seul résultat, le présélectionner pour gagner un clic
-  if(matches.length===1) sel.value=String(matches[0].id);
+  if(matches.length===1){ sel.value=String(matches[0].id); cmdSuggestClientAddress(); }
+}
+
+// Quand un client est choisi, propose son adresse comme lieu de livraison —
+// uniquement si le champ lieu est encore vide (ne jamais écraser une saisie manuelle).
+function cmdSuggestClientAddress(){
+  const sel=document.getElementById('f_cl'); const lieu=document.getElementById('f_lieu');
+  if(!sel || !lieu) return;
+  if((lieu.value||'').trim()) return; // l'utilisateur a déjà renseigné un lieu
+  const cid=+sel.value||0; if(!cid) return;
+  const cl=(cmdClientsCache||[]).find(c=>c.id===cid);
+  if(cl && (cl.adresse||'').trim()) lieu.value=cl.adresse.trim();
 }
 
 // Ajout rapide d'un client SANS quitter la commande (popup → retour avec client sélectionné)
@@ -3008,6 +3564,18 @@ function lineRemiseRow(ln,i){
     </div>`;
 }
 function setLineRemise(i,v){ let p=+v||0; if(p<0)p=0; if(p>100)p=100; cmdLines[i].remisePct=p; cmdRecalc(); }
+// Normalise les lignes d'édition (cmdLines) vers la forme stockée (tableaux parfums/items).
+// Réutilisé par saveCmd ET par le calcul de marge en direct (impact livraison).
+function cmdLinesToStored(){
+  return (cmdLines||[]).map(ln=>{
+    const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
+    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+    if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+    if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0)};
+  }).filter(Boolean);
+}
 function cmdRecalc(){
   const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln))); // après remises de ligne
   const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
@@ -3028,6 +3596,43 @@ function cmdRecalc(){
     } else brk.style.display='none';
   }
   if(typeof cmdUpdatePaySummary==='function') cmdUpdatePaySummary();
+  if(typeof cmdDeliveryRecalc==='function') cmdDeliveryRecalc();
+}
+
+// Recalcule en direct l'impact de la livraison sur la marge de la commande
+// et propose un prix de livraison qui couvre le coût ET préserve le taux de marge.
+function cmdDeliveryRecalc(){
+  const box=document.getElementById('deliveryImpact'); if(!box) return;
+  // commande de travail à partir des lignes en cours + saisies livraison
+  const o={
+    lignes: cmdLinesToStored(),
+    remiseGlobale: Math.max(0,Math.min(100,+(document.getElementById('f_remiseg')?.value)||0)),
+    distanceKm: +val('f_distKm')||0,
+    prixCarburant: +val('f_carbu')||0,
+    tempsLivraisonMin: +val('f_tempsLiv')||0
+  };
+  const liv = computeDeliveryCost(o);
+  if(!liv.actif){ box.style.display='none'; return; }
+  const c=_cmdMarginCache||{};
+  const m = computeOrderMargins(o, c.recipes||[], c.recipeItems||[], c.lots||[]);
+  const baisse = Math.max(0, m.tauxNet - m.tauxNetApresLiv);
+  box.style.display='flex';
+  box.innerHTML =
+    `<div style="display:flex;justify-content:space-between"><span>🚚 Coût livraison (A/R ${liv.distAR} km${liv.minutes?` · ${liv.minutes} min`:''})</span><b>${euro(liv.total)}</b></div>`+
+    `<div style="display:flex;justify-content:space-between;color:#8a7a72;font-size:.82rem"><span>dont carburant / temps</span><span>${euro(liv.coutCarburant)} · ${euro(liv.coutTemps)}</span></div>`+
+    `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span>Marge nette <b>sans</b> livraison</span><b>${euro(m.margeNette)} (${m.tauxNet}%)</b></div>`+
+    `<div style="display:flex;justify-content:space-between"><span>Marge nette <b>après</b> livraison</span><b style="color:${m.margeNetteApresLiv<0?'#b3261e':(baisse>0?'#d98324':'#2e7d32')}">${euro(m.margeNetteApresLiv)} (${m.tauxNetApresLiv}%)</b></div>`+
+    (baisse>0?`<div style="display:flex;justify-content:space-between;color:#b3261e;font-size:.82rem"><span>Impact sur le taux de marge</span><b>−${baisse.toFixed(1)} pt</b></div>`:'')+
+    (m.suggLivraison>0?`<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #e0d5c5">💡 Pour préserver ta marge, facture la livraison <b style="color:var(--bordeaux)">${euro(m.suggLivraison)}</b> <button type="button" class="btn gold sm" style="margin-left:6px" onclick="cmdApplyDeliveryFee(${m.suggLivraison})">Ajouter au prix</button></div>`:'');
+}
+// Ajoute le supplément livraison suggéré au prix total de la commande (champ manuel).
+function cmdApplyDeliveryFee(montant){
+  const mt=document.getElementById('f_mt'); if(!mt) return;
+  const base = +mt.value || 0;
+  mt.dataset.auto='0';                       // le prix devient manuel
+  mt.value = money2(base + (+montant||0)).toFixed(2);
+  cmdRecalc();
+  toast(`Livraison ${euro(montant)} ajoutée au prix`);
 }
 
 async function saveCmd(id){
@@ -3049,14 +3654,7 @@ async function saveCmd(id){
     }
   }
   // normaliser les lignes (parfums/items en tableaux pour stockage propre), remise de ligne conservée
-  const lignes = cmdLines.map(ln=>{
-    const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
-    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
-    if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
-    if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0)};
-  });
+  const lignes = cmdLinesToStored();
   const remiseGlobale = Math.max(0, Math.min(100, +val('f_remiseg')||0));
   // Registre de paiements : chaque encaissement exige montant>0 + date + mode. AUCUNE date auto-générée.
   // On considère "entamé" tout encaissement où au moins un champ a été touché.
@@ -3070,6 +3668,8 @@ async function saveCmd(id){
   const montant=money2(+val('f_mt')||0);
   const o={
     clientId:+val('f_cl')||0, date:val('f_date'),
+    heureLivraison: val('f_heure')||'', lieuLivraison: val('f_lieu')||'',
+    distanceKm: +val('f_distKm')||0, prixCarburant: +val('f_carbu')||0, tempsLivraisonMin: +val('f_tempsLiv')||0,
     lignes, remiseGlobale,
     perso:document.getElementById('f_perso').checked,
     montant,
@@ -3323,12 +3923,15 @@ async function computeAccounting(opts){
   orders.forEach(o=>{ const b=orderBalance(o); if(b>0) creances=money2(creances+b); });
 
   const totalCout=money2(serie.reduce((s,x)=>s+x.coutMatieres,0));
+  // Valeur des pertes / casse déclarées (coût de revient des pièces jetées) — imputée au résultat.
+  const lossesAll = await db.losses.toArray().catch(()=>[]);
+  const totalPertes = money2(lossesAll.reduce((s,l)=>s+(+l.coutTotal||0),0));
   return {
     serie, encByMethod, chargeByCat,
     totalEncaisse, totalFacture, totalCharges, totalCoutMatieres:totalCout,
-    totalMarches,
+    totalMarches, totalPertes,
     margeBrute: money2(totalEncaisse-totalCout),
-    resultat: money2(totalEncaisse-totalCharges-totalCout),
+    resultat: money2(totalEncaisse-totalCharges-totalCout-totalPertes),
     creances,
     nbCharges: charges.length
   };
@@ -3353,6 +3956,26 @@ function estimateOrderMaterialCost(o, recipes, recipeItems, lots){
   return money2(cost);
 }
 
+/* ------------------------------------------------------------
+   COÛT DE LIVRAISON d'une commande.
+   Entrées stockées sur l'objet order (saisie utilisateur) :
+     - distanceKm        : distance ALLER simple (km) — doublée ici pour l'aller-retour
+     - prixCarburant     : prix à la pompe (€/L)
+     - tempsLivraisonMin : temps théorique de livraison (min) — coût = temps × taux horaire
+   Le carburant utilise la consommation du véhicule (L/100 km, réglages).
+   ------------------------------------------------------------ */
+function computeDeliveryCost(o){
+  const s=getSettings();
+  const distAller = Math.max(0, +o.distanceKm||0);
+  const distAR = distAller*2;                       // aller-retour
+  const prixL = Math.max(0, +o.prixCarburant||0);
+  const conso = Math.max(0, +s.vehicleConso||0);
+  const coutCarburant = money2(distAR * (conso/100) * prixL);
+  const minutes = Math.max(0, +o.tempsLivraisonMin||0);
+  const coutTemps = money2((minutes/60) * (+s.laborRate||0));
+  const total = money2(coutCarburant + coutTemps);
+  return {distAller, distAR, coutCarburant, coutTemps, minutes, total, actif: (distAller>0||minutes>0)};
+}
 /* ============================================================
    MARGES — rentabilité réelle d'une vente
    Brute  = prix de vente − coût matières − coût emballages − consommables
@@ -3402,9 +4025,35 @@ function computeOrderMargins(o, recipes, recipeItems, lots){
   const margeNette = money2(margeBrute - chargesSociales);
   const tauxNet = caNet>0 ? Math.round(margeNette/caNet*1000)/10 : 0;
 
+  // --- Coût de livraison : carburant (aller-retour) + temps (taux horaire) ---
+  const liv = computeDeliveryCost(o);
+  const margeNetteApresLiv = money2(margeNette - liv.total);
+  const tauxNetApresLiv = caNet>0 ? Math.round(margeNetteApresLiv/caNet*1000)/10 : 0;
+  // Suggestion de prix de livraison à facturer pour : (1) couvrir le coût ET
+  // (2) préserver le taux de marge nette qu'avait la commande AVANT livraison.
+  // On résout : (margeNette + supplément×(1−chargeMoy)) / (caNet + supplément) = tauxNet/100
+  // soit le supplément qui maintient tauxNet une fois le coût livraison absorbé.
+  let suggLivraison = 0;
+  if(liv.actif){
+    // taux de charges sociales moyen pondéré appliqué au supplément (marchandise par défaut)
+    const partService = caNet>0 ? caServiceN/caNet : 0;
+    const chargeMoy = (s.socialGoods/100)*(1-partService) + (s.socialService/100)*partService;
+    const r = tauxNet/100; // cible : conserver le même taux net qu'avant livraison
+    // supplément X tel que (margeNette − livTotal + X(1−chargeMoy)) = r·(caNet + X)
+    const denom = (1 - chargeMoy - r);
+    if(denom > 0.0001){
+      suggLivraison = money2((r*caNet - (margeNette - liv.total)) / denom);
+    } else {
+      // repli : au minimum couvrir le coût net de charges
+      suggLivraison = money2(liv.total / Math.max(0.0001, 1 - chargeMoy));
+    }
+    if(suggLivraison < liv.total) suggLivraison = liv.total; // jamais en dessous du coût réel
+  }
+
   return {ca:caNet, caGoods:caGoodsN, caService:caServiceN,
     coutMat, coutEmb, margeBrute, tauxBrut,
-    chargesSociales, margeNette, tauxNet};
+    chargesSociales, margeNette, tauxNet,
+    livraison: liv, margeNetteApresLiv, tauxNetApresLiv, suggLivraison};
 }
 // Échelle de rentabilité d'après le taux de marge nette.
 function profitScale(tauxNet){
@@ -4618,6 +5267,7 @@ async function renderCompta(){
      <div class="kpi"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b></div>
      <div class="kpi"><span>Charges</span><b>${euro(A.totalCharges)}</b></div>
      <div class="kpi"><span>Coût matières (est.)</span><b>${euro(A.totalCoutMatieres)}</b></div>
+     ${A.totalPertes>0?`<div class="kpi"><span>Pertes / casse</span><b style="color:var(--red,#b3261e)">−${euro(A.totalPertes)}</b></div>`:''}
      <div class="kpi"><span>Résultat (encaissé)</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b></div>
      <div class="kpi"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b></div>
    </div>
@@ -5216,6 +5866,11 @@ function settingsForm(){
     <div id="set_pktypes">
       ${(s.packTypes||[]).concat([{nom:'',cout:'',capacite:''}]).map((t,i)=>`<div class="pay-row"><input id="set_pt_n_${i}" value="${esc(t.nom||'')}" placeholder="nom (ex: Boîte 6)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="${t.cout!==''&&t.cout!=null?t.cout:''}" placeholder="€/u" style="width:90px"><input type="number" step="1" min="0" id="set_pt_cap_${i}" value="${t.capacite!==''&&t.capacite!=null?t.capacite:''}" placeholder="pc" style="width:70px"></div>`).join('')}
     </div>
+    <p class="note" style="margin-top:8px">Livraison : sert à chiffrer le carburant (aller-retour) et le coût du temps de livraison.</p>
+    <div class="row2">
+      <div class="field"><label>Consommation véhicule (L/100 km)</label><input type="number" step="0.1" min="0" id="set_conso" value="${s.vehicleConso}"></div>
+      <div class="field"><label>Coût horaire main-d'œuvre (€/h)</label><input type="number" step="0.5" min="0" id="set_rate" value="${s.laborRate}"></div>
+    </div>
     <input type="hidden" id="set_pt_n" value="${(s.packTypes||[]).length+1}">
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveSettingsForm()">Enregistrer</button></div>`);
 }
@@ -5223,6 +5878,8 @@ function saveSettingsForm(){
   const s=getSettings();
   s.socialGoods=Math.max(0,+val('set_sg')||0);
   s.socialService=Math.max(0,+val('set_ss')||0);
+  s.vehicleConso=Math.max(0,+val('set_conso')||0);
+  s.laborRate=Math.max(0,+val('set_rate')||0);
   s.packaging={}; BOX_SIZES.forEach(t=>{ s.packaging[t]=money2(+val('set_pk_'+t)||0); });
   // types d'emballage (on lit toutes les lignes, on garde celles avec un nom)
   const n=+val('set_pt_n')||0; const pts=[];
@@ -5292,17 +5949,39 @@ async function marketForm(id){
       <div class="field"><label>Durée (heures)</label><input type="number" step="0.5" min="0" id="mk_heures" value="${mk.heures||''}" placeholder="ex : 8"></div>
     </div>
     <div class="field"><label>Météo (optionnel)</label><input id="mk_meteo" value="${esc(mk.meteo||'')}" placeholder="ex : Ensoleillé, 18°C"></div>
+    <div class="field"><label>Quantité prévue à emporter (macarons) <span style="color:#9a8a82;font-weight:400">— pour la planification intelligente</span></label>
+      <input type="number" min="0" step="10" id="mk_prevu" value="${mk.prevuQte!=null?esc(mk.prevuQte):''}" placeholder="ex : 300">
+      <p class="note" id="mk_prevuHint" style="margin-top:4px"></p></div>
     <div class="field"><label>Commentaires</label><textarea id="mk_notes" rows="2">${esc(mk.notes||'')}</textarea></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveMarket(${id||0})">Enregistrer</button></div>`);
+  // suggestion intelligente basée sur l'historique des marchés clos
+  marketPrevuSuggestion();
+}
+// Propose une quantité prévisionnelle d'après la moyenne des ventes des marchés passés.
+async function marketPrevuSuggestion(){
+  const hint=document.getElementById('mk_prevuHint'); if(!hint) return;
+  try{
+    const fc = await marketForecast();
+    if(fc.nbMarches>0){
+      hint.innerHTML = `💡 D'après tes ${fc.nbMarches} marché(s) passé(s) : ~<b>${fc.moyenneVendu}</b> macarons vendus en moyenne (max ${fc.maxVendu}). `+
+        `<span class="act" onclick="document.getElementById('mk_prevu').value=${fc.suggestion}">Utiliser ${fc.suggestion}</span>`;
+    } else {
+      hint.textContent = 'Aucun historique de marché pour le moment — la suggestion s’affinera après tes premiers marchés clôturés.';
+    }
+  }catch(e){ /* silencieux */ }
 }
 async function saveMarket(id){
   const nom=val('mk_nom'), date=val('mk_date');
   if(!nom){ toast('Nom obligatoire'); return; }
   if(!date){ toast('Date obligatoire'); return; }
   const o={nom, date, lieu:val('mk_lieu'), horaires:val('mk_horaires'), heures:+val('mk_heures')||0,
-    meteo:val('mk_meteo'), notes:val('mk_notes')};
+    meteo:val('mk_meteo'), notes:val('mk_notes'), prevuQte:+val('mk_prevu')||0};
   if(id){ await db.markets.update(id,o); }
-  else { o.statut='ouvert'; o.ca={especes:0,cb:0,autre:0}; await db.markets.add(o); }
+  else { o.statut='ouvert'; o.ca={especes:0,cb:0,autre:0}; id=await db.markets.add(o); }
+  // Connexion calendrier : un marché planifié apparaît dans l'agenda (type 'marche').
+  const evRef='mk'+id;
+  await db.events.where('refId').equals(evRef).delete().catch(()=>{});
+  await db.events.add({date:o.date, titre:'⛺ '+nom+(o.prevuQte?` (${o.prevuQte} prévus)`:''), type:'marche', refId:evRef}).catch(()=>{});
   closeModal(); renderMarkets(); toast('Marché enregistré ✓');
 }
 async function delMarket(id){
@@ -5311,6 +5990,7 @@ async function delMarket(id){
     await db.marketMoves.where('marketId').equals(id).delete();
     await db.markets.delete(id);
   });
+  await db.events.where('refId').equals('mk'+id).delete().catch(()=>{});
   renderMarkets(); toast('Marché supprimé');
 }
 
@@ -6090,9 +6770,210 @@ function aiExtractName(raw){
 
 
 let aiPending = null; // action critique en attente de validation
+/* ============================================================
+   ASSISTANT — ANTI-GASPI & JAUGE DE SÉRÉNITÉ
+   Branché sur l'architecture réelle de l'app :
+   - lots matières : db.materialLots (dlc, qteRestante)
+   - recette→ingrédients : db.recipeItems (recipeId, materialId)
+   - stock fini par recette : somme des db.productions.qteRestante
+   - temps de prod : recipe.minParBatch (min/batch) · rendement = pièces/batch
+   - commandes : db.orders (date) + demande via _orderParfumDemand
+   ============================================================ */
+
+// A. ANTI-GASPI : suggère quoi produire pour écouler les matières dont la DLC approche.
+// Retourne une liste triée : urgence DLC croissante, puis stock fini croissant.
+async function generateProductionSuggestions(daysThreshold){
+  const seuil = daysThreshold!=null ? daysThreshold : 7;
+  const [lots, mats, recipes, recipeItems, prods] = await Promise.all([
+    db.materialLots.toArray(), db.materials.toArray(),
+    db.recipes.toArray(), db.recipeItems.toArray(), db.productions.toArray()
+  ]);
+  const matName = id => (mats.find(m=>m.id===id)||{}).nom||'—';
+  // stock fini par recette (somme des batchs restants)
+  const finiByRecipe = {};
+  prods.forEach(p=>{ finiByRecipe[p.recipeId]=(finiByRecipe[p.recipeId]||0)+(+p.qteRestante||0); });
+  // 1) lots dont la DLC expire bientôt ET avec du stock restant
+  const lotsUrgents = lots
+    .filter(l => +l.qteRestante>0 && l.dlc)
+    .map(l => ({...l, jours: daysTo(l.dlc)}))
+    .filter(l => l.jours!=null && l.jours <= seuil)
+    .sort((a,b)=>(a.jours-b.jours));
+  // 2) croisement : pour chaque matière urgente → recettes qui l'utilisent → stock fini
+  const seen = new Set();   // évite les doublons (recette, matière)
+  const suggestions = [];
+  for(const lot of lotsUrgents){
+    const usedIn = recipeItems.filter(it=>it.materialId===lot.materialId);
+    for(const it of usedIn){
+      const rec = recipes.find(r=>r.id===it.recipeId);
+      if(!rec) continue;
+      const key = rec.id+':'+lot.materialId;
+      if(seen.has(key)) continue; seen.add(key);
+      suggestions.push({
+        recipeId: rec.id,
+        produitNom: rec.produitNom,
+        materialId: lot.materialId,
+        matiere: matName(lot.materialId),
+        lotId: lot.id,
+        lotFournisseur: lot.lotFournisseur||'',
+        dlc: lot.dlc,
+        joursAvantDLC: lot.jours,
+        qteLotRestante: round3(+lot.qteRestante||0),
+        stockFini: round3(finiByRecipe[rec.id]||0)
+      });
+    }
+  }
+  // 3) priorisation : DLC la plus proche d'abord, puis stock fini le plus bas
+  suggestions.sort((a,b)=> (a.joursAvantDLC-b.joursAvantDLC) || (a.stockFini-b.stockFini));
+  return suggestions;
+}
+
+// PRÉVISIONNEL MARCHÉ : analyse les marchés CLOS passés pour suggérer une quantité
+// totale à emporter et une répartition par parfum (basée sur les ventes réelles).
+async function marketForecast(){
+  const [markets, moves, recipes, prods] = await Promise.all([
+    db.markets.toArray().catch(()=>[]), db.marketMoves.toArray().catch(()=>[]),
+    db.recipes.toArray(), db.productions.toArray()
+  ]);
+  const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'';
+  const clos = markets.filter(m=>m.statut==='clos');
+  const movesByMarket={}; moves.forEach(mv=>{(movesByMarket[mv.marketId] ||= []).push(mv);});
+  let totalVendu=0, maxVendu=0; const venduParParfum={};
+  clos.forEach(mk=>{
+    const lines = marketLineSummary(movesByMarket[mk.id]||[]);
+    let venduMk=0;
+    lines.forEach(l=>{
+      const nom = l.parfum || recName((prods.find(p=>l.productionIds.includes(p.id))||{}).recipeId) || 'Autre';
+      venduParParfum[nom]=(venduParParfum[nom]||0)+(+l.vendu||0);
+      venduMk += (+l.vendu||0);
+    });
+    totalVendu += venduMk; maxVendu = Math.max(maxVendu, venduMk);
+  });
+  const nbMarches = clos.length;
+  const moyenneVendu = nbMarches>0 ? Math.round(totalVendu/nbMarches) : 0;
+  // suggestion : moyenne + petite marge de sécurité de 10 %, arrondie à la dizaine
+  const suggestion = nbMarches>0 ? Math.ceil(moyenneVendu*1.1/10)*10 : 0;
+  // répartition par parfum (en % des ventes cumulées), triée
+  const totParf = Object.values(venduParParfum).reduce((s,x)=>s+x,0);
+  const repartition = Object.keys(venduParParfum).map(nom=>({
+    parfum:nom, vendu:round3(venduParParfum[nom]),
+    pct: totParf>0 ? Math.round(venduParParfum[nom]/totParf*100) : 0
+  })).sort((a,b)=>b.vendu-a.vendu);
+  return {nbMarches, moyenneVendu, maxVendu, suggestion, repartition, totalVendu:round3(totalVendu)};
+}
+
+// B. JAUGE DE SÉRÉNITÉ : score 0–100 reflétant ta capacité à honorer les commandes
+// des 15 prochains jours avec le stock actuel, en tenant compte de la charge de
+// production restante et de l'urgence (échéances proches non couvertes).
+async function calculateSerenityScore(opts){
+  opts=opts||{};
+  const horizon = opts.horizon!=null ? opts.horizon : 15;   // jours
+  const [recipes, prods, orders, markets] = await Promise.all([
+    db.recipes.toArray(), db.productions.toArray(), db.orders.toArray(),
+    db.markets.toArray().catch(()=>[])
+  ]);
+  // stock fini par parfum (nom de recette)
+  const stockByParfum = {};
+  prods.forEach(p=>{ const r=recipes.find(x=>x.id===p.recipeId); const nom=r?r.produitNom:('#'+p.recipeId);
+    stockByParfum[nom]=(stockByParfum[nom]||0)+(+p.qteRestante||0); });
+  const stockTotal = Object.values(stockByParfum).reduce((s,x)=>s+x,0);
+  // recette par parfum (pour temps de prod + rendement)
+  const recByParfum = {}; recipes.forEach(r=>{ recByParfum[r.produitNom]=r; });
+  // temps moyen de production par pièce (toutes recettes) — pour la charge des marchés
+  const perPieceMin = (()=>{ const arr=recipes.map(r=>{ const rend=+r.rendement>0?+r.rendement:60; return (Math.max(0,+r.minParBatch||0))/rend; }).filter(x=>x>0); return arr.length?arr.reduce((a,x)=>a+x,0)/arr.length:0; })();
+  // commandes validées des N prochains jours (non livrées)
+  const todayStr = today();
+  const horizonDate = (()=>{ const d=new Date(todayStr); d.setDate(d.getDate()+horizon); return d.toISOString().slice(0,10); })();
+  const fenetre = orders.filter(o=> o.date && o.date>=todayStr && o.date<=horizonDate && normStatus(o.statut)!=='Livrée');
+  // marchés planifiés dans la fenêtre (non clos) avec une quantité prévue
+  const marchesFenetre = markets.filter(m=> m.date && m.date>=todayStr && m.date<=horizonDate && m.statut!=='clos' && (+m.prevuQte||0)>0);
+
+  // demande par parfum + suivi de l'échéance la plus proche non couverte
+  const demandeByParfum = {};
+  const datedDemand = {};   // parfum -> [{date, qte, dans}]
+  fenetre.forEach(o=>{
+    const dem=_orderParfumDemand(o); const dans=daysTo(o.date);
+    for(const nom in dem){ demandeByParfum[nom]=(demandeByParfum[nom]||0)+dem[nom];
+      (datedDemand[nom] ||= []).push({date:o.date, qte:dem[nom], dans}); }
+  });
+
+  let totalDemande=0, totalCouvert=0, aProduire=0;
+  let chargeMin=0;            // minutes de production nécessaires pour combler le manque
+  let urgenceCritique=false;  // une échéance proche (≤3 j) n'est pas couverte par le stock
+  const manquesParParfum=[];
+  for(const nom in demandeByParfum){
+    const dem=demandeByParfum[nom];
+    const stock=stockByParfum[nom]||0;
+    const couvert=Math.min(dem, stock);
+    const manque=Math.max(0, dem-stock);
+    totalDemande+=dem; totalCouvert+=couvert; aProduire+=manque;
+    if(manque>0){
+      manquesParParfum.push({parfum:nom, manque:round3(manque)});
+      // charge de production : (manque / rendement) batchs × temps/batch
+      const rec=recByParfum[nom];
+      const rend=rec&&+rec.rendement>0?+rec.rendement:60;
+      const minParBatch=rec?Math.max(0,+rec.minParBatch||0):0;
+      chargeMin += Math.ceil(manque/rend)*minParBatch;
+      // urgence : la première échéance non couverte tombe-t-elle très bientôt ?
+      const ech=(datedDemand[nom]||[]).slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+      let solde=stock;
+      for(const e of ech){ solde-=e.qte; if(solde<0 && e.dans!=null && e.dans<=3){ urgenceCritique=true; break; } }
+    }
+  }
+
+  // MARCHÉS PLANIFIÉS : la quantité prévue est une demande supplémentaire (globale,
+  // non ventilée par parfum). On l'honore d'abord avec le stock fini RESTANT après
+  // les commandes, puis le reste est à produire.
+  let marketDemande=0;
+  const stockRestantApresCmd = Math.max(0, stockTotal - totalCouvert);
+  let stockDispoMarche = stockRestantApresCmd;
+  marchesFenetre.forEach(m=>{
+    const q=+m.prevuQte||0; marketDemande+=q;
+    const dans=daysTo(m.date);
+    const couvertM=Math.min(q, stockDispoMarche);
+    stockDispoMarche=Math.max(0, stockDispoMarche-couvertM);
+    const manqueM=Math.max(0, q-couvertM);
+    totalDemande+=q; totalCouvert+=couvertM; aProduire+=manqueM;
+    if(manqueM>0){
+      chargeMin += Math.round(manqueM*perPieceMin);
+      if(dans!=null && dans<=3) urgenceCritique=true;
+    }
+  });
+
+  // SCORE : part de la demande déjà couverte par le stock (taux de service immédiat),
+  // pénalisée si une échéance critique (≤3 j) n'est pas honorée.
+  let score;
+  if(totalDemande<=0){ score = 100; }   // rien à honorer = sérénité totale
+  else {
+    score = Math.round(totalCouvert/totalDemande*100);
+    if(urgenceCritique) score = Math.min(score, 35);   // alerte rouge : retard quasi inévitable
+  }
+  score = Math.max(0, Math.min(100, score));
+  // libellé + couleur
+  let label, col;
+  if(score>=85){ label='Sérénité'; col='#3f7d52'; }
+  else if(score>=60){ label='Maîtrisé'; col='#7faa4f'; }
+  else if(score>=40){ label='Vigilance'; col='#caa23b'; }
+  else if(score>=20){ label='Tension'; col='#d98324'; }
+  else { label='Zone de stress'; col='#b3261e'; }
+  const heures=Math.floor(chargeMin/60), minutes=Math.round(chargeMin%60);
+  return {
+    score, label, col, horizon,
+    totalDemande:round3(totalDemande), totalCouvert:round3(totalCouvert), aProduire:round3(aProduire),
+    chargeMin, chargeTxt: chargeMin>0?`${heures?heures+'h ':''}${String(minutes).padStart(2,'0')}min`:'—',
+    urgenceCritique, nbCommandes:fenetre.length,
+    nbMarches: marchesFenetre.length, marketDemande: round3(marketDemande),
+    marches: marchesFenetre.map(m=>({nom:m.nom, date:m.date, dans:daysTo(m.date), prevu:+m.prevuQte||0})).sort((a,b)=>(a.date||'').localeCompare(b.date||'')),
+    manques: manquesParParfum.sort((a,b)=>b.manque-a.manque)
+  };
+}
+
+
 function renderAssistant(){
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Assistant</h1><p>Pilotez l'application en langage naturel</p></div></div>
+   <div class="topbar"><div><h1>Assistant</h1><p>Anti-gaspi, sérénité & pilotage</p></div></div>
+   <div id="serenityBox"><div class="banner">🧘 <div>Calcul de la jauge de sérénité…</div></div></div>
+   <div id="marketForecast"></div>
+   <div id="antiGaspi"></div>
    <div id="aiPredict"><div class="banner">📈 <div>Analyse du rythme de ventes en cours…</div></div></div>
    <div class="banner">🤖 <div>Écrivez ou dictez (micro du clavier) une instruction. L'assistant fonctionne <b>hors-ligne</b>. Toute action critique (création, suppression, ajustement) demande votre validation.</div></div>
    <div class="panel">
@@ -6106,7 +6987,75 @@ function renderAssistant(){
      </div>
    </div>
    <div id="aiOut"></div>`;
+  renderSerenityGauge();
+  renderMarketForecast();
+  renderAntiGaspi();
   renderPredictiveAlerts();
+  ttScheduleSerenityRefresh();
+}
+// Prévisionnel marché intelligent : suggestion de quantités d'après l'historique.
+async function renderMarketForecast(){
+  const box=document.getElementById('marketForecast'); if(!box) return;
+  let fc; try{ fc=await marketForecast(); }catch(e){ box.innerHTML=''; return; }
+  if(!fc.nbMarches){ box.innerHTML=''; return; }   // pas d'historique : on n'encombre pas
+  const rep=fc.repartition.slice(0,8).map(r=>`<div class="sum-box"><span>${esc(r.parfum||'Autre')}</span><b>${r.pct}% · ${qty(r.vendu)} vendus</b></div>`).join('');
+  box.innerHTML=`<div class="panel"><h2>📊 Prévisionnel marché <span style="font-weight:400;font-size:.82rem;color:#9a8a82">— d'après ${fc.nbMarches} marché(s) passé(s)</span></h2>
+    <div class="sum-box"><span>Ventes moyennes par marché</span><b>${qty(fc.moyenneVendu)} macarons</b></div>
+    <div class="sum-box"><span>Record</span><b>${qty(fc.maxVendu)} macarons</b></div>
+    <div class="sum-box"><span>💡 Quantité conseillée à prévoir</span><b style="color:var(--bordeaux)">${qty(fc.suggestion)} macarons</b></div>
+    ${rep?`<p class="note" style="margin:10px 0 4px">Répartition conseillée par parfum (selon tes ventes passées) :</p>${rep}`:''}
+  </div>`;
+}
+// Rafraîchit la jauge périodiquement tant que l'onglet Assistant est affiché
+// (background check), et au retour au premier plan. S'auto-arrête sinon.
+let _serenityTimer=null;
+function ttScheduleSerenityRefresh(){
+  if(_serenityTimer) clearInterval(_serenityTimer);
+  _serenityTimer=setInterval(()=>{
+    if(view==='assistant' && document.getElementById('serenityBox') && document.visibilityState==='visible'){
+      renderSerenityGauge();
+    } else if(view!=='assistant'){
+      clearInterval(_serenityTimer); _serenityTimer=null;
+    }
+  }, 60000); // toutes les minutes
+}
+// Jauge de sérénité (barre colorée dynamique) — recalculée à chaque ouverture
+// et rafraîchie en arrière-plan tant que l'onglet Assistant est affiché.
+async function renderSerenityGauge(){
+  const box=document.getElementById('serenityBox'); if(!box) return;
+  let g; try{ g=await calculateSerenityScore({horizon:15}); }catch(e){ box.innerHTML=''; return; }
+  box.innerHTML=`<div class="panel serenity">
+    <div class="ser-head"><span class="ser-title">🧘 Jauge de sérénité</span>
+      <span class="ser-score" style="color:${g.col}">${g.score}% · ${g.label}</span></div>
+    <div class="ser-bar"><span style="width:${g.score}%;background:linear-gradient(90deg,#b3261e,#d98324,#caa23b,#7faa4f,#3f7d52);"></span>
+      <i style="left:calc(${g.score}% - 1px)"></i></div>
+    <div class="ser-meta">
+      <span>${g.nbCommandes} commande(s)${g.nbMarches?` · ${g.nbMarches} marché(s)`:''} sur ${g.horizon} j</span>
+      <span>${g.aProduire>0?`À produire : <b>${qty(g.aProduire)}</b> · charge ~${g.chargeTxt}`:'Tout est couvert par le stock ✓'}</span>
+    </div>
+    ${g.marches&&g.marches.length?`<div class="ser-markets">${g.marches.map(m=>`<span class="tag event">⛺ ${esc(m.nom||'Marché')} · ${m.dans!=null?(m.dans<=0?"auj.":'J−'+m.dans):''} · ${qty(m.prevu)} prévus</span>`).join(' ')}</div>`:''}
+    ${g.urgenceCritique?`<p class="note" style="color:var(--red,#b3261e);margin-top:6px">⚠ Échéance critique sous 3 jours non couverte par le stock — lance une production en priorité.</p>`:''}
+  </div>`;
+}
+// Cartes d'alerte Anti-Gaspi (matières dont la DLC approche).
+async function renderAntiGaspi(){
+  const box=document.getElementById('antiGaspi'); if(!box) return;
+  let sugg; try{ sugg=await generateProductionSuggestions(7); }catch(e){ box.innerHTML=''; return; }
+  if(!sugg.length){
+    box.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Aucune matière à DLC proche (≤ 7 j). Rien à écouler en urgence.</div></div>`;
+    return;
+  }
+  const cards=sugg.slice(0,10).map(s=>{
+    const urgent = s.joursAvantDLC<=2;
+    const jTxt = s.joursAvantDLC<=0 ? "aujourd'hui" : (s.joursAvantDLC===1?'demain':`dans ${s.joursAvantDLC} jours`);
+    return `<div class="gaspi-card" style="border-left-color:${urgent?'#b3261e':'#d98324'}">
+      <div class="gaspi-head">${urgent?'🚨':'⏳'} <b>Produis des ${esc(s.produitNom)}</b></div>
+      <div class="gaspi-body">Ton lot de <b>${esc(s.matiere)}</b>${s.lotFournisseur?` (n° ${esc(s.lotFournisseur)})`:''} périme <b>${jTxt}</b> (${fmtDate(s.dlc)}), et ton stock fini est actuellement de <b>${qty(s.stockFini)}</b>.</div>
+      <div class="gaspi-foot"><span class="tag ${urgent?'out':'warn'}">DLC ${s.joursAvantDLC<=0?'⚠ dépassée/jour J':'J−'+s.joursAvantDLC}</span>
+        <button class="btn gold sm" onclick="goView('productions')">⚙ Lancer la production</button></div>
+    </div>`;
+  }).join('');
+  box.innerHTML=`<div class="panel"><h2>♻️ Anti-gaspi — à écouler en priorité</h2>${cards}</div>`;
 }
 // Affiche, en haut de l'assistant, les alertes de rupture PRÉDICTIVES (rythme de ventes).
 async function renderPredictiveAlerts(){
@@ -6432,6 +7381,21 @@ async function evView(id){
       ${o?`<button class="btn" onclick="closeModal();view='commandes';setActiveView&&setActiveView('commandes');renderCmd();cmdView(${o.id})">Voir la commande</button>`:''}</div>`);
     return;
   }
+  // Événement issu d'un marché planifié : géré depuis l'onglet Marchés
+  if(e.type==='marche' && typeof e.refId==='string' && e.refId.indexOf('mk')===0){
+    const mkId=+e.refId.slice(2);
+    const mk=await db.markets.get(mkId);
+    openModal(`<h3>Détail de l'événement</h3>
+      <div class="sum-box"><span>Type</span><b>Marché</b></div>
+      <div class="sum-box"><span>Intitulé</span><b>${esc(e.titre)}</b></div>
+      <div class="sum-box"><span>Date</span><b>${fmtDate(e.date)}</b></div>
+      ${mk?`<div class="sum-box"><span>Lieu</span><b>${esc(mk.lieu||'—')}</b></div>
+      <div class="sum-box"><span>Quantité prévue</span><b>${mk.prevuQte?qty(mk.prevuQte)+' macarons':'—'}</b></div>`:'<p class="note">Marché associé introuvable.</p>'}
+      <p class="note">Cet événement est rattaché à un marché. Pour le modifier, passez par l'onglet Marchés.</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      ${mk?`<button class="btn" onclick="closeModal();view='marches';setActiveView&&setActiveView('marches');renderMarkets();marketDetail(${mkId})">Voir le marché</button>`:''}</div>`);
+    return;
+  }
   // Événement libre : consultation, puis suppression via bouton explicite
   openModal(`<h3>Détail de l'événement</h3>
     <div class="sum-box"><span>Intitulé</span><b>${esc(e.titre)}</b></div>
@@ -6525,7 +7489,7 @@ async function renderLabels(){
           <span class="meta">Emplacement : ${p.emplacement?`${empIcon(p.emplacement)} ${esc(empNom(p.emplacement))} (${empLettre(p.emplacement)})`:'—'}</span>
           <span class="meta">Statut : ${st==='termine'?'✓ Terminée':'▶ Démarrée'}</span>
           <span class="meta">DLC : ${dlcTxt}</span>
-          <span class="meta">Fab. : ${fmtDate(p.date)}</span>
+          <span class="meta">Fab. : ${(p.prodTermineTs||(st==='termine'?p.prodTimestamp:'')) ? fmtDateTime(p.prodTermineTs||p.prodTimestamp) : fmtDate(p.date)}</span>
         </div>
         <div class="label-actions">
           <label class="copies">Copies <input type="number" id="lblCopies_${p.id}" min="1" max="200" value="1"></label>
@@ -6559,8 +7523,9 @@ async function buildLabelData(prodId){
     produit: rec?rec.produitNom:'Produit',
     lot: p.lotProduction||'—',
     dlc: p.dlcProduit ? fmtDate(p.dlcProduit) : '—',
-    // Fabrication : horodatage automatique (date + heure) si disponible, sinon la date saisie
-    fab: p.prodTimestamp ? fmtDateTime(p.prodTimestamp) : fmtDate(p.date),
+    // Fabrication = heure de FIN de production (prodTermineTs).
+    // Repli : ancien horodatage de fin, sinon date saisie. Heure au format 00:00.
+    fab: (p.prodTermineTs || (prodStatut(p)==='termine' ? p.prodTimestamp : '')) ? fmtDateTime(p.prodTermineTs || p.prodTimestamp) : fmtDate(p.date),
     emplacement: p.emplacement ? empNom(p.emplacement) : '',
     empLettre: p.emplacement ? empLettre(p.emplacement) : '',
     empType: p.emplacement ? empInfo(p.emplacement).type : '',
@@ -6659,7 +7624,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -7126,6 +8091,9 @@ async function buildOrderText(orderId){
   const L=[];
   L.push('SENSATIONS MACARONS');
   L.push('Commande du '+fmtDate(o.date));
+  if(o.heureLivraison || o.lieuLivraison){
+    L.push('Livraison : '+[o.heureLivraison, o.lieuLivraison].filter(Boolean).join(' · '));
+  }
   L.push('========================================');
   L.push('');
   L.push('CLIENT');
@@ -7152,6 +8120,10 @@ async function buildOrderText(orderId){
   });
   L.push('');
   L.push('MONTANT : '+euro(o.montant));
+  const _livT = computeDeliveryCost(o);
+  if(_livT.actif){
+    L.push('Livraison : A/R '+_livT.distAR+' km'+(_livT.minutes?' · '+_livT.minutes+' min':'')+' → coût '+euro(_livT.total)+' (carburant '+euro(_livT.coutCarburant)+' + temps '+euro(_livT.coutTemps)+')');
+  }
   L.push('Paiement : '+(o.paiement||'En attente')+(o.reglement?' ('+o.reglement+')':''));
   L.push('Statut : '+normStatus(o.statut));
   if(o.notes){ L.push(''); L.push('NOTES'); L.push('  '+o.notes.replace(/\n/g,'\n  ')); }
@@ -7318,12 +8290,207 @@ async function showForecastPopup(opts){
     </div>`);
 }
 
+/* ============================================================
+   POINTEUSE DE LABORATOIRE — time tracker global
+   100% offline, résilient à la mise en veille PWA.
+   Principe : on stocke uniquement le timestamp de DÉMARRAGE dans
+   localStorage. Le temps écoulé est TOUJOURS recalculé depuis
+   Date.now() − start (jamais d'accumulation via setInterval, qui
+   se fige quand iOS suspend l'app). Le tick ne sert qu'à rafraîchir
+   l'affichage ; la source de vérité reste le timestamp stocké.
+   ============================================================ */
+const TT_KEY = 'sm_workSession_start';   // timestamp (ms) de la session en cours
+const TT_PAUSED_KEY = 'sm_workSession_paused';   // ms de pause CUMULÉS (pauses terminées)
+const TT_PAUSE_AT_KEY = 'sm_workSession_pauseAt'; // timestamp du début de la pause en cours (0 si non en pause)
+let _ttTick = null;                       // id du setInterval d'affichage
+
+// État de pause courant.
+function ttIsPaused(){ return (+localStorage.getItem(TT_PAUSE_AT_KEY)||0) > 0; }
+// Temps NET travaillé (ms) = écoulé − pauses cumulées − pause en cours.
+// Toujours recalculé depuis les timestamps : résilient à la veille iOS.
+function ttNetElapsed(){
+  const start = +localStorage.getItem(TT_KEY)||0;
+  if(!start) return 0;
+  const accumPause = +localStorage.getItem(TT_PAUSED_KEY)||0;
+  const pauseAt = +localStorage.getItem(TT_PAUSE_AT_KEY)||0;
+  const curPause = pauseAt>0 ? Math.max(0, Date.now()-pauseAt) : 0;
+  return Math.max(0, Date.now() - start - accumPause - curPause);
+}
+
+// Formate une durée (ms) en "01h 24m" (et secondes si < 1 min pour le feedback).
+function ttFormat(ms){
+  const totalMin = Math.floor(ms/60000);
+  const h = Math.floor(totalMin/60);
+  const m = totalMin%60;
+  if(totalMin<1){ const s=Math.floor(ms/1000); return `00h 00m ${String(s).padStart(2,'0')}s`; }
+  return `${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m`;
+}
+// Rafraîchit l'UI à partir de l'état stocké (appelé au boot, au tick, et aux clics).
+function ttRefresh(){
+  const bar = document.getElementById('timeTracker');
+  const btn = document.getElementById('ttBtn');
+  const time = document.getElementById('ttTime');
+  const lbl = document.getElementById('ttLbl');
+  const pauseBtn = document.getElementById('ttPauseBtn');
+  if(!bar || !btn || !time) return;
+  const start = +localStorage.getItem(TT_KEY) || 0;
+  if(start>0){
+    const paused = ttIsPaused();
+    bar.classList.add('run');
+    bar.classList.toggle('paused', paused);
+    btn.classList.remove('start'); btn.classList.add('stop');
+    time.textContent = ttFormat(ttNetElapsed());
+    btn.textContent = '⏹ Terminer';
+    if(lbl) lbl.textContent = paused ? 'En pause' : 'Production';
+    if(pauseBtn){ pauseBtn.style.display=''; pauseBtn.textContent = paused ? '▶' : '⏸'; pauseBtn.title = paused ? 'Reprendre' : 'Mettre en pause'; }
+  } else {
+    bar.classList.remove('run','paused');
+    btn.classList.remove('stop'); btn.classList.add('start');
+    time.textContent = '00h 00m';
+    btn.textContent = '▶ Démarrer la production';
+    if(lbl) lbl.textContent = 'Production';
+    if(pauseBtn){ pauseBtn.style.display='none'; }
+  }
+}
+// Démarre/arrête le tick d'affichage (1 s). Le tick ne fait QUE rafraîchir l'UI.
+function ttStartTicking(){ ttStopTicking(); _ttTick = setInterval(ttRefresh, 1000); }
+function ttStopTicking(){ if(_ttTick){ clearInterval(_ttTick); _ttTick=null; } }
+
+// Clic sur le bouton : démarre si inactif, sinon arrête.
+function ttToggle(){
+  const start = +localStorage.getItem(TT_KEY) || 0;
+  if(start>0) ttStop(); else ttStart();
+}
+function ttStart(){
+  localStorage.setItem(TT_KEY, String(Date.now()));
+  localStorage.setItem(TT_PAUSED_KEY, '0');     // pauses cumulées = 0
+  localStorage.removeItem(TT_PAUSE_AT_KEY);      // pas de pause en cours
+  ttRefresh(); ttStartTicking();
+  toast('Production démarrée ⏱');
+}
+// Bascule pause / reprise. La pause fige le temps net en mémorisant le moment
+// du début de pause ; la reprise ajoute la durée de pause au cumul. Aucun
+// compteur continu : tout est recalculé depuis les timestamps.
+function ttPause(){
+  const start = +localStorage.getItem(TT_KEY)||0;
+  if(!start) return;
+  const pauseAt = +localStorage.getItem(TT_PAUSE_AT_KEY)||0;
+  if(pauseAt>0){
+    // REPRISE : on cumule la durée de la pause qui s'achève
+    const accum = +localStorage.getItem(TT_PAUSED_KEY)||0;
+    localStorage.setItem(TT_PAUSED_KEY, String(accum + Math.max(0, Date.now()-pauseAt)));
+    localStorage.removeItem(TT_PAUSE_AT_KEY);
+    ttRefresh(); ttStartTicking();
+    toast('Reprise ▶');
+  } else {
+    // PAUSE : on mémorise l'instant de mise en pause et on stoppe le tick d'affichage
+    localStorage.setItem(TT_PAUSE_AT_KEY, String(Date.now()));
+    ttStopTicking();
+    ttRefresh();
+    toast('En pause ⏸');
+  }
+}
+// Arrêt : fige la durée, demande le taux horaire, calcule et enregistre la session.
+function ttStop(){
+  const start = +localStorage.getItem(TT_KEY) || 0;
+  if(!start){ ttRefresh(); return; }
+  const end = Date.now();
+  // Temps NET (pauses déduites, y compris une pause encore ouverte au moment du Stop).
+  const ms = ttNetElapsed();
+  ttStopTicking();
+  // Durée décimale (heures) pour le calcul du coût, arrondie à 2 décimales.
+  const heuresDec = Math.round(ms/3600000*100)/100;
+  const dureeTxt = ttFormat(ms);
+  // Total des pauses (pour information dans la modale).
+  const accumPause = +localStorage.getItem(TT_PAUSED_KEY)||0;
+  const pauseAt = +localStorage.getItem(TT_PAUSE_AT_KEY)||0;
+  const pauseMs = accumPause + (pauseAt>0 ? Math.max(0, Date.now()-pauseAt) : 0);
+  const s = getSettings();
+  const tauxDefaut = +s.laborRate || 0;
+  openModal(`<h3>Fin de session</h3>
+    <div class="sum-box"><span>Temps travaillé (pauses déduites)</span><b>${dureeTxt}</b></div>
+    ${pauseMs>=60000?`<div class="sum-box"><span>Dont pauses déduites</span><b>${ttFormat(pauseMs)}</b></div>`:''}
+    <div class="sum-box"><span>Soit en heures</span><b>${heuresDec.toFixed(2)} h</b></div>
+    <div class="field" style="margin-top:12px"><label>Taux horaire de cette session (€/h)</label>
+      <input type="number" min="0" step="0.5" id="tt_rate" value="${tauxDefaut||''}" placeholder="ex : 12"></div>
+    <p class="note" id="tt_cost" style="margin-top:4px"></p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="ttCancelStop()">Annuler</button>
+      <button class="btn" onclick="ttConfirmStop(${start},${end},${ms},${pauseMs})">Enregistrer la session</button>
+    </div>`);
+  // aperçu live du coût
+  const rate=document.getElementById('tt_rate'), cost=document.getElementById('tt_cost');
+  const upd=()=>{ const t=+rate.value||0; cost.textContent = t>0?`Coût de main-d'œuvre : ${euro(money2(heuresDec*t))}`:''; };
+  if(rate){ rate.addEventListener('input', upd); upd(); rate.focus(); }
+}
+// L'utilisateur annule l'arrêt : la session continue (les timestamps n'ont pas été touchés).
+function ttCancelStop(){ closeModal(); ttRefresh(); if(!ttIsPaused()) ttStartTicking(); }
+// Confirme l'arrêt : enregistre la session en base et nettoie le localStorage.
+async function ttConfirmStop(start, end, ms, pauseMs){
+  const taux = Math.max(0, +val('tt_rate')||0);
+  ms = Math.max(0, +ms||0);
+  pauseMs = Math.max(0, +pauseMs||0);
+  const heuresDec = Math.round(ms/3600000*100)/100;
+  const totalMin = Math.floor(ms/60000);
+  const session = {
+    date: today(),
+    debut: new Date(start).toISOString(),
+    fin: new Date(end).toISOString(),
+    dureeMin: totalMin,
+    dureeHeures: heuresDec,
+    pauseMin: Math.floor(pauseMs/60000),
+    tauxHoraire: money2(taux),
+    coutTotal: money2(heuresDec*taux)
+  };
+  try{ await db.workSessions.add(session); }catch(e){ console.error('workSession',e); }
+  localStorage.removeItem(TT_KEY);
+  localStorage.removeItem(TT_PAUSED_KEY);
+  localStorage.removeItem(TT_PAUSE_AT_KEY);
+  closeModal(); ttRefresh();
+  toast(`Session enregistrée : ${ttFormat(ms)} · ${euro(session.coutTotal)}`);
+  if(view==='pointeuse' && typeof renderTimeTracker==='function') renderTimeTracker();
+}
+// Historique rapide des sessions (modale).
+async function ttOpenHistory(){
+  const sessions = (await db.workSessions.orderBy('date').reverse().toArray().catch(()=>[]));
+  const totMin = sessions.reduce((s,x)=>s+(+x.dureeMin||0),0);
+  const totCout = sessions.reduce((s,x)=>s+(+x.coutTotal||0),0);
+  const rows = sessions.slice(0,40).map(x=>{
+    const h=Math.floor((+x.dureeMin||0)/60), m=(+x.dureeMin||0)%60;
+    const pMin=+x.pauseMin||0; const ph=Math.floor(pMin/60), pm=pMin%60;
+    return `<tr><td>${fmtDate(x.date)}<br><span style="color:#9a8a82;font-size:.72rem">${fmtTime(x.debut)}–${fmtTime(x.fin)}</span></td>
+      <td>${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m${pMin>=1?`<br><span style="color:#9a8a82;font-size:.7rem">pause ${ph?ph+'h ':''}${String(pm).padStart(2,'0')}m</span>`:''}</td>
+      <td>${euro(x.tauxHoraire)}/h</td>
+      <td><b>${euro(x.coutTotal)}</b></td>
+      <td style="text-align:right"><span class="act del" onclick="ttDeleteSession(${x.id})">Suppr.</span></td></tr>`;
+  }).join('');
+  const th=Math.floor(totMin/60), tm=totMin%60;
+  openModal(`<h3>Pointeuse — historique</h3>
+    <div class="sum-box"><span>Total cumulé</span><b>${String(th).padStart(2,'0')}h ${String(tm).padStart(2,'0')}m · ${euro(totCout)}</b></div>
+    ${sessions.length?`<div class="table-wrap no-freeze" style="margin-top:10px"><table><thead><tr><th>Date</th><th>Durée</th><th>Taux</th><th>Coût</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${sessions.length>40?'<p class="note">40 dernières sessions affichées.</p>':''}`:'<p class="note">Aucune session enregistrée pour l\'instant.</p>'}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+async function ttDeleteSession(id){
+  if(!confirm('Supprimer cette session de travail ?')) return;
+  await db.workSessions.delete(id).catch(()=>{});
+  ttOpenHistory();
+  if(view==='pointeuse' && typeof renderTimeTracker==='function') renderTimeTracker();
+}
+// Initialisation au boot : reprend une session en cours si présente.
+function ttInit(){
+  ttRefresh();
+  if(+localStorage.getItem(TT_KEY)>0 && !ttIsPaused()) ttStartTicking();
+  // recalage immédiat quand l'app revient au premier plan (iOS a pu suspendre le tick)
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') ttRefresh(); });
+}
+
 (async()=>{
   try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
   try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
   const opened = await handleTraceAnchor().catch(()=>false);
   if(!opened) render();
   initHistoryNav();
+  ttInit();
   exportReminder();
   // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
   try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
