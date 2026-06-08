@@ -8233,7 +8233,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v96';
+const APP_VERSION = 'v97';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -8290,8 +8290,8 @@ const APP_KB = [
     tags:'sauvegarde backup restauration export import donnees fichier',
     r:`<p>Onglet <b>Sauvegardes</b>. Exporte toutes tes données dans un fichier, et réimporte-le pour restaurer. Pense à sauvegarder régulièrement : les données sont stockées localement sur ton appareil.</p>` },
   { id:'assistant', titre:'Assistant IA (hors-ligne)',
-    tags:'assistant ia aide question stock commande tendance rupture comment fonctionne localiser ou sont',
-    r:`<p>L'assistant fonctionne <b>hors-ligne</b>. Il sait : <b>localiser tes macarons</b> (« où sont mes macarons vanille ? » → popup avec le détail des batchs et emplacements), <b>créer une commande en langage naturel</b> (« ajoute une commande pour le 19 juin chez Paulette de 3 mangue passion et 3 chocolat » → il te fait préciser le parfum/format ambigu), répondre sur le stock, le CA, les tendances, les ruptures, et expliquer le fonctionnement (« comment ça marche… »). Toute action critique demande validation. Envoi fluide : touche <b>Entrée</b>.</p>` },
+    tags:'assistant ia aide question stock commande tendance rupture comment fonctionne localiser ou sont joindre piece fichier photo txt notes coller',
+    r:`<p>L'assistant fonctionne <b>hors-ligne</b>. Il sait : <b>localiser tes macarons</b> (« où sont mes macarons vanille ? »), <b>créer une commande en langage naturel</b>, répondre sur le stock, le CA, les tendances, les ruptures, et expliquer le fonctionnement. Tu peux <b>📎 Joindre</b> un <b>fichier texte (.txt)</b> : son contenu est ajouté à ta demande. Une <b>photo</b> peut être jointe comme simple <b>aperçu visuel temporaire</b> (l'assistant ne lit pas son contenu, et rien n'est enregistré dans l'app). Depuis l'app Notes de l'iPhone, fais <b>Copier</b> puis colle le texte dans le champ (l'accès direct aux notes Apple n'est pas possible). Toute action critique demande validation. Envoi : touche <b>Entrée</b>.</p>` },
   { id:'locate', titre:'Localiser mes macarons (où sont-ils ?)',
     tags:'localiser localisation ou sont emplacement batch batchs frigo congelateur trouve mes macarons popup',
     r:`<p>Demande à l'assistant « <b>où sont mes macarons vanille ?</b> ». Il ouvre une <b>popup</b> qui liste, par emplacement (Frigo F, Congélateurs B/C/A), chaque <b>batch</b> en stock avec sa quantité, son n° de lot, sa DLC et son statut (prêt / en cours). Sans parfum précisé, il propose la liste des parfums en stock.</p>` },
@@ -8342,6 +8342,7 @@ function aiHelp(txt){
 }
 
 function renderAssistant(){
+  _aiPhotoPreview=null;   // aucune pièce jointe ne persiste entre deux visites
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Assistant</h1><p>Anti-gaspi, sérénité & pilotage</p></div></div>
    <div id="serenityBox"><div class="banner">🧘 <div>Calcul de la jauge de sérénité…</div></div></div>
@@ -8353,10 +8354,13 @@ function renderAssistant(){
      <div class="field"><label>Votre demande</label>
        <textarea id="aiInput" rows="2" placeholder="ex : Comment fonctionne le picking ? · Quel est le stock de chocolat ? · Crée une commande pour M. Dupont vendredi" onkeydown="aiInputKey(event)"></textarea>
      </div>
-     <div class="flex" style="gap:8px"><button class="btn" onclick="aiRun()">Envoyer</button>
+     <div id="aiAttachWrap" style="display:none;margin-bottom:8px"></div>
+     <input type="file" id="aiFileInput" accept=".txt,.csv,.md,.text,text/plain,text/csv,text/markdown,image/*" style="display:none" onchange="aiAttachFile(this.files)">
+     <div class="flex" style="gap:8px;flex-wrap:wrap"><button class="btn" onclick="aiRun()">Envoyer</button>
+       <button class="btn ghost" onclick="document.getElementById('aiFileInput').click()" title="Joindre un fichier texte (.txt) ou une photo (support visuel)">📎 Joindre</button>
        <button class="btn gold" onclick="document.getElementById('aiInput').value='aide';aiRun()">❓ Aide</button>
-       <button class="btn ghost" onclick="document.getElementById('aiInput').value='';document.getElementById('aiOut').innerHTML='';">Effacer</button></div>
-     <p class="note" style="margin-top:6px">Astuce : appuie sur <b>Entrée</b> pour envoyer (Maj+Entrée = nouvelle ligne). Base d'aide à jour : <b>${APP_VERSION}</b>.</p>
+       <button class="btn ghost" onclick="aiClearAll()">Effacer</button></div>
+     <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> est lu et ajouté à ta demande ; une <b>photo</b> reste un aperçu temporaire (non lue, non enregistrée). Astuce : depuis l'app Notes, fais <b>Copier</b> puis colle ici. Base d'aide : <b>${APP_VERSION}</b>.</p>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
        ${['Aide','Comment fonctionne le picking ?','Quel est le stock de chocolat ?','Commandes à préparer demain','Chiffre d\'affaires','Que faut-il produire ?','Quand vais-je être en rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
      </div>
@@ -8459,8 +8463,60 @@ function aiSay(html){ document.getElementById('aiOut').innerHTML = `<div class="
 
 // Envoi fluide : Entrée envoie, Maj+Entrée = nouvelle ligne. Anti double-déclenchement.
 let _aiRunning=false;
+// Aperçu photo en mémoire vive UNIQUEMENT (jamais enregistré en base/cache). Réinitialisé à chaque rendu.
+let _aiPhotoPreview=null;
 function aiInputKey(ev){
   if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); aiRun(); }
+}
+// Gère la pièce jointe choisie : .txt/.csv/.md → injecté dans la demande ; image → aperçu temporaire.
+function aiAttachFile(files){
+  const f=files&&files[0]; if(!f){ return; }
+  const isImage=(f.type||'').startsWith('image/');
+  const isText = /^(text\/|application\/(json|csv))/.test(f.type||'') || /\.(txt|csv|md|text|json)$/i.test(f.name||'');
+  if(isImage){
+    // Limite douce : on n'affiche un aperçu que pour des images raisonnables (évite de saturer la RAM).
+    if(f.size > 12*1024*1024){ toast('Image trop lourde pour l\'aperçu (max ~12 Mo)'); document.getElementById('aiFileInput').value=''; return; }
+    const reader=new FileReader();
+    reader.onload=e=>{ _aiPhotoPreview=e.target.result; aiRenderAttach(f.name); };
+    reader.onerror=()=>toast('Lecture de l\'image impossible');
+    reader.readAsDataURL(f);
+  } else if(isText){
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const content=String(e.target.result||'').trim();
+      if(!content){ toast('Fichier texte vide'); return; }
+      const ta=document.getElementById('aiInput');
+      if(ta){
+        const sep = ta.value.trim() ? '\n\n' : '';
+        ta.value = ta.value + sep + content;
+        ta.focus();
+      }
+      toast(`Texte de « ${f.name} » ajouté à la demande ✓`);
+    };
+    reader.onerror=()=>toast('Lecture du fichier impossible');
+    reader.readAsText(f);
+  } else {
+    toast('Format non géré : utilise un .txt ou une photo');
+  }
+  // réinitialise l'input pour permettre de re-sélectionner le même fichier
+  const fi=document.getElementById('aiFileInput'); if(fi) fi.value='';
+}
+// Affiche l'aperçu photo temporaire (en RAM) avec bouton de retrait.
+function aiRenderAttach(name){
+  const w=document.getElementById('aiAttachWrap'); if(!w) return;
+  if(!_aiPhotoPreview){ w.style.display='none'; w.innerHTML=''; return; }
+  w.style.display='block';
+  w.innerHTML=`<div style="display:flex;align-items:center;gap:10px;background:var(--paper,#f7f1e7);border:1px solid #e6dac8;border-radius:10px;padding:8px">
+    <img src="${_aiPhotoPreview}" alt="aperçu" style="width:54px;height:54px;object-fit:cover;border-radius:8px;flex:none">
+    <div style="flex:1;font-size:.82rem;color:#6a5a52;min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name||'photo')}</b><span class="note">Pense-bête visuel · non enregistré</span></div>
+    <button class="btn ghost sm" onclick="aiRemovePhoto()">✕ Retirer</button>
+  </div>`;
+}
+function aiRemovePhoto(){ _aiPhotoPreview=null; aiRenderAttach(''); }
+function aiClearAll(){
+  const ta=document.getElementById('aiInput'); if(ta) ta.value='';
+  const out=document.getElementById('aiOut'); if(out) out.innerHTML='';
+  aiRemovePhoto();
 }
 async function aiRun(){
   if(_aiRunning) return;            // évite les envois multiples (taps rapides)
