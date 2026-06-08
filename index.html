@@ -401,6 +401,36 @@ tr:hover td{background:var(--creme-2)}
 .blur-name:hover,.blur-name:active{filter:blur(0)}
 .switch-row{display:flex;align-items:center;gap:8px;font-size:.9rem;color:#6a5a52;margin:8px 0;cursor:pointer}
 .switch-row input{width:18px;height:18px}
+/* ---- Recherche productions : chips emplacement ---- */
+.prod-emp-chips{display:flex;gap:6px;flex-wrap:wrap}
+.prod-emp-chips button{appearance:none;-webkit-appearance:none;cursor:pointer;border:1.5px solid #e0d5c5;
+  background:#fff;color:var(--bordeaux);font-family:inherit;font-weight:600;font-size:.82rem;
+  padding:6px 12px;border-radius:18px;-webkit-tap-highlight-color:transparent}
+.prod-emp-chips button.clear{color:#9a8a82;border-style:dashed}
+/* ---- Planification personnelle (ordonnancement) ---- */
+.perso-day{border:1px solid #ece2d4;border-radius:10px;padding:8px;margin-bottom:8px}
+.perso-presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.perso-insights{margin:0;padding-left:18px}
+.perso-insights li{margin:6px 0;line-height:1.4;font-size:.92rem;color:#4a3a32}
+.perso-ev{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid #f0e8dc}
+.perso-ev:last-child{border-bottom:none}
+.perso-ev-time{flex:0 0 52px;font-weight:700;color:var(--bordeaux);font-size:.82rem;text-align:right;line-height:1.2}
+.perso-ev-time span{font-weight:500;color:#9a8a82}
+.perso-ev-lbl{font-weight:600;color:var(--ink,#3a2a22)}
+.perso-ev-note{font-size:.82rem;color:#7a6a62;margin-top:3px;line-height:1.4}
+/* ---- Popup localisation des macarons (assistant) ---- */
+.loc-zone{border:1px solid #ece2d4;border-radius:10px;padding:8px 10px;margin-bottom:10px}
+.loc-zone-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.loc-batch{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:6px 0;border-top:1px dashed #efe6d8}
+.loc-batch:first-of-type{border-top:none}
+.loc-batch-main{font-size:.9rem;color:var(--ink,#3a2a22);display:flex;gap:8px;align-items:center}
+.loc-batch-sub{font-size:.76rem;color:#8a7a72;grid-column:1}
+.loc-batch-qty{grid-row:1 / span 2;align-self:center;font-weight:700;color:var(--bordeaux);font-size:1.05rem}
+.undo-bar{position:fixed;left:50%;transform:translateX(-50%) translateY(120%);bottom:84px;z-index:1200;
+  display:flex;align-items:center;gap:14px;background:var(--ink,#3a2a22);color:#fff;
+  padding:10px 14px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.28);transition:transform .25s ease;max-width:92vw;font-size:.9rem}
+.undo-bar.show{transform:translateX(-50%) translateY(0)}
+.undo-bar button{background:var(--gold,#AA7C39);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer;white-space:nowrap}
 .toast{position:fixed;bottom:24px;right:24px;background:var(--bordeaux);color:var(--creme);
   padding:13px 20px;border-radius:11px;font-size:.88rem;box-shadow:0 8px 24px rgba(82,37,47,.3);
   z-index:99;opacity:0;transform:translateY(10px);transition:.3s;pointer-events:none;max-width:80vw}
@@ -555,6 +585,7 @@ tr:hover td{background:var(--creme-2)}
 
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
+<div class="undo-bar" id="undoBar"><span id="undoLabel"></span><button id="undoBtn" onclick="runUndo()">↩ Annuler</button></div>
 
 <!-- Pointeuse de laboratoire (time tracker global, persistant entre les vues) -->
 <div id="timeTracker" aria-live="polite">

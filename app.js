@@ -85,7 +85,10 @@ const PRESET_DELIVERY_PLACES = [
 // Construit la liste dédupliquée des lieux à suggérer : presets + lieux déjà
 // utilisés dans des commandes (les plus fréquents/récents d'abord), hors doublons.
 async function usualDeliveryPlaces(){
-  const orders = await db.orders.toArray().catch(()=>[]);
+  const [orders, clients] = await Promise.all([
+    db.orders.toArray().catch(()=>[]),
+    db.clients.toArray().catch(()=>[])
+  ]);
   const freq = {};
   orders.forEach(o=>{
     const v = (o.lieuLivraison||'').trim();
@@ -93,9 +96,16 @@ async function usualDeliveryPlaces(){
   });
   // lieux issus des commandes, triés par fréquence décroissante
   const fromOrders = Object.keys(freq).sort((a,b)=>freq[b]-freq[a]);
-  // fusion sans doublon (insensible à la casse), presets d'abord
+  // adresses enregistrées sur les fiches clients (nom + adresse pour faciliter la recherche)
+  const fromClients = [];
+  clients.forEach(c=>{
+    const a=(c.adresse||'').trim(); if(!a) return;
+    fromClients.push(a);
+    if(c.nom) fromClients.push(`${c.nom} — ${a}`);
+  });
+  // fusion sans doublon (insensible à la casse), presets puis commandes puis clients
   const seen = new Set(), out = [];
-  [...PRESET_DELIVERY_PLACES, ...fromOrders].forEach(v=>{
+  [...PRESET_DELIVERY_PLACES, ...fromOrders, ...fromClients].forEach(v=>{
     const k = v.toLowerCase();
     if(!seen.has(k)){ seen.add(k); out.push(v); }
   });
@@ -129,6 +139,10 @@ const SETTINGS_DEFAULTS = {
   prixParFormat: { 6:2.00, 8:2.00, 16:1.75, 25:1.68 },
   // Prix unitaire de repli (si aucune vente pour pondérer) — recalculé depuis la grille.
   prixVenteUnitaire: 2.00,
+  // Tarif PRO au macaron STANDARD (vrac en boîte réutilisable, non facturée). Évolutif.
+  prixMacaronProStd: 1.40,
+  // Tarif PRO au macaron GRAND FORMAT. Évolutif (le tarif particulier reste à 6,00 €).
+  prixGrandFormatPro: 3.20,
   // Types d'emballage pour le comptage avant/après marché (delta) :
   // {nom, cout unitaire €, capacite = nb de macarons par boîte (sert à reconstituer le CA par format)}
   packTypes: [
@@ -148,6 +162,8 @@ function getSettings(){
       vehicleConso: s.vehicleConso!=null?+s.vehicleConso:SETTINGS_DEFAULTS.vehicleConso,
       prixParFormat: Object.assign({}, SETTINGS_DEFAULTS.prixParFormat, s.prixParFormat||{}),
       prixVenteUnitaire: s.prixVenteUnitaire!=null?+s.prixVenteUnitaire:SETTINGS_DEFAULTS.prixVenteUnitaire,
+      prixMacaronProStd: s.prixMacaronProStd!=null?+s.prixMacaronProStd:SETTINGS_DEFAULTS.prixMacaronProStd,
+      prixGrandFormatPro: s.prixGrandFormatPro!=null?+s.prixGrandFormatPro:SETTINGS_DEFAULTS.prixGrandFormatPro,
       packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
       packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes))
     };
@@ -220,9 +236,15 @@ async function decrementPackagingStock(taille, nb){
 }
 
 
-// Macarons grand format (vente à l'unité), double tarif
+// Macarons grand format (vente à l'unité), double tarif. Le tarif PRO est évolutif
+// (réglable dans les paramètres) ; le tarif particulier reste la référence par défaut.
 const BIG_FORMATS = ['Chocolat', 'Myrtille framboise', 'Mangue passion', 'Madeleine'];
-const BIG_PRICE = { pro: 3.20, particulier: 6.00 };
+const BIG_PRICE = { pro: 3.20, particulier: 6.00 };   // défauts/repli
+// Prix grand format selon le tarif, en tenant compte du réglage pro évolutif.
+function bigPrice(tarif){
+  if(tarif==='pro'){ const s=getSettings(); return (s.prixGrandFormatPro!=null)?+s.prixGrandFormatPro:BIG_PRICE.pro; }
+  return BIG_PRICE.particulier;
+}
 
 // --------- Helpers ---------
 // Arrondis stricts pour éviter la dérive des flottants (ex. 0.1+0.2, soustractions FIFO répétées).
@@ -290,6 +312,7 @@ function isFreezer(key){ const e=EMP_BY_KEY[key]; return e ? e.type==='congelate
 // Libellé/lettre/icône d'un emplacement (rétro-compat : 'congelateur' générique → bahut par défaut d'affichage).
 function empInfo(key){
   if(EMP_BY_KEY[key]) return EMP_BY_KEY[key];
+  if(key==='ambiant') return {key:'ambiant', lettre:'T', nom:'Température ambiante', type:'ambiant', icon:'🌡️'};
   if(key==='congelateur') return {key:'congelateur', lettre:'B', nom:'Congélateur', type:'congelateur', icon:'❄️'};
   if(key==='frigo') return EMP_BY_KEY.frigo;
   return {key:key||'', lettre:'?', nom:'—', type:'', icon:''};
@@ -390,6 +413,10 @@ const PROD_OPEN_MAX_DAYS = 4;
 // Statut effectif d'une prod (rétro-compat : les anciennes prods sans statut
 // sont considérées comme « terminée », avec leur DLC déjà figée).
 function prodStatut(p){ return p && p.prodStatut ? p.prodStatut : 'termine'; }
+// Composant d'une production : 'complet' (vendable), 'coques'/'ganache' (intermédiaires), 'assemble' (vendable).
+function prodComposant(p){ return (p && p.composant) ? p.composant : 'complet'; }
+// Un lot est-il un PRODUIT FINI vendable ? (exclut les sous-lots coques/ganache non assemblés)
+function prodVendable(p){ const c=prodComposant(p); return c==='complet' || c==='assemble'; }
 // Heure d'ancrage de la DLC frigo : le moment où la prod est passée « terminée »
 // (ou, pour les anciennes prods, l'horodatage de production).
 function prodDlcAnchor(p){ return (p && (p.prodTermineTs || (prodStatut(p)==='termine' ? p.prodTimestamp : ''))) || ''; }
@@ -461,6 +488,23 @@ const ymLabel = ym => { const [y,m]=ym.split('-'); return new Date(y,+m-1,1).toL
 // --------- Toast & Modal ---------
 let tt;
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(tt); tt=setTimeout(()=>t.classList.remove('show'),2400); }
+// ---- ANNULATION RAPIDE (undo) ----
+// Propose pendant quelques secondes d'annuler la dernière action destructrice.
+let _undoFn=null, _undoTimer=null;
+function showUndoToast(label, restoreFn, ms){
+  _undoFn=restoreFn;
+  const bar=document.getElementById('undoBar'), lbl=document.getElementById('undoLabel');
+  if(!bar||!lbl){ return; }
+  lbl.textContent=label;
+  bar.classList.add('show');
+  clearTimeout(_undoTimer);
+  _undoTimer=setTimeout(()=>{ hideUndo(); }, ms||7000);
+}
+function hideUndo(){ const bar=document.getElementById('undoBar'); if(bar) bar.classList.remove('show'); _undoFn=null; clearTimeout(_undoTimer); }
+async function runUndo(){
+  const fn=_undoFn; hideUndo();
+  if(typeof fn==='function'){ try{ await fn(); toast('Action annulée ✓'); }catch(e){ toast('Annulation impossible'); } }
+}
 const overlay=document.getElementById('overlay'), modal=document.getElementById('modal');
 function openModal(html){ modal.innerHTML=html; overlay.classList.add('show');
   if(_histReady && !_popping){ try{ history.pushState({kind:'modal'}, '', '#modal'); }catch(e){} } }
@@ -502,6 +546,7 @@ function navTo(b){
 // Navigation centralisée : change la vue ET empile une entrée d'historique (bouton Retour iOS).
 function goView(v, opts){
   opts=opts||{};
+  if(typeof hideUndo==='function') hideUndo();
   view=v; setActiveView(view); render();
   if(_histReady && !_popping && !opts.replace){
     try{ history.pushState({view:v, kind:'view'}, '', '#'+v); }catch(e){}
@@ -970,6 +1015,11 @@ async function matForm(id){
    <div class="field"><label>Prix indicatif / unité (€)</label><input type="number" step="0.01" id="f_prix" value="${s.prixDefaut||0}"></div>
    <div class="field" id="f_capWrap" style="${cat==='emballage'?'':'display:none'}"><label>Capacité (nb de macarons) <span style="color:#9a8a82;font-weight:400">— relie l'emballage à un format de coffret</span></label>
      <input type="number" min="0" step="1" id="f_cap" value="${s.capacite!=null?esc(s.capacite):''}" placeholder="ex : 8"></div>
+   <div id="f_periWrap" style="${cat==='emballage'?'display:none':''}">
+     <label class="switch-row"><input type="checkbox" id="f_peri" ${s.perissableOuvert?'checked':''} onchange="matPeriSwitch(this.checked)"> Périssable une fois ouvert (crème, lait…)</label>
+     <div class="field" id="f_periDaysWrap" style="${s.perissableOuvert?'':'display:none'}"><label>Durée après ouverture (jours) <span style="color:#9a8a82;font-weight:400">— DLC déclenchée dès la 1ʳᵉ utilisation en production</span></label>
+       <input type="number" min="1" step="1" id="f_periDays" value="${s.joursApresOuverture!=null?s.joursApresOuverture:7}" placeholder="7"></div>
+   </div>
    <p class="note">Le stock réel se gère par <b>lots</b> (bouton « Réception lot »). Ici tu définis seulement ${cat==='emballage'?"l'emballage":'la matière'} et son seuil.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveMat(${id||0})">Enregistrer</button></div>`);
 }
@@ -978,11 +1028,15 @@ function matCatSwitch(cat){
   const u=document.getElementById('f_unite');
   if(u && cat==='emballage' && (u.value==='kg'||u.value==='g'||u.value==='L'||u.value==='mL')) u.value='unité';
   const cw=document.getElementById('f_capWrap'); if(cw) cw.style.display = cat==='emballage' ? 'block' : 'none';
+  const pw=document.getElementById('f_periWrap'); if(pw) pw.style.display = cat==='emballage' ? 'none' : 'block';
 }
+function matPeriSwitch(on){ const d=document.getElementById('f_periDaysWrap'); if(d) d.style.display = on?'block':'none'; }
 async function saveMat(id){
   const isEmb = val('f_cat')==='emballage';
+  const peri = !isEmb && document.getElementById('f_peri')?.checked;
   const o={nom:val('f_nom'),unite:val('f_unite'),seuil:+val('f_seuil')||0,prixDefaut:+val('f_prix')||0,
-    categorie: isEmb?'emballage':'denree', capacite: isEmb ? (+val('f_cap')||0) : undefined};
+    categorie: isEmb?'emballage':'denree', capacite: isEmb ? (+val('f_cap')||0) : undefined,
+    perissableOuvert: !!peri, joursApresOuverture: peri ? (Math.max(1,+val('f_periDays')||7)) : undefined};
   if(!o.nom){toast('Nom requis');return;}
   if(id){
     // S3 : interdire le changement d'unité si la matière est déjà utilisée (lots ou recettes)
@@ -1222,6 +1276,8 @@ async function delRec(id){
 /* ============================================================
    PRODUCTIONS  (cœur de la traçabilité : consommation FIFO)
    ============================================================ */
+let prodnSearch='';
+let _prodnCache=null;
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
@@ -1229,21 +1285,30 @@ async function renderProductions(){
   const kpi = await lossKPIs();
   const lossByProd = {}; losses.forEach(l=>{ lossByProd[l.productionId]=(lossByProd[l.productionId]||0)+(+l.qte||0); });
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'(recette supprimée)';
-  const ecartTag = p => {
-    const e = (p.ecart!=null) ? +p.ecart : 0;
-    if(!e) return '<span class="tag ok">conforme</span>';
-    return `<span class="tag ${e<0?'warn':'event'}">${e>0?'+':''}${qty(e)}</span>`;
-  };
+  window._prodLossBy = lossByProd; window._prodRecName = recName;
   // résumé rendement global (somme réel / somme théorique sur les batchs renseignés)
   const withBoth = prods.filter(p=>p.qteTheorique>0 && p.qteReelle!=null);
   const sumTh = withBoth.reduce((s,p)=>s+(+p.qteTheorique||0),0);
   const sumRe = withBoth.reduce((s,p)=>s+(+p.qteReelle||0),0);
   const rendePct = sumTh ? Math.round(sumRe/sumTh*1000)/10 : null;
-  // Productions encore « démarrées » + celles dépassant le plafond des 4 jours.
   const ouvertes = prods.filter(p=>prodStatut(p)==='demarre');
   const enRetard = ouvertes.filter(prodOpenOverdue);
+  // index de recherche : lot, parfum/recette, date (plusieurs formats), emplacement (nom + LETTRE), statut
+  _prodnCache = prods.map(p=>{
+    const nom = recName(p.recipeId);
+    const e = empInfo(p.emplacement);
+    const st = prodStatut(p)==='termine' ? 'terminée terminé' : 'démarrée en cours';
+    const dateBlob = [p.date, fmtDate(p.date), (p.date||'').slice(0,7)].filter(Boolean).join(' ');
+    // la LETTRE d'emplacement comme token isolé → une seule lettre suffit à filtrer
+    const lettre = (e.lettre||'').toLowerCase();
+    const prim = normTxt([nom, p.lotProduction||''].filter(Boolean).join(' '));
+    const lotNoSep = (p.lotProduction||'').replace(/[-\s]/g,'');
+    const blob = normTxt([nom, p.lotProduction, lotNoSep, e.nom, e.lettre, st, dateBlob,
+      p.parentProdId?'partie':''].filter(Boolean).join(' '));
+    return {p, _lettre:lettre, _prim:prim, _blob:blob, _digits:onlyDigits([p.lotProduction, p.id].filter(Boolean).join(' '))};
+  });
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Productions</h1><p>${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p></div>
+   <div class="topbar"><div><h1>Productions</h1><p id="prodCount">${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p></div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button></div>
    ${kpi.count?`<div class="cards" style="margin-bottom:18px">
      <div class="card"><div class="lbl">Taux de perte</div><div class="val" style="color:${kpi.taux>=10?'#b3261e':(kpi.taux>=5?'#d98324':'#2e7d32')}">${kpi.taux}%</div><div class="sub">${qty(kpi.totalPerdu)} perdues / ${qty(kpi.totalProduit)} produites</div></div>
@@ -1252,42 +1317,91 @@ async function renderProductions(){
    ${enRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${enRetard.length} production(s) ouverte(s) depuis plus de ${PROD_OPEN_MAX_DAYS} jours.</b> Une production ne peut pas rester « démarrée » au-delà de ${PROD_OPEN_MAX_DAYS} jours : terminez-la (✓ Terminer) pour figer la DLC, ou supprimez-la.</div></div>`:''}
    ${ouvertes.length && !enRetard.length?`<div class="banner">▶ <div><b>${ouvertes.length} production(s) en cours.</b> La DLC de 7 j ne démarre qu'au passage en « terminée ».</div></div>`:''}
    <div class="panel">
-   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>Statut</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead><tbody>
-     ${prods.map(p=>{
-       const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
-       const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
-       const emp = p.emplacement;
-       const empTag = empTagHtml(emp);
-       // --- Statut de production : démarré / terminé ---
-       const st = prodStatut(p);
-       // Heure affichée : fin de prod si terminée (= heure de fabrication), sinon démarrage. Format 00:00.
-       const tsFab = st==='termine' ? (p.prodTermineTs||p.prodTimestamp) : (p.prodDebutTs||p.prodTimestamp);
-       const heureFab = tsFab ? fmtDateTime(tsFab) : '';
-       const overdue = prodOpenOverdue(p);
-       let statutCell;
-       if(st==='termine'){
-         const anchor = prodDlcAnchor(p);
-         statutCell = `<span class="tag ok">✓ Terminée</span>`
-           + (p.prodTermineTs?`<br><span style="color:#9a8a82;font-size:.72rem">le ${fmtDateTime(p.prodTermineTs)}</span>`:'')
-           + (p.dlcProduit?`<br><span style="color:#9a8a82;font-size:.72rem">DLC ${fmtDate(p.dlcProduit)}</span>`:'');
-       } else {
-         const oh = prodOpenHours(p);
-         const ouvertTxt = oh!=null ? (oh<24?`${Math.floor(oh)} h`:`${Math.floor(oh/24)} j ${Math.floor(oh%24)} h`) : '';
-         statutCell = `<span class="tag ${overdue?'warn':'event'}">▶ Démarrée</span>`
-           + (ouvertTxt?`<br><span style="font-size:.72rem;color:${overdue?'#b3261e':'#9a8a82'}">ouverte ${ouvertTxt}${overdue?' · &gt; 4 j !':''}</span>`:'')
-           + `<br><button class="qa edit" style="margin-top:3px" onclick="prodSetTermine(${p.id})" title="Passer en terminée — démarre la DLC">✓ Terminer</button>`;
-       }
-       const partTag = p.parentProdId ? `<br><span class="tag" style="background:#ece2d4;color:#6b5a52">partie</span>` : '';
-       return `<tr${overdue?' style="background:#fdf3f2"':''}>
-       <td><b>${esc(recName(p.recipeId))}</b>${partTag}<br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span>${heureFab?`<br><span style="color:#9a8a82;font-size:.72rem">🕒 ${heureFab}</span>`:''}</td>
-       <td>${statutCell}</td>
-       <td><b>${esc(p.lotProduction||'—')}</b></td>
-       <td>${empTag}<br><span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></td>
-       <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
-       <td>${qty(p.qteRestante)}${lossByProd[p.id]?`<br><span class="tag out" style="font-size:.68rem">−${qty(lossByProd[p.id])} perte</span>`:''}</td>
-       <td><div class="qa-row"><button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button><button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;}).join('')}
-   </tbody></table></div>`:`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
+     <input class="search" id="prodbatSearch" style="width:100%;margin-bottom:6px" placeholder="N° lot, parfum, date, emplacement (F/B/C/A)…" value="${esc(prodnSearch)}" oninput="prodbatFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
+     <div class="prod-emp-chips" style="margin-bottom:12px">
+       ${EMPLACEMENTS.map(e=>`<button onclick="prodbatSearchEmp('${e.lettre}')" title="${esc(e.nom)}">${e.icon} ${e.lettre}</button>`).join('')}
+       <button onclick="prodbatSearchEmp('')" class="clear">Tout</button>
+     </div>
+   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>Statut</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead>
+     <tbody id="prodbatBody"></tbody></table></div><div id="prodbatEmpty" class="empty" style="display:none">Aucune production ne correspond.</div>`
+     :`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
    </div>`;
+  prodbatFilter(prodnSearch);
+}
+function ecartTag(p){
+  const e = (p.ecart!=null) ? +p.ecart : 0;
+  if(!e) return '<span class="tag ok">conforme</span>';
+  return `<span class="tag ${e<0?'warn':'event'}">${e>0?'+':''}${qty(e)}</span>`;
+}
+function _prodbatRow(row){
+  const p=row.p; const recName=window._prodRecName||(id=>'#'+id); const lossByProd=window._prodLossBy||{};
+  const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
+  const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
+  const emp = p.emplacement; const empTag = empTagHtml(emp);
+  const st = prodStatut(p);
+  const tsFab = st==='termine' ? (p.prodTermineTs||p.prodTimestamp) : (p.prodDebutTs||p.prodTimestamp);
+  const heureFab = tsFab ? fmtDateTime(tsFab) : '';
+  const overdue = prodOpenOverdue(p);
+  let statutCell;
+  if(st==='termine'){
+    statutCell = `<span class="tag ok">✓ Terminée</span>`
+      + (p.prodTermineTs?`<br><span style="color:#9a8a82;font-size:.72rem">le ${fmtDateTime(p.prodTermineTs)}</span>`:'')
+      + (p.dlcProduit?`<br><span style="color:#9a8a82;font-size:.72rem">DLC ${fmtDate(p.dlcProduit)}</span>`:'');
+  } else {
+    const oh = prodOpenHours(p);
+    const ouvertTxt = oh!=null ? (oh<24?`${Math.floor(oh)} h`:`${Math.floor(oh/24)} j ${Math.floor(oh%24)} h`) : '';
+    statutCell = `<span class="tag ${overdue?'warn':'event'}">▶ Démarrée</span>`
+      + (ouvertTxt?`<br><span style="font-size:.72rem;color:${overdue?'#b3261e':'#9a8a82'}">ouverte ${ouvertTxt}${overdue?' · &gt; 4 j !':''}</span>`:'')
+      + `<br><button class="qa edit" style="margin-top:3px" onclick="prodSetTermine(${p.id})" title="Passer en terminée — démarre la DLC">✓ Terminer</button>`;
+  }
+  const partTag = p.parentProdId ? `<br><span class="tag" style="background:#ece2d4;color:#6b5a52">partie</span>` : '';
+  const comp = prodComposant(p);
+  const compTag = comp==='coques' ? `<br><span class="tag" style="background:#8a6d3b;color:#fff">🟤 Coques</span>`
+    : comp==='ganache' ? `<br><span class="tag" style="background:#5a3a2a;color:#fff">🍫 Ganache</span>`
+    : comp==='assemble' ? `<br><span class="tag" style="background:#3f7d52;color:#fff">✓ Assemblé</span>`
+    : comp==='degustation' ? `<br><span class="tag" style="background:#caa23b;color:#fff">🥄 Dégustation</span>` : '';
+  // Bouton Assembler : proposé sur un sous-lot coques OU ganache encore disponible.
+  const assembleBtn = (comp==='coques'||comp==='ganache') && round3(+p.qteRestante)>0
+    ? `<button class="qa edit" onclick="prodAssembleForm(${p.id})" title="Assembler coques + ganache de ce lot">🔗 Assembler</button>` : '';
+  // Bouton Distribué : décrémente un lot dégustation au fur et à mesure (offert).
+  const degBtn = comp==='degustation' && round3(+p.qteRestante)>0
+    ? `<button class="qa edit" onclick="prodDegDistribue(${p.id})" title="Décompter des macarons distribués en dégustation">🥄 Distribué</button>` : '';
+  return `<tr${overdue?' style="background:#fdf3f2"':''}>
+     <td><b>${esc(recName(p.recipeId))}</b>${compTag}${partTag}<br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span>${heureFab?`<br><span style="color:#9a8a82;font-size:.72rem">🕒 ${heureFab}</span>`:''}</td>
+     <td>${statutCell}</td>
+     <td><b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span style="color:#9a8a82;font-size:.68rem">base ${esc(p.lotBase)}</span>`:''}</td>
+     <td>${empTag}<br><span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></td>
+     <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
+     <td>${qty(p.qteRestante)}${lossByProd[p.id]?`<br><span class="tag out" style="font-size:.68rem">−${qty(lossByProd[p.id])} perte</span>`:''}</td>
+     <td><div class="qa-row">${assembleBtn}${degBtn}<button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button><button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;
+}
+// Recherche intelligente des productions. Une seule lettre d'emplacement (F/B/C/A)
+// filtre par zone ; sinon recherche plein-texte (lot, parfum, date, statut…).
+function prodbatFilter(q){
+  prodnSearch=q||'';
+  if(!_prodnCache) return;
+  const body=document.getElementById('prodbatBody'); if(!body) return;
+  const cnt=document.getElementById('prodCount'); const empty=document.getElementById('prodbatEmpty');
+  const raw=(q||'').trim();
+  let rows;
+  const empLetters = EMPLACEMENTS.map(e=>e.lettre.toLowerCase());
+  if(raw.length===1 && empLetters.includes(raw.toLowerCase())){
+    // filtre exact par lettre d'emplacement
+    const L=raw.toLowerCase();
+    rows = _prodnCache.filter(r=>r._lettre===L);
+  } else {
+    rows = searchRank(_prodnCache, q);
+  }
+  if(cnt){ const tot=_prodnCache.length; cnt.textContent = raw ? `${rows.length} / ${tot} batch(s)` : `${tot} batch(s) fabriqué(s)`; }
+  if(!rows.length){ body.innerHTML=''; if(empty) empty.style.display='block'; return; }
+  if(empty) empty.style.display='none';
+  body.innerHTML = rows.slice(0,400).map(_prodbatRow).join('') +
+    (rows.length>400?`<tr><td colspan="9" class="note" style="text-align:center">… ${rows.length-400} autre(s). Affinez la recherche.</td></tr>`:'');
+}
+// Chip emplacement : remplit la recherche avec la lettre (ou efface).
+function prodbatSearchEmp(lettre){
+  const inp=document.getElementById('prodbatSearch'); if(inp) inp.value=lettre;
+  prodbatFilter(lettre);
 }
 
 /* ============================================================
@@ -1317,7 +1431,7 @@ function pickFlavorMatch(flavorNom, recipeNom){
 function orderFlavorNeeds(o){
   const needs={};
   orderToLines(o).forEach(ln=>{
-    if(ln.type==='coffret'||ln.type==='evenement'||ln.type==='don'){
+    if(ln.type==='coffret'||ln.type==='evenement'||ln.type==='don'||ln.type==='vrac'){
       (ln.parfums||[]).forEach(p=>{ if(+p.qte>0) needs[p.nom]=(needs[p.nom]||0)+(+p.qte||0); });
     }
   });
@@ -1344,7 +1458,7 @@ function allocateBatches(needs, prods, recipes){
   // candidats par parfum : batchs avec stock, triés FIFO (DLC la plus proche d'abord)
   const remaining = {}; Object.keys(needs).forEach(f=>remaining[f]=needs[f]);
   // index des batchs disponibles avec quantité restante "virtuelle" (on déduit au fur et à mesure)
-  const stock = prods.filter(p=>round3(+p.qteRestante)>0).map(p=>({
+  const stock = prods.filter(p=>round3(+p.qteRestante)>0 && prodVendable(p)).map(p=>({
     id:p.id, emp:p.emplacement||'', lot:p.lotProduction||'', dlc:p.dlcProduit||'',
     rec:recName(p.recipeId), dispo:round3(+p.qteRestante)
   }));
@@ -1675,6 +1789,26 @@ async function pickMarketReady(marketId){
 
 // Une production a-t-elle déjà suivi le chemin congélateur → frigo ?
 // Si oui, toute recongélation est INTERDITE (congélateur>frigo>congélateur 🚫).
+// Règle chaîne du froid : une production SORTIE du congélateur ne peut y RETOURNER
+// que si le retour est saisi dans l'HEURE qui suit la sortie. Au-delà, retour A/B/C bloqué.
+const FREEZER_RETURN_MAX_MS = 60*60*1000; // 1 heure
+function freezerExitTs(p){
+  // dernier instant où la prod a quitté le congélateur (passage congélo -> non-congélo)
+  const hist=(p&&p.histEmplacement)||[];
+  let last='';
+  for(let i=1;i<hist.length;i++){
+    if(isFreezer(hist[i-1].lieu) && !isFreezer(hist[i].lieu)) last=hist[i].ts||'';
+  }
+  return last;
+}
+// Retour congélateur bloqué ? (sortie du congélo non suivie d'un retour dans l'heure)
+function freezerReturnBlocked(p){
+  if(!p) return false;
+  if(isFreezer(p.emplacement)) return false;          // déjà au congélo : non concerné
+  const exit=freezerExitTs(p);
+  if(!exit) return false;                              // jamais sortie d'un congélo
+  return (Date.now() - new Date(exit).getTime()) > FREEZER_RETURN_MAX_MS;
+}
 function aDejaDecongele(p){
   const hist=(p&&p.histEmplacement)||[];
   let vuCongelo=false;
@@ -1689,12 +1823,15 @@ function aDejaDecongele(p){
 async function setEmplacement(id){
   const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
   const decongele = aDejaDecongele(p);
+  const retourBloque = freezerReturnBlocked(p);
   const courant = p.emplacement||'';
+  const exitTs = freezerExitTs(p);
   const opts = EMPLACEMENTS.map(e=>{
     const estCongelo = e.type==='congelateur';
-    const interdit = estCongelo && decongele; // recongélation interdite
+    const interdit = estCongelo && (decongele || retourBloque); // recongélation interdite OU délai 1h dépassé
     const actif = courant===e.key;
-    return `<button class="btn ${actif?'gold':'ghost'} sm" ${interdit?'disabled title="Déjà décongelé : recongélation interdite"':''}
+    const titre = decongele ? 'Déjà décongelé : recongélation interdite' : (retourBloque?'Retour congélateur dépassé : délai d\'1h écoulé depuis la sortie':'');
+    return `<button class="btn ${actif?'gold':'ghost'} sm" ${interdit?`disabled title="${titre}"`:''}
        style="${interdit?'opacity:.45':''};min-width:46%;margin:3px 0;justify-content:flex-start;display:flex;gap:6px"
        onclick="doMoveEmplacement(${id},'${e.key}')">
        <b style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
@@ -1703,6 +1840,7 @@ async function setEmplacement(id){
   openModal(`<h3>Emplacement de stockage</h3>
     <p class="note">${courant?`Actuellement : <b>${esc(empNom(courant))} (${empLettre(courant)})</b>.`:'Choisissez où ranger cette production.'} La lettre s'ajoute au n° de lot et à l'étiquette.</p>
     ${decongele?'<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⚠️ Cette production est déjà passée par le frigo après congélation : <b>recongélation interdite</b>.</div></div>':''}
+    ${(!decongele&&retourBloque)?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⛔ Sortie du congélateur le <b>${fmtDateTime(exitTs)}</b> : le délai d'<b>1 heure</b> pour un retour au congélateur est dépassé. Retour A/B/C bloqué (chaîne du froid).</div></div>`:''}
     <div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:space-between">${opts}</div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
@@ -1716,6 +1854,12 @@ async function doMoveEmplacement(id, dest){
   // RÈGLE SÉCURITÉ ALIMENTAIRE : interdiction de recongeler après décongélation.
   if(isFreezer(dest) && aDejaDecongele(p)){
     toast('Recongélation interdite : cette production est déjà passée congélateur → frigo.');
+    return;
+  }
+  // RÈGLE CHAÎNE DU FROID : retour congélateur uniquement dans l'heure suivant la sortie.
+  if(isFreezer(dest) && freezerReturnBlocked(p)){
+    const exit=freezerExitTs(p);
+    toast(`Retour congélateur bloqué : plus d'1 h depuis la sortie (${fmtDateTime(exit)}).`);
     return;
   }
   const nowIso=new Date().toISOString();
@@ -1860,11 +2004,138 @@ async function prodSetTermine(id){
     patch.histEmplacement = reanchored;
     patch.emplacementMaj = nowIso;
     patch.dlcProduit = computeDlcFromHistory(reanchored, nowIso);
+    // Au plus prudent : si une crème/lait ouvert impose une DLC plus courte, on l'applique.
+    if(p.dlcContrainteOuverture && (!patch.dlcProduit || p.dlcContrainteOuverture < patch.dlcProduit)){
+      patch.dlcProduit = p.dlcContrainteOuverture;
+      patch.dlcLimiteeParOuverture = true;
+    }
     patch.dlcAuto = true;
   }
   await db.productions.update(id, patch);
   renderProductions();
   toast(`Production terminée ✓${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
+}
+
+// ====== ASSEMBLAGE coques + ganache → macaron assemblé (vendable) ======
+// Réunit un sous-lot COQUES et un sous-lot GANACHE (idéalement même n° de lot de base)
+// en une production « assemble » qui alimente le stock vendable, avec traçabilité de bout en bout.
+async function prodAssembleForm(id){
+  const p=await db.productions.get(id); if(!p){ toast('Sous-lot introuvable'); return; }
+  const comp=prodComposant(p);
+  if(comp!=='coques' && comp!=='ganache'){ toast('L\'assemblage part d\'un sous-lot coques ou ganache.'); return; }
+  const recName = (window._prodRecName)||((rid)=>'#'+rid);
+  const all=await db.productions.toArray();
+  const want = comp==='coques' ? 'ganache' : 'coques';
+  // Candidats : TOUS les sous-lots complémentaires en stock (tous parfums), car une
+  // dégustation peut associer coques et ganache de parfums différents. On trie en mettant
+  // le même n° de lot puis la même recette en tête (assemblage « normal »).
+  let cands=all.filter(x=>prodComposant(x)===want && round3(+x.qteRestante)>0);
+  cands.sort((a,b)=>{
+    const sa=(a.lotBase&&a.lotBase===p.lotBase)?0:1, sb=(b.lotBase&&b.lotBase===p.lotBase)?0:1;
+    if(sa!==sb) return sa-sb;
+    const ra=(a.recipeId===p.recipeId)?0:1, rb=(b.recipeId===p.recipeId)?0:1;
+    if(ra!==rb) return ra-rb;
+    return (a.dlcProduit||'9999').localeCompare(b.dlcProduit||'9999');
+  });
+  if(!cands.length){ toast(`Aucun sous-lot ${want==='ganache'?'ganache':'coques'} disponible pour assembler.`); return; }
+  const optsCand = cands.map(c=>{
+    const same = c.recipeId===p.recipeId;
+    const tag = c.lotBase===p.lotBase ? ' · même lot' : (same?'':' · ⚠ parfum différent');
+    return `<option value="${c.id}">${esc(recName(c.recipeId))} — ${esc(c.lotProduction||('#'+c.id))} · reste ${qty(c.qteRestante)}${tag}</option>`;
+  }).join('');
+  const maxThis=round3(+p.qteRestante);
+  openModal(`<h3>🔗 Assembler ${esc(recName(p.recipeId))}</h3>
+   <p class="note">Assemblage <b>normal</b> : coques + ganache du <b>même parfum/lot</b> (vendable). Assemblage <b>dégustation</b> : coques + ganache <b>sans correspondance</b> couleur/parfum, pour écouler les surplus (offert, non vendable).</p>
+   <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':'🍫 Ganache'} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · reste ${qty(maxThis)}</b></div>
+   <div class="field"><label>${want==='ganache'?'🍫 Ganache à associer':'🟤 Coques à associer'}</label>
+     <select id="f_asmOther">${optsCand}</select></div>
+   <label class="switch-row"><input type="checkbox" id="f_asmDeg" onchange="prodAsmDegSwitch(this.checked)"> 🥄 Assemblage dégustation (offert, non vendable)</label>
+   <div class="field"><label>Quantité de macarons à assembler</label>
+     <input type="number" id="f_asmQte" min="1" value="${maxThis}" max="${maxThis}"></div>
+   <div class="field" id="f_asmDestWrap"><label>Emplacement du macaron assemblé *</label>
+     <div style="display:flex;flex-wrap:wrap;gap:6px">
+       <label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_asmDest" value="frigo" checked> <b style="background:#6aa3a0;color:#fff;border-radius:6px;padding:0 7px">F</b> 🧊 Frigo (DLC 7 j)</label>
+       ${EMPLACEMENTS.filter(e=>e.type!=='frigo').map(e=>`<label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_asmDest" value="${e.key}"> <b style="background:#3b6ea5;color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b> ${e.icon} ${esc(e.nom)}</label>`).join('')}
+     </div></div>
+   <p class="note" id="asmDegHint" style="display:none">🥄 Ces macarons iront dans un <b>stock dégustation séparé</b> (non vendable, valeur 0 €). Tu les décrémenteras au fur et à mesure qu'ils sont distribués (marchés, dégustations).</p>
+   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+     <button class="btn gold" onclick="prodAssembleSave(${p.id})">Assembler</button></div>`);
+}
+function prodAsmDegSwitch(on){
+  const h=document.getElementById('asmDegHint'); if(h) h.style.display=on?'block':'none';
+}
+async function prodAssembleSave(thisId){
+  const otherId=+val('f_asmOther');
+  let qteAsm=+val('f_asmQte')||0;
+  const deg=document.getElementById('f_asmDeg')?.checked;
+  const dest=(document.querySelector('input[name="f_asmDest"]:checked')||{}).value||'frigo';
+  if(qteAsm<=0){ toast('Quantité invalide'); return; }
+  try{
+    const res = await db.transaction('rw', db.productions, db.prodConsumption, async ()=>{
+      const a=await db.productions.get(thisId); const b=await db.productions.get(otherId);
+      if(!a||!b) throw new Error('Sous-lot introuvable');
+      const coques = prodComposant(a)==='coques' ? a : (prodComposant(b)==='coques'?b:null);
+      const ganache = prodComposant(a)==='ganache' ? a : (prodComposant(b)==='ganache'?b:null);
+      if(!coques||!ganache) throw new Error('Il faut un sous-lot coques ET un sous-lot ganache.');
+      const dispo=Math.min(round3(+coques.qteRestante), round3(+ganache.qteRestante));
+      if(qteAsm>dispo+1e-9) throw new Error(`Quantité max assemblable : ${qty(dispo)} (limité par le plus petit sous-lot).`);
+      const nowIso=new Date().toISOString();
+      const motif = deg ? 'assemblage dégustation' : 'assemblage';
+      // DLC : 7 j frigo / 4 mois congélo, plafonné par la DLC la plus courte des composants
+      const baseDlc = computeDlcFromHistory([{lieu:dest, ts:nowIso, motif}], nowIso);
+      let dlc=baseDlc;
+      [coques.dlcProduit, ganache.dlcProduit, coques.dlcContrainteOuverture, ganache.dlcContrainteOuverture].forEach(d=>{
+        if(d && (!dlc || d<dlc)) dlc=d;
+      });
+      const lotBase = coques.lotBase || ganache.lotBase || lotBaseSansSuffixe(coques.lotProduction||'');
+      const suff = deg ? '-DG' : '-AS';
+      const lotAsm = lotAvecEmplacement((lotBase||genLotCode(3))+suff, dest);
+      // décrémente les deux composants
+      await db.productions.update(coques.id, {qteRestante: subQty(coques.qteRestante, qteAsm)});
+      await db.productions.update(ganache.id, {qteRestante: subQty(ganache.qteRestante, qteAsm)});
+      // crée la production assemblée : 'assemble' (vendable) ou 'degustation' (offert, non vendable)
+      await db.productions.add({
+        recipeId: coques.recipeId, lotProduction: lotAsm, date: today(),
+        composant: deg ? 'degustation' : 'assemble', lotBase,
+        degustation: !!deg,
+        qteTheorique:qteAsm, qteReelle:qteAsm, ecart:0,
+        qteProduite:qteAsm, qteRestante:qteAsm,
+        dlcProduit:dlc, dlcAuto:true, dlcLimiteeParOuverture: (dlc!==baseDlc),
+        prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
+        emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
+        histEmplacement:[{lieu:dest, ts:nowIso, motif}],
+        assembleFrom:[{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(coques.recipeId):'')},
+                      {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')}]
+      });
+      return {lotAsm, dlc, qteAsm, deg};
+    });
+    closeModal(); renderProductions();
+    toast(res.deg
+      ? `🥄 Dégustation assemblée ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm} (non vendable)`
+      : `Assemblé ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm}${res.dlc?` · DLC ${fmtDate(res.dlc)}`:''}`);
+  }catch(err){ toast(err.message||'Erreur assemblage'); }
+}
+// Décompte des macarons dégustation distribués (offerts) — sort du stock dégustation.
+async function prodDegDistribue(id){
+  const p=await db.productions.get(id); if(!p){ toast('Lot introuvable'); return; }
+  const reste=round3(+p.qteRestante||0);
+  if(reste<=0){ toast('Plus de stock dégustation sur ce lot.'); return; }
+  openModal(`<h3>🥄 Dégustations distribuées</h3>
+   <p class="note">Combien de macarons de ce lot dégustation as-tu distribués (offerts) ? Ils sortent du stock dégustation.</p>
+   <div class="sum-box"><span>Lot ${esc(p.lotProduction||('#'+p.id))}</span><b>reste ${qty(reste)}</b></div>
+   <div class="field"><label>Quantité distribuée</label><input type="number" id="f_degQte" min="1" max="${reste}" value="${reste}"></div>
+   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+     <button class="btn gold" onclick="prodDegDistribueSave(${p.id})">Décompter</button></div>`);
+}
+async function prodDegDistribueSave(id){
+  const q=+val('f_degQte')||0;
+  const p=await db.productions.get(id); if(!p){ toast('Lot introuvable'); return; }
+  const reste=round3(+p.qteRestante||0);
+  if(q<=0){ toast('Quantité invalide'); return; }
+  if(q>reste+1e-9){ toast(`Maximum ${qty(reste)}.`); return; }
+  await db.productions.update(id, {qteRestante: subQty(reste, q)});
+  closeModal(); renderProductions();
+  toast(`🥄 ${qty(q)} dégustation(s) distribuée(s) · reste ${qty(subQty(reste,q))}`);
 }
 async function prodForm(){
   const recipes = await db.recipes.toArray();
@@ -1880,7 +2151,18 @@ async function prodForm(){
   _prodReelTouched=false;
   const opts = recipes.map(r=>`<option value="${r.id}" data-rend="${r.rendement}">${esc(r.produitNom)} (${r.rendement}/batch)</option>`).join('');
   openModal(`<h3>Nouvelle production</h3>
+   <div class="field"><label>Mode de production</label>
+     <select id="f_mode" onchange="prodModeSwitch(this.value)">
+       <option value="complet">Batch complet (coques + ganache assemblés)</option>
+       <option value="composant">Par composants (coques / ganache séparés)</option>
+     </select></div>
    <div class="field"><label>Recette</label><select id="f_rec" onchange="prodSyncTheorique()">${opts}</select></div>
+   <div class="field" id="f_compWrap" style="display:none"><label>Composant à produire</label>
+     <div style="display:flex;gap:6px">
+       <label class="pay-opt" style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_comp" value="coques" checked onchange="prodCompSwitch()"> 🟤 Coques</label>
+       <label class="pay-opt" style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_comp" value="ganache" onchange="prodCompSwitch()"> 🍫 Ganache</label>
+     </div>
+     <p class="note" id="compHint">Les coques vides : <b>jamais au frigo</b> (température ambiante ou congélateur). La ganache terminée : <b>toujours au frigo</b>. L'assemblage réunira coques + ganache du même n° de lot.</p></div>
    <div class="row2">
      <div class="field"><label>Quantité théorique (batch) <span style="color:#9a8a82;font-weight:400">— base matières</span></label>
        <input type="number" id="f_qte" value="${recipes[0].rendement}" min="1" oninput="prodSyncReelDefault()"></div>
@@ -1892,16 +2174,51 @@ async function prodForm(){
    <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoute automatiquement</span></label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${genLotCode(3)}"></div>
    <div class="field"><label>Emplacement de rangement *</label>
      <div id="prodDest" style="display:flex;flex-wrap:wrap;gap:6px">
-       ${EMPLACEMENTS.map((e,i)=>`<label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer">
+       ${EMPLACEMENTS.map((e,i)=>`<label class="pay-opt prod-dest-opt" data-emp="${e.key}" data-freezer="${e.type!=='frigo'?'1':'0'}" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer">
          <input type="radio" name="f_dest" value="${e.key}" onchange="prodDlcHint()">
          <b style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
          <span>${e.icon} ${esc(e.nom)}</span></label>`).join('')}
+       <label class="pay-opt prod-dest-opt" data-emp="ambiant" data-freezer="0" style="flex:1;min-width:46%;display:none;align-items:center;gap:6px;cursor:pointer">
+         <input type="radio" name="f_dest" value="ambiant" onchange="prodDlcHint()">
+         <b style="background:#caa23b;color:#fff;border-radius:6px;padding:0 7px">T°</b>
+         <span>🌡️ Température ambiante</span></label>
      </div>
      <p class="note" id="dlcHint">La production démarre au statut <b>« démarrée »</b>. La DLC (<b>+7 j</b> au frigo, <b>+4 mois</b> au congélateur) ne court qu'au passage en <b>« terminée »</b>.</p>
    </div>
    <p class="note">Les <b>matières premières</b> sont déduites sur la base de la <b>quantité théorique</b> (DLC la plus proche d'abord). Le <b>stock de produits finis</b> est calé sur la <b>quantité réelle</b>. L'écart est historisé. Si le stock matières est insuffisant, <b>rien</b> n'est enregistré.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
   prodSyncReelDefault();
+}
+// Bascule entre batch complet et production par composants.
+function prodModeSwitch(mode){
+  const w=document.getElementById('f_compWrap'); if(w) w.style.display = mode==='composant'?'block':'none';
+  prodCompSwitch();
+}
+// Applique les contraintes d'emplacement selon le composant choisi (mode composant) :
+//  - coques : ambiant ou congélateur (PAS de frigo)
+//  - ganache : frigo uniquement
+function prodCompSwitch(){
+  const mode=document.getElementById('f_mode')?.value||'complet';
+  const comp=(document.querySelector('input[name="f_comp"]:checked')||{}).value||'coques';
+  const opts=document.querySelectorAll('.prod-dest-opt');
+  opts.forEach(o=>{
+    const emp=o.getAttribute('data-emp'); const freezer=o.getAttribute('data-freezer')==='1';
+    let show=true;
+    if(mode==='composant'){
+      if(comp==='coques') show = (emp==='ambiant' || freezer);      // jamais frigo
+      else if(comp==='ganache') show = (emp==='frigo');             // frigo uniquement
+    } else {
+      show = (emp!=='ambiant');   // batch complet : pas d'ambiant
+    }
+    o.style.display = show ? 'flex' : 'none';
+    if(!show){ const r=o.querySelector('input'); if(r) r.checked=false; }
+  });
+  const hint=document.getElementById('compHint');
+  if(hint && mode==='composant'){
+    hint.innerHTML = comp==='coques'
+      ? 'Coques vides : <b>température ambiante</b> ou <b>congélateur</b> (jamais frigo). Tu pourras les diviser et dispatcher différemment.'
+      : 'Ganache terminée : <b>frigo uniquement</b> (jamais congélateur seule). Elle ira au froid/congélateur une fois <b>assemblée</b> dans le macaron.';
+  }
 }
 // Aperçu live de la DLC calculée selon la destination choisie.
 function prodDlcHint(){
@@ -1950,40 +2267,51 @@ async function saveProd(){
   qteReelle = qteReelle==='' ? qteTheorique : +qteReelle; // défaut = théorique
   const date=val('f_date')||today(); let lot=val('f_lot');
   const dest=(document.querySelector('input[name="f_dest"]:checked')||{}).value||'';
+  const mode=document.getElementById('f_mode')?.value||'complet';
+  const comp=(document.querySelector('input[name="f_comp"]:checked')||{}).value||'coques';
+  const composant = mode==='composant' ? comp : 'complet';
   if(!qteTheorique||qteTheorique<=0){toast('Quantité théorique invalide');return;}
   if(qteReelle<0||isNaN(qteReelle)){toast('Quantité réelle invalide');return;}
-  if(!EMP_BY_KEY[dest]){ toast('Choisissez un emplacement de rangement (F / B / C / A)'); return; }
-  // Nettoyage des lettres ambiguës (I, L, O) sur la PARTIE VARIABLE uniquement :
-  // on préserve le préfixe « L- » et la date, on ne nettoie que ce qui suit.
+  // Validation emplacement selon le composant
+  const destOk = EMP_BY_KEY[dest] || dest==='ambiant';
+  if(!destOk){ toast('Choisissez un emplacement de rangement'); return; }
+  if(composant==='coques' && dest==='frigo'){ toast('Les coques vides ne vont jamais au frigo (ambiant ou congélateur).'); return; }
+  if(composant==='ganache' && dest!=='frigo'){ toast('La ganache terminée va uniquement au frigo.'); return; }
+  if(composant==='complet' && !EMP_BY_KEY[dest]){ toast('Choisissez un emplacement (F / B / C / A).'); return; }
+  // Nettoyage des lettres ambiguës (I, L, O) sur la PARTIE VARIABLE uniquement
   const baseLot = lotBaseSansSuffixe(val('f_lot'));
   const m = baseLot.match(/^(L-\d{8}-)(.*)$/i);
   let lotPrefix, lotCode;
   if(m){ lotPrefix=m[1].toUpperCase(); lotCode=m[2]; }
-  else { lotPrefix=''; lotCode=baseLot; } // format libre : on nettoie tout
+  else { lotPrefix=''; lotCode=baseLot; }
   const san=sanitizeLot(lotCode);
   if(san.changed) toast('Lettres ambiguës (I, L, O) retirées du n° de lot.');
   let cleanBase = lotPrefix + san.lot;
-  if(!san.lot){ cleanBase = lotPrefix + genLotCode(3); } // si le code devient vide, on en régénère un
-  lot = lotAvecEmplacement(cleanBase, dest);   // + lettre d'emplacement
+  if(!san.lot){ cleanBase = lotPrefix + genLotCode(3); }
+  // suffixe composant (CO/GA) AVANT la lettre d'emplacement, pour garder le même n° de lot de base
+  const suffComp = composant==='coques' ? '-CO' : (composant==='ganache' ? '-GA' : '');
+  lot = lotAvecEmplacement(cleanBase+suffComp, dest);
   if(!lotBaseSansSuffixe(lot)){ toast('N° de lot vide — saisissez un identifiant.'); return; }
   try{
-    await enregistrerProduction(recipeId, qteTheorique, qteReelle, date, lot, '', dest);
+    await enregistrerProduction(recipeId, qteTheorique, qteReelle, date, lot, '', dest,
+      {composant, lotBase:cleanBase});
     closeModal(); renderProductions();
     const ecart=qteReelle-qteTheorique;
-    toast(ecart===0 ? 'Production enregistrée ✓ — stock mis à jour'
-      : `Production enregistrée ✓ — écart ${ecart>0?'+':''}${qty(ecart)} historisé`);
+    const lbl = composant==='coques'?'Coques':composant==='ganache'?'Ganache':'Production';
+    toast(`${lbl} enregistrée ✓${ecart!==0?` — écart ${ecart>0?'+':''}${qty(ecart)} historisé`:' — stock mis à jour'}`);
   }catch(err){
     toast(err.message || 'Erreur production');
   }
 }
 // Transaction atomique : consommation FIFO (théorique) + traçabilité + stock fini (réel)
-async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd, lotProduction, dlcProduit, emplacement){
+async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd, lotProduction, dlcProduit, emplacement, meta){
+  meta=meta||{};
   return db.transaction('rw',
     db.recipes, db.recipeItems, db.materials, db.materialLots, db.productions, db.prodConsumption,
     async () => {
       const recette = await db.recipes.get(recipeId);
       if(!recette) throw new Error('Recette introuvable');
-      if(!EMP_BY_KEY[emplacement]) throw new Error('Emplacement de rangement (F / B / C / A) obligatoire');
+      if(!EMP_BY_KEY[emplacement] && emplacement!=='ambiant') throw new Error('Emplacement de rangement obligatoire');
       const items = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
       // CONSOMMATION MATIÈRES : basée UNIQUEMENT sur la quantité théorique
       const facteur = qteTheorique / (recette.rendement || 1);
@@ -2006,6 +2334,8 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
       // Tant que la prod est « démarrée », aucune DLC n'est figée.
       const prodId = await db.productions.add({
         recipeId, lotProduction, date:dateProd,
+        composant: meta.composant||'complet',   // 'complet' | 'coques' | 'ganache' | 'assemble'
+        lotBase: meta.lotBase||'',               // n° de lot commun (relie coques/ganache/assemblé)
         qteTheorique, qteReelle, ecart,
         // STOCK PRODUITS FINIS : calé sur la quantité réelle
         // qteProduite/qteRestante conservés pour compat. (lecture par trace, liaison commandes, analytics)
@@ -2024,8 +2354,12 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
         histEmplacement: [{lieu:emplacement, ts:nowIso, motif:'production'}]
       });
 
+      let dlcOuvertureMin = '';   // DLC la plus courte issue d'une matière périssable ouverte
       for(const item of items){
         let besoin = round3(item.qteParBatch * facteur);
+        const mat = await db.materials.get(item.materialId);
+        const peri = mat && mat.perissableOuvert;
+        const nbJoursOuv = peri ? (Math.max(1,+mat.joursApresOuverture||7)) : 0;
         const lots = await db.materialLots
           .where('materialId').equals(item.materialId)
           .and(l=>+l.qteRestante>0).toArray();
@@ -2033,14 +2367,29 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
         for(const lot of lots){
           if(besoin<=1e-9) break;
           const pris = round3(Math.min(besoin, +lot.qteRestante));
-          await db.materialLots.update(lot.id, {qteRestante: subQty(lot.qteRestante, pris)});
+          const patch = {qteRestante: subQty(lot.qteRestante, pris)};
+          // CRÈME/LAIT OUVERT : on horodate l'ouverture à la 1ʳᵉ utilisation et on calcule
+          // une DLC d'ouverture (date + N jours). Au plus prudent : écrase si plus courte.
+          if(peri){
+            let ouvertLe = lot.ouvertLe;
+            if(!ouvertLe){ ouvertLe = nowIso; patch.ouvertLe = nowIso;
+              const d = new Date(nowIso); d.setDate(d.getDate()+nbJoursOuv);
+              patch.dlcOuverture = d.toISOString().slice(0,10);
+            }
+            const dOuv = lot.dlcOuverture || patch.dlcOuverture;
+            if(dOuv && (!dlcOuvertureMin || dOuv<dlcOuvertureMin)) dlcOuvertureMin = dOuv;
+          }
+          await db.materialLots.update(lot.id, patch);
           // T2 : on fige (dénormalise) l'origine pour que la traçabilité survive à toute suppression future
           await db.prodConsumption.add({productionId:prodId, materialLotId:lot.id, qteConsommee:pris,
             snapMaterialId:item.materialId, snapLotFournisseur:lot.lotFournisseur||'',
-            snapSupplierId:lot.supplierId||0, snapDlc:lot.dlc||''});
+            snapSupplierId:lot.supplierId||0, snapDlc:lot.dlc||'',
+            snapDlcOuverture: peri ? (lot.dlcOuverture||patch.dlcOuverture||'') : ''});
           besoin = subQty(besoin, pris);
         }
       }
+      // Mémorise la contrainte de DLC d'ouverture sur la production (sert au plafonnement + ordonnancement).
+      if(dlcOuvertureMin){ await db.productions.update(prodId, {dlcContrainteOuverture: dlcOuvertureMin}); }
       return prodId;
     });
 }
@@ -2121,19 +2470,61 @@ async function declareLossForm(prodId){
     <div class="field" style="margin-top:10px"><label>Quantité perdue</label>
       <input type="number" id="f_lossQte" min="0" max="${dispo}" step="1" value="" placeholder="ex : 3"></div>
     <div class="field"><label>Motif</label><select id="f_lossMotif">${motifOpts}</select></div>
+    <label class="switch-row"><input type="checkbox" id="f_lossDeg" onchange="lossDegSwitch(this.checked)"> 🥄 Cassé mais garni → bascule en dégustation (offert, non perdu)</label>
+    <div class="field" id="f_lossDestWrap" style="display:none"><label>Emplacement des dégustations</label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_lossDest" value="frigo" checked> <b style="background:#6aa3a0;color:#fff;border-radius:6px;padding:0 7px">F</b> 🧊 Frigo (DLC 7 j)</label>
+        ${EMPLACEMENTS.filter(e=>e.type!=='frigo').map(e=>`<label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_lossDest" value="${e.key}"> <b style="background:#3b6ea5;color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b> ${e.icon} ${esc(e.nom)}</label>`).join('')}
+      </div></div>
     <div class="field"><label>Date</label><input type="date" id="f_lossDate" value="${today()}"></div>
     <div class="field"><label>Note (facultatif)</label><input id="f_lossNote" placeholder="détail, circonstances…"></div>
-    <p class="note">La perte sort définitivement du stock fini et alimente le taux de perte. Le coût des pièces perdues est imputé au coût de revient global.</p>
+    <p class="note" id="lossDegHint">La perte sort définitivement du stock fini et alimente le taux de perte. Le coût des pièces perdues est imputé au coût de revient global.</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
-      <button class="btn danger" onclick="saveLoss(${prodId})">Déclarer la perte</button></div>`);
+      <button class="btn danger" onclick="saveLoss(${prodId})">Déclarer</button></div>`);
+}
+function lossDegSwitch(on){
+  const w=document.getElementById('f_lossDestWrap'); if(w) w.style.display=on?'block':'none';
+  const h=document.getElementById('lossDegHint');
+  if(h) h.innerHTML = on
+    ? '🥄 Ces pièces cassées mais garnies ne sont <b>pas comptées en perte</b> : elles basculent en <b>stock dégustation</b> (offert, non vendable), à distribuer (marchés…).'
+    : 'La perte sort définitivement du stock fini et alimente le taux de perte. Le coût des pièces perdues est imputé au coût de revient global.';
 }
 async function saveLoss(prodId){
   const qteP = +val('f_lossQte');
   const p = await db.productions.get(prodId); if(!p){ toast('Production introuvable'); return; }
   const dispo = round3(+p.qteRestante||0);
-  if(isNaN(qteP) || qteP<=0){ toast('Indique une quantité perdue'); return; }
+  if(isNaN(qteP) || qteP<=0){ toast('Indique une quantité'); return; }
   if(qteP > dispo + 1e-9){ toast(`Maximum ${qty(dispo)} pièce(s) disponibles`); return; }
-  // coût unitaire de revient figé pour ce batch (matières + conso + MO selon paramètres)
+  const enDeg = document.getElementById('f_lossDeg')?.checked;
+  // CAS « cassé mais garni » → bascule en stock DÉGUSTATION (offert, non vendable), pas une perte.
+  if(enDeg){
+    const dest=(document.querySelector('input[name="f_lossDest"]:checked')||{}).value||'frigo';
+    const recName = (window._prodRecName)||((rid)=>'#'+rid);
+    await db.transaction('rw', db.productions, async()=>{
+      const src=await db.productions.get(prodId);
+      const nowIso=new Date().toISOString();
+      const baseDlc=computeDlcFromHistory([{lieu:dest, ts:nowIso, motif:'dégustation (cassé garni)'}], nowIso);
+      let dlc=baseDlc;
+      [src.dlcProduit, src.dlcContrainteOuverture].forEach(d=>{ if(d && (!dlc||d<dlc)) dlc=d; });
+      const lotBase = src.lotBase || lotBaseSansSuffixe(src.lotProduction||'');
+      const lotDeg = lotAvecEmplacement((lotBase||genLotCode(3))+'-DG', dest);
+      await db.productions.update(prodId, {qteRestante: subQty(src.qteRestante, qteP)});
+      await db.productions.add({
+        recipeId: src.recipeId, lotProduction: lotDeg, date: today(),
+        composant:'degustation', lotBase, degustation:true, degOrigine:'casse-garni',
+        qteTheorique:qteP, qteReelle:qteP, ecart:0, qteProduite:qteP, qteRestante:qteP,
+        dlcProduit:dlc, dlcAuto:true, dlcLimiteeParOuverture:(dlc!==baseDlc),
+        prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
+        emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
+        histEmplacement:[{lieu:dest, ts:nowIso, motif:'dégustation (cassé mais garni)'}],
+        assembleFrom:[{id:src.id, lot:src.lotProduction, composant:'casse-garni', qte:qteP, parfum:recName(src.recipeId)}]
+      });
+    });
+    closeModal(); renderProductions();
+    toast(`🥄 ${qty(qteP)} cassé(s) garni(s) basculé(s) en dégustation (non perdu)`);
+    return;
+  }
+  // CAS perte pure : coût unitaire de revient figé pour ce batch
   const recipe = await db.recipes.get(p.recipeId);
   const [recipeItems, lots] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray()]);
   let coutUnit = 0;
@@ -2177,36 +2568,81 @@ async function delProd(id){
       <div class="modal-actions"><button class="btn" onclick="closeModal()">Compris</button></div>`);
     return;
   }
-  // Sinon : proposer le choix de recréditer ou non
+  // Sinon : raison obligatoire, puis choix recréditer / pertes / simple suppression
   const prod = await db.productions.get(id);
   const conso = await db.prodConsumption.where('productionId').equals(id).toArray();
   const recap = conso.length ? `${conso.length} ligne(s) de matière consommée` : 'aucune matière consommée';
-  openModal(`<h3>Supprimer la production</h3>
+  const reste = round3(+(prod?prod.qteRestante:0)||0);
+  const opts = DELETE_REASONS_PROD.map(r=>`<option>${esc(r)}</option>`).join('');
+  openModal(`<h3>🗑 Supprimer la production</h3>
     <p style="margin-bottom:10px">Batch <b>${esc(prod?prod.lotProduction||'':'')}</b> — ${recap}.</p>
-    <p class="note" style="margin-bottom:16px">Souhaites-tu remettre les ingrédients consommés dans leurs lots d'origine (recréditer le stock) ?</p>
+    <div class="field"><label>Raison de la suppression *</label><select id="f_delReason">${opts}</select></div>
+    <div class="field"><label>Précision (facultatif)</label><input id="f_delNote" placeholder="détail…"></div>
+    ${reste>0?`<p class="note">Ce batch a encore <b>${qty(reste)}</b> en stock. Que faire de ces pièces non distribuées ?</p>`:'<p class="note" style="margin-bottom:6px">Souhaites-tu recréditer les ingrédients consommés dans leurs lots d\'origine ?</p>'}
     <div class="modal-actions" style="flex-direction:column;gap:8px">
-      <button class="btn gold" style="width:100%" onclick="doDelProd(${id},true)">↩ Supprimer ET recréditer le stock</button>
-      <button class="btn" style="width:100%" onclick="doDelProd(${id},false)">Supprimer sans recréditer</button>
+      <button class="btn gold" style="width:100%" onclick="doDelProd(${id},'recrediter')">↩ Supprimer ET recréditer le stock matières</button>
+      ${reste>0?`<button class="btn" style="width:100%" onclick="doDelProd(${id},'pertes')">⚠ Supprimer et déclarer ${qty(reste)} en pertes</button>`:''}
+      <button class="btn" style="width:100%" onclick="doDelProd(${id},'simple')">Supprimer sans recréditer ${reste>0?'(pièces ni recréditées ni en pertes)':''}</button>
       <button class="btn ghost" style="width:100%" onclick="closeModal()">Annuler</button>
     </div>`);
 }
-async function doDelProd(id, recrediter){
+async function doDelProd(id, mode){
+  const reason=val('f_delReason')||DELETE_REASONS_PROD[0];
+  const note=val('f_delNote')||'';
   // Re-vérifier le garde-fou (sécurité anti-concurrence)
   const liens = await db.orderItems.where('productionId').equals(id).toArray();
   if(liens.length){ closeModal(); toast('Production liée à une commande — suppression annulée'); renderProductions(); return; }
+  const prod = await db.productions.get(id);
+  const conso = await db.prodConsumption.where('productionId').equals(id).toArray();
+  const lossesBefore = await db.losses.where('productionId').equals(id).toArray().catch(()=>[]);
+  const reste = round3(+(prod?prod.qteRestante:0)||0);
+  // snapshot pour annulation
+  const snap = { prod:prod?{...prod}:null, conso:conso.map(c=>({...c})), losses:lossesBefore.map(l=>({...l})), mode, reste };
+  let newLoss=null;
   await db.transaction('rw',db.productions,db.prodConsumption,db.materialLots,db.losses,async()=>{
-    if(recrediter){
-      const conso = await db.prodConsumption.where('productionId').equals(id).toArray();
+    if(mode==='recrediter'){
       for(const c of conso){
         const lot = await db.materialLots.get(c.materialLotId);
         if(lot){ await db.materialLots.update(lot.id, { qteRestante: addQty(lot.qteRestante, c.qteConsommee) }); }
       }
     }
+    if(mode==='pertes' && reste>0 && prod){
+      const recipe = await db.recipes.get(prod.recipeId);
+      const [recipeItems, lots] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray()]);
+      let coutUnit=0; if(recipe){ const cr=coutRevientRecette(recipe, recipeItems, lots); coutUnit=+cr.coutRevientUnit||0; }
+      newLoss = { productionId:id, recipeId:prod.recipeId, lotProduction:prod.lotProduction||'',
+        date:today(), motif:'Suppression batch — '+reason, note,
+        qte:reste, coutUnit:money2(coutUnit), coutTotal:money2(coutUnit*reste) };
+      await db.losses.add(newLoss);
+    }
     await db.prodConsumption.where('productionId').equals(id).delete();
-    await db.losses.where('productionId').equals(id).delete().catch(()=>{});
+    if(mode!=='pertes'){ await db.losses.where('productionId').equals(id).delete().catch(()=>{}); }
     await db.productions.delete(id);
   });
-  closeModal(); renderProductions(); toast(recrediter?'Production supprimée, stock recrédité ✓':'Production supprimée');
+  logDeletion('production', id, reason, note, prod?(prod.lotProduction||''):'');
+  closeModal(); renderProductions();
+  toast(mode==='recrediter'?`Production supprimée (${esc(reason)}), stock recrédité ✓`
+    : mode==='pertes'?`Production supprimée (${esc(reason)}) · ${qty(reste)} en pertes ✓`
+    : `Production supprimée (${esc(reason)})`);
+  // annulation rapide
+  showUndoToast('Production supprimée', async ()=>{
+    await db.transaction('rw',db.productions,db.prodConsumption,db.materialLots,db.losses,async()=>{
+      if(snap.prod) await db.productions.put(snap.prod);
+      for(const c of snap.conso){ await db.prodConsumption.put(c); }
+      // annule le recrédit matières effectué
+      if(snap.mode==='recrediter'){
+        for(const c of snap.conso){ const lot=await db.materialLots.get(c.materialLotId);
+          if(lot){ await db.materialLots.update(lot.id, {qteRestante: subQty(lot.qteRestante, c.qteConsommee)}); } }
+      }
+      // retire la perte créée par la suppression
+      if(snap.mode==='pertes'){
+        const created = await db.losses.where('productionId').equals(id).toArray().catch(()=>[]);
+        for(const l of created){ if(/^Suppression batch/.test(l.motif||'')) await db.losses.delete(l.id); }
+        for(const l of snap.losses){ await db.losses.put(l); }
+      }
+    });
+    renderProductions();
+  });
 }
 
 /* ============================================================
@@ -2426,7 +2862,7 @@ async function traceLot(lotId){
     const oi = await db.orderItems.where('productionId').equals(prod.id).toArray();
     const cmdList = oi.map(it=>{ const o=orders.find(x=>x.id===it.orderId); const cl=o?clients.find(cc=>cc.id===o.clientId):null;
       return `<div style="font-size:.8rem;color:#6a5a52;padding:2px 0">→ ${esc(cl?cl.nom:'—')} · ${it.qte} pièces · ${o?fmtDate(o.date):''}</div>`; });
-    blocks.push(`<div class="trace-step"><b>${esc(rec?rec.produitNom:'?')}</b> · batch ${esc(prod.lotProduction||'—')} · ${qty(c.qteConsommee)} ${esc(mat?mat.unite:'')} consommé(s)
+    blocks.push(`<div class="trace-step"><b>${esc(rec?rec.produitNom:'?')}</b> · batch ${esc(prod.lotProduction||'—')}
       <div style="margin-top:4px">${cmdList.join('')||'<span class="note">Aucune commande servie depuis ce batch.</span>'}</div></div>`);
   }
   openModal(`<h3>Traçabilité — lot de matière</h3>
@@ -2572,7 +3008,7 @@ async function flashAlert(lotNum){
     });
     totalStock += (+p.qteRestante||0);
     const usedMat = (consoByProd[p.id]||[]).map(c=>{ const l=lots.find(x=>x.id===c.materialLotId);
-      return `${esc(matName(l?l.materialId:null))} ${qty(c.qteConsommee)} ${esc(matUnit(l?l.materialId:null))}`; }).join(', ');
+      return `${esc(matName(l?l.materialId:null))}`; }).filter(Boolean).join(', ');
     return `<div class="panel" style="margin:8px 0;border-left:4px solid var(--red,#b3261e)">
       <b>${esc(recName(p.recipeId))}</b> · batch ${esc(p.lotProduction||'—')} · ${fmtDate(p.date)}
       <div class="note">Produit ${qty(p.qteProduite!=null?p.qteProduite:p.qteReelle)} · encore en stock ${qty(p.qteRestante)}${usedMat?` · matière incriminée : ${usedMat}`:''}</div>
@@ -2639,13 +3075,13 @@ async function traceProd(prodId){
       // T2 : le lot n'existe plus → on s'appuie sur les données figées au moment de la production
       const mat = c.snapMaterialId ? await db.materials.get(c.snapMaterialId) : null;
       const sup = c.snapSupplierId ? await db.suppliers.get(c.snapSupplierId) : null;
-      lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'Matière')}</b> — ${qty(c.qteConsommee)} ${esc(mat?mat.unite:'')}<br>
+      lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'Matière')}</b><br>
         <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(c.snapLotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(c.snapDlc)||'—'} <span class="tag warn">lot archivé</span></span></div>`);
       continue;
     }
     const mat = await db.materials.get(lot.materialId);
     const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId) : null;
-    lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'?')}</b> — ${qty(c.qteConsommee)} ${esc(mat?mat.unite:'')}<br>
+    lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'?')}</b><br>
       <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(lot.lotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(lot.dlc)||'—'}</span></div>`);
   }
   // commandes liées
@@ -2666,12 +3102,13 @@ async function traceProd(prodId){
     : '';
   openModal(`<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
-    <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
+    <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prodComposant(prod)!=='complet'?` · <span class="tag" style="background:${prodComposant(prod)==='assemble'?'#3f7d52':prodComposant(prod)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff">${prodComposant(prod)==='coques'?'🟤 Coques':prodComposant(prod)==='ganache'?'🍫 Ganache':prodComposant(prod)==='degustation'?'🥄 Dégustation (offert)':'✓ Assemblé'}</span>`:''}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'')}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
     ${(prod.histEmplacement&&prod.histEmplacement.length>1)?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span style="font-weight:600">Parcours de conservation</span>${prod.histEmplacement.map(h=>`<span style="font-size:.8rem;color:#6b5a52">${empIcon(h.lieu)} ${esc(empNom(h.lieu))} (${empLettre(h.lieu)}) — ${fmtDateTime(h.ts)}${h.motif?` · ${esc(h.motif)}`:''}</span>`).join('')}</div>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
-    ${lines.length?lines.join(''):'<p class="note">Aucune consommation enregistrée.</p>'}
+    ${lines.length?lines.join(''):(prodComposant(prod)==='assemble'?'<p class="note">Macaron assemblé : matières tracées via les sous-lots ci-dessous.</p>':'<p class="note">Aucune consommation enregistrée.</p>')}
+    ${(prod.assembleFrom&&prod.assembleFrom.length)?`<h3 style="font-size:1rem;margin:18px 0 8px">🔗 ${prod.degOrigine==='casse-garni'?'Issu de pièces cassées mais garnies':'Assemblé à partir de'}${prodComposant(prod)==='degustation'?' <span class="tag" style="background:#caa23b;color:#fff;font-size:.66rem">dégustation</span>':''}</h3>${prod.assembleFrom.map(s=>`<div class="trace-step">${s.composant==='coques'?'🟤 Coques':s.composant==='ganache'?'🍫 Ganache':'💔 Cassé garni'}${s.parfum?` <b>${esc(s.parfum)}</b>`:''} · lot <b>${esc(s.lot||('#'+s.id))}</b> · ${qty(s.qte)} pièce(s)</div>`).join('')}`:''}
     ${lossBlock}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
     ${cmdLines.length?cmdLines.join(''):'<p class="note">Ce batch n\'est lié à aucune commande pour l\'instant.</p>'}
@@ -2919,7 +3356,18 @@ async function clientForm(id){
    </div>
    <div class="field"><label>Adresse</label><input id="f_adr" value="${esc(c.adresse)}"></div>
    <div class="field"><label>Notes</label><textarea id="f_notes" rows="2">${esc(c.notes)}</textarea></div>
-   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="saveClient(${id||0})">Enregistrer</button></div>`);
+   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="saveClient(${id||0})">Enregistrer</button>${id?`<button class="btn danger" onclick="confirmDelClient(${id})">🗑 Supprimer</button>`:''}</div>`);
+}
+function confirmDelClient(id){
+  openModal(`<h3>Supprimer ce client ?</h3>
+    <p class="note">Cette action est définitive. L'historique de ses commandes n'est pas supprimé, mais la fiche client le sera.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="clientForm(${id})">Annuler</button>
+      <button class="btn danger" onclick="doDelClient(${id})">Supprimer définitivement</button></div>`);
+}
+async function doDelClient(id){
+  const c=await db.clients.get(id); const snap=c?{...c}:null;
+  await db.clients.delete(id); closeModal(); renderClients(); toast('Client supprimé ✓');
+  if(snap) showUndoToast('Client supprimé', async()=>{ await db.clients.put(snap); renderClients(); });
 }
 async function saveClient(id){
   const o={nom:val('f_nom'),prenom:val('f_prenom'),societe:val('f_societe'),type:val('f_type'),tel:val('f_tel'),email:val('f_email'),ref:val('f_ref'),adresse:val('f_adr'),notes:val('f_notes')};
@@ -2961,7 +3409,7 @@ async function renderProducts(){
    </div>
    <div class="panel"><h2>Macarons grand format <span class="tag warn">${BIG_FORMATS.length}</span></h2>
      <div class="table-wrap"><table><thead><tr><th>Produit</th><th>Tarif particulier</th><th>Tarif pro</th></tr></thead><tbody>
-       ${BIG_FORMATS.map(f=>`<tr><td><b>${esc(f)}</b></td><td>${euro(BIG_PRICE.particulier)}</td><td>${euro(BIG_PRICE.pro)}</td></tr>`).join('')}
+       ${BIG_FORMATS.map(f=>`<tr><td><b>${esc(f)}</b></td><td>${euro(bigPrice('particulier'))}</td><td>${euro(bigPrice('pro'))}</td></tr>`).join('')}
      </tbody></table></div>
      <p class="note">Vendus à l'unité via le type de commande « Grand format ». Le tarif (pro / particulier) se choisit à chaque commande.</p>
    </div>
@@ -3149,9 +3597,14 @@ async function renderCmd(){
   // charge TOUS les liens batch en une seule requête (au lieu d'une par commande)
   const allItems = await db.orderItems.toArray();
   const itemsByOrder={}; allItems.forEach(it=>{ (itemsByOrder[it.orderId] ||= []).push(it); });
+  // n° de lot des batchs liés, par commande (pour permettre la recherche par lot)
+  const allProdsForLots = await db.productions.toArray();
+  const prodLotById = {}; allProdsForLots.forEach(p=>{ prodLotById[p.id]=p.lotProduction||''; });
+  const lotsByOrder={}; allItems.forEach(it=>{ const lot=prodLotById[it.productionId]; if(lot){ (lotsByOrder[it.orderId] ||= []).push(lot); } });
   const lineLabel = ln => {
     if(ln.type==='evenement') return `Événement ${ln.evQte||0} mac. +${ln.equip||0} pyr.`;
     if(ln.type==='grand'){ const n=(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Grand format ×${n}`; }
+    if(ln.type==='vrac'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Vrac pro ×${n}`; }
     if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0)+(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Don ×${n} (offert)`; }
     if(ln.type==='prestation') return `Prestation${ln.libelle?' : '+ln.libelle:''}`;
     return `Coffret ${ln.taille||'?'}`;
@@ -3169,7 +3622,8 @@ async function renderCmd(){
     const cl=clById[o.clientId]||{};
     const prim = normTxt([clName(o.clientId), 'cmd'+o.id].filter(Boolean).join(' '));
     const blob = normTxt([clName(o.clientId), cl.prenom, cl.societe, cl.tel, cl.email, cl.ref,
-      resume, prodTxt, o.notes, o.reglement, o.paiement, 'cmd'+o.id, '#'+o.id, fmtDate(o.date)].filter(Boolean).join(' '));
+      resume, prodTxt, o.notes, o.reglement, o.paiement, 'cmd'+o.id, '#'+o.id, fmtDate(o.date),
+      (lotsByOrder[o.id]||[]).join(' ')].filter(Boolean).join(' '));
     const digits = onlyDigits([o.id, cl.tel, o.montant].filter(v=>v!=null&&v!=='').join(' '));
     return {o, resume, nbLies:(itemsByOrder[o.id]||[]).length, _prim:prim, _blob:blob, _digits:digits};
   });
@@ -3351,6 +3805,12 @@ async function cmdView(id){
         ${items.length?`<div style="margin-top:6px">${items.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun.</p>'}
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
+    if(ln.type==='vrac'){
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      return `<div class="cmd-line"><div class="line-type">Vrac pro <span class="line-sub">boîte réutilisable, non facturée</span></div>
+        ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun.</p>'}
+        <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
+    }
     if(ln.type==='don'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       const items=(ln.items||[]).filter(p=>p.qte>0);
@@ -3374,7 +3834,7 @@ async function cmdView(id){
     <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientForm(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</p>
     ${o.lieuLivraison?`<div class="sum-box"><span>📍 Livraison</span><b>${esc(o.lieuLivraison)}</b></div>`:''}
     ${blocks||'<p class="note">Aucun produit.</p>'}
-    <div class="sum-box"><span>Personnalisation couleurs</span><b>${o.perso?'Oui':'Non'}</b></div>
+    <div class="sum-box"><span>Personnalisation couleurs</span><b>${+o.persoMacarons>0?`${o.persoMacarons} macaron(s) · +${euro(money2(o.persoMacarons*0.25))}`:(o.perso?'Oui':'Non')}</b></div>
     ${+o.remiseGlobale>0?`<div class="sum-box"><span>Remise globale</span><b>−${o.remiseGlobale}%</b></div>`:''}
     <div class="sum-box"><span>Montant total${+o.remiseGlobale>0||lignes.some(l=>+l.remisePct>0)?' (TTC, remises incluses)':''}</span><b>${euro(o.montant)}</b></div>
     <h3 style="font-size:1rem;margin:16px 0 8px">Paiements <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— réf. commande n°${esc(orderNumber(o))}</span></h3>
@@ -3393,7 +3853,7 @@ async function cmdView(id){
         return `<button class="btn ${cur?'':'ghost'} sm" onclick="setOrderStatus(${id},'${st}')" ${cur?'style="pointer-events:none"':''}>${cur?'● ':''}${st}</button>`;}).join('')}
     </div>
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
 function lineTotalStored(ln){
@@ -3407,7 +3867,8 @@ function lineTotalStored(ln){
     return money2(base + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE);
   }
   if(ln.type==='evenement') return money2((ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE);
-  if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); return money2(tot*pu); }
+  if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); return money2(tot*pu); }
+  if(ln.type==='vrac'){ const pu=+getSettings().prixMacaronProStd||0; const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); return money2(tot*pu); }
   if(ln.type==='don') return 0;
   if(ln.type==='prestation'){
     const base=money2(+ln.montantHT||0);
@@ -3454,6 +3915,7 @@ function _lineToEdit(ln){
   if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null)};
   if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0};
+  if(t==='vrac') return {type:'vrac', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items)};
   if(t==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0};
   return {...ln};
@@ -3497,8 +3959,8 @@ async function cmdForm(id, opts){
      <div class="field"><label>Heure de livraison</label><input type="time" id="f_heure" value="${esc(o.heureLivraison||'')}" oninput="cmdFeasibilityRecalc()"></div>
    </div>
    <div id="feasibility" class="feasibility" style="display:none"></div>
-   <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— adresse du client ou lieu habituel</span></label>
-     <input id="f_lieu" list="lieuxLivraison" autocomplete="off" placeholder="Choisir ou saisir un lieu…" value="${esc(o.lieuLivraison||'')}">
+   <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— tapez pour rechercher (clients, lieux habituels)</span></label>
+     <input class="search" id="f_lieu" list="lieuxLivraison" autocomplete="off" autocapitalize="words" placeholder="Tapez une adresse, un nom de client ou un lieu…" value="${esc(o.lieuLivraison||'')}">
      <datalist id="lieuxLivraison">${placesOpts}</datalist>
    </div>
    <div class="row2">
@@ -3507,8 +3969,8 @@ async function cmdForm(id, opts){
      <div class="field"><label>Prix carburant (€/L)</label>
        <input type="number" min="0" step="0.001" id="f_carbu" value="${o.prixCarburant!=null?esc(o.prixCarburant):''}" placeholder="ex : 1.85" oninput="cmdDeliveryRecalc()"></div>
    </div>
-   <div class="field"><label>Temps de livraison (min) <span style="color:#9a8a82;font-weight:400">— aller-retour, impacte le temps de travail</span></label>
-     <input type="number" min="0" step="1" id="f_tempsLiv" value="${o.tempsLivraisonMin!=null?esc(o.tempsLivraisonMin):''}" placeholder="ex : 30" oninput="cmdDeliveryRecalc()"></div>
+   <div class="field"><label>Temps de trajet aller (min) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé (×2)</span></label>
+     <input type="number" min="0" step="1" id="f_tempsLiv" value="${o.tempsLivraisonMin!=null?esc(o.tempsLivraisonMin):''}" placeholder="ex : 15" oninput="cmdDeliveryRecalc()"></div>
    <div class="sum-box" id="deliveryImpact" style="display:none;flex-direction:column;align-items:stretch;gap:4px"></div>
 
    <label style="font-size:.82rem;color:#7a6a62;font-weight:500;display:block;margin-bottom:6px">Produits de la commande</label>
@@ -3517,13 +3979,15 @@ async function cmdForm(id, opts){
      <button class="btn ghost sm" onclick="addLine('coffret')">+ Coffret</button>
      <button class="btn ghost sm" onclick="addLine('evenement')">+ Événement</button>
      <button class="btn ghost sm" onclick="addLine('grand')">+ Grand format</button>
+     <button class="btn ghost sm" onclick="addLine('vrac')">+ Vrac pro</button>
      <button class="btn ghost sm" onclick="addLine('prestation')">+ Prestation / Coaching</button>
      <button class="btn ghost sm" onclick="addLine('don')">+ Don (0 €)</button>
    </div>
 
-   <label style="font-size:.82rem;color:#7a6a62;display:flex;gap:7px;align-items:center;margin:6px 0"><input type="checkbox" id="f_perso" style="width:auto" ${o.perso?'checked':''}> Personnalisation des couleurs</label>
-
    <div class="field"><label>Statut commande</label><select id="f_st">${stOpts}</select></div>
+   <label class="switch-row"><input type="checkbox" id="f_perso" ${o.perso||+o.persoMacarons>0?'checked':''} onchange="cmdPersoToggle()"> Personnalisation des couleurs (+0,25 €/macaron)</label>
+   <div class="field" id="f_persoWrap" style="${(o.perso||+o.persoMacarons>0)?'':'display:none'}"><label>Nombre de macarons personnalisés <span style="color:#9a8a82;font-weight:400">— pas forcément le total de la commande</span></label>
+     <input type="number" min="0" step="1" id="f_persoNb" value="${o.persoMacarons||''}" placeholder="ex : 24" oninput="cmdRecalc()"></div>
    <div class="row2">
      <div class="field"><label>% de remise globale</label><input type="number" min="0" max="100" step="1" id="f_remiseg" value="${o.remiseGlobale||''}" placeholder="0" oninput="cmdRecalc()"></div>
      <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0';cmdRecalc()"></div>
@@ -3687,6 +4151,7 @@ function addLine(type){
   if(type==='coffret') cmdLines.push({type:'coffret', taille:6, parfums:{}});
   else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:EVENT_MIN_EQUIP, parfums:{}});
   else if(type==='grand') cmdLines.push({type:'grand', tarif:'particulier', items:{}});
+  else if(type==='vrac') cmdLines.push({type:'vrac', parfums:{}});
   else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
   else if(type==='prestation') cmdLines.push({type:'prestation', libelle:'', montantHT:0, remiseType:'pct', remisePct:0, remiseEuro:0});
   drawLines();
@@ -3700,6 +4165,7 @@ function drawLines(){
     if(ln.type==='coffret') return drawCoffretLine(ln,i);
     if(ln.type==='evenement') return drawEventLine(ln,i);
     if(ln.type==='grand') return drawBigLine(ln,i);
+    if(ln.type==='vrac') return drawVracLine(ln,i);
     if(ln.type==='don') return drawDonLine(ln,i);
     if(ln.type==='prestation') return drawPrestationLine(ln,i);
     return '';
@@ -3766,7 +4232,7 @@ function setEventEquip(i,v){ cmdLines[i].equip=+v||0; cmdRecalc(); }
 function setEventParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 
 function drawBigLine(ln,i){
-  const pu=BIG_PRICE[ln.tarif]||0;
+  const pu=bigPrice(ln.tarif);
   const bigRows = BIG_FORMATS.map((f,fi)=>{
     const q=ln.items[f]||0;
     let opts=''; for(let n=0;n<=50;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
@@ -3777,8 +4243,8 @@ function drawBigLine(ln,i){
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Grand format</span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <div class="field"><label>Tarif</label><select onchange="setBigTarif(${i},this.value)">
-      <option value="particulier" ${ln.tarif!=='pro'?'selected':''}>Particulier — ${euro(BIG_PRICE.particulier)}/pièce</option>
-      <option value="pro" ${ln.tarif==='pro'?'selected':''}>Pro — ${euro(BIG_PRICE.pro)}/pièce</option>
+      <option value="particulier" ${ln.tarif!=='pro'?'selected':''}>Particulier — ${euro(bigPrice('particulier'))}/pièce</option>
+      <option value="pro" ${ln.tarif==='pro'?'selected':''}>Pro — ${euro(bigPrice('pro'))}/pièce</option>
     </select></div>
     <label style="font-size:.78rem;color:#7a6a62">Produits (quantité)</label>
     <div class="flav-grid">${bigRows}</div>
@@ -3788,6 +4254,28 @@ function drawBigLine(ln,i){
 }
 function setBigTarif(i,v){ cmdLines[i].tarif=v; drawLines(); }
 function setBigItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdLines[i].items[f]=q; else delete cmdLines[i].items[f]; drawLines(); }
+
+// Ligne VRAC PRO : macarons standards en boîte réutilisable (non facturée), au tarif pro/macaron.
+function drawVracLine(ln,i){
+  if(!ln.parfums) ln.parfums={};
+  const pu=+getSettings().prixMacaronProStd||0;
+  const rows = FLAVORS.map((f,fi)=>{
+    const q=ln.parfums[f]||0;
+    let opts=''; for(let n=0;n<=120;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
+    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)}</span>
+      <select class="flav-sel" onchange="setVracParfum(${i},${fi},this.value)">${opts}</select></div>`;
+  }).join('');
+  const tot=Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
+  return `<div class="cmd-line">
+    <div class="line-head"><span class="line-type">Vrac pro <span class="line-sub">boîte réutilisable, non facturée</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="sum-box"><span>Tarif pro</span><b>${euro(pu)}/macaron</b></div>
+    <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité)</label>
+    <div class="flav-grid">${rows}</div>
+    <div class="sum-box"><span>${tot} macaron(s) × ${euro(pu)}</span><b>${euro(tot*pu)}</b></div>
+    ${lineRemiseRow(ln,i)}
+  </div>`;
+}
+function setVracParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 
 function drawDonLine(ln,i){
   if(!ln.parfums) ln.parfums={}; if(!ln.items) ln.items={};
@@ -3859,7 +4347,8 @@ function lineTotalBase(ln){
     return money2(base + over*FLAVOR_SURCHARGE);
   }
   if(ln.type==='evenement') return addMoney(mulMoney(ln.evQte||0,EVENT_PRICE), mulMoney(ln.equip||0,EQUIP_PRICE));
-  if(ln.type==='grand'){ const pu=BIG_PRICE[ln.tarif]||0; const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
+  if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
+  if(ln.type==='vrac'){ const pu=+getSettings().prixMacaronProStd||0; const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='don') return 0;
   if(ln.type==='prestation') return money2(+ln.montantHT||0);
   return 0;
@@ -3913,26 +4402,41 @@ function cmdLinesToStored(){
     if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+    if(ln.type==='vrac') return {type:'vrac', remisePct:rp, parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0)};
   }).filter(Boolean);
+}
+function cmdPersoToggle(){
+  const on=document.getElementById('f_perso')?.checked;
+  const w=document.getElementById('f_persoWrap'); if(w) w.style.display=on?'block':'none';
+  if(!on){ const n=document.getElementById('f_persoNb'); if(n) n.value=''; }
+  cmdRecalc();
+}
+const PERSO_PRIX_UNIT = 0.25;   // surcoût personnalisation des couleurs, €/macaron
+function cmdPersoCount(){
+  const on=document.getElementById('f_perso')?.checked;
+  return on ? Math.max(0, +(document.getElementById('f_persoNb')?.value)||0) : 0;
 }
 function cmdRecalc(){
   const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln))); // après remises de ligne
   const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
   const remiseG = money2(sousTotal*gpct/100);
-  const total = Math.max(0, subMoney(sousTotal, remiseG));
+  const persoNb = cmdPersoCount();
+  const persoSup = money2(persoNb*PERSO_PRIX_UNIT);
+  const total = Math.max(0, addMoney(subMoney(sousTotal, remiseG), persoSup));
   const mt=document.getElementById('f_mt');
   if(mt && mt.dataset.auto==='1'){ mt.value = total?total.toFixed(2):''; }
   const brk=document.getElementById('priceBreak');
   if(brk){
-    if(cmdLines.length){
+    if(cmdLines.length || persoNb){
       brk.style.display='block';
       const remiseLignes = addMoney(...cmdLines.map(ln=>lineRemiseEuro(ln)));
       brk.innerHTML =
         `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
         (remiseLignes>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
         (gpct>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseG)}</b></div>`:'')+
+        (persoNb>0?`<div style="display:flex;justify-content:space-between;color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×0,25 €)</span><b>+${euro(persoSup)}</b></div>`:'')+
         `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(total)}</b></div>`;
     } else brk.style.display='none';
   }
@@ -4045,6 +4549,7 @@ async function saveCmd(id){
     distanceKm: +val('f_distKm')||0, prixCarburant: +val('f_carbu')||0, tempsLivraisonMin: +val('f_tempsLiv')||0,
     lignes, remiseGlobale,
     perso:document.getElementById('f_perso').checked,
+    persoMacarons: cmdPersoCount(),
     montant,
     paiements,
     dateReglementFinal: val('f_dateFinal')||'',
@@ -4091,6 +4596,66 @@ async function checkForecastForOrder(orderId){
         <button class="btn gold" onclick="closeModal();view='previsionnel';setActiveView&&setActiveView('previsionnel');renderForecast()">Voir le prévisionnel</button>
       </div>`);
   }catch(e){ /* silencieux */ }
+}
+// Suppression de commande avec RAISON obligatoire (confirmation explicite).
+const DELETE_REASONS_ORDER = ['Annulation client','Erreur de saisie','Doublon','Non honorée','Report / remplacée','Autre'];
+const DELETE_REASONS_PROD = ['Erreur de saisie','Ratée / non conforme','Doublon','Test / essai','Périmée','Autre'];
+async function cmdDelete(id){
+  const o=await db.orders.get(id); if(!o){ toast('Commande introuvable'); return; }
+  const items = await db.orderItems.where('orderId').equals(id).toArray();
+  const totBatch = items.reduce((s,it)=>s+(+it.qte||0),0);
+  const cl = o.clientId ? await db.clients.get(o.clientId) : null;
+  const opts = DELETE_REASONS_ORDER.map(r=>`<option>${esc(r)}</option>`).join('');
+  openModal(`<h3>🗑 Supprimer la commande</h3>
+    <p style="margin-bottom:8px">${cl?`<b>${esc(cl.nom)}</b> · `:''}${fmtDate(o.date)} · ${euro(o.montant)}</p>
+    ${totBatch?`<div class="banner">↩ <div>${totBatch} macaron(s) de batch(s) lié(s) seront <b>recrédités au stock</b>.</div></div>`:''}
+    <div class="field"><label>Raison de la suppression *</label><select id="f_delReason">${opts}</select></div>
+    <div class="field"><label>Précision (facultatif)</label><input id="f_delNote" placeholder="détail…"></div>
+    <p class="note">La suppression est définitive. La raison est enregistrée dans le journal des suppressions.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn danger" onclick="cmdDeleteConfirm(${id})">Confirmer la suppression</button></div>`);
+}
+async function cmdDeleteConfirm(id){
+  const reason=val('f_delReason')||DELETE_REASONS_ORDER[0];
+  const note=val('f_delNote')||'';
+  const o=await db.orders.get(id);
+  const items = await db.orderItems.where('orderId').equals(id).toArray();
+  const evs = await db.events.where('refId').equals(id).toArray().catch(()=>[]);
+  const totBatch = items.reduce((s,it)=>s+(+it.qte||0),0);
+  // snapshot pour annulation
+  const snap = { order:o?{...o}:null, items:items.map(x=>({...x})), events:evs.map(e=>({...e})) };
+  await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,async()=>{
+    for(const it of items){
+      const prod = await db.productions.get(it.productionId);
+      if(prod){ await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, it.qte)}); }
+    }
+    await db.orderItems.where('orderId').equals(id).delete();
+    await db.events.where('refId').equals(id).delete();
+    await db.orders.delete(id);
+  });
+  logDeletion('commande', id, reason, note, o?`${fmtDate(o.date)} · ${euro(o.montant)}`:'');
+  closeModal(); renderCmd();
+  toast(totBatch?`Commande supprimée (${esc(reason)}) — ${totBatch} recrédité(s) ✓`:`Commande supprimée (${esc(reason)}) ✓`);
+  // annulation rapide : restaure la commande, ses liens, son événement, et ré-décrémente le stock
+  showUndoToast('Commande supprimée', async ()=>{
+    await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,async()=>{
+      if(snap.order) await db.orders.put(snap.order);
+      for(const it of snap.items){ await db.orderItems.put(it);
+        const prod=await db.productions.get(it.productionId);
+        if(prod){ await db.productions.update(prod.id,{qteRestante: subQty(prod.qteRestante, it.qte)}); } }
+      for(const e of snap.events){ await db.events.put(e); }
+    });
+    renderCmd();
+  });
+}
+// Journal léger des suppressions (localStorage, pour mémoire/traçabilité interne).
+function logDeletion(type, id, reason, note, label){
+  try{
+    const key='sm_deletionLog';
+    const arr=JSON.parse(localStorage.getItem(key)||'[]');
+    arr.unshift({type, id, reason, note:note||'', label:label||'', ts:new Date().toISOString()});
+    localStorage.setItem(key, JSON.stringify(arr.slice(0,300)));
+  }catch(e){}
 }
 async function delCmd(id){
   // Compter ce qui sera impacté pour informer l'utilisateur
@@ -4320,6 +4885,7 @@ function estimateOrderMaterialCost(o, recipes, recipeItems, lots){
     if(ln.type==='coffret') pieces=+ln.taille||0;
     else if(ln.type==='evenement') pieces=+ln.evQte||0;
     else if(ln.type==='grand') pieces=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
+    else if(ln.type==='vrac') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0);
     else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0);
     if(pieces<=0) return;
     // coût unitaire moyen toutes recettes confondues (approximation si parfum↔recette non résolu)
@@ -4335,7 +4901,8 @@ function estimateOrderMaterialCost(o, recipes, recipeItems, lots){
    Entrées stockées sur l'objet order (saisie utilisateur) :
      - distanceKm        : distance ALLER simple (km) — doublée ici pour l'aller-retour
      - prixCarburant     : prix à la pompe (€/L)
-     - tempsLivraisonMin : temps théorique de livraison (min) — coût = temps × taux horaire
+     - tempsLivraisonMin : temps ALLER simple (min) — doublé ici pour l'aller-retour ;
+                           coût = temps A/R × taux horaire
    Le carburant utilise la consommation du véhicule (L/100 km, réglages).
    ------------------------------------------------------------ */
 function computeDeliveryCost(o){
@@ -4345,10 +4912,11 @@ function computeDeliveryCost(o){
   const prixL = Math.max(0, +o.prixCarburant||0);
   const conso = Math.max(0, +s.vehicleConso||0);
   const coutCarburant = money2(distAR * (conso/100) * prixL);
-  const minutes = Math.max(0, +o.tempsLivraisonMin||0);
+  const minutesAller = Math.max(0, +o.tempsLivraisonMin||0);
+  const minutes = minutesAller*2;                   // aller-retour (comme la distance)
   const coutTemps = money2((minutes/60) * (+s.laborRate||0));
   const total = money2(coutCarburant + coutTemps);
-  return {distAller, distAR, coutCarburant, coutTemps, minutes, total, actif: (distAller>0||minutes>0)};
+  return {distAller, distAR, coutCarburant, coutTemps, minutesAller, minutes, total, actif: (distAller>0||minutesAller>0)};
 }
 /* ============================================================
    MARGES — rentabilité réelle d'une vente
@@ -4383,6 +4951,7 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials){
     let pieces=0;
     if(ln.type==='coffret'){ pieces=+ln.taille||0; coutEmb=money2(coutEmb+packagingCostReal(ln.taille, realPkg)); }
     else if(ln.type==='grand') pieces=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    else if(ln.type==='vrac') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);  // boîte réutilisable : pas de coût emballage
     else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
     coutMat=money2(coutMat+pieces*avgUnit);
   });
@@ -6276,6 +6845,10 @@ function parfumSettingsForm(){
       ${fmtKeys.map(k=>`<div class="field"><label>Coffret ${k} macarons</label><input type="number" step="0.01" min="0" id="ps_pf_${k}" value="${grid[k]!=null?grid[k]:''}" placeholder="€/pièce"></div>`).join('')}
     </div>
     <input type="hidden" id="ps_pf_keys" value="${fmtKeys.join(',')}">
+    <div class="field" style="margin-top:8px"><label>Tarif PRO — macaron standard (€ / macaron) <span style="color:#9a8a82;font-weight:400">— vrac en boîte réutilisable</span></label>
+      <input type="number" step="0.01" min="0" id="ps_propstd" value="${s.prixMacaronProStd!=null?s.prixMacaronProStd:1.40}" placeholder="1.40"></div>
+    <div class="field"><label>Tarif PRO — macaron grand format (€ / pièce)</label>
+      <input type="number" step="0.01" min="0" id="ps_progf" value="${s.prixGrandFormatPro!=null?s.prixGrandFormatPro:3.20}" placeholder="3.20"></div>
     <hr style="border:none;border-top:1px solid #ece2d4;margin:12px 0">
     <div class="field"><label class="pay-opt" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="ps_labor" ${s.laborEnabled?'checked':''}> <span>Inclure la main-d'œuvre dans le coût de revient</span></label></div>
     <div class="field"><label>Taux horaire main-d'œuvre (€/h)</label><input type="number" step="0.5" min="0" id="ps_rate" value="${s.laborRate}"></div>
@@ -6294,6 +6867,8 @@ function parfumSettingsSave(){
   // prix de repli = moyenne simple de la grille
   const vals=Object.values(s.prixParFormat||{}).map(Number).filter(x=>x>0);
   if(vals.length) s.prixVenteUnitaire=money2(vals.reduce((a,b)=>a+b,0)/vals.length);
+  { const pp=+val('ps_propstd'); if(pp>0) s.prixMacaronProStd=money2(pp); }
+  { const pg=+val('ps_progf'); if(pg>0) s.prixGrandFormatPro=money2(pg); }
   s.laborEnabled=document.getElementById('ps_labor')?.checked||false;
   s.laborRate=Math.max(0,+val('ps_rate')||0);
   s.socialGoods=Math.max(0,+val('ps_sg')||0);
@@ -6471,8 +7046,8 @@ async function marketForm(id){
       <div class="field"><label>Prix carburant (€/L)</label>
         <input type="number" min="0" step="0.001" id="mk_carbu" value="${mk.prixCarburant!=null?esc(mk.prixCarburant):''}" placeholder="ex : 1.85"></div>
     </div>
-    <div class="field"><label>Temps de route (min, A/R) <span style="color:#9a8a82;font-weight:400">— valorisé au taux horaire</span></label>
-      <input type="number" min="0" step="1" id="mk_route" value="${mk.tempsRouteMin!=null?esc(mk.tempsRouteMin):''}" placeholder="ex : 60"></div>
+    <div class="field"><label>Temps de route aller (min) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé (×2), valorisé au taux horaire</span></label>
+      <input type="number" min="0" step="1" id="mk_route" value="${mk.tempsRouteMin!=null?esc(mk.tempsRouteMin):''}" placeholder="ex : 30"></div>
     <div class="field"><label>Quantité prévue à emporter (macarons) <span style="color:#9a8a82;font-weight:400">— pour la planification intelligente</span></label>
       <input type="number" min="0" step="10" id="mk_prevu" value="${mk.prevuQte!=null?esc(mk.prevuQte):''}" placeholder="ex : 300">
       <p class="note" id="mk_prevuHint" style="margin-top:4px"></p></div>
@@ -6511,12 +7086,27 @@ async function saveMarket(id){
 }
 async function delMarket(id){
   if(!confirm('Supprimer ce marché et son historique ? Les invendus non retournés ne seront pas recrédités.')) return;
+  await doDelMarket(id);
+}
+async function doDelMarket(id){
+  const mk=await db.markets.get(id);
+  const moves=await db.marketMoves.where('marketId').equals(id).toArray().catch(()=>[]);
+  const evs=await db.events.where('refId').equals('mk'+id).toArray().catch(()=>[]);
+  const snap={market:mk?{...mk}:null, moves:moves.map(m=>({...m})), events:evs.map(e=>({...e}))};
   await db.transaction('rw', db.markets, db.marketMoves, async()=>{
     await db.marketMoves.where('marketId').equals(id).delete();
     await db.markets.delete(id);
   });
   await db.events.where('refId').equals('mk'+id).delete().catch(()=>{});
-  renderMarkets(); toast('Marché supprimé');
+  renderMarkets(); toast('Marché supprimé ✓');
+  if(snap.market) showUndoToast('Marché supprimé', async()=>{
+    await db.transaction('rw', db.markets, db.marketMoves, db.events, async()=>{
+      await db.markets.put(snap.market);
+      for(const m of snap.moves){ await db.marketMoves.put(m); }
+      for(const e of snap.events){ await db.events.put(e); }
+    });
+    renderMarkets();
+  });
 }
 
 // Fiche détaillée d'un marché : sorties, dons/pertes, retours, CA, clôture.
@@ -6576,7 +7166,14 @@ async function marketDetail(id){
       <button class="btn ghost sm" style="margin-top:8px" onclick="marketPackagingForm(${id})">📦 Comptage emballages (avant/après)</button>`
      :`<button class="btn gold" style="width:100%;margin-top:10px" onclick="marketCloseForm(${id})">Clôturer le marché (saisir le CA)</button>`}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
-      <button class="btn ghost" onclick="marketForm(${id})">Modifier la fiche</button></div>`);
+      <button class="btn ghost" onclick="marketForm(${id})">Modifier la fiche</button>
+      <button class="btn danger" onclick="confirmDelMarket(${id})">🗑 Supprimer</button></div>`);
+}
+function confirmDelMarket(id){
+  openModal(`<h3>Supprimer ce marché ?</h3>
+    <p class="note">Cette action est définitive. Les données du marché (CA, comptages, planning) seront supprimées.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${id})">Annuler</button>
+      <button class="btn danger" onclick="closeModal();doDelMarket(${id})">Supprimer définitivement</button></div>`);
 }
 
 // Sortie de stock : choix du lot + quantité (stock théorique affiché).
@@ -6891,6 +7488,44 @@ async function renderMarketForecast(){
    ANALYSE & PRODUCTION — tableau de bord décisionnel
    ============================================================ */
 let anaWindow = 30; // fenêtre de tendance en jours
+// Analyse des temps de production par NATURE D'ACTIVITÉ (issue du chrono) et
+// génération de conseils d'optimisation. Sans lien avec les productions.
+async function ttActivityAnalysis(){
+  const sessions = await db.workSessions.toArray().catch(()=>[]);
+  const tagged = sessions.filter(s=>s.activite);
+  const totalMin = sessions.reduce((a,s)=>a+(+s.dureeMin||0),0);
+  const byAct={};
+  tagged.forEach(s=>{ const k=s.activite; (byAct[k] ||= {min:0,n:0,pause:0}); byAct[k].min+=+s.dureeMin||0; byAct[k].n++; byAct[k].pause+=+s.pauseMin||0; });
+  const rows=Object.keys(byAct).map(k=>({activite:k, min:byAct[k].min, n:byAct[k].n, moy:byAct[k].n?Math.round(byAct[k].min/byAct[k].n):0, pause:byAct[k].pause}))
+    .sort((a,b)=>b.min-a.min);
+  const taggedMin=rows.reduce((a,r)=>a+r.min,0);
+  // Conseils d'optimisation (heuristiques simples, lisibles, non intrusives)
+  const tips=[];
+  if(rows.length){
+    const top=rows[0];
+    if(taggedMin>0 && top.min/taggedMin>=0.35){
+      tips.push(`<b>${esc(top.activite)}</b> représente ${Math.round(top.min/taggedMin*100)}% de ton temps mesuré. C'est ton principal levier : regarde si une partie peut être préparée en lot ou en amont.`);
+    }
+    const vaisselle=rows.find(r=>/vaisselle/i.test(r.activite));
+    if(vaisselle && taggedMin>0 && vaisselle.min/taggedMin>=0.15){
+      tips.push(`La <b>vaisselle</b> pèse ${Math.round(vaisselle.min/taggedMin*100)}% du temps : grouper la vaisselle en fin de bloc (plutôt qu'au fil de l'eau) fait souvent gagner du temps.`);
+    }
+    const nettoyage=rows.find(r=>/nettoyage/i.test(r.activite));
+    if(nettoyage && nettoyage.moy>=30){
+      tips.push(`Le <b>nettoyage fin de prod</b> dure en moyenne ${nettoyage.moy} min : préparer le poste (produits, chiffons) avant de commencer réduit ce temps.`);
+    }
+    const pochage=rows.find(r=>/pochage/i.test(r.activite));
+    const macaronnage=rows.find(r=>/macaronnage/i.test(r.activite));
+    if(pochage && macaronnage && pochage.moy>macaronnage.moy*1.5){
+      tips.push(`Ton <b>pochage</b> (${pochage.moy} min/séance) prend nettement plus de temps que le macaronnage : un gabarit ou une poche adaptée peut fluidifier le geste.`);
+    }
+    const totPause=rows.reduce((a,r)=>a+r.pause,0);
+    if(taggedMin>0 && totPause/taggedMin>=0.2){
+      tips.push(`Les pauses représentent ~${Math.round(totPause/taggedMin*100)}% du temps : si certaines sont des temps d'attente (cuisson, repos), tu peux les utiliser pour une autre activité (ganache pendant la cuisson).`);
+    }
+  }
+  return {rows, totalMin, taggedMin, nbSessions:sessions.length, nbTagged:tagged.length, tips};
+}
 async function renderAnalyse(){
   const orders=await db.orders.toArray();
   const clients=await db.clients.toArray();
@@ -6989,6 +7624,28 @@ async function renderAnalyse(){
    <div class="panel"><h2>Besoins en matières premières</h2>${matBlock}${sansRec}</div>
    <div class="panel"><h2>Rendement de production <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— écarts théorique / réel</span></h2>${rendBlock}</div>`;
 
+  // --- TEMPS DE PRODUCTION par nature d'activité (chrono) + conseils ---
+  const TA = await ttActivityAnalysis();
+  const fmtMin = m => { const h=Math.floor(m/60), mm=m%60; return h?`${h}h ${String(mm).padStart(2,'0')}m`:`${mm} min`; };
+  let tempsBlock;
+  if(!TA.nbTagged){
+    tempsBlock = `<div class="panel"><h2>⏱ Temps par activité</h2>
+      <p class="note">Lance le chrono (bouton ▶) et choisis une nature d'activité (ganache, meringue, macaronnage, pochage, vaisselle, nettoyage…). Après quelques sessions, tu verras ici la répartition de ton temps et des conseils d'optimisation.</p></div>`;
+  } else {
+    const maxMin = TA.rows[0]?.min||1;
+    const barRows = TA.rows.map(r=>{
+      const pct = TA.taggedMin? Math.round(r.min/TA.taggedMin*100):0;
+      return `<div style="margin:6px 0">
+        <div style="display:flex;justify-content:space-between;font-size:.85rem"><span>${esc(r.activite)}</span><b>${fmtMin(r.min)} · ${pct}% · ~${fmtMin(r.moy)}/séance</b></div>
+        <div style="height:8px;background:#efe6d8;border-radius:6px;overflow:hidden"><span style="display:block;height:100%;width:${Math.round(r.min/maxMin*100)}%;background:var(--bordeaux)"></span></div></div>`;
+    }).join('');
+    const tipsHtml = TA.tips.length
+      ? `<h3 style="font-size:.92rem;margin:12px 0 6px">💡 Conseils d'optimisation</h3>${TA.tips.map(t=>`<div class="sum-box" style="align-items:flex-start"><span>💡</span><span style="text-align:left">${t}</span></div>`).join('')}`
+      : `<p class="note" style="margin-top:10px">Continue à taguer tes séances : des conseils d'optimisation apparaîtront avec plus de données.</p>`;
+    tempsBlock = `<div class="panel"><h2>⏱ Temps par activité <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— ${TA.nbTagged} séance(s) taguée(s) · ${fmtMin(TA.taggedMin)}</span></h2>
+      ${barRows}${tipsHtml}</div>`;
+  }
+
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Analyse &amp; Production</h1><p>Décisions opérationnelles · 100% hors-ligne</p></div></div>
    <div class="banner">🧭 <div>Vue décisionnelle : tendances, clients clés, anomalies, et besoins de production calculés à partir de vos commandes et recettes. Aucune donnée ne quitte l'appareil.</div></div>
@@ -6998,7 +7655,9 @@ async function renderAnalyse(){
    <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Anomalies</h2>
    ${anoBlock}
    <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Production</h2>
-   ${prodBlock}`;
+   ${prodBlock}
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Temps de travail</h2>
+   ${tempsBlock}`;
 }
 
 /* ============================================================
@@ -7163,6 +7822,44 @@ function aiParseDate(txt, base){
   return null;
 }
 // retrouve un parfum mentionné
+// Extrait toutes les paires "quantité + parfum" d'une phrase, ex :
+// "3 macarons mangue passion et 3 macarons chocolat" → [{qte:3,raw:'mangue passion'},{qte:3,raw:'chocolat'}]
+function aiParseOrderItems(raw, flavors){
+  let n=aiNormalize(raw);
+  // retire la portion date ("le 19 juin", "pour le 5/06"…) pour ne pas confondre le jour avec une quantité
+  n=n.replace(/\b(le|pour le|du|the)\s+\d{1,2}\s*(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre|\/\d|[-.]\d)/g,' ');
+  n=n.replace(/\b\d{1,2}[\/.-]\d{1,2}([\/.-]\d{2,4})?\b/g,' ');
+  // ne garde que ce qui suit un mot déclencheur de contenu si présent (de/avec/:)
+  const items=[];
+  // motif : <nombre> macaron(s) <parfum...> — on EXIGE le mot "macaron" pour fiabiliser
+  // (sinon on tente aussi <nombre> <parfum> après "de"/"avec")
+  const reStrict=/(\d+)\s*macarons?\s+([a-zàâäéèêëïîôöùûüç' ]+?)(?=\s*(?:,|;|\bet\b|\bplus\b|\d+|$))/g;
+  let m, used=false;
+  while((m=reStrict.exec(n))){ used=true; _pushItem(items, +m[1], m[2]); }
+  if(!used){
+    // repli : "<nombre> <parfum>" après un connecteur de contenu
+    const idx=n.search(/\b(de|d'|avec|contenant|:)\b/);
+    const seg = idx>=0 ? n.slice(idx) : n;
+    const re=/(\d+)\s*(?:pieces?|pcs?)?\s*([a-zàâäéèêëïîôöùûüç' ]+?)(?=\s*(?:,|;|\bet\b|\bplus\b|\d+|$))/g;
+    while((m=re.exec(seg))){ _pushItem(items, +m[1], m[2]); }
+  }
+  // résolution parfum + ambiguïté (priorité : correspondance complète > par mot)
+  items.forEach(it=>{
+    const full=flavors.filter(f=>{ const nf=aiNormalize(f); return nf===it.raw || nf.includes(it.raw) || it.raw.includes(nf); });
+    let cands=full;
+    if(!cands.length){ // repli : correspondance par mot significatif
+      cands=flavors.filter(f=>{ const nf=aiNormalize(f); return it.raw.split(' ').some(w=>w.length>=4 && nf.includes(w)); });
+    }
+    if(cands.length===1){ it.flavor=cands[0]; }
+    else if(cands.length>1){ it.flavor=null; it.candidates=cands; }
+    else { it.flavor=null; it.candidates=[]; it.unknown=true; }
+  });
+  return items;
+}
+function _pushItem(items, qte, label){
+  label=(label||'').trim().replace(/\b(macarons?|pieces?|pcs?|de|d'|au|aux|a|la|le|les|du|nom|chez|pour)\b/g,' ').replace(/\s+/g,' ').trim();
+  if(qte>0 && label.length>=2) items.push({qte, raw:label});
+}
 function aiFindFlavor(txt, flavors){
   for(const f of flavors){ if(aiNormalize(txt).includes(aiNormalize(f))) return f; }
   // mots-clés partiels
@@ -7218,6 +7915,13 @@ function parseIntent(texte, ctx){
   }
 
   // ---- CONSULTATIONS (non critiques) ----
+  // LOCALISATION des macarons finis : "où sont mes macarons vanille", "emplacement chocolat"
+  if(/\b(ou (se trouve|sont|est|se trouvent)|localis|emplacement|range|rangee|rangees|range ou|trouve mes|dans quel|quel congelateur|quel frigo)\b/.test(t)
+     && /\bmacaron|macarons\b/.test(t) || (/\bou\b/.test(t) && aiFindFlavor(t,flavors))){
+    const fl=aiFindFlavor(t,flavors);
+    return {intent:'query_locate', params:{flavor:fl}, critical:false,
+      label: fl?`Localiser les macarons « ${fl} »`:'Localiser des macarons finis'};
+  }
   // stock d'une matière
   if(/\b(stock|combien|reste|il reste|quantite)\b/.test(t) && !/commande/.test(t)){
     const mat=aiFindMaterial(t,materials);
@@ -7244,17 +7948,18 @@ function parseIntent(texte, ctx){
 
   // ---- ACTIONS CRITIQUES (validation obligatoire) ----
   // créer une commande
-  if(/\b(cree|creer|crée|nouvelle commande|ajoute une commande|enregistre une commande)\b/.test(t) && /commande/.test(t)
-     || (/\bcree|creer\b/.test(t) && /commande/.test(t))){
+  if(/\b(cree|creer|crée|nouvelle commande|ajoute une commande|ajoute une cmd|enregistre une commande|fais une commande|prends une commande)\b/.test(t) && /commande/.test(t)
+     || ((/\bcree|creer|ajoute|fais\b/.test(t)) && /commande/.test(t))){
     const client=aiFindClient(t,clients);
     const date=aiParseDate(t);
     const nb=aiParseNumber(t);
-    // taille de coffret évoquée
     let taille=null; const mm=t.match(/coffret[s]? de (\d+)|(\d+) macaron/);
     if(mm) taille=+(mm[1]||mm[2]);
-    const fl=aiFindFlavor(t,flavors);
+    const items=aiParseOrderItems(raw, flavors);   // multi-parfums + ambiguïté
+    const grand=/\b(grand format|grands formats|gros macaron|grand macaron)\b/.test(t);
     return {intent:'create_order', critical:true,
-      params:{client, clientNameRaw: !client?aiExtractName(raw):null, date, taille, qte:nb, flavor:fl},
+      params:{client, clientNameRaw: !client?aiExtractName(raw):null, date, taille, qte:nb,
+        flavor:aiFindFlavor(t,flavors), items, grandHint:grand, raw},
       label:`Créer une commande${client?' pour '+client.nom:''}${date?' le '+date:''}`};
   }
   // ajouter des coffrets (à une commande en cours de dialogue)
@@ -7327,10 +8032,16 @@ async function generateProductionSuggestions(daysThreshold){
   // stock fini par recette (somme des batchs restants)
   const finiByRecipe = {};
   prods.forEach(p=>{ finiByRecipe[p.recipeId]=(finiByRecipe[p.recipeId]||0)+(+p.qteRestante||0); });
-  // 1) lots dont la DLC expire bientôt ET avec du stock restant
+  // DLC effective d'un lot : la plus proche entre la DLC fournisseur et la DLC d'ouverture
+  // (crème/lait entamé). Au plus prudent.
+  const effDlc = l => {
+    const cand=[l.dlc, l.dlcOuverture].filter(Boolean);
+    return cand.length ? cand.sort()[0] : '';
+  };
+  // 1) lots dont la DLC (effective) expire bientôt ET avec du stock restant
   const lotsUrgents = lots
-    .filter(l => +l.qteRestante>0 && l.dlc)
-    .map(l => ({...l, jours: daysTo(l.dlc)}))
+    .filter(l => +l.qteRestante>0 && effDlc(l))
+    .map(l => ({...l, _eff:effDlc(l), jours: daysTo(effDlc(l)), ouvert: !!l.ouvertLe}))
     .filter(l => l.jours!=null && l.jours <= seuil)
     .sort((a,b)=>(a.jours-b.jours));
   // 2) croisement : pour chaque matière urgente → recettes qui l'utilisent → stock fini
@@ -7350,8 +8061,9 @@ async function generateProductionSuggestions(daysThreshold){
         matiere: matName(lot.materialId),
         lotId: lot.id,
         lotFournisseur: lot.lotFournisseur||'',
-        dlc: lot.dlc,
+        dlc: lot._eff||lot.dlc,
         joursAvantDLC: lot.jours,
+        cremeOuverte: !!lot.ouvert,
         qteLotRestante: round3(+lot.qteRestante||0),
         stockFini: round3(finiByRecipe[rec.id]||0)
       });
@@ -7499,6 +8211,122 @@ async function calculateSerenityScore(opts){
 }
 
 
+/* ============================================================
+   BASE DE CONNAISSANCE DE L'APPLICATION (aide intégrée à l'assistant)
+   ------------------------------------------------------------
+   IMPORTANT — MAINTENANCE : à CHAQUE nouvelle version livrée, mettre à jour
+   APP_VERSION et compléter/ajuster APP_KB pour refléter les nouveautés, afin
+   que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
+   (mots-clés normalisés), r (réponse HTML concise)}.
+   ============================================================ */
+const APP_VERSION = 'v94';
+const APP_KB = [
+  { id:'commandes', titre:'Créer et gérer une commande',
+    tags:'commande commandes creer client coffret parfum livraison remise total prix',
+    r:`<p>Onglet <b>Commandes → + Nouvelle commande</b>. Choisis le client, la date, ajoute des produits (coffrets, grands formats, événement, don). Le prix se calcule automatiquement mais reste modifiable. Tu peux appliquer une remise par ligne ou une remise globale, indiquer l'heure et le lieu de livraison, et enregistrer les paiements (chaque encaissement exige montant + date + mode).</p>` },
+  { id:'perso', titre:'Personnalisation des couleurs (+0,25 €/macaron)',
+    tags:'personnalisation couleur couleurs perso facturation supplement 0.25 macaron personnalise',
+    r:`<p>Dans la commande, coche <b>« Personnalisation des couleurs »</b> : un champ apparaît pour saisir le <b>nombre de macarons personnalisés</b> (pas forcément le total). Le surcoût de <b>0,25 €/macaron</b> s'ajoute au total. La personnalisation est spécifique à la commande et lève la règle « 1 couleur = 1 parfum ».</p>` },
+  { id:'livraison', titre:'Coût de livraison',
+    tags:'livraison deplacement distance carburant cout transport km temps aller retour adresse suggestion',
+    r:`<p>Dans la commande, renseigne la <b>distance aller</b> et le <b>temps de trajet aller</b> : l'app double automatiquement les deux pour l'aller-retour. Avec le prix du carburant et la consommation du véhicule (réglages), elle calcule le coût (carburant A/R + temps A/R valorisé au taux horaire) et propose un prix de livraison qui préserve la marge. Le champ adresse suggère les adresses de tes clients et tes lieux habituels au fur et à mesure que tu tapes.</p>` },
+  { id:'stock-matieres', titre:'Matières premières & emballages (lots)',
+    tags:'matiere matieres emballage emballages lot lots reception stock denree capacite reference',
+    r:`<p>Onglet <b>Matières & emballages</b>. Crée tes références (catégorie <i>denrée</i> ou <i>emballage</i>), puis enregistre des <b>lots</b> à réception (prix, fournisseur, quantité, DLC, référence/commentaire). Le stock = somme des lots actifs. Les emballages portent une <b>capacité</b> (ex. 8) qui les relie aux coffrets. <b>Ne saisis jamais les matières/emballages en charges</b> (double comptage) : uniquement en lots.</p>` },
+  { id:'productions', titre:'Productions (batchs) & recherche',
+    tags:'production productions batch fabrication lot emplacement recherche parfum dlc rendement',
+    r:`<p>Onglet <b>Productions</b>. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock fini suit la quantité <b>réelle</b>. La barre de recherche filtre par n° de lot, parfum, date, statut ; une seule <b>lettre d'emplacement</b> (F/B/C/A) ou les puces de zone filtrent par emplacement. Tu peux découper un batch, ajuster le réel, déclarer une perte, imprimer l'étiquette.</p>` },
+  { id:'picking', titre:'Préparation / Picking & liaison batch↔commande',
+    tags:'picking preparation liaison batch commande prete affecter zone fifo',
+    r:`<p>La liaison batch↔commande est <b>automatique</b> : le picking calcule les besoins, affecte les batchs (optimisé par zone, FIFO par DLC) et, au clic <b>« Commande prête »</b>, crée les liens, décrémente le stock fini et les emballages, et passe la commande en « Terminée ». La liaison manuelle 🔗 reste possible en secours, sans double décompte.</p>` },
+  { id:'plan-prod', titre:'Plan de production & planification personnelle',
+    tags:'plan production mrp ordonnancement planning meringue capacite temps disponibilite chef',
+    r:`<p>Onglet <b>Plan de production</b>. Il agrège les besoins, calcule les batchs et le temps. La <b>planification personnelle</b> te laisse décrire ta disponibilité (jour par jour, plusieurs créneaux) et génère un planning minute par minute : meringues remplies à la capacité (240 coques = 120 macarons standard ; 48 coques = 24 grands formats), ganaches placées pendant la cuisson, montages ensuite, puis maturation 24 h. Le « mot du chef » explique chaque choix de façon chiffrée.</p>` },
+  { id:'meringue', titre:'Meringues : capacité et mutualisation',
+    tags:'meringue meringues capacite 240 coques mutualisation parfum couleur division',
+    r:`<p>Une meringue = <b>240 coques (120 macarons) en standard</b>, <b>48 coques (24 macarons) en grand format</b>. La mutualisation (2 parfums dans une meringue) n'est <b>pas une règle</b> : elle ne sert qu'à combler la capacité. Un parfum qui a besoin de 120 remplit une meringue entière à lui seul. Règle : <b>1 division = 1 couleur = 1 parfum</b> (sauf personnalisation).</p>` },
+  { id:'cuisson', titre:'Cuisson en cascade',
+    tags:'cuisson four plaque cascade 39 12 coques 20 28 minutes enfourner',
+    r:`<p>1 plaque = <b>39 coques</b> (standard, 20 min) ou <b>12 coques</b> (grand format, 28 min). Enfournement en cascade : la 2ᵉ plaque part 7 min après la 1ʳᵉ, la 3ᵉ quand la 1ʳᵉ sort, etc. Le plan de production estime le temps four et le traite comme un temps passif (on prépare les ganaches pendant).</p>` },
+  { id:'marches', titre:'Marchés (CA, fond de caisse, charges)',
+    tags:'marche marches fond caisse stand deplacement ca especes cb cloture depart retour',
+    r:`<p>Onglet <b>Marchés</b>. Renseigne lieu, horaires, quantité prévue, <b>fond de caisse</b>, et les <b>charges du marché</b> (stand, distance, carburant, temps de route). Le CA se ventile espèces/CB/autre (le fond de caisse est déduit des espèces). Les invendus se calculent par différentiel <b>départ − retour</b>. À la clôture, tout alimente la comptabilité.</p>` },
+  { id:'charges', titre:'Charges & charges récurrentes',
+    tags:'charge charges depense assurance hebergement abonnement recurrente mensuelle loyer',
+    r:`<p>Onglet <b>Comptabilité → charges</b>. Les charges sont les dépenses <b>hors stock</b> (assurance, hébergement web, loyer, stand…). Le bouton <b>🔁 Charges récurrentes</b> permet de saisir une charge mensuelle une seule fois : elle est reportée automatiquement chaque mois. Les matières et emballages ne sont jamais des charges (ils se gèrent en lots).</p>` },
+  { id:'compta', titre:'Comptabilité & bilan',
+    tags:'comptabilite compta resultat benefice ca encaisse charges bilan mensuel marge',
+    r:`<p>La <b>Comptabilité</b> croise le CA encaissé, les charges, le coût matières et les frais de marché pour donner le résultat par mois. L'onglet <b>Statistiques</b> affiche un <b>bilan financier mensuel</b> (CA encaissé − charges = bénéfice net, vert/rouge).</p>` },
+  { id:'crm', titre:'Fiches clients (CRM)',
+    tags:'client clients crm fiche panier moyen parfum prefere vip fidele frequence',
+    r:`<p>Onglet <b>Clients</b>. Chaque fiche montre le panier moyen, le parfum préféré, la fréquence et un badge (VIP / Fidèle). La recherche couvre nom, société, téléphone, e-mail, réf et notes.</p>` },
+  { id:'mode-discret', titre:'Mode discret',
+    tags:'discret confidentialite flou masquer nom prix montant privacy',
+    r:`<p>Le <b>mode discret</b> floute les noms de clients et masque les montants/volumes. Active-le depuis le bouton 🙈 sur les pages Commandes et Clients, ou depuis le Menu (☰). La saisie et les détails restent lisibles pour travailler.</p>` },
+  { id:'haccp', titre:'HACCP / Plan de Maîtrise Sanitaire',
+    tags:'haccp pms hygiene temperature releve nettoyage ddpp frigo congelateur',
+    r:`<p>Onglet <b>PMS</b>. Relevés de température matin/soir (avec action corrective obligatoire si hors plage), plan de nettoyage (quotidien/hebdo/mensuel) et export DDPP sur 30 jours.</p>` },
+  { id:'tracabilite', titre:'Traçabilité & étiquettes',
+    tags:'tracabilite tracage etiquette lot dlc impression label origine ddpp confidentialite quantite recette ingredient',
+    r:`<p>La <b>traçabilité</b> relie chaque batch aux lots de matières consommés (FIFO). Tu peux imprimer une <b>étiquette</b> par batch (parfum, lot, DLC) depuis Productions ou l'onglet Étiquettes. La traçabilité destinée à la <b>DDPP</b> (écrans et exports CSV) conserve toutes les informations — matières, lots fournisseurs, fournisseurs, DLC, origine — mais <b>masque les quantités d'ingrédients</b> pour préserver la confidentialité de tes recettes.</p>` },
+  { id:'pointeuse', titre:'Pointeuse / temps de travail & activités',
+    tags:'pointeuse temps travail session heures chrono pause activite ganache meringue macaronnage pochage vaisselle nettoyage optimisation analyse',
+    r:`<p>La <b>pointeuse</b> (bouton flottant) enregistre tes sessions (démarrer / pause / arrêter). Au démarrage, choisis d'un tap la <b>nature de l'activité</b> (ganache, meringue, macaronnage, pochage, cuisson, garnissage, vaisselle, nettoyage fin de prod, conditionnement…). Cela n'a <b>aucun impact sur les productions</b> mais alimente, dans <b>Analyse → Temps de travail</b>, une répartition de ton temps par activité et des <b>conseils d'optimisation</b>.</p>` },
+  { id:'sauvegarde', titre:'Sauvegarde & restauration',
+    tags:'sauvegarde backup restauration export import donnees fichier',
+    r:`<p>Onglet <b>Sauvegardes</b>. Exporte toutes tes données dans un fichier, et réimporte-le pour restaurer. Pense à sauvegarder régulièrement : les données sont stockées localement sur ton appareil.</p>` },
+  { id:'assistant', titre:'Assistant IA (hors-ligne)',
+    tags:'assistant ia aide question stock commande tendance rupture comment fonctionne localiser ou sont',
+    r:`<p>L'assistant fonctionne <b>hors-ligne</b>. Il sait : <b>localiser tes macarons</b> (« où sont mes macarons vanille ? » → popup avec le détail des batchs et emplacements), <b>créer une commande en langage naturel</b> (« ajoute une commande pour le 19 juin chez Paulette de 3 mangue passion et 3 chocolat » → il te fait préciser le parfum/format ambigu), répondre sur le stock, le CA, les tendances, les ruptures, et expliquer le fonctionnement (« comment ça marche… »). Toute action critique demande validation. Envoi fluide : touche <b>Entrée</b>.</p>` },
+  { id:'locate', titre:'Localiser mes macarons (où sont-ils ?)',
+    tags:'localiser localisation ou sont emplacement batch batchs frigo congelateur trouve mes macarons popup',
+    r:`<p>Demande à l'assistant « <b>où sont mes macarons vanille ?</b> ». Il ouvre une <b>popup</b> qui liste, par emplacement (Frigo F, Congélateurs B/C/A), chaque <b>batch</b> en stock avec sa quantité, son n° de lot, sa DLC et son statut (prêt / en cours). Sans parfum précisé, il propose la liste des parfums en stock.</p>` },
+  { id:'composants', titre:'Production par composants (coques / ganache) & assemblage',
+    tags:'composant composants coques ganache assemblage assembler sous-lot souslot lot ambiant congelateur frigo degustation echantillon offert marche surplus casse garni perte',
+    r:`<p>Au lancement d'une production, choisis <b>« Par composants »</b> pour démarrer par les <b>coques</b> ou la <b>ganache</b> : deux sous-lots sous le même n° de lot (<b>-CO</b> / <b>-GA</b>). Règles : coques vides → <b>ambiant ou congélateur</b> (jamais frigo) ; ganache terminée → <b>frigo</b>. Le bouton <b>🔗 Assembler</b> réunit coques + ganache → macaron <b>assemblé</b> (vendable, frigo DLC 7 j ou congélateur), traçabilité de bout en bout. Coches <b>« dégustation »</b> pour assembler des coques + ganache <b>sans correspondance couleur/parfum</b> (surplus) : résultat <b>offert, non vendable</b>, en <b>stock dégustation séparé</b>, décrémenté via <b>🥄 Distribué</b>. Les <b>macarons cassés mais garnis</b> (même couleur/parfum d'origine) basculent aussi en dégustation : dans « ⚠ Perte », coche <b>« Cassé mais garni → dégustation »</b> — ils ne sont pas comptés en perte mais offerts. Coques, ganache et dégustations ne comptent jamais comme stock vendable.</p>` },
+  { id:'suppressions', titre:'Supprimer une entrée (commande, production, marché, client, événement)',
+    tags:'supprimer suppression effacer raison motif confirmation perte recrediter congelateur retour chaine froid decongelation annuler annulation undo',
+    r:`<p>Chaque fiche complète a un bouton <b>🗑 Supprimer</b> (à droite de Modifier) avec <b>confirmation</b>. Pour une <b>commande</b> ou une <b>production</b>, une <b>raison</b> est demandée. À la suppression d'une production, tu choisis : recréditer le stock matières, ou — si des pièces finies restent — les <b>déclarer en pertes</b>. Après une suppression, une barre <b>↩ Annuler</b> s'affiche quelques secondes pour <b>revenir en arrière immédiatement</b>. Règle chaîne du froid : une production sortie du congélateur ne peut y retourner que dans l'heure ; au-delà le retour A/B/C est bloqué.</p>` }
+];
+// Recherche dans la base de connaissance : score par mots-clés communs.
+function kbSearch(q){
+  const nq=aiNormalize(q);
+  const terms=nq.split(' ').filter(w=>w.length>=3);
+  if(!terms.length) return [];
+  return APP_KB.map(e=>{
+    const hay=aiNormalize(e.titre+' '+e.tags);
+    let score=0;
+    for(const t of terms){ if(hay.includes(t)) score+= (e.tags.includes(t)?2:1); }
+    return {e, score};
+  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).map(x=>x.e);
+}
+// Détecte une question d'AIDE / mode d'emploi.
+function isHelpQuery(txt){
+  const n=aiNormalize(txt);
+  return /(\baide\b|\bcomment\b|\bpourquoi\b|c'?est quoi|qu'?est-?ce|a quoi sert|\bfonctionne|utilise|expliqu|mode d'?emploi|notice|tutoriel|ca marche|marche comment)/.test(n)
+    || n==='aide' || n==='help' || n==='?';
+}
+// Répond depuis la base de connaissance.
+function aiHelp(txt){
+  const n=aiNormalize(txt);
+  // demande générique → sommaire des sujets
+  if(n==='aide'||n==='help'||n==='?'||/\b(sommaire|sujets|liste|que peux-?tu|que sais-?tu|fonctionnalit)\b/.test(n)){
+    const lis=APP_KB.map(e=>`<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="document.getElementById('aiInput').value=${JSON.stringify('Comment fonctionne : '+e.titre)};aiRun()">${esc(e.titre)}</button>`).join('');
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🤖 Aide — que veux-tu savoir ?</h3>
+      <p class="note">Voici les sujets que je connais (version ${APP_VERSION}). Touche un sujet ou pose ta question :</p>
+      <div style="display:flex;flex-wrap:wrap">${lis}</div>`);
+  }
+  const hits=kbSearch(txt);
+  if(!hits.length){
+    return aiSay(`<p>Je n'ai pas de fiche précise pour « ${esc(txt)} ».</p>
+      <p class="note">Tape <b>aide</b> pour voir tous les sujets, ou reformule (ex. « comment fonctionne le picking ? »).</p>`);
+  }
+  const main=hits[0];
+  const autres=hits.slice(1,4).map(e=>`<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="document.getElementById('aiInput').value=${JSON.stringify('Comment fonctionne : '+e.titre)};aiRun()">${esc(e.titre)}</button>`).join('');
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">${esc(main.titre)}</h3>${main.r}
+    ${autres?`<p class="note" style="margin-top:10px">Sujets liés :</p><div style="display:flex;flex-wrap:wrap">${autres}</div>`:''}`);
+}
+
 function renderAssistant(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Assistant</h1><p>Anti-gaspi, sérénité & pilotage</p></div></div>
@@ -7506,15 +8334,17 @@ function renderAssistant(){
    <div id="marketForecast"></div>
    <div id="antiGaspi"></div>
    <div id="aiPredict"><div class="banner">📈 <div>Analyse du rythme de ventes en cours…</div></div></div>
-   <div class="banner">🤖 <div>Écrivez ou dictez (micro du clavier) une instruction. L'assistant fonctionne <b>hors-ligne</b>. Toute action critique (création, suppression, ajustement) demande votre validation.</div></div>
+   <div class="banner">🤖 <div>Écrivez ou dictez (micro du clavier) une instruction ou une <b>question d'aide</b> (« comment fonctionne… »). L'assistant fonctionne <b>hors-ligne</b>. Toute action critique demande votre validation.</div></div>
    <div class="panel">
      <div class="field"><label>Votre demande</label>
-       <textarea id="aiInput" rows="2" placeholder="ex : Quel est le stock de chocolat ? · Crée une commande pour M. Dupont vendredi · Affiche les commandes à préparer demain"></textarea>
+       <textarea id="aiInput" rows="2" placeholder="ex : Comment fonctionne le picking ? · Quel est le stock de chocolat ? · Crée une commande pour M. Dupont vendredi" onkeydown="aiInputKey(event)"></textarea>
      </div>
      <div class="flex" style="gap:8px"><button class="btn" onclick="aiRun()">Envoyer</button>
+       <button class="btn gold" onclick="document.getElementById('aiInput').value='aide';aiRun()">❓ Aide</button>
        <button class="btn ghost" onclick="document.getElementById('aiInput').value='';document.getElementById('aiOut').innerHTML='';">Effacer</button></div>
+     <p class="note" style="margin-top:6px">Astuce : appuie sur <b>Entrée</b> pour envoyer (Maj+Entrée = nouvelle ligne). Base d'aide à jour : <b>${APP_VERSION}</b>.</p>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-       ${['Quel est le stock de chocolat ?','Commandes à préparer demain','Quels clients commandent le plus de vanille ?','Chiffre d\'affaires','Quelles sont les tendances ?','Que faut-il produire ?','Quand vais-je être en rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
+       ${['Aide','Comment fonctionne le picking ?','Quel est le stock de chocolat ?','Commandes à préparer demain','Chiffre d\'affaires','Que faut-il produire ?','Quand vais-je être en rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
      </div>
    </div>
    <div id="aiOut"></div>`;
@@ -7581,7 +8411,7 @@ async function renderAntiGaspi(){
     const jTxt = s.joursAvantDLC<=0 ? "aujourd'hui" : (s.joursAvantDLC===1?'demain':`dans ${s.joursAvantDLC} jours`);
     return `<div class="gaspi-card" style="border-left-color:${urgent?'#b3261e':'#d98324'}">
       <div class="gaspi-head">${urgent?'🚨':'⏳'} <b>Produis des ${esc(s.produitNom)}</b></div>
-      <div class="gaspi-body">Ton lot de <b>${esc(s.matiere)}</b>${s.lotFournisseur?` (n° ${esc(s.lotFournisseur)})`:''} périme <b>${jTxt}</b> (${fmtDate(s.dlc)}), et ton stock fini est actuellement de <b>${qty(s.stockFini)}</b>.</div>
+      <div class="gaspi-body">Ton lot de <b>${esc(s.matiere)}</b>${s.lotFournisseur?` (n° ${esc(s.lotFournisseur)})`:''}${s.cremeOuverte?' <span class="tag warn" style="font-size:.66rem">entamé · DLC 7 j</span>':''} périme <b>${jTxt}</b> (${fmtDate(s.dlc)}), et ton stock fini est actuellement de <b>${qty(s.stockFini)}</b>.</div>
       <div class="gaspi-foot"><span class="tag ${urgent?'out':'warn'}">DLC ${s.joursAvantDLC<=0?'⚠ dépassée/jour J':'J−'+s.joursAvantDLC}</span>
         <button class="btn gold sm" onclick="goView('productions')">⚙ Lancer la production</button></div>
     </div>`;
@@ -7613,31 +8443,53 @@ async function renderPredictiveAlerts(){
 }
 function aiSay(html){ document.getElementById('aiOut').innerHTML = `<div class="panel">${html}</div>`; }
 
+// Envoi fluide : Entrée envoie, Maj+Entrée = nouvelle ligne. Anti double-déclenchement.
+let _aiRunning=false;
+function aiInputKey(ev){
+  if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); aiRun(); }
+}
 async function aiRun(){
-  const txt=(document.getElementById('aiInput').value||'').trim();
+  if(_aiRunning) return;            // évite les envois multiples (taps rapides)
+  const ta=document.getElementById('aiInput');
+  const txt=(ta?.value||'').trim();
   if(!txt){ return; }
-  const flavors=FLAVORS;
-  const clients=await db.clients.toArray();
-  const materials=await db.materials.toArray();
-  const r=parseIntent(txt,{flavors,clients,materials});
-  aiPending=null;
-  switch(r.intent){
-    case 'query_stock': return aiQueryStock(r.params);
-    case 'query_orders': return aiQueryOrders(r.params);
-    case 'query_top_clients': return aiQueryTopClients(r.params);
-    case 'query_revenue': return aiQueryRevenue();
-    case 'query_trends': return aiQueryTrends();
-    case 'query_anomalies': return aiQueryAnomalies();
-    case 'query_production_needs': return aiQueryProductionNeeds();
-    case 'query_rupture': return aiQueryRupture();
-    case 'query_predict': return aiQueryPredict();
-    case 'create_order': return aiConfirmCreateOrder(r);
-    case 'delete_order': return aiConfirmDeleteOrder(r);
-    case 'adjust_stock': return aiConfirmAdjustStock(r);
-    case 'add_box': return aiSay(`<p>Pour ajouter des coffrets, ouvrez d'abord une commande. Dites par exemple : <b>« Crée une commande pour [client] »</b>, puis ajoutez les produits.</p>`);
-    default:
-      return aiSay(`<p>Je n'ai pas compris « ${esc(txt)} ».</p>
-        <p class="note">Exemples : <i>Quel est le stock de chocolat ?</i> · <i>Crée une commande pour M. Dupont vendredi</i> · <i>Affiche les commandes à préparer demain</i> · <i>Quels clients commandent le plus de vanille ?</i></p>`);
+  _aiRunning=true;
+  try{
+    const flavors=FLAVORS;
+    const clients=await db.clients.toArray();
+    const materials=await db.materials.toArray();
+    const r=parseIntent(txt,{flavors,clients,materials});
+    aiPending=null;
+    // Question d'aide / mode d'emploi → base de connaissance (sauf si une intention
+    // d'ACTION ou de DONNÉES précise a été reconnue, qu'on laisse passer en priorité).
+    if(isHelpQuery(txt) && (r.intent==='unknown' || !r.intent || r.intent==='add_box')){
+      return aiHelp(txt);
+    }
+    switch(r.intent){
+      case 'query_stock': return aiQueryStock(r.params);
+      case 'query_locate': return aiQueryLocate(r.params);
+      case 'query_orders': return aiQueryOrders(r.params);
+      case 'query_top_clients': return aiQueryTopClients(r.params);
+      case 'query_revenue': return aiQueryRevenue();
+      case 'query_trends': return aiQueryTrends();
+      case 'query_anomalies': return aiQueryAnomalies();
+      case 'query_production_needs': return aiQueryProductionNeeds();
+      case 'query_rupture': return aiQueryRupture();
+      case 'query_predict': return aiQueryPredict();
+      case 'create_order': return aiConfirmCreateOrder(r);
+      case 'delete_order': return aiConfirmDeleteOrder(r);
+      case 'adjust_stock': return aiConfirmAdjustStock(r);
+      case 'add_box': return aiSay(`<p>Pour ajouter des coffrets, ouvrez d'abord une commande. Dites par exemple : <b>« Crée une commande pour [client] »</b>, puis ajoutez les produits.</p>`);
+      default:
+        // Dernier recours : on tente la base de connaissance avant d'abandonner.
+        { const hits=kbSearch(txt); if(hits.length) return aiHelp(txt); }
+        return aiSay(`<p>Je n'ai pas compris « ${esc(txt)} ».</p>
+          <p class="note">Pose une question d'aide (ex. <i>« comment fonctionne le picking ? »</i>) ou tape <b>aide</b>. Exemples d'actions : <i>Quel est le stock de chocolat ?</i> · <i>Crée une commande pour M. Dupont vendredi</i> · <i>Commandes à préparer demain</i>.</p>`);
+    }
+  } catch(e){
+    aiSay(`<p>Une erreur est survenue : ${esc(e.message||'inconnue')}.</p><p class="note">Réessaie ou reformule ta demande.</p>`);
+  } finally {
+    _aiRunning=false;
   }
 }
 
@@ -7660,6 +8512,82 @@ async function aiQueryStock(params){
     <div class="sum-box"><span>Lots actifs</span><b>${lots.length}</b></div>
     ${proche?`<div class="sum-box"><span>DLC la plus proche</span><b>${fmtDate(proche.dlc)||'—'}</b></div>`:''}
     ${params.material.seuil&&tot<params.material.seuil?`<p class="note" style="color:var(--red)">⚠ Sous le seuil d'alerte (${qty(params.material.seuil)}).</p>`:''}`);
+}
+// LOCALISATION des macarons finis par parfum : détail des batchs + emplacements,
+// présenté dans une popup lisible. Si aucun parfum reconnu, propose la liste.
+async function aiQueryLocate(params){
+  const recipes=await db.recipes.toArray();
+  const prods=await db.productions.toArray();
+  // parfum non reconnu → demander lequel (boutons des parfums effectivement en stock)
+  if(!params.flavor){
+    const stockByRec={};
+    prods.forEach(p=>{ if(+p.qteRestante>0) stockByRec[p.recipeId]=(stockByRec[p.recipeId]||0)+(+p.qteRestante||0); });
+    const dispo=recipes.filter(r=>stockByRec[r.id]>0)
+      .sort((a,b)=>stockByRec[b.id]-stockByRec[a.id]);
+    if(!dispo.length) return aiSay(`<p>Aucun macaron fini en stock actuellement.</p>`);
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Quel parfum localiser ?</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${dispo.map(r=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify('où sont mes macarons '+r.produitNom)};aiRun()">${esc(r.produitNom)} <span style="color:#9a8a82">(${qty(stockByRec[r.id])})</span></button>`).join('')}</div>`);
+  }
+  // recettes correspondant au parfum (inclusion normalisée)
+  const fn=aiNormalize(params.flavor);
+  const recIds=recipes.filter(r=>{ const rn=aiNormalize(r.produitNom); return rn===fn||rn.includes(fn)||fn.includes(rn); }).map(r=>r.id);
+  const recName=id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  // batchs finis en stock pour ce parfum
+  let batchs=prods.filter(p=>recIds.includes(p.recipeId) && round3(+p.qteRestante)>0);
+  if(!batchs.length){
+    aiLocatePopup(params.flavor, [], 0);
+    return aiSay(`<p>Aucun batch de <b>${esc(params.flavor)}</b> en stock actuellement. <span class="act" onclick="goView('productions')">Voir les productions →</span></p>`);
+  }
+  // regrouper par emplacement
+  const byEmp={};
+  batchs.forEach(p=>{ const k=p.emplacement||''; (byEmp[k] ||= []).push(p); });
+  const total=batchs.reduce((s,p)=>s+(+p.qteRestante||0),0);
+  aiLocatePopup(params.flavor, byEmp, total, recName);
+  // trace courte dans le fil de l'assistant
+  const zones=Object.keys(byEmp).map(k=>`${empLettre(k)} (${qty(byEmp[k].reduce((s,p)=>s+(+p.qteRestante||0),0))})`).join(' · ');
+  aiSay(`<h3 style="font-size:1rem">📍 ${esc(params.flavor)} — ${qty(total)} en stock</h3>
+    <div class="sum-box"><span>Répartition</span><b>${zones}</b></div>
+    <p class="note">Détail affiché dans la fenêtre. <span class="act" onclick="aiLocateReopen()">Rouvrir</span></p>`);
+  // mémorise pour réouverture
+  window._aiLastLocate={flavor:params.flavor, byEmp, total};
+}
+function aiLocateReopen(){ const L=window._aiLastLocate; if(L) aiLocatePopup(L.flavor, L.byEmp, L.total); }
+// Popup lisible : un bloc par emplacement, avec chaque batch (lot, qté, DLC, statut).
+function aiLocatePopup(flavor, byEmp, total, recName){
+  recName=recName||(id=>'');
+  let body;
+  if(!total){
+    body=`<p class="note">Aucun batch en stock pour ce parfum.</p>`;
+  } else {
+    // ordre : frigo d'abord, puis congélateurs
+    const order=['frigo','bahut','colonne','petit',''];
+    const keys=Object.keys(byEmp).sort((a,b)=>order.indexOf(a)-order.indexOf(b));
+    body=keys.map(k=>{
+      const e=empInfo(k);
+      const list=byEmp[k].slice().sort((a,b)=>(a.dlcProduit||'9999').localeCompare(b.dlcProduit||'9999'));
+      const sousTot=list.reduce((s,p)=>s+(+p.qteRestante||0),0);
+      const rows=list.map(p=>{
+        const st=prodStatut(p);
+        const dlc=p.dlcProduit?`DLC ${fmtDate(p.dlcProduit)}`:'DLC non figée';
+        const dj=p.dlcProduit?daysTo(p.dlcProduit):null;
+        const dlcCol = dj!=null&&dj<=2?'color:var(--red,#b3261e);font-weight:600':'';
+        return `<div class="loc-batch">
+          <div class="loc-batch-main"><b>Lot ${esc(p.lotProduction||('#'+p.id))}</b>
+            <span class="tag ${st==='termine'?'ok':'event'}" style="font-size:.66rem">${st==='termine'?'✓ prêt':'▶ en cours'}</span></div>
+          <div class="loc-batch-sub"><span style="${dlcCol}">${dlc}${dj!=null&&dj<=2?` (J${dj<=0?'':'−'}${dj<=0?'0':dj})`:''}</span> · fabriqué le ${fmtDate(p.date)}</div>
+          <div class="loc-batch-qty">${qty(p.qteRestante)}</div></div>`;
+      }).join('');
+      const bg = e.type==='frigo' ? '#6aa3a0' : '#3b6ea5';
+      return `<div class="loc-zone">
+        <div class="loc-zone-head"><span class="tag" style="background:${bg||'#999'};color:#fff">${e.icon||'📍'} ${esc(e.nom||'Emplacement non renseigné')} · ${e.lettre||'?'}</span>
+          <b>${qty(sousTot)} macaron(s)</b></div>
+        ${rows}</div>`;
+    }).join('');
+  }
+  openModal(`<h3>📍 Où sont mes macarons ${esc(flavor)} ?</h3>
+    <p class="note" style="margin-bottom:10px">${total?`<b>${qty(total)}</b> macaron(s) répartis sur ${Object.keys(byEmp).length} emplacement(s).`:'Rien en stock pour ce parfum.'}</p>
+    ${body}
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
 }
 async function aiQueryOrders(params){
   let orders=await db.orders.toArray();
@@ -7766,17 +8694,112 @@ async function aiQueryRupture(){
 }
 
 // ---- ACTIONS CRITIQUES : résumé + validation explicite ----
+// Brouillon de commande en cours de dialogue (multi-parfums + format).
+let _aiOrderDraft=null;
 function aiConfirmCreateOrder(r){
   const p=r.params;
-  const clientLine = p.client ? p.client.nom : (p.clientNameRaw||'(non précisé)');
-  aiPending={type:'create_order', params:p};
-  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">⚠ Action à valider — Créer une commande</h3>
-    <div class="sum-box"><span>Client</span><b>${esc(clientLine)}${!p.client&&p.clientNameRaw?' (nouveau)':''}</b></div>
-    <div class="sum-box"><span>Date</span><b>${p.date?fmtDate(p.date):'aujourd\'hui'}</b></div>
-    ${p.taille?`<div class="sum-box"><span>Coffret</span><b>${p.taille} macarons</b></div>`:''}
-    <p class="note">L'assistant prépare le formulaire ; vous compléterez les produits et le prix avant l'enregistrement définitif.</p>
-    <div class="flex" style="gap:8px;margin-top:10px"><button class="btn ghost" onclick="document.getElementById('aiOut').innerHTML=''">Annuler</button>
-      <button class="btn" onclick="aiExecute()">Ouvrir le formulaire pré-rempli</button></div>`);
+  _aiOrderDraft={
+    client:p.client||null, clientNameRaw:p.clientNameRaw||null, date:p.date||null,
+    items:(p.items&&p.items.length)?p.items.map(it=>({qte:it.qte, raw:it.raw, flavor:it.flavor||null,
+      candidates:it.candidates||[], unknown:!!it.unknown,
+      format: p.grandHint?'grand':null })) : [],
+    taille:p.taille||null
+  };
+  aiRenderOrderDraft();
+}
+// Affiche le brouillon ; demande à lever chaque ambiguïté (parfum puis format).
+function aiRenderOrderDraft(){
+  const D=_aiOrderDraft; if(!D) return;
+  const clientLine = D.client ? D.client.nom : (D.clientNameRaw||'(non précisé)');
+  // 1) ambiguïté de PARFUM (ex. "chocolat" → plusieurs)
+  const ambig = D.items.find(it=>!it.flavor && it.candidates && it.candidates.length>1);
+  if(ambig){
+    const idx=D.items.indexOf(ambig);
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Précision nécessaire</h3>
+      <p>Pour « <b>${esc(ambig.raw)}</b> » (${ambig.qte} macaron(s)), quel parfum exactement ?</p>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+        ${ambig.candidates.map(c=>`<button class="btn ghost sm" onclick="aiOrderSetFlavor(${idx},${JSON.stringify(c).replace(/"/g,'&quot;')})">${esc(c)}</button>`).join('')}
+      </div>`);
+  }
+  // 2) parfum inconnu → saisie libre / proposition
+  const unknown=D.items.find(it=>it.unknown && !it.flavor);
+  if(unknown){
+    const idx=D.items.indexOf(unknown);
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Parfum non reconnu</h3>
+      <p>Je ne connais pas « <b>${esc(unknown.raw)}</b> ». Choisis le parfum voulu :</p>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+        ${FLAVORS.map(c=>`<button class="btn ghost sm" onclick="aiOrderSetFlavor(${idx},${JSON.stringify(c).replace(/"/g,'&quot;')})">${esc(c)}</button>`).join('')}
+        <button class="btn ghost sm" onclick="aiOrderDropItem(${idx})">Retirer cette ligne</button>
+      </div>`);
+  }
+  // 3) ambiguïté de FORMAT (standard vs grand) — une fois les parfums résolus
+  const noFmt = D.items.find(it=>it.flavor && !it.format);
+  if(noFmt){
+    const idx=D.items.indexOf(noFmt);
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Format ?</h3>
+      <p>Les <b>${noFmt.qte} ${esc(noFmt.flavor)}</b>, ce sont des macarons <b>standards</b> ou <b>grand format</b> ?</p>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button class="btn" onclick="aiOrderSetFormat(${idx},'standard')">Standard</button>
+        <button class="btn gold" onclick="aiOrderSetFormat(${idx},'grand')">Grand format</button>
+      </div>
+      <p class="note" style="margin-top:6px">Astuce : tu peux préciser directement « grand format » dans ta phrase pour éviter la question.</p>`);
+  }
+  // tout est résolu → récapitulatif + validation
+  aiPending={type:'create_order_built', params:{}};
+  const estPro = !!(D.client && D.client.type==='Pro');
+  const condit = estPro ? 'Vrac pro (boîte réutilisable, tarif pro/macaron)' : 'Coffret';
+  const rows=D.items.map(it=>`<div class="sum-box"><span>${it.qte} × ${esc(it.flavor||it.raw)}</span><b>${it.format==='grand'?'Grand format':'Standard'}</b></div>`).join('')
+    || '<p class="note">Aucun produit précisé — tu compléteras dans le formulaire.</p>';
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">⚠ Commande à valider</h3>
+    <div class="sum-box"><span>Client</span><b>${esc(clientLine)}${D.client?` · ${esc(D.client.type||'Particulier')}`:(D.clientNameRaw?' (nouveau)':'')}</b></div>
+    <div class="sum-box"><span>Date</span><b>${D.date?fmtDate(D.date):'aujourd\'hui'}</b></div>
+    ${rows}
+    ${D.items.some(it=>it.flavor && it.format!=='grand')?`<div class="sum-box"><span>Conditionnement standard</span><b>${condit}</b></div>`:''}
+    <p class="note">${D.client?(estPro?'Client pro détecté → tarif pro au macaron, sans coffret.':'Client particulier → coffret.'):'Type de client inconnu : coffret par défaut (précise le client pour le tarif pro).'} Je pré-remplis le formulaire ; tu vérifies et enregistres.</p>
+    <div class="flex" style="gap:8px;margin-top:10px"><button class="btn ghost" onclick="_aiOrderDraft=null;document.getElementById('aiOut').innerHTML=''">Annuler</button>
+      <button class="btn" onclick="aiExecuteOrderDraft()">Ouvrir le formulaire pré-rempli</button></div>`);
+}
+function aiOrderSetFlavor(idx,flavor){ if(_aiOrderDraft&&_aiOrderDraft.items[idx]){ _aiOrderDraft.items[idx].flavor=flavor; _aiOrderDraft.items[idx].unknown=false; _aiOrderDraft.items[idx].candidates=[]; } aiRenderOrderDraft(); }
+function aiOrderSetFormat(idx,fmt){ if(_aiOrderDraft&&_aiOrderDraft.items[idx]){ _aiOrderDraft.items[idx].format=fmt; } aiRenderOrderDraft(); }
+function aiOrderDropItem(idx){ if(_aiOrderDraft){ _aiOrderDraft.items.splice(idx,1); } aiRenderOrderDraft(); }
+// Construit la commande dans le formulaire : standards → coffret(s) par parfum ; grand format → ligne grand.
+async function aiExecuteOrderDraft(){
+  const D=_aiOrderDraft; if(!D) return;
+  aiPending=null;
+  document.getElementById('aiOut').innerHTML='';
+  if(D.client){ await cmdForm(0,{clientId:D.client.id}); }
+  else { await cmdForm(0); }
+  // date
+  setTimeout(async ()=>{
+    const d=document.getElementById('f_date'); if(d&&D.date) d.value=D.date;
+    if(D.clientNameRaw && !D.client){ const s=document.getElementById('f_clsearch'); if(s) s.value=D.clientNameRaw; }
+    // Construit les lignes selon le TYPE DU CLIENT (consulté en base) :
+    //  - PRO  → macarons standards en VRAC (boîte réutilisable non facturée), tarif pro/macaron
+    //  - PARTICULIER → COFFRET (taille la plus petite couvrant le total, par défaut 6)
+    const standards=D.items.filter(it=>it.flavor && it.format!=='grand');
+    const grands=D.items.filter(it=>it.flavor && it.format==='grand');
+    const estPro = !!(D.client && D.client.type==='Pro');
+    if(typeof cmdLines!=='undefined'){
+      if(standards.length){
+        const parfums={}; standards.forEach(it=>{ parfums[it.flavor]=(parfums[it.flavor]||0)+it.qte; });
+        if(estPro){
+          cmdLines.push({type:'vrac', parfums});   // pro : vrac au tarif pro, sans coffret
+        } else {
+          const total=Object.values(parfums).reduce((s,q)=>s+q,0);
+          const taille=D.taille || (BOX_SIZES.find(t=>t>=total) || BOX_SIZES[BOX_SIZES.length-1]);
+          cmdLines.push({type:'coffret', taille, parfums});
+        }
+      }
+      if(grands.length){
+        const items={}; grands.forEach(it=>{ items[it.flavor]=(items[it.flavor]||0)+it.qte; });
+        cmdLines.push({type:'grand', tarif: estPro?'pro':'particulier', items});
+      }
+      if(typeof drawLines==='function') drawLines();
+      else if(typeof cmdRecalc==='function') cmdRecalc();
+    }
+    toast(estPro?'Client pro : macarons en vrac au tarif pro — vérifie puis enregistre':'Commande pré-remplie — vérifie le prix puis enregistre');
+  },150);
+  _aiOrderDraft=null;
 }
 function aiConfirmDeleteOrder(r){
   aiPending={type:'delete_order', params:r.params};
@@ -7969,7 +8992,9 @@ async function saveEv(){
   await db.events.add({date:d,titre:t,type:'event'}); closeModal(); renderCal(); toast('Événement ajouté ✓');
 }
 async function delEvent(id){
+  const e=await db.events.get(id); const snap=e?{...e}:null;
   await db.events.delete(id); closeModal(); renderCal(); toast('Événement supprimé');
+  if(snap) showUndoToast('Événement supprimé', async()=>{ await db.events.put(snap); renderCal(); });
 }
 
 /* ============================================================
@@ -8479,12 +9504,12 @@ async function exportTraceProd(prodId){
   const prod=await db.productions.get(prodId);
   const recipe=await db.recipes.get(prod.recipeId);
   const conso=await db.prodConsumption.where('productionId').equals(prodId).toArray();
-  const rows=[['Produit','Lot production','Date','Matière','Qté consommée','Lot fournisseur','Fournisseur','DLC']];
+  const rows=[['Produit','Lot production','Date','Matière','Lot fournisseur','Fournisseur','DLC']];
   for(const c of conso){
     const lot=await db.materialLots.get(c.materialLotId); if(!lot)continue;
     const mat=await db.materials.get(lot.materialId);
     const sup=lot.supplierId?await db.suppliers.get(lot.supplierId):null;
-    rows.push([recipe?recipe.produitNom:'',prod.lotProduction,prod.date,mat?mat.nom:'',c.qteConsommee,lot.lotFournisseur,sup?sup.nom:'',lot.dlc]);
+    rows.push([recipe?recipe.produitNom:'',prod.lotProduction,prod.date,mat?mat.nom:'',lot.lotFournisseur,sup?sup.nom:'',lot.dlc]);
   }
   csvDownload('tracabilite-batch-'+(prod.lotProduction||prodId)+'.csv',rows); toast('CSV exporté ✓');
 }
@@ -8833,6 +9858,9 @@ async function showForecastPopup(opts){
 const TT_KEY = 'sm_workSession_start';   // timestamp (ms) de la session en cours
 const TT_PAUSED_KEY = 'sm_workSession_paused';   // ms de pause CUMULÉS (pauses terminées)
 const TT_PAUSE_AT_KEY = 'sm_workSession_pauseAt'; // timestamp du début de la pause en cours (0 si non en pause)
+const TT_ACT_KEY = 'sm_workSession_act';  // nature d'activité de la session en cours
+// Natures d'activité du chrono (pour l'analyse d'optimisation des temps). Sans impact production.
+const TT_ACTIVITIES = ['Ganache','Meringue','Macaronnage','Pochage','Cuisson','Garnissage/Montage','Vaisselle','Nettoyage fin de prod','Conditionnement','Autre'];
 let _ttTick = null;                       // id du setInterval d'affichage
 
 // État de pause courant.
@@ -8872,7 +9900,8 @@ function ttRefresh(){
     btn.classList.remove('start'); btn.classList.add('stop');
     time.textContent = ttFormat(ttNetElapsed());
     btn.textContent = '⏹ Terminer';
-    if(lbl) lbl.textContent = paused ? 'En pause' : 'Production';
+    const act = localStorage.getItem(TT_ACT_KEY)||'';
+    if(lbl) lbl.textContent = paused ? 'En pause' : (act||'Production');
     if(pauseBtn){ pauseBtn.style.display=''; pauseBtn.textContent = paused ? '▶' : '⏸'; pauseBtn.title = paused ? 'Reprendre' : 'Mettre en pause'; }
   } else {
     bar.classList.remove('run','paused');
@@ -8893,11 +9922,23 @@ function ttToggle(){
   if(start>0) ttStop(); else ttStart();
 }
 function ttStart(){
+  // Choix RAPIDE de la nature d'activité (un tap suffit). Sans impact sur les productions.
+  openModal(`<h3>⏱ Démarrer — nature de l'activité ?</h3>
+    <p class="note">Un tap pour démarrer. Sert uniquement à analyser et optimiser tes temps plus tard.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+      ${TT_ACTIVITIES.map(a=>`<button class="btn ghost" style="flex:1;min-width:44%" onclick="ttStartWith(${JSON.stringify(a).replace(/"/g,'&quot;')})">${esc(a)}</button>`).join('')}
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="ttStartWith('')">Démarrer sans préciser</button></div>`);
+}
+function ttStartWith(activite){
   localStorage.setItem(TT_KEY, String(Date.now()));
   localStorage.setItem(TT_PAUSED_KEY, '0');     // pauses cumulées = 0
   localStorage.removeItem(TT_PAUSE_AT_KEY);      // pas de pause en cours
+  localStorage.setItem(TT_ACT_KEY, activite||'');
+  closeModal();
   ttRefresh(); ttStartTicking();
-  toast('Production démarrée ⏱');
+  toast(activite ? `⏱ ${activite} démarré` : 'Production démarrée ⏱');
 }
 // Bascule pause / reprise. La pause fige le temps net en mémorisant le moment
 // du début de pause ; la reprise ajoute la durée de pause au cumul. Aucun
@@ -8938,11 +9979,15 @@ function ttStop(){
   const pauseMs = accumPause + (pauseAt>0 ? Math.max(0, Date.now()-pauseAt) : 0);
   const s = getSettings();
   const tauxDefaut = +s.laborRate || 0;
+  const curAct = localStorage.getItem(TT_ACT_KEY)||'';
+  const actOpts = ['',...TT_ACTIVITIES].map(a=>`<option value="${esc(a)}" ${a===curAct?'selected':''}>${a?esc(a):'— non précisé —'}</option>`).join('');
   openModal(`<h3>Fin de session</h3>
     <div class="sum-box"><span>Temps travaillé (pauses déduites)</span><b>${dureeTxt}</b></div>
     ${pauseMs>=60000?`<div class="sum-box"><span>Dont pauses déduites</span><b>${ttFormat(pauseMs)}</b></div>`:''}
     <div class="sum-box"><span>Soit en heures</span><b>${heuresDec.toFixed(2)} h</b></div>
-    <div class="field" style="margin-top:12px"><label>Taux horaire de cette session (€/h)</label>
+    <div class="field" style="margin-top:12px"><label>Nature de l'activité</label>
+      <select id="tt_act">${actOpts}</select></div>
+    <div class="field"><label>Taux horaire de cette session (€/h)</label>
       <input type="number" min="0" step="0.5" id="tt_rate" value="${tauxDefaut||''}" placeholder="ex : 12"></div>
     <p class="note" id="tt_cost" style="margin-top:4px"></p>
     <div class="modal-actions">
@@ -8970,6 +10015,7 @@ async function ttConfirmStop(start, end, ms, pauseMs){
     dureeMin: totalMin,
     dureeHeures: heuresDec,
     pauseMin: Math.floor(pauseMs/60000),
+    activite: val('tt_act')||'',
     tauxHoraire: money2(taux),
     coutTotal: money2(heuresDec*taux)
   };
@@ -8977,8 +10023,9 @@ async function ttConfirmStop(start, end, ms, pauseMs){
   localStorage.removeItem(TT_KEY);
   localStorage.removeItem(TT_PAUSED_KEY);
   localStorage.removeItem(TT_PAUSE_AT_KEY);
+  localStorage.removeItem(TT_ACT_KEY);
   closeModal(); ttRefresh();
-  toast(`Session enregistrée : ${ttFormat(ms)} · ${euro(session.coutTotal)}`);
+  toast(`Session enregistrée${session.activite?` · ${session.activite}`:''} : ${ttFormat(ms)} · ${euro(session.coutTotal)}`);
   if(view==='pointeuse' && typeof renderTimeTracker==='function') renderTimeTracker();
 }
 // Historique rapide des sessions (modale).
@@ -8990,6 +10037,7 @@ async function ttOpenHistory(){
     const h=Math.floor((+x.dureeMin||0)/60), m=(+x.dureeMin||0)%60;
     const pMin=+x.pauseMin||0; const ph=Math.floor(pMin/60), pm=pMin%60;
     return `<tr><td>${fmtDate(x.date)}<br><span style="color:#9a8a82;font-size:.72rem">${fmtTime(x.debut)}–${fmtTime(x.fin)}</span></td>
+      <td>${x.activite?`<span class="tag" style="background:#6aa3a0;color:#fff;font-size:.66rem">${esc(x.activite)}</span>`:'<span style="color:#c9bcae">—</span>'}</td>
       <td>${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m${pMin>=1?`<br><span style="color:#9a8a82;font-size:.7rem">pause ${ph?ph+'h ':''}${String(pm).padStart(2,'0')}m</span>`:''}</td>
       <td>${euro(x.tauxHoraire)}/h</td>
       <td><b>${euro(x.coutTotal)}</b></td>
@@ -8998,7 +10046,8 @@ async function ttOpenHistory(){
   const th=Math.floor(totMin/60), tm=totMin%60;
   openModal(`<h3>Pointeuse — historique</h3>
     <div class="sum-box"><span>Total cumulé</span><b>${String(th).padStart(2,'0')}h ${String(tm).padStart(2,'0')}m · ${euro(totCout)}</b></div>
-    ${sessions.length?`<div class="table-wrap no-freeze" style="margin-top:10px"><table><thead><tr><th>Date</th><th>Durée</th><th>Taux</th><th>Coût</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${sessions.length>40?'<p class="note">40 dernières sessions affichées.</p>':''}`:'<p class="note">Aucune session enregistrée pour l\'instant.</p>'}
+    ${sessions.length?`<div class="flex" style="gap:8px;margin-top:8px"><button class="btn gold sm" onclick="closeModal();goView('analyse')">📊 Analyse des temps & conseils</button></div>
+    <div class="table-wrap no-freeze" style="margin-top:10px"><table><thead><tr><th>Date</th><th>Activité</th><th>Durée</th><th>Taux</th><th>Coût</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${sessions.length>40?'<p class="note">40 dernières sessions affichées.</p>':''}`:'<p class="note">Aucune session enregistrée pour l\'instant.</p>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 async function ttDeleteSession(id){
@@ -9163,9 +10212,49 @@ function mascotSetupDrag(host){
 // Une seule MERINGUE sert 2 batchs (2 parfums) = production mutualisée :
 // on coule une meringue, on la divise pour 2 ordres de fabrication.
 // → l'étape coques/meringue est partagée ; ganache + montage restent par parfum.
-const TAILLE_BATCH_MACARONS = 60;        // macarons par batch
+const TAILLE_BATCH_MACARONS = 60;        // macarons par "batch" unitaire (1 ordre de fabrication)
 const COQUES_PAR_BATCH = 120;            // coques par batch (2 coques/macaron)
-const BATCHS_PAR_MERINGUE = 2;           // mutualisation : 2 batchs issus d'une meringue
+const BATCHS_PAR_MERINGUE = 2;           // capacité d'une meringue = 2 batchs = 120 macarons = 240 coques
+const MACARONS_PAR_MERINGUE = 120;       // capacité utile réelle d'une meringue (240 coques)
+
+// REMPLISSAGE DES MERINGUES par capacité (120 macarons / 240 coques chacune).
+// La mutualisation n'est pas imposée : un parfum qui a besoin de ≥120 macarons
+// remplit des meringues entières à lui seul ; on ne regroupe 2 parfums que pour
+// combler une meringue partiellement vide (optimisation du remplissage, pas une règle).
+// lignes : [{parfum, besoinNet, ...}]. Renvoie [{parfums:[...], repartition:{p:qte}, macarons, nbBatchs, partielle}].
+function _packMeringues(lignes){
+  // 1) Chaque parfum : autant de meringues PLEINES mono-parfum que possible, + un reste < 120.
+  const meringues=[]; const restes=[];   // restes : {parfum, qte<120}
+  lignes.forEach(l=>{
+    let q=Math.max(0, +l.besoinNet||0);
+    while(q>=MACARONS_PAR_MERINGUE){
+      meringues.push({parfums:[l.parfum], repartition:{[l.parfum]:MACARONS_PAR_MERINGUE},
+        macarons:MACARONS_PAR_MERINGUE, nbBatchs:BATCHS_PAR_MERINGUE, partielle:false});
+      q-=MACARONS_PAR_MERINGUE;
+    }
+    if(q>0) restes.push({parfum:l.parfum, qte:q});
+  });
+  // 2) Apparier les restes pour remplir au mieux (first-fit decreasing).
+  restes.sort((a,b)=>b.qte-a.qte);
+  while(restes.length){
+    const a=restes.shift();
+    // cherche le plus gros reste d'un AUTRE parfum qui tient avec a (≤120)
+    let bestIdx=-1;
+    for(let i=0;i<restes.length;i++){
+      if(restes[i].parfum!==a.parfum && a.qte+restes[i].qte<=MACARONS_PAR_MERINGUE){ bestIdx=i; break; }
+    }
+    if(bestIdx>=0){
+      const b=restes.splice(bestIdx,1)[0];
+      meringues.push({parfums:[a.parfum,b.parfum], repartition:{[a.parfum]:a.qte,[b.parfum]:b.qte},
+        macarons:a.qte+b.qte, nbBatchs:2, partielle:(a.qte+b.qte)<MACARONS_PAR_MERINGUE});
+    } else {
+      // reste seul → meringue partielle (un seul parfum, pas assez pour la remplir)
+      meringues.push({parfums:[a.parfum], repartition:{[a.parfum]:a.qte},
+        macarons:a.qte, nbBatchs:1, partielle:true});
+    }
+  }
+  return meringues;
+}
 
 /* ============================================================
    DISPONIBILITÉS & FAISABILITÉ DE COMMANDE
@@ -9372,7 +10461,7 @@ function saveMrpTimes(t){ localStorage.setItem(MRP_TIME_KEY, JSON.stringify(t));
 async function mrpCurrentStockByParfum(){
   const [recipes, prods] = await Promise.all([db.recipes.toArray(), db.productions.toArray()]);
   const stock={};
-  prods.forEach(p=>{ const r=recipes.find(x=>x.id===p.recipeId); const nom=r?r.produitNom:('#'+p.recipeId);
+  prods.forEach(p=>{ if(!prodVendable(p)) return; const r=recipes.find(x=>x.id===p.recipeId); const nom=r?r.produitNom:('#'+p.recipeId);
     stock[nom]=(stock[nom]||0)+(+p.qteRestante||0); });
   return {stock, recipes};
 }
@@ -9420,39 +10509,173 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   }
   lignes.sort((a,b)=>b.besoinNet-a.besoinNet);
 
-  // 3) MUTUALISATION DES MERINGUES : on éclate les besoins en batchs unitaires (60),
-  //    puis on les apparie 2 par 2 dans une même meringue (parfums différents de
-  //    préférence, pour coller à l'habitude « 1 meringue → 2 ordres de fabrication »).
-  const unites=[];   // un élément par batch de 60
-  lignes.forEach(l=>{ for(let i=0;i<l.nbBatchs;i++) unites.push(l.parfum); });
-  // tri pour alterner les parfums (évite d'apparier 2 fois le même quand d'autres existent)
-  const parParfum={}; unites.forEach(p=>{ (parParfum[p] ||= 0); parParfum[p]++; });
-  const file=Object.keys(parParfum).sort((a,b)=>parParfum[b]-parParfum[a]);
-  const restant=Object.assign({}, parParfum);
-  const ordered=[];
-  // round-robin : on pioche tour à tour dans chaque parfum encore disponible
-  let safety=unites.length+5;
-  while(ordered.length<unites.length && safety-->0){
-    let placed=false;
-    for(const p of file){ if(restant[p]>0){ ordered.push(p); restant[p]--; placed=true; } }
-    if(!placed) break;
-  }
-  const meringues=[];
-  for(let i=0;i<ordered.length;i+=BATCHS_PAR_MERINGUE){
-    const grp=ordered.slice(i, i+BATCHS_PAR_MERINGUE);
-    meringues.push({parfums:grp, nbBatchs:grp.length, partielle:grp.length<BATCHS_PAR_MERINGUE});
-  }
+  // 3) REMPLISSAGE DES MERINGUES (capacité 120 macarons) — mutualisation seulement
+  //    pour combler une meringue, jamais imposée. Un parfum ≥120 prend des meringues pleines.
+  const meringues = _packMeringues(lignes);
+  const nbBatchsTotal = lignes.reduce((s,l)=>s+l.nbBatchs,0);
   const tMeringue = meringues.length*times.coques.estimatedTime;   // par meringue
   const tGanacheTot = lignes.reduce((s,l)=>s+l.tGanache,0);
   const tMontageTot = lignes.reduce((s,l)=>s+l.tMontage,0);
   const tempsTotal = tMeringue + tGanacheTot + tMontageTot;
 
   const dispo = +tempsDisponibleMinutes||0;
-  return {lignes, meringues, nbMeringues:meringues.length, nbBatchsTotal:unites.length,
+  return {lignes, meringues, nbMeringues:meringues.length, nbBatchsTotal,
     tMeringue, tGanacheTot, tMontageTot, tempsTotal, tempsDisponible:dispo,
     depassement: dispo>0 && tempsTotal>dispo,
     chargePct: dispo>0 ? Math.round(tempsTotal/dispo*100) : 0,
     warnings, nbParfums:lignes.length};
+}
+
+/* ============================================================
+   ORDONNANCEMENT PERSONNEL « CHEF D'ATELIER »
+   ------------------------------------------------------------
+   À partir de créneaux de disponibilité saisis librement (jour par jour,
+   plusieurs plages possibles) + une liste de tâches souhaitées, on construit
+   un planning minute par minute qui respecte la SÉQUENCE TECHNIQUE du macaron
+   et exploite les temps PASSIFS (croûtage, cuisson, maturation) pour caser
+   d'autres tâches actives en parallèle. Chaque décision est argumentée.
+   ============================================================ */
+// Constantes process (minutes). Passif = ne consomme pas de main d'œuvre (on peut faire autre chose).
+const PROC = {
+  maturationH: 24,     // maturation au frais avant vente (passif)
+  relancePlaqueMin: 7  // on enfourne la plaque suivante 7 min après la précédente
+};
+// Formats de cuisson : coques/plaque + durée de cuisson d'une plaque + capacité meringue.
+const CUISSON = {
+  standard: { coquesParPlaque:39, cuissonMin:20, coquesParMeringue:240, macaronsParMeringue:120 },
+  grand:    { coquesParPlaque:12, cuissonMin:28, coquesParMeringue:48,  macaronsParMeringue:24  }
+};
+// Temps FOUR total (makespan) pour cuire `nbCoques` d'un format donné, en cascade :
+// P1 à t=0, P2 à t=+7, puis P3 quand P1 sort, P4 7 min après, etc. (four ~2 plaques).
+// Renvoie {nbPlaques, makespanMin, four:[{plaque,entree,sortie}]}.
+function cuissonCascade(nbCoques, format){
+  const C = CUISSON[format] || CUISSON.standard;
+  const nbPlaques = Math.ceil(Math.max(0,nbCoques)/C.coquesParPlaque);
+  const B = C.cuissonMin, R = PROC.relancePlaqueMin;
+  const four=[]; 
+  // Les plaques entrent par paires : la paire k démarre à t = k*B (k=0,1,2…),
+  // 1ère plaque de la paire à k*B, 2ème à k*B + R. Capacité simultanée = 2.
+  for(let i=0;i<nbPlaques;i++){
+    const pair=Math.floor(i/2), within=i%2;
+    const entree = pair*B + (within===1?R:0);
+    four.push({plaque:i+1, entree, sortie:entree+B});
+  }
+  const makespan = four.length ? Math.max(...four.map(p=>p.sortie)) : 0;
+  return {nbPlaques, makespanMin:makespan, four, cuissonMin:B, coquesParPlaque:C.coquesParPlaque};
+}
+
+// Convertit une saisie de dispo en blocs datés exploitables.
+// daySpecs : [{date:'AAAA-MM-JJ', slots:[[startMin,endMin],...]}] déjà en minutes.
+function _flattenAvailability(daySpecs){
+  const blocks=[];
+  daySpecs.forEach(d=>{
+    (d.slots||[]).forEach(([s,e])=>{ if(e>s) blocks.push({date:d.date, start:s, end:e, used:0}); });
+  });
+  // tri chronologique (date puis heure)
+  blocks.sort((a,b)=> a.date.localeCompare(b.date) || a.start-b.start);
+  return blocks;
+}
+function _totalAvail(blocks){ return blocks.reduce((s,b)=>s+(b.end-b.start),0); }
+
+// Ordonnance une liste de tâches actives (avec dépendances souples) dans les blocs.
+// tasks: [{id,label,type,active,after,passiveAfter}] ; renvoie le planning + diagnostic.
+// Heuristique : on respecte l'ordre des phases (meringue → ganache → montage),
+// on place chaque tâche active dans le premier créneau qui la contient, et on
+// déclenche les temps passifs (cuisson/maturation) en tâche de fond.
+function schedulePersonalPlan(daySpecs, plan, opts){
+  opts=opts||{};
+  const blocks=_flattenAvailability(daySpecs);
+  const times=getMrpTimes();
+  const events=[];           // {date,start,end,label,kind,passive}
+  const warnings=[], insights=[];
+  if(!blocks.length) return {events, warnings:['Aucun créneau de disponibilité renseigné.'], insights, blocks, ok:false, totalActive:0, totalAvail:0};
+
+  // 1) Construire la liste ORDONNÉE des tâches actives selon la séquence technique.
+  //    Phase 1 : meringues (remplies à la capacité utile). Phase 2 : ganaches. Phase 3 : montages.
+  //    On entrelace : les ganaches se font pendant la cuisson des coques (temps passif).
+  const meringues = plan.meringues||[];
+  const lignes = plan.lignes||[];
+  const tMer = Math.round((plan.tMeringue||0)/Math.max(1,plan.nbMeringues||1));
+
+  // file de tâches actives, dans un ordre logique de production
+  const active=[];
+  meringues.forEach((mg,i)=>{
+    const rep = mg.repartition ? Object.entries(mg.repartition).map(([p,q])=>`${p} ${q}`).join(' + ') : mg.parfums.join(' + ');
+    const remplissage = mg.partielle ? ` (meringue partielle : ${mg.macarons||''}/${MACARONS_PAR_MERINGUE})` : '';
+    const cuis = cuissonCascade((mg.macarons||0)*2, 'standard');
+    active.push({
+      id:'meringue:'+i, phase:1, label:`Meringue ${i+1} — ${rep}`,
+      dur:tMer, type:'coques', passiveAfter:cuis.makespanMin,
+      note:`Coulage + dressage de ${(mg.macarons||0)*2} coques${remplissage}. Cuisson : ${cuis.nbPlaques} plaque(s) en cascade (~${cuis.makespanMin} min four). Pendant la cuisson, on enchaîne une ganache pour ne pas perdre de temps.`
+    });
+  });
+  lignes.forEach(l=> active.push({
+    id:'ganache:'+l.parfum, phase:2, label:`Ganache ${l.parfum}`,
+    dur:l.tGanache, type:'ganache',
+    note:`${l.garnitureManque?'⚠ poids garniture à renseigner. ':''}${l.garnitureG||'?'} g pour ${l.nbBatchs} batch(s). À préparer pendant la cuisson des coques pour ne pas perdre de temps machine.`
+  }));
+  lignes.forEach(l=> active.push({
+    id:'montage:'+l.parfum, phase:3, label:`Montage ${l.parfum}`,
+    dur:l.tMontage, type:'montage',
+    note:`Garnissage de ${l.besoinNet} macarons. Nécessite coques cuites + ganache prête. Lance la maturation de ${PROC.maturationH} h juste après.`
+  }));
+
+  // 2) Placement glouton dans les blocs, en respectant l'ordre des phases.
+  //    On garde un curseur par bloc ; une tâche ne peut pas être coupée (atomique)
+  //    sauf le montage qu'on autorise à se fractionner par batch si besoin.
+  let bi=0;
+  function place(task){
+    // cherche le premier bloc ayant assez de place à partir du curseur courant
+    for(let k=bi;k<blocks.length;k++){
+      const b=blocks[k]; const free=(b.end-b.start)-b.used;
+      if(free>=task.dur){
+        const startAbs=b.start+b.used; const endAbs=startAbs+task.dur;
+        b.used+=task.dur; bi=k;
+        events.push({date:b.date, start:startAbs, end:endAbs, label:task.label, kind:task.type, note:task.note});
+        return {date:b.date, end:endAbs, blockIdx:k};
+      }
+    }
+    // pas de place : tâche non planifiée
+    warnings.push(`« ${task.label} » (${task.dur} min) ne rentre dans aucun créneau disponible.`);
+    return null;
+  }
+  // placement : phase 1 et 2 entrelacées (meringue puis ganache pendant le passif), puis phase 3.
+  const ph1=active.filter(t=>t.phase===1), ph2=active.filter(t=>t.phase===2), ph3=active.filter(t=>t.phase===3);
+  // on alterne meringue / ganache pour matérialiser l'entrelacement
+  const interleaved=[]; let gi=0;
+  ph1.forEach(m=>{ interleaved.push(m); if(gi<ph2.length) interleaved.push(ph2[gi++]); });
+  while(gi<ph2.length) interleaved.push(ph2[gi++]);
+  interleaved.forEach(place);
+  // montages en dernier (dépendent de tout le reste), après maturation des coques cuites
+  ph3.forEach(place);
+
+  // 3) Diagnostic chiffré + insights argumentés (le « chef » explique ses choix).
+  const totalActive = active.reduce((s,t)=>s+t.dur,0);
+  const totalAvail = _totalAvail(blocks);
+  const placed = events.length;
+  const lastEvent = events[events.length-1];
+  // estimation de fin (avec maturation) → prêt à vendre
+  let readyInfo=null;
+  if(lastEvent){
+    const matEnd = new Date(lastEvent.date+'T00:00'); matEnd.setMinutes(lastEvent.end); matEnd.setHours(matEnd.getHours()+PROC.maturationH);
+    readyInfo = matEnd;
+  }
+  // insights
+  const pleines = (plan.meringues||[]).filter(m=>!m.partielle).length;
+  const partielles = (plan.meringues||[]).length - pleines;
+  const mutualisees = (plan.meringues||[]).filter(m=>m.parfums.length>1).length;
+  insights.push(`⏱️ Charge active totale : ${Math.floor(totalActive/60)}h${String(totalActive%60).padStart(2,'0')} pour ${Math.floor(totalAvail/60)}h${String(totalAvail%60).padStart(2,'0')} disponibles (${totalAvail>0?Math.round(totalActive/totalAvail*100):0} % de remplissage).`);
+  insights.push(`🥚 ${plan.nbMeringues} meringue(s) de ${MACARONS_PAR_MERINGUE} macarons max (240 coques) : ${pleines} pleine(s)${partielles?`, ${partielles} partielle(s)`:''}. ${mutualisees?`${mutualisees} meringue(s) regroupent 2 parfums uniquement pour combler la capacité`:`Aucun regroupement forcé : chaque parfum remplit ses propres meringues`}.`);
+  if(partielles) insights.push(`💡 ${partielles} meringue(s) ne sont pas pleines. Si une échéance approche, tu peux soit les lancer telles quelles, soit attendre une commande qui complète la capacité pour ne pas gâcher de blancs.`);
+  const coquesTot = (plan.meringues||[]).reduce((s,m)=>s+(m.macarons||0)*2,0);
+  const cuisTot = cuissonCascade(coquesTot,'standard');
+  insights.push(`🔥 Cuisson : ${cuisTot.nbPlaques} plaque(s) de 39 coques, enfournées en cascade (2ᵉ plaque +${PROC.relancePlaqueMin} min, 3ᵉ à la sortie de la 1ʳᵉ…). Temps four estimé ~${Math.floor(cuisTot.makespanMin/60)?Math.floor(cuisTot.makespanMin/60)+'h':''}${cuisTot.makespanMin%60} min, en parallèle des ganaches/montages.`);
+  if(readyInfo) insights.push(`📦 Avec ${PROC.maturationH} h de maturation après le dernier montage, le lot complet est prêt à la vente le ${readyInfo.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'})} vers ${String(readyInfo.getHours()).padStart(2,'0')}h${String(readyInfo.getMinutes()).padStart(2,'0')}.`);
+  if(totalActive>totalAvail) insights.push(`⚠ Il manque ${Math.ceil((totalActive-totalAvail)/60*10)/10} h de créneau : envisage d'étaler sur un jour de plus, ou de réduire les quantités les moins prioritaires.`);
+  else insights.push(`✅ Tout tient dans tes créneaux, avec ${Math.floor((totalAvail-totalActive)/60)}h${String((totalAvail-totalActive)%60).padStart(2,'0')} de marge pour les imprévus (nettoyage, étiquetage, pauses).`);
+
+  return {events, warnings, insights, blocks, ok: warnings.length===0,
+    totalActive, totalAvail, placed, readyInfo, nbMeringues:plan.nbMeringues, nbBatchsTotal:plan.nbBatchsTotal};
 }
 
 // APPRENTISSAGE : enregistre le temps réel d'une tâche et met à jour l'estimation (moyenne mobile).
@@ -9488,7 +10711,12 @@ function renderMRP(){
        <input type="number" inputmode="numeric" min="0" step="15" id="mrp_dispo" value="${_mrpDispo||''}" placeholder="ex : 240"></div>
      <button class="btn" onclick="mrpGenerate()">⚙ Générer le plan</button>
    </div>
-   <div id="mrpResult"></div>`;
+   <div id="mrpResult"></div>
+   <div class="panel" style="border:1.5px solid var(--gold,#AA7C39)">
+     <h2>🧑‍🍳 Planification personnelle sur mesure</h2>
+     <p class="note">Décris le temps dont tu disposes (jour par jour, plusieurs créneaux possibles). Le chef d'atelier ordonnance tes tâches en optimisant les temps passifs (croûtage, cuisson, maturation) et la mutualisation des meringues.</p>
+     <button class="btn gold" style="margin-top:8px" onclick="persoPlanForm()">📅 Définir ma disponibilité & générer</button>
+   </div>`;
 }
 async function mrpGenerate(){
   _mrpStart=val('mrp_start')||today();
@@ -9508,18 +10736,21 @@ function mrpRenderResult(){
   const dh=Math.floor(p.tempsDisponible/60), dm=p.tempsDisponible%60;
   const pct=Math.min(100, p.chargePct);
   const barCol = p.depassement ? 'var(--red,#b04a3e)' : (p.chargePct>=80?'var(--caramel,#AA7C39)':'var(--green,#3f7d52)');
-  // TÂCHES : d'abord les MERINGUES mutualisées (1 meringue → jusqu'à 2 parfums),
+  // TÂCHES : d'abord les MERINGUES (remplies à 120 macarons / 240 coques),
   // puis ganache + montage PAR parfum.
   const meringueRows = p.meringues.map((mg,i)=>{
     const key='meringue:'+i;
     const done=_mrpDone.has(key);
-    const parfumsTxt = mg.parfums.join(' + ');
-    const sub = (mg.parfums.length>1)
-      ? `1 meringue mutualisée → ${parfumsTxt} · ${mg.nbBatchs}×${TAILLE_BATCH_MACARONS} macarons`
-      : `1 meringue (demi) → ${parfumsTxt} · ${mg.nbBatchs*TAILLE_BATCH_MACARONS} macarons`;
+    const rep = mg.repartition ? Object.entries(mg.repartition).map(([pf,q])=>`${pf} ${q}`).join(' + ') : mg.parfums.join(' + ');
+    const macs = mg.macarons!=null ? mg.macarons : (mg.nbBatchs*TAILLE_BATCH_MACARONS);
+    const sub = mg.partielle
+      ? `Meringue partielle : ${macs}/${MACARONS_PAR_MERINGUE} macarons (${macs*2} coques)`
+      : (mg.parfums.length>1
+          ? `Meringue pleine mutualisée → ${rep} · ${macs} macarons (240 coques)`
+          : `Meringue pleine → ${rep} · ${macs} macarons (240 coques)`);
     return `<div class="pick-row${done?' done':''}">
       <div class="pick-check" onclick="mrpToggleTask('${key}','coques',${p.tMeringue/Math.max(1,p.nbMeringues)})">${done?'✓':''}</div>
-      <div class="pick-main"><div class="pick-name">🥚 Meringue ${i+1} : ${esc(parfumsTxt)}</div>
+      <div class="pick-main"><div class="pick-name">🥚 Meringue ${i+1} : ${esc(rep)}</div>
         <div class="pick-sub">${esc(sub)}</div></div>
       <div class="pick-qty">${Math.round(p.tMeringue/Math.max(1,p.nbMeringues))}'</div></div>`;
   }).join('');
@@ -9544,7 +10775,7 @@ function mrpRenderResult(){
      <div class="mrp-gauge-meta"><span>Estimé : <b>${h?h+'h ':''}${String(m).padStart(2,'0')}min</b></span>
        <span>Dispo : <b>${p.tempsDisponible?`${dh?dh+'h ':''}${String(dm).padStart(2,'0')}min`:'—'}</b></span></div>
      <div class="mrp-gauge"><span style="width:${pct}%;background:${barCol}"></span></div>
-     <p class="note" style="margin-top:6px">${p.nbBatchsTotal} batch(s) de ${TAILLE_BATCH_MACARONS} → <b>${p.nbMeringues} meringue(s)</b> (mutualisation 2 parfums/meringue).</p>
+     <p class="note" style="margin-top:6px">${p.nbBatchsTotal} batch(s) de ${TAILLE_BATCH_MACARONS} → <b>${p.nbMeringues} meringue(s)</b> de ${MACARONS_PAR_MERINGUE} macarons max (240 coques). Regroupement de 2 parfums uniquement pour combler une meringue.</p>
      ${p.depassement?`<p class="note" style="color:var(--red,#b04a3e)">⚠ Dépassement de ${p.tempsTotal-p.tempsDisponible} min : réduis la période ou ajoute du temps.</p>`:(p.tempsDisponible?`<p class="note">✓ Tient dans le temps disponible (${p.chargePct}%).</p>`:'')}
      ${p.warnings.length?`<p class="note" style="color:var(--caramel)">ℹ Recette/poids garniture manquant pour : ${p.warnings.map(esc).join(', ')}.</p>`:''}
    </div>
@@ -9581,6 +10812,167 @@ function mrpConfirmTask(key, type){
   // recalcule le plan pour refléter les nouvelles estimations sur les tâches restantes
   mrpGenerate().then(()=>{ /* _mrpDone conservé */ });
   toast('Tâche validée ✓ — estimation ajustée');
+}
+
+/* ---------- Planification personnelle (UI) ---------- */
+let _persoDays = null;   // [{date, slotsTxt}]
+let _persoPlan = null;   // résultat schedulePersonalPlan
+function _persoDefaultDays(){
+  const d0=today();
+  return [{date:d0, slotsTxt:''}];
+}
+function persoPlanForm(){
+  if(!_persoDays) _persoDays=_persoDefaultDays();
+  const rows=_persoDays.map((d,i)=>`
+    <div class="perso-day">
+      <div class="row2">
+        <div class="field"><label>Jour ${i+1}</label><input type="date" id="pd_date_${i}" value="${esc(d.date)}"></div>
+        <div class="field"><label>Créneaux (ex : 14:00-18:00, 21:00-23:00)</label>
+          <input id="pd_slots_${i}" value="${esc(d.slotsTxt)}" placeholder="14:00-18:00, 21:00-23:00" spellcheck="false"></div>
+      </div>
+      ${_persoDays.length>1?`<button class="act del" onclick="persoDelDay(${i})">– retirer ce jour</button>`:''}
+    </div>`).join('');
+  openModal(`<h3>🧑‍🍳 Ma disponibilité</h3>
+    <p class="note">Indique tes créneaux réels jour par jour. Tu peux mettre plusieurs plages par jour (séparées par une virgule). Exemples : « 3h aujourd'hui » → un créneau de 3h ; « 1 jour 4h puis le lendemain 5h » → deux jours.</p>
+    <div class="perso-presets">
+      <button class="btn ghost sm" onclick="persoPreset('today3')">Aujourd'hui 3h</button>
+      <button class="btn ghost sm" onclick="persoPreset('2days')">2 jours</button>
+      <button class="btn ghost sm" onclick="persoPreset('fromAvail')">⤵ Importer mes dispos</button>
+    </div>
+    <div id="persoDays">${rows}</div>
+    <button class="act" onclick="persoAddDay()">+ ajouter un jour</button>
+    <div class="field" style="margin-top:10px"><label>Tâches à accomplir</label>
+      <select id="pd_source">
+        <option value="orders">Honorer les commandes de la période ci-dessous</option>
+        <option value="custom">Quantités libres par parfum</option>
+      </select></div>
+    <div class="row2">
+      <div class="field"><label>Commandes du</label><input type="date" id="pd_from" value="${_mrpStart||today()}"></div>
+      <div class="field"><label>au</label><input type="date" id="pd_to" value="${_mrpEnd||today()}"></div>
+    </div>
+    <div class="field" id="pd_customWrap" style="display:none"><label>Quantités libres (ex : Vanille 120, Caramel 60)</label>
+      <input id="pd_custom" placeholder="Vanille 120, Caramel 60" spellcheck="false"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="persoGenerate()">⚙ Générer mon planning</button></div>`);
+  const sel=document.getElementById('pd_source');
+  if(sel) sel.onchange=()=>{ document.getElementById('pd_customWrap').style.display = sel.value==='custom'?'block':'none'; };
+}
+function _persoReadDays(){
+  _persoDays = _persoDays.map((d,i)=>({
+    date: val('pd_date_'+i)||d.date,
+    slotsTxt: val('pd_slots_'+i)||''
+  }));
+}
+function persoAddDay(){ _persoReadDays(); const last=_persoDays[_persoDays.length-1];
+  const nd=new Date(last.date); nd.setDate(nd.getDate()+1);
+  _persoDays.push({date:nd.toISOString().slice(0,10), slotsTxt:''}); persoPlanForm(); }
+function persoDelDay(i){ _persoReadDays(); _persoDays.splice(i,1); if(!_persoDays.length)_persoDays=_persoDefaultDays(); persoPlanForm(); }
+function persoPreset(kind){
+  _persoReadDays();
+  if(kind==='today3'){ _persoDays=[{date:today(), slotsTxt:_presetNextHours(3)}]; }
+  else if(kind==='2days'){ const d0=today(); const d1=new Date(d0); d1.setDate(d1.getDate()+1);
+    _persoDays=[{date:d0, slotsTxt:_presetNextHours(4)},{date:d1.toISOString().slice(0,10), slotsTxt:'09:00-14:00'}]; }
+  else if(kind==='fromAvail'){
+    const conf=getAvailability(); const out=[]; const cur=new Date(today());
+    for(let k=0;k<3;k++){ const slots=availSlotsForDate(cur,conf); if(slots.length) out.push({date:cur.toISOString().slice(0,10), slotsTxt:_slotsToText(slots)}); cur.setDate(cur.getDate()+1); }
+    _persoDays = out.length?out:_persoDefaultDays();
+  }
+  persoPlanForm();
+}
+// Construit un créneau "maintenant → +Nh" arrondi, borné à 23:00.
+function _presetNextHours(h){
+  const now=new Date(); let sh=now.getHours()+(now.getMinutes()>0?1:0); if(sh<8)sh=8;
+  let eh=Math.min(23, sh+h);
+  return `${String(sh).padStart(2,'0')}:00-${String(eh).padStart(2,'0')}:00`;
+}
+function _parseCustomNeeds(txt){
+  const needs={};
+  String(txt||'').split(',').forEach(part=>{
+    const m=part.trim().match(/^(.+?)\s+(\d+)$/);
+    if(m){ needs[m[1].trim()] = (needs[m[1].trim()]||0)+(+m[2]||0); }
+  });
+  return needs;
+}
+async function persoGenerate(){
+  _persoReadDays();
+  const source=val('pd_source')||'orders';
+  // 1) Construire le plan de besoins (batchs/meringues/temps) selon la source choisie.
+  let plan;
+  if(source==='custom'){
+    const needs=_parseCustomNeeds(val('pd_custom'));
+    if(!Object.keys(needs).length){ toast('Indique au moins un parfum et une quantité'); return; }
+    plan = await _planFromNeeds(needs);
+  } else {
+    const from=val('pd_from')||today(), to=val('pd_to')||from;
+    plan = await generateProductionOrder(from, to, 0);
+    if(!plan.lignes.length){ closeModal(); toast('Le stock couvre déjà ces commandes — rien à produire'); return; }
+  }
+  // 2) Convertir la dispo saisie en blocs (minutes).
+  const daySpecs=_persoDays.map(d=>({ date:d.date,
+    slots:_textToSlots(d.slotsTxt).map(([a,b])=>[hmToMin(a), hmToMin(b)]) }))
+    .filter(d=>d.slots.length);
+  if(!daySpecs.length){ toast('Renseigne au moins un créneau horaire'); return; }
+  // 3) Ordonnancer.
+  _persoPlan = schedulePersonalPlan(daySpecs, plan, {});
+  closeModal();
+  _mrpPlan = plan;   // pour cohérence d'affichage
+  persoRenderResult();
+}
+// Construit un "plan" (même forme que generateProductionOrder) à partir de besoins libres.
+async function _planFromNeeds(needs){
+  const {stock, recipes}=await mrpCurrentStockByParfum();
+  const times=getMrpTimes();
+  const lignes=[]; const warnings=[];
+  for(const parfum in needs){
+    const besoinBrut=+needs[parfum]||0; if(besoinBrut<=0) continue;
+    const enStock=stock[parfum]||0; const besoinNet=Math.max(0,besoinBrut-enStock);
+    if(besoinNet<=0) continue;
+    const nbBatchs=Math.ceil(besoinNet/TAILLE_BATCH_MACARONS);
+    const rec=mrpFindRecipe(recipes,parfum); if(!rec) warnings.push(parfum);
+    const poidsUnit=rec&&rec.poidsGarnitureUnit!=null?+rec.poidsGarnitureUnit:0;
+    lignes.push({parfum, recipeId:rec?rec.id:null, besoinBrut, enStock, besoinNet, nbBatchs,
+      coques:nbBatchs*COQUES_PAR_BATCH, garnitureG:Math.round(nbBatchs*TAILLE_BATCH_MACARONS*poidsUnit),
+      poidsUnit, tMontage:nbBatchs*times.montage.estimatedTime, tGanache:nbBatchs*times.ganache.estimatedTime,
+      garnitureManque:!rec||poidsUnit<=0});
+  }
+  lignes.sort((a,b)=>b.besoinNet-a.besoinNet);
+  const meringues=_packMeringues(lignes);
+  const nbBatchsTotal=lignes.reduce((s,l)=>s+l.nbBatchs,0);
+  const tMeringue=meringues.length*times.coques.estimatedTime;
+  const tGanacheTot=lignes.reduce((s,l)=>s+l.tGanache,0), tMontageTot=lignes.reduce((s,l)=>s+l.tMontage,0);
+  return {lignes, meringues, nbMeringues:meringues.length, nbBatchsTotal,
+    tMeringue, tGanacheTot, tMontageTot, tempsTotal:tMeringue+tGanacheTot+tMontageTot,
+    tempsDisponible:0, depassement:false, chargePct:0, warnings, nbParfums:lignes.length};
+}
+const _JOURS_FR=['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
+function _minToHM(m){ return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); }
+function persoRenderResult(){
+  const box=document.getElementById('mrpResult'); if(!box||!_persoPlan) return;
+  const S=_persoPlan;
+  // grouper les événements par jour
+  const byDay={}; S.events.forEach(e=>{ (byDay[e.date] ||= []).push(e); });
+  const dayBlocks=Object.keys(byDay).sort().map(date=>{
+    const d=new Date(date+'T00:00');
+    const rows=byDay[date].map(e=>{
+      const icon=e.kind==='coques'?'🥚':e.kind==='ganache'?'🍫':e.kind==='montage'?'🧩':'•';
+      return `<div class="perso-ev">
+        <div class="perso-ev-time">${_minToHM(e.start)}<br><span>${_minToHM(e.end)}</span></div>
+        <div class="perso-ev-body"><div class="perso-ev-lbl">${icon} ${esc(e.label)}</div>
+          ${e.note?`<div class="perso-ev-note">${esc(e.note)}</div>`:''}</div></div>`;
+    }).join('');
+    return `<div class="panel"><h2 style="text-transform:capitalize">${_JOURS_FR[d.getDay()]} ${d.toLocaleDateString('fr-FR',{day:'2-digit',month:'long'})}</h2>${rows}</div>`;
+  }).join('');
+  const insightHtml=S.insights.map(t=>`<li>${esc(t)}</li>`).join('');
+  const warnHtml=S.warnings.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⚠ <div>${S.warnings.map(esc).join('<br>')}</div></div>`:'';
+  box.innerHTML=`
+    ${warnHtml}
+    <div class="panel" style="background:#faf6ef">
+      <h2>🧑‍🍳 Le mot du chef d'atelier</h2>
+      <ul class="perso-insights">${insightHtml}</ul>
+    </div>
+    ${dayBlocks||'<div class="banner">Aucune tâche planifiable avec ces créneaux.</div>'}
+    <div class="panel"><button class="btn ghost" onclick="persoPlanForm()">✎ Ajuster ma disponibilité</button></div>`;
+  box.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 /* ============================================================
