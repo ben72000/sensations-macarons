@@ -5632,7 +5632,10 @@ async function renderStats(){
 /* ============================================================
    COMPTABILITÉ — écran de pilotage (CA encaissé, charges, marges)
    ============================================================ */
-const CHARGE_CATS = ['Matières premières','Emballages','Équipement','Loyer','Énergie','Transport','Marketing','Frais bancaires','Cotisations / impôts','Formation','Autre'];
+// Catégories de CHARGES : dépenses hors stock uniquement.
+// Les matières premières et emballages se saisissent en LOTS (pas ici), pour éviter
+// tout double comptage — ils alimentent déjà le coût de revient via les lots.
+const CHARGE_CATS = ['Assurance professionnelle','Hébergement / site web','Abonnements / logiciels','Équipement','Loyer','Énergie','Transport / déplacement','Stand / marché','Marketing','Frais bancaires','Cotisations / impôts','Formation','Autre'];
 async function renderCompta(){
  try {
   const A = await computeAccounting();
@@ -5758,7 +5761,7 @@ async function recurringChargesForm(){
 }
 function recurEdit(i){
   const models=getRecurringCharges();
-  const m = i>=0 ? models[i] : {libelle:'', categorie:'Cotisations / impôts', montant:'', jourMois:1, debut:today().slice(0,7), actif:true};
+  const m = i>=0 ? models[i] : {libelle:'', categorie:'Assurance professionnelle', montant:'', jourMois:1, debut:today().slice(0,7), actif:true};
   openModal(`<h3>${i>=0?'Modifier':'Nouvelle'} charge récurrente</h3>
     <div class="field"><label>Libellé *</label><input id="rc_lib" value="${esc(m.libelle||'')}" placeholder="ex : Assurance pro, Hébergement site web"></div>
     <div class="field"><label>Catégorie</label><select id="rc_cat">${CHARGE_CATS.map(x=>`<option ${m.categorie===x?'selected':''}>${x}</option>`).join('')}</select></div>
@@ -5810,9 +5813,10 @@ async function renderChargesList(){
 async function chargeForm(id){
   const c = id ? await db.charges.get(id) : {};
   openModal(`<h3>${id?'Modifier':'Nouvelle'} charge</h3>
+    <p class="note">Les charges sont les dépenses <b>hors stock</b> (assurance, hébergement, loyer, stand…). Les <b>matières premières et emballages</b> se saisissent en réception de lot, pas ici.</p>
     <div class="field"><label>Date *</label><input type="date" id="ch_date" value="${esc(c.date||'')}"></div>
-    <div class="field"><label>Catégorie *</label><select id="ch_cat">${CHARGE_CATS.map(x=>`<option ${c.categorie===x?'selected':''}>${x}</option>`).join('')}</select></div>
-    <div class="field"><label>Libellé</label><input id="ch_lib" value="${esc(c.libelle||'')}" placeholder="ex : Achat poudre d'amande"></div>
+    <div class="field"><label>Catégorie *</label><select id="ch_cat">${(c.categorie && !CHARGE_CATS.includes(c.categorie)?[c.categorie]:[]).concat(CHARGE_CATS).map(x=>`<option ${c.categorie===x?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+    <div class="field"><label>Libellé</label><input id="ch_lib" value="${esc(c.libelle||'')}" placeholder="ex : Assurance pro, hébergement site…"></div>
     <div class="field"><label>Montant (€) *</label><input type="number" step="0.01" min="0" id="ch_mt" value="${c.montant||''}"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCharge(${id||0})">Enregistrer</button></div>`);
 }
