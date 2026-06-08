@@ -426,15 +426,15 @@ tr:hover td{background:var(--creme-2)}
 .loc-batch-main{font-size:.9rem;color:var(--ink,#3a2a22);display:flex;gap:8px;align-items:center}
 .loc-batch-sub{font-size:.76rem;color:#8a7a72;grid-column:1}
 .loc-batch-qty{grid-row:1 / span 2;align-self:center;font-weight:700;color:var(--bordeaux);font-size:1.05rem}
-.undo-bar{position:fixed;left:50%;transform:translateX(-50%) translateY(120%);bottom:84px;z-index:1200;
-  display:flex;align-items:center;gap:14px;background:var(--ink,#3a2a22);color:#fff;
-  padding:10px 14px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.28);transition:transform .25s ease;max-width:92vw;font-size:.9rem}
-.undo-bar.show{transform:translateX(-50%) translateY(0)}
-.undo-bar button{background:var(--gold,#AA7C39);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer;white-space:nowrap}
 .toast{position:fixed;bottom:24px;right:24px;background:var(--bordeaux);color:var(--creme);
   padding:13px 20px;border-radius:11px;font-size:.88rem;box-shadow:0 8px 24px rgba(82,37,47,.3);
-  z-index:99;opacity:0;transform:translateY(10px);transition:.3s;pointer-events:none;max-width:80vw}
+  z-index:1200;opacity:0;transform:translateY(10px);transition:.3s;pointer-events:none;max-width:80vw}
 .toast.show{opacity:1;transform:translateY(0)}
+/* Variante avec action (annulation rapide) : cliquable, discrète, au-dessus de la barre d'onglets */
+.toast.with-action{display:flex;align-items:center;gap:14px;pointer-events:auto;background:var(--ink,#3a2a22)}
+.toast.with-action .toast-msg{flex:1}
+.toast.with-action .toast-undo{appearance:none;-webkit-appearance:none;background:var(--gold,#AA7C39);color:#fff;border:none;
+  border-radius:8px;padding:7px 13px;font-weight:600;cursor:pointer;white-space:nowrap;font-size:.86rem}
 @media(max-width:820px){
   /* iPhone : on masque la barre latérale, on utilise la tabbar + feuille menu */
   .side{display:none}
@@ -471,6 +471,9 @@ tr:hover td{background:var(--creme-2)}
   .sheet{background:var(--paper);width:100%;border-radius:22px 22px 0 0;padding:10px 18px calc(24px + env(safe-area-inset-bottom));
     max-height:84vh;overflow-y:auto;box-shadow:0 -10px 40px rgba(82,37,47,.3)}
   .sheet-grip{width:42px;height:5px;border-radius:3px;background:#d8c9b0;margin:8px auto 14px}
+  /* Toast/undo remontés au-dessus de la barre d'onglets sur mobile (non invasif) */
+  .toast{bottom:calc(72px + env(safe-area-inset-bottom));right:12px;left:auto}
+  .toast.with-action{left:12px;right:12px;max-width:none;justify-content:space-between}
   .sheet h3{color:var(--bordeaux);font-size:1.2rem;margin-bottom:14px}
   .sheet-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px}
   .sheet-grid button{appearance:none;-webkit-appearance:none;border:1.5px solid #e0d5c5;background:#fff;
@@ -585,7 +588,6 @@ tr:hover td{background:var(--creme-2)}
 
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
-<div class="undo-bar" id="undoBar"><span id="undoLabel"></span><button id="undoBtn" onclick="runUndo()">↩ Annuler</button></div>
 
 <!-- Pointeuse de laboratoire (time tracker global, persistant entre les vues) -->
 <div id="timeTracker" aria-live="polite">

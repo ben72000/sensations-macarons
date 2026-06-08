@@ -240,6 +240,9 @@ async function decrementPackagingStock(taille, nb){
 // (réglable dans les paramètres) ; le tarif particulier reste la référence par défaut.
 const BIG_FORMATS = ['Chocolat', 'Myrtille framboise', 'Mangue passion', 'Madeleine'];
 const BIG_PRICE = { pro: 3.20, particulier: 6.00 };   // défauts/repli
+// 1 macaron assemblé = 2 coques + 1 dose de ganache. Les sous-lots COQUES sont comptés
+// en coques ; les sous-lots GANACHE en nombre de macarons garnissables.
+const COQUES_PAR_MACARON = 2;
 // Prix grand format selon le tarif, en tenant compte du réglage pro évolutif.
 function bigPrice(tarif){
   if(tarif==='pro'){ const s=getSettings(); return (s.prixGrandFormatPro!=null)?+s.prixGrandFormatPro:BIG_PRICE.pro; }
@@ -487,22 +490,23 @@ const ymLabel = ym => { const [y,m]=ym.split('-'); return new Date(y,+m-1,1).toL
 
 // --------- Toast & Modal ---------
 let tt;
-function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(tt); tt=setTimeout(()=>t.classList.remove('show'),2400); }
+function toast(msg){ const t=document.getElementById('toast'); if(!t) return; t.innerHTML=esc(msg); t.classList.remove('with-action'); t.classList.add('show'); clearTimeout(tt); tt=setTimeout(()=>t.classList.remove('show'),2400); }
 // ---- ANNULATION RAPIDE (undo) ----
-// Propose pendant quelques secondes d'annuler la dernière action destructrice.
+// Le toast affiche un message + un lien « Annuler » discret, au même endroit que les
+// notifications habituelles (non invasif). Disparaît seul après quelques secondes.
 let _undoFn=null, _undoTimer=null;
 function showUndoToast(label, restoreFn, ms){
   _undoFn=restoreFn;
-  const bar=document.getElementById('undoBar'), lbl=document.getElementById('undoLabel');
-  if(!bar||!lbl){ return; }
-  lbl.textContent=label;
-  bar.classList.add('show');
-  clearTimeout(_undoTimer);
-  _undoTimer=setTimeout(()=>{ hideUndo(); }, ms||7000);
+  const t=document.getElementById('toast'); if(!t){ return; }
+  t.innerHTML=`<span class="toast-msg">${esc(label)}</span><button type="button" class="toast-undo" onclick="runUndo()">↩ Annuler</button>`;
+  t.classList.add('show','with-action');
+  clearTimeout(tt); clearTimeout(_undoTimer);
+  _undoTimer=setTimeout(()=>{ hideUndo(); }, ms||6000);
 }
-function hideUndo(){ const bar=document.getElementById('undoBar'); if(bar) bar.classList.remove('show'); _undoFn=null; clearTimeout(_undoTimer); }
+function hideUndo(){ const t=document.getElementById('toast'); if(t){ t.classList.remove('show','with-action'); } _undoFn=null; clearTimeout(_undoTimer); }
 async function runUndo(){
-  const fn=_undoFn; hideUndo();
+  const fn=_undoFn; _undoFn=null; clearTimeout(_undoTimer);
+  const t=document.getElementById('toast'); if(t) t.classList.remove('show','with-action');
   if(typeof fn==='function'){ try{ await fn(); toast('Action annulée ✓'); }catch(e){ toast('Annulation impossible'); } }
 }
 const overlay=document.getElementById('overlay'), modal=document.getElementById('modal');
@@ -2041,17 +2045,23 @@ async function prodAssembleForm(id){
   const optsCand = cands.map(c=>{
     const same = c.recipeId===p.recipeId;
     const tag = c.lotBase===p.lotBase ? ' · même lot' : (same?'':' · ⚠ parfum différent');
-    return `<option value="${c.id}">${esc(recName(c.recipeId))} — ${esc(c.lotProduction||('#'+c.id))} · reste ${qty(c.qteRestante)}${tag}</option>`;
+    // 'want' est le composant du candidat : coques → capacité = reste/2 ; ganache → reste
+    const capMac = want==='coques' ? Math.floor(round3(+c.qteRestante)/COQUES_PAR_MACARON) : round3(+c.qteRestante);
+    const unite = want==='coques' ? `${qty(c.qteRestante)} coques (≈ ${capMac} mac.)` : `${qty(c.qteRestante)} mac.`;
+    return `<option value="${c.id}">${esc(recName(c.recipeId))} — ${esc(c.lotProduction||('#'+c.id))} · ${unite}${tag}</option>`;
   }).join('');
-  const maxThis=round3(+p.qteRestante);
+  // Capacité en MACARONS de CE sous-lot : coques → /2 ; ganache → tel quel.
+  const maxThisMac = comp==='coques' ? Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON) : round3(+p.qteRestante);
+  const uniteThis = comp==='coques' ? `${qty(p.qteRestante)} coques (≈ ${maxThisMac} macarons)` : `${qty(p.qteRestante)} macarons`;
   openModal(`<h3>🔗 Assembler ${esc(recName(p.recipeId))}</h3>
-   <p class="note">Assemblage <b>normal</b> : coques + ganache du <b>même parfum/lot</b> (vendable). Assemblage <b>dégustation</b> : coques + ganache <b>sans correspondance</b> couleur/parfum, pour écouler les surplus (offert, non vendable).</p>
-   <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':'🍫 Ganache'} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · reste ${qty(maxThis)}</b></div>
+   <p class="note">1 macaron = <b>2 coques + 1 ganache</b>. Assemblage <b>normal</b> : coques + ganache du même parfum/lot (vendable). Assemblage <b>dégustation</b> : sans correspondance couleur/parfum (offert, non vendable).</p>
+   <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':'🍫 Ganache'} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · ${uniteThis}</b></div>
    <div class="field"><label>${want==='ganache'?'🍫 Ganache à associer':'🟤 Coques à associer'}</label>
      <select id="f_asmOther">${optsCand}</select></div>
    <label class="switch-row"><input type="checkbox" id="f_asmDeg" onchange="prodAsmDegSwitch(this.checked)"> 🥄 Assemblage dégustation (offert, non vendable)</label>
-   <div class="field"><label>Quantité de macarons à assembler</label>
-     <input type="number" id="f_asmQte" min="1" value="${maxThis}" max="${maxThis}"></div>
+   <div class="field"><label>Quantité de <b>macarons</b> à assembler</label>
+     <input type="number" id="f_asmQte" min="1" value="${maxThisMac}" max="${maxThisMac}">
+     <p class="note" style="margin-top:4px">Consommera 2 coques + 1 ganache par macaron. Le maximum réel dépend aussi du sous-lot associé.</p></div>
    <div class="field" id="f_asmDestWrap"><label>Emplacement du macaron assemblé *</label>
      <div style="display:flex;flex-wrap:wrap;gap:6px">
        <label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_asmDest" value="frigo" checked> <b style="background:#6aa3a0;color:#fff;border-radius:6px;padding:0 7px">F</b> 🧊 Frigo (DLC 7 j)</label>
@@ -2077,8 +2087,12 @@ async function prodAssembleSave(thisId){
       const coques = prodComposant(a)==='coques' ? a : (prodComposant(b)==='coques'?b:null);
       const ganache = prodComposant(a)==='ganache' ? a : (prodComposant(b)==='ganache'?b:null);
       if(!coques||!ganache) throw new Error('Il faut un sous-lot coques ET un sous-lot ganache.');
-      const dispo=Math.min(round3(+coques.qteRestante), round3(+ganache.qteRestante));
-      if(qteAsm>dispo+1e-9) throw new Error(`Quantité max assemblable : ${qty(dispo)} (limité par le plus petit sous-lot).`);
+      // qteAsm = nombre de MACARONS. Capacité : coques/2 (2 coques/macaron) et ganache (déjà en macarons).
+      const capCoques = Math.floor(round3(+coques.qteRestante)/COQUES_PAR_MACARON);
+      const capGanache = round3(+ganache.qteRestante);
+      const dispo = Math.min(capCoques, capGanache);
+      if(qteAsm>dispo+1e-9) throw new Error(`Max assemblable : ${qty(dispo)} macaron(s) — limité par ${capCoques<=capGanache?'les coques ('+qty(coques.qteRestante)+' coques)':'la ganache ('+qty(ganache.qteRestante)+' macarons)'}.`);
+      const coquesUtilisees = qteAsm*COQUES_PAR_MACARON;
       const nowIso=new Date().toISOString();
       const motif = deg ? 'assemblage dégustation' : 'assemblage';
       // DLC : 7 j frigo / 4 mois congélo, plafonné par la DLC la plus courte des composants
@@ -2090,8 +2104,8 @@ async function prodAssembleSave(thisId){
       const lotBase = coques.lotBase || ganache.lotBase || lotBaseSansSuffixe(coques.lotProduction||'');
       const suff = deg ? '-DG' : '-AS';
       const lotAsm = lotAvecEmplacement((lotBase||genLotCode(3))+suff, dest);
-      // décrémente les deux composants
-      await db.productions.update(coques.id, {qteRestante: subQty(coques.qteRestante, qteAsm)});
+      // décrémente les composants selon le ratio : 2 coques + 1 ganache par macaron
+      await db.productions.update(coques.id, {qteRestante: subQty(coques.qteRestante, coquesUtilisees)});
       await db.productions.update(ganache.id, {qteRestante: subQty(ganache.qteRestante, qteAsm)});
       // crée la production assemblée : 'assemble' (vendable) ou 'degustation' (offert, non vendable)
       await db.productions.add({
@@ -2104,7 +2118,7 @@ async function prodAssembleSave(thisId){
         prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
         emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
         histEmplacement:[{lieu:dest, ts:nowIso, motif}],
-        assembleFrom:[{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(coques.recipeId):'')},
+        assembleFrom:[{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:coquesUtilisees, parfum:(window._prodRecName?window._prodRecName(coques.recipeId):'')},
                       {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')}]
       });
       return {lotAsm, dlc, qteAsm, deg};
@@ -2621,11 +2635,10 @@ async function doDelProd(id, mode){
   });
   logDeletion('production', id, reason, note, prod?(prod.lotProduction||''):'');
   closeModal(); renderProductions();
-  toast(mode==='recrediter'?`Production supprimée (${esc(reason)}), stock recrédité ✓`
-    : mode==='pertes'?`Production supprimée (${esc(reason)}) · ${qty(reste)} en pertes ✓`
-    : `Production supprimée (${esc(reason)})`);
   // annulation rapide
-  showUndoToast('Production supprimée', async ()=>{
+  showUndoToast(mode==='recrediter'?'Production supprimée, stock recrédité'
+    : mode==='pertes'?`Production supprimée · ${qty(reste)} en pertes`
+    : 'Production supprimée', async ()=>{
     await db.transaction('rw',db.productions,db.prodConsumption,db.materialLots,db.losses,async()=>{
       if(snap.prod) await db.productions.put(snap.prod);
       for(const c of snap.conso){ await db.prodConsumption.put(c); }
@@ -3366,8 +3379,9 @@ function confirmDelClient(id){
 }
 async function doDelClient(id){
   const c=await db.clients.get(id); const snap=c?{...c}:null;
-  await db.clients.delete(id); closeModal(); renderClients(); toast('Client supprimé ✓');
+  await db.clients.delete(id); closeModal(); renderClients();
   if(snap) showUndoToast('Client supprimé', async()=>{ await db.clients.put(snap); renderClients(); });
+  else toast('Client supprimé ✓');
 }
 async function saveClient(id){
   const o={nom:val('f_nom'),prenom:val('f_prenom'),societe:val('f_societe'),type:val('f_type'),tel:val('f_tel'),email:val('f_email'),ref:val('f_ref'),adresse:val('f_adr'),notes:val('f_notes')};
@@ -4635,9 +4649,8 @@ async function cmdDeleteConfirm(id){
   });
   logDeletion('commande', id, reason, note, o?`${fmtDate(o.date)} · ${euro(o.montant)}`:'');
   closeModal(); renderCmd();
-  toast(totBatch?`Commande supprimée (${esc(reason)}) — ${totBatch} recrédité(s) ✓`:`Commande supprimée (${esc(reason)}) ✓`);
   // annulation rapide : restaure la commande, ses liens, son événement, et ré-décrémente le stock
-  showUndoToast('Commande supprimée', async ()=>{
+  showUndoToast(totBatch?`Commande supprimée — ${totBatch} recrédité(s)`:'Commande supprimée', async ()=>{
     await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,async()=>{
       if(snap.order) await db.orders.put(snap.order);
       for(const it of snap.items){ await db.orderItems.put(it);
@@ -7098,7 +7111,7 @@ async function doDelMarket(id){
     await db.markets.delete(id);
   });
   await db.events.where('refId').equals('mk'+id).delete().catch(()=>{});
-  renderMarkets(); toast('Marché supprimé ✓');
+  renderMarkets();
   if(snap.market) showUndoToast('Marché supprimé', async()=>{
     await db.transaction('rw', db.markets, db.marketMoves, db.events, async()=>{
       await db.markets.put(snap.market);
@@ -7107,6 +7120,7 @@ async function doDelMarket(id){
     });
     renderMarkets();
   });
+  else toast('Marché supprimé ✓');
 }
 
 // Fiche détaillée d'un marché : sorties, dons/pertes, retours, CA, clôture.
@@ -8219,7 +8233,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v94';
+const APP_VERSION = 'v96';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -8283,7 +8297,7 @@ const APP_KB = [
     r:`<p>Demande à l'assistant « <b>où sont mes macarons vanille ?</b> ». Il ouvre une <b>popup</b> qui liste, par emplacement (Frigo F, Congélateurs B/C/A), chaque <b>batch</b> en stock avec sa quantité, son n° de lot, sa DLC et son statut (prêt / en cours). Sans parfum précisé, il propose la liste des parfums en stock.</p>` },
   { id:'composants', titre:'Production par composants (coques / ganache) & assemblage',
     tags:'composant composants coques ganache assemblage assembler sous-lot souslot lot ambiant congelateur frigo degustation echantillon offert marche surplus casse garni perte',
-    r:`<p>Au lancement d'une production, choisis <b>« Par composants »</b> pour démarrer par les <b>coques</b> ou la <b>ganache</b> : deux sous-lots sous le même n° de lot (<b>-CO</b> / <b>-GA</b>). Règles : coques vides → <b>ambiant ou congélateur</b> (jamais frigo) ; ganache terminée → <b>frigo</b>. Le bouton <b>🔗 Assembler</b> réunit coques + ganache → macaron <b>assemblé</b> (vendable, frigo DLC 7 j ou congélateur), traçabilité de bout en bout. Coches <b>« dégustation »</b> pour assembler des coques + ganache <b>sans correspondance couleur/parfum</b> (surplus) : résultat <b>offert, non vendable</b>, en <b>stock dégustation séparé</b>, décrémenté via <b>🥄 Distribué</b>. Les <b>macarons cassés mais garnis</b> (même couleur/parfum d'origine) basculent aussi en dégustation : dans « ⚠ Perte », coche <b>« Cassé mais garni → dégustation »</b> — ils ne sont pas comptés en perte mais offerts. Coques, ganache et dégustations ne comptent jamais comme stock vendable.</p>` },
+    r:`<p>Au lancement d'une production, choisis <b>« Par composants »</b> pour démarrer par les <b>coques</b> ou la <b>ganache</b> : deux sous-lots sous le même n° de lot (<b>-CO</b> / <b>-GA</b>). Les <b>coques</b> se comptent en <b>coques</b>, la <b>ganache</b> en <b>macarons garnissables</b>. Règle d'assemblage : <b>1 macaron = 2 coques + 1 ganache</b>. Le bouton <b>🔗 Assembler</b> réunit coques + ganache → macaron assemblé (vendable, frigo DLC 7 j ou congélateur) ; l'assemblage partiel est possible (ex. 20 macarons consomment 40 coques et 20 ganache, le reste de ganache reste au frigo). Coques vides → ambiant/congélateur (jamais frigo) ; ganache terminée → frigo. Coche <b>« dégustation »</b> pour assembler sans correspondance couleur/parfum (offert, non vendable, stock séparé décrémenté via <b>🥄 Distribué</b>). Les <b>cassés mais garnis</b> basculent aussi en dégustation depuis « ⚠ Perte ». Coques, ganache et dégustations ne comptent jamais comme stock vendable.</p>` },
   { id:'suppressions', titre:'Supprimer une entrée (commande, production, marché, client, événement)',
     tags:'supprimer suppression effacer raison motif confirmation perte recrediter congelateur retour chaine froid decongelation annuler annulation undo',
     r:`<p>Chaque fiche complète a un bouton <b>🗑 Supprimer</b> (à droite de Modifier) avec <b>confirmation</b>. Pour une <b>commande</b> ou une <b>production</b>, une <b>raison</b> est demandée. À la suppression d'une production, tu choisis : recréditer le stock matières, ou — si des pièces finies restent — les <b>déclarer en pertes</b>. Après une suppression, une barre <b>↩ Annuler</b> s'affiche quelques secondes pour <b>revenir en arrière immédiatement</b>. Règle chaîne du froid : une production sortie du congélateur ne peut y retourner que dans l'heure ; au-delà le retour A/B/C est bloqué.</p>` }
@@ -8993,8 +9007,9 @@ async function saveEv(){
 }
 async function delEvent(id){
   const e=await db.events.get(id); const snap=e?{...e}:null;
-  await db.events.delete(id); closeModal(); renderCal(); toast('Événement supprimé');
+  await db.events.delete(id); closeModal(); renderCal();
   if(snap) showUndoToast('Événement supprimé', async()=>{ await db.events.put(snap); renderCal(); });
+  else toast('Événement supprimé');
 }
 
 /* ============================================================
