@@ -59,6 +59,9 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia',serif}
 .btn.sm{padding:6px 12px;font-size:.78rem}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-bottom:28px}
 .card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 4px 20px var(--shadow);border:1px solid rgba(170,124,57,.12);position:relative;overflow:hidden}
+.card.clickable{cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
+.card.clickable:hover{transform:translateY(-2px);box-shadow:0 8px 26px var(--shadow)}
+.card.clickable:active{transform:translateY(0)}
 .card .lbl{font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;color:#9a8a82;font-weight:500}
 .card .val{font-family:'Fraunces',serif;font-size:2rem;font-weight:600;color:var(--bordeaux);margin-top:6px;line-height:1}
 .card .sub{font-size:.78rem;color:#9a8a82;margin-top:6px}

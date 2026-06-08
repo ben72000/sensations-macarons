@@ -445,10 +445,10 @@ async function renderDash(){
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${a.emplacement==='congelateur'?'❄️':'🧊'} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
-     <div class="card"><div class="corner">€</div><div class="lbl">CA ce mois</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s)</div></div>
-     <div class="card"><div class="corner">∑</div><div class="lbl">CA total</div><div class="val">${euro(caTotal)}</div><div class="sub">depuis le début</div></div>
-     <div class="card"><div class="corner">⚙</div><div class="lbl">Macarons en stock</div><div class="val">${qtyP(finis)}</div><div class="sub">${productions.length} batch(s)</div></div>
-     <div class="card"><div class="corner">⬛</div><div class="lbl">Alertes stock</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil</div></div>
+     <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
+     <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">∑</div><div class="lbl">CA total</div><div class="val">${euro(caTotal)}</div><div class="sub">depuis le début ›</div></div>
+     <div class="card clickable" onclick="goView('productions')" title="Voir les productions"><div class="corner">⚙</div><div class="lbl">Macarons en stock</div><div class="val">${qtyP(finis)}</div><div class="sub">${productions.length} batch(s) ›</div></div>
+     <div class="card clickable" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
    </div>
    <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
      <div class="bar-wrap">${data.map(d=>`<div class="bar-col"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
@@ -845,7 +845,7 @@ async function renderProductions(){
    <div class="topbar"><div><h1>Productions</h1><p>${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}</p></div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button></div>
    <div class="panel">
-   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Produit</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th></th></tr></thead><tbody>
+   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead><tbody>
      ${prods.map(p=>{
        const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
        const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
@@ -855,12 +855,12 @@ async function renderProductions(){
          : '<span class="tag warn">non renseigné</span>';
        const blocked = p.venuDuCongelateur ? ' title="A séjourné au congélateur : ne peut y retourner"' : '';
        return `<tr>
-       <td>${fmtDate(p.date)}</td><td><b>${esc(recName(p.recipeId))}</b></td>
+       <td><b>${esc(recName(p.recipeId))}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span></td>
        <td>${esc(p.lotProduction||'—')}</td>
        <td>${empTag}${emp?`<br><span class="act" onclick="toggleEmplacement(${p.id})"${blocked}>↔ ${emp==='frigo'?'mettre au congélo':'mettre au frigo'}</span>`:`<br><span class="act" onclick="setEmplacement(${p.id})">renseigner</span>`}</td>
        <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
        <td>${qty(p.qteRestante)}</td>
-       <td style="text-align:right"><span class="act" onclick="prodAdjustForm(${p.id})">Ajuster réel</span><span class="act" onclick="traceProd(${p.id})">Traçabilité</span><span class="act del" onclick="delProd(${p.id})">Suppr.</span></td></tr>`;}).join('')}
+       <td><div class="qa-row"><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Traça.</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;}).join('')}
    </tbody></table></div>`:`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
    </div>`;
 }
@@ -1746,6 +1746,32 @@ function clientFilter(q){
   if(!_clientsCache) return;
   searchRenderBody('clBody','clCount','clEmpty', _clientsCache, q, _clientRow, 6, 'fiche(s)');
 }
+// Aperçu rapide d'un client (lecture seule) — moins intrusif que la fiche complète.
+async function clientPopup(id){
+  const c = await db.clients.get(id);
+  if(!c){ toast('Client introuvable'); return; }
+  // petit récap commandes / CA si dispo
+  let stat='';
+  try{
+    const orders=(await db.orders.toArray()).filter(o=>o.clientId===id);
+    if(orders.length){
+      const ca=orders.reduce((s,o)=>s+(+o.montant||0),0);
+      stat=`<div class="sum-box"><span>Commandes</span><b>${orders.length}</b></div>
+            <div class="sum-box"><span>CA cumulé</span><b>${euro(ca)}</b></div>`;
+    }
+  }catch(e){}
+  const nomComplet=[c.prenom,c.nom].filter(Boolean).join(' ')||c.nom||'Client';
+  const ligne=(label,val)=> val?`<div class="sum-box"><span>${label}</span><b>${esc(val)}</b></div>`:'';
+  openModal(`<h3>${esc(nomComplet)}</h3>
+    <div style="margin:-4px 0 10px"><span class="tag ${c.type==='Pro'?'event':'ok'}">${esc(c.type||'Particulier')}</span>${c.ref?` <span class="note">${esc(c.ref)}</span>`:''}</div>
+    ${ligne('Société', c.societe)}
+    ${c.tel?`<div class="sum-box"><span>Téléphone</span><b><a href="tel:${esc(c.tel)}" style="color:var(--bordeaux)">${esc(c.tel)}</a></b></div>`:''}
+    ${c.email?`<div class="sum-box"><span>Email</span><b><a href="mailto:${esc(c.email)}" style="color:var(--bordeaux);word-break:break-all">${esc(c.email)}</a></b></div>`:''}
+    ${ligne('Adresse', c.adresse)}
+    ${c.notes?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span>Notes</span><b style="font-weight:500;white-space:pre-wrap">${esc(c.notes)}</b></div>`:''}
+    ${stat}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="clientForm(${id})">Ouvrir la fiche complète</button></div>`);
+}
 async function clientForm(id){
   const c = id ? await db.clients.get(id) : {};
   openModal(`<h3>${id?'Fiche':'Nouveau'} client</h3>
@@ -2042,7 +2068,7 @@ function _cmdRow(row){
   const st = orderPayStatus(o); const solde = orderBalance(o);
   const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
   return `<tr>
-     <td><b>${o.clientId?`<span class="link-name" onclick="clientForm(${o.clientId})">${esc(_cmdClName(o.clientId))}</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}</span></td>
+     <td><b>${o.clientId?`<span class="link-name" onclick="clientPopup(${o.clientId})">${esc(_cmdClName(o.clientId))}</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}</span></td>
      <td><span style="font-size:.82rem">${esc(row.resume)}</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
      <td>
