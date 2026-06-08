@@ -70,12 +70,22 @@ const SETTINGS_DEFAULTS = {
   socialGoods: 12.3,     // % charges sociales sur vente de marchandise (produit fini)
   socialService: 25.6,   // % charges sociales sur prestation de service
   packaging: { 6:0.50, 8:0.60, 16:1.00, 25:1.50 }, // € emballage/consommable par coffret (commandes)
-  // Types d'emballage pour le comptage avant/après marché (delta) : {nom, cout unitaire €}
+  // Main-d'œuvre (optionnelle) : prise en compte dans le coût de revient si activée.
+  laborEnabled: false,   // active/désactive l'ajout du coût de main-d'œuvre
+  laborRate: 12.0,       // coût horaire main-d'œuvre (€/h) chargé
+  // PRIX DE VENTE PAR FORMAT (dégressif) — € par macaron selon la taille du coffret.
+  // Sert à estimer un prix moyen pondéré et à détecter les incohérences de CA.
+  // Le CA réel reste toujours le CA ENCAISSÉ ; cette grille n'établit pas le CA.
+  prixParFormat: { 6:2.00, 8:2.00, 16:1.75, 25:1.68 },
+  // Prix unitaire de repli (si aucune vente pour pondérer) — recalculé depuis la grille.
+  prixVenteUnitaire: 2.00,
+  // Types d'emballage pour le comptage avant/après marché (delta) :
+  // {nom, cout unitaire €, capacite = nb de macarons par boîte (sert à reconstituer le CA par format)}
   packTypes: [
-    {nom:'Boîte 6', cout:0.50},
-    {nom:'Boîte 12', cout:0.80},
-    {nom:'Sachet individuel', cout:0.15},
-    {nom:'Pochon kraft', cout:0.30}
+    {nom:'Boîte 6', cout:0.50, capacite:6},
+    {nom:'Boîte 8', cout:0.60, capacite:8},
+    {nom:'Boîte 16', cout:1.00, capacite:16},
+    {nom:'Boîte 25', cout:1.50, capacite:25}
   ]
 };
 function getSettings(){
@@ -83,6 +93,10 @@ function getSettings(){
     return {
       socialGoods: s.socialGoods!=null?+s.socialGoods:SETTINGS_DEFAULTS.socialGoods,
       socialService: s.socialService!=null?+s.socialService:SETTINGS_DEFAULTS.socialService,
+      laborEnabled: s.laborEnabled===true,
+      laborRate: s.laborRate!=null?+s.laborRate:SETTINGS_DEFAULTS.laborRate,
+      prixParFormat: Object.assign({}, SETTINGS_DEFAULTS.prixParFormat, s.prixParFormat||{}),
+      prixVenteUnitaire: s.prixVenteUnitaire!=null?+s.prixVenteUnitaire:SETTINGS_DEFAULTS.prixVenteUnitaire,
       packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
       packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes))
     };
@@ -286,7 +300,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -754,6 +768,16 @@ async function renderRecipes(){
   const mats = await db.materials.toArray();
   const matName = id => (mats.find(m=>m.id===id)||{}).nom||'(supprimée)';
   const matUnit = id => (mats.find(m=>m.id===id)||{}).unite||'';
+  // Coût de revient + rentabilité par parfum (indicateur visuel sur la fiche)
+  const _lots = await db.materialLots.toArray();
+  const _orders = await db.orders.toArray();
+  const _markets = await db.markets.toArray();
+  const _marketMoves = await db.marketMoves.toArray();
+  const _productions = await db.productions.toArray();
+  const _recipeItems = await db.recipeItems.toArray();
+  const _settings = getSettings();
+  const _A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats, orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, settings:_settings});
+  const _rowByRec = {}; _A.rows.forEach(r=>{ _rowByRec[r.recipeId]=r; });
   _recipeMultCache = {}; // {recipeId: {rendement, items:[{nom,unite,qteParBatch}]}}
   const blocks=[];
   for(const r of recipes){
@@ -767,6 +791,9 @@ async function renderRecipes(){
       </tr>`).join('');
     blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
+      ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
+        return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
+          <b><span class="tag" style="background:${rr.scale.col};color:#fff">${rr.scale.dot} ${rr.tauxMarge!=null?rr.tauxMarge+'%':'coût seul'}</span></b></div>`; })()}
       ${items.length?`
       <div class="mult-bar">
         <label>Quantité voulue</label>
@@ -823,6 +850,14 @@ async function recForm(id){
    </div>
    <div class="field"><label>Composition (par batch)</label><div id="bomList"></div>
      <button class="btn ghost sm" style="margin-top:6px" onclick="bomAdd()">+ Ajouter une matière</button></div>
+   <details style="margin:10px 0"><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">Coût de revient avancé (optionnel)</summary>
+     <div class="row2" style="margin-top:8px">
+       <div class="field"><label>Pertes / casse (%)</label><input type="number" step="0.5" min="0" max="90" id="f_perte" value="${r.pertePct!=null?r.pertePct:0}" placeholder="ex : 5"></div>
+       <div class="field"><label>Temps de main-d'œuvre (min/batch)</label><input type="number" step="1" min="0" id="f_mod" value="${r.minParBatch!=null?r.minParBatch:0}" placeholder="ex : 90"></div>
+     </div>
+     <div class="field"><label>Consommables par pièce (€) <span style="color:#9a8a82;font-weight:400">— insert, étiquette, caissette…</span></label><input type="number" step="0.001" min="0" id="f_conso" value="${r.coutConsoUnit!=null?r.coutConsoUnit:0}" placeholder="ex : 0.05"></div>
+     <p class="note">Pertes : réduit le nombre de pièces vendables (augmente le coût/pièce). Main-d'œuvre : ajoutée au coût de revient uniquement si activée dans les paramètres (taux horaire global). Consommables : coût direct par macaron.</p>
+   </details>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveRec(${id||0})">Enregistrer</button></div>`);
   drawBom();
 }
@@ -843,7 +878,10 @@ function bomDel(i){ bomDraft.splice(i,1); drawBom(); }
 async function saveRec(id){
   const rend=+val('f_rend');
   if(!rend || rend<=0){toast('Le rendement doit être supérieur à 0');return;}
-  const o={produitNom:val('f_nom'),rendement:rend};
+  const o={produitNom:val('f_nom'),rendement:rend,
+    pertePct: Math.max(0, Math.min(90, +val('f_perte')||0)),
+    minParBatch: Math.max(0, +val('f_mod')||0),
+    coutConsoUnit: Math.max(0, money2(+val('f_conso')||0))};
   if(!o.produitNom){toast('Nom requis');return;}
   if(!bomDraft.length){toast('Ajoute au moins une matière');return;}
   await db.transaction('rw',db.recipes,db.recipeItems,async()=>{
@@ -1338,7 +1376,8 @@ async function renderCosts(){
   const serieMarge={label:'Marge brute', color:'#AA7C39', points:moisKeys.map(k=>({x:k,y:(moisCA[k]||0)-(moisCout[k]||0)}))};
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Coûts & prix</h1><p>Évolution des prix d'achat et de la rentabilité</p></div></div>
+   <div class="topbar"><div><h1>Coûts & prix</h1><p>Évolution des prix d'achat et de la rentabilité</p></div>
+     <button class="btn ghost sm" onclick="goView('rentaparfum')">🎯 Rentabilité par parfum</button></div>
 
    <div class="panel"><h2>Évolution du prix d'achat unitaire</h2>
      ${series.length?lineChart(series,{fmt:v=>euro(v),xlabel:ymLabel,zero:true}):'<div class="empty">Réceptionne des lots avec un prix pour voir la courbe (au moins un point par matière).</div>'}
@@ -3298,6 +3337,66 @@ function marketPackagingCost(market){
   pk.forEach(p=>{ const u=Math.max(0, round3((+p.before||0)-(+p.after||0))); used+=u; cost=money2(cost+u*(+p.cost||0)); });
   return {used:round3(used), cost:money2(cost)};
 }
+// Prix € par macaron pour un format donné (depuis la grille dégressive).
+// Repli : le prix du format le plus proche, sinon le prix unitaire de repli.
+function prixParPiece(capacite, settings){
+  const s=settings||getSettings();
+  const grid=s.prixParFormat||{};
+  if(grid[capacite]!=null) return +grid[capacite];
+  const keys=Object.keys(grid).map(Number).filter(n=>n>0).sort((a,b)=>a-b);
+  if(!keys.length) return +s.prixVenteUnitaire||0;
+  // format le plus proche
+  let best=keys[0]; keys.forEach(k=>{ if(Math.abs(k-capacite)<Math.abs(best-capacite)) best=k; });
+  return +grid[best];
+}
+// Reconstitue, à partir du COMPTAGE D'EMBALLAGES d'un marché (avant−après par type),
+// le nombre de coffrets vendus par format, le CA théorique par format et le total.
+// Nécessite que les types d'emballage portent une capacité (nb macarons).
+function marketFormatBreakdown(market, settings){
+  const s=settings||getSettings();
+  const pk=(market && market.packaging) || [];
+  const formats=[]; let caTheo=0, piecesFormats=0, coffrets=0;
+  pk.forEach(p=>{
+    const cap=+p.capacite||0;
+    const n=Math.max(0, round3((+p.before||0)-(+p.after||0))); // coffrets vendus de ce type
+    if(n<=0) return;
+    const pu=cap>0?prixParPiece(cap, s):0;
+    const pieces=cap*n;
+    const ca=money2(pieces*pu);
+    formats.push({nom:p.nom, capacite:cap, coffrets:n, prixPiece:pu, pieces:round3(pieces), ca});
+    if(cap>0){ caTheo=money2(caTheo+ca); piecesFormats=round3(piecesFormats+pieces); coffrets+=n; }
+  });
+  const prixMoyen = piecesFormats>0 ? money2(caTheo/piecesFormats) : null;
+  return {formats, caTheo, piecesFormats:round3(piecesFormats), coffrets, prixMoyen, hasData:formats.some(f=>f.capacite>0)};
+}
+// PRIX DE VENTE MOYEN PONDÉRÉ, calculé sur les ventes RÉELLES :
+//  - commandes en ligne : chaque coffret → taille × prix du format
+//  - marchés clos : comptage d'emballages → coffrets par format × prix du format
+// Repli : moyenne simple de la grille. Renvoie {prix, pieces, source}.
+function computeAvgSellPrice(data){
+  const {orders, markets, settings}=data;
+  const s=settings||getSettings();
+  let caP=0, pieces=0;
+  // commandes (coffrets uniquement : on connaît la taille et donc le prix du format)
+  (orders||[]).forEach(o=>{
+    orderToLines(o).forEach(ln=>{
+      if(ln.type!=='coffret') return;
+      const cap=+ln.taille||0; if(cap<=0) return;
+      const pu=prixParPiece(cap, s);
+      caP=money2(caP+cap*pu); pieces=round3(pieces+cap);
+    });
+  });
+  // marchés clos avec comptage d'emballages renseigné
+  (markets||[]).filter(mk=>mk.statut==='clos').forEach(mk=>{
+    const b=marketFormatBreakdown(mk, s);
+    if(b.hasData){ caP=money2(caP+b.caTheo); pieces=round3(pieces+b.piecesFormats); }
+  });
+  if(pieces>0) return {prix:money2(caP/pieces), pieces:round3(pieces), source:'ventes'};
+  // repli : moyenne simple de la grille
+  const vals=Object.values(s.prixParFormat||{}).map(Number).filter(x=>x>0);
+  const moy=vals.length?money2(vals.reduce((a,b)=>a+b,0)/vals.length):(+s.prixVenteUnitaire||0);
+  return {prix:moy, pieces:0, source:'grille'};
+}
 // Totaux d'un marché (quantités + CA + pertes + coûts + marges).
 // avgUnitMat = coût matière moyen par macaron (fourni par l'appelant qui a accès aux recettes).
 function marketTotals(market, moves, avgUnitMat){
@@ -3337,6 +3436,340 @@ function avgMacaronCost(recipes, recipeItems, lots){
   const per = recipes.map(r=>{ const cb=coutRecette(r.id, recipeItems, lots); return r.rendement>0?cb/r.rendement:0; }).filter(x=>x>0);
   return per.length ? per.reduce((a,x)=>a+x,0)/per.length : 0;
 }
+
+/* ============================================================
+   MODULE : ANALYSE DE RENTABILITÉ & COÛTS DE REVIENT PAR PARFUM
+   ------------------------------------------------------------
+   Un « parfum » correspond à une recette (recipe.produitNom).
+   Tous les calculs sont DYNAMIQUES : ils repartent des prix d'achat
+   courants des lots, des recettes (BOM), des ventes (commandes + marchés)
+   et des paramètres (pertes, main-d'œuvre, consommables, charges sociales).
+   Aucune saisie manuelle répétée : on recalcule à chaque ouverture de l'écran.
+   ============================================================ */
+
+// Heuristique : un ingrédient appartient-il à la COQUE (sinon garniture/ganache) ?
+// Sert à ventiler le coût coque vs garniture, à titre indicatif.
+function _isCoqueMaterial(nom){
+  const n = aiNormalize(nom);
+  return /(poudre.*amande|amande.*poudre|sucre glace|blanc.*oeuf|oeuf.*blanc|colorant|sucre semoule|sucre en poudre|tant pour tant|meringue)/.test(n);
+}
+
+// Coût de revient COMPLET d'une recette/parfum (par batch ET par pièce).
+// Intègre : matières (prix courant), pertes (rendement utile), consommables/pièce,
+// et main-d'œuvre si activée. Renvoie aussi la ventilation coque/garniture.
+function coutRevientRecette(recipe, recipeItems, lots, settings){
+  const s = settings || getSettings();
+  const items = recipeItems.filter(it=>it.recipeId===recipe.id);
+  let coutMatBatch=0, coutCoqueBatch=0, coutGarnitureBatch=0;
+  const detail = items.map(it=>{
+    const pu = prixCourant(it.materialId, lots);
+    const c = (+it.qteParBatch||0) * pu;
+    coutMatBatch += c;
+    return {materialId:it.materialId, qteParBatch:+it.qteParBatch||0, pu, cout:c};
+  });
+  // ventilation coque / garniture (indicative)
+  // nécessite les noms de matières — on les retrouvera côté appelant ; ici on garde detail brut.
+  const rendement = +recipe.rendement||1;
+  const pertePct = Math.max(0, Math.min(90, +recipe.pertePct||0));
+  const piecesUtiles = rendement * (1 - pertePct/100);   // pièces réellement vendables
+  // coût matière par pièce VENDABLE (les pertes renchérissent le coût unitaire)
+  const coutMatUnit = piecesUtiles>0 ? coutMatBatch/piecesUtiles : 0;
+  // consommables (par pièce, direct)
+  const coutConsoUnit = Math.max(0, +recipe.coutConsoUnit||0);
+  // main-d'œuvre (par pièce) — uniquement si activée
+  const minParBatch = Math.max(0, +recipe.minParBatch||0);
+  const coutMODBatch = s.laborEnabled ? (minParBatch/60)*(+s.laborRate||0) : 0;
+  const coutMODUnit  = (s.laborEnabled && piecesUtiles>0) ? coutMODBatch/piecesUtiles : 0;
+  // coût de revient unitaire complet
+  const coutRevientUnit = money2(coutMatUnit + coutConsoUnit + coutMODUnit);
+  return {
+    recipeId: recipe.id, nom: recipe.produitNom, rendement, pertePct, piecesUtiles: round3(piecesUtiles),
+    coutMatBatch: money2(coutMatBatch),
+    coutMatUnit: money2(coutMatUnit),
+    coutConsoUnit: money2(coutConsoUnit),
+    coutMODUnit: money2(coutMODUnit), coutMODBatch: money2(coutMODBatch),
+    coutRevientUnit,
+    coutRevientBatch: money2(coutRevientUnit*piecesUtiles),
+    laborOn: !!s.laborEnabled,
+    detail
+  };
+}
+
+// Coût coque/garniture par pièce (ventilation indicative) — nécessite la table matières.
+function ventilationCoqueGarniture(coutObj, mats){
+  let coque=0, garn=0;
+  coutObj.detail.forEach(d=>{
+    const mat = mats.find(m=>m.id===d.materialId);
+    const nom = mat?mat.nom:'';
+    if(_isCoqueMaterial(nom)) coque += d.cout; else garn += d.cout;
+  });
+  const pu = coutObj.piecesUtiles>0 ? coutObj.piecesUtiles : (coutObj.rendement||1);
+  return { coqueUnit: money2(coque/pu), garnitureUnit: money2(garn/pu),
+           coqueBatch: money2(coque), garnitureBatch: money2(garn) };
+}
+
+// Échelle de rentabilité par TAUX DE MARGE (vert / orange / rouge).
+// On la base sur le taux de marge brute par pièce (vente − coût de revient).
+function flavorScale(tauxMarge){
+  if(tauxMarge==null) return {label:'—', col:'#9a8a82', rank:0, dot:'⚪'};
+  if(tauxMarge>=55) return {label:'Très rentable', col:'#2e7d32', rank:5, dot:'🟢'};
+  if(tauxMarge>=40) return {label:'Rentable', col:'#3f7d52', rank:4, dot:'🟢'};
+  if(tauxMarge>=25) return {label:'Rentabilité moyenne', col:'#caa23b', rank:3, dot:'🟠'};
+  if(tauxMarge>=10) return {label:'Faible', col:'#d98324', rank:2, dot:'🟠'};
+  if(tauxMarge>=0)  return {label:'Très faible', col:'#d4671f', rank:1, dot:'🔴'};
+  return {label:'À perte', col:'#b3261e', rank:0, dot:'🔴'};
+}
+
+// VENTES PAR PARFUM à partir des commandes ET des marchés.
+// BASE DE CALCUL = CA ENCAISSÉ (réel). Le prix moyen pondéré ne sert qu'à un CA
+// « théorique » parallèle, pour détecter les incohérences (encaissé vs attendu).
+// - Commandes : CA encaissé du coffret ventilé sur ses pièces (CA/pièce × qté du parfum).
+// - Marchés : vendu par parfum = sortie − retour − don − perte ; le CA ENCAISSÉ du marché
+//   (espèces + CB + autre) est ventilé entre parfums au prorata des pièces vendues.
+//   (Tous les parfums partageant le même prix au sein d'un format, le prorata pièces est exact.)
+// caVentes = encaissé ; caTheo = Σ pièces × prix moyen pondéré (pour l'alerte d'écart).
+function buildFlavorSales(orders, markets, marketMoves, recipes, productions, settings){
+  const s = settings || getSettings();
+  const prixMoyen = (computeAvgSellPrice({orders, markets, settings:s}).prix)||0;
+  const recByNorm = {};
+  recipes.forEach(r=>{ recByNorm[aiNormalize(r.produitNom)] = r; });
+  const matchRecipe = nom=>{
+    const k=aiNormalize(nom);
+    if(recByNorm[k]) return recByNorm[k];
+    const hit = recipes.find(r=>{ const rn=aiNormalize(r.produitNom); return rn && (rn.startsWith(k.slice(0,5)) || k.startsWith(rn.slice(0,5))); });
+    return hit||null;
+  };
+  // pour retrouver le parfum d'un mouvement marché sans champ "parfum" (sortie par lot)
+  const recName = rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'';
+  const prodById = {}; (productions||[]).forEach(p=>{ prodById[p.id]=p; });
+  const moveParfum = m=>{
+    if(m.parfum) return m.parfum;
+    if(m.productionId!=null && prodById[m.productionId]) return recName(prodById[m.productionId].recipeId)||'(parfum ?)';
+    return '(parfum ?)';
+  };
+  const acc = {}; // nom -> {nom, recipeId, piecesVendues, piecesDon, caVentes(=encaissé), caTheo, cmdPieces, mkPieces, mkCA, cmdCA}
+  const ensure = nom=>{ const k=nom||'(parfum ?)'; return (acc[k] ||= {nom:k, recipeId:null, piecesVendues:0, piecesDon:0, caVentes:0, caTheo:0, cmdPieces:0, mkPieces:0, mkCA:0, cmdCA:0}); };
+
+  // ---- COMMANDES (CA encaissé réel du coffret) ----
+  (orders||[]).forEach(o=>{
+    const lignes = orderToLines(o);
+    const gpct = Math.max(0,Math.min(100,+o.remiseGlobale||0));
+    const factor = gpct>0 ? (1-gpct/100) : 1;
+    lignes.forEach(ln=>{
+      if(ln.type!=='coffret' && ln.type!=='don' && ln.type!=='evenement') return;
+      const parfums = (ln.parfums||[]).filter(p=>+p.qte>0);
+      const totPieces = parfums.reduce((s2,p)=>s2+(+p.qte||0),0);
+      if(totPieces<=0) return;
+      if(ln.type==='don'){
+        parfums.forEach(p=>{ const a=ensure(p.nom); a.piecesDon+=+p.qte; a.cmdPieces+=+p.qte; if(!a.recipeId){const r=matchRecipe(p.nom); if(r)a.recipeId=r.id;} });
+        return;
+      }
+      const net = money2(lineTotalStored(ln)*factor);   // CA encaissé du coffret
+      const caParPiece = totPieces>0 ? net/totPieces : 0;
+      parfums.forEach(p=>{
+        const a=ensure(p.nom);
+        a.piecesVendues += +p.qte; a.cmdPieces += +p.qte;
+        const c = money2(caParPiece*(+p.qte));
+        a.caVentes = money2(a.caVentes + c); a.cmdCA = money2(a.cmdCA + c);
+        a.caTheo = money2(a.caTheo + prixMoyen*(+p.qte));
+        if(!a.recipeId){const r=matchRecipe(p.nom); if(r)a.recipeId=r.id;}
+      });
+    });
+  });
+
+  // ---- MARCHÉS (CA ENCAISSÉ ventilé par pièces vendues) ----
+  const movesByMk = {}; (marketMoves||[]).forEach(mv=>{ (movesByMk[mv.marketId] ||= []).push(mv); });
+  (markets||[]).filter(mk=>mk.statut==='clos').forEach(mk=>{
+    const mv = movesByMk[mk.id]||[];
+    const byParfum={};
+    mv.forEach(m=>{
+      const nom = moveParfum(m);
+      const b=(byParfum[nom] ||= {sortie:0,retour:0,don:0,perte:0});
+      if(m.type==='sortie') b.sortie+=+m.qte||0;
+      else if(m.type==='retour') b.retour+=+m.qte||0;
+      else if(m.type==='don') b.don+=+m.qte||0;
+      else if(m.type==='perte') b.perte+=+m.qte||0;
+    });
+    // total vendu (toutes saveurs) pour ventiler le CA ENCAISSÉ du marché
+    const venduByParfum={}; let totVendu=0;
+    Object.keys(byParfum).forEach(nom=>{ const b=byParfum[nom]; const v=Math.max(0,b.sortie-b.retour-b.don-b.perte); venduByParfum[nom]=v; totVendu+=v; });
+    const ca=mk.ca||{}; const caEncaisse=money2((+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0));
+    const caParPiece = totVendu>0 ? caEncaisse/totVendu : 0;
+    Object.keys(venduByParfum).forEach(nom=>{
+      const v=venduByParfum[nom]; if(v<=0) return;
+      const a=ensure(nom);
+      a.piecesVendues += v; a.mkPieces += v;
+      const c = money2(caParPiece*v);          // part du CA ENCAISSÉ
+      a.caVentes = money2(a.caVentes + c); a.mkCA = money2(a.mkCA + c);
+      a.caTheo = money2(a.caTheo + prixMoyen*v);
+      if(!a.recipeId){const r=matchRecipe(nom); if(r)a.recipeId=r.id;}
+    });
+  });
+
+  return Object.values(acc);
+}
+
+// SYNTHÈSE COMPLÈTE par parfum : coût de revient + ventes + marges + classement + stock immobilisé.
+// Renvoie {rows:[...], unmatched:[...], totals:{...}, recIndex:{}}
+function analyzeFlavorProfitability(data){
+  const {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings} = data;
+  const s = settings || getSettings();
+  // 1) coût de revient par recette
+  const costByRecipe = {};
+  recipes.forEach(r=>{ costByRecipe[r.id] = coutRevientRecette(r, recipeItems, lots, s); });
+  // 2) ventes par parfum
+  const sales = buildFlavorSales(orders, markets, marketMoves, recipes, productions, s);
+  const salesByRecipe = {}; const unmatched=[];
+  sales.forEach(sa=>{
+    if(sa.recipeId){ (salesByRecipe[sa.recipeId] ||= []).push(sa); }
+    else if(sa.piecesVendues>0 || sa.piecesDon>0){ unmatched.push(sa); }
+  });
+  // 3) stock fini (immobilisation) par recette
+  const stockByRecipe={};
+  (productions||[]).forEach(p=>{ const q=round3(+p.qteRestante||0); if(q>0){ stockByRecipe[p.recipeId]=round3((stockByRecipe[p.recipeId]||0)+q); } });
+
+  // 4) lignes consolidées par recette/parfum
+  const rows = recipes.map(r=>{
+    const c = costByRecipe[r.id];
+    const saList = salesByRecipe[r.id]||[];
+    const piecesVendues = round3(saList.reduce((x,a)=>x+a.piecesVendues,0));
+    const piecesDon = round3(saList.reduce((x,a)=>x+a.piecesDon,0));
+    const ca = money2(saList.reduce((x,a)=>x+a.caVentes,0));            // CA ENCAISSÉ (base de calcul)
+    const caTheo = money2(saList.reduce((x,a)=>x+(a.caTheo||0),0));     // CA attendu (pièces × prix moyen)
+    const ecartTheo = money2(ca - caTheo);                              // écart encaissé − attendu
+    const prixVenteMoyen = piecesVendues>0 ? money2(ca/piecesVendues) : null;
+    // coûts rattachés aux pièces vendues
+    const coutVentes = money2(piecesVendues * c.coutRevientUnit);
+    const margeBrute = money2(ca - coutVentes);
+    const margeUnit = (prixVenteMoyen!=null) ? money2(prixVenteMoyen - c.coutRevientUnit) : null;
+    const tauxMarge = (prixVenteMoyen!=null && prixVenteMoyen>0) ? Math.round(margeUnit/prixVenteMoyen*1000)/10 : null;
+    // charges sociales (marchandise) sur le CA → marge nette estimée
+    const chargesSoc = money2(ca * s.socialGoods/100);
+    const margeNette = money2(margeBrute - chargesSoc);
+    const tauxNet = ca>0 ? Math.round(margeNette/ca*1000)/10 : null;
+    const stock = round3(stockByRecipe[r.id]||0);
+    const valStockCout = money2(stock * c.coutRevientUnit);
+    const scale = flavorScale(tauxMarge);
+    return {
+      recipeId:r.id, nom:r.produitNom, cost:c,
+      piecesVendues, piecesDon, ca, caTheo, ecartTheo, prixVenteMoyen, coutVentes,
+      margeBrute, margeUnit, tauxMarge, chargesSoc, margeNette, tauxNet,
+      stock, valStockCout, scale
+    };
+  });
+
+  // 5) totaux
+  const totals = {
+    ca: money2(rows.reduce((s2,r)=>s2+r.ca,0)),
+    caTheo: money2(rows.reduce((s2,r)=>s2+r.caTheo,0)),
+    pieces: round3(rows.reduce((s2,r)=>s2+r.piecesVendues,0)),
+    margeBrute: money2(rows.reduce((s2,r)=>s2+r.margeBrute,0)),
+    margeNette: money2(rows.reduce((s2,r)=>s2+r.margeNette,0)),
+    valStock: money2(rows.reduce((s2,r)=>s2+r.valStockCout,0))
+  };
+  totals.ecartTheo = money2(totals.ca - totals.caTheo);
+  totals.tauxMargeGlobal = totals.ca>0 ? Math.round(totals.margeBrute/totals.ca*1000)/10 : null;
+
+  return {rows, unmatched, totals, costByRecipe};
+}
+
+// MOTEUR DE RECOMMANDATIONS : règles déterministes sur la synthèse.
+// Détecte : best-sellers profit, forte demande/faible marge, faible demande/forte marge,
+// stock immobilisé peu rentable, alertes hausse de coût matière, suggestions mise en avant.
+function flavorRecommendations(analysis, data){
+  const {rows, totals} = analysis;
+  const sold = rows.filter(r=>r.piecesVendues>0);
+  const recs=[];
+  if(!sold.length){ return [{icon:'ℹ️', col:'#9a8a82', txt:'Pas encore de ventes par parfum. Enregistrez des commandes (coffrets) et clôturez des marchés pour activer les recommandations.'}]; }
+
+  // médianes pour qualifier "forte/faible" demande et marge
+  const piecesArr = sold.map(r=>r.piecesVendues).sort((a,b)=>a-b);
+  const margeArr = sold.filter(r=>r.tauxMarge!=null).map(r=>r.tauxMarge).sort((a,b)=>a-b);
+  const med = arr => arr.length? (arr.length%2? arr[(arr.length-1)/2] : (arr[arr.length/2-1]+arr[arr.length/2])/2) : 0;
+  const medPieces = med(piecesArr), medMarge = med(margeArr);
+
+  // 1) parfums les plus profitables (marge brute €)
+  const topProfit = [...sold].sort((a,b)=>b.margeBrute-a.margeBrute).slice(0,3);
+  if(topProfit.length){
+    recs.push({icon:'🏆', col:'#2e7d32',
+      txt:`Plus gros contributeurs au bénéfice : ${topProfit.map(r=>`${r.nom} (${euro(r.margeBrute)})`).join(', ')}. Sécurisez leur appro et mettez-les systématiquement en avant.`});
+  }
+  // 2) forte demande mais faible marge → lever le prix ou réduire le coût
+  const volFaibleMarge = sold.filter(r=>r.piecesVendues>=medPieces && r.tauxMarge!=null && r.tauxMarge<25)
+    .sort((a,b)=>a.tauxMarge-b.tauxMarge);
+  volFaibleMarge.slice(0,3).forEach(r=>{
+    const cible = r.cost.coutRevientUnit>0 ? money2(r.cost.coutRevientUnit/(1-0.40)) : null; // prix pour 40% de marge
+    recs.push({icon:'⚠️', col:'#d98324',
+      txt:`${r.nom} : forte demande (${qty(r.piecesVendues)} vendus) mais marge faible (${r.tauxMarge}%). ${cible?`Visez ~${euro(cible)}/pièce pour 40% de marge, ou réduisez le coût de revient (${euro(r.cost.coutRevientUnit)}).`:'Revoyez le prix ou le coût.'}`});
+  });
+  // 3) faible demande mais très rentable → pousser à la vente
+  const nicheRentable = sold.filter(r=>r.piecesVendues<medPieces && r.tauxMarge!=null && r.tauxMarge>=40)
+    .sort((a,b)=>b.tauxMarge-a.tauxMarge);
+  nicheRentable.slice(0,3).forEach(r=>{
+    recs.push({icon:'💎', col:'#3f7d52',
+      txt:`${r.nom} : très rentable (${r.tauxMarge}%) mais peu vendu (${qty(r.piecesVendues)}). Donnez-lui plus de visibilité (vitrine, suggestion, dégustation) — chaque vente rapporte ${r.margeUnit!=null?euro(r.margeUnit):'bien'}.`});
+  });
+  // 4) à perte
+  const perte = sold.filter(r=>r.tauxMarge!=null && r.tauxMarge<0);
+  perte.forEach(r=>{
+    recs.push({icon:'🛑', col:'#b3261e',
+      txt:`${r.nom} se vend À PERTE (prix moyen ${r.prixVenteMoyen!=null?euro(r.prixVenteMoyen):'?'} < coût ${euro(r.cost.coutRevientUnit)}). Augmentez le prix ou retirez-le de l'offre.`});
+  });
+  // 5) stock immobilisé peu rentable
+  const stockMort = analysis.rows.filter(r=>r.stock>0 && (r.piecesVendues===0 || (r.tauxMarge!=null && r.tauxMarge<15)))
+    .sort((a,b)=>b.valStockCout-a.valStockCout);
+  stockMort.slice(0,3).forEach(r=>{
+    recs.push({icon:'📦', col:'#d4671f',
+      txt:`${r.nom} immobilise ${qty(r.stock)} pièce(s) (${euro(r.valStockCout)} de coût) pour une rentabilité ${r.piecesVendues===0?'sans historique de vente':'faible ('+r.tauxMarge+'%)'}. Écoulez-le (marché, promo) avant la DLC.`});
+  });
+  // 6) mise en avant marché / forte affluence = top marge brute par pièce parmi les bons vendeurs
+  const pourMarche = [...sold].filter(r=>r.margeUnit!=null).sort((a,b)=>(b.margeUnit*Math.log(1+b.piecesVendues))-(a.margeUnit*Math.log(1+a.piecesVendues))).slice(0,4);
+  if(pourMarche.length){
+    recs.push({icon:'⛺', col:'#AA7C39',
+      txt:`Mix conseillé en marché / forte affluence (volume × marge) : ${pourMarche.map(r=>r.nom).join(', ')}.`});
+  }
+  // 7) priorité de production selon rentabilité historique
+  const prioProd = [...sold].filter(r=>r.tauxMarge!=null).sort((a,b)=>(b.margeBrute)-(a.margeBrute)).slice(0,5);
+  if(prioProd.length){
+    recs.push({icon:'⚙️', col:'#52252F',
+      txt:`Priorité de production (bénéfice historique) : ${prioProd.map((r,i)=>`${i+1}. ${r.nom}`).join('  ')}.`});
+  }
+  // 8) INCOHÉRENCE CA : encaissé vs attendu (pièces × prix moyen). Pertinent une fois
+  //    les retours/pertes saisis. Un écart négatif marqué = encaissé < attendu
+  //    (pertes non comptées, remises, vol, erreur de caisse) ; positif = ventes au-dessus du tarif.
+  const ec = totals.ecartTheo, theo = totals.caTheo;
+  if(theo>0 && Math.abs(ec) >= Math.max(5, theo*0.05)){
+    if(ec<0) recs.push({icon:'🔎', col:'#b3261e',
+      txt:`Incohérence de CA : encaissé ${euro(totals.ca)} vs attendu ${euro(theo)} (écart ${euro(ec)}). L'encaissé est inférieur à ce que les ventes auraient dû rapporter — vérifiez les pertes/dons non saisis, les remises accordées, ou une erreur de caisse.`});
+    else recs.push({icon:'🔎', col:'#d98324',
+      txt:`Écart de CA favorable : encaissé ${euro(totals.ca)} vs attendu ${euro(theo)} (+${euro(ec)}). Ventes au-dessus du tarif moyen (formats plus chers, ventes à l'unité) — ou un prix de grille à réajuster.`});
+  }
+  return recs;
+}
+
+// ALERTES HAUSSE DE COÛT : pour chaque matière dont le prix a augmenté,
+// estime l'impact sur la marge des parfums qui l'utilisent.
+function flavorCostHikeAlerts(data, analysis){
+  const {recipes, recipeItems, lots, mats} = data;
+  const alerts=[];
+  mats.forEach(mat=>{
+    const ls = lots.filter(l=>l.materialId===mat.id && lotPU(l)>0)
+                   .sort((a,b)=>(a.dateReception||'').localeCompare(b.dateReception||''));
+    if(ls.length<2) return;
+    const first=lotPU(ls[0]), last=lotPU(ls[ls.length-1]);
+    if(first<=0) return;
+    const varPct=(last-first)/first*100;
+    if(varPct<8) return; // seuil d'alerte : +8%
+    // recettes impactées
+    const impacted = recipeItems.filter(it=>it.materialId===mat.id).map(it=>it.recipeId);
+    const noms = recipes.filter(r=>impacted.includes(r.id)).map(r=>r.produitNom);
+    if(!noms.length) return;
+    alerts.push({mat:mat.nom, varPct:Math.round(varPct*10)/10, parfums:noms,
+      delta:money2((last-first))});
+  });
+  return alerts.sort((a,b)=>b.varPct-a.varPct);
+}
+
 
 // === insère moteur computeStats (voir stats_engine.js) ===
 /* ============================================================
@@ -4097,6 +4530,415 @@ async function renderPilotage(){
 /* ============================================================
    ANALYSE DE RENTABILITÉ — par client et par événement, avec échelle
    ============================================================ */
+/* ============================================================
+   ÉCRAN : RENTABILITÉ PAR PARFUM
+   ============================================================ */
+let _parfumSort = 'marge'; // marge | ca | pieces | taux | nom | stock
+let _parfumEvolWindow = 6; // mois pour la courbe d'évolution
+
+async function renderParfums(){
+  const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
+    db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
+    db.orders.toArray(), db.markets.toArray(), db.marketMoves.toArray(), db.productions.toArray()
+  ]);
+  const s = getSettings();
+  const data = {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings:s};
+
+  if(!recipes.length){
+    document.getElementById('main').innerHTML=`
+      <div class="topbar"><div><h1>Rentabilité parfums</h1><p>Coûts de revient & marges par parfum</p></div></div>
+      <div class="panel"><div class="empty">Aucune recette. Créez vos recettes (BOM) — chaque recette correspond à un parfum — puis réceptionnez des lots avec prix pour activer l'analyse.</div></div>`;
+    return;
+  }
+
+  const A = analyzeFlavorProfitability(data);
+  const hikes = flavorCostHikeAlerts(data, A);
+  const recs = flavorRecommendations(A, data);
+
+  // tri
+  const rows=[...A.rows];
+  const sorters={
+    marge:(a,b)=>b.margeBrute-a.margeBrute,
+    ca:(a,b)=>b.ca-a.ca,
+    pieces:(a,b)=>b.piecesVendues-a.piecesVendues,
+    taux:(a,b)=>(b.tauxMarge==null?-1:b.tauxMarge)-(a.tauxMarge==null?-1:a.tauxMarge),
+    stock:(a,b)=>b.valStockCout-a.valStockCout,
+    nom:(a,b)=>a.nom.localeCompare(b.nom)
+  };
+  rows.sort(sorters[_parfumSort]||sorters.marge);
+
+  // Pareto 80/20 (sur marge brute, parfums vendus uniquement)
+  const sold=A.rows.filter(r=>r.piecesVendues>0 && r.margeBrute>0).sort((a,b)=>b.margeBrute-a.margeBrute);
+  const totMargeSold=sold.reduce((s2,r)=>s2+r.margeBrute,0);
+  let cum=0; const pareto=[]; let seuil80=null;
+  sold.forEach((r,i)=>{ cum+=r.margeBrute; const pct=totMargeSold>0?cum/totMargeSold*100:0; pareto.push({...r, cumPct:pct}); if(seuil80===null && pct>=80) seuil80=i+1; });
+
+  // classements
+  const best=A.rows.filter(r=>r.tauxMarge!=null).sort((a,b)=>b.tauxMarge-a.tauxMarge).slice(0,5);
+  const worst=A.rows.filter(r=>r.tauxMarge!=null).sort((a,b)=>a.tauxMarge-b.tauxMarge).slice(0,5);
+
+  // KPI
+  const avgP = computeAvgSellPrice(data);
+  const kpis=`<div class="kpi-grid">
+    <div class="kpi"><span>CA encaissé (parfums)</span><b>${euro(A.totals.ca)}</b><span>${qty(A.totals.pieces)} pièces vendues</span></div>
+    <div class="kpi"><span>Marge brute totale</span><b style="color:${A.totals.margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(A.totals.margeBrute)}</b><span>${A.totals.tauxMargeGlobal!=null?A.totals.tauxMargeGlobal+'% de marge':'—'}</span></div>
+    <div class="kpi"><span>Marge nette estimée</span><b style="color:${A.totals.margeNette>=0?'#3f7d52':'#b3261e'}">${euro(A.totals.margeNette)}</b><span>après charges ${s.socialGoods}%</span></div>
+    <div class="kpi"><span>Prix moyen pondéré</span><b>${euro(avgP.prix)}</b><span>${avgP.source==='ventes'?'d\'après les ventes':'grille (pas de vente)'}</span></div>
+    <div class="kpi"><span>Stock immobilisé</span><b>${euro(A.totals.valStock)}</b><span>au coût de revient</span></div>
+  </div>`;
+
+  // bannière d'incohérence CA : encaissé vs attendu (pièces × prix moyen)
+  const ecT=A.totals.ecartTheo, theoT=A.totals.caTheo;
+  const incohBanner = (theoT>0 && Math.abs(ecT)>=Math.max(5, theoT*0.05))
+    ? `<div class="banner" style="background:${ecT<0?'#fdf3f2':'#fff8ec'};border-color:${ecT<0?'#e5b4ae':'#e8cfa0'}">🔎 <div><b>Écart CA encaissé vs attendu : ${ecT>0?'+':''}${euro(ecT)}</b> (encaissé ${euro(A.totals.ca)} · attendu ${euro(theoT)} au prix moyen ${euro(avgP.prix)}). ${ecT<0?'L\'encaissé est sous l\'attendu : pertes/dons non saisis, remises, ou erreur de caisse.':'Ventes au-dessus du tarif moyen, ou grille de prix à réajuster.'}</div></div>`
+    : '';
+
+  // alertes hausse de coût
+  const hikeBanner = hikes.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">📈 <div><b>Hausse de coût matière détectée</b> : ${hikes.slice(0,4).map(h=>`${esc(h.mat)} +${h.varPct}% (impacte ${h.parfums.map(esc).join(', ')})`).join(' · ')}${hikes.length>4?` … +${hikes.length-4}`:''}. Vérifiez les prix de vente des parfums concernés.</div></div>`:'';
+
+  // tableau principal
+  const sortBtn=(k,lib)=>`<button class="btn ghost sm" style="${_parfumSort===k?'border-color:var(--caramel);font-weight:600':''}" onclick="_parfumSort='${k}';renderParfums()">${lib}</button>`;
+  const mainTable=`<div class="table-wrap"><table><thead><tr>
+      <th>Parfum</th><th>Coût revient/pc</th><th>Prix vente moy.</th><th>Marge/pc</th><th>Vendus</th><th>CA</th><th>Marge brute</th><th>Rentabilité</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr style="cursor:pointer" onclick="parfumDetail(${r.recipeId})">
+      <td><b>${esc(r.nom)}</b>${r.cost.pertePct>0?`<br><span style="color:#9a8a82;font-size:.7rem">pertes ${r.cost.pertePct}%</span>`:''}</td>
+      <td>${euro(r.cost.coutRevientUnit)}</td>
+      <td>${r.prixVenteMoyen!=null?euro(r.prixVenteMoyen):'<span style="color:#9a8a82">—</span>'}</td>
+      <td style="color:${r.margeUnit!=null?(r.margeUnit>=0?'#3f7d52':'#b3261e'):'#9a8a82'}">${r.margeUnit!=null?euro(r.margeUnit):'—'}</td>
+      <td>${r.piecesVendues>0?qty(r.piecesVendues):'<span style="color:#9a8a82">0</span>'}</td>
+      <td>${euro(r.ca)}</td>
+      <td style="font-weight:600;color:${r.margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(r.margeBrute)}</td>
+      <td><span class="tag" style="background:${r.scale.col};color:#fff">${r.scale.dot} ${r.tauxMarge!=null?r.tauxMarge+'%':'—'}</span></td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="note">Touchez une ligne pour le détail (coque/garniture, simulation de prix, seuil de rentabilité). Base de calcul = <b>CA encaissé</b> réel (commandes + marchés), réparti par parfum selon les pièces vendues. Coût de revient = matières (prix courant) + pertes + consommables${s.laborEnabled?' + main-d\'œuvre':''}. La grille de prix par format sert à estimer le prix moyen pondéré et à détecter les écarts.</p>`;
+
+  // parfums sans recette (vendus mais non rattachés)
+  const unmatchedBlock=A.unmatched.length?`<div class="panel"><h2>Parfums vendus sans recette <span class="tag warn">${A.unmatched.length}</span></h2>
+     <p class="note">Ces parfums apparaissent dans les ventes mais n'ont pas de recette correspondante — impossible de calculer leur coût/marge. Créez une recette portant le même nom : ${A.unmatched.map(u=>`<b>${esc(u.nom)}</b> (${qty(u.piecesVendues+u.piecesDon)} pc)`).join(', ')}.</p></div>`:'';
+
+  // Pareto
+  const paretoBlock = sold.length?`<div class="panel"><h2>Analyse Pareto 80/20</h2>
+     ${seuil80?`<div class="banner"><div><b>${seuil80} parfum(s)</b> sur ${sold.length} génèrent <b>80%</b> de votre marge brute. Concentrez vos efforts (appro, mise en avant, production) sur eux.</div></div>`:''}
+     <div class="table-wrap"><table><thead><tr><th>#</th><th>Parfum</th><th>Marge brute</th><th>% cumulé</th></tr></thead><tbody>
+       ${pareto.map((r,i)=>`<tr${seuil80&&i<seuil80?' style="background:#f3f8f4"':''}><td>${i+1}</td><td><b>${esc(r.nom)}</b></td><td>${euro(r.margeBrute)}</td>
+         <td><span class="tag ${r.cumPct<=80?'ok':''}">${r.cumPct.toFixed(0)}%</span></td></tr>`).join('')}
+     </tbody></table></div></div>`:'';
+
+  // classements
+  const rankBlock=`<div class="panel"><h2>Classement par rentabilité</h2>
+     <div class="row2">
+       <div><h3 style="font-size:.92rem;margin:6px 0;color:#3f7d52">🟢 Les plus rentables</h3>
+         ${best.length?best.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b style="color:#3f7d52">${r.tauxMarge}% · ${euro(r.margeUnit||0)}/pc</b></div>`).join(''):'<p class="note">—</p>'}</div>
+       <div><h3 style="font-size:.92rem;margin:6px 0;color:#b3261e">🔴 Les moins rentables</h3>
+         ${worst.length?worst.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b style="color:${r.tauxMarge<0?'#b3261e':'#d98324'}">${r.tauxMarge}% · ${euro(r.margeUnit||0)}/pc</b></div>`).join(''):'<p class="note">—</p>'}</div>
+     </div></div>`;
+
+  // recommandations
+  const recBlock=`<div class="panel"><h2>Recommandations intelligentes</h2>
+     ${recs.map(r=>`<div class="sum-box" style="align-items:flex-start"><span style="font-size:1.1rem">${r.icon}</span><b style="font-weight:500;color:${r.col};text-align:left;flex:1;margin-left:8px">${r.txt}</b></div>`).join('')}</div>`;
+
+  // évolution de la rentabilité dans le temps (marge brute mensuelle, par CA - coût des ventes)
+  const evolBlock = await buildFlavorEvolutionBlock(data, A);
+
+  // outils de prévision
+  const prevBlock=`<div class="panel"><h2>Prévisions & aide à la décision</h2>
+     <div class="flex" style="gap:8px;flex-wrap:wrap">
+       <button class="btn ghost sm" onclick="parfumBatchSim()">🧮 Marge prévisionnelle d'un batch</button>
+       <button class="btn ghost sm" onclick="parfumMixOptim()">🎯 Mix de parfums optimal</button>
+       <button class="btn ghost sm" onclick="parfumMarketGain()">⛺ Gain estimé d'un marché</button>
+     </div>
+     <p class="note">Calculs basés sur vos coûts de revient et l'historique de vente. Aucune donnée ne quitte l'appareil.</p></div>`;
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Rentabilité parfums</h1><p>Coûts de revient, marges & recommandations par parfum</p></div>
+     <button class="btn ghost sm" onclick="parfumSettingsForm()">⚙ Coûts & MO</button></div>
+   ${hikeBanner}
+   ${incohBanner}
+   ${kpis}
+   <div class="panel"><h2>Synthèse par parfum</h2>
+     <div class="flex" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><span style="font-size:.8rem;color:#9a8a82;align-self:center">Trier :</span>
+       ${sortBtn('marge','Marge')} ${sortBtn('ca','CA')} ${sortBtn('pieces','Volume')} ${sortBtn('taux','Taux')} ${sortBtn('stock','Stock')} ${sortBtn('nom','A→Z')}</div>
+     ${mainTable}</div>
+   ${unmatchedBlock}
+   ${recBlock}
+   ${paretoBlock}
+   ${rankBlock}
+   ${evolBlock}
+   ${prevBlock}`;
+
+  // dessine la courbe d'évolution si présente
+  drawFlavorEvolutionChart(data, A);
+}
+
+// Bloc HTML pour l'évolution mensuelle de la marge (placeholder de conteneur).
+async function buildFlavorEvolutionBlock(data, A){
+  return `<div class="panel"><h2>Évolution de la rentabilité <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— marge brute mensuelle</span></h2>
+     <div id="flavorEvolChart"></div>
+     <p class="note">CA mensuel (commandes + marchés clos) − coût de revient des pièces vendues le mois.</p></div>`;
+}
+
+// Calcule et dessine la courbe d'évolution (CA, coût, marge) par mois.
+function drawFlavorEvolutionChart(data, A){
+  const el=document.getElementById('flavorEvolChart'); if(!el) return;
+  const {recipes, recipeItems, lots, orders, markets, marketMoves, productions, settings}=data;
+  const s=settings||getSettings();
+  const costByRecipe=A.costByRecipe;
+  const units=Object.values(costByRecipe).map(c=>c.coutRevientUnit).filter(x=>x>0);
+  const avgUnit=units.length?units.reduce((a,b)=>a+b,0)/units.length:0;
+  // retrouver la recette d'un parfum/mouvement
+  const recByNorm={}; recipes.forEach(r=>{recByNorm[aiNormalize(r.produitNom)]=r;});
+  const prodById={}; (productions||[]).forEach(p=>{prodById[p.id]=p;});
+  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'';
+  const unitCostForParfum=nom=>{ const r=recByNorm[aiNormalize(nom)]; return r&&costByRecipe[r.id]?costByRecipe[r.id].coutRevientUnit:avgUnit; };
+  const moveParfum=m=>{ if(m.parfum) return m.parfum; if(m.productionId!=null && prodById[m.productionId]) return recName(prodById[m.productionId].recipeId)||''; return ''; };
+
+  // pièces vendues par mois + CA par mois (commandes)
+  const caByMonth={}, coutByMonth={};
+  (orders||[]).forEach(o=>{
+    const k=ymKey(o.date); if(!k) return;
+    caByMonth[k]=money2((caByMonth[k]||0)+(+o.montant||0));
+    // pièces de la commande × coût moyen (approche globale mensuelle)
+    const lignes=orderToLines(o);
+    let pieces=0;
+    lignes.forEach(ln=>{
+      if(ln.type==='coffret') pieces+=+ln.taille||0;
+      else if(ln.type==='don') pieces+=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+      else if(ln.type==='evenement') pieces+=+ln.evQte||0;
+      else if(ln.type==='grand') pieces+=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    });
+    coutByMonth[k]=money2((coutByMonth[k]||0)+pieces*avgUnit);
+  });
+  // marchés clos : CA = ENCAISSÉ (base de calcul) ; coût = pièces × coût DU PARFUM
+  const movesByMk={}; (marketMoves||[]).forEach(mv=>{(movesByMk[mv.marketId] ||= []).push(mv);});
+  (markets||[]).filter(mk=>mk.statut==='clos').forEach(mk=>{
+    const k=ymKey(mk.dateCloture||mk.date); if(!k) return;
+    const ca=mk.ca||{}; caByMonth[k]=money2((caByMonth[k]||0)+(+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0));
+    const mv=movesByMk[mk.id]||[];
+    const byParfum={};
+    mv.forEach(m=>{ const nom=moveParfum(m)||'(parfum ?)'; const b=(byParfum[nom] ||= {sortie:0,retour:0,don:0,perte:0});
+      if(m.type==='sortie')b.sortie+=+m.qte||0; else if(m.type==='retour')b.retour+=+m.qte||0; else if(m.type==='don')b.don+=+m.qte||0; else if(m.type==='perte')b.perte+=+m.qte||0; });
+    let coutMk=0;
+    Object.keys(byParfum).forEach(nom=>{ const b=byParfum[nom]; const v=Math.max(0,b.sortie-b.retour-b.don-b.perte); if(v<=0) return;
+      coutMk=money2(coutMk+v*unitCostForParfum(nom)); });
+    coutByMonth[k]=money2((coutByMonth[k]||0)+coutMk);
+  });
+  const keys=[...new Set([...Object.keys(caByMonth),...Object.keys(coutByMonth)])].sort().slice(-12);
+  if(!keys.length){ el.innerHTML='<div class="empty">Pas encore de ventes datées pour tracer la courbe.</div>'; return; }
+  const sCA={label:'CA', color:'#3f7d52', points:keys.map(k=>({x:k,y:caByMonth[k]||0}))};
+  const sCout={label:'Coût de revient', color:'#b04a3e', points:keys.map(k=>({x:k,y:coutByMonth[k]||0}))};
+  const sMarge={label:'Marge brute', color:'#AA7C39', points:keys.map(k=>({x:k,y:money2((caByMonth[k]||0)-(coutByMonth[k]||0))}))};
+  el.innerHTML=lineChart([sCA,sCout,sMarge],{fmt:v=>euro(v),xlabel:ymLabel,zero:true});
+}
+
+// DÉTAIL d'un parfum : ventilation coque/garniture, coût détaillé, simulation de prix, seuil de rentabilité.
+async function parfumDetail(recipeId){
+  const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions]=await Promise.all([
+    db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
+    db.orders.toArray(), db.markets.toArray(), db.marketMoves.toArray(), db.productions.toArray()
+  ]);
+  const s=getSettings();
+  const data={recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings:s};
+  const r=recipes.find(x=>x.id===recipeId); if(!r){ toast('Recette introuvable'); return; }
+  const A=analyzeFlavorProfitability(data);
+  const row=A.rows.find(x=>x.recipeId===recipeId); if(!row){ toast('Données indisponibles'); return; }
+  const c=row.cost;
+  const vent=ventilationCoqueGarniture(c, mats);
+  const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'—';
+  const matUnit=id=>(mats.find(m=>m.id===id)||{}).unite||'';
+
+  const detailRows=c.detail.filter(d=>d.cout>0).sort((a,b)=>b.cout-a.cout).map(d=>`<tr>
+     <td>${esc(matName(d.materialId))}</td><td>${qty(d.qteParBatch)} ${esc(matUnit(d.materialId))}</td>
+     <td>${euro(d.pu)}/${esc(matUnit(d.materialId))}</td><td>${euro(money2(d.cout))}</td></tr>`).join('');
+
+  // valeur de référence pour la simulation : prix de vente moyen constaté, sinon prix unitaire global
+  const prixRef = row.prixVenteMoyen!=null ? row.prixVenteMoyen : (+s.prixVenteUnitaire||money2((BOX_PRICES[6]||12)/6));
+  // seuil de rentabilité : à ce prix de référence, combien de pièces pour couvrir un batch (MO+conso inclus)
+  const margeRefUnit = money2(prixRef - c.coutRevientUnit);
+
+  openModal(`<h3>${esc(r.produitNom)} <span class="tag" style="background:${row.scale.col};color:#fff">${row.scale.dot} ${row.scale.label}</span></h3>
+    <div class="sum-box"><span>Coût de revient / pièce</span><b>${euro(c.coutRevientUnit)}</b></div>
+    <div class="sum-box"><span>· dont matières</span><b>${euro(c.coutMatUnit)}</b></div>
+    <div class="sum-box"><span>· dont coque (estim.)</span><b>${euro(vent.coqueUnit)}</b></div>
+    <div class="sum-box"><span>· dont garniture (estim.)</span><b>${euro(vent.garnitureUnit)}</b></div>
+    ${c.coutConsoUnit>0?`<div class="sum-box"><span>· dont consommables</span><b>${euro(c.coutConsoUnit)}</b></div>`:''}
+    ${c.laborOn?`<div class="sum-box"><span>· dont main-d'œuvre</span><b>${euro(c.coutMODUnit)}</b></div>`:''}
+    <div class="sum-box"><span>Rendement utile / batch</span><b>${qty(c.piecesUtiles)}${c.pertePct>0?` <span style="color:#9a8a82;font-weight:400">(−${c.pertePct}% pertes)</span>`:''}</b></div>
+    <div class="sum-box"><span>Coût de revient / batch</span><b>${euro(c.coutRevientBatch)}</b></div>
+    <hr style="border:none;border-top:1px solid #ece2d4;margin:10px 0">
+    <div class="sum-box"><span>Prix de vente moyen constaté</span><b>${row.prixVenteMoyen!=null?euro(row.prixVenteMoyen):'— pas de vente —'}</b></div>
+    <div class="sum-box"><span>Marge / pièce</span><b style="color:${row.margeUnit!=null?(row.margeUnit>=0?'#3f7d52':'#b3261e'):'#9a8a82'}">${row.margeUnit!=null?euro(row.margeUnit)+' ('+row.tauxMarge+'%)':'—'}</b></div>
+    <div class="sum-box"><span>Vendus / CA / marge brute</span><b>${qty(row.piecesVendues)} · ${euro(row.ca)} · ${euro(row.margeBrute)}</b></div>
+    ${row.stock>0?`<div class="sum-box"><span>Stock immobilisé</span><b>${qty(row.stock)} pc · ${euro(row.valStockCout)}</b></div>`:''}
+
+    <details style="margin-top:10px"><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">Détail des matières (par batch)</summary>
+      ${detailRows?`<div class="table-wrap" style="margin-top:6px"><table><thead><tr><th>Matière</th><th>Qté</th><th>Prix</th><th>Coût</th></tr></thead><tbody>${detailRows}</tbody></table></div>`:'<p class="note">Aucune matière avec prix.</p>'}
+    </details>
+
+    <h3 style="font-size:.98rem;margin:14px 0 6px">Simulation de prix</h3>
+    <div class="field"><label>Prix de vente / pièce (€)</label>
+      <input type="number" step="0.05" min="0" id="simPrix" value="${prixRef}" oninput="parfumSimUpdate(${recipeId},${c.coutRevientUnit},${row.piecesVendues||0})"></div>
+    <div id="simOut"></div>
+    <p class="note">Le seuil de rentabilité est atteint dès que le prix dépasse le coût de revient (${euro(c.coutRevientUnit)}/pc).</p>
+
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="closeModal();recForm(${recipeId})">✎ Modifier la recette</button></div>`);
+  parfumSimUpdate(recipeId, c.coutRevientUnit, row.piecesVendues||0);
+}
+
+// Met à jour la simulation de prix dans la fiche parfum.
+function parfumSimUpdate(recipeId, coutUnit, piecesHist){
+  const out=document.getElementById('simOut'); if(!out) return;
+  const prix=+(document.getElementById('simPrix')?.value)||0;
+  const marge=money2(prix-coutUnit);
+  const taux=prix>0?Math.round(marge/prix*1000)/10:0;
+  const sc=flavorScale(taux);
+  const projMarge = piecesHist>0 ? money2(marge*piecesHist) : null;
+  out.innerHTML=`
+    <div class="sum-box"><span>Marge / pièce à ce prix</span><b style="color:${marge>=0?'#3f7d52':'#b3261e'}">${euro(marge)} (${taux}%)</b></div>
+    <div class="sum-box"><span>Note de rentabilité</span><b><span class="tag" style="background:${sc.col};color:#fff">${sc.dot} ${sc.label}</span></b></div>
+    ${projMarge!=null?`<div class="sum-box"><span>Marge brute si volume = historique (${qty(piecesHist)} pc)</span><b style="color:${projMarge>=0?'#3f7d52':'#b3261e'}">${euro(projMarge)}</b></div>`:''}`;
+}
+
+// PRÉVISION : marge prévisionnelle d'un batch (avant production).
+async function parfumBatchSim(){
+  const [recipes, recipeItems, lots]=await Promise.all([db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()]);
+  if(!recipes.length){ toast('Crée d\'abord une recette'); return; }
+  const s=getSettings();
+  const opts=recipes.map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('');
+  openModal(`<h3>🧮 Marge prévisionnelle d'un batch</h3>
+    <div class="field"><label>Parfum</label><select id="bs_rec" onchange="parfumBatchSimUpdate()">${opts}</select></div>
+    <div class="row2">
+      <div class="field"><label>Nombre de batchs</label><input type="number" min="1" step="1" id="bs_n" value="1" oninput="parfumBatchSimUpdate()"></div>
+      <div class="field"><label>Prix de vente / pièce (€)</label><input type="number" min="0" step="0.05" id="bs_prix" value="${s.prixVenteUnitaire||2.50}" oninput="parfumBatchSimUpdate()"></div>
+    </div>
+    <div id="bs_out"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+  // stocke les données pour le calcul live
+  window._bsData={recipes, recipeItems, lots, settings:s};
+  // pré-remplit le prix avec le prix de vente moyen si dispo
+  parfumBatchSimUpdate();
+}
+function parfumBatchSimUpdate(){
+  const d=window._bsData; if(!d) return;
+  const out=document.getElementById('bs_out'); if(!out) return;
+  const rid=+val('bs_rec'); const n=Math.max(1,+val('bs_n')||1); const prix=+val('bs_prix')||0;
+  const r=d.recipes.find(x=>x.id===rid); if(!r){ out.innerHTML=''; return; }
+  const c=coutRevientRecette(r, d.recipeItems, d.lots, d.settings);
+  const pieces=round3(c.piecesUtiles*n);
+  const coutTotal=money2(c.coutRevientBatch*n);
+  const ca=money2(prix*pieces);
+  const margeBrute=money2(ca-coutTotal);
+  const chargesSoc=money2(ca*d.settings.socialGoods/100);
+  const margeNette=money2(margeBrute-chargesSoc);
+  const taux=ca>0?Math.round(margeBrute/ca*1000)/10:0;
+  const sc=flavorScale(taux);
+  out.innerHTML=`
+    <div class="sum-box"><span>Pièces vendables (${n} batch)</span><b>${qty(pieces)}${c.pertePct>0?` <span style="color:#9a8a82;font-weight:400">(−${c.pertePct}%)</span>`:''}</b></div>
+    <div class="sum-box"><span>Coût de revient total</span><b>${euro(coutTotal)}</b> <span style="color:#9a8a82;font-size:.72rem">(${euro(c.coutRevientUnit)}/pc)</span></div>
+    <div class="sum-box"><span>CA prévisionnel (tout vendu)</span><b>${euro(ca)}</b></div>
+    <div class="sum-box"><span>Marge brute prévisionnelle</span><b style="color:${margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(margeBrute)} (${taux}%)</b></div>
+    <div class="sum-box"><span>Marge nette estimée</span><b style="color:${margeNette>=0?'#3f7d52':'#b3261e'}">${euro(margeNette)}</b> <span style="color:#9a8a82;font-size:.72rem">après charges ${d.settings.socialGoods}%</span></div>
+    <div class="sum-box"><span>Note</span><b><span class="tag" style="background:${sc.col};color:#fff">${sc.dot} ${sc.label}</span></b></div>`;
+}
+
+// PRÉVISION : mix de parfums optimal pour maximiser le bénéfice attendu.
+async function parfumMixOptim(){
+  const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions]=await Promise.all([
+    db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
+    db.orders.toArray(), db.markets.toArray(), db.marketMoves.toArray(), db.productions.toArray()
+  ]);
+  const s=getSettings();
+  const data={recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings:s};
+  const A=analyzeFlavorProfitability(data);
+  const sold=A.rows.filter(r=>r.piecesVendues>0 && r.margeUnit!=null);
+  if(!sold.length){ openModal(`<h3>🎯 Mix de parfums optimal</h3><p class="note">Pas assez d'historique de vente. Enregistrez des commandes et des marchés pour estimer la demande et la marge par parfum.</p><div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`); return; }
+
+  // poids de demande = part des pièces vendues ; score = marge unitaire × demande relative
+  const totPieces=sold.reduce((x,r)=>x+r.piecesVendues,0);
+  const scored=sold.map(r=>({...r, demandePct: totPieces>0?r.piecesVendues/totPieces*100:0,
+    score: money2(r.margeUnit * (r.piecesVendues/Math.max(1,totPieces)))}))
+    .sort((a,b)=>b.score-a.score);
+
+  // recommandation pour un volume cible (ex : 300 pièces) réparti au prorata marge×demande
+  const cible=300;
+  const sumScore=scored.reduce((x,r)=>x+Math.max(0,r.margeUnit)*r.piecesVendues,0);
+  const mix=scored.map(r=>{
+    const part=sumScore>0?(Math.max(0,r.margeUnit)*r.piecesVendues)/sumScore:0;
+    const q=Math.round(cible*part);
+    return {...r, q, margeAttendue:money2(q*r.margeUnit)};
+  }).filter(m=>m.q>0);
+  const margeTot=money2(mix.reduce((x,m)=>x+m.margeAttendue,0));
+
+  openModal(`<h3>🎯 Mix de parfums optimal</h3>
+    <p class="note">Répartition conseillée pour <b>${cible} pièces</b>, pondérée par la marge unitaire et la demande historique. Maximise le bénéfice attendu pour un volume donné.</p>
+    <div class="table-wrap"><table><thead><tr><th>Parfum</th><th>Part conseillée</th><th>Marge/pc</th><th>Marge attendue</th></tr></thead><tbody>
+      ${mix.map(m=>`<tr><td><b>${esc(m.nom)}</b><br><span style="color:#9a8a82;font-size:.7rem">demande ${m.demandePct.toFixed(0)}%</span></td>
+        <td>${m.q} pc</td><td style="color:${m.margeUnit>=0?'#3f7d52':'#b3261e'}">${euro(m.margeUnit)}</td>
+        <td style="font-weight:600">${euro(m.margeAttendue)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="sum-box" style="margin-top:8px"><span><b>Marge brute attendue (${cible} pc)</b></span><b style="color:#3f7d52">${euro(margeTot)}</b></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+// PRÉVISION : gain estimé d'un marché d'après l'historique.
+async function parfumMarketGain(){
+  const [markets, marketMoves, recipes, recipeItems, lots]=await Promise.all([
+    db.markets.toArray(), db.marketMoves.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()
+  ]);
+  const clos=markets.filter(m=>m.statut==='clos');
+  if(!clos.length){ openModal(`<h3>⛺ Gain estimé d'un marché</h3><p class="note">Aucun marché clôturé dans l'historique. Clôturez au moins un marché pour obtenir une estimation.</p><div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`); return; }
+  const avgUnit=avgMacaronCost(recipes, recipeItems, lots);
+  const movesByMk={}; marketMoves.forEach(mv=>{(movesByMk[mv.marketId] ||= []).push(mv);});
+  let caTot=0, margeTot=0, venduTot=0;
+  clos.forEach(mk=>{ const T=marketTotals(mk, movesByMk[mk.id]||[], avgUnit); caTot+=T.caTotal; margeTot+=T.margeNette; venduTot+=T.vendu; });
+  const caMoy=money2(caTot/clos.length), margeMoy=money2(margeTot/clos.length), venduMoy=round3(venduTot/clos.length);
+  openModal(`<h3>⛺ Gain estimé d'un marché</h3>
+    <p class="note">Moyenne sur ${clos.length} marché(s) clôturé(s).</p>
+    <div class="sum-box"><span>CA moyen / marché</span><b>${euro(caMoy)}</b></div>
+    <div class="sum-box"><span>Pièces vendues / marché</span><b>${qty(venduMoy)}</b></div>
+    <div class="sum-box"><span>Marge nette moyenne / marché</span><b style="color:${margeMoy>=0?'#3f7d52':'#b3261e'}">${euro(margeMoy)}</b></div>
+    <p class="note">Estimation indicative : les ventes réelles dépendent de la météo, de l'affluence et du mix de parfums embarqué.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+// Réglages coûts & main-d'œuvre (raccourci vers les paramètres pertinents).
+function parfumSettingsForm(){
+  const s=getSettings();
+  const grid=s.prixParFormat||{};
+  const fmtKeys=[...new Set([...BOX_SIZES, ...Object.keys(grid).map(Number)])].filter(n=>n>0).sort((a,b)=>a-b);
+  openModal(`<h3>⚙ Prix, coûts & main-d'œuvre</h3>
+    <p class="note">Le CA réel reste toujours le CA encaissé. La grille ci-dessous (prix dégressif par format) sert à estimer un prix moyen pondéré et à détecter les incohérences de CA.</p>
+    <label style="font-weight:600;font-size:.9rem">Prix de vente par format (€ / macaron)</label>
+    <div class="row2" style="margin-top:6px">
+      ${fmtKeys.map(k=>`<div class="field"><label>Coffret ${k} macarons</label><input type="number" step="0.01" min="0" id="ps_pf_${k}" value="${grid[k]!=null?grid[k]:''}" placeholder="€/pièce"></div>`).join('')}
+    </div>
+    <input type="hidden" id="ps_pf_keys" value="${fmtKeys.join(',')}">
+    <hr style="border:none;border-top:1px solid #ece2d4;margin:12px 0">
+    <div class="field"><label class="pay-opt" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="ps_labor" ${s.laborEnabled?'checked':''}> <span>Inclure la main-d'œuvre dans le coût de revient</span></label></div>
+    <div class="field"><label>Taux horaire main-d'œuvre (€/h)</label><input type="number" step="0.5" min="0" id="ps_rate" value="${s.laborRate}"></div>
+    <p class="note">Le temps de fabrication (min/batch), les pertes et les consommables se règlent par recette.</p>
+    <div class="row2">
+      <div class="field"><label>Charges sociales — marchandise (%)</label><input type="number" step="0.1" id="ps_sg" value="${s.socialGoods}"></div>
+      <div class="field"><label>Charges sociales — prestation (%)</label><input type="number" step="0.1" id="ps_ss" value="${s.socialService}"></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="parfumSettingsSave()">Enregistrer</button></div>`);
+}
+function parfumSettingsSave(){
+  const s=getSettings();
+  const keys=(val('ps_pf_keys')||'').split(',').map(Number).filter(n=>n>0);
+  const grid={}; keys.forEach(k=>{ const v=+val('ps_pf_'+k); if(v>0) grid[k]=money2(v); });
+  if(Object.keys(grid).length) s.prixParFormat=grid;
+  // prix de repli = moyenne simple de la grille
+  const vals=Object.values(s.prixParFormat||{}).map(Number).filter(x=>x>0);
+  if(vals.length) s.prixVenteUnitaire=money2(vals.reduce((a,b)=>a+b,0)/vals.length);
+  s.laborEnabled=document.getElementById('ps_labor')?.checked||false;
+  s.laborRate=Math.max(0,+val('ps_rate')||0);
+  s.socialGoods=Math.max(0,+val('ps_sg')||0);
+  s.socialService=Math.max(0,+val('ps_ss')||0);
+  saveSettings(s);
+  closeModal(); renderParfums(); toast('Paramètres enregistrés ✓');
+}
+
 async function renderProfit(){
   const [orders, clients, recipes, recipeItems, lots] = await Promise.all([
     db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()
@@ -4167,9 +5009,10 @@ function settingsForm(){
     <div class="row2">
       ${BOX_SIZES.map(t=>`<div class="field"><label>Coffret ${t}</label><input type="number" step="0.01" id="set_pk_${t}" value="${s.packaging[t]!=null?s.packaging[t]:0}"></div>`).join('')}
     </div>
-    <p class="note" style="margin-top:8px">Types d'emballage pour le comptage avant/après en marché (nom + coût unitaire €). Laissez le nom vide pour retirer une ligne.</p>
+    <p class="note" style="margin-top:8px">Types d'emballage pour le comptage avant/après en marché : nom, coût unitaire €, et <b>capacité</b> (nb de macarons par boîte — sert à reconstituer le CA par format). Laissez le nom vide pour retirer une ligne.</p>
+    <div class="pay-row" style="font-weight:600;color:#9a8a82;font-size:.8rem"><span style="flex:1">Nom</span><span style="width:90px">€/u</span><span style="width:70px">Capacité</span></div>
     <div id="set_pktypes">
-      ${(s.packTypes||[]).concat([{nom:'',cout:''}]).map((t,i)=>`<div class="pay-row"><input id="set_pt_n_${i}" value="${esc(t.nom||'')}" placeholder="nom (ex: Boîte 6)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="${t.cout!==''&&t.cout!=null?t.cout:''}" placeholder="€/u" style="width:90px"></div>`).join('')}
+      ${(s.packTypes||[]).concat([{nom:'',cout:'',capacite:''}]).map((t,i)=>`<div class="pay-row"><input id="set_pt_n_${i}" value="${esc(t.nom||'')}" placeholder="nom (ex: Boîte 6)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="${t.cout!==''&&t.cout!=null?t.cout:''}" placeholder="€/u" style="width:90px"><input type="number" step="1" min="0" id="set_pt_cap_${i}" value="${t.capacite!==''&&t.capacite!=null?t.capacite:''}" placeholder="pc" style="width:70px"></div>`).join('')}
     </div>
     <input type="hidden" id="set_pt_n" value="${(s.packTypes||[]).length+1}">
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveSettingsForm()">Enregistrer</button></div>`);
@@ -4181,7 +5024,7 @@ function saveSettingsForm(){
   s.packaging={}; BOX_SIZES.forEach(t=>{ s.packaging[t]=money2(+val('set_pk_'+t)||0); });
   // types d'emballage (on lit toutes les lignes, on garde celles avec un nom)
   const n=+val('set_pt_n')||0; const pts=[];
-  for(let i=0;i<n;i++){ const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue; pts.push({nom, cout:money2(+val('set_pt_c_'+i)||0)}); }
+  for(let i=0;i<n;i++){ const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue; pts.push({nom, cout:money2(+val('set_pt_c_'+i)||0), capacite:Math.max(0,+val('set_pt_cap_'+i)||0)}); }
   s.packTypes=pts.length?pts:SETTINGS_DEFAULTS.packTypes;
   saveSettings(s);
   closeModal();
@@ -4300,7 +5143,15 @@ async function marketDetail(id){
     <div class="sum-box"><span>Embarqué</span><b>${qty(T.embarque)}</b></div>
     <div class="sum-box"><span>Vendu</span><b>${qty(T.vendu)}</b></div>
     <div class="sum-box"><span>Retour / Don / Perte</span><b>${qty(T.retour)} / ${qty(T.don)} / ${qty(T.perte)}</b></div>
-    ${clos?`<div class="sum-box"><span>CA encaissé</span><b>${euro(T.caTotal)}</b></div>
+    ${clos?`<div class="sum-box"><span>CA encaissé (saisi)</span><b>${euro(T.caTotal)}</b></div>
+      ${(()=>{ const s=getSettings(); const bd=marketFormatBreakdown(mk, s);
+        let caTheo, lbl;
+        if(bd.hasData){ caTheo=bd.caTheo; lbl=`CA théorique (${bd.coffrets} coffret(s), prix moy. ${euro(bd.prixMoyen)})`; }
+        else { const pu=+s.prixVenteUnitaire||0; caTheo=money2(T.vendu*pu); lbl=`CA théorique (${qty(T.vendu)} × ${euro(pu)})`; }
+        const ecart=money2(T.caTotal-caTheo);
+        return `<div class="sum-box"><span>${lbl}</span><b>${euro(caTheo)}</b></div>
+        <div class="sum-box"><span>Écart encaissé − théorique</span><b style="color:${Math.abs(ecart)<0.01?'#3f7d52':(ecart<0?'var(--red,#b3261e)':'#d98324')}">${ecart>0?'+':''}${euro(ecart)}${Math.abs(ecart)>=0.5?' ⚠':' ✓'}</b></div>
+        ${!bd.hasData?'<div class="note" style="margin:2px 0 0">Renseignez le comptage d\'emballages (capacités) pour un CA théorique reconstitué par format.</div>':''}`; })()}
       <div class="sum-box"><span>Espèces / CB / Autre</span><b>${euro(T.caEspeces)} / ${euro(T.caCB)} / ${euro(T.caAutre)}</b></div>
       <div class="sum-box"><span>Répartition</span><b>CB ${T.pctCB}% · Espèces ${T.pctEspeces}%</b></div>
       <div class="sum-box"><span>Taux d'invendus / pertes</span><b>${T.tauxInvendus}% / ${T.tauxPerte}%</b></div>
@@ -4423,18 +5274,25 @@ async function marketCloseForm(marketId){
   const mk=await db.markets.get(marketId);
   const moves=await db.marketMoves.where('marketId').equals(marketId).toArray();
   const T=marketTotals(mk, moves);
+  const s=getSettings();
+  const bd=marketFormatBreakdown(mk, s);
+  // CA théorique : priorité au CA reconstitué par formats (comptage emballages), sinon vendu × prix moyen pondéré
+  const prixMoyen=(computeAvgSellPrice({orders:await db.orders.toArray(), markets:await db.markets.toArray(), settings:s}).prix)||0;
+  const caTheo = bd.hasData ? bd.caTheo : money2(T.vendu*prixMoyen);
+  const theoSrc = bd.hasData ? `${bd.coffrets} coffret(s) comptés` : `${qty(T.vendu)} × ${euro(prixMoyen)}`;
   openModal(`<h3>Clôture du marché</h3>
     <p class="note">Quantité vendue calculée : <b>${qty(T.vendu)}</b> macaron(s). Saisissez les encaissements par mode de paiement.</p>
+    ${caTheo>0?`<div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>CA théorique : <b>${euro(caTheo)}</b> (${theoSrc}).${bd.hasData?'':' Astuce : renseignez le comptage d\'emballages pour un CA reconstitué par format.'} <span class="act" onclick="document.getElementById('mc_esp').value=${caTheo};document.getElementById('mc_cb').value='';document.getElementById('mc_autre').value='';marketCloseSummary(${T.vendu},${caTheo})">Pré-remplir en espèces</span></div></div>`:''}
     <div class="field"><label>Espèces (€)</label><input type="number" step="0.01" min="0" id="mc_esp" value="${(mk.ca&&mk.ca.especes)||''}"></div>
     <div class="field"><label>Carte bancaire (€)</label><input type="number" step="0.01" min="0" id="mc_cb" value="${(mk.ca&&mk.ca.cb)||''}"></div>
     <div class="field"><label>Autres (€) — optionnel</label><input type="number" step="0.01" min="0" id="mc_autre" value="${(mk.ca&&mk.ca.autre)||''}"></div>
     <div class="sum-box" id="mc_summary"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Annuler</button>
       <button class="btn gold" onclick="marketDoClose(${marketId},${T.vendu})">Clôturer</button></div>`);
-  ['mc_esp','mc_cb','mc_autre'].forEach(idf=>{ const el=document.getElementById(idf); if(el) el.oninput=()=>marketCloseSummary(T.vendu); });
-  marketCloseSummary(T.vendu);
+  ['mc_esp','mc_cb','mc_autre'].forEach(idf=>{ const el=document.getElementById(idf); if(el) el.oninput=()=>marketCloseSummary(T.vendu, caTheo); });
+  marketCloseSummary(T.vendu, caTheo);
 }
-function marketCloseSummary(vendu){
+function marketCloseSummary(vendu, caTheo){
   const esp=+(document.getElementById('mc_esp')?.value)||0, cb=+(document.getElementById('mc_cb')?.value)||0, au=+(document.getElementById('mc_autre')?.value)||0;
   const tot=addMoney(esp,cb,au); const box=document.getElementById('mc_summary'); if(!box) return;
   const ppu = vendu>0 ? money2(tot/vendu) : 0;
@@ -4444,7 +5302,7 @@ function marketCloseSummary(vendu){
   if(vendu>0 && tot===0) warn=`<div style="color:var(--red,#b3261e);margin-top:4px">⚠ ${qty(vendu)} vendus mais 0 € encaissé.</div>`;
   box.innerHTML=`<div style="display:flex;justify-content:space-between"><span>Total encaissé</span><b>${euro(tot)}</b></div>
     <div style="display:flex;justify-content:space-between"><span>CB / Espèces</span><b>${tot>0?Math.round(cb/tot*100):0}% / ${tot>0?Math.round(esp/tot*100):0}%</b></div>
-    ${vendu>0?`<div style="display:flex;justify-content:space-between"><span>Prix moyen / macaron</span><b>${euro(ppu)}</b></div>`:''}${warn}`;
+    ${vendu>0?`<div style="display:flex;justify-content:space-between"><span>Prix moyen / macaron</span><b>${euro(ppu)}</b></div>`:''}${(()=>{ if(!(caTheo>0)) return ''; const ec=money2(tot-caTheo); return `<div style="display:flex;justify-content:space-between"><span>vs CA théorique (${euro(caTheo)})</span><b style="color:${Math.abs(ec)<0.01?'#3f7d52':(ec<0?'var(--red,#b3261e)':'#d98324')}">${ec>0?'+':''}${euro(ec)}</b></div>`; })()}${warn}`;
 }
 async function marketDoClose(marketId, vendu){
   const esp=money2(+val('mc_esp')||0), cb=money2(+val('mc_cb')||0), au=money2(+val('mc_autre')||0);
@@ -4454,33 +5312,57 @@ async function marketDoClose(marketId, vendu){
   toast('Marché clôturé ✓'); marketDetail(marketId);
 }
 
-// Comptage des emballages avant/après le marché : le coût consommé = Σ((avant−après) × coût unitaire).
+// Comptage des emballages avant/après le marché : coût consommé = Σ((avant−après) × coût unitaire).
+// La capacité (nb macarons/boîte) permet aussi de reconstituer le CA par format et le prix moyen réel.
 async function marketPackagingForm(marketId){
   const mk=await db.markets.get(marketId); if(!mk) return;
   const types=getSettings().packTypes||[];
-  // initialise depuis l'existant ou les types paramétrés
-  let pk = (mk.packaging && mk.packaging.length) ? mk.packaging
-    : types.map(t=>({nom:t.nom, cost:+t.cout||0, before:'', after:''}));
+  const capOf=nom=>{ const t=types.find(x=>x.nom===nom); return t&&t.capacite!=null?+t.capacite:0; };
+  // initialise depuis l'existant ou les types paramétrés (en récupérant la capacité)
+  let pk = (mk.packaging && mk.packaging.length) ? mk.packaging.map(p=>({...p, capacite:(p.capacite!=null?p.capacite:capOf(p.nom))}))
+    : types.map(t=>({nom:t.nom, cost:+t.cout||0, capacite:+t.capacite||0, before:'', after:''}));
   // fusionne d'éventuels nouveaux types paramétrés non encore présents
-  types.forEach(t=>{ if(!pk.some(p=>p.nom===t.nom)) pk.push({nom:t.nom, cost:+t.cout||0, before:'', after:''}); });
+  types.forEach(t=>{ if(!pk.some(p=>p.nom===t.nom)) pk.push({nom:t.nom, cost:+t.cout||0, capacite:+t.capacite||0, before:'', after:''}); });
   const rows = pk.map((p,i)=>`<div class="pay-row" style="flex-wrap:wrap;align-items:center">
-      <span style="flex:1;min-width:130px">${esc(p.nom)} <span class="note">(${euro(p.cost)}/u)</span></span>
-      <input type="number" step="1" min="0" id="pk_b_${i}" value="${p.before!==''&&p.before!=null?p.before:''}" placeholder="avant" style="width:80px">
-      <input type="number" step="1" min="0" id="pk_a_${i}" value="${p.after!==''&&p.after!=null?p.after:''}" placeholder="après" style="width:80px">
+      <span style="flex:1;min-width:130px">${esc(p.nom)} <span class="note">(${euro(p.cost)}/u${p.capacite>0?` · ${p.capacite} pc`:''})</span></span>
+      <input type="number" step="1" min="0" id="pk_b_${i}" value="${p.before!==''&&p.before!=null?p.before:''}" placeholder="avant" style="width:80px" oninput="marketPkBreakdown()">
+      <input type="number" step="1" min="0" id="pk_a_${i}" value="${p.after!==''&&p.after!=null?p.after:''}" placeholder="après" style="width:80px" oninput="marketPkBreakdown()">
     </div>`).join('');
   openModal(`<h3>Comptage emballages</h3>
     <p class="note">Saisissez le stock d'emballages embarqué (avant) et rapporté (après). Le coût consommé = (avant − après) × coût unitaire. Les types et coûts se règlent dans ⚙ Paramètres.</p>
     <div class="pay-row" style="font-weight:600;color:#9a8a82"><span style="flex:1;min-width:130px">Type</span><span style="width:80px">Avant</span><span style="width:80px">Après</span></div>
     ${rows||'<p class="note">Aucun type d\'emballage paramétré.</p>'}
     <input type="hidden" id="pk_n" value="${pk.length}">
+    <div class="sum-box" id="pk_breakdown" style="margin-top:8px"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
       <button class="btn" onclick="marketDoPackaging(${marketId})">Enregistrer le comptage</button></div>`);
-  // stocke les noms/coûts pour la sauvegarde
+  // stocke les noms/coûts/capacités pour la sauvegarde
   window._pkDraft = pk;
+  marketPkBreakdown();
+}
+// Recalcule en direct le CA par format reconstitué depuis le comptage d'emballages.
+function marketPkBreakdown(){
+  const box=document.getElementById('pk_breakdown'); if(!box) return;
+  const pk=window._pkDraft||[]; const s=getSettings();
+  let caTheo=0, pieces=0, coffrets=0; const parts=[];
+  pk.forEach((p,i)=>{
+    const cap=+p.capacite||0; if(cap<=0) return;
+    const b=+val('pk_b_'+i)||0, a=+val('pk_a_'+i)||0; const n=Math.max(0,b-a);
+    if(n<=0) return;
+    const pu=prixParPiece(cap, s); const ca=money2(cap*n*pu);
+    caTheo=money2(caTheo+ca); pieces+=cap*n; coffrets+=n;
+    parts.push(`${n}× ${esc(p.nom)} = ${euro(ca)}`);
+  });
+  if(pieces<=0){ box.innerHTML='<span class="note">Renseignez les capacités (⚙ Paramètres) et le comptage pour reconstituer le CA par format.</span>'; return; }
+  const prixMoy=money2(caTheo/pieces);
+  box.innerHTML=`<div style="display:flex;justify-content:space-between"><span>Coffrets vendus / pièces</span><b>${coffrets} / ${pieces}</b></div>
+    <div style="display:flex;justify-content:space-between"><span>CA reconstitué (formats)</span><b>${euro(caTheo)}</b></div>
+    <div style="display:flex;justify-content:space-between"><span>Prix moyen pondéré</span><b>${euro(prixMoy)}</b></div>
+    <div class="note" style="margin-top:4px">${parts.join(' · ')}</div>`;
 }
 async function marketDoPackaging(marketId){
   const pk=(window._pkDraft||[]).map((p,i)=>({
-    nom:p.nom, cost:+p.cost||0,
+    nom:p.nom, cost:+p.cost||0, capacite:+p.capacite||0,
     before: val('pk_b_'+i)!==''?(+val('pk_b_'+i)||0):'',
     after: val('pk_a_'+i)!==''?(+val('pk_a_'+i)||0):''
   }));
@@ -5414,7 +6296,7 @@ async function renderLabels(){
   const linkCount = id => oitems.filter(it=>it.orderId===id).length;
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 30 mm — Phomemo D520BT (AirPrint)</p></div></div>
+   <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 25 mm — Phomemo D520BT (AirPrint)</p></div></div>
    <div class="banner">▤ <div>Étiquettes noir sur blanc, sans décoration, optimisées pour l'impression thermique. Chaque étiquette porte : produit, lot, DLC, date, et le QR de traçabilité. Choisis un nombre de copies pour imprimer en lot, ou imprime toutes les étiquettes d'une commande.</div></div>
 
    ${orders.length?`<div class="panel"><h2>Imprimer les étiquettes d'une commande</h2>
@@ -5456,9 +6338,9 @@ async function renderLabels(){
 }
 
 /* ============================================================
-   IMPRESSION D'ÉTIQUETTES THERMIQUES 50×30 mm via AirPrint
+   IMPRESSION D'ÉTIQUETTES THERMIQUES 50×25 mm via AirPrint
    Architecture : buildLabelData (données) → renderLabelHTML (1 étiquette)
-   → printLabelSheet (feuille de N étiquettes, 1 par page 50×30).
+   → printLabelSheet (feuille de N étiquettes, 1 par page 50×25).
    Web Bluetooth volontairement écarté : non supporté par Safari iOS.
    Un backend Bluetooth/ESC-POS pourra se brancher ici plus tard (Android/desktop).
    ============================================================ */
@@ -5479,39 +6361,41 @@ async function buildLabelData(prodId){
     qr: tmp.toDataURL('image/png')
   };
 }
-// HTML d'UNE étiquette (50×30 mm, noir sur blanc, sans décoration).
+// HTML d'UNE étiquette (50×25 mm, noir sur blanc, QR à gauche / infos à droite).
 function renderLabelHTML(d){
   return `<div class="lab">
      <div class="q"><img src="${d.qr}"></div>
      <div class="t">
        <div class="prod">${esc(d.produit)}</div>
-       <div class="row">Lot : ${esc(d.lot)}</div>
-       <div class="dlc">DLC : ${esc(d.dlc)}</div>
-       <div class="row">Fab. : ${esc(d.fab)}</div>
+       <div class="row">Lot ${esc(d.lot)}</div>
+       <div class="dlc">DLC ${esc(d.dlc)}</div>
+       <div class="row">Fab. ${esc(d.fab)}</div>
      </div>
    </div>`;
 }
 // Ouvre une fenêtre d'impression contenant une feuille de plusieurs étiquettes.
 // `labels` = tableau de données d'étiquette (déjà multiplié par le nombre de copies).
+// Format Phomemo D520BT : 50 mm (longueur) × 25 mm (hauteur), QR à gauche, texte à droite.
 function printLabelSheet(labels, titre){
   if(!labels || !labels.length){ toast('Aucune étiquette à imprimer'); return; }
-  const win = window.open('', '_blank', 'width=420,height=320');
+  const win = window.open('', '_blank', 'width=420,height=300');
   if(!win){ toast('Autorise les fenêtres pour imprimer'); return; }
   win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(titre||'Étiquettes')}</title>
    <style>
-     @page { size: 50mm 30mm; margin: 0; }
+     @page { size: 50mm 25mm; margin: 0; }
      * { margin:0; padding:0; box-sizing:border-box; }
      html,body { background:#fff; }
-     .lab { width:50mm; height:30mm; background:#fff; color:#000; padding:1.5mm;
-            font-family:Arial,Helvetica,sans-serif; display:flex; gap:1.5mm; align-items:center;
-            page-break-after:always; break-after:page; }
+     .lab { width:50mm; height:25mm; background:#fff; color:#000; padding:1.2mm;
+            font-family:Arial,Helvetica,sans-serif; display:flex; gap:1.2mm; align-items:center;
+            page-break-after:always; break-after:page; overflow:hidden; }
      .lab:last-child { page-break-after:auto; break-after:auto; }
-     .lab .q { width:16mm; height:16mm; flex-shrink:0; }
-     .lab .q img { width:16mm; height:16mm; display:block; image-rendering:pixelated; }
-     .lab .t { flex:1; min-width:0; line-height:1.2; }
-     .lab .prod { font-size:3mm; font-weight:bold; }
-     .lab .row { font-size:2.5mm; }
-     .lab .dlc { font-size:2.8mm; font-weight:bold; }
+     /* QR carré calé sur la hauteur utile (25 − 2×1.2 padding ≈ 22.6 mm) */
+     .lab .q { width:21mm; height:21mm; flex-shrink:0; }
+     .lab .q img { width:21mm; height:21mm; display:block; image-rendering:pixelated; }
+     .lab .t { flex:1; min-width:0; line-height:1.15; overflow:hidden; }
+     .lab .prod { font-size:2.9mm; font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+     .lab .row { font-size:2.3mm; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+     .lab .dlc { font-size:2.7mm; font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
    </style></head><body>
    ${labels.map(renderLabelHTML).join('')}
    <script>window.onload=function(){setTimeout(function(){window.print();},300);};window.onafterprint=function(){window.close();};<\/script>
