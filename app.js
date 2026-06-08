@@ -293,7 +293,7 @@ function lineChart(series, opt){
   const all = series.flatMap(s=>s.points);
   if(!all.length) return '<div class="empty">Pas encore de données.</div>';
   // axe X = union triée des clés
-  const xs = [...new Set(all.map(p=>p.x))].sort();
+  const xs = [...new Set(all.map(p=>p.x))].sort((a,b)=>String(a).localeCompare(String(b)));
   const xIdx = {}; xs.forEach((x,i)=>xIdx[x]=i);
   const xPos = i => xs.length<=1 ? pad.l+(W-pad.l-pad.r)/2 : pad.l + i*(W-pad.l-pad.r)/(xs.length-1);
   let ymin = Math.min(...all.map(p=>p.y)), ymax = Math.max(...all.map(p=>p.y));
@@ -316,7 +316,7 @@ function lineChart(series, opt){
   let paths='';
   series.forEach(s=>{
     const col = s.color||'#AA7C39';
-    const pts = s.points.slice().sort((a,b)=>a.x.localeCompare(b.x));
+    const pts = s.points.slice().sort((a,b)=>String(a.x).localeCompare(String(b.x)));
     if(!pts.length) return;
     const d = pts.map((p,i)=>`${i?'L':'M'}${xPos(xIdx[p.x]).toFixed(1)},${yPos(p.y).toFixed(1)}`).join(' ');
     paths+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round"/>`;
