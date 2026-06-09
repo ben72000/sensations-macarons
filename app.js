@@ -235,13 +235,35 @@ function saveSettings(s){ localStorage.setItem('sm_settings', JSON.stringify(s))
 // prochaine réception, tu modifieras les prix dans Paramètres et ils ne seront plus écrasés.
 function migratePackaging202511(){
   try{
-    if(localStorage.getItem('sm_pkg_migr_20251128')==='done') return;
+    if(localStorage.getItem('sm_pkg_migr_20251128_v2')==='done') return;
     const raw=JSON.parse(localStorage.getItem('sm_settings')||'{}');
-    raw.packaging = { 6:1.26, 8:2.18, 16:1.90, 25:2.32 };
-    raw.packagingDate = '2025-11-28';
-    localStorage.setItem('sm_settings', JSON.stringify(raw));
-    localStorage.setItem('sm_pkg_migr_20251128','done');
+    const cur=raw.packaging||{};
+    // N'applique les nouveaux tarifs QUE si l'utilisateur n'a rien personnalisé depuis :
+    // soit aucun tarif enregistré, soit exactement les anciens défauts (0.50/0.60/1.00/1.50).
+    const estAncienDefaut = (cur[6]==0.50&&cur[8]==0.60&&cur[16]==1.00&&cur[25]==1.50);
+    const estVide = !cur || Object.keys(cur).length===0;
+    if(estVide || estAncienDefaut){
+      raw.packaging = { 6:1.26, 8:2.18, 16:1.90, 25:2.32 };
+      raw.packagingDate = '2025-11-28';
+      localStorage.setItem('sm_settings', JSON.stringify(raw));
+    }
+    localStorage.setItem('sm_pkg_migr_20251128_v2','done');
   }catch(e){ console.error('migratePackaging', e); }
+}
+// Applique les tarifs d'emballage du 28/11/2025, sous contrôle de l'utilisateur (bouton Paramètres).
+// Écrit directement dans les réglages (fiable, indépendant de la migration automatique).
+function applyPackaging202511(){
+  const tarifs={6:1.26, 8:2.18, 16:1.90, 25:2.32};
+  // 1) met à jour les champs visibles si le formulaire est ouvert
+  Object.keys(tarifs).forEach(t=>{ const el=document.getElementById('set_pk_'+t); if(el) el.value=tarifs[t]; });
+  // 2) enregistre dans les réglages (avec la date de référence)
+  const s=getSettings();
+  s.packaging=Object.assign({}, s.packaging, tarifs);
+  s.packagingDate='2025-11-28';
+  saveSettings(s);
+  localStorage.setItem('sm_pkg_migr_20251128_v2','done');   // évite que la migration auto ne revienne dessus
+  toast('Tarifs emballage du 28/11/2025 appliqués ✓');
+  if(typeof settingsForm==='function') settingsForm();   // rouvre le formulaire avec les valeurs à jour
 }
 // Coût emballage d'un coffret selon sa taille (commandes) — tarif paramétré (repli).
 function packagingCost(taille){ const s=getSettings(); return money2(s.packaging[taille]!=null?s.packaging[taille]:0); }
@@ -7795,6 +7817,7 @@ function settingsForm(){
     <div class="row2">
       ${BOX_SIZES.map(t=>`<div class="field"><label>Coffret ${t}</label><input type="number" step="0.01" id="set_pk_${t}" value="${s.packaging[t]!=null?s.packaging[t]:0}"></div>`).join('')}
     </div>
+    <button type="button" class="btn ghost sm" style="margin-top:6px" onclick="applyPackaging202511()" title="Remplit les champs avec les tarifs reçus le 28/11/2025">↺ Appliquer les tarifs du 28/11/2025 (6→1,26 · 8→2,18 · 16→1,90 · 25→2,32)</button>
     <p class="note" style="margin-top:8px">Types d'emballage pour le comptage avant/après en marché : nom, coût unitaire €, et <b>capacité</b> (nb de macarons par boîte — sert à reconstituer le CA par format). Laissez le nom vide pour retirer une ligne.</p>
     <div class="pay-row" style="font-weight:600;color:#9a8a82;font-size:.8rem"><span style="flex:1">Nom</span><span style="width:90px">€/u</span><span style="width:70px">Capacité</span></div>
     <div id="set_pktypes">
@@ -9105,7 +9128,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v147';
+const APP_VERSION = 'v149';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
