@@ -326,44 +326,46 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
   .labels-grid{grid-template-columns:repeat(2,1fr)}
 }
 /* ---- Pointeuse de laboratoire (time tracker global) ---- */
-#timeTracker{position:fixed;z-index:45;left:246px;bottom:18px;
-  display:none;flex-direction:column;gap:6px;
-  background:#fff;border:1px solid rgba(170,124,57,.18);border-radius:14px;
-  padding:8px;box-shadow:0 8px 26px rgba(82,37,47,.18);
-  font-family:'Outfit',system-ui,sans-serif;width:300px;max-width:calc(100vw - 270px)}
-#timeTracker.run{display:flex}
-#timeTracker:not(.run){display:flex}
-#timeTracker .tt-list{display:flex;flex-direction:column;gap:6px}
-#timeTracker .tt-list:empty{display:none}
-#timeTracker .tt-chip{display:flex;align-items:center;gap:8px;background:var(--paper,#f7f1e7);
-  border:1px solid #ece2d4;border-radius:11px;padding:6px 8px}
-#timeTracker .tt-chip.paused{opacity:.7}
-#timeTracker .tt-dot{width:9px;height:9px;border-radius:50%;background:var(--red);flex-shrink:0;animation:ttPulse 1.4s ease-in-out infinite}
-#timeTracker .tt-chip.paused .tt-dot{background:var(--caramel);animation:none}
-@keyframes ttPulse{0%,100%{opacity:1}50%{opacity:.35}}
-#timeTracker .tt-info{display:flex;flex-direction:column;line-height:1.1;min-width:0;flex:1}
-#timeTracker .tt-lbl{font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:#9a8a82;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#timeTracker .tt-time{font-family:'Fraunces',serif;font-size:1rem;font-weight:600;color:var(--bordeaux);font-variant-numeric:tabular-nums}
-#timeTracker .tt-actions{display:flex;align-items:center;gap:8px}
-#timeTracker .tt-btn{appearance:none;-webkit-appearance:none;border:none;cursor:pointer;
-  font-family:inherit;font-weight:600;font-size:.84rem;color:#fff;padding:9px 14px;border-radius:10px;
-  white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:.15s}
-#timeTracker .tt-actions .tt-btn.start{flex:1}
-#timeTracker .tt-btn.start{background:var(--green)}#timeTracker .tt-btn.start:active{background:#356b46}
-#timeTracker .tt-btn.stop{background:var(--red);padding:8px 11px}#timeTracker .tt-btn.stop:active{background:#933a30}
-#timeTracker .tt-pause{appearance:none;-webkit-appearance:none;cursor:pointer;
-  border:1.5px solid #e0d5c5;background:#fff;color:var(--bordeaux);
-  font-size:.9rem;width:34px;height:34px;border-radius:9px;flex-shrink:0;
-  -webkit-tap-highlight-color:transparent;transition:.15s}
-#timeTracker .tt-pause:active{background:var(--creme-2)}
-#timeTracker .tt-chip.paused .tt-pause{border-color:var(--caramel);color:var(--caramel);background:var(--creme-2)}
-#timeTracker .tt-log{appearance:none;-webkit-appearance:none;border:none;background:transparent;cursor:pointer;
-  font-size:1.05rem;color:#9a8a82;padding:4px 6px;border-radius:8px;-webkit-tap-highlight-color:transparent}
-#timeTracker .tt-log:active{background:var(--creme-2)}
+/* ===== POINTEUSE — feu tricolore flottant déplaçable + fouets animés ===== */
+#timeTracker{position:fixed;z-index:46;left:246px;bottom:18px;
+  display:flex;flex-direction:column;align-items:center;gap:7px;
+  background:#2c2420;border:2px solid #1c1714;border-radius:18px;
+  padding:9px 8px;box-shadow:0 10px 30px rgba(0,0,0,.32);
+  font-family:'Outfit',system-ui,sans-serif;touch-action:none;user-select:none;cursor:grab}
+#timeTracker.dragging{cursor:grabbing;opacity:.92}
+#timeTracker .tt-grip{font-size:.7rem;color:#8a7d70;letter-spacing:.15em;line-height:1}
+#timeTracker .tt-light{width:46px;height:46px;border-radius:50%;border:none;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;position:relative;transition:.15s;
+  display:flex;align-items:center;justify-content:center;font-size:1.25rem}
+#timeTracker .tt-light.green{background:radial-gradient(circle at 35% 30%,#7bd88f,#2e9c4d);box-shadow:0 0 14px rgba(46,156,77,.7)}
+#timeTracker .tt-light.green:active{transform:scale(.92)}
+#timeTracker .tt-light.dim{background:#3a322c;box-shadow:inset 0 0 0 1px #4a403a;cursor:default}
+#timeTracker .tt-light.dim span{opacity:.25}
+/* Fouets flottants : un par chrono actif */
+#ttWhisks{position:fixed;z-index:45;left:300px;bottom:24px;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+#ttWhisks .tt-whisk{pointer-events:auto;display:flex;align-items:center;gap:8px;
+  background:#fff;border:1px solid rgba(170,124,57,.25);border-radius:13px;padding:6px 10px;
+  box-shadow:0 6px 20px rgba(82,37,47,.2);font-family:'Outfit',system-ui,sans-serif;cursor:grab;touch-action:none}
+#ttWhisks .tt-whisk.dragging{cursor:grabbing;opacity:.92}
+#ttWhisks .tt-whisk.paused{opacity:.72}
+#ttWhisks .whisk-ico{font-size:1.4rem;display:inline-block;transform-origin:50% 18%;animation:whiskBeat .5s ease-in-out infinite}
+#ttWhisks .tt-whisk.paused .whisk-ico{animation:none;filter:grayscale(.6)}
+@keyframes whiskBeat{0%,100%{transform:rotate(-18deg)}50%{transform:rotate(18deg)}}
+#ttWhisks .whisk-info{display:flex;flex-direction:column;line-height:1.15;min-width:0}
+#ttWhisks .whisk-lbl{font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;color:#9a8a82;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+#ttWhisks .whisk-time{font-family:'Fraunces',serif;font-size:.95rem;font-weight:600;color:var(--bordeaux);font-variant-numeric:tabular-nums}
+/* Mini-feu pause/stop d'un fouet (affiché au clic) */
+#ttWhisks .whisk-ctrl{display:none;gap:5px;margin-left:4px}
+#ttWhisks .tt-whisk.open .whisk-ctrl{display:flex}
+#ttWhisks .whisk-ctrl button{appearance:none;-webkit-appearance:none;border:none;cursor:pointer;
+  width:30px;height:30px;border-radius:50%;color:#fff;font-size:.8rem;-webkit-tap-highlight-color:transparent}
+#ttWhisks .whisk-ctrl .wc-pause{background:radial-gradient(circle at 35% 30%,#f5c45e,#d8932a)}
+#ttWhisks .whisk-ctrl .wc-stop{background:radial-gradient(circle at 35% 30%,#ef7e6e,#c23a2a)}
+#ttWhisks .whisk-log{appearance:none;-webkit-appearance:none;border:none;background:transparent;cursor:pointer;
+  font-size:.95rem;color:#9a8a82;padding:2px 4px}
 @media(max-width:820px){
-  /* iPhone : barre pleine largeur juste au-dessus de la tabbar */
-  #timeTracker{left:8px;right:8px;width:auto;max-width:none;
-    bottom:calc(70px + env(safe-area-inset-bottom));}
+  #timeTracker{left:auto;right:12px;bottom:calc(78px + env(safe-area-inset-bottom))}
+  #ttWhisks{left:12px;right:auto;bottom:calc(82px + env(safe-area-inset-bottom))}
 }
 /* ---- Module Préparation / Picking (gros blocs tactiles) ---- */
 .pick-tabs{display:flex;gap:8px;margin-bottom:16px}
@@ -521,6 +523,16 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .cmd-period-week{display:inline-block;color:#7a6a62;background:var(--creme,#F5F0E8);font-weight:600;
   font-size:.7rem;padding:1px 8px;border-radius:6px;margin:0 0 4px 5px;border-left:3px solid var(--caramel,#AA7C39)}
 .table-wrap tr.cmd-new-month td{border-top:2px solid var(--caramel,#AA7C39)}
+/* STOCK PAR PARFUM : pastilles colorées (couleurs identiques à la boutique) */
+.flavor-stock-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:9px}
+.flavor-stock{display:flex;align-items:center;gap:10px;padding:11px 13px;border:1px solid var(--hair);
+  border-radius:11px;background:#fff}
+.flavor-stock .fs-pastille{width:20px;height:20px;border-radius:50%;flex:none;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
+.flavor-stock .fs-nom{flex:1;font-weight:600;font-size:.9rem;color:var(--bordeaux)}
+.flavor-stock .fs-qte{font-size:1.05rem;color:var(--bordeaux)}
+.flavor-stock.fs-empty{opacity:.5;background:#faf7f2}
+.flavor-stock .fs-zero{color:#b0a193;font-weight:600}
 /* ---- Mode discret : floutage des noms sensibles ---- */
 .sheet-privacy{width:100%;margin-bottom:12px;appearance:none;-webkit-appearance:none;cursor:pointer;
   border:1.5px solid var(--bordeaux);background:#fff;color:var(--bordeaux);font-family:inherit;
@@ -736,6 +748,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 
 <!-- Pointeuse de laboratoire (time tracker global, persistant entre les vues) -->
 <div id="timeTracker" aria-live="polite"></div>
+<div id="ttWhisks" aria-live="polite"></div>
 
 <script src="dexie.min.js"></script>
 <script src="qr.min.js"></script>

@@ -613,7 +613,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -840,7 +840,7 @@ async function renderDash(){
    <div class="cards">
      <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
      <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">∑</div><div class="lbl">CA total</div><div class="val">${euro(caTotal)}</div><div class="sub">depuis le début ›</div></div>
-     <div class="card clickable" onclick="goView('productions')" title="Voir les productions"><div class="corner">⚙</div><div class="lbl">Macarons en stock</div><div class="val">${qtyP(finis)}</div><div class="sub">${productions.length} batch(s) ›</div></div>
+     <div class="card clickable" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
      <div class="card clickable" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
    </div>
    <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
@@ -2414,9 +2414,8 @@ async function prodSetTermine(id){
      <input type="radio" name="f_destEnd" value="${c.key}">
      <b class="opt-emp" style="background:${c.freezer?'#3b6ea5':(c.key==='ambiant'?'#caa23b':'#6aa3a0')}">${c.lettre}</b>
      <span class="opt-main"><b>${c.icon} ${esc(c.nom)}</b><br><span class="opt-sub">${c.freezer?'+4 mois':(c.key==='ambiant'?'sans DLC frigo (coques sèches)':'+7 j')}</span></span></label>`).join('');
-  const _nomProd = p.libre ? (p.produitLibre||'(sans nom)') : ((p.recipeId!=null ? (await db.recipes.get(p.recipeId)) : null)?.produitNom || '?');
   openModal(`<h3>✓ Terminer la production</h3>
-    <p style="margin-bottom:8px"><b>${esc(_nomProd)}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${comp!=='complet'?` · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp}</span>`:''}</p>
+    <p style="margin-bottom:8px"><b>${esc((await db.recipes.get(p.recipeId))?.produitNom||'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${comp!=='complet'?` · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp}</span>`:''}</p>
     <div class="field"><label>Emplacement de rangement *</label>
       <div class="opt-table" id="prodDestEnd">${rows||'<p class="note">Aucun emplacement disponible (recongélation interdite).</p>'}</div></div>
     ${decongele?'<p class="note" style="color:#b3261e">⚠️ Déjà décongelé : le congélateur est désactivé (recongélation interdite).</p>':''}
@@ -2721,13 +2720,49 @@ async function saveProd(){
   try{
     await enregistrerProduction(recipeId, qTh, qRe, date, lot, '', '',
       {composant, lotBase:cleanBase, facteurQte});
-    closeModal(); renderProductions();
+    renderProductions();
     const lbl = composant==='coques'?'Coques':composant==='ganache'?'Ganache':'Production';
     const extra = composant==='coques'?` (${qty(qTh)} coques pour ${qty(qteTheorique)} macarons)`:'';
-    toast(`${lbl} démarrée ✓${extra} — choisis l'emplacement à la fin (✓ Terminer)`);
+    toast(`${lbl} démarrée ✓${extra}`);
+    // Affiche aussitôt la fiche recette recalculée aux quantités du batch, pour produire.
+    await ficheRecetteProduction(recipeId, facteurQte, composant, lot);
   }catch(err){
     toast(err.message || 'Erreur production');
   }
+}
+// Fiche recette recalculée aux quantités d'un batch (affichée juste après le lancement).
+// Met à l'échelle chaque ingrédient selon le nombre de macarons produits, en ne montrant
+// que les ingrédients du composant concerné (coque / ganache) si la recette est étiquetée.
+async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
+  const rec = recipeId!=null ? await db.recipes.get(recipeId) : null;
+  if(!rec){ closeModal(); return; }
+  const allItems = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
+  const mats = await db.materials.toArray();
+  const matName = id => (mats.find(m=>m.id===id)||{}).nom || '(matière ?)';
+  // unité d'affichage : g pour les denrées au kg, sinon unité de base
+  const dispOf = id => { const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
+    return (u==='kg') ? {u:'g', f:1000} : {u:m.unite||'', f:1}; };
+  const rendement = +rec.rendement||1;
+  const facteur = rendement>0 ? (nbMacarons/rendement) : 0;
+  // filtre par composant si la recette est étiquetée coque/ganache
+  const etiquetee = allItems.some(it=>it.partie==='coque'||it.partie==='ganache');
+  let items = allItems;
+  if(etiquetee && (composant==='coques'||composant==='ganache')){
+    const cible = composant==='coques' ? 'coque' : 'ganache';
+    items = allItems.filter(it=> it.partie===cible || !it.partie);
+  }
+  const compLabel = composant==='coques'?'🟤 Coques':composant==='ganache'?'🍫 Ganache':'🍩 Complet';
+  const rows = items.map(it=>{ const d=dispOf(it.materialId);
+    const q = round3((+it.qteParBatch||0)*d.f*facteur);
+    const partTag = it.partie ? ` <span class="tag" style="background:${it.partie==='coque'?'#8a6d3b':'#5a3a2a'};color:#fff;font-size:.6rem">${it.partie}</span>` : '';
+    return `<tr><td>${esc(matName(it.materialId))}${partTag}</td><td style="text-align:right"><b>${qty(q)}</b> ${esc(d.u)}</td></tr>`;
+  }).join('') || '<tr><td colspan="2" class="note">Aucun ingrédient renseigné pour ce composant.</td></tr>';
+  openModal(`<h3>📋 Fiche de production</h3>
+    <p style="margin-bottom:4px"><b>${esc(rec.produitNom)}</b> · ${compLabel} · lot <b>${esc(lot||'—')}</b></p>
+    <p class="note" style="margin-bottom:12px">Quantités calculées pour <b>${qty(nbMacarons)} macaron(s)</b> (recette de base : ${rendement}/batch). Suis ces grammages pour produire.</p>
+    <div class="table-wrap"><table><thead><tr><th>Ingrédient</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="note" style="margin-top:10px">La production est <b>démarrée</b>. Tu choisiras l'emplacement de rangement à la fin (✓ Terminer dans la liste).</p>
+    <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
 }
 // Transaction atomique : consommation FIFO (théorique) + traçabilité + stock fini (réel)
 async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd, lotProduction, dlcProduit, emplacement, meta){
@@ -2841,7 +2876,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
 // - l'écart théorique/réel est ré-historisé
 async function prodAdjustForm(id){
   const p = await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
-  const recipe = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
+  const recipe = await db.recipes.get(p.recipeId);
   const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
   const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
   const estCoques = prodComposant(p)==='coques';
@@ -2975,7 +3010,7 @@ async function prodAdjustReel(id){
    ------------------------------------------------------------ */
 async function declareLossForm(prodId){
   const p = await db.productions.get(prodId); if(!p){ toast('Production introuvable'); return; }
-  const recipe = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
+  const recipe = await db.recipes.get(p.recipeId);
   const dispo = round3(+p.qteRestante||0);
   if(dispo<=0){ toast('Aucune pièce disponible dans ce batch'); return; }
   const motifOpts = LOSS_REASONS.map(m=>`<option>${esc(m)}</option>`).join('');
@@ -3067,7 +3102,7 @@ async function saveLoss(prodId){
     return;
   }
   // CAS perte pure : coût unitaire de revient figé pour ce batch
-  const recipe = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
+  const recipe = await db.recipes.get(p.recipeId);
   const [recipeItems, lots] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray()]);
   let coutUnit = 0;
   if(recipe){ const cr = coutRevientRecette(recipe, recipeItems, lots); coutUnit = +cr.coutRevientUnit||0; }
@@ -5783,6 +5818,43 @@ async function marketAddSortie(marketId, productionId, qte, parfum){
   });
 }
 
+// ===== VUE DÉDIÉE : STOCK PAR PARFUM (pastilles colorées, comme la boutique) =====
+// Vue d'ensemble : chaque parfum avec sa pastille de couleur, son nom et la quantité
+// de macarons finis vendables en stock. Tous les parfums du catalogue sont affichés,
+// y compris ceux à 0 (vision complète, comme sur le site).
+async function renderStockParfums(){
+  const prods=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0 && prodVendable(p));
+  const recipes=await db.recipes.toArray();
+  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'(parfum ?)';
+  const byNom={};
+  prods.forEach(p=>{
+    const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
+    (byNom[nom] ||= {nom, dispo:0, batches:0});
+    byNom[nom].dispo = addQty(byNom[nom].dispo, p.qteRestante);
+    byNom[nom].batches++;
+  });
+  const noms = [...FLAVORS];
+  Object.keys(byNom).forEach(n=>{ if(!noms.includes(n)) noms.push(n); });
+  const totalDispo = Object.values(byNom).reduce((s,b)=>addQty(s,b.dispo),0);
+  const enStock = noms.filter(n=>byNom[n] && byNom[n].dispo>0).length;
+  const cards = noms.map(nom=>{
+    const b = byNom[nom]; const dispo = b?b.dispo:0; const col = flavorColor(nom);
+    const vide = dispo<=0;
+    return `<div class="flavor-stock${vide?' fs-empty':''}">
+      <span class="fs-pastille" style="background:${col}"></span>
+      <span class="fs-nom">${esc(nom)}</span>
+      <span class="fs-qte">${vide?'<span class="fs-zero">0</span>':`<b>${qty(dispo)}</b>`}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Stock par parfum</h1>
+     <p>${enStock} parfum(s) en stock · ${qty(totalDispo)} macaron(s) vendable(s)</p></div>
+     <div class="flex"><button class="btn" onclick="goView('productions')">🍩 Productions →</button></div></div>
+   <div class="panel">
+     <p class="note" style="margin-bottom:12px">Vue d'ensemble des macarons finis <b>vendables</b> disponibles, par parfum. Les pastilles reprennent les couleurs de la boutique. Les parfums à 0 sont grisés.</p>
+     <div class="flavor-stock-grid">${cards}</div>
+   </div>`;
+}
 // Stock fini disponible AGRÉGÉ PAR PARFUM (sans se soucier des lots).
 // Retourne [{parfum, dispo, recipeId, batches:[{id,qteRestante,date}]}] trié par parfum.
 async function stockFiniParParfum(){
@@ -9223,7 +9295,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v157';
+const APP_VERSION = 'v160';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -10183,7 +10255,7 @@ async function renderLabels(){
 async function buildLabelData(prodId){
   const p = await db.productions.get(prodId);
   if(!p) return null;
-  const rec = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
+  const rec = await db.recipes.get(p.recipeId);
   const tmp = document.createElement('canvas');
   try{ QR.render(tmp, traceUrl(p.lotProduction||''), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
   return {
@@ -11293,31 +11365,71 @@ function ttFormat(ms){
 function ttRefresh(){
   const bar=document.getElementById('timeTracker'); if(!bar) return;
   const sessions=ttLoad();
-  bar.classList.toggle('run', sessions.length>0);
-  const chips = sessions.map(s=>{
+  // FEU : bouton vert « démarrer » toujours présent (+ accès historique discret).
+  bar.innerHTML = `<span class="tt-grip">⠿⠿</span>
+    <button type="button" class="tt-light green" onclick="ttStart()" title="Démarrer une activité"><span>▶</span></button>
+    <button type="button" class="tt-light dim" onclick="ttOpenHistory()" title="Historique"><span>🗒</span></button>`;
+  ttBindDrag(bar, 'sm_tt_pos');
+  // FOUETS : un par chrono actif, flottants.
+  const wrap=document.getElementById('ttWhisks'); if(!wrap) return;
+  wrap.innerHTML = sessions.map(s=>{
     const paused=ttSessionPaused(s);
-    return `<div class="tt-chip${paused?' paused':''}">
-      <span class="tt-dot"></span>
-      <div class="tt-info">
-        <span class="tt-lbl">${esc(s.activite||'Production')}${paused?' · pause':''}</span>
-        <span class="tt-time" data-tt="${s.id}">${ttFormat(ttSessionNet(s))}</span>
+    return `<div class="tt-whisk${paused?' paused':''}" data-w="${s.id}" onclick="ttWhiskToggle(event,'${s.id}')">
+      <span class="whisk-ico">🥄</span>
+      <div class="whisk-info">
+        <span class="whisk-lbl">${esc(s.activite||'Production')}${paused?' · pause':''}</span>
+        <span class="whisk-time" data-tt="${s.id}">${ttFormat(ttSessionNet(s))}</span>
       </div>
-      <button type="button" class="tt-pause" onclick="ttPause('${s.id}')" title="${paused?'Reprendre':'Pause'}">${paused?'▶':'⏸'}</button>
-      <button type="button" class="tt-btn stop" onclick="ttStop('${s.id}')" title="Terminer ce chrono">⏹</button>
+      <span class="whisk-ctrl">
+        <button type="button" class="wc-pause" onclick="event.stopPropagation();ttPause('${s.id}')" title="${paused?'Reprendre':'Pause'}">${paused?'▶':'⏸'}</button>
+        <button type="button" class="wc-stop" onclick="event.stopPropagation();ttStop('${s.id}')" title="Stop">⏹</button>
+      </span>
     </div>`;
   }).join('');
-  bar.innerHTML = `<div class="tt-list">${chips}</div>
-    <div class="tt-actions">
-      <button type="button" class="tt-btn start" onclick="ttStart()">▶ ${sessions.length?'Ajouter une activité':'Démarrer'}</button>
-      <button type="button" class="tt-log" onclick="ttOpenHistory()" title="Historique des sessions">🗒</button>
-    </div>`;
+  // rend chaque fouet déplaçable indépendamment
+  wrap.querySelectorAll('.tt-whisk').forEach((el,i)=>ttBindDrag(el, 'sm_ttw_'+i, true));
+}
+// Ouvre/ferme le mini-feu pause/stop d'un fouet (sauf si on vient de le déplacer).
+function ttWhiskToggle(ev, id){
+  const el=ev.currentTarget; if(el._dragged){ el._dragged=false; return; }
+  el.classList.toggle('open');
+}
+// Rend un élément flottant déplaçable (souris + tactile), position mémorisée.
+function ttBindDrag(el, storeKey, isWhisk){
+  if(!el || el._dragBound) return; el._dragBound=true;
+  // restaure une position mémorisée
+  try{ const p=JSON.parse(localStorage.getItem(storeKey)||'null');
+    if(p && p.left!=null){ el.style.left=p.left+'px'; el.style.top=p.top+'px'; el.style.right='auto'; el.style.bottom='auto'; } }catch(e){}
+  let sx,sy,ox,oy,moved;
+  const down=e=>{
+    const t=e.touches?e.touches[0]:e; sx=t.clientX; sy=t.clientY; moved=false;
+    const r=el.getBoundingClientRect(); ox=r.left; oy=r.top;
+    el.classList.add('dragging');
+    document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
+    document.addEventListener('touchmove',move,{passive:false}); document.addEventListener('touchend',up);
+  };
+  const move=e=>{
+    const t=e.touches?e.touches[0]:e; const dx=t.clientX-sx, dy=t.clientY-sy;
+    if(Math.abs(dx)>4||Math.abs(dy)>4){ moved=true; if(e.cancelable)e.preventDefault(); }
+    let nl=Math.max(4,Math.min(window.innerWidth-el.offsetWidth-4, ox+dx));
+    let nt=Math.max(4,Math.min(window.innerHeight-el.offsetHeight-4, oy+dy));
+    el.style.left=nl+'px'; el.style.top=nt+'px'; el.style.right='auto'; el.style.bottom='auto';
+  };
+  const up=()=>{
+    el.classList.remove('dragging');
+    document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up);
+    document.removeEventListener('touchmove',move); document.removeEventListener('touchend',up);
+    if(moved){ if(isWhisk) el._dragged=true;
+      try{ localStorage.setItem(storeKey, JSON.stringify({left:parseInt(el.style.left), top:parseInt(el.style.top)})); }catch(e){} }
+  };
+  el.addEventListener('mousedown',down); el.addEventListener('touchstart',down,{passive:true});
 }
 function ttStartTicking(){ ttStopTicking(); _ttTick=setInterval(ttTick,1000); }
 function ttStopTicking(){ if(_ttTick){ clearInterval(_ttTick); _ttTick=null; } }
 // Tick léger : met à jour uniquement les chronos non en pause (pas de re-render complet).
 function ttTick(){
   const sessions=ttLoad(); if(!sessions.length){ ttStopTicking(); return; }
-  sessions.forEach(s=>{ const el=document.querySelector(`.tt-time[data-tt="${s.id}"]`); if(el && !ttSessionPaused(s)) el.textContent=ttFormat(ttSessionNet(s)); });
+  sessions.forEach(s=>{ const el=document.querySelector(`.whisk-time[data-tt="${s.id}"]`); if(el && !ttSessionPaused(s)) el.textContent=ttFormat(ttSessionNet(s)); });
 }
 
 // Démarre un NOUVEAU chrono (choix rapide d'activité). N'interrompt pas les autres.

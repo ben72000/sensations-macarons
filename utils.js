@@ -56,6 +56,19 @@ function monthLabel(k){
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function normTxt(s){ return (s==null?'':String(s)).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 
+// --- Parfums : couleur de pastille (identiques à la boutique en ligne) ---
+// Correspondance nom de parfum → teinte, pour afficher des pastilles cohérentes
+// entre le site et l'app de gestion. Comparaison insensible à la casse/accents.
+const FLAVOR_COLORS = {
+  'citron cremeux':'#f3df8a', 'chocolat au lait':'#b98756', 'chocolat noir':'#6a4630',
+  'framboise':'#d76b86', 'vanille':'#efe3c4', 'pistache':'#9bc081',
+  'coco rafaello':'#f3ece0', 'cannelle noisette':'#c79a6a', 'caramel beurre sale':'#cf9a52',
+  'chocolat passion':'#d98e4e', 'nocciolata':'#8a5a3c', 'coco citron vert':'#cfe2a5',
+  'praline noisettes':'#bd8a55', 'popcorn':'#ecd9a4', 'cafe':'#7d5436'
+};
+// Renvoie la couleur d'un parfum (gris neutre si inconnu, ex. grand format / parfum libre).
+function flavorColor(nom){ return FLAVOR_COLORS[normTxt(nom)] || '#cbb89f'; }
+
 // --- UI : bloc repliable réutilisable ---
 // Affiche les `show` premiers éléments d'une liste HTML, masque le reste derrière un
 // chevron « Voir les N autres ▾ ». Fluidifie les longues listes verticales.
