@@ -509,14 +509,18 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 /* ---- Séparateurs temporels de la liste des commandes ---- */
 .cmd-sep>td{padding:6px 0 2px !important;border:none}
 .cmd-sep-in{background:var(--sep-col,#52252F);color:#fff;padding:9px 12px;border-radius:8px;
-  display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;
-  position:sticky;left:0;width:88vw;max-width:520px;box-sizing:border-box}
+  display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
 .cmd-sep-lbl{font-family:'Fraunces',serif;font-weight:600;font-size:1rem;letter-spacing:.01em}
 .cmd-sep-meta{font-size:.78rem;opacity:.92}
 .cmd-sep-week>td{padding:0 0 2px !important;border:none}
 .cmd-sep-week-in{background:var(--creme,#F5F0E8);color:#7a6a62;padding:5px 12px;
-  font-size:.78rem;font-weight:600;border-left:3px solid var(--caramel,#AA7C39);border-radius:0 6px 6px 0;
-  position:sticky;left:0;width:88vw;max-width:520px;box-sizing:border-box}
+  font-size:.78rem;font-weight:600;border-left:3px solid var(--caramel,#AA7C39);border-radius:0 6px 6px 0}
+/* Repères mois/semaine DANS la cellule client (figée à gauche → restent visibles au scroll) */
+.cmd-period-month{display:inline-block;color:#fff;font-family:'Fraunces',serif;font-weight:600;
+  font-size:.82rem;padding:2px 9px;border-radius:7px;margin-bottom:4px}
+.cmd-period-week{display:inline-block;color:#7a6a62;background:var(--creme,#F5F0E8);font-weight:600;
+  font-size:.7rem;padding:1px 8px;border-radius:6px;margin:0 0 4px 5px;border-left:3px solid var(--caramel,#AA7C39)}
+.table-wrap tr.cmd-new-month td{border-top:2px solid var(--caramel,#AA7C39)}
 /* ---- Mode discret : floutage des noms sensibles ---- */
 .sheet-privacy{width:100%;margin-bottom:12px;appearance:none;-webkit-appearance:none;cursor:pointer;
   border:1.5px solid var(--bordeaux);background:#fff;color:var(--bordeaux);font-family:inherit;

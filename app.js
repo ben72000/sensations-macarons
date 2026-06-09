@@ -4245,19 +4245,30 @@ async function renderCmd(){
   cmdFilter(cmdSearch);
   cmdUpdateSelBar();
 }
-function _cmdRow(row){
+function _cmdRow(row, grp){
   const o=row.o; const paye=o.paiement==='Payé';
   const checked = _cmdSel.has(o.id) ? 'checked' : '';
   const st = orderPayStatus(o); const solde = orderBalance(o);
   const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
-  // Le mois/semaine n'est plus répété ici : il est porté par les séparateurs (figés à gauche).
+  grp = grp||{};
+  // Repère mois/semaine DANS la cellule client (figée à gauche → reste visible au scroll).
+  let periodeBandeau = '';
+  if(grp.newMonth && o.date){
+    const mk=o.date.slice(0,7); const [yy,mm]=mk.split('-'); const idx=(+mm||1)-1;
+    const col=_SEP_COLORS[idx % _SEP_COLORS.length];
+    periodeBandeau += `<div class="cmd-period-month" style="background:${col}">${_MOIS_FR[idx]||''} ${yy||''}</div>`;
+  }
+  if(grp.newWeek && o.date){
+    const wk=_isoWeekKey(o.date)||'';
+    periodeBandeau += `<div class="cmd-period-week">Semaine ${wk.split('-W')[1]||''}</div>`;
+  }
   // Statut commande : menu déroulant (changement direct au clic). « Terminée » s'affiche « Prête ».
   const curStatut = normStatus(o.statut);
   const statutSelect = `<select class="status-select status-${curStatut==='Livrée'?'done':(curStatut==='Terminée'?'ok':'todo')}" onchange="setOrderStatusInline(${o.id}, this.value)" title="Changer le statut">
     ${ORDER_STATUS.map(s=>`<option value="${s}" ${s===curStatut?'selected':''}>${s==='Terminée'?'Prête':esc(s)}</option>`).join('')}
   </select>`;
-  return `<tr>
-     <td><b>${o.clientId?`${nameP(_cmdClName(o.clientId))} <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Voir la fiche client">→</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
+  return `<tr${grp.newMonth?' class="cmd-new-month"':''}>
+     <td>${periodeBandeau}<b>${o.clientId?`${nameP(_cmdClName(o.clientId))} <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Voir la fiche client">→</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
      <td><span style="font-size:.82rem">${esc(row.resume)}</span> <span class="jump-arrow" onclick="cmdView(${o.id})" title="Voir le détail de la commande">→</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
      <td>
@@ -4323,13 +4334,14 @@ function cmdFilter(q){
   const shown = rows.slice(0,LIMIT);
   let html=''; let lastMonth=null, lastWeek=null;
   shown.forEach(r=>{
+    let newMonth=false, newWeek=false;
     if(grouper){
       const mk = (r.o.date||'').slice(0,7);   // "AAAA-MM"
-      if(mk && mk!==lastMonth){ lastMonth=mk; lastWeek=null; html += _cmdMonthSeparator(mk); }
+      if(mk && mk!==lastMonth){ lastMonth=mk; lastWeek=null; newMonth=true; }
       const wk = _isoWeekKey(r.o.date);
-      if(wk && wk!==lastWeek){ lastWeek=wk; html += _cmdWeekSeparator(r.o.date); }
+      if(wk && wk!==lastWeek){ lastWeek=wk; newWeek=true; }
     }
-    html += _cmdRow(r);
+    html += _cmdRow(r, {newMonth, newWeek});
   });
   if(rows.length>LIMIT) html += `<tr><td colspan="9" class="note" style="text-align:center">… ${rows.length-LIMIT} autre(s) résultat(s). Affinez la recherche.</td></tr>`;
   body.innerHTML = html;
@@ -9210,7 +9222,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v154';
+const APP_VERSION = 'v155';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
