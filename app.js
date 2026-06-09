@@ -5376,7 +5376,7 @@ async function exportComptaCSV(){
   const csv='\uFEFF'+rows.join('\r\n');   // BOM pour Excel FR
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='comptabilite-mensuelle.csv'; a.click();
-  toast('Export comptable téléchargé ✓');
+  toast('Fichier comptable prêt — choisis où l\'enregistrer 📂');
 }
 
 // Coût matières estimé d'une commande (somme sur ses lignes coffret/événement via les recettes).
@@ -6116,8 +6116,11 @@ async function computeStrategic(){
 
   // Marges globales (somme des marges par commande payée)
   let margeBrute=0, margeNette=0, caPaye=0;
+  let sumCoutMat=0, sumCoutEmb=0, sumCharges=0;   // composantes pour le détail explicatif
   const paid = orders.filter(o=>o.paiement==='Payé');
-  paid.forEach(o=>{ const m=computeOrderMargins(o,recipes,recipeItems,lots); margeBrute=money2(margeBrute+m.margeBrute); margeNette=money2(margeNette+m.margeNette); caPaye=money2(caPaye+m.ca); });
+  paid.forEach(o=>{ const m=computeOrderMargins(o,recipes,recipeItems,lots);
+    margeBrute=money2(margeBrute+m.margeBrute); margeNette=money2(margeNette+m.margeNette); caPaye=money2(caPaye+m.ca);
+    sumCoutMat=money2(sumCoutMat+m.coutMat); sumCoutEmb=money2(sumCoutEmb+m.coutEmb); sumCharges=money2(sumCharges+m.chargesSociales); });
   const tauxBrut = caPaye>0?Math.round(margeBrute/caPaye*1000)/10:0;
   const tauxNet = caPaye>0?Math.round(margeNette/caPaye*1000)/10:0;
 
@@ -6125,13 +6128,31 @@ async function computeStrategic(){
   const nbCmd = paid.length;
   const panier = nbCmd>0 ? money2(caPaye/nbCmd) : 0;
   const since=new Date(now-90*86400000).toISOString().slice(0,10);
-  const activeClients = new Set(paid.filter(o=>o.date&&o.date>=since && o.clientId).map(o=>o.clientId)).size;
+  const activeIds = new Set(paid.filter(o=>o.date&&o.date>=since && o.clientId).map(o=>o.clientId));
+  const activeClients = activeIds.size;
   const totalClients = clients.length;
+
+  // Détail du panier moyen : chaque commande payée avec son montant (CA marge) et son écart à la moyenne.
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  const panierDetail = paid.map(o=>{
+    const m=computeOrderMargins(o,recipes,recipeItems,lots);
+    return {id:o.id, date:o.date||'', client:clName(o.clientId), montant:m.ca,
+            ecart: money2(m.ca-panier), dessus: m.ca>=panier};
+  }).sort((a,b)=>b.montant-a.montant);
+
+  // Liste des clients actifs (90 j) avec leur nb de commandes et CA encaissé sur la période.
+  const activeList = [...activeIds].map(id=>{
+    const cmds = paid.filter(o=>o.clientId===id && o.date && o.date>=since);
+    const ca = money2(cmds.reduce((s,o)=>s+((+o.montant)||0),0));
+    return {id, nom:clName(id), n:cmds.length, ca};
+  }).sort((a,b)=>b.ca-a.ca);
 
   return {
     caMonth, caPrevMonth, evoMonth, caYear, caPrevYear, evoYear,
     margeBrute, margeNette, tauxBrut, tauxNet,
+    coutMat:sumCoutMat, coutEmb:sumCoutEmb, chargesSociales:sumCharges, caPaye,
     panier, nbCmd, activeClients, totalClients,
+    panierDetail, activeList,
     caEncaisse:A.totalEncaisse, caFacture:A.totalFacture, creances:A.creances,
     serie:A.serie,
     _ctx:{orders, clients, recipes, recipeItems, lots, products, paid}
@@ -6735,6 +6756,8 @@ function comptaGo(dest){
 }
 // Petit chevron « › » signalant un raccourci (à insérer dans une .sum-box / .kpi cliquable).
 const NAV_GO = '<span class="nav-go" aria-hidden="true">›</span>';
+// Petit marqueur « ⓘ » signalant qu'un détail explicatif s'ouvre en popup (pas un changement d'écran).
+const INFO_I = '<span class="info-i" aria-hidden="true">ⓘ</span>';
 async function renderCompta(){
  try {
   const A = await computeAccounting();
@@ -6966,9 +6989,75 @@ async function delCharge(id){
 /* ============================================================
    TABLEAU DE BORD STRATÉGIQUE — centre de pilotage financier
    ============================================================ */
+// Dernier instantané stratégique calculé, partagé avec les popups de détail
+// (les onclick ne peuvent pas transporter l'objet S complet).
+let _pilotageS = null;
+
+// --- Popup : explication de la MARGE BRUTE ---
+function pilotMargeBrute(){
+  const S=_pilotageS; if(!S) return;
+  openModal(`<h3>📊 Marge brute — comment c'est calculé</h3>
+    <p class="note" style="margin-bottom:10px">Sur l'ensemble de tes <b>${S.nbCmd} commande(s) payée(s)</b>. La marge brute, c'est ce qui reste du chiffre d'affaires une fois retirés les coûts directs de fabrication (matières + emballages), <b>avant</b> les charges sociales.</p>
+    <div class="sum-box"><span>Chiffre d'affaires encaissé</span><b>${euro(S.caPaye)}</b></div>
+    <div class="sum-box"><span>− Coût des matières</span><b style="color:var(--red,#b3261e)">−${euro(S.coutMat)}</b></div>
+    <div class="sum-box"><span>− Coût des emballages</span><b style="color:var(--red,#b3261e)">−${euro(S.coutEmb)}</b></div>
+    <div class="sum-box" style="border-top:2px solid #e0d5c5;margin-top:4px;padding-top:8px"><span><b>= Marge brute</b></span><b style="color:${S.margeBrute>=0?'#2e7d32':'#b3261e'};font-size:1.05rem">${euro(S.margeBrute)}</b></div>
+    <div class="sum-box" style="background:#f4faf5"><span>Taux de marge brute</span><b>${S.tauxBrut}% du CA</b></div>
+    <p class="note" style="margin-top:10px">Formule : <b>CA − matières − emballages</b>. Le coût matières est estimé (coût recette ÷ rendement). C'est l'indicateur de rentabilité « atelier », avant cotisations.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="closeModal();renderProfit()">Rentabilité détaillée ›</button></div>`);
+}
+
+// --- Popup : explication de la MARGE NETTE ---
+function pilotMargeNette(){
+  const S=_pilotageS; if(!S) return;
+  openModal(`<h3>📊 Marge nette — comment c'est calculé</h3>
+    <p class="note" style="margin-bottom:10px">La marge nette part de la marge brute et retire en plus les <b>charges sociales URSSAF</b> (cotisations micro-entreprise). C'est ce qu'il te reste réellement, hors impôt sur le revenu.</p>
+    <div class="sum-box"><span>Marge brute</span><b>${euro(S.margeBrute)}</b></div>
+    <div class="sum-box"><span>− Charges sociales (URSSAF)</span><b style="color:var(--red,#b3261e)">−${euro(S.chargesSociales)}</b></div>
+    <div class="sum-box" style="border-top:2px solid #e0d5c5;margin-top:4px;padding-top:8px"><span><b>= Marge nette</b></span><b style="color:${S.margeNette>=0?'#2e7d32':'#b3261e'};font-size:1.05rem">${euro(S.margeNette)}</b></div>
+    <div class="sum-box" style="background:#f4faf5"><span>Taux de marge nette</span><b>${S.tauxNet}% du CA</b></div>
+    <p class="note" style="margin-top:10px">Formule : <b>marge brute − charges sociales</b>. Les taux (12,3 % marchandise / 25,6 % service) sont réglables dans ⚙ Paramètres. Hors impôt sur le revenu et frais annexes.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="closeModal();renderProfit()">Rentabilité détaillée ›</button></div>`);
+}
+
+// --- Popup : détail du PANIER MOYEN (commandes au-dessus = vert, en dessous = rouge) ---
+function pilotPanier(){
+  const S=_pilotageS; if(!S) return;
+  const det=S.panierDetail||[];
+  const rows = det.map(d=>{
+    const col = d.dessus ? '#2e7d32' : '#b3261e';
+    const sign = d.dessus ? '▲' : '▼';
+    const dot = d.dessus ? '🟢' : '🔴';
+    return `<div class="sum-box" style="border-left:3px solid ${col}">
+      <span>${dot} ${esc(d.client)} <span style="color:#9a8a82;font-size:.74rem">${d.date?fmtDate(d.date):''}</span></span>
+      <b style="color:${col}">${euro(d.montant)} <span style="font-weight:400;font-size:.72rem">${sign} ${euro(Math.abs(d.ecart))}</span></b></div>`;
+  }).join('');
+  openModal(`<h3>🛍️ Panier moyen — ${euro(S.panier)}</h3>
+    <p class="note" style="margin-bottom:10px">Moyenne sur <b>${S.nbCmd} commande(s) payée(s)</b> (CA encaissé ÷ nombre de commandes). Ci-dessous, chaque commande avec son écart à la moyenne :
+    <span style="color:#2e7d32">🟢 vert = au-dessus</span> (tire la moyenne vers le haut), <span style="color:#b3261e">🔴 rouge = en dessous</span> (tire vers le bas).</p>
+    <div style="max-height:48vh;overflow:auto">${rows||'<p class="note">Aucune commande payée.</p>'}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="closeModal();view='commandes';setActiveView&&setActiveView('commandes');renderCmd()">Voir les commandes ›</button></div>`);
+}
+
+// --- Popup : liste des CLIENTS ACTIFS (90 j) + raccourci vers la liste clients ---
+function pilotClientsActifs(){
+  const S=_pilotageS; if(!S) return;
+  const list=S.activeList||[];
+  const rows = list.map(c=>`<div class="sum-box"><span>👤 ${esc(c.nom)} <span style="color:#9a8a82;font-size:.74rem">(${c.n} cmd)</span></span><b>${euro(c.ca)}</b></div>`).join('');
+  openModal(`<h3>👥 Clients actifs — ${S.activeClients} sur ${S.totalClients}</h3>
+    <p class="note" style="margin-bottom:10px">Clients ayant passé au moins une commande payée sur les <b>90 derniers jours</b>, triés par CA encaissé sur la période.</p>
+    <div style="max-height:48vh;overflow:auto">${rows||'<p class="note">Aucun client actif sur les 90 derniers jours.</p>'}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="closeModal();view='clients';setActiveView&&setActiveView('clients');renderClients()">Voir tous les clients ›</button></div>`);
+}
+
 async function renderPilotage(){
  try {
   const S = await computeStrategic();
+  _pilotageS = S;   // mémorisé pour les popups détaillés (marges, panier, clients actifs)
   const I = generateInsights(S);
   const evoBadge = (v)=>{ const up=v>=0; return `<span style="color:${up?'#3f7d52':'var(--red,#b3261e)'};font-size:.8rem">${up?'▲':'▼'} ${Math.abs(v)}%</span>`; };
 
@@ -6995,10 +7084,10 @@ async function renderPilotage(){
    <div class="kpi-grid">
      <div class="kpi"><span>CA ce mois</span><b>${euro(S.caMonth)}</b><span>${evoBadge(S.evoMonth)} vs mois dernier</span></div>
      <div class="kpi"><span>CA cette année</span><b>${euro(S.caYear)}</b><span>${evoBadge(S.evoYear)} vs an dernier</span></div>
-     <div class="kpi"><span>Marge brute</span><b>${euro(S.margeBrute)}</b><span>${S.tauxBrut}% du CA</span></div>
-     <div class="kpi"><span>Marge nette</span><b style="color:${S.margeNette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(S.margeNette)}</b><span>${S.tauxNet}% du CA</span></div>
-     <div class="kpi"><span>Panier moyen</span><b>${euro(S.panier)}</b><span>${S.nbCmd} commande(s)</span></div>
-     <div class="kpi"><span>Clients actifs</span><b>${S.activeClients}</b><span>sur ${S.totalClients} (90 j)</span></div>
+     <div class="kpi lnk" onclick="pilotMargeBrute()"><span>Marge brute ${INFO_I}</span><b>${euro(S.margeBrute)}</b><span>${S.tauxBrut}% du CA</span></div>
+     <div class="kpi lnk" onclick="pilotMargeNette()"><span>Marge nette ${INFO_I}</span><b style="color:${S.margeNette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(S.margeNette)}</b><span>${S.tauxNet}% du CA</span></div>
+     <div class="kpi lnk" onclick="pilotPanier()"><span>Panier moyen ${INFO_I}</span><b>${euro(S.panier)}</b><span>${S.nbCmd} commande(s)</span></div>
+     <div class="kpi lnk" onclick="pilotClientsActifs()"><span>Clients actifs</span><b>${S.activeClients}</b><span>sur ${S.totalClients} (90 j)</span>${NAV_GO}</div>
    </div>
 
    ${S.serie.length?`<div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none"':''}><h2>Évolution du CA encaissé</h2>${chart}</div>`:''}
@@ -7028,6 +7117,53 @@ async function renderPilotage(){
    ============================================================ */
 let _parfumSort = 'marge'; // marge | ca | pieces | taux | nom | stock
 let _parfumEvolWindow = 6; // mois pour la courbe d'évolution
+// Mémoire pour les popups détaillés de l'écran Rentabilité parfums.
+let _parfumsA = null, _parfumsAvgP = null;
+
+// Popup : détail de la MARGE BRUTE / NETTE totale par parfum (qui contribue, qui plombe).
+function parfumMargesPopup(net){
+  const A=_parfumsA; if(!A) return;
+  const rows=(A.rows||[]).filter(r=>r.piecesVendues>0)
+    .map(r=>({nom:r.nom, val: net?r.margeNette:r.margeBrute, taux:r.tauxMarge}))
+    .sort((a,b)=>b.val-a.val);
+  const moy = rows.length ? rows.reduce((s,r)=>s+r.val,0)/rows.length : 0;
+  const body=rows.map(r=>{
+    const dessus=r.val>=moy; const col=dessus?'#2e7d32':'#b3261e'; const dot=dessus?'🟢':'🔴';
+    return `<div class="sum-box" style="border-left:3px solid ${col}"><span>${dot} ${esc(r.nom)} ${r.taux!=null?`<span style="color:#9a8a82;font-size:.74rem">${r.taux}%</span>`:''}</span><b style="color:${col}">${euro(r.val)}</b></div>`;
+  }).join('');
+  const tot=net?A.totals.margeNette:A.totals.margeBrute;
+  openModal(`<h3>📊 Marge ${net?'nette':'brute'} totale — ${euro(tot)}</h3>
+    <p class="note" style="margin-bottom:10px">${net?'Après charges sociales.':'Avant charges sociales (CA − coût de revient des pièces vendues).'} Contribution de chaque parfum, du plus rentable au moins rentable :
+    <span style="color:#2e7d32">🟢 au-dessus de la moyenne</span>, <span style="color:#b3261e">🔴 en dessous</span>.</p>
+    <div style="max-height:48vh;overflow:auto">${body||'<p class="note">Aucune vente.</p>'}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+// Popup : explication du PRIX MOYEN PONDÉRÉ.
+function parfumPrixMoyenPopup(){
+  const A=_parfumsA, p=_parfumsAvgP; if(!A||!p) return;
+  openModal(`<h3>🏷️ Prix moyen pondéré — ${euro(p.prix)}</h3>
+    <p class="note" style="margin-bottom:10px">Prix de vente moyen d'un macaron, ${p.source==='ventes'?'calculé sur tes <b>ventes réelles</b> (commandes + marchés clos)':'estimé depuis la <b>grille de prix</b> (pas encore assez de ventes)'}.</p>
+    <div class="sum-box"><span>Pièces prises en compte</span><b>${qty(p.pieces||0)}</b></div>
+    <div class="sum-box"><span>Source du calcul</span><b>${p.source==='ventes'?'Ventes réelles':'Grille de prix'}</b></div>
+    <div class="sum-box" style="background:#f4faf5"><span>CA attendu (pièces × prix moyen)</span><b>${euro(A.totals.caTheo||0)}</b></div>
+    <div class="sum-box"><span>CA réellement encaissé</span><b>${euro(A.totals.ca)}</b></div>
+    ${A.totals.ecartTheo!=null?`<div class="sum-box" style="border-top:2px solid #e0d5c5;margin-top:4px;padding-top:8px"><span><b>Écart</b></span><b style="color:${A.totals.ecartTheo<0?'#b3261e':'#2e7d32'}">${A.totals.ecartTheo>0?'+':''}${euro(A.totals.ecartTheo)}</b></div>`:''}
+    <p class="note" style="margin-top:10px">Un écart négatif = encaissé sous l'attendu (remises, dons/pertes non saisis, erreur de caisse). Positif = ventes au-dessus du tarif moyen.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+// Popup : détail du STOCK IMMOBILISÉ (valeur au coût de revient, par parfum).
+function parfumStockPopup(){
+  const A=_parfumsA; if(!A) return;
+  const rows=(A.rows||[]).filter(r=>r.stock>0)
+    .map(r=>({nom:r.nom, stock:r.stock, val:r.valStockCout}))
+    .sort((a,b)=>b.val-a.val);
+  const body=rows.map(r=>`<div class="sum-box"><span>${esc(r.nom)} <span style="color:#9a8a82;font-size:.74rem">${qty(r.stock)} pc</span></span><b>${euro(r.val)}</b></div>`).join('');
+  openModal(`<h3>📦 Stock immobilisé — ${euro(A.totals.valStock)}</h3>
+    <p class="note" style="margin-bottom:10px">Valeur des macarons en stock, au <b>coût de revient</b> (matières + pertes + consommables). C'est l'argent « dormant » dans ton congélateur/frigo. Par parfum, du plus lourd au plus léger :</p>
+    <div style="max-height:48vh;overflow:auto">${body||'<p class="note">Aucun stock.</p>'}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="closeModal();goView('productions')">Voir les productions ›</button></div>`);
+}
 
 async function renderParfums(){
   const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
@@ -7045,6 +7181,7 @@ async function renderParfums(){
   }
 
   const A = analyzeFlavorProfitability(data);
+  _parfumsA = A;   // mémorisé pour les popups détaillés (marges, prix moyen, stock)
   const hikes = flavorCostHikeAlerts(data, A);
   const recs = flavorRecommendations(A, data);
 
@@ -7072,12 +7209,13 @@ async function renderParfums(){
 
   // KPI
   const avgP = computeAvgSellPrice(data);
+  _parfumsAvgP = avgP;
   const kpis=`<div class="kpi-grid">
     <div class="kpi"><span>CA encaissé (parfums)</span><b>${euro(A.totals.ca)}</b><span>${qty(A.totals.pieces)} pièces vendues</span></div>
-    <div class="kpi"><span>Marge brute totale</span><b style="color:${A.totals.margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(A.totals.margeBrute)}</b><span>${A.totals.tauxMargeGlobal!=null?A.totals.tauxMargeGlobal+'% de marge':'—'}</span></div>
-    <div class="kpi"><span>Marge nette estimée</span><b style="color:${A.totals.margeNette>=0?'#3f7d52':'#b3261e'}">${euro(A.totals.margeNette)}</b><span>après charges ${s.socialGoods}%</span></div>
-    <div class="kpi"><span>Prix moyen pondéré</span><b>${euro(avgP.prix)}</b><span>${avgP.source==='ventes'?'d\'après les ventes':'grille (pas de vente)'}</span></div>
-    <div class="kpi"><span>Stock immobilisé</span><b>${euro(A.totals.valStock)}</b><span>au coût de revient</span></div>
+    <div class="kpi lnk" onclick="parfumMargesPopup(false)"><span>Marge brute totale ${INFO_I}</span><b style="color:${A.totals.margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(A.totals.margeBrute)}</b><span>${A.totals.tauxMargeGlobal!=null?A.totals.tauxMargeGlobal+'% de marge':'—'}</span></div>
+    <div class="kpi lnk" onclick="parfumMargesPopup(true)"><span>Marge nette estimée ${INFO_I}</span><b style="color:${A.totals.margeNette>=0?'#3f7d52':'#b3261e'}">${euro(A.totals.margeNette)}</b><span>après charges ${s.socialGoods}%</span></div>
+    <div class="kpi lnk" onclick="parfumPrixMoyenPopup()"><span>Prix moyen pondéré ${INFO_I}</span><b>${euro(avgP.prix)}</b><span>${avgP.source==='ventes'?'d\'après les ventes':'grille (pas de vente)'}</span></div>
+    <div class="kpi lnk" onclick="parfumStockPopup()"><span>Stock immobilisé ${INFO_I}</span><b>${euro(A.totals.valStock)}</b><span>au coût de revient</span></div>
   </div>`;
 
   // bannière d'incohérence CA : encaissé vs attendu (pièces × prix moyen)
@@ -7541,6 +7679,33 @@ function saveSettingsForm(){
 /* ============================================================
    MARCHÉS / VENTES ITINÉRANTES — écrans
    ============================================================ */
+// Mémoire (marchés clos + leurs totaux) pour les popups détaillés.
+let _marketsPer = [];
+
+// Popup générique listant les marchés clos selon une métrique, avec code couleur vert/rouge.
+function _marketPopup(opts){
+  const per=_marketsPer||[];
+  if(!per.length){ openModal(`<h3>${opts.titre}</h3><p class="note">Aucun marché clôturé pour le moment.</p><div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`); return; }
+  const items=per.map(({mk,T})=>({nom:mk.nom||mk.lieu||'—', date:mk.date, v:opts.val(T)}));
+  // moyenne de référence pour le code couleur (sauf si métrique « plus bas = mieux »)
+  const moy=items.reduce((s,x)=>s+x.v,0)/items.length;
+  items.sort((a,b)=> opts.asc ? a.v-b.v : b.v-a.v);
+  const body=items.map(x=>{
+    // « bon » = au-dessus de la moyenne, sauf pour les invendus où c'est l'inverse
+    const bon = opts.lowerIsBetter ? x.v<=moy : x.v>=moy;
+    const col=bon?'#2e7d32':'#b3261e'; const dot=bon?'🟢':'🔴';
+    return `<div class="sum-box" style="border-left:3px solid ${col}"><span>${dot} ${esc(x.nom)} <span style="color:#9a8a82;font-size:.74rem">${x.date?fmtDate(x.date):''}</span></span><b style="color:${col}">${opts.fmt(x.v)}</b></div>`;
+  }).join('');
+  openModal(`<h3>${opts.titre}</h3>
+    <p class="note" style="margin-bottom:10px">${opts.note}</p>
+    <div style="max-height:48vh;overflow:auto">${body}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+function marketCAPopup(){ _marketPopup({titre:'⛺ CA par marché clôturé', note:'Chiffre d\'affaires encaissé de chaque marché, du plus gros au plus petit. 🟢 au-dessus de la moyenne, 🔴 en dessous.', val:T=>T.caTotal, fmt:v=>euro(v)}); }
+function marketMargePopup(){ _marketPopup({titre:'⛺ Marge nette par marché', note:'Marge nette après coûts (matière, emballage, stand, déplacement) et charges sociales. 🟢 rentable, 🔴 à surveiller.', val:T=>T.margeNette, fmt:v=>euro(v)}); }
+function marketInvendusPopup(){ _marketPopup({titre:'⛺ Taux d\'invendus par marché', note:'Part des macarons embarqués non vendus (retour + don + perte). Ici 🟢 = peu d\'invendus (mieux), 🔴 = beaucoup (à corriger : moins produire ou mieux vendre).', val:T=>T.tauxInvendus, fmt:v=>v+'%', lowerIsBetter:true, asc:true}); }
+function marketVendusPopup(){ _marketPopup({titre:'⛺ Macarons vendus par marché', note:'Volume vendu sur chaque marché. 🟢 au-dessus de la moyenne, 🔴 en dessous.', val:T=>T.vendu, fmt:v=>qty(v)+' pc'}); }
+
 async function renderMarkets(){
   const markets=(await db.markets.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const moves=await db.marketMoves.toArray();
@@ -7555,6 +7720,7 @@ async function renderMarkets(){
     return {mk,T}; });
   const caMoyen = nbClos>0?money2(caTotal/nbClos):0;
   const invMoyen = nbClos>0?Math.round(sumInvendus/nbClos*10)/10:0;
+  _marketsPer = perMarket.filter(x=>x.mk.statut==='clos');   // pour les popups détaillés
 
   const rows=perMarket.map(({mk,T})=>`<tr>
      <td>${fmtDate(mk.date)}</td>
@@ -7570,11 +7736,11 @@ async function renderMarkets(){
      <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="renderMarketStats()">📊 Statistiques</button>
      <button class="btn" onclick="marketForm()">+ Nouveau marché</button></div></div>
    ${nbClos>0?`<div class="kpi-grid">
-     <div class="kpi"><span>CA marchés (clos)</span><b>${euro(caTotal)}</b><span>${nbClos} marché(s)</span></div>
+     <div class="kpi lnk" onclick="marketCAPopup()"><span>CA marchés (clos) ${INFO_I}</span><b>${euro(caTotal)}</b><span>${nbClos} marché(s)</span></div>
      <div class="kpi"><span>CA moyen / marché</span><b>${euro(caMoyen)}</b></div>
-     <div class="kpi"><span>Marge nette marchés</span><b style="color:${margeNetteTotal>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(margeNetteTotal)}</b></div>
-     <div class="kpi"><span>Macarons vendus</span><b>${qty(venduTotal)}</b></div>
-     <div class="kpi"><span>Taux d'invendus moyen</span><b>${invMoyen}%</b></div>
+     <div class="kpi lnk" onclick="marketMargePopup()"><span>Marge nette marchés ${INFO_I}</span><b style="color:${margeNetteTotal>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(margeNetteTotal)}</b></div>
+     <div class="kpi lnk" onclick="marketVendusPopup()"><span>Macarons vendus ${INFO_I}</span><b>${qty(venduTotal)}</b></div>
+     <div class="kpi lnk" onclick="marketInvendusPopup()"><span>Taux d'invendus moyen ${INFO_I}</span><b>${invMoyen}%</b></div>
    </div>`:''}
    <div class="panel">
    ${markets.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Marché</th><th>Statut</th><th>CA</th><th>Vendus</th><th>Invendus</th><th></th></tr></thead>
@@ -7989,15 +8155,16 @@ async function renderMarketStats(){
 
   const totEmb=data.reduce((s,d)=>s+d.T.embarque,0), totInv=data.reduce((s,d)=>s+d.T.retour+d.T.don+d.T.perte,0);
   const tauxInvGlobal=totEmb>0?Math.round(totInv/totEmb*1000)/10:0;
+  _marketsPer = data;   // pour les popups détaillés (marge, invendus)
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Statistiques marchés</h1><p>${data.length} marché(s) clôturé(s)</p></div><button class="btn ghost sm" onclick="renderMarkets()">← Marchés</button></div>
    <div class="kpi-grid">
      <div class="kpi"><span>CA total marchés</span><b>${euro(caTotal)}</b></div>
      <div class="kpi"><span>CA moyen / marché</span><b>${euro(caMoyen)}</b></div>
-     <div class="kpi"><span>Marge nette totale</span><b style="color:${margeNetteTot>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(margeNetteTot)}</b></div>
+     <div class="kpi lnk" onclick="marketMargePopup()"><span>Marge nette totale ${INFO_I}</span><b style="color:${margeNetteTot>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(margeNetteTot)}</b></div>
      <div class="kpi"><span>Macarons vendus</span><b>${qty(venduTotal)}</b></div>
-     <div class="kpi"><span>Taux d'invendus global</span><b>${tauxInvGlobal}%</b></div>
+     <div class="kpi lnk" onclick="marketInvendusPopup()"><span>Taux d'invendus global ${INFO_I}</span><b>${tauxInvGlobal}%</b></div>
    </div>
    ${months.length>1?`<div class="panel"><h2>CA marchés par mois</h2>${chart}</div>`:''}
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
@@ -8786,7 +8953,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v133';
+const APP_VERSION = 'v136';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -9971,7 +10138,10 @@ async function exportData(){
   a.download='sensations-macarons-sauvegarde-'+today()+'.json'; a.click();
   localStorage.setItem('sm_lastExport', today());
   localStorage.removeItem('sm_exportSnooze');
-  toast('Sauvegarde téléchargée ✓');
+  // Message honnête : sur iPhone, Safari ouvre une fenêtre où l'utilisateur choisit
+  // d'enregistrer le fichier (Fichiers / iCloud). L'app ne peut PAS savoir si la
+  // sauvegarde a été confirmée — on décrit donc l'action, sans affirmer « c'est fait ».
+  toast('Fichier prêt — choisis où l\'enregistrer (Fichiers / iCloud) 📂');
 }
 
 /* ============================================================
@@ -10120,7 +10290,7 @@ async function downloadBackup(id){
   const blob=new Blob([b.payload],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   a.download='sensations-sauvegarde-'+b.date.slice(0,10)+'-'+id+'.json'; a.click();
-  toast('Sauvegarde téléchargée ✓');
+  toast('Fichier prêt — choisis où l\'enregistrer (Fichiers / iCloud) 📂');
 }
 async function deleteBackup(id){
   if(!confirm('Supprimer cette sauvegarde de l\'historique ?')) return;
