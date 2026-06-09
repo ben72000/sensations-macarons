@@ -63,6 +63,12 @@ const FLAVORS = [
   'Popcorn','Café'
 ];
 const BOX_SIZES = [6, 8, 16, 25];
+// 14 allergènes à déclaration obligatoire (règlement INCO 1169/2011). Servent à
+// l'étiquetage et seront réutilisés par la boutique en ligne (information avant achat).
+const ALLERGENS = [
+  'Gluten','Crustacés','Œufs','Poissons','Arachides','Soja','Lait',
+  'Fruits à coque','Céleri','Moutarde','Sésame','Sulfites','Lupin','Mollusques'
+];
 const BOX_PRICES = { 6: 12, 8: 16, 16: 28, 25: 42 }; // prix de base par taille
 const BOX_FLAVOR_LIMIT = { 6: 3, 8: 4, 16: 4, 25: 5 }; // parfums DIFFÉRENTS inclus
 const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire
@@ -552,11 +558,28 @@ function navTo(b){
 // Navigation centralisée : change la vue ET empile une entrée d'historique (bouton Retour iOS).
 function goView(v, opts){
   opts=opts||{};
+  // Filet de sécurité HACCP : si on quitte l'écran Températures avec des valeurs
+  // saisies mais non validées, on prévient (évite la perte silencieuse de relevés).
+  if(typeof pmsGuardUnsaved==='function' && view==='pms' && v!=='pms'){
+    if(!pmsGuardUnsaved()) return;
+  }
   if(typeof hideUndo==='function') hideUndo();
   view=v; setActiveView(view); render();
   if(_histReady && !_popping && !opts.replace){
     try{ history.pushState({view:v, kind:'view'}, '', '#'+v); }catch(e){}
   }
+}
+// Renvoie true si des températures ont été saisies dans l'écran courant mais non enregistrées.
+function pmsHasUnsavedTemp(){
+  if(_pmsTab!=='temp') return false;
+  const sels=document.querySelectorAll('select[id^="pmsT_"]');
+  for(const s of sels){ if(s.value!=='' && !isNaN(+s.value)) return true; }
+  return false;
+}
+// Garde-fou : demande confirmation avant de perdre des relevés non validés.
+function pmsGuardUnsaved(){
+  if(!pmsHasUnsavedTemp()) return true;
+  return confirm('⚠ Des températures ont été saisies mais NON enregistrées.\n\nElles seront perdues si tu quittes sans valider.\n\nQuitter quand même ?');
 }
 function openSheet(){
   const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
@@ -679,6 +702,9 @@ async function renderDash(){
     db.recipes.toArray()
   ]);
   const recName = rid => (recipes.find(r=>r.id===rid)||{}).produitNom||'Produit';
+  // Relevé de température du jour fait ou non (rappel HACCP discret).
+  const tLogsToday = await (db.temperatureLogs?db.temperatureLogs.where('date').equals(today()).toArray():Promise.resolve([])).catch(()=>[]);
+  const releveFait = tLogsToday.length>0;
   // CA des marchés clôturés (somme espèces+CB+autre), rattaché à leur date de clôture.
   const closedMk = (markets||[]).filter(k=>k.statut==='clos').map(k=>{
     const ca=k.ca||{}; return {date:(k.dateCloture||k.date||''), montant:marketNetCA(k)};
@@ -732,6 +758,7 @@ async function renderDash(){
      <div class="flex" style="gap:6px"><button class="btn ghost sm" onclick="quickLossForm()">⚠ Casse</button><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div></div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
+   ${!releveFait?`<div class="banner">🌡 <div><b>Relevé de température non fait aujourd'hui.</b> Pense à le saisir et à <b>valider</b>. <span class="act" onclick="goView('pms')">Faire le relevé →</span></div></div>`:''}
    ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
    ${prodSugg.length?`<div class="banner" style="background:#f4faf5;border-color:#cfe3d4">🔗 <div><b>${prodSugg.length} assemblage(s) à finaliser</b> — des coques et ganaches en stock peuvent être réunies (${prodSugg.slice(0,3).map(s=>esc(s.coqRec)+' '+qty(s.assemblable)+' mac.').join(' · ')}${prodSugg.length>3?' …':''}). <span class="act" onclick="goView('productions')">Assembler →</span></div></div>`:''}
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
@@ -1247,6 +1274,7 @@ async function renderRecipes(){
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
         return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
           <b><span class="tag" style="background:${rr.scale.col};color:#fff">${rr.scale.dot} ${rr.tauxMarge!=null?rr.tauxMarge+'%':'coût seul'}</span></b></div>`; })()}
+      ${(r.allergenes&&r.allergenes.length)?`<div class="note" style="margin:0 0 8px"><b>Allergènes :</b> ${r.allergenes.map(a=>esc(a)).join(' · ')}</div>`:'<div class="note" style="margin:0 0 8px;color:#b08a3a">⚠ Allergènes non renseignés</div>'}
       ${items.length?`
       <div class="mult-bar">
         <label>Quantité voulue</label>
@@ -1302,6 +1330,12 @@ async function recForm(id){
      <div class="field"><label>Rendement (nb par batch)</label><input type="number" id="f_rend" value="${r.rendement||60}"></div>
    </div>
    <label class="switch-row"><input type="checkbox" id="f_gf" ${r.grandFormat?'checked':''}> 🍪 Recette <b>grand format</b> (macaron à l'unité — stock séparé des petits)</label>
+   <div class="field"><label>Allergènes <span style="color:#9a8a82;font-weight:400">— information obligatoire pour la vente</span></label>
+     <div class="allergen-chips">${ALLERGENS.map(a=>{
+       const on=(r.allergenes||[]).includes(a);
+       return `<button type="button" class="allergen-chip${on?' on':''}" data-a="${esc(a)}" onclick="this.classList.toggle('on')">${esc(a)}</button>`;
+     }).join('')}</div>
+   </div>
    <div class="field"><label>Composition (par batch)</label><div id="bomList"></div>
      <button class="btn ghost sm" style="margin-top:6px" onclick="bomAdd()">+ Ajouter une matière</button></div>
    <details style="margin:10px 0"><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">Coût de revient avancé (optionnel)</summary>
@@ -1361,6 +1395,7 @@ async function saveRec(id){
   if(!rend || rend<=0){toast('Le rendement doit être supérieur à 0');return;}
   const o={produitNom:val('f_nom'),rendement:rend,
     grandFormat: !!document.getElementById('f_gf')?.checked,
+    allergenes: Array.from(document.querySelectorAll('.allergen-chip.on')).map(b=>b.dataset.a),
     pertePct: Math.max(0, Math.min(90, +val('f_perte')||0)),
     minParBatch: Math.max(0, +val('f_mod')||0),
     coutConsoUnit: Math.max(0, money2(+val('f_conso')||0)),
@@ -8667,7 +8702,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v120';
+const APP_VERSION = 'v124';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -8735,6 +8770,9 @@ const APP_KB = [
   { id:'composants', titre:'Production par composants (coques / ganache) & assemblage',
     tags:'composant composants coques ganache assemblage assembler sous-lot souslot lot ambiant congelateur frigo degustation echantillon offert marche surplus casse garni perte',
     r:`<p>Au lancement d'une production, choisis <b>« Par composants »</b> pour démarrer par les <b>coques</b> ou la <b>ganache</b> (sous-lots <b>-CO</b> / <b>-GA</b> sous le même n° de lot de base). Tu saisis toujours la quantité <b>en macarons</b> : pour les coques, l'app stocke automatiquement <b>2 coques par macaron</b> (60 macarons → <b>120 coques</b>), tout en calculant les matières sur le nombre de macarons. Règle d'assemblage : <b>1 macaron = 2 coques + 1 ganache</b>. Tu peux <b>terminer</b> la production de coques (choix de l'emplacement à la fin), <b>déclarer pertes et écarts</b> théorie/réel sur les coques, puis utiliser <b>🔗 Assembler</b> pour réunir coques + ganache en un macaron assemblé (assemblage partiel possible). L'application <b>surveille les coques et ganaches non assemblées</b> : un bloc <b>« Assemblages à finaliser »</b> (dans Productions et sur le tableau de bord) te <b>suggère les rapprochements</b> possibles (même lot de base et même parfum en priorité) avec le nombre de macarons assemblables, et un bouton direct pour finaliser. Coche <b>« dégustation »</b> pour un assemblage offert non vendable ; les <b>cassés mais garnis</b> basculent en dégustation depuis « ⚠ Perte ». Coques, ganache et dégustations ne comptent jamais comme stock vendable.</p>` },
+  { id:'allergenes', titre:'Allergènes des recettes',
+    tags:'allergene allergenes gluten oeuf lait fruits a coque soja arachide etiquetage boutique conformite vente inco',
+    r:`<p>Sur chaque <b>recette</b>, tu peux cocher les <b>allergènes</b> présents parmi les 14 à déclaration obligatoire (gluten, œufs, lait, fruits à coque, soja, arachides…). Ils s'affichent sur la fiche recette, et une recette sans allergène renseigné est signalée (⚠) pour t'inciter à compléter. Cette information est <b>obligatoire pour la vente</b> (notamment en ligne) et servira de source unique pour l'étiquetage et la future boutique.</p>` },
   { id:'casse-perte', titre:'Casse / Perte (retirer du stock)',
     tags:'casse perte invendable tombe jete dlc depassee retrait stock decompte rapide taux perte cout',
     r:`<p>Pour sortir des pièces du stock sans les vendre (macaron tombé, invendable, DLC dépassée), deux accès : le bouton <b>⚠ Perte</b> sur chaque batch dans Productions, ou le bouton <b>⚠ Casse / Perte</b> (en haut de Productions et sur le tableau de bord) pour un <b>accès rapide</b> sans chercher le batch. Tu choisis le produit/lot, la quantité et le motif ; la perte est <b>tracée avec son coût de revient</b> et alimente le <b>taux de perte</b> et la valeur perdue (imputée au coût). Cas particulier : un <b>cassé mais garni</b> peut basculer en <b>dégustation</b> (offert, non perdu) au lieu d'être compté en perte.</p>` },
@@ -11779,10 +11817,13 @@ function pmsPeriodStart(freq){
 
 let _pmsTab = 'temp';        // 'temp' | 'nettoyage'
 let _pmsPeriode = null;      // 'Matin' | 'Soir' (auto si null)
+let _pmsDate = null;         // date du relevé (défaut = aujourd'hui ; permet de corriger un jour passé)
+function pmsSetDate(d){ if(d!==_pmsDate && !pmsGuardUnsaved()) return; _pmsDate = d || today(); pmsRenderTemp(); }
 
 async function renderPMS(){
   await seedPMS();
   if(!_pmsPeriode){ _pmsPeriode = (new Date().getHours() < 14) ? 'Matin' : 'Soir'; }
+  _pmsDate = today();   // on repart toujours sur aujourd'hui en entrant dans l'écran
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>HACCP / PMS</h1><p>Plan de Maîtrise Sanitaire — ${fmtDate(today())}</p></div>
      <button class="btn ghost" onclick="pmsExportDDPP()">🗄 Historique / Contrôle DDPP</button></div>
@@ -11793,8 +11834,8 @@ async function renderPMS(){
    <div id="pmsBody"></div>`;
   if(_pmsTab==='temp') await pmsRenderTemp(); else await pmsRenderCleaning();
 }
-function pmsSetTab(t){ _pmsTab=t; renderPMS(); }
-function pmsSetPeriode(p){ _pmsPeriode=p; pmsRenderTemp(); }
+function pmsSetTab(t){ if(t!==_pmsTab && !pmsGuardUnsaved()) return; _pmsTab=t; renderPMS(); }
+function pmsSetPeriode(p){ if(p!==_pmsPeriode && !pmsGuardUnsaved()) return; _pmsPeriode=p; pmsRenderTemp(); }
 
 // ---------- A. TEMPÉRATURES ----------
 async function pmsRenderTemp(){
@@ -11803,8 +11844,8 @@ async function pmsRenderTemp(){
   // équipements à relever au labo (on exclut la vitrine marché du relevé quotidien)
   const labo = eqs.filter(e=>!e.marcheOnly);
   const vitrine = eqs.filter(e=>e.marcheOnly);
-  // relevés déjà saisis aujourd'hui pour cette période (pré-remplissage)
-  const todayLogs = (await db.temperatureLogs.where('date').equals(today()).toArray())
+  // relevés déjà saisis pour cette date + période (pré-remplissage)
+  const todayLogs = (await db.temperatureLogs.where('date').equals(_pmsDate).toArray())
     .filter(l=>l.periode===_pmsPeriode);
   const logByEq = {}; todayLogs.forEach(l=>{ logByEq[l.equipmentId]=l; });
 
@@ -11830,7 +11871,19 @@ async function pmsRenderTemp(){
       </div>
     </div>`;
   };
+  // État du relevé pour cette date + période (✅ fait / ⚠ pas encore) — évite tout doute.
+  const estAuj = _pmsDate===today();
+  const dejaFait = todayLogs.length>0;
+  const jourLbl = estAuj ? "aujourd'hui" : fmtDate(_pmsDate);
+  const etatBanner = dejaFait
+    ? `<div class="banner" style="background:#eaf6ec;border-color:#bfe0c8;color:#2e7d32">✅ <div><b>Relevé « ${esc(_pmsPeriode)} » enregistré (${jourLbl})</b> — ${todayLogs.length} équipement(s). Modifiable puis revalider si besoin.</div></div>`
+    : `<div class="banner">⚠ <div><b>Aucun relevé « ${esc(_pmsPeriode)} » enregistré (${jourLbl}).</b> N'oublie pas de taper <b>« ✓ Valider les relevés »</b> en bas : saisir les valeurs ne suffit pas.</div></div>`;
   body.innerHTML=`
+   ${etatBanner}
+   <div class="field" style="max-width:240px;margin-bottom:10px">
+     <label>Date du relevé ${estAuj?'':'<span style="color:#b04a3e">(jour passé)</span>'}</label>
+     <input type="date" value="${_pmsDate}" max="${today()}" onchange="pmsSetDate(this.value)">
+   </div>
    <div class="pms-periode">
      <button class="${_pmsPeriode==='Matin'?'active':''}" onclick="pmsSetPeriode('Matin')">☀️ Matin</button>
      <button class="${_pmsPeriode==='Soir'?'active':''}" onclick="pmsSetPeriode('Soir')">🌙 Soir</button>
@@ -11855,29 +11908,39 @@ function fmtTempSigned(t){
   const dec = Math.round((abs-Math.floor(abs))*10);
   return `${sign}${intp}.${dec}`;
 }
-// Génère les <option> d'un menu déroulant de températures (pas de 0,5°),
-// sur une plage élargie autour de [min..max] pour permettre le hors-plage (alerte).
+// Génère les <option> d'un menu déroulant de températures, PAS de 0,5°.
+// La ZONE CONFORME (min..max) est placée EN PREMIER (groupe « ✅ Zone conforme »)
+// pour éviter de scroller ; les valeurs hors plage suivent dans un second groupe.
 function tempOptions(min, max, current){
   min=+min; max=+max;
   if(isNaN(min)) min=0; if(isNaN(max)) max=8;
-  // marge de ±3° autour de la plage (pas de 0,1° → liste raisonnable),
-  // pour pouvoir saisir un hors-plage réaliste qui déclenche l'action corrective.
   let lo=Math.floor(min)-3, hi=Math.ceil(max)+3;
   lo=Math.max(lo,-40); hi=Math.min(hi,60);
-  const round1 = x => Math.round(x*10)/10;        // évite les imprécisions flottantes
+  const round1 = x => Math.round(x*10)/10;
+  const half = x => Math.round(x*2)/2;            // arrondi au 0,5° le plus proche
   const cur = current!=null ? round1(+current) : null;
-  const opts=['<option value="">—</option>'];
-  // du plus chaud au plus froid (lecture naturelle : positifs en haut), pas de 0,1°
-  for(let i=Math.round(hi*10); i>=Math.round(lo*10); i--){
-    const v=round1(i/10);
-    const sel = (cur!=null && Math.abs(v-cur)<1e-9) ? ' selected' : '';
-    opts.push(`<option value="${v}"${sel}>${fmtTempSigned(v)}</option>`);
-  }
-  // si la valeur enregistrée tombe hors de la plage générée (ancienne saisie), on l'ajoute en tête
+  const eq = (a,b)=>Math.abs(a-b)<1e-9;
+  const inRange = v => v>=round1(min)-1e-9 && v<=round1(max)+1e-9;
+  const optTag = v => { const sel=(cur!=null && eq(v,cur))?' selected':''; return `<option value="${v}"${sel}>${fmtTempSigned(v)}</option>`; };
+  // bornes alignées sur le demi-degré
+  const minH=half(min), maxH=half(max), loH=half(lo), hiH=half(hi);
+  const STEP=0.5;
+  // 1) zone conforme, du plus froid au plus chaud
+  const conf=[];
+  for(let v=minH; v<=maxH+1e-9; v=round1(v+STEP)){ conf.push(optTag(v)); }
+  // 2) hors plage : au-dessus du max (du plus proche au plus chaud), puis en dessous du min
+  const horsHaut=[]; for(let v=round1(maxH+STEP); v<=hiH+1e-9; v=round1(v+STEP)){ horsHaut.push(optTag(v)); }
+  const horsBas=[];  for(let v=round1(minH-STEP); v>=loH-1e-9; v=round1(v-STEP)){ horsBas.push(optTag(v)); }
+  let out = '<option value="">—</option>'
+    + `<optgroup label="✅ Zone conforme (${fmtTempSigned(min)} à ${fmtTempSigned(max)})">${conf.join('')}</optgroup>`
+    + `<optgroup label="⚠ Hors plage">${horsHaut.join('')}${horsBas.join('')}</optgroup>`;
+  // valeur enregistrée hors de la plage générée (ancienne saisie, ex. au 0,1°) → on l'ajoute, sélectionnée
   if(cur!=null && (cur>hi || cur<lo)){
-    opts.splice(1,0,`<option value="${cur}" selected>${fmtTempSigned(cur)}</option>`);
+    out = '<option value="">—</option>'
+      + `<option value="${cur}" selected>${fmtTempSigned(cur)}</option>`
+      + out.slice('<option value="">—</option>'.length);
   }
-  return opts.join('');
+  return out;
 }
 // Affiche/masque le menu correctif si la température est hors plage.
 function pmsCheckTemp(eqId){
@@ -11895,9 +11958,10 @@ function pmsCheckTemp(eqId){
 async function pmsSaveTemp(marcheOnly){
   const eqs = await db.pmsEquipments.toArray();
   const cible = eqs.filter(e=> marcheOnly ? e.marcheOnly : !e.marcheOnly);
-  const dateStr=today();
-  let nb=0, manqueCorr=false;
+  const dateStr = _pmsDate || today();
+  let nb=0;
   const toSave=[];
+  const manquants=[];   // équipements hors plage sans action corrective
   for(const eq of cible){
     const inp=document.getElementById('pmsT_'+eq.id); if(!inp) continue;
     const raw=inp.value;
@@ -11908,13 +11972,21 @@ async function pmsSaveTemp(marcheOnly){
     if(!conforme){
       const sel=document.getElementById('pmsCorrSel_'+eq.id);
       action = sel ? sel.value : '';
-      if(!action){ manqueCorr=true; }
+      if(!action){ manquants.push(eq); }
     }
     toSave.push({equipmentId:eq.id, date:dateStr, periode:_pmsPeriode, temperature:t,
       conforme, actionCorrective:action});
     nb++;
   }
-  if(manqueCorr){ toast('Sélectionne une action corrective pour les températures hors plage'); return; }
+  if(manquants.length){
+    // Rien n'est enregistré tant qu'une action corrective manque : on le rend TRÈS visible
+    // (surlignage + défilement) pour éviter de croire à tort que le relevé est sauvegardé.
+    manquants.forEach(eq=>{ const w=document.getElementById('pmsEq_'+eq.id); if(w){ w.classList.add('nc'); } });
+    const first=document.getElementById('pmsEq_'+manquants[0].id);
+    if(first&&first.scrollIntoView) first.scrollIntoView({behavior:'smooth',block:'center'});
+    toast('⚠ RIEN N\'A ÉTÉ ENREGISTRÉ : choisis une action corrective pour '+manquants.map(e=>e.nom).join(', '));
+    return;
+  }
   if(!nb){ toast('Saisis au moins une température'); return; }
   // remplace d'éventuels relevés déjà faits aujourd'hui pour cette période + ces équipements
   await db.transaction('rw', db.temperatureLogs, async()=>{
