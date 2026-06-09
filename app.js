@@ -729,7 +729,7 @@ async function renderDash(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div>
-     <button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div>
+     <div class="flex" style="gap:6px"><button class="btn ghost sm" onclick="quickLossForm()">⚠ Casse</button><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div></div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
    ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
@@ -1242,7 +1242,7 @@ async function renderRecipes(){
         <td>${qty(shown)} ${esc(d.u)}</td>
         <td id="mult_${r.id}_${idx}"><b>${qty(shown)}</b> ${esc(d.u)}</td>
       </tr>`; }).join('');
-    blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
+    blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
         return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
@@ -1301,6 +1301,7 @@ async function recForm(id){
      <div class="field"><label>Nom du produit</label><input id="f_nom" value="${esc(r.produitNom)}" placeholder="Macaron vanille"></div>
      <div class="field"><label>Rendement (nb par batch)</label><input type="number" id="f_rend" value="${r.rendement||60}"></div>
    </div>
+   <label class="switch-row"><input type="checkbox" id="f_gf" ${r.grandFormat?'checked':''}> 🍪 Recette <b>grand format</b> (macaron à l'unité — stock séparé des petits)</label>
    <div class="field"><label>Composition (par batch)</label><div id="bomList"></div>
      <button class="btn ghost sm" style="margin-top:6px" onclick="bomAdd()">+ Ajouter une matière</button></div>
    <details style="margin:10px 0"><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">Coût de revient avancé (optionnel)</summary>
@@ -1359,6 +1360,7 @@ async function saveRec(id){
   const rend=+val('f_rend');
   if(!rend || rend<=0){toast('Le rendement doit être supérieur à 0');return;}
   const o={produitNom:val('f_nom'),rendement:rend,
+    grandFormat: !!document.getElementById('f_gf')?.checked,
     pertePct: Math.max(0, Math.min(90, +val('f_perte')||0)),
     minParBatch: Math.max(0, +val('f_mod')||0),
     coutConsoUnit: Math.max(0, money2(+val('f_conso')||0)),
@@ -1461,7 +1463,8 @@ async function renderProductions(){
   });
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Productions</h1><p id="prodCount">${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p></div>
-     <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button></div>
+     <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button>
+     <button class="btn ghost" style="margin-left:6px" onclick="quickLossForm()">⚠ Casse / Perte</button></div>
    ${kpi.count?`<div class="cards" style="margin-bottom:18px">
      <div class="card"><div class="lbl">Taux de perte</div><div class="val" style="color:${kpi.taux>=10?'#b3261e':(kpi.taux>=5?'#d98324':'#2e7d32')}">${kpi.taux}%</div><div class="sub">${qty(kpi.totalPerdu)} perdues / ${qty(kpi.totalProduit)} produites</div></div>
      <div class="card"><div class="lbl">Valeur perdue (casse)</div><div class="val">${euro(kpi.valeurPerdue)}</div><div class="sub">${kpi.count} déclaration(s) · imputé au coût de revient</div></div>
@@ -1592,11 +1595,21 @@ function pickFlavorMatch(flavorNom, recipeNom){
   return a===b || b.includes(a) || a.includes(b);
 }
 // Besoins en macarons par parfum pour une commande (coffrets + événement + don).
+// Marqueur interne pour distinguer un besoin "grand format" d'un besoin "petit format"
+// portant le même nom de parfum (ils NE partagent PAS le même stock / la même recette).
+const GF_MARK = '\u0001GF';
+function isGFKey(k){ return typeof k==='string' && k.endsWith(GF_MARK); }
+function gfBase(k){ return isGFKey(k) ? k.slice(0, -GF_MARK.length) : k; }
 function orderFlavorNeeds(o){
   const needs={};
   orderToLines(o).forEach(ln=>{
     if(ln.type==='coffret'||ln.type==='evenement'||ln.type==='don'||ln.type==='vrac'){
       (ln.parfums||[]).forEach(p=>{ if(+p.qte>0) needs[p.nom]=(needs[p.nom]||0)+(+p.qte||0); });
+    }
+    // Grands formats : recette DISTINCTE, stock séparé → clé marquée GF, jamais mélangée
+    // avec les petits macarons du même nom.
+    if(ln.type==='grand'||ln.type==='don'){
+      (ln.items||[]).forEach(p=>{ if(+p.qte>0){ const k=p.nom+GF_MARK; needs[k]=(needs[k]||0)+(+p.qte||0); } });
     }
   });
   return needs;
@@ -1621,47 +1634,54 @@ function allocateBatches(needs, prods, recipes){
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'';
   // candidats par parfum : batchs avec stock, triés FIFO (DLC la plus proche d'abord)
   const remaining = {}; Object.keys(needs).forEach(f=>remaining[f]=needs[f]);
-  // index des batchs disponibles avec quantité restante "virtuelle" (on déduit au fur et à mesure)
+  const recById = {}; (recipes||[]).forEach(r=>{ recById[r.id]=r; });
+  // index des batchs disponibles ; on mémorise si le batch est d'une recette GRAND FORMAT
   const stock = prods.filter(p=>round3(+p.qteRestante)>0 && prodVendable(p)).map(p=>({
     id:p.id, emp:p.emplacement||'', lot:p.lotProduction||'', dlc:p.dlcProduit||'',
-    rec:recName(p.recipeId), dispo:round3(+p.qteRestante)
+    rec:recName(p.recipeId), gf: !!(recById[p.recipeId] && recById[p.recipeId].grandFormat),
+    dispo:round3(+p.qteRestante)
   }));
-  // Quels parfums chaque zone peut-elle servir ? (pour prioriser les zones polyvalentes)
+  // Correspondance besoin ↔ batch : le type DOIT coïncider (grand format avec grand format,
+  // petit avec petit), en plus de la correspondance de parfum. Jamais de mélange.
+  const matchNeed = (needKey, s) => {
+    const wantGF = isGFKey(needKey);
+    if(wantGF !== s.gf) return false;
+    return pickFlavorMatch(gfBase(needKey), s.rec);
+  };
   const flavorsNeeded = Object.keys(needs).filter(f=>needs[f]>0);
-  const zoneScore = {};   // emp -> nb de parfums distincts (parmi les besoins) présents dans la zone
+  const zoneScore = {};
   EMPLACEMENTS.forEach(e=>{ zoneScore[e.key]=0; });
   flavorsNeeded.forEach(f=>{
-    const zones=new Set(stock.filter(s=>pickFlavorMatch(f, s.rec)).map(s=>s.emp));
+    const zones=new Set(stock.filter(s=>matchNeed(f, s)).map(s=>s.emp));
     zones.forEach(z=>{ if(zoneScore[z]!=null) zoneScore[z]++; else zoneScore[z]=1; });
   });
-  // ordre des zones : score décroissant, puis ordre physique (F,B,C,A)
   const zoneOrder = [...new Set([...EMPLACEMENTS.map(e=>e.key), ...stock.map(s=>s.emp)])]
     .filter(z=>z!=='')
     .sort((a,b)=>(zoneScore[b]||0)-(zoneScore[a]||0));
-  const plan=[];           // {flavor, prodId, qte, emp, lot, dlc}
-  // On parcourt les zones les plus polyvalentes d'abord ; dans chaque zone, FIFO par DLC.
+  // libellé d'affichage : nom propre + suffixe « (grand format) » si besoin GF
+  const dispName = k => isGFKey(k) ? (gfBase(k)+' (grand format)') : k;
+  const plan=[];
   zoneOrder.forEach(z=>{
     flavorsNeeded.forEach(f=>{
       if(remaining[f]<=0) return;
-      const cands=stock.filter(s=>s.emp===z && s.dispo>0 && pickFlavorMatch(f, s.rec))
+      const cands=stock.filter(s=>s.emp===z && s.dispo>0 && matchNeed(f, s))
         .sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999')); // FIFO
       for(const s of cands){
         if(remaining[f]<=0) break;
         const take=Math.min(remaining[f], s.dispo);
         if(take>0){
-          plan.push({flavor:f, prodId:s.id, qte:round3(take), emp:s.emp, lot:s.lot, dlc:s.dlc});
+          plan.push({flavor:dispName(f), prodId:s.id, qte:round3(take), emp:s.emp, lot:s.lot, dlc:s.dlc});
           s.dispo=round3(s.dispo-take); remaining[f]=round3(remaining[f]-take);
         }
       }
     });
   });
-  // regroupement du plan par zone (dans l'ordre de zoneOrder)
   const byZone=[];
   zoneOrder.forEach(z=>{
     const picks=plan.filter(pk=>pk.emp===z);
     if(picks.length){ const e=empInfo(z); byZone.push({emp:z, lettre:e.lettre, nom:e.nom, icon:e.icon, picks}); }
   });
-  const shortages=flavorsNeeded.filter(f=>remaining[f]>0).map(f=>({flavor:f, manque:round3(remaining[f])}));
+  const shortages=flavorsNeeded.filter(f=>remaining[f]>0).map(f=>({flavor:dispName(f), manque:round3(remaining[f])}));
   return {byZone, shortages, plan};
 }
 
@@ -2683,6 +2703,32 @@ function lossDegSwitch(on){
     ? '🥄 Ces pièces cassées mais garnies ne sont <b>pas comptées en perte</b> : elles basculent en <b>stock dégustation</b> (offert, non vendable), à distribuer (marchés…).'
     : 'La perte sort définitivement du stock fini et alimente le taux de perte. Le coût des pièces perdues est imputé au coût de revient global.';
 }
+// ACCÈS RAPIDE « Casse / Perte » : sortir une pièce du stock sans passer par la fiche
+// d'un batch. On liste les batchs vendables avec stock ; le choix ouvre la déclaration
+// de perte existante (coût, KPI et option « cassé garni » réutilisés tels quels).
+async function quickLossForm(){
+  const [prods, recipes] = await Promise.all([db.productions.toArray(), db.recipes.toArray()]);
+  const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'?';
+  const dispo = prods.filter(p=>round3(+p.qteRestante)>0 && prodVendable(p))
+    .sort((a,b)=>(b.prodTimestamp||b.date||'').localeCompare(a.prodTimestamp||a.date||''));
+  if(!dispo.length){ toast('Aucun stock disponible à décompter.'); return; }
+  const opts = dispo.map(p=>{
+    const e=empInfo(p.emplacement);
+    return `<option value="${p.id}">${esc(recName(p.recipeId))} — lot ${esc(p.lotProduction||('#'+p.id))} · ${qty(p.qteRestante)} dispo${e.lettre?' · '+e.lettre:''}</option>`;
+  }).join('');
+  openModal(`<h3>⚠ Casse / Perte rapide</h3>
+    <p class="note">Retire des pièces du stock (tombées, invendables, DLC dépassée…) sans passer par une commande. Tracé avec son coût pour le suivi des pertes.</p>
+    <div class="field"><label>Produit / lot concerné</label>
+      <select id="ql_prod">${opts}</select></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn danger" onclick="quickLossNext()">Suivant</button></div>`);
+}
+function quickLossNext(){
+  const id=+val('ql_prod'); if(!id){ toast('Choisis un produit'); return; }
+  closeModal();
+  declareLossForm(id);   // réutilise la déclaration de perte complète (quantité, motif, coût, dégustation)
+}
+
 async function saveLoss(prodId){
   const qteP = +val('f_lossQte');
   const p = await db.productions.get(prodId); if(!p){ toast('Production introuvable'); return; }
@@ -5111,6 +5157,127 @@ async function computeAccounting(opts){
     nbCharges: charges.length
   };
 }
+// ============================================================
+//  BILAN MENSUEL — ventilation marchandise / prestation de service
+//  sur les ENCAISSEMENTS du mois (base trésorerie = base déclaration
+//  micro-entreprise URSSAF) + prédiction des cotisations.
+// ============================================================
+async function computeMonthlyBilan(ym){
+  // ym = 'YYYY-MM'. Sépare le CA encaissé du mois en marchandise vs service.
+  const s=getSettings();
+  const orders = await db.orders.toArray();
+  const markets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
+  let goods=0, service=0;            // encaissé du mois, ventilé
+  const detailGoods=[], detailService=[];
+  // Pour chaque commande, on connaît la part service vs marchandise (lignes prestation = service).
+  orders.forEach(o=>{
+    const total=money2(+o.montant||0); if(total<=0) return;
+    const lignes=orderToLines(o);
+    let svc=0;
+    lignes.forEach(ln=>{ if(ln.type==='prestation') svc=money2(svc+lineTotalStored(ln)); });
+    const partSvc = total>0 ? Math.min(1, svc/total) : 0;   // proportion service de la commande
+    // encaissements du mois pour cette commande
+    const pays=(o.paiements&&o.paiements.length)?o.paiements
+      :(o.paiement==='Payé'&&o.datePaiement?[{date:o.datePaiement,montant:total}]:[]);
+    let encMois=0;
+    pays.forEach(p=>{ if(monthKey(p.date)===ym) encMois=money2(encMois+money2(p.montant)); });
+    if(encMois<=0) return;
+    const sPart=money2(encMois*partSvc), gPart=money2(encMois-encMois*partSvc);
+    if(gPart>0){ goods=money2(goods+gPart); }
+    if(sPart>0){ service=money2(service+sPart); }
+    const cl=o.histoLabel||'';
+    if(gPart>0) detailGoods.push({label:(o.histo?'[reprise] ':'')+(cl||('commande #'+o.id)), montant:gPart});
+    if(sPart>0) detailService.push({label:(cl||('prestation #'+o.id)), montant:sPart});
+  });
+  // Marchés clôturés du mois = vente de marchandise.
+  markets.forEach(mk=>{
+    if(mk.statut!=='clos') return;
+    if(monthKey(mk.dateCloture||mk.date)!==ym) return;
+    const ca=mk.ca||{}; const fond=money2(+mk.fondCaisse||0);
+    const esp=money2(Math.max(0,(+ca.especes||0)-fond)), cb=money2(ca.cb||0), au=money2(ca.autre||0);
+    const tot=money2(esp+cb+au); if(tot<=0) return;
+    goods=money2(goods+tot);
+    detailGoods.push({label:'Marché : '+(mk.nom||mk.lieu||'—'), montant:tot});
+  });
+  const caTotal=money2(goods+service);
+  // Cotisations URSSAF micro-entreprise : taux distincts marchandise / service.
+  const tauxGoods=+s.socialGoods||0, tauxService=+s.socialService||0;
+  const cotisGoods=money2(goods*tauxGoods/100);
+  const cotisService=money2(service*tauxService/100);
+  const cotisTotal=money2(cotisGoods+cotisService);
+  return {ym, goods, service, caTotal, tauxGoods, tauxService, cotisGoods, cotisService, cotisTotal,
+    detailGoods, detailService};
+}
+// Construit le texte du bilan mensuel (export .txt).
+function buildBilanText(B){
+  const L=[];
+  L.push('SENSATIONS MACARONS — BILAN MENSUEL');
+  L.push('Mois : '+monthLabel(B.ym));
+  L.push('Édité le '+fmtDate(today()));
+  L.push('========================================');
+  L.push('');
+  L.push('CHIFFRE D\'AFFAIRES ENCAISSÉ : '+euro(B.caTotal));
+  L.push('');
+  L.push('VENTILATION');
+  L.push('  • Vente de marchandise : '+euro(B.goods));
+  L.push('  • Prestation de service : '+euro(B.service));
+  L.push('');
+  L.push('COTISATIONS URSSAF (estimation)');
+  L.push('  • Marchandise : '+euro(B.goods)+' × '+B.tauxGoods+'%  = '+euro(B.cotisGoods));
+  L.push('  • Service     : '+euro(B.service)+' × '+B.tauxService+'%  = '+euro(B.cotisService));
+  L.push('  ----------------------------------------');
+  L.push('  À PAYER (estimé) : '+euro(B.cotisTotal));
+  L.push('');
+  if(B.detailGoods.length){
+    L.push('DÉTAIL MARCHANDISE');
+    B.detailGoods.forEach(d=>L.push('  - '+d.label+' : '+euro(d.montant)));
+    L.push('');
+  }
+  if(B.detailService.length){
+    L.push('DÉTAIL PRESTATIONS');
+    B.detailService.forEach(d=>L.push('  - '+d.label+' : '+euro(d.montant)));
+    L.push('');
+  }
+  L.push('========================================');
+  L.push('Base : encaissements du mois (trésorerie).');
+  L.push('Estimation indicative — vérifiez auprès de l\'URSSAF / votre comptable.');
+  L.push('Sensations Macarons — Le Mans');
+  return L.join('\n');
+}
+async function exportBilanMois(ym){
+  const B=await computeMonthlyBilan(ym);
+  const txt=buildBilanText(B);
+  const name='bilan-'+ym+'.txt';
+  let copied=false;
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(txt); copied=true; } }catch(e){}
+  const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  openModal(`<h3>Bilan ${monthLabel(ym)}</h3>
+    <p class="note">${copied?'Copié dans le presse-papier ✓.':'Fichier .txt téléchargé.'} </p>
+    <textarea rows="16" style="width:100%;font-family:monospace;font-size:.76rem;white-space:pre">${esc(txt)}</textarea>
+    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="(function(){const t=this.closest('.modal').querySelector('textarea');t.select();try{document.execCommand('copy');}catch(e){} toast('Copié ✓');}).call(this)">⧉ Copier</button></div>`);
+}
+
+// Export comptable CSV : synthèse mensuelle (CA encaissé, marchandise, service, cotisations, charges, résultat).
+async function exportComptaCSV(){
+  const A = await computeAccounting();
+  const sep=';';
+  const esc2 = v => { v=String(v==null?'':v); return /[";\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+  const rows=[['Mois','CA encaissé','Vente marchandise','Prestation service','Cotis. marchandise','Cotis. service','Cotis. URSSAF totale','Charges','Coût matières (est.)','Résultat'].map(esc2).join(sep)];
+  for(const s of A.serie){
+    const B=await computeMonthlyBilan(s.mois);
+    rows.push([
+      monthLabel(s.mois), money2(s.ca), B.goods, B.service, B.cotisGoods, B.cotisService, B.cotisTotal,
+      money2(s.charges), money2(s.coutMatieres), money2(s.resultat)
+    ].map(v=>esc2(typeof v==='number'?v.toFixed(2).replace('.',','):v)).join(sep));
+  }
+  const csv='\uFEFF'+rows.join('\r\n');   // BOM pour Excel FR
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='comptabilite-mensuelle.csv'; a.click();
+  toast('Export comptable téléchargé ✓');
+}
+
 // Coût matières estimé d'une commande (somme sur ses lignes coffret/événement via les recettes).
 function estimateOrderMaterialCost(o, recipes, recipeItems, lots){
   // coût unitaire matière par recette (réutilise coutRecette/ rendement)
@@ -5880,6 +6047,7 @@ function generateInsights(S){
   paid.forEach(o=>{
     const m=computeOrderMargins(o,recipes,recipeItems,lots);
     orderToLines(o).forEach(ln=>{
+      if(ln.type==='histo') return;   // ligne de reprise : sert aux tendances parfums, pas au mix produit
       let key;
       if(ln.type==='coffret') key=`Coffret ${ln.taille}`;
       else if(ln.type==='evenement') key='Événement';
@@ -6022,6 +6190,11 @@ function computeStats(orders, clients, toLines){
           global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
         (ln.items||[]).forEach(p=>{ if(p.qte>0){ const lbl='Grand format : '+p.nom;
           addP(global.grandFormat,p.nom,p.qte);
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+      } else if(ln.type==='histo'){
+        // Commande historique (reprise) : on alimente UNIQUEMENT les parfums et le
+        // nombre de macarons (pour les tendances), sans créer de faux produit/coffret.
+        (ln.parfums||[]).forEach(p=>{ if(p.qte>0){ addP(global.parfums,p.nom,p.qte); addP(C.parfums,p.nom,p.qte);
           global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
       }
     }
@@ -6444,10 +6617,25 @@ async function renderStats(){
 // Les matières premières et emballages se saisissent en LOTS (pas ici), pour éviter
 // tout double comptage — ils alimentent déjà le coût de revient via les lots.
 const CHARGE_CATS = ['Assurance professionnelle','Hébergement / site web','Abonnements / logiciels','Équipement','Loyer','Énergie','Transport / déplacement','Stand / marché','Marketing','Frais bancaires','Cotisations / impôts','Formation','Autre'];
+let _comptaMonth = null;
+function comptaSetMonth(m){ _comptaMonth = m; renderCompta(); }
 async function renderCompta(){
  try {
   const A = await computeAccounting();
   const fmtPct = (n,d)=> d>0 ? Math.round(n/d*100) : 0;
+  // mois disponibles (depuis la série) + mois courant
+  const moisDispo = [...new Set([...(A.serie||[]).map(s=>s.mois), monthKey(today())])].filter(Boolean).sort().reverse();
+  if(!_comptaMonth || !moisDispo.includes(_comptaMonth)) _comptaMonth = moisDispo[0] || monthKey(today());
+  const B = await computeMonthlyBilan(_comptaMonth);
+  // cumul de l'année en cours (cotisations URSSAF year-to-date)
+  const yearOf = (_comptaMonth||'').slice(0,4);
+  let ytdGoods=0, ytdService=0, ytdCotis=0;
+  for(const m of moisDispo.filter(x=>x.slice(0,4)===yearOf)){
+    const bm = (m===_comptaMonth) ? B : await computeMonthlyBilan(m);
+    ytdGoods+=bm.goods; ytdService+=bm.service; ytdCotis+=bm.cotisTotal;
+  }
+  ytdGoods=money2(ytdGoods); ytdService=money2(ytdService); ytdCotis=money2(ytdCotis);
+  const moisOpts = moisDispo.map(m=>`<option value="${m}" ${m===_comptaMonth?'selected':''}>${esc(monthLabel(m))}</option>`).join('');
 
   // graphe CA encaissé vs charges par mois (lineChart attend des séries de points {x,y})
   let chart='';
@@ -6479,6 +6667,7 @@ async function renderCompta(){
    <div class="banner">📒 <div>Deux lectures du chiffre d'affaires : le <b>CA facturé</b> (total des commandes, à leur date) et le <b>CA encaissé</b> (règlements reçus, à leur date réelle). Une commande « en attente de paiement » est facturée mais n'entre pas dans le CA encaissé. Le CA des <b>marchés clôturés</b> est inclus (à leur date de clôture).${A.totalMarches>0?` Dont marchés : <b>${euro(A.totalMarches)}</b>.`:''}</div></div>
    <div class="flex" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
      <button class="btn" onclick="view='rentabilite';setActiveView&&setActiveView('rentabilite');renderProfit()">📈 Analyse de rentabilité</button>
+     <button class="btn ghost" onclick="exportComptaCSV()">⤓ Export comptable (.csv)</button>
      <button class="btn ghost" onclick="settingsForm()">⚙ Paramètres (taux, emballages)</button>
    </div>
 
@@ -6490,6 +6679,23 @@ async function renderCompta(){
      ${A.totalPertes>0?`<div class="kpi"><span>Pertes / casse</span><b style="color:var(--red,#b3261e)">−${euro(A.totalPertes)}</b></div>`:''}
      <div class="kpi"><span>Résultat (encaissé)</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b></div>
      <div class="kpi"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b></div>
+   </div>
+
+   <div class="panel" style="border:1.5px solid #e7d9b8;background:#fcf8ee">
+     <h2>📄 Bilan du mois & URSSAF</h2>
+     <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+       <select id="comptaMonth" onchange="comptaSetMonth(this.value)" style="flex:1;min-width:160px;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${moisOpts}</select>
+       <button class="btn gold" onclick="exportBilanMois('${_comptaMonth}')">⤓ Exporter le bilan (.txt)</button>
+     </div>
+     <div class="sum-box"><span>CA encaissé du mois</span><b>${euro(B.caTotal)}</b></div>
+     <div class="sum-box"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b></div>
+     <div class="sum-box"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b></div>
+     <h3 style="font-size:.95rem;margin:14px 0 6px">Cotisations URSSAF estimées</h3>
+     <div class="sum-box"><span>Marchandise · ${B.tauxGoods}%</span><b>${euro(B.cotisGoods)}</b></div>
+     <div class="sum-box"><span>Service · ${B.tauxService}%</span><b>${euro(B.cotisService)}</b></div>
+     <div class="sum-box" style="border-top:2px solid #e0d5c5;margin-top:4px;padding-top:8px"><span><b>À provisionner ce mois (estimé)</b></span><b style="color:var(--bordeaux);font-size:1.05rem">${euro(B.cotisTotal)}</b></div>
+     <div class="sum-box" style="background:#f4faf5"><span>Cumul ${esc(yearOf)} — CA (march. ${euro(ytdGoods)} · serv. ${euro(ytdService)})</span><b>cotis. ${euro(ytdCotis)}</b></div>
+     <p class="note">Estimation sur les <b>encaissements du mois</b> (base de déclaration micro-entreprise). Les taux sont réglables dans ⚙ Paramètres. À vérifier auprès de l'URSSAF / votre comptable.</p>
    </div>
 
    ${A.serie.length?`<div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none"':''}><h2>CA encaissé, charges & résultat par mois</h2>${chart}</div>`:''}
@@ -8461,7 +8667,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v113';
+const APP_VERSION = 'v120';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -8480,7 +8686,7 @@ const APP_KB = [
     r:`<p>Onglet <b>Productions</b>. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock fini suit la quantité <b>réelle</b>. La barre de recherche filtre par n° de lot, parfum, date, statut ; une seule <b>lettre d'emplacement</b> (F/B/C/A) ou les puces de zone filtrent par emplacement. Tu peux découper un batch, ajuster le réel, déclarer une perte, imprimer l'étiquette.</p>` },
   { id:'picking', titre:'Préparation / Picking & liaison batch↔commande',
     tags:'picking preparation liaison batch commande prete affecter zone fifo',
-    r:`<p>La liaison batch↔commande est <b>automatique</b> : le picking calcule les besoins, affecte les batchs (optimisé par zone, FIFO par DLC) et, au clic <b>« Commande prête »</b>, crée les liens, décrémente le stock fini et les emballages, et passe la commande en « Terminée ». La liaison manuelle 🔗 reste possible en secours, sans double décompte.</p>` },
+    r:`<p>La liaison batch↔commande est <b>automatique</b> : le picking calcule les besoins, affecte les batchs (optimisé par zone, FIFO par DLC) et, au clic <b>« Commande prête »</b>, crée les liens, décrémente le stock fini et les emballages, et passe la commande en « Terminée ». La liaison manuelle 🔗 reste possible en secours, sans double décompte. Les <b>macarons grand format</b> ont leur <b>propre recette et leur propre stock</b> : coche « Recette grand format » sur la fiche recette. Un grand format n'est jamais servi à partir du stock des petits macarons du même parfum (et inversement) — s'il manque du stock grand format, le picking affiche « stock insuffisant ».</p>` },
   { id:'plan-prod', titre:'Plan de production & planification personnelle',
     tags:'plan production mrp ordonnancement planning meringue capacite temps disponibilite chef',
     r:`<p>Onglet <b>Plan de production</b>. Il agrège les besoins, calcule les batchs et le temps. La <b>planification personnelle</b> te laisse décrire ta disponibilité (jour par jour, plusieurs créneaux) et génère un planning minute par minute : meringues remplies à la capacité (240 coques = 120 macarons standard ; 48 coques = 24 grands formats), ganaches placées pendant la cuisson, montages ensuite, puis maturation 24 h. Le « mot du chef » explique chaque choix de façon chiffrée.</p>` },
@@ -8497,8 +8703,8 @@ const APP_KB = [
     tags:'charge charges depense assurance hebergement abonnement recurrente mensuelle loyer',
     r:`<p>Onglet <b>Comptabilité → charges</b>. Les charges sont les dépenses <b>hors stock</b> (assurance, hébergement web, loyer, stand…). Le bouton <b>🔁 Charges récurrentes</b> permet de saisir une charge mensuelle une seule fois : elle est reportée automatiquement chaque mois. Les matières et emballages ne sont jamais des charges (ils se gèrent en lots).</p>` },
   { id:'compta', titre:'Comptabilité & bilan',
-    tags:'comptabilite compta resultat benefice ca encaisse charges bilan mensuel marge',
-    r:`<p>La <b>Comptabilité</b> croise le CA encaissé, les charges, le coût matières et les frais de marché pour donner le résultat par mois. L'onglet <b>Statistiques</b> affiche un <b>bilan financier mensuel</b> (CA encaissé − charges = bénéfice net, vert/rouge).</p>` },
+    tags:'comptabilite compta resultat benefice ca encaisse charges bilan mensuel marge urssaf cotisation marchandise prestation service ventilation export txt csv declaration',
+    r:`<p>La <b>Comptabilité</b> croise le CA encaissé, les charges, le coût matières et les frais de marché pour donner le résultat par mois (base trésorerie). Un panneau <b>« Bilan du mois & URSSAF »</b> ventile le CA encaissé du mois entre <b>vente de marchandise</b> et <b>prestation de service</b>, puis estime les <b>cotisations URSSAF</b> à provisionner (taux distincts marchandise / service, réglables dans Paramètres) avec un <b>cumul annuel</b>. Tu peux <b>exporter le bilan du mois en .txt</b> (un bouton, copie automatique dans le presse-papier) et l'ensemble en <b>.csv</b> pour ton comptable. Une commande mixte (coffrets + prestation) est répartie au prorata ; les marchés clôturés comptent en marchandise.</p>` },
   { id:'crm', titre:'Fiches clients (CRM)',
     tags:'client clients crm fiche panier moyen parfum prefere vip fidele frequence',
     r:`<p>Onglet <b>Clients</b>. Chaque fiche montre le panier moyen, le parfum préféré, la fréquence et un badge (VIP / Fidèle). La recherche couvre nom, société, téléphone, e-mail, réf et notes.</p>` },
@@ -8516,7 +8722,7 @@ const APP_KB = [
     r:`<p>La <b>pointeuse</b> (bandeau flottant) permet de lancer <b>plusieurs chronos en parallèle</b>, chacun avec sa <b>nature d'activité</b> : Pesées, Ganache, Meringue, Macaronnage, Pochage, Cuisson, Garnissage/Montage, Vaisselle, Nettoyage fin de prod, Conditionnement, ou <b>Autre</b> (que tu peux <b>préciser</b> librement). Chaque chrono a sa <b>pause</b> et son <b>stop</b> indépendants — tu peux faire tourner « Cuisson » et « Macaronnage » en même temps, ou deux « Cuisson » à la fois. Le bouton <b>▶ Ajouter une activité</b> démarre un chrono sans interrompre les autres. À l'arrêt, tu renseignes le taux horaire et la session est enregistrée. Dans <b>Analyse → Temps de travail</b> : répartition par activité + conseils. Sans aucun impact sur les productions.</p>` },
   { id:'migration', titre:'Reprise / migration (historique & stock de départ)',
     tags:'migration reprise historique demarrage debut ancienne donnee ca chiffre affaire stock depart inventaire import',
-    r:`<p>L'onglet <b>Reprise / migration</b> sert à démarrer avec ton historique. Tu peux saisir des <b>commandes historiques</b> (date, montant, client ou libellé) : elles <b>comptent dans le chiffre d'affaires</b> et les stats, mais sont marquées « historique » — l'app ne demande <b>ni production, ni picking, ni matières</b> et ne génère <b>aucune alerte</b> dessus (elles n'apparaissent pas dans la liste des commandes opérationnelles). Tu peux aussi enregistrer ton <b>stock de départ de produits finis</b> (lot déjà « terminé », sans consommer de matières) et, pour les matières premières, utiliser la <b>réception de lot</b> habituelle dans Matières &amp; emballages.</p>` },
+    r:`<p>L'onglet <b>Reprise / migration</b> sert à démarrer avec ton historique. Tu peux saisir des <b>commandes historiques</b> (date, montant, client ou libellé) : elles <b>comptent dans le chiffre d'affaires</b> et les stats, mais sont marquées « historique » — l'app ne demande <b>ni production, ni picking, ni matières</b> et ne génère <b>aucune alerte</b> dessus (elles n'apparaissent pas dans la liste des commandes opérationnelles). Tu peux y ajouter le <b>détail des parfums</b> (parfum + quantité) : cela <b>alimente les statistiques et les tendances</b> (parfums populaires, saisonnalité) sans modifier le montant saisi. Tu peux aussi enregistrer ton <b>stock de départ de produits finis</b> (lot déjà « terminé », sans consommer de matières) et, pour les matières premières, utiliser la <b>réception de lot</b> habituelle dans Matières &amp; emballages.</p>` },
   { id:'sauvegarde', titre:'Sauvegarde & restauration',
     tags:'sauvegarde backup restauration export import donnees fichier rappel ios safari perte purge securite',
     r:`<p>Onglet <b>Sauvegarde &amp; sécurité</b>. <b>Exporte</b> toutes tes données dans un fichier .json et range-le ailleurs (Fichiers, iCloud, e-mail), puis <b>réimporte</b>-le pour restaurer (remplacement ou fusion). ⚠️ Important : effacer l'historique Safari <b>supprime aussi la base de l'app</b> (limite iOS) — seul un export hors appareil te protège. L'app fait une <b>sauvegarde automatique quotidienne</b> dans son historique interne et te <b>rappelle automatiquement</b> d'exporter (fréquence réglable, 3 jours par défaut). Exporte avant toute mise à jour ou nettoyage de Safari.</p>` },
@@ -8529,6 +8735,9 @@ const APP_KB = [
   { id:'composants', titre:'Production par composants (coques / ganache) & assemblage',
     tags:'composant composants coques ganache assemblage assembler sous-lot souslot lot ambiant congelateur frigo degustation echantillon offert marche surplus casse garni perte',
     r:`<p>Au lancement d'une production, choisis <b>« Par composants »</b> pour démarrer par les <b>coques</b> ou la <b>ganache</b> (sous-lots <b>-CO</b> / <b>-GA</b> sous le même n° de lot de base). Tu saisis toujours la quantité <b>en macarons</b> : pour les coques, l'app stocke automatiquement <b>2 coques par macaron</b> (60 macarons → <b>120 coques</b>), tout en calculant les matières sur le nombre de macarons. Règle d'assemblage : <b>1 macaron = 2 coques + 1 ganache</b>. Tu peux <b>terminer</b> la production de coques (choix de l'emplacement à la fin), <b>déclarer pertes et écarts</b> théorie/réel sur les coques, puis utiliser <b>🔗 Assembler</b> pour réunir coques + ganache en un macaron assemblé (assemblage partiel possible). L'application <b>surveille les coques et ganaches non assemblées</b> : un bloc <b>« Assemblages à finaliser »</b> (dans Productions et sur le tableau de bord) te <b>suggère les rapprochements</b> possibles (même lot de base et même parfum en priorité) avec le nombre de macarons assemblables, et un bouton direct pour finaliser. Coche <b>« dégustation »</b> pour un assemblage offert non vendable ; les <b>cassés mais garnis</b> basculent en dégustation depuis « ⚠ Perte ». Coques, ganache et dégustations ne comptent jamais comme stock vendable.</p>` },
+  { id:'casse-perte', titre:'Casse / Perte (retirer du stock)',
+    tags:'casse perte invendable tombe jete dlc depassee retrait stock decompte rapide taux perte cout',
+    r:`<p>Pour sortir des pièces du stock sans les vendre (macaron tombé, invendable, DLC dépassée), deux accès : le bouton <b>⚠ Perte</b> sur chaque batch dans Productions, ou le bouton <b>⚠ Casse / Perte</b> (en haut de Productions et sur le tableau de bord) pour un <b>accès rapide</b> sans chercher le batch. Tu choisis le produit/lot, la quantité et le motif ; la perte est <b>tracée avec son coût de revient</b> et alimente le <b>taux de perte</b> et la valeur perdue (imputée au coût). Cas particulier : un <b>cassé mais garni</b> peut basculer en <b>dégustation</b> (offert, non perdu) au lieu d'être compté en perte.</p>` },
   { id:'suppressions', titre:'Supprimer une entrée (commande, production, marché, client, événement)',
     tags:'supprimer suppression effacer raison motif confirmation perte recrediter congelateur retour chaine froid decongelation annuler annulation undo',
     r:`<p>Chaque fiche complète a un bouton <b>🗑 Supprimer</b> (à droite de Modifier) avec <b>confirmation</b>. Pour une <b>commande</b> ou une <b>production</b>, une <b>raison</b> est demandée. À la suppression d'une production, tu choisis : recréditer le stock matières, ou — si des pièces finies restent — les <b>déclarer en pertes</b>. Après une suppression, une barre <b>↩ Annuler</b> s'affiche quelques secondes pour <b>revenir en arrière immédiatement</b>. Règle chaîne du froid : une production sortie du congélateur ne peut y retourner que dans l'heure ; au-delà le retour A/B/C est bloqué.</p>` }
@@ -9750,7 +9959,25 @@ async function deleteBackup(id){
 //  paiement:'Payé', montant, date} → compte dans le CA, mais
 //  l'app NE demande NI production NI picking NI matières.
 // ============================================================
+// Détail parfums d'une commande historique (alimente les stats sans toucher au CA).
+let migParfums=[];
+function migParfumOptions(){
+  const all=[...FLAVORS, ...((typeof BIG_FORMATS!=='undefined')?BIG_FORMATS:[])];
+  return [...new Set(all)].sort((a,b)=>a.localeCompare(b,'fr')).map(f=>`<option value="${esc(f)}">`).join('');
+}
+function migParfumDraw(){
+  const box=document.getElementById('mig_parfums'); if(!box) return;
+  box.innerHTML = `<datalist id="migFlavorList">${migParfumOptions()}</datalist>` + (migParfums.length?migParfums.map((p,i)=>`
+    <div class="bom-line">
+      <input list="migFlavorList" value="${esc(p.nom)}" placeholder="parfum" oninput="migParfums[${i}].nom=this.value">
+      <input type="number" min="1" step="1" value="${p.qte}" placeholder="qté" oninput="migParfums[${i}].qte=+this.value">
+      <span class="x" onclick="migParfumDel(${i})">×</span>
+    </div>`).join(''):'<p class="note">Aucun parfum ajouté (facultatif).</p>');
+}
+function migParfumAdd(){ migParfums.push({nom:'',qte:1}); migParfumDraw(); }
+function migParfumDel(i){ migParfums.splice(i,1); migParfumDraw(); }
 async function renderMigration(){
+  migParfums=[];
   const orders = await db.orders.toArray();
   const histo = orders.filter(o=>o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
@@ -9779,6 +10006,11 @@ async function renderMigration(){
      <div class="field"><label>Client (optionnel)</label>
        <select id="mig_client"><option value="">— sans client / divers —</option>${clientOpts}</select></div>
      <div class="field"><label>Libellé si sans client (optionnel)</label><input id="mig_label" placeholder="ex : Marché de Noël, ventes diverses…"></div>
+     <div class="field"><label>Détail des parfums <span style="color:#9a8a82;font-weight:400">— optionnel, alimente les statistiques & tendances</span></label>
+       <div id="mig_parfums"></div>
+       <button class="btn ghost sm" style="margin-top:6px" onclick="migParfumAdd()">+ Ajouter un parfum</button>
+       <p class="note">Renseigne les parfums vendus et leurs quantités pour voir émerger les tendances (parfums populaires, saisonnalité). Sans impact sur le montant : le CA reste celui que tu as saisi.</p>
+     </div>
      <button class="btn gold" style="width:100%" onclick="migSaveOrder()">＋ Ajouter au chiffre d'affaires</button>
      <p class="note">Astuce : pour un mois entier, tu peux saisir une seule ligne au total du mois (avec un libellé), ou plusieurs commandes détaillées — comme tu préfères.</p>
    </div>
@@ -9803,6 +10035,7 @@ async function renderMigration(){
      ${moisRows?`<div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Mois</th><th>CA</th></tr></thead><tbody>${moisRows}</tbody></table></div>`:''}
      ${rows?`<h3 style="font-size:.95rem;margin:14px 0 6px">Détail</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Client / libellé</th><th>Montant</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${histo.length>60?'<p class="note">60 dernières lignes affichées.</p>':''}`:'<div class="empty">Aucune commande historique saisie pour l\'instant.</div>'}
    </div>`;
+  migParfumDraw();
 }
 async function migSaveOrder(){
   const date=val('mig_date')||today();
@@ -9810,11 +10043,16 @@ async function migSaveOrder(){
   const clientId=+val('mig_client')||0;
   const label=(val('mig_label')||'').trim();
   if(montant<=0){ toast('Indique un montant encaissé'); return; }
+  // détail parfums optionnel (alimente les stats/tendances, n'affecte pas le CA)
+  const parfums=(migParfums||[]).filter(p=>p.nom&&p.nom.trim()&&+p.qte>0)
+    .map(p=>({nom:p.nom.trim(), qte:+p.qte}));
+  const lignes = parfums.length ? [{type:'histo', parfums}] : [];
   const o={ clientId:clientId||null, date, montant:money2(montant),
     statut:'Livrée', paiement:'Payé', histo:true, histoLabel:label||'',
-    lignes:[], paiements:[], notes:'(reprise / historique)' };
+    lignes, paiements:[], notes:'(reprise / historique)' };
   await db.orders.add(o);
-  toast(`Ajouté au CA : ${euro(montant)} ✓`);
+  const nbMac=parfums.reduce((s,p)=>s+p.qte,0);
+  toast(`Ajouté au CA : ${euro(montant)}${nbMac?` · ${nbMac} macaron(s) détaillés`:''} ✓`);
   renderMigration();
 }
 async function migDeleteOrder(id){
@@ -10112,23 +10350,51 @@ async function buildOrderText(orderId){
   if(cl&&cl.tel) L.push('  '+cl.tel);
   L.push('');
   L.push('PRODUITS');
+  if(!lignes.length){ L.push('  (aucun détail enregistré)'); }
   lignes.forEach(ln=>{
     if(ln.type==='coffret'){
-      L.push('  - Coffret '+ln.taille+' macarons');
-      (ln.parfums||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      const totQ=parfums.reduce((s,p)=>s+(+p.qte||0),0);
+      L.push('  - Coffret '+ln.taille+' macarons'+(totQ?' ('+totQ+' macaron'+(totQ>1?'s':'')+')':'')+' — '+euro(lineTotalStored(ln)));
+      parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
+      if(!parfums.length) L.push('      • (parfums non détaillés)');
     } else if(ln.type==='evenement'){
-      L.push('  - Événement : '+(ln.evQte||0)+' macarons + '+(ln.equip||0)+' présentoir(s)');
-      (ln.parfums||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      L.push('  - Événement : '+(ln.evQte||0)+' macarons + '+(ln.equip||0)+' présentoir(s) — '+euro(lineTotalStored(ln)));
+      parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
     } else if(ln.type==='grand'){
-      L.push('  - Grand format ('+(ln.tarif||'particulier')+')');
-      (ln.items||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
+      const items=(ln.items||[]).filter(p=>p.qte>0);
+      const totQ=items.reduce((s,p)=>s+(+p.qte||0),0);
+      L.push('  - Grand format ('+(ln.tarif||'particulier')+')'+(totQ?' — '+totQ+' pièce'+(totQ>1?'s':''):'')+' — '+euro(lineTotalStored(ln)));
+      items.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
+    } else if(ln.type==='vrac'){
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      const totQ=parfums.reduce((s,p)=>s+(+p.qte||0),0);
+      L.push('  - Vrac pro'+(totQ?' — '+totQ+' macaron'+(totQ>1?'s':''):'')+' — '+euro(lineTotalStored(ln)));
+      parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
     } else if(ln.type==='don'){
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      const items=(ln.items||[]).filter(p=>p.qte>0);
       L.push('  - Don (offert)');
-      (ln.parfums||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' × '+p.qte+' (offert)'));
-      (ln.items||[]).filter(p=>p.qte>0).forEach(p=>L.push('      • '+p.nom+' (GF) × '+p.qte+' (offert)'));
+      parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte+' (offert)'));
+      items.forEach(p=>L.push('      • '+p.nom+' (grand format) × '+p.qte+' (offert)'));
+    } else if(ln.type==='prestation'){
+      L.push('  - Prestation / Coaching : '+(ln.libelle||'Prestation')+' — '+euro(lineTotalStored(ln)));
     }
   });
+  if(+o.persoMacarons>0){ L.push('  - Personnalisation couleurs : '+o.persoMacarons+' macaron(s)'); }
+  // Récapitulatif par parfum (tous coffrets/formats confondus)
+  const parfumTot={};
+  lignes.forEach(ln=>{ (ln.parfums||[]).forEach(p=>{ if(+p.qte>0) parfumTot[p.nom]=(parfumTot[p.nom]||0)+(+p.qte); });
+                       (ln.items||[]).forEach(p=>{ if(+p.qte>0) parfumTot[p.nom]=(parfumTot[p.nom]||0)+(+p.qte); }); });
+  const parfumKeys=Object.keys(parfumTot);
+  if(parfumKeys.length){
+    L.push('');
+    L.push('RÉCAP PARFUMS');
+    parfumKeys.sort((a,b)=>a.localeCompare(b,'fr')).forEach(k=>L.push('  • '+k+' × '+parfumTot[k]));
+  }
   L.push('');
+  if(+o.remiseGlobale>0) L.push('Remise globale : −'+o.remiseGlobale+'%');
   L.push('MONTANT : '+euro(o.montant));
   const _livT = computeDeliveryCost(o);
   if(_livT.actif){
