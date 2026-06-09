@@ -1579,7 +1579,15 @@ async function renderProductions(){
   const kpi = await lossKPIs();
   const lossByProd = {}; losses.forEach(l=>{ lossByProd[l.productionId]=(lossByProd[l.productionId]||0)+(+l.qte||0); });
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'(recette supprimée)';
-  window._prodLossBy = lossByProd; window._prodRecName = recName;
+  // Nom affiché d'une production : accepte soit l'objet production, soit un recipeId.
+  // Pour une production « libre » (mode découverte), renvoie son nom saisi.
+  const _prodById = {}; prods.forEach(p=>{ if(p && p.id!=null) _prodById[p.id]=p; });
+  const prodNom = arg => {
+    if(arg && typeof arg==='object'){ return arg.libre ? (arg.produitLibre||'(sans nom)') : recName(arg.recipeId); }
+    return recName(arg);   // appelé avec un recipeId classique
+  };
+  window._prodNom = prodNom;
+  window._prodLossBy = lossByProd; window._prodRecName = prodNom;
   // Consommation matières par batch (pour le bloc « Stock consommé » en bas de l'écran).
   const _allMats = await db.materials.toArray();
   const _matById = {}; _allMats.forEach(m=>_matById[m.id]=m);
@@ -1613,7 +1621,7 @@ async function renderProductions(){
   }).length;
   // index de recherche : lot, parfum/recette, date (plusieurs formats), emplacement (nom + LETTRE), statut
   _prodnCache = prods.map(p=>{
-    const nom = recName(p.recipeId);
+    const nom = prodNom(p);
     const e = empInfo(p.emplacement);
     const st = prodStatut(p)==='termine' ? 'terminée terminé' : 'démarrée en cours';
     const dateBlob = [p.date, fmtDate(p.date), (p.date||'').slice(0,7)].filter(Boolean).join(' ');
@@ -1768,8 +1776,9 @@ function prodbatFilter(q){
   // Regroupe par recette en conservant l'ordre d'apparition (déjà trié par pertinence/date)
   const groups=[]; const idx={};
   capped.forEach(r=>{
-    const rid=r.p.recipeId;
-    if(idx[rid]==null){ idx[rid]=groups.length; groups.push({rid, name:recName(rid), rows:[]}); }
+    // Clé de groupe : recipeId si lié à une recette, sinon « libre:nom » pour le mode découverte.
+    const rid = r.p.libre ? ('libre:'+(r.p.produitLibre||r.p.id)) : r.p.recipeId;
+    if(idx[rid]==null){ idx[rid]=groups.length; groups.push({rid, name:recName(r.p), libre:!!r.p.libre, rows:[]}); }
     groups[idx[rid]].rows.push(r);
   });
   let html='';
@@ -1777,7 +1786,8 @@ function prodbatFilter(q){
     g.rows.sort((a,b)=>(compOrder[prodComposant(a.p)]??9)-(compOrder[prodComposant(b.p)]??9));
     const nb=g.rows.length;
     const reste=g.rows.reduce((s,r)=>s+(round3(+r.p.qteRestante)>0?1:0),0);
-    html+=`<tr class="prod-sec-head"><td colspan="9">🍩 ${esc(g.name)}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></td></tr>`;
+    const libreTag = g.libre?' <span class="tag" style="background:#e9eef9;color:#3a5a9a;font-size:.64rem">libre</span>':'';
+    html+=`<tr class="prod-sec-head"><td colspan="9">🍩 ${esc(g.name)}${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></td></tr>`;
     html+=g.rows.map(_prodbatRow).join('');
   });
   body.innerHTML = html +
@@ -2587,7 +2597,9 @@ async function prodDegDistribueSave(id){
 }
 async function prodForm(){
   const recipes = await db.recipes.toArray();
-  if(!recipes.length){toast('Crée d\'abord une recette');return;}
+  // Mode DÉCOUVERTE : si aucune recette n'existe encore, on propose une production « libre »
+  // (nom saisi à la main, sans recette ni consommation de matières) pour se familiariser.
+  if(!recipes.length){ return prodFormLibre(); }
   // Garde-fou : on ne peut pas démarrer une nouvelle production tant qu'une
   // production reste « démarrée » depuis plus de 4 jours (à terminer ou supprimer).
   const allProds = await db.productions.toArray();
@@ -2599,6 +2611,7 @@ async function prodForm(){
   _prodReelTouched=false;
   const opts = recipes.map(r=>`<option value="${r.id}" data-rend="${r.rendement}">${esc(r.produitNom)} (${r.rendement}/batch)</option>`).join('');
   openModal(`<h3>Nouvelle production</h3>
+   <p class="note" style="margin:-2px 0 10px"><span class="act" onclick="prodFormLibre()">⚡ Production rapide (sans recette) →</span> <span style="color:#9a8a82">pour se familiariser sans tout paramétrer</span></p>
    <div class="field"><label>Mode de production</label>
      <select id="f_mode" onchange="prodModeSwitch(this.value)">
        <option value="complet">Batch complet (coques + ganache assemblés)</option>
@@ -2727,6 +2740,43 @@ async function saveProd(){
   }catch(err){
     toast(err.message || 'Erreur production');
   }
+}
+// ---- MODE DÉCOUVERTE : production « libre » sans recette ni consommation de matières ----
+// Permet de se familiariser avec l'app. Ces productions sont marquées « libre » et pourront
+// être complétées ou supprimées plus tard. Elles ne décrémentent AUCUN stock.
+function prodFormLibre(){
+  openModal(`<h3>Production rapide ⚡</h3>
+   <p class="note" style="margin-bottom:10px">Pour te familiariser : crée une production avec juste un <b>nom</b>, sans recette ni matières. Aucun stock n'est touché. Tu pourras la compléter ou la supprimer plus tard.</p>
+   <div class="field"><label>Nom du produit</label><input id="fl_nom" placeholder="ex. Macaron chocolat" autocomplete="off"></div>
+   <div class="row2">
+     <div class="field"><label>Quantité produite</label><input type="number" id="fl_qte" value="30" min="1"></div>
+     <div class="field"><label>Date</label><input type="date" id="fl_date" value="${today()}"></div>
+   </div>
+   <div class="field"><label>N° lot de production</label><input id="fl_lot" value="L-${today().replace(/-/g,'')}-${genLotCode(3)}"></div>
+   <p class="note">Cette production apparaîtra avec une étiquette <b>« libre »</b> pour que tu la repères. Elle n'entre pas dans les calculs de coût tant qu'elle n'est pas reliée à une recette.</p>
+   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProdLibre()">Lancer la production</button></div>`);
+  setTimeout(()=>{ const el=document.getElementById('fl_nom'); if(el) el.focus(); }, 60);
+}
+async function saveProdLibre(){
+  const nom=val('fl_nom').trim();
+  if(!nom){ toast('Donne un nom au produit'); return; }
+  const qte=+val('fl_qte'); if(!qte||qte<=0){ toast('Quantité invalide'); return; }
+  const date=val('fl_date')||today();
+  const baseLot=lotBaseSansSuffixe(val('fl_lot'));
+  const san=sanitizeLot(baseLot.replace(/^(L-\d{8}-)/i,''));
+  const m=baseLot.match(/^(L-\d{8}-)(.*)$/i);
+  const lot=(m?m[1].toUpperCase():'')+(san.lot||genLotCode(3));
+  try{
+    await db.productions.add({
+      recipeId: null, produitLibre: nom, libre: true,
+      qteTheorique: qte, qteReelle: qte, qteProduite: qte, qteRestante: qte,
+      date, lotProduction: lot, lotBase: lot,
+      composant: 'complet', prodStatut: 'demarre', emplacement: '',
+      prodDebutTs: new Date().toISOString()
+    });
+    closeModal(); renderProductions();
+    toast(`Production « ${nom} » créée ✓ (mode découverte)`);
+  }catch(err){ console.error(err); toast('Erreur création'); }
 }
 // Transaction atomique : consommation FIFO (théorique) + traçabilité + stock fini (réel)
 async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd, lotProduction, dlcProduit, emplacement, meta){
@@ -9222,7 +9272,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v155';
+const APP_VERSION = 'v156';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
