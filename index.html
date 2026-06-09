@@ -86,7 +86,7 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia','Times New Roman',serif;letter-
 .card .val{font-family:'Fraunces',serif;font-size:2.1rem;font-weight:600;color:var(--bordeaux);margin-top:7px;line-height:1;letter-spacing:-.02em}
 .card .sub{font-size:.78rem;color:#9a8a82;margin-top:7px}
 .card .corner{position:absolute;top:-10px;right:-8px;font-size:3.4rem;opacity:.07}
-.panel{background:#fff;border-radius:var(--r-lg);padding:24px 26px;box-shadow:var(--sh-2);border:1px solid var(--hair);margin-bottom:22px;max-width:100%;overflow:hidden;position:relative}
+.panel{background:#fff;border-radius:var(--r-lg);padding:24px 26px;box-shadow:var(--sh-2);border:1px solid var(--hair);margin-bottom:22px;max-width:100%;position:relative}
 .panel h2{font-size:1.2rem;color:var(--bordeaux);margin-bottom:18px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;letter-spacing:-.01em}
 .table-wrap{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;display:block;overscroll-behavior-x:contain}
 table{width:100%;border-collapse:separate;border-spacing:0;font-size:.87rem}
@@ -128,6 +128,17 @@ tr:hover td{background:var(--creme-2)}
 .status-select.status-ok{background:#e3f0e7;color:#2e7d32}
 .status-select.status-done{background:#e9eef9;color:#3a5a9a}
 .cmd-period{display:block;color:#8a7a72;font-size:.72rem;font-weight:600;margin-top:1px}
+/* BLOC REPLIABLE réutilisable : montre N éléments, le reste masqué derrière un chevron.
+   Fluidifie les longues listes verticales (lots, consommations, historiques…). */
+.collapse-more{display:none}
+.collapse-block.open .collapse-more{display:revert}
+tr.collapse-more{display:none}
+.collapse-block.open tr.collapse-more{display:table-row}
+.collapse-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--caramel);
+  font-weight:600;font-size:.82rem;padding:8px 4px;user-select:none;background:none;border:none;font-family:inherit}
+.collapse-toggle .chev{transition:transform .2s;display:inline-block;font-size:.9em}
+.collapse-block.open .collapse-toggle .chev{transform:rotate(180deg)}
+.collapse-toggle:hover{filter:brightness(.92)}
 /* PRODUCTIONS — sections par recette + repérage instantané du composant.
    Bande latérale colorée épaisse + grosse pastille : coque/ganache/assemblé
    identifiables en un coup d'œil, sans lire. */

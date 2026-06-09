@@ -1091,7 +1091,7 @@ async function renderMaterials(){
      :`<div class="empty">Aucun lot réceptionné.</div>`}
    </div>
    <div class="panel"><h2>Matières consommées par batch</h2>
-   ${batches.length?batches.map(b=>{
+   ${batches.length?collapseList(batches.map(b=>{
      const p=b.prod;
      const deb = p.prodDebutTs||p.prodTimestamp||'';
      const fin = p.prodTermineTs||'';
@@ -1111,7 +1111,7 @@ async function renderMaterials(){
          <span>${esc(matName(it.materialId))} <span style="color:#9a8a82">· lot ${esc(it.lotFournisseur||'—')}</span></span>
          <span class="tag out">−${qty(it.qte)} ${esc(matUnit(it.materialId))}</span></div>`).join('')}
      </div>`;
-   }).join(''):`<div class="empty">Aucune consommation rattachée à un batch.</div>`}
+   }), 1, {moreLabel:n=>`Voir les ${n} batch(s) précédent(s)`, lessLabel:'Réduire'}):`<div class="empty">Aucune consommation rattachée à un batch.</div>`}
    </div>
    ${consumablesList.length?`<div class="panel"><h2>Consommables <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— non rattachés à un batch (papier, film, emballages…)</span></h2>
      <div class="table-wrap"><table><thead><tr><th>Consommable</th><th>Total consommé</th></tr></thead><tbody>
@@ -1157,7 +1157,7 @@ let lotSearch='';
 function lotFilter(q){
   lotSearch=q||'';
   if(!_lotCache) return;
-  searchRenderBody('lotBody','__noop','lotEmpty', _lotCache, q, _lotRow, 7, 'lot(s)');
+  searchRenderBody('lotBody','__noop','lotEmpty', _lotCache, q, _lotRow, 7, 'lot(s)', 5);
 }
 async function matForm(id){
   const s = id ? await db.materials.get(id) : {unite:'kg', categorie:'denree'};
@@ -1577,6 +1577,21 @@ async function renderProductions(){
   const lossByProd = {}; losses.forEach(l=>{ lossByProd[l.productionId]=(lossByProd[l.productionId]||0)+(+l.qte||0); });
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'(recette supprimée)';
   window._prodLossBy = lossByProd; window._prodRecName = recName;
+  // Consommation matières par batch (pour le bloc « Stock consommé » en bas de l'écran).
+  const _allMats = await db.materials.toArray();
+  const _matById = {}; _allMats.forEach(m=>_matById[m.id]=m);
+  const _matNameP = id => (_matById[id]||{}).nom || '(matière supprimée)';
+  const _matUnitP = id => (_matById[id]||{}).unite || '';
+  const _consoAll = await db.prodConsumption.toArray();
+  const _consoByProd = new Map();
+  _consoAll.forEach(c=>{
+    const mid = c.snapMaterialId!=null ? c.snapMaterialId : (c.materialId!=null?c.materialId:null);
+    if(!_consoByProd.has(c.productionId)) _consoByProd.set(c.productionId, {});
+    const agg=_consoByProd.get(c.productionId);
+    const key = mid+'|'+(c.snapLotFournisseur||'');
+    if(!agg[key]) agg[key]={materialId:mid, lotFournisseur:c.snapLotFournisseur||'', qte:0};
+    agg[key].qte = round3(agg[key].qte + (+c.qteConsommee||0));
+  });
   // résumé rendement global (somme réel / somme théorique sur les batchs renseignés)
   const withBoth = prods.filter(p=>p.qteTheorique>0 && p.qteReelle!=null);
   const sumTh = withBoth.reduce((s,p)=>s+(+p.qteTheorique||0),0);
@@ -1640,7 +1655,34 @@ async function renderProductions(){
    ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>Statut</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead>
      <tbody id="prodbatBody"></tbody></table></div><div id="prodbatEmpty" class="empty" style="display:none">Aucune production ne correspond.</div>`
      :`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
-   </div>`;
+   </div>
+   ${(()=>{
+     // Bloc STOCK CONSOMMÉ : vision directe du stock décrémenté par la production,
+     // sans aller dans « Matières & lots ». Batchs triés du plus récent au plus ancien.
+     const consoBatches = prods
+       .filter(p=>_consoByProd.has(p.id))
+       .map(p=>({p, items:Object.values(_consoByProd.get(p.id))}))
+       .filter(b=>b.items.length>0);
+     if(!consoBatches.length) return '';
+     const blocs = consoBatches.map(b=>{
+       const p=b.p;
+       const comp=prodComposant(p);
+       const compTag = comp!=='complet'?` <span class="tag" style="background:${comp==='assemble'?'#3f7d52':comp==='degustation'?'#caa23b':comp==='ganache'?'#5a3a2a':'#8a6d3b'};color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp==='degustation'?'dégustation':'assemblé'}</span>`:'';
+       const when = p.prodTermineTs||p.prodDebutTs||p.prodTimestamp||(p.date?p.date+'T00:00':'');
+       return `<div class="trace-step" style="margin-bottom:10px">
+         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+           <div><b>${esc(recName(p.recipeId))}</b>${compTag}<br>
+             <span style="color:#9a8a82;font-size:.76rem">lot ${esc(p.lotProduction||('#'+p.id))}${when?' · '+fmtDateTime(when):''}</span></div>
+           <button class="btn ghost sm" onclick="traceProd(${p.id})" title="Détail du batch">🔎</button>
+         </div>
+         ${b.items.map(it=>`<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:3px 0;border-top:1px solid #f0e8da">
+           <span>${esc(_matNameP(it.materialId))} <span style="color:#9a8a82">· lot ${esc(it.lotFournisseur||'—')}</span></span>
+           <span class="tag out">−${qty(it.qte)} ${esc(_matUnitP(it.materialId))}</span></div>`).join('')}
+       </div>`;
+     });
+     return `<div class="panel"><h2>📉 Stock consommé par la production <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— matières décrémentées à mesure que tu produis</span></h2>
+       ${collapseList(blocs, 1, {moreLabel:n=>`Voir les ${n} batch(s) précédent(s)`, lessLabel:'Réduire'})}</div>`;
+   })()}`;
   prodbatFilter(prodnSearch);
 }
 function ecartTag(p){
@@ -3734,7 +3776,7 @@ function searchRank(items, q){
 }
 // Rendu standard d'un corps de tableau filtré (mise à jour du seul tbody, jamais de la page).
 // rowFn: item -> '<tr>…'. cols: nb de colonnes (pour la ligne « +N autres »).
-function searchRenderBody(bodyId, countId, emptyId, items, q, rowFn, cols, unitLabel){
+function searchRenderBody(bodyId, countId, emptyId, items, q, rowFn, cols, unitLabel, collapseShow){
   const body=document.getElementById(bodyId); if(!body) return;
   const rows=searchRank(items, q);
   const cnt=document.getElementById(countId);
@@ -3743,8 +3785,27 @@ function searchRenderBody(bodyId, countId, emptyId, items, q, rowFn, cols, unitL
   if(!rows.length){ body.innerHTML=''; if(empty) empty.style.display='block'; return; }
   if(empty) empty.style.display='none';
   const LIMIT=300;
-  body.innerHTML = rows.slice(0,LIMIT).map(rowFn).join('') +
-    (rows.length>LIMIT?`<tr><td colspan="${cols}" class="note" style="text-align:center">… ${rows.length-LIMIT} autre(s) résultat(s). Affinez la recherche.</td></tr>`:'');
+  const capped = rows.slice(0,LIMIT);
+  const overflow = rows.length>LIMIT?`<tr><td colspan="${cols}" class="note" style="text-align:center">… ${rows.length-LIMIT} autre(s) résultat(s). Affinez la recherche.</td></tr>`:'';
+  // Repli optionnel : seulement HORS recherche (sinon on masquerait des résultats filtrés).
+  // On insère les lignes directement dans le <tbody> existant via collapseRows (qui crée
+  // son propre <tbody> interne) — ici on garde le <tbody> hôte et on gère le masquage par classe.
+  if(collapseShow && collapseShow>0 && !(q&&q.trim()) && capped.length>collapseShow){
+    const htmlRows = capped.map(rowFn);
+    const id='clpb'+(++_collapseSeq);
+    body.classList.add('collapse-block'); body.id=bodyId;   // garde l'id d'origine + classe
+    const head = htmlRows.slice(0,collapseShow).join('');
+    const hidden = htmlRows.slice(collapseShow).map(r=>r.replace(/^(\s*)<tr/, '$1<tr class="collapse-more"')).join('');
+    const nMore = capped.length-collapseShow;
+    const toggle = `<tr class="clp-toggle-row"><td colspan="${cols}" style="text-align:center;padding:6px">`
+      + `<button type="button" class="collapse-toggle" onclick="collapseToggle('${bodyId}', this)">`
+      + `<span class="chev">▾</span><span class="clp-txt" data-more="Voir les ${nMore} autre(s)" data-less="Réduire">Voir les ${nMore} autre(s)</span></button></td></tr>`;
+    body.innerHTML = head + hidden + toggle + overflow;
+    return;
+  }
+  // sinon : affichage classique
+  body.classList.remove('collapse-block');
+  body.innerHTML = capped.map(rowFn).join('') + overflow;
 }
 
 async function renderClients(){
@@ -9128,7 +9189,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v149';
+const APP_VERSION = 'v151';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',

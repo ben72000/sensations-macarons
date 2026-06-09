@@ -46,3 +46,52 @@ function monthLabel(k){
 // --- Texte ---
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function normTxt(s){ return (s==null?'':String(s)).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+
+// --- UI : bloc repliable réutilisable ---
+// Affiche les `show` premiers éléments d'une liste HTML, masque le reste derrière un
+// chevron « Voir les N autres ▾ ». Fluidifie les longues listes verticales.
+// - items : tableau de chaînes HTML (chaque entrée = un bloc déjà formaté)
+// - show  : nombre d'éléments visibles par défaut (ex. 5, ou 1)
+// - opts  : { moreLabel:(n)=>texte, lessLabel:texte }
+// Chaque élément est enveloppé dans un <div> ; pour des lignes de tableau, utiliser
+// collapseRows() à la place.
+let _collapseSeq = 0;
+function collapseList(items, show, opts){
+  opts = opts || {}; items = items || [];
+  const total = items.length;
+  if(total <= show) return items.join('');
+  const id = 'clp'+(++_collapseSeq);
+  const head = items.slice(0, show).join('');
+  const restWrapped = items.slice(show).map(h=>`<div class="collapse-more">${h}</div>`).join('');
+  const nMore = total - show;
+  const moreTxt = opts.moreLabel ? opts.moreLabel(nMore) : `Voir les ${nMore} autre(s)`;
+  const lessTxt = opts.lessLabel || 'Voir moins';
+  const toggle = `<button type="button" class="collapse-toggle" onclick="collapseToggle('${id}', this)">`
+    + `<span class="chev">▾</span><span class="clp-txt" data-more="${esc(moreTxt)}" data-less="${esc(lessTxt)}">${esc(moreTxt)}</span></button>`;
+  return `<div class="collapse-block" id="${id}">${head}${restWrapped}${toggle}</div>`;
+}
+// Variante pour les LIGNES de tableau (<tr>) : renvoie {visible, hidden, toggleRow}
+// à insérer dans un <tbody>. Le toggle est une ligne <tr> pleine largeur.
+function collapseRows(rows, show, colspan, opts){
+  opts = opts || {}; rows = rows || [];
+  const total = rows.length;
+  if(total <= show) return rows.join('');
+  const id = 'clp'+(++_collapseSeq);
+  const head = rows.slice(0, show).join('');
+  // chaque ligne masquée reçoit la classe collapse-more (ajoutée à son <tr>)
+  const hidden = rows.slice(show).map(r=>r.replace(/^(\s*)<tr/, '$1<tr class="collapse-more"')).join('');
+  const nMore = total - show;
+  const moreTxt = opts.moreLabel ? opts.moreLabel(nMore) : `Voir les ${nMore} autre(s)`;
+  const lessTxt = opts.lessLabel || 'Voir moins';
+  const toggle = `<tr class="clp-toggle-row"><td colspan="${colspan||1}" style="text-align:center;padding:6px">`
+    + `<button type="button" class="collapse-toggle" onclick="collapseToggle('${id}', this)">`
+    + `<span class="chev">▾</span><span class="clp-txt" data-more="${esc(moreTxt)}" data-less="${esc(lessTxt)}">${esc(moreTxt)}</span></button></td></tr>`;
+  return `<tbody class="collapse-block" id="${id}">${head}${hidden}${toggle}</tbody>`;
+}
+function collapseToggle(id, btn){
+  const el = document.getElementById(id); if(!el) return;
+  el.classList.toggle('open');
+  const open = el.classList.contains('open');
+  const txt = btn.querySelector('.clp-txt'); if(!txt) return;
+  txt.textContent = open ? (txt.dataset.less||'Voir moins') : (txt.dataset.more||'Voir plus');
+}
