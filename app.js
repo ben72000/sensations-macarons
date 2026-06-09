@@ -323,16 +323,8 @@ function bigPrice(tarif){
 }
 
 // --------- Helpers ---------
-// Arrondis stricts pour éviter la dérive des flottants (ex. 0.1+0.2, soustractions FIFO répétées).
-// money2 : arrondi au centime via entiers de centimes. round3 : quantités de stock (3 décimales).
-const money2 = n => Math.round(((+n)||0)*100)/100;
-const round3  = n => Math.round(((+n)||0)*1000)/1000;
-// Opérations financières/stocks sûres (toujours ré-arrondies après l'opération).
-const addMoney = (...xs) => money2(xs.reduce((s,x)=>s+((+x)||0),0));
-const subMoney = (a,b) => money2(((+a)||0)-((+b)||0));
-const mulMoney = (a,b) => money2(((+a)||0)*((+b)||0));
-const addQty  = (...xs) => round3(xs.reduce((s,x)=>s+((+x)||0),0));
-const subQty  = (a,b) => round3(((+a)||0)-((+b)||0));
+// Arrondis & opérations argent/stock : voir utils.js (money2, round3, addMoney,
+// subMoney, mulMoney, addQty, subQty) — chargé avant app.js.
 // ---- MODE DISCRET / CONFIDENTIALITÉ ----
 // Masque les chiffres sensibles (CA, montants, volumes de stock) d'un simple clic,
 // utile devant un client ou un fournisseur. Persisté dans localStorage (comme sm_autoPay).
@@ -359,11 +351,11 @@ const qty = n => { const v = round3(n); return v.toLocaleString('fr-FR', {maximu
 const qtyP = n => privacyMasked() ? '•••' : qty(n);
 // Floute un NOM (client) en mode discret : le texte reste présent (recherche/tri)
 // mais s'affiche flouté. Réutilisable partout où un nom sensible apparaît.
-function nameP(txt){
+const nameP = (txt)=>{
   const s = esc(txt==null?'':String(txt));
   return privacyMasked() ? `<span class="blur-name">${s}</span>` : s;
-}
-const today = () => new Date().toISOString().slice(0,10);
+};
+// today() : voir utils.js
 // Calcule la DLC selon l'emplacement, à partir d'un horodatage (calcul SIMPLE, sans historique).
 // Règle de base : frigo = +7 jours ; congélateur = +4 mois.
 function computeDlc(emplacement, baseIso){
@@ -475,18 +467,7 @@ function computeDlcFromHistory(hist, refIso){
 }
 // Horodatage lisible "le JJ/MM/AAAA à HHhMM" à partir d'un ISO.
 // Heure seule au format 00:00 (ex : 10:02). Renvoie '' si non valide.
-function fmtTime(iso){
-  if(!iso) return '';
-  const d=new Date(iso); if(isNaN(d)) return '';
-  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-}
-function fmtDateTime(iso){
-  if(!iso) return '—';
-  const d=new Date(iso); if(isNaN(d)) return '—';
-  const date=d.toLocaleDateString('fr-FR');
-  // Heure au format 00:00 (ex : 10:02)
-  return `${date} à ${fmtTime(iso)}`;
-}
+// fmtTime / fmtDateTime : voir utils.js
 // --------- Statut de production : démarré / terminé ---------
 // Plafond de temps autorisé en statut « démarré » avant blocage (4 jours).
 const PROD_OPEN_MAX_DAYS = 4;
@@ -512,10 +493,9 @@ function prodOpenOverdue(p){
   const h = prodOpenHours(p);
   return h!=null && h > PROD_OPEN_MAX_DAYS*24;
 }
-const esc   = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// esc() : voir utils.js
 function val(id){ const el = document.getElementById(id); return el ? (el.value||'').trim() : ''; }
-function fmtDate(s){ if(!s) return ''; const d = new Date(s); return isNaN(d)?'':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}); }
-function daysTo(s){ if(!s) return null; return Math.ceil((new Date(s) - new Date(today())) / 86400000); }
+// fmtDate() / daysTo() : voir utils.js
 
 // --------- Graphique linéaire SVG (sans dépendance) ---------
 // series : [{label, points:[{x:'2026-01', y:12.5}], color}]  — x = clé triable
@@ -1397,7 +1377,7 @@ async function recForm(id){
   if(!mats.length){toast('Crée d\'abord des matières');return;}
   let r={produitNom:'',rendement:60};
   bomDraft=[];
-  if(id){ r=await db.recipes.get(id); bomDraft=(await db.recipeItems.where('recipeId').equals(id).toArray()).map(it=>({materialId:it.materialId,qteParBatch:it.qteParBatch})); }
+  if(id){ r=await db.recipes.get(id); bomDraft=(await db.recipeItems.where('recipeId').equals(id).toArray()).map(it=>({materialId:it.materialId,qteParBatch:it.qteParBatch,partie:it.partie||''})); }
   window._matsCache=mats;
   openModal(`<h3>${id?'Modifier':'Nouvelle'} recette</h3>
    <div class="row2">
@@ -1436,19 +1416,37 @@ function bomDisplay(materialId){
 }
 function drawBom(){
   const mats=window._matsCache||[];
+  // Compte les occurrences de chaque matière, et repère les doublons sur la MÊME phase (vraie erreur).
+  const countMat={}, countMatPart={};
+  bomDraft.forEach(b=>{ countMat[b.materialId]=(countMat[b.materialId]||0)+1;
+    const k=b.materialId+'|'+(b.partie||''); countMatPart[k]=(countMatPart[k]||0)+1; });
   document.getElementById('bomList').innerHTML = bomDraft.map((b,i)=>{
     const d=bomDisplay(b.materialId);
     const shown = round3((+b.qteParBatch||0)*d.factor);   // kg → g pour l'affichage
+    const part = b.partie||'';
+    const multi = countMat[b.materialId]>1;                          // matière sur plusieurs lignes
+    const conflit = part && countMatPart[b.materialId+'|'+part]>1;   // même matière + même phase = doublon réel
+    const note = conflit
+      ? `<span style="font-size:.66rem;color:var(--red,#b3261e);font-weight:600" title="Deux lignes de la même matière sur la même phase : fusionne-les ou change la phase">⚠ doublon ${part==='coque'?'coque':'ganache'}</span>`
+      : (multi ? `<span style="font-size:.66rem;color:#9a8a82" title="Cette matière est répartie sur plusieurs phases (ex. eau coque + eau ganache) — c'est normal">↔ ${countMat[b.materialId]} lignes</span>` : '');
     return `
     <div class="bom-line">
       <select onchange="bomSetMat(${i}, +this.value)">
         ${mats.map(m=>`<option value="${m.id}" ${b.materialId===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (saisie en ${bomDisplay(m.id).unit})</option>`).join('')}
       </select>
       <input type="number" step="${d.factor===1000?'1':'0.001'}" value="${shown}" oninput="bomSetQte(${i}, +this.value)" placeholder="qté">
-      <span style="font-size:.75rem;color:#9a8a82">${esc(d.unit)} / batch</span>
+      <span style="font-size:.75rem;color:#9a8a82">${esc(d.unit)}/batch${note?'<br>'+note:''}</span>
+      <select class="bom-part" onchange="bomSetPartie(${i}, this.value)" title="À quelle phase sert cet ingrédient ?">
+        <option value="" ${part===''?'selected':''}>— phase —</option>
+        <option value="coque" ${part==='coque'?'selected':''}>🟤 Coque</option>
+        <option value="ganache" ${part==='ganache'?'selected':''}>🍫 Ganache</option>
+      </select>
       <span class="x" onclick="bomDel(${i})">×</span>
     </div>`; }).join('') || '<p class="note">Aucune matière ajoutée.</p>';
 }
+// Étiquette un ingrédient comme servant aux coques ou à la ganache (évite le double
+// comptage lors d'une production par composants séparés).
+function bomSetPartie(i, val){ if(bomDraft[i]){ bomDraft[i].partie = val||''; drawBom(); } }
 // Saisie utilisateur (en g pour les denrées) → stockée en unité de base (kg).
 function bomSetQte(i, shownVal){
   const d=bomDisplay(bomDraft[i].materialId);
@@ -1486,7 +1484,7 @@ async function saveRec(id){
     let rid=id;
     if(id){ await db.recipes.update(id,o); await db.recipeItems.where('recipeId').equals(id).delete(); }
     else { rid=await db.recipes.add(o); }
-    for(const b of bomDraft) await db.recipeItems.add({recipeId:rid,materialId:b.materialId,qteParBatch:b.qteParBatch});
+    for(const b of bomDraft) await db.recipeItems.add({recipeId:rid,materialId:b.materialId,qteParBatch:b.qteParBatch,partie:b.partie||''});
   });
   closeModal(); renderRecipes(); toast('Recette enregistrée ✓');
 }
@@ -1566,6 +1564,13 @@ async function renderProductions(){
   const enRetard = ouvertes.filter(prodOpenOverdue);
   // ---- SURVEILLANCE : coques & ganache non assemblées → suggestions de rapprochement ----
   const sugg = assemblySuggestions(prods, recName);
+  // Anciens lots coques non convertis (quantité ≈ rendement au lieu de ×2) à signaler
+  const _recById={}; recipes.forEach(r=>_recById[r.id]=r);
+  const coquesSuspectsN = prods.filter(p=>{
+    if(prodComposant(p)!=='coques' || p._coquesConverti) return false;
+    const rec=_recById[p.recipeId]; const rend=+(rec&&rec.rendement)||0; if(rend<=0) return false;
+    const ratio=(+p.qteTheorique||0)/rend; return ratio>0.7 && ratio<1.4;
+  }).length;
   // index de recherche : lot, parfum/recette, date (plusieurs formats), emplacement (nom + LETTRE), statut
   _prodnCache = prods.map(p=>{
     const nom = recName(p.recipeId);
@@ -1604,6 +1609,7 @@ async function renderProductions(){
       </div>`).join('')}
    </div>`:''}
    <div class="panel">
+     ${coquesSuspectsN>0?`<div class="banner" style="background:#fff8ec;border-color:#e8cfa0;margin-bottom:8px">🔧 <div><b>${coquesSuspectsN} ancien(s) lot(s) de coques</b> à corriger (quantité non doublée). <span class="act" onclick="reviewCoquesMigration(false)">Vérifier et corriger →</span></div></div>`:''}
      <input class="search" id="prodbatSearch" style="width:100%;margin-bottom:6px" placeholder="N° lot, parfum, date, emplacement (F/B/C/A)…" value="${esc(prodnSearch)}" oninput="prodbatFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
      <div class="prod-emp-chips" style="margin-bottom:12px">
        ${EMPLACEMENTS.map(e=>`<button onclick="prodbatSearchEmp('${e.lettre}')" title="${esc(e.nom)}">${e.icon} ${e.lettre}</button>`).join('')}
@@ -2664,7 +2670,20 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
       const recette = await db.recipes.get(recipeId);
       if(!recette) throw new Error('Recette introuvable');
       if(!EMP_BY_KEY[emplacement] && emplacement!=='ambiant' && emplacement!=='') throw new Error('Emplacement de rangement invalide');
-      const items = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
+      const allItems = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
+      // CONSOMMATION PAR COMPOSANT : un batch « coques » ne puise que les ingrédients
+      // étiquetés coque ; un batch « ganache » que les ingrédients ganache ; un batch
+      // « complet » puise tout. Évite le double comptage quand on produit en 2 temps.
+      // Rétro-compat : si AUCUN ingrédient n'est étiqueté (anciennes recettes), on consomme
+      // tout quel que soit le composant (comportement d'avant l'étiquetage).
+      const comp = meta.composant || 'complet';
+      const recetteEtiquetee = allItems.some(it=>it.partie==='coque'||it.partie==='ganache');
+      let items = allItems;
+      if(recetteEtiquetee && (comp==='coques' || comp==='ganache')){
+        const cible = comp==='coques' ? 'coque' : 'ganache';
+        // un ingrédient non étiqueté est considéré commun → consommé par les deux composants
+        items = allItems.filter(it=> it.partie===cible || !it.partie);
+      }
       // CONSOMMATION MATIÈRES : basée sur la quantité de MACARONS-équivalent.
       // Pour les coques, qteTheorique est en COQUES ; meta.facteurQte donne le nb de macarons.
       const baseFacteur = (meta.facteurQte!=null) ? meta.facteurQte : qteTheorique;
@@ -2775,6 +2794,76 @@ async function prodAdjustForm(id){
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="prodAdjustReel(${id})">Enregistrer l'ajustement</button></div>`);
   prodAdjHint(th, dejaSorti);
+}
+
+/* ============================================================
+   CORRECTION ASSISTÉE — anciens lots COQUES non convertis (×2)
+   ------------------------------------------------------------
+   Avant l'introduction de la conversion automatique « 1 macaron = 2 coques »,
+   un batch de 60 macarons en coques stockait 60 coques au lieu de 120.
+   On NE corrige RIEN automatiquement (risque de doubler un lot déjà bon).
+   À la place : on détecte les lots SUSPECTS (quantité ≈ rendement, pas ×2)
+   et on laisse l'utilisateur cocher ceux à doubler. Sûr et réversible.
+   ============================================================ */
+async function detectCoquesSuspects(){
+  const [prods, recipes] = await Promise.all([db.productions.toArray(), db.recipes.toArray()]);
+  const recById = {}; recipes.forEach(r=>recById[r.id]=r);
+  const out=[];
+  prods.forEach(p=>{
+    if(prodComposant(p)!=='coques') return;
+    const rec=recById[p.recipeId]; if(!rec) return;
+    const rend=+rec.rendement||0; if(rend<=0) return;
+    const qTh=+p.qteTheorique||0;
+    // Lot déjà converti si qté ≈ un multiple pair du rendement (≥ rendement×2).
+    // Suspect si qté est proche du rendement SIMPLE (pas doublé) -> ancien lot.
+    // tolérance 15 % pour absorber casse/écarts.
+    const ratio = qTh/rend;
+    const suspect = ratio>0.7 && ratio<1.4;   // ~1× rendement => non doublé
+    if(suspect && !p._coquesConverti){
+      out.push({id:p.id, lot:p.lotProduction||('#'+p.id), parfum:rec.produitNom||('#'+p.recipeId),
+        rend, qTh, qRe:+p.qteReelle||qTh, propose: qTh*2, propRe:(+p.qteReelle||qTh)*2,
+        date:p.date||''});
+    }
+  });
+  return out;
+}
+async function reviewCoquesMigration(silentIfNone){
+  const susp = await detectCoquesSuspects();
+  if(!susp.length){
+    if(!silentIfNone) toast('Aucun ancien lot de coques à corriger ✓');
+    return;
+  }
+  const rows = susp.map(s=>`<label class="pay-opt" style="display:flex;align-items:flex-start;gap:9px;padding:10px;border:1px solid #e7dcc9;border-radius:10px;margin-top:7px;cursor:pointer">
+    <input type="checkbox" class="coqMigChk" data-id="${s.id}" data-prop="${s.propose}" data-propre="${s.propRe}" checked style="margin-top:3px">
+    <div style="flex:1">
+      <div><b>${esc(s.parfum)}</b> <span style="color:#9a8a82;font-size:.74rem">lot ${esc(s.lot)}${s.date?' · '+fmtDate(s.date):''}</span></div>
+      <div style="font-size:.82rem;margin-top:2px">actuel : <b>${qty(s.qTh)} coques</b> → corrigé : <b style="color:#2e7d32">${qty(s.propose)} coques</b> <span style="color:#9a8a82">(= ${qty(s.rend)} macarons)</span></div>
+    </div></label>`).join('');
+  openModal(`<h3>🔧 Corriger les anciens lots de coques</h3>
+    <div class="banner" style="background:#fff8ec;border-color:#e8cfa0"><div>${susp.length} lot(s) de coques semblent dater d'avant la conversion automatique (1 macaron = 2 coques). Leur quantité paraît <b>non doublée</b>. Coche ceux à corriger — <b>vérifie chacun</b> avant de valider, surtout si tu as fait des demi-batchs.</div></div>
+    <div style="max-height:42vh;overflow:auto;margin-top:6px">${rows}</div>
+    <p class="note" style="margin-top:8px">La correction double les coques (théorique + réel) ; les matières et la ganache ne changent pas. Réversible via « ✎ Réel » sur chaque lot.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="applyCoquesMigration()">Corriger les lots cochés</button></div>`);
+}
+async function applyCoquesMigration(){
+  const chks=[...document.querySelectorAll('.coqMigChk:checked')];
+  if(!chks.length){ closeModal(); toast('Aucun lot sélectionné.'); return; }
+  let n=0;
+  for(const c of chks){
+    const id=+c.dataset.id, prop=+c.dataset.prop, propRe=+c.dataset.propre;
+    const p=await db.productions.get(id); if(!p) continue;
+    const dejaSorti=(+p.qteProduite||0)-(+p.qteRestante||0);
+    const newRestant=Math.max(0, propRe - dejaSorti);
+    await db.productions.update(id, {
+      qteTheorique:prop, qteReelle:propRe, qteProduite:propRe,
+      qteRestante:newRestant, _coquesConverti:true,
+      ecart: propRe - prop
+    });
+    n++;
+  }
+  closeModal(); renderProductions();
+  toast(`${n} lot(s) de coques corrigé(s) ✓`);
 }
 function prodAdjHint(th, dejaSorti){
   const v=+(document.getElementById('f_newreel')?.value);
@@ -3572,7 +3661,7 @@ async function traceOrder(orderId){
 let clientSearch='';
 let _clientsCache=null;   // {clients, ordersByClient, blob} chargé une seule fois par rendu de page
 // Normalisation tolérante : minuscules + suppression des accents
-function normTxt(s){ return (s==null?'':String(s)).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+// normTxt() : voir utils.js
 function onlyDigits(s){ return (s==null?'':String(s)).replace(/[^0-9]/g,''); }
 
 /* ============================================================
@@ -5184,7 +5273,7 @@ let calRef=new Date();
    (date de chaque ligne de paiement), pas à la date de commande/livraison.
    Indépendant des modules Commandes/Stocks : ne lit que les données brutes.
    ============================================================ */
-function monthKey(d){ return (d||'').slice(0,7); }   // 'YYYY-MM'
+// monthKey() : voir utils.js
 function monthLabel(k){
   if(!k) return '—';
   const [y,m]=k.split('-'); const noms=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
@@ -9006,7 +9095,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v141';
+const APP_VERSION = 'v145';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',

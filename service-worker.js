@@ -1,7 +1,8 @@
-const CACHE = 'sm-iphone-v69';
+const CACHE = 'sm-iphone-v73';
 const ASSETS = [
   './',
   './index.html',
+  './utils.js',
   './app.js',
   './dexie.min.js',
   './qr.min.js',
@@ -48,6 +49,7 @@ self.addEventListener('fetch', e => {
 
   const isCode = req.mode === 'navigate'
     || url.pathname.endsWith('/app.js')
+    || url.pathname.endsWith('/utils.js')
     || url.pathname.endsWith('/index.html')
     || url.pathname === '/' || url.pathname.endsWith('/');
 
