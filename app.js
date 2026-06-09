@@ -3987,7 +3987,7 @@ function normStatus(st){ return st==='En cours' ? 'À préparer' : (st || 'À pr
 function statusTag(st){
   const s = normStatus(st);
   const cls = s==='Livrée' ? 'done' : (s==='Terminée' ? 'ok' : 'todo');
-  return `<span class="tag ${cls}">${esc(s)}</span>`;
+  return `<span class="tag ${cls}">${esc(s==='Terminée'?'Prête':s)}</span>`;
 }
 // Changement rapide : passe au statut suivant (À préparer → Terminée → Livrée → …)
 async function cycleStatus(id){
@@ -4164,8 +4164,17 @@ function _cmdRow(row){
   const checked = _cmdSel.has(o.id) ? 'checked' : '';
   const st = orderPayStatus(o); const solde = orderBalance(o);
   const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
+  // Mois + semaine de la commande, figés avec le nom du client (colonne sticky).
+  const moisTxt = o.date ? monthLabel(monthKey(o.date)) : '';
+  const wk = o.date ? (_isoWeekKey(o.date)||'') : '';
+  const semTxt = wk ? ('sem. '+wk.split('-W')[1]) : '';
+  // Statut commande : menu déroulant (changement direct au clic). « Terminée » s'affiche « Prête ».
+  const curStatut = normStatus(o.statut);
+  const statutSelect = `<select class="status-select status-${curStatut==='Livrée'?'done':(curStatut==='Terminée'?'ok':'todo')}" onchange="setOrderStatusInline(${o.id}, this.value)" title="Changer le statut">
+    ${ORDER_STATUS.map(s=>`<option value="${s}" ${s===curStatut?'selected':''}>${s==='Terminée'?'Prête':esc(s)}</option>`).join('')}
+  </select>`;
   return `<tr>
-     <td><b>${o.clientId?`${nameP(_cmdClName(o.clientId))} <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Voir la fiche client">→</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
+     <td><b>${o.clientId?`${nameP(_cmdClName(o.clientId))} <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Voir la fiche client">→</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${moisTxt?`<br><span class="cmd-period">📅 ${esc(moisTxt)}${semTxt?' · '+esc(semTxt):''}</span>`:''}${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
      <td><span style="font-size:.82rem">${esc(row.resume)}</span> <span class="jump-arrow" onclick="cmdView(${o.id})" title="Voir le détail de la commande">→</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
      <td>
@@ -4173,11 +4182,10 @@ function _cmdRow(row){
        ${st!=='Payé'&&solde>0?`<br><span style="color:var(--red,#b3261e);font-size:.72rem">solde ${euro(solde)}</span>`:''}
        ${st==='Payé'&&o.datePaiement?`<br><span style="color:#9a8a82;font-size:.72rem">le ${fmtDate(o.datePaiement)}</span>`:''}
      </td>
-     <td><span class="act-status" onclick="cycleStatus(${o.id})" title="Toucher pour changer le statut">${statusTag(o.statut)}</span></td>
+     <td>${statutSelect}</td>
      <td>${row.nbLies?`<span class="tag ok">${row.nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
      <td><div class="qa-row">
        ${st!=='Payé'?`<button class="qa pay" onclick="markPaid(${o.id})" title="Encaisser le solde">✓ Solder</button>`:''}
-       <button class="qa status" onclick="cycleStatus(${o.id})" title="Changer le statut">⟳ Statut</button>
        <button class="qa" onclick="cmdView(${o.id})" title="Voir le détail">👁 Détail</button>
        <button class="qa edit" onclick="cmdForm(${o.id})" title="Modifier">✎ Modifier</button>
        <button class="qa" onclick="exportOrderText(${o.id})" title="Exporter en texte">⤓ Texte</button>
@@ -4185,6 +4193,12 @@ function _cmdRow(row){
        <button class="qa del" onclick="delCmd(${o.id})" title="Supprimer">🗑</button>
      </div></td>
      <td><input type="checkbox" class="cmd-check" ${checked} onclick="cmdToggleOne(${o.id},this.checked)"></td></tr>`;
+}
+// Changement de statut depuis le menu déroulant de la liste (sans fermer de modale).
+async function setOrderStatusInline(id, statut){
+  await db.orders.update(id, {statut});
+  renderCmd();
+  toast('Statut : '+(statut==='Terminée'?'Prête':statut));
 }
 // ---- Solder une commande depuis la liste (encaisse le solde, daté du jour) ----
 async function listSetPay(id, statut){
@@ -5274,11 +5288,7 @@ let calRef=new Date();
    Indépendant des modules Commandes/Stocks : ne lit que les données brutes.
    ============================================================ */
 // monthKey() : voir utils.js
-function monthLabel(k){
-  if(!k) return '—';
-  const [y,m]=k.split('-'); const noms=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
-  return `${noms[(+m)-1]||m} ${y}`;
-}
+// monthLabel() : voir utils.js
 async function computeAccounting(opts){
   opts=opts||{};
   const orders = await db.orders.toArray();
@@ -9095,7 +9105,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v145';
+const APP_VERSION = 'v147';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -10600,14 +10610,13 @@ async function renderBackups(){
    ${expWarn?`<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div>${lastExport?`Dernier export manuel il y a ${Math.abs(dExp)} jour(s).`:'Aucun export manuel hors appareil pour le moment.'} Pensez à télécharger une sauvegarde et à la conserver ailleurs (e-mail, cloud) : iOS peut purger les données de l'app.</div></div>`:''}
    <div class="panel"><h2>Actions</h2>
      <div class="flex" style="flex-wrap:wrap;gap:8px">
-       <button class="btn gold" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud</button>
        <button class="btn" onclick="snapshotBackup('manuel').then(()=>{renderBackups();toast('Sauvegarde créée ✓');})">＋ Sauvegarder maintenant</button>
-       <button class="btn ghost" onclick="exportData()">⬇ Exporter (.json)</button>
+       <button class="btn gold" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud</button>
        <label class="btn ghost" style="cursor:pointer">⬆ Importer (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
        <label class="btn ghost" style="cursor:pointer">➕ Importer en fusion (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importDataMerge(event)"></label>
        <button class="btn ghost" onclick="runConsistencyCheck(true)">🔍 Vérifier l'intégrité</button>
      </div>
-     <p class="note"><b>☁️ Sauvegarder sur iCloud</b> : ouvre le partage iOS — choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé ensuite). « Sauvegarder maintenant » garde une copie dans l'app ; « Exporter » télécharge le fichier. L'import « Importer » <b>remplace</b> tout ; « en fusion » <b>ajoute</b> sans rien effacer. Une sauvegarde automatique se fait à l'ouverture.</p>
+     <p class="note"><b>☁️ Sauvegarder sur iCloud</b> : ouvre le partage iOS — choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé ensuite). « Sauvegarder maintenant » garde une copie dans l'app. L'import « Importer » <b>remplace</b> tout ; « en fusion » <b>ajoute</b> sans rien effacer. Une sauvegarde automatique se fait à l'ouverture.</p>
    </div>
    <div class="panel"><h2>Sauvegarde iCloud & rappel</h2>
      <p class="note" style="margin-bottom:8px">${lastICloudInfo().txt} ${lastExport?`Dernier export hors appareil : <b>${fmtDate(lastExport)}</b>${dExp!==null?` (il y a ${Math.abs(dExp)} j)`:''}.`:'Aucun export hors appareil enregistré.'}</p>

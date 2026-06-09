@@ -118,6 +118,12 @@ tr:hover td{background:var(--creme-2)}
 /* Tag d'emplacement de batch : par défaut (iPad/desktop) on montre le nom complet,
    la lettre seule est masquée. La bascule iPhone se fait dans la media query mobile. */
 .emp-tag .emp-letter{display:none}
+/* COMMANDES : menu déroulant de statut (changement direct) + période figée (mois/semaine) */
+.status-select{border:none;border-radius:14px;padding:4px 8px;font-size:.74rem;font-weight:600;cursor:pointer;font-family:inherit;-webkit-appearance:none;appearance:none;text-align:center}
+.status-select.status-todo{background:#fef0d9;color:#9a6a14}
+.status-select.status-ok{background:#e3f0e7;color:#2e7d32}
+.status-select.status-done{background:#e9eef9;color:#3a5a9a}
+.cmd-period{display:block;color:#8a7a72;font-size:.72rem;font-weight:600;margin-top:1px}
 /* PRODUCTIONS — sections par recette + repérage instantané du composant.
    Bande latérale colorée épaisse + grosse pastille : coque/ganache/assemblé
    identifiables en un coup d'œil, sans lire. */

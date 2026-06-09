@@ -36,6 +36,12 @@ function fmtDateTime(iso){
 function fmtDate(s){ if(!s) return ''; const d = new Date(s); return isNaN(d)?'':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}); }
 function daysTo(s){ if(!s) return null; return Math.ceil((new Date(s) - new Date(today())) / 86400000); }
 function monthKey(d){ return (d||'').slice(0,7); }   // 'YYYY-MM'
+// Libellé lisible d'un mois 'YYYY-MM' → « juin 2026 ».
+function monthLabel(k){
+  if(!k) return '—';
+  const [y,m]=k.split('-'); const noms=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
+  return `${noms[(+m)-1]||m} ${y}`;
+}
 
 // --- Texte ---
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
