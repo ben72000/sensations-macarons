@@ -115,6 +115,24 @@ td{padding:12px;border-bottom:1px solid #f2ece2;vertical-align:top}
 tbody tr:nth-child(even) td{background:rgba(245,240,232,.4)}
 tr:hover td{background:var(--creme-2)}
 .tag{display:inline-block;padding:3px 11px;border-radius:20px;font-size:.73rem;font-weight:600;white-space:nowrap;letter-spacing:.01em}
+/* Tag d'emplacement de batch : par défaut (iPad/desktop) on montre le nom complet,
+   la lettre seule est masquée. La bascule iPhone se fait dans la media query mobile. */
+.emp-tag .emp-letter{display:none}
+/* PRODUCTIONS — sections par recette + repérage instantané du composant.
+   Bande latérale colorée épaisse + grosse pastille : coque/ganache/assemblé
+   identifiables en un coup d'œil, sans lire. */
+.prod-sec-head td{background:linear-gradient(90deg,#ede3d3,#f5efe4);border-top:2px solid var(--caramel);
+  font-family:'Fraunces',serif;font-size:1.02rem;color:var(--bordeaux);font-weight:600;padding:10px 12px!important;letter-spacing:-.01em}
+.prod-sec-head .sec-count{font-family:'Outfit',system-ui;font-size:.74rem;font-weight:500;color:#9a8a82;margin-left:8px}
+tr.prow{border-left:7px solid transparent}
+tr.prow-coques{border-left-color:#8a6d3b;background:#fbf7f0}
+tr.prow-ganache{border-left-color:#5a3a2a;background:#f7f2ee}
+tr.prow-assemble{border-left-color:#3f7d52;background:#f3f9f4}
+tr.prow-degustation{border-left-color:#caa23b;background:#fcf8ec}
+tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
+.comp-pill{display:inline-flex;align-items:center;gap:5px;border-radius:9px;padding:5px 11px;font-weight:700;font-size:.92rem;color:#fff;white-space:nowrap;letter-spacing:.01em}
+.comp-pill .cp-ico{font-size:1.05rem}
+.comp-coques{background:#8a6d3b}.comp-ganache{background:#5a3a2a}.comp-assemble{background:#3f7d52}.comp-degustation{background:#caa23b}.comp-complet{background:#6aa3a0}
 .tag.in{background:#e3f0e7;color:var(--green)}
 .tag.out{background:#f6e3e0;color:var(--red)}
 .tag.low{background:#fbeede;color:var(--caramel)}
@@ -528,6 +546,10 @@ tr:hover td{background:var(--creme-2)}
 @media(max-width:820px){
   /* iPhone : on masque la barre latérale, on utilise la tabbar + feuille menu */
   .side{display:none}
+  /* iPhone : emplacement de batch réduit à sa LETTRE seule, centrée, couleur conservée */
+  .emp-tag .emp-full{display:none}
+  .emp-tag .emp-letter{display:inline-block;min-width:1.1em;text-align:center;font-weight:700}
+  .emp-tag{padding:3px 9px;text-align:center}
   .main{margin-left:0;max-width:100%;width:100%;padding:46px 14px calc(80px + env(safe-area-inset-bottom))}
   .topbar h1{font-size:1.5rem}
   .row2,.row3{grid-template-columns:1fr}

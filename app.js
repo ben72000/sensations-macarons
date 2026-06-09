@@ -182,7 +182,8 @@ const EXPORT_REMINDER_DAYS_DEFAULT = 3;   // fréquence par défaut du rappel d'
 const SETTINGS_DEFAULTS = {
   socialGoods: 12.3,     // % charges sociales sur vente de marchandise (produit fini)
   socialService: 25.6,   // % charges sociales sur prestation de service
-  packaging: { 6:0.50, 8:0.60, 16:1.00, 25:1.50 }, // € emballage/consommable par coffret (commandes)
+  packaging: { 6:1.26, 8:2.18, 16:1.90, 25:2.32 }, // € emballage/consommable par coffret (tarifs réels reçus le 28/11/2025)
+  packagingDate: '2025-11-28', // date de réception de référence de ces tarifs (mise à jour à chaque nouvelle réception)
   // Main-d'œuvre (optionnelle) : prise en compte dans le coût de revient si activée.
   laborEnabled: false,   // active/désactive l'ajout du coût de main-d'œuvre
   laborRate: 12.0,       // coût horaire main-d'œuvre (€/h) chargé
@@ -221,12 +222,27 @@ function getSettings(){
       prixMacaronProStd: s.prixMacaronProStd!=null?+s.prixMacaronProStd:SETTINGS_DEFAULTS.prixMacaronProStd,
       prixGrandFormatPro: s.prixGrandFormatPro!=null?+s.prixGrandFormatPro:SETTINGS_DEFAULTS.prixGrandFormatPro,
       packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
+      packagingDate: s.packagingDate || SETTINGS_DEFAULTS.packagingDate,
       packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes)),
       exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT
     };
   }catch(e){ return JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)); }
 }
 function saveSettings(s){ localStorage.setItem('sm_settings', JSON.stringify(s)); }
+
+// Migration unique : inscrit les tarifs d'emballage reçus le 28/11/2025 dans les réglages
+// enregistrés (qui priment sinon sur les nouveaux défauts). Ne s'exécute qu'UNE fois : à ta
+// prochaine réception, tu modifieras les prix dans Paramètres et ils ne seront plus écrasés.
+function migratePackaging202511(){
+  try{
+    if(localStorage.getItem('sm_pkg_migr_20251128')==='done') return;
+    const raw=JSON.parse(localStorage.getItem('sm_settings')||'{}');
+    raw.packaging = { 6:1.26, 8:2.18, 16:1.90, 25:2.32 };
+    raw.packagingDate = '2025-11-28';
+    localStorage.setItem('sm_settings', JSON.stringify(raw));
+    localStorage.setItem('sm_pkg_migr_20251128','done');
+  }catch(e){ console.error('migratePackaging', e); }
+}
 // Coût emballage d'un coffret selon sa taille (commandes) — tarif paramétré (repli).
 function packagingCost(taille){ const s=getSettings(); return money2(s.packaging[taille]!=null?s.packaging[taille]:0); }
 
@@ -380,12 +396,16 @@ function empInfo(key){
 function empLettre(key){ return empInfo(key).lettre; }
 function empNom(key){ return empInfo(key).nom; }
 function empIcon(key){ return empInfo(key).icon; }
-// Tag HTML coloré d'un emplacement (avec sa lettre).
+// Tag HTML coloré d'un emplacement.
+// Sur iPad/desktop : icône + nom complet + lettre (ex. « 🌡️ Température ambiante · T »).
+// Sur iPhone (CSS @media) : on n'affiche QUE la lettre centrée, en gardant la couleur.
 function empTagHtml(key){
   const e=empInfo(key);
   if(!e.key) return '<span class="tag warn">non renseigné</span>';
   const bg = e.type==='frigo' ? '#6aa3a0' : '#3b6ea5';
-  return `<span class="tag" style="background:${bg};color:#fff">${e.icon} ${esc(e.nom)} · ${e.lettre}</span>`;
+  return `<span class="tag emp-tag" style="background:${bg};color:#fff" title="${esc(e.nom)}">`
+    + `<span class="emp-full">${e.icon} ${esc(e.nom)} · ${e.lettre}</span>`
+    + `<span class="emp-letter">${e.lettre}</span></span>`;
 }
 // Applique/relève la lettre d'emplacement au numéro de lot : « L-…-EMR » + « -A ».
 // On retire d'abord un éventuel suffixe -X existant, puis on ajoute la nouvelle lettre.
@@ -1517,6 +1537,10 @@ function assemblySuggestions(prods, recName){
       coqRec: recName(c.p.recipeId), ganRec: recName(best.p.recipeId),
       coqLot: c.p.lotProduction||('#'+c.p.id), ganLot: best.p.lotProduction||('#'+best.p.id),
       coqMac: c.mac, ganMac: best.mac, assemblable,
+      coqUnits: round3(+c.p.qteRestante),               // nb de COQUES physiques réelles en stock
+      coquesNeeded: assemblable*COQUES_PAR_MACARON,      // coques réellement consommées par l'assemblage
+      coquesReste: round3(round3(+c.p.qteRestante) - assemblable*COQUES_PAR_MACARON), // coques qui resteront (casse/impair)
+      ganacheReste: round3((best.mac) - assemblable),    // ganaches qui resteront
       sameBase: !!(c.p.lotBase && best.p.lotBase && c.p.lotBase===best.p.lotBase),
       sameRec: c.p.recipeId===best.p.recipeId
     });
@@ -1568,12 +1592,13 @@ async function renderProductions(){
    ${ouvertes.length && !enRetard.length?`<div class="banner">▶ <div><b>${ouvertes.length} production(s) en cours.</b> La DLC de 7 j ne démarre qu'au passage en « terminée ».</div></div>`:''}
    ${sugg.length?`<div class="panel" style="border:1.5px solid #cfe3d4;background:#f4faf5">
      <h2 style="color:#2e7d32">🔗 Assemblages à finaliser <span style="font-weight:400;font-size:.82rem;color:#6a8a72">— ${sugg.length} rapprochement(s) possible(s)</span></h2>
-     <p class="note" style="margin-bottom:8px">Des <b>coques</b> et des <b>ganaches</b> en stock peuvent être assemblées pour terminer la production. Vérifie le parfum avant de valider.</p>
+     <p class="note" style="margin-bottom:8px">Coques et ganaches réellement <b>en stock</b> (quantités réelles, casse déduite) pouvant être assemblées. Vérifie le parfum avant de valider.</p>
      ${sugg.map(s=>`<div class="sugg-row">
         <div class="sugg-main">
-          <div><b>🟤 ${esc(s.coqRec)}</b> <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.64rem">${qty(s.coqMac)} mac. dispo</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.coqLot)}</span></div>
-          <div style="margin-top:2px"><b>🍫 ${esc(s.ganRec)}</b> <span class="tag" style="background:#5a3a2a;color:#fff;font-size:.64rem">${qty(s.ganMac)} dispo</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.ganLot)}</span></div>
-          <div style="margin-top:3px;font-size:.8rem;color:#2e7d32">➜ assemblables : <b>${qty(s.assemblable)} macaron(s)</b>${s.sameBase?' · <span class="tag ok" style="font-size:.62rem">même lot</span>':''}${s.sameRec?'':' · <span class="tag warn" style="font-size:.62rem">parfum différent</span>'}</div>
+          <div><b>🟤 ${esc(s.coqRec)}</b> <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.64rem">${qty(s.coqUnits)} coques (= ${qty(s.coqMac)} mac.)</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.coqLot)}</span></div>
+          <div style="margin-top:2px"><b>🍫 ${esc(s.ganRec)}</b> <span class="tag" style="background:#5a3a2a;color:#fff;font-size:.64rem">${qty(s.ganMac)} doses dispo</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.ganLot)}</span></div>
+          <div style="margin-top:3px;font-size:.8rem;color:#2e7d32">➜ assemblage : <b>${qty(s.coquesNeeded)} coques + ${qty(s.assemblable)} ganaches → ${qty(s.assemblable)} macaron(s)</b>${s.sameBase?' · <span class="tag ok" style="font-size:.62rem">même lot</span>':''}${s.sameRec?'':' · <span class="tag warn" style="font-size:.62rem">parfum différent</span>'}</div>
+          ${(s.coquesReste>0||s.ganacheReste>0)?`<div style="margin-top:2px;font-size:.74rem;color:#9a8a82">↳ resterait : ${s.coquesReste>0?`<b>${qty(s.coquesReste)} coque(s)</b>`:''}${s.coquesReste>0&&s.ganacheReste>0?' · ':''}${s.ganacheReste>0?`<b>${qty(s.ganacheReste)} ganache(s)</b>`:''} (casse / écart réel)</div>`:''}
         </div>
         <button class="btn gold sm" onclick="prodAssembleForm(${s.coqId})" title="Assembler ces composants">🔗 Assembler</button>
       </div>`).join('')}
@@ -1616,20 +1641,26 @@ function _prodbatRow(row){
       + (ouvertTxt?`<br><span style="font-size:.72rem;color:${overdue?'#b3261e':'#9a8a82'}">ouverte ${ouvertTxt}${overdue?' · &gt; 4 j !':''}</span>`:'')
       + `<br><button class="qa edit" style="margin-top:3px" onclick="prodSetTermine(${p.id})" title="Passer en terminée — démarre la DLC">✓ Terminer</button>`;
   }
-  const partTag = p.parentProdId ? `<br><span class="tag" style="background:#ece2d4;color:#6b5a52">partie</span>` : '';
   const comp = prodComposant(p);
-  const compTag = comp==='coques' ? `<br><span class="tag" style="background:#8a6d3b;color:#fff">🟤 Coques</span>`
-    : comp==='ganache' ? `<br><span class="tag" style="background:#5a3a2a;color:#fff">🍫 Ganache</span>`
-    : comp==='assemble' ? `<br><span class="tag" style="background:#3f7d52;color:#fff">✓ Assemblé</span>`
-    : comp==='degustation' ? `<br><span class="tag" style="background:#caa23b;color:#fff">🥄 Dégustation</span>` : '';
+  // Pastille composant PROÉMINENTE : repérage instantané (couleur + icône + mot).
+  const compMeta = {
+    coques:     {ico:'🟤', mot:'COQUES',      cls:'comp-coques'},
+    ganache:    {ico:'🍫', mot:'GANACHE',     cls:'comp-ganache'},
+    assemble:   {ico:'✓',  mot:'ASSEMBLÉ',    cls:'comp-assemble'},
+    degustation:{ico:'🥄', mot:'DÉGUSTATION', cls:'comp-degustation'},
+    complet:    {ico:'🍪', mot:'COMPLET',     cls:'comp-complet'}
+  }[comp] || {ico:'🍪', mot:'COMPLET', cls:'comp-complet'};
+  const compPill = `<span class="comp-pill ${compMeta.cls}"><span class="cp-ico">${compMeta.ico}</span>${compMeta.mot}</span>`;
+  const rowCls = `prow prow-${comp||'complet'}`;
+  const partTag = p.parentProdId ? ` <span class="tag" style="background:#ece2d4;color:#6b5a52;font-size:.66rem">partie</span>` : '';
   // Bouton Assembler : proposé sur un sous-lot coques OU ganache encore disponible.
   const assembleBtn = (comp==='coques'||comp==='ganache') && round3(+p.qteRestante)>0
     ? `<button class="qa edit" onclick="prodAssembleForm(${p.id})" title="Assembler coques + ganache de ce lot">🔗 Assembler</button>` : '';
   // Bouton Distribué : décrémente un lot dégustation au fur et à mesure (offert).
   const degBtn = comp==='degustation' && round3(+p.qteRestante)>0
     ? `<button class="qa edit" onclick="prodDegDistribue(${p.id})" title="Décompter des macarons distribués en dégustation">🥄 Distribué</button>` : '';
-  return `<tr${overdue?' style="background:#fdf3f2"':''}>
-     <td><b>${esc(recName(p.recipeId))}</b>${compTag}${partTag}<br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span>${heureFab?`<br><span style="color:#9a8a82;font-size:.72rem">🕒 ${heureFab}</span>`:''}</td>
+  return `<tr class="${rowCls}"${overdue?' style="background:#fdf3f2"':''}>
+     <td>${compPill}${partTag}<br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span>${heureFab?`<br><span style="color:#9a8a82;font-size:.72rem">🕒 ${heureFab}</span>`:''}</td>
      <td>${statutCell}</td>
      <td><b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span style="color:#9a8a82;font-size:.68rem">base ${esc(p.lotBase)}</span>`:''}</td>
      <td>${empTag}<br><span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></td>
@@ -1657,7 +1688,26 @@ function prodbatFilter(q){
   if(cnt){ const tot=_prodnCache.length; cnt.textContent = raw ? `${rows.length} / ${tot} batch(s)` : `${tot} batch(s) fabriqué(s)`; }
   if(!rows.length){ body.innerHTML=''; if(empty) empty.style.display='block'; return; }
   if(empty) empty.style.display='none';
-  body.innerHTML = rows.slice(0,400).map(_prodbatRow).join('') +
+  const recName=window._prodRecName||(id=>'#'+id);
+  // Ordre des composants à l'intérieur d'une recette : coques, ganache, assemblé, dégustation, complet
+  const compOrder={coques:0, ganache:1, assemble:2, degustation:3, complet:4};
+  const capped = rows.slice(0,400);
+  // Regroupe par recette en conservant l'ordre d'apparition (déjà trié par pertinence/date)
+  const groups=[]; const idx={};
+  capped.forEach(r=>{
+    const rid=r.p.recipeId;
+    if(idx[rid]==null){ idx[rid]=groups.length; groups.push({rid, name:recName(rid), rows:[]}); }
+    groups[idx[rid]].rows.push(r);
+  });
+  let html='';
+  groups.forEach(g=>{
+    g.rows.sort((a,b)=>(compOrder[prodComposant(a.p)]??9)-(compOrder[prodComposant(b.p)]??9));
+    const nb=g.rows.length;
+    const reste=g.rows.reduce((s,r)=>s+(round3(+r.p.qteRestante)>0?1:0),0);
+    html+=`<tr class="prod-sec-head"><td colspan="9">🍩 ${esc(g.name)}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></td></tr>`;
+    html+=g.rows.map(_prodbatRow).join('');
+  });
+  body.innerHTML = html +
     (rows.length>400?`<tr><td colspan="9" class="note" style="text-align:center">… ${rows.length-400} autre(s). Affinez la recherche.</td></tr>`:'');
 }
 // Chip emplacement : remplit la recherche avec la lettre (ou efface).
@@ -7642,7 +7692,7 @@ function settingsForm(){
       <div class="field"><label>Charges sociales — marchandise (%)</label><input type="number" step="0.1" id="set_sg" value="${s.socialGoods}"></div>
       <div class="field"><label>Charges sociales — prestation (%)</label><input type="number" step="0.1" id="set_ss" value="${s.socialService}"></div>
     </div>
-    <p class="note" style="margin-top:8px">Coût emballage / consommables par coffret (€).</p>
+    <p class="note" style="margin-top:8px">Coût emballage / consommables par coffret (€). <span style="color:#9a8a82">Tarifs de référence reçus le <b>${s.packagingDate?fmtDate(s.packagingDate):'—'}</b> · boîte (+ calage pour le format 8). Coût unitaire, hors stock. Mets à jour ces montants à ta prochaine réception.</span></p>
     <div class="row2">
       ${BOX_SIZES.map(t=>`<div class="field"><label>Coffret ${t}</label><input type="number" step="0.01" id="set_pk_${t}" value="${s.packaging[t]!=null?s.packaging[t]:0}"></div>`).join('')}
     </div>
@@ -7665,7 +7715,10 @@ function saveSettingsForm(){
   s.socialService=Math.max(0,+val('set_ss')||0);
   s.vehicleConso=Math.max(0,+val('set_conso')||0);
   s.laborRate=Math.max(0,+val('set_rate')||0);
+  // Si un tarif d'emballage change, on horodate la nouvelle grille à aujourd'hui (date de réception).
+  const oldPack=JSON.stringify(s.packaging||{});
   s.packaging={}; BOX_SIZES.forEach(t=>{ s.packaging[t]=money2(+val('set_pk_'+t)||0); });
+  if(JSON.stringify(s.packaging)!==oldPack) s.packagingDate=today();
   // types d'emballage (on lit toutes les lignes, on garde celles avec un nom)
   const n=+val('set_pt_n')||0; const pts=[];
   for(let i=0;i<n;i++){ const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue; pts.push({nom, cout:money2(+val('set_pt_c_'+i)||0), capacite:Math.max(0,+val('set_pt_cap_'+i)||0)}); }
@@ -8953,7 +9006,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v136';
+const APP_VERSION = 'v141';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -12438,6 +12491,7 @@ function startClock(){
 }
 
 (async()=>{
+  migratePackaging202511();   // inscrit les tarifs emballage 28/11/2025 (une seule fois)
   try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
   try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
   try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
