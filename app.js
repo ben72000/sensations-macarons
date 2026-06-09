@@ -69,6 +69,51 @@ const ALLERGENS = [
   'Gluten','Crustacés','Œufs','Poissons','Arachides','Soja','Lait',
   'Fruits à coque','Céleri','Moutarde','Sésame','Sulfites','Lupin','Mollusques'
 ];
+// Allergènes connus par parfum (catégories réglementaires). Source : fiche allergènes.
+// Sert à pré-remplir automatiquement une recette QUI N'A PAS ENCORE d'allergènes saisis.
+// La clé est normalisée (sans accents/casse) ; un nom de recette contenant ces mots
+// (ex. « Macaron vanille de Madagascar ») sera reconnu.
+const ALLERGENS_PAR_PARFUM = [
+  { match:['citron'],            all:['Œufs','Lait','Soja','Fruits à coque','Poissons'] }, // gélatine de poisson
+  { match:['framboise-myrtille','myrtille'], all:['Œufs','Lait','Soja','Fruits à coque'] }, // grand format
+  { match:['framboise'],         all:['Œufs','Lait','Soja','Fruits à coque','Poissons'] }, // gélatine de poisson
+  { match:['cannelle'],          all:['Œufs','Lait','Soja','Fruits à coque','Sulfites'] }, // lait inclus (corrigé)
+  { match:['praline','praliné'], all:['Œufs','Lait','Soja','Fruits à coque','Sulfites'] },
+  { match:['nocciolata'],        all:['Œufs','Lait','Soja','Fruits à coque','Sulfites'] },
+  { match:['caramel'],           all:['Œufs','Lait','Fruits à coque'] },                   // pas de soja
+  { match:['madeleine'],         all:['Œufs','Lait','Soja','Fruits à coque','Gluten'] },   // grand format : GLUTEN
+  { match:['mangue'],            all:['Œufs','Lait','Soja','Fruits à coque'] },            // grand format
+  { match:['2 chocolats','deux chocolats'], all:['Œufs','Lait','Soja','Fruits à coque'] },// grand format
+  { match:['chocolat au lait'],  all:['Œufs','Lait','Soja','Fruits à coque'] },
+  { match:['chocolat noir'],     all:['Œufs','Lait','Soja','Fruits à coque'] },
+  { match:['chocolat passion'],  all:['Œufs','Lait','Soja','Fruits à coque'] },
+  { match:['vanille'],           all:['Œufs','Lait','Soja','Fruits à coque'] },
+  { match:['pistache'],          all:['Œufs','Lait','Soja','Fruits à coque'] },
+  { match:['rafaello','raffaello','coco citron'], all:['Œufs','Lait','Soja','Fruits à coque'] },
+  { match:['coco'],              all:['Œufs','Lait','Soja','Fruits à coque'] },
+  { match:['popcorn'],           all:['Œufs','Lait','Soja','Fruits à coque'] },
+  { match:['café','cafe'],       all:['Œufs','Lait','Soja','Fruits à coque'] },
+];
+// Renvoie les allergènes connus pour un nom de recette donné, ou null si inconnu.
+function allergenesPourNom(nom){
+  const n = (nom||'').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,''); // enlève les accents
+  for(const e of ALLERGENS_PAR_PARFUM){
+    if(e.match.some(m => n.includes(m.normalize('NFD').replace(/[\u0300-\u036f]/g,'')))) return e.all;
+  }
+  return null;
+}
+// Pré-remplit les allergènes des recettes qui n'en ont pas encore (jamais d'écrasement).
+async function seedAllergenes(){
+  try{
+    const recs = await db.recipes.toArray();
+    for(const r of recs){
+      if(r.allergenes && r.allergenes.length) continue;   // déjà renseigné → on ne touche pas
+      const all = allergenesPourNom(r.produitNom);
+      if(all){ await db.recipes.update(r.id, { allergenes: all }); }
+    }
+  }catch(e){ /* silencieux : ne bloque jamais le démarrage */ }
+}
 const BOX_PRICES = { 6: 12, 8: 16, 16: 28, 25: 42 }; // prix de base par taille
 const BOX_FLAVOR_LIMIT = { 6: 3, 8: 4, 16: 4, 25: 5 }; // parfums DIFFÉRENTS inclus
 const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire
@@ -1401,6 +1446,11 @@ async function saveRec(id){
     coutConsoUnit: Math.max(0, money2(+val('f_conso')||0)),
     poidsGarnitureUnit: Math.max(0, +val('f_garn')||0)};
   if(!o.produitNom){toast('Nom requis');return;}
+  // Si aucun allergène coché mais que le parfum est connu, on pré-remplit automatiquement.
+  if((!o.allergenes || !o.allergenes.length)){
+    const auto = allergenesPourNom(o.produitNom);
+    if(auto) o.allergenes = auto.slice();
+  }
   if(!bomDraft.length){toast('Ajoute au moins une matière');return;}
   await db.transaction('rw',db.recipes,db.recipeItems,async()=>{
     let rid=id;
@@ -8702,7 +8752,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v124';
+const APP_VERSION = 'v126';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -12097,6 +12147,7 @@ async function pmsExportDDPP(){
   try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
   try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
   try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
+  try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
   try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
   try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
   const opened = await handleTraceAnchor().catch(()=>false);
