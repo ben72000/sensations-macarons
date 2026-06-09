@@ -73,10 +73,15 @@ const ALLERGENS = [
 // Sert à pré-remplir automatiquement une recette QUI N'A PAS ENCORE d'allergènes saisis.
 // La clé est normalisée (sans accents/casse) ; un nom de recette contenant ces mots
 // (ex. « Macaron vanille de Madagascar ») sera reconnu.
+// IMPORTANT : l'ordre compte. La 1ʳᵉ règle dont un mot-clé est contenu dans le nom gagne.
+// On va donc du PLUS SPÉCIFIQUE au PLUS GÉNÉRIQUE :
+//  - 'coco citron'/'coco' AVANT 'citron' (sinon « Coco citron vert » hériterait des Poissons du citron) ;
+//  - variantes 'chocolat au lait/noir/passion' et '2 chocolats' AVANT le 'chocolat' générique.
 const ALLERGENS_PAR_PARFUM = [
-  { match:['citron'],            all:['Œufs','Lait','Soja','Fruits à coque','Poissons'] }, // gélatine de poisson
+  { match:['rafaello','raffaello','coco citron','coco'], all:['Œufs','Lait','Soja','Fruits à coque'] }, // coco AVANT citron
   { match:['framboise-myrtille','myrtille'], all:['Œufs','Lait','Soja','Fruits à coque'] }, // grand format
   { match:['framboise'],         all:['Œufs','Lait','Soja','Fruits à coque','Poissons'] }, // gélatine de poisson
+  { match:['citron'],            all:['Œufs','Lait','Soja','Fruits à coque','Poissons'] }, // gélatine de poisson
   { match:['cannelle'],          all:['Œufs','Lait','Soja','Fruits à coque','Sulfites'] }, // lait inclus (corrigé)
   { match:['praline','praliné'], all:['Œufs','Lait','Soja','Fruits à coque','Sulfites'] },
   { match:['nocciolata'],        all:['Œufs','Lait','Soja','Fruits à coque','Sulfites'] },
@@ -87,10 +92,9 @@ const ALLERGENS_PAR_PARFUM = [
   { match:['chocolat au lait'],  all:['Œufs','Lait','Soja','Fruits à coque'] },
   { match:['chocolat noir'],     all:['Œufs','Lait','Soja','Fruits à coque'] },
   { match:['chocolat passion'],  all:['Œufs','Lait','Soja','Fruits à coque'] },
+  { match:['chocolat'],          all:['Œufs','Lait','Soja','Fruits à coque'] },            // grand format « Chocolat » seul + générique
   { match:['vanille'],           all:['Œufs','Lait','Soja','Fruits à coque'] },
   { match:['pistache'],          all:['Œufs','Lait','Soja','Fruits à coque'] },
-  { match:['rafaello','raffaello','coco citron'], all:['Œufs','Lait','Soja','Fruits à coque'] },
-  { match:['coco'],              all:['Œufs','Lait','Soja','Fruits à coque'] },
   { match:['popcorn'],           all:['Œufs','Lait','Soja','Fruits à coque'] },
   { match:['café','cafe'],       all:['Œufs','Lait','Soja','Fruits à coque'] },
 ];
@@ -4219,25 +4223,31 @@ async function cmdView(id){
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
 function lineTotalStored(ln){
+  // base = montant AVANT remise de ligne, selon le type
+  let base;
   if(ln.type==='coffret'){
-    // priorité au prix scellé dans la commande (immunise les ventes passées)
-    const base = (ln.prixUnitaireApplique!=null && +ln.prixUnitaireApplique>=0)
+    const pu = (ln.prixUnitaireApplique!=null && +ln.prixUnitaireApplique>=0)
       ? +ln.prixUnitaireApplique
       : ((BOX_PRICES[ln.taille]!=null)?BOX_PRICES[ln.taille]:0);
     const nbDiff=(ln.parfums||[]).filter(p=>p.qte>0).length;
     const limit=BOX_FLAVOR_LIMIT[ln.taille]||0;
-    return money2(base + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE);
+    base = money2(pu + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE);
   }
-  if(ln.type==='evenement') return money2((ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE);
-  if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); return money2(tot*pu); }
-  if(ln.type==='vrac'){ const pu=+getSettings().prixMacaronProStd||0; const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); return money2(tot*pu); }
-  if(ln.type==='don') return 0;
-  if(ln.type==='prestation'){
-    const base=money2(+ln.montantHT||0);
+  else if(ln.type==='evenement') base = money2((ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE);
+  else if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
+  else if(ln.type==='vrac'){ const pu=+getSettings().prixMacaronProStd||0; const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
+  else if(ln.type==='don') return 0; // toujours gratuit, pas de remise à appliquer
+  else if(ln.type==='prestation'){
+    base=money2(+ln.montantHT||0);
     const rem = ln.remiseType==='euro' ? Math.min(base,money2(+ln.remiseEuro||0)) : money2(base*Math.max(0,Math.min(100,+ln.remisePct||0))/100);
     return Math.max(0, money2(base-rem));
   }
-  return 0;
+  else return 0;
+  // Remise de ligne en % (bornée 0–100), appliquée à la base — alignée sur lineTotal() côté édition.
+  // Sans ça, le CA recalculé (marges, analytics, export) ignorerait les remises de ligne.
+  const pct = Math.max(0, Math.min(100, +ln.remisePct||0));
+  const rem = money2(base*pct/100);
+  return Math.max(0, money2(base - rem));
 }
 let cmdLines = [];      // lignes de produits de la commande en cours
 let cmdProductsCache = [];
@@ -8340,8 +8350,11 @@ function aiParseDate(txt, base){
   const d = base ? new Date(base) : new Date();
   const jours={dimanche:0,lundi:1,mardi:2,mercredi:3,jeudi:4,vendredi:5,samedi:6};
   if(/\baujourd'?hui\b/.test(txt)){ return d.toISOString().slice(0,10); }
+  // « après-demain » DOIT être testé AVANT « demain » : sinon /\bdemain\b/ matche
+  // l'intérieur de « apres-demain » (le tiret/espace est une frontière de mot) et on
+  // se tromperait d'un jour. On tolère le tiret ou l'espace entre « apres » et « demain ».
+  if(/\bapres[-\s]demain\b/.test(txt)){ d.setDate(d.getDate()+2); return d.toISOString().slice(0,10); }
   if(/\bdemain\b/.test(txt)){ d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); }
-  if(/\bapres-demain\b/.test(txt)){ d.setDate(d.getDate()+2); return d.toISOString().slice(0,10); }
   for(const j in jours){
     if(new RegExp('\\b'+j+'\\b').test(txt)){
       // prochain jour de semaine correspondant
@@ -8752,7 +8765,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v126';
+const APP_VERSION = 'v129';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -8809,8 +8822,8 @@ const APP_KB = [
     tags:'migration reprise historique demarrage debut ancienne donnee ca chiffre affaire stock depart inventaire import',
     r:`<p>L'onglet <b>Reprise / migration</b> sert à démarrer avec ton historique. Tu peux saisir des <b>commandes historiques</b> (date, montant, client ou libellé) : elles <b>comptent dans le chiffre d'affaires</b> et les stats, mais sont marquées « historique » — l'app ne demande <b>ni production, ni picking, ni matières</b> et ne génère <b>aucune alerte</b> dessus (elles n'apparaissent pas dans la liste des commandes opérationnelles). Tu peux y ajouter le <b>détail des parfums</b> (parfum + quantité) : cela <b>alimente les statistiques et les tendances</b> (parfums populaires, saisonnalité) sans modifier le montant saisi. Tu peux aussi enregistrer ton <b>stock de départ de produits finis</b> (lot déjà « terminé », sans consommer de matières) et, pour les matières premières, utiliser la <b>réception de lot</b> habituelle dans Matières &amp; emballages.</p>` },
   { id:'sauvegarde', titre:'Sauvegarde & restauration',
-    tags:'sauvegarde backup restauration export import donnees fichier rappel ios safari perte purge securite',
-    r:`<p>Onglet <b>Sauvegarde &amp; sécurité</b>. <b>Exporte</b> toutes tes données dans un fichier .json et range-le ailleurs (Fichiers, iCloud, e-mail), puis <b>réimporte</b>-le pour restaurer (remplacement ou fusion). ⚠️ Important : effacer l'historique Safari <b>supprime aussi la base de l'app</b> (limite iOS) — seul un export hors appareil te protège. L'app fait une <b>sauvegarde automatique quotidienne</b> dans son historique interne et te <b>rappelle automatiquement</b> d'exporter (fréquence réglable, 3 jours par défaut). Exporte avant toute mise à jour ou nettoyage de Safari.</p>` },
+    tags:'sauvegarde backup restauration export import donnees fichier rappel ios safari perte purge securite icloud cloud drive partage',
+    r:`<p>Onglet <b>Sauvegarde &amp; sécurité</b>. Le plus simple : <b>☁️ Sauvegarder sur iCloud</b> — l'app ouvre le partage iOS, choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé, les fois suivantes vont plus vite). Tu peux aussi <b>Exporter</b> un fichier .json à ranger ailleurs (e-mail, autre cloud), puis le <b>réimporter</b> pour restaurer (remplacement ou fusion). ⚠️ Important : effacer l'historique Safari <b>supprime aussi la base de l'app</b> (limite iOS) — seule une copie hors appareil (iCloud, fichier) te protège. À l'ouverture, l'app fait une <b>sauvegarde interne quotidienne</b> et te <b>propose automatiquement</b> d'enregistrer sur iCloud si ta dernière sauvegarde dépasse le délai réglé (mets <b>1 jour</b> pour un rappel quotidien). Note : une app web ne peut pas écrire seule dans iCloud sans ce petit geste de validation — c'est une sécurité d'iOS.</p>` },
   { id:'assistant', titre:'Assistant IA (hors-ligne)',
     tags:'assistant ia aide question stock commande tendance rupture comment fonctionne localiser ou sont joindre piece fichier photo txt notes coller',
     r:`<p>L'assistant fonctionne <b>hors-ligne</b>. Il sait : <b>localiser tes macarons</b> (« où sont mes macarons vanille ? »), <b>créer une commande en langage naturel</b>, répondre sur le stock, le CA, les tendances, les ruptures, et expliquer le fonctionnement. Tu peux <b>📎 Joindre</b> un <b>fichier texte (.txt)</b> : son contenu est ajouté à ta demande. Une <b>photo</b> peut être jointe comme simple <b>aperçu visuel temporaire</b> (l'assistant ne lit pas son contenu, et rien n'est enregistré dans l'app). Depuis l'app Notes de l'iPhone, fais <b>Copier</b> puis colle le texte dans le champ (l'accès direct aux notes Apple n'est pas possible). Toute action critique demande validation. Envoi : touche <b>Entrée</b>.</p>` },
@@ -9939,6 +9952,60 @@ async function exportData(){
   localStorage.removeItem('sm_exportSnooze');
   toast('Sauvegarde téléchargée ✓');
 }
+
+/* ============================================================
+   SAUVEGARDE VERS iCLOUD DRIVE (via la feuille de partage iOS)
+   ------------------------------------------------------------
+   Une PWA ne peut pas écrire seule dans iCloud Drive (bac à sable du
+   navigateur). La seule voie fiable sur iPhone est l'API Web Share avec
+   un FICHIER : elle ouvre la feuille de partage native, où l'utilisateur
+   choisit « Enregistrer dans Fichiers → iCloud Drive ». Le dossier est
+   mémorisé par iOS, donc les fois suivantes ne demandent qu'une validation.
+   Repli : si le partage de fichier n'est pas disponible (ex. ordinateur),
+   on retombe sur le téléchargement classique (.json).
+   ============================================================ */
+async function shareBackupToICloud(opts){
+  opts = opts || {};
+  try{
+    const dump = await buildDump();
+    const json = JSON.stringify(dump, null, 2);
+    const nomFichier = 'sensations-macarons-sauvegarde-'+today()+'.json';
+    // 1) Voie idéale iOS : partage d'un vrai fichier
+    if(navigator.canShare){
+      const file = new File([json], nomFichier, {type:'application/json'});
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({
+          files:[file],
+          title:'Sauvegarde Sensations Macarons',
+          text:'Sauvegarde du '+fmtDate(today())+' — choisis « Enregistrer dans Fichiers » puis iCloud Drive.'
+        });
+        // succès : on note la date et on prend aussi un instantané interne
+        localStorage.setItem('sm_lastICloud', today());
+        localStorage.setItem('sm_lastExport', today());
+        localStorage.removeItem('sm_exportSnooze');
+        try{ await snapshotBackup('icloud'); }catch(e){}
+        toast('Sauvegarde envoyée — enregistre-la dans iCloud Drive ✓');
+        if(typeof renderBackups==='function' && view==='backups') renderBackups();
+        return true;
+      }
+    }
+    // 2) Repli : téléchargement classique (ordinateur, ou navigateur sans partage de fichier)
+    const blob=new Blob([json],{type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download=nomFichier; a.click();
+    localStorage.setItem('sm_lastExport', today());
+    localStorage.removeItem('sm_exportSnooze');
+    try{ await snapshotBackup('icloud'); }catch(e){}
+    toast('Partage direct indisponible : fichier téléchargé. Range-le dans iCloud Drive.');
+    return true;
+  }catch(e){
+    // l'utilisateur a annulé la feuille de partage, ou erreur : pas grave, on reste silencieux
+    if(e && e.name==='AbortError'){ return false; }
+    console.error('shareBackupToICloud', e);
+    toast('Sauvegarde iCloud annulée ou impossible.');
+    return false;
+  }
+}
 // ---- IMPORT MANUEL (depuis un fichier .json) ----
 async function importData(e){
   const f=e.target.files[0]; if(!f)return;
@@ -10200,18 +10267,21 @@ async function renderBackups(){
    ${expWarn?`<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div>${lastExport?`Dernier export manuel il y a ${Math.abs(dExp)} jour(s).`:'Aucun export manuel hors appareil pour le moment.'} Pensez à télécharger une sauvegarde et à la conserver ailleurs (e-mail, cloud) : iOS peut purger les données de l'app.</div></div>`:''}
    <div class="panel"><h2>Actions</h2>
      <div class="flex" style="flex-wrap:wrap;gap:8px">
-       <button class="btn gold" onclick="snapshotBackup('manuel').then(()=>{renderBackups();toast('Sauvegarde créée ✓');})">＋ Sauvegarder maintenant</button>
-       <button class="btn" onclick="exportData()">⬇ Exporter (.json)</button>
+       <button class="btn gold" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud</button>
+       <button class="btn" onclick="snapshotBackup('manuel').then(()=>{renderBackups();toast('Sauvegarde créée ✓');})">＋ Sauvegarder maintenant</button>
+       <button class="btn ghost" onclick="exportData()">⬇ Exporter (.json)</button>
        <label class="btn ghost" style="cursor:pointer">⬆ Importer (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
        <label class="btn ghost" style="cursor:pointer">➕ Importer en fusion (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importDataMerge(event)"></label>
        <button class="btn ghost" onclick="runConsistencyCheck(true)">🔍 Vérifier l'intégrité</button>
      </div>
-     <p class="note">L'import « Importer » <b>remplace</b> tout ; l'import « en fusion » <b>ajoute</b> sans rien effacer (idéal pour intégrer un fichier de saisies préparé à part). La sauvegarde automatique se déclenche une fois par jour à l'ouverture.</p>
+     <p class="note"><b>☁️ Sauvegarder sur iCloud</b> : ouvre le partage iOS — choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé ensuite). « Sauvegarder maintenant » garde une copie dans l'app ; « Exporter » télécharge le fichier. L'import « Importer » <b>remplace</b> tout ; « en fusion » <b>ajoute</b> sans rien effacer. Une sauvegarde automatique se fait à l'ouverture.</p>
    </div>
-   <div class="panel"><h2>Rappel d'export</h2>
-     <p class="note" style="margin-bottom:8px">${lastExport?`Dernier export hors appareil : <b>${fmtDate(lastExport)}</b>${dExp!==null?` (il y a ${Math.abs(dExp)} j)`:''}.`:'Aucun export hors appareil enregistré.'} L'app te le rappellera automatiquement à l'ouverture.</p>
-     <div class="field"><label>Me rappeler d'exporter tous les… (jours)</label>
+   <div class="panel"><h2>Sauvegarde iCloud & rappel</h2>
+     <p class="note" style="margin-bottom:8px">${lastICloudInfo().txt} ${lastExport?`Dernier export hors appareil : <b>${fmtDate(lastExport)}</b>${dExp!==null?` (il y a ${Math.abs(dExp)} j)`:''}.`:'Aucun export hors appareil enregistré.'}</p>
+     <button class="btn gold" style="margin-bottom:10px" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud maintenant</button>
+     <div class="field"><label>Me rappeler de sauvegarder tous les… (jours)</label>
        <input type="number" min="1" max="60" id="set_expReminder" value="${exportReminderDays()}" onchange="saveExportReminderDays(this.value)"></div>
+     <p class="note">À l'ouverture, si la dernière sauvegarde dépasse ce délai, l'app te proposera en un geste de l'enregistrer sur iCloud Drive. Mets <b>1</b> pour un rappel quotidien.</p>
    </div>
    <div class="panel"><h2>Historique des sauvegardes</h2>
    ${backups.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Contenu</th><th>Taille</th><th>Intégrité</th><th></th></tr></thead>
@@ -10443,22 +10513,26 @@ async function buildOrderText(orderId){
     if(ln.type==='coffret'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       const totQ=parfums.reduce((s,p)=>s+(+p.qte||0),0);
-      L.push('  - Coffret '+ln.taille+' macarons'+(totQ?' ('+totQ+' macaron'+(totQ>1?'s':'')+')':'')+' — '+euro(lineTotalStored(ln)));
+      const _rem=Math.max(0,Math.min(100,+ln.remisePct||0));
+      L.push('  - Coffret '+ln.taille+' macarons'+(totQ?' ('+totQ+' macaron'+(totQ>1?'s':'')+')':'')+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
       parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
       if(!parfums.length) L.push('      • (parfums non détaillés)');
     } else if(ln.type==='evenement'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
-      L.push('  - Événement : '+(ln.evQte||0)+' macarons + '+(ln.equip||0)+' présentoir(s) — '+euro(lineTotalStored(ln)));
+      const _rem=Math.max(0,Math.min(100,+ln.remisePct||0));
+      L.push('  - Événement : '+(ln.evQte||0)+' macarons + '+(ln.equip||0)+' présentoir(s)'+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
       parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
     } else if(ln.type==='grand'){
       const items=(ln.items||[]).filter(p=>p.qte>0);
       const totQ=items.reduce((s,p)=>s+(+p.qte||0),0);
-      L.push('  - Grand format ('+(ln.tarif||'particulier')+')'+(totQ?' — '+totQ+' pièce'+(totQ>1?'s':''):'')+' — '+euro(lineTotalStored(ln)));
+      const _rem=Math.max(0,Math.min(100,+ln.remisePct||0));
+      L.push('  - Grand format ('+(ln.tarif||'particulier')+')'+(totQ?' — '+totQ+' pièce'+(totQ>1?'s':''):'')+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
       items.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
     } else if(ln.type==='vrac'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       const totQ=parfums.reduce((s,p)=>s+(+p.qte||0),0);
-      L.push('  - Vrac pro'+(totQ?' — '+totQ+' macaron'+(totQ>1?'s':''):'')+' — '+euro(lineTotalStored(ln)));
+      const _rem=Math.max(0,Math.min(100,+ln.remisePct||0));
+      L.push('  - Vrac pro'+(totQ?' — '+totQ+' macaron'+(totQ>1?'s':''):'')+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
       parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
     } else if(ln.type==='don'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
@@ -10586,6 +10660,14 @@ function exportReminderDays(){
   const n=parseInt(s.exportReminderDays,10);
   return (n&&n>0)?n:EXPORT_REMINDER_DAYS_DEFAULT;
 }
+// Texte d'état de la dernière sauvegarde iCloud (pour l'écran Sauvegarde).
+function lastICloudInfo(){
+  const last=localStorage.getItem('sm_lastICloud');
+  if(!last) return {txt:'Aucune sauvegarde iCloud enregistrée pour le moment.', jours:null};
+  const d=daysTo(last);
+  const age = (d===0||d===null) ? "aujourd'hui" : `il y a ${Math.abs(d)} j`;
+  return {txt:`Dernière sauvegarde iCloud : <b>${fmtDate(last)}</b> (${age}).`, jours:d};
+}
 async function exportReminder(){
   const freq=exportReminderDays();
   const last = localStorage.getItem('sm_lastExport');
@@ -10601,10 +10683,11 @@ async function exportReminder(){
   }
   if(!overdue) return;
   openModal(`<h3>💾 Sauvegarde recommandée</h3>
-    <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4"><div>${ageTxt} iOS peut purger les données de l'app (effacer l'historique Safari supprime aussi la base). Exporte un fichier et range-le ailleurs (Fichiers, iCloud, e-mail).</div></div>
+    <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4"><div>${ageTxt} iOS peut purger les données de l'app (effacer l'historique Safari supprime aussi la base). Mets une copie à l'abri sur iCloud Drive.</div></div>
     <p class="note" style="margin:8px 0">${nb} enregistrement(s) clés actuellement sur l'appareil.</p>
     <div class="modal-actions" style="flex-direction:column;gap:8px">
-      <button class="btn gold" style="width:100%" onclick="closeModal();exportData()">⬇ Exporter maintenant (.json)</button>
+      <button class="btn gold" style="width:100%" onclick="closeModal();shareBackupToICloud()">☁️ Sauvegarder sur iCloud</button>
+      <button class="btn ghost" style="width:100%" onclick="closeModal();exportData()">⬇ Exporter le fichier (.json)</button>
       <button class="btn ghost" style="width:100%" onclick="closeModal();goView('sauvegardes')">Ouvrir Sauvegarde &amp; sécurité</button>
       <button class="btn ghost" style="width:100%" onclick="exportSnooze(1)">Me le rappeler demain</button>
     </div>`);
