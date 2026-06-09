@@ -2,10 +2,19 @@
    utils.js — Fonctions utilitaires PURES de Sensations Macarons
    ------------------------------------------------------------
    Helpers mathématiques, de formatage (argent, quantités, dates,
-   texte) sans aucune dépendance au DOM ni à l'état de l'application.
+   texte) et d'UI génériques, SANS aucune dépendance au DOM métier
+   ni à l'état de l'application (pas de db, getSettings, render…).
    Chargé AVANT app.js : ces fonctions restent globales (window),
    exactement comme avant — aucun changement de comportement.
-   Première étape d'une mise en ordre progressive du code.
+
+   Mise en ordre progressive du code (séparation des préoccupations).
+   Inventaire actuel :
+   • Arrondis / argent / stock : money2, round3, addMoney, subMoney,
+     mulMoney, addQty, subQty
+   • Dates / heures : today, fmtTime, fmtDateTime, fmtDate, daysTo,
+     monthKey, monthLabel
+   • Texte : esc, normTxt
+   • UI repliable réutilisable : collapseList, collapseRows, collapseToggle
    ============================================================ */
 
 // --- Arrondis stricts (évitent la dérive des flottants : 0.1+0.2, FIFO répétés) ---

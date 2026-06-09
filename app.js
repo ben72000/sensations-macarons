@@ -254,16 +254,19 @@ function migratePackaging202511(){
 // Écrit directement dans les réglages (fiable, indépendant de la migration automatique).
 function applyPackaging202511(){
   const tarifs={6:1.26, 8:2.18, 16:1.90, 25:2.32};
-  // 1) met à jour les champs visibles si le formulaire est ouvert
+  try{
+    // Écriture DIRECTE dans le localStorage brut (sans passer par getSettings, pour éviter
+    // toute réintroduction de valeurs parasites). On remplace entièrement la clé packaging.
+    const raw=JSON.parse(localStorage.getItem('sm_settings')||'{}');
+    raw.packaging = Object.assign({}, tarifs);   // remplace tout : 6/8/16/25 = tarifs réels
+    raw.packagingDate = '2025-11-28';
+    localStorage.setItem('sm_settings', JSON.stringify(raw));
+    localStorage.setItem('sm_pkg_migr_20251128_v2','done');
+  }catch(e){ console.error('applyPackaging202511', e); toast('Erreur d\'enregistrement'); return; }
+  // met à jour les champs visibles si le formulaire est ouvert
   Object.keys(tarifs).forEach(t=>{ const el=document.getElementById('set_pk_'+t); if(el) el.value=tarifs[t]; });
-  // 2) enregistre dans les réglages (avec la date de référence)
-  const s=getSettings();
-  s.packaging=Object.assign({}, s.packaging, tarifs);
-  s.packagingDate='2025-11-28';
-  saveSettings(s);
-  localStorage.setItem('sm_pkg_migr_20251128_v2','done');   // évite que la migration auto ne revienne dessus
   toast('Tarifs emballage du 28/11/2025 appliqués ✓');
-  if(typeof settingsForm==='function') settingsForm();   // rouvre le formulaire avec les valeurs à jour
+  if(typeof settingsForm==='function') settingsForm();   // rouvre le formulaire avec les valeurs à jour + diagnostic
 }
 // Coût emballage d'un coffret selon sa taille (commandes) — tarif paramétré (repli).
 function packagingCost(taille){ const s=getSettings(); return money2(s.packaging[taille]!=null?s.packaging[taille]:0); }
@@ -4247,17 +4250,14 @@ function _cmdRow(row){
   const checked = _cmdSel.has(o.id) ? 'checked' : '';
   const st = orderPayStatus(o); const solde = orderBalance(o);
   const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
-  // Mois + semaine de la commande, figés avec le nom du client (colonne sticky).
-  const moisTxt = o.date ? monthLabel(monthKey(o.date)) : '';
-  const wk = o.date ? (_isoWeekKey(o.date)||'') : '';
-  const semTxt = wk ? ('sem. '+wk.split('-W')[1]) : '';
+  // Le mois/semaine n'est plus répété ici : il est porté par les séparateurs (figés à gauche).
   // Statut commande : menu déroulant (changement direct au clic). « Terminée » s'affiche « Prête ».
   const curStatut = normStatus(o.statut);
   const statutSelect = `<select class="status-select status-${curStatut==='Livrée'?'done':(curStatut==='Terminée'?'ok':'todo')}" onchange="setOrderStatusInline(${o.id}, this.value)" title="Changer le statut">
     ${ORDER_STATUS.map(s=>`<option value="${s}" ${s===curStatut?'selected':''}>${s==='Terminée'?'Prête':esc(s)}</option>`).join('')}
   </select>`;
   return `<tr>
-     <td><b>${o.clientId?`${nameP(_cmdClName(o.clientId))} <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Voir la fiche client">→</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${moisTxt?`<br><span class="cmd-period">📅 ${esc(moisTxt)}${semTxt?' · '+esc(semTxt):''}</span>`:''}${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
+     <td><b>${o.clientId?`${nameP(_cmdClName(o.clientId))} <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Voir la fiche client">→</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
      <td><span style="font-size:.82rem">${esc(row.resume)}</span> <span class="jump-arrow" onclick="cmdView(${o.id})" title="Voir le détail de la commande">→</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
      <td>${euro(+o.montant)}</td>
      <td>
@@ -7866,19 +7866,40 @@ async function renderProfit(){
 }
 
 // Paramètres : taux de charges sociales + coûts d'emballage par taille de coffret.
-function settingsForm(){
+async function settingsForm(){
   const s=getSettings();
+  // Coût RÉEL d'emballage par format, calculé sur les lots effectivement reçus (factures).
+  let realMap=new Map();
+  try{
+    const [mats, lots] = await Promise.all([db.materials.toArray(), db.materialLots.toArray()]);
+    realMap = realPackagingCostMap(mats, lots);
+  }catch(e){ console.error('settingsForm realMap', e); }
   openModal(`<h3>Paramètres de gestion</h3>
     <p class="note">Charges sociales appliquées au calcul de la marge nette.</p>
     <div class="row2">
       <div class="field"><label>Charges sociales — marchandise (%)</label><input type="number" step="0.1" id="set_sg" value="${s.socialGoods}"></div>
       <div class="field"><label>Charges sociales — prestation (%)</label><input type="number" step="0.1" id="set_ss" value="${s.socialService}"></div>
     </div>
-    <p class="note" style="margin-top:8px">Coût emballage / consommables par coffret (€). <span style="color:#9a8a82">Tarifs de référence reçus le <b>${s.packagingDate?fmtDate(s.packagingDate):'—'}</b> · boîte (+ calage pour le format 8). Coût unitaire, hors stock. Mets à jour ces montants à ta prochaine réception.</span></p>
+    <p class="note" style="margin-top:8px"><b>Coût emballage par coffret.</b> <span style="color:#9a8a82">Le coût <b>réel</b> est calculé automatiquement sur tes <b>lots d'emballage reçus</b> (moyenne pondérée d'après tes factures). Le tarif saisi ci-dessous ne sert que de <b>repli</b> si aucun lot chiffré n'existe pour ce format.</span></p>
     <div class="row2">
-      ${BOX_SIZES.map(t=>`<div class="field"><label>Coffret ${t}</label><input type="number" step="0.01" id="set_pk_${t}" value="${s.packaging[t]!=null?s.packaging[t]:0}"></div>`).join('')}
+      ${BOX_SIZES.map(t=>{ const reel=realMap.get(+t); const manuel=s.packaging[t]!=null?s.packaging[t]:0;
+        return `<div class="field"><label>Coffret ${t}</label>
+          <input type="number" step="0.01" id="set_pk_${t}" value="${manuel}">
+          ${reel!=null
+            ? `<div style="font-size:.72rem;color:#2e7d32;margin-top:3px">✓ réel (lots reçus) : <b>${euro(reel)}</b> <span style="color:#9a8a82">— utilisé dans les calculs</span></div>`
+            : `<div style="font-size:.72rem;color:#b07a4a;margin-top:3px">⚠ aucun lot chiffré — c'est le tarif saisi qui est utilisé</div>`}
+        </div>`; }).join('')}
     </div>
+    <p class="note" style="margin-top:6px;color:#9a8a82">Pour obtenir un coût réel, réceptionne tes emballages comme des lots (avec leur prix de facture) : <b>Matières → ↘ Réception lot</b>, en choisissant une matière de catégorie « emballage » dont la <b>capacité</b> correspond au format (6, 8, 16 ou 25).</p>
     <button type="button" class="btn ghost sm" style="margin-top:6px" onclick="applyPackaging202511()" title="Remplit les champs avec les tarifs reçus le 28/11/2025">↺ Appliquer les tarifs du 28/11/2025 (6→1,26 · 8→2,18 · 16→1,90 · 25→2,32)</button>
+    <div id="pkgDiag" style="margin-top:8px;font-size:.74rem;color:#9a8a82;background:#f7f3ee;border:1px solid #ece3d6;border-radius:8px;padding:8px 10px;line-height:1.6">
+      ${(()=>{ try{ const raw=JSON.parse(localStorage.getItem('sm_settings')||'{}'); const st=raw.packaging||{}; const ef=getSettings().packaging;
+        return `🔎 <b>Diagnostic</b> — valeurs réellement en mémoire :<br>`
+          + `Stocké : ${BOX_SIZES.map(t=>`${t}→${st[t]!=null?st[t]:'∅'}`).join(' · ')}<br>`
+          + `Effectif : ${BOX_SIZES.map(t=>`${t}→${ef[t]}`).join(' · ')}<br>`
+          + `Date réf. stockée : ${raw.packagingDate||'∅'}`;
+      }catch(e){ return 'Diagnostic indisponible'; } })()}
+    </div>
     <p class="note" style="margin-top:8px">Types d'emballage pour le comptage avant/après en marché : nom, coût unitaire €, et <b>capacité</b> (nb de macarons par boîte — sert à reconstituer le CA par format). Laissez le nom vide pour retirer une ligne.</p>
     <div class="pay-row" style="font-weight:600;color:#9a8a82;font-size:.8rem"><span style="flex:1">Nom</span><span style="width:90px">€/u</span><span style="width:70px">Capacité</span></div>
     <div id="set_pktypes">
@@ -9189,7 +9210,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v151';
+const APP_VERSION = 'v154';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
