@@ -821,12 +821,18 @@ async function renderDash(){
    <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
      <div class="bar-wrap">${data.map(d=>`<div class="bar-col"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
    </div>
-   <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
+   <div class="dash-2col">
      <div class="panel"><h2>⚠ Matières à réapprovisionner</h2>
-       ${low.length?`<div class="table-wrap"><table><tbody>${low.map(s=>`<tr><td>${esc(s.nom)}</td><td style="text-align:right"><span class="tag low">${qty(s.total)} ${esc(s.unite||'')}</span></td><td style="text-align:right;color:#9a8a82">seuil ${qty(s.seuil)}</td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">Tout est au-dessus du seuil ✓</div>`}
+       ${low.length?`<div class="table-wrap"><table class="dash-tbl"><tbody>${low.map(s=>`<tr>
+         <td class="nm">${esc(s.nom)}</td>
+         <td style="text-align:right;white-space:nowrap"><span class="tag low">${qty(s.total)} ${esc(s.unite||'')}</span></td>
+         <td style="text-align:right;color:#9a8a82;white-space:nowrap;font-size:.78rem">seuil ${qty(s.seuil)}</td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">Tout est au-dessus du seuil ✓</div>`}
      </div>
      <div class="panel"><h2>Prochaines échéances</h2>
-       ${upcoming.length?`<div class="table-wrap"><table><tbody>${upcoming.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${esc(e.titre)}</td><td style="text-align:right"><span class="tag ${e.type==='cmd'?'todo':'event'}">${e.type==='cmd'?'Commande':'Événement'}</span></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">Aucune échéance à venir</div>`}
+       ${upcoming.length?`<div class="table-wrap"><table class="dash-tbl"><tbody>${upcoming.map(e=>`<tr>
+         <td style="white-space:nowrap;color:#6a5a52">${fmtDate(e.date)}</td>
+         <td class="nm">${esc(e.titre)}</td>
+         <td style="text-align:right"><span class="tag ${e.type==='cmd'?'todo':'event'}">${e.type==='cmd'?'Commande':'Événement'}</span></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">Aucune échéance à venir</div>`}
      </div>
    </div>`;
 }
@@ -6782,8 +6788,8 @@ async function renderCompta(){
    </div>
 
    <div class="kpi-grid">
-     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA facturé</span><b>${euro(A.totalFacture)}</b>${NAV_GO}</div>
-     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA facturé</span><b>${euro(A.totalFacture)}</b><small class="kpi-note">toutes commandes, payées ou non</small>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b><small class="kpi-note">argent réellement reçu · base URSSAF</small>${NAV_GO}</div>
      <div class="kpi lnk" onclick="comptaGo('charges')"><span>Charges</span><b>${euro(A.totalCharges)}</b>${NAV_GO}</div>
      <div class="kpi lnk" onclick="comptaGo('detailMois')"><span>Coût matières (est.)</span><b>${euro(A.totalCoutMatieres)}</b>${NAV_GO}</div>
      ${A.totalPertes>0?`<div class="kpi"><span>Pertes / casse</span><b style="color:var(--red,#b3261e)">−${euro(A.totalPertes)}</b></div>`:''}
@@ -8780,7 +8786,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v131';
+const APP_VERSION = 'v133';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
