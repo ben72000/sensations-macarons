@@ -6714,6 +6714,21 @@ async function renderStats(){
 const CHARGE_CATS = ['Assurance professionnelle','Hébergement / site web','Abonnements / logiciels','Équipement','Loyer','Énergie','Transport / déplacement','Stand / marché','Marketing','Frais bancaires','Cotisations / impôts','Formation','Autre'];
 let _comptaMonth = null;
 function comptaSetMonth(m){ _comptaMonth = m; renderCompta(); }
+// Raccourci de navigation depuis l'écran Comptabilité vers un autre écran.
+// Centralise le pattern view=… + setActiveView + render…() pour les chiffres cliquables.
+function comptaGo(dest){
+  if(dest==='commandes'){ view='commandes'; if(typeof setActiveView==='function') setActiveView('commandes'); renderCmd(); }
+  else if(dest==='charges'){ renderChargesList(); }
+  else if(dest==='rentabilite'){ view='rentabilite'; if(typeof setActiveView==='function') setActiveView('rentabilite'); renderProfit(); }
+  else if(dest==='detailMois'){
+    // reste sur la page Comptabilité : défile jusqu'au tableau « Détail mensuel »
+    const el=[...document.querySelectorAll('#main .panel h2')].find(h=>/Détail mensuel/.test(h.textContent));
+    if(el){ el.scrollIntoView({behavior:'smooth', block:'start'}); el.closest('.panel').style.transition='box-shadow .3s';
+      const p=el.closest('.panel'); p.style.boxShadow='0 0 0 2px var(--caramel)'; setTimeout(()=>p.style.boxShadow='',1200); }
+  }
+}
+// Petit chevron « › » signalant un raccourci (à insérer dans une .sum-box / .kpi cliquable).
+const NAV_GO = '<span class="nav-go" aria-hidden="true">›</span>';
 async function renderCompta(){
  try {
   const A = await computeAccounting();
@@ -6752,9 +6767,9 @@ async function renderCompta(){
      <td style="font-weight:600;color:${s.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(s.resultat)}</td></tr>`).join('');
 
   const methodRows = Object.entries(A.encByMethod).sort((a,b)=>b[1]-a[1])
-    .map(([m,v])=>`<div class="sum-box"><span>${esc(m)}</span><b>${euro(v)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(v,A.totalEncaisse)}%)</span></b></div>`).join('');
+    .map(([m,v])=>`<div class="sum-box lnk" onclick="comptaGo('commandes')"><span>${esc(m)}</span><b>${euro(v)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(v,A.totalEncaisse)}%)</span></b>${NAV_GO}</div>`).join('');
   const catRows = Object.entries(A.chargeByCat).sort((a,b)=>b[1]-a[1])
-    .map(([c,v])=>`<div class="sum-box"><span>${esc(c)}</span><b>${euro(v)}</b></div>`).join('');
+    .map(([c,v])=>`<div class="sum-box lnk" onclick="comptaGo('charges')"><span>${esc(c)}</span><b>${euro(v)}</b>${NAV_GO}</div>`).join('');
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Comptabilité</h1><p>Pilotage en trésorerie — CA comptabilisé à l'encaissement réel</p></div>
@@ -6767,13 +6782,13 @@ async function renderCompta(){
    </div>
 
    <div class="kpi-grid">
-     <div class="kpi"><span>CA facturé</span><b>${euro(A.totalFacture)}</b></div>
-     <div class="kpi"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b></div>
-     <div class="kpi"><span>Charges</span><b>${euro(A.totalCharges)}</b></div>
-     <div class="kpi"><span>Coût matières (est.)</span><b>${euro(A.totalCoutMatieres)}</b></div>
+     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA facturé</span><b>${euro(A.totalFacture)}</b>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaGo('charges')"><span>Charges</span><b>${euro(A.totalCharges)}</b>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaGo('detailMois')"><span>Coût matières (est.)</span><b>${euro(A.totalCoutMatieres)}</b>${NAV_GO}</div>
      ${A.totalPertes>0?`<div class="kpi"><span>Pertes / casse</span><b style="color:var(--red,#b3261e)">−${euro(A.totalPertes)}</b></div>`:''}
-     <div class="kpi"><span>Résultat (encaissé)</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b></div>
-     <div class="kpi"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b></div>
+     <div class="kpi lnk" onclick="comptaGo('detailMois')"><span>Résultat (encaissé)</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b>${NAV_GO}</div>
    </div>
 
    <div class="panel" style="border:1.5px solid #e7d9b8;background:#fcf8ee">
@@ -6782,9 +6797,9 @@ async function renderCompta(){
        <select id="comptaMonth" onchange="comptaSetMonth(this.value)" style="flex:1;min-width:160px;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${moisOpts}</select>
        <button class="btn gold" onclick="exportBilanMois('${_comptaMonth}')">⤓ Exporter le bilan (.txt)</button>
      </div>
-     <div class="sum-box"><span>CA encaissé du mois</span><b>${euro(B.caTotal)}</b></div>
-     <div class="sum-box"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b></div>
-     <div class="sum-box"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b></div>
+     <div class="sum-box lnk" onclick="comptaGo('commandes')"><span>CA encaissé du mois</span><b>${euro(B.caTotal)}</b>${NAV_GO}</div>
+     <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b>${NAV_GO}</div>
+     <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b>${NAV_GO}</div>
      <h3 style="font-size:.95rem;margin:14px 0 6px">Cotisations URSSAF estimées</h3>
      <div class="sum-box"><span>Marchandise · ${B.tauxGoods}%</span><b>${euro(B.cotisGoods)}</b></div>
      <div class="sum-box"><span>Service · ${B.tauxService}%</span><b>${euro(B.cotisService)}</b></div>
@@ -8765,7 +8780,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v129';
+const APP_VERSION = 'v131';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -12226,6 +12241,26 @@ async function pmsExportDDPP(){
   toast('Registre PMS exporté ✓');
 }
 
+/* ============================================================
+   HORODATEUR GLOBAL — date + heure en direct (haut à droite, toutes pages)
+   Mise à jour chaque seconde. Léger : un seul setInterval, format FR.
+   ============================================================ */
+let _clockTimer=null;
+function startClock(){
+  const el=document.getElementById('clock'); if(!el) return;
+  const tick=()=>{
+    const d=new Date();
+    const date=d.toLocaleDateString('fr-FR',{weekday:'short', day:'2-digit', month:'short'});
+    const heure=d.toLocaleTimeString('fr-FR',{hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    el.innerHTML=`<span class="c-date">${date}</span><span class="c-time">${heure}</span>`;
+  };
+  tick();
+  if(_clockTimer) clearInterval(_clockTimer);
+  _clockTimer=setInterval(tick, 1000);
+  // resynchronise quand l'app revient au premier plan (l'intervalle peut être gelé en arrière-plan)
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) tick(); });
+}
+
 (async()=>{
   try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
   try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
@@ -12238,6 +12273,7 @@ async function pmsExportDDPP(){
   initHistoryNav();
   ttInit();
   mascotInit();
+  startClock();
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
   // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
   try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
