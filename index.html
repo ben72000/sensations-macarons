@@ -354,7 +354,8 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 }
 /* ---- Pointeuse de laboratoire (time tracker global) ---- */
 /* ===== POINTEUSE — feu tricolore flottant déplaçable + fouets animés ===== */
-#timeTracker{position:fixed;z-index:46;left:246px;bottom:18px;
+#timeTracker{display:none !important}
+#timeTracker.legacy-show{position:fixed;z-index:46;left:246px;bottom:18px;
   display:flex;flex-direction:column;align-items:center;gap:6px;
   background:transparent;border:none;border-radius:18px;
   padding:0;box-shadow:none;
@@ -550,8 +551,8 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .cmd-sep-week-in{background:var(--creme,#F5F0E8);color:#7a6a62;padding:5px 12px;
   font-size:.78rem;font-weight:600;border-left:3px solid var(--caramel,#AA7C39);border-radius:0 6px 6px 0}
 /* Repères mois/semaine DANS la cellule client (figée à gauche → restent visibles au scroll) */
-.cmd-period-month{display:inline-block;color:#fff;font-family:'Fraunces',serif;font-weight:600;
-  font-size:.82rem;padding:2px 9px;border-radius:7px;margin-bottom:4px}
+.cmd-period-month{display:block;width:fit-content;color:#fff;font-family:'Fraunces',serif;font-weight:600;
+  font-size:.82rem;padding:2px 9px;border-radius:7px;margin-bottom:5px}
 .cmd-period-week{display:inline-block;color:#7a6a62;background:var(--creme,#F5F0E8);font-weight:600;
   font-size:.7rem;padding:1px 8px;border-radius:6px;margin:0 0 4px 5px;border-left:3px solid var(--caramel,#AA7C39)}
 .table-wrap tr.cmd-new-month td{border-top:2px solid var(--caramel,#AA7C39)}
@@ -734,6 +735,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
   <button data-v="commandes"><span class="ico">✎</span><span>Commandes</span></button>
   <button data-v="cal"><span class="ico">▦</span><span>Agenda</span></button>
   <button data-v="matieres"><span class="ico">⬛</span><span>Stock</span></button>
+  <button id="ttBtn" onclick="ttStart()"><span class="ico">⏱</span><span>Pointeuse</span></button>
   <button id="menuBtn"><span class="ico">☰</span><span>Menu</span></button>
 </nav>
 
