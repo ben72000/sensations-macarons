@@ -7,22 +7,18 @@ Application de gestion **production + stock + traçabilité**, 100 % hors ligne 
 | Fichier | Rôle |
 |---|---|
 | `index.html` | Interface (structure + styles) |
-| `utils.js` | Fonctions utilitaires pures (arrondis, dates, formatage) — chargé **avant** app.js |
 | `app.js` | Toute la logique : stock, lots, recettes, productions, traçabilité, étiquettes |
-| `pdf_extract.js` | Extraction de texte des PDF (factures) — module isolé, hors ligne |
 | `dexie.min.js` | Couche base de données locale (IndexedDB) — autonome, aucune connexion requise |
 | `qr.min.js` | Générateur de QR codes — autonome, fonctionne hors ligne |
 | `service-worker.js` | Cache offline (rend l'app utilisable sans réseau) |
 | `manifest.webmanifest` | Déclaration PWA (nom, icône, plein écran) |
 | `icon-192.png` / `icon-512.png` | Icônes de l'app |
 
-> **Important — ordre de chargement.** `index.html` charge `utils.js` **avant** `app.js`. Téléverse toujours les deux ensemble : `app.js` dépend des fonctions définies dans `utils.js`.
-
 ## Étape 1 — Mettre les fichiers en ligne (GitHub Pages, depuis l'iPhone)
 
 1. Crée un compte gratuit sur **github.com**.
 2. **New repository** → nom `sensations-macarons` → coche **Public** → **Create**.
-3. **Add file → Upload files**. Depuis l'app **Fichiers** de l'iPhone, sélectionne **tous les fichiers** (pas le dossier : les fichiers doivent être à la racine). **Commit changes**.
+3. **Add file → Upload files**. Depuis l'app **Fichiers** de l'iPhone, sélectionne les **7 fichiers** (pas le dossier : les fichiers doivent être à la racine). **Commit changes**.
 4. **Settings → Pages → Source : Deploy from a branch → `main` / `root` → Save**.
 5. Patiente ~1 minute. Ton adresse devient :
    `https://TON-PSEUDO.github.io/sensations-macarons/`
@@ -47,15 +43,6 @@ iOS peut **effacer les données d'une PWA après environ 7 jours sans ouverture*
 - Utilise le bouton **⬇ Exporter** (barre de gauche) **chaque semaine** → un fichier `.json` est téléchargé. Range-le dans iCloud Drive.
 - En cas de perte / changement de téléphone : **⬆ Importer** ce fichier restaure tout.
 - L'app affiche un rappel automatique si plus de 7 jours se sont écoulés depuis le dernier export.
-- **Depuis cette version, l'export inclut aussi tes réglages** (coûts d'emballage, charges sociales, etc.). Pense à refaire un export neuf après avoir modifié ces réglages.
-
-## Mise à jour de l'app (versions futures)
-
-Le cache porte un numéro de version (`sm-iphone-vXX` dans `service-worker.js`). À chaque nouvelle mise en ligne :
-
-1. Incrémente ce numéro (ex. de `v90` à `v91`) **sinon l'iPhone peut continuer à servir l'ancienne version en cache**.
-2. Réuploade les fichiers modifiés sur GitHub.
-3. Ouvre l'app une fois **en ligne** : elle se met à jour seule, sans désinstaller. Tes données sont conservées.
 
 ## Comment utiliser (ordre logique)
 
@@ -85,8 +72,11 @@ Le cache porte un numéro de version (`sm-iphone-vXX` dans `service-worker.js`).
 - À chaque **réception de lot**, saisis la quantité et le **prix total payé** : le prix unitaire est calculé automatiquement et affiché.
 - L'onglet **Coûts & prix** trace l'évolution du prix unitaire de chaque matière dans le temps, et calcule le coût matière de chaque recette au prix d'achat le plus récent.
 - La **rentabilité mensuelle** compare ton chiffre d'affaires (commandes) au coût réel des matières consommées par tes productions.
-- Les **coûts d'emballage par coffret** se règlent dans ⚙ Paramètres (taux, emballages), accessible depuis l'écran Comptabilité ou Analyse de rentabilité.
 - Plus tu réceptionnes de lots avec leur prix, plus les courbes sont précises.
+
+## Mise à jour de l'app (versions futures)
+
+Le cache porte désormais un numéro de version. Quand tu réuploades une nouvelle version sur GitHub, il suffit d'**ouvrir l'app une fois en ligne** : elle se met à jour seule, sans désinstaller. Tes données sont conservées.
 
 ## Étiquettes QR — comment ça marche
 
