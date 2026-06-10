@@ -760,11 +760,34 @@ const SFX = (function(){
       });
     }catch(e){}
   }
+  // Goutte d'eau / bulle : une sinusoïde dont la fréquence MONTE vite (le « ploc »),
+  // enveloppe ronde (attaque très douce, courte extinction), filtre passe-bas pour
+  // l'arrondi organique. Volume volontairement bas (discret).
+  function drop(freqStart, freqEnd, dur, vol, delay){
+    if(!on) return;
+    const c=ensureCtx(); if(!c) return;
+    try{ if(c.state==='suspended') c.resume(); }catch(e){}
+    try{
+      const t0=c.currentTime+(delay||0);
+      const lp=c.createBiquadFilter(); lp.type='lowpass';
+      lp.frequency.setValueAtTime(1900, t0); lp.Q.value=0.9;
+      const osc=c.createOscillator(); osc.type='sine';
+      osc.frequency.setValueAtTime(freqStart, t0);
+      // la montée rapide de hauteur = signature de la goutte
+      osc.frequency.exponentialRampToValueAtTime(freqEnd, t0+dur*0.55);
+      const g=c.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol, t0+0.010);   // attaque douce
+      g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);  // extinction ronde
+      osc.connect(g); g.connect(lp); lp.connect(c.destination);
+      osc.start(t0); osc.stop(t0+dur+0.03);
+    }catch(e){}
+  }
   return {
-    // Fermeture de la feuille : deux notes descendantes, douces, comme une boîte à musique.
-    sheet(){ chime(587.33, 0.42, 0.16, 0); chime(440.00, 0.55, 0.13, 0.10); },   // ré5 → la4
-    // Navigation : un seul carillon clair et bref (mi5), discret et raffiné.
-    nav(){ chime(659.25, 0.34, 0.11, 0); },
+    // Fermeture de la feuille : une goutte un peu plus grave et pleine (la « grosse » bulle).
+    sheet(){ drop(420, 720, 0.16, 0.045); },
+    // Navigation : une mini-goutte plus aiguë et très brève, à peine perceptible.
+    nav(){ drop(620, 990, 0.11, 0.030); },
     unlock,
     isOn(){ return on; },
     toggle(){ on=!on; try{ localStorage.setItem('sm_sfx', on?'1':'0'); }catch(e){} if(on){ unlock(); SFX.nav(); } return on; }
@@ -927,6 +950,84 @@ function renderViewError(v, err){
    pour que le geste « retour » revienne à la vue précédente
    (et ferme d'abord une fenêtre ou le menu ouverts).
    ============================================================ */
+/* ============================================================
+   GESTES DE BORD (edge-swipe) — navigation fluide au pouce
+   • Bord GAUCHE → glisser vers la DROITE  = Retour (page précédente)
+   • Bord DROIT  → glisser vers la GAUCHE  = Annulation rapide (si dispo)
+   Les deux partent des ~28 px du bord, donc AUCUN conflit avec le scroll
+   horizontal d'un tableau (qui démarre au milieu de l'écran). Un indice
+   visuel suit le doigt et confirme l'action avant le relâchement.
+   ============================================================ */
+function _hasUndo(){ return typeof _undoFn==='function'; }
+function initEdgeGestures(){
+  const EDGE=28;          // largeur de la zone de départ au bord (px)
+  const TRIGGER=70;       // distance pour déclencher
+  const cue=document.getElementById('edgeCue');
+  let active=null;        // 'back' | 'undo' | null
+  let startX=0, startY=0, dx=0, decided=false, fired=false;
+
+  function showCue(kind, progress){
+    if(!cue) return;
+    const side = kind==='back' ? 'left' : 'right';
+    cue.className='edge-cue '+side+(progress>=1?' ready':'');
+    cue.textContent = kind==='back' ? '‹' : '↩';
+    cue.style.opacity = Math.min(1, 0.35+progress*0.65);
+    const shift = Math.min(TRIGGER, Math.abs(dx));
+    cue.style.transform = kind==='back'
+      ? `translateY(-50%) translateX(${shift-44}px)`
+      : `translateY(-50%) translateX(${44-shift}px)`;
+  }
+  function hideCue(){ if(cue){ cue.style.opacity='0'; cue.className='edge-cue'; } }
+
+  function onStart(e){
+    if(e.touches && e.touches.length!==1){ active=null; return; }
+    const t=e.touches?e.touches[0]:e;
+    // ne pas interférer avec une saisie en cours / un menu ouvert
+    const ov=document.getElementById('sheetOverlay');
+    if(ov && ov.classList.contains('show')){ active=null; return; }
+    startX=t.clientX; startY=t.clientY; dx=0; decided=false; fired=false;
+    const W=window.innerWidth;
+    if(startX<=EDGE) active='back';
+    else if(startX>=W-EDGE) active='undo';
+    else active=null;
+  }
+  function onMove(e){
+    if(!active) return;
+    const t=e.touches?e.touches[0]:e;
+    dx=t.clientX-startX; const dy=t.clientY-startY;
+    if(!decided){
+      // direction : il faut un mouvement horizontal franc dans le bon sens
+      if(Math.abs(dy)>Math.abs(dx)){ active=null; hideCue(); return; }   // geste vertical → on lâche
+      if(active==='back' && dx<6) return;
+      if(active==='undo' && dx>-6) return;
+      decided=true;
+    }
+    if(e.cancelable) e.preventDefault();
+    const dist = active==='back' ? Math.max(0,dx) : Math.max(0,-dx);
+    showCue(active, dist/TRIGGER);
+  }
+  function onEnd(){
+    if(!active){ hideCue(); return; }
+    const dist = active==='back' ? Math.max(0,dx) : Math.max(0,-dx);
+    if(dist>=TRIGGER && !fired){
+      fired=true;
+      if(active==='back'){
+        try{ SFX.nav(); }catch(e){}
+        try{ history.back(); }catch(e){}
+      } else { // undo
+        if(_hasUndo()){ try{ SFX.nav(); }catch(e){} runUndo(); }
+        else { toast('Rien à annuler'); }
+      }
+    }
+    active=null; decided=false; hideCue();
+  }
+  // capture:true pour décider avant le scroll ; passive:false sur move pour pouvoir bloquer
+  document.addEventListener('touchstart', onStart, {passive:true, capture:true});
+  document.addEventListener('touchmove',  onMove,  {passive:false, capture:true});
+  document.addEventListener('touchend',   onEnd,   {passive:true, capture:true});
+  document.addEventListener('touchcancel',()=>{ active=null; hideCue(); }, {passive:true, capture:true});
+}
+
 function initHistoryNav(){
   // état racine = tableau de bord
   try{ history.replaceState({view:view, kind:'view'}, '', '#'+view); }catch(e){}
@@ -9944,7 +10045,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v168';
+const APP_VERSION = 'v170';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -9988,9 +10089,12 @@ const APP_KB = [
   { id:'mode-discret', titre:'Mode discret',
     tags:'discret confidentialite flou masquer nom prix montant privacy',
     r:`<p>Le <b>mode discret</b> floute les noms de clients et masque les montants/volumes. Active-le depuis le bouton 🙈 sur les pages Commandes et Clients, ou depuis le Menu (☰). La saisie et les détails restent lisibles pour travailler.</p>` },
+  { id:'gestes-bord', titre:'Gestes de navigation (retour & annulation)',
+    tags:'geste gestes swipe glisser bord retour precedent annuler annulation undo navigation fluide pouce',
+    r:`<p>Deux gestes rapides au pouce : glisse depuis le <b>bord gauche vers la droite</b> pour <b>revenir</b> à l'écran précédent (ferme d'abord une fenêtre ou le menu ouverts) ; glisse depuis le <b>bord droit vers la gauche</b> pour <b>annuler</b> la dernière action (suppression de commande, client, production…) tant que le bandeau d'annulation est encore actif. Une pastille suit ton doigt et devient dorée quand le geste va se déclencher. Ces gestes partent du bord, donc ils ne gênent pas le défilement des tableaux.</p>` },
   { id:'theme-premium', titre:'Identité visuelle, polices & iPad',
-    tags:'police polices outfit bellota typographie design esthetique premium chic raffine son sons effet sonore carillon ipad tablette affichage couleur',
-    r:`<p>L'app utilise les polices de marque <b>Outfit</b> (interface et chiffres) et <b>Bellota Text</b> (titres), <b>embarquées</b> dans l'app pour fonctionner même hors ligne. Les sons d'interface (navigation, fermeture du menu) sont de discrets <b>carillons</b> raffinés ; coupe-les depuis le Menu (🔔/🔕). Sur <b>iPad</b>, la mise en page s'élargit (barre latérale, cartes sur plusieurs colonnes, marges généreuses) au lieu d'être un grand iPhone.</p>` },
+    tags:'police polices outfit bellota typographie design esthetique premium chic raffine son sons effet sonore goutte carillon ipad tablette affichage couleur',
+    r:`<p>L'app utilise les polices de marque <b>Outfit</b> (interface et chiffres) et <b>Bellota Text</b> (titres), <b>embarquées</b> dans l'app pour fonctionner même hors ligne. Les sons d'interface (navigation, fermeture du menu) sont de discrètes <b>gouttes d'eau</b> feutrées ; coupe-les depuis le Menu (🔔/🔕). Sur <b>iPad</b>, la mise en page s'élargit (barre latérale, cartes sur plusieurs colonnes, marges généreuses) au lieu d'être un grand iPhone.</p>` },
   { id:'cartes-mobiles', titre:'Affichage en cartes sur iPhone',
     tags:'carte cartes mobile tableau scroll defilement horizontal lisibilite navigation commandes productions matieres lots ergonomie',
     r:`<p>Sur iPhone, les grands tableaux (<b>Commandes</b>, <b>Productions</b>, <b>Matières &amp; lots</b>) s'affichent en <b>cartes verticales</b> : toutes les informations d'une ligne sont visibles d'un coup, <b>sans défilement horizontal</b>, avec des boutons élargis pour le tactile. La recherche, les filtres et la sélection fonctionnent comme avant. Sur iPad/ordinateur, les tableaux classiques restent affichés.</p>` },
@@ -14033,6 +14137,7 @@ function startClock(){
   if(!opened) render();
   initHistoryNav();
   initSheetDrag();
+  initEdgeGestures();
   ttInit();
   mascotInit();
   startClock();

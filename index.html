@@ -883,6 +883,16 @@ h1,h2,h3{font-weight:700}
 /* Feuille menu (iPhone) : emblème en en-tête */
 .sheet-logo{display:block;width:54px;height:54px;margin:2px auto 10px;opacity:.95;
   background:var(--logo-emb-a) center/contain no-repeat}
+
+/* Indice visuel des gestes de bord (retour / annulation) */
+.edge-cue{position:fixed;top:50%;z-index:1400;width:44px;height:44px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;
+  color:#fff;background:var(--grad-bordeaux);box-shadow:0 6px 22px rgba(73,15,37,.4);
+  opacity:0;pointer-events:none;transition:opacity .12s ease;transform:translateY(-50%)}
+.edge-cue.left{left:6px}
+.edge-cue.right{right:6px}
+.edge-cue.ready{background:var(--grad-gold);box-shadow:0 6px 24px rgba(170,124,57,.5);transform:translateY(-50%) scale(1.12)}
+@media (prefers-reduced-motion: reduce){ .edge-cue{transition:none} }
 </style>
 </head>
 <body>
@@ -1003,6 +1013,7 @@ h1,h2,h3{font-weight:700}
 
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
+<div class="edge-cue" id="edgeCue" aria-hidden="true"></div>
 
 <!-- Pointeuse de laboratoire (time tracker global, persistant entre les vues) -->
 <div id="timeTracker" aria-live="polite"></div>
