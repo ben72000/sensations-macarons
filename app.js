@@ -54,65 +54,13 @@ db.version(9).stores({
   pmsTasks:        '++id, nom, frequence',
   cleaningLogs:    '++id, taskId, date'
 });
+// v10 neutre : certaines bases ont déjà été élevées en v10. On déclare donc une v10
+// SANS index supplémentaire, pour qu'une base déjà en v10 s'ouvre normalement et qu'une
+// base en v9 monte proprement. (L'infrastructure de synchro a été retirée ; on garde
+// seulement la compatibilité de numéro de version.)
+db.version(10).stores({});
 
-// --------- v10 : synchronisation multi-appareils (infrastructure) ---------
-// On indexe un identifiant universel partagé `uid` sur les tables réellement
-// saisies en décalé (commandes, clients, stock). `updatedAt` (horodatage) et le
-// `uid` sont posés AUTOMATIQUEMENT par des hooks Dexie globaux (voir plus bas) —
-// aucune fonction de saisie existante n'est modifiée.
-// `tombstones` mémorise les suppressions (uid + date) pour éviter les « zombies »
-// lors d'une future fusion. Cette étape n'active PAS encore la fusion.
-db.version(10).stores({
-  clients:         '++id, nom, uid',
-  orders:          '++id, clientId, date, uid',
-  orderItems:      '++id, orderId, productionId, uid',
-  materials:       '++id, nom, uid',
-  materialLots:    '++id, materialId, supplierId, dlc, dateReception, uid',
-  productions:     '++id, recipeId, date, uid',
-  prodConsumption: '++id, productionId, materialLotId, uid',
-  suppliers:       '++id, nom, uid',
-  recipes:         '++id, produitNom, uid',
-  recipeItems:     '++id, recipeId, materialId, uid',
-  tombstones:      '++id, uid, table, deletedAt'
-});
 
-// --------- Hooks de synchronisation (centralisés, non intrusifs) ---------
-// Tables réellement synchronisées en décalé entre appareils.
-const SYNC_TABLES = ['clients','orders','orderItems','materials','materialLots',
-                     'productions','prodConsumption','suppliers','recipes','recipeItems'];
-// Génère un identifiant universel (préfixe d'appareil + temps + aléa) — stable et partageable.
-function _deviceTag(){
-  let t=localStorage.getItem('sm_deviceTag');
-  if(!t){ t=Math.random().toString(36).slice(2,7); localStorage.setItem('sm_deviceTag', t); }
-  return t;
-}
-function genUid(){
-  return _deviceTag()+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);
-}
-// Branche les hooks sur chaque table synchronisée : uid + updatedAt à la création,
-// updatedAt à la mise à jour, et pierre tombale à la suppression.
-SYNC_TABLES.forEach(t=>{
-  const table=db.table(t);
-  table.hook('creating', function(primKey, obj){
-    if(obj.uid==null) obj.uid = genUid();
-    if(obj.updatedAt==null) obj.updatedAt = Date.now();
-  });
-  table.hook('updating', function(mods, primKey, obj){
-    // ne pas écraser un updatedAt explicitement fourni par la fusion
-    if(!('updatedAt' in mods)) return { updatedAt: Date.now() };
-  });
-  table.hook('deleting', function(primKey, obj){
-    // pierre tombale : on mémorise quel uid a été supprimé et quand.
-    // Différé hors de la transaction courante pour éviter tout conflit de portée Dexie,
-    // et totalement silencieux : une suppression ne doit jamais échouer à cause du tombstone.
-    try{
-      if(obj && obj.uid){
-        const tomb={ uid: obj.uid, table: t, deletedAt: Date.now() };
-        setTimeout(()=>{ db.table('tombstones').add(tomb).catch(()=>{}); }, 0);
-      }
-    }catch(e){ /* silencieux */ }
-  });
-});
 
 const FLAVORS = [
   'Citron crémeux','Chocolat au lait','Chocolat noir','Framboise','Vanille',
@@ -289,29 +237,6 @@ function getSettings(){
 function saveSettings(s){ localStorage.setItem('sm_settings', JSON.stringify(s)); }
 
 // Migration unique : inscrit les tarifs d'emballage reçus le 28/11/2025 dans les réglages
-// Migration unique : attribue un uid + updatedAt aux enregistrements déjà saisis
-// (ceux créés avant la mise en place de la synchro). Ne touche qu'aux lignes sans uid.
-// IMPORTANT : pour éviter des uid différents entre appareils sur le MÊME historique,
-// on établira une base commune (un appareil exporte, l'autre importe en remplacement)
-// AVANT de passer en mode fusion. Cette migration se contente de rendre les données prêtes.
-async function migrateAssignUids(){
-  try{
-    if(localStorage.getItem('sm_uid_migr')==='done') return;
-    for(const t of SYNC_TABLES){
-      const rows = await db.table(t).toArray();
-      const toUpdate = [];
-      for(const r of rows){
-        if(r.uid==null || r.updatedAt==null){
-          r.uid = r.uid || genUid();
-          r.updatedAt = r.updatedAt || Date.now();
-          toUpdate.push(r);
-        }
-      }
-      if(toUpdate.length) await db.table(t).bulkPut(toUpdate);
-    }
-    localStorage.setItem('sm_uid_migr','done');
-  }catch(e){ console.error('migrateAssignUids', e); }
-}
 
 // enregistrés (qui priment sinon sur les nouveaux défauts). Ne s'exécute qu'UNE fois : à ta
 // prochaine réception, tu modifieras les prix dans Paramètres et ils ne seront plus écrasés.
@@ -10941,7 +10866,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','tombstones'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -13945,16 +13870,21 @@ function startClock(){
 }
 
 (async()=>{
-  migratePackaging202511();   // inscrit les tarifs emballage 28/11/2025 (une seule fois)
-  try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
-  try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
-  try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
-  try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
-  try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
-  try{ await migrateAssignUids(); }catch(e){ console.error('migrateUids',e); }
-  try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
-  const opened = await handleTraceAnchor().catch(()=>false);
-  if(!opened) render();
+  // Le rendu ne doit JAMAIS être bloqué par une migration ou un seed.
+  // On enveloppe toute la préparation ; quoi qu'il arrive, render() est appelé.
+  try{
+    migratePackaging202511();   // inscrit les tarifs emballage 28/11/2025 (une seule fois)
+    try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
+    try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
+    try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
+    try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
+    try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
+    try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
+  }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }
+
+  let opened=false;
+  try{ opened = await handleTraceAnchor().catch(()=>false); }catch(e){ console.error('traceAnchor',e); }
+  try{ if(!opened) render(); }catch(e){ console.error('render',e); }
   initHistoryNav();
   ttInit();
   mascotInit();
