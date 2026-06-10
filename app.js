@@ -657,6 +657,7 @@ function pmsGuardUnsaved(){
 }
 function openSheet(){
   const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
+    navAdvEnsureVisible();
     const pb=document.getElementById('sheetPrivacyBtn'); if(pb) pb.textContent = privacyModeEnabled()?'👁️ Afficher les données':'🙈 Mode discret';
     if(_histReady && !_popping){ try{ history.pushState({kind:'sheet'}, '', '#menu'); }catch(e){} } }
 }
@@ -675,6 +676,24 @@ const menuBtn=document.getElementById('menuBtn'); if(menuBtn) menuBtn.addEventLi
 document.querySelectorAll('#sheetGrid button[data-v]').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
 const sheetOv=document.getElementById('sheetOverlay');
 if(sheetOv) sheetOv.addEventListener('click', e=>{ if(e.target===sheetOv) closeSheet(); });
+
+// MENU SIMPLIFIÉ : section « Avancé » repliée par défaut, état mémorisé.
+// S'ouvre automatiquement si l'écran actif est un écran avancé (pour rester visible).
+function navAdvApply(open){
+  document.querySelectorAll('#navAdv, #sheetAdv').forEach(el=>el.classList.toggle('open', !!open));
+  document.querySelectorAll('.nav-adv-toggle, .sheet-adv-toggle').forEach(el=>el.classList.toggle('open', !!open));
+}
+function navAdvToggle(){
+  const open = !document.getElementById('sheetAdv')?.classList.contains('open');
+  navAdvApply(open);
+  try{ localStorage.setItem('sm_nav_adv', open?'1':'0'); }catch(e){}
+}
+function navAdvEnsureVisible(){
+  // si la vue active vit dans la section Avancé, on déplie pour que son bouton soit visible
+  const adv=document.getElementById('sheetAdv');
+  if(adv && adv.querySelector(`button[data-v="${view}"]`)) navAdvApply(true);
+}
+(function(){ try{ if(localStorage.getItem('sm_nav_adv')==='1') navAdvApply(true); }catch(e){} })();
 
 // FLUIDITÉ DE NAVIGATION : sur mobile, dès que l'utilisateur fait défiler la PAGE DE FOND,
 // on retire le focus du champ actif (clavier qui se referme) pour ne plus avoir à
@@ -9341,7 +9360,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v161';
+const APP_VERSION = 'v162';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
