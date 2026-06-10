@@ -137,6 +137,7 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia','Times New Roman',serif;letter-
 .cmd-statut-select.st-prete{background:#d8e6f2;color:#2f6a9a}
 .cmd-statut-select.st-livree{background:#dcebdd;color:#3f7d52}
 .cmd-card .qa.gold{border-color:#e3c48f;color:#9a7320}
+.cmd-check{width:20px;height:20px;flex-shrink:0;accent-color:var(--bordeaux,#490F25);cursor:pointer;margin:2px 0 0}
 .card{background:linear-gradient(160deg,#ffffff,#fdfaf5);border-radius:var(--r-lg);padding:20px;box-shadow:var(--sh-2);border:1px solid var(--hair);position:relative;overflow:hidden}
 .card::after{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:var(--grad-gold);opacity:.85}
 .card.clickable{cursor:pointer;transition:transform .16s cubic-bezier(.4,0,.2,1),box-shadow .16s ease}
@@ -258,7 +259,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .pay-toggle .pay-opt{display:inline-flex;align-items:center;gap:5px;font-size:.84rem;padding:4px 8px;border:1.5px solid #e0d5c5;border-radius:9px;cursor:pointer;background:#fff}
 .pay-toggle .pay-opt input{width:auto;margin:0}
 .pay-toggle.sm .pay-opt{font-size:.76rem;padding:3px 6px}
-.sel-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fbf4ec;border:1px solid #e8dccd;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:.86rem;font-weight:600;color:var(--bordeaux)}
+.sel-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fbf4ec;border:1px solid #e8dccd;border-radius:14px;padding:10px 14px;font-size:.86rem;font-weight:600;color:var(--bordeaux);position:fixed;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:60;box-shadow:0 6px 24px rgba(73,15,37,.18)}
 #updateBanner{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 130px);z-index:9999;display:flex;align-items:center;gap:12px;background:var(--bordeaux);color:#fff;border-radius:14px;padding:12px 14px;box-shadow:0 10px 30px rgba(43,26,31,.35);font-size:.88rem;max-width:92vw}
 #updateBanner button{border:none;border-radius:9px;padding:8px 12px;font-family:'Outfit';font-weight:600;cursor:pointer}
 #updateBanner #updateReload{background:var(--caramel);color:#fff}
