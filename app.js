@@ -316,7 +316,11 @@ function lineChart(series, opt){
   let paths='';
   series.forEach(s=>{
     const col = s.color||'#AA7C39';
-    const pts = s.points.slice().sort((a,b)=>a.x.localeCompare(b.x));
+    const pts = s.points.slice().sort((a,b)=>{
+      const ax=a.x, bx=b.x;
+      if(typeof ax==='number' && typeof bx==='number') return ax-bx;
+      return String(ax==null?'':ax).localeCompare(String(bx==null?'':bx));
+    });
     if(!pts.length) return;
     const d = pts.map((p,i)=>`${i?'L':'M'}${xPos(xIdx[p.x]).toFixed(1)},${yPos(p.y).toFixed(1)}`).join(' ');
     paths+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round"/>`;
