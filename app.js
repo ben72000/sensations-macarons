@@ -12245,8 +12245,13 @@ function mascotInit(){
   host.id='mascot';
   host.innerHTML=`<div class="mascot-face"></div><span class="mascot-badge">—</span>`;
   document.body.appendChild(host);
-  // position mémorisée (sinon coin bas-droit par défaut)
+  // position mémorisée (sinon place par défaut : sous l'horloge, en haut à droite)
   try{
+    // Réinitialisation unique : on adopte la nouvelle place par défaut (sous l'horodatage).
+    if(localStorage.getItem('sm_mascot_home')!=='v2'){
+      localStorage.removeItem('sm_mascot_pos');
+      localStorage.setItem('sm_mascot_home','v2');
+    }
     const saved=JSON.parse(localStorage.getItem('sm_mascot_pos')||'null');
     if(saved && typeof saved.x==='number'){ host.style.left=saved.x+'px'; host.style.top=saved.y+'px'; host.style.right='auto'; host.style.bottom='auto'; }
   }catch(e){}
