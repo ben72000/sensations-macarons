@@ -4495,7 +4495,7 @@ function syncPaymentFields(o){
 
 // Réglage : automatisation du statut de paiement quand un règlement est saisi.
 // Stocké dans localStorage, activé par défaut, désactivable par l'utilisateur.
-function autoPayEnabled(){ return localStorage.getItem('sm_autoPay')!=='0'; }
+function autoPayEnabled(){ return true; } // toujours actif : auto-solde automatique à l'encaissement (plus de case)
 function setAutoPay(on){ localStorage.setItem('sm_autoPay', on?'1':'0'); }
 
 // Applique le paiement sur un objet commande (mutation en place) de façon cohérente :
@@ -5110,13 +5110,12 @@ async function cmdForm(id, opts){
    <div class="sum-box" id="priceBreak" style="display:none"></div>
 
    <div class="pay-ledger" style="margin-top:14px">
-     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+     <div style="margin-bottom:6px">
        <label style="font-weight:600;color:var(--bordeaux)">Paiements encaissés</label>
-       <label style="font-size:.76rem;color:#7a6a62;display:flex;gap:6px;align-items:center"><input type="checkbox" id="f_autopay" style="width:auto" ${autoPayEnabled()?'checked':''} onchange="setAutoPay(this.checked)"> auto-solder si encaissement</label>
      </div>
      <div id="payList"></div>
      <button type="button" class="btn ghost sm" onclick="cmdAddPayment()">＋ Ajouter un paiement</button>
-     <div class="sum-box" id="paySummary" style="margin-top:8px"></div>
+     <div class="pay-summary" id="paySummary" style="margin-top:8px"></div>
      <div class="field" style="margin-top:8px"><label>Date prévue du règlement final <span style="color:#9a8a82;font-weight:400">— acomptes / événements</span></label>
        <input type="date" id="f_dateFinal" value="${esc(o.dateReglementFinal||'')}"></div>
    </div>
