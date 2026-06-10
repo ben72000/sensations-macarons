@@ -91,28 +91,56 @@ function genUid(){
 }
 // Branche les hooks sur chaque table synchronisée : uid + updatedAt à la création,
 // updatedAt à la mise à jour, et pierre tombale à la suppression.
-SYNC_TABLES.forEach(t=>{
-  const table=db.table(t);
-  table.hook('creating', function(primKey, obj){
-    if(obj.uid==null) obj.uid = genUid();
-    if(obj.updatedAt==null) obj.updatedAt = Date.now();
+// Enveloppé : si l'attache d'un hook échoue, l'app doit quand même démarrer normalement.
+try{
+  SYNC_TABLES.forEach(t=>{
+    const table=db.table(t);
+    table.hook('creating', function(primKey, obj){
+      if(obj.uid==null) obj.uid = genUid();
+      if(obj.updatedAt==null) obj.updatedAt = Date.now();
+    });
+    table.hook('updating', function(mods, primKey, obj){
+      if(!('updatedAt' in mods)) return { updatedAt: Date.now() };
+    });
+    table.hook('deleting', function(primKey, obj){
+      try{
+        if(obj && obj.uid){
+          const tomb={ uid: obj.uid, table: t, deletedAt: Date.now() };
+          setTimeout(()=>{ try{ db.table('tombstones').add(tomb).catch(()=>{}); }catch(e){} }, 0);
+        }
+      }catch(e){ /* silencieux */ }
+    });
   });
-  table.hook('updating', function(mods, primKey, obj){
-    // ne pas écraser un updatedAt explicitement fourni par la fusion
-    if(!('updatedAt' in mods)) return { updatedAt: Date.now() };
-  });
-  table.hook('deleting', function(primKey, obj){
-    // pierre tombale : on mémorise quel uid a été supprimé et quand.
-    // Différé hors de la transaction courante pour éviter tout conflit de portée Dexie,
-    // et totalement silencieux : une suppression ne doit jamais échouer à cause du tombstone.
-    try{
-      if(obj && obj.uid){
-        const tomb={ uid: obj.uid, table: t, deletedAt: Date.now() };
-        setTimeout(()=>{ db.table('tombstones').add(tomb).catch(()=>{}); }, 0);
-      }
-    }catch(e){ /* silencieux */ }
-  });
+}catch(e){ console.error('Attache des hooks de synchro échouée (non bloquant):', e); }
+
+// Ouverture robuste de la base : si la mise à niveau du schéma est BLOQUÉE
+// (typiquement une ancienne version encore ouverte dans un autre onglet/instance),
+// on en informe clairement l'utilisateur au lieu de laisser un écran vide.
+db.on('blocked', ()=>{
+  try{
+    const m=document.getElementById('main');
+    if(m) m.innerHTML='<div style="padding:24px;max-width:520px;margin:40px auto;text-align:center;font-family:system-ui">'
+      +'<h2 style="color:#490F25">Mise à jour en attente</h2>'
+      +'<p style="color:#6a5a52;line-height:1.5">L’application est ouverte ailleurs (un autre onglet ou fenêtre) et bloque la mise à jour.<br><br>'
+      +'<b>Ferme toutes les autres fenêtres/onglets de l’app, puis relance celle-ci.</b><br><br>'
+      +'Tes données sont intactes — il s’agit seulement d’un conflit d’ouverture.</p></div>';
+  }catch(_){}
 });
+// On ouvre explicitement la base pour intercepter une éventuelle erreur de migration,
+// au lieu de laisser une ouverture implicite échouer en silence (→ écran vide).
+db.open().catch(err=>{
+  console.error('Ouverture de la base échouée:', err);
+  try{
+    const m=document.getElementById('main');
+    if(m) m.innerHTML='<div style="padding:24px;max-width:520px;margin:40px auto;text-align:center;font-family:system-ui">'
+      +'<h2 style="color:#490F25">Souci au démarrage</h2>'
+      +'<p style="color:#6a5a52;line-height:1.5">La base de données n’a pas pu s’ouvrir correctement.<br><br>'
+      +'<b>Ferme complètement l’app et rouvre-la.</b> Si le souci persiste, contacte le support.<br><br>'
+      +'Tes données ne sont pas effacées.</p></div>';
+  }catch(_){}
+});
+
+
 
 const FLAVORS = [
   'Citron crémeux','Chocolat au lait','Chocolat noir','Framboise','Vanille',
@@ -13945,16 +13973,22 @@ function startClock(){
 }
 
 (async()=>{
-  migratePackaging202511();   // inscrit les tarifs emballage 28/11/2025 (une seule fois)
-  try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
-  try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
-  try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
-  try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
-  try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
-  try{ await migrateAssignUids(); }catch(e){ console.error('migrateUids',e); }
-  try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
-  const opened = await handleTraceAnchor().catch(()=>false);
-  if(!opened) render();
+  // Le rendu ne doit JAMAIS être bloqué par une migration ou un seed.
+  // On enveloppe toute la préparation ; quoi qu'il arrive, render() est appelé.
+  try{
+    migratePackaging202511();   // inscrit les tarifs emballage 28/11/2025 (une seule fois)
+    try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
+    try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
+    try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
+    try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
+    try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
+    try{ await migrateAssignUids(); }catch(e){ console.error('migrateUids',e); }
+    try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
+  }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }
+
+  let opened=false;
+  try{ opened = await handleTraceAnchor().catch(()=>false); }catch(e){ console.error('traceAnchor',e); }
+  try{ if(!opened) render(); }catch(e){ console.error('render',e); }
   initHistoryNav();
   ttInit();
   mascotInit();
