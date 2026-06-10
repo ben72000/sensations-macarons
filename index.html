@@ -96,9 +96,28 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia','Times New Roman',serif;letter-
 .btn.danger{background:linear-gradient(135deg,#c0584a,var(--red,#b0392c));color:#fff}
 .btn.ghost:hover{background:var(--bordeaux);color:var(--creme);border-color:var(--bordeaux)}
 .btn.sm{padding:6px 12px;font-size:.78rem;border-radius:9px}
-.home-hero{margin:0 0 18px;border-radius:16px;overflow:hidden;
+.home-hero{margin:0 0 18px;border-radius:16px;overflow:hidden;position:relative;
   box-shadow:0 4px 16px rgba(73,15,37,.08)}
 .home-hero img{width:100%;height:auto;display:block}
+.home-hero-caption{position:absolute;top:42%;left:53%;width:34%;
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+  color:#EBDFCB;pointer-events:none}
+.home-hero-caption .hhc-title{font-family:'Fraunces','Bellota',serif;font-weight:600;
+  font-size:clamp(.95rem,2.6vw,1.5rem);line-height:1.1;letter-spacing:.01em}
+.home-hero-caption .hhc-sub{font-family:'Outfit',sans-serif;font-weight:400;
+  font-size:clamp(.62rem,1.6vw,.92rem);letter-spacing:.14em;text-transform:uppercase;
+  margin-top:.5em;opacity:.92}
+.home-hero-caption .hhc-clock{font-family:'Outfit',sans-serif;font-weight:300;
+  font-size:clamp(.9rem,2.4vw,1.45rem);letter-spacing:.05em;margin-top:.7em;
+  font-variant-numeric:tabular-nums;opacity:.95}
+.home-hero-caption .hhc-ca{display:flex;flex-direction:column;align-items:center;
+  margin-top:.7em;font-family:'Fraunces','Bellota',serif;font-weight:600;
+  font-size:clamp(1rem,2.8vw,1.6rem);line-height:1;color:#fff}
+.home-hero-caption .hhc-ca-lbl{font-family:'Outfit',sans-serif;font-weight:400;
+  font-size:clamp(.52rem,1.3vw,.72rem);letter-spacing:.12em;text-transform:uppercase;
+  margin-top:.45em;opacity:.82}
+.home-hero-caption::before{content:'';position:absolute;top:-0.7em;left:50%;transform:translateX(-50%);
+  width:30px;height:1px;background:#EBDFCB;opacity:.5}
 @media(max-width:820px){ .home-hero{border-radius:13px} }
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-bottom:28px}
 .mat-cards{display:flex;flex-direction:column;gap:14px}

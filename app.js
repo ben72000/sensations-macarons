@@ -921,9 +921,16 @@ async function renderDash(){
   const max=Math.max(...data.map(d=>d.v),1);
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div>
+   <div class="topbar home-topbar"><div></div>
      <div class="flex" style="gap:6px"><button class="btn ghost sm" onclick="quickLossForm()">⚠ Casse</button><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div></div>
-   <div class="home-hero"><img src="${HOME_PHOTO}" alt="Macarons Sensations Macarons"></div>
+   <div class="home-hero"><img src="${HOME_PHOTO}" alt="Macarons Sensations Macarons">
+     <div class="home-hero-caption">
+       <span class="hhc-title">Tableau de bord</span>
+       <span class="hhc-sub">${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</span>
+       <span class="hhc-clock" id="homeClock">${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span>
+       <span class="hhc-ca">${privacyModeEnabled()?'•••':euro(caMonth)}<span class="hhc-ca-lbl">CA du mois</span></span>
+     </div>
+   </div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
    ${!releveFait?`<div class="banner">🌡 <div><b>Relevé de température non fait aujourd'hui.</b> Pense à le saisir et à <b>valider</b>. <span class="act" onclick="goView('pms')">Faire le relevé →</span></div></div>`:''}
@@ -954,6 +961,19 @@ async function renderDash(){
          <td style="text-align:right"><span class="tag ${e.type==='cmd'?'todo':'event'}">${e.type==='cmd'?'Commande':'Événement'}</span></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">Aucune échéance à venir</div>`}
      </div>
    </div>`;
+  startHomeClock();
+}
+// Horloge live de l'accueil (HH:MM, dans le bandeau du tableau de bord)
+let _homeClockTimer = null;
+function startHomeClock(){
+  if(_homeClockTimer){ clearInterval(_homeClockTimer); _homeClockTimer=null; }
+  const tick=()=>{
+    const el=document.getElementById('homeClock');
+    if(!el){ if(_homeClockTimer){ clearInterval(_homeClockTimer); _homeClockTimer=null; } return; }
+    el.textContent = new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+  };
+  tick();
+  _homeClockTimer = setInterval(tick, 1000);
 }
 
 /* ============================================================
