@@ -1931,8 +1931,8 @@ function _prodbatRow(row){
     ganache:    {ico:'🍫', mot:'GANACHE',     cls:'comp-ganache'},
     assemble:   {ico:'✓',  mot:'ASSEMBLÉ',    cls:'comp-assemble'},
     degustation:{ico:'🥄', mot:'DÉGUSTATION', cls:'comp-degustation'},
-    complet:    {ico:'🍪', mot:'COQUES + GANACHE',     cls:'comp-complet'}
-  }[comp] || {ico:'🍪', mot:'COQUES + GANACHE', cls:'comp-complet'};
+    complet:    {ico:'🍪', mot:'ENTIER',     cls:'comp-complet'}
+  }[comp] || {ico:'🍪', mot:'ENTIER', cls:'comp-complet'};
   const compPill = `<span class="comp-pill ${compMeta.cls}"><span class="cp-ico">${compMeta.ico}</span>${compMeta.mot}</span>`;
   const rowCls = `prow prow-${comp||'complet'}`;
   const partTag = p.parentProdId ? ` <span class="tag" style="background:#ece2d4;color:#6b5a52;font-size:.66rem">partie</span>` : '';
