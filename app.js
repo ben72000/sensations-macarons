@@ -1865,8 +1865,7 @@ async function renderProductions(){
        ${EMPLACEMENTS.map(e=>`<button onclick="prodbatSearchEmp('${e.lettre}')" title="${esc(e.nom)}">${e.icon} ${e.lettre}</button>`).join('')}
        <button onclick="prodbatSearchEmp('')" class="clear">Tout</button>
      </div>
-   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>Statut</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead>
-     <tbody id="prodbatBody"></tbody></table></div><div id="prodbatEmpty" class="empty" style="display:none">Aucune production ne correspond.</div>`
+   ${prods.length?`<div id="prodbatBody" class="prod-cards"></div><div id="prodbatEmpty" class="empty" style="display:none">Aucune production ne correspond.</div>`
      :`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
    </div>
    ${(()=>{
@@ -1921,8 +1920,7 @@ function _prodbatRow(row){
     const oh = prodOpenHours(p);
     const ouvertTxt = oh!=null ? (oh<24?`${Math.floor(oh)} h`:`${Math.floor(oh/24)} j ${Math.floor(oh%24)} h`) : '';
     statutCell = `<span class="tag ${overdue?'warn':'event'}">▶ Démarrée</span>`
-      + (ouvertTxt?`<br><span style="font-size:.72rem;color:${overdue?'#b3261e':'#9a8a82'}">ouverte ${ouvertTxt}${overdue?' · &gt; 4 j !':''}</span>`:'')
-      + `<br><button class="qa edit" style="margin-top:3px" onclick="prodSetTermine(${p.id})" title="Passer en terminée — démarre la DLC">✓ Terminer</button>`;
+      + (ouvertTxt?`<br><span style="font-size:.72rem;color:${overdue?'#b3261e':'#9a8a82'}">ouverte ${ouvertTxt}${overdue?' · &gt; 4 j !':''}</span>`:'');
   }
   const comp = prodComposant(p);
   // Pastille composant PROÉMINENTE : repérage instantané (couleur + icône + mot).
@@ -1945,14 +1943,37 @@ function _prodbatRow(row){
   // Production « à la volée » non reliée → bouton pour la rattacher à une recette.
   const linkBtn = p.libre
     ? `<button class="qa" style="background:#f5c45e;color:#5a3a10" onclick="prodLinkForm(${p.id})" title="Relier à une recette pour activer les coûts">🔗 Relier</button>` : '';
-  return `<tr class="${rowCls}"${overdue?' style="background:#fdf3f2"':''}>
-     <td>${compPill}${partTag}<br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span>${heureFab?`<br><span style="color:#9a8a82;font-size:.72rem">🕒 ${heureFab}</span>`:''}</td>
-     <td>${statutCell}</td>
-     <td><b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span style="color:#9a8a82;font-size:.68rem">base ${esc(p.lotBase)}</span>`:''}</td>
-     <td>${empTag}<br><span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></td>
-     <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
-     <td>${qty(p.qteRestante)}${comp==='coques'?' <span style="color:#9a8a82;font-size:.66rem">coques</span>':''}${lossByProd[p.id]?`<br><span class="tag out" style="font-size:.68rem">−${qty(lossByProd[p.id])} perte</span>`:''}</td>
-     <td><div class="qa-row">${linkBtn}${assembleBtn}${degBtn}<button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button><button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;
+  return `<div class="${rowCls} prod-card"${overdue?' style="background:#fdf3f2"':''}>
+     <div class="prod-card-top">
+       <div>${compPill}${partTag}</div>
+       <div class="prod-lot"><b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span class="prod-base">base ${esc(p.lotBase)}</span>`:''}</div>
+     </div>
+     <div class="prod-card-meta">
+       <span class="prod-date">${fmtDate(p.date)}${heureFab?` · 🕒 ${heureFab}`:''}</span>
+       <span class="prod-emp">${empTag} <span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></span>
+     </div>
+     <div class="prod-card-stats">
+       <span>Théo. <b>${qty(th)}</b></span>
+       <span>Réel <b>${qty(re)}</b></span>
+       <span>Écart ${ecartTag(p)}</span>
+       <span>Restant <b>${qty(p.qteRestante)}</b>${comp==='coques'?' <span class="prod-unit">coques</span>':''}</span>
+     </div>
+     ${lossByProd[p.id]?`<div class="prod-loss"><span class="tag out" style="font-size:.68rem">−${qty(lossByProd[p.id])} perte</span></div>`:''}
+     <div class="prod-card-status">${statutCell}</div>
+     <div class="prod-card-actions">
+       ${st!=='termine'?`<button class="qa edit" onclick="prodSetTermine(${p.id})" title="Passer en terminée — démarre la DLC">✓ Terminer</button>`:''}
+       ${assembleBtn}
+       ${degBtn}
+       <button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button>
+       <button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button>
+       <button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button>
+       <button class="qa" onclick="setEmplacement(${p.id})" title="Déplacer / ranger">📍 Déplacer</button>
+       ${linkBtn}
+       <button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button>
+       <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Traça.</button>
+       <button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button>
+     </div>
+  </div>`;
 }
 // Recherche intelligente des productions. Une seule lettre d'emplacement (F/B/C/A)
 // filtre par zone ; sinon recherche plein-texte (lot, parfum, date, statut…).
@@ -1991,11 +2012,11 @@ function prodbatFilter(q){
     const nb=g.rows.length;
     const reste=g.rows.reduce((s,r)=>s+(round3(+r.p.qteRestante)>0?1:0),0);
     const libreTag = g.libre?' <span class="tag" style="background:#fbeede;color:#a9772a;font-size:.64rem" title="Production à la volée : à relier à une recette pour activer les coûts">⚠ à compléter</span>':'';
-    html+=`<tr class="prod-sec-head"><td colspan="9">🍩 ${esc(g.name)}${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></td></tr>`;
+    html+=`<div class="prod-sec-head">🍩 ${esc(g.name)}${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></div>`;
     html+=g.rows.map(_prodbatRow).join('');
   });
   body.innerHTML = html +
-    (rows.length>400?`<tr><td colspan="9" class="note" style="text-align:center">… ${rows.length-400} autre(s). Affinez la recherche.</td></tr>`:'');
+    (rows.length>400?`<div class="note" style="text-align:center">… ${rows.length-400} autre(s). Affinez la recherche.</div>`:'');
 }
 // Chip emplacement : remplit la recherche avec la lettre (ou efface).
 function prodbatSearchEmp(lettre){
