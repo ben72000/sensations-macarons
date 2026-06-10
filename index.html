@@ -653,6 +653,16 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
     color:rgba(232,221,205,.78);font-family:inherit;font-size:.6rem;font-weight:500;-webkit-tap-highlight-color:transparent;border-radius:13px;transition:.18s}
   .tabbar button *{pointer-events:none}
   .tabbar button .ico{font-size:1.3rem}
+  /* Bouton Pointeuse : pastille verte (rappel du feu d'origine) avec triangle « play » */
+  .tabbar button .ico.tt-play{width:26px;height:26px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,#7bd88f,#2e9c4d);
+    box-shadow:0 2px 7px rgba(46,156,77,.45);
+    display:flex;align-items:center;justify-content:center;position:relative;transition:transform .12s}
+  .tabbar button .ico.tt-play::after{content:"";display:block;
+    width:0;height:0;border-style:solid;border-width:5px 0 5px 8px;
+    border-color:transparent transparent transparent #fff;margin-left:2px}
+  .tabbar button#ttBtn:active .ico.tt-play{transform:scale(.9)}
+  .tabbar button#ttBtn.active .ico.tt-play{box-shadow:0 2px 10px rgba(46,156,77,.6)}
   .tabbar button.active{background:linear-gradient(160deg,#fff,var(--creme));color:var(--bordeaux);font-weight:600;box-shadow:0 3px 10px rgba(0,0,0,.2)}
   .sheet-overlay{position:fixed;inset:0;background:rgba(43,26,31,.45);z-index:60;display:none;
     align-items:flex-end;backdrop-filter:blur(3px)}
@@ -735,7 +745,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
   <button data-v="commandes"><span class="ico">✎</span><span>Commandes</span></button>
   <button data-v="cal"><span class="ico">▦</span><span>Agenda</span></button>
   <button data-v="matieres"><span class="ico">⬛</span><span>Stock</span></button>
-  <button id="ttBtn" onclick="ttStart()"><span class="ico">⏱</span><span>Pointeuse</span></button>
+  <button id="ttBtn" onclick="ttStart()"><span class="ico tt-play" aria-hidden="true"></span><span>Pointeuse</span></button>
   <button id="menuBtn"><span class="ico">☰</span><span>Menu</span></button>
 </nav>
 
