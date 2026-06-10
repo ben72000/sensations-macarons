@@ -636,6 +636,7 @@ function setActiveView(v){
 function navTo(b){
   if(!b || !b.dataset || !b.dataset.v) return;
   const now=Date.now(); if(now-_navLast<120 && view===b.dataset.v && !document.getElementById('sheetOverlay').classList.contains('show')) return; _navLast=now;
+  if(view!==b.dataset.v) SFX.nav();
   goView(b.dataset.v);
   closeSheet();
 }
@@ -685,12 +686,142 @@ function pmsGuardUnsaved(){
   return ok;
 }
 function openSheet(){
-  const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
+  const o=document.getElementById('sheetOverlay'); if(o){ const s=document.getElementById('sheet'); if(s){ s.style.transition=''; s.style.transform=''; } o.classList.add('show'); setActiveView(view);
     navAdvEnsureVisible();
     const pb=document.getElementById('sheetPrivacyBtn'); if(pb) pb.textContent = privacyModeEnabled()?'👁️ Afficher les données':'🙈 Mode discret';
+    const sb=document.getElementById('sfxToggleBtn'); if(sb) sb.textContent = SFX.isOn()?'🔔 Sons : activés':'🔕 Sons : coupés';
     if(_histReady && !_popping){ try{ history.pushState({kind:'sheet'}, '', '#menu'); }catch(e){} } }
 }
-function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); }
+function closeSheet(opts){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); const s=document.getElementById('sheet'); if(s){ s.style.transition=''; s.style.transform=''; } if(opts&&opts.sound) SFX.sheet(); }
+
+/* ============================================================
+   EFFETS SONORES (WebAudio — aucun fichier à charger)
+   Deux sons discrets et feutrés :
+   - SFX.sheet() : fermeture de la feuille menu (tick doux descendant)
+   - SFX.nav()   : navigation d'une page à l'autre (tick court, plus léger)
+   Sur PWA iOS, l'AudioContext doit être débloqué par un premier geste
+   utilisateur, sinon aucun son ne sort : on le réveille au 1er tap/touch.
+   État activé/désactivé mémorisé (localStorage), coupable depuis le Menu.
+   ============================================================ */
+const SFX = (function(){
+  let ctx=null, unlocked=false;
+  let on = (function(){ try{ return localStorage.getItem('sm_sfx')!=='0'; }catch(e){ return true; } })();
+  function ensureCtx(){
+    if(!ctx){ try{ const AC=window.AudioContext||window.webkitAudioContext; if(AC) ctx=new AC(); }catch(e){ ctx=null; } }
+    return ctx;
+  }
+  function unlock(){
+    if(unlocked) return;
+    const c=ensureCtx(); if(!c) return;
+    try{ if(c.state==='suspended') c.resume(); }catch(e){}
+    // bip muet pour « réveiller » la sortie audio iOS
+    try{ const b=c.createBuffer(1,1,22050); const s=c.createBufferSource(); s.buffer=b; s.connect(c.destination); s.start(0); }catch(e){}
+    unlocked=true;
+  }
+  // tone : génère une note courte avec enveloppe douce (pas de clic dur)
+  function tone(freqStart, freqEnd, dur, gainPeak, type){
+    if(!on) return;
+    const c=ensureCtx(); if(!c) return;
+    try{ if(c.state==='suspended') c.resume(); }catch(e){}
+    try{
+      const t0=c.currentTime;
+      const osc=c.createOscillator();
+      const g=c.createGain();
+      osc.type=type||'sine';
+      osc.frequency.setValueAtTime(freqStart, t0);
+      if(freqEnd && freqEnd!==freqStart) osc.frequency.exponentialRampToValueAtTime(Math.max(40,freqEnd), t0+dur);
+      // enveloppe : attaque très douce + extinction exponentielle (feutré)
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gainPeak, t0+0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+      osc.connect(g); g.connect(c.destination);
+      osc.start(t0); osc.stop(t0+dur+0.02);
+    }catch(e){}
+  }
+  return {
+    // fermeture feuille : deux sinus brefs, ton qui descend → sensation de « ça se range »
+    sheet(){ tone(440, 300, 0.10, 0.06, 'sine'); setTimeout(()=>tone(300, 230, 0.09, 0.04, 'sine'), 55); },
+    // navigation : un seul tick court et léger, plus aigu et plus discret
+    nav(){ tone(660, 620, 0.055, 0.035, 'sine'); },
+    unlock,
+    isOn(){ return on; },
+    toggle(){ on=!on; try{ localStorage.setItem('sm_sfx', on?'1':'0'); }catch(e){} if(on){ unlock(); SFX.nav(); } return on; }
+  };
+})();
+// Débloque l'audio au tout premier geste utilisateur (exigence PWA iOS).
+['touchstart','pointerdown','click'].forEach(ev=>{
+  window.addEventListener(ev, ()=>SFX.unlock(), {once:true, passive:true, capture:true});
+});
+
+/* ============================================================
+   GLISSEMENT DE LA FEUILLE MENU (swipe vers le bas pour fermer)
+   Le tiret (grip) ne déclenchait rien : le geste partait dans le
+   scroll de la feuille / de la page de fond. On capte ici le geste
+   sur toute la feuille. Règle clé : on ne « tire » la feuille (et on
+   ne bloque le scroll) QUE si le contenu est déjà tout en haut et que
+   le doigt descend. Sinon on laisse le scroll interne se faire.
+   Au relâché : si on a dépassé un seuil (≈100px) ou un geste rapide,
+   on ferme (avec son) ; sinon la feuille revient en place.
+   ============================================================ */
+// Bascule l'effet sonore depuis le menu (libellé mis à jour + petit son de confirmation si on active).
+function toggleSfxBtn(btn){
+  const on=SFX.toggle();
+  if(btn) btn.textContent = on?'🔔 Sons : activés':'🔕 Sons : coupés';
+}
+
+function initSheetDrag(){
+  const sheet=document.getElementById('sheet');
+  if(!sheet) return;
+  let startY=0, lastY=0, prevY=0, prevT=0, vel=0, dy=0, dragging=false, decided=false, capturing=false;
+  const CLOSE_PX=100;        // distance de fermeture
+  const FLING_VPS=0.5;       // vélocité (px/ms) déclenchant une fermeture même sur petit geste
+
+  function onStart(e){
+    const t=e.touches?e.touches[0]:e;
+    startY=lastY=prevY=t.clientY; prevT=Date.now(); dy=0; vel=0;
+    dragging=true; decided=false; capturing=false;
+    sheet.style.transition='none';
+  }
+  function onMove(e){
+    if(!dragging) return;
+    const t=e.touches?e.touches[0]:e;
+    const y=t.clientY;
+    const total=y-startY;
+    const now=Date.now();
+    // décision unique en début de geste : ne capturer que si on descend ET feuille en haut
+    if(!decided){
+      const atTop = sheet.scrollTop<=0;
+      if(total>4 && atTop){ capturing=true; decided=true; }   // descente depuis le haut → on prend la main
+      else if(Math.abs(total)>4){ capturing=false; decided=true; dragging=false; return; }
+    }
+    if(!capturing) return;
+    // on suit le doigt (vers le bas uniquement) et on bloque le scroll de fond
+    if(e.cancelable) e.preventDefault();
+    dy=Math.max(0, total);
+    sheet.style.transform='translateY('+dy+'px)';
+    const dt=now-prevT;
+    if(dt>0) vel=(y-prevY)/dt;   // px/ms (positif = vers le bas)
+    prevY=y; prevT=now; lastY=y;
+  }
+  function onEnd(){
+    if(!dragging && !capturing) return;
+    dragging=false;
+    sheet.style.transition='transform .22s ease';
+    const fast = vel > FLING_VPS;
+    if(capturing && (dy>CLOSE_PX || (dy>30 && fast))){
+      sheet.style.transform='translateY(110%)';
+      setTimeout(()=>{ closeSheet({sound:true}); }, 160);
+    } else {
+      sheet.style.transform='translateY(0)';
+    }
+    capturing=false;
+  }
+
+  sheet.addEventListener('touchstart', onStart, {passive:true});
+  sheet.addEventListener('touchmove',  onMove,  {passive:false});
+  sheet.addEventListener('touchend',   onEnd,   {passive:true});
+  sheet.addEventListener('touchcancel',onEnd,   {passive:true});
+}
 
 // Sidebar (iPad / desktop) — écoute directe + délégation
 document.querySelectorAll('#nav button').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
@@ -9763,7 +9894,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v162';
+const APP_VERSION = 'v163';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -13845,6 +13976,7 @@ function startClock(){
   const opened = await handleTraceAnchor().catch(()=>false);
   if(!opened) render();
   initHistoryNav();
+  initSheetDrag();
   ttInit();
   mascotInit();
   startClock();
