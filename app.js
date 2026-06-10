@@ -4660,8 +4660,7 @@ async function renderCmd(){
          <button class="btn ghost sm" onclick="cmdExportSelection()">⬇ Exporter (TXT)</button>
        </div>
      </div>
-     <div class="table-wrap"><table><thead><tr><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th>Actions</th><th style="width:34px" title="Sélection"><input type="checkbox" id="cmdSelHead" onclick="cmdToggleAll(this.checked)" title="Tout sélectionner"></th></tr></thead>
-       <tbody id="cmdBody"></tbody></table></div>
+     <div id="cmdBody" class="cmd-cards"></div>
      <div id="cmdEmpty" class="empty" style="display:none">Aucune commande.</div>
    </div>`;
   _cmdRenderTagBar();
@@ -4712,47 +4711,53 @@ function _cmdRenderTagBar(){
   bar.innerHTML = html;
 }
 function _cmdRow(row, grp){
-  const o=row.o; const paye=o.paiement==='Payé';
+  const o=row.o;
   const checked = _cmdSel.has(o.id) ? 'checked' : '';
   const st = orderPayStatus(o); const solde = orderBalance(o);
-  const stCol = st==='Payé'?'done':(st==='Partiel'?'todo':'todo');
   grp = grp||{};
-  // Repère mois/semaine DANS la cellule client (figée à gauche → reste visible au scroll).
+  // Repère mois (bandeau de séparation) au-dessus de la carte.
   let periodeBandeau = '';
   if(grp.newMonth && o.date){
     const mk=o.date.slice(0,7); const [yy,mm]=mk.split('-'); const idx=(+mm||1)-1;
     const col=_SEP_COLORS[idx % _SEP_COLORS.length];
     periodeBandeau += `<div class="cmd-period-month" style="background:${col}">${_MOIS_FR[idx]||''} ${yy||''}</div>`;
   }
-  if(grp.newWeek && o.date){
-    const wk=_isoWeekKey(o.date)||'';
-    periodeBandeau += `<div class="cmd-period-week">Semaine ${wk.split('-W')[1]||''}</div>`;
-  }
-  // Statut commande : menu déroulant (changement direct au clic). « Terminée » s'affiche « Prête ».
+  // Statut commande : À préparer (orange) / Prête (bleu) / Livrée (vert).
   const curStatut = normStatus(o.statut);
-  const statutSelect = `<select class="status-select status-${curStatut==='Livrée'?'done':(curStatut==='Terminée'?'ok':'todo')}" onchange="setOrderStatusInline(${o.id}, this.value)" title="Changer le statut">
+  const statutClass = curStatut==='Livrée'?'st-livree':(curStatut==='Terminée'?'st-prete':'st-prepa');
+  const statutSelect = `<select class="cmd-statut-select ${statutClass}" onchange="setOrderStatusInline(${o.id}, this.value)" title="Changer le statut">
     ${ORDER_STATUS.map(s=>`<option value="${s}" ${s===curStatut?'selected':''}>${s==='Terminée'?'Prête':esc(s)}</option>`).join('')}
   </select>`;
-  return `<tr${grp.newMonth?' class="cmd-new-month"':''}>
-     <td>${periodeBandeau}<b>${o.clientId?`${nameP(_cmdClName(o.clientId))} <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Voir la fiche client">→</span>`:'—'}</b><br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</span>${o.lieuLivraison?`<br><span style="color:#9a8a82;font-size:.72rem">📍 ${nameP(o.lieuLivraison)}</span>`:''}</td>
-     <td><span style="font-size:.82rem">${esc(row.resume)}</span> <span class="jump-arrow" onclick="cmdView(${o.id})" title="Voir le détail de la commande">→</span>${o.perso?' <span class="tag event">perso</span>':''}</td>
-     <td>${euro(+o.montant)}</td>
-     <td>
-       <span class="tag ${st==='Payé'?'done':(st==='Partiel'?'event':'todo')}">${st}</span>
-       ${st!=='Payé'&&solde>0?`<br><span style="color:var(--red,#b3261e);font-size:.72rem">solde ${euro(solde)}</span>`:''}
-       ${st==='Payé'&&o.datePaiement?`<br><span style="color:#9a8a82;font-size:.72rem">le ${fmtDate(o.datePaiement)}</span>`:''}
-     </td>
-     <td>${statutSelect}</td>
-     <td>${row.nbLies?`<span class="tag ok">${row.nbLies} batch</span>`:'<span class="tag warn">non lié</span>'}</td>
-     <td><div class="qa-row">
-       ${st!=='Payé'?`<button class="qa pay" onclick="markPaid(${o.id})" title="Encaisser le solde">✓ Solder</button>`:''}
-       <button class="qa" onclick="cmdView(${o.id})" title="Voir le détail">👁 Détail</button>
-       <button class="qa edit" onclick="cmdForm(${o.id})" title="Modifier">✎ Modifier</button>
-       <button class="qa" onclick="exportOrderText(${o.id})" title="Exporter en texte">⤓ Texte</button>
-       <button class="qa" onclick="cmdLink(${o.id})" title="Lier à une production">🔗 Lier</button>
-       <button class="qa del" onclick="delCmd(${o.id})" title="Supprimer">🗑</button>
-     </div></td>
-     <td><input type="checkbox" class="cmd-check" ${checked} onclick="cmdToggleOne(${o.id},this.checked)"></td></tr>`;
+  // Paiement : En attente (rouge) / Payé (vert).
+  const payBtn = st==='Payé'
+    ? `<button class="cmd-pill pay-ok" onclick="cmdView(${o.id})" title="Payé">✓ Payé</button>`
+    : `<button class="cmd-pill pay-due" onclick="markPaid(${o.id})" title="Encaisser le solde">● En attente${solde>0?' ('+euro(solde)+')':''}</button>`;
+
+  const clientNom = o.clientId ? nameP(_cmdClName(o.clientId)) : '—';
+  const adresse = o.lieuLivraison ? nameP(o.lieuLivraison) : '';
+
+  return `${periodeBandeau}<div class="cmd-card">
+    <div class="cmd-card-head">
+      <div class="cmd-client">
+        <b>${esc(clientNom)}</b>${o.clientId?` <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Fiche client">→</span>`:''}
+        <div class="cmd-meta">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</div>
+        ${adresse?`<div class="cmd-meta">📍 ${esc(adresse)}</div>`:''}
+      </div>
+      <input type="checkbox" class="cmd-check" ${checked} onclick="cmdToggleOne(${o.id},this.checked)" title="Sélectionner">
+    </div>
+    <div class="cmd-contenu">${esc(row.resume)}${o.perso?' <span class="tag event">perso</span>':''}</div>
+    <div class="cmd-primary">
+      <button class="cmd-pill detail" onclick="cmdView(${o.id})" title="Voir le détail">👁 Détails</button>
+      <span class="cmd-montant">${euro(+o.montant)}</span>
+      ${statutSelect}
+    </div>
+    <div class="cmd-secondary">
+      <button class="qa edit" onclick="cmdForm(${o.id})" title="Modifier">✎ Modifier</button>
+      ${payBtn}
+      <button class="qa" onclick="cmdLink(${o.id})" title="Lier à une production">🔗 Lier</button>
+      <button class="qa gold" onclick="genererFacture(${o.id})" title="Générer la facture">🧾 Facturer</button>
+    </div>
+  </div>`;
 }
 // Changement de statut depuis le menu déroulant de la liste (sans fermer de modale).
 async function setOrderStatusInline(id, statut){

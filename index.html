@@ -118,6 +118,25 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia','Times New Roman',serif;letter-
 .mat-card-actions{display:flex;gap:8px;padding-top:12px;border-top:1px dashed #ece3d5}
 .mat-card-actions .qa{flex:0 0 auto}
 .cards-old-placeholder{}
+/* ---- Cartes Commandes ---- */
+.cmd-cards{display:flex;flex-direction:column;gap:14px}
+.cmd-card{border:1px solid #ece3d5;border-radius:16px;padding:15px 16px 13px;background:#fff;box-shadow:0 2px 8px rgba(73,15,37,.05)}
+.cmd-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.cmd-client b{color:var(--ink);font-size:1.02rem}
+.cmd-meta{color:#9a8a82;font-size:.76rem;margin-top:2px}
+.cmd-contenu{margin:9px 0 12px;font-size:.9rem;color:#5a4a44;line-height:1.4}
+.cmd-primary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-bottom:11px;margin-bottom:11px;border-bottom:1px dashed #ece3d5}
+.cmd-montant{font-family:'Fraunces',serif;font-weight:600;font-size:1.15rem;color:var(--bordeaux,#490F25);margin-left:auto}
+.cmd-secondary{display:flex;gap:8px;flex-wrap:wrap}
+.cmd-pill{border:none;border-radius:10px;padding:8px 13px;font-size:.84rem;font-weight:600;cursor:pointer;font-family:inherit}
+.cmd-pill.detail{background:#f2ece4;color:#490F25}
+.cmd-pill.pay-ok{background:#dcebdd;color:#2e7d45}
+.cmd-pill.pay-due{background:#f7dedb;color:#b3261e}
+.cmd-statut-select{border:none;border-radius:10px;padding:8px 12px;font-size:.84rem;font-weight:600;cursor:pointer;font-family:inherit;-webkit-appearance:none;appearance:none;text-align:center}
+.cmd-statut-select.st-prepa{background:#f6e4cf;color:#a9772a}
+.cmd-statut-select.st-prete{background:#d8e6f2;color:#2f6a9a}
+.cmd-statut-select.st-livree{background:#dcebdd;color:#3f7d52}
+.cmd-card .qa.gold{border-color:#e3c48f;color:#9a7320}
 .card{background:linear-gradient(160deg,#ffffff,#fdfaf5);border-radius:var(--r-lg);padding:20px;box-shadow:var(--sh-2);border:1px solid var(--hair);position:relative;overflow:hidden}
 .card::after{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:var(--grad-gold);opacity:.85}
 .card.clickable{cursor:pointer;transition:transform .16s cubic-bezier(.4,0,.2,1),box-shadow .16s ease}
