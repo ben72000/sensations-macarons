@@ -11726,19 +11726,47 @@ function ttFormat(ms){
   return `${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m`;
 }
 
+// Couleur associée à chaque type d'activité (pour repérer la tâche en cours d'un coup d'œil).
+// Les activités connues ont une teinte fixe ; les libres (« Autre … ») dérivent une couleur
+// stable de leur texte, pour qu'une même tâche garde toujours la même couleur.
+const TT_ACT_COLORS = {
+  'Pesées':'#caa23b', 'Ganache':'#8a5a3c', 'Meringue':'#e8c8d4', 'Macaronnage':'#d76b86',
+  'Pochage':'#9bc081', 'Cuisson':'#cf7a3a', 'Garnissage/Montage':'#6aa3a0', 'Vaisselle':'#5a7a9a',
+  'Nettoyage fin de prod':'#7a6a9a', 'Conditionnement':'#b98756', 'Autre':'#9a8a82'
+};
+const TT_COLOR_PALETTE = ['#d76b86','#caa23b','#9bc081','#6aa3a0','#8a5a3c','#cf7a3a','#7a6a9a','#5a7a9a','#b98756','#3f7d52','#9a6a82','#5a8a7a'];
+function ttActivityColor(activite){
+  const a=(activite||'').trim();
+  if(!a) return '#3f7d52';                       // sans précision → vert
+  if(TT_ACT_COLORS[a]) return TT_ACT_COLORS[a];  // activité connue
+  // activité libre : couleur stable dérivée du texte (hash simple)
+  let h=0; for(let i=0;i<a.length;i++){ h=(h*31 + a.charCodeAt(i))>>>0; }
+  return TT_COLOR_PALETTE[h % TT_COLOR_PALETTE.length];
+}
+// Petit macaron SVG colorable : deux coques crème + ganache de la couleur de l'activité.
+function macaronSVG(col){
+  return `<svg viewBox="0 0 40 32" width="100%" height="100%" aria-hidden="true">
+    <ellipse cx="20" cy="9" rx="15" ry="8" fill="#efe3c4"/>
+    <ellipse cx="20" cy="23" rx="15" ry="8" fill="#efe3c4"/>
+    <rect x="6" y="13" width="28" height="6" rx="3" fill="${col}"/>
+    <ellipse cx="13" cy="24" rx="3" ry="1.6" fill="#e3d4b0" opacity=".7"/>
+    <ellipse cx="27" cy="24" rx="3" ry="1.6" fill="#e3d4b0" opacity=".7"/>
+  </svg>`;
+}
 // Rendu du bandeau : une puce par chrono actif + bouton « + ».
 function ttRefresh(){
   const bar=document.getElementById('timeTracker'); if(!bar) return;
   const sessions=ttLoad();
   bar.innerHTML = `<span class="tt-grip">⠿⠿</span>
-    <button type="button" class="tt-light green" onclick="ttStart()" title="Démarrer une activité"><span>▶</span></button>
+    <button type="button" class="tt-light green" onclick="ttLightTap(event)" title="Pointeuse"><span>▶</span></button>
     <button type="button" class="tt-light dim" onclick="ttOpenHistory()" title="Historique"><span>🗒</span></button>`;
   ttBindDrag(bar, 'sm_tt_pos');
   const wrap=document.getElementById('ttWhisks'); if(!wrap) return;
   wrap.innerHTML = sessions.map(s=>{
     const paused=ttSessionPaused(s);
-    return `<div class="tt-whisk${paused?' paused':''}" data-w="${s.id}" onclick="ttWhiskToggle(event,'${s.id}')">
-      <span class="whisk-ico">🥄</span>
+    const col=ttActivityColor(s.activite);
+    return `<div class="tt-whisk${paused?' paused':''}" data-w="${s.id}" style="--tt-col:${col}" onclick="ttWhiskToggle(event,'${s.id}')">
+      <span class="whisk-ico">${macaronSVG(col)}</span>
       <div class="whisk-info">
         <span class="whisk-lbl">${esc(s.activite||'Production')}${paused?' · pause':''}</span>
         <span class="whisk-time" data-tt="${s.id}">${ttFormat(ttSessionNet(s))}</span>
@@ -11750,6 +11778,30 @@ function ttRefresh(){
     </div>`;
   }).join('');
   wrap.querySelectorAll('.tt-whisk').forEach((el,i)=>ttBindDrag(el, 'sm_ttw_'+i, true));
+}
+// Tap sur le feu vert : si le bandeau est replié → on le déploie ; s'il est déjà déployé →
+// on démarre une activité. Un drag ne déclenche rien (géré par _dragged). Repli auto après délai.
+let _ttCollapseTimer=null;
+function ttLightTap(ev){
+  const bar=document.getElementById('timeTracker'); if(!bar) return;
+  if(bar._dragged){ bar._dragged=false; return; }   // c'était un déplacement, pas un tap
+  if(ev && ev.stopPropagation) ev.stopPropagation();
+  if(!bar.classList.contains('tt-open')){
+    ttExpand();
+  } else {
+    ttStart();
+  }
+}
+function ttExpand(){
+  const bar=document.getElementById('timeTracker'); if(!bar) return;
+  bar.classList.add('tt-open');
+  clearTimeout(_ttCollapseTimer);
+  // repli automatique après 4 s sans interaction (évite que ça reste ouvert et gêne)
+  _ttCollapseTimer=setTimeout(ttCollapse, 4000);
+}
+function ttCollapse(){
+  const bar=document.getElementById('timeTracker'); if(bar) bar.classList.remove('tt-open');
+  clearTimeout(_ttCollapseTimer);
 }
 function ttWhiskToggle(ev, id){
   const el=ev.currentTarget; if(el._dragged){ el._dragged=false; return; }
@@ -11778,7 +11830,7 @@ function ttBindDrag(el, storeKey, isWhisk){
     el.classList.remove('dragging');
     document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up);
     document.removeEventListener('touchmove',move); document.removeEventListener('touchend',up);
-    if(moved){ if(isWhisk) el._dragged=true;
+    if(moved){ el._dragged=true;
       try{ localStorage.setItem(storeKey, JSON.stringify({left:parseInt(el.style.left), top:parseInt(el.style.top)})); }catch(e){} }
   };
   el.addEventListener('mousedown',down); el.addEventListener('touchstart',down,{passive:true});
@@ -11793,6 +11845,7 @@ function ttTick(){
 
 // Démarre un NOUVEAU chrono (choix rapide d'activité). N'interrompt pas les autres.
 function ttStart(){
+  ttCollapse();
   openModal(`<h3>⏱ Nouvelle activité</h3>
     <p class="note">Un tap pour démarrer un chrono. Plusieurs activités peuvent tourner en parallèle.</p>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">

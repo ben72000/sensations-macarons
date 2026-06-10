@@ -355,28 +355,34 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 /* ---- Pointeuse de laboratoire (time tracker global) ---- */
 /* ===== POINTEUSE — feu tricolore flottant déplaçable + fouets animés ===== */
 #timeTracker{position:fixed;z-index:46;left:246px;bottom:18px;
-  display:flex;flex-direction:column;align-items:center;gap:7px;
-  background:#2c2420;border:2px solid #1c1714;border-radius:18px;
-  padding:9px 8px;box-shadow:0 10px 30px rgba(0,0,0,.32);
-  font-family:'Outfit',system-ui,sans-serif;touch-action:none;user-select:none;cursor:grab}
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  background:transparent;border:none;border-radius:18px;
+  padding:0;box-shadow:none;
+  font-family:'Outfit',system-ui,sans-serif;touch-action:none;user-select:none;cursor:grab;transition:gap .15s}
 #timeTracker.dragging{cursor:grabbing;opacity:.92}
-#timeTracker .tt-grip{font-size:.7rem;color:#8a7d70;letter-spacing:.15em;line-height:1}
-#timeTracker .tt-light{width:46px;height:46px;border-radius:50%;border:none;cursor:pointer;
+/* poignée + bouton historique masqués au repos, révélés quand déployé */
+#timeTracker .tt-grip{font-size:.7rem;color:#8a7d70;letter-spacing:.15em;line-height:1;display:none;opacity:.7}
+#timeTracker .tt-light{width:38px;height:38px;border-radius:50%;border:none;cursor:pointer;
   -webkit-tap-highlight-color:transparent;position:relative;transition:.15s;
-  display:flex;align-items:center;justify-content:center;font-size:1.25rem}
-#timeTracker .tt-light.green{background:radial-gradient(circle at 35% 30%,#7bd88f,#2e9c4d);box-shadow:0 0 14px rgba(46,156,77,.7)}
+  display:flex;align-items:center;justify-content:center;font-size:1.05rem}
+#timeTracker .tt-light.green{background:radial-gradient(circle at 35% 30%,#7bd88f,#2e9c4d);box-shadow:0 3px 10px rgba(46,156,77,.5)}
 #timeTracker .tt-light.green:active{transform:scale(.92)}
-#timeTracker .tt-light.dim{background:#3a322c;box-shadow:inset 0 0 0 1px #4a403a;cursor:pointer}
-#timeTracker .tt-light.dim span{opacity:.35}
+#timeTracker .tt-light.dim{background:#3a322c;box-shadow:inset 0 0 0 1px #4a403a;cursor:pointer;display:none}
+#timeTracker .tt-light.dim span{opacity:.55}
+/* état déployé : fond, poignée et 2e bouton visibles, feu agrandi */
+#timeTracker.tt-open{background:#2c2420;border:2px solid #1c1714;padding:9px 8px;box-shadow:0 10px 30px rgba(0,0,0,.32)}
+#timeTracker.tt-open .tt-grip{display:block}
+#timeTracker.tt-open .tt-light{width:46px;height:46px;font-size:1.25rem}
+#timeTracker.tt-open .tt-light.dim{display:flex}
 #ttWhisks{position:fixed;z-index:45;left:300px;bottom:24px;display:flex;flex-direction:column;gap:8px;pointer-events:none}
 #ttWhisks .tt-whisk{pointer-events:auto;display:flex;align-items:center;gap:8px;
-  background:#fff;border:1px solid rgba(170,124,57,.25);border-radius:13px;padding:6px 10px;
+  background:#fff;border:1px solid rgba(170,124,57,.25);border-left:4px solid var(--tt-col,#AA7C39);border-radius:13px;padding:6px 10px;
   box-shadow:0 6px 20px rgba(82,37,47,.2);font-family:'Outfit',system-ui,sans-serif;cursor:grab;touch-action:none}
 #ttWhisks .tt-whisk.dragging{cursor:grabbing;opacity:.92}
 #ttWhisks .tt-whisk.paused{opacity:.72}
-#ttWhisks .whisk-ico{font-size:1.4rem;display:inline-block;transform-origin:50% 18%;animation:whiskBeat .5s ease-in-out infinite}
+#ttWhisks .whisk-ico{width:30px;height:24px;display:inline-block;transform-origin:50% 50%;animation:whiskBeat .9s ease-in-out infinite}
 #ttWhisks .tt-whisk.paused .whisk-ico{animation:none;filter:grayscale(.6)}
-@keyframes whiskBeat{0%,100%{transform:rotate(-18deg)}50%{transform:rotate(18deg)}}
+@keyframes whiskBeat{0%,100%{transform:rotate(-9deg) translateY(0)}50%{transform:rotate(9deg) translateY(-1px)}}
 #ttWhisks .whisk-info{display:flex;flex-direction:column;line-height:1.15;min-width:0}
 #ttWhisks .whisk-lbl{font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;color:#9a8a82;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
 #ttWhisks .whisk-time{font-family:'Fraunces',serif;font-size:.95rem;font-weight:600;color:var(--bordeaux);font-variant-numeric:tabular-nums}
