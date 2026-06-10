@@ -1579,7 +1579,14 @@ async function renderProductions(){
   const kpi = await lossKPIs();
   const lossByProd = {}; losses.forEach(l=>{ lossByProd[l.productionId]=(lossByProd[l.productionId]||0)+(+l.qte||0); });
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'(recette supprimée)';
-  window._prodLossBy = lossByProd; window._prodRecName = recName;
+  // Nom affiché d'une production : accepte soit l'objet production, soit un recipeId.
+  // Pour une production « libre » (mode découverte), renvoie son nom saisi.
+  const prodNom = arg => {
+    if(arg && typeof arg==='object'){ return arg.libre ? (arg.produitLibre||'(sans nom)') : recName(arg.recipeId); }
+    return recName(arg);
+  };
+  window._prodNom = prodNom;
+  window._prodLossBy = lossByProd; window._prodRecName = prodNom;
   // Consommation matières par batch (pour le bloc « Stock consommé » en bas de l'écran).
   const _allMats = await db.materials.toArray();
   const _matById = {}; _allMats.forEach(m=>_matById[m.id]=m);
@@ -1613,7 +1620,7 @@ async function renderProductions(){
   }).length;
   // index de recherche : lot, parfum/recette, date (plusieurs formats), emplacement (nom + LETTRE), statut
   _prodnCache = prods.map(p=>{
-    const nom = recName(p.recipeId);
+    const nom = prodNom(p);
     const e = empInfo(p.emplacement);
     const st = prodStatut(p)==='termine' ? 'terminée terminé' : 'démarrée en cours';
     const dateBlob = [p.date, fmtDate(p.date), (p.date||'').slice(0,7)].filter(Boolean).join(' ');
@@ -1768,8 +1775,8 @@ function prodbatFilter(q){
   // Regroupe par recette en conservant l'ordre d'apparition (déjà trié par pertinence/date)
   const groups=[]; const idx={};
   capped.forEach(r=>{
-    const rid=r.p.recipeId;
-    if(idx[rid]==null){ idx[rid]=groups.length; groups.push({rid, name:recName(rid), rows:[]}); }
+    const rid = r.p.libre ? ('libre:'+(r.p.produitLibre||r.p.id)) : r.p.recipeId;
+    if(idx[rid]==null){ idx[rid]=groups.length; groups.push({rid, name:recName(r.p), libre:!!r.p.libre, rows:[]}); }
     groups[idx[rid]].rows.push(r);
   });
   let html='';
@@ -1777,7 +1784,8 @@ function prodbatFilter(q){
     g.rows.sort((a,b)=>(compOrder[prodComposant(a.p)]??9)-(compOrder[prodComposant(b.p)]??9));
     const nb=g.rows.length;
     const reste=g.rows.reduce((s,r)=>s+(round3(+r.p.qteRestante)>0?1:0),0);
-    html+=`<tr class="prod-sec-head"><td colspan="9">🍩 ${esc(g.name)}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></td></tr>`;
+    const libreTag = g.libre?' <span class="tag" style="background:#e9eef9;color:#3a5a9a;font-size:.64rem">libre</span>':'';
+    html+=`<tr class="prod-sec-head"><td colspan="9">🍩 ${esc(g.name)}${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></td></tr>`;
     html+=g.rows.map(_prodbatRow).join('');
   });
   body.innerHTML = html +
@@ -2415,7 +2423,7 @@ async function prodSetTermine(id){
      <b class="opt-emp" style="background:${c.freezer?'#3b6ea5':(c.key==='ambiant'?'#caa23b':'#6aa3a0')}">${c.lettre}</b>
      <span class="opt-main"><b>${c.icon} ${esc(c.nom)}</b><br><span class="opt-sub">${c.freezer?'+4 mois':(c.key==='ambiant'?'sans DLC frigo (coques sèches)':'+7 j')}</span></span></label>`).join('');
   openModal(`<h3>✓ Terminer la production</h3>
-    <p style="margin-bottom:8px"><b>${esc((await db.recipes.get(p.recipeId))?.produitNom||'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${comp!=='complet'?` · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp}</span>`:''}</p>
+    <p style="margin-bottom:8px"><b>${esc(p.libre ? (p.produitLibre||'(sans nom)') : ((p.recipeId!=null ? (await db.recipes.get(p.recipeId)) : null)?.produitNom||'?'))}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${comp!=='complet'?` · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp}</span>`:''}</p>
     <div class="field"><label>Emplacement de rangement *</label>
       <div class="opt-table" id="prodDestEnd">${rows||'<p class="note">Aucun emplacement disponible (recongélation interdite).</p>'}</div></div>
     ${decongele?'<p class="note" style="color:#b3261e">⚠️ Déjà décongelé : le congélateur est désactivé (recongélation interdite).</p>':''}
@@ -2587,7 +2595,9 @@ async function prodDegDistribueSave(id){
 }
 async function prodForm(){
   const recipes = await db.recipes.toArray();
-  if(!recipes.length){toast('Crée d\'abord une recette');return;}
+  // Mode DÉCOUVERTE : si aucune recette n'existe encore, on propose une production « libre »
+  // (nom saisi à la main, sans recette ni consommation de matières) pour se familiariser.
+  if(!recipes.length){ return prodFormLibre(); }
   // Garde-fou : on ne peut pas démarrer une nouvelle production tant qu'une
   // production reste « démarrée » depuis plus de 4 jours (à terminer ou supprimer).
   const allProds = await db.productions.toArray();
@@ -2599,6 +2609,7 @@ async function prodForm(){
   _prodReelTouched=false;
   const opts = recipes.map(r=>`<option value="${r.id}" data-rend="${r.rendement}">${esc(r.produitNom)} (${r.rendement}/batch)</option>`).join('');
   openModal(`<h3>Nouvelle production</h3>
+   <p class="note" style="margin:-2px 0 10px"><span class="act" onclick="prodFormLibre()">⚡ Production rapide (sans recette) →</span> <span style="color:#9a8a82">pour se familiariser sans tout paramétrer</span></p>
    <div class="field"><label>Mode de production</label>
      <select id="f_mode" onchange="prodModeSwitch(this.value)">
        <option value="complet">Batch complet (coques + ganache assemblés)</option>
@@ -2739,12 +2750,10 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
   const allItems = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
   const mats = await db.materials.toArray();
   const matName = id => (mats.find(m=>m.id===id)||{}).nom || '(matière ?)';
-  // unité d'affichage : g pour les denrées au kg, sinon unité de base
   const dispOf = id => { const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
     return (u==='kg') ? {u:'g', f:1000} : {u:m.unite||'', f:1}; };
   const rendement = +rec.rendement||1;
   const facteur = rendement>0 ? (nbMacarons/rendement) : 0;
-  // filtre par composant si la recette est étiquetée coque/ganache
   const etiquetee = allItems.some(it=>it.partie==='coque'||it.partie==='ganache');
   let items = allItems;
   if(etiquetee && (composant==='coques'||composant==='ganache')){
@@ -2763,6 +2772,43 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
     <div class="table-wrap"><table><thead><tr><th>Ingrédient</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}</tbody></table></div>
     <p class="note" style="margin-top:10px">La production est <b>démarrée</b>. Tu choisiras l'emplacement de rangement à la fin (✓ Terminer dans la liste).</p>
     <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
+}
+// ---- MODE DÉCOUVERTE : production « libre » sans recette ni consommation de matières ----
+// Permet de se familiariser avec l'app. Ces productions sont marquées « libre » et pourront
+// être supprimées plus tard. Elles ne décrémentent AUCUN stock.
+function prodFormLibre(){
+  openModal(`<h3>Production rapide ⚡</h3>
+   <p class="note" style="margin-bottom:10px">Pour te familiariser : crée une production avec juste un <b>nom</b>, sans recette ni matières. Aucun stock n'est touché. Tu pourras la compléter ou la supprimer plus tard.</p>
+   <div class="field"><label>Nom du produit</label><input id="fl_nom" placeholder="ex. Macaron chocolat" autocomplete="off"></div>
+   <div class="row2">
+     <div class="field"><label>Quantité produite</label><input type="number" id="fl_qte" value="30" min="1"></div>
+     <div class="field"><label>Date</label><input type="date" id="fl_date" value="${today()}"></div>
+   </div>
+   <div class="field"><label>N° lot de production</label><input id="fl_lot" value="L-${today().replace(/-/g,'')}-${genLotCode(3)}"></div>
+   <p class="note">Cette production apparaîtra avec une étiquette <b>« libre »</b> pour que tu la repères. Elle n'entre pas dans les calculs de coût tant qu'elle n'est pas reliée à une recette.</p>
+   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProdLibre()">Lancer la production</button></div>`);
+  setTimeout(()=>{ const el=document.getElementById('fl_nom'); if(el) el.focus(); }, 60);
+}
+async function saveProdLibre(){
+  const nom=val('fl_nom').trim();
+  if(!nom){ toast('Donne un nom au produit'); return; }
+  const qte=+val('fl_qte'); if(!qte||qte<=0){ toast('Quantité invalide'); return; }
+  const date=val('fl_date')||today();
+  const baseLot=lotBaseSansSuffixe(val('fl_lot'));
+  const san=sanitizeLot(baseLot.replace(/^(L-\d{8}-)/i,''));
+  const m=baseLot.match(/^(L-\d{8}-)(.*)$/i);
+  const lot=(m?m[1].toUpperCase():'')+(san.lot||genLotCode(3));
+  try{
+    await db.productions.add({
+      recipeId: null, produitLibre: nom, libre: true,
+      qteTheorique: qte, qteReelle: qte, qteProduite: qte, qteRestante: qte,
+      date, lotProduction: lot, lotBase: lot,
+      composant: 'complet', prodStatut: 'demarre', emplacement: '',
+      prodDebutTs: new Date().toISOString()
+    });
+    closeModal(); renderProductions();
+    toast(`Production « ${nom} » créée ✓ (mode découverte)`);
+  }catch(err){ console.error(err); toast('Erreur création'); }
 }
 // Transaction atomique : consommation FIFO (théorique) + traçabilité + stock fini (réel)
 async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd, lotProduction, dlcProduit, emplacement, meta){
@@ -2876,7 +2922,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
 // - l'écart théorique/réel est ré-historisé
 async function prodAdjustForm(id){
   const p = await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
-  const recipe = await db.recipes.get(p.recipeId);
+  const recipe = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
   const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
   const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
   const estCoques = prodComposant(p)==='coques';
@@ -3010,7 +3056,7 @@ async function prodAdjustReel(id){
    ------------------------------------------------------------ */
 async function declareLossForm(prodId){
   const p = await db.productions.get(prodId); if(!p){ toast('Production introuvable'); return; }
-  const recipe = await db.recipes.get(p.recipeId);
+  const recipe = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
   const dispo = round3(+p.qteRestante||0);
   if(dispo<=0){ toast('Aucune pièce disponible dans ce batch'); return; }
   const motifOpts = LOSS_REASONS.map(m=>`<option>${esc(m)}</option>`).join('');
@@ -3102,7 +3148,7 @@ async function saveLoss(prodId){
     return;
   }
   // CAS perte pure : coût unitaire de revient figé pour ce batch
-  const recipe = await db.recipes.get(p.recipeId);
+  const recipe = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
   const [recipeItems, lots] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray()]);
   let coutUnit = 0;
   if(recipe){ const cr = coutRevientRecette(recipe, recipeItems, lots); coutUnit = +cr.coutRevientUnit||0; }
@@ -9295,7 +9341,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v160';
+const APP_VERSION = 'v161';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -9438,13 +9484,13 @@ function renderAssistant(){
    </div>
    <div id="aiOut"></div>`;
   renderSerenityGauge();
-  renderMarketForecast();
+  renderMarketForecastBox();
   renderAntiGaspi();
   renderPredictiveAlerts();
   ttScheduleSerenityRefresh();
 }
 // Prévisionnel marché intelligent : suggestion de quantités d'après l'historique.
-async function renderMarketForecast(){
+async function renderMarketForecastBox(){
   const box=document.getElementById('marketForecast'); if(!box) return;
   let fc; try{ fc=await marketForecast(); }catch(e){ box.innerHTML=''; return; }
   if(!fc.nbMarches){ box.innerHTML=''; return; }   // pas d'historique : on n'encombre pas
@@ -10255,7 +10301,7 @@ async function renderLabels(){
 async function buildLabelData(prodId){
   const p = await db.productions.get(prodId);
   if(!p) return null;
-  const rec = await db.recipes.get(p.recipeId);
+  const rec = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
   const tmp = document.createElement('canvas');
   try{ QR.render(tmp, traceUrl(p.lotProduction||''), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
   return {
@@ -11365,12 +11411,10 @@ function ttFormat(ms){
 function ttRefresh(){
   const bar=document.getElementById('timeTracker'); if(!bar) return;
   const sessions=ttLoad();
-  // FEU : bouton vert « démarrer » toujours présent (+ accès historique discret).
   bar.innerHTML = `<span class="tt-grip">⠿⠿</span>
     <button type="button" class="tt-light green" onclick="ttStart()" title="Démarrer une activité"><span>▶</span></button>
     <button type="button" class="tt-light dim" onclick="ttOpenHistory()" title="Historique"><span>🗒</span></button>`;
   ttBindDrag(bar, 'sm_tt_pos');
-  // FOUETS : un par chrono actif, flottants.
   const wrap=document.getElementById('ttWhisks'); if(!wrap) return;
   wrap.innerHTML = sessions.map(s=>{
     const paused=ttSessionPaused(s);
@@ -11386,18 +11430,14 @@ function ttRefresh(){
       </span>
     </div>`;
   }).join('');
-  // rend chaque fouet déplaçable indépendamment
   wrap.querySelectorAll('.tt-whisk').forEach((el,i)=>ttBindDrag(el, 'sm_ttw_'+i, true));
 }
-// Ouvre/ferme le mini-feu pause/stop d'un fouet (sauf si on vient de le déplacer).
 function ttWhiskToggle(ev, id){
   const el=ev.currentTarget; if(el._dragged){ el._dragged=false; return; }
   el.classList.toggle('open');
 }
-// Rend un élément flottant déplaçable (souris + tactile), position mémorisée.
 function ttBindDrag(el, storeKey, isWhisk){
   if(!el || el._dragBound) return; el._dragBound=true;
-  // restaure une position mémorisée
   try{ const p=JSON.parse(localStorage.getItem(storeKey)||'null');
     if(p && p.left!=null){ el.style.left=p.left+'px'; el.style.top=p.top+'px'; el.style.right='auto'; el.style.bottom='auto'; } }catch(e){}
   let sx,sy,ox,oy,moved;
