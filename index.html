@@ -561,6 +561,9 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .flavor-stock .fs-nom{flex:1;font-weight:600;font-size:.9rem;color:var(--bordeaux)}
 .flavor-stock .fs-qte{font-size:1.05rem;color:var(--bordeaux)}
 .flavor-stock.fs-empty{opacity:.5;background:#faf7f2}
+.flavor-stock.clickable{cursor:pointer;transition:transform .1s,box-shadow .15s}
+.flavor-stock.clickable:hover{box-shadow:0 4px 14px rgba(82,37,47,.14);transform:translateY(-1px)}
+.flavor-stock.clickable:active{transform:scale(.98)}
 .flavor-stock .fs-zero{color:#b0a193;font-weight:600}
 /* ---- Mode discret : floutage des noms sensibles ---- */
 .sheet-privacy{width:100%;margin-bottom:12px;appearance:none;-webkit-appearance:none;cursor:pointer;

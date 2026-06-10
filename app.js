@@ -3945,6 +3945,7 @@ async function prodSaveTimes(prodId){
 async function traceProd(prodId){
   const prod = await db.productions.get(prodId);
   const recipe = await db.recipes.get(prod.recipeId);
+  const _prodNom = recipe ? recipe.produitNom : (prod.libre ? (prod.produitLibre||'(libre)') : '?');
   const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray();
   const lines=[];
   for(const c of conso){
@@ -3981,7 +3982,7 @@ async function traceProd(prodId){
   const _deb=prod.prodDebutTs||prod.prodTimestamp||''; const _fin=prod.prodTermineTs||'';
   const _dur=(_deb&&_fin)?ttFormat(new Date(_fin)-new Date(_deb)):'';
   openModal(`<h3>Traçabilité — batch</h3>
-    <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
+    <p style="margin-bottom:8px"><b>${esc(_prodNom)}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
     <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prodComposant(prod)!=='complet'?` · <span class="tag" style="background:${prodComposant(prod)==='assemble'?'#3f7d52':prodComposant(prod)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff">${prodComposant(prod)==='coques'?'🟤 Coques':prodComposant(prod)==='ganache'?'🍫 Ganache':prodComposant(prod)==='degustation'?'🥄 Dégustation (offert)':'✓ Assemblé'}</span>`:''}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${_dur?` · <b>durée ${_dur}</b>`:''}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'')}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
@@ -6258,10 +6259,11 @@ async function renderStockParfums(){
   const cards = noms.map(nom=>{
     const b = byNom[nom]; const dispo = b?b.dispo:0; const col = flavorColor(nom);
     const vide = dispo<=0;
-    return `<div class="flavor-stock${vide?' fs-empty':''}">
+    const clic = vide ? '' : ` clickable" onclick="stockParfumDetail(${JSON.stringify(nom).replace(/"/g,'&quot;')})" title="Voir les batchs et la traçabilité`;
+    return `<div class="flavor-stock${vide?' fs-empty':clic}">
       <span class="fs-pastille" style="background:${col}"></span>
       <span class="fs-nom">${esc(nom)}</span>
-      <span class="fs-qte">${vide?'<span class="fs-zero">0</span>':`<b>${qty(dispo)}</b>`}</span>
+      <span class="fs-qte">${vide?'<span class="fs-zero">0</span>':`<b>${qty(dispo)}</b>${b.batches?` <span style="color:#9a8a82;font-size:.72rem">· ${b.batches} batch${b.batches>1?'s':''} ›</span>`:''}`}</span>
     </div>`;
   }).join('');
   document.getElementById('main').innerHTML=`
@@ -6272,6 +6274,33 @@ async function renderStockParfums(){
      <p class="note" style="margin-bottom:12px">Vue d'ensemble des macarons finis <b>vendables</b> disponibles, par parfum. Les pastilles reprennent les couleurs de la boutique. Les parfums à 0 sont grisés.</p>
      <div class="flavor-stock-grid">${cards}</div>
    </div>`;
+}
+// Détail d'un parfum : liste de ses batchs en stock, chacun ouvrant la traçabilité complète.
+async function stockParfumDetail(nom){
+  const recipes=await db.recipes.toArray();
+  const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'(parfum ?)';
+  const prods=(await db.productions.toArray())
+    .filter(p=>round3(+p.qteRestante)>0 && prodVendable(p))
+    .filter(p=>(p.libre?(p.produitLibre||'(libre)'):recName(p.recipeId))===nom)
+    .sort((a,b)=>(a.dlcProduit||'9999').localeCompare(b.dlcProduit||'9999') || (b.date||'').localeCompare(a.date||''));
+  const col=flavorColor(nom);
+  const rows=prods.map(p=>{
+    const st=prodStatut(p);
+    const dlc=p.dlcProduit?fmtDate(p.dlcProduit):(st!=='termine'?'<span style="color:#9a8a82">DLC non lancée</span>':'—');
+    const fab=p.prodTermineTs||p.prodDebutTs||p.prodTimestamp;
+    return `<div class="trace-step clickable" style="cursor:pointer" onclick="closeModal();traceProd(${p.id})" title="Traçabilité complète de ce batch">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div><b>lot ${esc(p.lotProduction||'—')}</b> · ${qty(p.qteRestante)} pièce(s)<br>
+          <span style="font-size:.78rem;color:#9a8a82">${empTagHtml(p.emplacement)} · fab. ${fab?fmtDateTime(fab):fmtDate(p.date)} · DLC ${dlc}</span></div>
+        <span class="tag ${st==='termine'?'ok':'event'}">${st==='termine'?'✓':'▶'}</span>
+      </div>
+    </div>`;
+  }).join('') || '<p class="note">Aucun batch en stock pour ce parfum.</p>';
+  const total=prods.reduce((s,p)=>addQty(s,p.qteRestante),0);
+  openModal(`<h3><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${col};vertical-align:middle;margin-right:6px"></span>${esc(nom)}</h3>
+    <p class="note" style="margin-bottom:10px">${prods.length} batch(s) en stock · <b>${qty(total)}</b> macaron(s) vendable(s). Touche un batch pour sa <b>traçabilité complète</b> (matières, emplacement, dates, commandes).</p>
+    ${rows}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 // Stock fini disponible AGRÉGÉ PAR PARFUM (sans se soucier des lots).
 // Retourne [{parfum, dispo, recipeId, batches:[{id,qteRestante,date}]}] trié par parfum.
