@@ -1944,11 +1944,14 @@ function _prodbatRow(row){
   const linkBtn = p.libre
     ? `<button class="qa" style="background:#f5c45e;color:#5a3a10" onclick="prodLinkForm(${p.id})" title="Relier à une recette pour activer les coûts">🔗 Relier</button>` : '';
   const startTs = p.prodDebutTs || p.prodTimestamp || '';
+  const prodNomLive = esc(recName(p));
+  const compMot = compMeta.mot;
   const liveBar = (st!=='termine' && startTs)
-    ? `<div class="prod-live ${overdue?'prod-live-over':''}"><span class="pl-dot"></span><span class="pl-label">▶ EN COURS</span><span class="prod-chrono" data-start="${esc(startTs)}">00:00:00</span></div>`
+    ? `<div class="prod-live ${overdue?'prod-live-over':''}"><span class="pl-dot"></span><span class="pl-name">${compMeta.ico} ${prodNomLive} · ${compMot}</span><span class="prod-chrono" data-start="${esc(startTs)}">00:00:00</span></div>`
     : '';
-  return `<div class="${rowCls} prod-card"${overdue?' style="background:#fdf3f2"':''}>
+  return `<div class="${rowCls} prod-card${liveBar?' prod-card-live':''}"${overdue?' style="background:#fdf3f2"':''}>
      ${liveBar}
+     <div class="prod-card-body">
      <div class="prod-card-top">
        <div>${compPill}${partTag}</div>
        <div class="prod-lot"><b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span class="prod-base">base ${esc(p.lotBase)}</span>`:''}</div>
@@ -1977,6 +1980,7 @@ function _prodbatRow(row){
        <button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button>
        <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Traça.</button>
        <button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button>
+     </div>
      </div>
   </div>`;
 }
@@ -11825,25 +11829,31 @@ async function genererFactureMultiple(ids){
   const win = window.open('', '_blank', 'width=800,height=1000');
   if(!win){ toast('Autorise les fenêtres pour générer la facture'); return; }
   win.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8">
+   <meta name="format-detection" content="telephone=no, date=no, email=no, address=no">
    <title>Facture groupée</title>
    <link href="https://fonts.googleapis.com/css2?family=Bellota:wght@400;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
    <style>
      @page { size: A4; margin: 0; }
      * { margin:0; padding:0; box-sizing:border-box; }
      body { font-family:'Outfit',system-ui,sans-serif; color:#3a2a2e; background:#fff; font-size:13px; }
+     a, a:link, a:visited { color:inherit !important; text-decoration:none !important; }
      .page { width:210mm; min-height:297mm; padding:0 0 18mm 0; margin:0 auto; }
-     .entete { background:#E8DDCD; color:#490F25; padding:14mm 16mm 11mm; }
-     .entete .logo { width:95mm; max-width:100%; height:auto; display:block; margin-bottom:7mm; }
-     .entete .em { font-size:11.5px; line-height:1.55; }
-     .corps { padding:10mm 16mm 0; }
-     .ftitre { font-family:'Bellota',cursive; font-weight:700; color:#490F25; font-size:26px; margin-bottom:2mm; }
-     .meta { display:flex; justify-content:space-between; margin:6mm 0 8mm; gap:10mm; }
+     .entete { background:#E8DDCD; color:#490F25; padding:15mm 18mm 12mm; text-align:center; border-bottom:2.5pt solid #490F25; }
+     .entete .logo { width:78mm; max-width:80%; height:auto; display:block; margin:0 auto 6mm; }
+     .entete .em-nom { font-family:'Bellota',cursive; font-weight:700; font-size:18px; color:#490F25; letter-spacing:.02em; margin-bottom:3mm; }
+     .entete .em { font-size:11px; line-height:1.7; color:#5a3a30; max-width:150mm; margin:0 auto; }
+     .entete .em-sep { color:#490F25; margin:0 7px; font-weight:600; }
+     .corps { padding:11mm 18mm 0; }
+     .ftitre { font-family:'Bellota',cursive; font-weight:700; color:#490F25; font-size:26px; margin-bottom:1mm; }
+     .ftitre-rule { height:1.5pt; background:#490F25; width:24mm; margin-bottom:6mm; }
+     .meta { display:flex; justify-content:space-between; margin:6mm 0 5mm; gap:10mm; }
      .meta .bloc { font-size:12.5px; line-height:1.55; }
      .meta .bloc .lbl { color:#AA7C39; font-weight:600; text-transform:uppercase; font-size:10.5px; letter-spacing:.06em; margin-bottom:1mm; }
-     .cmd-section { margin-bottom:7mm; border:1px solid #ece3d5; border-radius:3mm; overflow:hidden; }
-     .cmd-head { background:#f6efe4; color:#490F25; padding:2.5mm 4mm; display:flex; justify-content:space-between; align-items:center; }
+     .meta-rule { height:0.75pt; background:#490F25; opacity:.55; margin:0 0 7mm; }
+     .cmd-section { margin-bottom:7mm; border:1px solid #d8c3b0; border-radius:3mm; overflow:hidden; }
+     .cmd-head { background:#490F25; color:#E8DDCD; padding:2.8mm 4mm; display:flex; justify-content:space-between; align-items:center; }
      .cmd-head .cmd-ref { font-family:'Bellota',cursive; font-weight:700; font-size:14px; }
-     .cmd-head .cmd-date { font-size:11.5px; color:#8a6a52; }
+     .cmd-head .cmd-date { font-size:11.5px; color:#d8c3b0; }
      .cmd-table { width:100%; border-collapse:collapse; }
      .cmd-table td { padding:2.4mm 4mm; border-bottom:1px solid #f0e8da; font-size:12.5px; }
      .cmd-table td.mt { text-align:right; white-space:nowrap; }
@@ -11863,13 +11873,19 @@ async function genererFactureMultiple(ids){
    <div class="page">
      <div class="entete">
        <img class="logo" src="${FACT_LOGO}" alt="logo">
+       ${e.nom?`<div class="em-nom">${esc(e.nom)}</div>`:''}
        <div class="em">
-         ${e.exploitant?esc(e.exploitant)+' · ':''}${e.adresse?esc(e.adresse):''}<br>
-         ${e.tel?'Tél : '+esc(e.tel)+' · ':''}${e.email?esc(e.email)+' · ':''}SIRET : ${esc(e.siret||'—')}
+         ${[
+           e.adresse?esc(e.adresse):'',
+           e.tel?'Tél. '+esc(e.tel):'',
+           e.email?esc(e.email):'',
+           e.siret?'SIRET '+esc(e.siret):''
+         ].filter(Boolean).join('<span class="em-sep">•</span>')}
        </div>
      </div>
      <div class="corps">
        <div class="ftitre">Facture</div>
+       <div class="ftitre-rule"></div>
        <div class="meta">
          <div class="bloc"><div class="lbl">Facturé à</div>${clientBloc}</div>
          <div class="bloc" style="text-align:right">
@@ -11879,6 +11895,7 @@ async function genererFactureMultiple(ids){
            ${orders.length>1 ? orders.length+' commande(s) regroupée(s)' : ''}
          </div>
        </div>
+       <div class="meta-rule"></div>
        ${sections}
        <div class="grand">
          <div class="lg total"><span>Total à payer</span><span>${euro(grandTotal)}</span></div>
