@@ -10,6 +10,9 @@
 <meta name="apple-mobile-web-app-title" content="Sensations">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="apple-touch-icon" href="icon-512.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bellota:wght@400;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
   --bordeaux:#52252F; --bordeaux-2:#6e3340; --bordeaux-3:#3d1a22; --creme:#E8DDCD; --creme-2:#F5F0E8;
@@ -93,6 +96,10 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia','Times New Roman',serif;letter-
 .btn.danger{background:linear-gradient(135deg,#c0584a,var(--red,#b0392c));color:#fff}
 .btn.ghost:hover{background:var(--bordeaux);color:var(--creme);border-color:var(--bordeaux)}
 .btn.sm{padding:6px 12px;font-size:.78rem;border-radius:9px}
+.home-hero{margin:0 0 18px;border-radius:16px;overflow:hidden;background:#C6D6C4;
+  display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(73,15,37,.08)}
+.home-hero img{width:100%;height:auto;max-height:340px;object-fit:contain;display:block}
+@media(max-width:820px){ .home-hero img{max-height:260px} }
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-bottom:28px}
 .card{background:linear-gradient(160deg,#ffffff,#fdfaf5);border-radius:var(--r-lg);padding:20px;box-shadow:var(--sh-2);border:1px solid var(--hair);position:relative;overflow:hidden}
 .card::after{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:var(--grad-gold);opacity:.85}
