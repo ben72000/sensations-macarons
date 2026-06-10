@@ -715,25 +715,31 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
   .cardify tbody tr{display:grid;gap:3px 10px;background:#fff;border:1.5px solid #e8ddcd;
     border-radius:14px;padding:12px 13px;margin-bottom:10px;box-shadow:var(--sh-1);
     width:100%;max-width:100%;box-sizing:border-box;overflow:hidden}
-  .cardify tbody td{border:0;padding:0;background:none;min-width:0;overflow-wrap:anywhere}
+  .cardify tbody td{border:0!important;padding:0;background:none!important;min-width:0;overflow-wrap:anywhere}
+  .cardify tbody tr td:first-child{position:static!important;box-shadow:none!important;background:none!important;max-width:none!important;left:auto!important;z-index:auto!important}
   .cardify td[colspan]{grid-column:1/-1}
   .cardify .qa{min-height:40px;padding:9px 12px;font-size:.8rem;border-radius:11px;margin:0;max-width:100%}
   .cardify .qa-row{justify-content:flex-start;gap:6px;margin-top:7px;padding-top:8px;border-top:1px dashed #eee3d2;flex-wrap:wrap;max-width:100%}
   .cardify .card-lbl::before{display:block;font-size:.6rem;letter-spacing:.04em;color:#9a8a82;font-weight:700;text-transform:uppercase}
 
-  /* ---- COMMANDES ---- */
+  /* ---- COMMANDES (carte épurée, alignée) ---- */
   .cardify-cmd tbody tr{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:
-    "c1 c8" "c2 c2" "c3 c4" "c5 c6" "c7 c7"}
-  .cardify-cmd td:nth-child(1){grid-area:c1}
-  .cardify-cmd td:nth-child(2){grid-area:c2;padding:6px 0;margin:4px 0;border-top:1px dashed #eee3d2;border-bottom:1px dashed #eee3d2}
-  .cardify-cmd td:nth-child(3){grid-area:c3;font-weight:700;font-size:1.05rem;align-self:center;color:var(--bordeaux)}
-  .cardify-cmd td:nth-child(4){grid-area:c4;text-align:right;align-self:center}
-  .cardify-cmd td:nth-child(5){grid-area:c5;align-self:center}
-  .cardify-cmd td:nth-child(6){grid-area:c6;text-align:right;align-self:center}
-  .cardify-cmd td:nth-child(7){grid-area:c7}
-  .cardify-cmd td:nth-child(8){grid-area:c8;justify-self:end}
-  .cardify-cmd .cmd-check{width:22px;height:22px}
-  .cardify-cmd .status-select{width:100%;min-height:38px}
+    "c1 c8" "c2 c2" "c3 c4" "c5 c6" "c7 c7";align-items:center}
+  .cardify-cmd td:nth-child(1){grid-area:c1;align-self:start}
+  .cardify-cmd td:nth-child(2){grid-area:c2;padding:9px 0!important;margin:3px 0;
+    border-top:1px solid #f0e8da!important;border-bottom:1px solid #f0e8da!important;line-height:1.4}
+  .cardify-cmd td:nth-child(3){grid-area:c3;font-weight:700;font-size:1.15rem;color:var(--bordeaux);font-variant-numeric:tabular-nums}
+  .cardify-cmd td:nth-child(4){grid-area:c4;text-align:right}
+  .cardify-cmd td:nth-child(5){grid-area:c5}
+  .cardify-cmd td:nth-child(6){grid-area:c6;text-align:right}
+  .cardify-cmd td:nth-child(7){grid-area:c7;align-self:start}
+  .cardify-cmd td:nth-child(8){grid-area:c8;justify-self:end;align-self:start}
+  .cardify-cmd .cmd-check{width:24px;height:24px}
+  .cardify-cmd .status-select{width:100%;min-height:40px;text-align:center}
+  .cardify-cmd .cmd-period-month{margin-bottom:7px;font-size:.78rem;padding:4px 12px;border-radius:8px}
+  .cardify-cmd .cmd-period-week{display:none}
+  .cardify-cmd tr.cmd-new-month td{border-top:0!important}
+  .cardify-cmd .jump-arrow{margin-left:4px}
 
   /* ---- PRODUCTIONS (cibles tactiles encore + grandes : mains occupées) ---- */
   .cardify-prodbat tbody tr{grid-template-columns:repeat(4,minmax(0,1fr));grid-template-areas:
@@ -852,32 +858,27 @@ h1,h2,h3{font-weight:700}
 /* Bande de titre de l'ACCUEIL — composition « magazine » :
    texte sur aubergine plein à gauche (lisibilité parfaite), photo des
    macarons PLEINEMENT visible à droite, jonction en fondu doux. */
-.topbar.dash-hero{position:relative;border-bottom:none;padding:0;border-radius:18px;overflow:hidden;
-  margin-bottom:26px;box-shadow:var(--sh-2);min-height:150px;display:flex;align-items:stretch}
+.topbar.dash-hero{position:relative;border-bottom:none;padding:0;border-radius:20px;overflow:hidden;
+  margin-bottom:26px;box-shadow:var(--sh-2);min-height:172px;display:flex;align-items:center;
+  background:var(--bg-hero) center 42%/cover no-repeat}
 .topbar.dash-hero::before{content:'';position:absolute;inset:0;z-index:0;
-  background:var(--bg-hero);background-size:cover;background-position:center 58%}
-/* voile : plein à gauche (texte), transparent à droite (photo nette) */
-.topbar.dash-hero::after{content:'';position:absolute;inset:0;z-index:1;
-  background:linear-gradient(95deg,
-    var(--bordeaux) 0%,var(--bordeaux) 30%,
-    rgba(73,15,37,.86) 44%,rgba(73,15,37,.42) 60%,rgba(73,15,37,.08) 76%,transparent 90%)}
+  background:linear-gradient(90deg,rgba(255,255,255,.10),rgba(255,255,255,0) 55%)}
 .topbar.dash-hero>*{position:relative;z-index:2}
-.topbar.dash-hero>div:first-child{flex:1;max-width:62%;padding:24px 24px 24px 26px;align-self:center}
-.topbar.dash-hero>div:last-child{padding:20px 22px;align-self:flex-start}
-.topbar.dash-hero h1{color:#fff;text-shadow:0 1px 10px rgba(40,8,20,.5)}
-.topbar.dash-hero p{color:rgba(245,240,232,.95);text-shadow:0 1px 8px rgba(40,8,20,.45)}
-.topbar.dash-hero .hero-logo{filter:drop-shadow(0 1px 6px rgba(40,8,20,.55))}
+.topbar.dash-hero>div:first-child{margin:18px 0 18px 18px;padding:16px 22px;border-radius:16px;
+  background:rgba(73,15,37,.82);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  box-shadow:0 8px 28px rgba(40,8,20,.32);max-width:64%}
+.topbar.dash-hero>div:last-child{margin-right:18px;align-self:flex-start;margin-top:18px}
+.topbar.dash-hero h1{color:#fff}
+.topbar.dash-hero p{color:rgba(245,240,232,.95)}
+.topbar.dash-hero .hero-logo{filter:none;opacity:1}
+.topbar.dash-hero .btn.ghost{background:rgba(255,255,255,.9);color:var(--bordeaux);border-color:rgba(255,255,255,.6)}
+.topbar.dash-hero .btn.ghost:hover{background:#fff}
 @media(max-width:820px){
-  .topbar.dash-hero{flex-direction:column;min-height:0}
-  .topbar.dash-hero::before{background-position:center 62%}
-  /* sur mobile, voile vertical : sombre en haut (texte), photo dégagée en bas */
-  .topbar.dash-hero::after{background:linear-gradient(180deg,
-    rgba(73,15,37,.92) 0%,rgba(73,15,37,.74) 42%,rgba(73,15,37,.30) 70%,rgba(73,15,37,.10) 100%)}
-  .topbar.dash-hero>div:first-child{max-width:100%;padding:18px 18px 8px}
-  .topbar.dash-hero>div:last-child{padding:0 18px 16px;align-self:stretch}
+  .topbar.dash-hero{min-height:200px;align-items:flex-end;background-position:center 38%}
+  .topbar.dash-hero::before{background:linear-gradient(180deg,rgba(255,255,255,.06),transparent 40%)}
+  .topbar.dash-hero>div:first-child{margin:0 14px 14px;max-width:none;width:calc(100% - 28px)}
+  .topbar.dash-hero>div:last-child{position:absolute;top:14px;right:14px;margin:0}
 }
-.topbar.dash-hero .btn.ghost{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.30);backdrop-filter:blur(4px)}
-.topbar.dash-hero .btn.ghost:hover{background:rgba(255,255,255,.24)}
 @media(max-width:820px){ .topbar.dash-hero{padding:20px 18px;border-radius:14px} }
 
 /* ===== LOGOS DE MARQUE EMBARQUÉS (crème, sur fond aubergine) ===== */
@@ -890,7 +891,7 @@ h1,h2,h3{font-weight:700}
 /* Sidebar : logo vertical à la place du texte de marque */
 .brand-logo{display:block;width:158px;max-width:82%;aspect-ratio:420/395;margin:2px auto 2px;
   background:var(--logo-v) center/contain no-repeat;filter:drop-shadow(0 2px 8px rgba(0,0,0,.28))}
-.brand-pilotage{text-align:center;font-family:var(--font-ui);font-size:.62rem;letter-spacing:.30em;
+.brand-pilotage{text-align:center;font-family:var(--font-ui);font-size:.92rem;letter-spacing:.34em;
   text-transform:uppercase;color:var(--caramel-2);font-weight:600;margin-top:2px}
 /* Accueil (bande héro) : logo horizontal discret en haut */
 .hero-logo{display:block;height:34px;width:200px;max-width:60vw;margin-bottom:10px;opacity:.96;
