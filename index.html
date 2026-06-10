@@ -316,17 +316,21 @@ body.sel-active .cardify-cmd{padding-bottom:80px}
 .flav-row input[type=checkbox]{width:auto;flex-shrink:0}
 .pill{display:inline-block;background:var(--creme);color:var(--bordeaux);border-radius:14px;padding:2px 9px;font-size:.72rem;margin:2px 2px 0 0}
 .sum-box{background:linear-gradient(135deg,var(--creme-2),#f0e8da);border:1px solid var(--hair);border-radius:var(--r-sm);padding:11px 13px;font-size:.84rem;display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+/* variante empilée : pour les récapitulatifs à plusieurs lignes (paiements, prix, livraison) */
+.sum-box.col{flex-direction:column;align-items:stretch;gap:3px}
+.sum-box.col>div{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .sum-box b{color:var(--bordeaux)}
 /* HORODATEUR GLOBAL — discret, fixe en haut à droite, présent sur toutes les pages.
    Semi-transparent et non cliquable pour ne pas gêner ; passe sous les modales (z-index modéré). */
 .clock{position:fixed;top:8px;right:12px;z-index:30;pointer-events:none;
-  font-family:'Outfit',system-ui,sans-serif;font-size:.72rem;line-height:1.15;text-align:right;
-  color:var(--bordeaux);opacity:.62;font-variant-numeric:tabular-nums;letter-spacing:.01em;
-  background:rgba(253,251,247,.72);border:1px solid rgba(170,124,57,.18);border-radius:9px;
-  padding:4px 9px;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
-  box-shadow:0 1px 4px rgba(73,15,37,.06);user-select:none;max-width:46vw}
-.clock .c-date{display:block;font-size:.66rem;color:#8a7a72;text-transform:capitalize}
-.clock .c-time{display:block;font-weight:600;font-size:.82rem}
+  font-family:'Outfit',system-ui,sans-serif;font-size:.7rem;line-height:1.1;text-align:right;
+  color:var(--bordeaux);opacity:.92;font-variant-numeric:tabular-nums;letter-spacing:.01em;
+  background:rgba(253,251,247,.82);border:1px solid rgba(170,124,57,.22);border-radius:10px;
+  padding:5px 10px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  box-shadow:0 2px 10px rgba(73,15,37,.10);user-select:none;
+  display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+.clock .c-date{font-size:.62rem;color:#9a8a82;text-transform:capitalize;font-weight:500}
+.clock .c-time{font-weight:700;font-size:.84rem;color:var(--bordeaux)}
 /* iPhone : laisse respirer sous l'encoche/barre d'état (safe-area) */
 @supports(padding:max(0px)){ .clock{top:max(8px, env(safe-area-inset-top))} }
 /* TABLEAU DE BORD — paire d'encarts (Matières à réappro / Prochaines échéances).
@@ -652,8 +656,11 @@ body.sel-active .cardify-cmd{padding-bottom:80px}
   .emp-tag .emp-full{display:none}
   .emp-tag .emp-letter{display:inline-block;min-width:1.1em;text-align:center;font-weight:700}
   .emp-tag{padding:3px 9px;text-align:center}
-  .main{margin-left:0;max-width:100%;width:100%;padding:46px 14px calc(80px + env(safe-area-inset-bottom))}
+  .main{margin-left:0;max-width:100%;width:100%;padding:56px 14px calc(80px + env(safe-area-inset-bottom))}
   .topbar h1{font-size:1.5rem}
+  /* réserve la zone de l'horloge (en haut à droite) pour que les titres ne passent jamais dessous */
+  .topbar>div:first-child{padding-right:96px}
+  .topbar.dash-hero>div:first-child{padding-right:22px}
   .row2,.row3{grid-template-columns:1fr}
   table{font-size:.82rem}td,th{padding:9px 7px}
   .modal{width:94vw;padding:20px;max-height:84vh}

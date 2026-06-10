@@ -4729,8 +4729,8 @@ function syncPaymentFields(o){
 
 // Réglage : automatisation du statut de paiement quand un règlement est saisi.
 // Stocké dans localStorage, activé par défaut, désactivable par l'utilisateur.
-function autoPayEnabled(){ return localStorage.getItem('sm_autoPay')!=='0'; }
-function setAutoPay(on){ localStorage.setItem('sm_autoPay', on?'1':'0'); }
+function autoPayEnabled(){ return true; }  // toujours actif (case retirée du formulaire)
+function setAutoPay(on){ /* conservé pour compatibilité, sans effet */ }
 
 // Applique le paiement sur un objet commande (mutation en place) de façon cohérente :
 // si un règlement est présent ET l'auto-paiement actif → Payé + date du jour.
@@ -5330,16 +5330,15 @@ async function cmdForm(id, opts){
      </div>
      <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0';cmdRecalc()"></div>
    </div>
-   <div class="sum-box" id="priceBreak" style="display:none"></div>
+   <div class="sum-box col" id="priceBreak" style="display:none"></div>
 
    <div class="pay-ledger" style="margin-top:14px">
      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
        <label style="font-weight:600;color:var(--bordeaux)">Paiements encaissés</label>
-       <label style="font-size:.76rem;color:#7a6a62;display:flex;gap:6px;align-items:center"><input type="checkbox" id="f_autopay" style="width:auto" ${autoPayEnabled()?'checked':''} onchange="setAutoPay(this.checked)"> auto-solder si encaissement</label>
      </div>
      <div id="payList"></div>
      <button type="button" class="btn ghost sm" onclick="cmdAddPayment()">＋ Ajouter un paiement</button>
-     <div class="sum-box" id="paySummary" style="margin-top:8px"></div>
+     <div class="sum-box col" id="paySummary" style="margin-top:8px"></div>
      <div class="field" style="margin-top:8px"><label>Date prévue du règlement final <span style="color:#9a8a82;font-weight:400">— acomptes / événements</span></label>
        <input type="date" id="f_dateFinal" value="${esc(o.dateReglementFinal||'')}"></div>
    </div>
@@ -5816,12 +5815,17 @@ function cmdRecalc(){
     if(cmdLines.length || persoNb){
       brk.style.display='block';
       const remiseLignes = addMoney(...cmdLines.map(ln=>lineRemiseEuro(ln)));
+      // part livraison facturée (si le bouton « Ajouter au prix » a été utilisé)
+      const fraisLiv = (mt && mt.dataset.fraisLivraison) ? (+mt.dataset.fraisLivraison||0) : 0;
+      // total affiché = valeur réelle du champ (inclut la livraison si manuel), sinon total calculé
+      const totalAffiche = (mt && mt.dataset.auto==='0' && mt.value!=='') ? money2(+mt.value||0) : total;
       brk.innerHTML =
-        `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
-        (remiseLignes>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
-        (gpct>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseG)}</b></div>`:'')+
-        (persoNb>0?`<div style="display:flex;justify-content:space-between;color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×0,25 €)</span><b>+${euro(persoSup)}</b></div>`:'')+
-        `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(total)}</b></div>`;
+        `<div><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
+        (remiseLignes>0?`<div style="color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
+        (gpct>0?`<div style="color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseG)}</b></div>`:'')+
+        (persoNb>0?`<div style="color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×0,25 €)</span><b>+${euro(persoSup)}</b></div>`:'')+
+        (fraisLiv>0?`<div style="color:var(--caramel)"><span>🚚 Frais de livraison</span><b>+${euro(fraisLiv)}</b></div>`:'')+
+        `<div style="border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(totalAffiche)}</b></div>`;
     } else brk.style.display='none';
   }
   if(typeof cmdUpdatePaySummary==='function') cmdUpdatePaySummary();
@@ -5889,15 +5893,23 @@ function cmdDeliveryRecalc(){
     (baisse>0?`<div style="display:flex;justify-content:space-between;color:#b3261e;font-size:.82rem"><span>Impact sur le taux de marge</span><b>−${baisse.toFixed(1)} pt</b></div>`:'')+
     (m.suggLivraison>0?`<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #e0d5c5">💡 Pour préserver ta marge, facture la livraison <b style="color:var(--bordeaux)">${euro(m.suggLivraison)}</b> <button type="button" class="btn gold sm" style="margin-left:6px" onclick="cmdApplyDeliveryFee(${m.suggLivraison})">Ajouter au prix</button></div>`:'');
 }
-// Ajoute le supplément livraison suggéré au prix total de la commande (champ manuel).
+// Ajoute (de façon FIABLE) le supplément livraison au prix total.
+// Repart toujours du total produits calculé (sous-total − remises + perso) pour
+// éviter d'empiler plusieurs fois la livraison ou de partir d'un champ vide.
 function cmdApplyDeliveryFee(montant){
   const mt=document.getElementById('f_mt'); if(!mt) return;
-  const base = +mt.value || 0;
-  mt.dataset.auto='0';                       // le prix devient manuel
-  mt.value = money2(base + (+montant||0)).toFixed(2);
-  mt.dataset.fraisLivraison = money2(+montant||0);  // mémorise la part livraison facturée (pour la facture)
+  const frais = money2(+montant||0);
+  // total produits net, indépendant de ce qui est affiché dans le champ
+  const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln)));
+  const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
+  const remiseG = money2(sousTotal*gpct/100);
+  const persoSup = money2(cmdPersoCount()*PERSO_PRIX_UNIT);
+  const totalProduits = Math.max(0, addMoney(subMoney(sousTotal, remiseG), persoSup));
+  mt.dataset.auto='0';                          // le prix devient manuel (livraison incluse)
+  mt.dataset.fraisLivraison = frais;            // mémorise la part livraison (pour la facture)
+  mt.value = money2(totalProduits + frais).toFixed(2);
   cmdRecalc();
-  toast(`Livraison ${euro(montant)} ajoutée au prix`);
+  toast(`Livraison ${euro(frais)} ajoutée — total ${euro(totalProduits+frais)}`);
 }
 
 async function saveCmd(id){
@@ -10045,7 +10057,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v173';
+const APP_VERSION = 'v175';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -12607,10 +12619,13 @@ function ttTick(){
 // Démarre un NOUVEAU chrono (choix rapide d'activité). N'interrompt pas les autres.
 function ttStart(){
   ttCollapse();
-  openModal(`<h3>⏱ Nouvelle activité</h3>
+  openModal(`<h3>⏱ Pointeuse</h3>
     <p class="note">Un tap pour démarrer un chrono. Plusieurs activités peuvent tourner en parallèle.</p>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
       ${TT_ACTIVITIES.map(a=>`<button class="btn ghost" style="flex:1;min-width:44%" onclick="ttStartWith(${JSON.stringify(a).replace(/"/g,'&quot;')})">${esc(a)}</button>`).join('')}
+    </div>
+    <div class="flex" style="gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--hair)">
+      <button class="btn gold" style="flex:1" onclick="closeModal();ttOpenHistory()">🗒 Historique du pointage</button>
     </div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn" onclick="ttStartWith('')">Démarrer sans préciser</button></div>`);
