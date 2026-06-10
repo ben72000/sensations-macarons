@@ -1056,17 +1056,19 @@ async function renderMaterials(){
   window._allMatsCache = mats;   // cache pour le coût emballage réel (calculs synchrones)
   // précalcul du stock par matière (une seule passe sur les lots)
   const allLots = await db.materialLots.toArray();
-  const stockBy={}, dlcBy={}, nbBy={};
-  allLots.forEach(l=>{ const id=l.materialId; if(!(id in stockBy)){stockBy[id]=0;nbBy[id]=0;}
+  const stockBy={}, dlcBy={}, nbBy={}, sansPrixBy={};
+  allLots.forEach(l=>{ const id=l.materialId; if(!(id in stockBy)){stockBy[id]=0;nbBy[id]=0;sansPrixBy[id]=0;}
     const r=+l.qteRestante||0; stockBy[id]+=r;
-    if(r>0){ nbBy[id]++; if(l.dlc && (!dlcBy[id]||l.dlc<dlcBy[id])) dlcBy[id]=l.dlc; } });
+    if(r>0){ nbBy[id]++; if(l.dlc && (!dlcBy[id]||l.dlc<dlcBy[id])) dlcBy[id]=l.dlc;
+      if(!(+l.prix>0)) sansPrixBy[id]++; } });
   _matCache = mats.map(mat=>{
     const total=stockBy[mat.id]||0, dlcMin=dlcBy[mat.id]||null, nbLots=nbBy[mat.id]||0;
+    const sansPrix=sansPrixBy[mat.id]||0;
     const low = total<=(+mat.seuil||0);
     const cat = mat.categorie||'denree';
     const prim = normTxt(mat.nom||'');
     const blob = normTxt([mat.nom, mat.marque, mat.unite, mat.ref, cat==='emballage'?'emballage':'denree', low?'à commander':'ok'].filter(Boolean).join(' '));
-    return {mat, total, dlcMin, nbLots, low, cat, _prim:prim, _blob:blob, _digits:''};
+    return {mat, total, dlcMin, nbLots, sansPrix, low, cat, _prim:prim, _blob:blob, _digits:''};
   });
 
   const sups = await db.suppliers.toArray();
@@ -1177,8 +1179,9 @@ async function renderMaterials(){
 function _matRow(row){
   const mat=row.mat; const dj=row.dlcMin?daysTo(row.dlcMin):null;
   const emb = row.cat==='emballage';
+  const sansPrixBadge = row.sansPrix>0 ? `<br><span class="tag" style="background:#fbeede;color:#a9772a;font-size:.62rem" title="${row.sansPrix} lot(s) sans prix — coût de revient faussé">⚠ prix manquant (${row.sansPrix})</span>` : '';
   return `<tr>
-    <td><b>${esc(mat.nom)}</b>${mat.marque?`<br><span style="color:#9a8a82;font-size:.74rem">🏷️ ${esc(mat.marque)}</span>`:''}</td>
+    <td><b>${esc(mat.nom)}</b>${mat.marque?`<br><span style="color:#9a8a82;font-size:.74rem">🏷️ ${esc(mat.marque)}</span>`:''}${sansPrixBadge}</td>
     <td><span class="tag" style="background:${emb?'#7a6a9a':'#6aa3a0'};color:#fff">${emb?'📦':'🥚'}</span></td>
     <td>${qty(row.total)} ${esc(mat.unite||'')}</td>
     <td>${qty(mat.seuil||0)} ${esc(mat.unite||'')}</td>
@@ -1193,12 +1196,17 @@ function _matRow(row){
 }
 function _lotRow(row){
   const l=row.l;
+  const sansPrix = !(+l.prix>0);
   const idtxt = l.refProduit ? esc(l.refProduit) : (l.commentaire?`<span style="color:#9a8a82">${esc(l.commentaire)}</span>`:(esc(l.lotFournisseur||'—')));
+  const prixBadge = sansPrix ? ` <span class="tag" style="background:#fbeede;color:#a9772a;font-size:.62rem" title="Prix d'achat non renseigné — coût de revient faussé">⚠ prix manquant</span>` : '';
+  const prixBtn = sansPrix
+    ? `<button class="qa" style="background:#f5c45e;color:#5a3a10" onclick="lotPriceForm(${l.id})" title="Renseigner le prix d'achat">💶 Prix</button>`
+    : `<button class="qa edit" onclick="lotPriceForm(${l.id})" title="Modifier le prix">💶</button>`;
   return `<tr>
-    <td>${fmtDate(l.dateReception)}</td><td>${esc(row.matName)}</td>
+    <td>${fmtDate(l.dateReception)}</td><td>${esc(row.matName)}${prixBadge}</td>
     <td>${idtxt}</td><td>${esc(row.supName)}</td>
     <td>${qty(l.qteRestante)} / ${qty(l.qteInitiale)}</td><td>${fmtDate(l.dlc)}</td>
-    <td><div class="qa-row"><button class="qa del" onclick="delLot(${l.id})" title="Supprimer le lot">🗑 Suppr.</button></div></td></tr>`;
+    <td><div class="qa-row">${prixBtn}<button class="qa del" onclick="delLot(${l.id})" title="Supprimer le lot">🗑 Suppr.</button></div></td></tr>`;
 }
 function matSetCat(c){ _matCatFilter=c; renderMaterials(); }
 function matFilter(q){
@@ -1374,19 +1382,73 @@ function majPrixUnit(){
   if(q>0 && p>0){ el.textContent = euro(p/q)+' / '+unite; }
   else { el.textContent='—'; }
 }
+let _pendingLot = null;   // données du lot en attente de confirmation (prix 0)
 async function saveLot(){
   const qte=round3(+val('f_qte'));
   if(!qte||qte<=0){toast('Quantité invalide');return;}
   const prix=money2(+val('f_prix')||0);
-  const o={
+  // On capture TOUTES les valeurs maintenant : ouvrir l'alerte remplace la modale du formulaire.
+  const data={
     materialId:+val('f_mat'), supplierId:+val('f_sup')||0,
     lotFournisseur:val('f_lotf'), qteInitiale:qte, qteRestante:qte,
     prix, prixUnitaire: qte>0 ? money2(prix/qte) : 0,
     dateReception:val('f_date')||today(), dlc:val('f_dlc')||'',
     refProduit:val('f_ref')||'', commentaire:val('f_comm')||''
   };
+  // Garde-fou coût de revient : un lot sans prix d'achat fausse le calcul de marge.
+  if(prix<=0){
+    _pendingLot = data;
+    openModal(`<h3>⚠ Prix d'achat non renseigné</h3>
+      <div class="banner" style="background:#fbeede;border-color:#e5c98a"><div>Attention : sans <b>prix d'achat</b>, le <b>coût de revient</b> de tes recettes utilisant cette matière sera <b>faussé</b> (sous-estimé) — marges et rentabilité incluses.</div></div>
+      <p class="note">Reviens saisir le prix, ou enregistre quand même si ce lot est réellement gratuit (échantillon, don…).</p>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="reopenLotForm()">← Renseigner le prix</button>
+        <button class="btn gold" onclick="saveLotConfirm()">Enregistrer sans prix</button>
+      </div>`);
+    return;
+  }
+  _pendingLot = data;
+  await saveLotConfirm();
+}
+// Renseigner / corriger le PRIX d'un lot existant. Comme tous les calculs (coût de revient,
+// marges, rentabilité) lisent les lots en direct, la correction se répercute instantanément.
+async function lotPriceForm(id){
+  const l=await db.materialLots.get(id); if(!l){ toast('Lot introuvable'); return; }
+  const mat=await db.materials.get(l.materialId);
+  const emb = mat && mat.categorie==='emballage';
+  const u = emb ? (mat.unite||'unité') : 'kg';
+  openModal(`<h3>💶 Renseigner le prix du lot</h3>
+    <p style="margin-bottom:8px"><b>${esc(mat?mat.nom:'?')}</b> · reçu ${fmtDate(l.dateReception)} · ${qty(l.qteInitiale)} ${esc(u)}</p>
+    <div class="field"><label>Prix total payé (€)</label>
+      <input type="number" step="0.01" min="0" id="f_lotprix" value="${l.prix>0?l.prix:''}" placeholder="ex : 12.50"></div>
+    <p class="note">Le prix unitaire sera recalculé automatiquement, et tous les coûts de revient se mettront à jour.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="lotPriceSave(${id})">Enregistrer le prix</button>
+    </div>`);
+}
+async function lotPriceSave(id){
+  const l=await db.materialLots.get(id); if(!l){ toast('Lot introuvable'); return; }
+  const prix=money2(+val('f_lotprix')||0);
+  const pu = (+l.qteInitiale>0) ? money2(prix/l.qteInitiale) : 0;
+  await db.materialLots.update(id, {prix, prixUnitaire:pu});
+  closeModal(); renderMaterials();
+  toast(prix>0 ? 'Prix enregistré ✓ — coûts mis à jour' : 'Prix remis à 0');
+}
+// Rouvre le formulaire de réception en conservant la matière déjà choisie.
+function reopenLotForm(){
+  const matId = _pendingLot ? _pendingLot.materialId : 0;
+  _pendingLot = null;
+  closeModal();
+  lotForm(0, matId);
+}
+// Enregistrement effectif du lot depuis les données capturées.
+async function saveLotConfirm(){
+  const o=_pendingLot; _pendingLot=null;
+  if(!o || !o.materialId){ toast('Données du lot manquantes'); closeModal(); return; }
   await db.materialLots.add(o);
-  closeModal(); renderMaterials(); toast('Lot réceptionné ✓');
+  closeModal(); renderMaterials();
+  toast(o.prix>0 ? 'Lot réceptionné ✓' : 'Lot enregistré (sans prix) ✓');
 }
 async function delLot(id){
   // S1 : un lot consommé par une production ne peut pas être supprimé (traçabilité HACCP)
@@ -1832,6 +1894,9 @@ function _prodbatRow(row){
   // Bouton Distribué : décrémente un lot dégustation au fur et à mesure (offert).
   const degBtn = comp==='degustation' && round3(+p.qteRestante)>0
     ? `<button class="qa edit" onclick="prodDegDistribue(${p.id})" title="Décompter des macarons distribués en dégustation">🥄 Distribué</button>` : '';
+  // Production « à la volée » non reliée → bouton pour la rattacher à une recette.
+  const linkBtn = p.libre
+    ? `<button class="qa" style="background:#f5c45e;color:#5a3a10" onclick="prodLinkForm(${p.id})" title="Relier à une recette pour activer les coûts">🔗 Relier</button>` : '';
   return `<tr class="${rowCls}"${overdue?' style="background:#fdf3f2"':''}>
      <td>${compPill}${partTag}<br><span style="color:#9a8a82;font-size:.74rem">${fmtDate(p.date)}</span>${heureFab?`<br><span style="color:#9a8a82;font-size:.72rem">🕒 ${heureFab}</span>`:''}</td>
      <td>${statutCell}</td>
@@ -1839,7 +1904,7 @@ function _prodbatRow(row){
      <td>${empTag}<br><span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></td>
      <td>${qty(th)}</td><td><b>${qty(re)}</b></td><td>${ecartTag(p)}</td>
      <td>${qty(p.qteRestante)}${comp==='coques'?' <span style="color:#9a8a82;font-size:.66rem">coques</span>':''}${lossByProd[p.id]?`<br><span class="tag out" style="font-size:.68rem">−${qty(lossByProd[p.id])} perte</span>`:''}</td>
-     <td><div class="qa-row">${assembleBtn}${degBtn}<button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button><button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;
+     <td><div class="qa-row">${linkBtn}${assembleBtn}${degBtn}<button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button><button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button><button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button><button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button><button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎</button><button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button></div></td></tr>`;
 }
 // Recherche intelligente des productions. Une seule lettre d'emplacement (F/B/C/A)
 // filtre par zone ; sinon recherche plein-texte (lot, parfum, date, statut…).
@@ -1877,7 +1942,7 @@ function prodbatFilter(q){
     g.rows.sort((a,b)=>(compOrder[prodComposant(a.p)]??9)-(compOrder[prodComposant(b.p)]??9));
     const nb=g.rows.length;
     const reste=g.rows.reduce((s,r)=>s+(round3(+r.p.qteRestante)>0?1:0),0);
-    const libreTag = g.libre?' <span class="tag" style="background:#e9eef9;color:#3a5a9a;font-size:.64rem">libre</span>':'';
+    const libreTag = g.libre?' <span class="tag" style="background:#fbeede;color:#a9772a;font-size:.64rem" title="Production à la volée : à relier à une recette pour activer les coûts">⚠ à compléter</span>':'';
     html+=`<tr class="prod-sec-head"><td colspan="9">🍩 ${esc(g.name)}${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></td></tr>`;
     html+=g.rows.map(_prodbatRow).join('');
   });
@@ -2913,7 +2978,61 @@ async function saveProdLibre(){
     toast(`Production « ${nom} » créée ✓ (mode découverte)`);
   }catch(err){ console.error(err); toast('Erreur création'); }
 }
-// Transaction atomique : consommation FIFO (théorique) + traçabilité + stock fini (réel)
+// ---- RELIER une production libre à une recette (compléter les infos manquantes) ----
+// Sur le modèle des lots sans prix : on n'a rien bloqué à la création ; ici on rattache
+// la production à une recette pour activer les coûts. Choix laissé pour le stock.
+async function prodLinkForm(id){
+  const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
+  const recipes=await db.recipes.toArray();
+  if(!recipes.length){ toast('Crée d\'abord une recette'); return; }
+  const opts=recipes.sort((a,b)=>(a.produitNom||'').localeCompare(b.produitNom||''))
+    .map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('');
+  openModal(`<h3>🔗 Relier à une recette</h3>
+    <p style="margin-bottom:8px"><b>${esc(p.produitLibre||'(sans nom)')}</b> · lot <b>${esc(p.lotProduction||'—')}</b> · ${qty(p.qteProduite||p.qteReelle||0)} pièce(s)</p>
+    <div class="field"><label>Recette</label><select id="f_linkRec">${opts}</select></div>
+    <div class="field"><label>Stock des matières</label>
+      <div class="opt-table">
+        <label class="opt-row"><input type="radio" name="f_linkStock" value="non" checked> <span class="opt-main"><b>Ne pas toucher le stock</b><br><span style="color:#9a8a82;font-size:.78rem">associe juste pour les coûts (recommandé)</span></span></label>
+        <label class="opt-row"><input type="radio" name="f_linkStock" value="oui"> <span class="opt-main"><b>Consommer le stock maintenant</b><br><span style="color:#9a8a82;font-size:.78rem">déduit les ingrédients (selon stock dispo, ne bloque pas)</span></span></label>
+      </div></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="prodLinkSave(${id})">Relier</button>
+    </div>`);
+}
+async function prodLinkSave(id){
+  const recipeId=+val('f_linkRec')||0;
+  const consommer=(document.querySelector('input[name="f_linkStock"]:checked')||{}).value==='oui';
+  if(!recipeId){ toast('Choisis une recette'); return; }
+  const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
+  const rec=await db.recipes.get(recipeId);
+  await db.transaction('rw', db.productions, db.recipeItems, db.materialLots, db.prodConsumption, async()=>{
+    // 1) rattachement : la prod n'est plus « libre »
+    await db.productions.update(id, {recipeId, libre:false});
+    // 2) consommation rétroactive optionnelle (FIFO, ne bloque pas si stock insuffisant)
+    if(consommer){
+      const items=await db.recipeItems.where('recipeId').equals(recipeId).toArray();
+      const rend=+rec.rendement||1;
+      const facteur=(rend>0)?((+p.qteProduite||+p.qteReelle||0)/rend):0;
+      for(const it of items){
+        let besoin=round3((+it.qteParBatch||0)*facteur);
+        if(besoin<=0) continue;
+        const lots=(await db.materialLots.where('materialId').equals(it.materialId).and(l=>+l.qteRestante>0).toArray()).sort(lotFifoCompare);
+        for(const lot of lots){
+          if(besoin<=1e-9) break;
+          const pris=round3(Math.min(besoin,+lot.qteRestante));
+          if(pris>0){
+            await db.materialLots.update(lot.id,{qteRestante:subQty(lot.qteRestante,pris)});
+            await db.prodConsumption.add({productionId:id, materialLotId:lot.id, qteConsommee:pris});
+            besoin=round3(besoin-pris);
+          }
+        }
+      }
+    }
+  });
+  closeModal(); renderProductions();
+  toast(consommer ? 'Reliée ✓ — stock consommé' : 'Reliée ✓ — coûts activés');
+}
 async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd, lotProduction, dlcProduit, emplacement, meta){
   meta=meta||{};
   return db.transaction('rw',
@@ -11767,11 +11886,9 @@ function ttRefresh(){
     const col=ttActivityColor(s.activite);
     return `<div class="tt-whisk${paused?' paused':''}" data-w="${s.id}" style="--tt-col:${col}" onclick="ttWhiskToggle(event,'${s.id}')">
       <span class="whisk-ico">${macaronSVG(col)}</span>
-      <div class="whisk-info">
-        <span class="whisk-lbl">${esc(s.activite||'Production')}${paused?' · pause':''}</span>
-        <span class="whisk-time" data-tt="${s.id}">${ttFormat(ttSessionNet(s))}</span>
-      </div>
+      <span class="whisk-time" data-tt="${s.id}">${ttFormat(ttSessionNet(s))}</span>
       <span class="whisk-ctrl">
+        <span class="whisk-lbl">${esc(s.activite||'Production')}${paused?' · pause':''}</span>
         <button type="button" class="wc-pause" onclick="event.stopPropagation();ttPause('${s.id}')" title="${paused?'Reprendre':'Pause'}">${paused?'▶':'⏸'}</button>
         <button type="button" class="wc-stop" onclick="event.stopPropagation();ttStop('${s.id}')" title="Stop">⏹</button>
       </span>
