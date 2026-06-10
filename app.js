@@ -817,7 +817,9 @@ async function renderDash(){
     if(total<=(+mat.seuil||0)) low.push({nom:mat.nom,total,unite:mat.unite,seuil:mat.seuil});
     if(dlcMin){ const d=daysTo(dlcMin); if(d!==null && d<=7) dlcAlert.push({nom:mat.nom,dlc:dlcMin,j:d}); }
   }
-  const finis = productions.reduce((s,p)=>s+(+p.qteRestante||0),0);
+  // Stock de macarons FINIS VENDABLES uniquement : on exclut les sous-lots intermédiaires
+  // (ganache, coques non assemblées) via prodVendable(), comme la vue « Stock par parfum ».
+  const finis = productions.filter(prodVendable).reduce((s,p)=>s+(+p.qteRestante||0),0);
 
   // Alertes DLC produits finis (suivi en sourdine) : seuil adapté à l'emplacement.
   // Frigo : alerte à ≤2 jours. Congélateur : alerte à ≤14 jours. Expiré = priorité.
