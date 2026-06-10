@@ -4505,11 +4505,13 @@ let _cmdCache=null;
 let cmdTags = new Set();
 // Calcule les facettes d'une commande à partir de ses lignes déjà résolues.
 // Retourne un tableau de {cat, val, label} — cat/val normalisés (filtrage), label lisible (pastille).
-function orderFacets(o, lignes){
+function orderFacets(o, lignes, client){
   const out=[]; const seen=new Set();
   const add=(cat,val,label)=>{ const key=cat+':'+normTxt(String(val)); if(!seen.has(key)){ seen.add(key); out.push({cat, val:normTxt(String(val)), label, key}); } };
   // Année (depuis la date de commande)
   const an=(o.date||'').slice(0,4); if(an) add('annee', an, an);
+  // Mois (libellé court FR) — utile pour retrouver « décembre », « juin »…
+  if(o.date){ const mo=new Date(o.date); if(!isNaN(mo)){ const ml=mo.toLocaleDateString('fr-FR',{month:'long'}); add('mois', ml, ml.charAt(0).toUpperCase()+ml.slice(1)); } }
   lignes.forEach(ln=>{
     // Type de ligne
     if(ln.type) add('type', ln.type, ln.type==='coffret'?'Coffret':ln.type==='grand'?'Grand format':ln.type==='evenement'?'Événement':ln.type);
@@ -4519,10 +4521,20 @@ function orderFacets(o, lignes){
     (ln.parfums||[]).forEach(p=>{ if(p && p.nom) add('parfum', p.nom, p.nom); });
     // Produits (grands formats)
     (ln.items||[]).forEach(p=>{ if(p && p.nom) add('parfum', p.nom, p.nom); });
+    // Personnalisation couleur présente sur la ligne
+    if(ln.persoCouleurs && (Array.isArray(ln.persoCouleurs)?ln.persoCouleurs.length:ln.persoCouleurs)) add('option', 'perso', 'Perso couleur');
   });
   // Statut de paiement (réutilise la logique existante)
   const st = orderPayStatus(o);
   if(st) add('paiement', st, st);
+  // Statut de commande (à préparer / prête / livrée) — pour retrouver vite ce qui reste à faire.
+  const sc = normStatus(o.statut);
+  if(sc) add('statut', sc, sc==='Terminée'?'Prête':sc);
+  // Remise appliquée (globale ou de ligne)
+  const aRemise = (+o.remiseGlobale>0) || (lignes||[]).some(l=>+l.remisePct>0 || +l.remiseEuro>0);
+  if(aRemise) add('remise', 'oui', 'Avec remise');
+  // Type de client (pro / particulier), si renseigné
+  if(client && client.type){ const t=normTxt(client.type); if(t.includes('pro')) add('client','pro','Client pro'); else add('client','particulier','Client particulier'); }
   return out;
 }
 // Une commande (entrée de cache) satisfait-elle TOUS les tags actifs ? (ET logique)
@@ -4576,11 +4588,12 @@ async function renderCmd(){
     const cl=clById[o.clientId]||{};
     const refCmd = orderNumber(o);   // n° de référence affiché (ex. 2026-030)
     const prim = normTxt([clName(o.clientId), 'cmd'+o.id, refCmd].filter(Boolean).join(' '));
+    const _facets = orderFacets(o, lignes, clById[o.clientId]||{});
+    const facetTxt = _facets.map(f=>f.label).join(' ');   // labels filtrables via la recherche
     const blob = normTxt([clName(o.clientId), cl.prenom, cl.societe, cl.tel, cl.email, cl.ref,
       resume, prodTxt, o.notes, o.reglement, o.paiement, 'cmd'+o.id, '#'+o.id, refCmd, fmtDate(o.date),
-      (lotsByOrder[o.id]||[]).join(' ')].filter(Boolean).join(' '));
+      facetTxt, (lotsByOrder[o.id]||[]).join(' ')].filter(Boolean).join(' '));
     const digits = onlyDigits([o.id, refCmd, cl.tel, o.montant].filter(v=>v!=null&&v!=='').join(' '));
-    const _facets = orderFacets(o, lignes);
     return {o, resume, nbLies:(itemsByOrder[o.id]||[]).length, _prim:prim, _blob:blob, _digits:digits, _facets};
   });
   document.getElementById('main').innerHTML=`
@@ -4588,7 +4601,7 @@ async function renderCmd(){
      <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()" title="Masquer/afficher les données sensibles">${privacyModeEnabled()?'👁️ Afficher':'🙈 Mode discret'}</button>
      <button class="btn" onclick="cmdForm()">+ Nouvelle commande</button></div></div>
    <div class="panel">
-     <input class="search" id="cmdSearch" style="width:100%;margin-bottom:12px" placeholder="N° commande, client, produit, parfum, notes, règlement…" value="${esc(cmdSearch)}" oninput="cmdFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
+     <input class="search" id="cmdSearch" style="width:100%;margin-bottom:12px" placeholder="N° commande, client, produit, parfum, mois, statut (prête/livrée), payé, remise…" value="${esc(cmdSearch)}" oninput="cmdFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
      <div id="cmdTagBar" class="cmd-tagbar"></div>
      <div id="cmdSelBar" class="sel-bar" style="display:none">
        <span id="cmdSelCount">0 sélectionnée(s)</span>
@@ -4618,7 +4631,12 @@ const _FACET_CATS = [
 ];
 function _cmdRenderTagBar(){
   const bar=document.getElementById('cmdTagBar'); if(!bar) return;
-  if(!_cmdCache || !_cmdCache.length){ bar.innerHTML=''; return; }
+  // Étiquettes masquées à la demande : le filtrage se fait via la recherche texte
+  // (les libellés de facettes sont inclus dans le champ recherchable). Les fonctions de tag
+  // restent disponibles si on souhaite les réafficher un jour.
+  bar.innerHTML='';
+  return;
+  // Code d'affichage conservé (inactif) au cas où on réactiverait les étiquettes visuelles :
   // Inventaire des facettes présentes : key -> {cat, label} ; et comptage par key.
   const facetMap=new Map();
   _cmdCache.forEach(e=>(e._facets||[]).forEach(f=>{ if(!facetMap.has(f.key)) facetMap.set(f.key, {cat:f.cat, val:f.val, label:f.label}); }));
@@ -12137,61 +12155,70 @@ function serenityTier(score){
 
 // Dessine le chat selon l'humeur. Couleur = couleur de palier (col).
 // moods : 'stress' | 'tension' | 'vigilance' | 'serein' | 'tres-serein'
+// Mascotte MACARON (inspirée d'une photo) : coque haute caramel, coque basse jaune safran,
+// ganache foncée au centre. Le visage (sur la coque haute) change selon l'humeur ; la couleur
+// de la jauge (col) sert d'accent (liseré + joues) pour rester cohérent avec le système.
 function mascotSVG(mood, col){
-  // éléments variables selon l'humeur
-  let ears, eyes, mouth, extra='', tail, whiskerY=42;
+  let eyes, mouth, brows='', extra='', cheekOp='.55';
   switch(mood){
-    case 'stress': // très stressé : oreilles en arrière, poils hérissés, gouttes
-      ears = `<path d="M20 26 L10 10 L30 20 Z" fill="${col}"/><path d="M60 26 L70 10 L50 20 Z" fill="${col}"/>`;
-      eyes = `<circle cx="31" cy="38" r="5" fill="#fff"/><circle cx="49" cy="38" r="5" fill="#fff"/>
-              <circle cx="31" cy="38" r="3.4" fill="#2b1a1f"/><circle cx="49" cy="38" r="3.4" fill="#2b1a1f"/>
-              <path d="M25 31 L36 35 M55 31 L44 35" stroke="#2b1a1f" stroke-width="2" stroke-linecap="round"/>`;
-      mouth = `<path d="M34 50 Q40 45 46 50" fill="none" stroke="#2b1a1f" stroke-width="2" stroke-linecap="round"/>`;
-      extra = `<path d="M62 30 q3 5 0 9 q-3 -4 0 -9Z" fill="#7ec8e3"/>`; // goutte de sueur
-      tail = `<path d="M64 60 q16 -2 12 -18" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round"/>`;
+    case 'stress': // yeux écarquillés, bouche ouverte inquiète, gouttes de sueur
+      brows = `<path d="M22 30 L33 27 M58 30 L47 27" stroke="#5a3a22" stroke-width="2.2" stroke-linecap="round"/>`;
+      eyes  = `<ellipse cx="30" cy="36" rx="5.2" ry="6" fill="#fff"/><ellipse cx="50" cy="36" rx="5.2" ry="6" fill="#fff"/>
+               <circle cx="30" cy="37.5" r="3" fill="#3a2418"/><circle cx="50" cy="37.5" r="3" fill="#3a2418"/>`;
+      mouth = `<ellipse cx="40" cy="50" rx="5" ry="6" fill="#5a2a22"/>`;
+      extra = `<path d="M63 33 q3 5 0 9 q-3 -4 0 -9Z" fill="#7ec8e3"/><path d="M16 30 q2.5 4 0 7.5 q-2.5 -3.5 0 -7.5Z" fill="#7ec8e3"/>`;
+      cheekOp='.3';
       break;
-    case 'tension': // tension : une oreille basse, sourcils inquiets
-      ears = `<path d="M20 26 L12 12 L31 20 Z" fill="${col}"/><path d="M60 28 L66 16 L49 21 Z" fill="${col}"/>`;
-      eyes = `<circle cx="31" cy="39" r="4.6" fill="#2b1a1f"/><circle cx="49" cy="39" r="4.6" fill="#2b1a1f"/>
-              <path d="M26 33 L36 36 M54 33 L44 36" stroke="#2b1a1f" stroke-width="1.8" stroke-linecap="round"/>`;
-      mouth = `<path d="M35 49 Q40 47 45 49" fill="none" stroke="#2b1a1f" stroke-width="2" stroke-linecap="round"/>`;
-      tail = `<path d="M64 60 q15 2 14 -12" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round"/>`;
+    case 'tension': // sourcils froncés, bouche plate ondulée
+      brows = `<path d="M23 29 L33 31 M57 29 L47 31" stroke="#5a3a22" stroke-width="2.2" stroke-linecap="round"/>`;
+      eyes  = `<circle cx="30" cy="39" r="4.4" fill="#3a2418"/><circle cx="50" cy="39" r="4.4" fill="#3a2418"/>`;
+      mouth = `<path d="M32 52 Q36 49 40 52 Q44 55 48 52" fill="none" stroke="#5a2a22" stroke-width="2.4" stroke-linecap="round"/>`;
+      cheekOp='.4';
       break;
-    case 'vigilance': // vigilance : neutre, attentif
-      ears = `<path d="M20 24 L13 9 L32 18 Z" fill="${col}"/><path d="M60 24 L67 9 L48 18 Z" fill="${col}"/>`;
-      eyes = `<circle cx="31" cy="38" r="4.8" fill="#2b1a1f"/><circle cx="49" cy="38" r="4.8" fill="#2b1a1f"/>
-              <circle cx="32.6" cy="36.6" r="1.4" fill="#fff"/><circle cx="50.6" cy="36.6" r="1.4" fill="#fff"/>`;
-      mouth = `<path d="M37 49 L40 51 L43 49" fill="none" stroke="#2b1a1f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
-      tail = `<path d="M64 60 q16 0 14 -14" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round"/>`;
+    case 'vigilance': // neutre attentif, petit sourire discret
+      eyes  = `<circle cx="30" cy="38" r="4.6" fill="#3a2418"/><circle cx="50" cy="38" r="4.6" fill="#3a2418"/>
+               <circle cx="31.6" cy="36.6" r="1.5" fill="#fff"/><circle cx="51.6" cy="36.6" r="1.5" fill="#fff"/>`;
+      mouth = `<path d="M34 51 Q40 54 46 51" fill="none" stroke="#5a2a22" stroke-width="2.4" stroke-linecap="round"/>`;
       break;
-    case 'serein': // serein : petit sourire, yeux doux
-      ears = `<path d="M20 23 L13 8 L32 17 Z" fill="${col}"/><path d="M60 23 L67 8 L48 17 Z" fill="${col}"/>`;
-      eyes = `<circle cx="31" cy="38" r="4.6" fill="#2b1a1f"/><circle cx="49" cy="38" r="4.6" fill="#2b1a1f"/>
-              <circle cx="32.6" cy="36.6" r="1.4" fill="#fff"/><circle cx="50.6" cy="36.6" r="1.4" fill="#fff"/>`;
-      mouth = `<path d="M33 49 Q40 55 47 49" fill="none" stroke="#2b1a1f" stroke-width="2" stroke-linecap="round"/>`;
-      extra = `<circle cx="26" cy="46" r="3" fill="#f4a9a0" opacity=".6"/><circle cx="54" cy="46" r="3" fill="#f4a9a0" opacity=".6"/>`;
-      tail = `<path d="M64 58 q16 2 12 -14" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round"/>`;
+    case 'serein': // sourire franc, joues roses, yeux pétillants
+      eyes  = `<circle cx="30" cy="38" r="4.6" fill="#3a2418"/><circle cx="50" cy="38" r="4.6" fill="#3a2418"/>
+               <circle cx="31.8" cy="36.4" r="1.6" fill="#fff"/><circle cx="51.8" cy="36.4" r="1.6" fill="#fff"/>`;
+      mouth = `<path d="M32 50 Q40 58 48 50" fill="none" stroke="#5a2a22" stroke-width="2.6" stroke-linecap="round"/>`;
+      cheekOp='.75';
       break;
-    default: // tres-serein : yeux fermés satisfaits, ronronne (Z/zen)
-      ears = `<path d="M20 23 L13 8 L32 17 Z" fill="${col}"/><path d="M60 23 L67 8 L48 17 Z" fill="${col}"/>`;
-      eyes = `<path d="M26 38 Q31 34 36 38" fill="none" stroke="#2b1a1f" stroke-width="2" stroke-linecap="round"/>
-              <path d="M44 38 Q49 34 54 38" fill="none" stroke="#2b1a1f" stroke-width="2" stroke-linecap="round"/>`;
-      mouth = `<path d="M33 48 Q40 56 47 48" fill="none" stroke="#2b1a1f" stroke-width="2" stroke-linecap="round"/>`;
-      extra = `<circle cx="25" cy="46" r="3.2" fill="#f4a9a0" opacity=".7"/><circle cx="55" cy="46" r="3.2" fill="#f4a9a0" opacity=".7"/>
-               <text x="60" y="20" font-size="9" fill="${col}" font-family="serif">z</text><text x="67" y="13" font-size="6" fill="${col}" font-family="serif">z</text>`;
-      tail = `<path d="M64 58 q18 0 10 -16" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round"/>`;
+    default: // tres-serein : yeux fermés satisfaits, grand sourire, petites notes de bonheur
+      eyes  = `<path d="M25 38 Q30 33 35 38" fill="none" stroke="#3a2418" stroke-width="2.4" stroke-linecap="round"/>
+               <path d="M45 38 Q50 33 55 38" fill="none" stroke="#3a2418" stroke-width="2.4" stroke-linecap="round"/>`;
+      mouth = `<path d="M31 50 Q40 60 49 50" fill="none" stroke="#5a2a22" stroke-width="2.6" stroke-linecap="round"/>`;
+      extra = `<text x="58" y="22" font-size="10" fill="${col}" font-family="serif">♪</text><text x="66" y="15" font-size="7" fill="${col}" font-family="serif">♫</text>`;
+      cheekOp='.8';
+      break;
   }
-  const whiskers = `<g stroke="#9a8a82" stroke-width="1.2" stroke-linecap="round" opacity=".8">
-      <path d="M28 ${whiskerY} L14 ${whiskerY-2}"/><path d="M28 ${whiskerY+3} L15 ${whiskerY+5}"/>
-      <path d="M52 ${whiskerY} L66 ${whiskerY-2}"/><path d="M52 ${whiskerY+3} L65 ${whiskerY+5}"/></g>`;
+  // joues colorées selon la jauge
+  const cheeks = `<ellipse cx="22" cy="44" rx="4.5" ry="3" fill="${col}" opacity="${cheekOp}"/><ellipse cx="58" cy="44" rx="4.5" ry="3" fill="${col}" opacity="${cheekOp}"/>`;
   return `<svg viewBox="0 0 80 80" width="100%" height="100%" aria-hidden="true">
-    ${tail}
-    <ellipse cx="40" cy="44" rx="24" ry="22" fill="#fff" stroke="${col}" stroke-width="2.5"/>
-    ${ears}
-    <ellipse cx="40" cy="46" rx="22" ry="19" fill="#fff"/>
-    ${whiskers}${eyes}
-    <path d="M37 43 L43 43 L40 46 Z" fill="${col}"/>
-    ${mouth}${extra}
+    <defs>
+      <linearGradient id="mcTop" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#c98a4e"/><stop offset="1" stop-color="#a96a32"/>
+      </linearGradient>
+      <linearGradient id="mcBot" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#f4c43a"/><stop offset="1" stop-color="#e0a81f"/>
+      </linearGradient>
+    </defs>
+    <!-- coque basse (jaune safran) + sa collerette -->
+    <ellipse cx="40" cy="62" rx="30" ry="11" fill="url(#mcBot)"/>
+    <path d="M11 60 q4 5 10 5.5 M69 60 q-4 5 -10 5.5 M24 64 q3 3 7 3.2 M49 64 q3 0 7 -3.2" stroke="#caa01c" stroke-width="1.4" fill="none" opacity=".5"/>
+    <!-- ganache foncée -->
+    <ellipse cx="40" cy="55" rx="27" ry="7" fill="#4a2a1c"/>
+    <!-- coque haute (caramel) -->
+    <ellipse cx="40" cy="40" rx="32" ry="24" fill="url(#mcTop)"/>
+    <!-- liseré couleur jauge (fin, en bas de la coque haute) -->
+    <path d="M9 44 q31 14 62 0" fill="none" stroke="${col}" stroke-width="2.4" stroke-linecap="round" opacity=".85"/>
+    <!-- collerette (pied) de la coque haute -->
+    <path d="M10 47 q5 5 11 5.5 M70 47 q-5 5 -11 5.5 M25 51 q4 3 8 3 M47 51 q4 0 8 -3" stroke="#8a5a2e" stroke-width="1.5" fill="none" opacity=".55"/>
+    <!-- brillance -->
+    <ellipse cx="30" cy="28" rx="13" ry="6" fill="#fff" opacity=".18"/>
+    ${cheeks}${brows}${eyes}${mouth}${extra}
   </svg>`;
 }
 
@@ -13089,7 +13116,7 @@ async function renderPMS(){
   _pmsDate = today();   // on repart toujours sur aujourd'hui en entrant dans l'écran
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>HACCP / PMS</h1><p>Plan de Maîtrise Sanitaire — ${fmtDate(today())}</p></div>
-     <button class="btn ghost" onclick="pmsExportDDPP()">🗄 Historique / Contrôle DDPP</button></div>
+     <div class="flex"><button class="btn ghost" onclick="pmsRemindersInfo()">🔔 Rappels iOS</button><button class="btn ghost" onclick="pmsExportDDPP()">🗄 Historique / Contrôle DDPP</button></div></div>
    <div class="pick-tabs">
      <button class="${_pmsTab==='temp'?'active':''}" onclick="pmsSetTab('temp')">🌡 Températures</button>
      <button class="${_pmsTab==='nettoyage'?'active':''}" onclick="pmsSetTab('nettoyage')">🧼 Nettoyage</button>
@@ -13304,6 +13331,126 @@ async function pmsToggleTask(taskId, wasDone){
   pmsRenderCleaning();
 }
 
+// L'app a-t-elle « servi » aujourd'hui ? (production, commande, relevé T° ou session de travail créés ce jour)
+async function pmsAppServedToday(){
+  const d=today();
+  const prod=await db.productions.where('date').equals(d).count().catch(()=>0);
+  if(prod>0) return true;
+  const cmd=await db.orders.where('date').equals(d).count().catch(()=>0);
+  if(cmd>0) return true;
+  const temp=await db.temperatureLogs.where('date').equals(d).count().catch(()=>0);
+  if(temp>0) return true;
+  const ws=(await db.workSessions.toArray().catch(()=>[])).some(s=>((s.date||'').slice(0,10)===d)||((s.debut||'').slice(0,10)===d));
+  return !!ws;
+}
+// Vérification de fin de journée pour le nettoyage. Exécutée une fois par jour au lancement.
+// - Si l'app a servi aujourd'hui : popup rappelant les nettoyages quotidiens non faits.
+// - Sinon : valide automatiquement les tâches quotidiennes du jour (rien ne s'est passé à nettoyer).
+async function pmsEndOfDayCheck(){
+  const d=today();
+  // « Fin de journée » : on ne déclenche qu'à partir de 18h (sinon le rappel n'a pas de sens le matin).
+  if(new Date().getHours() < 18) return;
+  // une seule exécution par jour
+  if(localStorage.getItem('sm_pmsEod')===d) return;
+  const tasks=await db.pmsTasks.toArray().catch(()=>[]);
+  const daily=tasks.filter(t=>t.frequence==='Quotidien');
+  if(!daily.length){ localStorage.setItem('sm_pmsEod', d); return; }
+  const logs=await db.cleaningLogs.toArray().catch(()=>[]);
+  const doneToday=id=>logs.some(l=>l.taskId===id && (l.date||'')===d);
+  const restants=daily.filter(t=>!doneToday(t.id));
+  if(!restants.length){ localStorage.setItem('sm_pmsEod', d); return; }   // déjà tout fait
+  const served=await pmsAppServedToday();
+  if(!served){
+    // Aucune activité aujourd'hui → on valide automatiquement les tâches quotidiennes.
+    for(const t of restants){ await db.cleaningLogs.add({taskId:t.id, date:d}); }
+    localStorage.setItem('sm_pmsEod', d);
+    return;
+  }
+  // L'app a servi → on rappelle (popup) les nettoyages quotidiens non faits.
+  localStorage.setItem('sm_pmsEod', d);
+  openModal(`<h3>🧼 Nettoyages de fin de journée</h3>
+    <div class="banner" style="background:#fbeede;border-color:#e5c98a"><div>Il reste <b>${restants.length} nettoyage(s) quotidien(s)</b> non validé(s) aujourd'hui.</div></div>
+    <div style="margin:6px 0 10px">${restants.map(t=>`<div class="trace-step">• ${esc(t.nom)}</div>`).join('')}</div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Plus tard</button>
+      <button class="btn gold" onclick="pmsValidateDailyCleaning()">✓ Tout valider</button>
+    </div>`);
+}
+async function pmsValidateDailyCleaning(){
+  const d=today();
+  const tasks=await db.pmsTasks.toArray().catch(()=>[]);
+  const daily=tasks.filter(t=>t.frequence==='Quotidien');
+  const logs=await db.cleaningLogs.toArray().catch(()=>[]);
+  for(const t of daily){ if(!logs.some(l=>l.taskId===t.id && (l.date||'')===d)) await db.cleaningLogs.add({taskId:t.id, date:d}); }
+  closeModal(); toast('Nettoyages du jour validés ✓');
+  if(view==='pms' && _pmsTab==='nettoyage') pmsRenderCleaning();
+}
+
+// ---------- RAPPELS iOS (calendrier .ics) ----------
+// iOS bloque les push planifiés d'une PWA sans serveur. On génère donc des rappels récurrents
+// dans le Calendrier de l'iPhone, qui notifie même app fermée.
+// Règle matin : semaine PAIRE → 4h30, semaine IMPAIRE → 9h (alternance sans fin).
+// Soir : 21h tous les jours.
+function pmsRemindersInfo(){
+  openModal(`<h3>🔔 Rappels HACCP sur iPhone</h3>
+    <div class="banner">📅 <div>iOS n'autorise pas une app web à sonner seule à heure fixe. La solution fiable : ajouter des <b>rappels récurrents</b> à ton <b>Calendrier iPhone</b> — ils te notifieront <b>même l'app fermée</b>.</div></div>
+    <p class="note" style="margin-bottom:8px">Ce fichier programme :</p>
+    <ul style="margin:0 0 10px 18px;font-size:.88rem;color:#5a4a42;line-height:1.5">
+      <li><b>Matin — semaines paires</b> : contrôle T° à <b>4h30</b></li>
+      <li><b>Matin — semaines impaires</b> : contrôle T° à <b>9h00</b></li>
+      <li><b>Soir</b> : contrôle T° à <b>21h00</b>, tous les jours</li>
+    </ul>
+    <p class="note" style="margin-bottom:10px">Touche le bouton, puis dans iOS choisis <b>« Calendrier »</b> pour ajouter les rappels. À faire une seule fois.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn gold" onclick="pmsDownloadICS()">📅 Ajouter les rappels</button>
+    </div>`);
+}
+// Construit le contenu ICS (3 séries récurrentes).
+function pmsBuildICS(){
+  const pad=n=>String(n).padStart(2,'0');
+  // Ancres 2026 (vérifiées) : lundi 8/6 = semaine 24 PAIRE ; lundi 15/6 = semaine 25 IMPAIRE.
+  // DTSTART local + RRULE bihebdomadaire → alternance perpétuelle.
+  const dtMatinPair   = '20260608T043000'; // 4h30, semaines paires
+  const dtMatinImpair = '20260615T090000'; // 9h00, semaines impaires
+  const dtSoir        = '20260608T210000'; // 21h00 tous les jours
+  const stamp = (()=>{ const d=new Date(); return d.getUTCFullYear()+pad(d.getUTCMonth()+1)+pad(d.getUTCDate())+'T'+pad(d.getUTCHours())+pad(d.getUTCMinutes())+pad(d.getUTCSeconds())+'Z'; })();
+  const uid=()=> 'sm-'+Math.random().toString(36).slice(2)+'@sensations-macarons';
+  const vevent=(dtstart,rrule,summary,desc)=>[
+    'BEGIN:VEVENT','UID:'+uid(),'DTSTAMP:'+stamp,
+    'DTSTART;TZID=Europe/Paris:'+dtstart,
+    'DURATION:PT10M','RRULE:'+rrule,
+    'SUMMARY:'+summary,'DESCRIPTION:'+desc,
+    'BEGIN:VALARM','ACTION:DISPLAY','TRIGGER:PT0M','DESCRIPTION:'+summary,'END:VALARM',
+    'END:VEVENT'
+  ].join('\r\n');
+  const body=[
+    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Sensations Macarons//HACCP//FR','CALSCALE:GREGORIAN','METHOD:PUBLISH',
+    'BEGIN:VTIMEZONE','TZID:Europe/Paris',
+    'BEGIN:STANDARD','DTSTART:19701025T030000','TZOFFSETFROM:+0200','TZOFFSETTO:+0100','RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU','END:STANDARD',
+    'BEGIN:DAYLIGHT','DTSTART:19700329T020000','TZOFFSETFROM:+0100','TZOFFSETTO:+0200','RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU','END:DAYLIGHT',
+    'END:VTIMEZONE',
+    vevent(dtMatinPair,   'FREQ=WEEKLY;INTERVAL=2', '🌡 Contrôle T° HACCP (matin 4h30)', 'Releve de temperature - semaines paires. Valide dans l app Sensations Macarons.'),
+    vevent(dtMatinImpair, 'FREQ=WEEKLY;INTERVAL=2', '🌡 Contrôle T° HACCP (matin 9h)',   'Releve de temperature - semaines impaires. Valide dans l app Sensations Macarons.'),
+    vevent(dtSoir,        'FREQ=DAILY',             '🌡 Contrôle T° HACCP (soir 21h)',   'Releve de temperature du soir. Valide dans l app Sensations Macarons.'),
+    'END:VCALENDAR'
+  ].join('\r\n');
+  return body;
+}
+function pmsDownloadICS(){
+  try{
+    const ics=pmsBuildICS();
+    const blob=new Blob([ics],{type:'text/calendar;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download='rappels-haccp-sensations-macarons.ics';
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
+    closeModal();
+    toast('Fichier de rappels créé — choisis « Calendrier » dans iOS ✓');
+  }catch(e){ console.error(e); toast('Erreur lors de la création du fichier'); }
+}
+
 // ---------- C. HISTORIQUE / EXPORT DDPP (30 jours) ----------
 async function pmsExportDDPP(){
   const [eqs, tasks, tLogs, cLogs] = await Promise.all([
@@ -13394,6 +13541,7 @@ function startClock(){
   // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
   try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
   try{ await autoDailyBackup(); }catch(e){ console.error('autoBackup',e); }
+  try{ await pmsEndOfDayCheck(); }catch(e){ console.error('pmsEod',e); }
   // Rappel d'export en DERNIER (et seulement si aucune autre modale n'est ouverte),
   // pour qu'il ne soit pas masqué par un autre message de démarrage.
   setTimeout(()=>{ try{ if(!document.getElementById('overlay')?.classList.contains('show')) exportReminder(); }catch(e){} }, 1200);
