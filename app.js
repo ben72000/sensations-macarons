@@ -1931,8 +1931,8 @@ function _prodbatRow(row){
     ganache:    {ico:'🍫', mot:'GANACHE',     cls:'comp-ganache'},
     assemble:   {ico:'✓',  mot:'ASSEMBLÉ',    cls:'comp-assemble'},
     degustation:{ico:'🥄', mot:'DÉGUSTATION', cls:'comp-degustation'},
-    complet:    {ico:'🍪', mot:'COMPLET',     cls:'comp-complet'}
-  }[comp] || {ico:'🍪', mot:'COMPLET', cls:'comp-complet'};
+    complet:    {ico:'🍪', mot:'COQUES + GANACHE',     cls:'comp-complet'}
+  }[comp] || {ico:'🍪', mot:'COQUES + GANACHE', cls:'comp-complet'};
   const compPill = `<span class="comp-pill ${compMeta.cls}"><span class="cp-ico">${compMeta.ico}</span>${compMeta.mot}</span>`;
   const rowCls = `prow prow-${comp||'complet'}`;
   const partTag = p.parentProdId ? ` <span class="tag" style="background:#ece2d4;color:#6b5a52;font-size:.66rem">partie</span>` : '';
@@ -2711,9 +2711,9 @@ async function prodAssembleForm(id){
      <input type="number" id="f_asmQte" min="1" value="${maxThisMac}" max="${maxThisMac}">
      <p class="note" style="margin-top:4px">Consommera 2 coques + 1 ganache par macaron. Le maximum réel dépend aussi du sous-lot associé.</p></div>
    <div class="field" id="f_asmDestWrap"><label>Emplacement du macaron assemblé *</label>
-     <div style="display:flex;flex-wrap:wrap;gap:6px">
-       <label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_asmDest" value="frigo" checked> <b style="background:#6aa3a0;color:#fff;border-radius:6px;padding:0 7px">F</b> 🧊 Frigo (DLC 7 j)</label>
-       ${EMPLACEMENTS.filter(e=>e.type!=='frigo').map(e=>`<label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_asmDest" value="${e.key}"> <b style="background:#3b6ea5;color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b> ${e.icon} ${esc(e.nom)}</label>`).join('')}
+     <div class="emp-choices">
+       <label class="emp-opt"><input type="radio" name="f_asmDest" value="frigo" checked> <b style="background:#6aa3a0;color:#fff;border-radius:6px;padding:0 7px">F</b> <span>🧊 Frigo (DLC 7 j)</span></label>
+       ${EMPLACEMENTS.filter(e=>e.type!=='frigo').map(e=>`<label class="emp-opt"><input type="radio" name="f_asmDest" value="${e.key}"> <b style="background:#3b6ea5;color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b> <span>${e.icon} ${esc(e.nom)}</span></label>`).join('')}
      </div></div>
    <p class="note" id="asmDegHint" style="display:none">🥄 Ces macarons iront dans un <b>stock dégustation séparé</b> (non vendable, valeur 0 €). Tu les décrémenteras au fur et à mesure qu'ils sont distribués (marchés, dégustations).</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
