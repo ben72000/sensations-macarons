@@ -311,7 +311,17 @@ async function seedEmballages(){
       capacite:+cap, seuil:0, prixDefaut:prixDef});
   }
 }
-// Décrémente `nb` emballages du stock (lots FIFO : DLC la plus proche, puis réception la plus ancienne).
+// Comparateur FIFO des lots de matière/emballage.
+// RÈGLE : un lot de REPRISE (stock de départ migration, repriseStock:true) est TOUJOURS
+// consommé en premier (priorité absolue), avant tout autre lot. Ensuite, ordre normal :
+// DLC la plus proche d'abord, puis réception la plus ancienne.
+function lotFifoCompare(a, b){
+  const ra = a.repriseStock?0:1, rb = b.repriseStock?0:1;
+  if(ra!==rb) return ra-rb;                       // les lots de reprise en tête
+  return (a.dlc||'9999').localeCompare(b.dlc||'9999')
+      || (a.dateReception||'').localeCompare(b.dateReception||'');
+}
+// Décrémente `nb` emballages du stock (lots FIFO : reprise d'abord, puis DLC la plus proche).
 // Retourne {consomme, manque, materialId} ; ne lève pas si stock insuffisant (consomme ce qui existe).
 // À appeler dans une transaction incluant db.materialLots.
 async function decrementPackagingStock(taille, nb){
@@ -319,7 +329,7 @@ async function decrementPackagingStock(taille, nb){
   if(!mat) return {consomme:0, manque:nb, materialId:null, absent:true};
   const lots = (await db.materialLots.where('materialId').equals(mat.id).toArray())
     .filter(l=>round3(+l.qteRestante)>0)
-    .sort((a,b)=> (a.dlc||'9999').localeCompare(b.dlc||'9999') || (a.dateReception||'').localeCompare(b.dateReception||''));
+    .sort(lotFifoCompare);
   let reste = round3(+nb||0); let consomme=0;
   for(const l of lots){
     if(reste<=0) break;
@@ -643,17 +653,36 @@ function goView(v, opts){
     try{ history.pushState({view:v, kind:'view'}, '', '#'+v); }catch(e){}
   }
 }
-// Renvoie true si des températures ont été saisies dans l'écran courant mais non enregistrées.
+// Renvoie true s'il existe une température MODIFIÉE et non encore validée dans l'écran courant.
+// On compare la valeur affichée à la valeur déjà enregistrée (data-saved) : un relevé déjà
+// validé puis simplement réaffiché ne compte PAS comme « non enregistré ».
 function pmsHasUnsavedTemp(){
   if(_pmsTab!=='temp') return false;
   const sels=document.querySelectorAll('select[id^="pmsT_"]');
-  for(const s of sels){ if(s.value!=='' && !isNaN(+s.value)) return true; }
+  for(const s of sels){
+    const cur = s.value;
+    const saved = s.getAttribute('data-saved')||'';
+    // une vraie modification = valeur courante différente de la valeur enregistrée
+    if(cur!==saved && cur!=='' && !isNaN(+cur)) return true;
+  }
   return false;
 }
-// Garde-fou : demande confirmation avant de perdre des relevés non validés.
+// Garde-fou : si une température a été MODIFIÉE sans être revalidée, on demande confirmation
+// avant de quitter. Message neutre (pas de « perte de données ») : il s'agit seulement d'un
+// relevé non encore validé. Robuste si confirm() est indisponible (PWA iOS).
 function pmsGuardUnsaved(){
   if(!pmsHasUnsavedTemp()) return true;
-  return confirm('⚠ Des températures ont été saisies mais NON enregistrées.\n\nElles seront perdues si tu quittes sans valider.\n\nQuitter quand même ?');
+  let ok;
+  try{
+    ok = window.confirm('Un relevé de température a été modifié mais pas encore validé.\n\nTouche « ✓ Valider les relevés » pour l\'enregistrer.\n\nContinuer sans valider cette modification ?');
+  }catch(e){ ok = undefined; }
+  // Si confirm() n'est pas exploitable (certaines PWA iOS), on ne bloque pas la navigation
+  // mais on prévient clairement par un toast.
+  if(ok===undefined){
+    if(typeof toast==='function') toast('ℹ️ Relevé modifié non validé — pense à « Valider les relevés »');
+    return true;
+  }
+  return ok;
 }
 function openSheet(){
   const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
@@ -815,7 +844,8 @@ async function renderDash(){
   for(const mat of materials){
     const {total,dlcMin}=await stockParMatiere(mat.id);
     if(total<=(+mat.seuil||0)) low.push({nom:mat.nom,total,unite:mat.unite,seuil:mat.seuil});
-    if(dlcMin){ const d=daysTo(dlcMin); if(d!==null && d<=7) dlcAlert.push({nom:mat.nom,dlc:dlcMin,j:d}); }
+    // Les emballages (carton, film…) ne périment pas → pas d'alerte DLC pour eux.
+    if(dlcMin && mat.categorie!=='emballage'){ const d=daysTo(dlcMin); if(d!==null && d<=7) dlcAlert.push({nom:mat.nom,dlc:dlcMin,j:d}); }
   }
   // Stock de macarons FINIS VENDABLES uniquement : on exclut les sous-lots intermédiaires
   // (ganache, coques non assemblées) via prodVendable(), comme la vue « Stock par parfum ».
@@ -1153,7 +1183,7 @@ function _matRow(row){
     <td>${qty(row.total)} ${esc(mat.unite||'')}</td>
     <td>${qty(mat.seuil||0)} ${esc(mat.unite||'')}</td>
     <td>${row.nbLots}</td>
-    <td>${row.dlcMin?`${fmtDate(row.dlcMin)} ${dj!==null&&dj<=7?`<span class="tag warn">${dj<=0?'expiré':dj+' j'}</span>`:''}`:'—'}</td>
+    <td>${emb?'—':(row.dlcMin?`${fmtDate(row.dlcMin)} ${dj!==null&&dj<=7?`<span class="tag warn">${dj<=0?'expiré':dj+' j'}</span>`:''}`:'—')}</td>
     <td><span class="tag ${row.low?'low':'ok'}">${row.low?'À commander':'OK'}</span></td>
     <td><div class="qa-row">
       <button class="qa pay" onclick="lotForm(0,${mat.id})" title="Ajouter un lot">＋ Lot</button>
@@ -1264,18 +1294,45 @@ async function saveMat(id){
   closeModal(); renderMaterials(); toast('Matière enregistrée ✓');
 }
 async function delMat(id){
-  if(!confirm('Supprimer cette matière et ses lots ?'))return;
+  const mat = await db.materials.get(id);
+  if(!mat){ toast('Matière introuvable'); return; }
+  // Garde-fou : une matière utilisée dans une ou plusieurs recettes ne peut pas être supprimée.
+  const usedItems = await db.recipeItems.where('materialId').equals(id).toArray().catch(()=>[]);
+  if(usedItems.length){
+    const recIds = [...new Set(usedItems.map(it=>it.recipeId))];
+    const recs = await db.recipes.toArray();
+    const recNoms = recIds.map(rid=>{ const r=recs.find(x=>x.id===rid); return r?(r.produitNom||('recette #'+rid)):('recette #'+rid); });
+    openModal(`<h3>Suppression impossible</h3>
+      <div class="banner" style="background:#f6e3e0;border-color:var(--red,#b3261e);color:#7a2a20">⛔ <div><b>${esc(mat.nom)}</b> est utilisée dans ${recIds.length} recette(s) : <b>${esc([...new Set(recNoms)].join(', '))}</b>.<br>Retirez d'abord cette matière de ces recettes avant de la supprimer.</div></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const nbLots = await db.materialLots.where('materialId').equals(id).count();
+  openModal(`<h3>🗑 Supprimer la matière</h3>
+    <p style="margin-bottom:10px"><b>${esc(mat.nom)}</b>${nbLots?` — ${nbLots} lot(s) seront aussi supprimés.`:''}</p>
+    <p class="note">Cette action est définitive.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn danger" onclick="doDelMat(${id})">🗑 Supprimer</button>
+    </div>`);
+}
+async function doDelMat(id){
+  // Re-vérification anti-concurrence : la matière a-t-elle été ajoutée à une recette entre-temps ?
+  const stillUsed = await db.recipeItems.where('materialId').equals(id).count().catch(()=>0);
+  if(stillUsed){ closeModal(); toast('Matière désormais utilisée dans une recette — suppression annulée'); renderMaterials(); return; }
   await db.transaction('rw',db.materials,db.materialLots,async()=>{
     await db.materialLots.where('materialId').equals(id).delete();
     await db.materials.delete(id);
   });
-  renderMaterials(); toast('Supprimée');
+  closeModal();
+  renderMaterials();
+  toast('Matière supprimée');
 }
 async function lotForm(_id, presetMat){
   const mats = await db.materials.toArray();
   const sups = await db.suppliers.toArray();
   if(!mats.length){toast('Crée d\'abord une matière');return;}
-  const matOpts = mats.map(m=>`<option value="${m.id}" data-unite="${esc(m.unite)}" ${presetMat===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (${esc(m.unite)})</option>`).join('');
+  const matOpts = mats.map(m=>`<option value="${m.id}" data-unite="${esc(m.unite)}" data-emb="${m.categorie==='emballage'?1:0}" ${presetMat===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (${esc(m.unite)})</option>`).join('');
   const supOpts = `<option value="0">— non précisé —</option>`+sups.map(s=>`<option value="${s.id}">${esc(s.nom)}</option>`).join('');
   openModal(`<h3>Réception d'un lot</h3>
    <div class="field"><label>Matière</label><select id="f_mat" onchange="majPrixUnit()">${matOpts}</select></div>
@@ -1290,7 +1347,7 @@ async function lotForm(_id, presetMat){
    <div class="field"><label>Prix unitaire</label><div id="f_pu" style="padding:10px 12px;background:var(--creme-2);border-radius:10px;font-weight:600;color:var(--bordeaux)">—</div></div>
    <div class="row2">
      <div class="field"><label>Date réception</label><input type="date" id="f_date" value="${today()}"></div>
-     <div class="field"><label>DLC / DDM</label><input type="date" id="f_dlc"></div>
+     <div class="field" id="f_dlcWrap"><label>DLC / DDM</label><input type="date" id="f_dlc"></div>
    </div>
    <div class="field"><label>Référence produit <span style="color:#9a8a82;font-weight:400">— EAN / code article (si disponible)</span></label>
      <input id="f_ref" placeholder="ex : 3760123456789 ou ART-BTE08"></div>
@@ -1304,8 +1361,16 @@ function majPrixUnit(){
   const q=+val('f_qte'), p=+val('f_prix');
   const el=document.getElementById('f_pu'); if(!el)return;
   const sel=document.getElementById('f_mat');
-  const unite = sel && sel.options[sel.selectedIndex] ? (sel.options[sel.selectedIndex].dataset.unite||'') : '';
+  const opt = sel && sel.options[sel.selectedIndex];
+  const unite = opt ? (opt.dataset.unite||'') : '';
   const hint=document.getElementById('qteUniteHint'); if(hint) hint.textContent = unite?`— en ${unite}`:'';
+  // Emballages (carton, film…) : pas de DLC pertinente → on masque le champ.
+  const isEmb = opt && opt.dataset.emb==='1';
+  const dlcWrap=document.getElementById('f_dlcWrap');
+  if(dlcWrap){
+    dlcWrap.style.display = isEmb ? 'none' : '';
+    if(isEmb){ const d=document.getElementById('f_dlc'); if(d) d.value=''; }   // pas de DLC sur un emballage
+  }
   if(q>0 && p>0){ el.textContent = euro(p/q)+' / '+unite; }
   else { el.textContent='—'; }
 }
@@ -1365,8 +1430,10 @@ async function renderRecipes(){
     const items = await db.recipeItems.where('recipeId').equals(r.id).toArray();
     _recipeMultCache[r.id] = { rendement:+r.rendement||1,
       items: items.map(it=>{ const d=dispOf(it.materialId); return {nom:matName(it.materialId), unite:d.u, qteParBatch:round3((+it.qteParBatch||0)*d.f)}; }) };
-    const rows = items.map((it,idx)=>{ const d=dispOf(it.materialId); const shown=round3((+it.qteParBatch||0)*d.f); return `<tr>
-        <td>${esc(matName(it.materialId))}</td>
+    const rows = items.map((it,idx)=>{ const d=dispOf(it.materialId); const shown=round3((+it.qteParBatch||0)*d.f);
+      const tags=[it.partie?(it.partie==='coque'?'coque':'ganache'):'', it.etiquette||''].filter(Boolean).join(' · ');
+      return `<tr>
+        <td>${esc(matName(it.materialId))}${tags?` <span style="color:#9a8a82;font-size:.74rem">(${esc(tags)})</span>`:''}</td>
         <td>${qty(shown)} ${esc(d.u)}</td>
         <td id="mult_${r.id}_${idx}"><b>${qty(shown)}</b> ${esc(d.u)}</td>
       </tr>`; }).join('');
@@ -1423,7 +1490,7 @@ async function recForm(id){
   if(!mats.length){toast('Crée d\'abord des matières');return;}
   let r={produitNom:'',rendement:60};
   bomDraft=[];
-  if(id){ r=await db.recipes.get(id); bomDraft=(await db.recipeItems.where('recipeId').equals(id).toArray()).map(it=>({materialId:it.materialId,qteParBatch:it.qteParBatch,partie:it.partie||''})); }
+  if(id){ r=await db.recipes.get(id); bomDraft=(await db.recipeItems.where('recipeId').equals(id).toArray()).map(it=>({materialId:it.materialId,qteParBatch:it.qteParBatch,partie:it.partie||'',etiquette:it.etiquette||''})); }
   window._matsCache=mats;
   openModal(`<h3>${id?'Modifier':'Nouvelle'} recette</h3>
    <div class="row2">
@@ -1487,12 +1554,17 @@ function drawBom(){
         <option value="coque" ${part==='coque'?'selected':''}>🟤 Coque</option>
         <option value="ganache" ${part==='ganache'?'selected':''}>🍫 Ganache</option>
       </select>
+      <input type="text" class="bom-etiq" value="${esc(b.etiquette||'')}" oninput="bomSetEtiq(${i}, this.value)" placeholder="note (ex : chaude)" title="Étiquette libre, purement informative — sans effet sur le stock" maxlength="24">
       <span class="x" onclick="bomDel(${i})">×</span>
     </div>`; }).join('') || '<p class="note">Aucune matière ajoutée.</p>';
 }
 // Étiquette un ingrédient comme servant aux coques ou à la ganache (évite le double
 // comptage lors d'une production par composants séparés).
 function bomSetPartie(i, val){ if(bomDraft[i]){ bomDraft[i].partie = val||''; drawBom(); } }
+// Étiquette LIBRE et purement informative (ex. « chaude », « froide »). N'a AUCUN effet sur
+// la consommation de stock : deux lignes d'une même matière puisent dans le même stock,
+// quelle que soit leur étiquette. Pas de redraw (préserve le focus pendant la frappe).
+function bomSetEtiq(i, val){ if(bomDraft[i]){ bomDraft[i].etiquette = (val||'').slice(0,24); } }
 // Saisie utilisateur (en g pour les denrées) → stockée en unité de base (kg).
 function bomSetQte(i, shownVal){
   const d=bomDisplay(bomDraft[i].materialId);
@@ -1530,7 +1602,7 @@ async function saveRec(id){
     let rid=id;
     if(id){ await db.recipes.update(id,o); await db.recipeItems.where('recipeId').equals(id).delete(); }
     else { rid=await db.recipes.add(o); }
-    for(const b of bomDraft) await db.recipeItems.add({recipeId:rid,materialId:b.materialId,qteParBatch:b.qteParBatch,partie:b.partie||''});
+    for(const b of bomDraft) await db.recipeItems.add({recipeId:rid,materialId:b.materialId,qteParBatch:b.qteParBatch,partie:b.partie||'',etiquette:b.etiquette||''});
   });
   closeModal(); renderRecipes(); toast('Recette enregistrée ✓');
 }
@@ -2782,15 +2854,25 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
     items = allItems.filter(it=> it.partie===cible || !it.partie);
   }
   const compLabel = composant==='coques'?'🟤 Coques':composant==='ganache'?'🍫 Ganache':'🍩 Complet';
+  // Total par matière (pour afficher « crème : 150 g » quand elle est répartie sur plusieurs lignes).
+  const totParMat = {};
+  items.forEach(it=>{ const d=dispOf(it.materialId); const q=round3((+it.qteParBatch||0)*d.f*facteur);
+    if(!totParMat[it.materialId]) totParMat[it.materialId]={q:0, u:d.u, n:0};
+    totParMat[it.materialId].q = round3(totParMat[it.materialId].q + q);
+    totParMat[it.materialId].n++; });
   const rows = items.map(it=>{ const d=dispOf(it.materialId);
     const q = round3((+it.qteParBatch||0)*d.f*facteur);
     const partTag = it.partie ? ` <span class="tag" style="background:${it.partie==='coque'?'#8a6d3b':'#5a3a2a'};color:#fff;font-size:.6rem">${it.partie}</span>` : '';
-    return `<tr><td>${esc(matName(it.materialId))}${partTag}</td><td style="text-align:right"><b>${qty(q)}</b> ${esc(d.u)}</td></tr>`;
+    const etiq = it.etiquette ? ` <span style="color:#9a8a82;font-size:.8rem">${esc(it.etiquette)}</span>` : '';
+    return `<tr><td>${esc(matName(it.materialId))}${etiq}${partTag}</td><td style="text-align:right"><b>${qty(q)}</b> ${esc(d.u)}</td></tr>`;
   }).join('') || '<tr><td colspan="2" class="note">Aucun ingrédient renseigné pour ce composant.</td></tr>';
+  // Lignes de sous-total (uniquement pour les matières présentes sur 2+ lignes : c'est ton cas crème chaude/froide).
+  const totals = Object.keys(totParMat).filter(id=>totParMat[id].n>1)
+    .map(id=>`<tr style="background:#faf6ef"><td><b>Total ${esc(matName(+id))}</b> <span style="color:#9a8a82;font-size:.74rem">(prélevé du stock)</span></td><td style="text-align:right"><b>${qty(totParMat[id].q)}</b> ${esc(totParMat[id].u)}</td></tr>`).join('');
   openModal(`<h3>📋 Fiche de production</h3>
     <p style="margin-bottom:4px"><b>${esc(rec.produitNom)}</b> · ${compLabel} · lot <b>${esc(lot||'—')}</b></p>
     <p class="note" style="margin-bottom:12px">Quantités calculées pour <b>${qty(nbMacarons)} macaron(s)</b> (recette de base : ${rendement}/batch). Suis ces grammages pour produire.</p>
-    <div class="table-wrap"><table><thead><tr><th>Ingrédient</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Ingrédient</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}${totals?`<tr><td colspan="2" style="padding:2px"></td></tr>${totals}`:''}</tbody></table></div>
     <p class="note" style="margin-top:10px">La production est <b>démarrée</b>. Tu choisiras l'emplacement de rangement à la fin (✓ Terminer dans la liste).</p>
     <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
 }
@@ -2906,7 +2988,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
         const lots = await db.materialLots
           .where('materialId').equals(item.materialId)
           .and(l=>+l.qteRestante>0).toArray();
-        lots.sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999')); // FIFO par DLC
+        lots.sort(lotFifoCompare); // FIFO : lots de reprise d'abord, puis DLC la plus proche
         for(const lot of lots){
           if(besoin<=1e-9) break;
           const pris = round3(Math.min(besoin, +lot.qteRestante));
@@ -3408,8 +3490,9 @@ async function renderDlc(){
   const matName = id => (mats.find(m=>m.id===id)||{}).nom||'(supprimée)';
   const matUnit = id => (mats.find(m=>m.id===id)||{}).unite||'';
   const supName = id => (sups.find(s=>s.id===id)||{}).nom||'—';
-  // lots actifs avec DLC renseignée
-  const actifs = lots.filter(l=>+l.qteRestante>0 && l.dlc)
+  // lots actifs avec DLC renseignée — hors emballages (carton, film… ne périment pas)
+  const isEmbMat = id => (mats.find(m=>m.id===id)||{}).categorie==='emballage';
+  const actifs = lots.filter(l=>+l.qteRestante>0 && l.dlc && !isEmbMat(l.materialId))
     .map(l=>({...l, j:daysTo(l.dlc)}))
     .sort((a,b)=>(a.dlc||'').localeCompare(b.dlc||''));
   const expires = actifs.filter(l=>l.j!==null && l.j<0);
@@ -4055,9 +4138,19 @@ async function clientForm(id){
    <div class="field"><label>Notes</label><textarea id="f_notes" rows="2">${esc(c.notes)}</textarea></div>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="saveClient(${id||0})">Enregistrer</button>${id?`<button class="btn danger" onclick="confirmDelClient(${id})">🗑 Supprimer</button>`:''}</div>`);
 }
-function confirmDelClient(id){
+async function confirmDelClient(id){
+  // Garde-fou : un client avec des commandes associées ne peut pas être supprimé
+  // (préserve l'historique et évite les commandes orphelines).
+  const cmds = await db.orders.where('clientId').equals(id).toArray().catch(()=>[]);
+  if(cmds.length){
+    const apercu = cmds.slice(0,5).map(o=>`n°${esc(orderNumber(o))}${o.date?` (${fmtDate(o.date)})`:''}`).join(', ');
+    openModal(`<h3>Suppression impossible</h3>
+      <div class="banner" style="background:#f6e3e0;border-color:var(--red,#b3261e);color:#7a2a20">⛔ <div>Ce client est associé à <b>${cmds.length} commande(s)</b> : ${apercu}${cmds.length>5?` … +${cmds.length-5}`:''}.<br>Supprimez d'abord ces commandes (ou réattribuez-les) avant de supprimer la fiche client.</div></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
   openModal(`<h3>Supprimer ce client ?</h3>
-    <p class="note">Cette action est définitive. L'historique de ses commandes n'est pas supprimé, mais la fiche client le sera.</p>
+    <p class="note">Cette action est définitive.</p>
     <div class="modal-actions"><button class="btn ghost" onclick="clientForm(${id})">Annuler</button>
       <button class="btn danger" onclick="doDelClient(${id})">Supprimer définitivement</button></div>`);
 }
@@ -4285,8 +4378,49 @@ async function confirmMarkPaid(id, fromModal){
 }
 let cmdSearch='';
 let _cmdCache=null;
+// --- Filtres par tags libres empilables (cumul en ET, par-dessus la recherche texte) ---
+// Un tag = une facette structurée "categorie:valeur" (ex. "format:8", "parfum:framboise",
+// "annee:2026", "type:coffret", "paiement:paye"). Les tags ne s'affichent PAS dans le tableau :
+// ils servent uniquement au filtrage. L'ensemble actif est conservé entre les frappes.
+let cmdTags = new Set();
+// Calcule les facettes d'une commande à partir de ses lignes déjà résolues.
+// Retourne un tableau de {cat, val, label} — cat/val normalisés (filtrage), label lisible (pastille).
+function orderFacets(o, lignes){
+  const out=[]; const seen=new Set();
+  const add=(cat,val,label)=>{ const key=cat+':'+normTxt(String(val)); if(!seen.has(key)){ seen.add(key); out.push({cat, val:normTxt(String(val)), label, key}); } };
+  // Année (depuis la date de commande)
+  const an=(o.date||'').slice(0,4); if(an) add('annee', an, an);
+  lignes.forEach(ln=>{
+    // Type de ligne
+    if(ln.type) add('type', ln.type, ln.type==='coffret'?'Coffret':ln.type==='grand'?'Grand format':ln.type==='evenement'?'Événement':ln.type);
+    // Format (taille) pour les coffrets
+    if(ln.type==='coffret' && ln.taille) add('format', ln.taille, 'Coffret '+ln.taille);
+    // Parfums (coffrets + événements)
+    (ln.parfums||[]).forEach(p=>{ if(p && p.nom) add('parfum', p.nom, p.nom); });
+    // Produits (grands formats)
+    (ln.items||[]).forEach(p=>{ if(p && p.nom) add('parfum', p.nom, p.nom); });
+  });
+  // Statut de paiement (réutilise la logique existante)
+  const st = orderPayStatus(o);
+  if(st) add('paiement', st, st);
+  return out;
+}
+// Une commande (entrée de cache) satisfait-elle TOUS les tags actifs ? (ET logique)
+function cmdMatchTags(entry){
+  if(!cmdTags.size) return true;
+  const facetKeys = new Set((entry._facets||[]).map(f=>f.key));
+  for(const t of cmdTags){ if(!facetKeys.has(t)) return false; }
+  return true;
+}
+function cmdToggleTag(key){
+  if(cmdTags.has(key)) cmdTags.delete(key); else cmdTags.add(key);
+  _cmdRenderTagBar();
+  cmdFilter(cmdSearch);
+}
+function cmdClearTags(){ cmdTags.clear(); _cmdRenderTagBar(); cmdFilter(cmdSearch); }
 async function renderCmd(){
   _cmdSel = new Set();   // sélection réinitialisée à chaque ouverture de l'écran
+  cmdTags = new Set();   // filtres par tags réinitialisés à chaque ouverture
   // Les commandes "historiques" (reprise/migration) ne s'affichent pas ici :
   // elles comptent dans le CA mais ne sont pas opérationnelles.
   const orders = (await db.orders.toArray()).filter(o=>!o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
@@ -4320,12 +4454,14 @@ async function renderCmd(){
       ln.type
     ]).join(' ');
     const cl=clById[o.clientId]||{};
-    const prim = normTxt([clName(o.clientId), 'cmd'+o.id].filter(Boolean).join(' '));
+    const refCmd = orderNumber(o);   // n° de référence affiché (ex. 2026-030)
+    const prim = normTxt([clName(o.clientId), 'cmd'+o.id, refCmd].filter(Boolean).join(' '));
     const blob = normTxt([clName(o.clientId), cl.prenom, cl.societe, cl.tel, cl.email, cl.ref,
-      resume, prodTxt, o.notes, o.reglement, o.paiement, 'cmd'+o.id, '#'+o.id, fmtDate(o.date),
+      resume, prodTxt, o.notes, o.reglement, o.paiement, 'cmd'+o.id, '#'+o.id, refCmd, fmtDate(o.date),
       (lotsByOrder[o.id]||[]).join(' ')].filter(Boolean).join(' '));
-    const digits = onlyDigits([o.id, cl.tel, o.montant].filter(v=>v!=null&&v!=='').join(' '));
-    return {o, resume, nbLies:(itemsByOrder[o.id]||[]).length, _prim:prim, _blob:blob, _digits:digits};
+    const digits = onlyDigits([o.id, refCmd, cl.tel, o.montant].filter(v=>v!=null&&v!=='').join(' '));
+    const _facets = orderFacets(o, lignes);
+    return {o, resume, nbLies:(itemsByOrder[o.id]||[]).length, _prim:prim, _blob:blob, _digits:digits, _facets};
   });
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Commandes</h1><p id="cmdCount">${orders.length} commande(s)</p></div>
@@ -4333,6 +4469,7 @@ async function renderCmd(){
      <button class="btn" onclick="cmdForm()">+ Nouvelle commande</button></div></div>
    <div class="panel">
      <input class="search" id="cmdSearch" style="width:100%;margin-bottom:12px" placeholder="N° commande, client, produit, parfum, notes, règlement…" value="${esc(cmdSearch)}" oninput="cmdFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
+     <div id="cmdTagBar" class="cmd-tagbar"></div>
      <div id="cmdSelBar" class="sel-bar" style="display:none">
        <span id="cmdSelCount">0 sélectionnée(s)</span>
        <div class="flex" style="gap:6px">
@@ -4345,8 +4482,47 @@ async function renderCmd(){
        <tbody id="cmdBody"></tbody></table></div>
      <div id="cmdEmpty" class="empty" style="display:none">Aucune commande.</div>
    </div>`;
+  _cmdRenderTagBar();
   cmdFilter(cmdSearch);
   cmdUpdateSelBar();
+}
+// Dessine la barre de filtres par tags : pastilles groupées par catégorie, dans l'ordre
+// Format → Parfum → Année → Type → Paiement. Une pastille active est mise en évidence.
+// Les pastilles ne listent que les facettes RÉELLEMENT présentes dans les commandes.
+const _FACET_CATS = [
+  {cat:'format',   titre:'Format'},
+  {cat:'parfum',   titre:'Parfum'},
+  {cat:'annee',    titre:'Année'},
+  {cat:'type',     titre:'Type'},
+  {cat:'paiement', titre:'Paiement'}
+];
+function _cmdRenderTagBar(){
+  const bar=document.getElementById('cmdTagBar'); if(!bar) return;
+  if(!_cmdCache || !_cmdCache.length){ bar.innerHTML=''; return; }
+  // Inventaire des facettes présentes : key -> {cat, label} ; et comptage par key.
+  const facetMap=new Map();
+  _cmdCache.forEach(e=>(e._facets||[]).forEach(f=>{ if(!facetMap.has(f.key)) facetMap.set(f.key, {cat:f.cat, val:f.val, label:f.label}); }));
+  if(!facetMap.size){ bar.innerHTML=''; return; }
+  let html='';
+  _FACET_CATS.forEach(({cat,titre})=>{
+    let facets=[...facetMap.entries()].filter(([k,f])=>f.cat===cat);
+    if(!facets.length) return;
+    // Tri : formats par taille croissante ; années décroissantes ; le reste alpha.
+    facets.sort((a,b)=>{
+      if(cat==='format') return (parseInt(a[1].val,10)||0)-(parseInt(b[1].val,10)||0);
+      if(cat==='annee')  return b[1].val.localeCompare(a[1].val);
+      return a[1].label.localeCompare(b[1].label);
+    });
+    const pills=facets.map(([key,f])=>{
+      const on=cmdTags.has(key);
+      return `<button type="button" class="cmd-tag${on?' on':''}" onclick="cmdToggleTag('${key.replace(/'/g,"\\'")}')">${esc(f.label)}</button>`;
+    }).join('');
+    html += `<div class="cmd-tag-grp"><span class="cmd-tag-cat">${titre}</span>${pills}</div>`;
+  });
+  if(cmdTags.size){
+    html += `<button type="button" class="cmd-tag-clear" onclick="cmdClearTags()">✕ Réinitialiser (${cmdTags.size})</button>`;
+  }
+  bar.innerHTML = html;
 }
 function _cmdRow(row, grp){
   const o=row.o; const paye=o.paiement==='Payé';
@@ -4425,26 +4601,33 @@ function cmdFilter(q){
   cmdSearch=q||'';
   if(!_cmdCache) return;
   const body=document.getElementById('cmdBody'); if(!body) return;
-  const rows=searchRank(_cmdCache, q);
+  // 1) filtre par tags actifs (ET logique), 2) puis recherche texte sur le sous-ensemble.
+  const base = cmdTags.size ? _cmdCache.filter(cmdMatchTags) : _cmdCache;
+  const rows=searchRank(base, q);
   const cnt=document.getElementById('cmdCount');
-  if(cnt) cnt.textContent = (q&&q.trim()) ? `${rows.length} / ${_cmdCache.length} commande(s)` : `${_cmdCache.length} commande(s)`;
+  if(cnt){
+    const total=_cmdCache.length;
+    const filtre=(q&&q.trim()) || cmdTags.size;
+    if(!filtre){ cnt.textContent = `${total} commande(s)`; }
+    else if(cmdTags.size && (q&&q.trim())){ cnt.textContent = `${rows.length} / ${base.length} filtrée(s) · ${cmdTags.size} tag(s)`; }
+    else if(cmdTags.size){ cnt.textContent = `${rows.length} / ${total} · ${cmdTags.size} tag(s)`; }
+    else { cnt.textContent = `${rows.length} / ${total} commande(s)`; }
+  }
   const empty=document.getElementById('cmdEmpty');
   if(!rows.length){ body.innerHTML=''; if(empty) empty.style.display='block'; return; }
   if(empty) empty.style.display='none';
   // Pendant une recherche, le tri est par pertinence → pas de séparateurs temporels.
-  const grouper = !(q && q.trim());
+  const grouper = !((q && q.trim()) || cmdTags.size);
   const LIMIT=300;
   const shown = rows.slice(0,LIMIT);
-  let html=''; let lastMonth=null, lastWeek=null;
+  let html=''; let lastMonth=null;
   shown.forEach(r=>{
-    let newMonth=false, newWeek=false;
+    let newMonth=false;
     if(grouper){
       const mk = (r.o.date||'').slice(0,7);   // "AAAA-MM"
-      if(mk && mk!==lastMonth){ lastMonth=mk; lastWeek=null; newMonth=true; }
-      const wk = _isoWeekKey(r.o.date);
-      if(wk && wk!==lastWeek){ lastWeek=wk; newWeek=true; }
+      if(mk && mk!==lastMonth){ lastMonth=mk; newMonth=true; }
     }
-    html += _cmdRow(r, {newMonth, newWeek});
+    html += _cmdRow(r, {newMonth, newWeek:false});
   });
   if(rows.length>LIMIT) html += `<tr><td colspan="9" class="note" style="text-align:center">… ${rows.length-LIMIT} autre(s) résultat(s). Affinez la recherche.</td></tr>`;
   body.innerHTML = html;
@@ -4720,7 +4903,10 @@ async function cmdForm(id, opts){
    <div class="field" id="f_persoWrap" style="${(o.perso||+o.persoMacarons>0)?'':'display:none'}"><label>Nombre de macarons personnalisés <span style="color:#9a8a82;font-weight:400">— pas forcément le total de la commande</span></label>
      <input type="number" min="0" step="1" id="f_persoNb" value="${o.persoMacarons||''}" placeholder="ex : 24" oninput="cmdRecalc()"></div>
    <div class="row2">
-     <div class="field"><label>% de remise globale</label><input type="number" min="0" max="100" step="1" id="f_remiseg" value="${o.remiseGlobale||''}" placeholder="0" oninput="cmdRecalc()"></div>
+     <div class="row2" style="align-items:end">
+       <div class="field" style="margin:0"><label>Remise globale (€)</label><input type="number" min="0" step="0.01" id="f_remisegEur" placeholder="0" oninput="cmdGlobalRemiseFromEuro(this.value)"></div>
+       <div class="field" style="margin:0"><label>Remise globale (%)</label><input type="number" min="0" max="100" step="1" id="f_remiseg" value="${o.remiseGlobale||''}" placeholder="0" oninput="cmdGlobalRemiseFromPct(this.value)"></div>
+     </div>
      <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0';cmdRecalc()"></div>
    </div>
    <div class="sum-box" id="priceBreak" style="display:none"></div>
@@ -5094,14 +5280,11 @@ function coffretUnitPrice(ln){
   if(cat && cat.prix!=null) return +cat.prix;
   return (BOX_PRICES[ln&&ln.taille]!=null) ? BOX_PRICES[ln.taille] : 0;
 }
-// Remise de ligne en € (bornée 0–100 %, arrondie au centime)
+// Remise de ligne en € — gère les deux modes (€ fixe ou %) pour TOUS les types de ligne.
+// remiseType:'euro' → montant fixe (borné au prix de base) ; sinon → pourcentage (0–100 %).
 function lineRemiseEuro(ln){
   const base=lineTotalBase(ln);
-  if(ln.type==='prestation'){
-    if(ln.remiseType==='euro') return Math.min(base, money2(+ln.remiseEuro||0));
-    const pct=Math.max(0,Math.min(100,+ln.remisePct||0));
-    return money2(base*pct/100);
-  }
+  if(ln.remiseType==='euro') return Math.min(base, money2(+ln.remiseEuro||0));
   const pct=Math.max(0,Math.min(100,+ln.remisePct||0));
   return money2(base*pct/100);
 }
@@ -5109,22 +5292,47 @@ function lineRemiseEuro(ln){
 function lineTotal(ln){
   return Math.max(0, subMoney(lineTotalBase(ln), lineRemiseEuro(ln)));
 }
-// Bloc d'affichage « remise de ligne » réutilisé par chaque type (sauf don, gratuit)
+// Bloc « remise de ligne » : deux champs synchronisés € et %.
+// Saisir l'un recalcule l'autre et le total, en direct. La référence stockée reste remisePct
+// (% de la base) pour rester compatible avec tous les calculs en aval (CA, marges, export).
 function lineRemiseRow(ln,i){
   if(ln.type==='don') return '';
   const base=lineTotalBase(ln);
-  const pct=+ln.remisePct||0;
+  const pct=Math.max(0,Math.min(100,+ln.remisePct||0));
+  const eur=money2(base*pct/100);
   const net=lineTotal(ln);
   return `<div class="row2" style="align-items:end">
-      <div class="field" style="margin:0"><label>% de remise (ligne)</label>
-        <input type="number" min="0" max="100" step="1" value="${pct||''}" placeholder="0"
-          oninput="setLineRemise(${i},this.value)"></div>
-      <div class="sum-box" style="margin:0">${pct>0
-        ? `<span>Avant ${euro(base)} · −${pct}%</span><b>${euro(net)}</b>`
-        : `<span>Montant ligne</span><b>${euro(base)}</b>`}</div>
-    </div>`;
+      <div class="field" style="margin:0"><label>Remise ligne (€)</label>
+        <input type="number" min="0" step="0.01" id="remEur_${i}" value="${eur>0?eur:''}" placeholder="0"
+          oninput="setLineRemiseEuro(${i},this.value)"></div>
+      <div class="field" style="margin:0"><label>Remise ligne (%)</label>
+        <input type="number" min="0" max="100" step="1" id="remPct_${i}" value="${pct>0?pct:''}" placeholder="0"
+          oninput="setLineRemisePct(${i},this.value)"></div>
+    </div>
+    <div class="sum-box" style="margin:6px 0 0">${(pct>0)
+      ? `<span>Avant ${euro(base)} · −${pct}% (${euro(eur)})</span><b>${euro(net)}</b>`
+      : `<span>Montant ligne</span><b>${euro(base)}</b>`}</div>`;
 }
-function setLineRemise(i,v){ let p=+v||0; if(p<0)p=0; if(p>100)p=100; cmdLines[i].remisePct=p; cmdRecalc(); }
+// Saisie en POURCENTAGE → borne 0–100, met à jour le champ € jumeau, recalcule.
+function setLineRemisePct(i,v){
+  let p=+v||0; if(p<0)p=0; if(p>100)p=100;
+  cmdLines[i].remiseType='pct'; cmdLines[i].remisePct=p; delete cmdLines[i].remiseEuro;
+  const base=lineTotalBase(cmdLines[i]);
+  const eurEl=document.getElementById('remEur_'+i);
+  if(eurEl && document.activeElement!==eurEl){ const e=money2(base*p/100); eurEl.value=e>0?e:''; }
+  cmdRecalc();
+}
+// Saisie en EUROS → convertie en % de la base (référence canonique), met à jour le champ % jumeau.
+function setLineRemiseEuro(i,v){
+  let e=money2(+v||0); if(e<0)e=0;
+  const base=lineTotalBase(cmdLines[i]);
+  if(e>base) e=base;
+  const p = base>0 ? Math.max(0,Math.min(100, money2(e/base*100))) : 0;
+  cmdLines[i].remiseType='pct'; cmdLines[i].remisePct=p; delete cmdLines[i].remiseEuro;
+  const pctEl=document.getElementById('remPct_'+i);
+  if(pctEl && document.activeElement!==pctEl){ pctEl.value=p>0?p:''; }
+  cmdRecalc();
+}
 // Normalise les lignes d'édition (cmdLines) vers la forme stockée (tableaux parfums/items).
 // Réutilisé par saveCmd ET par le calcul de marge en direct (impact livraison).
 function cmdLinesToStored(){
@@ -5149,10 +5357,34 @@ function cmdPersoCount(){
   const on=document.getElementById('f_perso')?.checked;
   return on ? Math.max(0, +(document.getElementById('f_persoNb')?.value)||0) : 0;
 }
+// Remise globale — synchronisation €/%. La référence stockée reste le % (champ f_remiseg),
+// appliqué au sous-total (après remises de ligne), pour rester compatible avec saveCmd et l'aval.
+function _cmdSousTotalAvantGlobal(){
+  return addMoney(...cmdLines.map(ln=>lineTotal(ln)));
+}
+function cmdGlobalRemiseFromPct(v){
+  let p=+v||0; if(p<0)p=0; if(p>100)p=100;
+  const st=_cmdSousTotalAvantGlobal();
+  const eurEl=document.getElementById('f_remisegEur');
+  if(eurEl && document.activeElement!==eurEl){ const e=money2(st*p/100); eurEl.value=e>0?e:''; }
+  cmdRecalc();
+}
+function cmdGlobalRemiseFromEuro(v){
+  let e=money2(+v||0); if(e<0)e=0;
+  const st=_cmdSousTotalAvantGlobal();
+  if(e>st) e=st;
+  const p = st>0 ? Math.max(0,Math.min(100, money2(e/st*100))) : 0;
+  const pctEl=document.getElementById('f_remiseg');
+  if(pctEl){ pctEl.value = p>0?p:''; }   // met à jour la référence canonique
+  cmdRecalc();
+}
 function cmdRecalc(){
   const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln))); // après remises de ligne
   const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
   const remiseG = money2(sousTotal*gpct/100);
+  // garde le champ € global cohérent avec le % quand le sous-total évolue (sauf saisie en cours)
+  const gEurEl=document.getElementById('f_remisegEur');
+  if(gEurEl && document.activeElement!==gEurEl){ gEurEl.value = remiseG>0?remiseG:''; }
   const persoNb = cmdPersoCount();
   const persoSup = money2(persoNb*PERSO_PRIX_UNIT);
   const total = Math.max(0, addMoney(subMoney(sousTotal, remiseG), persoSup));
@@ -10751,6 +10983,14 @@ async function renderMigration(){
   const histo = orders.filter(o=>o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
   const cname = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  // Matières & emballages, triés par catégorie puis nom (pour le stock de départ rapide).
+  const _mats = (await db.materials.toArray()).sort((a,b)=>
+    ((a.categorie==='emballage')-(b.categorie==='emballage')) || (a.nom||'').localeCompare(b.nom||''));
+  const matOpts = _mats.map(m=>{
+    const emb = m.categorie==='emballage';
+    const u = emb ? (m.unite||'unité') : 'g';   // denrées saisies en grammes (converties en kg au stockage)
+    return `<option value="${m.id}" data-emb="${emb?1:0}" data-unite="${esc(u)}">${emb?'📦 ':'🥚 '}${esc(m.nom)} (${esc(u)})</option>`;
+  }).join('');
   const totCA = histo.reduce((s,o)=>s+(+o.montant||0),0);
   const byMonth={};
   histo.forEach(o=>{ const m=(o.date||'').slice(0,7)||'?'; byMonth[m]=(byMonth[m]||0)+(+o.montant||0); });
@@ -10796,7 +11036,16 @@ async function renderMigration(){
          ${EMPLACEMENTS.map((e,i)=>`<label class="opt-row"><input type="radio" name="mig_emp" value="${e.key}" ${i===0?'checked':''}> <b class="opt-emp" style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'}">${e.lettre}</b> <span class="opt-main"><b>${e.icon} ${esc(e.nom)}</b></span></label>`).join('')}
        </div></div>
      <button class="btn" style="width:100%" onclick="migSaveStock()">＋ Ajouter au stock de produits finis</button>
-     <p class="note">Pour le <b>stock de matières premières</b>, utilise l'onglet <b>Matières &amp; emballages → Réception lot</b> : c'est le même geste qu'une réception normale.</p>
+   </div>
+
+   <div class="panel"><h2>3 · Stock de départ — matières & emballages</h2>
+     <p class="note" style="margin-bottom:8px">Saisie rapide de ton stock actuel de matières premières et d'emballages, <b>sans n° de lot ni prix</b>. Ce stock part « à l'équilibre » (aucun écart de valeur) et sera <b>consommé en priorité</b> avant tes futures réceptions, pour une migration en douceur.</p>
+     <div class="field"><label>Matière / emballage</label>
+       <select id="mig_mat" onchange="migMatUniteHint()">${matOpts||'<option value="">(aucune matière créée)</option>'}</select></div>
+     <div class="field"><label>Quantité en stock <span id="mig_matUnite" style="color:#9a8a82;font-weight:400">— en grammes (denrées) / unités (emballages)</span></label>
+       <input type="number" min="0" step="0.001" id="mig_matqte" placeholder="ex : 2500"></div>
+     <button class="btn" style="width:100%" onclick="migSaveMatStock()">＋ Ajouter au stock de matières</button>
+     <p class="note">Les denrées se saisissent en <b>grammes</b> (comme dans les recettes) ; les emballages à l'<b>unité</b>. Tu pourras ensuite réceptionner tes vrais lots normalement : ils s'ajouteront après ce stock de départ.</p>
    </div>
 
    <div class="panel"><h2>Chiffre d'affaires historique saisi</h2>
@@ -10852,6 +11101,41 @@ async function migSaveStock(){
     histEmplacement:[{lieu:dest, ts:nowIso, motif:'stock de départ (reprise)'}]
   });
   toast(`Stock ajouté : ${qty(qte)} ✓`);
+  renderMigration();
+}
+// Met à jour le libellé d'unité sous le sélecteur de matière (g pour denrées, unité pour emballages).
+function migMatUniteHint(){
+  const sel=document.getElementById('mig_mat'); const hint=document.getElementById('mig_matUnite');
+  if(!sel||!hint) return;
+  const opt=sel.options[sel.selectedIndex];
+  const u=opt?opt.getAttribute('data-unite'):'';
+  const emb=opt&&opt.getAttribute('data-emb')==='1';
+  hint.textContent = u ? `— en ${emb?u:'grammes'}` : '';
+}
+// Crée un LOT DE REPRISE (stock de départ) pour une matière/emballage :
+//  - sans n° de lot ni prix (prix 0 → aucun écart de valeur),
+//  - marqué repriseStock:true → consommé EN PRIORITÉ (avant tout autre lot),
+//  - DLC laissée vide → aucune fausse alerte « expiré ».
+// Les denrées sont saisies en GRAMMES et stockées en KG (÷1000), comme une réception normale.
+async function migSaveMatStock(){
+  const matId=+val('mig_mat')||0;
+  const saisi=round3(+val('mig_matqte')||0);
+  if(!matId){ toast('Choisis une matière'); return; }
+  if(saisi<=0){ toast('Indique une quantité'); return; }
+  const mat=await db.materials.get(matId);
+  if(!mat){ toast('Matière introuvable'); return; }
+  const emb = mat.categorie==='emballage';
+  // Conversion : denrées saisies en g → stockées en kg ; emballages en unités (pas de conversion).
+  const qte = emb ? saisi : round3(saisi/1000);
+  await db.materialLots.add({
+    materialId: matId, supplierId: 0,
+    lotFournisseur: '', qteInitiale: qte, qteRestante: qte,
+    prix: 0, prixUnitaire: 0,
+    dateReception: today(), dlc: '',
+    refProduit: '', commentaire: 'Stock de départ (reprise) — consommé en priorité',
+    repriseStock: true
+  });
+  toast(`Stock de départ ajouté : ${qty(saisi)} ${emb?(mat.unite||'unité'):'g'} ✓`);
   renderMigration();
 }
 
@@ -12637,7 +12921,7 @@ async function pmsRenderTemp(){
     return `<div class="pms-eq" id="pmsEq_${eq.id}" data-min="${eq.tempMin}" data-max="${eq.tempMax}">
       <div class="pms-eq-head"><div class="pms-eq-nom">${esc(eq.nom)}</div><div class="pms-eq-plage">${plage}</div></div>
       <div class="pms-eq-row">
-        <select id="pmsT_${eq.id}" class="pms-temp-input" onchange="pmsCheckTemp(${eq.id})">
+        <select id="pmsT_${eq.id}" class="pms-temp-input" data-saved="${cur!=null?cur:''}" onchange="pmsCheckTemp(${eq.id})">
           ${tempOptions(eq.tempMin, eq.tempMax, cur)}
         </select>
         <span class="pms-unit">°C</span>
