@@ -1252,12 +1252,12 @@ async function renderMaterials(){
        <button class="${_matCatFilter==='emballage'?'active':''}" onclick="matSetCat('emballage')">📦 Emballages</button>
      </div>
      <input class="search" id="matSearch" style="width:100%;margin-bottom:12px" placeholder="Nom de référence, unité, état…" value="${esc(matSearch)}" oninput="matFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
-   ${mats.length?`<div class="table-wrap"><table><thead><tr><th>Référence</th><th>Cat.</th><th>Stock</th><th>Seuil</th><th>Lots</th><th>DLC la + proche</th><th>État</th><th></th></tr></thead>
+   ${mats.length?`<div class="table-wrap cardify cardify-mat"><table><thead><tr><th>Référence</th><th>Cat.</th><th>Stock</th><th>Seuil</th><th>Lots</th><th>DLC la + proche</th><th>État</th><th></th></tr></thead>
      <tbody id="matBody"></tbody></table></div><div id="matEmpty" class="empty" style="display:none">Aucune référence.</div>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…) et tes emballages, puis réceptionne des lots.</div>`}
    </div>
    <div class="panel"><h2>Lots réceptionnés</h2>
      <input class="search" id="lotSearch" style="width:100%;margin-bottom:12px" placeholder="N° de lot, matière, fournisseur…" value="${esc(lotSearch)}" oninput="lotFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
-   ${lots.length?`<div class="table-wrap"><table><thead><tr><th>Réception</th><th>Matière</th><th>N° lot fourn.</th><th>Fournisseur</th><th>Restant / Initial</th><th>DLC</th><th></th></tr></thead>
+   ${lots.length?`<div class="table-wrap cardify cardify-lot"><table><thead><tr><th>Réception</th><th>Matière</th><th>N° lot fourn.</th><th>Fournisseur</th><th>Restant / Initial</th><th>DLC</th><th></th></tr></thead>
      <tbody id="lotBody"></tbody></table></div><div id="lotEmpty" class="empty" style="display:none">Aucun lot.</div>`
      :`<div class="empty">Aucun lot réceptionné.</div>`}
    </div>
@@ -1932,7 +1932,7 @@ async function renderProductions(){
        ${EMPLACEMENTS.map(e=>`<button onclick="prodbatSearchEmp('${e.lettre}')" title="${esc(e.nom)}">${e.icon} ${e.lettre}</button>`).join('')}
        <button onclick="prodbatSearchEmp('')" class="clear">Tout</button>
      </div>
-   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>Statut</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead>
+   ${prods.length?`<div class="table-wrap cardify cardify-prodbat"><table><thead><tr><th>Produit</th><th>Statut</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead>
      <tbody id="prodbatBody"></tbody></table></div><div id="prodbatEmpty" class="empty" style="display:none">Aucune production ne correspond.</div>`
      :`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
    </div>
@@ -4764,7 +4764,7 @@ async function renderCmd(){
          <button class="btn ghost sm" onclick="cmdExportSelection()">⬇ Exporter (TXT)</button>
        </div>
      </div>
-     <div class="table-wrap"><table><thead><tr><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th>Actions</th><th style="width:34px" title="Sélection"><input type="checkbox" id="cmdSelHead" onclick="cmdToggleAll(this.checked)" title="Tout sélectionner"></th></tr></thead>
+     <div class="table-wrap cardify cardify-cmd"><table><thead><tr><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th>Actions</th><th style="width:34px" title="Sélection"><input type="checkbox" id="cmdSelHead" onclick="cmdToggleAll(this.checked)" title="Tout sélectionner"></th></tr></thead>
        <tbody id="cmdBody"></tbody></table></div>
      <div id="cmdEmpty" class="empty" style="display:none">Aucune commande.</div>
    </div>`;
@@ -9915,7 +9915,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v163';
+const APP_VERSION = 'v164';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -9959,6 +9959,9 @@ const APP_KB = [
   { id:'mode-discret', titre:'Mode discret',
     tags:'discret confidentialite flou masquer nom prix montant privacy',
     r:`<p>Le <b>mode discret</b> floute les noms de clients et masque les montants/volumes. Active-le depuis le bouton 🙈 sur les pages Commandes et Clients, ou depuis le Menu (☰). La saisie et les détails restent lisibles pour travailler.</p>` },
+  { id:'cartes-mobiles', titre:'Affichage en cartes sur iPhone',
+    tags:'carte cartes mobile tableau scroll defilement horizontal lisibilite navigation commandes productions matieres lots ergonomie',
+    r:`<p>Sur iPhone, les grands tableaux (<b>Commandes</b>, <b>Productions</b>, <b>Matières &amp; lots</b>) s'affichent en <b>cartes verticales</b> : toutes les informations d'une ligne sont visibles d'un coup, <b>sans défilement horizontal</b>, avec des boutons élargis pour le tactile. La recherche, les filtres et la sélection fonctionnent comme avant. Sur iPad/ordinateur, les tableaux classiques restent affichés.</p>` },
   { id:'haccp', titre:'HACCP / Plan de Maîtrise Sanitaire',
     tags:'haccp pms hygiene temperature releve nettoyage ddpp frigo congelateur',
     r:`<p>Onglet <b>PMS</b>. Relevés de température matin/soir (avec action corrective obligatoire si hors plage), plan de nettoyage (quotidien/hebdo/mensuel) et export DDPP sur 30 jours.</p>` },
