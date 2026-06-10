@@ -11580,6 +11580,11 @@ function factLineDesc(ln){
 }
 // Génère et imprime la facture d'une commande (→ « Enregistrer en PDF » sur iOS).
 async function genererFacture(orderId){
+  // Une facture d'une seule commande utilise désormais le même rendu élégant
+  // « en sections » que la facture multi-commandes (style unifié).
+  return genererFactureMultiple([orderId]);
+}
+async function _genererFactureSimple_DEPRECATED(orderId){
   const o = await db.orders.get(orderId);
   if(!o){ toast('Commande introuvable'); return; }
   const e = factGetEmetteur();
@@ -11700,7 +11705,6 @@ async function genererFacture(orderId){
 async function genererFactureMultiple(ids){
   ids = (ids||[]).filter(Boolean);
   if(!ids.length){ toast('Sélectionne au moins une commande'); return; }
-  if(ids.length===1){ return genererFacture(ids[0]); }
   const e = factGetEmetteur();
   if(!e.nom || !e.siret || !e.adresse){
     toast('Renseigne d\'abord tes coordonnées de facturation');
@@ -11756,7 +11760,9 @@ async function genererFactureMultiple(ids){
     : (clientIds.length>1 ? 'Clients multiples' : 'Client de passage');
 
   // Numéro de facture groupée : basé sur la 1re et dernière commande
-  const numFact = `${orderNumber(orders[0])} → ${orderNumber(orders[orders.length-1])}`;
+  const numFact = orders.length===1
+    ? orderNumber(orders[0])
+    : `${orderNumber(orders[0])} → ${orderNumber(orders[orders.length-1])}`;
 
   const win = window.open('', '_blank', 'width=800,height=1000');
   if(!win){ toast('Autorise les fenêtres pour générer la facture'); return; }
@@ -11812,7 +11818,7 @@ async function genererFactureMultiple(ids){
            <div class="lbl">Détails</div>
            Facture n° : <b>${esc(numFact)}</b><br>
            Date d'émission : ${fmtDate(today())}<br>
-           ${orders.length} commande(s) regroupée(s)
+           ${orders.length>1 ? orders.length+' commande(s) regroupée(s)' : ''}
          </div>
        </div>
        ${sections}
