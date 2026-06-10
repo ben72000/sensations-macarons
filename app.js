@@ -10417,8 +10417,21 @@ const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont p
 async function buildDump(){
   const dump={_app:'sensations-macarons',_version:BACKUP_VERSION,_date:new Date().toISOString()};
   for(const t of TABLES) dump[t]=await db.table(t).toArray();
-  dump._checksum = backupChecksum(dump);
+  dump._localStorage = collectLocalSettings(); // réglages hors IndexedDB (emballages, charges, etc.)
+  dump._checksum = backupChecksum(dump);        // checksum calculé sur les TABLES uniquement
   return dump;
+}
+// Clés localStorage à inclure dans les sauvegardes (réglages persistants, hors état transitoire).
+const BACKUP_LS_KEYS = ['sm_settings','sm_autoPay','sm_privacyMode','sm_lastExport','sm_lastICloud','sm_autoBackupDate'];
+function collectLocalSettings(){
+  const o={};
+  BACKUP_LS_KEYS.forEach(k=>{ const v=localStorage.getItem(k); if(v!=null) o[k]=v; });
+  return o;
+}
+// Restaure les réglages localStorage depuis un dump (remplacement). Sans effet si absent.
+function applyLocalSettings(dump){
+  if(!dump || typeof dump._localStorage!=='object' || !dump._localStorage) return;
+  BACKUP_LS_KEYS.forEach(k=>{ if(dump._localStorage[k]!=null) localStorage.setItem(k, dump._localStorage[k]); });
 }
 // Somme de contrôle simple et déterministe (hash 32 bits, type DJB2) sur les données (hors méta).
 function backupChecksum(dump){
@@ -10516,6 +10529,7 @@ async function applyDump(dump){
       if(Array.isArray(dump[t]) && dump[t].length) await db.table(t).bulkAdd(dump[t]);
     }
   });
+  applyLocalSettings(dump); // réapplique les réglages (emballages, charges…) si présents
 }
 
 // ---- EXPORT MANUEL (fichier .json téléchargé) ----
