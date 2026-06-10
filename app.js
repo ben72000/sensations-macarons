@@ -54,127 +54,11 @@ db.version(9).stores({
   pmsTasks:        '++id, nom, frequence',
   cleaningLogs:    '++id, taskId, date'
 });
-
-// --------- v10 : synchronisation multi-appareils (infrastructure) ---------
-// On indexe un identifiant universel partagé `uid` sur les tables réellement
-// saisies en décalé (commandes, clients, stock). `updatedAt` (horodatage) et le
-// `uid` sont posés AUTOMATIQUEMENT par des hooks Dexie globaux (voir plus bas) —
-// aucune fonction de saisie existante n'est modifiée.
-// `tombstones` mémorise les suppressions (uid + date) pour éviter les « zombies »
-// lors d'une future fusion. Cette étape n'active PAS encore la fusion.
-db.version(10).stores({
-  clients:         '++id, nom, uid',
-  orders:          '++id, clientId, date, uid',
-  orderItems:      '++id, orderId, productionId, uid',
-  materials:       '++id, nom, uid',
-  materialLots:    '++id, materialId, supplierId, dlc, dateReception, uid',
-  productions:     '++id, recipeId, date, uid',
-  prodConsumption: '++id, productionId, materialLotId, uid',
-  suppliers:       '++id, nom, uid',
-  recipes:         '++id, produitNom, uid',
-  recipeItems:     '++id, recipeId, materialId, uid',
-  tombstones:      '++id, uid, table, deletedAt'
-});
-
-// --------- Hooks de synchronisation (centralisés, non intrusifs) ---------
-// Tables réellement synchronisées en décalé entre appareils.
-const SYNC_TABLES = ['clients','orders','orderItems','materials','materialLots',
-                     'productions','prodConsumption','suppliers','recipes','recipeItems'];
-// Génère un identifiant universel (préfixe d'appareil + temps + aléa) — stable et partageable.
-function _deviceTag(){
-  let t=localStorage.getItem('sm_deviceTag');
-  if(!t){ t=Math.random().toString(36).slice(2,7); localStorage.setItem('sm_deviceTag', t); }
-  return t;
-}
-function genUid(){
-  return _deviceTag()+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);
-}
-// Branche les hooks sur chaque table synchronisée : uid + updatedAt à la création,
-// updatedAt à la mise à jour, et pierre tombale à la suppression.
-// Enveloppé : si l'attache d'un hook échoue, l'app doit quand même démarrer normalement.
-try{
-  SYNC_TABLES.forEach(t=>{
-    const table=db.table(t);
-    table.hook('creating', function(primKey, obj){
-      if(obj.uid==null) obj.uid = genUid();
-      if(obj.updatedAt==null) obj.updatedAt = Date.now();
-    });
-    table.hook('updating', function(mods, primKey, obj){
-      if(!('updatedAt' in mods)) return { updatedAt: Date.now() };
-    });
-    table.hook('deleting', function(primKey, obj){
-      try{
-        if(obj && obj.uid){
-          const tomb={ uid: obj.uid, table: t, deletedAt: Date.now() };
-          setTimeout(()=>{ try{ db.table('tombstones').add(tomb).catch(()=>{}); }catch(e){} }, 0);
-        }
-      }catch(e){ /* silencieux */ }
-    });
-  });
-}catch(e){ console.error('Attache des hooks de synchro échouée (non bloquant):', e); }
-
-// Ouverture robuste de la base. Si l'ouverture échoue (migration cassée, base dans un
-// état incohérent…), on n'affiche PAS un écran vide : on propose une RÉCUPÉRATION guidée
-// (réimporter une sauvegarde, ou en dernier recours repartir d'une base vierge).
-db.on('blocked', ()=>{ _showDbRecovery('blocked'); });
-db.open().catch(err=>{
-  console.error('Ouverture de la base échouée:', err);
-  _showDbRecovery('error', err);
-});
-// Écran de secours, autonome (ne dépend d'aucune autre fonction de l'app, qui peut ne pas
-// être prête). Permet d'importer un fichier .json de sauvegarde dans une base neuve.
-function _showDbRecovery(kind, err){
-  try{
-    const main=document.getElementById('main') || document.body;
-    main.innerHTML =
-      '<div style="padding:24px;max-width:560px;margin:30px auto;font-family:system-ui;color:#3a2a2e">'
-      +'<h2 style="color:#490F25;font-family:serif">Récupération des données</h2><p style="font-size:12px;color:#aa9">version de secours v122</p>'
-      +'<p style="line-height:1.55;color:#6a5a52">L’application n’a pas pu ouvrir sa base locale. '
-      +'Ce n’est pas une perte : tu peux <b>réimporter ta dernière sauvegarde</b> (le fichier .json '
-      +'enregistré dans Fichiers / iCloud) pour repartir proprement.</p>'
-      +'<div style="margin:18px 0;padding:14px;border:1px solid #e0d5c5;border-radius:12px;background:#faf6ef">'
-      +'<label style="font-weight:600;display:block;margin-bottom:8px">1. Choisis ton fichier de sauvegarde</label>'
-      +'<input type="file" id="recoveryFile" accept="application/json,.json" '
-      +'style="width:100%;font-size:15px">'
-      +'<button id="recoveryBtn" '
-      +'style="margin-top:14px;width:100%;padding:12px;border:none;border-radius:10px;'
-      +'background:#490F25;color:#fff;font-size:16px;font-weight:600">Restaurer cette sauvegarde</button>'
-      +'</div>'
-      +'<p id="recoveryMsg" style="min-height:20px;color:#b3261e;font-size:14px"></p>'
-      +'<details style="margin-top:10px;color:#8a7a72;font-size:13px"><summary>Dernier recours</summary>'
-      +'<p style="line-height:1.5">Si tu n’as aucune sauvegarde, tu peux repartir d’une base vide '
-      +'(tes données actuelles n’ont pas pu être lues). '
-      +'<button id="recoveryWipe" style="margin-top:6px;padding:8px 12px;border:1px solid #b3261e;'
-      +'border-radius:8px;background:#fff;color:#b3261e">Repartir d’une base vierge</button></p></details>'
-      +'</div>';
-    const fileEl=document.getElementById('recoveryFile');
-    const btn=document.getElementById('recoveryBtn');
-    const msg=document.getElementById('recoveryMsg');
-    const wipe=document.getElementById('recoveryWipe');
-    if(btn) btn.onclick=async()=>{
-      msg.style.color='#6a5a52'; msg.textContent='Lecture du fichier…';
-      const f=fileEl && fileEl.files && fileEl.files[0];
-      if(!f){ msg.style.color='#b3261e'; msg.textContent='Choisis d’abord un fichier .json'; return; }
-      let obj;
-      try{ obj=JSON.parse(await f.text()); }
-      catch(e){ msg.style.color='#b3261e'; msg.textContent='Fichier illisible (JSON invalide).'; return; }
-      try{
-        // On supprime la base bloquée, puis on la recrée en rechargeant la page,
-        // qui réimportera ensuite. On stocke le dump à appliquer juste après réouverture.
-        sessionStorage.setItem('sm_recoveryDump', JSON.stringify(obj));
-        await db.delete();              // supprime la base corrompue
-        msg.style.color='#2e7d32'; msg.textContent='Base réinitialisée. Rechargement…';
-        setTimeout(()=>location.reload(), 600);
-      }catch(e){ msg.style.color='#b3261e'; msg.textContent='Échec de la réinitialisation : '+(e&&e.message||e); }
-    };
-    if(wipe) wipe.onclick=async()=>{
-      if(!confirm('Repartir d’une base VIDE ? Tes données locales actuelles (illisibles) seront supprimées.')) return;
-      try{ await db.delete(); location.reload(); }
-      catch(e){ msg.style.color='#b3261e'; msg.textContent='Échec : '+(e&&e.message||e); }
-    };
-  }catch(e){ /* dernier filet : on ne peut rien afficher, mais on a loggé l'erreur d'origine */ }
-}
-
+// v10 neutre : certaines bases ont déjà été élevées en v10. On déclare donc une v10
+// SANS index supplémentaire, pour qu'une base déjà en v10 s'ouvre normalement et qu'une
+// base en v9 monte proprement. (L'infrastructure de synchro a été retirée ; on garde
+// seulement la compatibilité de numéro de version.)
+db.version(10).stores({});
 
 
 
@@ -353,29 +237,6 @@ function getSettings(){
 function saveSettings(s){ localStorage.setItem('sm_settings', JSON.stringify(s)); }
 
 // Migration unique : inscrit les tarifs d'emballage reçus le 28/11/2025 dans les réglages
-// Migration unique : attribue un uid + updatedAt aux enregistrements déjà saisis
-// (ceux créés avant la mise en place de la synchro). Ne touche qu'aux lignes sans uid.
-// IMPORTANT : pour éviter des uid différents entre appareils sur le MÊME historique,
-// on établira une base commune (un appareil exporte, l'autre importe en remplacement)
-// AVANT de passer en mode fusion. Cette migration se contente de rendre les données prêtes.
-async function migrateAssignUids(){
-  try{
-    if(localStorage.getItem('sm_uid_migr')==='done') return;
-    for(const t of SYNC_TABLES){
-      const rows = await db.table(t).toArray();
-      const toUpdate = [];
-      for(const r of rows){
-        if(r.uid==null || r.updatedAt==null){
-          r.uid = r.uid || genUid();
-          r.updatedAt = r.updatedAt || Date.now();
-          toUpdate.push(r);
-        }
-      }
-      if(toUpdate.length) await db.table(t).bulkPut(toUpdate);
-    }
-    localStorage.setItem('sm_uid_migr','done');
-  }catch(e){ console.error('migrateAssignUids', e); }
-}
 
 // enregistrés (qui priment sinon sur les nouveaux défauts). Ne s'exécute qu'UNE fois : à ta
 // prochaine réception, tu modifieras les prix dans Paramètres et ils ne seront plus écrasés.
@@ -11005,7 +10866,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','tombstones'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -14009,19 +13870,6 @@ function startClock(){
 }
 
 (async()=>{
-  // Reprise après récupération : si une sauvegarde a été déposée par l'écran de secours
-  // (la base avait été supprimée puis recréée vierge), on l'applique maintenant.
-  try{
-    const recovery = sessionStorage.getItem('sm_recoveryDump');
-    if(recovery){
-      sessionStorage.removeItem('sm_recoveryDump');
-      const dump = JSON.parse(recovery);
-      // applyDump vide chaque table et recharge depuis le fichier (base déjà vierge ici).
-      await applyDump(dump);
-      try{ localStorage.setItem('sm_uid_migr','done'); }catch(_){}  // données déjà porteuses d'uid
-    }
-  }catch(e){ console.error('Reprise après récupération échouée:', e); }
-
   // Le rendu ne doit JAMAIS être bloqué par une migration ou un seed.
   // On enveloppe toute la préparation ; quoi qu'il arrive, render() est appelé.
   try{
@@ -14031,7 +13879,6 @@ function startClock(){
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
-    try{ await migrateAssignUids(); }catch(e){ console.error('migrateUids',e); }
     try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
   }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }
 
