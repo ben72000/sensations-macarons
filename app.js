@@ -713,6 +713,41 @@ document.querySelectorAll('#sheetGrid button[data-v]').forEach(btn=>{ btn.addEve
 const sheetOv=document.getElementById('sheetOverlay');
 if(sheetOv) sheetOv.addEventListener('click', e=>{ if(e.target===sheetOv) closeSheet(); });
 
+// Geste : glisser le panneau vers le BAS pour le refermer (avec suivi du doigt).
+(function setupSheetSwipe(){
+  const sheet=document.getElementById('sheet'); if(!sheet) return;
+  let startY=0, curY=0, dragging=false;
+  const onStart=(y)=>{
+    // On n'arme le glissement-fermeture que si le contenu est tout en haut
+    // (sinon l'utilisateur veut faire défiler la liste, pas fermer le menu).
+    if(sheet.scrollTop>0){ dragging=false; return; }
+    startY=y; curY=y; dragging=true; sheet.style.transition='none';
+  };
+  const onMove=(y)=>{
+    if(!dragging) return;
+    curY=y; const dy=Math.max(0, y-startY);   // on ne suit que vers le bas
+    sheet.style.transform = dy>0 ? `translateY(${dy}px)` : '';
+  };
+  const onEnd=()=>{
+    if(!dragging) return; dragging=false;
+    const dy=Math.max(0, curY-startY);
+    sheet.style.transition='';                 // restaure l'animation CSS
+    if(dy>90){                                  // seuil de fermeture
+      sheet.style.transform='';
+      closeSheet();
+    } else {
+      sheet.style.transform='';                 // pas assez : revient en place
+    }
+  };
+  sheet.addEventListener('touchstart', e=>{ onStart(e.touches[0].clientY); }, {passive:true});
+  sheet.addEventListener('touchmove',  e=>{
+    // n'intercepte le glissement que s'il part vers le bas (pour ne pas gêner le scroll interne)
+    if(dragging && (e.touches[0].clientY - startY) > 0){ e.preventDefault(); onMove(e.touches[0].clientY); }
+  }, {passive:false});
+  sheet.addEventListener('touchend', onEnd);
+  sheet.addEventListener('touchcancel', onEnd);
+})();
+
 // MENU SIMPLIFIÉ : section « Avancé » repliée par défaut, état mémorisé.
 // S'ouvre automatiquement si l'écran actif est un écran avancé (pour rester visible).
 function navAdvApply(open){
