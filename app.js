@@ -1180,8 +1180,7 @@ async function renderMaterials(){
        <button class="${_matCatFilter==='emballage'?'active':''}" onclick="matSetCat('emballage')">📦 Emballages</button>
      </div>
      <input class="search" id="matSearch" style="width:100%;margin-bottom:12px" placeholder="Nom de référence, unité, état…" value="${esc(matSearch)}" oninput="matFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
-   ${mats.length?`<div class="table-wrap"><table><thead><tr><th>Référence</th><th>Cat.</th><th>Stock</th><th>Seuil</th><th>Lots</th><th>DLC la + proche</th><th>État</th><th></th></tr></thead>
-     <tbody id="matBody"></tbody></table></div><div id="matEmpty" class="empty" style="display:none">Aucune référence.</div>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…) et tes emballages, puis réceptionne des lots.</div>`}
+   ${mats.length?`<div id="matBody" class="mat-cards"></div><div id="matEmpty" class="empty" style="display:none">Aucune référence.</div>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…) et tes emballages, puis réceptionne des lots.</div>`}
    </div>
    <div class="panel"><h2>Lots réceptionnés</h2>
      <input class="search" id="lotSearch" style="width:100%;margin-bottom:12px" placeholder="N° de lot, matière, fournisseur…" value="${esc(lotSearch)}" oninput="lotFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
@@ -1222,20 +1221,26 @@ async function renderMaterials(){
 function _matRow(row){
   const mat=row.mat; const dj=row.dlcMin?daysTo(row.dlcMin):null;
   const emb = row.cat==='emballage';
-  const sansPrixBadge = row.sansPrix>0 ? `<br><span class="tag" style="background:#fbeede;color:#a9772a;font-size:.62rem" title="${row.sansPrix} lot(s) sans prix — coût de revient faussé">⚠ prix manquant (${row.sansPrix})</span>` : '';
-  return `<tr>
-    <td><b>${esc(mat.nom)}</b>${mat.marque?`<br><span style="color:#9a8a82;font-size:.74rem">🏷️ ${esc(mat.marque)}</span>`:''}${sansPrixBadge}</td>
-    <td><span class="tag" style="background:${emb?'#7a6a9a':'#6aa3a0'};color:#fff">${emb?'📦':'🥚'}</span></td>
-    <td>${qty(row.total)} ${esc(mat.unite||'')}</td>
-    <td>${qty(mat.seuil||0)} ${esc(mat.unite||'')}</td>
-    <td>${row.nbLots}</td>
-    <td>${emb?'—':(row.dlcMin?`${fmtDate(row.dlcMin)} ${dj!==null&&dj<=7?`<span class="tag warn">${dj<=0?'expiré':dj+' j'}</span>`:''}`:'—')}</td>
-    <td><span class="tag ${row.low?'low':'ok'}">${row.low?'À commander':'OK'}</span></td>
-    <td><div class="qa-row">
+  const sansPrixBadge = row.sansPrix>0 ? `<span class="tag" style="background:#fbeede;color:#a9772a;font-size:.62rem" title="${row.sansPrix} lot(s) sans prix — coût de revient faussé">⚠ prix manquant (${row.sansPrix})</span>` : '';
+  const dlcTxt = emb ? '—' : (row.dlcMin?`${fmtDate(row.dlcMin)} ${dj!==null&&dj<=7?`<span class="tag warn">${dj<=0?'expiré':dj+' j'}</span>`:''}`:'—');
+  return `<div class="mat-card">
+    <div class="mat-card-top">
+      <div class="mat-card-name"><b>${esc(mat.nom)}</b>${mat.marque?`<span class="mat-marque">🏷️ ${esc(mat.marque)}</span>`:''}${sansPrixBadge}</div>
+      <span class="mat-cat-pill" style="background:${emb?'#7a6a9a':'#6aa3a0'}">${emb?'📦':'🥚'}</span>
+    </div>
+    <div class="mat-card-grid">
+      <div class="mat-stock">Stock : <b>${qty(row.total)} ${esc(mat.unite||'')}</b></div>
+      <div class="mat-state"><span class="tag ${row.low?'low':'ok'}">${row.low?'À commander':'OK'}</span></div>
+      <div class="mat-sub">Seuil : ${qty(mat.seuil||0)} ${esc(mat.unite||'')}</div>
+      <div class="mat-sub mat-lots">Lots : ${row.nbLots}</div>
+      <div class="mat-sub mat-dlc">DLC la + proche : ${dlcTxt}</div>
+    </div>
+    <div class="mat-card-actions">
       <button class="qa pay" onclick="lotForm(0,${mat.id})" title="Ajouter un lot">＋ Lot</button>
       <button class="qa edit" onclick="matForm(${mat.id})" title="Modifier">✎ Modifier</button>
       <button class="qa del" onclick="delMat(${mat.id})" title="Supprimer">🗑</button>
-    </div></td></tr>`;
+    </div>
+  </div>`;
 }
 function _lotRow(row){
   const l=row.l;
