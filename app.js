@@ -55,7 +55,65 @@ db.version(9).stores({
   cleaningLogs:    '++id, taskId, date'
 });
 
-// --------- Catalogue de référence ---------
+// --------- v10 : synchronisation multi-appareils (infrastructure) ---------
+// On indexe un identifiant universel partagé `uid` sur les tables réellement
+// saisies en décalé (commandes, clients, stock). `updatedAt` (horodatage) et le
+// `uid` sont posés AUTOMATIQUEMENT par des hooks Dexie globaux (voir plus bas) —
+// aucune fonction de saisie existante n'est modifiée.
+// `tombstones` mémorise les suppressions (uid + date) pour éviter les « zombies »
+// lors d'une future fusion. Cette étape n'active PAS encore la fusion.
+db.version(10).stores({
+  clients:         '++id, nom, uid',
+  orders:          '++id, clientId, date, uid',
+  orderItems:      '++id, orderId, productionId, uid',
+  materials:       '++id, nom, uid',
+  materialLots:    '++id, materialId, supplierId, dlc, dateReception, uid',
+  productions:     '++id, recipeId, date, uid',
+  prodConsumption: '++id, productionId, materialLotId, uid',
+  suppliers:       '++id, nom, uid',
+  recipes:         '++id, produitNom, uid',
+  recipeItems:     '++id, recipeId, materialId, uid',
+  tombstones:      '++id, uid, table, deletedAt'
+});
+
+// --------- Hooks de synchronisation (centralisés, non intrusifs) ---------
+// Tables réellement synchronisées en décalé entre appareils.
+const SYNC_TABLES = ['clients','orders','orderItems','materials','materialLots',
+                     'productions','prodConsumption','suppliers','recipes','recipeItems'];
+// Génère un identifiant universel (préfixe d'appareil + temps + aléa) — stable et partageable.
+function _deviceTag(){
+  let t=localStorage.getItem('sm_deviceTag');
+  if(!t){ t=Math.random().toString(36).slice(2,7); localStorage.setItem('sm_deviceTag', t); }
+  return t;
+}
+function genUid(){
+  return _deviceTag()+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);
+}
+// Branche les hooks sur chaque table synchronisée : uid + updatedAt à la création,
+// updatedAt à la mise à jour, et pierre tombale à la suppression.
+SYNC_TABLES.forEach(t=>{
+  const table=db.table(t);
+  table.hook('creating', function(primKey, obj){
+    if(obj.uid==null) obj.uid = genUid();
+    if(obj.updatedAt==null) obj.updatedAt = Date.now();
+  });
+  table.hook('updating', function(mods, primKey, obj){
+    // ne pas écraser un updatedAt explicitement fourni par la fusion
+    if(!('updatedAt' in mods)) return { updatedAt: Date.now() };
+  });
+  table.hook('deleting', function(primKey, obj){
+    // pierre tombale : on mémorise quel uid a été supprimé et quand.
+    // Différé hors de la transaction courante pour éviter tout conflit de portée Dexie,
+    // et totalement silencieux : une suppression ne doit jamais échouer à cause du tombstone.
+    try{
+      if(obj && obj.uid){
+        const tomb={ uid: obj.uid, table: t, deletedAt: Date.now() };
+        setTimeout(()=>{ db.table('tombstones').add(tomb).catch(()=>{}); }, 0);
+      }
+    }catch(e){ /* silencieux */ }
+  });
+});
+
 const FLAVORS = [
   'Citron crémeux','Chocolat au lait','Chocolat noir','Framboise','Vanille',
   'Pistache','Coco Rafaello','Cannelle noisette','Caramel beurre salé',
@@ -231,6 +289,30 @@ function getSettings(){
 function saveSettings(s){ localStorage.setItem('sm_settings', JSON.stringify(s)); }
 
 // Migration unique : inscrit les tarifs d'emballage reçus le 28/11/2025 dans les réglages
+// Migration unique : attribue un uid + updatedAt aux enregistrements déjà saisis
+// (ceux créés avant la mise en place de la synchro). Ne touche qu'aux lignes sans uid.
+// IMPORTANT : pour éviter des uid différents entre appareils sur le MÊME historique,
+// on établira une base commune (un appareil exporte, l'autre importe en remplacement)
+// AVANT de passer en mode fusion. Cette migration se contente de rendre les données prêtes.
+async function migrateAssignUids(){
+  try{
+    if(localStorage.getItem('sm_uid_migr')==='done') return;
+    for(const t of SYNC_TABLES){
+      const rows = await db.table(t).toArray();
+      const toUpdate = [];
+      for(const r of rows){
+        if(r.uid==null || r.updatedAt==null){
+          r.uid = r.uid || genUid();
+          r.updatedAt = r.updatedAt || Date.now();
+          toUpdate.push(r);
+        }
+      }
+      if(toUpdate.length) await db.table(t).bulkPut(toUpdate);
+    }
+    localStorage.setItem('sm_uid_migr','done');
+  }catch(e){ console.error('migrateAssignUids', e); }
+}
+
 // enregistrés (qui priment sinon sur les nouveaux défauts). Ne s'exécute qu'UNE fois : à ta
 // prochaine réception, tu modifieras les prix dans Paramètres et ils ne seront plus écrasés.
 function migratePackaging202511(){
@@ -636,7 +718,6 @@ function setActiveView(v){
 function navTo(b){
   if(!b || !b.dataset || !b.dataset.v) return;
   const now=Date.now(); if(now-_navLast<120 && view===b.dataset.v && !document.getElementById('sheetOverlay').classList.contains('show')) return; _navLast=now;
-  if(view!==b.dataset.v) SFX.nav();
   goView(b.dataset.v);
   closeSheet();
 }
@@ -686,178 +767,12 @@ function pmsGuardUnsaved(){
   return ok;
 }
 function openSheet(){
-  const o=document.getElementById('sheetOverlay'); if(o){ const s=document.getElementById('sheet'); if(s){ s.style.transition=''; s.style.transform=''; } o.classList.add('show'); setActiveView(view);
+  const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
     navAdvEnsureVisible();
     const pb=document.getElementById('sheetPrivacyBtn'); if(pb) pb.textContent = privacyModeEnabled()?'👁️ Afficher les données':'🙈 Mode discret';
-    const sb=document.getElementById('sfxToggleBtn'); if(sb) sb.textContent = SFX.isOn()?'🔔 Sons : activés':'🔕 Sons : coupés';
     if(_histReady && !_popping){ try{ history.pushState({kind:'sheet'}, '', '#menu'); }catch(e){} } }
 }
-function closeSheet(opts){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); const s=document.getElementById('sheet'); if(s){ s.style.transition=''; s.style.transform=''; } if(opts&&opts.sound) SFX.sheet(); }
-
-/* ============================================================
-   EFFETS SONORES (WebAudio — aucun fichier à charger)
-   - SFX.sheet() : fermeture de la feuille menu (tick doux descendant)
-   - SFX.nav()   : navigation d'une page à l'autre (tick court, plus léger)
-   Sur PWA iOS l'AudioContext doit être débloqué par un 1er geste, sinon
-   silence : on le réveille au premier tap. État on/off mémorisé.
-   ============================================================ */
-const SFX = (function(){
-  let ctx=null, unlocked=false;
-  let on = (function(){ try{ return localStorage.getItem('sm_sfx')!=='0'; }catch(e){ return true; } })();
-  function ensureCtx(){
-    if(!ctx){ try{ const AC=window.AudioContext||window.webkitAudioContext; if(AC) ctx=new AC(); }catch(e){ ctx=null; } }
-    return ctx;
-  }
-  function unlock(){
-    if(unlocked) return;
-    const c=ensureCtx(); if(!c) return;
-    try{ if(c.state==='suspended') c.resume(); }catch(e){}
-    try{ const b=c.createBuffer(1,1,22050); const s=c.createBufferSource(); s.buffer=b; s.connect(c.destination); s.start(0); }catch(e){}
-    unlocked=true;
-  }
-  function tone(freqStart, freqEnd, dur, gainPeak, type){
-    if(!on) return;
-    const c=ensureCtx(); if(!c) return;
-    try{ if(c.state==='suspended') c.resume(); }catch(e){}
-    try{
-      const t0=c.currentTime;
-      const osc=c.createOscillator();
-      const g=c.createGain();
-      osc.type=type||'sine';
-      osc.frequency.setValueAtTime(freqStart, t0);
-      if(freqEnd && freqEnd!==freqStart) osc.frequency.exponentialRampToValueAtTime(Math.max(40,freqEnd), t0+dur);
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(gainPeak, t0+0.012);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
-      osc.connect(g); g.connect(c.destination);
-      osc.start(t0); osc.stop(t0+dur+0.02);
-    }catch(e){}
-  }
-  // Carillon raffiné : fondamentale + partiels harmoniques, attaque douce,
-  // longue extinction, filtre passe-bas chaud → sensation « boîte à musique / cristal ».
-  function chime(freq, dur, vol, delay){
-    if(!on) return;
-    const c=ensureCtx(); if(!c) return;
-    try{ if(c.state==='suspended') c.resume(); }catch(e){}
-    try{
-      const t0=c.currentTime+(delay||0);
-      // filtre passe-bas pour adoucir les aigus (rondeur boisée)
-      const lp=c.createBiquadFilter(); lp.type='lowpass';
-      lp.frequency.setValueAtTime(3200, t0); lp.Q.value=0.7;
-      const bus=c.createGain(); bus.gain.value=1; bus.connect(lp); lp.connect(c.destination);
-      // partiels : fondamentale + octave + douzième, amplitudes décroissantes
-      const partials=[[1,1],[2,0.42],[3,0.18],[4.2,0.08]];
-      partials.forEach(([mult,amp])=>{
-        const osc=c.createOscillator(); osc.type='sine';
-        osc.frequency.setValueAtTime(freq*mult, t0);
-        const g=c.createGain();
-        const peak=vol*amp;
-        g.gain.setValueAtTime(0.0001, t0);
-        g.gain.exponentialRampToValueAtTime(peak, t0+0.018);          // attaque douce
-        g.gain.exponentialRampToValueAtTime(0.0001, t0+dur*(1-0.05*mult)); // les partiels aigus s'éteignent + vite
-        osc.connect(g); g.connect(bus);
-        osc.start(t0); osc.stop(t0+dur+0.05);
-      });
-    }catch(e){}
-  }
-  // Goutte d'eau / bulle : une sinusoïde dont la fréquence MONTE vite (le « ploc »),
-  // enveloppe ronde (attaque très douce, courte extinction), filtre passe-bas pour
-  // l'arrondi organique. Volume volontairement bas (discret).
-  function drop(freqStart, freqEnd, dur, vol, delay){
-    if(!on) return;
-    const c=ensureCtx(); if(!c) return;
-    try{ if(c.state==='suspended') c.resume(); }catch(e){}
-    try{
-      const t0=c.currentTime+(delay||0);
-      const lp=c.createBiquadFilter(); lp.type='lowpass';
-      lp.frequency.setValueAtTime(1900, t0); lp.Q.value=0.9;
-      const osc=c.createOscillator(); osc.type='sine';
-      osc.frequency.setValueAtTime(freqStart, t0);
-      // la montée rapide de hauteur = signature de la goutte
-      osc.frequency.exponentialRampToValueAtTime(freqEnd, t0+dur*0.55);
-      const g=c.createGain();
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(vol, t0+0.010);   // attaque douce
-      g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);  // extinction ronde
-      osc.connect(g); g.connect(lp); lp.connect(c.destination);
-      osc.start(t0); osc.stop(t0+dur+0.03);
-    }catch(e){}
-  }
-  return {
-    // Fermeture de la feuille : une goutte un peu plus grave et pleine (la « grosse » bulle).
-    sheet(){ drop(420, 720, 0.16, 0.045); },
-    // Navigation : une mini-goutte plus aiguë et très brève, à peine perceptible.
-    nav(){ drop(620, 990, 0.11, 0.030); },
-    unlock,
-    isOn(){ return on; },
-    toggle(){ on=!on; try{ localStorage.setItem('sm_sfx', on?'1':'0'); }catch(e){} if(on){ unlock(); SFX.nav(); } return on; }
-  };
-})();
-['touchstart','pointerdown','click'].forEach(ev=>{
-  window.addEventListener(ev, ()=>SFX.unlock(), {once:true, passive:true, capture:true});
-});
-
-// Bascule l'effet sonore depuis le menu (libellé mis à jour).
-function toggleSfxBtn(btn){
-  const on=SFX.toggle();
-  if(btn) btn.textContent = on?'🔔 Sons : activés':'🔕 Sons : coupés';
-}
-
-/* ============================================================
-   GLISSEMENT DE LA FEUILLE MENU (swipe vers le bas pour fermer)
-   On capte le geste sur toute la feuille. On ne « tire » la feuille
-   (et on ne bloque le scroll de fond) QUE si le contenu est déjà tout
-   en haut ET que le doigt descend. Sinon, scroll interne normal.
-   ============================================================ */
-function initSheetDrag(){
-  const sheet=document.getElementById('sheet');
-  if(!sheet) return;
-  let startY=0, lastY=0, prevY=0, prevT=0, vel=0, dy=0, dragging=false, decided=false, capturing=false;
-  const CLOSE_PX=100;
-  const FLING_VPS=0.5;
-  function onStart(e){
-    const t=e.touches?e.touches[0]:e;
-    startY=lastY=prevY=t.clientY; prevT=Date.now(); dy=0; vel=0;
-    dragging=true; decided=false; capturing=false;
-    sheet.style.transition='none';
-  }
-  function onMove(e){
-    if(!dragging) return;
-    const t=e.touches?e.touches[0]:e;
-    const y=t.clientY;
-    const total=y-startY;
-    const now=Date.now();
-    if(!decided){
-      const atTop = sheet.scrollTop<=0;
-      if(total>4 && atTop){ capturing=true; decided=true; }
-      else if(Math.abs(total)>4){ capturing=false; decided=true; dragging=false; return; }
-    }
-    if(!capturing) return;
-    if(e.cancelable) e.preventDefault();
-    dy=Math.max(0, total);
-    sheet.style.transform='translateY('+dy+'px)';
-    const dt=now-prevT;
-    if(dt>0) vel=(y-prevY)/dt;
-    prevY=y; prevT=now; lastY=y;
-  }
-  function onEnd(){
-    if(!dragging && !capturing) return;
-    dragging=false;
-    sheet.style.transition='transform .22s ease';
-    const fast = vel > FLING_VPS;
-    if(capturing && (dy>CLOSE_PX || (dy>30 && fast))){
-      sheet.style.transform='translateY(110%)';
-      setTimeout(()=>{ closeSheet({sound:true}); }, 160);
-    } else {
-      sheet.style.transform='translateY(0)';
-    }
-    capturing=false;
-  }
-  sheet.addEventListener('touchstart', onStart, {passive:true});
-  sheet.addEventListener('touchmove',  onMove,  {passive:false});
-  sheet.addEventListener('touchend',   onEnd,   {passive:true});
-  sheet.addEventListener('touchcancel',onEnd,   {passive:true});
-}
+function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); }
 
 // Sidebar (iPad / desktop) — écoute directe + délégation
 document.querySelectorAll('#nav button').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
@@ -950,84 +865,6 @@ function renderViewError(v, err){
    pour que le geste « retour » revienne à la vue précédente
    (et ferme d'abord une fenêtre ou le menu ouverts).
    ============================================================ */
-/* ============================================================
-   GESTES DE BORD (edge-swipe) — navigation fluide au pouce
-   • Bord GAUCHE → glisser vers la DROITE  = Retour (page précédente)
-   • Bord DROIT  → glisser vers la GAUCHE  = Annulation rapide (si dispo)
-   Les deux partent des ~28 px du bord, donc AUCUN conflit avec le scroll
-   horizontal d'un tableau (qui démarre au milieu de l'écran). Un indice
-   visuel suit le doigt et confirme l'action avant le relâchement.
-   ============================================================ */
-function _hasUndo(){ return typeof _undoFn==='function'; }
-function initEdgeGestures(){
-  const EDGE=28;          // largeur de la zone de départ au bord (px)
-  const TRIGGER=70;       // distance pour déclencher
-  const cue=document.getElementById('edgeCue');
-  let active=null;        // 'back' | 'undo' | null
-  let startX=0, startY=0, dx=0, decided=false, fired=false;
-
-  function showCue(kind, progress){
-    if(!cue) return;
-    const side = kind==='back' ? 'left' : 'right';
-    cue.className='edge-cue '+side+(progress>=1?' ready':'');
-    cue.textContent = kind==='back' ? '‹' : '↩';
-    cue.style.opacity = Math.min(1, 0.35+progress*0.65);
-    const shift = Math.min(TRIGGER, Math.abs(dx));
-    cue.style.transform = kind==='back'
-      ? `translateY(-50%) translateX(${shift-44}px)`
-      : `translateY(-50%) translateX(${44-shift}px)`;
-  }
-  function hideCue(){ if(cue){ cue.style.opacity='0'; cue.className='edge-cue'; } }
-
-  function onStart(e){
-    if(e.touches && e.touches.length!==1){ active=null; return; }
-    const t=e.touches?e.touches[0]:e;
-    // ne pas interférer avec une saisie en cours / un menu ouvert
-    const ov=document.getElementById('sheetOverlay');
-    if(ov && ov.classList.contains('show')){ active=null; return; }
-    startX=t.clientX; startY=t.clientY; dx=0; decided=false; fired=false;
-    const W=window.innerWidth;
-    if(startX<=EDGE) active='back';
-    else if(startX>=W-EDGE) active='undo';
-    else active=null;
-  }
-  function onMove(e){
-    if(!active) return;
-    const t=e.touches?e.touches[0]:e;
-    dx=t.clientX-startX; const dy=t.clientY-startY;
-    if(!decided){
-      // direction : il faut un mouvement horizontal franc dans le bon sens
-      if(Math.abs(dy)>Math.abs(dx)){ active=null; hideCue(); return; }   // geste vertical → on lâche
-      if(active==='back' && dx<6) return;
-      if(active==='undo' && dx>-6) return;
-      decided=true;
-    }
-    if(e.cancelable) e.preventDefault();
-    const dist = active==='back' ? Math.max(0,dx) : Math.max(0,-dx);
-    showCue(active, dist/TRIGGER);
-  }
-  function onEnd(){
-    if(!active){ hideCue(); return; }
-    const dist = active==='back' ? Math.max(0,dx) : Math.max(0,-dx);
-    if(dist>=TRIGGER && !fired){
-      fired=true;
-      if(active==='back'){
-        try{ SFX.nav(); }catch(e){}
-        try{ history.back(); }catch(e){}
-      } else { // undo
-        if(_hasUndo()){ try{ SFX.nav(); }catch(e){} runUndo(); }
-        else { toast('Rien à annuler'); }
-      }
-    }
-    active=null; decided=false; hideCue();
-  }
-  // capture:true pour décider avant le scroll ; passive:false sur move pour pouvoir bloquer
-  document.addEventListener('touchstart', onStart, {passive:true, capture:true});
-  document.addEventListener('touchmove',  onMove,  {passive:false, capture:true});
-  document.addEventListener('touchend',   onEnd,   {passive:true, capture:true});
-  document.addEventListener('touchcancel',()=>{ active=null; hideCue(); }, {passive:true, capture:true});
-}
-
 function initHistoryNav(){
   // état racine = tableau de bord
   try{ history.replaceState({view:view, kind:'view'}, '', '#'+view); }catch(e){}
@@ -1124,7 +961,7 @@ async function renderDash(){
   const max=Math.max(...data.map(d=>d.v),1);
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar dash-hero"><div><div class="hero-logo" role="img" aria-label="Sensations Macarons"></div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div>
+   <div class="topbar"><div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div>
      <div class="flex" style="gap:6px"><button class="btn ghost sm" onclick="quickLossForm()">⚠ Casse</button><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div></div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
@@ -1382,12 +1219,12 @@ async function renderMaterials(){
        <button class="${_matCatFilter==='emballage'?'active':''}" onclick="matSetCat('emballage')">📦 Emballages</button>
      </div>
      <input class="search" id="matSearch" style="width:100%;margin-bottom:12px" placeholder="Nom de référence, unité, état…" value="${esc(matSearch)}" oninput="matFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
-   ${mats.length?`<div class="table-wrap cardify cardify-mat"><table><thead><tr><th>Référence</th><th>Cat.</th><th>Stock</th><th>Seuil</th><th>Lots</th><th>DLC la + proche</th><th>État</th><th></th></tr></thead>
+   ${mats.length?`<div class="table-wrap"><table><thead><tr><th>Référence</th><th>Cat.</th><th>Stock</th><th>Seuil</th><th>Lots</th><th>DLC la + proche</th><th>État</th><th></th></tr></thead>
      <tbody id="matBody"></tbody></table></div><div id="matEmpty" class="empty" style="display:none">Aucune référence.</div>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…) et tes emballages, puis réceptionne des lots.</div>`}
    </div>
    <div class="panel"><h2>Lots réceptionnés</h2>
      <input class="search" id="lotSearch" style="width:100%;margin-bottom:12px" placeholder="N° de lot, matière, fournisseur…" value="${esc(lotSearch)}" oninput="lotFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
-   ${lots.length?`<div class="table-wrap cardify cardify-lot"><table><thead><tr><th>Réception</th><th>Matière</th><th>N° lot fourn.</th><th>Fournisseur</th><th>Restant / Initial</th><th>DLC</th><th></th></tr></thead>
+   ${lots.length?`<div class="table-wrap"><table><thead><tr><th>Réception</th><th>Matière</th><th>N° lot fourn.</th><th>Fournisseur</th><th>Restant / Initial</th><th>DLC</th><th></th></tr></thead>
      <tbody id="lotBody"></tbody></table></div><div id="lotEmpty" class="empty" style="display:none">Aucun lot.</div>`
      :`<div class="empty">Aucun lot réceptionné.</div>`}
    </div>
@@ -2062,7 +1899,7 @@ async function renderProductions(){
        ${EMPLACEMENTS.map(e=>`<button onclick="prodbatSearchEmp('${e.lettre}')" title="${esc(e.nom)}">${e.icon} ${e.lettre}</button>`).join('')}
        <button onclick="prodbatSearchEmp('')" class="clear">Tout</button>
      </div>
-   ${prods.length?`<div class="table-wrap cardify cardify-prodbat"><table><thead><tr><th>Produit</th><th>Statut</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead>
+   ${prods.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>Statut</th><th>N° lot prod.</th><th>Emplacement</th><th>Théo.</th><th>Réel</th><th>Écart</th><th>Restant</th><th>Actions</th></tr></thead>
      <tbody id="prodbatBody"></tbody></table></div><div id="prodbatEmpty" class="empty" style="display:none">Aucune production ne correspond.</div>`
      :`<div class="empty">Aucune production. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock de produits finis suit la quantité <b>réelle</b>.</div>`}
    </div>
@@ -2801,11 +2638,9 @@ async function prodDoSplit(){
 // STATUT : passe une production de « démarré » à « terminé ».
 // C'est CE moment qui déclenche la DLC (7 j au frigo, 4 mois au congélateur).
 // Règle : on NE PEUT PAS revenir en arrière (terminé → démarré interdit).
-let _prodEndCache=null;   // production en cours de « Terminer » (pour le hint d'écart rendement)
 async function prodSetTermine(id){
   const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
   if(prodStatut(p)==='termine'){ toast('Production déjà terminée — retour en arrière impossible'); return; }
-  _prodEndCache=p;   // mémorisé pour le hint d'écart « bons pour la vente »
   const comp=prodComposant(p);
   const decongele=aDejaDecongele(p);
   // Emplacements proposés selon le composant (centralisés dans un tableau lisible) :
@@ -2829,33 +2664,12 @@ async function prodSetTermine(id){
      <span class="opt-main"><b>${c.icon} ${esc(c.nom)}</b><br><span class="opt-sub">${c.freezer?'+4 mois':(c.key==='ambiant'?'sans DLC frigo (coques sèches)':'+7 j')}</span></span></label>`).join('');
   openModal(`<h3>✓ Terminer la production</h3>
     <p style="margin-bottom:8px"><b>${esc(p.libre ? (p.produitLibre||'(sans nom)') : ((p.recipeId!=null ? (await db.recipes.get(p.recipeId)) : null)?.produitNom||'?'))}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${comp!=='complet'?` · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp}</span>`:''}</p>
-    <div class="field"><label>Bons pour la vente ${comp==='coques'?'<span style="color:#9a8a82;font-weight:400">— en coques</span>':'<span style="color:#9a8a82;font-weight:400">— en pièces</span>'}</label>
-      <input type="number" id="f_endReel" min="0" step="1" value="${(p.qteTheorique!=null)?p.qteTheorique:(p.qteProduite!=null?p.qteProduite:'')}" oninput="prodEndReelHint(${id})">
-      <p class="note" id="endReelHint" style="margin-top:4px;display:none"></p>
-      <p class="note" style="margin-top:4px;color:#8a6d3b">Compte ce qui sort <b>bon à la vente</b> (hors craqués, restes de poche…). Les matières premières restent déduites sur le théorique : seul le <b>stock de produits finis</b> et l'<b>écart de rendement</b> sont recalés.</p></div>
     <div class="field"><label>Emplacement de rangement *</label>
       <div class="opt-table" id="prodDestEnd">${rows||'<p class="note">Aucun emplacement disponible (recongélation interdite).</p>'}</div></div>
     ${decongele?'<p class="note" style="color:#b3261e">⚠️ Déjà décongelé : le congélateur est désactivé (recongélation interdite).</p>':''}
     <p class="note">La <b>DLC démarre maintenant</b> selon l'emplacement choisi. La lettre s'ajoute au n° de lot.</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="prodTermineConfirm(${id})">Terminer</button></div>`);
-}
-// Hint live de l'écart de rendement saisi à la fin de production.
-function prodEndReelHint(id){
-  const inp=document.getElementById('f_endReel');
-  const hint=document.getElementById('endReelHint'); if(!inp||!hint) return;
-  const v=inp.value;
-  if(v===''){ hint.style.display='none'; return; }
-  const re=+v;
-  const p=_prodEndCache;   // théorique mémorisé à l'ouverture
-  const th=(p&&p.qteTheorique!=null)?+p.qteTheorique:(p?+p.qteProduite:0);
-  if(isNaN(re)||re<0){ hint.style.display='block'; hint.style.color='var(--red,#b3261e)'; hint.textContent='Quantité invalide.'; return; }
-  const dejaSorti=p?((+p.qteProduite||0)-(+p.qteRestante||0)):0;
-  if(re<dejaSorti-1e-9){ hint.style.display='block'; hint.style.color='var(--red,#b3261e)'; hint.textContent=`Au moins ${qty(dejaSorti)} (déjà affecté à des commandes).`; return; }
-  const e=re-th;
-  hint.style.display='block';
-  hint.style.color = e<0 ? 'var(--red,#b3261e)' : (e>0?'#3f7d52':'#9a8a82');
-  hint.textContent = `Écart de rendement : ${e>0?'+':''}${qty(e)} (${th?(e>0?'+':'')+Math.round(e/th*100):0}%) — ${e<0?'perte / casse':(e>0?'surplus':'conforme au théorique')}.`;
 }
 async function prodTermineConfirm(id){
   const dest=(document.querySelector('input[name="f_destEnd"]:checked')||{}).value||'';
@@ -2866,18 +2680,6 @@ async function prodTermineConfirm(id){
   if(comp==='coques' && dest==='frigo'){ toast('Les coques ne vont pas au frigo.'); return; }
   if(comp==='ganache' && dest!=='frigo'){ toast('La ganache va uniquement au frigo.'); return; }
   if(isFreezer(dest) && aDejaDecongele(p)){ toast('Recongélation interdite.'); return; }
-  // Rendement réel saisi à la fin : « bons pour la vente ». Recale stock fini + écart,
-  // matières inchangées (déjà déduites sur le théorique). Vide = on garde le théorique.
-  const rawReel = (val('f_endReel')||'').trim();
-  let reelPatch=null;
-  if(rawReel!==''){
-    const newReel=+rawReel;
-    if(isNaN(newReel)||newReel<0){ toast('Quantité « bons pour la vente » invalide'); return; }
-    const th=(p.qteTheorique!=null)?+p.qteTheorique:(+p.qteProduite||0);
-    const dejaSorti=(+p.qteProduite||0)-(+p.qteRestante||0);
-    if(newReel<dejaSorti-1e-9){ toast(`Au moins ${qty(dejaSorti)} (déjà affecté à des commandes).`); return; }
-    reelPatch={ qteReelle:newReel, qteProduite:newReel, qteRestante:newReel-dejaSorti, ecart:newReel-th };
-  }
   const nowIso=new Date().toISOString();
   // ajoute la lettre d'emplacement au lot (base + éventuel suffixe composant déjà présent)
   const newLot = lotAvecEmplacement(p.lotProduction||'', dest);
@@ -2895,11 +2697,9 @@ async function prodTermineConfirm(id){
     }
     patch.dlcAuto = true;
   }
-  if(reelPatch) Object.assign(patch, reelPatch);
   await db.productions.update(id, patch);
   closeModal(); renderProductions();
-  const ecartTxt = reelPatch ? ` · rendement ${reelPatch.qteReelle}/${(p.qteTheorique!=null)?p.qteTheorique:p.qteProduite}${reelPatch.ecart?` (écart ${reelPatch.ecart>0?'+':''}${qty(reelPatch.ecart)})`:''}` : '';
-  toast(`Production terminée ✓ · ${empLettre(dest)}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}${ecartTxt}`);
+  toast(`Production terminée ✓ · ${empLettre(dest)}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
 }
 
 // ====== ASSEMBLAGE coques + ganache → macaron assemblé (vendable) ======
@@ -3804,7 +3604,7 @@ async function renderCosts(){
 
   // ---- Graphe 1 : évolution du prix unitaire par matière (moyenne mensuelle des lots reçus) ----
   // construit une série par matière qui a au moins 2 points de prix
-  const palette = ['#AA7C39','#490F25','#3f7d52','#b04a3e','#7a4b82','#c6974f','#6e3340'];
+  const palette = ['#AA7C39','#52252F','#3f7d52','#b04a3e','#7a4b82','#c6974f','#6e3340'];
   const series=[];
   let ci=0;
   for(const mat of mats){
@@ -4485,7 +4285,7 @@ async function getClientDashboardData(clientId){
   // Badge : VIP (panier moyen hors événement > 50€) prioritaire, sinon Fidèle (>5 commandes)
   let badge=null;
   if(panierMoyenHorsEvent>50) badge={label:'VIP', col:'var(--gold,#AA7C39)'};
-  else if(nb>5) badge={label:'Client fidèle', col:'var(--bordeaux,#490F25)'};
+  else if(nb>5) badge={label:'Client fidèle', col:'var(--bordeaux,#52252F)'};
   return {client:c, nbCommandes:nb, panierMoyen, panierMoyenHorsEvent,
     parfumPrefere, frequenceTxt, frequenceJours, caTotal:money2(caTotal), badge};
 }
@@ -4729,8 +4529,8 @@ function syncPaymentFields(o){
 
 // Réglage : automatisation du statut de paiement quand un règlement est saisi.
 // Stocké dans localStorage, activé par défaut, désactivable par l'utilisateur.
-function autoPayEnabled(){ return true; }  // toujours actif (case retirée du formulaire)
-function setAutoPay(on){ /* conservé pour compatibilité, sans effet */ }
+function autoPayEnabled(){ return localStorage.getItem('sm_autoPay')!=='0'; }
+function setAutoPay(on){ localStorage.setItem('sm_autoPay', on?'1':'0'); }
 
 // Applique le paiement sur un objet commande (mutation en place) de façon cohérente :
 // si un règlement est présent ET l'auto-paiement actif → Payé + date du jour.
@@ -4894,7 +4694,7 @@ async function renderCmd(){
          <button class="btn ghost sm" onclick="cmdExportSelection()">⬇ Exporter (TXT)</button>
        </div>
      </div>
-     <div class="table-wrap cardify cardify-cmd"><table><thead><tr><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th>Actions</th><th style="width:34px" title="Sélection"><input type="checkbox" id="cmdSelHead" onclick="cmdToggleAll(this.checked)" title="Tout sélectionner"></th></tr></thead>
+     <div class="table-wrap"><table><thead><tr><th>Client</th><th>Produits</th><th>Montant</th><th>Paiement</th><th>Statut</th><th>Traça.</th><th>Actions</th><th style="width:34px" title="Sélection"><input type="checkbox" id="cmdSelHead" onclick="cmdToggleAll(this.checked)" title="Tout sélectionner"></th></tr></thead>
        <tbody id="cmdBody"></tbody></table></div>
      <div id="cmdEmpty" class="empty" style="display:none">Aucune commande.</div>
    </div>`;
@@ -5013,8 +4813,8 @@ function cmdClearSelection(){ _cmdSel.clear(); const h=document.getElementById('
 function cmdUpdateSelBar(){
   const bar=document.getElementById('cmdSelBar'), cnt=document.getElementById('cmdSelCount');
   if(!bar) return;
-  if(_cmdSel.size>0){ bar.style.display='flex'; bar.classList.add('floating'); document.body.classList.add('sel-active'); if(cnt) cnt.textContent=`${_cmdSel.size} sélectionnée(s)`; }
-  else { bar.style.display='none'; bar.classList.remove('floating'); document.body.classList.remove('sel-active'); }
+  if(_cmdSel.size>0){ bar.style.display='flex'; if(cnt) cnt.textContent=`${_cmdSel.size} sélectionnée(s)`; }
+  else { bar.style.display='none'; }
 }
 let _cmdClNameMap={};
 function _cmdClName(id){ return _cmdClNameMap[id]||'—'; }
@@ -5055,7 +4855,7 @@ function cmdFilter(q){
 }
 // Ligne séparatrice colorée par mois/année (couleur dérivée du mois → contraste entre groupes).
 const _MOIS_FR=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-const _SEP_COLORS=['#490F25','#AA7C39','#6aa3a0','#7a6a9a','#b07a4a','#3f7d52','#9a6a82','#5a7a9a','#a98b3d','#7a8a5a','#8a5a6a','#5a8a7a'];
+const _SEP_COLORS=['#52252F','#AA7C39','#6aa3a0','#7a6a9a','#b07a4a','#3f7d52','#9a6a82','#5a7a9a','#a98b3d','#7a8a5a','#8a5a6a','#5a8a7a'];
 function _cmdMonthSeparator(mk){
   const [y,m]=mk.split('-'); const idx=(+m||1)-1;
   const col=_SEP_COLORS[idx % _SEP_COLORS.length];
@@ -5105,7 +4905,13 @@ async function cmdView(id){
       `<div class="sum-box"><span>Marge nette sans livraison</span><b>${euro(_m.margeNette)} (${_m.tauxNet}%)</b></div>`+
       `<div class="sum-box"><span>Marge nette après livraison</span><b style="color:${_m.margeNetteApresLiv<0?'#b3261e':(_baisse>0?'#d98324':'#2e7d32')}">${euro(_m.margeNetteApresLiv)} (${_m.tauxNetApresLiv}%)</b></div>`+
       (_baisse>0?`<div class="sum-box" style="font-size:.82rem;color:#b3261e"><span>Impact sur le taux de marge</span><b>−${_baisse.toFixed(1)} pt</b></div>`:'')+
-      (_m.suggLivraison>0?`<p class="note">💡 Prix de livraison conseillé pour préserver la marge : <b>${euro(_m.suggLivraison)}</b>.</p>`:'');
+      (function(){
+        const s=getSettings();
+        const partService = _m.ca>0 ? (_m.caService||0)/_m.ca : 0;
+        const chargeMoy = (s.socialGoods/100)*(1-partService) + (s.socialService/100)*partService;
+        const zeroPerte = money2(_liv.total / Math.max(0.0001, 1 - chargeMoy));
+        return `<p class="note" style="margin-top:6px">💡 Prix de livraison conseillés : carburant seul <b>${euro(_liv.coutCarburant)}</b> · coût réel <b>${euro(_liv.total)}</b> · zéro perte <b>${euro(zeroPerte)}</b>.</p>`;
+      })();
   }
   const lignes = orderToLines(o);
   const blocks = lignes.map(ln=>{
@@ -5330,15 +5136,16 @@ async function cmdForm(id, opts){
      </div>
      <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0';cmdRecalc()"></div>
    </div>
-   <div class="sum-box col" id="priceBreak" style="display:none"></div>
+   <div class="sum-box" id="priceBreak" style="display:none"></div>
 
    <div class="pay-ledger" style="margin-top:14px">
      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
        <label style="font-weight:600;color:var(--bordeaux)">Paiements encaissés</label>
+       <label style="font-size:.76rem;color:#7a6a62;display:flex;gap:6px;align-items:center"><input type="checkbox" id="f_autopay" style="width:auto" ${autoPayEnabled()?'checked':''} onchange="setAutoPay(this.checked)"> auto-solder si encaissement</label>
      </div>
      <div id="payList"></div>
      <button type="button" class="btn ghost sm" onclick="cmdAddPayment()">＋ Ajouter un paiement</button>
-     <div class="sum-box col" id="paySummary" style="margin-top:8px"></div>
+     <div class="sum-box" id="paySummary" style="margin-top:8px"></div>
      <div class="field" style="margin-top:8px"><label>Date prévue du règlement final <span style="color:#9a8a82;font-weight:400">— acomptes / événements</span></label>
        <input type="date" id="f_dateFinal" value="${esc(o.dateReglementFinal||'')}"></div>
    </div>
@@ -5815,17 +5622,12 @@ function cmdRecalc(){
     if(cmdLines.length || persoNb){
       brk.style.display='block';
       const remiseLignes = addMoney(...cmdLines.map(ln=>lineRemiseEuro(ln)));
-      // part livraison facturée (si le bouton « Ajouter au prix » a été utilisé)
-      const fraisLiv = (mt && mt.dataset.fraisLivraison) ? (+mt.dataset.fraisLivraison||0) : 0;
-      // total affiché = valeur réelle du champ (inclut la livraison si manuel), sinon total calculé
-      const totalAffiche = (mt && mt.dataset.auto==='0' && mt.value!=='') ? money2(+mt.value||0) : total;
       brk.innerHTML =
-        `<div><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
-        (remiseLignes>0?`<div style="color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
-        (gpct>0?`<div style="color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseG)}</b></div>`:'')+
-        (persoNb>0?`<div style="color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×0,25 €)</span><b>+${euro(persoSup)}</b></div>`:'')+
-        (fraisLiv>0?`<div style="color:var(--caramel)"><span>🚚 Frais de livraison</span><b>+${euro(fraisLiv)}</b></div>`:'')+
-        `<div style="border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(totalAffiche)}</b></div>`;
+        `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
+        (remiseLignes>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
+        (gpct>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseG)}</b></div>`:'')+
+        (persoNb>0?`<div style="display:flex;justify-content:space-between;color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×0,25 €)</span><b>+${euro(persoSup)}</b></div>`:'')+
+        `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(total)}</b></div>`;
     } else brk.style.display='none';
   }
   if(typeof cmdUpdatePaySummary==='function') cmdUpdatePaySummary();
@@ -5891,25 +5693,39 @@ function cmdDeliveryRecalc(){
     `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span>Marge nette <b>sans</b> livraison</span><b>${euro(m.margeNette)} (${m.tauxNet}%)</b></div>`+
     `<div style="display:flex;justify-content:space-between"><span>Marge nette <b>après</b> livraison</span><b style="color:${m.margeNetteApresLiv<0?'#b3261e':(baisse>0?'#d98324':'#2e7d32')}">${euro(m.margeNetteApresLiv)} (${m.tauxNetApresLiv}%)</b></div>`+
     (baisse>0?`<div style="display:flex;justify-content:space-between;color:#b3261e;font-size:.82rem"><span>Impact sur le taux de marge</span><b>−${baisse.toFixed(1)} pt</b></div>`:'')+
-    (m.suggLivraison>0?`<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #e0d5c5">💡 Pour préserver ta marge, facture la livraison <b style="color:var(--bordeaux)">${euro(m.suggLivraison)}</b> <button type="button" class="btn gold sm" style="margin-left:6px" onclick="cmdApplyDeliveryFee(${m.suggLivraison})">Ajouter au prix</button></div>`:'');
+    (function(){
+      // Trois paliers de prix de livraison, du plus généreux au plus protecteur.
+      // 1) Carburant seul · 2) Coût réel (carburant + temps) · 3) Coût réel + charges (zéro perte).
+      const s=getSettings();
+      // Taux de charges sociales moyen pondéré (marchandise/prestation) appliqué à cette commande.
+      const partService = m.ca>0 ? (m.caService||0)/m.ca : 0;
+      const chargeMoy = (s.socialGoods/100)*(1-partService) + (s.socialService/100)*partService;
+      const carburant = liv.coutCarburant;
+      const reel = liv.total;
+      // Pour que le « zéro perte » soit vraiment neutre, on compense les charges prélevées sur ce qu'on facture.
+      const zeroPerte = money2(reel / Math.max(0.0001, 1 - chargeMoy));
+      const palier = (label, montant, hint, col)=>
+        `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:5px">
+           <div style="font-size:.84rem"><b style="color:${col}">${euro(montant)}</b> <span style="color:#8a7a72">${label}</span>${hint?`<br><span style="color:#a89a90;font-size:.74rem">${hint}</span>`:''}</div>
+           <button type="button" class="btn ghost sm" onclick="cmdApplyDeliveryFee(${montant})">Ajouter</button>
+         </div>`;
+      return `<div style="margin-top:7px;padding-top:7px;border-top:1px dashed #e0d5c5">
+          <div style="font-size:.86rem;margin-bottom:2px">💡 Pour préserver ta marge, facture la livraison :</div>
+          ${palier('Carburant seul', carburant, 'geste commercial', '#2e7d32')}
+          ${palier('Coût réel (carburant + temps)', reel, 'déplacement neutre', '#AA7C39')}
+          ${palier('Coût réel + charges', zeroPerte, 'zéro perte après cotisations', 'var(--bordeaux)')}
+        </div>`;
+    })();
 }
-// Ajoute (de façon FIABLE) le supplément livraison au prix total.
-// Repart toujours du total produits calculé (sous-total − remises + perso) pour
-// éviter d'empiler plusieurs fois la livraison ou de partir d'un champ vide.
+// Ajoute le supplément livraison suggéré au prix total de la commande (champ manuel).
 function cmdApplyDeliveryFee(montant){
   const mt=document.getElementById('f_mt'); if(!mt) return;
-  const frais = money2(+montant||0);
-  // total produits net, indépendant de ce qui est affiché dans le champ
-  const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln)));
-  const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
-  const remiseG = money2(sousTotal*gpct/100);
-  const persoSup = money2(cmdPersoCount()*PERSO_PRIX_UNIT);
-  const totalProduits = Math.max(0, addMoney(subMoney(sousTotal, remiseG), persoSup));
-  mt.dataset.auto='0';                          // le prix devient manuel (livraison incluse)
-  mt.dataset.fraisLivraison = frais;            // mémorise la part livraison (pour la facture)
-  mt.value = money2(totalProduits + frais).toFixed(2);
+  const base = +mt.value || 0;
+  mt.dataset.auto='0';                       // le prix devient manuel
+  mt.value = money2(base + (+montant||0)).toFixed(2);
+  mt.dataset.fraisLivraison = money2(+montant||0);  // mémorise la part livraison facturée (pour la facture)
   cmdRecalc();
-  toast(`Livraison ${euro(frais)} ajoutée — total ${euro(totalProduits+frais)}`);
+  toast(`Livraison ${euro(montant)} ajoutée au prix`);
 }
 
 async function saveCmd(id){
@@ -7130,7 +6946,7 @@ function flavorRecommendations(analysis, data){
   // 7) priorité de production selon rentabilité historique
   const prioProd = [...sold].filter(r=>r.tauxMarge!=null).sort((a,b)=>(b.margeBrute)-(a.margeBrute)).slice(0,5);
   if(prioProd.length){
-    recs.push({icon:'⚙️', col:'#490F25',
+    recs.push({icon:'⚙️', col:'#52252F',
       txt:`Priorité de production (bénéfice historique) : ${prioProd.map((r,i)=>`${i+1}. ${r.nom}`).join('  ')}.`});
   }
   // 8) INCOHÉRENCE CA : encaissé vs attendu (pièces × prix moyen). Pertinent une fois
@@ -7788,7 +7604,7 @@ async function renderStats(){
    </div>
    ${clientBlock}
 
-   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Vue globale</h2>
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Vue globale</h2>
    <div class="panel"><h2>Tendances par parfum <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— tous produits, dons inclus</span></h2>${statBars(G.parfums)}</div>
    <div class="panel"><h2>Produits les plus vendus</h2>${statBars(G.produits, {unit:''})}</div>
    <div class="panel"><h2>Évolution des coffrets <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— par taille</span></h2>
@@ -7862,7 +7678,7 @@ async function renderCompta(){
     const labelByIdx = A.serie.map(s=>monthLabel(s.mois));
     chart = lineChart([
       {name:'CA facturé', points:mkPts(s=>s.caFacture), color:'#c9a227'},
-      {name:'CA encaissé', points:mkPts(s=>s.ca), color:'#490F25'},
+      {name:'CA encaissé', points:mkPts(s=>s.ca), color:'#52252F'},
       {name:'Résultat', points:mkPts(s=>s.resultat), color:'#3f7d52'}
     ], {zero:true, xlabel:i=>labelByIdx[i]||'', fmt:v=>Math.round(v)+'€'});
   }
@@ -8143,7 +7959,7 @@ async function renderPilotage(){
   // mini-courbe CA encaissé
   let chart='';
   if(S.serie.length){
-    chart = lineChart([{name:'CA encaissé', points:S.serie.map((s,i)=>({x:i,y:s.ca})), color:'#490F25'}],
+    chart = lineChart([{name:'CA encaissé', points:S.serie.map((s,i)=>({x:i,y:s.ca})), color:'#52252F'}],
       {zero:true, xlabel:i=>monthLabel(S.serie[i]?.mois)||'', fmt:v=>Math.round(v)+'€'});
   }
 
@@ -8708,7 +8524,7 @@ async function renderProfit(){
      <button class="btn ghost sm" onclick="settingsForm()">⚙ Paramètres</button></div>
    <div class="banner">📈 <div>Marge brute = prix de vente − matières − emballages. Marge nette = marge brute − charges sociales (${getSettings().socialGoods}% marchandise, ${getSettings().socialService}% prestation). L'échelle de rentabilité se base sur le taux de marge nette.</div></div>
    <div class="panel"><h2>Classement clients par rentabilité</h2>${clientTable}</div>
-   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:18px 0 4px;font-size:1.2rem">Rentabilité par événement</h2>
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:18px 0 4px;font-size:1.2rem">Rentabilité par événement</h2>
    ${eventCards}`;
 }
 
@@ -9244,7 +9060,7 @@ async function renderMarketStats(){
   // CA par mois
   const byMonth={}; data.forEach(d=>{ const m=monthKey(d.mk.date); byMonth[m]=addMoney(byMonth[m]||0,d.T.caTotal); });
   const months=Object.keys(byMonth).sort();
-  let chart=''; if(months.length) chart=lineChart([{name:'CA marchés', points:months.map((m,i)=>({x:i,y:byMonth[m]})), color:'#490F25'}], {zero:true, xlabel:i=>monthLabel(months[i]), fmt:v=>Math.round(v)+'€'});
+  let chart=''; if(months.length) chart=lineChart([{name:'CA marchés', points:months.map((m,i)=>({x:i,y:byMonth[m]})), color:'#52252F'}], {zero:true, xlabel:i=>monthLabel(months[i]), fmt:v=>Math.round(v)+'€'});
 
   // parfums les + / - vendus (somme vendu par parfum)
   const byParfum={};
@@ -9485,13 +9301,13 @@ async function renderAnalyse(){
    <div class="topbar"><div><h1>Analyse &amp; Production</h1><p>Décisions opérationnelles · 100% hors-ligne</p></div></div>
    <div class="banner">🧭 <div>Vue décisionnelle : tendances, clients clés, anomalies, et besoins de production calculés à partir de vos commandes et recettes. Aucune donnée ne quitte l'appareil.</div></div>
    ${trendBlock}
-   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Clients</h2>
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Clients</h2>
    ${clientBlock}
-   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Anomalies</h2>
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Anomalies</h2>
    ${anoBlock}
-   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Production</h2>
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Production</h2>
    ${prodBlock}
-   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Temps de travail</h2>
+   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Temps de travail</h2>
    ${tempsBlock}`;
 }
 
@@ -9542,7 +9358,7 @@ async function renderForecast(){
      <p class="note">« Réservé » = macarons engagés par les commandes à venir non livrées. « Prévisionnel » = stock fini actuel − réservé. Une rupture sous ${f.horizon} jours déclenche une alerte.</p>`
      :`<div class="empty">Aucune donnée. Lancez des productions et créez des commandes pour activer le prévisionnel.</div>`}
    </div>
-   ${detailRupture?`<h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
+   ${detailRupture?`<h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
 }
 
 /* ============================================================
@@ -9600,7 +9416,7 @@ async function renderEvents(){
   };
 
   const section = (titre, list, emptyMsg, color) =>
-    `<h2 style="font-family:var(--font-display);color:${color||'var(--bordeaux)'};margin:18px 0 4px;font-size:1.2rem">${titre} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">(${list.length})</span></h2>
+    `<h2 style="font-family:'Fraunces',serif;color:${color||'var(--bordeaux)'};margin:18px 0 4px;font-size:1.2rem">${titre} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">(${list.length})</span></h2>
      ${list.length?list.map(card).join(''):`<p class="note">${emptyMsg}</p>`}`;
 
   // totaux
@@ -10057,7 +9873,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v175';
+const APP_VERSION = 'v162';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -10101,15 +9917,6 @@ const APP_KB = [
   { id:'mode-discret', titre:'Mode discret',
     tags:'discret confidentialite flou masquer nom prix montant privacy',
     r:`<p>Le <b>mode discret</b> floute les noms de clients et masque les montants/volumes. Active-le depuis le bouton 🙈 sur les pages Commandes et Clients, ou depuis le Menu (☰). La saisie et les détails restent lisibles pour travailler.</p>` },
-  { id:'gestes-bord', titre:'Gestes de navigation (retour & annulation)',
-    tags:'geste gestes swipe glisser bord retour precedent annuler annulation undo navigation fluide pouce',
-    r:`<p>Deux gestes rapides au pouce : glisse depuis le <b>bord gauche vers la droite</b> pour <b>revenir</b> à l'écran précédent (ferme d'abord une fenêtre ou le menu ouverts) ; glisse depuis le <b>bord droit vers la gauche</b> pour <b>annuler</b> la dernière action (suppression de commande, client, production…) tant que le bandeau d'annulation est encore actif. Une pastille suit ton doigt et devient dorée quand le geste va se déclencher. Ces gestes partent du bord, donc ils ne gênent pas le défilement des tableaux.</p>` },
-  { id:'theme-premium', titre:'Identité visuelle, polices & iPad',
-    tags:'police polices outfit bellota typographie design esthetique premium chic raffine son sons effet sonore goutte carillon ipad tablette affichage couleur',
-    r:`<p>L'app utilise les polices de marque <b>Outfit</b> (interface et chiffres) et <b>Bellota Text</b> (titres), <b>embarquées</b> dans l'app pour fonctionner même hors ligne. Les sons d'interface (navigation, fermeture du menu) sont de discrètes <b>gouttes d'eau</b> feutrées ; coupe-les depuis le Menu (🔔/🔕). Sur <b>iPad</b>, la mise en page s'élargit (barre latérale, cartes sur plusieurs colonnes, marges généreuses) au lieu d'être un grand iPhone.</p>` },
-  { id:'cartes-mobiles', titre:'Affichage en cartes sur iPhone',
-    tags:'carte cartes mobile tableau scroll defilement horizontal lisibilite navigation commandes productions matieres lots ergonomie',
-    r:`<p>Sur iPhone, les grands tableaux (<b>Commandes</b>, <b>Productions</b>, <b>Matières &amp; lots</b>) s'affichent en <b>cartes verticales</b> : toutes les informations d'une ligne sont visibles d'un coup, <b>sans défilement horizontal</b>, avec des boutons élargis pour le tactile. La recherche, les filtres et la sélection fonctionnent comme avant. Sur iPad/ordinateur, les tableaux classiques restent affichés.</p>` },
   { id:'haccp', titre:'HACCP / Plan de Maîtrise Sanitaire',
     tags:'haccp pms hygiene temperature releve nettoyage ddpp frigo congelateur',
     r:`<p>Onglet <b>PMS</b>. Relevés de température matin/soir (avec action corrective obligatoire si hors plage), plan de nettoyage (quotidien/hebdo/mensuel) et export DDPP sur 30 jours.</p>` },
@@ -11134,7 +10941,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','tombstones'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -12619,13 +12426,10 @@ function ttTick(){
 // Démarre un NOUVEAU chrono (choix rapide d'activité). N'interrompt pas les autres.
 function ttStart(){
   ttCollapse();
-  openModal(`<h3>⏱ Pointeuse</h3>
+  openModal(`<h3>⏱ Nouvelle activité</h3>
     <p class="note">Un tap pour démarrer un chrono. Plusieurs activités peuvent tourner en parallèle.</p>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
       ${TT_ACTIVITIES.map(a=>`<button class="btn ghost" style="flex:1;min-width:44%" onclick="ttStartWith(${JSON.stringify(a).replace(/"/g,'&quot;')})">${esc(a)}</button>`).join('')}
-    </div>
-    <div class="flex" style="gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--hair)">
-      <button class="btn gold" style="flex:1" onclick="closeModal();ttOpenHistory()">🗒 Historique du pointage</button>
     </div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn" onclick="ttStartWith('')">Démarrer sans préciser</button></div>`);
@@ -14147,12 +13951,11 @@ function startClock(){
   try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
   try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
   try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
+  try{ await migrateAssignUids(); }catch(e){ console.error('migrateUids',e); }
   try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
   const opened = await handleTraceAnchor().catch(()=>false);
   if(!opened) render();
   initHistoryNav();
-  initSheetDrag();
-  initEdgeGestures();
   ttInit();
   mascotInit();
   startClock();
