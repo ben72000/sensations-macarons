@@ -733,9 +733,38 @@ const SFX = (function(){
       osc.start(t0); osc.stop(t0+dur+0.02);
     }catch(e){}
   }
+  // Carillon raffiné : fondamentale + partiels harmoniques, attaque douce,
+  // longue extinction, filtre passe-bas chaud → sensation « boîte à musique / cristal ».
+  function chime(freq, dur, vol, delay){
+    if(!on) return;
+    const c=ensureCtx(); if(!c) return;
+    try{ if(c.state==='suspended') c.resume(); }catch(e){}
+    try{
+      const t0=c.currentTime+(delay||0);
+      // filtre passe-bas pour adoucir les aigus (rondeur boisée)
+      const lp=c.createBiquadFilter(); lp.type='lowpass';
+      lp.frequency.setValueAtTime(3200, t0); lp.Q.value=0.7;
+      const bus=c.createGain(); bus.gain.value=1; bus.connect(lp); lp.connect(c.destination);
+      // partiels : fondamentale + octave + douzième, amplitudes décroissantes
+      const partials=[[1,1],[2,0.42],[3,0.18],[4.2,0.08]];
+      partials.forEach(([mult,amp])=>{
+        const osc=c.createOscillator(); osc.type='sine';
+        osc.frequency.setValueAtTime(freq*mult, t0);
+        const g=c.createGain();
+        const peak=vol*amp;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(peak, t0+0.018);          // attaque douce
+        g.gain.exponentialRampToValueAtTime(0.0001, t0+dur*(1-0.05*mult)); // les partiels aigus s'éteignent + vite
+        osc.connect(g); g.connect(bus);
+        osc.start(t0); osc.stop(t0+dur+0.05);
+      });
+    }catch(e){}
+  }
   return {
-    sheet(){ tone(440, 300, 0.10, 0.06, 'sine'); setTimeout(()=>tone(300, 230, 0.09, 0.04, 'sine'), 55); },
-    nav(){ tone(660, 620, 0.055, 0.035, 'sine'); },
+    // Fermeture de la feuille : deux notes descendantes, douces, comme une boîte à musique.
+    sheet(){ chime(587.33, 0.42, 0.16, 0); chime(440.00, 0.55, 0.13, 0.10); },   // ré5 → la4
+    // Navigation : un seul carillon clair et bref (mi5), discret et raffiné.
+    nav(){ chime(659.25, 0.34, 0.11, 0); },
     unlock,
     isOn(){ return on; },
     toggle(){ on=!on; try{ localStorage.setItem('sm_sfx', on?'1':'0'); }catch(e){} if(on){ unlock(); SFX.nav(); } return on; }
@@ -994,7 +1023,7 @@ async function renderDash(){
   const max=Math.max(...data.map(d=>d.v),1);
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div>
+   <div class="topbar dash-hero"><div><h1>Tableau de bord</h1><p>Vue d'ensemble — ${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p></div>
      <div class="flex" style="gap:6px"><button class="btn ghost sm" onclick="quickLossForm()">⚠ Casse</button><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div></div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
@@ -3674,7 +3703,7 @@ async function renderCosts(){
 
   // ---- Graphe 1 : évolution du prix unitaire par matière (moyenne mensuelle des lots reçus) ----
   // construit une série par matière qui a au moins 2 points de prix
-  const palette = ['#AA7C39','#52252F','#3f7d52','#b04a3e','#7a4b82','#c6974f','#6e3340'];
+  const palette = ['#AA7C39','#490F25','#3f7d52','#b04a3e','#7a4b82','#c6974f','#6e3340'];
   const series=[];
   let ci=0;
   for(const mat of mats){
@@ -4355,7 +4384,7 @@ async function getClientDashboardData(clientId){
   // Badge : VIP (panier moyen hors événement > 50€) prioritaire, sinon Fidèle (>5 commandes)
   let badge=null;
   if(panierMoyenHorsEvent>50) badge={label:'VIP', col:'var(--gold,#AA7C39)'};
-  else if(nb>5) badge={label:'Client fidèle', col:'var(--bordeaux,#52252F)'};
+  else if(nb>5) badge={label:'Client fidèle', col:'var(--bordeaux,#490F25)'};
   return {client:c, nbCommandes:nb, panierMoyen, panierMoyenHorsEvent,
     parfumPrefere, frequenceTxt, frequenceJours, caTotal:money2(caTotal), badge};
 }
@@ -4925,7 +4954,7 @@ function cmdFilter(q){
 }
 // Ligne séparatrice colorée par mois/année (couleur dérivée du mois → contraste entre groupes).
 const _MOIS_FR=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-const _SEP_COLORS=['#52252F','#AA7C39','#6aa3a0','#7a6a9a','#b07a4a','#3f7d52','#9a6a82','#5a7a9a','#a98b3d','#7a8a5a','#8a5a6a','#5a8a7a'];
+const _SEP_COLORS=['#490F25','#AA7C39','#6aa3a0','#7a6a9a','#b07a4a','#3f7d52','#9a6a82','#5a7a9a','#a98b3d','#7a8a5a','#8a5a6a','#5a8a7a'];
 function _cmdMonthSeparator(mk){
   const [y,m]=mk.split('-'); const idx=(+m||1)-1;
   const col=_SEP_COLORS[idx % _SEP_COLORS.length];
@@ -6988,7 +7017,7 @@ function flavorRecommendations(analysis, data){
   // 7) priorité de production selon rentabilité historique
   const prioProd = [...sold].filter(r=>r.tauxMarge!=null).sort((a,b)=>(b.margeBrute)-(a.margeBrute)).slice(0,5);
   if(prioProd.length){
-    recs.push({icon:'⚙️', col:'#52252F',
+    recs.push({icon:'⚙️', col:'#490F25',
       txt:`Priorité de production (bénéfice historique) : ${prioProd.map((r,i)=>`${i+1}. ${r.nom}`).join('  ')}.`});
   }
   // 8) INCOHÉRENCE CA : encaissé vs attendu (pièces × prix moyen). Pertinent une fois
@@ -7646,7 +7675,7 @@ async function renderStats(){
    </div>
    ${clientBlock}
 
-   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Vue globale</h2>
+   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Vue globale</h2>
    <div class="panel"><h2>Tendances par parfum <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— tous produits, dons inclus</span></h2>${statBars(G.parfums)}</div>
    <div class="panel"><h2>Produits les plus vendus</h2>${statBars(G.produits, {unit:''})}</div>
    <div class="panel"><h2>Évolution des coffrets <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— par taille</span></h2>
@@ -7720,7 +7749,7 @@ async function renderCompta(){
     const labelByIdx = A.serie.map(s=>monthLabel(s.mois));
     chart = lineChart([
       {name:'CA facturé', points:mkPts(s=>s.caFacture), color:'#c9a227'},
-      {name:'CA encaissé', points:mkPts(s=>s.ca), color:'#52252F'},
+      {name:'CA encaissé', points:mkPts(s=>s.ca), color:'#490F25'},
       {name:'Résultat', points:mkPts(s=>s.resultat), color:'#3f7d52'}
     ], {zero:true, xlabel:i=>labelByIdx[i]||'', fmt:v=>Math.round(v)+'€'});
   }
@@ -8001,7 +8030,7 @@ async function renderPilotage(){
   // mini-courbe CA encaissé
   let chart='';
   if(S.serie.length){
-    chart = lineChart([{name:'CA encaissé', points:S.serie.map((s,i)=>({x:i,y:s.ca})), color:'#52252F'}],
+    chart = lineChart([{name:'CA encaissé', points:S.serie.map((s,i)=>({x:i,y:s.ca})), color:'#490F25'}],
       {zero:true, xlabel:i=>monthLabel(S.serie[i]?.mois)||'', fmt:v=>Math.round(v)+'€'});
   }
 
@@ -8566,7 +8595,7 @@ async function renderProfit(){
      <button class="btn ghost sm" onclick="settingsForm()">⚙ Paramètres</button></div>
    <div class="banner">📈 <div>Marge brute = prix de vente − matières − emballages. Marge nette = marge brute − charges sociales (${getSettings().socialGoods}% marchandise, ${getSettings().socialService}% prestation). L'échelle de rentabilité se base sur le taux de marge nette.</div></div>
    <div class="panel"><h2>Classement clients par rentabilité</h2>${clientTable}</div>
-   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:18px 0 4px;font-size:1.2rem">Rentabilité par événement</h2>
+   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:18px 0 4px;font-size:1.2rem">Rentabilité par événement</h2>
    ${eventCards}`;
 }
 
@@ -9102,7 +9131,7 @@ async function renderMarketStats(){
   // CA par mois
   const byMonth={}; data.forEach(d=>{ const m=monthKey(d.mk.date); byMonth[m]=addMoney(byMonth[m]||0,d.T.caTotal); });
   const months=Object.keys(byMonth).sort();
-  let chart=''; if(months.length) chart=lineChart([{name:'CA marchés', points:months.map((m,i)=>({x:i,y:byMonth[m]})), color:'#52252F'}], {zero:true, xlabel:i=>monthLabel(months[i]), fmt:v=>Math.round(v)+'€'});
+  let chart=''; if(months.length) chart=lineChart([{name:'CA marchés', points:months.map((m,i)=>({x:i,y:byMonth[m]})), color:'#490F25'}], {zero:true, xlabel:i=>monthLabel(months[i]), fmt:v=>Math.round(v)+'€'});
 
   // parfums les + / - vendus (somme vendu par parfum)
   const byParfum={};
@@ -9343,13 +9372,13 @@ async function renderAnalyse(){
    <div class="topbar"><div><h1>Analyse &amp; Production</h1><p>Décisions opérationnelles · 100% hors-ligne</p></div></div>
    <div class="banner">🧭 <div>Vue décisionnelle : tendances, clients clés, anomalies, et besoins de production calculés à partir de vos commandes et recettes. Aucune donnée ne quitte l'appareil.</div></div>
    ${trendBlock}
-   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Clients</h2>
+   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Clients</h2>
    ${clientBlock}
-   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Anomalies</h2>
+   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Anomalies</h2>
    ${anoBlock}
-   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Production</h2>
+   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Production</h2>
    ${prodBlock}
-   <h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Temps de travail</h2>
+   <h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:24px 0 4px;font-size:1.3rem">Temps de travail</h2>
    ${tempsBlock}`;
 }
 
@@ -9400,7 +9429,7 @@ async function renderForecast(){
      <p class="note">« Réservé » = macarons engagés par les commandes à venir non livrées. « Prévisionnel » = stock fini actuel − réservé. Une rupture sous ${f.horizon} jours déclenche une alerte.</p>`
      :`<div class="empty">Aucune donnée. Lancez des productions et créez des commandes pour activer le prévisionnel.</div>`}
    </div>
-   ${detailRupture?`<h2 style="font-family:'Fraunces',serif;color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
+   ${detailRupture?`<h2 style="font-family:var(--font-display);color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
 }
 
 /* ============================================================
@@ -9458,7 +9487,7 @@ async function renderEvents(){
   };
 
   const section = (titre, list, emptyMsg, color) =>
-    `<h2 style="font-family:'Fraunces',serif;color:${color||'var(--bordeaux)'};margin:18px 0 4px;font-size:1.2rem">${titre} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">(${list.length})</span></h2>
+    `<h2 style="font-family:var(--font-display);color:${color||'var(--bordeaux)'};margin:18px 0 4px;font-size:1.2rem">${titre} <span style="font-weight:400;font-size:.85rem;color:#9a8a82">(${list.length})</span></h2>
      ${list.length?list.map(card).join(''):`<p class="note">${emptyMsg}</p>`}`;
 
   // totaux
@@ -9915,7 +9944,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v164';
+const APP_VERSION = 'v167';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
@@ -9959,6 +9988,9 @@ const APP_KB = [
   { id:'mode-discret', titre:'Mode discret',
     tags:'discret confidentialite flou masquer nom prix montant privacy',
     r:`<p>Le <b>mode discret</b> floute les noms de clients et masque les montants/volumes. Active-le depuis le bouton 🙈 sur les pages Commandes et Clients, ou depuis le Menu (☰). La saisie et les détails restent lisibles pour travailler.</p>` },
+  { id:'theme-premium', titre:'Identité visuelle, polices & iPad',
+    tags:'police polices outfit bellota typographie design esthetique premium chic raffine son sons effet sonore carillon ipad tablette affichage couleur',
+    r:`<p>L'app utilise les polices de marque <b>Outfit</b> (interface et chiffres) et <b>Bellota Text</b> (titres), <b>embarquées</b> dans l'app pour fonctionner même hors ligne. Les sons d'interface (navigation, fermeture du menu) sont de discrets <b>carillons</b> raffinés ; coupe-les depuis le Menu (🔔/🔕). Sur <b>iPad</b>, la mise en page s'élargit (barre latérale, cartes sur plusieurs colonnes, marges généreuses) au lieu d'être un grand iPhone.</p>` },
   { id:'cartes-mobiles', titre:'Affichage en cartes sur iPhone',
     tags:'carte cartes mobile tableau scroll defilement horizontal lisibilite navigation commandes productions matieres lots ergonomie',
     r:`<p>Sur iPhone, les grands tableaux (<b>Commandes</b>, <b>Productions</b>, <b>Matières &amp; lots</b>) s'affichent en <b>cartes verticales</b> : toutes les informations d'une ligne sont visibles d'un coup, <b>sans défilement horizontal</b>, avec des boutons élargis pour le tactile. La recherche, les filtres et la sélection fonctionnent comme avant. Sur iPad/ordinateur, les tableaux classiques restent affichés.</p>` },
