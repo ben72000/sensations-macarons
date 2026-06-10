@@ -1943,7 +1943,12 @@ function _prodbatRow(row){
   // Production « à la volée » non reliée → bouton pour la rattacher à une recette.
   const linkBtn = p.libre
     ? `<button class="qa" style="background:#f5c45e;color:#5a3a10" onclick="prodLinkForm(${p.id})" title="Relier à une recette pour activer les coûts">🔗 Relier</button>` : '';
+  const startTs = p.prodDebutTs || p.prodTimestamp || '';
+  const liveBar = (st!=='termine' && startTs)
+    ? `<div class="prod-live ${overdue?'prod-live-over':''}"><span class="pl-dot"></span><span class="pl-label">▶ EN COURS</span><span class="prod-chrono" data-start="${esc(startTs)}">00:00:00</span></div>`
+    : '';
   return `<div class="${rowCls} prod-card"${overdue?' style="background:#fdf3f2"':''}>
+     ${liveBar}
      <div class="prod-card-top">
        <div>${compPill}${partTag}</div>
        <div class="prod-lot"><b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span class="prod-base">base ${esc(p.lotBase)}</span>`:''}</div>
@@ -1974,6 +1979,28 @@ function _prodbatRow(row){
        <button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button>
      </div>
   </div>`;
+}
+// ---- Chronomètre live des productions démarrées (HH:MM:SS qui défile) ----
+let _prodChronoTimer = null;
+function _prodChronoTick(){
+  const els = document.querySelectorAll('.prod-chrono');
+  if(!els.length){ if(_prodChronoTimer){ clearInterval(_prodChronoTimer); _prodChronoTimer=null; } return; }
+  const now = Date.now();
+  els.forEach(el=>{
+    const start = new Date(el.getAttribute('data-start')).getTime();
+    if(isNaN(start)){ el.textContent='—'; return; }
+    let s = Math.max(0, Math.floor((now-start)/1000));
+    const h = Math.floor(s/3600); s-=h*3600;
+    const m = Math.floor(s/60); s-=m*60;
+    el.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  });
+}
+function startProdChrono(){
+  _prodChronoTick();
+  if(_prodChronoTimer) clearInterval(_prodChronoTimer);
+  if(document.querySelector('.prod-chrono')){
+    _prodChronoTimer = setInterval(_prodChronoTick, 1000);
+  }
 }
 // Recherche intelligente des productions. Une seule lettre d'emplacement (F/B/C/A)
 // filtre par zone ; sinon recherche plein-texte (lot, parfum, date, statut…).
@@ -2017,6 +2044,7 @@ function prodbatFilter(q){
   });
   body.innerHTML = html +
     (rows.length>400?`<div class="note" style="text-align:center">… ${rows.length-400} autre(s). Affinez la recherche.</div>`:'');
+  startProdChrono();
 }
 // Chip emplacement : remplit la recherche avec la lettre (ou efface).
 function prodbatSearchEmp(lettre){
