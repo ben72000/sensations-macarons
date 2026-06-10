@@ -54,23 +54,6 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia','Times New Roman',serif;letter-
 .nav button.active::before{content:'';position:absolute;left:-16px;top:50%;transform:translateY(-50%);width:4px;height:60%;border-radius:0 4px 4px 0;background:var(--caramel-2)}
 .nav .ico{font-size:1.05rem;width:20px;text-align:center}
 .nav .sep{font-size:.6rem;letter-spacing:.2em;text-transform:uppercase;color:rgba(232,221,205,.42);padding:14px 14px 4px;font-weight:600}
-/* MENU SIMPLIFIÉ : section « Avancé » repliée par défaut (barre latérale + feuille iPhone) */
-.nav-adv{display:none}
-.nav-adv.open{display:block}
-.sheet-grid.nav-adv{display:none}
-.sheet-grid.nav-adv.open{display:grid}
-.nav .nav-adv-toggle{appearance:none;-webkit-appearance:none;width:100%;text-align:left;border:none;cursor:pointer;
-  background:rgba(232,221,205,.07);color:rgba(232,221,205,.75);font-family:inherit;font-weight:600;font-size:.78rem;
-  letter-spacing:.08em;text-transform:uppercase;padding:11px 14px;margin-top:12px;border-radius:9px;
-  display:flex;align-items:center;gap:9px;-webkit-tap-highlight-color:transparent}
-.nav .nav-adv-toggle .adv-chev{transition:transform .2s;display:inline-block;width:20px;text-align:center;color:var(--caramel)}
-.nav .nav-adv-toggle.open .adv-chev{transform:rotate(90deg)}
-.sheet-adv-toggle{appearance:none;-webkit-appearance:none;width:100%;border:1.5px dashed #d8c9b2;background:#faf6ee;
-  color:#8a6d4a;font-family:inherit;font-weight:600;font-size:.85rem;padding:11px;border-radius:11px;cursor:pointer;
-  margin:4px 0 10px;display:flex;align-items:center;justify-content:center;gap:8px;-webkit-tap-highlight-color:transparent}
-.sheet-adv-toggle .adv-chev{transition:transform .2s;display:inline-block;color:var(--caramel)}
-.sheet-adv-toggle.open .adv-chev{transform:rotate(90deg)}
-.sheet-adv-toggle .adv-count{font-weight:400;color:#b0a193;font-size:.76rem}
 .side-foot{font-size:.66rem;color:rgba(232,221,205,.55);line-height:1.5;margin-top:8px}
 .side-foot .foot-help{display:block;margin-bottom:8px}
 .side-foot .foot-btn{width:100%;margin-top:6px}
@@ -663,39 +646,36 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
     <div class="brand-rule"></div>
     <nav class="nav" id="nav">
       <button data-v="dash" class="active"><span class="ico">◷</span><span>Tableau de bord</span></button>
-      <div class="sep">Quotidien</div>
+      <div class="sep">Commercial</div>
       <button data-v="clients"><span class="ico">♣</span><span>Clients</span></button>
       <button data-v="commandes"><span class="ico">✎</span><span>Commandes</span></button>
+      <button data-v="produits"><span class="ico">◫</span><span>Offre / Coffrets</span></button>
       <button data-v="cal"><span class="ico">▦</span><span>Calendrier</span></button>
       <div class="sep">Production</div>
       <button data-v="fournisseurs"><span class="ico">⚑</span><span>Fournisseurs</span></button>
+      <button data-v="achats"><span class="ico">🛒</span><span>Optimisation achats</span></button>
       <button data-v="matieres"><span class="ico">⬛</span><span>Matières & lots</span></button>
       <button data-v="recettes"><span class="ico">❀</span><span>Recettes (BOM)</span></button>
       <button data-v="productions"><span class="ico">⚙</span><span>Productions</span></button>
-      <button data-v="stockparfums"><span class="ico">🍬</span><span>Stock par parfum</span></button>
+      <button data-v="picking"><span class="ico">📦</span><span>Préparation / Picking</span></button>
+      <button data-v="mrp"><span class="ico">🏭</span><span>Plan de production</span></button>
       <button data-v="couts"><span class="ico">€</span><span>Coûts & prix</span></button>
+      <button data-v="rentaparfum"><span class="ico">🎯</span><span>Rentabilité parfums</span></button>
+      <button data-v="pilotage"><span class="ico">📈</span><span>Pilotage stratégique</span></button>
+      <button data-v="stats"><span class="ico">📊</span><span>Statistiques</span></button>
+      <button data-v="compta"><span class="ico">📒</span><span>Comptabilité</span></button>
+      <button data-v="analyse"><span class="ico">🧭</span><span>Analyse &amp; Production</span></button>
+      <button data-v="previsionnel"><span class="ico">🔮</span><span>Prévisionnel stocks</span></button>
+      <button data-v="evenements"><span class="ico">🎉</span><span>Événements &amp; acomptes</span></button>
+      <button data-v="marches"><span class="ico">⛺</span><span>Marchés</span></button>
       <button data-v="sauvegardes"><span class="ico">🛟</span><span>Sauvegarde &amp; sécurité</span></button>
-      <button type="button" class="nav-adv-toggle" onclick="navAdvToggle()"><span class="ico adv-chev">▸</span><span>Avancé</span></button>
-      <div class="nav-adv" id="navAdv">
-        <button data-v="produits"><span class="ico">◫</span><span>Offre / Coffrets</span></button>
-        <button data-v="achats"><span class="ico">🛒</span><span>Optimisation achats</span></button>
-        <button data-v="picking"><span class="ico">📦</span><span>Préparation / Picking</span></button>
-        <button data-v="mrp"><span class="ico">🏭</span><span>Plan de production</span></button>
-        <button data-v="rentaparfum"><span class="ico">🎯</span><span>Rentabilité parfums</span></button>
-        <button data-v="pilotage"><span class="ico">📈</span><span>Pilotage stratégique</span></button>
-        <button data-v="stats"><span class="ico">📊</span><span>Statistiques</span></button>
-        <button data-v="compta"><span class="ico">📒</span><span>Comptabilité</span></button>
-        <button data-v="analyse"><span class="ico">🧭</span><span>Analyse &amp; Production</span></button>
-        <button data-v="previsionnel"><span class="ico">🔮</span><span>Prévisionnel stocks</span></button>
-        <button data-v="evenements"><span class="ico">🎉</span><span>Événements &amp; acomptes</span></button>
-        <button data-v="marches"><span class="ico">⛺</span><span>Marchés</span></button>
-        <button data-v="migration"><span class="ico">📥</span><span>Reprise / migration</span></button>
-        <button data-v="assistant"><span class="ico">🤖</span><span>Assistant</span></button>
-        <button data-v="pms"><span class="ico">🧼</span><span>HACCP / PMS</span></button>
-        <button data-v="dlc"><span class="ico">⏰</span><span>Suivi DLC</span></button>
-        <button data-v="tracabilite"><span class="ico">⊕</span><span>Traçabilité</span></button>
-        <button data-v="etiquettes"><span class="ico">▤</span><span>Étiquettes QR</span></button>
-      </div>
+      <button data-v="migration"><span class="ico">📥</span><span>Reprise / migration</span></button>
+      <button data-v="assistant"><span class="ico">🤖</span><span>Assistant</span></button>
+      <div class="sep">Qualité</div>
+      <button data-v="pms"><span class="ico">🧼</span><span>HACCP / PMS</span></button>
+      <button data-v="dlc"><span class="ico">⏰</span><span>Suivi DLC</span></button>
+      <button data-v="tracabilite"><span class="ico">⊕</span><span>Traçabilité</span></button>
+      <button data-v="etiquettes"><span class="ico">▤</span><span>Étiquettes QR</span></button>
     </nav>
     <div class="side-foot">
       <span class="foot-help">Données sur cet appareil.<br>Exporte chaque semaine ↓</span>
@@ -722,41 +702,35 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
     <div class="sheet-grip"></div>
     <h3>Menu</h3>
     <button class="sheet-privacy" onclick="togglePrivacyMode();closeSheet&&closeSheet()" id="sheetPrivacyBtn">🙈 Mode discret</button>
-    <div id="sheetGrid">
-      <div class="sheet-grid">
-        <button data-v="dash"><span class="ico">◷</span>Tableau de bord</button>
-        <button data-v="clients"><span class="ico">♣</span>Clients</button>
-        <button data-v="commandes"><span class="ico">✎</span>Commandes</button>
-        <button data-v="cal"><span class="ico">▦</span>Calendrier</button>
-        <button data-v="fournisseurs"><span class="ico">⚑</span>Fournisseurs</button>
-        <button data-v="matieres"><span class="ico">⬛</span>Matières & lots</button>
-        <button data-v="recettes"><span class="ico">❀</span>Recettes (BOM)</button>
-        <button data-v="productions"><span class="ico">⚙</span>Productions</button>
-        <button data-v="stockparfums"><span class="ico">🍬</span>Stock par parfum</button>
-        <button data-v="couts"><span class="ico">€</span>Coûts & prix</button>
-        <button data-v="sauvegardes"><span class="ico">🛟</span>Sauvegarde &amp; sécurité</button>
-      </div>
-      <button type="button" class="sheet-adv-toggle" onclick="navAdvToggle()"><span class="adv-chev">▸</span> Avancé <span class="adv-count">(18 écrans)</span></button>
-      <div class="sheet-grid nav-adv" id="sheetAdv">
-        <button data-v="produits"><span class="ico">◫</span>Offre / Coffrets</button>
-        <button data-v="achats"><span class="ico">🛒</span>Optimisation achats</button>
-        <button data-v="picking"><span class="ico">📦</span>Préparation / Picking</button>
-        <button data-v="mrp"><span class="ico">🏭</span>Plan de production</button>
-        <button data-v="rentaparfum"><span class="ico">🎯</span>Rentabilité parfums</button>
-        <button data-v="pilotage"><span class="ico">📈</span>Pilotage stratégique</button>
-        <button data-v="stats"><span class="ico">📊</span>Statistiques</button>
-        <button data-v="compta"><span class="ico">📒</span>Comptabilité</button>
-        <button data-v="analyse"><span class="ico">🧭</span>Analyse &amp; Production</button>
-        <button data-v="previsionnel"><span class="ico">🔮</span>Prévisionnel stocks</button>
-        <button data-v="evenements"><span class="ico">🎉</span>Événements &amp; acomptes</button>
-        <button data-v="marches"><span class="ico">⛺</span>Marchés</button>
-        <button data-v="migration"><span class="ico">📥</span>Reprise / migration</button>
-        <button data-v="assistant"><span class="ico">🤖</span>Assistant</button>
-        <button data-v="pms"><span class="ico">🧼</span>HACCP / PMS</button>
-        <button data-v="dlc"><span class="ico">⏰</span>Suivi DLC</button>
-        <button data-v="tracabilite"><span class="ico">⊕</span>Traçabilité</button>
-        <button data-v="etiquettes"><span class="ico">▤</span>Étiquettes QR</button>
-      </div>
+    <div class="sheet-grid" id="sheetGrid">
+      <button data-v="dash"><span class="ico">◷</span>Tableau de bord</button>
+      <button data-v="clients"><span class="ico">♣</span>Clients</button>
+      <button data-v="commandes"><span class="ico">✎</span>Commandes</button>
+      <button data-v="produits"><span class="ico">◫</span>Offre / Coffrets</button>
+      <button data-v="cal"><span class="ico">▦</span>Calendrier</button>
+      <button data-v="fournisseurs"><span class="ico">⚑</span>Fournisseurs</button>
+      <button data-v="achats"><span class="ico">🛒</span>Optimisation achats</button>
+      <button data-v="matieres"><span class="ico">⬛</span>Matières & lots</button>
+      <button data-v="recettes"><span class="ico">❀</span>Recettes (BOM)</button>
+      <button data-v="productions"><span class="ico">⚙</span>Productions</button>
+      <button data-v="picking"><span class="ico">📦</span>Préparation / Picking</button>
+      <button data-v="mrp"><span class="ico">🏭</span>Plan de production</button>
+      <button data-v="couts"><span class="ico">€</span>Coûts & prix</button>
+      <button data-v="rentaparfum"><span class="ico">🎯</span>Rentabilité parfums</button>
+      <button data-v="pilotage"><span class="ico">📈</span>Pilotage stratégique</button>
+      <button data-v="stats"><span class="ico">📊</span>Statistiques</button>
+      <button data-v="compta"><span class="ico">📒</span>Comptabilité</button>
+      <button data-v="analyse"><span class="ico">🧭</span>Analyse &amp; Production</button>
+      <button data-v="previsionnel"><span class="ico">🔮</span>Prévisionnel stocks</button>
+      <button data-v="evenements"><span class="ico">🎉</span>Événements &amp; acomptes</button>
+      <button data-v="marches"><span class="ico">⛺</span>Marchés</button>
+      <button data-v="sauvegardes"><span class="ico">🛟</span>Sauvegarde &amp; sécurité</button>
+      <button data-v="migration"><span class="ico">📥</span>Reprise / migration</button>
+      <button data-v="assistant"><span class="ico">🤖</span>Assistant</button>
+      <button data-v="pms"><span class="ico">🧼</span>HACCP / PMS</button>
+      <button data-v="dlc"><span class="ico">⏰</span>Suivi DLC</button>
+      <button data-v="tracabilite"><span class="ico">⊕</span>Traçabilité</button>
+      <button data-v="etiquettes"><span class="ico">▤</span>Étiquettes QR</button>
     </div>
     <div class="sheet-data">
       <button class="btn gold" onclick="exportData()">⬇ Exporter les données</button>
