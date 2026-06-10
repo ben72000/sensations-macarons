@@ -5013,8 +5013,8 @@ function cmdClearSelection(){ _cmdSel.clear(); const h=document.getElementById('
 function cmdUpdateSelBar(){
   const bar=document.getElementById('cmdSelBar'), cnt=document.getElementById('cmdSelCount');
   if(!bar) return;
-  if(_cmdSel.size>0){ bar.style.display='flex'; if(cnt) cnt.textContent=`${_cmdSel.size} sélectionnée(s)`; }
-  else { bar.style.display='none'; }
+  if(_cmdSel.size>0){ bar.style.display='flex'; bar.classList.add('floating'); document.body.classList.add('sel-active'); if(cnt) cnt.textContent=`${_cmdSel.size} sélectionnée(s)`; }
+  else { bar.style.display='none'; bar.classList.remove('floating'); document.body.classList.remove('sel-active'); }
 }
 let _cmdClNameMap={};
 function _cmdClName(id){ return _cmdClNameMap[id]||'—'; }
@@ -10045,7 +10045,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v172';
+const APP_VERSION = 'v173';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
