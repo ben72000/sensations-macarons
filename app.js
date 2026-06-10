@@ -696,12 +696,10 @@ function closeSheet(opts){ const o=document.getElementById('sheetOverlay'); if(o
 
 /* ============================================================
    EFFETS SONORES (WebAudio — aucun fichier à charger)
-   Deux sons discrets et feutrés :
    - SFX.sheet() : fermeture de la feuille menu (tick doux descendant)
    - SFX.nav()   : navigation d'une page à l'autre (tick court, plus léger)
-   Sur PWA iOS, l'AudioContext doit être débloqué par un premier geste
-   utilisateur, sinon aucun son ne sort : on le réveille au 1er tap/touch.
-   État activé/désactivé mémorisé (localStorage), coupable depuis le Menu.
+   Sur PWA iOS l'AudioContext doit être débloqué par un 1er geste, sinon
+   silence : on le réveille au premier tap. État on/off mémorisé.
    ============================================================ */
 const SFX = (function(){
   let ctx=null, unlocked=false;
@@ -714,11 +712,9 @@ const SFX = (function(){
     if(unlocked) return;
     const c=ensureCtx(); if(!c) return;
     try{ if(c.state==='suspended') c.resume(); }catch(e){}
-    // bip muet pour « réveiller » la sortie audio iOS
     try{ const b=c.createBuffer(1,1,22050); const s=c.createBufferSource(); s.buffer=b; s.connect(c.destination); s.start(0); }catch(e){}
     unlocked=true;
   }
-  // tone : génère une note courte avec enveloppe douce (pas de clic dur)
   function tone(freqStart, freqEnd, dur, gainPeak, type){
     if(!on) return;
     const c=ensureCtx(); if(!c) return;
@@ -730,7 +726,6 @@ const SFX = (function(){
       osc.type=type||'sine';
       osc.frequency.setValueAtTime(freqStart, t0);
       if(freqEnd && freqEnd!==freqStart) osc.frequency.exponentialRampToValueAtTime(Math.max(40,freqEnd), t0+dur);
-      // enveloppe : attaque très douce + extinction exponentielle (feutré)
       g.gain.setValueAtTime(0.0001, t0);
       g.gain.exponentialRampToValueAtTime(gainPeak, t0+0.012);
       g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
@@ -739,43 +734,35 @@ const SFX = (function(){
     }catch(e){}
   }
   return {
-    // fermeture feuille : deux sinus brefs, ton qui descend → sensation de « ça se range »
     sheet(){ tone(440, 300, 0.10, 0.06, 'sine'); setTimeout(()=>tone(300, 230, 0.09, 0.04, 'sine'), 55); },
-    // navigation : un seul tick court et léger, plus aigu et plus discret
     nav(){ tone(660, 620, 0.055, 0.035, 'sine'); },
     unlock,
     isOn(){ return on; },
     toggle(){ on=!on; try{ localStorage.setItem('sm_sfx', on?'1':'0'); }catch(e){} if(on){ unlock(); SFX.nav(); } return on; }
   };
 })();
-// Débloque l'audio au tout premier geste utilisateur (exigence PWA iOS).
 ['touchstart','pointerdown','click'].forEach(ev=>{
   window.addEventListener(ev, ()=>SFX.unlock(), {once:true, passive:true, capture:true});
 });
 
-/* ============================================================
-   GLISSEMENT DE LA FEUILLE MENU (swipe vers le bas pour fermer)
-   Le tiret (grip) ne déclenchait rien : le geste partait dans le
-   scroll de la feuille / de la page de fond. On capte ici le geste
-   sur toute la feuille. Règle clé : on ne « tire » la feuille (et on
-   ne bloque le scroll) QUE si le contenu est déjà tout en haut et que
-   le doigt descend. Sinon on laisse le scroll interne se faire.
-   Au relâché : si on a dépassé un seuil (≈100px) ou un geste rapide,
-   on ferme (avec son) ; sinon la feuille revient en place.
-   ============================================================ */
-// Bascule l'effet sonore depuis le menu (libellé mis à jour + petit son de confirmation si on active).
+// Bascule l'effet sonore depuis le menu (libellé mis à jour).
 function toggleSfxBtn(btn){
   const on=SFX.toggle();
   if(btn) btn.textContent = on?'🔔 Sons : activés':'🔕 Sons : coupés';
 }
 
+/* ============================================================
+   GLISSEMENT DE LA FEUILLE MENU (swipe vers le bas pour fermer)
+   On capte le geste sur toute la feuille. On ne « tire » la feuille
+   (et on ne bloque le scroll de fond) QUE si le contenu est déjà tout
+   en haut ET que le doigt descend. Sinon, scroll interne normal.
+   ============================================================ */
 function initSheetDrag(){
   const sheet=document.getElementById('sheet');
   if(!sheet) return;
   let startY=0, lastY=0, prevY=0, prevT=0, vel=0, dy=0, dragging=false, decided=false, capturing=false;
-  const CLOSE_PX=100;        // distance de fermeture
-  const FLING_VPS=0.5;       // vélocité (px/ms) déclenchant une fermeture même sur petit geste
-
+  const CLOSE_PX=100;
+  const FLING_VPS=0.5;
   function onStart(e){
     const t=e.touches?e.touches[0]:e;
     startY=lastY=prevY=t.clientY; prevT=Date.now(); dy=0; vel=0;
@@ -788,19 +775,17 @@ function initSheetDrag(){
     const y=t.clientY;
     const total=y-startY;
     const now=Date.now();
-    // décision unique en début de geste : ne capturer que si on descend ET feuille en haut
     if(!decided){
       const atTop = sheet.scrollTop<=0;
-      if(total>4 && atTop){ capturing=true; decided=true; }   // descente depuis le haut → on prend la main
+      if(total>4 && atTop){ capturing=true; decided=true; }
       else if(Math.abs(total)>4){ capturing=false; decided=true; dragging=false; return; }
     }
     if(!capturing) return;
-    // on suit le doigt (vers le bas uniquement) et on bloque le scroll de fond
     if(e.cancelable) e.preventDefault();
     dy=Math.max(0, total);
     sheet.style.transform='translateY('+dy+'px)';
     const dt=now-prevT;
-    if(dt>0) vel=(y-prevY)/dt;   // px/ms (positif = vers le bas)
+    if(dt>0) vel=(y-prevY)/dt;
     prevY=y; prevT=now; lastY=y;
   }
   function onEnd(){
@@ -816,7 +801,6 @@ function initSheetDrag(){
     }
     capturing=false;
   }
-
   sheet.addEventListener('touchstart', onStart, {passive:true});
   sheet.addEventListener('touchmove',  onMove,  {passive:false});
   sheet.addEventListener('touchend',   onEnd,   {passive:true});
@@ -2687,9 +2671,11 @@ async function prodDoSplit(){
 // STATUT : passe une production de « démarré » à « terminé ».
 // C'est CE moment qui déclenche la DLC (7 j au frigo, 4 mois au congélateur).
 // Règle : on NE PEUT PAS revenir en arrière (terminé → démarré interdit).
+let _prodEndCache=null;   // production en cours de « Terminer » (pour le hint d'écart rendement)
 async function prodSetTermine(id){
   const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
   if(prodStatut(p)==='termine'){ toast('Production déjà terminée — retour en arrière impossible'); return; }
+  _prodEndCache=p;   // mémorisé pour le hint d'écart « bons pour la vente »
   const comp=prodComposant(p);
   const decongele=aDejaDecongele(p);
   // Emplacements proposés selon le composant (centralisés dans un tableau lisible) :
@@ -2713,12 +2699,33 @@ async function prodSetTermine(id){
      <span class="opt-main"><b>${c.icon} ${esc(c.nom)}</b><br><span class="opt-sub">${c.freezer?'+4 mois':(c.key==='ambiant'?'sans DLC frigo (coques sèches)':'+7 j')}</span></span></label>`).join('');
   openModal(`<h3>✓ Terminer la production</h3>
     <p style="margin-bottom:8px"><b>${esc(p.libre ? (p.produitLibre||'(sans nom)') : ((p.recipeId!=null ? (await db.recipes.get(p.recipeId)) : null)?.produitNom||'?'))}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${comp!=='complet'?` · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp}</span>`:''}</p>
+    <div class="field"><label>Bons pour la vente ${comp==='coques'?'<span style="color:#9a8a82;font-weight:400">— en coques</span>':'<span style="color:#9a8a82;font-weight:400">— en pièces</span>'}</label>
+      <input type="number" id="f_endReel" min="0" step="1" value="${(p.qteTheorique!=null)?p.qteTheorique:(p.qteProduite!=null?p.qteProduite:'')}" oninput="prodEndReelHint(${id})">
+      <p class="note" id="endReelHint" style="margin-top:4px;display:none"></p>
+      <p class="note" style="margin-top:4px;color:#8a6d3b">Compte ce qui sort <b>bon à la vente</b> (hors craqués, restes de poche…). Les matières premières restent déduites sur le théorique : seul le <b>stock de produits finis</b> et l'<b>écart de rendement</b> sont recalés.</p></div>
     <div class="field"><label>Emplacement de rangement *</label>
       <div class="opt-table" id="prodDestEnd">${rows||'<p class="note">Aucun emplacement disponible (recongélation interdite).</p>'}</div></div>
     ${decongele?'<p class="note" style="color:#b3261e">⚠️ Déjà décongelé : le congélateur est désactivé (recongélation interdite).</p>':''}
     <p class="note">La <b>DLC démarre maintenant</b> selon l'emplacement choisi. La lettre s'ajoute au n° de lot.</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="prodTermineConfirm(${id})">Terminer</button></div>`);
+}
+// Hint live de l'écart de rendement saisi à la fin de production.
+function prodEndReelHint(id){
+  const inp=document.getElementById('f_endReel');
+  const hint=document.getElementById('endReelHint'); if(!inp||!hint) return;
+  const v=inp.value;
+  if(v===''){ hint.style.display='none'; return; }
+  const re=+v;
+  const p=_prodEndCache;   // théorique mémorisé à l'ouverture
+  const th=(p&&p.qteTheorique!=null)?+p.qteTheorique:(p?+p.qteProduite:0);
+  if(isNaN(re)||re<0){ hint.style.display='block'; hint.style.color='var(--red,#b3261e)'; hint.textContent='Quantité invalide.'; return; }
+  const dejaSorti=p?((+p.qteProduite||0)-(+p.qteRestante||0)):0;
+  if(re<dejaSorti-1e-9){ hint.style.display='block'; hint.style.color='var(--red,#b3261e)'; hint.textContent=`Au moins ${qty(dejaSorti)} (déjà affecté à des commandes).`; return; }
+  const e=re-th;
+  hint.style.display='block';
+  hint.style.color = e<0 ? 'var(--red,#b3261e)' : (e>0?'#3f7d52':'#9a8a82');
+  hint.textContent = `Écart de rendement : ${e>0?'+':''}${qty(e)} (${th?(e>0?'+':'')+Math.round(e/th*100):0}%) — ${e<0?'perte / casse':(e>0?'surplus':'conforme au théorique')}.`;
 }
 async function prodTermineConfirm(id){
   const dest=(document.querySelector('input[name="f_destEnd"]:checked')||{}).value||'';
@@ -2729,6 +2736,18 @@ async function prodTermineConfirm(id){
   if(comp==='coques' && dest==='frigo'){ toast('Les coques ne vont pas au frigo.'); return; }
   if(comp==='ganache' && dest!=='frigo'){ toast('La ganache va uniquement au frigo.'); return; }
   if(isFreezer(dest) && aDejaDecongele(p)){ toast('Recongélation interdite.'); return; }
+  // Rendement réel saisi à la fin : « bons pour la vente ». Recale stock fini + écart,
+  // matières inchangées (déjà déduites sur le théorique). Vide = on garde le théorique.
+  const rawReel = (val('f_endReel')||'').trim();
+  let reelPatch=null;
+  if(rawReel!==''){
+    const newReel=+rawReel;
+    if(isNaN(newReel)||newReel<0){ toast('Quantité « bons pour la vente » invalide'); return; }
+    const th=(p.qteTheorique!=null)?+p.qteTheorique:(+p.qteProduite||0);
+    const dejaSorti=(+p.qteProduite||0)-(+p.qteRestante||0);
+    if(newReel<dejaSorti-1e-9){ toast(`Au moins ${qty(dejaSorti)} (déjà affecté à des commandes).`); return; }
+    reelPatch={ qteReelle:newReel, qteProduite:newReel, qteRestante:newReel-dejaSorti, ecart:newReel-th };
+  }
   const nowIso=new Date().toISOString();
   // ajoute la lettre d'emplacement au lot (base + éventuel suffixe composant déjà présent)
   const newLot = lotAvecEmplacement(p.lotProduction||'', dest);
@@ -2746,9 +2765,11 @@ async function prodTermineConfirm(id){
     }
     patch.dlcAuto = true;
   }
+  if(reelPatch) Object.assign(patch, reelPatch);
   await db.productions.update(id, patch);
   closeModal(); renderProductions();
-  toast(`Production terminée ✓ · ${empLettre(dest)}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
+  const ecartTxt = reelPatch ? ` · rendement ${reelPatch.qteReelle}/${(p.qteTheorique!=null)?p.qteTheorique:p.qteProduite}${reelPatch.ecart?` (écart ${reelPatch.ecart>0?'+':''}${qty(reelPatch.ecart)})`:''}` : '';
+  toast(`Production terminée ✓ · ${empLettre(dest)}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}${ecartTxt}`);
 }
 
 // ====== ASSEMBLAGE coques + ganache → macaron assemblé (vendable) ======
