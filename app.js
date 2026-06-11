@@ -1804,11 +1804,13 @@ async function renderRecipes(){
       items: items.map(it=>{ const d=dispOf(it.materialId); return {nom:matName(it.materialId), unite:d.u, qteParBatch:round3((+it.qteParBatch||0)*d.f)}; }) };
     const rows = items.map((it,idx)=>{ const d=dispOf(it.materialId); const shown=round3((+it.qteParBatch||0)*d.f);
       const tags=[it.partie?(it.partie==='coque'?'coque':'ganache'):'', it.etiquette||''].filter(Boolean).join(' · ');
-      return `<tr>
-        <td>${esc(matName(it.materialId))}${tags?` <span style="color:#9a8a82;font-size:.74rem">(${esc(tags)})</span>`:''}</td>
-        <td>${qty(shown)} ${esc(d.u)}</td>
-        <td id="mult_${r.id}_${idx}"><b>${qty(shown)}</b> ${esc(d.u)}</td>
-      </tr>`; }).join('');
+      return `<div class="ing-row">
+        <div class="ing-nom">${esc(matName(it.materialId))}${tags?`<span class="ing-tag">${esc(tags)}</span>`:''}</div>
+        <div class="ing-qtes">
+          <span class="ing-base">${qty(shown)} ${esc(d.u)}</span>
+          <span class="ing-mult" id="mult_${r.id}_${idx}"><b>${qty(shown)}</b> ${esc(d.u)}</span>
+        </div>
+      </div>`; }).join('');
     blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
@@ -1823,9 +1825,10 @@ async function renderRecipes(){
         <span style="flex:1"></span>
         ${[0.5,1,2,3].map(m=>`<button type="button" class="btn ghost sm" onclick="recipeMultiplyFactor(${r.id},${m})">×${m}</button>`).join('')}
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Matière</th><th>Par batch (${r.rendement})</th><th id="multHead_${r.id}">Pour ${r.rendement} pièce(s)</th></tr></thead><tbody>
+      <div class="ing-list">
+        <div class="ing-head"><span class="ing-nom-h">Matière</span><div class="ing-qtes"><span class="ing-base">Par batch</span><span class="ing-mult" id="multHead_${r.id}">Pour ${r.rendement} pc</span></div></div>
         ${rows}
-      </tbody></table></div>
+      </div>
       <p class="note">Recalcul à la volée selon la quantité voulue — la recette de base n'est jamais modifiée.</p>`
       :`<div class="empty">Aucun ingrédient défini.</div>`}</div>`);
   }
@@ -3943,15 +3946,32 @@ async function renderCosts(){
    </div>
 
    <div class="panel"><h2>Prix courant par matière</h2>
-     ${priceRows.length?`<div class="table-wrap"><table><thead><tr><th>Matière</th><th>Prix actuel</th><th>Variation depuis le 1ᵉʳ lot</th><th>Réceptions</th></tr></thead><tbody>
-       ${priceRows.map(r=>`<tr><td><b>${esc(r.nom)}</b></td><td>${euro(r.last)} / ${esc(r.unite)}</td>
-         <td><span class="tag ${r.varPct>0.5?'low':(r.varPct<-0.5?'ok':'')}">${r.varPct>0?'▲ +':r.varPct<0?'▼ ':''}${r.varPct.toFixed(1)} %</span></td>
-         <td>${r.n}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Aucun prix enregistré.</div>'}
+     ${priceRows.length?`<div class="cost-list">
+       ${priceRows.map(r=>`<div class="cost-card">
+         <div class="cost-card-nom">${esc(r.nom)}</div>
+         <div class="cost-card-row">
+           <span class="cost-lbl">Prix actuel</span>
+           <span class="cost-val">${euro(r.last)} / ${esc(r.unite)}</span>
+         </div>
+         <div class="cost-card-row">
+           <span class="cost-lbl">Variation</span>
+           <span class="tag ${r.varPct>0.5?'low':(r.varPct<-0.5?'ok':'')}">${r.varPct>0?'▲ +':r.varPct<0?'▼ ':''}${r.varPct.toFixed(1)} %</span>
+         </div>
+         <div class="cost-card-row">
+           <span class="cost-lbl">Réceptions</span>
+           <span class="cost-val">${r.n}</span>
+         </div>
+       </div>`).join('')}</div>`:'<div class="empty">Aucun prix enregistré.</div>'}
    </div>
 
    <div class="panel"><h2>Coût matière par recette</h2>
-     ${recRows.length?`<div class="table-wrap"><table><thead><tr><th>Produit</th><th>Rendement</th><th>Coût matière / batch</th><th>Coût matière / pièce</th></tr></thead><tbody>
-       ${recRows.map(r=>`<tr><td><b>${esc(r.nom)}</b></td><td>${r.rendement}</td><td>${euro(r.coutBatch)}</td><td><b>${euro(r.coutUnit)}</b></td></tr>`).join('')}</tbody></table></div>
+     ${recRows.length?`<div class="cost-list">
+       ${recRows.map(r=>`<div class="cost-card">
+         <div class="cost-card-nom">${esc(r.nom)}</div>
+         <div class="cost-card-row"><span class="cost-lbl">Rendement</span><span class="cost-val">${r.rendement} pc/batch</span></div>
+         <div class="cost-card-row"><span class="cost-lbl">Coût matière / batch</span><span class="cost-val">${euro(r.coutBatch)}</span></div>
+         <div class="cost-card-row"><span class="cost-lbl">Coût matière / pièce</span><span class="cost-val cost-strong">${euro(r.coutUnit)}</span></div>
+       </div>`).join('')}</div>
        <p class="note">Calculé au prix d'achat <b>le plus récent</b> de chaque matière. Compare ce coût/pièce à ton prix de vente pour connaître ta marge.</p>`
        :'<div class="empty">Crée des recettes et réceptionne des lots avec prix pour voir les coûts.</div>'}
    </div>
@@ -4496,20 +4516,31 @@ async function renderClients(){
    <div class="topbar"><div><h1>Clients</h1><p id="clCount">${clients.length} fiche(s)</p></div>
      <div class="flex"><button class="btn ghost sm" onclick="togglePrivacyMode()" title="Masquer/afficher les données sensibles">${privacyModeEnabled()?'👁️':'🙈'}</button><input class="search" id="clSearch" placeholder="Nom, société, téléphone, e-mail, réf, notes…" value="${esc(clientSearch)}" oninput="clientFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off"><button class="btn" onclick="clientForm()">+ Nouveau client</button></div></div>
    <div class="panel">
-     <div class="table-wrap"><table><thead><tr><th>Nom</th><th>Type</th><th>Contact</th><th>Cmd</th><th>CA cumulé</th><th></th></tr></thead>
-       <tbody id="clBody"></tbody></table></div>
+     <div id="clBody" class="cl-list"></div>
      <div id="clEmpty" class="empty" style="display:none">Aucun client.</div>
    </div>`;
   clientFilter(clientSearch); // remplissage initial du corps uniquement
 }
-// Construit une ligne <tr> client
+// Construit une carte client
 function _clientRow(row){
   const c=row.c;
-  return `<tr><td><b><span class="link-name" onclick="clientForm(${c.id})">${nameP(c.nom)}</span></b></td>
-    <td><span class="tag ${c.type==='Pro'?'event':'ok'}">${esc(c.type||'Particulier')}</span></td>
-    <td>${nameP(c.tel||'')}${c.tel&&c.email?'<br>':''}<span style="color:#9a8a82;font-size:.82rem">${nameP(c.email||'')}</span></td>
-    <td>${row.nb}</td><td>${euro(row.ca)}</td>
-    <td style="text-align:right"><span class="act" onclick="clientForm(${c.id})">Fiche</span><span class="act del" onclick="delClient(${c.id})">Suppr.</span></td></tr>`;
+  const typeTag = `<span class="tag ${c.type==='Pro'?'event':'ok'}">${esc(c.type||'Particulier')}</span>`;
+  const contact = [c.tel?nameP(c.tel):'', c.email?nameP(c.email):''].filter(Boolean).join(' · ');
+  return `<div class="cl-card" onclick="clientForm(${c.id})">
+    <div class="cl-card-head">
+      <span class="cl-card-nom">${nameP(c.nom)}</span>
+      ${typeTag}
+    </div>
+    ${contact?`<div class="cl-card-contact">${contact}</div>`:''}
+    <div class="cl-card-foot">
+      <span class="cl-card-stat">🧾 ${row.nb} commande(s)</span>
+      <span class="cl-card-ca">${euro(row.ca)}</span>
+    </div>
+    <div class="cl-card-actions" onclick="event.stopPropagation()">
+      <button class="qa edit" onclick="clientForm(${c.id})">✎ Fiche</button>
+      <button class="qa del" onclick="delClient(${c.id})">🗑</button>
+    </div>
+  </div>`;
 }
 // Filtrage instantané : ne touche QUE le corps du tableau (pas de re-render global, pas de relecture DB)
 function clientFilter(q){
