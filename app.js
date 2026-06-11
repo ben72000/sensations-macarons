@@ -9397,7 +9397,8 @@ async function marketDetail(id){
       <div class="sum-box"><span>Marge brute</span><b>${euro(T.margeBrute)} <span style="color:#9a8a82;font-weight:400">(${T.tauxBrut}%)</span></b></div>
       <div class="sum-box"><span>Charges sociales (${getSettings().socialGoods}%)</span><b>−${euro(T.chargesSociales)}</b></div>
       <div class="sum-box"><span><b>Marge nette</b></span><b style="color:${T.margeNette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(T.margeNette)} (${T.tauxNet}%)</b></div>
-      <button class="btn ghost sm" style="margin-top:8px" onclick="marketPackagingForm(${id})">📦 Comptage emballages (avant/après)</button>`
+      <button class="btn ghost sm" style="margin-top:8px" onclick="marketPackagingForm(${id})">📦 Comptage emballages (avant/après)</button>
+      <button class="btn ghost sm" style="margin-top:8px" onclick="marketReopen(${id})">↺ Rouvrir le marché</button>`
      :`<button class="btn gold" style="width:100%;margin-top:10px" onclick="marketCloseForm(${id})">Clôturer le marché (saisir le CA)</button>`}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
       <button class="btn ghost" onclick="marketForm(${id})">Modifier la fiche</button>
@@ -9559,6 +9560,14 @@ async function marketDoClose(marketId, vendu){
   if(tot<=0 && vendu>0){ if(!confirm('Aucun encaissement saisi alors que des ventes sont calculées. Clôturer quand même ?')) return; }
   await db.markets.update(marketId, {ca:{especes:esp,cb:cb,autre:au}, statut:'clos', dateCloture:today()});
   toast('Marché clôturé ✓'); marketDetail(marketId);
+}
+// Réouvre un marché clôturé : repasse simplement le statut à « ouvert ».
+// Le CA saisi (mk.ca) et les mouvements de stock déjà enregistrés sont conservés ;
+// ils seront pré-remplis à la re-clôture (marketCloseForm lit déjà mk.ca).
+async function marketReopen(marketId){
+  if(!confirm('Rouvrir ce marché clôturé ? Les sorties de stock et le CA saisi sont conservés ; vous pourrez corriger retours et ventes, puis re-clôturer.')) return;
+  await db.markets.update(marketId, {statut:'ouvert'});
+  toast('Marché rouvert ✓'); marketDetail(marketId);
 }
 
 // Comptage des emballages avant/après le marché : coût consommé = Σ((avant−après) × coût unitaire).
