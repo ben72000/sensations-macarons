@@ -1192,7 +1192,7 @@ async function renderMaterials(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Matières & emballages</h1><p id="matCount">${mats.length} référence(s)</p></div>
-     <div class="flex"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Référence</button></div></div>
+     <div class="flex" style="flex-wrap:wrap;gap:8px"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Référence</button><button class="btn ghost" onclick="genShoppingList()">🛒 Liste de courses</button></div></div>
    <div class="panel"><h2>Inventaire (stock = somme des lots actifs)</h2>
      <div class="mat-cat-chips">
        <button class="${_matCatFilter==='all'?'active':''}" onclick="matSetCat('all')">Tout</button>
@@ -1282,6 +1282,110 @@ function matFilter(q){
   if(!_matCache) return;
   const list = _matCatFilter==='all' ? _matCache : _matCache.filter(r=>r.cat===_matCatFilter);
   searchRenderBody('matBody','matCount','matEmpty', list, q, _matRow, 8, 'référence(s)');
+}
+// Génère une liste de courses imprimable à partir des matières ACTUELLEMENT filtrées
+// à l'écran (catégorie + recherche, ex. « à commander »). Pour chaque matière, interroge
+// l'historique des lots pour proposer le fournisseur au meilleur prix.
+async function genShoppingList(){
+  if(!_matCache){ toast('Données non chargées'); return; }
+  // 1) Reproduire le filtre courant (catégorie + texte de recherche).
+  let list = _matCatFilter==='all' ? _matCache : _matCache.filter(r=>r.cat===_matCatFilter);
+  list = searchRank(list, matSearch);
+  if(!list.length){ toast('Aucune matière dans le filtre actuel'); return; }
+  // 2) Charger lots + fournisseurs pour le meilleur prix.
+  const [lots, suppliers] = await Promise.all([db.materialLots.toArray(), db.suppliers.toArray()]);
+  const supName = id => (suppliers.find(s=>s.id===id)||{}).nom || '—';
+  // Meilleur prix par matière : pour chaque fournisseur, son lot le plus récent ; on garde le PU mini.
+  function bestSupplier(materialId){
+    const perSup = new Map();
+    for(const l of lots){
+      if(l.materialId!==materialId || !l.supplierId) continue;
+      const cur = perSup.get(l.supplierId);
+      const newer = !cur || (l.dateReception||'') > (cur.dateReception||'')
+        || ((l.dateReception||'')===(cur.dateReception||'') && (l.id||0)>(cur.id||0));
+      if(newer) perSup.set(l.supplierId, l);
+    }
+    const offres=[];
+    for(const [sid,lot] of perSup){ const pu=lotPU(lot); if(pu>0) offres.push({sid,pu,date:lot.dateReception||''}); }
+    if(!offres.length) return null;
+    offres.sort((a,b)=>a.pu-b.pu);
+    return { nom:supName(offres[0].sid), pu:offres[0].pu, date:offres[0].date,
+             nbAutres:offres.length-1, ecart: offres.length>1 ? money2(offres[offres.length-1].pu-offres[0].pu) : 0 };
+  }
+  // 3) Construire les lignes.
+  const lignes = list.map(r=>{
+    const mat=r.mat;
+    const manque = Math.max(0, (+mat.seuil||0) - (r.total||0));
+    const best = bestSupplier(mat.id);
+    return { nom:mat.nom, unite:mat.unite||'', cat:r.cat, stock:r.total||0, seuil:+mat.seuil||0,
+             manque, low:r.low, best };
+  });
+  // 4) Modale d'aperçu + bouton imprimer.
+  const aCommander = lignes.filter(l=>l.low).length;
+  openShoppingListModal(lignes, aCommander);
+}
+function _shopRow(l){
+  const manqueTxt = l.manque>0 ? `${qty(l.manque)} ${esc(l.unite)}` : '—';
+  const best = l.best
+    ? `<b>${esc(l.best.nom)}</b> <span class="ws-time">${euro(l.best.pu)}/${esc(l.unite||'u')}</span>${l.best.nbAutres>0?` <span class="tag ok" style="font-size:.6rem">meilleur prix (−${euro(l.best.ecart)})</span>`:''}`
+    : `<span style="color:#c9bcae">aucun historique d'achat</span>`;
+  return `<div class="shop-line">
+    <div class="shop-chk">☐</div>
+    <div class="shop-main">
+      <div class="shop-name"><b>${esc(l.nom)}</b> ${l.low?'<span class="tag low" style="font-size:.6rem">à commander</span>':''}</div>
+      <div class="shop-sub">Stock ${qty(l.stock)} / seuil ${qty(l.seuil)} ${esc(l.unite)} · à prévoir : <b>${manqueTxt}</b></div>
+      <div class="shop-sup">🏪 ${best}</div>
+    </div>
+  </div>`;
+}
+function openShoppingListModal(lignes, aCommander){
+  const dateStr = new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  openModal(`<h3>🛒 Liste de courses</h3>
+    <p class="note">${lignes.length} référence(s)${aCommander?` · <b>${aCommander} à commander</b>`:''}. Le fournisseur indiqué est celui au <b>meilleur prix</b> d'après ton historique d'achat.</p>
+    <div class="shop-list" id="shopList">${lignes.map(_shopRow).join('')}</div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="_printShop()">🖨 Imprimer</button>
+    </div>`);
+  // stocke les lignes pour l'impression
+  window.__shopLignes = lignes; window.__shopDate = dateStr;
+}
+function _printShop(){
+  const lignes = window.__shopLignes||[]; const dateStr=window.__shopDate||'';
+  const rows = lignes.map(l=>{
+    const manque = l.manque>0 ? `${qty(l.manque)} ${esc(l.unite)}` : '—';
+    const best = l.best ? `${esc(l.best.nom)} — ${euro(l.best.pu)}/${esc(l.unite||'u')}` : '—';
+    return `<tr>
+      <td style="width:22px;text-align:center">☐</td>
+      <td><b>${esc(l.nom)}</b>${l.low?' <span style="color:#a9772a;font-size:10px">(à commander)</span>':''}</td>
+      <td style="text-align:right;white-space:nowrap">${manque}</td>
+      <td>${best}</td></tr>`;
+  }).join('');
+  const win = window.open('', '_blank', 'width=700,height=900');
+  if(!win){ toast('Autorise les fenêtres pour imprimer'); return; }
+  win.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8">
+    <title>Liste de courses</title>
+    <link href="https://fonts.googleapis.com/css2?family=Bellota:wght@400;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+      @page{size:A4;margin:14mm}
+      *{margin:0;padding:0;box-sizing:border-box}
+      body{font-family:'Outfit',system-ui,sans-serif;color:#3a2a2e;font-size:13px}
+      .head{background:#490F25;color:#EBDFCB;padding:10mm 12mm;border-radius:4mm;margin-bottom:8mm;text-align:center}
+      .head h1{font-family:'Bellota',cursive;font-weight:700;font-size:22px;color:#fff}
+      .head .d{font-size:11px;opacity:.85;margin-top:2mm;text-transform:capitalize}
+      table{width:100%;border-collapse:collapse}
+      th{background:#E8DDCD;color:#490F25;text-align:left;padding:3mm 3.5mm;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+      th:nth-child(3){text-align:right}
+      td{padding:3mm 3.5mm;border-bottom:1px solid #ece3d5;font-size:12.5px;vertical-align:top}
+      .foot{margin-top:8mm;font-size:10.5px;color:#8a7a72;text-align:center}
+    </style></head><body>
+    <div class="head"><h1>🛒 Liste de courses</h1><div class="d">Sensations Macarons · ${dateStr}</div></div>
+    <table><thead><tr><th></th><th>Matière première</th><th>À prévoir</th><th>Fournisseur (meilleur prix)</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <div class="foot">Fournisseurs et prix issus de l'historique d'achat · à vérifier au moment de la commande.</div>
+    </body></html>`);
+  win.document.close();
+  setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 600);
 }
 let lotSearch='';
 function lotFilter(q){

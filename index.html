@@ -383,6 +383,15 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .ws-cost{font-weight:600;color:#490F25;white-space:nowrap}
 .ws-del{cursor:pointer;opacity:.5;font-size:.85rem}
 .ws-del:active{opacity:1}
+/* ---- Liste de courses ---- */
+.shop-list{display:flex;flex-direction:column;gap:8px;max-height:54vh;overflow-y:auto;margin:10px 0}
+.shop-line{display:flex;gap:10px;align-items:flex-start;border:1px solid #ece3d5;border-radius:12px;padding:10px 12px;background:#fff}
+.shop-chk{font-size:1.1rem;color:#b8a88f;flex-shrink:0;line-height:1.3}
+.shop-main{flex:1;min-width:0}
+.shop-name{font-size:.95rem;color:var(--ink,#490F25)}
+.shop-sub{color:#8a7a72;font-size:.78rem;margin-top:2px}
+.shop-sup{font-size:.82rem;margin-top:4px;color:#5a4a44}
+.shop-sup b{color:var(--bordeaux,#490F25)}
 /* ---- Cartes Production ---- */
 .prod-cards{display:flex;flex-direction:column;gap:0}
 .prod-sec-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-family:'Fraunces',serif;font-weight:600;font-size:1.15rem;color:var(--bordeaux,#490F25);margin:18px 0 10px;padding-bottom:6px;border-bottom:2px solid #ece3d5}
