@@ -14344,46 +14344,26 @@ function mascotInit(){
   host.id='mascot';
   host.innerHTML=`<div class="mascot-face"></div><span class="mascot-badge">—</span>`;
   document.body.appendChild(host);
-  // position mémorisée (sinon place par défaut : sous l'horloge, en haut à droite)
+  // Position FIXE (bas-droite, près du CA du mois) : on ne restaure plus de position
+  // déplacée et on purge toute position mémorisée (évite qu'elle reste coincée hors écran).
   try{
-    // Réinitialisation unique : on adopte la nouvelle place par défaut (sous l'horodatage).
-    if(localStorage.getItem('sm_mascot_home')!=='v2'){
+    if(localStorage.getItem('sm_mascot_home')!=='v3-fixed'){
       localStorage.removeItem('sm_mascot_pos');
-      localStorage.setItem('sm_mascot_home','v2');
+      localStorage.setItem('sm_mascot_home','v3-fixed');
     }
-    const saved=JSON.parse(localStorage.getItem('sm_mascot_pos')||'null');
-    if(saved && typeof saved.x==='number'){ host.style.left=saved.x+'px'; host.style.top=saved.y+'px'; host.style.right='auto'; host.style.bottom='auto'; }
+    localStorage.removeItem('sm_mascot_pos'); // ancrage CSS systématique
   }catch(e){}
-  mascotSetupDrag(host);
+  mascotSetupTap(host);
   mascotRefresh();
   // synchro périodique (background) tant que l'app est au premier plan
   if(_mascotTimer) clearInterval(_mascotTimer);
   _mascotTimer=setInterval(()=>{ if(document.visibilityState==='visible') mascotRefresh(); }, 60000);
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') mascotRefresh(); });
 }
-// Drag tactile + souris. Tap (sans déplacement) = ouvrir l'Assistant.
-function mascotSetupDrag(host){
-  let dragging=false, moved=false, sx=0, sy=0, ox=0, oy=0;
-  const start=(x,y)=>{ dragging=true; moved=false; sx=x; sy=y;
-    const r=host.getBoundingClientRect(); ox=r.left; oy=r.top; host.classList.add('dragging'); };
-  const move=(x,y)=>{ if(!dragging) return;
-    const dx=x-sx, dy=y-sy; if(Math.abs(dx)+Math.abs(dy)>4) moved=true;
-    let nx=ox+dx, ny=oy+dy;
-    const m=8, w=host.offsetWidth, h=host.offsetHeight;
-    nx=Math.max(m, Math.min(window.innerWidth-w-m, nx));
-    ny=Math.max(m, Math.min(window.innerHeight-h-m, ny));
-    host.style.left=nx+'px'; host.style.top=ny+'px'; host.style.right='auto'; host.style.bottom='auto'; };
-  const end=()=>{ if(!dragging) return; dragging=false; host.classList.remove('dragging');
-    if(moved){ const r=host.getBoundingClientRect();
-      try{ localStorage.setItem('sm_mascot_pos', JSON.stringify({x:Math.round(r.left), y:Math.round(r.top)})); }catch(e){} }
-    else { goView('assistant'); }   // simple tap → ouvre la jauge
-  };
-  host.addEventListener('touchstart', e=>{ const t=e.touches[0]; start(t.clientX,t.clientY); }, {passive:true});
-  host.addEventListener('touchmove', e=>{ const t=e.touches[0]; move(t.clientX,t.clientY); }, {passive:true});
-  host.addEventListener('touchend', end);
-  host.addEventListener('mousedown', e=>{ start(e.clientX,e.clientY);
-    const mm=ev=>move(ev.clientX,ev.clientY), mu=()=>{ end(); document.removeEventListener('mousemove',mm); document.removeEventListener('mouseup',mu); };
-    document.addEventListener('mousemove',mm); document.addEventListener('mouseup',mu); });
+// Mascotte FIXE : un simple tap ouvre l'Assistant (jauge). Plus de déplacement
+// (la position est ancrée en CSS, bas-droite, pour ne jamais se perdre hors écran).
+function mascotSetupTap(host){
+  host.addEventListener('click', ()=> goView('assistant'));
 }
 
 /* ============================================================
