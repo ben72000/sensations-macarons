@@ -4003,7 +4003,22 @@ async function renderDlc(){
   const ok      = actifs.filter(l=>l.j!==null && l.j>7);
   const sansDlc = lots.filter(l=>+l.qteRestante>0 && !l.dlc);
 
-  const ligne = l => `<tr>
+  const ligne = l => {
+    const echeance = l.j<0?`<span class="tag out">expiré (${-l.j} j)</span>`:l.j<=3?`<span class="tag out">J−${l.j}</span>`:l.j<=7?`<span class="tag low">J−${l.j}</span>`:`<span class="tag ok">${l.j} j</span>`;
+    return `<div class="dlc-card">
+      <div class="dlc-card-head">
+        <span class="dlc-nom">${esc(matName(l.materialId))}</span>
+        ${echeance}
+      </div>
+      <div class="dlc-card-info">
+        <span>📦 ${qty(l.qteRestante)} ${esc(matUnit(l.materialId))} restant</span>
+        <span>🏷 ${esc(l.lotFournisseur||'—')}</span>
+        <span>⚑ ${esc(supName(l.supplierId))}</span>
+        <span>📅 DLC ${fmtDate(l.dlc)}</span>
+      </div>
+    </div>`;
+  };
+  const _ligneOld = l => `<tr>
      <td><b>${esc(matName(l.materialId))}</b></td>
      <td>${qty(l.qteRestante)} ${esc(matUnit(l.materialId))}</td>
      <td>${esc(l.lotFournisseur||'—')}</td>
@@ -4013,8 +4028,7 @@ async function renderDlc(){
    </tr>`;
 
   const bloc = (titre,arr,cls)=> arr.length?`<div class="panel"><h2>${titre} <span class="tag ${cls}">${arr.length}</span></h2>
-     <div class="table-wrap"><table><thead><tr><th>Matière</th><th>Restant</th><th>Lot fourn.</th><th>Fournisseur</th><th>DLC</th><th>Échéance</th></tr></thead>
-     <tbody>${arr.map(ligne).join('')}</tbody></table></div></div>`:'';
+     <div class="dlc-list">${arr.map(ligne).join('')}</div></div>`:'';
 
   const total = expires.length+urgent.length+proche.length;
   document.getElementById('main').innerHTML=`
@@ -4026,8 +4040,14 @@ async function renderDlc(){
    ${bloc('À écouler — sous 7 jours', proche, 'low')}
    ${bloc('Plus de 7 jours', ok, 'ok')}
    ${sansDlc.length?`<div class="panel"><h2>Sans DLC renseignée <span class="tag warn">${sansDlc.length}</span></h2>
-     <div class="table-wrap"><table><thead><tr><th>Matière</th><th>Restant</th><th>Lot fourn.</th><th>Réception</th></tr></thead>
-     <tbody>${sansDlc.map(l=>`<tr><td><b>${esc(matName(l.materialId))}</b></td><td>${qty(l.qteRestante)} ${esc(matUnit(l.materialId))}</td><td>${esc(l.lotFournisseur||'—')}</td><td>${fmtDate(l.dateReception)}</td></tr>`).join('')}</tbody></table></div>
+     <div class="dlc-list">${sansDlc.map(l=>`<div class="dlc-card">
+       <div class="dlc-card-head"><span class="dlc-nom">${esc(matName(l.materialId))}</span></div>
+       <div class="dlc-card-info">
+         <span>📦 ${qty(l.qteRestante)} ${esc(matUnit(l.materialId))} restant</span>
+         <span>🏷 ${esc(l.lotFournisseur||'—')}</span>
+         <span>📅 reçu ${fmtDate(l.dateReception)}</span>
+       </div>
+     </div>`).join('')}</div>
      <p class="note">Pense à renseigner la DLC à la réception pour activer le suivi.</p></div>`:''}
    ${actifs.length===0&&sansDlc.length===0?'<div class="panel"><div class="empty">Aucun lot actif. Réceptionne des lots pour activer le suivi DLC.</div></div>':''}`;
 }
@@ -4050,24 +4070,24 @@ async function renderTrace(){
      <div class="flex" style="gap:8px"><button class="btn" onclick="openScanner(lot=>traceLotByNumber(lot))">📷 Scanner un lot</button>
      <button class="btn" style="background:var(--red,#b3261e)" onclick="openFlashAlert()">⚠ Alerte Sanitaire Flash</button></div></div>
    <div class="banner">⊕ <div>La traçabilité répond à trois questions réglementaires : ingrédients d'une commande, origine d'un batch, et usage d'un lot de matière. En cas de problème, l'<b>Alerte Sanitaire Flash</b> isole un lot et liste tous les produits et clients concernés.</div></div>
-   <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
+   <div class="trace-grid">
      <div class="panel"><h2>Par commande livrée</h2>
-       ${orders.length?`<div class="table-wrap"><table><tbody>${orders.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(o=>`<tr>
-         <td>${fmtDate(o.date)}</td><td><b>${esc(clName(o.clientId))}</b></td>
-         <td style="text-align:right"><span class="act" onclick="traceOrder(${o.id})">Tracer</span></td></tr>`).join('')}</tbody></table></div>`
+       ${orders.length?`<div class="trace-list">${orders.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(o=>`<div class="trace-row">
+         <div class="trace-row-main"><span class="trace-date">${fmtDate(o.date)}</span><span class="trace-nom">${esc(clName(o.clientId))}</span></div>
+         <button class="qa" onclick="traceOrder(${o.id})">Tracer</button></div>`).join('')}</div>`
          :`<div class="empty">Aucune commande.</div>`}
      </div>
      <div class="panel"><h2>Par batch de production</h2>
-       ${prods.length?`<div class="table-wrap"><table><tbody>${prods.map(p=>`<tr>
-         <td>${fmtDate(p.date)}</td><td><b>${esc(recName(p.recipeId))}</b><br><span style="color:#9a8a82;font-size:.78rem">${esc(p.lotProduction||'')}</span></td>
-         <td style="text-align:right"><span class="act" onclick="printLabel(${p.id})">⎙ Étiquette</span> <span class="act" onclick="traceProd(${p.id})">Tracer</span></td></tr>`).join('')}</tbody></table></div>`
+       ${prods.length?`<div class="trace-list">${prods.map(p=>`<div class="trace-row">
+         <div class="trace-row-main"><span class="trace-date">${fmtDate(p.date)}</span><span class="trace-nom">${esc(recName(p.recipeId))}</span>${p.lotProduction?`<span class="trace-sub">${esc(p.lotProduction)}</span>`:''}</div>
+         <div class="trace-row-acts"><button class="qa" onclick="printLabel(${p.id})">⎙</button><button class="qa" onclick="traceProd(${p.id})">Tracer</button></div></div>`).join('')}</div>`
          :`<div class="empty">Aucune production.</div>`}
      </div>
    </div>
-   <div class="panel" style="margin-top:22px"><h2>Par lot de matière première <span style="font-weight:400;font-size:.82rem;color:#9a8a82">— en cas de rappel fournisseur</span></h2>
-     ${lots.length?`<div class="table-wrap"><table><thead><tr><th>Matière</th><th>N° lot fourn.</th><th>Réception</th><th></th></tr></thead><tbody>${lots.sort((a,b)=>(b.dateReception||'').localeCompare(a.dateReception||'')).map(l=>`<tr>
-       <td><b>${esc(matName(l.materialId))}</b></td><td>${esc(l.lotFournisseur||'—')}</td><td>${fmtDate(l.dateReception)}</td>
-       <td style="text-align:right"><span class="act" onclick="traceLot(${l.id})">Tracer</span></td></tr>`).join('')}</tbody></table></div>`
+   <div class="panel" style="margin-top:18px"><h2>Par lot de matière première <span style="font-weight:400;font-size:.82rem;color:#9a8a82">— en cas de rappel fournisseur</span></h2>
+     ${lots.length?`<div class="trace-list">${lots.sort((a,b)=>(b.dateReception||'').localeCompare(a.dateReception||'')).map(l=>`<div class="trace-row">
+       <div class="trace-row-main"><span class="trace-nom">${esc(matName(l.materialId))}</span><span class="trace-sub">Lot ${esc(l.lotFournisseur||'—')} · reçu ${fmtDate(l.dateReception)}</span></div>
+       <button class="qa" onclick="traceLot(${l.id})">Tracer</button></div>`).join('')}</div>`
        :`<div class="empty">Aucun lot.</div>`}
    </div>`;
 }
