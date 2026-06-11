@@ -630,7 +630,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -11248,6 +11248,102 @@ async function autoDailyBackup(){
     localStorage.setItem('sm_autoBackupDate', today());
   }catch(e){ console.error('autoBackup',e); }
 }
+// ============================================================
+//  VÉRIFICATEUR D'INTÉGRITÉ DES DONNÉES (lecture seule)
+//  Repère les liens cassés / orphelins entre les tables.
+//  Ne modifie RIEN : il signale, et propose un nettoyage au choix.
+// ============================================================
+async function runIntegrityCheck(){
+  const [materials, materialLots, suppliers, recipes, recipeItems,
+         productions, prodConsumption, clients, orders, orderItems, markets, marketMoves] =
+    await Promise.all([
+      db.materials.toArray(), db.materialLots.toArray(), db.suppliers.toArray(),
+      db.recipes.toArray(), db.recipeItems.toArray(), db.productions.toArray(),
+      db.prodConsumption.toArray(), db.clients.toArray(), db.orders.toArray(),
+      db.orderItems.toArray(), db.markets.toArray(), db.marketMoves.toArray()
+    ]);
+  const idset = arr => new Set(arr.map(x=>x.id));
+  const S = {
+    materials:idset(materials), suppliers:idset(suppliers), recipes:idset(recipes),
+    productions:idset(productions), clients:idset(clients), orders:idset(orders),
+    materialLots:idset(materialLots), markets:idset(markets)
+  };
+  const issues = [];
+  const add=(table,label,items,fix)=>{ if(items.length) issues.push({table,label,count:items.length,ids:items.map(x=>x.id),fix}); };
+
+  // Commandes → client inexistant
+  add('orders','Commande(s) liée(s) à un client supprimé',
+    orders.filter(o=>o.clientId && !S.clients.has(o.clientId)), 'detachClient');
+  // OrderItems → commande ou production inexistante
+  add('orderItems','Ligne(s) de commande liée(s) à une commande supprimée',
+    orderItems.filter(it=>!S.orders.has(it.orderId)), 'delete');
+  add('orderItems','Ligne(s) de commande liée(s) à une production supprimée',
+    orderItems.filter(it=>it.productionId && !S.productions.has(it.productionId)), 'delete');
+  // Productions → recette inexistante (hors productions « libres »)
+  add('productions','Production(s) liée(s) à une recette supprimée',
+    productions.filter(p=>!p.libre && p.recipeId && !S.recipes.has(p.recipeId)), 'none');
+  // RecipeItems → recette ou matière inexistante
+  add('recipeItems','Ingrédient(s) de recette liés à une recette supprimée',
+    recipeItems.filter(ri=>!S.recipes.has(ri.recipeId)), 'delete');
+  add('recipeItems','Ingrédient(s) de recette liés à une matière supprimée',
+    recipeItems.filter(ri=>ri.materialId && !S.materials.has(ri.materialId)), 'delete');
+  // Lots → matière ou fournisseur inexistant
+  add('materialLots','Lot(s) de matière liés à une matière supprimée',
+    materialLots.filter(l=>!S.materials.has(l.materialId)), 'delete');
+  add('materialLots','Lot(s) liés à un fournisseur supprimé',
+    materialLots.filter(l=>l.supplierId && !S.suppliers.has(l.supplierId)), 'detachSupplier');
+  // Consommations → production ou lot inexistant
+  add('prodConsumption','Consommation(s) liée(s) à une production supprimée',
+    prodConsumption.filter(c=>!S.productions.has(c.productionId)), 'delete');
+  add('prodConsumption','Consommation(s) liée(s) à un lot supprimé',
+    prodConsumption.filter(c=>c.materialLotId && !S.materialLots.has(c.materialLotId)), 'delete');
+  // Mouvements marché → marché ou production inexistant
+  add('marketMoves','Mouvement(s) de marché liés à un marché supprimé',
+    marketMoves.filter(m=>!S.markets.has(m.marketId)), 'delete');
+  add('marketMoves','Mouvement(s) de marché liés à une production supprimée',
+    marketMoves.filter(m=>m.productionId && !S.productions.has(m.productionId)), 'delete');
+
+  return issues;
+}
+// Applique le nettoyage d'une anomalie (avec sauvegarde de sécurité préalable).
+async function fixIntegrityIssue(table, ids, fix){
+  if(fix==='none'){ toast('À corriger manuellement (recrée la recette ou supprime la production)'); return; }
+  const set=new Set(ids);
+  await snapshotBackup('avant-nettoyage-intégrité');
+  try{
+    if(fix==='delete'){
+      await db[table].bulkDelete(ids);
+    } else if(fix==='detachClient'){
+      await db.transaction('rw', db.orders, async()=>{ for(const id of ids) await db.orders.update(id,{clientId:null}); });
+    } else if(fix==='detachSupplier'){
+      await db.transaction('rw', db.materialLots, async()=>{ for(const id of ids) await db.materialLots.update(id,{supplierId:null}); });
+    }
+    toast(`${ids.length} anomalie(s) corrigée(s) ✓`);
+    renderIntegrity();
+  }catch(e){ console.error('fixIntegrity',e); toast('Erreur pendant le nettoyage'); }
+}
+// Écran de résultats du vérificateur.
+async function renderIntegrity(){
+  const main=document.getElementById('main'); if(!main) return;
+  main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
+    <div class="panel" id="integrityBody"><div class="empty">Analyse en cours…</div></div>`;
+  const issues = await runIntegrityCheck();
+  const body=document.getElementById('integrityBody'); if(!body) return;
+  if(!issues.length){
+    body.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcd9c2">✅ <div><b>Aucune incohérence détectée.</b> Tous les liens entre tes données sont sains (commandes, productions, lots, recettes, marchés).</div></div>`;
+    return;
+  }
+  const total=issues.reduce((s,i)=>s+i.count,0);
+  body.innerHTML=`<div class="banner" style="background:#fdf6ec;border-color:#e8cfa0;margin-bottom:14px">⚠ <div><b>${total} anomalie(s)</b> sur ${issues.length} type(s) de lien. Ce sont des références orphelines (entité supprimée encore citée ailleurs). Tu peux nettoyer chaque cas — une sauvegarde de sécurité est prise avant toute correction.</div></div>
+    <div class="mat-cards">${issues.map((it,i)=>`<div class="mat-card">
+      <div class="mat-card-top"><div class="mat-card-name"><b>${esc(it.label)}</b><span class="mat-marque">${it.count} enregistrement(s) · table « ${esc(it.table)} »</span></div>
+        <span class="tag warn">${it.count}</span></div>
+      <div class="mat-card-actions">
+        ${it.fix==='none'
+          ? `<span class="note" style="font-size:.8rem">À corriger manuellement</span>`
+          : `<button class="qa del" onclick='fixIntegrityIssue(${JSON.stringify(it.table)}, ${JSON.stringify(it.ids)}, ${JSON.stringify(it.fix)})'>${it.fix==='delete'?'🗑 Supprimer les orphelins':'✂ Détacher le lien'}</button>`}
+      </div></div>`).join('')}</div>`;
+}
 // Restaure une sauvegarde de l'historique interne (avec filet de sécurité).
 async function restoreBackup(id){
   const b=await db.backups.get(id); if(!b){ toast('Sauvegarde introuvable'); return; }
@@ -11491,7 +11587,7 @@ async function renderBackups(){
        <button class="btn gold" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud</button>
        <label class="btn ghost" style="cursor:pointer">⬆ Importer (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
        <label class="btn ghost" style="cursor:pointer">➕ Importer en fusion (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importDataMerge(event)"></label>
-       <button class="btn ghost" onclick="runConsistencyCheck(true)">🔍 Vérifier l'intégrité</button>
+       <button class="btn ghost" onclick="view='integrite';setActiveView&&setActiveView('integrite');renderIntegrity()">🔍 Vérifier l'intégrité</button>
      </div>
      <p class="note"><b>☁️ Sauvegarder sur iCloud</b> : ouvre le partage iOS — choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé ensuite). « Sauvegarder maintenant » garde une copie dans l'app. L'import « Importer » <b>remplace</b> tout ; « en fusion » <b>ajoute</b> sans rien effacer. Une sauvegarde automatique se fait à l'ouverture.</p>
    </div>
