@@ -470,6 +470,8 @@ const KPI_HELP = {
   'macarons_vendus':{ t:'Macarons vendus', d:"Le nombre total de macarons écoulés sur la période (commandes + marchés)." },
   'ca_moyen_marche':{ t:'CA moyen / marché', d:"Le chiffre d'affaires moyen que te rapporte un marché : total des ventes sur marchés ÷ nombre de marchés réalisés." },
   'pertes_casse':  { t:'Pertes / casse', d:"La valeur totale de la casse déclarée sur la période, déduite de ton résultat." },
+  'cout_revient_rec':{ t:'Coût de revient (par pièce)', d:"Le coût de fabrication d'UN macaron nu : matières premières + consommables directs + main-d'œuvre (si activée), réparti sur les pièces réellement vendables (les pertes renchérissent le coût).\n\nImportant : ce montant n'inclut PAS l'emballage du coffret. L'emballage dépend du format de boîte (6, 8, 16, 25), pas du parfum — il est donc ajouté séparément quand tu composes un coffret, et bien déduit de ta marge à ce moment-là." },
+  'taux_marge_rec':{ t:'Taux de marge', d:"La part du prix de vente qui te reste en marge, une fois le coût de revient retiré.\n\nCalcul : marge ÷ prix de vente moyen. Par exemple, un macaron vendu 1,67 € qui coûte 0,11 € à fabriquer laisse 1,56 € de marge, soit 93 %. Plus le pourcentage est élevé, plus le parfum est rentable.\n\nÀ noter : c'est le taux sur le macaron nu ; l'emballage du coffret se déduit au niveau de la commande." },
 };
 // Génère un petit « i » cliquable qui ouvre l'explication du KPI.
 function kpiI(key){
@@ -1802,8 +1804,8 @@ async function renderRecipes(){
     blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
-        return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
-          <b><span class="tag" style="background:${rr.scale.col};color:#fff">${rr.scale.dot} ${rr.tauxMarge!=null?rr.tauxMarge+'%':'coût seul'}</span></b></div>`; })()}
+        return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc ${kpiI('cout_revient_rec')}${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
+          <b><span class="tag" style="background:${rr.scale.col};color:#fff">${rr.scale.dot} ${rr.tauxMarge!=null?rr.tauxMarge+'%':'coût seul'}</span>${rr.tauxMarge!=null?' '+kpiI('taux_marge_rec'):''}</b></div>`; })()}
       ${(r.allergenes&&r.allergenes.length)?`<div class="note" style="margin:0 0 8px"><b>Allergènes :</b> ${r.allergenes.map(a=>esc(a)).join(' · ')}</div>`:'<div class="note" style="margin:0 0 8px;color:#b08a3a">⚠ Allergènes non renseignés</div>'}
       ${items.length?`
       <div class="mult-bar">
