@@ -9450,6 +9450,28 @@ function confirmDelMarket(id){
 
 // Sortie de stock : choix du lot + quantité (stock théorique affiché).
 async function marketSortieForm(marketId){
+  const histo = await marketIsHisto(marketId);
+  if(histo){
+    // MODE HISTORIQUE : on saisit des données passées. On propose TOUT le catalogue de
+    // parfums, sans plafond de stock (le stock du jour du marché n'existe plus aujourd'hui).
+    const stock = await stockFiniParParfum();
+    const dispoByNom = {}; stock.forEach(s=>{ dispoByNom[s.parfum]=s.dispo; });
+    const noms = [...FLAVORS];
+    stock.forEach(s=>{ if(!noms.includes(s.parfum)) noms.push(s.parfum); });
+    const rows = noms.map((nom,i)=>`<div class="pay-row" style="align-items:center">
+        <span style="flex:1;min-width:140px">${esc(nom)}${dispoByNom[nom]>0?` <span class="note">stock ${qty(dispoByNom[nom])}</span>`:''}</span>
+        <input type="number" step="1" min="0" id="ms_${i}" data-parfum="${esc(nom)}" data-dispo=""
+          placeholder="0" style="width:90px">
+      </div>`).join('');
+    openModal(`<h3>Sortie de stock pour le marché</h3>
+      <div class="banner" style="background:#eef2fb;border-color:#bcd0ec"><div>📥 <b>Marché historique.</b> Saisis librement les quantités embarquées par parfum, telles qu'elles étaient ce jour-là. Aucun impact sur ton stock actuel, aucune limite.</div></div>
+      <div class="pay-row" style="font-weight:600;color:#9a8a82"><span style="flex:1;min-width:140px">Parfum</span><span style="width:90px">Quantité</span></div>
+      ${rows}
+      <input type="hidden" id="ms_n" value="${noms.length}">
+      <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
+        <button class="btn" onclick="marketDoSortie(${marketId})">Embarquer</button></div>`);
+    return;
+  }
   const stock=await stockFiniParParfum();
   if(!stock.length){ toast('Aucun stock fini disponible à l\'atelier'); return; }
   const rows=stock.map((s,i)=>`<div class="pay-row" style="align-items:center">
