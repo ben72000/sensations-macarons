@@ -279,6 +279,7 @@ function getSettings(){
       packagingDate: s.packagingDate || SETTINGS_DEFAULTS.packagingDate,
       packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes)),
       addressBook: Array.isArray(s.addressBook) ? s.addressBook : [],
+      prodCustomTasks: Array.isArray(s.prodCustomTasks) ? s.prodCustomTasks : [],
       exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT
     };
   }catch(e){ return JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)); }
@@ -719,7 +720,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -12737,7 +12738,464 @@ const TT_PAUSED_KEY = 'sm_workSession_paused';
 const TT_PAUSE_AT_KEY = 'sm_workSession_pauseAt';
 const TT_ACT_KEY = 'sm_workSession_act';
 const TT_ACTIVITIES = ['Pesées','Ganache','Meringue','Macaronnage','Pochage','Cuisson','Garnissage/Montage','Vaisselle','Nettoyage fin de prod','Conditionnement','Autre'];
+
+// ============================================================================
+//  MODULE PRODUCTION — SOCLE (étape 1 : catalogue de tâches)
+//  Module INDÉPENDANT : il observe et documente le temps de travail, sans jamais
+//  contraindre les autres modules. Sert à nourrir l'analyse / l'optimisation des KPI.
+//
+//  Modèle :
+//    Session de production (datée) ──contient──> Tâches labellisées (chronos parallèles)
+//  Les tâches peuvent se chevaucher dans le temps (ex. cuisson + meringue suivante).
+// ============================================================================
+
+// Catalogue des tâches, groupées par phase. La phase porte une couleur (barres du tableau blanc).
+// Modifiable : l'utilisateur peut ajouter ses propres tâches (stockées dans les réglages).
+const PROD_TASK_CATALOG = [
+  { phase:'Préparation', color:'#c1a27c', tasks:[
+    'Pesée du tant pour tant (poudre d\'amandes + sucre glace)',
+    'Pesée des ingrédients meringue (eau, blanc d\'œuf en poudre, sucre semoule)',
+  ]},
+  { phase:'Meringue', color:'#caa23b', tasks:[
+    'Mise en chauffe de la meringue',
+    'Foisonnement de la meringue',
+    'Pesée de la meringue pour division',
+  ]},
+  { phase:'Macaronnage', color:'#aa7c39', tasks:[
+    'Incorporation du tant pour tant à la meringue',
+    'Macaronnage',
+    'Pochage',
+    'Tapage des plaques',
+  ]},
+  { phase:'Cuisson', color:'#c0392b', tasks:[
+    'Cuisson des coques',
+    'Refroidissement des coques',
+  ]},
+  { phase:'Garnissage', color:'#3f7d52', tasks:[
+    'Chablonnage des coques',
+    'Cristallisation du beurre de cacao',
+    'Préparation de la ganache pour pochage',
+    'Pochage de la ganache',
+    'Assemblage des coques (finition macaron)',
+  ]},
+  { phase:'Entretien', color:'#5a8aa0', tasks:[
+    'Vaisselle',
+    'Nettoyage des surfaces (plan de maîtrise sanitaire)',
+  ]},
+];
+// Liste à plat de toutes les tâches connues (catalogue + ajouts perso de l'utilisateur).
+function prodAllTasks(){
+  const custom = (getSettings().prodCustomTasks||[]);
+  const base = [];
+  PROD_TASK_CATALOG.forEach(g=>g.tasks.forEach(t=>base.push({label:t, phase:g.phase, color:g.color})));
+  custom.forEach(c=>{
+    if(typeof c==='string') base.push({label:c, phase:'Personnalisé', color:'#8a7a72'});
+    else if(c && c.label) base.push({label:c.label, phase:c.phase||'Personnalisé', color:c.color||'#8a7a72'});
+  });
+  return base;
+}
+// Retrouve la couleur/phase d'une tâche par son label (pour les barres).
+function prodTaskMeta(label){
+  const found = prodAllTasks().find(t=>t.label===label);
+  return found || {label:label||'Tâche', phase:'Autre', color:'#8a7a72'};
+}
 let _ttTick = null;
+
+// ---- Stockage des SESSIONS DE PRODUCTION (indépendant, persistant) ----
+// Structure d'une session :
+//   { id, date:'YYYY-MM-DD', start:ms, end:ms|null, note:'',
+//     tasks:[ { id, label, phase, color, start:ms, end:ms|null,
+//               pausedAccum:ms, pauseAt:ms|null } ] }
+// Les tâches en cours ont end=null. Une session est « ouverte » tant que end=null.
+const PROD_SESS_KEY = 'sm_prodSessions';
+function prodSessLoad(){
+  try{ const a=JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]'); return Array.isArray(a)?a:[]; }
+  catch(e){ return []; }
+}
+function prodSessSave(arr){
+  try{ localStorage.setItem(PROD_SESS_KEY, JSON.stringify(arr||[])); }
+  catch(e){ console.error('prodSessSave', e); }
+}
+function prodSessGet(id){ return prodSessLoad().find(s=>s.id===id); }
+function prodSessUpsert(sess){
+  const a=prodSessLoad(); const i=a.findIndex(s=>s.id===sess.id);
+  if(i>=0) a[i]=sess; else a.push(sess);
+  prodSessSave(a);
+}
+function prodSessRemove(id){ prodSessSave(prodSessLoad().filter(s=>s.id!==id)); }
+// La session ouverte du jour (end=null), s'il y en a une.
+function prodSessActive(){ return prodSessLoad().find(s=>!s.end); }
+// Générateur d'id simple et unique.
+function prodNewId(){ return 'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+
+// Durée nette d'une tâche (pauses déduites), en ms. Fonctionne tâche finie ou en cours.
+function prodTaskNet(t){
+  const end = t.end || Date.now();
+  const gross = Math.max(0, end - t.start);
+  const accum = +t.pausedAccum||0;
+  const live = (+t.pauseAt||0)>0 ? Math.max(0, Date.now()-(+t.pauseAt)) : 0;
+  return Math.max(0, gross - accum - live);
+}
+function prodTaskPaused(t){ return t && (+t.pauseAt||0)>0; }
+// Une tâche est-elle en cours (non terminée) ?
+function prodTaskRunning(t){ return t && !t.end; }
+// Y a-t-il au moins une tâche en cours dans une session ouverte ?
+function prodAnyRunning(){
+  const s=prodSessActive(); if(!s) return false;
+  return (s.tasks||[]).some(prodTaskRunning);
+}
+
+// ---- ACTIONS DE PILOTAGE (étape 2) ----
+// Ouvre une nouvelle session de production (ou retourne celle déjà ouverte).
+function prodSessionStart(note){
+  let s = prodSessActive();
+  if(s) return s;
+  s = { id:prodNewId(), date:today(), start:Date.now(), end:null, note:note||'', tasks:[] };
+  prodSessUpsert(s);
+  return s;
+}
+// Clôture la session ouverte : arrête toutes ses tâches encore en cours, fixe l'heure de fin.
+function prodSessionEnd(){
+  const s = prodSessActive(); if(!s) return;
+  const now = Date.now();
+  (s.tasks||[]).forEach(t=>{ if(!t.end){ if(prodTaskPaused(t)){ t.pausedAccum=(+t.pausedAccum||0)+Math.max(0,now-(+t.pauseAt)); t.pauseAt=null; } t.end=now; } });
+  s.end = now;
+  prodSessUpsert(s);
+  prodStopTicking();
+}
+// Démarre une tâche labellisée dans la session (en crée une si besoin). N'interrompt PAS les autres.
+function prodTaskStart(label){
+  const meta = prodTaskMeta(label);
+  let s = prodSessionStart();
+  const t = { id:prodNewId(), label:meta.label, phase:meta.phase, color:meta.color,
+              start:Date.now(), end:null, pausedAccum:0, pauseAt:null };
+  s.tasks = s.tasks||[]; s.tasks.push(t);
+  prodSessUpsert(s);
+  prodStartTicking();
+  return t;
+}
+// Pause / reprise d'une tâche (sans l'arrêter).
+function prodTaskPauseToggle(taskId){
+  const s = prodSessActive(); if(!s) return;
+  const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t || t.end) return;
+  if(prodTaskPaused(t)){
+    t.pausedAccum = (+t.pausedAccum||0) + Math.max(0, Date.now()-(+t.pauseAt));
+    t.pauseAt = null;
+  } else {
+    t.pauseAt = Date.now();
+  }
+  prodSessUpsert(s);
+  prodRenderBoard&&prodRenderBoard();
+}
+// Arrête (termine) une tâche. Les autres continuent.
+function prodTaskStop(taskId){
+  const s = prodSessActive(); if(!s) return;
+  const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t || t.end) return;
+  if(prodTaskPaused(t)){ t.pausedAccum=(+t.pausedAccum||0)+Math.max(0,Date.now()-(+t.pauseAt)); t.pauseAt=null; }
+  t.end = Date.now();
+  prodSessUpsert(s);
+  if(!prodAnyRunning()) prodStopTicking();
+  prodRenderBoard&&prodRenderBoard();
+}
+// Supprime une tâche (annulation sans conserver).
+function prodTaskDelete(taskId){
+  const s = prodSessActive(); if(!s) return;
+  s.tasks = (s.tasks||[]).filter(x=>x.id!==taskId);
+  prodSessUpsert(s);
+  if(!prodAnyRunning()) prodStopTicking();
+  prodRenderBoard&&prodRenderBoard();
+}
+
+// ---- Tick (rafraîchit les chronos en cours, 1 s) ----
+let _prodTick = null;
+function prodStartTicking(){ prodStopTicking(); _prodTick=setInterval(prodBoardTick, 1000); }
+function prodStopTicking(){ if(_prodTick){ clearInterval(_prodTick); _prodTick=null; } }
+function prodBoardTick(){
+  const s = prodSessActive();
+  if(!s || !(s.tasks||[]).some(prodTaskRunning)){ prodStopTicking(); }
+  // met à jour les chronos affichés sans tout redessiner
+  document.querySelectorAll('[data-prodchrono]').forEach(el=>{
+    const s2=prodSessActive(); if(!s2) return;
+    const t=(s2.tasks||[]).find(x=>x.id===el.getAttribute('data-prodchrono'));
+    if(t) el.textContent = prodFmt(prodTaskNet(t));
+  });
+}
+// Format ms → HH:MM:SS.
+function prodFmt(ms){
+  let s=Math.max(0,Math.floor(ms/1000));
+  const h=Math.floor(s/3600); s-=h*3600;
+  const m=Math.floor(s/60); s-=m*60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+// ---- VUE ATELIER (héberge le board de pilotage) ----
+let _atelierTab = 'pilotage';   // 'pilotage' | 'tableau'
+function renderAtelier(){
+  const main=document.getElementById('main'); if(!main) return;
+  main.innerHTML = `
+    <div class="topbar"><div><h1>Atelier de production</h1><p>Mesure du temps par tâche — chronos parallèles</p></div></div>
+    <div class="atelier-tabs">
+      <button class="at-tab ${_atelierTab==='pilotage'?'active':''}" onclick="atelierSwitch('pilotage')">⏱ Pilotage</button>
+      <button class="at-tab ${_atelierTab==='tableau'?'active':''}" onclick="atelierSwitch('tableau')">📊 Tableau</button>
+      <button class="at-tab ${_atelierTab==='journal'?'active':''}" onclick="atelierSwitch('journal')">📅 Journal</button>
+    </div>
+    <div id="prodBoardHost"></div>`;
+  if(_atelierTab==='tableau') prodRenderGantt();
+  else if(_atelierTab==='journal') prodRenderJournal();
+  else prodRenderBoard();
+}
+function atelierSwitch(tab){
+  _atelierTab=tab;
+  const host=document.getElementById('prodBoardHost'); if(!host) return;
+  const btns=document.querySelectorAll('.at-tab');
+  btns.forEach(b=>b.classList.remove('active'));
+  const idx = tab==='pilotage'?0 : tab==='tableau'?1 : 2;
+  if(btns[idx]) btns[idx].classList.add('active');
+  if(tab==='tableau') prodRenderGantt();
+  else if(tab==='journal') prodRenderJournal();
+  else prodRenderBoard();
+}
+
+// ---- VUE TABLEAU BLANC (Gantt) de la session du jour ----
+// Barres horizontales positionnées selon l'heure de début/fin ; empilées verticalement ;
+// le chevauchement temporel est visible (deux barres sur la même tranche horaire).
+function prodRenderGantt(targetSession){
+  const host = document.getElementById('prodBoardHost');
+  if(!host) return;
+  const s = targetSession || prodSessActive() || prodLastSession();
+  if(!s || !(s.tasks||[]).length){
+    host.innerHTML = `<div class="prodb-empty"><div class="prodb-empty-ico">📊</div>
+      <p>Aucune tâche à afficher pour l'instant.</p>
+      <p class="note">Lance des tâches depuis l'onglet « Pilotage » : elles apparaîtront ici sous forme de barres positionnées dans le temps.</p></div>`;
+    return;
+  }
+  // Échelle temporelle : du début de la 1re tâche à la fin de la dernière (ou maintenant).
+  const tasks = (s.tasks||[]).slice().sort((a,b)=>a.start-b.start);
+  const t0 = Math.min(...tasks.map(t=>t.start));
+  const t1 = Math.max(...tasks.map(t=>t.end||Date.now()));
+  const span = Math.max(1, t1 - t0);
+  const fmtH = ms => new Date(ms).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+
+  // Graduations horaires (toutes les heures rondes dans la plage).
+  const ticks=[];
+  const startH=new Date(t0); startH.setMinutes(0,0,0);
+  for(let h=startH.getTime(); h<=t1; h+=3600000){ if(h>=t0) ticks.push(h); }
+
+  const rows = tasks.map(t=>{
+    const left = ((t.start - t0)/span)*100;
+    const end = t.end||Date.now();
+    const width = Math.max(1.5, ((end - t.start)/span)*100);
+    const running = !t.end;
+    const dur = prodDurShort(prodTaskNet(t));
+    return `<div class="gantt-row">
+      <div class="gantt-label" title="${esc(t.label)}"><span class="prodt-dot" style="background:${t.color}"></span>${esc(t.label)}</div>
+      <div class="gantt-track">
+        ${ticks.map(tk=>`<div class="gantt-grid" style="left:${((tk-t0)/span)*100}%"></div>`).join('')}
+        <div class="gantt-bar ${running?'is-running':''}" style="left:${left}%;width:${width}%;background:${t.color}">
+          <span class="gantt-bar-txt">${dur}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const sessTitle = s.end
+    ? `Session du ${fmtDate(s.date)} · ${fmtH(s.start)}–${fmtH(s.end)}`
+    : `Session en cours · démarrée à ${fmtH(s.start)}`;
+
+  host.innerHTML = `
+    <div class="gantt-wrap">
+      <div class="gantt-sess">${sessTitle}</div>
+      <div class="gantt-scale">
+        <div class="gantt-label gantt-corner"></div>
+        <div class="gantt-track gantt-axis">
+          ${ticks.map(tk=>`<div class="gantt-tick" style="left:${((tk-t0)/span)*100}%">${fmtH(tk)}</div>`).join('')}
+        </div>
+      </div>
+      <div class="gantt-rows">${rows}</div>
+      <p class="note gantt-hint">Chaque barre = une tâche. Deux barres sur la même tranche horaire = tâches menées en parallèle (ex. cuisson pendant la meringue suivante).</p>
+    </div>`;
+  if((s.tasks||[]).some(prodTaskRunning)) prodStartTicking();
+}
+// Dernière session clôturée (pour afficher quelque chose même sans session active).
+function prodLastSession(){
+  const all = prodSessLoad().filter(s=>s.end).sort((a,b)=>b.end-a.end);
+  return all[0]||null;
+}
+// ---- JOURNAL DE BORD (étape 4) : sessions passées, groupées par jour ----
+function prodRenderJournal(){
+  const host = document.getElementById('prodBoardHost'); if(!host) return;
+  const sessions = prodSessLoad().slice().sort((a,b)=> (b.start)-(a.start));
+  if(!sessions.length){
+    host.innerHTML = `<div class="prodb-empty"><div class="prodb-empty-ico">📅</div>
+      <p>Aucune session enregistrée pour l'instant.</p>
+      <p class="note">Tes journées de production apparaîtront ici, consultables sous forme de tableau blanc daté.</p></div>`;
+    return;
+  }
+  const fmtH = ms => new Date(ms).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+  const cards = sessions.map(s=>{
+    const tasks=s.tasks||[];
+    const totMs = tasks.reduce((sum,t)=>sum+prodTaskNet(t),0);
+    const phases = {};
+    tasks.forEach(t=>{ phases[t.phase]=(phases[t.phase]||0)+prodTaskNet(t); });
+    const phaseChips = Object.keys(phases).map(p=>{
+      const meta = prodAllTasks().find(t=>t.phase===p);
+      const col = meta?meta.color:'#8a7a72';
+      return `<span class="pj-chip" style="background:${col}">${esc(p)} ${prodDurShort(phases[p])}</span>`;
+    }).join('');
+    const open = !s.end;
+    return `<div class="pj-card">
+      <div class="pj-head" onclick="prodJournalOpen('${s.id}')">
+        <div>
+          <div class="pj-date">${fmtDate(s.date)} ${open?'<span class="pj-live">● en cours</span>':''}</div>
+          <div class="pj-time">${fmtH(s.start)}${s.end?'–'+fmtH(s.end):''} · ${tasks.length} tâche(s)</div>
+        </div>
+        <div class="pj-tot">${prodDurShort(totMs)}</div>
+      </div>
+      <div class="pj-chips">${phaseChips}</div>
+      <div class="pj-actions">
+        <button class="qa" onclick="prodJournalOpen('${s.id}')">📊 Voir le tableau</button>
+        ${!open?`<button class="qa del" onclick="prodJournalDelete('${s.id}')">🗑</button>`:''}
+      </div>
+    </div>`;
+  }).join('');
+  host.innerHTML = `<div class="pj-list">${cards}</div>`;
+}
+// Ouvre une session du journal dans la vue tableau blanc (lecture).
+function prodJournalOpen(sessId){
+  const s = prodSessGet(sessId); if(!s) return;
+  _atelierTab='tableau';
+  renderAtelier();
+  // afficher CETTE session précise dans le Gantt
+  setTimeout(()=>prodRenderGantt(s), 0);
+}
+function prodJournalDelete(sessId){
+  const s=prodSessGet(sessId); if(!s) return;
+  if(!confirm(`Supprimer la session du ${fmtDate(s.date)} du journal ?\nLes temps enregistrés seront perdus.`)) return;
+  prodSessRemove(sessId);
+  prodRenderJournal();
+  toast('Session supprimée');
+}
+// ---- ÉCRAN DE PILOTAGE (étape 2 : vue liste des tâches actives) ----
+// (La vue « tableau blanc » Gantt arrive à l'étape 3.)
+function prodRenderBoard(){
+  const host = document.getElementById('prodBoardHost');
+  if(!host) return;
+  const s = prodSessActive();
+  if(!s){
+    host.innerHTML = `<div class="prodb-empty">
+      <div class="prodb-empty-ico">🥣</div>
+      <p>Aucune session de production en cours.</p>
+      <button class="btn" onclick="prodSessionStart();prodRenderBoard()">▶ Démarrer une session</button>
+      <p class="note" style="margin-top:10px">Une session sert à mesurer le temps de tes tâches (pesées, macaronnage, cuisson, nettoyage…). Tu peux en lancer plusieurs en parallèle.</p>
+    </div>`;
+    return;
+  }
+  const running = (s.tasks||[]).filter(prodTaskRunning);
+  const done = (s.tasks||[]).filter(t=>t.end);
+  const startedTxt = new Date(s.start).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+
+  const runCards = running.length ? running.map(t=>{
+    const paused = prodTaskPaused(t);
+    return `<div class="prodt-card ${paused?'is-paused':''}" style="border-left-color:${t.color}">
+      <div class="prodt-top">
+        <span class="prodt-dot" style="background:${t.color}"></span>
+        <span class="prodt-label">${esc(t.label)}</span>
+      </div>
+      <div class="prodt-bottom">
+        <span class="prodt-chrono" data-prodchrono="${t.id}">${prodFmt(prodTaskNet(t))}</span>
+        <div class="prodt-ctrl">
+          <button class="pt-btn pt-pause" onclick="prodTaskPauseToggle('${t.id}')" title="${paused?'Reprendre':'Pause'}">${paused?'▶':'⏸'}</button>
+          <button class="pt-btn pt-stop" onclick="prodTaskStop('${t.id}')" title="Terminer">⏹</button>
+          <button class="pt-btn pt-del" onclick="prodConfirmDelTask('${t.id}')" title="Supprimer">✕</button>
+        </div>
+      </div>
+      ${paused?'<div class="prodt-pausetag">⏸ en pause</div>':''}
+    </div>`;
+  }).join('') : `<p class="note" style="text-align:center;padding:14px 0">Aucune tâche en cours. Lance-en une ci-dessous 👇</p>`;
+
+  const doneList = done.length ? `
+    <div class="prodb-done">
+      <div class="prodb-done-head">✓ Tâches terminées (${done.length})</div>
+      ${done.map(t=>`<div class="prodb-done-row">
+        <span class="prodt-dot" style="background:${t.color}"></span>
+        <span class="pd-label">${esc(t.label)}</span>
+        <span class="pd-dur">${prodDurShort(prodTaskNet(t))}</span>
+      </div>`).join('')}
+    </div>` : '';
+
+  host.innerHTML = `
+    <div class="prodb-session">
+      <div class="prodb-sess-head">
+        <div><span class="prodb-live-dot"></span> Session en cours <span class="prodb-sess-time">démarrée à ${startedTxt}</span></div>
+        <button class="btn ghost sm" onclick="prodConfirmEndSession()">⏹ Clôturer</button>
+      </div>
+    </div>
+    <div class="prodb-running">${runCards}</div>
+    <button class="btn prodb-addbtn" onclick="prodTaskPicker()">＋ Lancer une tâche</button>
+    ${doneList}`;
+
+  if((s.tasks||[]).some(prodTaskRunning)) prodStartTicking();
+}
+// Durée courte lisible (ex. « 1 h 20 », « 14 min »).
+function prodDurShort(ms){
+  const totalMin = Math.round(ms/60000);
+  if(totalMin<60) return totalMin+' min';
+  const h=Math.floor(totalMin/60), m=totalMin%60;
+  return m? `${h} h ${String(m).padStart(2,'0')}` : `${h} h`;
+}
+// Sélecteur de tâche à lancer (catalogue groupé par phase + ajout perso).
+function prodTaskPicker(){
+  const groups = {};
+  prodAllTasks().forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });
+  const blocks = Object.keys(groups).map(phase=>{
+    const g=groups[phase];
+    return `<div class="ptp-group">
+      <div class="ptp-phase" style="color:${g.color}">${esc(phase)}</div>
+      <div class="ptp-tasks">
+        ${g.items.map(l=>`<button class="ptp-task" style="border-left:3px solid ${g.color}" onclick="prodPickTask(${JSON.stringify(l).replace(/"/g,'&quot;')})">${esc(l)}</button>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+  openModal(`<h3>Lancer une tâche</h3>
+    <p class="note">Choisis la tâche à chronométrer. Elle démarre tout de suite et tourne en parallèle des autres.</p>
+    <div class="ptp-list">${blocks}</div>
+    <div class="field" style="margin-top:10px"><label>Ou une tâche personnalisée</label>
+      <div style="display:flex;gap:8px"><input id="ptp_custom" placeholder="Nom de la tâche…" style="flex:1"><button class="btn" onclick="prodPickCustom()">Lancer</button></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+function prodPickTask(label){
+  closeModal();
+  prodTaskStart(label);
+  prodRenderBoard();
+  toast(`▶ ${label}`);
+}
+function prodPickCustom(){
+  const label=(val('ptp_custom')||'').trim();
+  if(!label){ toast('Donne un nom à la tâche'); return; }
+  // mémorise la tâche perso pour la prochaine fois
+  const s=getSettings(); const list=s.prodCustomTasks||[];
+  if(!list.some(c=>(typeof c==='string'?c:c.label)===label)){ list.push(label); s.prodCustomTasks=list; saveSettings(s); }
+  closeModal();
+  prodTaskStart(label);
+  prodRenderBoard();
+  toast(`▶ ${label}`);
+}
+function prodConfirmDelTask(taskId){
+  if(!confirm('Supprimer cette tâche en cours sans l\'enregistrer ?')) return;
+  prodTaskDelete(taskId);
+}
+function prodConfirmEndSession(){
+  const s=prodSessActive(); if(!s) return;
+  const running=(s.tasks||[]).filter(prodTaskRunning).length;
+  const msg = running>0
+    ? `Clôturer la session ?\n${running} tâche(s) encore en cours seront arrêtées et enregistrées.`
+    : 'Clôturer la session de production ?';
+  if(!confirm(msg)) return;
+  prodSessionEnd();
+  prodRenderBoard();
+  toast('Session clôturée ✓');
+}
 
 function ttLoad(){
   try{ const a=JSON.parse(localStorage.getItem(TT_SESSIONS_KEY)||'[]'); return Array.isArray(a)?a:[]; }

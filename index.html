@@ -417,6 +417,74 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .ac-item.ac-book{display:flex;align-items:center;gap:6px}
 .ac-item.ac-book b{color:var(--bordeaux,#490F25)}
 .ac-item .ac-meta{color:#9a8a82;font-size:.76rem;margin-left:auto}
+/* ===== MODULE ATELIER DE PRODUCTION ===== */
+.prodb-empty{text-align:center;padding:40px 20px;background:#fff;border:1px solid #ece3d5;border-radius:18px;box-shadow:0 2px 12px rgba(73,15,37,.05)}
+.prodb-empty-ico{font-size:3rem;margin-bottom:10px}
+.prodb-empty p{color:#6a5a52;margin-bottom:14px}
+.prodb-session{margin-bottom:14px}
+.prodb-sess-head{display:flex;justify-content:space-between;align-items:center;gap:10px;background:linear-gradient(135deg,#490F25,#6a1d38);color:#EBDFCB;border-radius:14px;padding:12px 15px;font-size:.92rem;font-weight:600}
+.prodb-sess-time{font-weight:400;font-size:.8rem;opacity:.85;margin-left:6px}
+.prodb-live-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#3fb968;margin-right:6px;animation:plpulse 1s ease-in-out infinite;vertical-align:middle}
+.prodb-running{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.prodt-card{background:#fff;border:1px solid #ece3d5;border-left:4px solid #8a7a72;border-radius:14px;padding:13px 15px;box-shadow:0 2px 8px rgba(73,15,37,.05)}
+.prodt-card.is-paused{opacity:.7;background:#faf6f0}
+.prodt-top{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+.prodt-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+.prodt-label{font-weight:600;color:var(--bordeaux,#490F25);font-size:.92rem;line-height:1.25}
+.prodt-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.prodt-chrono{font-family:'Fraunces','Bellota',serif;font-weight:600;font-size:1.5rem;color:var(--bordeaux,#490F25);font-variant-numeric:tabular-nums}
+.prodt-ctrl{display:flex;gap:7px}
+.pt-btn{border:none;cursor:pointer;width:38px;height:38px;border-radius:50%;color:#fff;font-size:.9rem;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent}
+.pt-pause{background:radial-gradient(circle at 35% 30%,#f5c45e,#d8932a)}
+.pt-stop{background:radial-gradient(circle at 35% 30%,#ef7e6e,#c23a2a)}
+.pt-del{background:radial-gradient(circle at 35% 30%,#cfc3b4,#9a8a7a);font-size:.78rem}
+.prodt-pausetag{margin-top:8px;font-size:.74rem;color:#d8932a;font-weight:600}
+.prodb-addbtn{width:100%;margin-bottom:14px}
+.prodb-done{background:#fff;border:1px solid #ece3d5;border-radius:14px;padding:12px 15px;box-shadow:0 2px 8px rgba(73,15,37,.04)}
+.prodb-done-head{font-weight:600;color:#3f7d52;font-size:.86rem;margin-bottom:9px}
+.prodb-done-row{display:flex;align-items:center;gap:9px;padding:6px 0;border-bottom:1px solid #f4ede2;font-size:.86rem}
+.prodb-done-row:last-child{border-bottom:none}
+.prodb-done-row .pd-label{flex:1;color:#5a4a44}
+.prodb-done-row .pd-dur{font-weight:600;color:var(--bordeaux,#490F25);white-space:nowrap}
+/* Sélecteur de tâche */
+.ptp-list{display:flex;flex-direction:column;gap:14px;max-height:50vh;overflow-y:auto;margin:10px 0}
+.ptp-group .ptp-phase{font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}
+.ptp-tasks{display:flex;flex-direction:column;gap:6px}
+.ptp-task{text-align:left;background:#fff;border:1px solid #ece3d5;border-radius:10px;padding:11px 13px;font-size:.88rem;color:#3a2a2e;cursor:pointer;font-family:inherit}
+.ptp-task:active{background:#fbf4ec}
+/* Onglets Atelier */
+.atelier-tabs{display:flex;gap:8px;margin-bottom:16px}
+.at-tab{flex:1;appearance:none;border:1.5px solid #e0d5c5;background:#fff;cursor:pointer;border-radius:11px;padding:10px;font-family:inherit;font-weight:600;font-size:.88rem;color:#8a7a72;-webkit-tap-highlight-color:transparent}
+.at-tab.active{background:var(--bordeaux,#490F25);color:var(--creme,#E8DDCD);border-color:var(--bordeaux,#490F25)}
+/* Tableau blanc (Gantt) */
+.gantt-wrap{background:#fff;border:1px solid #ece3d5;border-radius:16px;padding:14px;box-shadow:0 2px 12px rgba(73,15,37,.05);overflow:hidden}
+.gantt-sess{font-family:'Fraunces','Bellota',serif;font-weight:600;color:var(--bordeaux,#490F25);font-size:1rem;margin-bottom:12px}
+.gantt-scale{display:flex;align-items:flex-end;margin-bottom:6px}
+.gantt-corner{flex-shrink:0}
+.gantt-axis{position:relative;height:18px}
+.gantt-tick{position:absolute;transform:translateX(-50%);font-size:.66rem;color:#9a8a82;white-space:nowrap;bottom:0}
+.gantt-rows{display:flex;flex-direction:column;gap:7px}
+.gantt-row{display:flex;align-items:center;gap:8px}
+.gantt-label{flex-shrink:0;width:34%;max-width:150px;font-size:.74rem;color:#5a4a44;display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gantt-label .prodt-dot{width:9px;height:9px;flex-shrink:0}
+.gantt-track{position:relative;flex:1;height:26px;background:#f7f2ea;border-radius:7px;overflow:hidden}
+.gantt-grid{position:absolute;top:0;bottom:0;width:1px;background:rgba(170,124,57,.13)}
+.gantt-bar{position:absolute;top:3px;bottom:3px;border-radius:6px;min-width:6px;display:flex;align-items:center;padding:0 6px;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.gantt-bar.is-running{background-image:linear-gradient(45deg,rgba(255,255,255,.25) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.25) 50%,rgba(255,255,255,.25) 75%,transparent 75%);background-size:14px 14px;animation:ganttStripes 1s linear infinite}
+.gantt-bar-txt{font-size:.64rem;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@keyframes ganttStripes{0%{background-position:0 0}100%{background-position:14px 0}}
+.gantt-hint{margin-top:12px;font-size:.76rem}
+/* Journal de bord atelier */
+.pj-list{display:flex;flex-direction:column;gap:12px}
+.pj-card{background:#fff;border:1px solid #ece3d5;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(73,15,37,.05)}
+.pj-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;cursor:pointer}
+.pj-date{font-family:'Fraunces','Bellota',serif;font-weight:600;color:var(--bordeaux,#490F25);font-size:.98rem;text-transform:capitalize}
+.pj-live{color:#3fb968;font-size:.74rem;font-weight:600;margin-left:4px}
+.pj-time{color:#9a8a82;font-size:.78rem;margin-top:2px}
+.pj-tot{font-family:'Fraunces','Bellota',serif;font-weight:700;color:var(--caramel,#AA7C39);font-size:1.2rem;white-space:nowrap}
+.pj-chips{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0}
+.pj-chip{color:#fff;font-size:.68rem;font-weight:600;padding:3px 9px;border-radius:999px}
+.pj-actions{display:flex;gap:8px;padding-top:10px;border-top:1px dashed #ece3d5}
 /* ---- Vue d'impression intégrée (facture, étiquettes…) ---- */
 #printView{position:fixed;inset:0;z-index:9999;background:#5a5048;display:flex;flex-direction:column}
 #printView .pv-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;
@@ -890,6 +958,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
       <button data-v="matieres"><span class="ico">⬛</span><span>Matières & lots</span></button>
       <button data-v="recettes"><span class="ico">❀</span><span>Recettes (BOM)</span></button>
       <button data-v="productions"><span class="ico">⚙</span><span>Productions</span></button>
+      <button data-v="atelier"><span class="ico">⏱</span><span>Atelier (chronos)</span></button>
       <button data-v="stockparfums"><span class="ico">🍬</span><span>Stock par parfum</span></button>
       <button data-v="couts"><span class="ico">€</span><span>Coûts & prix</span></button>
       <button data-v="sauvegardes"><span class="ico">🛟</span><span>Sauvegarde &amp; sécurité</span></button>
