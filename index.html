@@ -374,14 +374,17 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .ws-date{font-family:'Fraunces','Bellota',serif;font-weight:600;color:var(--bordeaux,#490F25);font-size:.96rem;text-transform:capitalize}
 .ws-day-tot{font-size:.8rem;color:#8a6d3b;font-weight:600}
 .ws-lines{display:flex;flex-direction:column}
-.ws-line{display:grid;grid-template-columns:auto 1fr auto auto auto;gap:9px;align-items:center;padding:9px 13px;border-bottom:1px solid #f4ede2;font-size:.84rem}
+.ws-line{display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid #f4ede2;font-size:.84rem}
 .ws-line:last-child{border-bottom:none}
-.ws-act{color:#fff;border-radius:999px;padding:3px 10px;font-size:.72rem;font-weight:600;white-space:nowrap}
-.ws-time{color:#9a8a82;font-size:.76rem}
+.ws-line-l{display:flex;align-items:center;gap:8px;flex:1;min-width:0;flex-wrap:wrap}
+.ws-line-m{display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;line-height:1.2}
+.ws-line-r{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.ws-act{color:#fff;border-radius:999px;padding:3px 10px;font-size:.72rem;font-weight:600;white-space:nowrap;flex-shrink:0}
+.ws-time{color:#9a8a82;font-size:.76rem;white-space:nowrap}
 .ws-dur b{color:var(--bordeaux,#490F25)}
-.ws-pause{color:#c0392b;font-size:.68rem}
+.ws-pause{color:#c0392b;font-size:.66rem;white-space:nowrap}
 .ws-cost{font-weight:600;color:#490F25;white-space:nowrap}
-.ws-del{cursor:pointer;opacity:.5;font-size:.85rem}
+.ws-del{cursor:pointer;opacity:.5;font-size:.85rem;flex-shrink:0}
 .ws-del:active{opacity:1}
 /* ---- Liste de courses ---- */
 .shop-list{display:flex;flex-direction:column;gap:8px;max-height:54vh;overflow-y:auto;margin:10px 0}

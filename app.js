@@ -12802,7 +12802,8 @@ async function ttConfirmStop(id, start, end, ms, pauseMs){
 }
 // Historique rapide des sessions (modale).
 async function ttOpenHistory(){
-  const sessions = (await db.workSessions.orderBy('date').reverse().toArray().catch(()=>[]));
+  const sessions = (await db.workSessions.orderBy('date').reverse().toArray().catch(()=>[]))
+    .filter(x => x.fin || (+x.dureeMin>0));   // n'afficher que les sessions terminées (chrono arrêté)
   const totMin = sessions.reduce((s,x)=>s+(+x.dureeMin||0),0);
   const totCout = sessions.reduce((s,x)=>s+(+x.coutTotal||0),0);
   const th=Math.floor(totMin/60), tm=totMin%60;
@@ -12827,11 +12828,18 @@ async function ttOpenHistory(){
       const h=Math.floor((+x.dureeMin||0)/60), m=(+x.dureeMin||0)%60;
       const pMin=+x.pauseMin||0;
       return `<div class="ws-line">
-        <span class="ws-act" style="background:${actColor(x.activite)}">${x.activite?esc(x.activite):'Activité'}</span>
-        <span class="ws-time">${fmtTime(x.debut)}–${fmtTime(x.fin)}</span>
-        <span class="ws-dur"><b>${String(h).padStart(2,'0')}h${String(m).padStart(2,'0')}</b>${pMin>=1?` <span class="ws-pause">+${pMin}m pause</span>`:''}</span>
-        <span class="ws-cost">${euro(x.coutTotal)}</span>
-        <span class="ws-del" onclick="ttDeleteSession(${x.id})" title="Supprimer">🗑</span>
+        <div class="ws-line-l">
+          <span class="ws-act" style="background:${actColor(x.activite)}">${x.activite?esc(x.activite):'Activité'}</span>
+          <span class="ws-time">${fmtTime(x.debut)}${x.fin?'–'+fmtTime(x.fin):''}</span>
+        </div>
+        <div class="ws-line-m">
+          <span class="ws-dur"><b>${String(h).padStart(2,'0')}h${String(m).padStart(2,'0')}</b></span>
+          ${pMin>=1?`<span class="ws-pause">+${pMin}m pause</span>`:''}
+        </div>
+        <div class="ws-line-r">
+          <span class="ws-cost">${euro(x.coutTotal)}</span>
+          <span class="ws-del" onclick="ttDeleteSession(${x.id})" title="Supprimer">🗑</span>
+        </div>
       </div>`;
     }).join('');
     return `<div class="ws-card">
