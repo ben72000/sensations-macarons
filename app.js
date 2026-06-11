@@ -756,7 +756,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -11673,6 +11673,128 @@ async function fixIntegrityIssue(table, ids, fix){
   }catch(e){ console.error('fixIntegrity',e); toast('Erreur pendant le nettoyage'); }
 }
 // Écran de résultats du vérificateur.
+// ============================================================
+//  GUIDE INTERACTIF — mode d'emploi par thèmes, cartes dépliables.
+//  Chaque fonctionnalité : résumé court + détail (voir plus) + accès direct.
+// ============================================================
+const GUIDE_THEMES = [
+  { titre:'Ventes & clients', emoji:'🛍️', color:'#aa7c39', items:[
+    { v:'commandes', t:'Commandes', ico:'✎', resume:"Créer et suivre tes commandes, de la prise à la livraison.",
+      detail:"Saisis une commande avec ses coffrets, événements ou accompagnements. Suis son statut (à préparer, prête, livrée), enregistre les paiements, et génère la facture. La livraison se renseigne dans un bloc dépliable, avec ton carnet d'adresses pour pré-remplir distance et temps.",
+      steps:["Touche « + Nouvelle commande »","Choisis le client et ajoute les produits","Renseigne la livraison si besoin (bloc dépliable)","Suis le statut et facture quand c'est prêt"] },
+    { v:'clients', t:'Clients', ico:'♣', resume:"Ton carnet de clients, avec historique et habitudes d'achat.",
+      detail:"Chaque fiche client montre son panier moyen, son parfum préféré, sa fréquence de commande, et un badge VIP pour les meilleurs. Pratique pour personnaliser ta relation et repérer tes clients fidèles.",
+      steps:["Ouvre un client pour voir sa fiche enrichie","Repère les badges VIP et habitudes","Crée une commande directement depuis sa fiche"] },
+    { v:'evenements', t:'Événements', ico:'🎪', resume:"Gérer tes prestations événementielles (mariages, fêtes…).",
+      detail:"Référence tes événements et prestations spéciales, distincts des commandes classiques de coffrets.",
+      steps:["Ajoute un événement avec sa date","Relie-le à une commande si besoin"] },
+    { v:'cal', t:'Calendrier', ico:'▦', resume:"Vue d'ensemble de tes échéances et livraisons.",
+      detail:"Visualise tes commandes et événements dans le temps, pour anticiper les pics d'activité et organiser ta production.",
+      steps:["Parcours le calendrier","Touche une date pour voir le détail"] },
+  ]},
+  { titre:'Production', emoji:'⚙️', color:'#c0392b', items:[
+    { v:'productions', t:'Productions', ico:'⚙', resume:"Lancer et suivre tes fabrications, lot par lot.",
+      detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
+      steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
+    { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour analyser ton temps.",
+      detail:"Ouvre une session de production et lance des chronos par tâche (pesée, macaronnage, cuisson…). Plusieurs tâches tournent en parallèle. Le tableau blanc montre ta journée en barres, et le journal garde l'historique. Sert à optimiser ton organisation.",
+      steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail","Consulte le tableau blanc et le journal"] },
+    { v:'recettes', t:'Recettes (BOM)', ico:'❀', resume:"Tes recettes détaillées avec leurs ingrédients.",
+      detail:"Définis chaque recette avec ses matières et quantités (la nomenclature). C'est la base qui permet de calculer les coûts et de déduire le stock à chaque production.",
+      steps:["Crée une recette","Ajoute les matières et quantités","Elle servira au calcul des coûts et productions"] },
+    { v:'etiquettes', t:'Étiquettes & traçabilité', ico:'🏷', resume:"Imprimer des étiquettes conformes avec DLC.",
+      detail:"Génère des étiquettes de traçabilité pour tes lots, avec dates et informations réglementaires.",
+      steps:["Sélectionne un lot","Génère et imprime l'étiquette"] },
+  ]},
+  { titre:'Stock & achats', emoji:'📦', color:'#3f7d52', items:[
+    { v:'matieres', t:'Matières & lots', ico:'⬛', resume:"Gérer tes matières premières, lots et DLC.",
+      detail:"Suis tes matières et emballages en cartes claires, avec dates de péremption et alertes « à commander » sous le seuil. Réceptionne tes lots avec leur prix pour un coût réel. Génère une liste de courses avec le meilleur fournisseur.",
+      steps:["Réceptionne tes lots à l'achat","Surveille les alertes de seuil","Génère ta liste de courses (bouton 🛒)"] },
+    { v:'stockparfums', t:'Stock par parfum', ico:'🍬', resume:"Tes macarons finis disponibles, par parfum.",
+      detail:"Vue colorée de ton stock de macarons vendables, parfum par parfum, cohérente avec ta boutique.",
+      steps:["Consulte les quantités par parfum","Repère ce qui manque pour tes commandes"] },
+    { v:'fournisseurs', t:'Fournisseurs', ico:'⚑', resume:"Ton répertoire de fournisseurs.",
+      detail:"Référence tes fournisseurs pour les associer à tes lots et comparer les prix.",
+      steps:["Ajoute un fournisseur","Associe-le à tes réceptions de lots"] },
+    { v:'achats', t:'Optimisation achats', ico:'🛒', resume:"Comparer les prix pour acheter au mieux.",
+      detail:"Analyse ton historique d'achat pour identifier où acheter chaque matière au meilleur prix.",
+      steps:["Consulte les comparaisons de prix","Optimise tes prochains achats"] },
+  ]},
+  { titre:'Pilotage & chiffres', emoji:'📊', color:'#6a1d38', items:[
+    { v:'dash', t:'Tableau de bord', ico:'◷', resume:"Ta vue d'ensemble : CA, stock, alertes.",
+      detail:"Le cœur de l'app : chiffre d'affaires du mois, total, macarons en stock, alertes. Chaque chiffre a un petit « i » pour comprendre ce qu'il signifie.",
+      steps:["Consulte tes indicateurs clés","Touche un « i » pour l'explication","Touche une carte pour aller plus loin"] },
+    { v:'compta', t:'Comptabilité', ico:'📒', resume:"CA facturé vs encaissé, charges, cotisations.",
+      detail:"Deux lectures de ton CA (facturé et encaissé), tes charges, et tes cotisations sociales calculées au bon taux. Pour piloter sans être comptable.",
+      steps:["Compare CA facturé et encaissé","Vérifie tes charges et cotisations"] },
+    { v:'analyse', t:'Analyse & assistant', ico:'🤖', resume:"Anti-gaspi, alertes et conseils.",
+      detail:"Analyse ton activité : alertes de rupture à venir, suggestions anti-gaspi, et indicateurs de sérénité.",
+      steps:["Consulte les alertes et conseils","Anticipe tes ruptures et pertes"] },
+    { v:'rentaparfum', t:'Rentabilité parfums', ico:'🎯', resume:"Quel parfum te rapporte le plus.",
+      detail:"Classe tes parfums par rentabilité réelle (marge), pour orienter ta production vers ce qui paie.",
+      steps:["Compare les marges par parfum","Oriente ta production en conséquence"] },
+    { v:'couts', t:'Coûts & prix', ico:'€', resume:"Calculer tes coûts de revient et fixer tes prix.",
+      detail:"Calcule le coût de revient de chaque recette (matières, emballage, main-d'œuvre, pertes) pour fixer des prix justes et rentables.",
+      steps:["Vérifie le coût de revient d'une recette","Ajuste tes prix de vente"] },
+  ]},
+  { titre:'Organisation & sécurité', emoji:'🛟', color:'#5a8aa0', items:[
+    { v:'pms', t:'Plan de maîtrise sanitaire', ico:'🌡', resume:"Relevés de température et nettoyage (HACCP).",
+      detail:"Enregistre tes relevés de température et tes tâches de nettoyage pour ta conformité sanitaire.",
+      steps:["Fais ton relevé de température","Valide tes tâches de nettoyage"] },
+    { v:'sauvegardes', t:'Sauvegarde & sécurité', ico:'🛟', resume:"Protéger et exporter tes données.",
+      detail:"Sauvegardes automatiques quotidiennes, export d'un fichier à conserver, et vérificateur d'intégrité de tes données. Ta tranquillité d'esprit.",
+      steps:["Exporte une sauvegarde régulièrement","Lance le vérificateur d'intégrité au besoin"] },
+    { v:'picking', t:'Préparation / Picking', ico:'📦', resume:"Préparer efficacement tes commandes.",
+      detail:"Liste optimisée de ce qu'il faut rassembler pour honorer tes commandes du jour.",
+      steps:["Consulte la liste de préparation","Coche au fur et à mesure"] },
+  ]},
+];
+function renderGuide(){
+  const main=document.getElementById('main'); if(!main) return;
+  const cards = GUIDE_THEMES.map((th,ti)=>`
+    <div class="guide-theme">
+      <div class="guide-th-head" style="border-left:4px solid ${th.color}">
+        <span class="guide-th-emo">${th.emoji}</span>
+        <span class="guide-th-title">${esc(th.titre)}</span>
+        <span class="guide-th-count">${th.items.length}</span>
+      </div>
+      <div class="guide-items">
+        ${th.items.map((it,ii)=>`
+          <div class="guide-card" id="gc-${ti}-${ii}">
+            <div class="guide-card-head" onclick="guideToggle(${ti},${ii})">
+              <span class="guide-ico" style="background:${th.color}22;color:${th.color}">${it.ico}</span>
+              <div class="guide-card-txt">
+                <div class="guide-card-t">${esc(it.t)}</div>
+                <div class="guide-card-r">${esc(it.resume)}</div>
+              </div>
+              <span class="guide-chev" id="gchev-${ti}-${ii}">▸</span>
+            </div>
+            <div class="guide-card-body" id="gbody-${ti}-${ii}" style="display:none">
+              <p class="guide-detail">${esc(it.detail)}</p>
+              <div class="guide-steps">
+                ${it.steps.map((s,si)=>`<div class="guide-step"><span class="guide-step-n" style="background:${th.color}">${si+1}</span>${esc(s)}</div>`).join('')}
+              </div>
+              <button class="btn guide-go" style="background:${th.color}" onclick="goView('${it.v}')">Ouvrir ${esc(it.t)} →</button>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+  main.innerHTML = `
+    <div class="topbar"><div><h1>Guide</h1><p>Mode d'emploi de ton application, thème par thème</p></div></div>
+    <div class="guide-intro">👋 Touche une fonctionnalité pour la déplier : tu y trouveras à quoi elle sert, comment l'utiliser, et un accès direct.</div>
+    <div class="guide-list">${cards}</div>`;
+}
+function guideToggle(ti,ii){
+  const body=document.getElementById(`gbody-${ti}-${ii}`);
+  const chev=document.getElementById(`gchev-${ti}-${ii}`);
+  const card=document.getElementById(`gc-${ti}-${ii}`);
+  if(!body) return;
+  const open = body.style.display==='none';
+  body.style.display = open?'block':'none';
+  if(chev) chev.textContent = open?'▾':'▸';
+  if(card) card.classList.toggle('open', open);
+}
+
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>

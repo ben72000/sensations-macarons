@@ -492,6 +492,29 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
   cursor:pointer;vertical-align:middle;line-height:1;padding:0;margin-left:4px;flex-shrink:0;
   -webkit-tap-highlight-color:transparent;transition:.15s}
 .kpi-i:active{background:var(--caramel,#AA7C39);color:#fff}
+/* ===== GUIDE INTERACTIF ===== */
+.guide-intro{background:linear-gradient(135deg,#fbf4ec,#f5ece0);border:1px solid #ece3d5;border-radius:14px;padding:14px 16px;font-size:.9rem;color:#6a5a52;margin-bottom:18px;line-height:1.5}
+.guide-list{display:flex;flex-direction:column;gap:20px}
+.guide-theme{}
+.guide-th-head{display:flex;align-items:center;gap:10px;padding:8px 0 8px 12px;margin-bottom:10px}
+.guide-th-emo{font-size:1.3rem}
+.guide-th-title{font-family:'Fraunces','Bellota',serif;font-weight:600;color:var(--bordeaux,#490F25);font-size:1.15rem;flex:1}
+.guide-th-count{background:#ece3d5;color:#8a7a72;font-size:.72rem;font-weight:700;padding:2px 9px;border-radius:999px}
+.guide-items{display:flex;flex-direction:column;gap:9px}
+.guide-card{background:#fff;border:1px solid #ece3d5;border-radius:14px;overflow:hidden;transition:box-shadow .15s}
+.guide-card.open{box-shadow:0 4px 16px rgba(73,15,37,.1)}
+.guide-card-head{display:flex;align-items:center;gap:12px;padding:13px 15px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.guide-ico{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0}
+.guide-card-txt{flex:1;min-width:0}
+.guide-card-t{font-weight:600;color:var(--bordeaux,#490F25);font-size:.96rem}
+.guide-card-r{font-size:.8rem;color:#9a8a82;margin-top:2px;line-height:1.35}
+.guide-chev{color:var(--caramel,#AA7C39);font-size:.85rem;flex-shrink:0;transition:transform .15s}
+.guide-card-body{padding:0 15px 15px;border-top:1px solid #f4ede2}
+.guide-detail{color:#5a4a44;font-size:.9rem;line-height:1.6;margin:12px 0}
+.guide-steps{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.guide-step{display:flex;align-items:flex-start;gap:10px;font-size:.88rem;color:#5a4a44;line-height:1.4}
+.guide-step-n{flex-shrink:0;width:22px;height:22px;border-radius:50%;color:#fff;font-size:.74rem;font-weight:700;display:flex;align-items:center;justify-content:center}
+.guide-go{width:100%;color:#fff!important}
 /* ---- Vue d'impression intégrée (facture, étiquettes…) ---- */
 #printView{position:fixed;inset:0;z-index:9999;background:#5a5048;display:flex;flex-direction:column}
 #printView .pv-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;
@@ -984,6 +1007,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
         <button data-v="evenements"><span class="ico">🎉</span><span>Événements &amp; acomptes</span></button>
         <button data-v="marches"><span class="ico">⛺</span><span>Marchés</span></button>
         <button data-v="migration"><span class="ico">📥</span><span>Reprise / migration</span></button>
+        <button data-v="guide"><span class="ico">📖</span><span>Guide / mode d'emploi</span></button>
         <button data-v="assistant"><span class="ico">🤖</span><span>Assistant</span></button>
         <button data-v="pms"><span class="ico">🧼</span><span>HACCP / PMS</span></button>
         <button data-v="dlc"><span class="ico">⏰</span><span>Suivi DLC</span></button>
@@ -1047,6 +1071,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
         <button data-v="evenements"><span class="ico">🎉</span>Événements &amp; acomptes</button>
         <button data-v="marches"><span class="ico">⛺</span>Marchés</button>
         <button data-v="migration"><span class="ico">📥</span>Reprise / migration</button>
+        <button data-v="guide"><span class="ico">📖</span>Guide / mode d'emploi</button>
         <button data-v="assistant"><span class="ico">🤖</span>Assistant</button>
         <button data-v="pms"><span class="ico">🧼</span>HACCP / PMS</button>
         <button data-v="dlc"><span class="ico">⏰</span>Suivi DLC</button>
