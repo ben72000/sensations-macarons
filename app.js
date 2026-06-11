@@ -948,7 +948,7 @@ async function renderDash(){
      <div class="home-hero-caption">
        <span class="hhc-title">Tableau de bord</span>
        <span class="hhc-sub">${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</span>
-       <span class="hhc-clock" id="homeClock">${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span>
+       <span class="hhc-clock" id="homeClock">${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
        <span class="hhc-ca">${privacyModeEnabled()?'•••':euro(caMonth)}<span class="hhc-ca-lbl">CA du mois</span></span>
      </div>
    </div>
@@ -991,7 +991,7 @@ function startHomeClock(){
   const tick=()=>{
     const el=document.getElementById('homeClock');
     if(!el){ if(_homeClockTimer){ clearInterval(_homeClockTimer); _homeClockTimer=null; } return; }
-    el.textContent = new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    el.textContent = new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   };
   tick();
   _homeClockTimer = setInterval(tick, 1000);
@@ -12591,6 +12591,16 @@ function ttSave(arr){ localStorage.setItem(TT_SESSIONS_KEY, JSON.stringify(arr||
 function ttGet(id){ return ttLoad().find(s=>s.id===id); }
 function ttUpsert(sess){ const a=ttLoad(); const i=a.findIndex(s=>s.id===sess.id); if(i>=0) a[i]=sess; else a.push(sess); ttSave(a); }
 function ttRemove(id){ ttSave(ttLoad().filter(s=>s.id!==id)); }
+// Annule un chrono en cours SANS l'enregistrer dans l'historique (suppression directe).
+function ttCancel(id){
+  const s=ttGet(id); if(!s){ ttRefresh(); return; }
+  const lbl = s.activite ? `« ${s.activite} »` : 'ce chrono';
+  if(!confirm(`Annuler ${lbl} sans l'enregistrer ?\nLe temps écoulé ne sera pas conservé.`)) return;
+  ttRemove(id);
+  ttRefresh();
+  if(!ttLoad().length) ttStopTicking();
+  toast('Chrono annulé');
+}
 function ttSessionPaused(s){ return s && (+s.pauseAt||0)>0; }
 // Temps net d'UN chrono (ms) — recalculé depuis les timestamps (résilient à la veille iOS).
 function ttSessionNet(s){
@@ -12664,6 +12674,7 @@ function ttRefresh(){
       <span class="whisk-ctrl">
         <span class="whisk-lbl">${esc(s.activite||'Production')}${paused?' · pause':''}</span>
         <button type="button" class="wc-pause" onclick="event.stopPropagation();ttPause('${s.id}')" title="${paused?'Reprendre':'Pause'}">${paused?'▶':'⏸'}</button>
+        <button type="button" class="wc-cancel" onclick="event.stopPropagation();ttCancel('${s.id}')" title="Annuler sans enregistrer">✕</button>
         <button type="button" class="wc-stop" onclick="event.stopPropagation();ttStop('${s.id}')" title="Stop">⏹</button>
       </span>
     </div>`;

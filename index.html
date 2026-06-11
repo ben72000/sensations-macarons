@@ -515,7 +515,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 #timeTracker.tt-open .tt-light.dim{display:flex}
 #timeTracker .tt-histlabel{display:none;font-size:.62rem;color:#e8dccd;letter-spacing:.08em;text-transform:uppercase;line-height:1}
 #timeTracker.tt-open .tt-histlabel{display:block}
-#ttWhisks{position:fixed;z-index:45;left:300px;bottom:24px;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+#ttWhisks{position:fixed;z-index:45;left:auto;right:24px;bottom:24px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none;max-width:min(360px,calc(100vw - 24px))}
 #ttWhisks .tt-whisk{pointer-events:auto;display:flex;align-items:center;gap:8px;
   background:#fff;border:1px solid rgba(170,124,57,.25);border-left:4px solid var(--tt-col,#AA7C39);border-radius:13px;padding:6px 10px;
   box-shadow:0 6px 20px rgba(82,37,47,.2);font-family:'Outfit',system-ui,sans-serif;cursor:grab;touch-action:none}
@@ -531,10 +531,13 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 #ttWhisks .whisk-ctrl button{appearance:none;-webkit-appearance:none;border:none;cursor:pointer;
   width:30px;height:30px;border-radius:50%;color:#fff;font-size:.8rem;-webkit-tap-highlight-color:transparent}
 #ttWhisks .whisk-ctrl .wc-pause{background:radial-gradient(circle at 35% 30%,#f5c45e,#d8932a)}
+#ttWhisks .whisk-ctrl .wc-cancel{background:radial-gradient(circle at 35% 30%,#cfc3b4,#9a8a7a);font-size:.72rem}
 #ttWhisks .whisk-ctrl .wc-stop{background:radial-gradient(circle at 35% 30%,#ef7e6e,#c23a2a)}
 @media(max-width:820px){
-  #timeTracker{left:auto;right:12px;bottom:calc(78px + env(safe-area-inset-bottom))}
-  #ttWhisks{left:12px;right:auto;bottom:calc(82px + env(safe-area-inset-bottom))}
+  #timeTracker{left:auto;right:12px;bottom:calc(150px + env(safe-area-inset-bottom))}
+  #ttWhisks{left:12px;right:12px;bottom:calc(86px + env(safe-area-inset-bottom));align-items:flex-start}
+  #ttWhisks .tt-whisk{max-width:100%}
+  #ttWhisks .whisk-lbl{max-width:90px}
 }
 }
 /* ---- Module Préparation / Picking (gros blocs tactiles) ---- */
@@ -828,7 +831,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 </head>
 <body>
 <!-- Horodateur global : date + heure en direct, fixe en haut à droite, sur toutes les pages. -->
-<div id="clock" class="clock" aria-hidden="true"></div>
+<div id="clock" class="clock" aria-hidden="true" style="display:none"></div>
 <div class="app">
   <aside class="side">
     <div class="brand">Sensations<br>Macarons<small>Pilotage</small></div>

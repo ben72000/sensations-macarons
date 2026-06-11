@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sensations Macarons — L'application qui gère votre atelier</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Outfit:wght@300;400;500;600;700&family=Bellota:wght@700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --aubergine:#490F25; --aubergine-2:#6a1d38;
+    --caramel:#AA7C39; --cafe:#C1A27C;
+    --sauge:#C6D6C4; --creme:#E8DDCD; --creme-pale:#FDFBF7;
+    --ink:#3a2a2e;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{font-family:'Outfit',system-ui,sans-serif;color:var(--ink);background:var(--creme-pale);line-height:1.6;font-size:17px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  h1,h2,h3{font-family:'Fraunces',Georgia,serif;color:var(--aubergine);line-height:1.1;font-weight:600}
+
+  /* ===== HERO ===== */
+  .hero{background:linear-gradient(140deg,var(--aubergine),var(--aubergine-2));color:var(--creme);padding:80px 0 70px;position:relative;overflow:hidden}
+  .hero::after{content:'';position:absolute;right:-120px;top:-120px;width:380px;height:380px;border-radius:50%;background:radial-gradient(circle,rgba(198,162,124,.22),transparent 70%)}
+  .hero .eyebrow{font-size:.8rem;letter-spacing:.28em;text-transform:uppercase;color:var(--cafe);font-weight:600;margin-bottom:20px}
+  .hero h1{color:#fff;font-size:clamp(2.4rem,6vw,4rem);font-weight:700;max-width:14ch;margin-bottom:22px}
+  .hero p.lead{font-size:clamp(1.05rem,2.4vw,1.4rem);max-width:46ch;color:var(--creme);font-weight:300;margin-bottom:34px}
+  .hero .pill{display:inline-block;background:rgba(232,221,205,.14);border:1px solid rgba(232,221,205,.3);color:var(--creme);padding:8px 18px;border-radius:999px;font-size:.86rem;font-weight:500;margin-bottom:30px}
+  .cta-row{display:flex;gap:14px;flex-wrap:wrap}
+  .btn{display:inline-block;padding:15px 30px;border-radius:14px;font-weight:600;font-size:1rem;text-decoration:none;transition:transform .15s,box-shadow .15s}
+  .btn-primary{background:var(--caramel);color:#fff;box-shadow:0 8px 24px rgba(170,124,57,.4)}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(170,124,57,.5)}
+  .btn-ghost{background:transparent;color:var(--creme);border:1.5px solid rgba(232,221,205,.4)}
+  .btn-ghost:hover{background:rgba(232,221,205,.1)}
+
+  /* ===== PROMESSE / INTRO ===== */
+  .intro{padding:72px 0 40px;text-align:center}
+  .intro .kicker{color:var(--caramel);font-weight:600;letter-spacing:.18em;text-transform:uppercase;font-size:.8rem;margin-bottom:16px}
+  .intro h2{font-size:clamp(1.8rem,4vw,2.6rem);max-width:20ch;margin:0 auto 20px}
+  .intro p{max-width:54ch;margin:0 auto;color:#5a4a44;font-size:1.1rem}
+
+  /* ===== FONCTIONNALITÉS ===== */
+  .features{padding:50px 0 30px}
+  .feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:22px;margin-top:40px}
+  .feat{background:#fff;border:1px solid #efe6d8;border-radius:20px;padding:30px 28px;transition:transform .15s,box-shadow .15s}
+  .feat:hover{transform:translateY(-4px);box-shadow:0 16px 40px rgba(73,15,37,.1)}
+  .feat .ico{width:54px;height:54px;border-radius:14px;background:var(--sauge);display:flex;align-items:center;justify-content:center;font-size:1.6rem;margin-bottom:18px}
+  .feat h3{font-size:1.3rem;margin-bottom:10px}
+  .feat p{color:#6a5a52;font-size:.98rem}
+
+  /* ===== BANDEAU CHIFFRES ===== */
+  .stats{background:var(--creme);margin:60px 0;padding:50px 0}
+  .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:30px;text-align:center}
+  .stat .num{font-family:'Fraunces',serif;font-size:2.8rem;font-weight:700;color:var(--aubergine);line-height:1}
+  .stat .lbl{color:var(--caramel);font-weight:600;font-size:.82rem;letter-spacing:.08em;text-transform:uppercase;margin-top:8px}
+
+  /* ===== POUR QUI ===== */
+  .audience{padding:30px 0 60px}
+  .audience h2{text-align:center;font-size:clamp(1.7rem,3.5vw,2.3rem);margin-bottom:14px}
+  .audience .sub{text-align:center;color:#6a5a52;max-width:50ch;margin:0 auto 36px}
+  .check-list{max-width:680px;margin:0 auto;display:grid;gap:14px}
+  .check{display:flex;gap:14px;align-items:flex-start;background:#fff;border:1px solid #efe6d8;border-radius:14px;padding:18px 20px}
+  .check .mark{flex-shrink:0;width:26px;height:26px;border-radius:50%;background:var(--sauge);color:var(--aubergine);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.9rem}
+  .check b{color:var(--aubergine)}
+
+  /* ===== ENCART TECHNIQUE ===== */
+  .tech{background:linear-gradient(140deg,var(--aubergine),var(--aubergine-2));color:var(--creme);padding:64px 0;margin-top:40px}
+  .tech .badge{display:inline-block;background:rgba(198,162,124,.2);color:var(--cafe);padding:6px 16px;border-radius:999px;font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;font-weight:600;margin-bottom:18px}
+  .tech h2{color:#fff;font-size:clamp(1.6rem,3.5vw,2.2rem);max-width:24ch;margin-bottom:16px}
+  .tech .tech-intro{color:var(--creme);max-width:56ch;font-weight:300;margin-bottom:36px;opacity:.92}
+  .tech-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:34px;align-items:start}
+  .tech-points{display:grid;gap:18px}
+  .tp{display:flex;gap:14px;align-items:flex-start}
+  .tp .d{flex-shrink:0;width:34px;height:34px;border-radius:9px;background:rgba(232,221,205,.12);display:flex;align-items:center;justify-content:center;font-size:1.1rem}
+  .tp b{color:#fff;display:block;margin-bottom:2px;font-weight:600}
+  .tp span{color:var(--creme);font-size:.92rem;opacity:.85;font-weight:300}
+  .codecard{background:rgba(0,0,0,.28);border:1px solid rgba(232,221,205,.16);border-radius:16px;padding:22px;font-family:'Courier New',monospace;font-size:.84rem}
+  .codecard .cc-title{font-family:'Outfit',sans-serif;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--cafe);margin-bottom:14px;font-weight:600}
+  .codecard .row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(232,221,205,.1);color:var(--creme)}
+  .codecard .row:last-child{border-bottom:none}
+  .codecard .row b{color:#fff;font-family:'Outfit',sans-serif;font-weight:700}
+  .codecard .note{margin-top:16px;font-family:'Outfit',sans-serif;font-size:.82rem;color:var(--cafe);font-weight:300;line-height:1.5}
+
+  /* ===== CLÔTURE ===== */
+  .closing{text-align:center;padding:72px 0}
+  .closing h2{font-size:clamp(1.9rem,4vw,2.6rem);max-width:18ch;margin:0 auto 18px}
+  .closing p{color:#6a5a52;max-width:48ch;margin:0 auto 30px;font-size:1.1rem}
+  .signature{font-family:'Bellota',cursive;color:var(--caramel);font-size:1.3rem;margin-top:40px}
+  footer{background:var(--aubergine);color:var(--creme);text-align:center;padding:30px 0;font-size:.85rem;opacity:.9}
+
+  @media(max-width:760px){
+    .tech-grid{grid-template-columns:1fr;gap:26px}
+    .hero{padding:60px 0 50px}
+  }
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Sensations Macarons</div>
+    <h1>Votre atelier, enfin sous contrôle.</h1>
+    <p class="lead">L'application tout-en-un pensée par un pâtissier, pour les pâtissiers. Production, stock, commandes, factures et temps de travail — réunis dans un seul outil, simple et beau.</p>
+    <div class="cta-row">
+      <a href="#fonctionnalites" class="btn btn-primary">Découvrir les fonctionnalités</a>
+      <a href="#tech" class="btn btn-ghost">Comment ça marche</a>
+    </div>
+  </div>
+</header>
+
+<!-- INTRO -->
+<section class="intro">
+  <div class="wrap">
+    <div class="kicker">Fini les carnets et les tableurs</div>
+    <h2>Tout votre métier, dans votre poche</h2>
+    <p>Vous savez faire des macarons. Vous ne devriez pas avoir à jongler entre dix cahiers, un tableur illisible et des post-it pour savoir ce qu'il vous reste en stock, ce que vous avez vendu, ou combien d'heures vous avez passées en cuisine. Cette application réunit tout, dans une interface claire et agréable, qui parle votre langue — pas celle des informaticiens.</p>
+  </div>
+</section>
+
+<!-- FONCTIONNALITÉS -->
+<section class="features" id="fonctionnalites">
+  <div class="wrap">
+    <div style="text-align:center">
+      <div class="kicker" style="color:var(--caramel);font-weight:600;letter-spacing:.18em;text-transform:uppercase;font-size:.8rem;margin-bottom:14px">Ce que l'app fait pour vous</div>
+      <h2 style="font-size:clamp(1.7rem,3.5vw,2.4rem)">Des outils concrets, pour de vrais besoins</h2>
+    </div>
+    <div class="feat-grid">
+      <div class="feat">
+        <div class="ico">📋</div>
+        <h3>Production & recettes</h3>
+        <p>Lancez vos fabrications, suivez vos coques et ganaches, assemblez vos macarons. L'app calcule les quantités de matières consommées et garde la trace de chaque lot.</p>
+      </div>
+      <div class="feat">
+        <div class="ico">📦</div>
+        <h3>Stock & DLC</h3>
+        <p>Vos matières et emballages en cartes claires, avec les dates de péremption et une alerte « à commander » dès qu'un produit passe sous votre seuil.</p>
+      </div>
+      <div class="feat">
+        <div class="ico">🛒</div>
+        <h3>Liste de courses intelligente</h3>
+        <p>Générez une liste imprimable de ce qu'il faut racheter — avec, pour chaque produit, le fournisseur au meilleur prix d'après votre historique d'achats.</p>
+      </div>
+      <div class="feat">
+        <div class="ico">🧾</div>
+        <h3>Commandes & factures</h3>
+        <p>Saisissez vos commandes, suivez les paiements, et éditez des factures élégantes et conformes (franchise de TVA), prêtes à envoyer ou imprimer.</p>
+      </div>
+      <div class="feat">
+        <div class="ico">⏱️</div>
+        <h3>Pointeuse & temps de travail</h3>
+        <p>Un chrono par activité (macaronnage, cuisson, garnissage…), un journal de bord par jour, et l'analyse de votre temps réellement passé en cuisine.</p>
+      </div>
+      <div class="feat">
+        <div class="ico">📊</div>
+        <h3>Chiffres & rentabilité</h3>
+        <p>Chiffre d'affaires, charges, cotisations sociales calculées au bon taux, marge par produit : vous pilotez votre activité sans être comptable.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CHIFFRES -->
+<section class="stats">
+  <div class="wrap">
+    <div class="stats-grid">
+      <div class="stat"><div class="num">41</div><div class="lbl">écrans métier</div></div>
+      <div class="stat"><div class="num">100%</div><div class="lbl">hors-ligne</div></div>
+      <div class="stat"><div class="num">0€</div><div class="lbl">de matériel à acheter</div></div>
+      <div class="stat"><div class="num">∞</div><div class="lbl">commandes & recettes</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- POUR QUI -->
+<section class="audience">
+  <div class="wrap">
+    <h2>Pensée pour les artisans, pas pour les ingénieurs</h2>
+    <p class="sub">Si vous vous reconnaissez dans une de ces phrases, cette application est faite pour vous.</p>
+    <div class="check-list">
+      <div class="check"><span class="mark">✓</span><div>Vous êtes <b>micro-entrepreneur ou artisan</b> en pâtisserie et vous gérez tout, tout seul.</div></div>
+      <div class="check"><span class="mark">✓</span><div>Vous perdez du temps à <b>recopier les mêmes infos</b> dans plusieurs cahiers ou tableurs.</div></div>
+      <div class="check"><span class="mark">✓</span><div>Vous voulez savoir <b>ce que vous gagnez vraiment</b>, une fois les charges et cotisations déduites.</div></div>
+      <div class="check"><span class="mark">✓</span><div>Vous devez <b>tracer vos lots et vos DLC</b> sans y passer vos soirées.</div></div>
+      <div class="check"><span class="mark">✓</span><div>Vous n'avez <b>aucune envie d'apprendre l'informatique</b> — et c'est très bien comme ça.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ENCART TECHNIQUE -->
+<section class="tech" id="tech">
+  <div class="wrap">
+    <div class="badge">Sous le capot — en clair</div>
+    <h2>Solide, sans que vous ayez à y penser</h2>
+    <p class="tech-intro">Vous n'avez pas besoin de comprendre la technique pour l'utiliser. Mais voici, en mots simples, ce qui fait qu'elle est fiable et qu'elle vous appartient vraiment.</p>
+    <div class="tech-grid">
+      <div class="tech-points">
+        <div class="tp"><div class="d">📲</div><div><b>Elle s'installe comme une vraie app</b><span>Pas de magasin d'applications, pas de mise à jour à gérer. Elle vit sur votre téléphone et s'ouvre d'un geste, comme n'importe quelle icône.</span></div></div>
+        <div class="tp"><div class="d">✈️</div><div><b>Elle fonctionne sans internet</b><span>En plein labo, même sans réseau, tout marche. Vos données sont stockées directement sur votre appareil — rien ne dépend d'une connexion.</span></div></div>
+        <div class="tp"><div class="d">🔒</div><div><b>Vos données restent chez vous</b><span>Aucune information n'est envoyée ailleurs. Vos recettes, vos clients, vos chiffres : tout reste privé, sur votre matériel.</span></div></div>
+        <div class="tp"><div class="d">💾</div><div><b>Sauvegardes automatiques</b><span>L'app garde des copies de sécurité chaque jour, et vous pouvez exporter un fichier à conserver à l'abri (iCloud, Fichiers…) en un geste.</span></div></div>
+        <div class="tp"><div class="d">🩺</div><div><b>Elle se vérifie toute seule</b><span>Un contrôle intégré repère les éventuelles incohérences dans vos données et vous propose de les corriger — votre tranquillité d'esprit.</span></div></div>
+      </div>
+      <div class="codecard">
+        <div class="cc-title">L'app en chiffres</div>
+        <div class="row"><span>Lignes de code soignées</span><b>~14 300</b></div>
+        <div class="row"><span>Fonctions métier</span><b>683</b></div>
+        <div class="row"><span>Écrans dédiés</span><b>41</b></div>
+        <div class="row"><span>Garde-fous anti-erreur</span><b>101</b></div>
+        <div class="row"><span>Base de données locale</span><b>incluse</b></div>
+        <div class="note">En clair : chaque ligne a été écrite et testée pour qu'un bouton fasse exactement ce qu'il annonce, sans surprise. La fiabilité n'est pas une option — c'est la priorité.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CLÔTURE -->
+<section class="closing">
+  <div class="wrap">
+    <div class="kicker" style="color:var(--caramel);font-weight:600;letter-spacing:.18em;text-transform:uppercase;font-size:.8rem;margin-bottom:14px">Reprenez la main</div>
+    <h2>Passez moins de temps à gérer, plus de temps à créer</h2>
+    <p>Vos macarons méritent toute votre attention. Laissez l'application s'occuper du reste.</p>
+    <a href="#" class="btn btn-primary">Demander une démonstration</a>
+    <div class="signature">Sensations Macarons · Le Mans</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">Sensations Macarons — application de gestion pour artisans pâtissiers · Conçue par un pâtissier, pour les pâtissiers.</div>
+</footer>
+
+</body>
+</html>
