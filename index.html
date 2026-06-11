@@ -386,6 +386,13 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .ws-cost{font-weight:600;color:#490F25;white-space:nowrap}
 .ws-del{cursor:pointer;opacity:.5;font-size:.85rem;flex-shrink:0}
 .ws-del:active{opacity:1}
+/* ---- Autocomplete adresses (personnalisé, fiable iOS) ---- */
+.ac-wrap{position:relative}
+.ac-list{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:50;background:#fff;
+  border:1.5px solid #e0d5c5;border-radius:12px;box-shadow:0 8px 24px rgba(73,15,37,.14);
+  max-height:240px;overflow-y:auto;padding:4px}
+.ac-item{padding:10px 12px;border-radius:8px;font-size:.9rem;color:#3a2a2e;cursor:pointer;line-height:1.3}
+.ac-item:hover,.ac-item:active{background:#fbf4ec;color:var(--bordeaux,#490F25)}
 /* ---- Liste de courses ---- */
 .shop-list{display:flex;flex-direction:column;gap:8px;max-height:54vh;overflow-y:auto;margin:10px 0}
 .shop-line{display:flex;gap:10px;align-items:flex-start;border:1px solid #ece3d5;border-radius:12px;padding:10px 12px;background:#fff}

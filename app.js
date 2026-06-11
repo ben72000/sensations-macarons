@@ -145,6 +145,27 @@ const PRESET_DELIVERY_PLACES = [
 ];
 // Construit la liste dédupliquée des lieux à suggérer : presets + lieux déjà
 // utilisés dans des commandes (les plus fréquents/récents d'abord), hors doublons.
+// Autocomplete personnalisé pour le champ adresse (remplace le <datalist> natif,
+// peu fiable sur iOS). Affiche les suggestions au focus et filtre à la frappe.
+function acFilter(q){
+  const list = document.getElementById('acList'); if(!list) return;
+  const all = window.__placesCache || [];
+  const term = (q||'').trim().toLowerCase();
+  // au focus champ vide → on montre les plus fréquents ; sinon on filtre
+  const matches = (term ? all.filter(p=>p.toLowerCase().includes(term)) : all).slice(0, 8);
+  if(!matches.length){ list.style.display='none'; list.innerHTML=''; return; }
+  list.innerHTML = matches.map(p=>`<div class="ac-item" onmousedown="acPick(${JSON.stringify(p).replace(/"/g,'&quot;')})">${esc(p)}</div>`).join('');
+  list.style.display='block';
+}
+function acPick(val){
+  const inp=document.getElementById('f_lieu'); if(inp){ inp.value=val; }
+  const list=document.getElementById('acList'); if(list){ list.style.display='none'; }
+}
+// Ferme la liste si on clique ailleurs.
+document.addEventListener('click', e=>{
+  const w=e.target.closest && e.target.closest('.ac-wrap');
+  if(!w){ const l=document.getElementById('acList'); if(l) l.style.display='none'; }
+});
 async function usualDeliveryPlaces(){
   const [orders, clients] = await Promise.all([
     db.orders.toArray().catch(()=>[]),
@@ -5241,7 +5262,7 @@ async function cmdForm(id, opts){
   const regOpts = `<option value="">—</option>`+PAY_METHODS.map(s=>`<option ${o.reglement===s?'selected':''}>${s}</option>`).join('');
   // Suggestions de lieux de livraison : presets + lieux des commandes passées.
   const places = await usualDeliveryPlaces();
-  const placesOpts = places.map(p=>`<option value="${esc(p)}">`).join('');
+  window.__placesCache = places;   // pour l'autocomplete personnalisé
   openModal(`<h3>${id?'Modifier':'Nouvelle'} commande</h3>
    <div class="field"><label>Client</label>
      <input class="search" id="f_clsearch" placeholder="Rechercher par nom ou téléphone…" oninput="filterCmdClients(this.value)" value="">
@@ -5254,8 +5275,11 @@ async function cmdForm(id, opts){
    </div>
    <div id="feasibility" class="feasibility" style="display:none"></div>
    <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— tapez pour rechercher (clients, lieux habituels)</span></label>
-     <input class="search" id="f_lieu" list="lieuxLivraison" autocomplete="off" autocapitalize="words" placeholder="Tapez une adresse, un nom de client ou un lieu…" value="${esc(o.lieuLivraison||'')}">
-     <datalist id="lieuxLivraison">${placesOpts}</datalist>
+     <div class="ac-wrap">
+       <input class="search" id="f_lieu" autocomplete="off" autocapitalize="words" placeholder="Tapez une adresse, un nom de client ou un lieu…" value="${esc(o.lieuLivraison||'')}"
+         oninput="acFilter(this.value)" onfocus="acFilter(this.value)">
+       <div id="acList" class="ac-list" style="display:none"></div>
+     </div>
    </div>
    <div class="row2">
      <div class="field"><label>Distance aller (km) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé</span></label>
