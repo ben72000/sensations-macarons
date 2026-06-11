@@ -8921,6 +8921,86 @@ function addressBookDelete(idx){
   toast('Adresse supprimée');
   openAddressBook();
 }
+
+// ============================================================
+//  COMPARATEUR DE MARGE PAR EMBALLAGE (étape 1)
+//  Montre, côte à côte, la marge brute de chaque format de boîte.
+//  Marge brute = prix de vente − coût des macarons − coût de l'emballage.
+//  Données : packTypes (nom, coût, capacité) + coffrets standards.
+// ============================================================
+function _packMarginRows(){
+  const s=getSettings();
+  // Rassemble : coffrets standards (avec prix d'emballage) + types d'emballage perso.
+  const rows=[];
+  // 1) coffrets standards
+  BOX_SIZES.forEach(t=>{
+    rows.push({ nom:'Coffret '+t, cap:t, coutEmb: (s.packaging&&s.packaging[t]!=null)?+s.packaging[t]:0, std:true });
+  });
+  // 2) types d'emballage perso (marché, pro…), hors doublons de nom
+  (s.packTypes||[]).forEach(p=>{
+    if(!p.nom) return;
+    rows.push({ nom:p.nom, cap:+p.capacite||0, coutEmb:+p.cout||0, std:false });
+  });
+  return rows;
+}
+async function openPackMarginComparator(){
+  const rows=_packMarginRows();
+  const s=getSettings();
+  // Coût macaron RÉEL : moyenne des coûts de revient de tes recettes (données de l'app).
+  let coutAuto = null;
+  try{
+    const [recipes, recipeItems, lots] = await Promise.all([
+      db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()
+    ]);
+    if(recipes.length){
+      const v = avgMacaronCost(recipes, recipeItems, lots);
+      if(v>0) coutAuto = money2(v);
+    }
+  }catch(e){ console.error('pmc coutAuto', e); }
+  // priorité : valeur auto réelle > valeur mémorisée > défaut
+  const coutPiece = coutAuto!=null ? coutAuto : (s._packCompCoutPiece!=null ? s._packCompCoutPiece : 0.11);
+  const autoNote = coutAuto!=null
+    ? `<span style="color:#3f7d52;font-weight:500">✓ calculé d'après tes recettes (moyenne)</span>`
+    : `<span style="color:#9a8a82;font-weight:400">aucune recette trouvée — valeur à saisir</span>`;
+  const body = rows.map((r,i)=>{
+    const venteDef = r._vente!=null?r._vente:'';
+    return `<div class="pmc-row" data-pmc="${i}">
+      <div class="pmc-nom"><b>${esc(r.nom)}</b><span class="pmc-cap">${r.cap?r.cap+' pc':'—'}</span></div>
+      <div class="pmc-fields">
+        <label>Emballage<input type="number" step="0.01" min="0" id="pmc_emb_${i}" value="${r.coutEmb||''}" oninput="pmcRecalc()"></label>
+        <label>Prix vente<input type="number" step="0.01" min="0" id="pmc_vente_${i}" placeholder="€" oninput="pmcRecalc()"></label>
+      </div>
+      <div class="pmc-result" id="pmc_res_${i}">—</div>
+    </div>`;
+  }).join('');
+  openModal(`<h3>📊 Marge par emballage</h3>
+    <p class="note">Compare la marge brute de chaque format. Saisis le prix de vente de chaque boîte : l'app déduit le coût des macarons et de l'emballage.</p>
+    <div class="field" style="margin:10px 0"><label>Coût d'un macaron nu (€/pièce) ${autoNote}</label>
+      <input type="number" step="0.01" min="0" id="pmc_piece" value="${coutPiece}" oninput="pmcRecalc()"></div>
+    <div class="pmc-list">${body}</div>
+    <p class="note" style="margin-top:10px">Marge brute = prix de vente − (nb macarons × coût/pièce) − emballage. Hors charges sociales et livraison.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="settingsForm()">‹ Retour</button></div>`);
+  window.__pmcRows = rows;
+  setTimeout(pmcRecalc, 0);
+}
+function pmcRecalc(){
+  const rows = window.__pmcRows||[];
+  const coutPiece = +val('pmc_piece')||0;
+  // mémorise le coût pièce
+  const s=getSettings(); s._packCompCoutPiece=coutPiece; saveSettings(s);
+  rows.forEach((r,i)=>{
+    const emb = +val('pmc_emb_'+i)||0;
+    const vente = +val('pmc_vente_'+i)||0;
+    const resEl = document.getElementById('pmc_res_'+i);
+    if(!resEl) return;
+    if(vente<=0){ resEl.innerHTML='<span class="pmc-empty">prix ?</span>'; return; }
+    const coutMaca = (r.cap||0)*coutPiece;
+    const marge = money2(vente - coutMaca - emb);
+    const taux = vente>0 ? Math.round(marge/vente*1000)/10 : 0;
+    const col = taux>=60?'#2e7d32':(taux>=40?'#3f7d52':(taux>=25?'#caa23b':'#d4671f'));
+    resEl.innerHTML = `<span class="pmc-marge" style="color:${col}">${euro(marge)}</span><span class="pmc-taux" style="background:${col}">${taux}%</span>`;
+  });
+}
 async function settingsForm(){
   const s=getSettings();
   // Coût RÉEL d'emballage par format, calculé sur les lots effectivement reçus (factures).
@@ -8960,6 +9040,7 @@ async function settingsForm(){
     <div id="set_pktypes">
       ${(s.packTypes||[]).concat([{nom:'',cout:'',capacite:''}]).map((t,i)=>`<div class="pay-row"><input id="set_pt_n_${i}" value="${esc(t.nom||'')}" placeholder="nom (ex: Boîte 6)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="${t.cout!==''&&t.cout!=null?t.cout:''}" placeholder="€/u" style="width:90px"><input type="number" step="1" min="0" id="set_pt_cap_${i}" value="${t.capacite!==''&&t.capacite!=null?t.capacite:''}" placeholder="pc" style="width:70px"></div>`).join('')}
     </div>
+    <button type="button" class="btn ghost" style="width:100%;margin-top:8px" onclick="openPackMarginComparator()">📊 Comparer la marge par emballage</button>
     <p class="note" style="margin-top:8px">Livraison : sert à chiffrer le carburant (aller-retour) et le coût du temps de livraison.</p>
     <div class="row2">
       <div class="field"><label>Consommation véhicule (L/100 km)</label><input type="number" step="0.1" min="0" id="set_conso" value="${s.vehicleConso}"></div>
