@@ -4797,7 +4797,10 @@ async function renderCmd(){
     if(ln.type==='grand'){ const n=(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Grand format ×${n}`; }
     if(ln.type==='vrac'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Vrac pro ×${n}`; }
     if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0)+(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Don ×${n} (offert)`; }
-    if(ln.type==='prestation') return `Prestation${ln.libelle?' : '+ln.libelle:''}`;
+    if(ln.type==='prestation'){
+      if(ln.presta==='accompagnement'){ const m=ln.mode==='enligne'?'en ligne':(ln.mode==='presentiel'?'présentiel':''); return `Accompagnement${ln.dureeH?' '+ln.dureeH+'h':''}${m?' ('+m+')':''}`; }
+      return `Prestation${ln.libelle?' : '+ln.libelle:''}`;
+    }
     return `Coffret ${ln.taille||'?'}`;
   };
   // index de recherche par commande, calculé une seule fois
@@ -5105,8 +5108,12 @@ async function cmdView(id){
     if(ln.type==='prestation'){
       const base=money2(+ln.montantHT||0); const net=lineTotalStored(ln);
       const remTxt = ln.remiseType==='euro' ? (ln.remiseEuro>0?`remise ${euro(ln.remiseEuro)}`:'') : (ln.remisePct>0?`remise ${ln.remisePct}%`:'');
-      return `<div class="cmd-line"><div class="line-type">Prestation / Coaching <span class="line-sub">service</span></div>
-        <p style="margin-top:4px">${esc(ln.libelle||'Prestation')}</p>
+      const isAcc = ln.presta==='accompagnement';
+      const modeTxt = ln.mode==='enligne'?'💻 En ligne':(ln.mode==='presentiel'?'📍 En présentiel':'');
+      const meta = isAcc ? `<p class="line-sub" style="margin-top:2px">${ln.dureeH?ln.dureeH+' h':''}${ln.dureeH&&modeTxt?' · ':''}${modeTxt}</p>${ln.detail?`<p style="margin-top:4px;color:#6a5a52;font-size:.85rem">${esc(ln.detail)}</p>`:''}` : '';
+      return `<div class="cmd-line"><div class="line-type">${isAcc?'🎓 Accompagnement / formation':'Prestation / Coaching'} <span class="line-sub">service</span></div>
+        <p style="margin-top:4px">${esc(ln.libelle||(isAcc?'Accompagnement':'Prestation'))}</p>
+        ${meta}
         <div class="sum-box" style="margin-top:8px"><span>${base!==net?`Avant remise ${euro(base)}${remTxt?' · '+remTxt:''}`:'Montant'}</span><b>${euro(net)}</b></div></div>`;
     }
     return '';
@@ -5204,7 +5211,7 @@ function _lineToEdit(ln){
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0};
   if(t==='vrac') return {type:'vrac', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items)};
-  if(t==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0};
+  if(t==='prestation') return {type:'prestation', presta:ln.presta||'', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, dureeH:+ln.dureeH||0, mode:ln.mode||'', detail:ln.detail||'', remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0};
   return {...ln};
 }
 // Charge une commande dans le modèle d'édition (objet) sans rien perdre.
@@ -5270,6 +5277,7 @@ async function cmdForm(id, opts){
      <button class="btn ghost sm" onclick="addLine('grand')">+ Grand format</button>
      <button class="btn ghost sm" onclick="addLine('vrac')">+ Vrac pro</button>
      <button class="btn ghost sm" onclick="addLine('prestation')">+ Prestation / Coaching</button>
+     <button class="btn ghost sm" onclick="addLine('accompagnement')">🎓 + Accompagnement (150€ · 3h)</button>
      <button class="btn ghost sm" onclick="addLine('don')">+ Don (0 €)</button>
    </div>
 
@@ -5445,6 +5453,7 @@ function addLine(type){
   else if(type==='vrac') cmdLines.push({type:'vrac', parfums:{}});
   else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
   else if(type==='prestation') cmdLines.push({type:'prestation', libelle:'', montantHT:0, remiseType:'pct', remisePct:0, remiseEuro:0});
+  else if(type==='accompagnement') cmdLines.push({type:'prestation', presta:'accompagnement', libelle:'Accompagnement / formation', montantHT:150, dureeH:3, mode:'presentiel', detail:'', remiseType:'pct', remisePct:0, remiseEuro:0});
   drawLines();
 }
 function removeLine(i){ cmdLines.splice(i,1); drawLines(); }
@@ -5597,14 +5606,28 @@ function drawPrestationLine(ln,i){
   if(ln.remiseType==null) ln.remiseType='pct';
   const base=money2(+ln.montantHT||0);
   const net=lineTotal(ln);
-  return `<div class="cmd-line">
-    <div class="line-head"><span class="line-type">Prestation / Coaching <span class="line-sub">service · charges sociales ${getSettings().socialService}%</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
-    <div class="field" style="margin:6px 0"><label>Libellé de la prestation</label>
-      <input value="${esc(ln.libelle||'')}" placeholder="ex : Coaching macarons (2 h), déplacement…" oninput="setPrestaField(${i},'libelle',this.value)"></div>
+  const isAccomp = ln.presta==='accompagnement';
+  const accompFields = isAccomp ? `
     <div class="row2">
-      <div class="field" style="margin:0"><label>Montant (€)</label>
+      <div class="field" style="margin:6px 0 0"><label>Durée (heures)</label>
+        <input type="number" step="0.5" min="0" value="${ln.dureeH||''}" placeholder="3" oninput="setPrestaField(${i},'dureeH',this.value)"></div>
+      <div class="field" style="margin:6px 0 0"><label>Format</label>
+        <select onchange="setPrestaField(${i},'mode',this.value)">
+          <option value="presentiel" ${ln.mode==='presentiel'?'selected':''}>📍 En présentiel</option>
+          <option value="enligne" ${ln.mode==='enligne'?'selected':''}>💻 En ligne</option>
+        </select></div>
+    </div>
+    <div class="field" style="margin:6px 0 0"><label>Détail de l'accompagnement <span style="color:#9a8a82;font-weight:400">— libre</span></label>
+      <textarea rows="2" placeholder="ex : techniques de macaronnage, recettes, conseils gestion…" oninput="setPrestaField(${i},'detail',this.value)" style="width:100%;resize:vertical">${esc(ln.detail||'')}</textarea></div>` : '';
+  return `<div class="cmd-line">
+    <div class="line-head"><span class="line-type">${isAccomp?'🎓 Accompagnement / formation':'Prestation / Coaching'} <span class="line-sub">service · charges sociales ${getSettings().socialService}%</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="field" style="margin:6px 0"><label>${isAccomp?'Intitulé':'Libellé de la prestation'}</label>
+      <input value="${esc(ln.libelle||'')}" placeholder="ex : Coaching macarons (2 h), déplacement…" oninput="setPrestaField(${i},'libelle',this.value)"></div>
+    ${accompFields}
+    <div class="row2">
+      <div class="field" style="margin:6px 0 0"><label>Montant (€)</label>
         <input type="number" step="0.01" min="0" value="${ln.montantHT||''}" placeholder="0" oninput="setPrestaField(${i},'montantHT',this.value)"></div>
-      <div class="field" style="margin:0"><label>Type de remise</label>
+      <div class="field" style="margin:6px 0 0"><label>Type de remise</label>
         <select onchange="setPrestaField(${i},'remiseType',this.value)">
           <option value="pct" ${ln.remiseType==='pct'?'selected':''}>Pourcentage (%)</option>
           <option value="euro" ${ln.remiseType==='euro'?'selected':''}>Fixe (€)</option>
@@ -5615,7 +5638,7 @@ function drawPrestationLine(ln,i){
         ? `<label>Remise (€)</label><input type="number" step="0.01" min="0" value="${ln.remiseEuro||''}" placeholder="0" oninput="setPrestaField(${i},'remiseEuro',this.value)">`
         : `<label>Remise (%)</label><input type="number" step="1" min="0" max="100" value="${ln.remisePct||''}" placeholder="0" oninput="setPrestaField(${i},'remisePct',this.value)">`}
     </div>
-    <div class="sum-box">${(base!==net)?`<span>Avant remise ${euro(base)}</span><b>${euro(net)}</b>`:`<span>Montant prestation</span><b>${euro(base)}</b>`}</div>
+    <div class="sum-box">${(base!==net)?`<span>Avant remise ${euro(base)}</span><b>${euro(net)}</b>`:`<span>Montant ${isAccomp?'accompagnement':'prestation'}</span><b>${euro(base)}</b>`}</div>
   </div>`;
 }
 function setPrestaField(i,field,v){
