@@ -4812,9 +4812,9 @@ function _cmdRow(row, grp){
   return `${periodeBandeau}<div class="cmd-card">
     <div class="cmd-card-head">
       <div class="cmd-client">
-        <b>${esc(clientNom)}</b>${o.clientId?` <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Fiche client">→</span>`:''}
+        <b>${clientNom}</b>${o.clientId?` <span class="jump-arrow" onclick="clientPopup(${o.clientId})" title="Fiche client">→</span>`:''}
         <div class="cmd-meta">${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</div>
-        ${adresse?`<div class="cmd-meta">📍 ${esc(adresse)}</div>`:''}
+        ${adresse?`<div class="cmd-meta">📍 ${adresse}</div>`:''}
       </div>
       <input type="checkbox" class="cmd-check" ${checked} onclick="cmdToggleOne(${o.id},this.checked)" title="Sélectionner">
     </div>
