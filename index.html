@@ -485,6 +485,13 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .pj-chips{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0}
 .pj-chip{color:#fff;font-size:.68rem;font-weight:600;padding:3px 9px;border-radius:999px}
 .pj-actions{display:flex;gap:8px;padding-top:10px;border-top:1px dashed #ece3d5}
+/* Petit « i » d'aide à côté des KPI */
+.kpi-i{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;
+  border-radius:50%;border:1.2px solid var(--caramel,#AA7C39);background:transparent;
+  color:var(--caramel,#AA7C39);font-size:.62rem;font-weight:700;font-style:italic;font-family:Georgia,serif;
+  cursor:pointer;vertical-align:middle;line-height:1;padding:0;margin-left:4px;flex-shrink:0;
+  -webkit-tap-highlight-color:transparent;transition:.15s}
+.kpi-i:active{background:var(--caramel,#AA7C39);color:#fff}
 /* ---- Vue d'impression intégrée (facture, étiquettes…) ---- */
 #printView{position:fixed;inset:0;z-index:9999;background:#5a5048;display:flex;flex-direction:column}
 #printView .pv-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;

@@ -447,6 +447,42 @@ const nameP = (txt)=>{
   const s = esc(txt==null?'':String(txt));
   return privacyMasked() ? `<span class="blur-name">${s}</span>` : s;
 };
+
+// ============================================================
+//  AIDE KPI : un petit « i » cliquable à côté des indicateurs.
+//  Chaque chiffre peut être expliqué simplement, sans jargon comptable.
+// ============================================================
+const KPI_HELP = {
+  'ca_mois':       { t:'CA ce mois', d:"Chiffre d'affaires facturé depuis le 1er du mois en cours : la somme de toutes tes commandes datées de ce mois, marchés inclus. C'est ce que tu as facturé, pas forcément encore encaissé." },
+  'ca_total':      { t:'CA total', d:"Chiffre d'affaires facturé depuis le tout début, toutes commandes et marchés confondus. Une vue cumulée de toute ton activité." },
+  'ca_annee':      { t:'CA cette année', d:"Chiffre d'affaires facturé depuis le 1er janvier de l'année en cours. Utile pour suivre ta progression annuelle." },
+  'ca_encaisse':   { t:'CA encaissé', d:"L'argent réellement reçu (règlements enregistrés), à la date du paiement. Différent du CA facturé : une commande facturée mais pas encore payée n'apparaît pas ici." },
+  'ca_facture':    { t:'CA facturé', d:"Le total de tes commandes à leur date, qu'elles soient payées ou non. C'est la référence pour ton plafond de micro-entreprise." },
+  'macarons_stock':{ t:'Macarons en stock', d:"Le nombre de macarons finis (assemblés et prêts à vendre) actuellement disponibles, tous parfums confondus." },
+  'alertes_stock': { t:'Alertes stock', d:"Le nombre de matières premières passées sous leur seuil de réapprovisionnement. Ce sont celles à racheter bientôt pour ne pas tomber en rupture." },
+  'taux_perte':    { t:'Taux de perte', d:"La part de ta production qui a été perdue (casse, ratés) par rapport au total produit. Sous 5 % c'est bon, au-dessus de 10 % ça mérite attention.\n\nCalcul : pièces perdues ÷ pièces produites." },
+  'valeur_perdue': { t:'Valeur perdue (casse)', d:"Le coût de revient total de ce que tu as déclaré en perte. Ce montant est réimputé sur le coût de tes macarons vendables, car la casse doit être absorbée par ce qui se vend." },
+  'panier_moyen':  { t:'Panier moyen', d:"Le montant moyen d'une commande de ce client : son chiffre d'affaires total ÷ son nombre de commandes. Plus il est élevé, plus le client est précieux." },
+  'marge_brute':   { t:'Marge brute', d:"Ce qui reste du chiffre d'affaires après avoir retiré les coûts directs de fabrication (matières + emballages), AVANT les charges sociales. C'est ta marge « atelier »." },
+  'marge_nette':   { t:'Marge nette', d:"Ce qui reste vraiment après avoir retiré les coûts de fabrication ET les charges sociales (cotisations URSSAF). C'est le plus proche de ton bénéfice réel." },
+  'marge_liv':     { t:'Marge après livraison', d:"Ta marge nette une fois déduits aussi les frais de livraison (carburant + temps de trajet). Montre si une livraison « mange » ta marge." },
+  'charges_soc':   { t:'Charges sociales', d:"Les cotisations URSSAF dues sur ton chiffre d'affaires. Le taux dépend de la nature : vente de marchandises ou prestation de service (taux différent)." },
+  'macarons_vendus':{ t:'Macarons vendus', d:"Le nombre total de macarons écoulés sur la période (commandes + marchés)." },
+  'ca_moyen_marche':{ t:'CA moyen / marché', d:"Le chiffre d'affaires moyen que te rapporte un marché : total des ventes sur marchés ÷ nombre de marchés réalisés." },
+  'pertes_casse':  { t:'Pertes / casse', d:"La valeur totale de la casse déclarée sur la période, déduite de ton résultat." },
+};
+// Génère un petit « i » cliquable qui ouvre l'explication du KPI.
+function kpiI(key){
+  if(!KPI_HELP[key]) return '';
+  return `<button type="button" class="kpi-i" onclick="event.stopPropagation();showKpiHelp('${key}')" title="En savoir plus" aria-label="Explication">i</button>`;
+}
+function showKpiHelp(key){
+  const h = KPI_HELP[key]; if(!h) return;
+  openModal(`<h3>${esc(h.t)}</h3>
+    <p style="color:#5a4a44;line-height:1.6;white-space:pre-line;margin:8px 0 4px">${esc(h.d)}</p>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Compris</button></div>`);
+}
+
 // today() : voir utils.js
 // Calcule la DLC selon l'emplacement, à partir d'un horodatage (calcul SIMPLE, sans historique).
 // Règle de base : frigo = +7 jours ; congélateur = +4 mois.
@@ -1031,10 +1067,10 @@ async function renderDash(){
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
-     <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
-     <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">∑</div><div class="lbl">CA total</div><div class="val">${euro(caTotal)}</div><div class="sub">depuis le début ›</div></div>
-     <div class="card clickable" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
-     <div class="card clickable" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
+     <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
+     <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">∑</div><div class="lbl">CA total ${kpiI('ca_total')}</div><div class="val">${euro(caTotal)}</div><div class="sub">depuis le début ›</div></div>
+     <div class="card clickable" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
+     <div class="card clickable" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock ${kpiI('alertes_stock')}</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
    </div>
    <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
      <div class="bar-wrap">${data.map(d=>`<div class="bar-col"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
@@ -2056,8 +2092,8 @@ async function renderProductions(){
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button>
      <button class="btn ghost" style="margin-left:6px" onclick="quickLossForm()">⚠ Casse / Perte</button></div>
    ${kpi.count?`<div class="cards" style="margin-bottom:18px">
-     <div class="card"><div class="lbl">Taux de perte</div><div class="val" style="color:${kpi.taux>=10?'#b3261e':(kpi.taux>=5?'#d98324':'#2e7d32')}">${kpi.taux}%</div><div class="sub">${qty(kpi.totalPerdu)} perdues / ${qty(kpi.totalProduit)} produites</div></div>
-     <div class="card"><div class="lbl">Valeur perdue (casse)</div><div class="val">${euro(kpi.valeurPerdue)}</div><div class="sub">${kpi.count} déclaration(s) · imputé au coût de revient</div></div>
+     <div class="card"><div class="lbl">Taux de perte ${kpiI('taux_perte')}</div><div class="val" style="color:${kpi.taux>=10?'#b3261e':(kpi.taux>=5?'#d98324':'#2e7d32')}">${kpi.taux}%</div><div class="sub">${qty(kpi.totalPerdu)} perdues / ${qty(kpi.totalProduit)} produites</div></div>
+     <div class="card"><div class="lbl">Valeur perdue (casse) ${kpiI('valeur_perdue')}</div><div class="val">${euro(kpi.valeurPerdue)}</div><div class="sub">${kpi.count} déclaration(s) · imputé au coût de revient</div></div>
    </div>`:''}
    ${enRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${enRetard.length} production(s) ouverte(s) depuis plus de ${PROD_OPEN_MAX_DAYS} jours.</b> Une production ne peut pas rester « démarrée » au-delà de ${PROD_OPEN_MAX_DAYS} jours : terminez-la (✓ Terminer) pour figer la DLC, ou supprimez-la.</div></div>`:''}
    ${ouvertes.length && !enRetard.length?`<div class="banner">▶ <div><b>${ouvertes.length} production(s) en cours.</b> La DLC de 7 j ne démarre qu'au passage en « terminée ».</div></div>`:''}
@@ -4535,7 +4571,7 @@ async function clientPopup(id){
     if(d.badge) badgeHtml=` <span class="tag" style="background:${d.badge.col};color:#fff">${esc(d.badge.label)}</span>`;
     if(d.nbCommandes){
       stat=`<div class="crm-kpis">
-        <div class="crm-kpi"><div class="crm-emo">🛍️</div><div class="crm-val">${euro(d.panierMoyen)}</div><div class="crm-lbl">Panier moyen</div></div>
+        <div class="crm-kpi"><div class="crm-emo">🛍️</div><div class="crm-val">${euro(d.panierMoyen)}</div><div class="crm-lbl">Panier moyen ${kpiI('panier_moyen')}</div></div>
         <div class="crm-kpi"><div class="crm-emo">🎯</div><div class="crm-val">${d.parfumPrefere?esc(d.parfumPrefere):'—'}</div><div class="crm-lbl">Parfum préféré</div></div>
         <div class="crm-kpi"><div class="crm-emo">📅</div><div class="crm-val" style="font-size:.95rem">${esc(d.frequenceTxt)}</div><div class="crm-lbl">Fréquence</div></div>
       </div>
@@ -7998,7 +8034,7 @@ async function renderCompta(){
      <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b><small class="kpi-note">argent réellement reçu · base URSSAF</small>${NAV_GO}</div>
      <div class="kpi lnk" onclick="comptaGo('charges')"><span>Charges</span><b>${euro(A.totalCharges)}</b>${NAV_GO}</div>
      <div class="kpi lnk" onclick="comptaGo('detailMois')"><span>Coût matières (est.)</span><b>${euro(A.totalCoutMatieres)}</b>${NAV_GO}</div>
-     ${A.totalPertes>0?`<div class="kpi"><span>Pertes / casse</span><b style="color:var(--red,#b3261e)">−${euro(A.totalPertes)}</b></div>`:''}
+     ${A.totalPertes>0?`<div class="kpi"><span>Pertes / casse ${kpiI('pertes_casse')}</span><b style="color:var(--red,#b3261e)">−${euro(A.totalPertes)}</b></div>`:''}
      <div class="kpi lnk" onclick="comptaGo('detailMois')"><span>Résultat (encaissé)</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b>${NAV_GO}</div>
      <div class="kpi lnk" onclick="comptaGo('commandes')"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b>${NAV_GO}</div>
    </div>
@@ -8265,8 +8301,8 @@ async function renderPilotage(){
      <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️':'🙈'}</button><button class="btn ghost sm" onclick="renderProfit()">Rentabilité détaillée →</button></div></div>
 
    <div class="kpi-grid">
-     <div class="kpi"><span>CA ce mois</span><b>${euro(S.caMonth)}</b><span>${evoBadge(S.evoMonth)} vs mois dernier</span></div>
-     <div class="kpi"><span>CA cette année</span><b>${euro(S.caYear)}</b><span>${evoBadge(S.evoYear)} vs an dernier</span></div>
+     <div class="kpi"><span>CA ce mois ${kpiI('ca_mois')}</span><b>${euro(S.caMonth)}</b><span>${evoBadge(S.evoMonth)} vs mois dernier</span></div>
+     <div class="kpi"><span>CA cette année ${kpiI('ca_annee')}</span><b>${euro(S.caYear)}</b><span>${evoBadge(S.evoYear)} vs an dernier</span></div>
      <div class="kpi lnk" onclick="pilotMargeBrute()"><span>Marge brute ${INFO_I}</span><b>${euro(S.margeBrute)}</b><span>${S.tauxBrut}% du CA</span></div>
      <div class="kpi lnk" onclick="pilotMargeNette()"><span>Marge nette ${INFO_I}</span><b style="color:${S.margeNette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(S.margeNette)}</b><span>${S.tauxNet}% du CA</span></div>
      <div class="kpi lnk" onclick="pilotPanier()"><span>Panier moyen ${INFO_I}</span><b>${euro(S.panier)}</b><span>${S.nbCmd} commande(s)</span></div>
@@ -8394,7 +8430,7 @@ async function renderParfums(){
   const avgP = computeAvgSellPrice(data);
   _parfumsAvgP = avgP;
   const kpis=`<div class="kpi-grid">
-    <div class="kpi"><span>CA encaissé (parfums)</span><b>${euro(A.totals.ca)}</b><span>${qty(A.totals.pieces)} pièces vendues</span></div>
+    <div class="kpi"><span>CA encaissé (parfums) ${kpiI('ca_encaisse')}</span><b>${euro(A.totals.ca)}</b><span>${qty(A.totals.pieces)} pièces vendues</span></div>
     <div class="kpi lnk" onclick="parfumMargesPopup(false)"><span>Marge brute totale ${INFO_I}</span><b style="color:${A.totals.margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(A.totals.margeBrute)}</b><span>${A.totals.tauxMargeGlobal!=null?A.totals.tauxMargeGlobal+'% de marge':'—'}</span></div>
     <div class="kpi lnk" onclick="parfumMargesPopup(true)"><span>Marge nette estimée ${INFO_I}</span><b style="color:${A.totals.margeNette>=0?'#3f7d52':'#b3261e'}">${euro(A.totals.margeNette)}</b><span>après charges ${s.socialGoods}%</span></div>
     <div class="kpi lnk" onclick="parfumPrixMoyenPopup()"><span>Prix moyen pondéré ${INFO_I}</span><b>${euro(avgP.prix)}</b><span>${avgP.source==='ventes'?'d\'après les ventes':'grille (pas de vente)'}</span></div>
@@ -9440,7 +9476,7 @@ async function renderMarketStats(){
      <div class="kpi"><span>CA total marchés</span><b>${euro(caTotal)}</b></div>
      <div class="kpi"><span>CA moyen / marché</span><b>${euro(caMoyen)}</b></div>
      <div class="kpi lnk" onclick="marketMargePopup()"><span>Marge nette totale ${INFO_I}</span><b style="color:${margeNetteTot>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(margeNetteTot)}</b></div>
-     <div class="kpi"><span>Macarons vendus</span><b>${qty(venduTotal)}</b></div>
+     <div class="kpi"><span>Macarons vendus ${kpiI('macarons_vendus')}</span><b>${qty(venduTotal)}</b></div>
      <div class="kpi lnk" onclick="marketInvendusPopup()"><span>Taux d'invendus global ${INFO_I}</span><b>${tauxInvGlobal}%</b></div>
    </div>
    ${months.length>1?`<div class="panel"><h2>CA marchés par mois</h2>${chart}</div>`:''}
