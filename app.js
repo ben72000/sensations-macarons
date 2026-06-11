@@ -8943,43 +8943,53 @@ function _packMarginRows(){
   });
   return rows;
 }
-async function openPackMarginComparator(){
-  const rows=_packMarginRows();
+// Déplie/replie le comparateur intégré et le charge sur place (pas de changement d'écran).
+async function togglePmcBlock(){
+  const body=document.getElementById('pmcBody'), arrow=document.getElementById('pmcArrow');
+  if(!body) return;
+  const open = body.style.display==='none';
+  body.style.display = open?'block':'none';
+  if(arrow) arrow.textContent = open?'▾':'▸';
+  if(!open) return;                 // on replie : rien d'autre à faire
+  // À l'ouverture : recalcule les lignes d'emballage DEPUIS les champs en cours de saisie
+  // (pour refléter ce que l'utilisateur vient de taper, même non enregistré).
+  await pmcBuildAndFill();
+}
+// Construit la liste des emballages à comparer en lisant les champs actuels + coffrets standards,
+// récupère le coût macaron réel, puis remplit le bloc intégré.
+async function pmcBuildAndFill(){
   const s=getSettings();
-  // Coût macaron RÉEL : moyenne des coûts de revient de tes recettes (données de l'app).
-  let coutAuto = null;
+  // 1) coffrets standards (avec leur prix d'emballage réglé)
+  const rows=[];
+  BOX_SIZES.forEach(t=>rows.push({ nom:'Coffret '+t, cap:t, coutEmb:(s.packaging&&s.packaging[t]!=null)?+s.packaging[t]:0 }));
+  // 2) types d'emballage : on lit les LIGNES SAISIES à l'écran (live), pas seulement l'enregistré
+  const n=+val('set_pt_n')||0;
+  for(let i=0;i<n;i++){
+    const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue;
+    rows.push({ nom, cap:Math.max(0,+val('set_pt_cap_'+i)||0), coutEmb:money2(+val('set_pt_c_'+i)||0) });
+  }
+  // 3) coût macaron réel (moyenne des recettes)
+  let coutAuto=null;
   try{
-    const [recipes, recipeItems, lots] = await Promise.all([
-      db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()
-    ]);
-    if(recipes.length){
-      const v = avgMacaronCost(recipes, recipeItems, lots);
-      if(v>0) coutAuto = money2(v);
-    }
+    const [recipes, recipeItems, lots] = await Promise.all([db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()]);
+    if(recipes.length){ const v=avgMacaronCost(recipes, recipeItems, lots); if(v>0) coutAuto=money2(v); }
   }catch(e){ console.error('pmc coutAuto', e); }
-  // priorité : valeur auto réelle > valeur mémorisée > défaut
   const coutPiece = coutAuto!=null ? coutAuto : (s._packCompCoutPiece!=null ? s._packCompCoutPiece : 0.11);
-  const autoNote = coutAuto!=null
-    ? `<span style="color:#3f7d52;font-weight:500">✓ calculé d'après tes recettes (moyenne)</span>`
-    : `<span style="color:#9a8a82;font-weight:400">aucune recette trouvée — valeur à saisir</span>`;
-  const body = rows.map((r,i)=>{
-    const venteDef = r._vente!=null?r._vente:'';
-    return `<div class="pmc-row" data-pmc="${i}">
+  const pieceInput=document.getElementById('pmc_piece'); if(pieceInput) pieceInput.value=coutPiece;
+  const noteEl=document.getElementById('pmcAutoNote');
+  if(noteEl) noteEl.innerHTML = coutAuto!=null
+    ? `<span style="color:#3f7d52;font-weight:500">✓ d'après tes recettes</span>`
+    : `<span style="color:#9a8a82">à saisir</span>`;
+  // 4) remplir la liste
+  const list=document.getElementById('pmcList'); if(!list) return;
+  list.innerHTML = rows.map((r,i)=>`<div class="pmc-row">
       <div class="pmc-nom"><b>${esc(r.nom)}</b><span class="pmc-cap">${r.cap?r.cap+' pc':'—'}</span></div>
       <div class="pmc-fields">
         <label>Emballage<input type="number" step="0.01" min="0" id="pmc_emb_${i}" value="${r.coutEmb||''}" oninput="pmcRecalc()"></label>
         <label>Prix vente<input type="number" step="0.01" min="0" id="pmc_vente_${i}" placeholder="€" oninput="pmcRecalc()"></label>
       </div>
       <div class="pmc-result" id="pmc_res_${i}">—</div>
-    </div>`;
-  }).join('');
-  openModal(`<h3>📊 Marge par emballage</h3>
-    <p class="note">Compare la marge brute de chaque format. Saisis le prix de vente de chaque boîte : l'app déduit le coût des macarons et de l'emballage.</p>
-    <div class="field" style="margin:10px 0"><label>Coût d'un macaron nu (€/pièce) ${autoNote}</label>
-      <input type="number" step="0.01" min="0" id="pmc_piece" value="${coutPiece}" oninput="pmcRecalc()"></div>
-    <div class="pmc-list">${body}</div>
-    <p class="note" style="margin-top:10px">Marge brute = prix de vente − (nb macarons × coût/pièce) − emballage. Hors charges sociales et livraison.</p>
-    <div class="modal-actions"><button class="btn ghost" onclick="settingsForm()">‹ Retour</button></div>`);
+    </div>`).join('');
   window.__pmcRows = rows;
   setTimeout(pmcRecalc, 0);
 }
@@ -9040,7 +9050,20 @@ async function settingsForm(){
     <div id="set_pktypes">
       ${(s.packTypes||[]).concat([{nom:'',cout:'',capacite:''}]).map((t,i)=>`<div class="pay-row"><input id="set_pt_n_${i}" value="${esc(t.nom||'')}" placeholder="nom (ex: Boîte 6)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="${t.cout!==''&&t.cout!=null?t.cout:''}" placeholder="€/u" style="width:90px"><input type="number" step="1" min="0" id="set_pt_cap_${i}" value="${t.capacite!==''&&t.capacite!=null?t.capacite:''}" placeholder="pc" style="width:70px"></div>`).join('')}
     </div>
-    <button type="button" class="btn ghost" style="width:100%;margin-top:8px" onclick="openPackMarginComparator()">📊 Comparer la marge par emballage</button>
+    <button type="button" class="btn ghost sm" style="margin-top:6px" onclick="addPackTypeRow()">＋ Ajouter une ligne</button>
+    <div class="collapse-sec" id="pmcBlock" style="margin-top:12px">
+      <button type="button" class="collapse-head" onclick="togglePmcBlock()">
+        <span>📊 Marge par emballage <span class="collapse-hint">— compare le gain selon la boîte</span></span>
+        <span class="collapse-arrow" id="pmcArrow">▸</span>
+      </button>
+      <div class="collapse-body" id="pmcBody" style="display:none">
+        <p class="note">Saisis le prix de vente de chaque boîte : la marge brute se calcule en direct (coût macarons + emballage déduits).</p>
+        <div class="field" style="margin:8px 0"><label>Coût d'un macaron nu (€/pièce) <span id="pmcAutoNote" style="color:#9a8a82;font-weight:400">— chargement…</span></label>
+          <input type="number" step="0.01" min="0" id="pmc_piece" value="0.11" oninput="pmcRecalc()"></div>
+        <div class="pmc-list" id="pmcList"><p class="note">Déplie pour charger…</p></div>
+        <p class="note" style="margin-top:8px">Marge brute = prix de vente − (nb macarons × coût/pièce) − emballage. Hors charges sociales et livraison.</p>
+      </div>
+    </div>
     <p class="note" style="margin-top:8px">Livraison : sert à chiffrer le carburant (aller-retour) et le coût du temps de livraison.</p>
     <div class="row2">
       <div class="field"><label>Consommation véhicule (L/100 km)</label><input type="number" step="0.1" min="0" id="set_conso" value="${s.vehicleConso}"></div>
@@ -9051,6 +9074,18 @@ async function settingsForm(){
     </div>
     <input type="hidden" id="set_pt_n" value="${(s.packTypes||[]).length+1}">
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveSettingsForm()">Enregistrer</button></div>`);
+}
+// Ajoute dynamiquement une ligne de type d'emballage (sans avoir à enregistrer entre chaque).
+function addPackTypeRow(){
+  const box=document.getElementById('set_pktypes'); if(!box) return;
+  const counter=document.getElementById('set_pt_n');
+  const i = box.querySelectorAll('.pay-row').length;   // prochain index libre
+  const row=document.createElement('div');
+  row.className='pay-row';
+  row.innerHTML=`<input id="set_pt_n_${i}" value="" placeholder="nom (ex: Boîte pro)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="" placeholder="€/u" style="width:90px"><input type="number" step="1" min="0" id="set_pt_cap_${i}" value="" placeholder="pc" style="width:70px">`;
+  box.appendChild(row);
+  if(counter) counter.value = String(i+1);   // la sauvegarde lira jusqu'à cet index
+  const nameInput=row.querySelector('input'); if(nameInput) nameInput.focus();
 }
 function saveSettingsForm(){
   const s=getSettings();
