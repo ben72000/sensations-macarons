@@ -1115,10 +1115,18 @@ async function renderSuppliers(){
    <div class="topbar"><div><h1>Fournisseurs</h1><p>${list.length} fournisseur(s)</p></div>
      <button class="btn" onclick="supForm()">+ Nouveau fournisseur</button></div>
    <div class="panel">
-   ${list.length?`<div class="table-wrap"><table><thead><tr><th>Nom</th><th>Contact</th><th></th></tr></thead><tbody>
-     ${list.map(s=>`<tr><td><b>${esc(s.nom)}</b></td><td style="color:#9a8a82">${esc(s.contact||'')}</td>
-       <td style="text-align:right"><span class="act" onclick="supForm(${s.id})">Modifier</span><span class="act del" onclick="delSup(${s.id})">Suppr.</span></td></tr>`).join('')}
-   </tbody></table></div>`:`<div class="empty">Aucun fournisseur. Ajoute tes fournisseurs (nut&me, Calconut…).</div>`}
+   ${list.length?`<div class="sup-list">
+     ${list.map(s=>`<div class="sup-card">
+       <div class="sup-card-main">
+         <div class="sup-card-nom">${esc(s.nom)}</div>
+         ${s.contact?`<div class="sup-card-contact">${esc(s.contact)}</div>`:''}
+       </div>
+       <div class="sup-card-actions">
+         <button class="qa edit" onclick="supForm(${s.id})">✎ Modifier</button>
+         <button class="qa del" onclick="delSup(${s.id})">🗑</button>
+       </div>
+     </div>`).join('')}
+   </div>`:`<div class="empty">Aucun fournisseur. Ajoute tes fournisseurs (nut&me, Calconut…).</div>`}
    </div>`;
 }
 async function supForm(id){
@@ -8982,13 +8990,22 @@ async function pmcBuildAndFill(){
     : `<span style="color:#9a8a82">à saisir</span>`;
   // 4) remplir la liste
   const list=document.getElementById('pmcList'); if(!list) return;
-  list.innerHTML = rows.map((r,i)=>`<div class="pmc-row">
-      <div class="pmc-nom"><b>${esc(r.nom)}</b><span class="pmc-cap">${r.cap?r.cap+' pc':'—'}</span></div>
-      <div class="pmc-fields">
-        <label>Emballage<input type="number" step="0.01" min="0" id="pmc_emb_${i}" value="${r.coutEmb||''}" oninput="pmcRecalc()"></label>
-        <label>Prix vente<input type="number" step="0.01" min="0" id="pmc_vente_${i}" placeholder="€" oninput="pmcRecalc()"></label>
+  list.innerHTML = rows.map((r,i)=>`<div class="pmc-card">
+      <div class="pmc-card-top">
+        <span class="pmc-card-nom">${esc(r.nom)}</span>
+        <span class="pmc-card-cap">${r.cap?r.cap+' macarons':'—'}</span>
       </div>
-      <div class="pmc-result" id="pmc_res_${i}">—</div>
+      <div class="pmc-card-inputs">
+        <div class="pmc-in">
+          <span class="pmc-in-lbl">Coût emballage</span>
+          <div class="pmc-in-box"><input type="number" step="0.01" min="0" id="pmc_emb_${i}" value="${r.coutEmb||''}" placeholder="0" oninput="pmcRecalc()"><span class="pmc-in-unit">€</span></div>
+        </div>
+        <div class="pmc-in">
+          <span class="pmc-in-lbl">Prix de vente</span>
+          <div class="pmc-in-box"><input type="number" step="0.01" min="0" id="pmc_vente_${i}" placeholder="0" oninput="pmcRecalc()"><span class="pmc-in-unit">€</span></div>
+        </div>
+      </div>
+      <div class="pmc-card-res" id="pmc_res_${i}"><span class="pmc-empty">Saisis le prix de vente ↑</span></div>
     </div>`).join('');
   window.__pmcRows = rows;
   setTimeout(pmcRecalc, 0);
@@ -9003,12 +9020,17 @@ function pmcRecalc(){
     const vente = +val('pmc_vente_'+i)||0;
     const resEl = document.getElementById('pmc_res_'+i);
     if(!resEl) return;
-    if(vente<=0){ resEl.innerHTML='<span class="pmc-empty">prix ?</span>'; return; }
-    const coutMaca = (r.cap||0)*coutPiece;
+    if(vente<=0){ resEl.innerHTML='<span class="pmc-empty">Saisis le prix de vente ↑</span>'; return; }
+    const coutMaca = money2((r.cap||0)*coutPiece);
     const marge = money2(vente - coutMaca - emb);
     const taux = vente>0 ? Math.round(marge/vente*1000)/10 : 0;
     const col = taux>=60?'#2e7d32':(taux>=40?'#3f7d52':(taux>=25?'#caa23b':'#d4671f'));
-    resEl.innerHTML = `<span class="pmc-marge" style="color:${col}">${euro(marge)}</span><span class="pmc-taux" style="background:${col}">${taux}%</span>`;
+    resEl.innerHTML = `
+      <div class="pmc-res-line">
+        <span class="pmc-res-marge" style="color:${col}">${euro(marge)}</span>
+        <span class="pmc-res-taux" style="background:${col}">${taux}%</span>
+      </div>
+      <div class="pmc-res-detail">${euro(vente)} vente − ${euro(coutMaca)} macarons − ${euro(emb)} boîte</div>`;
   });
 }
 async function settingsForm(){
