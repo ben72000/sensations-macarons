@@ -12190,6 +12190,21 @@ async function renderMigration(){
      <button class="btn" style="width:100%" onclick="migSaveStock()">＋ Ajouter au stock de produits finis</button>
    </div>
 
+   <div class="panel"><h2>2 bis · Stock de départ — coques vides</h2>
+     <p class="note" style="margin-bottom:8px">Saisis tes <b>coques cuites non garnies</b> déjà en stock. Elles entrent dans le système d'assemblage : tu pourras ensuite les garnir (2 coques + 1 ganache = 1 macaron) depuis l'écran Production. Comptées <b>en coques</b> (pas en paires).</p>
+     <div class="field"><label>Parfum / recette des coques</label><select id="mig_coqRec">${(await db.recipes.toArray()).map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('')||'<option value="">(crée d\'abord une recette)</option>'}</select></div>
+     <div class="row2">
+       <div class="field"><label>Nombre de coques en stock</label><input type="number" min="1" step="1" id="mig_coqQte" placeholder="ex : 80"></div>
+       <div class="field"><label>DLC (optionnel)</label><input type="date" id="mig_coqDlc"></div>
+     </div>
+     <div class="field"><label>Emplacement</label>
+       <div class="opt-table">
+         ${EMPLACEMENTS.map((e,i)=>`<label class="opt-row"><input type="radio" name="mig_coqEmp" value="${e.key}" ${i===0?'checked':''}> <b class="opt-emp" style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'}">${e.lettre}</b> <span class="opt-main"><b>${e.icon} ${esc(e.nom)}</b></span></label>`).join('')}
+       </div></div>
+     <button class="btn" style="width:100%" onclick="migSaveCoques()">＋ Ajouter au stock de coques</button>
+     <p class="note" id="mig_coqHint">Astuce : ${COQUES_PAR_MACARON} coques = 1 macaron. <span id="mig_coqConv"></span></p>
+   </div>
+
    <div class="panel"><h2>3 · Stock de départ — matières & emballages</h2>
      <p class="note" style="margin-bottom:8px">Saisie rapide de ton stock actuel de matières premières et d'emballages, <b>sans n° de lot ni prix</b>. Ce stock part « à l'équilibre » (aucun écart de valeur) et sera <b>consommé en priorité</b> avant tes futures réceptions, pour une migration en douceur.</p>
      <div class="field"><label>Matière / emballage</label>
@@ -12255,7 +12270,32 @@ async function migSaveStock(){
   toast(`Stock ajouté : ${qty(qte)} ✓`);
   renderMigration();
 }
-// Met à jour le libellé d'unité sous le sélecteur de matière (g pour denrées, unité pour emballages).
+// Crée un lot de COQUES VIDES de reprise (composant:'coques', déjà terminé, sans matières).
+// Rattaché à une recette/parfum, compté en coques. Entre dans le système d'assemblage
+// existant : 2 coques + 1 ganache = 1 macaron (cf. prodAssembleSave).
+async function migSaveCoques(){
+  const recipeId=+val('mig_coqRec')||0;
+  const qte=Math.round(+val('mig_coqQte')||0);
+  const dlc=val('mig_coqDlc')||'';
+  const dest=(document.querySelector('input[name="mig_coqEmp"]:checked')||{}).value||'frigo';
+  if(!recipeId){ toast('Choisis un parfum/recette'); return; }
+  if(qte<=0){ toast('Indique un nombre de coques'); return; }
+  const nowIso=new Date().toISOString();
+  const base='L-'+today().replace(/-/g,'')+'-'+genLotCode(3);
+  const lot=lotAvecEmplacement(base+'-CQ', dest);
+  await db.productions.add({
+    recipeId, lotProduction:lot, lotBase:base, date:today(),
+    composant:'coques', histo:true,
+    qteTheorique:qte, qteReelle:qte, ecart:0, qteProduite:qte, qteRestante:qte,
+    dlcProduit:dlc||'', dlcAuto:!dlc,
+    prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
+    emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
+    histEmplacement:[{lieu:dest, ts:nowIso, motif:'coques de départ (reprise)'}]
+  });
+  const mac=Math.floor(qte/COQUES_PAR_MACARON);
+  toast(`Coques ajoutées : ${qty(qte)} (≈ ${mac} macarons) ✓`);
+  renderMigration();
+}
 function migMatUniteHint(){
   const sel=document.getElementById('mig_mat'); const hint=document.getElementById('mig_matUnite');
   if(!sel||!hint) return;
