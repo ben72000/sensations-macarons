@@ -149,17 +149,44 @@ const PRESET_DELIVERY_PLACES = [
 // peu fiable sur iOS). Affiche les suggestions au focus et filtre à la frappe.
 function acFilter(q){
   const list = document.getElementById('acList'); if(!list) return;
-  const all = window.__placesCache || [];
   const term = (q||'').trim().toLowerCase();
-  // au focus champ vide → on montre les plus fréquents ; sinon on filtre
-  const matches = (term ? all.filter(p=>p.toLowerCase().includes(term)) : all).slice(0, 8);
-  if(!matches.length){ list.style.display='none'; list.innerHTML=''; return; }
-  list.innerHTML = matches.map(p=>`<div class="ac-item" onmousedown="acPick(${JSON.stringify(p).replace(/"/g,'&quot;')})">${esc(p)}</div>`).join('');
+  // 1) Adresses du carnet (avec distance/temps) — proposées en priorité.
+  const book = (getSettings().addressBook||[]);
+  const bookMatch = (term ? book.filter(a=>(a.libelle||'').toLowerCase().includes(term)) : book).slice(0,6);
+  // 2) Lieux issus des commandes passées / clients (simples chaînes).
+  const all = window.__placesCache || [];
+  const plainMatch = (term ? all.filter(p=>p.toLowerCase().includes(term)) : all).slice(0, 6);
+  let html = '';
+  if(bookMatch.length){
+    html += bookMatch.map((a,i)=>{
+      const bi = book.indexOf(a);
+      const meta = [a.km!=null?a.km+' km':'', a.min!=null?a.min+' min':''].filter(Boolean).join(' · ');
+      return `<div class="ac-item ac-book" onmousedown="acPickBook(${bi})">📍 <b>${esc(a.libelle)}</b>${meta?` <span class="ac-meta">${esc(meta)}</span>`:''}</div>`;
+    }).join('');
+  }
+  if(plainMatch.length){
+    html += plainMatch.map(p=>`<div class="ac-item" onmousedown="acPick(${JSON.stringify(p).replace(/"/g,'&quot;')})">${esc(p)}</div>`).join('');
+  }
+  if(!html){ list.style.display='none'; list.innerHTML=''; return; }
+  list.innerHTML = html;
   list.style.display='block';
 }
 function acPick(val){
   const inp=document.getElementById('f_lieu'); if(inp){ inp.value=val; }
   const list=document.getElementById('acList'); if(list){ list.style.display='none'; }
+}
+// Choix d'une adresse du carnet : remplit le lieu ET pré-remplit distance + temps.
+function acPickBook(bookIndex){
+  const a = (getSettings().addressBook||[])[bookIndex]; if(!a) return;
+  const inp=document.getElementById('f_lieu'); if(inp) inp.value=a.libelle||'';
+  const km=document.getElementById('f_distKm'); if(km && a.km!=null) km.value=a.km;
+  const min=document.getElementById('f_tempsLiv'); if(min && a.min!=null) min.value=a.min;
+  const list=document.getElementById('acList'); if(list) list.style.display='none';
+  // s'assurer que le bloc livraison est ouvert pour voir les valeurs pré-remplies
+  const body=document.getElementById('livBody');
+  if(body && body.style.display==='none' && typeof toggleLivBlock==='function') toggleLivBlock();
+  if(typeof cmdDeliveryRecalc==='function') cmdDeliveryRecalc();
+  toast(`Distance et temps pré-remplis pour « ${a.libelle} »`);
 }
 // Ferme la liste si on clique ailleurs.
 document.addEventListener('click', e=>{
@@ -251,6 +278,7 @@ function getSettings(){
       packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
       packagingDate: s.packagingDate || SETTINGS_DEFAULTS.packagingDate,
       packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes)),
+      addressBook: Array.isArray(s.addressBook) ? s.addressBook : [],
       exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT
     };
   }catch(e){ return JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)); }
@@ -632,6 +660,46 @@ async function runUndo(){
 const overlay=document.getElementById('overlay'), modal=document.getElementById('modal');
 function openModal(html){ modal.innerHTML=html; overlay.classList.add('show');
   if(_histReady && !_popping){ try{ history.pushState({kind:'modal'}, '', '#modal'); }catch(e){} } }
+// ============================================================
+//  AFFICHAGE D'UN DOCUMENT IMPRIMABLE (facture, étiquettes, liste…)
+//  dans une COUCHE intégrée à l'app (pas une fenêtre séparée).
+//  → toujours un bouton « Fermer » : plus de blocage après impression.
+// ============================================================
+function openPrintView(htmlDoc, opts){
+  opts = opts || {};
+  closePrintView(); // sécurité : pas de doublon
+  const wrap = document.createElement('div');
+  wrap.id = 'printView';
+  wrap.innerHTML = `
+    <div class="pv-bar">
+      <button class="pv-btn pv-close" onclick="closePrintView()">✕ Fermer</button>
+      <span class="pv-title">${esc(opts.title||'Document')}</span>
+      <button class="pv-btn pv-print" onclick="printPrintView()">🖨 Imprimer</button>
+    </div>
+    <div class="pv-body"><iframe id="pvFrame" title="Aperçu"></iframe></div>`;
+  document.body.appendChild(wrap);
+  const frame = document.getElementById('pvFrame');
+  const doc = frame.contentWindow.document;
+  doc.open(); doc.write(htmlDoc); doc.close();
+  // entrée d'historique pour que le bouton « retour » ferme la vue au lieu de quitter l'app
+  if(_histReady){ try{ history.pushState({kind:'printview'}, '', '#print'); }catch(e){} }
+  document.body.style.overflow='hidden';
+}
+function printPrintView(){
+  const frame = document.getElementById('pvFrame');
+  if(!frame){ return; }
+  try{ frame.contentWindow.focus(); frame.contentWindow.print(); }
+  catch(e){ try{ window.print(); }catch(_){} }
+}
+function closePrintView(opts){
+  const wrap = document.getElementById('printView');
+  if(wrap){ wrap.remove(); }
+  document.body.style.overflow='';
+  opts=opts||{};
+  if(_histReady && !_popping && !opts.fromPop && history.state && history.state.kind==='printview'){
+    try{ history.back(); }catch(e){}
+  }
+}
 function closeModal(opts){
   overlay.classList.remove('show'); modal.innerHTML='';
   _privacySuspend=0; // fin d'une éventuelle suspension du masquage (saisie/détail commande)
@@ -853,6 +921,8 @@ function initHistoryNav(){
   window.addEventListener('popstate', (e)=>{
     _popping=true;
     try{
+      // 0) une vue d'impression (facture…) ouverte ? le retour la ferme.
+      if(document.getElementById('printView')){ closePrintView({fromPop:true}); return; }
       // 1) une fenêtre modale ouverte ? le retour la ferme.
       if(overlay && overlay.classList.contains('show')){ closeModal({fromPop:true}); return; }
       // 2) le menu (feuille iPhone) ouvert ? le retour le ferme.
@@ -5269,29 +5339,8 @@ async function cmdForm(id, opts){
      <select id="f_cl" style="margin-top:6px" onchange="cmdSuggestClientAddress()">${clOpts||'<option value="0">— aucun —</option>'}</select>
      <button class="btn ghost sm" style="margin-top:6px" onclick="quickClient(${id||0})">+ Nouveau client</button>
    </div>
-   <div class="row2">
-     <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}" oninput="cmdFeasibilityRecalc()"></div>
-     <div class="field"><label>Heure de livraison</label><input type="time" id="f_heure" value="${esc(o.heureLivraison||'')}" oninput="cmdFeasibilityRecalc()"></div>
-   </div>
+   <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}" oninput="cmdFeasibilityRecalc()"></div>
    <div id="feasibility" class="feasibility" style="display:none"></div>
-   <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— tapez pour rechercher (clients, lieux habituels)</span></label>
-     <div class="ac-wrap">
-       <input class="search" id="f_lieu" autocomplete="off" autocapitalize="words" placeholder="Tapez une adresse, un nom de client ou un lieu…" value="${esc(o.lieuLivraison||'')}"
-         oninput="acFilter(this.value)" onfocus="acFilter(this.value)">
-       <div id="acList" class="ac-list" style="display:none"></div>
-     </div>
-   </div>
-   <div class="row2">
-     <div class="field"><label>Distance aller (km) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé</span></label>
-       <input type="number" min="0" step="0.1" id="f_distKm" value="${o.distanceKm!=null?esc(o.distanceKm):''}" placeholder="ex : 8" oninput="cmdDeliveryRecalc()"></div>
-     <div class="field"><label>Prix carburant (€/L)</label>
-       <input type="number" min="0" step="0.001" id="f_carbu" value="${o.prixCarburant!=null?esc(o.prixCarburant):''}" placeholder="ex : 1.85" oninput="cmdDeliveryRecalc()"></div>
-   </div>
-   <div class="field"><label>Temps de trajet aller (min) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé (×2)</span></label>
-     <input type="number" min="0" step="1" id="f_tempsLiv" value="${o.tempsLivraisonMin!=null?esc(o.tempsLivraisonMin):''}" placeholder="ex : 15" oninput="cmdDeliveryRecalc()"></div>
-   <div class="field"><label>Consommation réelle du véhicule (L/100 km) <span style="color:#9a8a82;font-weight:400">— laisser vide = réglage par défaut (${getSettings().vehicleConso} L)</span></label>
-     <input type="number" min="0" step="0.1" id="f_conso" value="${o.consoVehicule!=null&&o.consoVehicule!==''?esc(o.consoVehicule):''}" placeholder="ex : 7.2" oninput="cmdDeliveryRecalc()"></div>
-   <div class="sum-box" id="deliveryImpact" style="display:none;flex-direction:column;align-items:stretch;gap:4px"></div>
 
    <label style="font-size:.82rem;color:#7a6a62;font-weight:500;display:block;margin-bottom:6px">Produits de la commande</label>
    <div id="linesWrap"></div>
@@ -5306,6 +5355,34 @@ async function cmdForm(id, opts){
    </div>
 
    <div class="field"><label>Statut commande</label><select id="f_st">${stOpts}</select></div>
+
+   <div class="collapse-sec" id="livBlock">
+     <button type="button" class="collapse-head" onclick="toggleLivBlock()">
+       <span>🚚 Livraison <span class="collapse-hint">— horaire, adresse, trajet (optionnel)</span></span>
+       <span class="collapse-arrow" id="livArrow">▸</span>
+     </button>
+     <div class="collapse-body" id="livBody" style="display:none">
+       <div class="field"><label>Heure de livraison</label><input type="time" id="f_heure" value="${esc(o.heureLivraison||'')}" oninput="cmdFeasibilityRecalc()"></div>
+       <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— tapez pour rechercher (clients, lieux habituels)</span></label>
+         <div class="ac-wrap">
+           <input class="search" id="f_lieu" autocomplete="off" autocapitalize="words" placeholder="Tapez une adresse, un nom de client ou un lieu…" value="${esc(o.lieuLivraison||'')}"
+             oninput="acFilter(this.value)" onfocus="acFilter(this.value)">
+           <div id="acList" class="ac-list" style="display:none"></div>
+         </div>
+       </div>
+       <div class="row2">
+         <div class="field"><label>Distance aller (km) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé</span></label>
+           <input type="number" min="0" step="0.1" id="f_distKm" value="${o.distanceKm!=null?esc(o.distanceKm):''}" placeholder="ex : 8" oninput="cmdDeliveryRecalc()"></div>
+         <div class="field"><label>Prix carburant (€/L)</label>
+           <input type="number" min="0" step="0.001" id="f_carbu" value="${o.prixCarburant!=null?esc(o.prixCarburant):''}" placeholder="ex : 1.85" oninput="cmdDeliveryRecalc()"></div>
+       </div>
+       <div class="field"><label>Temps de trajet aller (min) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé (×2)</span></label>
+         <input type="number" min="0" step="1" id="f_tempsLiv" value="${o.tempsLivraisonMin!=null?esc(o.tempsLivraisonMin):''}" placeholder="ex : 15" oninput="cmdDeliveryRecalc()"></div>
+       <div class="field"><label>Consommation réelle du véhicule (L/100 km) <span style="color:#9a8a82;font-weight:400">— laisser vide = réglage par défaut (${getSettings().vehicleConso} L)</span></label>
+         <input type="number" min="0" step="0.1" id="f_conso" value="${o.consoVehicule!=null&&o.consoVehicule!==''?esc(o.consoVehicule):''}" placeholder="ex : 7.2" oninput="cmdDeliveryRecalc()"></div>
+       <div class="sum-box" id="deliveryImpact" style="display:none;flex-direction:column;align-items:stretch;gap:4px"></div>
+     </div>
+   </div>
    <label class="switch-row"><input type="checkbox" id="f_perso" ${o.perso||+o.persoMacarons>0?'checked':''} onchange="cmdPersoToggle()"> Personnalisation des couleurs (+0,25 €/macaron)</label>
    <div class="field" id="f_persoWrap" style="${(o.perso||+o.persoMacarons>0)?'':'display:none'}"><label>Nombre de macarons personnalisés <span style="color:#9a8a82;font-weight:400">— pas forcément le total de la commande</span></label>
      <input type="number" min="0" step="1" id="f_persoNb" value="${o.persoMacarons||''}" placeholder="ex : 24" oninput="cmdRecalc()"></div>
@@ -5345,6 +5422,10 @@ async function cmdForm(id, opts){
   const mt=document.getElementById('f_mt'); if(mt && !mt.value) mt.dataset.auto='1';
   drawPayments();
   drawLines();
+  // Si la commande comporte déjà des infos de livraison, ouvrir le bloc pour ne rien masquer.
+  if(o.lieuLivraison || o.heureLivraison || o.distanceKm!=null || o.tempsLivraisonMin!=null){
+    toggleLivBlock();
+  }
 }
 // Registre de paiements en cours d'édition (copie de travail, écrit en base au save)
 let cmdPayments=[];
@@ -5424,13 +5505,25 @@ function filterCmdClients(q){
 
 // Quand un client est choisi, propose son adresse comme lieu de livraison —
 // uniquement si le champ lieu est encore vide (ne jamais écraser une saisie manuelle).
+function toggleLivBlock(){
+  const body=document.getElementById('livBody'), arrow=document.getElementById('livArrow');
+  if(!body) return;
+  const open = body.style.display==='none';
+  body.style.display = open ? 'block' : 'none';
+  if(arrow) arrow.textContent = open ? '▾' : '▸';
+}
 function cmdSuggestClientAddress(){
   const sel=document.getElementById('f_cl'); const lieu=document.getElementById('f_lieu');
   if(!sel || !lieu) return;
   if((lieu.value||'').trim()) return; // l'utilisateur a déjà renseigné un lieu
   const cid=+sel.value||0; if(!cid) return;
   const cl=(cmdClientsCache||[]).find(c=>c.id===cid);
-  if(cl && (cl.adresse||'').trim()) lieu.value=cl.adresse.trim();
+  if(cl && (cl.adresse||'').trim()){
+    lieu.value=cl.adresse.trim();
+    // ouvrir le bloc livraison s'il est replié, pour montrer l'adresse pré-remplie
+    const body=document.getElementById('livBody');
+    if(body && body.style.display==='none') toggleLivBlock();
+  }
 }
 
 // Ajout rapide d'un client SANS quitter la commande (popup → retour avec client sélectionné)
@@ -8723,6 +8816,72 @@ async function renderProfit(){
 }
 
 // Paramètres : taux de charges sociales + coûts d'emballage par taille de coffret.
+// ============================================================
+//  CARNET D'ADRESSES DE LIVRAISON (distance + temps + note)
+//  Stocké dans les réglages. Pré-remplit la livraison des commandes.
+// ============================================================
+function openAddressBook(){
+  const s=getSettings();
+  const book=s.addressBook||[];
+  const rows = book.length ? book.map((a,i)=>`
+    <div class="ab-card">
+      <div class="ab-main">
+        <div class="ab-nom"><b>${esc(a.libelle||'(sans nom)')}</b></div>
+        <div class="ab-meta">📏 ${a.km!=null?esc(a.km)+' km':'— km'} · ⏱ ${a.min!=null?esc(a.min)+' min':'— min'}</div>
+        ${a.note?`<div class="ab-note">📝 ${esc(a.note)}</div>`:''}
+      </div>
+      <div class="ab-actions">
+        <button class="qa edit" onclick="addressBookForm(${i})">✎ Modifier</button>
+        <button class="qa del" onclick="addressBookDelete(${i})">🗑</button>
+      </div>
+    </div>`).join('') : '<p class="empty">Aucune adresse enregistrée. Ajoutez vos lieux de livraison habituels pour pré-remplir distance et temps automatiquement.</p>';
+  openModal(`<h3>📍 Carnet d'adresses</h3>
+    <p class="note">Enregistrez vos lieux de livraison habituels avec leur distance et leur temps de trajet. Ils pré-rempliront automatiquement le calcul de livraison dans vos commandes.</p>
+    <button class="btn" style="width:100%;margin:10px 0" onclick="addressBookForm(-1)">＋ Ajouter une adresse</button>
+    <div class="ab-list">${rows}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="settingsForm()">‹ Retour aux paramètres</button></div>`);
+}
+function addressBookForm(idx){
+  const s=getSettings(); const book=s.addressBook||[];
+  const a = idx>=0 ? book[idx] : {libelle:'', km:'', min:'', note:''};
+  openModal(`<h3>${idx>=0?'Modifier':'Nouvelle'} adresse</h3>
+    <div class="field"><label>Libellé du lieu</label>
+      <input id="ab_lib" value="${esc(a.libelle||'')}" placeholder="ex : Marché de Pontlieue, Chez Paulette…"></div>
+    <div class="row2">
+      <div class="field"><label>Distance aller (km)</label>
+        <input type="number" min="0" step="0.1" id="ab_km" value="${a.km!=null?esc(a.km):''}" placeholder="ex : 8"></div>
+      <div class="field"><label>Temps aller (min)</label>
+        <input type="number" min="0" step="1" id="ab_min" value="${a.min!=null?esc(a.min):''}" placeholder="ex : 15"></div>
+    </div>
+    <div class="field"><label>Note <span style="color:#9a8a82;font-weight:400">— étage, code, créneau…</span></label>
+      <textarea id="ab_note" rows="2" placeholder="ex : 2e étage, code 12B4, livrer avant 9h">${esc(a.note||'')}</textarea></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="openAddressBook()">Annuler</button>
+      <button class="btn" onclick="addressBookSave(${idx})">Enregistrer</button>
+    </div>`);
+}
+function addressBookSave(idx){
+  const s=getSettings(); const book=s.addressBook||[];
+  const entry={
+    libelle: val('ab_lib')||'',
+    km: val('ab_km')!==''?+val('ab_km'):null,
+    min: val('ab_min')!==''?+val('ab_min'):null,
+    note: val('ab_note')||''
+  };
+  if(!entry.libelle.trim()){ toast('Donnez un libellé à l\'adresse'); return; }
+  if(idx>=0) book[idx]=entry; else book.push(entry);
+  s.addressBook=book; saveSettings(s);
+  toast('Adresse enregistrée ✓');
+  openAddressBook();
+}
+function addressBookDelete(idx){
+  const s=getSettings(); const book=s.addressBook||[];
+  if(!book[idx]) return;
+  if(!confirm(`Supprimer « ${book[idx].libelle||'cette adresse'} » du carnet ?`)) return;
+  book.splice(idx,1); s.addressBook=book; saveSettings(s);
+  toast('Adresse supprimée');
+  openAddressBook();
+}
 async function settingsForm(){
   const s=getSettings();
   // Coût RÉEL d'emballage par format, calculé sur les lots effectivement reçus (factures).
@@ -8766,6 +8925,9 @@ async function settingsForm(){
     <div class="row2">
       <div class="field"><label>Consommation véhicule (L/100 km)</label><input type="number" step="0.1" min="0" id="set_conso" value="${s.vehicleConso}"></div>
       <div class="field"><label>Coût horaire main-d'œuvre (€/h)</label><input type="number" step="0.5" min="0" id="set_rate" value="${s.laborRate}"></div>
+    </div>
+    <div class="field" style="margin-top:8px">
+      <button type="button" class="btn ghost" style="width:100%" onclick="openAddressBook()">📍 Carnet d'adresses de livraison <span style="color:#9a8a82;font-weight:400">(${(s.addressBook||[]).length})</span></button>
     </div>
     <input type="hidden" id="set_pt_n" value="${(s.packTypes||[]).length+1}">
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveSettingsForm()">Enregistrer</button></div>`);
@@ -11946,9 +12108,7 @@ async function _genererFactureSimple_DEPRECATED(orderId){
     ? `${esc([client.civilite,client.prenom,client.nom].filter(Boolean).join(' ')||client.nom||'')}${client.societe?'<br>'+esc(client.societe):''}${client.adresse?'<br>'+esc(client.adresse):''}${client.tel?'<br>Tél : '+esc(client.tel):''}${client.email?'<br>'+esc(client.email):''}`
     : (o.histoLabel?esc(o.histoLabel):'Client de passage');
 
-  const win = window.open('', '_blank', 'width=800,height=1000');
-  if(!win){ toast('Autorise les fenêtres pour générer la facture'); return; }
-  win.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8">
+  const factureHtml = `<!doctype html><html lang="fr"><head><meta charset="utf-8">
    <title>Facture ${esc(numFact)}</title>
    <link href="https://fonts.googleapis.com/css2?family=Bellota:wght@400;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
    <style>
@@ -12023,9 +12183,8 @@ async function _genererFactureSimple_DEPRECATED(orderId){
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
      </div>
    </div>
-   <script>window.onload=function(){setTimeout(function(){try{window.print();}catch(e){}},500);};<\/script>
-   </body></html>`);
-  win.document.close();
+   </body></html>`;
+  openPrintView(factureHtml, {title:`Facture ${numFact}`});
 }
 
 // Facture regroupant PLUSIEURS commandes (sélection multiple).
@@ -12093,9 +12252,7 @@ async function genererFactureMultiple(ids){
     ? orderNumber(orders[0])
     : `${orderNumber(orders[0])} → ${orderNumber(orders[orders.length-1])}`;
 
-  const win = window.open('', '_blank', 'width=800,height=1000');
-  if(!win){ toast('Autorise les fenêtres pour générer la facture'); return; }
-  win.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8">
+  const factureHtml = `<!doctype html><html lang="fr"><head><meta charset="utf-8">
    <meta name="format-detection" content="telephone=no, date=no, email=no, address=no">
    <title>Facture groupée</title>
    <link href="https://fonts.googleapis.com/css2?family=Bellota:wght@400;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -12173,9 +12330,8 @@ async function genererFactureMultiple(ids){
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
      </div>
    </div>
-   <script>window.onload=function(){setTimeout(function(){try{window.print();}catch(e){}},500);};<\/script>
-   </body></html>`);
-  win.document.close();
+   </body></html>`;
+  openPrintView(factureHtml, {title:`Facture ${numFact}`});
 }
 
 
