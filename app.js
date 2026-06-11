@@ -13363,6 +13363,89 @@ function prodTaskStop(taskId){
   if(!prodAnyRunning()) prodStopTicking();
   prodRenderBoard&&prodRenderBoard();
 }
+// ÉDITION DU TEMPS d'une tâche de la SESSION ACTIVE (en cours ou terminée).
+// Deux modes synchronisés : (A) durée nette directe en minutes, (B) heures début/fin réelles.
+// Garde-fous : fin ≥ début, durée ≥ 0. Les pauses cumulées (pausedAccum) sont préservées.
+function prodTaskEditForm(taskId){
+  const s = prodSessActive(); if(!s){ toast('Aucune session active'); return; }
+  const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t){ toast('Tâche introuvable'); return; }
+  const enCours = !t.end;
+  const netMin = Math.round(prodTaskNet(t)/60000);
+  const fmtHM = ms => { const d=new Date(ms); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+  const startHM = fmtHM(t.start);
+  const endHM = t.end ? fmtHM(t.end) : fmtHM(Date.now());
+  const pauseMin = Math.round(((+t.pausedAccum||0))/60000);
+  openModal(`<h3>Modifier le temps — ${esc(t.label)}</h3>
+    <p class="note">${enCours?'Tâche <b>en cours</b> : ajuste sa durée déjà écoulée.':'Tâche <b>terminée</b> : corrige sa durée ou ses horaires.'}${pauseMin>0?` <br>Pauses déjà déduites : <b>${pauseMin} min</b> (conservées).`:''}</p>
+    <div class="field"><label>Durée nette (minutes)</label>
+      <input type="number" min="0" step="1" id="pte_dur" value="${netMin}" inputmode="numeric"></div>
+    <details style="margin:6px 0">
+      <summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">Ou saisir les horaires réels</summary>
+      <div class="row2" style="margin-top:8px">
+        <div class="field"><label>Heure de début</label><input type="time" id="pte_start" value="${startHM}"></div>
+        <div class="field"><label>Heure de fin${enCours?' (laisser vide si en cours)':''}</label><input type="time" id="pte_end" value="${enCours?'':endHM}"></div>
+      </div>
+      <p class="note">Si tu renseignes les horaires, ils priment sur la durée ci-dessus. La durée nette = (fin − début) − pauses.</p>
+    </details>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="prodTaskEditSave('${t.id}')">Enregistrer</button>
+    </div>`);
+}
+function prodTaskEditSave(taskId){
+  const s = prodSessActive(); if(!s){ toast('Aucune session active'); return; }
+  const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t){ toast('Tâche introuvable'); return; }
+  const pauseMs = (+t.pausedAccum||0);
+  const startHM = (val('pte_start')||'').trim();
+  const endHM = (val('pte_end')||'').trim();
+  const durMin = +val('pte_dur');
+
+  // Reconstruit un timestamp à la date de la tâche (on garde le jour de t.start) à partir de "HH:MM".
+  const dayBase = new Date(t.start); dayBase.setSeconds(0,0);
+  const tsFromHM = hm => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(hm); if(!m) return null;
+    const d = new Date(dayBase); d.setHours(+m[1], +m[2], 0, 0); return d.getTime();
+  };
+
+  // MODE B prioritaire : horaires renseignés (au moins le début + une fin si fournie)
+  const startTs = tsFromHM(startHM);
+  const endTs = endHM ? tsFromHM(endHM) : null;
+  if(startTs!=null && endHM){
+    if(endTs==null){ toast('Heure de fin invalide'); return; }
+    if(endTs < startTs){ toast('La fin ne peut pas précéder le début'); return; }
+    const net = (endTs - startTs) - pauseMs;
+    if(net < 0){ toast('Durée négative : les pauses dépassent l\'intervalle'); return; }
+    t.start = startTs; t.end = endTs; t.pauseAt = null;
+    prodSessUpsert(s); closeModal(); prodRenderBoard&&prodRenderBoard();
+    toast('Temps mis à jour ✓'); return;
+  }
+  // Cas : seulement le début modifié (tâche reste en cours), pas de fin
+  if(startTs!=null && !endHM && !t.end){
+    // on garde la tâche en cours, on cale start tel quel ; la durée se recalculera en live
+    t.start = startTs; t.pauseAt = null;
+    prodSessUpsert(s); closeModal(); prodRenderBoard&&prodRenderBoard();
+    toast('Début mis à jour ✓'); return;
+  }
+  // MODE A : durée nette en minutes
+  if(!(durMin>=0) || isNaN(durMin)){ toast('Durée invalide'); return; }
+  const durMs = Math.round(durMin*60000);
+  if(t.end){
+    // terminée : on garde le début, on recale la fin = début + durée + pauses
+    t.end = t.start + durMs + pauseMs; t.pauseAt = null;
+  } else {
+    // en cours : on recale le début pour que la durée écoulée corresponde.
+    // Si la tâche est en pause, on fige d'abord la pause en cours dans pausedAccum
+    // pour que prodTaskNet ne la soustraie pas une seconde fois.
+    if(prodTaskPaused(t)){
+      t.pausedAccum = (+t.pausedAccum||0) + Math.max(0, Date.now()-(+t.pauseAt));
+      t.pauseAt = null;
+    }
+    const pAccum = (+t.pausedAccum||0);
+    t.start = Date.now() - durMs - pAccum;
+  }
+  prodSessUpsert(s); closeModal(); prodRenderBoard&&prodRenderBoard();
+  toast('Temps mis à jour ✓');
+}
 // Supprime une tâche (annulation sans conserver).
 function prodTaskDelete(taskId){
   const s = prodSessActive(); if(!s) return;
@@ -13734,6 +13817,7 @@ function prodRenderBoard(){
         <div class="prodt-ctrl">
           <button class="pt-btn pt-pause" onclick="prodTaskPauseToggle('${t.id}')" title="${paused?'Reprendre':'Pause'}">${paused?'▶':'⏸'}</button>
           <button class="pt-btn pt-stop" onclick="prodTaskStop('${t.id}')" title="Terminer">⏹</button>
+          <button class="pt-btn pt-edit" onclick="prodTaskEditForm('${t.id}')" title="Modifier le temps">✎</button>
           <button class="pt-btn pt-del" onclick="prodConfirmDelTask('${t.id}')" title="Supprimer">✕</button>
         </div>
       </div>
@@ -13748,6 +13832,7 @@ function prodRenderBoard(){
         <span class="prodt-dot" style="background:${t.color}"></span>
         <span class="pd-label">${esc(t.label)}</span>
         <span class="pd-dur">${prodDurShort(prodTaskNet(t))}</span>
+        <button class="pt-btn pt-edit" onclick="prodTaskEditForm('${t.id}')" title="Modifier le temps" style="margin-left:8px">✎</button>
       </div>`).join('')}
     </div>` : '';
 
