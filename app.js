@@ -59,6 +59,14 @@ db.version(9).stores({
 // base en v9 monte proprement. (L'infrastructure de synchro a été retirée ; on garde
 // seulement la compatibilité de numéro de version.)
 db.version(10).stores({});
+// v11 : persistance des sessions de production / chronos d'atelier.
+// Jusqu'ici stockées UNIQUEMENT en localStorage (sm_prodSessions), exposées à la purge
+// iOS au rechargement de la PWA. On les double désormais dans IndexedDB (source de vérité),
+// le localStorage ne servant plus que de cache rapide synchrone. Clé primaire = id texte
+// généré par prodNewId() (pas d'auto-incrément).
+db.version(11).stores({
+  prodSessions:    'id, date, end'
+});
 
 
 
@@ -6739,9 +6747,23 @@ function profitScale(tauxNet){
    Tous les mouvements sont ACID (transaction Dexie) et historisés.
    ============================================================ */
 // Enregistre une SORTIE de stock vers un marché (décrément ACID du batch).
+// MODE HISTORIQUE (migration / réouverture) : un marché marqué histo:true sert uniquement
+// à saisir des données passées pour nourrir les algos. Les mouvements sont enregistrés
+// dans marketMoves (stats, CA, marges, prévisions) mais N'IMPACTENT PAS le stock réel
+// (db.productions) et ne sont pas plafonnés par le stock disponible actuel.
+async function marketIsHisto(marketId){
+  const mk=await db.markets.get(marketId);
+  return !!(mk && mk.histo);
+}
+
 async function marketAddSortie(marketId, productionId, qte, parfum){
   qte=round3(qte);
   if(qte<=0) throw new Error('Quantité invalide');
+  // Mode historique : on enregistre le mouvement sans toucher au stock ni plafonner.
+  if(await marketIsHisto(marketId)){
+    await db.marketMoves.add({marketId, productionId:productionId||null, type:'sortie', qte, parfum:parfum||'', motif:'', date:today(), histo:true});
+    return;
+  }
   await db.transaction('rw', db.productions, db.marketMoves, async()=>{
     const p=await db.productions.get(productionId);
     if(!p) throw new Error('Lot introuvable');
@@ -6841,6 +6863,12 @@ async function stockFiniParParfum(){
 async function marketAddSortieParfum(marketId, parfum, qteDemandee){
   let reste=round3(qteDemandee);
   if(reste<=0) throw new Error('Quantité invalide');
+  // Mode historique : un seul mouvement par parfum, sans FIFO ni rattachement à un lot réel,
+  // sans impact stock ni plafond (le stock du jour du marché n'existe plus aujourd'hui).
+  if(await marketIsHisto(marketId)){
+    await db.marketMoves.add({marketId, productionId:null, type:'sortie', qte:reste, parfum, motif:'', date:today(), histo:true});
+    return;
+  }
   await db.transaction('rw', db.productions, db.recipes, db.marketMoves, async()=>{
     const recipes=await db.recipes.toArray();
     const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'';
@@ -6866,12 +6894,19 @@ async function marketAddLoss(marketId, productionId, qte, type, parfum, motif){
   qte=round3(qte);
   if(qte<=0) throw new Error('Quantité invalide');
   if(type!=='don' && type!=='perte') throw new Error('Type invalide');
-  await db.marketMoves.add({marketId, productionId, type, qte, parfum:parfum||'', motif:motif||'', date:today()});
+  const histo=await marketIsHisto(marketId);
+  await db.marketMoves.add({marketId, productionId:productionId||null, type, qte, parfum:parfum||'', motif:motif||'', date:today(), ...(histo?{histo:true}:{})});
 }
 // Enregistre un RETOUR d'invendus (ré-incrémente le stock atelier, ACID).
 async function marketAddRetour(marketId, productionId, qte, parfum, destination){
   qte=round3(qte);
   if(qte<0) throw new Error('Quantité invalide');
+  // Mode historique : on enregistre le retour comme donnée, sans ré-incrémenter le stock
+  // et sans exiger d'emplacement (rien n'est rangé réellement).
+  if(await marketIsHisto(marketId)){
+    await db.marketMoves.add({marketId, productionId:productionId||null, type:'retour', qte, parfum:parfum||'', motif:'', date:today(), destination:destination||'', histo:true});
+    return;
+  }
   if(!EMP_BY_KEY[destination]) throw new Error('Emplacement de rangement du retour obligatoire');
   await db.transaction('rw', db.productions, db.marketMoves, async()=>{
     const p=await db.productions.get(productionId);
@@ -9228,7 +9263,7 @@ async function renderMarkets(){
 
   const rows=perMarket.map(({mk,T})=>`<tr>
      <td>${fmtDate(mk.date)}</td>
-     <td><b>${esc(mk.nom||'—')}</b><br><span style="color:#9a8a82;font-size:.75rem">${esc(mk.lieu||'')}</span></td>
+     <td><b>${esc(mk.nom||'—')}</b>${mk.histo?' <span class="tag" style="background:#eef2fb;color:#3b6ea5">📥 Hist.</span>':''}<br><span style="color:#9a8a82;font-size:.75rem">${esc(mk.lieu||'')}</span></td>
      <td>${mk.statut==='clos'?`<span class="tag done">Clos</span>`:`<span class="tag todo">Ouvert</span>`}</td>
      <td>${mk.statut==='clos'?euro(T.caTotal):'—'}</td>
      <td>${T.vendu>0||mk.statut==='clos'?qty(T.vendu):'—'}</td>
@@ -9285,6 +9320,7 @@ async function marketForm(id){
       <input type="number" min="0" step="10" id="mk_prevu" value="${mk.prevuQte!=null?esc(mk.prevuQte):''}" placeholder="ex : 300">
       <p class="note" id="mk_prevuHint" style="margin-top:4px"></p></div>
     <div class="field"><label>Commentaires</label><textarea id="mk_notes" rows="2">${esc(mk.notes||'')}</textarea></div>
+    <label class="opt-row" style="margin:4px 0 2px"><input type="checkbox" id="mk_histo" ${mk.histo?'checked':''}> <span class="opt-main"><b>📥 Marché historique (migration)</b><br><span style="font-size:.78rem;color:#9a8a82">Saisie de données passées pour les statistiques, <b>sans impact sur le stock</b>. Les sorties/retours ne décrémentent ni n'incrémentent tes productions.</span></span></label>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveMarket(${id||0})">Enregistrer</button></div>`);
   // suggestion intelligente basée sur l'historique des marchés clos
   marketPrevuSuggestion();
@@ -9309,6 +9345,7 @@ async function saveMarket(id){
   const o={nom, date, lieu:val('mk_lieu'), horaires:val('mk_horaires'), heures:+val('mk_heures')||0,
     meteo:val('mk_meteo'), notes:val('mk_notes'), prevuQte:+val('mk_prevu')||0, fondCaisse:+val('mk_fond')||0,
     coutStand:+val('mk_stand')||0, distanceKm:+val('mk_dist')||0, prixCarburant:+val('mk_carbu')||0, tempsRouteMin:+val('mk_route')||0, consoVehicule: val('mk_conso')!==''?(+val('mk_conso')||0):null};
+  o.histo = !!document.getElementById('mk_histo')?.checked;
   if(id){ await db.markets.update(id,o); }
   else { o.statut='ouvert'; o.ca={especes:0,cb:0,autre:0}; id=await db.markets.add(o); }
   // Connexion calendrier : un marché planifié apparaît dans l'agenda (type 'marche').
@@ -9362,7 +9399,7 @@ async function marketDetail(id){
       <td><b>${qty(l.vendu)}</b>${l.incoherent?' <span class="tag low">incohérent</span>':''}</td></tr>`;}).join('');
 
   const clos = mk.statut==='clos';
-  openModal(`<h3>${esc(mk.nom)} <span style="font-weight:400;font-size:.8rem;color:#9a8a82">${fmtDate(mk.date)}${mk.lieu?' · '+esc(mk.lieu):''}</span></h3>
+  openModal(`<h3>${esc(mk.nom)} <span style="font-weight:400;font-size:.8rem;color:#9a8a82">${fmtDate(mk.date)}${mk.lieu?' · '+esc(mk.lieu):''}</span>${mk.histo?' <span class="tag" style="background:#eef2fb;color:#3b6ea5">📥 Historique</span>':''}</h3>
     ${mk.horaires||mk.meteo?`<p class="note">${esc(mk.horaires||'')}${mk.meteo?' · '+esc(mk.meteo):''}</p>`:''}
     ${!clos?`<div class="flex" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">
       <button class="btn gold sm" onclick="marketSortieForm(${id})">＋ Sortie stock</button>
@@ -9561,13 +9598,14 @@ async function marketDoClose(marketId, vendu){
   await db.markets.update(marketId, {ca:{especes:esp,cb:cb,autre:au}, statut:'clos', dateCloture:today()});
   toast('Marché clôturé ✓'); marketDetail(marketId);
 }
-// Réouvre un marché clôturé : repasse simplement le statut à « ouvert ».
-// Le CA saisi (mk.ca) et les mouvements de stock déjà enregistrés sont conservés ;
-// ils seront pré-remplis à la re-clôture (marketCloseForm lit déjà mk.ca).
+// Réouvre un marché clôturé : repasse le statut à « ouvert » ET le marque « historique »
+// (histo:true). En mode historique, les saisies (sortie/retour/don/perte) nourrissent les
+// algos via marketMoves SANS impacter le stock réel ni être plafonnées — il s'agit de
+// corriger/compléter des données passées, pas de re-piocher dans le stock actuel.
 async function marketReopen(marketId){
-  if(!confirm('Rouvrir ce marché clôturé ? Les sorties de stock et le CA saisi sont conservés ; vous pourrez corriger retours et ventes, puis re-clôturer.')) return;
-  await db.markets.update(marketId, {statut:'ouvert'});
-  toast('Marché rouvert ✓'); marketDetail(marketId);
+  if(!confirm('Rouvrir ce marché clôturé en mode « historique » ? Tu pourras corriger sorties, retours et ventes pour nourrir les statistiques, sans impacter ton stock actuel. Tu re-clôtureras ensuite (le CA saisi est conservé).')) return;
+  await db.markets.update(marketId, {statut:'ouvert', histo:true});
+  toast('Marché rouvert (mode historique) ✓'); marketDetail(marketId);
 }
 
 // Comptage des emballages avant/après le marché : coût consommé = Σ((avant−après) × coût unitaire).
@@ -11534,7 +11572,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -11655,6 +11693,8 @@ async function applyDump(dump){
     }
   });
   applyLocalSettings(dump); // réapplique les réglages (emballages, charges, préférence de menu…) si présents
+  // Resynchronise le cache localStorage des sessions de production depuis la base restaurée.
+  try{ const ps=await db.prodSessions.toArray(); localStorage.setItem(PROD_SESS_KEY, JSON.stringify(ps)); }catch(e){ console.error('restore prodSess cache', e); }
 }
 
 // ---- EXPORT MANUEL (fichier .json téléchargé) ----
@@ -13170,9 +13210,55 @@ function prodSessLoad(){
   try{ const a=JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]'); return Array.isArray(a)?a:[]; }
   catch(e){ return []; }
 }
+// Écrit le cache localStorage (synchrone) ET persiste dans IndexedDB (asynchrone, non bloquant).
+// IndexedDB est la source de vérité anti-purge ; le localStorage reste un cache rapide pour
+// toutes les lectures synchrones existantes (prodSessLoad), inchangées.
 function prodSessSave(arr){
-  try{ localStorage.setItem(PROD_SESS_KEY, JSON.stringify(arr||[])); }
+  const data = arr||[];
+  try{ localStorage.setItem(PROD_SESS_KEY, JSON.stringify(data)); }
   catch(e){ console.error('prodSessSave', e); }
+  prodSessPersistDexie(data);
+}
+// Synchronise l'état complet des sessions vers la table Dexie prodSessions.
+// On remplace l'ensemble (bulkPut + suppression des absents) pour rester aligné sur le cache.
+async function prodSessPersistDexie(arr){
+  try{
+    if(!db.prodSessions) return; // sécurité : table absente (base non migrée)
+    const data = arr||[];
+    const ids = new Set(data.map(s=>s.id));
+    await db.transaction('rw', db.prodSessions, async()=>{
+      const existing = await db.prodSessions.toArray();
+      const toDelete = existing.filter(s=>!ids.has(s.id)).map(s=>s.id);
+      if(toDelete.length) await db.prodSessions.bulkDelete(toDelete);
+      if(data.length) await db.prodSessions.bulkPut(data);
+    });
+  }catch(e){ console.error('prodSessPersistDexie', e); }
+}
+// Réhydratation au démarrage : si IndexedDB contient des sessions absentes du localStorage
+// (cas typique d'une purge iOS du localStorage), on les réinjecte dans le cache.
+// IndexedDB fait foi : toute session présente en base mais perdue du cache est restaurée.
+async function prodSessHydrate(){
+  try{
+    if(!db.prodSessions) return;
+    const fromDexie = await db.prodSessions.toArray();
+    const cache = prodSessLoad();
+    // Migration initiale (1re ouverture en v11) : des sessions existent en localStorage
+    // mais la table Dexie est vide → on les y copie pour les mettre à l'abri.
+    if(!fromDexie.length){
+      if(cache.length) await prodSessPersistDexie(cache);
+      return;
+    }
+    // Cas nominal : IndexedDB fait foi. Toute session présente en base mais absente du
+    // cache (purge iOS du localStorage) est réinjectée dans le cache.
+    const byId = new Map(cache.map(s=>[s.id, s]));
+    let restored = 0;
+    fromDexie.forEach(s=>{ if(!byId.has(s.id)){ byId.set(s.id, s); restored++; } });
+    if(restored>0){
+      const merged = Array.from(byId.values());
+      try{ localStorage.setItem(PROD_SESS_KEY, JSON.stringify(merged)); }catch(e){}
+      console.log('prodSessHydrate: '+restored+' session(s) restaurée(s) depuis IndexedDB');
+    }
+  }catch(e){ console.error('prodSessHydrate', e); }
 }
 function prodSessGet(id){ return prodSessLoad().find(s=>s.id===id); }
 function prodSessUpsert(sess){
@@ -15283,6 +15369,7 @@ function startClock(){
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
     try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
+    try{ await prodSessHydrate(); }catch(e){ console.error('prodSessHydrate',e); }
   }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }
 
   let opened=false;
