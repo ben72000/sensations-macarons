@@ -766,7 +766,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -13371,6 +13371,168 @@ function prodFmt(ms){
   const m=Math.floor(s/60); s-=m*60;
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
+
+/* ============================================================
+   MON REVENU HORAIRE — outil évolutif (couches : 0 audit · 1 indicateur · 2 simulateur)
+   Objectif : à partir des données réelles (ventes, temps mesuré, charges), estimer
+   ce que l'artisan peut espérer se payer de l'heure, et où agir (produire / vendre).
+   Couche 0 (présente) : AUDIT DE FIABILITÉ des données, sans calcul de revenu encore.
+   ============================================================ */
+const REVH_DEFAULT_DAYS = 90;
+
+// Collecte unique des données brutes sur une fenêtre de N jours.
+// Sert de socle commun aux 3 couches (audit, indicateur, simulateur).
+async function revenuHoraireData(jours){
+  jours = +jours || REVH_DEFAULT_DAYS;
+  const since = new Date(); since.setDate(since.getDate()-jours);
+  const sinceStr = since.toISOString().slice(0,10);
+
+  // 1) TEMPS MESURÉ (en heures) sur la fenêtre : pointeuse (workSessions) + atelier (prodSessions)
+  const ws = await db.workSessions.toArray().catch(()=>[]);
+  const wsIn = ws.filter(s=>(s.date||'').slice(0,10) >= sinceStr);
+  const hPointeuse = wsIn.reduce((a,s)=>a+(+s.dureeHeures|| ((+s.dureeMin||0)/60) ||0),0);
+
+  const psAll = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
+  const psIn = psAll.filter(s=>(s.date||'').slice(0,10) >= sinceStr);
+  let msAtelier = 0;
+  psIn.forEach(s=>{ (s.tasks||[]).forEach(t=>{ msAtelier += (typeof prodTaskNet==='function')?prodTaskNet(t):0; }); });
+  const hAtelier = msAtelier/3600000;
+
+  const heuresMesurees = round3(hPointeuse + hAtelier);
+
+  // 2) CA ENCAISSÉ sur la fenêtre (cash basis), via les paiements datés des commandes + marchés clos
+  const orders = await db.orders.toArray().catch(()=>[]);
+  let caCommandes = 0;
+  orders.forEach(o=>{
+    const regs = Array.isArray(o.paiements)?o.paiements:[];
+    if(regs.length){
+      regs.forEach(p=>{ if((p.date||'').slice(0,10) >= sinceStr) caCommandes += (+p.montant||0); });
+    } else if(o.datePaiement && (o.datePaiement.slice(0,10) >= sinceStr)){
+      caCommandes += (+o.montant||0);
+    }
+  });
+  const markets = await db.markets.toArray().catch(()=>[]);
+  const closIn = markets.filter(mk=>mk.statut==='clos' && ((mk.dateCloture||mk.date||'').slice(0,10) >= sinceStr));
+  let caMarches = 0;
+  closIn.forEach(mk=>{ const ca=mk.ca||{}; caMarches += (+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0); });
+  const caEncaisse = money2(caCommandes + caMarches);
+
+  // 3) CHARGES (réelles, datées) sur la fenêtre + charges récurrentes actives (référence mensuelle)
+  const charges = await db.charges.toArray().catch(()=>[]);
+  const chargesIn = charges.filter(c=>(c.date||'').slice(0,10) >= sinceStr);
+  const totalCharges = money2(chargesIn.reduce((a,c)=>a+(+c.montant||0),0));
+  const recur = (typeof getRecurringCharges==='function'?getRecurringCharges():[]).filter(m=>m.actif!==false && +m.montant>0);
+  const chargesRecurMensuel = money2(recur.reduce((a,m)=>a+(+m.montant||0),0));
+
+  // 4) CAPACITÉ À VENDRE : taux d'invendus moyen des marchés clos de la fenêtre.
+  //    Le taux n'est pas stocké sur le marché : on le recalcule via marketTotals (comme partout).
+  let invendusSum=0, invendusN=0;
+  if(closIn.length){
+    const recipes = await db.recipes.toArray().catch(()=>[]);
+    const recipeItems = await db.recipeItems.toArray().catch(()=>[]);
+    const lots = await db.materialLots.toArray().catch(()=>[]);
+    const avgUnit = (typeof avgMacaronCost==='function') ? avgMacaronCost(recipes, recipeItems, lots) : 0;
+    for(const mk of closIn){
+      const moves = await db.marketMoves.where('marketId').equals(mk.id).toArray().catch(()=>[]);
+      const T = marketTotals(mk, moves, avgUnit);
+      if(typeof T.tauxInvendus==='number'){ invendusSum+=T.tauxInvendus; invendusN++; }
+    }
+  }
+  const tauxInvendusMoyen = invendusN>0 ? Math.round(invendusSum/invendusN) : null;
+
+  return {
+    jours, sinceStr,
+    heuresMesurees, hPointeuse:round3(hPointeuse), hAtelier:round3(hAtelier),
+    nbSessionsPointeuse: wsIn.length, nbSessionsAtelier: psIn.length,
+    caEncaisse, caCommandes:money2(caCommandes), caMarches:money2(caMarches),
+    totalCharges, chargesRecurMensuel, nbCharges: chargesIn.length,
+    nbMarchesClos: closIn.length, tauxInvendusMoyen
+  };
+}
+
+// COUCHE 0 — AUDIT : évalue la fiabilité de chaque source et un niveau de confiance global.
+// Aucun revenu n'est encore calculé ici : on prépare le terrain honnêtement.
+function revenuHoraireAudit(d){
+  const checks = [];
+  // a) Temps mesuré
+  checks.push({
+    cle:'temps', label:'Temps de travail mesuré',
+    niveau: d.heuresMesurees>=20 ? 'ok' : (d.heuresMesurees>0 ? 'warn' : 'ko'),
+    detail: d.heuresMesurees>0
+      ? `${d.heuresMesurees.toFixed(1)} h mesurées (${d.hPointeuse.toFixed(1)} h pointeuse + ${d.hAtelier.toFixed(1)} h atelier)`
+      : 'Aucun temps mesuré sur la période — lance tes chronos pour fiabiliser le calcul.'
+  });
+  // b) CA encaissé
+  checks.push({
+    cle:'ca', label:'Chiffre d\'affaires encaissé',
+    niveau: d.caEncaisse>0 ? 'ok' : 'ko',
+    detail: d.caEncaisse>0
+      ? `${euro(d.caEncaisse)} encaissés (${euro(d.caCommandes)} commandes + ${euro(d.caMarches)} marchés)`
+      : 'Aucun encaissement détecté sur la période.'
+  });
+  // c) Charges
+  checks.push({
+    cle:'charges', label:'Charges (coûts fixes)',
+    niveau: (d.totalCharges>0 || d.chargesRecurMensuel>0) ? 'ok' : 'warn',
+    detail: (d.totalCharges>0 || d.chargesRecurMensuel>0)
+      ? `${euro(d.totalCharges)} sur la période${d.chargesRecurMensuel>0?` · ${euro(d.chargesRecurMensuel)}/mois récurrent`:''}`
+      : 'Aucune charge saisie — ton revenu serait surestimé. Renseigne tes charges fixes.'
+  });
+  // d) Capacité à vendre (lien production → vente)
+  checks.push({
+    cle:'vente', label:'Capacité à écouler (marchés)',
+    niveau: d.nbMarchesClos>0 ? (d.tauxInvendusMoyen!=null ? 'ok' : 'warn') : 'warn',
+    detail: d.nbMarchesClos>0
+      ? `${d.nbMarchesClos} marché(s) clôturé(s)${d.tauxInvendusMoyen!=null?` · ${d.tauxInvendusMoyen}% d'invendus en moyenne`:''}`
+      : 'Pas de marché clôturé sur la période — la capacité de vente reste à estimer.'
+  });
+  const nbOk = checks.filter(c=>c.niveau==='ok').length;
+  let confiance, confLabel;
+  if(nbOk>=4){ confiance='ok'; confLabel='Élevée — les estimations seront fiables.'; }
+  else if(nbOk>=2){ confiance='warn'; confLabel=`Moyenne — ${nbOk}/4 sources fiables, estimations indicatives.`; }
+  else { confiance='ko'; confLabel=`Faible — ${nbOk}/4 sources fiables, complète tes données d'abord.`; }
+  return { checks, nbOk, confiance, confLabel };
+}
+
+let _revhDays = REVH_DEFAULT_DAYS;
+async function renderRevenuHoraire(){
+  const main=document.getElementById('main'); if(!main) return;
+  main.innerHTML = `<div class="topbar"><div><h1>Mon revenu horaire</h1><p>Chargement…</p></div></div>`;
+  let d, audit;
+  try{ d = await revenuHoraireData(_revhDays); audit = revenuHoraireAudit(d); }
+  catch(e){ console.error('revenuHoraire',e); main.innerHTML=`<div class="topbar"><div><h1>Mon revenu horaire</h1></div></div><div class="panel"><p class="note">Erreur de chargement des données.</p></div>`; return; }
+
+  const dot = n => n==='ok'?'#3f7d52':(n==='warn'?'#d98324':'#b3261e');
+  const ico = n => n==='ok'?'✓':(n==='warn'?'!':'✕');
+  const rows = audit.checks.map(c=>`
+    <div class="sum-box" style="align-items:flex-start;gap:10px">
+      <span style="flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:${dot(c.niveau)};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:.8rem">${ico(c.niveau)}</span>
+      <span style="flex:1"><b>${esc(c.label)}</b><br><span style="font-size:.82rem;color:#9a8a82">${esc(c.detail)}</span></span>
+    </div>`).join('');
+
+  const periodBtns = [30,90,0].map(j=>{
+    const lib = j===0?'Tout':j+' j';
+    const on = (_revhDays===j || (j===0 && _revhDays>=99999));
+    return `<button class="btn ${on?'gold':'ghost'} sm" onclick="revhSetDays(${j===0?99999:j})">${lib}</button>`;
+  }).join('');
+
+  main.innerHTML = `
+    <div class="topbar"><div><h1>Mon revenu horaire</h1>
+      <p>Combien tu peux espérer te payer, d'après tes ventes et ta production réelles.</p></div></div>
+    <div class="panel">
+      <div class="flex" style="gap:6px;justify-content:flex-end;margin-bottom:10px">${periodBtns}</div>
+      <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>
+        <b>Étape 1 — Fiabilité de tes données.</b> Avant tout calcul, voici ce que l'outil sait mesurer sur les ${d.jours>=99999?'données disponibles':`${d.jours} derniers jours`}. Plus tes sources sont vertes, plus l'estimation de revenu (étape suivante) sera juste.
+      </div></div>
+      ${rows}
+      <div class="sum-box" style="margin-top:8px;align-items:flex-start;gap:10px;border:1px solid ${dot(audit.confiance)};background:#fff">
+        <span style="flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:${dot(audit.confiance)};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:.8rem">${ico(audit.confiance)}</span>
+        <span style="flex:1"><b>Niveau de confiance global</b><br><span style="font-size:.82rem;color:#9a8a82">${esc(audit.confLabel)}</span></span>
+      </div>
+      <p class="note" style="margin-top:12px">Les étapes suivantes (ton revenu horaire réel, puis le simulateur « et si je vendais plus / produisais plus vite ») s'appuieront sur ces mêmes données. On les activera une fois cette base validée.</p>
+    </div>`;
+}
+function revhSetDays(j){ _revhDays = j; renderRevenuHoraire(); }
 
 // ---- VUE ATELIER (héberge le board de pilotage) ----
 let _atelierTab = 'pilotage';   // 'pilotage' | 'tableau'
