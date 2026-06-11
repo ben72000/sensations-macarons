@@ -12500,7 +12500,8 @@ function ttRefresh(){
   const sessions=ttLoad();
   bar.innerHTML = `<span class="tt-grip">⠿⠿</span>
     <button type="button" class="tt-light green" onclick="ttLightTap(event)" title="Pointeuse"><span>▶</span></button>
-    <button type="button" class="tt-light dim" onclick="ttOpenHistory()" title="Historique"><span>🗒</span></button>`;
+    <button type="button" class="tt-light dim" onclick="ttOpenHistory()" title="Historique"><span>🗒</span></button>
+    <span class="tt-histlabel">Historique</span>`;
   ttBindDrag(bar, 'sm_tt_pos');
   const wrap=document.getElementById('ttWhisks'); if(!wrap) return;
   wrap.innerHTML = sessions.map(s=>{
@@ -12525,18 +12526,15 @@ function ttLightTap(ev){
   const bar=document.getElementById('timeTracker'); if(!bar) return;
   if(bar._dragged){ bar._dragged=false; return; }   // c'était un déplacement, pas un tap
   if(ev && ev.stopPropagation) ev.stopPropagation();
-  if(!bar.classList.contains('tt-open')){
-    ttExpand();
-  } else {
-    ttStart();
-  }
+  // Un seul tap ouvre la fenêtre : choix d'activité + accès direct à l'historique.
+  ttStart();
 }
 function ttExpand(){
   const bar=document.getElementById('timeTracker'); if(!bar) return;
   bar.classList.add('tt-open');
   clearTimeout(_ttCollapseTimer);
-  // repli automatique après 4 s sans interaction (évite que ça reste ouvert et gêne)
-  _ttCollapseTimer=setTimeout(ttCollapse, 4000);
+  // repli automatique après 9 s sans interaction (laisse le temps d'ouvrir l'historique)
+  _ttCollapseTimer=setTimeout(ttCollapse, 9000);
 }
 function ttCollapse(){
   const bar=document.getElementById('timeTracker'); if(bar) bar.classList.remove('tt-open');
@@ -12585,8 +12583,9 @@ function ttTick(){
 // Démarre un NOUVEAU chrono (choix rapide d'activité). N'interrompt pas les autres.
 function ttStart(){
   ttCollapse();
-  openModal(`<h3>⏱ Nouvelle activité</h3>
-    <p class="note">Un tap pour démarrer un chrono. Plusieurs activités peuvent tourner en parallèle.</p>
+  openModal(`<h3>⏱ Pointeuse</h3>
+    <button class="btn gold" style="width:100%;margin-bottom:6px" onclick="closeModal();ttOpenHistory()">🗒 Voir l'historique / journal de bord</button>
+    <p class="note" style="margin-top:12px">Démarrer un chrono (plusieurs activités peuvent tourner en parallèle) :</p>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
       ${TT_ACTIVITIES.map(a=>`<button class="btn ghost" style="flex:1;min-width:44%" onclick="ttStartWith(${JSON.stringify(a).replace(/"/g,'&quot;')})">${esc(a)}</button>`).join('')}
     </div>
@@ -12679,21 +12678,49 @@ async function ttOpenHistory(){
   const sessions = (await db.workSessions.orderBy('date').reverse().toArray().catch(()=>[]));
   const totMin = sessions.reduce((s,x)=>s+(+x.dureeMin||0),0);
   const totCout = sessions.reduce((s,x)=>s+(+x.coutTotal||0),0);
-  const rows = sessions.slice(0,40).map(x=>{
-    const h=Math.floor((+x.dureeMin||0)/60), m=(+x.dureeMin||0)%60;
-    const pMin=+x.pauseMin||0; const ph=Math.floor(pMin/60), pm=pMin%60;
-    return `<tr><td>${fmtDate(x.date)}<br><span style="color:#9a8a82;font-size:.72rem">${fmtTime(x.debut)}–${fmtTime(x.fin)}</span></td>
-      <td>${x.activite?`<span class="tag" style="background:#6aa3a0;color:#fff;font-size:.66rem">${esc(x.activite)}</span>`:'<span style="color:#c9bcae">—</span>'}</td>
-      <td>${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m${pMin>=1?`<br><span style="color:#9a8a82;font-size:.7rem">pause ${ph?ph+'h ':''}${String(pm).padStart(2,'0')}m</span>`:''}</td>
-      <td>${euro(x.tauxHoraire)}/h</td>
-      <td><b>${euro(x.coutTotal)}</b></td>
-      <td style="text-align:right"><span class="act del" onclick="ttDeleteSession(${x.id})">Suppr.</span></td></tr>`;
-  }).join('');
   const th=Math.floor(totMin/60), tm=totMin%60;
-  openModal(`<h3>Pointeuse — historique</h3>
-    <div class="sum-box"><span>Total cumulé</span><b>${String(th).padStart(2,'0')}h ${String(tm).padStart(2,'0')}m · ${euro(totCout)}</b></div>
-    ${sessions.length?`<div class="flex" style="gap:8px;margin-top:8px"><button class="btn gold sm" onclick="closeModal();goView('analyse')">📊 Analyse des temps & conseils</button></div>
-    <div class="table-wrap no-freeze" style="margin-top:10px"><table><thead><tr><th>Date</th><th>Activité</th><th>Durée</th><th>Taux</th><th>Coût</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${sessions.length>40?'<p class="note">40 dernières sessions affichées.</p>':''}`:'<p class="note">Aucune session enregistrée pour l\'instant.</p>'}
+  // Couleur de pastille par type d'activité (cohérence visuelle)
+  const actColor = a => {
+    const m={'Pesées':'#6aa3a0','Ganache':'#8a6d3b','Meringue':'#c1a27c','Macaronnage':'#aa7c39',
+      'Pochage':'#7a6a9a','Cuisson':'#c0392b','Garnissage/Montage':'#3f7d52','Vaisselle':'#5a8aa0',
+      'Nettoyage fin de prod':'#6a8a5a','Conditionnement':'#9a7320'};
+    return m[a]||'#8a7a72';
+  };
+  // Regroupement par jour pour un vrai « journal de bord »
+  const parJour={};
+  sessions.forEach(x=>{ const d=(x.date||'').slice(0,10)||'?'; (parJour[d]=parJour[d]||[]).push(x); });
+  const jours=Object.keys(parJour).sort().reverse().slice(0,30);
+
+  const cards = jours.map(d=>{
+    const list=parJour[d];
+    const jourMin=list.reduce((s,x)=>s+(+x.dureeMin||0),0);
+    const jourCout=list.reduce((s,x)=>s+(+x.coutTotal||0),0);
+    const jh=Math.floor(jourMin/60), jm=jourMin%60;
+    const items=list.map(x=>{
+      const h=Math.floor((+x.dureeMin||0)/60), m=(+x.dureeMin||0)%60;
+      const pMin=+x.pauseMin||0;
+      return `<div class="ws-line">
+        <span class="ws-act" style="background:${actColor(x.activite)}">${x.activite?esc(x.activite):'Activité'}</span>
+        <span class="ws-time">${fmtTime(x.debut)}–${fmtTime(x.fin)}</span>
+        <span class="ws-dur"><b>${String(h).padStart(2,'0')}h${String(m).padStart(2,'0')}</b>${pMin>=1?` <span class="ws-pause">+${pMin}m pause</span>`:''}</span>
+        <span class="ws-cost">${euro(x.coutTotal)}</span>
+        <span class="ws-del" onclick="ttDeleteSession(${x.id})" title="Supprimer">🗑</span>
+      </div>`;
+    }).join('');
+    return `<div class="ws-card">
+      <div class="ws-card-head">
+        <span class="ws-date">${fmtDate(d)}</span>
+        <span class="ws-day-tot">${String(jh).padStart(2,'0')}h ${String(jm).padStart(2,'0')}m · ${euro(jourCout)}</span>
+      </div>
+      <div class="ws-lines">${items}</div>
+    </div>`;
+  }).join('');
+
+  openModal(`<h3>🗒 Journal de bord — temps de travail</h3>
+    <div class="ws-total"><div><span class="ws-total-lbl">Total cumulé</span><b>${String(th).padStart(2,'0')}h ${String(tm).padStart(2,'0')}m</b></div><div class="ws-total-cout">${euro(totCout)}</div></div>
+    ${sessions.length?`<div class="flex" style="gap:8px;margin:10px 0"><button class="btn gold sm" onclick="closeModal();goView('analyse')">📊 Analyse des temps & conseils</button></div>
+    <div class="ws-cards">${cards}</div>${jours.length>=30?'<p class="note">30 derniers jours affichés.</p>':''}`
+    :'<p class="empty">Aucune session enregistrée pour l\'instant. Lance une activité depuis le feu vert pour commencer à chronométrer ton temps de travail.</p>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 async function ttDeleteSession(id){
