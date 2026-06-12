@@ -87,6 +87,11 @@ db.version(13).stores({
 db.version(14).stores({
   components:      '++id, nom, type'
 });
+// v15 : les ingrédients d'un composant sont stockés dans recipeItems via componentId
+// (au lieu de recipeId). Un item appartient soit à une recette, soit à un composant.
+db.version(15).stores({
+  recipeItems:     '++id, recipeId, materialId, componentId'
+});
 
 
 
@@ -17193,20 +17198,43 @@ async function renderComposants(){
    <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>Un composant (ex : une ganache montée) existe une seule fois ici et peut être <b>partagé par plusieurs recettes</b>. C'est ce qui permet de mutualiser sa production (ex : la même ganache pour mangue passion et myrtille framboise).</div></div>
    ${comps.length?comps.map(card).join(''):'<div class="panel"><p class="note">Aucun composant pour l\'instant. Crée ta première brique réutilisable (ex : « Ganache montée mangue/framboise »).</p></div>'}`;
 }
+let cmpBomDraft=[];
 async function componentForm(id){
   const c = id ? (await db.components.get(id))||{} : {};
+  const mats = await db.materials.toArray().catch(()=>[]);
+  window._matsCache = mats;
+  cmpBomDraft = id ? (await db.recipeItems.where('componentId').equals(id).toArray().catch(()=>[]))
+    .map(it=>({materialId:it.materialId, qteParBatch:it.qteParBatch})) : [];
   const typeOpts = Object.entries(COMPONENT_TYPES).map(([k,t])=>`<option value="${k}" ${c.type===k?'selected':''}>${t.ico} ${t.label}</option>`).join('');
   openModal(`<h3>${id?'Modifier':'Nouveau'} composant</h3>
     <div class="field"><label>Nom</label><input type="text" id="cmp_nom" value="${esc(c.nom||'')}" placeholder="ex : Ganache montée mangue/framboise"></div>
     <div class="field"><label>Type</label><select id="cmp_type">${typeOpts}</select></div>
     <div class="field"><label>Rendement (nb de pièces/portions par batch)</label>
-      <input type="number" step="1" min="1" id="cmp_rend" value="${c.rendement!=null?c.rendement:''}" placeholder="ex : 17 (ganache) ou 24 (crémeux)"></div>
+      <input type="number" step="1" min="1" id="cmp_rend" value="${c.rendement!=null?c.rendement:''}" placeholder="ex : 24"></div>
     <label class="switch-row"><input type="checkbox" id="cmp_congel" ${c.congelObligatoire?'checked':''}> ❄️ Passe systématiquement par une <b>congélation</b></label>
+    <div class="field"><label>Ingrédients (par batch) <span style="color:#9a8a82;font-weight:400">— la nomenclature propre à ce composant</span></label>
+      <div id="cmpBomList"></div>
+      ${mats.length?`<button class="btn ghost sm" style="margin-top:6px" onclick="cmpBomAdd()">+ Ajouter une matière</button>`:'<p class="note">Crée d\'abord des matières premières.</p>'}</div>
     <div class="field"><label>Notes (optionnel)</label><input type="text" id="cmp_notes" value="${esc(c.notes||'')}" placeholder="process, particularités…"></div>
     <div class="modal-actions">${id?`<button class="btn ghost" style="color:var(--red,#b3261e)" onclick="componentDelete(${id})">Supprimer</button>`:''}
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="componentSave(${id})">Enregistrer</button></div>`);
+  drawCmpBom();
 }
+function drawCmpBom(){
+  const box=document.getElementById('cmpBomList'); if(!box) return;
+  const mats=window._matsCache||[];
+  box.innerHTML = cmpBomDraft.map((b,i)=>{
+    const opts=mats.map(m=>`<option value="${m.id}" ${m.id===b.materialId?'selected':''}>${esc(m.nom)}</option>`).join('');
+    return `<div class="bom-line" style="grid-template-columns:1fr 90px 24px">
+      <select onchange="cmpBomSet(${i},'materialId',+this.value)">${opts}</select>
+      <input type="number" step="0.001" min="0" value="${b.qteParBatch!=null?b.qteParBatch:''}" oninput="cmpBomSet(${i},'qteParBatch',+this.value)" placeholder="qté">
+      <span class="x" onclick="cmpBomDel(${i})">×</span></div>`;
+  }).join('') || '<p class="note">Aucun ingrédient.</p>';
+}
+function cmpBomAdd(){ const mats=window._matsCache||[]; if(!mats.length) return; cmpBomDraft.push({materialId:mats[0].id, qteParBatch:0}); drawCmpBom(); }
+function cmpBomDel(i){ cmpBomDraft.splice(i,1); drawCmpBom(); }
+function cmpBomSet(i,k,v){ if(cmpBomDraft[i]){ cmpBomDraft[i][k]=(k==='qteParBatch')?Math.max(0,+v||0):v; } }
 async function componentSave(id){
   const nom=(val('cmp_nom')||'').trim();
   if(!nom){ toast('Nom requis'); return; }
@@ -17214,7 +17242,12 @@ async function componentSave(id){
     rendement:Math.max(1, Math.round(+val('cmp_rend')||1)),
     congelObligatoire: !!document.getElementById('cmp_congel')?.checked,
     notes:(val('cmp_notes')||'').trim() };
-  if(id) await db.components.update(id, o); else await db.components.add(o);
+  let cid = id;
+  if(id){ await db.components.update(id, o); }
+  else { cid = await db.components.add(o); }
+  // ingrédients du composant : on remplace l'ensemble (via componentId)
+  await db.recipeItems.where('componentId').equals(cid).delete().catch(()=>{});
+  for(const b of cmpBomDraft){ if(b.materialId) await db.recipeItems.add({componentId:cid, materialId:b.materialId, qteParBatch:Math.max(0,+b.qteParBatch||0)}); }
   closeModal(); toast('Composant enregistré ✓'); renderComposants();
 }
 async function componentDelete(id){
