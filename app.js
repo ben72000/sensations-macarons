@@ -532,6 +532,40 @@ const EMPLACEMENTS = [
 ];
 const EMP_BY_KEY = Object.fromEntries(EMPLACEMENTS.map(e=>[e.key,e]));
 const EMP_BY_LETTRE = Object.fromEntries(EMPLACEMENTS.map(e=>[e.lettre,e]));
+// ---- CONTENANTS ISOTHERMES MARCHÉ ----
+// Glacières identifiées par couleur (repère physique stable) + un sac « métro » à part.
+// Servent à répartir des BOÎTES ENTIÈRES (jamais de mélange de parfums dans une boîte) de
+// façon équilibrée, pour n'ouvrir qu'un contenant à la fois sur le stand (chaîne du froid).
+const COOLERS = [
+  {key:'vert',   nom:'Glacière verte',   col:'#3f7d52', ico:'🟢'},
+  {key:'bleu',   nom:'Glacière bleue',   col:'#3b6ea5', ico:'🔵'},
+  {key:'orange', nom:'Glacière orange',  col:'#d98324', ico:'🟠'},
+  {key:'violet', nom:'Glacière violette',col:'#7d5ba6', ico:'🟣'},
+  {key:'metro',  nom:'Sac métro',        col:'#6a6a6a', ico:'🎒'},
+];
+const COOLER_BY_KEY = Object.fromEntries(COOLERS.map(c=>[c.key,c]));
+// ---- RÉPARTITION MARCHÉ : boîtes entières ventilées en glacières (assortiment équilibré) ----
+// boxesToLoad : [{parfum, lot, prodId, nbMacarons, boiteNom}] — chaque entrée = UNE boîte (1 parfum).
+// coolerKeys : liste des contenants utilisés (ex ['vert','bleu','orange']).
+// Principe : pour chaque parfum, on répartit ses boîtes en commençant par la glacière la moins
+// remplie → chaque glacière reçoit un assortiment équilibré, sans jamais mélanger 2 parfums.
+function repartitionMarche(boxesToLoad, coolerKeys){
+  const cools = (coolerKeys||[]).filter(k=>COOLER_BY_KEY[k]);
+  if(!cools.length) return {parGlaciere:{}, nbBoites:0, coolers:[]};
+  const parGlaciere = {}; cools.forEach(k=>parGlaciere[k]={boites:[], nbBoites:0, nbMacarons:0, parfums:{}});
+  const parParfum = {};
+  (boxesToLoad||[]).forEach(b=>{ (parParfum[b.parfum] ||= []).push(b); });
+  Object.keys(parParfum).sort().forEach(parfum=>{
+    parParfum[parfum].forEach(boite=>{
+      let cible = cools[0];
+      for(const k of cools){ if(parGlaciere[k].nbBoites < parGlaciere[cible].nbBoites) cible=k; }
+      const g=parGlaciere[cible];
+      g.boites.push(boite); g.nbBoites++; g.nbMacarons+=(+boite.nbMacarons||0);
+      g.parfums[parfum]=(g.parfums[parfum]||0)+1;
+    });
+  });
+  return {parGlaciere, nbBoites:(boxesToLoad||[]).length, coolers:cools};
+}
 // Un emplacement est-il un congélateur ? (B, C, A) — sinon frigo (F).
 function isFreezer(key){ const e=EMP_BY_KEY[key]; return e ? e.type==='congelateur' : key==='congelateur'; }
 function isFrigoKey(key){ const e=EMP_BY_KEY[key]; return e ? e.type==='frigo' : key==='frigo'; }
@@ -7090,10 +7124,32 @@ async function stockParfumDetail(nom){
     const st=prodStatut(p);
     const dlc=p.dlcProduit?fmtDate(p.dlcProduit):(st!=='termine'?'<span style="color:#9a8a82">DLC non lancée</span>':'—');
     const fab=p.prodTermineTs||p.prodDebutTs||p.prodTimestamp;
+    // Âge du lot (depuis la fabrication)
+    const fabDate = fab ? new Date(fab) : (p.date?new Date(p.date+'T00:00'):null);
+    let ageTxt='';
+    if(fabDate && !isNaN(fabDate)){
+      const jours = Math.floor((Date.now()-fabDate.getTime())/86400000);
+      ageTxt = jours<=0 ? "aujourd'hui" : jours===1 ? 'hier' : `il y a ${jours} j`;
+    }
+    // Repère visuel DLC : vert (large) / orange (≤3j) / rouge (périmé ou aujourd'hui)
+    let dlcDot='';
+    if(p.dlcProduit){
+      const j = daysTo(p.dlcProduit);
+      const col = j==null?'#9a8a82' : j<0?'#b3261e' : j<=3?'#AA7C39' : '#3f7d52';
+      const lbl = j==null?'' : j<0?'périmé' : j===0?'DLC aujourd\'hui' : j<=3?`DLC dans ${j} j`:'';
+      dlcDot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${col};margin-right:4px;vertical-align:middle"></span>${lbl?`<span style="color:${col};font-size:.74rem">${lbl}</span> `:''}`;
+    }
+    // Emplacement fin : équipement + niveau + boîte
+    const empFin = [
+      p.emplacement?empTagHtml(p.emplacement):'',
+      p.niveauNom?esc(p.niveauNom):'',
+      p.boiteNom?('📦 '+esc(p.boiteNom)):''
+    ].filter(Boolean).join(' · ');
     return `<div class="trace-step clickable" style="cursor:pointer" onclick="closeModal();traceProd(${p.id})" title="Traçabilité complète de ce batch">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <div><b>lot ${esc(p.lotProduction||'—')}</b> · ${qty(p.qteRestante)} pièce(s)<br>
-          <span style="font-size:.78rem;color:#9a8a82">${empTagHtml(p.emplacement)} · fab. ${fab?fmtDateTime(fab):fmtDate(p.date)} · DLC ${dlc}</span></div>
+        <div><b>lot ${esc(p.lotProduction||'—')}</b> · ${qty(p.qteRestante)} pièce(s)${ageTxt?` <span style="font-size:.72rem;color:#9a8a82">· ${ageTxt}</span>`:''}<br>
+          <span style="font-size:.78rem;color:#9a8a82">${empFin||'emplacement —'}</span><br>
+          <span style="font-size:.78rem">${dlcDot}<span style="color:#9a8a82">fab. ${fab?fmtDateTime(fab):fmtDate(p.date)} · DLC ${dlc}</span></span></div>
         <span class="tag ${st==='termine'?'ok':'event'}">${st==='termine'?'✓':'▶'}</span>
       </div>
     </div>`;
@@ -8186,6 +8242,94 @@ async function computeSalesVelocity(opts){
 
   return {lignes, alertes:lignes.filter(l=>l.alerte), lookbackMonths, horizon, observedDays,
     hasData: Object.keys(soldByParfum).length>0};
+}
+
+// ---- SÉLECTION MARCHÉ OPTIMALE ----
+// Croise rentabilité (CA, marge) et vélocité (vitesse de vente) pour proposer une sélection
+// équilibrée : cœur de gamme (stars), rotation (à alterner), à reposer (lents), + grands formats.
+async function computeMarketSelection(opts){
+  opts = opts || {};
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  let velo = {lignes:[], hasData:false};
+  try{ velo = await computeSalesVelocity({months:opts.months||3, horizonDays:14}); }catch(e){}
+  let profByNom = {};
+  try{
+    const _recipeItems = await db.recipeItems.toArray();
+    const _lots = await db.materialLots.toArray();
+    const _mats = await db.materials.toArray();
+    const _orders = await db.orders.toArray();
+    const _markets = await db.markets.toArray().catch(()=>[]);
+    const _marketMoves = await db.marketMoves.toArray().catch(()=>[]);
+    const _productions = await db.productions.toArray();
+    const _settings = await getSettings();
+    const A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats:_mats,
+      orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, settings:_settings});
+    (A.lignes||A||[]).forEach(l=>{ if(l && l.parfum) profByNom[l.parfum]=l; });
+  }catch(e){}
+  const veloByNom = {}; (velo.lignes||[]).forEach(l=>{ veloByNom[l.parfum]=l; });
+  const allNoms = new Set([...Object.keys(veloByNom), ...Object.keys(profByNom), ...recipes.map(r=>r.produitNom)]);
+  const lignes = [];
+  allNoms.forEach(nom=>{
+    if(!nom) return;
+    const v = veloByNom[nom]||{}; const pr = profByNom[nom]||{};
+    const isGF = BIG_FORMATS.some(b=>aiNormalize(b)===aiNormalize(nom));
+    lignes.push({parfum:nom, ca:+pr.ca||0, perMonth:+v.perMonth||0,
+      tauxMarge:(pr.tauxMarge!=null)?+pr.tauxMarge:null, vendu:+v.vendu||0, stock:+v.stock||0, isGF});
+  });
+  const maxCA = Math.max(1, ...lignes.map(l=>l.ca));
+  const maxVel = Math.max(1, ...lignes.map(l=>l.perMonth));
+  const maxMarge = Math.max(1, ...lignes.map(l=>l.tauxMarge||0));
+  lignes.forEach(l=>{
+    const sCA=l.ca/maxCA, sVel=l.perMonth/maxVel, sMarge=(l.tauxMarge!=null)?(l.tauxMarge/maxMarge):0.3;
+    l.score = sCA*0.45 + sVel*0.35 + sMarge*0.20;
+    l.aucuneVente = (l.vendu<=0 && l.perMonth<=0 && l.ca<=0);
+  });
+  const standards = lignes.filter(l=>!l.isGF).sort((a,b)=>b.score-a.score);
+  const grandsFormats = lignes.filter(l=>l.isGF).sort((a,b)=>b.score-a.score);
+  const avecVente = standards.filter(l=>!l.aucuneVente);
+  const sansVente = standards.filter(l=>l.aucuneVente);
+  const nCoeur = Math.min(8, Math.max(4, Math.round(avecVente.length*0.45)));
+  return {
+    hasData: velo.hasData || Object.keys(profByNom).length>0,
+    coeur: avecVente.slice(0,nCoeur),
+    rotation: avecVente.slice(nCoeur, nCoeur+5),
+    repos: avecVente.slice(nCoeur+5).concat(sansVente),
+    grandsFormats, sansVente, totalParfums: lignes.length
+  };
+}
+async function showMarketSelection(){
+  openModal('<h3>🎯 Sélection optimale des parfums</h3><p class="note">Analyse de tes ventes en cours…</p>');
+  const sel = await computeMarketSelection({});
+  if(!sel.hasData){
+    openModal(`<h3>🎯 Sélection optimale des parfums</h3>
+      <div class="banner" style="background:#fdf7ec;border-color:#e8d4a8"><div>Pas encore assez de ventes enregistrées pour analyser. Continue à saisir tes ventes et tes marchés : l'analyse se précisera automatiquement.</div></div>
+      <p class="note">En attendant, le principe d'équilibre reste : un cœur de 6-8 best-sellers toujours présents, 3-5 parfums en rotation pour la nouveauté, et 2-3 grands formats en pièces d'appel.</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const ligneHtml = (l, showCA)=>{
+    const col=flavorColor(l.parfum);
+    const marge = l.tauxMarge!=null?`${l.tauxMarge}%`:'—';
+    const vel = l.perMonth>0?`${Math.round(l.perMonth)}/mois`:'peu de ventes';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f0e9e2">
+      <span style="width:11px;height:11px;border-radius:50%;background:${col};flex:none"></span>
+      <span style="flex:1;font-weight:600">${esc(l.parfum)}</span>
+      <span style="font-size:.74rem;color:#9a8a82">${vel} · marge ${marge}</span></div>`;
+  };
+  const section = (titre, desc, arr, badge)=> arr.length?`
+    <div class="panel" style="margin-bottom:10px">
+      <h2 style="font-size:1rem">${titre} <span class="tag" style="background:${badge};color:#fff;font-size:.6rem">${arr.length}</span></h2>
+      <p class="note" style="margin-top:0;margin-bottom:6px">${desc}</p>
+      ${arr.map(l=>ligneHtml(l)).join('')}
+    </div>`:'';
+  openModal(`<h3>🎯 Sélection optimale des parfums</h3>
+    <p class="note">Calculée sur tes ventes réelles (CA, vitesse de vente, marge). Objectif : équilibre entre chiffre d'affaires, attractivité du stand et simplicité de production.</p>
+    ${section('⭐ Cœur de gamme', 'Tes best-sellers — toujours présents, en quantité. Le socle de ton chiffre.', sel.coeur, '#3f7d52')}
+    ${section('🔄 Rotation', 'À faire tourner d\'un marché à l\'autre pour créer la nouveauté et donner envie de revenir.', sel.rotation, '#AA7C39')}
+    ${section('🍪 Grands formats', 'Tes pièces d\'appel premium. Mets-en 2-3 en avant, pas forcément les 4.', sel.grandsFormats, '#8a6d3b')}
+    ${sel.repos.length?section('💤 À reposer', 'Ventes plus lentes — à sortir occasionnellement ou pour tester, sans encombrer la production.', sel.repos, '#9a8a82'):''}
+    <p class="note" style="margin-top:10px">💡 Un stand de ~12-15 références (cœur + rotation + 2-3 GF) est en général l'optimum : assez riche pour séduire, assez resserré pour produire efficacement et gérer ta chaîne du froid.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 
 async function analyzeStockCoverage(orders){
@@ -9585,7 +9729,7 @@ async function renderMarkets(){
    ${markets.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Marché</th><th>Statut</th><th>CA</th><th>Vendus</th><th>Invendus</th><th></th></tr></thead>
      <tbody>${rows}</tbody></table></div>`:`<div class="empty">Aucun marché. Créez une fiche avant votre prochain marché pour suivre stocks, ventes et performances.</div>`}
    </div>
-   <div class="flex" style="gap:8px;margin-top:12px"><button class="btn ghost" onclick="renderMarketForecast()">🔮 Prévisions de production marché</button></div>`;
+   <div class="flex" style="gap:8px;margin-top:12px"><button class="btn ghost" onclick="renderMarketForecast()">🔮 Prévisions de production marché</button><button class="btn ghost" onclick="showMarketSelection()">🎯 Sélection optimale des parfums</button></div>`;
 }
 
 async function marketForm(id){
