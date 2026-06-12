@@ -16447,14 +16447,14 @@ async function boitesSeedGF(){
   for(const b of boxes){
     const nom=norm(b.nom);
     let gf=null;
-    // Règles spécifiques d'abord (les plus précises), pour éviter les collisions "grande/moyenne"
-    if(nom.includes('transparente')) gf=0;
-    else if(nom.includes('rectangle')) gf=6;
-    else if(nom.includes('grande') && nom.includes('couvercle bleu')) gf=2;
-    else if(nom.includes('grande') && nom.includes('couvercle noir')) gf=6;
-    else if(nom.includes('moyenne') && nom.includes('couvercle noir')) gf=4;
-    else if(nom.includes('moyenne') && nom.includes('couvercle bleu')) gf=2;
-    else if(nom.includes('petite') && nom.includes('couvercle noir')) gf=0;
+    // Noms courts (après renommage) OU anciens noms longs — les plus précis d'abord
+    if(/\b21\s*t\b/.test(nom) || nom.includes('transparente')) gf=0;
+    else if(/\b30\s*r\b/.test(nom) || nom.includes('rectangle')) gf=6;
+    else if(/\bbo[iî]te\s*30\b/.test(nom) || (nom.includes('grande') && nom.includes('couvercle noir'))) gf=6;
+    else if(/\bbo[iî]te\s*20\b/.test(nom) || (nom.includes('grande') && nom.includes('couvercle bleu'))) gf=2;
+    else if(/\bbo[iî]te\s*22\b/.test(nom) || (nom.includes('moyenne') && nom.includes('couvercle noir'))) gf=4;
+    else if(/\bbo[iî]te\s*10\b/.test(nom) || (nom.includes('moyenne') && nom.includes('couvercle bleu'))) gf=2;
+    else if(/\bbo[iî]te\s*16\b/.test(nom) || (nom.includes('petite') && nom.includes('couvercle noir'))) gf=0;
     if(gf!==null){ await db.storageBoxes.update(b.id, {capaciteGF:gf}); n++; }
   }
   renderBoites();
