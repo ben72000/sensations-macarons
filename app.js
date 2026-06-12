@@ -8297,38 +8297,112 @@ async function computeMarketSelection(opts){
     grandsFormats, sansVente, totalParfums: lignes.length
   };
 }
+// Analyse MARCHÉ par TAUX D'ÉCOULEMENT (canal marché uniquement, anti-biais de volume).
+// taux = (emporté − rapporté − don − perte) / emporté, agrégé sur tous les marchés.
+// Signale les "stars cachées" : fort écoulement mais petit volume emporté → en amener plus.
+async function computeMarketChannelAnalysis(opts){
+  opts = opts || {};
+  const moves = await db.marketMoves.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recByNom = {}; recipes.forEach(r=>{ recByNom[aiNormalize(r.produitNom)]=r; });
+  const byParfum = {};
+  moves.forEach(mv=>{
+    const nom = mv.parfum||''; if(!nom) return;
+    const k = aiNormalize(nom);
+    (byParfum[k] ||= {parfum:nom, sortie:0, retour:0, don:0, perte:0, nbMarches:new Set()});
+    const b=byParfum[k];
+    if(mv.marketId!=null) b.nbMarches.add(mv.marketId);
+    if(mv.type==='sortie') b.sortie+=(+mv.qte||0);
+    else if(mv.type==='retour') b.retour+=(+mv.qte||0);
+    else if(mv.type==='don') b.don+=(+mv.qte||0);
+    else if(mv.type==='perte') b.perte+=(+mv.qte||0);
+  });
+  const lignes = Object.values(byParfum).map(b=>{
+    const emporte = b.sortie;
+    const ecoule = Math.max(0, b.sortie - b.retour - b.don - b.perte);
+    const taux = emporte>0 ? Math.round(ecoule/emporte*1000)/10 : null;
+    const isGF = BIG_FORMATS.some(x=>aiNormalize(x)===aiNormalize(b.parfum));
+    const nbM = b.nbMarches.size;
+    const emporteMoyen = nbM>0 ? Math.round(emporte/nbM) : emporte;
+    return {parfum:b.parfum, emporte, ecoule, retour:b.retour, taux, isGF, nbMarches:nbM, emporteMoyen};
+  }).filter(l=>l.emporte>0);
+  // volume écoulé moyen par marché (pour repérer petits volumes)
+  const ecouleMoyens = lignes.map(l=>l.nbMarches>0?l.ecoule/l.nbMarches:l.ecoule);
+  const medianEcoule = ecouleMoyens.length ? ecouleMoyens.slice().sort((a,b)=>a-b)[Math.floor(ecouleMoyens.length/2)] : 0;
+  lignes.forEach(l=>{
+    const ecMoy = l.nbMarches>0?l.ecoule/l.nbMarches:l.ecoule;
+    // star cachée : taux très élevé (≥90%) ET volume écoulé sous la médiane → demande probablement non satisfaite
+    l.starCachee = (l.taux!=null && l.taux>=90 && ecMoy < medianEcoule && !l.isGF);
+    l.surstock = (l.taux!=null && l.taux<55); // s'écoule mal : tu en amènes trop ou il séduit peu
+  });
+  lignes.sort((a,b)=>(b.taux||0)-(a.taux||0) || b.ecoule-a.ecoule);
+  return {hasData: lignes.length>0, lignes,
+    standards: lignes.filter(l=>!l.isGF), grandsFormats: lignes.filter(l=>l.isGF)};
+}
+let _marketSelCanal = 'marche'; // 'marche' (taux d'écoulement) | 'global' (CA/vélocité toutes ventes)
 async function showMarketSelection(){
-  openModal('<h3>🎯 Sélection optimale des parfums</h3><p class="note">Analyse de tes ventes en cours…</p>');
-  const sel = await computeMarketSelection({});
-  if(!sel.hasData){
-    openModal(`<h3>🎯 Sélection optimale des parfums</h3>
-      <div class="banner" style="background:#fdf7ec;border-color:#e8d4a8"><div>Pas encore assez de ventes enregistrées pour analyser. Continue à saisir tes ventes et tes marchés : l'analyse se précisera automatiquement.</div></div>
-      <p class="note">En attendant, le principe d'équilibre reste : un cœur de 6-8 best-sellers toujours présents, 3-5 parfums en rotation pour la nouveauté, et 2-3 grands formats en pièces d'appel.</p>
+  openModal('<h3>🎯 Sélection optimale des parfums</h3><p class="note">Analyse en cours…</p>');
+  await renderMarketSelection();
+}
+function marketSelSetCanal(c){ _marketSelCanal=c; renderMarketSelection(); }
+async function renderMarketSelection(){
+  const tabs = `<div style="display:flex;gap:6px;margin-bottom:12px">
+    <button class="btn ${_marketSelCanal==='marche'?'gold':'ghost'} sm" onclick="marketSelSetCanal('marche')">⛺ Marché (écoulement)</button>
+    <button class="btn ${_marketSelCanal==='global'?'gold':'ghost'} sm" onclick="marketSelSetCanal('global')">🌐 Toutes ventes (CA)</button>
+  </div>`;
+  const pastille = nom => `<span style="width:11px;height:11px;border-radius:50%;background:${flavorColor(nom)};flex:none;display:inline-block"></span>`;
+  if(_marketSelCanal==='marche'){
+    const a = await computeMarketChannelAnalysis({});
+    if(!a.hasData){
+      openModal(`<h3>🎯 Sélection optimale des parfums</h3>${tabs}
+        <div class="banner" style="background:#fdf7ec;border-color:#e8d4a8"><div>Pas encore de données de marché (sorties/retours). Enregistre tes chargements et tes invendus depuis l'écran Marchés : l'analyse par taux d'écoulement se construira toute seule.</div></div>
+        <p class="note">Le taux d'écoulement (vendu ÷ emporté) est plus juste que le volume : il révèle les parfums qui partent à tous les coups, même si tu en amènes peu.</p>
+        <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+      return;
+    }
+    const row = l=>{
+      const tx = l.taux!=null?`${l.taux}%`:'—';
+      const col = l.taux==null?'#9a8a82':l.taux>=85?'#3f7d52':l.taux>=55?'#AA7C39':'#b3261e';
+      const badges = [
+        l.starCachee?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.58rem">⭐ star cachée → en amener +</span>':'',
+        l.surstock?'<span class="tag" style="background:#b3261e;color:#fff;font-size:.58rem">⚠ s\'écoule mal</span>':''
+      ].join(' ');
+      return `<div style="padding:6px 0;border-bottom:1px solid #f0e9e2">
+        <div style="display:flex;align-items:center;gap:8px">
+          ${pastille(l.parfum)}<span style="flex:1;font-weight:600">${esc(l.parfum)}</span>
+          <span style="font-weight:700;color:${col}">${tx}</span></div>
+        <div style="font-size:.72rem;color:#9a8a82;margin-left:19px">écoulé ${l.ecoule} / emporté ${l.emporte}${l.nbMarches?` · ${l.nbMarches} marché(s)`:''} ${badges}</div>
+      </div>`;
+    };
+    openModal(`<h3>🎯 Sélection optimale des parfums</h3>${tabs}
+      <p class="note">Basé <b>uniquement sur tes marchés</b>, en <b>taux d'écoulement</b> (vendu ÷ emporté). Plus juste que le volume : un parfum qui part à 100% mais en petite quantité est une <b>star cachée</b> — tu devrais en amener plus.</p>
+      <div class="panel" style="margin-bottom:10px"><h2 style="font-size:1rem">Standards — par taux d'écoulement</h2>
+        ${a.standards.map(row).join('')||'<p class="note">Aucune donnée standard.</p>'}</div>
+      ${a.grandsFormats.length?`<div class="panel" style="margin-bottom:10px"><h2 style="font-size:1rem">🍪 Grands formats</h2>${a.grandsFormats.map(row).join('')}</div>`:''}
+      <p class="note">🟢 ≥85% : forte demande · 🟡 55-85% : équilibré · 🔴 &lt;55% : tu en amènes trop ou il séduit peu. À toi de juger en croisant taux <b>et</b> volume.</p>
       <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
     return;
   }
-  const ligneHtml = (l, showCA)=>{
-    const col=flavorColor(l.parfum);
-    const marge = l.tauxMarge!=null?`${l.tauxMarge}%`:'—';
-    const vel = l.perMonth>0?`${Math.round(l.perMonth)}/mois`:'peu de ventes';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f0e9e2">
-      <span style="width:11px;height:11px;border-radius:50%;background:${col};flex:none"></span>
-      <span style="flex:1;font-weight:600">${esc(l.parfum)}</span>
-      <span style="font-size:.74rem;color:#9a8a82">${vel} · marge ${marge}</span></div>`;
-  };
+  // canal global (ancienne analyse CA/vélocité)
+  const sel = await computeMarketSelection({});
+  if(!sel.hasData){
+    openModal(`<h3>🎯 Sélection optimale des parfums</h3>${tabs}
+      <div class="banner" style="background:#fdf7ec;border-color:#e8d4a8"><div>Pas encore assez de ventes enregistrées. Continue à saisir tes ventes : l'analyse se précisera.</div></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const ligneHtml = l=>`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f0e9e2">
+      ${pastille(l.parfum)}<span style="flex:1;font-weight:600">${esc(l.parfum)}</span>
+      <span style="font-size:.74rem;color:#9a8a82">${l.perMonth>0?`${Math.round(l.perMonth)}/mois`:'peu de ventes'} · marge ${l.tauxMarge!=null?l.tauxMarge+'%':'—'}</span></div>`;
   const section = (titre, desc, arr, badge)=> arr.length?`
-    <div class="panel" style="margin-bottom:10px">
-      <h2 style="font-size:1rem">${titre} <span class="tag" style="background:${badge};color:#fff;font-size:.6rem">${arr.length}</span></h2>
-      <p class="note" style="margin-top:0;margin-bottom:6px">${desc}</p>
-      ${arr.map(l=>ligneHtml(l)).join('')}
-    </div>`:'';
-  openModal(`<h3>🎯 Sélection optimale des parfums</h3>
-    <p class="note">Calculée sur tes ventes réelles (CA, vitesse de vente, marge). Objectif : équilibre entre chiffre d'affaires, attractivité du stand et simplicité de production.</p>
-    ${section('⭐ Cœur de gamme', 'Tes best-sellers — toujours présents, en quantité. Le socle de ton chiffre.', sel.coeur, '#3f7d52')}
-    ${section('🔄 Rotation', 'À faire tourner d\'un marché à l\'autre pour créer la nouveauté et donner envie de revenir.', sel.rotation, '#AA7C39')}
-    ${section('🍪 Grands formats', 'Tes pièces d\'appel premium. Mets-en 2-3 en avant, pas forcément les 4.', sel.grandsFormats, '#8a6d3b')}
-    ${sel.repos.length?section('💤 À reposer', 'Ventes plus lentes — à sortir occasionnellement ou pour tester, sans encombrer la production.', sel.repos, '#9a8a82'):''}
-    <p class="note" style="margin-top:10px">💡 Un stand de ~12-15 références (cœur + rotation + 2-3 GF) est en général l'optimum : assez riche pour séduire, assez resserré pour produire efficacement et gérer ta chaîne du froid.</p>
+    <div class="panel" style="margin-bottom:10px"><h2 style="font-size:1rem">${titre} <span class="tag" style="background:${badge};color:#fff;font-size:.6rem">${arr.length}</span></h2>
+      <p class="note" style="margin-top:0;margin-bottom:6px">${desc}</p>${arr.map(ligneHtml).join('')}</div>`:'';
+  openModal(`<h3>🎯 Sélection optimale des parfums</h3>${tabs}
+    <p class="note">Toutes ventes confondues (CA, vitesse, marge). ⚠️ Mélange marché, boutique et distanciel — moins précis pour un marché que l'onglet « écoulement ».</p>
+    ${section('⭐ Cœur de gamme', 'Tes best-sellers — toujours présents, en quantité.', sel.coeur, '#3f7d52')}
+    ${section('🔄 Rotation', 'À faire tourner pour la nouveauté.', sel.rotation, '#AA7C39')}
+    ${section('🍪 Grands formats', 'Pièces d\'appel premium (2-3 en avant).', sel.grandsFormats, '#8a6d3b')}
+    ${sel.repos.length?section('💤 À reposer', 'Ventes plus lentes.', sel.repos, '#9a8a82'):''}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 
