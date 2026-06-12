@@ -2103,10 +2103,6 @@ function bomDisplay(materialId){
 }
 function drawBom(){
   const mats=window._matsCache||[];
-  // Mémorise la position de défilement (modale ou fenêtre) pour éviter le saut au redraw.
-  const _bomList=document.getElementById('bomList');
-  const _scroller = _bomList ? (_bomList.closest('.modal-body')||_bomList.closest('.sheet')||_bomList.closest('.modal')||null) : null;
-  const _savedScroll = _scroller ? _scroller.scrollTop : (window.scrollY||0);
   // Compte les occurrences de chaque matière, et repère les doublons sur la MÊME phase (vraie erreur).
   const countMat={}, countMatPart={};
   bomDraft.forEach(b=>{ countMat[b.materialId]=(countMat[b.materialId]||0)+1;
@@ -2135,11 +2131,6 @@ function drawBom(){
       <input type="text" class="bom-etiq" value="${esc(b.etiquette||'')}" oninput="bomSetEtiq(${i}, this.value)" placeholder="note (ex : chaude)" title="Étiquette libre, purement informative — sans effet sur le stock" maxlength="24">
       <span class="x" onclick="bomDel(${i})">×</span>
     </div>`; }).join('') || '<p class="note">Aucune matière ajoutée.</p>';
-  // Restaure la position de défilement pour éviter le saut intempestif après le redraw.
-  if(_savedScroll){
-    if(_scroller) _scroller.scrollTop=_savedScroll;
-    else window.scrollTo(0, _savedScroll);
-  }
 }
 // Étiquette un ingrédient comme servant aux coques ou à la ganache (évite le double
 // comptage lors d'une production par composants séparés).
