@@ -2119,7 +2119,7 @@ function drawBom(){
     return `
     <div class="bom-line">
       <select onchange="bomSetMat(${i}, +this.value)">
-        ${mats.map(m=>`<option value="${m.id}" ${b.materialId===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (saisie en ${bomDisplay(m.id).unit})</option>`).join('')}
+        ${mats.slice().sort((a,b)=>(a.nom||'').localeCompare(b.nom||'','fr',{sensitivity:'base'})).map(m=>`<option value="${m.id}" ${b.materialId===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (saisie en ${bomDisplay(m.id).unit})</option>`).join('')}
       </select>
       <input type="number" step="${d.factor===1000?'1':'0.001'}" value="${shown}" oninput="bomSetQte(${i}, +this.value)" placeholder="qté">
       <span style="font-size:.75rem;color:#9a8a82">${esc(d.unit)}/batch${note?'<br>'+note:''}</span>
@@ -17223,14 +17223,26 @@ async function componentForm(id){
 }
 function drawCmpBom(){
   const box=document.getElementById('cmpBomList'); if(!box) return;
-  const mats=window._matsCache||[];
-  box.innerHTML = cmpBomDraft.map((b,i)=>{
-    const opts=mats.map(m=>`<option value="${m.id}" ${m.id===b.materialId?'selected':''}>${esc(m.nom)}</option>`).join('');
+  const mats=(window._matsCache||[]).slice().sort((a,b)=>(a.nom||'').localeCompare(b.nom||'','fr',{sensitivity:'base'}));
+  const dl = `<datalist id="cmpMatList">${mats.map(m=>`<option value="${esc(m.nom)}${m.marque?' — '+esc(m.marque):''}">`).join('')}</datalist>`;
+  const nomById = id => { const m=mats.find(x=>x.id===id); return m?(m.nom+(m.marque?' — '+m.marque:'')):''; };
+  box.innerHTML = dl + cmpBomDraft.map((b,i)=>{
     return `<div class="bom-line" style="grid-template-columns:1fr 90px 24px">
-      <select onchange="cmpBomSet(${i},'materialId',+this.value)">${opts}</select>
+      <input list="cmpMatList" value="${esc(nomById(b.materialId))}" placeholder="Tape ou choisis une matière…" oninput="cmpBomPick(${i},this.value)">
       <input type="number" step="0.001" min="0" value="${b.qteParBatch!=null?b.qteParBatch:''}" oninput="cmpBomSet(${i},'qteParBatch',+this.value)" placeholder="qté">
       <span class="x" onclick="cmpBomDel(${i})">×</span></div>`;
   }).join('') || '<p class="note">Aucun ingrédient.</p>';
+}
+// Résout le texte saisi (nom éventuellement suivi de « — marque ») vers un materialId.
+function cmpBomPick(i, txt){
+  if(!cmpBomDraft[i]) return;
+  const mats=window._matsCache||[];
+  const t=(txt||'').trim().toLowerCase();
+  // match exact "nom — marque" puis match sur le nom seul
+  let m = mats.find(x=>((x.nom||'')+(x.marque?' — '+x.marque:'')).toLowerCase()===t)
+       || mats.find(x=>(x.nom||'').toLowerCase()===t)
+       || mats.find(x=>(x.nom||'').toLowerCase().startsWith(t));
+  if(m) cmpBomDraft[i].materialId = m.id;
 }
 function cmpBomAdd(){ const mats=window._matsCache||[]; if(!mats.length) return; cmpBomDraft.push({materialId:mats[0].id, qteParBatch:0}); drawCmpBom(); }
 function cmpBomDel(i){ cmpBomDraft.splice(i,1); drawCmpBom(); }
