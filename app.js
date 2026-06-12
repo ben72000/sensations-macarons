@@ -1912,6 +1912,7 @@ async function recForm(id){
      <p class="note" style="margin-top:8px">Étapes propres à ce parfum qui ajoutent du temps, en plus des temps génériques (coques, ganache, montage). Ex : chablonnage framboise, incrustation de pistaches, noisettes à couper. Laisse vide si rien de particulier — l'ordonnancement n'en sera que plus juste quand tu les renseigneras.</p>
      <div id="tsList"></div>
      <button class="btn ghost sm" style="margin-top:6px" onclick="tsAdd()">+ Ajouter une opération</button>
+     <div id="tsRecap" style="margin-top:8px"></div>
    </details>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveRec(${id||0})">Enregistrer</button></div>`);
   drawBom();
@@ -1932,10 +1933,39 @@ function drawTs(){
       </select>
       <span class="x" onclick="tsDel(${i})">×</span>
     </div>`).join('') || '<p class="note">Aucune opération spécifique.</p>';
+  // Récapitulatif de l'impact coût (si main-d'œuvre activée).
+  const s=getSettings(); const taux=+s.laborRate||0;
+  const rend=Math.max(1,+val('f_rend')||60);
+  let minPiece=0;
+  tsDraft.forEach(t=>{ const d=Math.max(0,+t.duree||0); if(d<=0)return; minPiece += (t.unite==='macaron')?d:(d/rend); });
+  const recapBox=document.getElementById('tsRecap');
+  if(recapBox){
+    if(s.laborEnabled && minPiece>0){
+      const coutPiece=money2((minPiece/60)*taux);
+      recapBox.innerHTML=`<div class="sum-box" style="background:#faf6ee"><span>⏱ Surcoût temps de ces opérations</span><b>+${euro(coutPiece)}/macaron</b></div>
+        <p class="note">Soit ${round3(minPiece)} min/macaron × ${taux}€/h. Ce surcoût s'ajoute automatiquement au coût de revient de cette recette.</p>`;
+    } else if(minPiece>0 && !s.laborEnabled){
+      recapBox.innerHTML=`<p class="note">💡 Active la main-d'œuvre dans les paramètres pour que ce temps (${round3(minPiece)} min/macaron) soit chiffré dans le coût de revient.</p>`;
+    } else {
+      recapBox.innerHTML='';
+    }
+  }
 }
 function tsAdd(){ tsDraft.push({nom:'', duree:0, unite:'batch'}); drawTs(); }
 function tsDel(i){ tsDraft.splice(i,1); drawTs(); }
-function tsSet(i,k,v){ if(tsDraft[i]){ tsDraft[i][k]=(k==='duree')?Math.max(0,+v||0):v; if(k==='unite')drawTs(); } }
+function tsSet(i,k,v){ if(tsDraft[i]){ tsDraft[i][k]=(k==='duree')?Math.max(0,+v||0):v; if(k!=='nom')drawTs(); else tsUpdateRecap(); } }
+// Met à jour seulement le récap de coût (sans redessiner les champs → préserve le focus de saisie).
+function tsUpdateRecap(){
+  const s=getSettings(); const taux=+s.laborRate||0; const rend=Math.max(1,+val('f_rend')||60);
+  let minPiece=0; tsDraft.forEach(t=>{ const d=Math.max(0,+t.duree||0); if(d<=0)return; minPiece += (t.unite==='macaron')?d:(d/rend); });
+  const recapBox=document.getElementById('tsRecap'); if(!recapBox) return;
+  if(s.laborEnabled && minPiece>0){ const coutPiece=money2((minPiece/60)*taux);
+    recapBox.innerHTML=`<div class="sum-box" style="background:#faf6ee"><span>⏱ Surcoût temps de ces opérations</span><b>+${euro(coutPiece)}/macaron</b></div>
+      <p class="note">Soit ${round3(minPiece)} min/macaron × ${taux}€/h. Ce surcoût s'ajoute automatiquement au coût de revient de cette recette.</p>`;
+  } else if(minPiece>0 && !s.laborEnabled){
+    recapBox.innerHTML=`<p class="note">💡 Active la main-d'œuvre dans les paramètres pour que ce temps (${round3(minPiece)} min/macaron) soit chiffré dans le coût de revient.</p>`;
+  } else recapBox.innerHTML='';
+}
 // Unité d'affichage/saisie d'une matière en recette :
 //  - denrée (stockée en kg) → saisie en GRAMMES (facteur 1000)
 //  - emballage / autre      → unité native (facteur 1)
@@ -7163,6 +7193,23 @@ function coutRevientRecette(recipe, recipeItems, lots, settings, opts){
       laborMode = 'manuel';
     }
   }
+  // TEMPS SPÉCIFIQUES de la recette (opérations propres à ce parfum : chablonnage, incrustation
+  // noisettes/pistaches…). S'ajoutent à la MO générique, par-dessus la source manuel/mesuré.
+  // Unité 'macaron' → min/pièce ; unité 'batch' → min/batch ÷ pièces utiles. Comptés seulement si MO activée.
+  let coutSpecUnit=0, minSpecParPiece=0; const specDetail=[];
+  if(s.laborEnabled && Array.isArray(recipe.tempsSpecifiques)){
+    recipe.tempsSpecifiques.forEach(op=>{
+      const d=Math.max(0,+op.duree||0); if(d<=0) return;
+      const minPiece = (op.unite==='macaron') ? d : (piecesUtiles>0 ? d/piecesUtiles : 0);
+      minSpecParPiece += minPiece;
+      const c = (minPiece/60)*(+s.laborRate||0);
+      specDetail.push({nom:op.nom||'opération', unite:op.unite==='macaron'?'macaron':'batch', duree:d, minParPiece:round3(minPiece), coutUnit:money2(c)});
+    });
+    coutSpecUnit = (minSpecParPiece/60)*(+s.laborRate||0);
+  }
+  // intègre le coût spécifique dans la MO totale
+  coutMODUnit  += coutSpecUnit;
+  coutMODBatch += coutSpecUnit*piecesUtiles;
   const coutRevientUnit = money2(coutMatUnit + coutConsoUnit + coutMODUnit);
   return {
     recipeId: recipe.id, nom: recipe.produitNom, rendement, pertePct, piecesUtiles: round3(piecesUtiles),
@@ -7170,6 +7217,7 @@ function coutRevientRecette(recipe, recipeItems, lots, settings, opts){
     coutMatUnit: money2(coutMatUnit),
     coutConsoUnit: money2(coutConsoUnit),
     coutMODUnit: money2(coutMODUnit), coutMODBatch: money2(coutMODBatch),
+    coutSpecUnit: money2(coutSpecUnit), specDetail,
     coutRevientUnit,
     coutRevientBatch: money2(coutRevientUnit*piecesUtiles),
     laborOn: !!s.laborEnabled, laborMode,
@@ -16003,11 +16051,140 @@ async function renderPMS(){
    <div class="pick-tabs">
      <button class="${_pmsTab==='temp'?'active':''}" onclick="pmsSetTab('temp')">🌡 Températures</button>
      <button class="${_pmsTab==='nettoyage'?'active':''}" onclick="pmsSetTab('nettoyage')">🧼 Nettoyage</button>
+     <button class="${_pmsTab==='doc'?'active':''}" onclick="pmsSetTab('doc')">📋 Document</button>
+     <button class="${_pmsTab==='5m'?'active':''}" onclick="pmsSetTab('5m')">🔬 Analyse 5M</button>
    </div>
    <div id="pmsBody"></div>`;
-  if(_pmsTab==='temp') await pmsRenderTemp(); else await pmsRenderCleaning();
+  if(_pmsTab==='temp') await pmsRenderTemp();
+  else if(_pmsTab==='nettoyage') await pmsRenderCleaning();
+  else if(_pmsTab==='doc') pmsRenderDoc();
+  else if(_pmsTab==='5m') pmsRender5M();
 }
 function pmsSetTab(t){ if(t!==_pmsTab && !pmsGuardUnsaved()) return; _pmsTab=t; renderPMS(); }
+
+// ---------- C. DOCUMENT PMS (consultable + infos labo saisies en local) ----------
+function pmsGetLaboInfo(){ const s=getSettings(); return s.pmsLabo||{}; }
+function pmsSaveLaboInfo(){
+  const s=getSettings();
+  s.pmsLabo = {
+    responsable: (val('pms_resp')||'').trim(),
+    adresse: (val('pms_adr')||'').trim(),
+    siret: (val('pms_siret')||'').trim(),
+    declaration: (val('pms_decl')||'').trim(),
+    formation: (val('pms_form')||'').trim(),
+    maj: today()
+  };
+  saveSettings(s);
+  toast('Informations du labo enregistrées ✓');
+  pmsRenderDoc();
+}
+// Bloc d'accordéon réutilisable (titre + contenu HTML).
+function pmsAccordion(titre, contenuHtml, open){
+  return `<details ${open?'open':''} style="margin:8px 0;border:1px solid #ece2d4;border-radius:10px;overflow:hidden">
+    <summary style="cursor:pointer;padding:12px 14px;background:#faf6ee;font-weight:600;color:var(--bordeaux,#7a2230)">${titre}</summary>
+    <div style="padding:6px 14px 14px">${contenuHtml}</div></details>`;
+}
+function pmsLi(arr){ return `<ul style="margin:4px 0 4px 18px;padding:0">${arr.map(x=>`<li style="margin:3px 0;font-size:.9rem;line-height:1.45">${x}</li>`).join('')}</ul>`; }
+
+function pmsRenderDoc(){
+  const body=document.getElementById('pmsBody'); if(!body) return;
+  const L=pmsGetLaboInfo();
+  const champs = `
+    <div class="panel" style="background:#fff">
+      <h2 style="font-size:1rem">🏷 Informations de mon établissement</h2>
+      <p class="note">Saisies et conservées <b>uniquement sur cet appareil</b> (rien n'est envoyé en ligne).</p>
+      <div class="field"><label>Responsable (exploitant)</label><input id="pms_resp" value="${esc(L.responsable||'')}" placeholder="Nom Prénom"></div>
+      <div class="field"><label>Adresse du laboratoire</label><input id="pms_adr" value="${esc(L.adresse||'')}" placeholder="Adresse complète"></div>
+      <div class="row2">
+        <div class="field"><label>N° SIRET</label><input id="pms_siret" value="${esc(L.siret||'')}" placeholder="000 000 000 00000"></div>
+        <div class="field"><label>N° déclaration (DDPP)</label><input id="pms_decl" value="${esc(L.declaration||'')}" placeholder="le cas échéant"></div>
+      </div>
+      <div class="field"><label>Formation hygiène — date / organisme</label><input id="pms_form" value="${esc(L.formation||'')}" placeholder="ex : 03/2025 — HACCP"></div>
+      <button class="btn" onclick="pmsSaveLaboInfo()">💾 Enregistrer mes informations</button>
+      ${L.maj?`<p class="note" style="margin-top:6px">Dernière mise à jour : ${fmtDate(L.maj)}</p>`:''}
+    </div>`;
+
+  const intro = `<div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>
+    Ce document est ta référence sanitaire, consultable à tout moment. Les relevés (températures, nettoyage) se font dans les onglets dédiés et constituent ta preuve d'application. <b>Tu restes responsable de son contenu</b> : complète-le avec ta réalité et fais-le valider si besoin par ta DDPP.</div></div>`;
+
+  body.innerHTML = champs + intro + `<div class="panel">
+    <h2 style="font-size:1.05rem">📋 Plan de Maîtrise Sanitaire</h2>
+    ${pmsAccordion('1 · Présentation de l\'activité', pmsLi([
+      '<b>Activité</b> : fabrication artisanale de macarons (coques meringue + ganaches) et vente.',
+      '<b>Lieu</b> : laboratoire à domicile déclaré.',
+      '<b>Effectif</b> : exploitant seul.',
+      '<b>Canaux</b> : marchés / vente directe, vente en ligne avec expédition, revente professionnels (B2B).',
+      '<b>Conservation</b> : produits réfrigérés ; congélation des coques et ganaches comme étape de process.'
+    ]))}
+    ${pmsAccordion('2 · Bonnes pratiques d\'hygiène', 
+      '<b>Personnel</b>'+pmsLi(['Tenue propre dédiée (blouse, charlotte).','Lavage des mains aux moments clés (entrée, pause, changement de tâche).','Pas de production en cas de maladie transmissible ; plaie protégée + gant.','Ni manger, ni boire, ni fumer en zone de production.'])
+      +'<b>Locaux & matériel</b>'+pmsLi(['Zone de production dédiée, sans circulation domestique pendant la prod.','Surfaces et matériel lavables et désinfectés (poches, douilles, pinceaux de chablonnage).','Plan de nettoyage suivi (voir onglet Nettoyage).','Lutte contre les nuisibles, gestion des déchets.'])
+      +'<b>Réception & stockage</b>'+pmsLi(['Contrôle à réception : emballage, DLC/DLUO, température, aspect.','Enregistrement des lots fournisseurs.','Froid positif / sec selon produits ; rotation FIFO.','Séparation et identification des allergènes.']))}
+    ${pmsAccordion('3 · Plan HACCP (dangers & maîtrise)', 
+      'Étapes suivies de la réception à la vente, avec maîtrise des dangers biologiques, chimiques, physiques et allergènes. Points de vigilance :'
+      +pmsLi(['<b>Ovoproduits</b> → Salmonella : pasteurisé, froid, DLC.','<b>Crème/lait</b> → Listeria : froid strict jusqu\'au dernier moment.','<b>Cuisson</b> : barème temps/température constant.','<b>Chablonnage / incrustation</b> : hygiène, plan de travail dédié.','<b>Décongélation</b> : au réfrigérateur uniquement, jamais de recongélation.','<b>Étiquetage</b> : allergènes + DLC + lot avant mise en vente.']))}
+    ${pmsAccordion('4 · Traçabilité & non-conformités', pmsLi([
+      'Traçabilité amont (lots fournisseurs), interne (n° de lot par production), aval (destinataires B2B).',
+      'Produit douteux (rupture froid, aspect anormal, DLC dépassée) : écarté, non vendu.',
+      'En cas d\'alerte : isoler le lot, identifier les produits concernés, décider du retrait/rappel, informer les autorités si la sécurité est en jeu.',
+      'Enregistrement de chaque incident et de l\'action corrective.'
+    ]))}
+    ${pmsAccordion('5 · Allergènes', 
+      'Présents dans l\'activité : fruits à coque (amande, noisette, pistache), œuf, lait, soja (à vérifier selon chocolats/arômes).'
+      +pmsLi(['Information du consommateur sur tous les canaux (coffrets, marché, fiche en ligne).','Vente à distance : info allergènes disponible avant achat et à la livraison.','Prévention des contaminations croisées (nettoyage entre séries, découpe des fruits à coque).','Vérification des étiquettes fournisseurs à chaque réception.']))}
+    ${pmsAccordion('6 · Chaîne du froid', 
+      '<b>Production</b>'+pmsLi(['Matières au froid jusqu\'au dernier moment ; refroidissement maîtrisé ; relevés réguliers.'])
+      +'<b>Congélation / décongélation</b>'+pmsLi(['Congeler des produits sains, rapidement, à cœur (≤ -18 °C, à confirmer).','Identifier nature/lot/date ; durée max à définir.','Décongélation au réfrigérateur ; pas de recongélation.'])
+      +'<b>Marchés & livraison</b>'+pmsLi(['Contenants isothermes + accumulateurs en nombre suffisant.','Durée d\'exposition limitée ; froid maintenu en vente.','Produit ayant subi une rupture prolongée : non remis en vente.']))}
+    ${pmsAccordion('7 · Enregistrements à tenir', pmsLi([
+      'Relevés de température (onglet Températures).','Plan et fiches de nettoyage (onglet Nettoyage).','Fiches de réception des matières (lots, DLC).','Fiches de production (lot, DLC).','Suivi congélation/décongélation.','Registre des non-conformités.','Attestation de formation hygiène.'
+    ]))}
+    <p class="note" style="margin-top:10px">Les valeurs-cibles (températures, DLC) sont des repères usuels à confirmer selon tes produits et tes fournisseurs.</p>
+  </div>`;
+}
+
+function pmsRender5M(){
+  const body=document.getElementById('pmsBody'); if(!body) return;
+  const m = (cause,risque,prev)=>`<tr><td style="padding:6px 8px;border-bottom:1px solid #efe7da;font-size:.85rem">${cause}</td><td style="padding:6px 8px;border-bottom:1px solid #efe7da;font-size:.85rem">${risque}</td><td style="padding:6px 8px;border-bottom:1px solid #efe7da;font-size:.85rem">${prev}</td></tr>`;
+  const tbl = (titre,intro,rows)=>pmsAccordion(titre,
+    `<p class="note">${intro}</p><table style="width:100%;border-collapse:collapse;margin-top:4px">
+      <tr style="background:#7a2230"><th style="padding:6px 8px;color:#fff;text-align:left;font-size:.8rem">Cause</th><th style="padding:6px 8px;color:#fff;text-align:left;font-size:.8rem">Risque</th><th style="padding:6px 8px;color:#fff;text-align:left;font-size:.8rem">Prévention</th></tr>
+      ${rows}</table>`);
+
+  body.innerHTML = `<div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>
+    L'analyse 5M (Ishikawa) examine les 5 familles de causes pouvant affecter la sécurité sanitaire : Main-d'œuvre, Matière, Matériel, Méthode, Milieu. Lecture transversale, complémentaire du PMS.</div></div>
+  <div class="panel">
+    <h2 style="font-size:1.05rem">🔬 Analyse 5M</h2>
+    ${tbl('M1 · Main-d\'œuvre','Exploitant seul : maîtrise totale, mais pas de double regard.',
+      m('Hygiène des mains insuffisante','Contamination microbienne','Protocole de lavage strict')
+      +m('Fatigue / surcharge','Oublis (froid, étiquetage)','Organisation, pauses')
+      +m('Découpe fruits à coque','Contamination croisée allergènes','Nettoyage entre séries')
+      +m('Travail sans contrôle croisé','Anomalie non détectée','Auto-contrôles, relevés systématiques'))}
+    ${tbl('M2 · Matière','Les matières portent l\'essentiel des dangers.',
+      m('Ovoproduit contaminé','Salmonella','Pasteurisé, froid, DLC')
+      +m('Crème/lait en limite DLC','Listeria','Contrôle réception, FIFO, froid')
+      +m('Fruits à coque rancis','Altération','Stockage sec, rotation')
+      +m('Allergène non identifié','Réaction allergique','Vérif étiquettes fournisseurs'))}
+    ${tbl('M3 · Matériel','Froid, four, petit matériel, transport.',
+      m('Froid défaillant','Rupture de froid','Relevés T°, entretien')
+      +m('Four mal réglé','Sous-cuisson','Barème maîtrisé')
+      +m('Matériel mal nettoyé','Contamination croisée','Plan de nettoyage')
+      +m('Isothermes insuffisants (marché)','Rupture de froid en vente','Accumulateurs suffisants'))}
+    ${tbl('M4 · Méthode','Procédures de fabrication, congélation, étiquetage, vente.',
+      m('Décongélation à T° ambiante','Prolifération','Au réfrigérateur uniquement')
+      +m('Recongélation','Danger microbien','Interdiction, identification lots')
+      +m('Étiquetage allergènes incomplet','Réaction allergique','Étiquetage complet avant vente')
+      +m('Vente en ligne sans info allergènes','Non-conformité','Info dispo avant achat & livraison'))}
+    ${tbl('M5 · Milieu','Labo à domicile + conditions de vente extérieures.',
+      m('Mélange domestique / pro','Contamination croisée','Zone dédiée, pas de circulation')
+      +m('Animaux domestiques','Contamination','Exclusion stricte de la zone')
+      +m('Stockage sec inadéquat','Rancissement, nuisibles','Local sec, contenants fermés')
+      +m('Marché : chaleur','Rupture de froid','Isothermes, ombre, durée limitée'))}
+    <h2 style="font-size:1rem;margin-top:12px">Points de vigilance prioritaires</h2>
+    ${pmsLi(['<b>Allergènes</b> : information sur tous les canaux + anti-contamination.','<b>Chaîne du froid marchés</b> : matériel isotherme suffisant.','<b>DLC produits finis</b> : définies, testées, respectées.','<b>Contaminations croisées</b> : nettoyage entre séries.','<b>Traçabilité des lots</b> : amont, interne, aval.'])}
+    <p class="note" style="margin-top:8px;font-style:italic">Le travail en solo renforce l'importance des enregistrements : ils remplacent le double regard d'une équipe et constituent ta preuve de maîtrise.</p>
+  </div>`;
+}
 function pmsSetPeriode(p){ if(p!==_pmsPeriode && !pmsGuardUnsaved()) return; _pmsPeriode=p; pmsRenderTemp(); }
 
 // ---------- A. TEMPÉRATURES ----------
