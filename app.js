@@ -1908,9 +1908,34 @@ async function recForm(id){
      <div class="field"><label>Poids de garniture par macaron (g) <span style="color:#9a8a82;font-weight:400">— pour l'assistant de production</span></label><input type="number" step="0.1" min="0" id="f_garn" value="${r.poidsGarnitureUnit!=null?r.poidsGarnitureUnit:''}" placeholder="ex : 7"></div>
      <p class="note">Pertes : réduit le nombre de pièces vendables (augmente le coût/pièce). Main-d'œuvre : ajoutée au coût de revient uniquement si activée dans les paramètres (taux horaire global). Consommables : coût direct par macaron.</p>
    </details>
+   <details style="margin:10px 0"><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">⏱ Opérations spécifiques à cette recette (temps)</summary>
+     <p class="note" style="margin-top:8px">Étapes propres à ce parfum qui ajoutent du temps, en plus des temps génériques (coques, ganache, montage). Ex : chablonnage framboise, incrustation de pistaches, noisettes à couper. Laisse vide si rien de particulier — l'ordonnancement n'en sera que plus juste quand tu les renseigneras.</p>
+     <div id="tsList"></div>
+     <button class="btn ghost sm" style="margin-top:6px" onclick="tsAdd()">+ Ajouter une opération</button>
+   </details>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveRec(${id||0})">Enregistrer</button></div>`);
   drawBom();
+  tsDraft = Array.isArray(r.tempsSpecifiques) ? JSON.parse(JSON.stringify(r.tempsSpecifiques)) : [];
+  drawTs();
 }
+// Brouillon des opérations spécifiques (temps additionnels) de la recette en cours d'édition.
+let tsDraft = [];
+function drawTs(){
+  const box=document.getElementById('tsList'); if(!box) return;
+  box.innerHTML = tsDraft.map((t,i)=>`
+    <div class="bom-line" style="grid-template-columns:1fr 70px 90px 24px">
+      <input type="text" value="${esc(t.nom||'')}" oninput="tsSet(${i},'nom',this.value)" placeholder="ex : Chablonnage" maxlength="40">
+      <input type="number" step="0.1" min="0" value="${t.duree!=null?t.duree:''}" oninput="tsSet(${i},'duree',+this.value)" placeholder="min">
+      <select onchange="tsSet(${i},'unite',this.value)">
+        <option value="batch" ${t.unite!=='macaron'?'selected':''}>/ batch</option>
+        <option value="macaron" ${t.unite==='macaron'?'selected':''}>/ macaron</option>
+      </select>
+      <span class="x" onclick="tsDel(${i})">×</span>
+    </div>`).join('') || '<p class="note">Aucune opération spécifique.</p>';
+}
+function tsAdd(){ tsDraft.push({nom:'', duree:0, unite:'batch'}); drawTs(); }
+function tsDel(i){ tsDraft.splice(i,1); drawTs(); }
+function tsSet(i,k,v){ if(tsDraft[i]){ tsDraft[i][k]=(k==='duree')?Math.max(0,+v||0):v; if(k==='unite')drawTs(); } }
 // Unité d'affichage/saisie d'une matière en recette :
 //  - denrée (stockée en kg) → saisie en GRAMMES (facteur 1000)
 //  - emballage / autre      → unité native (facteur 1)
@@ -1983,7 +2008,10 @@ async function saveRec(id){
     pertePct: Math.max(0, Math.min(90, +val('f_perte')||0)),
     minParBatch: Math.max(0, +val('f_mod')||0),
     coutConsoUnit: Math.max(0, money2(+val('f_conso')||0)),
-    poidsGarnitureUnit: Math.max(0, +val('f_garn')||0)};
+    poidsGarnitureUnit: Math.max(0, +val('f_garn')||0),
+    tempsSpecifiques: (Array.isArray(tsDraft)?tsDraft:[])
+      .filter(t=>(t.nom||'').trim() && +t.duree>0)
+      .map(t=>({nom:(t.nom||'').trim().slice(0,40), duree:Math.max(0,+t.duree||0), unite:t.unite==='macaron'?'macaron':'batch'}))};
   if(!o.produitNom){toast('Nom requis');return;}
   // Si aucun allergène coché mais que le parfum est connu, on pré-remplit automatiquement.
   if((!o.allergenes || !o.allergenes.length)){
@@ -10690,7 +10718,7 @@ function renderAssistant(){
      <div class="flex" style="gap:8px;flex-wrap:wrap"><button class="btn" onclick="aiRun()">Envoyer</button>
        <button class="btn ghost" onclick="document.getElementById('aiFileInput').click()" title="Joindre un fichier texte (.txt) ou une photo (support visuel)">📎 Joindre</button>
        <button class="btn gold" onclick="document.getElementById('aiInput').value='aide';aiRun()">❓ Aide</button>
-       <button class="btn" onclick="renderProductionPlan()">🧭 Plan de production</button>
+       <button class="btn" onclick="goView('mrp')">🧭 Plan de production</button>
        <button class="btn ghost" onclick="aiClearAll()">Effacer</button></div>
      <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> ou un <b>PDF</b> (généré par ordi) est lu et ajouté à ta demande ; une <b>photo</b> ou un PDF scanné reste un aperçu temporaire (non lu, non enregistré). Astuce : depuis l'app Notes, fais <b>Copier</b> puis colle ici. Base d'aide : <b>${APP_VERSION}</b>.</p>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
@@ -10873,10 +10901,118 @@ async function buildProductionPlan(horizonDays){
   return items;
 }
 
+// ============================================================
+//  ORDONNANCEUR UNIFIÉ — ÉTAPE 1 : MOTEUR DE BESOINS
+//  Règle validée : besoin(parfum) = commandes fermes (s'ajoutent, ponctionnent le stock à
+//  leur date) + max(besoin vélocité 14 j, réassort) − stock actuel.
+//  Chaque parfum garde la RAISON la plus urgente et la plus proche échéance.
+// ============================================================
+async function buildUnifiedNeeds(opts){
+  opts=opts||{};
+  const horizon = opts.horizon||14;          // jours de couverture (vélocité/réassort)
+  const horizonCmd = opts.horizonCmd||horizon; // fenêtre de prise en compte des commandes
+  const todayStr = today();
+
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recByNom = {}; recipes.forEach(r=>{ recByNom[aiNormalize(r.produitNom)]=r; });
+  const findRec = nom => recByNom[aiNormalize(nom)] || mrpFindRecipe(recipes, nom);
+
+  // 1) STOCK actuel par parfum
+  const {stock} = await mrpCurrentStockByParfum();
+
+  // 2) COMMANDES fermes non livrées, dans la fenêtre → s'ADDITIONNENT, avec la date la plus proche
+  const cmdByParfum = {};   // nom -> {qte, dateMin}
+  try{
+    const orders = await db.orders.toArray();
+    orders.forEach(o=>{
+      if(normStatus(o.statut)==='Livrée') return;
+      const j = daysTo(o.date); if(j===null || j>horizonCmd) return;
+      const dem = _orderParfumDemand(o);
+      for(const nom in dem){
+        if(!cmdByParfum[nom]) cmdByParfum[nom]={qte:0, dateMin:o.date};
+        cmdByParfum[nom].qte += dem[nom];
+        if(o.date < cmdByParfum[nom].dateMin) cmdByParfum[nom].dateMin=o.date;
+      }
+    });
+  }catch(e){ console.error('unifiedNeeds orders',e); }
+
+  // 3) VÉLOCITÉ → besoin de couverture sur l'horizon + détection rupture
+  const veloByParfum = {};  // nom -> {besoin, joursRestants, perMonth, rupture}
+  try{
+    const v = await computeSalesVelocity({months:3, horizonDays:horizon});
+    if(v.hasData){
+      (v.lignes||[]).forEach(l=>{
+        if(l.perDay<=0) return;
+        const besoinCouv = Math.max(0, Math.ceil(l.perDay*horizon - l.stock));
+        veloByParfum[l.parfum] = {
+          besoin: besoinCouv,
+          joursRestants: l.joursRestants,
+          perMonth: l.perMonth,
+          rupture: (l.joursRestants!=null && l.joursRestants<=7)
+        };
+      });
+    }
+  }catch(e){ console.error('unifiedNeeds velocity',e); }
+
+  // 4) ANTI-GASPI : matières à DLC proche → parfums à produire (raison prioritaire si DLC très proche)
+  const gaspiByParfum = {}; // nom -> {joursAvantDLC, matiere}
+  try{
+    const sugg = await generateProductionSuggestions(7);
+    sugg.forEach(s=>{
+      const cur = gaspiByParfum[s.produitNom];
+      if(!cur || s.joursAvantDLC < cur.joursAvantDLC) gaspiByParfum[s.produitNom]={joursAvantDLC:s.joursAvantDLC, matiere:s.matiere};
+    });
+  }catch(e){ console.error('unifiedNeeds gaspi',e); }
+
+  // 5) FUSION par parfum
+  const allNoms = new Set([...Object.keys(cmdByParfum), ...Object.keys(veloByParfum), ...Object.keys(gaspiByParfum)]);
+  const needs = [];
+  allNoms.forEach(nom=>{
+    const cmd = cmdByParfum[nom];
+    const velo = veloByParfum[nom];
+    const gaspi = gaspiByParfum[nom];
+    const enStock = +stock[nom]||0;
+
+    const qCmd = cmd ? cmd.qte : 0;
+    const qCouv = velo ? velo.besoin : 0;          // déjà net de stock dans computeSalesVelocity
+    // besoin = commande (s'ajoute) + couverture flux (max vélocité/réassort, déjà calculé) − stock dispo pour la commande
+    // la couverture est nette de stock ; la commande ponctionne le stock en premier.
+    const stockPourCmd = Math.min(enStock, qCmd);
+    const besoinCmdNet = Math.max(0, qCmd - stockPourCmd);
+    const besoinTotal = besoinCmdNet + qCouv;
+    if(besoinTotal<=0 && !gaspi) return;
+
+    // raison + priorité (type) : la plus urgente l'emporte
+    let type='reassort', raison='', echeance=null;
+    if(velo && velo.rupture){ type='rupture'; raison=`Rupture dans ~${velo.joursRestants} j`; }
+    else if(qCouv>0){ type='reassort'; raison=`Réassort ${horizon} j${velo?` (${velo.perMonth}/mois)`:''}`; }
+    if(gaspi){ // anti-gaspi peut surclasser si DLC très proche
+      if(type==='reassort' || gaspi.joursAvantDLC<=2){ type='antigaspi'; raison=`Matière ${gaspi.matiere} à DLC ${gaspi.joursAvantDLC<=0?'atteinte':'J−'+gaspi.joursAvantDLC}`; }
+    }
+    if(cmd){ type='commande'; raison=`Commande${besoinCmdNet>0?` (${qty(besoinCmdNet)} à produire)`:''} pour le ${fmtDate(cmd.dateMin)}${qCouv>0?` + réassort ${qty(qCouv)}`:''}`; echeance=cmd.dateMin; }
+
+    const rec = findRec(nom);
+    needs.push({
+      parfum: nom, recipeId: rec?rec.id:null,
+      besoin: besoinTotal>0?besoinTotal:(gaspi?0:besoinTotal),
+      besoinCommande: besoinCmdNet, besoinCouverture: qCouv,
+      enStock, type, raison, echeance,
+      joursRestants: velo?velo.joursRestants:null,
+      dlcMatiere: gaspi?gaspi.joursAvantDLC:null,
+      sansRecette: !rec
+    });
+  });
+
+  // tri par urgence d'échéance (commandes datées d'abord), puis besoin décroissant
+  const typeRank = {commande:0, rupture:1, antigaspi:2, reassort:3};
+  needs.sort((a,b)=> (typeRank[a.type]-typeRank[b.type]) || ((a.echeance||'9999')<(b.echeance||'9999')?-1:1) || (b.besoin-a.besoin));
+  return needs;
+}
+
 let _planTempsDispoMin = 180; // défaut : 3 h
 let _planAlloueMin = null;    // temps que l'utilisateur veut consacrer à la production (null = tout le dispo)
 async function renderProductionPlan(){
-  const box=document.getElementById('aiOut'); if(!box) return;
+  const box=document.getElementById('mrpConseil') || document.getElementById('aiOut'); if(!box) return;
   box.innerHTML=`<div class="panel"><h2>🧭 Plan de production</h2><p class="note">Calcul en cours…</p></div>`;
   let plan, tl;
   try{ plan=await buildProductionPlan(14); tl=await prodTempsLissePerMacaron(90); }
@@ -15418,6 +15554,7 @@ function renderMRP(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Plan de production</h1><p>Assistant adaptatif — besoins, batchs & temps</p></div>
      <button class="btn ghost" onclick="availEditor()">🗓 Mes disponibilités</button></div>
+   <div id="mrpConseil"><div class="banner">🧭 <div>L'assistant prépare ton conseil de production…</div></div></div>
    <div class="panel">
      <div class="row2">
        <div class="field"><label>Du</label><input type="date" id="mrp_start" value="${_mrpStart}"></div>
@@ -15433,6 +15570,7 @@ function renderMRP(){
      <p class="note">Décris le temps dont tu disposes (jour par jour, plusieurs créneaux possibles). Le chef d'atelier ordonnance tes tâches en optimisant les temps passifs (croûtage, cuisson, maturation) et la mutualisation des meringues.</p>
      <button class="btn gold" style="margin-top:8px" onclick="persoPlanForm()">📅 Définir ma disponibilité & générer</button>
    </div>`;
+  renderProductionPlan();
 }
 async function mrpGenerate(){
   _mrpStart=val('mrp_start')||today();
