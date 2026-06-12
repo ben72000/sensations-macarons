@@ -2887,10 +2887,36 @@ async function pickRenderMarket(){
            <div class="pick-check">${d?'✓':''}</div>
            <div class="pick-main"><div class="pick-name">${esc(r.label)}</div><div class="pick-sub">${esc(r.sub)}</div></div></div>`;
        }).join('');
+       // --- Sélection des glacières du jour + répartition équilibrée par boîtes entières ---
+       const coolSel = Array.isArray(mk.coolers) ? mk.coolers : [];
+       const coolBtns = COOLERS.map(c=>{
+         const on=coolSel.includes(c.key);
+         return `<button class="btn ${on?'gold':'ghost'} sm" style="margin:2px" onclick="pickToggleCooler(${mk.id},'${c.key}')">${c.ico} ${esc(c.nom)}${on?' ✓':''}</button>`;
+       }).join('');
+       // chaque bac sorti = une boîte (1 parfum). On répartit ces boîtes dans les glacières choisies.
+       let repartHtml='';
+       if(coolSel.length && mvs.length){
+         const boxesToLoad = mvs.map(v=>{ const p=prods.find(x=>x.id===v.productionId);
+           return {parfum:v.parfum||(p?recName(p.recipeId):'?'), nbMacarons:+v.qte||0, lot:p?p.lotProduction:'', prodId:v.productionId}; });
+         const rep = repartitionMarche(boxesToLoad, coolSel);
+         repartHtml = `<div style="margin-top:10px">${rep.coolers.map(k=>{
+           const c=COOLER_BY_KEY[k]; const g=rep.parGlaciere[k];
+           const parfums=Object.entries(g.parfums).map(([p,n])=>`${esc(p)}×${n}`).join(', ')||'—';
+           return `<div class="sum-box" style="background:#faf8f4;border-left:4px solid ${c.col}">
+             <span style="flex:1">${c.ico} <b>${esc(c.nom)}</b><br><span style="font-size:.74rem;color:#7a6a60">${parfums}</span></span>
+             <span style="font-size:.78rem;color:#9a8a82">${g.nbBoites} boîte(s)<br>${g.nbMacarons} mac</span></div>`;
+         }).join('')}</div>
+         <p class="note" style="margin-top:4px">💡 Assortiment équilibré : ouvre une seule glacière à la fois sur le stand pour garder les autres au froid.</p>`;
+       } else if(mvs.length){
+         repartHtml = `<p class="note" style="margin-top:8px">Sélectionne les glacières emportées ce jour pour voir la répartition équilibrée.</p>`;
+       }
+       const coolerBlock = `<div class="pick-zone-head" style="margin-top:6px">🧊 Glacières du jour</div>
+         <div style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:6px">${coolBtns}</div>${repartHtml}`;
        return `<div class="pick-order-card${ready?' ready':''}">
          <div class="pick-order-head"><h3>${esc(mk.nom||'Marché')} <span style="font-size:.8rem;color:#9a8a82;font-weight:400">${fmtDate(mk.date)}</span></h3>
            <span class="tag ${ready?'done':'todo'}">${ready?'✓ Chargé':done+'/'+allKeys.length}</span></div>
          ${!mvs.length?`<p class="note" style="margin-bottom:10px">Aucun bac « sorti » pour ce marché. Enregistre tes sorties de stock depuis l'écran Marchés.</p>`:zonesHtml}
+         ${mvs.length?coolerBlock:''}
          ${extraHtml}
          <button class="pick-big-btn ${ready?'ready':'wait'}" style="margin-top:12px" onclick="pickMarketReady(${mk.id})">${ready?'✓ Camion chargé':'✓ Valider le chargement'}</button>
        </div>`;
@@ -2902,6 +2928,15 @@ async function pickToggleMarket(marketId, key){
   const load=Object.assign({}, mk.loadState||{});
   load[key]=!load[key];
   await db.markets.update(marketId, {loadState:load});
+  pickRenderMarket();
+}
+async function pickToggleCooler(marketId, coolerKey){
+  if(!COOLER_BY_KEY[coolerKey]) return;
+  const mk=await db.markets.get(marketId); if(!mk) return;
+  const cur = Array.isArray(mk.coolers) ? mk.coolers.slice() : [];
+  const i = cur.indexOf(coolerKey);
+  if(i>=0) cur.splice(i,1); else cur.push(coolerKey);
+  await db.markets.update(marketId, {coolers:cur});
   pickRenderMarket();
 }
 async function pickMarketReady(marketId){
@@ -10163,7 +10198,7 @@ async function marketDoMove(marketId){
   toast(raison+' enregistré ✓'); marketDetail(marketId);
 }
 
-// Retour de marché : saisie des invendus par lot (vendu recalculé).
+// Retour de marché : saisie des invendus par lot, avec décision guidée du sort de chaque parfum.
 async function marketRetourForm(marketId){
   const moves=await db.marketMoves.where('marketId').equals(marketId).toArray();
   const lines=marketLineSummary(moves).filter(l=>l.sortie>0);
@@ -10171,34 +10206,56 @@ async function marketRetourForm(marketId){
   const recipes=await db.recipes.toArray();
   const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'—';
   if(!lines.length){ toast('Aucune sortie à retourner'); return; }
+  _retourDest = {}; // i -> 'congel' | 'frigo' | 'ecarte'
   const rows=lines.map((l,i)=>{
     const restant=subQty(subQty(subQty(l.sortie,l.retour),l.don),l.perte);
     const p=prods.find(x=>x.id===l.productionId);
     const decongele = p && aDejaDecongele(p);
-    const empOpts = EMPLACEMENTS.map(e=>{
-      const interdit = e.type==='congelateur' && decongele;
-      return `<option value="${e.key}" ${interdit?'disabled':''}>${e.icon} ${esc(e.nom)} (${e.lettre})${interdit?' — interdit':''}</option>`;
-    }).join('');
-    return `<div class="pay-row" style="flex-wrap:wrap;align-items:flex-start">
-      <span style="flex:1;min-width:120px">${esc(l.parfum||'(parfum ?)')}<br><span class="note">embarqué ${qty(l.sortie)}, déjà retourné ${qty(l.retour)}${decongele?' · ❄️→🧊 décongelé':''}</span></span>
-      <input type="number" step="1" min="0" max="${restant}" id="mr_${i}" data-prod="${l.productionId}" data-parfum="${esc(l.parfum)}" placeholder="invendus" style="width:80px">
-      <select id="md_${i}" style="width:150px">${empOpts}</select>
+    // défaut : congélateur si jamais décongelé, sinon frigo
+    _retourDest[i] = decongele ? 'frigo' : 'congel';
+    const cas = decongele
+      ? '<span style="font-size:.72rem;color:#b3261e">❄️→🧊 déjà décongelé : congélateur interdit</span>'
+      : '<span style="font-size:.72rem;color:#3f7d52">frais : peut retourner au congélateur</span>';
+    return `<div style="padding:8px 0;border-bottom:1px solid #f0e9e2">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="flex:1"><b>${esc(l.parfum||'(parfum ?)')}</b><br><span class="note">embarqué ${qty(l.sortie)}${l.retour>0?`, déjà retourné ${qty(l.retour)}`:''} · ${cas}</span></span>
+        <input type="number" step="1" min="0" max="${restant}" id="mr_${i}" data-prod="${l.productionId}" data-parfum="${esc(l.parfum)}" value="${restant>0?restant:''}" placeholder="invendus" style="width:72px">
+      </div>
+      <div style="display:flex;gap:4px;margin-top:6px" id="mrdest_${i}">
+        <button class="btn ${!decongele?'gold':'ghost'} sm" ${decongele?'disabled title="Recongélation interdite"':''} onclick="retourSetDest(${i},'congel')" data-d="congel" style="flex:1;${decongele?'opacity:.4':''}">❄️ Congélateur</button>
+        <button class="btn ghost sm" onclick="retourSetDest(${i},'frigo')" data-d="frigo" style="flex:1">🧊 Frigo</button>
+        <button class="btn ghost sm" onclick="retourSetDest(${i},'ecarte')" data-d="ecarte" style="flex:1">🗑 Écarté</button>
+      </div>
     </div>`;}).join('');
-  openModal(`<h3>Retour de marché</h3>
-    <p class="note">Saisissez les invendus rapportés par parfum et leur emplacement de rangement. Ils sont recrédités au stock atelier. ⚠️ Un produit <b>déjà décongelé</b> (congélateur → frigo) ne peut pas retourner au congélateur.</p>
+  openModal(`<h3>Retour de marché — invendus</h3>
+    <p class="note">Pour chaque parfum, saisis les invendus et choisis leur sort. Les produits frais (jamais congelés) peuvent repartir au congélateur ; ceux déjà décongelés, non.</p>
     ${rows}
     <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
-      <button class="btn" onclick="marketDoRetour(${marketId},${lines.length})">Valider les retours</button></div>`);
+      <button class="btn gold" onclick="marketDoRetour(${marketId},${lines.length})">Valider les retours</button></div>`);
+  // applique le surlignage initial des boutons par défaut
+  lines.forEach((l,i)=>retourSetDest(i, _retourDest[i], true));
+}
+let _retourDest={};
+function retourSetDest(i, dest, silent){
+  _retourDest[i]=dest;
+  const wrap=document.getElementById('mrdest_'+i); if(!wrap) return;
+  wrap.querySelectorAll('button').forEach(b=>{
+    const isOn = b.getAttribute('data-d')===dest && !b.disabled;
+    b.classList.toggle('gold', isOn);
+    b.classList.toggle('ghost', !isOn);
+  });
 }
 async function marketDoRetour(marketId, n){
-  let done=0;
+  let done=0, ecartes=0;
   for(let i=0;i<n;i++){ const el=document.getElementById('mr_'+i); if(!el) continue;
     const q=+el.value||0; if(q<=0) continue;
     const pid=+el.getAttribute('data-prod'); const parfum=el.getAttribute('data-parfum');
-    const dest=(document.getElementById('md_'+i)||{}).value||'frigo';
+    const choix=_retourDest[i]||'frigo';
+    if(choix==='ecarte'){ ecartes++; continue; } // écarté : non recrédité au stock (perte assumée)
+    const dest = choix==='congel' ? 'bahut' : 'frigo'; // congélateur principal = bahut
     try{ await marketAddRetour(marketId, pid, q, parfum, dest); done++; }catch(e){ toast(e.message||'Erreur'); }
   }
-  toast(done?`${done} retour(s) enregistré(s) ✓`:'Aucun retour saisi'); marketDetail(marketId);
+  toast(done?`${done} retour(s) enregistré(s)${ecartes?` · ${ecartes} écarté(s)`:''} ✓`:(ecartes?`${ecartes} parfum(s) écarté(s)`:'Aucun retour saisi')); marketDetail(marketId);
 }
 
 // Clôture : saisie du CA par mode + contrôle de cohérence vs quantités vendues.
@@ -16821,7 +16878,32 @@ function buildPlacementsMap(prods, boxesByNom){
   return map;
 }
 
-// ---- DEMANDE PROCHE PAR PARFUM (commandes à venir + prévisionnel) ----
+// Construit les segments colorés (par parfum) d'un niveau pour la jauge d'occupation.
+// placements : liste issue de buildPlacementsMap ; prodParfum : Map prodId -> parfum.
+// Retourne {taux, segments:[{parfum, color, part, nbMacarons}]} où part = fraction du REMPLISSAGE.
+function levelFlavorSegments(lv, placements, prodParfum){
+  const occ = levelOccupancy(lv, placements);
+  if(!occ) return {taux:0, segments:[], nbMacarons:0};
+  // empreinte pondérée par parfum (même logique que levelOccupancy, mais ventilée)
+  const parParfum = {};
+  (placements||[]).forEach(pl=>{
+    const box=pl.box; if(!box) return;
+    const couches = levelLayersForHeight(lv, +box.h||0) || 1;
+    const cout = (boxFloorArea(box)/couches) * Math.max(0,+pl.nbBoites||0);
+    const parfum = (prodParfum && prodParfum.get(pl.prodId)) || '(?)';
+    if(!parParfum[parfum]) parParfum[parfum]={parfum, emp:0, nbMacarons:0};
+    parParfum[parfum].emp += cout;
+    parParfum[parfum].nbMacarons += Math.max(0,+pl.nbMacarons||0);
+  });
+  const aire = levelFloorArea(lv)||1;
+  const segments = Object.values(parParfum).map(s=>({
+    parfum:s.parfum, color:flavorColor(s.parfum),
+    part: s.emp/aire,            // fraction de la surface totale du niveau
+    nbMacarons: s.nbMacarons
+  })).sort((a,b)=>b.part-a.part);
+  return {taux:occ.tauxVolume, segments, nbMacarons:occ.nbMacarons};
+}
+
 // Sert à juger la "durée de stockage prévue" d'un lot : un parfum très demandé bientôt
 // doit être rangé accessible (sortie rapide) ; un parfum sans demande proche peut dormir
 // en réserve profonde. S'appuie sur buildUnifiedNeeds (commandes fermes datées + vélocité).
@@ -17014,6 +17096,24 @@ async function renderEquipements(){
   const specs = await equipGetSpecs();
   const boxes = await db.storageBoxes.orderBy('nom').toArray().catch(()=>[]);
   const anySpec = Object.values(specs).some(s=>Array.isArray(s.niveaux)&&s.niveaux.length);
+  // Données d'occupation réelle pour les jauges colorées par parfum.
+  const _prods = await db.productions.toArray().catch(()=>[]);
+  const _recipes = await db.recipes.toArray().catch(()=>[]);
+  const _recName = rid => (_recipes.find(r=>r.id===rid)||{}).produitNom||'(?)';
+  const _prodParfum = new Map();
+  _prods.forEach(p=>{ _prodParfum.set(p.id, p.libre?(p.produitLibre||'(libre)'):_recName(p.recipeId)); });
+  const _boxesByNom = {}; boxes.forEach(b=>{ _boxesByNom[b.nom]=b; });
+  const _placements = buildPlacementsMap(_prods, _boxesByNom);
+  // Jauge HTML d'un niveau (segments colorés par parfum, longueur = taux d'occupation).
+  const gaugeHtml = (eKey, lv, i)=>{
+    const pls = _placements.get(eKey+'|'+(lv.nom||('Niveau '+(i+1)))) || [];
+    if(!pls.length) return `<div class="gauge-empty">vide</div>`;
+    const fs = levelFlavorSegments(lv, pls, _prodParfum);
+    const pct = Math.round(fs.taux*100);
+    const segs = fs.segments.map(s=>`<span title="${esc(s.parfum)} : ${s.nbMacarons} mac" style="display:block;height:100%;width:${Math.max(2,Math.round(s.part*100))}%;background:${s.color}"></span>`).join('');
+    return `<div class="gauge"><div class="gauge-bar">${segs}</div><span class="gauge-pct">${pct}%</span></div>
+      <div class="gauge-legend">${fs.segments.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.parfum)} ${s.nbMacarons}</span>`).join('')}</div>`;
+  };
   const card = e => {
     const s = specs[e.key];
     const bg = e.type==='frigo' ? '#6aa3a0' : '#3b6ea5';
@@ -17023,7 +17123,9 @@ async function renderEquipements(){
     } else {
       const nivList = s.niveaux.map((lv,i)=>{
         const r=NIV_ROLES[nivRole(lv)], a=NIV_ACCES[nivAcces(lv)];
-        return `<div class="sum-box"><span style="padding-left:10px">${lv.reserve?'🔒 ':''}${esc(lv.nom||('Niveau '+(i+1)))} <span style="font-size:.72rem;color:${r.c}">${r.ico} ${r.label}</span> <span style="font-size:.72rem">${a.ico}</span></span><b style="font-size:.78rem;color:#9a8a82">${lv.L}×${lv.l}×${lv.h}${lv.reserve?' · MP':''}</b></div>`;
+        return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center"><span style="padding-left:10px">${lv.reserve?'🔒 ':''}${esc(lv.nom||('Niveau '+(i+1)))} <span style="font-size:.72rem;color:${r.c}">${r.ico} ${r.label}</span> <span style="font-size:.72rem">${a.ico}</span></span><b style="font-size:.78rem;color:#9a8a82">${lv.L}×${lv.l}×${lv.h}${lv.reserve?' · MP':''}</b></div>
+          ${lv.reserve?'':gaugeHtml(e.key, lv, i)}</div>`;
       }).join('');
       let capBloc='';
       if(boxes.length){
@@ -17041,11 +17143,39 @@ async function renderEquipements(){
       </div>
       ${corps}</div>`;
   };
+  // Vue inverse : par parfum, où est-il rangé.
+  const parfumMap = {};
+  _placements.forEach((pls, key)=>{
+    pls.forEach(pl=>{
+      const parfum=_prodParfum.get(pl.prodId)||'(?)';
+      (parfumMap[parfum] ||= {parfum, total:0, lieux:{}});
+      parfumMap[parfum].total += Math.max(0,+pl.nbMacarons||0);
+      parfumMap[parfum].lieux[key] = (parfumMap[parfum].lieux[key]||0) + Math.max(0,+pl.nbMacarons||0);
+    });
+  });
+  const parfumsRanges = Object.values(parfumMap).sort((a,b)=>b.total-a.total);
+  const maxParfum = Math.max(1, ...parfumsRanges.map(p=>p.total));
+  const parParfumHtml = parfumsRanges.length ? parfumsRanges.map(pf=>{
+    const col=flavorColor(pf.parfum);
+    const lieux = Object.entries(pf.lieux).map(([k,nb])=>{
+      const [ek,niv]=k.split('|'); const e=empInfo(ek);
+      return `${e.lettre} ${esc(niv)} (${nb})`;
+    }).join(' · ');
+    return `<div style="padding:6px 0;border-bottom:1px solid #f0e9e2">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="width:11px;height:11px;border-radius:50%;background:${col};flex:none"></span>
+        <span style="flex:1;font-weight:600">${esc(pf.parfum)}</span><b style="font-size:.82rem">${pf.total} mac</b></div>
+      <div class="gauge-bar" style="margin:4px 0 2px"><span style="display:block;height:100%;width:${Math.round(pf.total/maxParfum*100)}%;background:${col}"></span></div>
+      <div style="font-size:.72rem;color:#9a8a82">${lieux}</div></div>`;
+  }).join('') : '<p class="note">Aucun macaron rangé pour l\'instant.</p>';
   main.innerHTML=`
    <div class="topbar"><div><h1>Équipements de stockage</h1><p>Niveaux & capacité — espace de stockage global</p></div></div>
    <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>Chaque équipement est décrit par ses niveaux (dimensions réelles). La capacité en boîtes et macarons se calcule automatiquement, sans rotation des boîtes. Un niveau peut être réservé aux matières premières.</div></div>
    ${!anySpec?`<div class="panel" style="border:1.5px solid var(--gold,#AA7C39)"><h2 style="font-size:1rem">⚡ Pré-remplissage</h2><p class="note">Tes 4 équipements peuvent être pré-remplis avec les dimensions que tu as fournies (A, B, C, F). Tu pourras vérifier et ajuster ensuite.</p><button class="btn gold" onclick="equipSeedFill()">Pré-remplir mes équipements</button></div>`:''}
    ${EMPLACEMENTS.map(card).join('')}
+   <div class="panel"><h2 style="font-size:1rem">🎨 Où est chaque parfum ?</h2>
+     <p class="note" style="margin-top:0">Répartition de ton stock rangé, par parfum. Les couleurs reprennent celles de la boutique.</p>
+     ${parParfumHtml}</div>
    ${!boxes.length?`<div class="panel"><p class="note">💡 Renseigne tes <b>boîtes de conservation</b> pour voir les capacités calculées.</p></div>`:''}`;
 }
 async function equipForm(key){
