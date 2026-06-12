@@ -11043,26 +11043,34 @@ async function renderProductionPlan(){
   const fmtHM = m => { const h=Math.floor(m/60), mm=m%60; return `${h?h+'h ':''}${String(mm).padStart(2,'0')}min`; };
   const prioBtns = planPrioOrder().map((k,i)=>`<span class="tag" style="background:#efe7da;color:#6b5d54;margin:2px">${i+1}. ${esc(PLAN_PRIO_LABEL[k])}</span>`).join(' ');
   const ligne = it => {
-    const m = (it.min!=null)?`${it.min} min`:'temps ?';
     const q = it.qte!=null?`${qty(it.qte)} pièces`:'à écouler';
     const col = it.type==='commande'?'#b3261e':it.type==='rupture'?'#d98324':it.type==='antigaspi'?'#7a6a9a':'#3f7d52';
+    // Le temps n'est affiché QUE s'il est estimable (sinon rien, pour ne pas répéter "temps ?").
+    const mTxt = (it.min!=null)?`<b style="white-space:nowrap;color:#6b5d54">${it.min} min</b>`:'';
     return `<div class="sum-box" style="border-left:3px solid ${col}">
       <span style="flex:1"><b>${esc(it.produitNom)}</b> <span style="color:#9a8a82">— ${q}</span><br>
         <span style="font-size:.78rem;color:#9a8a82">${esc(it.raison)}</span></span>
-      <b style="white-space:nowrap">${m}</b></div>`;
+      ${mTxt}</div>`;
   };
 
+  // Deux modes d'affichage : avec temps mesuré (calage) ou sans (simple liste priorisée).
+  const sansTemps = (minParMac==null);
+  const listeComplete = [...dansLeTemps, ...horsTemps];
+
   box.innerHTML=`<div class="panel">
-    <h2>🧭 Plan de production</h2>
+    <h2>🧭 Ce que l'assistant te conseille de produire</h2>
     ${dispoPlanning!=null?`<div class="sum-box" style="background:#eef5f0"><span>📅 Temps dispo aujourd'hui (planning)</span><b>${dispoPlanning>0?fmtHM(dispoPlanning):'aucune plage'}</b></div>`:''}
     <div class="field"><label>Temps que je veux allouer à la production (minutes)</label>
       <input type="number" min="0" step="15" id="plan_alloue" value="${alloue}" onchange="_planAlloueMin=Math.max(0,+this.value||0);renderProductionPlan()">
       <p class="note">Pré-rempli avec ton temps disponible du jour. Réduis-le si une partie va à l'administratif, aux courses, etc.${dispoPlanning!=null&&_planAlloueMin!=null&&_planAlloueMin<dispoPlanning?` (tu réserves ${fmtHM(dispoPlanning-_planAlloueMin)} hors production)`:''}</p></div>
     <p class="note">Priorité : ${prioBtns} <button class="btn ghost sm" onclick="planPrioForm()">Réordonner</button></p>
-    ${minParMac==null?`<div class="banner" style="background:#fdf6ec;border-color:#e5cfa0">⏱ <div>Temps par macaron pas encore mesuré : les durées ne peuvent pas être estimées. Le plan reste utile pour l'ordre et les quantités. Lance tes chronos d'atelier pour activer le calage temps.</div></div>`:`<div class="sum-box" style="background:#eef5f0"><span><b>Tient dans le temps alloué</b> (${cumul} / ${budget} min)</span><b>${dansLeTemps.length} production(s)</b></div>`}
-    ${dansLeTemps.length?`<h2 style="font-size:1rem;margin-top:10px">✅ À produire maintenant</h2>${dansLeTemps.map(ligne).join('')}`:''}
-    ${horsTemps.length?`<h2 style="font-size:1rem;margin-top:10px">⏳ Si tu as plus de temps</h2>${horsTemps.map(ligne).join('')}`:''}
-    ${(!dansLeTemps.length&&!horsTemps.length)?`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Rien à produire en priorité : commandes, stocks et DLC sont sous contrôle.</div></div>`:''}
+    ${sansTemps
+      ? `<div class="banner" style="background:#fdf6ec;border-color:#e5cfa0">⏱ <div>Durées non estimées (temps par macaron pas encore mesuré). La liste ci-dessous reste classée par priorité. Lance tes chronos d'atelier pour activer le calage horaire.</div></div>
+         ${listeComplete.length?`<h2 style="font-size:1rem;margin-top:10px">📋 À produire, par ordre de priorité</h2>${listeComplete.map(ligne).join('')}`:''}`
+      : `<div class="sum-box" style="background:#eef5f0"><span><b>Tient dans le temps alloué</b> (${cumul} / ${budget} min)</span><b>${dansLeTemps.length} production(s)</b></div>
+         ${dansLeTemps.length?`<h2 style="font-size:1rem;margin-top:10px">✅ À produire maintenant</h2>${dansLeTemps.map(ligne).join('')}`:''}
+         ${horsTemps.length?`<h2 style="font-size:1rem;margin-top:10px">⏳ Si tu as plus de temps</h2>${horsTemps.map(ligne).join('')}`:''}`}
+    ${(!listeComplete.length)?`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Rien à produire en priorité : commandes, stocks et DLC sont sous contrôle.</div></div>`:''}
     <p class="note" style="margin-top:8px">Conseil indicatif basé sur tes commandes, ta vélocité de ventes (14 j) et tes DLC. Les quantités sont des suggestions à ajuster.</p>
   </div>`;
 }
@@ -14528,6 +14536,46 @@ function prodConfirmEndSession(){
   prodSessionEnd();
   prodRenderBoard();
   toast('Session clôturée ✓');
+  // Apprentissage des temps : ne le proposer que si la session contient des tâches mappables.
+  const sClosed = prodSessLoad().find(x=>x.id===s.id) || s;
+  const mins = prodSessMinutesByCategory(sClosed);
+  const aDuTemps = Object.values(mins).some(v=>v>0.1);
+  if(aDuTemps) prodLearnQtyForm(sClosed.id);
+}
+
+// Demande le nombre de batchs / meringues réalisés, pour ramener les durées à l'unité de référence.
+function prodLearnQtyForm(sessId){
+  const s = prodSessLoad().find(x=>x.id===sessId); if(!s) return;
+  const mins = prodSessMinutesByCategory(s);
+  const lignes = [];
+  if(mins.coques>0.1)    lignes.push(`🟤 Coques : ${Math.round(mins.coques)} min mesurées`);
+  if(mins.ganache>0.1)   lignes.push(`🍫 Ganache : ${Math.round(mins.ganache)} min`);
+  if(mins.montage>0.1)   lignes.push(`🔧 Montage : ${Math.round(mins.montage)} min`);
+  if(mins.vaisselle>0.1) lignes.push(`🧽 Vaisselle : ${Math.round(mins.vaisselle)} min`);
+  if(mins.entretien>0.1) lignes.push(`🧹 Entretien : ${Math.round(mins.entretien)} min`);
+  const needMeringues = mins.coques>0.1;
+  const needBatchs = (mins.ganache>0.1||mins.montage>0.1||mins.vaisselle>0.1);
+  openModal(`<h3>📊 Affiner les temps de l'atelier</h3>
+    <p class="note">Pour que l'ordonnancement apprenne <b>tes</b> temps réels, indique ce que cette session a produit. Les durées seront ramenées « par batch » et « par meringue ».</p>
+    <div class="sum-box" style="display:block;background:#faf6ee">${lignes.join('<br>')}</div>
+    ${needMeringues?`<div class="field"><label>Nombre de meringues réalisées <span style="color:#9a8a82;font-weight:400">(1 meringue ≈ 2 batchs)</span></label>
+      <input type="number" inputmode="numeric" min="0" step="1" id="learn_mer" placeholder="ex : 2"></div>`:''}
+    ${needBatchs?`<div class="field"><label>Nombre de batchs réalisés <span style="color:#9a8a82;font-weight:400">(1 batch ≈ 60 macarons)</span></label>
+      <input type="number" inputmode="numeric" min="0" step="1" id="learn_bat" placeholder="ex : 4"></div>`:''}
+    <p class="note">Tu peux ignorer : la session reste enregistrée, seul l'apprentissage des temps est sauté.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Ignorer</button>
+      <button class="btn" onclick="prodLearnQtySave('${sessId}')">Enregistrer & apprendre</button>
+    </div>`);
+}
+function prodLearnQtySave(sessId){
+  const s = prodSessLoad().find(x=>x.id===sessId); if(!s){ closeModal(); return; }
+  const nbMer = +val('learn_mer')||0;
+  const nbBat = +val('learn_bat')||0;
+  const fed = prodSessFeedLearning(s, nbBat, nbMer);
+  closeModal();
+  if(fed.length) toast(`Temps appris ✓ (${fed.join(', ')})`);
+  else toast('Aucune quantité renseignée — apprentissage sauté');
 }
 
 function ttLoad(){
@@ -15291,9 +15339,11 @@ function availSave(){
 // 'coques' = temps d'UNE meringue (mutualisée, sert 2 batchs) ; 'ganache'/'montage' = PAR batch.
 const MRP_TIME_KEY = 'sm_mrp_times';
 const MRP_TIME_DEFAULTS = {
-  coques:  { estimatedTime: 35, totalRealTime: 0, completions: 0 },  // par MERINGUE (2 batchs)
-  montage: { estimatedTime: 15, totalRealTime: 0, completions: 0 },  // par batch (60 macarons)
-  ganache: { estimatedTime: 12, totalRealTime: 0, completions: 0 }   // par batch (60 macarons)
+  coques:    { estimatedTime: 35, totalRealTime: 0, completions: 0 },  // par MERINGUE (2 batchs)
+  montage:   { estimatedTime: 15, totalRealTime: 0, completions: 0 },  // par batch (60 macarons)
+  ganache:   { estimatedTime: 12, totalRealTime: 0, completions: 0 },  // par batch (60 macarons)
+  vaisselle: { estimatedTime: 10, totalRealTime: 0, completions: 0 },  // par batch — charge de prod
+  entretien: { estimatedTime: 15, totalRealTime: 0, completions: 0 }   // par SESSION — indép. du volume
 };
 function getMrpTimes(){
   try{
@@ -15531,6 +15581,60 @@ function schedulePersonalPlan(daySpecs, plan, opts){
 }
 
 // APPRENTISSAGE : enregistre le temps réel d'une tâche et met à jour l'estimation (moyenne mobile).
+// MAPPING d'une tâche d'atelier (label/phase) vers une catégorie de temps MRP.
+// Phases Préparation/Meringue/Macaronnage/Cuisson → coques.
+// Phase Garnissage : ganache (prépa ganache, cristallisation beurre cacao) vs montage (pochage,
+// assemblage, chablonnage). Phase Entretien : vaisselle vs entretien (nettoyage surfaces).
+function prodTaskMrpCategory(task){
+  const phase = (task.phase||'').toLowerCase();
+  const label = (task.label||'').toLowerCase();
+  if(phase==='préparation'||phase==='preparation'||phase==='meringue'||phase==='macaronnage'||phase==='cuisson') return 'coques';
+  if(phase==='garnissage'){
+    // Chablonnage + cristallisation du beurre de cacao = opérations SPÉCIFIQUES à certaines recettes
+    // (ganaches humides type framboise). Elles ne s'appliquent pas à toutes les productions, donc on
+    // les EXCLUT des catégories génériques (sinon elles fausseraient les temps de toutes les recettes).
+    // → gérées via les "temps spécifiques par recette" (cadre dédié).
+    if(label.includes('chablonnage')||label.includes('cristallisation')||label.includes('beurre de cacao')) return null;
+    if(label.includes('ganache')&&label.includes('prépar')) return 'ganache';
+    // pochage ganache, assemblage → montage
+    return 'montage';
+  }
+  if(phase==='entretien'){
+    if(label.includes('vaisselle')) return 'vaisselle';
+    return 'entretien';
+  }
+  return null; // tâche non mappable (ex. "Autre") → ignorée pour l'apprentissage
+}
+
+// Agrège les durées nettes (minutes) d'une session, par catégorie MRP.
+function prodSessMinutesByCategory(sess){
+  const acc = { coques:0, ganache:0, montage:0, vaisselle:0, entretien:0 };
+  (sess.tasks||[]).forEach(t=>{
+    const cat = prodTaskMrpCategory(t); if(!cat) return;
+    const ms = (typeof prodTaskNet==='function') ? prodTaskNet(t) : 0;
+    acc[cat] += ms/60000;
+  });
+  return acc;
+}
+
+// APPRENTISSAGE depuis une session close : ramène les durées mesurées à l'unité de référence
+// (coques÷meringues, ganache/montage/vaisselle÷batchs, entretien par session) et nourrit validateTask.
+function prodSessFeedLearning(sess, nbBatchs, nbMeringues){
+  const mins = prodSessMinutesByCategory(sess);
+  const nb = Math.max(0, +nbBatchs||0);
+  const nm = Math.max(0, +nbMeringues||0);
+  const fed = [];
+  // coques : par meringue
+  if(mins.coques>0 && nm>0){ validateTask('coques', mins.coques/nm); fed.push('coques'); }
+  // ganache, montage, vaisselle : par batch
+  if(mins.ganache>0 && nb>0){ validateTask('ganache', mins.ganache/nb); fed.push('ganache'); }
+  if(mins.montage>0 && nb>0){ validateTask('montage', mins.montage/nb); fed.push('montage'); }
+  if(mins.vaisselle>0 && nb>0){ validateTask('vaisselle', mins.vaisselle/nb); fed.push('vaisselle'); }
+  // entretien : par session (indépendant du volume)
+  if(mins.entretien>0){ validateTask('entretien', mins.entretien); fed.push('entretien'); }
+  return fed;
+}
+
 function validateTask(taskType, actualMinutes){
   const t=getMrpTimes();
   if(!t[taskType]) return null;
@@ -15552,24 +15656,29 @@ function renderMRP(){
   if(!_mrpStart){ _mrpStart=today(); }
   if(!_mrpEnd){ const d=new Date(today()); d.setDate(d.getDate()+7); _mrpEnd=d.toISOString().slice(0,10); }
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Plan de production</h1><p>Assistant adaptatif — besoins, batchs & temps</p></div>
+   <div class="topbar"><div><h1>Plan de production</h1><p>Conseil de l'assistant + outils de planification</p></div>
      <button class="btn ghost" onclick="availEditor()">🗓 Mes disponibilités</button></div>
    <div id="mrpConseil"><div class="banner">🧭 <div>L'assistant prépare ton conseil de production…</div></div></div>
-   <div class="panel">
-     <div class="row2">
-       <div class="field"><label>Du</label><input type="date" id="mrp_start" value="${_mrpStart}"></div>
-       <div class="field"><label>Au</label><input type="date" id="mrp_end" value="${_mrpEnd}"></div>
+   <details style="margin-top:4px">
+     <summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600;padding:8px 0">⚙ Outils avancés de planification (manuel)</summary>
+     <div class="panel" style="margin-top:8px">
+       <h2 style="font-size:1rem">🔧 Générateur par période</h2>
+       <p class="note">Calcule les besoins et le temps requis entre deux dates, à partir des commandes de la période.</p>
+       <div class="row2">
+         <div class="field"><label>Du</label><input type="date" id="mrp_start" value="${_mrpStart}"></div>
+         <div class="field"><label>Au</label><input type="date" id="mrp_end" value="${_mrpEnd}"></div>
+       </div>
+       <div class="field"><label>Temps disponible (minutes)</label>
+         <input type="number" inputmode="numeric" min="0" step="15" id="mrp_dispo" value="${_mrpDispo||''}" placeholder="ex : 240"></div>
+       <button class="btn" onclick="mrpGenerate()">⚙ Générer le plan</button>
      </div>
-     <div class="field"><label>Temps disponible (minutes)</label>
-       <input type="number" inputmode="numeric" min="0" step="15" id="mrp_dispo" value="${_mrpDispo||''}" placeholder="ex : 240"></div>
-     <button class="btn" onclick="mrpGenerate()">⚙ Générer le plan</button>
-   </div>
-   <div id="mrpResult"></div>
-   <div class="panel" style="border:1.5px solid var(--gold,#AA7C39)">
-     <h2>🧑‍🍳 Planification personnelle sur mesure</h2>
-     <p class="note">Décris le temps dont tu disposes (jour par jour, plusieurs créneaux possibles). Le chef d'atelier ordonnance tes tâches en optimisant les temps passifs (croûtage, cuisson, maturation) et la mutualisation des meringues.</p>
-     <button class="btn gold" style="margin-top:8px" onclick="persoPlanForm()">📅 Définir ma disponibilité & générer</button>
-   </div>`;
+     <div id="mrpResult"></div>
+     <div class="panel" style="border:1.5px solid var(--gold,#AA7C39)">
+       <h2 style="font-size:1rem">🧑‍🍳 Planification personnelle sur mesure</h2>
+       <p class="note">Décris le temps dont tu disposes (jour par jour, plusieurs créneaux possibles). Le chef d'atelier ordonnance tes tâches en optimisant les temps passifs (croûtage, cuisson, maturation) et la mutualisation des meringues.</p>
+       <button class="btn gold" style="margin-top:8px" onclick="persoPlanForm()">📅 Définir ma disponibilité & générer</button>
+     </div>
+   </details>`;
   renderProductionPlan();
 }
 async function mrpGenerate(){
