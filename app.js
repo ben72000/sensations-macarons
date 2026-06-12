@@ -1858,7 +1858,7 @@ async function renderRecipes(){
           <span class="ing-mult" id="mult_${r.id}_${idx}"><b>${qty(shown)}</b> ${esc(d.u)}</span>
         </div>
       </div>`; }).join('');
-    blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
+    blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}${r.coquesCongelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ coques congelées</span> ':''}${(r.ganacheDelaiH!=null&&+r.ganacheDelaiH>0)?`<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">⏱ ganache ${r.ganacheDelaiH}h</span> `:''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
         return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc ${kpiI('cout_revient_rec')}${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
@@ -1920,6 +1920,14 @@ async function recForm(id){
      <div class="field"><label>Rendement (nb par batch)</label><input type="number" id="f_rend" value="${r.rendement||60}"></div>
    </div>
    <label class="switch-row"><input type="checkbox" id="f_gf" ${r.grandFormat?'checked':''}> 🍪 Recette <b>grand format</b> (macaron à l'unité — stock séparé des petits)</label>
+   <details style="margin:8px 0" ${(r.ganacheDelaiH!=null||r.coquesCongelObligatoire)?'open':''}><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">⏱ Règles d'ordonnancement (optionnel)</summary>
+     <div style="margin-top:8px">
+       <div class="field"><label>Délai minimum ganache avant montage (heures)</label>
+         <input type="number" step="0.5" min="0" id="f_ganacheDelai" value="${r.ganacheDelaiH!=null?r.ganacheDelaiH:12}" placeholder="12">
+         <p class="note">Par défaut 12 h. Mets 0 pour les ganaches qui n'ont pas besoin de ce délai (exception).</p></div>
+       <label class="switch-row"><input type="checkbox" id="f_coquesCongel" ${r.coquesCongelObligatoire?'checked':''}> ❄️ Coques à <b>congeler obligatoirement</b> avant montage (cas du grand format)</label>
+     </div>
+   </details>
    <div class="field"><label>Allergènes <span style="color:#9a8a82;font-weight:400">— information obligatoire pour la vente</span></label>
      <div class="allergen-chips">${ALLERGENS.map(a=>{
        const on=(r.allergenes||[]).includes(a);
@@ -2063,6 +2071,8 @@ async function saveRec(id){
   if(!rend || rend<=0){toast('Le rendement doit être supérieur à 0');return;}
   const o={produitNom:val('f_nom'),rendement:rend,
     grandFormat: !!document.getElementById('f_gf')?.checked,
+    ganacheDelaiH: Math.max(0, +val('f_ganacheDelai')||0),
+    coquesCongelObligatoire: !!document.getElementById('f_coquesCongel')?.checked,
     allergenes: Array.from(document.querySelectorAll('.allergen-chip.on')).map(b=>b.dataset.a),
     pertePct: Math.max(0, Math.min(90, +val('f_perte')||0)),
     minParBatch: Math.max(0, +val('f_mod')||0),
