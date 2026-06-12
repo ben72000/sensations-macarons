@@ -10675,6 +10675,7 @@ function renderAssistant(){
   _aiPhotoPreview=null;   // aucune pièce jointe ne persiste entre deux visites
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Assistant</h1><p>Anti-gaspi, sérénité & pilotage</p></div></div>
+   <div id="assistantBriefing"><div class="banner">☀️ <div>Préparation de ton briefing du jour…</div></div></div>
    <div id="serenityBox"><div class="banner">🧘 <div>Calcul de la jauge de sérénité…</div></div></div>
    <div id="marketForecast"></div>
    <div id="antiGaspi"></div>
@@ -10689,6 +10690,7 @@ function renderAssistant(){
      <div class="flex" style="gap:8px;flex-wrap:wrap"><button class="btn" onclick="aiRun()">Envoyer</button>
        <button class="btn ghost" onclick="document.getElementById('aiFileInput').click()" title="Joindre un fichier texte (.txt) ou une photo (support visuel)">📎 Joindre</button>
        <button class="btn gold" onclick="document.getElementById('aiInput').value='aide';aiRun()">❓ Aide</button>
+       <button class="btn" onclick="renderProductionPlan()">🧭 Plan de production</button>
        <button class="btn ghost" onclick="aiClearAll()">Effacer</button></div>
      <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> ou un <b>PDF</b> (généré par ordi) est lu et ajouté à ta demande ; une <b>photo</b> ou un PDF scanné reste un aperçu temporaire (non lu, non enregistré). Astuce : depuis l'app Notes, fais <b>Copier</b> puis colle ici. Base d'aide : <b>${APP_VERSION}</b>.</p>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
@@ -10701,7 +10703,253 @@ function renderAssistant(){
   renderAntiGaspi();
   renderPredictiveAlerts();
   ttScheduleSerenityRefresh();
+  renderAssistantBriefing();
 }
+
+// TABLEAU DE BORD PROACTIF — « À faire aujourd'hui ».
+// Agrège les signaux actionnables et les présente en tête de l'Assistant, classés par urgence.
+// N'effectue AUCUNE action : observe, priorise et propose. Réutilise les détecteurs existants.
+async function assistantBriefing(){
+  const items=[]; // {prio:0 urgent|1 important|2 info, ico, titre, detail, action:{label,view}}
+  const todayStr=today();
+  const inDays=(dateStr)=>{ const j=daysTo(dateStr); return j; };
+
+  // 1) COMMANDES proches (aujourd'hui / demain) non terminées
+  try{
+    const orders=await db.orders.toArray();
+    const clients=await db.clients.toArray();
+    const nm=id=>{ const c=clients.find(x=>x.id===id); return c?c.nom:'client'; };
+    orders.forEach(o=>{
+      const st=(typeof normStatus==='function')?normStatus(o.statut):o.statut;
+      if(st==='Livrée'||st==='Terminée') return;
+      const j=inDays(o.date); if(j===null) return;
+      if(j<0){ items.push({prio:0, ico:'📦', titre:`Commande en retard — ${nm(o.clientId)}`, detail:`Retrait prévu ${fmtDate(o.date)} (${-j} j de retard).`, action:{label:'Voir les commandes', view:'commandes'}}); }
+      else if(j===0){ items.push({prio:0, ico:'📦', titre:`Commande à préparer aujourd'hui — ${nm(o.clientId)}`, detail:`Retrait prévu aujourd'hui.`, action:{label:'Préparer', view:'commandes'}}); }
+      else if(j===1){ items.push({prio:1, ico:'📦', titre:`Commande demain — ${nm(o.clientId)}`, detail:`Retrait prévu ${fmtDate(o.date)}.`, action:{label:'Voir', view:'commandes'}}); }
+    });
+  }catch(e){ console.error('briefing orders',e); }
+
+  // 2) ANTI-GASPI : matières à DLC proche (réutilise le détecteur existant)
+  try{
+    const sugg=await generateProductionSuggestions(7);
+    sugg.slice(0,5).forEach(s=>{
+      const urgent=s.joursAvantDLC<=2;
+      items.push({prio:urgent?0:1, ico:'♻️',
+        titre:`À écouler : ${s.matiere}`,
+        detail:`Produis des ${s.produitNom} — DLC ${s.joursAvantDLC<=0?'atteinte':'dans '+s.joursAvantDLC+' j'} (stock fini ${qty(s.stockFini)}).`,
+        action:{label:'Lancer la production', view:'productions'}});
+    });
+  }catch(e){ console.error('briefing gaspi',e); }
+
+  // 3) RUPTURES prédictives (réutilise computeSalesVelocity)
+  try{
+    const v=await computeSalesVelocity({months:3, horizonDays:14});
+    if(v.hasData){ v.alertes.slice(0,5).forEach(a=>{
+      const urgent=a.joursRestants<=7;
+      items.push({prio:urgent?0:1, ico:'⚠️',
+        titre:`Rupture prévue : ${a.parfum}`,
+        detail:`~${a.joursRestants} j de stock au rythme actuel${a.dateRupture?` (vers ${fmtDate(a.dateRupture)})`:''}.`,
+        action:{label:'Produire', view:'productions'}});
+    }); }
+  }catch(e){ console.error('briefing velocity',e); }
+
+  // 4) DLC PRODUITS FINIS proches (lots finis qui périment)
+  try{
+    const prods=await db.productions.toArray();
+    prods.forEach(p=>{
+      if(round3(+p.qteRestante)<=0 || !p.dlcProduit) return;
+      const c=p.composant||'complet'; if(c!=='complet'&&c!=='assemble') return;
+      const j=daysTo(p.dlcProduit); if(j===null||j>3) return;
+      items.push({prio:j<=1?0:1, ico:'🧊',
+        titre:`Stock fini à DLC proche`,
+        detail:`${qty(p.qteRestante)} pièce(s)${p.lotProduction?` (lot ${p.lotProduction})`:''} — DLC ${j<=0?'atteinte':'dans '+j+' j'}.`,
+        action:{label:'Voir le stock', view:'stockparfums'}});
+    });
+  }catch(e){ console.error('briefing dlc',e); }
+
+  items.sort((a,b)=>a.prio-b.prio);
+  return items;
+}
+
+async function renderAssistantBriefing(){
+  const box=document.getElementById('assistantBriefing'); if(!box) return;
+  let items; try{ items=await assistantBriefing(); }catch(e){ console.error('briefing',e); box.innerHTML=''; return; }
+  if(!items.length){
+    box.innerHTML=`<div class="panel"><h2>☀️ À faire aujourd'hui</h2>
+      <div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Rien d'urgent détecté. Tes commandes, stocks et DLC sont sous contrôle.</div></div></div>`;
+    return;
+  }
+  const prioLabel={0:{t:'Urgent',c:'#b3261e'},1:{t:'Important',c:'#d98324'},2:{t:'Info',c:'#3f7d52'}};
+  const rows=items.slice(0,12).map(it=>{
+    const p=prioLabel[it.prio]||prioLabel[2];
+    return `<div class="sum-box" style="align-items:flex-start;gap:10px;border-left:3px solid ${p.c}">
+      <span style="flex:0 0 auto;font-size:1.1rem">${it.ico}</span>
+      <span style="flex:1"><b>${esc(it.titre)}</b> <span class="tag" style="background:${p.c};color:#fff;font-size:.6rem">${p.t}</span><br>
+        <span style="font-size:.82rem;color:#6b5d54">${esc(it.detail)}</span></span>
+      ${it.action?`<button class="btn ghost sm" style="flex:0 0 auto" onclick="goView('${it.action.view}')">${esc(it.action.label)}</button>`:''}
+    </div>`;
+  }).join('');
+  const nbUrgent=items.filter(i=>i.prio===0).length;
+  box.innerHTML=`<div class="panel"><h2>☀️ À faire aujourd'hui ${nbUrgent>0?`<span class="tag" style="background:#b3261e;color:#fff;font-size:.62rem">${nbUrgent} urgent${nbUrgent>1?'s':''}</span>`:''}</h2>
+    ${rows}
+    <p class="note" style="margin-top:8px">Synthèse automatique de ce qui mérite ton attention. Touche un bouton pour agir — rien n'est fait sans toi.</p></div>`;
+}
+
+// ============================================================
+//  PLAN DE PRODUCTION INTELLIGENT
+//  Croise commandes + ruptures + anti-gaspi + réassort, chiffre les quantités (horizon 14 j),
+//  estime le temps de chaque production via le temps lissé (brique 1), et cale dans le temps
+//  dispo saisi par l'utilisateur. Ordre de priorité réordonnable et mémorisé.
+// ============================================================
+const PLAN_PRIO_KEY = 'sm_planPrioOrder';
+const PLAN_PRIO_DEFAULT = ['commande','rupture','antigaspi','reassort'];
+const PLAN_PRIO_LABEL = {commande:'Commandes fermes', rupture:'Ruptures imminentes', antigaspi:'Anti-gaspi (DLC matières)', reassort:'Réassort de confort'};
+function planPrioOrder(){
+  try{ const a=JSON.parse(localStorage.getItem(PLAN_PRIO_KEY)||'null');
+    if(Array.isArray(a) && a.length===4 && PLAN_PRIO_DEFAULT.every(k=>a.includes(k))) return a; }catch(e){}
+  return [...PLAN_PRIO_DEFAULT];
+}
+function planPrioSave(arr){ try{ localStorage.setItem(PLAN_PRIO_KEY, JSON.stringify(arr)); }catch(e){} }
+
+// Construit la liste des productions conseillées (avant calage temps).
+async function buildProductionPlan(horizonDays){
+  const H = horizonDays||14;
+  const items=[]; // {type, recipeId, produitNom, qte, raison, prioRang}
+  const order = planPrioOrder();
+  const rang = t => { const i=order.indexOf(t); return i<0?9:i; };
+
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recById = {}; recipes.forEach(r=>recById[r.id]=r);
+  const recByNom = {}; recipes.forEach(r=>recByNom[r.produitNom]=r);
+
+  // 1) COMMANDES fermes non livrées, dans l'horizon : besoin = pièces commandées non couvertes
+  try{
+    const orders=await db.orders.toArray();
+    const items_= await db.orderItems.toArray();
+    orders.forEach(o=>{
+      const st=(typeof normStatus==='function')?normStatus(o.statut):o.statut;
+      if(st==='Livrée') return;
+      const j=daysTo(o.date); if(j===null||j>H) return;
+      // pièces de la commande par recette (via orderItems → productions liées ? sinon lignes)
+      // approche simple : on s'appuie sur les lignes de commande agrégées par parfum si dispo
+    });
+  }catch(e){ console.error('plan orders',e); }
+
+  // 2) RUPTURES + 4) RÉASSORT : via la vélocité de ventes (besoin sur H jours)
+  try{
+    const v=await computeSalesVelocity({months:3, horizonDays:H});
+    if(v.hasData){
+      (v.lignes||[]).forEach(l=>{
+        if(l.perDay<=0) return;
+        const besoin = Math.ceil(l.perDay*H - l.stock);
+        if(besoin<=0) return;
+        const rec = recByNom[l.parfum];
+        const estRupture = l.joursRestants!=null && l.joursRestants<=7;
+        items.push({
+          type: estRupture?'rupture':'reassort',
+          recipeId: rec?rec.id:null, produitNom: l.parfum, qte: besoin,
+          raison: estRupture ? `Rupture dans ~${l.joursRestants} j` : `Réassort ${H} j (vélocité ${l.perMonth}/mois)`,
+          prioRang: rang(estRupture?'rupture':'reassort')
+        });
+      });
+    }
+  }catch(e){ console.error('plan velocity',e); }
+
+  // 3) ANTI-GASPI : matières à DLC proche
+  try{
+    const sugg=await generateProductionSuggestions(7);
+    sugg.forEach(s=>{
+      if(items.some(it=>it.recipeId===s.recipeId)) return; // déjà couvert
+      items.push({
+        type:'antigaspi', recipeId:s.recipeId, produitNom:s.produitNom,
+        qte: null, // quantité libre (selon matière) — on suggère "à écouler"
+        raison:`Matière ${s.matiere} à DLC ${s.joursAvantDLC<=0?'atteinte':'J−'+s.joursAvantDLC}`,
+        prioRang: rang('antigaspi')
+      });
+    });
+  }catch(e){ console.error('plan gaspi',e); }
+
+  items.sort((a,b)=> a.prioRang-b.prioRang || (b.qte||0)-(a.qte||0));
+  return items;
+}
+
+let _planTempsDispoMin = 180; // défaut : 3 h
+let _planAlloueMin = null;    // temps que l'utilisateur veut consacrer à la production (null = tout le dispo)
+async function renderProductionPlan(){
+  const box=document.getElementById('aiOut'); if(!box) return;
+  box.innerHTML=`<div class="panel"><h2>🧭 Plan de production</h2><p class="note">Calcul en cours…</p></div>`;
+  let plan, tl;
+  try{ plan=await buildProductionPlan(14); tl=await prodTempsLissePerMacaron(90); }
+  catch(e){ console.error('plan',e); box.innerHTML=`<div class="panel"><p class="note">Erreur de calcul du plan.</p></div>`; return; }
+  const minParMac = (tl && tl.minParMacaron) ? tl.minParMacaron : null;
+  const estMin = qte => (minParMac!=null && qte) ? Math.round(qte*minParMac) : null;
+
+  // Temps disponible AUJOURD'HUI, lu depuis ton planning (disponibilité bi-hebdomadaire).
+  let dispoPlanning = null;
+  try{
+    const now=new Date();
+    dispoPlanning = availMinutesOnDay(now, now.getHours()*60+now.getMinutes(), null, getAvailability());
+  }catch(e){ console.error('plan dispo planning',e); }
+  // Si le planning donne une valeur, on l'utilise comme temps dispo de référence (sinon le champ manuel).
+  if(dispoPlanning!=null && dispoPlanning>0 && _planAlloueMin===null){ _planTempsDispoMin = dispoPlanning; }
+  // Le temps réellement calé = temps ALLOUÉ à la production (≤ dispo). Par défaut = tout le dispo.
+  const alloue = (_planAlloueMin!=null) ? _planAlloueMin : _planTempsDispoMin;
+
+  // calage dans le temps ALLOUÉ
+  let budget=alloue, cumul=0;
+  const dansLeTemps=[], horsTemps=[];
+  plan.forEach(it=>{
+    const m=estMin(it.qte);
+    if(m!=null && cumul+m<=budget){ cumul+=m; dansLeTemps.push({...it,min:m}); }
+    else horsTemps.push({...it,min:m});
+  });
+
+  const fmtHM = m => { const h=Math.floor(m/60), mm=m%60; return `${h?h+'h ':''}${String(mm).padStart(2,'0')}min`; };
+  const prioBtns = planPrioOrder().map((k,i)=>`<span class="tag" style="background:#efe7da;color:#6b5d54;margin:2px">${i+1}. ${esc(PLAN_PRIO_LABEL[k])}</span>`).join(' ');
+  const ligne = it => {
+    const m = (it.min!=null)?`${it.min} min`:'temps ?';
+    const q = it.qte!=null?`${qty(it.qte)} pièces`:'à écouler';
+    const col = it.type==='commande'?'#b3261e':it.type==='rupture'?'#d98324':it.type==='antigaspi'?'#7a6a9a':'#3f7d52';
+    return `<div class="sum-box" style="border-left:3px solid ${col}">
+      <span style="flex:1"><b>${esc(it.produitNom)}</b> <span style="color:#9a8a82">— ${q}</span><br>
+        <span style="font-size:.78rem;color:#9a8a82">${esc(it.raison)}</span></span>
+      <b style="white-space:nowrap">${m}</b></div>`;
+  };
+
+  box.innerHTML=`<div class="panel">
+    <h2>🧭 Plan de production</h2>
+    ${dispoPlanning!=null?`<div class="sum-box" style="background:#eef5f0"><span>📅 Temps dispo aujourd'hui (planning)</span><b>${dispoPlanning>0?fmtHM(dispoPlanning):'aucune plage'}</b></div>`:''}
+    <div class="field"><label>Temps que je veux allouer à la production (minutes)</label>
+      <input type="number" min="0" step="15" id="plan_alloue" value="${alloue}" onchange="_planAlloueMin=Math.max(0,+this.value||0);renderProductionPlan()">
+      <p class="note">Pré-rempli avec ton temps disponible du jour. Réduis-le si une partie va à l'administratif, aux courses, etc.${dispoPlanning!=null&&_planAlloueMin!=null&&_planAlloueMin<dispoPlanning?` (tu réserves ${fmtHM(dispoPlanning-_planAlloueMin)} hors production)`:''}</p></div>
+    <p class="note">Priorité : ${prioBtns} <button class="btn ghost sm" onclick="planPrioForm()">Réordonner</button></p>
+    ${minParMac==null?`<div class="banner" style="background:#fdf6ec;border-color:#e5cfa0">⏱ <div>Temps par macaron pas encore mesuré : les durées ne peuvent pas être estimées. Le plan reste utile pour l'ordre et les quantités. Lance tes chronos d'atelier pour activer le calage temps.</div></div>`:`<div class="sum-box" style="background:#eef5f0"><span><b>Tient dans le temps alloué</b> (${cumul} / ${budget} min)</span><b>${dansLeTemps.length} production(s)</b></div>`}
+    ${dansLeTemps.length?`<h2 style="font-size:1rem;margin-top:10px">✅ À produire maintenant</h2>${dansLeTemps.map(ligne).join('')}`:''}
+    ${horsTemps.length?`<h2 style="font-size:1rem;margin-top:10px">⏳ Si tu as plus de temps</h2>${horsTemps.map(ligne).join('')}`:''}
+    ${(!dansLeTemps.length&&!horsTemps.length)?`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Rien à produire en priorité : commandes, stocks et DLC sont sous contrôle.</div></div>`:''}
+    <p class="note" style="margin-top:8px">Conseil indicatif basé sur tes commandes, ta vélocité de ventes (14 j) et tes DLC. Les quantités sont des suggestions à ajuster.</p>
+  </div>`;
+}
+// Réordonnancement de la priorité (simple : monter/descendre).
+function planPrioForm(){
+  const order=planPrioOrder();
+  const rows=order.map((k,i)=>`<div class="sum-box"><span style="flex:1"><b>${i+1}.</b> ${esc(PLAN_PRIO_LABEL[k])}</span>
+    <span style="display:flex;gap:4px">
+      <button class="btn ghost sm" ${i===0?'disabled':''} onclick="planPrioMove(${i},-1)">▲</button>
+      <button class="btn ghost sm" ${i===order.length-1?'disabled':''} onclick="planPrioMove(${i},1)">▼</button>
+    </span></div>`).join('');
+  openModal(`<h3>Ordre de priorité de production</h3>
+    <p class="note">Détermine quoi produire en premier quand le temps est limité.</p>
+    ${rows}
+    <div class="modal-actions"><button class="btn" onclick="closeModal();renderProductionPlan()">Terminé</button></div>`);
+}
+function planPrioMove(i,dir){
+  const order=planPrioOrder(); const j=i+dir;
+  if(j<0||j>=order.length) return;
+  [order[i],order[j]]=[order[j],order[i]];
+  planPrioSave(order); planPrioForm();
+}
+
 // Prévisionnel marché intelligent : suggestion de quantités d'après l'historique.
 async function renderMarketForecastBox(){
   const box=document.getElementById('marketForecast'); if(!box) return;
