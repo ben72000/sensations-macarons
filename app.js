@@ -1017,13 +1017,18 @@ document.addEventListener('scroll', (e)=>{
 
 function render(){
   const fn = VIEWS[view] || renderDash;
-  // transition légère : on relance l'animation de fondu/glissement du conteneur
   const main=document.getElementById('main');
-  if(main){ main.classList.remove('view-in'); void main.offsetWidth; main.classList.add('view-in'); }
+  // Joue l'animation de transition APRÈS que le contenu est prêt (les vues sont async).
+  // Sinon l'animation se joue sur l'ANCIEN contenu pendant le calcul de la nouvelle vue,
+  // ce qui donne un effet de double affichage / rechargement (visible sur Recettes & Dashboard).
+  const playIn = ()=>{ if(main){ main.classList.remove('view-in'); void main.offsetWidth; main.classList.add('view-in'); } };
   try {
     const r = fn();
-    // les vues sont asynchrones : on capture aussi un rejet de promesse (sinon écran blanc silencieux)
-    if (r && typeof r.catch === 'function') r.catch(err => renderViewError(view, err));
+    if (r && typeof r.then === 'function') {
+      r.then(playIn).catch(err => renderViewError(view, err));
+    } else {
+      playIn();
+    }
   } catch (err) {
     renderViewError(view, err);
   }
@@ -1089,6 +1094,21 @@ async function renderDash(){
     db.recipes.toArray()
   ]);
   const recName = rid => (recipes.find(r=>r.id===rid)||{}).produitNom||'Produit';
+  // Marge nette moyenne par macaron (s'appuie sur l'analyse de rentabilité : coûts + charges sociales).
+  // Calcul protégé : en cas d'erreur ou d'absence de ventes, on n'affiche rien plutôt que de fausser.
+  let margeNetteParMacaron = null;
+  try {
+    const [_ri, _lots, _mm, _st] = await Promise.all([
+      db.recipeItems.toArray().catch(()=>[]),
+      db.materialLots.toArray().catch(()=>[]),
+      (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]),
+      Promise.resolve(getSettings())
+    ]);
+    const _An = analyzeFlavorProfitability({recipes, recipeItems:_ri, lots:_lots, mats:materials, orders, markets, marketMoves:_mm, productions, settings:_st});
+    if(_An && _An.totals && _An.totals.pieces>0){
+      margeNetteParMacaron = money2(_An.totals.margeNette / _An.totals.pieces);
+    }
+  } catch(e){ console.error('margeNetteParMacaron', e); }
   // Relevé de température du jour fait ou non (rappel HACCP discret).
   const tLogsToday = await (db.temperatureLogs?db.temperatureLogs.where('date').equals(today()).toArray():Promise.resolve([])).catch(()=>[]);
   const releveFait = tLogsToday.length>0;
@@ -1163,10 +1183,14 @@ async function renderDash(){
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
      <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
-     <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">∑</div><div class="lbl">CA total ${kpiI('ca_total')}</div><div class="val">${euro(caTotal)}</div><div class="sub">depuis le début ›</div></div>
+     <div class="card clickable" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts & charges ›':'pas encore de ventes ›'}</div></div>
      <div class="card clickable" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
      <div class="card clickable" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock ${kpiI('alertes_stock')}</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
    </div>
+   <details style="margin:2px 0 10px">
+     <summary style="cursor:pointer;color:#9a8a82;font-size:.78rem;list-style:none;display:inline-flex;align-items:center;gap:4px">▾ CA total depuis le début</summary>
+     <div style="font-size:.82rem;color:#7a6a60;padding:4px 2px 0">${privacyModeEnabled()?'•••':euro(caTotal)} <span style="color:#9a8a82">cumul de toutes les ventes</span></div>
+   </details>
    <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
      <div class="bar-wrap">${data.map(d=>`<div class="bar-col"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
    </div>
@@ -5122,7 +5146,7 @@ async function clientPopup(id){
         <div class="crm-kpi"><div class="crm-emo">🎯</div><div class="crm-val">${d.parfumPrefere?esc(d.parfumPrefere):'—'}</div><div class="crm-lbl">Parfum préféré</div></div>
         <div class="crm-kpi"><div class="crm-emo">📅</div><div class="crm-val" style="font-size:.95rem">${esc(d.frequenceTxt)}</div><div class="crm-lbl">Fréquence</div></div>
       </div>
-      <div class="sum-box"><span>Commandes</span><b>${d.nbCommandes}</b></div>
+      <div class="sum-box clickable" onclick="clientOrders(${id})" style="cursor:pointer" title="Voir le détail des commandes"><span>Commandes</span><b>${d.nbCommandes} ›</b></div>
       <div class="sum-box"><span>CA cumulé</span><b>${euro(d.caTotal)}</b></div>`;
     } else {
       stat=`<div class="sum-box"><span>Commandes</span><b>Aucune pour l'instant</b></div>`;
@@ -5139,6 +5163,42 @@ async function clientPopup(id){
     ${c.notes?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span>Notes</span><b style="font-weight:500;white-space:pre-wrap">${esc(c.notes)}</b></div>`:''}
     ${stat}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="clientForm(${id})">Ouvrir la fiche complète</button></div>`);
+}
+// Détail des commandes d'un client : quoi a été acheté et à quelle date.
+async function clientOrders(id){
+  const c = await db.clients.get(id);
+  if(!c){ toast('Client introuvable'); return; }
+  const orders = (await db.orders.where('clientId').equals(id).toArray())
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||'')); // plus récentes d'abord
+  const nomComplet=[c.prenom,c.nom].filter(Boolean).join(' ')||c.nom||'Client';
+  if(!orders.length){
+    openModal(`<h3>Commandes — ${esc(nomComplet)}</h3>
+      <div class="sum-box"><span>Aucune commande pour l'instant</span></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="clientPopup(${id})">‹ Retour</button></div>`);
+    return;
+  }
+  const fmtD = d => { if(!d) return 'sans date'; const dt=new Date(d); return isNaN(dt)?esc(String(d).slice(0,10)):dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'}); };
+  // Résumé du contenu d'une commande : parfums agrégés (nom × qté).
+  const contenu = o => {
+    let dem={};
+    try{ dem=_orderParfumDemand(o)||{}; }catch(e){ dem={}; }
+    const parts=Object.entries(dem).filter(([n,q])=>q>0).map(([n,q])=>`${esc(n)} ×${qty(q)}`);
+    return parts.length?parts.join(' · '):'<span style="color:#9a8a82">contenu non détaillé</span>';
+  };
+  const rows = orders.map(o=>`
+    <div class="sum-box" style="flex-direction:column;align-items:stretch;gap:3px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <b>${fmtD(o.date)}</b>
+        <b style="color:var(--bordeaux,#490F25)">${euro(+o.montant||0)}</b>
+      </div>
+      <div style="font-size:.82rem;color:#7a6a60">${contenu(o)}</div>
+      ${o.statut?`<div style="font-size:.72rem;color:#9a8a82">${esc(o.statut)}</div>`:''}
+    </div>`).join('');
+  const total = money2(orders.reduce((s,o)=>s+(+o.montant||0),0));
+  openModal(`<h3>Commandes — ${esc(nomComplet)}</h3>
+    <div style="margin:-4px 0 8px;color:#9a8a82;font-size:.82rem">${orders.length} commande(s) · ${euro(total)} au total</div>
+    ${rows}
+    <div class="modal-actions"><button class="btn ghost" onclick="clientPopup(${id})">‹ Retour</button><button class="btn" onclick="closeModal()">Fermer</button></div>`);
 }
 async function clientForm(id){
   const c = id ? await db.clients.get(id) : {};

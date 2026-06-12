@@ -1,4 +1,4 @@
-const CACHE = 'sm-iphone-v235';
+const CACHE = 'sm-iphone-v239';
 const ASSETS = [
   './',
   './index.html',
@@ -9,7 +9,15 @@ const ASSETS = [
   './pdf_extract.js',
   './manifest.webmanifest',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './fonts/Outfit-Light.ttf',
+  './fonts/Outfit-Regular.ttf',
+  './fonts/Outfit-Medium.ttf',
+  './fonts/Outfit-SemiBold.ttf',
+  './fonts/Outfit-Bold.ttf',
+  './fonts/Fraunces-Variable.ttf',
+  './fonts/BellotaText-Regular.ttf',
+  './fonts/BellotaText-Bold.ttf'
 ];
 
 // INSTALL : précache + activation IMMÉDIATE de la nouvelle version (skipWaiting).

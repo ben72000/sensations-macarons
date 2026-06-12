@@ -10,9 +10,18 @@
 <meta name="apple-mobile-web-app-title" content="Sensations">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="apple-touch-icon" href="icon-512.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bellota:wght@400;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Polices hébergées en local (plus de dépendance Google Fonts, plus de reflow au chargement) */
+@font-face{font-family:'Outfit';font-style:normal;font-weight:300;font-display:swap;src:url('fonts/Outfit-Light.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/Outfit-Regular.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/Outfit-Medium.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/Outfit-SemiBold.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/Outfit-Bold.ttf') format('truetype')}
+/* Fraunces : police variable, un seul fichier couvre les graisses 400→700 */
+@font-face{font-family:'Fraunces';font-style:normal;font-weight:400 700;font-display:swap;src:url('fonts/Fraunces-Variable.ttf') format('truetype-variations')}
+@font-face{font-family:'Bellota';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/BellotaText-Regular.ttf') format('truetype')}
+@font-face{font-family:'Bellota';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/BellotaText-Bold.ttf') format('truetype')}
+</style>
 <style>
 :root{
   --bordeaux:#52252F; --bordeaux-2:#6e3340; --bordeaux-3:#3d1a22; --creme:#E8DDCD; --creme-2:#F5F0E8;
