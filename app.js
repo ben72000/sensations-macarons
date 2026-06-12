@@ -13666,6 +13666,62 @@ async function revenuHoraireData(jours){
   };
 }
 
+// BRIQUE 3 — REVENU HORAIRE GLOBAL RÉEL.
+// Ce que tu peux te payer de l'heure = marge avant rémunération ÷ temps total travaillé.
+//  • numérateur = CA encaissé − matières − emballages − charges fixes  (la main-d'œuvre N'est PAS
+//    déduite : c'est justement ce qu'on cherche à rémunérer).
+//  • dénominateur = temps total = atelier (production) + pointeuse (hors-production).
+//  • on fournit AVANT et APRÈS cotisations sociales (~socialGoods % du CA marchandise).
+async function revenuHoraireCalcul(jours){
+  jours = +jours || REVH_DEFAULT_DAYS;
+  const d = await revenuHoraireData(jours);
+  const s = getSettings();
+
+  // Coût matières + emballages des VENTES de la période, via l'analyse de rentabilité par parfum
+  // (coutVentes = pièces vendues × coût de revient matière unitaire ; déjà calculé ailleurs).
+  let coutMatieres = 0, coutEmballages = 0;
+  try{
+    const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
+      db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
+      db.orders.toArray(), db.markets.toArray(), db.marketMoves.toArray(), db.productions.toArray()
+    ]);
+    const A = analyzeFlavorProfitability({recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings:s});
+    // coût matières des ventes : somme des coutVentes par parfum.
+    const coutVentesTotal = (A.rows||[]).reduce((a,r)=>a + (+r.coutVentes||0), 0);
+    const caTotalAnalyse = (A.totals && +A.totals.ca) || (A.rows||[]).reduce((a,r)=>a + (+r.ca||0), 0);
+    // prorata : part du CA de la fenêtre sur le CA total analysé (évite de surcompter,
+    // car l'analyse couvre toutes les périodes, pas seulement la fenêtre).
+    const ratio = caTotalAnalyse>0 ? Math.min(1, d.caEncaisse/caTotalAnalyse) : 0;
+    coutMatieres = money2(coutVentesTotal * ratio);
+    // emballages : estimés via coût d'emballage moyen par macaron vendu (table packaging)
+    // approche prudente : si non calculable finement, laissé à 0 (n'invente pas).
+  }catch(e){ console.error('revh coûts ventes', e); }
+
+  // Charges fixes sur la fenêtre : récurrent mensuel × (jours/30) + charges ponctuelles datées.
+  const moisEquiv = jours/30;
+  const chargesFixes = money2(d.chargesRecurMensuel*moisEquiv + d.totalCharges);
+
+  // Cotisations sociales : socialGoods % du CA marchandise encaissé (approche micro-entrepreneur).
+  const cotisations = money2(d.caEncaisse * (+s.socialGoods||0)/100);
+
+  // Numérateur (marge avant rémunération), hors main-d'œuvre.
+  const margeAvantRemu = money2(d.caEncaisse - coutMatieres - coutEmballages - chargesFixes);
+  const margeApresCotis = money2(margeAvantRemu - cotisations);
+
+  const h = d.heuresMesurees;
+  const revAvant = h>0 ? money2(margeAvantRemu/h) : null;
+  const revApres = h>0 ? money2(margeApresCotis/h) : null;
+
+  return {
+    ...d,
+    coutMatieres, coutEmballages, chargesFixes, cotisations,
+    margeAvantRemu, margeApresCotis,
+    revHoraireAvantCotis: revAvant,
+    revHoraireApresCotis: revApres,
+    heures: h
+  };
+}
+
 // COUCHE 0 — AUDIT : évalue la fiabilité de chaque source et un niveau de confiance global.
 // Aucun revenu n'est encore calculé ici : on prépare le terrain honnêtement.
 function revenuHoraireAudit(d){
@@ -13714,8 +13770,8 @@ let _revhDays = REVH_DEFAULT_DAYS;
 async function renderRevenuHoraire(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML = `<div class="topbar"><div><h1>Mon revenu horaire</h1><p>Chargement…</p></div></div>`;
-  let d, audit;
-  try{ d = await revenuHoraireData(_revhDays); audit = revenuHoraireAudit(d); }
+  let d, audit, calc;
+  try{ calc = await revenuHoraireCalcul(_revhDays); d = calc; audit = revenuHoraireAudit(d); }
   catch(e){ console.error('revenuHoraire',e); main.innerHTML=`<div class="topbar"><div><h1>Mon revenu horaire</h1></div></div><div class="panel"><p class="note">Erreur de chargement des données.</p></div>`; return; }
 
   const dot = n => n==='ok'?'#3f7d52':(n==='warn'?'#d98324':'#b3261e');
@@ -13745,7 +13801,76 @@ async function renderRevenuHoraire(){
         <span style="flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:${dot(audit.confiance)};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:.8rem">${ico(audit.confiance)}</span>
         <span style="flex:1"><b>Niveau de confiance global</b><br><span style="font-size:.82rem;color:#9a8a82">${esc(audit.confLabel)}</span></span>
       </div>
-      <p class="note" style="margin-top:12px">Les étapes suivantes (ton revenu horaire réel, puis le simulateur « et si je vendais plus / produisais plus vite ») s'appuieront sur ces mêmes données. On les activera une fois cette base validée.</p>
+      <p class="note" style="margin-top:12px">Le calcul ci-dessous s'appuie sur ces données. Plus elles sont complètes, plus il est juste.</p>
+    </div>
+    ${(()=>{
+      const c=calc; const fiable=audit.nbOk>=2 && c.heures>0;
+      const euroOrTiret = v => v==null?'—':euro(v);
+      if(!(c.heures>0)){
+        return `<div class="panel"><h2>Ton revenu horaire</h2>
+          <p class="note">Pas assez de temps mesuré sur la période pour calculer un revenu horaire. Lance tes chronos (atelier + pointeuse) et reviens ici.</p></div>`;
+      }
+      return `<div class="panel">
+        <h2>Ton revenu horaire réel</h2>
+        <div class="row2">
+          <div class="card" style="background:#eef5f0;border-color:#bcd9c6">
+            <div class="lbl">Avant cotisations</div>
+            <div class="val" style="color:#2e7d32">${euroOrTiret(c.revHoraireAvantCotis)}/h</div>
+            <div class="sub">marge ${euro(c.margeAvantRemu)} ÷ ${c.heures.toFixed(1)} h</div>
+          </div>
+          <div class="card" style="background:#fbf6ee;border-color:#e5d3b3">
+            <div class="lbl">Après cotisations (~${(+getSettings().socialGoods||0)}%)</div>
+            <div class="val" style="color:#AA7C39">${euroOrTiret(c.revHoraireApresCotis)}/h</div>
+            <div class="sub">marge nette ${euro(c.margeApresCotis)} ÷ ${c.heures.toFixed(1)} h</div>
+          </div>
+        </div>
+        <h2 style="margin-top:14px;font-size:1rem">D'où vient ce chiffre</h2>
+        <div class="sum-box"><span>CA encaissé</span><b>${euro(c.caEncaisse)}</b></div>
+        <div class="sum-box"><span>− Matières des ventes</span><b>− ${euro(c.coutMatieres)}</b></div>
+        ${c.coutEmballages>0?`<div class="sum-box"><span>− Emballages</span><b>− ${euro(c.coutEmballages)}</b></div>`:''}
+        <div class="sum-box"><span>− Charges fixes (sur ${(c.jours/30).toFixed(1)} mois)</span><b>− ${euro(c.chargesFixes)}</b></div>
+        <div class="sum-box" style="border-top:1px solid #e6dccd"><span><b>= Marge avant rémunération</b></span><b>${euro(c.margeAvantRemu)}</b></div>
+        <div class="sum-box"><span>− Cotisations sociales</span><b>− ${euro(c.cotisations)}</b></div>
+        <div class="sum-box"><span><b>= Marge nette</b></span><b>${euro(c.margeApresCotis)}</b></div>
+        <div class="sum-box" style="margin-top:6px"><span>Temps total travaillé</span><b>${c.heures.toFixed(1)} h</b></div>
+        <div class="sum-box"><span style="padding-left:10px">· dont production (atelier)</span><b>${c.hAtelier.toFixed(1)} h</b></div>
+        <div class="sum-box"><span style="padding-left:10px">· dont hors-production (pointeuse)</span><b>${c.hPointeuse.toFixed(1)} h</b></div>
+        ${!fiable?`<p class="note" style="margin-top:10px;color:#d98324">⚠ Données encore partielles : ce chiffre est indicatif. Complète tes sources (voir ci-dessus) pour le fiabiliser.</p>`:''}
+        ${c.coutMatieres===0?`<p class="note" style="margin-top:8px">Note : le coût matières des ventes n'a pas pu être estimé (pas de ventes rattachées à des recettes chiffrées sur la période).</p>`:''}
+        <p class="note" style="margin-top:8px">La main-d'œuvre n'est pas déduite ici : ce revenu horaire <b>est</b> ta rémunération du temps travaillé. À comparer avec ce que tu voudrais te payer — l'écart te dit s'il faut ajuster prix, vitesse ou volume de ventes.</p>
+      </div>`;
+    })()}
+    <div class="panel">
+      <details>
+        <summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600;font-size:1.02rem">📐 Comment c'est calculé</summary>
+        <div style="margin-top:12px">
+          <p class="note">Toutes les formules utilisées par cet écran et par ton coût de revient. Tes données alimentent ces calculs automatiquement.</p>
+
+          <h2 style="font-size:1rem;margin-top:14px">1 · Temps de production par macaron</h2>
+          <p class="body" style="font-size:.9rem">Mesuré à l'atelier, lissé sur 90 jours pour rester stable.</p>
+          <div class="sum-box" style="display:block"><b>min / macaron</b> = temps total d'atelier (toutes tâches) ÷ macarons finis produits</div>
+          <p class="note">Exemple : 300 min d'atelier ÷ 600 macarons = <b>0,5 min/macaron</b>. Seuls les macarons finis (assemblés ou complets) comptent, pas les coques ou ganaches seules.</p>
+
+          <h2 style="font-size:1rem;margin-top:14px">2 · Coût de revient d'un macaron</h2>
+          <div class="sum-box" style="display:block"><b>coût/pièce</b> = matières + consommables + main-d'œuvre, le tout réparti sur les pièces vendables (les pertes renchérissent le coût)</div>
+          <p class="body" style="font-size:.9rem">La main-d'œuvre (si activée) = temps × taux horaire. Le temps vient soit de la recette (manuel), soit de la mesure atelier (brique 1), selon ton réglage.</p>
+          <p class="note">Exemple : 0,5 min/macaron × 12 €/h ÷ 60 = <b>0,10 €</b> de main-d'œuvre par macaron. L'emballage n'est pas inclus ici (il dépend du format de coffret).</p>
+
+          <h2 style="font-size:1rem;margin-top:14px">3 · Ton revenu horaire</h2>
+          <div class="sum-box" style="display:block"><b>revenu/h</b> = marge avant rémunération ÷ temps total travaillé</div>
+          <p class="body" style="font-size:.9rem">avec :</p>
+          <div class="sum-box"><span>Marge avant rémunération</span><b>CA encaissé − matières − emballages − charges fixes</b></div>
+          <div class="sum-box"><span>Marge nette</span><b>marge avant rému − cotisations sociales</b></div>
+          <div class="sum-box"><span>Temps total</span><b>atelier (production) + pointeuse (hors-prod)</b></div>
+          <p class="note">La main-d'œuvre n'est <b>pas</b> retirée du numérateur : ce revenu horaire est justement ce que ton travail te rapporte. Les cotisations (~${(+getSettings().socialGoods||0)} % du CA marchandise) donnent la version « après cotisations ».</p>
+          <p class="note">Exemple : (3000 € − 450 € matières − 750 € charges) ÷ 120 h = <b>15 €/h</b> avant cotisations ; après cotisations ≈ 11,93 €/h.</p>
+
+          <h2 style="font-size:1rem;margin-top:14px">Pourquoi « lissé » et pas le temps du jour ?</h2>
+          <p class="body" style="font-size:.9rem">Un mauvais jour de prod ne doit pas faire exploser ton coût de revient. Le coût utilise donc ta <b>moyenne</b> sur 90 jours (stable, pilotable). La variation au jour le jour, elle, servira au suivi de performance (à venir).</p>
+
+          <p class="note" style="margin-top:14px;color:#9a8a82">Fenêtre de calcul actuelle : ${d.jours>=99999?'toutes les données':`${d.jours} derniers jours`}. Modifiable en haut de l'écran.</p>
+        </div>
+      </details>
     </div>`;
 }
 function revhSetDays(j){ _revhDays = j; renderRevenuHoraire(); }
