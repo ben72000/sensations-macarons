@@ -2977,6 +2977,8 @@ async function setEmplacement(id){
   }catch(e){ /* base vide ou pas de données : on reste sur suggestion simple */ }
   const _smart = suggestLevelSmart(_specsMap, _sugBox, _ctx, _occMap, _demande);
   const _sugLvl = _smart.best;
+  // Mémorise tout le contexte pour permettre le recalcul si l'utilisateur change de boîte.
+  _placeCtx = {id, specsMap:_specsMap, boxes:_boxes, ctx:_ctx, occMap:_occMap, demande:_demande, sugBoxNom: _sugBox?_sugBox.nom:null};
   const opts = EMPLACEMENTS.map(e=>{
     const estCongelo = e.type==='congelateur';
     const interdit = estCongelo && (decongele || retourBloque); // recongélation interdite OU délai 1h dépassé
@@ -3022,11 +3024,22 @@ async function setEmplacement(id){
       })();
       sugHtml = `<h3 style="font-size:1rem;margin-top:14px">📍 Rangement suggéré</h3>
         ${actuelLigne}
-        <div class="sum-box" style="background:#faf6ee;flex-direction:column;align-items:flex-start;gap:4px">
+        <div id="placeResult" class="sum-box" style="background:#faf6ee;flex-direction:column;align-items:flex-start;gap:4px">
           <span><b>${e.icon} ${esc(e.nom)} (${e.lettre})</b> · ${esc(lv.nom||'niveau')} <span style="font-size:.72rem;color:${r.c}">${r.ico} ${r.label}</span> <span style="font-size:.72rem">${a.ico} ${a.label}</span></span>
-          <span style="font-size:.82rem;color:#7a6a60">Boîte : <b>${esc(_sugBox.nom)}</b> (${capLabel}) · ${_ctx.nb} macaron(s) à ranger</span>
+          <span style="font-size:.82rem;color:#7a6a60">${_ctx.nb} macaron(s) à ranger</span>
         </div>
-        <button class="btn gold sm" style="margin-top:6px" onclick="applySuggestedPlacement(${id})">✓ Ranger ici</button>
+        <div class="field" style="margin-top:8px"><label>Boîte utilisée <span style="color:#9a8a82;font-weight:400">— change si tu prends une autre boîte</span></label>
+          <select id="placeBox" onchange="recalcPlacement(${id}, this.value)">
+            ${_boxes.filter(bx=>{const c=_ctx.grandFormat?(+bx.capaciteGF||0):(+bx.capacite||0);return c>0;}).map(bx=>{
+              const cap=_ctx.grandFormat?(+bx.capaciteGF||0):(+bx.capacite||0);
+              return `<option value="${esc(bx.nom)}" ${bx.nom===_sugBox.nom?'selected':''}>${esc(bx.nom)} (${cap} ${_ctx.grandFormat?'GF':'std'})</option>`;
+            }).join('')}
+          </select></div>
+        <div id="placeAlert"></div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn gold sm" style="flex:1" onclick="applySuggestedPlacement(${id})">✓ Ranger ici</button>
+          <button class="btn ghost sm" onclick="proposeSplit(${id})">📦 Répartir</button>
+        </div>
         <p class="note" style="margin-top:4px">💡 ${esc(pourquoi)}.</p>`;
     } else if(_ctx.nb>0) {
       sugHtml = `<p class="note" style="margin-top:10px">${actuelLigne||''}💡 Aucune suggestion de niveau (vérifie que tes boîtes ont des dimensions et qu'un niveau peut les accueillir).</p>`;
@@ -3047,6 +3060,7 @@ async function setEmplacement(id){
   _placementSuggestion = (_sugLvl&&_sugBox) ? {id, equipKey:_sugLvl.equipKey, nivIndex:_sugLvl.nivIndex, niveauNom:_sugLvl.niveau.nom, boiteNom:_sugBox.nom} : null;
 }
 let _placementSuggestion=null;
+let _placeCtx=null;
 // Applique le rangement suggéré : déplace vers l'équipement ET enregistre niveau + boîte.
 async function applySuggestedPlacement(id){
   const s=_placementSuggestion; if(!s || s.id!==id){ toast('Suggestion expirée'); return; }
@@ -3060,6 +3074,94 @@ async function applySuggestedPlacement(id){
   if(typeof renderProductions==='function') renderProductions();
   const e=empInfo(s.equipKey);
   toast(`Rangé : ${e.nom} (${e.lettre}) · ${s.niveauNom} · ${s.boiteNom}`);
+}
+// Recalcule le rangement quand l'utilisateur choisit une AUTRE boîte que celle suggérée.
+// Détecte le manque de place (niveau idéal plein) → alerte + propose la meilleure alternative.
+function recalcPlacement(id, boiteNom){
+  const cx=_placeCtx; if(!cx || cx.id!==id) return;
+  const box = cx.boxes.find(b=>b.nom===boiteNom); if(!box) return;
+  const smart = suggestLevelSmart(cx.specsMap, box, cx.ctx, cx.occMap, cx.demande);
+  const best = smart.best;
+  const resBox = document.getElementById('placeResult');
+  const alertBox = document.getElementById('placeAlert');
+  if(!best){
+    // Aucun niveau ne peut accueillir cette boîte (trop grande, ou tous pleins)
+    if(resBox) resBox.style.opacity='0.5';
+    if(alertBox) alertBox.innerHTML=`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-top:8px">⚠ <div><b>Pas de place pour cette boîte.</b> Aucun niveau compatible n'est disponible (trop grande, ou niveaux pleins). Essaie une boîte plus petite, ou libère de la place.</div></div>`;
+    _placementSuggestion=null;
+    return;
+  }
+  const e=EMP_BY_KEY[best.equipKey], lv=best.niveau;
+  const r=NIV_ROLES[nivRole(lv)], a=NIV_ACCES[nivAcces(lv)];
+  if(resBox){
+    resBox.style.opacity='1';
+    resBox.innerHTML=`<span><b>${e.icon} ${esc(e.nom)} (${e.lettre})</b> · ${esc(lv.nom||'niveau')} <span style="font-size:.72rem;color:${r.c}">${r.ico} ${r.label}</span> <span style="font-size:.72rem">${a.ico} ${a.label}</span></span>
+      <span style="font-size:.82rem;color:#7a6a60">${cx.ctx.nb} macaron(s) · boîte ${esc(box.nom)}</span>`;
+  }
+  // Alerte si le niveau retenu est déjà bien rempli (place tendue mais ça passe)
+  if(alertBox){
+    const taux = best.tauxRempli!=null?Math.round(best.tauxRempli*100):null;
+    if(taux!=null && taux>=80){
+      alertBox.innerHTML=`<div class="banner" style="background:#fdf6ec;border-color:#e5cfa0;margin-top:8px">⚠ <div>Place tendue : ce niveau est déjà rempli à <b>${taux}%</b>. Ça passe, mais surveille l'encombrement.</div></div>`;
+    } else {
+      alertBox.innerHTML='';
+    }
+  }
+  // met à jour la suggestion appliquée par "Ranger ici"
+  _placementSuggestion = {id, equipKey:best.equipKey, nivIndex:best.nivIndex, niveauNom:lv.nom, boiteNom:box.nom};
+}
+// Propose un scindage du batch courant sur plusieurs niveaux et l'affiche pour ajustement.
+function proposeSplit(id){
+  const cx=_placeCtx; if(!cx || cx.id!==id) return;
+  const boiteNom = (document.getElementById('placeBox')||{}).value || cx.sugBoxNom;
+  const box = cx.boxes.find(b=>b.nom===boiteNom); if(!box) return;
+  const split = splitPlacement(cx.specsMap, box, cx.ctx, cx.occMap, cx.demande);
+  const alertBox = document.getElementById('placeAlert'); if(!alertBox) return;
+  if(!split.parts.length){
+    alertBox.innerHTML=`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-top:8px">⚠ <div>Impossible de répartir : aucun niveau ne peut accueillir cette boîte.</div></div>`;
+    return;
+  }
+  _splitProposal = {id, boiteNom, parts:split.parts.map(p=>({...p}))};
+  const lignes = split.parts.map((p,i)=>{
+    const e=EMP_BY_KEY[p.equipKey];
+    return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #f0e9e2">
+      <span style="flex:1">${e.icon} <b>${esc(e.nom)} (${e.lettre})</b> · ${esc(p.niveauNom)}</span>
+      <input type="number" min="0" style="width:70px" value="${p.nbMacarons}" onchange="splitAdjust(${i}, this.value)">
+      <span style="font-size:.72rem;color:#9a8a82">mac</span></div>`;
+  }).join('');
+  const totalProp = split.parts.reduce((s,p)=>s+p.nbMacarons,0);
+  alertBox.innerHTML=`<div class="sum-box" style="background:#eef5f0;flex-direction:column;align-items:stretch;gap:2px;margin-top:8px">
+    <span style="font-weight:600;margin-bottom:4px">📦 Répartition proposée (${cx.ctx.nb} macaron(s)) — ajustable</span>
+    ${lignes}
+    <div id="splitTotal" style="font-size:.76rem;color:#7a6a60;margin-top:4px">Total réparti : ${totalProp} / ${cx.ctx.nb}${split.reste>0?` · ⚠ reste ${split.reste} non placé`:''}</div>
+    <button class="btn gold sm" style="margin-top:6px" onclick="applySplit(${id})">✓ Ranger réparti</button>
+  </div>`;
+}
+let _splitProposal=null;
+function splitAdjust(i, val){
+  if(!_splitProposal || !_splitProposal.parts[i]) return;
+  _splitProposal.parts[i].nbMacarons = Math.max(0, +val||0);
+  const tot=_splitProposal.parts.reduce((s,p)=>s+p.nbMacarons,0);
+  const cx=_placeCtx;
+  const el=document.getElementById('splitTotal');
+  if(el && cx){ const reste=cx.ctx.nb-tot; el.innerHTML=`Total réparti : ${tot} / ${cx.ctx.nb}${reste>0?` · ⚠ reste ${reste} non placé`:reste<0?` · ⚠ dépasse de ${-reste}`:' ✓'}`; }
+}
+async function applySplit(id){
+  const sp=_splitProposal; if(!sp || sp.id!==id) return;
+  const parts = sp.parts.filter(p=>p.nbMacarons>0);
+  if(!parts.length){ toast('Aucune quantité à ranger'); return; }
+  const p=await db.productions.get(id); if(!p) return;
+  // placement principal = premier morceau (compat avec tout le code existant)
+  const main=parts[0];
+  if(p.emplacement!==main.equipKey){ await doMoveEmplacement(id, main.equipKey, {silent:true}); }
+  // champ placements ADDITIF : liste complète ; les champs simples reflètent le principal
+  await db.productions.update(id, {
+    niveauIndex:main.nivIndex, niveauNom:main.niveauNom, boiteNom:sp.boiteNom,
+    placements: parts.map(pp=>({equipKey:pp.equipKey, niveauNom:pp.niveauNom, boiteNom:sp.boiteNom, nbMacarons:pp.nbMacarons}))
+  });
+  closeModal();
+  if(typeof renderProductions==='function') renderProductions();
+  toast(`Réparti sur ${parts.length} emplacement(s)`);
 }
 async function setMaturation(id, etat){
   if(!MATURATION_ETATS[etat]) return;
@@ -7140,11 +7242,20 @@ async function stockParfumDetail(nom){
       dlcDot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${col};margin-right:4px;vertical-align:middle"></span>${lbl?`<span style="color:${col};font-size:.74rem">${lbl}</span> `:''}`;
     }
     // Emplacement fin : équipement + niveau + boîte
-    const empFin = [
-      p.emplacement?empTagHtml(p.emplacement):'',
-      p.niveauNom?esc(p.niveauNom):'',
-      p.boiteNom?('📦 '+esc(p.boiteNom)):''
-    ].filter(Boolean).join(' · ');
+    let empFin;
+    if(Array.isArray(p.placements) && p.placements.length>1){
+      // lot réparti sur plusieurs emplacements
+      empFin = '📦 réparti : ' + p.placements.map(pl=>{
+        const e=empInfo(pl.equipKey);
+        return `${e.lettre} ${esc(pl.niveauNom||'')} (${pl.nbMacarons})`;
+      }).join(' · ');
+    } else {
+      empFin = [
+        p.emplacement?empTagHtml(p.emplacement):'',
+        p.niveauNom?esc(p.niveauNom):'',
+        p.boiteNom?('📦 '+esc(p.boiteNom)):''
+      ].filter(Boolean).join(' · ');
+    }
     return `<div class="trace-step clickable" style="cursor:pointer" onclick="closeModal();traceProd(${p.id})" title="Traçabilité complète de ce batch">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <div><b>lot ${esc(p.lotProduction||'—')}</b> · ${qty(p.qteRestante)} pièce(s)${ageTxt?` <span style="font-size:.72rem;color:#9a8a82">· ${ageTxt}</span>`:''}<br>
@@ -16836,6 +16947,55 @@ function suggestLevelSmart(specsMap, box, ctx, occMap, demande){
   }
   candidates.sort((a,b)=>a.score-b.score);
   return {best:candidates[0]||null, candidates, sortVite};
+}
+// ---- SCINDAGE : répartir un batch sur plusieurs niveaux quand il ne tient pas en un seul ----
+// Place le maximum au meilleur niveau, puis le reste au suivant, etc. (capacité = nb boîtes × macarons/boîte).
+// Retourne {parts:[{equipKey,nivIndex,niveauNom,nbMacarons,nbBoites}], reste, complet:bool}.
+function splitPlacement(specsMap, box, ctx, occMap, demande){
+  const capParMacaron = ctx.grandFormat ? (+box.capaciteGF||0) : (+box.capacite||0);
+  if(capParMacaron<=0) return {parts:[], reste:ctx.nb, complet:false};
+  let reste = ctx.nb;
+  const parts = [];
+  // copie locale de l'occupation pour la décrémenter au fur et à mesure
+  const occLocal = new Map(); if(occMap) occMap.forEach((v,k)=>occLocal.set(k,Object.assign({},v)));
+  let garde = 0;
+  while(reste>0 && garde<20){
+    garde++;
+    const smart = suggestLevelSmart(specsMap, box, {...ctx, nb:reste}, occLocal, demande);
+    const best = smart.best; if(!best) break; // plus aucun niveau ne rentre
+    const lv = best.niveau;
+    const cap = levelCapacityForBox(lv, box); // {nbBoites}
+    if(!cap || cap.nbBoites<=0) break;
+    // combien de boîtes peut-on encore mettre vu l'occupation réelle
+    const key = best.equipKey+'|'+(lv.nom||'');
+    const occ = occLocal.get(key);
+    let boitesLibres = cap.nbBoites;
+    if(occ){
+      const surfNiv = levelFloorArea(lv);
+      const couches = levelLayersForHeight(lv, +box.h||0)||1;
+      const coutBoite = boxFloorArea(box)/couches;
+      const resteSurf = surfNiv - (occ.empreinteUtilisee||0);
+      boitesLibres = Math.max(0, Math.min(cap.nbBoites, Math.floor(resteSurf/coutBoite + 0.01)));
+    }
+    if(boitesLibres<=0){
+      // niveau plein : on le neutralise pour la prochaine itération
+      occLocal.set(key, {empreinteUtilisee: levelFloorArea(lv), tauxVolume:1, plein:true});
+      continue;
+    }
+    const capaciteNiveau = boitesLibres * capParMacaron;
+    const aPoser = Math.min(reste, capaciteNiveau);
+    const boitesUtilisees = Math.ceil(aPoser/capParMacaron);
+    parts.push({equipKey:best.equipKey, nivIndex:best.nivIndex, niveauNom:lv.nom||'',
+      nbMacarons:aPoser, nbBoites:boitesUtilisees, boiteNom:box.nom});
+    reste -= aPoser;
+    // décrémente l'occupation locale pour ne pas re-remplir le même niveau
+    const couches = levelLayersForHeight(lv, +box.h||0)||1;
+    const coutBoite = boxFloorArea(box)/couches;
+    const prevEmp = occ ? (occ.empreinteUtilisee||0) : 0;
+    occLocal.set(key, {empreinteUtilisee: prevEmp + boitesUtilisees*coutBoite,
+      tauxVolume: Math.min(1,(prevEmp + boitesUtilisees*coutBoite)/levelFloorArea(lv))});
+  }
+  return {parts, reste, complet: reste<=0};
 }
 function lotPlacementCtx(p, recipe){
   const nb = round3(+p.qteRestante||0);
