@@ -534,6 +534,7 @@ const EMP_BY_KEY = Object.fromEntries(EMPLACEMENTS.map(e=>[e.key,e]));
 const EMP_BY_LETTRE = Object.fromEntries(EMPLACEMENTS.map(e=>[e.lettre,e]));
 // Un emplacement est-il un congélateur ? (B, C, A) — sinon frigo (F).
 function isFreezer(key){ const e=EMP_BY_KEY[key]; return e ? e.type==='congelateur' : key==='congelateur'; }
+function isFrigoKey(key){ const e=EMP_BY_KEY[key]; return e ? e.type==='frigo' : key==='frigo'; }
 // Libellé/lettre/icône d'un emplacement (rétro-compat : 'congelateur' générique → bahut par défaut d'affichage).
 function empInfo(key){
   if(EMP_BY_KEY[key]) return EMP_BY_KEY[key];
@@ -1858,7 +1859,7 @@ async function renderRecipes(){
           <span class="ing-mult" id="mult_${r.id}_${idx}"><b>${qty(shown)}</b> ${esc(d.u)}</span>
         </div>
       </div>`; }).join('');
-    blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}${r.coquesCongelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ coques congelées</span> ':''}${(r.ganacheDelaiH!=null&&+r.ganacheDelaiH>0)?`<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">⏱ ganache ${r.ganacheDelaiH}h</span> `:''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
+    blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}${r.coquesCongelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ coques congelées</span> ':''}${(r.ganacheDelaiH!=null&&+r.ganacheDelaiH>0)?`<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">⏱ ganache ${r.ganacheDelaiH}h</span> `:''}${r.congelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ congel. obligatoire</span> ':''}${r.jourJUniquement?'<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">📅 jour J</span> ':''}${(r.heuresMaxSortie!=null&&+r.heuresMaxSortie>0)?`<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">⏳ ${r.heuresMaxSortie}h max</span> `:''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
         return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc ${kpiI('cout_revient_rec')}${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
@@ -1926,6 +1927,21 @@ async function recForm(id){
          <input type="number" step="0.5" min="0" id="f_ganacheDelai" value="${r.ganacheDelaiH!=null?r.ganacheDelaiH:12}" placeholder="12">
          <p class="note">Par défaut 12 h. Mets 0 pour les ganaches qui n'ont pas besoin de ce délai (exception).</p></div>
        <label class="switch-row"><input type="checkbox" id="f_coquesCongel" ${r.coquesCongelObligatoire?'checked':''}> ❄️ Coques à <b>congeler obligatoirement</b> avant montage (cas du grand format)</label>
+     </div>
+   </details>
+   <details style="margin:8px 0" ${(r.congelObligatoire||r.heuresMaxSortie||r.jourJUniquement||r.joursToleranceFrigo!=null)?'open':''}><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">🌡 Conservation (propre à la recette)</summary>
+     <div style="margin-top:8px">
+       <p class="note" style="margin-top:0">Chaque ganache a sa sensibilité. Ces réglages adaptent le stockage et la DLC à cette recette précise (ex : framboise/citron = très sensibles ; caramel = tolérant).</p>
+       <label class="switch-row"><input type="checkbox" id="f_congelObl" ${r.congelObligatoire?'checked':''}> ❄️ <b>Congélateur obligatoire</b> (le frigo ne sera pas proposé sauf sortie imminente)</label>
+       <label class="switch-row"><input type="checkbox" id="f_jourJ" ${r.jourJUniquement?'checked':''}> 📅 Sortie <b>le jour de livraison uniquement</b> (jamais avant le jour J)</label>
+       <div class="row2" style="margin-top:8px">
+         <div class="field"><label>Heures max hors congélateur avant livraison</label>
+           <input type="number" step="0.5" min="0" id="f_heuresMax" value="${r.heuresMaxSortie!=null?r.heuresMaxSortie:''}" placeholder="ex : 7 (framboise)">
+           <p class="note">0 ou vide = pas de contrainte. 7 pour la framboise.</p></div>
+         <div class="field"><label>Jours de tolérance au frigo</label>
+           <input type="number" step="1" min="0" id="f_tolFrigo" value="${r.joursToleranceFrigo!=null?r.joursToleranceFrigo:''}" placeholder="ex : 0 framboise, 5 caramel">
+           <p class="note">Combien de jours ce parfum supporte le frigo sans perte de qualité.</p></div>
+       </div>
      </div>
    </details>
    <div class="field"><label>Allergènes <span style="color:#9a8a82;font-weight:400">— information obligatoire pour la vente</span></label>
@@ -2073,6 +2089,10 @@ async function saveRec(id){
     grandFormat: !!document.getElementById('f_gf')?.checked,
     ganacheDelaiH: Math.max(0, +val('f_ganacheDelai')||0),
     coquesCongelObligatoire: !!document.getElementById('f_coquesCongel')?.checked,
+    congelObligatoire: !!document.getElementById('f_congelObl')?.checked,
+    jourJUniquement: !!document.getElementById('f_jourJ')?.checked,
+    heuresMaxSortie: (val('f_heuresMax')==='')?null:Math.max(0, +val('f_heuresMax')||0),
+    joursToleranceFrigo: (val('f_tolFrigo')==='')?null:Math.max(0, Math.round(+val('f_tolFrigo')||0)),
     allergenes: Array.from(document.querySelectorAll('.allergen-chip.on')).map(b=>b.dataset.a),
     pertePct: Math.max(0, Math.min(90, +val('f_perte')||0)),
     minParBatch: Math.max(0, +val('f_mod')||0),
@@ -2504,7 +2524,8 @@ function allocateBatches(needs, prods, recipes){
   const stock = prods.filter(p=>round3(+p.qteRestante)>0 && prodVendable(p)).map(p=>({
     id:p.id, emp:p.emplacement||'', lot:p.lotProduction||'', dlc:p.dlcProduit||'',
     rec:recName(p.recipeId), gf: !!(recById[p.recipeId] && recById[p.recipeId].grandFormat),
-    dispo:round3(+p.qteRestante)
+    dispo:round3(+p.qteRestante),
+    niveauNom:p.niveauNom||'', boiteNom:p.boiteNom||'', maturation:prodMaturation(p)
   }));
   // Correspondance besoin ↔ batch : le type DOIT coïncider (grand format avec grand format,
   // petit avec petit), en plus de la correspondance de parfum. Jamais de mélange.
@@ -2535,7 +2556,8 @@ function allocateBatches(needs, prods, recipes){
         if(remaining[f]<=0) break;
         const take=Math.min(remaining[f], s.dispo);
         if(take>0){
-          plan.push({flavor:dispName(f), prodId:s.id, qte:round3(take), emp:s.emp, lot:s.lot, dlc:s.dlc});
+          plan.push({flavor:dispName(f), prodId:s.id, qte:round3(take), emp:s.emp, lot:s.lot, dlc:s.dlc,
+            niveauNom:s.niveauNom, boiteNom:s.boiteNom, maturation:s.maturation});
           s.dispo=round3(s.dispo-take); remaining[f]=round3(remaining[f]-take);
         }
       }
@@ -2552,6 +2574,7 @@ function allocateBatches(needs, prods, recipes){
 
 async function renderPicking(){
   if(!_pickDate) _pickDate = today();
+  try{ window._equipSpecsCache = await equipGetSpecs(); }catch(e){ window._equipSpecsCache = {}; }
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Préparation / Picking</h1><p>Affectation des batchs optimisée par emplacement</p></div></div>
    <div class="pick-tabs">
@@ -2593,6 +2616,22 @@ async function pickRenderOrders(){
 }
 
 // Vue « Tout sortir » : un parcours par ZONE (emplacements polyvalents en premier).
+// Construit la ligne de détail d'emplacement fin pour le picking (niveau, boîte, accès, maturation).
+function pickDetailLine(pk){
+  const bits=[];
+  if(pk.niveauNom) bits.push(esc(pk.niveauNom));
+  if(pk.boiteNom) bits.push('📦 '+esc(pk.boiteNom));
+  // accès du niveau si on le retrouve
+  if(pk.niveauNom && pk.emp){
+    const spec = (window._equipSpecsCache||{})[pk.emp];
+    if(spec && Array.isArray(spec.niveaux)){
+      const lv = spec.niveaux.find(n=>n.nom===pk.niveauNom);
+      if(lv){ const a=NIV_ACCES[nivAcces(lv)]; if(a) bits.push(a.ico+' '+a.label); }
+    }
+  }
+  if(pk.maturation){ const m=MATURATION_ETATS[pk.maturation]; if(m) bits.push(m.ico+' '+m.label); }
+  return bits.length? `<div class="pick-sub" style="color:#8a6d3b">${bits.join(' · ')}</div>` : '';
+}
 function pickConsolidatedHtml(alloc, orders){
   if(!alloc.byZone.length && !alloc.shortages.length) return '<div class="empty">Rien à préparer (aucun macaron demandé).</div>';
   const zones = alloc.byZone.map(z=>{
@@ -2602,7 +2641,7 @@ function pickConsolidatedHtml(alloc, orders){
       return `<div class="pick-row${done?' done':''}" onclick="pickToggleCons('${key.replace(/'/g,"\\'")}')">
         <div class="pick-check">${done?'✓':''}</div>
         <div class="pick-main"><div class="pick-name">${esc(pk.flavor)}</div>
-          <div class="pick-sub">lot ${esc(pk.lot||'—')}${pk.dlc?` · DLC ${fmtDate(pk.dlc)}`:''}</div></div>
+          <div class="pick-sub">lot ${esc(pk.lot||'—')}${pk.dlc?` · DLC ${fmtDate(pk.dlc)}`:''}</div>${pickDetailLine(pk)}</div>
         <button class="pick-scan" onclick="event.stopPropagation();pickScanConfirm('${esc(pk.flavor).replace(/'/g,"\\'")}','${esc(pk.lot||'').replace(/'/g,"\\'")}')" title="Scanner ce bac">📷</button>
         <div class="pick-qty">${pk.qte}</div></div>`;
     }).join('');
@@ -2645,7 +2684,8 @@ function pickOrderCard(o, nom, prods, recipes){
   alloc.byZone.forEach(z=>{
     z.picks.forEach(pk=>{
       rows.push({key:'pick:'+pk.prodId+':'+pk.flavor, kind:'mac', label:pk.flavor, qte:pk.qte,
-        emp:z.emp, lettre:z.lettre, zoneNom:z.nom, icon:z.icon, lot:pk.lot, dlc:pk.dlc, prodId:pk.prodId});
+        emp:z.emp, lettre:z.lettre, zoneNom:z.nom, icon:z.icon, lot:pk.lot, dlc:pk.dlc, prodId:pk.prodId,
+        niveauNom:pk.niveauNom, boiteNom:pk.boiteNom, maturation:pk.maturation});
     });
   });
   const totalLines=rows.length;
@@ -2665,9 +2705,10 @@ function pickOrderCard(o, nom, prods, recipes){
     const done=!!state[r.key];
     const scan = r.kind==='mac'?`<button class="pick-scan" onclick="event.stopPropagation();pickScanConfirm('${esc(r.label).replace(/'/g,"\\'")}','${esc(r.lot||'').replace(/'/g,"\\'")}')" title="Scanner ce bac">📷</button>`:'';
     const sub = r.kind==='mac'?`lot ${esc(r.lot||'—')}${r.dlc?` · DLC ${fmtDate(r.dlc)}`:''}`:r.sub;
+    const detail = r.kind==='mac'?pickDetailLine(r):'';
     return header+`<div class="pick-row${done?' done':''}" onclick="pickToggleLine(${o.id},'${r.key.replace(/'/g,"\\'")}')">
       <div class="pick-check">${done?'✓':''}</div>
-      <div class="pick-main"><div class="pick-name">${esc(r.label)}</div><div class="pick-sub">${sub}</div></div>
+      <div class="pick-main"><div class="pick-name">${esc(r.label)}</div><div class="pick-sub">${sub}</div>${detail}</div>
       ${scan}<div class="pick-qty">${r.qte}</div></div>`;
   }).join('');
   return `<div class="pick-order-card${ready?' ready':''}">
@@ -2875,6 +2916,13 @@ async function setEmplacement(id){
   const retourBloque = freezerReturnBlocked(p);
   const courant = p.emplacement||'';
   const exitTs = freezerExitTs(p);
+  // Données pour la suggestion de niveau + boîte
+  const _specsMap = await equipGetSpecs();
+  const _boxes = await db.storageBoxes.toArray().catch(()=>[]);
+  const _recipe = p.recipeId ? await db.recipes.get(p.recipeId).catch(()=>null) : null;
+  const _ctx = lotPlacementCtx(p, _recipe);
+  const _sugBox = suggestBox(_boxes, _ctx.nb, _ctx.grandFormat);
+  const _sugLvl = suggestLevel(_specsMap, _sugBox, _ctx);
   const opts = EMPLACEMENTS.map(e=>{
     const estCongelo = e.type==='congelateur';
     const interdit = estCongelo && (decongele || retourBloque); // recongélation interdite OU délai 1h dépassé
@@ -2893,15 +2941,60 @@ async function setEmplacement(id){
       onclick="setMaturation(${id},'${k}')" title="${esc(m.desc)}">
       <span>${m.ico} ${esc(m.label)}</span>${actif?' <span class="tag ok" style="margin-left:auto">actuel</span>':''}</button>`;
   }).join('');
+  // Bloc suggestion niveau + boîte
+  let sugHtml='';
+  {
+    const empActuel = p.emplacement ? `${empNom(p.emplacement)} (${empLettre(p.emplacement)})` : null;
+    const nivActuel = (p.niveauNom!=null) ? p.niveauNom : null;
+    const boiteActuelle = p.boiteNom || null;
+    const actuelLigne = (nivActuel||boiteActuelle)
+      ? `<p class="note">Rangé actuellement : ${empActuel||'—'}${nivActuel?` · ${esc(nivActuel)}`:''}${boiteActuelle?` · ${esc(boiteActuelle)}`:''}</p>`
+      : '';
+    if(_sugLvl && _sugBox){
+      const e=EMP_BY_KEY[_sugLvl.equipKey];
+      const lv=_sugLvl.niveau;
+      const r=NIV_ROLES[nivRole(lv)], a=NIV_ACCES[nivAcces(lv)];
+      const capLabel = _ctx.grandFormat ? `${_sugBox.capaciteGF||0} GF` : `${_sugBox.capacite||0} std`;
+      sugHtml = `<h3 style="font-size:1rem;margin-top:14px">📍 Rangement suggéré</h3>
+        ${actuelLigne}
+        <div class="sum-box" style="background:#faf6ee;flex-direction:column;align-items:flex-start;gap:4px">
+          <span><b>${e.icon} ${esc(e.nom)} (${e.lettre})</b> · ${esc(lv.nom||'niveau')} <span style="font-size:.72rem;color:${r.c}">${r.ico} ${r.label}</span> <span style="font-size:.72rem">${a.ico} ${a.label}</span></span>
+          <span style="font-size:.82rem;color:#7a6a60">Boîte : <b>${esc(_sugBox.nom)}</b> (${capLabel}) · ${_ctx.nb} macaron(s) à ranger</span>
+        </div>
+        <button class="btn gold sm" style="margin-top:6px" onclick="applySuggestedPlacement(${id})">✓ Ranger ici</button>
+        <p class="note" style="margin-top:4px">Suggestion selon zone thermique, rôle et accessibilité. Tu peux aussi choisir l'équipement manuellement ci-dessus.</p>`;
+    } else if(_ctx.nb>0) {
+      sugHtml = `<p class="note" style="margin-top:10px">${actuelLigne||''}💡 Aucune suggestion de niveau (vérifie que tes boîtes ont des dimensions et qu'un niveau peut les accueillir).</p>`;
+    }
+  }
   openModal(`<h3>Emplacement de stockage</h3>
     <p class="note">${courant?`Actuellement : <b>${esc(empNom(courant))} (${empLettre(courant)})</b>.`:'Choisissez où ranger cette production.'} La lettre s'ajoute au n° de lot et à l'étiquette.</p>
     ${decongele?'<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⚠️ Cette production est déjà passée par le frigo après congélation : <b>recongélation interdite</b>.</div></div>':''}
     ${(!decongele&&retourBloque)?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⛔ Sortie du congélateur le <b>${fmtDateTime(exitTs)}</b> : le délai d'<b>1 heure</b> pour un retour au congélateur est dépassé. Retour A/B/C bloqué (chaîne du froid).</div></div>`:''}
+    ${sugHtml}
+    <h3 style="font-size:1rem;margin-top:14px">Équipement</h3>
     <div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:space-between">${opts}</div>
     <h3 style="font-size:1rem;margin-top:14px">🌱 Maturation</h3>
     <p class="note">Le repos au froid positif (frigo F) qui développe les arômes. Tu peux la faire avant congélation (recommandé) ou après décongélation.</p>
     <div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:space-between">${matOpts}</div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+  // mémorise la suggestion courante pour application
+  _placementSuggestion = (_sugLvl&&_sugBox) ? {id, equipKey:_sugLvl.equipKey, nivIndex:_sugLvl.nivIndex, niveauNom:_sugLvl.niveau.nom, boiteNom:_sugBox.nom} : null;
+}
+let _placementSuggestion=null;
+// Applique le rangement suggéré : déplace vers l'équipement ET enregistre niveau + boîte.
+async function applySuggestedPlacement(id){
+  const s=_placementSuggestion; if(!s || s.id!==id){ toast('Suggestion expirée'); return; }
+  const p=await db.productions.get(id); if(!p) return;
+  // si l'équipement change, on passe par doMoveEmplacement pour garder toutes les règles (froid, DLC, lot)
+  if(p.emplacement!==s.equipKey){
+    await doMoveEmplacement(id, s.equipKey, {silent:true});
+  }
+  await db.productions.update(id, {niveauIndex:s.nivIndex, niveauNom:s.niveauNom, boiteNom:s.boiteNom});
+  closeModal();
+  if(typeof renderProductions==='function') renderProductions();
+  const e=empInfo(s.equipKey);
+  toast(`Rangé : ${e.nom} (${e.lettre}) · ${s.niveauNom} · ${s.boiteNom}`);
 }
 async function setMaturation(id, etat){
   if(!MATURATION_ETATS[etat]) return;
@@ -2913,22 +3006,34 @@ async function setMaturation(id, etat){
 // Déplacement central d'une production vers un emplacement (frigo / B / C / A).
 // Applique : règle anti-recongélation, journal, DLC (frigo↔congélo), MAJ de la lettre de lot,
 // régénération implicite de l'étiquette (le lot et l'emplacement changent).
-async function doMoveEmplacement(id, dest){
-  if(!EMP_BY_KEY[dest]){ toast('Emplacement inconnu'); return; }
-  const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
-  if(p.emplacement===dest){ closeModal(); toast('Déjà dans cet emplacement'); return; }
+async function doMoveEmplacement(id, dest, opts){
+  const silent = opts && opts.silent;
+  if(!EMP_BY_KEY[dest]){ toast('Emplacement inconnu'); return false; }
+  const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return false; }
+  if(p.emplacement===dest){ if(!silent){ closeModal(); toast('Déjà dans cet emplacement'); } return true; }
   // RÈGLE SÉCURITÉ ALIMENTAIRE : interdiction de recongeler après décongélation.
   if(isFreezer(dest) && aDejaDecongele(p)){
     toast('Recongélation interdite : cette production est déjà passée congélateur → frigo.');
-    return;
+    return false;
   }
   // RÈGLE CHAÎNE DU FROID : retour congélateur uniquement dans l'heure suivant la sortie.
   if(isFreezer(dest) && freezerReturnBlocked(p)){
     const exit=freezerExitTs(p);
     toast(`Retour congélateur bloqué : plus d'1 h depuis la sortie (${fmtDateTime(exit)}).`);
-    return;
+    return false;
   }
   const nowIso=new Date().toISOString();
+  // ALERTE conservation : recette sensible (congélateur obligatoire) qu'on tente de mettre au frigo.
+  if(isFrigoKey(dest)){
+    try{
+      const rec = p.recipeId ? await db.recipes.get(p.recipeId) : null;
+      if(rec && rec.congelObligatoire && !(opts&&opts.confirmedFrigo)){
+        const hMax = (rec.heuresMaxSortie!=null&&+rec.heuresMaxSortie>0) ? ` Cette recette ne doit pas rester hors congélateur plus de ${rec.heuresMaxSortie} h avant livraison${rec.jourJUniquement?', et sort le jour J uniquement':''}.` : '';
+        const ok = confirm(`⚠️ « ${rec.produitNom} » est en congélateur obligatoire (ganache sensible).${hMax}\n\nMettre ce lot au frigo va consommer sa DLC et peut dégrader le produit. Continuer quand même ?`);
+        if(!ok){ return false; }
+      }
+    }catch(err){}
+  }
   const hist=(p.histEmplacement||[]).concat([{lieu:dest, ts:nowIso, motif:'transfert'}]);
   const nouveauLot = lotAvecEmplacement(p.lotProduction, dest);
   const patch={ emplacement:dest, emplacementMaj:nowIso, histEmplacement:hist, lotProduction:nouveauLot };
@@ -2939,9 +3044,12 @@ async function doMoveEmplacement(id, dest){
     patch.dlcProduit = prodStatut(p)==='termine' ? computeDlcFromHistory(hist, nowIso) : '';
   }
   await db.productions.update(id, patch);
-  closeModal(); renderProductions();
-  const e=empInfo(dest);
-  toast(`Rangé en ${e.nom} (${e.lettre}) · lot ${nouveauLot}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
+  if(!silent){
+    closeModal(); renderProductions();
+    const e=empInfo(dest);
+    toast(`Rangé en ${e.nom} (${e.lettre}) · lot ${nouveauLot}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
+  }
+  return true;
 }
 // Compat : ancien point d'entrée « toggle » → ouvre désormais le sélecteur complet.
 async function toggleEmplacement(id){ return setEmplacement(id); }
@@ -16246,6 +16354,144 @@ async function equipSeedFill(){
   const data=equipSeedData();
   for(const key of Object.keys(data)){ await db.equipmentSpecs.put(data[key]); }
   toast('Équipements pré-remplis ✓'); renderEquipements();
+}
+
+// ---- OCCUPATION RÉELLE DES NIVEAUX (par empreinte/volume des boîtes présentes) ----
+// L'unité physique est la BOÎTE. Un niveau a une empreinte au sol (L×l) et une hauteur ;
+// chaque boîte présente consomme une empreinte (sa L×l) sur une couche, et s'empile selon
+// la hauteur. On raisonne en "empreinte au sol disponible par couche" pour gérer des boîtes
+// de types différents dans un même niveau (occupation volumétrique réaliste).
+//
+// Modèle de placement (sur une production p) :
+//   p.emplacement (équipement), p.niveauNom/niveauIndex (niveau), p.boiteNom, p.nbBoites
+// Un lot peut occuper plusieurs boîtes (p.nbBoites). Le nb de macarons est porté par qteRestante.
+
+// Surface d'empreinte au sol d'un niveau (cm²).
+function levelFloorArea(lv){ return (+lv.L||0)*(+lv.l||0); }
+// Empreinte au sol d'une boîte (cm²).
+function boxFloorArea(box){ return (+box.L||0)*(+box.l||0); }
+// Nombre de couches qu'un niveau peut empiler pour une hauteur de boîte donnée.
+function levelLayersForHeight(lv, boxH){
+  const eh=+lv.h||0; if(eh<=0||boxH<=0) return 0;
+  return (lv.mode==='clayette') ? (boxH<=eh?1:0) : Math.floor(eh/boxH);
+}
+// Calcule l'occupation d'un niveau à partir des placements présents.
+// placements = [{box, nbBoites, nbMacarons}] (box = objet boîte avec dimensions).
+// Retourne {capaciteEmpreinte, empreinteUtilisee, tauxVolume, nbBoites, nbMacarons, plein:bool, reste}.
+function levelOccupancy(lv, placements){
+  const aireNiveau = levelFloorArea(lv);
+  if(aireNiveau<=0) return null;
+  // Capacité de référence : on mesure la surface "couche au sol" disponible, multipliée par
+  // le nb de couches MOYEN pondéré n'a pas de sens (hauteurs de boîtes variables). On raisonne
+  // donc en surface-couche : chaque boîte consomme (empreinte / nbCouchesPossibles pour SA hauteur).
+  // Concrètement : une boîte haute "coûte" plus cher qu'une boîte basse à empreinte égale.
+  let empreintePondereeUtilisee = 0;   // somme des (empreinte boîte / couches possibles)
+  let nbBoites = 0, nbMacarons = 0;
+  (placements||[]).forEach(pl=>{
+    const box=pl.box; if(!box) return;
+    const nb=Math.max(0, +pl.nbBoites||0);
+    const couches = levelLayersForHeight(lv, +box.h||0) || 1;
+    const coutUneBoite = boxFloorArea(box) / couches;  // surface-sol équivalente par boîte empilée
+    empreintePondereeUtilisee += coutUneBoite * nb;
+    nbBoites += nb;
+    nbMacarons += Math.max(0, +pl.nbMacarons||0);
+  });
+  const tauxVolume = aireNiveau>0 ? Math.min(1, empreintePondereeUtilisee/aireNiveau) : 1;
+  const resteSurface = Math.max(0, aireNiveau - empreintePondereeUtilisee);
+  return {
+    capaciteEmpreinte: aireNiveau,
+    empreinteUtilisee: empreintePondereeUtilisee,
+    tauxVolume,
+    nbBoites, nbMacarons,
+    plein: tauxVolume>=0.999,
+    resteSurface
+  };
+}
+// Une boîte (avec sa hauteur) tient-elle ENCORE dans le niveau compte tenu de l'occupation ?
+function levelCanFit(lv, occ, box){
+  if(!box) return false;
+  const couches = levelLayersForHeight(lv, +box.h||0);
+  if(couches<=0) return false; // trop haute pour ce niveau
+  const coutUneBoite = boxFloorArea(box) / couches;
+  const reste = lv ? (levelFloorArea(lv) - (occ?occ.empreinteUtilisee:0)) : 0;
+  return reste >= coutUneBoite - 0.01;
+}
+// Regroupe tous les placements existants par équipement+niveau, à partir des productions.
+// Retourne une Map "equipKey|niveauNom" -> [{box, nbBoites, nbMacarons, prodId, lot}].
+function buildPlacementsMap(prods, boxesByNom){
+  const map = new Map();
+  (prods||[]).forEach(p=>{
+    if(!p.emplacement || !p.niveauNom || round3(+p.qteRestante)<=0) return;
+    const box = boxesByNom[p.boiteNom]; if(!box) return;
+    const key = p.emplacement+'|'+p.niveauNom;
+    if(!map.has(key)) map.set(key, []);
+    map.get(key).push({ box, nbBoites:Math.max(1,+p.nbBoites||1), nbMacarons:round3(+p.qteRestante), prodId:p.id, lot:p.lotProduction });
+  });
+  return map;
+}
+
+// Logique de priorité validée : thermique → rôle → accès → capacité.
+// thermique : un lot congelé (emplacement A/B/C ou destiné au froid négatif) va en réserve/standard
+//   des congélateurs ; un lot en maturation (à maturer après) ou réfrigéré va en transit (F).
+// Score d'accès : facile=0, moyenne=1, difficile=2 (plus c'est petit, mieux c'est).
+const ACCES_SCORE = {facile:0, moyenne:1, difficile:2};
+// Choisit la boîte la plus adaptée pour ranger `nb` macarons d'un format donné.
+// Préfère la plus petite boîte dont la capacité couvre le lot ; sinon la plus grande dispo.
+function suggestBox(boxes, nb, grandFormat){
+  const capOf = b => grandFormat ? (+b.capaciteGF||0) : (+b.capacite||0);
+  const utilisables = boxes.filter(b=>capOf(b)>0 && (+b.stockVide||0)>0);
+  if(!utilisables.length) return null;
+  // boîtes dont une seule suffit, triées par capacité croissante (la plus juste)
+  const suffisantes = utilisables.filter(b=>capOf(b)>=nb).sort((a,b)=>capOf(a)-capOf(b));
+  if(suffisantes.length) return suffisantes[0];
+  // sinon la plus grande capacité dispo (il en faudra plusieurs)
+  return utilisables.sort((a,b)=>capOf(b)-capOf(a))[0];
+}
+// Suggère le meilleur niveau pour un lot. ctx = {congele:bool, aMaturer:bool, nb, grandFormat}.
+// Retourne {equipKey, nivIndex, niveau, score} ou null.
+function suggestLevel(specsMap, box, ctx){
+  if(!box) return null;
+  const candidates = [];
+  for(const e of EMPLACEMENTS){
+    const spec = specsMap[e.key]; if(!spec || !Array.isArray(spec.niveaux)) continue;
+    const estFroidPositif = (e.type==='frigo');
+    // Filtre thermique : congelé → froid négatif ; à maturer / positif → froid positif (F)
+    if(ctx.congele && estFroidPositif) continue;
+    if(ctx.aMaturer && !estFroidPositif) continue;
+    // Recette à congélateur obligatoire : on n'autorise JAMAIS le frigo via la suggestion
+    // (le frigo amputerait la DLC ; il sera proposé séparément seulement pour une sortie imminente).
+    if(ctx.congelObligatoire && estFroidPositif) continue;
+    spec.niveaux.forEach((lv,i)=>{
+      if(lv.reserve) return; // niveau réservé MP
+      const cap = levelCapacityForBox(lv, box);
+      if(!cap || cap.nbBoites<=0) return; // la boîte ne rentre pas
+      // Score de rôle : selon le contexte, on préfère réserve (gros/longue) ou transit (à écouler/maturer)
+      const role = NIV_ROLES[nivRole(lv)] ? nivRole(lv) : 'standard';
+      let roleScore;
+      if(ctx.aMaturer)      roleScore = (role==='transit')?0:(role==='standard'?1:2);
+      else if(ctx.congele)  roleScore = (role==='reserve')?0:(role==='standard'?1:2);
+      else                  roleScore = (role==='standard')?0:1;
+      const accesScore = ACCES_SCORE[nivAcces(lv)] ?? 1;
+      // score global : rôle prioritaire, puis accès (pondération faible)
+      const score = roleScore*10 + accesScore;
+      candidates.push({equipKey:e.key, nivIndex:i, niveau:lv, score, capBoites:cap.nbBoites});
+    });
+  }
+  if(!candidates.length) return null;
+  candidates.sort((a,b)=>a.score-b.score);
+  return candidates[0];
+}
+// Construit le contexte d'un lot pour la suggestion.
+function lotPlacementCtx(p, recipe){
+  const nb = round3(+p.qteRestante||0);
+  const grandFormat = !!(recipe && recipe.grandFormat);
+  const congelObligatoire = !!(recipe && recipe.congelObligatoire);
+  const aMaturer = prodMaturation(p)==='apres'; // doit passer par F
+  // congelé par défaut si déjà au congélo, sans emplacement, ou si la recette l'impose
+  let congele = isFreezer(p.emplacement) || (!p.emplacement) || congelObligatoire;
+  // une recette à congélateur obligatoire prime : pas de maturation frigo imposée
+  const aMaturerEff = congelObligatoire ? false : aMaturer;
+  return {nb, grandFormat, congele: aMaturerEff?false:congele, aMaturer:aMaturerEff, congelObligatoire};
 }
 
 async function renderEquipements(){
