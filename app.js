@@ -16207,29 +16207,30 @@ function renderMRP(){
   if(!_mrpStart){ _mrpStart=today(); }
   if(!_mrpEnd){ const d=new Date(today()); d.setDate(d.getDate()+7); _mrpEnd=d.toISOString().slice(0,10); }
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Plan de production</h1><p>Conseil de l'assistant + outils de planification</p></div>
+   <div class="topbar"><div><h1>Plan de production</h1><p>Du besoin au planning, en 3 étapes</p></div>
      <button class="btn ghost" onclick="availEditor()">🗓 Mes disponibilités</button></div>
+
+   <div class="step-head"><span class="step-num">1</span><div><b>Qu'est-ce que je dois produire ?</b><br><span class="note">Tes besoins : commandes + prévisionnel + dates limites. Rien à faire, juste à lire.</span></div></div>
    <div id="mrpConseil"><div class="banner">🧭 <div>L'assistant prépare ton conseil de production…</div></div></div>
-   <details style="margin-top:4px">
-     <summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600;padding:8px 0">⚙ Outils avancés de planification (manuel)</summary>
-     <div class="panel" style="margin-top:8px">
-       <h2 style="font-size:1rem">🔧 Générateur par période</h2>
-       <p class="note">Calcule les besoins et le temps requis entre deux dates, à partir des commandes de la période.</p>
-       <div class="row2">
-         <div class="field"><label>Du</label><input type="date" id="mrp_start" value="${_mrpStart}"></div>
-         <div class="field"><label>Au</label><input type="date" id="mrp_end" value="${_mrpEnd}"></div>
-       </div>
-       <div class="field"><label>Temps disponible (minutes)</label>
-         <input type="number" inputmode="numeric" min="0" step="15" id="mrp_dispo" value="${_mrpDispo||''}" placeholder="ex : 240"></div>
-       <button class="btn" onclick="mrpGenerate()">⚙ Générer le plan</button>
+
+   <div class="step-head"><span class="step-num">2</span><div><b>Est-ce que ça tient dans mon temps ?</b><br><span class="note">L'app confronte ces besoins à ta disponibilité et te dit si c'est jouable, ou s'il faut étaler.</span></div></div>
+   <div class="panel">
+     <p class="note" style="margin-top:0">Vérifie la faisabilité sur une période donnée, à partir de tes commandes.</p>
+     <div class="row2">
+       <div class="field"><label>Du</label><input type="date" id="mrp_start" value="${_mrpStart}"></div>
+       <div class="field"><label>Au</label><input type="date" id="mrp_end" value="${_mrpEnd}"></div>
      </div>
-     <div id="mrpResult"></div>
-     <div class="panel" style="border:1.5px solid var(--gold,#AA7C39)">
-       <h2 style="font-size:1rem">🧑‍🍳 Planification personnelle sur mesure</h2>
-       <p class="note">Décris le temps dont tu disposes (jour par jour, plusieurs créneaux possibles). Le chef d'atelier ordonnance tes tâches en optimisant les temps passifs (croûtage, cuisson, maturation) et la mutualisation des meringues.</p>
-       <button class="btn gold" style="margin-top:8px" onclick="persoPlanForm()">📅 Définir ma disponibilité & générer</button>
-     </div>
-   </details>`;
+     <div class="field"><label>Temps disponible (minutes) — optionnel</label>
+       <input type="number" inputmode="numeric" min="0" step="15" id="mrp_dispo" value="${_mrpDispo||''}" placeholder="ex : 240"></div>
+     <button class="btn" onclick="mrpGenerate()">Vérifier la faisabilité</button>
+   </div>
+   <div id="mrpResult"></div>
+
+   <div class="step-head"><span class="step-num">3</span><div><b>Dans quel ordre je m'y prends ?</b><br><span class="note">Génère ton planning minute par minute : meringues, ganaches (avec repos), cuisson en cascade, montages, maturation.</span></div></div>
+   <div class="panel" style="border:1.5px solid var(--gold,#AA7C39)">
+     <p class="note" style="margin-top:0">Le « chef d'atelier » ordonnance tes tâches en optimisant les temps passifs (croûtage, cuisson, maturation) et la mutualisation des meringues, selon la disponibilité que tu décris.</p>
+     <button class="btn gold" onclick="persoPlanForm()">📅 Définir ma disponibilité & générer mon planning</button>
+   </div>`;
   renderProductionPlan();
 }
 async function mrpGenerate(){
