@@ -249,6 +249,11 @@ const SETTINGS_DEFAULTS = {
   // Main-d'œuvre (optionnelle) : prise en compte dans le coût de revient si activée.
   laborEnabled: false,   // active/désactive l'ajout du coût de main-d'œuvre
   laborRate: 12.0,       // coût horaire main-d'œuvre (€/h) chargé
+  // Source du TEMPS de main-d'œuvre pour le coût de revient :
+  //  'manuel' = temps saisi sur chaque recette (minParBatch) ;
+  //  'mesure' = temps de production LISSÉ par macaron, mesuré à l'atelier (brique 1, 90 j).
+  // En mode 'mesure', si les données mesurées sont insuffisantes, on retombe sur 'manuel'.
+  laborSource: 'manuel',
   // Livraison : consommation moyenne du véhicule (L/100 km), pour chiffrer le carburant.
   // Le coût du temps de livraison réutilise laborRate (€/h).
   vehicleConso: 6.5,     // litres aux 100 km
@@ -1800,7 +1805,12 @@ async function renderRecipes(){
   const _productions = await db.productions.toArray();
   const _recipeItems = await db.recipeItems.toArray();
   const _settings = getSettings();
-  const _A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats, orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, settings:_settings});
+  // Mode 'mesuré' : on précharge le temps de production lissé (brique 1) pour nourrir le coût de revient.
+  let _mesureMin = null;
+  if(_settings.laborSource==='mesure' && _settings.laborEnabled){
+    try{ const tl = await prodTempsLissePerMacaron(90); if(tl.fiable) _mesureMin = tl.minParMacaron; }catch(e){ console.error('tempsLisse',e); }
+  }
+  const _A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats, orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, settings:_settings, minParMacaronMesure:_mesureMin});
   const _rowByRec = {}; _A.rows.forEach(r=>{ _rowByRec[r.recipeId]=r; });
   _recipeMultCache = {}; // {recipeId: {rendement, items:[{nom,unite,qteParBatch(affichée),base}]}}
   // Affichage : denrées (kg) → grammes ; autres → unité native.
@@ -7092,7 +7102,7 @@ function _isCoqueMaterial(nom){
 // Coût de revient COMPLET d'une recette/parfum (par batch ET par pièce).
 // Intègre : matières (prix courant), pertes (rendement utile), consommables/pièce,
 // et main-d'œuvre si activée. Renvoie aussi la ventilation coque/garniture.
-function coutRevientRecette(recipe, recipeItems, lots, settings){
+function coutRevientRecette(recipe, recipeItems, lots, settings, opts){
   const s = settings || getSettings();
   const items = recipeItems.filter(it=>it.recipeId===recipe.id);
   let coutMatBatch=0, coutCoqueBatch=0, coutGarnitureBatch=0;
@@ -7102,20 +7112,29 @@ function coutRevientRecette(recipe, recipeItems, lots, settings){
     coutMatBatch += c;
     return {materialId:it.materialId, qteParBatch:+it.qteParBatch||0, pu, cout:c};
   });
-  // ventilation coque / garniture (indicative)
-  // nécessite les noms de matières — on les retrouvera côté appelant ; ici on garde detail brut.
   const rendement = +recipe.rendement||1;
   const pertePct = Math.max(0, Math.min(90, +recipe.pertePct||0));
   const piecesUtiles = rendement * (1 - pertePct/100);   // pièces réellement vendables
-  // coût matière par pièce VENDABLE (les pertes renchérissent le coût unitaire)
   const coutMatUnit = piecesUtiles>0 ? coutMatBatch/piecesUtiles : 0;
-  // consommables (par pièce, direct)
   const coutConsoUnit = Math.max(0, +recipe.coutConsoUnit||0);
-  // main-d'œuvre (par pièce) — uniquement si activée
+  // main-d'œuvre (par pièce) — uniquement si activée.
+  // Deux sources possibles : temps MESURÉ lissé (min/macaron, passé via opts) ou temps MANUEL (min/batch).
   const minParBatch = Math.max(0, +recipe.minParBatch||0);
-  const coutMODBatch = s.laborEnabled ? (minParBatch/60)*(+s.laborRate||0) : 0;
-  const coutMODUnit  = (s.laborEnabled && piecesUtiles>0) ? coutMODBatch/piecesUtiles : 0;
-  // coût de revient unitaire complet
+  const mesureMin = opts && opts.minParMacaronMesure!=null ? +opts.minParMacaronMesure : null;
+  const useMesure = (s.laborSource==='mesure' && mesureMin!=null && mesureMin>0);
+  let coutMODUnit=0, coutMODBatch=0, laborMode='off';
+  if(s.laborEnabled){
+    if(useMesure){
+      // temps mesuré : déjà par macaron → coût direct par pièce vendable
+      coutMODUnit = (mesureMin/60)*(+s.laborRate||0);
+      coutMODBatch = coutMODUnit*piecesUtiles;
+      laborMode = 'mesure';
+    } else {
+      coutMODBatch = (minParBatch/60)*(+s.laborRate||0);
+      coutMODUnit  = piecesUtiles>0 ? coutMODBatch/piecesUtiles : 0;
+      laborMode = 'manuel';
+    }
+  }
   const coutRevientUnit = money2(coutMatUnit + coutConsoUnit + coutMODUnit);
   return {
     recipeId: recipe.id, nom: recipe.produitNom, rendement, pertePct, piecesUtiles: round3(piecesUtiles),
@@ -7125,7 +7144,7 @@ function coutRevientRecette(recipe, recipeItems, lots, settings){
     coutMODUnit: money2(coutMODUnit), coutMODBatch: money2(coutMODBatch),
     coutRevientUnit,
     coutRevientBatch: money2(coutRevientUnit*piecesUtiles),
-    laborOn: !!s.laborEnabled,
+    laborOn: !!s.laborEnabled, laborMode,
     detail
   };
 }
@@ -7249,9 +7268,11 @@ function buildFlavorSales(orders, markets, marketMoves, recipes, productions, se
 function analyzeFlavorProfitability(data){
   const {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings} = data;
   const s = settings || getSettings();
+  // Temps mesuré lissé (min/macaron) éventuellement préchargé par l'appelant (mode 'mesure').
+  const mesureOpts = (data.minParMacaronMesure!=null) ? {minParMacaronMesure:+data.minParMacaronMesure} : undefined;
   // 1) coût de revient par recette
   const costByRecipe = {};
-  recipes.forEach(r=>{ costByRecipe[r.id] = coutRevientRecette(r, recipeItems, lots, s); });
+  recipes.forEach(r=>{ costByRecipe[r.id] = coutRevientRecette(r, recipeItems, lots, s, mesureOpts); });
   // 2) ventes par parfum
   const sales = buildFlavorSales(orders, markets, marketMoves, recipes, productions, s);
   const salesByRecipe = {}; const unmatched=[];
@@ -8866,7 +8887,13 @@ function parfumSettingsForm(){
     <hr style="border:none;border-top:1px solid #ece2d4;margin:12px 0">
     <div class="field"><label class="pay-opt" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="ps_labor" ${s.laborEnabled?'checked':''}> <span>Inclure la main-d'œuvre dans le coût de revient</span></label></div>
     <div class="field"><label>Taux horaire main-d'œuvre (€/h)</label><input type="number" step="0.5" min="0" id="ps_rate" value="${s.laborRate}"></div>
-    <p class="note">Le temps de fabrication (min/batch), les pertes et les consommables se règlent par recette.</p>
+    <div class="field"><label>Source du temps de main-d'œuvre</label>
+      <select id="ps_laborsrc">
+        <option value="manuel" ${s.laborSource!=='mesure'?'selected':''}>Temps saisi par recette (min/batch)</option>
+        <option value="mesure" ${s.laborSource==='mesure'?'selected':''}>Temps mesuré à l'atelier (lissé 90 j)</option>
+      </select>
+      <p class="note">En mode « mesuré », le coût de revient utilise ton temps de production réel moyen par macaron (atelier, 90 derniers jours). Si les données mesurées sont insuffisantes, le temps saisi par recette est utilisé en repli.</p>
+    </div>
     <div class="row2">
       <div class="field"><label>Charges sociales — marchandise (%)</label><input type="number" step="0.1" id="ps_sg" value="${s.socialGoods}"></div>
       <div class="field"><label>Charges sociales — prestation (%)</label><input type="number" step="0.1" id="ps_ss" value="${s.socialService}"></div>
@@ -8885,6 +8912,7 @@ function parfumSettingsSave(){
   { const pg=+val('ps_progf'); if(pg>0) s.prixGrandFormatPro=money2(pg); }
   s.laborEnabled=document.getElementById('ps_labor')?.checked||false;
   s.laborRate=Math.max(0,+val('ps_rate')||0);
+  s.laborSource=val('ps_laborsrc')==='mesure'?'mesure':'manuel';
   s.socialGoods=Math.max(0,+val('ps_sg')||0);
   s.socialService=Math.max(0,+val('ps_ss')||0);
   saveSettings(s);
@@ -13197,7 +13225,9 @@ const TT_KEY = 'sm_workSession_start';
 const TT_PAUSED_KEY = 'sm_workSession_paused';
 const TT_PAUSE_AT_KEY = 'sm_workSession_pauseAt';
 const TT_ACT_KEY = 'sm_workSession_act';
-const TT_ACTIVITIES = ['Pesées','Ganache','Meringue','Macaronnage','Pochage','Cuisson','Garnissage/Montage','Vaisselle','Nettoyage fin de prod','Conditionnement','Autre'];
+// Catégories HORS-PRODUCTION : la pointeuse mesure le temps de travail qui ne passe pas
+// par l'atelier (lequel gère toute la production). Zéro chevauchement → temps total fiable.
+const TT_ACTIVITIES = ['Déplacements / livraisons','Administratif','Courses','Préparation marché','Préparation commande','Relations commerciales / prospection / réseautage','Autre'];
 
 // ============================================================================
 //  MODULE PRODUCTION — SOCLE (étape 1 : catalogue de tâches)
@@ -13524,6 +13554,47 @@ function prodFmt(ms){
    Couche 0 (présente) : AUDIT DE FIABILITÉ des données, sans calcul de revenu encore.
    ============================================================ */
 const REVH_DEFAULT_DAYS = 90;
+
+// BRIQUE 1 — TEMPS DE PRODUCTION LISSÉ PAR MACARON (min/pièce), sur une fenêtre glissante.
+// Rapproche le temps total d'atelier (toutes tâches) des macarons FINIS vendables produits
+// sur la même période. Lissé → stable, ne saute pas à chaque session (sert au coût de revient).
+// Ne compte PAS les étapes intermédiaires comme des pièces (coques/ganache), pour ne pas
+// gonfler le dénominateur ; mais leur TEMPS compte (il fait partie de la production).
+async function prodTempsLissePerMacaron(jours){
+  jours = +jours || REVH_DEFAULT_DAYS;
+  const since = new Date(); since.setDate(since.getDate()-jours);
+  const sinceStr = since.toISOString().slice(0,10);
+
+  // 1) Temps d'atelier total (ms) sur la fenêtre : somme des durées nettes de toutes les tâches.
+  const psAll = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
+  let msAtelier = 0;
+  psAll.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
+    (s.tasks||[]).forEach(t=>{ msAtelier += (typeof prodTaskNet==='function')?prodTaskNet(t):0; });
+  });
+  const minAtelier = msAtelier/60000;
+
+  // 2) Macarons FINIS vendables produits sur la fenêtre : lots 'complet' + 'assemble'.
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const finis = prods.filter(p=>{
+    const c = p.composant || 'complet';
+    if(c!=='complet' && c!=='assemble') return false;        // exclut coques/ganache/dégustation
+    const d = (p.date || (p.prodTimestamp||'').slice(0,10) || '');
+    return String(d).slice(0,10) >= sinceStr;
+  });
+  const nbMacarons = finis.reduce((a,p)=>a + (+p.qteReelle||+p.qteProduite||0), 0);
+
+  const minParMacaron = nbMacarons>0 ? (minAtelier/nbMacarons) : null;
+  // Fiabilité : un minimum de temps ET de pièces pour que la moyenne ait du sens.
+  const fiable = (minAtelier>=60 && nbMacarons>=100);
+  return {
+    jours, sinceStr,
+    minAtelier: Math.round(minAtelier),
+    nbMacarons,
+    minParMacaron,
+    minParMacaronArrondi: minParMacaron!=null ? Math.round(minParMacaron*100)/100 : null,
+    fiable
+  };
+}
 
 // Collecte unique des données brutes sur une fenêtre de N jours.
 // Sert de socle commun aux 3 couches (audit, indicateur, simulateur).
@@ -13999,9 +14070,9 @@ function ttFormat(ms){
 // Les activités connues ont une teinte fixe ; les libres (« Autre … ») dérivent une couleur
 // stable de leur texte, pour qu'une même tâche garde toujours la même couleur.
 const TT_ACT_COLORS = {
-  'Pesées':'#caa23b', 'Ganache':'#8a5a3c', 'Meringue':'#e8c8d4', 'Macaronnage':'#d76b86',
-  'Pochage':'#9bc081', 'Cuisson':'#cf7a3a', 'Garnissage/Montage':'#6aa3a0', 'Vaisselle':'#5a7a9a',
-  'Nettoyage fin de prod':'#7a6a9a', 'Conditionnement':'#b98756', 'Autre':'#9a8a82'
+  'Déplacements / livraisons':'#5a7a9a', 'Administratif':'#7a6a9a', 'Courses':'#cf7a3a',
+  'Préparation marché':'#caa23b', 'Préparation commande':'#6aa3a0',
+  'Relations commerciales / prospection / réseautage':'#d76b86', 'Autre':'#9a8a82'
 };
 const TT_COLOR_PALETTE = ['#d76b86','#caa23b','#9bc081','#6aa3a0','#8a5a3c','#cf7a3a','#7a6a9a','#5a7a9a','#b98756','#3f7d52','#9a6a82','#5a8a7a'];
 function ttActivityColor(activite){
@@ -14114,6 +14185,7 @@ function ttStart(){
   ttCollapse();
   openModal(`<h3>⏱ Pointeuse</h3>
     <button class="btn gold" style="width:100%;margin-bottom:6px" onclick="closeModal();ttOpenHistory()">🗒 Voir l'historique / journal de bord</button>
+    <button class="btn ghost" style="width:100%;margin-bottom:6px" onclick="ttManualForm()">➕ Saisir un temps a posteriori (décalé)</button>
     <p class="note" style="margin-top:12px">Démarrer un chrono (plusieurs activités peuvent tourner en parallèle) :</p>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
       ${TT_ACTIVITIES.map(a=>`<button class="btn ghost" style="flex:1;min-width:44%" onclick="ttStartWith(${JSON.stringify(a).replace(/"/g,'&quot;')})">${esc(a)}</button>`).join('')}
@@ -14200,6 +14272,73 @@ async function ttConfirmStop(id, start, end, ms, pauseMs){
   closeModal(); ttRefresh();
   if(!ttAnyRunning()) ttStopTicking();
   toast(`Session enregistrée${session.activite?` · ${session.activite}`:''} : ${ttFormat(ms)} · ${euro(session.coutTotal)}`);
+  if(view==='pointeuse' && typeof renderTimeTracker==='function') renderTimeTracker();
+}
+
+// SAISIE DÉCALÉE : créer une session déjà terminée a posteriori, sans chrono.
+// Deux modes : durée directe (minutes) OU horaires début/fin. Date choisie (défaut : aujourd'hui).
+function ttManualForm(){
+  const set=getSettings(); const tauxDefaut=+set.laborRate||0;
+  const actOpts=['',...TT_ACTIVITIES].map(a=>`<option value="${esc(a)}">${a?esc(a):'— non précisé —'}</option>`).join('');
+  openModal(`<h3>➕ Saisir un temps a posteriori</h3>
+    <p class="note">Pour enregistrer un temps de travail passé (ex : une livraison de cet après-midi) sans avoir lancé le chrono.</p>
+    <div class="field"><label>Date</label><input type="date" id="ttm_date" value="${today()}"></div>
+    <div class="field"><label>Catégorie</label><select id="ttm_act">${actOpts}</select>
+      <input id="ttm_autre" placeholder="Préciser si « Autre »… (laisser vide sinon)" style="margin-top:6px"></div>
+    <div class="field"><label>Durée (minutes)</label>
+      <input type="number" min="0" step="1" id="ttm_dur" inputmode="numeric" placeholder="ex : 40"></div>
+    <details style="margin:6px 0">
+      <summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">Ou saisir les horaires réels</summary>
+      <div class="row2" style="margin-top:8px">
+        <div class="field"><label>Début</label><input type="time" id="ttm_start"></div>
+        <div class="field"><label>Fin</label><input type="time" id="ttm_end"></div>
+      </div>
+      <p class="note">Si renseignés, les horaires priment sur la durée.</p>
+    </details>
+    <div class="field"><label>Taux horaire (€/h)</label>
+      <input type="number" min="0" step="0.5" id="ttm_rate" value="${tauxDefaut||''}" placeholder="ex : 12"></div>
+    <p class="note" id="ttm_cost"></p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="ttStart()">Retour</button>
+      <button class="btn" onclick="ttManualSave()">Enregistrer</button>
+    </div>`);
+  const dur=document.getElementById('ttm_dur'), st=document.getElementById('ttm_start'),
+        en=document.getElementById('ttm_end'), rate=document.getElementById('ttm_rate'),
+        cost=document.getElementById('ttm_cost');
+  const calcMin=()=>{
+    const a=(st.value||'').trim(), b=(en.value||'').trim();
+    if(a && b){ const pa=a.split(':'), pb=b.split(':');
+      let d=(+pb[0]*60+ +pb[1])-(+pa[0]*60+ +pa[1]); if(d<0) d+=1440; return d; }
+    return +dur.value||0;
+  };
+  const upd=()=>{ const m=calcMin(); const t=+rate.value||0;
+    cost.textContent=(m>0&&t>0)?`Durée ${Math.floor(m/60)}h${String(m%60).padStart(2,'0')} · Coût : ${euro(money2(m/60*t))}`:(m>0?`Durée ${Math.floor(m/60)}h${String(m%60).padStart(2,'0')}`:''); };
+  [dur,st,en,rate].forEach(el=>el&&el.addEventListener('input',upd)); upd();
+}
+async function ttManualSave(){
+  const date=val('ttm_date')||today();
+  let act=val('ttm_act')||'';
+  const autre=(val('ttm_autre')||'').trim();
+  if(act==='Autre' && autre) act='Autre : '+autre;
+  // durée : horaires prioritaires sinon minutes
+  const a=(val('ttm_start')||'').trim(), b=(val('ttm_end')||'').trim();
+  let totalMin;
+  if(a && b){ const pa=a.split(':'), pb=b.split(':');
+    let d=(+pb[0]*60+ +pb[1])-(+pa[0]*60+ +pa[1]); if(d<0) d+=1440; totalMin=d; }
+  else { totalMin=Math.round(+val('ttm_dur')||0); }
+  if(!(totalMin>0)){ toast('Indique une durée ou des horaires valides'); return; }
+  const taux=Math.max(0,+val('ttm_rate')||0);
+  const heuresDec=Math.round(totalMin/60*100)/100;
+  // début/fin indicatifs : ancrés sur la date choisie (midi si pas d'horaire), pour l'historique
+  let debutIso, finIso;
+  if(a && b){ debutIso=new Date(date+'T'+a+':00').toISOString(); finIso=new Date(date+'T'+b+':00').toISOString(); }
+  else { const base=new Date(date+'T12:00:00'); debutIso=base.toISOString(); finIso=new Date(base.getTime()+totalMin*60000).toISOString(); }
+  const session={ date, debut:debutIso, fin:finIso,
+    dureeMin:totalMin, dureeHeures:heuresDec, pauseMin:0,
+    activite:act, tauxHoraire:money2(taux), coutTotal:money2(heuresDec*taux), saisieDecalee:true };
+  try{ await db.workSessions.add(session); }catch(e){ console.error('workSession manual',e); toast('Erreur d\'enregistrement'); return; }
+  closeModal();
+  toast(`Temps enregistré${act?` · ${act}`:''} : ${Math.floor(totalMin/60)}h${String(totalMin%60).padStart(2,'0')}`);
   if(view==='pointeuse' && typeof renderTimeTracker==='function') renderTimeTracker();
 }
 // Historique rapide des sessions (modale).
