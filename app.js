@@ -16360,7 +16360,7 @@ async function renderBoites(){
     return `<div class="sum-box" style="align-items:flex-start;gap:10px">
       <span style="flex:0 0 auto;font-size:1.1rem">📦</span>
       <span style="flex:1"><b>${esc(b.nom)}</b><br>
-        <span style="font-size:.8rem;color:#9a8a82">${dims}${litres} · capacité ${qty(b.capacite||0)} macarons</span><br>
+        <span style="font-size:.8rem;color:#9a8a82">${dims}${litres} · capacité ${qty(b.capacite||0)} std${(b.capaciteGF!=null)?` · ${qty(b.capaciteGF||0)} GF`:''}</span><br>
         <span style="font-size:.8rem;color:${(+b.stockVide||0)>0?'#3f7d52':'#b3261e'}">${qty(b.stockVide||0)} boîte(s) vide(s) propre(s) dispo</span></span>
       <span style="display:flex;gap:4px">
         <button class="btn ghost sm" onclick="boiteForm(${b.id})">✎</button>
@@ -16371,7 +16371,9 @@ async function renderBoites(){
   main.innerHTML=`
    <div class="topbar"><div><h1>Boîtes de conservation</h1><p>Tes contenants réutilisables et leur capacité</p></div>
      <button class="btn" onclick="boiteForm(0)">+ Nouvelle boîte</button></div>
-   <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>Renseigne chaque type de boîte avec ses dimensions, sa capacité en macarons et le nombre de boîtes vides propres disponibles. Ces données serviront à répartir le stock dans tes équipements.</div></div>
+   <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>Renseigne chaque type de boîte avec ses dimensions, sa capacité en macarons (standard et grand format) et le nombre de boîtes vides propres disponibles. Ces données serviront à répartir le stock dans tes équipements.</div></div>
+   ${boxes.some(b=>/couvercle|transparente|rectangle/i.test(b.nom||''))?`<div class="panel" style="border:1.5px solid var(--gold,#AA7C39)"><h2 style="font-size:1rem">✨ Noms courts</h2><p class="note">Renomme tes boîtes avec des noms clairs basés sur leur capacité (Boîte 21 T, Boîte 20, Boîte 30, Boîte 30 R, Boîte 22, Boîte 10, Boîte 16).</p><button class="btn gold" onclick="boitesRenameClean()">Appliquer les noms courts</button></div>`:''}
+   ${boxes.some(b=>b.capaciteGF==null)?`<div class="panel" style="border:1.5px solid var(--gold,#AA7C39)"><h2 style="font-size:1rem">⚡ Capacités grand format</h2><p class="note">Applique automatiquement les capacités grand format à tes boîtes connues (transparente, couvercles bleu/noir, rectangle, etc.). Tu pourras ajuster ensuite.</p><button class="btn gold" onclick="boitesSeedGF()">Appliquer les capacités grand format</button></div>`:''}
    <div class="panel">
      ${boxes.length?boxes.map(card).join(''):'<p class="note">Aucune boîte enregistrée. Ajoute ta première boîte de conservation.</p>'}
    </div>
@@ -16388,9 +16390,10 @@ async function boiteForm(id){
       <div class="field" style="margin:0"><label>Hauteur</label><input type="number" step="0.1" min="0" id="bx_h" value="${b.h!=null?b.h:''}" placeholder="h"></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Capacité (macarons)</label><input type="number" step="1" min="0" id="bx_cap" value="${b.capacite!=null?b.capacite:''}" placeholder="ex : 60"></div>
-      <div class="field"><label>Boîtes vides propres dispo</label><input type="number" step="1" min="0" id="bx_vide" value="${b.stockVide!=null?b.stockVide:''}" placeholder="ex : 3"></div>
+      <div class="field"><label>Capacité — standard (macarons)</label><input type="number" step="1" min="0" id="bx_cap" value="${b.capacite!=null?b.capacite:''}" placeholder="ex : 60"></div>
+      <div class="field"><label>Capacité — grand format</label><input type="number" step="1" min="0" id="bx_capGF" value="${b.capaciteGF!=null?b.capaciteGF:''}" placeholder="ex : 6"></div>
     </div>
+    <div class="field"><label>Boîtes vides propres dispo</label><input type="number" step="1" min="0" id="bx_vide" value="${b.stockVide!=null?b.stockVide:''}" placeholder="ex : 3"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn" onclick="boiteSave(${id||0})">Enregistrer</button></div>`);
 }
@@ -16399,14 +16402,63 @@ async function boiteSave(id){
   if(!nom){ toast('Nom requis'); return; }
   const o={ nom,
     L:Math.max(0,+val('bx_L')||0), l:Math.max(0,+val('bx_l')||0), h:Math.max(0,+val('bx_h')||0),
-    capacite:Math.max(0,Math.round(+val('bx_cap')||0)), stockVide:Math.max(0,Math.round(+val('bx_vide')||0)) };
+    capacite:Math.max(0,Math.round(+val('bx_cap')||0)), capaciteGF:Math.max(0,Math.round(+val('bx_capGF')||0)), stockVide:Math.max(0,Math.round(+val('bx_vide')||0)) };
   if(id) await db.storageBoxes.update(id, o); else await db.storageBoxes.add(o);
   closeModal(); renderBoites(); toast('Boîte enregistrée ✓');
+}
+// Renomme les boîtes connues avec des noms courts et logiques (capacité + distinctif).
+async function boitesRenameClean(){
+  const boxes = await db.storageBoxes.toArray().catch(()=>[]);
+  let n=0;
+  for(const b of boxes){
+    const nom=(b.nom||'').toLowerCase();
+    let nouveau=null;
+    if(nom.includes('transparente')) nouveau='Boîte 21 T';
+    else if(nom.includes('rectangle')) nouveau='Boîte 30 R';
+    else if(nom.includes('grande') && nom.includes('couvercle bleu')) nouveau='Boîte 20';
+    else if(nom.includes('grande') && nom.includes('couvercle noir')) nouveau='Boîte 30';
+    else if(nom.includes('moyenne') && nom.includes('couvercle noir')) nouveau='Boîte 22';
+    else if(nom.includes('moyenne') && nom.includes('couvercle bleu')) nouveau='Boîte 10';
+    else if(nom.includes('petite') && nom.includes('couvercle noir')) nouveau='Boîte 16';
+    if(nouveau && nouveau!==b.nom){ await db.storageBoxes.update(b.id, {nom:nouveau}); n++; }
+  }
+  renderBoites();
+  toast(n? `${n} boîte(s) renommée(s) ✓` : 'Aucune boîte à renommer');
 }
 async function boiteDel(id){
   const b=await db.storageBoxes.get(id); if(!b) return;
   if(!confirm(`Supprimer la boîte « ${b.nom} » ?`)) return;
   await db.storageBoxes.delete(id); renderBoites(); toast('Supprimé');
+}
+// Pré-remplit les capacités grand format des boîtes connues (rattachement par nom).
+const BOITES_GF_SEED = [
+  {match:'transparente', gf:0},
+  {match:'couvercle bleu', grande:true, gf:2},   // Grande boîte couvercle bleu
+  {match:'couvercle noir', grande:true, gf:6},   // Grande boîte couvercle noir
+  {match:'rectangle', gf:6},                     // Grande boîte rectangle couv noir
+  {match:'moyenne boîte couvercle noir', gf:4},
+  {match:'moyenne boîte couvercle bleu', gf:2},
+  {match:'petite boîte couvercle noir', gf:0},
+];
+async function boitesSeedGF(){
+  const boxes = await db.storageBoxes.toArray().catch(()=>[]);
+  let n=0;
+  const norm = s => (s||'').toLowerCase();
+  for(const b of boxes){
+    const nom=norm(b.nom);
+    let gf=null;
+    // Règles spécifiques d'abord (les plus précises), pour éviter les collisions "grande/moyenne"
+    if(nom.includes('transparente')) gf=0;
+    else if(nom.includes('rectangle')) gf=6;
+    else if(nom.includes('grande') && nom.includes('couvercle bleu')) gf=2;
+    else if(nom.includes('grande') && nom.includes('couvercle noir')) gf=6;
+    else if(nom.includes('moyenne') && nom.includes('couvercle noir')) gf=4;
+    else if(nom.includes('moyenne') && nom.includes('couvercle bleu')) gf=2;
+    else if(nom.includes('petite') && nom.includes('couvercle noir')) gf=0;
+    if(gf!==null){ await db.storageBoxes.update(b.id, {capaciteGF:gf}); n++; }
+  }
+  renderBoites();
+  toast(n? `Capacités grand format appliquées à ${n} boîte(s) ✓` : 'Aucune boîte reconnue');
 }
 
 // ============================================================
