@@ -587,6 +587,21 @@ function sanitizeLot(lot){
 const FRIGO_DAYS = 7;        // durée de vie totale au frigo (jours)
 const CONGELO_MONTHS = 4;    // durée de vie au congélateur (mois)
 const MS_DAY = 86400000;
+// ÉTATS DE MATURATION d'un lot (champ production.maturation).
+// La maturation (repos au froid positif F pour développer les arômes) peut se faire AVANT
+// congélation (préférence de Benjamin) ou APRÈS décongélation, ou ne pas être requise.
+//  'fait'      : déjà maturé (typiquement maturé avant congélation) → prêt dès décongélation.
+//  'apres'     : à maturer APRÈS décongélation → devra passer par F avant d'être livrable.
+//  'nonrequis' : maturation non nécessaire pour ce lot.
+//  null/undefined : non renseigné (on ne présume rien).
+const MATURATION_ETATS = {
+  fait:      {label:'Déjà maturé', ico:'✅', desc:'Maturé avant congélation — prêt dès décongélation', c:'#3f7d52'},
+  apres:     {label:'À maturer après décongélation', ico:'🕒', desc:'Devra passer par le frigo F avant vente', c:'#d98324'},
+  nonrequis: {label:'Maturation non requise', ico:'➖', desc:'Pas d\'étape de maturation pour ce lot', c:'#9a8a82'}
+};
+function prodMaturation(p){ return p && MATURATION_ETATS[p.maturation] ? p.maturation : null; }
+// Un lot congelé est-il prêt à être livré dès décongélation (pas de maturation après) ?
+function prodMaturationPrete(p){ const m=prodMaturation(p); return m==='fait' || m==='nonrequis'; }
 // Calcule la DLC en TENANT COMPTE de l'historique des emplacements.
 // Principe sanitaire : le frigo dispose d'un budget total de 7 jours qui se CONSOMME
 // à chaque séjour au frigo (avant ET après congélation). La congélation met le compteur
@@ -2861,12 +2876,29 @@ async function setEmplacement(id){
        <b style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
        <span>${e.icon} ${esc(e.nom)}</span>${actif?' <span class="tag ok" style="margin-left:auto">actuel</span>':''}${interdit?' <span class="tag warn" style="margin-left:auto">🚫</span>':''}</button>`;
   }).join('');
+  const matEtat = prodMaturation(p);
+  const matOpts = Object.keys(MATURATION_ETATS).map(k=>{
+    const m=MATURATION_ETATS[k]; const actif=matEtat===k;
+    return `<button class="btn ${actif?'gold':'ghost'} sm" style="min-width:46%;margin:3px 0;justify-content:flex-start;display:flex;gap:6px"
+      onclick="setMaturation(${id},'${k}')" title="${esc(m.desc)}">
+      <span>${m.ico} ${esc(m.label)}</span>${actif?' <span class="tag ok" style="margin-left:auto">actuel</span>':''}</button>`;
+  }).join('');
   openModal(`<h3>Emplacement de stockage</h3>
     <p class="note">${courant?`Actuellement : <b>${esc(empNom(courant))} (${empLettre(courant)})</b>.`:'Choisissez où ranger cette production.'} La lettre s'ajoute au n° de lot et à l'étiquette.</p>
     ${decongele?'<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⚠️ Cette production est déjà passée par le frigo après congélation : <b>recongélation interdite</b>.</div></div>':''}
     ${(!decongele&&retourBloque)?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⛔ Sortie du congélateur le <b>${fmtDateTime(exitTs)}</b> : le délai d'<b>1 heure</b> pour un retour au congélateur est dépassé. Retour A/B/C bloqué (chaîne du froid).</div></div>`:''}
     <div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:space-between">${opts}</div>
+    <h3 style="font-size:1rem;margin-top:14px">🌱 Maturation</h3>
+    <p class="note">Le repos au froid positif (frigo F) qui développe les arômes. Tu peux la faire avant congélation (recommandé) ou après décongélation.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:space-between">${matOpts}</div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+async function setMaturation(id, etat){
+  if(!MATURATION_ETATS[etat]) return;
+  await db.productions.update(id, {maturation:etat});
+  const m=MATURATION_ETATS[etat];
+  toast(`Maturation : ${m.label}`);
+  setEmplacement(id); // ré-ouvre la modale à jour
 }
 // Déplacement central d'une production vers un emplacement (frigo / B / C / A).
 // Applique : règle anti-recongélation, journal, DLC (frigo↔congélo), MAJ de la lettre de lot,
@@ -16139,6 +16171,11 @@ async function equipGetSpecs(){
   const arr = await db.equipmentSpecs.toArray().catch(()=>[]);
   return Object.fromEntries(arr.map(s=>[s.key,s]));
 }
+// Rôles et accessibilité des niveaux (pour le rangement intelligent et le picking).
+const NIV_ROLES = {reserve:{label:'Réserve profonde', ico:'📦', c:'#7a6a9a'}, transit:{label:'Transit', ico:'🔄', c:'#3f7d52'}, standard:{label:'Standard', ico:'•', c:'#9a8a82'}};
+const NIV_ACCES = {facile:{label:'Facile', ico:'🟢'}, moyenne:{label:'Moyenne', ico:'🟡'}, difficile:{label:'Difficile', ico:'🔴'}};
+function nivRole(lv){ return NIV_ROLES[lv&&lv.role] ? lv.role : 'standard'; }
+function nivAcces(lv){ return NIV_ACCES[lv&&lv.acces] ? lv.acces : 'facile'; }
 function boxesPerLayer(eL, el, bL, bl){
   if(bL<=0||bl<=0||eL<=0||el<=0) return {fixe:0, tourne:0};
   return { fixe: Math.floor(eL/bL)*Math.floor(el/bl), tourne: Math.floor(eL/bl)*Math.floor(el/bL) };
@@ -16169,29 +16206,29 @@ function equipCapacityForBox(spec, box){
 function equipSeedData(){
   return {
     petit: { key:'petit', niveaux:[
-      {nom:'Niveau 1', L:35, l:32, h:14.5, mode:'clayette', reserve:false},
-      {nom:'Niveau 2', L:35, l:32, h:12,   mode:'clayette', reserve:false},
-      {nom:'Niveau 3', L:35, l:17, h:20,   mode:'clayette', reserve:false},
+      {nom:'Niveau 1', L:35, l:32, h:14.5, mode:'clayette', reserve:false, role:'standard', acces:'facile'},
+      {nom:'Niveau 2', L:35, l:32, h:12,   mode:'clayette', reserve:false, role:'standard', acces:'moyenne'},
+      {nom:'Niveau 3', L:35, l:17, h:20,   mode:'clayette', reserve:false, role:'standard', acces:'difficile'},
     ]},
     bahut: { key:'bahut', niveaux:[
-      {nom:'Bloc principal',        L:80, l:47, h:87.5, mode:'empilable', reserve:false},
-      {nom:'Appoint (sur compresseur)', L:19, l:47, h:67.5, mode:'empilable', reserve:false},
+      {nom:'Bloc principal',        L:80, l:47, h:87.5, mode:'empilable', reserve:false, role:'reserve', acces:'difficile'},
+      {nom:'Appoint (sur compresseur)', L:19, l:47, h:67.5, mode:'empilable', reserve:false, role:'reserve', acces:'moyenne'},
     ]},
     colonne: { key:'colonne', niveaux:[
-      {nom:'Niveau 1', L:38.5, l:32, h:20, mode:'clayette', reserve:false},
-      {nom:'Niveau 2', L:38.5, l:40, h:24, mode:'clayette', reserve:false},
-      {nom:'Niveau 3 (bac)', L:38.5, l:37, h:25, mode:'clayette', reserve:false},
-      {nom:'Niveau 4 (bac)', L:35, l:31, h:24, mode:'clayette', reserve:false},
-      {nom:'Niveau 5 (bac)', L:35, l:31, h:24, mode:'clayette', reserve:false},
-      {nom:'Niveau 6 (bac)', L:35, l:22, h:23, mode:'clayette', reserve:false},
+      {nom:'Niveau 1', L:38.5, l:32, h:20, mode:'clayette', reserve:false, role:'standard', acces:'facile'},
+      {nom:'Niveau 2', L:38.5, l:40, h:24, mode:'clayette', reserve:false, role:'standard', acces:'facile'},
+      {nom:'Niveau 3 (bac)', L:38.5, l:37, h:25, mode:'clayette', reserve:false, role:'standard', acces:'moyenne'},
+      {nom:'Niveau 4 (bac)', L:35, l:31, h:24, mode:'clayette', reserve:false, role:'standard', acces:'moyenne'},
+      {nom:'Niveau 5 (bac)', L:35, l:31, h:24, mode:'clayette', reserve:false, role:'standard', acces:'difficile'},
+      {nom:'Niveau 6 (bac)', L:35, l:22, h:23, mode:'clayette', reserve:false, role:'standard', acces:'difficile'},
     ]},
     frigo: { key:'frigo', niveaux:[
-      {nom:'Emplacement 1', L:45, l:28, h:21,   mode:'clayette', reserve:false},
-      {nom:'Emplacement 2', L:45, l:28, h:14.5, mode:'clayette', reserve:false},
-      {nom:'Emplacement 3', L:45, l:28, h:15,   mode:'clayette', reserve:false},
-      {nom:'Emplacement 4', L:45, l:28, h:10,   mode:'clayette', reserve:false},
-      {nom:'Emplacement 5', L:45, l:28, h:15,   mode:'clayette', reserve:false},
-      {nom:'Emplacement 6', L:45, l:28, h:20,   mode:'clayette', reserve:false},
+      {nom:'Emplacement 1', L:45, l:28, h:21,   mode:'clayette', reserve:false, role:'transit', acces:'facile'},
+      {nom:'Emplacement 2', L:45, l:28, h:14.5, mode:'clayette', reserve:false, role:'transit', acces:'facile'},
+      {nom:'Emplacement 3', L:45, l:28, h:15,   mode:'clayette', reserve:false, role:'transit', acces:'facile'},
+      {nom:'Emplacement 4', L:45, l:28, h:10,   mode:'clayette', reserve:false, role:'transit', acces:'moyenne'},
+      {nom:'Emplacement 5', L:45, l:28, h:15,   mode:'clayette', reserve:false, role:'transit', acces:'moyenne'},
+      {nom:'Emplacement 6', L:45, l:28, h:20,   mode:'clayette', reserve:false, role:'transit', acces:'moyenne'},
     ]},
   };
 }
@@ -16213,7 +16250,10 @@ async function renderEquipements(){
     if(!s || !Array.isArray(s.niveaux) || !s.niveaux.length){
       corps = `<p class="note">Niveaux non renseignés.</p>`;
     } else {
-      const nivList = s.niveaux.map((lv,i)=>`<div class="sum-box"><span style="padding-left:10px">${lv.reserve?'🔒 ':''}${esc(lv.nom||('Niveau '+(i+1)))}</span><b style="font-size:.8rem;color:#9a8a82">${lv.L}×${lv.l}×${lv.h} cm${lv.reserve?' · réservé MP':''}</b></div>`).join('');
+      const nivList = s.niveaux.map((lv,i)=>{
+        const r=NIV_ROLES[nivRole(lv)], a=NIV_ACCES[nivAcces(lv)];
+        return `<div class="sum-box"><span style="padding-left:10px">${lv.reserve?'🔒 ':''}${esc(lv.nom||('Niveau '+(i+1)))} <span style="font-size:.72rem;color:${r.c}">${r.ico} ${r.label}</span> <span style="font-size:.72rem">${a.ico}</span></span><b style="font-size:.78rem;color:#9a8a82">${lv.L}×${lv.l}×${lv.h}${lv.reserve?' · MP':''}</b></div>`;
+      }).join('');
       let capBloc='';
       if(boxes.length){
         capBloc = boxes.map(b=>{
@@ -16272,15 +16312,24 @@ function equipDrawNiv(){
         </select>
         <label style="display:flex;align-items:center;gap:4px;font-size:.8rem"><input type="checkbox" ${lv.reserve?'checked':''} onchange="equipNivSet(${i},'reserve',this.checked)"> 🔒 MP</label>
       </div>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <select onchange="equipNivSet(${i},'role',this.value)" style="flex:1">
+          ${Object.keys(NIV_ROLES).map(k=>`<option value="${k}" ${nivRole(lv)===k?'selected':''}>${NIV_ROLES[k].ico} ${NIV_ROLES[k].label}</option>`).join('')}
+        </select>
+        <select onchange="equipNivSet(${i},'acces',this.value)" style="flex:1">
+          ${Object.keys(NIV_ACCES).map(k=>`<option value="${k}" ${nivAcces(lv)===k?'selected':''}>${NIV_ACCES[k].ico} ${NIV_ACCES[k].label}</option>`).join('')}
+        </select>
+      </div>
     </div>`).join('') || '<p class="note">Aucun niveau. Ajoute-en un.</p>';
 }
-function equipNivAdd(){ _equipDraft.push({nom:'Niveau '+(_equipDraft.length+1), L:'', l:'', h:'', mode:'clayette', reserve:false}); equipDrawNiv(); }
+function equipNivAdd(){ _equipDraft.push({nom:'Niveau '+(_equipDraft.length+1), L:'', l:'', h:'', mode:'clayette', reserve:false, role:'standard', acces:'facile'}); equipDrawNiv(); }
 function equipNivDel(i){ _equipDraft.splice(i,1); equipDrawNiv(); }
-function equipNivSet(i,k,v){ if(_equipDraft[i]){ _equipDraft[i][k] = (k==='nom'||k==='mode')?v : (k==='reserve'?!!v:Math.max(0,+v||0)); if(k==='mode'||k==='reserve')equipDrawNiv(); } }
+function equipNivSet(i,k,v){ if(_equipDraft[i]){ _equipDraft[i][k] = (k==='nom'||k==='mode'||k==='role'||k==='acces')?v : (k==='reserve'?!!v:Math.max(0,+v||0)); if(k==='mode'||k==='reserve')equipDrawNiv(); } }
 async function equipSave(){
   const niveaux=_equipDraft.filter(lv=>(+lv.L>0&&+lv.l>0&&+lv.h>0)).map(lv=>({
     nom:(lv.nom||'Niveau').trim(), L:+lv.L||0, l:+lv.l||0, h:+lv.h||0,
-    mode:lv.mode==='empilable'?'empilable':'clayette', reserve:!!lv.reserve }));
+    mode:lv.mode==='empilable'?'empilable':'clayette', reserve:!!lv.reserve,
+    role:NIV_ROLES[lv.role]?lv.role:'standard', acces:NIV_ACCES[lv.acces]?lv.acces:'facile' }));
   await db.equipmentSpecs.put({key:_equipKey, niveaux});
   closeModal(); renderEquipements(); toast('Niveaux enregistrés ✓');
 }
