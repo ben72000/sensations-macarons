@@ -2922,7 +2922,27 @@ async function setEmplacement(id){
   const _recipe = p.recipeId ? await db.recipes.get(p.recipeId).catch(()=>null) : null;
   const _ctx = lotPlacementCtx(p, _recipe);
   const _sugBox = suggestBox(_boxes, _ctx.nb, _ctx.grandFormat);
-  const _sugLvl = suggestLevel(_specsMap, _sugBox, _ctx);
+  // Occupation réelle de tous les niveaux + demande proche du parfum (fusion intelligente)
+  let _occMap = new Map(), _demande = {urgent:false, qte:0, joursAvant:null};
+  try{
+    const _allProds = await db.productions.toArray();
+    const _boxesByNom = {}; _boxes.forEach(b=>{ _boxesByNom[b.nom]=b; });
+    const _placements = buildPlacementsMap(_allProds, _boxesByNom);
+    // calcule l'occupation par niveau
+    for(const e of EMPLACEMENTS){
+      const spec=_specsMap[e.key]; if(!spec||!Array.isArray(spec.niveaux)) continue;
+      spec.niveaux.forEach((lv,i)=>{
+        const key=e.key+'|'+(lv.nom||('niveau '+(i+1)));
+        const pls=_placements.get(key)||[];
+        const occ=levelOccupancy(lv, pls);
+        if(occ) _occMap.set(key, occ);
+      });
+    }
+    const _dMap = await computeDemandeProche({});
+    if(_recipe) _demande = demandeProchePour(_dMap, _recipe.produitNom);
+  }catch(e){ /* base vide ou pas de données : on reste sur suggestion simple */ }
+  const _smart = suggestLevelSmart(_specsMap, _sugBox, _ctx, _occMap, _demande);
+  const _sugLvl = _smart.best;
   const opts = EMPLACEMENTS.map(e=>{
     const estCongelo = e.type==='congelateur';
     const interdit = estCongelo && (decongele || retourBloque); // recongélation interdite OU délai 1h dépassé
@@ -2955,6 +2975,17 @@ async function setEmplacement(id){
       const lv=_sugLvl.niveau;
       const r=NIV_ROLES[nivRole(lv)], a=NIV_ACCES[nivAcces(lv)];
       const capLabel = _ctx.grandFormat ? `${_sugBox.capaciteGF||0} GF` : `${_sugBox.capacite||0} std`;
+      // Raisonnement dynamique : pourquoi ce niveau ?
+      const tauxPct = (_sugLvl.tauxRempli!=null) ? Math.round(_sugLvl.tauxRempli*100) : null;
+      const pourquoi = (()=>{
+        const bits=[];
+        if(_smart.sortVite){ bits.push('sortie proche → emplacement accessible privilégié'); }
+        else { bits.push('pas de demande imminente → réserve, on garde les accès faciles libres'); }
+        if(_ctx.congelObligatoire) bits.push('congélateur obligatoire (recette sensible)');
+        else if(_ctx.aMaturer) bits.push('à maturer → frigo F');
+        if(tauxPct!=null) bits.push(`niveau rempli à ${tauxPct}%`);
+        return bits.join(' · ');
+      })();
       sugHtml = `<h3 style="font-size:1rem;margin-top:14px">📍 Rangement suggéré</h3>
         ${actuelLigne}
         <div class="sum-box" style="background:#faf6ee;flex-direction:column;align-items:flex-start;gap:4px">
@@ -2962,7 +2993,7 @@ async function setEmplacement(id){
           <span style="font-size:.82rem;color:#7a6a60">Boîte : <b>${esc(_sugBox.nom)}</b> (${capLabel}) · ${_ctx.nb} macaron(s) à ranger</span>
         </div>
         <button class="btn gold sm" style="margin-top:6px" onclick="applySuggestedPlacement(${id})">✓ Ranger ici</button>
-        <p class="note" style="margin-top:4px">Suggestion selon zone thermique, rôle et accessibilité. Tu peux aussi choisir l'équipement manuellement ci-dessus.</p>`;
+        <p class="note" style="margin-top:4px">💡 ${esc(pourquoi)}.</p>`;
     } else if(_ctx.nb>0) {
       sugHtml = `<p class="note" style="margin-top:10px">${actuelLigne||''}💡 Aucune suggestion de niveau (vérifie que tes boîtes ont des dimensions et qu'un niveau peut les accueillir).</p>`;
     }
@@ -15689,8 +15720,12 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
     const garnitureG = Math.round(nbBatchs*TAILLE_BATCH_MACARONS*poidsUnit);
     const tMontage = nbBatchs*times.montage.estimatedTime;   // par batch
     const tGanache = nbBatchs*times.ganache.estimatedTime;   // par batch
+    // Délai de repos ganache avant montage (réglage recette, défaut 12 h ; 0 = exception)
+    const ganacheDelaiH = (rec && rec.ganacheDelaiH!=null) ? +rec.ganacheDelaiH : 12;
+    const coquesCongelObl = !!(rec && rec.coquesCongelObligatoire);
     lignes.push({parfum, recipeId:rec?rec.id:null, besoinBrut, enStock, besoinNet, nbBatchs,
       coques:nbBatchs*COQUES_PAR_BATCH, garnitureG, poidsUnit, tMontage, tGanache,
+      ganacheDelaiH, coquesCongelObl,
       garnitureManque: !rec || poidsUnit<=0});
   }
   lignes.sort((a,b)=>b.besoinNet-a.besoinNet);
@@ -15798,12 +15833,14 @@ function schedulePersonalPlan(daySpecs, plan, opts){
   lignes.forEach(l=> active.push({
     id:'ganache:'+l.parfum, phase:2, label:`Ganache ${l.parfum}`,
     dur:l.tGanache, type:'ganache',
-    note:`${l.garnitureManque?'⚠ poids garniture à renseigner. ':''}${l.garnitureG||'?'} g pour ${l.nbBatchs} batch(s). À préparer pendant la cuisson des coques pour ne pas perdre de temps machine.`
+    passiveAfter: (l.ganacheDelaiH>0 ? Math.round(l.ganacheDelaiH*60) : 0),
+    note:`${l.garnitureManque?'⚠ poids garniture à renseigner. ':''}${l.garnitureG||'?'} g pour ${l.nbBatchs} batch(s). À préparer pendant la cuisson des coques pour ne pas perdre de temps machine.${l.ganacheDelaiH>0?` ⏱ Repos ${l.ganacheDelaiH} h avant montage.`:' (montage possible sans délai pour cette recette.)'}`
   }));
   lignes.forEach(l=> active.push({
     id:'montage:'+l.parfum, phase:3, label:`Montage ${l.parfum}`,
     dur:l.tMontage, type:'montage',
-    note:`Garnissage de ${l.besoinNet} macarons. Nécessite coques cuites + ganache prête. Lance la maturation de ${PROC.maturationH} h juste après.`
+    after: (l.ganacheDelaiH>0 ? 'ganache:'+l.parfum : null),
+    note:`Garnissage de ${l.besoinNet} macarons. Nécessite coques cuites + ganache prête${l.ganacheDelaiH>0?` (reposée ${l.ganacheDelaiH} h)`:''}.${l.coquesCongelObl?' ❄️ Coques congelées obligatoires pour cette recette.':''} Lance la maturation de ${PROC.maturationH} h juste après.`
   }));
 
   // 2) Placement glouton dans les blocs, en respectant l'ordre des phases.
@@ -15857,6 +15894,18 @@ function schedulePersonalPlan(daySpecs, plan, opts){
   const cuisTot = cuissonCascade(coquesTot,'standard');
   insights.push(`🔥 Cuisson : ${cuisTot.nbPlaques} plaque(s) de 39 coques, enfournées en cascade (2ᵉ plaque +${PROC.relancePlaqueMin} min, 3ᵉ à la sortie de la 1ʳᵉ…). Temps four estimé ~${Math.floor(cuisTot.makespanMin/60)?Math.floor(cuisTot.makespanMin/60)+'h':''}${cuisTot.makespanMin%60} min, en parallèle des ganaches/montages.`);
   if(readyInfo) insights.push(`📦 Avec ${PROC.maturationH} h de maturation après le dernier montage, le lot complet est prêt à la vente le ${readyInfo.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'})} vers ${String(readyInfo.getHours()).padStart(2,'0')}h${String(readyInfo.getMinutes()).padStart(2,'0')}.`);
+  // Insight délai ganache : matérialise la contrainte de repos avant montage par recette.
+  {
+    const avecDelai = lignes.filter(l=>l.ganacheDelaiH>0);
+    const sansDelai = lignes.filter(l=>l.ganacheDelaiH===0);
+    if(avecDelai.length){
+      const maxDelai = Math.max(...avecDelai.map(l=>l.ganacheDelaiH));
+      insights.push(`⏱ Repos ganache : prévois les ganaches ${maxDelai>0?`au moins ${maxDelai} h`:''} avant le montage (${avecDelai.map(l=>l.parfum).join(', ')}). Idéalement, prépare-les la veille pour monter le jour J.`);
+    }
+    if(sansDelai.length) insights.push(`✓ Sans délai de repos imposé : ${sansDelai.map(l=>l.parfum).join(', ')} — montage possible dès la ganache prête.`);
+    const coquesCongel = lignes.filter(l=>l.coquesCongelObl);
+    if(coquesCongel.length) insights.push(`❄️ Coques à congeler avant montage : ${coquesCongel.map(l=>l.parfum).join(', ')}. Cuis les coques en amont, congèle-les, puis monte au moment voulu.`);
+  }
   if(totalActive>totalAvail) insights.push(`⚠ Il manque ${Math.ceil((totalActive-totalAvail)/60*10)/10} h de créneau : envisage d'étaler sur un jour de plus, ou de réduire les quantités les moins prioritaires.`);
   else insights.push(`✅ Tout tient dans tes créneaux, avec ${Math.floor((totalAvail-totalActive)/60)}h${String((totalAvail-totalActive)%60).padStart(2,'0')} de marge pour les imprévus (nettoyage, étiquetage, pauses).`);
 
@@ -16430,6 +16479,32 @@ function buildPlacementsMap(prods, boxesByNom){
   return map;
 }
 
+// ---- DEMANDE PROCHE PAR PARFUM (commandes à venir + prévisionnel) ----
+// Sert à juger la "durée de stockage prévue" d'un lot : un parfum très demandé bientôt
+// doit être rangé accessible (sortie rapide) ; un parfum sans demande proche peut dormir
+// en réserve profonde. S'appuie sur buildUnifiedNeeds (commandes fermes datées + vélocité).
+async function computeDemandeProche(opts){
+  opts = opts || {};
+  const seuilJours = opts.seuilJours!=null ? opts.seuilJours : 3; // "imminent" = sous 3 jours
+  const map = new Map();
+  let needs=[];
+  try{ needs = await buildUnifiedNeeds({horizon:opts.horizon||14}); }catch(e){ return map; }
+  (needs||[]).forEach(n=>{
+    const nom = n.parfum || n.nom; if(!nom) return;
+    const qte = +n.besoin||0;
+    const echeance = n.echeance || null;
+    const joursAvant = echeance ? daysTo(echeance) : null;
+    const estCommande = (n.type==='commande');
+    const urgent = estCommande && joursAvant!=null && joursAvant<=seuilJours;
+    map.set(aiNormalize(nom), {qte, echeance, joursAvant, urgent, type:n.type||'flux'});
+  });
+  return map;
+}
+function demandeProchePour(map, parfum){
+  if(!map || !parfum) return {qte:0, joursAvant:null, urgent:false, type:'flux'};
+  return map.get(aiNormalize(parfum)) || {qte:0, joursAvant:null, urgent:false, type:'flux'};
+}
+
 // Logique de priorité validée : thermique → rôle → accès → capacité.
 // thermique : un lot congelé (emplacement A/B/C ou destiné au froid négatif) va en réserve/standard
 //   des congélateurs ; un lot en maturation (à maturer après) ou réfrigéré va en transit (F).
@@ -16481,7 +16556,56 @@ function suggestLevel(specsMap, box, ctx){
   candidates.sort((a,b)=>a.score-b.score);
   return candidates[0];
 }
-// Construit le contexte d'un lot pour la suggestion.
+// ---- SCORE FUSIONNÉ : place (occupation réelle) + accès + flux, pondéré par la DEMANDE ----
+// occMap : Map "equipKey|niveauNom" -> occupation (levelOccupancy) déjà calculée.
+// demande : {urgent, joursAvant, qte} pour ce parfum (sortie imminente ?).
+// Retourne la liste TRIÉE des candidats avec le détail du score (pour transparence/simulation).
+function suggestLevelSmart(specsMap, box, ctx, occMap, demande){
+  if(!box) return {best:null, candidates:[]};
+  demande = demande || {urgent:false, joursAvant:null, qte:0};
+  // "sort vite" = commande imminente OU une bonne part du lot est déjà demandée
+  const ratioDemande = ctx.nb>0 ? (demande.qte/ctx.nb) : 0;
+  const sortVite = !!demande.urgent || ratioDemande>=0.4;
+  // Pondérations (validées en simulation) : si ça sort vite, l'accès prime ; sinon flux + économie de place.
+  const wAcces = sortVite ? 3.0 : 1.0;
+  const wFlux  = 2.0;
+  const wPlace = sortVite ? 1.0 : 3.0; // en réserve longue, économiser la place premium compte davantage
+  const candidates = [];
+  for(const e of EMPLACEMENTS){
+    const spec = specsMap[e.key]; if(!spec || !Array.isArray(spec.niveaux)) continue;
+    const estFroidPositif = (e.type==='frigo');
+    if(ctx.congele && estFroidPositif) continue;
+    if(ctx.aMaturer && !estFroidPositif) continue;
+    if(ctx.congelObligatoire && estFroidPositif) continue;
+    spec.niveaux.forEach((lv,i)=>{
+      if(lv.reserve) return;
+      // 1) Est-ce que ça RENTRE (volumétrie + occupation réelle) ?
+      const occ = (occMap && occMap.get(e.key+'|'+(lv.nom||('niveau '+(i+1))))) || null;
+      const cap = levelCapacityForBox(lv, box);
+      if(!cap || cap.nbBoites<=0) return;          // boîte incompatible avec ce niveau
+      if(occ && !levelCanFit(lv, occ, box)) return; // plein → éliminé
+      const tauxRempli = occ ? occ.tauxVolume : 0;
+      // 2) FLUX (rôle adapté à la durée prévue)
+      const role = NIV_ROLES[nivRole(lv)] ? nivRole(lv) : 'standard';
+      let fluxScore;
+      if(sortVite)         fluxScore = (role==='transit')?0:(role==='standard'?1:2);
+      else if(ctx.aMaturer)fluxScore = (role==='transit')?0:(role==='standard'?1:2);
+      else                 fluxScore = (role==='reserve')?0:(role==='standard'?1:2);
+      // 3) ACCÈS
+      const accesScore = ACCES_SCORE[nivAcces(lv)] ?? 1;
+      // 4) PLACE : pénalise les niveaux déjà bien remplis (0 vide … 1 presque plein)
+      const placeScore = tauxRempli;
+      const score = wAcces*accesScore + wFlux*fluxScore + wPlace*placeScore*2;
+      candidates.push({
+        equipKey:e.key, nivIndex:i, niveau:lv, score,
+        capBoites:cap.nbBoites, tauxRempli, accesScore, fluxScore, role, sortVite,
+        acces:nivAcces(lv)
+      });
+    });
+  }
+  candidates.sort((a,b)=>a.score-b.score);
+  return {best:candidates[0]||null, candidates, sortVite};
+}
 function lotPlacementCtx(p, recipe){
   const nb = round3(+p.qteRestante||0);
   const grandFormat = !!(recipe && recipe.grandFormat);
