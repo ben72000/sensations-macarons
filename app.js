@@ -5104,6 +5104,7 @@ async function renderCmd(){
          <button class="btn ghost sm" onclick="cmdSelectAllVisible()">Tout cocher</button>
          <button class="btn ghost sm" onclick="cmdClearSelection()">Tout décocher</button>
          <button class="btn gold sm" onclick="genererFactureMultiple([..._cmdSel])">🧾 Facturer la sélection</button>
+         <button class="btn ghost sm" onclick="cmdMailSelection()">✉️ Mail au client</button>
          <button class="btn ghost sm" onclick="cmdExportSelection()">⬇ Exporter (TXT)</button>
        </div>
      </div>
@@ -12077,7 +12078,8 @@ async function buildDump(){
   return dump;
 }
 // Clés localStorage incluses dans les sauvegardes (réglages persistants, hors état purement transitoire).
-const BACKUP_LS_KEYS = ['sm_settings','sm_autoPay','sm_privacyMode','sm_nav_adv','sm_lastExport','sm_lastICloud','sm_autoBackupDate'];
+const BACKUP_LS_KEYS = ['sm_settings','sm_autoPay','sm_privacyMode','sm_nav_adv','sm_lastExport','sm_lastICloud','sm_autoBackupDate',
+  'sm_facture','sm_recurringCharges','sm_mrp_times','sm_availability','sm_planPrioOrder','sm_pmsEod'];
 function collectLocalSettings(){
   const o={};
   BACKUP_LS_KEYS.forEach(k=>{ const v=localStorage.getItem(k); if(v!=null) o[k]=v; });
@@ -13340,6 +13342,76 @@ function formatOrderTXT(d){
   return L.join('\n');
 }
 // Export TXT d'une sélection de commandes (séparateur homogène entre commandes).
+// Construit un e-mail « Livraison du jour » vers le client à partir des commandes sélectionnées.
+// Regroupe par client (toutes les commandes cochées doivent concerner le même client), récupère
+// l'e-mail via la fiche client, et ouvre la boîte mail (mailto) avec un corps personnalisé.
+function factGetSignature(){ try{ return localStorage.getItem('sm_mailSignature')||''; }catch(e){ return ''; } }
+function factSaveSignature(v){ try{ localStorage.setItem('sm_mailSignature', v||''); }catch(e){} }
+
+async function cmdMailSelection(){
+  const ids=[..._cmdSel];
+  if(!ids.length){ toast('Aucune commande sélectionnée'); return; }
+  // Récupère les commandes + clients
+  const datas=[];
+  for(const id of ids){ const d=await collectOrderExport(id); if(d) datas.push(d); }
+  if(!datas.length){ toast('Impossible de lire les commandes'); return; }
+  // Vérifie qu'elles concernent un seul et même client
+  const orders = await Promise.all(ids.map(id=>db.orders.get(id)));
+  const clientIds = [...new Set(orders.filter(Boolean).map(o=>o.clientId))];
+  if(clientIds.length>1){
+    toast('Sélectionne des commandes d\'un seul client pour l\'e-mail');
+    return;
+  }
+  const cl = clientIds[0] ? await db.clients.get(clientIds[0]) : null;
+  if(!cl){ toast('Client introuvable'); return; }
+  if(!cl.email){
+    openModal(`<h3>✉️ Pas d'e-mail pour ce client</h3>
+      <p class="note">La fiche de « ${esc(cl.nom||'ce client')} » ne contient pas d'adresse e-mail. Ajoute-la dans sa fiche client, puis réessaie.</p>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Compris</button></div>`);
+    return;
+  }
+  datas.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const sign = factGetSignature();
+  // Aperçu + champ signature avant ouverture du mail
+  openModal(`<h3>✉️ E-mail au client</h3>
+    <p class="note">Destinataire : <b>${esc(cl.email)}</b> · ${datas.length} commande(s)</p>
+    <div class="field"><label>Signature (ton nom)</label><input id="mailSign" value="${esc(sign)}" placeholder="ex : Benjamin"></div>
+    <p class="note">Objet : « Livraison du jour ». Le détail des commandes sélectionnées sera inclus en texte brut.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="cmdMailOpen(${cl.id})">Ouvrir ma boîte mail</button>
+    </div>`);
+  // stocke temporairement les données pour cmdMailOpen
+  _mailDraft = {cl, datas};
+}
+let _mailDraft=null;
+function cmdMailOpen(clientId){
+  if(!_mailDraft){ closeModal(); return; }
+  const {cl, datas}=_mailDraft;
+  const sign=(val('mailSign')||'').trim(); factSaveSignature(sign);
+  // Salutation : Bonjour [Prénom] [Nom si présent]
+  const nomComplet=[cl.prenom, cl.nom].filter(Boolean).join(' ') || cl.nom || '';
+  const salut = `Bonjour ${nomComplet}`.trim();
+  // Détail des commandes en texte brut
+  const blocs = datas.map(d=>{
+    const L=[];
+    L.push(`Commande n°${d.numero} — ${d.dateFmt}`);
+    d.produits.forEach(p=>{
+      L.push(`  • ${p.label}${p.remisePct>0?` (remise ${p.remisePct}%)`:''}`);
+      p.parfums.forEach(f=>L.push(`      - ${f.nom} : ${f.qte}${f.offert?' (offert)':''}`));
+    });
+    L.push(`  Total : ${euro(d.montant)}`);
+    return L.join('\n');
+  }).join('\n\n');
+  const corps = `${salut},\n\nVoici le détail de votre commande :\n\n${blocs}\n\nMerci et à bientôt.\n${sign||''}\n— Sensations Macarons`;
+  const objet = 'Livraison du jour';
+  const mailto = `mailto:${encodeURIComponent(cl.email)}?subject=${encodeURIComponent(objet)}&body=${encodeURIComponent(corps)}`;
+  closeModal();
+  // Ouvre la boîte mail
+  window.location.href = mailto;
+  _mailDraft=null;
+}
+
 async function cmdExportSelection(){
   const ids=[..._cmdSel];
   if(!ids.length){ toast('Aucune commande sélectionnée'); return; }
