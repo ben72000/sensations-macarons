@@ -73,6 +73,12 @@ db.version(11).stores({
 db.version(12).stores({
   storageBoxes:    '++id, nom'
 });
+// v13 : caractéristiques physiques des équipements de stockage (dimensions de chargement,
+// mode d'empilement). Clé primaire = la clé de l'emplacement (frigo, bahut, colonne, petit).
+// Stockées à part pour ne pas toucher à la constante EMPLACEMENTS utilisée partout.
+db.version(13).stores({
+  equipmentSpecs:  'key'
+});
 
 
 
@@ -779,7 +785,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -12071,7 +12077,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -16120,6 +16126,164 @@ let _pmsTab = 'temp';        // 'temp' | 'nettoyage'
 let _pmsPeriode = null;      // 'Matin' | 'Soir' (auto si null)
 let _pmsDate = null;         // date du relevé (défaut = aujourd'hui ; permet de corriger un jour passé)
 function pmsSetDate(d){ if(d!==_pmsDate && !pmsGuardUnsaved()) return; _pmsDate = d || today(); pmsRenderTemp(); }
+
+// ============================================================
+//  ÉQUIPEMENTS — modèle à NIVEAUX multiples.
+//  Chaque équipement = liste de niveaux, chacun avec ses dimensions (L×l×h cm) et un mode :
+//   'empilable' (on empile les boîtes sur la hauteur du niveau) ou 'clayette' (1 couche).
+//  Un niveau peut être 'reserve' (matières premières) → exclu du calcul macarons.
+//  Le stockage global = somme des niveaux de tous les équipements (espace unique sectionné).
+//  Orientation des boîtes fixe (pas de rotation), conforme à la préférence.
+// ============================================================
+async function equipGetSpecs(){
+  const arr = await db.equipmentSpecs.toArray().catch(()=>[]);
+  return Object.fromEntries(arr.map(s=>[s.key,s]));
+}
+function boxesPerLayer(eL, el, bL, bl){
+  if(bL<=0||bl<=0||eL<=0||el<=0) return {fixe:0, tourne:0};
+  return { fixe: Math.floor(eL/bL)*Math.floor(el/bl), tourne: Math.floor(eL/bl)*Math.floor(el/bL) };
+}
+// Capacité d'UN niveau pour un type de boîte (orientation fixe).
+function levelCapacityForBox(level, box){
+  if(!level || level.reserve) return null;
+  const eL=+level.L||0, el=+level.l||0, eh=+level.h||0;
+  const bL=+box.L||0, bl=+box.l||0, bh=+box.h||0;
+  if(eL<=0||el<=0||eh<=0||bL<=0||bl<=0||bh<=0) return null;
+  const per = boxesPerLayer(eL, el, bL, bl);
+  const couches = (level.mode==='clayette') ? (bh<=eh?1:0) : Math.floor(eh/bh);
+  return { nbBoites: per.fixe*couches, nbBoitesTourne: per.tourne*couches,
+    capaciteMacarons: per.fixe*couches*(+box.capacite||0) };
+}
+// Capacité d'un équipement (somme de ses niveaux) pour un type de boîte.
+function equipCapacityForBox(spec, box){
+  if(!spec || !Array.isArray(spec.niveaux)) return null;
+  let nbBoites=0, capMac=0, gain=0, niveauxUtiles=0;
+  spec.niveaux.forEach(lv=>{
+    const c=levelCapacityForBox(lv, box); if(!c) return;
+    nbBoites+=c.nbBoites; capMac+=c.capaciteMacarons; gain+=Math.max(0,c.nbBoitesTourne-c.nbBoites);
+    if(c.nbBoites>0) niveauxUtiles++;
+  });
+  return { nbBoites, capaciteMacarons:capMac, gainRotation:gain, niveauxUtiles };
+}
+// Pré-remplissage des équipements avec les dimensions réelles fournies par Benjamin.
+function equipSeedData(){
+  return {
+    petit: { key:'petit', niveaux:[
+      {nom:'Niveau 1', L:35, l:32, h:14.5, mode:'clayette', reserve:false},
+      {nom:'Niveau 2', L:35, l:32, h:12,   mode:'clayette', reserve:false},
+      {nom:'Niveau 3', L:35, l:17, h:20,   mode:'clayette', reserve:false},
+    ]},
+    bahut: { key:'bahut', niveaux:[
+      {nom:'Bloc principal',        L:80, l:47, h:87.5, mode:'empilable', reserve:false},
+      {nom:'Appoint (sur compresseur)', L:19, l:47, h:67.5, mode:'empilable', reserve:false},
+    ]},
+    colonne: { key:'colonne', niveaux:[
+      {nom:'Niveau 1', L:38.5, l:32, h:20, mode:'clayette', reserve:false},
+      {nom:'Niveau 2', L:38.5, l:40, h:24, mode:'clayette', reserve:false},
+      {nom:'Niveau 3 (bac)', L:38.5, l:37, h:25, mode:'clayette', reserve:false},
+      {nom:'Niveau 4 (bac)', L:35, l:31, h:24, mode:'clayette', reserve:false},
+      {nom:'Niveau 5 (bac)', L:35, l:31, h:24, mode:'clayette', reserve:false},
+      {nom:'Niveau 6 (bac)', L:35, l:22, h:23, mode:'clayette', reserve:false},
+    ]},
+    frigo: { key:'frigo', niveaux:[
+      {nom:'Emplacement 1', L:45, l:28, h:21,   mode:'clayette', reserve:false},
+      {nom:'Emplacement 2', L:45, l:28, h:14.5, mode:'clayette', reserve:false},
+      {nom:'Emplacement 3', L:45, l:28, h:15,   mode:'clayette', reserve:false},
+      {nom:'Emplacement 4', L:45, l:28, h:10,   mode:'clayette', reserve:false},
+      {nom:'Emplacement 5', L:45, l:28, h:15,   mode:'clayette', reserve:false},
+      {nom:'Emplacement 6', L:45, l:28, h:20,   mode:'clayette', reserve:false},
+    ]},
+  };
+}
+async function equipSeedFill(){
+  const data=equipSeedData();
+  for(const key of Object.keys(data)){ await db.equipmentSpecs.put(data[key]); }
+  toast('Équipements pré-remplis ✓'); renderEquipements();
+}
+
+async function renderEquipements(){
+  const main=document.getElementById('main'); if(!main) return;
+  const specs = await equipGetSpecs();
+  const boxes = await db.storageBoxes.orderBy('nom').toArray().catch(()=>[]);
+  const anySpec = Object.values(specs).some(s=>Array.isArray(s.niveaux)&&s.niveaux.length);
+  const card = e => {
+    const s = specs[e.key];
+    const bg = e.type==='frigo' ? '#6aa3a0' : '#3b6ea5';
+    let corps;
+    if(!s || !Array.isArray(s.niveaux) || !s.niveaux.length){
+      corps = `<p class="note">Niveaux non renseignés.</p>`;
+    } else {
+      const nivList = s.niveaux.map((lv,i)=>`<div class="sum-box"><span style="padding-left:10px">${lv.reserve?'🔒 ':''}${esc(lv.nom||('Niveau '+(i+1)))}</span><b style="font-size:.8rem;color:#9a8a82">${lv.L}×${lv.l}×${lv.h} cm${lv.reserve?' · réservé MP':''}</b></div>`).join('');
+      let capBloc='';
+      if(boxes.length){
+        capBloc = boxes.map(b=>{
+          const c=equipCapacityForBox(s,b); if(!c||c.nbBoites<=0) return '';
+          return `<div class="sum-box" style="background:#faf6ee"><span>${esc(b.nom)}</span><b>${c.nbBoites} boîte(s) = ${qty(c.capaciteMacarons)} mac.</b></div>`;
+        }).join('');
+      }
+      corps = `${nivList}${capBloc||(boxes.length?'':'<p class="note">Ajoute des boîtes pour voir la capacité.</p>')}`;
+    }
+    return `<div class="panel">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <h2 style="font-size:1rem;margin:0">${e.icon} ${esc(e.nom)} <span class="tag" style="background:${bg};color:#fff">${e.lettre}</span></h2>
+        <button class="btn ghost sm" onclick="equipForm('${e.key}')">✎ Niveaux</button>
+      </div>
+      ${corps}</div>`;
+  };
+  main.innerHTML=`
+   <div class="topbar"><div><h1>Équipements de stockage</h1><p>Niveaux & capacité — espace de stockage global</p></div></div>
+   <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>Chaque équipement est décrit par ses niveaux (dimensions réelles). La capacité en boîtes et macarons se calcule automatiquement, sans rotation des boîtes. Un niveau peut être réservé aux matières premières.</div></div>
+   ${!anySpec?`<div class="panel" style="border:1.5px solid var(--gold,#AA7C39)"><h2 style="font-size:1rem">⚡ Pré-remplissage</h2><p class="note">Tes 4 équipements peuvent être pré-remplis avec les dimensions que tu as fournies (A, B, C, F). Tu pourras vérifier et ajuster ensuite.</p><button class="btn gold" onclick="equipSeedFill()">Pré-remplir mes équipements</button></div>`:''}
+   ${EMPLACEMENTS.map(card).join('')}
+   ${!boxes.length?`<div class="panel"><p class="note">💡 Renseigne tes <b>boîtes de conservation</b> pour voir les capacités calculées.</p></div>`:''}`;
+}
+async function equipForm(key){
+  const e = EMP_BY_KEY[key]; if(!e) return;
+  const specs = await equipGetSpecs();
+  const s = specs[key]||{niveaux:[]};
+  _equipDraft = JSON.parse(JSON.stringify(s.niveaux||[]));
+  _equipKey = key;
+  openModal(`<h3>${e.icon} ${esc(e.nom)} — niveaux</h3>
+    <p class="note">Dimensions de chaque niveau en cm (L × l × h). Coche « réservé » si le niveau sert aux matières premières.</p>
+    <div id="eq_niv"></div>
+    <button class="btn ghost sm" style="margin-top:6px" onclick="equipNivAdd()">+ Ajouter un niveau</button>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="equipSave()">Enregistrer</button></div>`);
+  equipDrawNiv();
+}
+let _equipDraft=[], _equipKey=null;
+function equipDrawNiv(){
+  const box=document.getElementById('eq_niv'); if(!box) return;
+  box.innerHTML = _equipDraft.map((lv,i)=>`
+    <div style="border:1px solid #ece2d4;border-radius:8px;padding:8px;margin:6px 0">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+        <input style="flex:1" value="${esc(lv.nom||('Niveau '+(i+1)))}" oninput="equipNivSet(${i},'nom',this.value)" placeholder="Nom du niveau">
+        <span class="x" onclick="equipNivDel(${i})">×</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">
+        <input type="number" step="0.1" min="0" value="${lv.L!=null?lv.L:''}" oninput="equipNivSet(${i},'L',+this.value)" placeholder="L">
+        <input type="number" step="0.1" min="0" value="${lv.l!=null?lv.l:''}" oninput="equipNivSet(${i},'l',+this.value)" placeholder="l">
+        <input type="number" step="0.1" min="0" value="${lv.h!=null?lv.h:''}" oninput="equipNivSet(${i},'h',+this.value)" placeholder="h">
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
+        <select onchange="equipNivSet(${i},'mode',this.value)" style="flex:1">
+          <option value="clayette" ${lv.mode!=='empilable'?'selected':''}>Clayette (1 couche)</option>
+          <option value="empilable" ${lv.mode==='empilable'?'selected':''}>Empilable (sur la hauteur)</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.8rem"><input type="checkbox" ${lv.reserve?'checked':''} onchange="equipNivSet(${i},'reserve',this.checked)"> 🔒 MP</label>
+      </div>
+    </div>`).join('') || '<p class="note">Aucun niveau. Ajoute-en un.</p>';
+}
+function equipNivAdd(){ _equipDraft.push({nom:'Niveau '+(_equipDraft.length+1), L:'', l:'', h:'', mode:'clayette', reserve:false}); equipDrawNiv(); }
+function equipNivDel(i){ _equipDraft.splice(i,1); equipDrawNiv(); }
+function equipNivSet(i,k,v){ if(_equipDraft[i]){ _equipDraft[i][k] = (k==='nom'||k==='mode')?v : (k==='reserve'?!!v:Math.max(0,+v||0)); if(k==='mode'||k==='reserve')equipDrawNiv(); } }
+async function equipSave(){
+  const niveaux=_equipDraft.filter(lv=>(+lv.L>0&&+lv.l>0&&+lv.h>0)).map(lv=>({
+    nom:(lv.nom||'Niveau').trim(), L:+lv.L||0, l:+lv.l||0, h:+lv.h||0,
+    mode:lv.mode==='empilable'?'empilable':'clayette', reserve:!!lv.reserve }));
+  await db.equipmentSpecs.put({key:_equipKey, niveaux});
+  closeModal(); renderEquipements(); toast('Niveaux enregistrés ✓');
+}
 
 // ============================================================
 //  BOÎTES DE CONSERVATION — catalogue des contenants réutilisables.
