@@ -79,6 +79,14 @@ db.version(12).stores({
 db.version(13).stores({
   equipmentSpecs:  'key'
 });
+// v14 : CATALOGUE DE COMPOSANTS réutilisables (ganache montée, crémeux, coques GF…).
+// Un composant existe une seule fois et peut être référencé par plusieurs recettes
+// (ex : une ganache montée partagée entre mangue passion et myrtille framboise → mutualisation).
+// Champs : nom, type (ganache|cremeux|coques|insert|autre), rendement (nb pièces/portions par batch),
+//   congelObligatoire, notes. Les matières d'un composant restent dans recipeItems (via componentId).
+db.version(14).stores({
+  components:      '++id, nom, type'
+});
 
 
 
@@ -838,7 +846,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -1948,10 +1956,12 @@ let bomDraft=[];
 async function recForm(id){
   const mats = await db.materials.toArray();
   if(!mats.length){toast('Crée d\'abord des matières');return;}
+  const allComponents = await db.components.orderBy('nom').toArray().catch(()=>[]);
   let r={produitNom:'',rendement:60};
   bomDraft=[];
   if(id){ r=await db.recipes.get(id); bomDraft=(await db.recipeItems.where('recipeId').equals(id).toArray()).map(it=>({materialId:it.materialId,qteParBatch:it.qteParBatch,partie:it.partie||'',etiquette:it.etiquette||''})); }
   window._matsCache=mats;
+  window._componentsCache=allComponents;
   openModal(`<h3>${id?'Modifier':'Nouvelle'} recette</h3>
    <div class="row2">
      <div class="field"><label>Nom du produit</label><input id="f_nom" value="${esc(r.produitNom)}" placeholder="Macaron vanille"></div>
@@ -1961,18 +1971,22 @@ async function recForm(id){
    <div id="gfCompZone" style="display:${r.grandFormat?'block':'none'}">
      <div class="panel" style="background:#faf6ee;margin:8px 0">
        <h3 style="font-size:.92rem;margin:0 0 6px">🍪 Composants du grand format</h3>
-       <p class="note" style="margin-top:0">Un GF = des <b>coques grand format</b> (calculées automatiquement : 1 coque GF = ${GF_COQUE_RATIO} coques standard) + <b>1 à 3 garnitures</b> que tu décris ci-dessous (ganache montée, cœur crémeux…).</p>
+       <p class="note" style="margin-top:0">Un GF = des <b>coques grand format</b> (1 coque GF = ${GF_COQUE_RATIO} coques standard) + des <b>composants</b> piochés dans ton catalogue (ganache montée, crémeux…). Un composant partagé entre recettes permet de mutualiser sa production.</p>
        <div class="field"><label>Nombre de coques GF par pièce</label>
          <input type="number" step="1" min="1" max="4" id="f_gfCoques" value="${r.gfCoquesParPiece!=null?r.gfCoquesParPiece:2}" placeholder="2"></div>
-       ${[0,1,2].map(i=>{
-         const g=(r.gfGarnitures||[])[i]||{};
-         return `<div class="row2" style="margin-top:6px">
-           <div class="field"><label>Garniture ${i+1}${i>0?' (optionnel)':''}</label>
-             <input type="text" id="f_gfg_nom_${i}" value="${esc(g.nom||'')}" placeholder="${i===0?'ex : ganache montée':i===1?'ex : cœur crémeux':'ex : insert'}"></div>
-           <div class="field"><label>Poids/pièce (g)</label>
-             <input type="number" step="0.1" min="0" id="f_gfg_poids_${i}" value="${g.poids!=null?g.poids:''}" placeholder="g"></div>
+       <label style="font-size:.82rem;font-weight:600;color:#7a6a60">Composants rattachés <span style="font-weight:400;color:#9a8a82">— coche ceux qui composent ce macaron</span></label>
+       ${allComponents.length ? allComponents.map(c=>{
+         const t=COMPONENT_TYPES[c.type]||COMPONENT_TYPES.autre;
+         const ref=(r.componentRefs||[]).find(x=>x.componentId===c.id);
+         const on=!!ref;
+         return `<div class="sum-box" style="margin-top:4px;${on?'border-left:3px solid #3f7d52':''}">
+           <label style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer">
+             <input type="checkbox" class="cmpRef" data-cid="${c.id}" ${on?'checked':''} onchange="this.closest('.sum-box').style.borderLeft=this.checked?'3px solid #3f7d52':'none';const w=document.getElementById('cmpW_${c.id}');if(w)w.style.display=this.checked?'block':'none'">
+             <span>${t.ico} <b>${esc(c.nom)}</b> <span style="font-size:.7rem;color:#9a8a82">${t.label} · rdt ${c.rendement}</span></span>
+           </label>
+           <span id="cmpW_${c.id}" style="display:${on?'block':'none'}"><input type="number" step="0.1" min="0" style="width:64px" id="cmpP_${c.id}" value="${ref&&ref.poids!=null?ref.poids:''}" placeholder="g/pièce"></span>
          </div>`;
-       }).join('')}
+       }).join('') : `<p class="note">Ton catalogue est vide. <span class="act" onclick="closeModal();goView('composants')">Crée d'abord tes composants →</span></p>`}
      </div>
    </div>
    <details style="margin:8px 0" ${(r.ganacheDelaiH!=null||r.coquesCongelObligatoire)?'open':''}><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">⏱ Règles d'ordonnancement (optionnel)</summary>
@@ -2060,7 +2074,7 @@ function drawTs(){
 }
 function tsAdd(){ tsDraft.push({nom:'', duree:0, unite:'batch'}); drawTs(); }
 function tsDel(i){ tsDraft.splice(i,1); drawTs(); }
-function tsSet(i,k,v){ if(tsDraft[i]){ tsDraft[i][k]=(k==='duree')?Math.max(0,+v||0):v; if(k!=='nom')drawTs(); else tsUpdateRecap(); } }
+function tsSet(i,k,v){ if(tsDraft[i]){ tsDraft[i][k]=(k==='duree')?Math.max(0,+v||0):v; tsUpdateRecap(); } }
 // Met à jour seulement le récap de coût (sans redessiner les champs → préserve le focus de saisie).
 function tsUpdateRecap(){
   const s=getSettings(); const taux=+s.laborRate||0; const rend=Math.max(1,+val('f_rend')||60);
@@ -2142,10 +2156,10 @@ async function saveRec(id){
   const o={produitNom:val('f_nom'),rendement:rend,
     grandFormat: !!document.getElementById('f_gf')?.checked,
     gfCoquesParPiece: Math.max(1, Math.round(+val('f_gfCoques')||2)),
-    gfGarnitures: [0,1,2].map(i=>({
-        nom: (val('f_gfg_nom_'+i)||'').trim(),
-        poids: Math.max(0, +val('f_gfg_poids_'+i)||0)
-      })).filter(g=>g.nom),  // ne garde que les garnitures nommées
+    componentRefs: Array.from(document.querySelectorAll('.cmpRef'))
+        .filter(cb=>cb.checked)
+        .map(cb=>{ const cid=+cb.getAttribute('data-cid');
+          return {componentId:cid, poids:Math.max(0, +val('cmpP_'+cid)||0)}; }),
     ganacheDelaiH: Math.max(0, +val('f_ganacheDelai')||0),
     coquesCongelObligatoire: !!document.getElementById('f_coquesCongel')?.checked,
     congelObligatoire: !!document.getElementById('f_congelObl')?.checked,
@@ -17147,6 +17161,69 @@ function lotPlacementCtx(p, recipe){
   return {nb, grandFormat, congele: aMaturerEff?false:congele, aMaturer:aMaturerEff, congelObligatoire};
 }
 
+// ---- CATALOGUE DE COMPOSANTS RÉUTILISABLES ----
+const COMPONENT_TYPES = {
+  ganache:  {label:'Ganache montée', ico:'🍫'},
+  cremeux:  {label:'Crémeux / cœur',  ico:'🟠'},
+  coques:   {label:'Coques',          ico:'🟤'},
+  insert:   {label:'Insert',          ico:'⭐'},
+  autre:    {label:'Autre',           ico:'🔹'},
+};
+async function renderComposants(){
+  const main=document.getElementById('main'); if(!main) return;
+  const comps = await db.components.orderBy('nom').toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  // compte combien de recettes pointent chaque composant (mutualisation visible)
+  const usage = {};
+  recipes.forEach(r=>{ (r.componentRefs||[]).forEach(ref=>{ usage[ref.componentId]=(usage[ref.componentId]||0)+1; }); });
+  const card = c => {
+    const t = COMPONENT_TYPES[c.type]||COMPONENT_TYPES.autre;
+    const nbRen = usage[c.id]||0;
+    return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="flex:1">${t.ico} <b>${esc(c.nom)}</b> <span style="font-size:.72rem;color:#9a8a82">${t.label}</span></span>
+        <button class="btn ghost sm" onclick="componentForm(${c.id})">✎</button>
+      </div>
+      <div style="font-size:.74rem;color:#9a8a82">Rendement : ${c.rendement||'?'} /batch${c.congelObligatoire?' · ❄️ congélation':''}${nbRen>0?` · <span style="color:#3f7d52">partagé par ${nbRen} recette(s)</span>`:' · non utilisé'}</div>
+    </div>`;
+  };
+  main.innerHTML=`
+   <div class="topbar"><div><h1>Composants</h1><p>Briques réutilisables : ganaches, crémeux, coques…</p></div>
+     <button class="btn gold" onclick="componentForm(0)">+ Composant</button></div>
+   <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>Un composant (ex : une ganache montée) existe une seule fois ici et peut être <b>partagé par plusieurs recettes</b>. C'est ce qui permet de mutualiser sa production (ex : la même ganache pour mangue passion et myrtille framboise).</div></div>
+   ${comps.length?comps.map(card).join(''):'<div class="panel"><p class="note">Aucun composant pour l\'instant. Crée ta première brique réutilisable (ex : « Ganache montée mangue/framboise »).</p></div>'}`;
+}
+async function componentForm(id){
+  const c = id ? (await db.components.get(id))||{} : {};
+  const typeOpts = Object.entries(COMPONENT_TYPES).map(([k,t])=>`<option value="${k}" ${c.type===k?'selected':''}>${t.ico} ${t.label}</option>`).join('');
+  openModal(`<h3>${id?'Modifier':'Nouveau'} composant</h3>
+    <div class="field"><label>Nom</label><input type="text" id="cmp_nom" value="${esc(c.nom||'')}" placeholder="ex : Ganache montée mangue/framboise"></div>
+    <div class="field"><label>Type</label><select id="cmp_type">${typeOpts}</select></div>
+    <div class="field"><label>Rendement (nb de pièces/portions par batch)</label>
+      <input type="number" step="1" min="1" id="cmp_rend" value="${c.rendement!=null?c.rendement:''}" placeholder="ex : 17 (ganache) ou 24 (crémeux)"></div>
+    <label class="switch-row"><input type="checkbox" id="cmp_congel" ${c.congelObligatoire?'checked':''}> ❄️ Passe systématiquement par une <b>congélation</b></label>
+    <div class="field"><label>Notes (optionnel)</label><input type="text" id="cmp_notes" value="${esc(c.notes||'')}" placeholder="process, particularités…"></div>
+    <div class="modal-actions">${id?`<button class="btn ghost" style="color:var(--red,#b3261e)" onclick="componentDelete(${id})">Supprimer</button>`:''}
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="componentSave(${id})">Enregistrer</button></div>`);
+}
+async function componentSave(id){
+  const nom=(val('cmp_nom')||'').trim();
+  if(!nom){ toast('Nom requis'); return; }
+  const o={ nom, type:val('cmp_type')||'autre',
+    rendement:Math.max(1, Math.round(+val('cmp_rend')||1)),
+    congelObligatoire: !!document.getElementById('cmp_congel')?.checked,
+    notes:(val('cmp_notes')||'').trim() };
+  if(id) await db.components.update(id, o); else await db.components.add(o);
+  closeModal(); toast('Composant enregistré ✓'); renderComposants();
+}
+async function componentDelete(id){
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const used = recipes.filter(r=>(r.componentRefs||[]).some(ref=>ref.componentId===id));
+  if(used.length){ toast(`Utilisé par ${used.length} recette(s) — détache-le d'abord`); return; }
+  if(!confirm('Supprimer ce composant ?')) return;
+  await db.components.delete(id); closeModal(); toast('Composant supprimé'); renderComposants();
+}
 async function renderEquipements(){
   const main=document.getElementById('main'); if(!main) return;
   const specs = await equipGetSpecs();
