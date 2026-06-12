@@ -67,6 +67,12 @@ db.version(10).stores({});
 db.version(11).stores({
   prodSessions:    'id, date, end'
 });
+// v12 : boîtes de conservation (contenants réutilisables). Dimensions L×l×h (cm),
+// capacité en macarons, stock de boîtes vides propres disponibles. Brique du module
+// de répartition du stock par équipement.
+db.version(12).stores({
+  storageBoxes:    '++id, nom'
+});
 
 
 
@@ -773,7 +779,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -12065,7 +12071,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -16114,6 +16120,71 @@ let _pmsTab = 'temp';        // 'temp' | 'nettoyage'
 let _pmsPeriode = null;      // 'Matin' | 'Soir' (auto si null)
 let _pmsDate = null;         // date du relevé (défaut = aujourd'hui ; permet de corriger un jour passé)
 function pmsSetDate(d){ if(d!==_pmsDate && !pmsGuardUnsaved()) return; _pmsDate = d || today(); pmsRenderTemp(); }
+
+// ============================================================
+//  BOÎTES DE CONSERVATION — catalogue des contenants réutilisables.
+//  Chaque boîte : nom, dimensions L×l×h (cm), capacité (macarons), stock de boîtes
+//  vides propres disponibles. Fondation du module de répartition du stock.
+// ============================================================
+async function renderBoites(){
+  const main=document.getElementById('main'); if(!main) return;
+  const boxes = await db.storageBoxes.orderBy('nom').toArray().catch(()=>[]);
+  const volCm3 = b => (+b.L||0)*(+b.l||0)*(+b.h||0);
+  const card = b => {
+    const vol = volCm3(b);
+    const dims = (b.L&&b.l&&b.h) ? `${b.L}×${b.l}×${b.h} cm` : 'dimensions non renseignées';
+    const litres = vol>0 ? ` · ${(vol/1000).toFixed(1)} L` : '';
+    return `<div class="sum-box" style="align-items:flex-start;gap:10px">
+      <span style="flex:0 0 auto;font-size:1.1rem">📦</span>
+      <span style="flex:1"><b>${esc(b.nom)}</b><br>
+        <span style="font-size:.8rem;color:#9a8a82">${dims}${litres} · capacité ${qty(b.capacite||0)} macarons</span><br>
+        <span style="font-size:.8rem;color:${(+b.stockVide||0)>0?'#3f7d52':'#b3261e'}">${qty(b.stockVide||0)} boîte(s) vide(s) propre(s) dispo</span></span>
+      <span style="display:flex;gap:4px">
+        <button class="btn ghost sm" onclick="boiteForm(${b.id})">✎</button>
+        <button class="btn ghost sm" onclick="boiteDel(${b.id})">🗑</button>
+      </span></div>`;
+  };
+  const totalCap = boxes.reduce((a,b)=>a+(+b.capacite||0)*(+b.stockVide||0),0);
+  main.innerHTML=`
+   <div class="topbar"><div><h1>Boîtes de conservation</h1><p>Tes contenants réutilisables et leur capacité</p></div>
+     <button class="btn" onclick="boiteForm(0)">+ Nouvelle boîte</button></div>
+   <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>Renseigne chaque type de boîte avec ses dimensions, sa capacité en macarons et le nombre de boîtes vides propres disponibles. Ces données serviront à répartir le stock dans tes équipements.</div></div>
+   <div class="panel">
+     ${boxes.length?boxes.map(card).join(''):'<p class="note">Aucune boîte enregistrée. Ajoute ta première boîte de conservation.</p>'}
+   </div>
+   ${boxes.length?`<div class="panel"><div class="sum-box" style="background:#faf6ee"><span><b>Capacité totale disponible</b> (boîtes vides × capacité)</span><b>${qty(totalCap)} macarons</b></div></div>`:''}`;
+}
+async function boiteForm(id){
+  const b = id ? (await db.storageBoxes.get(id))||{} : {};
+  openModal(`<h3>${id?'Modifier':'Nouvelle'} boîte de conservation</h3>
+    <div class="field"><label>Nom / type *</label><input id="bx_nom" value="${esc(b.nom||'')}" placeholder="ex : Grande boîte hermétique"></div>
+    <label style="font-size:.85rem;color:#6b5d54;font-weight:600">Dimensions intérieures (cm)</label>
+    <div class="row3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:4px 0 10px">
+      <div class="field" style="margin:0"><label>Longueur</label><input type="number" step="0.1" min="0" id="bx_L" value="${b.L!=null?b.L:''}" placeholder="L"></div>
+      <div class="field" style="margin:0"><label>Largeur</label><input type="number" step="0.1" min="0" id="bx_l" value="${b.l!=null?b.l:''}" placeholder="l"></div>
+      <div class="field" style="margin:0"><label>Hauteur</label><input type="number" step="0.1" min="0" id="bx_h" value="${b.h!=null?b.h:''}" placeholder="h"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Capacité (macarons)</label><input type="number" step="1" min="0" id="bx_cap" value="${b.capacite!=null?b.capacite:''}" placeholder="ex : 60"></div>
+      <div class="field"><label>Boîtes vides propres dispo</label><input type="number" step="1" min="0" id="bx_vide" value="${b.stockVide!=null?b.stockVide:''}" placeholder="ex : 3"></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="boiteSave(${id||0})">Enregistrer</button></div>`);
+}
+async function boiteSave(id){
+  const nom=(val('bx_nom')||'').trim();
+  if(!nom){ toast('Nom requis'); return; }
+  const o={ nom,
+    L:Math.max(0,+val('bx_L')||0), l:Math.max(0,+val('bx_l')||0), h:Math.max(0,+val('bx_h')||0),
+    capacite:Math.max(0,Math.round(+val('bx_cap')||0)), stockVide:Math.max(0,Math.round(+val('bx_vide')||0)) };
+  if(id) await db.storageBoxes.update(id, o); else await db.storageBoxes.add(o);
+  closeModal(); renderBoites(); toast('Boîte enregistrée ✓');
+}
+async function boiteDel(id){
+  const b=await db.storageBoxes.get(id); if(!b) return;
+  if(!confirm(`Supprimer la boîte « ${b.nom} » ?`)) return;
+  await db.storageBoxes.delete(id); renderBoites(); toast('Supprimé');
+}
 
 // ============================================================
 //  MODULE CONSOMMABLES — listing centralisé + dispatch vers le bon calcul.
