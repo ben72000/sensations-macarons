@@ -435,6 +435,9 @@ const BIG_PRICE = { pro: 3.20, particulier: 6.00 };   // défauts/repli
 // 1 macaron assemblé = 2 coques + 1 dose de ganache. Les sous-lots COQUES sont comptés
 // en coques ; les sous-lots GANACHE en nombre de macarons garnissables.
 const COQUES_PAR_MACARON = 2;
+// Ratio matière d'une coque grand format vs une coque standard (1 coque GF = 3,5 coques std).
+// S'applique UNIQUEMENT aux coques ; les garnitures d'un GF sont propres à chaque recette.
+const GF_COQUE_RATIO = 3.5;
 // Prix grand format selon le tarif, en tenant compte du réglage pro évolutif.
 function bigPrice(tarif){
   if(tarif==='pro'){ const s=getSettings(); return (s.prixGrandFormatPro!=null)?+s.prixGrandFormatPro:BIG_PRICE.pro; }
@@ -1954,7 +1957,24 @@ async function recForm(id){
      <div class="field"><label>Nom du produit</label><input id="f_nom" value="${esc(r.produitNom)}" placeholder="Macaron vanille"></div>
      <div class="field"><label>Rendement (nb par batch)</label><input type="number" id="f_rend" value="${r.rendement||60}"></div>
    </div>
-   <label class="switch-row"><input type="checkbox" id="f_gf" ${r.grandFormat?'checked':''}> 🍪 Recette <b>grand format</b> (macaron à l'unité — stock séparé des petits)</label>
+   <label class="switch-row"><input type="checkbox" id="f_gf" ${r.grandFormat?'checked':''} onchange="document.getElementById('gfCompZone').style.display=this.checked?'block':'none'"> 🍪 Recette <b>grand format</b> (macaron à l'unité — stock séparé des petits)</label>
+   <div id="gfCompZone" style="display:${r.grandFormat?'block':'none'}">
+     <div class="panel" style="background:#faf6ee;margin:8px 0">
+       <h3 style="font-size:.92rem;margin:0 0 6px">🍪 Composants du grand format</h3>
+       <p class="note" style="margin-top:0">Un GF = des <b>coques grand format</b> (calculées automatiquement : 1 coque GF = ${GF_COQUE_RATIO} coques standard) + <b>1 à 3 garnitures</b> que tu décris ci-dessous (ganache montée, cœur crémeux…).</p>
+       <div class="field"><label>Nombre de coques GF par pièce</label>
+         <input type="number" step="1" min="1" max="4" id="f_gfCoques" value="${r.gfCoquesParPiece!=null?r.gfCoquesParPiece:2}" placeholder="2"></div>
+       ${[0,1,2].map(i=>{
+         const g=(r.gfGarnitures||[])[i]||{};
+         return `<div class="row2" style="margin-top:6px">
+           <div class="field"><label>Garniture ${i+1}${i>0?' (optionnel)':''}</label>
+             <input type="text" id="f_gfg_nom_${i}" value="${esc(g.nom||'')}" placeholder="${i===0?'ex : ganache montée':i===1?'ex : cœur crémeux':'ex : insert'}"></div>
+           <div class="field"><label>Poids/pièce (g)</label>
+             <input type="number" step="0.1" min="0" id="f_gfg_poids_${i}" value="${g.poids!=null?g.poids:''}" placeholder="g"></div>
+         </div>`;
+       }).join('')}
+     </div>
+   </div>
    <details style="margin:8px 0" ${(r.ganacheDelaiH!=null||r.coquesCongelObligatoire)?'open':''}><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">⏱ Règles d'ordonnancement (optionnel)</summary>
      <div style="margin-top:8px">
        <div class="field"><label>Délai minimum ganache avant montage (heures)</label>
@@ -2121,6 +2141,11 @@ async function saveRec(id){
   if(!rend || rend<=0){toast('Le rendement doit être supérieur à 0');return;}
   const o={produitNom:val('f_nom'),rendement:rend,
     grandFormat: !!document.getElementById('f_gf')?.checked,
+    gfCoquesParPiece: Math.max(1, Math.round(+val('f_gfCoques')||2)),
+    gfGarnitures: [0,1,2].map(i=>({
+        nom: (val('f_gfg_nom_'+i)||'').trim(),
+        poids: Math.max(0, +val('f_gfg_poids_'+i)||0)
+      })).filter(g=>g.nom),  // ne garde que les garnitures nommées
     ganacheDelaiH: Math.max(0, +val('f_ganacheDelai')||0),
     coquesCongelObligatoire: !!document.getElementById('f_coquesCongel')?.checked,
     congelObligatoire: !!document.getElementById('f_congelObl')?.checked,
