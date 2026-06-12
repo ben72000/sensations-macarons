@@ -11469,6 +11469,24 @@ function planPrioOrder(){
 }
 function planPrioSave(arr){ try{ localStorage.setItem(PLAN_PRIO_KEY, JSON.stringify(arr)); }catch(e){} }
 
+// Coques en stock par parfum, en NOMBRE DE COQUES (pas en macarons).
+// 1 macaron = 2 coques. Le plan déduira ces coques du besoin de coques (besoin macarons × 2).
+async function coquesStockByParfum(){
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recName = rid => (recipes.find(r=>r.id===rid)||{}).produitNom||'';
+  const map = {}; // parfum normalisé -> {parfum, coques}
+  prods.forEach(p=>{
+    if(prodComposant(p)!=='coques') return;
+    const reste = round3(+p.qteRestante||0); if(reste<=0) return;  // reste = nb de coques
+    const nom = p.libre ? (p.produitLibre||'') : recName(p.recipeId);
+    if(!nom) return;
+    const k = aiNormalize(nom);
+    if(!map[k]) map[k]={parfum:nom, coques:0};
+    map[k].coques += reste;
+  });
+  return map;
+}
 // Construit la liste des productions conseillées (avant calage temps).
 async function buildProductionPlan(horizonDays){
   const H = horizonDays||14;
@@ -11649,6 +11667,9 @@ async function renderProductionPlan(){
   catch(e){ console.error('plan',e); box.innerHTML=`<div class="panel"><p class="note">Erreur de calcul du plan.</p></div>`; return; }
   const minParMac = (tl && tl.minParMacaron) ? tl.minParMacaron : null;
   const estMin = qte => (minParMac!=null && qte) ? Math.round(qte*minParMac) : null;
+  // Coques déjà en stock par parfum (en macarons assemblables) : déduites du besoin de coques.
+  let _coquesStock = {};
+  try{ _coquesStock = await coquesStockByParfum(); }catch(e){}
 
   // Temps disponible AUJOURD'HUI, lu depuis ton planning (disponibilité bi-hebdomadaire).
   let dispoPlanning = null;
@@ -11675,11 +11696,21 @@ async function renderProductionPlan(){
   const ligne = it => {
     const q = it.qte!=null?`${qty(it.qte)} pièces`:'à écouler';
     const col = it.type==='commande'?'#b3261e':it.type==='rupture'?'#d98324':it.type==='antigaspi'?'#7a6a9a':'#3f7d52';
-    // Le temps n'est affiché QUE s'il est estimable (sinon rien, pour ne pas répéter "temps ?").
     const mTxt = (it.min!=null)?`<b style="white-space:nowrap;color:#6b5d54">${it.min} min</b>`:'';
+    // Coques déjà en stock pour ce parfum → conseil d'assemblage différé.
+    let coquesTxt='';
+    if(it.qte!=null && it.qte>0){
+      const cs = _coquesStock[aiNormalize(it.produitNom)];
+      if(cs && cs.coques>0){
+        const besoinCoques = it.qte * COQUES_PAR_MACARON;      // 1 macaron = 2 coques
+        const dispoCoques = Math.min(cs.coques, besoinCoques);  // coques utilisables ici
+        const coquesAprod = Math.max(0, besoinCoques - dispoCoques);
+        coquesTxt = `<br><span style="font-size:.74rem;color:#3f7d52">🟤 ${cs.coques} coque(s) en stock → produis ${coquesAprod>0?`seulement ${coquesAprod} coque(s)`:'AUCUNE coque'} (au lieu de ${besoinCoques}), ganache pour ${it.qte} macaron(s), puis assemble.</span>`;
+      }
+    }
     return `<div class="sum-box" style="border-left:3px solid ${col}">
       <span style="flex:1"><b>${esc(it.produitNom)}</b> <span style="color:#9a8a82">— ${q}</span><br>
-        <span style="font-size:.78rem;color:#9a8a82">${esc(it.raison)}</span></span>
+        <span style="font-size:.78rem;color:#9a8a82">${esc(it.raison)}</span>${coquesTxt}</span>
       ${mTxt}</div>`;
   };
 
