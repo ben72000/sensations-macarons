@@ -339,7 +339,7 @@ function applyPackaging202511(){
   if(typeof settingsForm==='function') settingsForm();   // rouvre le formulaire avec les valeurs à jour + diagnostic
 }
 // Coût emballage d'un coffret selon sa taille (commandes) — tarif paramétré (repli).
-function packagingCost(taille){ const s=getSettings(); return money2(s.packaging[taille]!=null?s.packaging[taille]:0); }
+function packagingCost(taille){ const s=getSettings(); const base=(s.packaging[taille]!=null?s.packaging[taille]:0); return money2(base + (typeof consoCoffretSupplement==='function'?consoCoffretSupplement(taille):0)); }
 
 // Coût unitaire RÉEL d'un emballage par capacité, calculé sur les lots d'emballage
 // (prix unitaire moyen pondéré par les quantités reçues). Renvoie une Map(capacite → coût).
@@ -359,9 +359,11 @@ function realPackagingCostMap(materials, lots){
   return out;
 }
 // Coût emballage d'un format : réel (lots) si dispo, sinon tarif paramétré.
+// Dans les deux cas, on ajoute le supplément des consommables 'coffret' (cartes, stickers…).
 function packagingCostReal(taille, realMap){
-  if(realMap && realMap.has(+taille)) return realMap.get(+taille);
-  return packagingCost(taille);
+  const supp = (typeof consoCoffretSupplement==='function') ? consoCoffretSupplement(taille) : 0;
+  if(realMap && realMap.has(+taille)) return money2(realMap.get(+taille) + supp);
+  return packagingCost(taille); // packagingCost inclut déjà le supplément
 }
 // Trouve la matière EMBALLAGE correspondant à un format de coffret (par capacité).
 async function findPackagingMaterial(taille){
@@ -771,7 +773,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -16040,6 +16042,156 @@ let _pmsTab = 'temp';        // 'temp' | 'nettoyage'
 let _pmsPeriode = null;      // 'Matin' | 'Soir' (auto si null)
 let _pmsDate = null;         // date du relevé (défaut = aujourd'hui ; permet de corriger un jour passé)
 function pmsSetDate(d){ if(d!==_pmsDate && !pmsGuardUnsaved()) return; _pmsDate = d || today(); pmsRenderTemp(); }
+
+// ============================================================
+//  MODULE CONSOMMABLES — listing centralisé + dispatch vers le bon calcul.
+//  3 familles : 'atelier' (→ charges), 'coffret' (→ supplément emballage par format),
+//  'recette' (→ consommable par pièce de la recette concernée).
+// ============================================================
+const CONSO_FAMILLES = {
+  atelier:  {label:'Atelier', ico:'🧰', desc:'Papier cuisson, film, gants, sopalin… → comptés en charges (dépense réelle).'},
+  coffret:  {label:'Par coffret', ico:'🎁', desc:'Cartes, stickers… → imputés au coût du coffret, par format.'},
+  recette:  {label:'Par recette', ico:'🍪', desc:'Ronds dorés grand format… → consommable par pièce d\'une recette.'}
+};
+const BOX_SIZES_CONSO = [6,8,16,25];
+function getConsommables(){ const s=getSettings(); return Array.isArray(s.consommables)?s.consommables:[]; }
+function saveConsommables(arr){ const s=getSettings(); s.consommables=arr||[]; saveSettings(s); }
+// Supplément consommable par format de coffret (€), agrégé depuis les consommables 'coffret'.
+function consoCoffretSupplement(taille){
+  return money2(getConsommables()
+    .filter(c=>c.famille==='coffret' && Array.isArray(c.formats) && c.formats.includes(+taille))
+    .reduce((a,c)=>a+(+c.prixUnitaire||0),0));
+}
+
+async function renderConsommables(){
+  const main=document.getElementById('main'); if(!main) return;
+  const list=getConsommables();
+  const byFam = f => list.filter(c=>c.famille===f);
+
+  const card = (c,idx)=>{
+    const f=CONSO_FAMILLES[c.famille]||{};
+    let detail='';
+    if(c.famille==='coffret') detail = `Formats : ${(c.formats||[]).map(t=>t+'').join(', ')||'—'} · +${euro(c.prixUnitaire)}/coffret`;
+    else if(c.famille==='recette') detail = `${euro(c.prixUnitaire)}/pièce${c.recetteNom?` · ${esc(c.recetteNom)}`:''}`;
+    else detail = `${euro(c.prixUnitaire)}/${esc(c.unite||'unité')}${c.recurrent?' · récurrent':''}`;
+    return `<div class="sum-box" style="align-items:flex-start;gap:10px">
+      <span style="flex:0 0 auto;font-size:1.1rem">${f.ico||'•'}</span>
+      <span style="flex:1"><b>${esc(c.nom)}</b><br><span style="font-size:.8rem;color:#9a8a82">${detail}</span></span>
+      <span style="display:flex;gap:4px">
+        <button class="btn ghost sm" onclick="consoForm(${idx})">✎</button>
+        <button class="btn ghost sm" onclick="consoDel(${idx})">🗑</button>
+      </span></div>`;
+  };
+
+  const section = (fam)=>{
+    const f=CONSO_FAMILLES[fam]; const items=byFam(fam);
+    return `<div class="panel">
+      <h2 style="font-size:1rem">${f.ico} ${f.label}</h2>
+      <p class="note">${f.desc}</p>
+      ${items.length?items.map((c)=>card(c,list.indexOf(c))).join(''):'<p class="note">Aucun consommable dans cette famille.</p>'}
+      <button class="btn ghost sm" style="margin-top:6px" onclick="consoForm(-1,'${fam}')">+ Ajouter</button>
+    </div>`;
+  };
+
+  main.innerHTML=`
+   <div class="topbar"><div><h1>Consommables</h1><p>Listing centralisé — chaque article alimente le bon calcul</p></div></div>
+   <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>Range chaque consommable dans sa famille : l'app l'impute automatiquement au bon endroit (charges, coût du coffret, ou coût d'une recette).</div></div>
+   ${section('atelier')}
+   ${section('coffret')}
+   ${section('recette')}
+   <div class="panel">
+     <h2 style="font-size:1rem">📊 Récapitulatif d'impact</h2>
+     <div class="sum-box"><span>Supplément consommables par coffret</span><b></b></div>
+     ${BOX_SIZES_CONSO.map(t=>`<div class="sum-box"><span style="padding-left:10px">· Coffret ${t}</span><b>+${euro(consoCoffretSupplement(t))}</b></div>`).join('')}
+     <p class="note">Ce supplément s'ajoute au coût d'emballage du coffret concerné et impacte ta marge par commande.</p>
+   </div>`;
+}
+
+function consoForm(idx, presetFam){
+  const list=getConsommables();
+  const c = idx>=0 ? list[idx] : {nom:'', famille:presetFam||'atelier', prixUnitaire:'', unite:'unité', recurrent:false, formats:[], recetteNom:''};
+  const famOpts = Object.keys(CONSO_FAMILLES).map(k=>`<option value="${k}" ${c.famille===k?'selected':''}>${CONSO_FAMILLES[k].ico} ${CONSO_FAMILLES[k].label}</option>`).join('');
+  openModal(`<h3>${idx>=0?'Modifier':'Ajouter'} un consommable</h3>
+    <div class="field"><label>Nom *</label><input id="co_nom" value="${esc(c.nom||'')}" placeholder="ex : Carte de présentation parfum"></div>
+    <div class="field"><label>Famille</label><select id="co_fam" onchange="consoFormFam()">${famOpts}</select>
+      <p class="note" id="co_famdesc">${CONSO_FAMILLES[c.famille].desc}</p></div>
+    <div class="field"><label>Prix unitaire (€)</label><input type="number" step="0.001" min="0" id="co_prix" value="${c.prixUnitaire!==''&&c.prixUnitaire!=null?c.prixUnitaire:''}" placeholder="ex : 0.05"></div>
+    <div id="co_extra"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="consoSave(${idx})">Enregistrer</button></div>`);
+  consoFormFam(c);
+}
+function consoFormFam(preset){
+  const fam=val('co_fam')|| (preset&&preset.famille) || 'atelier';
+  const d=document.getElementById('co_famdesc'); if(d) d.textContent=CONSO_FAMILLES[fam].desc;
+  const extra=document.getElementById('co_extra'); if(!extra) return;
+  const c=preset||{};
+  if(fam==='atelier'){
+    extra.innerHTML=`<div class="row2">
+      <div class="field"><label>Unité</label><input id="co_unite" value="${esc(c.unite||'unité')}" placeholder="rouleau, boîte…"></div>
+      <div class="field"><label class="pay-opt" style="display:flex;align-items:center;gap:8px;margin-top:24px"><input type="checkbox" id="co_recur" ${c.recurrent?'checked':''}> <span>Achat récurrent</span></label></div>
+    </div>
+    <p class="note">À l'enregistrement, tu pourras l'ajouter comme charge (ponctuelle ou récurrente mensuelle).</p>`;
+  } else if(fam==='coffret'){
+    extra.innerHTML=`<div class="field"><label>Formats concernés</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        ${BOX_SIZES_CONSO.map(t=>`<label class="pay-opt" style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="co_fmt" value="${t}" ${(c.formats||[]).includes(t)?'checked':''}> ${t}</label>`).join('')}
+      </div>
+      <p class="note">Coche les tailles de coffret qui contiennent ce consommable (ex : carte de visite → 16 et 25 seulement).</p></div>`;
+  } else {
+    extra.innerHTML=`<div class="field"><label>Recette concernée</label><input id="co_recette" value="${esc(c.recetteNom||'')}" placeholder="ex : Grand format / Praliné">
+      <p class="note">Ce coût s'ajoutera au consommable par pièce de la recette. (Rattachement fin à venir : pour l'instant, note la recette ici.)</p></div>`;
+  }
+}
+function consoSave(idx){
+  const nom=(val('co_nom')||'').trim();
+  if(!nom){ toast('Nom requis'); return; }
+  const famille=val('co_fam')||'atelier';
+  const prixUnitaire=Math.max(0,+val('co_prix')||0);
+  const item={nom, famille, prixUnitaire};
+  if(famille==='atelier'){ item.unite=(val('co_unite')||'unité').trim(); item.recurrent=!!document.getElementById('co_recur')?.checked; }
+  else if(famille==='coffret'){ item.formats=[...document.querySelectorAll('.co_fmt:checked')].map(x=>+x.value); }
+  else { item.recetteNom=(val('co_recette')||'').trim(); }
+  const list=getConsommables();
+  if(idx>=0) list[idx]=item; else list.push(item);
+  saveConsommables(list);
+  closeModal(); renderConsommables();
+  toast('Consommable enregistré ✓');
+  // Famille atelier : proposer de créer la charge dans la foulée.
+  if(famille==='atelier' && prixUnitaire>0) consoOfferCharge(item);
+}
+function consoDel(idx){
+  const list=getConsommables(); const c=list[idx]; if(!c) return;
+  if(!confirm(`Supprimer « ${c.nom} » ?`)) return;
+  list.splice(idx,1); saveConsommables(list); renderConsommables();
+  toast('Supprimé');
+}
+// Proposer d'enregistrer un consommable d'atelier comme charge (ponctuelle ou récurrente).
+function consoOfferCharge(item){
+  openModal(`<h3>Ajouter « ${esc(item.nom)} » aux charges ?</h3>
+    <p class="note">Ce consommable d'atelier est une dépense. Tu peux l'enregistrer maintenant.</p>
+    <div class="field"><label>Montant de l'achat (€)</label><input type="number" step="0.01" min="0" id="cc_montant" value="${item.prixUnitaire||''}" placeholder="montant total payé"></div>
+    <div class="field"><label>Type</label>
+      <select id="cc_type"><option value="ponctuel">Achat ponctuel (ce mois)</option><option value="recurrent">Charge récurrente mensuelle</option></select></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Plus tard</button>
+      <button class="btn" onclick="consoAddCharge('${esc(item.nom).replace(/'/g,"\\'")}')">Enregistrer la charge</button></div>`);
+}
+async function consoAddCharge(nom){
+  const montant=Math.max(0,+val('cc_montant')||0);
+  const type=val('cc_type')||'ponctuel';
+  if(montant<=0){ toast('Montant invalide'); return; }
+  if(type==='recurrent'){
+    const models=getRecurringCharges();
+    models.push({id:'rc'+Date.now(), libelle:'Consommable : '+nom, categorie:'Équipement', montant:money2(montant), jourMois:1, debut:today().slice(0,7), actif:true});
+    saveRecurringCharges(models);
+    if(typeof materializeRecurringCharges==='function') await materializeRecurringCharges();
+    toast('Charge récurrente créée ✓');
+  } else {
+    await db.charges.add({date:today(), categorie:'Équipement', libelle:'Consommable : '+nom, montant:money2(montant)});
+    toast('Charge enregistrée ✓');
+  }
+  closeModal();
+}
 
 async function renderPMS(){
   await seedPMS();
