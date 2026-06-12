@@ -11533,6 +11533,16 @@ async function renderProductionPlan(){
          ${dansLeTemps.length?`<h2 style="font-size:1rem;margin-top:10px">✅ À produire maintenant</h2>${dansLeTemps.map(ligne).join('')}`:''}
          ${horsTemps.length?`<h2 style="font-size:1rem;margin-top:10px">⏳ Si tu as plus de temps</h2>${horsTemps.map(ligne).join('')}`:''}`}
     ${(!listeComplete.length)?`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Rien à produire en priorité : commandes, stocks et DLC sont sous contrôle.</div></div>`:''}
+    ${(()=>{
+      // Provenance des estimations de temps : lien explicite avec l'Atelier (chronos).
+      if(tl && tl.fiable && tl.minParMacaronArrondi!=null){
+        return `<div class="sum-box" style="background:#eef5f0;margin-top:8px"><span>⏱ Estimations basées sur tes chronos d'atelier : <b>${tl.minParMacaronArrondi} min/macaron</b> <span style="color:#9a8a82">(${fmtHM(tl.minAtelier)} mesurées sur ${qty(tl.nbMacarons)} pièces, 90 j)</span></span></div>`;
+      } else if(tl && tl.minAtelier>0){
+        return `<div class="banner" style="background:#fdf6ec;border-color:#e5cfa0">⏱ <div>Estimations encore <b>indicatives</b> : seulement ${fmtHM(tl.minAtelier)} chronométrées${tl.nbMacarons?` sur ${qty(tl.nbMacarons)} pièces`:''}. Chronomètre quelques productions pour fiabiliser le calage horaire. <span class="act" onclick="goView('atelier')">Ouvrir l'Atelier →</span></div></div>`;
+      } else {
+        return `<div class="banner" style="background:#fdf6ec;border-color:#e5cfa0">⏱ <div>Aucun temps mesuré pour l'instant : les durées ne peuvent pas être estimées. <b>Chronomètre tes tâches dans l'Atelier</b> pour que le plan cale tes productions dans le temps. <span class="act" onclick="goView('atelier')">Ouvrir l'Atelier →</span></div></div>`;
+      }
+    })()}
     <p class="note" style="margin-top:8px">Conseil indicatif basé sur tes commandes, ta vélocité de ventes (14 j) et tes DLC. Les quantités sont des suggestions à ajuster.</p>
   </div>`;
 }
@@ -14805,7 +14815,9 @@ let _atelierTab = 'pilotage';   // 'pilotage' | 'tableau'
 function renderAtelier(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML = `
-    <div class="topbar"><div><h1>Atelier de production</h1><p>Mesure du temps par tâche — chronos parallèles</p></div></div>
+    <div class="topbar"><div><h1>Atelier de production</h1><p>Mesure du temps par tâche — chronos parallèles</p></div>
+      <button class="btn ghost" onclick="goView('mrp')">🧭 Plan de production →</button></div>
+    <div class="banner" style="background:#eef5f0;border-color:#bcd9c6">⏱ <div>Chaque tâche que tu chronomètres ici nourrit les <b>estimations du Plan de production</b> : plus tu mesures, plus le calage horaire de tes journées devient juste.</div></div>
     <div class="atelier-tabs">
       <button class="at-tab ${_atelierTab==='pilotage'?'active':''}" onclick="atelierSwitch('pilotage')">⏱ Pilotage</button>
       <button class="at-tab ${_atelierTab==='tableau'?'active':''}" onclick="atelierSwitch('tableau')">📊 Tableau</button>
