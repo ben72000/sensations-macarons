@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v282';
+const APP_VERSION = 'v283';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6570,7 +6570,7 @@ function drawCoffretLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
     const maxq = ln.taille||25;
-    return flavorPickRow(f, q, `setCoffretParfum(${i},${fi},this.value)`, maxq);
+    return flavorPickRow(f, q, `setCoffretParfum(${i},${fi},VAL)`, maxq);
   }).join('');
   const nbDiff = Object.values(ln.parfums).filter(q=>q>0).length;
   const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
@@ -6594,7 +6594,7 @@ function setCoffretParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cm
 function drawEventLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
-    return flavorPickRow(f, q, `setEventParfum(${i},${fi},this.value)`, Math.max(ln.evQte,50));
+    return flavorPickRow(f, q, `setEventParfum(${i},${fi},VAL)`, Math.max(ln.evQte,50));
   }).join('');
   const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
   return `<div class="cmd-line">
@@ -6619,7 +6619,7 @@ function drawBigLine(ln,i){
   const pu=bigPrice(ln.tarif);
   const bigRows = BIG_FORMATS.map((f,fi)=>{
     const q=ln.items[f]||0;
-    return flavorPickRow(f, q, `setBigItem(${i},${fi},this.value)`, 50);
+    return flavorPickRow(f, q, `setBigItem(${i},${fi},VAL)`, 50);
   }).join('');
   const tot=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
   return `<div class="cmd-line">
@@ -6643,7 +6643,7 @@ function drawVracLine(ln,i){
   const pu=+getSettings().prixMacaronProStd||0;
   const rows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
-    return flavorPickRow(f, q, `setVracParfum(${i},${fi},this.value)`, 120);
+    return flavorPickRow(f, q, `setVracParfum(${i},${fi},VAL)`, 120);
   }).join('');
   const tot=Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
   return `<div class="cmd-line">
@@ -6661,11 +6661,11 @@ function drawDonLine(ln,i){
   if(!ln.parfums) ln.parfums={}; if(!ln.items) ln.items={};
   const parfRows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
-    return flavorPickRow(f, q, `setDonParfum(${i},${fi},this.value)`, 60);
+    return flavorPickRow(f, q, `setDonParfum(${i},${fi},VAL)`, 60);
   }).join('');
   const bigRows = BIG_FORMATS.map((f,fi)=>{
     const q=ln.items[f]||0;
-    return flavorPickRow(f+' (GF)', q, `setDonItem(${i},${fi},this.value)`, 30);
+    return flavorPickRow(f+' (GF)', q, `setDonItem(${i},${fi},VAL)`, 30);
   }).join('');
   const totP=Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
   const totB=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
@@ -7632,23 +7632,32 @@ async function marketAddSortie(marketId, productionId, qte, parfum){
 // Vue d'ensemble : chaque parfum avec sa pastille de couleur, son nom et la quantité
 // de macarons finis vendables en stock. Tous les parfums du catalogue sont affichés,
 // y compris ceux à 0 (vision complète, comme sur le site).
-// Composant UNIQUE de ligne de sélection de parfum, au visuel "stock par parfum"
-// (pastille colorée + nom à gauche, sélecteur de quantité à droite). Réutilisé partout
-// pour un rendu strictement identique dans toute l'app.
-//  - nom : nom du parfum
+// Composant UNIQUE de ligne de sélection de parfum, au visuel EXACT de la reprise/migration :
+// ligne entière cliquable, pastille + nom à gauche ; à droite "0" épuré si non sélectionné,
+// menu déroulant de quantité seulement une fois le parfum activé.
+//  - nom : nom du parfum affiché
 //  - qte : quantité actuelle
-//  - onChangeJs : code JS appelé au changement (reçoit la valeur via this.value)
-//  - maxq : quantité max du menu déroulant (def 60)
-function flavorPickRow(nom, qte, onChangeJs, maxq){
+//  - setJs : code JS qui fixe une quantité (reçoit la valeur). Ex : "setCoffretParfum(0,3,VAL)"
+//            où VAL sera remplacé par la valeur choisie.
+//  - maxq : quantité max du menu (def 60)
+function flavorPickRow(nom, qte, setJs, maxq){
   maxq = maxq||60;
   const col = (typeof flavorColor==='function') ? flavorColor(nom) : '#ccc';
   const on = (+qte)>0;
-  let opts='';
-  for(let n=0;n<=maxq;n++) opts+=`<option value="${n}" ${(+qte)===n?'selected':''}>${n}</option>`;
-  return `<div class="flavor-stock${on?' fp-on':''}">
-    <span class="fs-pastille" style="background:${col}"></span>
-    <span class="fs-nom">${esc(nom)}</span>
-    <select class="fp-sel" onchange="${onChangeJs}">${opts}</select>
+  // clic sur la ligne : si décoché → met 1 ; si coché → remet 0 (toggle)
+  const toggleJs = setJs.replace('VAL', on?'0':'1');
+  let qOpts=''; for(let n=1;n<=maxq;n++) qOpts+=`<option value="${n}" ${(+qte)===n?'selected':''}>${n}</option>`;
+  const changeJs = setJs.replace('VAL','+this.value');
+  return `<div onclick="${toggleJs}"
+      style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:4px 0;cursor:pointer;
+      border:1px solid var(--hair);border-radius:12px;
+      background:${on?'#eef5f0':'#fbf8f3'};${on?'border-color:#bcd9c6':''}">
+    <span style="width:22px;height:22px;border-radius:50%;background:${col};flex:none;
+      box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);${on?'outline:2px solid #3f7d52;outline-offset:1px':''}"></span>
+    <span style="flex:1;font-size:1rem;color:${on?'var(--bordeaux)':'#6a5a52'};font-weight:${on?'600':'400'}">${esc(nom)}</span>
+    ${on
+      ? `<select onclick="event.stopPropagation()" onchange="${changeJs}" style="flex:none;min-width:64px;font-size:1rem">${qOpts}</select>`
+      : `<span style="flex:none;color:#c2b8b0;font-size:1rem">0</span>`}
   </div>`;
 }
 async function renderStockParfums(){
