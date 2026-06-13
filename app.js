@@ -920,6 +920,117 @@ function openSheet(){
 }
 function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); }
 
+/* ============================================================
+   MENU RADIAL (camembert) — surgit du coin inférieur droit
+   ============================================================ */
+const RADIAL_ITEMS = [
+  { label:'Commande', act:()=>goView('commandes') },
+  { label:'Agenda',   act:()=>goView('cal') },
+  { label:'Production',act:()=>goView('productions') },
+  { label:'Atelier',  act:()=>goView('atelier') },
+  { label:'Pointeuse',act:()=>{ if(typeof ttStart==='function') ttStart(); } },
+  { label:'Avancé',   act:()=>openSheet() },
+];
+let _rmState = { open:false, active:-1, startX:0, startY:0, tracking:false };
+
+// Construit le SVG du camembert (quart de cercle, pivot au coin bas-droit).
+function radialBuild(){
+  const host=document.getElementById('radialMenu'); if(!host) return;
+  const N=RADIAL_ITEMS.length;
+  const cx=100, cy=100, rOut=96, rIn=20;      // coin bas-droit = (100,100)
+  // secteur balayé : de 180° (gauche) à 270° (haut) — quart haut-gauche, naturel pour le pouce
+  const a0=180, a1=270, span=a1-a0;
+  const rad=d=>d*Math.PI/180;
+  const pt=(r,deg)=>[cx+r*Math.cos(rad(deg)), cy+r*Math.sin(rad(deg))];
+  let segs='', labels='';
+  for(let i=0;i<N;i++){
+    const s=a0+span*(i/N), e=a0+span*((i+1)/N);
+    const [x1,y1]=pt(rOut,s), [x2,y2]=pt(rOut,e);
+    const [x3,y3]=pt(rIn,e),  [x4,y4]=pt(rIn,s);
+    const large = (e-s)>180?1:0;
+    const d=`M${x1.toFixed(2)},${y1.toFixed(2)} A${rOut},${rOut} 0 ${large} 1 ${x2.toFixed(2)},${y2.toFixed(2)} `
+          +`L${x3.toFixed(2)},${y3.toFixed(2)} A${rIn},${rIn} 0 ${large} 0 ${x4.toFixed(2)},${y4.toFixed(2)} Z`;
+    segs+=`<path class="rm-seg" data-i="${i}" d="${d}"></path>`;
+    const mid=(s+e)/2, rl=(rOut+rIn)/2;
+    const [lx,ly]=pt(rl,mid);
+    // rotation du label pour suivre l'arc, en gardant le texte lisible
+    let rot=mid-180; if(rot>90)rot-=180; if(rot<-90)rot+=180;
+    labels+=`<text class="rm-label" data-i="${i}" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" transform="rotate(${rot.toFixed(1)} ${lx.toFixed(1)} ${ly.toFixed(1)})">${esc(RADIAL_ITEMS[i].label)}</text>`;
+  }
+  host.innerHTML=`<svg viewBox="0 0 100 100" aria-label="Menu rapide">
+    <path class="rm-disc" d="M100,4 A96,96 0 0 1 100,100 L100,100 Z M4,100 A96,96 0 0 0 100,100"></path>
+    <path class="rm-disc" d="M${cx},${cy-rOut-2} A${rOut+2},${rOut+2} 0 0 1 ${cx-rOut-2},${cy} L${cx},${cy} Z"></path>
+    ${segs}${labels}</svg>`;
+  host.classList.add('peek');
+}
+
+function radialSetActive(i){
+  if(_rmState.active===i) return;
+  _rmState.active=i;
+  document.querySelectorAll('#radialMenu .rm-seg').forEach(el=>el.classList.toggle('active', +el.dataset.i===i));
+  document.querySelectorAll('#radialMenu .rm-label').forEach(el=>el.classList.toggle('active', +el.dataset.i===i));
+  if(i>=0 && navigator.vibrate) navigator.vibrate(8);
+}
+
+function radialOpen(){
+  const host=document.getElementById('radialMenu'); if(!host) return;
+  _rmState.open=true; host.classList.remove('peek'); host.classList.add('open');
+  let sc=document.getElementById('radialScrim');
+  if(!sc){ sc=document.createElement('div'); sc.id='radialScrim'; document.body.appendChild(sc); }
+  sc.classList.add('show');
+}
+function radialClose(openIndex){
+  const host=document.getElementById('radialMenu');
+  const sc=document.getElementById('radialScrim');
+  if(host){ host.classList.remove('open'); host.classList.add('peek'); }
+  if(sc) sc.classList.remove('show');
+  const wasActive=_rmState.active;
+  _rmState.open=false; _rmState.active=-1; _rmState.tracking=false;
+  document.querySelectorAll('#radialMenu .rm-seg,.rm-label').forEach(el=>el.classList.remove('active'));
+  if(openIndex!=null && openIndex>=0 && RADIAL_ITEMS[openIndex]){
+    setTimeout(()=>RADIAL_ITEMS[openIndex].act(), 120);
+  }
+}
+
+// Détermine quelle part est sous le point (x,y) à l'écran.
+function radialHitTest(x,y){
+  const els=document.elementsFromPoint(x,y);
+  for(const el of els){ if(el.classList&&el.classList.contains('rm-seg')) return +el.dataset.i; }
+  return -1;
+}
+
+function radialInit(){
+  radialBuild();
+  const W=window.innerWidth, H=window.innerHeight;
+  // zone d'amorce : coin inférieur droit
+  const inCorner=(x,y)=> x > W*0.78 && y > H*0.80;
+  window.addEventListener('touchstart', e=>{
+    const t=e.touches[0]; if(!t) return;
+    if(!_rmState.open && inCorner(t.clientX,t.clientY)){
+      _rmState.tracking=true; _rmState.startX=t.clientX; _rmState.startY=t.clientY;
+    }
+  }, {passive:true});
+  window.addEventListener('touchmove', e=>{
+    if(!_rmState.tracking) return;
+    const t=e.touches[0]; if(!t) return;
+    const dx=t.clientX-_rmState.startX, dy=t.clientY-_rmState.startY;
+    // ouverture : glissement vers le haut-gauche (dx<0, dy<0) au-delà d'un seuil
+    if(!_rmState.open && (dx<-26 || dy<-26)){ radialOpen(); }
+    if(_rmState.open){
+      e.preventDefault();
+      const i=radialHitTest(t.clientX,t.clientY);
+      radialSetActive(i);
+    }
+  }, {passive:false});
+  const endH=()=>{
+    if(!_rmState.tracking) return;
+    if(_rmState.open){ radialClose(_rmState.active); }
+    else { _rmState.tracking=false; }
+  };
+  window.addEventListener('touchend', endH);
+  window.addEventListener('touchcancel', endH);
+}
+
 // Sidebar (iPad / desktop) — écoute directe + délégation
 document.querySelectorAll('#nav button').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
 const navEl=document.getElementById('nav');
@@ -18388,6 +18499,7 @@ function startClock(){
   initHistoryNav();
   ttInit();
   mascotInit();
+  try{ radialInit(); }catch(e){ console.error('radialInit',e); }
   startClock();
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
   // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
