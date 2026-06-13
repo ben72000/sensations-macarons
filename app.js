@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v294';
+const APP_VERSION = 'v295';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7352,6 +7352,13 @@ async function computeAccounting(opts){
   orders.forEach(o=>{ const b=orderBalance(o); if(b>0) creances=money2(creances+b); });
 
   const totalCout=money2(serie.reduce((s,x)=>s+x.coutMatieres,0));
+  // Part des commandes migrées (reprise) : leur coût matières est estimé grossièrement
+  // (pas de détail produit), donc la marge est moins fiable. On le signale.
+  let migCount=0, migCA=0;
+  orders.forEach(o=>{
+    const lignes = orderToLines(o);
+    if(lignes.some(l=>l.type==='histo')){ migCount++; migCA=money2(migCA+(+o.montant||0)); }
+  });
   // Valeur des pertes / casse déclarées (coût de revient des pièces jetées) — imputée au résultat.
   const lossesAll = await db.losses.toArray().catch(()=>[]);
   const totalPertes = money2(lossesAll.reduce((s,l)=>s+(+l.coutTotal||0),0));
@@ -7362,6 +7369,7 @@ async function computeAccounting(opts){
     margeBrute: money2(totalEncaisse-totalCout),
     resultat: money2(totalEncaisse-totalCharges-totalCout-totalPertes),
     creances,
+    migCount, migCA,
     nbCharges: charges.length
   };
 }
@@ -7498,6 +7506,7 @@ function estimateOrderMaterialCost(o, recipes, recipeItems, lots){
     else if(ln.type==='grand') pieces=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
     else if(ln.type==='vrac') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0);
     else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0);
+    else if(ln.type==='histo') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); // commande migrée : estim. via nb de macarons saisis
     if(pieces<=0) return;
     // coût unitaire moyen toutes recettes confondues (approximation si parfum↔recette non résolu)
     const perRecipeUnit = recipes.map(r=>{ const cb=coutRecette(r.id, recipeItems, lots); return r.rendement>0?cb/r.rendement:0; }).filter(x=>x>0);
@@ -9272,6 +9281,7 @@ function comptaFlowSchema(A){
     ${box('= Résultat', res, res>=0?'ton bénéfice net 🎉':'déficit à surveiller', res>=0?'#3f7d52':'#b3261e', res>=0?'#eef6ef':'#fbeeec')}
 
     <p class="note" style="margin-top:12px">💡 <b>En clair :</b> tu as facturé <b>${e(fact)}</b>. ${creances>0?`Il te reste <b>${e(creances)}</b> à encaisser. `:''}Sur les <b>${e(enc)}</b> déjà reçus, la fabrication t'a coûté <b>${e(mat)}</b> et tes charges <b>${e(charges)}</b> — il te reste donc <b style="color:${res>=0?'#3f7d52':'#b3261e'}">${e(res)}</b>.</p>
+    ${(A.migCount>0)?`<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:8px">⚠️ <div><b>Marge approximative :</b> ${A.migCount} commande(s) de reprise (${e(A.migCA)}) n'ont pas de détail produit. Leur coût matières est <b>estimé</b> au coût moyen d'un macaron — le résultat réel peut différer. Pour une marge précise, saisis ces ventes en commande détaillée.</div></div>`:''}
   </div>`;
 }
 async function renderCompta(){
