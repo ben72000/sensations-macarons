@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v263';
+const APP_VERSION = 'v264';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2237,7 +2237,7 @@ async function recForm(id){
          return `<div class="sum-box" style="margin-top:4px;${on?'border-left:3px solid #3f7d52':''}">
            <label style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer">
              <input type="checkbox" class="cmpRef" data-cid="${c.id}" ${on?'checked':''} onchange="this.closest('.sum-box').style.borderLeft=this.checked?'3px solid #3f7d52':'none';const w=document.getElementById('cmpW_${c.id}');if(w)w.style.display=this.checked?'block':'none'">
-             <span>${t.ico} <b>${esc(c.nom)}</b> <span style="font-size:.7rem;color:#9a8a82">${t.label} · rdt ${c.rendement}</span></span>
+             <span>${componentLabel(c)} <span style="font-size:.7rem;color:#9a8a82">rdt ${c.rendement}</span></span>
            </label>
            <span id="cmpW_${c.id}" style="display:${on?'block':'none'}"><input type="number" step="0.1" min="0" style="width:64px" id="cmpP_${c.id}" value="${ref&&ref.poids!=null?ref.poids:''}" placeholder="g/pièce"></span>
          </div>`;
@@ -17540,6 +17540,16 @@ const COMPONENT_TYPES = {
   insert:   {label:'Insert',          ico:'⭐'},
   autre:    {label:'Autre',           ico:'🔹'},
 };
+// Libellé non ambigu d'un composant : icône + type court + nom, pour ne JAMAIS
+// le confondre avec un produit fini. Ex : "🍫 Ganache · vanille".
+// Type court (sans "montée" etc.) pour rester lisible.
+const COMPONENT_TYPE_SHORT = { ganache:'Ganache', coques:'Coques', insert:'Insert', autre:'Composant' };
+function componentLabel(c){
+  if(!c) return '';
+  const t = COMPONENT_TYPES[c.type]||COMPONENT_TYPES.autre;
+  const court = COMPONENT_TYPE_SHORT[c.type]||'Composant';
+  return `${t.ico} ${court} · ${c.nom||''}`.trim();
+}
 async function renderComposants(){
   const main=document.getElementById('main'); if(!main) return;
   const comps = await db.components.orderBy('nom').toArray().catch(()=>[]);
@@ -17552,7 +17562,7 @@ async function renderComposants(){
     const nbRen = usage[c.id]||0;
     return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px">
       <div style="display:flex;align-items:center;gap:8px">
-        <span style="flex:1">${t.ico} <b>${esc(c.nom)}</b> <span style="font-size:.72rem;color:#9a8a82">${t.label}</span></span>
+        <span style="flex:1">${componentLabel(c)}</span>
         <button class="btn ghost sm" onclick="componentForm(${c.id})">✎</button>
       </div>
       <div style="font-size:.74rem;color:#9a8a82">Rendement : ${c.rendement||'?'} /batch${c.congelObligatoire?' · ❄️ congélation':''}${nbRen>0?` · <span style="color:#3f7d52">partagé par ${nbRen} recette(s)</span>`:' · non utilisé'}</div>

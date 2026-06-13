@@ -87,8 +87,8 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia','Times New Roman',serif;letter-
 .side-foot .foot-help{display:block;margin-bottom:8px}
 .side-foot .foot-btn{width:100%;margin-top:6px}
 .main{margin-left:236px;flex:1;min-width:0;max-width:calc(100% - 236px);padding:32px 40px 60px;overflow-x:hidden}
-@keyframes viewIn{ from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
-.main.view-in{ animation:viewIn .28s cubic-bezier(.22,.61,.36,1) }
+@keyframes viewIn{ from{opacity:0} to{opacity:1} }
+.main.view-in{ animation:viewIn .22s ease }
 @media (prefers-reduced-motion: reduce){ .main.view-in{ animation:none } }
 .topbar{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px;flex-wrap:wrap;gap:12px;
   padding-bottom:18px;border-bottom:1px solid var(--hair)}
