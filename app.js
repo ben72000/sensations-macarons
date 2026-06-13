@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v289';
+const APP_VERSION = 'v290';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -16461,7 +16461,7 @@ function mascotInit(){
   if(document.getElementById('mascot')) return;
   const host=document.createElement('div');
   host.id='mascot';
-  host.innerHTML=`<div class="mascot-bubble" id="mascotBubble">Besoin d'un coup de main ? <b>Touche-moi</b> pour mes conseils 🍩</div>
+  host.innerHTML=`<div class="mascot-bubble" id="mascotBubble">Coucou ! 🍩</div>
     <div class="mascot-face"></div><span class="mascot-badge">—</span>`;
   document.body.appendChild(host);
   // Position FIXE (bas-droite, près du CA du mois) : on ne restaure plus de position
@@ -16531,49 +16531,43 @@ function mascotPickLine(mood){
   const arr = MASCOT_LINES[mood] || MASCOT_LINES['serein'];
   return arr[Math.floor(Math.random()*arr.length)];
 }
-// Bascule la bulle entre l'invitation compacte et le briefing agrandi.
+// Clic sur la mascotte/bulle : ouvre un vrai popup (modale) avec le briefing.
+// La mascotte et la bulle gardent leur taille d'origine — rien ne se déforme.
 let _mascotBubbleOpen=false;
 async function mascotToggleBubble(){
-  const bubble=document.getElementById('mascotBubble'); if(!bubble) return;
-  _mascotBubbleOpen=!_mascotBubbleOpen;
-  if(!_mascotBubbleOpen){ mascotBubbleReset(); return; }
-  // réplique selon l'état de sérénité courant (ton complice, variée à chaque ouverture)
   const mood = (typeof serenityTier==='function' && _mascotScore!=null) ? serenityTier(_mascotScore).mood : 'serein';
   const punchline = mascotPickLine(mood);
-  bubble.classList.add('big');
-  bubble.innerHTML=`<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px">
-      <b style="flex:1;font-size:.9rem">${esc(punchline)}</b>
-      <span onclick="event.stopPropagation();mascotBubbleReset()" style="cursor:pointer;color:#9a8a82;font-size:1.1rem;line-height:1">✕</span>
-    </div>
-    <div style="font-size:.8rem;color:#9a8a82">Je regarde ce qu'il y a à faire…</div>`;
+  // ouvre la modale tout de suite avec la punchline + un état de chargement
+  openModal(`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <div style="font-size:1.6rem">🍩</div>
+      <h3 style="margin:0;flex:1;font-size:1.02rem">${esc(punchline)}</h3></div>
+    <div id="mascotModalBody"><p class="note">Je regarde ce qu'il y a à faire…</p></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="closeModal();goView('assistant')">Ouvrir l'assistant →</button></div>`);
   let items=[];
   try{ items=await assistantBriefing(); }catch(e){ console.error('mascot briefing',e); }
-  if(!_mascotBubbleOpen) return; // refermée entre-temps
+  const body=document.getElementById('mascotModalBody'); if(!body) return; // modale fermée entre-temps
   const prioC={0:'#b3261e',1:'#d98324',2:'#3f7d52'};
-  let corps;
   if(!items.length){
-    corps=`<div style="font-size:.82rem;color:#3f7d52">✅ Rien d'urgent. Tout est sous contrôle.</div>`;
-  }else{
-    corps=items.slice(0,5).map(it=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--hair)">
-      <span style="flex:none">${it.ico||'•'}</span>
-      <span style="flex:1;font-size:.8rem;line-height:1.25"><b>${esc(it.titre)}</b><br>
-        <span style="color:#6b5d54">${esc(it.detail||'')}</span></span>
-      <span style="width:7px;height:7px;border-radius:50%;background:${prioC[it.prio]||'#3f7d52'};flex:none;margin-top:5px"></span>
-    </div>`).join('');
+    body.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Rien d'urgent — tes commandes, stocks et DLC sont sous contrôle.</div></div>`;
+    return;
   }
-  bubble.innerHTML=`<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px">
-      <b style="flex:1;font-size:.9rem">${esc(punchline)}</b>
-      <span onclick="event.stopPropagation();mascotBubbleReset()" style="cursor:pointer;color:#9a8a82;font-size:1.1rem;line-height:1">✕</span>
-    </div>${corps}
-    <div onclick="event.stopPropagation();goView('assistant')" style="margin-top:8px;text-align:center;font-size:.76rem;color:var(--bordeaux);font-weight:600;cursor:pointer">Ouvrir l'assistant →</div>`;
+  body.innerHTML=`<p class="note" style="margin-top:0">☀️ À faire aujourd'hui :</p>`+items.slice(0,8).map(it=>
+    `<div class="sum-box" style="align-items:flex-start;gap:10px;border-left:3px solid ${prioC[it.prio]||'#3f7d52'}">
+      <span style="flex:0 0 auto;font-size:1.05rem">${it.ico||'•'}</span>
+      <span style="flex:1"><b>${esc(it.titre)}</b><br>
+        <span style="font-size:.82rem;color:#6b5d54">${esc(it.detail||'')}</span></span>
+    </div>`).join('');
 }
-// Remet la bulle dans son état compact (invitation), avec un message qui varie.
+// (ancienne mécanique d'agrandissement de bulle supprimée — on garde une taille fixe)
+// Remet la bulle dans son état compact « coucou » (message court, taille fixe).
 const MASCOT_INVITES = [
-  "Besoin d'un coup de main ? <b>Touche-moi</b> 🍩",
-  "Psst… <b>tape-moi</b> pour voir ce qui t'attend 👀",
-  "Un petit point du jour ? <b>Touche-moi</b> !",
-  "Coucou ! <b>Clique</b> pour mes conseils du moment 🍪",
-  "On fait le point ? <b>Touche-moi</b> quand tu veux."
+  "Coucou ! 🍩",
+  "Psst… 👀",
+  "Hé, touche-moi !",
+  "J'ai un truc à te dire 🍪",
+  "Coucou, on fait le point ?"
 ];
 function mascotBubbleReset(){
   _mascotBubbleOpen=false;
