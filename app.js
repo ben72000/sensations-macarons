@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v272';
+const APP_VERSION = 'v275';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5945,6 +5945,7 @@ function _cmdClName(id){ return _cmdClNameMap[id]||'—'; }
 function _cmdRowMini(row, opts){
   opts=opts||{};
   const o=row.o;
+  const checked = _cmdSel.has(o.id) ? 'checked' : '';
   const clientNom = (privacyModeEnabled()?'•••':( _cmdClNameMap[o.clientId] || o.histoLabel || '—'));
   const reste = (typeof orderBalance==='function') ? orderBalance(o) : 0;
   const marqueur = opts.distinctif
@@ -5954,6 +5955,7 @@ function _cmdRowMini(row, opts){
     ? `<span style="color:#d98324;font-weight:600;font-size:.8rem;white-space:nowrap">reste ${euro(reste)}</span>`
     : '';
   return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--hair)">
+    <input type="checkbox" ${checked} onchange="cmdToggleOne(${o.id}, this.checked)" style="flex:none" onclick="event.stopPropagation()">
     ${marqueur}
     <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem">${esc(clientNom)}
       <span style="color:#9a8a82;font-size:.78rem"> · ${fmtDate(o.date)}</span></span>
@@ -6270,7 +6272,8 @@ async function cmdForm(id, opts){
   window.__placesCache = places;   // pour l'autocomplete personnalisé
   openModal(`<h3>${id?'Modifier':'Nouvelle'} commande</h3>
    <div class="field"><label>Client</label>
-     <input class="search" id="f_clsearch" placeholder="Rechercher par nom ou téléphone…" oninput="filterCmdClients(this.value)" value="">
+     <input class="search" id="f_clsearch" placeholder="Rechercher par nom ou téléphone…" oninput="filterCmdClients(this.value)" value="" autocomplete="off">
+     <div id="f_clResults" style="display:none;border:1px solid var(--hair);border-radius:10px;margin-top:4px;max-height:220px;overflow-y:auto;background:#fff"></div>
      <select id="f_cl" style="margin-top:6px" onchange="cmdSuggestClientAddress()">${clOpts||'<option value="0">— aucun —</option>'}</select>
      <button class="btn ghost sm" style="margin-top:6px" onclick="quickClient(${id||0})">+ Nouveau client</button>
    </div>
@@ -6285,7 +6288,6 @@ async function cmdForm(id, opts){
      <button class="btn ghost sm" onclick="addLine('grand')">+ Grand format</button>
      <button class="btn ghost sm" onclick="addLine('vrac')">+ Vrac pro</button>
      <button class="btn ghost sm" onclick="addLine('prestation')">+ Prestation / Coaching</button>
-     <button class="btn ghost sm" onclick="addLine('accompagnement')">🎓 + Accompagnement (150€ · 3h)</button>
      <button class="btn ghost sm" onclick="addLine('don')">+ Don (0 €)</button>
    </div>
 
@@ -6433,9 +6435,33 @@ function filterCmdClients(q){
     const byTel = qd && digits(c.tel).includes(qd);
     return byName || byTel;
   });
+  // 1) garde le <select> synchronisé (utilisé par le reste du code pour lire le choix)
   sel.innerHTML='<option value="0">— aucun —</option>'+matches.map(c=>`<option value="${c.id}" ${String(c.id)===cur?'selected':''}>${esc(c.nom)}${c.tel?' · '+esc(c.tel):''}</option>`).join('');
+  // 2) affiche une liste VISIBLE et cliquable sous le champ (ergonomie : pas besoin de dérouler)
+  const box=document.getElementById('f_clResults');
+  if(box){
+    if(!term){ box.style.display='none'; box.innerHTML=''; }
+    else if(!matches.length){
+      box.style.display='block';
+      box.innerHTML=`<div style="padding:10px 12px;color:#9a8a82;font-size:.85rem">Aucun client trouvé — utilisez « + Nouveau client ».</div>`;
+    } else {
+      box.style.display='block';
+      box.innerHTML=matches.slice(0,40).map(c=>
+        `<div onclick="pickCmdClient(${c.id})" style="padding:10px 12px;border-bottom:1px solid var(--hair);cursor:pointer;font-size:.9rem">
+          <b>${esc(c.nom)}</b>${c.tel?`<span style="color:#9a8a82"> · ${esc(c.tel)}</span>`:''}</div>`
+      ).join('');
+    }
+  }
   // si un seul résultat, le présélectionner pour gagner un clic
   if(matches.length===1){ sel.value=String(matches[0].id); cmdSuggestClientAddress(); }
+}
+// Sélectionne un client depuis la liste de résultats visible.
+function pickCmdClient(id){
+  const sel=document.getElementById('f_cl'); if(sel){ sel.value=String(id); }
+  const cl=(cmdClientsCache||[]).find(c=>c.id===id);
+  const search=document.getElementById('f_clsearch'); if(search&&cl){ search.value=cl.nom||''; }
+  const box=document.getElementById('f_clResults'); if(box){ box.style.display='none'; box.innerHTML=''; }
+  cmdSuggestClientAddress();
 }
 
 // Quand un client est choisi, propose son adresse comme lieu de livraison —
@@ -6505,7 +6531,6 @@ function addLine(type){
   else if(type==='vrac') cmdLines.push({type:'vrac', parfums:{}});
   else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
   else if(type==='prestation') cmdLines.push({type:'prestation', libelle:'', montantHT:0, remiseType:'pct', remisePct:0, remiseEuro:0});
-  else if(type==='accompagnement') cmdLines.push({type:'prestation', presta:'accompagnement', libelle:'Accompagnement / formation', montantHT:150, dureeH:3, mode:'presentiel', detail:'', remiseType:'pct', remisePct:0, remiseEuro:0});
   drawLines();
 }
 function removeLine(i){ cmdLines.splice(i,1); drawLines(); }
@@ -18442,13 +18467,7 @@ async function pmsRenderTemp(){
    ${vitrine.length?`<div class="panel"><h2>Relevé marché <span style="font-weight:400;font-size:.82rem;color:#9a8a82">— uniquement les jours de marché</span></h2>
      ${vitrine.map(card).join('')}
      <button class="pick-big-btn wait" style="margin-top:6px;background:var(--caramel);color:#fff" onclick="pmsSaveTemp(true)">✓ Enregistrer le relevé marché</button>
-   </div>`:''}
-   <div class="panel" style="border:1px dashed #c9a24b;background:#fbf4e6;margin-top:14px">
-     <h2 style="font-size:.9rem">🛠 Outil temporaire</h2>
-     <p class="note" style="margin-top:0">Génère un historique de relevés (15/10/2025 → 08/06/2026), 2/jour, tous conformes. À usage unique — ce bouton sera retiré ensuite.</p>
-     <button class="btn ghost" onclick="genTempHistoryTEMP()">📊 (Re)générer l'historique de température</button>
-     <button class="btn ghost" style="margin-top:6px" onclick="genCleaningHistoryTEMP()">🧽 Générer l'historique de nettoyage</button>
-   </div>`;
+   </div>`:''}`;
   // applique l'état hors-plage initial
   [...labo, ...vitrine].forEach(eq=>pmsCheckTemp(eq.id));
 }
