@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v304';
+const APP_VERSION = 'v306';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2168,6 +2168,28 @@ async function delLot(id){
 /* ============================================================
    RECETTES (BOM)
    ============================================================ */
+// Barre de décomposition du coût de revient d'un macaron (propre à la fiche recette) :
+// montre comment matières + consommables + main d'œuvre s'empilent pour former le coût total.
+function coutRevientBar(c){
+  if(privacyModeEnabled()||!c) return '';
+  const mat=c.coutMatUnit||0, conso=c.coutConsoUnit||0, mo=c.coutMODUnit||0;
+  const total=mat+conso+mo;
+  if(total<=0) return '';
+  const segs=[
+    {lbl:'Matières', v:mat, col:'#b3261e'},
+    {lbl:'Consommables', v:conso, col:'#d98324'},
+    {lbl:'Main d\'œuvre', v:mo, col:'#7a4b82'}
+  ].filter(s=>s.v>0);
+  const pct=v=>Math.round(v/total*100);
+  const barre=segs.map(s=>`<div style="width:${Math.max(2,s.v/total*100)}%;background:${s.col}" title="${s.lbl} : ${euro(s.v)}"></div>`).join('');
+  const legende=segs.map(s=>`<span style="display:inline-flex;align-items:center;gap:4px;font-size:.72rem;color:#6a5a52">
+      <span style="width:10px;height:10px;border-radius:2px;background:${s.col};display:inline-block"></span>${s.lbl} ${euro(s.v)} <span style="color:#9a8a82">(${pct(s.v)}%)</span></span>`).join('');
+  return `<div style="background:#fcfaf6;border:1px solid var(--hair);border-radius:11px;padding:10px 12px;margin:0 0 8px">
+    <div style="font-size:.74rem;color:#7a6a62;margin-bottom:6px">Comment se construit le coût de <b>${euro(total)}</b> par macaron :</div>
+    <div style="display:flex;height:20px;border-radius:6px;overflow:hidden;background:#eee">${barre}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">${legende}</div>
+  </div>`;
+}
 async function renderRecipes(){
   const recipes = await db.recipes.orderBy('produitNom').toArray();
   const mats = await db.materials.toArray();
@@ -2209,7 +2231,7 @@ async function renderRecipes(){
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
         return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc ${kpiI('cout_revient_rec')}${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
-          <b><span class="tag" style="background:${rr.scale.col};color:#fff">${rr.scale.dot} ${rr.tauxMarge!=null?rr.tauxMarge+'%':'coût seul'}</span>${rr.tauxMarge!=null?' '+kpiI('taux_marge_rec'):''}</b></div>`; })()}
+          <b><span class="tag" style="background:${rr.scale.col};color:#fff">${rr.scale.dot} ${rr.tauxMarge!=null?rr.tauxMarge+'%':'coût seul'}</span>${rr.tauxMarge!=null?' '+kpiI('taux_marge_rec'):''}</b></div>${coutRevientBar(c)}`; })()}
       ${(r.allergenes&&r.allergenes.length)?`<div class="note" style="margin:0 0 8px"><b>Allergènes :</b> ${r.allergenes.map(a=>esc(a)).join(' · ')}</div>`:'<div class="note" style="margin:0 0 8px;color:#b08a3a">⚠ Allergènes non renseignés</div>'}
       ${items.length?`
       <div class="mult-bar">
@@ -3667,6 +3689,32 @@ function splitSummary(){
   box.innerHTML=`<div style="display:flex;justify-content:space-between"><span>Réparti / disponible</span><b>${qty(total)} / ${qty(ctx.dispo||0)}</b></div>
     <div style="display:flex;justify-content:space-between"><span>Reste sur la production d'origine</span><b style="color:${over?'#b3261e':'#3f7d52'}">${over?'dépassement '+qty(-reste):qty(reste)}</b></div>`;
 }
+// RÉPARATION (une seule fois) : les sous-lots issus d'un découpage avant le correctif
+// avaient perdu leur 'composant' (bug : non hérité de la mère) → comptés à tort comme
+// macarons vendables. On le réattribue depuis la production mère (parentProdId).
+// Universel : coques, ganaches, tous parfums. Ne touche QUE les lots concernés.
+async function fixSplitComponentInheritance(){
+  if(localStorage.getItem('sm_fixSplitComp')==='done') return;
+  try{
+    const prods = await db.productions.toArray();
+    const byId = {}; prods.forEach(p=>{ byId[p.id]=p; });
+    const aReparer = prods.filter(p=>
+      p.parentProdId &&                       // issu d'un découpage
+      !p.composant &&                         // a perdu son composant
+      byId[p.parentProdId] &&                 // la mère existe
+      byId[p.parentProdId].composant          // et la mère a un composant identifiable
+    );
+    if(aReparer.length){
+      await db.transaction('rw', db.productions, async()=>{
+        for(const sous of aReparer){
+          await db.productions.update(sous.id, {composant: byId[sous.parentProdId].composant});
+        }
+      });
+      console.log(`Réparation : ${aReparer.length} sous-lot(s) ont retrouvé leur composant.`);
+    }
+    localStorage.setItem('sm_fixSplitComp','done');
+  }catch(e){ console.error('fixSplitComponentInheritance', e); }
+}
 async function prodDoSplit(){
   const ctx=window._splitCtx; if(!ctx){ return; }
   const p=await db.productions.get(ctx.id); if(!p){ toast('Production introuvable'); return; }
@@ -3690,6 +3738,7 @@ async function prodDoSplit(){
       const hist=[{lieu:part.dest, ts:nowIso, motif:'découpe de production'}];
       const child={
         recipeId:p.recipeId,
+        composant:p.composant||undefined,           // hérite du composant (ganache/coques) : un sous-lot de ganache reste une ganache, pas un macaron vendable
         parentProdId:p.parentProdId||p.id,           // rattachement à la prod mère (traçabilité)
         lotBase:base,
         lotProduction:lotAvecEmplacement(base, part.dest),
@@ -19179,6 +19228,7 @@ function startClock(){
     try{ await prodSessHydrate(); }catch(e){ console.error('prodSessHydrate',e); }
   }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }
 
+  try{ await fixSplitComponentInheritance(); }catch(e){ console.error('fixSplitComp',e); }
   let opened=false;
   try{ opened = await handleTraceAnchor().catch(()=>false); }catch(e){ console.error('traceAnchor',e); }
   try{ if(!opened) render(); }catch(e){ console.error('render',e); }
