@@ -3,6 +3,10 @@
    Couche données : Dexie.js (IndexedDB) — 100% offline
    ============================================================ */
 
+// Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
+// Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
+const APP_VERSION = 'v256';
+
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
   suppliers:       '++id, nom',
@@ -11529,7 +11533,6 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v255';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
