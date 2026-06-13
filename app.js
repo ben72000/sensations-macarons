@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v280';
+const APP_VERSION = 'v281';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6573,7 +6573,7 @@ function drawCoffretLine(ln,i){
     let opts='';
     for(let n=0;n<=maxq;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
     return `<div class="flav-row ${q>0?'on':''}">
-      <span class="nm">${esc(f)}</span>
+      <span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
       <select class="flav-sel" onchange="setCoffretParfum(${i},${fi},this.value)">${opts}</select></div>`;
   }).join('');
   const nbDiff = Object.values(ln.parfums).filter(q=>q>0).length;
@@ -6599,7 +6599,7 @@ function drawEventLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
     let opts=''; for(let n=0;n<=Math.max(ln.evQte,50);n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)}</span>
+    return `<div class="flav-row ${q>0?'on':''}"><span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
       <select class="flav-sel" onchange="setEventParfum(${i},${fi},this.value)">${opts}</select></div>`;
   }).join('');
   const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
@@ -6626,7 +6626,7 @@ function drawBigLine(ln,i){
   const bigRows = BIG_FORMATS.map((f,fi)=>{
     const q=ln.items[f]||0;
     let opts=''; for(let n=0;n<=50;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)}</span>
+    return `<div class="flav-row ${q>0?'on':''}"><span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
       <select class="flav-sel" onchange="setBigItem(${i},${fi},this.value)">${opts}</select></div>`;
   }).join('');
   const tot=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
@@ -6652,7 +6652,7 @@ function drawVracLine(ln,i){
   const rows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
     let opts=''; for(let n=0;n<=120;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)}</span>
+    return `<div class="flav-row ${q>0?'on':''}"><span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
       <select class="flav-sel" onchange="setVracParfum(${i},${fi},this.value)">${opts}</select></div>`;
   }).join('');
   const tot=Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
@@ -6672,7 +6672,7 @@ function drawDonLine(ln,i){
   const parfRows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
     let opts=''; for(let n=0;n<=60;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)}</span>
+    return `<div class="flav-row ${q>0?'on':''}"><span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
       <select class="flav-sel" onchange="setDonParfum(${i},${fi},this.value)">${opts}</select></div>`;
   }).join('');
   const bigRows = BIG_FORMATS.map((f,fi)=>{
