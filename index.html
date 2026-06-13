@@ -179,6 +179,14 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia','Times New Roman',serif;letter-
 .card .sub{font-size:.78rem;color:#9a8a82;margin-top:7px}
 .card .corner{position:absolute;top:-10px;right:-8px;font-size:3.4rem;opacity:.07}
 .panel{background:#fff;border-radius:var(--r-lg);padding:24px 26px;box-shadow:var(--sh-2);border:1px solid var(--hair);margin-bottom:22px;max-width:100%;position:relative}
+.ai-fold{background:#fff;border-radius:var(--r-lg);box-shadow:var(--sh-2);border:1px solid var(--hair);margin-bottom:14px;overflow:hidden}
+.ai-fold>summary{cursor:pointer;list-style:none;padding:16px 20px;font-size:1.05rem;font-weight:600;color:var(--bordeaux);display:flex;align-items:center;gap:10px;user-select:none}
+.ai-fold>summary::-webkit-details-marker{display:none}
+.ai-fold>summary .ai-fold-arrow{margin-left:auto;transition:transform .2s;color:#9a8a82;font-size:.9rem}
+.ai-fold[open]>summary .ai-fold-arrow{transform:rotate(180deg)}
+.ai-fold>summary:active{background:var(--creme-2)}
+.ai-fold .ai-fold-body{padding:0 16px 12px}
+.ai-fold .ai-fold-body .panel,.ai-fold .ai-fold-body>div{box-shadow:none;border:none;margin-bottom:0;padding-left:6px;padding-right:6px}
 .panel h2{font-size:1.2rem;color:var(--bordeaux);margin-bottom:18px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;letter-spacing:-.01em}
 .table-wrap{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;display:block;overscroll-behavior-x:contain}
 table{width:100%;border-collapse:separate;border-spacing:0;font-size:.87rem}

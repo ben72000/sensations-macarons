@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v285';
+const APP_VERSION = 'v286';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1428,6 +1428,7 @@ async function renderDash(){
    <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
      <div class="bar-wrap">${data.map(d=>`<div class="bar-col"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
    </div>
+   <div id="dashProduction"></div>
    <div class="dash-2col">
      <div class="panel"><h2>⚠ Matières à réapprovisionner</h2>
        ${low.length?`<div class="table-wrap"><table class="dash-tbl"><tbody>${low.map(s=>`<tr>
@@ -1443,6 +1444,34 @@ async function renderDash(){
      </div>
    </div>`;
   startHomeClock();
+  renderDashProduction();
+}
+// Carte « À produire » sur l'accueil : résume le plan de production (les + prioritaires),
+// pour amener l'info à l'utilisateur sans passer par l'assistant. Cliquable → plan complet.
+async function renderDashProduction(){
+  const box=document.getElementById('dashProduction'); if(!box) return;
+  let plan;
+  try{ plan = await buildProductionPlan(14); }catch(e){ console.error('dashProduction',e); box.innerHTML=''; return; }
+  if(!plan || !plan.length){
+    box.innerHTML=`<div class="panel"><h2>🍩 À produire</h2>
+      <div class="empty">Rien d'urgent à produire — ton stock couvre les besoins des 14 prochains jours ✓</div></div>`;
+    return;
+  }
+  const typeLabel={rupture:{t:'Rupture',c:'#b3261e'}, reassort:{t:'Réassort',c:'#d98324'}, antigaspi:{t:'Anti-gaspi',c:'#3f7d52'}, commande:{t:'Commande',c:'#7a4b82'}};
+  const top=plan.slice(0,4);
+  const rows=top.map(it=>{
+    const tl=typeLabel[it.type]||{t:it.type,c:'#9a8a82'};
+    return `<tr>
+      <td class="nm">${esc(it.produitNom||'—')}</td>
+      <td style="text-align:right;white-space:nowrap">${it.qte?`<b>${qty(it.qte)}</b>`:'<span style="color:#9a8a82">à écouler</span>'}</td>
+      <td style="text-align:right;white-space:nowrap"><span class="tag" style="background:${tl.c};color:#fff;font-size:.62rem">${tl.t}</span></td>
+    </tr>`;
+  }).join('');
+  const reste = plan.length>top.length ? `<div class="note" style="margin-top:6px">+ ${plan.length-top.length} autre(s) production(s) conseillée(s)</div>` : '';
+  box.innerHTML=`<div class="panel clickable" onclick="goView('mrp')" title="Ouvrir le plan de production" style="cursor:pointer">
+    <h2>🍩 À produire <span class="collapse-hint">${plan.length} conseil(s) · 14 j ›</span></h2>
+    <div class="table-wrap"><table class="dash-tbl"><tbody>${rows}</tbody></table></div>
+    ${reste}</div>`;
 }
 // Horloge live de l'accueil (HH:MM, dans le bandeau du tableau de bord)
 let _homeClockTimer = null;
