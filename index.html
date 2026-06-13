@@ -170,6 +170,7 @@ h1,h2,h3,.serif{font-family:'Fraunces','Georgia','Times New Roman',serif;letter-
 .cmd-card .qa.gold{border-color:#e3c48f;color:#9a7320}
 .cmd-check{width:20px;height:20px;flex-shrink:0;accent-color:var(--bordeaux,#490F25);cursor:pointer;margin:2px 0 0}
 .card{background:linear-gradient(160deg,#ffffff,#fdfaf5);border-radius:var(--r-lg);padding:20px;box-shadow:var(--sh-2);border:1px solid var(--hair);position:relative;overflow:hidden}
+.card.accent::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:var(--card-accent,#c9a227)}
 .card::after{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:var(--grad-gold);opacity:.85}
 .card.clickable{cursor:pointer;transition:transform .16s cubic-bezier(.4,0,.2,1),box-shadow .16s ease}
 .card.clickable:hover{transform:translateY(-3px);box-shadow:var(--sh-3)}

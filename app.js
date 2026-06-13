@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v300';
+const APP_VERSION = 'v301';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7254,9 +7254,34 @@ let calRef=new Date();
    ============================================================ */
 // monthKey() : voir utils.js
 // monthLabel() : voir utils.js
+// Période sélectionnée pour la comptabilité (schéma de flux).
+let _comptaPeriode = 'tout';
+const COMPTA_PERIODES = [
+  {k:'tout',   lib:'Tout'},
+  {k:'annee',  lib:'Cette année'},
+  {k:'6mois',  lib:'6 mois'},
+  {k:'90j',    lib:'90 jours'},
+  {k:'mois',   lib:'Dernier mois'},
+  {k:'semaine',lib:'Cette semaine'}
+];
+// Renvoie la date de début (incluse) pour une période, ou null pour "tout".
+function comptaPeriodeStart(k){
+  const now=new Date();
+  const d=new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if(k==='annee') return `${now.getFullYear()}-01-01`;
+  if(k==='6mois'){ const x=new Date(d); x.setMonth(x.getMonth()-6); return x.toISOString().slice(0,10); }
+  if(k==='90j'){ const x=new Date(d); x.setDate(x.getDate()-90); return x.toISOString().slice(0,10); }
+  if(k==='mois'){ const x=new Date(d); x.setMonth(x.getMonth()-1); return x.toISOString().slice(0,10); }
+  if(k==='semaine'){ const x=new Date(d); x.setDate(x.getDate()-7); return x.toISOString().slice(0,10); }
+  return null; // tout
+}
+function comptaSetPeriode(k){ _comptaPeriode=k; renderCompta(); }
 async function computeAccounting(opts){
   opts=opts||{};
-  const orders = await db.orders.toArray();
+  const _periodeStart = opts.periodeStart || null; // filtre optionnel par date de début
+  const allOrders = await db.orders.toArray();
+  // Filtre par période : on ne garde que les commandes dont la date est >= début de période.
+  const orders = _periodeStart ? allOrders.filter(o=> (o.date||'') >= _periodeStart) : allOrders;
   const charges = await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
   const recipes = await db.recipes.toArray();
   const recipeItems = await db.recipeItems.toArray();
@@ -9271,6 +9296,9 @@ function comptaFlowSchema(A){
   const arrowDown=(lbl)=>`<div style="text-align:center;color:#b3261e;font-size:.75rem;padding:3px 0">▼ <span style="color:#9a8a82">${lbl}</span></div>`;
   return `<div class="panel" style="background:#fcfaf6">
     <h2 style="font-size:1.05rem">🔀 D'où vient ton argent, où il va</h2>
+    <div style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;margin-bottom:10px">
+      ${COMPTA_PERIODES.map(p=>`<button onclick="comptaSetPeriode('${p.k}')" style="flex:none;padding:6px 13px;border-radius:20px;border:1.5px solid ${_comptaPeriode===p.k?'#52252f':'var(--hair)'};background:${_comptaPeriode===p.k?'#52252f':'#fff'};color:${_comptaPeriode===p.k?'#fff':'#6a5a52'};font-size:.8rem;font-weight:600;white-space:nowrap;cursor:pointer">${p.lib}</button>`).join('')}
+    </div>
     <p class="note" style="margin-top:0;margin-bottom:12px">Chaque chiffre découle du précédent. On part de ce que tu as facturé, on suit l'argent jusqu'à ce qu'il te reste vraiment.</p>
 
     <!-- Étage 1 : le CA facturé se sépare en encaissé + créances -->
@@ -9297,7 +9325,7 @@ function comptaFlowSchema(A){
 }
 async function renderCompta(){
  try {
-  const A = await computeAccounting();
+  const A = await computeAccounting({ periodeStart: comptaPeriodeStart(_comptaPeriode) });
   const fmtPct = (n,d)=> d>0 ? Math.round(n/d*100) : 0;
   // mois disponibles (depuis la série) + mois courant
   const moisDispo = [...new Set([...(A.serie||[]).map(s=>s.mois), monthKey(today())])].filter(Boolean).sort().reverse();
