@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v271';
+const APP_VERSION = 'v272';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5940,6 +5940,28 @@ function cmdUpdateSelBar(){
 }
 let _cmdClNameMap={};
 function _cmdClName(id){ return _cmdClNameMap[id]||'—'; }
+// Ligne SIMPLIFIÉE pour les sections repliées (terminées / à encaisser) :
+// client + montant + œil pour le détail. `distinctif` ajoute un marqueur visuel (à encaisser).
+function _cmdRowMini(row, opts){
+  opts=opts||{};
+  const o=row.o;
+  const clientNom = (privacyModeEnabled()?'•••':( _cmdClNameMap[o.clientId] || o.histoLabel || '—'));
+  const reste = (typeof orderBalance==='function') ? orderBalance(o) : 0;
+  const marqueur = opts.distinctif
+    ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d98324;flex:none" title="Reste à encaisser"></span>`
+    : '';
+  const resteTxt = opts.distinctif && reste>0
+    ? `<span style="color:#d98324;font-weight:600;font-size:.8rem;white-space:nowrap">reste ${euro(reste)}</span>`
+    : '';
+  return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--hair)">
+    ${marqueur}
+    <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem">${esc(clientNom)}
+      <span style="color:#9a8a82;font-size:.78rem"> · ${fmtDate(o.date)}</span></span>
+    ${resteTxt}
+    <b style="font-size:.9rem;white-space:nowrap">${privacyModeEnabled()?'•••':euro(o.montant)}</b>
+    <button class="cmd-pill detail" style="flex:none" onclick="cmdView(${o.id})" title="Voir le détail">👁</button>
+  </div>`;
+}
 function cmdFilter(q){
   cmdSearch=q||'';
   if(!_cmdCache) return;
@@ -5963,16 +5985,49 @@ function cmdFilter(q){
   const grouper = !((q && q.trim()) || cmdTags.size);
   const LIMIT=300;
   const shown = rows.slice(0,LIMIT);
-  let html=''; let lastMonth=null;
+  // Répartition en 3 groupes :
+  //  - enCours : pas encore livrée (opérationnel) → cartes complètes
+  //  - aEncaisser : livrée MAIS pas soldée (acompte/partiel/en attente) → section distincte
+  //  - terminees : livrée ET payée → repli simple
+  const enCours=[], aEncaisser=[], terminees=[];
   shown.forEach(r=>{
+    const o=r.o;
+    const livree = normStatus(o.statut)==='Livrée';
+    const paye = (typeof orderPayStatus==='function') ? (orderPayStatus(o)==='Payé') : (o.paiement==='Payé');
+    if(!livree) enCours.push(r);
+    else if(!paye) aEncaisser.push(r);
+    else terminees.push(r);
+  });
+  let html='';
+  // 1) EN COURS — cartes complètes (avec séparateurs de mois si pas de recherche)
+  let lastMonth=null;
+  enCours.forEach(r=>{
     let newMonth=false;
     if(grouper){
-      const mk = (r.o.date||'').slice(0,7);   // "AAAA-MM"
+      const mk=(r.o.date||'').slice(0,7);
       if(mk && mk!==lastMonth){ lastMonth=mk; newMonth=true; }
     }
     html += _cmdRow(r, {newMonth, newWeek:false});
   });
-  if(rows.length>LIMIT) html += `<tr><td colspan="9" class="note" style="text-align:center">… ${rows.length-LIMIT} autre(s) résultat(s). Affinez la recherche.</td></tr>`;
+  if(!enCours.length){ html += `<div class="empty" style="padding:14px">Aucune commande en cours.</div>`; }
+  // 2) À ENCAISSER — section distincte, dépliée par défaut (à ne pas oublier)
+  if(aEncaisser.length){
+    const totReste=aEncaisser.reduce((s,r)=>s+((typeof orderBalance==='function')?orderBalance(r.o):0),0);
+    html += `<details open style="margin:12px 0 4px;border:1px solid #f0c89a;border-radius:12px;overflow:hidden;background:#fffaf3">
+      <summary style="cursor:pointer;padding:11px 13px;font-weight:700;color:#b5701a;background:#fdf0dd">
+        💰 À encaisser <span style="font-weight:500">(${aEncaisser.length}) · reste ${euro(totReste)}</span></summary>
+      <div>${aEncaisser.map(r=>_cmdRowMini(r,{distinctif:true})).join('')}</div>
+    </details>`;
+  }
+  // 3) TERMINÉES — repli simple (livrées + soldées)
+  if(terminees.length){
+    html += `<details style="margin:8px 0 4px;border:1px solid var(--hair);border-radius:12px;overflow:hidden">
+      <summary style="cursor:pointer;padding:11px 13px;font-weight:600;color:#6a5a52;background:var(--creme-2)">
+        ✓ Terminées <span style="font-weight:400;color:#9a8a82">(${terminees.length})</span></summary>
+      <div>${terminees.map(r=>_cmdRowMini(r,{distinctif:false})).join('')}</div>
+    </details>`;
+  }
+  if(rows.length>LIMIT) html += `<div class="note" style="text-align:center">… ${rows.length-LIMIT} autre(s) résultat(s). Affinez la recherche.</div>`;
   body.innerHTML = html;
 }
 // Ligne séparatrice colorée par mois/année (couleur dérivée du mois → contraste entre groupes).
