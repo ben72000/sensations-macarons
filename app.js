@@ -16843,6 +16843,50 @@ async function seedPMS(){
   }
 }
 
+// ⚠ FONCTION TEMPORAIRE — génération d'un historique de relevés de température.
+// À RETIRER après usage. Génère 2 relevés/jour (Matin/Soir) par équipement fixe (non marcheOnly),
+// conformes (température aléatoire dans [tempMin, tempMax] de CHAQUE équipement), sur une période donnée.
+async function genTempHistoryTEMP(){
+  const D1='2025-10-15', D2='2026-06-08';
+  const eqs = (await db.pmsEquipments.toArray()).filter(e=>!e.marcheOnly);
+  if(!eqs.length){ toast('Aucun équipement fixe trouvé'); return; }
+  const noms = eqs.map(e=>e.nom).join(', ');
+  if(!confirm(`Générer l'historique de température ?\n\nPériode : ${D1} → ${D2}\nÉquipements (${eqs.length}) : ${noms}\n2 relevés/jour (Matin + Soir), tous conformes.\n\nUne sauvegarde de sécurité sera prise avant.`)) return;
+  // borne aléatoire conforme, arrondie à 0,1 °C, avec une légère marge intérieure pour rester crédible
+  const randTemp = (eq)=>{
+    let lo=+eq.tempMin, hi=+eq.tempMax;
+    // marge intérieure de 0,5°C si la plage est assez large, pour éviter de coller pile aux bornes
+    if(hi-lo>=2){ lo+=0.5; hi-=0.5; }
+    const v = lo + Math.random()*(hi-lo);
+    return Math.round(v*10)/10;
+  };
+  try{
+    await snapshotBackup('avant-genTemp');
+    // relevés déjà présents sur la période (pour ne pas dupliquer)
+    const existing = new Set();
+    (await db.temperatureLogs.toArray()).forEach(l=>{
+      if(l.date>=D1 && l.date<=D2) existing.add(l.equipmentId+'|'+l.date+'|'+l.periode);
+    });
+    const toAdd=[];
+    const start=new Date(D1+'T00:00:00'), end=new Date(D2+'T00:00:00');
+    for(let d=new Date(start); d<=end; d.setDate(d.getDate()+1)){
+      const ds = d.toISOString().slice(0,10);
+      for(const per of ['Matin','Soir']){
+        for(const eq of eqs){
+          const key=eq.id+'|'+ds+'|'+per;
+          if(existing.has(key)) continue;
+          const t=randTemp(eq);
+          toAdd.push({equipmentId:eq.id, date:ds, periode:per, temperature:t, conforme:true, actionCorrective:''});
+        }
+      }
+    }
+    if(!toAdd.length){ toast('Rien à générer (déjà présent)'); return; }
+    // insertion par lots pour ménager l'iPhone
+    const CH=300;
+    for(let i=0;i<toAdd.length;i+=CH){ await db.temperatureLogs.bulkAdd(toAdd.slice(i,i+CH)); }
+    toast(`✓ ${toAdd.length} relevés générés (${eqs.length} équipements)`);
+  }catch(err){ console.error('genTempHistory',err); toast('Erreur pendant la génération'); }
+}
 // Une température est-elle conforme à la plage de l'équipement ?
 function pmsConforme(eq, t){
   if(t===''||t==null||isNaN(+t)) return null;   // pas de saisie
@@ -17940,7 +17984,12 @@ async function pmsRenderTemp(){
    ${vitrine.length?`<div class="panel"><h2>Relevé marché <span style="font-weight:400;font-size:.82rem;color:#9a8a82">— uniquement les jours de marché</span></h2>
      ${vitrine.map(card).join('')}
      <button class="pick-big-btn wait" style="margin-top:6px;background:var(--caramel);color:#fff" onclick="pmsSaveTemp(true)">✓ Enregistrer le relevé marché</button>
-   </div>`:''}`;
+   </div>`:''}
+   <div class="panel" style="border:1px dashed #c9a24b;background:#fbf4e6;margin-top:14px">
+     <h2 style="font-size:.9rem">🛠 Outil temporaire</h2>
+     <p class="note" style="margin-top:0">Génère un historique de relevés (15/10/2025 → 08/06/2026), 2/jour, tous conformes. À usage unique — ce bouton sera retiré ensuite.</p>
+     <button class="btn ghost" onclick="genTempHistoryTEMP()">📊 Générer l'historique de température</button>
+   </div>`;
   // applique l'état hors-plage initial
   [...labo, ...vitrine].forEach(eq=>pmsCheckTemp(eq.id));
 }
