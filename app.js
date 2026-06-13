@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v268';
+const APP_VERSION = 'v269';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -13550,12 +13550,17 @@ function migParfumDraw(){
     const cur=migParfums.find(p=>p.nom===f);
     const on=!!cur;
     const fe=esc(f).replace(/'/g,"\\'");
-    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;margin:3px 0;
-        border:1px solid var(--hair);border-radius:var(--r-sm);
-        background:${on?'#eef5f0':'var(--creme-2)'};${on?'border-left:3px solid #3f7d52':''}">
-      <input type="checkbox" ${on?'checked':''} onchange="migParfumToggle('${fe}',this.checked)" style="flex-shrink:0">
-      <span style="flex:1;font-size:.86rem">${esc(f)}</span>
-      ${on?`<select onchange="migParfumQte('${fe}',+this.value)" style="flex-shrink:0;min-width:60px">${qOpts(cur.qte)}</select>`:''}
+    const col=(typeof flavorColor==='function')?flavorColor(f):'#ccc';
+    return `<div onclick="migParfumToggle('${fe}',${on?'false':'true'})"
+        style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:4px 0;cursor:pointer;
+        border:1px solid var(--hair);border-radius:12px;
+        background:${on?'#eef5f0':'#fbf8f3'};${on?'border-color:#bcd9c6':''}">
+      <span style="width:22px;height:22px;border-radius:50%;background:${col};flex:none;
+        box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);${on?'outline:2px solid #3f7d52;outline-offset:1px':''}"></span>
+      <span style="flex:1;font-size:1rem;color:${on?'var(--bordeaux)':'#6a5a52'};font-weight:${on?'600':'400'}">${esc(f)}</span>
+      ${on
+        ? `<select onclick="event.stopPropagation()" onchange="migParfumQte('${fe}',+this.value)" style="flex:none;min-width:64px;font-size:1rem">${qOpts(cur.qte)}</select>`
+        : `<span style="flex:none;color:#c2b8b0;font-size:1rem">0</span>`}
     </div>`;
   }).join('');
 }
