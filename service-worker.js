@@ -1,4 +1,4 @@
-const CACHE = 'sm-iphone-v269';
+const CACHE = 'sm-iphone-v271';
 const ASSETS = [
   './',
   './index.html',

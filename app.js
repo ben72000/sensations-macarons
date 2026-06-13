@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v269';
+const APP_VERSION = 'v271';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -512,6 +512,7 @@ const KPI_HELP = {
   'panier_moyen':  { t:'Panier moyen', d:"Le montant moyen d'une commande de ce client : son chiffre d'affaires total ÷ son nombre de commandes. Plus il est élevé, plus le client est précieux." },
   'marge_brute':   { t:'Marge brute', d:"Ce qui reste du chiffre d'affaires après avoir retiré les coûts directs de fabrication (matières + emballages), AVANT les charges sociales. C'est ta marge « atelier »." },
   'marge_nette':   { t:'Marge nette', d:"Ce qui reste vraiment après avoir retiré les coûts de fabrication ET les charges sociales (cotisations URSSAF). C'est le plus proche de ton bénéfice réel." },
+  'cout_dons':     { t:'Coût des dons', d:"Ce que t'ont coûté les macarons offerts (dégustations, promotions, gestes commerciaux), valorisés à leur coût de revient complet (matières + temps). La « marge après dons » te montre ta marge nette une fois ce coût déduit : utile pour juger si ta générosité reste un bon investissement commercial." },
   'marge_liv':     { t:'Marge après livraison', d:"Ta marge nette une fois déduits aussi les frais de livraison (carburant + temps de trajet). Montre si une livraison « mange » ta marge." },
   'charges_soc':   { t:'Charges sociales', d:"Les cotisations URSSAF dues sur ton chiffre d'affaires. Le taux dépend de la nature : vente de marchandises ou prestation de service (taux différent)." },
   'macarons_vendus':{ t:'Macarons vendus', d:"Le nombre total de macarons écoulés sur la période (commandes + marchés)." },
@@ -1322,6 +1323,7 @@ async function renderDash(){
   // Marge nette moyenne par macaron (s'appuie sur l'analyse de rentabilité : coûts + charges sociales).
   // Calcul protégé : en cas d'erreur ou d'absence de ventes, on n'affiche rien plutôt que de fausser.
   let margeNetteParMacaron = null;
+  let coutDons = null, margeApresDons = null, piecesDon = 0;
   try {
     const [_ri, _lots, _mm, _st] = await Promise.all([
       db.recipeItems.toArray().catch(()=>[]),
@@ -1332,6 +1334,11 @@ async function renderDash(){
     const _An = analyzeFlavorProfitability({recipes, recipeItems:_ri, lots:_lots, mats:materials, orders, markets, marketMoves:_mm, productions, settings:_st});
     if(_An && _An.totals && _An.totals.pieces>0){
       margeNetteParMacaron = money2(_An.totals.margeNette / _An.totals.pieces);
+    }
+    if(_An && _An.totals){
+      coutDons = _An.totals.coutDons||0;
+      margeApresDons = _An.totals.margeApresDons;
+      piecesDon = _An.totals.piecesDon||0;
     }
   } catch(e){ console.error('margeNetteParMacaron', e); }
   // Relevé de température du jour fait ou non (rappel HACCP discret).
@@ -1410,6 +1417,7 @@ async function renderDash(){
    <div class="cards">
      <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
      <div class="card clickable" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts & charges ›':'pas encore de ventes ›'}</div></div>
+     <div class="card clickable" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      <div class="card clickable" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
      <div class="card clickable" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock ${kpiI('alertes_stock')}</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
    </div>
@@ -8126,10 +8134,23 @@ function analyzeFlavorProfitability(data){
     pieces: round3(rows.reduce((s2,r)=>s2+r.piecesVendues,0)),
     margeBrute: money2(rows.reduce((s2,r)=>s2+r.margeBrute,0)),
     margeNette: money2(rows.reduce((s2,r)=>s2+r.margeNette,0)),
-    valStock: money2(rows.reduce((s2,r)=>s2+r.valStockCout,0))
+    valStock: money2(rows.reduce((s2,r)=>s2+r.valStockCout,0)),
+    piecesDon: round3(rows.reduce((s2,r)=>s2+(r.piecesDon||0),0)),
+    // coût des dons = pièces données × coût de revient complet (matières + temps) de chaque parfum
+    coutDons: money2(rows.reduce((s2,r)=>s2+((r.piecesDon||0) * (r.cost?r.cost.coutRevientUnit:0)),0))
   };
+  // dons non rattachés à un parfum (ex : "Non spécifié") → valorisés au coût de revient MOYEN
+  const coutsArr = rows.map(r=>r.cost?r.cost.coutRevientUnit:0).filter(c=>c>0);
+  const coutMoyen = coutsArr.length ? coutsArr.reduce((a,b)=>a+b,0)/coutsArr.length : 0;
+  const piecesDonNS = round3((unmatched||[]).reduce((s2,u)=>s2+(u.piecesDon||0),0));
+  if(piecesDonNS>0){
+    totals.piecesDon = round3(totals.piecesDon + piecesDonNS);
+    totals.coutDons = money2(totals.coutDons + piecesDonNS*coutMoyen);
+  }
   totals.ecartTheo = money2(totals.ca - totals.caTheo);
   totals.tauxMargeGlobal = totals.ca>0 ? Math.round(totals.margeBrute/totals.ca*1000)/10 : null;
+  // marge nette une fois le coût des dons déduit (impact réel de la générosité/promo)
+  totals.margeApresDons = money2(totals.margeNette - totals.coutDons);
 
   return {rows, unmatched, totals, costByRecipe};
 }
@@ -13574,8 +13595,48 @@ function migParfumQte(nom, qte){
 }
 function migParfumAdd(){ migParfums.push({nom:'',qte:1}); migParfumDraw(); }
 function migParfumDel(i){ migParfums.splice(i,1); migParfumDraw(); }
+
+// ---- DONS historiques (offerts, sans montant) ----
+let migDons=[];   // [{nom, qte}] — nom peut être un parfum ou '(Non spécifié)'
+const DON_NON_SPECIFIE='(Non spécifié)';
+function migDonDraw(){
+  const box=document.getElementById('mig_dons'); if(!box) return;
+  const all=[...FLAVORS, ...((typeof BIG_FORMATS!=='undefined')?BIG_FORMATS:[])];
+  const uniq=[...new Set(all)].sort((a,b)=>a.localeCompare(b,'fr'));
+  const liste=[...uniq, DON_NON_SPECIFIE];   // "Non spécifié" en dernier
+  const qOpts=(sel)=>{ let o=''; for(let n=1;n<=60;n++){ o+=`<option value="${n}" ${n===sel?'selected':''}>${n}</option>`; } return o; };
+  box.innerHTML = liste.map(f=>{
+    const cur=migDons.find(p=>p.nom===f);
+    const on=!!cur;
+    const fe=esc(f).replace(/'/g,"\\'");
+    const isNS=(f===DON_NON_SPECIFIE);
+    const col=isNS?'#cdbfb2':((typeof flavorColor==='function')?flavorColor(f):'#ccc');
+    return `<div onclick="migDonToggle('${fe}',${on?'false':'true'})"
+        style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:4px 0;cursor:pointer;
+        border:1px solid var(--hair);border-radius:12px;
+        background:${on?'#f3eef7':'#fbf8f3'};${on?'border-color:#caa6d8':''}">
+      <span style="width:22px;height:22px;border-radius:50%;background:${col};flex:none;
+        box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);${on?'outline:2px solid #9c5bb0;outline-offset:1px':''};
+        ${isNS?'display:flex;align-items:center;justify-content:center;font-size:.8rem':''}">${isNS?'?':''}</span>
+      <span style="flex:1;font-size:1rem;color:${on?'var(--bordeaux)':'#6a5a52'};font-weight:${on?'600':'400'};${isNS?'font-style:italic':''}">${esc(f)}</span>
+      ${on
+        ? `<select onclick="event.stopPropagation()" onchange="migDonQte('${fe}',+this.value)" style="flex:none;min-width:64px;font-size:1rem">${qOpts(cur.qte)}</select>`
+        : `<span style="flex:none;color:#c2b8b0;font-size:1rem">0</span>`}
+    </div>`;
+  }).join('');
+}
+function migDonToggle(nom, on){
+  if(on){ if(!migDons.find(p=>p.nom===nom)) migDons.push({nom, qte:1}); }
+  else { migDons = migDons.filter(p=>p.nom!==nom); }
+  migDonDraw();
+}
+function migDonQte(nom, qte){
+  const p=migDons.find(x=>x.nom===nom); if(p) p.qte=Math.max(1, qte||1);
+}
+
 async function renderMigration(){
   migParfums=[];
+  migDons=[];
   _migEditId=null;
   const orders = await db.orders.toArray();
   const histo = orders.filter(o=>o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
@@ -13617,6 +13678,11 @@ async function renderMigration(){
        <div id="mig_parfums"></div>
        <p class="note">Coche les parfums vendus et indique leur quantité pour voir émerger les tendances (parfums populaires, saisonnalité). Sans impact sur le montant : le CA reste celui que tu as saisi.</p>
      </div>
+     <details style="margin:4px 0 10px;border:1px dashed #caa6d8;border-radius:10px;padding:8px 10px;background:#faf6fc">
+       <summary style="cursor:pointer;font-weight:600;color:#7a4a88">🎁 Don (offert) <span style="font-weight:400;color:#9a8a82">— optionnel, sans montant</span></summary>
+       <p class="note" style="margin:8px 0">Coche les parfums offerts et leur quantité. Ces macarons n'ont pas de montant (offerts) mais comptent dans le <b>coût des dons</b> et la <b>marge après dons</b>. Utilise « Non spécifié » si tu ne sais plus quel parfum.</p>
+       <div id="mig_dons"></div>
+     </details>
      <button class="btn gold" style="width:100%" onclick="migSaveOrder()">＋ Ajouter au chiffre d'affaires</button>
      <p class="note">Astuce : pour un mois entier, tu peux saisir une seule ligne au total du mois (avec un libellé), ou plusieurs commandes détaillées — comme tu préfères.</p>
    </div>
@@ -13666,22 +13732,29 @@ async function renderMigration(){
      ${rows?`<h3 style="font-size:.95rem;margin:14px 0 6px">Détail</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Client / libellé</th><th>Montant</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${histo.length>60?'<p class="note">60 dernières lignes affichées.</p>':''}`:'<div class="empty">Aucune commande historique saisie pour l\'instant.</div>'}
    </div>`;
   migParfumDraw();
+  migDonDraw();
 }
 async function migSaveOrder(){
   const date=val('mig_date')||today();
   const montant=+val('mig_montant')||0;
   const clientId=+val('mig_client')||0;
   const label=(val('mig_label')||'').trim();
-  if(montant<=0){ toast('Indique un montant encaissé'); return; }
-  // détail parfums optionnel (alimente les stats/tendances, n'affecte pas le CA)
+  // détail parfums vendus (alimente les stats/tendances, n'affecte pas le CA)
   const parfums=(migParfums||[]).filter(p=>p.nom&&p.nom.trim()&&+p.qte>0)
     .map(p=>({nom:p.nom.trim(), qte:+p.qte}));
-  const lignes = parfums.length ? [{type:'histo', parfums}] : [];
+  // dons (offerts, sans montant) — comptent dans le coût des dons
+  const dons=(migDons||[]).filter(p=>p.nom&&p.nom.trim()&&+p.qte>0)
+    .map(p=>({nom:p.nom.trim(), qte:+p.qte}));
+  // on autorise la saisie s'il y a un montant encaissé OU au moins un don
+  if(montant<=0 && !dons.length){ toast('Indique un montant encaissé (ou ajoute un don)'); return; }
+  const lignes = [];
+  if(parfums.length) lignes.push({type:'histo', parfums});
+  if(dons.length)    lignes.push({type:'don', parfums:dons});
   if(_migEditId){
-    // MODE ÉDITION : on met à jour la commande existante (sans toucher aux champs non gérés ici)
+    // MODE ÉDITION : met à jour la commande existante
     await db.orders.update(_migEditId, { clientId:clientId||null, date, montant:money2(montant),
       histoLabel:label||'', lignes });
-    const editId=_migEditId; _migEditId=null;
+    _migEditId=null;
     toast(`Commande modifiée ✓`);
     renderMigration();
     return;
@@ -13691,7 +13764,8 @@ async function migSaveOrder(){
     lignes, paiements:[], notes:'(reprise / historique)' };
   await db.orders.add(o);
   const nbMac=parfums.reduce((s,p)=>s+p.qte,0);
-  toast(`Ajouté au CA : ${euro(montant)}${nbMac?` · ${nbMac} macaron(s) détaillés`:''} ✓`);
+  const nbDon=dons.reduce((s,p)=>s+p.qte,0);
+  toast(`Enregistré : ${euro(montant)}${nbMac?` · ${nbMac} vendu(s)`:''}${nbDon?` · 🎁 ${nbDon} offert(s)`:''} ✓`);
   renderMigration();
 }
 // Charge une commande historique dans le formulaire pour l'éditer.
@@ -13709,6 +13783,11 @@ async function migEditOrder(id){
   const ligneHisto=(o.lignes||[]).find(l=>l.type==='histo');
   if(ligneHisto&&Array.isArray(ligneHisto.parfums)){ migParfums=ligneHisto.parfums.map(p=>({nom:p.nom, qte:+p.qte||1})); }
   migParfumDraw();
+  // recharge les dons cochés
+  migDons=[];
+  const ligneDon=(o.lignes||[]).find(l=>l.type==='don');
+  if(ligneDon&&Array.isArray(ligneDon.parfums)){ migDons=ligneDon.parfums.map(p=>({nom:p.nom, qte:+p.qte||1})); }
+  migDonDraw();
   // bascule le bouton en mode "enregistrer les modifications" + retour visuel
   const btn=document.querySelector('button[onclick="migSaveOrder()"]');
   if(btn){ btn.textContent='✓ Enregistrer les modifications'; btn.scrollIntoView({behavior:'smooth',block:'center'}); }
