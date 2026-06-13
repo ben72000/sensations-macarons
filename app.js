@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v286';
+const APP_VERSION = 'v289';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -865,6 +865,8 @@ function setActiveView(v){
   document.querySelectorAll('.nav button, .tabbar button, .sheet-grid button').forEach(x=>{
     if(x.dataset && x.dataset.v) x.classList.toggle('active', x.dataset.v===v);
   });
+  // La mascotte n'est présente que sur l'accueil (dash) ; masquée ailleurs.
+  if(typeof mascotSetVisible==='function') mascotSetVisible(v==='dash');
 }
 function navTo(b){
   if(!b || !b.dataset || !b.dataset.v) return;
@@ -16459,7 +16461,8 @@ function mascotInit(){
   if(document.getElementById('mascot')) return;
   const host=document.createElement('div');
   host.id='mascot';
-  host.innerHTML=`<div class="mascot-face"></div><span class="mascot-badge">—</span>`;
+  host.innerHTML=`<div class="mascot-bubble" id="mascotBubble">Besoin d'un coup de main ? <b>Touche-moi</b> pour mes conseils 🍩</div>
+    <div class="mascot-face"></div><span class="mascot-badge">—</span>`;
   document.body.appendChild(host);
   // Position FIXE (bas-droite, près du CA du mois) : on ne restaure plus de position
   // déplacée et on purge toute position mémorisée (évite qu'elle reste coincée hors écran).
@@ -16472,15 +16475,111 @@ function mascotInit(){
   }catch(e){}
   mascotSetupTap(host);
   mascotRefresh();
+  // visible uniquement sur l'accueil au démarrage
+  mascotSetVisible(view==='dash');
   // synchro périodique (background) tant que l'app est au premier plan
   if(_mascotTimer) clearInterval(_mascotTimer);
   _mascotTimer=setInterval(()=>{ if(document.visibilityState==='visible') mascotRefresh(); }, 60000);
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') mascotRefresh(); });
 }
-// Mascotte FIXE : un simple tap ouvre l'Assistant (jauge). Plus de déplacement
-// (la position est ancrée en CSS, bas-droite, pour ne jamais se perdre hors écran).
+// Affiche ou masque la mascotte (présente uniquement sur l'accueil).
+function mascotSetVisible(on){
+  const host=document.getElementById('mascot'); if(!host) return;
+  host.style.display = on ? '' : 'none';
+  if(!on && typeof mascotBubbleReset==='function') mascotBubbleReset(); // repli au départ de l'accueil
+}
+// Mascotte FIXE : un tap agrandit la bulle et y affiche le briefing « À faire aujourd'hui ».
 function mascotSetupTap(host){
-  host.addEventListener('click', ()=> goView('assistant'));
+  host.addEventListener('click', (e)=>{ e.stopPropagation(); mascotToggleBubble(); });
+}
+// Répliques de la mascotte : ton complice et taquin, déclinées par état de sérénité.
+// Plusieurs variantes par état → tirage au hasard pour varier à chaque ouverture.
+const MASCOT_LINES = {
+  'tres-serein': [
+    "Tout roule, chef ! Je m'ennuierais presque… 😎",
+    "Rien à signaler. Tu gères ça comme un pro des coques.",
+    "Pause café méritée ? De mon côté, c'est calme plat.",
+    "Stock au top, commandes sous contrôle. T'es en feu (pas le four, toi).",
+    "Honnêtement ? J'ai rien à te reprocher. C'est rare, profites-en."
+  ],
+  'serein': [
+    "Ça tourne bien ! Quelques bricoles, rien de méchant.",
+    "Tranquille aujourd'hui. Jette quand même un œil ici 👇",
+    "Bonne ambiance dans l'atelier. Deux-trois trucs et c'est nickel.",
+    "On est large. Mais bon, je te montre quand même, hein."
+  ],
+  'vigilance': [
+    "Hmm, ça se corse un peu. On garde l'œil ouvert ?",
+    "Rien de grave, mais faudrait pas laisser traîner…",
+    "Petite vigilance ! Regarde ça avant que ça s'accumule.",
+    "Je dis ça, je dis rien, mais y'a deux-trois trucs à voir 👀"
+  ],
+  'tension': [
+    "Ça chauffe un peu côté planning ! On souffle et on attaque.",
+    "Bon, faut s'y mettre, là. Mais on va y arriver, toi et moi.",
+    "Le four monte en température… et le planning aussi 😅",
+    "Un peu sous pression ! Mais t'as déjà vu pire, allez."
+  ],
+  'stress': [
+    "Ok, panique pas ! On respire… et on regarde ça ensemble.",
+    "Aïe aïe aïe, ça presse ! Mais je suis là, on gère. 💪",
+    "Coup de feu ! Priorité au plus urgent, je te liste ça.",
+    "Respire un bon coup. On prend les choses une par une, promis."
+  ]
+};
+function mascotPickLine(mood){
+  const arr = MASCOT_LINES[mood] || MASCOT_LINES['serein'];
+  return arr[Math.floor(Math.random()*arr.length)];
+}
+// Bascule la bulle entre l'invitation compacte et le briefing agrandi.
+let _mascotBubbleOpen=false;
+async function mascotToggleBubble(){
+  const bubble=document.getElementById('mascotBubble'); if(!bubble) return;
+  _mascotBubbleOpen=!_mascotBubbleOpen;
+  if(!_mascotBubbleOpen){ mascotBubbleReset(); return; }
+  // réplique selon l'état de sérénité courant (ton complice, variée à chaque ouverture)
+  const mood = (typeof serenityTier==='function' && _mascotScore!=null) ? serenityTier(_mascotScore).mood : 'serein';
+  const punchline = mascotPickLine(mood);
+  bubble.classList.add('big');
+  bubble.innerHTML=`<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px">
+      <b style="flex:1;font-size:.9rem">${esc(punchline)}</b>
+      <span onclick="event.stopPropagation();mascotBubbleReset()" style="cursor:pointer;color:#9a8a82;font-size:1.1rem;line-height:1">✕</span>
+    </div>
+    <div style="font-size:.8rem;color:#9a8a82">Je regarde ce qu'il y a à faire…</div>`;
+  let items=[];
+  try{ items=await assistantBriefing(); }catch(e){ console.error('mascot briefing',e); }
+  if(!_mascotBubbleOpen) return; // refermée entre-temps
+  const prioC={0:'#b3261e',1:'#d98324',2:'#3f7d52'};
+  let corps;
+  if(!items.length){
+    corps=`<div style="font-size:.82rem;color:#3f7d52">✅ Rien d'urgent. Tout est sous contrôle.</div>`;
+  }else{
+    corps=items.slice(0,5).map(it=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--hair)">
+      <span style="flex:none">${it.ico||'•'}</span>
+      <span style="flex:1;font-size:.8rem;line-height:1.25"><b>${esc(it.titre)}</b><br>
+        <span style="color:#6b5d54">${esc(it.detail||'')}</span></span>
+      <span style="width:7px;height:7px;border-radius:50%;background:${prioC[it.prio]||'#3f7d52'};flex:none;margin-top:5px"></span>
+    </div>`).join('');
+  }
+  bubble.innerHTML=`<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px">
+      <b style="flex:1;font-size:.9rem">${esc(punchline)}</b>
+      <span onclick="event.stopPropagation();mascotBubbleReset()" style="cursor:pointer;color:#9a8a82;font-size:1.1rem;line-height:1">✕</span>
+    </div>${corps}
+    <div onclick="event.stopPropagation();goView('assistant')" style="margin-top:8px;text-align:center;font-size:.76rem;color:var(--bordeaux);font-weight:600;cursor:pointer">Ouvrir l'assistant →</div>`;
+}
+// Remet la bulle dans son état compact (invitation), avec un message qui varie.
+const MASCOT_INVITES = [
+  "Besoin d'un coup de main ? <b>Touche-moi</b> 🍩",
+  "Psst… <b>tape-moi</b> pour voir ce qui t'attend 👀",
+  "Un petit point du jour ? <b>Touche-moi</b> !",
+  "Coucou ! <b>Clique</b> pour mes conseils du moment 🍪",
+  "On fait le point ? <b>Touche-moi</b> quand tu veux."
+];
+function mascotBubbleReset(){
+  _mascotBubbleOpen=false;
+  const bubble=document.getElementById('mascotBubble'); if(!bubble) return;
+  bubble.classList.remove('big');
+  bubble.innerHTML=MASCOT_INVITES[Math.floor(Math.random()*MASCOT_INVITES.length)];
 }
 
 /* ============================================================
