@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v303';
+const APP_VERSION = 'v304';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7624,13 +7624,20 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials){
       coutMat=money2(coutMat+(+ln.evQte||0)*avgUnit);
       return;
     }
-    // coffret / grand / don : marchandise
-    caGoods=money2(caGoods+net);
+    // coffret / grand / don / histo : marchandise
+    // histo (reprise) : le prix n'est pas porté par la ligne mais par o.montant.
+    const lineCA = (ln.type==='histo') ? money2(+o.montant||0) : net;
+    caGoods=money2(caGoods+lineCA);
     let pieces=0;
     if(ln.type==='coffret'){ pieces=+ln.taille||0; coutEmb=money2(coutEmb+packagingCostReal(ln.taille, realPkg)); }
     else if(ln.type==='grand') pieces=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
     else if(ln.type==='vrac') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);  // boîte réutilisable : pas de coût emballage
     else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    else if(ln.type==='histo'){
+      // Commande de reprise (migration) : pas de détail produit fin.
+      // CA = montant commande (ci-dessus) ; coût matières estimé via nb de macarons × coût moyen.
+      pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    }
     coutMat=money2(coutMat+pieces*avgUnit);
   });
 
@@ -10219,8 +10226,9 @@ async function renderProfit(){
   const byClient={};
   withM.forEach(({o,m})=>{
     const k=o.clientId||0;
-    (byClient[k] ||= {clientId:k, nom:clName(k), ca:0, nb:0, brute:0, nette:0});
+    (byClient[k] ||= {clientId:k, nom:clName(k), ca:0, nb:0, brute:0, nette:0, aReprise:false});
     const c=byClient[k]; c.ca=money2(c.ca+m.ca); c.nb++; c.brute=money2(c.brute+m.margeBrute); c.nette=money2(c.nette+m.margeNette);
+    if((orderToLines(o)||[]).some(l=>l.type==='histo')) c.aReprise=true;
   });
   const clientRows=Object.values(byClient).map(c=>{
     c.panier=c.nb>0?money2(c.ca/c.nb):0;
@@ -10241,7 +10249,7 @@ async function renderProfit(){
       return `<div onclick="${c.clientId?`clientForm(${c.clientId})`:''}" style="${c.clientId?'cursor:pointer;':''}background:#fff;border:1px solid var(--hair);border-left:4px solid ${c.scale.col};border-radius:14px;padding:13px 15px;box-shadow:var(--sh-1)">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
           <span style="flex:none">${medaille}</span>
-          <b style="flex:1;font-size:1rem;color:var(--bordeaux);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.nom)}</b>
+          <b style="flex:1;font-size:1rem;color:var(--bordeaux);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.nom)}${c.aReprise?` <span style="color:#9a8a82;font-size:.66rem;font-weight:400" title="Contient des commandes de reprise : marge estimée">~ estimé</span>`:''}</b>
           <span class="tag" style="background:${c.scale.col};color:#fff;font-size:.66rem">${c.scale.label}</span>
         </div>
         <div style="display:flex;gap:6px;text-align:center;margin-bottom:10px">
