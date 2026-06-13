@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v277';
+const APP_VERSION = 'v279';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5907,6 +5907,7 @@ function _cmdRow(row, grp){
       ${payBtn}
       <button class="qa" onclick="cmdLink(${o.id})" title="Lier à une production">🔗 Lier</button>
       <button class="qa gold" onclick="genererFacture(${o.id})" title="Générer la facture">🧾 Facturer</button>
+      <button class="qa del-full" onclick="cmdDelete(${o.id})" title="Supprimer la commande">🗑 Supprimer</button>
     </div>
   </div>`;
 }
@@ -11567,7 +11568,10 @@ async function calculateSerenityScore(opts){
   // commandes validées des N prochains jours (non livrées)
   const todayStr = today();
   const horizonDate = (()=>{ const d=new Date(todayStr); d.setDate(d.getDate()+horizon); return d.toISOString().slice(0,10); })();
-  const fenetre = orders.filter(o=> o.date && o.date>=todayStr && o.date<=horizonDate && normStatus(o.statut)!=='Livrée');
+  // commandes validées des N prochains jours, NON livrées ET NON terminées :
+  // une commande « Terminée » (prête, déjà produite) ne pèse plus sur la sérénité.
+  const fenetre = orders.filter(o=> o.date && o.date>=todayStr && o.date<=horizonDate
+    && normStatus(o.statut)!=='Livrée' && normStatus(o.statut)!=='Terminée');
   // marchés planifiés dans la fenêtre (non clos) avec une quantité prévue
   const marchesFenetre = markets.filter(m=> m.date && m.date>=todayStr && m.date<=horizonDate && m.statut!=='clos' && (+m.prevuQte||0)>0);
 
