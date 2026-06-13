@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v279';
+const APP_VERSION = 'v280';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10139,9 +10139,13 @@ function _packMarginRows(){
   BOX_SIZES.forEach(t=>{
     rows.push({ nom:'Coffret '+t, cap:t, coutEmb: (s.packaging&&s.packaging[t]!=null)?+s.packaging[t]:0, std:true });
   });
-  // 2) types d'emballage perso (marché, pro…), hors doublons de nom
+  // 2) types d'emballage perso (marché, pro…), en éliminant les doublons (même nom + capacité + coût)
+  const seen=new Set();
   (s.packTypes||[]).forEach(p=>{
     if(!p.nom) return;
+    const key=(p.nom||'').trim().toLowerCase()+'|'+(+p.capacite||0)+'|'+(+p.cout||0);
+    if(seen.has(key)) return;   // doublon → ignoré
+    seen.add(key);
     rows.push({ nom:p.nom, cap:+p.capacite||0, coutEmb:+p.cout||0, std:false });
   });
   return rows;
@@ -10167,9 +10171,14 @@ async function pmcBuildAndFill(){
   BOX_SIZES.forEach(t=>rows.push({ nom:'Coffret '+t, cap:t, coutEmb:(s.packaging&&s.packaging[t]!=null)?+s.packaging[t]:0 }));
   // 2) types d'emballage : on lit les LIGNES SAISIES à l'écran (live), pas seulement l'enregistré
   const n=+val('set_pt_n')||0;
+  const seenPmc=new Set();
   for(let i=0;i<n;i++){
     const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue;
-    rows.push({ nom, cap:Math.max(0,+val('set_pt_cap_'+i)||0), coutEmb:money2(+val('set_pt_c_'+i)||0) });
+    const cap=Math.max(0,+val('set_pt_cap_'+i)||0), coutEmb=money2(+val('set_pt_c_'+i)||0);
+    const key=nom.toLowerCase()+'|'+cap+'|'+coutEmb;
+    if(seenPmc.has(key)) continue;   // doublon → ignoré
+    seenPmc.add(key);
+    rows.push({ nom, cap, coutEmb });
   }
   // 3) coût macaron réel (moyenne des recettes)
   let coutAuto=null;
@@ -10314,9 +10323,16 @@ function saveSettingsForm(){
   const oldPack=JSON.stringify(s.packaging||{});
   s.packaging={}; BOX_SIZES.forEach(t=>{ s.packaging[t]=money2(+val('set_pk_'+t)||0); });
   if(JSON.stringify(s.packaging)!==oldPack) s.packagingDate=today();
-  // types d'emballage (on lit toutes les lignes, on garde celles avec un nom)
-  const n=+val('set_pt_n')||0; const pts=[];
-  for(let i=0;i<n;i++){ const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue; pts.push({nom, cout:money2(+val('set_pt_c_'+i)||0), capacite:Math.max(0,+val('set_pt_cap_'+i)||0)}); }
+  // types d'emballage (on lit toutes les lignes, on garde celles avec un nom, sans doublon)
+  const n=+val('set_pt_n')||0; const pts=[]; const seenSave=new Set();
+  for(let i=0;i<n;i++){
+    const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue;
+    const cout=money2(+val('set_pt_c_'+i)||0), capacite=Math.max(0,+val('set_pt_cap_'+i)||0);
+    const key=nom.toLowerCase()+'|'+capacite+'|'+cout;
+    if(seenSave.has(key)) continue;   // doublon → on ne l'enregistre pas
+    seenSave.add(key);
+    pts.push({nom, cout, capacite});
+  }
   s.packTypes=pts.length?pts:SETTINGS_DEFAULTS.packTypes;
   saveSettings(s);
   closeModal();
