@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v275';
+const APP_VERSION = 'v277';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5948,19 +5948,30 @@ function _cmdRowMini(row, opts){
   const checked = _cmdSel.has(o.id) ? 'checked' : '';
   const clientNom = (privacyModeEnabled()?'•••':( _cmdClNameMap[o.clientId] || o.histoLabel || '—'));
   const reste = (typeof orderBalance==='function') ? orderBalance(o) : 0;
+  const montant = (+o.montant)||0;
   const marqueur = opts.distinctif
     ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#d98324;flex:none" title="Reste à encaisser"></span>`
     : '';
-  const resteTxt = opts.distinctif && reste>0
+  // "reste" affiché UNIQUEMENT en cas de paiement partiel (reste différent du montant total).
+  // Si rien n'a été payé (reste = montant) c'est redondant → on ne l'affiche pas.
+  const estPartiel = opts.distinctif && reste>0 && Math.abs(reste-montant)>0.01;
+  const resteTxt = estPartiel
     ? `<span style="color:#d98324;font-weight:600;font-size:.8rem;white-space:nowrap">reste ${euro(reste)}</span>`
     : '';
+  // Couleur du montant dans "À encaisser" : rouge si totalement dû (rien payé), orange si partiel.
+  let montantColor='';
+  if(opts.distinctif && reste>0){
+    montantColor = estPartiel ? 'color:#d98324' : 'color:#b3261e';   // orange partiel · rouge totalement dû
+  }
   return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--hair)">
     <input type="checkbox" ${checked} onchange="cmdToggleOne(${o.id}, this.checked)" style="flex:none" onclick="event.stopPropagation()">
     ${marqueur}
-    <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem">${esc(clientNom)}
-      <span style="color:#9a8a82;font-size:.78rem"> · ${fmtDate(o.date)}</span></span>
+    <span style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem">${esc(clientNom)}</span>
+      <span style="color:#8a7a72;font-size:.74rem;white-space:nowrap">${fmtDate(o.date)}</span>
+    </span>
     ${resteTxt}
-    <b style="font-size:.9rem;white-space:nowrap">${privacyModeEnabled()?'•••':euro(o.montant)}</b>
+    <b style="font-size:.9rem;white-space:nowrap;${montantColor}">${privacyModeEnabled()?'•••':euro(o.montant)}</b>
     <button class="cmd-pill detail" style="flex:none" onclick="cmdView(${o.id})" title="Voir le détail">👁</button>
   </div>`;
 }
@@ -5989,16 +6000,17 @@ function cmdFilter(q){
   const shown = rows.slice(0,LIMIT);
   // Répartition en 3 groupes :
   //  - enCours : pas encore livrée (opérationnel) → cartes complètes
-  //  - aEncaisser : livrée MAIS pas soldée (acompte/partiel/en attente) → section distincte
-  //  - terminees : livrée ET payée → repli simple
+  //  - aEncaisser : livrée AVEC un solde réellement dû (montant>0 et non soldé) → section distincte
+  //  - terminees : livrée et soldée, OU sans montant dû (0 €) → repli simple ("archivées")
   const enCours=[], aEncaisser=[], terminees=[];
   shown.forEach(r=>{
     const o=r.o;
     const livree = normStatus(o.statut)==='Livrée';
-    const paye = (typeof orderPayStatus==='function') ? (orderPayStatus(o)==='Payé') : (o.paiement==='Payé');
+    const reste = (typeof orderBalance==='function') ? orderBalance(o) : ((+o.montant)||0);
+    const aDuRestant = (+o.montant)>0 && reste>0.01;   // un vrai montant reste à encaisser
     if(!livree) enCours.push(r);
-    else if(!paye) aEncaisser.push(r);
-    else terminees.push(r);
+    else if(aDuRestant) aEncaisser.push(r);
+    else terminees.push(r);   // soldée OU montant à 0 € → terminées (archivées)
   });
   let html='';
   // 1) EN COURS — cartes complètes (avec séparateurs de mois si pas de recherche)
