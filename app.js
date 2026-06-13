@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v292';
+const APP_VERSION = 'v294';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9235,6 +9235,45 @@ function comptaGo(dest){
 const NAV_GO = '<span class="nav-go" aria-hidden="true">›</span>';
 // Petit marqueur « ⓘ » signalant qu'un détail explicatif s'ouvre en popup (pas un changement d'écran).
 const INFO_I = '<span class="info-i" aria-hidden="true">ⓘ</span>';
+// Schéma de flux financier : montre comment les chiffres découlent les uns des autres,
+// avec des flèches. Branché sur les données réelles (objet A de renderCompta).
+//   CA facturé ─┬─► CA encaissé ─(− matières − charges)─► Résultat
+//               └─► Créances (reste à encaisser)
+function comptaFlowSchema(A){
+  if(privacyModeEnabled()) return ''; // pas de schéma chiffré en mode discret
+  const e=v=>euro(v||0);
+  const fact=A.totalFacture||0, enc=A.totalEncaisse||0, creances=A.creances||0;
+  const mat=A.totalCoutMatieres||0, charges=A.totalCharges||0, res=A.resultat||0;
+  const box=(titre,val,sub,col,bg)=>`<div style="flex:1;min-width:120px;background:${bg};border:1.5px solid ${col};border-radius:12px;padding:10px 12px;text-align:center">
+      <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.03em;color:#7a6a62;font-weight:600">${titre}</div>
+      <div style="font-size:1.1rem;font-weight:700;color:${col};margin:2px 0">${e(val)}</div>
+      ${sub?`<div style="font-size:.66rem;color:#9a8a82">${sub}</div>`:''}</div>`;
+  const arrowDown=(lbl)=>`<div style="text-align:center;color:#b3261e;font-size:.75rem;padding:3px 0">▼ <span style="color:#9a8a82">${lbl}</span></div>`;
+  return `<div class="panel" style="background:#fcfaf6">
+    <h2 style="font-size:1.05rem">🔀 D'où vient ton argent, où il va</h2>
+    <p class="note" style="margin-top:0;margin-bottom:12px">Chaque chiffre découle du précédent. On part de ce que tu as facturé, on suit l'argent jusqu'à ce qu'il te reste vraiment.</p>
+
+    <!-- Étage 1 : le CA facturé se sépare en encaissé + créances -->
+    ${box('CA facturé', fact, 'tout ce que tu as vendu', '#c9a227', '#fdf8e9')}
+    <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#9a8a82;font-size:.72rem;padding:5px 0">
+      <span>▼ se partage en deux ▼</span></div>
+    <div style="display:flex;gap:10px;align-items:stretch">
+      ${box('CA encaissé', enc, 'déjà reçu · base URSSAF', '#3f7d52', '#eef6ef')}
+      ${box('Créances', creances, creances>0?'encore à encaisser':'rien en attente ✓', creances>0?'#d98324':'#9a8a82', creances>0?'#fdf3e7':'#f7f4ef')}
+    </div>
+
+    <!-- Étage 2 : de l'encaissé au résultat -->
+    ${arrowDown('on retire les coûts de l\'encaissé')}
+    <div style="display:flex;gap:8px;align-items:stretch">
+      ${box('− Coût matières', mat, 'ce que coûte la fabrication', '#b3261e', '#fbeeec')}
+      ${box('− Charges', charges, 'URSSAF, frais, abos…', '#b3261e', '#fbeeec')}
+    </div>
+    ${arrowDown('ce qu\'il te reste vraiment')}
+    ${box('= Résultat', res, res>=0?'ton bénéfice net 🎉':'déficit à surveiller', res>=0?'#3f7d52':'#b3261e', res>=0?'#eef6ef':'#fbeeec')}
+
+    <p class="note" style="margin-top:12px">💡 <b>En clair :</b> tu as facturé <b>${e(fact)}</b>. ${creances>0?`Il te reste <b>${e(creances)}</b> à encaisser. `:''}Sur les <b>${e(enc)}</b> déjà reçus, la fabrication t'a coûté <b>${e(mat)}</b> et tes charges <b>${e(charges)}</b> — il te reste donc <b style="color:${res>=0?'#3f7d52':'#b3261e'}">${e(res)}</b>.</p>
+  </div>`;
+}
 async function renderCompta(){
  try {
   const A = await computeAccounting();
@@ -9287,6 +9326,7 @@ async function renderCompta(){
      <button class="btn ghost" onclick="settingsForm()">⚙ Paramètres (taux, emballages)</button>
    </div>
 
+   ${comptaFlowSchema(A)}
    <div class="kpi-grid">
      <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA facturé</span><b>${euro(A.totalFacture)}</b><small class="kpi-note">toutes commandes, payées ou non</small>${NAV_GO}</div>
      <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b><small class="kpi-note">argent réellement reçu · base URSSAF</small>${NAV_GO}</div>
@@ -9839,6 +9879,32 @@ function drawFlavorEvolutionChart(data, A){
 }
 
 // DÉTAIL d'un parfum : ventilation coque/garniture, coût détaillé, simulation de prix, seuil de rentabilité.
+// Barre décomposée propre à la rentabilité par parfum : à partir du prix de vente,
+// montre visuellement la part de chaque coût (matières, main-d'œuvre, charges) et la marge restante.
+function parfumMargeBar(row, c){
+  if(privacyModeEnabled()) return '';
+  const prix = row.prixVenteMoyen;
+  if(prix==null || prix<=0) return ''; // pas de vente → pas de décomposition pertinente
+  const mat = (c.coutMatUnit||0) + (c.coutConsoUnit||0); // matières + consommables
+  const mo  = c.coutMODUnit||0;                           // main-d'œuvre
+  const charges = row.chargesSoc!=null ? row.chargesSoc : 0; // charges sociales / pièce
+  const marge = Math.max(0, prix - mat - mo - charges);      // ce qu'il reste vraiment
+  const segs=[
+    {lbl:'Matières', v:mat, col:'#b3261e'},
+    {lbl:'Main-d\'œuvre', v:mo, col:'#d98324'},
+    {lbl:'Charges', v:charges, col:'#c9a227'},
+    {lbl:'Marge nette', v:marge, col:'#3f7d52'}
+  ].filter(s=>s.v>0);
+  const pct=v=> prix>0 ? Math.round(v/prix*100) : 0;
+  const barre2 = segs.map(s=>`<div style="width:${Math.max(2,s.v/prix*100)}%;background:${s.col}" title="${s.lbl} : ${euro(s.v)}"></div>`).join('');
+  const legende = segs.map(s=>`<span style="display:inline-flex;align-items:center;gap:4px;font-size:.72rem;color:#6a5a52">
+      <span style="width:10px;height:10px;border-radius:2px;background:${s.col};display:inline-block"></span>${s.lbl} ${euro(s.v)} <span style="color:#9a8a82">(${pct(s.v)}%)</span></span>`).join('');
+  return `<div style="background:#fcfaf6;border:1px solid var(--hair);border-radius:12px;padding:11px 13px;margin-bottom:12px">
+    <div style="font-size:.78rem;color:#7a6a62;margin-bottom:6px">Sur <b>${euro(prix)}</b> de prix de vente, voici où va chaque centime :</div>
+    <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;background:#eee">${barre2}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">${legende}</div>
+  </div>`;
+}
 async function parfumDetail(recipeId){
   const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions]=await Promise.all([
     db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
@@ -9864,6 +9930,7 @@ async function parfumDetail(recipeId){
   const margeRefUnit = money2(prixRef - c.coutRevientUnit);
 
   openModal(`<h3>${esc(r.produitNom)} <span class="tag" style="background:${row.scale.col};color:#fff">${row.scale.dot} ${row.scale.label}</span></h3>
+    ${parfumMargeBar(row, c)}
     <div class="sum-box"><span>Coût de revient / pièce</span><b>${euro(c.coutRevientUnit)}</b></div>
     <div class="sum-box"><span>· dont matières</span><b>${euro(c.coutMatUnit)}</b></div>
     <div class="sum-box"><span>· dont coque (estim.)</span><b>${euro(vent.coqueUnit)}</b></div>
