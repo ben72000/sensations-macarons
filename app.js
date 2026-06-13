@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v267';
+const APP_VERSION = 'v268';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -13549,14 +13549,13 @@ function migParfumDraw(){
   box.innerHTML = uniq.map(f=>{
     const cur=migParfums.find(p=>p.nom===f);
     const on=!!cur;
-    return `<div class="sum-box" style="margin:3px 0;${on?'border-left:3px solid #3f7d52':''}">
-      <label style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" ${on?'checked':''} onchange="migParfumToggle('${esc(f).replace(/'/g,"\\'")}',this.checked)">
-        <span>${esc(f)}</span>
-      </label>
-      <span style="${on?'':'display:none'}">
-        <select onchange="migParfumQte('${esc(f).replace(/'/g,"\\'")}',+this.value)" style="min-width:64px">${qOpts(on?cur.qte:1)}</select>
-      </span>
+    const fe=esc(f).replace(/'/g,"\\'");
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;margin:3px 0;
+        border:1px solid var(--hair);border-radius:var(--r-sm);
+        background:${on?'#eef5f0':'var(--creme-2)'};${on?'border-left:3px solid #3f7d52':''}">
+      <input type="checkbox" ${on?'checked':''} onchange="migParfumToggle('${fe}',this.checked)" style="flex-shrink:0">
+      <span style="flex:1;font-size:.86rem">${esc(f)}</span>
+      ${on?`<select onchange="migParfumQte('${fe}',+this.value)" style="flex-shrink:0;min-width:60px">${qOpts(cur.qte)}</select>`:''}
     </div>`;
   }).join('');
 }
