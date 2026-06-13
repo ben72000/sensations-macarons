@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v298';
+const APP_VERSION = 'v300';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9767,19 +9767,30 @@ async function renderParfums(){
 
   // tableau principal
   const sortBtn=(k,lib)=>`<button class="btn ghost sm" style="${_parfumSort===k?'border-color:var(--caramel);font-weight:600':''}" onclick="_parfumSort='${k}';renderParfums()">${lib}</button>`;
-  const mainTable=`<div class="table-wrap"><table><thead><tr>
-      <th>Parfum</th><th>Coût revient/pc</th><th>Prix vente moy.</th><th>Marge/pc</th><th>Vendus</th><th>CA</th><th>Marge brute</th><th>Rentabilité</th></tr></thead><tbody>
-    ${rows.map(r=>`<tr style="cursor:pointer" onclick="parfumDetail(${r.recipeId})">
-      <td><b>${esc(r.nom)}</b>${r.cost.pertePct>0?`<br><span style="color:#9a8a82;font-size:.7rem">pertes ${r.cost.pertePct}%</span>`:''}</td>
-      <td>${euro(r.cost.coutRevientUnit)}</td>
-      <td>${r.prixVenteMoyen!=null?euro(r.prixVenteMoyen):'<span style="color:#9a8a82">—</span>'}</td>
-      <td style="color:${r.margeUnit!=null?(r.margeUnit>=0?'#3f7d52':'#b3261e'):'#9a8a82'}">${r.margeUnit!=null?euro(r.margeUnit):'—'}</td>
-      <td>${r.piecesVendues>0?qty(r.piecesVendues):'<span style="color:#9a8a82">0</span>'}</td>
-      <td>${euro(r.ca)}</td>
-      <td style="font-weight:600;color:${r.margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(r.margeBrute)}</td>
-      <td><span class="tag" style="background:${r.scale.col};color:#fff">${r.scale.dot} ${r.tauxMarge!=null?r.tauxMarge+'%':'—'}</span></td></tr>`).join('')}
-    </tbody></table></div>
-    <p class="note">Touchez une ligne pour le détail (coque/garniture, simulation de prix, seuil de rentabilité). Base de calcul = <b>CA encaissé</b> réel (commandes + marchés), réparti par parfum selon les pièces vendues. Coût de revient = matières (prix courant) + pertes + consommables${s.laborEnabled?' + main-d\'œuvre':''}. La grille de prix par format sert à estimer le prix moyen pondéré et à détecter les écarts.</p>`;
+  const mainTable=`<div style="display:flex;flex-direction:column;gap:10px">${rows.map(r=>{
+      const taux=r.tauxMarge;
+      const tauxClamp=taux!=null?Math.max(0,Math.min(100,taux)):0;
+      const col=(typeof flavorColor==='function')?flavorColor(r.nom):'#ccc';
+      return `<div onclick="parfumDetail(${r.recipeId})" style="cursor:pointer;background:#fff;border:1px solid var(--hair);border-left:4px solid ${r.scale.col};border-radius:14px;padding:13px 15px;box-shadow:var(--sh-1)">
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+          <span style="width:20px;height:20px;border-radius:50%;background:${col};flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>
+          <b style="flex:1;font-size:1rem;color:var(--bordeaux);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.nom)}${r.cost.pertePct>0?` <span style="color:#9a8a82;font-size:.7rem;font-weight:400">· pertes ${r.cost.pertePct}%</span>`:''}</b>
+          <span class="tag" style="background:${r.scale.col};color:#fff;font-size:.66rem">${r.scale.dot} ${r.scale.label||''}</span>
+        </div>
+        <div style="display:flex;gap:6px;text-align:center;margin-bottom:10px">
+          <div style="flex:1"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Coût/pc</div><div style="font-weight:700;color:var(--bordeaux);font-size:.88rem">${euro(r.cost.coutRevientUnit)}</div></div>
+          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Vente/pc</div><div style="font-weight:700;color:var(--bordeaux);font-size:.88rem">${r.prixVenteMoyen!=null?euro(r.prixVenteMoyen):'—'}</div></div>
+          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Vendus</div><div style="font-weight:700;color:var(--bordeaux);font-size:.88rem">${r.piecesVendues>0?qty(r.piecesVendues):'0'}</div></div>
+          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Marge brute</div><div style="font-weight:700;font-size:.88rem;color:${r.margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(r.margeBrute)}</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:.66rem;color:#9a8a82;flex:none">taux net</span>
+          <div style="flex:1;height:8px;background:#f0e9de;border-radius:5px;overflow:hidden"><div style="width:${tauxClamp}%;height:100%;background:${r.scale.col}"></div></div>
+          <span style="font-size:.78rem;font-weight:700;color:${r.scale.col};flex:none">${taux!=null?taux+'%':'—'}</span>
+        </div>
+      </div>`;
+    }).join('')}</div>
+    <p class="note">Touchez une carte pour le détail (coque/garniture, simulation de prix, seuil de rentabilité). Base de calcul = <b>CA encaissé</b> réel (commandes + marchés), réparti par parfum selon les pièces vendues. Coût de revient = matières (prix courant) + pertes + consommables${s.laborEnabled?' + main-d\'œuvre':''}.</p>`;
 
   // parfums sans recette (vendus mais non rattachés)
   const unmatchedBlock=A.unmatched.length?`<div class="panel"><h2>Parfums vendus sans recette <span class="tag warn">${A.unmatched.length}</span></h2>
@@ -10190,7 +10201,7 @@ async function renderProfit(){
           <div style="flex:1"><div style="font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">CA</div><div style="font-weight:700;color:var(--bordeaux);font-size:.92rem">${euro(c.ca)}</div></div>
           <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Cmd</div><div style="font-weight:700;color:var(--bordeaux);font-size:.92rem">${c.nb}</div></div>
           <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Panier</div><div style="font-weight:700;color:var(--bordeaux);font-size:.92rem">${euro(c.panier)}</div></div>
-          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Marge</div><div style="font-weight:700;font-size:.92rem;color:${c.nette>=0?'#3f7d52':'#b3261e'}">${euro(c.nette)}</div></div>
+          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Marge nette</div><div style="font-weight:700;font-size:.92rem;color:${c.nette>=0?'#3f7d52':'#b3261e'}">${euro(c.nette)}</div></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <div style="flex:1;height:8px;background:#f0e9de;border-radius:5px;overflow:hidden"><div style="width:${tauxClamp}%;height:100%;background:${c.scale.col}"></div></div>
