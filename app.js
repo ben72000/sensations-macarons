@@ -950,7 +950,7 @@ function radialBuild(){
     const large = (e-s)>180?1:0;
     const d=`M${x1.toFixed(2)},${y1.toFixed(2)} A${rOut},${rOut} 0 ${large} 1 ${x2.toFixed(2)},${y2.toFixed(2)} `
           +`L${x3.toFixed(2)},${y3.toFixed(2)} A${rIn},${rIn} 0 ${large} 0 ${x4.toFixed(2)},${y4.toFixed(2)} Z`;
-    segs+=`<path class="rm-seg" data-i="${i}" d="${d}"></path>`;
+    segs+=`<path class="rm-seg" data-i="${i}" data-mid="${mid.toFixed(1)}" d="${d}"></path>`;
     const mid=(s+e)/2, rl=(rOut+rIn)/2;
     const [lx,ly]=pt(rl,mid);
     // rotation du label pour suivre l'arc, en gardant le texte lisible
@@ -967,7 +967,21 @@ function radialBuild(){
 function radialSetActive(i){
   if(_rmState.active===i) return;
   _rmState.active=i;
-  document.querySelectorAll('#radialMenu .rm-seg').forEach(el=>el.classList.toggle('active', +el.dataset.i===i));
+  document.querySelectorAll('#radialMenu .rm-seg').forEach(el=>{
+    const on = (+el.dataset.i===i);
+    el.classList.toggle('active', on);
+    if(on){
+      // la part se détache vers l'extérieur (direction de son angle médian) et grossit légèrement
+      const mid=+el.dataset.mid||225;
+      const rad=mid*Math.PI/180;
+      const dx=Math.cos(rad)*7, dy=Math.sin(rad)*7;   // pousse vers l'extérieur du camembert
+      el.style.transform=`translate(${dx.toFixed(2)}px,${dy.toFixed(2)}px) scale(1.08)`;
+      el.style.transformOrigin='100% 100%';
+      el.parentNode.appendChild(el);                  // passe au-dessus des autres
+    } else {
+      el.style.transform='';
+    }
+  });
   document.querySelectorAll('#radialMenu .rm-label').forEach(el=>el.classList.toggle('active', +el.dataset.i===i));
   if(i>=0 && navigator.vibrate) navigator.vibrate(8);
 }
@@ -982,14 +996,29 @@ function radialOpen(){
 function radialClose(openIndex){
   const host=document.getElementById('radialMenu');
   const sc=document.getElementById('radialScrim');
-  if(host){ host.classList.remove('open'); host.classList.add('peek'); }
   if(sc) sc.classList.remove('show');
-  const wasActive=_rmState.active;
-  _rmState.open=false; _rmState.active=-1; _rmState.tracking=false;
-  document.querySelectorAll('#radialMenu .rm-seg,.rm-label').forEach(el=>el.classList.remove('active'));
+  // si une part est validée : on la PROJETTE vers la gauche (effet "lancer la part"), puis on ouvre
   if(openIndex!=null && openIndex>=0 && RADIAL_ITEMS[openIndex]){
-    setTimeout(()=>RADIAL_ITEMS[openIndex].act(), 120);
+    const seg=document.querySelector(`#radialMenu .rm-seg[data-i="${openIndex}"]`);
+    const lbl=document.querySelector(`#radialMenu .rm-label[data-i="${openIndex}"]`);
+    if(seg){
+      seg.style.transition='transform .22s cubic-bezier(.4,0,.6,1), opacity .22s ease';
+      seg.style.transform='translate(-120px,-40px) scale(1.25)'; seg.style.opacity='0';
+    }
+    if(lbl){ lbl.style.transition='opacity .18s ease'; lbl.style.opacity='0'; }
+    if(host){ setTimeout(()=>{ host.classList.remove('open'); host.classList.add('peek'); }, 140); }
+    _rmState.open=false; _rmState.active=-1; _rmState.tracking=false;
+    setTimeout(()=>{
+      RADIAL_ITEMS[openIndex].act();
+      // réinitialise les styles inline des parts pour le prochain affichage
+      document.querySelectorAll('#radialMenu .rm-seg,#radialMenu .rm-label').forEach(el=>{ el.style.transform=''; el.style.opacity=''; el.style.transition=''; el.classList.remove('active'); });
+    }, 230);
+    return;
   }
+  // annulation simple : on referme sans rien ouvrir
+  if(host){ host.classList.remove('open'); host.classList.add('peek'); }
+  _rmState.open=false; _rmState.active=-1; _rmState.tracking=false;
+  document.querySelectorAll('#radialMenu .rm-seg,#radialMenu .rm-label').forEach(el=>{ el.style.transform=''; el.style.opacity=''; el.classList.remove('active'); });
 }
 
 // Détermine quelle part est sous le point (x,y) à l'écran.
