@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v262';
+const APP_VERSION = 'v263';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2184,16 +2184,6 @@ async function renderRecipes(){
    <div class="topbar"><div><h1>Recettes (BOM)</h1><p>${recipes.length} recette(s) — nomenclature matières</p></div>
      <button class="btn" onclick="recForm()">+ Nouvelle recette</button></div>
    ${recipes.length?blocks.join(''):`<div class="panel"><div class="empty">Aucune recette. Une recette définit les matières consommées par batch (le « Bill of Materials »).</div></div>`}`;
-  // ── SONDE TEMPORAIRE : mesure si la page bouge après le rendu (à retirer) ──
-  try{
-    const _m=document.getElementById('main');
-    const h0=_m?_m.scrollHeight:0, s0=window.scrollY||0;
-    setTimeout(()=>{
-      const h1=_m?_m.scrollHeight:0, s1=window.scrollY||0;
-      const dh=h1-h0, ds=s1-s0;
-      if(typeof toast==='function') toast(`Sonde recettes — hauteur Δ${dh}px · scroll Δ${ds}px (h0=${h0}→${h1})`);
-    }, 400);
-  }catch(e){}
 }
 // Cache des recettes pour le multiplicateur dynamique (lecture seule, aucune écriture en base)
 let _recipeMultCache={};
