@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v301';
+const APP_VERSION = 'v303';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2550,6 +2550,14 @@ function assemblySuggestions(prods, recName){
   out.sort((a,b)=> (b.sameBase-a.sameBase) || (b.sameRec-a.sameRec) || (b.assemblable-a.assemblable));
   return out;
 }
+// Couleur stable dérivée d'un identifiant de lot (lotBase) : tous les sous-lots
+// d'un même batch mère partagent la même couleur → repérage visuel des familles.
+function lotFamilyColor(base){
+  if(!base) return null;
+  let h=0; for(let i=0;i<base.length;i++){ h=(h*31+base.charCodeAt(i))|0; }
+  const hue=Math.abs(h)%360;
+  return `hsl(${hue},55%,55%)`;
+}
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
@@ -2597,6 +2605,13 @@ async function renderProductions(){
     const ratio=(+p.qteTheorique||0)/rend; return ratio>0.7 && ratio<1.4;
   }).length;
   // index de recherche : lot, parfum/recette, date (plusieurs formats), emplacement (nom + LETTRE), statut
+  // Familles de lots : on compte les membres par base (lot mère sans suffixe).
+  // Une famille colorée = au moins 2 membres (donc un découpage a eu lieu).
+  const famCount={};
+  prods.forEach(p=>{
+    const base = p.lotBase || lotBaseSansSuffixe(p.lotProduction||'');
+    if(base) famCount[base]=(famCount[base]||0)+1;
+  });
   _prodnCache = prods.map(p=>{
     const nom = prodNom(p);
     const e = empInfo(p.emplacement);
@@ -2724,12 +2739,16 @@ function _prodbatRow(row){
   const liveBar = (st!=='termine' && startTs)
     ? `<div class="prod-live ${overdue?'prod-live-over':''}"><span class="pl-dot"></span><span class="pl-name">${compMeta.ico} ${prodNomLive} · ${compMot}</span><span class="prod-chrono" data-start="${esc(startTs)}">00:00:00</span></div>`
     : '';
-  return `<div class="${rowCls} prod-card${liveBar?' prod-card-live':''}"${overdue?' style="background:#fdf3f2"':''}>
+  const _famBase = p.lotBase || lotBaseSansSuffixe(p.lotProduction||'');
+  const _famCol = (_famBase && famCount[_famBase]>1) ? lotFamilyColor(_famBase) : null;
+  const _famStyle = _famCol ? `border-left:5px solid ${_famCol};` : '';
+  const _famDot = _famCol ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${_famCol};margin-right:5px;vertical-align:middle" title="Sous-lot du même batch"></span>` : '';
+  return `<div class="${rowCls} prod-card${liveBar?' prod-card-live':''}" style="${_famStyle}${overdue?'background:#fdf3f2;':''}">
      ${liveBar}
      <div class="prod-card-body">
      <div class="prod-card-top">
        <div>${compPill}${partTag}</div>
-       <div class="prod-lot"><b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span class="prod-base">base ${esc(p.lotBase)}</span>`:''}</div>
+       <div class="prod-lot">${_famDot}<b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span class="prod-base">base ${esc(p.lotBase)}</span>`:''}</div>
      </div>
      <div class="prod-card-meta">
        <span class="prod-date">${fmtDate(p.date)}${heureFab?` · 🕒 ${heureFab}`:''}</span>
@@ -14030,7 +14049,8 @@ async function renderMigration(){
      </div>
      <div class="field"><label>Emplacement</label>
        <div class="opt-table">
-         ${EMPLACEMENTS.map((e,i)=>`<label class="opt-row"><input type="radio" name="mig_coqEmp" value="${e.key}" ${i===0?'checked':''}> <b class="opt-emp" style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'}">${e.lettre}</b> <span class="opt-main"><b>${e.icon} ${esc(e.nom)}</b></span></label>`).join('')}
+         ${(()=>{ const firstCong=EMPLACEMENTS.findIndex(e=>e.type==='congelateur'); const def=firstCong>=0?firstCong:0;
+           return EMPLACEMENTS.map((e,i)=>`<label class="opt-row"><input type="radio" name="mig_coqEmp" value="${e.key}" ${i===def?'checked':''}> <b class="opt-emp" style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'}">${e.lettre}</b> <span class="opt-main"><b>${e.icon} ${esc(e.nom)}</b></span></label>`).join(''); })()}
        </div></div>
      <button class="btn" style="width:100%" onclick="migSaveCoques()">＋ Ajouter au stock de coques</button>
      <p class="note" id="mig_coqHint">Astuce : ${COQUES_PAR_MACARON} coques = 1 macaron. <span id="mig_coqConv"></span></p>
@@ -14150,7 +14170,8 @@ async function migSaveCoques(){
   const recipeId=+val('mig_coqRec')||0;
   const qte=Math.round(+val('mig_coqQte')||0);
   const dlc=val('mig_coqDlc')||'';
-  const dest=(document.querySelector('input[name="mig_coqEmp"]:checked')||{}).value||'frigo';
+  const _defCong=(EMPLACEMENTS.find(e=>e.type==='congelateur')||{}).key||'bahut';
+  const dest=(document.querySelector('input[name="mig_coqEmp"]:checked')||{}).value||_defCong;
   if(!recipeId){ toast('Choisis un parfum/recette'); return; }
   if(qte<=0){ toast('Indique un nombre de coques'); return; }
   const nowIso=new Date().toISOString();
