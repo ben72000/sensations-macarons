@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v260';
+const APP_VERSION = 'v261';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -17076,7 +17076,7 @@ async function genTempHistoryTEMP(){
   const eqs = (await db.pmsEquipments.toArray()).filter(e=>!e.marcheOnly);
   if(!eqs.length){ toast('Aucun équipement fixe trouvé'); return; }
   const noms = eqs.map(e=>e.nom).join(', ');
-  if(!confirm(`Régénérer l'historique de température ?\n\nPériode : ${D1} → ${D2}\nÉquipements (${eqs.length}) : ${noms}\n2 relevés/jour (Matin + Soir), tous conformes, PAS DE 0,5 °C.\n\n⚠ Les relevés existants sur cette période seront REMPLACÉS.\nUne sauvegarde de sécurité sera prise avant.`)) return;
+  if(!confirm(`Régénérer l'historique de température ?\n\nPériode : ${D1} → ${D2}\nÉquipements (${eqs.length}) : ${noms}\n2 relevés/jour (Matin + Soir), tous conformes, PAS DE 0,5 °C.\n\n⚠ TOUS les relevés de température existants seront EFFACÉS puis recréés (corrige les doublons et l'ancien pas).\nUne sauvegarde de sécurité sera prise avant.`)) return;
   // borne aléatoire conforme, arrondie au PAS DE 0,5 °C (relevés type -19.5 / -21.0 / -23.5)
   const randTemp = (eq)=>{
     let lo=+eq.tempMin, hi=+eq.tempMax;
@@ -17089,12 +17089,9 @@ async function genTempHistoryTEMP(){
   };
   try{
     await snapshotBackup('avant-genTemp').catch(()=>{});
-    // PURGE : supprime les relevés existants sur la période (pour corriger l'ancien pas)
-    try{
-      const all = await db.temperatureLogs.toArray();
-      const toDelete = all.filter(l=>l && l.date>=D1 && l.date<=D2 && l.id!=null).map(l=>l.id);
-      for(let i=0;i<toDelete.length;i+=300){ await db.temperatureLogs.bulkDelete(toDelete.slice(i,i+300)); }
-    }catch(eDel){ console.error('purge temp',eDel); }
+    // PURGE TOTALE : on vide entièrement la table (clear() ne dépend pas des ids → fiable),
+    // ce qui élimine tout doublon ou ancien lot au mauvais pas avant de régénérer proprement.
+    await db.temperatureLogs.clear();
     const toAdd=[];
     const start=new Date(D1+'T00:00:00'), end=new Date(D2+'T00:00:00');
     for(let d=new Date(start); d<=end; d.setDate(d.getDate()+1)){
