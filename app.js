@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v284';
+const APP_VERSION = 'v285';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -11826,10 +11826,14 @@ function renderAssistant(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Assistant</h1><p>Anti-gaspi, sérénité & pilotage</p></div></div>
    <div id="assistantBriefing"><div class="banner">☀️ <div>Préparation de ton briefing du jour…</div></div></div>
-   <div id="serenityBox"><div class="banner">🧘 <div>Calcul de la jauge de sérénité…</div></div></div>
-   <div id="marketForecast"></div>
-   <div id="antiGaspi"></div>
-   <div id="aiPredict"><div class="banner">📈 <div>Analyse du rythme de ventes en cours…</div></div></div>
+   <details class="ai-fold" open><summary>🧘 Jauge de sérénité <span class="ai-fold-arrow">▾</span></summary>
+     <div class="ai-fold-body"><div id="serenityBox"><div class="banner">🧘 <div>Calcul de la jauge de sérénité…</div></div></div></div></details>
+   <details class="ai-fold"><summary>📈 Rythme de ventes & alertes <span class="ai-fold-arrow">▾</span></summary>
+     <div class="ai-fold-body"><div id="aiPredict"><div class="banner">📈 <div>Analyse du rythme de ventes en cours…</div></div></div></div></details>
+   <details class="ai-fold"><summary>⛺ Prévisions marché <span class="ai-fold-arrow">▾</span></summary>
+     <div class="ai-fold-body"><div id="marketForecast"></div></div></details>
+   <details class="ai-fold"><summary>♻️ Anti-gaspi <span class="ai-fold-arrow">▾</span></summary>
+     <div class="ai-fold-body"><div id="antiGaspi"></div></div></details>
    <div class="banner">🤖 <div>Écrivez ou dictez (micro du clavier) une instruction ou une <b>question d'aide</b> (« comment fonctionne… »). L'assistant fonctionne <b>hors-ligne</b>. Toute action critique demande votre validation.</div></div>
    <div class="panel">
      <div class="field"><label>Votre demande</label>
