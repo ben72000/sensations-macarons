@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v256';
+const APP_VERSION = 'v257';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -954,8 +954,8 @@ function radialBuild(){
     const large = (e-s)>180?1:0;
     const d=`M${x1.toFixed(2)},${y1.toFixed(2)} A${rOut},${rOut} 0 ${large} 1 ${x2.toFixed(2)},${y2.toFixed(2)} `
           +`L${x3.toFixed(2)},${y3.toFixed(2)} A${rIn},${rIn} 0 ${large} 0 ${x4.toFixed(2)},${y4.toFixed(2)} Z`;
-    segs+=`<path class="rm-seg" data-i="${i}" data-mid="${mid.toFixed(1)}" d="${d}"></path>`;
     const mid=(s+e)/2, rl=(rOut+rIn)/2;
+    segs+=`<path class="rm-seg" data-i="${i}" data-mid="${mid.toFixed(1)}" d="${d}"></path>`;
     const [lx,ly]=pt(rl,mid);
     // rotation du label pour suivre l'arc, en gardant le texte lisible
     let rot=mid-180; if(rot>90)rot-=180; if(rot<-90)rot+=180;
