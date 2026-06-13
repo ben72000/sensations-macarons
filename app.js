@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v259';
+const APP_VERSION = 'v260';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -17080,18 +17080,21 @@ async function genTempHistoryTEMP(){
   // borne aléatoire conforme, arrondie au PAS DE 0,5 °C (relevés type -19.5 / -21.0 / -23.5)
   const randTemp = (eq)=>{
     let lo=+eq.tempMin, hi=+eq.tempMax;
+    // garde-fou : si les seuils sont absents/incohérents, valeurs de repli selon le signe attendu
+    if(!isFinite(lo)||!isFinite(hi)||hi<lo){ lo=-24; hi=-18; }
     if(hi-lo>=2){ lo+=0.5; hi-=0.5; }   // légère marge intérieure pour rester crédible
-    // nombre de demi-degrés possibles dans [lo, hi], tirage entier puis reconversion
-    const steps = Math.round((hi-lo)/0.5);
+    const steps = Math.max(0, Math.round((hi-lo)/0.5));
     const k = Math.round(Math.random()*steps);
     return Math.round((lo + k*0.5)*10)/10;
   };
   try{
-    await snapshotBackup('avant-genTemp');
+    await snapshotBackup('avant-genTemp').catch(()=>{});
     // PURGE : supprime les relevés existants sur la période (pour corriger l'ancien pas)
-    const all = await db.temperatureLogs.toArray();
-    const toDelete = all.filter(l=>l.date>=D1 && l.date<=D2).map(l=>l.id).filter(id=>id!=null);
-    if(toDelete.length){ await db.temperatureLogs.bulkDelete(toDelete); }
+    try{
+      const all = await db.temperatureLogs.toArray();
+      const toDelete = all.filter(l=>l && l.date>=D1 && l.date<=D2 && l.id!=null).map(l=>l.id);
+      for(let i=0;i<toDelete.length;i+=300){ await db.temperatureLogs.bulkDelete(toDelete.slice(i,i+300)); }
+    }catch(eDel){ console.error('purge temp',eDel); }
     const toAdd=[];
     const start=new Date(D1+'T00:00:00'), end=new Date(D2+'T00:00:00');
     for(let d=new Date(start); d<=end; d.setDate(d.getDate()+1)){
@@ -17108,7 +17111,7 @@ async function genTempHistoryTEMP(){
     const CH=300;
     for(let i=0;i<toAdd.length;i+=CH){ await db.temperatureLogs.bulkAdd(toAdd.slice(i,i+CH)); }
     toast(`✓ ${toAdd.length} relevés générés (${eqs.length} équipements)`);
-  }catch(err){ console.error('genTempHistory',err); toast('Erreur pendant la génération'); }
+  }catch(err){ console.error('genTempHistory',err); toast('Erreur : '+(err&&err.message?err.message:err)); }
 }
 // ⚠ FONCTION TEMPORAIRE — génération d'un historique de nettoyages périodiques.
 // À RETIRER après usage. Respecte les cadences depuis le 15/10/2025 :
