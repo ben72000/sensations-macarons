@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v295';
+const APP_VERSION = 'v296';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7268,9 +7268,13 @@ async function computeAccounting(opts){
     const mF=monthKey(o.date); const tot=money2(o.montant);
     if(mF && tot>0){ factByMonth[mF]=money2((factByMonth[mF]||0)+tot); totalFacture=money2(totalFacture+tot); }
     const pays = (o.paiements||[]);
-    // rétro-compat : ancienne commande "Payé" sans registre → on rattache au datePaiement connu
+    // rétro-compat : ancienne commande / reprise "Payé" sans registre de paiement.
+    // On la considère encaissée : à sa datePaiement si connue, sinon à sa date de commande
+    // (cas des commandes migrées, marquées Payé mais sans registre ni datePaiement).
     const list = pays.length ? pays
-      : (o.paiement==='Payé' && o.datePaiement ? [{date:o.datePaiement, montant:+o.montant||0, moyen:o.reglement||'—'}] : []);
+      : (o.paiement==='Payé'
+          ? [{date:(o.datePaiement||o.date), montant:+o.montant||0, moyen:o.reglement||'—'}]
+          : []);
     list.forEach(p=>{
       const m=monthKey(p.date); if(!m) return;
       const v=money2(p.montant);
@@ -7316,7 +7320,7 @@ async function computeAccounting(opts){
     const total=money2(o.montant); if(total<=0) return;
     const coutMat = estimateOrderMaterialCost(o, recipes, recipeItems, lots);
     const pays = (o.paiements&&o.paiements.length)?o.paiements
-      :(o.paiement==='Payé'&&o.datePaiement?[{date:o.datePaiement,montant:total}]:[]);
+      :(o.paiement==='Payé'?[{date:(o.datePaiement||o.date),montant:total}]:[]);
     pays.forEach(p=>{
       const m=monthKey(p.date); if(!m) return;
       const ratio=total>0?(money2(p.montant)/total):0;
