@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v296';
+const APP_VERSION = 'v298';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1417,11 +1417,11 @@ async function renderDash(){
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
-     <div class="card clickable" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
-     <div class="card clickable" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts & charges ›':'pas encore de ventes ›'}</div></div>
-     <div class="card clickable" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
-     <div class="card clickable" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
-     <div class="card clickable" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock ${kpiI('alertes_stock')}</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
+     <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
+     <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts & charges ›':'pas encore de ventes ›'}</div></div>
+     <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
+     <div class="card clickable accent" style="--card-accent:#7a4b82" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
+     <div class="card clickable accent" style="--card-accent:${low.length>0?'#b3261e':'#3f7d52'}" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock ${kpiI('alertes_stock')}</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
    </div>
    <details style="margin:2px 0 10px">
      <summary style="cursor:pointer;color:#9a8a82;font-size:.78rem;list-style:none;display:inline-flex;align-items:center;gap:4px">▾ CA total depuis le début</summary>
@@ -1433,16 +1433,23 @@ async function renderDash(){
    <div id="dashProduction"></div>
    <div class="dash-2col">
      <div class="panel"><h2>⚠ Matières à réapprovisionner</h2>
-       ${low.length?`<div class="table-wrap"><table class="dash-tbl"><tbody>${low.map(s=>`<tr>
-         <td class="nm">${esc(s.nom)}</td>
-         <td style="text-align:right;white-space:nowrap"><span class="tag low">${qty(s.total)} ${esc(s.unite||'')}</span></td>
-         <td style="text-align:right;color:#9a8a82;white-space:nowrap;font-size:.78rem">seuil ${qty(s.seuil)}</td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">Tout est au-dessus du seuil ✓</div>`}
+       ${low.length?`<div style="display:flex;flex-direction:column;gap:7px">${low.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fdf3ef;border:1px solid #f0cfc9;border-left:3px solid #b3261e;border-radius:11px">
+         <span style="flex:none;font-size:1rem">⚠️</span>
+         <span style="flex:1;font-weight:600;color:var(--bordeaux);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.nom)}</span>
+         <span style="flex:none;text-align:right"><b style="color:#b3261e">${qty(s.total)} ${esc(s.unite||'')}</b><br><span style="color:#9a8a82;font-size:.72rem">seuil ${qty(s.seuil)}</span></span>
+       </div>`).join('')}</div>`:`<div class="empty">Tout est au-dessus du seuil ✓</div>`}
      </div>
      <div class="panel"><h2>Prochaines échéances</h2>
-       ${upcoming.length?`<div class="table-wrap"><table class="dash-tbl"><tbody>${upcoming.map(e=>`<tr>
-         <td style="white-space:nowrap;color:#6a5a52">${fmtDate(e.date)}</td>
-         <td class="nm">${esc(e.titre)}</td>
-         <td style="text-align:right"><span class="tag ${e.type==='cmd'?'todo':'event'}">${e.type==='cmd'?'Commande':'Événement'}</span></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">Aucune échéance à venir</div>`}
+       ${upcoming.length?`<div style="display:flex;flex-direction:column;gap:7px">${upcoming.map(e=>{
+         const isCmd=e.type==='cmd';
+         const col=isCmd?'#7a4b82':'#3f7d52';
+         return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid var(--hair);border-left:3px solid ${col};border-radius:11px">
+           <span style="flex:none;font-size:1rem">${isCmd?'📦':'📅'}</span>
+           <span style="flex:1;min-width:0"><b style="color:var(--bordeaux);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.titre)}</b>
+             <span style="color:#9a8a82;font-size:.74rem">${fmtDate(e.date)}</span></span>
+           <span class="tag" style="background:${col};color:#fff;flex:none;font-size:.64rem">${isCmd?'Commande':'Événement'}</span>
+         </div>`;
+       }).join('')}</div>`:`<div class="empty">Aucune échéance à venir</div>`}
      </div>
    </div>`;
   startHomeClock();
@@ -10170,12 +10177,27 @@ async function renderProfit(){
     return {o, m, sc, nom:clName(o.clientId)};
   }).sort((a,b)=>b.m.ca-a.m.ca);
 
-  const clientTable = clientRows.length?`<div class="table-wrap"><table><thead><tr><th>Client</th><th>CA</th><th>Cmd</th><th>Panier moy.</th><th>Marge nette</th><th>Rentabilité</th></tr></thead>
-    <tbody>${clientRows.map(c=>`<tr>
-      <td><b>${c.clientId?`<span class="link-name" onclick="clientForm(${c.clientId})">${esc(c.nom)}</span>`:esc(c.nom)}</b></td>
-      <td>${euro(c.ca)}</td><td>${c.nb}</td><td>${euro(c.panier)}</td>
-      <td style="color:${c.nette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(c.nette)} <span style="color:#9a8a82;font-size:.72rem">(${c.tauxNet}%)</span></td>
-      <td><span class="tag" style="background:${c.scale.col};color:#fff">${c.scale.label}</span></td></tr>`).join('')}</tbody></table></div>`
+  const clientTable = clientRows.length?`<div style="display:flex;flex-direction:column;gap:10px">${clientRows.map((c,idx)=>{
+      const tauxClamp=Math.max(0,Math.min(100,c.tauxNet||0));
+      const medaille = idx===0?'🥇':idx===1?'🥈':idx===2?'🥉':`<span style="display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:#f0e9de;border-radius:50%;font-size:.72rem;color:#9a8a82;font-weight:700">${idx+1}</span>`;
+      return `<div onclick="${c.clientId?`clientForm(${c.clientId})`:''}" style="${c.clientId?'cursor:pointer;':''}background:#fff;border:1px solid var(--hair);border-left:4px solid ${c.scale.col};border-radius:14px;padding:13px 15px;box-shadow:var(--sh-1)">
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+          <span style="flex:none">${medaille}</span>
+          <b style="flex:1;font-size:1rem;color:var(--bordeaux);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.nom)}</b>
+          <span class="tag" style="background:${c.scale.col};color:#fff;font-size:.66rem">${c.scale.label}</span>
+        </div>
+        <div style="display:flex;gap:6px;text-align:center;margin-bottom:10px">
+          <div style="flex:1"><div style="font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">CA</div><div style="font-weight:700;color:var(--bordeaux);font-size:.92rem">${euro(c.ca)}</div></div>
+          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Cmd</div><div style="font-weight:700;color:var(--bordeaux);font-size:.92rem">${c.nb}</div></div>
+          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Panier</div><div style="font-weight:700;color:var(--bordeaux);font-size:.92rem">${euro(c.panier)}</div></div>
+          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Marge</div><div style="font-weight:700;font-size:.92rem;color:${c.nette>=0?'#3f7d52':'#b3261e'}">${euro(c.nette)}</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:8px;background:#f0e9de;border-radius:5px;overflow:hidden"><div style="width:${tauxClamp}%;height:100%;background:${c.scale.col}"></div></div>
+          <span style="font-size:.78rem;font-weight:700;color:${c.scale.col};flex:none">${c.tauxNet}%</span>
+        </div>
+      </div>`;
+    }).join('')}</div>`
     :'<div class="empty">Aucune commande.</div>';
 
   const eventCards = eventsM.length?eventsM.map(({o,m,sc,nom})=>`<div class="panel" style="margin:8px 0;border-left:4px solid ${sc.col}">
