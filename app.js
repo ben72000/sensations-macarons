@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v281';
+const APP_VERSION = 'v282';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6570,11 +6570,7 @@ function drawCoffretLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
     const maxq = ln.taille||25;
-    let opts='';
-    for(let n=0;n<=maxq;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}">
-      <span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
-      <select class="flav-sel" onchange="setCoffretParfum(${i},${fi},this.value)">${opts}</select></div>`;
+    return flavorPickRow(f, q, `setCoffretParfum(${i},${fi},this.value)`, maxq);
   }).join('');
   const nbDiff = Object.values(ln.parfums).filter(q=>q>0).length;
   const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
@@ -6598,9 +6594,7 @@ function setCoffretParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cm
 function drawEventLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
-    let opts=''; for(let n=0;n<=Math.max(ln.evQte,50);n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}"><span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
-      <select class="flav-sel" onchange="setEventParfum(${i},${fi},this.value)">${opts}</select></div>`;
+    return flavorPickRow(f, q, `setEventParfum(${i},${fi},this.value)`, Math.max(ln.evQte,50));
   }).join('');
   const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
   return `<div class="cmd-line">
@@ -6625,9 +6619,7 @@ function drawBigLine(ln,i){
   const pu=bigPrice(ln.tarif);
   const bigRows = BIG_FORMATS.map((f,fi)=>{
     const q=ln.items[f]||0;
-    let opts=''; for(let n=0;n<=50;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}"><span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
-      <select class="flav-sel" onchange="setBigItem(${i},${fi},this.value)">${opts}</select></div>`;
+    return flavorPickRow(f, q, `setBigItem(${i},${fi},this.value)`, 50);
   }).join('');
   const tot=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
   return `<div class="cmd-line">
@@ -6651,9 +6643,7 @@ function drawVracLine(ln,i){
   const pu=+getSettings().prixMacaronProStd||0;
   const rows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
-    let opts=''; for(let n=0;n<=120;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}"><span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
-      <select class="flav-sel" onchange="setVracParfum(${i},${fi},this.value)">${opts}</select></div>`;
+    return flavorPickRow(f, q, `setVracParfum(${i},${fi},this.value)`, 120);
   }).join('');
   const tot=Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
   return `<div class="cmd-line">
@@ -6671,15 +6661,11 @@ function drawDonLine(ln,i){
   if(!ln.parfums) ln.parfums={}; if(!ln.items) ln.items={};
   const parfRows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
-    let opts=''; for(let n=0;n<=60;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}"><span class="nm"><span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${flavorColor(f)};vertical-align:middle;margin-right:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>${esc(f)}</span>
-      <select class="flav-sel" onchange="setDonParfum(${i},${fi},this.value)">${opts}</select></div>`;
+    return flavorPickRow(f, q, `setDonParfum(${i},${fi},this.value)`, 60);
   }).join('');
   const bigRows = BIG_FORMATS.map((f,fi)=>{
     const q=ln.items[f]||0;
-    let opts=''; for(let n=0;n<=30;n++) opts+=`<option value="${n}" ${q===n?'selected':''}>${n}</option>`;
-    return `<div class="flav-row ${q>0?'on':''}"><span class="nm">${esc(f)} <span style="color:#9a8a82;font-size:.72rem">(GF)</span></span>
-      <select class="flav-sel" onchange="setDonItem(${i},${fi},this.value)">${opts}</select></div>`;
+    return flavorPickRow(f+' (GF)', q, `setDonItem(${i},${fi},this.value)`, 30);
   }).join('');
   const totP=Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
   const totB=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
@@ -7646,6 +7632,25 @@ async function marketAddSortie(marketId, productionId, qte, parfum){
 // Vue d'ensemble : chaque parfum avec sa pastille de couleur, son nom et la quantité
 // de macarons finis vendables en stock. Tous les parfums du catalogue sont affichés,
 // y compris ceux à 0 (vision complète, comme sur le site).
+// Composant UNIQUE de ligne de sélection de parfum, au visuel "stock par parfum"
+// (pastille colorée + nom à gauche, sélecteur de quantité à droite). Réutilisé partout
+// pour un rendu strictement identique dans toute l'app.
+//  - nom : nom du parfum
+//  - qte : quantité actuelle
+//  - onChangeJs : code JS appelé au changement (reçoit la valeur via this.value)
+//  - maxq : quantité max du menu déroulant (def 60)
+function flavorPickRow(nom, qte, onChangeJs, maxq){
+  maxq = maxq||60;
+  const col = (typeof flavorColor==='function') ? flavorColor(nom) : '#ccc';
+  const on = (+qte)>0;
+  let opts='';
+  for(let n=0;n<=maxq;n++) opts+=`<option value="${n}" ${(+qte)===n?'selected':''}>${n}</option>`;
+  return `<div class="flavor-stock${on?' fp-on':''}">
+    <span class="fs-pastille" style="background:${col}"></span>
+    <span class="fs-nom">${esc(nom)}</span>
+    <select class="fp-sel" onchange="${onChangeJs}">${opts}</select>
+  </div>`;
+}
 async function renderStockParfums(){
   const prods=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0 && prodVendable(p));
   const recipes=await db.recipes.toArray();
