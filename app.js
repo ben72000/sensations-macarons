@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v264';
+const APP_VERSION = 'v267';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -13536,23 +13536,43 @@ async function deleteBackup(id){
 // ============================================================
 // Détail parfums d'une commande historique (alimente les stats sans toucher au CA).
 let migParfums=[];
+let _migEditId = null;   // id de la commande historique en cours d'édition (null = création)
 function migParfumOptions(){
   const all=[...FLAVORS, ...((typeof BIG_FORMATS!=='undefined')?BIG_FORMATS:[])];
   return [...new Set(all)].sort((a,b)=>a.localeCompare(b,'fr')).map(f=>`<option value="${esc(f)}">`).join('');
 }
 function migParfumDraw(){
   const box=document.getElementById('mig_parfums'); if(!box) return;
-  box.innerHTML = `<datalist id="migFlavorList">${migParfumOptions()}</datalist>` + (migParfums.length?migParfums.map((p,i)=>`
-    <div class="bom-line">
-      <input list="migFlavorList" value="${esc(p.nom)}" placeholder="parfum" oninput="migParfums[${i}].nom=this.value">
-      <input type="number" min="1" step="1" value="${p.qte}" placeholder="qté" oninput="migParfums[${i}].qte=+this.value">
-      <span class="x" onclick="migParfumDel(${i})">×</span>
-    </div>`).join(''):'<p class="note">Aucun parfum ajouté (facultatif).</p>');
+  const all=[...FLAVORS, ...((typeof BIG_FORMATS!=='undefined')?BIG_FORMATS:[])];
+  const uniq=[...new Set(all)].sort((a,b)=>a.localeCompare(b,'fr'));
+  const qOpts=(sel)=>{ let o=''; for(let n=1;n<=60;n++){ o+=`<option value="${n}" ${n===sel?'selected':''}>${n}</option>`; } return o; };
+  box.innerHTML = uniq.map(f=>{
+    const cur=migParfums.find(p=>p.nom===f);
+    const on=!!cur;
+    return `<div class="sum-box" style="margin:3px 0;${on?'border-left:3px solid #3f7d52':''}">
+      <label style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" ${on?'checked':''} onchange="migParfumToggle('${esc(f).replace(/'/g,"\\'")}',this.checked)">
+        <span>${esc(f)}</span>
+      </label>
+      <span style="${on?'':'display:none'}">
+        <select onchange="migParfumQte('${esc(f).replace(/'/g,"\\'")}',+this.value)" style="min-width:64px">${qOpts(on?cur.qte:1)}</select>
+      </span>
+    </div>`;
+  }).join('');
+}
+function migParfumToggle(nom, on){
+  if(on){ if(!migParfums.find(p=>p.nom===nom)) migParfums.push({nom, qte:1}); }
+  else { migParfums = migParfums.filter(p=>p.nom!==nom); }
+  migParfumDraw();
+}
+function migParfumQte(nom, qte){
+  const p=migParfums.find(x=>x.nom===nom); if(p) p.qte=Math.max(1, qte||1);
 }
 function migParfumAdd(){ migParfums.push({nom:'',qte:1}); migParfumDraw(); }
 function migParfumDel(i){ migParfums.splice(i,1); migParfumDraw(); }
 async function renderMigration(){
   migParfums=[];
+  _migEditId=null;
   const orders = await db.orders.toArray();
   const histo = orders.filter(o=>o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
@@ -13575,7 +13595,7 @@ async function renderMigration(){
       <td>${fmtDate(o.date)}</td>
       <td>${esc(o.clientId?cname(o.clientId):(o.histoLabel||'—'))}</td>
       <td><b>${euro(o.montant)}</b></td>
-      <td style="text-align:right"><span class="act del" onclick="migDeleteOrder(${o.id})">Suppr.</span></td></tr>`).join('');
+      <td style="text-align:right"><span class="act" style="color:var(--caramel)" onclick="migEditOrder(${o.id})">Modifier</span> · <span class="act del" onclick="migDeleteOrder(${o.id})">Suppr.</span></td></tr>`).join('');
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Reprise / migration</h1><p>Saisis ton historique sans déclencher la production</p></div></div>
@@ -13591,8 +13611,7 @@ async function renderMigration(){
      <div class="field"><label>Libellé si sans client (optionnel)</label><input id="mig_label" placeholder="ex : Marché de Noël, ventes diverses…"></div>
      <div class="field"><label>Détail des parfums <span style="color:#9a8a82;font-weight:400">— optionnel, alimente les statistiques & tendances</span></label>
        <div id="mig_parfums"></div>
-       <button class="btn ghost sm" style="margin-top:6px" onclick="migParfumAdd()">+ Ajouter un parfum</button>
-       <p class="note">Renseigne les parfums vendus et leurs quantités pour voir émerger les tendances (parfums populaires, saisonnalité). Sans impact sur le montant : le CA reste celui que tu as saisi.</p>
+       <p class="note">Coche les parfums vendus et indique leur quantité pour voir émerger les tendances (parfums populaires, saisonnalité). Sans impact sur le montant : le CA reste celui que tu as saisi.</p>
      </div>
      <button class="btn gold" style="width:100%" onclick="migSaveOrder()">＋ Ajouter au chiffre d'affaires</button>
      <p class="note">Astuce : pour un mois entier, tu peux saisir une seule ligne au total du mois (avec un libellé), ou plusieurs commandes détaillées — comme tu préfères.</p>
@@ -13654,6 +13673,15 @@ async function migSaveOrder(){
   const parfums=(migParfums||[]).filter(p=>p.nom&&p.nom.trim()&&+p.qte>0)
     .map(p=>({nom:p.nom.trim(), qte:+p.qte}));
   const lignes = parfums.length ? [{type:'histo', parfums}] : [];
+  if(_migEditId){
+    // MODE ÉDITION : on met à jour la commande existante (sans toucher aux champs non gérés ici)
+    await db.orders.update(_migEditId, { clientId:clientId||null, date, montant:money2(montant),
+      histoLabel:label||'', lignes });
+    const editId=_migEditId; _migEditId=null;
+    toast(`Commande modifiée ✓`);
+    renderMigration();
+    return;
+  }
   const o={ clientId:clientId||null, date, montant:money2(montant),
     statut:'Livrée', paiement:'Payé', histo:true, histoLabel:label||'',
     lignes, paiements:[], notes:'(reprise / historique)' };
@@ -13661,6 +13689,26 @@ async function migSaveOrder(){
   const nbMac=parfums.reduce((s,p)=>s+p.qte,0);
   toast(`Ajouté au CA : ${euro(montant)}${nbMac?` · ${nbMac} macaron(s) détaillés`:''} ✓`);
   renderMigration();
+}
+// Charge une commande historique dans le formulaire pour l'éditer.
+async function migEditOrder(id){
+  const o=await db.orders.get(id); if(!o){ toast('Commande introuvable'); return; }
+  _migEditId=id;
+  // pré-remplit les champs
+  const setV=(elId,v)=>{ const e=document.getElementById(elId); if(e) e.value=v; };
+  setV('mig_date', o.date||today());
+  setV('mig_montant', o.montant!=null?o.montant:'');
+  setV('mig_label', o.histoLabel||'');
+  const cl=document.getElementById('mig_client'); if(cl) cl.value=o.clientId||0;
+  // recharge le détail parfums coché
+  migParfums=[];
+  const ligneHisto=(o.lignes||[]).find(l=>l.type==='histo');
+  if(ligneHisto&&Array.isArray(ligneHisto.parfums)){ migParfums=ligneHisto.parfums.map(p=>({nom:p.nom, qte:+p.qte||1})); }
+  migParfumDraw();
+  // bascule le bouton en mode "enregistrer les modifications" + retour visuel
+  const btn=document.querySelector('button[onclick="migSaveOrder()"]');
+  if(btn){ btn.textContent='✓ Enregistrer les modifications'; btn.scrollIntoView({behavior:'smooth',block:'center'}); }
+  toast('Édition — modifie puis enregistre');
 }
 async function migDeleteOrder(id){
   const o=await db.orders.get(id);
