@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v283';
+const APP_VERSION = 'v284';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8540,20 +8540,34 @@ function computeStats(orders, clients, toLines){
     coffretsTaille:{}, // taille -> nb de coffrets vendus
     grandFormat:{},    // nom -> nb pièces
     parMois:{},        // 'YYYY-MM' -> {ca, macarons, commandes}
-    caTotal:0, nbCommandes:valides.length, nbMacarons:0
+    // nbMacarons = total historique (std + GF mélangés) CONSERVÉ pour compatibilité.
+    // Ventilation : macaronsStd (standards seuls), nbGrandsFormats (GF en pièces),
+    // coquesEquiv (volume de production en équivalent-coques : 1 std = 1, 1 GF = GF_COQUE_RATIO).
+    caTotal:0, nbCommandes:valides.length, nbMacarons:0,
+    macaronsStd:0, nbGrandsFormats:0, coquesEquiv:0
   };
   const parClient = {}; // clientId -> {nom, parfums:{}, produits:{}, parMois:{}, ca, nbCommandes, macarons}
 
   const addP=(obj,k,n)=>{ obj[k]=(obj[k]||0)+n; };
+  // Helpers de ventilation : un macaron STANDARD compte 1 coque-équivalent ;
+  // un GRAND FORMAT compte GF_COQUE_RATIO coques-équivalent (volume de production).
+  // `mois` est passé en paramètre car défini dans la boucle (hors de portée ici).
+  const addStd=(C,mois,n)=>{ global.macaronsStd+=n; C.macaronsStd+=n; global.coquesEquiv+=n; C.coquesEquiv+=n;
+    global.parMois[mois].macaronsStd+=n; C.parMois[mois].macaronsStd+=n;
+    global.parMois[mois].coquesEquiv+=n; C.parMois[mois].coquesEquiv+=n; };
+  const addGF=(C,mois,n)=>{ const eq=n*GF_COQUE_RATIO; global.nbGrandsFormats+=n; C.nbGrandsFormats+=n;
+    global.coquesEquiv+=eq; C.coquesEquiv+=eq;
+    global.parMois[mois].nbGrandsFormats+=n; C.parMois[mois].nbGrandsFormats+=n;
+    global.parMois[mois].coquesEquiv+=eq; C.parMois[mois].coquesEquiv+=eq; };
 
   for(const o of valides){
     const cid=o.clientId||0;
-    if(!parClient[cid]) parClient[cid]={nom:clientName(cid), parfums:{}, produits:{}, coffretsTaille:{}, grandFormat:{}, parMois:{}, ca:0, nbCommandes:0, macarons:0};
+    if(!parClient[cid]) parClient[cid]={nom:clientName(cid), parfums:{}, produits:{}, coffretsTaille:{}, grandFormat:{}, parMois:{}, ca:0, nbCommandes:0, macarons:0, macaronsStd:0, nbGrandsFormats:0, coquesEquiv:0};
     const C=parClient[cid];
     C.nbCommandes++; C.ca+=(+o.montant||0); global.caTotal+=(+o.montant||0);
     const mois=(o.date||'').slice(0,7) || 'inconnu';
-    if(!global.parMois[mois]) global.parMois[mois]={ca:0,macarons:0,commandes:0};
-    if(!C.parMois[mois]) C.parMois[mois]={ca:0,macarons:0,commandes:0};
+    if(!global.parMois[mois]) global.parMois[mois]={ca:0,macarons:0,commandes:0,macaronsStd:0,nbGrandsFormats:0,coquesEquiv:0};
+    if(!C.parMois[mois]) C.parMois[mois]={ca:0,macarons:0,commandes:0,macaronsStd:0,nbGrandsFormats:0,coquesEquiv:0};
     global.parMois[mois].ca+=(+o.montant||0); global.parMois[mois].commandes++;
     C.parMois[mois].ca+=(+o.montant||0); C.parMois[mois].commandes++;
 
@@ -8564,29 +8578,30 @@ function computeStats(orders, clients, toLines){
         addP(global.produits,lbl,1); addP(C.produits,lbl,1);
         addP(global.coffretsTaille,ln.taille,1); addP(C.coffretsTaille,ln.taille,1);
         (ln.parfums||[]).forEach(p=>{ if(p.qte>0){ addP(global.parfums,p.nom,p.qte); addP(C.parfums,p.nom,p.qte);
-          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; addStd(C,mois,p.qte); } });
       } else if(ln.type==='evenement'){
         addP(global.produits,'Événement',1); addP(C.produits,'Événement',1);
         (ln.parfums||[]).forEach(p=>{ if(p.qte>0){ addP(global.parfums,p.nom,p.qte); addP(C.parfums,p.nom,p.qte);
-          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; addStd(C,mois,p.qte); } });
       } else if(ln.type==='grand'){
         (ln.items||[]).forEach(p=>{ if(p.qte>0){ const lbl='Grand format : '+p.nom;
           addP(global.produits,lbl,p.qte); addP(C.produits,lbl,p.qte);
           addP(global.grandFormat,p.nom,p.qte); addP(C.grandFormat,p.nom,p.qte);
-          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; addGF(C,mois,p.qte); } });
       } else if(ln.type==='don'){
         // dons : comptés dans la consommation par parfum (sortie de stock réelle), 0 € donc pas de CA
         addP(global.produits,'Don',1); addP(C.produits,'Don',1);
         (ln.parfums||[]).forEach(p=>{ if(p.qte>0){ addP(global.parfums,p.nom,p.qte); addP(C.parfums,p.nom,p.qte);
-          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; addStd(C,mois,p.qte); } });
         (ln.items||[]).forEach(p=>{ if(p.qte>0){ const lbl='Grand format : '+p.nom;
           addP(global.grandFormat,p.nom,p.qte);
-          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; addGF(C,mois,p.qte); } });
       } else if(ln.type==='histo'){
         // Commande historique (reprise) : on alimente UNIQUEMENT les parfums et le
         // nombre de macarons (pour les tendances), sans créer de faux produit/coffret.
+        // Les reprises sont comptées comme des standards (la migration ne saisit pas de GF).
         (ln.parfums||[]).forEach(p=>{ if(p.qte>0){ addP(global.parfums,p.nom,p.qte); addP(C.parfums,p.nom,p.qte);
-          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; } });
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; addStd(C,mois,p.qte); } });
       }
     }
   }
@@ -12600,7 +12615,9 @@ async function aiQueryRevenue(){
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
     <div class="sum-box"><span>CA total</span><b>${euro(R.global.caTotal)}</b></div>
     <div class="sum-box"><span>Commandes payées</span><b>${R.nbValides}</b></div>
-    <div class="sum-box"><span>Macarons écoulés</span><b>${qty(R.global.nbMacarons)}</b></div>
+    <div class="sum-box"><span>Macarons standards écoulés</span><b>${qty(R.global.macaronsStd)}</b></div>
+    ${R.global.nbGrandsFormats>0?`<div class="sum-box"><span>Grands formats écoulés</span><b>${qty(R.global.nbGrandsFormats)}</b></div>
+    <div class="sum-box" style="background:#eef5f0"><span>Volume de production <span style="color:#9a8a82;font-size:.75rem">(équiv. coques · 1 GF = ${GF_COQUE_RATIO})</span></span><b>${qty(Math.round(R.global.coquesEquiv))}</b></div>`:''}
     ${mois.length?mois.map(m=>`<div class="sum-box"><span>${m}</span><b>${euro(R.global.parMois[m].ca)}</b></div>`).join(''):''}`);
 }
 
