@@ -17271,7 +17271,10 @@ async function componentForm(id){
     <div class="field"><label>Type</label><select id="cmp_type">${typeOpts}</select></div>
     <div class="field"><label>Rendement (nb de pièces/portions par batch)</label>
       <input type="number" step="1" min="1" id="cmp_rend" value="${c.rendement!=null?c.rendement:''}" placeholder="ex : 24"></div>
-    <label class="switch-row"><input type="checkbox" id="cmp_congel" ${c.congelObligatoire?'checked':''}> ❄️ Passe systématiquement par une <b>congélation</b></label>
+    <div class="field"><label>Délai à prévoir à l'avance (heures)</label>
+      <input type="number" step="0.5" min="0" id="cmp_delai" value="${c.delaiPrepaH!=null?c.delaiPrepaH:''}" placeholder="ex : 12 (repos au frigo)">
+      <p class="note" style="margin:4px 0 0">Temps minimum entre la fabrication et l'utilisation (repos, prise au froid…). Le système l'anticipera pour planifier la production assez tôt.</p></div>
+    <label class="switch-row"><input type="checkbox" id="cmp_congel" ${c.congelObligatoire?'checked':''}> <span>❄️ <b>Congélation</b> systématique</span></label>
     <div class="field"><label>Ingrédients (par batch) <span style="color:#9a8a82;font-weight:400">— la nomenclature propre à ce composant</span></label>
       <div id="cmpBomList"></div>
       ${mats.length?`<button class="btn ghost sm" style="margin-top:6px" onclick="cmpBomAdd()">+ Ajouter une matière</button>`:'<p class="note">Crée d\'abord des matières premières.</p>'}</div>
@@ -17313,6 +17316,7 @@ async function componentSave(id){
   const o={ nom, type:val('cmp_type')||'autre',
     rendement:Math.max(1, Math.round(+val('cmp_rend')||1)),
     congelObligatoire: !!document.getElementById('cmp_congel')?.checked,
+    delaiPrepaH: Math.max(0, +val('cmp_delai')||0),
     notes:(val('cmp_notes')||'').trim() };
   let cid = id;
   if(id){ await db.components.update(id, o); }
