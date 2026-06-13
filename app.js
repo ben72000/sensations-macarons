@@ -1002,30 +1002,101 @@ function radialHitTest(x,y){
 function radialInit(){
   radialBuild();
   const W=window.innerWidth, H=window.innerHeight;
-  // zone d'amorce : coin inférieur droit
-  const inCorner=(x,y)=> x > W*0.78 && y > H*0.80;
+  // zone d'amorce d'OUVERTURE : coin inférieur droit
+  const inCorner=(x,y)=> x > W*0.72 && y > H*0.74;
+  // état du geste de FERMETURE (balayage vers le coin pour revenir à l'accueil)
+  let _cl={tracking:false, x0:0, y0:0};
+  const mainEl=()=>document.getElementById('main');
   window.addEventListener('touchstart', e=>{
     const t=e.touches[0]; if(!t) return;
     if(!_rmState.open && inCorner(t.clientX,t.clientY)){
       _rmState.tracking=true; _rmState.startX=t.clientX; _rmState.startY=t.clientY;
     }
+    // amorce fermeture : pouce posé HORS du coin, et on n'est pas déjà sur l'accueil
+    else if(!_rmState.open && view!=='dash' && !inCorner(t.clientX,t.clientY)){
+      _cl.tracking=true; _cl.x0=t.clientX; _cl.y0=t.clientY;
+      _cl.lastX=t.clientX; _cl.lastY=t.clientY; _cl.armed=false;
+    }
   }, {passive:true});
   window.addEventListener('touchmove', e=>{
-    if(!_rmState.tracking) return;
     const t=e.touches[0]; if(!t) return;
-    const dx=t.clientX-_rmState.startX, dy=t.clientY-_rmState.startY;
-    // ouverture : glissement vers le haut-gauche (dx<0, dy<0) au-delà d'un seuil
-    if(!_rmState.open && (dx<-26 || dy<-26)){ radialOpen(); }
-    if(_rmState.open){
-      e.preventDefault();
-      const i=radialHitTest(t.clientX,t.clientY);
-      radialSetActive(i);
+    // --- geste d'ouverture du camembert ---
+    if(_rmState.tracking){
+      const dx=t.clientX-_rmState.startX, dy=t.clientY-_rmState.startY;
+      if(!_rmState.open && (dx<-26 || dy<-26)){ radialOpen(); }
+      if(_rmState.open){ e.preventDefault(); radialSetActive(radialHitTest(t.clientX,t.clientY)); }
+      return;
+    }
+    // --- geste de fermeture vers le coin (retour accueil) ---
+    if(_cl.tracking){
+      const dx=t.clientX-_cl.x0, dy=t.clientY-_cl.y0;
+      // CONTINUITÉ : le pouce doit progresser sans repartir en arrière.
+      // Si à un instant il recule (vers le haut ou la gauche) par rapport au point le plus avancé,
+      // on ABANDONNE le geste (c'était un scroll ou une hésitation, pas un vrai retour).
+      const lastX=_cl.lastX!=null?_cl.lastX:t.clientX, lastY=_cl.lastY!=null?_cl.lastY:t.clientY;
+      const goingBack = (t.clientX < lastX-4) || (t.clientY < lastY-4);
+      _cl.lastX=t.clientX; _cl.lastY=t.clientY;
+      if(goingBack){
+        // direction inversée → on annule proprement et on laisse l'écran revenir
+        if(_cl.armed){ const m=mainEl(); if(m){ m.style.transition='transform .18s ease,opacity .18s ease'; m.style.transform=''; m.style.opacity=''; m.style.borderRadius=''; m.style.boxShadow=''; } }
+        _cl.tracking=false; _cl.armed=false; return;
+      }
+      // vrai mouvement diagonal vers le coin bas-droite (évite de capturer un scroll vertical) :
+      // déplacement vers la droite ET vers le bas, équilibré (ni quasi-horizontal ni quasi-vertical).
+      const diag = dx>16 && dy>16 && dx > dy*0.5 && dy > dx*0.5;
+      if(diag || _cl.armed){
+        _cl.armed=true;
+        e.preventDefault();
+        const m=mainEl();
+        if(m){
+          // La page SUIT LE DOIGT : translation = déplacement réel du pouce (effet "feuille").
+          // Légère rotation + réduction progressive ancrées au coin bas-droite pour l'effet page-turn.
+          const prog=Math.min(1, Math.hypot(dx,dy)/Math.hypot(W,H)); // 0→1 sur la diagonale écran
+          const rot = prog*8;                 // bascule légère (deg)
+          const sc  = 1 - 0.18*prog;          // réduction douce
+          m.style.transition='none';
+          m.style.transformOrigin='100% 100%';
+          m.style.transform=`translate(${dx}px,${dy}px) rotate(${rot.toFixed(2)}deg) scale(${sc.toFixed(3)})`;
+          m.style.opacity=String(1-0.15*prog);
+          m.style.borderRadius=(prog*18).toFixed(0)+'px';
+          m.style.boxShadow=prog>0.02?`-12px -12px 30px rgba(0,0,0,${(0.18*prog).toFixed(2)})`:'';
+        }
+      }
     }
   }, {passive:false});
-  const endH=()=>{
-    if(!_rmState.tracking) return;
-    if(_rmState.open){ radialClose(_rmState.active); }
-    else { _rmState.tracking=false; }
+  const finishClose=(commit)=>{
+    const m=mainEl();
+    const cleanup=()=>{ if(!m)return; m.style.transition='none'; m.style.transform=''; m.style.opacity='';
+      m.style.borderRadius=''; m.style.boxShadow=''; m.style.transformOrigin='';
+      requestAnimationFrame(()=>{ m.style.transition=''; }); };
+    if(m){
+      m.style.transition='transform .26s cubic-bezier(.4,0,.6,1), opacity .26s ease';
+      if(commit){
+        // la feuille finit sa course : sort complètement par le coin bas-droite
+        m.style.transform='translate(100%,100%) rotate(10deg) scale(.55)';
+        m.style.opacity='0';
+        setTimeout(()=>{ if(view!=='dash') goView('dash'); cleanup(); }, 240);
+      } else {
+        // pas validé : la feuille revient se poser en place
+        m.style.transform=''; m.style.opacity=''; m.style.borderRadius=''; m.style.boxShadow='';
+        setTimeout(()=>{ if(m){ m.style.transition=''; m.style.transformOrigin=''; } }, 240);
+      }
+    }
+    _cl.tracking=false;
+  };
+  const endH=(e)=>{
+    if(_rmState.tracking){
+      if(_rmState.open){ radialClose(_rmState.active); } else { _rmState.tracking=false; }
+      return;
+    }
+    if(_cl.tracking){
+      // validation : geste réellement engagé en diagonale (armed) ET amplitude suffisante
+      const ch=e.changedTouches&&e.changedTouches[0];
+      const dx=ch?ch.clientX-_cl.x0:0, dy=ch?ch.clientY-_cl.y0:0;
+      const ok = _cl.armed && dx>60 && dy>60 && Math.hypot(dx,dy)>120;
+      finishClose(ok);
+      _cl.armed=false;
+    }
   };
   window.addEventListener('touchend', endH);
   window.addEventListener('touchcancel', endH);
