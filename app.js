@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v257';
+const APP_VERSION = 'v258';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -928,12 +928,9 @@ function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.
    MENU RADIAL (camembert) — surgit du coin inférieur droit
    ============================================================ */
 const RADIAL_ITEMS = [
-  { label:'Commande', act:()=>goView('commandes') },
-  { label:'Agenda',   act:()=>goView('cal') },
-  { label:'Production',act:()=>goView('productions') },
-  { label:'Atelier',  act:()=>goView('atelier') },
-  { label:'Pointeuse',act:()=>{ if(typeof ttStart==='function') ttStart(); } },
-  { label:'Avancé',   act:()=>openSheet() },
+  { label:'Pointeuse', act:()=>{ if(typeof ttStart==='function') ttStart(); } },
+  { label:'Commande',  act:()=>goView('commandes') },
+  { label:'Calendrier',act:()=>goView('cal') },
 ];
 let _rmState = { open:false, active:-1, startX:0, startY:0, tracking:false };
 
@@ -975,11 +972,11 @@ function radialSetActive(i){
     const on = (+el.dataset.i===i);
     el.classList.toggle('active', on);
     if(on){
-      // la part se détache vers l'extérieur (direction de son angle médian) et grossit légèrement
+      // la part se DÉTACHE nettement vers l'extérieur (direction de son angle médian) et grossit
       const mid=+el.dataset.mid||225;
       const rad=mid*Math.PI/180;
-      const dx=Math.cos(rad)*7, dy=Math.sin(rad)*7;   // pousse vers l'extérieur du camembert
-      el.style.transform=`translate(${dx.toFixed(2)}px,${dy.toFixed(2)}px) scale(1.08)`;
+      const dx=Math.cos(rad)*16, dy=Math.sin(rad)*16;   // détachement marqué hors du camembert
+      el.style.transform=`translate(${dx.toFixed(2)}px,${dy.toFixed(2)}px) scale(1.14)`;
       el.style.transformOrigin='100% 100%';
       el.parentNode.appendChild(el);                  // passe au-dessus des autres
     } else {
@@ -1006,8 +1003,8 @@ function radialClose(openIndex){
     const seg=document.querySelector(`#radialMenu .rm-seg[data-i="${openIndex}"]`);
     const lbl=document.querySelector(`#radialMenu .rm-label[data-i="${openIndex}"]`);
     if(seg){
-      seg.style.transition='transform .22s cubic-bezier(.4,0,.6,1), opacity .22s ease';
-      seg.style.transform='translate(-120px,-40px) scale(1.25)'; seg.style.opacity='0';
+      seg.style.transition='transform .3s cubic-bezier(.3,0,.4,1), opacity .3s ease';
+      seg.style.transform='translate(-180px,-90px) scale(1.5)'; seg.style.opacity='0';
     }
     if(lbl){ lbl.style.transition='opacity .18s ease'; lbl.style.opacity='0'; }
     if(host){ setTimeout(()=>{ host.classList.remove('open'); host.classList.add('peek'); }, 140); }
@@ -1099,21 +1096,34 @@ function radialInit(){
   }, {passive:false});
   const finishClose=(commit)=>{
     const m=mainEl();
-    const cleanup=()=>{ if(!m)return; m.style.transition='none'; m.style.transform=''; m.style.opacity='';
+    if(!m){ _cl.tracking=false; return; }
+    if(commit){
+      // 1) fige l'état visuel actuel de la page dans un CALQUE qui se superpose,
+      //    avec la transformation en cours (translation/rotation/échelle déjà appliquées).
+      const rect=m.getBoundingClientRect();
+      const ghost=m.cloneNode(true);
+      ghost.id='radialGhost';
+      ghost.style.cssText=`position:fixed;left:0;top:0;width:100%;z-index:58;margin:0;
+        pointer-events:none;transform:${m.style.transform||''};opacity:${m.style.opacity||1};
+        transform-origin:100% 100%;border-radius:${m.style.borderRadius||0};box-shadow:${m.style.boxShadow||'none'};
+        background:var(--creme,#F5F0E8)`;
+      document.body.appendChild(ghost);
+      // 2) on remet la vraie page à zéro et on rend l'ACCUEIL DESSOUS, immédiatement.
+      m.style.transition='none'; m.style.transform=''; m.style.opacity='';
       m.style.borderRadius=''; m.style.boxShadow=''; m.style.transformOrigin='';
-      requestAnimationFrame(()=>{ m.style.transition=''; }); };
-    if(m){
-      m.style.transition='transform .26s cubic-bezier(.4,0,.6,1), opacity .26s ease';
-      if(commit){
-        // la feuille finit sa course : sort complètement par le coin bas-droite
-        m.style.transform='translate(100%,100%) rotate(10deg) scale(.55)';
-        m.style.opacity='0';
-        setTimeout(()=>{ if(view!=='dash') goView('dash'); cleanup(); }, 240);
-      } else {
-        // pas validé : la feuille revient se poser en place
-        m.style.transform=''; m.style.opacity=''; m.style.borderRadius=''; m.style.boxShadow='';
-        setTimeout(()=>{ if(m){ m.style.transition=''; m.style.transformOrigin=''; } }, 240);
-      }
+      if(view!=='dash') goView('dash');
+      // 3) on anime le calque qui glisse et sort, révélant l'accueil déjà présent dessous.
+      requestAnimationFrame(()=>{
+        ghost.style.transition='transform .28s cubic-bezier(.4,0,.6,1), opacity .28s ease';
+        ghost.style.transform='translate(100%,100%) rotate(10deg) scale(.5)';
+        ghost.style.opacity='0';
+        setTimeout(()=>{ ghost.remove(); }, 320);
+      });
+    } else {
+      // pas validé : la feuille revient se poser en place
+      m.style.transition='transform .24s ease, opacity .24s ease';
+      m.style.transform=''; m.style.opacity=''; m.style.borderRadius=''; m.style.boxShadow='';
+      setTimeout(()=>{ if(m){ m.style.transition=''; m.style.transformOrigin=''; } }, 240);
     }
     _cl.tracking=false;
   };
