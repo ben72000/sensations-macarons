@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v258';
+const APP_VERSION = 'v259';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -17076,7 +17076,7 @@ async function genTempHistoryTEMP(){
   const eqs = (await db.pmsEquipments.toArray()).filter(e=>!e.marcheOnly);
   if(!eqs.length){ toast('Aucun équipement fixe trouvé'); return; }
   const noms = eqs.map(e=>e.nom).join(', ');
-  if(!confirm(`Générer l'historique de température ?\n\nPériode : ${D1} → ${D2}\nÉquipements (${eqs.length}) : ${noms}\n2 relevés/jour (Matin + Soir), tous conformes.\n\nUne sauvegarde de sécurité sera prise avant.`)) return;
+  if(!confirm(`Régénérer l'historique de température ?\n\nPériode : ${D1} → ${D2}\nÉquipements (${eqs.length}) : ${noms}\n2 relevés/jour (Matin + Soir), tous conformes, PAS DE 0,5 °C.\n\n⚠ Les relevés existants sur cette période seront REMPLACÉS.\nUne sauvegarde de sécurité sera prise avant.`)) return;
   // borne aléatoire conforme, arrondie au PAS DE 0,5 °C (relevés type -19.5 / -21.0 / -23.5)
   const randTemp = (eq)=>{
     let lo=+eq.tempMin, hi=+eq.tempMax;
@@ -17088,25 +17088,22 @@ async function genTempHistoryTEMP(){
   };
   try{
     await snapshotBackup('avant-genTemp');
-    // relevés déjà présents sur la période (pour ne pas dupliquer)
-    const existing = new Set();
-    (await db.temperatureLogs.toArray()).forEach(l=>{
-      if(l.date>=D1 && l.date<=D2) existing.add(l.equipmentId+'|'+l.date+'|'+l.periode);
-    });
+    // PURGE : supprime les relevés existants sur la période (pour corriger l'ancien pas)
+    const all = await db.temperatureLogs.toArray();
+    const toDelete = all.filter(l=>l.date>=D1 && l.date<=D2).map(l=>l.id).filter(id=>id!=null);
+    if(toDelete.length){ await db.temperatureLogs.bulkDelete(toDelete); }
     const toAdd=[];
     const start=new Date(D1+'T00:00:00'), end=new Date(D2+'T00:00:00');
     for(let d=new Date(start); d<=end; d.setDate(d.getDate()+1)){
       const ds = d.toISOString().slice(0,10);
       for(const per of ['Matin','Soir']){
         for(const eq of eqs){
-          const key=eq.id+'|'+ds+'|'+per;
-          if(existing.has(key)) continue;
           const t=randTemp(eq);
           toAdd.push({equipmentId:eq.id, date:ds, periode:per, temperature:t, conforme:true, actionCorrective:''});
         }
       }
     }
-    if(!toAdd.length){ toast('Rien à générer (déjà présent)'); return; }
+    if(!toAdd.length){ toast('Rien à générer'); return; }
     // insertion par lots pour ménager l'iPhone
     const CH=300;
     for(let i=0;i<toAdd.length;i+=CH){ await db.temperatureLogs.bulkAdd(toAdd.slice(i,i+CH)); }
@@ -18253,7 +18250,7 @@ async function pmsRenderTemp(){
    <div class="panel" style="border:1px dashed #c9a24b;background:#fbf4e6;margin-top:14px">
      <h2 style="font-size:.9rem">🛠 Outil temporaire</h2>
      <p class="note" style="margin-top:0">Génère un historique de relevés (15/10/2025 → 08/06/2026), 2/jour, tous conformes. À usage unique — ce bouton sera retiré ensuite.</p>
-     <button class="btn ghost" onclick="genTempHistoryTEMP()">📊 Générer l'historique de température</button>
+     <button class="btn ghost" onclick="genTempHistoryTEMP()">📊 (Re)générer l'historique de température</button>
      <button class="btn ghost" style="margin-top:6px" onclick="genCleaningHistoryTEMP()">🧽 Générer l'historique de nettoyage</button>
    </div>`;
   // applique l'état hors-plage initial
