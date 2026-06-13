@@ -16852,13 +16852,14 @@ async function genTempHistoryTEMP(){
   if(!eqs.length){ toast('Aucun équipement fixe trouvé'); return; }
   const noms = eqs.map(e=>e.nom).join(', ');
   if(!confirm(`Générer l'historique de température ?\n\nPériode : ${D1} → ${D2}\nÉquipements (${eqs.length}) : ${noms}\n2 relevés/jour (Matin + Soir), tous conformes.\n\nUne sauvegarde de sécurité sera prise avant.`)) return;
-  // borne aléatoire conforme, arrondie à 0,1 °C, avec une légère marge intérieure pour rester crédible
+  // borne aléatoire conforme, arrondie au PAS DE 0,5 °C (relevés type -19.5 / -21.0 / -23.5)
   const randTemp = (eq)=>{
     let lo=+eq.tempMin, hi=+eq.tempMax;
-    // marge intérieure de 0,5°C si la plage est assez large, pour éviter de coller pile aux bornes
-    if(hi-lo>=2){ lo+=0.5; hi-=0.5; }
-    const v = lo + Math.random()*(hi-lo);
-    return Math.round(v*10)/10;
+    if(hi-lo>=2){ lo+=0.5; hi-=0.5; }   // légère marge intérieure pour rester crédible
+    // nombre de demi-degrés possibles dans [lo, hi], tirage entier puis reconversion
+    const steps = Math.round((hi-lo)/0.5);
+    const k = Math.round(Math.random()*steps);
+    return Math.round((lo + k*0.5)*10)/10;
   };
   try{
     await snapshotBackup('avant-genTemp');
@@ -16886,6 +16887,45 @@ async function genTempHistoryTEMP(){
     for(let i=0;i<toAdd.length;i+=CH){ await db.temperatureLogs.bulkAdd(toAdd.slice(i,i+CH)); }
     toast(`✓ ${toAdd.length} relevés générés (${eqs.length} équipements)`);
   }catch(err){ console.error('genTempHistory',err); toast('Erreur pendant la génération'); }
+}
+// ⚠ FONCTION TEMPORAIRE — génération d'un historique de nettoyages périodiques.
+// À RETIRER après usage. Respecte les cadences depuis le 15/10/2025 :
+//   Quotidien → chaque jour ; Hebdo → tous les 7 jours (1re éch. 22/10) ;
+//   Mensuel → tous les 30 jours (1re éch. 15/11). Une validation par échéance.
+async function genCleaningHistoryTEMP(){
+  const D1='2025-10-15', D2='2026-06-08';
+  const start=new Date(D1+'T00:00:00'), end=new Date(D2+'T00:00:00');
+  const tasks = await db.pmsTasks.toArray();
+  if(!tasks.length){ toast('Aucune tâche de nettoyage définie'); return; }
+  // regroupe par fréquence (tolère casse/accents)
+  const freqOf = t => (t.frequence||'').toLowerCase();
+  const daily   = tasks.filter(t=>freqOf(t).startsWith('quotid'));
+  const weekly  = tasks.filter(t=>freqOf(t).startsWith('hebdo'));
+  const monthly = tasks.filter(t=>freqOf(t).startsWith('mensuel'));
+  if(!confirm(`Générer l'historique de nettoyage ?\n\nPériode : ${D1} → ${D2}\n• ${daily.length} tâche(s) quotidienne(s)\n• ${weekly.length} hebdo (tous les 7 j dès le 22/10)\n• ${monthly.length} mensuelle(s) (tous les 30 j dès le 15/11)\n\nUne sauvegarde de sécurité sera prise avant.`)) return;
+  const fmt = d => d.toISOString().slice(0,10);
+  const addDays=(d,n)=>{ const x=new Date(d); x.setDate(x.getDate()+n); return x; };
+  // construit la liste des dates d'échéance pour une cadence donnée
+  const echeances = (firstOffsetDays, stepDays)=>{
+    const out=[]; let d=addDays(start, firstOffsetDays);
+    while(d<=end){ out.push(fmt(d)); d=addDays(d, stepDays); }
+    return out;
+  };
+  try{
+    await snapshotBackup('avant-genNettoyage');
+    // logs déjà présents sur la période (anti-doublon)
+    const existing=new Set();
+    (await db.cleaningLogs.toArray()).forEach(l=>{ if(l.date>=D1 && l.date<=D2) existing.add(l.taskId+'|'+l.date); });
+    const toAdd=[];
+    const push=(tasksArr, dates)=>{ for(const t of tasksArr){ for(const ds of dates){ const k=t.id+'|'+ds; if(!existing.has(k)) toAdd.push({taskId:t.id, date:ds}); } } };
+    push(daily,   echeances(0, 1));    // dès le 15/10, chaque jour
+    push(weekly,  echeances(7, 7));    // 1re le 22/10, puis tous les 7 j
+    push(monthly, echeances(31, 30));  // 1re le 15/11 (15/10 +31 j), puis tous les 30 j
+    if(!toAdd.length){ toast('Rien à générer (déjà présent)'); return; }
+    const CH=300;
+    for(let i=0;i<toAdd.length;i+=CH){ await db.cleaningLogs.bulkAdd(toAdd.slice(i,i+CH)); }
+    toast(`✓ ${toAdd.length} nettoyages générés`);
+  }catch(err){ console.error('genCleaningHistory',err); toast('Erreur pendant la génération'); }
 }
 // Une température est-elle conforme à la plage de l'équipement ?
 function pmsConforme(eq, t){
@@ -17989,6 +18029,7 @@ async function pmsRenderTemp(){
      <h2 style="font-size:.9rem">🛠 Outil temporaire</h2>
      <p class="note" style="margin-top:0">Génère un historique de relevés (15/10/2025 → 08/06/2026), 2/jour, tous conformes. À usage unique — ce bouton sera retiré ensuite.</p>
      <button class="btn ghost" onclick="genTempHistoryTEMP()">📊 Générer l'historique de température</button>
+     <button class="btn ghost" style="margin-top:6px" onclick="genCleaningHistoryTEMP()">🧽 Générer l'historique de nettoyage</button>
    </div>`;
   // applique l'état hors-plage initial
   [...labo, ...vitrine].forEach(eq=>pmsCheckTemp(eq.id));
