@@ -1383,6 +1383,7 @@ async function renderDash(){
        <span class="hhc-sub">${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</span>
        <span class="hhc-clock" id="homeClock">${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
        <span class="hhc-ca">${privacyModeEnabled()?'•••':euro(caMonth)}<span class="hhc-ca-lbl">CA du mois</span></span>
+       <span style="margin-top:6px;font-size:.62rem;opacity:.5;letter-spacing:.05em">${APP_VERSION}</span>
      </div>
    </div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
@@ -11528,7 +11529,7 @@ async function calculateSerenityScore(opts){
    que l'assistant réponde toujours juste. Chaque entrée : {id, titre, tags
    (mots-clés normalisés), r (réponse HTML concise)}.
    ============================================================ */
-const APP_VERSION = 'v162';
+const APP_VERSION = 'v255';
 const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
