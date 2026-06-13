@@ -1925,7 +1925,7 @@ async function renderRecipes(){
     _recipeMultCache[r.id] = { rendement:+r.rendement||1,
       items: items.map(it=>{ const d=dispOf(it.materialId); return {nom:matName(it.materialId), unite:d.u, qteParBatch:round3((+it.qteParBatch||0)*d.f)}; }) };
     const rows = items.map((it,idx)=>{ const d=dispOf(it.materialId); const shown=round3((+it.qteParBatch||0)*d.f);
-      const tags=[it.partie?(it.partie==='coque'?'coque':'ganache'):'', it.etiquette||''].filter(Boolean).join(' · ');
+      const tags=[it.partie||'', it.etiquette||''].filter(Boolean).join(' · ');
       return `<div class="ing-row">
         <div class="ing-nom">${esc(matName(it.materialId))}${tags?`<span class="ing-tag">${esc(tags)}</span>`:''}</div>
         <div class="ing-qtes">
@@ -2151,6 +2151,7 @@ function drawBom(){
         <option value="" ${part===''?'selected':''}>— phase —</option>
         <option value="coque" ${part==='coque'?'selected':''}>🟤 Coque</option>
         <option value="ganache" ${part==='ganache'?'selected':''}>🍫 Ganache</option>
+        <option value="cremeux" ${part==='cremeux'?'selected':''}>🟠 Crémeux</option>
       </select>
       <input type="text" class="bom-etiq" value="${esc(b.etiquette||'')}" oninput="bomSetEtiq(${i}, this.value)" placeholder="note (ex : chaude)" title="Étiquette libre, purement informative — sans effet sur le stock" maxlength="24">
       <span class="x" onclick="bomDel(${i})">×</span>
@@ -3803,7 +3804,7 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
     totParMat[it.materialId].n++; });
   const rows = items.map(it=>{ const d=dispOf(it.materialId);
     const q = round3((+it.qteParBatch||0)*d.f*facteur);
-    const partTag = it.partie ? ` <span class="tag" style="background:${it.partie==='coque'?'#8a6d3b':'#5a3a2a'};color:#fff;font-size:.6rem">${it.partie}</span>` : '';
+    const partTag = it.partie ? ` <span class="tag" style="background:${it.partie==='coque'?'#8a6d3b':it.partie==='cremeux'?'#c97b3c':'#5a3a2a'};color:#fff;font-size:.6rem">${it.partie}</span>` : '';
     const etiq = it.etiquette ? ` <span style="color:#9a8a82;font-size:.8rem">${esc(it.etiquette)}</span>` : '';
     return `<tr><td>${esc(matName(it.materialId))}${etiq}${partTag}</td><td style="text-align:right"><b>${qty(q)}</b> ${esc(d.u)}</td></tr>`;
   }).join('') || '<tr><td colspan="2" class="note">Aucun ingrédient renseigné pour ce composant.</td></tr>';
@@ -17229,7 +17230,6 @@ function lotPlacementCtx(p, recipe){
 // ---- CATALOGUE DE COMPOSANTS RÉUTILISABLES ----
 const COMPONENT_TYPES = {
   ganache:  {label:'Ganache montée', ico:'🍫'},
-  cremeux:  {label:'Crémeux / cœur',  ico:'🟠'},
   coques:   {label:'Coques',          ico:'🟤'},
   insert:   {label:'Insert',          ico:'⭐'},
   autre:    {label:'Autre',           ico:'🔹'},
@@ -17264,7 +17264,7 @@ async function componentForm(id){
   const mats = await db.materials.toArray().catch(()=>[]);
   window._matsCache = mats;
   cmpBomDraft = id ? (await db.recipeItems.where('componentId').equals(id).toArray().catch(()=>[]))
-    .map(it=>({materialId:it.materialId, qteParBatch:it.qteParBatch})) : [];
+    .map(it=>({materialId:it.materialId, qteParBatch:it.qteParBatch, note:it.note||''})) : [];
   const typeOpts = Object.entries(COMPONENT_TYPES).map(([k,t])=>`<option value="${k}" ${c.type===k?'selected':''}>${t.ico} ${t.label}</option>`).join('');
   openModal(`<h3>${id?'Modifier':'Nouveau'} composant</h3>
     <div class="field"><label>Nom</label><input type="text" id="cmp_nom" value="${esc(c.nom||'')}" placeholder="ex : Ganache montée mangue/framboise"></div>
@@ -17287,27 +17287,19 @@ async function componentForm(id){
 function drawCmpBom(){
   const box=document.getElementById('cmpBomList'); if(!box) return;
   const mats=(window._matsCache||[]).slice().sort((a,b)=>(a.nom||'').localeCompare(b.nom||'','fr',{sensitivity:'base'}));
-  const dl = `<datalist id="cmpMatList">${mats.map(m=>`<option value="${esc(m.nom)}${m.marque?' — '+esc(m.marque):''}">`).join('')}</datalist>`;
-  const nomById = id => { const m=mats.find(x=>x.id===id); return m?(m.nom+(m.marque?' — '+m.marque:'')):''; };
-  box.innerHTML = dl + cmpBomDraft.map((b,i)=>{
-    return `<div class="bom-line" style="grid-template-columns:1fr 90px 24px">
-      <input list="cmpMatList" value="${esc(nomById(b.materialId))}" placeholder="Tape ou choisis une matière…" oninput="cmpBomPick(${i},this.value)">
-      <input type="number" step="0.001" min="0" value="${b.qteParBatch!=null?b.qteParBatch:''}" oninput="cmpBomSet(${i},'qteParBatch',+this.value)" placeholder="qté">
-      <span class="x" onclick="cmpBomDel(${i})">×</span></div>`;
+  box.innerHTML = cmpBomDraft.map((b,i)=>{
+    const opts = mats.map(m=>`<option value="${m.id}" ${m.id===b.materialId?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''}</option>`).join('');
+    return `<div style="margin-bottom:8px">
+      <div class="bom-line" style="grid-template-columns:1fr 90px 24px">
+        <select onchange="cmpBomSet(${i},'materialId',+this.value)">${opts}</select>
+        <input type="number" step="0.001" min="0" value="${b.qteParBatch!=null?b.qteParBatch:''}" oninput="cmpBomSet(${i},'qteParBatch',+this.value)" placeholder="qté">
+        <span class="x" onclick="cmpBomDel(${i})">×</span>
+      </div>
+      <input type="text" value="${esc(b.note||'')}" oninput="cmpBomSet(${i},'note',this.value)" placeholder="💬 précision (ex : crème chaude, crème froide…)" style="width:100%;margin-top:3px;font-size:.82rem;padding:6px 8px;border:1px solid #e8dccd;border-radius:8px;background:#fff;color:#6a5a52">
+    </div>`;
   }).join('') || '<p class="note">Aucun ingrédient.</p>';
 }
-// Résout le texte saisi (nom éventuellement suivi de « — marque ») vers un materialId.
-function cmpBomPick(i, txt){
-  if(!cmpBomDraft[i]) return;
-  const mats=window._matsCache||[];
-  const t=(txt||'').trim().toLowerCase();
-  // match exact "nom — marque" puis match sur le nom seul
-  let m = mats.find(x=>((x.nom||'')+(x.marque?' — '+x.marque:'')).toLowerCase()===t)
-       || mats.find(x=>(x.nom||'').toLowerCase()===t)
-       || mats.find(x=>(x.nom||'').toLowerCase().startsWith(t));
-  if(m) cmpBomDraft[i].materialId = m.id;
-}
-function cmpBomAdd(){ const mats=window._matsCache||[]; if(!mats.length) return; cmpBomDraft.push({materialId:mats[0].id, qteParBatch:0}); drawCmpBom(); }
+function cmpBomAdd(){ const mats=window._matsCache||[]; if(!mats.length) return; cmpBomDraft.push({materialId:mats[0].id, qteParBatch:0, note:''}); drawCmpBom(); }
 function cmpBomDel(i){ cmpBomDraft.splice(i,1); drawCmpBom(); }
 function cmpBomSet(i,k,v){ if(cmpBomDraft[i]){ cmpBomDraft[i][k]=(k==='qteParBatch')?Math.max(0,+v||0):v; } }
 async function componentSave(id){
@@ -17323,7 +17315,7 @@ async function componentSave(id){
   else { cid = await db.components.add(o); }
   // ingrédients du composant : on remplace l'ensemble (via componentId)
   await db.recipeItems.where('componentId').equals(cid).delete().catch(()=>{});
-  for(const b of cmpBomDraft){ if(b.materialId) await db.recipeItems.add({componentId:cid, materialId:b.materialId, qteParBatch:Math.max(0,+b.qteParBatch||0)}); }
+  for(const b of cmpBomDraft){ if(b.materialId) await db.recipeItems.add({componentId:cid, materialId:b.materialId, qteParBatch:Math.max(0,+b.qteParBatch||0), note:(b.note||'').trim()}); }
   closeModal(); toast('Composant enregistré ✓'); renderComposants();
 }
 async function componentDelete(id){
