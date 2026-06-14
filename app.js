@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v333';
+const APP_VERSION = 'v336';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -643,6 +643,45 @@ function genLotCode(n){
   let s='';
   for(let i=0;i<n;i++) s += LOT_ALPHABET[Math.floor(Math.random()*LOT_ALPHABET.length)];
   return s;
+}
+// Table des CODES PARFUM pour les numéros de lot (définis par Benjamin).
+// En lisant un lot, le code dit immédiatement de quel produit il s'agit.
+const FLAVOR_CODES = {
+  'Citron crémeux':'CIT', 'Chocolat au lait':'CHL', 'Chocolat noir':'CHN',
+  'Framboise':'FRA', 'Vanille':'VAN', 'Pistache':'PIS', 'Coco Rafaello':'RAF',
+  'Cannelle noisette':'CAN', 'Caramel beurre salé':'CAR', 'Chocolat passion':'CHP',
+  'Nocciolata':'NOC', 'Coco citron vert':'CCV', 'Praliné noisettes':'PRA',
+  'Popcorn':'POP', 'Café':'CAF'
+};
+// Dérive le code parfum à partir d'un nom de recette/produit. Cherche le parfum dont
+// le nom est contenu dans le nom de la recette (ex. « Macaron Caramel beurre salé » → CAR).
+// Repli : 3 premières lettres alphabétiques si aucun parfum connu n'est reconnu.
+function flavorCode(nom){
+  const n = normTxt(nom||'');
+  // On teste du plus spécifique au plus court pour éviter que 'Chocolat' attrape 'Chocolat noir'.
+  const noms = Object.keys(FLAVOR_CODES).sort((a,b)=>normTxt(b).length-normTxt(a).length);
+  for(const f of noms){ if(n.includes(normTxt(f))) return FLAVOR_CODES[f]; }
+  const lettres = (nom||'').toUpperCase().replace(/[^A-Z]/g,'').replace(/[ILO]/g,'');
+  return lettres.slice(0,3) || 'XXX';
+}
+// Date JJMMAA (jour-mois-année courts) pour le numéro de lot.
+function lotDateJJMMAA(d){
+  const dt = d ? new Date(d) : new Date();
+  const jj = String(dt.getDate()).padStart(2,'0');
+  const mm = String(dt.getMonth()+1).padStart(2,'0');
+  const aa = String(dt.getFullYear()).slice(-2);
+  return jj+mm+aa;
+}
+// Construit le numéro de lot : JJMMAA + CODE (+ numéro si doublon du jour).
+// Le 1er lot du jour pour ce parfum n'a pas de numéro ; les suivants : 2, 3, …
+// existants = liste des lotBase déjà utilisés ce jour pour CE parfum (pour calculer le rang).
+function buildLotBase(nomProduit, dateStr, existantsMemeJourMemeParfum){
+  const code = flavorCode(nomProduit);
+  const datePart = lotDateJJMMAA(dateStr);
+  const racine = datePart + code;           // ex : 180824CAR
+  const dejaCount = (existantsMemeJourMemeParfum||[]).length;
+  if(dejaCount<=0) return racine;           // 1er lot : sans numéro
+  return racine + (dejaCount+1);            // 2e lot → CAR2, 3e → CAR3, …
 }
 // Nettoie un n° de lot saisi : met en majuscules et retire les lettres ambiguës I, L, O.
 // Renvoie {lot, changed} pour pouvoir prévenir l'utilisateur si une correction a eu lieu.
@@ -4444,8 +4483,33 @@ async function prodDegDistribueSave(id){
   closeModal(); renderProductions();
   toast(`🥄 ${qty(q)} dégustation(s) distribuée(s) · reste ${qty(subQty(reste,q))}`);
 }
-async function prodForm(){
-  const recipes = await db.recipes.toArray();
+// Recalcule le n° de lot proposé selon la recette + la date sélectionnées dans le formulaire,
+// en comptant les lots du même parfum déjà produits ce jour-là (pour le numéro de doublon).
+async function prodRefreshLot(){
+  const sel=document.getElementById('f_rec');
+  const dateEl=document.getElementById('f_date');
+  const lotEl=document.getElementById('f_lot');
+  if(!sel||!lotEl) return;
+  // Ne pas écraser une saisie manuelle de l'utilisateur.
+  if(lotEl.dataset.touched==='1') return;
+  let nom='';
+  try{ const rid=+sel.value; const r=await db.recipes.get(rid); nom=r?r.produitNom:''; }catch(e){}
+  const dateStr=(dateEl&&dateEl.value)||today();
+  // Lots déjà produits ce jour pour ce parfum (même code) → pour calculer le rang.
+  let memeJourMemeParfum=[];
+  try{
+    const code=flavorCode(nom);
+    const datePart=lotDateJJMMAA(dateStr);
+    const racine=datePart+code;
+    const prods=await db.productions.toArray();
+    memeJourMemeParfum=prods.filter(p=>{
+      const base=p.lotBase||lotBaseSansSuffixe(p.lotProduction||'');
+      return base && (base===racine || new RegExp('^'+racine+'\\d+$').test(base));
+    });
+  }catch(e){}
+  lotEl.value=buildLotBase(nom, dateStr, memeJourMemeParfum);
+}
+async function prodForm(){  const recipes = await db.recipes.toArray();
   // Mode DÉCOUVERTE : si aucune recette n'existe encore, on propose une production « libre »
   // (nom saisi à la main, sans recette ni consommation de matières) pour se familiariser.
   if(!recipes.length){ return prodFormLibre(); }
@@ -4466,7 +4530,7 @@ async function prodForm(){
        <option value="complet">Batch complet (coques + ganache assemblés)</option>
        <option value="composant">Par composants (coques / ganache séparés)</option>
      </select></div>
-   <div class="field"><label>Recette</label><select id="f_rec" onchange="prodSyncTheorique()">${opts}</select></div>
+   <div class="field"><label>Recette</label><select id="f_rec" onchange="prodSyncTheorique();prodRefreshLot()">${opts}</select></div>
    <div class="field" id="f_compWrap" style="display:none"><label>Composant à produire</label>
      <div class="opt-table">
        <label class="opt-row"><input type="radio" name="f_comp" value="coques" checked onchange="prodCompSwitch()"> <span class="opt-ico">🟤</span> <span class="opt-main"><b>Coques</b><br><span class="opt-sub">rangement : ambiant ou congélateur (jamais frigo)</span></span></label>
@@ -4475,17 +4539,18 @@ async function prodForm(){
    <div class="row2">
      <div class="field"><label>Quantité théorique <span style="color:#9a8a82;font-weight:400" id="qteUnit">— en macarons (base matières)</span></label>
        <input type="number" id="f_qte" value="${recipes[0].rendement}" min="1" oninput="prodSyncReelDefault()"></div>
-     <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}"></div>
+     <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}" onchange="prodRefreshLot()"></div>
    </div>
    <p class="note" id="coqueHint" style="display:none;margin:-4px 0 8px;color:#8a6d3b"></p>
    <div class="field"><label>Quantité réelle produite <span style="color:#9a8a82;font-weight:400">— stock produits finis (modifiable en fin de production)</span></label>
      <input type="number" id="f_qtereel" value="${recipes[0].rendement}" min="0" oninput="_prodReelTouched=true;prodUpdateEcartHint()">
      <p class="note" id="ecartHint" style="margin-top:4px;display:none"></p></div>
-   <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoutera à la fin</span></label><input id="f_lot" value="L-${today().replace(/-/g,'')}-${genLotCode(3)}"></div>
+   <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoutera à la fin</span></label><input id="f_lot" value="${lotDateJJMMAA()}${flavorCode(recipes[0].produitNom)}" oninput="this.dataset.touched='1'"></div>
    <p class="note" id="dlcHint">La production démarre au statut <b>« démarrée »</b>. Tu choisiras l'<b>emplacement de rangement</b> au moment de la <b>fin de production</b> (« ✓ Terminer »), et la DLC (<b>+7 j</b> frigo, <b>+4 mois</b> congélateur) ne courra qu'à ce moment-là.</p>
    <p class="note">Les <b>matières premières</b> sont déduites sur la base de la <b>quantité théorique</b> (DLC la plus proche d'abord). Le <b>stock de produits finis</b> est calé sur la <b>quantité réelle</b>. L'écart est historisé. Si le stock matières est insuffisant, <b>rien</b> n'est enregistré.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
   prodSyncReelDefault();
+  prodRefreshLot();
 }
 // Bascule entre batch complet et production par composants.
 function prodModeSwitch(mode){
@@ -4557,16 +4622,12 @@ async function saveProd(){
   if(!qteTheorique||qteTheorique<=0){toast('Quantité théorique invalide');return;}
   if(qteReelle<0||isNaN(qteReelle)){toast('Quantité réelle invalide');return;}
   // L'emplacement n'est plus demandé au lancement : il sera choisi à la fin de production.
-  // Nettoyage des lettres ambiguës (I, L, O) sur la PARTIE VARIABLE uniquement
+  // Nouveau format de lot : JJMMAA + CODE PARFUM (+ numéro) — les codes sont définis exprès
+  // et non ambigus, donc on NE retire PAS I/L/O (sinon CHL→CH, NOC→NC casseraient le code).
+  // On met simplement en majuscules et on retire les espaces.
   const baseLot = lotBaseSansSuffixe(val('f_lot'));
-  const m = baseLot.match(/^(L-\d{8}-)(.*)$/i);
-  let lotPrefix, lotCode;
-  if(m){ lotPrefix=m[1].toUpperCase(); lotCode=m[2]; }
-  else { lotPrefix=''; lotCode=baseLot; }
-  const san=sanitizeLot(lotCode);
-  if(san.changed) toast('Lettres ambiguës (I, L, O) retirées du n° de lot.');
-  let cleanBase = lotPrefix + san.lot;
-  if(!san.lot){ cleanBase = lotPrefix + genLotCode(3); }
+  let cleanBase = baseLot.toUpperCase().replace(/\s+/g,'');
+  if(!cleanBase){ cleanBase = lotDateJJMMAA(date)+'XXX'; }
   // suffixe composant (CO/GA) — la lettre d'emplacement sera ajoutée à la fin de production
   const suffComp = composant==='coques' ? '-CO' : (composant==='ganache' ? '-GA' : '');
   lot = cleanBase + suffComp;   // pas encore de lettre d'emplacement
@@ -4640,25 +4701,42 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
 function prodFormLibre(){
   openModal(`<h3>Production rapide ⚡</h3>
    <p class="note" style="margin-bottom:10px">Pour te familiariser : crée une production avec juste un <b>nom</b>, sans recette ni matières. Aucun stock n'est touché. Tu pourras la compléter ou la supprimer plus tard.</p>
-   <div class="field"><label>Nom du produit</label><input id="fl_nom" placeholder="ex. Macaron chocolat" autocomplete="off"></div>
+   <div class="field"><label>Nom du produit</label><input id="fl_nom" placeholder="ex. Macaron chocolat" autocomplete="off" oninput="prodLibreRefreshLot()"></div>
    <div class="row2">
      <div class="field"><label>Quantité produite</label><input type="number" id="fl_qte" value="30" min="1"></div>
      <div class="field"><label>Date</label><input type="date" id="fl_date" value="${today()}"></div>
    </div>
-   <div class="field"><label>N° lot de production</label><input id="fl_lot" value="L-${today().replace(/-/g,'')}-${genLotCode(3)}"></div>
+   <div class="field"><label>N° lot de production</label><input id="fl_lot" value="${lotDateJJMMAA()}" oninput="this.dataset.touched='1'"></div>
    <p class="note">Cette production apparaîtra avec une étiquette <b>« libre »</b> pour que tu la repères. Elle n'entre pas dans les calculs de coût tant qu'elle n'est pas reliée à une recette.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProdLibre()">Lancer la production</button></div>`);
   setTimeout(()=>{ const el=document.getElementById('fl_nom'); if(el) el.focus(); }, 60);
+}
+// Recalcule le lot du formulaire libre selon le nom saisi + la date (avec numéro de doublon).
+async function prodLibreRefreshLot(){
+  const nomEl=document.getElementById('fl_nom');
+  const dateEl=document.getElementById('fl_date');
+  const lotEl=document.getElementById('fl_lot');
+  if(!lotEl) return;
+  if(lotEl.dataset.touched==='1') return;
+  const nom=(nomEl&&nomEl.value)||'';
+  const dateStr=(dateEl&&dateEl.value)||today();
+  let memeJour=[];
+  try{
+    const racine=lotDateJJMMAA(dateStr)+flavorCode(nom);
+    const prods=await db.productions.toArray();
+    memeJour=prods.filter(p=>{ const base=p.lotBase||lotBaseSansSuffixe(p.lotProduction||''); return base && (base===racine || new RegExp('^'+racine+'\\d+$').test(base)); });
+  }catch(e){}
+  lotEl.value=buildLotBase(nom, dateStr, memeJour);
 }
 async function saveProdLibre(){
   const nom=val('fl_nom').trim();
   if(!nom){ toast('Donne un nom au produit'); return; }
   const qte=+val('fl_qte'); if(!qte||qte<=0){ toast('Quantité invalide'); return; }
   const date=val('fl_date')||today();
+  // Nouveau format : on garde le lot tel quel (majuscules, sans espaces), sans retirer I/L/O.
   const baseLot=lotBaseSansSuffixe(val('fl_lot'));
-  const san=sanitizeLot(baseLot.replace(/^(L-\d{8}-)/i,''));
-  const m=baseLot.match(/^(L-\d{8}-)(.*)$/i);
-  const lot=(m?m[1].toUpperCase():'')+(san.lot||genLotCode(3));
+  let lot=baseLot.toUpperCase().replace(/\s+/g,'');
+  if(!lot){ lot=lotDateJJMMAA(date)+flavorCode(nom); }
   try{
     await db.productions.add({
       recipeId: null, produitLibre: nom, libre: true,
@@ -5396,6 +5474,9 @@ async function renderTrace(){
    <div class="topbar"><div><h1>Traçabilité</h1><p>Remonter la chaîne fournisseur → lot → batch → commande</p></div>
      <div class="flex" style="gap:8px"><button class="btn" onclick="openScanner(lot=>traceLotByNumber(lot))">📷 Scanner un lot</button>
      <button class="btn" style="background:var(--red,#b3261e)" onclick="openFlashAlert()">⚠ Alerte Sanitaire Flash</button></div></div>
+   <div class="flex" style="gap:8px;margin-bottom:10px">
+     <input class="search" id="lotNumInput" style="flex:1" placeholder="Rechercher un n° de lot (ex : 140626FRA, AMANDE…)" autocomplete="off" autocapitalize="characters" autocorrect="off" onkeydown="if(event.key==='Enter')traceLotByNumber(this.value)">
+     <button class="btn gold" onclick="traceLotByNumber(document.getElementById('lotNumInput').value)">Chercher</button></div>
    <div class="banner">⊕ <div>La traçabilité répond à trois questions réglementaires : ingrédients d'une commande, origine d'un batch, et usage d'un lot de matière. En cas de problème, l'<b>Alerte Sanitaire Flash</b> isole un lot et liste tous les produits et clients concernés.</div></div>
    <div class="trace-grid">
      <div class="panel"><h2>Par commande livrée</h2>
@@ -5512,12 +5593,34 @@ async function traceLotByNumber(code){
   code=(code||'').trim(); if(!code){ return; }
   const target=normTxt(code);
   const lots=await db.materialLots.toArray();
-  const ml=lots.find(l=>normTxt(l.lotFournisseur||'')===target) || lots.find(l=>normTxt(l.lotFournisseur||'').includes(target));
-  if(ml){ traceLot(ml.id); return; }
   const prods=await db.productions.toArray();
-  const p=prods.find(x=>normTxt(x.lotProduction||'')===target) || prods.find(x=>normTxt(x.lotProduction||'').includes(target));
-  if(p){ traceProd(p.id); return; }
-  toast('Lot « '+code+' » introuvable. Essayez l\'Alerte Flash.');
+  const mats=await db.materials.toArray();
+  const recipes=await db.recipes.toArray();
+  const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'—';
+  const recName2=id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  // Correspondances : exact OU base sans emplacement OU inclusion. On liste TOUT et l'utilisateur choisit.
+  const prodMatch=prods.filter(x=>{
+    const full=normTxt(x.lotProduction||''); const base=normTxt(lotBaseSansSuffixe(x.lotProduction||''));
+    return full===target || base===target || full.includes(target);
+  }).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const lotMatch=lots.filter(l=>normTxt(l.lotFournisseur||'').includes(target));
+  if(!prodMatch.length && !lotMatch.length){
+    toast('Lot « '+code+' » introuvable. Essayez l\'Alerte Flash.'); return;
+  }
+  const prodRows=prodMatch.map(p=>{
+    const nom = p.libre ? (p.produitLibre||'(sans nom)') : recName2(p.recipeId);
+    const emp = p.emplacement ? ' · '+empLettre(p.emplacement) : '';
+    return `<button type="button" class="lot-res" onclick="closeModal();traceProd(${p.id})" style="display:block;width:100%;text-align:left;background:#fff;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer">
+      <b style="color:var(--bordeaux)">${esc(p.lotProduction||'—')}</b>${emp}<br>
+      <span style="font-size:.84rem;color:#6a5a52">${esc(nom)}${p.date?' · '+fmtDate(p.date):''}</span></button>`;
+  }).join('');
+  const lotRows=lotMatch.map(l=>`<button type="button" class="lot-res" onclick="closeModal();traceLot(${l.id})" style="display:block;width:100%;text-align:left;background:#fff;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer">
+      <b style="color:var(--bordeaux)">${esc(l.lotFournisseur||'(sans n°)')}</b><br>
+      <span style="font-size:.84rem;color:#6a5a52">${esc(matName(l.materialId))}</span></button>`).join('');
+  openModal(`<h3>Résultats pour « ${esc(code)} »</h3>
+    ${prodMatch.length?`<div style="margin-bottom:10px"><div style="font-size:.74rem;font-weight:600;text-transform:uppercase;color:#7a6a62;margin-bottom:6px">Productions (${prodMatch.length})</div>${prodRows}</div>`:''}
+    ${lotMatch.length?`<div style="margin-bottom:10px"><div style="font-size:.74rem;font-weight:600;text-transform:uppercase;color:#7a6a62;margin-bottom:6px">Lots fournisseur (${lotMatch.length})</div>${lotRows}</div>`:''}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 
 /* ============================================================
