@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v312';
+const APP_VERSION = 'v313';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7110,9 +7110,19 @@ function lineRemiseRow(ln,i){
         <input type="number" min="0" max="100" step="1" id="remPct_${i}" value="${pct>0?pct:''}" placeholder="0"
           oninput="setLineRemisePct(${i},this.value)"></div>
     </div>
-    <div class="sum-box" style="margin:6px 0 0">${(pct>0)
+    <div class="sum-box" id="remSum_${i}" style="margin:6px 0 0">${(pct>0)
       ? `<span>Avant ${euro(base)} · −${pct}% (${euro(eur)})</span><b>${euro(net)}</b>`
       : `<span>Montant ligne</span><b>${euro(base)}</b>`}</div>`;
+}
+// HTML interne du récap de remise d'une ligne (réutilisé pour le rafraîchissement temps réel).
+function lineRemiseSumInner(ln){
+  const base=lineTotalBase(ln);
+  const pct=Math.max(0,Math.min(100,+ln.remisePct||0));
+  const eur=money2(base*pct/100);
+  const net=lineTotal(ln);
+  return (pct>0)
+    ? `<span>Avant ${euro(base)} · −${pct}% (${euro(eur)})</span><b>${euro(net)}</b>`
+    : `<span>Montant ligne</span><b>${euro(base)}</b>`;
 }
 // Saisie en POURCENTAGE → borne 0–100, met à jour le champ € jumeau, recalcule.
 function setLineRemisePct(i,v){
@@ -7121,6 +7131,7 @@ function setLineRemisePct(i,v){
   const base=lineTotalBase(cmdLines[i]);
   const eurEl=document.getElementById('remEur_'+i);
   if(eurEl && document.activeElement!==eurEl){ const e=money2(base*p/100); eurEl.value=e>0?e:''; }
+  const sum=document.getElementById('remSum_'+i); if(sum) sum.innerHTML=lineRemiseSumInner(cmdLines[i]);
   cmdRecalc();
 }
 // Saisie en EUROS → convertie en % de la base (référence canonique), met à jour le champ % jumeau.
@@ -7132,6 +7143,7 @@ function setLineRemiseEuro(i,v){
   cmdLines[i].remiseType='pct'; cmdLines[i].remisePct=p; delete cmdLines[i].remiseEuro;
   const pctEl=document.getElementById('remPct_'+i);
   if(pctEl && document.activeElement!==pctEl){ pctEl.value=p>0?p:''; }
+  const sum=document.getElementById('remSum_'+i); if(sum) sum.innerHTML=lineRemiseSumInner(cmdLines[i]);
   cmdRecalc();
 }
 // Normalise les lignes d'édition (cmdLines) vers la forme stockée (tableaux parfums/items).
