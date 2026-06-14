@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v326';
+const APP_VERSION = 'v327';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2790,15 +2790,16 @@ function docStatutColor(d){
 }
 // Une facture est-elle définitive (gravée, inaltérable) ?
 function docEstDefinitif(d){ return d && d.type==='facture' && (d.statut==='emise' || d.statut==='payee'); }
-// Numéro légal SÉQUENTIEL STRICT : lit la dernière facture DÉFINITIVE et incrémente.
-// L'ordre de validation fait foi (pas l'ordre de création des brouillons). Jamais de trou.
+// Numéro légal au format AAAAMM-[numéro]. Le numéro croît sans fin (jamais de reset),
+// démarre à 24, et l'ordre de validation fait foi. Le préfixe = année+mois d'émission.
 async function nextFactureNumeroDefinitif(){
-  const year=new Date().getFullYear();
+  const d=new Date();
+  const prefix=d.getFullYear()+String(d.getMonth()+1).padStart(2,'0');
   const factsDef=(await db.documents.where('type').equals('facture').toArray().catch(()=>[]))
-    .filter(d=>docEstDefinitif(d) && d.numero && (d.numero||'').includes('-'+year+'-'));
-  let maxSeq=0;
-  factsDef.forEach(d=>{ const m=(d.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>maxSeq) maxSeq=n; } });
-  return `FAC-${year}-${String(maxSeq+1).padStart(3,'0')}`;
+    .filter(f=>docEstDefinitif(f) && f.numero);
+  let maxSeq=23;  // pour que la toute première facture porte le numéro 24
+  factsDef.forEach(f=>{ const m=(f.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>maxSeq) maxSeq=n; } });
+  return `${prefix}-${maxSeq+1}`;
 }
 // Numéro de document : DEV-2026-001 / FAC-2026-001
 async function nextDocNumero(type){
@@ -15237,6 +15238,7 @@ async function genererFactureMultiple(ids){
     : `${orderNumber(orders[0])} → ${orderNumber(orders[orders.length-1])}`;
 
   const factureHtml = `<!doctype html><html lang="fr"><head><meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
    <meta name="format-detection" content="telephone=no, date=no, email=no, address=no">
    <title>Facture groupée</title>
    <link href="https://fonts.googleapis.com/css2?family=Bellota:wght@400;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -15246,6 +15248,13 @@ async function genererFactureMultiple(ids){
      body { font-family:'Outfit',system-ui,sans-serif; color:#3a2a2e; background:#fff; font-size:13px; }
      a, a:link, a:visited { color:inherit !important; text-decoration:none !important; }
      .page { width:210mm; min-height:297mm; padding:0 0 18mm 0; margin:0 auto; }
+     @media screen {
+       html,body { background:#e8e2da; }
+       .page { width:100%; max-width:820px; min-height:0; padding:18px 16px 28px; margin:0 auto; background:#fff; }
+       body { font-size:15px; -webkit-text-size-adjust:100%; }
+       table { width:100%; }
+       .totaux { width:auto; max-width:100%; }
+     }
      .entete { background:#E8DDCD; color:#490F25; padding:15mm 18mm 12mm; text-align:center; border-bottom:2.5pt solid #490F25; }
      .entete .logo { width:78mm; max-width:80%; height:auto; display:block; margin:0 auto 6mm; }
      .entete .em-nom { font-family:'Bellota',cursive; font-weight:700; font-size:18px; color:#490F25; letter-spacing:.02em; margin-bottom:3mm; }
