@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v341';
+const APP_VERSION = 'v342';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10591,6 +10591,8 @@ function diagFlavorCAGap(orders, markets, marketMoves){
     else { cat.marchesNonVentiles += caMk; nb.marchesNonVentiles++; }
   });
   cat.total = money2(totalCmd + cat.marches);
+  cat.totalCmd = money2(totalCmd);
+  cat.totalMarches = money2(cat.marches);
   Object.keys(cat).forEach(k=>{ if(typeof cat[k]==='number') cat[k]=money2(cat[k]); });
   cat._nb = nb;
   return cat;
@@ -10649,6 +10651,8 @@ async function renderParfums(){
   const diagBox = `<details style="margin-bottom:12px"><summary style="cursor:pointer;color:#7a6a62;font-size:.84rem;font-weight:600">🔎 Où va le CA total ?</summary>
     <div class="panel" style="margin-top:8px;font-size:.86rem">
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span>CA total (commandes + marchés)</span><b>${euro(gap.total)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:1px 0;font-size:.78rem;color:#9a8a82"><span>&nbsp;&nbsp;· dont commandes</span><span>${euro(gap.totalCmd)}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:1px 0;font-size:.78rem;color:#9a8a82"><span>&nbsp;&nbsp;· dont marchés</span><span>${euro(gap.totalMarches)}</span></div>
       <div style="border-top:1px solid var(--hair);margin:6px 0"></div>
       <div style="display:flex;justify-content:space-between;padding:3px 0;color:#3f7d52"><span>✓ Ventilé sur les parfums</span><b>${euro(caVentile)}</b></div>
       ${gap.pyramides>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;color:#7a4b82;font-size:.82rem"><span>&nbsp;&nbsp;dont pyramides redistribuées</span><b>${euro(gap.pyramides)} (${caVentile>0?Math.round(gap.pyramides/caVentile*100):0}%)</b></div>`:''}
