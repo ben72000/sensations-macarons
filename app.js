@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v325';
+const APP_VERSION = 'v326';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2812,7 +2812,22 @@ async function nextDocNumero(type){
 
 async function renderDocuments(){
   const main=document.getElementById('main'); if(!main) return;
-  const docs = await db.documents.orderBy('date').reverse().toArray().catch(()=>[]);
+  let docs = await db.documents.orderBy('date').reverse().toArray().catch(()=>[]);
+  // Resynchronise le statut de PAIEMENT des factures validées selon l'encaissement réel
+  // des commandes liées (emise ↔ payee). Le numéro, le montant et le contenu restent gravés.
+  for(const f of docs){
+    if(f.type==='facture' && (f.statut==='emise' || f.statut==='payee')){
+      const oids=f.orderIds||(f.orderId?[f.orderId]:[]);
+      let encaisse=0, total=0;
+      for(const oid of oids){
+        const o=await db.orders.get(oid).catch(()=>null);
+        if(o){ total+=(+o.montant||0); encaisse+=(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0); }
+      }
+      const payee = total>0 && encaisse>=total-0.01;
+      const cible = payee ? 'payee' : 'emise';
+      if(cible!==f.statut){ await db.documents.update(f.id, {statut:cible}); f.statut=cible; }
+    }
+  }
   const clients = await db.clients.toArray().catch(()=>[]);
   const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
   const devis = docs.filter(d=>d.type==='devis');
@@ -2855,7 +2870,15 @@ async function docNewDevis(){
 }
 // Ouverture d'un document (détail) — étape suivante : édition + conversion. Pour l'instant, aperçu.
 async function docOpen(id){
-  const d=await db.documents.get(id); if(!d) return;
+  let d=await db.documents.get(id); if(!d) return;
+  // Resync paiement si facture validée (reflète l'encaissement réel des commandes liées).
+  if(d.type==='facture' && (d.statut==='emise'||d.statut==='payee')){
+    const oids=d.orderIds||(d.orderId?[d.orderId]:[]);
+    let enc=0,tot=0;
+    for(const oid of oids){ const o=await db.orders.get(oid).catch(()=>null); if(o){ tot+=(+o.montant||0); enc+=(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0); } }
+    const cible=(tot>0&&enc>=tot-0.01)?'payee':'emise';
+    if(cible!==d.statut){ await db.documents.update(id,{statut:cible}); d=await db.documents.get(id); }
+  }
   const clients=await db.clients.toArray().catch(()=>[]);
   const clName=(clients.find(c=>c.id===d.clientId)||{}).nom||'—';
   const nbLignes=(d.lignes||[]).length;
