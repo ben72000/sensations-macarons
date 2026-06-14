@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v329';
+const APP_VERSION = 'v330';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3040,7 +3040,14 @@ async function docValiderFacture(id){
   // Numéro légal séquentiel strict, attribué MAINTENANT (ordre de validation).
   const numero=await nextFactureNumeroDefinitif();
   const statut=(+d.totalPaye>=+d.montant-0.01 && +d.montant>0) ? 'payee' : 'emise';
-  await db.documents.update(id, { numero, statut, dateValidation:auj, lockedAt:Date.now() });
+  // Met à jour le HTML mémorisé pour que l'aperçu/impression affichent le numéro et la date DÉFINITIFS.
+  let html=d.html||'';
+  if(html){
+    html=html.replace(/<span id="factNumero">[\s\S]*?<\/span>/, `<span id="factNumero">${esc(numero)}</span>`);
+    html=html.replace(/<span id="factDate">[\s\S]*?<\/span>/, `<span id="factDate">${esc(fmtDate(dateFact))}</span>`);
+    html=html.replace(/Facture \(brouillon\)/g, 'Facture');
+  }
+  await db.documents.update(id, { numero, statut, date:dateFact, dateValidation:auj, lockedAt:Date.now(), html });
   closeModal(); toast('Facture '+numero+' validée et verrouillée 🔒');
   if(view==='documents') renderDocuments();
 }
@@ -15359,8 +15366,8 @@ async function genererFactureMultiple(ids){
          <div class="bloc"><div class="lbl">Facturé à</div>${clientBloc}</div>
          <div class="bloc" style="text-align:right">
            <div class="lbl">Détails</div>
-           Facture n° : <b>${esc(numFact)}</b><br>
-           Date d'émission : ${fmtDate(today())}<br>
+           Facture n° : <b><span id="factNumero">${esc(numFact)}</span></b><br>
+           Date d'émission : <span id="factDate">${fmtDate(today())}</span><br>
            ${orders.length>1 ? orders.length+' commande(s) regroupée(s)' : ''}
          </div>
        </div>
