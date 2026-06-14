@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v336';
+const APP_VERSION = 'v337';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10517,6 +10517,36 @@ function parfumStockPopup(){
       <button class="btn" onclick="closeModal();goView('productions')">Voir les productions ›</button></div>`);
 }
 
+// DIAGNOSTIC : décompose le CA total des commandes par catégorie de ligne, pour comprendre
+// l'écart entre le CA total (tableau de bord) et le CA ventilé par parfum (rentabilité).
+function diagFlavorCAGap(orders){
+  const cat = { total:0, ventile:0, histoAvecParfums:0, vrac:0, grand:0, prestation:0, autre:0, sansLigne:0 };
+  const nb = { histoAvecParfums:0, vrac:0, grand:0, sansLigne:0 };
+  (orders||[]).forEach(o=>{
+    const montant = +o.montant||0;
+    cat.total += montant;
+    const lignes = orderToLines(o);
+    if(!lignes.length){ cat.sansLigne += montant; nb.sansLigne++; return; }
+    let aParfumsHisto=false, aVrac=false, aGrand=false, aVentile=false, aPresta=false;
+    lignes.forEach(ln=>{
+      if(ln.type==='coffret'||ln.type==='evenement') aVentile=true;
+      else if(ln.type==='histo'){ const ps=(ln.parfums||[]).filter(p=>+p.qte>0); if(ps.length) aParfumsHisto=true; }
+      else if(ln.type==='vrac'){ const ps=(ln.parfums||[]).filter(p=>+p.qte>0); if(ps.length) aVrac=true; }
+      else if(ln.type==='grand'){ const it=(ln.items||[]).filter(p=>+p.qte>0); if(it.length) aGrand=true; }
+      else if(ln.type==='prestation') aPresta=true;
+    });
+    if(aVentile){ cat.ventile += montant; }
+    else if(aParfumsHisto){ cat.histoAvecParfums += montant; nb.histoAvecParfums++; }
+    else if(aVrac){ cat.vrac += montant; nb.vrac++; }
+    else if(aGrand){ cat.grand += montant; nb.grand++; }
+    else if(aPresta){ cat.prestation += montant; }
+    else { cat.autre += montant; }
+  });
+  cat.ecart = money2(cat.total - cat.ventile);
+  Object.keys(cat).forEach(k=>{ if(typeof cat[k]==='number') cat[k]=money2(cat[k]); });
+  cat._nb = nb;
+  return cat;
+}
 async function renderParfums(){
   const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
     db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
@@ -10562,6 +10592,23 @@ async function renderParfums(){
   // KPI
   const avgP = computeAvgSellPrice(data);
   _parfumsAvgP = avgP;
+  // Diagnostic de l'écart entre le CA total (toutes commandes) et le CA ventilé par parfum.
+  const gap = diagFlavorCAGap(orders);
+  const caVentile = A.totals.ca;
+  const diagBox = `<details style="margin-bottom:12px"><summary style="cursor:pointer;color:#7a6a62;font-size:.84rem;font-weight:600">🔎 D'où vient l'écart avec le CA total ?</summary>
+    <div class="panel" style="margin-top:8px;font-size:.86rem">
+      <div style="display:flex;justify-content:space-between;padding:3px 0"><span>CA total (toutes commandes + marchés)</span><b>${euro(gap.total)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;color:#3f7d52"><span>↳ CA ventilé par parfum (coffrets, événements)</span><b>${euro(caVentile)}</b></div>
+      <div style="border-top:1px solid var(--hair);margin:6px 0"></div>
+      <div style="color:#9a8a82;margin-bottom:4px">Non ventilé par parfum actuellement :</div>
+      ${gap.histoAvecParfums>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;color:#b08a3a"><span>• Commandes migrées avec parfums (${gap._nb.histoAvecParfums})</span><b>${euro(gap.histoAvecParfums)}</b></div>`:''}
+      ${gap.vrac>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Vrac (${gap._nb.vrac})</span><b>${euro(gap.vrac)}</b></div>`:''}
+      ${gap.grand>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Grands formats (${gap._nb.grand})</span><b>${euro(gap.grand)}</b></div>`:''}
+      ${gap.prestation>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Prestations</span><b>${euro(gap.prestation)}</b></div>`:''}
+      ${gap.sansLigne>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Sans détail (${gap._nb.sansLigne})</span><b>${euro(gap.sansLigne)}</b></div>`:''}
+      ${gap.autre>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Autre</span><b>${euro(gap.autre)}</b></div>`:''}
+      ${gap.histoAvecParfums>0?`<p class="note" style="margin-top:8px;color:#b08a3a">Tes commandes migrées contiennent les parfums mais ne sont pas comptées dans le CA par parfum. On peut corriger ça pour les inclure.</p>`:''}
+    </div></details>`;
   const kpis=`<div class="kpi-grid">
     <div class="kpi"><span>CA encaissé (parfums) ${kpiI('ca_encaisse')}</span><b>${euro(A.totals.ca)}</b><span>${qty(A.totals.pieces)} pièces vendues</span></div>
     <div class="kpi lnk" onclick="parfumMargesPopup(false)"><span>Marge brute totale ${INFO_I}</span><b style="color:${A.totals.margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(A.totals.margeBrute)}</b><span>${A.totals.tauxMargeGlobal!=null?A.totals.tauxMargeGlobal+'% de marge':'—'}</span></div>
@@ -10648,6 +10695,7 @@ async function renderParfums(){
      <button class="btn ghost sm" onclick="parfumSettingsForm()">⚙ Coûts & MO</button></div>
    ${hikeBanner}
    ${incohBanner}
+   ${diagBox}
    ${kpis}
    <div class="panel"><h2>Synthèse par parfum</h2>
      <div class="flex" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><span style="font-size:.8rem;color:#9a8a82;align-self:center">Trier :</span>
