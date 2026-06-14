@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v316';
+const APP_VERSION = 'v317';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2633,7 +2633,7 @@ function pyraOptimise(plateaux, voulu){
 // Optimiseur MULTI-OPTIONS : pour un objectif, propose plusieurs configurations
 // (1 pyramide unique, ou N pyramides identiques), toujours au-dessus de l'objectif,
 // dans la marge donnée (+10% par défaut). Pyramides multipliées : min 3 plateaux chacune.
-function pyraOptions(voulu, marge){
+function pyraOptions(voulu, marge, nbPyramides){
   marge = (marge==null)?0.10:marge;
   if(!(voulu>0)) return {voulu:0, plafond:0, opts:[]};
   const plafond=Math.ceil(voulu*(1+marge));
@@ -2660,9 +2660,11 @@ function pyraOptions(voulu, marge){
     });
   });
   const seen=new Set();
-  const uniq=opts.filter(o=>{ if(seen.has(o.desc))return false; seen.add(o.desc); return true; });
+  let uniq=opts.filter(o=>{ if(seen.has(o.desc))return false; seen.add(o.desc); return true; });
+  // Filtre STRICT par nombre de pyramides si demandé (le champ Pyramides = N).
+  if(nbPyramides>0) uniq=uniq.filter(o=>o.n===nbPyramides);
   uniq.sort((a,b)=>a.total-b.total || a.n-b.n);
-  return {voulu, plafond, opts:uniq};
+  return {voulu, plafond, opts:uniq, nbPyramides:nbPyramides||0};
 }
 function pyraBoxes(nbMacarons){
   const grande=PYRA_BOXES[0].cap, petite=PYRA_BOXES[1].cap;
@@ -7047,7 +7049,7 @@ function drawEventLine(ln,i){
       <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
       <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="${EVENT_MIN_EQUIP}" value="${ln.equip}" oninput="setEventEquip(${i},this.value)"></div>
     </div>
-    ${hasPyra?`<div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0)}</div>`:''}
+    ${hasPyra?`<div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0, +ln.equip||0)}</div>`:''}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}</div>
     <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(PYRA_PRICE)}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
@@ -7058,16 +7060,26 @@ function drawEventLine(ln,i){
 }
 // HTML du bloc options : la liste se base sur la DEMANDE client (stable),
 // l'option mise en avant est la quantité RETENUE (choisie). Les deux sont dissociées.
-function eventPyraOptsHtml(i, demande, choisi){
-  const multiOpt = pyraOptions(demande||0);
+function eventPyraOptsHtml(i, demande, choisi, nbPyr){
+  nbPyr = +nbPyr||0;
+  const multiOpt = pyraOptions(demande||0, undefined, nbPyr);
   const boxes = (choisi>0) ? pyraBoxes(choisi) : null;  // boîtes calculées sur la quantité retenue
-  const optsHtml = `<div style="background:#faf7f2;border:1px solid var(--hair);border-radius:11px;padding:11px 13px;margin:4px 0">
-    <div style="font-size:.74rem;color:#7a6a62;font-weight:600;text-transform:uppercase;margin-bottom:6px">Configurations possibles ${multiOpt.opts.length?`(demande ${demande} · jusqu'à ${multiOpt.plafond})`:''}</div>
-    ${multiOpt.opts.length?multiOpt.opts.map(o=>`
+  const filtreTxt = nbPyr>0 ? ` · ${nbPyr} pyramide(s)` : '';
+  let corps;
+  if(multiOpt.opts.length){
+    corps = multiOpt.opts.map(o=>`
       <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${o.total===choisi?'#eef6ef':'#fff'};border:1px solid ${o.total===choisi?'#3f7d52':'var(--hair)'}">
         <span style="flex:1;font-size:.86rem"><b style="color:var(--bordeaux)">${o.total}</b> <span style="color:#6a5a52">— ${esc(o.desc)}</span></span>
         ${o.total===choisi?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="pickEventConfig(${i},${o.total},${o.n})">Choisir</button>`}
-      </div>`).join(''):`<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${demande}. Ajuste la demande.</p>`}
+      </div>`).join('');
+  } else if(nbPyr>0){
+    corps = `<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à <b>${nbPyr} pyramide(s)</b> pour une demande de ${demande} (jusqu'à ${Math.ceil((demande||0)*1.1)}). Change le nombre de pyramides, ou mets <b>0</b> pour voir toutes les options.</p>`;
+  } else {
+    corps = `<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${demande}. Ajuste la demande.</p>`;
+  }
+  const optsHtml = `<div style="background:#faf7f2;border:1px solid var(--hair);border-radius:11px;padding:11px 13px;margin:4px 0">
+    <div style="font-size:.74rem;color:#7a6a62;font-weight:600;text-transform:uppercase;margin-bottom:6px">Configurations possibles ${demande>0?`(demande ${demande}${filtreTxt} · jusqu'à ${multiOpt.plafond})`:''}</div>
+    ${corps}
   </div>
   ${boxes?`<div class="sum-box" style="background:#faf7f2"><span>📦 Transport : ${boxes.g>0?`${boxes.g}× grande`:''}${boxes.g>0&&boxes.p>0?' + ':''}${boxes.p>0?`${boxes.p}× petite`:''}</span><b>${boxes.nb} boîte(s)</b></div>`:''}`;
   return optsHtml;
@@ -7086,10 +7098,18 @@ function setEventQte(i,v){
   cmdLines[i].evDemande = val;
   cmdLines[i].evQte = val;        // par défaut la quantité retenue suit la demande tant qu'on n'a pas choisi
   const box=document.getElementById('pyraOpts_'+i);
-  if(box && (+cmdLines[i].equip||0)>0) box.innerHTML=eventPyraOptsHtml(i, val, val);
+  if(box && (+cmdLines[i].equip||0)>0) box.innerHTML=eventPyraOptsHtml(i, val, val, +cmdLines[i].equip||0);
   cmdRecalc();
 }
-function setEventEquip(i,v){ cmdLines[i].equip=+v||0; drawLines(); }
+function setEventEquip(i,v){
+  cmdLines[i].equip=+v||0;
+  // Rafraîchit les options EN DIRECT (filtre par nb de pyramides) sans perdre le focus.
+  const box=document.getElementById('pyraOpts_'+i);
+  const demande=(cmdLines[i].evDemande!=null?+cmdLines[i].evDemande:+cmdLines[i].evQte||0);
+  if(box && (+cmdLines[i].equip||0)>0){ box.innerHTML=eventPyraOptsHtml(i, demande, +cmdLines[i].evQte||0, +cmdLines[i].equip||0); }
+  else { drawLines(); return; }   // passage à 0 pyramide : on redessine (le bloc disparaît)
+  cmdRecalc();
+}
 function setEventParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 
 function drawBigLine(ln,i){
