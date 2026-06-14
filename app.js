@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v321';
+const APP_VERSION = 'v322';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7053,7 +7053,11 @@ function drawEventLine(ln,i){
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}</div>
     <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(PYRA_PRICE)}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
-    ${totQ&&totQ!==+ln.evQte?`<p class="note" style="color:var(--red)">⚠ ${totQ} parfums détaillés ≠ ${ln.evQte} macarons.</p>`:''}
+    ${(totQ>+ln.evQte)
+      ? `<p class="note" style="color:var(--red)">⚠ ${totQ} parfums saisis pour ${ln.evQte} macarons : trop de parfums (max ${ln.evQte}).</p>`
+      : (totQ>0 && totQ<+ln.evQte)
+        ? `<p class="note" style="color:#7a6a62">${ln.evQte-totQ} macaron(s) sans parfum précisé → seront comptés « non spécifié ».</p>`
+        : ''}
     ${lineRemiseRow(ln,i)}
   </div>`;
 }
@@ -7497,6 +7501,13 @@ async function saveCmd(id){
     if(ln.type==='evenement'){
       if((ln.evQte||0)<EVENT_MIN){ toast(`Événement : minimum ${EVENT_MIN} macarons`); return; }
       if((ln.equip||0)<EVENT_MIN_EQUIP){ toast(`Événement : au moins ${EVENT_MIN_EQUIP} pyramide obligatoire`); return; }
+      // Parfums : on autorise le partiel (reste = non spécifié), mais on interdit le dépassement.
+      const totParf=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0);
+      if(totParf>(ln.evQte||0)){ toast(`Trop de parfums : ${totParf} pour ${ln.evQte} macarons (max ${ln.evQte})`); return; }
+      if(totParf>0 && totParf<(ln.evQte||0)){
+        const reste=(ln.evQte||0)-totParf;
+        if(!confirm(`${reste} macaron(s) sans parfum précisé seront comptés « non spécifié ». Continuer ?`)) return;
+      }
     }
     if(ln.type==='grand'){
       const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0);
