@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v313';
+const APP_VERSION = 'v314';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -95,6 +95,14 @@ db.version(14).stores({
 // (au lieu de recipeId). Un item appartient soit à une recette, soit à un composant.
 db.version(15).stores({
   recipeItems:     '++id, recipeId, materialId, componentId'
+});
+// v16 : registre de DOCUMENTS commerciaux — devis & factures.
+// Cycle de vie : devis → (converti en) commande → facture.
+//   type   : 'devis' | 'facture'
+//   statut : devis → 'en_attente' | 'accepte' | 'refuse' | 'expire' ; facture → 'emise' | 'payee'
+//   orderId: commande liée une fois le devis converti (sinon null pour un devis libre)
+db.version(16).stores({
+  documents:       '++id, type, statut, date, clientId, numero, orderId'
 });
 
 
@@ -859,7 +867,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -2763,6 +2771,122 @@ function pyraSaveEdits(){
   }
   if(!out.length){ toast('Au moins un modèle valide requis'); return; }
   pyraSaveModels(out); toast('Modèles enregistrés ✓'); renderPyramides();
+}
+/* ============================================================
+   DEVIS & FACTURES — registre central des documents commerciaux
+   Cycle : devis → commande → facture
+   ============================================================ */
+function docStatutLabel(d){
+  if(d.type==='devis'){
+    return {en_attente:'⏳ En attente', accepte:'✓ Accepté', refuse:'✕ Refusé', expire:'⌛ Expiré'}[d.statut]||d.statut;
+  }
+  return {emise:'📄 Émise', payee:'✓ Payée'}[d.statut]||d.statut;
+}
+function docStatutColor(d){
+  const map={en_attente:'#d98324', accepte:'#3f7d52', refuse:'#b3261e', expire:'#9a8a82', emise:'#7a4b82', payee:'#3f7d52'};
+  return map[d.statut]||'#9a8a82';
+}
+// Numéro de document : DEV-2026-001 / FAC-2026-001
+async function nextDocNumero(type){
+  const prefix = type==='devis' ? 'DEV' : 'FAC';
+  const year = new Date().getFullYear();
+  const all = await db.documents.where('type').equals(type).toArray().catch(()=>[]);
+  const sameYear = all.filter(d=>(d.numero||'').includes('-'+year+'-'));
+  const seq = sameYear.length+1;
+  return `${prefix}-${year}-${String(seq).padStart(3,'0')}`;
+}
+
+async function renderDocuments(){
+  const main=document.getElementById('main'); if(!main) return;
+  const docs = await db.documents.orderBy('date').reverse().toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
+  const devis = docs.filter(d=>d.type==='devis');
+  const factures = docs.filter(d=>d.type==='facture');
+
+  const docCard=d=>`<div onclick="docOpen(${d.id})" style="cursor:pointer;background:#fff;border:1px solid var(--hair);border-left:4px solid ${docStatutColor(d)};border-radius:13px;padding:12px 14px;box-shadow:var(--sh-1);margin-bottom:9px">
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:5px">
+        <b style="flex:1;color:var(--bordeaux)">${esc(d.numero||'—')}</b>
+        <span class="tag" style="background:${docStatutColor(d)};color:#fff;font-size:.66rem">${docStatutLabel(d)}</span>
+      </div>
+      <div style="display:flex;gap:10px;font-size:.84rem;color:#6a5a52">
+        <span style="flex:1">${esc(clName(d.clientId))}</span>
+        <span style="color:#9a8a82">${fmtDate(d.date)}</span>
+        <b style="color:var(--bordeaux)">${euro(d.montant||0)}</b>
+      </div>
+    </div>`;
+
+  main.innerHTML=`
+   <div class="topbar"><div><h1>Devis & Factures</h1><p>Tes documents commerciaux · devis → commande → facture</p></div></div>
+
+   <div style="display:flex;gap:8px;margin-bottom:14px">
+     <button class="btn gold" onclick="docNewDevis()">+ Nouveau devis</button>
+   </div>
+
+   <div class="panel">
+     <h2>📝 Devis ${devis.length?`<span style="color:#9a8a82;font-size:.8rem;font-weight:400">(${devis.length})</span>`:''}</h2>
+     ${devis.length?devis.map(docCard).join(''):'<div class="empty">Aucun devis pour l\'instant. Crée ton premier devis avec le bouton ci-dessus.</div>'}
+   </div>
+
+   <div class="panel">
+     <h2>📄 Factures ${factures.length?`<span style="color:#9a8a82;font-size:.8rem;font-weight:400">(${factures.length})</span>`:''}</h2>
+     ${factures.length?factures.map(docCard).join(''):'<div class="empty">Aucune facture enregistrée ici pour l\'instant.</div>'}
+   </div>
+  `;
+}
+
+// Création d'un devis libre minimal (étape 1 : socle). L'édition complète viendra ensuite.
+async function docNewDevis(){
+  const clients = await db.clients.toArray().catch(()=>[]);
+  if(!clients.length){ toast('Crée d\'abord un client'); return; }
+  const opts = clients.map(c=>`<option value="${c.id}">${esc(c.nom)}</option>`).join('');
+  openModal(`<h3>Nouveau devis</h3>
+    <div class="field"><label>Client</label><select id="dvCl">${opts}</select></div>
+    <div class="field"><label>Montant total (€)</label><input type="number" min="0" step="0.01" id="dvMontant" placeholder="ex : 228"></div>
+    <div class="field"><label>Objet / description (optionnel)</label><input id="dvObjet" placeholder="ex : Pyramide 105 macarons événement"></div>
+    <div class="field"><label>Validité (jours)</label><input type="number" min="1" id="dvValid" value="30"></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn gold" onclick="docSaveDevis()">Créer le devis</button>
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+    </div>`);
+}
+async function docSaveDevis(){
+  const clientId=+(document.getElementById('dvCl')||{}).value||0;
+  const montant=money2(+(document.getElementById('dvMontant')||{}).value||0);
+  const objet=((document.getElementById('dvObjet')||{}).value||'').trim();
+  const validite=+(document.getElementById('dvValid')||{}).value||30;
+  if(!clientId){ toast('Choisis un client'); return; }
+  const numero=await nextDocNumero('devis');
+  const today=new Date(); const exp=new Date(today); exp.setDate(exp.getDate()+validite);
+  await db.documents.add({
+    type:'devis', statut:'en_attente', numero,
+    clientId, montant, objet,
+    date:today.toISOString().slice(0,10),
+    validiteJours:validite, expiration:exp.toISOString().slice(0,10),
+    orderId:null, createdAt:Date.now()
+  });
+  closeModal(); toast('Devis '+numero+' créé ✓'); renderDocuments();
+}
+// Ouverture d'un document (détail) — étape suivante : édition + conversion. Pour l'instant, aperçu.
+async function docOpen(id){
+  const d=await db.documents.get(id); if(!d) return;
+  const clients=await db.clients.toArray().catch(()=>[]);
+  const clName=(clients.find(c=>c.id===d.clientId)||{}).nom||'—';
+  openModal(`<h3>${esc(d.numero||'')} <span class="tag" style="background:${docStatutColor(d)};color:#fff">${docStatutLabel(d)}</span></h3>
+    <div class="sum-box"><span>Client</span><b>${esc(clName)}</b></div>
+    <div class="sum-box"><span>Montant</span><b>${euro(d.montant||0)}</b></div>
+    ${d.objet?`<div class="sum-box"><span>Objet</span><b>${esc(d.objet)}</b></div>`:''}
+    <div class="sum-box"><span>Date</span><b>${fmtDate(d.date)}</b></div>
+    ${d.type==='devis'?`<div class="sum-box"><span>Valable jusqu'au</span><b>${fmtDate(d.expiration)}</b></div>`:''}
+    <p class="note" style="margin-top:10px">La conversion devis → commande → facture et l'impression arrivent à la prochaine étape.</p>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn ghost del" onclick="docDelete(${d.id})">Supprimer</button>
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+    </div>`);
+}
+async function docDelete(id){
+  if(!confirm('Supprimer ce document ?')) return;
+  await db.documents.delete(id); closeModal(); toast('Document supprimé'); renderDocuments();
 }
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
@@ -13666,7 +13790,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs','documents'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -14023,6 +14147,9 @@ const GUIDE_THEMES = [
     { v:'evenements', t:'Événements', ico:'🎪', resume:"Gérer tes prestations événementielles (mariages, fêtes…).",
       detail:"Référence tes événements et prestations spéciales, distincts des commandes classiques de coffrets.",
       steps:["Ajoute un événement avec sa date","Relie-le à une commande si besoin"] },
+    { v:'documents', t:'Devis & Factures', ico:'🧾', resume:"Tes documents commerciaux centralisés : devis et factures.",
+      detail:"Crée des devis libres, retrouve-les au même endroit, et suis leur cycle de vie : devis → commande → facture. Chaque document a son numéro et son statut.",
+      steps:["Crée un devis avec « + Nouveau devis »","Suis son statut (en attente, accepté…)","La conversion en commande puis facture arrive ensuite"] },
     { v:'cal', t:'Calendrier', ico:'▦', resume:"Vue d'ensemble de tes échéances et livraisons.",
       detail:"Visualise tes commandes et événements dans le temps, pour anticiper les pics d'activité et organiser ta production.",
       steps:["Parcours le calendrier","Touche une date pour voir le détail"] },
