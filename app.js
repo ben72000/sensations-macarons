@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v340';
+const APP_VERSION = 'v341';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10545,44 +10545,52 @@ function parfumStockPopup(){
 // DIAGNOSTIC : décompose le CA total des commandes par catégorie de ligne, pour comprendre
 // l'écart entre le CA total (tableau de bord) et le CA ventilé par parfum (rentabilité).
 function diagFlavorCAGap(orders, markets, marketMoves){
-  const cat = { total:0, ventile:0, histoAvecParfums:0, vrac:0, grand:0, prestation:0, autre:0, sansLigne:0,
-                marchesVentiles:0, marchesNonVentiles:0, pyramides:0 };
-  const nb = { histoAvecParfums:0, vrac:0, grand:0, sansLigne:0, marchesNonVentiles:0 };
-  // --- Commandes ---
+  // IMPORTANT : ce diagnostic suit EXACTEMENT la même logique que buildFlavorSales (v339+),
+  // pour que les chiffres soient cohérents. Le CA est calé sur le montant réel encaissé ;
+  // la part macarons va aux parfums, la part prestation reste à part.
+  const TYPES_MACARON = ['coffret','evenement','vrac','grand','histo'];
+  const lineParfumsOf = ln => (ln.type==='grand' ? (ln.items||[]) : (ln.parfums||[])).filter(p=>+p.qte>0);
+  const cat = { total:0, ventileParfum:0, prestation:0, marches:0, marchesNonVentiles:0,
+                sansParfum:0, pyramides:0 };
+  const nb = { prestation:0, sansParfum:0, marchesNonVentiles:0 };
   let totalCmd=0;
   (orders||[]).forEach(o=>{
-    const montant = +o.montant||0;
+    const montant = money2(+o.montant||0);
     totalCmd += montant;
     const lignes = orderToLines(o);
-    if(!lignes.length){ cat.sansLigne += montant; nb.sansLigne++; return; }
-    // Part équipement pyramide redistribuée sur les parfums (equip × prix unité).
-    lignes.forEach(ln=>{ if(ln.type==='evenement'){ cat.pyramides += (+ln.equip||0)*EQUIP_PRICE; } });
-    let aParfumsHisto=false, aVrac=false, aGrand=false, aVentile=false, aPresta=false;
+    if(!lignes.length){ cat.sansParfum += montant; nb.sansParfum++; return; }
+    // Valeur catalogue macarons vs prestation (même calcul que buildFlavorSales).
+    let valMac=0, valPresta=0, totalPiecesMac=0;
     lignes.forEach(ln=>{
-      if(ln.type==='coffret'||ln.type==='evenement') aVentile=true;
-      else if(ln.type==='histo'){ const ps=(ln.parfums||[]).filter(p=>+p.qte>0); if(ps.length) aParfumsHisto=true; }
-      else if(ln.type==='vrac'){ const ps=(ln.parfums||[]).filter(p=>+p.qte>0); if(ps.length) aVrac=true; }
-      else if(ln.type==='grand'){ const it=(ln.items||[]).filter(p=>+p.qte>0); if(it.length) aGrand=true; }
-      else if(ln.type==='prestation') aPresta=true;
+      if(ln.type==='prestation'){ valPresta += money2(lineTotalStored(ln)); }
+      else if(TYPES_MACARON.includes(ln.type)){
+        valMac += money2(lineTotalStored(ln));
+        lineParfumsOf(ln).forEach(p=>totalPiecesMac+=+p.qte);
+      }
+      if(ln.type==='evenement'){ cat.pyramides += (+ln.equip||0)*EQUIP_PRICE; }
     });
-    if(aVentile){ cat.ventile += montant; }
-    else if(aParfumsHisto){ cat.histoAvecParfums += montant; nb.histoAvecParfums++; }
-    else if(aVrac){ cat.vrac += montant; nb.vrac++; }
-    else if(aGrand){ cat.grand += montant; nb.grand++; }
-    else if(aPresta){ cat.prestation += montant; }
-    else { cat.autre += montant; }
+    if(totalPiecesMac<=0){ cat.sansParfum += montant; nb.sansParfum++; return; }
+    // Répartition du montant réel entre macarons (→ parfums) et prestation (→ à part).
+    let caMacaron;
+    if(valPresta>0 && valMac>0) caMacaron = money2(montant * valMac/(valMac+valPresta));
+    else if(valPresta>0 && valMac<=0) caMacaron = 0;
+    else caMacaron = montant;
+    cat.ventileParfum += caMacaron;
+    const partPresta = money2(montant - caMacaron);
+    if(partPresta>0.005){ cat.prestation += partPresta; nb.prestation++; }
   });
-  // --- Marchés clos ---
+  // Marchés clos.
   const movesByMk={}; (marketMoves||[]).forEach(mv=>{ (movesByMk[mv.marketId] ||= []).push(mv); });
   (markets||[]).filter(mk=>mk.statut==='clos').forEach(mk=>{
     const caMk = (typeof marketNetCA==='function') ? marketNetCA(mk) : (+mk.montant||0);
+    if(caMk<=0) return;
     const mv = movesByMk[mk.id]||[];
     const aVentes = mv.some(m=>m.type==='sortie' || m.type==='vente' || (+m.qte>0 && m.type!=='retour'));
-    if(aVentes && caMk>0){ cat.marchesVentiles += caMk; }
-    else if(caMk>0){ cat.marchesNonVentiles += caMk; nb.marchesNonVentiles++; }
+    cat.marches += caMk;
+    if(aVentes){ cat.ventileParfum += 0; } // le CA marché ventilé est déjà dans buildFlavorSales
+    else { cat.marchesNonVentiles += caMk; nb.marchesNonVentiles++; }
   });
-  cat.total = money2(totalCmd + cat.marchesVentiles + cat.marchesNonVentiles);
-  cat.ecart = money2(cat.total - cat.ventile - cat.marchesVentiles);
+  cat.total = money2(totalCmd + cat.marches);
   Object.keys(cat).forEach(k=>{ if(typeof cat[k]==='number') cat[k]=money2(cat[k]); });
   cat._nb = nb;
   return cat;
@@ -10635,22 +10643,21 @@ async function renderParfums(){
   // Diagnostic de l'écart entre le CA total (toutes commandes) et le CA ventilé par parfum.
   const gap = diagFlavorCAGap(orders, markets, marketMoves);
   const caVentile = A.totals.ca;
-  const diagBox = `<details style="margin-bottom:12px"><summary style="cursor:pointer;color:#7a6a62;font-size:.84rem;font-weight:600">🔎 D'où vient l'écart avec le CA total ?</summary>
+  // Écart résiduel = ce que le total ne couvre pas via les catégories connues (pertes, remises, arrondi).
+  const expliqué = money2(caVentile + gap.prestation + gap.marchesNonVentiles + gap.sansParfum);
+  const residuel = money2(gap.total - expliqué);
+  const diagBox = `<details style="margin-bottom:12px"><summary style="cursor:pointer;color:#7a6a62;font-size:.84rem;font-weight:600">🔎 Où va le CA total ?</summary>
     <div class="panel" style="margin-top:8px;font-size:.86rem">
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span>CA total (commandes + marchés)</span><b>${euro(gap.total)}</b></div>
-      <div style="display:flex;justify-content:space-between;padding:3px 0;color:#3f7d52"><span>↳ CA ventilé par parfum</span><b>${euro(caVentile)}</b></div>
-      ${gap.pyramides>0?`<div style="display:flex;justify-content:space-between;padding:3px 0;color:#7a4b82"><span>&nbsp;&nbsp;dont pyramides redistribuées</span><b>${euro(gap.pyramides)} (${caVentile>0?Math.round(gap.pyramides/caVentile*100):0}%)</b></div>`:''}
       <div style="border-top:1px solid var(--hair);margin:6px 0"></div>
-      <div style="color:#9a8a82;margin-bottom:4px">Non ventilé par parfum actuellement :</div>
-      ${gap.marchesNonVentiles>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;color:#b3261e"><span>• Marchés sans détail de ventes (${gap._nb.marchesNonVentiles})</span><b>${euro(gap.marchesNonVentiles)}</b></div>`:''}
-      ${gap.histoAvecParfums>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;color:#b08a3a"><span>• Commandes migrées avec parfums (${gap._nb.histoAvecParfums})</span><b>${euro(gap.histoAvecParfums)}</b></div>`:''}
-      ${gap.vrac>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Vrac (${gap._nb.vrac})</span><b>${euro(gap.vrac)}</b></div>`:''}
-      ${gap.grand>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Grands formats (${gap._nb.grand})</span><b>${euro(gap.grand)}</b></div>`:''}
-      ${gap.prestation>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Prestations</span><b>${euro(gap.prestation)}</b></div>`:''}
-      ${gap.sansLigne>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Commandes sans détail (${gap._nb.sansLigne})</span><b>${euro(gap.sansLigne)}</b></div>`:''}
-      ${gap.autre>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Autre / non classé</span><b>${euro(gap.autre)}</b></div>`:''}
+      <div style="display:flex;justify-content:space-between;padding:3px 0;color:#3f7d52"><span>✓ Ventilé sur les parfums</span><b>${euro(caVentile)}</b></div>
+      ${gap.pyramides>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;color:#7a4b82;font-size:.82rem"><span>&nbsp;&nbsp;dont pyramides redistribuées</span><b>${euro(gap.pyramides)} (${caVentile>0?Math.round(gap.pyramides/caVentile*100):0}%)</b></div>`:''}
+      ${gap.prestation>0?`<div style="display:flex;justify-content:space-between;padding:3px 0;color:#7a6a62"><span>↔ Prestations / services (à part, ${gap._nb.prestation})</span><b>${euro(gap.prestation)}</b></div>`:''}
+      ${gap.marchesNonVentiles>0?`<div style="display:flex;justify-content:space-between;padding:3px 0;color:#b3261e"><span>⚠ Marchés sans détail de ventes (${gap._nb.marchesNonVentiles})</span><b>${euro(gap.marchesNonVentiles)}</b></div>`:''}
+      ${gap.sansParfum>0?`<div style="display:flex;justify-content:space-between;padding:3px 0"><span>Commandes sans parfum (${gap._nb.sansParfum})</span><b>${euro(gap.sansParfum)}</b></div>`:''}
+      ${Math.abs(residuel)>0.5?`<div style="display:flex;justify-content:space-between;padding:3px 0;color:#9a8a82"><span>Écart résiduel (pertes, remises, arrondis)</span><b>${euro(residuel)}</b></div>`:''}
       <div style="border-top:1px solid var(--hair);margin:6px 0"></div>
-      <div style="display:flex;justify-content:space-between;padding:2px 0;font-weight:600"><span>Écart non ventilé</span><b>${euro(money2(gap.total-caVentile))}</b></div>
+      <p class="note" style="color:#9a8a82">Le « ventilé sur les parfums » inclut désormais tes commandes (coffrets, événements, vrac, grands formats et migrées) au montant réellement encaissé. Seules les prestations et les marchés non détaillés restent hors du CA par parfum.</p>
     </div></details>`;
   const kpis=`<div class="kpi-grid">
     <div class="kpi"><span>CA encaissé (parfums) ${kpiI('ca_encaisse')}</span><b>${euro(A.totals.ca)}</b><span>${qty(A.totals.pieces)} pièces vendues</span></div>
