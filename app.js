@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v344';
+const APP_VERSION = 'v345';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10601,6 +10601,24 @@ function diagFlavorCAGap(orders, markets, marketMoves){
   cat._nb = nb;
   return cat;
 }
+// Compte les coffrets vendus par taille (nombre + CA réel encaissé), pour l'indicateur.
+function coffretsParTaille(orders){
+  const map = {};   // taille -> {nb, ca, pieces}
+  (orders||[]).forEach(o=>{
+    orderToLines(o).forEach(ln=>{
+      if(ln.type!=='coffret') return;
+      const t = +ln.taille||0; if(t<=0) return;
+      const m = (map[t] ||= {taille:t, nb:0, ca:0, pieces:0});
+      m.nb += 1;
+      m.pieces += t;
+      m.ca = money2(m.ca + money2(lineTotalStored(ln)));
+    });
+  });
+  const list = Object.values(map).sort((a,b)=>b.nb-a.nb);
+  const totNb = list.reduce((s,x)=>s+x.nb,0);
+  const totCA = money2(list.reduce((s,x)=>s+x.ca,0));
+  return { list, totNb, totCA, best: list[0]||null };
+}
 async function renderParfums(){
   const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
     db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
@@ -10646,6 +10664,27 @@ async function renderParfums(){
   // KPI
   const avgP = computeAvgSellPrice(data);
   _parfumsAvgP = avgP;
+  // Indicateur : coffrets vendus par taille (nombre + CA, meilleur format mis en avant).
+  const cof = coffretsParTaille(orders);
+  const coffretsBox = cof.totNb>0 ? `<div class="panel" style="margin-bottom:12px">
+    <h2>📦 Coffrets vendus par taille</h2>
+    ${cof.best?`<div class="banner" style="background:#eef6ef;border-color:#3f7d52;margin:4px 0 10px"><div>🏆 Format le plus vendu : <b>coffret ${cof.best.taille}</b> — ${cof.best.nb} vendu${cof.best.nb>1?'s':''} (${euro(cof.best.ca)})</div></div>`:''}
+    <table style="width:100%;border-collapse:collapse;font-size:.9rem">
+      <thead><tr style="text-align:left;color:#9a8a82;font-size:.8rem">
+        <th style="padding:4px 6px">Format</th><th style="padding:4px 6px;text-align:right">Vendus</th><th style="padding:4px 6px;text-align:right">CA</th><th style="padding:4px 6px;text-align:right">Part</th></tr></thead>
+      <tbody>
+        ${cof.list.map(c=>`<tr style="border-top:1px solid var(--hair)">
+          <td style="padding:6px"><b>Coffret ${c.taille}</b></td>
+          <td style="padding:6px;text-align:right">${c.nb}</td>
+          <td style="padding:6px;text-align:right">${euro(c.ca)}</td>
+          <td style="padding:6px;text-align:right;color:#9a8a82">${cof.totNb>0?Math.round(c.nb/cof.totNb*100):0}%</td></tr>`).join('')}
+      </tbody>
+      <tfoot><tr style="border-top:2px solid var(--bordeaux);font-weight:600">
+        <td style="padding:6px">Total</td><td style="padding:6px;text-align:right">${cof.totNb}</td>
+        <td style="padding:6px;text-align:right">${euro(cof.totCA)}</td><td></td></tr></tfoot>
+    </table>
+    <p class="note" style="margin-top:6px">Coffrets des commandes. Le « format le plus vendu » est classé par nombre de coffrets.</p>
+  </div>` : '';
   // Diagnostic de l'écart entre le CA total (toutes commandes) et le CA ventilé par parfum.
   const gap = diagFlavorCAGap(orders, markets, marketMoves);
   const caVentile = A.totals.ca;
@@ -10758,6 +10797,7 @@ async function renderParfums(){
    ${incohBanner}
    ${diagBox}
    ${kpis}
+   ${coffretsBox}
    <div class="panel"><h2>Synthèse par parfum</h2>
      <div class="flex" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><span style="font-size:.8rem;color:#9a8a82;align-self:center">Trier :</span>
        ${sortBtn('marge','Marge')} ${sortBtn('ca','CA')} ${sortBtn('pieces','Volume')} ${sortBtn('taux','Taux')} ${sortBtn('stock','Stock')} ${sortBtn('nom','A→Z')}</div>
