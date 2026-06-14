@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v342';
+const APP_VERSION = 'v343';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10585,9 +10585,11 @@ function diagFlavorCAGap(orders, markets, marketMoves){
     const caMk = (typeof marketNetCA==='function') ? marketNetCA(mk) : (+mk.montant||0);
     if(caMk<=0) return;
     const mv = movesByMk[mk.id]||[];
-    const aVentes = mv.some(m=>m.type==='sortie' || m.type==='vente' || (+m.qte>0 && m.type!=='retour'));
+    // Pièces réellement vendues = sorties - retours - dons - pertes (ce qui sert à ventiler).
+    let vendu=0;
+    mv.forEach(m=>{ const q=+m.qte||0; if(m.type==='sortie') vendu+=q; else if(m.type==='retour'||m.type==='don'||m.type==='perte') vendu-=q; });
     cat.marches += caMk;
-    if(aVentes){ cat.ventileParfum += 0; } // le CA marché ventilé est déjà dans buildFlavorSales
+    if(vendu>0){ /* ventilé via buildFlavorSales */ }
     else { cat.marchesNonVentiles += caMk; nb.marchesNonVentiles++; }
   });
   cat.total = money2(totalCmd + cat.marches);
@@ -10662,6 +10664,7 @@ async function renderParfums(){
       ${Math.abs(residuel)>0.5?`<div style="display:flex;justify-content:space-between;padding:3px 0;color:#9a8a82"><span>Écart résiduel (pertes, remises, arrondis)</span><b>${euro(residuel)}</b></div>`:''}
       <div style="border-top:1px solid var(--hair);margin:6px 0"></div>
       <p class="note" style="color:#9a8a82">Le « ventilé sur les parfums » inclut désormais tes commandes (coffrets, événements, vrac, grands formats et migrées) au montant réellement encaissé. Seules les prestations et les marchés non détaillés restent hors du CA par parfum.</p>
+      ${gap.marchesNonVentiles>0?`<p class="note" style="color:#b3261e;margin-top:6px">⚠ ${euro(gap.marchesNonVentiles)} de CA sur ${gap._nb.marchesNonVentiles} marché(s) ne sont pas répartis par parfum : il manque le détail des ventes (sorties − retours par parfum). Pour les ventiler, édite ces marchés et renseigne ce que tu as emporté et rapporté pour chaque parfum.</p>`:''}
     </div></details>`;
   const kpis=`<div class="kpi-grid">
     <div class="kpi"><span>CA encaissé (parfums) ${kpiI('ca_encaisse')}</span><b>${euro(A.totals.ca)}</b><span>${qty(A.totals.pieces)} pièces vendues</span></div>
