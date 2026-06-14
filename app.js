@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v306';
+const APP_VERSION = 'v309';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -263,6 +263,9 @@ const EVENT_PRICE = 1.60;       // prix par macaron
 const EVENT_MIN = 35;           // quantité minimale
 const EQUIP_PRICE = 20;         // location présentoir / pyramide (par unité)
 const EVENT_MIN_EQUIP = 1;      // au moins 1 pyramide obligatoire
+const PYRA_PRICE = 1.60;        // prix au macaron en mode événement-pyramide
+// Prix unitaire du macaron en événement : 1,60€ si pyramide présente, sinon tarif événement standard.
+function eventUnitPrice(ln){ return ((+(ln&&ln.equip)||0)>0) ? PYRA_PRICE : EVENT_PRICE; }
 
 /* ============================================================
    PARAMÈTRES DE GESTION (réglables, persistés en localStorage)
@@ -2579,6 +2582,187 @@ function lotFamilyColor(base){
   let h=0; for(let i=0;i<base.length;i++){ h=(h*31+base.charCodeAt(i))|0; }
   const hue=Math.abs(h)%360;
   return `hsl(${hue},55%,55%)`;
+}
+/* ============================================================
+   PYRAMIDES — modèles, optimiseur de paliers, calcul de boîtes
+   ============================================================ */
+// PYRA_PRICE est défini en haut avec les autres constantes de prix.
+
+// Boîtes blanches JETABLES de transport (pas les boîtes de conservation).
+const PYRA_BOXES = [
+  { key:'gd', nom:'Grande (20×20×5)', cap:25 },
+  { key:'pt', nom:'Petite (18×8×5)',  cap:9 }   // ~9, à ajuster si besoin
+];
+
+// Modèles de pyramides. Plateaux listés du SOMMET vers la BASE.
+// Prérempli avec l'exemple type ; modifiable par l'utilisateur (persisté en localStorage).
+function pyraModels(){
+  try{ const j=JSON.parse(localStorage.getItem('sm_pyraModels')||'null'); if(Array.isArray(j)&&j.length) return j; }catch(e){}
+  return [
+    { nom:'Pyramide transparente', plateaux:[5,10,14,18,22,26,30,34,37,41], secable:true },
+    { nom:'Bloc 35',               plateaux:[35],                            secable:false },
+    { nom:'Matfer noire (estim.)', plateaux:[6,11,16,20,24,28,32,35,38],     secable:true }
+  ];
+}
+function pyraSaveModels(list){ localStorage.setItem('sm_pyraModels', JSON.stringify(list)); }
+
+// Configurations valides : sommes cumulées DEPUIS LE SOMMET (on compte par le haut).
+function pyraConfigs(plateaux){
+  const out=[]; let cumul=0;
+  for(let i=0;i<plateaux.length;i++){ cumul+=(+plateaux[i]||0); out.push({etages:i+1, total:cumul}); }
+  return out;
+}
+function pyraBornes(plateaux){ const c=pyraConfigs(plateaux); return c.length?{min:c[0].total,max:c[c.length-1].total}:{min:0,max:0}; }
+
+// Optimiseur : propose TOUJOURS le palier du dessus (jamais en sous-capacité).
+function pyraOptimise(plateaux, voulu){
+  const c=pyraConfigs(plateaux);
+  const palier=c.find(x=>x.total>=voulu);
+  if(!palier) return {possible:false, max:c.length?c[c.length-1].total:0};
+  return {possible:true, propose:palier.total, etages:palier.etages, exact:palier.total===voulu};
+}
+
+// Optimiseur MULTI-OPTIONS : pour un objectif, propose plusieurs configurations
+// (1 pyramide unique, ou N pyramides identiques), toujours au-dessus de l'objectif,
+// dans la marge donnée (+10% par défaut). Pyramides multipliées : min 3 plateaux chacune.
+function pyraOptions(voulu, marge){
+  marge = (marge==null)?0.10:marge;
+  if(!(voulu>0)) return {voulu:0, plafond:0, opts:[]};
+  const plafond=Math.ceil(voulu*(1+marge));
+  const models=pyraModels();
+  const opts=[];
+  models.forEach(m=>{
+    const cfgs=pyraConfigs(m.plateaux);
+    if(!cfgs.length) return;
+    const full=cfgs[cfgs.length-1];
+    const secable=(m.secable!==false);
+    // (a) 1 pyramide unique : meilleur palier >= voulu
+    const palier=cfgs.find(c=>c.total>=voulu);
+    if(palier && palier.total<=plafond)
+      opts.push({total:palier.total, n:1, modele:m.nom, desc:'1× '+m.nom+(palier.etages<m.plateaux.length?' ('+palier.etages+' étages)':' (complète)')});
+    // (b) N pyramides identiques
+    cfgs.forEach(c=>{
+      for(let n=2;n<=8;n++){
+        if(secable && c.etages<3) continue;               // partielle trop plate (<3 plateaux)
+        if(!secable && c.total!==full.total) continue;     // bloc non sécable : seulement complet
+        const t=c.total*n;
+        if(t>=voulu && t<=plafond)
+          opts.push({total:t, n, modele:m.nom, desc:n+'× '+m.nom+(c.etages<m.plateaux.length?' ('+c.etages+' étages chacune)':' (complètes)')});
+      }
+    });
+  });
+  const seen=new Set();
+  const uniq=opts.filter(o=>{ if(seen.has(o.desc))return false; seen.add(o.desc); return true; });
+  uniq.sort((a,b)=>a.total-b.total || a.n-b.n);
+  return {voulu, plafond, opts:uniq};
+}
+function pyraBoxes(nbMacarons){
+  const grande=PYRA_BOXES[0].cap, petite=PYRA_BOXES[1].cap;
+  let best=null;
+  for(let g=0; g<=Math.ceil(nbMacarons/grande)+1; g++){
+    const reste=nbMacarons-g*grande;
+    const p=reste>0?Math.ceil(reste/petite):0;
+    const capa=g*grande+p*petite;
+    if(capa>=nbMacarons){
+      const nb=g+p, perte=capa-nbMacarons;
+      if(!best || nb<best.nb || (nb===best.nb && perte<best.perte)) best={g,p,nb,perte};
+    }
+  }
+  return best||{g:0,p:0,nb:0,perte:0};
+}
+
+let _pyraModelIdx = 0;
+let _pyraVoulu = 60;
+function pyraSetModel(i){ _pyraModelIdx=+i; renderPyramides(); }
+function pyraSetVoulu(v){ _pyraVoulu=Math.max(0,Math.floor(+v||0)); renderPyramides(); }
+
+async function renderPyramides(){
+  const main=document.getElementById('main'); if(!main) return;
+  const models=pyraModels();
+  if(_pyraModelIdx>=models.length) _pyraModelIdx=0;
+  const m=models[_pyraModelIdx];
+  const configs=pyraConfigs(m.plateaux);
+  const bornes=pyraBornes(m.plateaux);
+  const opt=pyraOptimise(m.plateaux, _pyraVoulu);
+  const boxes=opt.possible?pyraBoxes(opt.propose):null;
+
+  const modelOpts=models.map((mm,i)=>`<option value="${i}" ${i===_pyraModelIdx?'selected':''}>${esc(mm.nom)}</option>`).join('');
+  const paliersHtml=configs.map(c=>{
+    const isPropose=opt.possible&&c.total===opt.propose;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:9px;margin-bottom:5px;background:${isPropose?'#eef6ef':'#faf7f2'};border:1px solid ${isPropose?'#3f7d52':'var(--hair)'}">
+      <span style="flex:none;width:24px;height:24px;border-radius:50%;background:${isPropose?'#3f7d52':'#ece2d4'};color:${isPropose?'#fff':'#8a7a6f'};display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700">${c.etages}</span>
+      <span style="flex:1"><b style="color:var(--bordeaux)">${c.total} macarons</b> <span style="color:#9a8a82;font-size:.74rem">· ${c.etages} étage(s) depuis le sommet</span></span>
+      ${isPropose?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.64rem">proposé</span>':''}
+    </div>`;
+  }).join('');
+
+  main.innerHTML=`
+   <div class="topbar"><div><h1>Pyramides événement</h1><p>Optimiseur de paliers · prix ${euro(PYRA_PRICE)}/macaron · boîtes de transport</p></div></div>
+
+   <div class="panel">
+     <h2>🔺 Simulateur</h2>
+     <div class="field"><label>Modèle de pyramide</label>
+       <select onchange="pyraSetModel(this.value)">${modelOpts}</select></div>
+     <div class="note" style="margin:0 0 10px">Plateaux (du sommet vers la base) : <b>${m.plateaux.join(' · ')}</b> — capacité de <b>${bornes.min}</b> à <b>${bornes.max}</b> macarons.</div>
+     <div class="field"><label>Combien le client en veut-il ?</label>
+       <input type="number" min="0" value="${_pyraVoulu}" oninput="pyraSetVoulu(this.value)"></div>
+
+     ${opt.possible?`
+       <div style="background:#eef6ef;border:1.5px solid #3f7d52;border-radius:12px;padding:13px 15px;margin:6px 0 4px">
+         <div style="font-size:.78rem;color:#3f7d52;font-weight:600;text-transform:uppercase;letter-spacing:.03em">Proposition</div>
+         <div style="font-size:1.3rem;font-weight:700;color:var(--bordeaux);margin:3px 0">${opt.propose} macarons${opt.exact?'':` <span style="font-size:.8rem;font-weight:400;color:#9a8a82">(au lieu de ${_pyraVoulu})</span>`}</div>
+         <div style="font-size:.82rem;color:#6a5a52">Pyramide de <b>${opt.etages} plateau(x)</b> complets depuis le sommet — visuel parfait, sans trou.</div>
+         <div style="font-size:.9rem;color:var(--bordeaux);margin-top:6px">Prix : <b>${opt.propose} × ${euro(PYRA_PRICE)} = ${euro(opt.propose*PYRA_PRICE)}</b></div>
+       </div>
+       ${opt.exact?'':`<p class="note" style="margin:4px 0 0">💡 Tu peux dire : « Pour un visuel optimal sans plateau à trou, je vous propose <b>${opt.propose}</b> macarons. »</p>`}
+     `:`<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin:6px 0">⚠️ <div>${_pyraVoulu} dépasse la capacité de ce modèle (max <b>${opt.max}</b>). Choisis un modèle plus grand ou plusieurs pyramides.</div></div>`}
+   </div>
+
+   ${boxes?`<div class="panel">
+     <h2>📦 Boîtes de transport</h2>
+     <p class="note" style="margin-top:0">Boîtes blanches jetables pour transporter les <b>${opt.propose}</b> macarons.</p>
+     <div style="display:flex;flex-direction:column;gap:7px">
+       ${boxes.g>0?`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid var(--hair);border-left:3px solid #7a4b82;border-radius:11px"><span style="font-size:1rem">📦</span><span style="flex:1"><b>${boxes.g} ×</b> ${esc(PYRA_BOXES[0].nom)}</span><span style="color:#9a8a82;font-size:.76rem">${PYRA_BOXES[0].cap}/boîte</span></div>`:''}
+       ${boxes.p>0?`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid var(--hair);border-left:3px solid #d98324;border-radius:11px"><span style="font-size:1rem">📦</span><span style="flex:1"><b>${boxes.p} ×</b> ${esc(PYRA_BOXES[1].nom)}</span><span style="color:#9a8a82;font-size:.76rem">${PYRA_BOXES[1].cap}/boîte</span></div>`:''}
+     </div>
+     <div class="sum-box" style="margin-top:9px"><span>Total boîtes</span><b>${boxes.nb} boîte(s)</b></div>
+     ${boxes.perte>0?`<p class="note" style="margin:4px 0 0">Il restera ${boxes.perte} place(s) libre(s) dans les boîtes.</p>`:''}
+   </div>`:''}
+
+   <div class="panel">
+     <h2>📐 Paliers de ce modèle</h2>
+     <p class="note" style="margin-top:0">On compte toujours <b>depuis le sommet</b> et on descend. Chaque palier = une pyramide complète.</p>
+     ${paliersHtml}
+   </div>
+
+   <div class="panel">
+     <h2>⚙️ Modèles de pyramides</h2>
+     <p class="note" style="margin-top:0">Définis tes modèles : un nom + les capacités des plateaux, <b>du sommet vers la base</b>, séparées par des virgules ou espaces.</p>
+     <div id="pyraModelsEdit">${models.map((mm,i)=>`
+       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+         <input id="pyraNom_${i}" value="${esc(mm.nom)}" placeholder="Nom" style="flex:1">
+         <input id="pyraPlat_${i}" value="${mm.plateaux.join(', ')}" placeholder="ex : 7, 14, 21, 28, 35" style="flex:2">
+         <button class="qa del" onclick="pyraDeleteModel(${i})">✕</button>
+       </div>`).join('')}</div>
+     <div style="display:flex;gap:8px;margin-top:8px">
+       <button class="btn ghost sm" onclick="pyraAddModel()">+ Ajouter un modèle</button>
+       <button class="btn gold sm" onclick="pyraSaveEdits()">Enregistrer les modèles</button>
+     </div>
+   </div>
+  `;
+}
+function pyraAddModel(){ const l=pyraModels(); l.push({nom:'Nouveau modèle', plateaux:[7,14,21]}); pyraSaveModels(l); renderPyramides(); }
+function pyraDeleteModel(i){ const l=pyraModels(); if(l.length<=1){ toast('Garde au moins un modèle'); return; } l.splice(i,1); pyraSaveModels(l); if(_pyraModelIdx>=l.length)_pyraModelIdx=0; renderPyramides(); }
+function pyraSaveEdits(){
+  const l=pyraModels(); const out=[];
+  for(let i=0;i<l.length;i++){
+    const nom=(document.getElementById('pyraNom_'+i)||{}).value||('Modèle '+(i+1));
+    const platStr=(document.getElementById('pyraPlat_'+i)||{}).value||'';
+    const plateaux=platStr.split(/[,\s]+/).map(x=>parseInt(x,10)).filter(x=>x>0);
+    if(plateaux.length) out.push({nom:nom.trim(), plateaux});
+  }
+  if(!out.length){ toast('Au moins un modèle valide requis'); return; }
+  pyraSaveModels(out); toast('Modèles enregistrés ✓'); renderPyramides();
 }
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
@@ -6225,7 +6409,7 @@ async function cmdView(id){
     if(ln.type==='evenement'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       return `<div class="cmd-line"><div class="line-type">Événement</div>
-        <div class="sum-box"><span>Macarons</span><b>${ln.evQte||0} × ${euro(EVENT_PRICE)}</b></div>
+        <div class="sum-box"><span>Macarons</span><b>${ln.evQte||0} × ${euro(eventUnitPrice(ln))}</b></div>
         <div class="sum-box"><span>Pyramides / présentoirs</span><b>${ln.equip||0} × ${euro(EQUIP_PRICE)}</b></div>
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:''}
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
@@ -6302,7 +6486,7 @@ function lineTotalStored(ln){
     const limit=BOX_FLAVOR_LIMIT[ln.taille]||0;
     base = money2(pu + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE);
   }
-  else if(ln.type==='evenement') base = money2((ln.evQte||0)*EVENT_PRICE + (ln.equip||0)*EQUIP_PRICE);
+  else if(ln.type==='evenement') base = money2((ln.evQte||0)*eventUnitPrice(ln) + (ln.equip||0)*EQUIP_PRICE);
   else if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
   else if(ln.type==='vrac'){ const pu=+getSettings().prixMacaronProStd||0; const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
   else if(ln.type==='don') return 0; // toujours gratuit, pas de remise à appliquer
@@ -6703,16 +6887,34 @@ function drawEventLine(ln,i){
     return flavorPickRow(f, q, `setEventParfum(${i},${fi},VAL)`, Math.max(ln.evQte,50));
   }).join('');
   const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
+  // --- Logique pyramide intégrée ---
+  const hasPyra=(+ln.equip||0)>0;                 // une pyramide est présente
+  const prixMac = hasPyra ? PYRA_PRICE : EVENT_PRICE;   // 1,60€ conditionné à la pyramide
+  const multiOpt = hasPyra ? pyraOptions(+ln.evQte||0) : null;
+  const boxes = (hasPyra && (+ln.evQte||0)>0) ? pyraBoxes(+ln.evQte||0) : null;
+  const totalLigne = (+ln.evQte||0)*prixMac + (+ln.equip||0)*EQUIP_PRICE;
+
   return `<div class="cmd-line">
-    <div class="line-head"><span class="line-type">Événement <span class="line-sub">${euro(EVENT_PRICE)}/macaron · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="line-head"><span class="line-type">Événement <span class="line-sub">${hasPyra?`${euro(PYRA_PRICE)}/macaron (pyramide)`:`${euro(EVENT_PRICE)}/macaron`} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <div class="row2">
       <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
       <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="${EVENT_MIN_EQUIP}" value="${ln.equip}" oninput="setEventEquip(${i},this.value)"></div>
     </div>
+    ${hasPyra&&multiOpt?`
+      <div style="background:#faf7f2;border:1px solid var(--hair);border-radius:11px;padding:11px 13px;margin:4px 0">
+        <div style="font-size:.74rem;color:#7a6a62;font-weight:600;text-transform:uppercase;margin-bottom:6px">Configurations possibles ${multiOpt.opts.length?`(jusqu'à ${multiOpt.plafond})`:''}</div>
+        ${multiOpt.opts.length?multiOpt.opts.map(o=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${o.total===+ln.evQte?'#eef6ef':'#fff'};border:1px solid ${o.total===+ln.evQte?'#3f7d52':'var(--hair)'}">
+            <span style="flex:1;font-size:.86rem"><b style="color:var(--bordeaux)">${o.total}</b> <span style="color:#6a5a52">— ${esc(o.desc)}</span></span>
+            ${o.total===+ln.evQte?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="setEventQte(${i},${o.total})">Choisir</button>`}
+          </div>`).join(''):`<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${ln.evQte}. Ajuste la quantité ou ajoute une pyramide.</p>`}
+      </div>
+    `:''}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}</div>
-    <div class="sum-box"><span>${ln.evQte} macarons · ${ln.equip} pyramide(s)</span><b>${euro(ln.evQte*EVENT_PRICE + ln.equip*EQUIP_PRICE)}</b></div>
-    ${ln.equip<EVENT_MIN_EQUIP?`<p class="note" style="color:var(--red)">⚠ Au moins ${EVENT_MIN_EQUIP} pyramide obligatoire.</p>`:''}
+    <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(PYRA_PRICE)}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
+    ${(+ln.equip||0)<EVENT_MIN_EQUIP?`<p class="note" style="color:var(--red)">⚠ Au moins ${EVENT_MIN_EQUIP} pyramide obligatoire.</p>`:''}
+    ${boxes?`<div class="sum-box" style="background:#faf7f2"><span>📦 Transport : ${boxes.g>0?`${boxes.g}× grande`:''}${boxes.g>0&&boxes.p>0?' + ':''}${boxes.p>0?`${boxes.p}× petite`:''}</span><b>${boxes.nb} boîte(s)</b></div>`:''}
     ${totQ&&totQ!==+ln.evQte?`<p class="note" style="color:var(--red)">⚠ ${totQ} parfums détaillés ≠ ${ln.evQte} macarons.</p>`:''}
     ${lineRemiseRow(ln,i)}
   </div>`;
@@ -6842,7 +7044,7 @@ function lineTotalBase(ln){
     const over = Math.max(0, nbDiff-limit);
     return money2(base + over*FLAVOR_SURCHARGE);
   }
-  if(ln.type==='evenement') return addMoney(mulMoney(ln.evQte||0,EVENT_PRICE), mulMoney(ln.equip||0,EQUIP_PRICE));
+  if(ln.type==='evenement') return addMoney(mulMoney(ln.evQte||0,eventUnitPrice(ln)), mulMoney(ln.equip||0,EQUIP_PRICE));
   if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='vrac'){ const pu=+getSettings().prixMacaronProStd||0; const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='don') return 0;
@@ -7667,7 +7869,7 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials){
     if(ln.type==='prestation'){ caService=money2(caService+net); return; } // service : pas de matière/emballage
     if(ln.type==='evenement'){
       // l'événement mêle marchandise (macarons) et service (location pyramide/déplacement)
-      const maca = money2((+ln.evQte||0)*EVENT_PRICE);
+      const maca = money2((+ln.evQte||0)*eventUnitPrice(ln));
       const presta = money2((+ln.equip||0)*EQUIP_PRICE);
       caGoods=money2(caGoods+maca); caService=money2(caService+presta);
       coutMat=money2(coutMat+(+ln.evQte||0)*avgUnit);
