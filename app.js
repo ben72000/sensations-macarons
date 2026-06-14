@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v337';
+const APP_VERSION = 'v338';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10519,12 +10519,15 @@ function parfumStockPopup(){
 
 // DIAGNOSTIC : décompose le CA total des commandes par catégorie de ligne, pour comprendre
 // l'écart entre le CA total (tableau de bord) et le CA ventilé par parfum (rentabilité).
-function diagFlavorCAGap(orders){
-  const cat = { total:0, ventile:0, histoAvecParfums:0, vrac:0, grand:0, prestation:0, autre:0, sansLigne:0 };
-  const nb = { histoAvecParfums:0, vrac:0, grand:0, sansLigne:0 };
+function diagFlavorCAGap(orders, markets, marketMoves){
+  const cat = { total:0, ventile:0, histoAvecParfums:0, vrac:0, grand:0, prestation:0, autre:0, sansLigne:0,
+                marchesVentiles:0, marchesNonVentiles:0 };
+  const nb = { histoAvecParfums:0, vrac:0, grand:0, sansLigne:0, marchesNonVentiles:0 };
+  // --- Commandes ---
+  let totalCmd=0;
   (orders||[]).forEach(o=>{
     const montant = +o.montant||0;
-    cat.total += montant;
+    totalCmd += montant;
     const lignes = orderToLines(o);
     if(!lignes.length){ cat.sansLigne += montant; nb.sansLigne++; return; }
     let aParfumsHisto=false, aVrac=false, aGrand=false, aVentile=false, aPresta=false;
@@ -10542,7 +10545,17 @@ function diagFlavorCAGap(orders){
     else if(aPresta){ cat.prestation += montant; }
     else { cat.autre += montant; }
   });
-  cat.ecart = money2(cat.total - cat.ventile);
+  // --- Marchés clos : CA ventilable seulement s'il y a des mouvements de vente par parfum ---
+  const movesByMk={}; (marketMoves||[]).forEach(mv=>{ (movesByMk[mv.marketId] ||= []).push(mv); });
+  (markets||[]).filter(mk=>mk.statut==='clos').forEach(mk=>{
+    const caMk = (typeof marketNetCA==='function') ? marketNetCA(mk) : (+mk.montant||0);
+    const mv = movesByMk[mk.id]||[];
+    const aVentes = mv.some(m=>m.type==='sortie' || m.type==='vente' || (+m.qte>0 && m.type!=='retour'));
+    if(aVentes && caMk>0){ cat.marchesVentiles += caMk; }
+    else if(caMk>0){ cat.marchesNonVentiles += caMk; nb.marchesNonVentiles++; }
+  });
+  cat.total = money2(totalCmd + cat.marchesVentiles + cat.marchesNonVentiles);
+  cat.ecart = money2(cat.total - cat.ventile - cat.marchesVentiles);
   Object.keys(cat).forEach(k=>{ if(typeof cat[k]==='number') cat[k]=money2(cat[k]); });
   cat._nb = nb;
   return cat;
@@ -10593,21 +10606,23 @@ async function renderParfums(){
   const avgP = computeAvgSellPrice(data);
   _parfumsAvgP = avgP;
   // Diagnostic de l'écart entre le CA total (toutes commandes) et le CA ventilé par parfum.
-  const gap = diagFlavorCAGap(orders);
+  const gap = diagFlavorCAGap(orders, markets, marketMoves);
   const caVentile = A.totals.ca;
   const diagBox = `<details style="margin-bottom:12px"><summary style="cursor:pointer;color:#7a6a62;font-size:.84rem;font-weight:600">🔎 D'où vient l'écart avec le CA total ?</summary>
     <div class="panel" style="margin-top:8px;font-size:.86rem">
-      <div style="display:flex;justify-content:space-between;padding:3px 0"><span>CA total (toutes commandes + marchés)</span><b>${euro(gap.total)}</b></div>
-      <div style="display:flex;justify-content:space-between;padding:3px 0;color:#3f7d52"><span>↳ CA ventilé par parfum (coffrets, événements)</span><b>${euro(caVentile)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0"><span>CA total (commandes + marchés)</span><b>${euro(gap.total)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;color:#3f7d52"><span>↳ CA ventilé par parfum</span><b>${euro(caVentile)}</b></div>
       <div style="border-top:1px solid var(--hair);margin:6px 0"></div>
       <div style="color:#9a8a82;margin-bottom:4px">Non ventilé par parfum actuellement :</div>
+      ${gap.marchesNonVentiles>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;color:#b3261e"><span>• Marchés sans détail de ventes (${gap._nb.marchesNonVentiles})</span><b>${euro(gap.marchesNonVentiles)}</b></div>`:''}
       ${gap.histoAvecParfums>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;color:#b08a3a"><span>• Commandes migrées avec parfums (${gap._nb.histoAvecParfums})</span><b>${euro(gap.histoAvecParfums)}</b></div>`:''}
       ${gap.vrac>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Vrac (${gap._nb.vrac})</span><b>${euro(gap.vrac)}</b></div>`:''}
       ${gap.grand>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Grands formats (${gap._nb.grand})</span><b>${euro(gap.grand)}</b></div>`:''}
       ${gap.prestation>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Prestations</span><b>${euro(gap.prestation)}</b></div>`:''}
-      ${gap.sansLigne>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Sans détail (${gap._nb.sansLigne})</span><b>${euro(gap.sansLigne)}</b></div>`:''}
-      ${gap.autre>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Autre</span><b>${euro(gap.autre)}</b></div>`:''}
-      ${gap.histoAvecParfums>0?`<p class="note" style="margin-top:8px;color:#b08a3a">Tes commandes migrées contiennent les parfums mais ne sont pas comptées dans le CA par parfum. On peut corriger ça pour les inclure.</p>`:''}
+      ${gap.sansLigne>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Commandes sans détail (${gap._nb.sansLigne})</span><b>${euro(gap.sansLigne)}</b></div>`:''}
+      ${gap.autre>0?`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>• Autre / non classé</span><b>${euro(gap.autre)}</b></div>`:''}
+      <div style="border-top:1px solid var(--hair);margin:6px 0"></div>
+      <div style="display:flex;justify-content:space-between;padding:2px 0;font-weight:600"><span>Écart non ventilé</span><b>${euro(money2(gap.total-caVentile))}</b></div>
     </div></details>`;
   const kpis=`<div class="kpi-grid">
     <div class="kpi"><span>CA encaissé (parfums) ${kpiI('ca_encaisse')}</span><b>${euro(A.totals.ca)}</b><span>${qty(A.totals.pieces)} pièces vendues</span></div>
