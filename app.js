@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v319';
+const APP_VERSION = 'v321';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6980,7 +6980,7 @@ async function saveQuickClient(){
 
 function addLine(type){
   if(type==='coffret') cmdLines.push({type:'coffret', taille:6, parfums:{}});
-  else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:EVENT_MIN_EQUIP, parfums:{}});
+  else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:0, parfums:{}});
   else if(type==='grand') cmdLines.push({type:'grand', tarif:'particulier', items:{}});
   else if(type==='vrac') cmdLines.push({type:'vrac', parfums:{}});
   else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
@@ -7047,13 +7047,12 @@ function drawEventLine(ln,i){
     <div class="line-head"><span class="line-type">Événement <span class="line-sub">${hasPyra?`${euro(PYRA_PRICE)}/macaron (pyramide)`:`${euro(EVENT_PRICE)}/macaron`} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <div class="row2">
       <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
-      <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="0" inputmode="numeric" value="${ln.equip}" placeholder="0" oninput="setEventEquip(${i},this.value)"></div>
+      <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="0" inputmode="numeric" value="${(+ln.equip||0)>0?ln.equip:''}" placeholder="toutes les options" oninput="setEventEquip(${i},this.value)"></div>
     </div>
-    ${hasPyra?`<div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0, +ln.equip||0)}</div>`:''}
+    <div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0, +ln.equip||0)}</div>
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}</div>
     <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(PYRA_PRICE)}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
-    ${(+ln.equip||0)<EVENT_MIN_EQUIP?`<p class="note" style="color:var(--red)">⚠ Au moins ${EVENT_MIN_EQUIP} pyramide obligatoire.</p>`:''}
     ${totQ&&totQ!==+ln.evQte?`<p class="note" style="color:var(--red)">⚠ ${totQ} parfums détaillés ≠ ${ln.evQte} macarons.</p>`:''}
     ${lineRemiseRow(ln,i)}
   </div>`;
@@ -7098,7 +7097,8 @@ function setEventQte(i,v){
   cmdLines[i].evDemande = val;
   cmdLines[i].evQte = val;        // par défaut la quantité retenue suit la demande tant qu'on n'a pas choisi
   const box=document.getElementById('pyraOpts_'+i);
-  if(box && (+cmdLines[i].equip||0)>0) box.innerHTML=eventPyraOptsHtml(i, val, val, +cmdLines[i].equip||0);
+  // On rafraîchit dès que le bloc existe (même si equip=0 : le filtre 0 montre toutes les options).
+  if(box) box.innerHTML=eventPyraOptsHtml(i, val, val, +cmdLines[i].equip||0);
   cmdRecalc();
 }
 function setEventEquip(i,v){
