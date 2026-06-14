@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v328';
+const APP_VERSION = 'v329';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -14884,6 +14884,28 @@ async function migSaveMatStock(){
   renderMigration();
 }
 
+// Demande au navigateur de marquer le stockage local comme PERSISTANT (protège les
+// données IndexedDB d'une purge automatique quand l'appareil manque d'espace).
+// Sans effet de bord : si le navigateur refuse, on reste dans l'état actuel.
+async function requestPersistentStorage(){
+  try{
+    if(navigator.storage && navigator.storage.persist){
+      const dejaPersist = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+      const granted = dejaPersist ? true : await navigator.storage.persist();
+      localStorage.setItem('sm_persistStorage', granted?'1':'0');
+      return granted;
+    }
+  }catch(e){}
+  localStorage.setItem('sm_persistStorage', 'na');
+  return null;
+}
+// État lisible de la persistance, pour l'affichage dans Sauvegarde & sécurité.
+function persistStorageStatus(){
+  const v=localStorage.getItem('sm_persistStorage');
+  if(v==='1') return {ok:true,  label:'🔒 Stockage persistant : accordé', detail:'Tes données sont protégées contre la purge automatique du navigateur.'};
+  if(v==='0') return {ok:false, label:'⚠️ Stockage non garanti (best-effort)', detail:'Le navigateur n\'a pas accordé la persistance. Tes données restent là, mais pourraient être purgées si l\'appareil manque d\'espace. Garde des exports réguliers.'};
+  return {ok:null, label:'ℹ️ Persistance non disponible', detail:'Ce navigateur ne propose pas le verrouillage du stockage. Garde des exports réguliers.'};
+}
 async function renderBackups(){
   const backups = await db.backups.orderBy('date').reverse().toArray();
   const lastExport = localStorage.getItem('sm_lastExport');
@@ -14907,6 +14929,7 @@ async function renderBackups(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Sauvegarde & sécurité</h1><p>${backups.length} sauvegarde(s) dans l'historique · max ${MAX_BACKUPS}</p></div></div>
+   ${(function(){const s=persistStorageStatus();const bg=s.ok===true?'#eef6ef':(s.ok===false?'#fdf3e7':'#f4f1ec');const bd=s.ok===true?'#3f7d52':(s.ok===false?'#e0a458':'var(--hair)');return `<div class="banner" style="background:${bg};border-color:${bd};margin-bottom:12px"><div><b>${s.label}</b><br><span style="font-size:.85rem;color:#6a5a52">${s.detail}</span></div></div>`;})()}
    ${expWarn?`<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div>${lastExport?`Dernier export manuel il y a ${Math.abs(dExp)} jour(s).`:'Aucun export manuel hors appareil pour le moment.'} Pensez à télécharger une sauvegarde et à la conserver ailleurs (e-mail, cloud) : iOS peut purger les données de l'app.</div></div>`:''}
    <div class="panel"><h2>Actions</h2>
      <div class="flex" style="flex-wrap:wrap;gap:8px">
@@ -19881,6 +19904,7 @@ function startClock(){
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
   // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
   try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
+  try{ await requestPersistentStorage(); }catch(e){ console.error('persist',e); }
   try{ await autoDailyBackup(); }catch(e){ console.error('autoBackup',e); }
   try{ await pmsEndOfDayCheck(); }catch(e){ console.error('pmsEod',e); }
   // Rappel d'export en DERNIER (et seulement si aucune autre modale n'est ouverte),
