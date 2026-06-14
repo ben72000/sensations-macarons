@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v324';
+const APP_VERSION = 'v325';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2782,11 +2782,23 @@ function docStatutLabel(d){
   if(d.type==='devis'){
     return {en_attente:'⏳ En attente', accepte:'✓ Accepté', refuse:'✕ Refusé', expire:'⌛ Expiré'}[d.statut]||d.statut;
   }
-  return {emise:'📄 Émise', payee:'✓ Payée'}[d.statut]||d.statut;
+  return {brouillon:'📝 Brouillon (à valider)', emise:'🔒 Validée', payee:'🔒 Validée · payée'}[d.statut]||d.statut;
 }
 function docStatutColor(d){
-  const map={en_attente:'#d98324', accepte:'#3f7d52', refuse:'#b3261e', expire:'#9a8a82', emise:'#7a4b82', payee:'#3f7d52'};
+  const map={en_attente:'#d98324', accepte:'#3f7d52', refuse:'#b3261e', expire:'#9a8a82', brouillon:'#b08a3a', emise:'#7a4b82', payee:'#3f7d52'};
   return map[d.statut]||'#9a8a82';
+}
+// Une facture est-elle définitive (gravée, inaltérable) ?
+function docEstDefinitif(d){ return d && d.type==='facture' && (d.statut==='emise' || d.statut==='payee'); }
+// Numéro légal SÉQUENTIEL STRICT : lit la dernière facture DÉFINITIVE et incrémente.
+// L'ordre de validation fait foi (pas l'ordre de création des brouillons). Jamais de trou.
+async function nextFactureNumeroDefinitif(){
+  const year=new Date().getFullYear();
+  const factsDef=(await db.documents.where('type').equals('facture').toArray().catch(()=>[]))
+    .filter(d=>docEstDefinitif(d) && d.numero && (d.numero||'').includes('-'+year+'-'));
+  let maxSeq=0;
+  factsDef.forEach(d=>{ const m=(d.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>maxSeq) maxSeq=n; } });
+  return `FAC-${year}-${String(maxSeq+1).padStart(3,'0')}`;
 }
 // Numéro de document : DEV-2026-001 / FAC-2026-001
 async function nextDocNumero(type){
@@ -2808,7 +2820,7 @@ async function renderDocuments(){
 
   const docCard=d=>`<div onclick="docOpen(${d.id})" style="cursor:pointer;background:#fff;border:1px solid var(--hair);border-left:4px solid ${docStatutColor(d)};border-radius:13px;padding:12px 14px;box-shadow:var(--sh-1);margin-bottom:9px">
       <div style="display:flex;align-items:center;gap:9px;margin-bottom:5px">
-        <b style="flex:1;color:var(--bordeaux)">${esc(d.numero||'—')}</b>
+        <b style="flex:1;color:var(--bordeaux)">${esc(d.numero||d.refInterne||'Brouillon')}</b>
         <span class="tag" style="background:${docStatutColor(d)};color:#fff;font-size:.66rem">${docStatutLabel(d)}</span>
       </div>
       <div style="display:flex;gap:10px;font-size:.84rem;color:#6a5a52">
@@ -2892,10 +2904,30 @@ async function docOpen(id){
       ${!peutConvertir?`<p class="note" style="margin:6px 0 0;color:#b08a3a">Saisis un acompte pour débloquer la conversion.</p>`:''}
     `:''}
     ${(d.type==='devis'&&d.orderId)?`<p class="note" style="margin-top:8px;color:#3f7d52">✓ Converti en commande.</p>`:''}
+    ${d.type==='facture'?`
+      ${d.statut==='brouillon'?`
+        <div class="banner" style="background:#fdf8ec;border-color:#e8d4a0;margin-top:10px">📝 <div><b>Brouillon</b> — cette facture n'a pas encore de numéro légal. Vérifie-la, puis valide-la définitivement.</div></div>
+        <div class="field" style="margin-top:8px"><label>Date de la facture</label>
+          <input type="date" id="docFactDate" value="${d.date||new Date().toISOString().slice(0,10)}" max="${new Date().toISOString().slice(0,10)}" onchange="docSetFactDate(${d.id},this.value)"></div>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button class="btn ghost" onclick="docApercu(${d.id})">👁️ Aperçu complet</button>
+          <button class="btn gold" onclick="docValiderFacture(${d.id})">🔒 Valider définitivement</button>
+        </div>
+      `:`
+        <div class="banner" style="background:#f0ecf3;border-color:#cdbcd6;margin-top:10px">🔒 <div><b>Facture validée</b> — inaltérable. Ni modification ni suppression possibles (obligation légale).${d.dateValidation?` Validée le ${fmtDate(d.dateValidation)}.`:''}</div></div>
+        <div style="margin-top:8px"><button class="btn ghost" onclick="docApercu(${d.id})">👁️ Voir / imprimer la facture</button></div>
+      `}
+    `:''}
     <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn ghost del" onclick="docDelete(${d.id})">Supprimer</button>
+      ${docEstDefinitif(d)?'':`<button class="btn ghost del" onclick="docDelete(${d.id})">Supprimer</button>`}
       <button class="btn ghost" onclick="closeModal()">Fermer</button>
     </div>`);
+}
+// Modifie la date d'un brouillon de facture (refusée si dans le futur).
+async function docSetFactDate(id, v){
+  const auj=new Date().toISOString().slice(0,10);
+  if(v>auj){ toast('⛔ Date dans le futur interdite'); const el=document.getElementById('docFactDate'); if(el) el.value=auj; await db.documents.update(id,{date:auj}); return; }
+  await db.documents.update(id,{date:v});
 }
 async function docSetAcompte(id, v){
   const a=money2(+v||0);
@@ -2926,8 +2958,38 @@ async function docConvertToOrder(id){
   if(view==='documents') renderDocuments();
 }
 async function docDelete(id){
+  const d=await db.documents.get(id);
+  if(docEstDefinitif(d)){ toast('🔒 Une facture validée ne peut pas être supprimée (obligation légale)'); return; }
   if(!confirm('Supprimer ce document ?')) return;
   await db.documents.delete(id); closeModal(); toast('Document supprimé'); renderDocuments();
+}
+// Aperçu intégral de la facture (popup type PDF) à partir du HTML mémorisé.
+async function docApercu(id){
+  const d=await db.documents.get(id); if(!d) return;
+  if(d.html){ openPrintView(d.html, {title:`Facture ${d.numero||d.refInterne||''}`}); }
+  else if(d.orderIds&&d.orderIds.length){ genererFactureMultiple(d.orderIds); }
+  else { toast('Aperçu indisponible'); }
+}
+// VALIDATION définitive d'un brouillon de facture : avertissement, contrôle de date,
+// numéro séquentiel strict, puis verrouillage (inaltérable).
+async function docValiderFacture(id){
+  const d=await db.documents.get(id); if(!d||d.type!=='facture') return;
+  if(docEstDefinitif(d)){ toast('Facture déjà validée'); return; }
+  // Contrôle de date : jamais dans le futur ; alerte si dans le passé.
+  const auj=new Date().toISOString().slice(0,10);
+  const dateFact=d.date||auj;
+  if(dateFact>auj){ toast('⛔ Date de facture dans le futur interdite. Corrige la date.'); return; }
+  if(dateFact<auj){
+    if(!confirm(`⚠️ La date de cette facture (${fmtDate(dateFact)}) est antérieure à aujourd'hui (${fmtDate(auj)}).\n\nUne facture doit en principe porter sa date d'émission réelle. Confirmer cette date ?`)) return;
+  }
+  // Avertissement légal d'inaltérabilité.
+  if(!confirm('⚠️ Attention, vérifie bien que la facture est conforme.\n\nUne fois validée, elle ne pourra être ni modifiée ni supprimée.\n\nValider définitivement ?')) return;
+  // Numéro légal séquentiel strict, attribué MAINTENANT (ordre de validation).
+  const numero=await nextFactureNumeroDefinitif();
+  const statut=(+d.totalPaye>=+d.montant-0.01 && +d.montant>0) ? 'payee' : 'emise';
+  await db.documents.update(id, { numero, statut, dateValidation:auj, lockedAt:Date.now() });
+  closeModal(); toast('Facture '+numero+' validée et verrouillée 🔒');
+  if(view==='documents') renderDocuments();
 }
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
@@ -15230,18 +15292,38 @@ async function genererFactureMultiple(ids){
      </div>
    </div>
    </body></html>`;
-  // === Enregistrement au REGISTRE (Documents) : la facture laisse une trace ===
+  // === Enregistrement au REGISTRE comme BROUILLON (sans numéro légal) ===
+  // Le numéro définitif et le verrouillage n'interviennent qu'à la VALIDATION.
   try{
     const orderIds = orders.map(o=>o.id);
     const existing = (await db.documents.where('type').equals('facture').toArray())
       .find(d => Array.isArray(d.orderIds) && d.orderIds.length===orderIds.length && d.orderIds.every(x=>orderIds.includes(x)));
     const totalPaye = orders.reduce((s,o)=>s+(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0),0);
-    const statutFact = (totalPaye>=grandTotal-0.01 && grandTotal>0) ? 'payee' : 'emise';
-    const docFact = { type:'facture', statut:statutFact, numero:numFact, clientId:(client&&client.id)||orders[0].clientId||0, date:new Date().toISOString().slice(0,10), montant:money2(grandTotal), orderIds, orderId:orderIds[0]||null, nbCommandes:orders.length, createdAt:Date.now() };
-    if(existing){ await db.documents.update(existing.id, docFact); } else { await db.documents.add(docFact); }
+    // Si une facture DÉFINITIVE existe déjà pour ces commandes, on ne la touche pas (inaltérable).
+    if(existing && docEstDefinitif(existing)){
+      if(view==="documents") renderDocuments();
+      openPrintView(factureHtml, {title:`Facture ${existing.numero}`});
+      return;
+    }
+    const docFact = {
+      type:'facture', statut:'brouillon',
+      numero:null,                       // pas de numéro légal tant que brouillon
+      refInterne:numFact,                // référence interne lisible (basée sur la commande)
+      clientId:(client&&client.id)||orders[0].clientId||0,
+      date:new Date().toISOString().slice(0,10),
+      montant:money2(grandTotal),
+      totalPaye:money2(totalPaye),
+      orderIds, orderId:orderIds[0]||null,
+      nbCommandes:orders.length,
+      html:factureHtml,                  // aperçu intégral mémorisé
+      createdAt:Date.now()
+    };
+    if(existing){ await db.documents.update(existing.id, docFact); }
+    else { await db.documents.add(docFact); }
     if(view==="documents") renderDocuments();
+    toast('Brouillon de facture créé — à vérifier puis valider');
   }catch(e){}
-  openPrintView(factureHtml, {title:`Facture ${numFact}`});
+  openPrintView(factureHtml, {title:`Facture (brouillon) ${numFact}`});
 }
 
 
