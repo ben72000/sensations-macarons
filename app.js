@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v332';
+const APP_VERSION = 'v333';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7234,7 +7234,7 @@ function eventPyraOptsHtml(i, demande, choisi, nbPyr){
   nbPyr = +nbPyr||0;
   const multiOpt = pyraOptions(demande||0, undefined, nbPyr);
   const boxes = (choisi>0) ? pyraBoxes(choisi) : null;  // boîtes calculées sur la quantité retenue
-  const filtreTxt = nbPyr>0 ? ` · jusqu'à ${nbPyr} pyramide(s)` : '';
+  const filtreTxt = nbPyr>0 ? ` · max ${nbPyr} pyramide${nbPyr>1?'s':''}` : '';
   let corps;
   if(multiOpt.opts.length){
     corps = multiOpt.opts.map(o=>`
@@ -7248,7 +7248,7 @@ function eventPyraOptsHtml(i, demande, choisi, nbPyr){
     corps = `<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${demande}. Ajuste la demande.</p>`;
   }
   const optsHtml = `<div style="background:#faf7f2;border:1px solid var(--hair);border-radius:11px;padding:11px 13px;margin:4px 0">
-    <div style="font-size:.74rem;color:#7a6a62;font-weight:600;text-transform:uppercase;margin-bottom:6px">Configurations possibles ${demande>0?`(demande ${demande}${filtreTxt} · jusqu'à ${multiOpt.plafond})`:''}</div>
+    <div style="font-size:.74rem;color:#7a6a62;font-weight:600;text-transform:uppercase;margin-bottom:6px">Configurations possibles ${demande>0?`<br><span style="font-weight:400;text-transform:none;font-size:.92em;color:#9a8a82">Demande : ${demande} macarons${filtreTxt} · propositions jusqu'à ${multiOpt.plafond}</span>`:''}</div>
     ${corps}
   </div>
   ${boxes?`<div class="sum-box" style="background:#faf7f2"><span>📦 Transport : ${boxes.g>0?`${boxes.g}× grande`:''}${boxes.g>0&&boxes.p>0?' + ':''}${boxes.p>0?`${boxes.p}× petite`:''}</span><b>${boxes.nb} boîte(s)</b></div>`:''}`;
@@ -7274,13 +7274,10 @@ function setEventQte(i,v){
 }
 function setEventEquip(i,v){
   const raw=(v==null?'':String(v)).trim();
-  // Champ temporairement VIDE pendant la saisie : on ne touche À RIEN (ni DOM, ni redraw).
-  // On laisse l'utilisateur taper sa nouvelle valeur tranquillement.
-  if(raw===''){ cmdLines[i].equip=0; cmdRecalc(); return; }
-  const n=+raw||0;
+  const n=+raw||0;                       // vide ou 0 → 0 (= aucun filtre, toutes les options)
   const prev=+cmdLines[i].equip||0;
   cmdLines[i].equip=n;
-  // On ne réécrit le bloc d'options que si le NOMBRE a réellement changé (évite les réécritures inutiles).
+  // Rafraîchit le bloc d'options si le nombre a changé (y compris vers 0 = tout afficher).
   if(n!==prev){
     const box=document.getElementById('pyraOpts_'+i);
     const demande=(cmdLines[i].evDemande!=null?+cmdLines[i].evDemande:+cmdLines[i].evQte||0);
