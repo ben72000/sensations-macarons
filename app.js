@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v322';
+const APP_VERSION = 'v324';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2849,12 +2849,39 @@ async function docOpen(id){
   const nbLignes=(d.lignes||[]).length;
   const acompte=+d.acompte||0;
   const peutConvertir = d.type==='devis' && d.statut==='en_attente' && acompte>0;
+  // --- Construction de la chaîne de liens devis → commande → facture ---
+  const allDocs = await db.documents.toArray().catch(()=>[]);
+  const liens = [];
+  // Commande(s) liée(s) à ce document
+  const orderIds = d.type==='facture' ? (d.orderIds||[]) : (d.orderId?[d.orderId]:[]);
+  for(const oid of orderIds){
+    const o=await db.orders.get(oid).catch(()=>null);
+    if(o) liens.push({label:'Commande '+orderNumber(o), fn:`closeModal();cmdView(${oid})`});
+  }
+  // Si je suis un DEVIS : retrouver la facture née de ma commande
+  if(d.type==='devis' && d.orderId){
+    const fact=allDocs.find(x=>x.type==='facture' && Array.isArray(x.orderIds) && x.orderIds.includes(d.orderId));
+    if(fact) liens.push({label:'Facture '+fact.numero, fn:`docOpen(${fact.id})`});
+  }
+  // Si je suis une FACTURE : retrouver le devis d'origine de ma commande
+  if(d.type==='facture'){
+    for(const oid of orderIds){
+      const dev=allDocs.find(x=>x.type==='devis' && x.orderId===oid);
+      if(dev){ liens.unshift({label:'Devis '+dev.numero, fn:`docOpen(${dev.id})`}); break; }
+    }
+  }
+  const liensHtml = liens.length
+    ? `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px">
+         <span style="font-size:.74rem;color:#7a6a62;text-transform:uppercase;font-weight:600">Documents liés</span>
+         ${liens.map(l=>`<button class="btn ghost sm" style="justify-content:flex-start" onclick="${l.fn}">🔗 ${esc(l.label)} →</button>`).join('')}
+       </div>` : '';
   openModal(`<h3>${esc(d.numero||'')} <span class="tag" style="background:${docStatutColor(d)};color:#fff">${docStatutLabel(d)}</span></h3>
     <div class="sum-box"><span>Client</span><b>${esc(clName)}</b></div>
     <div class="sum-box"><span>Montant total</span><b>${euro(d.montant||0)}</b></div>
     ${nbLignes?`<div class="sum-box"><span>Détail</span><b>${nbLignes} ligne(s)</b></div>`:''}
     <div class="sum-box"><span>Date</span><b>${fmtDate(d.date)}</b></div>
     ${d.type==='devis'?`<div class="sum-box"><span>Valable jusqu'au</span><b>${fmtDate(d.expiration)}</b></div>`:''}
+    ${liensHtml}
     ${(d.type==='devis'&&d.statut==='en_attente')?`
       <div class="field" style="margin-top:10px"><label>Acompte reçu (€) — requis pour convertir</label>
         <input type="number" min="0" step="0.01" id="docAcompte" value="${acompte>0?acompte:''}" placeholder="ex : 100" oninput="docSetAcompte(${d.id},this.value)"></div>
@@ -2864,7 +2891,7 @@ async function docOpen(id){
       </div>
       ${!peutConvertir?`<p class="note" style="margin:6px 0 0;color:#b08a3a">Saisis un acompte pour débloquer la conversion.</p>`:''}
     `:''}
-    ${d.orderId?`<p class="note" style="margin-top:8px;color:#3f7d52">✓ Converti en commande.</p>`:''}
+    ${(d.type==='devis'&&d.orderId)?`<p class="note" style="margin-top:8px;color:#3f7d52">✓ Converti en commande.</p>`:''}
     <div style="display:flex;gap:8px;margin-top:10px">
       <button class="btn ghost del" onclick="docDelete(${d.id})">Supprimer</button>
       <button class="btn ghost" onclick="closeModal()">Fermer</button>
@@ -6513,6 +6540,18 @@ async function cmdView(id){
   _privacySuspend=1; // détail de commande toujours en clair, même en mode discret
   const o = await db.orders.get(id);
   const cl = o.clientId ? await db.clients.get(o.clientId) : null;
+  // Documents liés : devis d'origine + facture(s) émise(s) pour cette commande
+  const _docs = await db.documents.toArray().catch(()=>[]);
+  const _devisOrig = _docs.find(x=>x.type==='devis' && x.orderId===id);
+  const _factOrig = _docs.find(x=>x.type==='facture' && Array.isArray(x.orderIds) && x.orderIds.includes(id));
+  const _docLiens = [];
+  if(_devisOrig) _docLiens.push({label:'Devis '+_devisOrig.numero, fn:`closeModal();docOpen(${_devisOrig.id})`});
+  if(_factOrig)  _docLiens.push({label:'Facture '+_factOrig.numero, fn:`closeModal();docOpen(${_factOrig.id})`});
+  const _docLiensHtml = _docLiens.length
+    ? `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px">
+         <span style="font-size:.74rem;color:#7a6a62;text-transform:uppercase;font-weight:600">Documents liés</span>
+         ${_docLiens.map(l=>`<button class="btn ghost sm" style="justify-content:flex-start" onclick="${l.fn}">🔗 ${esc(l.label)} →</button>`).join('')}
+       </div>` : '';
   const _liv = computeDeliveryCost(o);
   let _livBlock = '';
   if(_liv.actif){
@@ -6594,6 +6633,7 @@ async function cmdView(id){
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${+o.persoMacarons>0?`${o.persoMacarons} macaron(s) · +${euro(money2(o.persoMacarons*0.25))}`:(o.perso?'Oui':'Non')}</b></div>
     ${+o.remiseGlobale>0?`<div class="sum-box"><span>Remise globale</span><b>−${o.remiseGlobale}%</b></div>`:''}
     <div class="sum-box"><span>Montant total${+o.remiseGlobale>0||lignes.some(l=>+l.remisePct>0)?' (TTC, remises incluses)':''}</span><b>${euro(o.montant)}</b></div>
+    ${_docLiensHtml}
     <h3 style="font-size:1rem;margin:16px 0 8px">Paiements <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— réf. commande n°${esc(orderNumber(o))}</span></h3>
     ${(o.paiements&&o.paiements.length)
       ? o.paiements.map(p=>`<div class="sum-box"><span>${fmtDate(p.date)} · ${esc(p.moyen||'—')}</span><b>${euro(p.montant)}</b></div>`).join('')
@@ -15190,6 +15230,17 @@ async function genererFactureMultiple(ids){
      </div>
    </div>
    </body></html>`;
+  // === Enregistrement au REGISTRE (Documents) : la facture laisse une trace ===
+  try{
+    const orderIds = orders.map(o=>o.id);
+    const existing = (await db.documents.where('type').equals('facture').toArray())
+      .find(d => Array.isArray(d.orderIds) && d.orderIds.length===orderIds.length && d.orderIds.every(x=>orderIds.includes(x)));
+    const totalPaye = orders.reduce((s,o)=>s+(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0),0);
+    const statutFact = (totalPaye>=grandTotal-0.01 && grandTotal>0) ? 'payee' : 'emise';
+    const docFact = { type:'facture', statut:statutFact, numero:numFact, clientId:(client&&client.id)||orders[0].clientId||0, date:new Date().toISOString().slice(0,10), montant:money2(grandTotal), orderIds, orderId:orderIds[0]||null, nbCommandes:orders.length, createdAt:Date.now() };
+    if(existing){ await db.documents.update(existing.id, docFact); } else { await db.documents.add(docFact); }
+    if(view==="documents") renderDocuments();
+  }catch(e){}
   openPrintView(factureHtml, {title:`Facture ${numFact}`});
 }
 
