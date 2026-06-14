@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v318';
+const APP_VERSION = 'v319';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7047,7 +7047,7 @@ function drawEventLine(ln,i){
     <div class="line-head"><span class="line-type">Événement <span class="line-sub">${hasPyra?`${euro(PYRA_PRICE)}/macaron (pyramide)`:`${euro(EVENT_PRICE)}/macaron`} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <div class="row2">
       <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
-      <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="${EVENT_MIN_EQUIP}" value="${ln.equip}" oninput="setEventEquip(${i},this.value)"></div>
+      <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="0" inputmode="numeric" value="${ln.equip}" placeholder="0" oninput="setEventEquip(${i},this.value)"></div>
     </div>
     ${hasPyra?`<div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0, +ln.equip||0)}</div>`:''}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
@@ -7102,12 +7102,19 @@ function setEventQte(i,v){
   cmdRecalc();
 }
 function setEventEquip(i,v){
-  cmdLines[i].equip=+v||0;
-  // Rafraîchit les options EN DIRECT (filtre par nb de pyramides) sans perdre le focus.
-  const box=document.getElementById('pyraOpts_'+i);
-  const demande=(cmdLines[i].evDemande!=null?+cmdLines[i].evDemande:+cmdLines[i].evQte||0);
-  if(box && (+cmdLines[i].equip||0)>0){ box.innerHTML=eventPyraOptsHtml(i, demande, +cmdLines[i].evQte||0, +cmdLines[i].equip||0); }
-  else { drawLines(); return; }   // passage à 0 pyramide : on redessine (le bloc disparaît)
+  const raw=(v==null?'':String(v)).trim();
+  // Champ temporairement VIDE pendant la saisie : on ne touche À RIEN (ni DOM, ni redraw).
+  // On laisse l'utilisateur taper sa nouvelle valeur tranquillement.
+  if(raw===''){ cmdLines[i].equip=0; cmdRecalc(); return; }
+  const n=+raw||0;
+  const prev=+cmdLines[i].equip||0;
+  cmdLines[i].equip=n;
+  // On ne réécrit le bloc d'options que si le NOMBRE a réellement changé (évite les réécritures inutiles).
+  if(n!==prev){
+    const box=document.getElementById('pyraOpts_'+i);
+    const demande=(cmdLines[i].evDemande!=null?+cmdLines[i].evDemande:+cmdLines[i].evQte||0);
+    if(box) box.innerHTML=eventPyraOptsHtml(i, demande, +cmdLines[i].evQte||0, n);
+  }
   cmdRecalc();
 }
 function setEventParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
