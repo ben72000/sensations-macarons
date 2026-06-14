@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v315';
+const APP_VERSION = 'v316';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2835,54 +2835,66 @@ async function renderDocuments(){
   `;
 }
 
-// Création d'un devis libre minimal (étape 1 : socle). L'édition complète viendra ensuite.
+// Création d'un devis : on réutilise le formulaire de commande complet, en mode devis.
 async function docNewDevis(){
-  const clients = await db.clients.toArray().catch(()=>[]);
-  if(!clients.length){ toast('Crée d\'abord un client'); return; }
-  const opts = clients.map(c=>`<option value="${c.id}">${esc(c.nom)}</option>`).join('');
-  openModal(`<h3>Nouveau devis</h3>
-    <div class="field"><label>Client</label><select id="dvCl">${opts}</select></div>
-    <div class="field"><label>Montant total (€)</label><input type="number" min="0" step="0.01" id="dvMontant" placeholder="ex : 228"></div>
-    <div class="field"><label>Objet / description (optionnel)</label><input id="dvObjet" placeholder="ex : Pyramide 105 macarons événement"></div>
-    <div class="field"><label>Validité (jours)</label><input type="number" min="1" id="dvValid" value="30"></div>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn gold" onclick="docSaveDevis()">Créer le devis</button>
-      <button class="btn ghost" onclick="closeModal()">Annuler</button>
-    </div>`);
-}
-async function docSaveDevis(){
-  const clientId=+(document.getElementById('dvCl')||{}).value||0;
-  const montant=money2(+(document.getElementById('dvMontant')||{}).value||0);
-  const objet=((document.getElementById('dvObjet')||{}).value||'').trim();
-  const validite=+(document.getElementById('dvValid')||{}).value||30;
-  if(!clientId){ toast('Choisis un client'); return; }
-  const numero=await nextDocNumero('devis');
-  const today=new Date(); const exp=new Date(today); exp.setDate(exp.getDate()+validite);
-  await db.documents.add({
-    type:'devis', statut:'en_attente', numero,
-    clientId, montant, objet,
-    date:today.toISOString().slice(0,10),
-    validiteJours:validite, expiration:exp.toISOString().slice(0,10),
-    orderId:null, createdAt:Date.now()
-  });
-  closeModal(); toast('Devis '+numero+' créé ✓'); renderDocuments();
+  cmdForm(null, {devis:true});
 }
 // Ouverture d'un document (détail) — étape suivante : édition + conversion. Pour l'instant, aperçu.
 async function docOpen(id){
   const d=await db.documents.get(id); if(!d) return;
   const clients=await db.clients.toArray().catch(()=>[]);
   const clName=(clients.find(c=>c.id===d.clientId)||{}).nom||'—';
+  const nbLignes=(d.lignes||[]).length;
+  const acompte=+d.acompte||0;
+  const peutConvertir = d.type==='devis' && d.statut==='en_attente' && acompte>0;
   openModal(`<h3>${esc(d.numero||'')} <span class="tag" style="background:${docStatutColor(d)};color:#fff">${docStatutLabel(d)}</span></h3>
     <div class="sum-box"><span>Client</span><b>${esc(clName)}</b></div>
-    <div class="sum-box"><span>Montant</span><b>${euro(d.montant||0)}</b></div>
-    ${d.objet?`<div class="sum-box"><span>Objet</span><b>${esc(d.objet)}</b></div>`:''}
+    <div class="sum-box"><span>Montant total</span><b>${euro(d.montant||0)}</b></div>
+    ${nbLignes?`<div class="sum-box"><span>Détail</span><b>${nbLignes} ligne(s)</b></div>`:''}
     <div class="sum-box"><span>Date</span><b>${fmtDate(d.date)}</b></div>
     ${d.type==='devis'?`<div class="sum-box"><span>Valable jusqu'au</span><b>${fmtDate(d.expiration)}</b></div>`:''}
-    <p class="note" style="margin-top:10px">La conversion devis → commande → facture et l'impression arrivent à la prochaine étape.</p>
-    <div style="display:flex;gap:8px;margin-top:8px">
+    ${(d.type==='devis'&&d.statut==='en_attente')?`
+      <div class="field" style="margin-top:10px"><label>Acompte reçu (€) — requis pour convertir</label>
+        <input type="number" min="0" step="0.01" id="docAcompte" value="${acompte>0?acompte:''}" placeholder="ex : 100" oninput="docSetAcompte(${d.id},this.value)"></div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn gold" id="docConvertBtn" ${peutConvertir?'':'disabled style="opacity:.5"'} onclick="docConvertToOrder(${d.id})">→ Convertir en commande</button>
+        <button class="btn ghost" onclick="cmdForm(null,{devis:true,devisId:${d.id}});">Modifier</button>
+      </div>
+      ${!peutConvertir?`<p class="note" style="margin:6px 0 0;color:#b08a3a">Saisis un acompte pour débloquer la conversion.</p>`:''}
+    `:''}
+    ${d.orderId?`<p class="note" style="margin-top:8px;color:#3f7d52">✓ Converti en commande.</p>`:''}
+    <div style="display:flex;gap:8px;margin-top:10px">
       <button class="btn ghost del" onclick="docDelete(${d.id})">Supprimer</button>
       <button class="btn ghost" onclick="closeModal()">Fermer</button>
     </div>`);
+}
+async function docSetAcompte(id, v){
+  const a=money2(+v||0);
+  await db.documents.update(id, {acompte:a});
+  const btn=document.getElementById('docConvertBtn');
+  if(btn){ if(a>0){ btn.disabled=false; btn.style.opacity='1'; } else { btn.disabled=true; btn.style.opacity='.5'; } }
+}
+// Conversion devis → commande : crée une vraie commande à partir des lignes du devis.
+async function docConvertToOrder(id){
+  const d=await db.documents.get(id); if(!d) return;
+  const acompte=+d.acompte||0;
+  if(!(acompte>0)){ toast('Un acompte est requis pour convertir'); return; }
+  const today=new Date().toISOString().slice(0,10);
+  const o={
+    clientId:d.clientId, date:d.date||today,
+    heureLivraison:d.heureLivraison||'', lieuLivraison:d.lieuLivraison||'',
+    lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0,
+    perso:false, persoMacarons:0, montant:d.montant||0,
+    paiements:[{date:today, montant:money2(acompte), moyen:'Acompte'}],
+    statut:'À préparer', notes:(d.notes||'')+`\n(Issu du devis ${d.numero})`,
+    type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[],
+    issuDevis:d.numero
+  };
+  syncPaymentFields(o);
+  const oid=await db.orders.add(o);
+  await db.documents.update(id, {statut:'accepte', orderId:oid});
+  closeModal(); toast('Devis converti en commande ✓');
+  if(view==='documents') renderDocuments();
 }
 async function docDelete(id){
   if(!confirm('Supprimer ce document ?')) return;
@@ -6672,8 +6684,12 @@ function _lineToEdit(ln){
 // Charge une commande dans le modèle d'édition (objet) sans rien perdre.
 function orderToEditLines(o){ return orderToLines(o).map(_lineToEdit); }
 
+let _cmdDevisMode = false;   // le formulaire de commande est-il en train de créer/éditer un devis ?
+let _cmdDevisId = null;      // id du devis édité (registre documents)
 async function cmdForm(id, opts){
   opts = opts || {};
+  _cmdDevisMode = !!opts.devis;          // true = on crée/édite un DEVIS (enregistré dans documents)
+  _cmdDevisId = opts.devisId || null;    // id du devis en cours d'édition (sinon nouveau)
   _privacySuspend=1; // saisie de commande toujours en clair, même en mode discret
   cmdClientsCache = await db.clients.toArray();
   cmdProductsCache = (await db.products.toArray()).filter(p=>p.actif!==false).sort((a,b)=>(+a.taille)-(+b.taille));
@@ -6683,7 +6699,16 @@ async function cmdForm(id, opts){
     recipeItems: await db.recipeItems.toArray(),
     lots: await db.materialLots.toArray()
   };
-  const o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
+  let o;
+  if(_cmdDevisMode && _cmdDevisId){
+    const dv = await db.documents.get(_cmdDevisId);
+    o = dv ? {clientId:dv.clientId, date:dv.date, lignes:dv.lignes||[], remiseGlobale:dv.remiseGlobale||0,
+              heureLivraison:dv.heureLivraison||'', lieuLivraison:dv.lieuLivraison||'', notes:dv.notes||'',
+              statut:'À préparer', paiement:'En attente', perso:false}
+            : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
+  } else {
+    o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
+  }
   // Préserver les lignes en cours si on rouvre après ajout d'un client
   if(opts.keepLines && Array.isArray(cmdLines)){ /* cmdLines déjà en mémoire, on le garde */ }
   else { cmdLines = orderToEditLines(o); }   // forme objet, parfums conservés
@@ -6697,7 +6722,7 @@ async function cmdForm(id, opts){
   // Suggestions de lieux de livraison : presets + lieux des commandes passées.
   const places = await usualDeliveryPlaces();
   window.__placesCache = places;   // pour l'autocomplete personnalisé
-  openModal(`<h3>${id?'Modifier':'Nouvelle'} commande</h3>
+  openModal(`<h3>${_cmdDevisMode?(_cmdDevisId?'Modifier le devis':'Nouveau devis'):(id?'Modifier':'Nouvelle')+' commande'}</h3>
    <div class="field"><label>Client</label>
      <input class="search" id="f_clsearch" placeholder="Rechercher par nom ou téléphone…" oninput="filterCmdClients(this.value)" value="" autocomplete="off">
      <div id="f_clResults" style="display:none;border:1px solid var(--hair);border-radius:10px;margin-top:4px;max-height:220px;overflow-y:auto;background:#fff"></div>
@@ -7490,6 +7515,29 @@ async function saveCmd(id){
   if(o.montant<0){toast('Le prix ne peut pas être négatif');return;}
   // garde-fou : un encaissement sans date ne doit jamais passer (traçabilité)
   if(orderPayStatus(o)!=='En attente' && !o.datePaiement){ toast('Date de paiement manquante'); return; }
+  // === MODE DEVIS : on enregistre dans le registre 'documents', pas dans les commandes ===
+  if(_cmdDevisMode){
+    const numero = _cmdDevisId ? (await db.documents.get(_cmdDevisId)||{}).numero : await nextDocNumero('devis');
+    const today=new Date(); const exp=new Date(today); exp.setDate(exp.getDate()+30);
+    const docObj = {
+      type:'devis', statut:'en_attente', numero,
+      clientId:o.clientId, date:o.date||today.toISOString().slice(0,10),
+      montant:o.montant,
+      lignes:o.lignes,                      // lignes détaillées (coffrets, pyramides, parfums…)
+      remiseGlobale:o.remiseGlobale,
+      heureLivraison:o.heureLivraison, lieuLivraison:o.lieuLivraison,
+      notes:o.notes,
+      acompte: 0,                           // acompte reçu (déclenche la conversion une fois > 0)
+      validiteJours:30, expiration:exp.toISOString().slice(0,10),
+      orderId:null, createdAt:Date.now()
+    };
+    if(_cmdDevisId){ await db.documents.update(_cmdDevisId, docObj); }
+    else { await db.documents.add(docObj); }
+    _cmdDevisMode=false; _cmdDevisId=null;
+    closeModal(); toast('Devis '+numero+' enregistré ✓');
+    if(view==='documents') renderDocuments();
+    return;
+  }
   let oid=id;
   if(id) await db.orders.update(id,o); else oid=await db.orders.add(o);
   // calendrier : recréer l'événement lié
