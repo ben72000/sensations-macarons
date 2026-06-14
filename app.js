@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v317';
+const APP_VERSION = 'v318';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2661,8 +2661,8 @@ function pyraOptions(voulu, marge, nbPyramides){
   });
   const seen=new Set();
   let uniq=opts.filter(o=>{ if(seen.has(o.desc))return false; seen.add(o.desc); return true; });
-  // Filtre STRICT par nombre de pyramides si demandé (le champ Pyramides = N).
-  if(nbPyramides>0) uniq=uniq.filter(o=>o.n===nbPyramides);
+  // Filtre par nombre de pyramides : le champ = N → configs de 1 JUSQU'À N pyramides (0 = tout).
+  if(nbPyramides>0) uniq=uniq.filter(o=>o.n<=nbPyramides);
   uniq.sort((a,b)=>a.total-b.total || a.n-b.n);
   return {voulu, plafond, opts:uniq, nbPyramides:nbPyramides||0};
 }
@@ -7064,7 +7064,7 @@ function eventPyraOptsHtml(i, demande, choisi, nbPyr){
   nbPyr = +nbPyr||0;
   const multiOpt = pyraOptions(demande||0, undefined, nbPyr);
   const boxes = (choisi>0) ? pyraBoxes(choisi) : null;  // boîtes calculées sur la quantité retenue
-  const filtreTxt = nbPyr>0 ? ` · ${nbPyr} pyramide(s)` : '';
+  const filtreTxt = nbPyr>0 ? ` · jusqu'à ${nbPyr} pyramide(s)` : '';
   let corps;
   if(multiOpt.opts.length){
     corps = multiOpt.opts.map(o=>`
@@ -7073,7 +7073,7 @@ function eventPyraOptsHtml(i, demande, choisi, nbPyr){
         ${o.total===choisi?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="pickEventConfig(${i},${o.total},${o.n})">Choisir</button>`}
       </div>`).join('');
   } else if(nbPyr>0){
-    corps = `<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à <b>${nbPyr} pyramide(s)</b> pour une demande de ${demande} (jusqu'à ${Math.ceil((demande||0)*1.1)}). Change le nombre de pyramides, ou mets <b>0</b> pour voir toutes les options.</p>`;
+    corps = `<p class="note" style="margin:0;color:#b08a3a">Aucune configuration jusqu'à <b>${nbPyr} pyramide(s)</b> pour une demande de ${demande} (jusqu'à ${Math.ceil((demande||0)*1.1)}). Augmente le nombre de pyramides, ou mets <b>0</b> pour voir toutes les options.</p>`;
   } else {
     corps = `<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${demande}. Ajuste la demande.</p>`;
   }
