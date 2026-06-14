@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v338';
+const APP_VERSION = 'v340';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8986,26 +8986,51 @@ function buildFlavorSales(orders, markets, marketMoves, recipes, productions, se
   const acc = {}; // nom -> {nom, recipeId, piecesVendues, piecesDon, caVentes(=encaissé), caTheo, cmdPieces, mkPieces, mkCA, cmdCA}
   const ensure = nom=>{ const k=nom||'(parfum ?)'; return (acc[k] ||= {nom:k, recipeId:null, piecesVendues:0, piecesDon:0, caVentes:0, caTheo:0, cmdPieces:0, mkPieces:0, mkCA:0, cmdCA:0}); };
 
-  // ---- COMMANDES (CA encaissé réel du coffret) ----
+  // ---- COMMANDES : CA par parfum calé sur le MONTANT RÉELLEMENT ENCAISSÉ (o.montant) ----
+  // Règle : la part « macarons » du montant va aux parfums (au prorata de la valeur catalogue si
+  // connue, sinon des pièces) ; la part « prestation/service » reste à part. Les dons (0€) ne
+  // prennent aucune part de CA mais sont comptés en pièces offertes.
+  const TYPES_MACARON = ['coffret','evenement','vrac','grand','histo'];
+  const lineParfumsOf = ln => (ln.type==='grand' ? (ln.items||[]) : (ln.parfums||[])).filter(p=>+p.qte>0);
   (orders||[]).forEach(o=>{
     const lignes = orderToLines(o);
     const gpct = Math.max(0,Math.min(100,+o.remiseGlobale||0));
     const factor = gpct>0 ? (1-gpct/100) : 1;
+    // 1) Dons : comptés en pièces offertes (aucun CA).
     lignes.forEach(ln=>{
-      if(ln.type!=='coffret' && ln.type!=='don' && ln.type!=='evenement') return;
-      const parfums = (ln.parfums||[]).filter(p=>+p.qte>0);
-      const totPieces = parfums.reduce((s2,p)=>s2+(+p.qte||0),0);
-      if(totPieces<=0) return;
-      if(ln.type==='don'){
-        parfums.forEach(p=>{ const a=ensure(p.nom); a.piecesDon+=+p.qte; a.cmdPieces+=+p.qte; if(!a.recipeId){const r=matchRecipe(p.nom); if(r)a.recipeId=r.id;} });
-        return;
+      if(ln.type!=='don') return;
+      lineParfumsOf(ln).forEach(p=>{ const a=ensure(p.nom); a.piecesDon+=+p.qte; a.cmdPieces+=+p.qte; if(!a.recipeId){const r=matchRecipe(p.nom); if(r)a.recipeId=r.id;} });
+    });
+    // 2) Valeur catalogue des lignes macarons vs prestation (pour répartir le montant réel).
+    let valMac=0, valPresta=0, totalPiecesMac=0;
+    lignes.forEach(ln=>{
+      if(ln.type==='prestation'){ valPresta += money2(lineTotalStored(ln)); }
+      else if(TYPES_MACARON.includes(ln.type)){
+        valMac += money2(lineTotalStored(ln));   // 0 pour histo (non catalogué)
+        lineParfumsOf(ln).forEach(p=>totalPiecesMac+=+p.qte);
       }
-      const net = money2(lineTotalStored(ln)*factor);   // CA encaissé du coffret
-      const caParPiece = totPieces>0 ? net/totPieces : 0;
+    });
+    if(totalPiecesMac<=0) return;   // rien à ventiler par parfum dans cette commande
+    // 3) Part du montant réel encaissé qui revient aux macarons.
+    const montant = money2((+o.montant||0));
+    let caMacaron;
+    if(valPresta>0 && valMac>0) caMacaron = money2(montant * valMac/(valMac+valPresta));
+    else if(valPresta>0 && valMac<=0) caMacaron = 0;   // commande = prestation seule (mais on a des pièces ?) → garde-fou
+    else caMacaron = montant;                          // 100% macarons (ou histo)
+    // 4) Répartir caMacaron sur les parfums : à la valeur catalogue si connue, sinon aux pièces.
+    const useValeur = valMac>0;
+    lignes.forEach(ln=>{
+      if(!TYPES_MACARON.includes(ln.type)) return;
+      const parfums = lineParfumsOf(ln);
+      const piecesLn = parfums.reduce((s2,p)=>s2+(+p.qte||0),0);
+      if(piecesLn<=0) return;
+      const valLn = money2(lineTotalStored(ln));
+      const caLn = (useValeur && valLn>0) ? (caMacaron*valLn/valMac) : (caMacaron*piecesLn/totalPiecesMac);
+      const caParPiece = piecesLn>0 ? caLn/piecesLn : 0;
       parfums.forEach(p=>{
         const a=ensure(p.nom);
         a.piecesVendues += +p.qte; a.cmdPieces += +p.qte;
-        const c = money2(caParPiece*(+p.qte));
+        const c = money2(caParPiece*(+p.qte)*factor);
         a.caVentes = money2(a.caVentes + c); a.cmdCA = money2(a.cmdCA + c);
         a.caTheo = money2(a.caTheo + prixMoyen*(+p.qte));
         if(!a.recipeId){const r=matchRecipe(p.nom); if(r)a.recipeId=r.id;}
@@ -10521,7 +10546,7 @@ function parfumStockPopup(){
 // l'écart entre le CA total (tableau de bord) et le CA ventilé par parfum (rentabilité).
 function diagFlavorCAGap(orders, markets, marketMoves){
   const cat = { total:0, ventile:0, histoAvecParfums:0, vrac:0, grand:0, prestation:0, autre:0, sansLigne:0,
-                marchesVentiles:0, marchesNonVentiles:0 };
+                marchesVentiles:0, marchesNonVentiles:0, pyramides:0 };
   const nb = { histoAvecParfums:0, vrac:0, grand:0, sansLigne:0, marchesNonVentiles:0 };
   // --- Commandes ---
   let totalCmd=0;
@@ -10530,6 +10555,8 @@ function diagFlavorCAGap(orders, markets, marketMoves){
     totalCmd += montant;
     const lignes = orderToLines(o);
     if(!lignes.length){ cat.sansLigne += montant; nb.sansLigne++; return; }
+    // Part équipement pyramide redistribuée sur les parfums (equip × prix unité).
+    lignes.forEach(ln=>{ if(ln.type==='evenement'){ cat.pyramides += (+ln.equip||0)*EQUIP_PRICE; } });
     let aParfumsHisto=false, aVrac=false, aGrand=false, aVentile=false, aPresta=false;
     lignes.forEach(ln=>{
       if(ln.type==='coffret'||ln.type==='evenement') aVentile=true;
@@ -10545,7 +10572,7 @@ function diagFlavorCAGap(orders, markets, marketMoves){
     else if(aPresta){ cat.prestation += montant; }
     else { cat.autre += montant; }
   });
-  // --- Marchés clos : CA ventilable seulement s'il y a des mouvements de vente par parfum ---
+  // --- Marchés clos ---
   const movesByMk={}; (marketMoves||[]).forEach(mv=>{ (movesByMk[mv.marketId] ||= []).push(mv); });
   (markets||[]).filter(mk=>mk.statut==='clos').forEach(mk=>{
     const caMk = (typeof marketNetCA==='function') ? marketNetCA(mk) : (+mk.montant||0);
@@ -10612,6 +10639,7 @@ async function renderParfums(){
     <div class="panel" style="margin-top:8px;font-size:.86rem">
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span>CA total (commandes + marchés)</span><b>${euro(gap.total)}</b></div>
       <div style="display:flex;justify-content:space-between;padding:3px 0;color:#3f7d52"><span>↳ CA ventilé par parfum</span><b>${euro(caVentile)}</b></div>
+      ${gap.pyramides>0?`<div style="display:flex;justify-content:space-between;padding:3px 0;color:#7a4b82"><span>&nbsp;&nbsp;dont pyramides redistribuées</span><b>${euro(gap.pyramides)} (${caVentile>0?Math.round(gap.pyramides/caVentile*100):0}%)</b></div>`:''}
       <div style="border-top:1px solid var(--hair);margin:6px 0"></div>
       <div style="color:#9a8a82;margin-bottom:4px">Non ventilé par parfum actuellement :</div>
       ${gap.marchesNonVentiles>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;color:#b3261e"><span>• Marchés sans détail de ventes (${gap._nb.marchesNonVentiles})</span><b>${euro(gap.marchesNonVentiles)}</b></div>`:''}
