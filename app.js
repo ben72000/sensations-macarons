@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v345';
+const APP_VERSION = 'v346';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10619,6 +10619,46 @@ function coffretsParTaille(orders){
   const totCA = money2(list.reduce((s,x)=>s+x.ca,0));
   return { list, totNb, totCA, best: list[0]||null };
 }
+// Rentabilité des GRANDS FORMATS (gros macarons à l'unité).
+// Compte les ventes par produit (type 'grand'), CA réel encaissé, et marge si la recette existe.
+function bigFormatStats(orders, recipes, recipeItems, lots){
+  const recByNorm={}; (recipes||[]).forEach(r=>{ recByNorm[aiNormalize(r.produitNom)]=r; });
+  const map={};   // nom -> {nom, qte, ca, recipe, coutUnit}
+  (orders||[]).forEach(o=>{
+    orderToLines(o).forEach(ln=>{
+      if(ln.type!=='grand') return;
+      const items=(ln.items||[]).filter(p=>+p.qte>0);
+      const totPieces=items.reduce((s,p)=>s+(+p.qte||0),0);
+      if(totPieces<=0) return;
+      const caLigne=money2(lineTotalStored(ln));            // CA réel de la ligne
+      const caParPiece=totPieces>0?caLigne/totPieces:0;
+      items.forEach(p=>{
+        const m=(map[p.nom] ||= {nom:p.nom, qte:0, ca:0, recipe:null, coutUnit:null});
+        m.qte += +p.qte;
+        m.ca = money2(m.ca + caParPiece*(+p.qte));
+      });
+    });
+  });
+  // Coût de revient par produit, si une recette grand format correspond.
+  Object.values(map).forEach(m=>{
+    const r=recByNorm[aiNormalize(m.nom)];
+    if(r && r.grandFormat){
+      m.recipe=r;
+      try{ const cr=coutRevientRecette(r, recipeItems, lots); m.coutUnit=+cr.coutRevientUnit||0; }catch(e){ m.coutUnit=null; }
+    }
+  });
+  const list=Object.values(map).map(m=>{
+    const prixMoyen = m.qte>0 ? money2(m.ca/m.qte) : 0;
+    const coutTot = (m.coutUnit!=null) ? money2(m.coutUnit*m.qte) : null;
+    const marge = (coutTot!=null) ? money2(m.ca-coutTot) : null;
+    const tauxMarge = (marge!=null && m.ca>0) ? Math.round(marge/m.ca*1000)/10 : null;
+    return {...m, prixMoyen, coutTot, marge, tauxMarge};
+  }).sort((a,b)=>b.qte-a.qte);
+  const totQte=list.reduce((s,x)=>s+x.qte,0);
+  const totCA=money2(list.reduce((s,x)=>s+x.ca,0));
+  const totMarge=list.some(x=>x.marge!=null) ? money2(list.reduce((s,x)=>s+(x.marge||0),0)) : null;
+  return { list, totQte, totCA, totMarge, best:list[0]||null };
+}
 async function renderParfums(){
   const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
     db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
@@ -10664,6 +10704,28 @@ async function renderParfums(){
   // KPI
   const avgP = computeAvgSellPrice(data);
   _parfumsAvgP = avgP;
+  // Indicateur : rentabilité des grands formats (gros macarons).
+  const bf = bigFormatStats(orders, recipes, recipeItems, lots);
+  const bigBox = bf.totQte>0 ? `<div class="panel" style="margin-bottom:12px">
+    <h2>🍪 Rentabilité grands formats</h2>
+    ${bf.best?`<div class="banner" style="background:#f6f1e8;border-color:#8a6d3b;margin:4px 0 10px"><div>🏆 Le plus vendu : <b>${esc(bf.best.nom)}</b> — ${bf.best.qte} vendu${bf.best.qte>1?'s':''} (${euro(bf.best.ca)})</div></div>`:''}
+    <table style="width:100%;border-collapse:collapse;font-size:.88rem">
+      <thead><tr style="text-align:left;color:#9a8a82;font-size:.78rem">
+        <th style="padding:4px 5px">Produit</th><th style="padding:4px 5px;text-align:right">Vendus</th><th style="padding:4px 5px;text-align:right">CA</th><th style="padding:4px 5px;text-align:right">Marge</th></tr></thead>
+      <tbody>
+        ${bf.list.map(b=>`<tr style="border-top:1px solid var(--hair)">
+          <td style="padding:6px 5px"><b>${esc(b.nom)}</b>${b.coutUnit==null?'<br><span style="font-size:.72rem;color:#b08a3a">recette à créer</span>':''}</td>
+          <td style="padding:6px 5px;text-align:right">${b.qte}</td>
+          <td style="padding:6px 5px;text-align:right">${euro(b.ca)}</td>
+          <td style="padding:6px 5px;text-align:right">${b.marge!=null?`<b style="color:#3f7d52">${euro(b.marge)}</b>${b.tauxMarge!=null?`<br><span style="font-size:.72rem;color:#9a8a82">${b.tauxMarge}%</span>`:''}`:'<span style="color:#c9bfb5">—</span>'}</td></tr>`).join('')}
+      </tbody>
+      <tfoot><tr style="border-top:2px solid var(--bordeaux);font-weight:600">
+        <td style="padding:6px 5px">Total</td><td style="padding:6px 5px;text-align:right">${bf.totQte}</td>
+        <td style="padding:6px 5px;text-align:right">${euro(bf.totCA)}</td>
+        <td style="padding:6px 5px;text-align:right">${bf.totMarge!=null?euro(bf.totMarge):'—'}</td></tr></tfoot>
+    </table>
+    ${bf.list.some(b=>b.coutUnit==null)?`<p class="note" style="margin-top:6px;color:#b08a3a">Certaines marges sont indisponibles : crée la recette grand format correspondante (même nom) pour calculer le coût et la marge.</p>`:'<p class="note" style="margin-top:6px">Vendus à l\'unité. Marge = CA réel − coût de revient de la recette.</p>'}
+  </div>` : '';
   // Indicateur : coffrets vendus par taille (nombre + CA, meilleur format mis en avant).
   const cof = coffretsParTaille(orders);
   const coffretsBox = cof.totNb>0 ? `<div class="panel" style="margin-bottom:12px">
@@ -10798,6 +10860,7 @@ async function renderParfums(){
    ${diagBox}
    ${kpis}
    ${coffretsBox}
+   ${bigBox}
    <div class="panel"><h2>Synthèse par parfum</h2>
      <div class="flex" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><span style="font-size:.8rem;color:#9a8a82;align-self:center">Trier :</span>
        ${sortBtn('marge','Marge')} ${sortBtn('ca','CA')} ${sortBtn('pieces','Volume')} ${sortBtn('taux','Taux')} ${sortBtn('stock','Stock')} ${sortBtn('nom','A→Z')}</div>
