@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v311';
+const APP_VERSION = 'v312';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6898,7 +6898,7 @@ function drawEventLine(ln,i){
       <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
       <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="${EVENT_MIN_EQUIP}" value="${ln.equip}" oninput="setEventEquip(${i},this.value)"></div>
     </div>
-    ${hasPyra?`<div id="pyraOpts_${i}">${eventPyraOptsHtml(i, +ln.evQte||0)}</div>`:''}
+    ${hasPyra?`<div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0)}</div>`:''}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}</div>
     <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(PYRA_PRICE)}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
@@ -6907,34 +6907,37 @@ function drawEventLine(ln,i){
     ${lineRemiseRow(ln,i)}
   </div>`;
 }
-// HTML du bloc "configurations possibles" + boîtes, pour une quantité donnée.
-function eventPyraOptsHtml(i, voulu){
-  const multiOpt = pyraOptions(voulu||0);
-  const boxes = (voulu>0) ? pyraBoxes(voulu) : null;
+// HTML du bloc options : la liste se base sur la DEMANDE client (stable),
+// l'option mise en avant est la quantité RETENUE (choisie). Les deux sont dissociées.
+function eventPyraOptsHtml(i, demande, choisi){
+  const multiOpt = pyraOptions(demande||0);
+  const boxes = (choisi>0) ? pyraBoxes(choisi) : null;  // boîtes calculées sur la quantité retenue
   const optsHtml = `<div style="background:#faf7f2;border:1px solid var(--hair);border-radius:11px;padding:11px 13px;margin:4px 0">
-    <div style="font-size:.74rem;color:#7a6a62;font-weight:600;text-transform:uppercase;margin-bottom:6px">Configurations possibles ${multiOpt.opts.length?`(jusqu'à ${multiOpt.plafond})`:''}</div>
+    <div style="font-size:.74rem;color:#7a6a62;font-weight:600;text-transform:uppercase;margin-bottom:6px">Configurations possibles ${multiOpt.opts.length?`(demande ${demande} · jusqu'à ${multiOpt.plafond})`:''}</div>
     ${multiOpt.opts.length?multiOpt.opts.map(o=>`
-      <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${o.total===voulu?'#eef6ef':'#fff'};border:1px solid ${o.total===voulu?'#3f7d52':'var(--hair)'}">
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${o.total===choisi?'#eef6ef':'#fff'};border:1px solid ${o.total===choisi?'#3f7d52':'var(--hair)'}">
         <span style="flex:1;font-size:.86rem"><b style="color:var(--bordeaux)">${o.total}</b> <span style="color:#6a5a52">— ${esc(o.desc)}</span></span>
-        ${o.total===voulu?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="pickEventConfig(${i},${o.total},${o.n})">Choisir</button>`}
-      </div>`).join(''):`<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${voulu}. Ajuste la quantité.</p>`}
+        ${o.total===choisi?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="pickEventConfig(${i},${o.total},${o.n})">Choisir</button>`}
+      </div>`).join(''):`<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${demande}. Ajuste la demande.</p>`}
   </div>
   ${boxes?`<div class="sum-box" style="background:#faf7f2"><span>📦 Transport : ${boxes.g>0?`${boxes.g}× grande`:''}${boxes.g>0&&boxes.p>0?' + ':''}${boxes.p>0?`${boxes.p}× petite`:''}</span><b>${boxes.nb} boîte(s)</b></div>`:''}`;
   return optsHtml;
 }
-// Choix d'une configuration : reporte la quantité de macarons ET le nombre de pyramides,
-// puis redessine la ligne (le prix se recalcule automatiquement via lineTotalStored).
+// Choix d'une configuration : reporte la quantité retenue ET le nombre de pyramides,
+// SANS toucher la demande client (la liste d'options reste stable).
 function pickEventConfig(i, total, n){
   cmdLines[i].evQte = +total||0;
-  cmdLines[i].equip = +n||1;     // nombre de pyramides découlant de la configuration
-  drawLines();                    // redessine : champ pyramides à jour + options + prix
+  cmdLines[i].equip = +n||1;
+  drawLines();                    // redessine : champ pyramides + surbrillance + prix
   cmdRecalc();
 }
 function setEventQte(i,v){
-  cmdLines[i].evQte=+v||0;
-  // Rafraîchit le bloc options EN DIRECT sans redessiner le champ (garde le focus).
+  // Saisie au clavier = nouvelle DEMANDE client → régénère la liste d'options.
+  const val=+v||0;
+  cmdLines[i].evDemande = val;
+  cmdLines[i].evQte = val;        // par défaut la quantité retenue suit la demande tant qu'on n'a pas choisi
   const box=document.getElementById('pyraOpts_'+i);
-  if(box && (+cmdLines[i].equip||0)>0) box.innerHTML=eventPyraOptsHtml(i, +v||0);
+  if(box && (+cmdLines[i].equip||0)>0) box.innerHTML=eventPyraOptsHtml(i, val, val);
   cmdRecalc();
 }
 function setEventEquip(i,v){ cmdLines[i].equip=+v||0; drawLines(); }
