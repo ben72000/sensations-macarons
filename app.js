@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v343';
+const APP_VERSION = 'v344';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9124,6 +9124,8 @@ function analyzeFlavorProfitability(data){
   // 5) totaux
   const totals = {
     ca: money2(rows.reduce((s2,r)=>s2+r.ca,0)),
+    caMarcheVentile: money2(sales.reduce((s2,a)=>s2+(+a.mkCA||0),0)),
+    caCmdVentile: money2(sales.reduce((s2,a)=>s2+(+a.cmdCA||0),0)),
     caTheo: money2(rows.reduce((s2,r)=>s2+r.caTheo,0)),
     pieces: round3(rows.reduce((s2,r)=>s2+r.piecesVendues,0)),
     margeBrute: money2(rows.reduce((s2,r)=>s2+r.margeBrute,0)),
@@ -10657,6 +10659,8 @@ async function renderParfums(){
       <div style="display:flex;justify-content:space-between;padding:1px 0;font-size:.78rem;color:#9a8a82"><span>&nbsp;&nbsp;· dont marchés</span><span>${euro(gap.totalMarches)}</span></div>
       <div style="border-top:1px solid var(--hair);margin:6px 0"></div>
       <div style="display:flex;justify-content:space-between;padding:3px 0;color:#3f7d52"><span>✓ Ventilé sur les parfums</span><b>${euro(caVentile)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:1px 0;font-size:.78rem;color:#9a8a82"><span>&nbsp;&nbsp;· dont commandes</span><span>${euro(A.totals.caCmdVentile||0)}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:1px 0;font-size:.78rem;color:#9a8a82"><span>&nbsp;&nbsp;· dont marchés</span><span>${euro(A.totals.caMarcheVentile||0)}</span></div>
       ${gap.pyramides>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;color:#7a4b82;font-size:.82rem"><span>&nbsp;&nbsp;dont pyramides redistribuées</span><b>${euro(gap.pyramides)} (${caVentile>0?Math.round(gap.pyramides/caVentile*100):0}%)</b></div>`:''}
       ${gap.prestation>0?`<div style="display:flex;justify-content:space-between;padding:3px 0;color:#7a6a62"><span>↔ Prestations / services (à part, ${gap._nb.prestation})</span><b>${euro(gap.prestation)}</b></div>`:''}
       ${gap.marchesNonVentiles>0?`<div style="display:flex;justify-content:space-between;padding:3px 0;color:#b3261e"><span>⚠ Marchés sans détail de ventes (${gap._nb.marchesNonVentiles})</span><b>${euro(gap.marchesNonVentiles)}</b></div>`:''}
