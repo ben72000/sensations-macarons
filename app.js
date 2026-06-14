@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v310';
+const APP_VERSION = 'v311';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6916,11 +6916,19 @@ function eventPyraOptsHtml(i, voulu){
     ${multiOpt.opts.length?multiOpt.opts.map(o=>`
       <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${o.total===voulu?'#eef6ef':'#fff'};border:1px solid ${o.total===voulu?'#3f7d52':'var(--hair)'}">
         <span style="flex:1;font-size:.86rem"><b style="color:var(--bordeaux)">${o.total}</b> <span style="color:#6a5a52">— ${esc(o.desc)}</span></span>
-        ${o.total===voulu?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="setEventQte(${i},${o.total})">Choisir</button>`}
+        ${o.total===voulu?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="pickEventConfig(${i},${o.total},${o.n})">Choisir</button>`}
       </div>`).join(''):`<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${voulu}. Ajuste la quantité.</p>`}
   </div>
   ${boxes?`<div class="sum-box" style="background:#faf7f2"><span>📦 Transport : ${boxes.g>0?`${boxes.g}× grande`:''}${boxes.g>0&&boxes.p>0?' + ':''}${boxes.p>0?`${boxes.p}× petite`:''}</span><b>${boxes.nb} boîte(s)</b></div>`:''}`;
   return optsHtml;
+}
+// Choix d'une configuration : reporte la quantité de macarons ET le nombre de pyramides,
+// puis redessine la ligne (le prix se recalcule automatiquement via lineTotalStored).
+function pickEventConfig(i, total, n){
+  cmdLines[i].evQte = +total||0;
+  cmdLines[i].equip = +n||1;     // nombre de pyramides découlant de la configuration
+  drawLines();                    // redessine : champ pyramides à jour + options + prix
+  cmdRecalc();
 }
 function setEventQte(i,v){
   cmdLines[i].evQte=+v||0;
