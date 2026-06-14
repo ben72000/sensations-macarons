@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v309';
+const APP_VERSION = 'v310';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6890,8 +6890,6 @@ function drawEventLine(ln,i){
   // --- Logique pyramide intégrée ---
   const hasPyra=(+ln.equip||0)>0;                 // une pyramide est présente
   const prixMac = hasPyra ? PYRA_PRICE : EVENT_PRICE;   // 1,60€ conditionné à la pyramide
-  const multiOpt = hasPyra ? pyraOptions(+ln.evQte||0) : null;
-  const boxes = (hasPyra && (+ln.evQte||0)>0) ? pyraBoxes(+ln.evQte||0) : null;
   const totalLigne = (+ln.evQte||0)*prixMac + (+ln.equip||0)*EQUIP_PRICE;
 
   return `<div class="cmd-line">
@@ -6900,27 +6898,38 @@ function drawEventLine(ln,i){
       <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
       <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="${EVENT_MIN_EQUIP}" value="${ln.equip}" oninput="setEventEquip(${i},this.value)"></div>
     </div>
-    ${hasPyra&&multiOpt?`
-      <div style="background:#faf7f2;border:1px solid var(--hair);border-radius:11px;padding:11px 13px;margin:4px 0">
-        <div style="font-size:.74rem;color:#7a6a62;font-weight:600;text-transform:uppercase;margin-bottom:6px">Configurations possibles ${multiOpt.opts.length?`(jusqu'à ${multiOpt.plafond})`:''}</div>
-        ${multiOpt.opts.length?multiOpt.opts.map(o=>`
-          <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${o.total===+ln.evQte?'#eef6ef':'#fff'};border:1px solid ${o.total===+ln.evQte?'#3f7d52':'var(--hair)'}">
-            <span style="flex:1;font-size:.86rem"><b style="color:var(--bordeaux)">${o.total}</b> <span style="color:#6a5a52">— ${esc(o.desc)}</span></span>
-            ${o.total===+ln.evQte?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="setEventQte(${i},${o.total})">Choisir</button>`}
-          </div>`).join(''):`<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${ln.evQte}. Ajuste la quantité ou ajoute une pyramide.</p>`}
-      </div>
-    `:''}
+    ${hasPyra?`<div id="pyraOpts_${i}">${eventPyraOptsHtml(i, +ln.evQte||0)}</div>`:''}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}</div>
     <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(PYRA_PRICE)}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
     ${(+ln.equip||0)<EVENT_MIN_EQUIP?`<p class="note" style="color:var(--red)">⚠ Au moins ${EVENT_MIN_EQUIP} pyramide obligatoire.</p>`:''}
-    ${boxes?`<div class="sum-box" style="background:#faf7f2"><span>📦 Transport : ${boxes.g>0?`${boxes.g}× grande`:''}${boxes.g>0&&boxes.p>0?' + ':''}${boxes.p>0?`${boxes.p}× petite`:''}</span><b>${boxes.nb} boîte(s)</b></div>`:''}
     ${totQ&&totQ!==+ln.evQte?`<p class="note" style="color:var(--red)">⚠ ${totQ} parfums détaillés ≠ ${ln.evQte} macarons.</p>`:''}
     ${lineRemiseRow(ln,i)}
   </div>`;
 }
-function setEventQte(i,v){ cmdLines[i].evQte=+v||0; cmdRecalc(); }
-function setEventEquip(i,v){ cmdLines[i].equip=+v||0; cmdRecalc(); }
+// HTML du bloc "configurations possibles" + boîtes, pour une quantité donnée.
+function eventPyraOptsHtml(i, voulu){
+  const multiOpt = pyraOptions(voulu||0);
+  const boxes = (voulu>0) ? pyraBoxes(voulu) : null;
+  const optsHtml = `<div style="background:#faf7f2;border:1px solid var(--hair);border-radius:11px;padding:11px 13px;margin:4px 0">
+    <div style="font-size:.74rem;color:#7a6a62;font-weight:600;text-transform:uppercase;margin-bottom:6px">Configurations possibles ${multiOpt.opts.length?`(jusqu'à ${multiOpt.plafond})`:''}</div>
+    ${multiOpt.opts.length?multiOpt.opts.map(o=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${o.total===voulu?'#eef6ef':'#fff'};border:1px solid ${o.total===voulu?'#3f7d52':'var(--hair)'}">
+        <span style="flex:1;font-size:.86rem"><b style="color:var(--bordeaux)">${o.total}</b> <span style="color:#6a5a52">— ${esc(o.desc)}</span></span>
+        ${o.total===voulu?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="setEventQte(${i},${o.total})">Choisir</button>`}
+      </div>`).join(''):`<p class="note" style="margin:0;color:#b08a3a">Aucune configuration à +10% de ${voulu}. Ajuste la quantité.</p>`}
+  </div>
+  ${boxes?`<div class="sum-box" style="background:#faf7f2"><span>📦 Transport : ${boxes.g>0?`${boxes.g}× grande`:''}${boxes.g>0&&boxes.p>0?' + ':''}${boxes.p>0?`${boxes.p}× petite`:''}</span><b>${boxes.nb} boîte(s)</b></div>`:''}`;
+  return optsHtml;
+}
+function setEventQte(i,v){
+  cmdLines[i].evQte=+v||0;
+  // Rafraîchit le bloc options EN DIRECT sans redessiner le champ (garde le focus).
+  const box=document.getElementById('pyraOpts_'+i);
+  if(box && (+cmdLines[i].equip||0)>0) box.innerHTML=eventPyraOptsHtml(i, +v||0);
+  cmdRecalc();
+}
+function setEventEquip(i,v){ cmdLines[i].equip=+v||0; drawLines(); }
 function setEventParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 
 function drawBigLine(ln,i){
