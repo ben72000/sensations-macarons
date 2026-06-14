@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v327';
+const APP_VERSION = 'v328';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2834,6 +2834,28 @@ async function renderDocuments(){
   const devis = docs.filter(d=>d.type==='devis');
   const factures = docs.filter(d=>d.type==='facture');
 
+  // --- Répartition actifs / archivés (repliables sous chevron) ---
+  const factParOrder = {};
+  factures.forEach(f=>{ (f.orderIds||(f.orderId?[f.orderId]:[])).forEach(oid=>{ factParOrder[oid]=f; }); });
+  const devisArchive = d => { if(!d.orderId) return false; const f=factParOrder[d.orderId]; return !!(f && docEstDefinitif(f)); };
+  const moisMs = 31*24*3600*1000;
+  const dernierPaiement = async f => {
+    const oids=f.orderIds||(f.orderId?[f.orderId]:[]); let last='';
+    for(const oid of oids){ const o=await db.orders.get(oid).catch(()=>null);
+      ((o&&o.paiements)||[]).forEach(p=>{ if(p.date && p.date>last) last=p.date; }); }
+    return last;
+  };
+  const facturesActives=[], facturesArchive=[];
+  for(const f of factures){
+    if(f.statut==='payee'){
+      const lp=await dernierPaiement(f);
+      if(lp && (Date.now()-new Date(lp).getTime())>moisMs){ facturesArchive.push(f); continue; }
+    }
+    facturesActives.push(f);
+  }
+  const devisActifs = devis.filter(d=>!devisArchive(d));
+  const devisArchives = devis.filter(d=>devisArchive(d));
+
   const docCard=d=>`<div onclick="docOpen(${d.id})" style="cursor:pointer;background:#fff;border:1px solid var(--hair);border-left:4px solid ${docStatutColor(d)};border-radius:13px;padding:12px 14px;box-shadow:var(--sh-1);margin-bottom:9px">
       <div style="display:flex;align-items:center;gap:9px;margin-bottom:5px">
         <b style="flex:1;color:var(--bordeaux)">${esc(d.numero||d.refInterne||'Brouillon')}</b>
@@ -2845,6 +2867,11 @@ async function renderDocuments(){
         <b style="color:var(--bordeaux)">${euro(d.montant||0)}</b>
       </div>
     </div>`;
+  // Bloc repliable (chevron) pour les documents archivés.
+  const archiveBloc=items=> items.length?`
+    <button type="button" onclick="this.querySelector('.adv-chev').style.transform=(this.nextElementSibling.style.display==='none'?'rotate(90deg)':'rotate(0)');this.nextElementSibling.style.display=(this.nextElementSibling.style.display==='none'?'block':'none')" style="appearance:none;border:1px dashed var(--hair);background:transparent;border-radius:10px;padding:8px 12px;width:100%;text-align:left;cursor:pointer;color:#9a8a82;font-size:.82rem;margin:4px 0 6px">
+      <span class="adv-chev" style="display:inline-block;transition:transform .2s">▸</span> Archivés (${items.length})</button>
+    <div style="display:none">${items.map(docCard).join('')}</div>` : '';
 
   main.innerHTML=`
    <div class="topbar"><div><h1>Devis & Factures</h1><p>Tes documents commerciaux · devis → commande → facture</p></div></div>
@@ -2855,12 +2882,14 @@ async function renderDocuments(){
 
    <div class="panel">
      <h2>📝 Devis ${devis.length?`<span style="color:#9a8a82;font-size:.8rem;font-weight:400">(${devis.length})</span>`:''}</h2>
-     ${devis.length?devis.map(docCard).join(''):'<div class="empty">Aucun devis pour l\'instant. Crée ton premier devis avec le bouton ci-dessus.</div>'}
+     ${devisActifs.length?devisActifs.map(docCard).join(''):(devisArchives.length?'':'<div class="empty">Aucun devis pour l\'instant. Crée ton premier devis avec le bouton ci-dessus.</div>')}
+     ${archiveBloc(devisArchives)}
    </div>
 
    <div class="panel">
      <h2>📄 Factures ${factures.length?`<span style="color:#9a8a82;font-size:.8rem;font-weight:400">(${factures.length})</span>`:''}</h2>
-     ${factures.length?factures.map(docCard).join(''):'<div class="empty">Aucune facture enregistrée ici pour l\'instant.</div>'}
+     ${facturesActives.length?facturesActives.map(docCard).join(''):(facturesArchive.length?'':'<div class="empty">Aucune facture enregistrée ici pour l\'instant.</div>')}
+     ${archiveBloc(facturesArchive)}
    </div>
   `;
 }
