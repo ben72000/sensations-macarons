@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v380';
+const APP_VERSION = 'v381';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -413,6 +413,18 @@ function embMatUnitCost(matId, materials, lots){
   const m=(materials||[]).find(x=>+x.id===+matId);
   return m && +m.prixDefaut>0 ? money2(+m.prixDefaut) : 0;
 }
+// Identifie LA matière "coffret standard" d'un format (par nom canonique "Coffret N macarons"),
+// pour calculer son coût réel sur SES lots uniquement — sans le confondre avec un autre emballage
+// de même capacité (ex: une boîte blanche de capacité 16). Repli : 1re matière emballage de cette
+// capacité dont le nom commence par "Coffret".
+function standardCoffretMatId(taille, materials){
+  const mats = materials||window._allMatsCache||[];
+  const cap=+taille;
+  const canon = ('coffret '+cap+' macarons');
+  let m = mats.find(x=>x.categorie==='emballage' && (x.nom||'').trim().toLowerCase()===canon);
+  if(!m) m = mats.find(x=>x.categorie==='emballage' && +x.capacite===cap && /^coffret\b/i.test((x.nom||'').trim()));
+  return m ? m.id : null;
+}
 // Coût emballage d'une ligne coffret selon son choix (embMode), + libellé lisible pour l'affichage.
 // Réutilise exactement la logique de computeOrderMargins pour garantir la cohérence.
 function coffretEmbInfo(ln, materials, lots, realMap){
@@ -423,8 +435,21 @@ function coffretEmbInfo(ln, materials, lots, realMap){
     const m=_mats.find(x=>+x.id===+ln.embMatId);
     return {cout:embMatUnitCost(ln.embMatId, _mats, lots||[]), label:'Autre — '+((m&&m.nom)||'emballage choisi')};
   }
-  const rp = realMap || realPackagingCostMap(_mats, lots||[]);
-  return {cout:packagingCostReal(ln.taille, rp), label:'Standard (selon la taille)'};
+  // STANDARD : coût réel du COFFRET de ce format, calculé sur SES propres lots (pas mélangé avec
+  // d'autres emballages de même capacité). Repli sur le tarif paramétré si pas de lot chiffré.
+  const stdId = standardCoffretMatId(ln.taille, _mats);
+  const supp = (typeof consoCoffretSupplement==='function') ? consoCoffretSupplement(ln.taille) : 0;
+  let base;
+  if(stdId!=null){
+    // a-t-il des lots chiffrés ? embMatUnitCost retombe sur prixDefaut, ce qui peut masquer l'absence
+    const hasLot = (lots||[]).some(l=>+l.materialId===+stdId && (+l.qteInitiale||0)>0 && lotPU(l)>0);
+    if(hasLot) base = embMatUnitCost(stdId, _mats, lots||[]);
+    else base = packagingCost(ln.taille);   // tarif paramétré (inclut déjà le supplément)
+    if(hasLot) base = money2(base + supp);
+  } else {
+    base = packagingCost(ln.taille);
+  }
+  return {cout:money2(base), label:'Standard (selon la taille)'};
 }
 // Coût emballage d'un format : réel (lots) si dispo, sinon tarif paramétré.
 // Dans les deux cas, on ajoute le supplément des consommables 'coffret' (cartes, stickers…).
@@ -15643,6 +15668,30 @@ async function applyZeroAmountFix(){
 // pour comprendre quel chiffre d'encaissé sort et d'où (facturé vs encaissé vs en attente).
 // Détecte les commandes dont la date de paiement tombe dans un mois DIFFÉRENT de la commande
 // (signal d'une date de paiement par défaut mal posée, ex : today() sur une commande historique).
+async function diagEmballageLots(){
+  const zone=document.getElementById('diagEmbZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    const mats=(await db.materials.toArray()).filter(m=>m.categorie==='emballage');
+    const lots=await db.materialLots.toArray();
+    const s=getSettings();
+    const rows = mats.sort((a,b)=>(+a.capacite||0)-(+b.capacite||0)).map(m=>{
+      const sien=lots.filter(l=>+l.materialId===+m.id && (+l.qteInitiale||0)>0 && lotPU(l)>0);
+      const reel = embMatUnitCost(m.id, mats, lots);
+      const tarif = (m.capacite>0 && s.packaging && s.packaging[+m.capacite]!=null)? +s.packaging[+m.capacite] : null;
+      // anomalie : coût réel très bas alors qu'un tarif paramétré nettement plus élevé existe
+      const suspect = (sien.length>0) && tarif!=null && reel>0 && reel < tarif*0.5;
+      const lotsTxt = sien.length ? sien.map(l=>`${qty(l.qteInitiale)}×${euro(lotPU(l))}`).join(', ') : '—';
+      return `<div class="sum-box" style="${suspect?'background:#fdeaea;border:1px solid #e8a9a3':''}">
+        <span>${esc(m.nom)} <span style="color:#9a8a82">(cap ${m.capacite||'—'})</span><br>
+          <span style="font-size:.75rem;color:#9a8a82">lots : ${lotsTxt}${tarif!=null?` · tarif paramétré ${euro(tarif)}`:''}</span></span>
+        <b style="color:${suspect?'#b3261e':'inherit'}">${euro(reel)}${suspect?' ⚠':''}</b></div>`;
+    }).join('');
+    const anySusp = /⚠/.test(rows);
+    if(zone) zone.innerHTML = rows +
+      (anySusp?`<p class="note" style="color:#b3261e;margin-top:6px">⚠ Un coût réel très bas (en rouge) vient d'un lot au prix anormal. Corrige le prix du lot dans Stock → l'emballage concerné → ses lots, ou supprime le lot erroné.</p>`
+              :`<p class="note" style="margin-top:6px;color:#3f7d52">✓ Aucun prix d'emballage manifestement anormal.</p>`);
+  }catch(e){ console.error('diagEmballageLots',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
+}
 async function diagSuspectPayDates(){
   const zone=document.getElementById('diagPayZone');
   if(zone) zone.innerHTML='<p class="note">Recherche en cours…</p>';
@@ -15781,6 +15830,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">📆 Dates de paiement suspectes</h2>
       <p class="note">Repère les commandes payées dont la <b>date de paiement tombe dans un autre mois</b> que la commande — souvent une date posée par défaut (date du jour) sur une commande historique. Ces commandes faussent le bilan du mois où elles « atterrissent ».</p>
       <div id="diagPayZone"><button class="btn gold sm" onclick="diagSuspectPayDates()">Rechercher les dates suspectes</button></div>
+    </div>
+    <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
+      <h2 style="font-size:1rem">📦 Diagnostic emballages</h2>
+      <p class="note">Liste tes emballages et le <b>coût unitaire réel</b> calculé sur leurs lots reçus. Repère un prix anormal (ex : 0,01 € sur un coffret 16) qui viendrait d'un lot mal saisi.</p>
+      <div id="diagEmbZone"><button class="btn gold sm" onclick="diagEmballageLots()">Analyser mes emballages</button></div>
     </div>
     <div class="panel" id="integrityBody"><div class="empty">Analyse en cours…</div></div>`;
   const issues = await runIntegrityCheck();
