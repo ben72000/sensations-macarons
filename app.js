@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v378';
+const APP_VERSION = 'v380';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6859,6 +6859,8 @@ async function cmdView(id){
   // Pour afficher le coût d'emballage retenu par coffret (contrôle du choix d'emballage).
   const _embMats = window._allMatsCache || await db.materials.toArray();
   const _embLots = await db.materialLots.toArray().catch(()=>[]);
+  const _embRecipes = await db.recipes.toArray().catch(()=>[]);
+  const _embItems = await db.recipeItems.toArray().catch(()=>[]);
   const _embRealMap = realPackagingCostMap(_embMats, _embLots);
   const blocks = lignes.map(ln=>{
     if(ln.type==='coffret'){
@@ -6932,6 +6934,15 @@ async function cmdView(id){
        return `<div class="sum-box"><span>Encaissé</span><b>${euro(enc)}</b></div>
          <div class="sum-box"><span><b>Solde restant dû</b> <span class="tag" style="background:${col};color:#fff">${st}</span></span><b style="color:${solde>0?'var(--red,#b3261e)':'#3f7d52'}">${euro(solde)}</b></div>`;})()}
     ${orderPayStatus(o)!=='Payé'?`<button class="btn gold sm" style="margin-top:6px" onclick="markPaid(${id},true)">✓ Solder (${euro(orderBalance(o))})</button>`:''}
+    ${(function(){
+      try{
+        const _mg = computeOrderMargins(o, _embRecipes, _embItems, _embLots, _embMats);
+        if(_mg && +_mg.coutEmbEstime>0){
+          return `<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:10px">📦 <div><b>Emballage estimé :</b> cette commande de reprise n'a pas de détail d'emballage. Son coût (<b>${euro(_mg.coutEmbEstime)}</b>) est <b>estimé</b> d'après la moyenne de tes commandes détaillées (${_embEstRefInfo.n} réf.). Le coût réel peut différer.</div></div>`;
+        }
+      }catch(e){}
+      return '';
+    })()}
     ${_livBlock}
     <h3 style="font-size:1rem;margin:16px 0 8px">Statut de la commande</h3>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -8462,7 +8473,51 @@ function computeDeliveryCost(o){
    Nette  = brute − charges sociales (12,3% marchandise / 25,6% prestation)
    La fiscalité/frais annexes seront ajoutés plus tard (au choix de l'utilisateur).
    ============================================================ */
-function computeOrderMargins(o, recipes, recipeItems, lots, materials){
+// Ratio €/macaron d'emballage de RÉFÉRENCE, calculé sur les vraies commandes DÉTAILLÉES
+// (celles qui ont des lignes coffret). Moyenne SIMPLE par commande. Sert à estimer le coût
+// d'emballage des commandes migrées (lignes 'histo') qui n'ont pas de détail coffret.
+// Garde-fou : null si moins de MIN_REF commandes de référence (estimation jugée non fiable).
+const EMB_EST_MIN_REF = 5;
+// Cache module du ratio €/macaron d'emballage de référence (commandes). null = pas assez de données.
+let _embEstRatioCommandes = null;
+let _embEstRefInfo = {n:0};   // info pour le signalement (nb de références utilisées)
+// Recalcule le ratio depuis toutes les commandes + données matières/lots. À appeler au démarrage
+// et après toute modif de commandes/lots significative.
+async function refreshEmbEstRatio(){
+  try{
+    const [orders, recipes, recipeItems, lots, materials] = await Promise.all([
+      db.orders.toArray(), db.recipes.toArray(), db.recipeItems.toArray(),
+      db.materialLots.toArray(), db.materials.toArray()
+    ]);
+    const r = embRatioRefCommandes(orders, recipes, recipeItems, lots, materials);
+    _embEstRatioCommandes = r.ratio;       // null si < EMB_EST_MIN_REF
+    _embEstRefInfo = {n:r.n};
+  }catch(e){ console.error('refreshEmbEstRatio', e); _embEstRatioCommandes=null; }
+}
+function embRatioRefCommandes(orders, recipes, recipeItems, lots, materials){
+  const _mats = materials||window._allMatsCache||[];
+  const realMap = realPackagingCostMap(_mats, lots||[]);
+  const ratios=[];
+  (orders||[]).forEach(o=>{
+    const lignes = orderToLines(o);
+    if(lignes.some(l=>l.type==='histo')) return;     // pas une référence : c'est une migrée
+    let embTot=0, pieces=0;
+    lignes.forEach(ln=>{
+      if(ln.type==='coffret'){
+        embTot+=coffretEmbInfo(ln, _mats, lots||[], realMap).cout;
+        pieces+=+ln.taille||0;
+      }
+    });
+    if(pieces>0 && embTot>0) ratios.push(embTot/pieces);   // €/macaron de cette commande
+  });
+  if(ratios.length < EMB_EST_MIN_REF) return {ratio:null, n:ratios.length};
+  const moy = ratios.reduce((a,x)=>a+x,0)/ratios.length;   // moyenne SIMPLE
+  return {ratio:money2(moy), n:ratios.length};
+}
+function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRatio){
+  // Si le ratio d'estimation emballage n'est pas fourni explicitement, on lit le cache global
+  // (calculé au démarrage). Reste null si la base de référence est insuffisante (garde-fou).
+  if(embEstRatio===undefined) embEstRatio = (typeof _embEstRatioCommandes!=='undefined' ? _embEstRatioCommandes : null);
   const s=getSettings();
   const lignes = orderToLines(o);
   // carte des coûts emballage réels par capacité (repli tarif paramétré si indispo)
@@ -8473,6 +8528,7 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials){
 
   let caGoods=0, caService=0;        // répartition du CA par régime social
   let coutMat=0, coutEmb=0;          // coûts matières / emballages
+  let coutEmbEstime=0;               // part du coût emballage qui est ESTIMÉE (commandes migrées)
   lignes.forEach(ln=>{
     const net = lineTotalStored(ln); // prix de vente net de remises de ligne
     if(ln.type==='prestation'){ caService=money2(caService+net); return; } // service : pas de matière/emballage
@@ -8501,6 +8557,13 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials){
       // Commande de reprise (migration) : pas de détail produit fin.
       // CA = montant commande (ci-dessus) ; coût matières estimé via nb de macarons × coût moyen.
       pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+      // Emballage : aucune donnée d'emballage sur une migrée → on l'ESTIME au ratio €/macaron
+      // de référence (commandes détaillées), s'il est fourni et fiable (garde-fou côté appelant).
+      if(embEstRatio!=null && embEstRatio>0 && pieces>0){
+        const estEmb=money2(pieces*embEstRatio);
+        coutEmb=money2(coutEmb+estEmb);
+        coutEmbEstime=money2(coutEmbEstime+estEmb);
+      }
     }
     coutMat=money2(coutMat+pieces*avgUnit);
   });
@@ -8545,7 +8608,7 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials){
   }
 
   return {ca:caNet, caGoods:caGoodsN, caService:caServiceN,
-    coutMat, coutEmb, margeBrute, tauxBrut,
+    coutMat, coutEmb, coutEmbEstime, margeBrute, tauxBrut,
     chargesSociales, margeNette, tauxNet,
     livraison: liv, margeNetteApresLiv, tauxNetApresLiv, suggLivraison};
 }
@@ -8833,6 +8896,33 @@ function marketPackagingCost(market){
   pk.forEach(p=>{ const u=Math.max(0, round3((+p.before||0)-(+p.after||0))); used+=u; cost=money2(cost+u*(+p.cost||0)); });
   return {used:round3(used), cost:money2(cost)};
 }
+// Ratio €/macaron d'emballage de RÉFÉRENCE, calculé sur les MARCHÉS qui ont un comptage de boîtes
+// (avant/après) — et UNIQUEMENT eux (donnée comparable entre marchés). Moyenne SIMPLE par marché.
+// Sert à estimer le coût d'emballage des marchés migrés sans comptage. null si < EMB_EST_MIN_REF.
+let _embEstRatioMarches = null;
+let _embEstRefInfoMarches = {n:0};
+function embRatioRefMarches(markets){
+  const ratios=[];
+  (markets||[]).forEach(mk=>{
+    const pk=(mk && mk.packaging) || [];
+    if(!pk.length) return;                          // pas de comptage → pas une référence
+    const c=marketPackagingCost(mk);
+    // nb de macarons emballés = Σ (coffrets utilisés × capacité du type)
+    let pieces=0;
+    pk.forEach(p=>{ const u=Math.max(0, round3((+p.before||0)-(+p.after||0))); pieces+=u*(+p.capacite||0); });
+    if(pieces>0 && c.cost>0) ratios.push(c.cost/pieces);
+  });
+  if(ratios.length < EMB_EST_MIN_REF) return {ratio:null, n:ratios.length};
+  const moy=ratios.reduce((a,x)=>a+x,0)/ratios.length;
+  return {ratio:money2(moy), n:ratios.length};
+}
+async function refreshEmbEstRatioMarches(){
+  try{
+    const markets=await db.markets.toArray();
+    const r=embRatioRefMarches(markets);
+    _embEstRatioMarches=r.ratio; _embEstRefInfoMarches={n:r.n};
+  }catch(e){ console.error('refreshEmbEstRatioMarches',e); _embEstRatioMarches=null; }
+}
 // Prix € par macaron pour un format donné (depuis la grille dégressive).
 // Repli : le prix du format le plus proche, sinon le prix unitaire de repli.
 function prixParPiece(capacite, settings){
@@ -8925,7 +9015,15 @@ function marketTotals(market, moves, avgUnitMat){
   const unit = +avgUnitMat||0;
   const coutMat = money2(vendu*unit);
   const pkg = marketPackagingCost(market);
-  const coutEmb = pkg.cost;
+  // Coût emballage : réel si comptage de boîtes ; sinon ESTIMÉ au ratio €/macaron des marchés
+  // de référence (garde-fou : ratio null si trop peu de marchés comptés → reste 0).
+  let coutEmb = pkg.cost;
+  let coutEmbEstime = 0;
+  const aComptage = ((market && market.packaging) || []).length > 0 && pkg.cost > 0;
+  if(!aComptage && typeof _embEstRatioMarches!=='undefined' && _embEstRatioMarches!=null && _embEstRatioMarches>0){
+    coutEmbEstime = money2(round3(vendu) * _embEstRatioMarches);   // vendu = macarons écoulés
+    coutEmb = coutEmbEstime;
+  }
   const s=getSettings();
   // Charges propres au marché : prix du stand + déplacement (carburant A/R + temps de route).
   const coutStand = money2(+market.coutStand||0);
@@ -8942,7 +9040,7 @@ function marketTotals(market, moves, avgUnitMat){
     pctCB: caTotal>0?Math.round(caCB/caTotal*100):0, pctEspeces: caTotal>0?Math.round(caEspeces/caTotal*100):0,
     tauxInvendus, tauxPerte,
     caParHeure: (market.heures>0)?money2(caTotal/market.heures):0,
-    coutMat, coutEmb, coutStand, deplacement, coutMarche, pkgUsed:pkg.used, margeBrute, tauxBrut, chargesSociales, margeNette, tauxNet};
+    coutMat, coutEmb, coutEmbEstime, coutStand, deplacement, coutMarche, pkgUsed:pkg.used, margeBrute, tauxBrut, chargesSociales, margeNette, tauxNet};
 }
 // Coût matière moyen par macaron (helper réutilisable, nécessite recipes+items+lots).
 function avgMacaronCost(recipes, recipeItems, lots){
@@ -10191,7 +10289,7 @@ async function comptaDetail(type){
   const charges = (await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[])).filter(c=>inPeriode(c.date));
   const markets = (await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[])).filter(k=>inPeriode(k.date));
   const ligneCmd = (o, montant, sub) => `<div class="sum-box lnk" onclick="closeModal();cmdForm(${o.id})"><span>${esc(fmtDate(o.date))} <span style="color:#9a8a82">#${o.id}${sub?' · '+sub:''}</span></span><b>${euro(montant)} ${NAV_GO}</b></div>`;
-  let titre='', lignes=[], total=0;
+  let titre='', lignes=[], total=0, entete='';
 
   if(type==='facture'){
     titre='CA facturé — détail';
@@ -10214,11 +10312,22 @@ async function comptaDetail(type){
     titre='Coût matières + emballage — détail par commande';
     let _rec=[], _items=[], _lots=[], _mats=[];
     try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); _mats=await db.materials.toArray(); }catch(e){}
+    // Encart : explique le ratio €/macaron utilisé pour estimer l'emballage des données migrées.
+    const rC = (typeof _embEstRatioCommandes!=='undefined') ? _embEstRatioCommandes : null;
+    const nC = (typeof _embEstRefInfo!=='undefined' && _embEstRefInfo) ? _embEstRefInfo.n : 0;
+    const rM = (typeof _embEstRatioMarches!=='undefined') ? _embEstRatioMarches : null;
+    const nM = (typeof _embEstRefInfoMarches!=='undefined' && _embEstRefInfoMarches) ? _embEstRefInfoMarches.n : 0;
+    entete = `<div class="banner" style="background:#f6f1e7;border-color:#e3d4b5;margin-bottom:8px">📦 <div style="font-size:.82rem">
+      <b>Estimation emballage des données migrées</b><br>
+      Commandes : ${rC!=null?`<b>${euro(rC)}/macaron</b> (moyenne de ${nC} commande(s) détaillée(s))`:`<span style="color:#b3261e">non activée</span> — il faut ≥ ${EMB_EST_MIN_REF} commandes détaillées (actuellement ${nC})`}<br>
+      Marchés : ${rM!=null?`<b>${euro(rM)}/macaron</b> (moyenne de ${nM} marché(s) compté(s))`:`<span style="color:#b3261e">non activée</span> — il faut ≥ ${EMB_EST_MIN_REF} marchés comptés (actuellement ${nM})`}
+    </div></div>`;
     orders.forEach(o=>{
-      let cm=0, ce=0;
-      try{ const mg=computeOrderMargins(o, _rec, _items, _lots, _mats); cm=money2(mg.coutMat||0); ce=money2(mg.coutEmb||0); }catch(e){}
+      let cm=0, ce=0, cest=0;
+      try{ const mg=computeOrderMargins(o, _rec, _items, _lots, _mats); cm=money2(mg.coutMat||0); ce=money2(mg.coutEmb||0); cest=money2(mg.coutEmbEstime||0); }catch(e){}
       const tot=money2(cm+ce);
-      if(tot>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();cmdForm(${o.id})"><span>${esc(fmtDate(o.date))} <span style="color:#9a8a82">#${o.id} · matières ${euro(cm)}${ce>0?' + emb. '+euro(ce):''}</span></span><b>${euro(tot)} ${NAV_GO}</b></div>`, v:tot}); }
+      const embLbl = ce>0 ? (' + emb. '+euro(ce)+(cest>0?' <span style="color:#d98324">(estimé)</span>':'')) : '';
+      if(tot>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();cmdForm(${o.id})"><span>${esc(fmtDate(o.date))} <span style="color:#9a8a82">#${o.id} · matières ${euro(cm)}${embLbl}</span></span><b>${euro(tot)} ${NAV_GO}</b></div>`, v:tot}); }
     });
   } else if(type==='resultat'){
     // Le résultat est un calcul, pas une liste : on montre sa décomposition.
@@ -10245,6 +10354,7 @@ async function comptaDetail(type){
   lignes.sort((a,b)=>b.v-a.v);
   openModal(`<h3>${esc(titre)}</h3>
     <p class="note">Période : ${esc(_comptaPeriode==='tout'?'toutes les données':comptaPeriodeDatesLabel(_comptaPeriode))}. Touche une ligne pour l'ouvrir.</p>
+    ${entete}
     ${lignes.length?lignes.map(l=>l.h).join(''):'<p class="note">Aucun élément.</p>'}
     <div class="sum-box" style="background:#f3ecdd;margin-top:6px"><span><b>Total</b></span><b>${euro(total)}</b></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
@@ -11999,7 +12109,8 @@ async function marketDetail(id){
       ${mk.heures>0?`<div class="sum-box"><span>CA / heure</span><b>${euro(T.caParHeure)}</b></div>`:''}
       <h3 style="font-size:.95rem;margin:12px 0 6px">Rentabilité</h3>
       <div class="sum-box"><span>Coût matières (${qty(T.vendu)} vendus)</span><b>−${euro(T.coutMat)}</b></div>
-      <div class="sum-box"><span>Coût emballages (delta ${qty(T.pkgUsed)} u.)</span><b>−${euro(T.coutEmb)}</b></div>
+      <div class="sum-box"><span>Coût emballages ${T.coutEmbEstime>0?'<span style="color:#d98324">(estimé)</span>':`(delta ${qty(T.pkgUsed)} u.)`}</span><b>−${euro(T.coutEmb)}</b></div>
+      ${T.coutEmbEstime>0?`<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin:4px 0">📦 <div>Ce marché n'a pas de comptage de boîtes. Le coût d'emballage est <b>estimé</b> (${euro(T.coutEmbEstime)}) d'après la moyenne de tes marchés comptés (${_embEstRefInfoMarches.n} réf.). Pour un coût réel, renseigne le comptage avant/après.</div></div>`:''}
       ${T.coutStand>0?`<div class="sum-box"><span>Prix du stand</span><b>−${euro(T.coutStand)}</b></div>`:''}
       ${T.deplacement&&T.deplacement.total>0?`<div class="sum-box"><span>Déplacement (A/R ${T.deplacement.distAR} km${T.deplacement.minutes?` · ${T.deplacement.minutes} min`:''})</span><b>−${euro(T.deplacement.total)}</b></div>`:''}
       <div class="sum-box"><span>Marge brute</span><b>${euro(T.margeBrute)} <span style="color:#9a8a82;font-weight:400">(${T.tauxBrut}%)</span></b></div>
@@ -21114,6 +21225,8 @@ function startClock(){
   try{ radialInit(); }catch(e){ console.error('radialInit',e); }
   startClock();
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
+  try{ await refreshEmbEstRatio(); }catch(e){ console.error('embEstRatio',e); }
+  try{ await refreshEmbEstRatioMarches(); }catch(e){ console.error('embEstRatioMarches',e); }
   // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
   try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
   try{ await requestPersistentStorage(); }catch(e){ console.error('persist',e); }
