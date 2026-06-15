@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v397';
+const APP_VERSION = 'v398';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2245,12 +2245,19 @@ function majPrixUnit(){
 }
 let _pendingLot = null;   // données du lot en attente de confirmation (prix 0)
 async function saveLot(){
-  const qte=round3(+val('f_qte'));
-  if(!qte||qte<=0){toast('Quantité invalide');return;}
+  const qteSaisie=round3(+val('f_qte'));
+  if(!qteSaisie||qteSaisie<=0){toast('Quantité invalide');return;}
   const prix=money2(+val('f_prix')||0);
+  // Conversion d'unité : les denrées (unité kg) sont SAISIES en grammes mais STOCKÉES en kg
+  // (cohérent avec les recettes). Les emballages restent à l'unité native. On divise donc par
+  // 1000 pour une denrée en kg. Sans ça, un lot de 760 g serait stocké comme 760 kg (bug).
+  const _matId=+val('f_mat');
+  const _mat=await db.materials.get(_matId).catch(()=>null);
+  const _facteur = (_mat && _mat.categorie!=='emballage' && (_mat.unite||'kg')==='kg') ? 1000 : 1;
+  const qte = round3(qteSaisie/_facteur);
   // On capture TOUTES les valeurs maintenant : ouvrir l'alerte remplace la modale du formulaire.
   const data={
-    materialId:+val('f_mat'), supplierId:+val('f_sup')||0,
+    materialId:_matId, supplierId:+val('f_sup')||0,
     lotFournisseur:val('f_lotf'), qteInitiale:qte, qteRestante:qte,
     prix, prixUnitaire: qte>0 ? money2(prix/qte) : 0,
     dateReception:val('f_date')||today(), dlc:val('f_dlc')||'',
@@ -2277,9 +2284,12 @@ async function lotPriceForm(id){
   const l=await db.materialLots.get(id); if(!l){ toast('Lot introuvable'); return; }
   const mat=await db.materials.get(l.materialId);
   const emb = mat && mat.categorie==='emballage';
-  const u = emb ? (mat.unite||'unité') : 'kg';
+  // Denrée (kg) : on raisonne en grammes → on affiche la quantité ×1000 avec l'unité « g ».
+  const isDenrKg = mat && !emb && (mat.unite||'kg')==='kg';
+  const u = emb ? (mat.unite||'unité') : (isDenrKg ? 'g' : (mat&&mat.unite)||'kg');
+  const qAff = isDenrKg ? round3((+l.qteInitiale||0)*1000) : (+l.qteInitiale||0);
   openModal(`<h3>💶 Renseigner le prix du lot</h3>
-    <p style="margin-bottom:8px"><b>${esc(mat?mat.nom:'?')}</b> · reçu ${fmtDate(l.dateReception)} · ${qty(l.qteInitiale)} ${esc(u)}</p>
+    <p style="margin-bottom:8px"><b>${esc(mat?mat.nom:'?')}</b> · reçu ${fmtDate(l.dateReception)} · ${qty(qAff)} ${esc(u)}</p>
     <div class="field"><label>Prix total payé (€)</label>
       <input type="number" step="0.01" min="0" id="f_lotprix" value="${l.prix>0?l.prix:''}" placeholder="ex : 12.50"></div>
     <p class="note">Le prix unitaire sera recalculé automatiquement, et tous les coûts de revient se mettront à jour.</p>
@@ -15961,6 +15971,59 @@ async function diagMatBrute(matId){
     if(zone) zone.innerHTML = cmp + champM + champL + coff;
   }catch(e){ console.error('diagMatBrute',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur.</p>'; }
 }
+// Analyse (LECTURE SEULE) des lots de denrées pour détecter ceux saisis en grammes mais NON
+// convertis en kg au stockage (bug réception). Un lot suspect : quantité anormalement grande pour
+// un artisan (≥ seuil) ou prix unitaire dérisoire (< 1 €/kg, irréaliste pour une denrée).
+async function diagLotsUnite(){
+  const zone=document.getElementById('diagUniteZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    const mats=await db.materials.toArray();
+    const lots=await db.materialLots.toArray();
+    const denrMats=new Map(); mats.filter(m=>m.categorie!=='emballage' && (m.unite||'kg')==='kg').forEach(m=>denrMats.set(+m.id,m));
+    const denrLots=lots.filter(l=>denrMats.has(+l.materialId));
+    if(!denrLots.length){ if(zone) zone.innerHTML='<p class="note">Aucun lot de denrée à analyser.</p>'; return; }
+    let nbSusp=0;
+    const rows=denrLots.map(l=>{
+      const m=denrMats.get(+l.materialId);
+      const q=+l.qteInitiale||0, pu=lotPU(l);
+      // suspect = quantité ≥ 50 (kg, peu plausible) OU prix unitaire < 1 €/kg (irréaliste)
+      const suspect = (q>=50) || (pu>0 && pu<1);
+      if(suspect) nbSusp++;
+      const corrige = suspect ? ` → corrigé : ${qty(round3(q/1000))} kg à ${euro(money2(pu*1000))}/kg` : '';
+      return `<div class="sum-box" style="${suspect?'background:#fdeaea;border:1px solid #e8a9a3':''};font-size:.8rem">
+        <span>${esc(m.nom)} <span style="color:#9a8a82">· reçu ${esc(fmtDate(l.dateReception))}${l.id?` · lot #${l.id}`:''}</span><br>
+          <span style="color:#9a8a82">stocké : ${qty(q)} kg · ${euro(pu)}/kg${suspect?`<span style="color:#b3261e">${corrige}</span>`:''}</span></span>
+        <b style="color:${suspect?'#b3261e':'#3f7d52'}">${suspect?'⚠ grammes ?':'✓'}</b></div>`;
+    }).join('');
+    if(zone) zone.innerHTML = rows +
+      (nbSusp>0
+        ? `<div class="banner" style="background:#fdeaea;border-color:#e8a9a3;margin-top:8px"><div><b>${nbSusp} lot(s) suspect(s)</b> : saisis en grammes mais stockés comme des kg (quantité ×1000 trop grande, prix ÷1000 trop bas). Le bouton ci-dessous les corrige en divisant la quantité par 1000 et en recalculant le prix au kg.</div></div>
+           <button class="btn gold" style="margin-top:8px" onclick="fixLotsUnite()">🔧 Corriger les ${nbSusp} lot(s) suspect(s)</button>`
+        : `<p class="note" style="margin-top:6px;color:#3f7d52">✓ Aucun lot suspect : toutes tes denrées semblent correctement stockées en kg.</p>`);
+  }catch(e){ console.error('diagLotsUnite',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
+}
+// Correction effective : divise par 1000 la quantité des lots de denrées suspects et recalcule le PU.
+async function fixLotsUnite(){
+  try{
+    const mats=await db.materials.toArray();
+    const lots=await db.materialLots.toArray();
+    const denr=new Set(mats.filter(m=>m.categorie!=='emballage' && (m.unite||'kg')==='kg').map(m=>+m.id));
+    const aCorriger=lots.filter(l=>denr.has(+l.materialId) && ((+l.qteInitiale||0)>=50 || (lotPU(l)>0 && lotPU(l)<1)));
+    if(!aCorriger.length){ toast('Aucun lot à corriger'); return; }
+    if(!confirm(`Corriger ${aCorriger.length} lot(s) : quantité ÷1000 et prix recalculé au kg ? Cette action est définitive.`)) return;
+    let n=0;
+    for(const l of aCorriger){
+      const newQteInit=round3((+l.qteInitiale||0)/1000);
+      const newQteRest=round3((+l.qteRestante||0)/1000);
+      const prix=+l.prix||0;
+      const newPU = newQteInit>0 ? money2(prix/newQteInit) : 0;
+      await db.materialLots.update(l.id, {qteInitiale:newQteInit, qteRestante:newQteRest, prixUnitaire:newPU});
+      n++;
+    }
+    toast(`${n} lot(s) corrigé(s) ✓ — coûts mis à jour`);
+    diagLotsUnite();
+  }catch(e){ console.error('fixLotsUnite',e); toast('Erreur pendant la correction'); }
+}
 // Liste TOUS les lots d'emballage (matière + quantité + prix unitaire), pour repérer un lot au prix
 // aberrant (ex : 0,01 €) qui fausse le coût d'un format. Permet d'ouvrir la matière pour corriger.
 async function diagLotsEmballage(){
@@ -16188,6 +16251,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">🍪 Diagnostic grands formats</h2>
       <p class="note">Pour chaque grand format, vérifie qu'il a bien une <b>recette « grand format »</b>, un coût calculable, du stock et des ventes. Repère ceux qui ne sont pas encore connectés (souvent : recette manquante).</p>
       <div id="diagGFZone"><button class="btn gold sm" onclick="diagGrandsFormats()">Analyser mes grands formats</button></div>
+    </div>
+    <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
+      <h2 style="font-size:1rem">⚖️ Diagnostic unités des lots (g/kg)</h2>
+      <p class="note">Vérifie que tes denrées saisies en grammes sont bien stockées en kg. Repère un lot suspect (quantité énorme ou prix dérisoire) issu d'une conversion manquante, et le corrige.</p>
+      <div id="diagUniteZone"><button class="btn gold sm" onclick="diagLotsUnite()">Analyser les unités de mes lots</button></div>
     </div>
     <div class="panel" id="integrityBody"><div class="empty">Analyse en cours…</div></div>`;
   const issues = await runIntegrityCheck();
