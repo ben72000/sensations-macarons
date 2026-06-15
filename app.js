@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v399';
+const APP_VERSION = 'v400';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15601,6 +15601,30 @@ async function shareBackupToICloud(opts){
   }
 }
 // ---- IMPORT MANUEL (depuis un fichier .json) ----
+// INSPECTION SEULE : lit un fichier .json et affiche son contenu (commandes, dont migrées) SANS
+// rien importer ni modifier. Permet de comparer plusieurs fichiers iCloud en sécurité totale.
+async function inspectData(e){
+  const f=e.target.files[0]; if(!f)return;
+  let obj;
+  try{ obj = JSON.parse(await f.text()); }
+  catch(err){ toast('Fichier illisible (JSON invalide)'); e.target.value=''; return; }
+  const orders = Array.isArray(obj.orders)?obj.orders : [];
+  const nbTot = orders.length;
+  const nbHisto = orders.filter(o=>o.histo).length;
+  const nbVisibles = nbTot - nbHisto;
+  const nbClients = Array.isArray(obj.clients)?obj.clients.length:0;
+  const nbMarches = Array.isArray(obj.markets)?obj.markets.length:0;
+  const dateInfo = obj._date ? new Date(obj._date).toLocaleString('fr-FR') : '?';
+  // dernières commandes non-migrées par date, pour repère visuel
+  const recentes = orders.filter(o=>!o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,5)
+    .map(o=>`${esc((o.date||'?'))} · ${euro(+o.montant||0)}`).join('\n');
+  alert(`📄 Fichier : ${f.name}\nDate de la sauvegarde : ${dateInfo}\n\n`+
+    `• ${nbTot} commande(s) AU TOTAL\n   dont ${nbVisibles} visibles + ${nbHisto} migrées\n`+
+    `• ${nbClients} client(s)\n• ${nbMarches} marché(s)\n\n`+
+    `5 dernières commandes visibles :\n${recentes||'(aucune)'}\n\n`+
+    `(Inspection seule — RIEN n'a été importé ni modifié.)`);
+  e.target.value='';
+}
 async function importData(e){
   const f=e.target.files[0]; if(!f)return;
   let obj;
@@ -16721,6 +16745,7 @@ async function renderBackups(){
      <div class="flex" style="flex-wrap:wrap;gap:8px">
        <button class="btn" onclick="snapshotBackup('manuel').then(()=>{renderBackups();toast('Sauvegarde créée ✓');})">＋ Sauvegarder maintenant</button>
        <button class="btn gold" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud</button>
+       <label class="btn ghost" style="cursor:pointer;background:#eef5f0;border-color:#bcd9c6">🔍 Inspecter un fichier (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="inspectData(event)"></label>
        <label class="btn ghost" style="cursor:pointer">⬆ Importer (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
        <label class="btn ghost" style="cursor:pointer">➕ Importer en fusion (.json)<input type="file" accept="application/json,.json" style="display:none" onchange="importDataMerge(event)"></label>
        <button class="btn ghost" onclick="view='integrite';setActiveView&&setActiveView('integrite');renderIntegrity()">🔍 Vérifier l'intégrité</button>
