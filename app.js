@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v363';
+const APP_VERSION = 'v364';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10218,11 +10218,14 @@ async function renderCompta(){
 
    <div class="panel" style="border:1.5px solid #e7d9b8;background:#fcf8ee">
      <h2>📄 Bilan du mois & URSSAF</h2>
-     <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-       <select id="comptaMonth" onchange="comptaSetMonth(this.value)" style="flex:1;min-width:160px;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${moisOpts}</select>
-       <button class="btn gold" onclick="exportBilanMois('${_comptaMonth}')">⤓ Exporter le bilan (.txt)</button>
+     <div class="field" style="margin-bottom:6px"><label style="font-weight:600">Période analysée</label>
+       <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap">
+         <select id="comptaMonth" onchange="comptaSetMonth(this.value)" style="flex:1;min-width:160px;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${moisOpts}</select>
+         <button class="btn gold" onclick="exportBilanMois('${_comptaMonth}')">⤓ Exporter le bilan (.txt)</button>
+       </div>
      </div>
-     <div class="sum-box lnk" onclick="comptaGo('commandes')"><span>CA encaissé du mois</span><b>${euro(B.caTotal)}</b>${NAV_GO}</div>
+     <div class="banner" style="background:#f0f4fa;border-color:#c4d2e6;margin-bottom:10px">📅 <div>Tous les chiffres ci-dessous concernent <b>${esc(monthLabel(_comptaMonth))}</b> (du 1ᵉʳ au dernier jour du mois).</div></div>
+     <div class="sum-box lnk" onclick="comptaGo('commandes')"><span>CA encaissé · ${esc(monthLabel(_comptaMonth))}</span><b>${euro(B.caTotal)}</b>${NAV_GO}</div>
      <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b>${NAV_GO}</div>
      <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b>${NAV_GO}</div>
      <h3 style="font-size:.95rem;margin:14px 0 6px">Cotisations URSSAF estimées</h3>
