@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v396';
+const APP_VERSION = 'v397';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -331,6 +331,7 @@ function getSettings(){
       packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
       packagingDate: s.packagingDate || SETTINGS_DEFAULTS.packagingDate,
       packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes)),
+      consommables: Array.isArray(s.consommables) ? s.consommables : [],
       addressBook: Array.isArray(s.addressBook) ? s.addressBook : [],
       prodCustomTasks: Array.isArray(s.prodCustomTasks) ? s.prodCustomTasks : [],
       exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT
