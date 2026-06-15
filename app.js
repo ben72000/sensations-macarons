@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v390';
+const APP_VERSION = 'v391';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15887,6 +15887,25 @@ async function applyZeroAmountFix(){
 // pour comprendre quel chiffre d'encaissé sort et d'où (facturé vs encaissé vs en attente).
 // Détecte les commandes dont la date de paiement tombe dans un mois DIFFÉRENT de la commande
 // (signal d'une date de paiement par défaut mal posée, ex : today() sur une commande historique).
+// DEBUG temporaire : inspecte une matière précise et ses lots (champs bruts) pour comprendre
+// pourquoi un lot échappe au diagnostic standard. À retirer une fois l'enquête terminée.
+async function diagMatBrute(matId){
+  const zone=document.getElementById('diagBruteZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    const m=await db.materials.get(+matId);
+    const lots=(await db.materialLots.toArray()).filter(l=>+l.materialId===+matId);
+    if(!m){ if(zone) zone.innerHTML=`<p class="note" style="color:#b3261e">Aucune matière id ${matId}.</p>`; return; }
+    const champM=`<div style="font-size:.74rem;background:#f7f3ee;padding:8px;border-radius:8px;line-height:1.7">
+      <b>Matière #${m.id} — ${esc(m.nom)}</b><br>
+      catégorie : <b>${esc(m.categorie||'(vide)')}</b> ${m.categorie==='emballage'?'✓':'⚠ PAS « emballage »'}<br>
+      capacité : ${m.capacite??'(vide)'} · prixDefaut : ${m.prixDefaut??'(vide)'}</div>`;
+    const champL = lots.length ? lots.map(l=>`<div style="font-size:.72rem;background:#fff;border:1px solid #ece3d6;padding:6px;border-radius:6px;margin-top:4px">
+      lot #${l.id} · qteInitiale : <b>${l.qteInitiale??'(vide)'}</b> · prixUnitaire : <b>${l.prixUnitaire??'(vide)'}</b> · prix : ${l.prix??'(vide)'} · lotPU() = <b>${lotPU(l)}</b> · reçu ${esc(l.dateReception||'?')}</div>`).join('')
+      : '<p class="note">Aucun lot sur cette matière.</p>';
+    if(zone) zone.innerHTML = champM + champL +
+      `<p class="note" style="margin-top:6px">${m.categorie!=='emballage'?'⚠ Cette matière a un <b>nom de coffret</b> mais sa catégorie n\'est pas « emballage » → elle est <b>vue par le calcul de commande</b> (qui cherche par nom) mais <b>ignorée par le diagnostic</b> (qui filtre par catégorie). C\'est l\'angle mort.':'Catégorie correcte.'}</p>`;
+  }catch(e){ console.error('diagMatBrute',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur.</p>'; }
+}
 // Liste TOUS les lots d'emballage (matière + quantité + prix unitaire), pour repérer un lot au prix
 // aberrant (ex : 0,01 €) qui fausse le coût d'un format. Permet d'ouvrir la matière pour corriger.
 async function diagLotsEmballage(){
@@ -16107,6 +16126,8 @@ async function renderIntegrity(){
       <div id="diagEmbZone"><button class="btn gold sm" onclick="diagEmballageLots()">Analyser mes emballages</button></div>
       <p class="note" style="margin-top:10px">Pour traquer un lot au prix aberrant (le fameux 0,01 €) :</p>
       <div id="diagLotsZone"><button class="btn ghost sm" onclick="diagLotsEmballage()">Lister tous les lots d'emballage</button></div>
+      <p class="note" style="margin-top:10px">🔧 Inspection ciblée (matière du coffret 16 = id 9) :</p>
+      <div id="diagBruteZone"><button class="btn ghost sm" onclick="diagMatBrute(9)">Inspecter la matière #9 et ses lots</button></div>
     </div>
     <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
       <h2 style="font-size:1rem">🍪 Diagnostic grands formats</h2>
