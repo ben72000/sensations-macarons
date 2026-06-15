@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v402';
+const APP_VERSION = 'v410';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3422,15 +3422,18 @@ function _prodbatRow(row){
       + (ouvertTxt?`<br><span style="font-size:.72rem;color:${overdue?'#b3261e':'#9a8a82'}">ouverte ${ouvertTxt}${overdue?' · &gt; 4 j !':''}</span>`:'');
   }
   const comp = prodComposant(p);
+  // Couleur du PARFUM (cohérente avec le reste de l'app) : pilote la bande latérale et la pastille.
+  const _parfumNom = p.libre ? (p.produitLibre||'') : recName(p);
+  const _parfumCol = (typeof flavorColor==='function' && _parfumNom) ? flavorColor(_parfumNom) : '#cbb89f';
   // Pastille composant PROÉMINENTE : repérage instantané (couleur + icône + mot).
   const compMeta = {
-    coques:     {ico:'🟤', mot:'COQUES',      cls:'comp-coques'},
-    ganache:    {ico:'🍫', mot:'GANACHE',     cls:'comp-ganache'},
-    assemble:   {ico:'✓',  mot:'ASSEMBLÉ',    cls:'comp-assemble'},
-    degustation:{ico:'🥄', mot:'DÉGUSTATION', cls:'comp-degustation'},
-    complet:    {ico:'🍪', mot:'ENTIER',     cls:'comp-complet'}
-  }[comp] || {ico:'🍪', mot:'ENTIER', cls:'comp-complet'};
-  const compPill = `<span class="comp-pill ${compMeta.cls}"><span class="cp-ico">${compMeta.ico}</span>${compMeta.mot}</span>`;
+    coques:     {ico:'', mot:'COQUES',      cls:'comp-coques'},
+    ganache:    {ico:'', mot:'GANACHE',     cls:'comp-ganache'},
+    assemble:   {ico:'', mot:'ASSEMBLÉ',    cls:'comp-assemble'},
+    degustation:{ico:'', mot:'DÉGUSTATION', cls:'comp-degustation'},
+    complet:    {ico:'', mot:'ENTIER',      cls:'comp-complet'}
+  }[comp] || {ico:'', mot:'ENTIER', cls:'comp-complet'};
+  const compPill = `<span class="comp-pill ${compMeta.cls}">${compMeta.mot}</span>`;
   const rowCls = `prow prow-${comp||'complet'}`;
   const partTag = p.parentProdId ? ` <span class="tag" style="background:#ece2d4;color:#6b5a52;font-size:.66rem">partie</span>` : '';
   // Bouton Assembler : proposé sur un sous-lot coques OU ganache encore disponible.
@@ -3446,15 +3449,22 @@ function _prodbatRow(row){
   const prodNomLive = esc(recName(p));
   const compMot = compMeta.mot;
   const liveBar = (st!=='termine' && startTs)
-    ? `<div class="prod-live ${overdue?'prod-live-over':''}"><span class="pl-dot"></span><span class="pl-name">${compMeta.ico} ${prodNomLive} · ${compMot}</span><span class="prod-chrono" data-start="${esc(startTs)}">00:00:00</span></div>`
+    ? `<div class="prod-live ${overdue?'prod-live-over':''}" title="Ce chrono sert au suivi de fraîcheur (DLC), pas à la mesure des temps. Pour mesurer ton temps de travail, utilise l'Atelier (chronos par tâche)."><span class="pl-dot"></span><span class="pl-name">${prodNomLive} · ${compMot} <span style="font-weight:400;opacity:.7;font-size:.82em">· suivi DLC</span></span><span class="prod-chrono" data-start="${esc(startTs)}">00:00:00</span></div>`
     : '';
   const _famBase = p.lotBase || lotBaseSansSuffixe(p.lotProduction||'');
-  const _famCol = (_famBase && (_prodFamCount[_famBase]||0)>1) ? lotFamilyColor(_famBase) : null;
-  const _famStyle = _famCol ? `border-left:5px solid ${_famCol};` : '';
-  const _famDot = _famCol ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${_famCol};margin-right:5px;vertical-align:middle" title="Sous-lot du même batch"></span>` : '';
-  return `<div class="${rowCls} prod-card${liveBar?' prod-card-live':''}" style="${_famStyle}${overdue?'background:#fdf3f2;':''}">
+  const _isFam = (_famBase && (_prodFamCount[_famBase]||0)>1);
+  // Bande latérale = COULEUR DU PARFUM (repérage immédiat). Épaisse et toujours visible.
+  const _bandStyle = `border-left:7px solid ${_parfumCol};`;
+  // Différenciation forte prêt / en cours : fond légèrement teinté selon l'état.
+  const _stateBg = overdue ? 'background:#fdf3f2;' : (st==='termine' ? 'background:#f3f8f4;' : 'background:#fffdf8;');
+  // Pastille de parfum (point coloré) + nom du parfum, bien visibles en tête.
+  const _parfumDot = `<span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:${_parfumCol};margin-right:6px;vertical-align:middle;border:1.5px solid rgba(0,0,0,.12)"></span>`;
+  const _parfumLabel = _parfumNom ? `<div class="prod-parfum" style="font-weight:700;font-size:.95rem;display:flex;align-items:center;margin-bottom:3px">${_parfumDot}<span>${esc(_parfumNom)}</span></div>` : '';
+  const _famDot = _isFam ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${lotFamilyColor(_famBase)};margin-right:5px;vertical-align:middle" title="Sous-lot du même batch"></span>` : '';
+  return `<div class="${rowCls} prod-card${liveBar?' prod-card-live':''}" style="${_bandStyle}${_stateBg}">
      ${liveBar}
      <div class="prod-card-body">
+     ${_parfumLabel}
      <div class="prod-card-top">
        <div>${compPill}${partTag}</div>
        <div class="prod-lot">${_famDot}<b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span class="prod-base">base ${esc(p.lotBase)}</span>`:''}</div>
@@ -3534,25 +3544,54 @@ function prodbatFilter(q){
   // Ordre des composants à l'intérieur d'une recette : coques, ganache, assemblé, dégustation, complet
   const compOrder={coques:0, ganache:1, assemble:2, degustation:3, complet:4};
   const capped = rows.slice(0,400);
-  // Regroupe par recette en conservant l'ordre d'apparition (déjà trié par pertinence/date)
+  // Regroupe par PARFUM LOGIQUE (code parfum via flavorCode), pour réunir sous un même chevron
+  // les composants d'un même parfum (ex : coque passion GF + crémeux mangue passion).
+  // EXCEPTION : les ganaches montées (composant 'ganache') sont mutualisables entre parfums →
+  // groupe distinct « 🍫 Ganaches montées », jamais rattachées à un parfum unique.
+  const GANACHE_KEY='__ganache_montee__';
   const groups=[]; const idx={};
   capped.forEach(r=>{
-    const rid = r.p.libre ? ('libre:'+(r.p.produitLibre||r.p.id)) : r.p.recipeId;
-    if(idx[rid]==null){ idx[rid]=groups.length; groups.push({rid, name:recName(r.p), libre:!!r.p.libre, rows:[]}); }
-    groups[idx[rid]].rows.push(r);
+    const p=r.p;
+    let key, label;
+    if(prodComposant(p)==='ganache'){
+      key=GANACHE_KEY; label='Ganaches montées (mutualisables)';
+    } else {
+      const nom = p.libre ? (p.produitLibre||'') : recName(p);
+      key = p.libre ? ('libre:'+(p.produitLibre||p.id)) : ('parfum:'+flavorCode(nom));
+      label = nom || '(sans nom)';
+    }
+    if(idx[key]==null){ idx[key]=groups.length; groups.push({key, name:label, libre:!!p.libre, rows:[]}); }
+    groups[idx[key]].rows.push(r);
   });
+  // la ganache montée en dernier (groupe transverse)
+  groups.sort((a,b)=>(a.key===GANACHE_KEY?1:0)-(b.key===GANACHE_KEY?1:0));
   let html='';
-  groups.forEach(g=>{
+  groups.forEach((g,gi)=>{
     g.rows.sort((a,b)=>(compOrder[prodComposant(a.p)]??9)-(compOrder[prodComposant(b.p)]??9));
     const nb=g.rows.length;
     const reste=g.rows.reduce((s,r)=>s+(round3(+r.p.qteRestante)>0?1:0),0);
-    const libreTag = g.libre?' <span class="tag" style="background:#fbeede;color:#a9772a;font-size:.64rem" title="Production à la volée : à relier à une recette pour activer les coûts">⚠ à compléter</span>':'';
-    html+=`<div class="prod-sec-head">🍩 ${esc(g.name)}${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></div>`;
-    html+=g.rows.map(_prodbatRow).join('');
+    const libreTag = g.libre?' <span class="tag" style="background:#fbeede;color:#a9772a;font-size:.64rem" title="Production à la volée : à relier à une recette">⚠ à compléter</span>':'';
+    const gid='prodgrp_'+gi;
+    // Couleur du parfum pour l'en-tête (cohérence avec la bande des cartes). Ganache = neutre.
+    const _grpCol = (g.key!==GANACHE_KEY && typeof flavorColor==='function' && g.name) ? flavorColor(g.name) : '#8a6d3b';
+    const _grpDot = `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${_grpCol};border:1.5px solid rgba(0,0,0,.12);flex:none"></span>`;
+    // chevron replié par défaut ; le détail (les cartes) est masqué jusqu'au clic
+    html+=`<div class="prod-sec-head" onclick="prodGroupToggle('${gid}')" style="cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none;border-left:6px solid ${_grpCol};padding-left:8px">
+      <span id="${gid}_chev" style="transition:transform .15s;display:inline-block">▸</span>
+      ${_grpDot}<span style="font-weight:700">${esc(g.name)}</span>${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></div>
+    <div id="${gid}" class="prod-grp-body" style="display:none">${g.rows.map(_prodbatRow).join('')}</div>`;
   });
   body.innerHTML = html +
     (rows.length>400?`<div class="note" style="text-align:center">… ${rows.length-400} autre(s). Affinez la recherche.</div>`:'');
   startProdChrono();
+}
+// Replie / déplie un groupe de parfum dans la vue Production.
+function prodGroupToggle(gid){
+  const body=document.getElementById(gid); const chev=document.getElementById(gid+'_chev');
+  if(!body) return;
+  const open = body.style.display!=='none';
+  body.style.display = open ? 'none' : 'block';
+  if(chev) chev.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
 }
 // Chip emplacement : remplit la recherche avec la lettre (ou efface).
 function prodbatSearchEmp(lettre){
@@ -17856,9 +17895,10 @@ function prodSessSave(arr){
 }
 // Synchronise l'état complet des sessions vers la table Dexie prodSessions.
 // On remplace l'ensemble (bulkPut + suppression des absents) pour rester aligné sur le cache.
+// En cas d'échec, on le SIGNALE (les chronos ne seraient alors qu'en localStorage fragile).
 async function prodSessPersistDexie(arr){
   try{
-    if(!db.prodSessions) return; // sécurité : table absente (base non migrée)
+    if(!db.prodSessions){ prodSessFlagDexieKo('table absente'); return false; }
     const data = arr||[];
     const ids = new Set(data.map(s=>s.id));
     await db.transaction('rw', db.prodSessions, async()=>{
@@ -17867,8 +17907,17 @@ async function prodSessPersistDexie(arr){
       if(toDelete.length) await db.prodSessions.bulkDelete(toDelete);
       if(data.length) await db.prodSessions.bulkPut(data);
     });
-  }catch(e){ console.error('prodSessPersistDexie', e); }
+    // Vérification : relire le nombre d'enregistrements pour confirmer l'écriture réelle.
+    const count = await db.prodSessions.count();
+    if(count < data.length){ prodSessFlagDexieKo('écriture incomplète'); return false; }
+    prodSessClearDexieKo();
+    return true;
+  }catch(e){ console.error('prodSessPersistDexie', e); prodSessFlagDexieKo(e&&e.message||'erreur'); return false; }
 }
+// Mémorise qu'une persistance Dexie a échoué (affiché en alerte sur l'écran Atelier).
+function prodSessFlagDexieKo(motif){ try{ localStorage.setItem('sm_prodSessDexieKo', motif||'1'); }catch(e){} }
+function prodSessClearDexieKo(){ try{ localStorage.removeItem('sm_prodSessDexieKo'); }catch(e){} }
+function prodSessDexieKo(){ try{ return localStorage.getItem('sm_prodSessDexieKo')||''; }catch(e){ return ''; } }
 // Réhydratation au démarrage : si IndexedDB contient des sessions absentes du localStorage
 // (cas typique d'une purge iOS du localStorage), on les réinjecte dans le cache.
 // IndexedDB fait foi : toute session présente en base mais perdue du cache est restaurée.
@@ -17883,20 +17932,28 @@ async function prodSessHydrate(){
       if(cache.length) await prodSessPersistDexie(cache);
       return;
     }
-    // Cas nominal : IndexedDB fait foi. Toute session présente en base mais absente du
-    // cache (purge iOS du localStorage) est réinjectée dans le cache.
+    // Cas nominal : IndexedDB fait foi. On fusionne cache + base en gardant, pour chaque id,
+    // la version la PLUS RÉCENTE (_ts). Ça restaure les sessions perdues du cache (purge iOS)
+    // ET évite qu'une version Dexie périmée n'écrase une modif récente encore en cache.
     const byId = new Map(cache.map(s=>[s.id, s]));
-    let restored = 0;
-    fromDexie.forEach(s=>{ if(!byId.has(s.id)){ byId.set(s.id, s); restored++; } });
-    if(restored>0){
+    let restored = 0, refreshed = 0;
+    fromDexie.forEach(s=>{
+      const cur = byId.get(s.id);
+      if(!cur){ byId.set(s.id, s); restored++; }
+      else if((+s._ts||0) > (+cur._ts||0)){ byId.set(s.id, s); refreshed++; }
+    });
+    if(restored>0 || refreshed>0){
       const merged = Array.from(byId.values());
       try{ localStorage.setItem(PROD_SESS_KEY, JSON.stringify(merged)); }catch(e){}
-      console.log('prodSessHydrate: '+restored+' session(s) restaurée(s) depuis IndexedDB');
+      // on re-persiste la fusion pour réaligner la base sur la vérité fusionnée
+      prodSessPersistDexie(merged);
+      console.log('prodSessHydrate: '+restored+' restaurée(s), '+refreshed+' rafraîchie(s) depuis IndexedDB');
     }
   }catch(e){ console.error('prodSessHydrate', e); }
 }
 function prodSessGet(id){ return prodSessLoad().find(s=>s.id===id); }
 function prodSessUpsert(sess){
+  sess._ts = Date.now();   // horodatage de dernière modification (arbitrage de fraîcheur)
   const a=prodSessLoad(); const i=a.findIndex(s=>s.id===sess.id);
   if(i>=0) a[i]=sess; else a.push(sess);
   prodSessSave(a);
@@ -17916,6 +17973,26 @@ function prodTaskNet(t){
   return Math.max(0, gross - accum - live);
 }
 function prodTaskPaused(t){ return t && (+t.pauseAt||0)>0; }
+// Durée RÉELLE d'une session (« mur à mur ») : enveloppe des tâches, du début de la première
+// au end de la dernière. Reflète le temps réellement passé en tenant compte des CHEVAUCHEMENTS
+// (tâches en parallèle), contrairement au cumul qui additionne des minutes superposées.
+// On déduit les pauses globales communes à toutes les tâches (pas les chevauchements internes).
+function prodSessReelMs(s){
+  const tasks=(s&&s.tasks)||[];
+  if(!tasks.length) return 0;
+  let minStart=Infinity, maxEnd=0;
+  tasks.forEach(t=>{
+    const st=+t.start||0; const en=+t.end|| Date.now();
+    if(st>0 && st<minStart) minStart=st;
+    if(en>maxEnd) maxEnd=en;
+  });
+  if(!isFinite(minStart) || maxEnd<=minStart) return 0;
+  return maxEnd-minStart;
+}
+// Cumul des durées de tâches (somme) : charge de travail si tout était fait à la chaîne.
+function prodSessCumulMs(s){
+  return ((s&&s.tasks)||[]).reduce((sum,t)=>sum+prodTaskNet(t),0);
+}
 // Une tâche est-elle en cours (non terminée) ?
 function prodTaskRunning(t){ return t && !t.end; }
 // Y a-t-il au moins une tâche en cours dans une session ouverte ?
@@ -18108,11 +18185,13 @@ async function prodTempsLissePerMacaron(jours){
   const since = new Date(); since.setDate(since.getDate()-jours);
   const sinceStr = since.toISOString().slice(0,10);
 
-  // 1) Temps d'atelier total (ms) sur la fenêtre : somme des durées nettes de toutes les tâches.
+  // 1) Temps d'atelier RÉEL (ms) sur la fenêtre : enveloppe « mur à mur » de chaque session
+  // (début 1ère tâche → fin dernière), pour refléter le temps vraiment passé avec chevauchements.
+  // On n'additionne PAS les durées de tâches (qui se superposent dans le temps réel).
   const psAll = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
   let msAtelier = 0;
   psAll.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
-    (s.tasks||[]).forEach(t=>{ msAtelier += (typeof prodTaskNet==='function')?prodTaskNet(t):0; });
+    msAtelier += (typeof prodSessReelMs==='function') ? prodSessReelMs(s) : 0;
   });
   const minAtelier = msAtelier/60000;
 
@@ -18425,7 +18504,8 @@ function renderAtelier(){
   main.innerHTML = `
     <div class="topbar"><div><h1>Atelier de production</h1><p>Mesure du temps par tâche — chronos parallèles</p></div>
       <button class="btn ghost" onclick="goView('mrp')">🧭 Plan de production →</button></div>
-    <div class="banner" style="background:#eef5f0;border-color:#bcd9c6">⏱ <div>Chaque tâche que tu chronomètres ici nourrit les <b>estimations du Plan de production</b> : plus tu mesures, plus le calage horaire de tes journées devient juste.</div></div>
+    <div class="banner" style="background:#eef5f0;border-color:#bcd9c6">⏱ <div>C'est <b>ICI</b> que tu mesures ton <b>temps de travail</b> : chaque tâche chronométrée nourrit les <b>estimations du Plan de production</b> (plus tu mesures, plus le calage horaire de tes journées devient juste). <span style="color:#6a8a5a">À ne pas confondre avec le chrono de la page Productions, qui sert seulement au suivi de fraîcheur (DLC).</span></div></div>
+    ${prodSessDexieKo()?`<div class="banner" style="background:#fdeaea;border-color:#d9534f">⚠ <div><b>Attention : la sauvegarde sécurisée des chronos a rencontré un souci</b> (${esc(prodSessDexieKo())}). Tes sessions sont encore en mémoire locale mais moins protégées. Ferme et rouvre l'app ; si l'alerte persiste, fais une sauvegarde iCloud par précaution.</div></div>`:''}
     <div class="atelier-tabs">
       <button class="at-tab ${_atelierTab==='pilotage'?'active':''}" onclick="atelierSwitch('pilotage')">⏱ Pilotage</button>
       <button class="at-tab ${_atelierTab==='tableau'?'active':''}" onclick="atelierSwitch('tableau')">📊 Tableau</button>
@@ -18526,7 +18606,9 @@ function prodRenderJournal(){
   const fmtH = ms => new Date(ms).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
   const cards = sessions.map(s=>{
     const tasks=s.tasks||[];
-    const totMs = tasks.reduce((sum,t)=>sum+prodTaskNet(t),0);
+    const totMs = prodSessCumulMs(s);        // cumul (charge de travail à la chaîne)
+    const reelMs = prodSessReelMs(s);         // durée réelle « mur à mur » (chevauchements compris)
+    const gainMs = Math.max(0, totMs - reelMs); // temps gagné grâce au chevauchement
     const phases = {};
     tasks.forEach(t=>{ phases[t.phase]=(phases[t.phase]||0)+prodTaskNet(t); });
     const phaseChips = Object.keys(phases).map(p=>{
@@ -18541,11 +18623,12 @@ function prodRenderJournal(){
           <div class="pj-date">${fmtDate(s.date)} ${open?'<span class="pj-live">● en cours</span>':''}</div>
           <div class="pj-time">${fmtH(s.start)}${s.end?'–'+fmtH(s.end):''} · ${tasks.length} tâche(s)</div>
         </div>
-        <div class="pj-tot">${prodDurShort(totMs)}</div>
+        <div class="pj-tot" style="text-align:right">${prodDurShort(reelMs)}<br><span style="font-size:.62rem;color:#9a8a82;font-weight:400">réel${gainMs>=60000?` · cumul ${prodDurShort(totMs)}`:''}</span></div>
       </div>
       <div class="pj-chips">${phaseChips}</div>
       <div class="pj-actions">
         <button class="qa" onclick="prodJournalOpen('${s.id}')">📊 Voir le tableau</button>
+        ${!open?`<button class="qa" style="background:#3f7d52;color:#fff" onclick="prodSessReopen('${s.id}')" title="Rouvrir cette session pour y ajouter des tâches (ex : garnissage après refroidissement)">↻ Rouvrir</button>`:''}
         ${!open?`<button class="qa del" onclick="prodJournalDelete('${s.id}')">🗑</button>`:''}
       </div>
     </div>`;
@@ -18679,6 +18762,25 @@ function prodConfirmDelTask(taskId){
   if(!confirm('Supprimer cette tâche en cours sans l\'enregistrer ?')) return;
   prodTaskDelete(taskId);
 }
+// Rouvre une session clôturée (clôture par erreur). Refuse s'il y a déjà une session active,
+// pour ne jamais avoir deux sessions ouvertes en même temps. La dernière tâche n'est PAS
+// redémarrée : on rouvre la session pour pouvoir y AJOUTER de nouvelles tâches (ex : garnissage).
+function prodSessReopen(sessId){
+  const active = prodSessActive();
+  if(active && active.id!==sessId){
+    toast('Termine d\'abord la session en cours avant d\'en rouvrir une autre');
+    return;
+  }
+  const s = prodSessLoad().find(x=>x.id===sessId); if(!s) return;
+  if(!s.end){ toast('Cette session est déjà ouverte'); return; }
+  if(!confirm(`Rouvrir la session du ${fmtDate(s.date)} ?\nTu pourras y ajouter de nouvelles tâches (ex : garnissage, montage).`)) return;
+  s.end = null;                 // redevient « ouverte »
+  prodSessUpsert(s);
+  _atelierTab = 'pilotage';
+  if(typeof renderAtelier==='function') renderAtelier();
+  if(typeof prodStartTicking==='function') prodStartTicking();
+  toast('Session rouverte ✓ — ajoute tes tâches');
+}
 function prodConfirmEndSession(){
   const s=prodSessActive(); if(!s) return;
   const running=(s.tasks||[]).filter(prodTaskRunning).length;
@@ -18689,27 +18791,35 @@ function prodConfirmEndSession(){
   prodSessionEnd();
   prodRenderBoard();
   toast('Session clôturée ✓');
-  // Apprentissage des temps : ne le proposer que si la session contient des tâches mappables.
+  // Apprentissage des temps : on ne le propose que pour les catégories ayant du temps NON encore
+  // appris. Si la session a été rouverte pour ajouter du garnissage, on apprendra ce nouveau temps
+  // sans recompter les catégories déjà comptabilisées (ex : coques).
   const sClosed = prodSessLoad().find(x=>x.id===s.id) || s;
   const mins = prodSessMinutesByCategory(sClosed);
-  const aDuTemps = Object.values(mins).some(v=>v>0.1);
-  if(aDuTemps) prodLearnQtyForm(sClosed.id);
+  const deja = Array.isArray(sClosed._apprisCats) ? sClosed._apprisCats : [];
+  const aApprendre = Object.keys(mins).some(cat => mins[cat]>0.1 && !deja.includes(cat));
+  if(aApprendre) prodLearnQtyForm(sClosed.id);
 }
 
 // Demande le nombre de batchs / meringues réalisés, pour ramener les durées à l'unité de référence.
 function prodLearnQtyForm(sessId){
   const s = prodSessLoad().find(x=>x.id===sessId); if(!s) return;
   const mins = prodSessMinutesByCategory(s);
+  const deja = Array.isArray(s._apprisCats) ? s._apprisCats : [];
+  // on ne montre que les catégories ayant du temps ET pas déjà apprises (cas session rouverte)
+  const neuf = cat => mins[cat]>0.1 && !deja.includes(cat);
   const lignes = [];
-  if(mins.coques>0.1)    lignes.push(`🟤 Coques : ${Math.round(mins.coques)} min mesurées`);
-  if(mins.ganache>0.1)   lignes.push(`🍫 Ganache : ${Math.round(mins.ganache)} min`);
-  if(mins.montage>0.1)   lignes.push(`🔧 Montage : ${Math.round(mins.montage)} min`);
-  if(mins.vaisselle>0.1) lignes.push(`🧽 Vaisselle : ${Math.round(mins.vaisselle)} min`);
-  if(mins.entretien>0.1) lignes.push(`🧹 Entretien : ${Math.round(mins.entretien)} min`);
-  const needMeringues = mins.coques>0.1;
-  const needBatchs = (mins.ganache>0.1||mins.montage>0.1||mins.vaisselle>0.1);
+  if(neuf('coques'))    lignes.push(`🟤 Coques : ${Math.round(mins.coques)} min mesurées`);
+  if(neuf('ganache'))   lignes.push(`🍫 Ganache : ${Math.round(mins.ganache)} min`);
+  if(neuf('montage'))   lignes.push(`🔧 Montage : ${Math.round(mins.montage)} min`);
+  if(neuf('vaisselle')) lignes.push(`🧽 Vaisselle : ${Math.round(mins.vaisselle)} min`);
+  if(neuf('entretien')) lignes.push(`🧹 Entretien : ${Math.round(mins.entretien)} min`);
+  const needMeringues = neuf('coques');
+  const needBatchs = (neuf('ganache')||neuf('montage')||neuf('vaisselle'));
+  const dejaTxt = deja.length ? `<p class="note" style="color:#6a8a5a">✓ Déjà comptabilisé précédemment : ${deja.join(', ')} — non redemandé.</p>` : '';
   openModal(`<h3>📊 Affiner les temps de l'atelier</h3>
     <p class="note">Pour que l'ordonnancement apprenne <b>tes</b> temps réels, indique ce que cette session a produit. Les durées seront ramenées « par batch » et « par meringue ».</p>
+    ${dejaTxt}
     <div class="sum-box" style="display:block;background:#faf6ee">${lignes.join('<br>')}</div>
     ${needMeringues?`<div class="field"><label>Nombre de meringues réalisées <span style="color:#9a8a82;font-weight:400">(1 meringue ≈ 2 batchs)</span></label>
       <input type="number" inputmode="numeric" min="0" step="1" id="learn_mer" placeholder="ex : 2"></div>`:''}
@@ -18726,6 +18836,12 @@ function prodLearnQtySave(sessId){
   const nbMer = +val('learn_mer')||0;
   const nbBat = +val('learn_bat')||0;
   const fed = prodSessFeedLearning(s, nbBat, nbMer);
+  if(fed.length){
+    // mémorise les catégories désormais apprises (cumul), pour qu'une re-clôture ne les recompte pas
+    const prev = Array.isArray(s._apprisCats) ? s._apprisCats : [];
+    s._apprisCats = Array.from(new Set([...prev, ...fed]));
+    prodSessUpsert(s);
+  }
   closeModal();
   if(fed.length) toast(`Temps appris ✓ (${fed.join(', ')})`);
   else toast('Aucune quantité renseignée — apprentissage sauté');
@@ -19916,15 +20032,17 @@ function prodSessFeedLearning(sess, nbBatchs, nbMeringues){
   const mins = prodSessMinutesByCategory(sess);
   const nb = Math.max(0, +nbBatchs||0);
   const nm = Math.max(0, +nbMeringues||0);
+  const deja = Array.isArray(sess._apprisCats) ? sess._apprisCats : [];
   const fed = [];
+  // On n'apprend QUE les catégories pas encore apprises (évite le double comptage si session rouverte).
   // coques : par meringue
-  if(mins.coques>0 && nm>0){ validateTask('coques', mins.coques/nm); fed.push('coques'); }
+  if(mins.coques>0 && nm>0 && !deja.includes('coques')){ validateTask('coques', mins.coques/nm); fed.push('coques'); }
   // ganache, montage, vaisselle : par batch
-  if(mins.ganache>0 && nb>0){ validateTask('ganache', mins.ganache/nb); fed.push('ganache'); }
-  if(mins.montage>0 && nb>0){ validateTask('montage', mins.montage/nb); fed.push('montage'); }
-  if(mins.vaisselle>0 && nb>0){ validateTask('vaisselle', mins.vaisselle/nb); fed.push('vaisselle'); }
+  if(mins.ganache>0 && nb>0 && !deja.includes('ganache')){ validateTask('ganache', mins.ganache/nb); fed.push('ganache'); }
+  if(mins.montage>0 && nb>0 && !deja.includes('montage')){ validateTask('montage', mins.montage/nb); fed.push('montage'); }
+  if(mins.vaisselle>0 && nb>0 && !deja.includes('vaisselle')){ validateTask('vaisselle', mins.vaisselle/nb); fed.push('vaisselle'); }
   // entretien : par session (indépendant du volume)
-  if(mins.entretien>0){ validateTask('entretien', mins.entretien); fed.push('entretien'); }
+  if(mins.entretien>0 && !deja.includes('entretien')){ validateTask('entretien', mins.entretien); fed.push('entretien'); }
   return fed;
 }
 
