@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v414';
+const APP_VERSION = 'v415';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15525,6 +15525,15 @@ function clearUnsaved(){ try{ localStorage.setItem('sm_unsaved','0'); }catch(e){
 async function buildDump(){
   const dump={_app:'sensations-macarons',_version:BACKUP_VERSION,_date:new Date().toISOString()};
   for(const t of TABLES) dump[t]=await db.table(t).toArray();
+  // FILET DE SÉCURITÉ sessions d'atelier : si la table IndexedDB est vide mais que le cache
+  // localStorage contient des sessions (persistance Dexie pas encore faite), on sauvegarde le
+  // cache. Évite qu'une sauvegarde ne contienne 0 session alors que l'atelier en a.
+  try{
+    const cacheSess = JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]');
+    if(Array.isArray(cacheSess) && cacheSess.length > (dump.prodSessions||[]).length){
+      dump.prodSessions = cacheSess;
+    }
+  }catch(e){}
   dump._localStorage = collectLocalSettings(); // réglages hors IndexedDB (emballages, charges, préférences…)
   dump._checksum = backupChecksum(dump);        // checksum calculé sur les TABLES uniquement
   return dump;
@@ -15726,13 +15735,18 @@ async function inspectData(e){
   const nbVisibles = nbTot - nbHisto;
   const nbClients = Array.isArray(obj.clients)?obj.clients.length:0;
   const nbMarches = Array.isArray(obj.markets)?obj.markets.length:0;
+  // Sessions d'atelier (chronos) contenues dans la sauvegarde + total de tâches chronométrées.
+  const sessions = Array.isArray(obj.prodSessions)?obj.prodSessions:[];
+  const nbSessions = sessions.length;
+  const nbTaches = sessions.reduce((a,s)=>a+((s.tasks||[]).length),0);
   const dateInfo = obj._date ? new Date(obj._date).toLocaleString('fr-FR') : '?';
   // dernières commandes non-migrées par date, pour repère visuel
   const recentes = orders.filter(o=>!o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,5)
     .map(o=>`${esc((o.date||'?'))} · ${euro(+o.montant||0)}`).join('\n');
   alert(`📄 Fichier : ${f.name}\nDate de la sauvegarde : ${dateInfo}\n\n`+
     `• ${nbTot} commande(s) AU TOTAL\n   dont ${nbVisibles} visibles + ${nbHisto} migrées\n`+
-    `• ${nbClients} client(s)\n• ${nbMarches} marché(s)\n\n`+
+    `• ${nbClients} client(s)\n• ${nbMarches} marché(s)\n`+
+    `• ${nbSessions} session(s) d'atelier (${nbTaches} tâche(s) chronométrée(s))\n\n`+
     `5 dernières commandes visibles :\n${recentes||'(aucune)'}\n\n`+
     `(Inspection seule — RIEN n'a été importé ni modifié.)`);
   e.target.value='';
