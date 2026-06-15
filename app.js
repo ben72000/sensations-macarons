@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v349';
+const APP_VERSION = 'v352';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -13235,6 +13235,247 @@ async function coquesStockByParfum(){
   return map;
 }
 // Construit la liste des productions conseillées (avant calage temps).
+// ============================================================================
+// ORDONNANCEUR DE PRODUCTION — moteur d'optimisation des meringues (validé)
+// Règles : meringue standard = 120 macarons / 3 parfums max ; grand format = 24
+// gros macarons / 2 parfums max ; complément unique (3 plus gros restes) si total
+// des restes >= 40, sinon "à décider" ; ganache par parfum en une fois = total
+// planifié ; ganache vanille-coco partagée Mangue passion + Myrtille framboise.
+// Fonctions PURES → rejouables à chaque ajustement.
+// ============================================================================
+const ORDO = { STD_CAP:120, STD_MAXP:3, GF_CAP:24, GF_MAXP:2, COMPLEMENT_MIN:40 };
+
+// Remplit des meringues PLEINES (capacité atteinte) pour minimiser leur nombre ; renvoie les restes.
+function ordoPackFull(besoins, cap, maxP){
+  let items=besoins.filter(b=>b.qte>0).map(b=>({nom:b.nom,reste:b.qte}));
+  const meringues=[];
+  while(true){
+    const tot=items.reduce((s,it)=>s+it.reste,0);
+    if(tot<cap) break;
+    const m={cap,libre:cap,parts:[]};
+    while(m.libre>0 && m.parts.length<maxP){
+      const cand=items.filter(it=>it.reste>0 && !m.parts.some(p=>p.nom===it.nom)).sort((a,b)=>b.reste-a.reste)[0];
+      if(!cand) break;
+      const pris=Math.min(cand.reste,m.libre);
+      m.parts.push({nom:cand.nom,qte:pris}); cand.reste-=pris; m.libre-=pris;
+    }
+    m.utilise=m.cap-m.libre;
+    if(m.libre>0){ meringues.push(m); break; }
+    meringues.push(m);
+    if(meringues.length>500) break;
+  }
+  return {meringues, restes:items.filter(it=>it.reste>0).map(it=>({nom:it.nom,qte:it.reste}))};
+}
+
+// Empile tout (sans exiger des meringues pleines) — pour les grands formats.
+function ordoPackAll(besoins, cap, maxP){
+  let items=besoins.filter(b=>b.qte>0).map(b=>({nom:b.nom,reste:b.qte}));
+  const meringues=[];
+  while(items.some(it=>it.reste>0)){
+    const m={cap,libre:cap,parts:[]};
+    while(m.libre>0 && m.parts.length<maxP){
+      const cand=items.filter(it=>it.reste>0 && !m.parts.some(p=>p.nom===it.nom)).sort((a,b)=>b.reste-a.reste)[0];
+      if(!cand) break;
+      const pris=Math.min(cand.reste,m.libre);
+      m.parts.push({nom:cand.nom,qte:pris}); cand.reste-=pris; m.libre-=pris;
+    }
+    m.utilise=m.cap-m.libre; meringues.push(m);
+    if(meringues.length>500) break;
+  }
+  return meringues;
+}
+
+// UNE meringue de complément avec les 3 plus gros restes ; le surplus passe "à décider".
+function ordoComplement(restes, cap, maxP, seuil){
+  const tot=restes.reduce((s,r)=>s+r.qte,0);
+  if(tot===0) return {meringue:null, restes:[], total:0};
+  if(tot<seuil) return {meringue:null, restes:restes.slice(), total:tot};
+  const tries=restes.slice().sort((a,b)=>b.qte-a.qte);
+  const retenus=tries.slice(0,maxP), exclus=tries.slice(maxP);
+  const m={cap,libre:cap,parts:[]}; const surplus=[];
+  retenus.forEach(r=>{
+    const pris=Math.min(r.qte,m.libre);
+    if(pris>0){ m.parts.push({nom:r.nom,qte:pris}); m.libre-=pris; }
+    if(r.qte-pris>0) surplus.push({nom:r.nom,qte:r.qte-pris});
+  });
+  m.utilise=m.cap-m.libre;
+  return {meringue:[m], restes:exclus.concat(surplus), total:tot};
+}
+
+// Moteur principal : besoins standards + grands formats → plan optimisé complet.
+function ordonnancer(besoinsStd, besoinsGF){
+  const std=ordoPackFull(besoinsStd, ORDO.STD_CAP, ORDO.STD_MAXP);
+  const comp=ordoComplement(std.restes, ORDO.STD_CAP, ORDO.STD_MAXP, ORDO.COMPLEMENT_MIN);
+  const planParfums={};
+  std.meringues.forEach(m=>m.parts.forEach(p=>{ planParfums[p.nom]=(planParfums[p.nom]||0)+p.qte; }));
+  if(comp.meringue) comp.meringue.forEach(m=>m.parts.forEach(p=>{ planParfums[p.nom]=(planParfums[p.nom]||0)+p.qte; }));
+  const ganaches=Object.entries(planParfums).map(([nom,qte])=>({nom,portions:qte}));
+  const gf=ordoPackAll(besoinsGF, ORDO.GF_CAP, ORDO.GF_MAXP);
+  const planGF={}; gf.forEach(m=>m.parts.forEach(p=>{ planGF[p.nom]=(planGF[p.nom]||0)+p.qte; }));
+  const ganacheVanilleCoco=(planGF['Mangue passion']||0)+(planGF['Myrtille framboise']||0);
+  return {
+    standard:{ meringuesPleines:std.meringues, complement:comp.meringue,
+               restesADecider:comp.restes, totalRestes:comp.total, ganaches },
+    grandFormat:{ meringues:gf, planParfums:planGF, ganacheVanilleCoco }
+  };
+}
+
+// Prépare les besoins par parfum (standards / grands formats) selon le mode choisi.
+// mode 'fermes' = commandes fermes − stock ; mode 'reassort' = commandes + réassort − stock.
+async function ordoBuildNeeds(mode, horizon){
+  const H=horizon||14;
+  const recipes=await db.recipes.toArray().catch(()=>[]);
+  const recByNom={}; recipes.forEach(r=>recByNom[aiNormalize(r.produitNom)]=r);
+  const isGF=nom=>{ const r=recByNom[aiNormalize(nom)]; return !!(r&&r.grandFormat); };
+  const besoins={};   // nom -> qte (macarons)
+  const add=(nom,q)=>{ if(!nom||q<=0) return; besoins[nom]=(besoins[nom]||0)+q; };
+
+  // 1) Commandes fermes non livrées dans l'horizon (toujours incluses).
+  try{
+    const orders=await db.orders.toArray();
+    orders.forEach(o=>{
+      const st=(typeof normStatus==='function')?normStatus(o.statut):o.statut;
+      if(st==='Livrée') return;
+      const j=(typeof daysTo==='function')?daysTo(o.date):null;
+      if(j!==null && j>H) return;
+      orderToLines(o).forEach(ln=>{
+        const parfums = ln.type==='grand' ? (ln.items||[]) : (ln.parfums||[]);
+        parfums.forEach(p=>{ if(+p.qte>0) add(p.nom, +p.qte); });
+      });
+    });
+  }catch(e){ console.error('ordo orders',e); }
+
+  // 2) Réassort (vélocité − stock) seulement en mode 'reassort'.
+  if(mode==='reassort'){
+    try{
+      const v=await computeSalesVelocity({months:3, horizonDays:H});
+      if(v.hasData){ (v.lignes||[]).forEach(l=>{
+        if(l.perDay<=0) return;
+        const besoin=Math.ceil(l.perDay*H - l.stock);
+        if(besoin>0) add(l.parfum, besoin);
+      }); }
+    }catch(e){ console.error('ordo velocity',e); }
+  }
+
+  // 3) Note : en mode réassort, le stock est déjà déduit via la vélocité (perDay*H − stock).
+  //    En mode 'fermes', on produit ce qui est commandé (le stock fini sert d'abord les commandes).
+
+  // 3) Déduire les COQUES déjà en stock (typées par parfum) : on ne reproduit pas la meringue
+  //    pour des coques qu'on a déjà. On trace la déduction pour l'affichage.
+  const coquesInfo={};   // nom -> {demande, coquesMac, aProduire}
+  try{
+    const coquesMap = await coquesStockByParfum();   // {normalisé:{parfum, coques}}
+    Object.keys(besoins).forEach(nom=>{
+      const k=aiNormalize(nom);
+      const coques = coquesMap[k] ? +coquesMap[k].coques||0 : 0;
+      const coquesMac = Math.floor(coques / COQUES_PAR_MACARON);   // coques → macarons assemblables
+      if(coquesMac>0){
+        const demande = besoins[nom];
+        const aProduire = Math.max(0, demande - coquesMac);
+        coquesInfo[nom] = { demande, coquesMac, aProduire };
+        besoins[nom] = aProduire;
+      }
+    });
+  }catch(e){ console.error('ordo coques',e); }
+
+  // Sépare standards / grands formats.
+  const std=[], gf=[];
+  Object.entries(besoins).forEach(([nom,qte])=>{ if(qte>0){ (isGF(nom)?gf:std).push({nom,qte:Math.round(qte)}); } });
+  return {std, gf, coquesInfo};
+}
+
+let _ordoState=null;   // {mode, std:[...], gf:[...]} — pour l'ajustement (étape 3)
+
+// Affiche le plan optimisé dans un conteneur, à partir des besoins (recalcul pur à chaque appel).
+function ordoRenderPlan(containerId){
+  const box=document.getElementById(containerId); if(!box||!_ordoState) return;
+  const plan=ordonnancer(_ordoState.std, _ordoState.gf);
+  const s=plan.standard, gf=plan.grandFormat;
+  const meringueHTML=(m,label,col)=>`<div class="sum-box" style="border-left:3px solid ${col};margin:4px 0">
+    <span style="flex:1"><b>${label}</b> <span style="color:#9a8a82">${m.utilise}/${m.cap} macarons</span><br>
+    <span style="font-size:.85rem">${m.parts.map(p=>`${esc(p.nom)} <b>${p.qte}</b>`).join(' &nbsp;·&nbsp; ')}</span>
+    ${m.libre>0?`<br><span style="font-size:.74rem;color:#9a8a82">reste ${m.libre} place(s) libre(s)</span>`:''}</span></div>`;
+
+  let html='<div class="panel"><h2>🔥 Plan de production optimisé</h2>';
+  // Mode actif + bascule
+  html+=`<div style="display:flex;gap:6px;margin-bottom:10px">
+    <button class="btn ${_ordoState.mode==='fermes'?'gold':'ghost'} sm" onclick="ordoSwitchMode('fermes')">Commandes fermes</button>
+    <button class="btn ${_ordoState.mode==='reassort'?'gold':'ghost'} sm" onclick="ordoSwitchMode('reassort')">Commandes + réassort</button>
+  </div>`;
+
+  // Coques déjà en stock, déduites du besoin (signalé clairement).
+  const cInfo=_ordoState.coquesInfo||{};
+  const cList=Object.entries(cInfo).filter(([n,v])=>v.coquesMac>0);
+  if(cList.length){
+    html+=`<div class="banner" style="background:#eef5f0;border-color:#bcd9c4;margin-bottom:10px">🟤 <div><b>Coques déjà en stock déduites :</b><br>${cList.map(([nom,v])=>`${esc(nom)} — ${v.demande} demandé(s), ${v.coquesMac} en coques → <b>${v.aProduire} à produire</b>`).join('<br>')}</div></div>`;
+  }
+
+  // --- Standards ---
+  const nbStd=s.meringuesPleines.length+(s.complement?s.complement.length:0);
+  if(nbStd===0 && !s.restesADecider.length){
+    html+='<p class="note">Aucun besoin standard à produire.</p>';
+  } else {
+    html+=`<h3 style="font-size:.95rem;margin:8px 0 4px">Macarons standards — ${nbStd} meringue(s)</h3>`;
+    s.meringuesPleines.forEach((m,i)=>{ html+=meringueHTML(m,`Meringue ${i+1}`,'#3f7d52'); });
+    if(s.complement) s.complement.forEach((m,i)=>{ html+=meringueHTML(m,`Meringue complément`,'#d98324'); });
+    if(s.restesADecider.length){
+      html+=`<div class="banner" style="background:#fdecec;border-color:#e0a0a0;margin-top:6px">⚠ <div><b>À décider</b> — ${s.restesADecider.map(r=>`${esc(r.nom)} ${r.qte}`).join(', ')}.<br><span style="font-size:.82rem">Ces restes ne remplissent pas une meringue de complément (max 3 parfums). Abandonne-les, ou ajuste les quantités pour les intégrer.</span></div></div>`;
+    }
+    // Ganaches
+    if(s.ganaches.length){
+      html+=`<p style="font-size:.85rem;margin-top:8px"><b>🍫 Ganaches à produire</b> (chacune en une fois) : ${s.ganaches.map(g=>`${esc(g.nom)} <b>${g.portions}</b>`).join(' · ')}</p>`;
+    }
+  }
+
+  // --- Grands formats ---
+  if(gf.meringues.length){
+    html+=`<h3 style="font-size:.95rem;margin:12px 0 4px">Grands formats — ${gf.meringues.length} meringue(s)</h3>`;
+    gf.meringues.forEach((m,i)=>{ html+=meringueHTML(m,`Meringue GF ${i+1}`,'#8a6d3b'); });
+    if(gf.ganacheVanilleCoco>0){
+      html+=`<p style="font-size:.85rem;margin-top:6px"><b>🍦 Ganache vanille-coco partagée</b> (Mangue passion + Myrtille framboise) : <b>${gf.ganacheVanilleCoco}</b> portions.</p>`;
+    }
+  }
+
+  // Ajustement
+  html+=`<div style="margin-top:12px"><button class="btn ghost sm" onclick="ordoAjuster()">✏️ Ajuster les quantités</button></div>`;
+  html+='</div>';
+  box.innerHTML=html;
+}
+
+// Lance l'ordonnanceur : choisit le mode, calcule les besoins, affiche.
+async function ordoLancer(mode){
+  const box=document.getElementById('ordoZone'); if(box) box.innerHTML='<div class="panel"><p class="note">Calcul du plan optimisé…</p></div>';
+  const needs=await ordoBuildNeeds(mode, 14);
+  _ordoState={mode, std:needs.std, gf:needs.gf, coquesInfo:needs.coquesInfo||{}};
+  ordoRenderPlan('ordoZone');
+}
+function ordoSwitchMode(mode){ if(_ordoState){ ordoLancer(mode); } }
+
+// Étape 3 — ajustement : formulaire éditable des quantités ; au changement, on RECALCULE tout.
+function ordoAjuster(){
+  if(!_ordoState) return;
+  const champ=(arr,titre,prefix)=>arr.length?`<h4 style="margin:8px 0 4px;font-size:.9rem">${titre}</h4>`+arr.map((b,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;margin:3px 0">
+      <span style="flex:1">${esc(b.nom)}</span>
+      <input type="number" min="0" step="1" value="${b.qte}" id="${prefix}_${i}" style="width:90px;text-align:right">
+    </div>`).join(''):'';
+  openModal(`<h3>✏️ Ajuster les quantités</h3>
+    <p class="note">Modifie les besoins puis recalcule : l'ordonnanceur réoptimise entièrement le plan à partir de tes nouvelles quantités.</p>
+    ${champ(_ordoState.std,'Macarons standards','ordoStd')}
+    ${champ(_ordoState.gf,'Grands formats','ordoGf')}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="ordoApplyAjust()">Recalculer le plan</button>
+    </div>`);
+}
+function ordoApplyAjust(){
+  if(!_ordoState) return;
+  _ordoState.std=_ordoState.std.map((b,i)=>({nom:b.nom, qte:Math.max(0,+(document.getElementById('ordoStd_'+i)?.value)||0)})).filter(b=>b.qte>0);
+  _ordoState.gf=_ordoState.gf.map((b,i)=>({nom:b.nom, qte:Math.max(0,+(document.getElementById('ordoGf_'+i)?.value)||0)})).filter(b=>b.qte>0);
+  closeModal();
+  ordoRenderPlan('ordoZone');
+}
+
 async function buildProductionPlan(horizonDays){
   const H = horizonDays||14;
   const items=[]; // {type, recipeId, produitNom, qte, raison, prioRang}
@@ -13271,6 +13512,7 @@ async function buildProductionPlan(horizonDays){
         items.push({
           type: estRupture?'rupture':'reassort',
           recipeId: rec?rec.id:null, produitNom: l.parfum, qte: besoin,
+          rendement: rec&&+rec.rendement>0 ? +rec.rendement : null,
           raison: estRupture ? `Rupture dans ~${l.joursRestants} j` : `Réassort ${H} j (vélocité ${l.perMonth}/mois)`,
           prioRang: rang(estRupture?'rupture':'reassort')
         });
@@ -13441,7 +13683,16 @@ async function renderProductionPlan(){
   const fmtHM = m => { const h=Math.floor(m/60), mm=m%60; return `${h?h+'h ':''}${String(mm).padStart(2,'0')}min`; };
   const prioBtns = planPrioOrder().map((k,i)=>`<span class="tag" style="background:#efe7da;color:#6b5d54;margin:2px">${i+1}. ${esc(PLAN_PRIO_LABEL[k])}</span>`).join(' ');
   const ligne = it => {
-    const q = it.qte!=null?`${qty(it.qte)} pièces`:'à écouler';
+    let q;
+    if(it.qte!=null){
+      q = `${qty(it.qte)} pièces`;
+      // Équivalent en batches (pour quelqu'un qui produit par fournée).
+      if(it.rendement && it.rendement>0){
+        const nb = it.qte/it.rendement;
+        const nbTxt = nb<1 ? nb.toFixed(1).replace('.',',') : (Math.round(nb*10)/10).toString().replace('.',',');
+        q += ` <span style="color:#8a6d3b">≈ ${nbTxt} batch${nb>=2?'es':''}</span>`;
+      }
+    } else { q='à écouler'; }
     const col = it.type==='commande'?'#b3261e':it.type==='rupture'?'#d98324':it.type==='antigaspi'?'#7a6a9a':'#3f7d52';
     const mTxt = (it.min!=null)?`<b style="white-space:nowrap;color:#6b5d54">${it.min} min</b>`:'';
     // Coques déjà en stock pour ce parfum → conseil d'assemblage différé.
@@ -13479,6 +13730,15 @@ async function renderProductionPlan(){
          ${dansLeTemps.length?`<h2 style="font-size:1rem;margin-top:10px">✅ À produire maintenant</h2>${dansLeTemps.map(ligne).join('')}`:''}
          ${horsTemps.length?`<h2 style="font-size:1rem;margin-top:10px">⏳ Si tu as plus de temps</h2>${horsTemps.map(ligne).join('')}`:''}`}
     ${(!listeComplete.length)?`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Rien à produire en priorité : commandes, stocks et DLC sont sous contrôle.</div></div>`:''}
+    <div class="panel" style="margin-top:12px;background:#fbf7f0">
+      <h2 style="font-size:1rem">🔥 Ordonnancement intelligent</h2>
+      <p class="note">Optimise tes fournées : regroupe les parfums dans des meringues (240 coques = 120 macarons, 3 parfums max) pour minimiser le nombre de productions. Choisis le périmètre :</p>
+      <div style="display:flex;gap:6px;margin:8px 0">
+        <button class="btn gold sm" onclick="ordoLancer('fermes')">Commandes fermes</button>
+        <button class="btn gold sm" onclick="ordoLancer('reassort')">Commandes + réassort</button>
+      </div>
+      <div id="ordoZone"></div>
+    </div>
     ${(()=>{
       // Provenance des estimations de temps : lien explicite avec l'Atelier (chronos).
       if(tl && tl.fiable && tl.minParMacaronArrondi!=null){
