@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v367';
+const APP_VERSION = 'v368';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15086,19 +15086,28 @@ async function runIntegrityCheck(){
 // Applique le nettoyage d'une anomalie (avec sauvegarde de sécurité préalable).
 async function fixIntegrityIssue(table, ids, fix){
   if(fix==='none'){ toast('À corriger manuellement (recrée la recette ou supprime la production)'); return; }
-  const set=new Set(ids);
-  await snapshotBackup('avant-nettoyage-intégrité');
+  // Normalise les ids : Dexie attend les clés primaires exactes (nombres pour les tables '++id').
+  const cleanIds = (ids||[]).map(x=> (typeof x==='string' && /^\d+$/.test(x)) ? +x : x).filter(x=>x!=null);
+  if(!cleanIds.length){ toast('Aucun élément à nettoyer'); return; }
+  let etape='sauvegarde';
   try{
+    try{ await snapshotBackup('avant-nettoyage-intégrité'); }
+    catch(eBk){ console.error('snapshot avant nettoyage',eBk); /* on continue : la sauvegarde ne doit pas bloquer le nettoyage */ }
+    etape='suppression';
     if(fix==='delete'){
-      await db[table].bulkDelete(ids);
+      if(!db[table]){ toast('Table inconnue : '+table); return; }
+      await db[table].bulkDelete(cleanIds);
     } else if(fix==='detachClient'){
-      await db.transaction('rw', db.orders, async()=>{ for(const id of ids) await db.orders.update(id,{clientId:null}); });
+      await db.transaction('rw', db.orders, async()=>{ for(const id of cleanIds) await db.orders.update(id,{clientId:null}); });
     } else if(fix==='detachSupplier'){
-      await db.transaction('rw', db.materialLots, async()=>{ for(const id of ids) await db.materialLots.update(id,{supplierId:null}); });
+      await db.transaction('rw', db.materialLots, async()=>{ for(const id of cleanIds) await db.materialLots.update(id,{supplierId:null}); });
     }
-    toast(`${ids.length} anomalie(s) corrigée(s) ✓`);
+    toast(`${cleanIds.length} anomalie(s) corrigée(s) ✓`);
     renderIntegrity();
-  }catch(e){ console.error('fixIntegrity',e); toast('Erreur pendant le nettoyage'); }
+  }catch(e){
+    console.error('fixIntegrity ['+etape+']',e);
+    toast('Erreur pendant le nettoyage ('+etape+') : '+((e&&e.message)?e.message:e));
+  }
 }
 // Écran de résultats du vérificateur.
 // ============================================================
