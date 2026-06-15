@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v373';
+const APP_VERSION = 'v374';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6916,6 +6916,7 @@ function lineTotalStored(ln){
 }
 let cmdLines = [];      // lignes de produits de la commande en cours
 let cmdProductsCache = [];
+let cmdEmballagesCache = [];   // emballages disponibles (matières 'emballage') pour le choix par coffret
 let _cmdMarginCache = {recipes:[], recipeItems:[], lots:[]};
 let cmdClientsCache = [];
 
@@ -6949,7 +6950,7 @@ function _parfumsToObj(p){
 }
 function _lineToEdit(ln){
   const t=ln.type;
-  if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null)};
+  if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null};
   if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0};
   if(t==='vrac') return {type:'vrac', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
@@ -6969,6 +6970,8 @@ async function cmdForm(id, opts){
   _privacySuspend=1; // saisie de commande toujours en clair, même en mode discret
   cmdClientsCache = await db.clients.toArray();
   cmdProductsCache = (await db.products.toArray()).filter(p=>p.actif!==false).sort((a,b)=>(+a.taille)-(+b.taille));
+  // Emballages disponibles (matières catégorie 'emballage') pour le choix d'emballage par coffret.
+  cmdEmballagesCache = (await db.materials.toArray()).filter(m=>m.categorie==='emballage').sort((a,b)=>(+a.capacite||0)-(+b.capacite||0));
   // caches pour le calcul de marge en direct (impact livraison)
   _cmdMarginCache = {
     recipes: await db.recipes.toArray(),
@@ -7293,6 +7296,20 @@ function drawCoffretLine(ln,i){
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Coffret <span class="line-sub">jusqu'à ${limit} parfum(s) inclus</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <div class="field"><label>Taille</label><select onchange="setCoffretTaille(${i},this.value)">${boxOpts}</select></div>
+    ${(()=>{
+      const mode = ln.embMode || 'standard';
+      const embOpts = cmdEmballagesCache.map(m=>`<option value="${m.id}" ${(+ln.embMatId===+m.id)?'selected':''}>${esc(m.nom)}${m.capacite?` (${m.capacite} mac.)`:''}</option>`).join('');
+      return `<div class="field"><label>Emballage <span style="color:#9a8a82;font-weight:400">— ajuste le coût</span></label>
+        <select onchange="setCoffretEmbMode(${i},this.value)">
+          <option value="standard" ${mode==='standard'?'selected':''}>Standard (selon la taille)</option>
+          <option value="reutilisable" ${mode==='reutilisable'?'selected':''}>Réutilisable (0 € — le client rapporte sa boîte)</option>
+          <option value="autre" ${mode==='autre'?'selected':''}>Autre emballage (choisir dans ma liste)</option>
+        </select>
+        ${mode==='autre'?`<select style="margin-top:6px" onchange="setCoffretEmbMat(${i},this.value)">
+          <option value="">— choisir un emballage —</option>${embOpts}
+        </select>${!cmdEmballagesCache.length?'<p class="note" style="color:var(--red)">Aucun emballage créé. Ajoute-en dans Stock → Matières (catégorie emballage).</p>':''}`:''}
+      </div>`;
+    })()}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité par parfum)</label>
     <div class="flav-grid">${flavRows}</div>
     <div class="sum-box"><span>${nbDiff} parfum(s) différent(s) · ${totQ}/${ln.taille} macarons</span><b>${over?`+${over} suppl. (${euro(over*FLAVOR_SURCHARGE)})`:'inclus'}</b></div>
@@ -7305,6 +7322,8 @@ function setCoffretTaille(i,v){ cmdLines[i].taille=+v;
   // purge les parfums au-delà de la nouvelle taille
   const max=+v; Object.keys(cmdLines[i].parfums).forEach(k=>{ if(cmdLines[i].parfums[k]>max) cmdLines[i].parfums[k]=max; }); drawLines(); }
 function setCoffretParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
+function setCoffretEmbMode(i,v){ cmdLines[i].embMode=v; if(v!=='autre') cmdLines[i].embMatId=null; drawLines(); }
+function setCoffretEmbMat(i,v){ cmdLines[i].embMatId = v?+v:null; drawLines(); }
 
 function drawEventLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
@@ -7602,7 +7621,7 @@ function setLineRemiseEuro(i,v){
 function cmdLinesToStored(){
   return (cmdLines||[]).map(ln=>{
     const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
-    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', remisePct:rp, parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
