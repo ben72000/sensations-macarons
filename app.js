@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v353';
+const APP_VERSION = 'v354';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18095,16 +18095,21 @@ function mascotPickLine(mood){
 // La mascotte et la bulle gardent leur taille d'origine — rien ne se déforme.
 let _mascotBubbleOpen=false;
 async function mascotToggleBubble(){
-  const mood = (typeof serenityTier==='function' && _mascotScore!=null) ? serenityTier(_mascotScore).mood : 'serein';
-  const punchline = mascotPickLine(mood);
+  let mood='serein', punchline='Coucou ! 🍩';
+  try{
+    mood = (typeof serenityTier==='function' && _mascotScore!=null) ? serenityTier(_mascotScore).mood : 'serein';
+    punchline = mascotPickLine(mood);
+  }catch(e){ console.error('mascot mood',e); }
   // ouvre la modale tout de suite avec la punchline + un état de chargement
-  openModal(`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-      <div style="font-size:1.6rem">🍩</div>
-      <h3 style="margin:0;flex:1;font-size:1.02rem">${esc(punchline)}</h3></div>
-    <div id="mascotModalBody"><p class="note">Je regarde ce qu'il y a à faire…</p></div>
-    <div class="modal-actions">
-      <button class="btn ghost" onclick="closeModal()">Fermer</button>
-      <button class="btn" onclick="closeModal();goView('assistant')">Ouvrir l'assistant →</button></div>`);
+  try{
+    openModal(`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="font-size:1.6rem">🍩</div>
+        <h3 style="margin:0;flex:1;font-size:1.02rem">${esc(punchline)}</h3></div>
+      <div id="mascotModalBody"><p class="note">Je regarde ce qu'il y a à faire…</p></div>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal()">Fermer</button>
+        <button class="btn" onclick="closeModal();goView('assistant')">Ouvrir l'assistant →</button></div>`);
+  }catch(e){ console.error('mascot openModal',e); return; }
   let items=[];
   try{ items=await assistantBriefing(); }catch(e){ console.error('mascot briefing',e); }
   const body=document.getElementById('mascotModalBody'); if(!body) return; // modale fermée entre-temps
@@ -20574,7 +20579,7 @@ function startClock(){
   try{ if(!opened) render(); }catch(e){ console.error('render',e); }
   initHistoryNav();
   ttInit();
-  mascotInit();
+  try{ mascotInit(); }catch(e){ console.error('mascotInit',e); }
   try{ radialInit(); }catch(e){ console.error('radialInit',e); }
   startClock();
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
