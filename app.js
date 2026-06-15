@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v384';
+const APP_VERSION = 'v386';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -397,6 +397,26 @@ function realPackagingCostMap(materials, lots){
   const out = new Map();
   for(const [cap, v] of embByCap){ if(v.qteTotal>0) out.set(cap, money2(v.coutTotal/v.qteTotal)); }
   return out;
+}
+// Résout le coût unitaire d'un emballage selon la hiérarchie : lot reçu (prix réel) > tarif
+// paramétré (réglages packaging, par capacité) > prix de référence (prixDefaut de la matière).
+// Renvoie {cout, source} pour pouvoir afficher d'où vient le chiffre.
+function embCostHierarchie(mat, lots, settings){
+  if(!mat) return {cout:0, source:'—'};
+  const s=settings||getSettings();
+  // 1) lot reçu chiffré ?
+  const sien=(lots||[]).filter(l=>+l.materialId===+mat.id && (+l.qteInitiale||0)>0 && lotPU(l)>0);
+  if(sien.length){
+    let ct=0,qt=0; sien.forEach(l=>{ const q=+l.qteInitiale||0; ct+=lotPU(l)*q; qt+=q; });
+    if(qt>0) return {cout:money2(ct/qt), source:'lot reçu'};
+  }
+  // 2) tarif paramétré (par capacité) — prioritaire sur l'ancien prixDefaut
+  if(+mat.capacite>0 && s.packaging && s.packaging[+mat.capacite]!=null){
+    return {cout:money2(+s.packaging[+mat.capacite]), source:'tarif paramétré'};
+  }
+  // 3) prix de référence de la matière (ex : boîtes blanches sans tarif paramétré)
+  if(+mat.prixDefaut>0) return {cout:money2(+mat.prixDefaut), source:'prix de référence'};
+  return {cout:0, source:'non défini'};
 }
 // Coût unitaire RÉEL d'un emballage précis (par materialId) : moyenne pondérée de ses lots
 // chiffrés ; à défaut, le prix de référence (prixDefaut) de la matière. Sert au choix
@@ -11910,9 +11930,11 @@ async function settingsForm(){
   const s=getSettings();
   // Coût RÉEL d'emballage par format, calculé sur les lots effectivement reçus (factures).
   let realMap=new Map();
+  let _settingsLots=[];
   try{
     const [mats, lots] = await Promise.all([db.materials.toArray(), db.materialLots.toArray()]);
     realMap = realPackagingCostMap(mats, lots);
+    _settingsLots = lots;
   }catch(e){ console.error('settingsForm realMap', e); }
   openModal(`<h3>Paramètres de gestion</h3>
     <p class="note">Charges sociales appliquées au calcul de la marge nette.</p>
@@ -11931,6 +11953,23 @@ async function settingsForm(){
             : `<div style="font-size:.72rem;color:#b07a4a;margin-top:3px">⚠ aucun lot chiffré — c'est le tarif saisi qui est utilisé</div>`}
         </div>`; }).join('')}
     </div>
+    ${(()=>{
+      // Autres emballages à capacité (ex : boîtes blanches) qui ne sont pas des coffrets standards.
+      // Affichés ici pour une vue d'ensemble ; leur coût vient de leurs lots ou de leur prix de
+      // référence (modifiable sur la fiche matière), pas du tableau ci-dessus.
+      const mats = (window._allMatsCache||[]).filter(m=>m.categorie==='emballage' && +m.capacite>0 && !BOX_SIZES.includes(+m.capacite));
+      // on inclut aussi les emballages de capacité standard mais au nom NON-coffret (ex: boîte blanche cap 16)
+      const matsStdCap = (window._allMatsCache||[]).filter(m=>m.categorie==='emballage' && BOX_SIZES.includes(+m.capacite) && !/^coffret\b/i.test((m.nom||'').trim()));
+      const autres = mats.concat(matsStdCap);
+      if(!autres.length) return '';
+      const rows = autres.sort((a,b)=>(+a.capacite||0)-(+b.capacite||0)).map(m=>{
+        const res = embCostHierarchie(m, _settingsLots||[], s);
+        return `<div class="field"><label>${esc(m.nom)} <span style="color:#9a8a82;font-weight:400">(cap ${m.capacite})</span></label>
+          <div class="sum-box" style="margin:0"><span style="font-size:.78rem">coût ${res.source}</span><b>${euro(res.cout)}</b></div></div>`;
+      }).join('');
+      return `<p class="note" style="margin-top:10px"><b>Autres emballages</b> (boîtes blanches, formats spécifiques). <span style="color:#9a8a82">Leur prix se règle sur la fiche matière (prix de référence) ou via leurs lots reçus.</span></p>
+        <div class="row2">${rows}</div>`;
+    })()}
     <p class="note" style="margin-top:6px;color:#9a8a82">Pour obtenir un coût réel, réceptionne tes emballages comme des lots (avec leur prix de facture) : <b>Matières → ↘ Réception lot</b>, en choisissant une matière de catégorie « emballage » dont la <b>capacité</b> correspond au format (6, 8, 16 ou 25).</p>
     <button type="button" class="btn ghost sm" style="margin-top:6px" onclick="applyPackaging202511()" title="Remplit les champs avec les tarifs reçus le 28/11/2025">↺ Appliquer les tarifs du 28/11/2025 (6→1,26 · 8→2,18 · 16→1,90 · 25→2,32)</button>
     <div id="pkgDiag" style="margin-top:8px;font-size:.74rem;color:#9a8a82;background:#f7f3ee;border:1px solid #ece3d6;border-radius:8px;padding:8px 10px;line-height:1.6">
@@ -15849,14 +15888,15 @@ async function diagEmballageLots(){
     const s=getSettings();
     const rows = mats.sort((a,b)=>(+a.capacite||0)-(+b.capacite||0)).map(m=>{
       const sien=lots.filter(l=>+l.materialId===+m.id && (+l.qteInitiale||0)>0 && lotPU(l)>0);
-      const reel = embMatUnitCost(m.id, mats, lots);
+      const res = embCostHierarchie(m, lots, s);   // lot > tarif paramétré > prix de référence
+      const reel = res.cout;
       const tarif = (m.capacite>0 && s.packaging && s.packaging[+m.capacite]!=null)? +s.packaging[+m.capacite] : null;
-      // anomalie : coût réel très bas alors qu'un tarif paramétré nettement plus élevé existe
+      // anomalie : un LOT chiffré donne un coût très bas vs le tarif paramétré (lot probablement mal saisi)
       const suspect = (sien.length>0) && tarif!=null && reel>0 && reel < tarif*0.5;
       const lotsTxt = sien.length ? sien.map(l=>`${qty(l.qteInitiale)}×${euro(lotPU(l))}`).join(', ') : '—';
       return `<div class="sum-box" style="${suspect?'background:#fdeaea;border:1px solid #e8a9a3':''}">
         <span>${esc(m.nom)} <span style="color:#9a8a82">(cap ${m.capacite||'—'})</span><br>
-          <span style="font-size:.75rem;color:#9a8a82">lots : ${lotsTxt}${tarif!=null?` · tarif paramétré ${euro(tarif)}`:''}</span></span>
+          <span style="font-size:.75rem;color:#9a8a82">lots : ${lotsTxt}${tarif!=null?` · tarif paramétré ${euro(tarif)}`:''} · <i>source : ${esc(res.source)}</i></span></span>
         <b style="color:${suspect?'#b3261e':'inherit'}">${euro(reel)}${suspect?' ⚠':''}</b></div>`;
     }).join('');
     const anySusp = /⚠/.test(rows);
