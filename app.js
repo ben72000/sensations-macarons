@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v346';
+const APP_VERSION = 'v347';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10817,7 +10817,9 @@ async function renderParfums(){
 
   // parfums sans recette (vendus mais non rattachés)
   const unmatchedBlock=A.unmatched.length?`<div class="panel"><h2>Parfums vendus sans recette <span class="tag warn">${A.unmatched.length}</span></h2>
-     <p class="note">Ces parfums apparaissent dans les ventes mais n'ont pas de recette correspondante — impossible de calculer leur coût/marge. Créez une recette portant le même nom : ${A.unmatched.map(u=>`<b>${esc(u.nom)}</b> (${qty(u.piecesVendues+u.piecesDon)} pc)`).join(', ')}.</p></div>`:'';
+     <p class="note">Ces parfums apparaissent dans les ventes mais n'ont pas de recette correspondante — impossible de calculer leur coût/marge. Créez une recette portant le même nom : ${A.unmatched.map(u=>`<b>${esc(u.nom)}</b> (${qty(u.piecesVendues+u.piecesDon)} pc)`).join(', ')}.</p>
+     <button class="btn ghost sm" style="margin-top:8px" onclick="fixFlavorTypos()">🔤 Corriger les doublons d'orthographe</button>
+     <p class="note" style="margin-top:4px;font-size:.78rem;color:#9a8a82">Certains de ces noms sont peut-être de simples fautes de frappe (ex : Raffaello vs Rafaello). Ce bouton les uniformise sur tes parfums officiels.</p></div>`:'';
 
   // Pareto
   const paretoBlock = sold.length?`<div class="panel"><h2>Analyse Pareto 80/20</h2>
@@ -12444,6 +12446,79 @@ function aiNormalize(s){
   return (s||'').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // enlève accents
     .replace(/['']/g,"'").replace(/\s+/g,' ').trim();
+}
+// Distance de Levenshtein (nb de modifications), sur noms normalisés.
+function levenshtein(a, b){
+  a=aiNormalize(a); b=aiNormalize(b);
+  const m=a.length, n=b.length;
+  if(!m) return n; if(!n) return m;
+  const d=Array.from({length:m+1},(_,i)=>{const row=new Array(n+1).fill(0); row[0]=i; return row;});
+  for(let j=0;j<=n;j++) d[0][j]=j;
+  for(let i=1;i<=m;i++) for(let j=1;j<=n;j++){
+    const c=a[i-1]===b[j-1]?0:1;
+    d[i][j]=Math.min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+c);
+  }
+  return d[m][n];
+}
+// Propose le parfum officiel (FLAVORS) le plus proche d'un nom saisi, SEULEMENT si c'est
+// clairement une variante d'orthographe (1-2 lettres d'écart) et PAS une confusion entre
+// deux parfums distincts. Renvoie null si rien de sûr.
+function suggestCanonicalFlavor(nom){
+  const norm=aiNormalize(nom);
+  if(!norm) return null;
+  if(FLAVORS.some(f=>aiNormalize(f)===norm)) return null;   // déjà conforme
+  let best=null, bestD=99;
+  FLAVORS.forEach(f=>{ const dd=levenshtein(nom,f); if(dd<bestD){ bestD=dd; best=f; } });
+  if(!best || bestD===0) return null;
+  const maxLen=Math.max(norm.length, aiNormalize(best).length);
+  if(bestD<=2 && (bestD/maxLen)<0.25) return { from:nom, to:best, dist:bestD };
+  return null;
+}
+// Scanne les ventes (commandes + marchés), détecte les variantes d'orthographe de parfums,
+// affiche un récapitulatif et corrige après confirmation. Manuel (export avant recommandé).
+async function fixFlavorTypos(){
+  const orders=await db.orders.toArray();
+  const moves=await db.marketMoves.toArray();
+  const corrections={};
+  const noter=nom=>{ if(!nom) return; const s=suggestCanonicalFlavor(nom); if(s){ (corrections[s.from] ||= {to:s.to, nb:0}).nb++; } };
+  orders.forEach(o=>{ (o.lignes||[]).forEach(ln=>{ (ln.parfums||[]).forEach(p=>noter(p.nom)); (ln.items||[]).forEach(p=>noter(p.nom)); }); });
+  moves.forEach(m=>noter(m.parfum));
+  const list=Object.entries(corrections).map(([from,v])=>({from, to:v.to, nb:v.nb}));
+  if(!list.length){ toast('Aucun doublon d\'orthographe détecté 👍'); return; }
+  const recap=list.map(c=>`• « ${esc(c.from)} » → « ${esc(c.to)} » (${c.nb})`).join('<br>');
+  openModal(`<h3>🔤 Corriger les doublons d'orthographe</h3>
+    <p class="note" style="margin-bottom:8px">J'ai détecté ${list.length} variante(s) d'orthographe à uniformiser sur tes parfums officiels :</p>
+    <div class="panel" style="font-size:.9rem;line-height:1.7">${recap}</div>
+    <p class="note" style="margin-top:8px;color:#b08a3a">⚠️ Fais un export de sauvegarde avant, par prudence. Cette correction modifie tes données de vente (commandes et marchés).</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="applyFlavorTypoFix()">Corriger maintenant</button>
+    </div>`);
+  _pendingTypoFix=list;
+}
+let _pendingTypoFix=null;
+async function applyFlavorTypoFix(){
+  const list=_pendingTypoFix; if(!list||!list.length){ closeModal(); return; }
+  const mapFix={}; list.forEach(c=>{ mapFix[aiNormalize(c.from)]=c.to; });
+  let nbCmd=0, nbMov=0;
+  const orders=await db.orders.toArray();
+  for(const o of orders){
+    let touched=false;
+    (o.lignes||[]).forEach(ln=>{
+      (ln.parfums||[]).forEach(p=>{ const to=mapFix[aiNormalize(p.nom)]; if(to && p.nom!==to){ p.nom=to; touched=true; } });
+      (ln.items||[]).forEach(p=>{ const to=mapFix[aiNormalize(p.nom)]; if(to && p.nom!==to){ p.nom=to; touched=true; } });
+    });
+    if(touched){ await db.orders.update(o.id, {lignes:o.lignes}); nbCmd++; }
+  }
+  const moves=await db.marketMoves.toArray();
+  for(const m of moves){
+    const to=mapFix[aiNormalize(m.parfum)];
+    if(to && m.parfum!==to){ await db.marketMoves.update(m.id, {parfum:to}); nbMov++; }
+  }
+  _pendingTypoFix=null;
+  closeModal();
+  toast(`Corrigé : ${nbCmd} commande(s) et ${nbMov} mouvement(s) de marché ✓`);
+  if(view==='rentaparfum') renderParfums();
 }
 // extrait un nombre écrit en chiffres ou en lettres (1..20 + dizaines simples)
 function aiParseNumber(txt){
