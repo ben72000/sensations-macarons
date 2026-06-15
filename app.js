@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v381';
+const APP_VERSION = 'v382';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9068,6 +9068,66 @@ function marketTotals(market, moves, avgUnitMat){
     coutMat, coutEmb, coutEmbEstime, coutStand, deplacement, coutMarche, pkgUsed:pkg.used, margeBrute, tauxBrut, chargesSociales, margeNette, tauxNet};
 }
 // Coût matière moyen par macaron (helper réutilisable, nécessite recipes+items+lots).
+// ÉTAPE 1 — Mesure du gaspillage : agrège les RETOURS de marché ÉCARTÉS (destination 'ecarte',
+// = partis à la poubelle, non recrédités au stock) par parfum, et les chiffre au coût COMPLET :
+// matière + main-d'œuvre (temps de production) + quote-part du déplacement du marché concerné.
+async function computeGaspillage(opts){
+  opts = opts || {};
+  const startStr = opts.start || null;            // 'YYYY-MM-DD' ; null = tout l'historique
+  const [recipes, recipeItems, lots, markets, moves] = await Promise.all([
+    db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(),
+    db.markets.toArray(), db.marketMoves.toArray()
+  ]);
+  const s=getSettings();
+  const recByName = {}; recipes.forEach(r=>{ recByName[(r.produitNom||'').trim()]=r; });
+  // Coût COMPLET d'un macaron pour un parfum donné (matière + MOD de SA recette si dispo, sinon moyenne).
+  const avgMat = avgMacaronCost(recipes, recipeItems, lots);
+  const taux = +s.laborRate||0;
+  function coutCompletUnit(parfum){
+    const r = recByName[(parfum||'').trim()];
+    let mat = avgMat, mod = 0;
+    if(r && r.rendement>0){
+      const cb = coutRecette(r.id, recipeItems, lots);
+      if(cb>0) mat = cb/r.rendement;
+      if(+r.minParBatch>0) mod = ((+r.minParBatch)/60*taux)/r.rendement;
+    }
+    return {mat:mat||0, mod:mod||0};
+  }
+  // Quote-part déplacement d'un marché, ramenée au macaron embarqué (le trajet est un coût fixe
+  // réparti sur tout ce qu'on a emporté ; ce qui est jeté en porte sa part).
+  const moveByMk = {}; moves.forEach(m=>{ (moveByMk[m.marketId]=moveByMk[m.marketId]||[]).push(m); });
+  function deplacementUnit(mk){
+    const mv = moveByMk[mk.id]||[];
+    const embarque = mv.filter(x=>x.type==='sortie').reduce((a,x)=>a+(+x.qte||0),0);
+    if(embarque<=0) return 0;
+    const dep = computeDeliveryCost({distanceKm:+mk.distanceKm||0, prixCarburant:+mk.prixCarburant||0, tempsLivraisonMin:+mk.tempsRouteMin||0, consoVehicule:mk.consoVehicule!=null?mk.consoVehicule:null});
+    return (dep.total||0)/embarque;
+  }
+  const byParfum = {};   // parfum -> {qte, coutMat, coutMod, coutDep}
+  let totQte=0, totMat=0, totMod=0, totDep=0;
+  markets.forEach(mk=>{
+    if(startStr && (mk.date||'')<startStr) return;
+    const depU = deplacementUnit(mk);
+    (moveByMk[mk.id]||[]).forEach(m=>{
+      if(m.type!=='retour' || m.destination!=='ecarte') return;   // SEULEMENT les retours jetés
+      const q=+m.qte||0; if(q<=0) return;
+      const parfum=m.parfum||'(parfum ?)';
+      const cu=coutCompletUnit(parfum);
+      const b = byParfum[parfum] || (byParfum[parfum]={qte:0,coutMat:0,coutMod:0,coutDep:0});
+      b.qte+=q; b.coutMat+=q*cu.mat; b.coutMod+=q*cu.mod; b.coutDep+=q*depU;
+      totQte+=q; totMat+=q*cu.mat; totMod+=q*cu.mod; totDep+=q*depU;
+    });
+  });
+  const lignes = Object.entries(byParfum).map(([parfum,b])=>({
+    parfum, qte:round3(b.qte),
+    coutMat:money2(b.coutMat), coutMod:money2(b.coutMod), coutDep:money2(b.coutDep),
+    total:money2(b.coutMat+b.coutMod+b.coutDep)
+  })).sort((a,b)=>b.total-a.total);
+  return {lignes, totQte:round3(totQte),
+    totMat:money2(totMat), totMod:money2(totMod), totDep:money2(totDep),
+    totalEuro:money2(totMat+totMod+totDep)};
+}
+
 function avgMacaronCost(recipes, recipeItems, lots){
   const per = recipes.map(r=>{ const cb=coutRecette(r.id, recipeItems, lots); return r.rendement>0?cb/r.rendement:0; }).filter(x=>x>0);
   return per.length ? per.reduce((a,x)=>a+x,0)/per.length : 0;
@@ -11904,6 +11964,30 @@ function _marketPopup(opts){
 function marketCAPopup(){ _marketPopup({titre:'⛺ CA par marché clôturé', note:'Chiffre d\'affaires encaissé de chaque marché, du plus gros au plus petit. 🟢 au-dessus de la moyenne, 🔴 en dessous.', val:T=>T.caTotal, fmt:v=>euro(v)}); }
 function marketMargePopup(){ _marketPopup({titre:'⛺ Marge nette par marché', note:'Marge nette après coûts (matière, emballage, stand, déplacement) et charges sociales. 🟢 rentable, 🔴 à surveiller.', val:T=>T.margeNette, fmt:v=>euro(v)}); }
 function marketInvendusPopup(){ _marketPopup({titre:'⛺ Taux d\'invendus par marché', note:'Part des macarons embarqués non vendus (retour + don + perte). Ici 🟢 = peu d\'invendus (mieux), 🔴 = beaucoup (à corriger : moins produire ou mieux vendre).', val:T=>T.tauxInvendus, fmt:v=>v+'%', lowerIsBetter:true, asc:true}); }
+// ÉTAPE 1 — Modale du gaspillage chiffré (retours jetés × coût complet).
+let _gaspPeriode = 'tout';
+async function gaspillagePopup(){
+  const start = _gaspPeriode==='tout' ? null : comptaPeriodeStart(_gaspPeriode);
+  let G;
+  try{ G = await computeGaspillage({start}); }
+  catch(e){ console.error('gaspillage',e); toast('Erreur lors du calcul du gaspillage'); return; }
+  const periodeLbl = _gaspPeriode==='tout' ? 'tout l\'historique' : comptaPeriodeDatesLabel(_gaspPeriode);
+  const tabs = [['tout','Tout'],['90j','90 j'],['mois','30 j'],['semaine','7 j']]
+    .map(([k,l])=>`<button class="btn ${_gaspPeriode===k?'gold':'ghost'} sm" onclick="_gaspPeriode='${k}';gaspillagePopup()">${l}</button>`).join('');
+  const lignes = G.lignes.length ? G.lignes.map(l=>`<div class="sum-box">
+      <span>${esc(l.parfum)} <span style="color:#9a8a82">· ${qty(l.qte)} jeté(s)</span><br>
+        <span style="font-size:.72rem;color:#9a8a82">matière ${euro(l.coutMat)} + main d'œuvre ${euro(l.coutMod)} + trajet ${euro(l.coutDep)}</span></span>
+      <b style="color:#b3261e">${euro(l.total)}</b></div>`).join('')
+    : '<p class="note">Aucun macaron jeté sur cette période 🎉 (seuls les retours « 🗑 Écarté » sont comptés).</p>';
+  openModal(`<h3>🗑 Gaspillage chiffré</h3>
+    <p class="note">Coût réel des invendus <b>jetés</b> (retours « écartés »), chiffré matière + main-d'œuvre + quote-part trajet. Période : ${esc(periodeLbl)}.</p>
+    <div class="flex" style="gap:6px;margin-bottom:10px">${tabs}</div>
+    ${G.totQte>0?`<div class="sum-box" style="background:#fdeaea;border:1px solid #e8a9a3">
+      <span><b>Total jeté : ${qty(G.totQte)} macaron(s)</b><br><span style="font-size:.72rem;color:#9a8a82">mat. ${euro(G.totMat)} + M.O. ${euro(G.totMod)} + trajet ${euro(G.totDep)}</span></span>
+      <b style="color:#b3261e;font-size:1.1rem">${euro(G.totalEuro)}</b></div>`:''}
+    ${lignes}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
 function marketVendusPopup(){ _marketPopup({titre:'⛺ Macarons vendus par marché', note:'Volume vendu sur chaque marché. 🟢 au-dessus de la moyenne, 🔴 en dessous.', val:T=>T.vendu, fmt:v=>qty(v)+' pc'}); }
 
 async function renderMarkets(){
@@ -11950,6 +12034,7 @@ async function renderMarkets(){
      <div class="kpi lnk" onclick="marketMargePopup()"><span>Marge nette marchés ${INFO_I}</span><b style="color:${margeNetteTotal>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(margeNetteTotal)}</b></div>
      <div class="kpi lnk" onclick="marketVendusPopup()"><span>Macarons vendus ${INFO_I}</span><b>${qty(venduTotal)}</b></div>
      <div class="kpi lnk" onclick="marketInvendusPopup()"><span>Taux d'invendus moyen ${INFO_I}</span><b>${invMoyen}%</b></div>
+     <div class="kpi lnk" onclick="gaspillagePopup()"><span>🗑 Gaspillage chiffré</span><b style="color:#b3261e">voir →</b></div>
    </div>`:''}
    <div class="panel">
    ${markets.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Marché</th><th>Statut</th><th>CA</th><th>Vendus</th><th>Invendus</th><th></th></tr></thead>
