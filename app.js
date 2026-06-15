@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v368';
+const APP_VERSION = 'v369';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15095,8 +15095,18 @@ async function fixIntegrityIssue(table, ids, fix){
     catch(eBk){ console.error('snapshot avant nettoyage',eBk); /* on continue : la sauvegarde ne doit pas bloquer le nettoyage */ }
     etape='suppression';
     if(fix==='delete'){
-      if(!db[table]){ toast('Table inconnue : '+table); return; }
-      await db[table].bulkDelete(cleanIds);
+      // db.table(name) est la méthode officielle Dexie (plus fiable que l'accès par bracket db[name],
+      // qui peut tomber sur une propriété interne et ne pas exposer bulkDelete).
+      let tbl=null;
+      try{ tbl = (typeof db.table==='function') ? db.table(table) : db[table]; }catch(eT){ tbl = db[table]; }
+      if(!tbl || typeof tbl.bulkDelete!=='function'){
+        // repli : suppression une par une via delete()
+        if(tbl && typeof tbl.delete==='function'){
+          for(const id of cleanIds){ await tbl.delete(id); }
+        } else { toast('Table inaccessible : '+table); return; }
+      } else {
+        await tbl.bulkDelete(cleanIds);
+      }
     } else if(fix==='detachClient'){
       await db.transaction('rw', db.orders, async()=>{ for(const id of cleanIds) await db.orders.update(id,{clientId:null}); });
     } else if(fix==='detachSupplier'){
