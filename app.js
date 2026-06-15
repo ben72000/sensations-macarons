@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v374';
+const APP_VERSION = 'v375';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -412,6 +412,27 @@ async function findPackagingMaterial(taille){
 }
 // Crée les emballages standards (un par format de coffret) s'ils n'existent pas encore.
 // Idempotent : ne recrée pas un format déjà présent. Le stock se gère ensuite par lots.
+// Crée les 2 boîtes blanches comme matières emballage (idempotent : ne recrée pas si déjà présentes).
+// Le coût indiqué est un coût de référence ; il sera affiné par les lots d'emballage reçus.
+async function createBoitesBlanches(){
+  const aCreer=[
+    {nom:'Boîte blch 8/10pcs', capacite:10, prixDefaut:0.14},
+    {nom:'Boîte blch 10/16pcs', capacite:16, prixDefaut:0.18}
+  ];
+  try{
+    const mats=await db.materials.toArray();
+    let nb=0, dejaLa=[];
+    for(const b of aCreer){
+      const existe=mats.some(m=>m.categorie==='emballage' && (m.nom||'').trim().toLowerCase()===b.nom.toLowerCase());
+      if(existe){ dejaLa.push(b.nom); continue; }
+      await db.materials.add({nom:b.nom, unite:'unité', categorie:'emballage', capacite:b.capacite, seuil:0, prixDefaut:b.prixDefaut});
+      nb++;
+    }
+    if(nb>0) toast(`${nb} boîte(s) créée(s) ✓${dejaLa.length?' ('+dejaLa.length+' existait déjà)':''}`);
+    else toast('Ces boîtes existent déjà — rien à créer');
+    if(typeof settingsForm==='function') settingsForm();   // rouvre les paramètres à jour
+  }catch(e){ console.error('createBoitesBlanches',e); toast('Erreur lors de la création'); }
+}
 async function seedEmballages(){
   const mats = await db.materials.toArray();
   const s = getSettings();
@@ -11573,6 +11594,7 @@ async function settingsForm(){
       <div class="field"><label>Charges sociales — prestation (%)</label><input type="number" step="0.1" id="set_ss" value="${s.socialService}"></div>
     </div>
     <p class="note" style="margin-top:8px"><b>Coût emballage par coffret.</b> <span style="color:#9a8a82">Le coût <b>réel</b> est calculé automatiquement sur tes <b>lots d'emballage reçus</b> (moyenne pondérée d'après tes factures). Le tarif saisi ci-dessous ne sert que de <b>repli</b> si aucun lot chiffré n'existe pour ce format.</span></p>
+    <div style="margin:6px 0"><button class="btn ghost sm" type="button" onclick="createBoitesBlanches()">＋ Créer les 2 boîtes blanches (8/10 et 10/16)</button></div>
     <div class="row2">
       ${BOX_SIZES.map(t=>{ const reel=realMap.get(+t); const manuel=s.packaging[t]!=null?s.packaging[t]:0;
         return `<div class="field"><label>Coffret ${t}</label>
