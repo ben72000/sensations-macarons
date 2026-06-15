@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v392';
+const APP_VERSION = 'v393';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -439,6 +439,13 @@ function embMatUnitCost(matId, materials, lots){
 // pour calculer son coût réel sur SES lots uniquement — sans le confondre avec un autre emballage
 // de même capacité (ex: une boîte blanche de capacité 16). Repli : 1re matière emballage de cette
 // capacité dont le nom commence par "Coffret".
+// Rafraîchit le cache des matières (utilisé par les calculs d'emballage synchrones). À appeler
+// après TOUTE modification de matière (ajout/suppression/édition) pour éviter une désynchro
+// cache↔base (ids réattribués → coûts d'emballage faux, ex : coffret 16 prenant le prix d'un
+// ingrédient à 0,01 €).
+async function refreshMatsCache(){
+  try{ window._allMatsCache = await db.materials.toArray(); }catch(e){ console.error('refreshMatsCache',e); }
+}
 function standardCoffretMatId(taille, materials){
   const mats = materials||window._allMatsCache||[];
   const cap=+taille;
@@ -452,27 +459,24 @@ function standardCoffretMatId(taille, materials){
 function coffretEmbInfo(ln, materials, lots, realMap){
   const _mats = materials||window._allMatsCache||[];
   const mode = ln.embMode||'standard';
-  if(mode==='reutilisable') return {cout:0, label:'Réutilisable (client rapporte sa boîte)', _dbg:'mode=reutilisable'};
+  if(mode==='reutilisable') return {cout:0, label:'Réutilisable (client rapporte sa boîte)'};
   if(mode==='autre' && ln.embMatId!=null){
     const m=_mats.find(x=>+x.id===+ln.embMatId);
-    const c=embMatUnitCost(ln.embMatId, _mats, lots||[]);
-    return {cout:c, label:'Autre — '+((m&&m.nom)||'emballage choisi'), _dbg:`mode=autre embMatId=${ln.embMatId} mat="${(m&&m.nom)||'?'}" → ${c}`};
+    return {cout:embMatUnitCost(ln.embMatId, _mats, lots||[]), label:'Autre — '+((m&&m.nom)||'emballage choisi')};
   }
   // STANDARD : coût réel du COFFRET de ce format, calculé sur SES propres lots (pas mélangé avec
   // d'autres emballages de même capacité). Repli sur le tarif paramétré si pas de lot chiffré.
   const stdId = standardCoffretMatId(ln.taille, _mats);
   const supp = (typeof consoCoffretSupplement==='function') ? consoCoffretSupplement(ln.taille) : 0;
-  let base, _src;
+  let base;
   if(stdId!=null){
-    const stdMat=_mats.find(x=>+x.id===+stdId);
-    const sesLots=(lots||[]).filter(l=>+l.materialId===+stdId && (+l.qteInitiale||0)>0 && lotPU(l)>0);
-    const hasLot = sesLots.length>0;
-    if(hasLot){ base = money2(embMatUnitCost(stdId, _mats, lots||[]) + supp); _src=`lot de "${(stdMat&&stdMat.nom)||'?'}" (${sesLots.length} lot(s): ${sesLots.map(l=>lotPU(l)).join(',')}) +supp ${supp}`; }
-    else { base = packagingCost(ln.taille); _src=`tarif paramétré packaging[${ln.taille}] (pas de lot sur "${(stdMat&&stdMat.nom)||'?'}")`; }
+    const hasLot = (lots||[]).some(l=>+l.materialId===+stdId && (+l.qteInitiale||0)>0 && lotPU(l)>0);
+    if(hasLot) base = money2(embMatUnitCost(stdId, _mats, lots||[]) + supp);
+    else base = packagingCost(ln.taille);   // tarif paramétré (inclut déjà le supplément)
   } else {
-    base = packagingCost(ln.taille); _src=`tarif paramétré (aucune matière coffret ${ln.taille} trouvée)`;
+    base = packagingCost(ln.taille);
   }
-  return {cout:money2(base), label:'Standard (selon la taille)', _dbg:`mode=standard taille=${ln.taille} stdId=${stdId} → ${money2(base)} · source: ${_src}`};
+  return {cout:money2(base), label:'Standard (selon la taille)'};
 }
 // Coût emballage d'un format : réel (lots) si dispo, sinon tarif paramétré.
 // Dans les deux cas, on ajoute le supplément des consommables 'coffret' (cartes, stickers…).
@@ -2154,7 +2158,7 @@ async function saveMat(id){
   } else {
     await db.materials.add(o);
   }
-  closeModal(); renderMaterials(); toast('Matière enregistrée ✓');
+  closeModal(); await refreshMatsCache(); renderMaterials(); toast('Matière enregistrée ✓');
 }
 async function delMat(id){
   const mat = await db.materials.get(id);
@@ -2188,6 +2192,7 @@ async function doDelMat(id){
     await db.materials.delete(id);
   });
   closeModal();
+  await refreshMatsCache();
   renderMaterials();
   toast('Matière supprimée');
 }
@@ -6908,7 +6913,10 @@ async function cmdView(id){
   }
   const lignes = orderToLines(o);
   // Pour afficher le coût d'emballage retenu par coffret (contrôle du choix d'emballage).
-  const _embMats = window._allMatsCache || await db.materials.toArray();
+  // IMPORTANT : on lit TOUJOURS la base fraîche (jamais le cache, qui peut être périmé si des
+  // matières ont été supprimées/recréées → ids réattribués). On rafraîchit le cache au passage.
+  const _embMats = await db.materials.toArray();
+  window._allMatsCache = _embMats;
   const _embLots = await db.materialLots.toArray().catch(()=>[]);
   const _embRecipes = await db.recipes.toArray().catch(()=>[]);
   const _embItems = await db.recipeItems.toArray().catch(()=>[]);
@@ -6923,7 +6931,6 @@ async function cmdView(id){
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Parfums non détaillés.</p>'}
         ${totQ&&totQ!==+ln.taille?`<p class="note" style="color:var(--red)">⚠ ${totQ} macarons pour un coffret de ${ln.taille}.</p>`:''}
         <div class="sum-box" style="font-size:.82rem;color:#8a7a72"><span>📦 Emballage : ${esc(_emb.label)}</span><b>${euro(_emb.cout)}</b></div>
-        <div style="font-size:.66rem;color:#b07a4a;background:#fdf6ee;padding:4px 8px;border-radius:6px;margin-top:2px">🔧 debug : ${esc(_emb._dbg||'')}</div>
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
     if(ln.type==='evenement'){
