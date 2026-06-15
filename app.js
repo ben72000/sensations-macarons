@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v395';
+const APP_VERSION = 'v396';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -20951,7 +20951,7 @@ async function renderConsommables(){
     const f=CONSO_FAMILLES[c.famille]||{};
     let detail='';
     if(c.famille==='coffret') detail = `Formats : ${(c.formats||[]).map(t=>t+'').join(', ')||'—'} · +${euro(c.prixUnitaire)}/coffret`;
-    else if(c.famille==='recette') detail = `${euro(c.prixUnitaire)}/pièce${c.recetteNom?` · ${esc(c.recetteNom)}`:''}`;
+    else if(c.famille==='recette') detail = `${euro(c.prixUnitaire)}/pièce${c.tousGF?' · 🍪 tous les grands formats':(c.recetteNom?` · ${esc(c.recetteNom)}`:'')}`;
     else detail = `${euro(c.prixUnitaire)}/${esc(c.unite||'unité')}${c.recurrent?' · récurrent':''}`;
     return `<div class="sum-box" style="align-items:flex-start;gap:10px">
       <span style="flex:0 0 auto;font-size:1.1rem">${f.ico||'•'}</span>
@@ -20983,6 +20983,8 @@ async function renderConsommables(){
      <div class="sum-box"><span>Supplément consommables par coffret</span><b></b></div>
      ${BOX_SIZES_CONSO.map(t=>`<div class="sum-box"><span style="padding-left:10px">· Coffret ${t}</span><b>+${euro(consoCoffretSupplement(t))}</b></div>`).join('')}
      <p class="note">Ce supplément s'ajoute au coût d'emballage du coffret concerné et impacte ta marge par commande.</p>
+     ${consoGrandFormatSupplement()>0?`<div class="sum-box" style="margin-top:10px"><span>✨ Supplément par pièce de grand format</span><b>+${euro(consoGrandFormatSupplement())}</b></div>
+     <p class="note">S'ajoute à chaque pièce de grand format vendue (ex : rond or), quel que soit l'emballage.</p>`:''}
    </div>`;
 }
 
