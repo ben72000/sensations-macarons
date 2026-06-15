@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v365';
+const APP_VERSION = 'v366';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15269,6 +15269,46 @@ async function applyZeroAmountFix(){
 }
 // Diagnostic : reproduit EXACTEMENT le calcul du CA mensuel de l'accueil, commande par commande.
 // Affiche date brute + montant brut + inclusion, pour repérer une commande mal datée ou mal typée.
+// Diagnostic du BILAN encaissé du mois : reproduit computeMonthlyBilan commande par commande,
+// pour comprendre quel chiffre d'encaissé sort et d'où (facturé vs encaissé vs en attente).
+async function diagBilanMois(){
+  const zone=document.getElementById('diagBilanZone');
+  if(zone) zone.innerHTML='<p class="note">Analyse en cours…</p>';
+  const ym=monthKey(today());
+  let rows=[], totFacture=0, totEncaisse=0, totAttente=0;
+  try{
+    const orders=await db.orders.toArray();
+    orders.forEach(o=>{
+      const total=money2(+o.montant||0); if(total<=0) return;
+      const dateMois = monthKey(o.date)===ym;   // commande datée du mois ?
+      // encaissé ce mois (même logique que computeMonthlyBilan)
+      const pays=(o.paiements&&o.paiements.length)?o.paiements
+        :(o.paiement==='Payé'&&o.datePaiement?[{date:o.datePaiement,montant:total}]:[]);
+      let encMois=0; pays.forEach(p=>{ if(monthKey(p.date)===ym) encMois=money2(encMois+money2(p.montant)); });
+      // une commande "Payé" SANS datePaiement ni registre : invisible pour l'encaissé (cas à signaler)
+      const payeSansDate = (o.paiement==='Payé') && !(o.paiements&&o.paiements.length) && !o.datePaiement;
+      if(dateMois){ totFacture=money2(totFacture+total); }
+      if(encMois>0){ totEncaisse=money2(totEncaisse+encMois); }
+      if(dateMois && encMois<total){ totAttente=money2(totAttente+(total-encMois)); }
+      if(dateMois || encMois>0){
+        rows.push({id:o.id, date:o.date, total, encMois, statut:o.statut, paiement:o.paiement,
+                   dateMois, payeSansDate, datePaiement:o.datePaiement||null});
+      }
+    });
+  }catch(e){ console.error('diagBilan',e); }
+  if(!zone) return;
+  const fmtRow = r => `<div class="sum-box" style="align-items:flex-start">
+      <span style="flex:1">${esc(String(r.date||''))} <span style="color:#9a8a82">#${r.id} ${esc(r.statut||'')} · ${esc(r.paiement||'—')}</span>
+        ${r.payeSansDate?'<br><span style="color:#b3261e;font-size:.76rem">⚠ « Payé » sans date de paiement → invisible dans l\'encaissé</span>':''}
+        ${!r.dateMois&&r.encMois>0?'<br><span style="color:#d98324;font-size:.76rem">↳ commande d\'un autre mois, mais encaissée ce mois-ci</span>':''}</span>
+      <span style="text-align:right">facturé <b>${euro(r.total)}</b><br><span style="font-size:.82rem;color:#3f7d52">encaissé ${euro(r.encMois)}</span></span></div>`;
+  zone.innerHTML=`
+    <div class="banner" style="background:#eef5f0;border-color:#bcd9c4;margin-bottom:8px">📊 <div>
+      <b>Facturé ce mois : ${euro(totFacture)}</b><br>
+      <b>Encaissé ce mois : ${euro(totEncaisse)}</b> <span style="color:#9a8a82">(ce que le bilan affiche)</span><br>
+      <b>En attente (facturé non encaissé) : ${euro(totAttente)}</b></div></div>
+    ${rows.map(fmtRow).join('')||'<p class="note">Aucune commande.</p>'}`;
+}
 async function diagCaMonth(){
   const zone=document.getElementById('diagCaZone');
   if(zone) zone.innerHTML='<p class="note">Analyse en cours…</p>';
@@ -15325,6 +15365,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">🔍 Diagnostic CA du mois</h2>
       <p class="note">Liste chaque commande du <b>mois courant</b> avec sa date et son montant, et indique si elle est comptée dans le CA. Permet de repérer une commande qui « disparaît » du total.</p>
       <div id="diagCaZone"><button class="btn gold sm" onclick="diagCaMonth()">Analyser le CA de ce mois</button></div>
+    </div>
+    <div class="panel" style="background:#f0faf4;margin-bottom:12px">
+      <h2 style="font-size:1rem">🧾 Diagnostic Bilan encaissé</h2>
+      <p class="note">Détaille, commande par commande, ce qui entre dans le <b>bilan encaissé du mois</b> (facturé vs encaissé vs en attente). Repère les commandes « Payé » sans date de paiement, qui faussent le total.</p>
+      <div id="diagBilanZone"><button class="btn gold sm" onclick="diagBilanMois()">Analyser le bilan de ce mois</button></div>
     </div>
     <div class="panel" id="integrityBody"><div class="empty">Analyse en cours…</div></div>`;
   const issues = await runIntegrityCheck();
