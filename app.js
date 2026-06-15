@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v415';
+const APP_VERSION = 'v417';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15641,15 +15641,34 @@ async function mergeDump(dump){
 
 // ---- Application d'un dump à la base (remplacement atomique) ----
 async function applyDump(dump){
+  // PROTECTION sessions d'atelier : si le dump importé ne contient PAS de sessions, on préserve
+  // celles déjà présentes (cache + base) au lieu de les effacer. Une restauration de sauvegarde
+  // ancienne/partielle ne doit jamais détruire des sessions absentes du fichier.
+  let sessAvant = [];
+  try{ sessAvant = JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]'); if(!Array.isArray(sessAvant)) sessAvant=[]; }catch(e){ sessAvant=[]; }
+  try{ const enBase = await db.prodSessions.toArray(); if(enBase.length>sessAvant.length) sessAvant = enBase; }catch(e){}
+  const dumpAUneSession = Array.isArray(dump.prodSessions) && dump.prodSessions.length>0;
+
   await db.transaction('rw',...TABLES.map(t=>db.table(t)),async()=>{
     for(const t of TABLES){
+      // on ne vide pas prodSessions si le dump n'en contient pas (préservation)
+      if(t==='prodSessions' && !dumpAUneSession) continue;
       await db.table(t).clear();
       if(Array.isArray(dump[t]) && dump[t].length) await db.table(t).bulkAdd(dump[t]);
     }
   });
   applyLocalSettings(dump); // réapplique les réglages (emballages, charges, préférence de menu…) si présents
-  // Resynchronise le cache localStorage des sessions de production depuis la base restaurée.
-  try{ const ps=await db.prodSessions.toArray(); localStorage.setItem(PROD_SESS_KEY, JSON.stringify(ps)); }catch(e){ console.error('restore prodSess cache', e); }
+  // Resynchronise le cache localStorage des sessions. Si le dump n'avait pas de sessions, on
+  // réinjecte celles qu'on a préservées (et on les remet en base par sécurité).
+  try{
+    if(!dumpAUneSession && sessAvant.length){
+      localStorage.setItem(PROD_SESS_KEY, JSON.stringify(sessAvant));
+      try{ await db.prodSessions.bulkPut(sessAvant); }catch(e){}
+    } else {
+      const ps=await db.prodSessions.toArray();
+      localStorage.setItem(PROD_SESS_KEY, JSON.stringify(ps));
+    }
+  }catch(e){ console.error('restore prodSess cache', e); }
 }
 
 // ---- EXPORT MANUEL (fichier .json téléchargé) ----
@@ -18085,6 +18104,9 @@ function prodSessionEnd(){
   s.end = now;
   prodSessUpsert(s);
   prodStopTicking();
+  // Une session clôturée est une donnée précieuse, vulnérable à une suppression d'app : on
+  // déclenche l'alerte « modifications non sauvegardées » pour rappeler de sauvegarder sur iCloud.
+  if(typeof markUnsaved==='function') markUnsaved();
 }
 // Démarre une tâche labellisée dans la session (en crée une si besoin). N'interrompt PAS les autres.
 function prodTaskStart(label){
@@ -18573,6 +18595,7 @@ function renderAtelier(){
       <button class="btn ghost" onclick="goView('mrp')">🧭 Plan de production →</button></div>
     <div class="banner" style="background:#eef5f0;border-color:#bcd9c6">⏱ <div>C'est <b>ICI</b> que tu mesures ton <b>temps de travail</b> : chaque tâche chronométrée nourrit les <b>estimations du Plan de production</b> (plus tu mesures, plus le calage horaire de tes journées devient juste). <span style="color:#6a8a5a">À ne pas confondre avec le chrono de la page Productions, qui sert seulement au suivi de fraîcheur (DLC).</span></div></div>
     ${prodSessDexieKo()?`<div class="banner" style="background:#fdeaea;border-color:#d9534f">⚠ <div><b>Attention : la sauvegarde sécurisée des chronos a rencontré un souci</b> (${esc(prodSessDexieKo())}). Tes sessions sont encore en mémoire locale mais moins protégées. Ferme et rouvre l'app ; si l'alerte persiste, fais une sauvegarde iCloud par précaution.</div></div>`:''}
+    ${(typeof unsavedCount==='function'&&unsavedCount()>0)?`<div class="banner" style="background:#fff7e6;border-color:#e8d09a">☁️ <div><b>Pense à sauvegarder sur iCloud.</b> Tes sessions ne sont vraiment à l'abri qu'une fois exportées hors de l'appareil. <button class="btn gold sm" style="margin-top:6px" onclick="shareBackupToICloud()">Sauvegarder maintenant</button></div></div>`:''}
     <div class="atelier-tabs">
       <button class="at-tab ${_atelierTab==='pilotage'?'active':''}" onclick="atelierSwitch('pilotage')">⏱ Pilotage</button>
       <button class="at-tab ${_atelierTab==='tableau'?'active':''}" onclick="atelierSwitch('tableau')">📊 Tableau</button>
