@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v389';
+const APP_VERSION = 'v390';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -452,26 +452,27 @@ function standardCoffretMatId(taille, materials){
 function coffretEmbInfo(ln, materials, lots, realMap){
   const _mats = materials||window._allMatsCache||[];
   const mode = ln.embMode||'standard';
-  if(mode==='reutilisable') return {cout:0, label:'Réutilisable (client rapporte sa boîte)'};
+  if(mode==='reutilisable') return {cout:0, label:'Réutilisable (client rapporte sa boîte)', _dbg:'mode=reutilisable'};
   if(mode==='autre' && ln.embMatId!=null){
     const m=_mats.find(x=>+x.id===+ln.embMatId);
-    return {cout:embMatUnitCost(ln.embMatId, _mats, lots||[]), label:'Autre — '+((m&&m.nom)||'emballage choisi')};
+    const c=embMatUnitCost(ln.embMatId, _mats, lots||[]);
+    return {cout:c, label:'Autre — '+((m&&m.nom)||'emballage choisi'), _dbg:`mode=autre embMatId=${ln.embMatId} mat="${(m&&m.nom)||'?'}" → ${c}`};
   }
   // STANDARD : coût réel du COFFRET de ce format, calculé sur SES propres lots (pas mélangé avec
   // d'autres emballages de même capacité). Repli sur le tarif paramétré si pas de lot chiffré.
   const stdId = standardCoffretMatId(ln.taille, _mats);
   const supp = (typeof consoCoffretSupplement==='function') ? consoCoffretSupplement(ln.taille) : 0;
-  let base;
+  let base, _src;
   if(stdId!=null){
-    // a-t-il des lots chiffrés ? embMatUnitCost retombe sur prixDefaut, ce qui peut masquer l'absence
-    const hasLot = (lots||[]).some(l=>+l.materialId===+stdId && (+l.qteInitiale||0)>0 && lotPU(l)>0);
-    if(hasLot) base = embMatUnitCost(stdId, _mats, lots||[]);
-    else base = packagingCost(ln.taille);   // tarif paramétré (inclut déjà le supplément)
-    if(hasLot) base = money2(base + supp);
+    const stdMat=_mats.find(x=>+x.id===+stdId);
+    const sesLots=(lots||[]).filter(l=>+l.materialId===+stdId && (+l.qteInitiale||0)>0 && lotPU(l)>0);
+    const hasLot = sesLots.length>0;
+    if(hasLot){ base = money2(embMatUnitCost(stdId, _mats, lots||[]) + supp); _src=`lot de "${(stdMat&&stdMat.nom)||'?'}" (${sesLots.length} lot(s): ${sesLots.map(l=>lotPU(l)).join(',')}) +supp ${supp}`; }
+    else { base = packagingCost(ln.taille); _src=`tarif paramétré packaging[${ln.taille}] (pas de lot sur "${(stdMat&&stdMat.nom)||'?'}")`; }
   } else {
-    base = packagingCost(ln.taille);
+    base = packagingCost(ln.taille); _src=`tarif paramétré (aucune matière coffret ${ln.taille} trouvée)`;
   }
-  return {cout:money2(base), label:'Standard (selon la taille)'};
+  return {cout:money2(base), label:'Standard (selon la taille)', _dbg:`mode=standard taille=${ln.taille} stdId=${stdId} → ${money2(base)} · source: ${_src}`};
 }
 // Coût emballage d'un format : réel (lots) si dispo, sinon tarif paramétré.
 // Dans les deux cas, on ajoute le supplément des consommables 'coffret' (cartes, stickers…).
@@ -6922,6 +6923,7 @@ async function cmdView(id){
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Parfums non détaillés.</p>'}
         ${totQ&&totQ!==+ln.taille?`<p class="note" style="color:var(--red)">⚠ ${totQ} macarons pour un coffret de ${ln.taille}.</p>`:''}
         <div class="sum-box" style="font-size:.82rem;color:#8a7a72"><span>📦 Emballage : ${esc(_emb.label)}</span><b>${euro(_emb.cout)}</b></div>
+        <div style="font-size:.66rem;color:#b07a4a;background:#fdf6ee;padding:4px 8px;border-radius:6px;margin-top:2px">🔧 debug : ${esc(_emb._dbg||'')}</div>
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
     if(ln.type==='evenement'){
