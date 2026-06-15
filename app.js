@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v347';
+const APP_VERSION = 'v348';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2331,13 +2331,14 @@ function recipeMultiplyFactor(recipeId, factor){
   recipeMultiply(recipeId, target);
 }
 let bomDraft=[];
-async function recForm(id){
+async function recForm(id, prefill){
   const mats = await db.materials.toArray();
   if(!mats.length){toast('Crée d\'abord des matières');return;}
   const allComponents = await db.components.orderBy('nom').toArray().catch(()=>[]);
   let r={produitNom:'',rendement:60};
   bomDraft=[];
   if(id){ r=await db.recipes.get(id); bomDraft=(await db.recipeItems.where('recipeId').equals(id).toArray()).map(it=>({materialId:it.materialId,qteParBatch:it.qteParBatch,partie:it.partie||'',etiquette:it.etiquette||''})); }
+  else if(prefill){ if(prefill.nom) r.produitNom=prefill.nom; if(prefill.grandFormat) r.grandFormat=true; }
   window._matsCache=mats;
   window._componentsCache=allComponents;
   openModal(`<h3>${id?'Modifier':'Nouvelle'} recette</h3>
@@ -10714,7 +10715,7 @@ async function renderParfums(){
         <th style="padding:4px 5px">Produit</th><th style="padding:4px 5px;text-align:right">Vendus</th><th style="padding:4px 5px;text-align:right">CA</th><th style="padding:4px 5px;text-align:right">Marge</th></tr></thead>
       <tbody>
         ${bf.list.map(b=>`<tr style="border-top:1px solid var(--hair)">
-          <td style="padding:6px 5px"><b>${esc(b.nom)}</b>${b.coutUnit==null?'<br><span style="font-size:.72rem;color:#b08a3a">recette à créer</span>':''}</td>
+          <td style="padding:6px 5px"><b>${esc(b.nom)}</b>${b.coutUnit==null?`<br><button class="btn ghost" style="font-size:.7rem;padding:2px 8px;margin-top:3px" onclick="recForm(null,{nom:${JSON.stringify(b.nom)},grandFormat:true})">+ créer la recette</button>`:''}</td>
           <td style="padding:6px 5px;text-align:right">${b.qte}</td>
           <td style="padding:6px 5px;text-align:right">${euro(b.ca)}</td>
           <td style="padding:6px 5px;text-align:right">${b.marge!=null?`<b style="color:#3f7d52">${euro(b.marge)}</b>${b.tauxMarge!=null?`<br><span style="font-size:.72rem;color:#9a8a82">${b.tauxMarge}%</span>`:''}`:'<span style="color:#c9bfb5">—</span>'}</td></tr>`).join('')}
@@ -10817,8 +10818,11 @@ async function renderParfums(){
 
   // parfums sans recette (vendus mais non rattachés)
   const unmatchedBlock=A.unmatched.length?`<div class="panel"><h2>Parfums vendus sans recette <span class="tag warn">${A.unmatched.length}</span></h2>
-     <p class="note">Ces parfums apparaissent dans les ventes mais n'ont pas de recette correspondante — impossible de calculer leur coût/marge. Créez une recette portant le même nom : ${A.unmatched.map(u=>`<b>${esc(u.nom)}</b> (${qty(u.piecesVendues+u.piecesDon)} pc)`).join(', ')}.</p>
-     <button class="btn ghost sm" style="margin-top:8px" onclick="fixFlavorTypos()">🔤 Corriger les doublons d'orthographe</button>
+     <p class="note">Ces parfums apparaissent dans les ventes mais n'ont pas de recette correspondante — impossible de calculer leur coût/marge. <b>Touche un parfum pour créer sa recette</b> (le nom est pré-rempli) :</p>
+     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+       ${A.unmatched.map(u=>`<button class="btn ghost sm" onclick="recForm(null,{nom:${JSON.stringify(u.nom)}})">+ ${esc(u.nom)} <span style="color:#9a8a82">(${qty(u.piecesVendues+u.piecesDon)} pc)</span></button>`).join('')}
+     </div>
+     <button class="btn ghost sm" style="margin-top:10px" onclick="fixFlavorTypos()">🔤 Corriger les doublons d'orthographe</button>
      <p class="note" style="margin-top:4px;font-size:.78rem;color:#9a8a82">Certains de ces noms sont peut-être de simples fautes de frappe (ex : Raffaello vs Rafaello). Ce bouton les uniformise sur tes parfums officiels.</p></div>`:'';
 
   // Pareto
