@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v413';
+const APP_VERSION = 'v414';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -16109,6 +16109,44 @@ async function diagMatBrute(matId){
 }
 // Diagnostic (LECTURE SEULE) : compte les enregistrements par table dans la base ACTUELLE et dans
 // chaque snapshot interne. Permet de voir où sont réellement les commandes (orders).
+// Diagnostic (LECTURE SEULE) des sessions d'atelier : compte ce qu'il y a dans la base Dexie
+// (source de vérité, protégée) vs le cache localStorage (fragile). Permet de savoir si les
+// sessions « disparues » de l'affichage sont en réalité toujours récupérables depuis la base.
+async function diagSessionsAtelier(){
+  const zone=document.getElementById('diagSessZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    let enBase=[], enCache=[];
+    try{ enBase = await db.prodSessions.toArray(); }catch(e){ console.error(e); }
+    try{ enCache = JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]'); if(!Array.isArray(enCache)) enCache=[]; }catch(e){ enCache=[]; }
+    const nbBase=enBase.length, nbCache=enCache.length;
+    // sessions présentes en base mais absentes du cache (récupérables par réhydratation)
+    const idsCache=new Set(enCache.map(s=>s.id));
+    const recuperables=enBase.filter(s=>!idsCache.has(s.id));
+    const tachesBase=enBase.reduce((a,s)=>a+((s.tasks||[]).length),0);
+    let html=`<div class="sum-box" style="background:${nbBase>0?'#eef5f0':'#fdeaea'}"><span><b>Base sécurisée (IndexedDB)</b></span><b>${nbBase} session(s)</b></div>
+      <div style="font-size:.74rem;color:#9a8a82;padding:2px 8px">${tachesBase} tâche(s) chronométrée(s) au total dans la base</div>
+      <div class="sum-box"><span>Cache rapide (localStorage)</span><b>${nbCache} session(s)</b></div>`;
+    if(nbBase>0 && recuperables.length>0){
+      html+=`<div class="banner" style="background:#eef5f0;border-color:#bcd9c6;margin-top:8px"><div><b>${recuperables.length} session(s) récupérable(s)</b> : présentes dans la base sécurisée mais absentes de l'affichage. Le bouton ci-dessous les réinjecte dans la vue.</div></div>
+        <button class="btn gold" style="margin-top:8px" onclick="fixRestoreSessions()">↻ Restaurer mes sessions depuis la base</button>`;
+    } else if(nbBase>0 && nbBase===nbCache){
+      html+=`<p class="note" style="margin-top:6px;color:#3f7d52">✓ Base et affichage sont synchronisés (${nbBase} sessions). Si le Journal semble vide, ferme et rouvre l'app.</p>`;
+    } else if(nbBase===0){
+      html+=`<p class="note" style="margin-top:6px;color:#b3261e">Aucune session dans la base sécurisée. Si tu as une sauvegarde iCloud récente, on pourra la restaurer.</p>`;
+    }
+    if(zone) zone.innerHTML=html;
+  }catch(e){ console.error('diagSessionsAtelier',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
+}
+// Réinjecte dans le cache (et l'affichage) toutes les sessions présentes dans la base Dexie.
+async function fixRestoreSessions(){
+  try{
+    const enBase = await db.prodSessions.toArray();
+    if(!enBase.length){ toast('Aucune session en base à restaurer'); return; }
+    localStorage.setItem(PROD_SESS_KEY, JSON.stringify(enBase));
+    toast(`${enBase.length} session(s) restaurée(s) ✓`);
+    diagSessionsAtelier();
+  }catch(e){ console.error('fixRestoreSessions',e); toast('Erreur pendant la restauration'); }
+}
 async function diagComptageTables(){
   const zone=document.getElementById('diagCountZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
   try{
@@ -16412,6 +16450,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">🍪 Diagnostic grands formats</h2>
       <p class="note">Pour chaque grand format, vérifie qu'il a bien une <b>recette « grand format »</b>, un coût calculable, du stock et des ventes. Repère ceux qui ne sont pas encore connectés (souvent : recette manquante).</p>
       <div id="diagGFZone"><button class="btn gold sm" onclick="diagGrandsFormats()">Analyser mes grands formats</button></div>
+    </div>
+    <div class="panel" style="background:#fdf3e7;margin-bottom:12px;border:1px solid #e8d09a">
+      <h2 style="font-size:1rem">⏱ Mes sessions d'atelier (chronos)</h2>
+      <p class="note">Vérifie si tes sessions de l'atelier sont toujours dans la base sécurisée, même si le Journal semble vide. Permet de les restaurer.</p>
+      <div id="diagSessZone"><button class="btn gold sm" onclick="diagSessionsAtelier()">Vérifier mes sessions d'atelier</button></div>
     </div>
     <div class="panel" style="background:#fdf3e7;margin-bottom:12px;border:1px solid #e8d09a">
       <h2 style="font-size:1rem">🔎 Où sont mes commandes ?</h2>
