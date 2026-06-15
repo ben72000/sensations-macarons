@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v393';
+const APP_VERSION = 'v395';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6943,8 +6943,17 @@ async function cmdView(id){
     }
     if(ln.type==='grand'){
       const items=(ln.items||[]).filter(p=>p.qte>0);
+      const _embMode=ln.embMode||'reutilisable';
+      const _embMat=_embMode==='autre'&&ln.embMatId!=null?_embMats.find(x=>+x.id===+ln.embMatId):null;
+      const _embCout=_embMode==='autre'&&ln.embMatId!=null?embMatUnitCost(ln.embMatId,_embMats,_embLots):0;
+      const _embLabel=_embMode==='reutilisable'?'Réutilisable (0 €)':('Boîte — '+((_embMat&&_embMat.nom)||'?'));
+      const _nbGF=items.reduce((s,p)=>s+(+p.qte||0),0);
+      const _suppGF=(typeof consoGrandFormatSupplement==='function')?consoGrandFormatSupplement():0;
+      const _suppLine=(_suppGF>0&&_nbGF>0)?`<div class="sum-box" style="font-size:.82rem;color:#8a7a72"><span>✨ Consommable GF (×${_nbGF})</span><b>${euro(_suppGF*_nbGF)}</b></div>`:'';
       return `<div class="cmd-line"><div class="line-type">Grand format <span class="line-sub">tarif ${esc(ln.tarif||'particulier')}</span></div>
         ${items.length?`<div style="margin-top:6px">${items.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun.</p>'}
+        <div class="sum-box" style="font-size:.82rem;color:#8a7a72"><span>📦 Emballage : ${esc(_embLabel)}</span><b>${euro(_embCout)}</b></div>
+        ${_suppLine}
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
     if(ln.type==='vrac'){
@@ -7077,7 +7086,7 @@ function _lineToEdit(ln){
   const t=ln.type;
   if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null};
   if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
-  if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0};
+  if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items)};
   if(t==='prestation') return {type:'prestation', presta:ln.presta||'', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, dureeH:+ln.dureeH||0, mode:ln.mode||'', detail:ln.detail||'', remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0};
@@ -7554,12 +7563,27 @@ function drawBigLine(ln,i){
     </select></div>
     <label style="font-size:.78rem;color:#7a6a62">Produits (quantité)</label>
     <div class="flav-grid">${bigRows}</div>
+    ${(()=>{
+      const mode = ln.embMode || 'reutilisable';   // défaut GF : pas de boîte facturée
+      const embOpts = cmdEmballagesCache.map(m=>`<option value="${m.id}" ${(+ln.embMatId===+m.id)?'selected':''}>${esc(m.nom)}${m.capacite?` (${m.capacite} mac.)`:''}</option>`).join('');
+      return `<div class="field"><label>Emballage <span style="color:#9a8a82;font-weight:400">— ajuste le coût</span></label>
+        <select onchange="setBigEmbMode(${i},this.value)">
+          <option value="reutilisable" ${mode==='reutilisable'?'selected':''}>Réutilisable (0 € — le client rapporte sa boîte)</option>
+          <option value="autre" ${mode==='autre'?'selected':''}>Boîte blanche / autre (choisir dans ma liste)</option>
+        </select>
+        ${mode==='autre'?`<select style="margin-top:6px" onchange="setBigEmbMat(${i},this.value)">
+          <option value="">— choisir un emballage —</option>${embOpts}
+        </select>${!cmdEmballagesCache.length?'<p class="note" style="color:var(--red)">Aucun emballage créé. Ajoute-en dans Stock → Matières (catégorie emballage).</p>':''}`:''}
+      </div>`;
+    })()}
     <div class="sum-box"><span>${tot} pièce(s) × ${euro(pu)}</span><b>${euro(tot*pu)}</b></div>
     ${lineRemiseRow(ln,i)}
   </div>`;
 }
 function setBigTarif(i,v){ cmdLines[i].tarif=v; drawLines(); }
 function setBigItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdLines[i].items[f]=q; else delete cmdLines[i].items[f]; drawLines(); }
+function setBigEmbMode(i,v){ cmdLines[i].embMode=v; if(v!=='autre') cmdLines[i].embMatId=null; drawLines(); }
+function setBigEmbMat(i,v){ cmdLines[i].embMatId = v?+v:null; drawLines(); }
 
 // Ligne VRAC PRO : macarons standards en boîte réutilisable (non facturée), au tarif pro/macaron.
 function drawVracLine(ln,i){
@@ -7749,7 +7773,7 @@ function cmdLinesToStored(){
     const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
     if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+    if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', remisePct:rp, parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0)};
@@ -8609,7 +8633,18 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
       // Coût d'emballage selon le choix fait sur la ligne (Standard / Réutilisable / Autre).
       coutEmb=money2(coutEmb+coffretEmbInfo(ln, materials||window._allMatsCache||[], lots||[], realPkg).cout);
     }
-    else if(ln.type==='grand') pieces=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    else if(ln.type==='grand'){
+      pieces=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
+      // Emballage du grand format : réutilisable (0 €) ou boîte choisie (prix de la matière).
+      const embMode = ln.embMode || 'reutilisable';
+      if(embMode==='autre' && ln.embMatId!=null){
+        coutEmb=money2(coutEmb+embMatUnitCost(ln.embMatId, materials||window._allMatsCache||[], lots||[]));
+      }
+      // Consommable par pièce de grand format (ex : rond or), systématique × nb de pièces.
+      const suppGF = (typeof consoGrandFormatSupplement==='function') ? consoGrandFormatSupplement() : 0;
+      if(suppGF>0 && pieces>0) coutEmb=money2(coutEmb + pieces*suppGF);
+      // 'reutilisable' → 0 € pour la boîte (rien à ajouter)
+    }
     else if(ln.type==='vrac') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);  // boîte réutilisable : pas de coût emballage
     else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
     else if(ln.type==='histo'){
@@ -20899,6 +20934,13 @@ function consoCoffretSupplement(taille){
     .filter(c=>c.famille==='coffret' && Array.isArray(c.formats) && c.formats.includes(+taille))
     .reduce((a,c)=>a+(+c.prixUnitaire||0),0));
 }
+// Coût des consommables qui s'appliquent à CHAQUE PIÈCE de grand format (ex : rond or),
+// déclarés famille « recette » avec l'option « tous les grands formats ». Par pièce.
+function consoGrandFormatSupplement(){
+  return money2(getConsommables()
+    .filter(c=>c.famille==='recette' && c.tousGF)
+    .reduce((a,c)=>a+(+c.prixUnitaire||0),0));
+}
 
 async function renderConsommables(){
   const main=document.getElementById('main'); if(!main) return;
@@ -20976,8 +21018,13 @@ function consoFormFam(preset){
       </div>
       <p class="note">Coche les tailles de coffret qui contiennent ce consommable (ex : carte de visite → 16 et 25 seulement).</p></div>`;
   } else {
-    extra.innerHTML=`<div class="field"><label>Recette concernée</label><input id="co_recette" value="${esc(c.recetteNom||'')}" placeholder="ex : Grand format / Praliné">
-      <p class="note">Ce coût s'ajoutera au consommable par pièce de la recette. (Rattachement fin à venir : pour l'instant, note la recette ici.)</p></div>`;
+    extra.innerHTML=`<div class="field">
+      <label class="pay-opt" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="co_allgf" ${c.tousGF?'checked':''} onchange="document.getElementById('co_recetteWrap').style.display=this.checked?'none':'block'"> <span>S'applique à <b>tous les grands formats</b> (par pièce)</span></label>
+      <p class="note">Coché : ce coût (ex : un rond or) s'ajoute automatiquement à chaque pièce de grand format vendue, quel que soit le parfum ou l'emballage.</p>
+      <div id="co_recetteWrap" style="display:${c.tousGF?'none':'block'}">
+        <label>Recette concernée</label><input id="co_recette" value="${esc(c.recetteNom||'')}" placeholder="ex : Grand format / Praliné">
+        <p class="note">Sinon, cible une recette précise par son nom (rattachement fin à venir).</p>
+      </div></div>`;
   }
 }
 function consoSave(idx){
@@ -20988,7 +21035,7 @@ function consoSave(idx){
   const item={nom, famille, prixUnitaire};
   if(famille==='atelier'){ item.unite=(val('co_unite')||'unité').trim(); item.recurrent=!!document.getElementById('co_recur')?.checked; }
   else if(famille==='coffret'){ item.formats=[...document.querySelectorAll('.co_fmt:checked')].map(x=>+x.value); }
-  else { item.recetteNom=(val('co_recette')||'').trim(); }
+  else { item.recetteNom=(val('co_recette')||'').trim(); item.tousGF=!!document.getElementById('co_allgf')?.checked; }
   const list=getConsommables();
   if(idx>=0) list[idx]=item; else list.push(item);
   saveConsommables(list);
