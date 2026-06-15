@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v348';
+const APP_VERSION = 'v349';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -194,13 +194,13 @@ const PRESET_DELIVERY_PLACES = [
 // peu fiable sur iOS). Affiche les suggestions au focus et filtre à la frappe.
 function acFilter(q){
   const list = document.getElementById('acList'); if(!list) return;
-  const term = (q||'').trim().toLowerCase();
+  const term = normTxt((q||'').trim());
   // 1) Adresses du carnet (avec distance/temps) — proposées en priorité.
   const book = (getSettings().addressBook||[]);
-  const bookMatch = (term ? book.filter(a=>(a.libelle||'').toLowerCase().includes(term)) : book).slice(0,6);
+  const bookMatch = (term ? book.filter(a=>normTxt(a.libelle||'').includes(term)) : book).slice(0,6);
   // 2) Lieux issus des commandes passées / clients (simples chaînes).
   const all = window.__placesCache || [];
-  const plainMatch = (term ? all.filter(p=>p.toLowerCase().includes(term)) : all).slice(0, 6);
+  const plainMatch = (term ? all.filter(p=>normTxt(p).includes(term)) : all).slice(0, 6);
   let html = '';
   if(bookMatch.length){
     html += bookMatch.map((a,i)=>{
@@ -7151,8 +7151,8 @@ function cmdSyncPayUI(){ if(typeof cmdUpdatePaySummary==='function') cmdUpdatePa
 function filterCmdClients(q){
   const sel=document.getElementById('f_cl'); if(!sel)return;
   const cur=sel.value;
-  const term=(q||'').trim().toLowerCase();
-  const norm=s=>(s||'').toLowerCase();
+  const term=normTxt((q||'').trim());
+  const norm=s=>normTxt(s||'');
   const digits=s=>(s||'').replace(/[^0-9]/g,'');
   const qd=digits(q);
   const matches = !term ? cmdClientsCache : cmdClientsCache.filter(c=>{
