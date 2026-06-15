@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v366';
+const APP_VERSION = 'v367';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15271,6 +15271,42 @@ async function applyZeroAmountFix(){
 // Affiche date brute + montant brut + inclusion, pour repérer une commande mal datée ou mal typée.
 // Diagnostic du BILAN encaissé du mois : reproduit computeMonthlyBilan commande par commande,
 // pour comprendre quel chiffre d'encaissé sort et d'où (facturé vs encaissé vs en attente).
+// Détecte les commandes dont la date de paiement tombe dans un mois DIFFÉRENT de la commande
+// (signal d'une date de paiement par défaut mal posée, ex : today() sur une commande historique).
+async function diagSuspectPayDates(){
+  const zone=document.getElementById('diagPayZone');
+  if(zone) zone.innerHTML='<p class="note">Recherche en cours…</p>';
+  const todayStr=today();
+  let rows=[];
+  try{
+    const orders=await db.orders.toArray();
+    orders.forEach(o=>{
+      if(o.paiement!=='Payé') return;
+      const moisCmd=monthKey(o.date);
+      // date de paiement effective : registre (dernier paiement) sinon champ datePaiement
+      let datePay=o.datePaiement||'';
+      if(o.paiements&&o.paiements.length){ datePay=o.paiements.reduce((d,p)=>p.date&&p.date>d?p.date:d,''); }
+      if(!datePay) return;
+      const moisPay=monthKey(datePay);
+      if(moisCmd && moisPay && moisCmd!==moisPay){
+        rows.push({id:o.id, dateCmd:o.date, datePay, montant:money2(+o.montant||0),
+                   estAujourdhui: datePay.slice(0,10)===todayStr});
+      }
+    });
+  }catch(e){ console.error('diagPay',e); }
+  if(!zone) return;
+  if(!rows.length){
+    zone.innerHTML='<div class="banner" style="background:#eef6ee;border-color:#bcd9c2">✅ <div>Aucune date de paiement suspecte : pour chaque commande payée, le mois du paiement correspond au mois de la commande.</div></div>';
+    return;
+  }
+  rows.sort((a,b)=>(b.estAujourdhui?1:0)-(a.estAujourdhui?1:0));
+  zone.innerHTML=`<div class="banner" style="background:#fdf6ec;border-color:#e8cfa0;margin-bottom:8px">⚠ <div><b>${rows.length} commande(s)</b> dont le mois de paiement diffère du mois de commande. Vérifie leur date de paiement (rouvre la commande pour corriger).</div></div>
+    ${rows.map(r=>`<div class="sum-box" style="align-items:flex-start">
+      <span style="flex:1">Commande #${r.id}<br>
+        <span style="font-size:.8rem;color:#9a8a82">commandée le ${esc(fmtDate(r.dateCmd))}</span><br>
+        <span style="font-size:.8rem;color:${r.estAujourdhui?'#b3261e':'#d98324'}">payée le ${esc(fmtDate(r.datePay))}${r.estAujourdhui?' ⚠ = date du jour (suspect)':''}</span></span>
+      <b>${euro(r.montant)}</b></div>`).join('')}`;
+}
 async function diagBilanMois(){
   const zone=document.getElementById('diagBilanZone');
   if(zone) zone.innerHTML='<p class="note">Analyse en cours…</p>';
@@ -15370,6 +15406,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">🧾 Diagnostic Bilan encaissé</h2>
       <p class="note">Détaille, commande par commande, ce qui entre dans le <b>bilan encaissé du mois</b> (facturé vs encaissé vs en attente). Repère les commandes « Payé » sans date de paiement, qui faussent le total.</p>
       <div id="diagBilanZone"><button class="btn gold sm" onclick="diagBilanMois()">Analyser le bilan de ce mois</button></div>
+    </div>
+    <div class="panel" style="background:#fdf6ec;margin-bottom:12px">
+      <h2 style="font-size:1rem">📆 Dates de paiement suspectes</h2>
+      <p class="note">Repère les commandes payées dont la <b>date de paiement tombe dans un autre mois</b> que la commande — souvent une date posée par défaut (date du jour) sur une commande historique. Ces commandes faussent le bilan du mois où elles « atterrissent ».</p>
+      <div id="diagPayZone"><button class="btn gold sm" onclick="diagSuspectPayDates()">Rechercher les dates suspectes</button></div>
     </div>
     <div class="panel" id="integrityBody"><div class="empty">Analyse en cours…</div></div>`;
   const issues = await runIntegrityCheck();
