@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v400';
+const APP_VERSION = 'v401';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1566,6 +1566,7 @@ async function renderDash(){
    </div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
+   ${unsavedCount()>0?`<div class="banner" style="background:#fdeaea;border:1.5px solid #d9534f"><div style="flex:1"><b>⚠ ${unsavedCount()} modification(s) non sauvegardée(s) sur iCloud.</b><br><span style="font-size:.84rem">Tes données récentes ne sont PAS encore à l'abri. Sur iPhone, un effacement de Safari peut les perdre définitivement. <b>Sauvegarde maintenant.</b></span><br><button class="btn gold" style="margin-top:8px" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud maintenant</button></div></div>`:''}
    ${!releveFait?`<div class="banner">🌡 <div><b>Relevé de température non fait aujourd'hui.</b> Pense à le saisir et à <b>valider</b>. <span class="act" onclick="goView('pms')">Faire le relevé →</span></div></div>`:''}
    ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
    ${(_gaspReady && _gaspReady.ready && !_gaspDismissed())?`<div class="banner" style="background:#eef6ef;border-color:#bcd9c4">✅ <div><b>Aide aux quantités activable</b> — tu as ${_gaspReady.nbVentiles} marchés avec invendus bien renseignés. L'app peut maintenant te conseiller combien produire par parfum pour limiter le gaspillage. <span class="act" onclick="gaspillagePopup()">Voir le gaspillage →</span> · <span class="act" onclick="_gaspDismiss()">Plus tard</span></div></div>`:''}
@@ -3170,6 +3171,7 @@ async function docConvertToOrder(id){
   syncPaymentFields(o);
   const oid=await db.orders.add(o);
   await db.documents.update(id, {statut:'accepte', orderId:oid});
+  markUnsaved();
   closeModal(); toast('Devis converti en commande ✓');
   if(view==='documents') renderDocuments();
 }
@@ -8040,6 +8042,7 @@ async function saveCmd(id){
   }
   let oid=id;
   if(id) await db.orders.update(id,o); else oid=await db.orders.add(o);
+  markUnsaved();
   // calendrier : recréer l'événement lié
   await db.events.where('refId').equals(oid).delete().catch(()=>{});
   const cb=document.getElementById('f_cal');
@@ -15411,6 +15414,13 @@ const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
+// --- Compteur de modifications non sauvegardées (protection anti-perte) ---
+// Incrémenté à chaque ajout/modif/suppression de données importantes ; remis à 0 après une vraie
+// sauvegarde iCloud/export. Une alerte accueil insiste tant qu'il est > 0.
+function unsavedCount(){ try{ return parseInt(localStorage.getItem('sm_unsaved')||'0',10)||0; }catch(e){ return 0; } }
+function markUnsaved(){ try{ localStorage.setItem('sm_unsaved', String(unsavedCount()+1)); }catch(e){} }
+function clearUnsaved(){ try{ localStorage.setItem('sm_unsaved','0'); }catch(e){} }
+
 // ---- Construction d'un instantané structuré ----
 async function buildDump(){
   const dump={_app:'sensations-macarons',_version:BACKUP_VERSION,_date:new Date().toISOString()};
@@ -15577,6 +15587,7 @@ async function shareBackupToICloud(opts){
         localStorage.setItem('sm_lastICloud', today());
         localStorage.setItem('sm_lastExport', today());
         localStorage.removeItem('sm_exportSnooze');
+        clearUnsaved();
         try{ await snapshotBackup('icloud'); }catch(e){}
         toast('Sauvegarde envoyée — enregistre-la dans iCloud Drive ✓');
         if(typeof renderBackups==='function' && view==='backups') renderBackups();
@@ -15589,6 +15600,7 @@ async function shareBackupToICloud(opts){
     a.download=nomFichier; a.click();
     localStorage.setItem('sm_lastExport', today());
     localStorage.removeItem('sm_exportSnooze');
+    clearUnsaved();
     try{ await snapshotBackup('icloud'); }catch(e){}
     toast('Partage direct indisponible : fichier téléchargé. Range-le dans iCloud Drive.');
     return true;
@@ -16572,6 +16584,7 @@ async function migSaveOrder(){
     statut:'Livrée', paiement:'Payé', histo:true, histoLabel:label||'',
     lignes, paiements:[], notes:'(reprise / historique)' };
   await db.orders.add(o);
+  markUnsaved();
   const nbMac=parfums.reduce((s,p)=>s+p.qte,0);
   const nbDon=dons.reduce((s,p)=>s+p.qte,0);
   toast(`Enregistré : ${euro(montant)}${nbMac?` · ${nbMac} vendu(s)`:''}${nbDon?` · 🎁 ${nbDon} offert(s)`:''} ✓`);
