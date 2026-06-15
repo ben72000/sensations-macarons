@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v361';
+const APP_VERSION = 'v362';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7802,7 +7802,18 @@ async function saveCmd(id){
     if(!p.moyen){ toast('Chaque encaissement doit avoir un mode de paiement'); return; }
   }
   const paiements = touched.map(p=>({ date:p.date, montant:money2(+p.montant||0), moyen:p.moyen }));
-  const montant=money2(+val('f_mt')||0);
+  // Montant : on lit le champ « Prix total » (modifiable). MAIS s'il est vide ou à 0
+  // alors que la commande a des lignes valides, on le RECALCULE depuis les lignes
+  // (sous-total − remise globale + persos), pour ne jamais enregistrer une commande à 0 €
+  // par accident (cas où l'auto-calcul du champ a été désactivé puis laissé vide).
+  let montant = money2(+val('f_mt')||0);
+  if(montant<=0){
+    const sousTotal = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
+    const remiseG = money2(sousTotal*remiseGlobale/100);
+    const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+    const recalc = Math.max(0, money2(sousTotal - remiseG + persoSup));
+    if(recalc>0) montant = recalc;
+  }
   const o={
     clientId:+val('f_cl')||0, date:val('f_date'),
     heureLivraison: val('f_heure')||'', lieuLivraison: val('f_lieu')||'',
@@ -15201,9 +15212,55 @@ function guideToggle(ti,ii){
   if(card) card.classList.toggle('open', open);
 }
 
+// Recherche les commandes dont montant<=0 mais dont les lignes totalisent un montant>0,
+// puis propose de recalculer le vrai montant depuis les lignes.
+async function scanZeroAmountOrders(){
+  const zone=document.getElementById('fixZeroZone');
+  if(zone) zone.innerHTML='<p class="note">Recherche en cours…</p>';
+  let touched=[];
+  try{
+    const orders=await db.orders.toArray();
+    orders.forEach(o=>{
+      const m=money2(+o.montant||0);
+      if(m>0) return;   // déjà un montant correct
+      const lignes=(o.lignes||[]);
+      if(!lignes.length) return;
+      let recalc=0;
+      try{ recalc=lignes.reduce((a,ln)=>a+(typeof lineTotalStored==='function'?lineTotalStored(ln):0),0); }catch(e){}
+      recalc=money2(recalc);
+      if(recalc>0) touched.push({id:o.id, date:o.date, recalc});
+    });
+  }catch(e){ console.error('scanZero',e); }
+  if(!zone) return;
+  if(!touched.length){
+    zone.innerHTML='<div class="banner" style="background:#eef6ee;border-color:#bcd9c2">✅ <div>Aucune commande à 0 € à réparer : tous les montants sont consolidés.</div></div>';
+    return;
+  }
+  _zeroFixList=touched;
+  const tot=money2(touched.reduce((s,t)=>s+t.recalc,0));
+  zone.innerHTML=`<div class="banner" style="background:#fdf6ec;border-color:#e8cfa0;margin-bottom:8px">⚠ <div><b>${touched.length} commande(s)</b> à 0 € avec un montant réel total de <b>${euro(tot)}</b>.</div></div>
+    ${touched.map(t=>`<div class="sum-box"><span>Commande du ${fmtDate(t.date)} (#${t.id})</span><b>→ ${euro(t.recalc)}</b></div>`).join('')}
+    <div style="margin-top:10px"><button class="btn gold" onclick="applyZeroAmountFix()">Corriger ces ${touched.length} commande(s)</button></div>`;
+}
+let _zeroFixList=[];
+async function applyZeroAmountFix(){
+  if(!_zeroFixList.length) return;
+  let n=0;
+  try{
+    for(const t of _zeroFixList){ await db.orders.update(t.id, {montant:t.recalc}); n++; }
+  }catch(e){ console.error('applyZeroFix',e); }
+  toast(n+' commande(s) corrigée(s) ✓');
+  _zeroFixList=[];
+  scanZeroAmountOrders();   // rafraîchit (devrait afficher « aucune à réparer »)
+}
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
+    <div class="panel" style="background:#fbf7f0;margin-bottom:12px">
+      <h2 style="font-size:1rem">💶 Commandes à 0 €</h2>
+      <p class="note">Recherche les commandes dont le <b>prix total est à 0 €</b> alors qu'elles contiennent des macarons (montant non consolidé à l'enregistrement). L'outil recalcule le vrai montant depuis les lignes.</p>
+      <div id="fixZeroZone"><button class="btn gold sm" onclick="scanZeroAmountOrders()">Rechercher les commandes à 0 €</button></div>
+    </div>
     <div class="panel" id="integrityBody"><div class="empty">Analyse en cours…</div></div>`;
   const issues = await runIntegrityCheck();
   const body=document.getElementById('integrityBody'); if(!body) return;
