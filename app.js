@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v369';
+const APP_VERSION = 'v370';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -11608,7 +11608,16 @@ function marketInvendusPopup(){ _marketPopup({titre:'⛺ Taux d\'invendus par ma
 function marketVendusPopup(){ _marketPopup({titre:'⛺ Macarons vendus par marché', note:'Volume vendu sur chaque marché. 🟢 au-dessus de la moyenne, 🔴 en dessous.', val:T=>T.vendu, fmt:v=>qty(v)+' pc'}); }
 
 async function renderMarkets(){
-  const markets=(await db.markets.toArray()).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const markets=(await db.markets.toArray()).sort((a,b)=>{
+    // Les marchés d'un même groupe (multi-jours) restent ensemble : on trie par la date du
+    // groupe (date du jour 1), puis par numéro de jour, puis par date pour les marchés simples.
+    const ka = a.mkGroup ? (a.mkGroup+'#'+(a.mkGroupDay||0)) : (a.date||'');
+    const kb = b.mkGroup ? (b.mkGroup+'#'+(b.mkGroupDay||0)) : (b.date||'');
+    // clé de tri principale = date la plus récente du marché ou de son groupe (ordre décroissant)
+    const da = a.date||'', dbb = b.date||'';
+    if(da!==dbb) return dbb.localeCompare(da);
+    return ka.localeCompare(kb);
+  });
   const moves=await db.marketMoves.toArray();
   const movesByMarket={}; moves.forEach(mv=>{ (movesByMarket[mv.marketId] ||= []).push(mv); });
   const [recipes, recipeItems, lots] = await Promise.all([db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()]);
@@ -11623,9 +11632,9 @@ async function renderMarkets(){
   const invMoyen = nbClos>0?Math.round(sumInvendus/nbClos*10)/10:0;
   _marketsPer = perMarket.filter(x=>x.mk.statut==='clos');   // pour les popups détaillés
 
-  const rows=perMarket.map(({mk,T})=>`<tr>
+  const rows=perMarket.map(({mk,T})=>`<tr${mk.mkGroup?' style="box-shadow:inset 3px 0 0 #c9a227"':''}>
      <td>${fmtDate(mk.date)}</td>
-     <td><b>${esc(mk.nom||'—')}</b>${mk.histo?' <span class="tag" style="background:#eef2fb;color:#3b6ea5">📥 Hist.</span>':''}<br><span style="color:#9a8a82;font-size:.75rem">${esc(mk.lieu||'')}</span></td>
+     <td><b>${esc(mk.nom||'—')}</b>${mk.histo?' <span class="tag" style="background:#eef2fb;color:#3b6ea5">📥 Hist.</span>':''}${mk.mkGroup?` <span class="tag" style="background:#f3ecdd;color:#8a6d3b">📅 Jour ${mk.mkGroupDay||'?'}/${mk.mkGroupTotal||'?'}</span>`:''}<br><span style="color:#9a8a82;font-size:.75rem">${esc(mk.lieu||'')}</span></td>
      <td>${mk.statut==='clos'?`<span class="tag done">Clos</span>`:`<span class="tag todo">Ouvert</span>`}</td>
      <td>${mk.statut==='clos'?euro(T.caTotal):'—'}</td>
      <td>${T.vendu>0||mk.statut==='clos'?qty(T.vendu):'—'}</td>
