@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v386';
+const APP_VERSION = 'v388';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -410,11 +410,13 @@ function embCostHierarchie(mat, lots, settings){
     let ct=0,qt=0; sien.forEach(l=>{ const q=+l.qteInitiale||0; ct+=lotPU(l)*q; qt+=q; });
     if(qt>0) return {cout:money2(ct/qt), source:'lot reçu'};
   }
-  // 2) tarif paramétré (par capacité) — prioritaire sur l'ancien prixDefaut
-  if(+mat.capacite>0 && s.packaging && s.packaging[+mat.capacite]!=null){
+  // 2) tarif paramétré (par capacité) — RÉSERVÉ aux vrais coffrets standards (nom « Coffret N »).
+  //    Une boîte spécifique (ex : boîte blanche de capacité 16) ne doit PAS hériter du tarif coffret.
+  const estCoffretStd = /^coffret\b/i.test((mat.nom||'').trim()) && BOX_SIZES.includes(+mat.capacite);
+  if(estCoffretStd && s.packaging && s.packaging[+mat.capacite]!=null){
     return {cout:money2(+s.packaging[+mat.capacite]), source:'tarif paramétré'};
   }
-  // 3) prix de référence de la matière (ex : boîtes blanches sans tarif paramétré)
+  // 3) prix de référence de la matière (boîtes blanches, formats spécifiques…)
   if(+mat.prixDefaut>0) return {cout:money2(+mat.prixDefaut), source:'prix de référence'};
   return {cout:0, source:'non défini'};
 }
@@ -11931,10 +11933,12 @@ async function settingsForm(){
   // Coût RÉEL d'emballage par format, calculé sur les lots effectivement reçus (factures).
   let realMap=new Map();
   let _settingsLots=[];
+  let _settingsMats=[];
   try{
     const [mats, lots] = await Promise.all([db.materials.toArray(), db.materialLots.toArray()]);
     realMap = realPackagingCostMap(mats, lots);
     _settingsLots = lots;
+    _settingsMats = mats;
   }catch(e){ console.error('settingsForm realMap', e); }
   openModal(`<h3>Paramètres de gestion</h3>
     <p class="note">Charges sociales appliquées au calcul de la marge nette.</p>
@@ -11957,9 +11961,10 @@ async function settingsForm(){
       // Autres emballages à capacité (ex : boîtes blanches) qui ne sont pas des coffrets standards.
       // Affichés ici pour une vue d'ensemble ; leur coût vient de leurs lots ou de leur prix de
       // référence (modifiable sur la fiche matière), pas du tableau ci-dessus.
-      const mats = (window._allMatsCache||[]).filter(m=>m.categorie==='emballage' && +m.capacite>0 && !BOX_SIZES.includes(+m.capacite));
+      const _src = (_settingsMats && _settingsMats.length) ? _settingsMats : (window._allMatsCache||[]);
+      const mats = _src.filter(m=>m.categorie==='emballage' && +m.capacite>0 && !BOX_SIZES.includes(+m.capacite));
       // on inclut aussi les emballages de capacité standard mais au nom NON-coffret (ex: boîte blanche cap 16)
-      const matsStdCap = (window._allMatsCache||[]).filter(m=>m.categorie==='emballage' && BOX_SIZES.includes(+m.capacite) && !/^coffret\b/i.test((m.nom||'').trim()));
+      const matsStdCap = _src.filter(m=>m.categorie==='emballage' && BOX_SIZES.includes(+m.capacite) && !/^coffret\b/i.test((m.nom||'').trim()));
       const autres = mats.concat(matsStdCap);
       if(!autres.length) return '';
       const rows = autres.sort((a,b)=>(+a.capacite||0)-(+b.capacite||0)).map(m=>{
@@ -15886,6 +15891,7 @@ async function diagEmballageLots(){
     const mats=(await db.materials.toArray()).filter(m=>m.categorie==='emballage');
     const lots=await db.materialLots.toArray();
     const s=getSettings();
+    const realMap = realPackagingCostMap(mats, lots);
     const rows = mats.sort((a,b)=>(+a.capacite||0)-(+b.capacite||0)).map(m=>{
       const sien=lots.filter(l=>+l.materialId===+m.id && (+l.qteInitiale||0)>0 && lotPU(l)>0);
       const res = embCostHierarchie(m, lots, s);   // lot > tarif paramétré > prix de référence
@@ -15893,16 +15899,29 @@ async function diagEmballageLots(){
       const tarif = (m.capacite>0 && s.packaging && s.packaging[+m.capacite]!=null)? +s.packaging[+m.capacite] : null;
       // anomalie : un LOT chiffré donne un coût très bas vs le tarif paramétré (lot probablement mal saisi)
       const suspect = (sien.length>0) && tarif!=null && reel>0 && reel < tarif*0.5;
+      // CONTRÔLE DE COHÉRENCE : le coût que prendrait RÉELLEMENT une commande pour cet emballage
+      // doit correspondre au coût affiché ici. On simule la ligne coffret selon le type d'emballage.
+      const estCoffretStd = /^coffret\b/i.test((m.nom||'').trim()) && BOX_SIZES.includes(+m.capacite);
+      let reelCmd=null;
+      try{
+        if(estCoffretStd){ reelCmd = coffretEmbInfo({type:'coffret', taille:+m.capacite, embMode:'standard'}, mats, lots, realMap).cout; }
+        else { reelCmd = coffretEmbInfo({type:'coffret', taille:+m.capacite, embMode:'autre', embMatId:m.id}, mats, lots, realMap).cout; }
+      }catch(e){}
+      const ecart = (reelCmd!=null) && Math.abs(money2(reelCmd) - money2(reel)) > 0.005;
       const lotsTxt = sien.length ? sien.map(l=>`${qty(l.qteInitiale)}×${euro(lotPU(l))}`).join(', ') : '—';
-      return `<div class="sum-box" style="${suspect?'background:#fdeaea;border:1px solid #e8a9a3':''}">
+      const flag = suspect||ecart;
+      return `<div class="sum-box" style="${flag?'background:#fdeaea;border:1px solid #e8a9a3':''}">
         <span>${esc(m.nom)} <span style="color:#9a8a82">(cap ${m.capacite||'—'})</span><br>
-          <span style="font-size:.75rem;color:#9a8a82">lots : ${lotsTxt}${tarif!=null?` · tarif paramétré ${euro(tarif)}`:''} · <i>source : ${esc(res.source)}</i></span></span>
-        <b style="color:${suspect?'#b3261e':'inherit'}">${euro(reel)}${suspect?' ⚠':''}</b></div>`;
+          <span style="font-size:.75rem;color:#9a8a82">lots : ${lotsTxt}${tarif!=null?` · tarif paramétré ${euro(tarif)}`:''} · <i>source : ${esc(res.source)}</i></span>
+          ${ecart?`<br><span style="font-size:.72rem;color:#b3261e">⚠ incohérence : une commande appliquerait ${euro(reelCmd)} (≠ ${euro(reel)})</span>`:`<br><span style="font-size:.7rem;color:#3f7d52">✓ commande : ${euro(reelCmd)}</span>`}</span>
+        <b style="color:${flag?'#b3261e':'inherit'}">${euro(reel)}${flag?' ⚠':''}</b></div>`;
     }).join('');
-    const anySusp = /⚠/.test(rows);
+    const anySusp = /incohérence/.test(rows);
+    const anyLot = /background:#fdeaea/.test(rows);
     if(zone) zone.innerHTML = rows +
-      (anySusp?`<p class="note" style="color:#b3261e;margin-top:6px">⚠ Un coût réel très bas (en rouge) vient d'un lot au prix anormal. Corrige le prix du lot dans Stock → l'emballage concerné → ses lots, ou supprime le lot erroné.</p>`
-              :`<p class="note" style="margin-top:6px;color:#3f7d52">✓ Aucun prix d'emballage manifestement anormal.</p>`);
+      (anySusp?`<p class="note" style="color:#b3261e;margin-top:6px">⚠ <b>Incohérence détectée</b> entre le coût affiché et celui qu'appliquerait une commande. Signale-le-moi pour correction.</p>`
+              :(anyLot?`<p class="note" style="color:#b3261e;margin-top:6px">⚠ Un coût réel très bas (en rouge) vient d'un lot au prix anormal. Corrige le prix du lot dans Stock → l'emballage concerné → ses lots.</p>`
+                      :`<p class="note" style="margin-top:6px;color:#3f7d52">✓ Aucun prix anormal, et le coût affiché correspond à celui utilisé dans les commandes.</p>`));
   }catch(e){ console.error('diagEmballageLots',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
 }
 async function diagSuspectPayDates(){
