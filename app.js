@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v360';
+const APP_VERSION = 'v361';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1405,6 +1405,7 @@ async function renderDash(){
   const caCmdMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).reduce((s,c)=>s+(+c.montant||0),0);
   const caMkMonth = closedMk.filter(k=>mkInMonth(k.date)).reduce((s,k)=>s+k.montant,0);
   const caMonth = money2(caCmdMonth + caMkMonth);
+  const _moisCourantLbl = (typeof monthLabel==='function') ? monthLabel(monthKey(today())) : 'ce mois';
   const nbMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).length;
   const caTotal = money2(orders.reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
 
@@ -1455,7 +1456,7 @@ async function renderDash(){
        <span class="hhc-title">Tableau de bord</span>
        <span class="hhc-sub">${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</span>
        <span class="hhc-clock" id="homeClock">${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
-       <span class="hhc-ca">${privacyModeEnabled()?'•••':euro(caMonth)}<span class="hhc-ca-lbl">CA du mois</span></span>
+       <span class="hhc-ca">${privacyModeEnabled()?'•••':euro(caMonth)}<span class="hhc-ca-lbl">CA ${esc(_moisCourantLbl)}</span></span>
        <span style="margin-top:6px;font-size:.62rem;opacity:.5;letter-spacing:.05em">${APP_VERSION}</span>
      </div>
    </div>
@@ -1467,7 +1468,7 @@ async function renderDash(){
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
-     <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ce mois ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
+     <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="goView('compta')" title="Voir la comptabilité"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) ›</div></div>
      <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts & charges ›':'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#7a4b82" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
@@ -10145,7 +10146,9 @@ async function renderCompta(){
   const fmtPct = (n,d)=> d>0 ? Math.round(n/d*100) : 0;
   // mois disponibles (depuis la série) + mois courant
   const moisDispo = [...new Set([...(A.serie||[]).map(s=>s.mois), monthKey(today())])].filter(Boolean).sort().reverse();
-  if(!_comptaMonth || !moisDispo.includes(_comptaMonth)) _comptaMonth = moisDispo[0] || monthKey(today());
+  // Par défaut on ouvre sur le MOIS COURANT (cohérent avec l'accueil), pas le dernier mois consulté.
+  const moisCourant = monthKey(today());
+  if(!_comptaMonth || !moisDispo.includes(_comptaMonth)) _comptaMonth = moisDispo.includes(moisCourant) ? moisCourant : (moisDispo[0] || moisCourant);
   const B = await computeMonthlyBilan(_comptaMonth);
   // cumul de l'année en cours (cotisations URSSAF year-to-date)
   const yearOf = (_comptaMonth||'').slice(0,4);
@@ -10182,7 +10185,7 @@ async function renderCompta(){
     .map(([c,v])=>`<div class="sum-box lnk" onclick="comptaGo('charges')"><span>${esc(c)}</span><b>${euro(v)}</b>${NAV_GO}</div>`).join('');
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Comptabilité</h1><p>Pilotage en trésorerie — CA comptabilisé à l'encaissement réel</p></div>
+   <div class="topbar"><div><h1>Comptabilité</h1><p>${esc(monthLabel(_comptaMonth))} · CA comptabilisé à l'encaissement réel</p></div>
      <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️':'🙈'}</button><button class="btn gold" onclick="chargeForm()">＋ Charge</button></div></div>
    <div class="banner">📒 <div>Deux lectures du chiffre d'affaires : le <b>CA facturé</b> (total des commandes, à leur date) et le <b>CA encaissé</b> (règlements reçus, à leur date réelle). Une commande « en attente de paiement » est facturée mais n'entre pas dans le CA encaissé. Le CA des <b>marchés clôturés</b> est inclus (à leur date de clôture).${A.totalMarches>0?` Dont marchés : <b>${euro(A.totalMarches)}</b>.`:''}</div></div>
    <div class="flex" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
