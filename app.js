@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v375';
+const APP_VERSION = 'v376';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -11481,14 +11481,23 @@ function _packMarginRows(){
   BOX_SIZES.forEach(t=>{
     rows.push({ nom:'Coffret '+t, cap:t, coutEmb: (s.packaging&&s.packaging[t]!=null)?+s.packaging[t]:0, std:true });
   });
-  // 2) types d'emballage perso (marché, pro…), en éliminant les doublons (même nom + capacité + coût)
+  // 2) types d'emballage perso (marché, pro…), en éliminant les doublons.
+  //    On pré-remplit "seen" avec les coffrets standards déjà ajoutés à l'étape 1, pour qu'un
+  //    packType "Coffret 8" (même capacité/nom) ne réapparaisse pas en double.
   const seen=new Set();
+  const stdCaps=new Set(BOX_SIZES.map(t=>+t));
+  BOX_SIZES.forEach(t=>{ seen.add('coffret '+t+'|'+(+t)); });   // marque les coffrets standards
   (s.packTypes||[]).forEach(p=>{
     if(!p.nom) return;
-    const key=(p.nom||'').trim().toLowerCase()+'|'+(+p.capacite||0)+'|'+(+p.cout||0);
-    if(seen.has(key)) return;   // doublon → ignoré
+    const nomNorm=(p.nom||'').trim().toLowerCase();
+    const cap=+p.capacite||0;
+    // doublon d'un coffret standard ? (même nom "coffret X" OU même capacité qu'un format standard)
+    if(seen.has(nomNorm+'|'+cap)) return;
+    if(/^coffret\s/.test(nomNorm) && stdCaps.has(cap)) return;
+    const key=nomNorm+'|'+cap+'|'+(+p.cout||0);
+    if(seen.has(key)) return;   // doublon entre packTypes
     seen.add(key);
-    rows.push({ nom:p.nom, cap:+p.capacite||0, coutEmb:+p.cout||0, std:false });
+    rows.push({ nom:p.nom, cap:cap, coutEmb:+p.cout||0, std:false });
   });
   return rows;
 }
@@ -11514,11 +11523,17 @@ async function pmcBuildAndFill(){
   // 2) types d'emballage : on lit les LIGNES SAISIES à l'écran (live), pas seulement l'enregistré
   const n=+val('set_pt_n')||0;
   const seenPmc=new Set();
+  const stdCapsPmc=new Set(BOX_SIZES.map(t=>+t));
+  BOX_SIZES.forEach(t=>{ seenPmc.add('coffret '+t+'|'+(+t)); });   // marque les coffrets standards déjà ajoutés
   for(let i=0;i<n;i++){
     const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue;
     const cap=Math.max(0,+val('set_pt_cap_'+i)||0), coutEmb=money2(+val('set_pt_c_'+i)||0);
-    const key=nom.toLowerCase()+'|'+cap+'|'+coutEmb;
-    if(seenPmc.has(key)) continue;   // doublon → ignoré
+    const nomNorm=nom.toLowerCase();
+    // doublon d'un coffret standard ? (même nom+capacité, ou "Coffret X" de capacité standard)
+    if(seenPmc.has(nomNorm+'|'+cap)) continue;
+    if(/^coffret\s/.test(nomNorm) && stdCapsPmc.has(cap)) continue;
+    const key=nomNorm+'|'+cap+'|'+coutEmb;
+    if(seenPmc.has(key)) continue;   // doublon entre types
     seenPmc.add(key);
     rows.push({ nom, cap, coutEmb });
   }
