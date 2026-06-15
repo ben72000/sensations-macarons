@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v362';
+const APP_VERSION = 'v363';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15253,6 +15253,52 @@ async function applyZeroAmountFix(){
   _zeroFixList=[];
   scanZeroAmountOrders();   // rafraîchit (devrait afficher « aucune à réparer »)
 }
+// Diagnostic : reproduit EXACTEMENT le calcul du CA mensuel de l'accueil, commande par commande.
+// Affiche date brute + montant brut + inclusion, pour repérer une commande mal datée ou mal typée.
+async function diagCaMonth(){
+  const zone=document.getElementById('diagCaZone');
+  if(zone) zone.innerHTML='<p class="note">Analyse en cours…</p>';
+  const now=new Date(), m=now.getMonth(), y=now.getFullYear();
+  let rows=[], totalCompte=0, totalAutres=0;
+  try{
+    const orders=await db.orders.toArray();
+    orders.forEach(o=>{
+      const d=new Date(o.date);
+      const inMonth = d.getMonth()===m && d.getFullYear()===y;
+      const mt=money2(+o.montant||0);
+      if(inMonth){ totalCompte=money2(totalCompte+mt); }
+      else { totalAutres=money2(totalAutres+mt); }
+      rows.push({id:o.id, dateRaw:o.date, mt, montantRaw:o.montant, inMonth, statut:o.statut, type:(o.type||'multi')});
+    });
+  }catch(e){ console.error('diagCa',e); }
+  // marchés clos du mois
+  let mkRows=[], totalMk=0;
+  try{
+    const markets=await db.markets.toArray();
+    markets.filter(k=>k.statut==='clos').forEach(k=>{
+      const d=new Date(k.date); const inMonth=d.getMonth()===m && d.getFullYear()===y;
+      const net=(typeof marketNetCA==='function')?money2(marketNetCA(k)):0;
+      if(inMonth && net>0) totalMk=money2(totalMk+net);
+      if(net>0) mkRows.push({nom:k.nom, dateRaw:k.date, net, inMonth, statut:k.statut});
+    });
+  }catch(e){}
+  if(!zone) return;
+  const moisCmd = rows.filter(r=>r.inMonth);
+  const horsMois = rows.filter(r=>!r.inMonth);
+  const fmtRow = r => `<div class="sum-box" style="${r.inMonth?'':'opacity:.5'}">
+      <span>${r.dateRaw?esc(String(r.dateRaw)):'<i>sans date</i>'} ${r.inMonth?'':'<span style="color:#b3261e">(hors mois)</span>'} <span style="color:#9a8a82">#${r.id} ${esc(r.type)} ${esc(r.statut||'')}</span></span>
+      <b>${euro(r.mt)}${(r.montantRaw===undefined||r.montantRaw===null||r.montantRaw==='')?' <span style="color:#b3261e">⚠ montant vide</span>':''}</b></div>`;
+  zone.innerHTML=`
+    <div class="banner" style="background:#eef5f0;border-color:#bcd9c4;margin-bottom:8px">📊 <div>
+      <b>CA commandes ce mois : ${euro(totalCompte)}</b> (${moisCmd.length} commande(s))<br>
+      <b>CA marchés clos ce mois : ${euro(totalMk)}</b><br>
+      <b>Total CA mois : ${euro(money2(totalCompte+totalMk))}</b></div></div>
+    <h4 style="margin:8px 0 4px">Commandes de ce mois (${moisCmd.length})</h4>
+    ${moisCmd.map(fmtRow).join('')||'<p class="note">Aucune.</p>'}
+    ${mkRows.filter(r=>r.inMonth).length?`<h4 style="margin:10px 0 4px">Marchés clos ce mois</h4>${mkRows.filter(r=>r.inMonth).map(r=>`<div class="sum-box"><span>${esc(r.nom||'—')} <span style="color:#9a8a82">${esc(String(r.dateRaw||''))}</span></span><b>${euro(r.net)}</b></div>`).join('')}`:''}
+    <details style="margin-top:10px"><summary style="cursor:pointer;color:#7a6a60">Voir les commandes hors mois (${horsMois.length})</summary>
+      ${horsMois.map(fmtRow).join('')||'<p class="note">Aucune.</p>'}</details>`;
+}
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
@@ -15260,6 +15306,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">💶 Commandes à 0 €</h2>
       <p class="note">Recherche les commandes dont le <b>prix total est à 0 €</b> alors qu'elles contiennent des macarons (montant non consolidé à l'enregistrement). L'outil recalcule le vrai montant depuis les lignes.</p>
       <div id="fixZeroZone"><button class="btn gold sm" onclick="scanZeroAmountOrders()">Rechercher les commandes à 0 €</button></div>
+    </div>
+    <div class="panel" style="background:#f0f4fa;margin-bottom:12px">
+      <h2 style="font-size:1rem">🔍 Diagnostic CA du mois</h2>
+      <p class="note">Liste chaque commande du <b>mois courant</b> avec sa date et son montant, et indique si elle est comptée dans le CA. Permet de repérer une commande qui « disparaît » du total.</p>
+      <div id="diagCaZone"><button class="btn gold sm" onclick="diagCaMonth()">Analyser le CA de ce mois</button></div>
     </div>
     <div class="panel" id="integrityBody"><div class="empty">Analyse en cours…</div></div>`;
   const issues = await runIntegrityCheck();
