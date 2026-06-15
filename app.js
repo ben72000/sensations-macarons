@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v352';
+const APP_VERSION = 'v353';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2583,6 +2583,7 @@ async function delRec(id){
    ============================================================ */
 let prodnSearch='';
 let _prodnCache=null;
+let _prodFamCount={};   // compteur de sous-lots par batch (rempli par renderProductions, lu par _prodbatRow)
 // Suggestions de rapprochement coques ↔ ganache (sous-lots non assemblés, avec stock).
 // Priorité : même lot de base, puis même recette (parfum). Allocation gloutonne pour
 // ne pas proposer deux fois la même ganache/coque.
@@ -3150,6 +3151,7 @@ async function renderProductions(){
     const base = p.lotBase || lotBaseSansSuffixe(p.lotProduction||'');
     if(base) famCount[base]=(famCount[base]||0)+1;
   });
+  _prodFamCount = famCount;   // exposé pour _prodbatRow (appelé hors de cette fonction)
   _prodnCache = prods.map(p=>{
     const nom = prodNom(p);
     const e = empInfo(p.emplacement);
@@ -3278,7 +3280,7 @@ function _prodbatRow(row){
     ? `<div class="prod-live ${overdue?'prod-live-over':''}"><span class="pl-dot"></span><span class="pl-name">${compMeta.ico} ${prodNomLive} · ${compMot}</span><span class="prod-chrono" data-start="${esc(startTs)}">00:00:00</span></div>`
     : '';
   const _famBase = p.lotBase || lotBaseSansSuffixe(p.lotProduction||'');
-  const _famCol = (_famBase && famCount[_famBase]>1) ? lotFamilyColor(_famBase) : null;
+  const _famCol = (_famBase && (_prodFamCount[_famBase]||0)>1) ? lotFamilyColor(_famBase) : null;
   const _famStyle = _famCol ? `border-left:5px solid ${_famCol};` : '';
   const _famDot = _famCol ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${_famCol};margin-right:5px;vertical-align:middle" title="Sous-lot du même batch"></span>` : '';
   return `<div class="${rowCls} prod-card${liveBar?' prod-card-live':''}" style="${_famStyle}${overdue?'background:#fdf3f2;':''}">
