@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v418';
+const APP_VERSION = 'v419';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -105,27 +105,17 @@ db.version(16).stores({
   documents:       '++id, type, statut, date, clientId, numero, orderId'
 });
 
-// --- Ouverture robuste de la base + diagnostic de migration ---------------------------------
+// --- Diagnostic de migration (non bloquant) -------------------------------------------------
 // Sur iPhone, si l'app installée ET Safari ont la base ouverte en même temps, une montée de
 // version du schéma peut être BLOQUÉE : la nouvelle table (ex. prodSessions) n'est alors pas
-// créée, et toute écriture dessus échoue (« bulkPut is not a function »). On gère explicitement
-// ce cas pour le signaler clairement au lieu de planter en silence.
-db.on('blocked', () => {
-  try{ localStorage.setItem('sm_dbBlocked','1'); }catch(e){}
-  console.error('Dexie blocked: une autre instance bloque la mise à jour de la base.');
-});
-db.on('versionchange', () => {
-  // une autre instance veut migrer : on ferme pour la laisser faire, puis on rechargera.
-  try{ db.close(); }catch(e){}
-  try{ localStorage.setItem('sm_dbNeedsReload','1'); }catch(e){}
-});
-// Ouverture explicite : on capture l'échec de migration pour pouvoir le diagnostiquer/réparer.
-db.open().then(() => {
-  try{ localStorage.removeItem('sm_dbBlocked'); }catch(e){}
-}).catch(err => {
-  console.error('Échec ouverture base Dexie:', err);
-  try{ localStorage.setItem('sm_dbOpenError', (err&&err.name||'')+': '+(err&&err.message||'')); }catch(e){}
-});
+// créée. On se contente de SIGNALER ces cas, sans jamais fermer ni rouvrir la base de force
+// (ce qui pouvait empêcher l'app de démarrer). Dexie ouvre la base automatiquement à la 1re requête.
+try{
+  db.on('blocked', () => {
+    try{ localStorage.setItem('sm_dbBlocked','1'); }catch(e){}
+    console.error('Dexie blocked: une autre instance bloque la mise à jour de la base.');
+  });
+}catch(e){ console.error('db.on blocked', e); }
 
 
 
