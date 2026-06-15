@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v382';
+const APP_VERSION = 'v384';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1446,6 +1446,8 @@ async function renderDash(){
     db.recipes.toArray()
   ]);
   const recName = rid => (recipes.find(r=>r.id===rid)||{}).produitNom||'Produit';
+  // Jauge gaspillage : alerte quand l'étape 2 (aide aux quantités) devient activable.
+  let _gaspReady=null; try{ _gaspReady=await gaspillageDataReadiness(); }catch(e){}
   // Marge nette moyenne par macaron (s'appuie sur l'analyse de rentabilité : coûts + charges sociales).
   // Calcul protégé : en cas d'erreur ou d'absence de ventes, on n'affiche rien plutôt que de fausser.
   let margeNetteParMacaron = null;
@@ -1538,6 +1540,7 @@ async function renderDash(){
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
    ${!releveFait?`<div class="banner">🌡 <div><b>Relevé de température non fait aujourd'hui.</b> Pense à le saisir et à <b>valider</b>. <span class="act" onclick="goView('pms')">Faire le relevé →</span></div></div>`:''}
    ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
+   ${(_gaspReady && _gaspReady.ready && !_gaspDismissed())?`<div class="banner" style="background:#eef6ef;border-color:#bcd9c4">✅ <div><b>Aide aux quantités activable</b> — tu as ${_gaspReady.nbVentiles} marchés avec invendus bien renseignés. L'app peut maintenant te conseiller combien produire par parfum pour limiter le gaspillage. <span class="act" onclick="gaspillagePopup()">Voir le gaspillage →</span> · <span class="act" onclick="_gaspDismiss()">Plus tard</span></div></div>`:''}
    ${prodSugg.length?`<div class="banner" style="background:#f4faf5;border-color:#cfe3d4">🔗 <div><b>${prodSugg.length} assemblage(s) à finaliser</b> — des coques et ganaches en stock peuvent être réunies (${prodSugg.slice(0,3).map(s=>esc(s.coqRec)+' '+qty(s.assemblable)+' mac.').join(' · ')}${prodSugg.length>3?' …':''}). <span class="act" onclick="goView('productions')">Assembler →</span></div></div>`:''}
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
@@ -9128,6 +9131,77 @@ async function computeGaspillage(opts){
     totalEuro:money2(totMat+totMod+totDep)};
 }
 
+// Diagnostic « état des grands formats » : pour chaque GF, indique s'il a une recette, du stock,
+// des ventes et un coût de revient calculable — pour repérer ce qui n'est pas (encore) connecté.
+async function diagGrandsFormats(){
+  const zone=document.getElementById('diagGFZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    const [recipes, recipeItems, lots, productions, orders, markets, marketMoves, mats] = await Promise.all([
+      db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(),
+      db.productions.toArray(), db.orders.toArray(),
+      db.markets.toArray().catch(()=>[]), db.marketMoves.toArray().catch(()=>[]), db.materials.toArray()
+    ]);
+    const s=getSettings();
+    const sales = buildFlavorSales(orders, markets, marketMoves, recipes, productions, s);
+    const recByNorm = {}; recipes.forEach(r=>{ recByNorm[normTxt(r.produitNom||'')]=r; });
+    const rows = BIG_FORMATS.map(nom=>{
+      const key=normTxt(nom);
+      const rec = recByNorm[key] || recipes.find(r=>normTxt(r.produitNom||'').includes(key) && r.grandFormat);
+      const aRecette = !!rec;
+      const estGF = rec && !!rec.grandFormat;
+      // stock fini de ce GF
+      let stock=0;
+      if(rec) productions.forEach(p=>{ if(+p.recipeId===+rec.id) stock+=round3(+p.qteRestante||0); });
+      // ventes de ce GF
+      const sa = sales.find(x=> rec ? (+x.recipeId===+rec.id) : (normTxt(x.parfum||'')===key));
+      const vendus = sa ? round3(sa.piecesVendues||0) : 0;
+      // coût de revient calculable ?
+      let coutOk=false, coutUnit=null;
+      if(rec){ try{ const c=coutRevientRecette(rec, recipeItems, lots, s, {}); coutUnit=c&&c.coutRevientUnit; coutOk=coutUnit>0; }catch(e){} }
+      const ok = v => v?'<span style="color:#3f7d52">✓</span>':'<span style="color:#b3261e">✗</span>';
+      const pbs=[];
+      if(!aRecette) pbs.push('pas de recette');
+      else if(!estGF) pbs.push('recette existe mais pas cochée « grand format »');
+      if(aRecette && !coutOk) pbs.push('coût non calculable (composants/lots manquants)');
+      return `<div class="sum-box" style="${pbs.length?'background:#fdf3e7':''};flex-direction:column;align-items:stretch;gap:2px">
+        <div style="display:flex;justify-content:space-between"><b>${esc(nom)}</b><span style="font-size:.8rem">${ok(aRecette)} recette ${ok(estGF)} GF ${ok(coutOk)} coût</span></div>
+        <div style="font-size:.74rem;color:#9a8a82">stock : ${qty(stock)} · vendus : ${qty(vendus)}${coutUnit?` · coût ${euro(coutUnit)}/u`:''}</div>
+        ${pbs.length?`<div style="font-size:.74rem;color:#b3261e">⚠ ${pbs.join(' · ')}</div>`:''}</div>`;
+    }).join('');
+    const manquants = BIG_FORMATS.filter(nom=>{ const k=normTxt(nom); return !recipes.some(r=>(normTxt(r.produitNom||'')===k || normTxt(r.produitNom||'').includes(k)) && r.grandFormat); });
+    if(zone) zone.innerHTML = rows +
+      (manquants.length?`<p class="note" style="color:#b3261e;margin-top:6px">⚠ ${manquants.length} grand(s) format(s) sans recette « grand format » : <b>${manquants.map(esc).join(', ')}</b>. Tant que la recette manque, ils n'apparaissent ni en rentabilité ni en coût. <span class="act" onclick="closeModal&&closeModal();goView('recettes')">Créer une recette →</span></p>`
+                       :`<p class="note" style="color:#3f7d52;margin-top:6px">✓ Tous tes grands formats ont une recette « grand format ».</p>`);
+  }catch(e){ console.error('diagGrandsFormats',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
+}
+
+// Jauge de fiabilité des données de gaspillage : compte les marchés CLÔTURÉS dont les invendus
+// ont été VENTILÉS (au moins un retour avec une destination explicite : écarté / congel / frigo).
+// Le seuil atteint = l'historique est assez représentatif pour activer l'aide aux quantités (étape 2).
+const GASP_READY_SEUIL = 5;
+async function gaspillageDataReadiness(){
+  try{
+    const [markets, moves] = await Promise.all([db.markets.toArray(), db.marketMoves.toArray()]);
+    const movesByMk = {}; moves.forEach(m=>{ (movesByMk[m.marketId]=movesByMk[m.marketId]||[]).push(m); });
+    let nbVentiles=0, nbClosSansVentil=0, totalEcarte=0;
+    markets.filter(k=>k.statut==='clos' && !k.histo).forEach(mk=>{
+      const mv = movesByMk[mk.id]||[];
+      const retours = mv.filter(m=>m.type==='retour');
+      const ventiles = retours.filter(m=>m.destination==='ecarte'||m.destination==='congel'||m.destination==='frigo');
+      const aDesSorties = mv.some(m=>m.type==='sortie');
+      if(ventiles.length>0) nbVentiles++;
+      else if(aDesSorties) nbClosSansVentil++;   // a vendu mais n'a pas qualifié ses invendus
+      totalEcarte += retours.filter(m=>m.destination==='ecarte').reduce((a,m)=>a+(+m.qte||0),0);
+    });
+    return {
+      nbVentiles, nbClosSansVentil, totalEcarte:round3(totalEcarte),
+      seuil:GASP_READY_SEUIL,
+      ready: nbVentiles>=GASP_READY_SEUIL,
+      pct: Math.min(100, Math.round(nbVentiles/GASP_READY_SEUIL*100))
+    };
+  }catch(e){ console.error('gaspillageDataReadiness',e); return {nbVentiles:0,nbClosSansVentil:0,totalEcarte:0,seuil:GASP_READY_SEUIL,ready:false,pct:0}; }
+}
+
 function avgMacaronCost(recipes, recipeItems, lots){
   const per = recipes.map(r=>{ const cb=coutRecette(r.id, recipeItems, lots); return r.rendement>0?cb/r.rendement:0; }).filter(x=>x>0);
   return per.length ? per.reduce((a,x)=>a+x,0)/per.length : 0;
@@ -11965,6 +12039,8 @@ function marketCAPopup(){ _marketPopup({titre:'⛺ CA par marché clôturé', no
 function marketMargePopup(){ _marketPopup({titre:'⛺ Marge nette par marché', note:'Marge nette après coûts (matière, emballage, stand, déplacement) et charges sociales. 🟢 rentable, 🔴 à surveiller.', val:T=>T.margeNette, fmt:v=>euro(v)}); }
 function marketInvendusPopup(){ _marketPopup({titre:'⛺ Taux d\'invendus par marché', note:'Part des macarons embarqués non vendus (retour + don + perte). Ici 🟢 = peu d\'invendus (mieux), 🔴 = beaucoup (à corriger : moins produire ou mieux vendre).', val:T=>T.tauxInvendus, fmt:v=>v+'%', lowerIsBetter:true, asc:true}); }
 // ÉTAPE 1 — Modale du gaspillage chiffré (retours jetés × coût complet).
+function _gaspDismissed(){ try{ return localStorage.getItem('sm_gasp_ready_dismiss')==='1'; }catch(e){ return false; } }
+function _gaspDismiss(){ try{ localStorage.setItem('sm_gasp_ready_dismiss','1'); }catch(e){} if(typeof renderDash==='function' && view==='dash') renderDash(); toast('Rappel masqué — tu retrouveras le gaspillage dans l\'écran Marchés'); }
 let _gaspPeriode = 'tout';
 async function gaspillagePopup(){
   const start = _gaspPeriode==='tout' ? null : comptaPeriodeStart(_gaspPeriode);
@@ -11972,6 +12048,17 @@ async function gaspillagePopup(){
   try{ G = await computeGaspillage({start}); }
   catch(e){ console.error('gaspillage',e); toast('Erreur lors du calcul du gaspillage'); return; }
   const periodeLbl = _gaspPeriode==='tout' ? 'tout l\'historique' : comptaPeriodeDatesLabel(_gaspPeriode);
+  // Jauge de fiabilité : combien de marchés bien renseignés, et l'étape 2 est-elle débloquable ?
+  const R = await gaspillageDataReadiness();
+  const jauge = `<div class="banner" style="background:${R.ready?'#eef6ef':'#f6f1e7'};border-color:${R.ready?'#bcd9c4':'#e3d4b5'};margin-bottom:10px">
+    ${R.ready?'✅':'📊'} <div style="font-size:.82rem">
+      <b>Fiabilité des données de gaspillage : ${R.nbVentiles}/${R.seuil} marché(s) bien renseigné(s)</b>
+      <div style="background:#e8ddca;border-radius:6px;height:8px;margin:5px 0;overflow:hidden"><div style="background:${R.ready?'#3f7d52':'#c9a227'};height:100%;width:${R.pct}%"></div></div>
+      ${R.ready
+        ? `Tes données sont assez représentatives. <b>L'aide à la quantité optimale (étape 2) peut être activée</b> — dis-le-moi quand tu veux qu'on la branche.`
+        : `Continue à <b>ventiler tes invendus</b> à chaque retour de marché (❄️ Congélateur / 🧊 Frigo / 🗑 Écarté). Encore ${R.seuil-R.nbVentiles} marché(s) pour débloquer l'aide aux quantités.`}
+      ${R.nbClosSansVentil>0?`<br><span style="color:#b3261e">⚠ ${R.nbClosSansVentil} marché(s) clôturé(s) sans invendus qualifiés : pense à marquer « 🗑 Écarté » ce que tu jettes.</span>`:''}
+    </div></div>`;
   const tabs = [['tout','Tout'],['90j','90 j'],['mois','30 j'],['semaine','7 j']]
     .map(([k,l])=>`<button class="btn ${_gaspPeriode===k?'gold':'ghost'} sm" onclick="_gaspPeriode='${k}';gaspillagePopup()">${l}</button>`).join('');
   const lignes = G.lignes.length ? G.lignes.map(l=>`<div class="sum-box">
@@ -11981,6 +12068,7 @@ async function gaspillagePopup(){
     : '<p class="note">Aucun macaron jeté sur cette période 🎉 (seuls les retours « 🗑 Écarté » sont comptés).</p>';
   openModal(`<h3>🗑 Gaspillage chiffré</h3>
     <p class="note">Coût réel des invendus <b>jetés</b> (retours « écartés »), chiffré matière + main-d'œuvre + quote-part trajet. Période : ${esc(periodeLbl)}.</p>
+    ${jauge}
     <div class="flex" style="gap:6px;margin-bottom:10px">${tabs}</div>
     ${G.totQte>0?`<div class="sum-box" style="background:#fdeaea;border:1px solid #e8a9a3">
       <span><b>Total jeté : ${qty(G.totQte)} macaron(s)</b><br><span style="font-size:.72rem;color:#9a8a82">mat. ${euro(G.totMat)} + M.O. ${euro(G.totMod)} + trajet ${euro(G.totDep)}</span></span>
@@ -15920,6 +16008,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">📦 Diagnostic emballages</h2>
       <p class="note">Liste tes emballages et le <b>coût unitaire réel</b> calculé sur leurs lots reçus. Repère un prix anormal (ex : 0,01 € sur un coffret 16) qui viendrait d'un lot mal saisi.</p>
       <div id="diagEmbZone"><button class="btn gold sm" onclick="diagEmballageLots()">Analyser mes emballages</button></div>
+    </div>
+    <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
+      <h2 style="font-size:1rem">🍪 Diagnostic grands formats</h2>
+      <p class="note">Pour chaque grand format, vérifie qu'il a bien une <b>recette « grand format »</b>, un coût calculable, du stock et des ventes. Repère ceux qui ne sont pas encore connectés (souvent : recette manquante).</p>
+      <div id="diagGFZone"><button class="btn gold sm" onclick="diagGrandsFormats()">Analyser mes grands formats</button></div>
     </div>
     <div class="panel" id="integrityBody"><div class="empty">Analyse en cours…</div></div>`;
   const issues = await runIntegrityCheck();
