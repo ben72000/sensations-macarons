@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v398';
+const APP_VERSION = 'v399';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15971,6 +15971,31 @@ async function diagMatBrute(matId){
     if(zone) zone.innerHTML = cmp + champM + champL + coff;
   }catch(e){ console.error('diagMatBrute',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur.</p>'; }
 }
+// Diagnostic (LECTURE SEULE) : compte les enregistrements par table dans la base ACTUELLE et dans
+// chaque snapshot interne. Permet de voir où sont réellement les commandes (orders).
+async function diagComptageTables(){
+  const zone=document.getElementById('diagCountZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    // base actuelle
+    const base={}; for(const t of TABLES){ base[t]=await db.table(t).count().catch(()=>0); }
+    // snapshots
+    const backups=await db.backups.orderBy('date').reverse().toArray();
+    const tablesClefs=['orders','clients','markets','marketMoves','materialLots','productions'];
+    const ligneBase=`<div class="sum-box" style="background:#eef5f0"><span><b>Base actuelle</b></span><b>${base.orders||0} commandes</b></div>
+      <div style="font-size:.72rem;color:#9a8a82;padding:2px 8px">${tablesClefs.map(t=>`${t}: ${base[t]||0}`).join(' · ')}</div>`;
+    const ligneSnaps = backups.slice(0,8).map(b=>{
+      let d=null; try{ d=JSON.parse(b.payload); }catch(e){}
+      const nbCmd = d&&Array.isArray(d.orders)?d.orders.length:'?';
+      const dt=new Date(b.date).toLocaleString('fr-FR');
+      const interesting = (typeof nbCmd==='number' && nbCmd>(base.orders||0));
+      return `<div class="sum-box" style="${interesting?'background:#fff7e6;border:1px solid #e8d09a':''}">
+        <span style="font-size:.8rem">${esc(dt)} <span style="color:#9a8a82">· ${esc(b.type||'')}</span></span>
+        <b style="color:${interesting?'#b3261e':'inherit'}">${nbCmd} cmd${interesting?' ⬅':''}</b></div>`;
+    }).join('');
+    if(zone) zone.innerHTML = ligneBase +
+      `<p class="note" style="margin-top:8px"><b>Commandes par snapshot</b> (⬅ = en contient plus que la base actuelle) :</p>` + ligneSnaps;
+  }catch(e){ console.error('diagComptageTables',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
+}
 // Analyse (LECTURE SEULE) des lots de denrées pour détecter ceux saisis en grammes mais NON
 // convertis en kg au stockage (bug réception). Un lot suspect : quantité anormalement grande pour
 // un artisan (≥ seuil) ou prix unitaire dérisoire (< 1 €/kg, irréaliste pour une denrée).
@@ -16251,6 +16276,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">🍪 Diagnostic grands formats</h2>
       <p class="note">Pour chaque grand format, vérifie qu'il a bien une <b>recette « grand format »</b>, un coût calculable, du stock et des ventes. Repère ceux qui ne sont pas encore connectés (souvent : recette manquante).</p>
       <div id="diagGFZone"><button class="btn gold sm" onclick="diagGrandsFormats()">Analyser mes grands formats</button></div>
+    </div>
+    <div class="panel" style="background:#fdf3e7;margin-bottom:12px;border:1px solid #e8d09a">
+      <h2 style="font-size:1rem">🔎 Où sont mes commandes ?</h2>
+      <p class="note">Compte les commandes dans la base actuelle et dans chaque sauvegarde interne, pour localiser tes données.</p>
+      <div id="diagCountZone"><button class="btn gold sm" onclick="diagComptageTables()">Compter mes commandes</button></div>
     </div>
     <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
       <h2 style="font-size:1rem">⚖️ Diagnostic unités des lots (g/kg)</h2>
