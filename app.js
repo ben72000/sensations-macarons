@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v370';
+const APP_VERSION = 'v373';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10103,6 +10103,71 @@ let _comptaMonth = null;
 function comptaSetMonth(m){ _comptaMonth = m; renderCompta(); }
 // Raccourci de navigation depuis l'écran Comptabilité vers un autre écran.
 // Centralise le pattern view=… + setActiveView + render…() pour les chiffres cliquables.
+// Détail d'un agrégat de la compta : ouvre une modale listant ce qui le compose,
+// chaque ligne cliquable pour ouvrir la commande/charge correspondante.
+async function comptaDetail(type){
+  const start = (_comptaPeriode && _comptaPeriode!=='tout') ? comptaPeriodeStart(_comptaPeriode) : null;
+  const inPeriode = d => !start || (d||'')>=start;
+  const orders = (await db.orders.toArray()).filter(o=>inPeriode(o.date));
+  const charges = (await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[])).filter(c=>inPeriode(c.date));
+  const markets = (await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[])).filter(k=>inPeriode(k.date));
+  const ligneCmd = (o, montant, sub) => `<div class="sum-box lnk" onclick="closeModal();cmdForm(${o.id})"><span>${esc(fmtDate(o.date))} <span style="color:#9a8a82">#${o.id}${sub?' · '+sub:''}</span></span><b>${euro(montant)} ${NAV_GO}</b></div>`;
+  let titre='', lignes=[], total=0;
+
+  if(type==='facture'){
+    titre='CA facturé — détail';
+    orders.forEach(o=>{ const m=money2(+o.montant||0); if(m>0){ lignes.push({h:ligneCmd(o,m,esc(o.statut||'')), v:m}); } });
+    markets.filter(k=>k.statut==='clos').forEach(k=>{ const m=(typeof marketNetCA==='function')?money2(marketNetCA(k)):0; if(m>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();marketDetail(${k.id})"><span>${esc(fmtDate(k.date))} <span style="color:#9a8a82">⛺ ${esc(k.nom||'marché')}</span></span><b>${euro(m)} ${NAV_GO}</b></div>`, v:m}); } });
+  } else if(type==='encaisse'){
+    titre='CA encaissé — détail (paiements reçus)';
+    orders.forEach(o=>{
+      const pays=(o.paiements&&o.paiements.length)?o.paiements:(o.paiement==='Payé'?[{date:(o.datePaiement||o.date),montant:+o.montant||0,moyen:o.reglement||'—'}]:[]);
+      pays.forEach(p=>{ if(!inPeriode(p.date)) return; const v=money2(p.montant); if(v>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();cmdForm(${o.id})"><span>${esc(fmtDate(p.date))} <span style="color:#9a8a82">#${o.id} · ${esc(p.moyen||'—')}</span></span><b>${euro(v)} ${NAV_GO}</b></div>`, v}); } });
+    });
+    markets.filter(k=>k.statut==='clos').forEach(k=>{ const m=(typeof marketNetCA==='function')?money2(marketNetCA(k)):0; if(m>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();marketDetail(${k.id})"><span>${esc(fmtDate(k.date))} <span style="color:#9a8a82">⛺ ${esc(k.nom||'marché')}</span></span><b>${euro(m)} ${NAV_GO}</b></div>`, v:m}); } });
+  } else if(type==='charges'){
+    titre='Charges — détail';
+    charges.forEach(c=>{ const v=money2(+c.montant||0); if(v>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();chargeForm(${c.id})"><span>${esc(fmtDate(c.date))} <span style="color:#9a8a82">${esc(c.categorie||'Autre')} · ${esc(c.libelle||'')}</span></span><b>${euro(v)} ${NAV_GO}</b></div>`, v}); } });
+  } else if(type==='creances'){
+    titre='Créances clients — détail (restant dû)';
+    orders.forEach(o=>{ const b=(typeof orderBalance==='function')?orderBalance(o):0; if(b>0){ lignes.push({h:ligneCmd(o,b,'reste à encaisser'), v:b}); } });
+  } else if(type==='matieres'){
+    titre='Coût matières (estimé) — détail par commande';
+    let _rec=[], _items=[], _lots=[];
+    try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); }catch(e){}
+    orders.forEach(o=>{
+      let cm=0; try{ const mg=computeOrderMargins(o, _rec, _items, _lots); cm=money2(mg.coutMat||0); }catch(e){}
+      if(cm>0){ lignes.push({h:ligneCmd(o,cm,'coût matières'), v:cm}); }
+    });
+  } else if(type==='resultat'){
+    // Le résultat est un calcul, pas une liste : on montre sa décomposition.
+    let _rec=[], _items=[], _lots=[];
+    try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); }catch(e){}
+    let enc=0; orders.forEach(o=>{
+      const pays=(o.paiements&&o.paiements.length)?o.paiements:(o.paiement==='Payé'?[{date:(o.datePaiement||o.date),montant:+o.montant||0}]:[]);
+      pays.forEach(p=>{ if(inPeriode(p.date)) enc=money2(enc+money2(p.montant)); });
+    });
+    markets.filter(k=>k.statut==='clos').forEach(k=>{ enc=money2(enc+((typeof marketNetCA==='function')?money2(marketNetCA(k)):0)); });
+    let cm=0; orders.forEach(o=>{ try{ cm=money2(cm+money2(computeOrderMargins(o,_rec,_items,_lots).coutMat||0)); }catch(e){} });
+    let ch=0; charges.forEach(c=>{ ch=money2(ch+money2(+c.montant||0)); });
+    const res=money2(enc-cm-ch);
+    openModal(`<h3>Résultat (encaissé) — comment il se calcule</h3>
+      <p class="note">Période : ${esc(_comptaPeriode==='tout'?'toutes les données':comptaPeriodeDatesLabel(_comptaPeriode))}.</p>
+      <div class="sum-box lnk" onclick="closeModal();comptaDetail('encaisse')"><span>CA encaissé</span><b>${euro(enc)} ${NAV_GO}</b></div>
+      <div class="sum-box lnk" onclick="closeModal();comptaDetail('matieres')"><span>− Coût matières</span><b>−${euro(cm)} ${NAV_GO}</b></div>
+      <div class="sum-box lnk" onclick="closeModal();comptaDetail('charges')"><span>− Charges</span><b>−${euro(ch)} ${NAV_GO}</b></div>
+      <div class="sum-box" style="background:#eef6ef;margin-top:6px"><span><b>= Résultat net</b></span><b style="color:${res>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(res)}</b></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  total=money2(lignes.reduce((s,l)=>s+l.v,0));
+  lignes.sort((a,b)=>b.v-a.v);
+  openModal(`<h3>${esc(titre)}</h3>
+    <p class="note">Période : ${esc(_comptaPeriode==='tout'?'toutes les données':comptaPeriodeDatesLabel(_comptaPeriode))}. Touche une ligne pour l'ouvrir.</p>
+    ${lignes.length?lignes.map(l=>l.h).join(''):'<p class="note">Aucun élément.</p>'}
+    <div class="sum-box" style="background:#f3ecdd;margin-top:6px"><span><b>Total</b></span><b>${euro(total)}</b></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
 function comptaGo(dest){
   if(dest==='commandes'){ view='commandes'; if(typeof setActiveView==='function') setActiveView('commandes'); renderCmd(); }
   else if(dest==='charges'){ renderChargesList(); }
@@ -10218,13 +10283,13 @@ async function renderCompta(){
 
    ${comptaFlowSchema(A)}
    <div class="kpi-grid">
-     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA facturé</span><b>${euro(A.totalFacture)}</b><small class="kpi-note">toutes commandes, payées ou non</small>${NAV_GO}</div>
-     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b><small class="kpi-note">argent réellement reçu · base URSSAF</small>${NAV_GO}</div>
-     <div class="kpi lnk" onclick="comptaGo('charges')"><span>Charges</span><b>${euro(A.totalCharges)}</b>${NAV_GO}</div>
-     <div class="kpi lnk" onclick="comptaGo('detailMois')"><span>Coût matières (est.)</span><b>${euro(A.totalCoutMatieres)}</b>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaDetail('facture')"><span>CA facturé</span><b>${euro(A.totalFacture)}</b><small class="kpi-note">toutes commandes, payées ou non</small>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaDetail('encaisse')"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b><small class="kpi-note">argent réellement reçu · base URSSAF</small>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaDetail('charges')"><span>Charges</span><b>${euro(A.totalCharges)}</b>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaDetail('matieres')"><span>Coût matières (est.)</span><b>${euro(A.totalCoutMatieres)}</b>${NAV_GO}</div>
      ${A.totalPertes>0?`<div class="kpi"><span>Pertes / casse ${kpiI('pertes_casse')}</span><b style="color:var(--red,#b3261e)">−${euro(A.totalPertes)}</b></div>`:''}
-     <div class="kpi lnk" onclick="comptaGo('detailMois')"><span>Résultat (encaissé)</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b>${NAV_GO}</div>
-     <div class="kpi lnk" onclick="comptaGo('commandes')"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaDetail('resultat')"><span>Résultat (encaissé)</span><b style="color:${A.resultat>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(A.resultat)}</b>${NAV_GO}</div>
+     <div class="kpi lnk" onclick="comptaDetail('creances')"><span>Créances clients</span><b style="color:${A.creances>0?'var(--caramel)':'#3f7d52'}">${euro(A.creances)}</b>${NAV_GO}</div>
    </div>
 
    <div class="panel" style="border:1.5px solid #e7d9b8;background:#fcf8ee">
@@ -11809,6 +11874,7 @@ async function marketDetail(id){
     ${mk.horaires||mk.meteo?`<p class="note">${esc(mk.horaires||'')}${mk.meteo?' · '+esc(mk.meteo):''}</p>`:''}
     ${!clos?`<div class="flex" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">
       <button class="btn gold sm" onclick="marketSortieForm(${id})">＋ Sortie stock</button>
+      ${(mk.mkGroup && mk.mkGroupDay>1)?`<button class="btn sm" style="background:#f3ecdd;color:#8a6d3b" onclick="marketRepriseReliquat(${id})">↩ Reprendre le reliquat du jour ${mk.mkGroupDay-1}</button>`:''}
       <button class="btn ghost sm" onclick="marketMoveForm(${id},'perte')">＋ Don / Perte / Casse</button>
       <button class="btn ghost sm" onclick="marketRetourForm(${id})">↩ Retour de marché</button>
     </div>`:''}
@@ -11855,6 +11921,72 @@ function confirmDelMarket(id){
 }
 
 // Sortie de stock : choix du lot + quantité (stock théorique affiché).
+// Marché multi-jours — retrouve le jour précédent (même groupe, jour N−1) d'un marché.
+async function marketJourPrecedent(mk){
+  if(!mk || !mk.mkGroup || !(mk.mkGroupDay>1)) return null;
+  const grp=await db.markets.where('mkGroup').equals(mk.mkGroup).toArray().catch(()=>[]);
+  return grp.find(m=>m.mkGroupDay===(mk.mkGroupDay-1)) || null;
+}
+// Reliquat du jour précédent = somme des RETOURS (ce qui est revenu le soir), par parfum.
+async function marketReliquatJourPrec(mk){
+  const prec=await marketJourPrecedent(mk);
+  if(!prec) return {prec:null, reliquat:[], nbRetours:0};
+  const moves=await db.marketMoves.where('marketId').equals(prec.id).toArray().catch(()=>[]);
+  const retours=moves.filter(m=>m.type==='retour');
+  const byP={};
+  retours.forEach(m=>{ const p=m.parfum||'—'; byP[p]=round3((byP[p]||0)+(+m.qte||0)); });
+  const reliquat=Object.entries(byP).filter(([,q])=>q>0).map(([parfum,qte])=>({parfum,qte}));
+  return {prec, reliquat, nbRetours:retours.length};
+}
+// Bouton « Reprendre le reliquat du jour 1 » : propose les quantités revenues la veille,
+// puis crée les sorties du jour courant après confirmation.
+async function marketRepriseReliquat(marketId){
+  const mk=await db.markets.get(marketId);
+  const {prec, reliquat, nbRetours}=await marketReliquatJourPrec(mk);
+  if(!prec){ toast('Aucun jour précédent lié à ce marché'); return; }
+  // Cas 1 : le jour 1 n'est pas clôturé → on ne connaît pas encore le reliquat.
+  if(prec.statut!=='clos'){
+    openModal(`<h3>⚠ Reliquat non comptabilisé</h3>
+      <p class="note">Le <b>jour 1</b> (${esc(fmtDate(prec.date))}) n'est <b>pas encore clôturé</b>. Tant qu'il n'est pas clôturé, on ne connaît pas ce qui est réellement revenu, donc impossible de reprendre le reliquat.</p>
+      <div class="banner" style="background:#fdf6ec;border-color:#e8cfa0">📋 <div>À faire d'abord : ouvre le marché du jour 1, saisis ton <b>retour de marché</b>, puis <b>clôture-le</b>. Le reliquat sera alors disponible ici.</div></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Fermer</button>
+        <button class="btn gold" onclick="marketDetail(${prec.id})">Ouvrir le jour 1 →</button></div>`);
+    return;
+  }
+  // Cas 2 : jour 1 clôturé MAIS aucun retour saisi → reliquat non comptabilisé (manipulation interdite).
+  if(nbRetours===0){
+    openModal(`<h3>⚠ Reliquat non comptabilisé</h3>
+      <p class="note">Le jour 1 (${esc(fmtDate(prec.date))}) a bien été clôturé, mais <b>aucun retour de marché n'y a été saisi</b>. Sans retour enregistré, le reliquat n'existe pas : reprendre des quantités fausserait ton stock.</p>
+      <div class="banner" style="background:#fdf6ec;border-color:#e8cfa0">📋 <div>Si des macarons sont revenus le soir du jour 1, saisis-les via <b>« Retour de marché »</b> sur la fiche du jour 1. Si tout a été vendu, il n'y a simplement rien à reprendre.</div></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Fermer</button>
+        <button class="btn gold" onclick="marketDetail(${prec.id})">Ouvrir le jour 1 →</button></div>`);
+    return;
+  }
+  // Cas 3 : reliquat comptabilisé mais nul (tout vendu) → rien à reprendre, mais ce n'est pas une erreur.
+  if(!reliquat.length){ toast('Jour 1 clôturé : tout a été vendu/écoulé, aucun reliquat à reprendre ✓'); return; }
+  const tot=reliquat.reduce((s,r)=>s+r.qte,0);
+  openModal(`<h3>↩ Reprendre le reliquat du jour 1</h3>
+    <p class="note">Voici ce qui est revenu le soir du <b>${esc(fmtDate(prec.date))}</b> (jour 1). En confirmant, ces quantités seront ressorties pour aujourd'hui. Tu pourras ensuite ajuster (ajouter du frais, retirer…).</p>
+    ${reliquat.map(r=>`<div class="sum-box"><span>${esc(r.parfum)}</span><b>${qty(r.qte)}</b></div>`).join('')}
+    <div class="sum-box" style="background:#f3ecdd"><span><b>Total à ressortir</b></span><b>${qty(tot)}</b></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="marketDetail(${marketId})">Annuler</button>
+      <button class="btn gold" onclick="marketRepriseReliquatApply(${marketId})">Ressortir ces quantités</button>
+    </div>`);
+}
+let _repriseCache={};
+async function marketRepriseReliquatApply(marketId){
+  const mk=await db.markets.get(marketId);
+  const {reliquat}=await marketReliquatJourPrec(mk);
+  let done=0, total=0, erreurs=[];
+  for(const r of reliquat){
+    try{ await marketAddSortieParfum(marketId, r.parfum, r.qte); done++; total+=r.qte; }
+    catch(e){ erreurs.push(`${r.parfum} : ${(e&&e.message)||e}`); }
+  }
+  if(erreurs.length){ toast(`${done} parfum(s) ressorti(s). Problème sur : ${erreurs.join(' ; ')}`); }
+  else { toast(`Reliquat repris : ${qty(total)} macaron(s) ressorti(s) ✓`); }
+  marketDetail(marketId);
+}
 async function marketSortieForm(marketId){
   const histo = await marketIsHisto(marketId);
   if(histo){
