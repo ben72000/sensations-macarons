@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v417';
+const APP_VERSION = 'v418';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -103,6 +103,28 @@ db.version(15).stores({
 //   orderId: commande liée une fois le devis converti (sinon null pour un devis libre)
 db.version(16).stores({
   documents:       '++id, type, statut, date, clientId, numero, orderId'
+});
+
+// --- Ouverture robuste de la base + diagnostic de migration ---------------------------------
+// Sur iPhone, si l'app installée ET Safari ont la base ouverte en même temps, une montée de
+// version du schéma peut être BLOQUÉE : la nouvelle table (ex. prodSessions) n'est alors pas
+// créée, et toute écriture dessus échoue (« bulkPut is not a function »). On gère explicitement
+// ce cas pour le signaler clairement au lieu de planter en silence.
+db.on('blocked', () => {
+  try{ localStorage.setItem('sm_dbBlocked','1'); }catch(e){}
+  console.error('Dexie blocked: une autre instance bloque la mise à jour de la base.');
+});
+db.on('versionchange', () => {
+  // une autre instance veut migrer : on ferme pour la laisser faire, puis on rechargera.
+  try{ db.close(); }catch(e){}
+  try{ localStorage.setItem('sm_dbNeedsReload','1'); }catch(e){}
+});
+// Ouverture explicite : on capture l'échec de migration pour pouvoir le diagnostiquer/réparer.
+db.open().then(() => {
+  try{ localStorage.removeItem('sm_dbBlocked'); }catch(e){}
+}).catch(err => {
+  console.error('Échec ouverture base Dexie:', err);
+  try{ localStorage.setItem('sm_dbOpenError', (err&&err.name||'')+': '+(err&&err.message||'')); }catch(e){}
 });
 
 
@@ -17984,7 +18006,13 @@ function prodSessSave(arr){
 // En cas d'échec, on le SIGNALE (les chronos ne seraient alors qu'en localStorage fragile).
 async function prodSessPersistDexie(arr){
   try{
-    if(!db.prodSessions){ prodSessFlagDexieKo('table absente'); return false; }
+    // Garde-fou renforcé : la table doit exister ET avoir ses méthodes. Si la migration de schéma
+    // a échoué (base bloquée), db.prodSessions peut exister sans bulkPut → on signale et on sort
+    // proprement au lieu de planter, en invitant à réparer la base.
+    if(!db.prodSessions || typeof db.prodSessions.bulkPut !== 'function'){
+      prodSessFlagDexieKo('base à réparer (migration incomplète)');
+      return false;
+    }
     const data = arr||[];
     const ids = new Set(data.map(s=>s.id));
     await db.transaction('rw', db.prodSessions, async()=>{
@@ -18004,6 +18032,29 @@ async function prodSessPersistDexie(arr){
 function prodSessFlagDexieKo(motif){ try{ localStorage.setItem('sm_prodSessDexieKo', motif||'1'); }catch(e){} }
 function prodSessClearDexieKo(){ try{ localStorage.removeItem('sm_prodSessDexieKo'); }catch(e){} }
 function prodSessDexieKo(){ try{ return localStorage.getItem('sm_prodSessDexieKo')||''; }catch(e){ return ''; } }
+// RÉPARATION : force la fermeture/réouverture de la base pour relancer la migration de schéma
+// (cas d'une base bloquée où prodSessions n'a pas été créée correctement). Préserve les sessions
+// du cache localStorage et les réinjecte une fois la table disponible.
+async function reparerBaseSessions(){
+  if(!confirm('Réparer la base de données ?\nTes sessions en mémoire seront préservées. Si l\'alerte persiste après, ferme TOUTES les fenêtres de l\'app (et Safari) puis rouvre.')) return;
+  let sauvegarde=[];
+  try{ sauvegarde = JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]'); if(!Array.isArray(sauvegarde)) sauvegarde=[]; }catch(e){ sauvegarde=[]; }
+  try{
+    db.close();
+    await db.open();   // relance la migration vers la dernière version du schéma
+    if(db.prodSessions && typeof db.prodSessions.bulkPut==='function'){
+      if(sauvegarde.length) await db.prodSessions.bulkPut(sauvegarde);
+      prodSessClearDexieKo();
+      toast('Base réparée ✓ — sessions préservées');
+    } else {
+      toast('Ferme TOUTES les fenêtres de l\'app (et Safari) puis rouvre pour finaliser');
+    }
+  }catch(e){
+    console.error('reparerBaseSessions', e);
+    toast('Ferme complètement l\'app puis rouvre pour finaliser la réparation');
+  }
+  if(typeof renderAtelier==='function') renderAtelier();
+}
 // Réhydratation au démarrage : si IndexedDB contient des sessions absentes du localStorage
 // (cas typique d'une purge iOS du localStorage), on les réinjecte dans le cache.
 // IndexedDB fait foi : toute session présente en base mais perdue du cache est restaurée.
@@ -18594,7 +18645,7 @@ function renderAtelier(){
     <div class="topbar"><div><h1>Atelier de production</h1><p>Mesure du temps par tâche — chronos parallèles</p></div>
       <button class="btn ghost" onclick="goView('mrp')">🧭 Plan de production →</button></div>
     <div class="banner" style="background:#eef5f0;border-color:#bcd9c6">⏱ <div>C'est <b>ICI</b> que tu mesures ton <b>temps de travail</b> : chaque tâche chronométrée nourrit les <b>estimations du Plan de production</b> (plus tu mesures, plus le calage horaire de tes journées devient juste). <span style="color:#6a8a5a">À ne pas confondre avec le chrono de la page Productions, qui sert seulement au suivi de fraîcheur (DLC).</span></div></div>
-    ${prodSessDexieKo()?`<div class="banner" style="background:#fdeaea;border-color:#d9534f">⚠ <div><b>Attention : la sauvegarde sécurisée des chronos a rencontré un souci</b> (${esc(prodSessDexieKo())}). Tes sessions sont encore en mémoire locale mais moins protégées. Ferme et rouvre l'app ; si l'alerte persiste, fais une sauvegarde iCloud par précaution.</div></div>`:''}
+    ${prodSessDexieKo()?`<div class="banner" style="background:#fdeaea;border-color:#d9534f">⚠ <div><b>La sauvegarde sécurisée des chronos a rencontré un souci</b> (${esc(prodSessDexieKo())}). Tes sessions sont encore en mémoire locale mais moins protégées.<br><button class="btn gold sm" style="margin-top:8px" onclick="reparerBaseSessions()">🔧 Réparer la base maintenant</button></div></div>`:''}
     ${(typeof unsavedCount==='function'&&unsavedCount()>0)?`<div class="banner" style="background:#fff7e6;border-color:#e8d09a">☁️ <div><b>Pense à sauvegarder sur iCloud.</b> Tes sessions ne sont vraiment à l'abri qu'une fois exportées hors de l'appareil. <button class="btn gold sm" style="margin-top:6px" onclick="shareBackupToICloud()">Sauvegarder maintenant</button></div></div>`:''}
     <div class="atelier-tabs">
       <button class="at-tab ${_atelierTab==='pilotage'?'active':''}" onclick="atelierSwitch('pilotage')">⏱ Pilotage</button>
