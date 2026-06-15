@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v391';
+const APP_VERSION = 'v392';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15893,8 +15893,14 @@ async function diagMatBrute(matId){
   const zone=document.getElementById('diagBruteZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
   try{
     const m=await db.materials.get(+matId);
+    const cacheM=(window._allMatsCache||[]).find(x=>+x.id===+matId);
     const lots=(await db.materialLots.toArray()).filter(l=>+l.materialId===+matId);
-    if(!m){ if(zone) zone.innerHTML=`<p class="note" style="color:#b3261e">Aucune matière id ${matId}.</p>`; return; }
+    if(!m){ if(zone) zone.innerHTML=`<p class="note" style="color:#b3261e">Aucune matière id ${matId} en base.</p>`; return; }
+    const cmp = `<div style="font-size:.74rem;background:#fdeaea;padding:8px;border-radius:8px;line-height:1.7;margin-bottom:6px">
+      <b>⚖ Comparaison cache vs base pour l'id ${matId} :</b><br>
+      base (db.materials) : <b>${esc(m.nom)}</b> · cat ${esc(m.categorie||'(vide)')}<br>
+      cache (_allMatsCache) : <b>${esc((cacheM&&cacheM.nom)||'(absent du cache)')}</b> · cat ${esc((cacheM&&cacheM.categorie)||'?')}<br>
+      ${cacheM && cacheM.nom!==m.nom ? '🚨 <b>DÉSYNCHRO</b> : le cache et la base ne pointent pas la même matière pour cet id !' : 'cache et base cohérents pour cet id.'}</div>`;
     const champM=`<div style="font-size:.74rem;background:#f7f3ee;padding:8px;border-radius:8px;line-height:1.7">
       <b>Matière #${m.id} — ${esc(m.nom)}</b><br>
       catégorie : <b>${esc(m.categorie||'(vide)')}</b> ${m.categorie==='emballage'?'✓':'⚠ PAS « emballage »'}<br>
@@ -15902,8 +15908,14 @@ async function diagMatBrute(matId){
     const champL = lots.length ? lots.map(l=>`<div style="font-size:.72rem;background:#fff;border:1px solid #ece3d6;padding:6px;border-radius:6px;margin-top:4px">
       lot #${l.id} · qteInitiale : <b>${l.qteInitiale??'(vide)'}</b> · prixUnitaire : <b>${l.prixUnitaire??'(vide)'}</b> · prix : ${l.prix??'(vide)'} · lotPU() = <b>${lotPU(l)}</b> · reçu ${esc(l.dateReception||'?')}</div>`).join('')
       : '<p class="note">Aucun lot sur cette matière.</p>';
-    if(zone) zone.innerHTML = champM + champL +
-      `<p class="note" style="margin-top:6px">${m.categorie!=='emballage'?'⚠ Cette matière a un <b>nom de coffret</b> mais sa catégorie n\'est pas « emballage » → elle est <b>vue par le calcul de commande</b> (qui cherche par nom) mais <b>ignorée par le diagnostic</b> (qui filtre par catégorie). C\'est l\'angle mort.':'Catégorie correcte.'}</p>`;
+    // recherche de la VRAIE matière coffret 16, par nom, dans base ET cache
+    const coffBase=(await db.materials.toArray()).filter(x=>/coffret\s*16/i.test((x.nom||'')));
+    const coffCache=(window._allMatsCache||[]).filter(x=>/coffret\s*16/i.test((x.nom||'')));
+    const coff=`<div style="font-size:.72rem;background:#eef5f0;padding:8px;border-radius:8px;margin-top:6px;line-height:1.6">
+      <b>🔎 Matières dont le nom contient « coffret 16 » :</b><br>
+      en base : ${coffBase.map(x=>`#${x.id} "${esc(x.nom)}" (cat ${esc(x.categorie||'∅')})`).join(' · ')||'aucune'}<br>
+      dans le cache : ${coffCache.map(x=>`#${x.id} "${esc(x.nom)}" (cat ${esc(x.categorie||'∅')})`).join(' · ')||'aucune'}</div>`;
+    if(zone) zone.innerHTML = cmp + champM + champL + coff;
   }catch(e){ console.error('diagMatBrute',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur.</p>'; }
 }
 // Liste TOUS les lots d'emballage (matière + quantité + prix unitaire), pour repérer un lot au prix
