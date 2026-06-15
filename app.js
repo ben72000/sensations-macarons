@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v412';
+const APP_VERSION = 'v413';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -864,6 +864,10 @@ function prodEstRangee(p){
   if(!p) return false;
   if(p.rangee===true) return true;
   if(window._prodLiesCmdPrete && window._prodLiesCmdPrete.has(+p.id)) return true;
+  // Production ÉPUISÉE : terminée et il ne reste plus rien (assemblée, servie, consommée).
+  // Plus rien à gérer → sort de la vue, comme une production rangée. On exige le statut
+  // « terminée » pour ne jamais masquer une prod encore en cours qui serait à 0 transitoirement.
+  if(prodStatut(p)==='termine' && round3(+p.qteRestante||0)<=0) return true;
   return false;
 }
 // Un lot est-il un PRODUIT FINI vendable ? (exclut les sous-lots coques/ganache non assemblés)
@@ -3387,13 +3391,19 @@ async function prodVoirRangees(){
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'(recette)';
   const rangees = prods.filter(p=>p.rangee===true);
   const liesCmd = prods.filter(p=>p.rangee!==true && window._prodLiesCmdPrete && window._prodLiesCmdPrete.has(+p.id));
+  // Épuisées : terminées + restant 0, et pas déjà comptées dans les deux catégories ci-dessus.
+  const epuisees = prods.filter(p=>p.rangee!==true
+    && !(window._prodLiesCmdPrete && window._prodLiesCmdPrete.has(+p.id))
+    && prodStatut(p)==='termine' && round3(+p.qteRestante||0)<=0);
   const ligne = p => `<div class="sum-box"><span>${esc(p.libre?(p.produitLibre||'(sans nom)'):recName(p.recipeId))} <span style="color:#9a8a82;font-size:.75rem">· lot ${esc(p.lotProduction||('#'+p.id))}</span></span>
     ${p.rangee===true?`<button class="btn ghost sm" onclick="prodDeranger(${p.id})">↩ Remettre</button>`:'<span class="tag ok" style="font-size:.62rem">cmd prête/livrée</span>'}</div>`;
-  openModal(`<h3>📦 Productions rangées (masquées)</h3>
-    <p class="note">Ces productions sont sorties de la vue. Tu peux en remettre une si besoin.</p>
+  const ligneEp = p => `<div class="sum-box"><span>${esc(p.libre?(p.produitLibre||'(sans nom)'):recName(p.recipeId))} <span style="color:#9a8a82;font-size:.75rem">· lot ${esc(p.lotProduction||('#'+p.id))}</span></span><span class="tag" style="background:#ece2d4;color:#6b5a52;font-size:.62rem">épuisée</span></div>`;
+  openModal(`<h3>Productions masquées</h3>
+    <p class="note">Ces productions sont sorties de la vue car rangées, écoulées ou épuisées.</p>
     ${rangees.length?`<p class="note" style="margin-top:8px"><b>Rangées manuellement (${rangees.length})</b></p>${rangees.map(ligne).join('')}`:''}
     ${liesCmd.length?`<p class="note" style="margin-top:8px"><b>Liées à une commande prête/livrée (${liesCmd.length})</b></p>${liesCmd.map(ligne).join('')}`:''}
-    ${(!rangees.length&&!liesCmd.length)?'<p class="note">Aucune production rangée pour le moment.</p>':''}
+    ${epuisees.length?`<p class="note" style="margin-top:8px"><b>Épuisées · restant 0 (${epuisees.length})</b></p>${epuisees.map(ligneEp).join('')}`:''}
+    ${(!rangees.length&&!liesCmd.length&&!epuisees.length)?'<p class="note">Aucune production masquée pour le moment.</p>':''}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 function ecartTag(p){
