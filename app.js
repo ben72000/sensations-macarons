@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v401';
+const APP_VERSION = 'v402';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -856,6 +856,16 @@ const PROD_OPEN_MAX_DAYS = 4;
 function prodStatut(p){ return p && p.prodStatut ? p.prodStatut : 'termine'; }
 // Composant d'une production : 'complet' (vendable), 'coques'/'ganache' (intermédiaires), 'assemble' (vendable).
 function prodComposant(p){ return (p && p.composant) ? p.composant : 'complet'; }
+// Une production est "rangée" (donc sortie de la vue Production) si elle a été DÉLIBÉRÉMENT
+// déclarée rangée (champ p.rangee), OU si elle est rattachée à une commande prête/livrée
+// (ensemble précalculé _prodLiesCmdPrete, rempli dans renderProductions). Aucune déduction
+// automatique au-delà : sans déclaration explicite, une production reste visible.
+function prodEstRangee(p){
+  if(!p) return false;
+  if(p.rangee===true) return true;
+  if(window._prodLiesCmdPrete && window._prodLiesCmdPrete.has(+p.id)) return true;
+  return false;
+}
 // Un lot est-il un PRODUIT FINI vendable ? (exclut les sous-lots coques/ganache non assemblés)
 function prodVendable(p){ const c=prodComposant(p); return c==='complet' || c==='assemble'; }
 // Heure d'ancrage de la DLC frigo : le moment où la prod est passée « terminée »
@@ -3219,6 +3229,18 @@ async function docValiderFacture(id){
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
+  // Précalcul : productions rattachées à une commande PRÊTE (Terminée) ou LIVRÉE → à masquer.
+  try{
+    const [_oItems, _ords] = await Promise.all([db.orderItems.toArray(), db.orders.toArray()]);
+    const statutByOrder = {}; _ords.forEach(o=>{ statutByOrder[+o.id]=o.statut||''; });
+    const set=new Set();
+    _oItems.forEach(it=>{
+      if(it.productionId==null || it.orderId==null) return;
+      const st=statutByOrder[+it.orderId];
+      if(st==='Terminée' || st==='Livrée') set.add(+it.productionId);
+    });
+    window._prodLiesCmdPrete = set;
+  }catch(e){ window._prodLiesCmdPrete = new Set(); }
   const losses = await db.losses.toArray().catch(()=>[]);
   const kpi = await lossKPIs();
   const lossByProd = {}; losses.forEach(l=>{ lossByProd[l.productionId]=(lossByProd[l.productionId]||0)+(+l.qte||0); });
@@ -3271,7 +3293,7 @@ async function renderProductions(){
     if(base) famCount[base]=(famCount[base]||0)+1;
   });
   _prodFamCount = famCount;   // exposé pour _prodbatRow (appelé hors de cette fonction)
-  _prodnCache = prods.map(p=>{
+  _prodnCache = prods.filter(p=>!prodEstRangee(p)).map(p=>{
     const nom = prodNom(p);
     const e = empInfo(p.emplacement);
     const st = prodStatut(p)==='termine' ? 'terminée terminé' : 'démarrée en cours';
@@ -3285,7 +3307,8 @@ async function renderProductions(){
     return {p, _lettre:lettre, _prim:prim, _blob:blob, _digits:onlyDigits([p.lotProduction, p.id].filter(Boolean).join(' '))};
   });
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Productions</h1><p id="prodCount">${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p></div>
+   <div class="topbar"><div><h1>Productions</h1><p id="prodCount">${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p>
+     ${(() => { const nbRangees = prods.filter(p=>prodEstRangee(p)).length; return nbRangees?`<p style="margin-top:2px"><span class="act" onclick="prodVoirRangees()" style="font-size:.8rem">📦 ${nbRangees} production(s) rangée(s) masquée(s) — voir →</span></p>`:''; })()}</div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button>
      <button class="btn ghost" style="margin-left:6px" onclick="quickLossForm()">⚠ Casse / Perte</button></div>
    ${kpi.count?`<div class="cards" style="margin-bottom:18px">
@@ -3345,6 +3368,33 @@ async function renderProductions(){
        ${collapseList(blocs, 1, {moreLabel:n=>`Voir les ${n} batch(s) précédent(s)`, lessLabel:'Réduire'})}</div>`;
    })()}`;
   prodbatFilter(prodnSearch);
+}
+// Déclare une production "rangée" (la sort de la vue Production). Geste délibéré, réversible.
+async function prodRanger(id){
+  await db.productions.update(id, {rangee:true, rangeeTs:new Date().toISOString()});
+  toast('Production rangée — retirée de la vue ✓');
+  renderProductions();
+}
+async function prodDeranger(id){
+  await db.productions.update(id, {rangee:false});
+  toast('Production remise dans la vue');
+  renderProductions();
+}
+// Affiche les productions rangées (masquées) dans une modale, avec possibilité de les "déranger".
+async function prodVoirRangees(){
+  const prods = await db.productions.orderBy('date').reverse().toArray();
+  const recipes = await db.recipes.toArray();
+  const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'(recette)';
+  const rangees = prods.filter(p=>p.rangee===true);
+  const liesCmd = prods.filter(p=>p.rangee!==true && window._prodLiesCmdPrete && window._prodLiesCmdPrete.has(+p.id));
+  const ligne = p => `<div class="sum-box"><span>${esc(p.libre?(p.produitLibre||'(sans nom)'):recName(p.recipeId))} <span style="color:#9a8a82;font-size:.75rem">· lot ${esc(p.lotProduction||('#'+p.id))}</span></span>
+    ${p.rangee===true?`<button class="btn ghost sm" onclick="prodDeranger(${p.id})">↩ Remettre</button>`:'<span class="tag ok" style="font-size:.62rem">cmd prête/livrée</span>'}</div>`;
+  openModal(`<h3>📦 Productions rangées (masquées)</h3>
+    <p class="note">Ces productions sont sorties de la vue. Tu peux en remettre une si besoin.</p>
+    ${rangees.length?`<p class="note" style="margin-top:8px"><b>Rangées manuellement (${rangees.length})</b></p>${rangees.map(ligne).join('')}`:''}
+    ${liesCmd.length?`<p class="note" style="margin-top:8px"><b>Liées à une commande prête/livrée (${liesCmd.length})</b></p>${liesCmd.map(ligne).join('')}`:''}
+    ${(!rangees.length&&!liesCmd.length)?'<p class="note">Aucune production rangée pour le moment.</p>':''}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 function ecartTag(p){
   const e = (p.ecart!=null) ? +p.ecart : 0;
@@ -3423,6 +3473,7 @@ function _prodbatRow(row){
      <div class="prod-card-status">${statutCell}</div>
      <div class="prod-card-actions">
        ${st!=='termine'?`<button class="qa edit" onclick="prodSetTermine(${p.id})" title="Passer en terminée — démarre la DLC">✓ Terminer</button>`:''}
+       ${st==='termine'?`<button class="qa" style="background:#3f7d52;color:#fff" onclick="prodRanger(${p.id})" title="Déclarer rangée — la retire de la vue Production">📦 Ranger</button>`:''}
        ${assembleBtn}
        ${degBtn}
        <button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button>
