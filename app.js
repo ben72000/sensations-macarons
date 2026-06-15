@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v358';
+const APP_VERSION = 'v359';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -11631,9 +11631,18 @@ async function marketForm(id){
       <div class="field"><label>Lieu</label><input id="mk_lieu" value="${esc(mk.lieu||'')}" placeholder="Place, ville"></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Horaires</label><input id="mk_horaires" value="${esc(mk.horaires||'')}" placeholder="ex : 9h–18h"></div>
+      <div class="field"><label>Horaires${id?'':' (jour 1)'}</label><input id="mk_horaires" value="${esc(mk.horaires||'')}" placeholder="ex : 10h–19h"></div>
       <div class="field"><label>Durée (heures)</label><input type="number" step="0.5" min="0" id="mk_heures" value="${mk.heures||''}" placeholder="ex : 8"></div>
     </div>
+    ${id?'':`
+    <label class="opt-row" style="margin:4px 0 2px"><input type="checkbox" id="mk_2jours" onchange="document.getElementById('mk_j2zone').style.display=this.checked?'block':'none'"> <span class="opt-main"><b>📅 Marché sur 2 jours consécutifs</b><br><span style="font-size:.78rem;color:#9a8a82">Crée deux fiches liées (une par jour), chacune avec sa caisse. Le stand est réparti moitié-moitié ; le trajet est compté chaque jour.</span></span></label>
+    <div id="mk_j2zone" style="display:none">
+      <div class="row2">
+        <div class="field"><label>Date jour 2 *</label><input type="date" id="mk_date2" value=""></div>
+        <div class="field"><label>Horaires (jour 2)</label><input id="mk_horaires2" value="" placeholder="ex : 10h–18h"></div>
+      </div>
+      <div class="field"><label>Durée jour 2 (heures)</label><input type="number" step="0.5" min="0" id="mk_heures2" value="" placeholder="ex : 8"></div>
+    </div>`}
     <div class="field"><label>Météo (optionnel)</label><input id="mk_meteo" value="${esc(mk.meteo||'')}" placeholder="ex : Ensoleillé, 18°C"></div>
     <div class="field"><label>Fond de caisse au départ (€) <span style="color:#9a8a82;font-weight:400">— déduit automatiquement du résultat</span></label>
       <input type="number" min="0" step="1" id="mk_fond" value="${mk.fondCaisse!=null?esc(mk.fondCaisse):''}" placeholder="ex : 50"></div>
@@ -11680,6 +11689,32 @@ async function saveMarket(id){
     meteo:val('mk_meteo'), notes:val('mk_notes'), prevuQte:+val('mk_prevu')||0, fondCaisse:+val('mk_fond')||0,
     coutStand:+val('mk_stand')||0, distanceKm:+val('mk_dist')||0, prixCarburant:+val('mk_carbu')||0, tempsRouteMin:+val('mk_route')||0, consoVehicule: val('mk_conso')!==''?(+val('mk_conso')||0):null};
   o.histo = !!document.getElementById('mk_histo')?.checked;
+  // --- Mode marché sur 2 jours consécutifs (création uniquement) ---
+  const deux = !id && !!document.getElementById('mk_2jours')?.checked;
+  if(deux){
+    const date2 = val('mk_date2');
+    if(!date2){ toast('Date du jour 2 obligatoire'); return; }
+    if(date2 < date){ toast('La date du jour 2 doit être après le jour 1'); return; }
+    const groupId = 'g'+Date.now();   // identifiant de regroupement des 2 fiches
+    // Stand réparti moitié-moitié ; trajet (distance, carburant, temps) compté chaque jour (inchangé).
+    const standMoit = money2((+val('mk_stand')||0)/2);
+    const baseCommune = {
+      nom, lieu:val('mk_lieu'), meteo:val('mk_meteo'), notes:val('mk_notes'),
+      prevuQte:+val('mk_prevu')||0, fondCaisse:+val('mk_fond')||0,
+      coutStand:standMoit, distanceKm:+val('mk_dist')||0, prixCarburant:+val('mk_carbu')||0,
+      tempsRouteMin:+val('mk_route')||0, consoVehicule: val('mk_conso')!==''?(+val('mk_conso')||0):null,
+      histo:o.histo, statut:'ouvert', ca:{especes:0,cb:0,autre:0}, mkGroup:groupId
+    };
+    const j1={...baseCommune, date, horaires:val('mk_horaires'), heures:+val('mk_heures')||0, mkGroupDay:1, mkGroupTotal:2};
+    const j2={...baseCommune, date:date2, horaires:val('mk_horaires2'), heures:+val('mk_heures2')||0, mkGroupDay:2, mkGroupTotal:2};
+    const id1=await db.markets.add(j1);
+    const id2=await db.markets.add(j2);
+    // Calendrier : un événement par jour.
+    await db.events.add({date:j1.date, titre:'⛺ '+nom+' (J1/2)', type:'marche', refId:'mk'+id1}).catch(()=>{});
+    await db.events.add({date:j2.date, titre:'⛺ '+nom+' (J2/2)', type:'marche', refId:'mk'+id2}).catch(()=>{});
+    closeModal(); renderMarkets(); toast('Marché sur 2 jours créé ✓');
+    return;
+  }
   if(id){ await db.markets.update(id,o); }
   else { o.statut='ouvert'; o.ca={especes:0,cb:0,autre:0}; id=await db.markets.add(o); }
   // Connexion calendrier : un marché planifié apparaît dans l'agenda (type 'marche').
