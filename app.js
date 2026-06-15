@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v376';
+const APP_VERSION = 'v377';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6991,8 +6991,9 @@ async function cmdForm(id, opts){
   _privacySuspend=1; // saisie de commande toujours en clair, même en mode discret
   cmdClientsCache = await db.clients.toArray();
   cmdProductsCache = (await db.products.toArray()).filter(p=>p.actif!==false).sort((a,b)=>(+a.taille)-(+b.taille));
-  // Emballages disponibles (matières catégorie 'emballage') pour le choix d'emballage par coffret.
-  cmdEmballagesCache = (await db.materials.toArray()).filter(m=>m.categorie==='emballage').sort((a,b)=>(+a.capacite||0)-(+b.capacite||0));
+  // Emballages disponibles pour le choix par coffret : uniquement les contenants ayant une CAPACITÉ
+  // (vraies boîtes). On exclut les consommables sans capacité comme le film étirable, le papier, etc.
+  cmdEmballagesCache = (await db.materials.toArray()).filter(m=>m.categorie==='emballage' && +m.capacite>0).sort((a,b)=>(+a.capacite||0)-(+b.capacite||0));
   // caches pour le calcul de marge en direct (impact livraison)
   _cmdMarginCache = {
     recipes: await db.recipes.toArray(),
@@ -11523,17 +11524,19 @@ async function pmcBuildAndFill(){
   // 2) types d'emballage : on lit les LIGNES SAISIES à l'écran (live), pas seulement l'enregistré
   const n=+val('set_pt_n')||0;
   const seenPmc=new Set();
-  const stdCapsPmc=new Set(BOX_SIZES.map(t=>+t));
-  BOX_SIZES.forEach(t=>{ seenPmc.add('coffret '+t+'|'+(+t)); });   // marque les coffrets standards déjà ajoutés
+  const stdCapsPmc=new Set(BOX_SIZES.map(t=>+t));   // capacités déjà couvertes par les coffrets standards
   for(let i=0;i<n;i++){
     const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue;
     const cap=Math.max(0,+val('set_pt_cap_'+i)||0), coutEmb=money2(+val('set_pt_c_'+i)||0);
-    const nomNorm=nom.toLowerCase();
-    // doublon d'un coffret standard ? (même nom+capacité, ou "Coffret X" de capacité standard)
-    if(seenPmc.has(nomNorm+'|'+cap)) continue;
-    if(/^coffret\s/.test(nomNorm) && stdCapsPmc.has(cap)) continue;
-    const key=nomNorm+'|'+cap+'|'+coutEmb;
-    if(seenPmc.has(key)) continue;   // doublon entre types
+    // Doublon d'un coffret standard : un packType générique "Boîte N" ou "Coffret N" dont la
+    // capacité N est un format standard (6/8/16/25) fait double emploi avec le coffret déjà
+    // affiché en haut → on le masque ICI uniquement (aucune donnée touchée, comptage marché intact).
+    // On épargne les emballages au nom spécifique (ex: "Boîte blch 10/16pcs") même si cap=16.
+    const nomNorm=nom.toLowerCase().replace(/\s+/g,' ').trim();
+    const estGenerique = new RegExp('^(bo[iî]te|coffret)\\s*'+cap+'$').test(nomNorm);
+    if(stdCapsPmc.has(cap) && estGenerique) continue;
+    const key=nom.toLowerCase()+'|'+cap+'|'+coutEmb;
+    if(seenPmc.has(key)) continue;   // doublon entre types restants
     seenPmc.add(key);
     rows.push({ nom, cap, coutEmb });
   }
