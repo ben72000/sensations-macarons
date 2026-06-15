@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v357';
+const APP_VERSION = 'v358';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18111,10 +18111,14 @@ function mascotPickLine(mood){
 // Clic sur la mascotte/bulle : ouvre un vrai popup (modale) avec le briefing.
 // La mascotte et la bulle gardent leur taille d'origine — rien ne se déforme.
 let _mascotBubbleOpen=false;
-// Navigation depuis la modale briefing vers l'assistant : pattern standard de l'app.
+// Navigation depuis la modale briefing vers l'assistant.
+// 1) on ferme la modale SANS history.back() (fromPop) — sinon le retour asynchrone ramène
+//    à l'accueil après coup ; 2) on affiche l'assistant ; 3) on REMPLACE l'entrée #modal
+//    par #assistant dans l'historique (pas de push, pas d'entrée parasite).
 function mascotGoAssistant(){
-  closeModal();
-  goView('assistant');
+  closeModal({fromPop:true});
+  view='assistant'; if(typeof setActiveView==='function') setActiveView(view); render();
+  if(_histReady && !_popping){ try{ history.replaceState({view:'assistant', kind:'view'}, '', '#assistant'); }catch(e){} }
 }
 async function mascotToggleBubble(){
   let mood='serein', punchline='Coucou ! 🍩';
