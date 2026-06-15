@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v364';
+const APP_VERSION = 'v365';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8070,17 +8070,27 @@ function comptaPeriodeStart(k){
   return null; // tout
 }
 function comptaSetPeriode(k){ _comptaPeriode=k; renderCompta(); }
+// Libellé lisible des dates couvertes par une période (ex : « du 16 mai au 15 juin 2026 »).
+function comptaPeriodeDatesLabel(k){
+  const start=comptaPeriodeStart(k);
+  const todayStr=new Date().toISOString().slice(0,10);
+  if(!start) return 'toutes les données';
+  const f = (typeof fmtDate==='function') ? fmtDate : (s=>s);
+  return `du ${f(start)} au ${f(todayStr)}`;
+}
 async function computeAccounting(opts){
   opts=opts||{};
   const _periodeStart = opts.periodeStart || null; // filtre optionnel par date de début
   const allOrders = await db.orders.toArray();
   // Filtre par période : on ne garde que les commandes dont la date est >= début de période.
   const orders = _periodeStart ? allOrders.filter(o=> (o.date||'') >= _periodeStart) : allOrders;
-  const charges = await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
+  const allCharges = await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
+  const charges = _periodeStart ? allCharges.filter(c=> (c.date||'') >= _periodeStart) : allCharges;
   const recipes = await db.recipes.toArray();
   const recipeItems = await db.recipeItems.toArray();
   const lots = await db.materialLots.toArray();
-  const markets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
+  const allMarkets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
+  const markets = _periodeStart ? allMarkets.filter(k=> (k.date||'') >= _periodeStart) : allMarkets;
 
   // 1) ENCAISSEMENTS par date réelle de paiement (cash basis)
   //    Chaque ligne de paiement {date, montant, moyen} compte au mois de SA date.
@@ -10127,6 +10137,7 @@ function comptaFlowSchema(A){
     <div style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;margin-bottom:10px">
       ${COMPTA_PERIODES.map(p=>`<button onclick="comptaSetPeriode('${p.k}')" style="flex:none;padding:6px 13px;border-radius:20px;border:1.5px solid ${_comptaPeriode===p.k?'#52252f':'var(--hair)'};background:${_comptaPeriode===p.k?'#52252f':'#fff'};color:${_comptaPeriode===p.k?'#fff':'#6a5a52'};font-size:.8rem;font-weight:600;white-space:nowrap;cursor:pointer">${p.lib}</button>`).join('')}
     </div>
+    <div class="banner" style="background:#f0f4fa;border-color:#c4d2e6;margin-bottom:10px;font-size:.82rem">📅 <div>Période affichée : <b>${esc(comptaPeriodeDatesLabel(_comptaPeriode))}</b>${_comptaPeriode==='mois'?' <span style="color:#9a8a82">(30 derniers jours glissants, pas le mois calendaire)</span>':''}</div></div>
     <p class="note" style="margin-top:0;margin-bottom:12px">Chaque chiffre découle du précédent. On part de ce que tu as facturé, on suit l'argent jusqu'à ce qu'il te reste vraiment.</p>
 
     <!-- Étage 1 : le CA facturé se sépare en encaissé + créances -->
