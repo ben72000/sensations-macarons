@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v359';
+const APP_VERSION = 'v360';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1398,7 +1398,7 @@ async function renderDash(){
   const releveFait = tLogsToday.length>0;
   // CA des marchés clôturés (somme espèces+CB+autre), rattaché à leur date de clôture.
   const closedMk = (markets||[]).filter(k=>k.statut==='clos').map(k=>{
-    const ca=k.ca||{}; return {date:(k.dateCloture||k.date||''), montant:marketNetCA(k)};
+    const ca=k.ca||{}; return {date:(k.date||''), montant:marketNetCA(k)};
   }).filter(k=>k.montant>0);
   const mkInMonth = d => { const dt=new Date(d); return dt.getMonth()===m && dt.getFullYear()===y; };
 
@@ -8107,7 +8107,7 @@ async function computeAccounting(opts){
     const ca=mk.ca||{}; const fond=money2(+mk.fondCaisse||0);
     const esp=money2(Math.max(0,(+ca.especes||0)-fond)), cb=money2(ca.cb||0), au=money2(ca.autre||0);
     const tot=money2(esp+cb+au); if(tot<=0) return;
-    const m=monthKey(mk.dateCloture||mk.date); if(!m) return;
+    const m=monthKey(mk.date); if(!m) return;
     encByMonth[m]=money2((encByMonth[m]||0)+tot);
     factByMonth[m]=money2((factByMonth[m]||0)+tot);
     totalEncaisse=money2(totalEncaisse+tot); totalFacture=money2(totalFacture+tot); totalMarches=money2(totalMarches+tot);
@@ -8151,7 +8151,7 @@ async function computeAccounting(opts){
   markets.forEach(mk=>{
     if(mk.statut!=='clos') return;
     const T=marketTotals(mk, movesByMk[mk.id]||[], avgUnitMat);
-    const m=monthKey(mk.dateCloture||mk.date); if(!m) return;
+    const m=monthKey(mk.date); if(!m) return;
     const c=money2(T.coutMat+T.coutEmb+(T.coutMarche||0));
     costByMonth[m]=money2((costByMonth[m]||0)+c);
     totalCoutMarches=money2(totalCoutMarches+c);
@@ -8226,7 +8226,7 @@ async function computeMonthlyBilan(ym){
   // Marchés clôturés du mois = vente de marchandise.
   markets.forEach(mk=>{
     if(mk.statut!=='clos') return;
-    if(monthKey(mk.dateCloture||mk.date)!==ym) return;
+    if(monthKey(mk.date)!==ym) return;
     const ca=mk.ca||{}; const fond=money2(+mk.fondCaisse||0);
     const esp=money2(Math.max(0,(+ca.especes||0)-fond)), cb=money2(ca.cb||0), au=money2(ca.autre||0);
     const tot=money2(esp+cb+au); if(tot<=0) return;
@@ -10925,7 +10925,7 @@ function drawFlavorEvolutionChart(data, A){
   // marchés clos : CA = ENCAISSÉ (base de calcul) ; coût = pièces × coût DU PARFUM
   const movesByMk={}; (marketMoves||[]).forEach(mv=>{(movesByMk[mv.marketId] ||= []).push(mv);});
   (markets||[]).filter(mk=>mk.statut==='clos').forEach(mk=>{
-    const k=ymKey(mk.dateCloture||mk.date); if(!k) return;
+    const k=ymKey(mk.date); if(!k) return;
     const ca=mk.ca||{}; caByMonth[k]=money2((caByMonth[k]||0)+marketNetCA(mk));
     const mv=movesByMk[mk.id]||[];
     const byParfum={};
