@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v388';
+const APP_VERSION = 'v389';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15885,6 +15885,42 @@ async function applyZeroAmountFix(){
 // pour comprendre quel chiffre d'encaissé sort et d'où (facturé vs encaissé vs en attente).
 // Détecte les commandes dont la date de paiement tombe dans un mois DIFFÉRENT de la commande
 // (signal d'une date de paiement par défaut mal posée, ex : today() sur une commande historique).
+// Liste TOUS les lots d'emballage (matière + quantité + prix unitaire), pour repérer un lot au prix
+// aberrant (ex : 0,01 €) qui fausse le coût d'un format. Permet d'ouvrir la matière pour corriger.
+async function diagLotsEmballage(){
+  const zone=document.getElementById('diagLotsZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    const mats=await db.materials.toArray();
+    const lots=await db.materialLots.toArray();
+    const embMats=new Map(); mats.filter(m=>m.categorie==='emballage').forEach(m=>embMats.set(+m.id, m));
+    const embLots=lots.filter(l=>embMats.has(+l.materialId));
+    if(!embLots.length){ if(zone) zone.innerHTML='<p class="note">Aucun lot d\'emballage enregistré. Les coûts viennent donc des tarifs paramétrés / prix de référence.</p>'; return; }
+    // groupé par matière
+    const byMat={}; embLots.forEach(l=>{ (byMat[+l.materialId]=byMat[+l.materialId]||[]).push(l); });
+    const blocks = Object.keys(byMat).map(mid=>{
+      const m=embMats.get(+mid);
+      const tarif=(m.capacite>0 && getSettings().packaging && getSettings().packaging[+m.capacite]!=null)?+getSettings().packaging[+m.capacite]:null;
+      const rows = byMat[mid].sort((a,b)=>(a.dateReception||'').localeCompare(b.dateReception||'')).map(l=>{
+        const pu=lotPU(l), q=+l.qteInitiale||0;
+        // aberrant : prix unitaire dérisoire (<0,05) ou très en dessous du tarif attendu
+        const aberrant = pu>0 && (pu<0.05 || (tarif!=null && pu < tarif*0.3));
+        return `<div class="sum-box" style="${aberrant?'background:#fdeaea;border:1px solid #e8a9a3':''};font-size:.8rem">
+          <span>${esc(l.dateReception||'date ?')} <span style="color:#9a8a82">· qté ${qty(q)}${l.id?` · lot #${l.id}`:''}</span></span>
+          <b style="color:${aberrant?'#b3261e':'inherit'}">${euro(pu)}/u${aberrant?' ⚠':''}</b></div>`;
+      }).join('');
+      const aAberrant = byMat[mid].some(l=>{ const pu=lotPU(l); return pu>0 && (pu<0.05 || (tarif!=null && pu<tarif*0.3)); });
+      return `<div style="margin:8px 0;padding:8px;border:1px solid ${aAberrant?'#e8a9a3':'#ece3d6'};border-radius:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center"><b>${esc(m.nom)}</b>
+          <span class="act" onclick="closeModal&&closeModal();matForm(${m.id})">Ouvrir →</span></div>
+        ${tarif!=null?`<div style="font-size:.72rem;color:#9a8a82">tarif attendu pour ce format : ${euro(tarif)}</div>`:''}
+        ${rows}</div>`;
+    }).join('');
+    const anyAb = /⚠/.test(blocks);
+    if(zone) zone.innerHTML = blocks +
+      (anyAb?`<p class="note" style="color:#b3261e;margin-top:6px">⚠ <b>Lot(s) au prix aberrant détecté(s)</b> (en rouge). C'est probablement la cause d'un coût d'emballage faux (ex : 0,01 € sur un coffret 16). Ouvre la matière concernée et <b>corrige ou supprime le lot erroné</b>.</p>`
+            :`<p class="note" style="margin-top:6px;color:#3f7d52">✓ Aucun lot d'emballage au prix aberrant.</p>`);
+  }catch(e){ console.error('diagLotsEmballage',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
+}
 async function diagEmballageLots(){
   const zone=document.getElementById('diagEmbZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
   try{
@@ -16067,6 +16103,8 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">📦 Diagnostic emballages</h2>
       <p class="note">Liste tes emballages et le <b>coût unitaire réel</b> calculé sur leurs lots reçus. Repère un prix anormal (ex : 0,01 € sur un coffret 16) qui viendrait d'un lot mal saisi.</p>
       <div id="diagEmbZone"><button class="btn gold sm" onclick="diagEmballageLots()">Analyser mes emballages</button></div>
+      <p class="note" style="margin-top:10px">Pour traquer un lot au prix aberrant (le fameux 0,01 €) :</p>
+      <div id="diagLotsZone"><button class="btn ghost sm" onclick="diagLotsEmballage()">Lister tous les lots d'emballage</button></div>
     </div>
     <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
       <h2 style="font-size:1rem">🍪 Diagnostic grands formats</h2>
