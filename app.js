@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v377';
+const APP_VERSION = 'v378';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -397,6 +397,34 @@ function realPackagingCostMap(materials, lots){
   const out = new Map();
   for(const [cap, v] of embByCap){ if(v.qteTotal>0) out.set(cap, money2(v.coutTotal/v.qteTotal)); }
   return out;
+}
+// Coût unitaire RÉEL d'un emballage précis (par materialId) : moyenne pondérée de ses lots
+// chiffrés ; à défaut, le prix de référence (prixDefaut) de la matière. Sert au choix
+// d'emballage "Autre" sur une ligne coffret.
+function embMatUnitCost(matId, materials, lots){
+  if(matId==null) return 0;
+  let coutTotal=0, qteTotal=0;
+  (lots||[]).forEach(l=>{
+    if(+l.materialId!==+matId) return;
+    const q=+l.qteInitiale||0, pu=lotPU(l); if(q<=0||!(pu>0)) return;
+    coutTotal+=pu*q; qteTotal+=q;
+  });
+  if(qteTotal>0) return money2(coutTotal/qteTotal);
+  const m=(materials||[]).find(x=>+x.id===+matId);
+  return m && +m.prixDefaut>0 ? money2(+m.prixDefaut) : 0;
+}
+// Coût emballage d'une ligne coffret selon son choix (embMode), + libellé lisible pour l'affichage.
+// Réutilise exactement la logique de computeOrderMargins pour garantir la cohérence.
+function coffretEmbInfo(ln, materials, lots, realMap){
+  const _mats = materials||window._allMatsCache||[];
+  const mode = ln.embMode||'standard';
+  if(mode==='reutilisable') return {cout:0, label:'Réutilisable (client rapporte sa boîte)'};
+  if(mode==='autre' && ln.embMatId!=null){
+    const m=_mats.find(x=>+x.id===+ln.embMatId);
+    return {cout:embMatUnitCost(ln.embMatId, _mats, lots||[]), label:'Autre — '+((m&&m.nom)||'emballage choisi')};
+  }
+  const rp = realMap || realPackagingCostMap(_mats, lots||[]);
+  return {cout:packagingCostReal(ln.taille, rp), label:'Standard (selon la taille)'};
 }
 // Coût emballage d'un format : réel (lots) si dispo, sinon tarif paramétré.
 // Dans les deux cas, on ajoute le supplément des consommables 'coffret' (cartes, stickers…).
@@ -6828,14 +6856,20 @@ async function cmdView(id){
       })();
   }
   const lignes = orderToLines(o);
+  // Pour afficher le coût d'emballage retenu par coffret (contrôle du choix d'emballage).
+  const _embMats = window._allMatsCache || await db.materials.toArray();
+  const _embLots = await db.materialLots.toArray().catch(()=>[]);
+  const _embRealMap = realPackagingCostMap(_embMats, _embLots);
   const blocks = lignes.map(ln=>{
     if(ln.type==='coffret'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       const totQ=parfums.reduce((s,p)=>s+(+p.qte||0),0);
       const nbDiff=parfums.length, limit=BOX_FLAVOR_LIMIT[ln.taille]||0, over=Math.max(0,nbDiff-limit);
+      const _emb=coffretEmbInfo(ln, _embMats, _embLots, _embRealMap);
       return `<div class="cmd-line"><div class="line-type">Coffret ${ln.taille} macarons ${over?`<span class="line-sub">+${over} parfum(s) suppl. = +${euro(over*FLAVOR_SURCHARGE)}</span>`:''}</div>
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Parfums non détaillés.</p>'}
         ${totQ&&totQ!==+ln.taille?`<p class="note" style="color:var(--red)">⚠ ${totQ} macarons pour un coffret de ${ln.taille}.</p>`:''}
+        <div class="sum-box" style="font-size:.82rem;color:#8a7a72"><span>📦 Emballage : ${esc(_emb.label)}</span><b>${euro(_emb.cout)}</b></div>
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
     if(ln.type==='evenement'){
@@ -8455,7 +8489,11 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials){
     const lineCA = (ln.type==='histo') ? money2(+o.montant||0) : net;
     caGoods=money2(caGoods+lineCA);
     let pieces=0;
-    if(ln.type==='coffret'){ pieces=+ln.taille||0; coutEmb=money2(coutEmb+packagingCostReal(ln.taille, realPkg)); }
+    if(ln.type==='coffret'){
+      pieces=+ln.taille||0;
+      // Coût d'emballage selon le choix fait sur la ligne (Standard / Réutilisable / Autre).
+      coutEmb=money2(coutEmb+coffretEmbInfo(ln, materials||window._allMatsCache||[], lots||[], realPkg).cout);
+    }
     else if(ln.type==='grand') pieces=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
     else if(ln.type==='vrac') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);  // boîte réutilisable : pas de coût emballage
     else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
@@ -10173,12 +10211,14 @@ async function comptaDetail(type){
     titre='Créances clients — détail (restant dû)';
     orders.forEach(o=>{ const b=(typeof orderBalance==='function')?orderBalance(o):0; if(b>0){ lignes.push({h:ligneCmd(o,b,'reste à encaisser'), v:b}); } });
   } else if(type==='matieres'){
-    titre='Coût matières (estimé) — détail par commande';
-    let _rec=[], _items=[], _lots=[];
-    try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); }catch(e){}
+    titre='Coût matières + emballage — détail par commande';
+    let _rec=[], _items=[], _lots=[], _mats=[];
+    try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); _mats=await db.materials.toArray(); }catch(e){}
     orders.forEach(o=>{
-      let cm=0; try{ const mg=computeOrderMargins(o, _rec, _items, _lots); cm=money2(mg.coutMat||0); }catch(e){}
-      if(cm>0){ lignes.push({h:ligneCmd(o,cm,'coût matières'), v:cm}); }
+      let cm=0, ce=0;
+      try{ const mg=computeOrderMargins(o, _rec, _items, _lots, _mats); cm=money2(mg.coutMat||0); ce=money2(mg.coutEmb||0); }catch(e){}
+      const tot=money2(cm+ce);
+      if(tot>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();cmdForm(${o.id})"><span>${esc(fmtDate(o.date))} <span style="color:#9a8a82">#${o.id} · matières ${euro(cm)}${ce>0?' + emb. '+euro(ce):''}</span></span><b>${euro(tot)} ${NAV_GO}</b></div>`, v:tot}); }
     });
   } else if(type==='resultat'){
     // Le résultat est un calcul, pas une liste : on montre sa décomposition.
