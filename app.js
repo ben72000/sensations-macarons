@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v356';
+const APP_VERSION = 'v357';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18050,11 +18050,24 @@ function mascotSetVisible(on){
 }
 // Mascotte FIXE : un tap agrandit la bulle et y affiche le briefing « À faire aujourd'hui ».
 function mascotSetupTap(host){
-  host.addEventListener('click', (e)=>{ e.stopPropagation(); mascotToggleBubble(); });
-  // La bulle « Coucou ! » est positionnée au-dessus du host (position:absolute, bottom:100%),
-  // donc elle déborde hors de la zone cliquable du host. On la rend cliquable elle-même.
+  // Comportements DISTINCTS :
+  //  - la BULLE « Coucou ! » → ouvre le briefing « À faire aujourd'hui »
+  //  - la MASCOTTE (le donut) → va directement à la page Assistant
+  host.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    // Si le clic vient de la bulle, son propre handler s'en charge (ne rien faire ici).
+    if(e.target && e.target.closest && e.target.closest('#mascotBubble')) return;
+    mascotGoAssistantDirect();
+  });
   const bubble=host.querySelector('#mascotBubble');
-  if(bubble){ bubble.style.cursor='pointer'; bubble.addEventListener('click', (e)=>{ e.stopPropagation(); mascotToggleBubble(); }); }
+  if(bubble){
+    bubble.style.cursor='pointer';
+    bubble.addEventListener('click', (e)=>{ e.stopPropagation(); mascotToggleBubble(); });
+  }
+}
+// Navigation directe vers l'assistant depuis la mascotte (sans modale → pas de conflit d'historique).
+function mascotGoAssistantDirect(){
+  goView('assistant');
 }
 // Répliques de la mascotte : ton complice et taquin, déclinées par état de sérénité.
 // Plusieurs variantes par état → tirage au hasard pour varier à chaque ouverture.
@@ -18098,19 +18111,10 @@ function mascotPickLine(mood){
 // Clic sur la mascotte/bulle : ouvre un vrai popup (modale) avec le briefing.
 // La mascotte et la bulle gardent leur taille d'origine — rien ne se déforme.
 let _mascotBubbleOpen=false;
-// Navigation propre depuis la modale mascotte vers l'assistant, sans conflit d'historique.
-// closeModal() déclenche un history.back() asynchrone ; on attend le popstate AVANT de naviguer,
-// sinon le retour arrière écrase la vue assistant et ramène à l'accueil (avec tremblement).
+// Navigation depuis la modale briefing vers l'assistant : pattern standard de l'app.
 function mascotGoAssistant(){
-  const goAssist=()=>{ window.removeEventListener('popstate', goAssist); goView('assistant'); };
-  if(_histReady && overlay && overlay.classList.contains('show') && history.state && history.state.kind==='modal'){
-    window.addEventListener('popstate', goAssist, {once:true});
-    closeModal();   // déclenche history.back() → popstate → goAssist navigue ensuite
-    // Filet de sécurité si popstate ne se déclenche pas (rare) : on navigue quand même.
-    setTimeout(()=>{ if(overlay && !overlay.classList.contains('show') && view!=='assistant'){ window.removeEventListener('popstate', goAssist); goView('assistant'); } }, 250);
-  } else {
-    closeModal(); goView('assistant');
-  }
+  closeModal();
+  goView('assistant');
 }
 async function mascotToggleBubble(){
   let mood='serein', punchline='Coucou ! 🍩';
