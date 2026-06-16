@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v424';
+const APP_VERSION = 'v425';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6018,30 +6018,32 @@ async function prodSaveTimes(prodId){
   toast('Heures mises a jour \u2713');
 }
 async function traceProd(prodId){
+ try{
   const prod = await db.productions.get(prodId);
-  const recipe = await db.recipes.get(prod.recipeId);
-  const _prodNom = recipe ? recipe.produitNom : (prod.libre ? (prod.produitLibre||'(libre)') : '?');
-  const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray();
+  if(!prod){ toast('Production introuvable'); return; }
+  const recipe = prod.recipeId!=null ? await db.recipes.get(prod.recipeId).catch(()=>null) : null;
+  const _prodNom = recipe ? recipe.produitNom : (prod.libre ? (prod.produitLibre||'(libre)') : '(recette non enregistrée)');
+  const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
   const lines=[];
   for(const c of conso){
-    const lot = await db.materialLots.get(c.materialLotId);
+    const lot = c.materialLotId!=null ? await db.materialLots.get(c.materialLotId).catch(()=>null) : null;
     if(!lot){
       // T2 : le lot n'existe plus → on s'appuie sur les données figées au moment de la production
-      const mat = c.snapMaterialId ? await db.materials.get(c.snapMaterialId) : null;
-      const sup = c.snapSupplierId ? await db.suppliers.get(c.snapSupplierId) : null;
+      const mat = c.snapMaterialId ? await db.materials.get(c.snapMaterialId).catch(()=>null) : null;
+      const sup = c.snapSupplierId ? await db.suppliers.get(c.snapSupplierId).catch(()=>null) : null;
       lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'Matière')}</b><br>
         <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(c.snapLotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(c.snapDlc)||'—'} <span class="tag warn">lot archivé</span></span></div>`);
       continue;
     }
-    const mat = await db.materials.get(lot.materialId);
-    const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId) : null;
+    const mat = await db.materials.get(lot.materialId).catch(()=>null);
+    const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId).catch(()=>null) : null;
     lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'?')}</b><br>
       <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(lot.lotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(lot.dlc)||'—'}</span></div>`);
   }
   // commandes liées
-  const oi = await db.orderItems.where('productionId').equals(prodId).toArray();
-  const clients = await db.clients.toArray();
-  const orders = await db.orders.toArray();
+  const oi = await db.orderItems.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const orders = await db.orders.toArray().catch(()=>[]);
   const cmdLines = oi.map(it=>{
     const o=orders.find(x=>x.id===it.orderId); const cl=o?clients.find(c=>c.id===o.clientId):null;
     const stTag = o ? (normStatus(o.statut)==='Livrée'?' <span class="tag done" style="font-size:.6rem">livrée</span>':(normStatus(o.statut)==='Terminée'?' <span class="tag ok" style="font-size:.6rem">prête</span>':'')) : '';
@@ -6073,6 +6075,10 @@ async function traceProd(prodId){
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
     ${cmdLines.length?cmdLines.join(''):'<p class="note">Ce batch n\'est lié à aucune commande pour l\'instant.</p>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button><button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
+ }catch(e){
+  console.error('traceProd', e);
+  toast('Erreur lors de l\'affichage de la traçabilité du batch');
+ }
 }
 
 async function traceOrder(orderId){
