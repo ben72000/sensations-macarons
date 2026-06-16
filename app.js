@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v450';
+const APP_VERSION = 'v451';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9344,7 +9344,8 @@ async function stockParfumDetail(nom){
         <div><b>lot ${esc(p.lotProduction||'—')}</b> · ${qty(p.qteRestante)} pièce(s)${ageTxt?` <span style="font-size:.72rem;color:#9a8a82">· ${ageTxt}</span>`:''}<br>
           <span style="font-size:.78rem;color:#9a8a82">${empFin||'emplacement —'}</span><br>
           <span style="font-size:.78rem">${dlcDot}<span style="color:#9a8a82">fab. ${fab?fmtDateTime(fab):fmtDate(p.date)} · DLC ${dlc}</span></span>
-          ${nonPlaceHtml}</div>
+          ${nonPlaceHtml}
+          <div style="margin-top:6px"><button class="btn ghost sm" onclick="event.stopPropagation();closeModal();setEmplacement(${p.id})" title="Déplacer ce lot vers un autre emplacement">📍 Déplacer</button></div></div>
         <span class="tag ${st==='termine'?'ok':'event'}">${st==='termine'?'✓':'▶'}</span>
       </div>
     </div>`;
