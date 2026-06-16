@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v428';
+const APP_VERSION = 'v429';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18133,22 +18133,40 @@ function prodSessDexieKo(){ try{ return localStorage.getItem('sm_prodSessDexieKo
 // (cas d'une base bloquée où prodSessions n'a pas été créée correctement). Préserve les sessions
 // du cache localStorage et les réinjecte une fois la table disponible.
 async function reparerBaseSessions(){
-  if(!confirm('Réparer la base de données ?\nTes sessions en mémoire seront préservées. Si l\'alerte persiste après, ferme TOUTES les fenêtres de l\'app (et Safari) puis rouvre.')) return;
+  if(!confirm('Réparer la base de données ?\nTes sessions en mémoire seront préservées.')) return;
   let sauvegarde=[];
   try{ sauvegarde = JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]'); if(!Array.isArray(sauvegarde)) sauvegarde=[]; }catch(e){ sauvegarde=[]; }
+  // Test RÉEL de la table : on tente un count(). S'il réussit, la table est opérationnelle —
+  // on efface le flag même s'il n'y a aucune session (sinon l'alerte resterait affichée à tort).
+  async function tableOK(){
+    try{
+      if(!db.prodSessions || typeof db.prodSessions.count!=='function') return false;
+      await db.prodSessions.count();   // opération réelle : lève si la table n'existe pas vraiment
+      return true;
+    }catch(e){ return false; }
+  }
   try{
-    db.close();
-    await db.open();   // relance la migration vers la dernière version du schéma
-    if(db.prodSessions && typeof db.prodSessions.bulkPut==='function'){
-      if(sauvegarde.length) await db.prodSessions.bulkPut(sauvegarde);
+    // 1) test direct sans rien fermer (la base est peut-être déjà bonne → faux positif du flag)
+    if(await tableOK()){
+      if(sauvegarde.length){ try{ await db.prodSessions.bulkPut(sauvegarde); }catch(e){} }
+      prodSessClearDexieKo();
+      toast('Base déjà fonctionnelle ✓ — alerte levée');
+      if(typeof renderAtelier==='function') renderAtelier();
+      return;
+    }
+    // 2) sinon, on tente une vraie réouverture pour relancer la migration
+    try{ db.close(); }catch(e){}
+    await db.open();
+    if(await tableOK()){
+      if(sauvegarde.length){ try{ await db.prodSessions.bulkPut(sauvegarde); }catch(e){} }
       prodSessClearDexieKo();
       toast('Base réparée ✓ — sessions préservées');
     } else {
-      toast('Ferme TOUTES les fenêtres de l\'app (et Safari) puis rouvre pour finaliser');
+      toast('Migration bloquée : ferme TOTALEMENT l\'app ET Safari, attends 5 s, puis rouvre UNE seule fenêtre');
     }
   }catch(e){
     console.error('reparerBaseSessions', e);
-    toast('Ferme complètement l\'app puis rouvre pour finaliser la réparation');
+    toast('Ferme complètement l\'app (et Safari) puis rouvre pour finaliser');
   }
   if(typeof renderAtelier==='function') renderAtelier();
 }
@@ -18159,6 +18177,9 @@ async function prodSessHydrate(){
   try{
     if(!db.prodSessions) return;
     const fromDexie = await db.prodSessions.toArray();
+    // Si on arrive ici, la table prodSessions répond → elle est opérationnelle. On lève donc
+    // tout flag « base à réparer » resté affiché à tort (ex. faux positif sans session à écrire).
+    if(typeof prodSessClearDexieKo==='function') prodSessClearDexieKo();
     const cache = prodSessLoad();
     // Migration initiale (1re ouverture en v11) : des sessions existent en localStorage
     // mais la table Dexie est vide → on les y copie pour les mettre à l'abri.
