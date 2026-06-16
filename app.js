@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v467';
+const APP_VERSION = 'v468';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1577,6 +1577,13 @@ async function stockParMatiere(materialId){
 // avec client, date et montant, plus les marchés clôturés du mois. Vue de contrôle comptable.
 async function caMonthDetail(mk){
   mk = mk || monthKey(today());
+  // mois précédent / suivant pour la navigation (format AAAA-MM)
+  const _ym = mk.split('-'); const _d = new Date(+_ym[0], +_ym[1]-1, 1);
+  const _prevD = new Date(_d.getFullYear(), _d.getMonth()-1, 1);
+  const _nextD = new Date(_d.getFullYear(), _d.getMonth()+1, 1);
+  const _mkPrev = _prevD.toISOString().slice(0,7);
+  const _mkNext = _nextD.toISOString().slice(0,7);
+  const _isCurrentOrFuture = mk >= monthKey(today());   // pas de "mois suivant" au-delà du mois courant
   const orders = await db.orders.toArray().catch(()=>[]);
   const clients = await db.clients.toArray().catch(()=>[]);
   const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
@@ -1609,12 +1616,17 @@ async function caMonthDetail(mk){
     : '<p class="note">Aucun encaissement de commande ce mois.</p>';
   const rowsMk = mkLignes.length ? `<h3 style="font-size:1rem;margin:14px 0 8px">Marchés</h3>`+mkLignes.map(l=>
     `<div class="sum-box"><span>${fmtDate(l.date)} · ${esc(l.nom)}</span><b>${euro(l.montant)}</b></div>`).join('') : '';
-  openModal(`<h3>Détail du CA — ${esc((typeof monthLabel==='function') ? monthLabel(mk) : mk)}</h3>
+  openModal(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">
+      <button class="btn ghost sm" onclick="caMonthDetail('${_mkPrev}')" title="Mois précédent">‹</button>
+      <h3 style="margin:0;text-align:center;flex:1">Détail du CA — ${esc((typeof monthLabel==='function') ? monthLabel(mk) : mk)}</h3>
+      <button class="btn ghost sm" onclick="caMonthDetail('${_mkNext}')" title="Mois suivant" ${_isCurrentOrFuture?'style="visibility:hidden"':''}>›</button>
+    </div>
     <p class="note">CA basé sur les <b>encaissements réels</b> du mois (chaque paiement compté à sa date). Touche une ligne pour ouvrir la commande.</p>
     <h3 style="font-size:1rem;margin:14px 0 8px">Commandes encaissées</h3>
     ${rowsCmd}
     ${rowsMk}
-    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total encaissé</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total encaissé</b> <span style="color:#9a8a82;font-size:.74rem">— montant à déclarer (URSSAF)</span></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
+    <p class="note" style="margin-top:6px">💡 En micro-entreprise, c'est ce <b>total encaissé</b> que tu déclares, pas le CA facturé (qui suit la date de livraison et sert au pilotage).</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 async function renderDash(){
