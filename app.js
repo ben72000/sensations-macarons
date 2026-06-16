@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v460';
+const APP_VERSION = 'v461';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -578,10 +578,11 @@ async function decrementPackagingStock(taille, nb){
   return {consomme, manque: round3(Math.max(0, reste)), materialId: mat.id, absent:false};
 }
 
-// Décrémente `nb` SACS du stock (lots FIFO), ciblé par materialId (un sac n'a pas de capacité,
-// donc on ne peut pas le retrouver par "taille" comme un coffret). Même logique FIFO que les boîtes.
-// À appeler dans une transaction incluant db.materialLots. Retour homogène avec decrementPackagingStock.
-async function decrementBagStock(materialId, nb){
+// Décrémente `nb` unités du stock d'une matière (par materialId), en FIFO sur ses lots.
+// Ne lit QUE db.materialLots → utilisable à l'intérieur d'une transaction rw qui inclut
+// materialLots (sans avoir à déclarer db.materials). Sert aux boîtes ET aux sacs.
+// Le materialId doit être résolu EN AMONT (hors transaction) via db.materials.
+async function decrementLotsByMaterial(materialId, nb){
   if(!materialId) return {consomme:0, manque:round3(+nb||0), materialId:null, absent:true};
   const lots = (await db.materialLots.where('materialId').equals(+materialId).toArray())
     .filter(l=>round3(+l.qteRestante)>0)
@@ -4218,6 +4219,16 @@ async function pickMarkReady(orderId){
   const existing=await db.orderItems.where('orderId').equals(orderId).toArray();
   const dejaLie=existing.reduce((s,e)=>s+(+e.qte||0),0);
   let pkgManques=[];
+  // IMPORTANT : on résout les matières d'emballage (boîtes + sac) AVANT la transaction.
+  // Lire db.materials DANS la transaction rw (qui ne la déclare pas) lève
+  // « object store not found ». On prépare donc ici les materialId à décrémenter.
+  const _allMats = await db.materials.toArray();
+  const boxPlan = [];   // [{taille, nb, materialId|null}]
+  for(const taille in pack.boxes){
+    const nb=+pack.boxes[taille]||0; if(nb<=0) continue;
+    const mat=_allMats.find(m=>m.categorie==='emballage' && +m.capacite===+taille) || null;
+    boxPlan.push({taille, nb, materialId: mat?mat.id:null});
+  }
   try{
     await db.transaction('rw', db.orderItems, db.productions, db.materialLots, db.orders, async()=>{
       if(dejaLie<=0){
@@ -4231,19 +4242,17 @@ async function pickMarkReady(orderId){
           await db.productions.update(pk.prodId, {qteRestante: subQty(prod.qteRestante, take)});
         }
       }
-      // décrément automatique des EMBALLAGES (coffrets), une seule fois par commande
+      // décrément automatique des EMBALLAGES (coffrets) + SAC, une seule fois par commande
       if(o.pkgDecremented!==true){
-        for(const taille in pack.boxes){
-          const nb=+pack.boxes[taille]||0; if(nb<=0) continue;
-          const res=await decrementPackagingStock(taille, nb);
-          if(res.absent) pkgManques.push(`format ${taille} (aucun emballage défini)`);
-          else if(res.manque>0) pkgManques.push(`${res.manque}× boîte ${taille}`);
+        for(const bp of boxPlan){
+          if(!bp.materialId){ pkgManques.push(`format ${bp.taille} (aucun emballage défini)`); continue; }
+          const res=await decrementLotsByMaterial(bp.materialId, bp.nb);
+          if(res.manque>0) pkgManques.push(`${res.manque}× boîte ${bp.taille}`);
         }
         // décrément du SAC choisi sur la commande (modèle + nombre saisi à la main)
         if(+o.sacMatId>0 && +o.sacNb>0){
-          const resSac=await decrementBagStock(+o.sacMatId, +o.sacNb);
-          if(resSac.absent) pkgManques.push(`sac (modèle introuvable)`);
-          else if(resSac.manque>0) pkgManques.push(`${resSac.manque}× sac`);
+          const resSac=await decrementLotsByMaterial(+o.sacMatId, +o.sacNb);
+          if(resSac.manque>0) pkgManques.push(`${resSac.manque}× sac`);
         }
         await db.orders.update(orderId, {pkgDecremented:true});
       }
