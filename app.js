@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v432';
+const APP_VERSION = 'v433';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1540,7 +1540,7 @@ async function caMonthDetail(mk){
   try{
     const markets = await db.markets.toArray();
     markets.forEach(k=>{
-      if(!k.cloture || ymKey(k.date||'')!==mk) return;
+      if(k.statut!=='clos' || ymKey(k.date||'')!==mk) return;
       const net = (typeof marketNetCA==='function') ? marketNetCA(k) : 0;
       if(net>0){ totalMk+=net; mkLignes.push({date:k.date, nom:k.nom||'Marché', montant:net}); }
     });
@@ -1609,6 +1609,14 @@ async function renderDash(){
   const caMkMonth = closedMk.filter(k=>mkInMonth(k.date)).reduce((s,k)=>s+k.montant,0);
   const caMonth = money2(caCmdMonth + caMkMonth);
   const _moisCourantLbl = (typeof monthLabel==='function') ? monthLabel(monthKey(today())) : 'ce mois';
+  // Nombre d'ENCAISSEMENTS du mois (commandes + marchés) — cohérent avec le détail affiché.
+  let _nbEncMois = 0;
+  orders.forEach(o=>{ if(o.histo) return;
+    let pmts = Array.isArray(o.paiements) ? o.paiements.filter(p=>p && (+p.montant)) : [];
+    if(!pmts.length && o.paiement==='Payé') pmts=[{date:(o.datePaiement||o.date||'')}];
+    pmts.forEach(p=>{ if(ymKey(p.date||o.date||'')===monthKey(today())) _nbEncMois++; });
+  });
+  _nbEncMois += closedMk.filter(k=>mkInMonth(k.date)).length;
   const nbMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).length;
   const caTotal = money2(orders.reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
 
@@ -1673,7 +1681,7 @@ async function renderDash(){
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
-     <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${nbMonth} commande(s) · voir le détail ›</div></div>
+     <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} encaissement(s) · voir le détail ›</div></div>
      <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts & charges ›':'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#7a4b82" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
