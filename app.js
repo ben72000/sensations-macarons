@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v455';
+const APP_VERSION = 'v457';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2826,7 +2826,7 @@ let _prodFamCount={};   // compteur de sous-lots par batch (rempli par renderPro
 // ne pas proposer deux fois la même ganache/coque.
 function assemblySuggestions(prods, recName){
   recName = recName || (id=>String(id));
-  const coques = prods.filter(p=>prodComposant(p)==='coques' && round3(+p.qteRestante)>0)
+  const coques = prods.filter(p=>prodComposant(p)==='coques' && !p.degDeclasse && round3(+p.qteRestante)>0)
     .map(p=>({p, mac: Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON)}))
     .filter(x=>x.mac>0);
   let ganaches = prods.filter(p=>prodComposant(p)==='ganache' && round3(+p.qteRestante)>0)
@@ -2866,6 +2866,61 @@ function assemblySuggestions(prods, recName){
   out.sort((a,b)=> (b.sameBase-a.sameBase) || (b.sameRec-a.sameRec) || (b.assemblable-a.assemblable));
   return out;
 }
+// SUGGESTIONS DÉGUSTATION : sauver des COQUES CASSÉES DÉCLASSÉES (degDeclasse:true) en les
+// assemblant avec un SURPLUS de ganache. Comme le résultat est OFFERT (non vendable), la
+// ganache peut être de n'importe quel parfum. On ne consomme que la ganache "en surplus",
+// c.-à-d. celle qui reste après avoir servi les assemblages vendables (assemblySuggestions).
+// Renvoie [{coqId, ganId, coqRec, ganRec, coqLot, ganLot, coqUnits, assemblable,
+//           coquesNeeded, coquesReste, ganacheReste, sameRec}].
+function degustationSuggestions(prods, recName){
+  recName = recName || (id=>String(id));
+  // coques déclassées en stock (uniquement celles-là : on ne touche pas aux coques saines)
+  const coquesDeg = prods.filter(p=>prodComposant(p)==='coques' && p.degDeclasse===true && round3(+p.qteRestante)>0)
+    .map(p=>({p, mac: Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON)}))
+    .filter(x=>x.mac>0);
+  if(!coquesDeg.length) return [];
+  // Ganache disponible, MOINS ce que les assemblages vendables vont consommer (vrai surplus).
+  const ganaches = prods.filter(p=>prodComposant(p)==='ganache' && round3(+p.qteRestante)>0)
+    .map(p=>({p, mac: round3(+p.qteRestante), used:0}));
+  if(!ganaches.length) return [];
+  // Pré-réserve la ganache que les assemblages VENDABLES consommeraient, pour ne proposer
+  // en dégustation que le reliquat (on ne "vole" pas la ganache d'un assemblage vendable).
+  try{
+    const vendables = assemblySuggestions(prods, recName);
+    vendables.forEach(v=>{
+      const g = ganaches.find(x=>x.p.id===v.ganId);
+      if(g) g.used = round3(g.used + (v.assemblable||0));
+    });
+  }catch(e){}
+  const out=[];
+  for(const c of coquesDeg){
+    // n'importe quelle ganache en surplus ; on privilégie tout de même le même parfum si dispo
+    const score = g => {
+      const dispo = round3(g.mac - g.used); if(dispo<=0) return -1;
+      return (c.p.recipeId===g.p.recipeId) ? 10 : 1;
+    };
+    let best=null, bestS=-1;
+    for(const g of ganaches){ const sc=score(g); if(sc>bestS){ bestS=sc; best=g; } }
+    if(!best || bestS<0) continue;
+    const dispoGan = round3(best.mac - best.used);
+    const assemblable = Math.min(c.mac, dispoGan);
+    if(assemblable<=0) continue;
+    best.used = round3(best.used + assemblable);
+    out.push({
+      coqId:c.p.id, ganId:best.p.id,
+      coqRec:recName(c.p.recipeId), ganRec:recName(best.p.recipeId),
+      coqLot:c.p.lotProduction||('#'+c.p.id), ganLot:best.p.lotProduction||('#'+best.p.id),
+      coqUnits:round3(+c.p.qteRestante),
+      assemblable,
+      coquesNeeded:assemblable*COQUES_PAR_MACARON,
+      coquesReste:round3(round3(+c.p.qteRestante) - assemblable*COQUES_PAR_MACARON),
+      ganacheReste:round3(best.mac - best.used),
+      sameRec:c.p.recipeId===best.p.recipeId
+    });
+  }
+  out.sort((a,b)=> (b.assemblable-a.assemblable));
+  return out;
+}
 // Détecte les COMPOSANTS ORPHELINS : un parfum qui a des coques mais PAS de ganache (ou l'inverse).
 // Ces composants ne peuvent pas former de macarons faute de leur moitié → filet anti-gaspillage.
 // Renvoie [{recipeId, nom, type:'coques'|'ganache', pieces, macPotentiels, manque:'ganache'|'coques'}].
@@ -2875,6 +2930,7 @@ function orphanComponents(prods, recName){
   (prods||[]).forEach(p=>{
     const comp = prodComposant(p);
     if(comp!=='coques' && comp!=='ganache') return;
+    if(comp==='coques' && p.degDeclasse) return;  // coques cassées déclassées : gérées par les suggestions dégustation, pas ici
     if(round3(+p.qteRestante)<=0) return;
     const rid = p.recipeId;
     (parf[rid] ||= {coques:0, ganache:0, nom:(p.libre?(p.produitLibre||'(libre)'):recName(rid))});
@@ -3411,6 +3467,7 @@ async function renderProductions(){
   const enRetard = ouvertes.filter(prodOpenOverdue);
   // ---- SURVEILLANCE : coques & ganache non assemblées → suggestions de rapprochement ----
   const sugg = assemblySuggestions(prods, recName);
+  const degustSugg = degustationSuggestions(prods, recName);  // coques cassées déclassées + surplus ganache → dégustation
   const orphans = orphanComponents(prods, recName);  // composants seuls (coques sans ganache, ou l'inverse)
   // Anciens lots coques non convertis (quantité ≈ rendement au lieu de ×2) à signaler
   const _recById={}; recipes.forEach(r=>_recById[r.id]=r);
@@ -3464,6 +3521,19 @@ async function renderProductions(){
           ${(s.coquesReste>0||s.ganacheReste>0)?`<div style="margin-top:2px;font-size:.74rem;color:#9a8a82">↳ resterait : ${s.coquesReste>0?`<b>${qty(s.coquesReste)} coque(s)</b>`:''}${s.coquesReste>0&&s.ganacheReste>0?' · ':''}${s.ganacheReste>0?`<b>${qty(s.ganacheReste)} ganache(s)</b>`:''} (casse / écart réel)</div>`:''}
         </div>
         <button class="btn gold sm" onclick="prodAssembleForm(${s.coqId})" title="Assembler ces composants">🔗 Assembler</button>
+      </div>`).join('')}
+   </div>`:''}
+   ${degustSugg.length?`<div class="panel" style="border:1.5px solid #e6d2a0;background:#fdf8ee">
+     <h2 style="color:#caa23b">🥄 Sauver des coques cassées en dégustation <span style="font-weight:400;font-size:.82rem;color:#b09a5b">— ${degustSugg.length} possibilité(s)</span></h2>
+     <p class="note" style="margin-bottom:8px">Des <b>coques cassées récupérables</b> peuvent être garnies avec un <b>surplus de ganache</b> (n'importe quel parfum, puisque c'est offert). Résultat : des macarons de <b>dégustation</b>, non vendables — plutôt que du gaspillage.</p>
+     ${degustSugg.map(s=>`<div class="sugg-row">
+        <div class="sugg-main">
+          <div><b>🟤 ${esc(s.coqRec)}</b> <span class="tag" style="background:#caa23b;color:#fff;font-size:.64rem">cassées · ${qty(s.coqUnits)} coques (= ${qty(s.assemblable)} mac.)</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.coqLot)}</span></div>
+          <div style="margin-top:2px"><b>🍫 ${esc(s.ganRec)}</b> <span class="tag" style="background:#5a3a2a;color:#fff;font-size:.64rem">surplus</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.ganLot)}</span></div>
+          <div style="margin-top:3px;font-size:.8rem;color:#a8841f">➜ dégustation : <b>${qty(s.coquesNeeded)} coques + ${qty(s.assemblable)} ganaches → ${qty(s.assemblable)} macaron(s) offert(s)</b>${s.sameRec?'':' · <span class="tag warn" style="font-size:.62rem">parfum différent</span>'}</div>
+          ${(s.coquesReste>0||s.ganacheReste>0)?`<div style="margin-top:2px;font-size:.74rem;color:#9a8a82">↳ resterait : ${s.coquesReste>0?`<b>${qty(s.coquesReste)} coque(s)</b>`:''}${s.coquesReste>0&&s.ganacheReste>0?' · ':''}${s.ganacheReste>0?`<b>${qty(s.ganacheReste)} ganache(s)</b>`:''}</div>`:''}
+        </div>
+        <button class="btn sm" style="background:#caa23b;color:#fff" onclick="prodAssembleForm(${s.coqId}, {deg:true, otherId:${s.ganId}})" title="Assembler en dégustation">🥄 Assembler</button>
       </div>`).join('')}
    </div>`:''}
    ${orphans.length?`<div class="panel" style="border:1.5px solid #e8cfa0;background:#fff8ec">
@@ -3538,14 +3608,52 @@ async function prodVoirRangees(){
   const epuisees = prods.filter(p=>p.rangee!==true
     && !(window._prodLiesCmdPrete && window._prodLiesCmdPrete.has(+p.id))
     && prodStatut(p)==='termine' && round3(+p.qteRestante||0)<=0);
-  const ligne = p => `<div class="sum-box"><span>${esc(p.libre?(p.produitLibre||'(sans nom)'):recName(p.recipeId))} <span style="color:#9a8a82;font-size:.75rem">· lot ${esc(p.lotProduction||('#'+p.id))}</span></span>
-    ${p.rangee===true?`<button class="btn ghost sm" onclick="prodDeranger(${p.id})">↩ Remettre</button>`:'<span class="tag ok" style="font-size:.62rem">cmd prête/livrée</span>'}</div>`;
-  const ligneEp = p => `<div class="sum-box"><span>${esc(p.libre?(p.produitLibre||'(sans nom)'):recName(p.recipeId))} <span style="color:#9a8a82;font-size:.75rem">· lot ${esc(p.lotProduction||('#'+p.id))}</span></span><span class="tag" style="background:#ece2d4;color:#6b5a52;font-size:.62rem">épuisée</span></div>`;
-  openModal(`<h3>Productions masquées</h3>
-    <p class="note">Ces productions sont sorties de la vue car rangées, écoulées ou épuisées.</p>
-    ${rangees.length?`<p class="note" style="margin-top:8px"><b>Rangées manuellement (${rangees.length})</b></p>${rangees.map(ligne).join('')}`:''}
-    ${liesCmd.length?`<p class="note" style="margin-top:8px"><b>Liées à une commande prête/livrée (${liesCmd.length})</b></p>${liesCmd.map(ligne).join('')}`:''}
-    ${epuisees.length?`<p class="note" style="margin-top:8px"><b>Épuisées · restant 0 (${epuisees.length})</b></p>${epuisees.map(ligneEp).join('')}`:''}
+  // Pastille couleur du parfum (réutilise flavorColor si dispo).
+  const _pastille = nom => {
+    const col = (typeof flavorColor==='function') ? flavorColor(nom) : '#cbb89f';
+    return `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${col};flex:0 0 auto"></span>`;
+  };
+  const _nomDe = p => p.libre?(p.produitLibre||'(sans nom)'):recName(p.recipeId);
+  // Ligne COMPACTE : pastille + parfum + (qté restante) + emplacement ; lot masqué (title only).
+  // On met l'info utile en avant ; le n° de lot reste accessible au survol mais n'encombre plus.
+  const ligne = (p, opts={}) => {
+    const nom = _nomDe(p);
+    const reste = round3(+p.qteRestante||0);
+    const emp = p.emplacement ? empTagHtml(p.emplacement) : '';
+    const lot = esc(p.lotProduction||('#'+p.id));
+    const droite = opts.epuisee
+      ? `<span class="tag" style="background:#ece2d4;color:#6b5a52;font-size:.6rem">épuisée</span>`
+      : (p.rangee===true
+          ? `<button class="btn ghost" style="font-size:.7rem;padding:3px 9px;flex:0 0 auto" onclick="prodDeranger(${p.id})" title="Remettre dans la vue Productions">↩</button>`
+          : `<span class="tag ok" style="font-size:.6rem">cmd prête</span>`);
+    return `<div class="pm-row" title="lot ${lot}">
+      <div class="pm-main">${_pastille(nom)}<div class="pm-txt"><b class="pm-nom">${esc(nom)}</b><span class="pm-lot">${lot}</span></div></div>
+      <div class="pm-meta">${opts.epuisee?'':`<span class="pm-qte">${qty(reste)}</span>`}${emp}</div>
+      <div class="pm-act">${droite}</div>
+    </div>`;
+  };
+  const _style = `<style>
+    .pm-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid #efe7db}
+    .pm-row:last-child{border-bottom:0}
+    .pm-main{display:flex;align-items:center;gap:7px;flex:1 1 auto;min-width:0}
+    .pm-txt{display:flex;flex-direction:column;min-width:0}
+    .pm-nom{font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.15}
+    .pm-lot{font-size:.62rem;color:#b8a99f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.02em}
+    .pm-meta{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+    .pm-qte{font-size:.8rem;font-weight:600;color:#6b5a52;background:#f3ece1;border-radius:8px;padding:1px 7px}
+    .pm-act{flex:0 0 auto}
+    .pm-sec{margin:14px 2px 4px;font-size:.78rem;font-weight:600;color:#9a8a82;text-transform:uppercase;letter-spacing:.04em}
+    .pm-list{background:#fff;border:1px solid #efe7db;border-radius:12px;overflow:hidden}
+  </style>`;
+  const section = (titre, items, opts={}) => items.length
+    ? `<div class="pm-sec">${titre} <span style="color:#c2b3a8">(${items.length})</span></div>
+       <div class="pm-list">${items.map(p=>ligne(p,opts)).join('')}</div>`
+    : '';
+  openModal(`${_style}<h3>Productions masquées</h3>
+    <p class="note" style="margin-bottom:4px">Sorties de la vue car rangées, écoulées ou épuisées.</p>
+    ${section('📦 Rangées manuellement', rangees)}
+    ${section('🧾 Liées à une commande prête/livrée', liesCmd)}
+    ${section('✅ Épuisées · restant 0', epuisees, {epuisee:true})}
     ${(!rangees.length&&!liesCmd.length&&!epuisees.length)?'<p class="note">Aucune production masquée pour le moment.</p>':''}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
@@ -4730,7 +4838,8 @@ async function prodTermineConfirm(id){
 // ====== ASSEMBLAGE coques + ganache → macaron assemblé (vendable) ======
 // Réunit un sous-lot COQUES et un sous-lot GANACHE (idéalement même n° de lot de base)
 // en une production « assemble » qui alimente le stock vendable, avec traçabilité de bout en bout.
-async function prodAssembleForm(id){
+async function prodAssembleForm(id, opts){
+  opts = opts || {};
   const p=await db.productions.get(id); if(!p){ toast('Sous-lot introuvable'); return; }
   const comp=prodComposant(p);
   if(comp!=='coques' && comp!=='ganache'){ toast('L\'assemblage part d\'un sous-lot coques ou ganache.'); return; }
@@ -4755,7 +4864,7 @@ async function prodAssembleForm(id){
     // 'want' est le composant du candidat : coques → capacité = reste/2 ; ganache → reste
     const capMac = want==='coques' ? Math.floor(round3(+c.qteRestante)/COQUES_PAR_MACARON) : round3(+c.qteRestante);
     const unite = want==='coques' ? `${qty(c.qteRestante)} coques (≈ ${capMac} mac.)` : `${qty(c.qteRestante)} mac.`;
-    return `<option value="${c.id}">${esc(recName(c.recipeId))} — ${esc(c.lotProduction||('#'+c.id))} · ${unite}${tag}</option>`;
+    return `<option value="${c.id}"${opts.otherId&&+opts.otherId===c.id?' selected':''}>${esc(recName(c.recipeId))} — ${esc(c.lotProduction||('#'+c.id))} · ${unite}${tag}</option>`;
   }).join('');
   // Capacité en MACARONS de CE sous-lot : coques → /2 ; ganache → tel quel.
   const maxThisMac = comp==='coques' ? Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON) : round3(+p.qteRestante);
@@ -4765,7 +4874,7 @@ async function prodAssembleForm(id){
    <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':'🍫 Ganache'} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · ${uniteThis}</b></div>
    <div class="field"><label>${want==='ganache'?'🍫 Ganache à associer':'🟤 Coques à associer'}</label>
      <select id="f_asmOther">${optsCand}</select></div>
-   <label class="switch-row"><input type="checkbox" id="f_asmDeg" onchange="prodAsmDegSwitch(this.checked)"> 🥄 Assemblage dégustation (offert, non vendable)</label>
+   <label class="switch-row"><input type="checkbox" id="f_asmDeg"${opts.deg?' checked':''} onchange="prodAsmDegSwitch(this.checked)"> 🥄 Assemblage dégustation (offert, non vendable)</label>
    <div class="field"><label>Quantité de <b>macarons</b> à assembler</label>
      <input type="number" id="f_asmQte" min="1" value="${maxThisMac}" max="${maxThisMac}">
      <p class="note" style="margin-top:4px">Consommera 2 coques + 1 ganache par macaron. Le maximum réel dépend aussi du sous-lot associé.</p></div>
@@ -4774,7 +4883,7 @@ async function prodAssembleForm(id){
        <label class="emp-opt"><input type="radio" name="f_asmDest" value="frigo" checked> <b style="background:#6aa3a0;color:#fff;border-radius:6px;padding:0 7px">F</b> <span>🧊 Frigo (DLC 7 j)</span></label>
        ${EMPLACEMENTS.filter(e=>e.type!=='frigo').map(e=>`<label class="emp-opt"><input type="radio" name="f_asmDest" value="${e.key}"> <b style="background:#3b6ea5;color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b> <span>${e.icon} ${esc(e.nom)}</span></label>`).join('')}
      </div></div>
-   <p class="note" id="asmDegHint" style="display:none">🥄 Ces macarons iront dans un <b>stock dégustation séparé</b> (non vendable, valeur 0 €). Tu les décrémenteras au fur et à mesure qu'ils sont distribués (marchés, dégustations).</p>
+   <p class="note" id="asmDegHint" style="display:${opts.deg?'block':'none'}">🥄 Ces macarons iront dans un <b>stock dégustation séparé</b> (non vendable, valeur 0 €). Tu les décrémenteras au fur et à mesure qu'ils sont distribués (marchés, dégustations).</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
      <button class="btn gold" onclick="prodAssembleSave(${p.id})">Assembler</button></div>`);
 }
