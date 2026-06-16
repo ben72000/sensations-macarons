@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v423';
+const APP_VERSION = 'v424';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6076,35 +6076,42 @@ async function traceProd(prodId){
 }
 
 async function traceOrder(orderId){
+ try{
   const order = await db.orders.get(orderId);
-  const client = order.clientId ? await db.clients.get(order.clientId) : null;
-  const items = await db.orderItems.where('orderId').equals(orderId).toArray();
+  if(!order){ toast('Commande introuvable'); return; }
+  const client = order.clientId ? await db.clients.get(order.clientId).catch(()=>null) : null;
+  const items = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
   const blocks=[];
   for(const it of items){
-    const prod = await db.productions.get(it.productionId);
+    const prod = it.productionId!=null ? await db.productions.get(it.productionId).catch(()=>null) : null;
     if(!prod){ blocks.push(`<div class="trace-step">Production supprimée</div>`); continue; }
-    const recipe = await db.recipes.get(prod.recipeId);
-    const conso = await db.prodConsumption.where('productionId').equals(prod.id).toArray();
+    const recipe = prod.recipeId!=null ? await db.recipes.get(prod.recipeId).catch(()=>null) : null;
+    const conso = await db.prodConsumption.where('productionId').equals(prod.id).toArray().catch(()=>[]);
     const sub=[];
     for(const c of conso){
-      const lot = await db.materialLots.get(c.materialLotId);
+      const lot = c.materialLotId!=null ? await db.materialLots.get(c.materialLotId).catch(()=>null) : null;
       if(!lot){
-        const mat = c.snapMaterialId ? await db.materials.get(c.snapMaterialId) : null;
-        const sup = c.snapSupplierId ? await db.suppliers.get(c.snapSupplierId) : null;
+        const mat = c.snapMaterialId ? await db.materials.get(c.snapMaterialId).catch(()=>null) : null;
+        const sup = c.snapSupplierId ? await db.suppliers.get(c.snapSupplierId).catch(()=>null) : null;
         sub.push(`<div style="font-size:.8rem;color:#6a5a52;padding:2px 0">• ${esc(mat?mat.nom:'Matière')} — lot ${esc(c.snapLotFournisseur||'—')} (${esc(sup?sup.nom:'?')}) <span class="tag warn">archivé</span></div>`);
         continue;
       }
-      const mat = await db.materials.get(lot.materialId);
-      const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId) : null;
+      const mat = await db.materials.get(lot.materialId).catch(()=>null);
+      const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId).catch(()=>null) : null;
       sub.push(`<div style="font-size:.8rem;color:#6a5a52;padding:2px 0">• ${esc(mat?mat.nom:'?')} — lot ${esc(lot.lotFournisseur||'—')} (${esc(sup?sup.nom:'?')})</div>`);
     }
-    blocks.push(`<div class="trace-step"><b>${esc(recipe?recipe.produitNom:'?')}</b> · ${it.qte} pièces · batch ${esc(prod.lotProduction||'—')}
+    const nomProd = recipe ? recipe.produitNom : (prod.libre ? (prod.produitLibre||'(production libre)') : '(recette non enregistrée)');
+    blocks.push(`<div class="trace-step"><b>${esc(nomProd)}</b> · ${it.qte} pièces · batch ${esc(prod.lotProduction||'—')}
       <div style="margin-top:4px">${sub.join('')||'<span class="note">pas de matières tracées</span>'}</div></div>`);
   }
   openModal(`<h3>Traçabilité — commande</h3>
     <p style="margin-bottom:8px"><b>${client?esc(client.nom):'—'}</b> · ${fmtDate(order.date)} · ${esc(order.statut||'')}</p>
     ${blocks.length?blocks.join(''):'<p class="note">Aucune production liée. Lie cette commande à un ou plusieurs batchs depuis l\'écran Commandes.</p>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="exportTraceOrder(${orderId})">⬇ Exporter CSV</button></div>`);
+ }catch(e){
+  console.error('traceOrder', e);
+  toast('Erreur lors de l\'affichage de la traçabilité');
+ }
 }
 
 /* ============================================================
