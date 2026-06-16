@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v434';
+const APP_VERSION = 'v435';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3416,6 +3416,7 @@ async function renderProductions(){
    <div class="topbar"><div><h1>Productions</h1><p id="prodCount">${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p>
      ${(() => { const nbRangees = prods.filter(p=>prodEstRangee(p)).length; return nbRangees?`<p style="margin-top:2px"><span class="act" onclick="prodVoirRangees()" style="font-size:.8rem">📦 ${nbRangees} production(s) rangée(s) masquée(s) — voir →</span></p>`:''; })()}</div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button>
+     <button class="btn ghost" style="margin-left:6px" onclick="goView('stockparfums')" title="Voir tout mon stock : parfums et emplacements">📦 Tout mon stock</button>
      <button class="btn ghost" style="margin-left:6px" onclick="quickLossForm()">⚠ Casse / Perte</button></div>
    ${kpi.count?`<div class="cards" style="margin-bottom:18px">
      <div class="card"><div class="lbl">Taux de perte ${kpiI('taux_perte')}</div><div class="val" style="color:${kpi.taux>=10?'#b3261e':(kpi.taux>=5?'#d98324':'#2e7d32')}">${kpi.taux}%</div><div class="sub">${qty(kpi.totalPerdu)} perdues / ${qty(kpi.totalProduit)} produites</div></div>
