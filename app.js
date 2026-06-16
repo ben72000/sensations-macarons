@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v438';
+const APP_VERSION = 'v439';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9134,13 +9134,14 @@ async function renderStockParfums(){
   const byNom={};
   prods.forEach(p=>{
     const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
-    (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0});
+    (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, dlcs:[]});
     byNom[nom].dispo = addQty(byNom[nom].dispo, p.qteRestante);
     byNom[nom].batches++;
+    if(p.dlcProduit) byNom[nom].dlcs.push(p.dlcProduit); // pour repérer la DLC la plus proche
   });
   composants.forEach(p=>{
     const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
-    (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0});
+    (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, dlcs:[]});
     byNom[nom].compo = addQty(byNom[nom].compo, p.qteRestante);
   });
   const noms = [...FLAVORS];
@@ -9153,10 +9154,24 @@ async function renderStockParfums(){
     const aContenu = dispo>0 || compo>0;
     const clic = aContenu ? ` clickable" onclick="stockParfumDetail(${JSON.stringify(nom).replace(/"/g,'&quot;')})" title="Voir les batchs, composants et emplacements` : '';
     const compoTag = compo>0 ? ` <span style="color:#8a6d3b;font-size:.7rem">· ⏳ ${qty(compo)} en attente</span>` : '';
+    // DLC la plus proche du parfum + nombre de batchs partageant cette date (repère couleur urgence).
+    let dlcLine = '';
+    if(dispo>0 && b.dlcs && b.dlcs.length){
+      const proche = b.dlcs.slice().sort((a,c)=>(a||'').localeCompare(c||''))[0];
+      const nbProche = b.dlcs.filter(d=>d===proche).length;
+      const j = daysTo(proche);
+      const dcol = j==null?'#9a8a82' : j<0?'#b3261e' : j<=2?'#b3261e' : j<=4?'#AA7C39' : '#3f7d52';
+      const lbl = j==null?'' : j<0?'périmée' : j===0?"aujourd'hui" : j===1?'demain' : `dans ${j} j`;
+      dlcLine = `<div style="font-size:.72rem;margin-top:2px;padding-left:22px">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dcol};margin-right:4px;vertical-align:middle"></span>
+        <span style="color:${dcol}">DLC ${fmtDate(proche)}${lbl?` (${lbl})`:''}</span>
+        <span style="color:#9a8a82"> · ${nbProche} batch${nbProche>1?'s':''}</span></div>`;
+    }
     return `<div class="flavor-stock${vide?' fs-empty':clic}">
       <span class="fs-pastille" style="background:${col}"></span>
       <span class="fs-nom">${esc(nom)}</span>
       <span class="fs-qte">${dispo>0?`<b>${qty(dispo)}</b>${b.batches?` <span style="color:#9a8a82;font-size:.72rem">· ${b.batches} batch${b.batches>1?'s':''}</span>`:''}`:(compo>0?'<span style="color:#9a8a82;font-size:.78rem">0 fini</span>':'<span class="fs-zero">0</span>')}${compoTag}${aContenu?' <span style="color:#9a8a82">›</span>':''}</span>
+      ${dlcLine}
     </div>`;
   }).join('');
   document.getElementById('main').innerHTML=`
