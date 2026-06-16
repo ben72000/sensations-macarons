@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v437';
+const APP_VERSION = 'v438';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4334,6 +4334,7 @@ async function applySuggestedPlacement(id){
     await doMoveEmplacement(id, s.equipKey, {silent:true});
   }
   await db.productions.update(id, {niveauIndex:s.nivIndex, niveauNom:s.niveauNom, boiteNom:s.boiteNom,
+    placements:[],   // rangement simple = une seule boîte → on efface toute répartition multi périmée
     rangee:true, rangeeTs:new Date().toISOString()});
   closeModal();
   if(typeof renderProductions==='function') renderProductions();
@@ -9228,7 +9229,7 @@ async function stockParfumDetail(nom){
     const nonPlaceHtml = nonPlace>0
       ? `<div style="margin-top:5px;padding:6px 8px;background:#fdf3e7;border:1px solid #e8d09a;border-radius:8px;font-size:.78rem">
            ⚠ <b>${qty(nonPlace)} macaron(s) sans emplacement</b>
-           <button class="btn gold sm" style="margin-left:6px" onclick="event.stopPropagation();closeModal();setEmplacement(${p.id})">📍 Ranger maintenant</button>
+           <button class="btn gold sm" style="margin-left:6px" onclick="event.stopPropagation();closeModal();prodSplitForm(${p.id})">📦 Répartir en boîtes</button>
          </div>`
       : '';
     return `<div class="trace-step clickable" style="cursor:pointer" onclick="closeModal();traceProd(${p.id})" title="Traçabilité complète de ce batch">
