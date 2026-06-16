@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v451';
+const APP_VERSION = 'v452';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5436,6 +5436,7 @@ async function declareLossForm(prodId){
       <input type="number" id="f_lossQte" min="0" max="${dispo}" step="1" value="" placeholder="ex : 3"></div>
     <div class="field"><label>Motif</label><select id="f_lossMotif">${motifOpts}</select></div>
     <label class="switch-row"><input type="checkbox" id="f_lossDeg" onchange="lossDegSwitch(this.checked)"> 🥄 Cassé mais garni → bascule en dégustation (offert, non perdu)</label>
+    ${prodComposant(p)==='coques'?`<label class="switch-row"><input type="checkbox" id="f_lossCoqDeg" onchange="lossCoqDegSwitch(this.checked)"> 🟤 Coques cassées mais récupérables → coques de dégustation (à assembler plus tard)</label>`:''}
     <div class="field" id="f_lossDestWrap" style="display:none"><label>Emplacement des dégustations</label>
       <div style="display:flex;flex-wrap:wrap;gap:6px">
         <label class="pay-opt" style="flex:1;min-width:46%;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="f_lossDest" value="frigo" checked> <b style="background:#6aa3a0;color:#fff;border-radius:6px;padding:0 7px">F</b> 🧊 Frigo (DLC 7 j)</label>
@@ -5449,9 +5450,20 @@ async function declareLossForm(prodId){
 }
 function lossDegSwitch(on){
   const w=document.getElementById('f_lossDestWrap'); if(w) w.style.display=on?'block':'none';
+  if(on){ const cd=document.getElementById('f_lossCoqDeg'); if(cd) cd.checked=false; }  // exclusif
   const h=document.getElementById('lossDegHint');
   if(h) h.innerHTML = on
     ? '🥄 Ces pièces cassées mais garnies ne sont <b>pas comptées en perte</b> : elles basculent en <b>stock dégustation</b> (offert, non vendable), à distribuer (marchés…).'
+    : 'La perte sort définitivement du stock fini et alimente le taux de perte. Le coût des pièces perdues est imputé au coût de revient global.';
+}
+// Coques cassées mais récupérables → reclassées en « coques de dégustation » (degDeclasse:true).
+// Restent des coques assemblables, mais réservées aux assemblages de dégustation.
+function lossCoqDegSwitch(on){
+  const w=document.getElementById('f_lossDestWrap'); if(w) w.style.display=on?'block':'none';
+  if(on){ const dg=document.getElementById('f_lossDeg'); if(dg) dg.checked=false; }  // exclusif
+  const h=document.getElementById('lossDegHint');
+  if(h) h.innerHTML = on
+    ? '🟤 Ces coques cassées mais récupérables <b>ne sont pas perdues</b> : elles deviennent des <b>coques de dégustation</b>, à assembler plus tard avec de la ganache pour faire des macarons offerts.'
     : 'La perte sort définitivement du stock fini et alimente le taux de perte. Le coût des pièces perdues est imputé au coût de revient global.';
 }
 // ACCÈS RAPIDE « Casse / Perte » : sortir une pièce du stock sans passer par la fiche
@@ -5487,6 +5499,33 @@ async function saveLoss(prodId){
   if(isNaN(qteP) || qteP<=0){ toast('Indique une quantité'); return; }
   if(qteP > dispo + 1e-9){ toast(`Maximum ${qty(dispo)} pièce(s) disponibles`); return; }
   const enDeg = document.getElementById('f_lossDeg')?.checked;
+  const enCoqDeg = document.getElementById('f_lossCoqDeg')?.checked;
+  // CAS « coques cassées récupérables » → reclassées en COQUES DE DÉGUSTATION (degDeclasse:true).
+  // Restent des coques (donc assemblables), mais réservées aux assemblages de dégustation.
+  if(enCoqDeg){
+    const dest=(document.querySelector('input[name="f_lossDest"]:checked')||{}).value||'frigo';
+    const recName = (window._prodRecName)||((rid)=>'#'+rid);
+    await db.transaction('rw', db.productions, async()=>{
+      const src=await db.productions.get(prodId);
+      const nowIso=new Date().toISOString();
+      const lotBase = src.lotBase || lotBaseSansSuffixe(src.lotProduction||'');
+      const lotDeg = lotAvecEmplacement((lotBase||genLotCode(3))+'-CQDG', dest);
+      await db.productions.update(prodId, {qteRestante: subQty(src.qteRestante, qteP)});
+      await db.productions.add({
+        recipeId: src.recipeId, lotProduction: lotDeg, lotBase, date: today(),
+        composant:'coques', degDeclasse:true,                 // coque de dégustation : assemblable, mais déclassée
+        qteTheorique:qteP, qteReelle:qteP, ecart:0, qteProduite:qteP, qteRestante:qteP,
+        dlcProduit:src.dlcProduit||'', dlcAuto:!src.dlcProduit,
+        prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
+        emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
+        histEmplacement:[{lieu:dest, ts:nowIso, motif:'coques de dégustation (cassées récupérables)'}],
+        assembleFrom:[{id:src.id, lot:src.lotProduction, composant:'coques', qte:qteP, parfum:recName(src.recipeId)}]
+      });
+    });
+    closeModal(); renderProductions();
+    toast(`🟤 ${qty(qteP)} coque(s) reclassée(s) en coques de dégustation`);
+    return;
+  }
   // CAS « cassé mais garni » → bascule en stock DÉGUSTATION (offert, non vendable), pas une perte.
   if(enDeg){
     const dest=(document.querySelector('input[name="f_lossDest"]:checked')||{}).value||'frigo';
