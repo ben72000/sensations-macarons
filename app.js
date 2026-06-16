@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v446';
+const APP_VERSION = 'v450';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -884,6 +884,9 @@ function prodComposant(p){ return (p && p.composant) ? p.composant : 'complet'; 
 function prodEstRangee(p){
   if(!p) return false;
   if(p.rangee===true) return true;
+  // Tout batch stocké au CONGÉLATEUR (A/B/C) est en stockage long terme → sort de la vue Production,
+  // même sans le flag « rangee » (ex. batchs rangés avant cette règle). Le frigo (F) ne compte pas.
+  if(p.emplacement && isFreezer(p.emplacement)) return true;
   if(window._prodLiesCmdPrete && window._prodLiesCmdPrete.has(+p.id)) return true;
   // Production ÉPUISÉE : terminée et il ne reste plus rien (assemblée, servie, consommée).
   // Plus rien à gérer → sort de la vue, comme une production rangée. On exige le statut
@@ -2863,6 +2866,31 @@ function assemblySuggestions(prods, recName){
   out.sort((a,b)=> (b.sameBase-a.sameBase) || (b.sameRec-a.sameRec) || (b.assemblable-a.assemblable));
   return out;
 }
+// Détecte les COMPOSANTS ORPHELINS : un parfum qui a des coques mais PAS de ganache (ou l'inverse).
+// Ces composants ne peuvent pas former de macarons faute de leur moitié → filet anti-gaspillage.
+// Renvoie [{recipeId, nom, type:'coques'|'ganache', pieces, macPotentiels, manque:'ganache'|'coques'}].
+function orphanComponents(prods, recName){
+  recName = recName || (id=>String(id));
+  const parf = {}; // recipeId → {coques, ganache}
+  (prods||[]).forEach(p=>{
+    const comp = prodComposant(p);
+    if(comp!=='coques' && comp!=='ganache') return;
+    if(round3(+p.qteRestante)<=0) return;
+    const rid = p.recipeId;
+    (parf[rid] ||= {coques:0, ganache:0, nom:(p.libre?(p.produitLibre||'(libre)'):recName(rid))});
+    parf[rid][comp] = round3(parf[rid][comp] + round3(+p.qteRestante));
+  });
+  const out = [];
+  Object.keys(parf).forEach(rid=>{
+    const x = parf[rid];
+    if(x.coques>0 && x.ganache<=0){
+      out.push({recipeId:+rid, nom:x.nom, type:'coques', pieces:x.coques, macPotentiels:Math.floor(x.coques/COQUES_PAR_MACARON), manque:'ganache'});
+    } else if(x.ganache>0 && x.coques<=0){
+      out.push({recipeId:+rid, nom:x.nom, type:'ganache', pieces:x.ganache, macPotentiels:Math.floor(x.ganache), manque:'coques'});
+    }
+  });
+  return out;
+}
 // Couleur stable dérivée d'un identifiant de lot (lotBase) : tous les sous-lots
 // d'un même batch mère partagent la même couleur → repérage visuel des familles.
 function lotFamilyColor(base){
@@ -3383,6 +3411,7 @@ async function renderProductions(){
   const enRetard = ouvertes.filter(prodOpenOverdue);
   // ---- SURVEILLANCE : coques & ganache non assemblées → suggestions de rapprochement ----
   const sugg = assemblySuggestions(prods, recName);
+  const orphans = orphanComponents(prods, recName);  // composants seuls (coques sans ganache, ou l'inverse)
   // Anciens lots coques non convertis (quantité ≈ rendement au lieu de ×2) à signaler
   const _recById={}; recipes.forEach(r=>_recById[r.id]=r);
   const coquesSuspectsN = prods.filter(p=>{
@@ -3435,6 +3464,17 @@ async function renderProductions(){
           ${(s.coquesReste>0||s.ganacheReste>0)?`<div style="margin-top:2px;font-size:.74rem;color:#9a8a82">↳ resterait : ${s.coquesReste>0?`<b>${qty(s.coquesReste)} coque(s)</b>`:''}${s.coquesReste>0&&s.ganacheReste>0?' · ':''}${s.ganacheReste>0?`<b>${qty(s.ganacheReste)} ganache(s)</b>`:''} (casse / écart réel)</div>`:''}
         </div>
         <button class="btn gold sm" onclick="prodAssembleForm(${s.coqId})" title="Assembler ces composants">🔗 Assembler</button>
+      </div>`).join('')}
+   </div>`:''}
+   ${orphans.length?`<div class="panel" style="border:1.5px solid #e8cfa0;background:#fff8ec">
+     <h2 style="color:#8a6d3b">⚠ Composants orphelins <span style="font-weight:400;font-size:.82rem;color:#a8895b">— ${orphans.length} en attente de leur moitié</span></h2>
+     <p class="note" style="margin-bottom:8px">Ces composants ne peuvent pas devenir des macarons : il leur manque l'autre moitié. Produis ce qui manque pour ne pas les perdre.</p>
+     ${orphans.map(o=>`<div class="sugg-row">
+        <div class="sugg-main">
+          <div><b>${o.type==='coques'?'🟤':'🍫'} ${esc(o.nom)}</b> <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.64rem">${qty(o.pieces)} ${o.type==='coques'?'coques':'ganache'}</span></div>
+          <div style="margin-top:3px;font-size:.8rem;color:#8a6d3b">➜ il manque <b>${o.manque==='ganache'?'de la ganache':'des coques'}</b> ${o.type==='coques'?`pour assembler jusqu'à <b>${qty(o.macPotentiels)} macaron(s)</b>`:`pour utiliser cette ganache`}</div>
+        </div>
+        <button class="btn ghost sm" onclick="prodForm()" title="Produire le composant manquant">⚙ Produire ${o.manque==='ganache'?'ganache':'coques'}</button>
       </div>`).join('')}
    </div>`:''}
    <div class="panel">
@@ -9169,7 +9209,9 @@ async function renderStockParfums(){
   const tous=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0);
   const prods=tous.filter(p=>prodVendable(p));
   // Composants rangés non terminés (coques/ganache en attente) → comptés à part par parfum.
-  const composants=tous.filter(p=>!prodVendable(p) && (p.rangee===true || prodStatut(p)!=='termine'));
+  // Composants rangés non terminés = uniquement coques/ganache assemblables (pas les dégustations).
+  const composants=tous.filter(p=>{ const c=prodComposant(p); return (c==='coques'||c==='ganache') && (p.rangee===true || prodStatut(p)!=='termine'); });
+  const degustations=tous.filter(p=>prodComposant(p)==='degustation');  // macarons offerts en stock
   const recipes=await db.recipes.toArray();
   const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'(parfum ?)';
   const byNom={};
@@ -9188,20 +9230,27 @@ async function renderStockParfums(){
     if(c==='coques') byNom[nom].coques = addQty(byNom[nom].coques, p.qteRestante);
     else if(c==='ganache') byNom[nom].ganache = addQty(byNom[nom].ganache, p.qteRestante);
   });
+  degustations.forEach(p=>{
+    const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
+    (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, coques:0, ganache:0, degust:0, dlcs:[]});
+    byNom[nom].degust = addQty(byNom[nom].degust||0, p.qteRestante);
+  });
   const noms = [...FLAVORS];
   Object.keys(byNom).forEach(n=>{ if(!noms.includes(n)) noms.push(n); });
   const totalDispo = Object.values(byNom).reduce((s,b)=>addQty(s,b.dispo),0);
   const enStock = noms.filter(n=>byNom[n] && byNom[n].dispo>0).length;
   const cards = noms.map(nom=>{
     const b = byNom[nom]; const dispo = b?b.dispo:0; const compo = b?b.compo:0; const col = flavorColor(nom);
-    const vide = dispo<=0 && compo<=0;            // grisé seulement si RIEN (ni fini, ni composant)
-    const aContenu = dispo>0 || compo>0;
+    const degust = b?(b.degust||0):0;
+    const vide = dispo<=0 && compo<=0 && degust<=0;   // grisé seulement si RIEN (fini, composant, dégust)
+    const aContenu = dispo>0 || compo>0 || degust>0;
     const clic = aContenu ? ` clickable" onclick="stockParfumDetail(${JSON.stringify(nom).replace(/"/g,'&quot;')})" title="Voir les batchs, composants et emplacements` : '';
     const coques = b?b.coques:0; const ganache = b?b.ganache:0;
-    const aContenuTous = dispo>0 || coques>0 || ganache>0;
-    // Dès que le parfum a quelque chose, on affiche toujours « gan X - coque Y » (même à 0).
+    const aContenuTous = dispo>0 || coques>0 || ganache>0 || degust>0;
+    // Dès que le parfum a quelque chose, on affiche toujours « gan X - coque Y » (même à 0),
+    // et « dég X » seulement s'il y a des dégustations.
     const compoTag = aContenuTous
-      ? ` <span style="color:#9a8a82;font-size:.72rem">|</span> <span style="color:#8a6d3b;font-size:.72rem">gan ${qty(ganache)} - coque ${qty(coques)}</span>`
+      ? ` <span style="color:#9a8a82;font-size:.72rem">|</span> <span style="color:#8a6d3b;font-size:.72rem">gan ${qty(ganache)} - coque ${qty(coques)}</span>${degust>0?` <span style="color:#caa23b;font-size:.72rem">· 🥄 dég ${qty(degust)}</span>`:''}`
       : '';
     return `<div class="flavor-stock${vide?' fs-empty':clic}">
       <span class="fs-pastille" style="background:${col}"></span>
@@ -9231,7 +9280,15 @@ async function stockParfumDetail(nom){
   const prods = tousDuParfum.filter(p=>prodVendable(p));
   // Composants rangés mais non terminés (coques, ganache en attente d'assemblage) — pour les
   // retrouver facilement par parfum + emplacement, même s'ils ne sont pas encore vendables.
-  const composants = tousDuParfum.filter(p=>!prodVendable(p) && (p.rangee===true || prodStatut(p)!=='termine'));
+  // « En attente d'assemblage » : UNIQUEMENT les vraies coques et ganaches (assemblables).
+  // On exclut explicitement les dégustations et autres composants non assemblables, qui sont aussi
+  // « non vendables » mais n'ont rien à faire ici (sinon affichage trompeur).
+  const composants = tousDuParfum.filter(p=>{
+    const c = prodComposant(p);
+    return (c==='coques' || c==='ganache') && (p.rangee===true || prodStatut(p)!=='termine');
+  });
+  // Dégustations en stock (macarons offerts, non vendables) — affichage dédié.
+  const degustations = tousDuParfum.filter(p=>prodComposant(p)==='degustation');
   const col=flavorColor(nom);
   const _ligneBatch = p => {
     const st=prodStatut(p);
@@ -9294,12 +9351,15 @@ async function stockParfumDetail(nom){
   };
   const rows = prods.map(_ligneBatch).join('') || '<p class="note">Aucun macaron fini en stock pour ce parfum.</p>';
   const rowsComp = composants.map(_ligneBatch).join('');
+  const rowsDeg = degustations.map(_ligneBatch).join('');
   const total=prods.reduce((s,p)=>addQty(s,p.qteRestante),0);
   const totalComp=composants.reduce((s,p)=>addQty(s,p.qteRestante),0);
+  const totalDeg=degustations.reduce((s,p)=>addQty(s,p.qteRestante),0);
   openModal(`<h3><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${col};vertical-align:middle;margin-right:6px"></span>${esc(nom)}</h3>
     <p class="note" style="margin-bottom:10px">${prods.length} batch(s) fini(s) · <b>${qty(total)}</b> macaron(s) vendable(s). Touche un batch pour sa <b>traçabilité complète</b>.</p>
     ${rows}
     ${composants.length?`<h3 style="font-size:1rem;margin:16px 0 8px">⏳ En attente d'assemblage <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— coques / ganache rangées (${qty(totalComp)} pièce(s))</span></h3>${rowsComp}`:''}
+    ${degustations.length?`<h3 style="font-size:1rem;margin:16px 0 8px">🥄 Dégustations <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— offerts, non vendables (${qty(totalDeg)} pièce(s))</span></h3>${rowsDeg}`:''}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 // Stock fini disponible AGRÉGÉ PAR PARFUM (sans se soucier des lots).
