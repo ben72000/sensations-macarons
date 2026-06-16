@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v469';
+const APP_VERSION = 'v471';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -620,6 +620,47 @@ async function restockLotsByMaterial(materialId, nb){
   const cible = lots[0];
   await db.materialLots.update(cible.id, {qteRestante: addQty(cible.qteRestante, n)});
   return {credite:n, lotId:cible.id};
+}
+
+// Applique au STOCK RÉEL le décompte des emballages d'un marché, à partir du comptage delta
+// (sortie − retour) des types RATTACHÉS à une matière (packType.materialId). Gère le différentiel :
+// `mk.pkgStockApplied` mémorise {materialId: qté_déjà_décomptée}. À chaque appel on n'applique
+// QUE l'écart (re-clôture après correction → ajuste ; réouverture → tout restituer via target=0).
+// Si target=0 forcé (param annule=true), on restitue tout le stock déjà décompté.
+// Retourne le nouvel objet pkgStockApplied à enregistrer sur le marché.
+async function applyMarketPackagingStock(mk, opts){
+  opts = opts || {};
+  const annule = !!opts.annule;
+  const settings = getSettings();
+  const packTypes = settings.packTypes || [];
+  // matériau rattaché par nom de type (le comptage du marché est indexé par nom)
+  const matByTypeName = {};
+  packTypes.forEach(t=>{ if(t && t.nom && +t.materialId>0) matByTypeName[t.nom] = +t.materialId; });
+  // cible voulue par matériau = Σ (sortie − retour) des types rattachés (0 si annulation)
+  const target = {};   // materialId -> qté à avoir décomptée au total
+  if(!annule){
+    (mk.packaging||[]).forEach(p=>{
+      const matId = matByTypeName[p.nom]; if(!matId) return;   // type non rattaché → on ignore le stock
+      const used = Math.max(0, round3((+p.before||0)-(+p.after||0)));
+      target[matId] = round3((target[matId]||0) + used);
+    });
+  }
+  const already = Object.assign({}, mk.pkgStockApplied || {});
+  // ensemble de tous les materialId concernés (cible + déjà appliqué)
+  const allIds = new Set([...Object.keys(target), ...Object.keys(already)].map(Number));
+  const newApplied = {};
+  for(const matId of allIds){
+    const want = round3(target[matId]||0);
+    const had  = round3(already[matId]||0);
+    const diff = round3(want - had);   // >0 : décompter en plus ; <0 : re-créditer
+    if(diff > 0){
+      await decrementLotsByMaterial(matId, diff);
+    } else if(diff < 0){
+      await restockLotsByMaterial(matId, -diff);
+    }
+    if(want > 0) newApplied[matId] = want;   // on ne garde que les positifs
+  }
+  return newApplied;
 }
 
 
@@ -13685,8 +13726,21 @@ async function marketDoClose(marketId, vendu){
   const esp=money2(+val('mc_esp')||0), cb=money2(+val('mc_cb')||0), au=money2(+val('mc_autre')||0);
   const tot=addMoney(esp,cb,au);
   if(tot<=0 && vendu>0){ if(!confirm('Aucun encaissement saisi alors que des ventes sont calculées. Clôturer quand même ?')) return; }
-  await db.markets.update(marketId, {ca:{especes:esp,cb:cb,autre:au}, statut:'clos', dateCloture:today()});
-  toast('Marché clôturé ✓'); marketDetail(marketId);
+  const mk = await db.markets.get(marketId);
+  const updates = {ca:{especes:esp,cb:cb,autre:au}, statut:'clos', dateCloture:today()};
+  // Décompte du STOCK RÉEL des emballages rattachés — SAUF en mode historique (correction de
+  // données passées, sans impact stock, conformément au mode rouvert/historique).
+  let stockMsg='';
+  if(mk && !mk.histo){
+    try{
+      const newApplied = await applyMarketPackagingStock(mk);
+      updates.pkgStockApplied = newApplied;
+      const nbTypes = Object.keys(newApplied).length;
+      if(nbTypes>0) stockMsg=' · emballages décomptés du stock';
+    }catch(e){ console.warn('applyMarketPackagingStock', e); }
+  }
+  await db.markets.update(marketId, updates);
+  toast('Marché clôturé ✓'+stockMsg); marketDetail(marketId);
 }
 // Réouvre un marché clôturé : repasse le statut à « ouvert » ET le marque « historique »
 // (histo:true). En mode historique, les saisies (sortie/retour/don/perte) nourrissent les
@@ -13694,7 +13748,13 @@ async function marketDoClose(marketId, vendu){
 // corriger/compléter des données passées, pas de re-piocher dans le stock actuel.
 async function marketReopen(marketId){
   if(!confirm('Rouvrir ce marché clôturé en mode « historique » ? Tu pourras corriger sorties, retours et ventes pour nourrir les statistiques, sans impacter ton stock actuel. Tu re-clôtureras ensuite (le CA saisi est conservé).')) return;
-  await db.markets.update(marketId, {statut:'ouvert', histo:true});
+  const mk = await db.markets.get(marketId);
+  // Restitue au stock les emballages qui avaient été décomptés à la clôture (le marché repasse
+  // en mode historique : aucun impact stock désormais).
+  if(mk && mk.pkgStockApplied && Object.keys(mk.pkgStockApplied).length){
+    try{ await applyMarketPackagingStock(mk, {annule:true}); }catch(e){ console.warn('reopen restock', e); }
+  }
+  await db.markets.update(marketId, {statut:'ouvert', histo:true, pkgStockApplied:{}});
   toast('Marché rouvert (mode historique) ✓'); marketDetail(marketId);
 }
 
@@ -16253,11 +16313,14 @@ async function renderLabels(){
    ${orders.length?`<div class="panel"><h2>Imprimer les étiquettes d'une commande</h2>
      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Client</th><th>Batchs liés</th><th></th></tr></thead><tbody>
        ${orders.map(o=>`<tr><td>${fmtDate(o.date)}</td><td><b>${esc(clName(o.clientId))}</b></td><td>${linkCount(o.id)}</td>
-         <td style="text-align:right">
+         <td style="text-align:right;white-space:nowrap">
+           <span class="act" onclick="printOrderRecapLabel(${o.id}, document.getElementById('recapCopies_${o.id}').value)">⎙ Récap</span>
+           <input id="recapCopies_${o.id}" type="number" min="1" max="50" value="2" style="width:46px;margin:0 6px" title="Nombre de copies">
+           <br>
            <span class="act" onclick="printOrderLabels(${o.id},'perLink')">1 / produit</span>
            <span class="act" onclick="printOrderLabels(${o.id},'perPiece')">1 / pièce</span></td></tr>`).join('')}
      </tbody></table></div>
-     <p class="note">« 1 / produit » : une étiquette par batch lié. « 1 / pièce » : autant d'étiquettes que de pièces commandées.</p>
+     <p class="note"><b>⎙ Récap</b> : une étiquette récapitulative par commande (parfums avec cases ☐ à remplir à la main, lots, fabrication, DLC = livraison + 4 j). « 1 / produit » : une étiquette par batch lié. « 1 / pièce » : autant d'étiquettes que de pièces commandées.</p>
    </div>`:''}
 
    <div class="panel"><h2>Par batch de production</h2>
@@ -16381,6 +16444,94 @@ async function printLabelCopies(prodId){
 }
 // Impression des étiquettes liées à UNE commande : un batch par produit lié,
 // nombre d'étiquettes = quantité de pièces liées (ou 1 par lien selon le choix).
+// Données de l'ÉTIQUETTE RÉCAPITULATIVE d'une commande (différente de l'étiquette batch) :
+// - liste des parfums (chacun précédé d'une case ☐, suivi d'un espace pour écrire la quantité)
+// - numéros de lot de tous les batchs liés à la commande
+// - date de fabrication = date de fin de production la plus récente parmi les batchs liés
+// - DLC = DATE DE LIVRAISON (o.date) + 4 jours, calculée sur la livraison, jamais sur l'impression
+async function buildOrderLabelData(orderId){
+  const o = await db.orders.get(orderId); if(!o) return null;
+  const links = await db.orderItems.where('orderId').equals(orderId).toArray();
+  if(!links.length) return null;
+  const recipes = await db.recipes.toArray();
+  const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'Produit';
+  // regroupe par parfum : nom -> {lots:Set}
+  const parfums = new Map();
+  const lotsAll = new Set();
+  let fabTsMax = '';
+  for(const it of links){
+    const p = await db.productions.get(it.productionId); if(!p) continue;
+    const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
+    if(!parfums.has(nom)) parfums.set(nom, {lots:new Set()});
+    const lot = p.lotProduction||'';
+    if(lot){ parfums.get(nom).lots.add(lot); lotsAll.add(lot); }
+    const ts = p.prodTermineTs || p.prodTimestamp || (p.date?p.date+'T00:00':'');
+    if(ts && ts>fabTsMax) fabTsMax = ts;
+  }
+  // DLC = date de livraison + 4 jours (calcul local, sans toISOString pour éviter le décalage UTC)
+  let dlcStr = '';
+  if(o.date){
+    const [yy,mm,dd] = o.date.split('-').map(Number);
+    const dl = new Date(yy, (mm||1)-1, dd||1);
+    dl.setDate(dl.getDate()+4);
+    const pad=n=>String(n).padStart(2,'0');
+    dlcStr = `${dl.getFullYear()}-${pad(dl.getMonth()+1)}-${pad(dl.getDate())}`;
+  }
+  return {
+    parfums: [...parfums.keys()],
+    lots: [...lotsAll],
+    fab: fabTsMax ? fmtDate(fabTsMax.slice(0,10)) : '—',
+    dlc: dlcStr ? fmtDate(dlcStr) : '—',
+    livraison: o.date ? fmtDate(o.date) : '—'
+  };
+}
+// HTML d'une étiquette récapitulative de commande (50×25 mm, SANS QR : toute la largeur au texte).
+function renderOrderLabelHTML(d){
+  const parfRows = d.parfums.map(nom=>`<div class="pf">☐ ${esc(nom)} <span class="qn">___</span></div>`).join('');
+  const lotsTxt = d.lots.length ? d.lots.map(esc).join(', ') : '—';
+  return `<div class="olab">
+     <div class="ohead"><span class="ofab">Fab. ${esc(d.fab)}</span><span class="odlc">DLC ${esc(d.dlc)}</span></div>
+     <div class="opf">${parfRows||'<div class="pf">☐ ______ <span class="qn">___</span></div>'}</div>
+     <div class="olots">Lots : ${lotsTxt}</div>
+   </div>`;
+}
+// Feuille d'impression des étiquettes récapitulatives de commande (50×25 mm, sans QR).
+function printOrderLabelSheet(labels, titre){
+  if(!labels || !labels.length){ toast('Aucune étiquette à imprimer'); return; }
+  const win = window.open('', '_blank', 'width=420,height=300');
+  if(!win){ toast('Autorise les fenêtres pour imprimer'); return; }
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(titre||'Étiquettes')}</title>
+   <style>
+     @page { size: 50mm 25mm; margin: 0; }
+     * { margin:0; padding:0; box-sizing:border-box; }
+     html,body { background:#fff; }
+     .olab { width:50mm; height:25mm; background:#fff; color:#000; padding:1mm 1.4mm;
+             font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column;
+             page-break-after:always; break-after:page; overflow:hidden; }
+     .olab:last-child { page-break-after:auto; break-after:auto; }
+     .olab .ohead { display:flex; justify-content:space-between; align-items:baseline; border-bottom:0.25mm solid #000; padding-bottom:0.5mm; margin-bottom:0.6mm; }
+     .olab .ofab { font-size:2.2mm; }
+     .olab .odlc { font-size:2.5mm; font-weight:bold; }
+     .olab .opf { flex:1; overflow:hidden; }
+     .olab .pf { font-size:2.5mm; font-weight:bold; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+     .olab .pf .qn { font-weight:normal; letter-spacing:0.2mm; }
+     .olab .olots { font-size:1.9mm; line-height:1.1; border-top:0.25mm solid #000; padding-top:0.5mm; margin-top:0.4mm;
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+   </style></head><body>
+   ${labels.map(renderOrderLabelHTML).join('')}
+   <script>window.onload=function(){setTimeout(function(){window.print();},300);};window.onafterprint=function(){window.close();};<\/script>
+   </body></html>`);
+  win.document.close();
+}
+// Imprime N copies de l'étiquette récapitulative d'une commande.
+async function printOrderRecapLabel(orderId, copies){
+  const d = await buildOrderLabelData(orderId);
+  if(!d){ toast('Aucun batch lié à cette commande. Liez d\'abord des batchs.'); return; }
+  const n = Math.max(1, Math.min(50, +copies||1));
+  const sheet=[]; for(let i=0;i<n;i++) sheet.push(d);
+  printOrderLabelSheet(sheet, 'Récap commande #'+orderId);
+  toast(`${n} étiquette(s) récap envoyée(s) à l'impression`);
+}
 async function printOrderLabels(orderId, mode){
   const links = await db.orderItems.where('orderId').equals(orderId).toArray();
   if(!links.length){ toast('Aucun batch lié à cette commande. Liez d\'abord des batchs.'); return; }
