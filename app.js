@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v457';
+const APP_VERSION = 'v458';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2044,12 +2044,14 @@ async function renderMaterials(){
 function _matRow(row){
   const mat=row.mat; const dj=row.dlcMin?daysTo(row.dlcMin):null;
   const emb = row.cat==='emballage';
+  const isSac = emb && mat.usage==='sac';
+  const sacBadge = isSac ? `<span class="tag" style="background:#caa23b;color:#fff;font-size:.62rem">🛍️ sac</span>` : '';
   const sansPrixBadge = row.sansPrix>0 ? `<span class="tag" style="background:#fbeede;color:#a9772a;font-size:.62rem" title="${row.sansPrix} lot(s) sans prix — coût de revient faussé">⚠ prix manquant (${row.sansPrix})</span>` : '';
   const dlcTxt = emb ? '—' : (row.dlcMin?`${fmtDate(row.dlcMin)} ${dj!==null&&dj<=7?`<span class="tag warn">${dj<=0?'expiré':dj+' j'}</span>`:''}`:'—');
   return `<div class="mat-card">
     <div class="mat-card-top">
-      <div class="mat-card-name"><b>${esc(mat.nom)}</b>${mat.marque?`<span class="mat-marque">🏷️ ${esc(mat.marque)}</span>`:''}${sansPrixBadge}</div>
-      <span class="mat-cat-pill" style="background:${emb?'#7a6a9a':'#6aa3a0'}">${emb?'📦':'🥚'}</span>
+      <div class="mat-card-name"><b>${esc(mat.nom)}</b>${sacBadge}${mat.marque?`<span class="mat-marque">🏷️ ${esc(mat.marque)}</span>`:''}${sansPrixBadge}</div>
+      <span class="mat-cat-pill" style="background:${isSac?'#caa23b':(emb?'#7a6a9a':'#6aa3a0')}">${isSac?'🛍️':(emb?'📦':'🥚')}</span>
     </div>
     <div class="mat-card-grid">
       <div class="mat-stock">Stock : <b>${qty(row.total)} ${esc(mat.unite||'')}</b></div>
@@ -2222,7 +2224,13 @@ async function matForm(id){
      <div class="field"><label>Seuil d'alerte ${isEmb?'(unités)':'(kg)'}</label><input type="number" step="0.01" id="f_seuil" value="${s.seuil||0}"></div>
    </div>
    <div class="field"><label>${isEmb?'Prix indicatif / unité (€)':'Prix indicatif au kilo (€/kg)'}</label><input type="number" step="0.01" id="f_prix" value="${s.prixDefaut||0}"></div>
-   <div class="field" id="f_capWrap" style="${isEmb?'':'display:none'}"><label>Capacité (nb de macarons) <span style="color:#9a8a82;font-weight:400">— relie l'emballage à un format de coffret</span></label>
+   <div class="field" id="f_embUsageWrap" style="${isEmb?'':'display:none'}"><label>Type d'emballage</label>
+     <select id="f_embUsage" onchange="matEmbUsageSwitch(this.value)">
+       <option value="coffret" ${s.usage!=='sac'?'selected':''}>📦 Coffret / Boîte (contient des macarons)</option>
+       <option value="sac" ${s.usage==='sac'?'selected':''}>🛍️ Sac (ajouté à la commande, sans capacité)</option>
+     </select>
+     <p class="note" id="embUsageNote" style="margin-top:4px">${s.usage==='sac'?'Un sac n’a pas de capacité en macarons : tu en choisiras le nombre sur chaque commande.':'Un coffret/boîte est relié à un format par sa capacité en macarons.'}</p></div>
+   <div class="field" id="f_capWrap" style="${(isEmb && s.usage!=='sac')?'':'display:none'}"><label>Capacité (nb de macarons) <span style="color:#9a8a82;font-weight:400">— relie l'emballage à un format de coffret</span></label>
      <input type="number" min="0" step="1" id="f_cap" value="${s.capacite!=null?esc(s.capacite):''}" placeholder="ex : 8"></div>
    <div id="f_periWrap" style="${isEmb?'display:none':''}">
      <label class="switch-row"><input type="checkbox" id="f_peri" ${s.perissableOuvert?'checked':''} onchange="matPeriSwitch(this.checked)"> Périssable une fois ouvert (crème, lait…)</label>
@@ -2246,7 +2254,12 @@ function matCatSwitch(cat){
       if(note) note.innerHTML='Les denrées sont gérées <b>au kilogramme</b> (prix, stock et recettes en kg).';
     }
   }
-  const cw=document.getElementById('f_capWrap'); if(cw) cw.style.display = cat==='emballage' ? 'block' : 'none';
+  const uw=document.getElementById('f_embUsageWrap'); if(uw) uw.style.display = cat==='emballage' ? 'block' : 'none';
+  const cw=document.getElementById('f_capWrap');
+  if(cw){
+    const usage = document.getElementById('f_embUsage')?.value || 'coffret';
+    cw.style.display = (cat==='emballage' && usage!=='sac') ? 'block' : 'none';
+  }
   const pw=document.getElementById('f_periWrap'); if(pw) pw.style.display = cat==='emballage' ? 'none' : 'block';
   // met à jour le libellé du prix
   const prixField=document.getElementById('f_prix');
@@ -2255,13 +2268,26 @@ function matCatSwitch(cat){
   const seuilLab=document.getElementById('f_seuil')?.closest('.field')?.querySelector('label');
   if(seuilLab) seuilLab.textContent = cat==='emballage' ? "Seuil d'alerte (unités)" : "Seuil d'alerte (kg)";
 }
+// Bascule selon le type d'emballage : un SAC n'a pas de capacité macarons (champ masqué).
+function matEmbUsageSwitch(usage){
+  const cw=document.getElementById('f_capWrap');
+  if(cw) cw.style.display = (usage==='sac') ? 'none' : 'block';
+  const note=document.getElementById('embUsageNote');
+  if(note) note.innerHTML = (usage==='sac')
+    ? 'Un sac n’a pas de capacité en macarons : tu en choisiras le nombre sur chaque commande.'
+    : 'Un coffret/boîte est relié à un format par sa capacité en macarons.';
+}
 function matPeriSwitch(on){ const d=document.getElementById('f_periDaysWrap'); if(d) d.style.display = on?'block':'none'; }
 async function saveMat(id){
   const isEmb = val('f_cat')==='emballage';
+  const embUsage = isEmb ? (val('f_embUsage')||'coffret') : null;
+  const isSac = embUsage==='sac';
   const peri = !isEmb && document.getElementById('f_peri')?.checked;
   const unite = isEmb ? (val('f_unite')||'unité') : 'kg';   // denrées toujours en kg
   const o={nom:val('f_nom'),marque:(val('f_marque')||'').trim(),unite,seuil:+val('f_seuil')||0,prixDefaut:+val('f_prix')||0,
-    categorie: isEmb?'emballage':'denree', capacite: isEmb ? (+val('f_cap')||0) : undefined,
+    categorie: isEmb?'emballage':'denree',
+    usage: isEmb ? embUsage : undefined,                       // 'coffret' (défaut) ou 'sac'
+    capacite: (isEmb && !isSac) ? (+val('f_cap')||0) : undefined,   // un sac n'a pas de capacité macarons
     perissableOuvert: !!peri, joursApresOuverture: peri ? (Math.max(1,+val('f_periDays')||7)) : undefined};
   if(!o.nom){toast('Nom requis');return;}
   if(id){
