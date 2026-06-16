@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v471';
+const APP_VERSION = 'v472';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -16445,30 +16445,43 @@ async function printLabelCopies(prodId){
 // Impression des étiquettes liées à UNE commande : un batch par produit lié,
 // nombre d'étiquettes = quantité de pièces liées (ou 1 par lien selon le choix).
 // Données de l'ÉTIQUETTE RÉCAPITULATIVE d'une commande (différente de l'étiquette batch) :
-// - liste des parfums (chacun précédé d'une case ☐, suivi d'un espace pour écrire la quantité)
-// - numéros de lot de tous les batchs liés à la commande
-// - date de fabrication = date de fin de production la plus récente parmi les batchs liés
+// - liste des PARFUMS lue dans le CONTENU de la commande (o.lignes[].parfums[].nom) → vrais noms
+//   (« Mangue passion »…), pas les batchs liés. Chaque parfum aura sa case ☐ + espace quantité.
+// - numéros de lot pris sur les batchs réellement liés (orderItems → productions.lotProduction)
+// - date de fabrication = fin de production la plus récente parmi les batchs liés
 // - DLC = DATE DE LIVRAISON (o.date) + 4 jours, calculée sur la livraison, jamais sur l'impression
 async function buildOrderLabelData(orderId){
   const o = await db.orders.get(orderId); if(!o) return null;
+  // 1) PARFUMS depuis le contenu de la commande (source de vérité des noms commandés)
+  const parfumsOrdre = [];   // garde l'ordre, dédupliqué
+  const _seen = new Set();
+  (orderToLines(o)||[]).forEach(ln=>{
+    (ln.parfums||[]).forEach(pf=>{
+      const nom = (pf && pf.nom||'').trim();
+      if(nom && +pf.qte>0 && !_seen.has(nom.toLowerCase())){ _seen.add(nom.toLowerCase()); parfumsOrdre.push(nom); }
+    });
+  });
+  // 2) LOTS + date de fabrication depuis les batchs liés (picking)
   const links = await db.orderItems.where('orderId').equals(orderId).toArray();
-  if(!links.length) return null;
-  const recipes = await db.recipes.toArray();
-  const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'Produit';
-  // regroupe par parfum : nom -> {lots:Set}
-  const parfums = new Map();
   const lotsAll = new Set();
   let fabTsMax = '';
-  for(const it of links){
-    const p = await db.productions.get(it.productionId); if(!p) continue;
-    const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
-    if(!parfums.has(nom)) parfums.set(nom, {lots:new Set()});
-    const lot = p.lotProduction||'';
-    if(lot){ parfums.get(nom).lots.add(lot); lotsAll.add(lot); }
-    const ts = p.prodTermineTs || p.prodTimestamp || (p.date?p.date+'T00:00':'');
-    if(ts && ts>fabTsMax) fabTsMax = ts;
+  if(links.length){
+    const recipes = await db.recipes.toArray();
+    const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'';
+    for(const it of links){
+      const p = await db.productions.get(it.productionId); if(!p) continue;
+      const lot = p.lotProduction||'';
+      if(lot) lotsAll.add(lot);
+      const ts = p.prodTermineTs || p.prodTimestamp || (p.date?p.date+'T00:00':'');
+      if(ts && ts>fabTsMax) fabTsMax = ts;
+      // si le contenu de commande était vide (rare), on complète les parfums via les batchs liés
+      if(!parfumsOrdre.length){
+        const nom = p.libre ? (p.produitLibre||'') : recName(p.recipeId);
+        if(nom && !_seen.has(nom.toLowerCase())){ _seen.add(nom.toLowerCase()); parfumsOrdre.push(nom); }
+      }
+    }
   }
-  // DLC = date de livraison + 4 jours (calcul local, sans toISOString pour éviter le décalage UTC)
+  // 3) DLC = date de livraison + 4 jours (calcul local, sans toISOString → pas de décalage UTC)
   let dlcStr = '';
   if(o.date){
     const [yy,mm,dd] = o.date.split('-').map(Number);
@@ -16478,9 +16491,9 @@ async function buildOrderLabelData(orderId){
     dlcStr = `${dl.getFullYear()}-${pad(dl.getMonth()+1)}-${pad(dl.getDate())}`;
   }
   return {
-    parfums: [...parfums.keys()],
+    parfums: parfumsOrdre,
     lots: [...lotsAll],
-    fab: fabTsMax ? fmtDate(fabTsMax.slice(0,10)) : '—',
+    fab: fabTsMax ? fmtDate(fabTsMax.slice(0,10)) : (o.date?fmtDate(o.date):'—'),
     dlc: dlcStr ? fmtDate(dlcStr) : '—',
     livraison: o.date ? fmtDate(o.date) : '—'
   };
