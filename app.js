@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v461';
+const APP_VERSION = 'v464';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -103,6 +103,13 @@ db.version(15).stores({
 //   orderId: commande liée une fois le devis converti (sinon null pour un devis libre)
 db.version(16).stores({
   documents:       '++id, type, statut, date, clientId, numero, orderId'
+});
+// v17 : historique des emballages (boîtes + sacs) prélevés par une commande, à la validation
+// (picking). Symétrique de prodConsumption pour les batchs. {orderId, materialId, qte, date,
+// kind:'box'|'sac'|'sac-don', taille, clientId, snapNom} — snapNom pour garder le nom même si
+// la matière est supprimée plus tard.
+db.version(17).stores({
+  packagingConsumption: '++id, orderId, materialId, date'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -598,6 +605,21 @@ async function decrementLotsByMaterial(materialId, nb){
     }
   }
   return {consomme, manque: round3(Math.max(0, reste)), materialId:+materialId, absent:false};
+}
+
+// Re-crédite `nb` unités sur les lots d'une matière (par materialId), à l'annulation d'une
+// commande. Approche simple : on remet la quantité sur le lot le plus récent encore présent
+// (ou, à défaut, sur n'importe quel lot du matériau). Ne lit QUE db.materialLots.
+async function restockLotsByMaterial(materialId, nb){
+  const n = round3(+nb||0);
+  if(!materialId || n<=0) return {credite:0};
+  const lots = await db.materialLots.where('materialId').equals(+materialId).toArray();
+  if(!lots.length) return {credite:0, absent:true};   // plus aucun lot : rien où recréditer
+  // lot le plus récent (réception la plus récente, sinon le dernier id)
+  lots.sort((a,b)=> (b.dateReception||'').localeCompare(a.dateReception||'') || (+b.id - +a.id));
+  const cible = lots[0];
+  await db.materialLots.update(cible.id, {qteRestante: addQty(cible.qteRestante, n)});
+  return {credite:n, lotId:cible.id};
 }
 
 
@@ -1982,6 +2004,13 @@ async function renderMaterials(){
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'—';
   const matCatById = id => (mats.find(m=>m.id===id)||{}).categorie||'denree';
   const conso = await db.prodConsumption.toArray();
+  // Historique des emballages prélevés par commande (table v17, peut être absente sur vieux schéma).
+  let pkgConso = [];
+  try{ pkgConso = await db.packagingConsumption.toArray(); }catch(e){ pkgConso = []; }
+  const allOrders = await db.orders.toArray().catch(()=>[]);
+  const allClients = await db.clients.toArray().catch(()=>[]);
+  const orderById = id => allOrders.find(o=>o.id===id);
+  const clientNom = id => (allClients.find(c=>c.id===id)||{}).nom || '';
   // Consommables non rattachés à un batch (papier sulfurisé, film étirable, emballages…)
   const isConsumable = (matId)=>{
     const m = mats.find(x=>x.id===matId);
@@ -2014,6 +2043,20 @@ async function renderMaterials(){
     .sort((a,b)=> String(tsOf(b.prod)).localeCompare(String(tsOf(a.prod)))).slice(0,30);
   const consumablesList = Array.from(consumablesAgg.entries()).map(([id,total])=>({id,total}))
     .sort((a,b)=> (matName(a.id)||'').localeCompare(matName(b.id)||''));
+
+  // Regroupe l'historique des emballages prélevés PAR COMMANDE (du plus récent au plus ancien).
+  const pkgByOrder = new Map();
+  pkgConso.forEach(h=>{
+    const oid = h.orderId;
+    if(!pkgByOrder.has(oid)) pkgByOrder.set(oid, {orderId:oid, date:h.date||'', items:[]});
+    const g = pkgByOrder.get(oid);
+    g.items.push(h);
+    if((h.date||'') > g.date) g.date = h.date||g.date;
+  });
+  const pkgGroups = Array.from(pkgByOrder.values())
+    .sort((a,b)=> String(b.date).localeCompare(String(a.date)))
+    .slice(0,40);
+  const kindLabel = k => k==='sac' ? '🛍️ sac' : (k==='sac-don' ? '🛍️ sac (don)' : '📦 boîte');
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Matières & emballages</h1><p id="matCount">${mats.length} référence(s)</p></div>
@@ -2059,7 +2102,26 @@ async function renderMaterials(){
    ${consumablesList.length?`<div class="panel"><h2>Consommables <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— non rattachés à un batch (papier, film, emballages…)</span></h2>
      <div class="table-wrap"><table><thead><tr><th>Consommable</th><th>Total consommé</th></tr></thead><tbody>
      ${consumablesList.map(c=>`<tr><td><b>${esc(matName(c.id))}</b></td><td><span class="tag out">−${qty(c.total)} ${esc(matUnit(c.id))}</span></td></tr>`).join('')}
-     </tbody></table></div></div>`:''}`;
+     </tbody></table></div></div>`:''}
+   <div class="panel"><h2>📦 Emballages prélevés par commande <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— boîtes & sacs décomptés à la validation (picking)</span></h2>
+   ${pkgGroups.length?collapseList(pkgGroups.map(g=>{
+     const o=orderById(g.orderId);
+     const cli = o ? (clientNom(o.clientId)||o.histoLabel||'') : '';
+     const titre = cli || (o?`Commande #${g.orderId}`:`Commande supprimée #${g.orderId}`);
+     const total = g.items.reduce((s,it)=>s+(+it.qte||0),0);
+     return `<div class="trace-step" style="margin-bottom:12px">
+       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+         <div><b>${esc(titre)}</b><br>
+           <span style="color:#9a8a82;font-size:.78rem">${fmtDate(g.date)}${o?` · ${euro(o.montant)}`:''}</span></div>
+         ${o?`<button class="btn ghost sm" onclick="closeModal&&closeModal();cmdView(${g.orderId})" title="Voir la commande">🔎</button>`:''}
+       </div>
+       ${g.items.map(it=>`<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:2px 0;border-top:1px solid #f0e8da">
+         <span>${kindLabel(it.kind)} <b>${esc(it.snapNom||matName(it.materialId))}</b>${it.taille?` <span style="color:#9a8a82">· format ${esc(it.taille)}</span>`:''}</span>
+         <span class="tag out">−${qty(it.qte)}</span></div>`).join('')}
+       <div style="display:flex;justify-content:flex-end;font-size:.78rem;color:#6b5a52;margin-top:4px">Total : <b style="margin-left:4px">${qty(total)} unité(s)</b></div>
+     </div>`;
+   }), 1, {moreLabel:n=>`Voir les ${n} commande(s) précédente(s)`, lessLabel:'Réduire'}):`<div class="empty">Aucun emballage prélevé pour l'instant. L'historique se remplit quand tu valides une commande au picking.</div>`}
+   </div>`;
   matFilter(matSearch);
   lotFilter(lotSearch);
 }
@@ -4229,6 +4291,16 @@ async function pickMarkReady(orderId){
     const mat=_allMats.find(m=>m.categorie==='emballage' && +m.capacite===+taille) || null;
     boxPlan.push({taille, nb, materialId: mat?mat.id:null});
   }
+  // Sacs des lignes de DON (en plus du sac global de commande). Un sac par ligne de don qui en a un.
+  const donSacPlan = [];   // [{materialId, nb}]
+  (o.lignes||[]).forEach(ln=>{
+    if(ln && ln.type==='don' && +ln.sacMatId>0 && +ln.sacNb>0){
+      donSacPlan.push({materialId:+ln.sacMatId, nb:+ln.sacNb});
+    }
+  });
+  // Snapshot des noms pour l'historique (au cas où la matière serait supprimée plus tard).
+  const _nomMat = id => { const m=_allMats.find(x=>+x.id===+id); return m?m.nom:'(emballage supprimé)'; };
+  const pkgHistory = [];   // lignes à journaliser après le décompte (table packagingConsumption)
   try{
     await db.transaction('rw', db.orderItems, db.productions, db.materialLots, db.orders, async()=>{
       if(dejaLie<=0){
@@ -4248,17 +4320,31 @@ async function pickMarkReady(orderId){
           if(!bp.materialId){ pkgManques.push(`format ${bp.taille} (aucun emballage défini)`); continue; }
           const res=await decrementLotsByMaterial(bp.materialId, bp.nb);
           if(res.manque>0) pkgManques.push(`${res.manque}× boîte ${bp.taille}`);
+          pkgHistory.push({orderId, materialId:bp.materialId, qte:bp.nb, kind:'box', taille:bp.taille, clientId:o.clientId||0, snapNom:_nomMat(bp.materialId), date:today()});
         }
         // décrément du SAC choisi sur la commande (modèle + nombre saisi à la main)
         if(+o.sacMatId>0 && +o.sacNb>0){
           const resSac=await decrementLotsByMaterial(+o.sacMatId, +o.sacNb);
           if(resSac.manque>0) pkgManques.push(`${resSac.manque}× sac`);
+          pkgHistory.push({orderId, materialId:+o.sacMatId, qte:+o.sacNb, kind:'sac', taille:null, clientId:o.clientId||0, snapNom:_nomMat(+o.sacMatId), date:today()});
+        }
+        // décrément des SACS offerts avec les dons (une ligne de don peut avoir son propre sac)
+        for(const ds of donSacPlan){
+          const resDS=await decrementLotsByMaterial(ds.materialId, ds.nb);
+          if(resDS.manque>0) pkgManques.push(`${resDS.manque}× sac (don)`);
+          pkgHistory.push({orderId, materialId:ds.materialId, qte:ds.nb, kind:'sac-don', taille:null, clientId:o.clientId||0, snapNom:_nomMat(ds.materialId), date:today()});
         }
         await db.orders.update(orderId, {pkgDecremented:true});
       }
       await db.orders.update(orderId, {statut:'Terminée'});
     });
   }catch(err){ toast(err.message||'Erreur à la validation'); return; }
+  // Journalise l'historique des emballages prélevés (hors transaction de décompte : si la table
+  // n'existe pas encore sur cet appareil, on n'empêche pas le décompte d'avoir réussi).
+  if(pkgHistory.length){
+    try{ for(const h of pkgHistory){ await db.packagingConsumption.add(h); } }
+    catch(e){ console.warn('packagingConsumption indisponible', e); }
+  }
   if(pkgManques.length) toast('Commande prête ✓ — stock emballage insuffisant : '+pkgManques.join(', '));
   else toast(dejaLie>0?'Commande prête ✓':'Commande prête ✓ — batchs & emballages décomptés');
   pickRenderOrders();
@@ -7667,7 +7753,7 @@ function _lineToEdit(ln){
   if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
-  if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null)};
+  if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacNb>0?+ln.sacNb:0)};
   if(t==='prestation') return {type:'prestation', presta:ln.presta||'', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, dureeH:+ln.dureeH||0, mode:ln.mode||'', detail:ln.detail||'', remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0};
   return {...ln};
 }
@@ -8238,6 +8324,15 @@ function drawDonLine(ln,i){
     </select>
     ${embMode==='autre'?`<select style="margin-top:6px" onchange="setDonEmbMat(${i},this.value)"><option value="">— choisir un emballage —</option>${embOpts}</select>
       ${ln.embMatId!=null?`<div class="sum-box" style="font-size:.82rem"><span>Coût emballage</span><b>${euro(embCout)}</b></div>`:''}`:''}`;
+  // Sac offert avec le don (séparé de l'emballage boîte). Décompté du stock + imputé au coût des dons.
+  const sacOpts = cmdSacsCache.map(m=>`<option value="${m.id}" ${(+ln.sacMatId===+m.id)?'selected':''}>${esc(m.nom)}${m.marque?' · '+esc(m.marque):''}</option>`).join('');
+  const sacCout = (ln.sacMatId!=null) ? embMatUnitCost(ln.sacMatId, cmdSacsCache, cmdEmbLotsCache||[]) : 0;
+  const sacBloc = cmdSacsCache.length ? `<label style="font-size:.78rem;color:#7a6a62;display:block;margin-top:8px">🛍️ Sac offert avec le don</label>
+    <div class="row2" style="align-items:end">
+      <div class="field" style="margin:0"><select onchange="setDonSacMat(${i},this.value)"><option value="">— aucun —</option>${sacOpts}</select></div>
+      <div class="field" style="margin:0"><input type="number" min="0" step="1" value="${ln.sacNb!=null&&+ln.sacNb>0?esc(ln.sacNb):''}" placeholder="nb" oninput="setDonSacNb(${i},this.value)"></div>
+    </div>
+    ${(+ln.sacMatId>0&&+ln.sacNb>0)?`<div class="sum-box" style="font-size:.82rem"><span>Coût sac (${qty(ln.sacNb)}×)</span><b>${euro(money2(sacCout*(+ln.sacNb||0)))}</b></div>`:''}` : '';
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Don <span class="line-sub">offert · 0 € · décrémente le stock</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <label style="font-size:.78rem;color:#7a6a62">Macarons offerts (par parfum)</label>
@@ -8245,12 +8340,15 @@ function drawDonLine(ln,i){
     <label style="font-size:.78rem;color:#7a6a62;display:block;margin-top:8px">Grands formats offerts (optionnel)</label>
     <div class="flav-grid">${bigRows}</div>
     ${embBloc}
-    <div class="sum-box"><span>${totP+totB} macaron(s) offert(s)${embMode==='autre'&&ln.embMatId!=null?' + emballage':''}</span><b>${euro(0)}</b></div>
+    ${sacBloc}
+    <div class="sum-box"><span>${totP+totB} macaron(s) offert(s)${embMode==='autre'&&ln.embMatId!=null?' + emballage':''}${+ln.sacMatId>0&&+ln.sacNb>0?' + sac':''}</span><b>${euro(0)}</b></div>
   </div>`;
 }
 // Setters emballage du don
 function setDonEmbMode(i,v){ cmdLines[i].donEmbMode = v; if(v==='sans') cmdLines[i].embMatId=null; drawLines(); }
 function setDonEmbMat(i,v){ cmdLines[i].embMatId = v?+v:null; drawLines(); }
+function setDonSacMat(i,v){ cmdLines[i].sacMatId = v?+v:null; if(!v){ cmdLines[i].sacNb=0; } else if(!(+cmdLines[i].sacNb>0)){ cmdLines[i].sacNb=1; } drawLines(); }
+function setDonSacNb(i,v){ cmdLines[i].sacNb = Math.max(0, Math.round(+v||0)); drawLines(); }
 function drawPrestationLine(ln,i){
   if(ln.remiseType==null) ln.remiseType='pct';
   const base=money2(+ln.montantHT||0);
@@ -8400,7 +8498,7 @@ function cmdLinesToStored(){
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', remisePct:rp, parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+    if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacMatId>0?Math.max(0,Math.round(+ln.sacNb||0)):0), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0)};
   }).filter(Boolean);
 }
@@ -8702,6 +8800,7 @@ async function cmdDelete(id){
   openModal(`<h3>🗑 Supprimer la commande</h3>
     <p style="margin-bottom:8px">${cl?`<b>${esc(cl.nom)}</b> · `:''}${fmtDate(o.date)} · ${euro(o.montant)}</p>
     ${totBatch?`<div class="banner">↩ <div>${totBatch} macaron(s) de batch(s) lié(s) seront <b>recrédités au stock</b>.</div></div>`:''}
+    ${o.pkgDecremented===true?`<div class="banner">📦 <div>Les <b>emballages</b> de cette commande (boîtes / sacs) seront <b>recrédités au stock</b>.</div></div>`:''}
     <div class="field"><label>Raison de la suppression *</label><select id="f_delReason">${opts}</select></div>
     <div class="field"><label>Précision (facultatif)</label><input id="f_delNote" placeholder="détail…"></div>
     <p class="note">La suppression est définitive. La raison est enregistrée dans le journal des suppressions.</p>
@@ -8715,26 +8814,45 @@ async function cmdDeleteConfirm(id){
   const items = await db.orderItems.where('orderId').equals(id).toArray();
   const evs = await db.events.where('refId').equals(id).toArray().catch(()=>[]);
   const totBatch = items.reduce((s,it)=>s+(+it.qte||0),0);
+  // Emballages à restituer (seulement si le décompte avait bien eu lieu sur cette commande).
+  // On résout les materialId AVANT la transaction (lire db.materials dedans est interdit).
+  const embRestock = [];   // [{materialId, nb}]
+  if(o && o.pkgDecremented===true){
+    const _allMats = await db.materials.toArray();
+    const pack = orderPackaging(o);
+    for(const taille in pack.boxes){
+      const nb=+pack.boxes[taille]||0; if(nb<=0) continue;
+      const mat=_allMats.find(m=>m.categorie==='emballage' && +m.capacite===+taille);
+      if(mat) embRestock.push({materialId:mat.id, nb});
+    }
+    if(+o.sacMatId>0 && +o.sacNb>0) embRestock.push({materialId:+o.sacMatId, nb:+o.sacNb});
+    (o.lignes||[]).forEach(ln=>{ if(ln && ln.type==='don' && +ln.sacMatId>0 && +ln.sacNb>0) embRestock.push({materialId:+ln.sacMatId, nb:+ln.sacNb}); });
+  }
   // snapshot pour annulation
-  const snap = { order:o?{...o}:null, items:items.map(x=>({...x})), events:evs.map(e=>({...e})) };
-  await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,async()=>{
+  const snap = { order:o?{...o}:null, items:items.map(x=>({...x})), events:evs.map(e=>({...e})), embRestock:embRestock.map(x=>({...x})) };
+  await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,db.materialLots,async()=>{
     for(const it of items){
       const prod = await db.productions.get(it.productionId);
       if(prod){ await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, it.qte)}); }
     }
+    // re-crédit des emballages (boîtes + sac)
+    for(const e of embRestock){ await restockLotsByMaterial(e.materialId, e.nb); }
     await db.orderItems.where('orderId').equals(id).delete();
     await db.events.where('refId').equals(id).delete();
     await db.orders.delete(id);
   });
   logDeletion('commande', id, reason, note, o?`${fmtDate(o.date)} · ${euro(o.montant)}`:'');
+  try{ await db.packagingConsumption.where('orderId').equals(id).delete(); }catch(e){}
   closeModal(); renderCmd();
   // annulation rapide : restaure la commande, ses liens, son événement, et ré-décrémente le stock
   showUndoToast(totBatch?`Commande supprimée — ${totBatch} recrédité(s)`:'Commande supprimée', async ()=>{
-    await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,async()=>{
+    await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,db.materialLots,async()=>{
       if(snap.order) await db.orders.put(snap.order);
       for(const it of snap.items){ await db.orderItems.put(it);
         const prod=await db.productions.get(it.productionId);
         if(prod){ await db.productions.update(prod.id,{qteRestante: subQty(prod.qteRestante, it.qte)}); } }
+      // ré-décrémente les emballages recrédités (on annule la restitution)
+      for(const e of (snap.embRestock||[])){ await decrementLotsByMaterial(e.materialId, e.nb); }
       for(const e of snap.events){ await db.events.put(e); }
     });
     renderCmd();
@@ -8751,19 +8869,36 @@ function logDeletion(type, id, reason, note, label){
 }
 async function delCmd(id){
   // Compter ce qui sera impacté pour informer l'utilisateur
+  const o = await db.orders.get(id);
   const items = await db.orderItems.where('orderId').equals(id).toArray();
   const totBatch = items.reduce((s,it)=>s+(+it.qte||0),0);
   const ev = await db.events.where('refId').equals(id).toArray().catch(()=>[]);
+  // Emballages à restituer (seulement si décompte effectué). materialId résolus hors transaction.
+  const embRestock = [];
+  if(o && o.pkgDecremented===true){
+    const _allMats = await db.materials.toArray();
+    const pack = orderPackaging(o);
+    for(const taille in pack.boxes){
+      const nb=+pack.boxes[taille]||0; if(nb<=0) continue;
+      const mat=_allMats.find(m=>m.categorie==='emballage' && +m.capacite===+taille);
+      if(mat) embRestock.push({materialId:mat.id, nb});
+    }
+    if(+o.sacMatId>0 && +o.sacNb>0) embRestock.push({materialId:+o.sacMatId, nb:+o.sacNb});
+    (o.lignes||[]).forEach(ln=>{ if(ln && ln.type==='don' && +ln.sacMatId>0 && +ln.sacNb>0) embRestock.push({materialId:+ln.sacMatId, nb:+ln.sacNb}); });
+  }
   const msg = `Supprimer cette commande ?` +
     (totBatch?`\n\n• ${totBatch} macaron(s) de batch(s) lié(s) seront recrédités au stock disponible.`:'') +
+    (embRestock.length?`\n• Les emballages (boîtes / sacs) seront recrédités au stock.`:'') +
     (ev.length?`\n• L'entrée du calendrier sera supprimée.`:'');
   if(!confirm(msg))return;
-  await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,async()=>{
+  await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,db.materialLots,async()=>{
     // 1) recréditer le stock fini des batchs liés
     for(const it of items){
       const prod = await db.productions.get(it.productionId);
       if(prod){ await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, it.qte)}); }
     }
+    // 1b) recréditer les emballages (boîtes + sac)
+    for(const e of embRestock){ await restockLotsByMaterial(e.materialId, e.nb); }
     // 2) supprimer les liens
     await db.orderItems.where('orderId').equals(id).delete();
     // 3) supprimer l'événement calendrier lié
@@ -8771,6 +8906,7 @@ async function delCmd(id){
     // 4) supprimer la commande
     await db.orders.delete(id);
   });
+  try{ await db.packagingConsumption.where('orderId').equals(id).delete(); }catch(e){}
   renderCmd(); toast(totBatch?`Commande supprimée — ${totBatch} macaron(s) recrédité(s) ✓`:'Commande supprimée ✓');
 }
 // Lier une commande à des batchs (décrémente le stock de produits finis)
@@ -10334,6 +10470,10 @@ function analyzeFlavorProfitability(data){
       (o.lignes||[]).forEach(ln=>{
         if(ln && ln.type==='don' && ln.donEmbMode==='autre' && ln.embMatId!=null){
           coutEmbDons += embMatUnitCost(ln.embMatId, mats||[], lots||[]);
+        }
+        // Sac offert avec le don : coût unitaire réel × nombre de sacs.
+        if(ln && ln.type==='don' && +ln.sacMatId>0 && +ln.sacNb>0){
+          coutEmbDons += embMatUnitCost(ln.sacMatId, mats||[], lots||[]) * (+ln.sacNb||0);
         }
       });
     });
