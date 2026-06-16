@@ -9253,6 +9253,15 @@ async function renderStockParfums(){
   const degustations=tous.filter(p=>prodComposant(p)==='degustation');  // macarons offerts en stock
   const recipes=await db.recipes.toArray();
   const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'(parfum ?)';
+  const recById={}; recipes.forEach(r=>recById[r.id]=r);
+  // Un nom de parfum relève-t-il du GRAND FORMAT ? (recette marquée grandFormat, ou nom
+  // figurant dans la liste de référence BIG_FORMATS). Sert à séparer la grille en 2 sections.
+  const _gfNorms = (typeof BIG_FORMATS!=='undefined'?BIG_FORMATS:[]).map(b=>normTxt(b));
+  const isGFnom = nom => {
+    const n = normTxt(nom||'');
+    if(_gfNorms.includes(n)) return true;
+    return recipes.some(r=> r.grandFormat && normTxt(r.produitNom||'')===n);
+  };
   const byNom={};
   prods.forEach(p=>{
     const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
@@ -9274,11 +9283,19 @@ async function renderStockParfums(){
     (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, coques:0, ganache:0, degust:0, dlcs:[]});
     byNom[nom].degust = addQty(byNom[nom].degust||0, p.qteRestante);
   });
-  const noms = [...FLAVORS];
-  Object.keys(byNom).forEach(n=>{ if(!noms.includes(n)) noms.push(n); });
+  // Liste des parfums PETITS (standard) : référence FLAVORS + tout nom rencontré non-GF.
+  const nomsPetits = [...FLAVORS];
+  // Liste des parfums GRAND FORMAT : référence BIG_FORMATS (toujours affichés, même à 0)
+  // + tout nom rencontré reconnu comme GF.
+  const nomsGF = [...(typeof BIG_FORMATS!=='undefined'?BIG_FORMATS:[])];
+  Object.keys(byNom).forEach(n=>{
+    if(isGFnom(n)){ if(!nomsGF.includes(n)) nomsGF.push(n); }
+    else { if(!nomsPetits.includes(n)) nomsPetits.push(n); }
+  });
   const totalDispo = Object.values(byNom).reduce((s,b)=>addQty(s,b.dispo),0);
-  const enStock = noms.filter(n=>byNom[n] && byNom[n].dispo>0).length;
-  const cards = noms.map(nom=>{
+  const enStock = [...nomsPetits, ...nomsGF].filter(n=>byNom[n] && byNom[n].dispo>0).length;
+  // Génère une carte parfum (commune aux deux sections).
+  const carteDe = nom => {
     const b = byNom[nom]; const dispo = b?b.dispo:0; const compo = b?b.compo:0; const col = flavorColor(nom);
     const degust = b?(b.degust||0):0;
     const vide = dispo<=0 && compo<=0 && degust<=0;   // grisé seulement si RIEN (fini, composant, dégust)
@@ -9296,14 +9313,20 @@ async function renderStockParfums(){
       <span class="fs-nom">${esc(nom)}</span>
       <span class="fs-qte">${dispo>0?`<b>${qty(dispo)}</b>`:(aContenuTous?'<b>0</b>':'<span class="fs-zero">0</span>')}${compoTag}${aContenuTous?' <span style="color:#9a8a82">›</span>':''}</span>
     </div>`;
-  }).join('');
+  };
+  const cardsPetits = nomsPetits.map(carteDe).join('');
+  const cardsGF = nomsGF.map(carteDe).join('');
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Stock par parfum</h1>
      <p>${enStock} parfum(s) en stock · ${qty(totalDispo)} macaron(s) vendable(s)</p></div>
      <div class="flex"><button class="btn" onclick="goView('productions')">🍩 Productions →</button></div></div>
    <div class="panel">
      <p class="note" style="margin-bottom:12px">Vue d'ensemble des macarons finis <b>vendables</b> disponibles, par parfum. Les pastilles reprennent les couleurs de la boutique. Les parfums à 0 sont grisés.</p>
-     <div class="flavor-stock-grid">${cards}</div>
+     <div class="flavor-stock-grid">${cardsPetits}</div>
+     ${nomsGF.length?`
+     <h2 style="margin:18px 0 4px;font-size:1.02rem;color:var(--bordeaux)">🍪 Grand format</h2>
+     <p class="note" style="margin-bottom:12px">Macarons grand format (vente à l'unité), comptés séparément des petits.</p>
+     <div class="flavor-stock-grid">${cardsGF}</div>`:''}
    </div>`;
 }
 // Détail d'un parfum : liste de ses batchs en stock, chacun ouvrant la traçabilité complète.
