@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v458';
+const APP_VERSION = 'v459';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7592,6 +7592,7 @@ function lineTotalStored(ln){
 let cmdLines = [];      // lignes de produits de la commande en cours
 let cmdProductsCache = [];
 let cmdEmballagesCache = [];   // emballages disponibles (matières 'emballage') pour le choix par coffret
+let cmdSacsCache = [];         // modèles de sacs (emballage usage:'sac') proposables sur la commande
 let cmdEmbLotsCache = [];      // lots de matières (pour coût unitaire emballage des dons)
 let _cmdMarginCache = {recipes:[], recipeItems:[], lots:[]};
 let cmdClientsCache = [];
@@ -7649,6 +7650,8 @@ async function cmdForm(id, opts){
   // Emballages disponibles pour le choix par coffret : uniquement les contenants ayant une CAPACITÉ
   // (vraies boîtes). On exclut les consommables sans capacité comme le film étirable, le papier, etc.
   cmdEmballagesCache = (await db.materials.toArray()).filter(m=>m.categorie==='emballage' && +m.capacite>0).sort((a,b)=>(+a.capacite||0)-(+b.capacite||0));
+  // Modèles de SACS (emballage usage:'sac') proposables sur la commande (quantité saisie à la main).
+  cmdSacsCache = (await db.materials.toArray()).filter(m=>m.categorie==='emballage' && m.usage==='sac').sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
   cmdEmbLotsCache = await db.materialLots.toArray().catch(()=>[]);   // lots pour calculer le coût unitaire emballage (dons)
   // caches pour le calcul de marge en direct (impact livraison)
   _cmdMarginCache = {
@@ -7701,6 +7704,21 @@ async function cmdForm(id, opts){
    </div>
 
    <div class="field"><label>Statut commande</label><select id="f_st">${stOpts}</select></div>
+
+   <div class="field" id="sacBlock">
+     <label>🛍️ Sac (optionnel) <span style="color:#9a8a82;font-weight:400">— ajouté au transport, décompté du stock</span></label>
+     ${cmdSacsCache.length?`<div class="row2" style="align-items:end">
+       <div class="field" style="margin:0"><label style="font-size:.78rem">Modèle</label>
+         <select id="f_sacMat">
+           <option value="0">— aucun —</option>
+           ${cmdSacsCache.map(m=>`<option value="${m.id}" ${(+o.sacMatId===+m.id)?'selected':''}>${esc(m.nom)}${m.marque?' · '+esc(m.marque):''}</option>`).join('')}
+         </select></div>
+       <div class="field" style="margin:0"><label style="font-size:.78rem">Nombre</label>
+         <input type="number" min="0" step="1" id="f_sacNb" value="${o.sacNb!=null&&+o.sacNb>0?esc(o.sacNb):''}" placeholder="ex : 2"></div>
+     </div>
+     <p class="note" style="margin-top:4px">Saisis le nombre de sacs utilisés pour cette commande. Le coût réel sera imputé à la validation.</p>`
+     :`<p class="note">Aucun modèle de sac enregistré. Crée-en un dans <b>Matières & emballages</b> (type « 🛍️ Sac ») pour pouvoir l'ajouter ici.</p>`}
+   </div>
 
    <div class="collapse-sec" id="livBlock">
      <button type="button" class="collapse-head" onclick="toggleLivBlock()">
@@ -8563,6 +8581,8 @@ async function saveCmd(id){
     lignes, remiseGlobale,
     perso:document.getElementById('f_perso').checked,
     persoMacarons: cmdPersoCount(),
+    sacMatId: +val('f_sacMat')||0,                    // modèle de sac choisi (matière emballage usage:'sac'), 0 = aucun
+    sacNb: Math.max(0, Math.round(+val('f_sacNb')||0)),// nombre de sacs saisi à la main
     montant,
     paiements,
     dateReglementFinal: val('f_dateFinal')||'',
