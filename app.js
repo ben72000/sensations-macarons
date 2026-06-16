@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v466';
+const APP_VERSION = 'v467';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9039,8 +9039,21 @@ async function computeAccounting(opts){
     return true;
   };
   const allOrders = await db.orders.toArray();
-  // Filtre par période : début ET fin (intervalle précis si dates personnalisées).
-  const orders = (_periodeStart||_periodeEnd) ? allOrders.filter(o=> _inRange(o.date)) : allOrders;
+  // Filtre par période. IMPORTANT : pour le CA ENCAISSÉ (cash basis), une commande doit être
+  // retenue dès qu'un de ses PAIEMENTS tombe dans la période — même si sa date de commande est
+  // hors période (ex. commande de septembre payée en mai). On inclut donc une commande si sa
+  // date de commande OU au moins un paiement est dans la plage. Chaque sous-calcul refiltre
+  // ensuite par sa propre date (paiement par date de paiement, facturé par date de commande).
+  const _orderPayDates = (o)=>{
+    const pays = (o.paiements&&o.paiements.length) ? o.paiements
+      : (o.paiement==='Payé' ? [{date:(o.datePaiement||o.date)}] : []);
+    return pays.map(p=>p && p.date).filter(Boolean);
+  };
+  const _orderInRange = (o)=>{
+    if(_inRange(o.date)) return true;                       // date de commande dans la plage
+    return _orderPayDates(o).some(d=>_inRange(d));          // ou un paiement dans la plage
+  };
+  const orders = (_periodeStart||_periodeEnd) ? allOrders.filter(_orderInRange) : allOrders;
   const allCharges = await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
   const charges = (_periodeStart||_periodeEnd) ? allCharges.filter(c=> _inRange(c.date)) : allCharges;
   const recipes = await db.recipes.toArray();
@@ -9058,8 +9071,12 @@ async function computeAccounting(opts){
   // Une commande "En attente de paiement" est facturée mais PAS encaissée → exclue du CA encaissé.
   const factByMonth={}; let totalFacture=0;
   orders.forEach(o=>{
-    const mF=monthKey(o.date); const tot=money2(o.montant);
-    if(mF && tot>0){ factByMonth[mF]=money2((factByMonth[mF]||0)+tot); totalFacture=money2(totalFacture+tot); }
+    // CA facturé : à la date de COMMANDE, et uniquement si celle-ci est dans la période.
+    // (une commande incluse seulement via un paiement hors période ne doit pas gonfler le facturé)
+    if(_inRange(o.date)){
+      const mF=monthKey(o.date); const tot=money2(o.montant);
+      if(mF && tot>0){ factByMonth[mF]=money2((factByMonth[mF]||0)+tot); totalFacture=money2(totalFacture+tot); }
+    }
     const pays = (o.paiements||[]);
     // rétro-compat : ancienne commande / reprise "Payé" sans registre de paiement.
     // On la considère encaissée : à sa datePaiement si connue, sinon à sa date de commande
@@ -9070,6 +9087,7 @@ async function computeAccounting(opts){
           : []);
     list.forEach(p=>{
       const m=monthKey(p.date); if(!m) return;
+      if((_periodeStart||_periodeEnd) && !_inRange(p.date)) return;   // paiement hors période → ignoré
       const v=money2(p.montant);
       encByMonth[m]=money2((encByMonth[m]||0)+v);
       encByMethod[p.moyen||'—']=money2((encByMethod[p.moyen||'—']||0)+v);
@@ -9116,6 +9134,7 @@ async function computeAccounting(opts){
       :(o.paiement==='Payé'?[{date:(o.datePaiement||o.date),montant:total}]:[]);
     pays.forEach(p=>{
       const m=monthKey(p.date); if(!m) return;
+      if((_periodeStart||_periodeEnd) && !_inRange(p.date)) return;   // paiement hors période → ignoré
       const ratio=total>0?(money2(p.montant)/total):0;
       costByMonth[m]=money2((costByMonth[m]||0)+coutMat*ratio);
     });
