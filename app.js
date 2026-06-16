@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v421';
+const APP_VERSION = 'v423';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3514,7 +3514,7 @@ function _prodbatRow(row){
        <button class="qa" onclick="setEmplacement(${p.id})" title="Déplacer / ranger">📍 Déplacer</button>
        ${linkBtn}
        <button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button>
-       <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Traça.</button>
+       <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Tracer</button>
        <button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button>
      </div>
      </div>
@@ -6044,7 +6044,11 @@ async function traceProd(prodId){
   const orders = await db.orders.toArray();
   const cmdLines = oi.map(it=>{
     const o=orders.find(x=>x.id===it.orderId); const cl=o?clients.find(c=>c.id===o.clientId):null;
-    return `<div class="trace-step">${cl?esc(cl.nom):'—'} — ${it.qte} pièces · ${o?fmtDate(o.date):''}</div>`;
+    const stTag = o ? (normStatus(o.statut)==='Livrée'?' <span class="tag done" style="font-size:.6rem">livrée</span>':(normStatus(o.statut)==='Terminée'?' <span class="tag ok" style="font-size:.6rem">prête</span>':'')) : '';
+    return `<div class="trace-step" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span>${cl?esc(cl.nom):'—'} — ${it.qte} pièces · ${o?fmtDate(o.date):''}${stTag}</span>
+      ${o?`<button class="btn ghost sm" style="flex:none" onclick="closeModal();cmdView(${o.id})">Ouvrir →</button>`:''}
+    </div>`;
   });
   // pertes déclarées sur ce batch
   const lossList = await db.losses.where('productionId').equals(prodId).toArray().catch(()=>[]);
@@ -7012,6 +7016,30 @@ async function cmdView(id){
   _privacySuspend=1; // détail de commande toujours en clair, même en mode discret
   const o = await db.orders.get(id);
   const cl = o.clientId ? await db.clients.get(o.clientId) : null;
+  // Traçabilité : productions (et lots) rattachées à cette commande, consultables à tout stade
+  // (y compris commande prête ou livrée). Lien via orderItems(orderId → productionId).
+  const _traceItems = await db.orderItems.where('orderId').equals(id).toArray().catch(()=>[]);
+  let _lotsLiesHtml = '';
+  if(_traceItems.length){
+    const _prodIds = [...new Set(_traceItems.map(it=>it.productionId).filter(x=>x!=null))];
+    const _prodsLiees = [];
+    for(const pid of _prodIds){ const pr = await db.productions.get(pid).catch(()=>null); if(pr) _prodsLiees.push(pr); }
+    if(_prodsLiees.length){
+      const _recs = await db.recipes.toArray().catch(()=>[]);
+      const _nom = pr => pr.libre ? (pr.produitLibre||'(sans nom)') : ((_recs.find(r=>r.id===pr.recipeId)||{}).produitNom||'(recette)');
+      _lotsLiesHtml = `<h3 style="font-size:1rem;margin:16px 0 8px">🔎 Traçabilité — lots de production liés</h3>
+        <div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px">
+          ${_prodsLiees.map(pr=>{
+            const qLien = _traceItems.filter(it=>it.productionId===pr.id).reduce((s,it)=>s+(+it.qte||0),0);
+            return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.84rem">
+              <span><b>${esc(pr.lotProduction||('#'+pr.id))}</b> <span style="color:#9a8a82">· ${esc(_nom(pr))}${qLien?` · ${qty(qLien)} u.`:''}</span></span>
+              <button class="btn ghost sm" onclick="closeModal();traceProd(${pr.id})">🔎 Tracer</button>
+            </div>`;
+          }).join('')}
+        </div>
+        <p class="note">Lots utilisés pour honorer cette commande — conservés pour la traçabilité même après livraison.</p>`;
+    }
+  }
   // Documents liés : devis d'origine + facture(s) émise(s) pour cette commande
   const _docs = await db.documents.toArray().catch(()=>[]);
   const _devisOrig = _docs.find(x=>x.type==='devis' && x.orderId===id);
@@ -7126,6 +7154,7 @@ async function cmdView(id){
     ${+o.remiseGlobale>0?`<div class="sum-box"><span>Remise globale</span><b>−${o.remiseGlobale}%</b></div>`:''}
     <div class="sum-box"><span>Montant total${+o.remiseGlobale>0||lignes.some(l=>+l.remisePct>0)?' (TTC, remises incluses)':''}</span><b>${euro(o.montant)}</b></div>
     ${_docLiensHtml}
+    ${_lotsLiesHtml}
     <h3 style="font-size:1rem;margin:16px 0 8px">Paiements <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— réf. commande n°${esc(orderNumber(o))}</span></h3>
     ${(o.paiements&&o.paiements.length)
       ? o.paiements.map(p=>`<div class="sum-box"><span>${fmtDate(p.date)} · ${esc(p.moyen||'—')}</span><b>${euro(p.montant)}</b></div>`).join('')
