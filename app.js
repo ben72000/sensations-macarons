@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v419';
+const APP_VERSION = 'v421';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3571,14 +3571,22 @@ function prodbatFilter(q){
   // EXCEPTION : les ganaches montées (composant 'ganache') sont mutualisables entre parfums →
   // groupe distinct « 🍫 Ganaches montées », jamais rattachées à un parfum unique.
   const GANACHE_KEY='__ganache_montee__';
+  // Une ganache est « mutualisée » (groupe transverse) si elle est marquée explicitement comme
+  // telle (p.mutualisee), OU si son nom contient « chantache » (marqueur fiable confirmé : une
+  // chantache est toujours mutualisée entre parfums). Sinon, une ganache rejoint son parfum.
+  const estMutualisee = (p, nom)=>{
+    if(p.mutualisee===true) return true;
+    if(normTxt(nom).includes('chantache')) return true;
+    return false;
+  };
   const groups=[]; const idx={};
   capped.forEach(r=>{
     const p=r.p;
     let key, label;
-    if(prodComposant(p)==='ganache'){
+    const nom = p.libre ? (p.produitLibre||'') : recName(p);
+    if(prodComposant(p)==='ganache' && estMutualisee(p, nom)){
       key=GANACHE_KEY; label='Ganaches montées (mutualisables)';
     } else {
-      const nom = p.libre ? (p.produitLibre||'') : recName(p);
       key = p.libre ? ('libre:'+(p.produitLibre||p.id)) : ('parfum:'+flavorCode(nom));
       label = nom || '(sans nom)';
     }
