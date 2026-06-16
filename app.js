@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v425';
+const APP_VERSION = 'v427';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5712,13 +5712,50 @@ async function renderTrace(){
   const lots = await db.materialLots.toArray();
   const mats = await db.materials.toArray();
   const matName = id => (mats.find(m=>m.id===id)||{}).nom||'—';
+  const suppliers = await db.suppliers.toArray().catch(()=>[]);
+  const supName = id => (suppliers.find(s=>s.id===id)||{}).nom||'';
+  // INDEX UNIFIÉ pour la recherche enrichie : productions, commandes, lots matière dans une seule
+  // liste. Chaque entrée porte _prim (texte principal), _blob (tout le texte cherchable) et
+  // _digits (chiffres), exploités par le moteur searchRank — comme partout dans l'app.
+  const itemsByOrder={};
+  (await db.orderItems.toArray().catch(()=>[])).forEach(it=>{ (itemsByOrder[it.orderId] ||= []).push(it); });
+  const lotByProd={}; prods.forEach(p=>{ lotByProd[p.id]=p.lotProduction||''; });
+  window._traceIndex = [];
+  // commandes
+  orders.filter(o=>!o.histo).forEach(o=>{
+    const cl=clName(o.clientId);
+    const lotsLies=(itemsByOrder[o.id]||[]).map(it=>lotByProd[it.productionId]).filter(Boolean);
+    const ref=orderNumber(o);
+    const prim=normTxt(cl);
+    const blob=normTxt([cl, 'commande', ref, fmtDate(o.date), o.statut, lotsLies.join(' ')].filter(Boolean).join(' '));
+    window._traceIndex.push({ kind:'order', id:o.id, _prim:prim, _blob:blob, _digits:onlyDigits([ref, fmtDate(o.date), o.id].join(' ')),
+      titre:cl, sous:`Commande${ref?' '+ref:''} · ${fmtDate(o.date)}${o.statut?' · '+o.statut:''}` });
+  });
+  // productions / batchs
+  prods.forEach(p=>{
+    const nom = p.libre ? (p.produitLibre||'(sans nom)') : recName(p.recipeId);
+    const prim=normTxt(nom);
+    const blob=normTxt([nom, 'production batch', p.lotProduction, fmtDate(p.date), prodComposant(p)].filter(Boolean).join(' '));
+    window._traceIndex.push({ kind:'prod', id:p.id, _prim:prim, _blob:blob, _digits:onlyDigits([p.lotProduction, fmtDate(p.date), p.id].join(' ')),
+      titre:nom, sous:`Batch${p.lotProduction?' '+p.lotProduction:''} · ${fmtDate(p.date)}` });
+  });
+  // lots de matière première
+  lots.forEach(l=>{
+    const mn=matName(l.materialId), sn=supName(l.supplierId);
+    const prim=normTxt(mn);
+    const blob=normTxt([mn, 'lot matiere fournisseur', l.lotFournisseur, sn, fmtDate(l.dateReception)].filter(Boolean).join(' '));
+    window._traceIndex.push({ kind:'lot', id:l.id, _prim:prim, _blob:blob, _digits:onlyDigits([l.lotFournisseur, fmtDate(l.dateReception), l.id].join(' ')),
+      titre:mn, sous:`Lot ${esc(l.lotFournisseur||'—')}${sn?' · '+sn:''} · reçu ${fmtDate(l.dateReception)}` });
+  });
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Traçabilité</h1><p>Remonter la chaîne fournisseur → lot → batch → commande</p></div>
      <div class="flex" style="gap:8px"><button class="btn" onclick="openScanner(lot=>traceLotByNumber(lot))">📷 Scanner un lot</button>
      <button class="btn" style="background:var(--red,#b3261e)" onclick="openFlashAlert()">⚠ Alerte Sanitaire Flash</button></div></div>
    <div class="flex" style="gap:8px;margin-bottom:10px">
-     <input class="search" id="lotNumInput" style="flex:1" placeholder="Rechercher un n° de lot (ex : 140626FRA, AMANDE…)" autocomplete="off" autocapitalize="characters" autocorrect="off" onkeydown="if(event.key==='Enter')traceLotByNumber(this.value)">
-     <button class="btn gold" onclick="traceLotByNumber(document.getElementById('lotNumInput').value)">Chercher</button></div>
+     <input class="search" id="traceSearch" style="flex:1" placeholder="Client, date, réf commande, n° lot, parfum…" autocomplete="off" autocapitalize="off" autocorrect="off" oninput="traceUnifiedFilter(this.value)">
+     <button class="btn" onclick="openScanner(lot=>{document.getElementById('traceSearch').value=lot;traceUnifiedFilter(lot);})" title="Scanner un lot">📷</button>
+   </div>
+   <div id="traceResults" style="margin-bottom:14px"></div>
    <div class="banner">⊕ <div>La traçabilité répond à trois questions réglementaires : ingrédients d'une commande, origine d'un batch, et usage d'un lot de matière. En cas de problème, l'<b>Alerte Sanitaire Flash</b> isole un lot et liste tous les produits et clients concernés.</div></div>
    <div class="trace-grid">
      <div class="panel"><h2>Par commande livrée</h2>
@@ -5742,7 +5779,25 @@ async function renderTrace(){
    </div>`;
 }
 
-// T3 : d'un lot de matière → toutes les productions, commandes et clients impactés (rappel produit)
+// Filtre la recherche unifiée de traçabilité (productions + commandes + lots matière mélangés).
+// Résultats cliquables vers la traçabilité correspondante. En direct à chaque frappe.
+function traceUnifiedFilter(q){
+  const zone=document.getElementById('traceResults'); if(!zone) return;
+  const idx=window._traceIndex||[];
+  const raw=(q||'').trim();
+  if(!raw){ zone.innerHTML=''; return; }
+  const rows=searchRank(idx, raw).slice(0,40);
+  if(!rows.length){ zone.innerHTML='<p class="note" style="text-align:center">Aucun résultat pour « '+esc(raw)+' ».</p>'; return; }
+  const badge = k => k==='order'?'<span class="tag" style="background:#7a4a8a;color:#fff;font-size:.6rem">commande</span>'
+                  : k==='prod'?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.6rem">batch</span>'
+                  : '<span class="tag" style="background:#3f7d52;color:#fff;font-size:.6rem">lot matière</span>';
+  const fn = r => r.kind==='order'?`traceOrder(${r.id})` : r.kind==='prod'?`traceProd(${r.id})` : `traceLot(${r.id})`;
+  zone.innerHTML = `<p class="note" style="margin-bottom:6px">${rows.length} résultat(s)</p>` + rows.map(r=>
+    `<button type="button" onclick="${fn(r)}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;background:#fff;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer">
+       <span><b style="color:var(--bordeaux)">${esc(r.titre)}</b><br><span style="font-size:.82rem;color:#6a5a52">${r.sous}</span></span>
+       ${badge(r.kind)}
+     </button>`).join('');
+}
 async function traceLot(lotId){
   const lot = await db.materialLots.get(lotId);
   if(!lot){ toast('Lot introuvable'); return; }
@@ -5852,11 +5907,11 @@ async function traceLotByNumber(code){
   const prodRows=prodMatch.map(p=>{
     const nom = p.libre ? (p.produitLibre||'(sans nom)') : recName2(p.recipeId);
     const emp = p.emplacement ? ' · '+empLettre(p.emplacement) : '';
-    return `<button type="button" class="lot-res" onclick="closeModal();traceProd(${p.id})" style="display:block;width:100%;text-align:left;background:#fff;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer">
+    return `<button type="button" class="lot-res" onclick="traceProd(${p.id})" style="display:block;width:100%;text-align:left;background:#fff;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer">
       <b style="color:var(--bordeaux)">${esc(p.lotProduction||'—')}</b>${emp}<br>
       <span style="font-size:.84rem;color:#6a5a52">${esc(nom)}${p.date?' · '+fmtDate(p.date):''}</span></button>`;
   }).join('');
-  const lotRows=lotMatch.map(l=>`<button type="button" class="lot-res" onclick="closeModal();traceLot(${l.id})" style="display:block;width:100%;text-align:left;background:#fff;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer">
+  const lotRows=lotMatch.map(l=>`<button type="button" class="lot-res" onclick="traceLot(${l.id})" style="display:block;width:100%;text-align:left;background:#fff;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer">
       <b style="color:var(--bordeaux)">${esc(l.lotFournisseur||'(sans n°)')}</b><br>
       <span style="font-size:.84rem;color:#6a5a52">${esc(matName(l.materialId))}</span></button>`).join('');
   openModal(`<h3>Résultats pour « ${esc(code)} »</h3>
