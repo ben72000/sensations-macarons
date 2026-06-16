@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v427';
+const APP_VERSION = 'v428';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6905,6 +6905,7 @@ function _cmdRow(row, grp){
       <button class="qa edit" onclick="cmdForm(${o.id})" title="Modifier">✎ Modifier</button>
       ${payBtn}
       <button class="qa" onclick="cmdLink(${o.id})" title="Lier à une production">🔗 Lier</button>
+      <button class="qa" onclick="traceOrder(${o.id})" title="Traçabilité de la commande">🔎 Tracer</button>
       <button class="qa gold" onclick="genererFacture(${o.id})" title="Générer la facture">🧾 Facturer</button>
       <button class="qa del-full" onclick="cmdDelete(${o.id})" title="Supprimer la commande">🗑 Supprimer</button>
     </div>
@@ -6973,6 +6974,7 @@ function _cmdRowMini(row, opts){
     ${resteTxt}
     <b style="font-size:.9rem;white-space:nowrap;${montantColor}">${privacyModeEnabled()?'•••':euro(o.montant)}</b>
     <button class="cmd-pill detail" style="flex:none" onclick="cmdView(${o.id})" title="Voir le détail">👁</button>
+    <button class="cmd-pill detail" style="flex:none" onclick="traceOrder(${o.id})" title="Traçabilité">🔎</button>
   </div>`;
 }
 function cmdFilter(q){
