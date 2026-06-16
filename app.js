@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v472';
+const APP_VERSION = 'v473';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1050,14 +1050,29 @@ const ymKey = d => (d||'').slice(0,7);
 // Renvoie { parMois:{'AAAA-MM':montant}, enAttente:montant_non_encore_encaissé }.
 // Source de vérité = le registre o.paiements[{date,montant}]. Rétro-compat : si pas de registre
 // mais commande marquée payée, on utilise datePaiement/montant.
+// --- HELPER CANONIQUE des paiements d'une commande -------------------------------------------
+// Renvoie TOUJOURS un tableau normalisé [{date, montant, moyen}] :
+//  • si la commande a un registre o.paiements → on le normalise (filtre les montants nuls) ;
+//  • sinon si elle est marquée « Payé » → un paiement reconstruit (datePaiement sinon date) ;
+//  • sinon (en attente) → [].
+// Centralise un pattern qui était dupliqué à ~9 endroits (cohérence comptable garantie).
+function paiementsDe(o){
+  if(!o) return [];
+  if(Array.isArray(o.paiements) && o.paiements.length){
+    return o.paiements
+      .filter(p=>p && (+p.montant))
+      .map(p=>({date:(p.date||o.date||''), montant:money2(+p.montant||0), moyen:(p.moyen||o.reglement||'—')}));
+  }
+  if(o.paiement==='Payé'){
+    return [{date:(o.datePaiement||o.date||''), montant:money2(+o.montant||0), moyen:(o.reglement||'—')}];
+  }
+  return [];
+}
 function caEncaisseParMois(orders){
   const parMois={}; let enAttente=0;
   (orders||[]).forEach(o=>{
     if(o.histo) return;
-    let paiements = Array.isArray(o.paiements) ? o.paiements.filter(p=>p && (+p.montant)) : [];
-    if(!paiements.length && (o.paiement==='Payé')){
-      paiements = [{date:(o.datePaiement||o.date||''), montant:(+o.montant||0)}];
-    }
+    const paiements = paiementsDe(o);
     let encaisse=0;
     paiements.forEach(p=>{
       const m=+p.montant||0; if(!m) return;
@@ -1634,8 +1649,7 @@ async function caMonthDetail(mk){
   const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
   const lignes = []; let totalCmd = 0;
   orders.filter(o=>!o.histo).forEach(o=>{
-    let paiements = Array.isArray(o.paiements) ? o.paiements.filter(p=>p && (+p.montant)) : [];
-    if(!paiements.length && o.paiement==='Payé') paiements=[{date:(o.datePaiement||o.date||''), montant:(+o.montant||0), moyen:o.reglement||''}];
+    const paiements = paiementsDe(o);
     paiements.forEach(p=>{
       if(ymKey(p.date||o.date||'')!==mk) return;
       const m=+p.montant||0; if(!m) return;
@@ -1725,9 +1739,7 @@ async function renderDash(){
   // Nombre d'ENCAISSEMENTS du mois (commandes + marchés) — cohérent avec le détail affiché.
   let _nbEncMois = 0;
   orders.forEach(o=>{ if(o.histo) return;
-    let pmts = Array.isArray(o.paiements) ? o.paiements.filter(p=>p && (+p.montant)) : [];
-    if(!pmts.length && o.paiement==='Payé') pmts=[{date:(o.datePaiement||o.date||'')}];
-    pmts.forEach(p=>{ if(ymKey(p.date||o.date||'')===monthKey(today())) _nbEncMois++; });
+    paiementsDe(o).forEach(p=>{ if(ymKey(p.date||o.date||'')===monthKey(today())) _nbEncMois++; });
   });
   _nbEncMois += closedMk.filter(k=>mkInMonth(k.date)).length;
   const nbMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).length;
@@ -1765,7 +1777,7 @@ async function renderDash(){
   const prodSugg = assemblySuggestions(productions, recName);
 
   const upcoming = events.filter(e=>e.date>=today()).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
-  const months=[]; for(let i=5;i>=0;i--){const d=new Date(y,m-i,1);months.push({k:d.toISOString().slice(0,7),l:d.toLocaleDateString('fr-FR',{month:'short'})});}
+  const months=[]; for(let i=5;i>=0;i--){const d=new Date(y,m-i,1);months.push({k:ymOf(d),l:d.toLocaleDateString('fr-FR',{month:'short'})});}
   const data=months.map(mo=>({...mo,v: money2(
     orders.filter(c=>c.date&&c.date.slice(0,7)===mo.k).reduce((s,c)=>s+(+c.montant||0),0)
     + closedMk.filter(k=>k.date&&k.date.slice(0,7)===mo.k).reduce((s,k)=>s+k.montant,0)
@@ -9101,11 +9113,7 @@ async function computeAccounting(opts){
   // hors période (ex. commande de septembre payée en mai). On inclut donc une commande si sa
   // date de commande OU au moins un paiement est dans la plage. Chaque sous-calcul refiltre
   // ensuite par sa propre date (paiement par date de paiement, facturé par date de commande).
-  const _orderPayDates = (o)=>{
-    const pays = (o.paiements&&o.paiements.length) ? o.paiements
-      : (o.paiement==='Payé' ? [{date:(o.datePaiement||o.date)}] : []);
-    return pays.map(p=>p && p.date).filter(Boolean);
-  };
+  const _orderPayDates = (o)=> paiementsDe(o).map(p=>p && p.date).filter(Boolean);
   const _orderInRange = (o)=>{
     if(_inRange(o.date)) return true;                       // date de commande dans la plage
     return _orderPayDates(o).some(d=>_inRange(d));          // ou un paiement dans la plage
@@ -9134,14 +9142,7 @@ async function computeAccounting(opts){
       const mF=monthKey(o.date); const tot=money2(o.montant);
       if(mF && tot>0){ factByMonth[mF]=money2((factByMonth[mF]||0)+tot); totalFacture=money2(totalFacture+tot); }
     }
-    const pays = (o.paiements||[]);
-    // rétro-compat : ancienne commande / reprise "Payé" sans registre de paiement.
-    // On la considère encaissée : à sa datePaiement si connue, sinon à sa date de commande
-    // (cas des commandes migrées, marquées Payé mais sans registre ni datePaiement).
-    const list = pays.length ? pays
-      : (o.paiement==='Payé'
-          ? [{date:(o.datePaiement||o.date), montant:+o.montant||0, moyen:o.reglement||'—'}]
-          : []);
+    const list = paiementsDe(o);
     list.forEach(p=>{
       const m=monthKey(p.date); if(!m) return;
       if((_periodeStart||_periodeEnd) && !_inRange(p.date)) return;   // paiement hors période → ignoré
@@ -9187,8 +9188,7 @@ async function computeAccounting(opts){
   orders.forEach(o=>{
     const total=money2(o.montant); if(total<=0) return;
     const coutMat = estimateOrderMaterialCost(o, recipes, recipeItems, lots);
-    const pays = (o.paiements&&o.paiements.length)?o.paiements
-      :(o.paiement==='Payé'?[{date:(o.datePaiement||o.date),montant:total}]:[]);
+    const pays = paiementsDe(o);
     pays.forEach(p=>{
       const m=monthKey(p.date); if(!m) return;
       if((_periodeStart||_periodeEnd) && !_inRange(p.date)) return;   // paiement hors période → ignoré
@@ -10675,8 +10675,8 @@ async function computeStrategic(){
     db.recipeItems.toArray(), db.materialLots.toArray(), db.products.toArray()
   ]);
   const A = await computeAccounting();
-  const now=new Date(); const curM=now.toISOString().slice(0,7); const curY=String(now.getFullYear());
-  const prevMonthD=new Date(now.getFullYear(), now.getMonth()-1, 1); const prevM=prevMonthD.toISOString().slice(0,7);
+  const now=new Date(); const curM=ymOf(now); const curY=String(now.getFullYear());
+  const prevMonthD=new Date(now.getFullYear(), now.getMonth()-1, 1); const prevM=ymOf(prevMonthD);
   const prevY=String(now.getFullYear()-1);
 
   // CA encaissé mensuel / annuel + évolutions (depuis la série de computeAccounting)
@@ -11511,7 +11511,7 @@ async function comptaDetail(type){
   } else if(type==='encaisse'){
     titre='CA encaissé — détail (paiements reçus)';
     orders.forEach(o=>{
-      const pays=(o.paiements&&o.paiements.length)?o.paiements:(o.paiement==='Payé'?[{date:(o.datePaiement||o.date),montant:+o.montant||0,moyen:o.reglement||'—'}]:[]);
+      const pays=paiementsDe(o);
       pays.forEach(p=>{ if(!inPeriode(p.date)) return; const v=money2(p.montant); if(v>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();cmdForm(${o.id})"><span>${esc(fmtDate(p.date))} <span style="color:#9a8a82">#${o.id} · ${esc(p.moyen||'—')}</span></span><b>${euro(v)} ${NAV_GO}</b></div>`, v}); } });
     });
     markets.filter(k=>k.statut==='clos').forEach(k=>{ const m=(typeof marketNetCA==='function')?money2(marketNetCA(k)):0; if(m>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();marketDetail(${k.id})"><span>${esc(fmtDate(k.date))} <span style="color:#9a8a82">⛺ ${esc(k.nom||'marché')}</span></span><b>${euro(m)} ${NAV_GO}</b></div>`, v:m}); } });
@@ -11547,7 +11547,7 @@ async function comptaDetail(type){
     let _rec=[], _items=[], _lots=[];
     try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); }catch(e){}
     let enc=0; orders.forEach(o=>{
-      const pays=(o.paiements&&o.paiements.length)?o.paiements:(o.paiement==='Payé'?[{date:(o.datePaiement||o.date),montant:+o.montant||0}]:[]);
+      const pays=paiementsDe(o);
       pays.forEach(p=>{ if(inPeriode(p.date)) enc=money2(enc+money2(p.montant)); });
     });
     markets.filter(k=>k.statut==='clos').forEach(k=>{ enc=money2(enc+((typeof marketNetCA==='function')?money2(marketNetCA(k)):0)); });
@@ -11661,9 +11661,7 @@ async function comptaFluxDetail(type){
   } else {
     // CA encaissé = chaque PAIEMENT dont la date est dans la période + marchés clôturés.
     orders.forEach(o=>{
-      let pmts = Array.isArray(o.paiements)?o.paiements.filter(p=>p&&(+p.montant)):[];
-      if(!pmts.length && o.paiement==='Payé') pmts=[{date:(o.datePaiement||o.date||''), montant:(+o.montant||0), moyen:o.reglement||''}];
-      pmts.forEach(p=>{ if(!inRange(p.date||o.date)) return; const m=+p.montant||0; if(!m) return; total+=m;
+      paiementsDe(o).forEach(p=>{ if(!inRange(p.date||o.date)) return; const m=+p.montant||0; if(!m) return; total+=m;
         lignes.push({date:p.date||o.date, nom:clName(o.clientId), montant:m, oid:o.id, sub:p.moyen||''}); });
     });
     try{

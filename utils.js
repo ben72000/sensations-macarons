@@ -45,6 +45,10 @@ function fmtDateTime(iso){
 function fmtDate(s){ if(!s) return ''; const d = new Date(s); return isNaN(d)?'':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}); }
 function daysTo(s){ if(!s) return null; return Math.ceil((new Date(s) - new Date(today())) / 86400000); }
 function monthKey(d){ return (d||'').slice(0,7); }   // 'YYYY-MM'
+// Clé 'AAAA-MM' d'un objet Date en heure LOCALE. À utiliser au lieu de
+// date.toISOString().slice(0,7), qui décale d'un mois en fuseau positif (France UTC+1/+2) :
+// new Date(2026,5,1).toISOString() → "2026-05-31T22:00Z" → clé "2026-05" au lieu de "2026-06".
+function ymOf(d){ if(!(d instanceof Date)||isNaN(d)) return ''; return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
 // Libellé lisible d'un mois 'YYYY-MM' → « juin 2026 ».
 function monthLabel(k){
   if(!k) return '—';
