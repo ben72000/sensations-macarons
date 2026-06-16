@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v443';
+const APP_VERSION = 'v445';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8624,7 +8624,7 @@ async function computeAccounting(opts){
   const recipeItems = await db.recipeItems.toArray();
   const lots = await db.materialLots.toArray();
   const allMarkets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
-  const markets = _periodeStart ? allMarkets.filter(k=> (k.date||'') >= _periodeStart) : allMarkets;
+  const markets = (_periodeStart||_periodeEnd) ? allMarkets.filter(k=> _inRange(k.date)) : allMarkets;
 
   // 1) ENCAISSEMENTS par date réelle de paiement (cash basis)
   //    Chaque ligne de paiement {date, montant, moyen} compte au mois de SA date.
@@ -11075,13 +11075,14 @@ async function comptaFluxDetail(type){
 
   if(type==='facture'){
     // CA facturé = montant des commandes dont la DATE est dans la période.
-    orders.filter(o=>!o.histo && inRange(o.date)).forEach(o=>{
-      const m=+o.montant||0; if(!m) return; total+=m;
+    // (Aligné EXACTEMENT sur computeAccounting : pas de filtre histo, sinon divergence avec le total.)
+    orders.filter(o=>inRange(o.date)).forEach(o=>{
+      const m=money2(o.montant); if(!(m>0)) return; total+=m;
       lignes.push({date:o.date, nom:clName(o.clientId), montant:m, oid:o.id, sub:o.statut||''});
     });
   } else {
     // CA encaissé = chaque PAIEMENT dont la date est dans la période + marchés clôturés.
-    orders.filter(o=>!o.histo).forEach(o=>{
+    orders.forEach(o=>{
       let pmts = Array.isArray(o.paiements)?o.paiements.filter(p=>p&&(+p.montant)):[];
       if(!pmts.length && o.paiement==='Payé') pmts=[{date:(o.datePaiement||o.date||''), montant:(+o.montant||0), moyen:o.reglement||''}];
       pmts.forEach(p=>{ if(!inRange(p.date||o.date)) return; const m=+p.montant||0; if(!m) return; total+=m;
