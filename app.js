@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v464';
+const APP_VERSION = 'v466';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -12941,6 +12941,12 @@ function pmcRecalc(){
 }
 async function settingsForm(){
   const s=getSettings();
+  // Matières d'emballage (boîtes + sacs) du stock, pour rattacher chaque type marché à une matière
+  // réelle (permet le décompte de stock — étape suivante). Liste optionnelle par type.
+  const _embMatsForLink = (await db.materials.toArray()).filter(m=>m.categorie==='emballage')
+    .sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
+  const _embLinkOpts = (sel)=>'<option value="">— non rattaché —</option>'+_embMatsForLink.map(m=>`<option value="${m.id}" ${(+sel===+m.id)?'selected':''}>${m.usage==='sac'?'🛍️ ':'📦 '}${esc(m.nom)}</option>`).join('');
+  window._embLinkOptsHtml = _embLinkOpts(0);   // pour addPackTypeRow (nouvelle ligne)
   // Coût RÉEL d'emballage par format, calculé sur les lots effectivement reçus (factures).
   let realMap=new Map();
   let _settingsLots=[];
@@ -12996,10 +13002,11 @@ async function settingsForm(){
           + `Date réf. stockée : ${raw.packagingDate||'∅'}`;
       }catch(e){ return 'Diagnostic indisponible'; } })()}
     </div>
-    <p class="note" style="margin-top:8px">Types d'emballage pour le comptage avant/après en marché : nom, coût unitaire €, et <b>capacité</b> (nb de macarons par boîte — sert à reconstituer le CA par format). Laissez le nom vide pour retirer une ligne.</p>
+    <p class="note" style="margin-top:8px">Types d'emballage pour le comptage avant/après en marché : nom, coût unitaire €, et <b>capacité</b> (nb de macarons par boîte — sert à reconstituer le CA par format). Pour un <b>🛍️ sac</b> ou un consommable <b>sans capacité</b>, laisse la capacité <b>vide ou 0</b> : il sera compté pour son coût mais exclu du CA par format. Le champ <b>↳ Stock</b> permet de <b>rattacher</b> ce type à une matière de ton inventaire (le décompte automatique du stock en marché arrive à l'étape suivante). Laisse le nom vide pour retirer une ligne.</p>
     <div class="pay-row" style="font-weight:600;color:#9a8a82;font-size:.8rem"><span style="flex:1">Nom</span><span style="width:90px">€/u</span><span style="width:70px">Capacité</span></div>
     <div id="set_pktypes">
-      ${(s.packTypes||[]).concat([{nom:'',cout:'',capacite:''}]).map((t,i)=>`<div class="pay-row"><input id="set_pt_n_${i}" value="${esc(t.nom||'')}" placeholder="nom (ex: Boîte 6)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="${t.cout!==''&&t.cout!=null?t.cout:''}" placeholder="€/u" style="width:90px"><input type="number" step="1" min="0" id="set_pt_cap_${i}" value="${t.capacite!==''&&t.capacite!=null?t.capacite:''}" placeholder="pc" style="width:70px"></div>`).join('')}
+      ${(s.packTypes||[]).concat([{nom:'',cout:'',capacite:''}]).map((t,i)=>`<div class="pt-line" style="margin-bottom:8px"><div class="pay-row"><input id="set_pt_n_${i}" value="${esc(t.nom||'')}" placeholder="nom (ex: Boîte 6 ou 🛍️ Sac)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="${t.cout!==''&&t.cout!=null?t.cout:''}" placeholder="€/u" style="width:90px"><input type="number" step="1" min="0" id="set_pt_cap_${i}" value="${t.capacite!==''&&t.capacite!=null?t.capacite:''}" placeholder="pc / vide=sac" style="width:70px"></div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:3px"><span class="note" style="white-space:nowrap">↳ Stock :</span><select id="set_pt_mat_${i}" style="flex:1">${_embLinkOpts(t.materialId)}</select></div></div>`).join('')}
     </div>
     <button type="button" class="btn ghost sm" style="margin-top:6px" onclick="addPackTypeRow()">＋ Ajouter une ligne</button>
     <div class="collapse-sec" id="pmcBlock" style="margin-top:12px">
@@ -13030,10 +13037,12 @@ async function settingsForm(){
 function addPackTypeRow(){
   const box=document.getElementById('set_pktypes'); if(!box) return;
   const counter=document.getElementById('set_pt_n');
-  const i = box.querySelectorAll('.pay-row').length;   // prochain index libre
+  const i = box.querySelectorAll('.pt-line').length;   // prochain index libre (1 pt-line par type)
   const row=document.createElement('div');
-  row.className='pay-row';
-  row.innerHTML=`<input id="set_pt_n_${i}" value="" placeholder="nom (ex: Boîte pro)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="" placeholder="€/u" style="width:90px"><input type="number" step="1" min="0" id="set_pt_cap_${i}" value="" placeholder="pc" style="width:70px">`;
+  row.className='pt-line';
+  row.style.marginBottom='8px';
+  row.innerHTML=`<div class="pay-row"><input id="set_pt_n_${i}" value="" placeholder="nom (ex: Boîte pro ou 🛍️ Sac)" style="flex:1"><input type="number" step="0.01" min="0" id="set_pt_c_${i}" value="" placeholder="€/u" style="width:90px"><input type="number" step="1" min="0" id="set_pt_cap_${i}" value="" placeholder="pc / vide=sac" style="width:70px"></div>
+    <div style="display:flex;align-items:center;gap:6px;margin-top:3px"><span class="note" style="white-space:nowrap">↳ Stock :</span><select id="set_pt_mat_${i}" style="flex:1">${window._embLinkOptsHtml||'<option value="">— non rattaché —</option>'}</select></div>`;
   box.appendChild(row);
   if(counter) counter.value = String(i+1);   // la sauvegarde lira jusqu'à cet index
   const nameInput=row.querySelector('input'); if(nameInput) nameInput.focus();
@@ -13053,10 +13062,11 @@ function saveSettingsForm(){
   for(let i=0;i<n;i++){
     const nom=(val('set_pt_n_'+i)||'').trim(); if(!nom) continue;
     const cout=money2(+val('set_pt_c_'+i)||0), capacite=Math.max(0,+val('set_pt_cap_'+i)||0);
+    const materialId=+val('set_pt_mat_'+i)||0;   // rattachement à une matière emballage (0 = non rattaché)
     const key=nom.toLowerCase()+'|'+capacite+'|'+cout;
     if(seenSave.has(key)) continue;   // doublon → on ne l'enregistre pas
     seenSave.add(key);
-    pts.push({nom, cout, capacite});
+    pts.push(materialId>0 ? {nom, cout, capacite, materialId} : {nom, cout, capacite});
   }
   s.packTypes=pts.length?pts:SETTINGS_DEFAULTS.packTypes;
   saveSettings(s);
@@ -13665,7 +13675,7 @@ async function marketPackagingForm(marketId){
   // fusionne d'éventuels nouveaux types paramétrés non encore présents
   types.forEach(t=>{ if(!pk.some(p=>p.nom===t.nom)) pk.push({nom:t.nom, cost:+t.cout||0, capacite:+t.capacite||0, before:'', after:''}); });
   const rows = pk.map((p,i)=>`<div class="pay-row" style="flex-wrap:wrap;align-items:center">
-      <span style="flex:1;min-width:130px">${esc(p.nom)} <span class="note">(${euro(p.cost)}/u${p.capacite>0?` · ${p.capacite} pc`:''})</span></span>
+      <span style="flex:1;min-width:130px">${esc(p.nom)} ${(+p.capacite>0)?`<span class="note">(${euro(p.cost)}/u · ${p.capacite} pc)</span>`:`<span class="tag" style="background:#caa23b;color:#fff;font-size:.6rem">🛍️ sans capacité</span> <span class="note">(${euro(p.cost)}/u)</span>`}</span>
       <input type="number" step="1" min="0" id="pk_b_${i}" value="${p.before!==''&&p.before!=null?p.before:''}" placeholder="avant" style="width:80px" oninput="marketPkBreakdown()">
       <input type="number" step="1" min="0" id="pk_a_${i}" value="${p.after!==''&&p.after!=null?p.after:''}" placeholder="après" style="width:80px" oninput="marketPkBreakdown()">
     </div>`).join('');
