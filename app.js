@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v445';
+const APP_VERSION = 'v446';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7378,6 +7378,7 @@ function lineTotalStored(ln){
 let cmdLines = [];      // lignes de produits de la commande en cours
 let cmdProductsCache = [];
 let cmdEmballagesCache = [];   // emballages disponibles (matières 'emballage') pour le choix par coffret
+let cmdEmbLotsCache = [];      // lots de matières (pour coût unitaire emballage des dons)
 let _cmdMarginCache = {recipes:[], recipeItems:[], lots:[]};
 let cmdClientsCache = [];
 
@@ -7415,7 +7416,7 @@ function _lineToEdit(ln){
   if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
-  if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items)};
+  if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null)};
   if(t==='prestation') return {type:'prestation', presta:ln.presta||'', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, dureeH:+ln.dureeH||0, mode:ln.mode||'', detail:ln.detail||'', remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0};
   return {...ln};
 }
@@ -7434,6 +7435,7 @@ async function cmdForm(id, opts){
   // Emballages disponibles pour le choix par coffret : uniquement les contenants ayant une CAPACITÉ
   // (vraies boîtes). On exclut les consommables sans capacité comme le film étirable, le papier, etc.
   cmdEmballagesCache = (await db.materials.toArray()).filter(m=>m.categorie==='emballage' && +m.capacite>0).sort((a,b)=>(+a.capacite||0)-(+b.capacite||0));
+  cmdEmbLotsCache = await db.materialLots.toArray().catch(()=>[]);   // lots pour calculer le coût unitaire emballage (dons)
   // caches pour le calcul de marge en direct (impact livraison)
   _cmdMarginCache = {
     recipes: await db.recipes.toArray(),
@@ -7957,15 +7959,30 @@ function drawDonLine(ln,i){
   }).join('');
   const totP=Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
   const totB=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
+  // Emballage du don : 'sans' (0 €) ou 'autre' (un emballage choisi dans la liste, coût unique).
+  const embMode = ln.donEmbMode || 'sans';
+  const embOpts = cmdEmballagesCache.map(m=>`<option value="${m.id}" ${(+ln.embMatId===+m.id)?'selected':''}>${esc(m.nom)}${m.capacite?` (${m.capacite} mac.)`:''}</option>`).join('');
+  const embCout = (embMode==='autre' && ln.embMatId!=null) ? embMatUnitCost(ln.embMatId, cmdEmballagesCache, cmdEmbLotsCache||[]) : 0;
+  const embBloc = `<label style="font-size:.78rem;color:#7a6a62;display:block;margin-top:8px">Emballage offert avec le don</label>
+    <select onchange="setDonEmbMode(${i},this.value)">
+      <option value="sans" ${embMode==='sans'?'selected':''}>Sans emballage (0 €)</option>
+      <option value="autre" ${embMode==='autre'?'selected':''}>Choisir dans ma liste</option>
+    </select>
+    ${embMode==='autre'?`<select style="margin-top:6px" onchange="setDonEmbMat(${i},this.value)"><option value="">— choisir un emballage —</option>${embOpts}</select>
+      ${ln.embMatId!=null?`<div class="sum-box" style="font-size:.82rem"><span>Coût emballage</span><b>${euro(embCout)}</b></div>`:''}`:''}`;
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Don <span class="line-sub">offert · 0 € · décrémente le stock</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <label style="font-size:.78rem;color:#7a6a62">Macarons offerts (par parfum)</label>
     <div class="flav-grid">${parfRows}</div>
     <label style="font-size:.78rem;color:#7a6a62;display:block;margin-top:8px">Grands formats offerts (optionnel)</label>
     <div class="flav-grid">${bigRows}</div>
-    <div class="sum-box"><span>${totP+totB} macaron(s) offert(s)</span><b>${euro(0)}</b></div>
+    ${embBloc}
+    <div class="sum-box"><span>${totP+totB} macaron(s) offert(s)${embMode==='autre'&&ln.embMatId!=null?' + emballage':''}</span><b>${euro(0)}</b></div>
   </div>`;
 }
+// Setters emballage du don
+function setDonEmbMode(i,v){ cmdLines[i].donEmbMode = v; if(v==='sans') cmdLines[i].embMatId=null; drawLines(); }
+function setDonEmbMat(i,v){ cmdLines[i].embMatId = v?+v:null; drawLines(); }
 function drawPrestationLine(ln,i){
   if(ln.remiseType==null) ln.remiseType='pct';
   const base=money2(+ln.montantHT||0);
@@ -8115,7 +8132,7 @@ function cmdLinesToStored(){
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', remisePct:rp, parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='don') return {type:'don', parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
+    if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0)};
   }).filter(Boolean);
 }
@@ -9980,6 +9997,22 @@ function analyzeFlavorProfitability(data){
     totals.piecesDon = round3(totals.piecesDon + piecesDonNS);
     totals.coutDons = money2(totals.coutDons + piecesDonNS*coutMoyen);
   }
+  // COÛT DES EMBALLAGES DE DONS : un don peut être offert dans un emballage choisi (donEmbMode==='autre').
+  // On valorise UN emballage par ligne de don (coût unitaire de la matière emballage). Ajouté au coût des dons.
+  try{
+    let coutEmbDons = 0;
+    (orders||[]).forEach(o=>{
+      (o.lignes||[]).forEach(ln=>{
+        if(ln && ln.type==='don' && ln.donEmbMode==='autre' && ln.embMatId!=null){
+          coutEmbDons += embMatUnitCost(ln.embMatId, mats||[], lots||[]);
+        }
+      });
+    });
+    if(coutEmbDons>0){
+      totals.coutEmbDons = money2(coutEmbDons);
+      totals.coutDons = money2(totals.coutDons + coutEmbDons);
+    }
+  }catch(e){ console.error('coutEmbDons', e); }
   totals.ecartTheo = money2(totals.ca - totals.caTheo);
   totals.tauxMargeGlobal = totals.ca>0 ? Math.round(totals.margeBrute/totals.ca*1000)/10 : null;
   // marge nette une fois le coût des dons déduit (impact réel de la générosité/promo)
