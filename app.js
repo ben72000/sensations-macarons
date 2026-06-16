@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v468';
+const APP_VERSION = 'v469';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1577,12 +1577,16 @@ async function stockParMatiere(materialId){
 // avec client, date et montant, plus les marchés clôturés du mois. Vue de contrôle comptable.
 async function caMonthDetail(mk){
   mk = mk || monthKey(today());
-  // mois précédent / suivant pour la navigation (format AAAA-MM)
-  const _ym = mk.split('-'); const _d = new Date(+_ym[0], +_ym[1]-1, 1);
-  const _prevD = new Date(_d.getFullYear(), _d.getMonth()-1, 1);
-  const _nextD = new Date(_d.getFullYear(), _d.getMonth()+1, 1);
-  const _mkPrev = _prevD.toISOString().slice(0,7);
-  const _mkNext = _nextD.toISOString().slice(0,7);
+  // mois précédent / suivant pour la navigation (format AAAA-MM).
+  // IMPORTANT : on calcule année/mois à la main, SANS toISOString() — sinon le décalage de
+  // fuseau (UTC) fait basculer le 1er du mois au mois précédent (ex. en France UTC+2,
+  // new Date(2026,5,1).toISOString() → "2026-05-31..."), ce qui cassait le bouton « suivant ».
+  const _pad2 = n => String(n).padStart(2,'0');
+  const _ym = mk.split('-'); const _yy = +_ym[0], _mm = +_ym[1];   // mois 1-12
+  const _prevYY = _mm===1 ? _yy-1 : _yy;   const _prevMM = _mm===1 ? 12 : _mm-1;
+  const _nextYY = _mm===12 ? _yy+1 : _yy;  const _nextMM = _mm===12 ? 1 : _mm+1;
+  const _mkPrev = `${_prevYY}-${_pad2(_prevMM)}`;
+  const _mkNext = `${_nextYY}-${_pad2(_nextMM)}`;
   const _isCurrentOrFuture = mk >= monthKey(today());   // pas de "mois suivant" au-delà du mois courant
   const orders = await db.orders.toArray().catch(()=>[]);
   const clients = await db.clients.toArray().catch(()=>[]);
