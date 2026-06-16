@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v452';
+const APP_VERSION = 'v454';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18313,6 +18313,18 @@ function exportSnooze(days){
    SERVICE WORKER — détection de mise à jour + invite « Recharger »
    skipWaiting est piloté par l'utilisateur (pas automatique).
    ============================================================ */
+// Numéro de version affiché en bas de l'app : permet de vérifier d'un coup d'œil
+// quelle version tourne réellement (utile en cas de doute sur le cache PWA).
+window.addEventListener('load', ()=>{
+  try{
+    if(document.getElementById('appVersionBadge')) return;
+    const b=document.createElement('div');
+    b.id='appVersionBadge';
+    b.textContent=APP_VERSION;
+    b.style.cssText='position:fixed;right:6px;bottom:4px;z-index:9999;font-size:.62rem;color:#b8a99f;background:rgba(255,255,255,.6);padding:1px 6px;border-radius:8px;pointer-events:none;font-family:system-ui,sans-serif';
+    document.body.appendChild(b);
+  }catch(e){}
+});
 let _swReg=null, _swReloading=false;
 function showUpdateBanner(worker){
   if(document.getElementById('updateBanner')) return; // déjà affichée
