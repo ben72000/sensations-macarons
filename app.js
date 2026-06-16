@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v441';
+const APP_VERSION = 'v443';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8560,16 +8560,27 @@ let calRef=new Date();
 // monthLabel() : voir utils.js
 // Période sélectionnée pour la comptabilité (schéma de flux).
 let _comptaPeriode = 'tout';
+let _comptaDateDebut = '';  // dates personnalisées (mode 'perso')
+let _comptaDateFin = '';
 const COMPTA_PERIODES = [
   {k:'tout',   lib:'Tout'},
   {k:'annee',  lib:'Cette année'},
   {k:'6mois',  lib:'6 mois'},
   {k:'90j',    lib:'90 jours'},
   {k:'mois',   lib:'Dernier mois'},
-  {k:'semaine',lib:'Cette semaine'}
+  {k:'semaine',lib:'Cette semaine'},
+  {k:'perso',  lib:'📅 Dates précises'}
 ];
+// Applique les dates personnalisées saisies et relance le calcul.
+function comptaSetDates(){
+  const d=document.getElementById('comptaDateDebut'); const f=document.getElementById('comptaDateFin');
+  _comptaDateDebut = d?d.value:''; _comptaDateFin = f?f.value:'';
+  _comptaPeriode='perso';
+  renderCompta();
+}
 // Renvoie la date de début (incluse) pour une période, ou null pour "tout".
 function comptaPeriodeStart(k){
+  if(k==='perso') return _comptaDateDebut||null;
   const now=new Date();
   const d=new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if(k==='annee') return `${now.getFullYear()}-01-01`;
@@ -8579,23 +8590,36 @@ function comptaPeriodeStart(k){
   if(k==='semaine'){ const x=new Date(d); x.setDate(x.getDate()-7); return x.toISOString().slice(0,10); }
   return null; // tout
 }
+// Date de fin d'une période ('perso' = date saisie, sinon aujourd'hui implicite donc null).
+function comptaPeriodeEnd(k){ return k==='perso' ? (_comptaDateFin||null) : null; }
 function comptaSetPeriode(k){ _comptaPeriode=k; renderCompta(); }
 // Libellé lisible des dates couvertes par une période (ex : « du 16 mai au 15 juin 2026 »).
 function comptaPeriodeDatesLabel(k){
   const start=comptaPeriodeStart(k);
+  const f = (typeof fmtDate==='function') ? fmtDate : (s=>s);
+  if(k==='perso'){
+    if(!start && !_comptaDateFin) return 'dates non saisies';
+    return `du ${start?f(start):'début'} au ${_comptaDateFin?f(_comptaDateFin):"aujourd'hui"}`;
+  }
   const todayStr=new Date().toISOString().slice(0,10);
   if(!start) return 'toutes les données';
-  const f = (typeof fmtDate==='function') ? fmtDate : (s=>s);
   return `du ${f(start)} au ${f(todayStr)}`;
 }
 async function computeAccounting(opts){
   opts=opts||{};
   const _periodeStart = opts.periodeStart || null; // filtre optionnel par date de début
+  const _periodeEnd = opts.periodeEnd || null;     // filtre optionnel par date de fin (incluse)
+  const _inRange = (dateStr) => {
+    const d = dateStr||'';
+    if(_periodeStart && d < _periodeStart) return false;
+    if(_periodeEnd && d > _periodeEnd) return false;
+    return true;
+  };
   const allOrders = await db.orders.toArray();
-  // Filtre par période : on ne garde que les commandes dont la date est >= début de période.
-  const orders = _periodeStart ? allOrders.filter(o=> (o.date||'') >= _periodeStart) : allOrders;
+  // Filtre par période : début ET fin (intervalle précis si dates personnalisées).
+  const orders = (_periodeStart||_periodeEnd) ? allOrders.filter(o=> _inRange(o.date)) : allOrders;
   const allCharges = await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
-  const charges = _periodeStart ? allCharges.filter(c=> (c.date||'') >= _periodeStart) : allCharges;
+  const charges = (_periodeStart||_periodeEnd) ? allCharges.filter(c=> _inRange(c.date)) : allCharges;
   const recipes = await db.recipes.toArray();
   const recipeItems = await db.recipeItems.toArray();
   const lots = await db.materialLots.toArray();
@@ -10994,8 +11018,8 @@ function comptaFlowSchema(A){
   const e=v=>euro(v||0);
   const fact=A.totalFacture||0, enc=A.totalEncaisse||0, creances=A.creances||0;
   const mat=A.totalCoutMatieres||0, charges=A.totalCharges||0, res=A.resultat||0;
-  const box=(titre,val,sub,col,bg)=>`<div style="flex:1;min-width:120px;background:${bg};border:1.5px solid ${col};border-radius:12px;padding:10px 12px;text-align:center">
-      <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.03em;color:#7a6a62;font-weight:600">${titre}</div>
+  const box=(titre,val,sub,col,bg,onclick)=>`<div ${onclick?`onclick="${onclick}" style="cursor:pointer;`:'style="'}flex:1;min-width:120px;background:${bg};border:1.5px solid ${col};border-radius:12px;padding:10px 12px;text-align:center">
+      <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.03em;color:#7a6a62;font-weight:600">${titre}${onclick?' <span style="color:#9a8a82">›</span>':''}</div>
       <div style="font-size:1.1rem;font-weight:700;color:${col};margin:2px 0">${e(val)}</div>
       ${sub?`<div style="font-size:.66rem;color:#9a8a82">${sub}</div>`:''}</div>`;
   const arrowDown=(lbl)=>`<div style="text-align:center;color:#b3261e;font-size:.75rem;padding:3px 0">▼ <span style="color:#9a8a82">${lbl}</span></div>`;
@@ -11004,15 +11028,23 @@ function comptaFlowSchema(A){
     <div style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;margin-bottom:10px">
       ${COMPTA_PERIODES.map(p=>`<button onclick="comptaSetPeriode('${p.k}')" style="flex:none;padding:6px 13px;border-radius:20px;border:1.5px solid ${_comptaPeriode===p.k?'#52252f':'var(--hair)'};background:${_comptaPeriode===p.k?'#52252f':'#fff'};color:${_comptaPeriode===p.k?'#fff':'#6a5a52'};font-size:.8rem;font-weight:600;white-space:nowrap;cursor:pointer">${p.lib}</button>`).join('')}
     </div>
+    ${_comptaPeriode==='perso'?`<div class="banner" style="background:#fdf8e9;border-color:#e8d09a;margin-bottom:10px">📅 <div style="flex:1">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div><label style="font-size:.74rem;color:#7a6a62;display:block">Du</label><input type="date" id="comptaDateDebut" value="${esc(_comptaDateDebut)}" style="padding:6px;border:1px solid var(--hair);border-radius:8px"></div>
+        <div><label style="font-size:.74rem;color:#7a6a62;display:block">Au</label><input type="date" id="comptaDateFin" value="${esc(_comptaDateFin)}" style="padding:6px;border:1px solid var(--hair);border-radius:8px"></div>
+        <button class="btn gold sm" onclick="comptaSetDates()">Appliquer</button>
+      </div>
+      <p class="note" style="margin:6px 0 0">Laisse un champ vide pour ne pas le borner (ex. tout depuis une date).</p>
+    </div></div>`:''}
     <div class="banner" style="background:#f0f4fa;border-color:#c4d2e6;margin-bottom:10px;font-size:.82rem">📅 <div>Période affichée : <b>${esc(comptaPeriodeDatesLabel(_comptaPeriode))}</b>${_comptaPeriode==='mois'?' <span style="color:#9a8a82">(30 derniers jours glissants, pas le mois calendaire)</span>':''}</div></div>
     <p class="note" style="margin-top:0;margin-bottom:12px">Chaque chiffre découle du précédent. On part de ce que tu as facturé, on suit l'argent jusqu'à ce qu'il te reste vraiment.</p>
 
     <!-- Étage 1 : le CA facturé se sépare en encaissé + créances -->
-    ${box('CA facturé', fact, 'tout ce que tu as vendu', '#c9a227', '#fdf8e9')}
+    ${box('CA facturé', fact, 'tout ce que tu as vendu', '#c9a227', '#fdf8e9', 'comptaFluxDetail(&#39;facture&#39;)')}
     <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#9a8a82;font-size:.72rem;padding:5px 0">
       <span>▼ se partage en deux ▼</span></div>
     <div style="display:flex;gap:10px;align-items:stretch">
-      ${box('CA encaissé', enc, 'déjà reçu · base URSSAF', '#3f7d52', '#eef6ef')}
+      ${box('CA encaissé', enc, 'déjà reçu · base URSSAF', '#3f7d52', '#eef6ef', 'comptaFluxDetail(&#39;encaisse&#39;)')}
       ${box('Créances', creances, creances>0?'encore à encaisser':'rien en attente ✓', creances>0?'#d98324':'#9a8a82', creances>0?'#fdf3e7':'#f7f4ef')}
     </div>
 
@@ -11029,9 +11061,55 @@ function comptaFlowSchema(A){
     ${(A.migCount>0)?`<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:8px">⚠️ <div><b>Marge approximative :</b> ${A.migCount} commande(s) de reprise (${e(A.migCA)}) n'ont pas de détail produit. Leur coût matières est <b>estimé</b> au coût moyen d'un macaron — le résultat réel peut différer. Pour une marge précise, saisis ces ventes en commande détaillée.</div></div>`:''}
   </div>`;
 }
+// Détail cliquable d'un flux comptable (facturé / encaissé) sur la PÉRIODE active.
+// Liste chaque commande (et marché pour l'encaissé) avec date, client, montant ; total en bas.
+async function comptaFluxDetail(type){
+  const start = comptaPeriodeStart(_comptaPeriode);
+  const end = comptaPeriodeEnd(_comptaPeriode);
+  const inRange = d => { const x=d||''; if(start && x<start) return false; if(end && x>end) return false; return true; };
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  const periodeLbl = _comptaPeriode==='tout' ? 'toutes périodes' : comptaPeriodeDatesLabel(_comptaPeriode);
+  let lignes=[]; let total=0;
+
+  if(type==='facture'){
+    // CA facturé = montant des commandes dont la DATE est dans la période.
+    orders.filter(o=>!o.histo && inRange(o.date)).forEach(o=>{
+      const m=+o.montant||0; if(!m) return; total+=m;
+      lignes.push({date:o.date, nom:clName(o.clientId), montant:m, oid:o.id, sub:o.statut||''});
+    });
+  } else {
+    // CA encaissé = chaque PAIEMENT dont la date est dans la période + marchés clôturés.
+    orders.filter(o=>!o.histo).forEach(o=>{
+      let pmts = Array.isArray(o.paiements)?o.paiements.filter(p=>p&&(+p.montant)):[];
+      if(!pmts.length && o.paiement==='Payé') pmts=[{date:(o.datePaiement||o.date||''), montant:(+o.montant||0), moyen:o.reglement||''}];
+      pmts.forEach(p=>{ if(!inRange(p.date||o.date)) return; const m=+p.montant||0; if(!m) return; total+=m;
+        lignes.push({date:p.date||o.date, nom:clName(o.clientId), montant:m, oid:o.id, sub:p.moyen||''}); });
+    });
+    try{
+      const markets=await db.markets.toArray();
+      markets.forEach(k=>{ if(k.statut!=='clos' || !inRange(k.date)) return;
+        const net=(typeof marketNetCA==='function')?marketNetCA(k):0; if(net<=0) return; total+=net;
+        lignes.push({date:k.date, nom:'🛒 '+(k.nom||'Marché'), montant:net, oid:null, sub:'marché'}); });
+    }catch(e){}
+  }
+  lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const titre = type==='facture' ? 'CA facturé' : 'CA encaissé';
+  const rows = lignes.length ? lignes.map(l=>
+    `<div class="sum-box"${l.oid?` style="cursor:pointer" onclick="closeModal();cmdView(${l.oid})"`:''}>
+       <span>${fmtDate(l.date)} · ${esc(l.nom)}${l.sub?` <span style="color:#9a8a82;font-size:.72rem">· ${esc(l.sub)}</span>`:''}</span>
+       <b>${euro(l.montant)}${l.oid?' ›':''}</b></div>`).join('')
+    : '<p class="note">Aucun mouvement sur cette période.</p>';
+  openModal(`<h3>${titre} — détail</h3>
+    <p class="note">Période : <b>${esc(periodeLbl)}</b>. ${type==='facture'?'Commandes facturées (par date de commande).':'Encaissements réels (par date de paiement) + marchés.'} Touche une ligne pour ouvrir la commande.</p>
+    ${rows}
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total ${esc(titre.toLowerCase())}</b></span><b style="color:var(--bordeaux)">${euro(money2(total))}</b></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
 async function renderCompta(){
  try {
-  const A = await computeAccounting({ periodeStart: comptaPeriodeStart(_comptaPeriode) });
+  const A = await computeAccounting({ periodeStart: comptaPeriodeStart(_comptaPeriode), periodeEnd: comptaPeriodeEnd(_comptaPeriode) });
   const fmtPct = (n,d)=> d>0 ? Math.round(n/d*100) : 0;
   // mois disponibles (depuis la série) + mois courant
   const moisDispo = [...new Set([...(A.serie||[]).map(s=>s.mois), monthKey(today())])].filter(Boolean).sort().reverse();
