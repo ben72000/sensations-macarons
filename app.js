@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v459';
+const APP_VERSION = 'v460';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -576,6 +576,27 @@ async function decrementPackagingStock(taille, nb){
     }
   }
   return {consomme, manque: round3(Math.max(0, reste)), materialId: mat.id, absent:false};
+}
+
+// Décrémente `nb` SACS du stock (lots FIFO), ciblé par materialId (un sac n'a pas de capacité,
+// donc on ne peut pas le retrouver par "taille" comme un coffret). Même logique FIFO que les boîtes.
+// À appeler dans une transaction incluant db.materialLots. Retour homogène avec decrementPackagingStock.
+async function decrementBagStock(materialId, nb){
+  if(!materialId) return {consomme:0, manque:round3(+nb||0), materialId:null, absent:true};
+  const lots = (await db.materialLots.where('materialId').equals(+materialId).toArray())
+    .filter(l=>round3(+l.qteRestante)>0)
+    .sort(lotFifoCompare);
+  let reste = round3(+nb||0); let consomme=0;
+  for(const l of lots){
+    if(reste<=0) break;
+    const dispo = round3(+l.qteRestante);
+    const pris = Math.min(dispo, reste);
+    if(pris>0){
+      await db.materialLots.update(l.id, {qteRestante: subQty(l.qteRestante, pris)});
+      reste = round3(reste - pris); consomme = round3(consomme + pris);
+    }
+  }
+  return {consomme, manque: round3(Math.max(0, reste)), materialId:+materialId, absent:false};
 }
 
 
@@ -4217,6 +4238,12 @@ async function pickMarkReady(orderId){
           const res=await decrementPackagingStock(taille, nb);
           if(res.absent) pkgManques.push(`format ${taille} (aucun emballage défini)`);
           else if(res.manque>0) pkgManques.push(`${res.manque}× boîte ${taille}`);
+        }
+        // décrément du SAC choisi sur la commande (modèle + nombre saisi à la main)
+        if(+o.sacMatId>0 && +o.sacNb>0){
+          const resSac=await decrementBagStock(+o.sacMatId, +o.sacNb);
+          if(resSac.absent) pkgManques.push(`sac (modèle introuvable)`);
+          else if(resSac.manque>0) pkgManques.push(`${resSac.manque}× sac`);
         }
         await db.orders.update(orderId, {pkgDecremented:true});
       }
@@ -9278,6 +9305,14 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
     coutMat=money2(coutMat+pieces*avgUnit);
   });
 
+  // SAC de la commande (modèle + nombre) : coût réel sur ses lots × quantité, imputé à l'emballage.
+  let coutSac = 0;
+  if(+o.sacMatId>0 && +o.sacNb>0){
+    const puSac = embMatUnitCost(+o.sacMatId, materials||window._allMatsCache||[], lots||[]);
+    coutSac = money2(puSac * (+o.sacNb||0));
+    coutEmb = money2(coutEmb + coutSac);
+  }
+
   const ca = money2(caGoods+caService);           // = montant commande (hors remise globale éventuelle)
   // remise globale éventuelle appliquée au prorata
   const totalLignes = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
@@ -9318,7 +9353,7 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
   }
 
   return {ca:caNet, caGoods:caGoodsN, caService:caServiceN,
-    coutMat, coutEmb, coutEmbEstime, margeBrute, tauxBrut,
+    coutMat, coutEmb, coutEmbEstime, coutSac, margeBrute, tauxBrut,
     chargesSociales, margeNette, tauxNet,
     livraison: liv, margeNetteApresLiv, tauxNetApresLiv, suggLivraison};
 }
