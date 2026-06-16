@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v454';
+const APP_VERSION = 'v455';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9247,9 +9247,15 @@ function flavorPickRow(nom, qte, setJs, maxq){
 async function renderStockParfums(){
   const tous=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0);
   const prods=tous.filter(p=>prodVendable(p));
-  // Composants rangés non terminés (coques/ganache en attente) → comptés à part par parfum.
-  // Composants rangés non terminés = uniquement coques/ganache assemblables (pas les dégustations).
-  const composants=tous.filter(p=>{ const c=prodComposant(p); return (c==='coques'||c==='ganache') && (p.rangee===true || prodStatut(p)!=='termine'); });
+  // Composants en stock à compter à part par parfum : coques/ganache assemblables qui ne
+  // sont pas (encore) des macarons vendables. On les retient si elles sont rangées, OU pas
+  // terminées, OU terminées mais déjà placées à un emplacement (cas des coques de reprise /
+  // migration : terminées d'office, avec emplacement, mais sans flag « rangee »).
+  const composants=tous.filter(p=>{
+    const c=prodComposant(p);
+    if(c!=='coques' && c!=='ganache') return false;
+    return p.rangee===true || prodStatut(p)!=='termine' || !!p.emplacement;
+  });
   const degustations=tous.filter(p=>prodComposant(p)==='degustation');  // macarons offerts en stock
   const recipes=await db.recipes.toArray();
   const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'(parfum ?)';
@@ -9347,7 +9353,8 @@ async function stockParfumDetail(nom){
   // « non vendables » mais n'ont rien à faire ici (sinon affichage trompeur).
   const composants = tousDuParfum.filter(p=>{
     const c = prodComposant(p);
-    return (c==='coques' || c==='ganache') && (p.rangee===true || prodStatut(p)!=='termine');
+    if(c!=='coques' && c!=='ganache') return false;
+    return p.rangee===true || prodStatut(p)!=='termine' || !!p.emplacement;
   });
   // Dégustations en stock (macarons offerts, non vendables) — affichage dédié.
   const degustations = tousDuParfum.filter(p=>prodComposant(p)==='degustation');
@@ -17344,7 +17351,7 @@ async function migSaveCoques(){
   const lot=lotAvecEmplacement(base+'-CQ', dest);
   await db.productions.add({
     recipeId, lotProduction:lot, lotBase:base, date:today(),
-    composant:'coques', histo:true,
+    composant:'coques', histo:true, rangee:true,
     qteTheorique:qte, qteReelle:qte, ecart:0, qteProduite:qte, qteRestante:qte,
     dlcProduit:dlc||'', dlcAuto:!dlc,
     prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
