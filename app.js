@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v429';
+const APP_VERSION = 'v431';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -948,6 +948,32 @@ function lineChart(series, opt){
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${grid}${xlab}${paths}</svg>${leg}`;
 }
 const ymKey = d => (d||'').slice(0,7);
+// CA COMPTABLE par mois d'ENCAISSEMENT : on ventile chaque paiement réel sur le mois de sa date.
+// Un paiement en 2 fois (acompte mai + solde août) tombe sur mai ET août, chacun son montant.
+// Renvoie { parMois:{'AAAA-MM':montant}, enAttente:montant_non_encore_encaissé }.
+// Source de vérité = le registre o.paiements[{date,montant}]. Rétro-compat : si pas de registre
+// mais commande marquée payée, on utilise datePaiement/montant.
+function caEncaisseParMois(orders){
+  const parMois={}; let enAttente=0;
+  (orders||[]).forEach(o=>{
+    if(o.histo) return;
+    let paiements = Array.isArray(o.paiements) ? o.paiements.filter(p=>p && (+p.montant)) : [];
+    if(!paiements.length && (o.paiement==='Payé')){
+      paiements = [{date:(o.datePaiement||o.date||''), montant:(+o.montant||0)}];
+    }
+    let encaisse=0;
+    paiements.forEach(p=>{
+      const m=+p.montant||0; if(!m) return;
+      encaisse+=m;
+      const k=ymKey(p.date||o.date||'');
+      if(k) parMois[k]=(parMois[k]||0)+m;
+    });
+    // reste à encaisser sur cette commande → en attente (pas compté dans le CA mensuel)
+    const reste=(+o.montant||0)-encaisse;
+    if(reste>0.01) enAttente+=reste;
+  });
+  return { parMois, enAttente: money2(enAttente) };
+}
 const ymLabel = ym => { const [y,m]=ym.split('-'); return new Date(y,+m-1,1).toLocaleDateString('fr-FR',{month:'short',year:'2-digit'}); };
 
 
@@ -3505,13 +3531,12 @@ function _prodbatRow(row){
      <div class="prod-card-status">${statutCell}</div>
      <div class="prod-card-actions">
        ${st!=='termine'?`<button class="qa edit" onclick="prodSetTermine(${p.id})" title="Passer en terminée — démarre la DLC">✓ Terminer</button>`:''}
-       ${st==='termine'?`<button class="qa" style="background:#3f7d52;color:#fff" onclick="prodRanger(${p.id})" title="Déclarer rangée — la retire de la vue Production">📦 Ranger</button>`:''}
        ${assembleBtn}
        ${degBtn}
        <button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button>
        <button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button>
        <button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button>
-       <button class="qa" onclick="setEmplacement(${p.id})" title="Déplacer / ranger">📍 Déplacer</button>
+       <button class="qa" style="background:#3f7d52;color:#fff" onclick="setEmplacement(${p.id})" title="Choisir l'emplacement de stockage — range le batch et remplit la visualisation">📍 Ranger</button>
        ${linkBtn}
        <button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button>
        <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Tracer</button>
@@ -4243,7 +4268,8 @@ async function applySuggestedPlacement(id){
   if(p.emplacement!==s.equipKey){
     await doMoveEmplacement(id, s.equipKey, {silent:true});
   }
-  await db.productions.update(id, {niveauIndex:s.nivIndex, niveauNom:s.niveauNom, boiteNom:s.boiteNom});
+  await db.productions.update(id, {niveauIndex:s.nivIndex, niveauNom:s.niveauNom, boiteNom:s.boiteNom,
+    rangee:true, rangeeTs:new Date().toISOString()});
   closeModal();
   if(typeof renderProductions==='function') renderProductions();
   const e=empInfo(s.equipKey);
@@ -4331,7 +4357,8 @@ async function applySplit(id){
   // champ placements ADDITIF : liste complète ; les champs simples reflètent le principal
   await db.productions.update(id, {
     niveauIndex:main.nivIndex, niveauNom:main.niveauNom, boiteNom:sp.boiteNom,
-    placements: parts.map(pp=>({equipKey:pp.equipKey, niveauNom:pp.niveauNom, boiteNom:sp.boiteNom, nbMacarons:pp.nbMacarons}))
+    placements: parts.map(pp=>({equipKey:pp.equipKey, niveauNom:pp.niveauNom, boiteNom:sp.boiteNom, nbMacarons:pp.nbMacarons})),
+    rangee:true, rangeeTs:new Date().toISOString()
   });
   closeModal();
   if(typeof renderProductions==='function') renderProductions();
@@ -5576,7 +5603,9 @@ async function renderCosts(){
     prodCost[prod.id] = (prodCost[prod.id]||0) + c.qteConsommee*lotPU(lot);
   });
   const moisCA={}, moisCout={};
-  orders.forEach(o=>{ const k=ymKey(o.date); moisCA[k]=(moisCA[k]||0)+(+o.montant||0); });
+  // CA = encaissements réels ventilés par mois de paiement (logique comptable micro-entreprise).
+  const _caEnc = caEncaisseParMois(orders);
+  Object.assign(moisCA, _caEnc.parMois);
   productions.forEach(p=>{ const k=ymKey(p.date); moisCout[k]=(moisCout[k]||0)+(prodCost[p.id]||0); });
   const moisKeys=[...new Set([...Object.keys(moisCA),...Object.keys(moisCout)])].sort();
   const serieCA={label:'CA', color:'#3f7d52', points:moisKeys.map(k=>({x:k,y:moisCA[k]||0}))};
