@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v436';
+const APP_VERSION = 'v437';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9203,8 +9203,16 @@ async function stockParfumDetail(nom){
     }
     // Emplacement fin : équipement + niveau + boîte
     let empFin;
+    // Nombre de macarons réellement PLACÉS (via placements multiples si réparti, sinon tout le batch
+    // est réputé placé s'il a un emplacement). Permet de détecter les pièces « sans emplacement ».
+    let nbPlace = 0;
+    if(Array.isArray(p.placements) && p.placements.length){
+      nbPlace = p.placements.reduce((s,pl)=>s+(+pl.nbMacarons||0),0);
+    } else if(p.emplacement){
+      nbPlace = round3(+p.qteRestante||0); // batch entier sur un seul emplacement
+    }
+    const nonPlace = Math.max(0, round3((+p.qteRestante||0) - nbPlace));
     if(Array.isArray(p.placements) && p.placements.length>1){
-      // lot réparti sur plusieurs emplacements
       empFin = '📦 réparti : ' + p.placements.map(pl=>{
         const e=empInfo(pl.equipKey);
         return `${e.lettre} ${esc(pl.niveauNom||'')} (${pl.nbMacarons})`;
@@ -9216,11 +9224,19 @@ async function stockParfumDetail(nom){
         p.boiteNom?('📦 '+esc(p.boiteNom)):''
       ].filter(Boolean).join(' · ');
     }
+    // Alerte : des macarons restent sans emplacement assigné (split incomplet) → bouton pour ranger.
+    const nonPlaceHtml = nonPlace>0
+      ? `<div style="margin-top:5px;padding:6px 8px;background:#fdf3e7;border:1px solid #e8d09a;border-radius:8px;font-size:.78rem">
+           ⚠ <b>${qty(nonPlace)} macaron(s) sans emplacement</b>
+           <button class="btn gold sm" style="margin-left:6px" onclick="event.stopPropagation();closeModal();setEmplacement(${p.id})">📍 Ranger maintenant</button>
+         </div>`
+      : '';
     return `<div class="trace-step clickable" style="cursor:pointer" onclick="closeModal();traceProd(${p.id})" title="Traçabilité complète de ce batch">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <div><b>lot ${esc(p.lotProduction||'—')}</b> · ${qty(p.qteRestante)} pièce(s)${ageTxt?` <span style="font-size:.72rem;color:#9a8a82">· ${ageTxt}</span>`:''}<br>
           <span style="font-size:.78rem;color:#9a8a82">${empFin||'emplacement —'}</span><br>
-          <span style="font-size:.78rem">${dlcDot}<span style="color:#9a8a82">fab. ${fab?fmtDateTime(fab):fmtDate(p.date)} · DLC ${dlc}</span></span></div>
+          <span style="font-size:.78rem">${dlcDot}<span style="color:#9a8a82">fab. ${fab?fmtDateTime(fab):fmtDate(p.date)} · DLC ${dlc}</span></span>
+          ${nonPlaceHtml}</div>
         <span class="tag ${st==='termine'?'ok':'event'}">${st==='termine'?'✓':'▶'}</span>
       </div>
     </div>`;
