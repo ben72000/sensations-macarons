@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v502d';
+const APP_VERSION = 'v505';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -474,6 +474,7 @@ function embMatUnitCost(matId, materials, lots){
 // ingrédient à 0,01 €).
 async function refreshMatsCache(){
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){ console.error('refreshMatsCache',e); }
+  try{ window._allRecipesCache = await db.recipes.toArray(); }catch(e){ console.error('refreshRecipesCache',e); }
 }
 function standardCoffretMatId(taille, materials){
   const mats = materials||window._allMatsCache||[];
@@ -981,6 +982,26 @@ const PROD_OPEN_MAX_DAYS = 4;
 function prodStatut(p){ return p && p.prodStatut ? p.prodStatut : 'termine'; }
 // Composant d'une production : 'complet' (vendable), 'coques'/'ganache' (intermédiaires), 'assemble' (vendable).
 function prodComposant(p){ return (p && p.composant) ? p.composant : 'complet'; }
+// ───────────────────────────────────────────────────────────────────────────
+// SOURCE UNIQUE DU NOM D'UNE PRODUCTION. Gère les 3 cas, dans l'ordre :
+//   1) production issue d'un COMPOSANT catalogue (chantilly…) → nom du composant (garnitureNom)
+//   2) production LIBRE (mode découverte) → nom saisi (produitLibre)
+//   3) production reliée à une RECETTE → produitNom de la recette (sinon « (recette supprimée) »)
+// `recipes` est optionnel : si l'appelant l'a déjà chargé, on l'utilise ; sinon on retombe sur
+// le cache global window._allRecipesCache (alimenté par renderProductions). Évite toute dispersion.
+function prodNomComplet(p, recipes){
+  if(p && typeof p==='object'){
+    if(p.composantCatalogue && p.garnitureNom) return p.garnitureNom;
+    if(p.libre) return p.produitLibre || '(sans nom)';
+    const list = recipes || window._allRecipesCache || [];
+    const r = list.find(x=> +x.id === +p.recipeId);
+    return r ? r.produitNom : '(recette supprimée)';
+  }
+  // appelé avec un recipeId brut (rétro-compat)
+  const list = recipes || window._allRecipesCache || [];
+  const r = list.find(x=> +x.id === +p);
+  return r ? r.produitNom : '(recette supprimée)';
+}
 // Libellé d'affichage de la garniture : « Crémeux » si sous-type crémeux, sinon « Ganache ».
 // (le composant interne reste 'ganache' pour ne pas casser l'assemblage)
 function garnLabel(p){ return (p && p.garnitureType==='cremeux') ? 'crémeux' : 'ganache'; }
@@ -1793,7 +1814,7 @@ async function renderDash(){
     const j=daysTo(p.dlcProduit); if(j===null) return;
     const seuil = isFreezer(p.emplacement) ? 14 : 2;
     if(j<=seuil){
-      prodDlcAlert.push({nom:recName(p.recipeId), lot:p.lotProduction||('#'+p.id),
+      prodDlcAlert.push({nom:prodNomComplet(p, recipes), lot:p.lotProduction||('#'+p.id),
         dlc:p.dlcProduit, j, emplacement:p.emplacement||'', qte:round3(+p.qteRestante)});
     }
   });
@@ -1825,7 +1846,7 @@ async function renderDash(){
      </div>
    </div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
-   ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(recName(p.recipeId))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
+   ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(prodNomComplet(p, recipes))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
    ${unsavedCount()>0?`<div class="banner" style="background:#fdeaea;border:1.5px solid #d9534f"><div style="flex:1"><b>⚠ ${unsavedCount()} modification(s) non sauvegardée(s) sur iCloud.</b><br><span style="font-size:.84rem">Tes données récentes ne sont PAS encore à l'abri. Sur iPhone, un effacement de Safari peut les perdre définitivement. <b>Sauvegarde maintenant.</b></span><br><button class="btn gold" style="margin-top:8px" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud maintenant</button></div></div>`:''}
    ${!releveFait?`<div class="banner">🌡 <div><b>Relevé de température non fait aujourd'hui.</b> Pense à le saisir et à <b>valider</b>. <span class="act" onclick="goView('pms')">Faire le relevé →</span></div></div>`:''}
    ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
@@ -3275,7 +3296,7 @@ function orphanComponents(prods, recName){
     if(comp==='coques' && p.degDeclasse) return;  // coques cassées déclassées : gérées par les suggestions dégustation, pas ici
     if(round3(+p.qteRestante)<=0) return;
     const rid = p.recipeId;
-    (parf[rid] ||= {coques:0, ganache:0, nom:(p.libre?(p.produitLibre||'(libre)'):recName(rid))});
+    (parf[rid] ||= {coques:0, ganache:0, nom:prodNomComplet(p)});
     parf[rid][comp] = round3(parf[rid][comp] + round3(+p.qteRestante));
   });
   const out = [];
@@ -3766,6 +3787,7 @@ async function docValiderFacture(id){
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
+  window._allRecipesCache = recipes;   // cache global pour prodNomComplet (appelants sans recipes en portée)
   // Précalcul : productions rattachées à une commande PRÊTE (Terminée) ou LIVRÉE → à masquer.
   try{
     const [_oItems, _ords] = await Promise.all([db.orderItems.toArray(), db.orders.toArray()]);
@@ -3782,12 +3804,9 @@ async function renderProductions(){
   const kpi = await lossKPIs();
   const lossByProd = {}; losses.forEach(l=>{ lossByProd[l.productionId]=(lossByProd[l.productionId]||0)+(+l.qte||0); });
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'(recette supprimée)';
-  // Nom affiché d'une production : accepte soit l'objet production, soit un recipeId.
-  // Pour une production « libre » (mode découverte), renvoie son nom saisi.
-  const prodNom = arg => {
-    if(arg && typeof arg==='object'){ return arg.libre ? (arg.produitLibre||'(sans nom)') : recName(arg.recipeId); }
-    return recName(arg);
-  };
+  // Nom affiché d'une production : délègue au helper global (source unique de vérité),
+  // en lui passant les recettes déjà chargées ici.
+  const prodNom = arg => prodNomComplet(arg, recipes);
   window._prodNom = prodNom;
   window._prodLossBy = lossByProd; window._prodRecName = prodNom;
   // Consommation matières par batch (pour le bloc « Stock consommé » en bas de l'écran).
@@ -3960,7 +3979,7 @@ async function prodVoirRangees(){
     const col = (typeof flavorColor==='function') ? flavorColor(nom) : '#cbb89f';
     return `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${col};flex:0 0 auto"></span>`;
   };
-  const _nomDe = p => p.libre?(p.produitLibre||'(sans nom)'):recName(p.recipeId);
+  const _nomDe = p => prodNomComplet(p);
   // Ligne COMPACTE : pastille + parfum + (qté restante) + emplacement ; lot masqué (title only).
   // On met l'info utile en avant ; le n° de lot reste accessible au survol mais n'encombre plus.
   const ligne = (p, opts={}) => {
@@ -5243,7 +5262,7 @@ async function prodAssembleForm(id, opts){
     }
   }catch(e){ console.error('garnitures supp', e); }
   const _garnSuppHtml = _garnSupp.length
-    ? `<div class="banner" style="background:#fff4e0;border-color:#e0b878;margin-bottom:10px"><div>⚠ <b>Garniture(s) à ne pas oublier au montage</b> pour ${esc((window._prodRecName?window._prodRecName(p.recipeId):'cette recette'))} :<br>${_garnSupp.map(c=>'• '+esc(c.nom||'')).join('<br>')}<br><span style="font-size:.82rem;color:#8a6d3b">(non encore décomptée automatiquement — vérifie sa présence en stock)</span></div></div>`
+    ? `<div class="banner" style="background:#eef6ef;border-color:#bcd9c6;margin-bottom:10px"><div>🍫 <b>Garniture(s) supplémentaire(s) déposée(s) au montage</b> pour ${esc((window._prodRecName?window._prodRecName(p.recipeId):'cette recette'))} :<br>${_garnSupp.map(c=>'• '+esc(c.nom||'')).join('<br>')}<br><span style="font-size:.82rem;color:#3f7d52">✓ 1 dose par macaron sera décomptée automatiquement du stock (assemblage bloqué si stock insuffisant).</span></div></div>`
     : '';
   const recName = (window._prodRecName)||((rid)=>'#'+rid);
   const all=await db.productions.toArray();
@@ -5300,7 +5319,7 @@ async function prodAssembleSave(thisId){
   const dest=(document.querySelector('input[name="f_asmDest"]:checked')||{}).value||'frigo';
   if(qteAsm<=0){ toast('Quantité invalide'); return; }
   try{
-    const res = await db.transaction('rw', db.productions, db.prodConsumption, async ()=>{
+    const res = await db.transaction('rw', db.productions, db.prodConsumption, db.recipes, db.components, async ()=>{
       const a=await db.productions.get(thisId); const b=await db.productions.get(otherId);
       if(!a||!b) throw new Error('Sous-lot introuvable');
       const coques = prodComposant(a)==='coques' ? a : (prodComposant(b)==='coques'?b:null);
@@ -5311,6 +5330,42 @@ async function prodAssembleSave(thisId){
       const capGanache = round3(+ganache.qteRestante);
       const dispo = Math.min(capCoques, capGanache);
       if(qteAsm>dispo+1e-9) throw new Error(`Max assemblable : ${qty(dispo)} macaron(s) — limité par ${capCoques<=capGanache?'les coques ('+qty(coques.qteRestante)+' coques)':'la ganache ('+qty(ganache.qteRestante)+' macarons)'}.`);
+      // [ÉTAPE 3] DÉCOMPTE DES COMPOSANTS SUPPLÉMENTAIRES (ex : chantache vanille-coco sur les GF).
+      // La recette du macaron peut référencer des composants (componentRefs) à déposer au montage.
+      // Règle : 1 dose de composant par macaron assemblé, prélevée en FIFO (DLC la plus proche) sur
+      // les sous-lots de CE composant en stock. Si le stock total est insuffisant → on BLOQUE tout
+      // (la transaction lèvera une erreur et rien ne sera écrit), comme pour les coques/ganache.
+      // Un composant n'est décompté QUE si la recette le référence (typiquement les grands formats).
+      const _rec = await db.recipes.get(coques.recipeId).catch(()=>null);
+      const _refs = (_rec && Array.isArray(_rec.componentRefs)) ? _rec.componentRefs : [];
+      const _compConsos = [];   // [{componentId, nom, prélèvements:[{prodId, qte}]}]
+      if(_refs.length){
+        const _toutesProds = await db.productions.toArray();
+        for(const ref of _refs){
+          const cid = +ref.componentId;
+          if(!cid) continue;
+          const comp = await db.components.get(cid).catch(()=>null);
+          const nomComp = comp ? (comp.nom||'composant') : 'composant';
+          // Sous-lots de CE composant en stock (productions issues du catalogue), FIFO par DLC.
+          const lots = _toutesProds
+            .filter(pp => pp.composantCatalogue===true && +pp.componentId===cid && round3(+pp.qteRestante)>0)
+            .sort((x,y)=> (x.dlcProduit||'9999').localeCompare(y.dlcProduit||'9999') || (x.date||'').localeCompare(y.date||''));
+          const dispoComp = lots.reduce((s,l)=>s+round3(+l.qteRestante),0);
+          const besoinComp = qteAsm;   // 1 dose par macaron
+          if(round3(dispoComp) + 1e-9 < besoinComp){
+            throw new Error(`Stock insuffisant de « ${nomComp} » : besoin ${qty(besoinComp)} dose(s), dispo ${qty(dispoComp)}. Produis-en avant d'assembler.`);
+          }
+          // Prélèvement FIFO
+          let reste = besoinComp;
+          const prelevs = [];
+          for(const l of lots){
+            if(reste<=1e-9) break;
+            const pris = round3(Math.min(reste, +l.qteRestante));
+            if(pris>0){ prelevs.push({prodId:l.id, lot:l.lotProduction||('#'+l.id), qte:pris}); reste = round3(reste - pris); }
+          }
+          _compConsos.push({componentId:cid, nom:nomComp, prelevs});
+        }
+      }
       const coquesUtilisees = qteAsm*COQUES_PAR_MACARON;
       const nowIso=new Date().toISOString();
       const motif = deg ? 'assemblage dégustation' : 'assemblage';
@@ -5326,6 +5381,15 @@ async function prodAssembleSave(thisId){
       // décrémente les composants selon le ratio : 2 coques + 1 ganache par macaron
       await db.productions.update(coques.id, {qteRestante: subQty(coques.qteRestante, coquesUtilisees)});
       await db.productions.update(ganache.id, {qteRestante: subQty(ganache.qteRestante, qteAsm)});
+      // [ÉTAPE 3] décrémente les composants supplémentaires (chantache…) en FIFO
+      const _assembleFromComp = [];
+      for(const cc of _compConsos){
+        for(const pv of cc.prelevs){
+          const lp = await db.productions.get(pv.prodId);
+          if(lp){ await db.productions.update(pv.prodId, {qteRestante: subQty(lp.qteRestante, pv.qte)}); }
+          _assembleFromComp.push({id:pv.prodId, lot:pv.lot, composant:'garniture-sup', componentId:cc.componentId, qte:pv.qte, parfum:cc.nom});
+        }
+      }
       // crée la production assemblée : 'assemble' (vendable) ou 'degustation' (offert, non vendable)
       await db.productions.add({
         recipeId: coques.recipeId, lotProduction: lotAsm, date: today(),
@@ -5338,14 +5402,18 @@ async function prodAssembleSave(thisId){
         emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
         histEmplacement:[{lieu:dest, ts:nowIso, motif}],
         assembleFrom:[{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:coquesUtilisees, parfum:(window._prodRecName?window._prodRecName(coques.recipeId):'')},
-                      {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')}]
+                      {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')},
+                      ..._assembleFromComp]
       });
-      return {lotAsm, dlc, qteAsm, deg};
+      return {lotAsm, dlc, qteAsm, deg, compConsos:_compConsos};
     });
     closeModal(); renderProductions();
+    const _compTxt = (res.compConsos && res.compConsos.length)
+      ? ' · ' + res.compConsos.map(c=>`${qty(res.qteAsm)} ${c.nom}`).join(', ') + ' décompté(s)'
+      : '';
     toast(res.deg
-      ? `🥄 Dégustation assemblée ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm} (non vendable)`
-      : `Assemblé ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm}${res.dlc?` · DLC ${fmtDate(res.dlc)}`:''}`);
+      ? `🥄 Dégustation assemblée ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm} (non vendable)${_compTxt}`
+      : `Assemblé ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm}${res.dlc?` · DLC ${fmtDate(res.dlc)}`:''}${_compTxt}`);
   }catch(err){ toast(err.message||'Erreur assemblage'); }
 }
 // Décompte des macarons dégustation distribués (offerts) — sort du stock dégustation.
@@ -6643,7 +6711,7 @@ async function renderTrace(){
   });
   // productions / batchs
   prods.forEach(p=>{
-    const nom = p.libre ? (p.produitLibre||'(sans nom)') : recName(p.recipeId);
+    const nom = prodNomComplet(p);
     const prim=normTxt(nom);
     const blob=normTxt([nom, 'production batch', p.lotProduction, fmtDate(p.date), prodComposant(p)].filter(Boolean).join(' '));
     window._traceIndex.push({ kind:'prod', id:p.id, _prim:prim, _blob:blob, _digits:onlyDigits([p.lotProduction, fmtDate(p.date), p.id].join(' ')),
@@ -6676,7 +6744,7 @@ async function renderTrace(){
      </div>
      <div class="panel"><h2>Par batch de production</h2>
        ${prods.length?`<div class="trace-list">${prods.map(p=>`<div class="trace-row">
-         <div class="trace-row-main"><span class="trace-date">${fmtDate(p.date)}</span><span class="trace-nom">${esc(recName(p.recipeId))}</span>${p.lotProduction?`<span class="trace-sub">${esc(p.lotProduction)}</span>`:''}</div>
+         <div class="trace-row-main"><span class="trace-date">${fmtDate(p.date)}</span><span class="trace-nom">${esc(prodNomComplet(p))}</span>${p.lotProduction?`<span class="trace-sub">${esc(p.lotProduction)}</span>`:''}</div>
          <div class="trace-row-acts"><button class="qa" onclick="printLabel(${p.id})">⎙</button><button class="qa" onclick="traceProd(${p.id})">Tracer</button></div></div>`).join('')}</div>`
          :`<div class="empty">Aucune production.</div>`}
      </div>
@@ -6895,7 +6963,7 @@ async function flashAlert(lotNum){
     const usedMat = (consoByProd[p.id]||[]).map(c=>{ const l=lots.find(x=>x.id===c.materialLotId);
       return `${esc(matName(l?l.materialId:null))}`; }).filter(Boolean).join(', ');
     return `<div class="panel" style="margin:8px 0;border-left:4px solid var(--red,#b3261e)">
-      <b>${esc(recName(p.recipeId))}</b> · batch ${esc(p.lotProduction||'—')} · ${fmtDate(p.date)}
+      <b>${esc(prodNomComplet(p))}</b> · batch ${esc(p.lotProduction||'—')} · ${fmtDate(p.date)}
       <div class="note">Produit ${qty(p.qteProduite!=null?p.qteProduite:p.qteReelle)} · encore en stock ${qty(p.qteRestante)}${usedMat?` · matière incriminée : ${usedMat}`:''}</div>
       <div style="margin-top:6px">${ventes.join('')||'<span class="note">Aucune vente liée — tout est encore en stock/non distribué.</span>'}</div>
     </div>`;
@@ -6936,7 +7004,7 @@ async function exportFlashAlert(lotNum){
   conso.forEach(c=>{ if(lotIds.has(c.materialLotId)) impacted.add(c.productionId); });
   const L=[`ALERTE SANITAIRE — lot fournisseur « ${lotNum} »`, `Édité le ${fmtDate(today())}`, ''];
   [...impacted].map(id=>prods.find(p=>p.id===id)).filter(Boolean).forEach(p=>{
-    L.push(`■ ${recName(p.recipeId)} — batch ${p.lotProduction||'—'} (${fmtDate(p.date)})`);
+    L.push(`■ ${prodNomComplet(p)} — batch ${p.lotProduction||'—'} (${fmtDate(p.date)})`);
     L.push(`   Produit : ${p.qteProduite!=null?p.qteProduite:p.qteReelle} · encore en stock : ${p.qteRestante}`);
     oitems.filter(it=>it.productionId===p.id).forEach(it=>{ const o=orders.find(x=>x.id===it.orderId);
       L.push(`   → ${clName(o?o.clientId:0)} : ${it.qte} pièce(s)${o&&o.tel?' · '+o.tel:''}${o&&o.date?' · '+fmtDate(o.date):''}`); });
@@ -10101,14 +10169,14 @@ async function renderStockParfums(){
   };
   const byNom={};
   prods.forEach(p=>{
-    const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
+    const nom = prodNomComplet(p);
     (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, coques:0, ganache:0, dlcs:[]});
     byNom[nom].dispo = addQty(byNom[nom].dispo, p.qteRestante);
     byNom[nom].batches++;
     if(p.dlcProduit) byNom[nom].dlcs.push(p.dlcProduit); // pour repérer la DLC la plus proche
   });
   composants.forEach(p=>{
-    const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
+    const nom = prodNomComplet(p);
     (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, coques:0, ganache:0, dlcs:[]});
     byNom[nom].compo = addQty(byNom[nom].compo, p.qteRestante);
     const c = prodComposant(p);
@@ -10116,7 +10184,7 @@ async function renderStockParfums(){
     else if(c==='ganache') byNom[nom].ganache = addQty(byNom[nom].ganache, p.qteRestante);
   });
   degustations.forEach(p=>{
-    const nom = p.libre ? (p.produitLibre||'(libre)') : recName(p.recipeId);
+    const nom = prodNomComplet(p);
     (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, coques:0, ganache:0, degust:0, dlcs:[]});
     byNom[nom].degust = addQty(byNom[nom].degust||0, p.qteRestante);
   });
@@ -10170,7 +10238,7 @@ async function renderStockParfums(){
 async function stockParfumDetail(nom){
   const recipes=await db.recipes.toArray();
   const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'(parfum ?)';
-  const _nomDe = p => (p.libre?(p.produitLibre||'(libre)'):recName(p.recipeId));
+  const _nomDe = p => prodNomComplet(p);
   const tousDuParfum=(await db.productions.toArray())
     .filter(p=>round3(+p.qteRestante)>0)
     .filter(p=>_nomDe(p)===nom)
@@ -15418,7 +15486,7 @@ async function coquesStockByParfum(){
   prods.forEach(p=>{
     if(prodComposant(p)!=='coques') return;
     const reste = round3(+p.qteRestante||0); if(reste<=0) return;  // reste = nb de coques
-    const nom = p.libre ? (p.produitLibre||'') : recName(p.recipeId);
+    const nom = prodNomComplet(p);
     if(!nom) return;
     const k = aiNormalize(nom);
     if(!map[k]) map[k]={parfum:nom, coques:0};
@@ -16749,7 +16817,7 @@ async function renderLabels(){
        return `<div class="label" data-prod="${p.id}">
         <div class="qr"><canvas data-lot="${esc(p.lotProduction||'')}"></canvas></div>
         <div class="info">
-          <b>${esc(recName(p.recipeId))}</b>
+          <b>${esc(prodNomComplet(p, recipes))}</b>
           <span class="meta">Lot : ${esc(p.lotProduction||'—')}</span>
           <span class="meta">Emplacement : ${p.emplacement?`${empIcon(p.emplacement)} ${esc(empNom(p.emplacement))} (${empLettre(p.emplacement)})`:'—'}</span>
           <span class="meta">Statut : ${st==='termine'?'✓ Terminée':'▶ Démarrée'}</span>
@@ -16894,7 +16962,7 @@ async function buildOrderLabelData(orderId){
       if(ts && ts>fabTsMax) fabTsMax = ts;
       // si le contenu de commande était vide (rare), on complète les parfums via les batchs liés
       if(!parfumsOrdre.length){
-        const nom = p.libre ? (p.produitLibre||'') : recName(p.recipeId);
+        const nom = prodNomComplet(p);
         if(nom && !_seen.has(nom.toLowerCase())){ _seen.add(nom.toLowerCase()); parfumsOrdre.push(nom); }
       }
     }
