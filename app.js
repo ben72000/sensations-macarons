@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v484';
+const APP_VERSION = 'v485';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18322,6 +18322,8 @@ const FACT_STYLE = `   <style>
      .grand .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:19px; color:#490F25; }
      .tva { margin-top:8mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
      .paiement { margin-top:3mm; font-size:11.5px; color:#6a5a52; }
+     .rib { margin-top:4mm; padding:3mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.6; }
+     .rib .rib-titre { font-weight:600; color:#490F25; }
      .pied { margin-top:12mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
      .barre { text-align:center; padding:10px; background:#490F25; }
@@ -18347,6 +18349,7 @@ function factEmetteurForm(retourOrderId){
     <div class="field"><label>E-mail <span style="color:#9a8a82;font-weight:400">— max 40</span></label><input id="fa_email" maxlength="40" value="${esc(e.email||'')}" placeholder="ex : contact@sensations-macarons.fr"></div>
     <div class="field"><label>Nom commercial (interne, pour le pied de page)</label><input id="fa_nom" value="${esc(e.nom||'Sensations Macarons')}"></div>
     <div class="field"><label>Mentions de paiement (facultatif)</label><input id="fa_paiement" maxlength="80" value="${esc(e.paiement||'Paiement à réception.')}"></div>
+    <div class="field"><label>Coordonnées bancaires <span style="color:#9a8a82;font-weight:400">— IBAN / BIC, apparaît en pied de page (facultatif)</span></label><textarea id="fa_iban" maxlength="160" rows="3" placeholder="ex :&#10;IBAN : FR76 1234 5678 9012 3456 7890 123&#10;BIC : ABCDEFGH&#10;Titulaire : Sensations Macarons">${esc(e.iban||'')}</textarea></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="factSaveEmetteurAndBack(${retourOrderId||0})">Enregistrer</button>
@@ -18354,7 +18357,7 @@ function factEmetteurForm(retourOrderId){
 }
 async function factSaveEmetteurAndBack(orderId){
   const o={ nom:val('fa_nom'), exploitant:val('fa_exploitant'), adresse:val('fa_adresse'),
-    cpville:val('fa_cpville'), siret:val('fa_siret'), tel:val('fa_tel'), email:val('fa_email'), paiement:val('fa_paiement') };
+    cpville:val('fa_cpville'), siret:val('fa_siret'), tel:val('fa_tel'), email:val('fa_email'), paiement:val('fa_paiement'), iban:val('fa_iban') };
   factSaveEmetteur(o);
   closeModal();
   toast('Coordonnées enregistrées ✓');
@@ -18371,6 +18374,14 @@ function factLineDesc(ln){
   if(ln.type==='don') return `Don (offert)${(parfums||items)?' — '+(parfums||items):''}`;
   if(ln.type==='prestation') return `Prestation${ln.libelle?' : '+ln.libelle:''}`;
   return 'Article';
+}
+// Bloc « Coordonnées bancaires » pour le pied de page des documents (devis + facture).
+// Renvoie '' si l'émetteur n'a pas renseigné d'IBAN, sinon un bloc HTML échappé multi-lignes.
+function factRibBloc(e){
+  const raw = (e && e.iban) ? String(e.iban).trim() : '';
+  if(!raw) return '';
+  const lignes = raw.split(/\r?\n/).map(l=>esc(l.trim())).filter(Boolean).join('<br>');
+  return `<div class="rib"><span class="rib-titre">Coordonnées bancaires</span><br>${lignes}</div>`;
 }
 // === DEVIS : aperçu / impression (→ « Enregistrer en PDF » sur iOS) + envoi par mail ===
 // Génère le HTML d'un devis (registre documents, type:'devis') avec le même rendu
@@ -18455,6 +18466,7 @@ async function genererDevisDoc(docId){
        </div>
        <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
        <div class="paiement">Devis valable ${d.validiteJours||30} jours à compter de la date d'émission.<br>Bon pour accord — date et signature :</div>
+       ${factRibBloc(e)}
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
      </div>
    </div>
@@ -18549,6 +18561,8 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .totaux .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:18px; color:#490F25; }
      .tva { margin-top:8mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
      .paiement { margin-top:3mm; font-size:11.5px; color:#6a5a52; }
+     .rib { margin-top:4mm; padding:3mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.6; }
+     .rib .rib-titre { font-weight:600; color:#490F25; }
      .pied { margin-top:12mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
      .barre { text-align:center; padding:10px; background:#490F25; }
@@ -18594,6 +18608,7 @@ async function _genererFactureSimple_DEPRECATED(orderId){
        </div>
        <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
        ${e.paiement?`<div class="paiement">${esc(e.paiement)}</div>`:''}
+       ${factRibBloc(e)}
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
      </div>
    </div>
@@ -18706,6 +18721,7 @@ async function genererFactureMultiple(ids){
        </div>
        <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
        ${e.paiement?`<div class="paiement">${esc(e.paiement)}</div>`:''}
+       ${factRibBloc(e)}
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
      </div>
    </div>
