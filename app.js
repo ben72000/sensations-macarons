@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v522';
+const APP_VERSION = 'v524';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -22335,13 +22335,23 @@ function retroplanningCommande(o, recipes){
     parfums.forEach(p=>{ const r=recByNom[normNom(p.nom)]; if(r && !recsUtilisees.includes(r)) recsUtilisees.push(r); });
   });
   // Contraintes agrégées (on prend la plus forte).
-  let reposGanacheH = 0, jourJ = false, congelObl = false, maturationRequise = true;
+  let reposGanacheH = 0, jourJ = false, congelObl = false, maturationRequise = true, aCremeux = false, gfCongele = false;
   recsUtilisees.forEach(r=>{
     const dg = (r.ganacheDelaiH!=null) ? +r.ganacheDelaiH : 12;
     if(dg>reposGanacheH) reposGanacheH = dg;
     if(r.jourJUniquement) jourJ = true;
     if(r.congelObligatoire) congelObl = true;
+    // Convention de l'app : une recette grand format utilise un CRÉMEUX (cf. garniture GF).
+    if(r.grandFormat) aCremeux = true;
+    // Grand format CONGELÉ (congélation obligatoire des coques ou de la recette) → décongélation
+    // au frigo avant service. On ne l'applique que si la recette impose effectivement le congélateur.
+    if(r.grandFormat && (r.congelObligatoire || r.coquesCongelObligatoire)) gfCongele = true;
   });
+  // Congélation du crémeux avant montage (règle générale : 6 h). 0 si pas de crémeux.
+  const cremeuxCongelH = aCremeux ? (typeof PROC!=='undefined' ? (PROC.cremeuxCongelH||6) : 6) : 0;
+  // Décongélation au frigo avant service (2 h) : seulement si le grand format a été congelé.
+  // Jour J = pas de congélation/avance, donc pas de décongélation à prévoir.
+  const decongelH = (gfCongele && !jourJ) ? (typeof PROC!=='undefined' ? (PROC.decongelFrigoH||2) : 2) : 0;
   // Jour J : pas de maturation longue ni d'avance (tout le jour même).
   const maturationH = jourJ ? 0 : (typeof PROC!=='undefined' ? PROC.maturationH : 24);
 
@@ -22352,8 +22362,17 @@ function retroplanningCommande(o, recipes){
   // Prêt à livrer = livraison.
   jalons.push({cle:'livraison', label:'Livraison', date:new Date(livraison), type:'jalon', note:'Date/heure de remise au client.'});
 
-  // Fin de maturation = livraison ; donc fin du montage = livraison − maturation.
-  const finMontage = minus(livraison, maturationH);
+  // [DÉCONGÉLATION] Grand format congelé : le sortir au frigo 2 h avant le service.
+  // « Sortie congélateur » = livraison − 2 h ; c'est le nouveau point de référence amont.
+  let refApresFroid = new Date(livraison);
+  if(decongelH>0){
+    refApresFroid = minus(livraison, decongelH);
+    jalons.push({cle:'decongel', label:`Décongélation au frigo (${decongelH} h)`, date:new Date(refApresFroid), type:'attente',
+      note:`Sors le grand format du congélateur et place-le au frigo ${decongelH} h avant de le servir.`});
+  }
+
+  // Fin de maturation = sortie du froid avant service ; fin du montage = ce point − maturation.
+  const finMontage = minus(refApresFroid, maturationH);
   if(maturationH>0){
     jalons.push({cle:'maturation', label:`Maturation (${maturationH} h au frais)`, date:new Date(finMontage), type:'attente',
       note:`Repos au froid pour développer les arômes. Le montage doit être fini à cette date.`});
@@ -22373,6 +22392,17 @@ function retroplanningCommande(o, recipes){
   jalons.push({cle:'ganache', label:'Préparation ganache / crémeux', date:new Date(debutGanache), type:'travail',
     note:'Cuire et couler la ganache, puis la laisser reposer.'});
 
+  // [CRÉMEUX] Si la commande contient un grand format (→ crémeux), il doit passer au congélateur
+  // 6 h avant le montage. Préparation crémeux → 6 h congélateur → montage.
+  if(cremeuxCongelH>0){
+    const cremeuxPret = new Date(finMontage);                 // dispo au montage
+    const debutCremeux = minus(cremeuxPret, cremeuxCongelH);   // préparé 6 h avant
+    jalons.push({cle:'congel-cremeux', label:`Congélation crémeux (${cremeuxCongelH} h)`, date:new Date(debutCremeux), type:'attente',
+      note:`Le crémeux doit passer ${cremeuxCongelH} h au congélateur avant le montage. À préparer pour cette date.`});
+    jalons.push({cle:'cremeux', label:'Préparation du crémeux', date:new Date(debutCremeux), type:'travail',
+      note:'Préparer le crémeux du grand format, puis le placer au congélateur.'});
+  }
+
   // Coques : avant le montage. Peuvent être faites en amont (la veille, ou congelées).
   const coquesAvant = minus(finMontage, 2); // au moins un créneau avant le montage (raffiné plus tard)
   jalons.push({cle:'coques', label:'Coques (meringue + cuisson)', date:new Date(coquesAvant), type:'travail',
@@ -22384,10 +22414,12 @@ function retroplanningCommande(o, recipes){
   const contraintes = [];
   if(jourJ) contraintes.push('📅 Jour J : à produire le jour même (pas d\'avance ni maturation longue).');
   if(congelObl) contraintes.push('❄️ Congélation obligatoire des coques.');
+  if(cremeuxCongelH>0) contraintes.push(`🧊 Congélation crémeux : ${cremeuxCongelH} h avant le montage.`);
+  if(decongelH>0) contraintes.push(`🌡 Décongélation : ${decongelH} h au frigo avant le service (grand format congelé).`);
   if(reposGanacheH>0) contraintes.push(`⏱ Repos ganache : ${reposGanacheH} h.`);
   if(maturationH>0) contraintes.push(`🧊 Maturation : ${maturationH} h avant livraison.`);
 
-  return {livraison, jalons, contraintes, reposGanacheH, maturationH, jourJ, congelObl, recsUtilisees:recsUtilisees.length};
+  return {livraison, jalons, contraintes, reposGanacheH, maturationH, cremeuxCongelH, decongelH, jourJ, congelObl, aCremeux, gfCongele, recsUtilisees:recsUtilisees.length};
 }
 
 // Affiche le rétroplanning d'une commande dans une modale (jalons datés à rebours).
@@ -22636,6 +22668,8 @@ function mrpMatieresBanner(check){
 // Constantes process (minutes). Passif = ne consomme pas de main d'œuvre (on peut faire autre chose).
 const PROC = {
   maturationH: 24,     // maturation au frais avant vente (passif)
+  cremeuxCongelH: 6,   // congélation du crémeux avant montage (passif, règle générale)
+  decongelFrigoH: 2,   // grand format congelé : passage au frigo avant service (passif)
   relancePlaqueMin: 7  // on enfourne la plaque suivante 7 min après la précédente
 };
 // Formats de cuisson : coques/plaque + durée de cuisson d'une plaque + capacité meringue.
