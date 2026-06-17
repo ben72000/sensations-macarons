@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v490';
+const APP_VERSION = 'v491';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18543,14 +18543,20 @@ async function genererDevisDoc(docId){
   let extraBtns = '';
   const emailCible = client && client.email ? client.email : '';
   const objet = `Devis ${d.numero||''} — ${e.nom||'Sensations Macarons'}`;
+  const nomClient = client ? [client.prenom, client.nom].filter(Boolean).join(' ') : '';
+  const montantFmt = money2(total).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const acompteFmt = money2(total*0.75).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const signature = [e.exploitant, e.nom].filter(Boolean).join(' — ') || (e.nom||'Sensations Macarons');
   const corps = [
-    `Bonjour${client && (client.prenom||client.nom) ? ' '+(client.prenom||client.nom) : ''},`,
+    `Bonjour${nomClient ? ' '+nomClient : ''},`,
     '',
-    `Veuillez trouver ci-dessous notre devis n° ${d.numero||''} d'un montant de ${money2(total).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})} €.`,
-    d.expiration ? `Ce devis est valable jusqu'au ${fmtDate(d.expiration)}.` : '',
+    `Veuillez trouver ci-dessous notre devis n° ${d.numero||''} d'un montant de ${montantFmt} €.`,
+    `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).`,
+    '',
+    'Vous remerciant par avance.',
     '',
     'Bien cordialement,',
-    e.exploitant || e.nom || ''
+    signature
   ].filter(l=>l!==null && l!==undefined).join('\n');
   const mailto = `mailto:${encodeURIComponent(emailCible)}?subject=${encodeURIComponent(objet)}&body=${encodeURIComponent(corps)}`;
   extraBtns = `<a class="pv-btn" href="${mailto}">✉️ Envoyer par mail</a>`;
