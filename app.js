@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v518';
+const APP_VERSION = 'v519';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18915,6 +18915,26 @@ async function renderMigration(){
      <p class="note" id="mig_coqHint">Astuce : ${COQUES_PAR_MACARON} coques = 1 macaron. <span id="mig_coqConv"></span></p>
    </div>
 
+
+   <div class="panel"><h2>2 ter · Stock de départ — garnitures (crémeux / ganache)</h2>
+     <p class="note" style="margin-bottom:8px">Saisis tes <b>garnitures déjà prêtes</b> (crémeux ou ganache) en stock, rattachées à leur parfum. Elles entrent dans le système d'assemblage comme une garniture produite (sous-lot <b>-CR</b> ou <b>-GA</b>). Comptées <b>en doses</b> (1 dose = 1 macaron à garnir). Rangement <b>frigo</b>.</p>
+     <div class="field"><label>Parfum / recette de la garniture</label><select id="mig_garnRec">${(await db.recipes.toArray()).map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('')||'<option value="">(crée d\'abord une recette)</option>'}</select></div>
+     <div class="field"><label>Type de garniture</label>
+       <div class="opt-table">
+         <label class="opt-row"><input type="radio" name="mig_garnType" value="cremeux" checked> <span class="opt-ico">🟠</span> <span class="opt-main"><b>Crémeux</b><br><span class="opt-sub">sous-lot <b>-CR</b></span></span></label>
+         <label class="opt-row"><input type="radio" name="mig_garnType" value="ganache"> <span class="opt-ico">🍫</span> <span class="opt-main"><b>Ganache</b><br><span class="opt-sub">sous-lot <b>-GA</b></span></span></label>
+       </div></div>
+     <div class="row2">
+       <div class="field"><label>Nombre de doses en stock</label><input type="number" min="1" step="1" id="mig_garnQte" placeholder="ex : 14"></div>
+       <div class="field"><label>DLC (optionnel)</label><input type="date" id="mig_garnDlc"></div>
+     </div>
+     <div class="field"><label>Emplacement</label>
+       <div class="opt-table">
+         ${(()=>{ const firstFrigo=EMPLACEMENTS.findIndex(e=>e.type==='frigo'); const def=firstFrigo>=0?firstFrigo:0;
+           return EMPLACEMENTS.map((e,i)=>`<label class="opt-row"><input type="radio" name="mig_garnEmp" value="${e.key}" ${i===def?'checked':''}> <b class="opt-emp" style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'}">${e.lettre}</b> <span class="opt-main"><b>${e.icon} ${esc(e.nom)}</b></span></label>`).join(''); })()}
+       </div></div>
+     <button class="btn" style="width:100%" onclick="migSaveGarniture()">＋ Ajouter au stock de garnitures</button>
+   </div>
    <div class="panel"><h2>3 · Stock de départ — matières & emballages</h2>
      <p class="note" style="margin-bottom:8px">Saisie rapide de ton stock actuel de matières premières et d'emballages, <b>sans n° de lot ni prix</b>. Ce stock part « à l'équilibre » (aucun écart de valeur) et sera <b>consommé en priorité</b> avant tes futures réceptions, pour une migration en douceur.</p>
      <div class="field"><label>Matière / emballage</label>
@@ -19052,6 +19072,38 @@ async function migSaveCoques(){
   });
   const mac=Math.floor(qte/COQUES_PAR_MACARON);
   toast(`Coques ajoutées : ${qty(qte)} (≈ ${mac} macarons) ✓`);
+  renderMigration();
+}
+
+// [REPRISE GARNITURE] Crée un sous-lot de garniture (crémeux/ganache) déjà en stock,
+// rattaché à sa recette, terminé, SANS consommer de matières. Compté en doses (macarons).
+// Stocké comme une garniture produite : composant 'ganache' + garnitureType (cremeux|ganache),
+// suffixe -CR / -GA. S'intègre directement au système d'assemblage.
+async function migSaveGarniture(){
+  const recipeId=+val('mig_garnRec')||0;
+  const qte=Math.round(+val('mig_garnQte')||0);
+  const dlc=val('mig_garnDlc')||'';
+  const garnType=(document.querySelector('input[name="mig_garnType"]:checked')||{}).value||'cremeux';
+  const _defFrigo=(EMPLACEMENTS.find(e=>e.type==='frigo')||{}).key||(EMPLACEMENTS[0]||{}).key;
+  const dest=(document.querySelector('input[name="mig_garnEmp"]:checked')||{}).value||_defFrigo;
+  if(!recipeId){ toast('Choisis un parfum/recette'); return; }
+  if(qte<=0){ toast('Indique un nombre de doses'); return; }
+  const nowIso=new Date().toISOString();
+  const _recMigG = await db.recipes.get(recipeId).catch(()=>null);
+  const base = buildLotBase(_recMigG?_recMigG.produitNom:'', today(), []);
+  const suff = garnType==='cremeux' ? '-CR' : '-GA';
+  const lot=lotAvecEmplacement(base+suff, dest);
+  await db.productions.add({
+    recipeId, lotProduction:lot, lotBase:base, date:today(),
+    composant:'ganache', garnitureType:garnType, histo:true, rangee:true,
+    qteTheorique:qte, qteReelle:qte, ecart:0, qteProduite:qte, qteRestante:qte,
+    dlcProduit:dlc||'', dlcAuto:!dlc,
+    prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
+    emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
+    histEmplacement:[{lieu:dest, ts:nowIso, motif:'garniture de départ (reprise)'}]
+  });
+  const libelle = garnType==='cremeux' ? 'Crémeux' : 'Ganache';
+  toast(`${libelle} ajouté : ${qty(qte)} dose(s) ✓`);
   renderMigration();
 }
 function migMatUniteHint(){
