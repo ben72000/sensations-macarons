@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v508';
+const APP_VERSION = 'v509';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5540,7 +5540,7 @@ async function prodForm(){  const recipes = await db.recipes.toArray();
    <div class="field" id="f_garnitureWrap" style="display:none"><label>Garniture à produire <span style="color:#9a8a82;font-weight:400">— depuis le catalogue de composants</span></label>
      <select id="f_garnitureSel" onchange="prodSyncTheorique();prodRefreshLot();prodApercuGarniture()">${_compOpts}</select></div>
    <div id="f_garnitureApercu" style="display:none"></div>
-   <div class="field"><label>Recette</label><select id="f_rec" onchange="prodSyncTheorique();prodRefreshLot()">${opts}</select></div>
+   <div class="field"><label>Recette</label><select id="f_rec" onchange="prodSyncTheorique();prodRefreshLot();prodFilterGarnTypes()">${opts}</select></div>
    <div class="field" id="f_compWrap" style="display:none"><label>Composant à produire</label>
      <div class="opt-table">
        <label class="opt-row"><input type="radio" name="f_comp" value="coques" checked onchange="prodCompSwitch()"> <span class="opt-ico">🟤</span> <span class="opt-main"><b>Coques</b><br><span class="opt-sub">rangement : ambiant ou congélateur (jamais frigo)</span></span></label>
@@ -5588,6 +5588,8 @@ function prodCompSwitch(){
   // Sous-type garniture (ganache/crémeux) visible seulement si on produit la garniture par composant.
   const garnWrap=document.getElementById('f_garnTypeWrap');
   if(garnWrap) garnWrap.style.display = (mode==='composant' && comp==='ganache') ? 'block' : 'none';
+  // [POINT B] Masquer les types de garniture inutiles selon la recette sélectionnée.
+  if(mode==='composant' && comp==='ganache') prodFilterGarnTypes();
   const hint=document.getElementById('coqueHint');
   const unit=document.getElementById('qteUnit');
   const isCoques = (mode==='composant' && comp==='coques');
@@ -5598,6 +5600,30 @@ function prodCompSwitch(){
       prodUpdateCoqueHint();
     } else { hint.style.display='none'; }
   }
+}
+// [POINT B] N'affiche que le(s) type(s) de garniture réellement utilisé(s) par la recette
+// sélectionnée (déduit des `partie` de ses ingrédients : 'ganache' / 'cremeux').
+// Recette non étiquetée (ancienne) → on laisse les deux (rétro-compat).
+async function prodFilterGarnTypes(){
+  try{
+    const rid=+(document.getElementById('f_rec')||{}).value||0;
+    const rowGa=document.querySelector('input[name="f_garnType"][value="ganache"]')?.closest('.opt-row');
+    const rowCr=document.querySelector('input[name="f_garnType"][value="cremeux"]')?.closest('.opt-row');
+    if(!rowGa||!rowCr) return;
+    if(!rid){ rowGa.style.display=''; rowCr.style.display=''; return; }
+    const items=await db.recipeItems.where('recipeId').equals(rid).toArray().catch(()=>[]);
+    const aGanache=items.some(it=>it.partie==='ganache');
+    const aCremeux=items.some(it=>it.partie==='cremeux');
+    const etiquetee=aGanache||aCremeux;
+    if(!etiquetee){ rowGa.style.display=''; rowCr.style.display=''; return; }  // ancienne recette → tout
+    rowGa.style.display = aGanache ? '' : 'none';
+    rowCr.style.display = aCremeux ? '' : 'none';
+    // Si le type actuellement coché est masqué, basculer sur le type visible.
+    const gaChecked=document.querySelector('input[name="f_garnType"][value="ganache"]');
+    const crChecked=document.querySelector('input[name="f_garnType"][value="cremeux"]');
+    if(!aGanache && gaChecked && gaChecked.checked && crChecked){ crChecked.checked=true; }
+    if(!aCremeux && crChecked && crChecked.checked && gaChecked){ gaChecked.checked=true; }
+  }catch(e){ console.error('prodFilterGarnTypes',e); }
 }
 function prodUpdateCoqueHint(){
   const hint=document.getElementById('coqueHint'); if(!hint) return;
