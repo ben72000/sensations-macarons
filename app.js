@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v488';
+const APP_VERSION = 'v489';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3654,7 +3654,7 @@ async function docConvertToOrder(id){
   const today=new Date().toISOString().slice(0,10);
   const o={
     clientId:d.clientId, date:d.date||today,
-    heureLivraison:d.heureLivraison||'', lieuLivraison:d.lieuLivraison||'',
+    heureLivraison:d.heureLivraison||'', lieuLivraison:d.lieuLivraison||'', dateEvenement:d.dateEvenement||'',
     // Livraison (transport) + sacs : repris du devis pour ne pas les ressaisir.
     distanceKm:d.distanceKm||0, prixCarburant:d.prixCarburant||0,
     tempsLivraisonMin:d.tempsLivraisonMin||0, consoVehicule:(d.consoVehicule!=null?d.consoVehicule:null),
@@ -8000,7 +8000,7 @@ async function cmdForm(id, opts){
   if(_cmdDevisMode && _cmdDevisId){
     const dv = await db.documents.get(_cmdDevisId);
     o = dv ? {clientId:dv.clientId, date:dv.date, lignes:dv.lignes||[], remiseGlobale:dv.remiseGlobale||0,
-              heureLivraison:dv.heureLivraison||'', lieuLivraison:dv.lieuLivraison||'', notes:dv.notes||'',
+              heureLivraison:dv.heureLivraison||'', lieuLivraison:dv.lieuLivraison||'', dateEvenement:dv.dateEvenement||'', notes:dv.notes||'',
               distanceKm:dv.distanceKm||0, prixCarburant:dv.prixCarburant||0,
               tempsLivraisonMin:dv.tempsLivraisonMin||0, consoVehicule:(dv.consoVehicule!=null?dv.consoVehicule:null),
               fraisLivraison:dv.fraisLivraison||0, sacMatId:dv.sacMatId||0, sacNb:dv.sacNb||0,
@@ -8066,6 +8066,7 @@ async function cmdForm(id, opts){
        <span class="collapse-arrow" id="livArrow">▸</span>
      </button>
      <div class="collapse-body" id="livBody" style="display:none">
+       <div class="field"><label>Date de l'événement <span style="color:#9a8a82;font-weight:400">— si différente de la date du devis</span></label><input type="date" id="f_dateEvenement" value="${esc(o.dateEvenement||'')}"></div>
        <div class="field"><label>Heure de livraison</label><input type="time" id="f_heure" value="${esc(o.heureLivraison||'')}" oninput="cmdFeasibilityRecalc()"></div>
        <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— tapez pour rechercher (clients, lieux habituels)</span></label>
          <div class="ac-wrap">
@@ -8926,7 +8927,7 @@ async function saveCmd(id){
   }
   const o={
     clientId:+val('f_cl')||0, date:val('f_date'),
-    heureLivraison: val('f_heure')||'', lieuLivraison: val('f_lieu')||'',
+    heureLivraison: val('f_heure')||'', lieuLivraison: val('f_lieu')||'', dateEvenement: val('f_dateEvenement')||'',
     distanceKm: +val('f_distKm')||0, prixCarburant: +val('f_carbu')||0, tempsLivraisonMin: +val('f_tempsLiv')||0,
     fraisLivraison: (function(){ const mt=document.getElementById('f_mt'); return mt&&mt.dataset.fraisLivraison? +mt.dataset.fraisLivraison : 0; })(),
     consoVehicule: val('f_conso')!==''?(+val('f_conso')||0):null,
@@ -8957,7 +8958,7 @@ async function saveCmd(id){
       montant:o.montant,
       lignes:o.lignes,                      // lignes détaillées (coffrets, pyramides, parfums…)
       remiseGlobale:o.remiseGlobale,
-      heureLivraison:o.heureLivraison, lieuLivraison:o.lieuLivraison,
+      heureLivraison:o.heureLivraison, lieuLivraison:o.lieuLivraison, dateEvenement:o.dateEvenement||'',
       // Livraison (transport) : conservés pour les retrouver à la réouverture et au calcul de coût.
       distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
       tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
@@ -18309,7 +18310,9 @@ const FACT_STYLE = `   <style>
      .meta .bloc .lbl { color:#AA7C39; font-weight:600; text-transform:uppercase; font-size:10.5px; letter-spacing:.06em; margin-bottom:1mm; }
      .meta-rule { height:0.75pt; background:#490F25; opacity:.55; margin:0 0 7mm; }
      .cmd-section { margin-bottom:5mm; border:1px solid #d8c3b0; border-radius:3mm; overflow:hidden; }
-     .cmd-head { background:#490F25; color:#E8DDCD; padding:2.8mm 4mm; display:flex; justify-content:space-between; align-items:center; }
+     .cmd-head { background:#490F25; color:#E8DDCD; padding:2.8mm 4mm; display:flex; justify-content:space-between; align-items:flex-start; }
+     .cmd-ref { display:flex; flex-direction:column; }
+     .cmd-event { font-size:10.5px; font-weight:400; color:#d8b48a; margin-top:0.8mm; }
      .cmd-head .cmd-ref { font-family:'Bellota',cursive; font-weight:700; font-size:14px; }
      .cmd-head .cmd-date { font-size:11.5px; color:#d8c3b0; }
      .cmd-table { width:100%; border-collapse:collapse; }
@@ -18468,7 +18471,7 @@ async function genererDevisDoc(docId){
   const section = `
       <div class="cmd-section">
         <div class="cmd-head">
-          <span class="cmd-ref">Devis ${esc(d.numero||'')}</span>
+          <span class="cmd-ref">Devis ${esc(d.numero||'')}${d.dateEvenement?`<span class="cmd-event">📅 Événement : ${fmtDate(d.dateEvenement)}</span>`:''}</span>
           <span class="cmd-date">${fmtDate(d.date)||''}</span>
         </div>
         <table class="cmd-table">
@@ -18720,7 +18723,7 @@ async function genererFactureMultiple(ids){
     return `
       <div class="cmd-section">
         <div class="cmd-head">
-          <span class="cmd-ref">Commande ${esc(orderNumber(o))}</span>
+          <span class="cmd-ref">Commande ${esc(orderNumber(o))}${o.dateEvenement?`<span class="cmd-event">📅 Événement : ${fmtDate(o.dateEvenement)}</span>`:''}</span>
           <span class="cmd-date">${fmtDate(o.date)||''}</span>
         </div>
         <table class="cmd-table">
