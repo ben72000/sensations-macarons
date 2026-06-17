@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v520';
+const APP_VERSION = 'v522';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8570,7 +8570,7 @@ async function cmdView(id){
         return `<button class="btn ${cur?'':'ghost'} sm" onclick="setOrderStatus(${id},'${st}')" ${cur?'style="pointer-events:none"':''}>${cur?'● ':''}${st}</button>`;}).join('')}
     </div>
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
-    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button>${paiementsDe(o).length?'':`<button class="btn ghost" onclick="cmdToDevis(${id})" title="Repasser cette commande en devis">📝 En devis</button>`}<button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn ghost" onclick="retroplanningView(${id})" title="Rétroplanning de production">🕘 Rétroplanning</button>${paiementsDe(o).length?'':`<button class="btn ghost" onclick="cmdToDevis(${id})" title="Repasser cette commande en devis">📝 En devis</button>`}<button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
 function lineTotalStored(ln){
@@ -22307,6 +22307,125 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
     nbMeringues:prod.nbMeringues, nbBatchs:prod.nbBatchsTotal};
 }
 
+/* ============================================================
+   RÉTROPLANNING D'UNE COMMANDE (v1 : jalons datés à rebours)
+   Part de la date/heure de livraison et remonte en tenant compte
+   des délais incompressibles : maturation, repos ganache.
+   Les heures de travail précises (imbrication dans les dispos)
+   seront raffinées dans une version ultérieure.
+   ============================================================ */
+// Renvoie { livraison:Date, jalons:[{cle, label, date:Date, type:'travail'|'attente', note}], contraintes:[...] }
+function retroplanningCommande(o, recipes){
+  recipes = recipes || window._allRecipesCache || [];
+  const recByNom = {};
+  recipes.forEach(r=>{ recByNom[aiNormalize ? aiNormalize(r.produitNom) : (r.produitNom||'').toLowerCase()] = r; });
+  const normNom = n => aiNormalize ? aiNormalize(n) : (n||'').toLowerCase();
+
+  // 1) Date + heure de livraison.
+  const dateLiv = o.dateEvenement || o.date || '';
+  if(!dateLiv) return {error:'Aucune date de livraison sur cette commande.'};
+  const hm = (o.heureLivraison && /^\d{1,2}:\d{2}/.test(o.heureLivraison)) ? o.heureLivraison : '10:00';
+  const livraison = new Date(dateLiv+'T'+(hm.length===4?'0'+hm:hm));
+
+  // 2) Recettes impliquées → contraintes (repos ganache max, jour J, congélation, maturation).
+  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
+  const recsUtilisees = [];
+  lignes.forEach(ln=>{
+    const parfums = ln.type==='grand' ? (ln.items||[]) : (ln.parfums||[]);
+    parfums.forEach(p=>{ const r=recByNom[normNom(p.nom)]; if(r && !recsUtilisees.includes(r)) recsUtilisees.push(r); });
+  });
+  // Contraintes agrégées (on prend la plus forte).
+  let reposGanacheH = 0, jourJ = false, congelObl = false, maturationRequise = true;
+  recsUtilisees.forEach(r=>{
+    const dg = (r.ganacheDelaiH!=null) ? +r.ganacheDelaiH : 12;
+    if(dg>reposGanacheH) reposGanacheH = dg;
+    if(r.jourJUniquement) jourJ = true;
+    if(r.congelObligatoire) congelObl = true;
+  });
+  // Jour J : pas de maturation longue ni d'avance (tout le jour même).
+  const maturationH = jourJ ? 0 : (typeof PROC!=='undefined' ? PROC.maturationH : 24);
+
+  // 3) Remontée à rebours.
+  const jalons = [];
+  const minus = (base, hours) => { const d=new Date(base); d.setHours(d.getHours()-hours); return d; };
+
+  // Prêt à livrer = livraison.
+  jalons.push({cle:'livraison', label:'Livraison', date:new Date(livraison), type:'jalon', note:'Date/heure de remise au client.'});
+
+  // Fin de maturation = livraison ; donc fin du montage = livraison − maturation.
+  const finMontage = minus(livraison, maturationH);
+  if(maturationH>0){
+    jalons.push({cle:'maturation', label:`Maturation (${maturationH} h au frais)`, date:new Date(finMontage), type:'attente',
+      note:`Repos au froid pour développer les arômes. Le montage doit être fini à cette date.`});
+  }
+
+  // Montage/assemblage : à finir pour finMontage. (durée de travail raffinée plus tard)
+  jalons.push({cle:'montage', label:'Montage / assemblage', date:new Date(finMontage), type:'travail',
+    note:'Garnir les coques. À terminer avant le début de la maturation.'});
+
+  // Ganache prête = au plus tard au début du montage. Début ganache = ganache prête − repos.
+  const ganachePrete = new Date(finMontage); // simplification v1 : montage commence quand ganache prête
+  const debutGanache = minus(ganachePrete, reposGanacheH);
+  if(reposGanacheH>0){
+    jalons.push({cle:'repos-ganache', label:`Repos ganache (${reposGanacheH} h)`, date:new Date(debutGanache), type:'attente',
+      note:`La ganache doit reposer ${reposGanacheH} h avant le montage. À préparer pour cette date.`});
+  }
+  jalons.push({cle:'ganache', label:'Préparation ganache / crémeux', date:new Date(debutGanache), type:'travail',
+    note:'Cuire et couler la ganache, puis la laisser reposer.'});
+
+  // Coques : avant le montage. Peuvent être faites en amont (la veille, ou congelées).
+  const coquesAvant = minus(finMontage, 2); // au moins un créneau avant le montage (raffiné plus tard)
+  jalons.push({cle:'coques', label:'Coques (meringue + cuisson)', date:new Date(coquesAvant), type:'travail',
+    note: congelObl ? 'Coques cuites puis congelées (obligatoire pour cette recette).' : 'Coques cuites, prêtes pour le montage. Peuvent être faites en avance.'});
+
+  // Tri chronologique (du plus tôt au plus tard) pour l'affichage.
+  jalons.sort((a,b)=> a.date - b.date);
+
+  const contraintes = [];
+  if(jourJ) contraintes.push('📅 Jour J : à produire le jour même (pas d\'avance ni maturation longue).');
+  if(congelObl) contraintes.push('❄️ Congélation obligatoire des coques.');
+  if(reposGanacheH>0) contraintes.push(`⏱ Repos ganache : ${reposGanacheH} h.`);
+  if(maturationH>0) contraintes.push(`🧊 Maturation : ${maturationH} h avant livraison.`);
+
+  return {livraison, jalons, contraintes, reposGanacheH, maturationH, jourJ, congelObl, recsUtilisees:recsUtilisees.length};
+}
+
+// Affiche le rétroplanning d'une commande dans une modale (jalons datés à rebours).
+async function retroplanningView(orderId){
+  const o = await db.orders.get(orderId);
+  if(!o){ toast('Commande introuvable'); return; }
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const r = retroplanningCommande(o, recipes);
+  if(r.error){
+    openModal(`<h3>🕘 Rétroplanning</h3><div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>${esc(r.error)}</div></div>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const cl = o.clientId ? await db.clients.get(o.clientId).catch(()=>null) : null;
+  const fmtJ = d => d.toLocaleString('fr-FR',{weekday:'long', day:'2-digit', month:'long', hour:'2-digit', minute:'2-digit'});
+  const ico = j => j.cle==='livraison'?'🎁' : j.type==='attente'?'⏳' : j.cle==='coques'?'🥚' : j.cle==='ganache'?'🍫' : j.cle==='montage'?'🔗' : '•';
+  // Les jalons sont déjà triés du plus tôt au plus tard.
+  const rows = r.jalons.map(j=>{
+    const col = j.cle==='livraison' ? '#3f7d52' : (j.type==='attente' ? '#9a8a82' : '#5a3a2a');
+    return `<div class="sugg-row" style="align-items:flex-start">
+      <div class="sugg-main">
+        <div><b style="color:${col}">${ico(j)} ${esc(j.label)}</b></div>
+        <div style="font-size:.82rem;color:#8a6d3b;margin-top:1px">${esc(fmtJ(j.date))}</div>
+        ${j.note?`<div style="font-size:.76rem;color:#9a8a82;margin-top:2px">${esc(j.note)}</div>`:''}
+      </div></div>`;
+  }).join('');
+  const contraintes = (r.contraintes&&r.contraintes.length)
+    ? `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a;margin-top:8px">📋 <div><b>Contraintes prises en compte :</b><br>${r.contraintes.map(esc).join('<br>')}</div></div>`
+    : '';
+  openModal(`<h3>🕘 Rétroplanning</h3>
+    <p style="margin-bottom:4px"><b>Livraison ${esc(cl?cl.nom:'')}</b> · ${esc(fmtJ(r.livraison))}</p>
+    <p class="note" style="margin-bottom:10px">À rebours depuis la livraison, voici quand commencer chaque étape. Les heures seront affinées selon tes disponibilités dans une prochaine version.</p>
+    ${rows}
+    ${contraintes}
+    <p class="note" style="margin-top:8px;color:#9a8a82">v1 : jalons indicatifs basés sur les délais incompressibles (repos ganache, maturation). Les durées de travail précises seront imbriquées dans tes plages horaires ensuite.</p>
+    <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`);
+}
+
 // Éditeur des disponibilités (planning bi-hebdomadaire A/B).
 const _DOW_LBL = {1:'Lundi',2:'Mardi',3:'Mercredi',4:'Jeudi',5:'Vendredi',6:'Samedi',0:'Dimanche'};
 const _DOW_ORDER = [1,2,3,4,5,6,0];
@@ -22441,6 +22560,68 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
     depassement: dispo>0 && tempsTotal>dispo,
     chargePct: dispo>0 ? Math.round(tempsTotal/dispo*100) : 0,
     warnings, nbParfums:lignes.length};
+}
+
+// [CONNEXION A] Vérifie si le stock de MATIÈRES PREMIÈRES suffit à exécuter le plan de production.
+// Pour chaque ligne (recette × nbBatchs), somme les besoins matières (qteParBatch × nbBatchs),
+// puis compare au stock disponible (somme des qteRestante des lots). Retourne la liste des manques.
+// Affichage en grammes pour les denrées au kg (cohérent avec le reste de l'app).
+async function mrpCheckMatieres(plan){
+  if(!plan || !Array.isArray(plan.lignes) || !plan.lignes.length) return {manques:[], ok:true, details:[]};
+  const [mats, lots, allItems] = await Promise.all([
+    db.materials.toArray(),
+    db.materialLots.toArray(),
+    db.recipeItems.toArray()
+  ]);
+  const matById = id => mats.find(m=>m.id===id) || null;
+  const dispOf = mat => { const u=(mat&&mat.unite||'').toLowerCase();
+    return (mat && mat.categorie!=='emballage' && u==='kg') ? {u:'g', f:1000} : {u:(mat&&mat.unite)||'', f:1}; };
+  // Stock par matière (unité de stockage).
+  const stockBy = {};
+  lots.forEach(l=>{ stockBy[l.materialId]=(stockBy[l.materialId]||0)+(+l.qteRestante||0); });
+  // Besoin cumulé par matière sur tout le plan (unité de stockage).
+  const besoinBy = {};
+  plan.lignes.forEach(l=>{
+    if(!l.recipeId || !(l.nbBatchs>0)) return;
+    const items = allItems.filter(it=>it.recipeId===l.recipeId);
+    items.forEach(it=>{
+      const q = (+it.qteParBatch||0) * l.nbBatchs;   // qteParBatch est en unité de stockage (kg ou unité)
+      if(q>0) besoinBy[it.materialId] = round3((besoinBy[it.materialId]||0) + q);
+    });
+  });
+  // Comparaison.
+  const manques = [], details = [];
+  Object.keys(besoinBy).forEach(idStr=>{
+    const id = +idStr;
+    const mat = matById(id); if(!mat) return;
+    const besoin = round3(besoinBy[id]);
+    const stock = round3(stockBy[id]||0);
+    const d = dispOf(mat);
+    const ligne = {
+      materialId:id, nom:mat.nom||'(matière ?)',
+      besoinAff: round3(besoin*d.f), stockAff: round3(stock*d.f), unite:d.u,
+      manqueAff: round3(Math.max(0, besoin-stock)*d.f),
+      manqueStock: round3(Math.max(0, besoin-stock))   // pour la liste de courses éventuelle
+    };
+    details.push(ligne);
+    if(besoin - stock > 1e-6) manques.push(ligne);
+  });
+  details.sort((a,b)=> b.manqueAff - a.manqueAff || a.nom.localeCompare(b.nom));
+  manques.sort((a,b)=> b.manqueAff - a.manqueAff);
+  return {manques, ok: manques.length===0, details};
+}
+
+// Rendu d'un encart « stock matières pour ce plan » à insérer dans le résultat MRP.
+function mrpMatieresBanner(check){
+  if(!check) return '';
+  if(check.ok){
+    return `<div class="banner" style="background:#eef6ee;border-color:#bcdcc0;margin-top:10px">✅ <div><b>Matières premières : tout est en stock</b> pour réaliser ce plan.</div></div>`;
+  }
+  const lignes = check.manques.map(m=>
+    `<div class="sum-box" style="font-size:.86rem"><span>${esc(m.nom)} <span style="color:#9a8a82">stock ${qty(m.stockAff)} ${esc(m.unite)} · besoin ${qty(m.besoinAff)} ${esc(m.unite)}</span></span><b style="color:#b3261e">manque ${qty(m.manqueAff)} ${esc(m.unite)}</b></div>`
+  ).join('');
+  return `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-top:10px">⛔ <div><b>Stock matières insuffisant pour ce plan</b> — ${check.manques.length} matière(s) à compléter avant de lancer :
+    <div style="margin-top:6px">${lignes}</div></div></div>`;
 }
 
 /* ============================================================
@@ -22682,7 +22863,7 @@ function validateTask(taskType, actualMinutes){
 }
 
 // ---------- UI ----------
-let _mrpStart=null, _mrpEnd=null, _mrpPlan=null, _mrpDispo=0;
+let _mrpStart=null, _mrpEnd=null, _mrpPlan=null, _mrpDispo=0, _mrpMatCheck=null;
 function renderMRP(){
   if(!_mrpStart){ _mrpStart=today(); }
   if(!_mrpEnd){ const d=new Date(today()); d.setDate(d.getDate()+7); _mrpEnd=d.toISOString().slice(0,10); }
@@ -22705,6 +22886,10 @@ function renderMRP(){
      <button class="btn" onclick="mrpGenerate()">Vérifier la faisabilité</button>
    </div>
    <div id="mrpResult"></div>
+   <div class="panel" id="mrpCommandesPanel" style="display:none"><h2>🕘 Rétroplanning par commande</h2>
+     <p class="note" style="margin-top:0">Les commandes non livrées de la période. Pour chacune, le rétroplanning calcule quand commencer chaque étape.</p>
+     <div id="mrpCommandes"></div>
+   </div>
 
    <div class="step-head"><span class="step-num">3</span><div><b>Dans quel ordre je m'y prends ?</b><br><span class="note">Génère ton planning minute par minute : meringues, ganaches (avec repos), cuisson en cascade, montages, maturation.</span></div></div>
    <div class="panel" style="border:1.5px solid var(--gold,#AA7C39)">
@@ -22712,6 +22897,43 @@ function renderMRP(){
      <button class="btn gold" onclick="persoPlanForm()">📅 Définir ma disponibilité & générer mon planning</button>
    </div>`;
   renderProductionPlan();
+  mrpRenderCommandes();
+}
+
+// Liste les commandes non livrées de la période du plan, avec un bouton rétroplanning par commande.
+async function mrpRenderCommandes(){
+  const box=document.getElementById('mrpCommandes');
+  const panel=document.getElementById('mrpCommandesPanel');
+  if(!box) return;
+  const start=_mrpStart||today();
+  const end=_mrpEnd||start;
+  let orders;
+  try{ orders = await db.orders.where('date').between(start, end, true, true).toArray(); }
+  catch(e){ const all=await db.orders.toArray().catch(()=>[]); orders=all.filter(o=>o.date&&o.date>=start&&o.date<=end); }
+  // Non livrées uniquement.
+  orders = orders.filter(o=> (typeof normStatus==='function'?normStatus(o.statut):o.statut)!=='Livrée');
+  orders.sort((a,b)=>(a.date||'').localeCompare(b.date||'') || (a.heureLivraison||'').localeCompare(b.heureLivraison||''));
+  if(!orders.length){
+    if(panel) panel.style.display='none';
+    box.innerHTML='';
+    return;
+  }
+  if(panel) panel.style.display='block';
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  box.innerHTML = orders.map(o=>{
+    const nbPieces = (typeof _orderParfumDemand==='function')
+      ? Object.values(_orderParfumDemand(o)).reduce((s,q)=>s+(+q||0),0) : 0;
+    const dateLbl = o.date ? fmtDate(o.date) : '—';
+    const heure = o.heureLivraison ? ` · ${esc(o.heureLivraison)}` : '';
+    return `<div class="sugg-row">
+      <div class="sugg-main">
+        <div><b>${esc(clName(o.clientId))}</b> <span style="color:#9a8a82;font-size:.8rem">${esc(dateLbl)}${heure}</span></div>
+        ${nbPieces?`<div style="font-size:.78rem;color:#9a8a82">${qty(nbPieces)} macaron(s)</div>`:''}
+      </div>
+      <button class="btn ghost sm" onclick="retroplanningView(${o.id})" title="Rétroplanning de cette commande">🕘 Rétroplanning</button>
+    </div>`;
+  }).join('');
 }
 async function mrpGenerate(){
   _mrpStart=val('mrp_start')||today();
@@ -22721,6 +22943,8 @@ async function mrpGenerate(){
   let plan; try{ plan=await generateProductionOrder(_mrpStart, _mrpEnd, _mrpDispo); }
   catch(e){ if(box) box.innerHTML=`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Erreur : ${esc(e.message||'calcul impossible')}</div></div>`; return; }
   _mrpPlan=plan;
+  // [CONNEXION A] Vérifie le stock matières nécessaire à ce plan (affiché dans le résultat).
+  try{ _mrpMatCheck = await mrpCheckMatieres(plan); }catch(e){ console.error('mrpCheckMatieres',e); _mrpMatCheck=null; }
   mrpRenderResult();
 }
 function mrpRenderResult(){
@@ -22773,6 +22997,7 @@ function mrpRenderResult(){
      <p class="note" style="margin-top:6px">${p.nbBatchsTotal} batch(s) de ${TAILLE_BATCH_MACARONS} → <b>${p.nbMeringues} meringue(s)</b> de ${MACARONS_PAR_MERINGUE} macarons max (240 coques). Regroupement de 2 parfums uniquement pour combler une meringue.</p>
      ${p.depassement?`<p class="note" style="color:var(--red,#b04a3e)">⚠ Dépassement de ${p.tempsTotal-p.tempsDisponible} min : réduis la période ou ajoute du temps.</p>`:(p.tempsDisponible?`<p class="note">✓ Tient dans le temps disponible (${p.chargePct}%).</p>`:'')}
      ${p.warnings.length?`<p class="note" style="color:var(--caramel)">ℹ Recette/poids garniture manquant pour : ${p.warnings.map(esc).join(', ')}.</p>`:''}
+     ${mrpMatieresBanner(_mrpMatCheck)}
    </div>
    <div class="panel"><h2>🥚 Meringues à couler (mutualisées)</h2>${meringueRows||'<p class="note">Aucune.</p>'}</div>
    <div class="panel"><h2>Ganache & montage par parfum</h2>${detailRows}</div>`;
