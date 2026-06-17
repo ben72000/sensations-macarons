@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v496';
+const APP_VERSION = 'v497';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5228,6 +5228,23 @@ async function prodAssembleForm(id, opts){
   const p=await db.productions.get(id); if(!p){ toast('Sous-lot introuvable'); return; }
   const comp=prodComposant(p);
   if(comp!=='coques' && comp!=='ganache'){ toast('L\'assemblage part d\'un sous-lot coques ou ganache.'); return; }
+  // [ÉTAPE 1 — garde-fou] Une recette peut nécessiter une 2e garniture séparée (ex : chantilly
+  // vanille-coco déposée au montage). On la repère via les componentRefs de la recette, et on
+  // affiche un AVERTISSEMENT non bloquant pour que l'utilisateur n'oublie pas de la déposer.
+  let _garnSupp = [];
+  try{
+    const _rec = await db.recipes.get(p.recipeId).catch(()=>null);
+    const _refs = (_rec && Array.isArray(_rec.componentRefs)) ? _rec.componentRefs : [];
+    if(_refs.length){
+      const _comps = await db.components.toArray().catch(()=>[]);
+      _garnSupp = _refs
+        .map(ref => _comps.find(c => +c.id === +ref.componentId))
+        .filter(c => c && (c.type==='ganache' || c.type==='insert' || c.type==='autre'));
+    }
+  }catch(e){ console.error('garnitures supp', e); }
+  const _garnSuppHtml = _garnSupp.length
+    ? `<div class="banner" style="background:#fff4e0;border-color:#e0b878;margin-bottom:10px"><div>⚠ <b>Garniture(s) à ne pas oublier au montage</b> pour ${esc((window._prodRecName?window._prodRecName(p.recipeId):'cette recette'))} :<br>${_garnSupp.map(c=>'• '+esc(c.nom||'')).join('<br>')}<br><span style="font-size:.82rem;color:#8a6d3b">(non encore décomptée automatiquement — vérifie sa présence en stock)</span></div></div>`
+    : '';
   const recName = (window._prodRecName)||((rid)=>'#'+rid);
   const all=await db.productions.toArray();
   const want = comp==='coques' ? 'ganache' : 'coques';
@@ -5255,6 +5272,7 @@ async function prodAssembleForm(id, opts){
   const maxThisMac = comp==='coques' ? Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON) : round3(+p.qteRestante);
   const uniteThis = comp==='coques' ? `${qty(p.qteRestante)} coques (≈ ${maxThisMac} macarons)` : `${qty(p.qteRestante)} macarons`;
   openModal(`<h3>🔗 Assembler ${esc(recName(p.recipeId))}</h3>
+   ${_garnSuppHtml}
    <p class="note">1 macaron = <b>2 coques + 1 ganache</b>. Assemblage <b>normal</b> : coques + ganache du même parfum/lot (vendable). Assemblage <b>dégustation</b> : sans correspondance couleur/parfum (offert, non vendable).</p>
    <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':garnIcon(p)+' '+(garnLabel(p)==='crémeux'?'Crémeux':'Ganache')} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · ${uniteThis}</b></div>
    <div class="field"><label>${want==='ganache'?'🍫 Ganache à associer':'🟤 Coques à associer'}</label>
