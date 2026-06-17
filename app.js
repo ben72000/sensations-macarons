@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v505';
+const APP_VERSION = 'v505b';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -17908,6 +17908,55 @@ async function convertirDenreeKgVersGConfirm(matId){
 // [INSPECTION COMPOSANTS — LECTURE SEULE] Liste chaque composant et ses lignes d'ingrédients,
 // avec le materialId pointé + le nom de la matière (ou « id orphelin » si la matière n'existe plus).
 // Sert à détecter une ligne qui pointe vers une matière supprimée/recréée (id décalé).
+// [DIAGNOSTIC ASSEMBLAGE — LECTURE SEULE] Pour chaque recette qui référence des composants
+// (componentRefs), affiche : le type de chaque composant, son poids dans la recette, et l'état
+// réel de son stock (lots, qteRestante, prodStatut). Éclaire les 3 anomalies d'assemblage :
+//   (1) quantité décomptée, (2) lots NON terminés éligibles, (3) composant manquant non bloquant.
+async function diagAssemblage(){
+  const zone=document.getElementById('diagAssemblageZone');
+  if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    const recipes=await db.recipes.toArray();
+    const comps=await db.components.toArray().catch(()=>[]);
+    const compById={}; comps.forEach(c=>compById[+c.id]=c);
+    const prods=await db.productions.toArray();
+    // Recettes ayant au moins une componentRef
+    const recsAvecRefs=recipes.filter(r=>Array.isArray(r.componentRefs) && r.componentRefs.length);
+    if(!recsAvecRefs.length){ if(zone) zone.innerHTML='<p class="note">Aucune recette ne référence de composant.</p>'; return; }
+    const blocs=recsAvecRefs.map(r=>{
+      const refsHtml=(r.componentRefs||[]).map(ref=>{
+        const c=compById[+ref.componentId];
+        const nom=c?(c.nom||'?'):'⚠ composant introuvable';
+        const type=c?(c.type||'—'):'—';
+        // Lots de ce composant en stock
+        const lots=prods.filter(p=>p.composantCatalogue===true && +p.componentId===+ref.componentId);
+        const lotsHtml=lots.length ? lots.map(l=>{
+          const st=l.prodStatut||'?';
+          const stCol = st==='termine' ? '#3f7d52' : '#b3261e';
+          return `<div style="font-size:.72rem;color:#6a5a52;margin-left:8px">– lot ${esc(l.lotProduction||('#'+l.id))} : reste <b>${qty(l.qteRestante)}</b> · statut <b style="color:${stCol}">${st}</b>${st!=='termine'?' ⚠':''}</div>`;
+        }).join('') : '<div style="font-size:.72rem;color:#9a8a82;margin-left:8px">– aucun lot en stock</div>';
+        const dispoTotal=lots.filter(l=>round3(+l.qteRestante)>0).reduce((s,l)=>s+round3(+l.qteRestante),0);
+        const dispoTermine=lots.filter(l=>l.prodStatut==='termine' && round3(+l.qteRestante)>0).reduce((s,l)=>s+round3(+l.qteRestante),0);
+        return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:2px">
+          <div style="font-size:.8rem"><b>${esc(nom)}</b> <span style="color:#9a8a82">· type <b>${esc(type)}</b> · poids ref <b>${ref.poids!=null?ref.poids:'—'}</b></span></div>
+          <div style="font-size:.72rem;color:#6a5a52">dispo total : <b>${qty(dispoTotal)}</b> · dispo <u>terminé seulement</u> : <b>${qty(dispoTermine)}</b></div>
+          ${lotsHtml}
+        </div>`;
+      }).join('');
+      return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px;background:#f5f0e8">
+        <b>🍪 ${esc(r.produitNom||('recette #'+r.id))} ${r.grandFormat?'<span style="color:#8a6d3b">(grand format)</span>':''}</b>
+        <div style="font-size:.72rem;color:#9a8a82">${(r.componentRefs||[]).length} composant(s) référencé(s)</div>
+        ${refsHtml}
+      </div>`;
+    }).join('');
+    if(zone) zone.innerHTML=blocs+
+      `<div class="banner" style="background:#eef3f8;border-color:#bcd0e0;margin-top:8px"><div>`+
+      `<b>Lecture</b> : « poids ref » = quantité demandée par la recette (à vérifier vs 1 dose/macaron). `+
+      `« dispo terminé seulement » = ce qui devrait être assemblable (un lot non <b>termine</b> ne doit pas compter). `+
+      `Si une recette montre un crémeux SANS lot, l'assemblage aurait dû être bloqué.`+
+      `</div></div>`;
+  }catch(e){ console.error('diagAssemblage',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
+}
 async function diagInspectionComposants(){
   const zone=document.getElementById('diagInspectionCompZone');
   if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
@@ -18223,6 +18272,10 @@ async function renderIntegrity(){
       <div style="margin-top:10px">
         <p class="note">🧩 <b>Inspection des composants</b> (lecture seule) : montre vers quelle matière pointe chaque ligne d'ingrédient d'un composant (ex. Chantache), et repère les « id orphelins ».</p>
         <div id="diagInspectionCompZone"><button class="btn ghost sm" onclick="diagInspectionComposants()">Inspecter les composants</button></div>
+      </div>
+      <div style="margin-top:10px">
+        <p class="note">🔗 <b>Diagnostic assemblage</b> (lecture seule) : pour chaque recette qui utilise des composants (chantache, crémeux…), montre leur type, le poids demandé, et l'état réel des lots en stock (terminé ou non). Éclaire les 3 anomalies : quantité décomptée, lot non terminé assemblable, composant manquant.</p>
+        <div id="diagAssemblageZone"><button class="btn ghost sm" onclick="diagAssemblage()">Diagnostiquer l'assemblage</button></div>
       </div>
     </div>
     <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
