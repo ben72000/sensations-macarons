@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v500';
+const APP_VERSION = 'v501';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5598,11 +5598,34 @@ function prodUpdateEcartHint(){
   hint.textContent = `Écart : ${e>0?'+':''}${qty(e)} pièce(s) (${e>0?'+':''}${Math.round(pct)}%) — ${e<0?'perte / casse':'surplus de rendement'}. Sans impact sur les matières.`;
 }
 async function saveProd(){
-  // [ÉTAPE 2a] Le mode « garniture séparée » n'est pas encore productible (arrive à l'étape 2b).
-  // On bloque proprement pour ne rien casser tant que la mécanique n'est pas en place.
+  // [ÉTAPE 2b] Mode « garniture séparée » : production réelle d'un composant catalogue
+  // (ex. chantilly). Décompte les matières et crée un sous-lot de stock (en doses).
   const _mode = document.getElementById('f_mode')?.value || 'complet';
   if(_mode==='garniture'){
-    toast('La production de garniture séparée arrive très bientôt (en cours de mise en place).');
+    const cid=+val('f_garnitureSel');
+    if(!cid){ toast('Choisis une garniture à produire'); return; }
+    const nbTh=+val('f_qte');
+    if(!nbTh||nbTh<=0){ toast('Quantité théorique invalide'); return; }
+    let nbRe=val('f_qtereel');
+    nbRe = nbRe==='' ? nbTh : +nbRe;            // défaut = théorique
+    if(nbRe<0||isNaN(nbRe)){ toast('Quantité réelle invalide'); return; }
+    const dateG=val('f_date')||today();
+    // N° de lot : base saisie nettoyée + suffixe -GA (la garniture est typée ganache à l'assemblage).
+    const baseG=lotBaseSansSuffixe(val('f_lot'));
+    let cleanG=baseG.toUpperCase().replace(/\s+/g,'');
+    if(!cleanG){ cleanG=lotDateJJMMAA(dateG)+'GAR'; }
+    const lotG=cleanG+'-GA';
+    try{
+      await produireComposant(cid, nbTh, nbRe, dateG, lotG, {lotBase:cleanG});
+      closeModal();
+      renderProductions();
+      const comp=await db.components.get(cid).catch(()=>null);
+      const nom=comp?comp.nom:'Garniture';
+      toast(`${nom} produite ✓ (${qty(nbRe)} dose(s) en stock)`);
+    }catch(err){
+      console.error('produireComposant', err);
+      toast(err.message || 'Erreur production garniture');
+    }
     return;
   }
   const recipeId=+val('f_rec');
@@ -5915,6 +5938,83 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
         }
       }
       // Mémorise la contrainte de DLC d'ouverture sur la production (sert au plafonnement + ordonnancement).
+      if(dlcOuvertureMin){ await db.productions.update(prodId, {dlcContrainteOuverture: dlcOuvertureMin}); }
+      return prodId;
+    });
+}
+
+// [ÉTAPE 2b] PRODUCTION D'UN COMPOSANT CATALOGUE (ex : chantilly vanille-coco).
+// Identique à enregistrerProduction mais lit les ingrédients via componentId, et crée un
+// sous-lot de stock typé 'ganache' (pour qu'il soit reconnu et décompté à l'assemblage en étape 3).
+// Le stock est compté en DOSES (1 dose = 1 macaron), comme une ganache.
+async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, lotProduction, meta){
+  meta = meta || {};
+  return db.transaction('rw',
+    db.components, db.recipeItems, db.materials, db.materialLots, db.productions, db.prodConsumption,
+    async () => {
+      const comp = await db.components.get(componentId);
+      if(!comp) throw new Error('Composant introuvable');
+      const items = await db.recipeItems.where('componentId').equals(componentId).toArray();
+      const rendement = +comp.rendement || 1;
+      const facteur = (rendement>0) ? (nbDosesTh / rendement) : 0;
+      // Vérif préalable : stock suffisant pour toutes les matières ?
+      for(const item of items){
+        const lots = await db.materialLots.where('materialId').equals(item.materialId).and(l=>+l.qteRestante>0).toArray();
+        const dispo = lots.reduce((s,l)=>s+(+l.qteRestante),0);
+        const besoin = (+item.qteParBatch||0) * facteur;
+        if(dispo + 1e-9 < besoin){
+          const mat = await db.materials.get(item.materialId);
+          throw new Error(`Stock insuffisant : ${mat?mat.nom:'?'} (besoin ${besoin.toFixed(3)}, dispo ${dispo.toFixed(3)})`);
+        }
+      }
+      const nowIso = new Date().toISOString();
+      const ecart = nbDosesReel - nbDosesTh;
+      // Création du sous-lot : composant 'ganache' (brique d'assemblage), marqué issu d'un composant catalogue.
+      const prodId = await db.productions.add({
+        recipeId: null,
+        componentId: componentId,            // origine : composant catalogue
+        composantCatalogue: true,            // drapeau : production issue du catalogue de composants
+        garnitureNom: comp.nom || '',        // nom lisible (ex : « Chantilly vanille-coco »)
+        lotProduction, date: dateProd,
+        composant: 'ganache',                // reconnu comme garniture à l'assemblage
+        garnitureType: 'ganache',
+        lotBase: meta.lotBase || lotBaseSansSuffixe(lotProduction||''),
+        qteTheorique: nbDosesTh, qteReelle: nbDosesReel, ecart,
+        qteProduite: nbDosesReel, qteRestante: nbDosesReel,
+        dlcProduit: '', dlcAuto: true,
+        prodStatut: 'demarre', prodDebutTs: nowIso, prodTermineTs: '',
+        prodTimestamp: nowIso, emplacement: '', emplacementMaj: nowIso,
+        venuDuCongelateur: false, histEmplacement: []
+      });
+      // Consommation FIFO des matières (même logique que enregistrerProduction).
+      let dlcOuvertureMin = '';
+      for(const item of items){
+        let besoin = round3((+item.qteParBatch||0) * facteur);
+        if(besoin<=0) continue;
+        const mat = await db.materials.get(item.materialId);
+        const peri = mat && mat.perissableOuvert;
+        const nbJoursOuv = peri ? (Math.max(1,+mat.joursApresOuverture||7)) : 0;
+        const lots = await db.materialLots.where('materialId').equals(item.materialId).and(l=>+l.qteRestante>0).toArray();
+        lots.sort(lotFifoCompare);
+        for(const lot of lots){
+          if(besoin<=1e-9) break;
+          const pris = round3(Math.min(besoin, +lot.qteRestante));
+          const patch = {qteRestante: subQty(lot.qteRestante, pris)};
+          if(peri){
+            if(!lot.ouvertLe){ patch.ouvertLe = nowIso;
+              const d = new Date(nowIso); d.setDate(d.getDate()+nbJoursOuv);
+              patch.dlcOuverture = d.toISOString().slice(0,10);
+            }
+            const dOuv = lot.dlcOuverture || patch.dlcOuverture;
+            if(dOuv && (!dlcOuvertureMin || dOuv<dlcOuvertureMin)) dlcOuvertureMin = dOuv;
+          }
+          await db.materialLots.update(lot.id, patch);
+          await db.prodConsumption.add({productionId:prodId, materialLotId:lot.id, qteConsommee:pris,
+            snapMaterialId:item.materialId, snapLotFournisseur:lot.lotFournisseur||'',
+            snapSupplierId:lot.supplierId||0, snapDlc:lot.dlc||''});
+          besoin = subQty(besoin, pris);
+        }
+      }
       if(dlcOuvertureMin){ await db.productions.update(prodId, {dlcContrainteOuverture: dlcOuvertureMin}); }
       return prodId;
     });
