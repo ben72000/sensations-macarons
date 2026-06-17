@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v481';
+const APP_VERSION = 'v484';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3655,6 +3655,10 @@ async function docConvertToOrder(id){
   const o={
     clientId:d.clientId, date:d.date||today,
     heureLivraison:d.heureLivraison||'', lieuLivraison:d.lieuLivraison||'',
+    // Livraison (transport) + sacs : repris du devis pour ne pas les ressaisir.
+    distanceKm:d.distanceKm||0, prixCarburant:d.prixCarburant||0,
+    tempsLivraisonMin:d.tempsLivraisonMin||0, consoVehicule:(d.consoVehicule!=null?d.consoVehicule:null),
+    fraisLivraison:d.fraisLivraison||0, sacMatId:d.sacMatId||0, sacNb:d.sacNb||0,
     lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0,
     perso:false, persoMacarons:0, montant:d.montant||0,
     paiements:[{date:today, montant:money2(acompte), moyen:'Acompte'}],
@@ -7997,6 +8001,9 @@ async function cmdForm(id, opts){
     const dv = await db.documents.get(_cmdDevisId);
     o = dv ? {clientId:dv.clientId, date:dv.date, lignes:dv.lignes||[], remiseGlobale:dv.remiseGlobale||0,
               heureLivraison:dv.heureLivraison||'', lieuLivraison:dv.lieuLivraison||'', notes:dv.notes||'',
+              distanceKm:dv.distanceKm||0, prixCarburant:dv.prixCarburant||0,
+              tempsLivraisonMin:dv.tempsLivraisonMin||0, consoVehicule:(dv.consoVehicule!=null?dv.consoVehicule:null),
+              fraisLivraison:dv.fraisLivraison||0, sacMatId:dv.sacMatId||0, sacNb:dv.sacNb||0,
               statut:'À préparer', paiement:'En attente', perso:false}
             : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
   } else {
@@ -8951,6 +8958,12 @@ async function saveCmd(id){
       lignes:o.lignes,                      // lignes détaillées (coffrets, pyramides, parfums…)
       remiseGlobale:o.remiseGlobale,
       heureLivraison:o.heureLivraison, lieuLivraison:o.lieuLivraison,
+      // Livraison (transport) : conservés pour les retrouver à la réouverture et au calcul de coût.
+      distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
+      tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
+      fraisLivraison:o.fraisLivraison||0,
+      // Sacs / emballages choisis sur la commande.
+      sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
       notes:o.notes,
       acompte: 0,                           // acompte reçu (déclenche la conversion une fois > 0)
       validiteJours:30, expiration:exp.toISOString().slice(0,10),
