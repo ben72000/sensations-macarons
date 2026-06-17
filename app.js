@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v511';
+const APP_VERSION = 'v515';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2180,7 +2180,7 @@ async function renderMaterials(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Matières & emballages</h1><p id="matCount">${mats.length} référence(s)</p></div>
-     <div class="flex" style="flex-wrap:wrap;gap:8px"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Référence</button><button class="btn ghost" onclick="genShoppingList()">🛒 Liste de courses</button></div></div>
+     <div class="flex" style="flex-wrap:wrap;gap:8px"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Référence</button><button class="btn ghost" onclick="genShoppingList()">🛒 Liste de courses</button><button class="btn ghost" onclick="inventaireForm()">📋 Inventaire</button></div></div>
    <div class="panel"><h2>Inventaire (stock = somme des lots actifs)</h2>
      <input class="search" id="matSearch" style="width:100%;margin-bottom:12px" placeholder="Nom de référence, unité, état…" value="${esc(matSearch)}" oninput="matFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
    ${mats.length?`
@@ -2395,6 +2395,138 @@ async function genShoppingList(){
   // 4) Modale d'aperçu + bouton imprimer.
   const aCommander = lignes.filter(l=>l.low).length;
   openShoppingListModal(lignes, aCommander);
+}
+
+/* ============================================================
+   INVENTAIRE PHYSIQUE DES MATIÈRES (point H)
+   Compter à la main → saisir le réel → l'app corrige l'écart.
+   Réutilise le moteur de recherche (searchRank) et la mécanique
+   d'ajustement éprouvée : surplus → lot de correction (traçable),
+   manque → décrément FIFO. Aucun historique conservé.
+   ============================================================ */
+let _invCache = null;      // [{mat, total, unite, _prim, _blob, _digits}]
+let _invSearch = '';
+let _invSaisies = {};      // materialId -> valeur réelle saisie (string) — persistée pendant la session de saisie
+
+// Unité d'affichage : denrées en kg comptées en g (cohérent avec le reste de l'app).
+function _invDispOf(mat){
+  const u=(mat.unite||'').toLowerCase();
+  return (mat.categorie!=='emballage' && u==='kg') ? {u:'g', f:1000} : {u:mat.unite||'', f:1};
+}
+
+async function inventaireForm(){
+  const [mats, lots] = await Promise.all([db.materials.toArray(), db.materialLots.toArray()]);
+  // Stock théorique par matière = somme des qteRestante des lots.
+  const stockBy={};
+  lots.forEach(l=>{ const id=l.materialId; stockBy[id]=(stockBy[id]||0)+(+l.qteRestante||0); });
+  // On inventorie les DENRÉES (matières premières), pas les emballages.
+  const denrees = mats.filter(m=>(m.categorie||'denree')!=='emballage');
+  _invCache = denrees.map(mat=>{
+    const total = stockBy[mat.id]||0;
+    const prim = normTxt(mat.nom||'');
+    const blob = normTxt([mat.nom, mat.marque, mat.unite, mat.ref].filter(Boolean).join(' '));
+    return {mat, total, _prim:prim, _blob:blob, _digits:''};
+  });
+  _invSearch=''; _invSaisies={};
+  openModal(`<h3>📋 Inventaire des matières</h3>
+    <p class="note" style="margin-bottom:8px">Compte ton stock réel et saisis-le en face de chaque matière. À l'enregistrement, l'app corrige l'écart : un surplus crée un lot de correction, un manque est retiré au plus proche de la péremption (FIFO). Laisse vide les matières non comptées.</p>
+    <input class="search" id="invSearch" style="width:100%;margin-bottom:10px" placeholder="Filtrer : nom, marque, unité…" value="" oninput="inventaireFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
+    <div class="table-wrap" style="max-height:48vh;overflow:auto"><table><thead><tr><th>Matière</th><th style="text-align:right">Théorique</th><th style="text-align:right">Réel compté</th></tr></thead><tbody id="invBody"></tbody></table></div>
+    <div id="invEmpty" class="empty" style="display:none">Aucune matière ne correspond.</div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="inventaireApply()">Enregistrer les corrections</button>
+    </div>`);
+  inventaireFilter('');
+}
+
+// Une ligne de saisie. La valeur saisie est mémorisée dans _invSaisies pour survivre au re-render du filtre.
+function _invRow(it){
+  const d=_invDispOf(it.mat);
+  const theo = round3((+it.total||0)*d.f);
+  const saisi = (it.mat.id in _invSaisies) ? _invSaisies[it.mat.id] : '';
+  return `<tr>
+    <td>${esc(it.mat.nom||'')}</td>
+    <td style="text-align:right"><b>${qty(theo)}</b> <span style="color:#9a8a82;font-size:.8rem">${esc(d.u)}</span></td>
+    <td style="text-align:right"><input type="number" inputmode="decimal" step="any" min="0" style="width:84px;text-align:right" value="${esc(String(saisi))}" oninput="_invSet(${it.mat.id}, this.value)" placeholder="—"> <span style="color:#9a8a82;font-size:.8rem">${esc(d.u)}</span></td>
+  </tr>`;
+}
+
+function _invSet(matId, v){ _invSaisies[matId] = v; }
+
+function inventaireFilter(q){
+  _invSearch=q||'';
+  if(!_invCache) return;
+  searchRenderBody('invBody', null, 'invEmpty', _invCache, q, _invRow, 3, 'matière(s)');
+}
+
+async function inventaireApply(){
+  if(!_invCache){ closeModal(); return; }
+  // Construire la liste des corrections : seulement les matières où un réel a été saisi
+  // (non vide, numérique) ET différent du théorique. La saisie est en unité d'AFFICHAGE (g
+  // pour les kg) → on reconvertit en unité de stockage (kg) avant correction.
+  const corrections=[];
+  for(const it of _invCache){
+    const raw = _invSaisies[it.mat.id];
+    if(raw===undefined || String(raw).trim()==='') continue;
+    const d=_invDispOf(it.mat);
+    const reelAffiche = +String(raw).replace(',','.');
+    if(isNaN(reelAffiche) || reelAffiche<0) continue;
+    const reelStock = round3(reelAffiche / d.f);       // retour en unité de stockage
+    const theoStock = round3(+it.total||0);
+    const delta = round3(reelStock - theoStock);
+    if(Math.abs(delta) < 1e-6) continue;               // pas d'écart → rien à faire
+    corrections.push({mat:it.mat, theoStock, reelStock, delta, dispU:d.u, f:d.f});
+  }
+  if(!corrections.length){ toast('Aucun écart à corriger'); closeModal(); return; }
+  // Récapitulatif AVANT d'écrire (validation explicite).
+  const lignes = corrections.map(c=>{
+    const sens = c.delta>0 ? '➕' : '➖';
+    const theoAff=round3(c.theoStock*c.f), reelAff=round3(c.reelStock*c.f), deltaAff=round3(Math.abs(c.delta)*c.f);
+    return `<div class="sum-box" style="font-size:.86rem"><span>${esc(c.mat.nom)} <span style="color:#9a8a82">${qty(theoAff)} → ${qty(reelAff)} ${esc(c.dispU)}</span></span><b style="color:${c.delta>0?'#2e7d32':'#b3261e'}">${sens} ${qty(deltaAff)} ${esc(c.dispU)}</b></div>`;
+  }).join('');
+  openModal(`<h3>📋 Confirmer l'inventaire</h3>
+    <p class="note" style="margin-bottom:8px"><b>${corrections.length} matière(s)</b> avec un écart seront corrigées :</p>
+    <div style="max-height:46vh;overflow:auto">${lignes}</div>
+    <p class="note" style="margin-top:8px">Les surplus créent un lot de correction (prix 0, traçable) ; les manques sont retirés en FIFO. Cette action modifie ton stock.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick='inventaireConfirm(${JSON.stringify(corrections.map(c=>({id:c.mat.id, nom:c.mat.nom, delta:c.delta})))})'>Confirmer la correction</button>
+    </div>`);
+}
+
+async function inventaireConfirm(list){
+  if(!Array.isArray(list) || !list.length){ closeModal(); return; }
+  try{
+    await db.transaction('rw', db.materialLots, async()=>{
+      for(const c of list){
+        const delta = round3(+c.delta||0);
+        if(Math.abs(delta) < 1e-6) continue;
+        if(delta>0){
+          // surplus → lot de correction traçable, NON CHIFFRÉ (marqueur inventaire:true)
+          await db.materialLots.add({materialId:c.id, supplierId:0, lotFournisseur:'INV-'+today().replace(/-/g,''),
+            qteInitiale:delta, qteRestante:delta, dateReception:today(), dlc:'', prix:0, prixUnitaire:0,
+            inventaire:true, note:'Inventaire'});
+        } else {
+          // manque → décrément FIFO sur les lots actifs (au plus proche de la DLC d'abord)
+          let reste = -delta;
+          const lots = (await db.materialLots.where('materialId').equals(+c.id).and(l=>+l.qteRestante>0).toArray())
+            .sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999'));
+          for(const l of lots){
+            if(reste<=1e-9) break;
+            const pris = round3(Math.min(reste, +l.qteRestante));
+            if(pris>0){ await db.materialLots.update(l.id, {qteRestante: subQty(l.qteRestante, pris)}); reste = subQty(reste, pris); }
+          }
+        }
+      }
+    });
+    closeModal();
+    toast(`Inventaire enregistré ✓ (${list.length} correction(s))`);
+    if(typeof renderMaterials==='function') renderMaterials();
+  }catch(e){
+    console.error('inventaireConfirm', e);
+    toast('Erreur pendant la correction d\'inventaire');
+  }
 }
 function _shopRow(l){
   const manqueTxt = l.manque>0 ? `${qty(l.manque)} ${esc(l.unite)}` : '—';
@@ -3171,6 +3303,20 @@ async function saveRec(id){
   closeModal(); renderRecipes(); toast('Recette enregistrée ✓');
 }
 async function delRec(id){
+  // [POINT D — préventif] On ne supprime pas une recette qui a encore des productions EN STOCK :
+  // sinon ces lots deviennent « (recette supprimée) » et perdent leur nom/coût.
+  const prodsLiees = await db.productions.where('recipeId').equals(id).toArray().catch(()=>[]);
+  const enStock = prodsLiees.filter(p=>round3(+p.qteRestante||0)>0);
+  if(enStock.length){
+    const rec = await db.recipes.get(id).catch(()=>null);
+    const nom = rec ? rec.produitNom : 'cette recette';
+    const apercu = enStock.slice(0,5).map(p=>esc(p.lotProduction||('#'+p.id))).join(', ');
+    openModal(`<h3>⛔ Suppression impossible</h3>
+      <div class="banner" style="background:#f6e3e0;border-color:#b3261e;color:#7a2a20">⚠ <div><b>${esc(nom)}</b> a encore <b>${enStock.length} production(s) en stock</b> : ${apercu}${enStock.length>5?` … +${enStock.length-5}`:''}.<br>
+      Écoule ou supprime d'abord ces lots (dans Productions) avant de supprimer la recette — sinon ils deviendraient des lots « recette supprimée » sans nom ni coût.</div></div>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Compris</button></div>`);
+    return;
+  }
   if(!confirm('Supprimer cette recette ?'))return;
   await db.transaction('rw',db.recipes,db.recipeItems,async()=>{
     await db.recipeItems.where('recipeId').equals(id).delete();
@@ -3190,10 +3336,13 @@ let _prodFamCount={};   // compteur de sous-lots par batch (rempli par renderPro
 // ne pas proposer deux fois la même ganache/coque.
 function assemblySuggestions(prods, recName){
   recName = recName || (id=>String(id));
-  const coques = prods.filter(p=>prodComposant(p)==='coques' && !p.degDeclasse && round3(+p.qteRestante)>0)
+  // [POINT G] Une production EN COURS (statut 'demarre') ne doit pas apparaître dans les
+  // suggestions d'assemblage : on ne peut assembler qu'à partir de sous-lots TERMINÉS.
+  const _fini = p => (p.prodStatut||'termine')==='termine';
+  const coques = prods.filter(p=>prodComposant(p)==='coques' && _fini(p) && !p.degDeclasse && round3(+p.qteRestante)>0)
     .map(p=>({p, mac: Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON)}))
     .filter(x=>x.mac>0);
-  let ganaches = prods.filter(p=>prodComposant(p)==='ganache' && round3(+p.qteRestante)>0)
+  let ganaches = prods.filter(p=>prodComposant(p)==='ganache' && _fini(p) && round3(+p.qteRestante)>0)
     .map(p=>({p, mac: round3(+p.qteRestante), used:0}));
   if(!coques.length || !ganaches.length) return [];
   const out=[];
@@ -3294,6 +3443,8 @@ function orphanComponents(prods, recName){
   (prods||[]).forEach(p=>{
     const comp = prodComposant(p);
     if(comp!=='coques' && comp!=='ganache') return;
+    // [POINT G] Une production en cours (non terminée) n'est pas encore un « orphelin » à assembler.
+    if((p.prodStatut||'termine')!=='termine') return;
     if(comp==='coques' && p.degDeclasse) return;  // coques cassées déclassées : gérées par les suggestions dégustation, pas ici
     if(round3(+p.qteRestante)<=0) return;
     const rid = p.recipeId;
@@ -4070,9 +4221,14 @@ function _prodbatRow(row){
   // Bouton Distribué : décrémente un lot dégustation au fur et à mesure (offert).
   const degBtn = comp==='degustation' && round3(+p.qteRestante)>0
     ? `<button class="qa edit" onclick="prodDegDistribue(${p.id})" title="Décompter des macarons distribués en dégustation">🥄 Distribué</button>` : '';
-  // Production « à la volée » non reliée → bouton pour la rattacher à une recette.
-  const linkBtn = p.libre
-    ? `<button class="qa" style="background:#f5c45e;color:#5a3a10" onclick="prodLinkForm(${p.id})" title="Relier à une recette pour activer les coûts">🔗 Relier</button>` : '';
+  // Production « à la volée » non reliée OU dont la recette a été supprimée → bouton pour la (re)rattacher.
+  // [POINT D] Recette supprimée = recipeId renseigné mais introuvable dans le cache des recettes
+  // (et ce n'est ni une production libre, ni un composant catalogue type chantache).
+  const _recCache = Array.isArray(window._allRecipesCache) ? window._allRecipesCache : [];
+  const _recetteSupprimee = !p.libre && !p.composantCatalogue && p.recipeId!=null
+                            && !_recCache.some(r=>+r.id===+p.recipeId);
+  const linkBtn = (p.libre || _recetteSupprimee)
+    ? `<button class="qa" style="background:#f5c45e;color:#5a3a10" onclick="prodLinkForm(${p.id})" title="${_recetteSupprimee?'Rattacher à la recette (recréée)':'Relier à une recette pour activer les coûts'}">🔗 ${_recetteSupprimee?'Rattacher':'Relier'}</button>` : '';
   const startTs = p.prodDebutTs || p.prodTimestamp || '';
   const prodNomLive = esc(recName(p));
   const compMot = compMeta.mot;
@@ -5933,7 +6089,7 @@ async function prodLinkForm(id){
   const opts=recipes.sort((a,b)=>(a.produitNom||'').localeCompare(b.produitNom||''))
     .map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('');
   openModal(`<h3>🔗 Relier à une recette</h3>
-    <p style="margin-bottom:8px"><b>${esc(p.produitLibre||'(sans nom)')}</b> · lot <b>${esc(p.lotProduction||'—')}</b> · ${qty(p.qteProduite||p.qteReelle||0)} pièce(s)</p>
+    <p style="margin-bottom:8px"><b>${esc(p.produitLibre || prodNomComplet(p))}</b> · lot <b>${esc(p.lotProduction||'—')}</b> · ${qty(p.qteProduite||p.qteReelle||0)} pièce(s)</p>
     <div class="field"><label>Recette</label><select id="f_linkRec">${opts}</select></div>
     <div class="field"><label>Stock des matières</label>
       <div class="opt-table">
@@ -6559,6 +6715,9 @@ async function doDelProd(id, mode){
    ============================================================ */
 // Prix unitaire d'un lot (rétro-compatible si prixUnitaire absent)
 function lotPU(l){
+  // [POINT H] Les lots de correction d'inventaire ne sont JAMAIS chiffrés : ce sont des
+  // régularisations de quantité, pas des achats. On les exclut de tout calcul de coût/prix.
+  if(l && l.inventaire===true) return 0;
   if(l.prixUnitaire!=null && !isNaN(l.prixUnitaire)) return +l.prixUnitaire;
   return (l.qteInitiale>0) ? (+l.prix||0)/l.qteInitiale : 0;
 }
