@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v494';
+const APP_VERSION = 'v496';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -705,6 +705,25 @@ const euro = n => privacyMasked() ? '••• €'
   : (money2(n)).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
 // Quantité : arrondit proprement (max 3 décimales) et supprime les zéros parasites
 const qty = n => { const v = round3(n); return v.toLocaleString('fr-FR', {maximumFractionDigits:3}); };
+// AFFICHAGE UNIFORME EN GRAMMES — sans modifier les données stockées.
+// Les denrées sont stockées en kg OU en g selon l'historique. Pour un affichage cohérent,
+// on convertit toujours vers l'unité de SAISIE lisible : une denrée en kg est montrée en g (×1000).
+// Renvoie { n: quantité convertie, u: unité d'affichage }. Les emballages restent inchangés.
+// 'mat' peut être l'objet matière complet, ou son unité (chaîne), ou son id (résolu via matUnitGlobal).
+function dispUnit(mat){
+  let unite='', cat='';
+  if(mat && typeof mat==='object'){ unite=(mat.unite||''); cat=(mat.categorie||''); }
+  else if(typeof mat==='string'){ unite=mat; }
+  else if(typeof mat==='number'){ // id -> on résout via le cache global des matières
+    const m=(window._allMatsCache||[]).find(x=>+x.id===+mat) || {};
+    unite=(m.unite||''); cat=(m.categorie||'');
+  }
+  const u=(unite||'').toLowerCase();
+  if(cat!=='emballage' && u==='kg') return {f:1000, u:'g'};
+  return {f:1, u:unite||''};
+}
+// Quantité affichée (texte) pour une matière : applique la conversion kg->g si nécessaire.
+function qtyDisp(qteStockee, mat){ const d=dispUnit(mat); return qty(round3((+qteStockee||0)*d.f)); }
 // Masque un volume de stock en mode discret (sauf suspension).
 const qtyP = n => privacyMasked() ? '•••' : qty(n);
 // Floute un NOM (client) en mode discret : le texte reste présent (recherche/tri)
@@ -1834,7 +1853,7 @@ async function renderDash(){
        ${low.length?`<div style="display:flex;flex-direction:column;gap:7px">${low.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fdf3ef;border:1px solid #f0cfc9;border-left:3px solid #b3261e;border-radius:11px">
          <span style="flex:none;font-size:1rem">⚠️</span>
          <span style="flex:1;font-weight:600;color:var(--bordeaux);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.nom)}</span>
-         <span style="flex:none;text-align:right"><b style="color:#b3261e">${qty(s.total)} ${esc(s.unite||'')}</b><br><span style="color:#9a8a82;font-size:.72rem">seuil ${qty(s.seuil)}</span></span>
+         <span style="flex:none;text-align:right"><b style="color:#b3261e">${qtyDisp(s.total, {unite:s.unite, categorie:'denree'})} ${esc(dispUnit({unite:s.unite, categorie:'denree'}).u)}</b><br><span style="color:#9a8a82;font-size:.72rem">seuil ${qty(s.seuil)}</span></span>
        </div>`).join('')}</div>`:`<div class="empty">Tout est au-dessus du seuil ✓</div>`}
      </div>
      <div class="panel"><h2>Prochaines échéances</h2>
@@ -2200,14 +2219,14 @@ async function renderMaterials(){
        </div>
        ${b.items.map(it=>`<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:2px 0;border-top:1px solid #f0e8da">
          <span>${esc(matName(it.materialId))} <span style="color:#9a8a82">· lot ${esc(it.lotFournisseur||'—')}</span></span>
-         <span class="tag out">−${qty(it.qte)} ${esc(matUnit(it.materialId))}</span></div>`).join('')}
+         <span class="tag out">−${qtyDisp(it.qte, it.materialId)} ${esc(dispUnit(it.materialId).u)}</span></div>`).join('')}
      </div>`;
    }), 1, {moreLabel:n=>`Voir les ${n} batch(s) précédent(s)`, lessLabel:'Réduire'}):`<div class="empty">Aucune consommation rattachée à un batch.</div>`}
    </div></div>
    </div>
    ${consumablesList.length?`<div class="panel"><h2>Consommables <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— non rattachés à un batch (papier, film, emballages…)</span></h2>
      <div class="table-wrap"><table><thead><tr><th>Consommable</th><th>Total consommé</th></tr></thead><tbody>
-     ${consumablesList.map(c=>`<tr><td><b>${esc(matName(c.id))}</b></td><td><span class="tag out">−${qty(c.total)} ${esc(matUnit(c.id))}</span></td></tr>`).join('')}
+     ${consumablesList.map(c=>`<tr><td><b>${esc(matName(c.id))}</b></td><td><span class="tag out">−${qtyDisp(c.total, c.id)} ${esc(dispUnit(c.id).u)}</span></td></tr>`).join('')}
      </tbody></table></div></div>`:''}
    <div class="panel"><div class="collapse-sec">
    <button type="button" class="collapse-head" onclick="toggleMatSec('matPkg')">
@@ -2258,9 +2277,9 @@ function _matRow(row){
       <span class="mat-cat-pill" style="background:${isSac?'#caa23b':(emb?'#7a6a9a':'#6aa3a0')}">${isSac?'🛍️':(emb?'📦':'🥚')}</span>
     </div>
     <div class="mat-card-grid">
-      <div class="mat-stock">Stock : <b>${qty(row.total)} ${esc(mat.unite||'')}</b></div>
+      <div class="mat-stock">Stock : <b>${qtyDisp(row.total, mat)} ${esc(dispUnit(mat).u)}</b></div>
       <div class="mat-state"><span class="tag ${row.low?'low':'ok'}">${row.low?'À commander':'OK'}</span></div>
-      <div class="mat-sub">Seuil : ${qty(mat.seuil||0)} ${esc(mat.unite||'')}</div>
+      <div class="mat-sub">Seuil : ${qtyDisp(mat.seuil||0, mat)} ${esc(dispUnit(mat).u)}</div>
       <div class="mat-sub mat-lots">Lots : ${row.nbLots}</div>
       <div class="mat-sub mat-dlc">DLC la + proche : ${dlcTxt}</div>
     </div>
@@ -2282,7 +2301,7 @@ function _lotRow(row){
   return `<tr>
     <td>${fmtDate(l.dateReception)}</td><td>${esc(row.matName)}${prixBadge}</td>
     <td>${idtxt}</td><td>${esc(row.supName)}</td>
-    <td>${qty(l.qteRestante)} / ${qty(l.qteInitiale)}</td><td>${fmtDate(l.dlc)}</td>
+    <td>${qtyDisp(l.qteRestante, l.materialId)} / ${qtyDisp(l.qteInitiale, l.materialId)} ${esc(dispUnit(l.materialId).u)}</td><td>${fmtDate(l.dlc)}</td>
     <td><div class="qa-row">${prixBtn}<button class="qa del" onclick="delLot(${l.id})" title="Supprimer le lot">🗑 Suppr.</button></div></td></tr>`;
 }
 function matSetCat(c){ _matCatFilter=c; renderMaterials(); }
@@ -2635,9 +2654,18 @@ function majPrixUnit(){
     dlcWrap.style.display = isEmb ? 'none' : '';
     if(isEmb){ const d=document.getElementById('f_dlc'); if(d) d.value=''; }
   }
-  // Prix unitaire indicatif : affiche dans l'unite de saisie (g/kg pour une denree, native pour un emballage).
+  // Prix unitaire indicatif : TOUJOURS affiché au kg pour une denrée (référence constante et comparable),
+  // quelle que soit l'unité de saisie. Pour un emballage : prix à l'unité native.
   const uSaisie = isEmb ? unite : (uSel ? uSel.value : 'g');
-  if(q>0 && p>0){ el.textContent = euro(p/q)+' / '+uSaisie; }
+  if(q>0 && p>0){
+    if(isEmb){
+      el.textContent = euro(p/q)+' / '+uSaisie;
+    } else {
+      // quantité ramenée en kg : si saisie en g -> /1000 ; si saisie en kg -> inchangée
+      const qKg = (uSaisie==='g') ? (q/1000) : q;
+      el.textContent = qKg>0 ? (euro(p/qKg)+' / kg') : '\u2014';
+    }
+  }
   else { el.textContent='\u2014'; }
 }
 let _pendingLot = null;   // données du lot en attente de confirmation (prix 0)
@@ -6325,7 +6353,7 @@ async function renderDlc(){
         ${echeance}
       </div>
       <div class="dlc-card-info">
-        <span>📦 ${qty(l.qteRestante)} ${esc(matUnit(l.materialId))} restant</span>
+        <span>📦 ${qtyDisp(l.qteRestante, l.materialId)} ${esc(dispUnit(l.materialId).u)} restant</span>
         <span>🏷 ${esc(l.lotFournisseur||'—')}</span>
         <span>⚑ ${esc(supName(l.supplierId))}</span>
         <span>📅 DLC ${fmtDate(l.dlc)}</span>
@@ -6334,7 +6362,7 @@ async function renderDlc(){
   };
   const _ligneOld = l => `<tr>
      <td><b>${esc(matName(l.materialId))}</b></td>
-     <td>${qty(l.qteRestante)} ${esc(matUnit(l.materialId))}</td>
+     <td>${qtyDisp(l.qteRestante, l.materialId)} ${esc(dispUnit(l.materialId).u)}</td>
      <td>${esc(l.lotFournisseur||'—')}</td>
      <td>${esc(supName(l.supplierId))}</td>
      <td>${fmtDate(l.dlc)}</td>
@@ -6357,7 +6385,7 @@ async function renderDlc(){
      <div class="dlc-list">${sansDlc.map(l=>`<div class="dlc-card">
        <div class="dlc-card-head"><span class="dlc-nom">${esc(matName(l.materialId))}</span></div>
        <div class="dlc-card-info">
-         <span>📦 ${qty(l.qteRestante)} ${esc(matUnit(l.materialId))} restant</span>
+         <span>📦 ${qtyDisp(l.qteRestante, l.materialId)} ${esc(dispUnit(l.materialId).u)} restant</span>
          <span>🏷 ${esc(l.lotFournisseur||'—')}</span>
          <span>📅 reçu ${fmtDate(l.dateReception)}</span>
        </div>
@@ -12714,7 +12742,7 @@ async function parfumDetail(recipeId){
   const matUnit=id=>(mats.find(m=>m.id===id)||{}).unite||'';
 
   const detailRows=c.detail.filter(d=>d.cout>0).sort((a,b)=>b.cout-a.cout).map(d=>`<tr>
-     <td>${esc(matName(d.materialId))}</td><td>${qty(d.qteParBatch)} ${esc(matUnit(d.materialId))}</td>
+     <td>${esc(matName(d.materialId))}</td><td>${qtyDisp(d.qteParBatch, d.materialId)} ${esc(dispUnit(d.materialId).u)}</td>
      <td>${euro(d.pu)}/${esc(matUnit(d.materialId))}</td><td>${euro(money2(d.cout))}</td></tr>`).join('');
 
   // valeur de référence pour la simulation : prix de vente moyen constaté, sinon prix unitaire global
