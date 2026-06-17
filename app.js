@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v491';
+const APP_VERSION = 'v492';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1002,6 +1002,10 @@ function prodOpenOverdue(p){
 }
 // esc() : voir utils.js
 function val(id){ const el = document.getElementById(id); return el ? (el.value||'').trim() : ''; }
+// Lecture NUMÉRIQUE d'un champ, tolérante au séparateur décimal français (virgule).
+// Sur iPhone, le pavé peut produire « 243,5 » : `+"243,5"` donne NaN (→ 0 silencieux et stock vidé).
+// numVal() remplace la virgule par un point avant conversion. Retourne 0 si vide/illisible.
+function numVal(id){ const s=val(id).replace(',', '.'); const n=parseFloat(s); return isFinite(n)?n:0; }
 // fmtDate() / daysTo() : voir utils.js
 
 // --------- Graphique linéaire SVG (sans dépendance) ---------
@@ -2605,7 +2609,7 @@ async function lotForm(_id, presetMat){
   majPrixUnit();
 }
 function majPrixUnit(){
-  const q=+val('f_qte'), p=+val('f_prix');
+  const q=numVal('f_qte'), p=numVal('f_prix');
   const el=document.getElementById('f_pu'); if(!el)return;
   const sel=document.getElementById('f_mat');
   const opt = sel && sel.options[sel.selectedIndex];
@@ -2623,9 +2627,9 @@ function majPrixUnit(){
 }
 let _pendingLot = null;   // données du lot en attente de confirmation (prix 0)
 async function saveLot(){
-  const qteSaisie=round3(+val('f_qte'));
+  const qteSaisie=round3(numVal('f_qte'));
   if(!qteSaisie||qteSaisie<=0){toast('Quantité invalide');return;}
-  const prix=money2(+val('f_prix')||0);
+  const prix=money2(numVal('f_prix'));
   // Conversion d'unité : les denrées (unité kg) sont SAISIES en grammes mais STOCKÉES en kg
   // (cohérent avec les recettes). Les emballages restent à l'unité native. On divise donc par
   // 1000 pour une denrée en kg. Sans ça, un lot de 760 g serait stocké comme 760 kg (bug).
