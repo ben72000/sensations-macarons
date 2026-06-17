@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v524';
+const APP_VERSION = 'v525';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4161,7 +4161,7 @@ async function renderProductions(){
           <div><b>${o.type==='coques'?'🟤':'🍫'} ${esc(o.nom)}</b> <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.64rem">${qty(o.pieces)} ${o.type==='coques'?'coques':(o.garnLabel||'ganache')}</span></div>
           <div style="margin-top:3px;font-size:.8rem;color:#8a6d3b">➜ il manque <b>${o.manque==='ganache'?(o.garnLabel==='crémeux'?'le crémeux':'de la ganache'):'des coques'}</b> ${o.type==='coques'?`pour assembler jusqu'à <b>${qty(o.macPotentiels)} macaron(s)</b>`:`pour utiliser ${o.garnLabel==='crémeux'?'ce crémeux':'cette ganache'}`}</div>
         </div>
-        <button class="btn ghost sm" onclick="prodForm()" title="Produire le composant manquant">⚙ Produire ${o.manque==='ganache'?(o.garnLabel||'ganache'):'coques'}</button>
+        <button class="btn ghost sm" onclick="prodForm(${o.recipeId?`{recipeId:${o.recipeId}, qte:${Math.max(1, Math.round(+o.macPotentiels||0))}}`:''})" title="Produire le composant manquant, pré-rempli">⚙ Produire ${o.manque==='ganache'?(o.garnLabel||'ganache'):'coques'}</button>
       </div>`).join('')}
    </div>`:''}
    <div class="panel">
@@ -5776,7 +5776,7 @@ async function prodRefreshLot(){
   }catch(e){}
   lotEl.value=buildLotBase(nom, dateStr, memeJourMemeParfum);
 }
-async function prodForm(){  const recipes = await db.recipes.toArray();
+async function prodForm(prefill){  const recipes = await db.recipes.toArray();
   // Mode DÉCOUVERTE : si aucune recette n'existe encore, on propose une production « libre »
   // (nom saisi à la main, sans recette ni consommation de matières) pour se familiariser.
   if(!recipes.length){ return prodFormLibre(); }
@@ -5832,6 +5832,23 @@ async function prodForm(){  const recipes = await db.recipes.toArray();
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
   prodSyncReelDefault();
   prodRefreshLot();
+  // [CONNEXION B] Préremplissage depuis le plan de production : sélectionne la recette et la quantité.
+  if(prefill && (prefill.recipeId || prefill.qte)){
+    const recSel=document.getElementById('f_rec');
+    if(prefill.recipeId && recSel){
+      recSel.value=String(prefill.recipeId);
+      // Synchronise la quantité théorique sur le rendement de la recette + recalcule le lot.
+      if(typeof prodSyncTheorique==='function') prodSyncTheorique();
+      prodRefreshLot();
+    }
+    if(prefill.qte>0){
+      const qteEl=document.getElementById('f_qte');
+      if(qteEl){ qteEl.value=Math.max(1, Math.round(prefill.qte)); }
+      const reelEl=document.getElementById('f_qtereel');
+      if(reelEl && !_prodReelTouched){ reelEl.value=Math.max(1, Math.round(prefill.qte)); }
+      if(typeof prodSyncReelDefault==='function') prodSyncReelDefault();
+    }
+  }
 }
 // Bascule entre batch complet et production par composants.
 function prodModeSwitch(mode){
@@ -23020,7 +23037,8 @@ function mrpRenderResult(){
         <div class="pick-check" onclick="mrpToggleTask('${km.replace(/'/g,"\\'")}','montage',${l.tMontage})">${dm2?'✓':''}</div>
         <div class="pick-main"><div class="pick-name">Montage ${esc(l.parfum)}</div>
           <div class="pick-sub">${l.besoinNet} macarons (stock ${l.enStock}/${l.besoinBrut})</div></div>
-        <div class="pick-qty">${l.tMontage}'</div></div>`;
+        <div class="pick-qty">${l.tMontage}'</div></div>
+      ${l.recipeId?`<div style="text-align:right;margin:-2px 0 10px"><button class="btn ghost sm" onclick="closeModal&&closeModal();prodForm({recipeId:${l.recipeId}, qte:${Math.max(1, Math.round(+l.besoinNet||0))}})" title="Lancer la production de ${esc(l.parfum)} pré-remplie">⚙ Produire ${esc(l.parfum)} (${l.besoinNet})</button></div>`:''}`;
   }).join('');
   box.innerHTML=`
    <div class="panel">
