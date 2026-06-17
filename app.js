@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v509';
+const APP_VERSION = 'v511';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -879,7 +879,8 @@ const FLAVOR_CODES = {
   'Framboise':'FRA', 'Vanille':'VAN', 'Pistache':'PIS', 'Coco Rafaello':'RAF',
   'Cannelle noisette':'CAN', 'Caramel beurre salé':'CAR', 'Chocolat passion':'CHP',
   'Nocciolata':'NOC', 'Coco citron vert':'CCV', 'Praliné noisettes':'PRA',
-  'Popcorn':'POP', 'Café':'CAF'
+  'Popcorn':'POP', 'Café':'CAF', 'Mangue passion':'MAN',
+  'Madeleine':'MAD', 'Myrtille framboise':'MYR', 'Deux chocolats':'2CH'
 };
 // Dérive le code parfum à partir d'un nom de recette/produit. Cherche le parfum dont
 // le nom est contenu dans le nom de la recette (ex. « Macaron Caramel beurre salé » → CAR).
@@ -5648,39 +5649,6 @@ function prodSyncTheorique(){
 // [ÉTAPE 2a] Aperçu des ingrédients du composant (garniture) AVANT de lancer la production.
 // Lit les ingrédients via componentId, applique le facteur (quantité saisie / rendement),
 // et affiche un tableau lisible (quantités en grammes pour les denrées en kg).
-async function prodApercuGarniture(){
-  const zone=document.getElementById('f_garnitureApercu'); if(!zone) return;
-  const sel=document.getElementById('f_garnitureSel');
-  const cid=sel?+sel.value:0;
-  if(!cid){ zone.style.display='none'; zone.innerHTML=''; return; }
-  try{
-    const comp=await db.components.get(cid);
-    if(!comp){ zone.style.display='none'; zone.innerHTML=''; return; }
-    const items=await db.recipeItems.where('componentId').equals(cid).toArray();
-    const mats=await db.materials.toArray();
-    const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'(matière ?)';
-    const dispOf=id=>{ const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
-      return (m.categorie!=='emballage' && u==='kg') ? {u:'g', f:1000} : {u:m.unite||'', f:1}; };
-    const rendement=+comp.rendement||1;
-    const nb=+(document.getElementById('f_qte')?.value)|| rendement;
-    const facteur = rendement>0 ? (nb/rendement) : 1;
-    if(!items.length){
-      zone.style.display='block';
-      zone.innerHTML=`<div class="banner" style="background:#fdf6ec;border-color:#e5c98a"><div>Cette garniture n'a aucun ingrédient renseigné. Tu peux l'enregistrer quand même, mais aucune matière ne sera décomptée.</div></div>`;
-      return;
-    }
-    const rows=items.map(it=>{ const d=dispOf(it.materialId);
-      const q=round3((+it.qteParBatch||0)*d.f*facteur);
-      return `<tr><td>${esc(matName(it.materialId))}</td><td style="text-align:right"><b>${qty(q)}</b> ${esc(d.u)}</td></tr>`;
-    }).join('');
-    zone.style.display='block';
-    zone.innerHTML=`<div class="panel" style="background:#faf6ee;margin:8px 0">
-      <h3 style="font-size:.9rem;margin:0 0 6px">🧾 Ingrédients — ${esc(comp.nom||'')} <span style="font-weight:400;color:#9a8a82">pour ${qty(nb)} dose(s)</span></h3>
-      <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>
-      <p class="note" style="margin-top:6px">Ces quantités seront déduites de ton stock matières au lancement.</p>
-    </div>`;
-  }catch(e){ console.error('prodApercuGarniture',e); zone.style.display='none'; zone.innerHTML=''; }
-}
 // [ÉTAPE 2a] Aperçu des ingrédients de la GARNITURE sélectionnée, AVANT de lancer la production.
 // Lit les ingrédients du composant (recipeItems via componentId), calcule les quantités au batch
 // (qteParBatch × facteur) et convertit kg→g pour l'affichage, comme la fiche recette.
@@ -5764,6 +5732,8 @@ async function saveProd(){
       const comp=await db.components.get(cid).catch(()=>null);
       const nom=comp?comp.nom:'Garniture';
       toast(`${nom} produite ✓ (${qty(nbRe)} dose(s) en stock)`);
+      // [POINT F] Fiche de production des ingrédients (comme pour les recettes normales).
+      await ficheComposantProduction(cid, nbTh, lotG);
     }catch(err){
       console.error('produireComposant', err);
       toast(err.message || 'Erreur production garniture');
@@ -5863,6 +5833,38 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
   openModal(`<h3>📋 Fiche de production</h3>
     <p style="margin-bottom:4px"><b>${esc(rec.produitNom)}</b> · ${compLabel} · lot <b>${esc(lot||'—')}</b></p>
     <p class="note" style="margin-bottom:12px">Quantités calculées pour <b>${qty(nbMacarons)} macaron(s)</b> (recette de base : ${rendement}/batch). Suis ces grammages pour produire.</p>
+    <div class="table-wrap"><table><thead><tr><th>Ingrédient</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}${totals?`<tr><td colspan="2" style="padding:2px"></td></tr>${totals}`:''}</tbody></table></div>
+    <p class="note" style="margin-top:10px">La production est <b>démarrée</b>. Tu choisiras l'emplacement de rangement à la fin (✓ Terminer dans la liste).</p>
+    <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
+}
+// [POINT F] Fiche de production pour un COMPOSANT catalogue (chantache…), même présentation
+// que ficheRecetteProduction mais lue depuis les ingrédients du composant (componentId).
+async function ficheComposantProduction(componentId, nbDoses, lot){
+  const comp = componentId!=null ? await db.components.get(componentId) : null;
+  if(!comp){ closeModal(); return; }
+  const items = await db.recipeItems.where('componentId').equals(componentId).toArray();
+  const mats = await db.materials.toArray();
+  const matName = id => (mats.find(m=>m.id===id)||{}).nom || '(matière ?)';
+  const dispOf = id => { const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
+    return (u==='kg') ? {u:'g', f:1000} : {u:m.unite||'', f:1}; };
+  const rendement = +comp.rendement||1;
+  const facteur = rendement>0 ? (nbDoses/rendement) : 0;
+  // Total par matière (ex : crème répartie sur 2 lignes)
+  const totParMat = {};
+  items.forEach(it=>{ const d=dispOf(it.materialId); const q=round3((+it.qteParBatch||0)*d.f*facteur);
+    if(!totParMat[it.materialId]) totParMat[it.materialId]={q:0, u:d.u, n:0};
+    totParMat[it.materialId].q = round3(totParMat[it.materialId].q + q);
+    totParMat[it.materialId].n++; });
+  const rows = items.map(it=>{ const d=dispOf(it.materialId);
+    const q = round3((+it.qteParBatch||0)*d.f*facteur);
+    const etiq = it.note ? ` <span style="color:#9a8a82;font-size:.8rem">${esc(it.note)}</span>` : '';
+    return `<tr><td>${esc(matName(it.materialId))}${etiq}</td><td style="text-align:right"><b>${qty(q)}</b> ${esc(d.u)}</td></tr>`;
+  }).join('') || '<tr><td colspan="2" class="note">Aucun ingrédient renseigné pour ce composant.</td></tr>';
+  const totals = Object.keys(totParMat).filter(id=>totParMat[id].n>1)
+    .map(id=>`<tr style="background:#faf6ef"><td><b>Total ${esc(matName(+id))}</b> <span style="color:#9a8a82;font-size:.74rem">(prélevé du stock)</span></td><td style="text-align:right"><b>${qty(totParMat[id].q)}</b> ${esc(totParMat[id].u)}</td></tr>`).join('');
+  openModal(`<h3>📋 Fiche de production</h3>
+    <p style="margin-bottom:4px"><b>${esc(comp.nom||'Garniture')}</b> · 🍫 Garniture · lot <b>${esc(lot||'—')}</b></p>
+    <p class="note" style="margin-bottom:12px">Quantités calculées pour <b>${qty(nbDoses)} dose(s)</b> (recette de base : ${rendement}/batch). Suis ces grammages pour produire.</p>
     <div class="table-wrap"><table><thead><tr><th>Ingrédient</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}${totals?`<tr><td colspan="2" style="padding:2px"></td></tr>${totals}`:''}</tbody></table></div>
     <p class="note" style="margin-top:10px">La production est <b>démarrée</b>. Tu choisiras l'emplacement de rangement à la fin (✓ Terminer dans la liste).</p>
     <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
@@ -18752,7 +18754,9 @@ async function migSaveStock(){
   if(!recipeId){ toast('Choisis un parfum/recette'); return; }
   if(qte<=0){ toast('Indique une quantité'); return; }
   const nowIso=new Date().toISOString();
-  const base='L-'+today().replace(/-/g,'')+'-'+genLotCode(3);
+  // [POINT E] Format de lot simplifié comme les productions normales : JJMMAA + CODE PARFUM.
+  const _recMig = await db.recipes.get(recipeId).catch(()=>null);
+  const base = buildLotBase(_recMig?_recMig.produitNom:'', today(), []);
   const lot=lotAvecEmplacement(base, dest);
   // Production "historique" déjà terminée, SANS consommation de matières.
   await db.productions.add({
@@ -18779,8 +18783,10 @@ async function migSaveCoques(){
   if(!recipeId){ toast('Choisis un parfum/recette'); return; }
   if(qte<=0){ toast('Indique un nombre de coques'); return; }
   const nowIso=new Date().toISOString();
-  const base='L-'+today().replace(/-/g,'')+'-'+genLotCode(3);
-  const lot=lotAvecEmplacement(base+'-CQ', dest);
+  // [POINT E] Format de lot simplifié : JJMMAA + CODE PARFUM, suffixe coques -CO (cohérent avec le reste).
+  const _recMigC = await db.recipes.get(recipeId).catch(()=>null);
+  const base = buildLotBase(_recMigC?_recMigC.produitNom:'', today(), []);
+  const lot=lotAvecEmplacement(base+'-CO', dest);
   await db.productions.add({
     recipeId, lotProduction:lot, lotBase:base, date:today(),
     composant:'coques', histo:true, rangee:true,
