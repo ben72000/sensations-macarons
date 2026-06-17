@@ -1,9 +1,9 @@
-const CACHE = 'sm-iphone-v481';
+const CACHE = 'sm-iphone-v482';
 const ASSETS = [
   './',
   './index.html',
-  './utils.js?v=481',
-  './app.js?v=481',
+  './utils.js?v=482',
+  './app.js?v=482',
   './dexie.min.js',
   './qr.min.js',
   './pdf_extract.js',
@@ -70,7 +70,7 @@ self.addEventListener('fetch', e => {
           caches.open(CACHE).then(c => c.put(req, copy));
         }
         return res;
-      }).catch(() => caches.open(CACHE).then(c => c.match(req).then(r => r || c.match('./index.html'))))
+      }).catch(() => caches.open(CACHE).then(c => c.match(req, {ignoreSearch:true}).then(r => r || c.match('./index.html'))))
     );
     return;
   }
