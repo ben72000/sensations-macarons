@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v487';
+const APP_VERSION = 'v488';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18325,6 +18325,11 @@ const FACT_STYLE = `   <style>
      .grand .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:19px; color:#490F25; }
      .tva { margin-top:5mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
      .acompte-mention { margin-top:4mm; padding:2.5mm 4mm; background:#fbeede; border:1.2px solid #d98324; border-radius:2mm; color:#9a4a10; font-weight:600; font-size:12px; text-align:center; }
+     .bas-doc { display:flex; justify-content:space-between; align-items:flex-start; gap:8mm; margin-top:5mm; }
+     .bas-txt { flex:1; min-width:0; }
+     .bas-txt .tva { margin-top:0; }
+     .bas-rib { flex:0 0 78mm; }
+     .bas-rib .rib { margin-top:0; }
      .paiement { margin-top:3mm; font-size:11.5px; color:#6a5a52; }
      .rib { margin-top:4mm; padding:2.5mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.55; max-width:115mm; }
      .rib .rib-titre { font-weight:600; color:#490F25; }
@@ -18420,16 +18425,19 @@ function factLineRows(ln){
 }
 // Bloc « Coordonnées bancaires » pour le pied de page des documents (devis + facture).
 // Renvoie '' si l'émetteur n'a pas renseigné d'IBAN, sinon un bloc HTML échappé multi-lignes.
-function factRibBloc(e){
+function factRibBloc(e, compact){
   const raw = (e && e.iban) ? String(e.iban).trim() : '';
   if(!raw) return '';
   let parts = raw.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
-  // Regroupe la ligne IBAN et la ligne BIC sur une seule ligne pour gagner de la hauteur.
-  const idxIban = parts.findIndex(l=>/^iban/i.test(l));
-  const idxBic  = parts.findIndex(l=>/^bic/i.test(l));
-  if(idxIban!==-1 && idxBic!==-1){
-    parts[idxIban] = parts[idxIban] + '   ·   ' + parts[idxBic];
-    parts.splice(idxBic, 1);
+  // En mode compact : regroupe IBAN et BIC sur une seule ligne (gain de hauteur).
+  // Sinon : on laisse chaque ligne telle quelle (IBAN et BIC sur des lignes distinctes).
+  if(compact){
+    const idxIban = parts.findIndex(l=>/^iban/i.test(l));
+    const idxBic  = parts.findIndex(l=>/^bic/i.test(l));
+    if(idxIban!==-1 && idxBic!==-1){
+      parts[idxIban] = parts[idxIban] + '   ·   ' + parts[idxBic];
+      parts.splice(idxBic, 1);
+    }
   }
   const lignes = parts.map(l=>esc(l)).join('<br>');
   return `<div class="rib"><span class="rib-titre">Coordonnées bancaires</span><br>${lignes}</div>`;
@@ -18516,9 +18524,13 @@ async function genererDevisDoc(docId){
          <div class="lg total"><span>Total du devis</span><span>${euro(total)}</span></div>
        </div>
        <div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider votre devis.</div>
-       <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
-       <div class="paiement">Devis valable ${d.validiteJours||30} jours à compter de la date d'émission.<br>Bon pour accord — date et signature :</div>
-       ${factRibBloc(e)}
+       <div class="bas-doc">
+         <div class="bas-txt">
+           <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
+           <div class="paiement">Devis valable ${d.validiteJours||30} jours à compter de la date d'émission.<br>Bon pour accord — date et signature :</div>
+         </div>
+         ${factRibBloc(e)?`<div class="bas-rib">${factRibBloc(e)}</div>`:''}
+       </div>
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
      </div>
    </div>
@@ -18609,6 +18621,11 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .totaux .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:18px; color:#490F25; }
      .tva { margin-top:5mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
      .acompte-mention { margin-top:4mm; padding:2.5mm 4mm; background:#fbeede; border:1.2px solid #d98324; border-radius:2mm; color:#9a4a10; font-weight:600; font-size:12px; text-align:center; }
+     .bas-doc { display:flex; justify-content:space-between; align-items:flex-start; gap:8mm; margin-top:5mm; }
+     .bas-txt { flex:1; min-width:0; }
+     .bas-txt .tva { margin-top:0; }
+     .bas-rib { flex:0 0 78mm; }
+     .bas-rib .rib { margin-top:0; }
      .paiement { margin-top:3mm; font-size:11.5px; color:#6a5a52; }
      .rib { margin-top:4mm; padding:2.5mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.55; max-width:115mm; }
      .rib .rib-titre { font-weight:600; color:#490F25; }
