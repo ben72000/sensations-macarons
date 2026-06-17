@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v476';
+const APP_VERSION = 'v481';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -962,6 +962,10 @@ const PROD_OPEN_MAX_DAYS = 4;
 function prodStatut(p){ return p && p.prodStatut ? p.prodStatut : 'termine'; }
 // Composant d'une production : 'complet' (vendable), 'coques'/'ganache' (intermédiaires), 'assemble' (vendable).
 function prodComposant(p){ return (p && p.composant) ? p.composant : 'complet'; }
+// Libellé d'affichage de la garniture : « Crémeux » si sous-type crémeux, sinon « Ganache ».
+// (le composant interne reste 'ganache' pour ne pas casser l'assemblage)
+function garnLabel(p){ return (p && p.garnitureType==='cremeux') ? 'crémeux' : 'ganache'; }
+function garnIcon(p){ return (p && p.garnitureType==='cremeux') ? '🟠' : '🍫'; }
 // Une production est "rangée" (donc sortie de la vue Production) si elle a été DÉLIBÉRÉMENT
 // déclarée rangée (champ p.rangee), OU si elle est rattachée à une commande prête/livrée
 // (ensemble précalculé _prodLiesCmdPrete, rempli dans renderProductions). Aucune déduction
@@ -2025,6 +2029,7 @@ async function renderAchats(){
    MATIÈRES & LOTS
    ============================================================ */
 let matSearch='';
+let recSearch='';   // texte de recherche recettes (persisté entre re-renders)
 let _matCatFilter='all';   // 'all' | 'denree' | 'emballage'
 let _matCache=null, _lotCache=null;
 async function renderMaterials(){
@@ -2131,19 +2136,40 @@ async function renderMaterials(){
    <div class="topbar"><div><h1>Matières & emballages</h1><p id="matCount">${mats.length} référence(s)</p></div>
      <div class="flex" style="flex-wrap:wrap;gap:8px"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Référence</button><button class="btn ghost" onclick="genShoppingList()">🛒 Liste de courses</button></div></div>
    <div class="panel"><h2>Inventaire (stock = somme des lots actifs)</h2>
-     <div class="mat-cat-chips">
-       <button class="${_matCatFilter==='all'?'active':''}" onclick="matSetCat('all')">Tout</button>
-       <button class="${_matCatFilter==='denree'?'active':''}" onclick="matSetCat('denree')">🥚 Denrées</button>
-       <button class="${_matCatFilter==='emballage'?'active':''}" onclick="matSetCat('emballage')">📦 Emballages</button>
-     </div>
      <input class="search" id="matSearch" style="width:100%;margin-bottom:12px" placeholder="Nom de référence, unité, état…" value="${esc(matSearch)}" oninput="matFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
-   ${mats.length?`<div id="matBody" class="mat-cards"></div><div id="matEmpty" class="empty" style="display:none">Aucune référence.</div>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…) et tes emballages, puis réceptionne des lots.</div>`}
+   ${mats.length?`
+     <div class="collapse-sec" style="margin-bottom:10px">
+       <button type="button" class="collapse-head" onclick="toggleMatSec('matDenree')">
+         <span>🥚 Matières premières <span class="collapse-hint" id="matDenreeCount"></span></span>
+         <span class="collapse-arrow" id="matDenreeArrow">▸</span>
+       </button>
+       <div class="collapse-body" id="matDenreeBody" style="display:none">
+         <div id="matBodyDenree" class="mat-cards"></div>
+         <div id="matEmptyDenree" class="empty" style="display:none">Aucune matière première.</div>
+       </div>
+     </div>
+     <div class="collapse-sec">
+       <button type="button" class="collapse-head" onclick="toggleMatSec('matEmb')">
+         <span>📦 Emballages <span class="collapse-hint" id="matEmbCount"></span></span>
+         <span class="collapse-arrow" id="matEmbArrow">▸</span>
+       </button>
+       <div class="collapse-body" id="matEmbBody" style="display:none">
+         <div id="matBodyEmb" class="mat-cards"></div>
+         <div id="matEmptyEmb" class="empty" style="display:none">Aucun emballage.</div>
+       </div>
+     </div>`:`<div class="empty">Aucune matière. Crée d'abord tes matières (poudre d'amande, sucre…) et tes emballages, puis réceptionne des lots.</div>`}
    </div>
-   <div class="panel"><h2>Lots réceptionnés</h2>
+   <div class="panel"><div class="collapse-sec">
+   <button type="button" class="collapse-head" onclick="toggleMatSec('matLots')">
+     <span>📥 Lots réceptionnés <span class="collapse-hint">— stock réel par lot (FIFO, DLC)</span></span>
+     <span class="collapse-arrow" id="matLotsArrow">▸</span>
+   </button>
+   <div class="collapse-body" id="matLotsBody" style="display:none">
      <input class="search" id="lotSearch" style="width:100%;margin-bottom:12px" placeholder="N° de lot, matière, fournisseur…" value="${esc(lotSearch)}" oninput="lotFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
    ${lots.length?`<div class="table-wrap"><table><thead><tr><th>Réception</th><th>Matière</th><th>N° lot fourn.</th><th>Fournisseur</th><th>Restant / Initial</th><th>DLC</th><th></th></tr></thead>
      <tbody id="lotBody"></tbody></table></div><div id="lotEmpty" class="empty" style="display:none">Aucun lot.</div>`
      :`<div class="empty">Aucun lot réceptionné.</div>`}
+   </div></div>
    </div>
    <div class="panel"><div class="collapse-sec">
    <button type="button" class="collapse-head" onclick="toggleMatSec('matBatch')">
@@ -2156,7 +2182,7 @@ async function renderMaterials(){
      const deb = p.prodDebutTs||p.prodTimestamp||'';
      const fin = p.prodTermineTs||'';
      const dur = (deb&&fin)?ttFormat(new Date(fin)-new Date(deb)):'';
-     const compTag = prodComposant(p)!=='complet'?` <span class="tag" style="background:${prodComposant(p)==='assemble'?'#3f7d52':prodComposant(p)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff;font-size:.66rem">${prodComposant(p)==='coques'?'coques':prodComposant(p)==='ganache'?'ganache':prodComposant(p)==='degustation'?'dégustation':'assemblé'}</span>`:'';
+     const compTag = prodComposant(p)!=='complet'?` <span class="tag" style="background:${prodComposant(p)==='assemble'?'#3f7d52':prodComposant(p)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff;font-size:.66rem">${prodComposant(p)==='coques'?'coques':prodComposant(p)==='ganache'?garnLabel(p):prodComposant(p)==='degustation'?'dégustation':'assemblé'}</span>`:'';
      return `<div class="trace-step" style="margin-bottom:12px">
        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
          <div><b>${esc(recName(p.recipeId))}</b>${compTag}<br>
@@ -2258,8 +2284,30 @@ function matSetCat(c){ _matCatFilter=c; renderMaterials(); }
 function matFilter(q){
   matSearch=q||'';
   if(!_matCache) return;
-  const list = _matCatFilter==='all' ? _matCache : _matCache.filter(r=>r.cat===_matCatFilter);
-  searchRenderBody('matBody','matCount','matEmpty', list, q, _matRow, 8, 'référence(s)');
+  // Deux sections distinctes : matières premières (denrées) et emballages, peuplées séparément.
+  const denrees = _matCache.filter(r=>r.cat!=='emballage');
+  const embs    = _matCache.filter(r=>r.cat==='emballage');
+  searchRenderBody('matBodyDenree', null, 'matEmptyDenree', denrees, q, _matRow, 8, 'référence(s)');
+  searchRenderBody('matBodyEmb',    null, 'matEmptyEmb',    embs,    q, _matRow, 8, 'référence(s)');
+  // Nb de résultats par section (après recherche).
+  const nbDenree = q ? searchRank(denrees, q).length : denrees.length;
+  const nbEmb    = q ? searchRank(embs, q).length    : embs.length;
+  // Compteurs dans les en-têtes repliables.
+  const dC=document.getElementById('matDenreeCount'); if(dC) dC.textContent = `— ${nbDenree} réf.`;
+  const eC=document.getElementById('matEmbCount');    if(eC) eC.textContent = `— ${nbEmb} réf.`;
+  const mc=document.getElementById('matCount'); if(mc) mc.textContent = `${_matCache.length} référence(s)`;
+  // Ouverture AUTO pendant la recherche : on ouvre les sections qui ont des résultats, on ferme
+  // les autres. Quand la recherche est vidée, on referme tout (retour à la vue compacte).
+  const searching = !!(q && q.trim());
+  _setMatSec('matDenree', searching && nbDenree>0);
+  _setMatSec('matEmb',    searching && nbEmb>0);
+}
+// Force l'état (ouvert/fermé) d'une section repliable de la vue stock.
+function _setMatSec(key, open){
+  const body=document.getElementById(key+'Body'), arrow=document.getElementById(key+'Arrow');
+  if(!body) return;
+  body.style.display = open ? 'block' : 'none';
+  if(arrow) arrow.textContent = open ? '▾' : '▸';
 }
 // Génère une liste de courses imprimable à partir des matières ACTUELLEMENT filtrées
 // à l'écran (catégorie + recherche, ex. « à commander »). Pour chaque matière, interroge
@@ -2760,9 +2808,10 @@ async function renderRecipes(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Recettes (BOM)</h1><p>${recipes.length} recette(s) — nomenclature matières</p></div>
      <button class="btn" onclick="recForm()">+ Nouvelle recette</button></div>
-   ${recipes.length?`<div class="panel" style="padding:12px 14px"><input type="search" id="recSearch" placeholder="🔍 Rechercher (parfum, ingrédient ex. « œufs », allergène ex. « sulfite »)" style="width:100%" oninput="filterRecipes(this.value)" autocomplete="off">
-     <p class="note" id="recSearchInfo" style="margin:6px 0 0">Cherche dans les noms, les ingrédients et les allergènes.</p></div>`:''}
+   ${recipes.length?`<div class="panel"><input class="search" id="recSearch" style="width:100%;margin-bottom:8px" placeholder="Parfum, ingrédient (ex. « œufs »), allergène (ex. « sulfite »)…" value="${esc(recSearch||'')}" oninput="filterRecipes(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
+     <p class="note" id="recSearchInfo" style="margin:0">Cherche dans les noms, les ingrédients et les allergènes.</p></div>`:''}
    <div id="recList">${recipes.length?blocks.join(''):`<div class="panel"><div class="empty">Aucune recette. Une recette définit les matières consommées par batch (le « Bill of Materials »).</div></div>`}</div>`;
+  if(recSearch) filterRecipes(recSearch);   // ré-applique le filtre courant après re-render
 }
 // Cache des recettes pour le multiplicateur dynamique (lecture seule, aucune écriture en base)
 let _recipeMultCache={};
@@ -2773,6 +2822,7 @@ function _recNorm(s){ return normTxt(s).replace(/œ/g,'oe').replace(/æ/g,'ae').
 // chaque mot tapé doit être présent (logique ET) → « œufs » ne montre que les recettes en
 // contenant ; « sulfite » ne montre que celles avec cet allergène.
 function filterRecipes(q){
+  recSearch = q||'';
   const terms = _recNorm(q||'').split(/\s+/).filter(Boolean);
   const cards = document.querySelectorAll('#recList .rec-card');
   let visibles = 0;
@@ -3810,7 +3860,7 @@ async function renderProductions(){
      const blocs = consoBatches.map(b=>{
        const p=b.p;
        const comp=prodComposant(p);
-       const compTag = comp!=='complet'?` <span class="tag" style="background:${comp==='assemble'?'#3f7d52':comp==='degustation'?'#caa23b':comp==='ganache'?'#5a3a2a':'#8a6d3b'};color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp==='degustation'?'dégustation':'assemblé'}</span>`:'';
+       const compTag = comp!=='complet'?` <span class="tag" style="background:${comp==='assemble'?'#3f7d52':comp==='degustation'?'#caa23b':comp==='ganache'?'#5a3a2a':'#8a6d3b'};color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?garnLabel(p):comp==='degustation'?'dégustation':'assemblé'}</span>`:'';
        const when = p.prodTermineTs||p.prodDebutTs||p.prodTimestamp||(p.date?p.date+'T00:00':'');
        return `<div class="trace-step" style="margin-bottom:10px">
          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
@@ -5151,7 +5201,7 @@ async function prodAssembleForm(id, opts){
   const uniteThis = comp==='coques' ? `${qty(p.qteRestante)} coques (≈ ${maxThisMac} macarons)` : `${qty(p.qteRestante)} macarons`;
   openModal(`<h3>🔗 Assembler ${esc(recName(p.recipeId))}</h3>
    <p class="note">1 macaron = <b>2 coques + 1 ganache</b>. Assemblage <b>normal</b> : coques + ganache du même parfum/lot (vendable). Assemblage <b>dégustation</b> : sans correspondance couleur/parfum (offert, non vendable).</p>
-   <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':'🍫 Ganache'} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · ${uniteThis}</b></div>
+   <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':garnIcon(p)+' '+(garnLabel(p)==='crémeux'?'Crémeux':'Ganache')} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · ${uniteThis}</b></div>
    <div class="field"><label>${want==='ganache'?'🍫 Ganache à associer':'🟤 Coques à associer'}</label>
      <select id="f_asmOther">${optsCand}</select></div>
    <label class="switch-row"><input type="checkbox" id="f_asmDeg"${opts.deg?' checked':''} onchange="prodAsmDegSwitch(this.checked)"> 🥄 Assemblage dégustation (offert, non vendable)</label>
@@ -5298,7 +5348,14 @@ async function prodForm(){  const recipes = await db.recipes.toArray();
    <div class="field" id="f_compWrap" style="display:none"><label>Composant à produire</label>
      <div class="opt-table">
        <label class="opt-row"><input type="radio" name="f_comp" value="coques" checked onchange="prodCompSwitch()"> <span class="opt-ico">🟤</span> <span class="opt-main"><b>Coques</b><br><span class="opt-sub">rangement : ambiant ou congélateur (jamais frigo)</span></span></label>
-       <label class="opt-row"><input type="radio" name="f_comp" value="ganache" onchange="prodCompSwitch()"> <span class="opt-ico">🍫</span> <span class="opt-main"><b>Ganache</b><br><span class="opt-sub">rangement : frigo uniquement</span></span></label>
+       <label class="opt-row"><input type="radio" name="f_comp" value="ganache" onchange="prodCompSwitch()"> <span class="opt-ico">🍫</span> <span class="opt-main"><b>Garniture</b><br><span class="opt-sub">ganache ou crémeux — rangement : frigo uniquement</span></span></label>
+     </div>
+     <div id="f_garnTypeWrap" style="display:none;margin-top:8px;padding-left:4px">
+       <label style="font-size:.82rem;color:#7a6a62;display:block;margin-bottom:4px">Type de garniture</label>
+       <div class="opt-table">
+         <label class="opt-row"><input type="radio" name="f_garnType" value="ganache" checked onchange="prodCompSwitch()"> <span class="opt-ico">🍫</span> <span class="opt-main"><b>Ganache</b><br><span class="opt-sub">sous-lot <b>-GA</b></span></span></label>
+         <label class="opt-row"><input type="radio" name="f_garnType" value="cremeux" onchange="prodCompSwitch()"> <span class="opt-ico">🟠</span> <span class="opt-main"><b>Crémeux</b><br><span class="opt-sub">sous-lot <b>-CR</b></span></span></label>
+       </div>
      </div></div>
    <div class="row2">
      <div class="field"><label>Quantité théorique <span style="color:#9a8a82;font-weight:400" id="qteUnit">— en macarons (base matières)</span></label>
@@ -5325,6 +5382,9 @@ function prodModeSwitch(mode){
 function prodCompSwitch(){
   const mode=document.getElementById('f_mode')?.value||'complet';
   const comp=(document.querySelector('input[name="f_comp"]:checked')||{}).value||'coques';
+  // Sous-type garniture (ganache/crémeux) visible seulement si on produit la garniture par composant.
+  const garnWrap=document.getElementById('f_garnTypeWrap');
+  if(garnWrap) garnWrap.style.display = (mode==='composant' && comp==='ganache') ? 'block' : 'none';
   const hint=document.getElementById('coqueHint');
   const unit=document.getElementById('qteUnit');
   const isCoques = (mode==='composant' && comp==='coques');
@@ -5383,6 +5443,11 @@ async function saveProd(){
   const mode=document.getElementById('f_mode')?.value||'complet';
   const comp=(document.querySelector('input[name="f_comp"]:checked')||{}).value||'coques';
   const composant = mode==='composant' ? comp : 'complet';
+  // Sous-type de garniture (composant interne 'ganache') : 'ganache' (défaut) ou 'cremeux'.
+  // Le composant reste 'ganache' pour ne pas casser l'assemblage ; seul le suffixe et l'affichage changent.
+  const garnType = (composant==='ganache')
+    ? ((document.querySelector('input[name="f_garnType"]:checked')||{}).value||'ganache')
+    : null;
   if(!qteTheorique||qteTheorique<=0){toast('Quantité théorique invalide');return;}
   if(qteReelle<0||isNaN(qteReelle)){toast('Quantité réelle invalide');return;}
   // L'emplacement n'est plus demandé au lancement : il sera choisi à la fin de production.
@@ -5392,8 +5457,10 @@ async function saveProd(){
   const baseLot = lotBaseSansSuffixe(val('f_lot'));
   let cleanBase = baseLot.toUpperCase().replace(/\s+/g,'');
   if(!cleanBase){ cleanBase = lotDateJJMMAA(date)+'XXX'; }
-  // suffixe composant (CO/GA) — la lettre d'emplacement sera ajoutée à la fin de production
-  const suffComp = composant==='coques' ? '-CO' : (composant==='ganache' ? '-GA' : '');
+  // suffixe composant — coques: -CO ; garniture: -GA (ganache) ou -CR (crémeux).
+  // La lettre d'emplacement sera ajoutée à la fin de production.
+  const suffComp = composant==='coques' ? '-CO'
+    : (composant==='ganache' ? (garnType==='cremeux' ? '-CR' : '-GA') : '');
   lot = cleanBase + suffComp;   // pas encore de lettre d'emplacement
   if(!lotBaseSansSuffixe(lot)){ toast('N° de lot vide — saisissez un identifiant.'); return; }
   // COQUES : 1 macaron = 2 coques. La quantité SAISIE est en macarons (rendement recette) ;
@@ -5406,9 +5473,9 @@ async function saveProd(){
   }
   try{
     await enregistrerProduction(recipeId, qTh, qRe, date, lot, '', '',
-      {composant, lotBase:cleanBase, facteurQte});
+      {composant, lotBase:cleanBase, facteurQte, garnitureType:garnType||undefined});
     renderProductions();
-    const lbl = composant==='coques'?'Coques':composant==='ganache'?'Ganache':'Production';
+    const lbl = composant==='coques'?'Coques':composant==='ganache'?(garnType==='cremeux'?'Crémeux':'Ganache'):'Production';
     const extra = composant==='coques'?` (${qty(qTh)} coques pour ${qty(qteTheorique)} macarons)`:'';
     toast(`${lbl} démarrée ✓${extra}`);
     // Affiche aussitôt la fiche recette recalculée aux quantités du batch, pour produire.
@@ -5623,6 +5690,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
       const prodId = await db.productions.add({
         recipeId, lotProduction, date:dateProd,
         composant: meta.composant||'complet',   // 'complet' | 'coques' | 'ganache' | 'assemble'
+        garnitureType: meta.garnitureType||undefined,  // sous-type si garniture : 'ganache' | 'cremeux'
         lotBase: meta.lotBase||'',               // n° de lot commun (relie coques/ganache/assemblé)
         qteTheorique, qteReelle, ecart,
         // STOCK PRODUITS FINIS : calé sur la quantité réelle
