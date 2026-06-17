@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v501b';
+const APP_VERSION = 'v501c';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5958,31 +5958,15 @@ async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, 
       const rendement = +comp.rendement || 1;
       const facteur = (rendement>0) ? (nbDosesTh / rendement) : 0;
       // Vérif préalable : stock suffisant pour toutes les matières ?
-      // [DIAG v501b] On collecte le détail pour TOUTES les matières avant de bloquer.
-      const _diag=[];
-      let _bloque=false;
       for(const item of items){
         const lots = await db.materialLots.where('materialId').equals(item.materialId).and(l=>+l.qteRestante>0).toArray();
         const dispo = lots.reduce((s,l)=>s+(+l.qteRestante),0);
         const besoin = (+item.qteParBatch||0) * facteur;
-        const mat = await db.materials.get(item.materialId);
-        const manque = (dispo + 1e-9 < besoin);
-        if(manque) _bloque=true;
-        _diag.push({nom:mat?mat.nom:'?', unite:mat?(mat.unite||'?'):'?',
-          qpb:(+item.qteParBatch||0), besoin, dispo, nbLots:lots.length, manque});
+        if(dispo + 1e-9 < besoin){
+          const mat = await db.materials.get(item.materialId);
+          throw new Error(`Stock insuffisant : ${mat?mat.nom:'?'} (besoin ${besoin.toFixed(3)}, dispo ${dispo.toFixed(3)})`);
+        }
       }
-      if(typeof openModal==='function'){
-        const rows=_diag.map(d=>`<div class="sum-box" style="${d.manque?'background:#fbeeec':''};flex-direction:column;align-items:stretch;gap:2px">
-          <div style="display:flex;justify-content:space-between"><b>${d.nom}</b><span>${d.manque?'❌ manque':'✓ ok'}</span></div>
-          <div style="font-size:.78rem;color:#6a5a52">unité <b>${d.unite}</b> · qteParBatch <b>${d.qpb}</b> · besoin <b>${d.besoin.toFixed(3)}</b> · stock vu <b>${d.dispo.toFixed(3)}</b> · ${d.nbLots} lot(s)</div>
-        </div>`).join('');
-        openModal(`<h3>🔎 Diagnostic production garniture</h3>
-          <p class="note">Composant <b>${comp.nom||'?'}</b> · rendement <b>${rendement}</b> · doses <b>${nbDosesTh}</b> · facteur <b>${facteur.toFixed(3)}</b></p>
-          ${rows}
-          <p class="note" style="margin-top:8px">Besoin = qteParBatch × facteur. Si l'unité est <b>g</b> mais qteParBatch ressemble à des kg (ou l'inverse), c'est la cause.</p>
-          <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
-      }
-      throw new Error('[DIAG] interruption volontaire — voir le détail à l\'écran');
       const nowIso = new Date().toISOString();
       const ecart = nbDosesReel - nbDosesTh;
       // Création du sous-lot : composant 'ganache' (brique d'assemblage), marqué issu d'un composant catalogue.
@@ -17729,6 +17713,56 @@ async function diagUnitesMatieres(){
       `</div></div>`;
   }catch(e){ console.error('diagUnitesMatieres',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
 }
+// [INSPECTION kg — LECTURE SEULE] Pour chaque denrée en kg : liste ses lots (qteRestante + prix bruts)
+// et ses lignes de recette (qteParBatch brut + nom recette). Signale les valeurs suspectes sans rien modifier.
+async function diagInspectionKg(){
+  const zone=document.getElementById('diagInspectionKgZone');
+  if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    const mats=(await db.materials.toArray()).filter(m=>m.categorie!=='emballage' && (m.unite||'kg')==='kg');
+    if(!mats.length){ if(zone) zone.innerHTML='<p class="note">Aucune denrée en kg. ✓ Tout est déjà en grammes.</p>'; return; }
+    const lots=await db.materialLots.toArray();
+    const items=await db.recipeItems.toArray();
+    const recipes=await db.recipes.toArray();
+    const comps=await db.components.toArray().catch(()=>[]);
+    const recName=rid=>(recipes.find(r=>+r.id===+rid)||{}).produitNom||('recette #'+rid);
+    const compName=cid=>(comps.find(c=>+c.id===+cid)||{}).nom||('composant #'+cid);
+    mats.sort((a,b)=>String(a.nom||'').localeCompare(String(b.nom||'')));
+    let nbSuspect=0;
+    const blocs=mats.map(m=>{
+      const sesLots=lots.filter(l=>+l.materialId===+m.id);
+      const sesItems=items.filter(it=>+it.materialId===+m.id);
+      const stock=sesLots.reduce((s,l)=>s+(+l.qteRestante||0),0);
+      // Heuristique : en kg, une ligne de recette >= 1 (>=1000 g/batch) est suspecte pour la plupart
+      // des ingrédients (surtout arômes/colorants/gélifiants). On signale sans trancher.
+      const itemsSuspects=sesItems.filter(it=>(+it.qteParBatch||0)>=1);
+      const suspect=itemsSuspects.length>0;
+      if(suspect) nbSuspect++;
+      const lotsTxt=sesLots.length
+        ? sesLots.map(l=>`<div style="font-size:.74rem;color:#6a5a52">• lot ${esc(l.lotFournisseur||l.id)} : reste <b>${l.qteRestante}</b> kg · prix <b>${l.prixUnitaire!=null?l.prixUnitaire:'—'}</b> €/kg</div>`).join('')
+        : '<div style="font-size:.74rem;color:#9a8a82">• aucun lot</div>';
+      const itemsTxt=sesItems.length
+        ? sesItems.map(it=>{
+            const ref=it.componentId!=null?('🧩 '+compName(it.componentId)):('📋 '+recName(it.recipeId));
+            const flag=(+it.qteParBatch||0)>=1?' <span style="color:#b3261e">⚠ ≥1 kg/batch</span>':'';
+            return `<div style="font-size:.74rem;color:#6a5a52">• ${esc(ref)} : qteParBatch <b>${it.qteParBatch}</b> kg${flag}</div>`;
+          }).join('')
+        : '<div style="font-size:.74rem;color:#9a8a82">• utilisée dans aucune recette</div>';
+      return `<div class="sum-box" style="${suspect?'background:#fbeeec':''};flex-direction:column;align-items:stretch;gap:3px">
+        <div style="display:flex;justify-content:space-between"><b>${esc(m.nom)}</b><span style="font-size:.76rem">${suspect?'<span style="color:#b3261e">⚠ à vérifier</span>':'<span style="color:#3f7d52">✓ plausible</span>'}</span></div>
+        <div style="font-size:.72rem;color:#9a8a82">stock total ${qty(stock)} kg = ${qty(stock*1000)} g</div>
+        <div style="margin-top:2px"><span style="font-size:.7rem;color:#7a6a62;font-weight:600">LOTS</span>${lotsTxt}</div>
+        <div style="margin-top:2px"><span style="font-size:.7rem;color:#7a6a62;font-weight:600">RECETTES</span>${itemsTxt}</div>
+      </div>`;
+    }).join('');
+    if(zone) zone.innerHTML=blocs+
+      `<div class="banner" style="background:#eef3f8;border-color:#bcd0e0;margin-top:8px"><div>`+
+      `<b>${mats.length} denrée(s) en kg</b> · ${nbSuspect} à vérifier (⚠).<br>`+
+      `Une ligne ⚠ « ≥1 kg/batch » est probablement une valeur saisie en pensant grammes (comme l'arôme coco). `+
+      `Lecture seule : <b>rien n'a été modifié</b>. Envoie-moi cette vue pour décider de la conversion.`+
+      `</div></div>`;
+  }catch(e){ console.error('diagInspectionKg',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'inspection.</p>'; }
+}
 async function diagLotsUnite(){
   const zone=document.getElementById('diagUniteZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
   try{
@@ -17997,6 +18031,10 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">📏 Inventaire des unités (denrées)</h2>
       <p class="note">Liste chaque denrée avec son <b>unité</b> (g ou kg), et le nombre de lots et de recettes liés. Permet de repérer si tes matières mélangent les unités — la cause de l'affichage incohérent.</p>
       <div id="diagUnitesZone"><button class="btn gold sm" onclick="diagUnitesMatieres()">Faire l'inventaire des unités</button></div>
+      <div style="margin-top:10px">
+        <p class="note">🔎 <b>Inspection des denrées en kg</b> (lecture seule) : pour chaque denrée en kg, affiche ses lots et ses lignes de recette avec les valeurs brutes, et signale les valeurs suspectes (comme l'arôme coco). Aucune modification.</p>
+        <div id="diagInspectionKgZone"><button class="btn ghost sm" onclick="diagInspectionKg()">Inspecter les denrées en kg</button></div>
+      </div>
     </div>
     <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
       <h2 style="font-size:1rem">📦 Diagnostic emballages</h2>
