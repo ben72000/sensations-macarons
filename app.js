@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v502c';
+const APP_VERSION = 'v502d';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -17847,6 +17847,9 @@ async function diagInspectionComposants(){
     const comps=await db.components.toArray().catch(()=>[]);
     if(!comps.length){ if(zone) zone.innerHTML='<p class="note">Aucun composant.</p>'; return; }
     const items=await db.recipeItems.toArray();
+    // [DIAG BRUT] Toutes les lignes ayant un componentId (quel que soit le type), pour comparer.
+    const avecComp = items.filter(it=> it.componentId!=null && it.componentId!=='');
+    const brut = avecComp.map(it=>`<div style="font-size:.72rem;color:#6a5a52">• recipeItem#${it.id} : componentId=<b>${JSON.stringify(it.componentId)}</b> (${typeof it.componentId}) · materialId=<b>${JSON.stringify(it.materialId)}</b> · qpb=<b>${it.qteParBatch}</b></div>`).join('') || '<div style="font-size:.72rem;color:#9a8a82">• AUCUNE ligne avec componentId dans toute la base</div>';
     const mats=await db.materials.toArray();
     const matById={}; mats.forEach(m=>matById[+m.id]=m);
     const blocs=comps.map(c=>{
@@ -17863,7 +17866,14 @@ async function diagInspectionComposants(){
         ${rows}
       </div>`;
     }).join('');
-    if(zone) zone.innerHTML=blocs+
+    if(zone) zone.innerHTML=
+      `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:2px;background:#f0f4fa">
+        <b style="font-size:.8rem">Composants (id réel) :</b>
+        ${comps.map(c=>`<div style="font-size:.72rem;color:#6a5a52">• id=<b>${JSON.stringify(c.id)}</b> (${typeof c.id}) · ${esc(c.nom||'')} · rdt ${c.rendement||1}</div>`).join('')}
+        <b style="font-size:.8rem;margin-top:6px">Lignes recipeItems avec componentId :</b>
+        ${brut}
+      </div>`+
+      blocs+
       `<div class="banner" style="background:#eef3f8;border-color:#bcd0e0;margin-top:8px"><div>`+
       `Une ligne <b style="color:#b3261e">⚠ id orphelin</b> = la matière a été supprimée/recréée et la recette pointe vers l'ancien id. `+
       `C'est probablement le cas de l'arôme dans la Chantache. Envoie-moi cette vue.`+
