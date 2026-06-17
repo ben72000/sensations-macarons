@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v492c-diag';
+const APP_VERSION = 'v493';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2592,7 +2592,15 @@ async function lotForm(_id, presetMat){
      <div class="field"><label>N° lot fournisseur</label><input id="f_lotf" placeholder="ex: NM-2026-0142"></div>
    </div>
    <div class="row2">
-     <div class="field"><label>Quantité reçue <span id="qteUniteHint" style="color:#9a8a82;font-weight:400"></span></label><input type="number" step="0.01" id="f_qte" value="1" oninput="majPrixUnit()"></div>
+     <div class="field"><label>Quantité reçue <span id="qteUniteHint" style="color:#9a8a82;font-weight:400"></span></label>
+       <div style="display:flex;gap:6px;align-items:stretch">
+         <input type="number" step="0.001" id="f_qte" value="1" oninput="majPrixUnit()" style="flex:1">
+         <select id="f_qteUnite" onchange="majPrixUnit()" style="flex:0 0 auto;width:auto">
+           <option value="g">g</option>
+           <option value="kg">kg</option>
+         </select>
+       </div>
+     </div>
      <div class="field"><label>Prix total payé (€)</label><input type="number" step="0.01" id="f_prix" value="0" oninput="majPrixUnit()"></div>
    </div>
    <div class="field"><label>Prix unitaire</label><div id="f_pu" style="padding:10px 12px;background:var(--creme-2);border-radius:10px;font-weight:600;color:var(--bordeaux)">—</div></div>
@@ -2614,53 +2622,38 @@ function majPrixUnit(){
   const sel=document.getElementById('f_mat');
   const opt = sel && sel.options[sel.selectedIndex];
   const unite = opt ? (opt.dataset.unite||'') : '';
-  const hint=document.getElementById('qteUniteHint'); if(hint) hint.textContent = unite?`— en ${unite}`:'';
-  // Emballages (carton, film…) : pas de DLC pertinente → on masque le champ.
+  // Emballages (carton, film...) : pas de DLC pertinente -> on masque le champ.
   const isEmb = opt && opt.dataset.emb==='1';
+  // Selecteur g/kg : pertinent uniquement pour une denree (un emballage est a l'unite native).
+  const uSel=document.getElementById('f_qteUnite');
+  if(uSel){ uSel.style.display = isEmb ? 'none' : ''; }
+  // Le hint d'unite n'est utile que pour un emballage (le selecteur g/kg le remplace pour une denree).
+  const hint=document.getElementById('qteUniteHint');
+  if(hint) hint.textContent = (isEmb && unite) ? ('\u2014 en '+unite) : '';
   const dlcWrap=document.getElementById('f_dlcWrap');
   if(dlcWrap){
     dlcWrap.style.display = isEmb ? 'none' : '';
-    if(isEmb){ const d=document.getElementById('f_dlc'); if(d) d.value=''; }   // pas de DLC sur un emballage
+    if(isEmb){ const d=document.getElementById('f_dlc'); if(d) d.value=''; }
   }
-  if(q>0 && p>0){ el.textContent = euro(p/q)+' / '+unite; }
-  else { el.textContent='—'; }
+  // Prix unitaire indicatif : affiche dans l'unite de saisie (g/kg pour une denree, native pour un emballage).
+  const uSaisie = isEmb ? unite : (uSel ? uSel.value : 'g');
+  if(q>0 && p>0){ el.textContent = euro(p/q)+' / '+uSaisie; }
+  else { el.textContent='\u2014'; }
 }
 let _pendingLot = null;   // données du lot en attente de confirmation (prix 0)
 async function saveLot(){
   const qteSaisie=round3(numVal('f_qte'));
   if(!qteSaisie||qteSaisie<=0){toast('Quantité invalide');return;}
   const prix=money2(numVal('f_prix'));
-  // Conversion d'unité : les denrées (unité kg) sont SAISIES en grammes mais STOCKÉES en kg
-  // (cohérent avec les recettes). Les emballages restent à l'unité native. On divise donc par
-  // 1000 pour une denrée en kg. Sans ça, un lot de 760 g serait stocké comme 760 kg (bug).
+  // Conversion d'unité : on stocke TOUJOURS en kg pour les denrées (cohérent avec les recettes).
+  // L'unité de SAISIE est désormais choisie par l'utilisateur (sélecteur g/kg) : « g » → ÷1000, « kg » → ×1.
+  // Les emballages restent à l'unité native (pas de conversion).
   const _matId=+val('f_mat');
   const _mat=await db.materials.get(_matId).catch(()=>null);
-  const _facteur = (_mat && _mat.categorie!=='emballage' && (_mat.unite||'kg')==='kg') ? 1000 : 1;
+  const _estEmballage = _mat && _mat.categorie==='emballage';
+  const _uniteSaisie = val('f_qteUnite') || 'g';
+  const _facteur = (!_estEmballage && _uniteSaisie==='g') ? 1000 : 1;
   const qte = round3(qteSaisie/_facteur);
-  // [DIAGNOSTIC TEMPORAIRE v492c] — modale bloquante : reste affichée jusqu'à action de l'utilisateur
-  _pendingLot = {
-    materialId:_matId, supplierId:+val('f_sup')||0,
-    lotFournisseur:val('f_lotf'), qteInitiale:qte, qteRestante:qte,
-    prix, prixUnitaire: qte>0 ? money2(prix/qte) : 0,
-    dateReception:val('f_date')||today(), dlc:val('f_dlc')||'',
-    refProduit:val('f_ref')||'', commentaire:val('f_comm')||''
-  };
-  openModal(`<h3>🔎 Diagnostic réception</h3>
-    <div class="banner" style="background:#eef6ee;border-color:#bcd9c2"><div style="font-family:monospace;font-size:.9rem;line-height:1.8">
-      Valeur brute champ : <b>${esc(val('f_qte'))}</b><br>
-      numVal('f_qte') : <b>${numVal('f_qte')}</b><br>
-      qteSaisie (round3) : <b>${qteSaisie}</b><br>
-      Matière unité : <b>${_mat?esc(_mat.unite||'(vide)'):'MATIERE INTROUVABLE'}</b><br>
-      Catégorie : <b>${_mat?esc(_mat.categorie||'(vide)'):'?'}</b><br>
-      Facteur division : <b>${_facteur}</b><br>
-      → qté STOCKÉE : <b style="color:#b3261e">${qte}</b>
-    </div></div>
-    <p class="note">Note ces valeurs et envoie-les. Puis « Enregistrer » pour finir normalement.</p>
-    <div class="modal-actions">
-      <button class="btn ghost" onclick="closeModal()">Annuler</button>
-      <button class="btn gold" onclick="saveLotConfirm()">Enregistrer</button>
-    </div>`);
-  return;
   // On capture TOUTES les valeurs maintenant : ouvrir l'alerte remplace la modale du formulaire.
   const data={
     materialId:_matId, supplierId:+val('f_sup')||0,
