@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v505b';
+const APP_VERSION = 'v506';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5337,7 +5337,12 @@ async function prodAssembleSave(thisId){
       // (la transaction lèvera une erreur et rien ne sera écrit), comme pour les coques/ganache.
       // Un composant n'est décompté QUE si la recette le référence (typiquement les grands formats).
       const _rec = await db.recipes.get(coques.recipeId).catch(()=>null);
-      const _refs = (_rec && Array.isArray(_rec.componentRefs)) ? _rec.componentRefs : [];
+      const _refsBrutes = (_rec && Array.isArray(_rec.componentRefs)) ? _rec.componentRefs : [];
+      // [ANOMALIE 1 — sécurité] Dédoublonnage par componentId : si une recette référence par erreur
+      // deux fois le même composant, on ne le décompte qu'UNE fois (sinon double prélèvement).
+      const _vus = new Set();
+      const _refs = [];
+      for(const r of _refsBrutes){ const cid=+r.componentId; if(!cid || _vus.has(cid)) continue; _vus.add(cid); _refs.push(r); }
       const _compConsos = [];   // [{componentId, nom, prélèvements:[{prodId, qte}]}]
       if(_refs.length){
         const _toutesProds = await db.productions.toArray();
@@ -5346,14 +5351,20 @@ async function prodAssembleSave(thisId){
           if(!cid) continue;
           const comp = await db.components.get(cid).catch(()=>null);
           const nomComp = comp ? (comp.nom||'composant') : 'composant';
-          // Sous-lots de CE composant en stock (productions issues du catalogue), FIFO par DLC.
+          // Sous-lots de CE composant en stock, FIFO par DLC.
+          // [ANOMALIE 2 — sécurité] On n'accepte QUE les lots TERMINÉS (prodStatut==='termine') :
+          // un composant encore « démarré » (en cours de production) ne doit jamais être assemblable.
           const lots = _toutesProds
-            .filter(pp => pp.composantCatalogue===true && +pp.componentId===cid && round3(+pp.qteRestante)>0)
+            .filter(pp => pp.composantCatalogue===true && +pp.componentId===cid
+                          && (pp.prodStatut||'termine')==='termine'
+                          && round3(+pp.qteRestante)>0)
             .sort((x,y)=> (x.dlcProduit||'9999').localeCompare(y.dlcProduit||'9999') || (x.date||'').localeCompare(y.date||''));
           const dispoComp = lots.reduce((s,l)=>s+round3(+l.qteRestante),0);
-          const besoinComp = qteAsm;   // 1 dose par macaron
+          // [OPTION B] 1 dose de composant par macaron GF assemblé (le poids en g de la recette
+          // ne sert qu'au calcul de coût, jamais au décompte du stock qui est en doses).
+          const besoinComp = qteAsm;
           if(round3(dispoComp) + 1e-9 < besoinComp){
-            throw new Error(`Stock insuffisant de « ${nomComp} » : besoin ${qty(besoinComp)} dose(s), dispo ${qty(dispoComp)}. Produis-en avant d'assembler.`);
+            throw new Error(`Stock insuffisant de « ${nomComp} » (terminé) : besoin ${qty(besoinComp)} dose(s), dispo ${qty(dispoComp)}. Produis-en et termine la production avant d'assembler.`);
           }
           // Prélèvement FIFO
           let reste = besoinComp;
