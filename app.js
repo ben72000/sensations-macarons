@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v507c';
+const APP_VERSION = 'v507d';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -17958,7 +17958,7 @@ const _CHANTACHE_INGREDIENTS = [
   {materialId:5,  qteParBatch:31.2},  // Chocolat blanc
   {materialId:64, qteParBatch:3.34},  // Arôme noix de coco
   {materialId:11, qteParBatch:8.33},  // Gélatine de poisson
-  {materialId:15, qteParBatch:4.2},   // Eau
+  {materialId:15, qteParBatch:42},    // Eau (corrigé : 42 g, pas 4,2)
   {materialId:13, qteParBatch:5}      // Vanille
 ];
 const _CHANTACHE_COMPONENT_ID = 1;
