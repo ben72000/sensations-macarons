@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v497';
+const APP_VERSION = 'v499';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5410,13 +5410,20 @@ async function prodForm(){  const recipes = await db.recipes.toArray();
   }
   _prodReelTouched=false;
   const opts = recipes.map(r=>`<option value="${r.id}" data-rend="${r.rendement}">${esc(r.produitNom)} (${r.rendement}/batch)</option>`).join('');
+  // [ÉTAPE 2a] Composants du catalogue (ex : chantilly vanille-coco) productibles comme garniture séparée.
+  const _composantsCat = await db.components.toArray().catch(()=>[]);
+  const _compOpts = _composantsCat.map(c=>`<option value="${c.id}" data-rend="${c.rendement||1}">${esc(c.nom||'')} (${c.rendement||1}/batch)</option>`).join('');
   openModal(`<h3>Nouvelle production</h3>
    <p class="note" style="margin:-2px 0 10px"><span class="act" onclick="prodFormLibre()">⚡ Production rapide (sans recette) →</span> <span style="color:#9a8a82">pour se familiariser sans tout paramétrer</span></p>
    <div class="field"><label>Mode de production</label>
      <select id="f_mode" onchange="prodModeSwitch(this.value)">
        <option value="complet">Batch complet (coques + ganache assemblés)</option>
        <option value="composant">Par composants (coques / ganache séparés)</option>
+       ${_composantsCat.length?`<option value="garniture">Garniture séparée (chantilly, insert…)</option>`:''}
      </select></div>
+   <div class="field" id="f_garnitureWrap" style="display:none"><label>Garniture à produire <span style="color:#9a8a82;font-weight:400">— depuis le catalogue de composants</span></label>
+     <select id="f_garnitureSel" onchange="prodSyncTheorique();prodRefreshLot();prodApercuGarniture()">${_compOpts}</select></div>
+   <div id="f_garnitureApercu" style="display:none"></div>
    <div class="field"><label>Recette</label><select id="f_rec" onchange="prodSyncTheorique();prodRefreshLot()">${opts}</select></div>
    <div class="field" id="f_compWrap" style="display:none"><label>Composant à produire</label>
      <div class="opt-table">
@@ -5432,7 +5439,7 @@ async function prodForm(){  const recipes = await db.recipes.toArray();
      </div></div>
    <div class="row2">
      <div class="field"><label>Quantité théorique <span style="color:#9a8a82;font-weight:400" id="qteUnit">— en macarons (base matières)</span></label>
-       <input type="number" id="f_qte" value="${recipes[0].rendement}" min="1" oninput="prodSyncReelDefault()"></div>
+       <input type="number" id="f_qte" value="${recipes[0].rendement}" min="1" oninput="prodSyncReelDefault();prodApercuGarniture()"></div>
      <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}" onchange="prodRefreshLot()"></div>
    </div>
    <p class="note" id="coqueHint" style="display:none;margin:-4px 0 8px;color:#8a6d3b"></p>
@@ -5449,6 +5456,13 @@ async function prodForm(){  const recipes = await db.recipes.toArray();
 // Bascule entre batch complet et production par composants.
 function prodModeSwitch(mode){
   const w=document.getElementById('f_compWrap'); if(w) w.style.display = mode==='composant'?'block':'none';
+  // [ÉTAPE 2a] Mode « garniture séparée » : on montre le menu des composants et on masque celui des recettes.
+  const g=document.getElementById('f_garnitureWrap'); if(g) g.style.display = mode==='garniture'?'block':'none';
+  const recWrap=document.getElementById('f_rec'); const recField=recWrap?recWrap.closest('.field'):null;
+  if(recField) recField.style.display = mode==='garniture'?'none':'block';
+  // Affiche/masque et remplit l'aperçu des ingrédients de la garniture.
+  if(mode==='garniture'){ prodSyncTheorique(); prodApercuGarniture(); }
+  else { const z=document.getElementById('f_garnitureApercu'); if(z){ z.style.display='none'; z.innerHTML=''; } }
   prodCompSwitch();
 }
 // Met à jour la note « coques » (1 macaron = 2 coques) selon le composant choisi.
@@ -5478,13 +5492,87 @@ function prodUpdateCoqueHint(){
 function prodDlcHint(){ /* l'emplacement et la DLC sont fixés à la fin de production */ }
 // Quand on change de recette, recale les deux quantités sur le rendement de la recette.
 function prodSyncTheorique(){
-  const sel=document.getElementById('f_rec'); if(!sel) return;
+  // En mode « garniture séparée », le rendement vient du composant choisi ; sinon de la recette.
+  const mode=document.getElementById('f_mode')?.value||'complet';
+  const sel = mode==='garniture' ? document.getElementById('f_garnitureSel') : document.getElementById('f_rec');
+  if(!sel) return;
   const rend=+sel.options[sel.selectedIndex]?.dataset.rend || 0;
   const th=document.getElementById('f_qte'), re=document.getElementById('f_qtereel');
   if(th && rend){ th.value=rend; }
   if(re && rend){ re.value=rend; }
   prodSyncReelDefault();
   prodUpdateCoqueHint();
+}
+// [ÉTAPE 2a] Aperçu des ingrédients du composant (garniture) AVANT de lancer la production.
+// Lit les ingrédients via componentId, applique le facteur (quantité saisie / rendement),
+// et affiche un tableau lisible (quantités en grammes pour les denrées en kg).
+async function prodApercuGarniture(){
+  const zone=document.getElementById('f_garnitureApercu'); if(!zone) return;
+  const sel=document.getElementById('f_garnitureSel');
+  const cid=sel?+sel.value:0;
+  if(!cid){ zone.style.display='none'; zone.innerHTML=''; return; }
+  try{
+    const comp=await db.components.get(cid);
+    if(!comp){ zone.style.display='none'; zone.innerHTML=''; return; }
+    const items=await db.recipeItems.where('componentId').equals(cid).toArray();
+    const mats=await db.materials.toArray();
+    const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'(matière ?)';
+    const dispOf=id=>{ const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
+      return (m.categorie!=='emballage' && u==='kg') ? {u:'g', f:1000} : {u:m.unite||'', f:1}; };
+    const rendement=+comp.rendement||1;
+    const nb=+(document.getElementById('f_qte')?.value)|| rendement;
+    const facteur = rendement>0 ? (nb/rendement) : 1;
+    if(!items.length){
+      zone.style.display='block';
+      zone.innerHTML=`<div class="banner" style="background:#fdf6ec;border-color:#e5c98a"><div>Cette garniture n'a aucun ingrédient renseigné. Tu peux l'enregistrer quand même, mais aucune matière ne sera décomptée.</div></div>`;
+      return;
+    }
+    const rows=items.map(it=>{ const d=dispOf(it.materialId);
+      const q=round3((+it.qteParBatch||0)*d.f*facteur);
+      return `<tr><td>${esc(matName(it.materialId))}</td><td style="text-align:right"><b>${qty(q)}</b> ${esc(d.u)}</td></tr>`;
+    }).join('');
+    zone.style.display='block';
+    zone.innerHTML=`<div class="panel" style="background:#faf6ee;margin:8px 0">
+      <h3 style="font-size:.9rem;margin:0 0 6px">🧾 Ingrédients — ${esc(comp.nom||'')} <span style="font-weight:400;color:#9a8a82">pour ${qty(nb)} dose(s)</span></h3>
+      <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>
+      <p class="note" style="margin-top:6px">Ces quantités seront déduites de ton stock matières au lancement.</p>
+    </div>`;
+  }catch(e){ console.error('prodApercuGarniture',e); zone.style.display='none'; zone.innerHTML=''; }
+}
+// [ÉTAPE 2a] Aperçu des ingrédients de la GARNITURE sélectionnée, AVANT de lancer la production.
+// Lit les ingrédients du composant (recipeItems via componentId), calcule les quantités au batch
+// (qteParBatch × facteur) et convertit kg→g pour l'affichage, comme la fiche recette.
+async function prodApercuGarniture(){
+  const zone=document.getElementById('f_garnitureApercu'); if(!zone) return;
+  const cid=+val('f_garnitureSel');
+  if(!cid){ zone.style.display='none'; zone.innerHTML=''; return; }
+  try{
+    const comp=await db.components.get(cid).catch(()=>null);
+    const items=await db.recipeItems.where('componentId').equals(cid).toArray().catch(()=>[]);
+    if(!comp || !items.length){
+      zone.style.display='block';
+      zone.innerHTML='<p class="note" style="color:#8a6d3b">Cette garniture n\'a pas encore d\'ingrédients renseignés (à compléter dans Composants).</p>';
+      return;
+    }
+    const mats=await db.materials.toArray();
+    const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'(matière ?)';
+    const dispOf=id=>{ const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
+      return (u==='kg')?{u:'g',f:1000}:{u:m.unite||'',f:1}; };
+    const rendement=+comp.rendement||1;
+    const nb=+val('f_qte')||rendement;
+    const facteur=rendement>0 ? (nb/rendement) : 1;
+    const rows=items.map(it=>{
+      const d=dispOf(it.materialId);
+      const q=round3((+it.qteParBatch||0)*d.f*facteur);
+      return `<div class="sum-box" style="font-size:.84rem"><span>${esc(matName(it.materialId))}${it.note?` <span style="color:#9a8a82">· ${esc(it.note)}</span>`:''}</span><b>${qty(q)} ${esc(d.u)}</b></div>`;
+    }).join('');
+    zone.style.display='block';
+    zone.innerHTML=`<div class="panel" style="background:#f7f3ec;margin:6px 0 10px">
+      <h3 style="font-size:.9rem;margin:0 0 6px">🧾 Ingrédients — ${esc(comp.nom||'')} <span style="font-weight:400;color:#9a8a82">(pour ${qty(nb)} dose(s))</span></h3>
+      ${rows}
+      <p class="note" style="margin-top:6px">Vérifie tes ingrédients avant de lancer. Les matières seront déduites à la production.</p>
+    </div>`;
+  }catch(e){ console.error('prodApercuGarniture',e); zone.style.display='block'; zone.innerHTML='<p class="note" style="color:#b3261e">Impossible d\'afficher les ingrédients.</p>'; }
 }
 // Tant que l'utilisateur n'a pas touché la quantité réelle, on la garde égale au théorique
 // et on affiche l'écart en direct.
@@ -5495,6 +5583,8 @@ function prodSyncReelDefault(){
   if(re && !_prodReelTouched){ re.value=th; }
   prodUpdateEcartHint();
   prodUpdateCoqueHint();
+  // En mode garniture, l'aperçu des ingrédients suit la quantité de doses saisie.
+  if(document.getElementById('f_mode')?.value==='garniture'){ prodApercuGarniture(); }
 }
 function prodUpdateEcartHint(){
   const th=+(document.getElementById('f_qte')?.value)||0;
@@ -5508,6 +5598,13 @@ function prodUpdateEcartHint(){
   hint.textContent = `Écart : ${e>0?'+':''}${qty(e)} pièce(s) (${e>0?'+':''}${Math.round(pct)}%) — ${e<0?'perte / casse':'surplus de rendement'}. Sans impact sur les matières.`;
 }
 async function saveProd(){
+  // [ÉTAPE 2a] Le mode « garniture séparée » n'est pas encore productible (arrive à l'étape 2b).
+  // On bloque proprement pour ne rien casser tant que la mécanique n'est pas en place.
+  const _mode = document.getElementById('f_mode')?.value || 'complet';
+  if(_mode==='garniture'){
+    toast('La production de garniture séparée arrive très bientôt (en cours de mise en place).');
+    return;
+  }
   const recipeId=+val('f_rec');
   const qteTheorique=+val('f_qte');
   let qteReelle=val('f_qtereel');
