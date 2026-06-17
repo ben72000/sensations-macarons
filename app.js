@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v506';
+const APP_VERSION = 'v507';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5247,30 +5247,24 @@ async function prodAssembleForm(id, opts){
   const p=await db.productions.get(id); if(!p){ toast('Sous-lot introuvable'); return; }
   const comp=prodComposant(p);
   if(comp!=='coques' && comp!=='ganache'){ toast('L\'assemblage part d\'un sous-lot coques ou ganache.'); return; }
-  // [ÉTAPE 1 — garde-fou] Une recette peut nécessiter une 2e garniture séparée (ex : chantilly
-  // vanille-coco déposée au montage). On la repère via les componentRefs de la recette, et on
-  // affiche un AVERTISSEMENT non bloquant pour que l'utilisateur n'oublie pas de la déposer.
-  let _garnSupp = [];
-  try{
-    const _rec = await db.recipes.get(p.recipeId).catch(()=>null);
-    const _refs = (_rec && Array.isArray(_rec.componentRefs)) ? _rec.componentRefs : [];
-    if(_refs.length){
-      const _comps = await db.components.toArray().catch(()=>[]);
-      _garnSupp = _refs
-        .map(ref => _comps.find(c => +c.id === +ref.componentId))
-        .filter(c => c && (c.type==='ganache' || c.type==='insert' || c.type==='autre'));
-    }
-  }catch(e){ console.error('garnitures supp', e); }
-  const _garnSuppHtml = _garnSupp.length
-    ? `<div class="banner" style="background:#eef6ef;border-color:#bcd9c6;margin-bottom:10px"><div>🍫 <b>Garniture(s) supplémentaire(s) déposée(s) au montage</b> pour ${esc((window._prodRecName?window._prodRecName(p.recipeId):'cette recette'))} :<br>${_garnSupp.map(c=>'• '+esc(c.nom||'')).join('<br>')}<br><span style="font-size:.82rem;color:#3f7d52">✓ 1 dose par macaron sera décomptée automatiquement du stock (assemblage bloqué si stock insuffisant).</span></div></div>`
-    : '';
   const recName = (window._prodRecName)||((rid)=>'#'+rid);
   const all=await db.productions.toArray();
+  // Recette + composants supplémentaires requis (ex : chantache sur un GF).
+  const _rec = await db.recipes.get(p.recipeId).catch(()=>null);
+  const _refsBrutes = (_rec && Array.isArray(_rec.componentRefs)) ? _rec.componentRefs : [];
+  // Dédoublonnage des refs par componentId
+  const _vus=new Set(); const _refs=[];
+  for(const r of _refsBrutes){ const cid=+r.componentId; if(!cid||_vus.has(cid)) continue; _vus.add(cid); _refs.push(r); }
+  const _comps = await db.components.toArray().catch(()=>[]);
+  const compById={}; _comps.forEach(c=>compById[+c.id]=c);
+  // Mode « 3 parties » : recette grand format AVEC composant(s) requis (chantache).
+  const mode3 = !!(_rec && _rec.grandFormat && _refs.length);
+
   const want = comp==='coques' ? 'ganache' : 'coques';
-  // Candidats : TOUS les sous-lots complémentaires en stock (tous parfums), car une
-  // dégustation peut associer coques et ganache de parfums différents. On trie en mettant
-  // le même n° de lot puis la même recette en tête (assemblage « normal »).
-  let cands=all.filter(x=>prodComposant(x)===want && round3(+x.qteRestante)>0);
+  // Sélecteur de la GARNITURE (ganache OU crémeux) à associer. En mode 3 parties, on EXCLUT
+  // les composants catalogue (chantache) de ce menu — ils ont leur propre sélecteur.
+  let cands=all.filter(x=>prodComposant(x)===want && round3(+x.qteRestante)>0
+                          && (!mode3 || x.composantCatalogue!==true));
   cands.sort((a,b)=>{
     const sa=(a.lotBase&&a.lotBase===p.lotBase)?0:1, sb=(b.lotBase&&b.lotBase===p.lotBase)?0:1;
     if(sa!==sb) return sa-sb;
@@ -5278,28 +5272,52 @@ async function prodAssembleForm(id, opts){
     if(ra!==rb) return ra-rb;
     return (a.dlcProduit||'9999').localeCompare(b.dlcProduit||'9999');
   });
-  if(!cands.length){ toast(`Aucun sous-lot ${want==='ganache'?'ganache':'coques'} disponible pour assembler.`); return; }
+  if(!cands.length){ toast(`Aucun sous-lot ${want==='ganache'?'garniture (ganache/crémeux)':'coques'} disponible pour assembler.`); return; }
   const optsCand = cands.map(c=>{
     const same = c.recipeId===p.recipeId;
     const tag = c.lotBase===p.lotBase ? ' · même lot' : (same?'':' · ⚠ parfum différent');
-    // 'want' est le composant du candidat : coques → capacité = reste/2 ; ganache → reste
     const capMac = want==='coques' ? Math.floor(round3(+c.qteRestante)/COQUES_PAR_MACARON) : round3(+c.qteRestante);
     const unite = want==='coques' ? `${qty(c.qteRestante)} coques (≈ ${capMac} mac.)` : `${qty(c.qteRestante)} mac.`;
-    return `<option value="${c.id}"${opts.otherId&&+opts.otherId===c.id?' selected':''}>${esc(recName(c.recipeId))} — ${esc(c.lotProduction||('#'+c.id))} · ${unite}${tag}</option>`;
+    const typeLbl = (c.garnitureType==='cremeux') ? ' [crémeux]' : (want==='ganache'?' [ganache]':'');
+    return `<option value="${c.id}"${opts.otherId&&+opts.otherId===c.id?' selected':''}>${esc(recName(c))}${typeLbl} — ${esc(c.lotProduction||('#'+c.id))} · ${unite}${tag}</option>`;
   }).join('');
-  // Capacité en MACARONS de CE sous-lot : coques → /2 ; ganache → tel quel.
+
+  // [MODE 3 PARTIES] Sélecteur(s) de COMPOSANT (chantache) : un menu par composant requis,
+  // listant uniquement les lots catalogue TERMINÉS et en stock, FIFO par DLC.
+  let compSelectorsHtml = '';
+  if(mode3){
+    for(const ref of _refs){
+      const cid=+ref.componentId;
+      const c=compById[cid]; const nomC=c?(c.nom||'composant'):'composant';
+      const lots = all.filter(x=> x.composantCatalogue===true && +x.componentId===cid
+                                   && (x.prodStatut||'termine')==='termine' && round3(+x.qteRestante)>0)
+                      .sort((a,b)=> (a.dlcProduit||'9999').localeCompare(b.dlcProduit||'9999') || (a.date||'').localeCompare(b.date||''));
+      if(!lots.length){
+        compSelectorsHtml += `<div class="field"><label>🍫 ${esc(nomC)} (dose)</label>
+          <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⛔ Aucun lot de « ${esc(nomC)} » terminé en stock. Produis-en et termine la production avant d'assembler ce grand format.</div></div></div>`;
+      } else {
+        const optsC = lots.map(l=>`<option value="${l.id}">${esc(l.lotProduction||('#'+l.id))} · ${qty(l.qteRestante)} dose(s) · DLC ${l.dlcProduit?fmtDate(l.dlcProduit):'—'}</option>`).join('');
+        compSelectorsHtml += `<div class="field"><label>🍫 ${esc(nomC)} (1 dose / macaron)</label>
+          <select class="f_asmComp" data-cid="${cid}">${optsC}</select></div>`;
+      }
+    }
+  }
+
   const maxThisMac = comp==='coques' ? Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON) : round3(+p.qteRestante);
   const uniteThis = comp==='coques' ? `${qty(p.qteRestante)} coques (≈ ${maxThisMac} macarons)` : `${qty(p.qteRestante)} macarons`;
-  openModal(`<h3>🔗 Assembler ${esc(recName(p.recipeId))}</h3>
-   ${_garnSuppHtml}
-   <p class="note">1 macaron = <b>2 coques + 1 ganache</b>. Assemblage <b>normal</b> : coques + ganache du même parfum/lot (vendable). Assemblage <b>dégustation</b> : sans correspondance couleur/parfum (offert, non vendable).</p>
+  const titreParts = mode3
+    ? `1 grand format = <b>2 coques + 1 crémeux + 1 dose de chantache</b>. Les <b>3 éléments</b> sont obligatoires : choisis-les ci-dessous (assemblage bloqué si l'un manque).`
+    : `1 macaron = <b>2 coques + 1 ganache</b>. Assemblage <b>normal</b> : coques + ganache du même parfum/lot (vendable). Assemblage <b>dégustation</b> : sans correspondance couleur/parfum (offert, non vendable).`;
+  openModal(`<h3>🔗 Assembler ${esc(recName(p))}${mode3?' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">grand format</span>':''}</h3>
+   <p class="note">${titreParts}</p>
    <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':garnIcon(p)+' '+(garnLabel(p)==='crémeux'?'Crémeux':'Ganache')} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · ${uniteThis}</b></div>
-   <div class="field"><label>${want==='ganache'?'🍫 Ganache à associer':'🟤 Coques à associer'}</label>
+   <div class="field"><label>${want==='ganache'?(mode3?'🟠 Crémeux à associer':'🍫 Ganache à associer'):'🟤 Coques à associer'}</label>
      <select id="f_asmOther">${optsCand}</select></div>
+   ${compSelectorsHtml}
    <label class="switch-row"><input type="checkbox" id="f_asmDeg"${opts.deg?' checked':''} onchange="prodAsmDegSwitch(this.checked)"> 🥄 Assemblage dégustation (offert, non vendable)</label>
    <div class="field"><label>Quantité de <b>macarons</b> à assembler</label>
      <input type="number" id="f_asmQte" min="1" value="${maxThisMac}" max="${maxThisMac}">
-     <p class="note" style="margin-top:4px">Consommera 2 coques + 1 ganache par macaron. Le maximum réel dépend aussi du sous-lot associé.</p></div>
+     <p class="note" style="margin-top:4px">${mode3?'Consommera 2 coques + 1 crémeux + 1 dose de chantache par macaron.':'Consommera 2 coques + 1 ganache par macaron.'} Le maximum réel dépend aussi des sous-lots associés.</p></div>
    <div class="field" id="f_asmDestWrap"><label>Emplacement du macaron assemblé *</label>
      <div class="emp-choices">
        <label class="emp-opt"><input type="radio" name="f_asmDest" value="frigo" checked> <b style="background:#6aa3a0;color:#fff;border-radius:6px;padding:0 7px">F</b> <span>🧊 Frigo (DLC 7 j)</span></label>
@@ -5318,64 +5336,68 @@ async function prodAssembleSave(thisId){
   const deg=document.getElementById('f_asmDeg')?.checked;
   const dest=(document.querySelector('input[name="f_asmDest"]:checked')||{}).value||'frigo';
   if(qteAsm<=0){ toast('Quantité invalide'); return; }
+  // [MODE 3 PARTIES] Lots de composant (chantache) choisis explicitement dans le formulaire.
+  // Map componentId → productionId sélectionnée. Si un sélecteur existe mais sans valeur → manquant.
+  const _compChoisi = {};   // cid → prodId (lot de chantache choisi)
+  const _compSelects = Array.from(document.querySelectorAll('.f_asmComp'));
+  let _compManquant = false;
+  _compSelects.forEach(sel=>{
+    const cid = +sel.getAttribute('data-cid');
+    const pid = +sel.value || 0;
+    if(!pid) _compManquant = true;
+    else _compChoisi[cid] = pid;
+  });
+  if(_compSelects.length && _compManquant){
+    toast('⛔ Composant manquant : ce grand format exige tous ses composants (produits et terminés) avant assemblage.');
+    return;
+  }
   try{
     const res = await db.transaction('rw', db.productions, db.prodConsumption, db.recipes, db.components, async ()=>{
       const a=await db.productions.get(thisId); const b=await db.productions.get(otherId);
       if(!a||!b) throw new Error('Sous-lot introuvable');
       const coques = prodComposant(a)==='coques' ? a : (prodComposant(b)==='coques'?b:null);
       const ganache = prodComposant(a)==='ganache' ? a : (prodComposant(b)==='ganache'?b:null);
-      if(!coques||!ganache) throw new Error('Il faut un sous-lot coques ET un sous-lot ganache.');
-      // qteAsm = nombre de MACARONS. Capacité : coques/2 (2 coques/macaron) et ganache (déjà en macarons).
+      if(!coques||!ganache) throw new Error('Il faut un sous-lot coques ET un sous-lot garniture.');
+      // qteAsm = nombre de MACARONS. Capacité : coques/2 (2 coques/macaron) et garniture (déjà en macarons).
       const capCoques = Math.floor(round3(+coques.qteRestante)/COQUES_PAR_MACARON);
       const capGanache = round3(+ganache.qteRestante);
       const dispo = Math.min(capCoques, capGanache);
-      if(qteAsm>dispo+1e-9) throw new Error(`Max assemblable : ${qty(dispo)} macaron(s) — limité par ${capCoques<=capGanache?'les coques ('+qty(coques.qteRestante)+' coques)':'la ganache ('+qty(ganache.qteRestante)+' macarons)'}.`);
-      // [ÉTAPE 3] DÉCOMPTE DES COMPOSANTS SUPPLÉMENTAIRES (ex : chantache vanille-coco sur les GF).
-      // La recette du macaron peut référencer des composants (componentRefs) à déposer au montage.
-      // Règle : 1 dose de composant par macaron assemblé, prélevée en FIFO (DLC la plus proche) sur
-      // les sous-lots de CE composant en stock. Si le stock total est insuffisant → on BLOQUE tout
-      // (la transaction lèvera une erreur et rien ne sera écrit), comme pour les coques/ganache.
-      // Un composant n'est décompté QUE si la recette le référence (typiquement les grands formats).
+      if(qteAsm>dispo+1e-9) throw new Error(`Max assemblable : ${qty(dispo)} macaron(s) — limité par ${capCoques<=capGanache?'les coques ('+qty(coques.qteRestante)+' coques)':'la garniture ('+qty(ganache.qteRestante)+' macarons)'}.`);
+      // [ÉTAPE 3] DÉCOMPTE DES COMPOSANTS SUPPLÉMENTAIRES (chantache) — choisis explicitement.
+      // Le lot est celui sélectionné dans le formulaire ; on vérifie statut terminé + quantité,
+      // sinon on BLOQUE tout (transaction annulée). Les 3 éléments d'un GF sont obligatoires.
       const _rec = await db.recipes.get(coques.recipeId).catch(()=>null);
+      // [GF VENDABLE] Le crémeux doit être du MÊME parfum que les coques (sauf dégustation).
+      const _estGF = !!(_rec && _rec.grandFormat && Array.isArray(_rec.componentRefs) && _rec.componentRefs.length);
+      if(_estGF && !deg && +coques.recipeId !== +ganache.recipeId){
+        throw new Error('Pour un grand format vendable, le crémeux doit être du même parfum que les coques. Coche « dégustation » pour associer librement.');
+      }
       const _refsBrutes = (_rec && Array.isArray(_rec.componentRefs)) ? _rec.componentRefs : [];
-      // [ANOMALIE 1 — sécurité] Dédoublonnage par componentId : si une recette référence par erreur
-      // deux fois le même composant, on ne le décompte qu'UNE fois (sinon double prélèvement).
       const _vus = new Set();
       const _refs = [];
       for(const r of _refsBrutes){ const cid=+r.componentId; if(!cid || _vus.has(cid)) continue; _vus.add(cid); _refs.push(r); }
       const _compConsos = [];   // [{componentId, nom, prélèvements:[{prodId, qte}]}]
-      if(_refs.length){
-        const _toutesProds = await db.productions.toArray();
-        for(const ref of _refs){
-          const cid = +ref.componentId;
-          if(!cid) continue;
-          const comp = await db.components.get(cid).catch(()=>null);
-          const nomComp = comp ? (comp.nom||'composant') : 'composant';
-          // Sous-lots de CE composant en stock, FIFO par DLC.
-          // [ANOMALIE 2 — sécurité] On n'accepte QUE les lots TERMINÉS (prodStatut==='termine') :
-          // un composant encore « démarré » (en cours de production) ne doit jamais être assemblable.
-          const lots = _toutesProds
-            .filter(pp => pp.composantCatalogue===true && +pp.componentId===cid
-                          && (pp.prodStatut||'termine')==='termine'
-                          && round3(+pp.qteRestante)>0)
-            .sort((x,y)=> (x.dlcProduit||'9999').localeCompare(y.dlcProduit||'9999') || (x.date||'').localeCompare(y.date||''));
-          const dispoComp = lots.reduce((s,l)=>s+round3(+l.qteRestante),0);
-          // [OPTION B] 1 dose de composant par macaron GF assemblé (le poids en g de la recette
-          // ne sert qu'au calcul de coût, jamais au décompte du stock qui est en doses).
-          const besoinComp = qteAsm;
-          if(round3(dispoComp) + 1e-9 < besoinComp){
-            throw new Error(`Stock insuffisant de « ${nomComp} » (terminé) : besoin ${qty(besoinComp)} dose(s), dispo ${qty(dispoComp)}. Produis-en et termine la production avant d'assembler.`);
-          }
-          // Prélèvement FIFO
-          let reste = besoinComp;
-          const prelevs = [];
-          for(const l of lots){
-            if(reste<=1e-9) break;
-            const pris = round3(Math.min(reste, +l.qteRestante));
-            if(pris>0){ prelevs.push({prodId:l.id, lot:l.lotProduction||('#'+l.id), qte:pris}); reste = round3(reste - pris); }
-          }
-          _compConsos.push({componentId:cid, nom:nomComp, prelevs});
+      for(const ref of _refs){
+        const cid = +ref.componentId;
+        if(!cid) continue;
+        const comp = await db.components.get(cid).catch(()=>null);
+        const nomComp = comp ? (comp.nom||'composant') : 'composant';
+        const besoinComp = qteAsm;   // [OPTION B] 1 dose / macaron
+        const pidChoisi = _compChoisi[cid];
+        if(!pidChoisi){
+          throw new Error(`Composant « ${nomComp} » non sélectionné : ce grand format ne peut pas être assemblé sans lui.`);
         }
+        const lotChoisi = await db.productions.get(pidChoisi).catch(()=>null);
+        if(!lotChoisi || lotChoisi.composantCatalogue!==true || +lotChoisi.componentId!==cid){
+          throw new Error(`Lot de « ${nomComp} » invalide.`);
+        }
+        if((lotChoisi.prodStatut||'termine')!=='termine'){
+          throw new Error(`Le lot de « ${nomComp} » n'est pas terminé : termine sa production avant d'assembler.`);
+        }
+        if(round3(+lotChoisi.qteRestante) + 1e-9 < besoinComp){
+          throw new Error(`Stock insuffisant de « ${nomComp} » : besoin ${qty(besoinComp)} dose(s), ce lot n'a que ${qty(lotChoisi.qteRestante)}.`);
+        }
+        _compConsos.push({componentId:cid, nom:nomComp, prelevs:[{prodId:lotChoisi.id, lot:lotChoisi.lotProduction||('#'+lotChoisi.id), qte:besoinComp}]});
       }
       const coquesUtilisees = qteAsm*COQUES_PAR_MACARON;
       const nowIso=new Date().toISOString();
@@ -5389,15 +5411,19 @@ async function prodAssembleSave(thisId){
       const lotBase = coques.lotBase || ganache.lotBase || lotBaseSansSuffixe(coques.lotProduction||'');
       const suff = deg ? '-DG' : '-AS';
       const lotAsm = lotAvecEmplacement((lotBase||genLotCode(3))+suff, dest);
-      // décrémente les composants selon le ratio : 2 coques + 1 ganache par macaron
+      // décrémente les composants selon le ratio : 2 coques + 1 garniture par macaron
       await db.productions.update(coques.id, {qteRestante: subQty(coques.qteRestante, coquesUtilisees)});
       await db.productions.update(ganache.id, {qteRestante: subQty(ganache.qteRestante, qteAsm)});
-      // [ÉTAPE 3] décrémente les composants supplémentaires (chantache…) en FIFO
+      // [ÉTAPE 3] décrémente les composants supplémentaires (chantache) choisis explicitement
       const _assembleFromComp = [];
       for(const cc of _compConsos){
         for(const pv of cc.prelevs){
           const lp = await db.productions.get(pv.prodId);
-          if(lp){ await db.productions.update(pv.prodId, {qteRestante: subQty(lp.qteRestante, pv.qte)}); }
+          if(lp){
+            await db.productions.update(pv.prodId, {qteRestante: subQty(lp.qteRestante, pv.qte)});
+            // la DLC du macaron ne peut pas dépasser celle de la chantache utilisée
+            if(lp.dlcProduit && (!dlc || lp.dlcProduit<dlc)) dlc=lp.dlcProduit;
+          }
           _assembleFromComp.push({id:pv.prodId, lot:pv.lot, composant:'garniture-sup', componentId:cc.componentId, qte:pv.qte, parfum:cc.nom});
         }
       }
