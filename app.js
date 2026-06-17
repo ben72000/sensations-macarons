@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v507b';
+const APP_VERSION = 'v507c';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6060,17 +6060,6 @@ async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, 
       const comp = await db.components.get(componentId);
       if(!comp) throw new Error('Composant introuvable');
       const items = await db.recipeItems.where('componentId').equals(componentId).toArray();
-      // [DIAG TEMPORAIRE] Vérifier ce que la production de composant voit réellement.
-      if(window._diagProdComposant){
-        const _tousItems = await db.recipeItems.toArray();
-        const _avecCid = _tousItems.filter(it=>it.componentId!=null);
-        alert('DIAG produireComposant\n'+
-          'componentId reçu = '+JSON.stringify(componentId)+' ('+typeof componentId+')\n'+
-          'comp.rendement = '+comp.rendement+'\n'+
-          'recipeItems trouvés (where componentId) = '+items.length+'\n'+
-          '--- toutes lignes avec componentId en base ---\n'+
-          _avecCid.map(it=>'item#'+it.id+' cid='+JSON.stringify(it.componentId)+'('+typeof it.componentId+') mat='+it.materialId+' qpb='+it.qteParBatch).join('\n'));
-      }
       const rendement = +comp.rendement || 1;
       const facteur = (rendement>0) ? (nbDosesTh / rendement) : 0;
       // Vérif préalable : stock suffisant pour toutes les matières ?
@@ -17960,6 +17949,66 @@ async function convertirDenreeKgVersGConfirm(matId){
 // (componentRefs), affiche : le type de chaque composant, son poids dans la recette, et l'état
 // réel de son stock (lots, qteRestante, prodStatut). Éclaire les 3 anomalies d'assemblage :
 //   (1) quantité décomptée, (2) lots NON terminés éligibles, (3) composant manquant non bloquant.
+// [RESTAURATION] Recrée les 8 lignes d'ingrédients de la Chantache (composantId=1), perdues.
+// Liste figée d'après le diagnostic (IMG_0617). Vérifie chaque matière + anti-doublon. Aperçu d'abord.
+const _CHANTACHE_INGREDIENTS = [
+  {materialId:8,  qteParBatch:208.8}, // Crème fraiche
+  {materialId:8,  qteParBatch:420},   // Crème fraiche (2e ligne, volontaire)
+  {materialId:16, qteParBatch:31.2},  // Sucre glace
+  {materialId:5,  qteParBatch:31.2},  // Chocolat blanc
+  {materialId:64, qteParBatch:3.34},  // Arôme noix de coco
+  {materialId:11, qteParBatch:8.33},  // Gélatine de poisson
+  {materialId:15, qteParBatch:4.2},   // Eau
+  {materialId:13, qteParBatch:5}      // Vanille
+];
+const _CHANTACHE_COMPONENT_ID = 1;
+async function diagRestoreChantacheApercu(){
+  const zone=document.getElementById('diagRestoreChantacheZone');
+  if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    const comp=await db.components.get(_CHANTACHE_COMPONENT_ID).catch(()=>null);
+    if(!comp){ if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Composant Chantache (id 1) introuvable.</p>'; return; }
+    const existantes=await db.recipeItems.where('componentId').equals(_CHANTACHE_COMPONENT_ID).toArray();
+    const rows=[];
+    let toutesOk=true;
+    for(const ing of _CHANTACHE_INGREDIENTS){
+      const mat=await db.materials.get(ing.materialId).catch(()=>null);
+      const nom=mat?mat.nom:'⚠ matière introuvable';
+      const unite=mat?(mat.unite||'?'):'—';
+      if(!mat) toutesOk=false;
+      // doublon = déjà une ligne même materialId + même qteParBatch
+      const dejaLa=existantes.some(it=>+it.materialId===ing.materialId && Math.abs((+it.qteParBatch||0)-ing.qteParBatch)<0.001);
+      rows.push(`<div style="font-size:.76rem;color:${mat?(dejaLa?'#9a8a82':'#3f7d52'):'#b3261e'}">${dejaLa?'⏭ déjà présente':'➕ à créer'} : <b>${esc(nom)}</b> (${unite}) · ${ing.qteParBatch} g · materialId ${ing.materialId}</div>`);
+    }
+    const nbACreer=_CHANTACHE_INGREDIENTS.filter(ing=>!existantes.some(it=>+it.materialId===ing.materialId && Math.abs((+it.qteParBatch||0)-ing.qteParBatch)<0.001)).length;
+    if(zone) zone.innerHTML=`<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:3px">
+      <b style="font-size:.85rem">${esc(comp.nom||'Chantache')} — lignes actuelles : ${existantes.length}</b>
+      ${rows.join('')}
+      <div style="margin-top:6px;font-size:.78rem;color:#6a5a52"><b>${nbACreer}</b> ligne(s) seront créées (les autres existent déjà).</div>
+      ${toutesOk
+        ? (nbACreer>0
+            ? `<button class="btn gold sm" style="margin-top:6px" onclick="diagRestoreChantacheConfirm()">Confirmer la restauration (${nbACreer} ligne(s))</button>`
+            : `<p class="note" style="margin-top:6px;color:#3f7d52">✓ Toutes les lignes sont déjà présentes, rien à faire.</p>`)
+        : `<p class="note" style="margin-top:6px;color:#b3261e">⚠ Une ou plusieurs matières sont introuvables (id changé ?). Vérifie avant de restaurer — dis-le-moi.</p>`}
+    </div>`;
+  }catch(e){ console.error('diagRestoreChantacheApercu',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur.</p>'; }
+}
+async function diagRestoreChantacheConfirm(){
+  try{
+    const existantes=await db.recipeItems.where('componentId').equals(_CHANTACHE_COMPONENT_ID).toArray();
+    let crees=0;
+    await db.transaction('rw', db.recipeItems, async()=>{
+      for(const ing of _CHANTACHE_INGREDIENTS){
+        const dejaLa=existantes.some(it=>+it.materialId===ing.materialId && Math.abs((+it.qteParBatch||0)-ing.qteParBatch)<0.001);
+        if(dejaLa) continue;
+        await db.recipeItems.add({componentId:_CHANTACHE_COMPONENT_ID, materialId:ing.materialId, qteParBatch:ing.qteParBatch, note:''});
+        crees++;
+      }
+    });
+    toast(`✓ ${crees} ligne(s) d'ingrédient recréée(s) pour la Chantache`);
+    diagRestoreChantacheApercu();
+  }catch(e){ console.error('diagRestoreChantacheConfirm',e); toast('Erreur pendant la restauration'); }
+}
 async function diagAssemblage(){
   const zone=document.getElementById('diagAssemblageZone');
   if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
@@ -18322,9 +18371,8 @@ async function renderIntegrity(){
         <div id="diagInspectionCompZone"><button class="btn ghost sm" onclick="diagInspectionComposants()">Inspecter les composants</button></div>
       </div>
       <div style="margin-top:10px">
-        <p class="note">🔬 <b>Diag production chantache</b> : active une fenêtre d'inspection qui s'affichera à ta PROCHAINE production de chantache (montre ce que le décompte des matières voit réellement). À désactiver ensuite.</p>
-        <button class="btn ghost sm" onclick="window._diagProdComposant=true;toast('Diag activé — produis une chantache maintenant')">Activer le diag production</button>
-        <button class="btn ghost sm" onclick="window._diagProdComposant=false;toast('Diag désactivé')">Désactiver</button>
+        <p class="note">🛠️ <b>Restaurer les ingrédients de la Chantache</b> : recrée les 8 lignes d'ingrédients du composant (perdues). Affiche un aperçu et vérifie chaque matière avant d'écrire. Sans effet si elles existent déjà.</p>
+        <div id="diagRestoreChantacheZone"><button class="btn ghost sm" onclick="diagRestoreChantacheApercu()">Aperçu de la restauration</button></div>
       </div>
       <div style="margin-top:10px">
         <p class="note">🔗 <b>Diagnostic assemblage</b> (lecture seule) : pour chaque recette qui utilise des composants (chantache, crémeux…), montre leur type, le poids demandé, et l'état réel des lots en stock (terminé ou non). Éclaire les 3 anomalies : quantité décomptée, lot non terminé assemblable, composant manquant.</p>
