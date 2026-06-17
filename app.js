@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v507d';
+const APP_VERSION = 'v508';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4064,8 +4064,8 @@ function _prodbatRow(row){
   const rowCls = `prow prow-${comp||'complet'}`;
   const partTag = p.parentProdId ? ` <span class="tag" style="background:#ece2d4;color:#6b5a52;font-size:.66rem">partie</span>` : '';
   // Bouton Assembler : proposé sur un sous-lot coques OU ganache encore disponible.
-  const assembleBtn = (comp==='coques'||comp==='ganache') && round3(+p.qteRestante)>0
-    ? `<button class="qa edit" onclick="prodAssembleForm(${p.id})" title="Assembler coques + ganache de ce lot">🔗 Assembler</button>` : '';
+  const assembleBtn = (comp==='coques'||comp==='ganache') && round3(+p.qteRestante)>0 && (p.prodStatut||'termine')==='termine'
+    ? `<button class="qa edit" onclick="prodAssembleForm(${p.id})" title="Assembler coques + garniture de ce lot">🔗 Assembler</button>` : '';
   // Bouton Distribué : décrémente un lot dégustation au fur et à mesure (offert).
   const degBtn = comp==='degustation' && round3(+p.qteRestante)>0
     ? `<button class="qa edit" onclick="prodDegDistribue(${p.id})" title="Décompter des macarons distribués en dégustation">🥄 Distribué</button>` : '';
@@ -5264,6 +5264,7 @@ async function prodAssembleForm(id, opts){
   // Sélecteur de la GARNITURE (ganache OU crémeux) à associer. En mode 3 parties, on EXCLUT
   // les composants catalogue (chantache) de ce menu — ils ont leur propre sélecteur.
   let cands=all.filter(x=>prodComposant(x)===want && round3(+x.qteRestante)>0
+                          && (x.prodStatut||'termine')==='termine'
                           && (!mode3 || x.composantCatalogue!==true));
   cands.sort((a,b)=>{
     const sa=(a.lotBase&&a.lotBase===p.lotBase)?0:1, sb=(b.lotBase&&b.lotBase===p.lotBase)?0:1;
@@ -5358,6 +5359,16 @@ async function prodAssembleSave(thisId){
       const coques = prodComposant(a)==='coques' ? a : (prodComposant(b)==='coques'?b:null);
       const ganache = prodComposant(a)==='ganache' ? a : (prodComposant(b)==='ganache'?b:null);
       if(!coques||!ganache) throw new Error('Il faut un sous-lot coques ET un sous-lot garniture.');
+      // [ANOMALIE C] Les sous-lots coques ET garniture (ganache/crémeux) doivent être TERMINÉS.
+      // Un composant encore « démarré » (en cours de production) ne doit pas être assemblable —
+      // même règle que pour la chantache. Sinon on assemblerait un macaron incomplet/non fini.
+      if((coques.prodStatut||'termine')!=='termine'){
+        throw new Error('Les coques sélectionnées ne sont pas terminées : termine leur production avant d\'assembler.');
+      }
+      if((ganache.prodStatut||'termine')!=='termine'){
+        const _lbl = (ganache.garnitureType==='cremeux') ? 'Le crémeux sélectionné n\'est pas terminé' : 'La garniture sélectionnée n\'est pas terminée';
+        throw new Error(`${_lbl} : termine sa production avant d'assembler.`);
+      }
       // qteAsm = nombre de MACARONS. Capacité : coques/2 (2 coques/macaron) et garniture (déjà en macarons).
       const capCoques = Math.floor(round3(+coques.qteRestante)/COQUES_PAR_MACARON);
       const capGanache = round3(+ganache.qteRestante);
