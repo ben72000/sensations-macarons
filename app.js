@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v525';
+const APP_VERSION = 'v528';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2538,7 +2538,7 @@ function _shopRow(l){
     <div class="shop-chk">☐</div>
     <div class="shop-main">
       <div class="shop-name"><b>${esc(l.nom)}</b> ${l.low?'<span class="tag low" style="font-size:.6rem">à commander</span>':''}</div>
-      <div class="shop-sub">Stock ${qty(l.stock)} / seuil ${qty(l.seuil)} ${esc(l.unite)} · à prévoir : <b>${manqueTxt}</b></div>
+      <div class="shop-sub">Stock ${qty(l.stock)} / ${l._planContext?'besoin plan':'seuil'} ${qty(l.seuil)} ${esc(l.unite)} · à prévoir : <b>${manqueTxt}</b></div>
       <div class="shop-sup">🏪 ${best}</div>
     </div>
   </div>`;
@@ -22472,7 +22472,67 @@ async function retroplanningView(orderId){
     ${rows}
     ${contraintes}
     <p class="note" style="margin-top:8px;color:#9a8a82">v1 : jalons indicatifs basés sur les délais incompressibles (repos ganache, maturation). Les durées de travail précises seront imbriquées dans tes plages horaires ensuite.</p>
-    <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn gold" onclick="retroplanningICS(${orderId})" title="Ajouter ces étapes à ton calendrier iPhone">📲 Ajouter au calendrier</button></div>`);
+}
+
+// [CONNEXION D] Exporte le rétroplanning d'une commande en fichier .ics (calendrier iPhone).
+// Un événement daté/heuré par jalon, avec alarme. Timezone Europe/Paris.
+async function retroplanningICS(orderId){
+  const o = await db.orders.get(orderId);
+  if(!o){ toast('Commande introuvable'); return; }
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const r = retroplanningCommande(o, recipes);
+  if(r.error){ toast(r.error); return; }
+  const cl = o.clientId ? await db.clients.get(o.clientId).catch(()=>null) : null;
+  const clNom = cl ? cl.nom : '';
+
+  const pad = n => String(n).padStart(2,'0');
+  // Format DTSTART local (sans Z) pour TZID=Europe/Paris.
+  const fmtLocal = d => d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'T'+pad(d.getHours())+pad(d.getMinutes())+'00';
+  const stamp = (()=>{ const d=new Date(); return d.getUTCFullYear()+pad(d.getUTCMonth()+1)+pad(d.getUTCDate())+'T'+pad(d.getUTCHours())+pad(d.getUTCMinutes())+pad(d.getUTCSeconds())+'Z'; })();
+  const uid = ()=> 'smretro-'+Math.random().toString(36).slice(2)+'@sensations-macarons';
+  // Échappement minimal pour les champs texte ICS.
+  const esc = s => String(s||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');
+
+  // Un VEVENT par jalon (on inclut la livraison comme repère, sans alarme anticipée).
+  const vevents = r.jalons.map(j=>{
+    const isLiv = j.cle==='livraison';
+    const sum = `${j.label}${clNom?(' — '+clNom):''}`;
+    const lines = [
+      'BEGIN:VEVENT','UID:'+uid(),'DTSTAMP:'+stamp,
+      'DTSTART;TZID=Europe/Paris:'+fmtLocal(j.date),
+      'DURATION:PT15M',
+      'SUMMARY:'+esc((isLiv?'🎁 ':(j.type==='attente'?'⏳ ':'👨‍🍳 '))+sum),
+      'DESCRIPTION:'+esc((j.note||'')+'\nRétroplanning Sensations Macarons.')
+    ];
+    // Alarme : à l'heure pour une tâche, pas d'alarme anticipée pour la livraison.
+    if(!isLiv){
+      lines.push('BEGIN:VALARM','ACTION:DISPLAY','TRIGGER:PT0M','DESCRIPTION:'+esc(sum),'END:VALARM');
+    }
+    lines.push('END:VEVENT');
+    return lines.join('\r\n');
+  });
+
+  const body = [
+    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Sensations Macarons//Retroplanning//FR','CALSCALE:GREGORIAN','METHOD:PUBLISH',
+    'BEGIN:VTIMEZONE','TZID:Europe/Paris',
+    'BEGIN:STANDARD','DTSTART:19701025T030000','TZOFFSETFROM:+0200','TZOFFSETTO:+0100','RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU','END:STANDARD',
+    'BEGIN:DAYLIGHT','DTSTART:19700329T020000','TZOFFSETFROM:+0100','TZOFFSETTO:+0200','RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU','END:DAYLIGHT',
+    'END:VTIMEZONE',
+    ...vevents,
+    'END:VCALENDAR'
+  ].join('\r\n');
+
+  try{
+    const blob=new Blob([body],{type:'text/calendar;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    const datePart = (o.date||'').replace(/-/g,'');
+    a.href=url; a.download=`retroplanning-${datePart||'commande'}.ics`;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
+    toast('Rétroplanning créé — choisis « Calendrier » dans iOS ✓');
+  }catch(e){ console.error('retroplanningICS',e); toast('Erreur lors de la création du fichier'); }
 }
 
 // Éditeur des disponibilités (planning bi-hebdomadaire A/B).
@@ -22660,6 +22720,50 @@ async function mrpCheckMatieres(plan){
   return {manques, ok: manques.length===0, details};
 }
 
+// [CONNEXION C] Génère une liste de courses à partir des MANQUES MATIÈRES du plan de production.
+// Réutilise la modale de liste de courses existante (openShoppingListModal), mais les quantités
+// « à prévoir » sont celles nécessaires au plan (et non le simple seuil de réassort).
+async function mrpShoppingFromPlan(){
+  const check = _mrpMatCheck;
+  if(!check || !Array.isArray(check.manques) || !check.manques.length){
+    toast('Aucun manque matière à acheter pour ce plan'); return;
+  }
+  const [mats, lots, suppliers] = await Promise.all([
+    db.materials.toArray(), db.materialLots.toArray(), db.suppliers.toArray()
+  ]);
+  const supName = id => (suppliers.find(s=>s.id===id)||{}).nom || '—';
+  const matById = id => mats.find(m=>m.id===id) || null;
+  // Meilleur fournisseur (même logique que genShoppingList).
+  function bestSupplier(materialId){
+    const perSup = new Map();
+    for(const l of lots){
+      if(l.materialId!==materialId || !l.supplierId) continue;
+      const cur = perSup.get(l.supplierId);
+      const newer = !cur || (l.dateReception||'') > (cur.dateReception||'')
+        || ((l.dateReception||'')===(cur.dateReception||'') && (l.id||0)>(cur.id||0));
+      if(newer) perSup.set(l.supplierId, l);
+    }
+    const offres=[];
+    for(const [sid,lot] of perSup){ const pu=lotPU(lot); if(pu>0) offres.push({sid,pu,date:lot.dateReception||''}); }
+    if(!offres.length) return null;
+    offres.sort((a,b)=>a.pu-b.pu);
+    return { nom:supName(offres[0].sid), pu:offres[0].pu, date:offres[0].date,
+             nbAutres:offres.length-1, ecart: offres.length>1 ? money2(offres[offres.length-1].pu-offres[0].pu) : 0 };
+  }
+  // Construire les lignes à partir des manques du plan. manqueAff/stockAff sont en unité d'affichage (g pour kg).
+  const lignes = check.manques.map(m=>{
+    const mat = matById(m.materialId) || {};
+    return {
+      nom: m.nom, unite: m.unite, cat: mat.categorie||'denree',
+      stock: m.stockAff, seuil: m.besoinAff,        // « seuil » = besoin du plan (réutilise l'affichage existant)
+      manque: m.manqueAff, low: true,               // tout manque du plan est « à commander »
+      best: bestSupplier(m.materialId),
+      _planContext: true
+    };
+  });
+  openShoppingListModal(lignes, lignes.length);
+}
+
 // Rendu d'un encart « stock matières pour ce plan » à insérer dans le résultat MRP.
 function mrpMatieresBanner(check){
   if(!check) return '';
@@ -22670,7 +22774,8 @@ function mrpMatieresBanner(check){
     `<div class="sum-box" style="font-size:.86rem"><span>${esc(m.nom)} <span style="color:#9a8a82">stock ${qty(m.stockAff)} ${esc(m.unite)} · besoin ${qty(m.besoinAff)} ${esc(m.unite)}</span></span><b style="color:#b3261e">manque ${qty(m.manqueAff)} ${esc(m.unite)}</b></div>`
   ).join('');
   return `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-top:10px">⛔ <div><b>Stock matières insuffisant pour ce plan</b> — ${check.manques.length} matière(s) à compléter avant de lancer :
-    <div style="margin-top:6px">${lignes}</div></div></div>`;
+    <div style="margin-top:6px">${lignes}</div>
+    <div style="margin-top:8px"><button class="btn ghost sm" onclick="mrpShoppingFromPlan()">🛒 Ajouter à la liste de courses</button></div></div></div>`;
 }
 
 /* ============================================================
@@ -22941,6 +23046,10 @@ function renderMRP(){
      <p class="note" style="margin-top:0">Les commandes non livrées de la période. Pour chacune, le rétroplanning calcule quand commencer chaque étape.</p>
      <div id="mrpCommandes"></div>
    </div>
+   <div class="panel" id="mrpConflitsPanel" style="display:none"><h2>⚠ Conflits de production (14 j)</h2>
+     <p class="note" style="margin-top:0">Tâches de travail (coques, ganache, crémeux, montage) de commandes différentes qui se chevauchent — impossibles à faire en même temps. Les temps de repos/maturation ne comptent pas (passifs).</p>
+     <div id="mrpConflits"></div>
+   </div>
 
    <div class="step-head"><span class="step-num">3</span><div><b>Dans quel ordre je m'y prends ?</b><br><span class="note">Génère ton planning minute par minute : meringues, ganaches (avec repos), cuisson en cascade, montages, maturation.</span></div></div>
    <div class="panel" style="border:1.5px solid var(--gold,#AA7C39)">
@@ -22949,6 +23058,7 @@ function renderMRP(){
    </div>`;
   renderProductionPlan();
   mrpRenderCommandes();
+  mrpRenderConflits();
 }
 
 // Liste les commandes non livrées de la période du plan, avec un bouton rétroplanning par commande.
@@ -22985,6 +23095,118 @@ async function mrpRenderCommandes(){
       <button class="btn ghost sm" onclick="retroplanningView(${o.id})" title="Rétroplanning de cette commande">🕘 Rétroplanning</button>
     </div>`;
   }).join('');
+}
+
+/* ============================================================
+   DÉTECTION DE CONFLITS DE PRODUCTION (rétroplanning multi-commandes)
+   Superpose les rétroplannings de toutes les commandes d'une période.
+   Deux tâches de TRAVAIL (coques, ganache, crémeux, montage) de commandes
+   différentes sont « en conflit » si leurs plages horaires se chevauchent
+   (impossibles à réaliser en même temps par une seule personne).
+   Les étapes d'ATTENTE (repos, maturation, congélation) sont passives et
+   ne créent jamais de conflit (plusieurs lots peuvent reposer en parallèle).
+   ============================================================ */
+// Durée (minutes) d'une tâche de travail selon le nb de batchs de la commande.
+function _retroDureeTache(cle, nbBatchs, nbMeringues, times){
+  const t = times || (typeof getMrpTimes==='function' ? getMrpTimes() : {coques:{estimatedTime:35},ganache:{estimatedTime:12},montage:{estimatedTime:15}});
+  const b = Math.max(1, nbBatchs||1);
+  const m = Math.max(1, nbMeringues||1);
+  if(cle==='coques')  return Math.round((t.coques?.estimatedTime||35) * m);     // par meringue
+  if(cle==='ganache') return Math.round((t.ganache?.estimatedTime||12) * b);    // par batch
+  if(cle==='cremeux') return Math.round((t.ganache?.estimatedTime||12) * b);    // ~ ganache
+  if(cle==='montage') return Math.round((t.montage?.estimatedTime||15) * b);    // par batch
+  return 20;
+}
+
+// Construit la liste des tâches de travail datées (avec durée) pour une commande.
+function retroTachesTravail(o, recipes, times, clName){
+  const r = retroplanningCommande(o, recipes);
+  if(r.error || !r.jalons) return [];
+  // Volume de la commande → nb de batchs / meringues (pour dimensionner les durées).
+  const dem = (typeof _orderParfumDemand==='function') ? _orderParfumDemand(o) : {};
+  const totMac = Object.values(dem).reduce((s,q)=>s+(+q||0),0);
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const MM = (typeof MACARONS_PAR_MERINGUE!=='undefined') ? MACARONS_PAR_MERINGUE : 120;
+  const nbBatchs = Math.max(1, Math.ceil(totMac/TB));
+  const nbMeringues = Math.max(1, Math.ceil(totMac/MM));
+  return r.jalons.filter(j=>j.type==='travail').map(j=>{
+    const dur = _retroDureeTache(j.cle, nbBatchs, nbMeringues, times);
+    const debut = new Date(j.date);
+    const fin = new Date(debut.getTime() + dur*60000);
+    return { orderId:o.id, client:clName||'', cle:j.cle, label:j.label, debut, fin, dureeMin:dur, dateLiv:o.date };
+  });
+}
+
+// Détecte les conflits (chevauchements) entre tâches de travail de commandes DIFFÉRENTES.
+async function retroConflicts(startDate, endDate){
+  let orders;
+  try{ orders = await db.orders.where('date').between(startDate, endDate, true, true).toArray(); }
+  catch(e){ const all=await db.orders.toArray().catch(()=>[]); orders=all.filter(o=>o.date&&o.date>=startDate&&o.date<=endDate); }
+  orders = orders.filter(o=> (typeof normStatus==='function'?normStatus(o.statut):o.statut)!=='Livrée');
+  const [recipes, clients] = await Promise.all([db.recipes.toArray().catch(()=>[]), db.clients.toArray().catch(()=>[])]);
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  const times = (typeof getMrpTimes==='function') ? getMrpTimes() : null;
+
+  // Toutes les tâches de travail, toutes commandes confondues.
+  let taches = [];
+  orders.forEach(o=>{ taches = taches.concat(retroTachesTravail(o, recipes, times, clName(o.clientId))); });
+  taches.sort((a,b)=> a.debut - b.debut);
+
+  // Recherche des chevauchements entre commandes différentes.
+  const conflits = [];
+  for(let i=0;i<taches.length;i++){
+    for(let j=i+1;j<taches.length;j++){
+      const A=taches[i], B=taches[j];
+      if(B.debut >= A.fin) break;                 // trié par début : plus de chevauchement possible avec A
+      if(A.orderId===B.orderId) continue;          // même commande : pas un conflit
+      // chevauchement si A.debut < B.fin && B.debut < A.fin (déjà garanti B.debut<A.fin)
+      const overlapStart = new Date(Math.max(A.debut, B.debut));
+      const overlapEnd   = new Date(Math.min(A.fin, B.fin));
+      const minutes = Math.round((overlapEnd - overlapStart)/60000);
+      if(minutes>0) conflits.push({a:A, b:B, debut:overlapStart, fin:overlapEnd, minutes});
+    }
+  }
+  return { conflits, taches, nbCommandes:orders.length };
+}
+
+// Affiche les conflits de production détectés sur les 14 prochains jours.
+async function mrpRenderConflits(){
+  const box=document.getElementById('mrpConflits');
+  const panel=document.getElementById('mrpConflitsPanel');
+  if(!box) return;
+  const start=today();
+  const end=(()=>{ const d=new Date(today()); d.setDate(d.getDate()+14); return d.toISOString().slice(0,10); })();
+  let res;
+  try{ res=await retroConflicts(start, end); }catch(e){ console.error('retroConflicts',e); if(panel)panel.style.display='none'; box.innerHTML=''; return; }
+  if(!res.conflits.length){
+    // On affiche un encart rassurant seulement s'il y a au moins 2 commandes (sinon inutile).
+    if(res.nbCommandes>=2){
+      if(panel) panel.style.display='block';
+      box.innerHTML='<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Aucun chevauchement détecté entre tes tâches de production sur 14 jours.</div></div>';
+    } else {
+      if(panel) panel.style.display='none'; box.innerHTML='';
+    }
+    return;
+  }
+  if(panel) panel.style.display='block';
+  const fmtH = d => d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+  const fmtJour = d => d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
+  // Regrouper par jour du chevauchement.
+  const parJour = {};
+  res.conflits.forEach(c=>{ const k=c.debut.toISOString().slice(0,10); (parJour[k]=parJour[k]||[]).push(c); });
+  const jours = Object.keys(parJour).sort();
+  const blocs = jours.map(k=>{
+    const items = parJour[k].sort((a,b)=>a.debut-b.debut).map(c=>{
+      return `<div class="sum-box" style="align-items:flex-start;background:#fdf3f2">
+        <span style="font-size:.86rem">
+          <b>${fmtH(c.debut)}–${fmtH(c.fin)}</b> · chevauchement ${c.minutes} min<br>
+          <span style="color:#8a6d3b">${esc(c.a.label)} <span style="color:#9a8a82">(${esc(c.a.client)})</span></span><br>
+          <span style="color:#8a6d3b">${esc(c.b.label)} <span style="color:#9a8a82">(${esc(c.b.client)})</span></span>
+        </span></div>`;
+    }).join('');
+    return `<div style="margin-bottom:10px"><div style="font-weight:600;color:#5a3a2a;margin-bottom:4px">${fmtJour(parJour[k][0].debut)}</div>${items}</div>`;
+  }).join('');
+  box.innerHTML = `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a;margin-bottom:8px">⚠ <div><b>${res.conflits.length} chevauchement(s)</b> sur 14 jours. Décale une tâche, anticipe d'un jour, ou prévois de l'aide sur ces créneaux.</div></div>${blocs}`;
 }
 async function mrpGenerate(){
   _mrpStart=val('mrp_start')||today();
