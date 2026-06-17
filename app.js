@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v492';
+const APP_VERSION = 'v492b-diag';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2637,6 +2637,8 @@ async function saveLot(){
   const _mat=await db.materials.get(_matId).catch(()=>null);
   const _facteur = (_mat && _mat.categorie!=='emballage' && (_mat.unite||'kg')==='kg') ? 1000 : 1;
   const qte = round3(qteSaisie/_facteur);
+  // [DIAGNOSTIC TEMPORAIRE v492b] — affiche les valeurs réelles pour localiser la perte de quantité
+  toast(`DIAG saisie=${qteSaisie} · unité=${_mat?_mat.unite:'?'} · facteur=${_facteur} · stocké=${qte}`);
   // On capture TOUTES les valeurs maintenant : ouvrir l'alerte remplace la modale du formulaire.
   const data={
     materialId:_matId, supplierId:+val('f_sup')||0,
