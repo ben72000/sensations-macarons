@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v519';
+const APP_VERSION = 'v520';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3343,7 +3343,9 @@ function assemblySuggestions(prods, recName){
   const coques = prods.filter(p=>prodComposant(p)==='coques' && _fini(p) && !p.degDeclasse && round3(+p.qteRestante)>0)
     .map(p=>({p, mac: Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON)}))
     .filter(x=>x.mac>0);
-  let ganaches = prods.filter(p=>prodComposant(p)==='ganache' && _fini(p) && round3(+p.qteRestante)>0)
+  // [CHANTACHE] Exclue des suggestions binaires coques+ganache : c'est un composant mutualisé
+  // appelé directement à l'assemblage d'un grand format, pas une ganache à marier ici.
+  let ganaches = prods.filter(p=>prodComposant(p)==='ganache' && _fini(p) && p.composantCatalogue!==true && round3(+p.qteRestante)>0)
     .map(p=>({p, mac: round3(+p.qteRestante), used:0}));
   if(!coques.length || !ganaches.length) return [];
   const out=[];
@@ -3444,6 +3446,9 @@ function orphanComponents(prods, recName){
   (prods||[]).forEach(p=>{
     const comp = prodComposant(p);
     if(comp!=='coques' && comp!=='ganache') return;
+    // [CHANTACHE] La chantache est un composant catalogue MUTUALISÉ : ce n'est pas un orphelin
+    // en attente de sa moitié, mais une réserve appelée à l'assemblage. On l'exclut donc ici.
+    if(p.composantCatalogue===true) return;
     // [POINT G] Une production en cours (non terminée) n'est pas encore un « orphelin » à assembler.
     if((p.prodStatut||'termine')!=='termine') return;
     if(comp==='coques' && p.degDeclasse) return;  // coques cassées déclassées : gérées par les suggestions dégustation, pas ici
@@ -3453,12 +3458,19 @@ function orphanComponents(prods, recName){
     parf[rid][comp] = round3(parf[rid][comp] + round3(+p.qteRestante));
   });
   const out = [];
+  // Libellé de la garniture attendue selon la recette : pour un grand format, c'est le « crémeux ».
+  const _recList = window._allRecipesCache || [];
+  const _garnLabelDe = rid => {
+    const r = _recList.find(x=>+x.id===+rid);
+    return (r && r.grandFormat) ? 'crémeux' : 'ganache';
+  };
   Object.keys(parf).forEach(rid=>{
     const x = parf[rid];
+    const gl = _garnLabelDe(rid);
     if(x.coques>0 && x.ganache<=0){
-      out.push({recipeId:+rid, nom:x.nom, type:'coques', pieces:x.coques, macPotentiels:Math.floor(x.coques/COQUES_PAR_MACARON), manque:'ganache'});
+      out.push({recipeId:+rid, nom:x.nom, type:'coques', pieces:x.coques, macPotentiels:Math.floor(x.coques/COQUES_PAR_MACARON), manque:'ganache', garnLabel:gl});
     } else if(x.ganache>0 && x.coques<=0){
-      out.push({recipeId:+rid, nom:x.nom, type:'ganache', pieces:x.ganache, macPotentiels:Math.floor(x.ganache), manque:'coques'});
+      out.push({recipeId:+rid, nom:x.nom, type:'ganache', pieces:x.ganache, macPotentiels:Math.floor(x.ganache), manque:'coques', garnLabel:gl});
     }
   });
   return out;
@@ -4146,10 +4158,10 @@ async function renderProductions(){
      <p class="note" style="margin-bottom:8px">Ces composants ne peuvent pas devenir des macarons : il leur manque l'autre moitié. Produis ce qui manque pour ne pas les perdre.</p>
      ${orphans.map(o=>`<div class="sugg-row">
         <div class="sugg-main">
-          <div><b>${o.type==='coques'?'🟤':'🍫'} ${esc(o.nom)}</b> <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.64rem">${qty(o.pieces)} ${o.type==='coques'?'coques':'ganache'}</span></div>
-          <div style="margin-top:3px;font-size:.8rem;color:#8a6d3b">➜ il manque <b>${o.manque==='ganache'?'de la ganache':'des coques'}</b> ${o.type==='coques'?`pour assembler jusqu'à <b>${qty(o.macPotentiels)} macaron(s)</b>`:`pour utiliser cette ganache`}</div>
+          <div><b>${o.type==='coques'?'🟤':'🍫'} ${esc(o.nom)}</b> <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.64rem">${qty(o.pieces)} ${o.type==='coques'?'coques':(o.garnLabel||'ganache')}</span></div>
+          <div style="margin-top:3px;font-size:.8rem;color:#8a6d3b">➜ il manque <b>${o.manque==='ganache'?(o.garnLabel==='crémeux'?'le crémeux':'de la ganache'):'des coques'}</b> ${o.type==='coques'?`pour assembler jusqu'à <b>${qty(o.macPotentiels)} macaron(s)</b>`:`pour utiliser ${o.garnLabel==='crémeux'?'ce crémeux':'cette ganache'}`}</div>
         </div>
-        <button class="btn ghost sm" onclick="prodForm()" title="Produire le composant manquant">⚙ Produire ${o.manque==='ganache'?'ganache':'coques'}</button>
+        <button class="btn ghost sm" onclick="prodForm()" title="Produire le composant manquant">⚙ Produire ${o.manque==='ganache'?(o.garnLabel||'ganache'):'coques'}</button>
       </div>`).join('')}
    </div>`:''}
    <div class="panel">
