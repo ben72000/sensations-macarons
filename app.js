@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v507';
+const APP_VERSION = 'v507b';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6060,6 +6060,17 @@ async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, 
       const comp = await db.components.get(componentId);
       if(!comp) throw new Error('Composant introuvable');
       const items = await db.recipeItems.where('componentId').equals(componentId).toArray();
+      // [DIAG TEMPORAIRE] Vérifier ce que la production de composant voit réellement.
+      if(window._diagProdComposant){
+        const _tousItems = await db.recipeItems.toArray();
+        const _avecCid = _tousItems.filter(it=>it.componentId!=null);
+        alert('DIAG produireComposant\n'+
+          'componentId reçu = '+JSON.stringify(componentId)+' ('+typeof componentId+')\n'+
+          'comp.rendement = '+comp.rendement+'\n'+
+          'recipeItems trouvés (where componentId) = '+items.length+'\n'+
+          '--- toutes lignes avec componentId en base ---\n'+
+          _avecCid.map(it=>'item#'+it.id+' cid='+JSON.stringify(it.componentId)+'('+typeof it.componentId+') mat='+it.materialId+' qpb='+it.qteParBatch).join('\n'));
+      }
       const rendement = +comp.rendement || 1;
       const facteur = (rendement>0) ? (nbDosesTh / rendement) : 0;
       // Vérif préalable : stock suffisant pour toutes les matières ?
@@ -18309,6 +18320,11 @@ async function renderIntegrity(){
       <div style="margin-top:10px">
         <p class="note">🧩 <b>Inspection des composants</b> (lecture seule) : montre vers quelle matière pointe chaque ligne d'ingrédient d'un composant (ex. Chantache), et repère les « id orphelins ».</p>
         <div id="diagInspectionCompZone"><button class="btn ghost sm" onclick="diagInspectionComposants()">Inspecter les composants</button></div>
+      </div>
+      <div style="margin-top:10px">
+        <p class="note">🔬 <b>Diag production chantache</b> : active une fenêtre d'inspection qui s'affichera à ta PROCHAINE production de chantache (montre ce que le décompte des matières voit réellement). À désactiver ensuite.</p>
+        <button class="btn ghost sm" onclick="window._diagProdComposant=true;toast('Diag activé — produis une chantache maintenant')">Activer le diag production</button>
+        <button class="btn ghost sm" onclick="window._diagProdComposant=false;toast('Diag désactivé')">Désactiver</button>
       </div>
       <div style="margin-top:10px">
         <p class="note">🔗 <b>Diagnostic assemblage</b> (lecture seule) : pour chaque recette qui utilise des composants (chantache, crémeux…), montre leur type, le poids demandé, et l'état réel des lots en stock (terminé ou non). Éclaire les 3 anomalies : quantité décomptée, lot non terminé assemblable, composant manquant.</p>
