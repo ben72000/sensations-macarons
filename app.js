@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v486';
+const APP_VERSION = 'v487';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18299,7 +18299,7 @@ const FACT_STYLE = `   <style>
      }
      .entete { background:#E8DDCD; color:#490F25; padding:10mm 18mm 8mm; text-align:center; border-bottom:2.5pt solid #490F25; }
      .entete .logo { width:78mm; max-width:80%; height:auto; display:block; margin:0 auto 6mm; }
-     .entete .em { font-size:11.5px; line-height:1.55; color:#5a3a30; max-width:120mm; margin:0 auto; }
+     .entete .em { font-size:11.5px; line-height:1.55; color:#5a3a30; max-width:120mm; margin:0 auto; transform:translateX(5%); }
      .entete .em-l { display:block; }
      .corps { padding:8mm 18mm 0; }
      .ftitre { font-family:'Bellota',cursive; font-weight:700; color:#490F25; font-size:26px; margin-bottom:1mm; }
@@ -18324,8 +18324,9 @@ const FACT_STYLE = `   <style>
      .grand .lg { display:flex; justify-content:space-between; padding:1.8mm 0; font-size:13px; }
      .grand .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:19px; color:#490F25; }
      .tva { margin-top:5mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
+     .acompte-mention { margin-top:4mm; padding:2.5mm 4mm; background:#fbeede; border:1.2px solid #d98324; border-radius:2mm; color:#9a4a10; font-weight:600; font-size:12px; text-align:center; }
      .paiement { margin-top:3mm; font-size:11.5px; color:#6a5a52; }
-     .rib { margin-top:4mm; padding:3mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.6; }
+     .rib { margin-top:4mm; padding:2.5mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.55; max-width:115mm; }
      .rib .rib-titre { font-weight:600; color:#490F25; }
      .pied { margin-top:7mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
@@ -18388,9 +18389,7 @@ function factLineDescHtml(ln){
   if(ln.type==='evenement'){
     const tete = `Prestation événement : ${ln.evQte||0} macarons`;
     const lignesParfums = parfums.map(p=>`<span class="ln-sub">${esc(p.nom)} ×${+p.qte}</span>`).join('');
-    const nbPyr = +ln.equip||0;
-    const loc = nbPyr>0 ? `<span class="ln-loc">location de matériel : ${nbPyr} pyramide${nbPyr>1?'s':''}, à retourner dans un délai de 48h après l'événement</span>` : '';
-    return `<span class="ln-main">${esc(tete)}</span>${lignesParfums}${loc}`;
+    return `<span class="ln-main">${esc(tete)}</span>${lignesParfums}`;
   }
   if(ln.type==='coffret'){
     const tete = `Coffret ${ln.taille} macarons`;
@@ -18400,12 +18399,39 @@ function factLineDescHtml(ln){
   // Autres types : on garde la description texte existante (échappée).
   return esc(factLineDesc(ln));
 }
+// Lignes de tableau (<tr>) d'un document pour une ligne de commande.
+// Cas général : une seule <tr> (description + montant total de la ligne).
+// Cas événement avec pyramides : DEUX <tr> — d'abord les macarons (part macarons),
+// puis une ligne « Prestation de service — location de pyramide » (quantité × prix unitaire).
+// La somme des deux montants reste STRICTEMENT égale au sous-total de la ligne (aucun double comptage).
+function factLineRows(ln){
+  if(ln.type==='evenement' && (+ln.equip||0)>0){
+    const nbPyr = +ln.equip||0;
+    const partPyr = money2(nbPyr*EQUIP_PRICE);                  // part location pyramides
+    const partMaca = money2(lineTotalStored(ln) - partPyr);     // reste = part macarons (garantit l'égalité)
+    const rowMaca = `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(partMaca)}</td></tr>`;
+    const descPyr = `<span class="ln-main">Prestation de service — location de pyramide</span>`+
+                    `<span class="ln-sub">${nbPyr} pyramide${nbPyr>1?'s':''} × ${euro(EQUIP_PRICE)}</span>`+
+                    `<span class="ln-loc">à retourner dans un délai de 48h après l'événement</span>`;
+    const rowPyr = `<tr><td class="desc">${descPyr}</td><td class="mt">${euro(partPyr)}</td></tr>`;
+    return rowMaca + rowPyr;
+  }
+  return `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(lineTotalStored(ln))}</td></tr>`;
+}
 // Bloc « Coordonnées bancaires » pour le pied de page des documents (devis + facture).
 // Renvoie '' si l'émetteur n'a pas renseigné d'IBAN, sinon un bloc HTML échappé multi-lignes.
 function factRibBloc(e){
   const raw = (e && e.iban) ? String(e.iban).trim() : '';
   if(!raw) return '';
-  const lignes = raw.split(/\r?\n/).map(l=>esc(l.trim())).filter(Boolean).join('<br>');
+  let parts = raw.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  // Regroupe la ligne IBAN et la ligne BIC sur une seule ligne pour gagner de la hauteur.
+  const idxIban = parts.findIndex(l=>/^iban/i.test(l));
+  const idxBic  = parts.findIndex(l=>/^bic/i.test(l));
+  if(idxIban!==-1 && idxBic!==-1){
+    parts[idxIban] = parts[idxIban] + '   ·   ' + parts[idxBic];
+    parts.splice(idxBic, 1);
+  }
+  const lignes = parts.map(l=>esc(l)).join('<br>');
   return `<div class="rib"><span class="rib-titre">Coordonnées bancaires</span><br>${lignes}</div>`;
 }
 // === DEVIS : aperçu / impression (→ « Enregistrer en PDF » sur iOS) + envoi par mail ===
@@ -18430,7 +18456,7 @@ async function genererDevisDoc(docId){
   // Total = montant stocké du devis si dispo (déjà net), sinon recalcul
   const total = (d.montant!=null) ? +d.montant : (sousTotal - remiseGEuro);
 
-  const rows = lignes.map(ln=>`<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(lineTotalStored(ln))}</td></tr>`).join('');
+  const rows = lignes.map(ln=>factLineRows(ln)).join('');
   const section = `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -18489,6 +18515,7 @@ async function genererDevisDoc(docId){
        <div class="grand">
          <div class="lg total"><span>Total du devis</span><span>${euro(total)}</span></div>
        </div>
+       <div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider votre devis.</div>
        <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
        <div class="paiement">Devis valable ${d.validiteJours||30} jours à compter de la date d'émission.<br>Bon pour accord — date et signature :</div>
        ${factRibBloc(e)}
@@ -18535,10 +18562,7 @@ async function _genererFactureSimple_DEPRECATED(orderId){
   const lignes = orderToLines(o);
   const numFact = orderNumber(o);
   // Lignes détaillées avec montant
-  const rowsHtml = lignes.map(ln=>{
-    const montant = lineTotalStored(ln);
-    return `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(montant)}</td></tr>`;
-  }).join('');
+  const rowsHtml = lignes.map(ln=>factLineRows(ln)).join('');
   // Sous-total (somme des lignes) et remise globale éventuelle
   const sousTotal = lignes.reduce((s,ln)=>s+lineTotalStored(ln),0);
   const gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
@@ -18584,8 +18608,9 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .totaux .lg { display:flex; justify-content:space-between; padding:1.6mm 0; font-size:13px; }
      .totaux .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:18px; color:#490F25; }
      .tva { margin-top:5mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
+     .acompte-mention { margin-top:4mm; padding:2.5mm 4mm; background:#fbeede; border:1.2px solid #d98324; border-radius:2mm; color:#9a4a10; font-weight:600; font-size:12px; text-align:center; }
      .paiement { margin-top:3mm; font-size:11.5px; color:#6a5a52; }
-     .rib { margin-top:4mm; padding:3mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.6; }
+     .rib { margin-top:4mm; padding:2.5mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.55; max-width:115mm; }
      .rib .rib-titre { font-weight:600; color:#490F25; }
      .pied { margin-top:7mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
@@ -18674,7 +18699,7 @@ async function genererFactureMultiple(ids){
     // total de la commande = montant stocké (déjà net, livraison incluse) si dispo, sinon recalcul
     const totalCmd = (o.montant!=null) ? +o.montant : (sousTotal - remiseGEuro + frais);
     grandTotal += totalCmd;
-    const rows = lignes.map(ln=>`<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(lineTotalStored(ln))}</td></tr>`).join('');
+    const rows = lignes.map(ln=>factLineRows(ln)).join('');
     return `
       <div class="cmd-section">
         <div class="cmd-head">
