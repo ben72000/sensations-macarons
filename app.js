@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v501c';
+const APP_VERSION = 'v502';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -17749,10 +17749,11 @@ async function diagInspectionKg(){
           }).join('')
         : '<div style="font-size:.74rem;color:#9a8a82">• utilisée dans aucune recette</div>';
       return `<div class="sum-box" style="${suspect?'background:#fbeeec':''};flex-direction:column;align-items:stretch;gap:3px">
-        <div style="display:flex;justify-content:space-between"><b>${esc(m.nom)}</b><span style="font-size:.76rem">${suspect?'<span style="color:#b3261e">⚠ à vérifier</span>':'<span style="color:#3f7d52">✓ plausible</span>'}</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><b>${esc(m.nom)}</b><span style="font-size:.76rem">${suspect?'<span style="color:#b3261e">⚠ à vérifier</span>':'<span style="color:#3f7d52">✓ plausible</span>'}</span></div>
         <div style="font-size:.72rem;color:#9a8a82">stock total ${qty(stock)} kg = ${qty(stock*1000)} g</div>
         <div style="margin-top:2px"><span style="font-size:.7rem;color:#7a6a62;font-weight:600">LOTS</span>${lotsTxt}</div>
         <div style="margin-top:2px"><span style="font-size:.7rem;color:#7a6a62;font-weight:600">RECETTES</span>${itemsTxt}</div>
+        ${suspect?`<button class="btn gold sm" style="margin-top:6px" onclick="convertirDenreeKgVersG(${m.id})">Convertir « ${esc(m.nom)} » en g →</button>`:''}
       </div>`;
     }).join('');
     if(zone) zone.innerHTML=blocs+
@@ -17762,6 +17763,79 @@ async function diagInspectionKg(){
       `Lecture seule : <b>rien n'a été modifié</b>. Envoie-moi cette vue pour décider de la conversion.`+
       `</div></div>`;
   }catch(e){ console.error('diagInspectionKg',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'inspection.</p>'; }
+}
+// [CONVERSION kg→g — CIBLÉE, AVEC APERÇU] Convertit UNE denrée de kg en g, en préservant la valeur €.
+// Règle : unité kg→g ; lots qteInitiale/qteRestante ×1000, prix total inchangé, prixUnitaire recalculé ;
+// recipeItems NON modifiés (la valeur saisie était déjà en grammes, cas arôme coco).
+// Étape 1 : aperçu avant/après (aucune écriture).
+async function convertirDenreeKgVersG(matId){
+  const mat=await db.materials.get(matId);
+  if(!mat){ toast('Matière introuvable'); return; }
+  if((mat.unite||'kg')!=='kg'){ toast('Cette matière n\'est pas en kg'); return; }
+  const lots=await db.materialLots.where('materialId').equals(matId).toArray();
+  const items=await db.recipeItems.where('materialId').equals(matId).toArray();
+  const lotsAvApr=lots.map(l=>{
+    const qi=+l.qteInitiale||0, qr=+l.qteRestante||0, prix=+l.prix||0;
+    const puAv=lotPU(l);
+    const qiN=round3(qi*1000), qrN=round3(qr*1000);
+    const puN=qiN>0 ? money2(prix/qiN) : 0;
+    return {id:l.id, ref:l.lotFournisseur||l.id, qrAv:qr, qrN, puAv, puN, prix};
+  });
+  const lotsHtml=lotsAvApr.length
+    ? lotsAvApr.map(l=>`<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:1px;font-size:.78rem">
+        <b>lot ${esc(l.ref)}</b>
+        <span style="color:#6a5a52">reste : <b>${l.qrAv}</b> kg → <b style="color:#3f7d52">${l.qrN}</b> g</span>
+        <span style="color:#6a5a52">prix : <b>${l.puAv}</b> €/kg → <b style="color:#3f7d52">${l.puN}</b> €/g <span style="color:#9a8a82">(total ${euro(l.prix)} inchangé)</span></span>
+      </div>`).join('')
+    : '<p class="note">Aucun lot à convertir.</p>';
+  const itemsHtml=items.length
+    ? items.map(it=>`<div style="font-size:.76rem;color:#6a5a52">• qteParBatch <b>${it.qteParBatch}</b> → <b style="color:#3f7d52">${it.qteParBatch}</b> (inchangé, déjà en g)</div>`).join('')
+    : '<p class="note" style="font-size:.76rem">Aucune ligne de recette.</p>';
+  openModal(`<h3>Convertir « ${esc(mat.nom)} » en grammes</h3>
+    <div class="banner" style="background:#fdf8e9;border-color:#e8d09a">⚠ <div>Vérifie l'aperçu ci-dessous. La valeur en euros du stock reste identique. Les lignes de recette ne changent pas (déjà saisies en grammes).</div></div>
+    <h4 style="margin:10px 0 4px;font-size:.9rem">Lots <span style="font-weight:400;color:#9a8a82">(${lotsAvApr.length})</span></h4>
+    ${lotsHtml}
+    <h4 style="margin:12px 0 4px;font-size:.9rem">Lignes de recette <span style="font-weight:400;color:#9a8a82">(${items.length})</span></h4>
+    ${itemsHtml}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="diagInspectionKg();closeModal()">Annuler</button>
+      <button class="btn gold" onclick="convertirDenreeKgVersGConfirm(${matId})">Confirmer la conversion</button>
+    </div>`);
+}
+// Étape 2 : écriture réelle (transaction). Snapshot pour annulation immédiate.
+async function convertirDenreeKgVersGConfirm(matId){
+  try{
+    const mat=await db.materials.get(matId);
+    if(!mat || (mat.unite||'kg')!=='kg'){ toast('Conversion impossible'); return; }
+    const lots=await db.materialLots.where('materialId').equals(matId).toArray();
+    // Snapshot avant écriture (pour annuler)
+    const snap={ unite:mat.unite, lots:lots.map(l=>({id:l.id, qteInitiale:l.qteInitiale, qteRestante:l.qteRestante, prixUnitaire:l.prixUnitaire})) };
+    await db.transaction('rw', db.materials, db.materialLots, async()=>{
+      await db.materials.update(matId, {unite:'g'});
+      for(const l of lots){
+        const qiN=round3((+l.qteInitiale||0)*1000);
+        const qrN=round3((+l.qteRestante||0)*1000);
+        const prix=+l.prix||0;
+        const puN=qiN>0 ? money2(prix/qiN) : 0;
+        await db.materialLots.update(l.id, {qteInitiale:qiN, qteRestante:qrN, prixUnitaire:puN});
+      }
+    });
+    await refreshMatsCache();
+    closeModal();
+    diagInspectionKg();
+    // Annulation rapide
+    if(typeof showUndoToast==='function'){
+      showUndoToast(`${mat.nom} convertie en grammes ✓`, async()=>{
+        await db.transaction('rw', db.materials, db.materialLots, async()=>{
+          await db.materials.update(matId, {unite:snap.unite});
+          for(const s of snap.lots){ await db.materialLots.update(s.id, {qteInitiale:s.qteInitiale, qteRestante:s.qteRestante, prixUnitaire:s.prixUnitaire}); }
+        });
+        await refreshMatsCache(); diagInspectionKg();
+      });
+    } else {
+      toast(`${mat.nom} convertie en grammes ✓`);
+    }
+  }catch(e){ console.error('convertirDenreeKgVersGConfirm',e); toast('Erreur pendant la conversion'); }
 }
 async function diagLotsUnite(){
   const zone=document.getElementById('diagUniteZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
