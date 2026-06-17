@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v502';
+const APP_VERSION = 'v502c';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -17753,7 +17753,7 @@ async function diagInspectionKg(){
         <div style="font-size:.72rem;color:#9a8a82">stock total ${qty(stock)} kg = ${qty(stock*1000)} g</div>
         <div style="margin-top:2px"><span style="font-size:.7rem;color:#7a6a62;font-weight:600">LOTS</span>${lotsTxt}</div>
         <div style="margin-top:2px"><span style="font-size:.7rem;color:#7a6a62;font-weight:600">RECETTES</span>${itemsTxt}</div>
-        ${suspect?`<button class="btn gold sm" style="margin-top:6px" onclick="convertirDenreeKgVersG(${m.id})">Convertir « ${esc(m.nom)} » en g →</button>`:''}
+        <button class="btn ${suspect?'gold':'ghost'} sm" style="margin-top:6px" onclick="convertirDenreeKgVersG(${m.id})">Convertir « ${esc(m.nom)} » en g →</button>
       </div>`;
     }).join('');
     if(zone) zone.innerHTML=blocs+
@@ -17836,6 +17836,39 @@ async function convertirDenreeKgVersGConfirm(matId){
       toast(`${mat.nom} convertie en grammes ✓`);
     }
   }catch(e){ console.error('convertirDenreeKgVersGConfirm',e); toast('Erreur pendant la conversion'); }
+}
+// [INSPECTION COMPOSANTS — LECTURE SEULE] Liste chaque composant et ses lignes d'ingrédients,
+// avec le materialId pointé + le nom de la matière (ou « id orphelin » si la matière n'existe plus).
+// Sert à détecter une ligne qui pointe vers une matière supprimée/recréée (id décalé).
+async function diagInspectionComposants(){
+  const zone=document.getElementById('diagInspectionCompZone');
+  if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
+  try{
+    const comps=await db.components.toArray().catch(()=>[]);
+    if(!comps.length){ if(zone) zone.innerHTML='<p class="note">Aucun composant.</p>'; return; }
+    const items=await db.recipeItems.toArray();
+    const mats=await db.materials.toArray();
+    const matById={}; mats.forEach(m=>matById[+m.id]=m);
+    const blocs=comps.map(c=>{
+      const ligns=items.filter(it=>+it.componentId===+c.id);
+      const rows=ligns.length ? ligns.map(it=>{
+        const m=matById[+it.materialId];
+        const nom = m ? m.nom : '⚠ id orphelin (matière introuvable)';
+        const unite = m ? (m.unite||'?') : '—';
+        const orph = !m;
+        return `<div style="font-size:.74rem;color:${orph?'#b3261e':'#6a5a52'}">• materialId <b>${it.materialId}</b> → <b>${esc(nom)}</b> (${unite}) · qteParBatch <b>${it.qteParBatch}</b></div>`;
+      }).join('') : '<div style="font-size:.74rem;color:#9a8a82">• aucune ligne</div>';
+      return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:2px">
+        <b>🧩 ${esc(c.nom||('composant #'+c.id))} <span style="font-weight:400;color:#9a8a82">· rendement ${c.rendement||1}</span></b>
+        ${rows}
+      </div>`;
+    }).join('');
+    if(zone) zone.innerHTML=blocs+
+      `<div class="banner" style="background:#eef3f8;border-color:#bcd0e0;margin-top:8px"><div>`+
+      `Une ligne <b style="color:#b3261e">⚠ id orphelin</b> = la matière a été supprimée/recréée et la recette pointe vers l'ancien id. `+
+      `C'est probablement le cas de l'arôme dans la Chantache. Envoie-moi cette vue.`+
+      `</div></div>`;
+  }catch(e){ console.error('diagInspectionComposants',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'inspection.</p>'; }
 }
 async function diagLotsUnite(){
   const zone=document.getElementById('diagUniteZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
@@ -18108,6 +18141,10 @@ async function renderIntegrity(){
       <div style="margin-top:10px">
         <p class="note">🔎 <b>Inspection des denrées en kg</b> (lecture seule) : pour chaque denrée en kg, affiche ses lots et ses lignes de recette avec les valeurs brutes, et signale les valeurs suspectes (comme l'arôme coco). Aucune modification.</p>
         <div id="diagInspectionKgZone"><button class="btn ghost sm" onclick="diagInspectionKg()">Inspecter les denrées en kg</button></div>
+      </div>
+      <div style="margin-top:10px">
+        <p class="note">🧩 <b>Inspection des composants</b> (lecture seule) : montre vers quelle matière pointe chaque ligne d'ingrédient d'un composant (ex. Chantache), et repère les « id orphelins ».</p>
+        <div id="diagInspectionCompZone"><button class="btn ghost sm" onclick="diagInspectionComposants()">Inspecter les composants</button></div>
       </div>
     </div>
     <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
