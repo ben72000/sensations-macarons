@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v475';
+const APP_VERSION = 'v476';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2145,7 +2145,12 @@ async function renderMaterials(){
      <tbody id="lotBody"></tbody></table></div><div id="lotEmpty" class="empty" style="display:none">Aucun lot.</div>`
      :`<div class="empty">Aucun lot réceptionné.</div>`}
    </div>
-   <div class="panel"><h2>Matières consommées par batch</h2>
+   <div class="panel"><div class="collapse-sec">
+   <button type="button" class="collapse-head" onclick="toggleMatSec('matBatch')">
+     <span>Matières consommées par batch <span class="collapse-hint">— historique par production</span></span>
+     <span class="collapse-arrow" id="matBatchArrow">▸</span>
+   </button>
+   <div class="collapse-body" id="matBatchBody" style="display:none">
    ${batches.length?collapseList(batches.map(b=>{
      const p=b.prod;
      const deb = p.prodDebutTs||p.prodTimestamp||'';
@@ -2167,12 +2172,18 @@ async function renderMaterials(){
          <span class="tag out">−${qty(it.qte)} ${esc(matUnit(it.materialId))}</span></div>`).join('')}
      </div>`;
    }), 1, {moreLabel:n=>`Voir les ${n} batch(s) précédent(s)`, lessLabel:'Réduire'}):`<div class="empty">Aucune consommation rattachée à un batch.</div>`}
+   </div></div>
    </div>
    ${consumablesList.length?`<div class="panel"><h2>Consommables <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— non rattachés à un batch (papier, film, emballages…)</span></h2>
      <div class="table-wrap"><table><thead><tr><th>Consommable</th><th>Total consommé</th></tr></thead><tbody>
      ${consumablesList.map(c=>`<tr><td><b>${esc(matName(c.id))}</b></td><td><span class="tag out">−${qty(c.total)} ${esc(matUnit(c.id))}</span></td></tr>`).join('')}
      </tbody></table></div></div>`:''}
-   <div class="panel"><h2>📦 Emballages prélevés par commande <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— boîtes & sacs décomptés à la validation (picking)</span></h2>
+   <div class="panel"><div class="collapse-sec">
+   <button type="button" class="collapse-head" onclick="toggleMatSec('matPkg')">
+     <span>📦 Emballages prélevés par commande <span class="collapse-hint">— boîtes & sacs décomptés au picking</span></span>
+     <span class="collapse-arrow" id="matPkgArrow">▸</span>
+   </button>
+   <div class="collapse-body" id="matPkgBody" style="display:none">
    ${pkgGroups.length?collapseList(pkgGroups.map(g=>{
      const o=orderById(g.orderId);
      const cli = o ? (clientNom(o.clientId)||o.histoLabel||'') : '';
@@ -2190,9 +2201,18 @@ async function renderMaterials(){
        <div style="display:flex;justify-content:flex-end;font-size:.78rem;color:#6b5a52;margin-top:4px">Total : <b style="margin-left:4px">${qty(total)} unité(s)</b></div>
      </div>`;
    }), 1, {moreLabel:n=>`Voir les ${n} commande(s) précédente(s)`, lessLabel:'Réduire'}):`<div class="empty">Aucun emballage prélevé pour l'instant. L'historique se remplit quand tu valides une commande au picking.</div>`}
+   </div></div>
    </div>`;
   matFilter(matSearch);
   lotFilter(lotSearch);
+}
+// Replie/déplie une section d'historique de la vue stock (batch / emballages prélevés).
+function toggleMatSec(key){
+  const body=document.getElementById(key+'Body'), arrow=document.getElementById(key+'Arrow');
+  if(!body) return;
+  const open = body.style.display==='none';
+  body.style.display = open?'block':'none';
+  if(arrow) arrow.textContent = open?'▾':'▸';
 }
 function _matRow(row){
   const mat=row.mat; const dj=row.dlcMin?daysTo(row.dlcMin):null;
@@ -2697,6 +2717,14 @@ async function renderRecipes(){
   const blocks=[];
   for(const r of recipes){
     const items = await db.recipeItems.where('recipeId').equals(r.id).toArray();
+    // Texte cherchable de la recette : nom + tous les noms d'ingrédients + tous les allergènes.
+    // Permet une recherche discriminante (« œufs » → recettes en contenant ; « sulfite » → idem).
+    const _searchTxt = _recNorm([
+      r.produitNom||'',
+      ...items.map(it=>matName(it.materialId)),
+      ...((r.allergenes||[])),
+      ...items.map(it=>it.etiquette||'')
+    ].join(' '));
     _recipeMultCache[r.id] = { rendement:+r.rendement||1,
       items: items.map(it=>{ const d=dispOf(it.materialId); return {nom:matName(it.materialId), unite:d.u, qteParBatch:round3((+it.qteParBatch||0)*d.f)}; }) };
     const rows = items.map((it,idx)=>{ const d=dispOf(it.materialId); const shown=round3((+it.qteParBatch||0)*d.f);
@@ -2708,7 +2736,7 @@ async function renderRecipes(){
           <span class="ing-mult" id="mult_${r.id}_${idx}"><b>${qty(shown)}</b> ${esc(d.u)}</span>
         </div>
       </div>`; }).join('');
-    blocks.push(`<div class="panel"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}${r.coquesCongelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ coques congelées</span> ':''}${(r.ganacheDelaiH!=null&&+r.ganacheDelaiH>0)?`<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">⏱ ganache ${r.ganacheDelaiH}h</span> `:''}${r.congelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ congel. obligatoire</span> ':''}${r.jourJUniquement?'<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">📅 jour J</span> ':''}${(r.heuresMaxSortie!=null&&+r.heuresMaxSortie>0)?`<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">⏳ ${r.heuresMaxSortie}h max</span> `:''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
+    blocks.push(`<div class="panel rec-card" data-search="${esc(_searchTxt)}"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}${r.coquesCongelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ coques congelées</span> ':''}${(r.ganacheDelaiH!=null&&+r.ganacheDelaiH>0)?`<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">⏱ ganache ${r.ganacheDelaiH}h</span> `:''}${r.congelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ congel. obligatoire</span> ':''}${r.jourJUniquement?'<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">📅 jour J</span> ':''}${(r.heuresMaxSortie!=null&&+r.heuresMaxSortie>0)?`<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">⏳ ${r.heuresMaxSortie}h max</span> `:''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
         return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc ${kpiI('cout_revient_rec')}${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
@@ -2732,10 +2760,35 @@ async function renderRecipes(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Recettes (BOM)</h1><p>${recipes.length} recette(s) — nomenclature matières</p></div>
      <button class="btn" onclick="recForm()">+ Nouvelle recette</button></div>
-   ${recipes.length?blocks.join(''):`<div class="panel"><div class="empty">Aucune recette. Une recette définit les matières consommées par batch (le « Bill of Materials »).</div></div>`}`;
+   ${recipes.length?`<div class="panel" style="padding:12px 14px"><input type="search" id="recSearch" placeholder="🔍 Rechercher (parfum, ingrédient ex. « œufs », allergène ex. « sulfite »)" style="width:100%" oninput="filterRecipes(this.value)" autocomplete="off">
+     <p class="note" id="recSearchInfo" style="margin:6px 0 0">Cherche dans les noms, les ingrédients et les allergènes.</p></div>`:''}
+   <div id="recList">${recipes.length?blocks.join(''):`<div class="panel"><div class="empty">Aucune recette. Une recette définit les matières consommées par batch (le « Bill of Materials »).</div></div>`}</div>`;
 }
 // Cache des recettes pour le multiplicateur dynamique (lecture seule, aucune écriture en base)
 let _recipeMultCache={};
+// Normalisation pour la recherche recettes : comme normTxt + gère les ligatures françaises
+// (œ→oe, æ→ae) pour que « oeufs » trouve « œufs », et retire l'apostrophe.
+function _recNorm(s){ return normTxt(s).replace(/œ/g,'oe').replace(/æ/g,'ae').replace(/['’]/g,' '); }
+// Filtre les cartes recette par recherche libre (nom, ingrédients, allergènes). Discriminant :
+// chaque mot tapé doit être présent (logique ET) → « œufs » ne montre que les recettes en
+// contenant ; « sulfite » ne montre que celles avec cet allergène.
+function filterRecipes(q){
+  const terms = _recNorm(q||'').split(/\s+/).filter(Boolean);
+  const cards = document.querySelectorAll('#recList .rec-card');
+  let visibles = 0;
+  cards.forEach(card=>{
+    const hay = card.getAttribute('data-search')||'';
+    const ok = terms.every(t=>hay.includes(t));   // tous les mots présents
+    card.style.display = ok ? '' : 'none';
+    if(ok) visibles++;
+  });
+  const info = document.getElementById('recSearchInfo');
+  if(info){
+    info.textContent = terms.length
+      ? `${visibles} recette(s) correspondante(s).`
+      : 'Cherche dans les noms, les ingrédients et les allergènes.';
+  }
+}
 // Recalcule les poids d'ingrédients pour une quantité cible (en pièces).
 function recipeMultiply(recipeId, targetQ){
   const rec=_recipeMultCache[recipeId]; if(!rec) return;
