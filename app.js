@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v492b-diag';
+const APP_VERSION = 'v492c-diag';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2637,8 +2637,30 @@ async function saveLot(){
   const _mat=await db.materials.get(_matId).catch(()=>null);
   const _facteur = (_mat && _mat.categorie!=='emballage' && (_mat.unite||'kg')==='kg') ? 1000 : 1;
   const qte = round3(qteSaisie/_facteur);
-  // [DIAGNOSTIC TEMPORAIRE v492b] — affiche les valeurs réelles pour localiser la perte de quantité
-  toast(`DIAG saisie=${qteSaisie} · unité=${_mat?_mat.unite:'?'} · facteur=${_facteur} · stocké=${qte}`);
+  // [DIAGNOSTIC TEMPORAIRE v492c] — modale bloquante : reste affichée jusqu'à action de l'utilisateur
+  _pendingLot = {
+    materialId:_matId, supplierId:+val('f_sup')||0,
+    lotFournisseur:val('f_lotf'), qteInitiale:qte, qteRestante:qte,
+    prix, prixUnitaire: qte>0 ? money2(prix/qte) : 0,
+    dateReception:val('f_date')||today(), dlc:val('f_dlc')||'',
+    refProduit:val('f_ref')||'', commentaire:val('f_comm')||''
+  };
+  openModal(`<h3>🔎 Diagnostic réception</h3>
+    <div class="banner" style="background:#eef6ee;border-color:#bcd9c2"><div style="font-family:monospace;font-size:.9rem;line-height:1.8">
+      Valeur brute champ : <b>${esc(val('f_qte'))}</b><br>
+      numVal('f_qte') : <b>${numVal('f_qte')}</b><br>
+      qteSaisie (round3) : <b>${qteSaisie}</b><br>
+      Matière unité : <b>${_mat?esc(_mat.unite||'(vide)'):'MATIERE INTROUVABLE'}</b><br>
+      Catégorie : <b>${_mat?esc(_mat.categorie||'(vide)'):'?'}</b><br>
+      Facteur division : <b>${_facteur}</b><br>
+      → qté STOCKÉE : <b style="color:#b3261e">${qte}</b>
+    </div></div>
+    <p class="note">Note ces valeurs et envoie-les. Puis « Enregistrer » pour finir normalement.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="saveLotConfirm()">Enregistrer</button>
+    </div>`);
+  return;
   // On capture TOUTES les valeurs maintenant : ouvrir l'alerte remplace la modale du formulaire.
   const data={
     materialId:_matId, supplierId:+val('f_sup')||0,
