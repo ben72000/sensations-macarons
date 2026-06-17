@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v501';
+const APP_VERSION = 'v501b';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5958,15 +5958,31 @@ async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, 
       const rendement = +comp.rendement || 1;
       const facteur = (rendement>0) ? (nbDosesTh / rendement) : 0;
       // Vérif préalable : stock suffisant pour toutes les matières ?
+      // [DIAG v501b] On collecte le détail pour TOUTES les matières avant de bloquer.
+      const _diag=[];
+      let _bloque=false;
       for(const item of items){
         const lots = await db.materialLots.where('materialId').equals(item.materialId).and(l=>+l.qteRestante>0).toArray();
         const dispo = lots.reduce((s,l)=>s+(+l.qteRestante),0);
         const besoin = (+item.qteParBatch||0) * facteur;
-        if(dispo + 1e-9 < besoin){
-          const mat = await db.materials.get(item.materialId);
-          throw new Error(`Stock insuffisant : ${mat?mat.nom:'?'} (besoin ${besoin.toFixed(3)}, dispo ${dispo.toFixed(3)})`);
-        }
+        const mat = await db.materials.get(item.materialId);
+        const manque = (dispo + 1e-9 < besoin);
+        if(manque) _bloque=true;
+        _diag.push({nom:mat?mat.nom:'?', unite:mat?(mat.unite||'?'):'?',
+          qpb:(+item.qteParBatch||0), besoin, dispo, nbLots:lots.length, manque});
       }
+      if(typeof openModal==='function'){
+        const rows=_diag.map(d=>`<div class="sum-box" style="${d.manque?'background:#fbeeec':''};flex-direction:column;align-items:stretch;gap:2px">
+          <div style="display:flex;justify-content:space-between"><b>${d.nom}</b><span>${d.manque?'❌ manque':'✓ ok'}</span></div>
+          <div style="font-size:.78rem;color:#6a5a52">unité <b>${d.unite}</b> · qteParBatch <b>${d.qpb}</b> · besoin <b>${d.besoin.toFixed(3)}</b> · stock vu <b>${d.dispo.toFixed(3)}</b> · ${d.nbLots} lot(s)</div>
+        </div>`).join('');
+        openModal(`<h3>🔎 Diagnostic production garniture</h3>
+          <p class="note">Composant <b>${comp.nom||'?'}</b> · rendement <b>${rendement}</b> · doses <b>${nbDosesTh}</b> · facteur <b>${facteur.toFixed(3)}</b></p>
+          ${rows}
+          <p class="note" style="margin-top:8px">Besoin = qteParBatch × facteur. Si l'unité est <b>g</b> mais qteParBatch ressemble à des kg (ou l'inverse), c'est la cause.</p>
+          <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+      }
+      throw new Error('[DIAG] interruption volontaire — voir le détail à l\'écran');
       const nowIso = new Date().toISOString();
       const ecart = nbDosesReel - nbDosesTh;
       // Création du sous-lot : composant 'ganache' (brique d'assemblage), marqué issu d'un composant catalogue.
