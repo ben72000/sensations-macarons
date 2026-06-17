@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v473';
+const APP_VERSION = 'v475';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2360,6 +2360,11 @@ async function matForm(id){
   const s = id ? await db.materials.get(id) : {unite:'kg', categorie:'denree'};
   const cat = s.categorie || 'denree';
   const isEmb = cat==='emballage';
+  // Unité d'une DENRÉE : on force « kg » pour les nouvelles, mais on PRÉSERVE l'unité existante
+  // (ex. « g » hérité d'une ancienne version) si la matière est déjà en base, pour ne pas bloquer
+  // l'édition du nom/prix ni invalider les lots/recettes déjà saisis dans cette unité.
+  const denreeUnite = (id && s.unite) ? s.unite : 'kg';
+  const denreeOpts = [...new Set(['kg', denreeUnite])];   // 'kg' + l'unité héritée si différente
   // Denrées alimentaires : tout au KILOGRAMME (prix, stock, recettes) pour une lecture homogène.
   // Emballages : à l'unité.
   openModal(`<h3>${id?'Modifier':'Nouvelle'} ${isEmb?'emballage':'matière'}</h3>
@@ -2372,8 +2377,8 @@ async function matForm(id){
    <div class="field"><label>Marque du produit <span style="color:#9a8a82;font-weight:400">— optionnel (ex : Valrhona)</span></label><input id="f_marque" value="${esc(s.marque||'')}" placeholder="${isEmb?'ex : marque de l’emballage':'ex : Valrhona'}"></div>
    <div class="row2">
      <div class="field" id="f_uniteWrap"><label>Unité</label>
-       <select id="f_unite" ${isEmb?'':'disabled'}>${(isEmb?['unité','sachet']:['kg']).map(u=>`<option ${ (s.unite===u)||(!isEmb&&u==='kg')?'selected':''}>${u}</option>`).join('')}</select>
-       <p class="note" id="uniteNote" style="margin-top:4px">${isEmb?'Emballages : comptés à l’unité.':'Les denrées sont gérées <b>au kilogramme</b> (prix, stock et recettes en kg).'}</p></div>
+       <select id="f_unite" ${isEmb?'':'disabled'}>${(isEmb?['unité','sachet']:denreeOpts).map(u=>`<option ${ (s.unite===u)||(!isEmb&&!s.unite&&u==='kg')?'selected':''}>${u}</option>`).join('')}</select>
+       <p class="note" id="uniteNote" style="margin-top:4px">${isEmb?'Emballages : comptés à l’unité.':(denreeUnite!=='kg'?`Cette denrée est gérée en <b>${esc(denreeUnite)}</b> (unité conservée de sa création ; lots et recettes l’utilisent).`:'Les denrées sont gérées <b>au kilogramme</b> (prix, stock et recettes en kg).')}</p></div>
      <div class="field"><label>Seuil d'alerte ${isEmb?'(unités)':'(kg)'}</label><input type="number" step="0.01" id="f_seuil" value="${s.seuil||0}"></div>
    </div>
    <div class="field"><label>${isEmb?'Prix indicatif / unité (€)':'Prix indicatif au kilo (€/kg)'}</label><input type="number" step="0.01" id="f_prix" value="${s.prixDefaut||0}"></div>
@@ -2436,7 +2441,12 @@ async function saveMat(id){
   const embUsage = isEmb ? (val('f_embUsage')||'coffret') : null;
   const isSac = embUsage==='sac';
   const peri = !isEmb && document.getElementById('f_peri')?.checked;
-  const unite = isEmb ? (val('f_unite')||'unité') : 'kg';   // denrées toujours en kg
+  // Unité : emballage = valeur choisie ; denrée = « kg » par défaut, MAIS on préserve l'unité
+  // existante (ex. « g ») pour une denrée déjà en base, afin de ne pas invalider lots/recettes.
+  let unite;
+  if(isEmb){ unite = val('f_unite')||'unité'; }
+  else if(id){ const _prev = await db.materials.get(id); unite = (_prev && _prev.unite) ? _prev.unite : 'kg'; }
+  else { unite = 'kg'; }
   const o={nom:val('f_nom'),marque:(val('f_marque')||'').trim(),unite,seuil:+val('f_seuil')||0,prixDefaut:+val('f_prix')||0,
     categorie: isEmb?'emballage':'denree',
     usage: isEmb ? embUsage : undefined,                       // 'coffret' (défaut) ou 'sac'
@@ -5367,11 +5377,17 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
     return (u==='kg') ? {u:'g', f:1000} : {u:m.unite||'', f:1}; };
   const rendement = +rec.rendement||1;
   const facteur = rendement>0 ? (nbMacarons/rendement) : 0;
-  const etiquetee = allItems.some(it=>it.partie==='coque'||it.partie==='ganache');
+  const etiquetee = allItems.some(it=>it.partie==='coque'||it.partie==='ganache'||it.partie==='cremeux');
   let items = allItems;
-  if(etiquetee && (composant==='coques'||composant==='ganache')){
-    const cible = composant==='coques' ? 'coque' : 'ganache';
-    items = allItems.filter(it=> it.partie===cible || !it.partie);
+  if(etiquetee && (composant==='coques'||composant==='ganache'||composant==='cremeux')){
+    if(composant==='coques'){
+      items = allItems.filter(it=> it.partie==='coque' || !it.partie);
+    } else {
+      // La GARNITURE (composant interne 'ganache') regroupe ganache ET crémeux. Une recette à
+      // crémeux (ex. mangue passion) doit donc afficher ses ingrédients ici, sans quoi la fiche
+      // restait vide. Le sous-type précis (ganache/crémeux) est porté par la production.
+      items = allItems.filter(it=> it.partie==='ganache' || it.partie==='cremeux' || !it.partie);
+    }
   }
   const compLabel = composant==='coques'?'🟤 Coques':composant==='ganache'?'🍫 Ganache':'🍩 Complet';
   // Total par matière (pour afficher « crème : 150 g » quand elle est répartie sur plusieurs lignes).
@@ -5520,12 +5536,15 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
       // Rétro-compat : si AUCUN ingrédient n'est étiqueté (anciennes recettes), on consomme
       // tout quel que soit le composant (comportement d'avant l'étiquetage).
       const comp = meta.composant || 'complet';
-      const recetteEtiquetee = allItems.some(it=>it.partie==='coque'||it.partie==='ganache');
+      const recetteEtiquetee = allItems.some(it=>it.partie==='coque'||it.partie==='ganache'||it.partie==='cremeux');
       let items = allItems;
       if(recetteEtiquetee && (comp==='coques' || comp==='ganache')){
-        const cible = comp==='coques' ? 'coque' : 'ganache';
-        // un ingrédient non étiqueté est considéré commun → consommé par les deux composants
-        items = allItems.filter(it=> it.partie===cible || !it.partie);
+        if(comp==='coques'){
+          items = allItems.filter(it=> it.partie==='coque' || !it.partie);
+        } else {
+          // garniture = ganache + crémeux (+ lignes communes non étiquetées)
+          items = allItems.filter(it=> it.partie==='ganache' || it.partie==='cremeux' || !it.partie);
+        }
       }
       // CONSOMMATION MATIÈRES : basée sur la quantité de MACARONS-équivalent.
       // Pour les coques, qteTheorique est en COQUES ; meta.facteurQte donne le nb de macarons.
