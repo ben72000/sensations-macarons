@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v485';
+const APP_VERSION = 'v486';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18297,34 +18297,37 @@ const FACT_STYLE = `   <style>
        table { width:100%; }
        .totaux { width:auto; max-width:100%; }
      }
-     .entete { background:#E8DDCD; color:#490F25; padding:15mm 18mm 12mm; text-align:center; border-bottom:2.5pt solid #490F25; }
+     .entete { background:#E8DDCD; color:#490F25; padding:10mm 18mm 8mm; text-align:center; border-bottom:2.5pt solid #490F25; }
      .entete .logo { width:78mm; max-width:80%; height:auto; display:block; margin:0 auto 6mm; }
      .entete .em { font-size:11.5px; line-height:1.55; color:#5a3a30; max-width:120mm; margin:0 auto; }
      .entete .em-l { display:block; }
-     .corps { padding:11mm 18mm 0; }
+     .corps { padding:8mm 18mm 0; }
      .ftitre { font-family:'Bellota',cursive; font-weight:700; color:#490F25; font-size:26px; margin-bottom:1mm; }
      .ftitre-rule { height:1.5pt; background:#490F25; width:24mm; margin-bottom:6mm; }
-     .meta { display:flex; justify-content:space-between; margin:6mm 0 5mm; gap:10mm; }
+     .meta { display:flex; justify-content:space-between; margin:4mm 0 4mm; gap:10mm; }
      .meta .bloc { font-size:12.5px; line-height:1.55; }
      .meta .bloc .lbl { color:#AA7C39; font-weight:600; text-transform:uppercase; font-size:10.5px; letter-spacing:.06em; margin-bottom:1mm; }
      .meta-rule { height:0.75pt; background:#490F25; opacity:.55; margin:0 0 7mm; }
-     .cmd-section { margin-bottom:7mm; border:1px solid #d8c3b0; border-radius:3mm; overflow:hidden; }
+     .cmd-section { margin-bottom:5mm; border:1px solid #d8c3b0; border-radius:3mm; overflow:hidden; }
      .cmd-head { background:#490F25; color:#E8DDCD; padding:2.8mm 4mm; display:flex; justify-content:space-between; align-items:center; }
      .cmd-head .cmd-ref { font-family:'Bellota',cursive; font-weight:700; font-size:14px; }
      .cmd-head .cmd-date { font-size:11.5px; color:#d8c3b0; }
      .cmd-table { width:100%; border-collapse:collapse; }
-     .cmd-table td { padding:2.4mm 4mm; border-bottom:1px solid #f0e8da; font-size:12.5px; }
+     .cmd-table td { padding:2mm 4mm; border-bottom:1px solid #f0e8da; font-size:12.5px; }
      .cmd-table td.mt { text-align:right; white-space:nowrap; }
+     .ln-main { display:block; }
+     .ln-sub { display:block; padding-left:5mm; font-size:11px; color:#7a6a60; }
+     .ln-loc { display:block; margin-top:1mm; font-size:11px; color:#8a5a2a; font-style:italic; }
      .cmd-table tr.sub td, .cmd-table tr.rem td, .cmd-table tr.liv td { color:#6a5a52; font-size:12px; border-bottom:none; padding-top:1mm; padding-bottom:1mm; }
      .cmd-table tr.cmd-total td { font-weight:600; color:#490F25; border-top:1px solid #e0d5c5; border-bottom:none; }
-     .grand { margin-top:6mm; margin-left:auto; width:85mm; }
+     .grand { margin-top:4mm; margin-left:auto; width:85mm; }
      .grand .lg { display:flex; justify-content:space-between; padding:1.8mm 0; font-size:13px; }
      .grand .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:19px; color:#490F25; }
-     .tva { margin-top:8mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
+     .tva { margin-top:5mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
      .paiement { margin-top:3mm; font-size:11.5px; color:#6a5a52; }
      .rib { margin-top:4mm; padding:3mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.6; }
      .rib .rib-titre { font-weight:600; color:#490F25; }
-     .pied { margin-top:12mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
+     .pied { margin-top:7mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
      .barre { text-align:center; padding:10px; background:#490F25; }
      .barre button { font-family:'Outfit'; font-size:14px; padding:9px 22px; border:none; border-radius:8px; background:#E8DDCD; color:#490F25; font-weight:600; cursor:pointer; }
@@ -18375,6 +18378,28 @@ function factLineDesc(ln){
   if(ln.type==='prestation') return `Prestation${ln.libelle?' : '+ln.libelle:''}`;
   return 'Article';
 }
+// Version HTML de la description d'une ligne pour les documents (devis + facture).
+// Permet un rendu multi-lignes (parfums un par un, mention de location de matériel).
+// Pour l'événement : « Prestation événement : N macarons », puis 1 parfum par ligne,
+// puis « location de matériel : N pyramide(s), à retourner sous 48h » si pyramides.
+function factLineDescHtml(ln){
+  const parfums = (ln.parfums||[]).filter(p=>+p.qte>0);
+  const items = (ln.items||[]).filter(p=>+p.qte>0);
+  if(ln.type==='evenement'){
+    const tete = `Prestation événement : ${ln.evQte||0} macarons`;
+    const lignesParfums = parfums.map(p=>`<span class="ln-sub">${esc(p.nom)} ×${+p.qte}</span>`).join('');
+    const nbPyr = +ln.equip||0;
+    const loc = nbPyr>0 ? `<span class="ln-loc">location de matériel : ${nbPyr} pyramide${nbPyr>1?'s':''}, à retourner dans un délai de 48h après l'événement</span>` : '';
+    return `<span class="ln-main">${esc(tete)}</span>${lignesParfums}${loc}`;
+  }
+  if(ln.type==='coffret'){
+    const tete = `Coffret ${ln.taille} macarons`;
+    const lignesParfums = parfums.map(p=>`<span class="ln-sub">${esc(p.nom)} ×${+p.qte}</span>`).join('');
+    return `<span class="ln-main">${esc(tete)}</span>${lignesParfums}`;
+  }
+  // Autres types : on garde la description texte existante (échappée).
+  return esc(factLineDesc(ln));
+}
 // Bloc « Coordonnées bancaires » pour le pied de page des documents (devis + facture).
 // Renvoie '' si l'émetteur n'a pas renseigné d'IBAN, sinon un bloc HTML échappé multi-lignes.
 function factRibBloc(e){
@@ -18405,7 +18430,7 @@ async function genererDevisDoc(docId){
   // Total = montant stocké du devis si dispo (déjà net), sinon recalcul
   const total = (d.montant!=null) ? +d.montant : (sousTotal - remiseGEuro);
 
-  const rows = lignes.map(ln=>`<tr><td class="desc">${esc(factLineDesc(ln))}</td><td class="mt">${euro(lineTotalStored(ln))}</td></tr>`).join('');
+  const rows = lignes.map(ln=>`<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(lineTotalStored(ln))}</td></tr>`).join('');
   const section = `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -18512,8 +18537,7 @@ async function _genererFactureSimple_DEPRECATED(orderId){
   // Lignes détaillées avec montant
   const rowsHtml = lignes.map(ln=>{
     const montant = lineTotalStored(ln);
-    const desc = factLineDesc(ln);
-    return `<tr><td class="desc">${esc(desc)}</td><td class="mt">${euro(montant)}</td></tr>`;
+    return `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(montant)}</td></tr>`;
   }).join('');
   // Sous-total (somme des lignes) et remise globale éventuelle
   const sousTotal = lignes.reduce((s,ln)=>s+lineTotalStored(ln),0);
@@ -18559,11 +18583,11 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .totaux { margin-top:5mm; margin-left:auto; width:80mm; }
      .totaux .lg { display:flex; justify-content:space-between; padding:1.6mm 0; font-size:13px; }
      .totaux .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:18px; color:#490F25; }
-     .tva { margin-top:8mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
+     .tva { margin-top:5mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
      .paiement { margin-top:3mm; font-size:11.5px; color:#6a5a52; }
      .rib { margin-top:4mm; padding:3mm 4mm; background:#faf6ef; border:1px solid #e6dcc9; border-radius:2mm; font-size:11px; color:#5a4a42; line-height:1.6; }
      .rib .rib-titre { font-weight:600; color:#490F25; }
-     .pied { margin-top:12mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
+     .pied { margin-top:7mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
      .barre { text-align:center; padding:10px; background:#490F25; }
      .barre button { font-family:'Outfit'; font-size:14px; padding:9px 22px; border:none; border-radius:8px; background:#E8DDCD; color:#490F25; font-weight:600; cursor:pointer; }
@@ -18650,7 +18674,7 @@ async function genererFactureMultiple(ids){
     // total de la commande = montant stocké (déjà net, livraison incluse) si dispo, sinon recalcul
     const totalCmd = (o.montant!=null) ? +o.montant : (sousTotal - remiseGEuro + frais);
     grandTotal += totalCmd;
-    const rows = lignes.map(ln=>`<tr><td class="desc">${esc(factLineDesc(ln))}</td><td class="mt">${euro(lineTotalStored(ln))}</td></tr>`).join('');
+    const rows = lignes.map(ln=>`<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(lineTotalStored(ln))}</td></tr>`).join('');
     return `
       <div class="cmd-section">
         <div class="cmd-head">
