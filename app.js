@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v515';
+const APP_VERSION = 'v518';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -880,7 +880,8 @@ const FLAVOR_CODES = {
   'Cannelle noisette':'CAN', 'Caramel beurre salé':'CAR', 'Chocolat passion':'CHP',
   'Nocciolata':'NOC', 'Coco citron vert':'CCV', 'Praliné noisettes':'PRA',
   'Popcorn':'POP', 'Café':'CAF', 'Mangue passion':'MAN',
-  'Madeleine':'MAD', 'Myrtille framboise':'MYR', 'Deux chocolats':'2CH'
+  'Madeleine':'MAD', 'Myrtille framboise':'MYR', 'Deux chocolats':'2CH',
+  'Chantache':'CHA'
 };
 // Dérive le code parfum à partir d'un nom de recette/produit. Cherche le parfum dont
 // le nom est contenu dans le nom de la recette (ex. « Macaron Caramel beurre salé » → CAR).
@@ -3364,7 +3365,7 @@ function assemblySuggestions(prods, recName){
     best.used += assemblable;
     out.push({
       coqId: c.p.id, ganId: best.p.id,
-      coqRec: recName(c.p.recipeId), ganRec: recName(best.p.recipeId),
+      coqRec: prodNomComplet(c.p), ganRec: prodNomComplet(best.p),
       coqLot: c.p.lotProduction||('#'+c.p.id), ganLot: best.p.lotProduction||('#'+best.p.id),
       coqMac: c.mac, ganMac: best.mac, assemblable,
       coqUnits: round3(+c.p.qteRestante),               // nb de COQUES physiques réelles en stock
@@ -3421,7 +3422,7 @@ function degustationSuggestions(prods, recName){
     best.used = round3(best.used + assemblable);
     out.push({
       coqId:c.p.id, ganId:best.p.id,
-      coqRec:recName(c.p.recipeId), ganRec:recName(best.p.recipeId),
+      coqRec:prodNomComplet(c.p), ganRec:prodNomComplet(best.p),
       coqLot:c.p.lotProduction||('#'+c.p.id), ganLot:best.p.lotProduction||('#'+best.p.id),
       coqUnits:round3(+c.p.qteRestante),
       assemblable,
@@ -3894,6 +3895,92 @@ async function docConvertToOrder(id){
   markUnsaved();
   closeModal(); toast('Devis converti en commande ✓');
   if(view==='documents') renderDocuments();
+}
+
+// [COMMANDE → DEVIS] Rétrograde une commande SANS paiement en devis (créée par erreur).
+// La commande est transformée : un document devis reprend son contenu, puis la commande est supprimée.
+// Garde-fou : refus si la commande a le moindre paiement (sinon le CA encaissé serait faussé).
+async function cmdToDevis(id){
+  const o=await db.orders.get(id);
+  if(!o){ toast('Commande introuvable'); return; }
+  // Sécurité : aucun paiement autorisé.
+  const paies=paiementsDe(o);
+  if(paies.length){
+    openModal(`<h3>⛔ Conversion impossible</h3>
+      <div class="banner" style="background:#f6e3e0;border-color:#b3261e;color:#7a2a20">⚠ <div>Cette commande a déjà <b>${paies.length} paiement(s)</b> enregistré(s). On ne peut pas la repasser en devis sans fausser ton chiffre d'affaires encaissé.<br>Si c'est une erreur, supprime d'abord les paiements, puis réessaie.</div></div>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Compris</button></div>`);
+    return;
+  }
+  // Sécurité : aucun batch de production lié, ni emballage déjà décompté (sinon on perdrait du
+  // stock réservé/consommé). On bloque et on invite à passer par la suppression (qui recrédite).
+  const itemsLies = await db.orderItems.where('orderId').equals(id).toArray().catch(()=>[]);
+  const totBatch = itemsLies.reduce((s,it)=>s+(+it.qte||0),0);
+  if(totBatch>0 || o.pkgDecremented===true){
+    const motifs=[];
+    if(totBatch>0) motifs.push(`<b>${totBatch} macaron(s)</b> de batch(s) sont réservés à cette commande`);
+    if(o.pkgDecremented===true) motifs.push(`des <b>emballages</b> ont déjà été décomptés`);
+    openModal(`<h3>⛔ Conversion impossible</h3>
+      <div class="banner" style="background:#f6e3e0;border-color:#b3261e;color:#7a2a20">⚠ <div>Cette commande ne peut pas être repassée en devis car ${motifs.join(' et ')}.<br>
+      Détache d'abord la production / les emballages (ou supprime la commande, ce qui les recrédite au stock), puis recrée un devis.</div></div>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Compris</button></div>`);
+    return;
+  }
+  // Lien éventuel vers un devis d'origine (si cette commande venait déjà d'un devis) : on prévient.
+  const docs=await db.documents.toArray().catch(()=>[]);
+  const devisOrigine=docs.find(x=>x.type==='devis' && x.orderId===id);
+  const avertDevis = devisOrigine
+    ? `<p class="note" style="color:#b08a3a;margin-top:6px">ℹ️ Un devis (${esc(devisOrigine.numero||'')}) avait déjà donné cette commande : il sera détaché (remis « en attente »), et un nouveau devis sera créé à partir du contenu actuel.</p>`
+    : '';
+  const cl = o.clientId ? await db.clients.get(o.clientId).catch(()=>null) : null;
+  const nbLignes=(o.lignes||[]).length;
+  openModal(`<h3>📝 Repasser en devis</h3>
+    <p style="margin-bottom:8px">Commande <b>${esc(orderNumber(o))}</b>${cl?` · ${esc(cl.nom)}`:''} · ${nbLignes} ligne(s) · ${euro(+o.montant||0)}</p>
+    <div class="banner" style="background:#fdf8e9;border-color:#e8d09a">⚠ <div>La commande va être <b>transformée en devis</b> : elle disparaîtra de tes commandes et n'entrera plus dans la production ni le CA. Son contenu (client, parfums, quantités, prix, livraison) est conservé dans le devis.</div></div>
+    ${avertDevis}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="cmdToDevisConfirm(${id})">Confirmer la transformation</button>
+    </div>`);
+}
+
+async function cmdToDevisConfirm(id){
+  try{
+    const o=await db.orders.get(id);
+    if(!o){ toast('Commande introuvable'); return; }
+    if(paiementsDe(o).length){ toast('Paiement présent — conversion annulée'); closeModal(); return; }
+    const itemsLies = await db.orderItems.where('orderId').equals(id).toArray().catch(()=>[]);
+    const totBatch = itemsLies.reduce((s,it)=>s+(+it.qte||0),0);
+    if(totBatch>0 || o.pkgDecremented===true){ toast('Batch ou emballage lié — conversion annulée'); closeModal(); return; }
+    const numero=await nextDocNumero('devis');
+    const today=new Date().toISOString().slice(0,10);
+    const doc={
+      type:'devis', statut:'en_attente', numero,
+      clientId:o.clientId||0, date:o.date||today,
+      heureLivraison:o.heureLivraison||'', lieuLivraison:o.lieuLivraison||'', dateEvenement:o.dateEvenement||'',
+      distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
+      tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
+      fraisLivraison:o.fraisLivraison||0, sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
+      lignes:o.lignes||[], remiseGlobale:o.remiseGlobale||0,
+      montant:+o.montant||0, acompte:0, orderId:null,
+      notes:(o.notes||'')+`\n(Repassé en devis depuis la commande ${orderNumber(o)})`
+    };
+    await db.transaction('rw', db.documents, db.orders, async()=>{
+      // Si un devis d'origine pointait vers cette commande, on le détache (repasse en attente).
+      const docs=await db.documents.where('type').equals('devis').toArray().catch(()=>[]);
+      for(const dv of docs){ if(dv.orderId===id){ await db.documents.update(dv.id, {orderId:null, statut:'en_attente'}); } }
+      await db.documents.add(doc);
+      await db.orders.delete(id);
+    });
+    markUnsaved && markUnsaved();
+    closeModal();
+    toast(`Commande repassée en devis ✓ (${numero})`);
+    // Retour à une vue cohérente.
+    if(typeof renderCmd==='function' && view==='commandes') renderCmd();
+    else if(typeof goView==='function') { goView('documents'); }
+  }catch(e){
+    console.error('cmdToDevisConfirm', e);
+    toast('Erreur pendant la transformation en devis');
+  }
 }
 async function docDelete(id){
   const d=await db.documents.get(id);
@@ -5649,11 +5736,19 @@ async function prodRefreshLot(){
   const sel=document.getElementById('f_rec');
   const dateEl=document.getElementById('f_date');
   const lotEl=document.getElementById('f_lot');
-  if(!sel||!lotEl) return;
+  if(!lotEl) return;
   // Ne pas écraser une saisie manuelle de l'utilisateur.
   if(lotEl.dataset.touched==='1') return;
   let nom='';
-  try{ const rid=+sel.value; const r=await db.recipes.get(rid); nom=r?r.produitNom:''; }catch(e){}
+  const mode=document.getElementById('f_mode')?.value||'complet';
+  if(mode==='garniture'){
+    // [LOT GARNITURE] Le code parfum vient du COMPOSANT (ex. « Chantache… » → CHA), pas de la recette.
+    try{ const cid=+(document.getElementById('f_garnitureSel')||{}).value||0;
+      const c=cid?await db.components.get(cid):null; nom=c?(c.nom||''):''; }catch(e){}
+  } else {
+    if(!sel) return;
+    try{ const rid=+sel.value; const r=await db.recipes.get(rid); nom=r?r.produitNom:''; }catch(e){}
+  }
   const dateStr=(dateEl&&dateEl.value)||today();
   // Lots déjà produits ce jour pour ce parfum (même code) → pour calculer le rang.
   let memeJourMemeParfum=[];
@@ -5734,8 +5829,8 @@ function prodModeSwitch(mode){
   const recWrap=document.getElementById('f_rec'); const recField=recWrap?recWrap.closest('.field'):null;
   if(recField) recField.style.display = mode==='garniture'?'none':'block';
   // Affiche/masque et remplit l'aperçu des ingrédients de la garniture.
-  if(mode==='garniture'){ prodSyncTheorique(); prodApercuGarniture(); }
-  else { const z=document.getElementById('f_garnitureApercu'); if(z){ z.style.display='none'; z.innerHTML=''; } }
+  if(mode==='garniture'){ prodSyncTheorique(); prodApercuGarniture(); prodRefreshLot(); }
+  else { const z=document.getElementById('f_garnitureApercu'); if(z){ z.style.display='none'; z.innerHTML=''; } prodRefreshLot(); }
   prodCompSwitch();
 }
 // Met à jour la note « coques » (1 macaron = 2 coques) selon le composant choisi.
@@ -8463,7 +8558,7 @@ async function cmdView(id){
         return `<button class="btn ${cur?'':'ghost'} sm" onclick="setOrderStatus(${id},'${st}')" ${cur?'style="pointer-events:none"':''}>${cur?'● ':''}${st}</button>`;}).join('')}
     </div>
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
-    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button>${paiementsDe(o).length?'':`<button class="btn ghost" onclick="cmdToDevis(${id})" title="Repasser cette commande en devis">📝 En devis</button>`}<button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
 function lineTotalStored(ln){
