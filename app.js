@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v493';
+const APP_VERSION = 'v494';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -17443,6 +17443,33 @@ async function diagComptageTables(){
 // Analyse (LECTURE SEULE) des lots de denrées pour détecter ceux saisis en grammes mais NON
 // convertis en kg au stockage (bug réception). Un lot suspect : quantité anormalement grande pour
 // un artisan (≥ seuil) ou prix unitaire dérisoire (< 1 €/kg, irréaliste pour une denrée).
+// Inventaire (lecture seule) des unités de toutes les denrées : g vs kg, avec le nombre
+// de lots et de recettes liés. Sert à repérer l'incohérence d'unités avant toute uniformisation.
+async function diagUnitesMatieres(){
+  const zone=document.getElementById('diagUnitesZone');
+  try{
+    const mats=(await db.materials.toArray()).filter(m=>m.categorie!=='emballage');
+    if(!mats.length){ if(zone) zone.innerHTML='<p class="note">Aucune denrée.</p>'; return; }
+    const lots=await db.materialLots.toArray();
+    const items=await db.recipeItems.toArray();
+    mats.sort((a,b)=>(a.unite||'kg').localeCompare(b.unite||'kg')||String(a.nom||'').localeCompare(String(b.nom||'')));
+    let nbKg=0, nbG=0;
+    const rows=mats.map(m=>{
+      const u=m.unite||'kg';
+      if(u==='kg') nbKg++; else if(u==='g') nbG++;
+      const nl=lots.filter(l=>+l.materialId===+m.id).length;
+      const ni=items.filter(it=>+it.materialId===+m.id).length;
+      const coul = u==='kg' ? '#2a6a9a' : '#3f7d52';
+      return `<div class="sum-box" style="font-size:.82rem"><span>${esc(m.nom)}</span>`+
+             `<b style="color:${coul}">${esc(u)} <span style="color:#9a8a82;font-weight:400">· ${nl} lot(s) · ${ni} recette(s)</span></b></div>`;
+    }).join('');
+    if(zone) zone.innerHTML = rows +
+      `<div class="banner" style="background:#eef3f8;border-color:#bcd0e0;margin-top:8px"><div>`+
+      `<b>${mats.length} denrée(s)</b> : ${nbKg} en <b style="color:#2a6a9a">kg</b>, ${nbG} en <b style="color:#3f7d52">g</b>`+
+      `${(nbKg>0&&nbG>0)?'<br>⚠ Unités mélangées : voilà la source de l’incohérence d’affichage.':'<br>✓ Toutes tes denrées utilisent la même unité.'}`+
+      `</div></div>`;
+  }catch(e){ console.error('diagUnitesMatieres',e); if(zone) zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse.</p>'; }
+}
 async function diagLotsUnite(){
   const zone=document.getElementById('diagUniteZone'); if(zone) zone.innerHTML='<p class="note">Analyse…</p>';
   try{
@@ -17706,6 +17733,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">📆 Dates de paiement suspectes</h2>
       <p class="note">Repère les commandes payées dont la <b>date de paiement tombe dans un autre mois</b> que la commande — souvent une date posée par défaut (date du jour) sur une commande historique. Ces commandes faussent le bilan du mois où elles « atterrissent ».</p>
       <div id="diagPayZone"><button class="btn gold sm" onclick="diagSuspectPayDates()">Rechercher les dates suspectes</button></div>
+    </div>
+    <div class="panel" style="background:#eef3f8;margin-bottom:12px">
+      <h2 style="font-size:1rem">📏 Inventaire des unités (denrées)</h2>
+      <p class="note">Liste chaque denrée avec son <b>unité</b> (g ou kg), et le nombre de lots et de recettes liés. Permet de repérer si tes matières mélangent les unités — la cause de l'affichage incohérent.</p>
+      <div id="diagUnitesZone"><button class="btn gold sm" onclick="diagUnitesMatieres()">Faire l'inventaire des unités</button></div>
     </div>
     <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
       <h2 style="font-size:1rem">📦 Diagnostic emballages</h2>
