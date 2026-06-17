@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v489';
+const APP_VERSION = 'v490';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18323,7 +18323,7 @@ const FACT_STYLE = `   <style>
      .ln-loc { display:block; margin-top:1mm; font-size:11px; color:#8a5a2a; font-style:italic; }
      .cmd-table tr.sub td, .cmd-table tr.rem td, .cmd-table tr.liv td { color:#6a5a52; font-size:12px; border-bottom:none; padding-top:1mm; padding-bottom:1mm; }
      .cmd-table tr.cmd-total td { font-weight:600; color:#490F25; border-top:1px solid #e0d5c5; border-bottom:none; }
-     .grand { margin-top:4mm; margin-left:auto; width:85mm; }
+     .grand { margin-top:4mm; width:100%; }
      .grand .lg { display:flex; justify-content:space-between; padding:1.8mm 0; font-size:13px; }
      .grand .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:19px; color:#490F25; }
      .tva { margin-top:5mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
