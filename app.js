@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v535';
+const APP_VERSION = 'v536';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15440,13 +15440,18 @@ async function marketForecast(){
   const clos = markets.filter(m=>m.statut==='clos');
   const movesByMarket={}; moves.forEach(mv=>{(movesByMarket[mv.marketId] ||= []).push(mv);});
   let totalVendu=0, maxVendu=0; const venduParParfum={};
+  let venduSansParfum = 0;   // ventes réelles mais sans parfum identifiable (exclues de la répartition)
   clos.forEach(mk=>{
     const lines = marketLineSummary(movesByMarket[mk.id]||[]);
     let venduMk=0;
     lines.forEach(l=>{
-      const nom = l.parfum || recName((prods.find(p=>l.productionIds.includes(p.id))||{}).recipeId) || 'Autre';
-      venduParParfum[nom]=(venduParParfum[nom]||0)+(+l.vendu||0);
-      venduMk += (+l.vendu||0);
+      // Nom de parfum : texte du mouvement, sinon nom de recette via productionId, sinon NON identifié.
+      const nomRecette = recName((prods.find(p=>l.productionIds.includes(p.id))||{}).recipeId);
+      const nom = l.parfum || nomRecette || '';
+      const v = (+l.vendu||0);
+      venduMk += v;
+      if(nom){ venduParParfum[nom]=(venduParParfum[nom]||0)+v; }
+      else { venduSansParfum += v; }   // exclu de la ventilation, conservé dans le volume
     });
     totalVendu += venduMk; maxVendu = Math.max(maxVendu, venduMk);
   });
@@ -15454,13 +15459,16 @@ async function marketForecast(){
   const moyenneVendu = nbMarches>0 ? Math.round(totalVendu/nbMarches) : 0;
   // suggestion : moyenne + petite marge de sécurité de 10 %, arrondie à la dizaine
   const suggestion = nbMarches>0 ? Math.ceil(moyenneVendu*1.1/10)*10 : 0;
-  // répartition par parfum (en % des ventes cumulées), triée
+  // RÉPARTITION par parfum : calculée UNIQUEMENT sur les ventes au parfum identifié
+  // (les ventes anonymes sont exclues pour ne pas fausser les pourcentages).
   const totParf = Object.values(venduParParfum).reduce((s,x)=>s+x,0);
   const repartition = Object.keys(venduParParfum).map(nom=>({
     parfum:nom, vendu:round3(venduParParfum[nom]),
     pct: totParf>0 ? Math.round(venduParParfum[nom]/totParf*100) : 0
   })).sort((a,b)=>b.vendu-a.vendu);
-  return {nbMarches, moyenneVendu, maxVendu, suggestion, repartition, totalVendu:round3(totalVendu)};
+  return {nbMarches, moyenneVendu, maxVendu, suggestion, repartition,
+          totalVendu:round3(totalVendu), venduSansParfum:round3(venduSansParfum),
+          venduIdentifie:round3(totParf)};
 }
 
 // B. JAUGE DE SÉRÉNITÉ : score 0–100 reflétant ta capacité à honorer les commandes
@@ -16752,12 +16760,16 @@ async function renderMarketForecastBox(){
     box.innerHTML = cibleBloc;
     return;
   }
-  const rep=fc.repartition.slice(0,8).map(r=>`<div class="sum-box"><span>${esc(r.parfum||'Autre')}</span><b>${r.pct}% · ${qty(r.vendu)} vendus</b></div>`).join('');
+  const rep=fc.repartition.map(r=>`<div class="sum-box"><span>${esc(r.parfum||'Autre')}</span><b>${r.pct}% · ${qty(r.vendu)} vendus</b></div>`).join('');
+  const sansParfum = (fc.venduSansParfum>0)
+    ? `<p class="note" style="margin:8px 0 0;color:#8a6d3b">ℹ ${qty(fc.venduSansParfum)} vente(s) sans parfum identifié sont exclues de cette répartition (mais comptées dans tes volumes). Renseigne le parfum lors de tes sorties de marché pour affiner.</p>`
+    : '';
   box.innerHTML=`<div class="panel"><h2>📊 Prévisionnel marché <span style="font-weight:400;font-size:.82rem;color:#9a8a82">— d'après ${fc.nbMarches} marché(s) passé(s)</span></h2>
     <div class="sum-box"><span>Ventes moyennes par marché</span><b>${qty(fc.moyenneVendu)} macarons</b></div>
     <div class="sum-box"><span>Record</span><b>${qty(fc.maxVendu)} macarons</b></div>
     <div class="sum-box"><span>💡 Quantité conseillée à prévoir</span><b style="color:var(--bordeaux)">${qty(fc.suggestion)} macarons</b></div>
-    ${rep?`<p class="note" style="margin:10px 0 4px">Répartition observée par parfum (selon tes ventes passées) :</p>${rep}`:''}
+    ${rep?`<p class="note" style="margin:10px 0 4px">Répartition observée par parfum <span style="color:#9a8a82">(sur ${qty(fc.venduIdentifie||0)} ventes au parfum identifié)</span> :</p>${rep}`:''}
+    ${sansParfum}
   </div>${cibleBloc}`;
 }
 
