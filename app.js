@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v557';
+const APP_VERSION = 'v558';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15712,7 +15712,6 @@ function renderAssistant(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Assistant</h1><p>Anti-gaspi, sérénité & pilotage</p></div></div>
    <div id="atelierVoixBox"><div class="banner">🧭 <div>Analyse de ta situation en cours…</div></div></div>
-   <div id="assistantBriefing"><div class="banner">☀️ <div>Préparation de ton briefing du jour…</div></div></div>
    <details class="ai-fold" open><summary>🧘 Jauge de sérénité <span class="ai-fold-arrow">▾</span></summary>
      <div class="ai-fold-body"><div id="serenityBox"><div class="banner">🧘 <div>Calcul de la jauge de sérénité…</div></div></div></div></details>
    <details class="ai-fold"><summary>📈 Rythme de ventes & alertes <span class="ai-fold-arrow">▾</span></summary>
@@ -15744,8 +15743,8 @@ function renderAssistant(){
   renderAntiGaspi();
   renderPredictiveAlerts();
   ttScheduleSerenityRefresh();
-  renderAssistantBriefing();
   renderAtelierVoix();
+  // renderAssistantBriefing() retiré : la voix (atelierVoix) couvre désormais tout ce qu'il faisait.
 }
 
 // [LA VOIX] Rendu de l'encart de conseil proactif (écran Assistant).
@@ -16587,6 +16586,35 @@ async function produitsFinisDlc(opts){
   out.sort((a,b)=> (a.joursAvantDLC-b.joursAvantDLC) || (b.qte-a.qte));
   return out;
 }
+
+/* [FUSION] Commandes proches du RETRAIT (aujourd'hui / demain / en retard de retrait).
+   Distinct des retards de LANCEMENT (production) : ici c'est la date de remise au client.
+   Réutilise la logique exacte de l'ancien briefing, pour que le cerveau couvre tout. */
+async function commandesProchesRetrait(opts){
+  opts = opts||{};
+  const seuilJours = (opts.seuilJours!=null) ? +opts.seuilJours : 1;   // aujourd'hui + demain par défaut
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const nm = id => { const c=clients.find(x=>x.id===id); return c?c.nom:'client'; };
+  const out = [];
+  orders.forEach(o=>{
+    const st = (typeof normStatus==='function') ? normStatus(o.statut) : o.statut;
+    if(st==='Livrée' || st==='Terminée') return;
+    const j = (typeof daysTo==='function') ? daysTo(o.date) : null;
+    if(j===null) return;
+    if(j<=seuilJours){
+      out.push({
+        orderId: o.id,
+        client: nm(o.clientId) || o.histoLabel || 'client',
+        date: o.date,
+        joursAvantRetrait: j,
+        etat: j<0 ? 'retard' : j===0 ? 'aujourdhui' : 'demain'
+      });
+    }
+  });
+  out.sort((a,b)=> a.joursAvantRetrait - b.joursAvantRetrait);
+  return out;
+}
 async function atelierBrain(opts){
   opts = opts || {};
   const horizon = opts.horizon || 14;
@@ -16694,6 +16722,11 @@ async function atelierBrain(opts){
   // de leur date limite, à écouler en priorité avant péremption.
   let dlcFinis = [];
   try{ dlcFinis = (typeof produitsFinisDlc==='function') ? await produitsFinisDlc({seuilJours:4}) : []; }catch(e){ console.error('brain.dlcfinis',e); }
+
+  // --- 5 sexies) [FUSION] COMMANDES PROCHES DU RETRAIT : à remettre au client aujourd'hui/demain.
+  // Distinct des retards de lancement (production). Permet au cerveau de couvrir le briefing.
+  let cmdProches = [];
+  try{ cmdProches = (typeof commandesProchesRetrait==='function') ? await commandesProchesRetrait({seuilJours:1}) : []; }catch(e){ console.error('brain.cmdproches',e); }
 
   // --- 5 bis) [CONNEXION #1] MARCHÉS À VENIR dans l'horizon : charge de production.
   // Un marché compte s'il est daté dans [aujourd'hui, +horizon], pas clos, pas historique.
@@ -16890,6 +16923,10 @@ async function atelierBrain(opts){
     nbDlcFinis: dlcFinis.length,
     aDesDlcProches: dlcFinis.length>0,
     nbDlcUrgents: dlcFinis.filter(d=>d.urgent).length,
+    // [FUSION] Commandes proches du retrait (à remettre au client aujourd'hui/demain).
+    commandesProches: cmdProches,
+    nbCommandesProches: cmdProches.length,
+    aDesCommandesProches: cmdProches.length>0,
     // Optimisation
     optimisations,
     // Méta : ce que le cerveau a pu calculer (pour que la "voix" ne parle que du sûr)
@@ -16940,6 +16977,21 @@ async function atelierVoix(opts){
     sections.push(`<div style="margin-bottom:10px">
       <div style="font-weight:700;color:#b3261e;margin-bottom:4px">⚠️ À traiter en priorité</div>
       ${urgences.map(u=>`<div style="font-size:.86rem;margin:3px 0;padding-left:4px">• ${u}</div>`).join('')}
+    </div>`);
+  }
+
+  // --- 1bis) COMMANDES À RETIRER (aujourd'hui / demain) ---
+  if(b.aDesCommandesProches && Array.isArray(b.commandesProches)){
+    const lignes = b.commandesProches.slice(0,5).map(c=>{
+      const when = c.etat==='retard' ? `<span style="color:#b3261e">en retard de ${-c.joursAvantRetrait} j</span>`
+                 : c.etat==='aujourdhui' ? '<span style="color:#d98324">aujourd\'hui</span>'
+                 : 'demain';
+      const lien = c.orderId ? ` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="cmdView(${c.orderId})">🔎 Voir</button>` : '';
+      return `<div style="font-size:.86rem;margin:3px 0;padding-left:4px">• <b>${esc2(c.client)}</b> — à remettre ${when}${lien}</div>`;
+    }).join('');
+    sections.push(`<div style="margin-bottom:10px">
+      <div style="font-weight:700;color:#5a3a2a;margin-bottom:4px">📦 Commandes à remettre</div>
+      ${lignes}
     </div>`);
   }
 
