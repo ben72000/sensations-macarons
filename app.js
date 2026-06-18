@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v610';
+const APP_VERSION = 'v597';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -110,13 +110,6 @@ db.version(16).stores({
 // la matière est supprimée plus tard.
 db.version(17).stores({
   packagingConsumption: '++id, orderId, materialId, date'
-});
-// v18 : trace des ajustements d'inventaire NÉGATIFS (manques constatés au comptage physique).
-// Les surplus créent déjà un lot de correction (inventaire:true) ; les manques décrémentaient
-// le stock sans trace. On enregistre désormais chaque manque pour réconcilier le stock.
-// {materialId, qte (positive = quantité retirée), date, note}
-db.version(18).stores({
-  inventoryMoves: '++id, materialId, date'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -1770,26 +1763,6 @@ async function caMonthDetail(mk){
     <p class="note" style="margin-top:6px">💡 En micro-entreprise, c'est ce <b>total encaissé</b> que tu déclares, pas le CA facturé (qui suit la date de livraison et sert au pilotage).</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
-// Menu d'actions sur un produit fini en DLC (proche ou dépassée), depuis l'accueil.
-// Intervention : déclarer la perte (cas le plus fréquent), ranger, ou voir dans Productions.
-async function dlcActions(prodId){
-  const p = await db.productions.get(prodId).catch(()=>null);
-  if(!p){ toast('Lot introuvable'); return; }
-  const recipes = await db.recipes.toArray().catch(()=>[]);
-  const nom = (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : '?';
-  const j = (typeof daysTo==='function') ? daysTo(p.dlcProduit) : null;
-  const etat = (j!=null && j<=0) ? '<b style="color:#b3261e">DLC dépassée</b>' : (j!=null?`DLC dans ${j} j`:'DLC');
-  const dispo = round3(+p.qteRestante||0);
-  openModal(`<h3>${esc(nom)}</h3>
-    <p class="note" style="margin-bottom:10px">Lot <b>${esc(p.lotProduction||('#'+p.id))}</b> · ${etat} · <b>${qty(dispo)}</b> pièce(s) en stock${p.emplacement?` · ${empIcon(p.emplacement)} ${empLettre(p.emplacement)}`:''}</p>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      <button class="btn danger" onclick="closeModal();declareLossForm(${prodId})">⚠ Déclarer une perte (sortir du stock)</button>
-      <button class="btn" style="background:#3f7d52;color:#fff" onclick="closeModal();setEmplacement(${prodId})">📍 Ranger / changer d'emplacement</button>
-      <button class="btn ghost" onclick="closeModal();goView('productions')">📋 Voir dans Productions</button>
-    </div>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
-}
-
 async function renderDash(){
   const now=new Date(), m=now.getMonth(), y=now.getFullYear();
   const [orders, clients, materials, productions, events, markets, recipes] = await Promise.all([
@@ -1829,16 +1802,13 @@ async function renderDash(){
   const closedMk = (markets||[]).filter(k=>k.statut==='clos').map(k=>{
     const ca=k.ca||{}; return {date:(k.date||''), montant:marketNetCA(k)};
   }).filter(k=>k.montant>0);
-  // Comparaison par CHAÎNE de mois (AAAA-MM), insensible au fuseau — alignée sur caMonthDetail.
-  // (Auparavant new Date(d).getMonth() pouvait décaler un marché d'un mois selon le fuseau,
-  //  d'où un marché clos visible dans le détail mais absent du CA du mois.)
+  const mkInMonth = d => { const dt=new Date(d); return dt.getMonth()===m && dt.getFullYear()===y; };
 
   // CA commandes du mois = ENCAISSEMENTS réels du mois (logique comptable), pas date de commande.
   const _mkCourant = monthKey(today());
-  const mkInMonth = d => ymKey(d||'') === _mkCourant;
   const _caEncDash = (typeof caEncaisseParMois==='function') ? caEncaisseParMois(orders) : {parMois:{},enAttente:0};
   const caCmdMonth = _caEncDash.parMois[_mkCourant] || 0;
-  const caMkMonth = closedMk.filter(k=>mkInMonth(k.date)).reduce((s,k)=>s+((typeof marketNetCA==='function')?marketNetCA(k):(+k.montant||0)),0);
+  const caMkMonth = closedMk.filter(k=>mkInMonth(k.date)).reduce((s,k)=>s+k.montant,0);
   const caMonth = money2(caCmdMonth + caMkMonth);
   const _moisCourantLbl = (typeof monthLabel==='function') ? monthLabel(monthKey(today())) : 'ce mois';
   // Nombre d'ENCAISSEMENTS du mois (commandes + marchés) — cohérent avec le détail affiché.
@@ -1870,7 +1840,7 @@ async function renderDash(){
     const j=daysTo(p.dlcProduit); if(j===null) return;
     const seuil = isFreezer(p.emplacement) ? 14 : 2;
     if(j<=seuil){
-      prodDlcAlert.push({id:p.id, nom:prodNomComplet(p, recipes), lot:p.lotProduction||('#'+p.id),
+      prodDlcAlert.push({nom:prodNomComplet(p, recipes), lot:p.lotProduction||('#'+p.id),
         dlc:p.dlcProduit, j, emplacement:p.emplacement||'', qte:round3(+p.qteRestante)});
     }
   });
@@ -1883,12 +1853,9 @@ async function renderDash(){
 
   const upcoming = events.filter(e=>e.date>=today()).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
   const months=[]; for(let i=5;i>=0;i--){const d=new Date(y,m-i,1);months.push({k:ymOf(d),l:d.toLocaleDateString('fr-FR',{month:'short'})});}
-  // CA mensuel en base COMPTABLE (encaissements réels), identique à caMonthDetail :
-  // paiements reçus dans le mois + marchés clos (CA net) du mois.
-  const _caEncMois = (typeof caEncaisseParMois==='function') ? caEncaisseParMois(orders).parMois : {};
   const data=months.map(mo=>({...mo,v: money2(
-    (_caEncMois[mo.k]||0)
-    + closedMk.filter(k=>k.date&&k.date.slice(0,7)===mo.k).reduce((s,k)=>s+((typeof marketNetCA==='function')?marketNetCA(k):(+k.montant||0)),0)
+    orders.filter(c=>c.date&&c.date.slice(0,7)===mo.k).reduce((s,c)=>s+(+c.montant||0),0)
+    + closedMk.filter(k=>k.date&&k.date.slice(0,7)===mo.k).reduce((s,k)=>s+k.montant,0)
   )}));
   const max=Math.max(...data.map(d=>d.v),1);
 
@@ -1912,7 +1879,7 @@ async function renderDash(){
    ${(_gaspReady && _gaspReady.ready && !_gaspDismissed())?`<div class="banner" style="background:#eef6ef;border-color:#bcd9c4">✅ <div><b>Aide aux quantités activable</b> — tu as ${_gaspReady.nbVentiles} marchés avec invendus bien renseignés. L'app peut maintenant te conseiller combien produire par parfum pour limiter le gaspillage. <span class="act" onclick="gaspillagePopup()">Voir le gaspillage →</span> · <span class="act" onclick="_gaspDismiss()">Plus tard</span></div></div>`:''}
    ${prodSugg.length?`<div class="banner" style="background:#f4faf5;border-color:#cfe3d4">🔗 <div><b>${prodSugg.length} assemblage(s) à finaliser</b> — des coques et ganaches en stock peuvent être réunies (${prodSugg.slice(0,3).map(s=>esc(s.coqRec)+' '+qty(s.assemblable)+' mac.').join(' · ')}${prodSugg.length>3?' …':''}). <span class="act" onclick="goView('productions')">Assembler →</span></div></div>`:''}
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
-   ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> <span style="font-size:.76rem;color:#9a8a82">— touche un lot pour intervenir</span><br>${prodDlcAlert.slice(0,6).map(a=>`<span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="dlcActions(${a.id})">${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})</span>`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
+   ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> : ${prodDlcAlert.slice(0,6).map(a=>`${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
      <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} encaissement(s) · voir le détail ›</div></div>
      <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts & charges ›':'pas encore de ventes ›'}</div></div>
@@ -1925,8 +1892,7 @@ async function renderDash(){
      <div style="font-size:.82rem;color:#7a6a60;padding:4px 2px 0">${privacyModeEnabled()?'•••':euro(caTotal)} <span style="color:#9a8a82">cumul de toutes les ventes</span></div>
    </details>
    <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
-     <p class="note" style="margin:-4px 0 8px">Touche une barre pour voir le détail des encaissements du mois.</p>
-     <div class="bar-wrap">${data.map(d=>`<div class="bar-col" onclick="caMonthDetail('${d.k}')" style="cursor:pointer" title="Voir le détail de ${esc(d.l)}"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
+     <div class="bar-wrap">${data.map(d=>`<div class="bar-col"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
    </div>
    <div id="dashProduction"></div>
    <div class="dash-2col">
@@ -2557,7 +2523,7 @@ async function inventaireApply(){
 async function inventaireConfirm(list){
   if(!Array.isArray(list) || !list.length){ closeModal(); return; }
   try{
-    await db.transaction('rw', db.materialLots, db.inventoryMoves, async()=>{
+    await db.transaction('rw', db.materialLots, async()=>{
       for(const c of list){
         const delta = round3(+c.delta||0);
         if(Math.abs(delta) < 1e-6) continue;
@@ -2576,8 +2542,6 @@ async function inventaireConfirm(list){
             const pris = round3(Math.min(reste, +l.qteRestante));
             if(pris>0){ await db.materialLots.update(l.id, {qteRestante: subQty(l.qteRestante, pris)}); reste = subQty(reste, pris); }
           }
-          // TRACE du manque d'inventaire (sortie légitime, pour réconcilier le stock).
-          await db.inventoryMoves.add({materialId:+c.id, qte:round3(-delta), date:today(), note:'Manque constaté à l\'inventaire'});
         }
       }
     });
@@ -7725,10 +7689,6 @@ async function buildGlobalIndex(){
     db.productions.toArray().catch(()=>[])
   ]);
   const coffrets = await db.products.toArray().catch(()=>[]);
-  // Stock par matière (somme des lots restants) — calculé une fois en mémoire pour la recherche.
-  const matLots = await db.materialLots.toArray().catch(()=>[]);
-  const _matStock = {};
-  matLots.forEach(l=>{ _matStock[l.materialId]=(_matStock[l.materialId]||0)+(+l.qteRestante||0); });
   const recById = {}; recipes.forEach(r=>recById[r.id]=r);
   const clById = {}; clients.forEach(c=>clById[c.id]=c);
   const idx = [];
@@ -7776,13 +7736,10 @@ async function buildGlobalIndex(){
 
   // MATIÈRES
   materials.forEach(m=>{
-    const d = (typeof dispUnit==='function') ? dispUnit(m) : {f:1, u:m.unite||''};
-    const stockAff = round3((_matStock[m.id]||0) * d.f);
-    const stockTxt = `stock ${qty(stockAff)} ${d.u}`.trim();
     idx.push(Object.assign({
       kind:'material', id:m.id,
       titre: m.nom || 'Matière',
-      sous: [stockTxt, m.categorie, m.marque].filter(Boolean).join(' · '),
+      sous: [m.unite, m.categorie].filter(Boolean).join(' · '),
       action:`closeSheet();matForm(${m.id})`
     }, _gsFields(m.nom, [m.unite, m.categorie, m.marque])));
   });
@@ -12846,8 +12803,7 @@ function comptaSetMonth(m){ _comptaMonth = m; renderCompta(); }
 // chaque ligne cliquable pour ouvrir la commande/charge correspondante.
 async function comptaDetail(type){
   const start = (_comptaPeriode && _comptaPeriode!=='tout') ? comptaPeriodeStart(_comptaPeriode) : null;
-  const end = (_comptaPeriode && _comptaPeriode!=='tout') ? comptaPeriodeEnd(_comptaPeriode) : null;
-  const inPeriode = d => { const x=d||''; if(start && x<start) return false; if(end && x>end) return false; return true; };
+  const inPeriode = d => !start || (d||'')>=start;
   const orders = (await db.orders.toArray()).filter(o=>inPeriode(o.date));
   const charges = (await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[])).filter(c=>inPeriode(c.date));
   const markets = (await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[])).filter(k=>inPeriode(k.date));
@@ -21652,346 +21608,6 @@ async function diagAllLots(){
     zone.innerHTML='<p class="note" style="color:#b3261e">Erreur : '+esc(e&&e.message?e.message:String(e))+'</p>';
   }
 }
-// CONTRÔLE DU STOCK DE MACARONS (produits finis) — pour chaque batch vendable, vérifie le bilan :
-// quantité produite = en stock + vendu (orderItems) + perdu (losses) + sorti en marché (marketMoves).
-// Un écart au-delà de la tolérance = macarons « disparus » sans trace. Coques/ganaches exclus
-// de ce premier contrôle. 100% déterministe, lecture seule.
-async function controleStockMacarons(){
-  const zone=document.getElementById('controleStockMacZone');
-  if(zone) zone.innerHTML='<p class="note">Bilan des batchs en cours…</p>';
-  const TOL=0.5;   // tolérance d'un demi-macaron (arrondis)
-  const [prods, recipes, orderItems, losses, marketMoves] = await Promise.all([
-    db.productions.toArray().catch(()=>[]),
-    db.recipes.toArray().catch(()=>[]),
-    db.orderItems.toArray().catch(()=>[]),
-    db.losses.toArray().catch(()=>[]),
-    db.marketMoves.toArray().catch(()=>[])
-  ]);
-  // index des sorties par production (une passe, efficace)
-  const venduBy={}, perduBy={}, marcheBy={};
-  orderItems.forEach(it=>{ if(it.productionId) venduBy[it.productionId]=round3((venduBy[it.productionId]||0)+(+it.qte||0)); });
-  losses.forEach(l=>{ if(l.productionId) perduBy[l.productionId]=round3((perduBy[l.productionId]||0)+(+l.qte||0)); });
-  marketMoves.forEach(m=>{ if(m.productionId && (m.type==='sortie'||m.type==='don'||m.type==='perte')) marcheBy[m.productionId]=round3((marcheBy[m.productionId]||0)+(+m.qte||0)); });
-  const anomalies=[]; let nbControlees=0;
-  prods.forEach(p=>{
-    const comp=(typeof prodComposant==='function')?prodComposant(p):'complet';
-    if(comp!=='complet' && comp!=='assemble') return;   // coques/ganache exclus
-    const produite=round3(+p.qteProduite||0);
-    if(produite<=0) return;
-    nbControlees++;
-    const restante=round3(+p.qteRestante||0);
-    const vendu=venduBy[p.id]||0, perdu=perduBy[p.id]||0, marche=marcheBy[p.id]||0;
-    const sorties=round3(restante+vendu+perdu+marche);
-    const ecart=round3(produite-sorties);
-    if(Math.abs(ecart)>TOL){
-      const nom=(typeof prodNomComplet==='function')?prodNomComplet(p, recipes):'?';
-      anomalies.push({id:p.id, nom, lot:p.lotProduction||('#'+p.id),
-        produite, restante, vendu, perdu, marche, ecart});
-    }
-  });
-  if(!zone) return;
-  if(!anomalies.length){
-    zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div><b>Stock de macarons cohérent.</b> Les ${nbControlees} batch(s) de produits finis se bouclent : produit = en stock + vendu + perdu + marché.</div></div>`;
-    return;
-  }
-  const rows=anomalies.sort((a,b)=>Math.abs(b.ecart)-Math.abs(a.ecart)).map(a=>
-    `<div class="sum-box" style="cursor:pointer;align-items:flex-start" onclick="dlcActions(${a.id})">
-       <span>${esc(a.nom)} <span style="color:#9a8a82">lot ${esc(a.lot)}</span><br><span style="color:#9a8a82;font-size:.76rem">produit ${qty(a.produite)} = stock ${qty(a.restante)} + vendu ${qty(a.vendu)} + perdu ${qty(a.perdu)} + marché ${qty(a.marche)} = ${qty(round3(a.restante+a.vendu+a.perdu+a.marche))}</span></span>
-       <b style="color:#b3261e">${a.ecart>0?'+':''}${qty(a.ecart)}</b></div>`).join('');
-  zone.innerHTML=`
-    <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div><b>${anomalies.length} batch(s)</b> ne se bouclent pas : des macarons ne sont retrouvés ni en stock, ni vendus, ni perdus, ni sortis en marché. Cause possible : une commande historique (sans détail de production), une sortie manuelle, ou un vrai écart. Touche une ligne pour intervenir sur le lot.</div></div>
-    ${rows}`;
-}
-
-// CONTRÔLE DES COMMANDES — recalcule le montant attendu de chaque commande depuis ses lignes
-// (même formule que la sauvegarde : somme des lignes − remise globale + supplément perso) et
-// le compare au montant enregistré. Repère les montants figés non recalculés. Les commandes à
-// prix manuel sont exclues (écart voulu). 100% déterministe, lecture seule.
-async function controleCommandes(){
-  const zone=document.getElementById('controleCmdZone');
-  if(zone) zone.innerHTML='<p class="note">Vérification en cours…</p>';
-  const [orders, clients] = await Promise.all([
-    db.orders.toArray().catch(()=>[]),
-    db.clients.toArray().catch(()=>[])
-  ]);
-  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
-  const PERSO = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
-  const anomalies=[]; let nbControlees=0, nbManuel=0;
-  orders.forEach(o=>{
-    if(o.histo) return;            // commande historique : montant libre, pas de lignes à réconcilier
-    if(o.prixManuel){ nbManuel++; return; }   // prix forcé à la main : écart volontaire, exclu
-    const lignes = (typeof orderToLines==='function') ? orderToLines(o) : (o.lignes||[]);
-    if(!lignes.length) return;     // rien à recalculer (ex. commande sans ligne structurée)
-    nbControlees++;
-    let sousTotal=0;
-    try{ sousTotal = lignes.reduce((a,ln)=>a + ((typeof lineTotalStored==='function')?lineTotalStored(ln):0), 0); }
-    catch(e){ sousTotal = 0; }
-    const remiseGlobale=+o.remiseGlobale||0;
-    const remiseG=money2(sousTotal*remiseGlobale/100);
-    const persoNb=(o.perso && +o.persoMacarons>0)?+o.persoMacarons:0;
-    const persoSup=money2(persoNb*PERSO);
-    const attendu=Math.max(0, money2(sousTotal - remiseG + persoSup));
-    const stocke=money2(+o.montant||0);
-    const ecart=money2(stocke - attendu);
-    if(Math.abs(ecart)>0.01){
-      anomalies.push({oid:o.id, nom:esc(clName(o.clientId)), date:o.date||'', attendu, stocke, ecart});
-    }
-  });
-  if(!zone) return;
-  if(!anomalies.length){
-    zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div><b>Commandes cohérentes.</b> Les ${nbControlees} commande(s) contrôlée(s) ont un montant conforme à la somme de leurs lignes${nbManuel>0?` (${nbManuel} commande(s) à prix manuel exclue(s))`:''}.</div></div>`;
-    return;
-  }
-  const rows=anomalies.sort((a,b)=>Math.abs(b.ecart)-Math.abs(a.ecart)).map(a=>
-    `<div class="sum-box" style="cursor:pointer;align-items:flex-start" onclick="cmdView(${a.oid})">
-       <span>${fmtDate(a.date)} · ${a.nom}<br><span style="color:#9a8a82;font-size:.76rem">montant enregistré ${euro(a.stocke)} · recalculé depuis les lignes ${euro(a.attendu)}</span></span>
-       <b style="color:#b3261e">${a.ecart>0?'+':''}${euro(a.ecart)}</b></div>`).join('');
-  zone.innerHTML=`
-    <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div><b>${anomalies.length} commande(s)</b> ont un montant qui ne correspond plus à la somme de leurs lignes (montant figé après modification ?). Touche une ligne pour ouvrir la commande et la recalculer.${nbManuel>0?`<br><span style="font-size:.78rem;color:#9a8a82">${nbManuel} commande(s) à prix manuel exclue(s) du contrôle.</span>`:''}</div></div>
-    ${rows}`;
-}
-
-// CONTRÔLE DU STOCK MATIÈRES — réconcilie, pour chaque matière : stock restant doit égaler
-// les quantités reçues moins les sorties tracées (production via prodConsumption + emballages
-// via packagingConsumption). Un écart = sortie non tracée ou ajustement manuel, à examiner.
-// 100% déterministe, lecture seule. Ne crie pas « bug » : signale un écart inexpliqué.
-async function controleStockMatieres(){
-  const zone=document.getElementById('controleStockMatZone');
-  if(zone) zone.innerHTML='<p class="note">Réconciliation en cours…</p>';
-  const [materials, lots, prodConso, packConso, invMoves] = await Promise.all([
-    db.materials.toArray().catch(()=>[]),
-    db.materialLots.toArray().catch(()=>[]),
-    db.prodConsumption.toArray().catch(()=>[]),
-    db.packagingConsumption.toArray().catch(()=>[]),
-    db.inventoryMoves.toArray().catch(()=>[])
-  ]);
-  // index : lot -> matière (pour rattacher une conso production à sa matière)
-  const lotMat={}; lots.forEach(l=>lotMat[l.id]=l.materialId);
-  const ecarts=[]; let nbControlees=0;
-  materials.forEach(m=>{
-    const sesLots=lots.filter(l=>l.materialId===m.id);
-    if(!sesLots.length) return;   // matière sans lot : rien à réconcilier
-    nbControlees++;
-    const entrees=round3(sesLots.reduce((s,l)=>s+(+l.qteInitiale||0),0));
-    const restant=round3(sesLots.reduce((s,l)=>s+(+l.qteRestante||0),0));
-    const lotIds=new Set(sesLots.map(l=>l.id));
-    const sortieProd=round3(prodConso.filter(c=>lotIds.has(c.materialLotId)).reduce((s,c)=>s+(+c.qteConsommee||0),0));
-    const sortiePack=round3(packConso.filter(p=>p.materialId===m.id).reduce((s,p)=>s+(+p.qte||0),0));
-    // sorties d'inventaire (manques constatés au comptage physique) — sortie LÉGITIME tracée
-    const sortieInv=round3(invMoves.filter(v=>v.materialId===m.id).reduce((s,v)=>s+(+v.qte||0),0));
-    const attendu=round3(entrees - sortieProd - sortiePack - sortieInv);
-    const ecart=round3(restant - attendu);
-    if(Math.abs(ecart)>0.001){
-      const d=(typeof dispUnit==='function')?dispUnit(m):{f:1,u:m.unite||''};
-      ecarts.push({ id:m.id, nom:m.nom||'(matière ?)',
-        entreesAff:round3(entrees*d.f), restantAff:round3(restant*d.f), attenduAff:round3(attendu*d.f),
-        ecartAff:round3(ecart*d.f), unite:d.u,
-        sortieProdAff:round3(sortieProd*d.f), sortiePackAff:round3(sortiePack*d.f), sortieInvAff:round3(sortieInv*d.f) });
-    }
-  });
-  if(!zone) return;
-  if(!ecarts.length){
-    const totalInv=round3(invMoves.reduce((s,v)=>s+(+v.qte||0),0));
-    const invTxt = totalInv>0 ? ` Les ajustements d'inventaire (manques constatés au comptage) sont pris en compte comme sorties légitimes.` : '';
-    zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div><b>Stock matières cohérent.</b> Les ${nbControlees} matière(s) avec lots se réconcilient : stock restant = reçu − sorties tracées (production + emballages + inventaire).${invTxt}</div></div>`;
-    return;
-  }
-  const rows=ecarts.sort((a,b)=>Math.abs(b.ecartAff)-Math.abs(a.ecartAff)).map(e=>
-    `<div class="sum-box" style="cursor:pointer;align-items:flex-start" onclick="matForm(${e.id})">
-       <span>${esc(e.nom)}<br><span style="color:#9a8a82;font-size:.76rem">reçu ${qty(e.entreesAff)} − prod ${qty(e.sortieProdAff)} − embal. ${qty(e.sortiePackAff)}${e.sortieInvAff>0?` − inventaire ${qty(e.sortieInvAff)}`:''} = attendu ${qty(e.attenduAff)} ${esc(e.unite)} · stock réel ${qty(e.restantAff)}</span></span>
-       <b style="color:#b3261e">${e.ecartAff>0?'+':''}${qty(e.ecartAff)} ${esc(e.unite)}</b></div>`).join('');
-  zone.innerHTML=`
-    <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div><b>${ecarts.length} matière(s)</b> présentent un écart inexpliqué par les mouvements tracés. Cause probable : un ajustement manuel de stock (légitime) ou une sortie non enregistrée. Touche une ligne pour ouvrir la matière.</div></div>
-    ${rows}`;
-}
-
-// CONTRÔLE DE COHÉRENCE DU CA — recalcule depuis les données brutes et signale tout écart
-// entre le statut de paiement, les paiements enregistrés et le montant d'une commande.
-// 100% déterministe, lecture seule. Objectif : débusquer les écarts silencieux qui faussent le CA.
-// DIAGNOSTIC MARCHÉS — reproduit EXACTEMENT la logique de la carte « CA ce mois » et affiche
-// chaque étape pour chaque marché, afin de voir pourquoi un marché serait exclu. Lecture seule.
-async function diagMarches(){
-  const zone=document.getElementById('diagMarchesZone');
-  if(zone) zone.innerHTML='<p class="note">Inspection en cours…</p>';
-  const markets = await db.markets.toArray().catch(()=>[]);
-  const _mkCourant = monthKey(today());
-  const _todayRaw = today();
-  const rows = markets.map(k=>{
-    const dateRaw = k.date||'(vide)';
-    const statut = k.statut||'(vide)';
-    const ymk = ymKey(k.date||'');
-    const net = (typeof marketNetCA==='function') ? marketNetCA(k) : 0;
-    const estClos = statut==='clos';
-    const passeNet = net>0;
-    const passeMois = ymk===_mkCourant;
-    const compte = estClos && passeNet && passeMois;
-    const ca = k.ca||{};
-    return `<div class="sum-box" style="align-items:flex-start;${compte?'':'background:#fdf3f2'}">
-      <span style="font-size:.76rem">
-        <b>${esc(k.nom||'Marché #'+k.id)}</b><br>
-        date brute : <code>${esc(dateRaw)}</code> → mois <code>${esc(ymk)}</code><br>
-        statut : <code>${esc(statut)}</code> ${estClos?'✓ clos':'✗ pas clos'}<br>
-        ca : esp <code>${esc(String(ca.especes??'∅'))}</code> · cb <code>${esc(String(ca.cb??'∅'))}</code> · autre <code>${esc(String(ca.autre??'∅'))}</code> · fond <code>${esc(String(k.fondCaisse??'∅'))}</code><br>
-        marketNetCA : <b>${euro(net)}</b> ${passeNet?'✓ > 0':'✗ = 0'}<br>
-        mois courant : <code>${esc(_mkCourant)}</code> ${passeMois?'✓ correspond':'✗ ne correspond pas'}
-      </span>
-      <b style="color:${compte?'#3f7d52':'#b3261e'}">${compte?'COMPTÉ':'EXCLU'}</b></div>`;
-  }).join('');
-  if(zone) zone.innerHTML=`
-    <div class="banner" style="background:#eef3f8;border-color:#a0b8d0">🔬 <div><code>today()</code> = <b>${esc(_todayRaw)}</b> · mois courant = <b>${esc(_mkCourant)}</b>. Ci-dessous chaque marché et s'il entre dans le CA du mois.</div></div>
-    ${rows||'<p class="note">Aucun marché.</p>'}`;
-}
-
-async function controleCA(){
-  const zone=document.getElementById('controleCaZone');
-  if(zone) zone.innerHTML='<p class="note">Vérification en cours…</p>';
-  const [orders, clients, markets, marketMoves] = await Promise.all([
-    db.orders.toArray().catch(()=>[]),
-    db.clients.toArray().catch(()=>[]),
-    db.markets.toArray().catch(()=>[]),
-    db.marketMoves.toArray().catch(()=>[])
-  ]);
-  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
-  const anomalies=[];
-  let nbControlees=0, totalEncaisse=0, totalFacture=0;
-  orders.forEach(o=>{
-    if(o.histo) return;   // les commandes historiques portent un montant libre, pas de détail à réconcilier
-    nbControlees++;
-    const montant=money2(+o.montant||0);
-    const paiements=(typeof paiementsDe==='function')?paiementsDe(o):[];
-    const encaisse=money2(paiements.reduce((s,p)=>s+(+p.montant||0),0));
-    const statut=o.paiement||'En attente';
-    totalFacture=money2(totalFacture+montant);
-    totalEncaisse=money2(totalEncaisse+encaisse);
-    const det=[];
-    // 1) "Payé" mais somme des paiements ≠ montant (hors repli sans tableau paiements, qui est cohérent par construction)
-    if(statut==='Payé' && Array.isArray(o.paiements) && o.paiements.length && Math.abs(encaisse-montant)>0.01){
-      det.push(`statut « Payé » mais ${euro(encaisse)} encaissé(s) ≠ ${euro(montant)} facturé(s)`);
-    }
-    // 2) Des paiements existent mais la commande n'est pas marquée "Payé"
-    if(statut!=='Payé' && Array.isArray(o.paiements) && o.paiements.some(p=>+p.montant>0)){
-      det.push(`${euro(encaisse)} encaissé(s) mais statut « ${esc(statut)} »`);
-    }
-    // 3) Trop-perçu : encaissé strictement supérieur au montant facturé
-    if(encaisse>montant+0.01){
-      det.push(`trop-perçu : ${euro(encaisse)} encaissé(s) pour ${euro(montant)} facturé(s)`);
-    }
-    // 4) Paiement sans date (fausse la ventilation mensuelle du CA)
-    if(Array.isArray(o.paiements) && o.paiements.some(p=>+p.montant>0 && !p.date) && !o.date){
-      det.push(`paiement sans date (CA mal ventilé par mois)`);
-    }
-    if(det.length){
-      anomalies.push({oid:o.id, nom:esc(clName(o.clientId)), date:o.date||'', montant, encaisse, det});
-    }
-  });
-
-  // MARCHÉS CLOS : modèle différent des commandes (pas de statut « Payé »/paiements, mais une
-  // caisse espèces/CB/autre et un fond de caisse). On vérifie la cohérence de cette caisse.
-  let nbMarches=0;
-  markets.forEach(mk=>{
-    if(mk.statut!=='clos') return;
-    nbMarches++;
-    const moves=marketMoves.filter(v=>v.marketId===mk.id);
-    let vendu=0;
-    try{ const t=(typeof marketTotals==='function')?marketTotals(mk, moves):null; vendu=t?+t.vendu||0:0; }catch(e){ vendu=0; }
-    const ca=mk.ca||{};
-    const especesBrut=money2(+ca.especes||0);
-    const fond=money2(+mk.fondCaisse||0);
-    const cb=money2(+ca.cb||0), autre=money2(+ca.autre||0);
-    const caNet=(typeof marketNetCA==='function')?money2(marketNetCA(mk)):money2(Math.max(0,especesBrut-fond)+cb+autre);
-    const det=[];
-    const fondExcessif = fond>especesBrut+0.01 && especesBrut>0;
-    // 1) fond de caisse supérieur aux espèces comptées
-    if(fondExcessif){
-      det.push(`fond de caisse ${euro(fond)} > espèces comptées ${euro(especesBrut)} (le CA espèces tombe à 0)`);
-    }
-    // 2) marché clos avec des ventes mais aucun CA saisi (sauf si déjà expliqué par le fond excessif)
-    if(caNet<=0.01 && vendu>0 && !fondExcessif){
-      det.push(`clos avec ${qty(vendu)} macaron(s) vendu(s) mais aucun CA saisi`);
-    }
-    // 3) du CA saisi mais aucun macaron vendu
-    if(caNet>0.01 && vendu<=0){
-      det.push(`CA ${euro(caNet)} saisi mais aucun macaron vendu enregistré`);
-    }
-    if(det.length){
-      anomalies.push({marche:true, mkId:mk.id, nom:`⛺ ${esc(mk.nom||'Marché')}`, date:mk.date||'', montant:caNet, encaisse:caNet, det});
-    }
-    totalFacture=money2(totalFacture+caNet);
-    totalEncaisse=money2(totalEncaisse+caNet);
-  });
-  if(!zone) return;
-  if(!anomalies.length){
-    zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div><b>CA cohérent.</b> ${nbControlees} commande(s) et ${nbMarches} marché(s) clos contrôlé(s) : statut, paiements, montants et caisses concordent. Total ${euro(totalFacture)} · encaissé ${euro(totalEncaisse)} · reste à encaisser ${euro(money2(totalFacture-totalEncaisse))}.</div></div>`;
-    return;
-  }
-  const rows=anomalies.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(a=>{
-    const action = a.marche ? `marketDetail(${a.mkId})` : `cmdView(${a.oid})`;
-    return `<div class="sum-box" style="cursor:pointer;align-items:flex-start" onclick="${action}">
-       <span>${fmtDate(a.date)} · ${a.nom}<br><span style="color:#b3261e;font-size:.78rem">${a.det.map(esc).join('<br>')}</span></span>
-       <b>${euro(a.montant)}</b></div>`;
-  }).join('');
-  zone.innerHTML=`
-    <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div><b>${anomalies.length} commande(s)</b> présentent un écart de cohérence du CA. Touche une ligne pour ouvrir la commande et corriger.</div></div>
-    ${rows}`;
-}
-
-// Retrace TOUS les dons : lignes de don dans les commandes (ouvrables via cmdView) + dons
-// faits sur les marchés (marketMoves type 'don', ouvrables via marketDetail). Lecture seule.
-async function traceDons(){
-  const zone=document.getElementById('traceDonsZone'); if(zone) zone.innerHTML='<p class="note">Recherche des dons…</p>';
-  const [orders, clients, markets, moves] = await Promise.all([
-    db.orders.toArray().catch(()=>[]),
-    db.clients.toArray().catch(()=>[]),
-    db.markets.toArray().catch(()=>[]),
-    db.marketMoves.toArray().catch(()=>[])
-  ]);
-  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
-  const mkName = id => { const k=markets.find(m=>m.id===id); return k ? (k.nom||'Marché') : 'Marché'; };
-  const lignes=[];   // {date, origine:'cmd'|'marche', refId, libelle, parfumsTxt, qte}
-
-  // 1) Dons dans les commandes (lignes type 'don').
-  orders.forEach(o=>{
-    if(o.histo) return;
-    (orderToLines(o)||[]).forEach(ln=>{
-      if(ln.type!=='don') return;
-      const parf=[...(ln.parfums||[]), ...(ln.items||[])].filter(p=>+p.qte>0);
-      const qte=parf.reduce((s,p)=>s+(+p.qte||0),0);
-      if(qte<=0) return;
-      lignes.push({ date:o.date||'', origine:'cmd', refId:o.id,
-        libelle:clName(o.clientId),
-        parfumsTxt:parf.map(p=>`${esc(p.nom)} ×${qty(p.qte)}`).join(', '), qte });
-    });
-  });
-
-  // 2) Dons sur les marchés (mouvements type 'don').
-  moves.forEach(mv=>{
-    if(mv.type!=='don') return;
-    const qte=+mv.qte||0; if(qte<=0) return;
-    lignes.push({ date:mv.date||'', origine:'marche', refId:mv.marketId,
-      libelle:`⛺ ${mkName(mv.marketId)}`,
-      parfumsTxt:`${esc(mv.parfum||'parfum ?')} ×${qty(qte)}`, qte });
-  });
-
-  if(!lignes.length){
-    if(zone) zone.innerHTML='<p class="note">Aucun don répertorié pour l\'instant.</p>';
-    return;
-  }
-  lignes.sort((a,b)=>(b.date||'').localeCompare(a.date||''));   // plus récents d'abord
-  const totalPieces=lignes.reduce((s,l)=>s+l.qte,0);
-  const rows=lignes.map(l=>{
-    const action = l.origine==='cmd' ? `cmdView(${l.refId})` : `marketDetail(${l.refId})`;
-    const tag = l.origine==='cmd'
-      ? '<span class="tag" style="background:#7a4b82;color:#fff;font-size:.62rem">commande</span>'
-      : '<span class="tag" style="background:#AA7C39;color:#fff;font-size:.62rem">marché</span>';
-    return `<div class="sum-box" style="cursor:pointer" onclick="${action}">
-      <span>${fmtDate(l.date)} · ${l.libelle} ${tag}<br><span style="color:#9a8a82;font-size:.78rem">${l.parfumsTxt}</span></span>
-      <b>×${qty(l.qte)}</b></div>`;
-  }).join('');
-  if(zone) zone.innerHTML=`
-    <div class="banner" style="background:#fdf6ec;border-color:#e8cfa0;margin-bottom:8px">🎁 <div><b>${lignes.length} don(s)</b> répertorié(s) · <b>${qty(totalPieces)}</b> macaron(s) offert(s) au total.</div></div>
-    ${rows}`;
-}
-
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
@@ -22015,40 +21631,10 @@ async function renderIntegrity(){
       <p class="note">Si tes lots de macarons s'affichent sous <b>« recette supprimée »</b> alors que la recette existe (souvent après une suppression puis recréation), cet outil les <b>rattache automatiquement</b> à la bonne recette grâce au code parfum de leur numéro de lot (ex. « …<b>VAN</b>… » → Vanille).</p>
       <div id="relinkZone"><button class="btn gold sm" onclick="scanOrphanLots()">Rechercher les lots à reconnecter</button></div>
     </div>
-    <div class="panel" style="background:#fdf6ec;margin-bottom:12px">
-      <h2 style="font-size:1rem">🎁 Retracer les dons</h2>
-      <p class="note">Liste <b>tous les dons</b> répertoriés — ceux saisis dans des <b>commandes</b> (offerts à un client) et ceux faits sur les <b>marchés</b>. Touche une ligne pour ouvrir la commande ou le marché d'origine.</p>
-      <div id="traceDonsZone"><button class="btn gold sm" onclick="traceDons()">Voir tous les dons</button></div>
-    </div>
     <div class="panel" style="background:#fbf7f0;margin-bottom:12px">
       <h2 style="font-size:1rem">💶 Commandes à 0 €</h2>
       <p class="note">Recherche les commandes dont le <b>prix total est à 0 €</b> alors qu'elles contiennent des macarons (montant non consolidé à l'enregistrement). L'outil recalcule le vrai montant depuis les lignes.</p>
       <div id="fixZeroZone"><button class="btn gold sm" onclick="scanZeroAmountOrders()">Rechercher les commandes à 0 €</button></div>
-    </div>
-    <div class="panel" style="background:#fdf6ec;margin-bottom:12px">
-      <h2 style="font-size:1rem">🧁 Contrôle du stock de macarons</h2>
-      <p class="note">Vérifie que chaque batch de produits finis <b>se boucle</b> : quantité produite = en stock + vendu (commandes) + perdu + sorti en marché. Un écart signale des macarons « disparus » sans trace. Tolérance d'un petit arrondi. Les coques et ganaches ne sont pas encore couvertes (étape suivante). Lecture seule.</p>
-      <div id="controleStockMacZone"><button class="btn gold sm" onclick="controleStockMacarons()">Vérifier le stock de macarons</button></div>
-    </div>
-    <div class="panel" style="background:#f7f4fb;margin-bottom:12px">
-      <h2 style="font-size:1rem">🧾 Contrôle des commandes</h2>
-      <p class="note">Vérifie que le <b>montant enregistré</b> de chaque commande correspond bien à la <b>somme de ses lignes</b> (coffrets, événements, grands formats, prestations), remises et personnalisation comprises. Repère les montants figés qui ne se sont pas recalculés après modification. Les commandes à <b>prix forcé à la main</b> sont exclues (écart volontaire). Lecture seule.</p>
-      <div id="controleCmdZone"><button class="btn gold sm" onclick="controleCommandes()">Vérifier les commandes</button></div>
-    </div>
-    <div class="panel" style="background:#f0faf4;margin-bottom:12px">
-      <h2 style="font-size:1rem">📦 Contrôle du stock matières</h2>
-      <p class="note">Vérifie que le stock de chaque matière <b>se réconcilie</b> : stock restant = quantités reçues − sorties tracées (production + emballages prélevés). Un écart signale une sortie non tracée ou un ajustement manuel — à examiner. Lecture seule.</p>
-      <div id="controleStockMatZone"><button class="btn gold sm" onclick="controleStockMatieres()">Vérifier le stock matières</button></div>
-    </div>
-    <div class="panel" style="background:#f0f4fa;margin-bottom:12px">
-      <h2 style="font-size:1rem">✅ Contrôle de cohérence du CA</h2>
-      <p class="note">Vérifie que ton chiffre d'affaires <b>tombe juste</b> : pour chaque commande, le statut de paiement, les paiements enregistrés et le montant total doivent concorder. Repère les écarts silencieux qui faussent le CA (commande « Payé » sans le bon montant encaissé, paiement sur une commande « En attente », trop-perçu…).</p>
-      <div id="controleCaZone"><button class="btn gold sm" onclick="controleCA()">Vérifier la cohérence du CA</button></div>
-    </div>
-    <div class="panel" style="background:#eef3f8;margin-bottom:12px">
-      <h2 style="font-size:1rem">🔬 Diagnostic marchés (CA du mois)</h2>
-      <p class="note">Affiche, pour chaque marché clos, exactement ce que voit le calcul du CA du mois : date brute, statut, CA net, et s'il est compté dans le mois courant. Lecture seule — pour comprendre pourquoi un marché manque.</p>
-      <div id="diagMarchesZone"><button class="btn gold sm" onclick="diagMarches()">Inspecter mes marchés</button></div>
     </div>
     <div class="panel" style="background:#f0f4fa;margin-bottom:12px">
       <h2 style="font-size:1rem">🔍 Diagnostic CA du mois</h2>
