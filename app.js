@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v567';
+const APP_VERSION = 'v568';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8772,6 +8772,7 @@ function lineTotalStored(ln){
   return Math.max(0, money2(base - rem));
 }
 let cmdLines = [];      // lignes de produits de la commande en cours
+let _cmdPriceManual = false;  // true seulement si l'utilisateur a tapé un prix à la main (sinon prix auto)
 let cmdProductsCache = [];
 let cmdEmballagesCache = [];   // emballages disponibles (matières 'emballage') pour le choix par coffret
 let cmdSacsCache = [];         // modèles de sacs (emballage usage:'sac') proposables sur la commande
@@ -8941,7 +8942,7 @@ async function cmdForm(id, opts){
        <div class="field" style="margin:0"><label>Remise globale (€)</label><input type="number" min="0" step="0.01" id="f_remisegEur" placeholder="0" oninput="cmdGlobalRemiseFromEuro(this.value)"></div>
        <div class="field" style="margin:0"><label>Remise globale (%)</label><input type="number" min="0" max="100" step="1" id="f_remiseg" value="${o.remiseGlobale||''}" placeholder="0" oninput="cmdGlobalRemiseFromPct(this.value)"></div>
      </div>
-     <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="this.dataset.auto='0';cmdRecalc()"></div>
+     <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="_cmdPriceManual=true;this.dataset.auto='0';cmdRecalc()"></div>
    </div>
    <div class="sum-box" id="priceBreak" style="display:none"></div>
 
@@ -8969,25 +8970,15 @@ async function cmdForm(id, opts){
     (o.paiements && o.paiements.length) ? o.paiements
     : (o.paiement==='Payé' ? [{date:o.datePaiement||'', montant:+o.montant||0, moyen:o.reglement||''}] : [])
   ));
-  const mt=document.getElementById('f_mt'); if(mt && !mt.value) mt.dataset.auto='1';
+  const mt=document.getElementById('f_mt');
+  // [PRIX] À l'ouverture, le prix est en mode AUTO : il se recalcule quand on change les
+  // produits. Il ne passe en MANUEL que si l'utilisateur tape lui-même dans le champ
+  // (flag _cmdPriceManual posé par l'oninput du champ). Ainsi, modifier une commande
+  // existante recalcule bien le total (corrige le prix figé à l'ancienne valeur).
+  _cmdPriceManual = false;
+  if(mt) mt.dataset.auto = '1';
   drawPayments();
   drawLines();
-  // [CORRECTION PRIX] À l'ouverture d'une commande existante, on détermine si le prix
-  // doit rester en mode AUTO (se recalcule quand on change les produits) ou MANUEL (figé).
-  // Règle : si le montant enregistré correspond au total calculé des lignes (à 1 cent près),
-  // c'est un prix auto → on réactive l'auto-recalcul pour qu'une modif des produits mette
-  // le prix à jour. S'il diffère, c'est un prix fixé à la main → on le respecte (auto reste off).
-  if(mt && mt.value){
-    try{
-      const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln)));
-      const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
-      const remiseG = money2(sousTotal*gpct/100);
-      const persoSup = money2(cmdPersoCount()*PERSO_PRIX_UNIT);
-      const totalCalc = Math.max(0, addMoney(subMoney(sousTotal, remiseG), persoSup));
-      const montantEnr = money2(+mt.value||0);
-      mt.dataset.auto = (Math.abs(totalCalc - montantEnr) < 0.01) ? '1' : '0';
-    }catch(e){ /* en cas de doute on ne touche pas au mode */ }
-  }
   cmdRecalc();
   // Si la commande comporte déjà des infos de livraison, ouvrir le bloc pour ne rien masquer.
   if(o.lieuLivraison || o.heureLivraison || o.distanceKm!=null || o.tempsLivraisonMin!=null){
@@ -9779,7 +9770,17 @@ async function saveCmd(id){
   // alors que la commande a des lignes valides, on le RECALCULE depuis les lignes
   // (sous-total − remise globale + persos), pour ne jamais enregistrer une commande à 0 €
   // par accident (cas où l'auto-calcul du champ a été désactivé puis laissé vide).
+  // Montant : si le prix est en mode AUTO (l'utilisateur n'a pas tapé de prix à la main),
+  // on le RECALCULE systématiquement depuis les lignes — c'est ce qui garantit qu'une
+  // modification des produits met le total à jour. Si l'utilisateur a saisi un prix manuel
+  // (_cmdPriceManual), on respecte la valeur du champ. Filet final : jamais 0 € par accident.
   let montant = money2(+val('f_mt')||0);
+  if(!_cmdPriceManual){
+    const sousTotal = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
+    const remiseG = money2(sousTotal*remiseGlobale/100);
+    const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+    montant = Math.max(0, money2(sousTotal - remiseG + persoSup));
+  }
   if(montant<=0){
     const sousTotal = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
     const remiseG = money2(sousTotal*remiseGlobale/100);
