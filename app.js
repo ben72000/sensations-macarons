@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v611';
+const APP_VERSION = 'v612';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1822,10 +1822,10 @@ async function renderDash(){
   const closedMk = (markets||[]).filter(k=>k.statut==='clos').map(k=>{
     const ca=k.ca||{}; return {date:(k.date||''), montant:marketNetCA(k)};
   }).filter(k=>k.montant>0);
-  const mkInMonth = d => { const dt=new Date(d); return dt.getMonth()===m && dt.getFullYear()===y; };
-
-  // CA commandes du mois = ENCAISSEMENTS réels du mois (logique comptable), pas date de commande.
   const _mkCourant = monthKey(today());
+  // Filtre par CHAÎNE de mois (AAAA-MM), exactement comme caMonthDetail qui affiche le bon total.
+  // (Avant : new Date(d).getMonth() — sensible au fuseau, excluait le marché du mois courant.)
+  const mkInMonth = d => ymKey(d||'') === _mkCourant;
   const _caEncDash = (typeof caEncaisseParMois==='function') ? caEncaisseParMois(orders) : {parMois:{},enAttente:0};
   const caCmdMonth = _caEncDash.parMois[_mkCourant] || 0;
   const caMkMonth = closedMk.filter(k=>mkInMonth(k.date)).reduce((s,k)=>s+((typeof marketNetCA==='function')?marketNetCA(k):(+k.montant||0)),0);
