@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v566';
+const APP_VERSION = 'v567';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8972,6 +8972,23 @@ async function cmdForm(id, opts){
   const mt=document.getElementById('f_mt'); if(mt && !mt.value) mt.dataset.auto='1';
   drawPayments();
   drawLines();
+  // [CORRECTION PRIX] À l'ouverture d'une commande existante, on détermine si le prix
+  // doit rester en mode AUTO (se recalcule quand on change les produits) ou MANUEL (figé).
+  // Règle : si le montant enregistré correspond au total calculé des lignes (à 1 cent près),
+  // c'est un prix auto → on réactive l'auto-recalcul pour qu'une modif des produits mette
+  // le prix à jour. S'il diffère, c'est un prix fixé à la main → on le respecte (auto reste off).
+  if(mt && mt.value){
+    try{
+      const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln)));
+      const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
+      const remiseG = money2(sousTotal*gpct/100);
+      const persoSup = money2(cmdPersoCount()*PERSO_PRIX_UNIT);
+      const totalCalc = Math.max(0, addMoney(subMoney(sousTotal, remiseG), persoSup));
+      const montantEnr = money2(+mt.value||0);
+      mt.dataset.auto = (Math.abs(totalCalc - montantEnr) < 0.01) ? '1' : '0';
+    }catch(e){ /* en cas de doute on ne touche pas au mode */ }
+  }
+  cmdRecalc();
   // Si la commande comporte déjà des infos de livraison, ouvrir le bloc pour ne rien masquer.
   if(o.lieuLivraison || o.heureLivraison || o.distanceKm!=null || o.tempsLivraisonMin!=null){
     toggleLivBlock();
