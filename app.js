@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v586';
+const APP_VERSION = 'v587';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8135,10 +8135,40 @@ async function ensureOrderDecremented(orderId){
   // Les commandes « historiques » (migration) n'exigent ni production ni picking.
   if(o.histo===true) return true;
 
+  // Nombre TOTAL de macarons de la commande, indépendamment du détail des parfums
+  // (coffret → taille, événement → evQte, vrac/don → parfums, grand format → items).
+  // Sert de filet quand les parfums ne sont pas détaillés ligne par ligne.
+  let totMac = 0;
+  orderToLines(o).forEach(ln=>{
+    if(ln.type==='coffret') totMac += +ln.taille||0;
+    else if(ln.type==='evenement') totMac += +ln.evQte||0;
+    else if(ln.type==='vrac') totMac += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0);
+    else if(ln.type==='don'){ totMac += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); }
+    else if(ln.type==='grand') totMac += (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
+  });
+  // Aucune pièce de macaron (ex. prestation seule, livraison seule) → rien à tracer.
+  if(round3(totMac) <= 0) return true;
+
   // Besoins par parfum (clé GF marquée pour les grands formats : stock séparé).
   const needs = orderFlavorNeeds(o);
   const flavorsNeeded = Object.keys(needs).filter(f=>needs[f]>0);
-  if(!flavorsNeeded.length) return true;   // commande sans macarons (ex. prestation seule)
+
+  // CAS PARTICULIER : la commande contient des macarons mais SANS détail de parfums
+  // (parfums non renseignés sur les lignes). On ne peut pas contrôler par parfum, mais on
+  // exige quand même une couverture GLOBALE : la somme des lots liés doit atteindre le total.
+  if(!flavorsNeeded.length){
+    const links0 = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
+    const lieTotal = links0.reduce((s,e)=>s+(+e.qte||0),0);
+    if(round3(lieTotal) + 1e-9 >= round3(totMac)) return true;   // couverture globale suffisante
+    openModal(`<h3 style="color:#b3261e">⛔ Traçabilité incomplète</h3>
+      <p style="margin-top:8px">Cette commande contient <b>${qty(totMac)} macaron(s)</b> mais seulement <b>${qty(lieTotal)}</b> sont reliés à des lots.</p>
+      <p class="note">Relie des batchs pour couvrir toute la commande (les lots de reprise sont sélectionnables ici).</p>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal()">Annuler</button>
+        <button class="btn gold" onclick="cmdLink(${orderId})">Lier des batchs →</button>
+      </div>`);
+    return false;
+  }
 
   const recipes = await db.recipes.toArray();
   const recById = {}; recipes.forEach(r=>{ recById[r.id]=r; });
@@ -9978,7 +10008,18 @@ async function saveCmd(id){
     return;
   }
   let oid=id;
+  // GARDE-FOU LIVRAISON aussi depuis le formulaire d'édition : si l'utilisateur choisit
+  // « Livrée » ici, on n'autorise le passage que si la couverture de traçabilité est complète.
+  // On écrit d'abord la commande en « Terminée » (pour que les besoins/liens soient lisibles
+  // en base), puis on tente le passage en « Livrée » via ensureOrderDecremented.
+  const _wantLivree = (o.statut==='Livrée') && (o.histo!==true);
+  if(_wantLivree) o.statut = 'Terminée';
   if(id) await db.orders.update(id,o); else oid=await db.orders.add(o);
+  if(_wantLivree){
+    const ok = await ensureOrderDecremented(oid);
+    if(ok){ await db.orders.update(oid, {statut:'Livrée'}); }
+    // si !ok : la commande reste « Terminée » et ensureOrderDecremented a ouvert « Lier des batchs ».
+  }
   markUnsaved();
   // calendrier : recréer l'événement lié
   await db.events.where('refId').equals(oid).delete().catch(()=>{});
