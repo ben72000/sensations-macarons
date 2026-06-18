@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v552';
+const APP_VERSION = 'v555';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -11986,7 +11986,7 @@ async function computeSalesVelocity(opts){
     if(o.date < startStr) return;                 // hors fenêtre récente
     if(!firstSaleDate || o.date<firstSaleDate) firstSaleDate=o.date;
     const dem=_orderParfumDemand(o);
-    for(const nom in dem){ soldByParfum[nom]=(soldByParfum[nom]||0)+dem[nom]; }
+    for(const nom in dem){ if(!nom || !String(nom).trim()) continue; soldByParfum[nom]=(soldByParfum[nom]||0)+dem[nom]; }
   });
 
   // nombre de jours effectivement observés dans la fenêtre (borne au 1er jour de vente)
@@ -16622,7 +16622,8 @@ async function atelierBrain(opts){
 
   // --- 4) TEMPS : besoin estimé (chrono) vs dispo (planning d'aujourd'hui)
   let minParMac = null;
-  try{ const tl = await prodTempsLissePerMacaron(90); minParMac = (tl && tl.minParMacaron) ? tl.minParMacaron : null; }catch(e){ console.error('brain.temps',e); }
+  let tempsLisseFiable = false;
+  try{ const tl = await prodTempsLissePerMacaron(90); minParMac = (tl && tl.minParMacaron) ? tl.minParMacaron : null; tempsLisseFiable = !!(tl && tl.fiable); }catch(e){ console.error('brain.temps',e); }
   // [TEMPS PAR PARFUM] Temps propre à chaque parfum (si assez de données), sinon repli moyenne globale.
   let tppMap = {};
   try{ tppMap = (typeof prodTempsParParfum==='function') ? await prodTempsParParfum(90) : {}; }catch(e){ console.error('brain.tpp',e); }
@@ -16843,6 +16844,8 @@ async function atelierBrain(opts){
     manquesMatieresCmd: matCheck.manques,
     // Temps (inclut la charge marchés dans besoinMin)
     minParMac, besoinMin, besoinMinCmd, dispoAujMin, dispoHorizonMin, planningRenseigne,
+    // Fiabilité de l'estimation de temps (assez de chronos mesurés ?).
+    tempsLisseFiable,
     // Transparence temps par parfum : combien de parfums du plan ont un temps propre fiable.
     nbParfumsTempsPropre, nbLignesPlan: lignesPlan.length,
     tempsParParfumActif: (nbParfumsTempsPropre>0),
@@ -16899,14 +16902,16 @@ async function atelierVoix(opts){
   if(b.aDesRetards && Array.isArray(b.retardsLancement)){
     b.retardsLancement.slice(0,3).forEach(r=>{
       const quoi = r.plusUrgent ? r.plusUrgent.label : 'une étape';
-      urgences.push(`La commande <b>${esc2(r.client)}</b> : l'étape « ${esc2(quoi)} » aurait déjà dû démarrer. À lancer sans tarder.`);
+      const lien = r.orderId ? ` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="cmdView(${r.orderId})">🔎 Voir</button>` : '';
+      urgences.push(`La commande <b>${esc2(r.client)}</b> : l'étape « ${esc2(quoi)} » aurait déjà dû démarrer. À lancer sans tarder.${lien}`);
     });
   }
   if(b.aDesDlcProches && Array.isArray(b.dlcFinis)){
     b.dlcFinis.filter(d=>d.urgent).slice(0,3).forEach(d=>{
       const q = (typeof qty==='function') ? qty(d.qte) : d.qte;
       const when = d.joursAvantDLC<0 ? 'a dépassé sa DLC' : d.joursAvantDLC===0 ? 'périme aujourd\'hui' : 'périme demain';
-      urgences.push(`<b>${q} ${esc2(d.parfum)}</b> (lot ${esc2(d.lot)}) ${when} — à écouler en priorité.`);
+      const lien = ` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="goView('stockparfums')">🔎 Stock</button>`;
+      urgences.push(`<b>${q} ${esc2(d.parfum)}</b> (lot ${esc2(d.lot)}) ${when} — à écouler en priorité.${lien}`);
     });
   }
   if(urgences.length){
@@ -16918,33 +16923,47 @@ async function atelierVoix(opts){
 
   // --- 2) À PRODUIRE (le plan, top 4) ---
   if(Array.isArray(b.plan) && b.plan.length){
-    const top = b.plan.slice(0,4);
-    const items = top.map((it,i)=>{
-      const q = (it.qte!=null) ? `${(typeof qty==='function')?qty(it.qte):it.qte} pièces` : 'à écouler';
-      const pour = it.type==='commande' ? ' <span style="color:#9a8a82">(commande)</span>'
-                 : it.type==='rupture' ? ' <span style="color:#9a8a82">(réassort)</span>'
-                 : it.type==='antigaspi' ? ' <span style="color:#9a8a82">(anti-gaspi)</span>' : '';
-      return `<div style="font-size:.86rem;margin:3px 0">${i+1}. <b>${esc2(it.produitNom)}</b> — ${q}${pour}</div>`;
-    }).join('');
-    const reste = b.plan.length>top.length ? `<div style="font-size:.78rem;color:#9a8a82;margin-top:2px">+ ${b.plan.length-top.length} autre(s)</div>` : '';
-    // Astuce stock déjà produit (si une ligne a des coques en stock)
-    let astuce='';
-    if(Array.isArray(b.lignesPlan)){
-      const avecCoques = b.lignesPlan.find(l=>l.coquesStock>0 && l.qte>0);
-      if(avecCoques){ astuce = `<div style="font-size:.78rem;color:#3f7d52;margin-top:4px">💡 Tu as déjà des coques en stock pour ${esc2(avecCoques.parfum)} → tu peux en produire moins.</div>`; }
+    // On n'affiche que les lignes avec un VRAI nom de produit (un tiret nu n'aide personne).
+    const planNomme = b.plan.filter(it=> it.produitNom && String(it.produitNom).trim() && !/^recette #/i.test(String(it.produitNom)));
+    const top = planNomme.slice(0,4);
+    if(top.length){
+      const items = top.map((it,i)=>{
+        const q = (it.qte!=null) ? `${(typeof qty==='function')?qty(it.qte):it.qte} pièces` : 'à écouler';
+        const pour = it.type==='commande' ? ' <span style="color:#9a8a82">(commande)</span>'
+                   : it.type==='rupture' ? ' <span style="color:#9a8a82">(réassort)</span>'
+                   : it.type==='reassort' ? ' <span style="color:#9a8a82">(réassort)</span>'
+                   : it.type==='antigaspi' ? ' <span style="color:#9a8a82">(anti-gaspi)</span>' : '';
+        // Boutons d'action : produire (pré-rempli) + voir la recette, si la recette est connue.
+        let actions='';
+        if(it.recipeId){
+          const qteProd = (it.qte!=null && it.qte>0) ? Math.round(it.qte) : 1;
+          actions = ` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="prodForm({recipeId:${it.recipeId}, qte:${qteProd}})">⚙ Produire</button>`
+                  + ` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="recForm(${it.recipeId})">📖 Recette</button>`;
+        }
+        return `<div style="font-size:.86rem;margin:5px 0">${i+1}. <b>${esc2(it.produitNom)}</b> — ${q}${pour}${actions}</div>`;
+      }).join('');
+      const reste = planNomme.length>top.length ? `<div style="font-size:.78rem;color:#9a8a82;margin-top:2px">+ ${planNomme.length-top.length} autre(s)</div>` : '';
+      // Astuce stock déjà produit (si une ligne a des coques en stock)
+      let astuce='';
+      if(Array.isArray(b.lignesPlan)){
+        const avecCoques = b.lignesPlan.find(l=>l.coquesStock>0 && l.qte>0);
+        if(avecCoques){ astuce = `<div style="font-size:.78rem;color:#3f7d52;margin-top:4px">💡 Tu as déjà des coques en stock pour ${esc2(avecCoques.parfum)} → tu peux en produire moins.</div>`; }
+      }
+      sections.push(`<div style="margin-bottom:10px">
+        <div style="font-weight:700;color:#5a3a2a;margin-bottom:4px">🍩 À produire ${planNomme.length?`<span style="font-weight:400;color:#9a8a82;font-size:.8rem">(${planNomme.length} conseil${planNomme.length>1?'s':''}, 14 j)</span>`:''}</div>
+        ${items}${reste}${astuce}
+      </div>`);
     }
-    sections.push(`<div style="margin-bottom:10px">
-      <div style="font-weight:700;color:#5a3a2a;margin-bottom:4px">🍩 À produire ${b.plan.length?`<span style="font-weight:400;color:#9a8a82;font-size:.8rem">(${b.plan.length} conseil${b.plan.length>1?'s':''}, 14 j)</span>`:''}</div>
-      ${items}${reste}${astuce}
-    </div>`);
   }
 
   // --- 3) TEMPS (ça tient ?) — seulement si calculé ---
   if(b.dispo && b.dispo.temps && b.dispo.planning && b.tempsSuffisant!=null){
+    const fiable = b.tempsLisseFiable;
+    const nuance = fiable ? '' : ` <span style="color:#9a8a82">(estimation encore approximative — chronomètre plus de productions pour l'affiner)</span>`;
     if(b.tempsSuffisant){
-      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#3f7d52">⏱ <b>Ça tient dans ton temps.</b> Charge estimée ${fmtHM(b.besoinMin)} sur tes 14 j disponibles${b.tauxChargeHorizon!=null?` (${b.tauxChargeHorizon}% de ta dispo)`:''}.</div>`);
+      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#3f7d52">⏱ <b>Ça devrait tenir dans ton temps.</b> Charge estimée ${fmtHM(b.besoinMin)} sur tes 14 j disponibles${b.tauxChargeHorizon!=null?` (${b.tauxChargeHorizon}% de ta dispo)`:''}.${nuance}</div>`);
     } else {
-      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#d98324">⏱ <b>Attention au temps.</b> Il manque environ ${fmtHM(b.tempsManquantMin)} sur l'horizon de 14 j. Pense à étaler ou élargir tes disponibilités.</div>`);
+      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#d98324">⏱ <b>Attention au temps.</b> Il manque environ ${fmtHM(b.tempsManquantMin)} sur l'horizon de 14 j. Pense à étaler ou élargir tes disponibilités.${nuance}</div>`);
     }
   }
 
@@ -16969,11 +16988,167 @@ async function atelierVoix(opts){
   if(!sections.length){
     return `<div class="banner" style="background:#eef5f0;border-color:#bcd9c4">🧭 <div><b>Rien d'urgent pour le moment.</b> Pas de commande en retard, pas de production pressante. Tu peux avancer sereinement.</div></div>`;
   }
+  // Bouton "Plus de détails" : visible seulement s'il y a matière à détailler
+  // (des retards à expliquer OU un manque de temps à organiser).
+  const aDuDetail = b.aDesRetards || (b.tempsSuffisant===false);
+  const boutonDetail = aDuDetail
+    ? `<div style="margin-top:6px"><button class="btn ghost sm" onclick="voixToggleDetails(this)">▾ Plus de détails</button>
+        <div class="voix-details" style="display:none;margin-top:8px"><p class="note">Calcul des explications…</p></div></div>`
+    : '';
   return `<div class="panel" style="border-left:4px solid var(--bordeaux)">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
       <span style="font-size:1.05rem">🧭</span><b style="color:var(--bordeaux);font-size:1rem">Ce que je te conseille maintenant</b>
     </div>
     ${sections.join('')}
+    ${boutonDetail}
+  </div>`;
+}
+
+// Bascule l'affichage du détail de la voix ; le génère à la demande (calcul paresseux).
+async function voixToggleDetails(btn){
+  const wrap = btn.parentElement.querySelector('.voix-details');
+  if(!wrap) return;
+  if(wrap.style.display==='none'){
+    wrap.style.display='block';
+    btn.textContent='▴ Moins de détails';
+    // Générer le détail une seule fois.
+    if(!wrap.dataset.loaded){
+      try{
+        const html = await voixGenererDetails();
+        wrap.innerHTML = html || '<p class="note">Aucun détail supplémentaire.</p>';
+        wrap.dataset.loaded='1';
+      }catch(e){ console.error('voixDetails',e); wrap.innerHTML='<p class="note">Détails indisponibles.</p>'; }
+    }
+  } else {
+    wrap.style.display='none';
+    btn.textContent='▾ Plus de détails';
+  }
+}
+
+// Génère le contenu détaillé : raisonnement de chaque retard + conseils d'organisation.
+async function voixGenererDetails(){
+  let b;
+  try{ b = await atelierBrain(); }catch(e){ return ''; }
+  if(!b) return '';
+  const blocs=[];
+
+  // 1) Détail des retards (le "pourquoi" + quoi faire).
+  if(b.aDesRetards && Array.isArray(b.retardsLancement) && b.retardsLancement.length){
+    const details=[];
+    for(const r of b.retardsLancement.slice(0,5)){
+      try{ const d = await voixDetailRetard(r.orderId); if(d) details.push(d); }catch(e){}
+    }
+    if(details.length){
+      blocs.push(`<div style="margin-bottom:6px"><div style="font-weight:700;color:#b3261e;margin-bottom:2px">Pourquoi ces étapes sont en retard</div>${details.join('')}</div>`);
+    }
+  }
+
+  // 2) Conseils d'organisation face au manque de temps.
+  const orga = voixDetailOrganisation(b);
+  if(orga) blocs.push(orga);
+
+  return blocs.join('');
+}
+
+/* [LA VOIX — DÉTAIL] Génère l'explication détaillée d'un retard (le "pourquoi" remonté
+   du rétroplanning) + le conseil d'action. Et le bloc d'organisation face au manque de temps. */
+
+// Convertit un nb d'heures de retard en texte lisible (j / h).
+function _voixRetardTexte(h){
+  h = Math.round(+h||0);
+  if(h < 24) return `${h} h de retard`;
+  const j = Math.floor(h/24), r = h%24;
+  return r>0 ? `${j} j et ${r} h de retard` : `${j} j de retard`;
+}
+
+// Explique POURQUOI une étape devait démarrer à telle date (délais incompressibles en jeu).
+function _voixPourquoiEtape(cle, rp){
+  const delais = [];
+  if(rp){
+    if(rp.maturationH>0) delais.push(`maturation de ${rp.maturationH} h avant livraison`);
+    if(cle==='ganache' && rp.reposGanacheH>0) delais.push(`repos de la ganache de ${rp.reposGanacheH} h avant le montage`);
+    if(cle==='cremeux' && rp.cremeuxCongelH>0) delais.push(`congélation du crémeux de ${rp.cremeuxCongelH} h`);
+    if(rp.decongelH>0) delais.push(`décongélation de ${rp.decongelH} h au frigo`);
+  }
+  if(!delais.length) return `En remontant depuis la date de livraison, cette étape devait déjà être lancée pour tenir les délais.`;
+  return `En cause : ${delais.join(', ')}. En remontant depuis la livraison, cette étape devait démarrer à la date indiquée.`;
+}
+
+// Détail complet d'UN retard, avec conseil d'action et report concret si calculable.
+async function voixDetailRetard(orderId){
+  const o = await db.orders.get(orderId);
+  if(!o) return '';
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const rp = (typeof retroplanningCommande==='function') ? retroplanningCommande(o, recipes) : null;
+  const cale = (typeof retroplanningCale==='function') ? await retroplanningCale(orderId).catch(()=>null) : null;
+
+  const cl = o.clientId ? await db.clients.get(o.clientId).catch(()=>null) : null;
+  const clNom = cl ? cl.nom : (o.histoLabel || 'Commande');
+  const fmtDT = d => d ? new Date(d).toLocaleString('fr-FR',{weekday:'long',day:'2-digit',month:'long',hour:'2-digit',minute:'2-digit'}) : '—';
+
+  // Retrouver l'étape la plus en retard via commandesEnRetard (cohérence avec la voix).
+  let retard=null;
+  try{
+    const all = (typeof commandesEnRetard==='function') ? await commandesEnRetard({horizon:21}) : [];
+    retard = all.find(r=>r.orderId===orderId) || null;
+  }catch(e){}
+  if(!retard || !retard.plusUrgent) return '';
+
+  const pu = retard.plusUrgent;
+  const pourquoi = _voixPourquoiEtape(pu.cle, rp);
+
+  // Conseil d'action : si la production est encore possible aujourd'hui, le dire ; sinon report.
+  // On s'appuie sur le calage : si le début de production calé est déjà passé, c'est tendu.
+  let conseil='';
+  const now = new Date();
+  if(cale && cale.ok && cale.debutProduction){
+    const debutProd = new Date(cale.debutProduction);
+    if(debutProd < now){
+      // Production aurait dû commencer : estimer le report nécessaire.
+      const retardJ = Math.ceil((now - debutProd)/86400000);
+      const reportTxt = retardJ<=0 ? 'quelques heures' : retardJ===1 ? 'une demi-journée à une journée' : `environ ${retardJ} jour(s)`;
+      conseil = `<div style="margin-top:4px;color:#b3261e"><b>Que faire :</b> lance cette étape <b>dès aujourd'hui</b>. Si ce n'est pas possible, prévois de proposer au client un report de <b>${reportTxt}</b> sur la livraison.</div>`;
+    } else {
+      conseil = `<div style="margin-top:4px;color:#3f7d52"><b>Que faire :</b> lance cette étape aujourd'hui et tu tiens la livraison sans report.</div>`;
+    }
+  } else {
+    conseil = `<div style="margin-top:4px;color:#b3261e"><b>Que faire :</b> lance cette étape sans tarder pour limiter le retard.</div>`;
+  }
+
+  return `<div style="font-size:.82rem;border-left:3px solid #e5b4ae;padding-left:8px;margin:8px 0">
+    <div><b>${(typeof esc==='function')?esc(clNom):clNom}</b> — livraison ${fmtDT(retard.dateLivraison)}</div>
+    <div style="margin-top:2px">• Étape en retard : <b>${(typeof esc==='function')?esc(pu.label):pu.label}</b> (prévue ${fmtDT(pu.date)}, ${_voixRetardTexte(pu.retardH)})</div>
+    <div style="margin-top:2px;color:#6b5d54">• ${pourquoi}</div>
+    ${conseil}
+    <div style="margin-top:4px"><button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="cmdView(${orderId})">🔎 Voir la commande</button></div>
+  </div>`;
+}
+
+// Bloc d'organisation face au manque de temps (quoi décaler, quoi garder, créneau à ajouter).
+function voixDetailOrganisation(b){
+  if(!b || b.tempsSuffisant!==false) return '';   // seulement si le temps NE tient PAS
+  const fmtHM = m => { m=Math.round(+m||0); const h=Math.floor(m/60), mm=m%60; return `${h?h+'h ':''}${String(mm).padStart(2,'0')}min`; };
+  const manque = b.tempsManquantMin||0;
+
+  // Distinguer le datable-reportable (réassort/anti-gaspi) du non-négociable (commandes).
+  const plan = Array.isArray(b.plan) ? b.plan : [];
+  const reportables = plan.filter(it=> it.type==='reassort' || it.type==='rupture' || it.type==='antigaspi')
+    .filter(it=> it.produitNom && String(it.produitNom).trim());
+  const commandes = plan.filter(it=> it.type==='commande' && it.produitNom && String(it.produitNom).trim());
+
+  const lignes=[];
+  if(reportables.length){
+    const noms = reportables.slice(0,4).map(it=>`${(typeof esc==='function')?esc(it.produitNom):it.produitNom}${it.qte?` (${(typeof qty==='function')?qty(it.qte):it.qte})`:''}`).join(', ');
+    lignes.push(`<b>Décale d'abord</b> ce qui n'a pas de date imposée : ${noms}${reportables.length>4?'…':''}. Ce sont des réassorts, ils peuvent attendre.`);
+  }
+  if(commandes.length){
+    lignes.push(`<b>Garde en priorité</b> les commandes datées : elles ont un client et une échéance ferme.`);
+  }
+  lignes.push(`<b>Ou ajoute un créneau</b> : environ ${fmtHM(manque)} de travail en plus sur tes 14 jours suffirait à tout produire. <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="availEditor()">🗓 Mes disponibilités</button>`);
+
+  return `<div style="font-size:.82rem;background:#fdf6ec;border:1px solid #e5cfa0;border-radius:8px;padding:8px;margin-top:8px">
+    <div style="font-weight:700;color:#d98324;margin-bottom:4px">⏱ Comment t'organiser (il manque ${fmtHM(manque)})</div>
+    ${lignes.map(l=>`<div style="margin:3px 0">• ${l}</div>`).join('')}
   </div>`;
 }
 async function renderProductionPlan(){
