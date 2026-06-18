@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v580';
+const APP_VERSION = 'v586';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -876,6 +876,10 @@ function genLotCode(n){
 }
 // Table des CODES PARFUM pour les numéros de lot (définis par Benjamin).
 // En lisant un lot, le code dit immédiatement de quel produit il s'agit.
+// ── DLC des macarons (jours à ajouter à la date de livraison) ───────────────
+// Règle métier Benjamin : grand format = 4 jours, format classique = 6 jours.
+const DLC_JOURS = { grandFormat: 4, standard: 6 };
+
 const FLAVOR_CODES = {
   'Citron crémeux':'CIT', 'Chocolat au lait':'CHL', 'Chocolat noir':'CHN',
   'Framboise':'FRA', 'Vanille':'VAN', 'Pistache':'PIS', 'Coco Rafaello':'RAF',
@@ -896,6 +900,24 @@ function flavorCode(nom){
   const lettres = (nom||'').toUpperCase().replace(/[^A-Z]/g,'').replace(/[ILO]/g,'');
   return lettres.slice(0,3) || 'XXX';
 }
+// Retrouve la recette correspondant à un nom de parfum (même logique que matchRecipe interne).
+// Sert notamment aux étiquettes pour savoir si un parfum est grand format.
+function recipeForFlavorName(nom, recipes){
+  if(!nom || !Array.isArray(recipes) || !recipes.length) return null;
+  const norm = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase().trim();
+  const k = norm(nom);
+  let hit = recipes.find(r => norm(r.produitNom) === k);
+  if(hit) return hit;
+  // repli : correspondance sur les 5 premiers caractères normalisés
+  hit = recipes.find(r => { const rn = norm(r.produitNom); return rn && (rn.startsWith(k.slice(0,5)) || k.startsWith(rn.slice(0,5))); });
+  return hit || null;
+}
+// Nombre de jours de DLC pour un parfum donné (grand format = 4 j, sinon 6 j).
+function dlcJoursPourParfum(nom, recipes){
+  const r = recipeForFlavorName(nom, recipes);
+  return (r && r.grandFormat) ? DLC_JOURS.grandFormat : DLC_JOURS.standard;
+}
+
 // Date JJMMAA (jour-mois-année courts) pour le numéro de lot.
 function lotDateJJMMAA(d){
   const dt = d ? new Date(d) : new Date();
@@ -8098,12 +8120,82 @@ function statusTag(st){
   const cls = s==='Livrée' ? 'done' : (s==='Terminée' ? 'ok' : 'todo');
   return `<span class="tag ${cls}">${esc(s==='Terminée'?'Prête':s)}</span>`;
 }
+// ── GARDE-FOU LIVRAISON (couverture de traçabilité) ─────────────────────────
+// Passer une commande en « Livrée » exige que CHAQUE parfum ait ses lots reliés,
+// et que la SOMME des quantités liées couvre la quantité commandée (par parfum).
+//  - Le décompte du stock se fait à la LIAISON (picking ou « Lier des batchs »),
+//    pas ici : cette fonction ne fait que CONTRÔLER la couverture.
+//  - Les lots de migration (histo) sont éligibles, mais sélectionnés manuellement
+//    comme les autres (ils apparaissent déjà dans la fenêtre « Lier des batchs »).
+//  - Si la couverture est incomplète → on OUVRE « Lier des batchs » pour compléter.
+// Retourne true si la livraison est autorisée (couverture complète), false sinon.
+async function ensureOrderDecremented(orderId){
+  const o = await db.orders.get(orderId);
+  if(!o) return false;
+  // Les commandes « historiques » (migration) n'exigent ni production ni picking.
+  if(o.histo===true) return true;
+
+  // Besoins par parfum (clé GF marquée pour les grands formats : stock séparé).
+  const needs = orderFlavorNeeds(o);
+  const flavorsNeeded = Object.keys(needs).filter(f=>needs[f]>0);
+  if(!flavorsNeeded.length) return true;   // commande sans macarons (ex. prestation seule)
+
+  const recipes = await db.recipes.toArray();
+  const recById = {}; recipes.forEach(r=>{ recById[r.id]=r; });
+  const recName = id => (recById[id]||{}).produitNom||'';
+
+  // Impute chaque lot lié au besoin de parfum correspondant (même règle que le picking :
+  // parfum qui correspond ET même type petit/grand format).
+  const matchNeed = (needKey, prod) => {
+    const wantGF = isGFKey(needKey);
+    const isGF = !!(recById[prod.recipeId] && recById[prod.recipeId].grandFormat);
+    if(wantGF !== isGF) return false;
+    return pickFlavorMatch(gfBase(needKey), recName(prod.recipeId));
+  };
+
+  const links = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
+  const couvert = {}; flavorsNeeded.forEach(f=>couvert[f]=0);
+  for(const lk of links){
+    const prod = await db.productions.get(lk.productionId).catch(()=>null);
+    if(!prod) continue;
+    // on impute au premier parfum-besoin qui correspond
+    const f = flavorsNeeded.find(k=>matchNeed(k, prod));
+    if(f) couvert[f] = round3(couvert[f] + (+lk.qte||0));
+  }
+
+  // Manques = parfums dont la couverture liée n'atteint pas le besoin.
+  const dispName = k => isGFKey(k) ? (gfBase(k)+' (grand format)') : k;
+  const manques = flavorsNeeded
+    .filter(f => round3(couvert[f]) + 1e-9 < round3(needs[f]))
+    .map(f => ({flavor:dispName(f), manque:round3(needs[f]-couvert[f]), besoin:round3(needs[f]), lie:round3(couvert[f])}));
+
+  if(manques.length){
+    // Couverture incomplète → on ouvre directement « Lier des batchs » pour compléter.
+    const detail = manques.map(m=>`${esc(m.flavor)} : ${qty(m.lie)}/${qty(m.besoin)} (manque ${qty(m.manque)})`).join('<br>');
+    openModal(`<h3 style="color:#b3261e">⛔ Traçabilité incomplète</h3>
+      <p style="margin-top:8px">Avant de livrer, chaque parfum doit avoir ses lots reliés (la somme doit couvrir la quantité commandée) :</p>
+      <p style="margin:8px 0;color:#b3261e;line-height:1.5">${detail}</p>
+      <p class="note">Les lots de reprise (migration) sont sélectionnables ici comme les autres.</p>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal()">Annuler</button>
+        <button class="btn gold" onclick="cmdLink(${orderId})">Lier des batchs →</button>
+      </div>`);
+    return false;
+  }
+  return true;   // couverture complète → livraison autorisée
+}
+
 // Changement rapide : passe au statut suivant (À préparer → Terminée → Livrée → …)
 async function cycleStatus(id){
   const o = await db.orders.get(id); if(!o) return;
   const cur = normStatus(o.statut);
   const i = ORDER_STATUS.indexOf(cur);
   const next = ORDER_STATUS[(i+1) % ORDER_STATUS.length];
+  // Garde-fou : passer en « Livrée » exige un stock décompté (picking ou auto-pick migration).
+  if(next==='Livrée'){
+    const ok = await ensureOrderDecremented(id);
+    if(!ok){ renderCmd(); return; }   // bloqué : on ne change pas le statut
+  }
   await db.orders.update(id, {statut: next});
   // mise à jour immédiate du calendrier et des stats : ces vues relisent la base à chaque rendu,
   // il suffit donc de rafraîchir la liste ici ; calendrier/stats seront à jour à leur prochaine ouverture
@@ -8112,6 +8204,10 @@ async function cycleStatus(id){
 }
 // Définit un statut précis (depuis la fiche détail)
 async function setOrderStatus(id, statut){
+  if(statut==='Livrée'){
+    const ok = await ensureOrderDecremented(id);
+    if(!ok){ renderCmd(); return; }   // bloqué : statut inchangé
+  }
   await db.orders.update(id, {statut});
   closeModal(); renderCmd(); toast('Statut : '+statut);
 }
@@ -8426,6 +8522,10 @@ function _cmdRow(row, grp){
 }
 // Changement de statut depuis le menu déroulant de la liste (sans fermer de modale).
 async function setOrderStatusInline(id, statut){
+  if(statut==='Livrée'){
+    const ok = await ensureOrderDecremented(id);
+    if(!ok){ renderCmd(); return; }   // bloqué : statut inchangé (le select est réinitialisé au rendu)
+  }
   await db.orders.update(id, {statut});
   renderCmd();
   toast('Statut : '+(statut==='Terminée'?'Prête':statut));
@@ -8837,7 +8937,7 @@ function _lineToEdit(ln){
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacNb>0?+ln.sacNb:0)};
-  if(t==='prestation') return {type:'prestation', presta:ln.presta||'', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, dureeH:+ln.dureeH||0, mode:ln.mode||'', detail:ln.detail||'', remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0};
+  if(t==='prestation') return {type:'prestation', presta:ln.presta||'', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, dureeH:+ln.dureeH||0, mode:ln.mode||'', detail:ln.detail||'', remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0, ...(ln.isLivraison?{isLivraison:true}:{})};
   return {...ln};
 }
 // Charge une commande dans le modèle d'édition (objet) sans rien perdre.
@@ -8993,12 +9093,12 @@ async function cmdForm(id, opts){
     : (o.paiement==='Payé' ? [{date:o.datePaiement||'', montant:+o.montant||0, moyen:o.reglement||''}] : [])
   ));
   const mt=document.getElementById('f_mt');
-  // [PRIX] À l'ouverture, le prix est en mode AUTO : il se recalcule quand on change les
-  // produits. Il ne passe en MANUEL que si l'utilisateur tape lui-même dans le champ
-  // (flag _cmdPriceManual posé par l'oninput du champ). Ainsi, modifier une commande
-  // existante recalcule bien le total (corrige le prix figé à l'ancienne valeur).
-  _cmdPriceManual = false;
-  if(mt) mt.dataset.auto = '1';
+  // [PRIX] Mode AUTO par défaut : le total se recalcule quand on change les produits.
+  // EXCEPTION : si la commande a été enregistrée avec un PRIX MANUEL (o.prixManuel),
+  // on respecte ce prix à la réouverture — on ne le recalcule pas, on ne l'écrase pas.
+  // Un prix tapé à la main est ainsi mémorisé d'une session d'édition à l'autre.
+  _cmdPriceManual = !!(o && o.prixManuel);
+  if(mt) mt.dataset.auto = _cmdPriceManual ? '0' : '1';
   drawPayments();
   drawLines();
   cmdRecalc();
@@ -9593,7 +9693,7 @@ function cmdLinesToStored(){
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', remisePct:rp, parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacMatId>0?Math.max(0,Math.round(+ln.sacNb||0)):0), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
-    if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0)};
+    if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0), ...(ln.isLivraison?{isLivraison:true}:{})};
   }).filter(Boolean);
 }
 function cmdPersoToggle(){
@@ -9741,14 +9841,28 @@ function cmdDeliveryRecalc(){
     })();
 }
 // Ajoute le supplément livraison suggéré au prix total de la commande (champ manuel).
+// La livraison facturée est ajoutée comme une LIGNE DE PRESTATION « Frais de livraison ».
+// Avantages : elle s'affiche clairement sur le devis ET la facture (les lignes prestation
+// y sont déjà rendues), elle est comptée comme prestation de service (charges sociales),
+// et le montant reste ajustable à la main comme n'importe quelle prestation.
+// Si une ligne livraison existe déjà (isLivraison), on la met à jour au lieu d'en empiler.
 function cmdApplyDeliveryFee(montant){
-  const mt=document.getElementById('f_mt'); if(!mt) return;
-  const base = +mt.value || 0;
-  mt.dataset.auto='0';                       // le prix devient manuel
-  mt.value = money2(base + (+montant||0)).toFixed(2);
-  mt.dataset.fraisLivraison = money2(+montant||0);  // mémorise la part livraison facturée (pour la facture)
+  const mt = montant!=null ? money2(+montant||0) : 0;
+  if(!(mt>0)){ toast('Montant de livraison invalide'); return; }
+  let ln = cmdLines.find(l=>l.type==='prestation' && l.isLivraison);
+  if(ln){
+    ln.montantHT = mt;
+  }else{
+    cmdLines.push({type:'prestation', isLivraison:true, libelle:'Frais de livraison',
+                   montantHT:mt, remiseType:'pct', remisePct:0, remiseEuro:0});
+  }
+  // Le prix total redevient AUTO : il intègre la nouvelle ligne via le recalcul normal.
+  const mtEl=document.getElementById('f_mt');
+  if(mtEl){ mtEl.dataset.auto='1'; delete mtEl.dataset.fraisLivraison; }
+  _cmdPriceManual=false;
+  drawLines();   // ré-affiche les lignes (la ligne livraison apparaît, éditable)
   cmdRecalc();
-  toast(`Livraison ${euro(montant)} ajoutée au prix`);
+  toast(`Livraison ${euro(mt)} ajoutée en prestation`);
 }
 
 async function saveCmd(id){
@@ -9825,6 +9939,7 @@ async function saveCmd(id){
     paiements,
     dateReglementFinal: val('f_dateFinal')||'',
     statut:val('f_st'), notes:val('f_notes'),
+    prixManuel: !!_cmdPriceManual,   // mémorise un prix forcé à la main (respecté à la réouverture)
     // on neutralise les anciens champs mono-type
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[]
   };
@@ -18727,6 +18842,7 @@ async function renderLabels(){
          <td style="text-align:right;white-space:nowrap">
            <span class="act" onclick="printOrderRecapLabel(${o.id}, document.getElementById('recapCopies_${o.id}').value)">⎙ Récap</span>
            <span class="act" onclick="shareOrderRecapImage(${o.id})" title="Image du récap à partager vers Phomemo">📤 Phomemo</span>
+           <span class="act" onclick="renderOrderTrace(${o.id})" title="Voir la traçabilité (coques, ganache, assemblé par parfum)">🔎 Traçabilité</span>
            <input id="recapCopies_${o.id}" type="number" min="1" max="50" value="2" style="width:46px;margin:0 6px" title="Nombre de copies">
            <br>
            <span class="act" onclick="printOrderLabels(${o.id},'perLink')">1 / produit</span>
@@ -18851,6 +18967,123 @@ async function shareLabelImage(prodId){
   }catch(e){ console.error('shareLabelImage',e); toast('Erreur lors de la génération de l\'étiquette'); }
 }
 
+// ── TRAÇABILITÉ DESCENDANTE D'UNE COMMANDE ──────────────────────────────────
+// À partir d'une commande, remonte pour chaque parfum la chaîne de fabrication :
+//   coques → ganache/crémeux → (composants) → macaron assemblé,
+// avec le lot ET l'emplacement de chacun. S'appuie sur le champ `assembleFrom`
+// enregistré à l'assemblage (cf. prodAssembleSave) qui mémorise les lots sources.
+async function buildOrderTraceability(orderId){
+  const o = await db.orders.get(orderId);
+  if(!o) return null;
+  const recipes = await db.recipes.toArray();
+  const links = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
+  const ref = orderNumber(o);
+
+  // Petit cache des productions déjà chargées (pour l'emplacement des lots sources).
+  const cacheProd = {};
+  const getProd = async id => {
+    if(id==null) return null;
+    if(cacheProd[id]!==undefined) return cacheProd[id];
+    const p = await db.productions.get(id).catch(()=>null);
+    cacheProd[id] = p || null;
+    return cacheProd[id];
+  };
+  const empOf = p => {
+    if(!p || !p.emplacement) return { nom:'', lettre:'', icon:'' };
+    return { nom: empNom(p.emplacement), lettre: empLettre(p.emplacement), icon: empIcon(p.emplacement) };
+  };
+
+  // Regroupement par parfum (nom complet du macaron assemblé).
+  const parParfum = {};   // nom -> { nom, assembles:[...], coques:[...], garniture:[...], composants:[...] }
+  const ensure = nom => (parParfum[nom] ||= { nom, assembles:[], coques:[], garniture:[], composants:[] });
+
+  for(const it of links){
+    const pid = it.productionId;
+    if(pid==null) continue;
+    const asm = await getProd(pid);
+    if(!asm) continue;
+    const nomParfum = prodNomComplet(asm, recipes) || '(parfum ?)';
+    const grp = ensure(nomParfum);
+    const empA = empOf(asm);
+    grp.assembles.push({ lot: asm.lotProduction||'—', emp:empA, qte:asm.qteProduite, dlc:asm.dlcProduit||'' });
+
+    // Lots sources mémorisés à l'assemblage.
+    const from = Array.isArray(asm.assembleFrom) ? asm.assembleFrom : [];
+    for(const src of from){
+      const sp = await getProd(src.id);
+      const emp = empOf(sp);
+      const ligne = { lot: src.lot || (sp && sp.lotProduction) || '—', emp, qte: src.qte };
+      if(src.composant==='coques') grp.coques.push(ligne);
+      else if(src.composant==='ganache'){
+        ligne.label = (sp && garnLabel(sp)) || 'ganache';
+        grp.garniture.push(ligne);
+      }
+      else if(src.composant==='garniture-sup'){
+        ligne.label = src.parfum || 'composant';
+        grp.composants.push(ligne);
+      }
+    }
+  }
+
+  // Dédoublonnage léger (un même lot source peut revenir si plusieurs assemblés).
+  const dedup = arr => {
+    const vus = new Set(); const out = [];
+    for(const x of arr){ const k = x.lot+'|'+(x.emp.lettre||''); if(!vus.has(k)){ vus.add(k); out.push(x); } }
+    return out;
+  };
+  const parfums = Object.values(parParfum).map(g => ({
+    nom: g.nom,
+    assembles: dedup(g.assembles),
+    coques: dedup(g.coques),
+    garniture: dedup(g.garniture),
+    composants: dedup(g.composants)
+  }));
+
+  return { ref, livraison: o.date ? fmtDate(o.date) : '', parfums, nbLies: links.length };
+}
+
+// Vue à l'écran de la traçabilité d'une commande, regroupée par parfum.
+// En-tête = référence commande (qui centralise client + date). Pour chaque parfum :
+// la chaîne coques → ganache/crémeux → (composants) → assemblé, avec lot + emplacement.
+async function renderOrderTrace(orderId){
+  const t = await buildOrderTraceability(orderId);
+  if(!t){ toast('Commande introuvable'); return; }
+  if(!t.nbLies){
+    openModal(`<h3>🔎 Traçabilité — Commande ${esc(t.ref)}</h3>
+      <p class="note" style="margin-top:8px">Aucun lot de production n'est relié à cette commande pour l'instant. Liez d'abord des batchs depuis la commande.</p>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const ligneLot = (l, type, color) => `
+    <div style="display:flex;align-items:baseline;gap:6px;padding:3px 0;border-bottom:1px dashed #ece5e0">
+      <span class="tag" style="background:${color};color:#fff;font-size:.62rem;flex:0 0 auto">${esc(type)}</span>
+      <span style="font-weight:600;font-size:.82rem">${esc(l.lot)}</span>
+      <span style="margin-left:auto;font-size:.74rem;color:#7a6a62;white-space:nowrap">${l.emp.lettre?`${l.emp.icon||''} ${esc(l.emp.lettre)} · ${esc(l.emp.nom)}`:'—'}</span>
+    </div>`;
+
+  const cartes = t.parfums.map(p=>{
+    const coques = p.coques.map(l=>ligneLot(l,'Coques','#8a6d3b')).join('');
+    const garn = p.garniture.map(l=>ligneLot(l, (l.label==='crémeux'?'Crémeux':'Ganache'), '#a5453b')).join('');
+    const comps = p.composants.map(l=>ligneLot(l, l.label||'Composant', '#6d6d6d')).join('');
+    const asm = p.assembles.map(l=>ligneLot(l,'Assemblé','#3f7d52')).join('');
+    return `
+      <div class="panel" style="margin-bottom:10px;padding:10px 12px">
+        <div style="font-weight:700;font-size:.95rem;margin-bottom:6px">🧁 ${esc(p.nom)}</div>
+        ${coques||garn||comps?'':'<p class="note" style="margin:0 0 6px">Pas de sous-lots tracés (macaron non assemblé via l\'app).</p>'}
+        ${coques}${garn}${comps}${asm}
+      </div>`;
+  }).join('');
+
+  openModal(`
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:2px">
+      <h3 style="margin:0">🔎 Traçabilité</h3>
+      <span style="font-weight:700;font-size:.9rem;color:#8a6d3b">Commande ${esc(t.ref)}</span>
+    </div>
+    ${t.livraison?`<p class="note" style="margin:0 0 10px">Livraison : ${esc(t.livraison)}</p>`:''}
+    ${cartes}
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+}
+
 /* Étiquette RÉCAP de commande → image partageable vers Phomemo.
    Reprend les données de buildOrderLabelData (parfums, lots, fab, DLC) et les dessine
    sur un canvas au format thermique (un peu plus haut car plusieurs parfums possibles). */
@@ -18867,7 +19100,8 @@ async function shareOrderRecapImage(orderId){
     // Hauteur dynamique : base + une ligne par parfum (mini 25 mm).
     const baseH = 25;
     const extra = Math.max(0, (d.parfums.length - 3)) * 3.2;  // au-delà de 3 parfums, on agrandit
-    const H = Math.round((baseH + extra) * PXMM);
+    const extraDlc = (d.mixteFormats && d.dlcParType && d.dlcParType.length>1) ? 3.2 : 0; // 2e ligne DLC
+    const H = Math.round((baseH + extra + extraDlc) * PXMM);
     const cv = document.createElement('canvas');
     cv.width = W; cv.height = H;
     const ctx = cv.getContext('2d');
@@ -18907,7 +19141,12 @@ async function shareOrderRecapImage(orderId){
     // Lots, fabrication, DLC.
     if(d.lots && d.lots.length) line('Lots : '+d.lots.join(', '), 2.1, false);
     line('Fab. : '+d.fab, 2.2, false);
-    line('DLC : '+d.dlc, 2.6, true);
+    // DLC : une ligne si un seul format, ventilée (grands formats / classiques) si la commande mélange les deux.
+    if(d.mixteFormats && d.dlcParType && d.dlcParType.length>1){
+      d.dlcParType.forEach(x=> line('DLC '+x.label+' : '+x.dlc, 2.3, true));
+    } else {
+      line('DLC : '+d.dlc, 2.6, true);
+    }
 
     const blob = await new Promise(res=> cv.toBlob(res, 'image/png'));
     if(!blob){ toast('Impossible de générer l\'image'); return; }
@@ -19016,6 +19255,7 @@ async function printLabelCopies(prodId){
 // - DLC = DATE DE LIVRAISON (o.date) + 4 jours, calculée sur la livraison, jamais sur l'impression
 async function buildOrderLabelData(orderId){
   const o = await db.orders.get(orderId); if(!o) return null;
+  const recipes = await db.recipes.toArray();   // chargé une fois, sert aux noms ET au format (DLC)
   // 1) PARFUMS depuis le contenu de la commande (source de vérité des noms commandés)
   const parfumsOrdre = [];   // garde l'ordre, dédupliqué
   const _seen = new Set();
@@ -19030,7 +19270,6 @@ async function buildOrderLabelData(orderId){
   const lotsAll = new Set();
   let fabTsMax = '';
   if(links.length){
-    const recipes = await db.recipes.toArray();
     const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'';
     for(const it of links){
       const p = await db.productions.get(it.productionId); if(!p) continue;
@@ -19040,25 +19279,48 @@ async function buildOrderLabelData(orderId){
       if(ts && ts>fabTsMax) fabTsMax = ts;
       // si le contenu de commande était vide (rare), on complète les parfums via les batchs liés
       if(!parfumsOrdre.length){
-        const nom = prodNomComplet(p);
+        const nom = prodNomComplet(p, recipes);
         if(nom && !_seen.has(nom.toLowerCase())){ _seen.add(nom.toLowerCase()); parfumsOrdre.push(nom); }
       }
     }
   }
-  // 3) DLC = date de livraison + 4 jours (calcul local, sans toISOString → pas de décalage UTC)
-  let dlcStr = '';
-  if(o.date){
+  // 3) DLC = date de livraison + N jours (4 j grand format, 6 j classique).
+  // Calcul local (sans toISOString → pas de décalage UTC). On VENTILE par type :
+  // si la commande mélange grands formats et classiques, on renvoie deux DLC distinctes.
+  const pad = n => String(n).padStart(2,'0');
+  const dlcDepuisLivraison = jours => {
+    if(!o.date) return '';
     const [yy,mm,dd] = o.date.split('-').map(Number);
     const dl = new Date(yy, (mm||1)-1, dd||1);
-    dl.setDate(dl.getDate()+4);
-    const pad=n=>String(n).padStart(2,'0');
-    dlcStr = `${dl.getFullYear()}-${pad(dl.getMonth()+1)}-${pad(dl.getDate())}`;
+    dl.setDate(dl.getDate()+jours);
+    return `${dl.getFullYear()}-${pad(dl.getMonth()+1)}-${pad(dl.getDate())}`;
+  };
+  // Quels types de format sont présents dans la commande ?
+  let aGrandFormat = false, aStandard = false;
+  parfumsOrdre.forEach(nom => {
+    const r = recipeForFlavorName(nom, recipes);
+    if(r && r.grandFormat) aGrandFormat = true; else aStandard = true;
+  });
+  // Si aucun parfum identifié (cas limite), on retombe sur la durée standard.
+  if(!aGrandFormat && !aStandard) aStandard = true;
+  const dlcParType = [];
+  if(aGrandFormat){
+    const s = dlcDepuisLivraison(DLC_JOURS.grandFormat);
+    if(s) dlcParType.push({ type:'grand', label:'Grands formats', dlc: fmtDate(s) });
   }
+  if(aStandard){
+    const s = dlcDepuisLivraison(DLC_JOURS.standard);
+    if(s) dlcParType.push({ type:'std', label:'Classiques', dlc: fmtDate(s) });
+  }
+  // DLC simple (compat) : la plus courte présente, pour les usages qui n'affichent qu'une valeur.
+  const dlcCourte = aGrandFormat ? dlcDepuisLivraison(DLC_JOURS.grandFormat) : dlcDepuisLivraison(DLC_JOURS.standard);
   return {
     parfums: parfumsOrdre,
     lots: [...lotsAll],
     fab: fabTsMax ? fmtDate(fabTsMax.slice(0,10)) : (o.date?fmtDate(o.date):'—'),
-    dlc: dlcStr ? fmtDate(dlcStr) : '—',
+    dlc: dlcCourte ? fmtDate(dlcCourte) : '—',   // compat : une seule valeur (la plus courte)
+    dlcParType,                                   // ventilation : 1 entrée si un seul type, 2 si mixte
+    mixteFormats: aGrandFormat && aStandard,
     livraison: o.date ? fmtDate(o.date) : '—'
   };
 }
@@ -19066,8 +19328,18 @@ async function buildOrderLabelData(orderId){
 function renderOrderLabelHTML(d){
   const parfRows = d.parfums.map(nom=>`<div class="pf">☐ ${esc(nom)} <span class="qn">___</span></div>`).join('');
   const lotsTxt = d.lots.length ? d.lots.map(esc).join(', ') : '—';
+  // DLC : une seule valeur si la commande est d'un seul format ; ventilée si elle mélange
+  // grands formats (4 j) et classiques (6 j).
+  const mixte = d.mixteFormats && Array.isArray(d.dlcParType) && d.dlcParType.length>1;
+  const headDlc = mixte
+    ? `<span class="odlc">DLC ↓</span>`
+    : `<span class="odlc">DLC ${esc(d.dlc)}</span>`;
+  const dlcVentil = mixte
+    ? `<div class="odlcv">${d.dlcParType.map(x=>`<span>${esc(x.label)} : <b>${esc(x.dlc)}</b></span>`).join('')}</div>`
+    : '';
   return `<div class="olab">
-     <div class="ohead"><span class="ofab">Fab. ${esc(d.fab)}</span><span class="odlc">DLC ${esc(d.dlc)}</span></div>
+     <div class="ohead"><span class="ofab">Fab. ${esc(d.fab)}</span>${headDlc}</div>
+     ${dlcVentil}
      <div class="opf">${parfRows||'<div class="pf">☐ ______ <span class="qn">___</span></div>'}</div>
      <div class="olots">Lots : ${lotsTxt}</div>
    </div>`;
@@ -19089,6 +19361,8 @@ function printOrderLabelSheet(labels, titre){
      .olab .ohead { display:flex; justify-content:space-between; align-items:baseline; border-bottom:0.25mm solid #000; padding-bottom:0.5mm; margin-bottom:0.6mm; }
      .olab .ofab { font-size:2.2mm; }
      .olab .odlc { font-size:2.5mm; font-weight:bold; }
+     .olab .odlcv { display:flex; justify-content:space-between; gap:1mm; font-size:1.9mm; line-height:1.15; margin-bottom:0.4mm; }
+     .olab .odlcv b { font-weight:bold; }
      .olab .opf { flex:1; overflow:hidden; }
      .olab .pf { font-size:2.5mm; font-weight:bold; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
      .olab .pf .qn { font-weight:normal; letter-spacing:0.2mm; }
@@ -21655,7 +21929,10 @@ function factLineDesc(ln){
   if(ln.type==='grand') return `Macarons grand format${items?' — '+items:''}`;
   if(ln.type==='vrac') return `Macarons (vrac)${parfums?' — '+parfums:''}`;
   if(ln.type==='don') return `Don (offert)${(parfums||items)?' — '+(parfums||items):''}`;
-  if(ln.type==='prestation') return `Prestation${ln.libelle?' : '+ln.libelle:''}`;
+  if(ln.type==='prestation'){
+    if(ln.isLivraison) return ln.libelle || 'Frais de livraison';   // livraison : libellé direct, sans préfixe
+    return `Prestation${ln.libelle?' : '+ln.libelle:''}`;
+  }
   return 'Article';
 }
 // Version HTML de la description d'une ligne pour les documents (devis + facture).
