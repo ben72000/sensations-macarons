@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v543';
+const APP_VERSION = 'v548';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15635,9 +15635,9 @@ const APP_KB = [
   { id:'tracabilite', titre:'Traçabilité & étiquettes',
     tags:'tracabilite tracage etiquette lot dlc impression label origine ddpp confidentialite quantite recette ingredient',
     r:`<p>La <b>traçabilité</b> relie chaque batch aux lots de matières consommés (FIFO). Tu peux imprimer une <b>étiquette</b> par batch (parfum, lot, DLC) depuis Productions ou l'onglet Étiquettes. La traçabilité destinée à la <b>DDPP</b> (écrans et exports CSV) conserve toutes les informations — matières, lots fournisseurs, fournisseurs, DLC, origine — mais <b>masque les quantités d'ingrédients</b> pour préserver la confidentialité de tes recettes.</p>` },
-  { id:'pointeuse', titre:'Pointeuse / temps de travail & activités',
-    tags:'pointeuse temps travail session heures chrono pause activite parallele simultane pesees pesee ganache meringue macaronnage pochage cuisson vaisselle nettoyage autre optimisation analyse',
-    r:`<p>La <b>pointeuse</b> (bandeau flottant) permet de lancer <b>plusieurs chronos en parallèle</b>, chacun avec sa <b>nature d'activité</b> : Pesées, Ganache, Meringue, Macaronnage, Pochage, Cuisson, Garnissage/Montage, Vaisselle, Nettoyage fin de prod, Conditionnement, ou <b>Autre</b> (que tu peux <b>préciser</b> librement). Chaque chrono a sa <b>pause</b> et son <b>stop</b> indépendants — tu peux faire tourner « Cuisson » et « Macaronnage » en même temps, ou deux « Cuisson » à la fois. Le bouton <b>▶ Ajouter une activité</b> démarre un chrono sans interrompre les autres. À l'arrêt, tu renseignes le taux horaire et la session est enregistrée. Dans <b>Analyse → Temps de travail</b> : répartition par activité + conseils. Sans aucun impact sur les productions.</p>` },
+  { id:'pointeuse', titre:'Chronos de l’Atelier / temps de travail & activités',
+    tags:'atelier chronos temps travail session heures chrono pause activite parallele simultane pesees pesee ganache meringue macaronnage pochage cuisson vaisselle nettoyage autre optimisation analyse',
+    r:`<p>Les <b>chronos de l’Atelier</b> (bandeau flottant) permettent de lancer <b>plusieurs chronos en parallèle</b>, chacun avec sa <b>nature d'activité</b> : Pesées, Ganache, Meringue, Macaronnage, Pochage, Cuisson, Garnissage/Montage, Vaisselle, Nettoyage fin de prod, Conditionnement, ou <b>Autre</b> (que tu peux <b>préciser</b> librement). Chaque chrono a sa <b>pause</b> et son <b>stop</b> indépendants — tu peux faire tourner « Cuisson » et « Macaronnage » en même temps, ou deux « Cuisson » à la fois. Le bouton <b>▶ Ajouter une activité</b> démarre un chrono sans interrompre les autres. À l'arrêt, tu renseignes le taux horaire et la session est enregistrée. Dans <b>Analyse → Temps de travail</b> : répartition par activité + conseils. Sans aucun impact sur les productions.</p>` },
   { id:'migration', titre:'Reprise / migration (historique & stock de départ)',
     tags:'migration reprise historique demarrage debut ancienne donnee ca chiffre affaire stock depart inventaire import',
     r:`<p>L'onglet <b>Reprise / migration</b> sert à démarrer avec ton historique. Tu peux saisir des <b>commandes historiques</b> (date, montant, client ou libellé) : elles <b>comptent dans le chiffre d'affaires</b> et les stats, mais sont marquées « historique » — l'app ne demande <b>ni production, ni picking, ni matières</b> et ne génère <b>aucune alerte</b> dessus (elles n'apparaissent pas dans la liste des commandes opérationnelles). Tu peux y ajouter le <b>détail des parfums</b> (parfum + quantité) : cela <b>alimente les statistiques et les tendances</b> (parfums populaires, saisonnalité) sans modifier le montant saisi. Tu peux aussi enregistrer ton <b>stock de départ de produits finis</b> (lot déjà « terminé », sans consommer de matières) et, pour les matières premières, utiliser la <b>réception de lot</b> habituelle dans Matières &amp; emballages.</p>` },
@@ -16446,6 +16446,72 @@ function marketVentilation(cible, historique, volume, opts){
 
   return { lignes, sourceUtilisee, explication, aCible, aHisto, volume, totalVentile:totalFinal, reste: Math.max(0, volume-totalFinal) };
 }
+
+/* [CONNEXION #4] RETARDS DE LANCEMENT. Pour chaque commande à venir non livrée, on calcule
+   son rétroplanning et on repère les étapes de TRAVAIL dont la date de lancement est déjà
+   passée (« tu aurais dû commencer la ganache hier »). C'est l'alerte du chef d'atelier.
+   Renvoie [{orderId, client, dateLivraison, retards:[{cle,label,date,retardH}], plusUrgent}].
+   - On ne signale que les jalons type:'travail' (actions à déclencher), pas les attentes.
+   - Une commande déjà entièrement produite (assez de stock fini) n'est pas en retard.
+*/
+async function commandesEnRetard(opts){
+  opts = opts||{};
+  const horizon = opts.horizon || 21;   // on regarde un peu plus loin que 14 j pour anticiper
+  const now = new Date();
+  const startStr = today();
+  const endStr = (()=>{ const d=new Date(startStr); d.setDate(d.getDate()+horizon); return d.toISOString().slice(0,10); })();
+
+  const [orders, recipes, clients] = await Promise.all([
+    db.orders.toArray().catch(()=>[]),
+    db.recipes.toArray().catch(()=>[]),
+    db.clients.toArray().catch(()=>[])
+  ]);
+  const clientNom = id => (clients.find(c=>c.id===id)||{}).nom || '';
+
+  const out = [];
+  orders.forEach(o=>{
+    // Commande à honorer : a une date de livraison dans la fenêtre, pas livrée, pas déjà produite.
+    const dateLiv = o.dateEvenement || o.date || '';
+    if(!dateLiv) return;
+    if(dateLiv < startStr || dateLiv > endStr) return;
+    const st = (typeof normStatus==='function') ? normStatus(o.statut) : (o.statut||'');
+    // 'Livrée' = finie. 'Terminée' = déjà produite → plus de lancement à faire, donc pas en retard.
+    if(st==='Livrée' || st==='Terminée') return;
+
+    // Rétroplanning de la commande.
+    let rp = null;
+    try{ rp = (typeof retroplanningCommande==='function') ? retroplanningCommande(o, recipes) : null; }catch(e){}
+    if(!rp || rp.error || !Array.isArray(rp.jalons)) return;
+
+    // Jalons de TRAVAIL dont la date de lancement est déjà passée.
+    const retards = [];
+    rp.jalons.forEach(j=>{
+      if(j.type!=='travail') return;
+      const d = (j.date instanceof Date) ? j.date : new Date(j.date);
+      if(isNaN(d)) return;
+      if(d < now){
+        const retardH = Math.max(0, Math.round((now - d)/3600000));
+        retards.push({ cle:j.cle, label:j.label, date:d, retardH });
+      }
+    });
+    if(!retards.length) return;
+
+    // Trier les retards par ancienneté (le plus en retard d'abord).
+    retards.sort((a,b)=>a.date-b.date);
+    out.push({
+      orderId: o.id,
+      client: clientNom(o.clientId) || o.histoLabel || '(client ?)',
+      dateLivraison: dateLiv,
+      retards,
+      plusUrgent: retards[0],   // le jalon le plus anciennement dépassé
+      nbRetards: retards.length
+    });
+  });
+
+  // Trier les commandes : la plus proche de la livraison en premier (la plus pressante).
+  out.sort((a,b)=>(a.dateLivraison||'').localeCompare(b.dateLivraison||''));
+  return out;
+}
 async function atelierBrain(opts){
   opts = opts || {};
   const horizon = opts.horizon || 14;
@@ -16504,10 +16570,24 @@ async function atelierBrain(opts){
   // --- 4) TEMPS : besoin estimé (chrono) vs dispo (planning d'aujourd'hui)
   let minParMac = null;
   try{ const tl = await prodTempsLissePerMacaron(90); minParMac = (tl && tl.minParMacaron) ? tl.minParMacaron : null; }catch(e){ console.error('brain.temps',e); }
+  // [TEMPS PAR PARFUM] Temps propre à chaque parfum (si assez de données), sinon repli moyenne globale.
+  let tppMap = {};
+  try{ tppMap = (typeof prodTempsParParfum==='function') ? await prodTempsParParfum(90) : {}; }catch(e){ console.error('brain.tpp',e); }
+  // minParMac d'une ligne : son temps parfum si fiable, sinon la moyenne globale.
+  const minParMacDe = (parfum)=>{
+    const k = (typeof aiNormalize==='function') ? aiNormalize(parfum) : (parfum||'').toLowerCase();
+    const tp = tppMap[k];
+    return (tp && tp.fiable && tp.minParMac>0) ? tp.minParMac : minParMac;
+  };
+  // Combien de parfums du plan bénéficient d'un temps propre fiable (transparence).
+  let nbParfumsTempsPropre = 0;
+  lignesPlan.forEach(l=>{ const k=(typeof aiNormalize==='function')?aiNormalize(l.parfum):(l.parfum||'').toLowerCase(); if(tppMap[k] && tppMap[k].fiable) nbParfumsTempsPropre++; });
   // Total de macarons à produire (hors anti-gaspi qui est "à écouler", qte null).
   const totMacAprod = lignesPlan.reduce((s,l)=>s+(+l.qte||0),0);
-  // Besoin temps commandes/réassort (les marchés seront ajoutés après leur calcul, plus bas).
-  const besoinMinCmd = (minParMac!=null) ? Math.round(totMacAprod*minParMac) : null;
+  // Besoin temps commandes/réassort : somme des temps PAR PARFUM (temps propre si fiable, sinon moyenne).
+  const besoinMinCmd = (minParMac!=null)
+    ? Math.round(lignesPlan.reduce((s,l)=>{ const m=minParMacDe(l.parfum); return s + (m!=null ? (+l.qte||0)*m : 0); },0))
+    : null;
   // Dispo aujourd'hui depuis le planning renseigné.
   let dispoAujMin = null, dispoHorizonMin = null, planningRenseigne = false;
   try{
@@ -16528,6 +16608,11 @@ async function atelierBrain(opts){
   // --- 5) CONFLITS : tâches de travail qui se chevauchent sur l'horizon
   let conf = {conflits:[], taches:[], nbCommandes:0};
   try{ conf = await retroConflicts(startStr, endStr) || conf; }catch(e){ console.error('brain.conf',e); }
+
+  // --- 5 quater) [CONNEXION #4] RETARDS DE LANCEMENT : commandes dont une étape de travail
+  // aurait déjà dû démarrer (le rétroplanning connaît la date de début de chaque étape).
+  let retardsLancement = [];
+  try{ retardsLancement = (typeof commandesEnRetard==='function') ? await commandesEnRetard({horizon:21}) : []; }catch(e){ console.error('brain.retards',e); }
 
   // --- 5 bis) [CONNEXION #1] MARCHÉS À VENIR dans l'horizon : charge de production.
   // Un marché compte s'il est daté dans [aujourd'hui, +horizon], pas clos, pas historique.
@@ -16577,8 +16662,11 @@ async function atelierBrain(opts){
   const stockCongeleUtilise = Math.min(stockCongeleGlobal, totMarcheCongele);
   // Net marché RÉELLEMENT à produire = part fraîche + part congelée non couverte par le stock.
   const totMacMarches = totMarcheFrais + congeleAProduire;
-  // Besoin temps TOTAL = commandes/réassort + net marché à produire.
-  const besoinMin = (minParMac!=null) ? Math.round((totMacAprod + totMacMarches)*minParMac) : null;
+  // Besoin temps TOTAL = commandes/réassort (déjà estimé PAR PARFUM dans besoinMinCmd)
+  // + net marché à produire (à la moyenne globale, la ventilation marché par parfum venant après).
+  const besoinMinMarche = (minParMac!=null) ? Math.round(totMacMarches*minParMac) : null;
+  const besoinMin = (besoinMinCmd!=null && besoinMinMarche!=null) ? (besoinMinCmd + besoinMinMarche)
+                  : (besoinMinCmd!=null ? besoinMinCmd : besoinMinMarche);
 
   // --- 5 ter) [CONNEXION #1++] VENTILATION MARCHÉ PAR PARFUM, MARCHÉ PAR MARCHÉ.
   // Pour chaque marché : si un ajustement propre (mkMix) existe, il est PRIORITAIRE ;
@@ -16697,6 +16785,9 @@ async function atelierBrain(opts){
     manquesMatieresCmd: matCheck.manques,
     // Temps (inclut la charge marchés dans besoinMin)
     minParMac, besoinMin, besoinMinCmd, dispoAujMin, dispoHorizonMin, planningRenseigne,
+    // Transparence temps par parfum : combien de parfums du plan ont un temps propre fiable.
+    nbParfumsTempsPropre, nbLignesPlan: lignesPlan.length,
+    tempsParParfumActif: (nbParfumsTempsPropre>0),
     // Faisabilité AUJOURD'HUI : ce que tu peux avancer dans le temps dispo du jour.
     tempsSuffisantAuj: (besoinMin!=null && dispoAujMin!=null) ? (besoinMin<=dispoAujMin) : null,
     // Faisabilité sur l'HORIZON (14 j) : la vraie question — la charge tient-elle dans la dispo des 14 j ?
@@ -16707,6 +16798,10 @@ async function atelierBrain(opts){
     // Conflits
     conflits: conf.conflits,
     nbConflits: conf.conflits.length,
+    // [CONNEXION #4] Retards de lancement : commandes dont une étape aurait dû démarrer.
+    retardsLancement,
+    nbCommandesEnRetard: retardsLancement.length,
+    aDesRetards: retardsLancement.length>0,
     // Optimisation
     optimisations,
     // Méta : ce que le cerveau a pu calculer (pour que la "voix" ne parle que du sûr)
@@ -21375,6 +21470,11 @@ function prodSessionEnd(){
   // Une session clôturée est une donnée précieuse, vulnérable à une suppression d'app : on
   // déclenche l'alerte « modifications non sauvegardées » pour rappeler de sauvegarder sur iCloud.
   if(typeof markUnsaved==='function') markUnsaved();
+  // [TEMPS PAR PARFUM] Proposer la confirmation des parfums produits (croisement pré-coché),
+  // une seule fois, à froid. On laisse un court délai pour ne pas heurter la clôture visuelle.
+  if(!s.parfumsConfirmes && (s.tasks||[]).some(t=>t.end) && typeof prodSessParfumsConfirm==='function'){
+    setTimeout(()=>{ try{ prodSessParfumsConfirm(s.id); }catch(e){ console.error('sessParfums',e); } }, 350);
+  }
 }
 // Démarre une tâche labellisée dans la session (en crée une si besoin). N'interrompt PAS les autres.
 function prodTaskStart(label){
@@ -21573,6 +21673,202 @@ async function prodTempsLissePerMacaron(jours){
     minParMacaronArrondi: minParMacaron!=null ? Math.round(minParMacaron*100)/100 : null,
     fiable
   };
+}
+
+/* [TEMPS PAR PARFUM] Calcule un temps moyen par macaron DISTINCT pour chaque parfum,
+   à partir des sessions de chronos d'atelier dont les tâches portent des parfums.
+   - Une tâche peut concerner plusieurs parfums (meringue mutualisée) : le temps de la
+     session se répartit À PARTS ÉGALES entre les parfums distincts qu'elle couvre.
+   - On rapporte ce temps au nombre de macarons FINIS de chaque parfum sur la fenêtre.
+   - Repli : si un parfum n'a pas assez de données propres, l'appelant utilisera la
+     moyenne globale (prodTempsLissePerMacaron).
+   Structure attendue d'une tâche : t.parfums = [recipeId, ...] (ou noms), optionnel.
+*/
+async function prodTempsParParfum(jours){
+  jours = +jours || 90;
+  const since = new Date(); since.setDate(since.getDate()-jours);
+  const sinceStr = since.toISOString().slice(0,10);
+  const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recName = rid => (recipes.find(r=>+r.id===+rid)||{}).produitNom || '';
+
+  // 1) Temps d'atelier réparti par parfum (en ms), via les parfums déclarés sur les tâches.
+  const msParParfum = {};   // parfum normalisé -> ms cumulés
+  sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
+    const msSession = (typeof prodSessReelMs==='function') ? prodSessReelMs(s) : 0;
+    if(msSession<=0) return;
+    // Parfums distincts couverts par les tâches de cette session.
+    const setParfums = new Set();
+    (s.tasks||[]).forEach(t=>{
+      const arr = Array.isArray(t.parfums) ? t.parfums : [];
+      arr.forEach(x=>{
+        const nom = (typeof x==='number') ? recName(x) : String(x||'');
+        if(nom){ const k=(typeof aiNormalize==='function')?aiNormalize(nom):nom.toLowerCase(); setParfums.add(k); }
+      });
+    });
+    if(setParfums.size===0) return;   // session non étiquetée → ignorée ici (tombe dans la moyenne globale)
+    // Répartition À PARTS ÉGALES du temps de la session entre ses parfums.
+    const part = msSession / setParfums.size;
+    setParfums.forEach(k=>{ msParParfum[k] = (msParParfum[k]||0) + part; });
+  });
+
+  // 2) Macarons finis par parfum sur la fenêtre.
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const macParParfum = {};
+  prods.forEach(p=>{
+    const c = p.composant || 'complet';
+    if(c!=='complet' && c!=='assemble') return;
+    const d = (p.date || (p.prodTimestamp||'').slice(0,10) || '');
+    if(String(d).slice(0,10) < sinceStr) return;
+    const nom = (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : '';
+    if(!nom) return;
+    const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
+    macParParfum[k] = (macParParfum[k]||0) + (+p.qteReelle||+p.qteProduite||0);
+  });
+
+  // 3) Temps par macaron, par parfum (quand on a temps ET pièces).
+  const out = {};   // parfum normalisé -> {parfum, minParMac, minAtelier, nbMac, fiable}
+  Object.keys(msParParfum).forEach(k=>{
+    const minAtelier = msParParfum[k]/60000;
+    const nbMac = macParParfum[k]||0;
+    if(nbMac>0){
+      out[k] = {
+        minParMac: minAtelier/nbMac,
+        minAtelier: Math.round(minAtelier),
+        nbMac,
+        // Fiable si assez de matière pour que la moyenne ait du sens (seuils volontairement bas par parfum).
+        fiable: (minAtelier>=20 && nbMac>=30)
+      };
+    }
+  });
+  return out;   // clés = parfums normalisés
+}
+
+/* [TEMPS PAR PARFUM — brique croisement] Trouve les parfums probablement produits pendant
+   une session de chronos d'atelier, par recoupement d'horodatage.
+   Priorité 1 : productions dont la fabrication CHEVAUCHE la fenêtre de la session.
+   Priorité 2 (repli) : productions du MÊME JOUR que la session.
+   Renvoie { chevauche:[noms], memeJour:[noms], suggestions:[{parfum, source:'chevauche'|'jour'}] }.
+   Aucune écriture : pure proposition, la confirmation se fait ailleurs.
+*/
+function sessFenetre(s){
+  const tasks=(s&&s.tasks)||[];
+  if(!tasks.length) return null;
+  let minStart=Infinity, maxEnd=0;
+  tasks.forEach(t=>{ const st=+t.start||0; const en=+t.end||Date.now();
+    if(st>0 && st<minStart) minStart=st; if(en>maxEnd) maxEnd=en; });
+  if(!isFinite(minStart) || maxEnd<=minStart) return null;
+  return {start:minStart, end:maxEnd};
+}
+
+async function sessProdsChevauchantes(session){
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const fen = sessFenetre(session);
+  const jour = (session && session.date) ? String(session.date).slice(0,10) : '';
+  const nomDe = p => (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : '';
+
+  const isoToMs = iso => { const t = Date.parse(iso||''); return isNaN(t)?0:t; };
+
+  const setChevauche = new Map();   // nom normalisé -> nom affiché
+  const setJour = new Map();
+  prods.forEach(p=>{
+    // On ne s'intéresse qu'aux productions de macarons (composants ou finis), pas aux autres objets.
+    const comp = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
+    const nom = nomDe(p);
+    if(!nom || nom==='(recette supprimée)') return;
+    const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
+
+    // Fenêtre de fabrication de la production.
+    const deb = isoToMs(p.prodDebutTs || p.prodTimestamp);
+    const fin = isoToMs(p.prodTermineTs) || deb;
+
+    // Priorité 1 : chevauchement horaire avec la session.
+    if(fen && deb>0){
+      const overlap = (deb <= fen.end) && (fin >= fen.start);
+      if(overlap){ setChevauche.set(k, nom); return; }
+    }
+    // Priorité 2 : même jour que la session.
+    const dProd = (p.date || (p.prodDebutTs||p.prodTimestamp||'').slice(0,10) || '');
+    if(jour && String(dProd).slice(0,10)===jour){ setJour.set(k, nom); }
+  });
+
+  const chevauche = Array.from(setChevauche.values());
+  // Le repli "même jour" n'inclut pas ce qui chevauche déjà (évite les doublons).
+  const memeJour = Array.from(setJour.entries()).filter(([k])=>!setChevauche.has(k)).map(([,v])=>v);
+  const suggestions = [
+    ...chevauche.map(p=>({parfum:p, source:'chevauche'})),
+    ...memeJour.map(p=>({parfum:p, source:'jour'})),
+  ];
+  return { chevauche, memeJour, suggestions };
+}
+
+/* [TEMPS PAR PARFUM — confirmation fin de session] Après clôture d'une session de chronos,
+   on propose les parfums probablement produits (croisement horaire + même jour, pré-cochés),
+   l'utilisateur confirme/ajuste, et on écrit t.parfums sur les tâches de la session.
+   La saisie se fait À FROID, une seule fois, pas en plein travail.
+*/
+async function prodSessParfumsConfirm(sessId){
+  const s = (typeof prodSessGet==='function') ? prodSessGet(sessId) : null;
+  if(!s){ toast('Session introuvable'); return; }
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  // Suggestions croisées (chevauchement horaire prioritaire, puis même jour).
+  let crois = {chevauche:[], memeJour:[], suggestions:[]};
+  try{ crois = await sessProdsChevauchantes(s) || crois; }catch(e){ console.error('sessParfums.crois',e); }
+  const preCoche = new Set([...crois.chevauche, ...crois.memeJour].map(n=>aiNormalize(n)));
+
+  // Parfums déjà déclarés sur la session (si on rouvre la confirmation).
+  const dejaSet = new Set();
+  (s.tasks||[]).forEach(t=> (Array.isArray(t.parfums)?t.parfums:[]).forEach(x=>{
+    const nom = (typeof x==='number') ? ((recipes.find(r=>+r.id===+x)||{}).produitNom||'') : String(x||'');
+    if(nom) dejaSet.add(aiNormalize(nom));
+  }));
+  const coche = (dejaSet.size>0) ? dejaSet : preCoche;
+
+  // Liste de tous les parfums (recettes), avec les suggérés en haut.
+  const parfums = recipes.map(r=>r.produitNom).filter(Boolean)
+    .sort((a,b)=>{
+      const sa = preCoche.has(aiNormalize(a))?0:1, sb = preCoche.has(aiNormalize(b))?0:1;
+      return sa-sb || a.localeCompare(b);
+    });
+  window._sessParfumId = sessId;
+  window._sessParfumList = parfums;
+
+  const rows = parfums.map(p=>{
+    const k=aiNormalize(p);
+    const checked = coche.has(k) ? 'checked' : '';
+    const src = crois.chevauche.map(n=>aiNormalize(n)).includes(k) ? '<span style="color:#3f7d52;font-size:.72rem">pendant le chrono</span>'
+              : crois.memeJour.map(n=>aiNormalize(n)).includes(k) ? '<span style="color:#8a6d3b;font-size:.72rem">même jour</span>'
+              : '';
+    return `<label class="sum-box" style="align-items:center;cursor:pointer">
+      <span style="flex:1">${esc(p)} ${src?'<br>'+src:''}</span>
+      <input type="checkbox" id="sp_${k}" ${checked} style="width:22px;height:22px"></label>`;
+  }).join('');
+
+  const dateTxt = s.date ? fmtDate(s.date) : '';
+  openModal(`<h3>🎯 Quels parfums pour cette session ?</h3>
+    <p class="note">Session du ${esc(dateTxt)}. Coche les parfums que tu as produits pendant cette session de chronos. Pré-coché à partir de tes productions — ajuste si besoin. Sert à affiner le temps par parfum.</p>
+    ${rows || '<p class="note">Aucune recette.</p>'}
+    <div class="modal-actions">
+      <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Plus tard</button>
+      <button class="btn gold" onclick="prodSessParfumsSave()">Confirmer</button>
+    </div>`);
+}
+
+// Enregistre les parfums confirmés sur TOUTES les tâches de la session (parts égales au calcul).
+function prodSessParfumsSave(){
+  const sessId = window._sessParfumId; if(sessId==null) return;
+  const parfums = window._sessParfumList||[];
+  const choisis = parfums.filter(p=>{ const el=document.getElementById('sp_'+aiNormalize(p)); return el && el.checked; });
+  const s = (typeof prodSessGet==='function') ? prodSessGet(sessId) : null;
+  if(!s){ closeModal(); return; }
+  // On applique la liste de parfums à chaque tâche (le calcul répartira à parts égales par session).
+  (s.tasks||[]).forEach(t=>{ t.parfums = choisis.slice(); });
+  s.parfumsConfirmes = true;   // marqueur : confirmation faite
+  if(typeof prodSessUpsert==='function') prodSessUpsert(s);
+  closeModal();
+  toast(choisis.length?`${choisis.length} parfum(s) enregistré(s) ✓`:'Aucun parfum coché');
+  if(typeof markUnsaved==='function') markUnsaved();
 }
 
 // Collecte unique des données brutes sur une fenêtre de N jours.
@@ -22937,6 +23233,23 @@ function getAvailability(){
 }
 function saveAvailability(a){ localStorage.setItem(AVAIL_KEY, JSON.stringify(a)); }
 
+// --- Exceptions de planning (vacances, jours fermés, horaires ponctuels) ---
+// Une exception = {id, start:'YYYY-MM-DD', end:'YYYY-MM-DD', etat:'ferme'|'full'|'custom', slots:[['HH:MM','HH:MM']]}
+// Elle REMPLACE le cycle A/B sur les dates couvertes (incluses). 'ferme' = aucune plage.
+const AVAIL_EXC_KEY = 'sm_availExceptions';
+function getAvailExceptions(){
+  try{ const a=JSON.parse(localStorage.getItem(AVAIL_EXC_KEY)||'[]'); return Array.isArray(a)?a:[]; }
+  catch(e){ return []; }
+}
+function saveAvailExceptions(arr){ localStorage.setItem(AVAIL_EXC_KEY, JSON.stringify(Array.isArray(arr)?arr:[])); }
+// Trouve l'exception couvrant une date (la plus récemment ajoutée gagne en cas de chevauchement).
+function findAvailException(dateStr){
+  const list=getAvailExceptions();
+  let found=null;
+  list.forEach(e=>{ if(e && e.start && e.end && dateStr>=e.start && dateStr<=e.end) found=e; });
+  return found;
+}
+
 // "HH:MM" → minutes depuis minuit (gère 24:00 = 1440 = minuit fin de journée).
 function hmToMin(hm){ const [h,m]=String(hm).split(':').map(Number); return (h||0)*60+(m||0); }
 // Numéro de semaine du cycle (A ou B) pour une date donnée, par rapport à l'ancre.
@@ -22952,7 +23265,14 @@ function availWeekType(dateStr, conf){
 // Plages d'un jour donné (Date) selon le cycle.
 function availSlotsForDate(d, conf){
   conf=conf||getAvailability();
-  const wk = availWeekType(d.toISOString().slice(0,10), conf);
+  const dateStr = d.toISOString().slice(0,10);
+  // [EXCEPTIONS] Priorité absolue : si une exception couvre cette date, elle remplace le cycle A/B.
+  const exc = findAvailException(dateStr);
+  if(exc){
+    if(exc.etat==='ferme') return [];                       // fermé : aucune plage
+    return Array.isArray(exc.slots) ? exc.slots : [];       // full/custom : les plages de l'exception
+  }
+  const wk = availWeekType(dateStr, conf);
   const map = wk==='A' ? conf.weekA : conf.weekB;
   return (map[d.getDay()]||[]);
 }
@@ -23279,10 +23599,15 @@ function availEditor(){
     <div class="avail-anchor">Cycle ancré au <b>${fmtDate(conf.anchor||AVAIL_ANCHOR)}</b> (= Semaine A).</div>
     <h4 style="margin:12px 0 4px;color:var(--bordeaux)">Semaine A</h4>${weekRows('A', conf.weekA)}
     <h4 style="margin:14px 0 4px;color:var(--bordeaux)">Semaine B</h4>${weekRows('B', conf.weekB)}
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid #eadfd3">
+      <h4 style="margin:0 0 4px;color:var(--bordeaux)">🏖 Exceptions / vacances</h4>
+      <p class="note" style="margin:0 0 8px">Jours fermés, vacances, horaires ponctuels — ils remplacent ton cycle habituel sur les dates choisies.</p>
+      <button class="btn ghost" style="width:100%" onclick="availSave(true);availExceptionsForm()">Gérer mes exceptions →</button>
+    </div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn" onclick="availSave()">Enregistrer</button></div>`);
 }
-function availSave(){
+function availSave(silencieux){
   const conf=getAvailability();
   const out={anchor:conf.anchor||AVAIL_ANCHOR, weekA:{}, weekB:{}};
   _DOW_ORDER.forEach(dw=>{
@@ -23290,7 +23615,117 @@ function availSave(){
     out.weekB[dw]=_textToSlots(document.getElementById('av_B_'+dw)?.value);
   });
   saveAvailability(out);
+  if(silencieux) return;   // sauvegarde sans fermer le modal (enchaînement vers exceptions)
   closeModal(); toast('Disponibilités enregistrées ✓');
+  if(view==='mrp') renderMRP();
+}
+
+// --- UI : gestion des exceptions de planning (vacances, fermetures, horaires ponctuels) ---
+function availExceptionsForm(){
+  const list = getAvailExceptions().slice().sort((a,b)=>(a.start||'').localeCompare(b.start||''));
+  const etatLabel = e => e==='ferme' ? '🔒 Fermé' : e==='full' ? '🏖 Full dispo' : '🕐 Horaires';
+  const etatSlots = e => (e.etat==='ferme') ? 'aucune dispo'
+    : (e.slots||[]).map(([s,end])=>`${s}-${end}`).join(', ') || '—';
+  const rows = list.length ? list.map(e=>{
+    const periode = (e.start===e.end) ? fmtDate(e.start) : `${fmtDate(e.start)} → ${fmtDate(e.end)}`;
+    return `<div class="sum-box" style="align-items:flex-start">
+      <span style="flex:1"><b>${etatLabel(e.etat)}</b><br><span style="font-size:.82rem">${periode}</span><br><span style="color:#9a8a82;font-size:.76rem">${etatSlots(e)}</span></span>
+      <button class="btn ghost sm" onclick="availExceptionRemove('${e.id}')" title="Supprimer">🗑</button></div>`;
+  }).join('') : '<p class="note">Aucune exception. Ton cycle A/B s\'applique partout.</p>';
+
+  openModal(`<h3>🏖 Exceptions / vacances</h3>
+    <p class="note">Une exception remplace ton cycle habituel sur les dates choisies. Pratique pour les vacances, jours fériés, ou horaires ponctuels.</p>
+
+    <h4 style="margin:10px 0 6px;color:var(--bordeaux)">Raccourcis rapides</h4>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      <button class="btn ghost sm" onclick="availExceptionQuick('ferme-today')">🔒 Fermer aujourd'hui</button>
+      <button class="btn ghost sm" onclick="availExceptionQuick('ferme-weekend')">🔒 Fermer ce week-end</button>
+      <button class="btn ghost sm" onclick="availExceptionQuick('full-week')">🏖 Full dispo cette semaine</button>
+    </div>
+
+    <h4 style="margin:14px 0 6px;color:var(--bordeaux)">Sur-mesure</h4>
+    <div class="field"><label>Du</label><input type="date" id="exc_start"></div>
+    <div class="field"><label>Au (inclus)</label><input type="date" id="exc_end"></div>
+    <div class="field"><label>État</label>
+      <select id="exc_etat" onchange="availExceptionEtatChange()">
+        <option value="ferme">🔒 Fermé (aucune dispo)</option>
+        <option value="full">🏖 Full dispo (vacances)</option>
+        <option value="custom">🕐 Horaires précis</option>
+      </select></div>
+    <div class="field" id="exc_slots_wrap" style="display:none"><label>Plages (ex : 08:00-20:00, plusieurs séparées par virgule)</label>
+      <input id="exc_slots" placeholder="08:00-20:00" spellcheck="false"></div>
+    <button class="btn gold" style="width:100%;margin-top:4px" onclick="availExceptionAdd()">＋ Ajouter cette exception</button>
+
+    <h4 style="margin:16px 0 6px;color:var(--bordeaux)">Mes exceptions</h4>
+    ${rows}
+    <div class="modal-actions"><button class="btn ghost" onclick="availForm()">← Retour au planning</button>
+      <button class="btn" onclick="closeModal()">Fermer</button></div>`);
+  availExceptionEtatChange();
+}
+
+// Affiche le champ plages seulement pour 'full' et 'custom'.
+function availExceptionEtatChange(){
+  const etat=document.getElementById('exc_etat')?.value;
+  const wrap=document.getElementById('exc_slots_wrap');
+  const inp=document.getElementById('exc_slots');
+  if(!wrap) return;
+  if(etat==='ferme'){ wrap.style.display='none'; }
+  else { wrap.style.display='block';
+    if(inp && !inp.value){ inp.value = (etat==='full') ? '08:00-20:00' : ''; }
+  }
+}
+
+// Ajoute une exception sur-mesure depuis le formulaire.
+function availExceptionAdd(){
+  const start=document.getElementById('exc_start')?.value;
+  const end=document.getElementById('exc_end')?.value || start;
+  const etat=document.getElementById('exc_etat')?.value||'ferme';
+  if(!start){ toast('Choisis au moins une date de début'); return; }
+  if(end<start){ toast('La date de fin est avant le début'); return; }
+  let slots=[];
+  if(etat!=='ferme'){
+    slots=_textToSlots(document.getElementById('exc_slots')?.value);
+    if(!slots.length){ toast('Renseigne au moins une plage horaire'); return; }
+  }
+  const list=getAvailExceptions();
+  list.push({ id:'exc'+Date.now(), start, end, etat, slots });
+  saveAvailExceptions(list);
+  toast('Exception ajoutée ✓');
+  availExceptionsForm();
+  if(view==='mrp') renderMRP();
+}
+
+// Raccourcis rapides.
+function availExceptionQuick(kind){
+  const list=getAvailExceptions();
+  const d=new Date(); const iso = x => x.toISOString().slice(0,10);
+  if(kind==='ferme-today'){
+    list.push({id:'exc'+Date.now(), start:iso(d), end:iso(d), etat:'ferme', slots:[]});
+    toast('Aujourd\'hui fermé ✓');
+  } else if(kind==='ferme-weekend'){
+    // prochain samedi + dimanche
+    const day=d.getDay(); const toSat=(6-day+7)%7;
+    const sat=new Date(d); sat.setDate(d.getDate()+toSat);
+    const sun=new Date(sat); sun.setDate(sat.getDate()+1);
+    list.push({id:'exc'+Date.now(), start:iso(sat), end:iso(sun), etat:'ferme', slots:[]});
+    toast('Week-end fermé ✓');
+  } else if(kind==='full-week'){
+    // lundi → dimanche de la semaine courante
+    const day=(d.getDay()+6)%7; const mon=new Date(d); mon.setDate(d.getDate()-day);
+    const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+    list.push({id:'exc'+Date.now(), start:iso(mon), end:iso(sun), etat:'full', slots:[['08:00','20:00']]});
+    toast('Semaine en full dispo ✓');
+  }
+  saveAvailExceptions(list);
+  availExceptionsForm();
+  if(view==='mrp') renderMRP();
+}
+
+// Supprime une exception.
+function availExceptionRemove(id){
+  saveAvailExceptions(getAvailExceptions().filter(e=>e.id!==id));
+  toast('Exception supprimée');
+  availExceptionsForm();
   if(view==='mrp') renderMRP();
 }
 
