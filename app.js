@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v537';
+const APP_VERSION = 'v538';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -16805,13 +16805,20 @@ async function renderMarketForecastBox(){
   let fc; try{ fc=await marketForecast(); }catch(e){ box.innerHTML=''; return; }
   const st=(typeof getSettings==='function')?getSettings():{};
   const cible=Array.isArray(st.marketMix)?st.marketMix:[];
+  const cibleTotal = cible.reduce((s,c)=>s+(+c.pct||0),0);
   const cibleRows = cible.length
-    ? cible.slice().sort((a,b)=>b.pct-a.pct).map(c=>`<div class="sum-box"><span>${esc(c.parfum)}</span><b>${c.pct}%</b></div>`).join('')
+    ? cible.slice().sort((a,b)=>b.pct-a.pct).map(c=>{
+        const reel = cibleTotal>0 ? (c.pct/cibleTotal*100) : 0;
+        const normTxt = (Math.abs(cibleTotal-100)>1) ? ` <span style="color:#3f7d52;font-size:.78rem">→ ${Math.round(reel*10)/10}%</span>` : '';
+        return `<div class="sum-box"><span>${esc(c.parfum)}</span><b>${c.pct}%${normTxt}</b></div>`;
+      }).join('')
     : '';
+  const cibleTotalTxt = (cible.length && Math.abs(cibleTotal-100)>1)
+    ? `<p class="note" style="margin:4px 0 0;color:#8a6d3b">Total saisi ${Math.round(cibleTotal)} % — ramené à 100 % (colonne de droite). Tu raisonnes en proportions, le cerveau normalise.</p>` : '';
   const cibleBloc = `<div class="panel" style="margin-top:10px;background:#fbf7f0">
       <h2 style="font-size:1rem">🎯 Ma cible de répartition</h2>
       ${cible.length
-        ? `<p class="note" style="margin-top:0">Le cerveau croise cette cible avec ton historique pour ventiler tes marchés.</p>${cibleRows}`
+        ? `<p class="note" style="margin-top:0">Le cerveau croise cette cible avec ton historique pour ventiler tes marchés.</p>${cibleRows}${cibleTotalTxt}`
         : `<p class="note" style="margin-top:0">Aucune cible définie. Le cerveau utilise ton historique seul. Définis une cible pour affiner.</p>`}
       <div style="margin-top:8px"><button class="btn gold sm" onclick="marketMixForm()">${cible.length?'Modifier ma cible':'🎯 Définir ma cible'}</button></div>
     </div>`;
@@ -16862,7 +16869,7 @@ async function marketMixForm(){
     const val = (ciblePct[k]!=null) ? ciblePct[k] : (histoPct[k]!=null ? histoPct[k] : '');
     const histoTxt = histoPct[k]!=null ? `<span style="color:#9a8a82;font-size:.74rem">historique ${histoPct[k]}%</span>` : `<span style="color:#c9bcae;font-size:.74rem">pas d'historique</span>`;
     return `<div class="sum-box" style="align-items:center">
-      <span style="flex:1">${esc(p)}<br>${histoTxt}</span>
+      <span style="flex:1">${esc(p)}<br>${histoTxt} <span id="mixnorm_${k}" style="font-size:.74rem;color:#3f7d52"></span></span>
       <span style="display:flex;align-items:center;gap:4px">
         <input type="number" min="0" max="100" step="1" id="mix_${k}" value="${val}" style="width:62px;text-align:right" oninput="marketMixSum()">
         <b>%</b></span></div>`;
@@ -16897,6 +16904,21 @@ function marketMixSum(){
     else if(Math.abs(tot-100)<=1) hint.innerHTML='<span style="color:#3f7d52">✓ Équilibré à 100 %.</span>';
     else hint.innerHTML=`<span style="color:#8a6d3b">Total ${Math.round(tot)} % — sera ramené à 100 % automatiquement (proportions conservées).</span>`;
   }
+  // % réel normalisé par parfum (affiché à côté de chaque champ).
+  parfums.forEach(p=>{
+    const k=aiNormalize(p);
+    const normEl=document.getElementById('mixnorm_'+k);
+    if(!normEl) return;
+    const el=document.getElementById('mix_'+k);
+    const v=el?Math.max(0,+el.value||0):0;
+    if(v>0 && tot>0){
+      const pctReel = v/tot*100;
+      // Affiché seulement si la normalisation change la valeur (total ≠ 100).
+      normEl.textContent = (Math.abs(tot-100)>1) ? `→ ${Math.round(pctReel*10)/10}% réel` : '';
+    } else {
+      normEl.textContent='';
+    }
+  });
   // Exemple chiffré en direct : sur un marché de volRef, le parfum dominant donne X pièces (% normalisé).
   const exEl=document.getElementById('mix_exemple');
   if(exEl){
