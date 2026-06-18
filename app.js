@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v576';
+const APP_VERSION = 'v577';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -20544,15 +20544,27 @@ async function recoverOneProduction(i){
 async function recoverAllProductions(){
   if(!_recoverData || !_recoverData.manquantes.length) return;
   if(!confirm(`Restaurer les ${_recoverData.manquantes.length} lot(s) manquant(s) ?\n\nIls seront réinsérés dans tes productions. Aucune autre donnée ne sera touchée.`)) return;
-  try{
-    // Sauvegarde de sécurité avant l'opération groupée.
-    try{ await snapshotBackup('avant-récupération-lots'); }catch(eBk){ console.error('snapshot',eBk); }
-    const cleanList = _recoverData.manquantes.map(p=>{ const c={...p}; delete c._recName; delete c._fromBackup; return c; });
-    await db.productions.bulkPut(cleanList);
-    markUnsaved && markUnsaved();
-    toast(cleanList.length+' lot(s) restauré(s) ✓');
-    scanLostProductions();
-  }catch(e){ console.error('recoverAllProductions',e); toast('Erreur lors de la restauration groupée'); }
+  try{ await snapshotBackup('avant-récupération-lots'); }catch(eBk){ console.error('snapshot',eBk); }
+  let ok=0; const erreurs=[];
+  for(const p of _recoverData.manquantes){
+    try{
+      const c={...p}; delete c._recName; delete c._fromBackup;
+      await db.productions.put(c); ok++;
+    }catch(e){
+      console.error('restore prod',p,e);
+      try{ const c2={...p}; delete c2._recName; delete c2._fromBackup; delete c2.id; await db.productions.add(c2); ok++; }
+      catch(e2){ erreurs.push('lot '+(p.lotProduction||p.id)+' : '+(e2&&e2.message?e2.message:e2)); }
+    }
+  }
+  markUnsaved && markUnsaved();
+  if(erreurs.length){
+    toast(`Restauré : ${ok} lot(s). ${erreurs.length} échec(s).`);
+    const zone=document.getElementById('recoverProdZone');
+    if(zone){ zone.insertAdjacentHTML('afterbegin', `<p class="note" style="color:#b3261e">⚠ ${erreurs.length} lot(s) non restauré(s) : ${esc(erreurs.slice(0,3).join(' · '))}</p>`); }
+  } else {
+    toast(`✓ ${ok} lot(s) restauré(s)`);
+  }
+  scanLostProductions();
 }
 
 /* ===== RÉCUPÉRATION DES RECETTES & INGRÉDIENTS SUPPRIMÉS =====
@@ -20637,17 +20649,38 @@ async function recoverAllRecipes(){
   const { recsManq, itemsManq } = _recoverRecData;
   if(!recsManq.length && !itemsManq.length) return;
   if(!confirm(`Restaurer ${recsManq.length} recette(s) et ${itemsManq.length} ingrédient(s) ?\n\nIls seront réinsérés. Aucune autre donnée ne sera touchée.`)) return;
-  try{
-    try{ await snapshotBackup('avant-récupération-recettes'); }catch(eBk){ console.error('snapshot',eBk); }
-    if(recsManq.length) await db.recipes.bulkPut(recsManq);
-    if(itemsManq.length){
-      const clean = itemsManq.map(it=>{ const c={...it}; delete c._appartient; return c; });
-      await db.recipeItems.bulkPut(clean);
+  try{ await snapshotBackup('avant-récupération-recettes'); }catch(eBk){ console.error('snapshot',eBk); }
+  let okRec=0, okItem=0; const erreurs=[];
+  // Recettes : une par une (put = insère ou met à jour selon l'id).
+  for(const r of recsManq){
+    try{ await db.recipes.put(r); okRec++; }
+    catch(e){ console.error('restore recipe',r,e); erreurs.push('recette '+(r.produitNom||r.id)+' : '+(e&&e.message?e.message:e)); }
+  }
+  // Ingrédients : un par un. On retire le champ d'affichage, et on laisse Dexie gérer l'id.
+  for(const it of itemsManq){
+    try{
+      const c={...it}; delete c._appartient;
+      await db.recipeItems.put(c);
+      okItem++;
+    }catch(e){
+      console.error('restore item',it,e);
+      // Repli : si l'id pose conflit, on réinsère SANS id (nouvel auto-id).
+      try{
+        const c2={...it}; delete c2._appartient; delete c2.id;
+        await db.recipeItems.add(c2);
+        okItem++;
+      }catch(e2){ console.error('restore item retry',it,e2); erreurs.push('ingrédient #'+it.id+' : '+(e2&&e2.message?e2.message:e2)); }
     }
-    markUnsaved && markUnsaved();
-    toast('Restauration effectuée ✓');
-    scanLostRecipes();
-  }catch(e){ console.error('recoverAllRecipes',e); toast('Erreur lors de la restauration'); }
+  }
+  markUnsaved && markUnsaved();
+  const zone=document.getElementById('recoverRecZone');
+  if(erreurs.length){
+    toast(`Restauré : ${okRec} recette(s), ${okItem} ingrédient(s). ${erreurs.length} échec(s).`);
+    if(zone){ zone.insertAdjacentHTML('afterbegin', `<p class="note" style="color:#b3261e">⚠ ${erreurs.length} élément(s) non restauré(s) : ${esc(erreurs.slice(0,3).join(' · '))}${erreurs.length>3?'…':''}</p>`); }
+  } else {
+    toast(`✓ Restauré : ${okRec} recette(s), ${okItem} ingrédient(s)`);
+  }
+  scanLostRecipes();
 }
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
