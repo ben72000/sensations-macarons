@@ -30,7 +30,12 @@ const addQty = (...xs) => round3(xs.reduce((s,x)=>s+((+x)||0),0));
 const subQty = (a,b) => round3(((+a)||0)-((+b)||0));
 
 // --- Dates / heures ---
-const today = () => new Date().toISOString().slice(0,10);
+// today() : date du jour en HEURE LOCALE (AAAA-MM-JJ).
+// IMPORTANT : ne PAS utiliser toISOString() qui renvoie l'UTC — en fuseau positif (France
+// UTC+1/+2), aux premières heures d'un jour la date UTC est encore la veille, ce qui fait
+// basculer le 1er du mois au mois précédent (ex. 1er juin 00h30 → "2026-05-31"). Bug qui
+// excluait par ex. un marché du mois courant du CA du mois. On lit les composants locaux.
+const today = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 function fmtTime(iso){
   if(!iso) return '';
   const d=new Date(iso); if(isNaN(d)) return '';

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v608';
+const APP_VERSION = 'v610';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -21808,6 +21808,40 @@ async function controleStockMatieres(){
 // CONTRÔLE DE COHÉRENCE DU CA — recalcule depuis les données brutes et signale tout écart
 // entre le statut de paiement, les paiements enregistrés et le montant d'une commande.
 // 100% déterministe, lecture seule. Objectif : débusquer les écarts silencieux qui faussent le CA.
+// DIAGNOSTIC MARCHÉS — reproduit EXACTEMENT la logique de la carte « CA ce mois » et affiche
+// chaque étape pour chaque marché, afin de voir pourquoi un marché serait exclu. Lecture seule.
+async function diagMarches(){
+  const zone=document.getElementById('diagMarchesZone');
+  if(zone) zone.innerHTML='<p class="note">Inspection en cours…</p>';
+  const markets = await db.markets.toArray().catch(()=>[]);
+  const _mkCourant = monthKey(today());
+  const _todayRaw = today();
+  const rows = markets.map(k=>{
+    const dateRaw = k.date||'(vide)';
+    const statut = k.statut||'(vide)';
+    const ymk = ymKey(k.date||'');
+    const net = (typeof marketNetCA==='function') ? marketNetCA(k) : 0;
+    const estClos = statut==='clos';
+    const passeNet = net>0;
+    const passeMois = ymk===_mkCourant;
+    const compte = estClos && passeNet && passeMois;
+    const ca = k.ca||{};
+    return `<div class="sum-box" style="align-items:flex-start;${compte?'':'background:#fdf3f2'}">
+      <span style="font-size:.76rem">
+        <b>${esc(k.nom||'Marché #'+k.id)}</b><br>
+        date brute : <code>${esc(dateRaw)}</code> → mois <code>${esc(ymk)}</code><br>
+        statut : <code>${esc(statut)}</code> ${estClos?'✓ clos':'✗ pas clos'}<br>
+        ca : esp <code>${esc(String(ca.especes??'∅'))}</code> · cb <code>${esc(String(ca.cb??'∅'))}</code> · autre <code>${esc(String(ca.autre??'∅'))}</code> · fond <code>${esc(String(k.fondCaisse??'∅'))}</code><br>
+        marketNetCA : <b>${euro(net)}</b> ${passeNet?'✓ > 0':'✗ = 0'}<br>
+        mois courant : <code>${esc(_mkCourant)}</code> ${passeMois?'✓ correspond':'✗ ne correspond pas'}
+      </span>
+      <b style="color:${compte?'#3f7d52':'#b3261e'}">${compte?'COMPTÉ':'EXCLU'}</b></div>`;
+  }).join('');
+  if(zone) zone.innerHTML=`
+    <div class="banner" style="background:#eef3f8;border-color:#a0b8d0">🔬 <div><code>today()</code> = <b>${esc(_todayRaw)}</b> · mois courant = <b>${esc(_mkCourant)}</b>. Ci-dessous chaque marché et s'il entre dans le CA du mois.</div></div>
+    ${rows||'<p class="note">Aucun marché.</p>'}`;
+}
+
 async function controleCA(){
   const zone=document.getElementById('controleCaZone');
   if(zone) zone.innerHTML='<p class="note">Vérification en cours…</p>';
@@ -22010,6 +22044,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">✅ Contrôle de cohérence du CA</h2>
       <p class="note">Vérifie que ton chiffre d'affaires <b>tombe juste</b> : pour chaque commande, le statut de paiement, les paiements enregistrés et le montant total doivent concorder. Repère les écarts silencieux qui faussent le CA (commande « Payé » sans le bon montant encaissé, paiement sur une commande « En attente », trop-perçu…).</p>
       <div id="controleCaZone"><button class="btn gold sm" onclick="controleCA()">Vérifier la cohérence du CA</button></div>
+    </div>
+    <div class="panel" style="background:#eef3f8;margin-bottom:12px">
+      <h2 style="font-size:1rem">🔬 Diagnostic marchés (CA du mois)</h2>
+      <p class="note">Affiche, pour chaque marché clos, exactement ce que voit le calcul du CA du mois : date brute, statut, CA net, et s'il est compté dans le mois courant. Lecture seule — pour comprendre pourquoi un marché manque.</p>
+      <div id="diagMarchesZone"><button class="btn gold sm" onclick="diagMarches()">Inspecter mes marchés</button></div>
     </div>
     <div class="panel" style="background:#f0f4fa;margin-bottom:12px">
       <h2 style="font-size:1rem">🔍 Diagnostic CA du mois</h2>
