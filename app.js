@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v612';
+const APP_VERSION = 'v613';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1819,7 +1819,13 @@ async function renderDash(){
   const tLogsToday = await (db.temperatureLogs?db.temperatureLogs.where('date').equals(today()).toArray():Promise.resolve([])).catch(()=>[]);
   const releveFait = tLogsToday.length>0;
   // CA des marchés clôturés (somme espèces+CB+autre), rattaché à leur date de clôture.
-  const closedMk = (markets||[]).filter(k=>k.statut==='clos').map(k=>{
+  // IMPORTANT : on relit db.markets ICI, isolément, exactement comme caMonthDetail (qui affiche
+  // le bon total). Auparavant on dépendait de la variable `markets` du Promise.all : si cet accès
+  // échouait silencieusement (.catch(()=>[])), le CA des marchés tombait à 0 sur la carte alors
+  // que le détail, lui, les retrouvait. On supprime cette divergence.
+  let _marketsForCA = markets;
+  try { const _mk = await db.markets.toArray(); if(Array.isArray(_mk)) _marketsForCA = _mk; } catch(e){}
+  const closedMk = (_marketsForCA||[]).filter(k=>k.statut==='clos').map(k=>{
     const ca=k.ca||{}; return {date:(k.date||''), montant:marketNetCA(k)};
   }).filter(k=>k.montant>0);
   const _mkCourant = monthKey(today());
