@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v571';
+const APP_VERSION = 'v572';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -18717,8 +18717,8 @@ async function renderLabels(){
   const linkCount = id => oitems.filter(it=>it.orderId===id).length;
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 25 mm — Phomemo D520BT (AirPrint)</p></div></div>
-   <div class="banner">▤ <div>Étiquettes noir sur blanc, sans décoration, optimisées pour l'impression thermique. Chaque étiquette porte : produit, lot, DLC, date, et le QR de traçabilité. Choisis un nombre de copies pour imprimer en lot, ou imprime toutes les étiquettes d'une commande.</div></div>
+   <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 25 mm — Phomemo D520BT</p></div></div>
+   <div class="banner">▤ <div>Étiquettes noir sur blanc optimisées pour l'impression thermique (produit, lot, DLC, date, QR de traçabilité). <b>📤 Image (Phomemo)</b> génère l'étiquette en image à partager vers l'app Phomemo (impression Bluetooth). <b>⎙ Imprimer</b> passe par AirPrint si ton imprimante le gère.</div></div>
 
    ${orders.length?`<div class="panel"><h2>Imprimer les étiquettes d'une commande</h2>
      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Client</th><th>Batchs liés</th><th></th></tr></thead><tbody>
@@ -18751,6 +18751,7 @@ async function renderLabels(){
         <div class="label-actions">
           <label class="copies">Copies <input type="number" id="lblCopies_${p.id}" min="1" max="200" value="1"></label>
           <button class="btn ghost sm" onclick="printLabelCopies(${p.id})">⎙ Imprimer</button>
+          <button class="btn gold sm" onclick="shareLabelImage(${p.id})" title="Générer une image à partager vers l'app Phomemo">📤 Image (Phomemo)</button>
         </div>
      </div>`;}).join('')}
    </div>`:`<div class="empty">Aucun batch produit. Lance une production pour générer ses étiquettes.</div>`}
@@ -18770,6 +18771,83 @@ async function renderLabels(){
    Un backend Bluetooth/ESC-POS pourra se brancher ici plus tard (Android/desktop).
    ============================================================ */
 // Prépare les données d'étiquette d'un batch de production.
+
+/* ===== ÉTIQUETTE → IMAGE PARTAGEABLE (pour l'app Phomemo) =====
+   Le Bluetooth direct est impossible depuis une PWA iOS. On génère donc l'étiquette
+   comme une IMAGE PNG haute résolution (format 50×25 mm), que l'utilisateur partage
+   vers l'app Phomemo (qui gère elle-même l'impression Bluetooth de l'imprimante). */
+
+// Dessine une étiquette sur un canvas et renvoie le canvas (50×25 mm @ ~12 px/mm = 600×300).
+async function labelToCanvas(d){
+  const PXMM = 12;               // résolution : 12 pixels par mm (net pour le thermique)
+  const W = 50*PXMM, H = 25*PXMM;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  // Fond blanc.
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#000';
+  const pad = 1.2*PXMM;
+  // QR à gauche (carré calé sur la hauteur utile).
+  const qrSize = H - pad*2;
+  if(d.qr){
+    await new Promise(res=>{
+      const img = new Image();
+      img.onload = ()=>{ ctx.drawImage(img, pad, pad, qrSize, qrSize); res(); };
+      img.onerror = ()=>res();
+      img.src = d.qr;
+    });
+  }
+  // Zone texte à droite.
+  const tx = pad + qrSize + 1.2*PXMM;
+  const tw = W - tx - pad;
+  let y = pad + 0.5*PXMM;
+  // Helper : texte tronqué à la largeur dispo.
+  const drawLine = (txt, sizeMm, bold)=>{
+    ctx.font = `${bold?'bold ':''}${sizeMm*PXMM}px Arial, Helvetica, sans-serif`;
+    let s = String(txt==null?'':txt);
+    while(s.length>1 && ctx.measureText(s).width > tw){ s = s.slice(0,-1); }
+    if(s.length<String(txt).length && s.length>1){ s = s.slice(0,-1)+'…'; }
+    y += sizeMm*PXMM;
+    ctx.fillText(s, tx, y);
+    y += 0.5*PXMM;
+  };
+  // Produit (gras) + pastille emplacement.
+  drawLine(d.produit + (d.empLettre?'  ['+d.empLettre+']':''), 2.9, true);
+  drawLine('Lot : '+d.lot, 2.3, false);
+  if(d.emplacement) drawLine('Empl. : '+d.emplacement, 2.3, false);
+  drawLine('Fab. : '+d.fab, 2.3, false);
+  // DLC en gras (info critique).
+  drawLine('DLC : '+d.dlc, 2.7, true);
+  return cv;
+}
+
+// Génère l'image d'étiquette d'un batch et la partage (ou la télécharge en repli).
+async function shareLabelImage(prodId){
+  try{
+    const d = await buildLabelData(prodId);
+    if(!d){ toast('Batch introuvable'); return; }
+    const cv = await labelToCanvas(d);
+    const blob = await new Promise(res=> cv.toBlob(res, 'image/png'));
+    if(!blob){ toast('Impossible de générer l\'image'); return; }
+    const fileName = 'etiquette-'+(d.lot||'lot').replace(/[^\w-]/g,'_')+'.png';
+    const file = new File([blob], fileName, {type:'image/png'});
+    // Partage natif iOS (vers l'app Phomemo, Photos, etc.) si disponible et compatible fichiers.
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{
+        await navigator.share({ files:[file], title:'Étiquette '+d.lot });
+        return;
+      }catch(eShare){ if(eShare && eShare.name==='AbortError') return; /* annulé par l'utilisateur */ }
+    }
+    // Repli : téléchargement de l'image (l'utilisateur l'ouvre ensuite dans Phomemo).
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    toast('Image enregistrée — ouvre-la dans l\'app Phomemo');
+  }catch(e){ console.error('shareLabelImage',e); toast('Erreur lors de la génération de l\'étiquette'); }
+}
 async function buildLabelData(prodId){
   const p = await db.productions.get(prodId);
   if(!p) return null;
