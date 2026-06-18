@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v604';
+const APP_VERSION = 'v602';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -110,13 +110,6 @@ db.version(16).stores({
 // la matière est supprimée plus tard.
 db.version(17).stores({
   packagingConsumption: '++id, orderId, materialId, date'
-});
-// v18 : trace des ajustements d'inventaire NÉGATIFS (manques constatés au comptage physique).
-// Les surplus créent déjà un lot de correction (inventaire:true) ; les manques décrémentaient
-// le stock sans trace. On enregistre désormais chaque manque pour réconcilier le stock.
-// {materialId, qte (positive = quantité retirée), date, note}
-db.version(18).stores({
-  inventoryMoves: '++id, materialId, date'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -2554,7 +2547,7 @@ async function inventaireApply(){
 async function inventaireConfirm(list){
   if(!Array.isArray(list) || !list.length){ closeModal(); return; }
   try{
-    await db.transaction('rw', db.materialLots, db.inventoryMoves, async()=>{
+    await db.transaction('rw', db.materialLots, async()=>{
       for(const c of list){
         const delta = round3(+c.delta||0);
         if(Math.abs(delta) < 1e-6) continue;
@@ -2573,8 +2566,6 @@ async function inventaireConfirm(list){
             const pris = round3(Math.min(reste, +l.qteRestante));
             if(pris>0){ await db.materialLots.update(l.id, {qteRestante: subQty(l.qteRestante, pris)}); reste = subQty(reste, pris); }
           }
-          // TRACE du manque d'inventaire (sortie légitime, pour réconcilier le stock).
-          await db.inventoryMoves.add({materialId:+c.id, qte:round3(-delta), date:today(), note:'Manque constaté à l\'inventaire'});
         }
       }
     });
@@ -21655,12 +21646,11 @@ async function diagAllLots(){
 async function controleStockMatieres(){
   const zone=document.getElementById('controleStockMatZone');
   if(zone) zone.innerHTML='<p class="note">Réconciliation en cours…</p>';
-  const [materials, lots, prodConso, packConso, invMoves] = await Promise.all([
+  const [materials, lots, prodConso, packConso] = await Promise.all([
     db.materials.toArray().catch(()=>[]),
     db.materialLots.toArray().catch(()=>[]),
     db.prodConsumption.toArray().catch(()=>[]),
-    db.packagingConsumption.toArray().catch(()=>[]),
-    db.inventoryMoves.toArray().catch(()=>[])
+    db.packagingConsumption.toArray().catch(()=>[])
   ]);
   // index : lot -> matière (pour rattacher une conso production à sa matière)
   const lotMat={}; lots.forEach(l=>lotMat[l.id]=l.materialId);
@@ -21674,28 +21664,24 @@ async function controleStockMatieres(){
     const lotIds=new Set(sesLots.map(l=>l.id));
     const sortieProd=round3(prodConso.filter(c=>lotIds.has(c.materialLotId)).reduce((s,c)=>s+(+c.qteConsommee||0),0));
     const sortiePack=round3(packConso.filter(p=>p.materialId===m.id).reduce((s,p)=>s+(+p.qte||0),0));
-    // sorties d'inventaire (manques constatés au comptage physique) — sortie LÉGITIME tracée
-    const sortieInv=round3(invMoves.filter(v=>v.materialId===m.id).reduce((s,v)=>s+(+v.qte||0),0));
-    const attendu=round3(entrees - sortieProd - sortiePack - sortieInv);
+    const attendu=round3(entrees - sortieProd - sortiePack);
     const ecart=round3(restant - attendu);
     if(Math.abs(ecart)>0.001){
       const d=(typeof dispUnit==='function')?dispUnit(m):{f:1,u:m.unite||''};
       ecarts.push({ id:m.id, nom:m.nom||'(matière ?)',
         entreesAff:round3(entrees*d.f), restantAff:round3(restant*d.f), attenduAff:round3(attendu*d.f),
         ecartAff:round3(ecart*d.f), unite:d.u,
-        sortieProdAff:round3(sortieProd*d.f), sortiePackAff:round3(sortiePack*d.f), sortieInvAff:round3(sortieInv*d.f) });
+        sortieProdAff:round3(sortieProd*d.f), sortiePackAff:round3(sortiePack*d.f) });
     }
   });
   if(!zone) return;
   if(!ecarts.length){
-    const totalInv=round3(invMoves.reduce((s,v)=>s+(+v.qte||0),0));
-    const invTxt = totalInv>0 ? ` Les ajustements d'inventaire (manques constatés au comptage) sont pris en compte comme sorties légitimes.` : '';
-    zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div><b>Stock matières cohérent.</b> Les ${nbControlees} matière(s) avec lots se réconcilient : stock restant = reçu − sorties tracées (production + emballages + inventaire).${invTxt}</div></div>`;
+    zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div><b>Stock matières cohérent.</b> Les ${nbControlees} matière(s) avec lots se réconcilient : stock restant = reçu − sorties tracées (production + emballages).</div></div>`;
     return;
   }
   const rows=ecarts.sort((a,b)=>Math.abs(b.ecartAff)-Math.abs(a.ecartAff)).map(e=>
     `<div class="sum-box" style="cursor:pointer;align-items:flex-start" onclick="matForm(${e.id})">
-       <span>${esc(e.nom)}<br><span style="color:#9a8a82;font-size:.76rem">reçu ${qty(e.entreesAff)} − prod ${qty(e.sortieProdAff)} − embal. ${qty(e.sortiePackAff)}${e.sortieInvAff>0?` − inventaire ${qty(e.sortieInvAff)}`:''} = attendu ${qty(e.attenduAff)} ${esc(e.unite)} · stock réel ${qty(e.restantAff)}</span></span>
+       <span>${esc(e.nom)}<br><span style="color:#9a8a82;font-size:.76rem">reçu ${qty(e.entreesAff)} − prod ${qty(e.sortieProdAff)} − embal. ${qty(e.sortiePackAff)} = attendu ${qty(e.attenduAff)} ${esc(e.unite)} · stock réel ${qty(e.restantAff)}</span></span>
        <b style="color:#b3261e">${e.ecartAff>0?'+':''}${qty(e.ecartAff)} ${esc(e.unite)}</b></div>`).join('');
   zone.innerHTML=`
     <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div><b>${ecarts.length} matière(s)</b> présentent un écart inexpliqué par les mouvements tracés. Cause probable : un ajustement manuel de stock (légitime) ou une sortie non enregistrée. Touche une ligne pour ouvrir la matière.</div></div>
@@ -21708,11 +21694,9 @@ async function controleStockMatieres(){
 async function controleCA(){
   const zone=document.getElementById('controleCaZone');
   if(zone) zone.innerHTML='<p class="note">Vérification en cours…</p>';
-  const [orders, clients, markets, marketMoves] = await Promise.all([
+  const [orders, clients] = await Promise.all([
     db.orders.toArray().catch(()=>[]),
-    db.clients.toArray().catch(()=>[]),
-    db.markets.toArray().catch(()=>[]),
-    db.marketMoves.toArray().catch(()=>[])
+    db.clients.toArray().catch(()=>[])
   ]);
   const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
   const anomalies=[];
@@ -21744,55 +21728,18 @@ async function controleCA(){
       det.push(`paiement sans date (CA mal ventilé par mois)`);
     }
     if(det.length){
-      anomalies.push({oid:o.id, nom:esc(clName(o.clientId)), date:o.date||'', montant, encaisse, det});
+      anomalies.push({oid:o.id, nom:clName(o.clientId), date:o.date||'', montant, encaisse, det});
     }
-  });
-
-  // MARCHÉS CLOS : modèle différent des commandes (pas de statut « Payé »/paiements, mais une
-  // caisse espèces/CB/autre et un fond de caisse). On vérifie la cohérence de cette caisse.
-  let nbMarches=0;
-  markets.forEach(mk=>{
-    if(mk.statut!=='clos') return;
-    nbMarches++;
-    const moves=marketMoves.filter(v=>v.marketId===mk.id);
-    let vendu=0;
-    try{ const t=(typeof marketTotals==='function')?marketTotals(mk, moves):null; vendu=t?+t.vendu||0:0; }catch(e){ vendu=0; }
-    const ca=mk.ca||{};
-    const especesBrut=money2(+ca.especes||0);
-    const fond=money2(+mk.fondCaisse||0);
-    const cb=money2(+ca.cb||0), autre=money2(+ca.autre||0);
-    const caNet=(typeof marketNetCA==='function')?money2(marketNetCA(mk)):money2(Math.max(0,especesBrut-fond)+cb+autre);
-    const det=[];
-    const fondExcessif = fond>especesBrut+0.01 && especesBrut>0;
-    // 1) fond de caisse supérieur aux espèces comptées
-    if(fondExcessif){
-      det.push(`fond de caisse ${euro(fond)} > espèces comptées ${euro(especesBrut)} (le CA espèces tombe à 0)`);
-    }
-    // 2) marché clos avec des ventes mais aucun CA saisi (sauf si déjà expliqué par le fond excessif)
-    if(caNet<=0.01 && vendu>0 && !fondExcessif){
-      det.push(`clos avec ${qty(vendu)} macaron(s) vendu(s) mais aucun CA saisi`);
-    }
-    // 3) du CA saisi mais aucun macaron vendu
-    if(caNet>0.01 && vendu<=0){
-      det.push(`CA ${euro(caNet)} saisi mais aucun macaron vendu enregistré`);
-    }
-    if(det.length){
-      anomalies.push({marche:true, mkId:mk.id, nom:`⛺ ${esc(mk.nom||'Marché')}`, date:mk.date||'', montant:caNet, encaisse:caNet, det});
-    }
-    totalFacture=money2(totalFacture+caNet);
-    totalEncaisse=money2(totalEncaisse+caNet);
   });
   if(!zone) return;
   if(!anomalies.length){
-    zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div><b>CA cohérent.</b> ${nbControlees} commande(s) et ${nbMarches} marché(s) clos contrôlé(s) : statut, paiements, montants et caisses concordent. Total ${euro(totalFacture)} · encaissé ${euro(totalEncaisse)} · reste à encaisser ${euro(money2(totalFacture-totalEncaisse))}.</div></div>`;
+    zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div><b>CA cohérent.</b> Les ${nbControlees} commande(s) contrôlée(s) concordent (statut, paiements, montant). Total facturé ${euro(totalFacture)} · encaissé ${euro(totalEncaisse)} · reste à encaisser ${euro(money2(totalFacture-totalEncaisse))}.</div></div>`;
     return;
   }
-  const rows=anomalies.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(a=>{
-    const action = a.marche ? `marketDetail(${a.mkId})` : `cmdView(${a.oid})`;
-    return `<div class="sum-box" style="cursor:pointer;align-items:flex-start" onclick="${action}">
-       <span>${fmtDate(a.date)} · ${a.nom}<br><span style="color:#b3261e;font-size:.78rem">${a.det.map(esc).join('<br>')}</span></span>
-       <b>${euro(a.montant)}</b></div>`;
-  }).join('');
+  const rows=anomalies.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(a=>
+    `<div class="sum-box" style="cursor:pointer;align-items:flex-start" onclick="cmdView(${a.oid})">
+       <span>${fmtDate(a.date)} · ${esc(a.nom)}<br><span style="color:#b3261e;font-size:.78rem">${a.det.map(esc).join('<br>')}</span></span>
+       <b>${euro(a.montant)}</b></div>`).join('');
   zone.innerHTML=`
     <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div><b>${anomalies.length} commande(s)</b> présentent un écart de cohérence du CA. Touche une ligne pour ouvrir la commande et corriger.</div></div>
     ${rows}`;
