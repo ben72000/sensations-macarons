@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v536';
+const APP_VERSION = 'v537';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15863,6 +15863,34 @@ async function coquesStockByParfum(){
   });
   return map;
 }
+
+// [CONNEXION #2] Stock de COMPOSANTS déjà produits, par parfum : coques cuites et garnitures
+// (ganache/crémeux) prêtes. Permet au cerveau de savoir ce qui est déjà fait pour ne pas
+// faire reproduire inutilement. Renvoie { parfumNormalisé: {parfum, coques, garniture} }.
+// - coques    : nombre de coques en stock (2 coques = 1 macaron)
+// - garniture : nombre de doses de garniture en stock (1 dose = 1 macaron)
+async function composantsStockByParfum(){
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const map = {};
+  prods.forEach(p=>{
+    const comp = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
+    const reste = round3(+p.qteRestante||0);
+    if(reste<=0) return;
+    // On ne s'intéresse qu'aux composants intermédiaires terminés (coques, ganache/crémeux),
+    // pas aux produits finis (gérés par enStock du plan) ni aux composants catalogue mutualisés.
+    if(comp!=='coques' && comp!=='ganache') return;
+    if(p.composantCatalogue===true) return;   // chantache & co : réserve mutualisée, pas par parfum
+    const fini = (typeof prodStatut==='function') ? prodStatut(p)==='termine' : true;
+    if(!fini) return;
+    const nom = (typeof prodNomComplet==='function') ? prodNomComplet(p) : '';
+    if(!nom || nom==='(recette supprimée)') return;
+    const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
+    if(!map[k]) map[k]={parfum:nom, coques:0, garniture:0};
+    if(comp==='coques') map[k].coques += reste;       // reste = nb de coques
+    else if(comp==='ganache') map[k].garniture += reste; // reste = nb de doses
+  });
+  return map;
+}
 // Construit la liste des productions conseillées (avant calage temps).
 // ============================================================================
 // ORDONNANCEUR DE PRODUCTION — moteur d'optimisation des meringues (validé)
@@ -16442,6 +16470,32 @@ async function atelierBrain(opts){
     lignesPlan.push({ parfum:it.produitNom, recipeId:it.recipeId, qte:it.qte, nbBatchs, besoinNet:it.qte, type:it.type, raison:it.raison });
   });
 
+  // --- 2 bis) [CONNEXION #2] STOCK DE COMPOSANTS déjà produits (coques + garnitures) par parfum.
+  // Pour chaque ligne, on indique ce qui est DÉJÀ fait, donc ce qu'il reste vraiment à produire.
+  let compStock = {};
+  try{ compStock = (typeof composantsStockByParfum==='function') ? await composantsStockByParfum() : {}; }catch(e){ console.error('brain.compstock',e); }
+  const CQ_PAR_MAC = (typeof COQUES_PAR_MACARON!=='undefined') ? COQUES_PAR_MACARON : 2;
+  lignesPlan.forEach(l=>{
+    const k = (typeof aiNormalize==='function') ? aiNormalize(l.parfum) : (l.parfum||'').toLowerCase();
+    const cs = compStock[k];
+    if(cs){
+      const coquesStock = +cs.coques||0;        // nb de coques
+      const garnStock = +cs.garniture||0;       // nb de doses (1 dose = 1 macaron)
+      const macParCoques = Math.floor(coquesStock / CQ_PAR_MAC);   // macarons assemblables côté coques
+      // macarons immédiatement assemblables = min(coques dispo, garniture dispo)
+      const assemblablesSansRien = Math.max(0, Math.min(macParCoques, garnStock));
+      l.coquesStock = coquesStock;
+      l.garnitureStock = garnStock;
+      l.assemblablesSansRien = Math.min(assemblablesSansRien, l.qte);
+      // Reste à produire en tenant compte des composants déjà là (indicatif, n'altère pas le besoin matières).
+      l.coquesAprod = Math.max(0, l.qte*CQ_PAR_MAC - coquesStock);
+      l.garnitureAprod = Math.max(0, l.qte - garnStock);
+    } else {
+      l.coquesStock = 0; l.garnitureStock = 0; l.assemblablesSansRien = 0;
+      l.coquesAprod = l.qte*CQ_PAR_MAC; l.garnitureAprod = l.qte;
+    }
+  });
+
   // --- 3) MATIÈRES : de quoi manque-t-il pour exécuter ce plan ?
   let matCheck = {manques:[], ok:true, details:[]};
   try{ matCheck = await mrpCheckMatieres({lignes:lignesPlan}) || matCheck; }catch(e){ console.error('brain.mat',e); }
@@ -16573,6 +16627,12 @@ async function atelierBrain(opts){
     nbProductions: lignesPlan.length,
     nbCommandes: commandes.length,
     totMacAprod,
+    // Stock de composants déjà produits (par parfum) — évite de reproduire l'existant.
+    composantsStock: lignesPlan.filter(l=> (l.coquesStock>0 || l.garnitureStock>0)).map(l=>({
+      parfum:l.parfum, coquesStock:l.coquesStock, garnitureStock:l.garnitureStock,
+      assemblablesSansRien:l.assemblablesSansRien, coquesAprod:l.coquesAprod, garnitureAprod:l.garnitureAprod
+    })),
+    totAssemblablesSansRien: lignesPlan.reduce((s,l)=>s+(+l.assemblablesSansRien||0),0),
     // Marchés à venir (volume croisé, réparti frais/congelé, net à produire)
     marches, nbMarches: marches.length,
     marketMode: mkMode, marketFraisPct: mkFraisPct,
