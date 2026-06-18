@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v534';
+const APP_VERSION = 'v535';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -16780,6 +16780,10 @@ async function marketMixForm(){
   const parfums = recipes.map(r=>r.produitNom).filter(Boolean)
     .sort((a,b)=> (histoPct[aiNormalize(b)]||0) - (histoPct[aiNormalize(a)]||0) || a.localeCompare(b));
 
+  // Volume de référence pour l'exemple chiffré : prédiction (suggestion), sinon moyenne, sinon 200.
+  const volRef = (fc && fc.suggestion>0) ? fc.suggestion : ((fc && fc.moyenneVendu>0) ? fc.moyenneVendu : 200);
+  window._mixVolRef = volRef;
+
   const rows = parfums.map(p=>{
     const k=aiNormalize(p);
     // valeur pré-remplie : ta cible si elle existe, sinon l'historique, sinon vide
@@ -16794,6 +16798,7 @@ async function marketMixForm(){
 
   openModal(`<h3>🎯 Ma cible de répartition marché</h3>
     <p class="note">Définis la part de chaque parfum pour un marché type. Le cerveau croisera cette cible avec ton historique de ventes. Pré-rempli avec ton historique — ajuste librement.</p>
+    <div class="banner" style="background:#eef5f0;border-color:#bcdcc0;margin-bottom:8px">📦 <div><b>Tu définis ici des pourcentages, pas des quantités.</b> Le volume (nombre de macarons) est propre à chaque marché : tu le saisis sur la fiche du marché. Le cerveau fait ensuite : <b>volume × ta répartition = pièces par parfum</b>.<div id="mix_exemple" style="margin-top:6px;font-size:.82rem;color:#3f7d52"></div></div></div>
     <div class="sum-box" style="background:#eef5f0"><span><b>Total</b></span><b id="mix_total">0 %</b></div>
     <p class="note" id="mix_hint" style="margin:4px 0 10px"></p>
     ${rows || '<p class="note">Aucune recette. Crée des recettes pour définir une cible.</p>'}
@@ -16811,13 +16816,28 @@ async function marketMixForm(){
 function marketMixSum(){
   const parfums = window._mixParfums||[];
   let tot=0;
-  parfums.forEach(p=>{ const el=document.getElementById('mix_'+aiNormalize(p)); if(el) tot += Math.max(0,+el.value||0); });
+  const vals=[];
+  parfums.forEach(p=>{ const el=document.getElementById('mix_'+aiNormalize(p)); const v=el?Math.max(0,+el.value||0):0; tot+=v; if(v>0) vals.push({parfum:p, pct:v}); });
   const totEl=document.getElementById('mix_total'); if(totEl) totEl.textContent = Math.round(tot)+' %';
   const hint=document.getElementById('mix_hint');
   if(hint){
     if(tot===0) hint.innerHTML='<span style="color:#9a8a82">Saisis au moins un parfum. Pas besoin de tomber pile à 100 : les parts seront normalisées.</span>';
     else if(Math.abs(tot-100)<=1) hint.innerHTML='<span style="color:#3f7d52">✓ Équilibré à 100 %.</span>';
     else hint.innerHTML=`<span style="color:#8a6d3b">Total ${Math.round(tot)} % — sera ramené à 100 % automatiquement (proportions conservées).</span>`;
+  }
+  // Exemple chiffré en direct : sur un marché de volRef, le parfum dominant donne X pièces (% normalisé).
+  const exEl=document.getElementById('mix_exemple');
+  if(exEl){
+    const vol=window._mixVolRef||200;
+    if(tot>0 && vals.length){
+      vals.sort((a,b)=>b.pct-a.pct);
+      const top=vals[0];
+      const pctNorm=top.pct/tot*100;
+      const pieces=Math.round(vol*pctNorm/100);
+      exEl.innerHTML=`Exemple : sur un marché de <b>${vol}</b> macarons, <b>${esc(top.parfum)}</b> (${Math.round(pctNorm)}%) = <b>${pieces}</b> pièces.`;
+    } else {
+      exEl.textContent='';
+    }
   }
 }
 
