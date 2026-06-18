@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v549';
+const APP_VERSION = 'v550';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -23610,28 +23610,84 @@ async function retroplanningView(orderId){
   }
   const cl = o.clientId ? await db.clients.get(o.clientId).catch(()=>null) : null;
   const fmtJ = d => d.toLocaleString('fr-FR',{weekday:'long', day:'2-digit', month:'long', hour:'2-digit', minute:'2-digit'});
-  const ico = j => j.cle==='livraison'?'🎁' : j.type==='attente'?'⏳' : j.cle==='coques'?'🥚' : j.cle==='ganache'?'🍫' : j.cle==='montage'?'🔗' : '•';
-  // Les jalons sont déjà triés du plus tôt au plus tard.
-  const rows = r.jalons.map(j=>{
-    const col = j.cle==='livraison' ? '#3f7d52' : (j.type==='attente' ? '#9a8a82' : '#5a3a2a');
-    return `<div class="sugg-row" style="align-items:flex-start">
-      <div class="sugg-main">
-        <div><b style="color:${col}">${ico(j)} ${esc(j.label)}</b></div>
-        <div style="font-size:.82rem;color:#8a6d3b;margin-top:1px">${esc(fmtJ(j.date))}</div>
-        ${j.note?`<div style="font-size:.76rem;color:#9a8a82;margin-top:2px">${esc(j.note)}</div>`:''}
-      </div></div>`;
-  }).join('');
+  const fmtHeure = d => d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+  const fmtJour = d => d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
+
+  // [CHANTIER 1] Rétroplanning CALÉ sur les disponibilités (3 types de tâches).
+  let cale = null;
+  try{ cale = await retroplanningCale(orderId); }catch(e){ console.error('retroCale',e); }
+
+  // Métadonnées d'affichage par type de tâche calée.
+  const TYPE_META = {
+    encadree: {ico:'🟡', col:'#b8860b', tag:'présence requise'},
+    active:   {ico:'🔴', col:'#a52a2a', tag:'travail actif'},
+    libre:    {ico:'🟢', col:'#3f7d52', tag:'sans surveillance'},
+    ancre:    {ico:'🎁', col:'#3f7d52', tag:''}
+  };
+
+  let corps, sousTitre, debordementBanner='';
+  if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
+    // Vue CALÉE : on affiche début → fin pour les tâches de travail, et la période pour les attentes.
+    const rows = cale.jalonsCales.map(j=>{
+      const meta = TYPE_META[j.type] || TYPE_META.active;
+      if(j.tropLongue){
+        return `<div class="sugg-row" style="align-items:flex-start">
+          <div class="sugg-main">
+            <div><b style="color:#b3261e">⚠️ ${esc(j.label)}</b></div>
+            <div style="font-size:.8rem;color:#b3261e;margin-top:1px">Trop longue pour tes créneaux habituels — à étaler sur plusieurs sessions (confirme l'organisation).</div>
+          </div></div>`;
+      }
+      let quand;
+      if(j.type==='ancre'){
+        quand = esc(fmtJ(j.debut));
+      } else if(j.type==='libre'){
+        // période passive : du ... au ...
+        const mj = (a,b)=> dayKey2(a)===dayKey2(b);
+        quand = mj(j.debut,j.fin)
+          ? `${esc(fmtJour(j.debut))} de ${esc(fmtHeure(j.debut))} à ${esc(fmtHeure(j.fin))}`
+          : `de ${esc(fmtJour(j.debut))} ${esc(fmtHeure(j.debut))} à ${esc(fmtJour(j.fin))} ${esc(fmtHeure(j.fin))}`;
+      } else {
+        // tâche active/encadrée : jour + créneau début-fin
+        quand = `${esc(fmtJour(j.debut))} · ${esc(fmtHeure(j.debut))} → ${esc(fmtHeure(j.fin))}`;
+      }
+      return `<div class="sugg-row" style="align-items:flex-start">
+        <div class="sugg-main">
+          <div><b style="color:${meta.col}">${meta.ico} ${esc(j.label)}</b>${meta.tag?` <span style="font-size:.7rem;color:#9a8a82">· ${meta.tag}</span>`:''}</div>
+          <div style="font-size:.82rem;color:#8a6d3b;margin-top:1px">${quand}</div>
+        </div></div>`;
+    }).join('');
+    sousTitre = `Calé sur tes disponibilités · ${cale.nbMacarons} macaron(s)`;
+    if(cale.aDesDebordements){
+      debordementBanner = `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-top:8px">⚠️ <div>Une ou plusieurs étapes ne tiennent pas dans tes créneaux habituels. Il faudra les étaler sur plusieurs sessions, ou élargir tes disponibilités sur cette période.</div></div>`;
+    }
+    corps = rows;
+  } else {
+    // Repli : ancienne vue brute (délais incompressibles, sans calage horaire).
+    const ico = j => j.cle==='livraison'?'🎁' : j.type==='attente'?'⏳' : j.cle==='coques'?'🥚' : j.cle==='ganache'?'🍫' : j.cle==='montage'?'🔗' : '•';
+    corps = r.jalons.map(j=>{
+      const col = j.cle==='livraison' ? '#3f7d52' : (j.type==='attente' ? '#9a8a82' : '#5a3a2a');
+      return `<div class="sugg-row" style="align-items:flex-start">
+        <div class="sugg-main">
+          <div><b style="color:${col}">${ico(j)} ${esc(j.label)}</b></div>
+          <div style="font-size:.82rem;color:#8a6d3b;margin-top:1px">${esc(fmtJ(j.date))}</div>
+          ${j.note?`<div style="font-size:.76rem;color:#9a8a82;margin-top:2px">${esc(j.note)}</div>`:''}
+        </div></div>`;
+    }).join('');
+    sousTitre = 'Jalons indicatifs (délais incompressibles)';
+  }
   const contraintes = (r.contraintes&&r.contraintes.length)
     ? `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a;margin-top:8px">📋 <div><b>Contraintes prises en compte :</b><br>${r.contraintes.map(esc).join('<br>')}</div></div>`
     : '';
   openModal(`<h3>🕘 Rétroplanning</h3>
     <p style="margin-bottom:4px"><b>Livraison ${esc(cl?cl.nom:'')}</b> · ${esc(fmtJ(r.livraison))}</p>
-    <p class="note" style="margin-bottom:10px">À rebours depuis la livraison, voici quand commencer chaque étape. Les heures seront affinées selon tes disponibilités dans une prochaine version.</p>
-    ${rows}
+    <p class="note" style="margin-bottom:10px">${esc(sousTitre)}. 🔴 travail actif · 🟡 présence requise (cuisson) · 🟢 sans surveillance (peut tourner la nuit).</p>
+    ${corps}
+    ${debordementBanner}
     ${contraintes}
-    <p class="note" style="margin-top:8px;color:#9a8a82">v1 : jalons indicatifs basés sur les délais incompressibles (repos ganache, maturation). Les durées de travail précises seront imbriquées dans tes plages horaires ensuite.</p>
     <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn gold" onclick="retroplanningICS(${orderId})" title="Ajouter ces étapes à ton calendrier iPhone">📲 Ajouter au calendrier</button></div>`);
 }
+// Helper : clé de jour (YYYY-MM-DD local) pour comparer deux dates.
+function dayKey2(d){ return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
 
 // [CONNEXION D] Exporte le rétroplanning d'une commande en fichier .ics (calendrier iPhone).
 // Un événement daté/heuré par jalon, avec alarme. Timezone Europe/Paris.
