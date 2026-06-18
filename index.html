@@ -1104,6 +1104,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
   <aside class="side">
     <div class="brand">Sensations<br>Macarons<small>Pilotage</small></div>
     <div class="brand-rule"></div>
+    <div class="global-search-wrap" style="margin-bottom:12px">
+      <input class="search" id="globalSearch" placeholder="🔎 Rechercher partout (client, commande, parfum, lot…)" autocomplete="off" autocapitalize="off" autocorrect="off" oninput="globalSearchRun(this.value)" onfocus="globalSearchRun(this.value)">
+      <div id="globalSearchResults" style="display:none;margin-top:8px;max-height:50vh;overflow-y:auto"></div>
+    </div>
     <nav class="nav" id="nav">
       <button data-v="dash" class="active"><span class="ico">◷</span><span>Tableau de bord</span></button>
       <div class="sep">Quotidien</div>
@@ -1238,7 +1242,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 
 <script src="dexie.min.js"></script>
 <script src="qr.min.js"></script>
-<script src="utils.js?v=558"></script>
-<script src="app.js?v=558"></script>
+<script src="utils.js?v=564"></script>
+<script src="app.js?v=564"></script>
 </body>
 </html>

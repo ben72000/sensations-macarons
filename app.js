@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v558';
+const APP_VERSION = 'v564';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7556,6 +7556,156 @@ function searchScore(terms, prim, blob, digitsField, qd){
 function escapeRe(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
 // Filtre + trie une liste indexée. items: [{...,_prim,_blob,_digits}]. q: requête brute.
 // Retourne les items conservés, triés par pertinence puis ordre d'origine.
+
+/* ============================ RECHERCHE GLOBALE ============================
+   Une seule barre cherche dans TOUTES les entités : clients, commandes, recettes,
+   matières, productions/lots, coffrets, parfums. Construit un index unifié (avec
+   _prim/_blob/_digits pour le moteur searchRank), affiche les résultats groupés par
+   type avec un badge, et un clic ouvre l'entité concernée. Index mis en cache court. */
+
+let _globalIndex = null;
+let _globalIndexTs = 0;
+const _GLOBAL_INDEX_MS = 8000;
+
+// Prépare les champs de recherche d'un item (réutilise la convention searchRank).
+function _gsFields(prim, blobParts){
+  const blob = blobParts.filter(Boolean).join(' ');
+  return {
+    _prim: aiNormalize(prim||''),
+    _blob: aiNormalize((prim||'')+' '+blob),
+    _digits: onlyDigits((prim||'')+' '+blob)
+  };
+}
+
+async function buildGlobalIndex(){
+  const now = Date.now();
+  if(_globalIndex && (now - _globalIndexTs) < _GLOBAL_INDEX_MS) return _globalIndex;
+
+  const [clients, orders, recipes, materials, prods] = await Promise.all([
+    db.clients.toArray().catch(()=>[]),
+    db.orders.toArray().catch(()=>[]),
+    db.recipes.toArray().catch(()=>[]),
+    db.materials.toArray().catch(()=>[]),
+    db.productions.toArray().catch(()=>[])
+  ]);
+  const coffrets = await db.products.toArray().catch(()=>[]);
+  const recById = {}; recipes.forEach(r=>recById[r.id]=r);
+  const clById = {}; clients.forEach(c=>clById[c.id]=c);
+  const idx = [];
+
+  // CLIENTS
+  clients.forEach(c=>{
+    idx.push(Object.assign({
+      kind:'client', id:c.id,
+      titre: c.nom || 'Client',
+      sous: [c.societe, c.telephone, c.email].filter(Boolean).join(' · '),
+      action:`closeSheet();clientForm(${c.id})`
+    }, _gsFields(c.nom, [c.societe, c.telephone, c.email, c.notes, c.ref])));
+  });
+
+  // COMMANDES
+  orders.forEach(o=>{
+    const cl = o.clientId ? clById[o.clientId] : null;
+    const num = (typeof orderNumber==='function') ? orderNumber(o) : ('#'+o.id);
+    const st = (typeof normStatus==='function') ? normStatus(o.statut) : o.statut;
+    idx.push(Object.assign({
+      kind:'order', id:o.id,
+      titre: `${num} — ${cl?cl.nom:(o.histoLabel||'client')}`,
+      sous: [o.date?fmtDate(o.date):'', st, o.paiement].filter(Boolean).join(' · '),
+      action:`closeSheet();cmdView(${o.id})`
+    }, _gsFields((cl?cl.nom:'')+' '+num, [o.date, st, o.paiement, o.histoLabel, o.note])));
+  });
+
+  // RECETTES (parfums = recettes)
+  recipes.forEach(r=>{
+    const ingr = Array.isArray(r.items) ? r.items.map(it=>it.nom).join(' ') : '';
+    idx.push(Object.assign({
+      kind:'recipe', id:r.id,
+      titre: r.produitNom || 'Recette',
+      sous: [r.grandFormat?'grand format':'', ingr.slice(0,40)].filter(Boolean).join(' · '),
+      action:`closeSheet();recForm(${r.id})`
+    }, _gsFields(r.produitNom, [ingr, r.allergenes, r.grandFormat?'grand format':''])));
+    // PARFUM (vue détail séparée, utile pour le stock/rentabilité par parfum)
+    idx.push(Object.assign({
+      kind:'parfum', id:r.id,
+      titre: r.produitNom || 'Parfum',
+      sous: 'stock & rentabilité par parfum',
+      action:`closeSheet();parfumDetail(${r.id})`
+    }, _gsFields(r.produitNom, [ingr])));
+  });
+
+  // MATIÈRES
+  materials.forEach(m=>{
+    idx.push(Object.assign({
+      kind:'material', id:m.id,
+      titre: m.nom || 'Matière',
+      sous: [m.unite, m.categorie].filter(Boolean).join(' · '),
+      action:`closeSheet();matForm(${m.id})`
+    }, _gsFields(m.nom, [m.unite, m.categorie, m.marque])));
+  });
+
+  // PRODUCTIONS / LOTS (ouvrent l'écran Productions, filtré sur le lot)
+  prods.forEach(p=>{
+    const r = recById[p.recipeId];
+    const nom = r ? r.produitNom : ('Recette #'+p.recipeId);
+    const lot = p.lotProduction || ('#'+p.id);
+    idx.push(Object.assign({
+      kind:'prod', id:p.id,
+      titre: `Lot ${lot} — ${nom}`,
+      sous: [p.emplacement, p.dlcProduit?`DLC ${fmtDate(p.dlcProduit)}`:'', p.qteRestante!=null?`reste ${qty(p.qteRestante)}`:''].filter(Boolean).join(' · '),
+      action:`closeSheet();goView('productions')`
+    }, _gsFields(lot+' '+nom, [p.emplacement, p.dlcProduit, p.lotProduction])));
+  });
+
+  // COFFRETS
+  coffrets.forEach(c=>{
+    idx.push(Object.assign({
+      kind:'coffret', id:c.id,
+      titre: c.nom || 'Coffret',
+      sous: [c.taille?c.taille+' pièces':'', c.ref].filter(Boolean).join(' · '),
+      action:`closeSheet();goView('produits')`
+    }, _gsFields(c.nom, [c.ref, c.taille])));
+  });
+
+  _globalIndex = idx; _globalIndexTs = Date.now();
+  return idx;
+}
+
+// Métadonnées d'affichage par type.
+const _GS_META = {
+  client:   {label:'Client',   color:'#7a4a8a', ico:'♣'},
+  order:    {label:'Commande', color:'#b3261e', ico:'✎'},
+  recipe:   {label:'Recette',  color:'#8a6d3b', ico:'❀'},
+  parfum:   {label:'Parfum',   color:'#c9a227', ico:'🍬'},
+  material: {label:'Matière',  color:'#3f7d52', ico:'⬛'},
+  prod:     {label:'Lot',      color:'#5a3a8a', ico:'⚙'},
+  coffret:  {label:'Coffret',  color:'#6b5d54', ico:'◫'}
+};
+
+async function globalSearchRun(q){
+  const zone = document.getElementById('globalSearchResults');
+  if(!zone) return;
+  const raw = (q||'').trim();
+  if(!raw){ zone.style.display='none'; zone.innerHTML=''; return; }
+
+  let idx;
+  try{ idx = await buildGlobalIndex(); }catch(e){ console.error('globalSearch',e); zone.style.display='block'; zone.innerHTML='<p class="note">Recherche indisponible.</p>'; return; }
+  const rows = searchRank(idx, raw).slice(0,30);
+  zone.style.display='block';
+  if(!rows.length){ zone.innerHTML=`<p class="note" style="text-align:center">Aucun résultat pour « ${esc(raw)} ».</p>`; return; }
+
+  const html = rows.map(r=>{
+    const meta = _GS_META[r.kind] || {label:'', color:'#888', ico:'•'};
+    return `<div class="gs-result" onclick="${r.action}" style="cursor:pointer;padding:8px 10px;border-bottom:1px solid rgba(232,221,205,.15);display:flex;align-items:flex-start;gap:8px">
+      <span style="background:${meta.color};color:#fff;font-size:.6rem;padding:1px 6px;border-radius:8px;white-space:nowrap;margin-top:2px">${meta.ico} ${meta.label}</span>
+      <span style="flex:1;min-width:0">
+        <div style="color:var(--creme);font-size:.88rem;font-weight:600;overflow:hidden;text-overflow:ellipsis">${esc(r.titre)}</div>
+        ${r.sous?`<div style="color:rgba(232,221,205,.6);font-size:.74rem;overflow:hidden;text-overflow:ellipsis">${esc(r.sous)}</div>`:''}
+      </span>
+    </div>`;
+  }).join('');
+  zone.innerHTML = `<p class="note" style="color:rgba(232,221,205,.7);margin:0 0 4px;font-size:.74rem">${rows.length} résultat(s) :</p>${html}`;
+}
 function searchRank(items, q){
   const terms = normTxt(q).split(/\s+/).filter(Boolean);
   const qd = onlyDigits(q);
@@ -15276,6 +15426,24 @@ function parseIntent(texte, ctx){
      && !/stock|combien|reste/.test(t)){
     return {intent:'query_advice', params:{}, critical:false, label:'Mon conseil de production du moment'};
   }
+  // EN RETARD : "qu'est-ce qui est en retard", "mes retards", "suis-je en retard"
+  if(/\b(en retard|du retard|des retards|mes retards|retard de|retards de|suis je en retard|j'?ai du retard|quoi.*retard|qu'?est ce.*retard)\b/.test(t)){
+    return {intent:'query_retards', params:{}, critical:false, label:'Ce qui est en retard'};
+  }
+  // PÉRIME / DLC : "qu'est-ce qui périme", "dlc proche", "ce qui va se perdre"
+  if(/\b(perim|perime|dlc|date limite|va se perdre|vont se perdre|gaspill|a ecouler|bientot perim|expire|expiration)\b/.test(t)
+     && !/matiere|matieres|ingredient/.test(t)){
+    return {intent:'query_dlc_finis', params:{}, critical:false, label:'Ce qui approche de sa DLC'};
+  }
+  // FAISABILITÉ TEMPS : "est-ce que je tiens", "j'ai le temps", "ça rentre dans mon planning"
+  if(/\b(je tiens|tiens je|le temps de|assez de temps|ai je le temps|ca rentre|ca tient|tient ca|dans (mon|le) temps|dans (mon|le) planning|delais? tenable|tenir (mes|les) delais|surcharge|surcharg)\b/.test(t)){
+    return {intent:'query_faisabilite', params:{}, critical:false, label:'Faisabilité dans mon temps'};
+  }
+  // ORGANISER LES FOURNÉES : "organise ma production", "groupe mes fournées", "optimise mes meringues"
+  if(/\b(organise|organiser|groupe|grouper|regroupe|regrouper|optimise|optimiser|ordonnanc|mes fournees|ma production|mes meringues|combien de meringues|plan de fabrication|comment produire)\b/.test(t)
+     && !/quoi produire|que produire|quoi faire/.test(t)){
+    return {intent:'query_ordo', params:{}, critical:false, label:'Organiser mes fournées'};
+  }
   // LOCALISATION des macarons finis : "où sont mes macarons vanille", "emplacement chocolat"
   if(/\b(ou (se trouve|sont|est|se trouvent)|localis|emplacement|range|rangee|rangees|range ou|trouve mes|dans quel|quel congelateur|quel frigo)\b/.test(t)
      && /\bmacaron|macarons\b/.test(t) || (/\bou\b/.test(t) && aiFindFlavor(t,flavors))){
@@ -15710,20 +15878,12 @@ function aiHelp(txt){
 function renderAssistant(){
   _aiPhotoPreview=null;   // aucune pièce jointe ne persiste entre deux visites
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Assistant</h1><p>Anti-gaspi, sérénité & pilotage</p></div></div>
+   <div class="topbar"><div><h1>Copilote</h1><p>Ton assistant de pilotage — conseils & questions</p></div></div>
    <div id="atelierVoixBox"><div class="banner">🧭 <div>Analyse de ta situation en cours…</div></div></div>
-   <details class="ai-fold" open><summary>🧘 Jauge de sérénité <span class="ai-fold-arrow">▾</span></summary>
-     <div class="ai-fold-body"><div id="serenityBox"><div class="banner">🧘 <div>Calcul de la jauge de sérénité…</div></div></div></div></details>
-   <details class="ai-fold"><summary>📈 Rythme de ventes & alertes <span class="ai-fold-arrow">▾</span></summary>
-     <div class="ai-fold-body"><div id="aiPredict"><div class="banner">📈 <div>Analyse du rythme de ventes en cours…</div></div></div></div></details>
-   <details class="ai-fold"><summary>⛺ Prévisions marché <span class="ai-fold-arrow">▾</span></summary>
-     <div class="ai-fold-body"><div id="marketForecast"></div></div></details>
-   <details class="ai-fold"><summary>♻️ Anti-gaspi <span class="ai-fold-arrow">▾</span></summary>
-     <div class="ai-fold-body"><div id="antiGaspi"></div></div></details>
-   <div class="banner">🤖 <div>Écrivez ou dictez (micro du clavier) une instruction ou une <b>question d'aide</b> (« comment fonctionne… »). L'assistant fonctionne <b>hors-ligne</b>. Toute action critique demande votre validation.</div></div>
+   <div class="banner">🤖 <div>Pose ta question ou demande un conseil (« conseille-moi », « qu'est-ce qui est en retard ? »). Le copilote fonctionne <b>hors-ligne</b>. Toute action critique demande ta validation.</div></div>
    <div class="panel">
-     <div class="field"><label>Votre demande</label>
-       <textarea id="aiInput" rows="2" placeholder="ex : Comment fonctionne le picking ? · Quel est le stock de chocolat ? · Crée une commande pour M. Dupont vendredi" onkeydown="aiInputKey(event)"></textarea>
+     <div class="field"><label>Ta demande</label>
+       <textarea id="aiInput" rows="2" placeholder="ex : Conseille-moi · Quel est le stock de chocolat ? · Crée une commande pour M. Dupont vendredi" onkeydown="aiInputKey(event)"></textarea>
      </div>
      <div id="aiAttachWrap" style="display:none;margin-bottom:8px"></div>
      <input type="file" id="aiFileInput" accept=".txt,.csv,.md,.text,.pdf,text/plain,text/csv,text/markdown,application/pdf,image/*" style="display:none" onchange="aiAttachFile(this.files)">
@@ -15732,19 +15892,16 @@ function renderAssistant(){
        <button class="btn gold" onclick="document.getElementById('aiInput').value='aide';aiRun()">❓ Aide</button>
        <button class="btn" onclick="goView('mrp')">🧭 Plan de production</button>
        <button class="btn ghost" onclick="aiClearAll()">Effacer</button></div>
-     <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> ou un <b>PDF</b> (généré par ordi) est lu et ajouté à ta demande ; une <b>photo</b> ou un PDF scanné reste un aperçu temporaire (non lu, non enregistré). Astuce : depuis l'app Notes, fais <b>Copier</b> puis colle ici. Base d'aide : <b>${APP_VERSION}</b>.</p>
+     <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> ou un <b>PDF</b> (généré par ordi) est lu et ajouté à ta demande ; une <b>photo</b> ou un PDF scanné reste un aperçu temporaire (non lu, non enregistré). Base d'aide : <b>${APP_VERSION}</b>.</p>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-       ${['Conseille-moi quoi faire','Aide','Comment fonctionne le picking ?','Quel est le stock de chocolat ?','Commandes à préparer demain','Chiffre d\'affaires','Que faut-il produire ?','Quand vais-je être en rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
+       ${['Conseille-moi quoi faire','Organise mes fournées','Qu\'est-ce qui est en retard ?','Qu\'est-ce qui périme bientôt ?','Est-ce que je tiens dans mon temps ?','Quel est le stock de chocolat ?','Commandes à préparer demain','Aide'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
      </div>
    </div>
    <div id="aiOut"></div>`;
-  renderSerenityGauge();
-  renderMarketForecastBox();
-  renderAntiGaspi();
-  renderPredictiveAlerts();
-  ttScheduleSerenityRefresh();
+  ttScheduleSerenityRefresh();   // la jauge de sérénité reste calculée en arrière-plan (utilisée ailleurs)
   renderAtelierVoix();
-  // renderAssistantBriefing() retiré : la voix (atelierVoix) couvre désormais tout ce qu'il faisait.
+  // Écran épuré : sérénité, prévisions marché et anti-gaspi ne sont plus affichés ici
+  // (prévisions toujours accessibles depuis l'écran Marchés ; le code reste en place).
 }
 
 // [LA VOIX] Rendu de l'encart de conseil proactif (écran Assistant).
@@ -16533,7 +16690,9 @@ async function commandesEnRetard(opts){
     out.push({
       orderId: o.id,
       client: clientNom(o.clientId) || o.histoLabel || '(client ?)',
-      dateLivraison: dateLiv,
+      // On transmet la date de livraison COMPLÈTE (avec l'heure) calculée par le rétroplanning,
+      // pour que l'affichage montre la vraie heure de livraison et non minuit (bug fuseau).
+      dateLivraison: (rp && rp.livraison instanceof Date) ? rp.livraison : dateLiv,
       retards,
       plusUrgent: retards[0],   // le jalon le plus anciennement dépassé
       nbRetards: retards.length
@@ -17328,12 +17487,7 @@ async function renderProductionPlan(){
     })()}
     <p class="note" style="margin-top:8px">Conseil indicatif basé sur tes commandes, ta vélocité de ventes (14 j) et tes DLC. Les quantités sont des suggestions à ajuster.</p>
   </div>`;
-
-  // [LA VOIX] Conseil parlé du cerveau, inséré EN TÊTE du plan (sans toucher au reste).
-  try{
-    const voix = await atelierVoix();
-    if(voix) box.insertAdjacentHTML('afterbegin', voix);
-  }catch(e){ console.error('voix.plan',e); }
+  // La voix proactive ne vit plus ici : elle est centralisée dans l'écran Copilote.
 }
 // Réordonnancement de la priorité (simple : monter/descendre).
 function planPrioForm(){
@@ -17830,6 +17984,10 @@ async function aiRun(){
     }
     switch(r.intent){
       case 'query_advice': return aiQueryAdvice();
+      case 'query_retards': return aiQueryRetards();
+      case 'query_dlc_finis': return aiQueryDlcFinis();
+      case 'query_faisabilite': return aiQueryFaisabilite();
+      case 'query_ordo': return aiQueryOrdo();
       case 'query_stock': return aiQueryStock(r.params);
       case 'query_locate': return aiQueryLocate(r.params);
       case 'query_orders': return aiQueryOrders(r.params);
@@ -17872,6 +18030,113 @@ async function aiQueryAdvice(){
   }catch(e){ console.error('aiQueryAdvice',e); if(out) out.innerHTML=`<div class="panel"><p>Je n'ai pas pu générer le conseil. Réessaie.</p></div>`; }
 }
 
+// EN RETARD : retards de lancement de production (le cerveau).
+async function aiQueryRetards(){
+  const out=document.getElementById('aiOut');
+  if(out) out.innerHTML=`<div class="panel"><p class="note">Vérification des retards…</p></div>`;
+  let b; try{ b=await atelierBrain(); }catch(e){ b=null; }
+  if(!b){ return aiSay(`<p>Je n'ai pas pu vérifier les retards. Réessaie.</p>`); }
+  if(!b.aDesRetards || !b.retardsLancement || !b.retardsLancement.length){
+    return aiSay(`<p>✅ <b>Aucune commande en retard de lancement.</b> Tes productions sont dans les temps.</p>`);
+  }
+  const rows = b.retardsLancement.slice(0,8).map(r=>{
+    const quoi = r.plusUrgent ? r.plusUrgent.label : 'une étape';
+    const lien = r.orderId ? ` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="cmdView(${r.orderId})">🔎 Voir</button>` : '';
+    return `<div class="sum-box" style="border-left:3px solid #b3261e"><span style="flex:1"><b>${esc(r.client)}</b> — l'étape « ${esc(quoi)} » aurait dû démarrer.${lien}</span></div>`;
+  }).join('');
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">⚠️ ${b.retardsLancement.length} commande(s) en retard de lancement</h3>${rows}
+    <p class="note" style="margin-top:8px">Ouvre la voix complète (« conseille-moi ») pour le détail et les conseils d'organisation.</p>`);
+}
+
+// PÉRIME : produits finis proches de leur DLC (le cerveau).
+async function aiQueryDlcFinis(){
+  const out=document.getElementById('aiOut');
+  if(out) out.innerHTML=`<div class="panel"><p class="note">Recherche des DLC proches…</p></div>`;
+  let b; try{ b=await atelierBrain(); }catch(e){ b=null; }
+  if(!b){ return aiSay(`<p>Je n'ai pas pu vérifier les DLC. Réessaie.</p>`); }
+  if(!b.aDesDlcProches || !b.dlcFinis || !b.dlcFinis.length){
+    return aiSay(`<p>✅ <b>Aucun produit fini proche de sa DLC.</b> Rien ne risque de se perdre dans l'immédiat.</p>`);
+  }
+  const rows = b.dlcFinis.slice(0,10).map(d=>{
+    const q = (typeof qty==='function')?qty(d.qte):d.qte;
+    const when = d.joursAvantDLC<0?'DLC dépassée':d.joursAvantDLC===0?'périme aujourd\'hui':d.joursAvantDLC===1?'périme demain':`dans ${d.joursAvantDLC} j`;
+    const col = d.urgent?'#b3261e':'#d98324';
+    return `<div class="sum-box" style="border-left:3px solid ${col}"><span style="flex:1"><b>${q} ${esc(d.parfum)}</b> <span style="color:#9a8a82">(lot ${esc(d.lot)})</span> — ${when}</span></div>`;
+  }).join('');
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🧊 ${b.dlcFinis.length} produit(s) à écouler en priorité</h3>${rows}
+    <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('stockparfums')">📦 Voir le stock par parfum</button></p>`);
+}
+
+// FAISABILITÉ : est-ce que la charge tient dans le temps disponible (le cerveau).
+async function aiQueryFaisabilite(){
+  const out=document.getElementById('aiOut');
+  if(out) out.innerHTML=`<div class="panel"><p class="note">Calcul de la faisabilité…</p></div>`;
+  let b; try{ b=await atelierBrain(); }catch(e){ b=null; }
+  if(!b){ return aiSay(`<p>Je n'ai pas pu calculer la faisabilité. Réessaie.</p>`); }
+  const fmtHM = m => { m=Math.round(+m||0); const h=Math.floor(m/60), mm=m%60; return `${h?h+'h ':''}${String(mm).padStart(2,'0')}min`; };
+  if(b.tempsSuffisant===null || !b.dispo || !b.dispo.temps || !b.dispo.planning){
+    return aiSay(`<p>Je ne peux pas encore l'estimer : il me manque ${!b.dispo||!b.dispo.temps?'des temps chronométrés (Atelier)':'ton planning de disponibilités'}.</p>
+      <p class="note">Renseigne ces éléments et repose-moi la question.</p>`);
+  }
+  const fiable = b.tempsLisseFiable ? '' : ` <span style="color:#9a8a82">(estimation approximative — chronomètre plus de productions pour l'affiner)</span>`;
+  if(b.tempsSuffisant){
+    aiSay(`<p>✅ <b>Oui, ça devrait tenir.</b></p>
+      <p>Charge estimée : <b>${fmtHM(b.besoinMin)}</b> sur tes 14 jours disponibles${b.tauxChargeHorizon!=null?` (${b.tauxChargeHorizon}% de ta dispo)`:''}.${fiable}</p>`);
+  } else {
+    aiSay(`<p>⚠️ <b>C'est tendu.</b> Il manque environ <b>${fmtHM(b.tempsManquantMin)}</b> sur l'horizon de 14 jours.${fiable}</p>
+      <p class="note">Demande-moi « conseille-moi » pour voir comment t'organiser (quoi décaler, créneau à ajouter).</p>`);
+  }
+}
+
+// ORGANISER LES FOURNÉES : lance l'ordonnanceur de meringues et restitue le plan dans le dialogue.
+async function aiQueryOrdo(){
+  const out=document.getElementById('aiOut');
+  if(out) out.innerHTML=`<div class="panel"><p class="note">Optimisation de tes fournées…</p></div>`;
+  let needs;
+  try{ needs = await ordoBuildNeeds('auto', 14); }catch(e){ console.error('aiQueryOrdo needs',e); return aiSay(`<p>Je n'ai pas pu calculer les fournées. Réessaie.</p>`); }
+  if((!needs.std || !needs.std.length) && (!needs.gf || !needs.gf.length)){
+    return aiSay(`<p>✅ <b>Rien à grouper pour le moment.</b> Aucun besoin de production sur les 14 prochains jours (commandes + réassort).</p>`);
+  }
+  let plan;
+  try{ plan = ordonnancer(needs.std||[], needs.gf||[]); }catch(e){ console.error('aiQueryOrdo plan',e); return aiSay(`<p>Erreur lors de l'optimisation.</p>`); }
+
+  const blocs=[];
+  // Meringues standards pleines
+  const mPleines = (plan.standard && plan.standard.meringuesPleines) ? plan.standard.meringuesPleines : [];
+  if(mPleines.length){
+    const rows = mPleines.map((m,i)=>{
+      const parts = m.parts.map(p=>`${esc(p.nom)} (${qty(p.qte)})`).join(' + ');
+      return `<div class="sum-box"><span style="flex:1"><b>Meringue ${i+1}</b> — ${parts}</span></div>`;
+    }).join('');
+    blocs.push(`<div style="margin-bottom:6px"><div style="font-weight:700;color:#5a3a2a;margin-bottom:2px">🥚 ${mPleines.length} meringue(s) standard pleine(s) (120 macarons chacune)</div>${rows}</div>`);
+  }
+  // Complément (meringue partielle)
+  if(plan.standard && plan.standard.complement && plan.standard.complement.parts && plan.standard.complement.parts.length){
+    const c=plan.standard.complement;
+    const parts=c.parts.map(p=>`${esc(p.nom)} (${qty(p.qte)})`).join(' + ');
+    blocs.push(`<div style="margin-bottom:6px"><div style="font-weight:700;color:#5a3a2a;margin-bottom:2px">➕ Meringue complément</div><div class="sum-box"><span style="flex:1">${parts} <span style="color:#9a8a82">(${c.utilise||0}/120)</span></span></div></div>`);
+  }
+  // Restes à décider
+  if(plan.standard && plan.standard.restesADecider && plan.standard.restesADecider.length){
+    const r=plan.standard.restesADecider.map(x=>`${esc(x.nom)} (${qty(x.qte)})`).join(', ');
+    blocs.push(`<div style="font-size:.82rem;color:#d98324;margin-bottom:6px">⚠️ Restes à décider (total < 40, pas assez pour une meringue) : ${r}</div>`);
+  }
+  // Grands formats
+  const mGF = (plan.grandFormat && plan.grandFormat.meringues) ? plan.grandFormat.meringues : [];
+  if(mGF.length){
+    const rows = mGF.map((m,i)=>{
+      const parts = m.parts.map(p=>`${esc(p.nom)} (${qty(p.qte)})`).join(' + ');
+      return `<div class="sum-box"><span style="flex:1"><b>Meringue GF ${i+1}</b> — ${parts}</span></div>`;
+    }).join('');
+    blocs.push(`<div style="margin-bottom:6px"><div style="font-weight:700;color:#5a3a2a;margin-bottom:2px">🍰 ${mGF.length} meringue(s) grand format (24 gros macarons chacune)</div>${rows}</div>`);
+  }
+
+  const total = mPleines.length + (plan.standard&&plan.standard.complement&&plan.standard.complement.parts&&plan.standard.complement.parts.length?1:0) + mGF.length;
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🧭 Tes fournées optimisées (${total} meringue(s))</h3>
+    ${blocs.join('')}
+    <p class="note" style="margin-top:8px">L'ordonnanceur regroupe tes parfums pour minimiser le nombre de meringues. <button class="btn ghost sm" onclick="goView('mrp')">🧭 Ouvrir le plan complet</button></p>`);
+}
+
 async function aiQueryStock(params){
   const materials=await db.materials.toArray();
   if(!params.material){
@@ -17879,7 +18144,8 @@ async function aiQueryStock(params){
     const rows=[];
     for(const m of materials){ const lots=await db.materialLots.where('materialId').equals(m.id).toArray();
       const tot=lots.reduce((s,l)=>s+(+l.qteRestante||0),0); rows.push(`<div class="sum-box"><span>${esc(m.nom)}</span><b>${qty(tot)} ${esc(m.unite||'')}</b></div>`); }
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Stock de toutes les matières</h3>${rows.join('')||'<p class="note">Aucune matière.</p>'}`);
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Stock de toutes les matières</h3>${rows.join('')||'<p class="note">Aucune matière.</p>'}
+      <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('matieres')">⬛ Gérer les matières</button> <button class="btn ghost sm" onclick="goView('stockparfums')">🍬 Stock par parfum</button></p>`);
   }
   const lots=await db.materialLots.where('materialId').equals(params.material.id).and(l=>+l.qteRestante>0).toArray();
   const tot=lots.reduce((s,l)=>s+(+l.qteRestante||0),0);
@@ -17889,7 +18155,8 @@ async function aiQueryStock(params){
     <div class="sum-box"><span>Quantité disponible</span><b>${qty(tot)} ${esc(params.material.unite||'')}</b></div>
     <div class="sum-box"><span>Lots actifs</span><b>${lots.length}</b></div>
     ${proche?`<div class="sum-box"><span>DLC la plus proche</span><b>${fmtDate(proche.dlc)||'—'}</b></div>`:''}
-    ${params.material.seuil&&tot<params.material.seuil?`<p class="note" style="color:var(--red)">⚠ Sous le seuil d'alerte (${qty(params.material.seuil)}).</p>`:''}`);
+    ${params.material.seuil&&tot<params.material.seuil?`<p class="note" style="color:var(--red)">⚠ Sous le seuil d'alerte (${qty(params.material.seuil)}).</p>`:''}
+    <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('achats')">🛒 Acheter / réapprovisionner</button></p>`);
 }
 // LOCALISATION des macarons finis par parfum : détail des batchs + emplacements,
 // présenté dans une popup lisible. Si aucun parfum reconnu, propose la liste.
@@ -18028,14 +18295,21 @@ async function aiQueryAnomalies(){
 }
 async function aiQueryProductionNeeds(){
   const orders=await db.orders.toArray();
+  const recipes=await db.recipes.toArray().catch(()=>[]);
+  const recByNom={}; recipes.forEach(r=>{ recByNom[aiNormalize(r.produitNom)]=r; });
   const N=await computeMaterialNeeds(orders);
   const dem=Object.entries(N.demande).filter(([,q])=>q>0).sort((a,b)=>b[1]-a[1]);
   if(!dem.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Besoins de production</h3><p class="note">Aucune commande « À préparer » en attente.</p>`);
-  const prod=dem.map(([nom,q])=>`<div class="sum-box"><span>${esc(nom)}</span><b>${qty(q)} pièce(s)</b></div>`).join('');
+  const prod=dem.map(([nom,q])=>{
+    const rec=recByNom[aiNormalize(nom)];
+    const btn = rec ? ` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="prodForm({recipeId:${rec.id}, qte:${Math.round(q)}})">⚙ Produire</button>` : '';
+    return `<div class="sum-box"><span style="flex:1">${esc(nom)} — <b>${qty(q)} pièce(s)</b>${btn}</span></div>`;
+  }).join('');
   const mat=N.matLignes.slice(0,12).map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:${m.manque>0?'var(--red,#b3261e)':'#3f7d52'}">${qty(m.requis)} ${esc(m.unite)}${m.manque>0?' · manque '+qty(m.manque):' · OK'}</b></div>`).join('');
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">À produire (commandes à préparer)</h3>${prod}
     <h3 style="font-size:.95rem;margin:12px 0 6px">Matières premières nécessaires</h3>${mat||'<p class="note">Aucune recette liée.</p>'}
-    ${N.sansRecette.length?`<p class="note" style="color:var(--red,#b3261e)">⚠ Sans recette : ${N.sansRecette.map(x=>esc(x.parfum)).join(', ')}.</p>`:''}`);
+    ${N.sansRecette.length?`<p class="note" style="color:var(--red,#b3261e)">⚠ Sans recette : ${N.sansRecette.map(x=>esc(x.parfum)).join(', ')}.</p>`:''}
+    <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('stockparfums')">📦 Voir mon stock</button> <button class="btn ghost sm" onclick="goView('mrp')">🧭 Plan complet</button></p>`);
 }
 // Réponse PRÉDICTIVE : jours avant rupture par parfum, selon le rythme de ventes.
 async function aiQueryPredict(){
@@ -18064,13 +18338,15 @@ async function aiQueryRupture(){
     .map(m=>({nom:m.nom, dispo:stock[m.id]||0, seuil:+m.seuil, unite:m.unite||''}));
   // ruptures prévisionnelles produits finis (sous 8 jours)
   let prev=[]; try{ prev=await forecastAlerts(); }catch(e){}
+  const recipes=await db.recipes.toArray().catch(()=>[]);
+  const recByNom={}; recipes.forEach(r=>{ recByNom[aiNormalize(r.produitNom)]=r; });
   if(!risques.length && !sousSeuil.length && !prev.length)
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3><p class="note">Aucun risque détecté : produits finis couverts sous 8 jours, matières suffisantes et au-dessus des seuils.</p>`);
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3>
-    ${prev.length?'<p style="margin:4px 0;font-weight:600;color:var(--red,#b3261e)">Produits finis — rupture prévue sous 8 jours</p>'+prev.map(a=>`<div class="sum-box"><span>${esc(a.parfum)}${a.firstShortDate?` · ${fmtDate(a.firstShortDate)}`:''}</span><b style="color:var(--red,#b3261e)">manque ${qty(a.manque||0)}</b></div>`).join(''):''}
+    ${prev.length?'<p style="margin:4px 0;font-weight:600;color:var(--red,#b3261e)">Produits finis — rupture prévue sous 8 jours</p>'+prev.map(a=>{ const rec=recByNom[aiNormalize(a.parfum)]; const btn=rec?` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="prodForm({recipeId:${rec.id}, qte:${Math.max(1,Math.round(+a.manque||30))}})">⚙ Produire</button>`:''; return `<div class="sum-box"><span style="flex:1">${esc(a.parfum)}${a.firstShortDate?` · ${fmtDate(a.firstShortDate)}`:''} — <b style="color:var(--red,#b3261e)">manque ${qty(a.manque||0)}</b>${btn}</span></div>`; }).join(''):''}
     ${risques.length?'<p style="margin:10px 0 4px;font-weight:600;color:var(--red,#b3261e)">Matières insuffisantes pour les commandes planifiées</p>'+risques.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">manque ${qty(m.manque)} ${esc(m.unite)} (${qty(m.dispo)}/${qty(m.requis)})</b></div>`).join(''):''}
     ${sousSeuil.length?'<p style="margin:10px 0 4px;font-weight:600">Matières sous le seuil d\'alerte</p>'+sousSeuil.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">${qty(m.dispo)} / seuil ${qty(m.seuil)} ${esc(m.unite)}</b></div>`).join(''):''}
-    <p class="note" style="margin-top:8px">Détail dans l'onglet <b>Prévisionnel stocks</b>.</p>`);
+    <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('achats')">🛒 Réapprovisionner</button> <button class="btn ghost sm" onclick="goView('previsionnel')">📊 Prévisionnel stocks</button></p>`);
 }
 
 // ---- ACTIONS CRITIQUES : résumé + validation explicite ----
@@ -23815,7 +24091,12 @@ function retroplanningCommande(o, recipes){
   const dateLiv = o.dateEvenement || o.date || '';
   if(!dateLiv) return {error:'Aucune date de livraison sur cette commande.'};
   const hm = (o.heureLivraison && /^\d{1,2}:\d{2}/.test(o.heureLivraison)) ? o.heureLivraison : '10:00';
-  const livraison = new Date(dateLiv+'T'+(hm.length===4?'0'+hm:hm));
+  const hmFull = (hm.length===4?'0'+hm:hm).slice(0,5);   // garantit 'HH:MM'
+  // Construction EXPLICITE en heure locale (évite l'interprétation UTC d'une date seule) :
+  // on découpe la date et l'heure et on les pose composant par composant.
+  const _dp = dateLiv.split('-').map(Number);
+  const _tp = hmFull.split(':').map(Number);
+  const livraison = new Date(_dp[0], (_dp[1]||1)-1, _dp[2]||1, _tp[0]||0, _tp[1]||0, 0, 0);
 
   // 2) Recettes impliquées → contraintes (repos ganache max, jour J, congélation, maturation).
   const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
