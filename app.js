@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v575';
+const APP_VERSION = 'v576';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -20471,9 +20471,12 @@ async function scanLostProductions(){
   try{
     // Sauvegardes candidates : celles prises avant un nettoyage ou une restauration, les plus récentes d'abord.
     const all = await db.backups.orderBy('date').reverse().toArray();
-    const candidates = all.filter(b=> /nettoyage|restauration|intégrité|integrite/i.test(b.type||''));
+    // On cherche dans TOUTES les sauvegardes (pas seulement « avant-nettoyage ») : une
+    // sauvegarde quotidienne ou manuelle peut contenir les données perdues. De la plus
+    // récente à la plus ancienne (déjà trié), pour restaurer l'état le plus proche.
+    const candidates = all;
     if(!candidates.length){
-      zone.innerHTML='<p class="note">Aucune sauvegarde « avant-nettoyage » trouvée. Regarde dans Sauvegarde &amp; sécurité si une sauvegarde manuelle ou quotidienne contient tes lots.</p>';
+      zone.innerHTML='<p class="note">Aucune sauvegarde disponible dans l\'historique. Si tu as un fichier de sauvegarde .json exporté, importe-le d\'abord (Sauvegarde &amp; sécurité), puis relance la recherche.</p>';
       return;
     }
     // Productions actuelles (par id).
@@ -20565,9 +20568,10 @@ async function scanLostRecipes(){
   zone.innerHTML='<p class="note">Recherche des recettes et ingrédients supprimés…</p>';
   try{
     const all = await db.backups.orderBy('date').reverse().toArray();
-    const candidates = all.filter(b=> /nettoyage|restauration|intégrité|integrite|récupération|recuperation/i.test(b.type||''));
+    // Toutes les sauvegardes (quotidiennes, manuelles, avant-nettoyage…), plus récente d'abord.
+    const candidates = all;
     if(!candidates.length){
-      zone.innerHTML='<p class="note">Aucune sauvegarde « avant-nettoyage » trouvée.</p>';
+      zone.innerHTML='<p class="note">Aucune sauvegarde disponible dans l\'historique. Importe un fichier .json si tu en as un, puis relance.</p>';
       return;
     }
     const [recsAct, itemsAct, compsAct] = await Promise.all([
@@ -20650,12 +20654,12 @@ async function renderIntegrity(){
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
     <div class="panel" style="background:#fff4f4;border:1.5px solid #e5a0a0;margin-bottom:12px">
       <h2 style="font-size:1rem">🛟 Récupérer des lots de produits finis supprimés</h2>
-      <p class="note">Si des lots ont disparu de ton <b>Stock par parfum</b> après un nettoyage, cet outil les retrouve dans la dernière sauvegarde « avant-nettoyage » et te permet de les <b>restaurer sans rien écraser d'autre</b>.</p>
+      <p class="note">Si des lots ont disparu de ton <b>Stock par parfum</b>, cet outil les retrouve dans <b>tes sauvegardes</b> (quotidiennes, manuelles ou avant-nettoyage) et te permet de les <b>restaurer sans rien écraser d'autre</b>.</p>
       <div id="recoverProdZone"><button class="btn gold sm" onclick="scanLostProductions()">Rechercher les lots supprimés</button></div>
     </div>
     <div class="panel" style="background:#fff4f4;border:1.5px solid #e5a0a0;margin-bottom:12px">
       <h2 style="font-size:1rem">🍽️ Récupérer une recette ou des ingrédients supprimés</h2>
-      <p class="note">Si une <b>recette a été supprimée</b> (tes lots s'affichent « recette supprimée ») ou si les <b>ingrédients d'un composant</b> (ex. Chantache) ont disparu, cet outil les retrouve dans la sauvegarde « avant-nettoyage » et les restaure <b>sans rien écraser</b>.</p>
+      <p class="note">Si une <b>recette a été supprimée</b> (tes lots s'affichent « recette supprimée ») ou si des <b>ingrédients</b> ont disparu, cet outil les retrouve dans <b>tes sauvegardes</b> et les restaure <b>sans rien écraser</b>. Pour la <b>Chantache</b> précisément, utilise plutôt l'outil dédié plus bas (il connaît ses 8 ingrédients sans sauvegarde).</p>
       <div id="recoverRecZone"><button class="btn gold sm" onclick="scanLostRecipes()">Rechercher les recettes et ingrédients supprimés</button></div>
     </div>
     <div class="panel" style="background:#fbf7f0;margin-bottom:12px">
