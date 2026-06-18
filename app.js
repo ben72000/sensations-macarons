@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v578';
+const APP_VERSION = 'v579';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -20761,9 +20761,84 @@ async function relinkAllLots(){
   else { toast(`✓ ${ok} lot(s) reconnecté(s) à leur parfum`); }
   scanOrphanLots();
 }
+
+/* ===== DIAGNOSTIC COMPLET DES LOTS (où sont mes macarons ?) =====
+   Affiche TOUS les lots de production avec : parfum, quantité, statut, emplacement, et la
+   RAISON exacte pour laquelle un lot est visible ou masqué (rangé, congelé, épuisé, commande
+   livrée, recette absente). Lecture seule — aucune modification. */
+
+async function diagAllLots(){
+  const zone=document.getElementById('diagLotsZone'); if(!zone) return;
+  zone.innerHTML='<p class="note">Analyse de tous les lots…</p>';
+  try{
+    const [prods, recipes, oItems, orders] = await Promise.all([
+      db.productions.toArray().catch(()=>[]),
+      db.recipes.toArray().catch(()=>[]),
+      db.orderItems.toArray().catch(()=>[]),
+      db.orders.toArray().catch(()=>[])
+    ]);
+    if(!prods.length){ zone.innerHTML='<p class="note">Aucune production dans la base.</p>'; return; }
+    const recById={}; recipes.forEach(r=>recById[r.id]=r);
+    // Commandes prêtes/livrées (pour la raison "rattaché à commande livrée").
+    const ordById={}; orders.forEach(o=>ordById[o.id]=o);
+    const liesCmdPrete = new Set();
+    oItems.forEach(it=>{ const o=ordById[it.orderId]; if(o){ const st=(typeof normStatus==='function')?normStatus(o.statut):o.statut; if(st==='Terminée'||st==='Livrée') liesCmdPrete.add(+it.productionId); } });
+
+    // Tri : par parfum puis date.
+    const nomDe = p => {
+      if(p.composantCatalogue && p.garnitureNom) return p.garnitureNom;
+      if(p.libre) return p.produitLibre||'(libre)';
+      const r=recById[+p.recipeId]; return r?r.produitNom:'(recette supprimée)';
+    };
+    prods.sort((a,b)=> nomDe(a).localeCompare(nomDe(b)) || (b.date||'').localeCompare(a.date||''));
+
+    const rows = prods.map(p=>{
+      const nom = nomDe(p);
+      const qr = round3(+p.qteRestante||0);
+      const st = (typeof prodStatut==='function')?prodStatut(p):'?';
+      const comp = (typeof prodComposant==='function')?prodComposant(p):'?';
+      const empl = p.emplacement||'—';
+      // Raisons de masquage (vue Productions).
+      const masques=[];
+      if(p.rangee===true) masques.push('rangé manuellement');
+      if(p.emplacement && typeof isFreezer==='function' && isFreezer(p.emplacement)) masques.push('au congélateur');
+      if(liesCmdPrete.has(+p.id)) masques.push('commande livrée/terminée');
+      if(st==='termine' && qr<=0) masques.push('épuisé (reste 0)');
+      // Raison d'absence de Stock par parfum.
+      const horsStock=[];
+      if(qr<=0) horsStock.push('quantité à 0');
+      if(comp!=='complet' && comp!=='assemble') horsStock.push('non vendable ('+comp+')');
+      const couleur = (masques.length||horsStock.length) ? '#b3261e' : '#3f7d52';
+      return `<div class="sum-box" style="border-left:3px solid ${couleur};flex-wrap:wrap">
+        <span style="flex:1;min-width:180px">
+          <b>${esc(nom)}</b> <span style="color:#9a8a82">— lot ${esc(p.lotProduction||('#'+p.id))}</span><br>
+          <span style="font-size:.8rem">Reste : <b>${qty(qr)}</b> · ${esc(st)} · ${esc(comp)} · empl. ${esc(empl)}${p.recipeId!=null?' · recId '+p.recipeId:''}</span>
+          ${masques.length?`<br><span style="font-size:.76rem;color:#b3261e">Masqué de Productions : ${esc(masques.join(', '))}</span>`:''}
+          ${horsStock.length?`<br><span style="font-size:.76rem;color:#d98324">Hors Stock par parfum : ${esc(horsStock.join(', '))}</span>`:''}
+        </span>
+      </div>`;
+    }).join('');
+    // Résumé par parfum.
+    const parParfum={};
+    prods.forEach(p=>{ const n=nomDe(p); parParfum[n]=(parParfum[n]||0)+round3(+p.qteRestante||0); });
+    const resume = Object.entries(parParfum).map(([n,q])=>`${esc(n)} : ${qty(q)}`).join(' · ');
+    zone.innerHTML = `
+      <p class="note"><b>${prods.length} lot(s) au total.</b> Stock par parfum : ${esc(resume)}.</p>
+      <p class="note">🟢 = visible partout · 🔴 = masqué/exclu (la raison est indiquée).</p>
+      ${rows}`;
+  }catch(e){
+    console.error('diagAllLots',e);
+    zone.innerHTML='<p class="note" style="color:#b3261e">Erreur : '+esc(e&&e.message?e.message:String(e))+'</p>';
+  }
+}
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
+    <div class="panel" style="background:#eef3f8;border:1.5px solid #a0b8d0;margin-bottom:12px">
+      <h2 style="font-size:1rem">🔍 Où sont mes lots ? (diagnostic complet)</h2>
+      <p class="note">Affiche <b>tous tes lots</b> avec leur quantité, statut et emplacement, et explique pour chacun <b>pourquoi il est visible ou masqué</b> (rangé, congelé, épuisé, commande livrée…). Lecture seule. Commence par ici si des lots semblent avoir disparu.</p>
+      <div id="diagLotsZone"><button class="btn gold sm" onclick="diagAllLots()">Voir l'état de tous mes lots</button></div>
+    </div>
     <div class="panel" style="background:#fff4f4;border:1.5px solid #e5a0a0;margin-bottom:12px">
       <h2 style="font-size:1rem">🛟 Récupérer des lots de produits finis supprimés</h2>
       <p class="note">Si des lots ont disparu de ton <b>Stock par parfum</b>, cet outil les retrouve dans <b>tes sauvegardes</b> (quotidiennes, manuelles ou avant-nettoyage) et te permet de les <b>restaurer sans rien écraser d'autre</b>.</p>
