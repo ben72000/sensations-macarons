@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v593';
+const APP_VERSION = 'v597';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6618,8 +6618,64 @@ async function prodAdjustReel(id){
     qteProduite:newReel,     // total réellement produit
     qteRestante:newRestant   // stock fini disponible recalé (matières inchangées)
   });
+  closeModal();
+  // ÉCART NÉGATIF = pièces prévues non obtenues. On propose de qualifier : casse en cours de
+  // production (perte réelle, valorisée au coût MATIÈRES) OU simple écart de rendement (non perdu).
+  const perdu = Math.round((th - newReel)*1000)/1000;
+  if(perdu > 0){
+    prodEcartQualifyForm(id, perdu);
+  } else {
+    renderProductions();
+    toast(`Quantité réelle ajustée à ${qty(newReel)} — écart ${ecart>0?'+':''}${qty(ecart)}`);
+  }
+}
+
+// Qualifie un écart négatif de production : casse (→ perte enregistrée, coût matières) ou
+// écart de rendement (→ pas de perte, simple constat). Réutilise db.losses et les KPI existants.
+async function prodEcartQualifyForm(prodId, perdu){
+  const p = await db.productions.get(prodId).catch(()=>null);
+  const recipe = (p && p.recipeId!=null) ? await db.recipes.get(p.recipeId).catch(()=>null) : null;
+  const uLoss = (typeof prodComposant==='function' && prodComposant(p)==='coques') ? 'coques' : 'pièces';
+  openModal(`<h3>Écart de production : ${qty(perdu)} ${uLoss}</h3>
+    <p class="note" style="margin-bottom:10px">Tu as obtenu <b>${qty(perdu)} ${uLoss}</b> de moins que prévu sur <b>${esc(recipe?recipe.produitNom:'?')}</b>. À quoi est-ce dû ?</p>
+    <label class="switch-row" style="align-items:flex-start"><input type="radio" name="f_ecartType" value="casse" checked>
+      <span>🧹 <b>Casse en production</b> (ratage four, manipulation…) → enregistré en <b>perte</b>, valorisé au coût matières.</span></label>
+    <label class="switch-row" style="align-items:flex-start"><input type="radio" name="f_ecartType" value="rendement">
+      <span>📉 <b>Écart de rendement</b> (la recette a simplement donné moins) → pas une perte, simple constat.</span></label>
+    <div class="field" style="margin-top:8px"><label>Note (facultatif)</label><input id="f_ecartNote" placeholder="détail, circonstances…"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal();renderProductions()">Ne rien enregistrer</button>
+      <button class="btn danger" onclick="prodEcartQualifySave(${prodId},${perdu})">Valider</button></div>`);
+}
+
+async function prodEcartQualifySave(prodId, perdu){
+  const type=(document.querySelector('input[name="f_ecartType"]:checked')||{}).value||'casse';
+  const note=val('f_ecartNote')||'';
+  if(type==='rendement'){
+    closeModal(); renderProductions();
+    toast('Écart de rendement noté (non compté en perte)');
+    return;
+  }
+  // CASSE → perte enregistrée dans db.losses, valorisée au COÛT MATIÈRES (pas le coût complet).
+  const p = await db.productions.get(prodId).catch(()=>null);
+  const recipe = (p && p.recipeId!=null) ? await db.recipes.get(p.recipeId).catch(()=>null) : null;
+  let coutMatUnit = 0;
+  if(recipe){
+    try{
+      const [recipeItems, lots] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray()]);
+      const cr = coutRevientRecette(recipe, recipeItems, lots);
+      coutMatUnit = +cr.coutMatUnit||0;   // coût matières seul
+    }catch(e){ coutMatUnit = 0; }
+  }
+  const loss = {
+    productionId: prodId, recipeId: p?p.recipeId:null,
+    date: today(), motif: 'Casse en production',
+    qte: perdu, enProduction: true,
+    coutUnit: money2(coutMatUnit), coutTotal: money2(coutMatUnit*perdu),
+    note: note
+  };
+  await db.losses.add(loss).catch(e=>console.error('loss prod',e));
   closeModal(); renderProductions();
-  toast(`Quantité réelle ajustée à ${qty(newReel)} — écart ${ecart>0?'+':''}${qty(ecart)}`);
+  toast(`Casse en production : ${qty(perdu)} ${(typeof prodComposant==='function'&&prodComposant(p)==='coques')?'coques':'pièce(s)'} · ${euro(loss.coutTotal)}`);
 }
 
 /* ------------------------------------------------------------
@@ -16534,7 +16590,49 @@ async function ordoBuildNeeds(mode, horizon){
     antigaspi.sort((a,b)=>(a.joursAvantDLC??99)-(b.joursAvantDLC??99));
   }catch(e){ console.error('ordo antigaspi',e); }
 
-  return {std, gf, coquesInfo, provenance, antigaspi, garnitureStock};
+  // 3c) COMPOSANTS CATALOGUE des grands formats (chantache & co) : suivi GLOBAL mutualisé.
+  // 1 pièce GF = 1 dose de chacun de ses composants requis (componentRefs). On agrège le besoin
+  // sur tous les GF planifiés, on le compare au stock de composant disponible, on chiffre le manque.
+  let composantsGF=[];
+  try{
+    const refsParRec = {};   // nom normalisé -> [componentId,...]
+    recipes.forEach(r=>{
+      if(r.grandFormat && Array.isArray(r.componentRefs) && r.componentRefs.length){
+        const vus=new Set(), ids=[];
+        r.componentRefs.forEach(ref=>{ const cid=+ref.componentId; if(cid && !vus.has(cid)){ vus.add(cid); ids.push(cid); } });
+        if(ids.length) refsParRec[aiNormalize(r.produitNom)] = ids;
+      }
+    });
+    // besoin par composant = somme des pièces GF qui le requièrent
+    const besoinParComp={};
+    gf.forEach(g=>{
+      const ids = refsParRec[aiNormalize(g.nom)];
+      if(!ids) return;
+      ids.forEach(cid=>{ besoinParComp[cid]=(besoinParComp[cid]||0)+g.qte; });
+    });
+    if(Object.keys(besoinParComp).length){
+      const comps = await db.components.toArray().catch(()=>[]);
+      const compNom={}; comps.forEach(c=>compNom[+c.id]=c.nom||'composant');
+      const prodsAll = await db.productions.toArray().catch(()=>[]);
+      // stock mutualisé par composant = somme des qteRestante des productions composantCatalogue
+      const stockComp={};
+      prodsAll.forEach(p=>{
+        if(p.composantCatalogue!==true) return;
+        const cid=+p.componentId; if(!cid) return;
+        const fini=(typeof prodStatut==='function')?prodStatut(p)==='termine':true;
+        if(!fini) return;
+        stockComp[cid]=(stockComp[cid]||0)+round3(+p.qteRestante||0);
+      });
+      for(const cid in besoinParComp){
+        const besoin=besoinParComp[cid];
+        const dispo=+stockComp[cid]||0;
+        composantsGF.push({ componentId:+cid, nom:compNom[cid]||'composant',
+          besoin, dispo, manque:Math.max(0, round3(besoin-dispo)) });
+      }
+    }
+  }catch(e){ console.error('ordo composants GF',e); }
+
+  return {std, gf, coquesInfo, provenance, antigaspi, garnitureStock, composantsGF};
 }
 
 let _ordoState=null;   // {mode, std:[...], gf:[...]} — pour l'ajustement (étape 3)
@@ -16579,6 +16677,23 @@ function ordoRenderPlan(containerId){
     html+=`<div class="banner" style="background:#eef5f0;border-color:#bcd9c4;margin-bottom:10px">♻️ <div><b>Anti-gaspi — pense à écouler :</b><br>${
       ag.map(a=>`${esc(a.parfum)} <span style="color:#7a6a62;font-size:.85rem">— ${esc(a.matiere)}${a.cremeOuverte?' (entamé)':''}, DLC ${a.joursAvantDLC<=0?'atteinte':'J−'+a.joursAvantDLC}</span>`).join('<br>')
     }<br><span style="font-size:.78rem;color:#7a6a62">À intégrer librement à tes fournées si tu produis ces parfums.</span></div></div>`;
+  }
+
+  // 3e ÉLÉMENT des grands formats (chantache & co) : suivi GLOBAL mutualisé.
+  const cgf=_ordoState.composantsGF||[];
+  if(cgf.length){
+    const manquants=cgf.filter(c=>c.manque>0);
+    const couleur = manquants.length ? '#b3261e' : '#3f7d52';
+    const fond = manquants.length ? '#fdf3f2' : '#eef5f0';
+    const bord = manquants.length ? '#f0c9c4' : '#bcd9c4';
+    html+=`<div class="banner" style="background:${fond};border-color:${bord};margin-bottom:10px">🧩 <div><b>3ᵉ élément des grands formats :</b><br>${
+      cgf.map(c=>{
+        const etat = c.manque>0
+          ? `<span style="color:#b3261e">manque ${c.manque}</span> (besoin ${c.besoin}, en stock ${round3(c.dispo)})`
+          : `<span style="color:#3f7d52">✓ couvert</span> (besoin ${c.besoin}, en stock ${round3(c.dispo)})`;
+        return `${esc(c.nom)} — ${etat}`;
+      }).join('<br>')
+    }</div></div>`;
   }
 
   // Coques déjà en stock, déduites du besoin (signalé clairement).
@@ -16632,6 +16747,38 @@ function ordoRenderPlan(containerId){
   }
 
   // Ajustement
+  // TEMPS DE PRODUCTION estimé (par parfum) vs disponibilité du planning.
+  const ti=_ordoState.tempsInfo;
+  if(ti && ti.totMin>0){
+    const fmtH = min => { const h=Math.floor(min/60), m=Math.round(min%60); return h>0?`${h} h${m>0?' '+m:''}`:`${m} min`; };
+    const sourceTxt = ti.nbParfumsTempsPropre>0
+      ? `${ti.nbParfumsTempsPropre}/${ti.nbParfums} parfum(s) avec ton temps réel appris, le reste sur ta moyenne`
+      : `estimé sur ta moyenne globale`;
+    let dispoTxt='', fond='#eef5f0', bord='#bcd9c4';
+    if(ti.planningRenseigne && ti.dispoMin!=null){
+      if(ti.depasse){ fond='#fdf3f2'; bord='#f0c9c4';
+        dispoTxt = `<br><b style="color:#b3261e">⚠ Dépasse ta dispo de ${fmtH(ti.totMin-ti.dispoMin)}</b> (dispo ${fmtH(ti.dispoMin)} sur 14 j).`;
+      } else {
+        dispoTxt = `<br><span style="color:#3f7d52">✓ Tient dans ta dispo</span> (${fmtH(ti.dispoMin)} sur 14 j).`;
+      }
+    } else {
+      dispoTxt = `<br><span style="color:#9a8a82">Renseigne ton planning pour comparer à ta dispo.</span>`;
+    }
+    html+=`<div class="banner" style="background:${fond};border-color:${bord};margin-top:10px">⏱ <div><b>Temps de production estimé : ${fmtH(ti.totMin)}</b> pour ${qty(ti.totMac)} macaron(s)<br><span style="font-size:.82rem;color:#7a6a62">${sourceTxt}${ti.minParMacMoyen?` · ~${ti.minParMacMoyen} min/macaron`:''}.</span>${dispoTxt}</div></div>`;
+  }
+
+  // MATIÈRES PREMIÈRES nécessaires à ce plan (+ bouton liste de courses si manque).
+  const mc=_ordoState.matCheck;
+  if(mc){
+    if(mc.ok){
+      html+=`<div class="banner" style="background:#eef6ee;border-color:#bcdcc0;margin-top:10px">✅ <div><b>Matières premières : tout est en stock</b> pour réaliser ce plan.</div></div>`;
+    } else {
+      html+=`<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4;margin-top:10px">🛒 <div><b>Matières manquantes pour ce plan :</b><br>${
+        mc.manques.map(m=>`${esc(m.nom)} <span style="color:#9a8a82">stock ${qty(m.stockAff)} ${esc(m.unite)} · besoin ${qty(m.besoinAff)} ${esc(m.unite)}</span> — <b style="color:#b3261e">manque ${qty(m.manqueAff)} ${esc(m.unite)}</b>`).join('<br>')
+      }<div style="margin-top:8px"><button class="btn ghost sm" onclick="ordoShoppingFromPlan()">🛒 Ajouter à la liste de courses</button></div></div></div>`;
+    }
+  }
+
   html+=`<div style="margin-top:12px"><button class="btn ghost sm" onclick="ordoAjuster()">✏️ Ajuster les quantités</button></div>`;
   html+='</div>';
   box.innerHTML=html;
@@ -16641,8 +16788,104 @@ function ordoRenderPlan(containerId){
 async function ordoLancer(mode){
   const box=document.getElementById('ordoZone'); if(box) box.innerHTML='<div class="panel"><p class="note">Calcul du plan optimisé…</p></div>';
   const needs=await ordoBuildNeeds(mode, 14);
-  _ordoState={mode, std:needs.std, gf:needs.gf, coquesInfo:needs.coquesInfo||{}, provenance:needs.provenance||{}, antigaspi:needs.antigaspi||[], garnitureStock:needs.garnitureStock||{}};
+  _ordoState={mode, std:needs.std, gf:needs.gf, coquesInfo:needs.coquesInfo||{}, provenance:needs.provenance||{}, antigaspi:needs.antigaspi||[], garnitureStock:needs.garnitureStock||{}, composantsGF:needs.composantsGF||[]};
+  // Vérification des matières premières nécessaires à CE plan (réutilise mrpCheckMatieres).
+  try{ _ordoState.matCheck = await ordoCheckMatieres(needs); }catch(e){ console.error('ordo matières',e); _ordoState.matCheck=null; }
+  // Estimation du TEMPS de production (temps appris PAR PARFUM si fiable, sinon moyenne globale)
+  // confronté à la disponibilité du planning — même logique que le conseil du chef.
+  try{ _ordoState.tempsInfo = await ordoEstimeTemps(needs); }catch(e){ console.error('ordo temps',e); _ordoState.tempsInfo=null; }
   ordoRenderPlan('ordoZone');
+}
+
+// Estime le temps total de production du plan ordonnanceur, parfum par parfum (temps propre
+// si fiable, sinon moyenne lissée), et le compare à la dispo cumulée sur l'horizon (14 j).
+async function ordoEstimeTemps(needs){
+  let minParMac=null, lisseFiable=false, tppMap={};
+  try{ const tl=await prodTempsLissePerMacaron(90); minParMac=(tl&&tl.minParMacaron)?tl.minParMacaron:null; lisseFiable=!!(tl&&tl.fiable); }catch(e){}
+  try{ tppMap=(typeof prodTempsParParfum==='function')?await prodTempsParParfum(90):{}; }catch(e){ tppMap={}; }
+  if(minParMac==null && !Object.keys(tppMap).length) return null;   // aucune donnée de temps
+  const minParMacDe = parfum=>{
+    const k=aiNormalize(parfum);
+    const tp=tppMap[k];
+    return (tp && tp.fiable && tp.minParMac>0) ? tp.minParMac : minParMac;
+  };
+  const lignes=[...(needs.std||[]),...(needs.gf||[])];
+  let totMac=0, totMin=0, nbParfumsTempsPropre=0;
+  lignes.forEach(l=>{
+    const m=minParMacDe(l.nom);
+    totMac+=(+l.qte||0);
+    if(m!=null) totMin+=(+l.qte||0)*m;
+    if(tppMap[aiNormalize(l.nom)] && tppMap[aiNormalize(l.nom)].fiable) nbParfumsTempsPropre++;
+  });
+  // Dispo cumulée sur l'horizon (14 j) depuis le planning.
+  let dispoMin=null, planningRenseigne=false;
+  try{
+    const conf=(typeof getAvailability==='function')?getAvailability():null;
+    const hasSlot=m=>m&&Object.values(m).some(arr=>Array.isArray(arr)&&arr.length>0);
+    planningRenseigne=!!(conf&&(hasSlot(conf.weekA)||hasSlot(conf.weekB)));
+    if(typeof availableMinutesUntil==='function'){
+      const fin=new Date(); fin.setDate(fin.getDate()+14);
+      dispoMin=availableMinutesUntil(fin.toISOString().slice(0,10),'23:59',conf);
+    }
+  }catch(e){}
+  return {
+    totMac, totMin:Math.round(totMin),
+    minParMacMoyen: totMac>0 ? Math.round(totMin/totMac*10)/10 : null,
+    nbParfumsTempsPropre, nbParfums:lignes.length,
+    dispoMin: dispoMin!=null?Math.round(dispoMin):null, planningRenseigne,
+    depasse: (dispoMin!=null && totMin>dispoMin)
+  };
+}
+
+// Convertit les besoins de l'ordonnanceur ({std, gf}) en lignes {recipeId, nbBatchs} puis
+// délègue à mrpCheckMatieres (source unique de vérité pour le calcul matières du plan).
+async function ordoCheckMatieres(needs){
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recByNom = {}; recipes.forEach(r=>recByNom[aiNormalize(r.produitNom)]=r);
+  const lignes = [];
+  [...(needs.std||[]), ...(needs.gf||[])].forEach(b=>{
+    const rec = recByNom[aiNormalize(b.nom)];
+    if(!rec || !(b.qte>0)) return;
+    const rdt = +rec.rendement>0 ? +rec.rendement : 1;
+    lignes.push({ recipeId: rec.id, nbBatchs: Math.max(1, Math.ceil(b.qte / rdt)) });
+  });
+  if(!lignes.length) return {manques:[], ok:true, details:[]};
+  return await mrpCheckMatieres({lignes});
+}
+
+// Alimente la liste de courses à partir des manques matières du plan de l'ordonnanceur.
+// Réutilise la même mécanique que mrpShoppingFromPlan (meilleur fournisseur + modale courses).
+async function ordoShoppingFromPlan(){
+  const check = _ordoState && _ordoState.matCheck;
+  if(!check || !Array.isArray(check.manques) || !check.manques.length){
+    toast('Aucun manque matière à acheter pour ce plan'); return;
+  }
+  const [mats, lots, suppliers] = await Promise.all([db.materials.toArray(), db.materialLots.toArray(), db.suppliers.toArray()]);
+  const supName = id => (suppliers.find(s=>s.id===id)||{}).nom || '—';
+  const matById = id => mats.find(m=>m.id===id) || null;
+  function bestSupplier(materialId){
+    const perSup = new Map();
+    for(const l of lots){
+      if(l.materialId!==materialId || !l.supplierId) continue;
+      const cur = perSup.get(l.supplierId);
+      const newer = !cur || (l.dateReception||'') > (cur.dateReception||'')
+        || ((l.dateReception||'')===(cur.dateReception||'') && (l.id||0)>(cur.id||0));
+      if(newer) perSup.set(l.supplierId, l);
+    }
+    const offres=[];
+    for(const [sid,lot] of perSup){ const pu=lotPU(lot); if(pu>0) offres.push({sid,pu,date:lot.dateReception||''}); }
+    if(!offres.length) return null;
+    offres.sort((a,b)=>a.pu-b.pu);
+    return { nom:supName(offres[0].sid), pu:offres[0].pu, date:offres[0].date,
+             nbAutres:offres.length-1, ecart: offres.length>1 ? money2(offres[offres.length-1].pu-offres[0].pu) : 0 };
+  }
+  const lignes = check.manques.map(m=>{
+    const mat = matById(m.materialId) || {};
+    return { nom:m.nom, unite:m.unite, cat:mat.categorie||'denree',
+      stock:m.stockAff, seuil:m.besoinAff, manque:m.manqueAff, low:true,
+      best:bestSupplier(m.materialId), _planContext:true };
+  });
+  openShoppingListModal(lignes, lignes.length);
 }
 function ordoSwitchMode(mode){ if(_ordoState){ ordoLancer(mode); } }
 
