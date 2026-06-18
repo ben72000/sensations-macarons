@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v540';
+const APP_VERSION = 'v543';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -14306,6 +14306,7 @@ async function marketDetail(id){
       <button class="btn ghost sm" style="margin-top:8px" onclick="marketReopen(${id})">↺ Rouvrir le marché</button>`
      :`<button class="btn gold" style="width:100%;margin-top:10px" onclick="marketCloseForm(${id})">Clôturer le marché (saisir le CA)</button>`}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn ghost" onclick="marketAdjustForm(${id})" title="Répartition par parfum pour ce marché">🎯 Répartition</button>
       <button class="btn ghost" onclick="marketForm(${id})">Modifier la fiche</button>
       <button class="btn danger" onclick="confirmDelMarket(${id})">🗑 Supprimer</button></div>`);
 }
@@ -16508,7 +16509,7 @@ async function atelierBrain(opts){
   // Besoin temps commandes/réassort (les marchés seront ajoutés après leur calcul, plus bas).
   const besoinMinCmd = (minParMac!=null) ? Math.round(totMacAprod*minParMac) : null;
   // Dispo aujourd'hui depuis le planning renseigné.
-  let dispoAujMin = null, planningRenseigne = false;
+  let dispoAujMin = null, dispoHorizonMin = null, planningRenseigne = false;
   try{
     const now=new Date();
     const conf = (typeof getAvailability==='function') ? getAvailability() : null;
@@ -16517,6 +16518,10 @@ async function atelierBrain(opts){
     planningRenseigne = !!(conf && (hasSlot(conf.weekA) || hasSlot(conf.weekB)));
     if(typeof availMinutesOnDay==='function'){
       dispoAujMin = availMinutesOnDay(now, now.getHours()*60+now.getMinutes(), null, conf);
+    }
+    // [CONNEXION #3] Dispo cumulée sur tout l'horizon (et pas seulement aujourd'hui).
+    if(typeof availableMinutesUntil==='function'){
+      dispoHorizonMin = availableMinutesUntil(endStr, '23:59', conf);
     }
   }catch(e){ console.error('brain.dispo',e); }
 
@@ -16556,7 +16561,8 @@ async function atelierBrain(opts){
         const cross = (typeof marketCrossPlan==='function')
           ? marketCrossPlan(+mk.prevuQte||0, mkForecast, {mode:mkMode, fraisPct:mkFraisPct})
           : {volume:+mk.prevuQte||0, frais:0, congele:+mk.prevuQte||0, mien:+mk.prevuQte||0, predit:0, source:'brut', explication:''};
-        return { id:mk.id, nom:mk.nom||'Marché', date:mk.date, prevuQte:+mk.prevuQte||0, cross };
+        return { id:mk.id, nom:mk.nom||'Marché', date:mk.date, prevuQte:+mk.prevuQte||0, cross,
+                 mkMix: Array.isArray(mk.mkMix)?mk.mkMix:null };
       })
       .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   }catch(e){ console.error('brain.marches',e); }
@@ -16574,17 +16580,50 @@ async function atelierBrain(opts){
   // Besoin temps TOTAL = commandes/réassort + net marché à produire.
   const besoinMin = (minParMac!=null) ? Math.round((totMacAprod + totMacMarches)*minParMac) : null;
 
-  // --- 5 ter) [CONNEXION #1++] VENTILATION MARCHÉ PAR PARFUM (croisement cible × historique).
-  // Le NET marché à produire (totMacMarches) est ventilé par parfum, puis injecté dans un
-  // check matières ENRICHI et une déduction de stock congelé par parfum.
+  // --- 5 ter) [CONNEXION #1++] VENTILATION MARCHÉ PAR PARFUM, MARCHÉ PAR MARCHÉ.
+  // Pour chaque marché : si un ajustement propre (mkMix) existe, il est PRIORITAIRE ;
+  // sinon on applique la cible globale (croisée avec l'historique) à son volume net.
+  // On agrège ensuite les pièces par parfum sur l'ensemble des marchés.
   const mkMixMode = ['croise','mienne','histo'].includes(opts.marketMixMode) ? opts.marketMixMode : 'croise';
   let marketCible = [];
   try{ const st=(typeof getSettings==='function')?getSettings():{}; marketCible = Array.isArray(st.marketMix)?st.marketMix:[]; }catch(e){}
   const marketHisto = (mkForecast && Array.isArray(mkForecast.repartition)) ? mkForecast.repartition : [];
-  let ventilation = {lignes:[], sourceUtilisee:'aucune', explication:''};
-  try{
-    ventilation = marketVentilation(marketCible, marketHisto, totMacMarches, {mode:mkMixMode});
-  }catch(e){ console.error('brain.ventil',e); }
+
+  // Net à produire par marché = sa part du net total, au prorata de son volume.
+  const totMarcheVolumeForProrata = totMarcheVolume>0 ? totMarcheVolume : 1;
+  const ventilParParfum = {};   // parfum normalisé -> {parfum, pieces}
+  let nbMarchesAjustes = 0;
+  marches.forEach(m=>{
+    const volM = +(m.cross&&m.cross.volume)||0;
+    if(volM<=0) return;
+    // Net à produire attribué à ce marché (prorata du net total).
+    const netM = Math.round(totMacMarches * (volM/totMarcheVolumeForProrata));
+    if(netM<=0) return;
+    let lignesM = [];
+    if(m.mkMix && m.mkMix.length){
+      // Ajustement propre : on respecte ses proportions, ramenées au net à produire de ce marché.
+      nbMarchesAjustes++;
+      const totMix = m.mkMix.reduce((s,x)=>s+(+x.mac||0),0);
+      if(totMix>0) lignesM = m.mkMix.map(x=>({ parfum:x.parfum, pieces: Math.round(netM*(+x.mac||0)/totMix) }));
+    } else {
+      // Pas d'ajustement : cible globale croisée appliquée au net de ce marché.
+      try{ const v=marketVentilation(marketCible, marketHisto, netM, {mode:mkMixMode}); lignesM=v.lignes||[]; }catch(e){}
+    }
+    lignesM.forEach(l=>{
+      const k=(typeof aiNormalize==='function')?aiNormalize(l.parfum):(l.parfum||'').toLowerCase();
+      if(!k) return;
+      if(!ventilParParfum[k]) ventilParParfum[k]={parfum:l.parfum, pieces:0};
+      ventilParParfum[k].pieces += (+l.pieces||0);
+    });
+  });
+  const ventilation = {
+    lignes: Object.values(ventilParParfum).filter(l=>l.pieces>0).sort((a,b)=>b.pieces-a.pieces),
+    sourceUtilisee: nbMarchesAjustes>0 ? 'marche-par-marche' : 'cible-globale',
+    nbMarchesAjustes,
+    explication: nbMarchesAjustes>0
+      ? `${nbMarchesAjustes} marché(s) avec répartition ajustée, le reste via ta cible.`
+      : 'Ventilation via ta cible globale croisée avec l\'historique.'
+  };
 
   // Check matières ENRICHI : on ajoute les pièces marché ventilées aux lignes du plan, par recette.
   let matCheckAvecMarche = matCheck;
@@ -16657,9 +16696,14 @@ async function atelierBrain(opts){
     // Détail matières commandes seules (sans marché), pour comparaison/transparence.
     manquesMatieresCmd: matCheck.manques,
     // Temps (inclut la charge marchés dans besoinMin)
-    minParMac, besoinMin, besoinMinCmd, dispoAujMin, planningRenseigne,
-    tempsSuffisant: (besoinMin!=null && dispoAujMin!=null) ? (besoinMin<=dispoAujMin) : null,
-    tempsManquantMin: (besoinMin!=null && dispoAujMin!=null && besoinMin>dispoAujMin) ? (besoinMin-dispoAujMin) : 0,
+    minParMac, besoinMin, besoinMinCmd, dispoAujMin, dispoHorizonMin, planningRenseigne,
+    // Faisabilité AUJOURD'HUI : ce que tu peux avancer dans le temps dispo du jour.
+    tempsSuffisantAuj: (besoinMin!=null && dispoAujMin!=null) ? (besoinMin<=dispoAujMin) : null,
+    // Faisabilité sur l'HORIZON (14 j) : la vraie question — la charge tient-elle dans la dispo des 14 j ?
+    tempsSuffisant: (besoinMin!=null && dispoHorizonMin!=null) ? (besoinMin<=dispoHorizonMin) : null,
+    tempsManquantMin: (besoinMin!=null && dispoHorizonMin!=null && besoinMin>dispoHorizonMin) ? (besoinMin-dispoHorizonMin) : 0,
+    // Taux de charge sur l'horizon (part du temps dispo consommée par la production).
+    tauxChargeHorizon: (besoinMin!=null && dispoHorizonMin>0) ? Math.round(besoinMin/dispoHorizonMin*100) : null,
     // Conflits
     conflits: conf.conflits,
     nbConflits: conf.conflits.length,
@@ -16973,6 +17017,113 @@ function marketMixSave(){
   closeModal();
   toast(mix.length?`Cible enregistrée (${mix.length} parfum(s)) ✓`:'Cible vidée');
   if(typeof renderMarketForecastBox==='function') renderMarketForecastBox();
+}
+
+/* [NIVEAU 2] AJUSTEMENT DE RÉPARTITION PAR MARCHÉ.
+   Part de ta cible proportionnelle (modèle réutilisable) appliquée au VOLUME de CE marché,
+   et te laisse ajuster les nombres réels pour ce marché précis — sans toucher à la cible modèle.
+   Stocké sur le marché dans mk.mkMix = [{parfum, mac}] (macarons ajustés pour ce marché).
+*/
+async function marketAdjustForm(id){
+  const mk = await db.markets.get(id);
+  if(!mk){ toast('Marché introuvable'); return; }
+  const [recipes, st] = await Promise.all([
+    db.recipes.toArray().catch(()=>[]),
+    Promise.resolve((typeof getSettings==='function')?getSettings():{})
+  ]);
+  let fc=null; try{ fc=(typeof marketForecast==='function')?await marketForecast():null; }catch(e){}
+  const histo = (fc && Array.isArray(fc.repartition)) ? fc.repartition : [];
+  const cible = Array.isArray(st.marketMix) ? st.marketMix : [];
+
+  // Volume de CE marché.
+  const volume = +mk.prevuQte||0;
+  // Ajustement déjà enregistré pour ce marché ?
+  const mkMix = Array.isArray(mk.mkMix) ? mk.mkMix : null;
+  const mkMixByParfum = {};
+  if(mkMix) mkMix.forEach(x=>{ mkMixByParfum[aiNormalize(x.parfum)] = +x.mac||0; });
+
+  // Ventilation de DÉPART = cible × historique appliquée au volume (ce que le cerveau propose).
+  let ventil = {lignes:[]};
+  try{ ventil = marketVentilation(cible, histo, volume, {mode:'croise'}); }catch(e){}
+  const ventilByParfum = {};
+  (ventil.lignes||[]).forEach(l=>{ ventilByParfum[aiNormalize(l.parfum)] = l.pieces; });
+
+  // Parfums : ceux de la ventilation + ceux des recettes (pour pouvoir en ajouter).
+  const parfums = recipes.map(r=>r.produitNom).filter(Boolean)
+    .sort((a,b)=> (ventilByParfum[aiNormalize(b)]||0) - (ventilByParfum[aiNormalize(a)]||0) || a.localeCompare(b));
+
+  window._mkAdjustId = id;
+  window._mkAdjustVol = volume;
+  window._mkAdjustParfums = parfums;
+
+  const rows = parfums.map(p=>{
+    const k=aiNormalize(p);
+    // Valeur pré-remplie : ajustement marché si présent, sinon la proposition du cerveau.
+    const propose = ventilByParfum[k]||0;
+    const val = (mkMixByParfum[k]!=null) ? mkMixByParfum[k] : (propose>0 ? propose : '');
+    const proposeTxt = propose>0 ? `<span style="color:#9a8a82;font-size:.74rem">proposé ${propose}</span>` : `<span style="color:#c9bcae;font-size:.74rem">—</span>`;
+    return `<div class="sum-box" style="align-items:center">
+      <span style="flex:1">${esc(p)}<br>${proposeTxt} <span id="mkadj_pct_${k}" style="font-size:.78rem;color:#3f7d52;font-weight:600"></span></span>
+      <span style="display:flex;align-items:center;gap:4px">
+        <input type="number" min="0" step="1" id="mkadj_${k}" value="${val}" style="width:62px;text-align:right" oninput="marketAdjustSum()" inputmode="numeric">
+        <span style="color:#9a8a82;font-size:.8rem">mac.</span></span></div>`;
+  }).join('');
+
+  openModal(`<h3>🎯 Répartition de ce marché</h3>
+    <p class="note">Voici la répartition que le cerveau propose pour <b>${esc(mk.nom||'ce marché')}</b> (volume prévu : <b>${volume}</b> macarons), à partir de ta cible. <b>Ajuste librement</b> pour ce marché précis — ta cible modèle n'est pas modifiée.</p>
+    <div class="sum-box" style="background:#eef5f0"><span><b>Total réparti</b></span><b id="mkadj_total">0</b></div>
+    <p class="note" id="mkadj_hint" style="margin:4px 0 10px"></p>
+    ${rows || '<p class="note">Aucune recette.</p>'}
+    <div class="modal-actions">
+      <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Annuler</button>
+      <button class="btn ghost" onclick="marketAdjustReset()" title="Repartir de la proposition du cerveau">↺ Proposition</button>
+      <button class="btn gold" onclick="marketAdjustSave()">Enregistrer</button>
+    </div>`);
+  marketAdjustSum();
+}
+
+// Total + % par parfum pour l'ajustement marché.
+function marketAdjustSum(){
+  const parfums = window._mkAdjustParfums||[];
+  const vol = window._mkAdjustVol||0;
+  let tot=0;
+  parfums.forEach(p=>{ const el=document.getElementById('mkadj_'+aiNormalize(p)); tot += el?Math.max(0,+el.value||0):0; });
+  const totEl=document.getElementById('mkadj_total'); if(totEl) totEl.textContent=`${Math.round(tot)} mac.`;
+  const hint=document.getElementById('mkadj_hint');
+  if(hint){
+    if(tot===0) hint.innerHTML='<span style="color:#9a8a82">Répartis les macarons de ce marché par parfum.</span>';
+    else if(!vol) hint.innerHTML=`<span style="color:#3f7d52">${Math.round(tot)} macarons répartis.</span>`;
+    else if(Math.abs(tot-vol)<=2) hint.innerHTML=`<span style="color:#3f7d52">✓ ${Math.round(tot)} macarons — tu colles au volume prévu (${vol}).</span>`;
+    else if(tot<vol) hint.innerHTML=`<span style="color:#8a6d3b">${Math.round(tot)} répartis sur ${vol} prévus — il reste ${Math.round(vol-tot)} à placer.</span>`;
+    else hint.innerHTML=`<span style="color:#8a6d3b">${Math.round(tot)} répartis, soit ${Math.round(tot-vol)} de plus que prévu (${vol}).</span>`;
+  }
+  parfums.forEach(p=>{
+    const k=aiNormalize(p); const pctEl=document.getElementById('mkadj_pct_'+k);
+    if(!pctEl) return;
+    const el=document.getElementById('mkadj_'+k); const v=el?Math.max(0,+el.value||0):0;
+    pctEl.textContent = (v>0 && tot>0) ? `→ ${Math.round(v/tot*1000)/10}%` : '';
+  });
+}
+
+// Repart de la proposition du cerveau (réinitialise l'ajustement).
+async function marketAdjustReset(){
+  const id=window._mkAdjustId; if(id==null) return;
+  const mk=await db.markets.get(id); if(!mk) return;
+  // On vide l'ajustement enregistré puis on rouvre (repart de la proposition).
+  if(mk.mkMix){ delete mk.mkMix; await db.markets.update(id, {mkMix:null}); }
+  closeModal(); marketAdjustForm(id);
+}
+
+// Enregistre l'ajustement sur le marché (mk.mkMix), en macarons.
+async function marketAdjustSave(){
+  const id=window._mkAdjustId; if(id==null) return;
+  const parfums=window._mkAdjustParfums||[];
+  const mkMix=[];
+  parfums.forEach(p=>{ const el=document.getElementById('mkadj_'+aiNormalize(p)); const m=el?Math.max(0,+el.value||0):0; if(m>0) mkMix.push({parfum:p, mac:m}); });
+  await db.markets.update(id, {mkMix});
+  closeModal();
+  toast(`Répartition du marché enregistrée (${mkMix.length} parfum(s)) ✓`);
+  if(typeof marketDetail==='function') marketDetail(id);
 }
 // Rafraîchit la jauge périodiquement tant que l'onglet Assistant est affiché
 // (background check), et au retour au premier plan. S'auto-arrête sinon.
