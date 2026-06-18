@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v572';
+const APP_VERSION = 'v574';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -19427,9 +19427,12 @@ async function runIntegrityCheck(){
   // Productions → recette inexistante (hors productions « libres »)
   add('productions','Production(s) liée(s) à une recette supprimée',
     productions.filter(p=>!p.libre && p.recipeId && !S.recipes.has(p.recipeId)), 'none');
-  // RecipeItems → recette ou matière inexistante
+  // RecipeItems → recette ou matière inexistante.
+  // ATTENTION : un recipeItem peut appartenir soit à une RECETTE (recipeId), soit à un
+  // COMPOSANT (componentId, ex. la Chantache). Un ingrédient de composant n'a pas de recipeId
+  // valide : il ne faut donc PAS le considérer orphelin tant que son composant existe.
   add('recipeItems','Ingrédient(s) de recette liés à une recette supprimée',
-    recipeItems.filter(ri=>!S.recipes.has(ri.recipeId)), 'delete');
+    recipeItems.filter(ri=> ri.componentId==null && !S.recipes.has(ri.recipeId)), 'delete');
   add('recipeItems','Ingrédient(s) de recette liés à une matière supprimée',
     recipeItems.filter(ri=>ri.materialId && !S.materials.has(ri.materialId)), 'delete');
   // Lots → matière ou fournisseur inexistant
@@ -20378,9 +20381,207 @@ async function fixLotGramme(lotId){
     scanCremeGrammes();   // rafraîchir la liste
   }catch(e){ console.error('fixLotGramme',e); toast('Erreur lors de la correction'); }
 }
+
+/* ===== RÉCUPÉRATION SÉLECTIVE DES LOTS DE PRODUITS FINIS SUPPRIMÉS =====
+   Compare la dernière sauvegarde « avant-nettoyage-intégrité » (ou avant-restauration)
+   avec l'état actuel, repère les PRODUCTIONS (lots de produits finis) qui ont disparu,
+   et permet de les réinsérer SANS écraser le reste de la base. */
+
+let _recoverData = null;   // { backupDate, manquantes:[...] }
+
+async function scanLostProductions(){
+  const zone=document.getElementById('recoverProdZone'); if(!zone) return;
+  zone.innerHTML='<p class="note">Recherche des lots supprimés…</p>';
+  try{
+    // Sauvegardes candidates : celles prises avant un nettoyage ou une restauration, les plus récentes d'abord.
+    const all = await db.backups.orderBy('date').reverse().toArray();
+    const candidates = all.filter(b=> /nettoyage|restauration|intégrité|integrite/i.test(b.type||''));
+    if(!candidates.length){
+      zone.innerHTML='<p class="note">Aucune sauvegarde « avant-nettoyage » trouvée. Regarde dans Sauvegarde &amp; sécurité si une sauvegarde manuelle ou quotidienne contient tes lots.</p>';
+      return;
+    }
+    // Productions actuelles (par id).
+    const actuelles = await db.productions.toArray().catch(()=>[]);
+    const idsActuels = new Set(actuelles.map(p=>p.id));
+
+    // On parcourt les sauvegardes candidates et on cumule les productions manquantes (sans doublon).
+    const manquantes = [];
+    const vues = new Set();
+    let backupDate = null;
+    for(const b of candidates){
+      let dump; try{ dump=JSON.parse(b.payload); }catch(e){ continue; }
+      const prods = dump.productions || [];
+      const recipes = dump.recipes || [];
+      const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom || '—';
+      prods.forEach(p=>{
+        if(!idsActuels.has(p.id) && !vues.has(p.id)){
+          vues.add(p.id);
+          manquantes.push({ ...p, _recName: recName(p.recipeId), _fromBackup: b.date });
+          if(!backupDate || b.date>backupDate) backupDate=b.date;
+        }
+      });
+    }
+    if(!manquantes.length){
+      zone.innerHTML='<p class="note">✅ Aucune production manquante détectée : tous les lots des sauvegardes « avant-nettoyage » sont encore présents. Le souci vient peut-être d\'un affichage filtré dans Stock par parfum (vérifie qu\'aucun filtre n\'est actif).</p>';
+      return;
+    }
+    _recoverData = { backupDate, manquantes };
+    // Affichage : liste des lots récupérables.
+    const rows = manquantes.map((p,i)=>{
+      const dlc = p.dlcProduit ? fmtDate(p.dlcProduit) : '—';
+      const qr = (p.qteRestante!=null) ? qty(round3(+p.qteRestante)) : '?';
+      return `<div class="sum-box" style="flex-wrap:wrap">
+        <span style="flex:1;min-width:160px">
+          <b>${esc(p._recName)}</b> <span style="color:#9a8a82">— lot ${esc(p.lotProduction||('#'+p.id))}${p.date?' · '+fmtDate(p.date):''}</span><br>
+          <span style="font-size:.82rem">Reste : <b>${qr}</b> · DLC : ${dlc}${p.emplacement?' · '+esc(p.emplacement):''}</span>
+        </span>
+        <button class="btn ghost sm" onclick="recoverOneProduction(${i})">↩ Restaurer ce lot</button>
+      </div>`;
+    }).join('');
+    zone.innerHTML = `
+      <p class="note"><b>${manquantes.length} lot(s) de produits finis</b> présents dans une sauvegarde mais absents aujourd'hui. Tu peux les restaurer un par un, ou tous d'un coup. Aucune autre donnée ne sera modifiée.</p>
+      <div style="margin:8px 0"><button class="btn gold sm" onclick="recoverAllProductions()">↩ Tout restaurer (${manquantes.length})</button></div>
+      ${rows}`;
+  }catch(e){
+    console.error('scanLostProductions',e);
+    zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant la recherche : '+esc(e&&e.message?e.message:String(e))+'</p>';
+  }
+}
+
+async function recoverOneProduction(i){
+  if(!_recoverData || !_recoverData.manquantes[i]) return;
+  const p = _recoverData.manquantes[i];
+  try{
+    // On retire les champs internes ajoutés pour l'affichage avant réinsertion.
+    const clean = {...p}; delete clean._recName; delete clean._fromBackup;
+    // Réinsertion en conservant l'id d'origine (db.put = insert ou update).
+    await db.productions.put(clean);
+    markUnsaved && markUnsaved();
+    toast('Lot restauré ✓');
+    scanLostProductions();   // rafraîchir
+  }catch(e){ console.error('recoverOneProduction',e); toast('Erreur lors de la restauration'); }
+}
+
+async function recoverAllProductions(){
+  if(!_recoverData || !_recoverData.manquantes.length) return;
+  if(!confirm(`Restaurer les ${_recoverData.manquantes.length} lot(s) manquant(s) ?\n\nIls seront réinsérés dans tes productions. Aucune autre donnée ne sera touchée.`)) return;
+  try{
+    // Sauvegarde de sécurité avant l'opération groupée.
+    try{ await snapshotBackup('avant-récupération-lots'); }catch(eBk){ console.error('snapshot',eBk); }
+    const cleanList = _recoverData.manquantes.map(p=>{ const c={...p}; delete c._recName; delete c._fromBackup; return c; });
+    await db.productions.bulkPut(cleanList);
+    markUnsaved && markUnsaved();
+    toast(cleanList.length+' lot(s) restauré(s) ✓');
+    scanLostProductions();
+  }catch(e){ console.error('recoverAllProductions',e); toast('Erreur lors de la restauration groupée'); }
+}
+
+/* ===== RÉCUPÉRATION DES RECETTES & INGRÉDIENTS SUPPRIMÉS =====
+   Cas typique : un nettoyage a supprimé une recette (les lots deviennent « recette supprimée »)
+   et/ou les ingrédients d'un composant (Chantache). Cet outil retrouve dans la dernière
+   sauvegarde « avant-nettoyage » les recettes ET les recipeItems (ingrédients de recettes ou de
+   composants) qui ont disparu, et les réinsère SANS écraser le reste. */
+
+let _recoverRecData = null;
+
+async function scanLostRecipes(){
+  const zone=document.getElementById('recoverRecZone'); if(!zone) return;
+  zone.innerHTML='<p class="note">Recherche des recettes et ingrédients supprimés…</p>';
+  try{
+    const all = await db.backups.orderBy('date').reverse().toArray();
+    const candidates = all.filter(b=> /nettoyage|restauration|intégrité|integrite|récupération|recuperation/i.test(b.type||''));
+    if(!candidates.length){
+      zone.innerHTML='<p class="note">Aucune sauvegarde « avant-nettoyage » trouvée.</p>';
+      return;
+    }
+    const [recsAct, itemsAct, compsAct] = await Promise.all([
+      db.recipes.toArray().catch(()=>[]),
+      db.recipeItems.toArray().catch(()=>[]),
+      db.components.toArray().catch(()=>[])
+    ]);
+    const recIds = new Set(recsAct.map(r=>r.id));
+    const itemIds = new Set(itemsAct.map(it=>it.id));
+    const compById = {}; compsAct.forEach(c=>compById[c.id]=c);
+
+    const recsManq = []; const itemsManq = [];
+    const vusR = new Set(); const vusI = new Set();
+    for(const b of candidates){
+      let dump; try{ dump=JSON.parse(b.payload); }catch(e){ continue; }
+      (dump.recipes||[]).forEach(r=>{
+        if(!recIds.has(r.id) && !vusR.has(r.id)){ vusR.add(r.id); recsManq.push(r); }
+      });
+      const recsDump = dump.recipes||[];
+      const recDumpName = id => (recsDump.find(r=>r.id===id)||{}).produitNom;
+      (dump.recipeItems||[]).forEach(it=>{
+        if(!itemIds.has(it.id) && !vusI.has(it.id)){
+          vusI.add(it.id);
+          // Étiquette lisible : à quoi cet ingrédient appartient (composant ou recette).
+          let appartient = '?';
+          if(it.componentId!=null){ appartient = 'composant ' + (compById[it.componentId]?compById[it.componentId].nom:('#'+it.componentId)); }
+          else if(it.recipeId!=null){ appartient = 'recette ' + (recDumpName(it.recipeId)||('#'+it.recipeId)); }
+          itemsManq.push({ ...it, _appartient:appartient });
+        }
+      });
+    }
+    if(!recsManq.length && !itemsManq.length){
+      zone.innerHTML='<p class="note">✅ Aucune recette ni ingrédient manquant détecté dans les sauvegardes.</p>';
+      return;
+    }
+    _recoverRecData = { recsManq, itemsManq };
+    let html = '';
+    if(recsManq.length){
+      html += `<p style="font-weight:600;margin:6px 0 4px">🍽️ ${recsManq.length} recette(s) supprimée(s)</p>`;
+      html += recsManq.map(r=>`<div class="sum-box"><span style="flex:1"><b>${esc(r.produitNom||'recette')}</b> <span style="color:#9a8a82">— ${r.grandFormat?'grand format':'standard'}${r.rendement?' · rendement '+r.rendement:''}</span></span></div>`).join('');
+    }
+    if(itemsManq.length){
+      // Regrouper par appartenance pour la lisibilité.
+      const parGroupe = {};
+      itemsManq.forEach(it=>{ (parGroupe[it._appartient]=parGroupe[it._appartient]||[]).push(it); });
+      html += `<p style="font-weight:600;margin:10px 0 4px">🧂 ${itemsManq.length} ingrédient(s) supprimé(s)</p>`;
+      Object.entries(parGroupe).forEach(([grp, list])=>{
+        html += `<div class="sum-box"><span style="flex:1"><b>${esc(grp)}</b> <span style="color:#9a8a82">— ${list.length} ingrédient(s)</span></span></div>`;
+      });
+    }
+    zone.innerHTML = `
+      <p class="note">Éléments présents dans une sauvegarde mais absents aujourd'hui. La restauration les réinsère sans toucher au reste.</p>
+      <div style="margin:8px 0"><button class="btn gold sm" onclick="recoverAllRecipes()">↩ Tout restaurer (${recsManq.length} recette(s) + ${itemsManq.length} ingrédient(s))</button></div>
+      ${html}`;
+  }catch(e){
+    console.error('scanLostRecipes',e);
+    zone.innerHTML='<p class="note" style="color:#b3261e">Erreur : '+esc(e&&e.message?e.message:String(e))+'</p>';
+  }
+}
+
+async function recoverAllRecipes(){
+  if(!_recoverRecData) return;
+  const { recsManq, itemsManq } = _recoverRecData;
+  if(!recsManq.length && !itemsManq.length) return;
+  if(!confirm(`Restaurer ${recsManq.length} recette(s) et ${itemsManq.length} ingrédient(s) ?\n\nIls seront réinsérés. Aucune autre donnée ne sera touchée.`)) return;
+  try{
+    try{ await snapshotBackup('avant-récupération-recettes'); }catch(eBk){ console.error('snapshot',eBk); }
+    if(recsManq.length) await db.recipes.bulkPut(recsManq);
+    if(itemsManq.length){
+      const clean = itemsManq.map(it=>{ const c={...it}; delete c._appartient; return c; });
+      await db.recipeItems.bulkPut(clean);
+    }
+    markUnsaved && markUnsaved();
+    toast('Restauration effectuée ✓');
+    scanLostRecipes();
+  }catch(e){ console.error('recoverAllRecipes',e); toast('Erreur lors de la restauration'); }
+}
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
+    <div class="panel" style="background:#fff4f4;border:1.5px solid #e5a0a0;margin-bottom:12px">
+      <h2 style="font-size:1rem">🛟 Récupérer des lots de produits finis supprimés</h2>
+      <p class="note">Si des lots ont disparu de ton <b>Stock par parfum</b> après un nettoyage, cet outil les retrouve dans la dernière sauvegarde « avant-nettoyage » et te permet de les <b>restaurer sans rien écraser d'autre</b>.</p>
+      <div id="recoverProdZone"><button class="btn gold sm" onclick="scanLostProductions()">Rechercher les lots supprimés</button></div>
+    </div>
+    <div class="panel" style="background:#fff4f4;border:1.5px solid #e5a0a0;margin-bottom:12px">
+      <h2 style="font-size:1rem">🍽️ Récupérer une recette ou des ingrédients supprimés</h2>
+      <p class="note">Si une <b>recette a été supprimée</b> (tes lots s'affichent « recette supprimée ») ou si les <b>ingrédients d'un composant</b> (ex. Chantache) ont disparu, cet outil les retrouve dans la sauvegarde « avant-nettoyage » et les restaure <b>sans rien écraser</b>.</p>
+      <div id="recoverRecZone"><button class="btn gold sm" onclick="scanLostRecipes()">Rechercher les recettes et ingrédients supprimés</button></div>
+    </div>
     <div class="panel" style="background:#fbf7f0;margin-bottom:12px">
       <h2 style="font-size:1rem">💶 Commandes à 0 €</h2>
       <p class="note">Recherche les commandes dont le <b>prix total est à 0 €</b> alors qu'elles contiennent des macarons (montant non consolidé à l'enregistrement). L'outil recalcule le vrai montant depuis les lignes.</p>
