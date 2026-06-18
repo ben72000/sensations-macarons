@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v550';
+const APP_VERSION = 'v552';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15706,6 +15706,7 @@ function renderAssistant(){
   _aiPhotoPreview=null;   // aucune pièce jointe ne persiste entre deux visites
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Assistant</h1><p>Anti-gaspi, sérénité & pilotage</p></div></div>
+   <div id="atelierVoixBox"><div class="banner">🧭 <div>Analyse de ta situation en cours…</div></div></div>
    <div id="assistantBriefing"><div class="banner">☀️ <div>Préparation de ton briefing du jour…</div></div></div>
    <details class="ai-fold" open><summary>🧘 Jauge de sérénité <span class="ai-fold-arrow">▾</span></summary>
      <div class="ai-fold-body"><div id="serenityBox"><div class="banner">🧘 <div>Calcul de la jauge de sérénité…</div></div></div></div></details>
@@ -15739,6 +15740,16 @@ function renderAssistant(){
   renderPredictiveAlerts();
   ttScheduleSerenityRefresh();
   renderAssistantBriefing();
+  renderAtelierVoix();
+}
+
+// [LA VOIX] Rendu de l'encart de conseil proactif (écran Assistant).
+async function renderAtelierVoix(){
+  const box=document.getElementById('atelierVoixBox'); if(!box) return;
+  try{
+    const voix = await atelierVoix();
+    box.innerHTML = voix || '';
+  }catch(e){ console.error('renderAtelierVoix',e); box.innerHTML=''; }
 }
 
 // TABLEAU DE BORD PROACTIF — « À faire aujourd'hui ».
@@ -16512,6 +16523,48 @@ async function commandesEnRetard(opts){
   out.sort((a,b)=>(a.dateLivraison||'').localeCompare(b.dateLivraison||''));
   return out;
 }
+
+/* [CONNEXION #5] DLC DES PRODUITS FINIS. Repère les macarons DÉJÀ FABRIQUÉS (finis, en stock)
+   qui approchent de leur date limite, pour les écouler en priorité avant qu'ils ne périment.
+   Pendant de la connexion #2 (ne pas reproduire l'existant) côté "ne pas gaspiller l'existant".
+   Renvoie [{parfum, lot, dlc, joursAvantDLC, qte, emplacement, urgent}], trié par urgence.
+   - On ne garde que les produits FINIS (complet/assemble) avec stock restant et une DLC connue.
+   - Seuil par défaut : alerte si DLC dans <= 4 jours (configurable via opts.seuilJours).
+*/
+async function produitsFinisDlc(opts){
+  opts = opts||{};
+  const seuilJours = (opts.seuilJours!=null) ? +opts.seuilJours : 4;
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+
+  const out = [];
+  prods.forEach(p=>{
+    // Produit FINI uniquement (pas coques/ganache/dégustation).
+    const comp = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
+    if(comp!=='complet' && comp!=='assemble') return;
+    const reste = round3(+p.qteRestante||0);
+    if(reste<=0) return;
+    if(!p.dlcProduit) return;
+    const j = (typeof daysTo==='function') ? daysTo(p.dlcProduit) : null;
+    if(j===null) return;
+    if(j > seuilJours) return;   // pas encore dans la fenêtre d'alerte
+
+    const nom = (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : '';
+    out.push({
+      parfum: nom || '(parfum ?)',
+      lot: p.lotProduction || ('#'+p.id),
+      dlc: p.dlcProduit,
+      joursAvantDLC: j,
+      qte: reste,
+      emplacement: p.emplacement || '',
+      urgent: (j<=1)              // urgent si DLC aujourd'hui/demain ou dépassée
+    });
+  });
+
+  // Tri : le plus urgent d'abord (DLC la plus proche), puis la plus grosse quantité.
+  out.sort((a,b)=> (a.joursAvantDLC-b.joursAvantDLC) || (b.qte-a.qte));
+  return out;
+}
 async function atelierBrain(opts){
   opts = opts || {};
   const horizon = opts.horizon || 14;
@@ -16613,6 +16666,11 @@ async function atelierBrain(opts){
   // aurait déjà dû démarrer (le rétroplanning connaît la date de début de chaque étape).
   let retardsLancement = [];
   try{ retardsLancement = (typeof commandesEnRetard==='function') ? await commandesEnRetard({horizon:21}) : []; }catch(e){ console.error('brain.retards',e); }
+
+  // --- 5 quinquies) [CONNEXION #5] DLC DES PRODUITS FINIS : macarons déjà faits qui approchent
+  // de leur date limite, à écouler en priorité avant péremption.
+  let dlcFinis = [];
+  try{ dlcFinis = (typeof produitsFinisDlc==='function') ? await produitsFinisDlc({seuilJours:4}) : []; }catch(e){ console.error('brain.dlcfinis',e); }
 
   // --- 5 bis) [CONNEXION #1] MARCHÉS À VENIR dans l'horizon : charge de production.
   // Un marché compte s'il est daté dans [aujourd'hui, +horizon], pas clos, pas historique.
@@ -16802,6 +16860,11 @@ async function atelierBrain(opts){
     retardsLancement,
     nbCommandesEnRetard: retardsLancement.length,
     aDesRetards: retardsLancement.length>0,
+    // [CONNEXION #5] Produits finis proches DLC : à écouler en priorité.
+    dlcFinis,
+    nbDlcFinis: dlcFinis.length,
+    aDesDlcProches: dlcFinis.length>0,
+    nbDlcUrgents: dlcFinis.filter(d=>d.urgent).length,
     // Optimisation
     optimisations,
     // Méta : ce que le cerveau a pu calculer (pour que la "voix" ne parle que du sûr)
@@ -16813,6 +16876,105 @@ async function atelierBrain(opts){
     }
   };
   return etat;
+}
+
+/* ============================ LA VOIX ============================
+   atelierVoix() : transforme les calculs d'atelierBrain en un CONSEIL PARLÉ,
+   priorisé et actionnable. Affiché en tête du Plan de production ET sur l'accueil.
+   Principe cardinal : ne parler QUE de ce qui est calculé (jamais d'invention).
+   Renvoie une chaîne HTML (l'encart de conseil), ou un encart neutre si rien à dire.
+*/
+async function atelierVoix(opts){
+  opts = opts||{};
+  let b;
+  try{ b = await atelierBrain(); }catch(e){ console.error('voix.brain',e); return ''; }
+  if(!b) return '';
+
+  const esc2 = s => (typeof esc==='function') ? esc(String(s==null?'':s)) : String(s==null?'':s);
+  const fmtHM = m => { m=Math.round(+m||0); const h=Math.floor(m/60), mm=m%60; return `${h?h+'h ':''}${String(mm).padStart(2,'0')}min`; };
+  const sections = [];
+
+  // --- 1) URGENCES (retards de lancement + DLC produits finis) ---
+  const urgences = [];
+  if(b.aDesRetards && Array.isArray(b.retardsLancement)){
+    b.retardsLancement.slice(0,3).forEach(r=>{
+      const quoi = r.plusUrgent ? r.plusUrgent.label : 'une étape';
+      urgences.push(`La commande <b>${esc2(r.client)}</b> : l'étape « ${esc2(quoi)} » aurait déjà dû démarrer. À lancer sans tarder.`);
+    });
+  }
+  if(b.aDesDlcProches && Array.isArray(b.dlcFinis)){
+    b.dlcFinis.filter(d=>d.urgent).slice(0,3).forEach(d=>{
+      const q = (typeof qty==='function') ? qty(d.qte) : d.qte;
+      const when = d.joursAvantDLC<0 ? 'a dépassé sa DLC' : d.joursAvantDLC===0 ? 'périme aujourd\'hui' : 'périme demain';
+      urgences.push(`<b>${q} ${esc2(d.parfum)}</b> (lot ${esc2(d.lot)}) ${when} — à écouler en priorité.`);
+    });
+  }
+  if(urgences.length){
+    sections.push(`<div style="margin-bottom:10px">
+      <div style="font-weight:700;color:#b3261e;margin-bottom:4px">⚠️ À traiter en priorité</div>
+      ${urgences.map(u=>`<div style="font-size:.86rem;margin:3px 0;padding-left:4px">• ${u}</div>`).join('')}
+    </div>`);
+  }
+
+  // --- 2) À PRODUIRE (le plan, top 4) ---
+  if(Array.isArray(b.plan) && b.plan.length){
+    const top = b.plan.slice(0,4);
+    const items = top.map((it,i)=>{
+      const q = (it.qte!=null) ? `${(typeof qty==='function')?qty(it.qte):it.qte} pièces` : 'à écouler';
+      const pour = it.type==='commande' ? ' <span style="color:#9a8a82">(commande)</span>'
+                 : it.type==='rupture' ? ' <span style="color:#9a8a82">(réassort)</span>'
+                 : it.type==='antigaspi' ? ' <span style="color:#9a8a82">(anti-gaspi)</span>' : '';
+      return `<div style="font-size:.86rem;margin:3px 0">${i+1}. <b>${esc2(it.produitNom)}</b> — ${q}${pour}</div>`;
+    }).join('');
+    const reste = b.plan.length>top.length ? `<div style="font-size:.78rem;color:#9a8a82;margin-top:2px">+ ${b.plan.length-top.length} autre(s)</div>` : '';
+    // Astuce stock déjà produit (si une ligne a des coques en stock)
+    let astuce='';
+    if(Array.isArray(b.lignesPlan)){
+      const avecCoques = b.lignesPlan.find(l=>l.coquesStock>0 && l.qte>0);
+      if(avecCoques){ astuce = `<div style="font-size:.78rem;color:#3f7d52;margin-top:4px">💡 Tu as déjà des coques en stock pour ${esc2(avecCoques.parfum)} → tu peux en produire moins.</div>`; }
+    }
+    sections.push(`<div style="margin-bottom:10px">
+      <div style="font-weight:700;color:#5a3a2a;margin-bottom:4px">🍩 À produire ${b.plan.length?`<span style="font-weight:400;color:#9a8a82;font-size:.8rem">(${b.plan.length} conseil${b.plan.length>1?'s':''}, 14 j)</span>`:''}</div>
+      ${items}${reste}${astuce}
+    </div>`);
+  }
+
+  // --- 3) TEMPS (ça tient ?) — seulement si calculé ---
+  if(b.dispo && b.dispo.temps && b.dispo.planning && b.tempsSuffisant!=null){
+    if(b.tempsSuffisant){
+      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#3f7d52">⏱ <b>Ça tient dans ton temps.</b> Charge estimée ${fmtHM(b.besoinMin)} sur tes 14 j disponibles${b.tauxChargeHorizon!=null?` (${b.tauxChargeHorizon}% de ta dispo)`:''}.</div>`);
+    } else {
+      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#d98324">⏱ <b>Attention au temps.</b> Il manque environ ${fmtHM(b.tempsManquantMin)} sur l'horizon de 14 j. Pense à étaler ou élargir tes disponibilités.</div>`);
+    }
+  }
+
+  // --- 4) MATIÈRES (manques chiffrés) — seulement si manques ---
+  if(b.matieresOk===false && Array.isArray(b.manquesMatieres) && b.manquesMatieres.length){
+    const liste = b.manquesMatieres.slice(0,4).map(m=>{
+      const nom = m.nom || '(matière ?)';
+      const manque = (m.besoinAff!=null && m.stockAff!=null) ? (m.besoinAff - m.stockAff) : null;
+      const q = (manque!=null && manque>0) ? ` (${(typeof qty==='function')?qty(manque):Math.round(manque*1000)/1000}${m.unite?' '+m.unite:''})` : '';
+      return `${esc2(nom)}${q}`;
+    }).join(', ');
+    sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#b3261e">🛒 <b>Matières manquantes</b> pour tout produire : ${liste}. À acheter avant de lancer.</div>`);
+  }
+
+  // --- 5) MARCHÉS (conseil de production marché) — seulement si pertinent ---
+  if(b.marketVentil && Array.isArray(b.marketVentil.lignes) && b.marketVentil.lignes.length){
+    const top3 = b.marketVentil.lignes.slice(0,3).map(l=>`${(typeof qty==='function')?qty(l.pieces):l.pieces} ${esc2(l.parfum)}`).join(', ');
+    sections.push(`<div style="font-size:.84rem;margin-bottom:4px;color:#5a3a2a">📅 <b>Pour tes marchés à venir</b> : ${top3}${b.marketVentil.lignes.length>3?'…':''}</div>`);
+  }
+
+  // --- Assemblage ---
+  if(!sections.length){
+    return `<div class="banner" style="background:#eef5f0;border-color:#bcd9c4">🧭 <div><b>Rien d'urgent pour le moment.</b> Pas de commande en retard, pas de production pressante. Tu peux avancer sereinement.</div></div>`;
+  }
+  return `<div class="panel" style="border-left:4px solid var(--bordeaux)">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <span style="font-size:1.05rem">🧭</span><b style="color:var(--bordeaux);font-size:1rem">Ce que je te conseille maintenant</b>
+    </div>
+    ${sections.join('')}
+  </div>`;
 }
 async function renderProductionPlan(){
   const box=document.getElementById('mrpConseil') || document.getElementById('aiOut'); if(!box) return;
@@ -16917,6 +17079,12 @@ async function renderProductionPlan(){
     })()}
     <p class="note" style="margin-top:8px">Conseil indicatif basé sur tes commandes, ta vélocité de ventes (14 j) et tes DLC. Les quantités sont des suggestions à ajuster.</p>
   </div>`;
+
+  // [LA VOIX] Conseil parlé du cerveau, inséré EN TÊTE du plan (sans toucher au reste).
+  try{
+    const voix = await atelierVoix();
+    if(voix) box.insertAdjacentHTML('afterbegin', voix);
+  }catch(e){ console.error('voix.plan',e); }
 }
 // Réordonnancement de la priorité (simple : monter/descendre).
 function planPrioForm(){
