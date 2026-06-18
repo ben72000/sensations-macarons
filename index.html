@@ -1105,7 +1105,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
     <div class="brand">Sensations<br>Macarons<small>Pilotage</small></div>
     <div class="brand-rule"></div>
     <div class="global-search-wrap" style="margin-bottom:12px">
-      <input class="search" id="globalSearch" placeholder="🔎 Rechercher partout (client, commande, parfum, lot…)" autocomplete="off" autocapitalize="off" autocorrect="off" oninput="globalSearchRun(this.value)" onfocus="globalSearchRun(this.value)">
+      <input class="search" id="globalSearch" placeholder="🔎 Rechercher partout (client, commande, parfum, lot…)" autocomplete="off" autocapitalize="off" autocorrect="off" oninput="globalSearchRun(this.value,'')" onfocus="globalSearchRun(this.value,'')">
       <div id="globalSearchResults" style="display:none;margin-top:8px;max-height:50vh;overflow-y:auto"></div>
     </div>
     <nav class="nav" id="nav">
@@ -1177,6 +1177,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
   <div class="sheet" id="sheet">
     <div class="sheet-grip"></div>
     <h3>Menu</h3>
+    <div class="global-search-wrap" style="margin-bottom:12px">
+      <input class="search" id="globalSearchM" placeholder="🔎 Rechercher partout (client, commande, parfum, lot…)" autocomplete="off" autocapitalize="off" autocorrect="off" style="width:100%" oninput="globalSearchRun(this.value,'M')">
+      <div id="globalSearchResultsM" style="display:none;margin-top:8px;max-height:45vh;overflow-y:auto"></div>
+    </div>
     <button class="sheet-privacy" onclick="togglePrivacyMode();closeSheet&&closeSheet()" id="sheetPrivacyBtn">🙈 Mode discret</button>
     <div id="sheetGrid">
       <div class="sheet-grid">
@@ -1242,7 +1246,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 
 <script src="dexie.min.js"></script>
 <script src="qr.min.js"></script>
-<script src="utils.js?v=564"></script>
-<script src="app.js?v=564"></script>
+<script src="utils.js?v=565"></script>
+<script src="app.js?v=565"></script>
 </body>
 </html>

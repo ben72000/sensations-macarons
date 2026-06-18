@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v564';
+const APP_VERSION = 'v565';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7682,8 +7682,9 @@ const _GS_META = {
   coffret:  {label:'Coffret',  color:'#6b5d54', ico:'◫'}
 };
 
-async function globalSearchRun(q){
-  const zone = document.getElementById('globalSearchResults');
+async function globalSearchRun(q, suffix){
+  suffix = suffix||'';
+  const zone = document.getElementById('globalSearchResults'+suffix);
   if(!zone) return;
   const raw = (q||'').trim();
   if(!raw){ zone.style.display='none'; zone.innerHTML=''; return; }
