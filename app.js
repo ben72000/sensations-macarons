@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v587';
+const APP_VERSION = 'v593';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -12239,6 +12239,7 @@ async function computeForecast(opts){
   const recipes = await db.recipes.toArray();
   const prods = await db.productions.toArray();
   const orders = await db.orders.toArray();
+  const markets = await db.markets.toArray().catch(()=>[]);
   const norm = s=>aiNormalize(s);
 
   // 1) STOCK FINI ACTUEL par parfum (somme des batchs restants, regroupés par recette/produitNom)
@@ -12261,6 +12262,39 @@ async function computeForecast(opts){
     for(const nom in dem){
       reservedByParfum[nom] = (reservedByParfum[nom]||0) + dem[nom];
       (datedByParfum[nom] ||= []).push({date:o.date, qte:dem[nom], orderId:o.id, clientId:o.clientId||0, dans});
+    }
+  });
+
+  // 2b) MARCHÉS PROGRAMMÉS (ouverts, à venir) : la quantité PRÉVUE à emporter est une
+  // demande future au même titre qu'une commande. On la VENTILE par parfum selon la
+  // répartition apprise des marchés passés (intelligence centrale) ; sans historique,
+  // elle reste une demande GLOBALE (imputée plus bas sur le stock total restant).
+  const futureMarkets = markets.filter(m=> m.date && m.date>=todayStr && m.statut!=='clos' && (+m.prevuQte||0)>0);
+  let marketRepartition = [];
+  if(futureMarkets.length){
+    try{ const mf = await marketForecast(); marketRepartition = (mf && mf.repartition) ? mf.repartition : []; }
+    catch(e){ marketRepartition = []; }
+  }
+  const totPct = marketRepartition.reduce((s,r)=>s+(+r.pct||0),0);
+  let marketGlobal = 0;                 // demande marché NON ventilée (faute d'historique)
+  const marketDates = [];               // [{date, qte, dans}] pour info/affichage
+  futureMarkets.forEach(m=>{
+    const q = +m.prevuQte||0; if(q<=0) return;
+    const dans = daysTo(m.date);
+    marketDates.push({nom:m.nom||'', date:m.date, qte:q, dans});
+    if(marketRepartition.length && totPct>0){
+      // ventilation au prorata des pourcentages appris ; le dernier parfum absorbe le reste
+      let cumule=0;
+      marketRepartition.forEach((r,i)=>{
+        let part = (i===marketRepartition.length-1) ? (q-cumule) : Math.round(q*(+r.pct||0)/totPct);
+        if(i!==marketRepartition.length-1) cumule += part;
+        if(part>0){
+          reservedByParfum[r.parfum] = (reservedByParfum[r.parfum]||0) + part;
+          (datedByParfum[r.parfum] ||= []).push({date:m.date, qte:part, marketId:m.id, marche:true, dans});
+        }
+      });
+    } else {
+      marketGlobal += q;   // pas d'historique → demande globale (traitée après la projection)
     }
   });
 
@@ -12291,9 +12325,28 @@ async function computeForecast(opts){
   });
 
   const alertes = lignes.filter(l=>l.alerte);
+
+  // 4) DEMANDE MARCHÉ GLOBALE (sans historique de répartition) : on l'impute sur le
+  // stock total RESTANT après toutes les réservations déjà projetées par parfum.
+  // Si ce reste ne couvre pas les marchés à venir, on lève une alerte « marché ».
+  const stockTotal = Object.values(stockByParfum).reduce((s,x)=>s+x,0);
+  const reserveTotale = Object.values(reservedByParfum).reduce((s,x)=>s+x,0);
+  const stockRestant = Math.max(0, stockTotal - reserveTotale);
+  const marketManqueGlobal = Math.max(0, round3(marketGlobal - stockRestant));
+  // échéance la plus proche parmi les marchés (pour l'urgence)
+  const marketProche = marketDates.slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''))[0] || null;
+  const alerteMarcheGlobal = marketManqueGlobal>0 && marketProche && marketProche.dans!=null && marketProche.dans < horizon;
+
   return {horizon, todayStr, lignes, alertes,
     nbFutur:futureOrders.length,
-    nbParfumsRupture: lignes.filter(l=>l.soldePrev<0).length};
+    nbParfumsRupture: lignes.filter(l=>l.soldePrev<0).length,
+    // Marchés programmés pris en compte :
+    nbMarches: futureMarkets.length,
+    marketGlobal: round3(marketGlobal),          // demande marché non ventilée (faute d'historique)
+    marketManqueGlobal,                          // ce qui manque globalement pour les marchés
+    marketDates,                                 // détail {nom,date,qte,dans}
+    marketVentile: marketRepartition.length>0,   // true si la demande marché a été ventilée par parfum
+    alerteMarcheGlobal };
 }
 // Résumé court des alertes pour la popup quotidienne.
 async function forecastAlerts(){
@@ -15302,6 +15355,19 @@ async function renderForecast(){
     ? `⚠ ${f.alertes.length} parfum(s) en risque de rupture pour une livraison sous ${f.horizon} jours. Planifiez une production.`
     : `✅ Aucun risque de rupture détecté sous ${f.horizon} jours sur les ${f.nbFutur} commande(s) à venir.`;
 
+  // Encart marchés programmés pris en compte dans le prévisionnel.
+  const marketBanner = f.nbMarches>0 ? (()=>{
+    const detail = (f.marketDates||[]).slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''))
+      .map(m=>`${esc(m.nom||'Marché')} (${fmtDate(m.date)}${m.dans!=null?`, J−${Math.max(0,m.dans)}`:''}) : ${qty(m.qte)}`).join(' · ');
+    const mode = f.marketVentile
+      ? 'répartis par parfum selon ton historique de marchés'
+      : 'comptés en demande globale (pas encore d\'historique pour répartir par parfum)';
+    const manque = f.marketManqueGlobal>0
+      ? ` <b style="color:var(--red,#b3261e)">Ton stock restant ne couvre pas ${qty(f.marketManqueGlobal)} macaron(s) de marché.</b>`
+      : '';
+    return `<div class="banner" style="background:#fff8ec;border-color:#e8cfa0">⛺ <div><b>${f.nbMarches} marché(s) programmé(s)</b> intégré(s) au prévisionnel — ${mode}.<br><span style="font-size:.82rem;color:#8a7a72">${detail}</span>${manque}</div></div>`;
+  })() : '';
+
   const rows = f.lignes.map(l=>{
     const soldeColor = l.soldePrev<0 ? 'var(--red,#b3261e)' : (l.soldePrev<=5 ? 'var(--caramel)' : '#3f7d52');
     const etat = l.alerte
@@ -15321,7 +15387,7 @@ async function renderForecast(){
   // détail des échéances en rupture (pour planifier les journées de production)
   const detailRupture = f.lignes.filter(l=>l.echeances.some(e=>e.rupture)).map(l=>{
     const ech = l.echeances.filter(e=>e.rupture).map(e=>
-      `<div class="sum-box"><span>${fmtDate(e.date)} ${e.dans!=null?`<span style="color:#9a8a82">(J−${Math.max(0,e.dans)})</span>`:''} · cmd #${e.orderId}</span><b style="color:var(--red,#b3261e)">manque ${qty(-e.soldeApres)}</b></div>`).join('');
+      `<div class="sum-box"><span>${fmtDate(e.date)} ${e.dans!=null?`<span style="color:#9a8a82">(J−${Math.max(0,e.dans)})</span>`:''} · ${e.marche?'⛺ marché':'cmd #'+e.orderId}</span><b style="color:var(--red,#b3261e)">manque ${qty(-e.soldeApres)}</b></div>`).join('');
     return `<div class="panel"><h2>${esc(l.parfum)} <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— stock ${qty(l.stock)}, réservé ${qty(l.reserved)}</span></h2>${ech}</div>`;
   }).join('');
 
@@ -15329,6 +15395,7 @@ async function renderForecast(){
    <div class="topbar"><div><h1>Prévisionnel stocks</h1><p>Anticipation des ruptures · données du ${fmtDate(f.todayStr)}</p></div>
      <button class="btn ghost sm" onclick="renderForecast()">↻ Réévaluer</button></div>
    <div class="banner" style="${f.alertes.length?'background:#fdf3f2;border-color:#f0c9c4':''}">${f.alertes.length?'⚠':'🔮'} <div>${bannerTxt}</div></div>
+   ${marketBanner}
    <div class="panel"><h2>Stock prévisionnel par parfum</h2>
    ${f.lignes.length?`<div class="table-wrap"><table><thead><tr><th>Parfum</th><th>Stock actuel</th><th>Réservé</th><th>Prévisionnel</th><th>Manque</th><th>1ère rupture</th><th>État</th></tr></thead>
      <tbody>${rows}</tbody></table></div>
@@ -16349,14 +16416,19 @@ function ordonnancer(besoinsStd, besoinsGF){
 }
 
 // Prépare les besoins par parfum (standards / grands formats) selon le mode choisi.
-// mode 'fermes' = commandes fermes − stock ; mode 'reassort' = commandes + réassort − stock.
+// mode 'fermes' = commandes fermes − stock ; mode 'reassort' = commandes + réassort − stock ;
+// mode 'marches' = commandes + marchés programmés − stock.
+// La PROVENANCE de chaque besoin (commande ferme / marché / réassort) est tracée séparément
+// pour être affichée sans ambiguïté (jamais de mélange opaque).
 async function ordoBuildNeeds(mode, horizon){
   const H=horizon||14;
   const recipes=await db.recipes.toArray().catch(()=>[]);
   const recByNom={}; recipes.forEach(r=>recByNom[aiNormalize(r.produitNom)]=r);
   const isGF=nom=>{ const r=recByNom[aiNormalize(nom)]; return !!(r&&r.grandFormat); };
   const besoins={};   // nom -> qte (macarons)
-  const add=(nom,q)=>{ if(!nom||q<=0) return; besoins[nom]=(besoins[nom]||0)+q; };
+  const provenance={};  // nom -> {cmd, marche, reassort}
+  const _prov=(nom)=> (provenance[nom] ||= {cmd:0, marche:0, reassort:0});
+  const add=(nom,q,src)=>{ if(!nom||q<=0) return; besoins[nom]=(besoins[nom]||0)+q; if(src) _prov(nom)[src]+=q; };
 
   // 1) Commandes fermes non livrées dans l'horizon (toujours incluses).
   try{
@@ -16368,10 +16440,37 @@ async function ordoBuildNeeds(mode, horizon){
       if(j!==null && j>H) return;
       orderToLines(o).forEach(ln=>{
         const parfums = ln.type==='grand' ? (ln.items||[]) : (ln.parfums||[]);
-        parfums.forEach(p=>{ if(+p.qte>0) add(p.nom, +p.qte); });
+        parfums.forEach(p=>{ if(+p.qte>0) add(p.nom, +p.qte, 'cmd'); });
       });
     });
   }catch(e){ console.error('ordo orders',e); }
+
+  // 1b) MARCHÉS programmés (mode 'marches' ou 'auto') : quantité prévue ventilée par parfum
+  //     selon la répartition apprise, sinon au prorata des commandes, sinon ligne « à définir ».
+  if(mode==='marches' || mode==='auto'){
+    try{
+      const mks=await db.markets.toArray().catch(()=>[]);
+      const mkFenetre=mks.filter(m=>{ const j=daysTo(m.date); return j!==null && j<=H && m.statut!=='clos' && (+m.prevuQte||0)>0; });
+      if(mkFenetre.length){
+        let rep=[]; try{ const mf=await marketForecast(); rep=(mf&&mf.repartition)?mf.repartition:[]; }catch(e){ rep=[]; }
+        const totPct=rep.reduce((s,r)=>s+(+r.pct||0),0);
+        // base de prorata = besoins commandes déjà connus
+        const baseNoms=Object.keys(besoins); const baseTot=baseNoms.reduce((s,n)=>s+besoins[n],0);
+        mkFenetre.forEach(m=>{
+          const q=+m.prevuQte||0; if(q<=0) return;
+          if(rep.length && totPct>0){
+            let cumule=0;
+            rep.forEach((r,i)=>{ let part=(i===rep.length-1)?(q-cumule):Math.round(q*(+r.pct||0)/totPct); if(i!==rep.length-1)cumule+=part; if(part>0) add(r.parfum, part, 'marche'); });
+          } else if(baseTot>0){
+            let c=0;
+            baseNoms.forEach((n,i)=>{ let part=(i===baseNoms.length-1)?(q-c):Math.round(q*besoins[n]/baseTot); if(i!==baseNoms.length-1)c+=part; if(part>0) add(n, part, 'marche'); });
+          } else {
+            add('Marché (parfums à définir)', q, 'marche');
+          }
+        });
+      }
+    }catch(e){ console.error('ordo marchés',e); }
+  }
 
   // 2) Réassort (vélocité − stock) seulement en mode 'reassort'.
   if(mode==='reassort'){
@@ -16380,7 +16479,7 @@ async function ordoBuildNeeds(mode, horizon){
       if(v.hasData){ (v.lignes||[]).forEach(l=>{
         if(l.perDay<=0) return;
         const besoin=Math.ceil(l.perDay*H - l.stock);
-        if(besoin>0) add(l.parfum, besoin);
+        if(besoin>0) add(l.parfum, besoin, 'reassort');
       }); }
     }catch(e){ console.error('ordo velocity',e); }
   }
@@ -16406,10 +16505,36 @@ async function ordoBuildNeeds(mode, horizon){
     });
   }catch(e){ console.error('ordo coques',e); }
 
+  // 3b) GARNITURES (ganache/crémeux) déjà en stock par parfum : ne réduisent PAS le besoin de
+  // macarons (donc pas les meringues/coques), mais réduiront le besoin de GANACHE à produire.
+  const garnitureStock={};   // nom normalisé -> {parfum, doses}
+  try{
+    const compMap = await composantsStockByParfum();   // {normalisé:{parfum, coques, garniture}}
+    Object.keys(compMap).forEach(k=>{
+      const g = +compMap[k].garniture||0;
+      if(g>0) garnitureStock[k] = { parfum:compMap[k].parfum, doses:g };
+    });
+  }catch(e){ console.error('ordo garniture',e); }
+
   // Sépare standards / grands formats.
   const std=[], gf=[];
   Object.entries(besoins).forEach(([nom,qte])=>{ if(qte>0){ (isGF(nom)?gf:std).push({nom,qte:Math.round(qte)}); } });
-  return {std, gf, coquesInfo};
+
+  // ANTI-GASPI : on SIGNALE les parfums dont une matière approche de sa DLC (sans imposer de
+  // quantité — à toi de saisir). Affiché toujours, même si le parfum a déjà une commande.
+  let antigaspi=[];
+  try{
+    const sugg = (typeof generateProductionSuggestions==='function') ? await generateProductionSuggestions(7) : [];
+    const vus=new Set();
+    (sugg||[]).forEach(s=>{
+      const k=aiNormalize(s.produitNom);
+      if(vus.has(k)) return; vus.add(k);
+      antigaspi.push({ parfum:s.produitNom, matiere:s.matiere, joursAvantDLC:s.joursAvantDLC, cremeOuverte:!!s.cremeOuverte });
+    });
+    antigaspi.sort((a,b)=>(a.joursAvantDLC??99)-(b.joursAvantDLC??99));
+  }catch(e){ console.error('ordo antigaspi',e); }
+
+  return {std, gf, coquesInfo, provenance, antigaspi, garnitureStock};
 }
 
 let _ordoState=null;   // {mode, std:[...], gf:[...]} — pour l'ajustement (étape 3)
@@ -16426,10 +16551,35 @@ function ordoRenderPlan(containerId){
 
   let html='<div class="panel"><h2>🔥 Plan de production optimisé</h2>';
   // Mode actif + bascule
-  html+=`<div style="display:flex;gap:6px;margin-bottom:10px">
+  html+=`<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
     <button class="btn ${_ordoState.mode==='fermes'?'gold':'ghost'} sm" onclick="ordoSwitchMode('fermes')">Commandes fermes</button>
+    <button class="btn ${_ordoState.mode==='marches'?'gold':'ghost'} sm" onclick="ordoSwitchMode('marches')">Commandes + marchés</button>
     <button class="btn ${_ordoState.mode==='reassort'?'gold':'ghost'} sm" onclick="ordoSwitchMode('reassort')">Commandes + réassort</button>
   </div>`;
+
+  // VENTILATION par origine (commande ferme / marché / réassort) — jamais de mélange opaque.
+  const prov=_ordoState.provenance||{};
+  const provList=Object.entries(prov).filter(([n,v])=>v && (v.cmd>0||v.marche>0||v.reassort>0));
+  if(provList.length){
+    html+=`<div class="banner" style="background:#f7f4fb;border-color:#d8c9e6;margin-bottom:10px">🧭 <div><b>D'où vient chaque besoin :</b><br>${
+      provList.map(([nom,v])=>{
+        const parts=[];
+        if(v.cmd>0) parts.push(`<span style="color:#7a4b82">cmd ${Math.round(v.cmd)}</span>`);
+        if(v.marche>0) parts.push(`<span style="color:#AA7C39">marché ${Math.round(v.marche)}</span>`);
+        if(v.reassort>0) parts.push(`<span style="color:#d98324">réassort ${Math.round(v.reassort)}</span>`);
+        return `${esc(nom)} — ${parts.join(' + ')}`;
+      }).join('<br>')
+    }</div></div>`;
+  }
+
+  // ANTI-GASPI : signalement des parfums à produire en priorité pour écouler une matière
+  // dont la DLC approche (sans quantité imposée — info complémentaire).
+  const ag=_ordoState.antigaspi||[];
+  if(ag.length){
+    html+=`<div class="banner" style="background:#eef5f0;border-color:#bcd9c4;margin-bottom:10px">♻️ <div><b>Anti-gaspi — pense à écouler :</b><br>${
+      ag.map(a=>`${esc(a.parfum)} <span style="color:#7a6a62;font-size:.85rem">— ${esc(a.matiere)}${a.cremeOuverte?' (entamé)':''}, DLC ${a.joursAvantDLC<=0?'atteinte':'J−'+a.joursAvantDLC}</span>`).join('<br>')
+    }<br><span style="font-size:.78rem;color:#7a6a62">À intégrer librement à tes fournées si tu produis ces parfums.</span></div></div>`;
+  }
 
   // Coques déjà en stock, déduites du besoin (signalé clairement).
   const cInfo=_ordoState.coquesInfo||{};
@@ -16451,7 +16601,24 @@ function ordoRenderPlan(containerId){
     }
     // Ganaches
     if(s.ganaches.length){
-      html+=`<p style="font-size:.85rem;margin-top:8px"><b>🍫 Ganaches à produire</b> (chacune en une fois) : ${s.ganaches.map(g=>`${esc(g.nom)} <b>${g.portions}</b>`).join(' · ')}</p>`;
+      const gStock=_ordoState.garnitureStock||{};
+      const lignesGan=[]; const dejaCouvert=[];
+      s.ganaches.forEach(g=>{
+        const k=(typeof aiNormalize==='function')?aiNormalize(g.nom):(g.nom||'').toLowerCase();
+        const dispo = gStock[k] ? +gStock[k].doses||0 : 0;
+        const net = Math.max(0, g.portions - dispo);
+        if(dispo>0) dejaCouvert.push(`${esc(g.nom)} ${Math.min(dispo,g.portions)}/${g.portions}`);
+        if(net>0) lignesGan.push(`${esc(g.nom)} <b>${net}</b>`);
+      });
+      if(lignesGan.length){
+        html+=`<p style="font-size:.85rem;margin-top:8px"><b>🍫 Ganaches à produire</b> (chacune en une fois) : ${lignesGan.join(' · ')}</p>`;
+      }
+      if(dejaCouvert.length){
+        html+=`<p style="font-size:.8rem;margin-top:2px;color:#3f7d52">🍫 Déjà en stock (garniture déduite) : ${dejaCouvert.join(' · ')}</p>`;
+      }
+      if(!lignesGan.length && dejaCouvert.length){
+        html+=`<p style="font-size:.8rem;color:#3f7d52">✓ Toutes les garnitures nécessaires sont déjà en stock.</p>`;
+      }
     }
   }
 
@@ -16474,7 +16641,7 @@ function ordoRenderPlan(containerId){
 async function ordoLancer(mode){
   const box=document.getElementById('ordoZone'); if(box) box.innerHTML='<div class="panel"><p class="note">Calcul du plan optimisé…</p></div>';
   const needs=await ordoBuildNeeds(mode, 14);
-  _ordoState={mode, std:needs.std, gf:needs.gf, coquesInfo:needs.coquesInfo||{}};
+  _ordoState={mode, std:needs.std, gf:needs.gf, coquesInfo:needs.coquesInfo||{}, provenance:needs.provenance||{}, antigaspi:needs.antigaspi||[], garnitureStock:needs.garnitureStock||{}};
   ordoRenderPlan('ordoZone');
 }
 function ordoSwitchMode(mode){ if(_ordoState){ ordoLancer(mode); } }
@@ -16531,18 +16698,66 @@ async function _buildProductionPlanRaw(horizonDays){
   const recById = {}; recipes.forEach(r=>recById[r.id]=r);
   const recByNom = {}; recipes.forEach(r=>recByNom[r.produitNom]=r);
 
-  // 1) COMMANDES fermes non livrées, dans l'horizon : besoin = pièces commandées non couvertes
+  // 1) COMMANDES fermes + MARCHÉS programmés, dans l'horizon : besoin par parfum,
+  // déduit du stock fini déjà disponible. C'est la PRIORITÉ n°1 (honorer les échéances).
+  const _besoinCmd = {};   // parfum -> pièces demandées (commandes + marchés) dans l'horizon
   try{
-    const orders=await db.orders.toArray();
-    const items_= await db.orderItems.toArray();
+    const orders = await db.orders.toArray();
     orders.forEach(o=>{
       const st=(typeof normStatus==='function')?normStatus(o.statut):o.statut;
       if(st==='Livrée') return;
       const j=daysTo(o.date); if(j===null||j>H) return;
-      // pièces de la commande par recette (via orderItems → productions liées ? sinon lignes)
-      // approche simple : on s'appuie sur les lignes de commande agrégées par parfum si dispo
+      const dem = (typeof _orderParfumDemand==='function') ? _orderParfumDemand(o) : {};
+      for(const nom in dem){ if(+dem[nom]>0) _besoinCmd[nom]=(_besoinCmd[nom]||0)+(+dem[nom]); }
     });
   }catch(e){ console.error('plan orders',e); }
+  // Marchés programmés (ouverts) dans l'horizon : quantité prévue ventilée par parfum
+  // selon la répartition apprise, sinon au prorata des commandes, sinon ligne « à définir ».
+  try{
+    const mks = await db.markets.toArray().catch(()=>[]);
+    const mkFenetre = mks.filter(m=>{ const j=daysTo(m.date); return j!==null && j<=H && m.statut!=='clos' && (+m.prevuQte||0)>0; });
+    if(mkFenetre.length){
+      let rep=[]; try{ const mf=await marketForecast(); rep=(mf&&mf.repartition)?mf.repartition:[]; }catch(e){ rep=[]; }
+      const totPct=rep.reduce((s,r)=>s+(+r.pct||0),0);
+      mkFenetre.forEach(m=>{
+        const q=+m.prevuQte||0; if(q<=0) return;
+        if(rep.length && totPct>0){
+          let cumule=0;
+          rep.forEach((r,i)=>{ let part=(i===rep.length-1)?(q-cumule):Math.round(q*(+r.pct||0)/totPct); if(i!==rep.length-1)cumule+=part; if(part>0)_besoinCmd[r.parfum]=(_besoinCmd[r.parfum]||0)+part; });
+        } else {
+          const noms=Object.keys(_besoinCmd); const tot=noms.reduce((s,n)=>s+_besoinCmd[n],0);
+          if(tot>0){ let c=0; noms.forEach((n,i)=>{ let part=(i===noms.length-1)?(q-c):Math.round(q*_besoinCmd[n]/tot); if(i!==noms.length-1)c+=part; if(part>0)_besoinCmd[n]=(_besoinCmd[n]||0)+part; }); }
+          else _besoinCmd['Marché (parfums à définir)']=(_besoinCmd['Marché (parfums à définir)']||0)+q;
+        }
+      });
+    }
+  }catch(e){ console.error('plan marchés',e); }
+  // Déduit le stock fini disponible et crée les items « commande » (besoin net > 0).
+  let _stockCmd = {};
+  try{ const sc = await mrpCurrentStockByParfum(); _stockCmd = sc.stock || {}; }catch(e){ _stockCmd = {}; }
+  // Le stock est indexé par produitNom de recette, le besoin par nom de parfum commandé :
+  // on rapproche les deux via une normalisation souple (même logique que mrpFindRecipe).
+  const _normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase().trim();
+  const _stockNorm = {};
+  for(const k in _stockCmd){ _stockNorm[_normP(k)] = (_stockNorm[_normP(k)]||0) + _stockCmd[k]; }
+  const _stockPourParfum = nom => {
+    const kn = _normP(nom);
+    if(_stockNorm[kn]!=null) return _stockNorm[kn];
+    // repli : correspondance partielle (le nom de parfum est contenu dans le nom de recette ou l'inverse)
+    for(const k in _stockNorm){ if(k && (k.includes(kn) || kn.includes(k))) return _stockNorm[k]; }
+    return 0;
+  };
+  for(const nom in _besoinCmd){
+    const net = Math.max(0, round3(_besoinCmd[nom] - _stockPourParfum(nom)));
+    if(net<=0) continue;
+    const rec = recByNom[nom];
+    items.push({
+      type:'commande', recipeId: rec?rec.id:null, produitNom:nom, qte:net,
+      rendement: rec&&+rec.rendement>0 ? +rec.rendement : null,
+      raison:'Commandes / marchés à honorer',
+      prioRang: rang('commande')
+    });
+  }
 
   // 2) RUPTURES + 4) RÉASSORT : via la vélocité de ventes (besoin sur H jours)
   try{
@@ -16550,6 +16765,8 @@ async function _buildProductionPlanRaw(horizonDays){
     if(v.hasData){
       (v.lignes||[]).forEach(l=>{
         if(l.perDay<=0) return;
+        // ne pas ré-ajouter un parfum déjà couvert par une commande/marché (priorité 1)
+        if(items.some(it=>it.type==='commande' && it.produitNom===l.parfum)) return;
         const besoin = Math.ceil(l.perDay*H - l.stock);
         if(besoin<=0) return;
         const rec = recByNom[l.parfum];
@@ -25666,6 +25883,49 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   const brut={};
   orders.forEach(o=>{ if(normStatus(o.statut)==='Livrée') return; const dem=_orderParfumDemand(o);
     for(const nom in dem) brut[nom]=(brut[nom]||0)+dem[nom]; });
+
+  // 1b) MARCHÉS PROGRAMMÉS dans la fenêtre [startDate, endDate] : la quantité prévue
+  // à emporter est un besoin de production, au même titre qu'une commande.
+  // Ventilée par parfum selon la répartition apprise des marchés passés (intelligence
+  // centrale) ; sans historique, répartie au prorata du besoin commandes, ou à défaut
+  // ajoutée en ligne « Marché (parfums à définir) » pour rester visible.
+  let _mrpMarketTotal = 0;
+  try{
+    const _allMk = await db.markets.toArray().catch(()=>[]);
+    const _mkFenetre = _allMk.filter(m=> m.date && m.date>=startDate && m.date<=endDate && m.statut!=='clos' && (+m.prevuQte||0)>0);
+    if(_mkFenetre.length){
+      let _rep = [];
+      try{ const _mf = await marketForecast(); _rep = (_mf && _mf.repartition) ? _mf.repartition : []; }catch(e){ _rep=[]; }
+      const _totPct = _rep.reduce((s,r)=>s+(+r.pct||0),0);
+      _mkFenetre.forEach(m=>{
+        const q=+m.prevuQte||0; if(q<=0) return;
+        _mrpMarketTotal += q;
+        if(_rep.length && _totPct>0){
+          let cumule=0;
+          _rep.forEach((r,i)=>{
+            let part=(i===_rep.length-1)?(q-cumule):Math.round(q*(+r.pct||0)/_totPct);
+            if(i!==_rep.length-1) cumule+=part;
+            if(part>0) brut[r.parfum]=(brut[r.parfum]||0)+part;
+          });
+        } else {
+          // pas d'historique : on répartit au prorata du besoin commandes déjà connu ;
+          // si aucune commande non plus, on garde une ligne visible « à définir ».
+          const noms=Object.keys(brut);
+          const totalCmd=noms.reduce((s,n)=>s+brut[n],0);
+          if(totalCmd>0){
+            let cumule=0;
+            noms.forEach((n,i)=>{
+              let part=(i===noms.length-1)?(q-cumule):Math.round(q*brut[n]/totalCmd);
+              if(i!==noms.length-1) cumule+=part;
+              if(part>0) brut[n]=(brut[n]||0)+part;
+            });
+          } else {
+            brut['Marché (parfums à définir)']=(brut['Marché (parfums à définir)']||0)+q;
+          }
+        }
+      });
+    }
+  }catch(e){ console.error('mrp marchés', e); }
   // 2) Pour chaque parfum : besoin net, nb de batchs (60), garniture, temps ganache+montage (par batch)
   const lignes=[]; const warnings=[];
   for(const parfum in brut){
@@ -25704,7 +25964,8 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
     tMeringue, tGanacheTot, tMontageTot, tempsTotal, tempsDisponible:dispo,
     depassement: dispo>0 && tempsTotal>dispo,
     chargePct: dispo>0 ? Math.round(tempsTotal/dispo*100) : 0,
-    warnings, nbParfums:lignes.length};
+    warnings, nbParfums:lignes.length,
+    marketTotal: round3(_mrpMarketTotal)};   // demande marché intégrée au plan (info affichage)
 }
 
 // [CONNEXION A] Vérifie si le stock de MATIÈRES PREMIÈRES suffit à exécuter le plan de production.
@@ -26307,6 +26568,7 @@ function mrpRenderResult(){
      <p class="note" style="margin-top:6px">${p.nbBatchsTotal} batch(s) de ${TAILLE_BATCH_MACARONS} → <b>${p.nbMeringues} meringue(s)</b> de ${MACARONS_PAR_MERINGUE} macarons max (240 coques). Regroupement de 2 parfums uniquement pour combler une meringue.</p>
      ${p.depassement?`<p class="note" style="color:var(--red,#b04a3e)">⚠ Dépassement de ${p.tempsTotal-p.tempsDisponible} min : réduis la période ou ajoute du temps.</p>`:(p.tempsDisponible?`<p class="note">✓ Tient dans le temps disponible (${p.chargePct}%).</p>`:'')}
      ${p.warnings.length?`<p class="note" style="color:var(--caramel)">ℹ Recette/poids garniture manquant pour : ${p.warnings.map(esc).join(', ')}.</p>`:''}
+     ${p.marketTotal>0?`<p class="note" style="color:var(--gold,#AA7C39)">⛺ Inclut <b>${qty(p.marketTotal)} macaron(s)</b> de marché(s) programmé(s) sur la période (quantité prévue à emporter).</p>`:''}
      ${mrpMatieresBanner(_mrpMatCheck)}
    </div>
    <div class="panel"><h2>🥚 Meringues à couler (mutualisées)</h2>${meringueRows||'<p class="note">Aucune.</p>'}</div>
