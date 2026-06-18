@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v528';
+const APP_VERSION = 'v534';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -362,6 +362,8 @@ function getSettings(){
       consommables: Array.isArray(s.consommables) ? s.consommables : [],
       addressBook: Array.isArray(s.addressBook) ? s.addressBook : [],
       prodCustomTasks: Array.isArray(s.prodCustomTasks) ? s.prodCustomTasks : [],
+      // Cible de ventilation marché par parfum : [{parfum, pct}]. Vide par défaut.
+      marketMix: Array.isArray(s.marketMix) ? s.marketMix : [],
       exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT
     };
   }catch(e){ return JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)); }
@@ -16267,6 +16269,344 @@ async function buildUnifiedNeeds(opts){
 
 let _planTempsDispoMin = 180; // défaut : 3 h
 let _planAlloueMin = null;    // temps que l'utilisateur veut consacrer à la production (null = tout le dispo)
+
+/* ============================================================
+   COPILOTE D'ATELIER — LE CERVEAU (agrégation des données)
+   Rassemble en UN SEUL état vérifié toutes les sources déjà calculées :
+   - productions dues sous 14 j (commandes) + réassort/rupture/anti-gaspi
+   - stock (ce qui est déjà produit vs à produire) et matières premières
+   - temps réel nécessaire (chrono d'atelier) vs temps disponible (planning)
+   - rétroplanning (délais incompressibles) + conflits de créneaux
+   - optimisation des fournées (batch plein plutôt que micro-production)
+   NE PRODUIT AUCUN TEXTE NI HTML : seulement des faits chiffrés et reliés.
+   Règle d'or : tout champ provient d'un calcul réel ; rien n'est inventé.
+   ============================================================ */
+
+/* [CONNEXION #1+] CROISEMENT MARCHÉ — transparent et modulable.
+   Pour un marché à venir, croise TON chiffre (prevuQte) avec la PRÉDICTION
+   historique (marketForecast) pour établir le VOLUME TOTAL à emmener.
+   Ce volume est ensuite RÉPARTI (et non augmenté) :
+     - une part FRAÎCHE (non congelée) = fraisPct % du volume total
+     - le reste vient du CONGÉLATEUR
+   Exemple : 300 à emmener, fraisPct=30 → 90 frais + 210 congelés. Total = 300.
+   La déduction du stock congelé déjà en réserve se fait dans le cerveau
+   (cette fonction pure ne connaît pas le stock).
+   Paramètres modulables :
+     - mode : 'croise' (défaut) | 'mien'  → quelle base de volume total
+     - fraisPct : part fraîche en % du volume total (défaut 30)
+*/
+function marketCrossPlan(prevuQte, forecast, opts){
+  opts = opts||{};
+  const mode = opts.mode==='mien' ? 'mien' : 'croise';
+  const fraisPct = (opts.fraisPct!=null) ? Math.min(100,Math.max(0,+opts.fraisPct)) : 30;
+  const mien = Math.max(0, +prevuQte||0);
+  const predit = (forecast && forecast.nbMarches>0) ? Math.max(0, +forecast.suggestion||0) : 0;
+  const aHistorique = !!(forecast && forecast.nbMarches>0);
+
+  // VOLUME TOTAL à emmener, avec explication explicite (transparence).
+  let volume, source, explication;
+  if(mode==='mien'){
+    volume = mien; source='mien';
+    explication = `Volume basé sur ton seul chiffre (${mien} pièces), comme demandé.`;
+  } else if(!aHistorique && mien>0){
+    volume = mien; source='mien-faute-historique';
+    explication = `Pas encore d'historique de marché : volume basé sur ton chiffre (${mien} pièces). La prédiction s'affinera après tes premiers marchés clôturés.`;
+  } else if(aHistorique && mien<=0){
+    volume = predit; source='predit-faute-saisie';
+    explication = `Tu n'as pas renseigné de quantité : volume basé sur la prédiction historique (${predit} pièces, moyenne de tes ${forecast.nbMarches} marché(s) passé(s)).`;
+  } else if(aHistorique && mien>0){
+    volume = Math.round((mien+predit)/2); source='croise';
+    explication = `Volume croisé : moyenne entre ton chiffre (${mien}) et la prédiction historique (${predit}, sur ${forecast.nbMarches} marché(s) passé(s)) = ${volume} pièces.`;
+  } else {
+    volume = 0; source='aucune-donnee';
+    explication = `Aucune donnée : ni quantité saisie, ni historique. Renseigne une quantité prévue pour ce marché.`;
+  }
+
+  // RÉPARTITION du volume (découpe, pas d'ajout) : part fraîche + part congelée.
+  const frais = Math.round(volume * fraisPct/100);
+  const congele = Math.max(0, volume - frais);
+
+  return {
+    mien, predit, aHistorique, nbMarchesHisto: aHistorique?forecast.nbMarches:0,
+    mode, volume, source, explication,
+    fraisPct, frais, congele,
+    // detail pédagogique pour l'affichage
+    detail: {
+      tonChiffre: mien,
+      prediction: predit,
+      volumeAEmmener: volume,
+      partFraiche: frais,
+      partCongelee: congele
+    }
+  };
+}
+
+/* [CONNEXION #1++] VENTILATION MARCHÉ PAR PARFUM — croisement transparent.
+   Croise TA CIBLE de répartition (% par parfum, définie dans les réglages) avec
+   la RÉPARTITION HISTORIQUE (marketForecast().repartition, issue des ventes réelles),
+   puis applique les pourcentages croisés au volume total du marché pour obtenir
+   un nombre de pièces par parfum.
+   - cible      : [{parfum, pct}]  (ta cible ; peut être vide)
+   - historique : [{parfum, pct}]  (issu de marketForecast ; peut être vide)
+   - volume     : nombre total de pièces à emmener (déjà croisé en amont)
+   - mode       : 'croise' (défaut) | 'mienne' (ma cible seule) | 'histo' (historique seul)
+   Renvoie une ventilation détaillée et transparente, sans rien inventer :
+   si aucune donnée, renvoie une ventilation vide (le cerveau le signalera).
+*/
+function marketVentilation(cible, historique, volume, opts){
+  opts = opts||{};
+  const mode = ['croise','mienne','histo'].includes(opts.mode) ? opts.mode : 'croise';
+  volume = Math.max(0, +volume||0);
+  const norm = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase().trim();
+
+  // Indexer les deux sources par parfum normalisé.
+  const cibleMap = {}, histoMap = {}, labels = {};
+  (cible||[]).forEach(c=>{ const k=norm(c.parfum); if(!k) return; cibleMap[k]=Math.max(0,+c.pct||0); labels[k]=c.parfum; });
+  (historique||[]).forEach(h=>{ const k=norm(h.parfum); if(!k) return; histoMap[k]=Math.max(0,+h.pct||0); if(!labels[k]) labels[k]=h.parfum; });
+
+  const aCible = Object.keys(cibleMap).length>0;
+  const aHisto = Object.keys(histoMap).length>0;
+
+  // Choix des pourcentages par parfum selon le mode (et les données disponibles).
+  const keys = Array.from(new Set([...Object.keys(cibleMap), ...Object.keys(histoMap)]));
+  let pctBrut = {}, sourceUtilisee, explication;
+
+  const useCible = (mode==='mienne') || (mode==='croise' && aCible && !aHisto) || (aCible && !aHisto);
+  const useHisto = (mode==='histo') || (mode==='croise' && aHisto && !aCible) || (aHisto && !aCible);
+
+  if(mode==='mienne' || (useCible && !useHisto && aCible)){
+    keys.forEach(k=> pctBrut[k]=cibleMap[k]||0);
+    sourceUtilisee='cible'; explication='Ventilation basée sur ta cible de répartition.';
+  } else if(mode==='histo' || (useHisto && !useCible && aHisto)){
+    keys.forEach(k=> pctBrut[k]=histoMap[k]||0);
+    sourceUtilisee='historique'; explication='Ventilation basée sur ton historique de ventes.';
+  } else if(aCible && aHisto){
+    // CROISEMENT : moyenne des deux pourcentages par parfum.
+    keys.forEach(k=> pctBrut[k]=((cibleMap[k]||0)+(histoMap[k]||0))/2);
+    sourceUtilisee='croise'; explication='Ventilation croisée : moyenne entre ta cible et ton historique, parfum par parfum.';
+  } else {
+    sourceUtilisee='aucune'; explication='Aucune ventilation disponible : définis une cible de répartition ou accumule de l’historique de marché.';
+    return {lignes:[], sourceUtilisee, explication, aCible, aHisto, volume, totalVentile:0, reste:volume};
+  }
+
+  // Normaliser les pourcentages pour qu'ils somment à 100 (robuste si la saisie ne tombe pas juste).
+  const sommePct = keys.reduce((s,k)=>s+(pctBrut[k]||0),0);
+  const lignes = keys.map(k=>{
+    const pctNorm = sommePct>0 ? (pctBrut[k]/sommePct*100) : 0;
+    const pieces = Math.round(volume * pctNorm/100);
+    return { parfum: labels[k], pct: Math.round(pctNorm*10)/10, pieces,
+             pctCible: cibleMap[k]!=null?cibleMap[k]:null, pctHisto: histoMap[k]!=null?histoMap[k]:null };
+  }).filter(l=>l.pieces>0 || l.pct>0)
+    .sort((a,b)=>b.pieces-a.pieces);
+
+  const totalVentile = lignes.reduce((s,l)=>s+l.pieces,0);
+  // Ajustement d'arrondi : on recale la plus grosse ligne pour que la somme = volume exact.
+  if(lignes.length && totalVentile!==volume){
+    lignes[0].pieces += (volume - totalVentile);
+    if(lignes[0].pieces<0) lignes[0].pieces=0;
+  }
+  const totalFinal = lignes.reduce((s,l)=>s+l.pieces,0);
+
+  return { lignes, sourceUtilisee, explication, aCible, aHisto, volume, totalVentile:totalFinal, reste: Math.max(0, volume-totalFinal) };
+}
+async function atelierBrain(opts){
+  opts = opts || {};
+  const horizon = opts.horizon || 14;
+  const startStr = today();
+  const endStr = (()=>{ const d=new Date(startStr); d.setDate(d.getDate()+horizon); return d.toISOString().slice(0,10); })();
+
+  // --- 1) PLAN : que faut-il produire sous 14 j ? (commandes, réassort, rupture, anti-gaspi)
+  let planItems = [];
+  try{ planItems = await buildProductionPlan(horizon) || []; }catch(e){ console.error('brain.plan',e); }
+
+  // --- 2) RECETTES (rendement, délais) pour convertir macarons → batchs
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recById = id => recipes.find(r=>r.id===id) || null;
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+
+  // Construire les "lignes" attendues par mrpCheckMatieres (recipeId + nbBatchs) à partir du plan.
+  const lignesPlan = [];
+  planItems.forEach(it=>{
+    if(!it.recipeId || it.qte==null || !(it.qte>0)) return;
+    const rec = recById(it.recipeId);
+    const rendement = (rec && rec.rendement>0) ? rec.rendement : TB;
+    const nbBatchs = Math.max(1, Math.ceil(it.qte / rendement));
+    lignesPlan.push({ parfum:it.produitNom, recipeId:it.recipeId, qte:it.qte, nbBatchs, besoinNet:it.qte, type:it.type, raison:it.raison });
+  });
+
+  // --- 3) MATIÈRES : de quoi manque-t-il pour exécuter ce plan ?
+  let matCheck = {manques:[], ok:true, details:[]};
+  try{ matCheck = await mrpCheckMatieres({lignes:lignesPlan}) || matCheck; }catch(e){ console.error('brain.mat',e); }
+
+  // --- 4) TEMPS : besoin estimé (chrono) vs dispo (planning d'aujourd'hui)
+  let minParMac = null;
+  try{ const tl = await prodTempsLissePerMacaron(90); minParMac = (tl && tl.minParMacaron) ? tl.minParMacaron : null; }catch(e){ console.error('brain.temps',e); }
+  // Total de macarons à produire (hors anti-gaspi qui est "à écouler", qte null).
+  const totMacAprod = lignesPlan.reduce((s,l)=>s+(+l.qte||0),0);
+  // Besoin temps commandes/réassort (les marchés seront ajoutés après leur calcul, plus bas).
+  const besoinMinCmd = (minParMac!=null) ? Math.round(totMacAprod*minParMac) : null;
+  // Dispo aujourd'hui depuis le planning renseigné.
+  let dispoAujMin = null, planningRenseigne = false;
+  try{
+    const now=new Date();
+    const conf = (typeof getAvailability==='function') ? getAvailability() : null;
+    // Planning renseigné = au moins une plage horaire dans la semaine A ou B.
+    const hasSlot = m => m && Object.values(m).some(arr=>Array.isArray(arr)&&arr.length>0);
+    planningRenseigne = !!(conf && (hasSlot(conf.weekA) || hasSlot(conf.weekB)));
+    if(typeof availMinutesOnDay==='function'){
+      dispoAujMin = availMinutesOnDay(now, now.getHours()*60+now.getMinutes(), null, conf);
+    }
+  }catch(e){ console.error('brain.dispo',e); }
+
+  // --- 5) CONFLITS : tâches de travail qui se chevauchent sur l'horizon
+  let conf = {conflits:[], taches:[], nbCommandes:0};
+  try{ conf = await retroConflicts(startStr, endStr) || conf; }catch(e){ console.error('brain.conf',e); }
+
+  // --- 5 bis) [CONNEXION #1] MARCHÉS À VENIR dans l'horizon : charge de production.
+  // Un marché compte s'il est daté dans [aujourd'hui, +horizon], pas clos, pas historique.
+  // Pour chaque marché : on CROISE ton chiffre (prevuQte) avec la prédiction historique pour
+  // obtenir le VOLUME à emmener, puis on le RÉPARTIT en part fraîche (à produire à neuf) et
+  // part congelée (à produire SAUF ce qu'on a déjà en stock congelé).
+  let marches = [];
+  const mkMode    = (opts.marketMode==='mien') ? 'mien' : 'croise';
+  const mkFraisPct= (opts.marketFraisPct!=null) ? Math.min(100,Math.max(0,+opts.marketFraisPct)) : 30;
+  let mkForecast = null;
+  try{ mkForecast = (typeof marketForecast==='function') ? await marketForecast() : null; }catch(e){ console.error('brain.forecast',e); }
+
+  // Stock de produits finis CONGELÉS (global, toutes recettes) — sert de réserve pour la part congelée.
+  let stockCongeleGlobal = 0;
+  try{
+    const prodsAll = await db.productions.toArray().catch(()=>[]);
+    prodsAll.forEach(p=>{
+      // produit fini assemblé, encore en stock, situé dans un congélateur
+      const fini = (typeof prodComposant==='function') ? (prodComposant(p)==null || prodComposant(p)==='') : true;
+      const reste = +p.qteRestante||0;
+      const auCongel = (typeof isFreezer==='function') ? isFreezer(p.emplacement) : false;
+      if(reste>0 && auCongel && fini && !p.venuDuCongelateur) stockCongeleGlobal += reste;
+    });
+  }catch(e){ console.error('brain.stockcongele',e); }
+
+  try{
+    const allMk = await db.markets.toArray().catch(()=>[]);
+    marches = allMk.filter(mk=> mk && mk.date && mk.date>=startStr && mk.date<=endStr
+                                 && mk.statut!=='clos' && !mk.histo)
+      .map(mk=>{
+        const cross = (typeof marketCrossPlan==='function')
+          ? marketCrossPlan(+mk.prevuQte||0, mkForecast, {mode:mkMode, fraisPct:mkFraisPct})
+          : {volume:+mk.prevuQte||0, frais:0, congele:+mk.prevuQte||0, mien:+mk.prevuQte||0, predit:0, source:'brut', explication:''};
+        return { id:mk.id, nom:mk.nom||'Marché', date:mk.date, prevuQte:+mk.prevuQte||0, cross };
+      })
+      .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  }catch(e){ console.error('brain.marches',e); }
+
+  // Agrégats marché (volume, frais, congelé) avant déduction du stock.
+  const totMarcheVolume = marches.reduce((s,m)=>s+(+(m.cross&&m.cross.volume)||0),0);
+  const totMarcheFrais  = marches.reduce((s,m)=>s+(+(m.cross&&m.cross.frais)||0),0);
+  const totMarcheCongele= marches.reduce((s,m)=>s+(+(m.cross&&m.cross.congele)||0),0);
+  // La part FRAÎCHE est toujours à produire à neuf. La part CONGELÉE est à produire SAUF
+  // ce qu'on a déjà en réserve congelée (déduction globale, faute de ventilation par parfum).
+  const congeleAProduire = Math.max(0, totMarcheCongele - stockCongeleGlobal);
+  const stockCongeleUtilise = Math.min(stockCongeleGlobal, totMarcheCongele);
+  // Net marché RÉELLEMENT à produire = part fraîche + part congelée non couverte par le stock.
+  const totMacMarches = totMarcheFrais + congeleAProduire;
+  // Besoin temps TOTAL = commandes/réassort + net marché à produire.
+  const besoinMin = (minParMac!=null) ? Math.round((totMacAprod + totMacMarches)*minParMac) : null;
+
+  // --- 5 ter) [CONNEXION #1++] VENTILATION MARCHÉ PAR PARFUM (croisement cible × historique).
+  // Le NET marché à produire (totMacMarches) est ventilé par parfum, puis injecté dans un
+  // check matières ENRICHI et une déduction de stock congelé par parfum.
+  const mkMixMode = ['croise','mienne','histo'].includes(opts.marketMixMode) ? opts.marketMixMode : 'croise';
+  let marketCible = [];
+  try{ const st=(typeof getSettings==='function')?getSettings():{}; marketCible = Array.isArray(st.marketMix)?st.marketMix:[]; }catch(e){}
+  const marketHisto = (mkForecast && Array.isArray(mkForecast.repartition)) ? mkForecast.repartition : [];
+  let ventilation = {lignes:[], sourceUtilisee:'aucune', explication:''};
+  try{
+    ventilation = marketVentilation(marketCible, marketHisto, totMacMarches, {mode:mkMixMode});
+  }catch(e){ console.error('brain.ventil',e); }
+
+  // Check matières ENRICHI : on ajoute les pièces marché ventilées aux lignes du plan, par recette.
+  let matCheckAvecMarche = matCheck;
+  if(ventilation.lignes && ventilation.lignes.length){
+    const recByNom = nom => recipes.find(r=> (typeof aiNormalize==='function'?aiNormalize(r.produitNom):r.produitNom)===(typeof aiNormalize==='function'?aiNormalize(nom):nom)) || null;
+    const lignesAvecMarche = lignesPlan.map(l=>({...l}));   // copie
+    ventilation.lignes.forEach(v=>{
+      const rec = recByNom(v.parfum); if(!rec) return;
+      const rendement = (rec.rendement>0) ? rec.rendement : TB;
+      const exist = lignesAvecMarche.find(l=>l.recipeId===rec.id);
+      if(exist){ exist.qte += v.pieces; exist.nbBatchs = Math.max(1, Math.ceil(exist.qte/rendement)); }
+      else lignesAvecMarche.push({ parfum:rec.produitNom, recipeId:rec.id, qte:v.pieces, nbBatchs:Math.max(1,Math.ceil(v.pieces/rendement)), besoinNet:v.pieces, type:'marche', raison:'Marché ventilé' });
+    });
+    try{ matCheckAvecMarche = await mrpCheckMatieres({lignes:lignesAvecMarche}) || matCheck; }catch(e){ console.error('brain.mat2',e); }
+  }
+
+  // --- 6) OPTIMISATION FOURNÉES : repérer les micro-productions à arrondir au batch plein.
+  // Une ligne dont la quantité est bien < 1 batch plein est candidate au "complète le batch
+  // pour refaire du stock". On chiffre le complément.
+  const optimisations = [];
+  lignesPlan.forEach(l=>{
+    const rec = recById(l.recipeId);
+    const rendement = (rec && rec.rendement>0) ? rec.rendement : TB;
+    if(l.qte>0 && l.qte < rendement){
+      optimisations.push({
+        parfum:l.parfum, recipeId:l.recipeId,
+        qteCommande:l.qte, rendement,
+        complementStock: rendement - l.qte,   // ce qu'on produirait en plus en lançant un batch plein
+        type:l.type
+      });
+    }
+  });
+
+  // --- SYNTHÈSE D'ÉTAT (faits seulement) ---
+  const commandes = lignesPlan.filter(l=>l.type==='commande');
+  const etat = {
+    horizon, periode:{start:startStr, end:endStr},
+    // Productions
+    plan: lignesPlan,
+    nbProductions: lignesPlan.length,
+    nbCommandes: commandes.length,
+    totMacAprod,
+    // Marchés à venir (volume croisé, réparti frais/congelé, net à produire)
+    marches, nbMarches: marches.length,
+    marketMode: mkMode, marketFraisPct: mkFraisPct,
+    marcheVolume: totMarcheVolume,        // total à emmener (tous marchés)
+    marcheFrais: totMarcheFrais,          // part fraîche (à produire à neuf)
+    marcheCongele: totMarcheCongele,      // part congelée souhaitée
+    stockCongeleGlobal,                   // réserve congelée disponible
+    stockCongeleUtilise,                  // part de la réserve mobilisée
+    congeleAProduire,                     // congelé restant à produire après déduction
+    totMacMarches,                        // net marché réellement à produire (frais + congelé non couvert)
+    marketForecastGlobal: mkForecast,     // {nbMarches, moyenneVendu, maxVendu, suggestion, repartition}
+    // Ventilation marché par parfum (croisement cible × historique)
+    marketVentil: ventilation,            // {lignes:[{parfum,pieces,pct,pctCible,pctHisto}], sourceUtilisee, explication}
+    marketMixMode: mkMixMode,
+    // Matières — le check ENRICHI inclut désormais les marchés ventilés (par parfum).
+    matieresOk: matCheckAvecMarche.ok,
+    manquesMatieres: matCheckAvecMarche.manques,
+    matieresCouvreMarches: (ventilation.lignes && ventilation.lignes.length>0),
+    matieresNote: (totMacMarches>0 && !(ventilation.lignes && ventilation.lignes.length))
+      ? `Le volume marché à produire (${totMacMarches} pièces) n'a pas pu être ventilé par parfum (ni cible ni historique) : il n'est pas inclus dans l'alerte matières. Définis une cible de répartition pour l'activer.`
+      : '',
+    // Détail matières commandes seules (sans marché), pour comparaison/transparence.
+    manquesMatieresCmd: matCheck.manques,
+    // Temps (inclut la charge marchés dans besoinMin)
+    minParMac, besoinMin, besoinMinCmd, dispoAujMin, planningRenseigne,
+    tempsSuffisant: (besoinMin!=null && dispoAujMin!=null) ? (besoinMin<=dispoAujMin) : null,
+    tempsManquantMin: (besoinMin!=null && dispoAujMin!=null && besoinMin>dispoAujMin) ? (besoinMin-dispoAujMin) : 0,
+    // Conflits
+    conflits: conf.conflits,
+    nbConflits: conf.conflits.length,
+    // Optimisation
+    optimisations,
+    // Méta : ce que le cerveau a pu calculer (pour que la "voix" ne parle que du sûr)
+    dispo:{
+      temps: (minParMac!=null),
+      planning: (dispoAujMin!=null),
+      matieres: true,
+      conflits: true
+    }
+  };
+  return etat;
+}
 async function renderProductionPlan(){
   const box=document.getElementById('mrpConseil') || document.getElementById('aiOut'); if(!box) return;
   box.innerHTML=`<div class="panel"><h2>🧭 Plan de production</h2><p class="note">Calcul en cours…</p></div>`;
@@ -16395,14 +16735,116 @@ function planPrioMove(i,dir){
 async function renderMarketForecastBox(){
   const box=document.getElementById('marketForecast'); if(!box) return;
   let fc; try{ fc=await marketForecast(); }catch(e){ box.innerHTML=''; return; }
-  if(!fc.nbMarches){ box.innerHTML=''; return; }   // pas d'historique : on n'encombre pas
+  const st=(typeof getSettings==='function')?getSettings():{};
+  const cible=Array.isArray(st.marketMix)?st.marketMix:[];
+  const cibleRows = cible.length
+    ? cible.slice().sort((a,b)=>b.pct-a.pct).map(c=>`<div class="sum-box"><span>${esc(c.parfum)}</span><b>${c.pct}%</b></div>`).join('')
+    : '';
+  const cibleBloc = `<div class="panel" style="margin-top:10px;background:#fbf7f0">
+      <h2 style="font-size:1rem">🎯 Ma cible de répartition</h2>
+      ${cible.length
+        ? `<p class="note" style="margin-top:0">Le cerveau croise cette cible avec ton historique pour ventiler tes marchés.</p>${cibleRows}`
+        : `<p class="note" style="margin-top:0">Aucune cible définie. Le cerveau utilise ton historique seul. Définis une cible pour affiner.</p>`}
+      <div style="margin-top:8px"><button class="btn gold sm" onclick="marketMixForm()">${cible.length?'Modifier ma cible':'🎯 Définir ma cible'}</button></div>
+    </div>`;
+  if(!fc.nbMarches){
+    // Pas d'historique : on n'affiche pas le prévisionnel, mais on permet quand même de définir la cible.
+    box.innerHTML = cibleBloc;
+    return;
+  }
   const rep=fc.repartition.slice(0,8).map(r=>`<div class="sum-box"><span>${esc(r.parfum||'Autre')}</span><b>${r.pct}% · ${qty(r.vendu)} vendus</b></div>`).join('');
   box.innerHTML=`<div class="panel"><h2>📊 Prévisionnel marché <span style="font-weight:400;font-size:.82rem;color:#9a8a82">— d'après ${fc.nbMarches} marché(s) passé(s)</span></h2>
     <div class="sum-box"><span>Ventes moyennes par marché</span><b>${qty(fc.moyenneVendu)} macarons</b></div>
     <div class="sum-box"><span>Record</span><b>${qty(fc.maxVendu)} macarons</b></div>
     <div class="sum-box"><span>💡 Quantité conseillée à prévoir</span><b style="color:var(--bordeaux)">${qty(fc.suggestion)} macarons</b></div>
-    ${rep?`<p class="note" style="margin:10px 0 4px">Répartition conseillée par parfum (selon tes ventes passées) :</p>${rep}`:''}
-  </div>`;
+    ${rep?`<p class="note" style="margin:10px 0 4px">Répartition observée par parfum (selon tes ventes passées) :</p>${rep}`:''}
+  </div>${cibleBloc}`;
+}
+
+// [UI cible marché] Formulaire pour définir TA cible de répartition par parfum (marketMix).
+// Pré-remplit avec l'historique si la cible est vide (point de départ naturel et transparent).
+async function marketMixForm(){
+  const [recipes, st] = await Promise.all([
+    db.recipes.toArray().catch(()=>[]),
+    Promise.resolve((typeof getSettings==='function')?getSettings():{})
+  ]);
+  let fc=null; try{ fc=(typeof marketForecast==='function')?await marketForecast():null; }catch(e){}
+  const histo = (fc && Array.isArray(fc.repartition)) ? fc.repartition : [];
+  const histoPct = {};
+  histo.forEach(h=>{ histoPct[aiNormalize(h.parfum)] = h.pct; });
+  const cible = Array.isArray(st.marketMix) ? st.marketMix : [];
+  const ciblePct = {};
+  cible.forEach(c=>{ ciblePct[aiNormalize(c.parfum)] = c.pct; });
+
+  // Parfums proposés : ceux des recettes, triés (les plus vendus en historique d'abord).
+  const parfums = recipes.map(r=>r.produitNom).filter(Boolean)
+    .sort((a,b)=> (histoPct[aiNormalize(b)]||0) - (histoPct[aiNormalize(a)]||0) || a.localeCompare(b));
+
+  const rows = parfums.map(p=>{
+    const k=aiNormalize(p);
+    // valeur pré-remplie : ta cible si elle existe, sinon l'historique, sinon vide
+    const val = (ciblePct[k]!=null) ? ciblePct[k] : (histoPct[k]!=null ? histoPct[k] : '');
+    const histoTxt = histoPct[k]!=null ? `<span style="color:#9a8a82;font-size:.74rem">historique ${histoPct[k]}%</span>` : `<span style="color:#c9bcae;font-size:.74rem">pas d'historique</span>`;
+    return `<div class="sum-box" style="align-items:center">
+      <span style="flex:1">${esc(p)}<br>${histoTxt}</span>
+      <span style="display:flex;align-items:center;gap:4px">
+        <input type="number" min="0" max="100" step="1" id="mix_${k}" value="${val}" style="width:62px;text-align:right" oninput="marketMixSum()">
+        <b>%</b></span></div>`;
+  }).join('');
+
+  openModal(`<h3>🎯 Ma cible de répartition marché</h3>
+    <p class="note">Définis la part de chaque parfum pour un marché type. Le cerveau croisera cette cible avec ton historique de ventes. Pré-rempli avec ton historique — ajuste librement.</p>
+    <div class="sum-box" style="background:#eef5f0"><span><b>Total</b></span><b id="mix_total">0 %</b></div>
+    <p class="note" id="mix_hint" style="margin:4px 0 10px"></p>
+    ${rows || '<p class="note">Aucune recette. Crée des recettes pour définir une cible.</p>'}
+    <div class="modal-actions">
+      <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Annuler</button>
+      <button class="btn ghost" onclick="marketMixUseHisto()" title="Repartir de l'historique">↺ Historique</button>
+      <button class="btn gold" onclick="marketMixSave()">Enregistrer</button>
+    </div>`);
+  // Liste des parfums mémorisée pour la sauvegarde.
+  window._mixParfums = parfums;
+  marketMixSum();
+}
+
+// Recalcule et affiche la somme des pourcentages (aide à tomber juste à 100).
+function marketMixSum(){
+  const parfums = window._mixParfums||[];
+  let tot=0;
+  parfums.forEach(p=>{ const el=document.getElementById('mix_'+aiNormalize(p)); if(el) tot += Math.max(0,+el.value||0); });
+  const totEl=document.getElementById('mix_total'); if(totEl) totEl.textContent = Math.round(tot)+' %';
+  const hint=document.getElementById('mix_hint');
+  if(hint){
+    if(tot===0) hint.innerHTML='<span style="color:#9a8a82">Saisis au moins un parfum. Pas besoin de tomber pile à 100 : les parts seront normalisées.</span>';
+    else if(Math.abs(tot-100)<=1) hint.innerHTML='<span style="color:#3f7d52">✓ Équilibré à 100 %.</span>';
+    else hint.innerHTML=`<span style="color:#8a6d3b">Total ${Math.round(tot)} % — sera ramené à 100 % automatiquement (proportions conservées).</span>`;
+  }
+}
+
+// Recharge les champs avec les valeurs de l'historique.
+async function marketMixUseHisto(){
+  let fc=null; try{ fc=await marketForecast(); }catch(e){}
+  const histo=(fc&&Array.isArray(fc.repartition))?fc.repartition:[];
+  const hp={}; histo.forEach(h=>hp[aiNormalize(h.parfum)]=h.pct);
+  (window._mixParfums||[]).forEach(p=>{ const el=document.getElementById('mix_'+aiNormalize(p)); if(el) el.value = hp[aiNormalize(p)]!=null?hp[aiNormalize(p)]:''; });
+  marketMixSum();
+}
+
+// Enregistre la cible dans les réglages (settings.marketMix).
+function marketMixSave(){
+  const parfums = window._mixParfums||[];
+  const mix=[];
+  parfums.forEach(p=>{
+    const el=document.getElementById('mix_'+aiNormalize(p));
+    const pct=el?Math.max(0,+el.value||0):0;
+    if(pct>0) mix.push({parfum:p, pct});
+  });
+  const st=(typeof getSettings==='function')?getSettings():{};
+  st.marketMix=mix;
+  if(typeof saveSettings==='function') saveSettings(st);
+  closeModal();
+  toast(mix.length?`Cible enregistrée (${mix.length} parfum(s)) ✓`:'Cible vidée');
+  if(typeof renderMarketForecastBox==='function') renderMarketForecastBox();
 }
 // Rafraîchit la jauge périodiquement tant que l'onglet Assistant est affiché
 // (background check), et au retour au premier plan. S'auto-arrête sinon.
