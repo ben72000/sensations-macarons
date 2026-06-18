@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v568';
+const APP_VERSION = 'v570';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -2803,6 +2803,13 @@ function majPrixUnit(){
   // Selecteur g/kg : pertinent uniquement pour une denree (un emballage est a l'unite native).
   const uSel=document.getElementById('f_qteUnite');
   if(uSel){ uSel.style.display = isEmb ? 'none' : ''; }
+  // Pour une denrée, on présélectionne l'unité NATIVE de la matière dans le curseur de saisie,
+  // pour éviter toute confusion (ex. une crème gérée en grammes propose « g » par défaut).
+  // On ne force qu'une seule fois par changement de matière (drapeau sur l'élément).
+  if(uSel && !isEmb && unite && (uSel.dataset.lastMat !== String(opt?opt.value:''))){
+    if(unite==='g' || unite==='kg'){ uSel.value = unite; }
+    uSel.dataset.lastMat = String(opt?opt.value:'');
+  }
   // Le hint d'unite n'est utile que pour un emballage (le selecteur g/kg le remplace pour une denree).
   const hint=document.getElementById('qteUniteHint');
   if(hint) hint.textContent = (isEmb && unite) ? ('\u2014 en '+unite) : '';
@@ -2818,9 +2825,13 @@ function majPrixUnit(){
     if(isEmb){
       el.textContent = euro(p/q)+' / '+uSaisie;
     } else {
-      // quantité ramenée en kg : si saisie en g -> /1000 ; si saisie en kg -> inchangée
-      const qKg = (uSaisie==='g') ? (q/1000) : q;
-      el.textContent = qKg>0 ? (euro(p/qKg)+' / kg') : '\u2014';
+      // Unité native de la matière (kg par défaut, mais peut être g).
+      const uNative = unite || 'kg';
+      // Quantité ramenée dans l'unité native, en tenant compte de l'unité de saisie.
+      let qNative = q;
+      if(uSaisie==='g'  && uNative==='kg') qNative = q/1000;
+      else if(uSaisie==='kg' && uNative==='g')  qNative = q*1000;
+      el.textContent = qNative>0 ? (euro(p/qNative)+' / '+uNative) : '\u2014';
     }
   }
   else { el.textContent='\u2014'; }
@@ -2837,8 +2848,18 @@ async function saveLot(){
   const _mat=await db.materials.get(_matId).catch(()=>null);
   const _estEmballage = _mat && _mat.categorie==='emballage';
   const _uniteSaisie = val('f_qteUnite') || 'g';
-  const _facteur = (!_estEmballage && _uniteSaisie==='g') ? 1000 : 1;
-  const qte = round3(qteSaisie/_facteur);
+  // Unité NATIVE de stockage de la matière (kg par défaut, mais une denrée peut être gérée en g).
+  const _uniteNative = (_mat && _mat.unite) ? _mat.unite : 'kg';
+  // Le facteur convertit la quantité saisie vers l'unité native :
+  //   saisie 'g' + native 'kg' → ÷1000      saisie 'kg' + native 'g'  → ×1000
+  //   saisie == native (g→g ou kg→kg) → ×1   (c'était le bug : on divisait g→g par 1000)
+  let _facteur = 1;
+  if(!_estEmballage){
+    if(_uniteSaisie==='g'  && _uniteNative==='kg') _facteur = 1/1000;   // diviser
+    else if(_uniteSaisie==='kg' && _uniteNative==='g')  _facteur = 1000;    // multiplier
+    else _facteur = 1;                                                      // même unité : rien
+  }
+  const qte = round3(qteSaisie*_facteur);
   // On capture TOUTES les valeurs maintenant : ouvrir l'alerte remplace la modale du formulaire.
   const data={
     materialId:_matId, supplierId:+val('f_sup')||0,
@@ -20201,6 +20222,75 @@ async function diagCaMonth(){
     <details style="margin-top:10px"><summary style="cursor:pointer;color:#7a6a60">Voir les commandes hors mois (${horsMois.length})</summary>
       ${horsMois.map(fmtRow).join('')||'<p class="note">Aucune.</p>'}</details>`;
 }
+
+/* ===== CORRECTION ASSISTÉE DES LOTS EN GRAMMES MAL CONVERTIS =====
+   L'ancien bug divisait par 1000 toute réception saisie en « g », même pour une
+   denrée dont l'unité native est le gramme → 500 g devenaient 0,5 g. Cet outil LISTE
+   les lots des denrées en grammes et laisse l'utilisateur corriger (×1000) chaque lot
+   en voyant sa valeur. Aucune correction aveugle : tout est manuel, avec sauvegarde. */
+
+async function scanCremeGrammes(){
+  const zone=document.getElementById('fixCremeZone'); if(!zone) return;
+  zone.innerHTML='<p class="note">Analyse des lots en grammes…</p>';
+  const mats = await db.materials.toArray().catch(()=>[]);
+  // Denrées dont l'unité native est 'g' (ce sont elles qui ont pu être mal converties).
+  const matsG = mats.filter(m=> m.categorie!=='emballage' && (m.unite==='g'));
+  if(!matsG.length){
+    zone.innerHTML='<p class="note">✅ Aucune denrée gérée en grammes. Rien à corriger ici.</p>';
+    return;
+  }
+  const matById={}; matsG.forEach(m=>matById[m.id]=m);
+  const lots = await db.materialLots.where('materialId').anyOf(matsG.map(m=>m.id)).toArray().catch(()=>[]);
+  if(!lots.length){
+    zone.innerHTML='<p class="note">✅ Aucun lot pour les denrées en grammes.</p>';
+    return;
+  }
+  // Trier par matière puis par date.
+  lots.sort((a,b)=> (a.materialId-b.materialId) || (a.dateReception||'').localeCompare(b.dateReception||''));
+  const rows = lots.map(l=>{
+    const m = matById[l.materialId] || {nom:'?'};
+    const qi = round3(+l.qteInitiale||0);
+    const qr = round3(+l.qteRestante||0);
+    // Heuristique d'alerte : une quantité < 10 g est très probablement une erreur (½ g de crème ≈ aberrant).
+    const suspect = qi>0 && qi<10;
+    return `<div class="sum-box" style="border-left:3px solid ${suspect?'#b3261e':'#d9c8b4'};flex-wrap:wrap">
+      <span style="flex:1;min-width:160px">
+        <b>${esc(m.nom)}</b> <span style="color:#9a8a82">— lot ${esc(l.lotFournisseur||('#'+l.id))}${l.dateReception?' · '+fmtDate(l.dateReception):''}</span><br>
+        <span style="font-size:.82rem">Initial : <b>${qty(qi)} g</b> · Restant : <b>${qty(qr)} g</b>${suspect?' <span style="color:#b3261e">⚠ valeur suspecte</span>':''}</span>
+      </span>
+      <button class="btn ${suspect?'gold':'ghost'} sm" style="white-space:nowrap" onclick="fixLotGramme(${l.id})">×1000 (→ ${qty(round3(qi*1000))} g)</button>
+    </div>`;
+  }).join('');
+  const nbSuspect = lots.filter(l=>{ const q=round3(+l.qteInitiale||0); return q>0&&q<10; }).length;
+  zone.innerHTML = `
+    <p class="note">${lots.length} lot(s) trouvé(s) pour les denrées en grammes${nbSuspect?` · <b style="color:#b3261e">${nbSuspect} valeur(s) suspecte(s)</b> (initial &lt; 10 g)`:''}.</p>
+    <p class="note">Vérifie chaque valeur. Si un lot affiche une quantité trop petite (ex. 0,5 g au lieu de 500 g), clique <b>×1000</b> pour le corriger. Une sauvegarde est faite avant chaque correction.</p>
+    ${rows}`;
+}
+
+async function fixLotGramme(lotId){
+  try{
+    const lot = await db.materialLots.get(lotId);
+    if(!lot){ toast('Lot introuvable'); return; }
+    const qi = round3(+lot.qteInitiale||0);
+    const qr = round3(+lot.qteRestante||0);
+    const newQi = round3(qi*1000);
+    const newQr = round3(qr*1000);
+    if(!confirm(`Corriger ce lot ?\n\nInitial : ${qty(qi)} g → ${qty(newQi)} g\nRestant : ${qty(qr)} g → ${qty(newQr)} g\n\nLe prix unitaire (par g) sera aussi ajusté.`)) return;
+    // Sauvegarde de sécurité avant toute écriture.
+    try{ await snapshotBackup('avant-correction-lot-grammes'); }catch(eBk){ console.error('snapshot',eBk); }
+    // Le prix TOTAL payé (champ 'prix') ne change pas : seule la quantité était fausse.
+    // On recalcule donc le prix unitaire depuis le prix total ÷ nouvelle quantité (précision préservée).
+    const patch = { qteInitiale:newQi, qteRestante:newQr };
+    const prixTotal = (lot.prix!=null) ? +lot.prix : null;
+    if(prixTotal!=null && newQi>0){ patch.prixUnitaire = money2(prixTotal/newQi); }
+    else if(lot.prixUnitaire!=null){ patch.prixUnitaire = money2((+lot.prixUnitaire||0)/1000); }
+    await db.materialLots.update(lotId, patch);
+    markUnsaved && markUnsaved();
+    toast('Lot corrigé ✓');
+    scanCremeGrammes();   // rafraîchir la liste
+  }catch(e){ console.error('fixLotGramme',e); toast('Erreur lors de la correction'); }
+}
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
@@ -20243,6 +20333,10 @@ async function renderIntegrity(){
       <div style="margin-top:10px">
         <p class="note">🔗 <b>Diagnostic assemblage</b> (lecture seule) : pour chaque recette qui utilise des composants (chantache, crémeux…), montre leur type, le poids demandé, et l'état réel des lots en stock (terminé ou non). Éclaire les 3 anomalies : quantité décomptée, lot non terminé assemblable, composant manquant.</p>
         <div id="diagAssemblageZone"><button class="btn ghost sm" onclick="diagAssemblage()">Diagnostiquer l'assemblage</button></div>
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #d9c8b4">
+        <p class="note">🥛 <b>Corriger les lots en grammes mal convertis</b> : un ancien bug divisait par 1000 les réceptions de denrées gérées en grammes (ex. crème : 500 g devenait 0,5 g). Cet outil liste ces lots et te laisse corriger chacun (<b>×1000</b>) en voyant les valeurs. Une sauvegarde est faite avant chaque correction.</p>
+        <div id="fixCremeZone"><button class="btn gold sm" onclick="scanCremeGrammes()">Rechercher les lots à corriger</button></div>
       </div>
     </div>
     <div class="panel" style="background:#f6f1e7;margin-bottom:12px">
