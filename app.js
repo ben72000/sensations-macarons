@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v565';
+const APP_VERSION = 'v566';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7697,15 +7697,16 @@ async function globalSearchRun(q, suffix){
 
   const html = rows.map(r=>{
     const meta = _GS_META[r.kind] || {label:'', color:'#888', ico:'•'};
-    return `<div class="gs-result" onclick="${r.action}" style="cursor:pointer;padding:8px 10px;border-bottom:1px solid rgba(232,221,205,.15);display:flex;align-items:flex-start;gap:8px">
-      <span style="background:${meta.color};color:#fff;font-size:.6rem;padding:1px 6px;border-radius:8px;white-space:nowrap;margin-top:2px">${meta.ico} ${meta.label}</span>
+    return `<div class="gs-result" onclick="${r.action}" style="cursor:pointer;background:#fff;border:1px solid #ece3d6;border-radius:12px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:9px;box-shadow:0 1px 2px rgba(80,50,30,.05)">
+      <span style="background:${meta.color};color:#fff;font-size:.62rem;font-weight:600;padding:2px 7px;border-radius:8px;white-space:nowrap;margin-top:1px">${meta.ico} ${meta.label}</span>
       <span style="flex:1;min-width:0">
-        <div style="color:var(--creme);font-size:.88rem;font-weight:600;overflow:hidden;text-overflow:ellipsis">${esc(r.titre)}</div>
-        ${r.sous?`<div style="color:rgba(232,221,205,.6);font-size:.74rem;overflow:hidden;text-overflow:ellipsis">${esc(r.sous)}</div>`:''}
+        <div style="color:#3a2418;font-size:.9rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.titre)}</div>
+        ${r.sous?`<div style="color:#9a8576;font-size:.76rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px">${esc(r.sous)}</div>`:''}
       </span>
+      <span style="color:#c9b8a8;font-size:1rem;margin-top:2px">›</span>
     </div>`;
   }).join('');
-  zone.innerHTML = `<p class="note" style="color:rgba(232,221,205,.7);margin:0 0 4px;font-size:.74rem">${rows.length} résultat(s) :</p>${html}`;
+  zone.innerHTML = `<p style="color:#9a8576;margin:2px 0 8px;font-size:.76rem;font-weight:500">${rows.length} résultat(s) :</p>${html}`;
 }
 function searchRank(items, q){
   const terms = normTxt(q).split(/\s+/).filter(Boolean);
