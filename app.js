@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v570';
+const APP_VERSION = 'v571';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -20232,40 +20232,49 @@ async function diagCaMonth(){
 async function scanCremeGrammes(){
   const zone=document.getElementById('fixCremeZone'); if(!zone) return;
   zone.innerHTML='<p class="note">Analyse des lots en grammes…</p>';
-  const mats = await db.materials.toArray().catch(()=>[]);
-  // Denrées dont l'unité native est 'g' (ce sont elles qui ont pu être mal converties).
-  const matsG = mats.filter(m=> m.categorie!=='emballage' && (m.unite==='g'));
-  if(!matsG.length){
-    zone.innerHTML='<p class="note">✅ Aucune denrée gérée en grammes. Rien à corriger ici.</p>';
-    return;
+  try{
+    const mats = await db.materials.toArray().catch(()=>[]);
+    // Denrées dont l'unité native est 'g' (ce sont elles qui ont pu être mal converties).
+    const matsG = mats.filter(m=> m.categorie!=='emballage' && (m.unite==='g'));
+    if(!matsG.length){
+      zone.innerHTML='<p class="note">✅ Aucune denrée gérée en grammes. Rien à corriger ici.</p>';
+      return;
+    }
+    const matById={}; matsG.forEach(m=>matById[m.id]=m);
+    const idSet = new Set(matsG.map(m=>m.id));
+    // On charge TOUS les lots puis on filtre en JS (plus robuste que anyOf, qui peut lever
+    // une erreur synchrone selon le type des clés et rester bloqué sans rien afficher).
+    const allLots = await db.materialLots.toArray().catch(()=>[]);
+    const lots = allLots.filter(l=> idSet.has(l.materialId));
+    if(!lots.length){
+      zone.innerHTML='<p class="note">✅ Aucun lot pour les denrées en grammes.</p>';
+      return;
+    }
+    // Trier par matière puis par date.
+    lots.sort((a,b)=> (a.materialId-b.materialId) || (a.dateReception||'').localeCompare(b.dateReception||''));
+    const rows = lots.map(l=>{
+      const m = matById[l.materialId] || {nom:'?'};
+      const qi = round3(+l.qteInitiale||0);
+      const qr = round3(+l.qteRestante||0);
+      // Heuristique d'alerte : une quantité < 10 g est très probablement une erreur (½ g de crème ≈ aberrant).
+      const suspect = qi>0 && qi<10;
+      return `<div class="sum-box" style="border-left:3px solid ${suspect?'#b3261e':'#d9c8b4'};flex-wrap:wrap">
+        <span style="flex:1;min-width:160px">
+          <b>${esc(m.nom)}</b> <span style="color:#9a8a82">— lot ${esc(l.lotFournisseur||('#'+l.id))}${l.dateReception?' · '+fmtDate(l.dateReception):''}</span><br>
+          <span style="font-size:.82rem">Initial : <b>${qty(qi)} g</b> · Restant : <b>${qty(qr)} g</b>${suspect?' <span style="color:#b3261e">⚠ valeur suspecte</span>':''}</span>
+        </span>
+        <button class="btn ${suspect?'gold':'ghost'} sm" style="white-space:nowrap" onclick="fixLotGramme(${l.id})">×1000 (→ ${qty(round3(qi*1000))} g)</button>
+      </div>`;
+    }).join('');
+    const nbSuspect = lots.filter(l=>{ const q=round3(+l.qteInitiale||0); return q>0&&q<10; }).length;
+    zone.innerHTML = `
+      <p class="note">${lots.length} lot(s) trouvé(s) pour les denrées en grammes${nbSuspect?` · <b style="color:#b3261e">${nbSuspect} valeur(s) suspecte(s)</b> (initial &lt; 10 g)`:''}.</p>
+      <p class="note">Vérifie chaque valeur. Si un lot affiche une quantité trop petite (ex. 0,5 g au lieu de 500 g), clique <b>×1000</b> pour le corriger. Une sauvegarde est faite avant chaque correction.</p>
+      ${rows}`;
+  }catch(e){
+    console.error('scanCremeGrammes',e);
+    zone.innerHTML='<p class="note" style="color:#b3261e">Erreur pendant l\'analyse : '+esc(e&&e.message?e.message:String(e))+'. Réessaie ou signale-le.</p>';
   }
-  const matById={}; matsG.forEach(m=>matById[m.id]=m);
-  const lots = await db.materialLots.where('materialId').anyOf(matsG.map(m=>m.id)).toArray().catch(()=>[]);
-  if(!lots.length){
-    zone.innerHTML='<p class="note">✅ Aucun lot pour les denrées en grammes.</p>';
-    return;
-  }
-  // Trier par matière puis par date.
-  lots.sort((a,b)=> (a.materialId-b.materialId) || (a.dateReception||'').localeCompare(b.dateReception||''));
-  const rows = lots.map(l=>{
-    const m = matById[l.materialId] || {nom:'?'};
-    const qi = round3(+l.qteInitiale||0);
-    const qr = round3(+l.qteRestante||0);
-    // Heuristique d'alerte : une quantité < 10 g est très probablement une erreur (½ g de crème ≈ aberrant).
-    const suspect = qi>0 && qi<10;
-    return `<div class="sum-box" style="border-left:3px solid ${suspect?'#b3261e':'#d9c8b4'};flex-wrap:wrap">
-      <span style="flex:1;min-width:160px">
-        <b>${esc(m.nom)}</b> <span style="color:#9a8a82">— lot ${esc(l.lotFournisseur||('#'+l.id))}${l.dateReception?' · '+fmtDate(l.dateReception):''}</span><br>
-        <span style="font-size:.82rem">Initial : <b>${qty(qi)} g</b> · Restant : <b>${qty(qr)} g</b>${suspect?' <span style="color:#b3261e">⚠ valeur suspecte</span>':''}</span>
-      </span>
-      <button class="btn ${suspect?'gold':'ghost'} sm" style="white-space:nowrap" onclick="fixLotGramme(${l.id})">×1000 (→ ${qty(round3(qi*1000))} g)</button>
-    </div>`;
-  }).join('');
-  const nbSuspect = lots.filter(l=>{ const q=round3(+l.qteInitiale||0); return q>0&&q<10; }).length;
-  zone.innerHTML = `
-    <p class="note">${lots.length} lot(s) trouvé(s) pour les denrées en grammes${nbSuspect?` · <b style="color:#b3261e">${nbSuspect} valeur(s) suspecte(s)</b> (initial &lt; 10 g)`:''}.</p>
-    <p class="note">Vérifie chaque valeur. Si un lot affiche une quantité trop petite (ex. 0,5 g au lieu de 500 g), clique <b>×1000</b> pour le corriger. Une sauvegarde est faite avant chaque correction.</p>
-    ${rows}`;
 }
 
 async function fixLotGramme(lotId){
