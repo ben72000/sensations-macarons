@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v574';
+const APP_VERSION = 'v575';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4397,6 +4397,7 @@ function _prodbatRow(row){
        <button class="qa" style="background:#3f7d52;color:#fff" onclick="setEmplacement(${p.id})" title="Choisir l'emplacement de stockage — range le batch et remplit la visualisation">📍 Ranger</button>
        ${linkBtn}
        <button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button>
+       <button class="qa" onclick="shareLabelImage(${p.id})" title="Image d'étiquette à partager vers Phomemo">📤 Phomemo</button>
        <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Tracer</button>
        <button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button>
      </div>
@@ -7127,7 +7128,7 @@ async function renderTrace(){
      <div class="panel"><h2>Par batch de production</h2>
        ${prods.length?`<div class="trace-list">${prods.map(p=>`<div class="trace-row">
          <div class="trace-row-main"><span class="trace-date">${fmtDate(p.date)}</span><span class="trace-nom">${esc(prodNomComplet(p))}</span>${p.lotProduction?`<span class="trace-sub">${esc(p.lotProduction)}</span>`:''}</div>
-         <div class="trace-row-acts"><button class="qa" onclick="printLabel(${p.id})">⎙</button><button class="qa" onclick="traceProd(${p.id})">Tracer</button></div></div>`).join('')}</div>`
+         <div class="trace-row-acts"><button class="qa" onclick="printLabel(${p.id})">⎙</button><button class="qa" onclick="shareLabelImage(${p.id})" title="Image Phomemo">📤</button><button class="qa" onclick="traceProd(${p.id})">Tracer</button></div></div>`).join('')}</div>`
          :`<div class="empty">Aucune production.</div>`}
      </div>
    </div>
@@ -7489,7 +7490,7 @@ async function traceProd(prodId){
     ${lossBlock}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
     ${cmdLines.length?cmdLines.join(''):'<p class="note">Ce batch n\'est lié à aucune commande pour l\'instant.</p>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button><button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button><button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn gold" onclick="shareLabelImage(${prodId})" title="Générer une image à partager vers l'app Phomemo">📤 Image (Phomemo)</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
  }catch(e){
   console.error('traceProd', e);
   toast('Erreur lors de l\'affichage de la traçabilité du batch');
@@ -18725,6 +18726,7 @@ async function renderLabels(){
        ${orders.map(o=>`<tr><td>${fmtDate(o.date)}</td><td><b>${esc(clName(o.clientId))}</b></td><td>${linkCount(o.id)}</td>
          <td style="text-align:right;white-space:nowrap">
            <span class="act" onclick="printOrderRecapLabel(${o.id}, document.getElementById('recapCopies_${o.id}').value)">⎙ Récap</span>
+           <span class="act" onclick="shareOrderRecapImage(${o.id})" title="Image du récap à partager vers Phomemo">📤 Phomemo</span>
            <input id="recapCopies_${o.id}" type="number" min="1" max="50" value="2" style="width:46px;margin:0 6px" title="Nombre de copies">
            <br>
            <span class="act" onclick="printOrderLabels(${o.id},'perLink')">1 / produit</span>
@@ -18847,6 +18849,80 @@ async function shareLabelImage(prodId){
     setTimeout(()=>URL.revokeObjectURL(url), 2000);
     toast('Image enregistrée — ouvre-la dans l\'app Phomemo');
   }catch(e){ console.error('shareLabelImage',e); toast('Erreur lors de la génération de l\'étiquette'); }
+}
+
+/* Étiquette RÉCAP de commande → image partageable vers Phomemo.
+   Reprend les données de buildOrderLabelData (parfums, lots, fab, DLC) et les dessine
+   sur un canvas au format thermique (un peu plus haut car plusieurs parfums possibles). */
+async function shareOrderRecapImage(orderId){
+  try{
+    const d = await buildOrderLabelData(orderId);
+    if(!d){ toast('Aucun batch lié à cette commande. Liez d\'abord des batchs.'); return; }
+    const o = await db.orders.get(orderId).catch(()=>null);
+    let clientNom = '';
+    if(o && o.clientId){ const c = await db.clients.get(o.clientId).catch(()=>null); clientNom = c?c.nom:''; }
+
+    const PXMM = 12;
+    const W = 50*PXMM;
+    // Hauteur dynamique : base + une ligne par parfum (mini 25 mm).
+    const baseH = 25;
+    const extra = Math.max(0, (d.parfums.length - 3)) * 3.2;  // au-delà de 3 parfums, on agrandit
+    const H = Math.round((baseH + extra) * PXMM);
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#000';
+    const pad = 1.5*PXMM;
+    let y = pad;
+    const line = (txt, sizeMm, bold)=>{
+      ctx.font = `${bold?'bold ':''}${sizeMm*PXMM}px Arial, Helvetica, sans-serif`;
+      let s = String(txt==null?'':txt);
+      const maxW = W - pad*2;
+      while(s.length>1 && ctx.measureText(s).width > maxW){ s = s.slice(0,-1); }
+      y += sizeMm*PXMM;
+      ctx.fillText(s, pad, y);
+      y += 0.6*PXMM;
+    };
+    // En-tête : client + livraison.
+    line('Sensations Macarons', 2.5, true);
+    if(clientNom) line('Client : '+clientNom, 2.6, false);
+    line('Livraison : '+d.livraison, 2.4, false);
+    // Parfums avec case à cocher.
+    if(d.parfums.length){
+      line('Parfums :', 2.4, true);
+      d.parfums.forEach(pf=>{
+        ctx.font = `${2.5*PXMM}px Arial, Helvetica, sans-serif`;
+        y += 2.5*PXMM;
+        // case ☐
+        const boxS = 2.2*PXMM;
+        ctx.strokeStyle = '#000'; ctx.lineWidth = Math.max(1, 0.2*PXMM);
+        ctx.strokeRect(pad, y - boxS + 0.4*PXMM, boxS, boxS);
+        let s = pf; const maxW = W - pad*2 - boxS - 1*PXMM;
+        while(s.length>1 && ctx.measureText(s).width > maxW){ s = s.slice(0,-1); }
+        ctx.fillText(s, pad + boxS + 1*PXMM, y);
+        y += 0.6*PXMM;
+      });
+    }
+    // Lots, fabrication, DLC.
+    if(d.lots && d.lots.length) line('Lots : '+d.lots.join(', '), 2.1, false);
+    line('Fab. : '+d.fab, 2.2, false);
+    line('DLC : '+d.dlc, 2.6, true);
+
+    const blob = await new Promise(res=> cv.toBlob(res, 'image/png'));
+    if(!blob){ toast('Impossible de générer l\'image'); return; }
+    const fileName = 'recap-commande-'+orderId+'.png';
+    const file = new File([blob], fileName, {type:'image/png'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{ await navigator.share({ files:[file], title:'Récap commande #'+orderId }); return; }
+      catch(eShare){ if(eShare && eShare.name==='AbortError') return; }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    toast('Image enregistrée — ouvre-la dans l\'app Phomemo');
+  }catch(e){ console.error('shareOrderRecapImage',e); toast('Erreur lors de la génération du récap'); }
 }
 async function buildLabelData(prodId){
   const p = await db.productions.get(prodId);
