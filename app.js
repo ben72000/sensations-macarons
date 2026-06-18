@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v579';
+const APP_VERSION = 'v580';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -10722,14 +10722,14 @@ async function renderStockParfums(){
   };
   const byNom={};
   prods.forEach(p=>{
-    const nom = prodNomComplet(p);
+    const nom = prodNomComplet(p, recipes);
     (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, coques:0, ganache:0, dlcs:[]});
     byNom[nom].dispo = addQty(byNom[nom].dispo, p.qteRestante);
     byNom[nom].batches++;
     if(p.dlcProduit) byNom[nom].dlcs.push(p.dlcProduit); // pour repérer la DLC la plus proche
   });
   composants.forEach(p=>{
-    const nom = prodNomComplet(p);
+    const nom = prodNomComplet(p, recipes);
     (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, coques:0, ganache:0, dlcs:[]});
     byNom[nom].compo = addQty(byNom[nom].compo, p.qteRestante);
     const c = prodComposant(p);
@@ -10737,7 +10737,7 @@ async function renderStockParfums(){
     else if(c==='ganache') byNom[nom].ganache = addQty(byNom[nom].ganache, p.qteRestante);
   });
   degustations.forEach(p=>{
-    const nom = prodNomComplet(p);
+    const nom = prodNomComplet(p, recipes);
     (byNom[nom] ||= {nom, dispo:0, batches:0, compo:0, coques:0, ganache:0, degust:0, dlcs:[]});
     byNom[nom].degust = addQty(byNom[nom].degust||0, p.qteRestante);
   });
@@ -20680,6 +20680,7 @@ async function recoverAllRecipes(){
   } else {
     toast(`✓ Restauré : ${okRec} recette(s), ${okItem} ingrédient(s)`);
   }
+  try{ await refreshMatsCache(); }catch(e){}
   scanLostRecipes();
 }
 
@@ -20759,6 +20760,7 @@ async function relinkAllLots(){
   markUnsaved && markUnsaved();
   if(erreurs.length){ toast(`Reconnecté : ${ok}. ${erreurs.length} échec(s).`); }
   else { toast(`✓ ${ok} lot(s) reconnecté(s) à leur parfum`); }
+  try{ await refreshMatsCache(); }catch(e){}   // cache à jour → Stock par parfum reflète le nouveau lien
   scanOrphanLots();
 }
 
@@ -27777,6 +27779,11 @@ function startClock(){
   }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }
 
   try{ await fixSplitComponentInheritance(); }catch(e){ console.error('fixSplitComp',e); }
+  // Cache recettes/matières prêt AVANT le premier rendu : prodNomComplet() (appelé sans
+  // « recipes » en portée, ex. Stock par parfum) s'appuie sur window._allRecipesCache. Sans ce
+  // rafraîchissement initial, le cache peut être vide/périmé et les lots s'afficheraient à tort
+  // « (recette supprimée) », faussant le regroupement par parfum.
+  try{ await refreshMatsCache(); }catch(e){ console.error('refreshMatsCache boot',e); }
   let opened=false;
   try{ opened = await handleTraceAnchor().catch(()=>false); }catch(e){ console.error('traceAnchor',e); }
   try{ if(!opened) render(); }catch(e){ console.error('render',e); }
