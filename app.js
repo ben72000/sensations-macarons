@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v548';
+const APP_VERSION = 'v549';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -23478,6 +23478,123 @@ function retroplanningCommande(o, recipes){
   if(maturationH>0) contraintes.push(`🧊 Maturation : ${maturationH} h avant livraison.`);
 
   return {livraison, jalons, contraintes, reposGanacheH, maturationH, cremeuxCongelH, decongelH, jourJ, congelObl, aCremeux, gfCongele, recsUtilisees:recsUtilisees.length};
+}
+
+/* [CHANTIER 1] COUCHE DE CALAGE du rétroplanning sur les plages de disponibilité.
+   N'altère PAS retroplanningCommande : on récupère ses paramètres et on RECONSTRUIT
+   la cascade à rebours en calant chaque étape selon son type (3 types), en lisant les
+   vraies plages (exceptions comprises via availSlotsForDate).
+   - active   : montage, ganache, crémeux → tient d'un seul tenant dans un créneau.
+   - encadree : coques (meringue + cuisson) → présence début+fin, idem active.
+   - libre    : repos, maturation, congélation, décongélation → traverse nuit & week-end.
+   Durées actives/encadrées = temps MRP × volume ; durées libres = constantes (heures).
+*/
+
+function _retroNbMacarons(o){
+  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
+  let n=0;
+  lignes.forEach(ln=>{
+    if(ln.type==='grand'){ (ln.items||[]).forEach(p=>{ n+=(+p.qte||0); }); }
+    else { (ln.parfums||[]).forEach(p=>{ n+=(+p.qte||0); }); }
+  });
+  return n;
+}
+
+function _retroDurees(nbMacarons){
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const MM = (typeof MACARONS_PAR_MERINGUE!=='undefined') ? MACARONS_PAR_MERINGUE : 120;
+  const t = (typeof getMrpTimes==='function') ? getMrpTimes() : {coques:{estimatedTime:35},montage:{estimatedTime:15},ganache:{estimatedTime:12}};
+  const nbBatchs = Math.max(1, Math.ceil(nbMacarons/TB));
+  const nbMeringues = Math.max(1, Math.ceil(nbMacarons/MM));
+  return {
+    coques: t.coques.estimatedTime * nbMeringues,
+    montage: t.montage.estimatedTime * nbBatchs,
+    ganache: t.ganache.estimatedTime * nbBatchs,
+    cremeux: t.ganache.estimatedTime * nbBatchs,
+    nbBatchs, nbMeringues
+  };
+}
+
+// Place une tâche ACTIVE/ENCADRÉE de durée 'duree' (min) finissant AU PLUS TARD à 'finVoulue'.
+function _retroPlacerActive(finVoulue, duree, conf, guardDays=180){
+  const hm = s => { const [h,m]=String(s).split(':').map(Number); return (h||0)*60+(m||0); };
+  const slotsOf = day => {
+    const raw = (typeof availSlotsForDate==='function') ? availSlotsForDate(day, conf) : [];
+    return raw.map(([s,e])=>[hm(s), hm(e)]).sort((a,b)=>a[0]-b[0]);
+  };
+  const dayKey = d => { const x=new Date(d); x.setHours(0,0,0,0); return x; };
+  const minOfDay = d => d.getHours()*60+d.getMinutes();
+  const atDayMin = (day,min) => { const r=dayKey(day); if(min>=1440){ r.setHours(23,59,59,0); return r; } r.setMinutes(min); return r; };
+  let cur = new Date(finVoulue);
+  for(let i=0;i<guardDays;i++){
+    const slots = slotsOf(cur);
+    const m = (i===0) ? minOfDay(cur) : 1440;
+    for(let k=slots.length-1;k>=0;k--){
+      const [a,b]=slots[k];
+      const finPossible = Math.min(m, b);
+      if(finPossible - a >= duree){
+        return { debut:atDayMin(cur, finPossible-duree), fin:atDayMin(cur, finPossible), tropLongue:false };
+      }
+    }
+    cur = dayKey(cur); cur.setDate(cur.getDate()-1); cur.setHours(23,59,0,0);
+  }
+  return { debut:null, fin:null, tropLongue:true };
+}
+
+async function retroplanningCale(orderId){
+  const o = await db.orders.get(orderId);
+  if(!o) return { ok:false, error:'Commande introuvable.' };
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const rp = (typeof retroplanningCommande==='function') ? retroplanningCommande(o, recipes) : null;
+  if(!rp || rp.error) return { ok:false, error:(rp&&rp.error)||'Rétroplanning indisponible.' };
+
+  const conf = (typeof getAvailability==='function') ? getAvailability() : null;
+  const nbMac = _retroNbMacarons(o);
+  const durees = _retroDurees(nbMac);
+
+  // Construire la séquence des étapes du plus tard (livraison) au plus tôt, avec durée + type.
+  // On s'appuie sur les paramètres exposés par retroplanningCommande pour savoir quelles
+  // phases existent et leur durée (en heures pour les phases libres).
+  const H = 60; // minutes par heure
+  const seq = [];   // dans l'ordre PRODUCTION (du plus tôt au plus tard) ; on inversera pour remonter
+  seq.push({ cle:'coques', label:'Coques (meringue + cuisson)', type:'encadree', duree:durees.coques });
+  if(rp.aCremeux){
+    seq.push({ cle:'cremeux', label:'Préparation du crémeux', type:'active', duree:durees.cremeux });
+    if(rp.cremeuxCongelH>0) seq.push({ cle:'congel-cremeux', label:`Congélation crémeux (${rp.cremeuxCongelH} h)`, type:'libre', duree:rp.cremeuxCongelH*H });
+  } else {
+    seq.push({ cle:'ganache', label:'Préparation ganache / crémeux', type:'active', duree:durees.ganache });
+    if(rp.reposGanacheH>0) seq.push({ cle:'repos-ganache', label:`Repos ganache (${rp.reposGanacheH} h)`, type:'libre', duree:rp.reposGanacheH*H });
+  }
+  seq.push({ cle:'montage', label:'Montage / assemblage', type:'active', duree:durees.montage });
+  if(rp.maturationH>0) seq.push({ cle:'maturation', label:`Maturation (${rp.maturationH} h au frais)`, type:'libre', duree:rp.maturationH*H });
+  if(rp.decongelH>0) seq.push({ cle:'decongel', label:`Décongélation au frigo (${rp.decongelH} h)`, type:'libre', duree:rp.decongelH*H });
+
+  // Remonter depuis la livraison : chaque étape finit quand la suivante (vers livraison) commence.
+  let refFin = new Date(rp.livraison);
+  const rev = [];
+  for(let i=seq.length-1;i>=0;i--){
+    const e = seq[i];
+    if(e.type==='libre'){
+      const fin = new Date(refFin);
+      const debut = new Date(fin.getTime() - e.duree*60000);
+      rev.push({ ...e, debut, fin, tropLongue:false });
+      refFin = debut;
+    } else {
+      const r = _retroPlacerActive(refFin, e.duree, conf);
+      rev.push({ ...e, debut:r.debut, fin:r.fin, tropLongue:r.tropLongue });
+      if(!r.tropLongue && r.debut) refFin = r.debut;
+    }
+  }
+  rev.push({ cle:'livraison', label:'Livraison', type:'ancre', duree:0, debut:new Date(rp.livraison), fin:new Date(rp.livraison), tropLongue:false });
+  const jalonsCales = rev.reverse();
+  const aDesDebordements = jalonsCales.some(j=>j.tropLongue);
+  const debutProd = jalonsCales.find(j=>j.debut && j.type!=='ancre');
+  return {
+    ok:true, livraison:rp.livraison, nbMacarons:nbMac, durees,
+    jalonsCales, aDesDebordements,
+    debutProduction: debutProd ? debutProd.debut : null,
+    contraintes:rp.contraintes
+  };
 }
 
 // Affiche le rétroplanning d'une commande dans une modale (jalons datés à rebours).
