@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v555';
+const APP_VERSION = 'v557';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -15271,6 +15271,11 @@ function parseIntent(texte, ctx){
   }
 
   // ---- CONSULTATIONS (non critiques) ----
+  // CONSEIL GLOBAL : "conseille-moi", "quoi faire", "par quoi je commence", "qu'est-ce que je dois faire"
+  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je )?commenc|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr)\b/.test(t)
+     && !/stock|combien|reste/.test(t)){
+    return {intent:'query_advice', params:{}, critical:false, label:'Mon conseil de production du moment'};
+  }
   // LOCALISATION des macarons finis : "où sont mes macarons vanille", "emplacement chocolat"
   if(/\b(ou (se trouve|sont|est|se trouvent)|localis|emplacement|range|rangee|rangees|range ou|trouve mes|dans quel|quel congelateur|quel frigo)\b/.test(t)
      && /\bmacaron|macarons\b/.test(t) || (/\bou\b/.test(t) && aiFindFlavor(t,flavors))){
@@ -15730,7 +15735,7 @@ function renderAssistant(){
        <button class="btn ghost" onclick="aiClearAll()">Effacer</button></div>
      <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> ou un <b>PDF</b> (généré par ordi) est lu et ajouté à ta demande ; une <b>photo</b> ou un PDF scanné reste un aperçu temporaire (non lu, non enregistré). Astuce : depuis l'app Notes, fais <b>Copier</b> puis colle ici. Base d'aide : <b>${APP_VERSION}</b>.</p>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-       ${['Aide','Comment fonctionne le picking ?','Quel est le stock de chocolat ?','Commandes à préparer demain','Chiffre d\'affaires','Que faut-il produire ?','Quand vais-je être en rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
+       ${['Conseille-moi quoi faire','Aide','Comment fonctionne le picking ?','Quel est le stock de chocolat ?','Commandes à préparer demain','Chiffre d\'affaires','Que faut-il produire ?','Quand vais-je être en rupture ?'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
      </div>
    </div>
    <div id="aiOut"></div>`;
@@ -16145,7 +16150,24 @@ function ordoApplyAjust(){
   ordoRenderPlan('ordoZone');
 }
 
+// [FUSION — Étape 1] Cache court du plan : évite de recalculer buildProductionPlan
+// plusieurs fois dans le même cycle d'affichage (ex. l'écran Plan l'appelle, et la voix
+// via atelierBrain l'appelle aussi). Le calcul lourd n'est fait qu'une fois par fenêtre
+// de quelques secondes, pour le même horizon. Aucune logique d'appel ne change.
+let _planCache = { horizon:null, data:null, ts:0 };
+const _PLAN_CACHE_MS = 3000;
+function invalidatePlanCache(){ _planCache = { horizon:null, data:null, ts:0 }; }
 async function buildProductionPlan(horizonDays){
+  const H = horizonDays||14;
+  const now = Date.now();
+  if(_planCache.data && _planCache.horizon===H && (now - _planCache.ts) < _PLAN_CACHE_MS){
+    return _planCache.data;
+  }
+  const data = await _buildProductionPlanRaw(H);
+  _planCache = { horizon:H, data, ts:Date.now() };
+  return data;
+}
+async function _buildProductionPlanRaw(horizonDays){
   const H = horizonDays||14;
   const items=[]; // {type, recipeId, produitNom, qte, raison, prioRang}
   const order = planPrioOrder();
@@ -17755,6 +17777,7 @@ async function aiRun(){
       return aiHelp(txt);
     }
     switch(r.intent){
+      case 'query_advice': return aiQueryAdvice();
       case 'query_stock': return aiQueryStock(r.params);
       case 'query_locate': return aiQueryLocate(r.params);
       case 'query_orders': return aiQueryOrders(r.params);
@@ -17783,6 +17806,20 @@ async function aiRun(){
 }
 
 // ---- CONSULTATIONS ----
+// CONSEIL GLOBAL : affiche la voix complète (le cerveau) dans le fil du dialogue.
+async function aiQueryAdvice(){
+  const out=document.getElementById('aiOut');
+  if(out) out.innerHTML=`<div class="panel"><p class="note">Analyse de ta situation…</p></div>`;
+  try{
+    const html = (typeof atelierVoix==='function') ? await atelierVoix() : '';
+    if(out){
+      out.innerHTML = html
+        ? `<div style="margin-top:4px">${html}<p class="note" style="margin-top:8px">💬 Tu peux aussi me demander : « qu'est-ce qui est en retard ? », « le stock de chocolat », « les commandes de demain »…</p></div>`
+        : `<div class="panel"><p>Rien d'urgent à signaler pour le moment. Tu peux avancer sereinement.</p></div>`;
+    }
+  }catch(e){ console.error('aiQueryAdvice',e); if(out) out.innerHTML=`<div class="panel"><p>Je n'ai pas pu générer le conseil. Réessaie.</p></div>`; }
+}
+
 async function aiQueryStock(params){
   const materials=await db.materials.toArray();
   if(!params.material){
