@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v577';
+const APP_VERSION = 'v578';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -20682,6 +20682,85 @@ async function recoverAllRecipes(){
   }
   scanLostRecipes();
 }
+
+/* ===== RECONNECTER LES LOTS « RECETTE SUPPRIMÉE » À LEUR PARFUM =====
+   Un lot affiche « recette supprimée » quand son recipeId ne correspond à aucune recette
+   (recette supprimée puis recréée avec un nouvel id, par ex.). On lit le CODE PARFUM encodé
+   dans le numéro de lot (ex. « 150626VAN-AS-C » → VAN → Vanille) et on rapproche le lot de
+   la recette dont le flavorCode correspond. Reconnexion = mise à jour du recipeId du lot. */
+
+let _relinkData = null;
+
+async function scanOrphanLots(){
+  const zone=document.getElementById('relinkZone'); if(!zone) return;
+  zone.innerHTML='<p class="note">Analyse des lots « recette supprimée »…</p>';
+  try{
+    const [prods, recipes] = await Promise.all([
+      db.productions.toArray().catch(()=>[]),
+      db.recipes.toArray().catch(()=>[])
+    ]);
+    const recIds = new Set(recipes.map(r=>r.id));
+    // Lots orphelins : pointent vers une recette absente, et ne sont ni libres ni composants.
+    const orphelins = prods.filter(p=> !p.libre && !p.composantCatalogue && p.recipeId!=null && !recIds.has(+p.recipeId));
+    if(!orphelins.length){
+      zone.innerHTML='<p class="note">✅ Aucun lot « recette supprimée » : tous tes lots sont reliés à une recette.</p>';
+      return;
+    }
+    // Index des recettes par code parfum (flavorCode).
+    const recByCode = {};
+    recipes.forEach(r=>{ const code=flavorCode(r.produitNom||''); if(code && !recByCode[code]) recByCode[code]=r; });
+
+    // Pour chaque lot orphelin, on déduit le code parfum depuis son numéro de lot.
+    const lignes = orphelins.map(p=>{
+      const lot = p.lotProduction || '';
+      // Le code parfum est un segment de 2-4 lettres majuscules dans le lot (ex. VAN, CHN, 2CH).
+      let code = '';
+      // 1) On teste tous les codes connus présents dans le lot.
+      for(const c of Object.keys(FLAVOR_CODES)){ const code2=FLAVOR_CODES[c]; if(lot.toUpperCase().includes(code2)){ code=code2; break; } }
+      const recTrouvee = code ? recByCode[code] : null;
+      return { prodId:p.id, lot, code, recId: recTrouvee?recTrouvee.id:null, recNom: recTrouvee?recTrouvee.produitNom:null, qte:round3(+p.qteRestante||0) };
+    });
+    _relinkData = lignes;
+
+    const reconnectables = lignes.filter(l=>l.recId!=null);
+    const sansMatch = lignes.filter(l=>l.recId==null);
+
+    let html='';
+    if(reconnectables.length){
+      html += `<p style="font-weight:600;margin:6px 0 4px;color:#3f7d52">✅ ${reconnectables.length} lot(s) reconnectable(s)</p>`;
+      html += reconnectables.map((l,i)=>`<div class="sum-box"><span style="flex:1"><b>lot ${esc(l.lot)}</b> <span style="color:#9a8a82">→ ${esc(l.recNom)} (${l.code})</span></span></div>`).join('');
+      html += `<div style="margin:8px 0"><button class="btn gold sm" onclick="relinkAllLots()">🔗 Reconnecter ces ${reconnectables.length} lot(s)</button></div>`;
+    }
+    if(sansMatch.length){
+      html += `<p style="font-weight:600;margin:10px 0 4px;color:#b3261e">⚠ ${sansMatch.length} lot(s) sans recette correspondante</p>`;
+      html += sansMatch.map(l=>`<div class="sum-box"><span style="flex:1"><b>lot ${esc(l.lot)}</b> <span style="color:#9a8a82">— code ${l.code||'?'} : aucune recette de ce parfum</span></span></div>`).join('');
+      html += `<p class="note" style="color:#b3261e">Pour ces lots, il faut d'abord <b>créer la recette du parfum</b> correspondant (Recettes → +), puis relancer cette reconnexion.</p>`;
+    }
+    zone.innerHTML = `
+      <p class="note">${orphelins.length} lot(s) « recette supprimée » trouvé(s). On les rapproche de la bonne recette via le code parfum de leur numéro de lot.</p>
+      ${html}`;
+  }catch(e){
+    console.error('scanOrphanLots',e);
+    zone.innerHTML='<p class="note" style="color:#b3261e">Erreur : '+esc(e&&e.message?e.message:String(e))+'</p>';
+  }
+}
+
+async function relinkAllLots(){
+  if(!_relinkData) return;
+  const reconnectables = _relinkData.filter(l=>l.recId!=null);
+  if(!reconnectables.length) return;
+  if(!confirm(`Reconnecter ${reconnectables.length} lot(s) à leur recette ?\n\nChaque lot retrouvera son parfum. Aucune autre donnée ne sera touchée.`)) return;
+  try{ await snapshotBackup('avant-reconnexion-lots'); }catch(eBk){ console.error('snapshot',eBk); }
+  let ok=0; const erreurs=[];
+  for(const l of reconnectables){
+    try{ await db.productions.update(l.prodId, { recipeId: l.recId }); ok++; }
+    catch(e){ console.error('relink',l,e); erreurs.push('lot '+l.lot); }
+  }
+  markUnsaved && markUnsaved();
+  if(erreurs.length){ toast(`Reconnecté : ${ok}. ${erreurs.length} échec(s).`); }
+  else { toast(`✓ ${ok} lot(s) reconnecté(s) à leur parfum`); }
+  scanOrphanLots();
+}
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
@@ -20694,6 +20773,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">🍽️ Récupérer une recette ou des ingrédients supprimés</h2>
       <p class="note">Si une <b>recette a été supprimée</b> (tes lots s'affichent « recette supprimée ») ou si des <b>ingrédients</b> ont disparu, cet outil les retrouve dans <b>tes sauvegardes</b> et les restaure <b>sans rien écraser</b>. Pour la <b>Chantache</b> précisément, utilise plutôt l'outil dédié plus bas (il connaît ses 8 ingrédients sans sauvegarde).</p>
       <div id="recoverRecZone"><button class="btn gold sm" onclick="scanLostRecipes()">Rechercher les recettes et ingrédients supprimés</button></div>
+    </div>
+    <div class="panel" style="background:#fff4f4;border:1.5px solid #e5a0a0;margin-bottom:12px">
+      <h2 style="font-size:1rem">🔗 Reconnecter les lots « recette supprimée » à leur parfum</h2>
+      <p class="note">Si tes lots de macarons s'affichent sous <b>« recette supprimée »</b> alors que la recette existe (souvent après une suppression puis recréation), cet outil les <b>rattache automatiquement</b> à la bonne recette grâce au code parfum de leur numéro de lot (ex. « …<b>VAN</b>… » → Vanille).</p>
+      <div id="relinkZone"><button class="btn gold sm" onclick="scanOrphanLots()">Rechercher les lots à reconnecter</button></div>
     </div>
     <div class="panel" style="background:#fbf7f0;margin-bottom:12px">
       <h2 style="font-size:1rem">💶 Commandes à 0 €</h2>
