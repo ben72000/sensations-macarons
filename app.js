@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v626';
+const APP_VERSION = 'v628';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4183,6 +4183,22 @@ async function renderProductions(){
     if(base) famCount[base]=(famCount[base]||0)+1;
   });
   _prodFamCount = famCount;   // exposé pour _prodbatRow (appelé hors de cette fonction)
+  // [MERINGUES MUTUALISÉES] Regroupe les sous-lots coques partageant une même fournée de meringue
+  // (meringueBatchId). On ne montre que les fournées encore actives (au moins un lot non rangé).
+  const _meringueGroups = {};
+  prods.forEach(p=>{
+    if(!p.meringueBatchId) return;
+    (_meringueGroups[p.meringueBatchId] ||= []).push(p);
+  });
+  const _meringueList = Object.entries(_meringueGroups)
+    .map(([mid, lots])=>({ mid, lots, actifs: lots.filter(p=>!prodEstRangee(p)) }))
+    .filter(g=>g.actifs.length>0)
+    .sort((a,b)=>{
+      const ta = Math.max(...a.lots.map(p=>Date.parse(p.prodDebutTs||p.prodTimestamp||0)||0));
+      const tb = Math.max(...b.lots.map(p=>Date.parse(p.prodDebutTs||p.prodTimestamp||0)||0));
+      return tb-ta;   // plus récentes d'abord
+    });
+  window._prodMeringueList = _meringueList;   // exposé pour le toggle de chevron
   _prodnCache = prods.filter(p=>!prodEstRangee(p)).map(p=>{
     const nom = prodNom(p);
     const e = empInfo(p.emplacement);
@@ -4208,6 +4224,41 @@ async function renderProductions(){
    </div>`:''}
    ${enRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${enRetard.length} production(s) ouverte(s) depuis plus de ${PROD_OPEN_MAX_DAYS} jours.</b> Une production ne peut pas rester « démarrée » au-delà de ${PROD_OPEN_MAX_DAYS} jours : terminez-la (✓ Terminer) pour figer la DLC, ou supprimez-la.</div></div>`:''}
    ${ouvertes.length && !enRetard.length?`<div class="banner">▶ <div><b>${ouvertes.length} production(s) en cours.</b> La DLC de 7 j ne démarre qu'au passage en « terminée ».</div></div>`:''}
+   ${_meringueList.length?`<div class="panel" style="border:1.5px solid #cfe3d4;background:#f4faf5">
+     <h2 style="color:#2e6b3f">🥣 Meringues mutualisées <span style="font-weight:400;font-size:.82rem;color:#5a8a6a">— ${_meringueList.length} fournée(s) à 2 parfums</span></h2>
+     <p class="note" style="margin-top:-2px">Chaque fournée partage une seule meringue entre plusieurs parfums. Touche une fournée pour voir et ouvrir le détail de chaque parfum.</p>
+     ${_meringueList.map(g=>{
+       const parfums = g.lots.map(p=>prodNom(p));
+       const totCoques = g.lots.reduce((a,p)=>a+(+p.qteRestante||0),0);
+       const tousTermines = g.lots.every(p=>prodStatut(p)==='termine');
+       const statutTxt = tousTermines ? '✓ terminée' : '▶ en cours';
+       const dateTxt = (()=>{ const t=Math.max(...g.lots.map(p=>Date.parse(p.prodDebutTs||p.prodTimestamp||0)||0)); return t?fmtDate(new Date(t).toISOString().slice(0,10)):''; })();
+       const gid = 'mer_'+String(g.mid).replace(/[^A-Za-z0-9]/g,'');
+       return `<div class="panel" style="background:#fff;border:1px solid #d8e6dc;padding:0;overflow:hidden;margin-bottom:8px">
+         <div onclick="prodMeringueToggle('${gid}')" style="display:flex;align-items:center;gap:8px;padding:12px 14px;cursor:pointer">
+           <span id="${gid}_chev" style="font-size:.9rem;color:#5a8a6a;transition:transform .15s">▶</span>
+           <div style="flex:1">
+             <div style="font-weight:600">🥣 ${esc(parfums.join(' + '))}</div>
+             <div style="font-size:.78rem;color:#7a6a62">${g.lots.length} parfum(s) · ${qty(totCoques)} coques · ${statutTxt}${dateTxt?` · ${dateTxt}`:''}</div>
+           </div>
+         </div>
+         <div id="${gid}_body" style="display:none;border-top:1px solid #eef3ee;padding:6px 10px 10px">
+           ${g.lots.map(p=>{
+             const nom=prodNom(p);
+             const dispo=round3(+p.qteRestante||0);
+             const stp = prodStatut(p)==='termine'?'✓ terminée':'▶ en cours';
+             return `<div style="display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid #f4f1ea">
+               <div style="flex:1">
+                 <div style="font-weight:600;font-size:.9rem">${esc(nom)}</div>
+                 <div style="font-size:.76rem;color:#9a8a82">Lot ${esc(p.lotProduction||('#'+p.id))} · ${qty(dispo)} coques · ${stp}</div>
+               </div>
+               <button class="btn ghost sm" onclick="traceProd(${p.id})">🔎 Détail</button>
+             </div>`;
+           }).join('')}
+         </div>
+       </div>`;
+     }).join('')}
+   </div>`:''}
    ${sugg.length?`<div class="panel" style="border:1.5px solid #cfe3d4;background:#f4faf5">
      <h2 style="color:#2e7d32">🔗 Assemblages à finaliser <span style="font-weight:400;font-size:.82rem;color:#6a8a72">— ${sugg.length} rapprochement(s) possible(s)</span></h2>
      <p class="note" style="margin-bottom:8px">Coques et ganaches réellement <b>en stock</b> (quantités réelles, casse déduite) pouvant être assemblées. Vérifie le parfum avant de valider.</p>
@@ -4296,6 +4347,15 @@ async function prodDeranger(id){
   renderProductions();
 }
 // Affiche les productions rangées (masquées) dans une modale, avec possibilité de les "déranger".
+// [MERINGUES MUTUALISÉES] Déplie/replie le détail d'une fournée (chevron).
+function prodMeringueToggle(gid){
+  const body=document.getElementById(gid+'_body');
+  const chev=document.getElementById(gid+'_chev');
+  if(!body) return;
+  const open = body.style.display!=='none';
+  body.style.display = open ? 'none' : 'block';
+  if(chev) chev.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+}
 async function prodVoirRangees(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
@@ -4379,6 +4439,11 @@ function _prodbatRow(row){
   }
 }
 function _prodbatRowInner(row){
+  const p = row.p;
+  // [SCOPE] recName et lossByProd sont locaux à renderProductions ; ici (fonction globale) on
+  // passe par les versions exposées sur window (sinon « Can't find variable » sur Safari).
+  const recName = window._prodRecName || (id => '#'+id);
+  const lossByProd = window._prodLossBy || {};
   const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
   const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
   const emp = p.emplacement; const empTag = empTagHtml(emp);
@@ -24475,6 +24540,25 @@ async function sessProdsChevauchantes(session){
   });
 
   const chevauche = Array.from(setChevauche.values());
+  // [DUO MERINGUE] Une fournée de meringue commune relie 2+ parfums (même meringueBatchId).
+  // Si UN des parfums d'une fournée est détecté (chevauchement ou même jour), on coche AUSSI
+  // ses binômes : le temps « meringue » est mutualisé, les deux parfums vont ensemble.
+  const detectes = new Set([...setChevauche.keys(), ...setJour.keys()]);
+  const batchParfums = {};   // meringueBatchId -> Map(normName -> displayName)
+  prods.forEach(p=>{
+    if(!p.meringueBatchId) return;
+    const nom = nomDe(p); if(!nom || nom==='(recette supprimée)') return;
+    const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
+    (batchParfums[p.meringueBatchId] ||= new Map()).set(k, nom);
+  });
+  Object.values(batchParfums).forEach(m=>{
+    // La fournée est-elle concernée par la session ? (au moins un de ses parfums détecté)
+    const concernee = [...m.keys()].some(k=>detectes.has(k));
+    if(!concernee) return;
+    // Oui → on s'assure que TOUS les parfums de la fournée sont au moins en « même jour ».
+    m.forEach((nom,k)=>{ if(!setChevauche.has(k) && !setJour.has(k)) setJour.set(k, nom); });
+  });
+
   // Le repli "même jour" n'inclut pas ce qui chevauche déjà (évite les doublons).
   const memeJour = Array.from(setJour.entries()).filter(([k])=>!setChevauche.has(k)).map(([,v])=>v);
   const suggestions = [
