@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v635';
+const APP_VERSION = 'v637';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -110,6 +110,22 @@ db.version(16).stores({
 // la matière est supprimée plus tard.
 db.version(17).stores({
   packagingConsumption: '++id, orderId, materialId, date'
+});
+// v18 : PROSPECTION B2B (mini-CRM). Suivi des cibles professionnelles à démarcher.
+//   nom, categorie (resto|hotel|salon_the|ce|traiteur|epicerie|fleuriste|autre),
+//   statut ('a_contacter'|'contacte'|'relance'|'rdv'|'client'|'abandonne'),
+//   contact, tel, email, adresse, tarifPro (note libre), frequence (note), potentiel (1-3),
+//   notes, prochaineSuite (date de relance), histo (journal d'actions), clientId (si converti),
+//   createdTs, majTs.
+db.version(18).stores({
+  prospects: '++id, nom, categorie, statut, prochaineSuite, clientId'
+});
+// v19 : PERSONAS marketing. Profils-types de clients pour adapter com, offres et démarchage.
+//   nom, emoji, archetype (cible type), tranche d'âge, profil (B2C|B2B), budget, frequenceType,
+//   occasions[], parfumsAimes[], motivations[], freins[], canaux[], ton, messages[], offres[],
+//   demarchage, sourceClientId (si nourri depuis un vrai client), notes, couleur, createdTs, majTs.
+db.version(19).stores({
+  personas: '++id, nom, profil, sourceClientId'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -1247,7 +1263,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -14796,6 +14812,523 @@ function _margeLeviersHtml(A, recs){
     <button class="btn ghost sm" style="margin-top:10px;width:100%" onclick="goView('rentaparfum')">🎯 Voir le détail par parfum & toutes les recommandations ›</button>
   </div>`;
 }
+
+// ════════════════════════════════════════════════════════════════════════
+//  MINI-CRM B2B — Prospection professionnelle (restaurants, hôtels, CE…)
+//  Transforme « plein de pros à démarcher » en clients signés : suivi des
+//  cibles, relances, tarifs négociés, et pense-bête de démarchage.
+// ════════════════════════════════════════════════════════════════════════
+const PROSPECT_CATS = {
+  resto:      {label:'Restaurant',        ico:'🍽️', pitch:"desserts à l'assiette, mignardises café gourmand, fin de repas signature"},
+  hotel:      {label:'Hôtel',             ico:'🏨', pitch:"petits-déjeuners, plateaux d'accueil chambre, séminaires"},
+  salon_the:  {label:'Salon de thé',      ico:'🫖', pitch:"vitrine sucrée, accord thé/macaron, gamme tournante"},
+  ce:         {label:'Comité d\'entreprise', ico:'🏢', pitch:"événements internes, cadeaux clients/salariés, fêtes de fin d'année"},
+  traiteur:   {label:'Traiteur',          ico:'🥂', pitch:"buffets, cocktails, mariages — volumes et sous-traitance sucrée"},
+  epicerie:   {label:'Épicerie fine',     ico:'🛍️', pitch:"dépôt-vente, coffrets cadeaux, produit local d'artisan"},
+  fleuriste:  {label:'Fleuriste',         ico:'💐', pitch:"coffrets cadeaux associés aux bouquets (fête des mères, St-Valentin)"},
+  autre:      {label:'Autre',             ico:'📍', pitch:"toute structure susceptible de commander en volume régulier"}
+};
+const PROSPECT_STATUTS = {
+  a_contacter: {label:'À contacter', ico:'🎯', col:'#9a8a82', ordre:0},
+  contacte:    {label:'Contacté',    ico:'📞', col:'#c9a227', ordre:1},
+  relance:     {label:'Relancé',     ico:'🔁', col:'#d98324', ordre:2},
+  rdv:         {label:'RDV / dégustation', ico:'🤝', col:'#5a7a9a', ordre:3},
+  client:      {label:'Client signé',ico:'✅', col:'#2e7d32', ordre:4},
+  abandonne:   {label:'Abandonné',   ico:'🚫', col:'#b3261e', ordre:5}
+};
+// Pense-bête de démarchage : étapes concrètes, adaptées à un artisan qui débute.
+const PROSPECT_PITCH = [
+  {t:'Avant d\'y aller', l:["Repère 5 cibles proches à pied/en voiture.","Prépare une petite boîte de 4-6 macarons à offrir (l'échantillon vend mieux qu'un discours).","Choisis tes 2 parfums les plus bluffants visuellement et gustativement."]},
+  {t:'L\'accroche (30 secondes)', l:["« Bonjour, je suis Benjamin, pâtissier-macaronnier au Mans (Sensations Macarons). »","« Je travaille avec des [restaurants/hôtels…] pour leurs [desserts/petits-déjeuners…]. »","« Je vous ai apporté quelques macarons à goûter — qui est la bonne personne pour en parler ? »"]},
+  {t:'Ce qui les intéresse', l:["Régularité et fiabilité (tu livres quand tu dis).","Produit local et artisanal = argument de vente pour EUX auprès de leurs clients.","Personnalisation possible (parfum signature à leur nom, à leur enseigne)."]},
+  {t:'Lever les objections', l:["« C'est cher » → propose un format/par­fum adapté à leur marge, ou un volume dégressif.","« On a déjà un fournisseur » → « gardez mon contact pour un dépannage ou une nouveauté ».","« Il faut que je voie » → laisse l'échantillon + une carte, et NOTE une date de relance."]},
+  {t:'Toujours finir par', l:["Repartir avec un nom + un contact (téléphone ou mail).","Fixer la prochaine étape (« je vous rappelle jeudi », « je repasse avec un devis »).","Le noter ICI tout de suite, avec une date de relance — c'est ce qui fait signer."]}
+];
+
+let _prospectFilter = 'tous';
+async function renderProspects(){
+  const list = await db.prospects.orderBy('majTs').reverse().toArray().catch(()=>[]);
+  // Stats par statut
+  const parStatut = {};
+  Object.keys(PROSPECT_STATUTS).forEach(k=>parStatut[k]=0);
+  list.forEach(p=>{ if(parStatut[p.statut]!=null) parStatut[p.statut]++; });
+  const total = list.length;
+  const clients = parStatut.client||0;
+  // Relances dues (prochaineSuite <= aujourd'hui, statut non terminal)
+  const today = today();
+  const relancesDues = list.filter(p=>p.prochaineSuite && p.prochaineSuite<=today && !['client','abandonne'].includes(p.statut));
+
+  // Filtres par statut
+  const filtChips = ['tous', ...Object.keys(PROSPECT_STATUTS)].map(k=>{
+    const actif = _prospectFilter===k;
+    const lbl = k==='tous' ? `Tous (${total})` : `${PROSPECT_STATUTS[k].ico} ${PROSPECT_STATUTS[k].label} (${parStatut[k]||0})`;
+    return `<button class="btn ${actif?'gold':'ghost'} sm" style="margin:2px" onclick="_prospectFilter='${k}';renderProspects()">${lbl}</button>`;
+  }).join('');
+
+  const visibles = _prospectFilter==='tous' ? list : list.filter(p=>p.statut===_prospectFilter);
+  // Tri : relance due d'abord, puis par statut, puis récent
+  visibles.sort((a,b)=>{
+    const ra = (a.prochaineSuite && a.prochaineSuite<=today && !['client','abandonne'].includes(a.statut))?0:1;
+    const rb = (b.prochaineSuite && b.prochaineSuite<=today && !['client','abandonne'].includes(b.statut))?0:1;
+    if(ra!==rb) return ra-rb;
+    return (PROSPECT_STATUTS[a.statut]?.ordre||0)-(PROSPECT_STATUTS[b.statut]?.ordre||0);
+  });
+
+  const cards = visibles.length ? visibles.map(_prospectCard).join('') : '<div class="empty">Aucun prospect dans cette catégorie. Ajoute ta première cible !</div>';
+
+  document.getElementById('main').innerHTML = `
+   <div class="topbar"><div><h1>Prospection B2B</h1><p>Tes cibles pros : démarche, relance, signe</p></div>
+     <button class="btn ghost sm" onclick="prospectPitchSheet()">💬 Pense-bête</button></div>
+   <div class="banner">🤝 <div>Un seul client pro régulier (resto, hôtel, CE…) pèse plus que des dizaines de ventes au détail. Note ici chaque cible et surtout <b>la date de relance</b> — c'est ce qui fait signer.</div></div>
+   ${relancesDues.length?`<div class="panel" style="border:1px solid #e5b4ae;background:#fdf6f5"><h2 style="color:#b3261e">🔔 ${relancesDues.length} relance(s) à faire</h2>${relancesDues.map(_prospectCard).join('')}</div>`:''}
+   <div style="display:flex;gap:8px;margin:10px 0">
+     <button class="btn gold" style="flex:1" onclick="prospectForm(-1)">＋ Nouveau prospect</button>
+   </div>
+   <div style="display:flex;flex-wrap:wrap;margin-bottom:8px">${filtChips}</div>
+   <div style="display:flex;flex-direction:column;gap:10px">${cards}</div>
+   ${total===0?`<div class="panel" style="margin-top:12px"><h2>💡 Par où commencer ?</h2><p class="note">Ajoute 5 cibles proches de chez toi. Pour chaque catégorie, voici l'angle qui marche :</p>${Object.entries(PROSPECT_CATS).map(([k,c])=>`<div style="padding:6px 0;border-top:1px solid #f0e9e2;font-size:.86rem"><b>${c.ico} ${c.label}</b> — ${esc(c.pitch)}</div>`).join('')}</div>`:''}`;
+}
+function _prospectCard(p){
+  const cat = PROSPECT_CATS[p.categorie]||PROSPECT_CATS.autre;
+  const st = PROSPECT_STATUTS[p.statut]||PROSPECT_STATUTS.a_contacter;
+  const today = today();
+  const relanceDue = p.prochaineSuite && p.prochaineSuite<=today && !['client','abandonne'].includes(p.statut);
+  const pot = (+p.potentiel||0);
+  const potStr = pot>0 ? '⭐'.repeat(pot) : '';
+  return `<div style="background:#fff;border:1px solid var(--hair);border-left:4px solid ${st.col};border-radius:14px;padding:13px 15px;box-shadow:var(--sh-1)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="flex:none;font-size:1.1rem">${cat.ico}</span>
+      <b style="flex:1;color:var(--bordeaux);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.nom||'(sans nom)')}</b>
+      <span class="tag" style="background:${st.col};color:#fff;font-size:.64rem">${st.ico} ${st.label}</span>
+    </div>
+    <div style="font-size:.78rem;color:#7a6a60;margin-bottom:6px">${cat.label}${potStr?` · ${potStr}`:''}${p.contact?` · 👤 ${esc(p.contact)}`:''}</div>
+    ${(p.tel||p.email)?`<div style="font-size:.78rem;color:#7a6a60;margin-bottom:6px">${p.tel?`📞 ${esc(p.tel)}`:''}${p.tel&&p.email?' · ':''}${p.email?`✉️ ${esc(p.email)}`:''}</div>`:''}
+    ${p.tarifPro?`<div style="font-size:.78rem;color:#5a4a42;margin-bottom:6px">💰 ${esc(p.tarifPro)}</div>`:''}
+    ${relanceDue?`<div style="font-size:.78rem;color:#b3261e;font-weight:600;margin-bottom:6px">🔔 Relance prévue le ${fmtDate(p.prochaineSuite)}</div>`:(p.prochaineSuite?`<div style="font-size:.78rem;color:#9a8a82;margin-bottom:6px">📅 Prochaine étape : ${fmtDate(p.prochaineSuite)}</div>`:'')}
+    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">
+      <button class="btn ghost sm" onclick="prospectAdvance(${p.id})" title="Faire avancer dans le tunnel">▶ Avancer</button>
+      <button class="btn ghost sm" onclick="prospectLogForm(${p.id})" title="Noter une action (appel, visite…)">📝 Action</button>
+      <button class="btn ghost sm" onclick="prospectForm(${p.id})">✎ Éditer</button>
+      ${p.statut==='client'&&!p.clientId?`<button class="btn ghost sm" style="color:#2e7d32" onclick="prospectToClient(${p.id})" title="Créer la fiche client">➕ En client</button>`:''}
+    </div>
+  </div>`;
+}
+
+// Formulaire d'ajout / édition d'un prospect.
+async function prospectForm(id){
+  const p = id>=0 ? await db.prospects.get(id) : null;
+  const isNew = !p;
+  const v = p || {nom:'', categorie:'resto', statut:'a_contacter', contact:'', tel:'', email:'', adresse:'', tarifPro:'', frequence:'', potentiel:2, notes:'', prochaineSuite:''};
+  const catOpts = Object.entries(PROSPECT_CATS).map(([k,c])=>`<option value="${k}" ${v.categorie===k?'selected':''}>${c.ico} ${esc(c.label)}</option>`).join('');
+  const statOpts = Object.entries(PROSPECT_STATUTS).map(([k,sObj])=>`<option value="${k}" ${v.statut===k?'selected':''}>${sObj.ico} ${esc(sObj.label)}</option>`).join('');
+  openModal(`<h3>${isNew?'➕ Nouveau prospect':'✎ '+esc(v.nom)}</h3>
+    <div class="field"><label>Nom de l'établissement *</label>
+      <input id="pr_nom" value="${esc(v.nom)}" placeholder="ex : Le Bistrot des Halles"></div>
+    <div class="row2">
+      <div class="field"><label>Catégorie</label><select id="pr_cat">${catOpts}</select></div>
+      <div class="field"><label>Statut</label><select id="pr_stat">${statOpts}</select></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Contact (personne)</label><input id="pr_contact" value="${esc(v.contact)}" placeholder="ex : Mme Durand, chef"></div>
+      <div class="field"><label>Potentiel</label><select id="pr_pot">
+        <option value="1" ${+v.potentiel===1?'selected':''}>⭐ Faible</option>
+        <option value="2" ${+v.potentiel===2?'selected':''}>⭐⭐ Moyen</option>
+        <option value="3" ${+v.potentiel===3?'selected':''}>⭐⭐⭐ Fort</option>
+      </select></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Téléphone</label><input id="pr_tel" value="${esc(v.tel)}" placeholder="02 .. .. .. .."></div>
+      <div class="field"><label>Email</label><input id="pr_email" value="${esc(v.email)}" placeholder="contact@..."></div>
+    </div>
+    <div class="field"><label>Adresse</label><input id="pr_adr" value="${esc(v.adresse)}" placeholder="rue, ville"></div>
+    <div class="field"><label>Tarif pro négocié <span style="color:#9a8a82;font-weight:400">— note libre</span></label>
+      <input id="pr_tarif" value="${esc(v.tarifPro)}" placeholder="ex : 1,30 €/macaron dès 100 pièces"></div>
+    <div class="field"><label>Fréquence envisagée</label>
+      <input id="pr_freq" value="${esc(v.frequence)}" placeholder="ex : ~150/mois, ponctuel événements"></div>
+    <div class="field"><label>📅 Prochaine relance / étape</label>
+      <input type="date" id="pr_suite" value="${esc(v.prochaineSuite||'')}"></div>
+    <div class="field"><label>Notes</label>
+      <textarea id="pr_notes" rows="2" placeholder="contexte, ce qui a été dit, objections…">${esc(v.notes)}</textarea></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      ${!isNew?`<button class="btn ghost" style="color:#b3261e" onclick="prospectDelete(${id})">🗑 Supprimer</button>`:''}
+      <button class="btn gold" onclick="prospectSave(${id})">${isNew?'Ajouter':'Enregistrer'}</button>
+    </div>`);
+}
+async function prospectSave(id){
+  const nom=(document.getElementById('pr_nom').value||'').trim();
+  if(!nom){ toast('Indique au moins le nom'); return; }
+  const data={
+    nom,
+    categorie: document.getElementById('pr_cat').value,
+    statut: document.getElementById('pr_stat').value,
+    contact:(document.getElementById('pr_contact').value||'').trim(),
+    tel:(document.getElementById('pr_tel').value||'').trim(),
+    email:(document.getElementById('pr_email').value||'').trim(),
+    adresse:(document.getElementById('pr_adr').value||'').trim(),
+    tarifPro:(document.getElementById('pr_tarif').value||'').trim(),
+    frequence:(document.getElementById('pr_freq').value||'').trim(),
+    potentiel:+document.getElementById('pr_pot').value||2,
+    prochaineSuite: document.getElementById('pr_suite').value||'',
+    notes:(document.getElementById('pr_notes').value||'').trim(),
+    majTs: Date.now()
+  };
+  if(id>=0){ await db.prospects.update(id, data); toast('Prospect mis à jour ✓'); }
+  else { data.createdTs=Date.now(); data.histo=[]; await db.prospects.add(data); toast('Prospect ajouté ✓'); }
+  closeModal();
+  renderProspects();
+}
+async function prospectDelete(id){
+  const p=await db.prospects.get(id);
+  if(!p) return;
+  if(!confirm(`Supprimer « ${p.nom} » de tes prospects ?`)) return;
+  await db.prospects.delete(id);
+  closeModal();
+  toast('Prospect supprimé');
+  renderProspects();
+}
+// Fait avancer le prospect au statut suivant logique.
+async function prospectAdvance(id){
+  const p=await db.prospects.get(id); if(!p) return;
+  const ordre=['a_contacter','contacte','relance','rdv','client'];
+  const i=ordre.indexOf(p.statut);
+  // depuis 'relance' on peut re-relancer ; sinon on avance d'un cran
+  const next = (i<0||i>=ordre.length-1) ? p.statut : ordre[i+1];
+  const histo=(p.histo||[]).concat([{ts:Date.now(), action:`Statut : ${PROSPECT_STATUTS[p.statut]?.label||p.statut} → ${PROSPECT_STATUTS[next]?.label||next}`}]);
+  await db.prospects.update(id, {statut:next, majTs:Date.now(), histo});
+  toast(`${PROSPECT_STATUTS[next]?.ico||''} ${PROSPECT_STATUTS[next]?.label||next}`);
+  renderProspects();
+}
+// Noter une action (appel, visite, dégustation…) + fixer la prochaine relance.
+async function prospectLogForm(id){
+  const p=await db.prospects.get(id); if(!p) return;
+  const histo=(p.histo||[]).slice().reverse();
+  const histoHtml = histo.length ? histo.map(h=>`<div style="font-size:.78rem;padding:5px 0;border-top:1px solid #f0e9e2"><span style="color:#9a8a82">${fmtDate(new Date(h.ts).toISOString().slice(0,10))}</span> · ${esc(h.action)}</div>`).join('') : '<p class="note">Aucune action notée pour l\'instant.</p>';
+  openModal(`<h3>📝 Action — ${esc(p.nom)}</h3>
+    <div class="field"><label>Qu'as-tu fait ?</label>
+      <select id="pr_act_type">
+        <option value="Appel téléphonique">📞 Appel téléphonique</option>
+        <option value="Visite sur place">🚶 Visite sur place</option>
+        <option value="Échantillons déposés">🎁 Échantillons déposés</option>
+        <option value="Dégustation faite">😋 Dégustation faite</option>
+        <option value="Devis envoyé">📄 Devis envoyé</option>
+        <option value="Email envoyé">✉️ Email envoyé</option>
+        <option value="Relance">🔁 Relance</option>
+        <option value="Autre">📍 Autre</option>
+      </select></div>
+    <div class="field"><label>Détail (optionnel)</label>
+      <input id="pr_act_note" placeholder="ce qui a été dit, prochaine étape convenue…"></div>
+    <div class="field"><label>📅 Prochaine relance</label>
+      <input type="date" id="pr_act_suite" value="${esc(p.prochaineSuite||'')}"></div>
+    <div class="panel" style="margin-top:8px;background:#faf6ee"><div style="font-weight:600;font-size:.84rem;margin-bottom:2px">Historique</div>${histoHtml}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="prospectLogSave(${id})">Enregistrer l'action</button></div>`);
+}
+async function prospectLogSave(id){
+  const p=await db.prospects.get(id); if(!p) return;
+  const type=document.getElementById('pr_act_type').value;
+  const note=(document.getElementById('pr_act_note').value||'').trim();
+  const suite=document.getElementById('pr_act_suite').value||'';
+  const action = note ? `${type} — ${note}` : type;
+  const histo=(p.histo||[]).concat([{ts:Date.now(), action}]);
+  await db.prospects.update(id, {histo, prochaineSuite:suite, majTs:Date.now()});
+  closeModal();
+  toast('Action enregistrée ✓');
+  renderProspects();
+}
+// Convertit un prospect « client signé » en vraie fiche client de l'app.
+async function prospectToClient(id){
+  const p=await db.prospects.get(id); if(!p) return;
+  if(p.clientId){ toast('Déjà lié à une fiche client'); return; }
+  if(!confirm(`Créer une fiche client pour « ${p.nom} » ?`)) return;
+  const clientId = await db.clients.add({
+    nom:p.nom, tel:p.tel||'', email:p.email||'', adresse:p.adresse||'',
+    type:'pro', notes:[p.tarifPro?`Tarif pro : ${p.tarifPro}`:'', p.frequence?`Fréquence : ${p.frequence}`:'', p.notes||''].filter(Boolean).join('\n')
+  });
+  await db.prospects.update(id, {clientId, majTs:Date.now()});
+  toast('Fiche client créée ✓');
+  renderProspects();
+}
+// Pense-bête de démarchage (sheet).
+function prospectPitchSheet(){
+  const blocs = PROSPECT_PITCH.map(b=>`<div style="margin-bottom:12px"><div style="font-weight:700;color:var(--bordeaux);margin-bottom:4px">${esc(b.t)}</div>${b.l.map(x=>`<div style="font-size:.86rem;color:#5a4a42;padding:3px 0 3px 14px;position:relative"><span style="position:absolute;left:0">•</span>${esc(x)}</div>`).join('')}</div>`).join('');
+  openModal(`<h3>💬 Pense-bête : démarcher un pro</h3>
+    <p class="note" style="margin-bottom:10px">Ton meilleur argument, c'est le goût. Apporte toujours des échantillons.</p>
+    ${blocs}
+    <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 💪</button></div>`);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+//  PERSONAS MARKETING — Connaître son client pour viser juste
+//  Fiches-types riches (identité, motivations, canaux, ton, offres,
+//  démarchage), construites à la main et/ou nourries par les vraies données
+//  clients. Un moteur suggère la stratégie de com selon le profil.
+// ════════════════════════════════════════════════════════════════════════
+const PERSONA_ARCHETYPES = {
+  gourmand_quartier: {emoji:'🧁', label:'Le gourmand du quartier', profil:'B2C', desc:"achète pour le plaisir, régulièrement, en petites quantités"},
+  offreur_cadeau:    {emoji:'🎁', label:"L'offreur de cadeaux", profil:'B2C', desc:"achète pour offrir : coffrets soignés, occasions spéciales"},
+  evenementiel:      {emoji:'💍', label:"Le client événement", profil:'B2C', desc:"mariage, baptême, anniversaire : gros volume ponctuel"},
+  pro_resto:         {emoji:'🍽️', label:'Le restaurateur', profil:'B2B', desc:"desserts, mignardises, café gourmand en volume régulier"},
+  pro_hotel:         {emoji:'🏨', label:"L'hôtelier", profil:'B2B', desc:"petits-déjeuners, accueils, séminaires"},
+  pro_ce:            {emoji:'🏢', label:'Le comité d\'entreprise', profil:'B2B', desc:"événements internes, cadeaux clients/salariés"},
+  pro_revendeur:     {emoji:'🛍️', label:'Le revendeur', profil:'B2B', desc:"épicerie fine, salon de thé : dépôt-vente, coffrets"},
+  autre:             {emoji:'👤', label:'Autre profil', profil:'B2C', desc:"à définir librement"}
+};
+const PERSONA_CANAUX = ['Instagram','Facebook','Bouche-à-oreille','Marché','Boutique/vitrine','Flyers locaux','Email','Téléphone','LinkedIn','Site web / Google'];
+const PERSONA_OCCASIONS = ['Plaisir perso','Cadeau','Anniversaire','Mariage','Fêtes (Noël, Pâques…)','Événement pro','Réception','Saint-Valentin','Fête des mères'];
+
+// MOTEUR DE SUGGESTIONS : propose canaux, ton, offres, démarchage selon le profil saisi.
+// Déterministe (règles métier), pas d'IA — cohérent et explicable.
+function personaSuggest(p){
+  const arch = PERSONA_ARCHETYPES[p.archetype] || PERSONA_ARCHETYPES.autre;
+  const estPro = (p.profil||arch.profil)==='B2B';
+  const age = p.age||'';
+  const budget = +p.budgetNum||0;
+  const occ = p.occasions||[];
+  const canaux=[], messages=[], offres=[]; let ton='';
+  let demarchage='';
+
+  if(estPro){
+    canaux.push('Téléphone','Email','Visite en personne (échantillons)');
+    if(p.archetype==='pro_ce') canaux.push('LinkedIn');
+    ton = "Professionnel, fiable, orienté bénéfice pour LEUR activité. Mets en avant la régularité, le local et la personnalisation.";
+    messages.push("« Un produit artisanal et local qui valorise votre carte / vos événements. »",
+      "« Je m'engage sur la régularité et la fraîcheur — vous savez ce que vous servez. »",
+      "« On peut créer un parfum signature à votre enseigne. »");
+    offres.push('Tarif dégressif par volume','Parfum signature personnalisé','Contrat de livraison récurrente','Dépôt-vente / coffrets co-brandés');
+    demarchage = "Apporte des échantillons, demande la bonne personne (chef, gérant, RH), repars avec un contact + une date de relance. Note tout dans Prospection B2B.";
+  } else {
+    // B2C : adapte selon âge & occasions
+    if(age==='18-30'){ canaux.push('Instagram','Bouche-à-oreille','Marché'); ton="Jeune, visuel, spontané. Photos gourmandes, stories, tendances, emojis."; }
+    else if(age==='30-50'){ canaux.push('Instagram','Facebook','Marché','Boutique/vitrine'); ton="Chaleureux et qualitatif. Met en avant l'artisanat, les parfums, le fait-maison."; }
+    else if(age==='50+'){ canaux.push('Facebook','Bouche-à-oreille','Boutique/vitrine','Flyers locaux'); ton="Rassurant, authentique, proximité. Valorise le savoir-faire et la tradition."; }
+    else { canaux.push('Instagram','Facebook','Marché','Bouche-à-oreille'); ton="Chaleureux, gourmand, authentique."; }
+
+    if(occ.includes('Cadeau')||occ.includes('Fêtes (Noël, Pâques…)')||occ.includes('Saint-Valentin')||occ.includes('Fête des mères')){
+      offres.push('Coffrets cadeaux soignés','Éditions limitées de saison','Carte-cadeau');
+      messages.push("« Offrez un cadeau gourmand et original, fait main au Mans. »");
+    }
+    if(occ.includes('Mariage')||occ.includes('Réception')||occ.includes('Événement pro')){
+      offres.push('Pièce montée de macarons','Devis sur mesure','Dégustation préalable');
+      messages.push("« Sublimez votre événement avec une pyramide de macarons personnalisée. »");
+    }
+    if(occ.includes('Plaisir perso')||occ.length===0){
+      offres.push('Formule fidélité (10e boîte offerte)','Box découverte mensuelle','Assortiment du moment');
+      messages.push("« Votre petit plaisir de la semaine, toujours frais et fait main. »");
+    }
+    if(budget>0 && budget<15){ offres.push('Petits formats accessibles (ballotin 6)'); }
+    else if(budget>=30){ offres.push('Grands coffrets / assortiments premium'); }
+  }
+  // déduplique
+  const uniq=a=>[...new Set(a)];
+  return {canaux:uniq(canaux), ton, messages:uniq(messages), offres:uniq(offres), demarchage};
+}
+
+// Vue liste des personas.
+async function renderPersonas(){
+  const list = await db.personas.orderBy('majTs').reverse().toArray().catch(()=>[]);
+  const cards = list.length ? list.map(_personaCard).join('') : '';
+  document.getElementById('main').innerHTML = `
+   <div class="topbar"><div><h1>Personas clients</h1><p>Connais tes clients pour viser juste</p></div></div>
+   <div class="banner">🎯 <div>Un persona, c'est un client-type. Plus tu le connais (qui il est, ce qui le motive, où le toucher), plus ta com et tes offres font mouche. Crée-les à la main ou à partir de tes vrais clients.</div></div>
+   <div style="display:flex;gap:8px;margin:10px 0;flex-wrap:wrap">
+     <button class="btn gold" style="flex:1;min-width:160px" onclick="personaForm(-1)">＋ Nouveau persona</button>
+     <button class="btn ghost" style="flex:1;min-width:160px" onclick="personaFromClientPicker()">👥 Depuis un vrai client</button>
+   </div>
+   ${list.length ? `<div style="display:flex;flex-direction:column;gap:10px">${cards}</div>`
+     : `<div class="panel"><h2>💡 Pourquoi des personas ?</h2><p class="note">Au lieu de parler « à tout le monde » (donc à personne), tu adaptes ton message à chaque type de client. Exemples utiles pour toi :</p>
+        ${Object.entries(PERSONA_ARCHETYPES).filter(([k])=>k!=='autre').map(([k,a])=>`<div style="padding:6px 0;border-top:1px solid #f0e9e2;font-size:.86rem"><b>${a.emoji} ${esc(a.label)}</b> <span class="tag" style="font-size:.6rem;background:${a.profil==='B2B'?'#5a7a9a':'#AA7C39'};color:#fff">${a.profil}</span><br><span style="color:#7a6a60">${esc(a.desc)}</span></div>`).join('')}
+        <button class="btn gold" style="width:100%;margin-top:10px" onclick="personaForm(-1)">Créer mon premier persona</button></div>`}`;
+}
+function _personaCard(p){
+  const arch=PERSONA_ARCHETYPES[p.archetype]||PERSONA_ARCHETYPES.autre;
+  const col=p.couleur||'#AA7C39';
+  const estPro=(p.profil||arch.profil)==='B2B';
+  return `<div onclick="personaDetail(${p.id})" style="cursor:pointer;background:#fff;border:1px solid var(--hair);border-left:4px solid ${col};border-radius:14px;padding:13px 15px;box-shadow:var(--sh-1)">
+    <div style="display:flex;align-items:center;gap:9px">
+      <span style="font-size:1.4rem;flex:none">${p.emoji||arch.emoji}</span>
+      <div style="flex:1;overflow:hidden">
+        <b style="color:var(--bordeaux);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.nom||arch.label)}</b>
+        <span style="font-size:.76rem;color:#7a6a60">${esc(arch.label)}${p.age?` · ${esc(p.age)}`:''}</span>
+      </div>
+      <span class="tag" style="font-size:.62rem;background:${estPro?'#5a7a9a':'#AA7C39'};color:#fff">${estPro?'B2B':'B2C'}</span>
+    </div>
+    ${p.sourceClientId?`<div style="font-size:.72rem;color:#2e7d32;margin-top:6px">👥 nourri par un vrai client</div>`:''}
+  </div>`;
+}
+
+// Fiche détaillée d'un persona, avec suggestions de stratégie.
+async function personaDetail(id){
+  const p=await db.personas.get(id); if(!p){ toast('Persona introuvable'); return; }
+  const arch=PERSONA_ARCHETYPES[p.archetype]||PERSONA_ARCHETYPES.autre;
+  const sug=personaSuggest(p);
+  const chips=(arr,col)=>(arr&&arr.length)?arr.map(x=>`<span class="tag" style="background:${col||'#f0e9de'};color:${col?'#fff':'#5a4a42'};font-size:.7rem;margin:2px">${esc(x)}</span>`).join(''):'<span class="note">—</span>';
+  const liste=(arr)=>(arr&&arr.length)?arr.map(x=>`<div style="font-size:.84rem;padding:3px 0 3px 14px;position:relative;color:#5a4a42"><span style="position:absolute;left:0">•</span>${esc(x)}</div>`).join(''):'<span class="note">—</span>';
+  // fusion suggestions + saisies manuelles (manuel prioritaire à l'affichage, suggestions en complément)
+  const canaux = (p.canaux&&p.canaux.length)?p.canaux:sug.canaux;
+  const offres = (p.offres&&p.offres.length)?p.offres:sug.offres;
+  const ton = p.ton||sug.ton;
+  const messages = (p.messages&&p.messages.length)?p.messages:sug.messages;
+  const demarchage = p.demarchage||sug.demarchage;
+  openModal(`<div style="max-height:78vh;overflow:auto;padding-right:2px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <span style="font-size:2rem">${p.emoji||arch.emoji}</span>
+      <div><h3 style="margin:0">${esc(p.nom||arch.label)}</h3><span style="font-size:.78rem;color:#7a6a60">${esc(arch.label)} · ${(p.profil||arch.profil)}</span></div>
+    </div>
+    ${p.sourceClientId?`<p class="note" style="color:#2e7d32">👥 Ce persona a été nourri par les données d'un vrai client.</p>`:''}
+
+    <div class="panel" style="margin:8px 0"><div style="font-weight:700;color:var(--bordeaux);margin-bottom:4px">🧍 Identité</div>
+      <div style="font-size:.84rem;color:#5a4a42">${[p.age?`Âge : ${esc(p.age)}`:'', p.budget?`Budget : ${esc(p.budget)}`:'', p.frequenceType?`Fréquence : ${esc(p.frequenceType)}`:''].filter(Boolean).join(' · ')||'—'}</div>
+      ${(p.occasions&&p.occasions.length)?`<div style="margin-top:6px">${chips(p.occasions)}</div>`:''}
+      ${(p.parfumsAimes&&p.parfumsAimes.length)?`<div style="margin-top:6px"><span style="font-size:.74rem;color:#9a8a82">Parfums aimés : </span>${chips(p.parfumsAimes,'#c9a227')}</div>`:''}
+    </div>
+
+    ${(p.motivations&&p.motivations.length)||(p.freins&&p.freins.length)?`<div class="panel" style="margin:8px 0"><div style="font-weight:700;color:var(--bordeaux);margin-bottom:4px">💭 Motivations & freins</div>
+      ${(p.motivations&&p.motivations.length)?`<div style="font-size:.74rem;color:#2e7d32;font-weight:600;margin-top:4px">Ce qui le motive</div>${liste(p.motivations)}`:''}
+      ${(p.freins&&p.freins.length)?`<div style="font-size:.74rem;color:#b3261e;font-weight:600;margin-top:4px">Ses freins</div>${liste(p.freins)}`:''}
+    </div>`:''}
+
+    <div class="panel" style="margin:8px 0;background:#fffdf8;border:1px solid #e8dcc0"><div style="font-weight:700;color:#AA7C39;margin-bottom:4px">📣 Stratégie de com suggérée</div>
+      <div style="font-size:.74rem;color:#9a8a82;margin-bottom:2px">Où le toucher</div><div style="margin-bottom:6px">${chips(canaux,'#5a7a9a')}</div>
+      <div style="font-size:.74rem;color:#9a8a82;margin-bottom:2px">Le bon ton</div><div style="font-size:.84rem;color:#5a4a42;margin-bottom:6px">${esc(ton)||'—'}</div>
+      <div style="font-size:.74rem;color:#9a8a82;margin-bottom:2px">Messages qui marchent</div>${liste(messages)}
+    </div>
+
+    <div class="panel" style="margin:8px 0"><div style="font-weight:700;color:var(--bordeaux);margin-bottom:4px">🛍️ Offres adaptées</div>${liste(offres)}</div>
+
+    ${demarchage?`<div class="panel" style="margin:8px 0"><div style="font-weight:700;color:var(--bordeaux);margin-bottom:4px">🤝 Angle de démarchage</div><div style="font-size:.84rem;color:#5a4a42">${esc(demarchage)}</div></div>`:''}
+
+    ${p.notes?`<div class="panel" style="margin:8px 0"><div style="font-weight:700;color:var(--bordeaux);margin-bottom:4px">📝 Notes</div><div style="font-size:.84rem;color:#5a4a42;white-space:pre-wrap">${esc(p.notes)}</div></div>`:''}
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" style="color:#b3261e" onclick="personaDelete(${id})">🗑</button>
+      <button class="btn ghost" onclick="personaForm(${id})">✎ Éditer</button>
+      <button class="btn gold" onclick="closeModal()">Fermer</button>
+    </div>`);
+}
+
+// Atelier guidé : formulaire de création / édition d'un persona.
+async function personaForm(id){
+  const p = id>=0 ? await db.personas.get(id) : null;
+  const isNew=!p;
+  const v = p || {nom:'', emoji:'', archetype:'gourmand_quartier', profil:'B2C', age:'', budget:'', budgetNum:'', frequenceType:'', occasions:[], parfumsAimes:[], motivations:[], freins:[], canaux:[], ton:'', messages:[], offres:[], demarchage:'', notes:'', couleur:'#AA7C39'};
+  // parfums dispo pour cocher les préférés
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const archOpts=Object.entries(PERSONA_ARCHETYPES).map(([k,a])=>`<option value="${k}" ${v.archetype===k?'selected':''}>${a.emoji} ${esc(a.label)}</option>`).join('');
+  const occChecks=PERSONA_OCCASIONS.map(o=>`<label style="display:inline-flex;align-items:center;gap:4px;font-size:.8rem;margin:2px 6px 2px 0"><input type="checkbox" class="pe_occ" value="${esc(o)}" ${(v.occasions||[]).includes(o)?'checked':''}> ${esc(o)}</label>`).join('');
+  const canChecks=PERSONA_CANAUX.map(c=>`<label style="display:inline-flex;align-items:center;gap:4px;font-size:.8rem;margin:2px 6px 2px 0"><input type="checkbox" class="pe_can" value="${esc(c)}" ${(v.canaux||[]).includes(c)?'checked':''}> ${esc(c)}</label>`).join('');
+  const parfChecks=recipes.map(r=>`<label style="display:inline-flex;align-items:center;gap:4px;font-size:.8rem;margin:2px 6px 2px 0"><input type="checkbox" class="pe_parf" value="${esc(r.produitNom)}" ${(v.parfumsAimes||[]).includes(r.produitNom)?'checked':''}> ${esc(r.produitNom)}</label>`).join('');
+  openModal(`<div style="max-height:78vh;overflow:auto;padding-right:2px">
+    <h3>${isNew?'➕ Nouveau persona':'✎ '+esc(v.nom||'Persona')}</h3>
+    <p class="note" style="margin-bottom:8px">Remplis ce que tu sais. L'app suggérera automatiquement canaux, ton et offres — tu pourras compléter.</p>
+    <div class="row2">
+      <div class="field"><label>Nom du persona *</label><input id="pe_nom" value="${esc(v.nom)}" placeholder="ex : Sophie, la maman gourmande"></div>
+      <div class="field"><label>Emoji</label><input id="pe_emoji" value="${esc(v.emoji)}" placeholder="🧁" maxlength="4"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Type de client</label><select id="pe_arch" onchange="_personaArchSync()">${archOpts}</select></div>
+      <div class="field"><label>Profil</label><select id="pe_profil">
+        <option value="B2C" ${v.profil==='B2C'?'selected':''}>Particulier (B2C)</option>
+        <option value="B2B" ${v.profil==='B2B'?'selected':''}>Professionnel (B2B)</option>
+      </select></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Tranche d'âge</label><select id="pe_age">
+        ${['','18-30','30-50','50+'].map(a=>`<option value="${a}" ${v.age===a?'selected':''}>${a||'—'}</option>`).join('')}
+      </select></div>
+      <div class="field"><label>Fréquence</label><input id="pe_freq" value="${esc(v.frequenceType)}" placeholder="ex : hebdo, mensuel, ponctuel"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Budget (texte)</label><input id="pe_budget" value="${esc(v.budget)}" placeholder="ex : 15-25 €/achat"></div>
+      <div class="field"><label>Budget moyen (€, pour suggestions)</label><input type="number" id="pe_budgetnum" value="${esc(v.budgetNum||'')}" placeholder="ex : 20"></div>
+    </div>
+    <div class="field"><label>Occasions d'achat</label><div style="display:flex;flex-wrap:wrap">${occChecks}</div></div>
+    ${recipes.length?`<div class="field"><label>Parfums qu'il aime</label><div style="display:flex;flex-wrap:wrap">${parfChecks}</div></div>`:''}
+    <div class="field"><label>Ce qui le motive <span style="color:#9a8a82;font-weight:400">— une idée par ligne</span></label><textarea id="pe_motiv" rows="2" placeholder="le plaisir, l'originalité, le local…">${esc((v.motivations||[]).join('\n'))}</textarea></div>
+    <div class="field"><label>Ses freins <span style="color:#9a8a82;font-weight:400">— une idée par ligne</span></label><textarea id="pe_freins" rows="2" placeholder="le prix, la distance, méconnaissance…">${esc((v.freins||[]).join('\n'))}</textarea></div>
+    <div class="field"><label>Canaux pour le toucher <span style="color:#9a8a82;font-weight:400">— laisse vide pour suggestion auto</span></label><div style="display:flex;flex-wrap:wrap">${canChecks}</div></div>
+    <div class="field"><label>Ton de com <span style="color:#9a8a82;font-weight:400">— vide = suggestion auto</span></label><textarea id="pe_ton" rows="2" placeholder="chaleureux, jeune, pro…">${esc(v.ton)}</textarea></div>
+    <div class="field"><label>Notes libres</label><textarea id="pe_notes" rows="2">${esc(v.notes)}</textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="personaSave(${id})">${isNew?'Créer':'Enregistrer'}</button>
+    </div>`);
+}
+// Quand on change d'archétype, aligne le profil par défaut.
+function _personaArchSync(){
+  const k=document.getElementById('pe_arch').value;
+  const a=PERSONA_ARCHETYPES[k]; if(a){ const sel=document.getElementById('pe_profil'); if(sel) sel.value=a.profil; }
+}
+async function personaSave(id){
+  const nom=(document.getElementById('pe_nom').value||'').trim();
+  if(!nom){ toast('Donne un nom à ton persona'); return; }
+  const lines=el=>{const t=(document.getElementById(el).value||'').trim();return t?t.split('\n').map(x=>x.trim()).filter(Boolean):[];};
+  const checks=cls=>Array.from(document.querySelectorAll('.'+cls+':checked')).map(c=>c.value);
+  const data={
+    nom,
+    emoji:(document.getElementById('pe_emoji').value||'').trim(),
+    archetype:document.getElementById('pe_arch').value,
+    profil:document.getElementById('pe_profil').value,
+    age:document.getElementById('pe_age').value,
+    frequenceType:(document.getElementById('pe_freq').value||'').trim(),
+    budget:(document.getElementById('pe_budget').value||'').trim(),
+    budgetNum:+document.getElementById('pe_budgetnum').value||'',
+    occasions:checks('pe_occ'),
+    parfumsAimes:checks('pe_parf'),
+    motivations:lines('pe_motiv'),
+    freins:lines('pe_freins'),
+    canaux:checks('pe_can'),
+    ton:(document.getElementById('pe_ton').value||'').trim(),
+    notes:(document.getElementById('pe_notes').value||'').trim(),
+    majTs:Date.now()
+  };
+  if(id>=0){ await db.personas.update(id,data); toast('Persona mis à jour ✓'); }
+  else { data.createdTs=Date.now(); data.couleur='#AA7C39'; await db.personas.add(data); toast('Persona créé ✓'); }
+  closeModal();
+  renderPersonas();
+}
+async function personaDelete(id){
+  const p=await db.personas.get(id); if(!p) return;
+  if(!confirm(`Supprimer le persona « ${p.nom}» ?`)) return;
+  await db.personas.delete(id);
+  closeModal(); toast('Persona supprimé'); renderPersonas();
+}
+// Sélecteur : choisir un vrai client pour pré-remplir un persona avec ses données.
+async function personaFromClientPicker(){
+  const clients=await db.clients.toArray().catch(()=>[]);
+  if(!clients.length){ toast('Aucun client enregistré pour l\'instant'); return; }
+  const rows=clients.map(c=>`<div class="sum-box lnk" style="cursor:pointer" onclick="personaFromClient(${c.id})"><span>👤 ${esc(c.nom)}</span><b>›</b></div>`).join('');
+  openModal(`<h3>👥 Créer un persona depuis un client</h3>
+    <p class="note" style="margin-bottom:8px">Choisis un client : l'app pré-remplit le persona avec son panier moyen, son parfum préféré et sa fréquence réelle.</p>
+    <div style="max-height:60vh;overflow:auto">${rows}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button></div>`);
+}
+async function personaFromClient(clientId){
+  let d=null;
+  try{ d=await getClientDashboardData(clientId); }catch(e){ toast('Impossible de lire ce client'); return; }
+  const c=d.client;
+  // Devine l'archétype : pro si type 'pro', sinon gourmand/offreur selon panier
+  const estPro=(c.type==='pro');
+  let archetype = estPro ? 'pro_resto' : (d.panierMoyen>=40 ? 'offreur_cadeau' : 'gourmand_quartier');
+  const data={
+    nom:`${c.nom} (type)`,
+    emoji: estPro?'🍽️':'🧁',
+    archetype, profil: estPro?'B2B':'B2C',
+    age:'', frequenceType: d.frequenceTxt||'',
+    budget: d.panierMoyen?`~${euro(d.panierMoyen)}/commande`:'',
+    budgetNum: d.panierMoyen?Math.round(d.panierMoyen):'',
+    occasions:[], parfumsAimes: d.parfumPrefere?[d.parfumPrefere]:[],
+    motivations:[], freins:[], canaux:[], ton:'', messages:[], offres:[],
+    notes:`Nourri depuis le client « ${c.nom} » : ${d.nbCommandes} commande(s), CA ${euro(d.caTotal)}${d.badge?`, ${d.badge.label}`:''}.`,
+    sourceClientId:clientId, couleur:'#2e7d32', createdTs:Date.now(), majTs:Date.now()
+  };
+  const id=await db.personas.add(data);
+  closeModal();
+  toast('Persona créé depuis le client ✓');
+  personaForm(id);   // ouvre l'édition pour compléter/affiner
+}
+
 async function renderProfit(){
   const [orders, clients, recipes, recipeItems, lots, _mats, _markets, _mm, _prods] = await Promise.all([
     db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(),
@@ -21112,6 +21645,12 @@ const GUIDE_THEMES = [
     { v:'clients', t:'Clients', ico:'♣', resume:"Ton carnet de clients, avec historique et habitudes d'achat.",
       detail:"Chaque fiche client montre son panier moyen, son parfum préféré, sa fréquence de commande, et un badge VIP pour les meilleurs. Pratique pour personnaliser ta relation et repérer tes clients fidèles.",
       steps:["Ouvre un client pour voir sa fiche enrichie","Repère les badges VIP et habitudes","Crée une commande directement depuis sa fiche"] },
+    { v:'prospects', t:'Prospection B2B', ico:'🤝', resume:"Démarcher les pros (restos, hôtels, CE…) et suivre tes relances.",
+      detail:"Un mini-CRM pour transformer les professionnels autour de toi en clients réguliers. Liste tes cibles, suis où tu en es avec chacune (à contacter, contacté, relancé, RDV, signé), note les tarifs pros et surtout les dates de relance. Inclut un pense-bête de démarchage. Un seul client pro régulier pèse plus que des dizaines de ventes au détail.",
+      steps:["Ajoute tes cibles pros (avec « + Nouveau prospect »)","Note chaque action et fixe une date de relance","Fais-les avancer jusqu'à la signature, puis convertis en client"] },
+    { v:'personas', t:'Personas clients', ico:'🎯', resume:"Connaître tes clients-types pour adapter com, offres et démarchage.",
+      detail:"Construis des profils-types de clients (le gourmand du quartier, l'offreur de cadeaux, le restaurateur…), à la main ou à partir de tes vrais clients. Pour chacun, l'app suggère où le toucher, quel ton employer, quelles offres proposer et comment le démarcher. Plus tu connais ton client, plus ta communication fait mouche.",
+      steps:["Crée un persona (vierge ou depuis un vrai client)","Renseigne profil, motivations, occasions","Suis les suggestions de canaux, ton et offres"] },
     { v:'evenements', t:'Événements', ico:'🎪', resume:"Gérer tes prestations événementielles (mariages, fêtes…).",
       detail:"Référence tes événements et prestations spéciales, distincts des commandes classiques de coffrets.",
       steps:["Ajoute un événement avec sa date","Relie-le à une commande si besoin"] },
