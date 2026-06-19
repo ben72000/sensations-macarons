@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v623';
+const APP_VERSION = 'v626';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5932,14 +5932,22 @@ async function prodForm(prefill){  const recipes = await db.recipes.toArray();
        </div>
      </div></div>
    <div class="field" id="f_duoWrap" style="display:none">
-     <div class="banner" style="background:#f4faf5;border-color:#cfe3d4;margin-bottom:10px">🥣 <div><b>Une seule meringue, deux parfums.</b> Choisis tes deux parfums et la quantité de chacun (en macarons). La meringue est calculée pour le total des coques. Le temps « meringue » sera mutualisé dans l'Atelier (50/50).</div></div>
+     <div class="banner" style="background:#f4faf5;border-color:#cfe3d4;margin-bottom:10px">🥣 <div><b>Une seule meringue, deux parfums.</b> Choisis tes deux parfums et la répartition. Tu peux régler le <b>%</b> (le curseur ajuste les quantités) ou taper directement les <b>macarons</b> de chaque parfum. Le total est libre (240 coques = une meringue pleine). Le temps « meringue » sera mutualisé dans l'Atelier.</div></div>
      <div class="row2">
        <div class="field"><label>Parfum 1</label><select id="f_duoRec1" onchange="prodRefreshLot();prodDuoApercu()">${opts}</select></div>
-       <div class="field"><label>Macarons parfum 1</label><input type="number" id="f_duoQte1" value="${recipes[0].rendement}" min="1" oninput="prodDuoApercu()"></div>
+       <div class="field"><label>Parfum 2</label><select id="f_duoRec2" onchange="prodRefreshLot();prodDuoApercu()">${opts}</select></div>
+     </div>
+     <div class="field">
+       <label>Total coques de la meringue <span style="color:#9a8a82;font-weight:400">— 240 = meringue pleine</span></label>
+       <input type="number" id="f_duoTotal" value="240" min="2" step="2" oninput="prodDuoTotalChange()">
+     </div>
+     <div class="field">
+       <label>Répartition <span id="f_duoPctLbl" style="color:#9a8a82;font-weight:400">— 50 % / 50 %</span></label>
+       <input type="range" id="f_duoSlider" min="0" max="100" value="50" step="5" oninput="prodDuoSliderChange()" style="width:100%">
      </div>
      <div class="row2">
-       <div class="field"><label>Parfum 2</label><select id="f_duoRec2" onchange="prodRefreshLot();prodDuoApercu()">${opts}</select></div>
-       <div class="field"><label>Macarons parfum 2</label><input type="number" id="f_duoQte2" value="${recipes[0].rendement}" min="1" oninput="prodDuoApercu()"></div>
+       <div class="field"><label>Macarons parfum 1</label><input type="number" id="f_duoQte1" value="60" min="0" oninput="prodDuoQteChange()"></div>
+       <div class="field"><label>Macarons parfum 2</label><input type="number" id="f_duoQte2" value="60" min="0" oninput="prodDuoQteChange()"></div>
      </div>
      <div id="f_duoApercu" class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px"></div>
    </div>
@@ -5995,20 +6003,147 @@ function prodModeSwitch(mode){
   prodCompSwitch();
 }
 // [DUO] Aperçu du calcul de meringue commune : total coques = (q1+q2) × 2.
-function prodDuoApercu(){
+async function prodDuoApercu(){
   const z=document.getElementById('f_duoApercu'); if(!z) return;
   const q1=Math.max(0, Math.round(+(document.getElementById('f_duoQte1')?.value)||0));
   const q2=Math.max(0, Math.round(+(document.getElementById('f_duoQte2')?.value)||0));
   const sel1=document.getElementById('f_duoRec1'); const sel2=document.getElementById('f_duoRec2');
-  const nom1=sel1?(sel1.options[sel1.selectedIndex]?.text||'Parfum 1'):'Parfum 1';
-  const nom2=sel2?(sel2.options[sel2.selectedIndex]?.text||'Parfum 2'):'Parfum 2';
-  const coq1=q1*COQUES_PAR_MACARON, coq2=q2*COQUES_PAR_MACARON, total=coq1+coq2;
-  const meme = sel1 && sel2 && sel1.value===sel2.value;
-  z.innerHTML =
-    `<div style="display:flex;justify-content:space-between"><span>🥣 Meringue à réaliser</span><b>${qty(total)} coques</b></div>`+
-    `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc((nom1||'').replace(/\s*\(\d+\/batch\)$/,''))}</span><span>${qty(q1)} mac. → ${qty(coq1)} coques</span></div>`+
-    `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc((nom2||'').replace(/\s*\(\d+\/batch\)$/,''))}</span><span>${qty(q2)} mac. → ${qty(coq2)} coques</span></div>`+
-    (meme?`<div style="color:#b3261e;font-size:.8rem;margin-top:2px">⚠ Les deux parfums sont identiques — choisis deux parfums différents.</div>`:'');
+  const rid1=+(sel1&&sel1.value)||0, rid2=+(sel2&&sel2.value)||0;
+  const nom1=sel1?((sel1.options[sel1.selectedIndex]?.text||'Parfum 1').replace(/\s*\(\d+\/batch\)$/,'')):'Parfum 1';
+  const nom2=sel2?((sel2.options[sel2.selectedIndex]?.text||'Parfum 2').replace(/\s*\(\d+\/batch\)$/,'')):'Parfum 2';
+  const coq1=q1*COQUES_PAR_MACARON, coq2=q2*COQUES_PAR_MACARON;
+  const meme = rid1 && rid2 && rid1===rid2;
+  // Proportion en nombre de coques (cas courant : même format).
+  const totCoq=coq1+coq2;
+  const pct1 = totCoq>0 ? Math.round(coq1/totCoq*100) : 50;
+  // En-tête : comptage par parfum (les coques GF et standard ne s'additionnent pas en « nombre »,
+  // on les pose côte à côte ; la capacité réelle est exprimée plus bas en équivalent-coques std).
+  let html =
+    `<div style="display:flex;justify-content:space-between;font-weight:600"><span>⚖️ Répartition</span><b>${pct1} % / ${100-pct1} %</b></div>`+
+    `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc(nom1)}</span><span>${qty(q1)} mac. → ${qty(coq1)} coques</span></div>`+
+    `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc(nom2)}</span><span>${qty(q2)} mac. → ${qty(coq2)} coques</span></div>`;
+  try{
+    const [r1, r2] = await Promise.all([rid1?db.recipes.get(rid1):null, rid2?db.recipes.get(rid2):null]);
+    const gf1=!!(r1&&r1.grandFormat), gf2=!!(r2&&r2.grandFormat);
+    // Capacité meringue en ÉQUIVALENT-COQUES STANDARD (1 coque GF = GF_COQUE_RATIO coques std).
+    const eq1 = coq1 * (gf1?GF_COQUE_RATIO:1);
+    const eq2 = coq2 * (gf2?GF_COQUE_RATIO:1);
+    const eqTotal = round3(eq1+eq2);
+    const capCoques = MACARONS_PAR_MERINGUE * COQUES_PAR_MACARON; // 240 coques std / meringue
+    const nbMeringues = capCoques>0 ? Math.ceil(eqTotal/capCoques) : 1;
+    const pct = capCoques>0 ? Math.round(eqTotal/capCoques*100) : 0;
+    html += `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span>🥣 Meringue à réaliser</span><b>${qty(Math.round(eqTotal))} coques std éq.</b></div>`;
+    html += `<div style="display:flex;justify-content:space-between;font-size:.8rem;color:#7a6a62"><span>Remplissage</span><span>${pct}% d'une meringue (${MACARONS_PAR_MERINGUE} mac. / 240 coques)</span></div>`;
+    if(nbMeringues>1){
+      html += `<div style="color:#d98324;font-size:.8rem;margin-top:2px">⚠ Cela dépasse une meringue : il en faudrait <b>${nbMeringues}</b>. Réduis les quantités pour tenir sur une seule fournée.</div>`;
+    }
+    if((gf1||gf2) && (gf1!==gf2)){
+      html += `<div style="color:#8a6d3b;font-size:.78rem;margin-top:2px">ℹ Tu mélanges un <b>grand format</b> et un <b>standard</b> : c'est la même meringue, pochée en deux tailles. La capacité est comptée en équivalent-coques standard.</div>`;
+    }
+    // FICHE INGRÉDIENTS MERINGUE : somme des ingrédients « partie coque » des 2 recettes,
+    // au prorata des quantités. Les recettes GF portent déjà leurs propres dosages (×3,5 intégré).
+    if(rid1 && rid2 && !meme){
+      const [it1, it2, mats] = await Promise.all([
+        db.recipeItems.where('recipeId').equals(rid1).toArray().catch(()=>[]),
+        db.recipeItems.where('recipeId').equals(rid2).toArray().catch(()=>[]),
+        db.materials.toArray().catch(()=>[])
+      ]);
+      const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'(matière ?)';
+      const dispOf=id=>{ const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
+        return (u==='kg')?{u:'g',f:1000}:{u:m.unite||'',f:1}; };
+      // ingrédients coque uniquement (étiquetés 'coque' ; rétro-compat : si aucune étiquette, on prend tout)
+      const coqueItems = arr => { const tagged=arr.filter(it=>it.partie==='coque'); return tagged.length?tagged:arr.filter(it=>!it.partie); };
+      const facteur = (r,q) => { const rend=+(r&&r.rendement)||1; return rend>0 ? q/rend : 0; };
+      const f1=facteur(r1,q1), f2=facteur(r2,q2);
+      // Deux groupes :
+      //  • aggCommun : ingrédients réellement mutualisés (blancs, sucre semoule…) → CUMULÉS.
+      //  • parBatch  : poudre d'amande & sucre glace (tant pour tant) → affichés PAR PARFUM.
+      const aggCommun={};                  // materialId -> qté cumulée
+      const parBatch={1:{}, 2:{}};         // batch -> materialId -> qté de ce parfum
+      const addItem = (it, f, batchKey)=>{
+        const d=dispOf(it.materialId);
+        const q=(+it.qteParBatch||0)*d.f*f;
+        if(_isTantPourTant(matName(it.materialId))){
+          parBatch[batchKey][it.materialId]=(parBatch[batchKey][it.materialId]||0)+q;
+        } else {
+          aggCommun[it.materialId]=(aggCommun[it.materialId]||0)+q;
+        }
+      };
+      coqueItems(it1).forEach(it=>addItem(it, f1, 1));
+      coqueItems(it2).forEach(it=>addItem(it, f2, 2));
+      const idsCommun=Object.keys(aggCommun);
+      const idsB1=Object.keys(parBatch[1]); const idsB2=Object.keys(parBatch[2]);
+      const aQuelqueChose = idsCommun.length || idsB1.length || idsB2.length;
+      if(aQuelqueChose){
+        const ligne = (id,q)=>{ const d=dispOf(+id); return `<div style="display:flex;justify-content:space-between;font-size:.82rem"><span>${esc(matName(+id))}</span><b>${qty(round3(q))} ${esc(d.u)}</b></div>`; };
+        // Bloc « par parfum » pour la poudre d'amande & le sucre glace (jamais cumulés).
+        let pb='';
+        if(idsB1.length || idsB2.length){
+          pb += `<div style="font-size:.74rem;color:#9a8a82;margin:2px 0 1px"><b>${esc(nom1)}</b></div>`;
+          pb += (idsB1.length ? idsB1.map(id=>ligne(id, parBatch[1][id])).join('') : '<div style="font-size:.8rem;color:#9a8a82">—</div>');
+          pb += `<div style="font-size:.74rem;color:#9a8a82;margin:4px 0 1px"><b>${esc(nom2)}</b></div>`;
+          pb += (idsB2.length ? idsB2.map(id=>ligne(id, parBatch[2][id])).join('') : '<div style="font-size:.8rem;color:#9a8a82">—</div>');
+        }
+        // Bloc cumulé pour le reste (base meringue commune).
+        let cm='';
+        if(idsCommun.length){
+          cm = `<div style="font-size:.74rem;color:#9a8a82;margin:6px 0 1px">Base commune (cumulée)</div>` + idsCommun.map(id=>ligne(id, aggCommun[id])).join('');
+        }
+        html += `<div style="border-top:1px solid #e8dccd;margin-top:6px;padding-top:6px"><div style="font-size:.78rem;color:#7a6a62;font-weight:600;margin-bottom:3px">🧾 Meringue à préparer</div>${pb}${cm}<p class="note" style="margin-top:4px;font-size:.72rem">Poudre d'amande & sucre glace pesées <b>par parfum</b> (coloration / ajouts propres). Le reste est mutualisé.</p></div>`;
+      } else {
+        html += `<div style="font-size:.78rem;color:#8a6d3b;margin-top:6px">Aucun ingrédient « coque » étiqueté dans ces recettes — renseigne la partie coque dans Recettes pour obtenir le rappel de meringue.</div>`;
+      }
+    }
+  }catch(e){ console.error('prodDuoApercu', e); }
+  if(meme){ html += `<div style="color:#b3261e;font-size:.8rem;margin-top:2px">⚠ Les deux parfums sont identiques — choisis deux parfums différents.</div>`; }
+  z.innerHTML = html;
+}
+// [DUO] Synchronisation répartition meringue. Le total est en COQUES ; les quantités par
+// parfum en MACARONS (1 macaron = 2 coques). Trois entrées possibles, toujours cohérentes :
+//   • on tape une quantité      → recalcule total + pourcentage
+//   • on bouge le curseur (%)   → répartit le total courant entre les 2 parfums
+//   • on change le total coques → garde le % et recalcule les 2 quantités
+function _duoEls(){
+  return {
+    t: document.getElementById('f_duoTotal'),
+    sl: document.getElementById('f_duoSlider'),
+    q1: document.getElementById('f_duoQte1'),
+    q2: document.getElementById('f_duoQte2'),
+    lbl: document.getElementById('f_duoPctLbl')
+  };
+}
+function _duoSetLabel(pct1){
+  const e=_duoEls(); if(e.lbl) e.lbl.textContent = `— ${Math.round(pct1)} % / ${Math.round(100-pct1)} %`;
+}
+// L'utilisateur a tapé une quantité de macarons : on en déduit total (coques) et %.
+function prodDuoQteChange(){
+  const e=_duoEls();
+  const q1=Math.max(0, Math.round(+(e.q1&&e.q1.value)||0));
+  const q2=Math.max(0, Math.round(+(e.q2&&e.q2.value)||0));
+  const totMac=q1+q2;
+  const totCoques=totMac*COQUES_PAR_MACARON;
+  if(e.t) e.t.value=totCoques;
+  const pct1 = totMac>0 ? (q1/totMac*100) : 50;
+  if(e.sl) e.sl.value=Math.round(pct1);
+  _duoSetLabel(pct1);
+  prodDuoApercu();
+}
+// L'utilisateur a bougé le curseur : on répartit le total de macarons courant selon le %.
+function prodDuoSliderChange(){
+  const e=_duoEls();
+  const totCoques=Math.max(0, Math.round(+(e.t&&e.t.value)||0));
+  const totMac=Math.round(totCoques/COQUES_PAR_MACARON);
+  const pct1=Math.max(0, Math.min(100, Math.round(+(e.sl&&e.sl.value)||50)));
+  const q1=Math.round(totMac*pct1/100);
+  const q2=totMac-q1;   // garantit q1+q2 = total exact
+  if(e.q1) e.q1.value=q1;
+  if(e.q2) e.q2.value=q2;
+  _duoSetLabel(pct1);
+  prodDuoApercu();
+}
+// L'utilisateur a changé le total de coques : on garde le % du curseur et on recalcule.
+function prodDuoTotalChange(){
+  prodDuoSliderChange();   // même logique : répartit le nouveau total selon le % courant
 }
 // Met à jour la note « coques » (1 macaron = 2 coques) selon le composant choisi.
 function prodCompSwitch(){
@@ -11729,6 +11864,13 @@ function avgMacaronCost(recipes, recipeItems, lots){
 function _isCoqueMaterial(nom){
   const n = aiNormalize(nom);
   return /(poudre.*amande|amande.*poudre|sucre glace|blanc.*oeuf|oeuf.*blanc|colorant|sucre semoule|sucre en poudre|tant pour tant|meringue)/.test(n);
+}
+// Poudre d'amande & sucre glace (le « tant pour tant ») : ces deux ingrédients se pèsent et se
+// préparent PAR PARFUM (coloration / ajouts propres), jamais en commun. Dans la fiche meringue,
+// ils sont donc affichés par batch, pas cumulés. Détection par nom (réutilise la logique coque).
+function _isTantPourTant(nom){
+  const n = aiNormalize(nom);
+  return /(poudre.*amande|amande.*poudre|sucre glace|tant pour tant)/.test(n);
 }
 
 // Coût de revient COMPLET d'une recette/parfum (par batch ET par pièce).
