@@ -1,11 +1,11 @@
-const CACHE = 'sm-iphone-v637';
+const CACHE = 'sm-iphone-v638';
 const ASSETS = [
   './',
   './index.html',
-  './utils.js?v=637',
-  './app.js?v=637',
+  './utils.js?v=638',
+  './app.js?v=638',
   './dexie.min.js',
-  './qr_min.js?v=637',
+  './qr_min.js?v=638',
   './pdf_extract.js',
   './manifest.webmanifest',
   './icon-192.png',
