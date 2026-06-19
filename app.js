@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v632';
+const APP_VERSION = 'v633';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4342,9 +4342,35 @@ async function prodRanger(id){
   renderProductions();
 }
 async function prodDeranger(id){
-  await db.productions.update(id, {rangee:false});
-  toast('Production remise dans la vue');
-  renderProductions();
+  // « Retour en production » : le lot repart à l'état « à ranger ». C'est une correction de saisie
+  // (l'app ne suppose pas que le lot est physiquement rangé/congelé). On ré-affiche le lot dans la
+  // vue Productions, on efface l'attribution de rangement (boîte + répartition) ET on le sort de
+  // son emplacement — sinon un lot « congelé » resterait masqué de la file. Le retrait est historisé.
+  const p = await db.productions.get(id);
+  if(!p){ toast('Lot introuvable'); return; }
+  const patch = {
+    rangee:false, rangeeTs:null,
+    boiteNom:null, niveauNom:null, niveauIndex:null,
+    placements:[]
+  };
+  // Retire l'emplacement (et nettoie le suffixe de lot) si le lot en avait un.
+  if(p.emplacement){
+    const nowIso=new Date().toISOString();
+    patch.emplacement = '';
+    patch.emplacementMaj = nowIso;
+    patch.lotProduction = lotBaseSansSuffixe(p.lotProduction||'');
+    patch.histEmplacement = (p.histEmplacement||[]).concat([{lieu:'', ts:nowIso, motif:'retour production (correction)'}]);
+  }
+  await db.productions.update(id, patch);
+  toast('Lot remis en production (à ranger) ✓');
+  if(typeof renderProductions==='function') renderProductions();
+}
+// Depuis la vue par parfums : remet le lot en production puis rafraîchit le détail du parfum.
+async function prodRetourProduction(id, nom){
+  await prodDeranger(id);
+  closeModal();
+  if(nom && typeof stockParfumDetail==='function'){ stockParfumDetail(nom); }
+  else if(typeof renderStockParfums==='function'){ renderStockParfums(); }
 }
 // Affiche les productions rangées (masquées) dans une modale, avec possibilité de les "déranger".
 // [MERINGUES MUTUALISÉES] Déplie/replie le détail d'une fournée (chevron).
@@ -11716,7 +11742,7 @@ async function stockParfumDetail(nom){
           <span style="font-size:.78rem;color:#9a8a82">${empFin||'emplacement —'}</span><br>
           <span style="font-size:.78rem">${dlcDot}<span style="color:#9a8a82">fab. ${fab?fmtDateTime(fab):fmtDate(p.date)} · DLC ${dlc}</span></span>
           ${nonPlaceHtml}
-          <div style="margin-top:6px"><button class="btn ghost sm" onclick="event.stopPropagation();closeModal();setEmplacement(${p.id})" title="Déplacer ce lot vers un autre emplacement">📍 Déplacer</button></div></div>
+          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" onclick="event.stopPropagation();closeModal();setEmplacement(${p.id})" title="Déplacer ce lot vers un autre emplacement">📍 Déplacer</button>${p.rangee===true?`<button class="btn ghost sm" onclick="event.stopPropagation();prodRetourProduction(${p.id}, ${JSON.stringify(nom).replace(/"/g,'&quot;')})" title="Remettre ce lot dans la file de production, à ranger (annule la boîte et la répartition)">↩ Retour en production</button>`:''}</div></div>
         <span class="tag ${st==='termine'?'ok':'event'}">${st==='termine'?'✓':'▶'}</span>
       </div>
     </div>`;
