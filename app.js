@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v640';
+const APP_VERSION = 'v641';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1260,7 +1260,7 @@ overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(); })
 // --------- Router ---------
 let view='dash';
 const VIEWS = {
-  dash:renderDash, clients:renderClients, commandes:renderCmd, produits:renderProducts, cal:renderCal,
+  dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
   tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
@@ -8499,6 +8499,31 @@ function searchRenderBody(bodyId, countId, emptyId, items, q, rowFn, cols, unitL
   body.innerHTML = capped.map(rowFn).join('') + overflow;
 }
 
+
+// [HUB CLIENTS & PROSPECTS] Un seul point d'entrée à onglets regroupant la gestion clients,
+// la prospection B2B et les personas. Chaque sous-vue garde son rendu d'origine (elle remplit
+// #main) ; on insère ensuite une barre d'onglets en tête pour naviguer entre les trois.
+let _clientsHubTab = 'clients';
+async function renderClientsHub(){
+  const tab = _clientsHubTab||'clients';
+  // Appelle la sous-vue d'origine (remplit #main comme avant).
+  if(tab==='prospects') await renderProspects();
+  else if(tab==='personas') await renderPersonas();
+  else await renderClients();
+  // Insère la barre d'onglets tout en haut de #main.
+  const main=document.getElementById('main'); if(!main) return;
+  const tabBar = document.createElement('div');
+  tabBar.className='atelier-tabs';
+  tabBar.style.marginBottom='10px';
+  const mk=(k,lbl)=>`<button class="at-tab ${tab===k?'active':''}" onclick="clientsHubSwitch('${k}')">${lbl}</button>`;
+  tabBar.innerHTML = mk('clients','♣ Clients') + mk('prospects','🤝 Prospects') + mk('personas','🎯 Personas');
+  main.insertBefore(tabBar, main.firstChild);
+}
+function clientsHubSwitch(tab){
+  _clientsHubTab = tab;
+  renderClientsHub();
+}
+
 async function renderClients(){
   const clients = await db.clients.orderBy('nom').toArray();
   const orders = await db.orders.toArray();
@@ -10884,7 +10909,11 @@ async function cmdLink(orderId){
   const prods = await db.productions.toArray();
   const recipes = await db.recipes.toArray();
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'?';
-  const dispo = prods.filter(p=>+p.qteRestante>0);
+  // Ne proposer QUE des produits finis (macarons entiers) : vendables (complet/assemblé) et
+  // dégustation/dons. On exclut les sous-lots coques, ganache et crémeux, qui ne se livrent pas
+  // en l'état et n'encombrent que le menu déroulant.
+  const estProduitFini = p => { const c=prodComposant(p); return c==='complet' || c==='assemble' || c==='degustation'; };
+  const dispo = prods.filter(p=>+p.qteRestante>0 && estProduitFini(p));
   const existing = await db.orderItems.where('orderId').equals(orderId).toArray();
   // total de macarons de la commande (coffrets + événement + dons ; les grands formats sont à part)
   const ord = await db.orders.get(orderId);
