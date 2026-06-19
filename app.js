@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v629';
+const APP_VERSION = 'v630';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5276,7 +5276,7 @@ async function setEmplacement(id){
         ${actuelLigne}
         <div id="placeResult" class="sum-box" style="background:#faf6ee;flex-direction:column;align-items:flex-start;gap:4px">
           <span><b>${e.icon} ${esc(e.nom)} (${e.lettre})</b> · ${esc(lv.nom||'niveau')} <span style="font-size:.72rem;color:${r.c}">${r.ico} ${r.label}</span> <span style="font-size:.72rem">${a.ico} ${a.label}</span></span>
-          <span style="font-size:.82rem;color:#7a6a60">${_ctx.nb} macaron(s) à ranger</span>
+          <span style="font-size:.82rem;color:#7a6a60">${_ctx.nb} ${uniteLabel(_ctx,_ctx.nb)} à ranger</span>
         </div>
         <div class="field" style="margin-top:8px"><label>Boîte utilisée <span style="color:#9a8a82;font-weight:400">— change si tu prends une autre boîte</span></label>
           <select id="placeBox" onchange="recalcPlacement(${id}, this.value)">
@@ -5379,11 +5379,11 @@ function proposeSplit(id){
     return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #f0e9e2">
       <span style="flex:1">${e.icon} <b>${esc(e.nom)} (${e.lettre})</b> · ${esc(p.niveauNom)}</span>
       <input type="number" min="0" style="width:70px" value="${p.nbMacarons}" onchange="splitAdjust(${i}, this.value)">
-      <span style="font-size:.72rem;color:#9a8a82">mac</span></div>`;
+      <span style="font-size:.72rem;color:#9a8a82">${uniteLabel(cx.ctx,2)}</span></div>`;
   }).join('');
   const totalProp = split.parts.reduce((s,p)=>s+p.nbMacarons,0);
   alertBox.innerHTML=`<div class="sum-box" style="background:#eef5f0;flex-direction:column;align-items:stretch;gap:2px;margin-top:8px">
-    <span style="font-weight:600;margin-bottom:4px">📦 Répartition proposée (${cx.ctx.nb} macaron(s)) — ajustable</span>
+    <span style="font-weight:600;margin-bottom:4px">📦 Répartition proposée (${cx.ctx.nb} ${uniteLabel(cx.ctx,cx.ctx.nb)}) — ajustable</span>
     ${lignes}
     <div id="splitTotal" style="font-size:.76rem;color:#7a6a60;margin-top:4px">Total réparti : ${totalProp} / ${cx.ctx.nb}${split.reste>0?` · ⚠ reste ${split.reste} non placé`:''}</div>
     <button class="btn gold sm" style="margin-top:6px" onclick="applySplit(${id})">✓ Ranger réparti</button>
@@ -5403,18 +5403,33 @@ async function applySplit(id){
   const parts = sp.parts.filter(p=>p.nbMacarons>0);
   if(!parts.length){ toast('Aucune quantité à ranger'); return; }
   const p=await db.productions.get(id); if(!p) return;
+  // [RANGEMENT PARTIEL] On compare la quantité réellement placée au total du lot. Si tout n'est
+  // pas placé, le lot RESTE « à ranger » (rangee:false) : le reste continue d'apparaître dans la
+  // file de rangement. Le champ placements mémorise ce qui est déjà casé.
+  const nouveaux = parts.map(pp=>({equipKey:pp.equipKey, niveauNom:pp.niveauNom, boiteNom:sp.boiteNom, nbMacarons:pp.nbMacarons}));
+  // Cumule avec les placements déjà enregistrés (si on range en plusieurs fois), sauf si le lot
+  // était déjà marqué entièrement rangé (cas d'une re-répartition complète, on repart à neuf).
+  const ancien = (!p.rangee && Array.isArray(p.placements)) ? p.placements : [];
+  const placementsCumul = ancien.concat(nouveaux);
+  const totalPlace = round3(placementsCumul.reduce((s,pp)=>s+(+pp.nbMacarons||0),0));
+  const totalLot = round3(+p.qteRestante||0);
+  const toutRange = totalPlace >= totalLot - 0.001;   // tolérance d'arrondi
+  const reste = round3(Math.max(0, totalLot - totalPlace));
   // placement principal = premier morceau (compat avec tout le code existant)
   const main=parts[0];
   if(p.emplacement!==main.equipKey){ await doMoveEmplacement(id, main.equipKey, {silent:true}); }
-  // champ placements ADDITIF : liste complète ; les champs simples reflètent le principal
+  // champ placements ADDITIF : liste complète cumulée ; les champs simples reflètent le principal
   await db.productions.update(id, {
     niveauIndex:main.nivIndex, niveauNom:main.niveauNom, boiteNom:sp.boiteNom,
-    placements: parts.map(pp=>({equipKey:pp.equipKey, niveauNom:pp.niveauNom, boiteNom:sp.boiteNom, nbMacarons:pp.nbMacarons})),
-    rangee:true, rangeeTs:new Date().toISOString()
+    placements: placementsCumul,
+    rangee: toutRange, rangeeTs: toutRange ? new Date().toISOString() : (p.rangeeTs||null)
   });
   closeModal();
   if(typeof renderProductions==='function') renderProductions();
-  toast(`Réparti sur ${parts.length} emplacement(s)`);
+  const uLbl = (_placeCtx && _placeCtx.ctx) ? uniteLabel(_placeCtx.ctx, reste) : 'pièce(s)';
+  toast(toutRange
+    ? `Réparti sur ${parts.length} emplacement(s) ✓`
+    : `${qty(totalPlace)} rangé(s) sur ${parts.length} emplacement(s) · ${qty(reste)} ${uLbl} encore à ranger`);
 }
 async function setMaturation(id, etat){
   if(!MATURATION_ETATS[etat]) return;
@@ -28168,7 +28183,14 @@ function splitPlacement(specsMap, box, ctx, occMap, demande){
   return {parts, reste, complet: reste<=0};
 }
 function lotPlacementCtx(p, recipe){
-  const nb = round3(+p.qteRestante||0);
+  const totalLot = round3(+p.qteRestante||0);
+  // [RANGEMENT PARTIEL] Si le lot a déjà des pièces placées (placements) mais n'est pas
+  // entièrement rangé, on ne propose au rangement que le RESTE non encore placé.
+  let dejaPlace = 0;
+  if(!p.rangee && Array.isArray(p.placements) && p.placements.length){
+    dejaPlace = round3(p.placements.reduce((s,pl)=>s+(+pl.nbMacarons||0),0));
+  }
+  const nb = round3(Math.max(0, totalLot - dejaPlace));
   const grandFormat = !!(recipe && recipe.grandFormat);
   const congelObligatoire = !!(recipe && recipe.congelObligatoire);
   const aMaturer = prodMaturation(p)==='apres'; // doit passer par F
@@ -28176,7 +28198,18 @@ function lotPlacementCtx(p, recipe){
   let congele = isFreezer(p.emplacement) || (!p.emplacement) || congelObligatoire;
   // une recette à congélateur obligatoire prime : pas de maturation frigo imposée
   const aMaturerEff = congelObligatoire ? false : aMaturer;
-  return {nb, grandFormat, congele: aMaturerEff?false:congele, aMaturer:aMaturerEff, congelObligatoire};
+  // Unité d'affichage selon le composant : un sous-lot coques se compte en COQUES, une
+  // garniture en doses, un produit fini ou complet en macarons. Évite d'écrire « macaron »
+  // là où l'on manipule en réalité des coques.
+  const comp = p.composant||'complet';
+  const unite = comp==='coques' ? 'coque' : ((comp==='ganache'||comp==='cremeux') ? 'dose' : 'macaron');
+  return {nb, grandFormat, congele: aMaturerEff?false:congele, aMaturer:aMaturerEff, congelObligatoire, unite, composant:comp, dejaPlace, totalLot};
+}
+// Libellé d'unité avec accord pluriel, à partir du contexte de placement (coque/dose/macaron).
+function uniteLabel(ctx, n){
+  const u = (ctx && ctx.unite) || 'macaron';
+  const plur = Math.abs(+n||0) >= 2;
+  return u + (plur ? 's' : '');
 }
 
 // ---- CATALOGUE DE COMPOSANTS RÉUTILISABLES ----
