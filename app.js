@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v617';
+const APP_VERSION = 'v619';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6691,15 +6691,16 @@ async function prodEcartQualifySave(prodId, perdu){
     toast('Écart de rendement noté (non compté en perte)');
     return;
   }
-  // CASSE → perte enregistrée dans db.losses, valorisée au COÛT MATIÈRES (pas le coût complet).
+  // CASSE → perte enregistrée dans db.losses, valorisée selon le STADE du lot
+  // (coques seules ≠ macaron complet), via lossUnitCost.
   const p = await db.productions.get(prodId).catch(()=>null);
   const recipe = (p && p.recipeId!=null) ? await db.recipes.get(p.recipeId).catch(()=>null) : null;
   let coutMatUnit = 0;
   if(recipe){
     try{
-      const [recipeItems, lots] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray()]);
+      const [recipeItems, lots, _mats] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray().catch(()=>[])]);
       const cr = coutRevientRecette(recipe, recipeItems, lots);
-      coutMatUnit = +cr.coutMatUnit||0;   // coût matières seul
+      coutMatUnit = lossUnitCost(prodComposant(p), cr, _mats);   // coût ajusté au stade du lot
     }catch(e){ coutMatUnit = 0; }
   }
   const loss = {
@@ -6770,17 +6771,41 @@ function lossCoqDegSwitch(on){
 async function quickLossForm(){
   const [prods, recipes] = await Promise.all([db.productions.toArray(), db.recipes.toArray()]);
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'?';
-  const dispo = prods.filter(p=>round3(+p.qteRestante)>0 && prodVendable(p))
+  // TOUS les lots avec stock, quel que soit le STADE (produit fini, coques, ganache/crémeux,
+  // dégustation) — plus de filtre prodVendable, pour qu'on puisse aussi déclarer une casse
+  // sur des composants en attente d'assemblage.
+  const dispo = prods.filter(p=>round3(+p.qteRestante)>0)
     .sort((a,b)=>(b.prodTimestamp||b.date||'').localeCompare(a.prodTimestamp||a.date||''));
   if(!dispo.length){ toast('Aucun stock disponible à décompter.'); return; }
-  const opts = dispo.map(p=>{
-    const e=empInfo(p.emplacement);
-    return `<option value="${p.id}">${esc(recName(p.recipeId))} — lot ${esc(p.lotProduction||('#'+p.id))} · ${qty(p.qteRestante)} dispo${e.lettre?' · '+e.lettre:''}</option>`;
-  }).join('');
+  // Libellé clair par lot : icône de stade + parfum + n° de lot + quantité (unité adaptée)
+  // + emplacement + DLC. Chaque entrée reflète exactement le lot qui s'y rattache.
+  const _nomLot = p => {
+    const comp = prodComposant(p);
+    const nom = p.libre ? (p.produitLibre||'(sans nom)') : recName(p.recipeId);
+    const e = empInfo(p.emplacement);
+    const unite = comp==='coques' ? 'coques' : (comp==='ganache' ? (garnLabel(p)==='crémeux'?'doses crémeux':'doses') : 'dispo');
+    const dlc = p.dlcProduit ? ` · DLC ${fmtDate(p.dlcProduit)}` : '';
+    const empTxt = e.lettre ? ` · ${e.lettre}` : '';
+    return `${esc(nom)} — lot ${esc(p.lotProduction||('#'+p.id))} · ${qty(p.qteRestante)} ${unite}${empTxt}${dlc}`;
+  };
+  // Groupes par stade, dans un ordre logique. degDeclasse = coques de dégustation (cassées récupérées).
+  const groupes = [
+    {key:'fini',  label:'🧁 Produits finis',        match:p=>{ const c=prodComposant(p); return c==='complet'||c==='assemble'; }},
+    {key:'coq',   label:'🟤 Coques (en attente)',    match:p=> prodComposant(p)==='coques' && !p.degDeclasse },
+    {key:'gan',   label:'🍫 Ganache / crémeux',      match:p=> prodComposant(p)==='ganache' },
+    {key:'deg',   label:'🥄 Dégustation',            match:p=> prodComposant(p)==='degustation' || (prodComposant(p)==='coques' && p.degDeclasse) }
+  ];
+  let optgroups = '';
+  groupes.forEach(g=>{
+    const lots = dispo.filter(g.match);
+    if(!lots.length) return;
+    const opts = lots.map(p=>`<option value="${p.id}">${_nomLot(p)}</option>`).join('');
+    optgroups += `<optgroup label="${g.label}">${opts}</optgroup>`;
+  });
   openModal(`<h3>⚠ Casse / Perte rapide</h3>
-    <p class="note">Retire des pièces du stock (tombées, invendables, DLC dépassée…) sans passer par une commande. Tracé avec son coût pour le suivi des pertes.</p>
+    <p class="note">Retire des pièces du stock (tombées, invendables, DLC dépassée…) sans passer par une commande. Tous les stades sont listés : produits finis, coques, ganache/crémeux, dégustation. Tracé avec son coût (ajusté au stade) pour le suivi des pertes.</p>
     <div class="field"><label>Produit / lot concerné</label>
-      <select id="ql_prod">${opts}</select></div>
+      <select id="ql_prod">${optgroups}</select></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn danger" onclick="quickLossNext()">Suivant</button></div>`);
 }
@@ -6879,11 +6904,15 @@ async function saveLoss(prodId){
     toast(`🥄 ${qty(qteP)} cassé(s) garni(s) basculé(s) en dégustation (non perdu)`);
     return;
   }
-  // CAS perte pure : coût unitaire de revient figé pour ce batch
+  // CAS perte pure : coût unitaire figé pour ce batch, SELON LE STADE du lot perdu.
+  // Un sous-lot 'coques' ne vaut pas un macaron complet (pas de garniture ni de MO d'assemblage).
   const recipe = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
-  const [recipeItems, lots] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray()]);
+  const [recipeItems, lots, _lossMats] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray().catch(()=>[])]);
   let coutUnit = 0;
-  if(recipe){ const cr = coutRevientRecette(recipe, recipeItems, lots); coutUnit = +cr.coutRevientUnit||0; }
+  if(recipe){
+    const cr = coutRevientRecette(recipe, recipeItems, lots);
+    coutUnit = lossUnitCost(prodComposant(p), cr, _lossMats);
+  }
   const loss = {
     productionId: prodId, recipeId: p.recipeId,
     lotProduction: p.lotProduction||'',
@@ -6963,8 +6992,8 @@ async function doDelProd(id, mode){
     }
     if(mode==='pertes' && reste>0 && prod){
       const recipe = await db.recipes.get(prod.recipeId);
-      const [recipeItems, lots] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray()]);
-      let coutUnit=0; if(recipe){ const cr=coutRevientRecette(recipe, recipeItems, lots); coutUnit=+cr.coutRevientUnit||0; }
+      const [recipeItems, lots, _mats] = await Promise.all([db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray().catch(()=>[])]);
+      let coutUnit=0; if(recipe){ const cr=coutRevientRecette(recipe, recipeItems, lots); coutUnit=lossUnitCost(prodComposant(prod), cr, _mats); }
       newLoss = { productionId:id, recipeId:prod.recipeId, lotProduction:prod.lotProduction||'',
         date:today(), motif:'Suppression batch — '+reason, note,
         qte:reste, coutUnit:money2(coutUnit), coutTotal:money2(coutUnit*reste) };
@@ -11696,7 +11725,40 @@ function ventilationCoqueGarniture(coutObj, mats){
   });
   const pu = coutObj.piecesUtiles>0 ? coutObj.piecesUtiles : (coutObj.rendement||1);
   return { coqueUnit: money2(coque/pu), garnitureUnit: money2(garn/pu),
-           coqueBatch: money2(coque), garnitureBatch: money2(garn) };
+           coqueBatch: money2(coque), garnitureBatch: money2(garn),
+           coqueBatchRaw: coque, garnitureBatchRaw: garn };
+}
+
+// Coût unitaire d'une PERTE selon le STADE du lot perdu — ne pas confondre un produit
+// fini (macaron assemblé) avec un composant en cours de production (coques ou ganache seules).
+//   • 'complet' / 'assemble'  → coût de revient COMPLET du macaron (matières + conso + MO).
+//   • 'coques'                → matière COQUE seule + part de conso/MO au prorata du coût
+//                               matière coque, le tout ramené à l'unité COQUE (1 mac = 2 coques).
+//   • 'ganache'/'degustation' → coût garniture seule + part conso/MO complémentaire (par macaron).
+// `coutObj` est le retour de coutRevientRecette ; `mats` la table des matières (pour la ventilation).
+// Renvoie un coût PAR UNITÉ DU LOT (par coque pour un sous-lot coques, par macaron sinon).
+function lossUnitCost(comp, coutObj, mats){
+  // Repli sûr : si pas de détail exploitable, on garde le coût de revient complet (ancien comportement).
+  if(!coutObj || !Array.isArray(coutObj.detail)) return +((coutObj||{}).coutRevientUnit)||0;
+  const complet = +coutObj.coutRevientUnit||0;          // coût macaron entier (par pièce vendable)
+  if(comp!=='coques' && comp!=='ganache' && comp!=='degustation') return complet;
+
+  const vent = ventilationCoqueGarniture(coutObj, mats||[]);
+  const matCoqueUnit = +vent.coqueUnit||0;              // matière coque, PAR MACARON
+  const matGarnUnit  = +vent.garnitureUnit||0;          // matière garniture, PAR MACARON
+  const matTotUnit   = matCoqueUnit + matGarnUnit;
+  // Part de conso + MO à imputer, au prorata du poids matière du composant.
+  const consoMODUnit = (+coutObj.coutConsoUnit||0) + (+coutObj.coutMODUnit||0); // par macaron
+  const partCoque = matTotUnit>0 ? matCoqueUnit/matTotUnit : 1;  // si pas de garniture connue → tout à la coque
+
+  if(comp==='coques'){
+    // Coût d'un MACARON-équivalent de coques (2 coques) = matière coque + part conso/MO coque.
+    const parMacaron = money2(matCoqueUnit + consoMODUnit*partCoque);
+    // Ramené à l'unité COQUE : un sous-lot coques se compte en coques (1 mac = COQUES_PAR_MACARON).
+    return money2(parMacaron / COQUES_PAR_MACARON);
+  }
+  // ganache / dégustation déclassée comptées par MACARON garnissable : garniture + part conso/MO restante.
+  return money2(matGarnUnit + consoMODUnit*(1-partCoque));
 }
 
 // Échelle de rentabilité par TAUX DE MARGE (vert / orange / rouge).
