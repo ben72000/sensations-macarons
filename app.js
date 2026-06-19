@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v630';
+const APP_VERSION = 'v631';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5228,7 +5228,7 @@ async function setEmplacement(id){
   const _smart = suggestLevelSmart(_specsMap, _sugBox, _ctx, _occMap, _demande);
   const _sugLvl = _smart.best;
   // Mémorise tout le contexte pour permettre le recalcul si l'utilisateur change de boîte.
-  _placeCtx = {id, specsMap:_specsMap, boxes:_boxes, ctx:_ctx, occMap:_occMap, demande:_demande, sugBoxNom: _sugBox?_sugBox.nom:null};
+  _placeCtx = {id, specsMap:_specsMap, boxes:_boxes, ctx:_ctx, occMap:_occMap, demande:_demande, sugBoxNom: _sugBox?_sugBox.nom:null, _prod:p};
   const opts = EMPLACEMENTS.map(e=>{
     const estCongelo = e.type==='congelateur';
     const interdit = estCongelo && (decongele || retourBloque); // recongélation interdite OU délai 1h dépassé
@@ -5363,41 +5363,154 @@ function recalcPlacement(id, boiteNom){
   _placementSuggestion = {id, equipKey:best.equipKey, nivIndex:best.nivIndex, niveauNom:lv.nom, boiteNom:box.nom};
 }
 // Propose un scindage du batch courant sur plusieurs niveaux et l'affiche pour ajustement.
+// [FLUX SÉQUENTIEL] Rangement guidé par étapes, derrière le bouton « Répartir » :
+//   1) on choisit la QUANTITÉ exacte à manipuler (le reste du lot reste en attente),
+//   2) on choisit une BOÎTE (seules celles assez grandes pour la quantité sont proposées),
+//   3) on choisit l'EMPLACEMENT (bloqué tant que 1 et 2 ne sont pas validés).
+let _partFlow = null;
 function proposeSplit(id){
   const cx=_placeCtx; if(!cx || cx.id!==id) return;
-  const boiteNom = (document.getElementById('placeBox')||{}).value || cx.sugBoxNom;
-  const box = cx.boxes.find(b=>b.nom===boiteNom); if(!box) return;
-  const split = splitPlacement(cx.specsMap, box, cx.ctx, cx.occMap, cx.demande);
-  const alertBox = document.getElementById('placeAlert'); if(!alertBox) return;
-  if(!split.parts.length){
-    alertBox.innerHTML=`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-top:8px">⚠ <div>Impossible de répartir : aucun niveau ne peut accueillir cette boîte.</div></div>`;
+  const total = round3(cx.ctx.nb);
+  if(total<=0){ toast('Rien à ranger sur ce lot'); return; }
+  const uPlur = uniteLabel(cx.ctx, 2);
+  // État du flux : quantité par défaut = tout ; boîte et emplacement non encore choisis.
+  _partFlow = { id, total, qte: total, boiteNom:null, equipKey:null };
+  openModal(`<h3>📦 Ranger une partie</h3>
+    <p class="note" style="margin-bottom:10px">Choisis la quantité à manipuler maintenant. Le reste du lot <b>restera en attente de rangement</b>.</p>
+    <div class="panel" style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <label style="font-weight:600">1 · Quantité</label>
+        <span style="font-size:.8rem;color:#7a6a60">sur <b>${qty(total)}</b> ${esc(uPlur)} au total</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+        <input type="range" id="pf_range" min="1" max="${total}" value="${total}" step="1" oninput="partFlowQte(this.value)" style="flex:1">
+        <input type="number" id="pf_num" min="1" max="${total}" value="${total}" oninput="partFlowQte(this.value)" style="width:78px">
+        <span style="font-size:.8rem;color:#9a8a82">${esc(uPlur)}</span>
+      </div>
+      <div id="pf_reste" style="font-size:.78rem;color:#7a6a60;margin-top:4px"></div>
+    </div>
+    <div class="panel" id="pf_boxWrap" style="margin-bottom:10px">
+      <label style="font-weight:600">2 · Boîte</label>
+      <div id="pf_boxes" style="margin-top:6px"></div>
+    </div>
+    <div class="panel" id="pf_empWrap" style="margin-bottom:10px;opacity:.45">
+      <label style="font-weight:600">3 · Emplacement</label>
+      <div id="pf_emps" style="margin-top:6px"></div>
+      <div id="pf_empLock" class="note" style="margin-top:4px">🔒 Choisis d'abord une quantité et une boîte.</div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button></div>`);
+  partFlowQte(total);
+}
+// Étape 1 → met à jour quantité + reste, puis recalcule les boîtes éligibles.
+function partFlowQte(val){
+  if(!_partFlow) return;
+  const cx=_placeCtx; if(!cx) return;
+  let q = Math.round(+val||0);
+  q = Math.max(1, Math.min(_partFlow.total, q));
+  _partFlow.qte = q;
+  // resynchronise les deux contrôles
+  const rg=document.getElementById('pf_range'), nu=document.getElementById('pf_num');
+  if(rg) rg.value=q; if(nu) nu.value=q;
+  const uPlur=uniteLabel(cx.ctx,2);
+  const reste=round3(_partFlow.total - q);
+  const rEl=document.getElementById('pf_reste');
+  if(rEl) rEl.innerHTML = reste>0
+    ? `Tu ranges <b>${qty(q)}</b> ${esc(uPlur)} · <b>${qty(reste)}</b> ${esc(uniteLabel(cx.ctx,reste))} resteront en attente.`
+    : `Tu ranges <b>tout</b> le lot (${qty(q)} ${esc(uPlur)}).`;
+  // Choisir une nouvelle quantité invalide la boîte/emplacement choisis (capacité peut changer).
+  _partFlow.boiteNom=null; _partFlow.equipKey=null;
+  partFlowRenderBoxes();
+  partFlowRenderEmps();
+}
+// Étape 2 → liste uniquement les boîtes dont la capacité ≥ quantité choisie.
+function partFlowRenderBoxes(){
+  if(!_partFlow) return;
+  const cx=_placeCtx; const zone=document.getElementById('pf_boxes'); if(!zone||!cx) return;
+  const gf=cx.ctx.grandFormat;
+  const capOf=b=>gf?(+b.capaciteGF||0):(+b.capacite||0);
+  const q=_partFlow.qte;
+  // boîtes assez grandes pour la quantité, triées par capacité croissante (la plus juste d'abord)
+  const elig=(cx.boxes||[]).filter(b=>capOf(b)>=q).sort((a,b)=>capOf(a)-capOf(b));
+  if(!elig.length){
+    const maxCap=Math.max(0,...(cx.boxes||[]).map(capOf));
+    zone.innerHTML=`<div class="note" style="color:#b3261e">Aucune boîte ne contient ${qty(q)} ${esc(uniteLabel(cx.ctx,q))}${maxCap?` (la plus grande fait ${maxCap}).`:'.'} Réduis la quantité.</div>`;
     return;
   }
-  _splitProposal = {id, boiteNom, parts:split.parts.map(p=>({...p}))};
-  const lignes = split.parts.map((p,i)=>{
-    const e=EMP_BY_KEY[p.equipKey];
-    return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #f0e9e2">
-      <span style="flex:1">${e.icon} <b>${esc(e.nom)} (${e.lettre})</b> · ${esc(p.niveauNom)}</span>
-      <input type="number" min="0" style="width:70px" value="${p.nbMacarons}" onchange="splitAdjust(${i}, this.value)">
-      <span style="font-size:.72rem;color:#9a8a82">${uniteLabel(cx.ctx,2)}</span></div>`;
+  zone.innerHTML = elig.map(b=>{
+    const cap=capOf(b);
+    const sel=_partFlow.boiteNom===b.nom;
+    return `<button class="btn ${sel?'gold':'ghost'} sm" style="min-width:46%;margin:3px 4px 3px 0;justify-content:flex-start;display:inline-flex;gap:6px"
+      onclick="partFlowPickBox(${JSON.stringify(b.nom).replace(/"/g,'&quot;')})">
+      📦 ${esc(b.nom)} <span style="font-size:.72rem;color:${sel?'#fff':'#9a8a82'}">${cap} ${gf?'GF':'std'}</span>${sel?' ✓':''}</button>`;
   }).join('');
-  const totalProp = split.parts.reduce((s,p)=>s+p.nbMacarons,0);
-  alertBox.innerHTML=`<div class="sum-box" style="background:#eef5f0;flex-direction:column;align-items:stretch;gap:2px;margin-top:8px">
-    <span style="font-weight:600;margin-bottom:4px">📦 Répartition proposée (${cx.ctx.nb} ${uniteLabel(cx.ctx,cx.ctx.nb)}) — ajustable</span>
-    ${lignes}
-    <div id="splitTotal" style="font-size:.76rem;color:#7a6a60;margin-top:4px">Total réparti : ${totalProp} / ${cx.ctx.nb}${split.reste>0?` · ⚠ reste ${split.reste} non placé`:''}</div>
-    <button class="btn gold sm" style="margin-top:6px" onclick="applySplit(${id})">✓ Ranger réparti</button>
-  </div>`;
 }
+function partFlowPickBox(nom){
+  if(!_partFlow) return;
+  _partFlow.boiteNom=nom; _partFlow.equipKey=null;
+  partFlowRenderBoxes();
+  partFlowRenderEmps();
+}
+// Étape 3 → emplacements, bloqués tant que quantité+boîte non validées.
+function partFlowRenderEmps(){
+  if(!_partFlow) return;
+  const cx=_placeCtx; const wrap=document.getElementById('pf_empWrap');
+  const zone=document.getElementById('pf_emps'); const lock=document.getElementById('pf_empLock');
+  if(!zone||!wrap||!cx) return;
+  const pret = _partFlow.qte>0 && !!_partFlow.boiteNom;
+  wrap.style.opacity = pret?'1':'.45';
+  if(!pret){ zone.innerHTML=''; if(lock) lock.style.display='block'; return; }
+  if(lock) lock.style.display='none';
+  // Restrictions thermiques identiques au reste de l'app (décongelé → recongélation interdite).
+  const p=cx._prod||null;
+  zone.innerHTML = EMPLACEMENTS.map(e=>{
+    const sel=_partFlow.equipKey===e.key;
+    return `<button class="btn ${sel?'gold':'ghost'} sm" style="min-width:46%;margin:3px 4px 3px 0;justify-content:flex-start;display:inline-flex;gap:6px"
+      onclick="partFlowPickEmp('${e.key}')">
+      <b style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
+      <span>${e.icon} ${esc(e.nom)}</span>${sel?' ✓':''}</button>`;
+  }).join('') + `<div style="margin-top:8px"><button class="btn gold" style="width:100%" onclick="partFlowApply()">✓ Ranger ${qty(_partFlow.qte)} ${esc(uniteLabel(cx.ctx,_partFlow.qte))} ici</button></div>`;
+}
+function partFlowPickEmp(key){
+  if(!_partFlow) return;
+  _partFlow.equipKey=key;
+  partFlowRenderEmps();
+}
+// Application : range la quantité choisie dans la boîte+emplacement, laisse le reste en attente.
+async function partFlowApply(){
+  if(!_partFlow) return;
+  const cx=_placeCtx; if(!cx) return;
+  if(_partFlow.qte<=0){ toast('Choisis une quantité'); return; }
+  if(!_partFlow.boiteNom){ toast('Choisis une boîte'); return; }
+  if(!_partFlow.equipKey){ toast('Choisis un emplacement'); return; }
+  const id=_partFlow.id;
+  const p=await db.productions.get(id); if(!p){ toast('Lot introuvable'); return; }
+  const box=(cx.boxes||[]).find(b=>b.nom===_partFlow.boiteNom);
+  // Cumule avec les placements déjà enregistrés (rangement en plusieurs fois).
+  const ancien=(!p.rangee && Array.isArray(p.placements))?p.placements:[];
+  const nouveau={equipKey:_partFlow.equipKey, niveauNom:null, boiteNom:_partFlow.boiteNom, nbMacarons:_partFlow.qte};
+  const placementsCumul=ancien.concat([nouveau]);
+  const totalPlace=round3(placementsCumul.reduce((s,pl)=>s+(+pl.nbMacarons||0),0));
+  const totalLot=round3(+p.qteRestante||0);
+  const toutRange = totalPlace >= totalLot - 0.001;
+  const reste=round3(Math.max(0,totalLot-totalPlace));
+  // Déplace physiquement le lot vers l'emplacement choisi (silencieux).
+  if(p.emplacement!==_partFlow.equipKey){ await doMoveEmplacement(id, _partFlow.equipKey, {silent:true}); }
+  await db.productions.update(id, {
+    boiteNom:_partFlow.boiteNom,
+    placements: placementsCumul,
+    rangee: toutRange, rangeeTs: toutRange ? new Date().toISOString() : (p.rangeeTs||null)
+  });
+  const uLbl=uniteLabel(cx.ctx, reste);
+  closeModal();
+  if(typeof renderProductions==='function') renderProductions();
+  toast(toutRange
+    ? `Lot rangé ✓ (${qty(totalPlace)} ${esc(uniteLabel(cx.ctx,totalPlace))})`
+    : `${qty(_partFlow.qte)} rangé(s) · ${qty(reste)} ${esc(uLbl)} encore en attente`);
+  _partFlow=null;
+}
+// Conservé pour compatibilité (plus appelé : le rangement partiel passe par le flux séquentiel
+// partFlow*). _splitProposal reste déclaré pour éviter toute référence à une variable absente.
 let _splitProposal=null;
-function splitAdjust(i, val){
-  if(!_splitProposal || !_splitProposal.parts[i]) return;
-  _splitProposal.parts[i].nbMacarons = Math.max(0, +val||0);
-  const tot=_splitProposal.parts.reduce((s,p)=>s+p.nbMacarons,0);
-  const cx=_placeCtx;
-  const el=document.getElementById('splitTotal');
-  if(el && cx){ const reste=cx.ctx.nb-tot; el.innerHTML=`Total réparti : ${tot} / ${cx.ctx.nb}${reste>0?` · ⚠ reste ${reste} non placé`:reste<0?` · ⚠ dépasse de ${-reste}`:' ✓'}`; }
-}
 async function applySplit(id){
   const sp=_splitProposal; if(!sp || sp.id!==id) return;
   const parts = sp.parts.filter(p=>p.nbMacarons>0);
