@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v628';
+const APP_VERSION = 'v629';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6409,6 +6409,12 @@ async function saveProd(){
     renderProductions();
     const totalCoques = (q1+q2)*COQUES_PAR_MACARON;
     toast(`🥣 Meringue commune lancée ✓ — ${qty(totalCoques)} coques (${esc(recs[0].produitNom)} + ${esc(recs[1].produitNom)})`);
+    // Fiche de production (pesées) affichée APRÈS le lancement, comme pour une production normale,
+    // pour que le détail des recettes ne soit consulté qu'une fois le temps de production lancé.
+    await ficheMeringueProduction([
+      { rid:rid1, q:q1, lot:lots[0].lot, rec:recs[0] },
+      { rid:rid2, q:q2, lot:lots[1].lot, rec:recs[1] }
+    ], meringueBatchId);
     return;
   }
   const recipeId=+val('f_rec');
@@ -6506,6 +6512,64 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
     <p class="note" style="margin-bottom:12px">Quantités calculées pour <b>${qty(nbMacarons)} macaron(s)</b> (recette de base : ${rendement}/batch). Suis ces grammages pour produire.</p>
     <div class="table-wrap"><table><thead><tr><th>Ingrédient</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}${totals?`<tr><td colspan="2" style="padding:2px"></td></tr>${totals}`:''}</tbody></table></div>
     <p class="note" style="margin-top:10px">La production est <b>démarrée</b>. Tu choisiras l'emplacement de rangement à la fin (✓ Terminer dans la liste).</p>
+    <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
+}
+// [DUO] Fiche de production d'une MERINGUE COMMUNE (2 parfums), affichée après le lancement.
+// Présentation alignée sur ficheRecetteProduction. La poudre d'amande et le sucre glace (tant
+// pour tant) sont listés PAR PARFUM ; la base meringue (blancs, sucre semoule…) est cumulée.
+async function ficheMeringueProduction(parts, meringueBatchId){
+  parts = (parts||[]).filter(x=>x && x.rid && x.q>0);
+  if(parts.length<2){ return; }
+  const mats = await db.materials.toArray().catch(()=>[]);
+  const matName = id => (mats.find(m=>m.id===id)||{}).nom || '(matière ?)';
+  const dispOf = id => { const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
+    return (u==='kg') ? {u:'g', f:1000} : {u:m.unite||'', f:1}; };
+  // Ingrédients coque de chaque parfum, au prorata de sa quantité.
+  const coqueItems = arr => { const tagged=arr.filter(it=>it.partie==='coque'); return tagged.length?tagged:arr.filter(it=>!it.partie); };
+  const aggCommun={};                       // matière mutualisée -> qté cumulée
+  const parParfum=[];                        // [{nom, lot, lignes:[{id,q,u}]}]
+  let totalCoques=0;
+  for(const part of parts){
+    const rec = await db.recipes.get(part.rid).catch(()=>null);
+    const its = await db.recipeItems.where('recipeId').equals(part.rid).toArray().catch(()=>[]);
+    const rend = +(rec&&rec.rendement)||1;
+    const f = rend>0 ? part.q/rend : 0;
+    totalCoques += part.q*COQUES_PAR_MACARON;
+    const lignesParfum=[];
+    coqueItems(its).forEach(it=>{
+      const d=dispOf(it.materialId);
+      const q=round3((+it.qteParBatch||0)*d.f*f);
+      if(_isTantPourTant(matName(it.materialId))){
+        lignesParfum.push({id:it.materialId, q, u:d.u});
+      } else {
+        aggCommun[it.materialId]=round3((aggCommun[it.materialId]||0)+q);
+      }
+    });
+    parParfum.push({ nom:(rec&&rec.produitNom)||'Parfum', lot:part.lot, q:part.q, lignes:lignesParfum });
+  }
+  // Tableau « par parfum » (tant pour tant).
+  const blocsParfum = parParfum.map(pf=>{
+    const rows = pf.lignes.length
+      ? pf.lignes.map(l=>`<tr><td>${esc(matName(+l.id))}</td><td style="text-align:right"><b>${qty(l.q)}</b> ${esc(l.u)}</td></tr>`).join('')
+      : '<tr><td colspan="2" class="note">Pas de tant pour tant étiqueté pour ce parfum.</td></tr>';
+    return `<p style="margin:10px 0 4px"><b>${esc(pf.nom)}</b> · ${qty(pf.q)} macaron(s) · lot <b>${esc(pf.lot||'—')}</b></p>
+      <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>`;
+  }).join('');
+  // Tableau cumulé (base commune).
+  const idsCommun=Object.keys(aggCommun);
+  const rowsCommun = idsCommun.length
+    ? idsCommun.map(id=>{ const d=dispOf(+id); return `<tr><td>${esc(matName(+id))}</td><td style="text-align:right"><b>${qty(aggCommun[id])}</b> ${esc(d.u)}</td></tr>`; }).join('')
+    : '<tr><td colspan="2" class="note">Aucune base commune étiquetée.</td></tr>';
+  openModal(`<h3>📋 Fiche de production — meringue commune</h3>
+    <p style="margin-bottom:4px"><b>${esc(parParfum.map(p=>p.nom).join(' + '))}</b> · 🥣 ${qty(totalCoques)} coques</p>
+    <p class="note" style="margin-bottom:10px">Une seule meringue, deux parfums. Pèse d'abord la <b>base meringue commune</b>, puis le <b>tant pour tant de chaque parfum</b> séparément (coloration / ajouts propres).</p>
+    <div class="panel" style="background:#f4faf5;border:1px solid #cfe3d4;margin-bottom:10px">
+      <div style="font-weight:700;color:#2e6b3f;margin-bottom:4px">🥣 Base meringue (commune, cumulée)</div>
+      <div class="table-wrap"><table><tbody>${rowsCommun}</tbody></table></div>
+    </div>
+    <div style="font-weight:700;color:#8a6d3b;margin-bottom:2px">🎨 Tant pour tant — par parfum</div>
+    ${blocsParfum}
+    <p class="note" style="margin-top:10px">La production est <b>démarrée</b> (2 sous-lots de coques reliés). Tu choisiras l'emplacement à la fin (✓ Terminer).</p>
     <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
 }
 // [POINT F] Fiche de production pour un COMPOSANT catalogue (chantache…), même présentation
