@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v641';
+const APP_VERSION = 'v642';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1117,22 +1117,46 @@ function lineChart(series, opt){
   const step = Math.ceil(xs.length/6);
   let xlab='';
   xs.forEach((x,i)=>{ if(i%step===0||i===xs.length-1) xlab+=`<text x="${xPos(i)}" y="${H-pad.b+16}" text-anchor="middle" font-size="10" fill="#9a8a82">${esc(opt.xlabel?opt.xlabel(x):x)}</text>`; });
-  // courbes
+  // courbes — chaque série porte un data-serie pour l'interactivité de légende
+  const chartId = 'lc'+Math.random().toString(36).slice(2,8);
   let paths='';
-  series.forEach(s=>{
+  series.forEach((s,si)=>{
     const col = s.color||'#AA7C39';
     const pts = s.points.slice().sort((a,b)=>String(a.x).localeCompare(String(b.x)));
     if(!pts.length) return;
     const d = pts.map((p,i)=>`${i?'L':'M'}${xPos(xIdx[p.x]).toFixed(1)},${yPos(p.y).toFixed(1)}`).join(' ');
-    paths+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round"/>`;
-    pts.forEach(p=>{ paths+=`<circle cx="${xPos(xIdx[p.x]).toFixed(1)}" cy="${yPos(p.y).toFixed(1)}" r="3.2" fill="${col}"/>`; });
+    paths+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round" data-serie="${si}" class="lc-line"/>`;
+    pts.forEach(p=>{ paths+=`<circle cx="${xPos(xIdx[p.x]).toFixed(1)}" cy="${yPos(p.y).toFixed(1)}" r="3.2" fill="${col}" data-serie="${si}" class="lc-dot"/>`; });
   });
-  // légende
+  // légende — cliquable pour isoler une courbe (clic = met en avant, reclic = tout réafficher)
   let leg='';
   if(series.length>1 || (series[0]&&series[0].label)){
-    leg='<div class="flex" style="gap:16px;margin-top:8px;font-size:.78rem">'+series.map(s=>`<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:3px;background:${s.color||'#AA7C39'};display:inline-block;border-radius:2px"></span>${esc(s.label||'')}</span>`).join('')+'</div>';
+    leg='<div class="flex" id="'+chartId+'_leg" style="gap:12px;margin-top:8px;font-size:.78rem;flex-wrap:wrap">'+series.map((s,si)=>`<span class="lc-legitem" data-serie="${si}" onclick="chartLegendToggle('${chartId}',${si})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:2px 4px;border-radius:6px"><span style="width:14px;height:3px;background:${s.color||'#AA7C39'};display:inline-block;border-radius:2px"></span>${esc(s.label||'')}</span>`).join('')+'</div>';
   }
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${grid}${xlab}${paths}</svg>${leg}`;
+  return `<svg id="${chartId}_svg" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${grid}${xlab}${paths}</svg>${leg}`;
+}
+// Isole une courbe au clic sur sa légende. Reclic sur la même = réaffiche tout.
+// État mémorisé par graphique (data-attribut sur le SVG).
+function chartLegendToggle(chartId, si){
+  const svg=document.getElementById(chartId+'_svg');
+  const leg=document.getElementById(chartId+'_leg');
+  if(!svg) return;
+  const cur = svg.getAttribute('data-focus');
+  const next = (cur!==null && +cur===si) ? null : si;   // reclic → désélection
+  svg.setAttribute('data-focus', next===null?'':String(next));
+  // courbes + points : la série focalisée bien visible, les autres estompées
+  svg.querySelectorAll('.lc-line, .lc-dot').forEach(el=>{
+    const s=+el.getAttribute('data-serie');
+    if(next===null){ el.style.opacity='1'; el.style.strokeWidth=''; }
+    else if(s===next){ el.style.opacity='1'; if(el.classList.contains('lc-line')) el.setAttribute('stroke-width','3.5'); }
+    else { el.style.opacity='0.12'; if(el.classList.contains('lc-line')) el.setAttribute('stroke-width','2'); }
+  });
+  // légende : surligne l'entrée active
+  if(leg){ leg.querySelectorAll('.lc-legitem').forEach(it=>{
+    const s=+it.getAttribute('data-serie');
+    it.style.background = (next!==null && s===next) ? '#f3ece0' : '';
+    it.style.opacity = (next===null || s===next) ? '1' : '0.45';
+  }); }
 }
 const ymKey = d => (d||'').slice(0,7);
 // CA COMPTABLE par mois d'ENCAISSEMENT : on ventile chaque paiement réel sur le mois de sa date.
