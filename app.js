@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v615';
+const APP_VERSION = 'v616';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8868,6 +8868,10 @@ async function cmdView(id){
     _livBlock = `<h3 style="font-size:1rem;margin:16px 0 8px">🚚 Livraison & rentabilité</h3>`+
       `<div class="sum-box"><span>Coût livraison (A/R ${_liv.distAR} km${_liv.minutes?` · ${_liv.minutes} min`:''})</span><b>${euro(_liv.total)}</b></div>`+
       `<div class="sum-box" style="font-size:.82rem;color:#8a7a72"><span>dont carburant / temps</span><span>${euro(_liv.coutCarburant)} · ${euro(_liv.coutTemps)}</span></div>`+
+      ((+_m.fraisLivFactures>0)?(
+        `<div class="sum-box"><span>Facturé au client</span><b>${euro(_m.fraisLivFactures)}</b></div>`+
+        `<div class="sum-box"><span>Bénéfice net livraison</span><b style="color:${_m.livBenefice<0?'#b3261e':'#2e7d32'}">${_m.livBenefice>=0?'+':''}${euro(_m.livBenefice)}</b></div>`
+      ):'')+
       `<div class="sum-box"><span>Marge nette sans livraison</span><b>${euro(_m.margeNette)} (${_m.tauxNet}%)</b></div>`+
       `<div class="sum-box"><span>Marge nette après livraison</span><b style="color:${_m.margeNetteApresLiv<0?'#b3261e':(_baisse>0?'#d98324':'#2e7d32')}">${euro(_m.margeNetteApresLiv)} (${_m.tauxNetApresLiv}%)</b></div>`+
       (_baisse>0?`<div class="sum-box" style="font-size:.82rem;color:#b3261e"><span>Impact sur le taux de marge</span><b>−${_baisse.toFixed(1)} pt</b></div>`:'')+
@@ -10825,12 +10829,38 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
     coutEmb = money2(coutEmb + coutSac);
   }
 
-  const ca = money2(caGoods+caService);           // = montant commande (hors remise globale éventuelle)
+  const ca = money2(caGoods+caService);           // = montant reconstruit depuis les lignes
   // remise globale éventuelle appliquée au prorata
   const totalLignes = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
   const gpct = Math.max(0,Math.min(100,+o.remiseGlobale||0));
   const factor = gpct>0 ? (1-gpct/100) : 1;
-  const caNet = money2(ca*factor), caGoodsN=money2(caGoods*factor), caServiceN=money2(caService*factor);
+  let caGoodsN=money2(caGoods*factor), caServiceN=money2(caService*factor);
+  let caNet = money2(ca*factor);
+
+  // === Réconciliation CA réel vs lignes reconstruites =========================
+  // Le CA de référence est le MONTANT RÉELLEMENT ASSUMÉ/ENCAISSÉ (o.montant), pas la
+  // somme théorique des lignes. Tout écart (prix ajusté à la main, p.ex. vrac pro
+  // réétiqueté au tarif particulier) doit entrer dans le CA, sinon la marge est
+  // sous-estimée. On isole d'abord les frais de livraison FACTURÉS au client
+  // (o.fraisLivraison) — ils servent à juger la rentabilité de la tournée — puis on
+  // ventile le reste du delta en MARCHANDISE (régime social goods), conformément à
+  // la séparation URSSAF marchandise / prestation.
+  const fraisLivFactures = Math.max(0, +o.fraisLivraison||0);
+  let deltaAjustGoods = 0;                       // part du delta réaffectée en marchandise
+  const montantReel = +o.montant;
+  // Garde-fou : on ne réconcilie que si o.montant est un nombre exploitable et
+  // cohérent (> 0). Sinon repli intégral sur la reconstruction par lignes (zéro régression).
+  if(montantReel!=null && isFinite(montantReel) && montantReel>0){
+    // delta = total assumé − (lignes nettes de remise) − frais de livraison facturés
+    const delta = money2(montantReel - caNet - fraisLivFactures);
+    // frais de livraison facturés : toujours intégrés au CA marchandise
+    if(fraisLivFactures>0){ caGoodsN = money2(caGoodsN + fraisLivFactures); }
+    // reste du delta (ajustement prix assumé) : marchandise également
+    if(Math.abs(delta) > 0.005){ caGoodsN = money2(caGoodsN + delta); deltaAjustGoods = delta; }
+    // CA net de référence = montant réel assumé
+    caNet = money2(caGoodsN + caServiceN);
+  }
+  // ===========================================================================
 
   const margeBrute = money2(caNet - coutMat - coutEmb);
   const tauxBrut = caNet>0 ? Math.round(margeBrute/caNet*1000)/10 : 0;
@@ -10864,10 +10894,17 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
     if(suggLivraison < liv.total) suggLivraison = liv.total; // jamais en dessous du coût réel
   }
 
+  // Bénéfice NET de la livraison sur cette commande : ce que le client a payé pour
+  // la livraison (o.fraisLivraison) moins le coût réel de la tournée. Positif = la
+  // livraison rapporte ; négatif = elle ronge la marge. Sert au bloc « Livraison & rentabilité ».
+  const livFactures = Math.max(0, +o.fraisLivraison||0);
+  const livBenefice = money2(livFactures - liv.total);
+
   return {ca:caNet, caGoods:caGoodsN, caService:caServiceN,
     coutMat, coutEmb, coutEmbEstime, coutSac, margeBrute, tauxBrut,
     chargesSociales, margeNette, tauxNet,
-    livraison: liv, margeNetteApresLiv, tauxNetApresLiv, suggLivraison};
+    livraison: liv, margeNetteApresLiv, tauxNetApresLiv, suggLivraison,
+    fraisLivFactures: livFactures, livBenefice, deltaAjustGoods};
 }
 // Échelle de rentabilité d'après le taux de marge nette.
 function profitScale(tauxNet){
