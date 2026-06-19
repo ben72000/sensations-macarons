@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v639';
+const APP_VERSION = 'v640';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -14855,8 +14855,8 @@ async function renderProspects(){
   const total = list.length;
   const clients = parStatut.client||0;
   // Relances dues (prochaineSuite <= aujourd'hui, statut non terminal)
-  const today = today();
-  const relancesDues = list.filter(p=>p.prochaineSuite && p.prochaineSuite<=today && !['client','abandonne'].includes(p.statut));
+  const todayStr = today();
+  const relancesDues = list.filter(p=>p.prochaineSuite && p.prochaineSuite<=todayStr && !['client','abandonne'].includes(p.statut));
 
   // Filtres par statut
   const filtChips = ['tous', ...Object.keys(PROSPECT_STATUTS)].map(k=>{
@@ -14868,8 +14868,8 @@ async function renderProspects(){
   const visibles = _prospectFilter==='tous' ? list : list.filter(p=>p.statut===_prospectFilter);
   // Tri : relance due d'abord, puis par statut, puis récent
   visibles.sort((a,b)=>{
-    const ra = (a.prochaineSuite && a.prochaineSuite<=today && !['client','abandonne'].includes(a.statut))?0:1;
-    const rb = (b.prochaineSuite && b.prochaineSuite<=today && !['client','abandonne'].includes(b.statut))?0:1;
+    const ra = (a.prochaineSuite && a.prochaineSuite<=todayStr && !['client','abandonne'].includes(a.statut))?0:1;
+    const rb = (b.prochaineSuite && b.prochaineSuite<=todayStr && !['client','abandonne'].includes(b.statut))?0:1;
     if(ra!==rb) return ra-rb;
     return (PROSPECT_STATUTS[a.statut]?.ordre||0)-(PROSPECT_STATUTS[b.statut]?.ordre||0);
   });
@@ -14891,8 +14891,8 @@ async function renderProspects(){
 function _prospectCard(p){
   const cat = PROSPECT_CATS[p.categorie]||PROSPECT_CATS.autre;
   const st = PROSPECT_STATUTS[p.statut]||PROSPECT_STATUTS.a_contacter;
-  const today = today();
-  const relanceDue = p.prochaineSuite && p.prochaineSuite<=today && !['client','abandonne'].includes(p.statut);
+  const todayStr = today();
+  const relanceDue = p.prochaineSuite && p.prochaineSuite<=todayStr && !['client','abandonne'].includes(p.statut);
   const pot = (+p.potentiel||0);
   const potStr = pot>0 ? '⭐'.repeat(pot) : '';
   return `<div style="background:#fff;border:1px solid var(--hair);border-left:4px solid ${st.col};border-radius:14px;padding:13px 15px;box-shadow:var(--sh-1)">
