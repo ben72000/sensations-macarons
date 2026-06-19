@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v622';
+const APP_VERSION = 'v623';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4412,6 +4412,8 @@ function _prodbatRowInner(row){
   const compPill = `<span class="comp-pill ${compMeta.cls}">${compMeta.mot}</span>`;
   const rowCls = `prow prow-${comp||'complet'}`;
   const partTag = p.parentProdId ? ` <span class="tag" style="background:#ece2d4;color:#6b5a52;font-size:.66rem">partie</span>` : '';
+  // [DUO] Marqueur de fournée de meringue partagée entre 2 parfums (coques mutualisées).
+  const meringueTag = p.meringueBatchId ? ` <span class="tag" style="background:#cfe3d4;color:#2e6b3f;font-size:.66rem" title="Coques issues d'une meringue commune à 2 parfums (fournée ${esc(p.meringueBatchId)})">🥣 meringue commune</span>` : '';
   // Bouton Assembler : proposé sur un sous-lot coques OU ganache encore disponible.
   const assembleBtn = (comp==='coques'||comp==='ganache') && round3(+p.qteRestante)>0 && (p.prodStatut||'termine')==='termine'
     ? `<button class="qa edit" onclick="prodAssembleForm(${p.id})" title="Assembler coques + garniture de ce lot">🔗 Assembler</button>` : '';
@@ -4447,7 +4449,7 @@ function _prodbatRowInner(row){
      <div class="prod-card-body">
      ${_parfumLabel}
      <div class="prod-card-top">
-       <div>${compPill}${partTag}</div>
+       <div>${compPill}${partTag}${meringueTag}</div>
        <div class="prod-lot">${_famDot}<b>${esc(p.lotProduction||'—')}</b>${p.lotBase?`<br><span class="prod-base">base ${esc(p.lotBase)}</span>`:''}</div>
      </div>
      <div class="prod-card-meta">
@@ -5910,6 +5912,7 @@ async function prodForm(prefill){  const recipes = await db.recipes.toArray();
      <select id="f_mode" onchange="prodModeSwitch(this.value)">
        <option value="complet">Batch complet (coques + ganache assemblés)</option>
        <option value="composant">Par composants (coques / ganache séparés)</option>
+       <option value="duo">Coques — 2 parfums (meringue commune)</option>
        ${_composantsCat.length?`<option value="garniture">Garniture séparée (chantilly, insert…)</option>`:''}
      </select></div>
    <div class="field" id="f_garnitureWrap" style="display:none"><label>Garniture à produire <span style="color:#9a8a82;font-weight:400">— depuis le catalogue de composants</span></label>
@@ -5928,7 +5931,19 @@ async function prodForm(prefill){  const recipes = await db.recipes.toArray();
          <label class="opt-row"><input type="radio" name="f_garnType" value="cremeux" onchange="prodCompSwitch()"> <span class="opt-ico">🟠</span> <span class="opt-main"><b>Crémeux</b><br><span class="opt-sub">sous-lot <b>-CR</b></span></span></label>
        </div>
      </div></div>
-   <div class="row2">
+   <div class="field" id="f_duoWrap" style="display:none">
+     <div class="banner" style="background:#f4faf5;border-color:#cfe3d4;margin-bottom:10px">🥣 <div><b>Une seule meringue, deux parfums.</b> Choisis tes deux parfums et la quantité de chacun (en macarons). La meringue est calculée pour le total des coques. Le temps « meringue » sera mutualisé dans l'Atelier (50/50).</div></div>
+     <div class="row2">
+       <div class="field"><label>Parfum 1</label><select id="f_duoRec1" onchange="prodRefreshLot();prodDuoApercu()">${opts}</select></div>
+       <div class="field"><label>Macarons parfum 1</label><input type="number" id="f_duoQte1" value="${recipes[0].rendement}" min="1" oninput="prodDuoApercu()"></div>
+     </div>
+     <div class="row2">
+       <div class="field"><label>Parfum 2</label><select id="f_duoRec2" onchange="prodRefreshLot();prodDuoApercu()">${opts}</select></div>
+       <div class="field"><label>Macarons parfum 2</label><input type="number" id="f_duoQte2" value="${recipes[0].rendement}" min="1" oninput="prodDuoApercu()"></div>
+     </div>
+     <div id="f_duoApercu" class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px"></div>
+   </div>
+   <div class="row2" id="f_qteRow">
      <div class="field"><label>Quantité théorique <span style="color:#9a8a82;font-weight:400" id="qteUnit">— en macarons (base matières)</span></label>
        <input type="number" id="f_qte" value="${recipes[0].rendement}" min="1" oninput="prodSyncReelDefault();prodApercuGarniture()"></div>
      <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}" onchange="prodRefreshLot()"></div>
@@ -5966,12 +5981,34 @@ function prodModeSwitch(mode){
   const w=document.getElementById('f_compWrap'); if(w) w.style.display = mode==='composant'?'block':'none';
   // [ÉTAPE 2a] Mode « garniture séparée » : on montre le menu des composants et on masque celui des recettes.
   const g=document.getElementById('f_garnitureWrap'); if(g) g.style.display = mode==='garniture'?'block':'none';
+  // [DUO] Mode « 2 parfums, meringue commune » : double sélecteur + quantités par parfum.
+  const duo=document.getElementById('f_duoWrap'); if(duo) duo.style.display = mode==='duo'?'block':'none';
   const recWrap=document.getElementById('f_rec'); const recField=recWrap?recWrap.closest('.field'):null;
-  if(recField) recField.style.display = mode==='garniture'?'none':'block';
+  // En mode duo et garniture, la recette unique + la quantité unique standard sont masquées
+  // (en duo, chaque parfum a son propre sélecteur et sa propre quantité).
+  if(recField) recField.style.display = (mode==='garniture'||mode==='duo')?'none':'block';
+  const qteRow=document.getElementById('f_qteRow'); if(qteRow) qteRow.style.display = mode==='duo'?'none':'flex';
   // Affiche/masque et remplit l'aperçu des ingrédients de la garniture.
   if(mode==='garniture'){ prodSyncTheorique(); prodApercuGarniture(); prodRefreshLot(); }
   else { const z=document.getElementById('f_garnitureApercu'); if(z){ z.style.display='none'; z.innerHTML=''; } prodRefreshLot(); }
+  if(mode==='duo'){ prodDuoApercu(); }
   prodCompSwitch();
+}
+// [DUO] Aperçu du calcul de meringue commune : total coques = (q1+q2) × 2.
+function prodDuoApercu(){
+  const z=document.getElementById('f_duoApercu'); if(!z) return;
+  const q1=Math.max(0, Math.round(+(document.getElementById('f_duoQte1')?.value)||0));
+  const q2=Math.max(0, Math.round(+(document.getElementById('f_duoQte2')?.value)||0));
+  const sel1=document.getElementById('f_duoRec1'); const sel2=document.getElementById('f_duoRec2');
+  const nom1=sel1?(sel1.options[sel1.selectedIndex]?.text||'Parfum 1'):'Parfum 1';
+  const nom2=sel2?(sel2.options[sel2.selectedIndex]?.text||'Parfum 2'):'Parfum 2';
+  const coq1=q1*COQUES_PAR_MACARON, coq2=q2*COQUES_PAR_MACARON, total=coq1+coq2;
+  const meme = sel1 && sel2 && sel1.value===sel2.value;
+  z.innerHTML =
+    `<div style="display:flex;justify-content:space-between"><span>🥣 Meringue à réaliser</span><b>${qty(total)} coques</b></div>`+
+    `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc((nom1||'').replace(/\s*\(\d+\/batch\)$/,''))}</span><span>${qty(q1)} mac. → ${qty(coq1)} coques</span></div>`+
+    `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc((nom2||'').replace(/\s*\(\d+\/batch\)$/,''))}</span><span>${qty(q2)} mac. → ${qty(coq2)} coques</span></div>`+
+    (meme?`<div style="color:#b3261e;font-size:.8rem;margin-top:2px">⚠ Les deux parfums sont identiques — choisis deux parfums différents.</div>`:'');
 }
 // Met à jour la note « coques » (1 macaron = 2 coques) selon le composant choisi.
 function prodCompSwitch(){
@@ -6129,6 +6166,49 @@ async function saveProd(){
       console.error('produireComposant', err);
       toast(err.message || 'Erreur production garniture');
     }
+    return;
+  }
+  // [DUO] Mode « 2 parfums, meringue commune » : on lance DEUX sous-lots de coques, un par
+  // parfum, reliés par un meringueBatchId partagé (fournée de meringue unique). Chaque parfum
+  // garde sa quantité et son coût matière propres ; le temps « meringue » sera mutualisé 50/50
+  // côté Atelier (cocher les 2 parfums sur la tâche meringue).
+  if(_mode==='duo'){
+    const rid1=+val('f_duoRec1'), rid2=+val('f_duoRec2');
+    const q1=Math.round(+val('f_duoQte1')||0), q2=Math.round(+val('f_duoQte2')||0);
+    if(!rid1||!rid2){ toast('Choisis les deux parfums'); return; }
+    if(rid1===rid2){ toast('Choisis deux parfums DIFFÉRENTS (sinon lance une production simple).'); return; }
+    if(q1<=0||q2<=0){ toast('Indique une quantité (macarons) pour chaque parfum'); return; }
+    const dateD=val('f_date')||today();
+    // Identifiant de fournée de meringue commun aux deux sous-lots.
+    const meringueBatchId = 'MER-' + lotDateJJMMAA(dateD) + '-' + genLotCode(3);
+    let recs;
+    try{ recs = await Promise.all([db.recipes.get(rid1), db.recipes.get(rid2)]); }
+    catch(e){ toast('Recette introuvable'); return; }
+    if(!recs[0]||!recs[1]){ toast('Recette introuvable'); return; }
+    // Construit un lot par parfum : JJMMAA + code parfum (+ suffixe -CO coques).
+    const baseD = lotDateJJMMAA(dateD);
+    const lots = recs.map(r=>{ const base = (baseD + flavorCode(r.produitNom)).toUpperCase().replace(/\s+/g,''); return {base, lot: base + '-CO'}; });
+    // Coques : 1 macaron = 2 coques. Matières calées sur les macarons (facteurQte).
+    const lance = [
+      { rid:rid1, q:q1, lot:lots[0].lot, base:lots[0].base, nom:recs[0].produitNom },
+      { rid:rid2, q:q2, lot:lots[1].lot, base:lots[1].base, nom:recs[1].produitNom }
+    ];
+    try{
+      for(const L of lance){
+        await enregistrerProduction(
+          L.rid, L.q*COQUES_PAR_MACARON, L.q*COQUES_PAR_MACARON, dateD, L.lot, '', '',
+          { composant:'coques', lotBase:L.base, facteurQte:L.q, meringueBatchId }
+        );
+      }
+    }catch(err){
+      console.error('saveProd duo', err);
+      toast(err.message || 'Erreur au lancement (meringue commune)');
+      return;
+    }
+    closeModal();
+    renderProductions();
+    const totalCoques = (q1+q2)*COQUES_PAR_MACARON;
+    toast(`🥣 Meringue commune lancée ✓ — ${qty(totalCoques)} coques (${esc(recs[0].produitNom)} + ${esc(recs[1].produitNom)})`);
     return;
   }
   const recipeId=+val('f_rec');
@@ -6419,6 +6499,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
         recipeId, lotProduction, date:dateProd,
         composant: meta.composant||'complet',   // 'complet' | 'coques' | 'ganache' | 'assemble'
         garnitureType: meta.garnitureType||undefined,  // sous-type si garniture : 'ganache' | 'cremeux'
+        meringueBatchId: meta.meringueBatchId||undefined,  // fournée de meringue COMMUNE à 2 parfums (coques mutualisées)
         lotBase: meta.lotBase||'',               // n° de lot commun (relie coques/ganache/assemblé)
         qteTheorique, qteReelle, ecart,
         // STOCK PRODUITS FINIS : calé sur la quantité réelle
