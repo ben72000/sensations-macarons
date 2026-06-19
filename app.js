@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v620';
+const APP_VERSION = 'v622';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1788,7 +1788,9 @@ async function dlcActions(prodId){
     <div style="display:flex;flex-direction:column;gap:8px">
       <button class="btn danger" onclick="closeModal();declareLossForm(${prodId})">⚠ Déclarer une perte (sortir du stock)</button>
       <button class="btn" style="background:#3f7d52;color:#fff" onclick="closeModal();setEmplacement(${prodId})">📍 Ranger / changer d'emplacement</button>
-      <button class="btn ghost" onclick="closeModal();goView('productions')">📋 Voir dans Productions</button>
+      ${prodEstRangee(p)
+        ? `<button class="btn ghost" onclick="closeModal({fromPop:true});traceProd(${prodId})" title="Ce lot est rangé (congélateur) : son détail s'ouvre directement.">🔎 Voir le détail du lot</button>`
+        : `<button class="btn ghost" onclick="closeModal({fromPop:true});goView('productions')">📋 Voir dans Productions</button>`}
     </div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
@@ -4359,7 +4361,24 @@ function ecartTag(p){
   return `<span class="tag ${e<0?'warn':'event'}">${e>0?'+':''}${qty(e)}</span>`;
 }
 function _prodbatRow(row){
-  const p=row.p; const recName=window._prodRecName||(id=>'#'+id); const lossByProd=window._prodLossBy||{};
+  // Filet : si le rendu d'une carte échoue (donnée de lot inhabituelle), on n'interrompt
+  // pas tout l'écran Productions — on affiche une carte d'erreur lisible identifiant le lot.
+  try{
+    return _prodbatRowInner(row);
+  }catch(err){
+    const p = (row && row.p) || {};
+    const lot = esc(p.lotProduction || ('#'+(p.id!=null?p.id:'?')));
+    console.error('Erreur rendu carte production', lot, err);
+    return `<div class="prod-card" style="border-left:7px solid #b3261e;background:#fdf3f2;padding:10px">
+      <div style="font-weight:700;color:#b3261e">⚠ Affichage impossible pour ce lot</div>
+      <div style="font-size:.8rem;margin-top:2px">Lot <b>${lot}</b></div>
+      <div style="font-size:.74rem;color:#9a8a82;margin-top:4px">${esc((err&&err.message)||String(err)||'erreur inconnue')}</div>
+      <div style="margin-top:6px"><button class="qa" onclick="traceProd(${p.id!=null?+p.id:0})" title="Voir le détail brut du lot">🔎 Détail</button>
+        <button class="qa del" onclick="delProd(${p.id!=null?+p.id:0})" title="Supprimer ce lot">🗑 Supprimer</button></div>
+    </div>`;
+  }
+}
+function _prodbatRowInner(row){
   const th = (p.qteTheorique!=null)?p.qteTheorique:p.qteProduite;
   const re = (p.qteReelle!=null)?p.qteReelle:p.qteProduite;
   const emp = p.emplacement; const empTag = empTagHtml(emp);
@@ -4476,16 +4495,28 @@ function _prodChronoTick(){
   });
 }
 function startProdChrono(){
-  _prodChronoTick();
-  if(_prodChronoTimer) clearInterval(_prodChronoTimer);
-  if(document.querySelector('.prod-chrono')){
-    _prodChronoTimer = setInterval(_prodChronoTick, 1000);
-  }
+  try{
+    _prodChronoTick();
+    if(_prodChronoTimer) clearInterval(_prodChronoTimer);
+    if(document.querySelector('.prod-chrono')){
+      _prodChronoTimer = setInterval(_prodChronoTick, 1000);
+    }
+  }catch(err){ console.error('startProdChrono', err); }
 }
 // Recherche intelligente des productions. Une seule lettre d'emplacement (F/B/C/A)
 // filtre par zone ; sinon recherche plein-texte (lot, parfum, date, statut…).
 function prodbatFilter(q){
   prodnSearch=q||'';
+  if(!_prodnCache) return;
+  try{
+    _prodbatFilterInner(q);
+  }catch(err){
+    console.error('Erreur prodbatFilter', err);
+    const body=document.getElementById('prodbatBody');
+    if(body){ body.innerHTML = `<div class="empty" style="color:#b3261e">⚠ Impossible d'afficher la liste des productions.<br><span style="color:#9a8a82;font-size:.8rem">${esc((err&&err.message)||String(err)||'erreur inconnue')}</span></div>`; }
+  }
+}
+function _prodbatFilterInner(q){
   if(!_prodnCache) return;
   const body=document.getElementById('prodbatBody'); if(!body) return;
   const cnt=document.getElementById('prodCount'); const empty=document.getElementById('prodbatEmpty');
