@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v614';
+const APP_VERSION = 'v615';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1883,13 +1883,10 @@ async function renderDash(){
 
   const upcoming = events.filter(e=>e.date>=today()).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
   const months=[]; for(let i=5;i>=0;i--){const d=new Date(y,m-i,1);months.push({k:ymOf(d),l:d.toLocaleDateString('fr-FR',{month:'short'})});}
-  // CA mensuel en base COMPTABLE (encaissements réels), identique à caMonthDetail :
-  // paiements reçus dans le mois + marchés clos (CA net) du mois.
-  const _caEncMois = (typeof caEncaisseParMois==='function') ? caEncaisseParMois(orders).parMois : {};
-  const data=months.map(mo=>({...mo,v: money2(
-    (_caEncMois[mo.k]||0)
-    + closedMk.filter(k=>k.date&&k.date.slice(0,7)===mo.k).reduce((s,k)=>s+((typeof marketNetCA==='function')?marketNetCA(k):(+k.montant||0)),0)
-  )}));
+  // CA mensuel via la MÊME fonction que la carte et le détail (caDuMois) — source unique de vérité.
+  // Chaque barre = total encaissé du mois (commandes + marchés clos), calculé à l'identique du clic.
+  const _moisCA = await Promise.all(months.map(mo=>caDuMois(mo.k).catch(()=>({total:0}))));
+  const data=months.map((mo,i)=>({...mo, v: money2((_moisCA[i]&&_moisCA[i].total)||0)}));
   const max=Math.max(...data.map(d=>d.v),1);
 
   document.getElementById('main').innerHTML=`
