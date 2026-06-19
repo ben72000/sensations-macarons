@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v633';
+const APP_VERSION = 'v635';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4561,7 +4561,7 @@ function _prodbatRowInner(row){
        ${degBtn}
        <button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button>
        <button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button>
-       <button class="qa" onclick="prodSplitForm(${p.id})" title="Découper en parties rangées séparément">✂ Découper</button>
+       <button class="qa" onclick="prodSplitForm(${p.id})" title="Découper = créer des LOTS séparés (n° de lot et DLC distincts), ex. une partie au congélateur pour plus tard et une partie au frigo. À ne pas confondre avec « Ranger » qui ne fait que ventiler le même lot dans des boîtes.">✂ Découper</button>
        <button class="qa" style="background:#3f7d52;color:#fff" onclick="setEmplacement(${p.id})" title="Choisir l'emplacement de stockage — range le batch et remplit la visualisation">📍 Ranger</button>
        ${linkBtn}
        <button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button>
@@ -5318,7 +5318,7 @@ async function setEmplacement(id){
           return ''; })()}
         <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn gold sm" style="flex:1" onclick="applySuggestedPlacement(${id})">✓ Ranger ici</button>
-          <button class="btn ghost sm" onclick="proposeSplit(${id})">📦 Répartir</button>
+          <button class="btn ghost sm" onclick="proposeSplit(${id})" title="Répartir = ranger le MÊME lot dans plusieurs boîtes / emplacements (même n° de lot, même DLC). Pour créer des lots distincts avec des DLC séparées, utilise « Découper ».">📦 Répartir en boîtes</button>
         </div>
         <p class="note" style="margin-top:4px">💡 ${esc(pourquoi)}.</p>`;
     } else if(_ctx.nb>0) {
@@ -5672,6 +5672,7 @@ async function prodSplitForm(id){
   _splitDraft=[{qte:'',dest:p.emplacement||'frigo'},{qte:'',dest:''}];
   window._splitCtx={id, dispo, decongele, base:lotBaseSansSuffixe(p.lotProduction), recipeId:p.recipeId, recName:recName(p.recipeId)};
   openModal(`<h3>✂ Découper la production</h3>
+    <div class="banner" style="background:#f5f0fa;border-color:#d8c9e8;margin-bottom:8px">✂ <div>Découper crée des <b>lots séparés</b> avec des <b>n° de lot et des DLC distincts</b> (utile si une partie part au congélateur et une autre au frigo). Si tu veux juste <b>ranger le même lot dans plusieurs boîtes</b>, ferme et utilise « Ranger » → « Répartir ».</div></div>
     <p class="note"><b>${esc(window._splitCtx.recName)}</b> · lot <b>${esc(window._splitCtx.base)}</b> · stock à répartir : <b>${qty(dispo)}</b> pièce(s).</p>
     <p class="note">Indiquez chaque partie : sa quantité et son emplacement. Chaque partie reçoit la lettre de son emplacement dans son n° de lot (ex : ${esc(window._splitCtx.base)}-A). Le reste non réparti demeure sur la production d'origine.</p>
     ${decongele?'<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⚠️ Production déjà décongelée : les parties ne peuvent pas aller au congélateur.</div></div>':''}
@@ -11732,8 +11733,8 @@ async function stockParfumDetail(nom){
     // Alerte : des macarons restent sans emplacement assigné (split incomplet) → bouton pour ranger.
     const nonPlaceHtml = nonPlace>0
       ? `<div style="margin-top:5px;padding:6px 8px;background:#fdf3e7;border:1px solid #e8d09a;border-radius:8px;font-size:.78rem">
-           ⚠ <b>${qty(nonPlace)} macaron(s) sans emplacement</b>
-           <button class="btn gold sm" style="margin-left:6px" onclick="event.stopPropagation();closeModal();prodSplitForm(${p.id})">📦 Répartir en boîtes</button>
+           ⚠ <b>${qty(nonPlace)} ${esc((typeof uniteLabel==='function' && p.composant==='coques')?'coque(s)':'macaron(s)')} sans emplacement</b>
+           <button class="btn gold sm" style="margin-left:6px" onclick="event.stopPropagation();closeModal();setEmplacement(${p.id})" title="Choisir où ranger ces pièces (boîte + emplacement)">📍 Ranger</button>
          </div>`
       : '';
     return `<div class="trace-step clickable" style="cursor:pointer" onclick="closeModal();traceProd(${p.id})" title="Traçabilité complète de ce batch">
@@ -14753,11 +14754,64 @@ function parfumSettingsSave(){
   closeModal(); renderParfums(); toast('Paramètres enregistrés ✓');
 }
 
+// [LEVIERS DE MARGE] Construit l'encart « ce qui fait monter/baisser ta marge nette / macaron ».
+// S'appuie ENTIÈREMENT sur analyzeFlavorProfitability (même source que la carte d'accueil) pour
+// rester cohérent. Décompose le coût d'un macaron moyen + facteurs transverses + recommandations.
+function _margeLeviersHtml(A, recs){
+  if(!A || !A.totals || !(A.totals.pieces>0)){
+    return `<div class="panel"><h2>🎯 Leviers de ta marge</h2><p class="empty">Pas encore assez de ventes pour analyser les leviers. Enregistre des commandes et clôture des marchés.</p></div>`;
+  }
+  const t=A.totals;
+  const pieces=t.pieces;
+  const par = v => money2((+v||0)/pieces);          // ramène un total à l'unité (€/macaron)
+  // Décomposition du prix de vente moyen en €/macaron
+  const pvMoyen = par(t.ca);
+  const coutRevient = par(t.ca - t.margeBrute);      // matières + emballages + temps rattachés aux ventes
+  const charges = par(t.margeBrute - t.margeNette);  // charges sociales
+  const margeNette = par(t.margeNette);
+  // Facteurs transverses (en €/macaron) qui rognent la marge
+  const donsParPiece = t.coutDons>0 ? par(t.coutDons) : 0;
+  // Barre de composition (part de chaque poste dans le prix de vente)
+  const pct = v => pvMoyen>0 ? Math.max(0,Math.min(100,Math.round((+v||0)/pvMoyen*100))) : 0;
+  const seg = (lib,val,col)=>`<div style="display:flex;justify-content:space-between;font-size:.82rem;padding:2px 0">
+      <span>${lib}</span><b style="color:${col}">${euro(money2(val))} <span style="color:#9a8a82;font-weight:400">· ${pct(val)}%</span></b></div>`;
+  // Sélection des 3 recommandations les plus « actionnables » (perte, faible marge/fort volume, stock mort)
+  const prioIcons = {'🛑':0,'⚠️':1,'📦':2,'💎':3,'🏆':4};
+  const recTop = (recs||[]).slice().sort((a,b)=>(prioIcons[a.icon]??9)-(prioIcons[b.icon]??9)).slice(0,3);
+  const recHtml = recTop.length ? recTop.map(r=>`<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid #f0e9e2">
+      <span style="flex:none">${r.icon}</span><span style="font-size:.84rem;color:#5a4a42">${r.txt}</span></div>`).join('') : '';
+  return `<div class="panel" style="border:1px solid #e8dcc0;background:#fffdf8">
+    <h2 style="margin-bottom:2px">🎯 Leviers de ta marge nette / macaron</h2>
+    <p class="note" style="margin-bottom:10px">Sur la base de <b>${qty(pieces)}</b> macaron(s) vendu(s). Voici ce qui compose ton prix moyen et ce qui pèse sur ta marge.</p>
+    <div class="sum-box" style="flex-direction:column;align-items:stretch;gap:0;background:#faf6ee">
+      ${seg('Prix de vente moyen', pvMoyen, '#2e6b3f')}
+      ${seg('− Coût de revient (matières, emballage, temps)', -coutRevient, '#b3261e')}
+      ${seg('− Charges sociales', -charges, '#b3261e')}
+      <div style="display:flex;justify-content:space-between;border-top:2px solid #e8dccd;margin-top:4px;padding-top:5px">
+        <span><b>= Marge nette / macaron</b></span><b style="color:${margeNette>=0?'#2e6b3f':'#b3261e'};font-size:1.02rem">${euro(margeNette)}</b></div>
+    </div>
+    ${donsParPiece>0?`<p class="note" style="margin-top:8px">🎁 Les dons coûtent en moyenne <b>${euro(donsParPiece)}</b> par macaron vendu (marge après dons : <b>${euro(par(t.margeApresDons))}</b>/macaron).</p>`:''}
+    ${t.ecartTheo!=null && Math.abs(t.ecartTheo)>=0.5?`<p class="note" style="margin-top:4px">${t.ecartTheo<0?'📉':'📈'} Écart prix encaissé vs attendu : <b style="color:${t.ecartTheo<0?'#b3261e':'#2e6b3f'}">${t.ecartTheo>0?'+':''}${euro(t.ecartTheo)}</b> au total (remises, arrondis, prix manuels).</p>`:''}
+    ${recHtml?`<div style="margin-top:10px"><div style="font-weight:600;font-size:.86rem;color:#52252F;margin-bottom:2px">Pistes prioritaires</div>${recHtml}</div>`:''}
+    <button class="btn ghost sm" style="margin-top:10px;width:100%" onclick="goView('rentaparfum')">🎯 Voir le détail par parfum & toutes les recommandations ›</button>
+  </div>`;
+}
 async function renderProfit(){
-  const [orders, clients, recipes, recipeItems, lots] = await Promise.all([
-    db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()
+  const [orders, clients, recipes, recipeItems, lots, _mats, _markets, _mm, _prods] = await Promise.all([
+    db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(),
+    db.materials.toArray().catch(()=>[]),
+    db.markets.toArray().catch(()=>[]),
+    (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]),
+    db.productions.toArray().catch(()=>[])
   ]);
   const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
+  // Analyse de marge (même moteur que la carte d'accueil) → encart « leviers ».
+  let _leviersHtml='';
+  try{
+    const _A = analyzeFlavorProfitability({recipes, recipeItems, lots, mats:_mats, orders, markets:_markets, marketMoves:_mm, productions:_prods, settings:getSettings()});
+    const _recs = flavorRecommendations(_A, {recipes, recipeItems, lots, mats:_mats, orders, markets:_markets, marketMoves:_mm, productions:_prods, settings:getSettings()});
+    _leviersHtml = _margeLeviersHtml(_A, _recs);
+  }catch(e){ console.error('leviers marge', e); _leviersHtml=''; }
 
   // marge par commande (toutes commandes confirmées)
   const withM = orders.map(o=>({o, m:computeOrderMargins(o, recipes, recipeItems, lots)}));
@@ -14821,6 +14875,7 @@ async function renderProfit(){
    <div class="topbar"><div><h1>Analyse de rentabilité</h1><p>Marge brute & nette · classement par rentabilité</p></div>
      <button class="btn ghost sm" onclick="settingsForm()">⚙ Paramètres</button></div>
    <div class="banner">📈 <div>Marge brute = prix de vente − matières − emballages. Marge nette = marge brute − charges sociales (${getSettings().socialGoods}% marchandise, ${getSettings().socialService}% prestation). L'échelle de rentabilité se base sur le taux de marge nette.</div></div>
+   ${_leviersHtml}
    <div class="panel"><h2>Classement clients par rentabilité</h2>${clientTable}</div>
    <h2 style="font-family:'Bellota',serif;color:var(--bordeaux);margin:18px 0 4px;font-size:1.2rem">Rentabilité par événement</h2>
    ${eventCards}`;
