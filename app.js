@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v642';
+const APP_VERSION = 'v643';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9881,6 +9881,20 @@ async function cmdForm(id, opts){
   // on respecte ce prix à la réouverture — on ne le recalcule pas, on ne l'écrase pas.
   // Un prix tapé à la main est ainsi mémorisé d'une session d'édition à l'autre.
   _cmdPriceManual = !!(o && o.prixManuel);
+  // [GARDE-FOU PRIX MANUEL] Même si le flag prixManuel n'a pas été persisté (anciennes commandes,
+  // ou perte du flag), on le redéduit : si le montant enregistré diffère du total recalculé depuis
+  // les lignes (remises/perso inclus), c'est forcément un prix forcé à la main → on le respecte.
+  // Sans ça, la réouverture réafficherait le prix « auto » des lignes et écraserait la correction.
+  if(!_cmdPriceManual && o && +o.montant>0){
+    try{
+      const _st = (cmdLines||[]).reduce((a,ln)=>a+(typeof lineTotalStored==='function'?lineTotalStored(ln):(typeof lineTotal==='function'?lineTotal(ln):0)),0);
+      const _gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
+      const _rg = money2(_st*_gpct/100);
+      const _perso = money2(((o.persoMacarons||0))*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+      const _autoTotal = Math.max(0, money2(_st - _rg + _perso));
+      if(Math.abs(_autoTotal - money2(+o.montant)) > 0.01){ _cmdPriceManual = true; }
+    }catch(e){ /* en cas de doute, on ne force rien */ }
+  }
   if(mt) mt.dataset.auto = _cmdPriceManual ? '0' : '1';
   drawPayments();
   drawLines();
@@ -9934,13 +9948,20 @@ function drawPayments(){
 function cmdUpdatePaySummary(){
   const box=document.getElementById('paySummary'); if(!box) return;
   const total=cmdCurrentTotal(), paid=cmdCurrentPaid(), reste=money2(total-paid);
-  const st = total>0 && paid+1e-9>=total ? 'Payé' : (paid>0?'Partiel':'En attente');
-  const col = st==='Payé'?'#3f7d52':(st==='Partiel'?'var(--caramel)':'var(--red,#b3261e)');
+  // Trop-perçu : encaissé > total (pourboire, arrondi, geste commercial). Signalé, pas bloquant.
+  const trop = paid > total + 1e-9;
+  const st = trop ? 'Trop-perçu' : (total>0 && paid+1e-9>=total ? 'Payé' : (paid>0?'Partiel':'En attente'));
+  const col = st==='Payé'?'#3f7d52':(st==='Trop-perçu'?'#d98324':(st==='Partiel'?'var(--caramel)':'var(--red,#b3261e)'));
+  // Libellé de la ligne de solde : « restant dû » si on doit encore, « excédent » si trop-perçu.
+  const ligneLbl = trop ? 'Excédent encaissé' : 'Solde restant dû';
+  const ligneVal = trop ? money2(paid-total) : reste;
+  const ligneCol = trop ? '#d98324' : (reste>0?'var(--red,#b3261e)':'#3f7d52');
   box.innerHTML = `<div style="display:flex;justify-content:space-between"><span>Encaissé</span><b>${euro(paid)}</b></div>
     <div style="display:flex;justify-content:space-between"><span>Total commande</span><b>${euro(total)}</b></div>
     <div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px">
-      <span><b>Solde restant dû</b> <span class="tag" style="background:${col};color:#fff">${st}</span></span><b style="color:${reste>0?'var(--red,#b3261e)':'#3f7d52'}">${euro(reste)}</b></div>`;
-  const hid=document.getElementById('f_pay'); if(hid) hid.value = (st==='Payé')?'Payé':'En attente';
+      <span><b>${ligneLbl}</b> <span class="tag" style="background:${col};color:#fff">${st}</span></span><b style="color:${ligneCol}">${euro(ligneVal)}</b></div>
+    ${trop?`<p class="note" style="color:#d98324;margin-top:4px">⚠ Tu as encaissé ${euro(paid-total)} de plus que le total. Normal si pourboire/arrondi ; sinon vérifie le prix ou le paiement.</p>`:''}`;
+  const hid=document.getElementById('f_pay'); if(hid) hid.value = (st==='Payé'||st==='Trop-perçu')?'Payé':'En attente';
 }
 
 // Compat. : ces helpers existaient pour l'ancien toggle ; le registre de paiements les remplace.
