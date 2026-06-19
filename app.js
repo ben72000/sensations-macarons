@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v613';
+const APP_VERSION = 'v614';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1706,6 +1706,36 @@ async function stockParMatiere(materialId){
    ============================================================ */
 // Détail du CA encaissé d'un mois donné (mk = 'AAAA-MM') : chaque paiement reçu ce mois-là,
 // avec client, date et montant, plus les marchés clôturés du mois. Vue de contrôle comptable.
+// SOURCE UNIQUE DE VÉRITÉ du CA encaissé d'un mois (mk = 'AAAA-MM').
+// Utilisée par la carte d'accueil ET le détail, pour qu'ils ne divergent JAMAIS.
+// Retourne { total, totalCmd, totalMk, lignesCmd, lignesMk }.
+async function caDuMois(mk){
+  mk = mk || monthKey(today());
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  const lignesCmd = []; let totalCmd = 0;
+  orders.filter(o=>!o.histo).forEach(o=>{
+    paiementsDe(o).forEach(p=>{
+      if(ymKey(p.date||o.date||'')!==mk) return;
+      const m=+p.montant||0; if(!m) return;
+      totalCmd += m;
+      lignesCmd.push({date:p.date||o.date||'', nom:clName(o.clientId), montant:m, moyen:p.moyen||'', oid:o.id});
+    });
+  });
+  lignesCmd.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  let totalMk = 0; const lignesMk=[];
+  try{
+    const markets = await db.markets.toArray();
+    markets.forEach(k=>{
+      if(k.statut!=='clos' || ymKey(k.date||'')!==mk) return;
+      const net = (typeof marketNetCA==='function') ? marketNetCA(k) : 0;
+      if(net>0){ totalMk+=net; lignesMk.push({date:k.date, nom:k.nom||'Marché', montant:net}); }
+    });
+  }catch(e){}
+  return { total: money2(totalCmd+totalMk), totalCmd: money2(totalCmd), totalMk: money2(totalMk), lignesCmd, lignesMk };
+}
+
 async function caMonthDetail(mk){
   mk = mk || monthKey(today());
   // mois précédent / suivant pour la navigation (format AAAA-MM).
@@ -1719,30 +1749,10 @@ async function caMonthDetail(mk){
   const _mkPrev = `${_prevYY}-${_pad2(_prevMM)}`;
   const _mkNext = `${_nextYY}-${_pad2(_nextMM)}`;
   const _isCurrentOrFuture = mk >= monthKey(today());   // pas de "mois suivant" au-delà du mois courant
-  const orders = await db.orders.toArray().catch(()=>[]);
-  const clients = await db.clients.toArray().catch(()=>[]);
-  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
-  const lignes = []; let totalCmd = 0;
-  orders.filter(o=>!o.histo).forEach(o=>{
-    const paiements = paiementsDe(o);
-    paiements.forEach(p=>{
-      if(ymKey(p.date||o.date||'')!==mk) return;
-      const m=+p.montant||0; if(!m) return;
-      totalCmd += m;
-      lignes.push({date:p.date||o.date||'', nom:clName(o.clientId), montant:m, moyen:p.moyen||'', oid:o.id});
-    });
-  });
-  lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  let totalMk = 0; const mkLignes=[];
-  try{
-    const markets = await db.markets.toArray();
-    markets.forEach(k=>{
-      if(k.statut!=='clos' || ymKey(k.date||'')!==mk) return;
-      const net = (typeof marketNetCA==='function') ? marketNetCA(k) : 0;
-      if(net>0){ totalMk+=net; mkLignes.push({date:k.date, nom:k.nom||'Marché', montant:net}); }
-    });
-  }catch(e){}
-  const total = money2(totalCmd + totalMk);
+  const _ca = await caDuMois(mk);
+  const lignes = _ca.lignesCmd; const totalCmd = _ca.totalCmd;
+  const totalMk = _ca.totalMk; const mkLignes = _ca.lignesMk;
+  const total = _ca.total;
   const rowsCmd = lignes.length ? lignes.map(l=>
     `<div class="sum-box" style="cursor:pointer" onclick="closeModal();cmdView(${l.oid})">
        <span>${fmtDate(l.date)} · ${esc(l.nom)}${l.moyen?` <span style="color:#9a8a82;font-size:.74rem">· ${esc(l.moyen)}</span>`:''}</span>
@@ -1818,24 +1828,18 @@ async function renderDash(){
   // Relevé de température du jour fait ou non (rappel HACCP discret).
   const tLogsToday = await (db.temperatureLogs?db.temperatureLogs.where('date').equals(today()).toArray():Promise.resolve([])).catch(()=>[]);
   const releveFait = tLogsToday.length>0;
-  // CA des marchés clôturés (somme espèces+CB+autre), rattaché à leur date de clôture.
-  // IMPORTANT : on relit db.markets ICI, isolément, exactement comme caMonthDetail (qui affiche
-  // le bon total). Auparavant on dépendait de la variable `markets` du Promise.all : si cet accès
-  // échouait silencieusement (.catch(()=>[])), le CA des marchés tombait à 0 sur la carte alors
-  // que le détail, lui, les retrouvait. On supprime cette divergence.
+  // CA des marchés clôturés (pour les compteurs annexes _nbEncMois / caTotal).
   let _marketsForCA = markets;
   try { const _mk = await db.markets.toArray(); if(Array.isArray(_mk)) _marketsForCA = _mk; } catch(e){}
   const closedMk = (_marketsForCA||[]).filter(k=>k.statut==='clos').map(k=>{
     const ca=k.ca||{}; return {date:(k.date||''), montant:marketNetCA(k)};
   }).filter(k=>k.montant>0);
   const _mkCourant = monthKey(today());
-  // Filtre par CHAÎNE de mois (AAAA-MM), exactement comme caMonthDetail qui affiche le bon total.
-  // (Avant : new Date(d).getMonth() — sensible au fuseau, excluait le marché du mois courant.)
   const mkInMonth = d => ymKey(d||'') === _mkCourant;
-  const _caEncDash = (typeof caEncaisseParMois==='function') ? caEncaisseParMois(orders) : {parMois:{},enAttente:0};
-  const caCmdMonth = _caEncDash.parMois[_mkCourant] || 0;
-  const caMkMonth = closedMk.filter(k=>mkInMonth(k.date)).reduce((s,k)=>s+((typeof marketNetCA==='function')?marketNetCA(k):(+k.montant||0)),0);
-  const caMonth = money2(caCmdMonth + caMkMonth);
+  // CA DU MOIS : on utilise la MÊME fonction que le détail (caDuMois) — source unique de vérité.
+  // La carte et le détail ne peuvent donc plus diverger : même calcul, mêmes données.
+  const _caMoisObj = await caDuMois(_mkCourant);
+  const caMonth = _caMoisObj.total;
   const _moisCourantLbl = (typeof monthLabel==='function') ? monthLabel(monthKey(today())) : 'ce mois';
   // Nombre d'ENCAISSEMENTS du mois (commandes + marchés) — cohérent avec le détail affiché.
   let _nbEncMois = 0;
