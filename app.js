@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v631';
+const APP_VERSION = 'v632';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -5286,6 +5286,10 @@ async function setEmplacement(id){
             }).join('')}
           </select></div>
         <div id="placeAlert"></div>
+        ${(()=>{ const cap=_ctx.grandFormat?(+_sugBox.capaciteGF||0):(+_sugBox.capacite||0);
+          if(cap>0 && _ctx.nb>cap){ const reste=round3(_ctx.nb-cap);
+            return `<p class="note" style="margin-top:4px;color:#8a6d3b">📦 Cette boîte contient <b>${cap}</b> ${esc(uniteLabel(_ctx,cap))} : « Ranger ici » en casera ${cap}, les <b>${reste}</b> ${esc(uniteLabel(_ctx,reste))} restants passeront en attente. Utilise « Répartir » pour tout ventiler d'un coup.</p>`; }
+          return ''; })()}
         <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn gold sm" style="flex:1" onclick="applySuggestedPlacement(${id})">✓ Ranger ici</button>
           <button class="btn ghost sm" onclick="proposeSplit(${id})">📦 Répartir</button>
@@ -5315,17 +5319,39 @@ let _placeCtx=null;
 async function applySuggestedPlacement(id){
   const s=_placementSuggestion; if(!s || s.id!==id){ toast('Suggestion expirée'); return; }
   const p=await db.productions.get(id); if(!p) return;
+  const cx=_placeCtx;
+  // [CAPACITÉ] On ne range que ce qui TIENT dans la boîte choisie. Le reste passe en attente.
+  const box = (cx && cx.boxes) ? cx.boxes.find(b=>b.nom===s.boiteNom) : null;
+  const gf = !!(cx && cx.ctx && cx.ctx.grandFormat);
+  const cap = box ? (gf ? (+box.capaciteGF||0) : (+box.capacite||0)) : 0;
+  // reste réel à ranger (déduit ce qui est déjà placé si rangement en plusieurs fois)
+  const dejaPlace = (!p.rangee && Array.isArray(p.placements)) ? round3(p.placements.reduce((a,pl)=>a+(+pl.nbMacarons||0),0)) : 0;
+  const totalLot = round3(+p.qteRestante||0);
+  const aRanger = round3(Math.max(0, totalLot - dejaPlace));
+  if(aRanger<=0){ toast('Ce lot est déjà entièrement rangé'); return; }
+  // quantité réellement casée = ce qui tient dans une boîte (ou tout si la boîte est assez grande / capacité inconnue)
+  const placeNow = cap>0 ? Math.min(aRanger, cap) : aRanger;
+  const uLbl = uniteLabel(cx&&cx.ctx, placeNow);
   // si l'équipement change, on passe par doMoveEmplacement pour garder toutes les règles (froid, DLC, lot)
   if(p.emplacement!==s.equipKey){
     await doMoveEmplacement(id, s.equipKey, {silent:true});
   }
+  const ancien = (!p.rangee && Array.isArray(p.placements)) ? p.placements : [];
+  const placementsCumul = ancien.concat([{equipKey:s.equipKey, niveauNom:s.niveauNom, boiteNom:s.boiteNom, nbMacarons:placeNow}]);
+  const totalPlace = round3(placementsCumul.reduce((a,pl)=>a+(+pl.nbMacarons||0),0));
+  const toutRange = totalPlace >= totalLot - 0.001;
+  const reste = round3(Math.max(0, totalLot - totalPlace));
   await db.productions.update(id, {niveauIndex:s.nivIndex, niveauNom:s.niveauNom, boiteNom:s.boiteNom,
-    placements:[],   // rangement simple = une seule boîte → on efface toute répartition multi périmée
-    rangee:true, rangeeTs:new Date().toISOString()});
+    placements: placementsCumul,
+    rangee: toutRange, rangeeTs: toutRange ? new Date().toISOString() : (p.rangeeTs||null)});
   closeModal();
   if(typeof renderProductions==='function') renderProductions();
   const e=empInfo(s.equipKey);
-  toast(`Rangé : ${e.nom} (${e.lettre}) · ${s.niveauNom} · ${s.boiteNom}`);
+  if(toutRange){
+    toast(`Rangé : ${e.nom} (${e.lettre}) · ${s.niveauNom} · ${s.boiteNom}`);
+  } else {
+    toast(`${qty(placeNow)} rangé(s) dans ${s.boiteNom} · ${qty(reste)} ${uLbl} en attente (boîte pleine)`);
+  }
 }
 // Recalcule le rangement quand l'utilisateur choisit une AUTRE boîte que celle suggérée.
 // Détecte le manque de place (niveau idéal plein) → alerte + propose la meilleure alternative.
