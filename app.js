@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v619';
+const APP_VERSION = 'v620';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4217,7 +4217,6 @@ async function renderProductions(){
           ${(s.coquesReste>0||s.ganacheReste>0)?`<div style="margin-top:2px;font-size:.74rem;color:#9a8a82">↳ resterait : ${s.coquesReste>0?`<b>${qty(s.coquesReste)} coque(s)</b>`:''}${s.coquesReste>0&&s.ganacheReste>0?' · ':''}${s.ganacheReste>0?`<b>${qty(s.ganacheReste)} ganache(s)</b>`:''} (casse / écart réel)</div>`:''}
         </div>
         <button class="btn gold sm" onclick="prodAssembleForm(${s.coqId})" title="Assembler ces composants">🔗 Assembler</button>
-        <button class="btn ghost sm" style="color:#b3261e" onclick="declareLossForm(${s.coqId})" title="Déclarer une perte / casse sur ces coques">⚠ Perte</button>
       </div>`).join('')}
    </div>`:''}
    ${degustSugg.length?`<div class="panel" style="border:1.5px solid #e6d2a0;background:#fdf8ee">
@@ -4242,7 +4241,6 @@ async function renderProductions(){
           <div style="margin-top:3px;font-size:.8rem;color:#8a6d3b">➜ il manque <b>${o.manque==='ganache'?(o.garnLabel==='crémeux'?'le crémeux':'de la ganache'):'des coques'}</b> ${o.type==='coques'?`pour assembler jusqu'à <b>${qty(o.macPotentiels)} macaron(s)</b>`:`pour utiliser ${o.garnLabel==='crémeux'?'ce crémeux':'cette ganache'}`}</div>
         </div>
         <button class="btn ghost sm" onclick="prodForm(${o.recipeId?`{recipeId:${o.recipeId}, qte:${Math.max(1, Math.round(+o.macPotentiels||0))}}`:''})" title="Produire le composant manquant, pré-rempli">⚙ Produire ${o.manque==='ganache'?(o.garnLabel||'ganache'):'coques'}</button>
-        ${(o.lots&&o.lots.length)?`<button class="btn ghost sm" style="color:#b3261e" onclick="orphanLossForm('${btoa(unescape(encodeURIComponent(JSON.stringify(o.lots))))}')" title="Déclarer une perte / casse sur ce composant">⚠ Perte</button>`:''}
       </div>`).join('')}
    </div>`:''}
    <div class="panel">
@@ -6815,32 +6813,6 @@ function quickLossNext(){
   declareLossForm(id);   // réutilise la déclaration de perte complète (quantité, motif, coût, dégustation)
 }
 
-// Déclarer une perte depuis l'encart « Composants orphelins ». Un orphelin est AGRÉGÉ par
-// recette : il peut donc recouvrir plusieurs lots distincts. Si un seul lot → on ouvre
-// directement la déclaration de perte. Si plusieurs → on demande lequel est concerné,
-// puis on réutilise declareLossForm (coût, motif, option récupérable gérés tels quels).
-// L'argument est passé sérialisé (JSON encodé) depuis le onclick de la carte orpheline.
-function orphanLossForm(lotsB64){
-  let lots=[];
-  try{ lots = JSON.parse(decodeURIComponent(escape(atob(lotsB64)))); }catch(e){ lots=[]; }
-  lots = (lots||[]).filter(l=>l && +l.qte>0);
-  if(!lots.length){ toast('Aucun lot disponible'); return; }
-  if(lots.length===1){ declareLossForm(+lots[0].id); return; }
-  const opts = lots.map(l=>{
-    const e = empInfo(l.emplacement);
-    return `<option value="${l.id}">lot ${esc(l.lot)} · ${qty(l.qte)} dispo${e&&e.lettre?' · '+e.lettre:''}</option>`;
-  }).join('');
-  openModal(`<h3>⚠ Déclarer une perte</h3>
-    <p class="note">Plusieurs lots de ce composant sont en attente. Choisis celui qui est cassé / à sortir.</p>
-    <div class="field"><label>Lot concerné</label><select id="orph_lot">${opts}</select></div>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
-      <button class="btn danger" onclick="orphanLossNext()">Suivant</button></div>`);
-}
-function orphanLossNext(){
-  const id=+val('orph_lot'); if(!id){ toast('Choisis un lot'); return; }
-  closeModal();
-  declareLossForm(id);
-}
 
 async function saveLoss(prodId){
   const qteP = +val('f_lossQte');
