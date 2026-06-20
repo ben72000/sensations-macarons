@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v646';
+const APP_VERSION = 'v647';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3808,18 +3808,72 @@ function docStatutColor(d){
 }
 // Une facture est-elle définitive (gravée, inaltérable) ?
 function docEstDefinitif(d){ return d && d.type==='facture' && (d.statut==='emise' || d.statut==='payee'); }
-// Numéro légal au format AAAAMM-[numéro]. Le numéro croît sans fin (jamais de reset),
-// démarre à 24, et l'ordre de validation fait foi. Le préfixe = année+mois d'émission.
+// [COMPTEUR LÉGAL DE FACTURES] Numéro au format AAAAMM-N.
+// PRINCIPE LÉGAL (art. 242 nonies A CGI) : la séquence est CONTINUE, SANS TROU, et un numéro
+// attribué n'est JAMAIS réutilisé ni recalculé. On NE déduit donc PAS le prochain numéro en
+// scannant les factures existantes (source de trous si une facture est supprimée/réimportée) :
+// on conserve un compteur persistant qui ne fait que s'incrémenter.
+// La dernière valeur ATTRIBUÉE est mémorisée dans localStorage 'sm_factSeq' (inclus dans les
+// sauvegardes). Démarre de sorte que la 1re facture porte le n°24.
+const FACT_SEQ_KEY = 'sm_factSeq';
+function _factSeqGet(){
+  const raw = parseInt(localStorage.getItem(FACT_SEQ_KEY), 10);
+  return Number.isFinite(raw) ? raw : 23;   // 23 → la prochaine sera 24
+}
+function _factSeqSet(n){ localStorage.setItem(FACT_SEQ_KEY, String(n)); }
+// Aperçu du PROCHAIN numéro SANS l'attribuer (pour affichage avant validation).
+function peekFactureNumero(){
+  const d=new Date();
+  const prefix=d.getFullYear()+String(d.getMonth()+1).padStart(2,'0');
+  return `${prefix}-${_factSeqGet()+1}`;
+}
+// Attribue DÉFINITIVEMENT le prochain numéro : incrémente le compteur ET le persiste, puis
+// renvoie le numéro. À n'appeler qu'au moment de la validation définitive (une seule fois).
 async function nextFactureNumeroDefinitif(){
   const d=new Date();
   const prefix=d.getFullYear()+String(d.getMonth()+1).padStart(2,'0');
-  const factsDef=(await db.documents.where('type').equals('facture').toArray().catch(()=>[]))
-    .filter(f=>docEstDefinitif(f) && f.numero);
-  let maxSeq=23;  // pour que la toute première facture porte le numéro 24
-  factsDef.forEach(f=>{ const m=(f.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>maxSeq) maxSeq=n; } });
-  return `${prefix}-${maxSeq+1}`;
+  // Garde-fou anti-régression : on ne descend jamais sous le plus haut numéro DÉJÀ attribué
+  // (au cas où le compteur aurait été perdu mais des factures définitives existeraient).
+  let seq=_factSeqGet();
+  try{
+    const factsDef=(await db.documents.where('type').equals('facture').toArray().catch(()=>[]))
+      .filter(f=>docEstDefinitif(f) && f.numero);
+    factsDef.forEach(f=>{ const m=(f.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>seq) seq=n; } });
+  }catch(e){}
+  const next=seq+1;
+  _factSeqSet(next);   // persiste AVANT de renvoyer : le numéro est consommé, définitivement
+  return `${prefix}-${next}`;
 }
-// Numéro de document : DEV-2026-001 / FAC-2026-001
+// Règle le point de départ du compteur de factures. STRICTEMENT INTERDIT s'il existe déjà une
+// facture définitive (on ne réinitialise jamais une séquence légale en cours). Sert uniquement à
+// caler le démarrage (ex. reprendre à 24) avant la toute première vraie facture.
+async function factCounterReset(){
+  const allFacts=(await db.documents.where('type').equals('facture').toArray().catch(()=>[]));
+  const factsDef=allFacts.filter(f=>docEstDefinitif(f) && f.numero);
+  // Si des factures définitives existent, on propose de PURGER les tests (avant la 1re vraie
+  // facture seulement). C'est une opération exceptionnelle, clairement présentée comme telle.
+  if(factsDef.length){
+    const okPurge = confirm(`⚠️ ATTENTION — usage exceptionnel.\n\n${factsDef.length} facture(s) définitive(s) existe(nt). La loi interdit de supprimer une vraie facture émise à un client.\n\nNe continue QUE s'il s'agit de factures de TEST, et que tu n'as encore envoyé AUCUNE vraie facture à un client.\n\nSupprimer ces ${factsDef.length} facture(s) de test et remettre le compteur à zéro ?`);
+    if(!okPurge) return;
+    const reConfirm = prompt('Pour confirmer la suppression des factures de test, tape exactement : SUPPRIMER');
+    if(reConfirm!=='SUPPRIMER'){ toast('Annulé'); return; }
+    for(const f of allFacts){ await db.documents.delete(f.id); }
+    _factSeqSet(23);
+    toast('Factures de test supprimées. Prochaine facture : n°24 ✓');
+    if(view==='documents') renderDocuments();
+    return;
+  }
+  const actuel=_factSeqGet();
+  const saisie=prompt(`Numéro de TA PROCHAINE facture ?\n\n(La prochaine sera ce numéro. Pour démarrer à 24, saisis 24.)\n\nActuellement la prochaine sera : ${actuel+1}`, String(actuel+1));
+  if(saisie===null) return;
+  const n=parseInt(saisie,10);
+  if(!Number.isFinite(n) || n<1){ toast('Numéro invalide'); return; }
+  if(!confirm(`Ta prochaine facture portera le numéro ${n} (format ${new Date().getFullYear()}${String(new Date().getMonth()+1).padStart(2,'0')}-${n}).\n\nConfirmer ?`)) return;
+  _factSeqSet(n-1);
+  toast('Compteur réglé : prochaine facture n°'+n+' ✓');
+  if(view==='documents') renderDocuments();
+}
+
 async function nextDocNumero(type){
   const prefix = type==='devis' ? 'DEV' : 'FAC';
   const year = new Date().getFullYear();
@@ -3897,6 +3951,21 @@ async function renderDocuments(){
    <div style="display:flex;gap:8px;margin-bottom:14px">
      <button class="btn gold" onclick="docNewDevis()">+ Nouveau devis</button>
    </div>
+   ${(()=>{
+     const nbDef=factures.filter(f=>docEstDefinitif(f)).length;
+     if(nbDef===0){
+       return `<div class="panel" style="background:#f8f5ef;border:1px dashed #d8c9a8;margin-bottom:12px">
+         <div style="font-size:.82rem;color:#7a6a60">🔢 Prochaine facture : <b>${esc(peekFactureNumero())}</b>. Tant qu'aucune facture n'est validée, tu peux régler le point de départ du compteur.</div>
+         <button class="btn ghost sm" style="margin-top:8px" onclick="factCounterReset()">Régler le compteur de factures</button>
+       </div>`;
+     }
+     // Des factures définitives existent : numérotation verrouillée. Purge de test possible
+     // seulement si tu n'as pas encore envoyé de vraie facture.
+     return `<div class="panel" style="background:#f8f5ef;border:1px dashed #d8c9a8;margin-bottom:12px">
+       <div style="font-size:.82rem;color:#7a6a60">🔒 Numérotation verrouillée (continuité légale). Prochaine facture : <b>${esc(peekFactureNumero())}</b>.</div>
+       <button class="btn ghost sm" style="margin-top:8px;color:#b3261e" onclick="factCounterReset()">Effacer des factures de test (avant 1re vraie facture)</button>
+     </div>`;
+   })()}
 
    <div class="panel">
      <h2>📝 Devis ${devis.length?`<span style="color:#9a8a82;font-size:.8rem;font-weight:400">(${devis.length})</span>`:''}</h2>
@@ -24406,9 +24475,10 @@ async function genererFactureMultiple(ids){
     : (clientIds.length>1 ? 'Clients multiples' : 'Client de passage');
 
   // Numéro de facture groupée : basé sur la 1re et dernière commande
-  const numFact = orders.length===1
-    ? orderNumber(orders[0])
-    : `${orderNumber(orders[0])} → ${orderNumber(orders[orders.length-1])}`;
+  // Sur le BROUILLON, on n'affiche pas un numéro légal (il n'est attribué qu'à la validation).
+  // On montre le prochain numéro PRÉVU, clairement marqué « (brouillon) » pour éviter toute
+  // confusion avec un numéro définitif.
+  const numFact = `${peekFactureNumero()} (brouillon)`;
 
   const factureHtml = `<!doctype html><html lang="fr"><head><meta charset="utf-8">
    <meta name="viewport" content="width=device-width, initial-scale=1">
