@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v645';
+const APP_VERSION = 'v646';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -11960,7 +11960,10 @@ async function stockParfumDetail(nom){
 // Stock fini disponible AGRÉGÉ PAR PARFUM (sans se soucier des lots).
 // Retourne [{parfum, dispo, recipeId, batches:[{id,qteRestante,date}]}] trié par parfum.
 async function stockFiniParParfum(){
-  const prods=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0);
+  // Ne compter QUE les produits finis VENDABLES (macarons complets/assemblés). On exclut les
+  // sous-lots coques, ganache et crémeux (non finis) et les lots de dégustation (offerts, non
+  // vendables) : sinon le stock « embarquable » au marché est gonflé par des composants.
+  const prods=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0 && prodVendable(p));
   const recipes=await db.recipes.toArray();
   const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'(parfum ?)';
   const byParfum={};
