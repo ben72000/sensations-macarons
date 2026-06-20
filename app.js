@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v643';
+const APP_VERSION = 'v645';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1286,7 +1286,7 @@ let view='dash';
 const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
-  productions:renderProductions, couts:renderCosts, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
+  productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
   tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
@@ -3468,12 +3468,17 @@ function assemblySuggestions(prods, recName){
   if(!coques.length || !ganaches.length) return [];
   const out=[];
   for(const c of coques){
-    // cherche une ganache : même lotBase d'abord, puis même recette, puis n'importe laquelle
+    // RÈGLE : un assemblage VENDABLE n'associe QUE le même parfum (ou le même lot de base).
+    // Marier deux parfums différents ne donne pas un macaron vendable cohérent — ce cas est
+    // réservé à la dégustation (voir degustationSuggestions). On EXCLUT donc les parfums différents.
     const score = g => {
       const dispo = g.mac - g.used; if(dispo<=0) return -1;
+      const memeBase = !!(c.p.lotBase && g.p.lotBase && c.p.lotBase===g.p.lotBase);
+      const memeParfum = c.p.recipeId===g.p.recipeId;
+      if(!memeBase && !memeParfum) return -1;   // parfum différent → pas d'assemblage vendable
       let s=0;
-      if(c.p.lotBase && g.p.lotBase && c.p.lotBase===g.p.lotBase) s+=100;
-      if(c.p.recipeId===g.p.recipeId) s+=10;
+      if(memeBase) s+=100;
+      if(memeParfum) s+=10;
       return s;
     };
     let best=null, bestS=-1;
@@ -7618,6 +7623,107 @@ function prixCourant(materialId, lots){
 function coutRecette(recipeId, items, lots){
   return items.filter(it=>it.recipeId===recipeId)
     .reduce((s,it)=>s + it.qteParBatch * prixCourant(it.materialId, lots), 0);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+//  AUDIT DES COÛTS DE REVIENT — Vérifie que les coûts matière sont justes.
+//  Détaille chaque recette ingrédient par ingrédient et lève des alertes
+//  automatiques (matière sans prix, quantité incohérente avec l'unité kg,
+//  référence cassée). Sert à fiabiliser toute l'analyse de rentabilité.
+// ════════════════════════════════════════════════════════════════════════
+// Calcul pur (testable) : renvoie pour chaque recette le détail + les alertes.
+function auditRecipeCosts(recipes, recipeItems, mats, lots){
+  const matById = id => mats.find(m=>m.id===id);
+  const out = [];
+  for(const r of recipes){
+    const its = recipeItems.filter(it=>it.recipeId===r.id);
+    const lignes = [];
+    let coutBatch = 0;
+    const alertes = [];
+    for(const it of its){
+      const mat = matById(it.materialId);
+      const q = +it.qteParBatch||0;
+      if(!mat){
+        alertes.push({type:'matiere_manquante', grave:true, msg:`Ingrédient introuvable (id ${it.materialId}) — référence cassée.`});
+        lignes.push({nom:'(matière supprimée)', q, unite:'?', pu:0, cout:0, manquante:true});
+        continue;
+      }
+      const pu = prixCourant(it.materialId, lots);   // prix au kg (ou à l'unité pour emballage)
+      const cout = q * pu;
+      coutBatch += cout;
+      const estEmb = (mat.categorie==='emballage');
+      const unite = mat.unite || (estEmb?'unité':'kg');
+      // Alerte prix manquant
+      if(pu<=0){ alertes.push({type:'sans_prix', grave:true, msg:`« ${mat.nom} » n'a aucun prix → comptée 0 € (coût sous-estimé).`}); }
+      // Alerte quantité incohérente avec l'unité kg : une denrée ≥ 5 kg/batch est suspecte
+      // (typiquement des grammes saisis comme des kg → coût ×1000).
+      if(!estEmb && unite==='kg' && q>=5){
+        alertes.push({type:'qte_suspecte', grave:true, msg:`« ${mat.nom} » : ${q} kg par batch — anormalement élevé. As-tu saisi des grammes au lieu de kg ? (0,150 = 150 g)`});
+      }
+      lignes.push({nom:mat.nom, q, unite, pu, cout, estEmb});
+    }
+    // part de chaque ligne dans le coût (pour repérer un poste dominant)
+    lignes.forEach(l=> l.part = coutBatch>0 ? l.cout/coutBatch : 0);
+    const rendement = +r.rendement||0;
+    const coutUnit = rendement>0 ? coutBatch/rendement : 0;
+    // Alerte coût unitaire aberrant (un macaron qui coûterait > 2 € de matière est douteux)
+    if(coutUnit>2){ alertes.push({type:'cout_aberrant', grave:true, msg:`Coût matière ${euro(coutUnit)}/pièce — anormalement haut, vérifie les quantités et unités.`}); }
+    if(rendement<=0){ alertes.push({type:'sans_rendement', grave:false, msg:`Rendement non renseigné → impossible de calculer le coût par pièce.`}); }
+    out.push({recipe:r, lignes, coutBatch, coutUnit, rendement, alertes});
+  }
+  return out;
+}
+
+async function renderCostAudit(){
+  const [recipes, recipeItems, mats, lots] = await Promise.all([
+    db.recipes.toArray(), db.recipeItems.toArray(), db.materials.toArray(), db.materialLots.toArray()
+  ]);
+  const audit = auditRecipeCosts(recipes, recipeItems, mats, lots);
+  // Tri : recettes avec alertes graves en premier
+  audit.sort((a,b)=>{
+    const ga=a.alertes.filter(x=>x.grave).length, gb=b.alertes.filter(x=>x.grave).length;
+    if(ga!==gb) return gb-ga;
+    return (a.recipe.produitNom||'').localeCompare(b.recipe.produitNom||'');
+  });
+  const totalAlertes = audit.reduce((s,a)=>s+a.alertes.filter(x=>x.grave).length,0);
+  const sansPrix = new Set();
+  audit.forEach(a=>a.alertes.forEach(al=>{ if(al.type==='sans_prix') sansPrix.add(al.msg); }));
+
+  const cards = audit.map(a=>{
+    const r=a.recipe;
+    const graves=a.alertes.filter(x=>x.grave);
+    const borderCol = graves.length ? '#b3261e' : '#cfe3d4';
+    const alertHtml = a.alertes.length ? a.alertes.map(al=>`<div style="font-size:.8rem;color:${al.grave?'#b3261e':'#8a6d3b'};padding:3px 0">${al.grave?'⚠':'ℹ️'} ${esc(al.msg)}</div>`).join('') : '';
+    // lignes ingrédients, la plus chère en premier
+    const lignesSorted=[...a.lignes].sort((x,y)=>y.cout-x.cout);
+    const lignesHtml = lignesSorted.map(l=>{
+      const partPct=Math.round((l.part||0)*100);
+      const col = l.manquante||l.pu<=0 ? '#b3261e' : (partPct>=40?'#8a6d3b':'#5a4a42');
+      return `<div style="display:flex;justify-content:space-between;font-size:.82rem;padding:2px 0;color:${col}">
+        <span>${esc(l.nom)} <span style="color:#9a8a82">(${qty(l.q)} ${esc(l.unite)} × ${euro(l.pu)})</span></span>
+        <b>${euro(l.cout)} <span style="color:#9a8a82;font-weight:400">${partPct}%</span></b></div>`;
+    }).join('');
+    return `<div style="background:#fff;border:1px solid var(--hair);border-left:4px solid ${borderCol};border-radius:14px;padding:13px 15px;box-shadow:var(--sh-1);margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <b style="color:var(--bordeaux)">${esc(r.produitNom||'(recette)')}</b>
+        <span style="font-size:.82rem;color:#7a6a60">${a.rendement?`${euro(a.coutUnit)}/pièce`:'—'}</span>
+      </div>
+      ${alertHtml?`<div style="margin-bottom:6px">${alertHtml}</div>`:''}
+      ${lignesHtml||'<p class="note">Aucun ingrédient renseigné.</p>'}
+      <div style="display:flex;justify-content:space-between;border-top:1px solid #eee;margin-top:5px;padding-top:5px;font-size:.84rem">
+        <span>Coût matière / batch (${a.rendement||'?'} pièces)</span><b>${euro(a.coutBatch)}</b></div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('main').innerHTML = `
+   <div class="topbar"><div><h1>Audit des coûts</h1><p>Vérifie que tes coûts de revient sont justes</p></div></div>
+   ${totalAlertes>0
+     ? `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⚠ <b>${totalAlertes} anomalie(s)</b> détectée(s) qui faussent tes coûts de revient. Corrige-les pour fiabiliser ta rentabilité (et ton étude imprimante).</div></div>`
+     : `<div class="banner" style="background:#eef6ee;border-color:#bcd9c2"><div>✅ Aucune anomalie majeure : tes coûts de revient semblent fiables.</div></div>`}
+   ${sansPrix.size>0?`<div class="panel"><h2 style="color:#b3261e">Matières sans prix</h2><p class="note">Ces matières comptent pour 0 € et sous-estiment tes coûts. Réceptionne un lot avec prix, ou renseigne un prix indicatif.</p>${[...sansPrix].map(m=>`<div style="font-size:.84rem;padding:3px 0">⚠ ${esc(m)}</div>`).join('')}</div>`:''}
+   <div style="margin-top:10px">${cards||'<div class="empty">Aucune recette à auditer.</div>'}</div>
+   <p class="note" style="margin-top:10px">Rappel : les denrées sont en <b>kg</b>. Un ingrédient de 150 g se saisit <b>0,150</b> dans la recette. Saisir « 150 » multiplierait son coût par 1000.</p>`;
 }
 
 async function renderCosts(){
