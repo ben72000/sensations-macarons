@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v647';
+const APP_VERSION = 'v648';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9307,6 +9307,76 @@ function cmdToggleTag(key){
   cmdFilter(cmdSearch);
 }
 function cmdClearTags(){ cmdTags.clear(); _cmdRenderTagBar(); cmdFilter(cmdSearch); }
+
+// ════════════════════════════════════════════════════════════════════════
+//  RÉCAP MACARONS PAR PARFUM SUR UNE PÉRIODE (écran Commandes)
+//  Compte les macarons commandés par parfum entre deux dates (filtre sur la
+//  date d'événement/livraison), avec un sélecteur de statut. Aide à anticiper
+//  la production et repérer les parfums qui tournent.
+// ════════════════════════════════════════════════════════════════════════
+let _cmdPeriodOpen = false;
+function cmdPeriodToggle(){
+  _cmdPeriodOpen = !_cmdPeriodOpen;
+  const z=document.getElementById('cmdPeriodBox');
+  if(z) z.style.display = _cmdPeriodOpen ? 'block' : 'none';
+  if(_cmdPeriodOpen && !document.getElementById('cmdPeriodResult').dataset.done){ cmdPeriodCompute(); }
+}
+// Date retenue pour le filtre : date d'événement si présente, sinon date de commande.
+function _orderRefDate(o){ return o.dateEvenement || o.date || ''; }
+async function cmdPeriodCompute(){
+  const d1 = (document.getElementById('cmdPeriodFrom')||{}).value || '';
+  const d2 = (document.getElementById('cmdPeriodTo')||{}).value || '';
+  const stFilter = (document.getElementById('cmdPeriodStatut')||{}).value || 'tous';
+  const res = document.getElementById('cmdPeriodResult');
+  if(!res) return;
+  const orders = (await db.orders.toArray()).filter(o=>!o.histo);
+  // filtre période (sur date d'événement/livraison) + statut
+  const inRange = orders.filter(o=>{
+    const dt=_orderRefDate(o); if(!dt) return false;
+    if(d1 && dt<d1) return false;
+    if(d2 && dt>d2) return false;
+    if(stFilter!=='tous' && normStatus(o.statut)!==stFilter) return false;
+    return true;
+  });
+  // agrégation par parfum
+  const parParfum={}; let totalMac=0; let nbCmd=0;
+  inRange.forEach(o=>{
+    let dem={}; try{ dem=_orderParfumDemand(o)||{}; }catch(e){ dem={}; }
+    let cmdHasMac=false;
+    Object.entries(dem).forEach(([nom,q])=>{ if(+q>0){ parParfum[nom]=(parParfum[nom]||0)+(+q); totalMac+=(+q); cmdHasMac=true; } });
+    if(cmdHasMac) nbCmd++;
+  });
+  const lignes = Object.entries(parParfum).sort((a,b)=>b[1]-a[1]);
+  // libellé période lisible
+  const fmtP = s => s ? fmtDate(s) : '…';
+  const periodeLbl = `${fmtP(d1)} → ${fmtP(d2)}`;
+  if(!lignes.length){
+    res.innerHTML = `<p class="note" style="margin-top:8px">Aucun macaron commandé sur cette période (${esc(periodeLbl)})${stFilter!=='tous'?` au statut « ${esc(stFilter)} »`:''}.</p>`;
+    res.dataset.done='1'; return;
+  }
+  const maxQ = lignes[0][1];
+  const rows = lignes.map(([nom,q])=>{
+    const pct = totalMac>0 ? Math.round(q/totalMac*100) : 0;
+    const barW = maxQ>0 ? Math.round(q/maxQ*100) : 0;
+    return `<div style="margin:6px 0">
+      <div style="display:flex;justify-content:space-between;font-size:.86rem">
+        <span style="color:#5a4a42">${esc(nom)}</span>
+        <b style="color:var(--bordeaux)">${qty(q)} <span style="color:#9a8a82;font-weight:400">· ${pct}%</span></b></div>
+      <div style="height:7px;background:#f0e9de;border-radius:4px;overflow:hidden;margin-top:2px">
+        <div style="height:100%;width:${barW}%;background:#AA7C39;border-radius:4px"></div></div>
+    </div>`;
+  }).join('');
+  res.innerHTML = `
+    <div style="display:flex;justify-content:space-between;border-bottom:1px solid #e8dccd;padding-bottom:6px;margin:8px 0">
+      <span style="font-size:.82rem;color:#7a6a60">${esc(periodeLbl)}${stFilter!=='tous'?` · ${esc(stFilter)}`:''}</span>
+      <span style="font-size:.82rem;color:#7a6a60">${nbCmd} commande(s)</span>
+    </div>
+    ${rows}
+    <div style="display:flex;justify-content:space-between;border-top:2px solid #e8dccd;margin-top:8px;padding-top:6px">
+      <b>Total macarons</b><b style="color:var(--bordeaux);font-size:1.05rem">${qty(totalMac)}</b></div>`;
+  res.dataset.done='1';
+}
+
 async function renderCmd(){
   _cmdSel = new Set();   // sélection réinitialisée à chaque ouverture de l'écran
   cmdTags = new Set();   // filtres par tags réinitialisés à chaque ouverture
@@ -9360,6 +9430,24 @@ async function renderCmd(){
    <div class="topbar"><div><h1>Commandes</h1><p id="cmdCount">${orders.length} commande(s)</p></div>
      <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="factEmetteurForm()" title="Coordonnées de facturation">🧾 Facturation</button><button class="btn ghost sm" onclick="togglePrivacyMode()" title="Masquer/afficher les données sensibles">${privacyModeEnabled()?'👁️ Afficher':'🙈 Mode discret'}</button>
      <button class="btn" onclick="cmdForm()">+ Nouvelle commande</button></div></div>
+   <div class="panel" style="background:#fffdf8;border:1px solid #e8dcc0">
+     <button class="btn ghost sm" style="width:100%;text-align:left" onclick="cmdPeriodToggle()">📊 Total macarons par parfum sur une période ▾</button>
+     <div id="cmdPeriodBox" style="display:none;margin-top:10px">
+       <div class="row2">
+         <div class="field"><label>Du</label><input type="date" id="cmdPeriodFrom" onchange="cmdPeriodCompute()"></div>
+         <div class="field"><label>Au</label><input type="date" id="cmdPeriodTo" onchange="cmdPeriodCompute()"></div>
+       </div>
+       <div class="field"><label>Statut des commandes</label>
+         <select id="cmdPeriodStatut" onchange="cmdPeriodCompute()">
+           <option value="tous">Toutes</option>
+           <option value="À préparer">À préparer (pas encore prêtes)</option>
+           <option value="Terminée">Terminées (prêtes, pas livrées)</option>
+           <option value="Livrée">Livrées</option>
+         </select></div>
+       <p class="note">Filtre sur la date d'événement/livraison. Compte les macarons commandés par parfum.</p>
+       <div id="cmdPeriodResult"></div>
+     </div>
+   </div>
    <div class="panel">
      <input class="search" id="cmdSearch" style="width:100%;margin-bottom:12px" placeholder="N° commande, client, produit, parfum, mois, statut (prête/livrée), payé, remise…" value="${esc(cmdSearch)}" oninput="cmdFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
      <div id="cmdTagBar" class="cmd-tagbar"></div>
