@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v648';
+const APP_VERSION = 'v649';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -9877,6 +9877,34 @@ async function cmdView(id){
   }).join('');
   openModal(`<h3>Détail commande</h3>
     <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientForm(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</p>
+    ${(function(){
+      // Encart paiement EN HAUT, bien visible : statut + date(s) et moyen(s) au premier coup d'œil.
+      const st=orderPayStatus(o), solde=orderBalance(o), enc=orderPaid(o);
+      const col=st==='Payé'?'#3f7d52':(st==='Partiel'?'#d98324':'#b3261e');
+      const bg =st==='Payé'?'#eef6ee':(st==='Partiel'?'#fdf3e7':'#fdf2f1');
+      // Ligne détail bien lisible : « 📅 12 mai 2026  ·  💳 Espèces … montant »
+      const ligne = p => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px dashed ${col}33">
+        <span style="font-size:.92rem;color:#3a2a22">📅 <b>${fmtDate(p.date)||'date ?'}</b> &nbsp;·&nbsp; 💳 <b>${esc(p.moyen||'moyen ?')}</b></span>
+        <b style="font-size:.95rem;color:${col}">${euro(p.montant)}</b></div>`;
+      let detail='';
+      if(o.paiements&&o.paiements.length){
+        detail = o.paiements.map(ligne).join('');
+      } else if(o.paiement==='Payé'){
+        detail = ligne({date:o.datePaiement, moyen:o.reglement, montant:o.montant});
+      } else {
+        detail = `<div style="font-size:.9rem;color:#b3261e;padding-top:6px;font-weight:600">⚠ Aucun encaissement enregistré</div>`;
+      }
+      return `<div style="border:2px solid ${col};background:${bg};border-radius:14px;padding:12px 14px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-weight:800;color:var(--bordeaux);font-size:1.05rem">💰 Paiement</span>
+          <span class="tag" style="background:${col};color:#fff;font-size:.8rem;padding:3px 10px">${st}</span>
+        </div>
+        ${detail}
+        <div style="display:flex;justify-content:space-between;border-top:2px solid ${col}55;margin-top:6px;padding-top:6px;font-size:.9rem">
+          <span>Encaissé</span><b style="color:${col}">${euro(enc)}</b></div>
+        ${solde>0.009?`<div style="display:flex;justify-content:space-between;font-size:.9rem;padding-top:2px"><span><b>Reste à encaisser</b></span><b style="color:#b3261e">${euro(solde)}</b></div>`:''}
+      </div>`;
+    })()}
     ${o.lieuLivraison?`<div class="sum-box"><span>📍 Livraison</span><b>${esc(o.lieuLivraison)}</b></div>`:''}
     ${blocks||'<p class="note">Aucun produit.</p>'}
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${+o.persoMacarons>0?`${o.persoMacarons} macaron(s) · +${euro(money2(o.persoMacarons*0.25))}`:(o.perso?'Oui':'Non')}</b></div>
