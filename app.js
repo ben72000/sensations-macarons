@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v654';
+const APP_VERSION = 'v656';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6052,11 +6052,13 @@ async function prodTermineConfirm(id){
   await db.productions.update(id, patch);
   closeModal(); renderProductions();
   toast(`Production terminée ✓ · ${empLettre(dest)}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
-  // [ÉTAPE 1] Si un chrono d'atelier est rattaché à ce batch, demander à le fermer ou le poursuivre.
+  // [TEMPS PAR RECETTE] Si une tâche d'atelier est rattachée à ce batch, demander à l'arrêter ou la poursuivre.
   try{
-    const _rec = await db.recipes.get(p.recipeId);
-    ttPromptOnBatchEnd(p.recipeId, p.lotBase||'', _rec?_rec.produitNom:'');
-  }catch(e){ console.error('chrono fin batch', e); }
+    if(p.atelierTaskId){
+      const _rec = await db.recipes.get(p.recipeId);
+      prodPromptBatchTaskEnd(p.atelierTaskId, _rec?_rec.produitNom:'');
+    }
+  }catch(e){ console.error('atelier fin batch', e); }
 }
 
 // ====== ASSEMBLAGE coques + ganache → macaron assemblé (vendable) ======
@@ -6787,13 +6789,15 @@ async function saveProd(){
     ];
     try{
       for(const L of lance){
-        await enregistrerProduction(
+        const prodId = await enregistrerProduction(
           L.rid, L.q*COQUES_PAR_MACARON, L.q*COQUES_PAR_MACARON, dateD, L.lot, '', '',
           { composant:'coques', lotBase:L.base, facteurQte:L.q, meringueBatchId }
         );
-        // [ÉTAPE 1] Chrono d'atelier rattaché à chaque parfum de la meringue commune.
-        try{ ttStartForBatch({recipeId:L.rid, composant:'coques', lotBase:L.base, parfumNom:L.nom}); }
-        catch(e){ console.error('chrono meringue', e); }
+        // [TEMPS PAR RECETTE] Tâche d'atelier liée à chaque parfum de la meringue commune.
+        try{
+          const taskId = prodTaskStartForBatch({recipeId:L.rid, composant:'coques', lotBase:L.base, parfumNom:L.nom});
+          if(prodId!=null && taskId) await db.productions.update(prodId, {atelierTaskId:taskId});
+        }catch(e){ console.error('atelier meringue', e); }
       }
     }catch(err){
       console.error('saveProd duo', err);
@@ -6849,17 +6853,18 @@ async function saveProd(){
     facteurQte = qteTheorique;   // matières basées sur les macarons (pas les coques)
   }
   try{
-    await enregistrerProduction(recipeId, qTh, qRe, date, lot, '', '',
+    const prodId = await enregistrerProduction(recipeId, qTh, qRe, date, lot, '', '',
       {composant, lotBase:cleanBase, facteurQte, garnitureType:garnType||undefined});
+    // [TEMPS PAR RECETTE] Démarre une tâche d'ATELIER liée à ce batch (porte le recipeId).
+    try{
+      const _rec = await db.recipes.get(recipeId);
+      const taskId = prodTaskStartForBatch({recipeId, composant, lotBase:cleanBase, parfumNom:_rec?_rec.produitNom:''});
+      if(prodId!=null && taskId) await db.productions.update(prodId, {atelierTaskId:taskId});
+    }catch(e){ console.error('atelier batch', e); }
     renderProductions();
     const lbl = composant==='coques'?'Coques':composant==='ganache'?(garnType==='cremeux'?'Crémeux':'Ganache'):'Production';
     const extra = composant==='coques'?` (${qty(qTh)} coques pour ${qty(qteTheorique)} macarons)`:'';
     toast(`${lbl} démarrée ✓${extra}`);
-    // [ÉTAPE 1] Démarre automatiquement le chrono d'atelier rattaché à ce batch (temps par recette).
-    try{
-      const _rec = await db.recipes.get(recipeId);
-      ttStartForBatch({recipeId, composant, lotBase:cleanBase, parfumNom:_rec?_rec.produitNom:''});
-    }catch(e){ console.error('chrono batch', e); }
     // Affiche aussitôt la fiche recette recalculée aux quantités du batch, pour produire.
     await ficheRecetteProduction(recipeId, facteurQte, composant, lot);
   }catch(err){
@@ -25550,6 +25555,31 @@ function prodTaskStart(label){
   prodStartTicking();
   return t;
 }
+// [TEMPS PAR RECETTE] Démarre une tâche d'ATELIER (prodSessions) rattachée à un batch de
+// production. La tâche porte `parfums:[recipeId]`, ce que prodTempsParParfum() lit pour répartir
+// le temps réel par recette. Le label reprend le composant + le parfum (ex. « Coques — Chocolat »).
+// Une session d'atelier est ouverte automatiquement si aucune n'est active. Renvoie l'id de tâche
+// (mémorisé sur la production pour pouvoir l'arrêter à la fin du batch).
+function prodTaskStartForBatch(meta){
+  meta = meta || {};
+  const compLbl = ({coques:'Coques', ganache:'Ganache', cremeux:'Crémeux', assemble:'Assemblage', complet:'Production'})[meta.composant] || 'Production';
+  const label = meta.parfumNom ? `${compLbl} — ${meta.parfumNom}` : compLbl;
+  // Phase d'atelier indicative selon le composant (réutilise la palette existante).
+  const phaseMap = {coques:'Macaronnage', ganache:'Garnissage', cremeux:'Garnissage', assemble:'Garnissage', complet:'Macaronnage'};
+  const phase = phaseMap[meta.composant] || 'Macaronnage';
+  const s = prodSessionStart();
+  const t = { id:prodNewId(), label, phase, color:'#aa7c39',
+              start:Date.now(), end:null, pausedAccum:0, pauseAt:null,
+              parfums: (meta.recipeId!=null ? [+meta.recipeId] : []),
+              composant: meta.composant||'complet',
+              lotBase: meta.lotBase||'',
+              fromBatch: true };
+  s.tasks = s.tasks||[]; s.tasks.push(t);
+  prodSessUpsert(s);
+  prodStartTicking();
+  if(typeof prodRenderBoard==='function') prodRenderBoard();
+  return t.id;
+}
 // Pause / reprise d'une tâche (sans l'arrêter).
 function prodTaskPauseToggle(taskId){
   const s = prodSessActive(); if(!s) return;
@@ -25572,6 +25602,25 @@ function prodTaskStop(taskId){
   prodSessUpsert(s);
   if(!prodAnyRunning()) prodStopTicking();
   prodRenderBoard&&prodRenderBoard();
+}
+// [FIN DE BATCH] Appelé quand un batch passe en « terminé ». Si une tâche d'atelier lui est
+// rattachée (atelierTaskId) et tourne encore, on demande : la FERMER (fin du travail sur cette
+// recette) ou la POURSUIVRE (enchaînement, vaisselle… : le temps continue et sera réparti).
+// La SESSION d'atelier, elle, reste ouverte tant que tu ne la clôtures pas — c'est elle qui
+// porte le temps non distribué à répartir en fin de session.
+function prodPromptBatchTaskEnd(taskId, parfumNom){
+  const s = prodSessActive(); if(!s){ return; }
+  const t = (s.tasks||[]).find(x=>x.id===taskId);
+  if(!t || t.end) return;   // pas de tâche liée active : rien à demander
+  const ecoule = ttFormat(prodTaskNet(t));
+  const nom = parfumNom || t.label || 'cette recette';
+  openModal(`<h3>⏱ Chrono atelier — ${esc(nom)}</h3>
+    <div class="sum-box"><span>Temps écoulé sur cette tâche</span><b>${ecoule}</b></div>
+    <p class="note">Le batch est terminé. Veux-tu <b>arrêter</b> le chrono de cette recette, ou le <b>poursuivre</b> (tu enchaînes une autre recette, de la vaisselle, du nettoyage… : le temps continue et sera réparti en fin de session) ?<br>La session d'atelier, elle, reste ouverte dans tous les cas.</p>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+      <button class="btn ghost" onclick="closeModal();renderProductions()">▶ Poursuivre</button>
+      <button class="btn gold" onclick="prodTaskStop('${t.id}');closeModal();renderProductions();toast('Chrono de cette recette arrêté ✓')">⏹ Arrêter cette recette</button>
+    </div>`);
 }
 // ÉDITION DU TEMPS d'une tâche de la SESSION ACTIVE (en cours ou terminée).
 // Deux modes synchronisés : (A) durée nette directe en minutes, (B) heures début/fin réelles.
@@ -26762,51 +26811,6 @@ function ttStartWith(activite){
   ttUpsert({id, start:Date.now(), activite:activite||'', pausedAccum:0, pauseAt:0});
   closeModal(); ttRefresh(); ttStartTicking();
   toast(activite?`⏱ ${activite} démarré`:'Chrono démarré ⏱');
-}
-// [ÉTAPE 1 — CHRONO LIÉ À UN BATCH] Démarre automatiquement un chrono d'atelier rattaché à un
-// batch de production. Le chrono hérite de la recette (parfum), du composant (coques/ganache/…)
-// et du lot, ce qui permettra de calculer un temps réel PAR RECETTE. Un chrono lié porte les
-// champs supplémentaires recipeId / composant / lotBase / parfumNom (les chronos manuels ne les
-// ont pas, ce qui les distingue). Plusieurs chronos liés peuvent tourner en parallèle.
-function ttStartForBatch(meta){
-  meta = meta || {};
-  const id='ttb'+Date.now()+'-'+Math.floor(Math.random()*1000);
-  const compLbl = ({coques:'Coques', ganache:'Ganache', cremeux:'Crémeux', assemble:'Assemblage', complet:'Production'})[meta.composant] || 'Production';
-  const activite = (meta.parfumNom ? `${compLbl} — ${meta.parfumNom}` : compLbl);
-  ttUpsert({
-    id, start:Date.now(), activite, pausedAccum:0, pauseAt:0,
-    recipeId: meta.recipeId!=null ? +meta.recipeId : undefined,
-    composant: meta.composant || 'complet',
-    lotBase:   meta.lotBase || '',
-    parfumNom: meta.parfumNom || '',
-    fromBatch: true
-  });
-  ttRefresh(); ttStartTicking();
-  toast(`⏱ Chrono démarré · ${activite}`);
-  return id;
-}
-// Retrouve le(s) chrono(s) en cours rattaché(s) à un batch (même recette + même lot de base).
-function ttFindForBatch(recipeId, lotBase){
-  return ttLoad().filter(s=> s.fromBatch
-    && (recipeId==null || +s.recipeId===+recipeId)
-    && (!lotBase || s.lotBase===lotBase));
-}
-// [ÉTAPE 1] Appelé quand un batch est passé en « terminé ». Si un chrono lui est rattaché,
-// demande s'il faut le FERMER (fin de session pour cette recette) ou le POURSUIVRE (enchaînement
-// d'une autre recette, vaisselle, nettoyage… : le temps continue de courir et sera réparti).
-function ttPromptOnBatchEnd(recipeId, lotBase, parfumNom){
-  const chronos = ttFindForBatch(recipeId, lotBase);
-  if(!chronos.length) return;            // aucun chrono lié : rien à demander
-  const c = chronos[0];
-  const ecoule = ttFormat(ttSessionNet(c));
-  const nom = parfumNom || c.parfumNom || c.activite || 'cette recette';
-  openModal(`<h3>⏱ Chrono de « ${esc(nom)} »</h3>
-    <div class="sum-box"><span>Temps écoulé sur ce chrono</span><b>${ecoule}</b></div>
-    <p class="note">Le batch est terminé. Veux-tu <b>fermer</b> ce chrono (fin du travail sur cette recette) ou le <b>poursuivre</b> (tu enchaînes une autre recette, de la vaisselle, du nettoyage… : le temps continue et sera réparti) ?</p>
-    <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
-      <button class="btn ghost" onclick="closeModal();renderProductions()">▶ Poursuivre le chrono</button>
-      <button class="btn gold" onclick="closeModal();ttStop('${c.id}')">⏹ Fermer le chrono</button>
-    </div>`);
 }
 // Saisie d'une précision pour l'activité « Autre ».
 function ttStartAutre(){
