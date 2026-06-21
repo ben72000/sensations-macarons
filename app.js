@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v656';
+const APP_VERSION = 'v658';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4766,7 +4766,7 @@ function _prodbatRowInner(row){
        <button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button>
        <button class="qa" onclick="shareLabelImage(${p.id})" title="Image d'étiquette à partager vers Phomemo">📤 Phomemo</button>
        <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Tracer</button>
-       ${p.recipeId?`<button class="qa" onclick="recForm(${p.recipeId})" title="Voir / modifier la recette de ce parfum (mode opératoire inclus)">📖 Recette</button>`:''}
+       ${p.recipeId?`<button class="qa" onclick="ficheRecetteProductionFromBatch(${p.id})" title="Voir la fiche de production : grammages recalculés + mode opératoire, consultable pendant la production">📋 Fiche & protocole</button>`:''}
        <button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button>
      </div>
      </div>
@@ -6676,6 +6676,11 @@ function prodSyncTheorique(){
 // (qteParBatch × facteur) et convertit kg→g pour l'affichage, comme la fiche recette.
 async function prodApercuGarniture(){
   const zone=document.getElementById('f_garnitureApercu'); if(!zone) return;
+  // GARDE-FOU : cet aperçu n'a de sens qu'en mode « garniture séparée ». Hors de ce mode, on ne
+  // l'affiche jamais (sinon le tableau « Ingrédients — Chantache » restait collé en haut quand on
+  // revenait en mode normal, le select gardant sa valeur).
+  const _mode=document.getElementById('f_mode')?.value||'complet';
+  if(_mode!=='garniture'){ zone.style.display='none'; zone.innerHTML=''; return; }
   const cid=+val('f_garnitureSel');
   if(!cid){ zone.style.display='none'; zone.innerHTML=''; return; }
   try{
@@ -6919,10 +6924,23 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
     ${instructionsVoletHtml(rec.instructions, 'prod'+recipeId)}
     <p class="note" style="margin-top:10px">La production est <b>démarrée</b>. Tu choisiras l'emplacement de rangement à la fin (✓ Terminer dans la liste).</p>
     <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
-      <button class="btn ghost" onclick="closeModal();recForm(${recipeId})" title="Voir / modifier la recette complète">📖 Recette</button>
-      <button class="btn ghost" onclick="closeModal();goView('productions')" title="Aller à la liste des productions">🏭 Productions</button>
-      <button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button>
+      <button class="btn ghost" onclick="closeModal();recForm(${recipeId})" title="Voir / modifier la recette complète">📖 Modifier la recette</button>
+      <button class="btn gold" onclick="closeModal()" title="Fermer et revenir à la production">↩ Revenir à la production</button>
     </div>`);
+}
+// [CONSULTATION PENDANT LA PRODUCTION] Rouvre la fiche de production (grammages recalculés +
+// mode opératoire) d'un batch DÉJÀ lancé, à partir de son id. Permet de consulter le détail
+// pendant qu'on produit, sans repasser par les fiches recettes. Reconstitue le nombre de
+// macarons selon le composant (les coques sont stockées en nombre de coques).
+async function ficheRecetteProductionFromBatch(prodId){
+  const p = await db.productions.get(prodId);
+  if(!p){ toast('Production introuvable'); return; }
+  if(p.libre || p.recipeId==null){ toast('Production libre : pas de fiche recette associée'); return; }
+  const comp = prodComposant(p);
+  // qteTheorique des coques est en COQUES → on revient au nombre de macarons pour la fiche.
+  let nbMac = +p.qteTheorique || +p.qteProduite || 0;
+  if(comp==='coques') nbMac = nbMac / COQUES_PAR_MACARON;
+  await ficheRecetteProduction(p.recipeId, nbMac, comp, p.lotProduction||'');
 }
 // [DUO] Fiche de production d'une MERINGUE COMMUNE (2 parfums), affichée après le lancement.
 // Présentation alignée sur ficheRecetteProduction. La poudre d'amande et le sucre glace (tant
