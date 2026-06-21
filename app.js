@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v650';
+const APP_VERSION = 'v653';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -916,6 +916,17 @@ function flavorCode(nom){
   const lettres = (nom||'').toUpperCase().replace(/[^A-Z]/g,'').replace(/[ILO]/g,'');
   return lettres.slice(0,3) || 'XXX';
 }
+// Variante tenant compte du GRAND FORMAT : ajoute le suffixe 'GF' au code parfum pour que les
+// lots et regroupements distinguent un grand format de son équivalent classique (ex. CHL → CHLGF).
+// La distinction vient de la case `grandFormat` de la recette, jamais du nom (peu fiable).
+function flavorCodeFor(nom, isGF){
+  const base = flavorCode(nom);
+  return isGF ? (base + 'GF') : base;
+}
+// Idem à partir d'un objet recette.
+function flavorCodeRec(rec){
+  return rec ? flavorCodeFor(rec.produitNom||'', !!rec.grandFormat) : 'XXX';
+}
 // Retrouve la recette correspondant à un nom de parfum (même logique que matchRecipe interne).
 // Sert notamment aux étiquettes pour savoir si un parfum est grand format.
 function recipeForFlavorName(nom, recipes){
@@ -945,10 +956,10 @@ function lotDateJJMMAA(d){
 // Construit le numéro de lot : JJMMAA + CODE (+ numéro si doublon du jour).
 // Le 1er lot du jour pour ce parfum n'a pas de numéro ; les suivants : 2, 3, …
 // existants = liste des lotBase déjà utilisés ce jour pour CE parfum (pour calculer le rang).
-function buildLotBase(nomProduit, dateStr, existantsMemeJourMemeParfum){
-  const code = flavorCode(nomProduit);
+function buildLotBase(nomProduit, dateStr, existantsMemeJourMemeParfum, isGF){
+  const code = flavorCodeFor(nomProduit, !!isGF);
   const datePart = lotDateJJMMAA(dateStr);
-  const racine = datePart + code;           // ex : 180824CAR
+  const racine = datePart + code;           // ex : 180824CAR (ou 180824CHLGF pour un grand format)
   const dejaCount = (existantsMemeJourMemeParfum||[]).length;
   if(dejaCount<=0) return racine;           // 1er lot : sans numéro
   return racine + (dejaCount+1);            // 2e lot → CAR2, 3e → CAR3, …
@@ -3368,7 +3379,7 @@ function drawBom(){
       ? `<span style="font-size:.66rem;color:var(--red,#b3261e);font-weight:600" title="Deux lignes de la même matière sur la même phase : fusionne-les ou change la phase">⚠ doublon ${part==='coque'?'coque':'ganache'}</span>`
       : (multi ? `<span style="font-size:.66rem;color:#9a8a82" title="Cette matière est répartie sur plusieurs phases (ex. eau coque + eau ganache) — c'est normal">↔ ${countMat[b.materialId]} lignes</span>` : '');
     return `
-    <div class="bom-line">
+    <div class="bom-line" data-bomidx="${i}">
       <select onchange="bomSetMat(${i}, +this.value)">
         ${mats.slice().sort((a,b)=>(a.nom||'').localeCompare(b.nom||'','fr',{sensitivity:'base'})).map(m=>`<option value="${m.id}" ${b.materialId===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (saisie en ${bomDisplay(m.id).unit})</option>`).join('')}
       </select>
@@ -3381,8 +3392,54 @@ function drawBom(){
         <option value="cremeux" ${part==='cremeux'?'selected':''}>🟠 Crémeux</option>
       </select>
       <input type="text" class="bom-etiq" value="${esc(b.etiquette||'')}" oninput="bomSetEtiq(${i}, this.value)" placeholder="note (ex : chaude)" title="Étiquette libre, purement informative — sans effet sur le stock" maxlength="24">
+      <span class="bom-drag" title="Glisser pour réordonner" style="cursor:grab;touch-action:none;user-select:none;padding:4px 6px;color:#9a8a82;font-size:1.1rem">☰</span>
       <span class="x" onclick="bomDel(${i})">×</span>
     </div>`; }).join('') || '<p class="note">Aucune matière ajoutée.</p>';
+  bomEnableDrag();
+}
+// [RÉORDONNANCEMENT TACTILE DU BOM] Glisser-déposer au doigt via la poignée ☰.
+// Implémentation touch maison (le drag HTML5 est peu fiable sur iOS). On déplace la ligne
+// selon le doigt, et au relâcher on réinsère bomDraft à la nouvelle position, puis on redessine.
+function bomEnableDrag(){
+  const list=document.getElementById('bomList'); if(!list) return;
+  list.querySelectorAll('.bom-drag').forEach(handle=>{
+    const start = ev=>{
+      ev.preventDefault();
+      const line = handle.closest('.bom-line'); if(!line) return;
+      const lines = Array.from(list.querySelectorAll('.bom-line'));
+      const fromIdx = +line.getAttribute('data-bomidx');
+      line.style.opacity='0.6'; line.style.background='#faf6ee';
+      const moveY = y=>{
+        // trouve la ligne sous le doigt et insère visuellement avant/après
+        for(const other of lines){
+          if(other===line) continue;
+          const r=other.getBoundingClientRect();
+          if(y>=r.top && y<=r.bottom){
+            const milieu=r.top+r.height/2;
+            if(y<milieu) list.insertBefore(line, other);
+            else list.insertBefore(line, other.nextSibling);
+            break;
+          }
+        }
+      };
+      const onMove = e=>{ const y=(e.touches?e.touches[0]:e).clientY; moveY(y); };
+      const onEnd = ()=>{
+        document.removeEventListener('touchmove',onMove); document.removeEventListener('touchend',onEnd);
+        document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onEnd);
+        line.style.opacity=''; line.style.background='';
+        // ordre final d'après le DOM → réordonne bomDraft
+        const order=Array.from(list.querySelectorAll('.bom-line')).map(el=>+el.getAttribute('data-bomidx'));
+        const moved = order.map(idx=>bomDraft[idx]);
+        if(moved.every(x=>x)){ bomDraft = moved; drawBom(); }
+      };
+      document.addEventListener('touchmove',onMove,{passive:false});
+      document.addEventListener('touchend',onEnd);
+      document.addEventListener('mousemove',onMove);
+      document.addEventListener('mouseup',onEnd);
+    };
+    handle.addEventListener('touchstart', start, {passive:false});
+    handle.addEventListener('mousedown', start);
+  });
 }
 // Étiquette un ingrédient comme servant aux coques ou à la ganache (évite le double
 // comptage lors d'une production par composants séparés).
@@ -4281,6 +4338,8 @@ async function renderProductions(){
   const prodNom = arg => prodNomComplet(arg, recipes);
   window._prodNom = prodNom;
   window._prodLossBy = lossByProd; window._prodRecName = prodNom;
+  // Indique si une production est en grand format (via sa recette), pour distinguer les codes parfum.
+  window._prodRecGF = p => { const r=recipes.find(x=>x.id===(p&&p.recipeId)); return !!(r&&r.grandFormat); };
   // Consommation matières par batch (pour le bloc « Stock consommé » en bas de l'écran).
   const _allMats = await db.materials.toArray();
   const _matById = {}; _allMats.forEach(m=>_matById[m.id]=m);
@@ -4792,7 +4851,7 @@ function _prodbatFilterInner(q){
     if(prodComposant(p)==='ganache' && estMutualisee(p, nom)){
       key=GANACHE_KEY; label='Ganaches montées (mutualisables)';
     } else {
-      key = p.libre ? ('libre:'+(p.produitLibre||p.id)) : ('parfum:'+flavorCode(nom));
+      key = p.libre ? ('libre:'+(p.produitLibre||p.id)) : ('parfum:'+flavorCodeFor(nom, (window._prodRecGF?window._prodRecGF(p):false)));
       label = nom || '(sans nom)';
     }
     if(idx[key]==null){ idx[key]=groups.length; groups.push({key, name:label, libre:!!p.libre, rows:[]}); }
@@ -6252,6 +6311,7 @@ async function prodRefreshLot(){
   // Ne pas écraser une saisie manuelle de l'utilisateur.
   if(lotEl.dataset.touched==='1') return;
   let nom='';
+  let _isGF=false;
   const mode=document.getElementById('f_mode')?.value||'complet';
   if(mode==='garniture'){
     // [LOT GARNITURE] Le code parfum vient du COMPOSANT (ex. « Chantache… » → CHA), pas de la recette.
@@ -6259,13 +6319,13 @@ async function prodRefreshLot(){
       const c=cid?await db.components.get(cid):null; nom=c?(c.nom||''):''; }catch(e){}
   } else {
     if(!sel) return;
-    try{ const rid=+sel.value; const r=await db.recipes.get(rid); nom=r?r.produitNom:''; }catch(e){}
+    try{ const rid=+sel.value; const r=await db.recipes.get(rid); nom=r?r.produitNom:''; _isGF=!!(r&&r.grandFormat); }catch(e){}
   }
   const dateStr=(dateEl&&dateEl.value)||today();
   // Lots déjà produits ce jour pour ce parfum (même code) → pour calculer le rang.
   let memeJourMemeParfum=[];
   try{
-    const code=flavorCode(nom);
+    const code=flavorCodeFor(nom, _isGF);
     const datePart=lotDateJJMMAA(dateStr);
     const racine=datePart+code;
     const prods=await db.productions.toArray();
@@ -6274,7 +6334,7 @@ async function prodRefreshLot(){
       return base && (base===racine || new RegExp('^'+racine+'\\d+$').test(base));
     });
   }catch(e){}
-  lotEl.value=buildLotBase(nom, dateStr, memeJourMemeParfum);
+  lotEl.value=buildLotBase(nom, dateStr, memeJourMemeParfum, _isGF);
 }
 async function prodForm(prefill){  const recipes = await db.recipes.toArray();
   // Mode DÉCOUVERTE : si aucune recette n'existe encore, on propose une production « libre »
@@ -6709,7 +6769,7 @@ async function saveProd(){
     if(!recs[0]||!recs[1]){ toast('Recette introuvable'); return; }
     // Construit un lot par parfum : JJMMAA + code parfum (+ suffixe -CO coques).
     const baseD = lotDateJJMMAA(dateD);
-    const lots = recs.map(r=>{ const base = (baseD + flavorCode(r.produitNom)).toUpperCase().replace(/\s+/g,''); return {base, lot: base + '-CO'}; });
+    const lots = recs.map(r=>{ const base = (baseD + flavorCodeRec(r)).toUpperCase().replace(/\s+/g,''); return {base, lot: base + '-CO'}; });
     // Coques : 1 macaron = 2 coques. Matières calées sur les macarons (facteurQte).
     const lance = [
       { rid:rid1, q:q1, lot:lots[0].lot, base:lots[0].base, nom:recs[0].produitNom },
@@ -23182,7 +23242,7 @@ async function scanOrphanLots(){
     }
     // Index des recettes par code parfum (flavorCode).
     const recByCode = {};
-    recipes.forEach(r=>{ const code=flavorCode(r.produitNom||''); if(code && !recByCode[code]) recByCode[code]=r; });
+    recipes.forEach(r=>{ const code=flavorCodeRec(r); if(code && !recByCode[code]) recByCode[code]=r; });
 
     // Pour chaque lot orphelin, on déduit le code parfum depuis son numéro de lot.
     const lignes = orphelins.map(p=>{
@@ -23856,7 +23916,7 @@ async function migSaveStock(){
   const nowIso=new Date().toISOString();
   // [POINT E] Format de lot simplifié comme les productions normales : JJMMAA + CODE PARFUM.
   const _recMig = await db.recipes.get(recipeId).catch(()=>null);
-  const base = buildLotBase(_recMig?_recMig.produitNom:'', today(), []);
+  const base = buildLotBase(_recMig?_recMig.produitNom:'', today(), [], !!(_recMig&&_recMig.grandFormat));
   const lot=lotAvecEmplacement(base, dest);
   // Production "historique" déjà terminée, SANS consommation de matières.
   await db.productions.add({
@@ -23885,7 +23945,7 @@ async function migSaveCoques(){
   const nowIso=new Date().toISOString();
   // [POINT E] Format de lot simplifié : JJMMAA + CODE PARFUM, suffixe coques -CO (cohérent avec le reste).
   const _recMigC = await db.recipes.get(recipeId).catch(()=>null);
-  const base = buildLotBase(_recMigC?_recMigC.produitNom:'', today(), []);
+  const base = buildLotBase(_recMigC?_recMigC.produitNom:'', today(), [], !!(_recMigC&&_recMigC.grandFormat));
   const lot=lotAvecEmplacement(base+'-CO', dest);
   await db.productions.add({
     recipeId, lotProduction:lot, lotBase:base, date:today(),
@@ -23916,7 +23976,7 @@ async function migSaveGarniture(){
   if(qte<=0){ toast('Indique un nombre de doses'); return; }
   const nowIso=new Date().toISOString();
   const _recMigG = await db.recipes.get(recipeId).catch(()=>null);
-  const base = buildLotBase(_recMigG?_recMigG.produitNom:'', today(), []);
+  const base = buildLotBase(_recMigG?_recMigG.produitNom:'', today(), [], !!(_recMigG&&_recMigG.grandFormat));
   const suff = garnType==='cremeux' ? '-CR' : '-GA';
   const lot=lotAvecEmplacement(base+suff, dest);
   await db.productions.add({
