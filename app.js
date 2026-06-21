@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v649';
+const APP_VERSION = 'v650';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3062,6 +3062,26 @@ function coutRevientBar(c){
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">${legende}</div>
   </div>`;
 }
+// [INSTRUCTIONS RECETTE] Volet dépliable (slide vertical) affichant le mode opératoire d'une
+// recette. Réutilisé sur la fiche recette ET sur la fiche de production. `instr` = texte brut
+// (une étape par ligne). `uid` rend l'identifiant unique si plusieurs volets coexistent.
+function instructionsVoletHtml(instr, uid){
+  if(!instr || !String(instr).trim()) return '';
+  const id = 'instr_'+(uid||Math.random().toString(36).slice(2,7));
+  const etapes = String(instr).split('\n').map(s=>s.trim()).filter(Boolean);
+  // si les lignes sont déjà numérotées (1. 2. …), on ne renumérote pas ; sinon on numérote.
+  const dejaNum = etapes.every(e=>/^\d+[\.\)]/.test(e));
+  const liste = etapes.map((e,i)=>`<div style="display:flex;gap:8px;padding:5px 0;border-top:1px solid #f0e9e2">
+      <span style="flex:none;font-weight:700;color:var(--caramel,#AA7C39);min-width:1.4em">${dejaNum?'':((i+1)+'.')}</span>
+      <span style="font-size:.9rem;color:#4a3a32;line-height:1.4">${esc(e.replace(/^\d+[\.\)]\s*/,''))}</span>
+    </div>`).join('');
+  return `<div style="margin:8px 0">
+    <button type="button" onclick="(function(b){var p=document.getElementById('${id}');var open=p.style.display!=='none';p.style.display=open?'none':'block';b.querySelector('.iv-chev').style.transform=open?'rotate(0)':'rotate(90deg)';})(this)"
+      style="appearance:none;width:100%;text-align:left;background:#faf6ee;border:1px solid #e8dcc0;border-radius:10px;padding:9px 12px;cursor:pointer;font-weight:600;color:var(--bordeaux);display:flex;align-items:center;gap:8px">
+      <span class="iv-chev" style="display:inline-block;transition:transform .2s">▸</span>📋 Mode opératoire <span style="font-weight:400;color:#9a8a82;font-size:.82rem">(${etapes.length} étape${etapes.length>1?'s':''})</span></button>
+    <div id="${id}" style="display:none;padding:4px 12px 8px">${liste}</div>
+  </div>`;
+}
 async function renderRecipes(){
   const recipes = await db.recipes.orderBy('produitNom').toArray();
   const mats = await db.materials.toArray();
@@ -3113,6 +3133,7 @@ async function renderRecipes(){
         return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc ${kpiI('cout_revient_rec')}${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
           <b><span class="tag" style="background:${rr.scale.col};color:#fff">${rr.scale.dot} ${rr.tauxMarge!=null?rr.tauxMarge+'%':'coût seul'}</span>${rr.tauxMarge!=null?' '+kpiI('taux_marge_rec'):''}</b></div>${coutRevientBar(c)}`; })()}
       ${(r.allergenes&&r.allergenes.length)?`<div class="note" style="margin:0 0 8px"><b>Allergènes :</b> ${r.allergenes.map(a=>esc(a)).join(' · ')}</div>`:'<div class="note" style="margin:0 0 8px;color:#b08a3a">⚠ Allergènes non renseignés</div>'}
+      ${instructionsVoletHtml(r.instructions, 'rec'+r.id)}
       ${items.length?`
       <div class="mult-bar">
         <label>Quantité voulue</label>
@@ -3248,6 +3269,10 @@ async function recForm(id, prefill){
        const on=(r.allergenes||[]).includes(a);
        return `<button type="button" class="allergen-chip${on?' on':''}" data-a="${esc(a)}" onclick="this.classList.toggle('on')">${esc(a)}</button>`;
      }).join('')}</div>
+   </div>
+   <div class="field"><label>📋 Mode opératoire <span style="color:#9a8a82;font-weight:400">— la marche à suivre, une étape par ligne</span></label>
+     <textarea id="f_instructions" rows="6" placeholder="1. Monter les blancs en neige...&#10;2. Incorporer la poudre d'amande tamisée...&#10;3. Macaronner jusqu'au ruban...&#10;4. Pocher et laisser croûter 30 min...">${esc(r.instructions||'')}</textarea>
+     <p class="note">Une étape par ligne. S'affichera sur la fiche recette et au lancement de production (volet dépliable).</p>
    </div>
    <div class="field"><label>Composition (par batch)</label><div id="bomList"></div>
      <button class="btn ghost sm" style="margin-top:6px" onclick="bomAdd()">+ Ajouter une matière</button></div>
@@ -3399,6 +3424,7 @@ async function saveRec(id){
     heuresMaxSortie: (val('f_heuresMax')==='')?null:Math.max(0, +val('f_heuresMax')||0),
     joursToleranceFrigo: (val('f_tolFrigo')==='')?null:Math.max(0, Math.round(+val('f_tolFrigo')||0)),
     allergenes: Array.from(document.querySelectorAll('.allergen-chip.on')).map(b=>b.dataset.a),
+    instructions: (function(){ const el=document.getElementById('f_instructions'); return el?el.value.trim():''; })(),
     pertePct: Math.max(0, Math.min(90, +val('f_perte')||0)),
     minParBatch: Math.max(0, +val('f_mod')||0),
     coutConsoUnit: Math.max(0, money2(+val('f_conso')||0)),
@@ -4681,6 +4707,7 @@ function _prodbatRowInner(row){
        <button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button>
        <button class="qa" onclick="shareLabelImage(${p.id})" title="Image d'étiquette à partager vers Phomemo">📤 Phomemo</button>
        <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Tracer</button>
+       ${p.recipeId?`<button class="qa" onclick="recForm(${p.recipeId})" title="Voir / modifier la recette de ce parfum (mode opératoire inclus)">📖 Recette</button>`:''}
        <button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button>
      </div>
      </div>
@@ -6806,8 +6833,13 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
     <p style="margin-bottom:4px"><b>${esc(rec.produitNom)}</b> · ${compLabel} · lot <b>${esc(lot||'—')}</b></p>
     <p class="note" style="margin-bottom:12px">Quantités calculées pour <b>${qty(nbMacarons)} macaron(s)</b> (recette de base : ${rendement}/batch). Suis ces grammages pour produire.</p>
     <div class="table-wrap"><table><thead><tr><th>Ingrédient</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}${totals?`<tr><td colspan="2" style="padding:2px"></td></tr>${totals}`:''}</tbody></table></div>
+    ${instructionsVoletHtml(rec.instructions, 'prod'+recipeId)}
     <p class="note" style="margin-top:10px">La production est <b>démarrée</b>. Tu choisiras l'emplacement de rangement à la fin (✓ Terminer dans la liste).</p>
-    <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
+    <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+      <button class="btn ghost" onclick="closeModal();recForm(${recipeId})" title="Voir / modifier la recette complète">📖 Recette</button>
+      <button class="btn ghost" onclick="closeModal();goView('productions')" title="Aller à la liste des productions">🏭 Productions</button>
+      <button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button>
+    </div>`);
 }
 // [DUO] Fiche de production d'une MERINGUE COMMUNE (2 parfums), affichée après le lancement.
 // Présentation alignée sur ficheRecetteProduction. La poudre d'amande et le sucre glace (tant
