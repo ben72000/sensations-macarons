@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v671';
+const APP_VERSION = 'v672';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({

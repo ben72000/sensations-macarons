@@ -1,0 +1,31 @@
+═══════════════════════════════════════════════════════════
+  SCAN CAMÉRA DANS L'APP (iPhone) — UNE SEULE ÉTAPE À FAIRE
+═══════════════════════════════════════════════════════════
+
+Pour que le scan caméra fonctionne DANS l'app sur iPhone, il faut
+déposer UN fichier de librairie dans ton dossier GitHub Pages, à
+côté de app.js et index.html.
+
+CE FICHIER : html5-qrcode.min.js
+
+COMMENT L'OBTENIR (2 minutes) :
+1. Va sur ce lien dans ton navigateur :
+   https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js
+
+2. Enregistre la page (Fichier → Enregistrer sous…) en nommant
+   EXACTEMENT le fichier :  html5-qrcode.min.js
+
+3. Dépose ce fichier dans ton dépôt GitHub (ben72000.github.io),
+   au même endroit que app.js et index.html, puis commit/push.
+
+C'EST TOUT. Au prochain chargement de l'app sur ton iPhone :
+- la caméra s'ouvrira DIRECTEMENT dans l'app quand tu touches
+  « 📷 Scanner un lot » ;
+- plus besoin de passer par l'appareil photo d'iOS.
+
+REMARQUE :
+- Tant que ce fichier n'est pas déposé, l'app fonctionne
+  normalement : le scan bascule simplement sur la saisie manuelle
+  (aucun plantage).
+- Le fichier est mis en cache pour fonctionner hors-ligne ensuite.
+═══════════════════════════════════════════════════════════
