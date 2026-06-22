@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v658';
+const APP_VERSION = 'v660';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -3108,10 +3108,13 @@ async function renderRecipes(){
   const _settings = getSettings();
   // Mode 'mesuré' : on précharge le temps de production lissé (brique 1) pour nourrir le coût de revient.
   let _mesureMin = null;
+  let _mesureParRec = null;
   if(_settings.laborSource==='mesure' && _settings.laborEnabled){
     try{ const tl = await prodTempsLissePerMacaron(90); if(tl.fiable) _mesureMin = tl.minParMacaron; }catch(e){ console.error('tempsLisse',e); }
+    // Temps RÉEL par recette (distingue GF/classique). Repli géré côté analyse si une recette manque de données.
+    try{ _mesureParRec = await prodTempsParParfum(90); }catch(e){ console.error('tempsParParfum',e); }
   }
-  const _A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats, orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, settings:_settings, minParMacaronMesure:_mesureMin});
+  const _A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats, orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, settings:_settings, minParMacaronMesure:_mesureMin, minParRecMesure:_mesureParRec});
   const _rowByRec = {}; _A.rows.forEach(r=>{ _rowByRec[r.recipeId]=r; });
   _recipeMultCache = {}; // {recipeId: {rendement, items:[{nom,unite,qteParBatch(affichée),base}]}}
   // Affichage : denrées (kg) → grammes ; autres → unité native.
@@ -12946,10 +12949,21 @@ function analyzeFlavorProfitability(data){
   const {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings} = data;
   const s = settings || getSettings();
   // Temps mesuré lissé (min/macaron) éventuellement préchargé par l'appelant (mode 'mesure').
-  const mesureOpts = (data.minParMacaronMesure!=null) ? {minParMacaronMesure:+data.minParMacaronMesure} : undefined;
-  // 1) coût de revient par recette
+  const mesureGlobal = (data.minParMacaronMesure!=null) ? +data.minParMacaronMesure : null;
+  const mesureParRec = data.minParRecMesure || null;   // {recipeId: {minParMac, fiable, ...}}
+  // 1) coût de revient par recette. Pour la main-d'œuvre en mode mesuré : on utilise le temps
+  // RÉEL PROPRE de la recette s'il est fiable (distingue GF/classique), sinon on retombe sur la
+  // moyenne globale lissée.
   const costByRecipe = {};
-  recipes.forEach(r=>{ costByRecipe[r.id] = coutRevientRecette(r, recipeItems, lots, s, mesureOpts); });
+  recipes.forEach(r=>{
+    let minPourCetteRec = mesureGlobal;
+    if(mesureParRec){
+      const e = mesureParRec[r.id];
+      if(e && e.fiable && e.minParMac>0) minPourCetteRec = e.minParMac;
+    }
+    const opt = (minPourCetteRec!=null) ? {minParMacaronMesure:minPourCetteRec} : undefined;
+    costByRecipe[r.id] = coutRevientRecette(r, recipeItems, lots, s, opt);
+  });
   // 2) ventes par parfum
   const sales = buildFlavorSales(orders, markets, marketMoves, recipes, productions, s);
   const salesByRecipe = {}; const unmatched=[];
@@ -18595,7 +18609,7 @@ async function ordoLancer(mode){
 async function ordoEstimeTemps(needs){
   let minParMac=null, lisseFiable=false, tppMap={};
   try{ const tl=await prodTempsLissePerMacaron(90); minParMac=(tl&&tl.minParMacaron)?tl.minParMacaron:null; lisseFiable=!!(tl&&tl.fiable); }catch(e){}
-  try{ tppMap=(typeof prodTempsParParfum==='function')?await prodTempsParParfum(90):{}; }catch(e){ tppMap={}; }
+  try{ tppMap=(typeof prodTempsParParfum==='function')?await prodTempsParParfumParNom(90):{}; }catch(e){ tppMap={}; }
   if(minParMac==null && !Object.keys(tppMap).length) return null;   // aucune donnée de temps
   const minParMacDe = parfum=>{
     const k=aiNormalize(parfum);
@@ -19286,7 +19300,7 @@ async function atelierBrain(opts){
   try{ const tl = await prodTempsLissePerMacaron(90); minParMac = (tl && tl.minParMacaron) ? tl.minParMacaron : null; tempsLisseFiable = !!(tl && tl.fiable); }catch(e){ console.error('brain.temps',e); }
   // [TEMPS PAR PARFUM] Temps propre à chaque parfum (si assez de données), sinon repli moyenne globale.
   let tppMap = {};
-  try{ tppMap = (typeof prodTempsParParfum==='function') ? await prodTempsParParfum(90) : {}; }catch(e){ console.error('brain.tpp',e); }
+  try{ tppMap = (typeof prodTempsParParfum==='function') ? await prodTempsParParfumParNom(90) : {}; }catch(e){ console.error('brain.tpp',e); }
   // minParMac d'une ligne : son temps parfum si fiable, sinon la moyenne globale.
   const minParMacDe = (parfum)=>{
     const k = (typeof aiNormalize==='function') ? aiNormalize(parfum) : (parfum||'').toLowerCase();
@@ -25805,73 +25819,92 @@ async function prodTempsLissePerMacaron(jours){
   };
 }
 
-/* [TEMPS PAR PARFUM] Calcule un temps moyen par macaron DISTINCT pour chaque parfum,
-   à partir des sessions de chronos d'atelier dont les tâches portent des parfums.
-   - Une tâche peut concerner plusieurs parfums (meringue mutualisée) : le temps de la
-     session se répartit À PARTS ÉGALES entre les parfums distincts qu'elle couvre.
-   - On rapporte ce temps au nombre de macarons FINIS de chaque parfum sur la fenêtre.
-   - Repli : si un parfum n'a pas assez de données propres, l'appelant utilisera la
+/* [TEMPS PAR PARFUM] Calcule un temps moyen par macaron DISTINCT pour chaque RECETTE
+   (clé = recipeId, ce qui distingue nativement le grand format du classique, même nom),
+   à partir des sessions de chronos d'atelier dont les tâches portent des parfums (recipeId).
+   - Une tâche peut concerner plusieurs recettes (meringue mutualisée) : le temps de la
+     session se répartit À PARTS ÉGALES entre les recettes distinctes qu'elle couvre.
+   - On rapporte ce temps au nombre de macarons FINIS de chaque recette sur la fenêtre.
+   - Repli : si une recette n'a pas assez de données propres, l'appelant utilisera la
      moyenne globale (prodTempsLissePerMacaron).
-   Structure attendue d'une tâche : t.parfums = [recipeId, ...] (ou noms), optionnel.
+   Structure attendue d'une tâche : t.parfums = [recipeId, ...].
 */
 async function prodTempsParParfum(jours){
   jours = +jours || 90;
   const since = new Date(); since.setDate(since.getDate()-jours);
   const sinceStr = since.toISOString().slice(0,10);
   const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
-  const recipes = await db.recipes.toArray().catch(()=>[]);
-  const recName = rid => (recipes.find(r=>+r.id===+rid)||{}).produitNom || '';
 
-  // 1) Temps d'atelier réparti par parfum (en ms), via les parfums déclarés sur les tâches.
-  const msParParfum = {};   // parfum normalisé -> ms cumulés
+  // 1) Temps d'atelier réparti par recette (en ms), via les recipeId déclarés sur les tâches.
+  const msParRec = {};   // recipeId -> ms cumulés
   sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
     const msSession = (typeof prodSessReelMs==='function') ? prodSessReelMs(s) : 0;
     if(msSession<=0) return;
-    // Parfums distincts couverts par les tâches de cette session.
-    const setParfums = new Set();
+    // Recettes distinctes couvertes par les tâches de cette session (par recipeId).
+    const setRec = new Set();
     (s.tasks||[]).forEach(t=>{
       const arr = Array.isArray(t.parfums) ? t.parfums : [];
-      arr.forEach(x=>{
-        const nom = (typeof x==='number') ? recName(x) : String(x||'');
-        if(nom){ const k=(typeof aiNormalize==='function')?aiNormalize(nom):nom.toLowerCase(); setParfums.add(k); }
-      });
+      arr.forEach(x=>{ const rid=+x; if(Number.isFinite(rid) && rid>0) setRec.add(rid); });
     });
-    if(setParfums.size===0) return;   // session non étiquetée → ignorée ici (tombe dans la moyenne globale)
-    // Répartition À PARTS ÉGALES du temps de la session entre ses parfums.
-    const part = msSession / setParfums.size;
-    setParfums.forEach(k=>{ msParParfum[k] = (msParParfum[k]||0) + part; });
+    if(setRec.size===0) return;   // session non étiquetée → ignorée ici (tombe dans la moyenne globale)
+    const part = msSession / setRec.size;   // répartition à parts égales
+    setRec.forEach(rid=>{ msParRec[rid] = (msParRec[rid]||0) + part; });
   });
 
-  // 2) Macarons finis par parfum sur la fenêtre.
+  // 2) Macarons finis par recette (recipeId) sur la fenêtre.
   const prods = await db.productions.toArray().catch(()=>[]);
-  const macParParfum = {};
+  const macParRec = {};
   prods.forEach(p=>{
     const c = p.composant || 'complet';
     if(c!=='complet' && c!=='assemble') return;
+    if(p.libre || p.recipeId==null) return;
     const d = (p.date || (p.prodTimestamp||'').slice(0,10) || '');
     if(String(d).slice(0,10) < sinceStr) return;
-    const nom = (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : '';
-    if(!nom) return;
-    const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
-    macParParfum[k] = (macParParfum[k]||0) + (+p.qteReelle||+p.qteProduite||0);
+    macParRec[p.recipeId] = (macParRec[p.recipeId]||0) + (+p.qteReelle||+p.qteProduite||0);
   });
 
-  // 3) Temps par macaron, par parfum (quand on a temps ET pièces).
-  const out = {};   // parfum normalisé -> {parfum, minParMac, minAtelier, nbMac, fiable}
-  Object.keys(msParParfum).forEach(k=>{
-    const minAtelier = msParParfum[k]/60000;
-    const nbMac = macParParfum[k]||0;
+  // 3) Temps par macaron, par recette (quand on a temps ET pièces).
+  const out = {};   // recipeId -> {minParMac, minAtelier, nbMac, fiable}
+  Object.keys(msParRec).forEach(rid=>{
+    const minAtelier = msParRec[rid]/60000;
+    const nbMac = macParRec[rid]||0;
     if(nbMac>0){
-      out[k] = {
+      out[rid] = {
         minParMac: minAtelier/nbMac,
         minAtelier: Math.round(minAtelier),
         nbMac,
-        // Fiable si assez de matière pour que la moyenne ait du sens (seuils volontairement bas par parfum).
+        // Fiable si assez de matière pour que la moyenne ait du sens (seuils volontairement bas par recette).
         fiable: (minAtelier>=20 && nbMac>=30)
       };
     }
   });
-  return out;   // clés = parfums normalisés
+  return out;   // clés = recipeId
+}
+// Vue AGRÉGÉE PAR NOM normalisé de prodTempsParParfum (pour les écrans qui raisonnent par nom :
+// ordonnanceur, cerveau). Fusionne les recettes de même nom (GF + classique) en cumulant temps
+// et pièces, puis recalcule un temps moyen par macaron. Conserve un flag « fiable » global.
+async function prodTempsParParfumParNom(jours){
+  const parRec = await prodTempsParParfum(jours);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recName = rid => (recipes.find(r=>+r.id===+rid)||{}).produitNom || '';
+  const agg = {};   // nomNormalisé -> {minAtelier(min), nbMac}
+  Object.keys(parRec).forEach(rid=>{
+    const e = parRec[rid];
+    const nom = recName(rid); if(!nom) return;
+    const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
+    (agg[k] ||= {minAtelier:0, nbMac:0});
+    agg[k].minAtelier += (+e.minAtelier||0);
+    agg[k].nbMac      += (+e.nbMac||0);
+  });
+  const out = {};
+  Object.keys(agg).forEach(k=>{
+    const a = agg[k];
+    if(a.nbMac>0){
+      out[k] = { minParMac:a.minAtelier/a.nbMac, minAtelier:Math.round(a.minAtelier), nbMac:a.nbMac,
+                 fiable:(a.minAtelier>=20 && a.nbMac>=30) };
+    }
+  });
+  return out;   // clés = noms normalisés
 }
 
 /* [TEMPS PAR PARFUM — brique croisement] Trouve les parfums probablement produits pendant
@@ -25974,24 +26007,28 @@ async function prodSessParfumsConfirm(sessId){
   }));
   const coche = (dejaSet.size>0) ? dejaSet : preCoche;
 
-  // Liste de tous les parfums (recettes), avec les suggérés en haut.
-  const parfums = recipes.map(r=>r.produitNom).filter(Boolean)
-    .sort((a,b)=>{
-      const sa = preCoche.has(aiNormalize(a))?0:1, sb = preCoche.has(aiNormalize(b))?0:1;
-      return sa-sb || a.localeCompare(b);
-    });
+  // Liste de toutes les RECETTES (par id, pour distinguer GF/classique de même nom), suggérées en haut.
+  const recsTri = recipes.slice().filter(r=>r.produitNom).sort((a,b)=>{
+    const sa = preCoche.has(aiNormalize(a.produitNom))?0:1, sb = preCoche.has(aiNormalize(b.produitNom))?0:1;
+    return sa-sb || (a.produitNom||'').localeCompare(b.produitNom||'');
+  });
+  // Pré-cochage : par recipeId si déjà déclaré, sinon par nom suggéré (croisement).
+  const dejaIds = new Set();
+  (s.tasks||[]).forEach(t=> (Array.isArray(t.parfums)?t.parfums:[]).forEach(x=>{ const rid=+x; if(Number.isFinite(rid)&&rid>0) dejaIds.add(rid); }));
   window._sessParfumId = sessId;
-  window._sessParfumList = parfums;
+  window._sessRecList = recsTri.map(r=>r.id);
 
-  const rows = parfums.map(p=>{
-    const k=aiNormalize(p);
-    const checked = coche.has(k) ? 'checked' : '';
+  const rows = recsTri.map(r=>{
+    const k=aiNormalize(r.produitNom);
+    const checkedById = dejaIds.has(r.id);
+    const checked = (dejaIds.size>0 ? checkedById : coche.has(k)) ? 'checked' : '';
+    const gfTag = r.grandFormat ? ' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">grand format</span>' : '';
     const src = crois.chevauche.map(n=>aiNormalize(n)).includes(k) ? '<span style="color:#3f7d52;font-size:.72rem">pendant le chrono</span>'
               : crois.memeJour.map(n=>aiNormalize(n)).includes(k) ? '<span style="color:#8a6d3b;font-size:.72rem">même jour</span>'
               : '';
     return `<label class="sum-box" style="align-items:center;cursor:pointer">
-      <span style="flex:1">${esc(p)} ${src?'<br>'+src:''}</span>
-      <input type="checkbox" id="sp_${k}" ${checked} style="width:22px;height:22px"></label>`;
+      <span style="flex:1">${esc(r.produitNom)}${gfTag} ${src?'<br>'+src:''}</span>
+      <input type="checkbox" id="sp_${r.id}" ${checked} style="width:22px;height:22px"></label>`;
   }).join('');
 
   const dateTxt = s.date ? fmtDate(s.date) : '';
@@ -26004,19 +26041,19 @@ async function prodSessParfumsConfirm(sessId){
     </div>`);
 }
 
-// Enregistre les parfums confirmés sur TOUTES les tâches de la session (parts égales au calcul).
+// Enregistre les recettes confirmées (recipeId) sur TOUTES les tâches de la session.
 function prodSessParfumsSave(){
   const sessId = window._sessParfumId; if(sessId==null) return;
-  const parfums = window._sessParfumList||[];
-  const choisis = parfums.filter(p=>{ const el=document.getElementById('sp_'+aiNormalize(p)); return el && el.checked; });
+  const recIds = window._sessRecList||[];
+  const choisis = recIds.filter(rid=>{ const el=document.getElementById('sp_'+rid); return el && el.checked; }).map(rid=>+rid);
   const s = (typeof prodSessGet==='function') ? prodSessGet(sessId) : null;
   if(!s){ closeModal(); return; }
-  // On applique la liste de parfums à chaque tâche (le calcul répartira à parts égales par session).
+  // On applique la liste de recettes (recipeId) à chaque tâche (le calcul répartira à parts égales par session).
   (s.tasks||[]).forEach(t=>{ t.parfums = choisis.slice(); });
   s.parfumsConfirmes = true;   // marqueur : confirmation faite
   if(typeof prodSessUpsert==='function') prodSessUpsert(s);
   closeModal();
-  toast(choisis.length?`${choisis.length} parfum(s) enregistré(s) ✓`:'Aucun parfum coché');
+  toast(choisis.length?`${choisis.length} recette(s) enregistrée(s) ✓`:'Aucune recette cochée');
   if(typeof markUnsaved==='function') markUnsaved();
 }
 
@@ -26431,6 +26468,7 @@ function prodRenderJournal(){
       <div class="pj-chips">${phaseChips}</div>
       <div class="pj-actions">
         <button class="qa" onclick="prodJournalOpen('${s.id}')">📊 Voir le tableau</button>
+        <button class="qa" style="background:#aa7c39;color:#fff" onclick="prodSessParfumsConfirm('${s.id}')" title="Rattacher les parfums/recettes produits pendant cette session (affine le temps par recette, y compris pour tes anciennes sessions)">🎯 Parfums${s.parfumsConfirmes?' ✓':''}</button>
         ${!open?`<button class="qa" style="background:#3f7d52;color:#fff" onclick="prodSessReopen('${s.id}')" title="Rouvrir cette session pour y ajouter des tâches (ex : garnissage après refroidissement)">↻ Rouvrir</button>`:''}
         ${!open?`<button class="qa del" onclick="prodJournalDelete('${s.id}')">🗑</button>`:''}
       </div>
