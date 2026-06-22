@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v670';
+const APP_VERSION = 'v671';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8289,29 +8289,42 @@ async function traceLot(lotId){
 
 /* ============================================================
    SCAN QR / CODE-BARRES — intégré, sans quitter l'app, hors-ligne.
-   Utilise l'API native BarcodeDetector (Safari iOS 17+) ; repli sur saisie manuelle.
+   Stratégie multi-moteur pour marcher PARTOUT, iPhone compris :
+   1) BarcodeDetector natif (Chrome Android, rapide) si disponible ;
+   2) sinon Html5Qrcode (JS/WASM) — indispensable sur iOS/Safari où
+      BarcodeDetector n'existe pas ;
+   3) sinon saisie manuelle (dernier recours).
    ============================================================ */
-let _scanStream=null, _scanRAF=null, _scanDetector=null;
-function scannerSupported(){ return 'BarcodeDetector' in window; }
+let _scanStream=null, _scanRAF=null, _scanDetector=null, _h5qr=null;
+function scannerSupported(){ return ('BarcodeDetector' in window) || ('Html5Qrcode' in window); }
+function _extractLot(val){ let lot=(val||'').trim(); const m=lot.match(/#trace=(.+)$/); if(m) lot=decodeURIComponent(m[1]); return lot; }
 async function openScanner(onResult){
   // onResult(texte) appelé quand un code est lu (ou saisi manuellement)
-  const supported = scannerSupported();
+  const hasNative = ('BarcodeDetector' in window);
+  const hasH5     = ('Html5Qrcode' in window);
+  const camera    = hasNative || hasH5;
   openModal(`<h3>Scanner un lot</h3>
-    ${supported
-      ? `<div class="scan-wrap"><video id="scanVideo" playsinline muted></video><div class="scan-frame"></div></div>
-         <p class="note" id="scanMsg">Visez le QR code ou code-barres du lot…</p>`
-      : `<p class="note">La lecture caméra n'est pas disponible sur cet appareil/navigateur. Saisissez le numéro de lot manuellement :</p>`}
+    ${camera
+      ? (hasNative
+          ? `<div class="scan-wrap"><video id="scanVideo" playsinline muted></video><div class="scan-frame"></div></div>`
+          : `<div id="h5qrReader" style="width:100%;border-radius:14px;overflow:hidden"></div>`)
+        + `<p class="note" id="scanMsg">Visez le QR code de l'étiquette…</p>`
+      : `<p class="note">La lecture caméra n'est pas disponible. Saisissez le numéro de lot manuellement :</p>`}
     <div class="field" style="margin-top:8px"><label>N° de lot (saisie manuelle)</label>
       <input id="scanManual" placeholder="ex : NM-A-101" autocapitalize="characters" autocomplete="off"></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeScanner()">Annuler</button>
-      <button class="btn" onclick="(function(){var v=document.getElementById('scanManual').value.trim(); if(v){ closeScanner(); (window._scanCb&&window._scanCb(v)); } else toast('Saisissez un numéro de lot'); })()">Valider</button>
+      <button class="btn" onclick="(function(){var v=document.getElementById('scanManual').value.trim(); if(v){ closeScanner(); (window._scanCb&&window._scanCb(_extractLot(v))); } else toast('Saisissez un numéro de lot'); })()">Valider</button>
     </div>`);
   window._scanCb = onResult;
-  if(!supported) return;
-  try{
-    _scanDetector = new BarcodeDetector({formats:['qr_code','code_128','ean_13','ean_8','code_39','codabar','upc_a','upc_e']});
-  }catch(e){ _scanDetector=null; }
+  if(!camera) return;
+  if(hasNative){ return _openScannerNative(); }
+  return _openScannerH5();
+}
+// Moteur 1 : BarcodeDetector natif (Android).
+async function _openScannerNative(){
+  try{ _scanDetector = new BarcodeDetector({formats:['qr_code','code_128','ean_13','ean_8','code_39','codabar','upc_a','upc_e']}); }
+  catch(e){ _scanDetector=null; }
   try{
     _scanStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
     const video=document.getElementById('scanVideo');
@@ -8323,6 +8336,22 @@ async function openScanner(onResult){
     if(msg) msg.textContent='Caméra inaccessible (autorisation refusée ?). Utilisez la saisie manuelle.';
   }
 }
+// Moteur 2 : Html5Qrcode (iOS/Safari et partout où le natif manque).
+async function _openScannerH5(){
+  try{
+    _h5qr = new Html5Qrcode('h5qrReader', { verbose:false });
+    const config = { fps:10, qrbox:{width:220,height:220}, aspectRatio:1.0 };
+    const onScan = (decodedText)=>{
+      const lot=_extractLot(decodedText);
+      const cb=window._scanCb; closeScanner(); if(cb) cb(lot);
+    };
+    await _h5qr.start({ facingMode:'environment' }, config, onScan, ()=>{ /* échec de frame : ignoré */ });
+  }catch(err){
+    const msg=document.getElementById('scanMsg');
+    if(msg) msg.textContent='Caméra inaccessible (autorisation refusée ?). Utilisez la saisie manuelle.';
+    _h5qr=null;
+  }
+}
 async function scanLoop(video){
   if(!_scanStream || !_scanDetector) return;
   try{
@@ -8330,8 +8359,7 @@ async function scanLoop(video){
     if(codes && codes.length){
       const val=(codes[0].rawValue||'').trim();
       if(val){
-        // un QR d'étiquette peut contenir une URL #trace=LOT ; on extrait alors le lot
-        let lot=val; const m=val.match(/#trace=(.+)$/); if(m) lot=decodeURIComponent(m[1]);
+        const lot=_extractLot(val);
         const cb=window._scanCb; closeScanner(); if(cb) cb(lot); return;
       }
     }
@@ -8342,7 +8370,9 @@ function stopScanStream(){
   if(_scanRAF){ cancelAnimationFrame(_scanRAF); _scanRAF=null; }
   if(_scanStream){ _scanStream.getTracks().forEach(t=>t.stop()); _scanStream=null; }
   _scanDetector=null;
+  if(_h5qr){ try{ _h5qr.stop().then(()=>{ try{_h5qr.clear();}catch(e){} _h5qr=null; }).catch(()=>{ _h5qr=null; }); }catch(e){ _h5qr=null; } }
 }
+
 function closeScanner(){ stopScanStream(); window._scanCb=null; closeModal(); }
 // Lance le scan puis ouvre l'alerte flash sur le lot lu.
 function scanForFlashAlert(){ openScanner(lot=>flashAlert(lot)); }
