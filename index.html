@@ -1108,6 +1108,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
       <input class="search" id="globalSearch" placeholder="🔎 Rechercher partout (client, commande, parfum, lot…)" autocomplete="off" autocapitalize="off" autocorrect="off" oninput="globalSearchRun(this.value,'')" onfocus="globalSearchRun(this.value,'')">
       <div id="globalSearchResults" style="display:none;margin-top:8px;max-height:50vh;overflow-y:auto"></div>
     </div>
+    <button class="btn gold" style="margin:8px 12px;width:calc(100% - 24px)" onclick="closeSheet&&closeSheet();scanAffectStock()">📷 Scanner un lot (traçabilité + affectation)</button>
     <nav class="nav" id="nav">
       <button data-v="dash" class="active"><span class="ico">◷</span><span>Tableau de bord</span></button>
       <div class="sep">Quotidien</div>
@@ -1120,6 +1121,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
       <button data-v="matieres"><span class="ico">⬛</span><span>Matières & lots</span></button>
       <button data-v="recettes"><span class="ico">❀</span><span>Recettes (BOM)</span></button>
       <button data-v="productions"><span class="ico">⚙</span><span>Productions</span></button>
+      <button data-v="agendaprod"><span class="ico">🗓</span><span>Agenda production</span></button>
       <button data-v="atelier"><span class="ico">⏱</span><span>Atelier (chronos)</span></button>
       <button data-v="stockparfums"><span class="ico">🍬</span><span>Stock par parfum</span></button>
       <button data-v="couts"><span class="ico">€</span><span>Coûts & prix</span></button>
@@ -1193,6 +1195,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
         <button data-v="matieres"><span class="ico">⬛</span>Matières & lots</button>
         <button data-v="recettes"><span class="ico">❀</span>Recettes (BOM)</button>
         <button data-v="productions"><span class="ico">⚙</span>Productions</button>
+        <button data-v="agendaprod"><span class="ico">🗓</span>Agenda production</button>
         <button data-v="atelier"><span class="ico">⏱</span>Atelier (chronos)</button>
         <button data-v="stockparfums"><span class="ico">🍬</span>Stock par parfum</button>
         <button data-v="couts"><span class="ico">€</span>Coûts & prix</button>
@@ -1246,8 +1249,8 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="qr_min.js?v=665"></script>
-<script src="utils.js?v=665"></script>
-<script src="app.js?v=665"></script>
+<script src="qr_min.js?v=668"></script>
+<script src="utils.js?v=668"></script>
+<script src="app.js?v=668"></script>
 </body>
 </html>

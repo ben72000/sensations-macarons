@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v665';
+const APP_VERSION = 'v668';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -1298,7 +1298,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -5042,7 +5042,8 @@ async function renderPicking(){
   if(!_pickDate) _pickDate = today();
   try{ window._equipSpecsCache = await equipGetSpecs(); }catch(e){ window._equipSpecsCache = {}; }
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Préparation / Picking</h1><p>Affectation des batchs optimisée par emplacement</p></div></div>
+   <div class="topbar"><div><h1>Préparation / Picking</h1><p>Affectation des batchs optimisée par emplacement</p></div>
+     <button class="btn gold" onclick="scanAffectStock()" title="Scanner un lot et l'affecter à une commande">📷 Scanner un lot</button></div>
    <div class="pick-tabs">
      <button class="${_pickMode==='commandes'?'active':''}" onclick="pickSetMode('commandes')">📋 Commandes</button>
      <button class="${_pickMode==='marche'?'active':''}" onclick="pickSetMode('marche')">⛺ Départ marché</button>
@@ -8330,6 +8331,121 @@ function stopScanStream(){
 function closeScanner(){ stopScanStream(); window._scanCb=null; closeModal(); }
 // Lance le scan puis ouvre l'alerte flash sur le lot lu.
 function scanForFlashAlert(){ openScanner(lot=>flashAlert(lot)); }
+/* [SCAN → AFFECTATION] Flux : scanner un lot de macarons finis, voir ses infos, choisir une
+   commande « à préparer » qui contient ce parfum, saisir la quantité, confirmer → décrémente le
+   stock du lot et crée le lien commande↔production (orderItems), comme le picking. */
+function scanAffectStock(){
+  openScanner(async code=>{ try{ await scanAffectResolve(code); }catch(e){ console.error('scanAffect',e); toast('Erreur lors du scan'); } });
+}
+async function scanAffectResolve(code){
+  code=(code||'').trim(); if(!code){ return; }
+  const target=normTxt(code);
+  const prods=await db.productions.toArray();
+  const recipes=await db.recipes.toArray();
+  const recName2=id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  // Toutes les productions correspondant au code (vendables OU non : on veut d'abord VOIR la traça).
+  const matches=prods.filter(p=>{
+    const full=normTxt(p.lotProduction||''); const base=normTxt(lotBaseSansSuffixe(p.lotProduction||''));
+    return full===target || base===target || full.includes(target);
+  }).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  if(!matches.length){
+    // Pas une production → tenter la résolution générale (lot matière, etc.).
+    return traceLotByNumber(code);
+  }
+  // Un seul lot → ouvre directement sa fiche de traçabilité complète.
+  if(matches.length===1){ closeScanner&&closeScanner(); return traceProd(matches[0].id); }
+  // Plusieurs lots → choisir lequel voir.
+  const rows=matches.map(p=>{
+    const nom = p.libre?(p.produitLibre||'(sans nom)'):recName2(p.recipeId);
+    const comp = prodComposant(p);
+    const compLbl = ({coques:'coques',ganache:'ganache',cremeux:'crémeux',assemble:'assemblé',complet:'complet',degustation:'dégustation'})[comp]||comp;
+    return `<button type="button" class="lot-res" style="display:block;width:100%;text-align:left;background:#fff;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer" onclick="closeModal();traceProd(${p.id})">
+      <b style="color:var(--bordeaux)">${esc(p.lotProduction||'—')}</b> · ${esc(nom)} <span style="font-size:.74rem;color:#9a8a82">(${compLbl})</span><br>
+      <span style="font-size:.84rem;color:#6a5a52">reste ${qty(p.qteRestante)}${p.dlcProduit?' · DLC '+fmtDate(p.dlcProduit):''}${p.emplacement?' · '+empLettre(p.emplacement):''}</span></button>`;
+  }).join('');
+  openModal(`<h3>Quel lot ?</h3><p class="note">Plusieurs lots correspondent à « ${esc(code)} ».</p>${rows}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button></div>`);
+}
+// Étape 2 : montre le lot et propose les commandes « à préparer » contenant ce parfum.
+async function scanAffectChooseOrder(prodId){
+  const p=await db.productions.get(prodId); if(!p){ toast('Lot introuvable'); return; }
+  const recipes=await db.recipes.toArray();
+  const orders=await db.orders.toArray();
+  const clients=await db.clients.toArray().catch(()=>[]);
+  const recName2=id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const clientNom=id=>{ const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'—'; };
+  const parfumLot = p.libre?(p.produitLibre||''):recName2(p.recipeId);
+  const kParfum = (typeof aiNormalize==='function')?aiNormalize(parfumLot):parfumLot.toLowerCase();
+  // Commandes à préparer qui demandent ce parfum (et pas encore terminées/livrées).
+  const candidates=orders.filter(o=>{
+    if(normStatus(o.statut)!=='À préparer') return false;
+    const needs=orderFlavorNeeds(o);
+    return Object.keys(needs).some(n=>(typeof aiNormalize==='function'?aiNormalize(n):n.toLowerCase())===kParfum && needs[n]>0);
+  }).sort((a,b)=>(a.dateEvenement||a.date||'').localeCompare(b.dateEvenement||b.date||''));
+  window._scanAffectProdId = prodId;
+  const lotInfo = `<div class="sum-box" style="border:2px solid #aa7c39;background:#fbf5ea">
+    <span>📦 <b>${esc(parfumLot)}</b><br><span style="font-size:.82rem;color:#7a6a60">lot ${esc(p.lotProduction||'—')}${p.dlcProduit?' · DLC '+fmtDate(p.dlcProduit):''}${p.emplacement?' · '+empLettre(p.emplacement):''}</span></span>
+    <b>reste ${qty(p.qteRestante)}</b></div>`;
+  if(!candidates.length){
+    openModal(`<h3>🎯 Affecter ce lot</h3>${lotInfo}
+      <p class="note">Aucune commande « à préparer » ne demande « ${esc(parfumLot)} » pour l'instant.</p>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const rows=candidates.map(o=>{
+    const needs=orderFlavorNeeds(o);
+    const besoin=Object.keys(needs).reduce((s,n)=>((typeof aiNormalize==='function'?aiNormalize(n):n.toLowerCase())===kParfum?s+needs[n]:s),0);
+    return `<button type="button" class="lot-res" style="display:block;width:100%;text-align:left;background:#fff;border:1px solid var(--hair);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer" onclick="scanAffectQte(${o.id})">
+      <b style="color:var(--bordeaux)">${esc(clientNom(o.clientId))}</b> · besoin ${qty(besoin)} ${esc(parfumLot)}<br>
+      <span style="font-size:.84rem;color:#6a5a52">livraison ${o.dateEvenement?fmtDate(o.dateEvenement):(o.date?fmtDate(o.date):'—')}</span></button>`;
+  }).join('');
+  openModal(`<h3>🎯 Affecter ce lot</h3>${lotInfo}
+    <p class="note">Commandes « à préparer » qui demandent ce parfum :</p>${rows}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button></div>`);
+}
+// Étape 3 : saisie de la quantité à affecter + confirmation.
+async function scanAffectQte(orderId){
+  const prodId=window._scanAffectProdId;
+  const p=await db.productions.get(prodId); if(!p){ toast('Lot introuvable'); return; }
+  const o=await db.orders.get(orderId); if(!o){ toast('Commande introuvable'); return; }
+  const recipes=await db.recipes.toArray();
+  const recName2=id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const parfumLot = p.libre?(p.produitLibre||''):recName2(p.recipeId);
+  const kParfum = (typeof aiNormalize==='function')?aiNormalize(parfumLot):parfumLot.toLowerCase();
+  const needs=orderFlavorNeeds(o);
+  const besoin=Object.keys(needs).reduce((s,n)=>((typeof aiNormalize==='function'?aiNormalize(n):n.toLowerCase())===kParfum?s+needs[n]:s),0);
+  const dispo=round3(+p.qteRestante||0);
+  const sugg=Math.min(dispo, besoin||dispo);
+  window._scanAffectOrderId=orderId;
+  openModal(`<h3>Quantité à affecter</h3>
+    <div class="sum-box"><span>Lot ${esc(p.lotProduction||'—')} · ${esc(parfumLot)}</span><b>dispo ${qty(dispo)}</b></div>
+    <div class="sum-box"><span>Besoin de la commande</span><b>${qty(besoin)}</b></div>
+    <div class="field"><label>Quantité affectée</label><input type="number" id="scanAffQte" min="1" max="${dispo}" value="${sugg}" style="font-size:1.1rem"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="scanAffectConfirm()">✓ Affecter et décompter</button>
+    </div>`);
+}
+// Étape 4 : validation → décrémente le stock + crée le lien orderItems (traçabilité).
+async function scanAffectConfirm(){
+  const prodId=window._scanAffectProdId, orderId=window._scanAffectOrderId;
+  const q=+val('scanAffQte')||0;
+  if(q<=0){ toast('Quantité invalide'); return; }
+  try{
+    await db.transaction('rw', db.productions, db.orderItems, async()=>{
+      const p=await db.productions.get(prodId); if(!p) throw new Error('Lot introuvable');
+      const take=Math.min(round3(q), round3(+p.qteRestante||0));
+      if(take<=0) throw new Error('Plus de stock disponible sur ce lot');
+      await db.orderItems.add({orderId, productionId:prodId, qte:round3(take)});
+      await db.productions.update(prodId, {qteRestante: subQty(p.qteRestante, take)});
+    });
+    closeModal();
+    toast(`✓ ${qty(q)} affecté(s) à la commande · stock décompté`);
+    if(typeof markUnsaved==='function') markUnsaved();
+    if(typeof renderPicking==='function' && document.querySelector('.pick-tabs')) renderPicking();
+  }catch(err){ toast(err.message||'Erreur d\'affectation'); }
+}
+
 // Résout un numéro scanné : lot matière → traceLot, sinon lot de production → traceProd.
 async function traceLotByNumber(code){
   code=(code||'').trim(); if(!code){ return; }
@@ -8574,7 +8690,7 @@ async function traceProd(prodId){
     ${lossBlock}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
     ${cmdLines.length?cmdLines.join(''):'<p class="note">Ce batch n\'est lié à aucune commande pour l\'instant.</p>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button><button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn gold" onclick="shareLabelImage(${prodId})" title="Générer une image à partager vers l'app Phomemo">📤 Image (Phomemo)</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button>${(prodVendable(prod) && round3(+prod.qteRestante||0)>0)?`<button class="btn gold" onclick="closeModal();scanAffectChooseOrder(${prodId})" title="Affecter ce lot à une commande à préparer">🎯 Affecter à une commande</button>`:''}<button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn gold" onclick="shareLabelImage(${prodId})" title="Générer une image à partager vers l'app Phomemo">📤 Image (Phomemo)</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
  }catch(e){
   console.error('traceProd', e);
   toast('Erreur lors de l\'affichage de la traçabilité du batch');
@@ -27975,6 +28091,110 @@ async function retroplanningCale(orderId){
     debutProduction: debutProd ? debutProd.debut : null,
     contraintes:rp.contraintes
   };
+}
+
+// [ÉCRAN] Agenda de production consolidé : toutes les commandes à venir, fusionnées par jour.
+async function renderAgendaProduction(){
+  const main = document.getElementById('main');
+  main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
+    <p class="note">⏳ Calcul du rétroplanning de chaque commande…</p>`;
+  let ag;
+  try{ ag = await buildAgendaProduction(45); }
+  catch(e){ console.error('agendaProd',e); main.innerHTML += '<p class="note" style="color:var(--red)">Erreur de calcul.</p>'; return; }
+
+  // Icône + couleur par type de tâche.
+  const META = {
+    coques:  {ico:'🟤', col:'#8a6d3b', nom:'Coques'},
+    ganache: {ico:'🍫', col:'#7a4b2a', nom:'Ganache'},
+    cremeux: {ico:'🟠', col:'#c0651a', nom:'Crémeux'},
+    montage: {ico:'🔧', col:'#3f7d52', nom:'Montage'}
+  };
+
+  let corps;
+  if(!ag.jours.length){
+    corps = `<div class="panel"><p class="note">Aucune tâche de production planifiée sur les ${ag.horizonJours} prochains jours.<br>Les commandes à venir (avec une date d'événement et des parfums) apparaîtront ici automatiquement.</p></div>`;
+  } else {
+    corps = ag.jours.map(j=>{
+      const taches = j.taches.map(t=>{
+        const m = META[t.cle] || {ico:'•', col:'#8a7a72', nom:t.label};
+        const livTxt = (()=>{ try{ return new Date(t.livraison+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}); }catch(e){ return t.livraison; } })();
+        return `<div class="sum-box" style="align-items:flex-start;border-left:3px solid ${m.col};cursor:pointer" onclick="retroplanningView(${t.orderId})">
+          <div style="flex:1">
+            <div><b>${t.heure}${t.finHeure?'–'+t.finHeure:''}</b> · ${m.ico} <b style="color:${m.col}">${m.nom}</b></div>
+            <div style="font-size:.82rem;color:#7a6a60;margin-top:2px">${esc(t.clientNom)} · livraison ${livTxt}${t.tropLongue?' <span style="color:var(--red)">⚠ ne tient pas</span>':''}</div>
+          </div>
+          <span style="color:var(--bordeaux);font-size:.8rem">détail →</span>
+        </div>`;
+      }).join('');
+      return `<div class="panel" style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #e8dccd;padding-bottom:6px;margin-bottom:8px">
+          <h2 style="margin:0;text-transform:capitalize">${esc(j.label)}</h2>
+          ${j.semaineType?`<span class="tag" style="background:#aa7c39;color:#fff">Semaine ${esc(j.semaineType)}</span>`:''}
+        </div>
+        ${taches}
+      </div>`;
+    }).join('');
+  }
+
+  main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>${ag.jours.length} jour(s) de travail planifié(s) · ${ag.horizonJours} prochains jours</p></div></div>
+    <p class="note" style="margin-bottom:14px">🟤 Coques · 🍫 Ganache · 🟠 Crémeux · 🔧 Montage. Chaque tâche est calée dans tes plages A/B. Touche une tâche pour voir le rétroplanning complet de la commande.</p>
+    ${corps}`;
+}
+// [AGENDA CONSOLIDÉ] Fusionne le rétroplanning calé de TOUTES les commandes à venir en un agenda
+// de production groupé par jour. Ne retient que les tâches de TRAVAIL (présence requise) : coques,
+// ganache, crémeux, montage — pas les attentes (repos, maturation) qui ne mobilisent pas l'atelier.
+// Renvoie { jours:[{date:'YYYY-MM-DD', label, taches:[{heure, cle, label, commande, clientNom, fin, plage}]}], conflits:[...] }.
+async function buildAgendaProduction(horizonJours){
+  horizonJours = +horizonJours || 30;
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clientNom = id => { const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'—'; };
+  const today0 = new Date(); today0.setHours(0,0,0,0);
+  const horizon = new Date(today0); horizon.setDate(horizon.getDate()+horizonJours);
+
+  // Types de tâches à afficher dans l'agenda (travail mobilisant l'atelier).
+  const TACHES_TRAVAIL = new Set(['coques','ganache','cremeux','montage']);
+  const parJour = {};   // 'YYYY-MM-DD' -> [tache...]
+
+  for(const o of orders){
+    // On ne planifie que les commandes non livrées avec une date d'événement à venir.
+    const st = (typeof normStatus==='function') ? normStatus(o.statut) : (o.statut||'');
+    if(st==='Livrée') continue;
+    const dLiv = o.dateEvenement || o.date || '';
+    if(!dLiv) continue;
+    let cale=null;
+    try{ cale = await retroplanningCale(o.id); }catch(e){ continue; }
+    if(!cale || !cale.ok || !Array.isArray(cale.jalonsCales)) continue;
+    cale.jalonsCales.forEach(j=>{
+      if(!TACHES_TRAVAIL.has(j.cle) || !j.debut) return;
+      const d = new Date(j.debut);
+      if(d < today0 || d > horizon) return;   // hors fenêtre
+      const key = d.toISOString().slice(0,10);
+      (parJour[key] ||= []).push({
+        heureMin: d.getHours()*60+d.getMinutes(),
+        heure: d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}),
+        finHeure: j.fin ? new Date(j.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : '',
+        cle: j.cle, label: j.label,
+        orderId: o.id,
+        clientNom: clientNom(o.clientId),
+        livraison: dLiv,
+        tropLongue: !!j.tropLongue
+      });
+    });
+  }
+
+  // Construit la liste ordonnée des jours, tâches triées par heure.
+  const jours = Object.keys(parJour).sort().map(key=>{
+    const taches = parJour[key].sort((a,b)=>a.heureMin-b.heureMin);
+    const d = new Date(key+'T12:00:00');
+    return {
+      date: key,
+      label: d.toLocaleDateString('fr-FR',{weekday:'long', day:'2-digit', month:'long'}),
+      semaineType: (typeof availWeekType==='function') ? availWeekType(key) : '',
+      taches
+    };
+  });
+  return { jours, horizonJours };
 }
 
 // Affiche le rétroplanning d'une commande dans une modale (jalons datés à rebours).
