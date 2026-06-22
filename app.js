@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v680';
+const APP_VERSION = 'v681';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -28312,12 +28312,15 @@ function retroplanningCommande(o, recipes){
     parfums.forEach(p=>{ const r=recByNom[normNom(p.nom)]; if(r && !recsUtilisees.includes(r)) recsUtilisees.push(r); });
   });
   // Contraintes agrégées (on prend la plus forte).
-  let reposGanacheH = 0, jourJ = false, congelObl = false, maturationRequise = true, aCremeux = false, gfCongele = false;
+  let reposGanacheH = 0, jourJ = false, congelObl = false, maturationRequise = true, aCremeux = false, gfCongele = false, aStandard = false;
   recsUtilisees.forEach(r=>{
     const dg = (r.ganacheDelaiH!=null) ? +r.ganacheDelaiH : 12;
     if(dg>reposGanacheH) reposGanacheH = dg;
     if(r.jourJUniquement) jourJ = true;
     if(r.congelObligatoire) congelObl = true;
+    // Macaron STANDARD (≠ grand format) : ses coques doivent être faites le JOUR du montage
+    // (règle métier : coques fraîches le jour de l'assemblage). Les grands formats sont exclus.
+    if(!r.grandFormat) aStandard = true;
     // Convention de l'app : une recette grand format utilise un CRÉMEUX (cf. garniture GF).
     if(r.grandFormat) aCremeux = true;
     // Grand format CONGELÉ (congélation obligatoire des coques ou de la recette) → décongélation
@@ -28380,10 +28383,26 @@ function retroplanningCommande(o, recipes){
       note:'Préparer le crémeux du grand format, puis le placer au congélateur.'});
   }
 
-  // Coques : avant le montage. Peuvent être faites en amont (la veille, ou congelées).
-  const coquesAvant = minus(finMontage, 2); // au moins un créneau avant le montage (raffiné plus tard)
+  // Coques : avant le montage.
+  // RÈGLE MÉTIER (macarons standard) : les coques se font le JOUR du montage — pivot = montage,
+  // PAS la livraison (le montage peut être la veille de la livraison à cause de la maturation).
+  // On les cale donc le même jour calendaire que finMontage, le matin (8h par défaut), et jamais
+  // après le début du montage (si le montage est avant 8h, on place les coques juste avant).
+  // Les GRANDS FORMATS sont exclus : ils gardent la possibilité de coques congelées en amont.
+  // L'usage de coques congelées d'un ancien batch reste une EXCEPTION ponctuelle à l'assemblage,
+  // non planifiée ici.
+  let coquesAvant;
+  if(aStandard){
+    const COQUES_HEURE_MATIN = (typeof PROC!=='undefined' && PROC.coquesHeureMatin!=null) ? PROC.coquesHeureMatin : 8;
+    const jourMontage = new Date(finMontage);
+    jourMontage.setHours(COQUES_HEURE_MATIN, 0, 0, 0);   // même jour que le montage, à 8h
+    // Si le montage est calé plus tôt que 8h ce jour-là, on place les coques juste avant le montage.
+    coquesAvant = (jourMontage <= finMontage) ? jourMontage : minus(finMontage, 2);
+  } else {
+    coquesAvant = minus(finMontage, 2); // grand format uniquement : comportement existant
+  }
   jalons.push({cle:'coques', label:'Coques (meringue + cuisson)', date:new Date(coquesAvant), type:'travail',
-    note: congelObl ? 'Coques cuites puis congelées (obligatoire pour cette recette).' : 'Coques cuites, prêtes pour le montage. Peuvent être faites en avance.'});
+    note: aStandard ? 'Coques à réaliser le jour même du montage (coques fraîches — règle macaron standard). Exception : des coques d\'un ancien batch peuvent venir du congélateur pour l\'assemblage.' : (congelObl ? 'Coques cuites puis congelées (obligatoire pour cette recette).' : 'Coques cuites, prêtes pour le montage. Peuvent être faites en avance.')});
 
   // Tri chronologique (du plus tôt au plus tard) pour l'affichage.
   jalons.sort((a,b)=> a.date - b.date);
@@ -28395,8 +28414,9 @@ function retroplanningCommande(o, recipes){
   if(decongelH>0) contraintes.push(`🌡 Décongélation : ${decongelH} h au frigo avant le service (grand format congelé).`);
   if(reposGanacheH>0) contraintes.push(`⏱ Repos ganache : ${reposGanacheH} h.`);
   if(maturationH>0) contraintes.push(`🧊 Maturation : ${maturationH} h avant livraison.`);
+  if(aStandard) contraintes.push('🍪 Coques le jour du montage (coques fraîches — macaron standard).');
 
-  return {livraison, jalons, contraintes, reposGanacheH, maturationH, cremeuxCongelH, decongelH, jourJ, congelObl, aCremeux, gfCongele, recsUtilisees:recsUtilisees.length};
+  return {livraison, jalons, contraintes, reposGanacheH, maturationH, cremeuxCongelH, decongelH, jourJ, congelObl, aCremeux, gfCongele, aStandard, recsUtilisees:recsUtilisees.length};
 }
 
 /* [CHANTIER 1] COUCHE DE CALAGE du rétroplanning sur les plages de disponibilité.
