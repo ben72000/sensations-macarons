@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v661';
+const APP_VERSION = 'v664';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -6309,7 +6309,7 @@ async function prodAssembleSave(thisId){
                       {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')},
                       ..._assembleFromComp]
       });
-      return {lotAsm, dlc, qteAsm, deg, compConsos:_compConsos};
+      return {lotAsm, dlc, qteAsm, deg, compConsos:_compConsos, recipeId:coques.recipeId, parfumNom:(_rec?_rec.produitNom:'')};
     });
     closeModal(); renderProductions();
     const _compTxt = (res.compConsos && res.compConsos.length)
@@ -6318,6 +6318,14 @@ async function prodAssembleSave(thisId){
     toast(res.deg
       ? `🥄 Dégustation assemblée ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm} (non vendable)${_compTxt}`
       : `Assemblé ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm}${res.dlc?` · DLC ${fmtDate(res.dlc)}`:''}${_compTxt}`);
+    // [ASSEMBLAGE D'UN BATCH] Crée une tâche d'ATELIER « Assemblage — [parfum] » liée à la recette,
+    // chronométrée comme les autres. Couvre le cas « assemblage d'un batch produit un autre jour » :
+    // le temps d'assemblage est ainsi attribué à la bonne recette (répartition fine). Une seule
+    // tâche par assemblage ; tu l'arrêteras depuis l'écran Atelier quand tu auras fini.
+    if(!res.deg && res.recipeId!=null){
+      try{ prodTaskStartForBatch({recipeId:res.recipeId, composant:'assemble', lotBase:res.lotAsm||'', parfumNom:res.parfumNom||''}); }
+      catch(e){ console.error('atelier assemblage', e); }
+    }
   }catch(err){ toast(err.message||'Erreur assemblage'); }
 }
 // Décompte des macarons dégustation distribués (offerts) — sort du stock dégustation.
@@ -25611,7 +25619,85 @@ function prodTaskStart(label){
   s.tasks = s.tasks||[]; s.tasks.push(t);
   prodSessUpsert(s);
   prodStartTicking();
+  // [RATTACHEMENT INTELLIGENT] Si UN SEUL parfum est en cours de production, on rattache la tâche
+  // automatiquement (l'algo « comprend » sans rien demander). Si plusieurs → on propose de cocher.
+  // Si aucun → tâche transverse (vaisselle…), pas de rattachement auto.
+  try{ prodTaskAutoRattach(t.id); }catch(e){ console.error('autoRattach',e); }
   return t;
+}
+// Renvoie les recipeId DISTINCTS des batchs actuellement en cours de production (statut démarré).
+async function prodRecettesEnCours(){
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const set = new Set();
+  prods.forEach(p=>{
+    if((p.prodStatut||'termine')!=='demarre') return;
+    if(p.libre || p.recipeId==null) return;
+    set.add(+p.recipeId);
+  });
+  return Array.from(set);
+}
+// Rattache automatiquement une tâche au parfum en cours s'il n'y en a qu'un ; sinon propose un choix.
+async function prodTaskAutoRattach(taskId){
+  const recs = await prodRecettesEnCours();
+  if(recs.length===1){
+    // Un seul parfum en production → rattachement direct, silencieux.
+    const s = prodSessActive(); if(!s) return;
+    const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t) return;
+    t.parfums = recs.slice();
+    prodSessUpsert(s);
+    prodRenderBoard&&prodRenderBoard();
+  } else if(recs.length>1){
+    // Plusieurs parfums en cours → on propose de cocher (en cas de doute).
+    prodTaskRattachPicker(taskId, recs);
+  }
+  // recs.length===0 → tâche transverse, on ne rattache rien (cochable manuellement plus tard).
+}
+// Sélecteur de rattachement : coche le(s) parfum(s) concerné(s) par cette tâche.
+async function prodTaskRattachPicker(taskId, recsEnCours){
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const s = prodSessActive(); if(!s) return;
+  const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t) return;
+  // Liste : parfums en cours en haut (pré-cochés si un seul), puis le reste.
+  const enCours = recsEnCours||[];
+  const dejaSet = new Set((Array.isArray(t.parfums)?t.parfums:[]).map(x=>+x));
+  const recsTri = recipes.slice().filter(r=>r.produitNom).sort((a,b)=>{
+    const sa=enCours.includes(a.id)?0:1, sb=enCours.includes(b.id)?0:1;
+    return sa-sb || (a.produitNom||'').localeCompare(b.produitNom||'');
+  });
+  window._taskRattachId = taskId;
+  window._taskRattachRecs = recsTri.map(r=>r.id);
+  const rows = recsTri.map(r=>{
+    const checked = (dejaSet.has(r.id) || enCours.includes(r.id)) ? 'checked' : '';
+    const gf = r.grandFormat ? ' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">GF</span>' : '';
+    const enc = enCours.includes(r.id) ? ' <span style="color:#3f7d52;font-size:.72rem">en production</span>' : '';
+    return `<label class="sum-box" style="align-items:center;cursor:pointer">
+      <span style="flex:1">${esc(r.produitNom)}${gf}${enc}</span>
+      <input type="checkbox" id="trc_${r.id}" ${checked} style="width:22px;height:22px"></label>`;
+  }).join('');
+  openModal(`<h3>🎯 Parfum(s) de cette tâche</h3>
+    <p class="note">Plusieurs parfums sont en production. Coche celui (ou ceux) concerné(s) par « ${esc(t.label)} ». Sert à attribuer le temps au bon parfum.</p>
+    ${rows}
+    <div class="modal-actions">
+      <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Plus tard</button>
+      <button class="btn gold" onclick="prodTaskRattachSave()">Valider</button>
+    </div>`);
+}
+function prodTaskRattachSave(){
+  const taskId = window._taskRattachId; if(taskId==null) return;
+  const recIds = window._taskRattachRecs||[];
+  const choisis = recIds.filter(rid=>{ const el=document.getElementById('trc_'+rid); return el&&el.checked; }).map(rid=>+rid);
+  const s = prodSessActive(); if(!s){ closeModal(); return; }
+  const t = (s.tasks||[]).find(x=>x.id===taskId);
+  if(t){ t.parfums = choisis.slice(); prodSessUpsert(s); }
+  closeModal();
+  prodRenderBoard&&prodRenderBoard();
+  toast(choisis.length?`${choisis.length} parfum(s) rattaché(s) ✓`:'Tâche sans parfum (transverse)');
+}
+// Ouvre le sélecteur de rattachement pour une tâche, à la demande (bouton ✏️). Fonctionne même
+// sur une session passée rouverte (cherche la tâche dans la session active).
+async function prodTaskRattachManuel(taskId){
+  const recs = await prodRecettesEnCours();
+  prodTaskRattachPicker(taskId, recs);
 }
 // [TEMPS PAR RECETTE] Démarre une tâche d'ATELIER (prodSessions) rattachée à un batch de
 // production. La tâche porte `parfums:[recipeId]`, ce que prodTempsParParfum() lit pour répartir
@@ -25845,15 +25931,67 @@ async function prodTempsLissePerMacaron(jours){
   };
 }
 
-/* [TEMPS PAR PARFUM] Calcule un temps moyen par macaron DISTINCT pour chaque RECETTE
-   (clé = recipeId, ce qui distingue nativement le grand format du classique, même nom),
-   à partir des sessions de chronos d'atelier dont les tâches portent des parfums (recipeId).
-   - Une tâche peut concerner plusieurs recettes (meringue mutualisée) : le temps de la
-     session se répartit À PARTS ÉGALES entre les recettes distinctes qu'elle couvre.
-   - On rapporte ce temps au nombre de macarons FINIS de chaque recette sur la fenêtre.
-   - Repli : si une recette n'a pas assez de données propres, l'appelant utilisera la
-     moyenne globale (prodTempsLissePerMacaron).
-   Structure attendue d'une tâche : t.parfums = [recipeId, ...].
+/* [RÉPARTITION FINE] Pour UNE session, répartit le temps réel entre les recettes selon le
+   principe : à chaque instant, le temps se partage entre les recettes dont une tâche est ACTIVE
+   à cet instant. Le temps où AUCUNE tâche-recette n'est active (vaisselle, nettoyage, pauses)
+   est « non distribué » et réparti à parts égales, en fin de session, entre TOUTES les recettes
+   couvertes. Renvoie { recipeId: ms }.
+   Méthode : balayage par événements (sweep line) sur les intervalles [start,end] des tâches qui
+   portent un recipeId. Entre deux instants-clés consécutifs, on partage la tranche entre les
+   recettes actives sur cette tranche. */
+function prodSessTempsParRecette(s){
+  const tasks = (s&&s.tasks)||[];
+  // Intervalles des tâches portant au moins une recette. Une tâche peut porter plusieurs recettes
+  // (meringue mutualisée) → toutes actives en même temps sur cet intervalle.
+  const intervals = [];
+  const allRecs = new Set();
+  tasks.forEach(t=>{
+    const recs = (Array.isArray(t.parfums)?t.parfums:[]).map(x=>+x).filter(r=>Number.isFinite(r)&&r>0);
+    if(!recs.length) return;
+    const st = +t.start||0;
+    const en = +t.end || Date.now();
+    if(st<=0 || en<=st) return;
+    intervals.push({st, en, recs});
+    recs.forEach(r=>allRecs.add(r));
+  });
+  const result = {};
+  allRecs.forEach(r=>result[r]=0);
+  if(!intervals.length) return result;
+
+  // Points-clés (bornes) du balayage.
+  const points = new Set();
+  intervals.forEach(iv=>{ points.add(iv.st); points.add(iv.en); });
+  const sorted = Array.from(points).sort((a,b)=>a-b);
+
+  let distributed = 0;
+  for(let i=0;i<sorted.length-1;i++){
+    const a=sorted[i], b=sorted[i+1];
+    const dur=b-a; if(dur<=0) continue;
+    // Recettes actives sur la tranche [a,b] : union des recs des intervalles couvrant cette tranche.
+    const actives = new Set();
+    intervals.forEach(iv=>{ if(iv.st<=a && iv.en>=b){ iv.recs.forEach(r=>actives.add(r)); } });
+    if(actives.size===0) continue;   // tranche sans tâche-recette (ne devrait pas arriver ici)
+    const part = dur/actives.size;
+    actives.forEach(r=>{ result[r]+=part; });
+    distributed += dur;
+  }
+
+  // Temps NON distribué = temps réel de session (mur à mur) − temps déjà attribué aux tranches.
+  // Couvre la vaisselle/nettoyage/pauses où aucune tâche-recette n'était active.
+  const reel = (typeof prodSessReelMs==='function') ? prodSessReelMs(s) : 0;
+  const nonDistribue = Math.max(0, reel - distributed);
+  if(nonDistribue>0 && allRecs.size>0){
+    const part = nonDistribue/allRecs.size;
+    allRecs.forEach(r=>{ result[r]+=part; });
+  }
+  return result;
+}
+
+/* [TEMPS PAR PARFUM] Calcule un temps moyen par macaron DISTINCT pour chaque RECETTE (clé =
+   recipeId, distingue GF/classique), à partir des sessions d'atelier. La répartition du temps
+   au sein d'une session se fait FINEMENT (minute par minute + temps non distribué) via
+   prodSessTempsParRecette. On rapporte ensuite au nombre de macarons FINIS de chaque recette.
+   Repli : si une recette manque de données, l'appelant utilise la moyenne globale.
 */
 async function prodTempsParParfum(jours){
   jours = +jours || 90;
@@ -25861,20 +25999,11 @@ async function prodTempsParParfum(jours){
   const sinceStr = since.toISOString().slice(0,10);
   const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
 
-  // 1) Temps d'atelier réparti par recette (en ms), via les recipeId déclarés sur les tâches.
+  // 1) Temps d'atelier réparti FINEMENT par recette (minute par minute + temps non distribué).
   const msParRec = {};   // recipeId -> ms cumulés
   sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
-    const msSession = (typeof prodSessReelMs==='function') ? prodSessReelMs(s) : 0;
-    if(msSession<=0) return;
-    // Recettes distinctes couvertes par les tâches de cette session (par recipeId).
-    const setRec = new Set();
-    (s.tasks||[]).forEach(t=>{
-      const arr = Array.isArray(t.parfums) ? t.parfums : [];
-      arr.forEach(x=>{ const rid=+x; if(Number.isFinite(rid) && rid>0) setRec.add(rid); });
-    });
-    if(setRec.size===0) return;   // session non étiquetée → ignorée ici (tombe dans la moyenne globale)
-    const part = msSession / setRec.size;   // répartition à parts égales
-    setRec.forEach(rid=>{ msParRec[rid] = (msParRec[rid]||0) + part; });
+    const parRec = prodSessTempsParRecette(s);   // {recipeId: ms} pour cette session
+    Object.keys(parRec).forEach(rid=>{ msParRec[rid] = (msParRec[rid]||0) + parRec[rid]; });
   });
 
   // 2) Macarons finis par recette (recipeId) sur la fenêtre.
@@ -26419,14 +26548,24 @@ function prodRenderGantt(targetSession){
   const startH=new Date(t0); startH.setMinutes(0,0,0);
   for(let h=startH.getTime(); h<=t1; h+=3600000){ if(h>=t0) ticks.push(h); }
 
+  const _recNames = (window._allRecipesCache||[]);
+  const _recNm = rid => { const r=_recNames.find(x=>+x.id===+rid); return r?r.produitNom:('#'+rid); };
   const rows = tasks.map(t=>{
     const left = ((t.start - t0)/span)*100;
     const end = t.end||Date.now();
     const width = Math.max(1.5, ((end - t.start)/span)*100);
     const running = !t.end;
     const dur = prodDurShort(prodTaskNet(t));
+    const parfums = Array.isArray(t.parfums)?t.parfums:[];
+    const parfumTxt = parfums.length
+      ? parfums.map(_recNm).join(', ')
+      : '<span style="color:#b08a3a">parfum ?</span>';
     return `<div class="gantt-row">
-      <div class="gantt-label" title="${esc(t.label)}"><span class="prodt-dot" style="background:${t.color}"></span>${esc(t.label)}</div>
+      <div class="gantt-label" title="${esc(t.label)}">
+        <span class="prodt-dot" style="background:${t.color}"></span>${esc(t.label)}
+        <div style="font-size:.68rem;color:#9a8a82;margin-top:1px">🎯 ${parfumTxt}
+          <span class="act" style="cursor:pointer;color:var(--bordeaux)" onclick="prodTaskRattachManuel('${t.id}')">✏️</span></div>
+      </div>
       <div class="gantt-track">
         ${ticks.map(tk=>`<div class="gantt-grid" style="left:${((tk-t0)/span)*100}%"></div>`).join('')}
         <div class="gantt-bar ${running?'is-running':''}" style="left:${left}%;width:${width}%;background:${t.color}">
