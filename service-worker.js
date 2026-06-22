@@ -1,11 +1,11 @@
-const CACHE = 'sm-iphone-v672';
+const CACHE = 'sm-iphone-v673';
 const ASSETS = [
   './',
   './index.html',
-  './utils.js?v=672',
-  './app.js?v=672',
+  './utils.js?v=673',
+  './app.js?v=673',
   './dexie.min.js',
-  './qr_min.js?v=672',
+  './qr_min.js?v=673',
   './pdf_extract.js',
   './manifest.webmanifest',
   './icon-192.png',
@@ -28,7 +28,7 @@ self.addEventListener('install', e => {
       c.addAll(ASSETS).then(()=>{
         // Librairie de scan caméra (optionnelle, déposée à part) : on la met en cache si présente,
         // sans faire échouer l'installation si le fichier n'existe pas encore.
-        return c.add('./html5-qrcode.min.js?v=672').catch(()=>{});
+        return c.add('./html5-qrcode.min.js?v=673').catch(()=>{});
       })
     ).then(() => self.skipWaiting())
   );

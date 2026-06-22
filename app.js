@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v672';
+const APP_VERSION = 'v673';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -8296,12 +8296,21 @@ async function traceLot(lotId){
    3) sinon saisie manuelle (dernier recours).
    ============================================================ */
 let _scanStream=null, _scanRAF=null, _scanDetector=null, _h5qr=null;
-function scannerSupported(){ return ('BarcodeDetector' in window) || ('Html5Qrcode' in window); }
+// Récupère la classe Html5Qrcode quel que soit la façon dont la lib l'expose
+// (globale directe, ou via window.__Html5QrcodeLibrary__).
+function _getH5Class(){
+  if(typeof Html5Qrcode!=='undefined') return Html5Qrcode;
+  if(window.Html5Qrcode) return window.Html5Qrcode;
+  if(window.__Html5QrcodeLibrary__ && window.__Html5QrcodeLibrary__.Html5Qrcode) return window.__Html5QrcodeLibrary__.Html5Qrcode;
+  return null;
+}
+function _h5Available(){ try{ return !!_getH5Class(); }catch(e){ return false; } }
+function scannerSupported(){ return ('BarcodeDetector' in window) || _h5Available(); }
 function _extractLot(val){ let lot=(val||'').trim(); const m=lot.match(/#trace=(.+)$/); if(m) lot=decodeURIComponent(m[1]); return lot; }
 async function openScanner(onResult){
   // onResult(texte) appelé quand un code est lu (ou saisi manuellement)
   const hasNative = ('BarcodeDetector' in window);
-  const hasH5     = ('Html5Qrcode' in window);
+  const hasH5     = _h5Available();
   const camera    = hasNative || hasH5;
   openModal(`<h3>Scanner un lot</h3>
     ${camera
@@ -8339,7 +8348,9 @@ async function _openScannerNative(){
 // Moteur 2 : Html5Qrcode (iOS/Safari et partout où le natif manque).
 async function _openScannerH5(){
   try{
-    _h5qr = new Html5Qrcode('h5qrReader', { verbose:false });
+    const H5 = _getH5Class();
+    if(!H5){ const msg=document.getElementById('scanMsg'); if(msg) msg.textContent='Librairie de scan indisponible. Utilisez la saisie manuelle.'; return; }
+    _h5qr = new H5('h5qrReader', { verbose:false });
     const config = { fps:10, qrbox:{width:220,height:220}, aspectRatio:1.0 };
     const onScan = (decodedText)=>{
       const lot=_extractLot(decodedText);
