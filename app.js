@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v660';
+const APP_VERSION = 'v661';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4316,6 +4316,14 @@ async function docValiderFacture(id){
   closeModal(); toast('Facture '+numero+' validée et verrouillée 🔒');
   if(view==='documents') renderDocuments();
 }
+// Déplie/replie l'encart « productions en cours » (accès direct aux recettes + raccourci atelier).
+function prodEnCoursToggle(){
+  const box=document.getElementById('prodEnCoursBox'); if(!box) return;
+  const open = box.style.display!=='none';
+  box.style.display = open?'none':'block';
+  const chev=document.getElementById('prodEnCoursChev');
+  if(chev) chev.style.transform = open?'rotate(0)':'rotate(90deg)';
+}
 async function renderProductions(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
@@ -4425,7 +4433,25 @@ async function renderProductions(){
      <div class="card"><div class="lbl">Valeur perdue (casse) ${kpiI('valeur_perdue')}</div><div class="val">${euro(kpi.valeurPerdue)}</div><div class="sub">${kpi.count} déclaration(s) · imputé au coût de revient</div></div>
    </div>`:''}
    ${enRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${enRetard.length} production(s) ouverte(s) depuis plus de ${PROD_OPEN_MAX_DAYS} jours.</b> Une production ne peut pas rester « démarrée » au-delà de ${PROD_OPEN_MAX_DAYS} jours : terminez-la (✓ Terminer) pour figer la DLC, ou supprimez-la.</div></div>`:''}
-   ${ouvertes.length && !enRetard.length?`<div class="banner">▶ <div><b>${ouvertes.length} production(s) en cours.</b> La DLC de 7 j ne démarre qu'au passage en « terminée ».</div></div>`:''}
+   ${ouvertes.length && !enRetard.length?`<div class="banner" style="flex-direction:column;align-items:stretch">
+     <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="prodEnCoursToggle()">
+       <span id="prodEnCoursChev" style="display:inline-block;transition:transform .2s">▸</span>
+       <div><b>${ouvertes.length} production(s) en cours.</b> La DLC de 7 j ne démarre qu'au passage en « terminée ».</div>
+     </div>
+     <div id="prodEnCoursBox" style="display:none;margin-top:10px">
+       ${ouvertes.map(o=>{
+         const _p=o;
+         const nom = (typeof _prodNom==='function')?_prodNom(_p):(_p.lotProduction||('#'+_p.id));
+         const comp = prodComposant(_p);
+         const compLbl = ({coques:'Coques',ganache:'Ganache',cremeux:'Crémeux',assemble:'Assemblage',complet:'Production'})[comp]||'Production';
+         return `<div class="sum-box" style="align-items:center;cursor:pointer" onclick="ficheRecetteProductionFromBatch(${_p.id})" title="Ouvrir la fiche recette + protocole de cette production">
+           <span style="flex:1">📋 <b>${esc(nom)}</b> <span style="color:#9a8a82;font-size:.8rem">· ${compLbl}${_p.lotProduction?' · '+esc(_p.lotProduction):''}</span></span>
+           <span style="color:var(--bordeaux);font-size:.8rem">Voir la recette →</span>
+         </div>`;
+       }).join('')}
+       <button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="goView('atelier')" title="Aller aux chronos de l'atelier (aller-retour rapide)">⏱ Atelier — chronos</button>
+     </div>
+   </div>`:''}
    ${_meringueList.length?`<div class="panel" style="border:1.5px solid #cfe3d4;background:#f4faf5">
      <h2 style="color:#2e6b3f">🥣 Meringues mutualisées <span style="font-weight:400;font-size:.82rem;color:#5a8a6a">— ${_meringueList.length} fournée(s) à 2 parfums</span></h2>
      <p class="note" style="margin-top:-2px">Chaque fournée partage une seule meringue entre plusieurs parfums. Touche une fournée pour voir et ouvrir le détail de chaque parfum.</p>
