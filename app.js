@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v679';
+const APP_VERSION = 'v680';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -2769,7 +2769,7 @@ async function matForm(id){
      <div class="field" id="f_uniteWrap"><label>Unité</label>
        <select id="f_unite" ${isEmb?'':'disabled'}>${(isEmb?['unité','sachet']:denreeOpts).map(u=>`<option ${ (s.unite===u)||(!isEmb&&!s.unite&&u==='kg')?'selected':''}>${u}</option>`).join('')}</select>
        <p class="note" id="uniteNote" style="margin-top:4px">${isEmb?'Emballages : comptés à l’unité.':(denreeUnite!=='kg'?`Cette denrée est gérée en <b>${esc(denreeUnite)}</b> (unité conservée de sa création ; lots et recettes l’utilisent).`:'Les denrées sont gérées <b>au kilogramme</b> (prix, stock et recettes en kg).')}</p></div>
-     <div class="field"><label>Seuil d'alerte ${isEmb?'(unités)':'(kg)'}</label><input type="number" step="0.01" id="f_seuil" value="${s.seuil||0}"></div>
+     <div class="field"><label>Seuil d'alerte ${isEmb?'(unités)':`(${esc(denreeUnite)})`}</label><input type="number" step="0.01" id="f_seuil" value="${s.seuil||0}"></div>
    </div>
    <div class="field"><label>${isEmb?'Prix indicatif / unité (€)':'Prix indicatif au kilo (€/kg)'}</label><input type="number" step="0.01" id="f_prix" value="${s.prixDefaut||0}"></div>
    <div class="field" id="f_embUsageWrap" style="${isEmb?'':'display:none'}"><label>Type d'emballage</label>
@@ -2814,7 +2814,10 @@ function matCatSwitch(cat){
   if(prixField){ const lab=prixField.closest('.field')?.querySelector('label');
     if(lab) lab.textContent = cat==='emballage' ? 'Prix indicatif / unité (€)' : 'Prix indicatif au kilo (€/kg)'; }
   const seuilLab=document.getElementById('f_seuil')?.closest('.field')?.querySelector('label');
-  if(seuilLab) seuilLab.textContent = cat==='emballage' ? "Seuil d'alerte (unités)" : "Seuil d'alerte (kg)";
+  if(seuilLab){
+    const uNat = document.getElementById('f_unite')?.value || 'kg';
+    seuilLab.textContent = cat==='emballage' ? "Seuil d'alerte (unités)" : `Seuil d'alerte (${uNat})`;
+  }
 }
 // Bascule selon le type d'emballage : un SAC n'a pas de capacité macarons (champ masqué).
 function matEmbUsageSwitch(usage){
