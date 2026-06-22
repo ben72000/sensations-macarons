@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v668';
+const APP_VERSION = 'v670';
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -7885,7 +7885,7 @@ function auditRecipeCosts(recipes, recipeItems, mats, lots){
       const mat = matById(it.materialId);
       const q = +it.qteParBatch||0;
       if(!mat){
-        alertes.push({type:'matiere_manquante', grave:true, msg:`Ingrédient introuvable (id ${it.materialId}) — référence cassée.`});
+        alertes.push({type:'matiere_manquante', grave:true, materialId:it.materialId, msg:`Ingrédient introuvable (id ${it.materialId}) — référence cassée.`});
         lignes.push({nom:'(matière supprimée)', q, unite:'?', pu:0, cout:0, manquante:true});
         continue;
       }
@@ -7895,11 +7895,11 @@ function auditRecipeCosts(recipes, recipeItems, mats, lots){
       const estEmb = (mat.categorie==='emballage');
       const unite = mat.unite || (estEmb?'unité':'kg');
       // Alerte prix manquant
-      if(pu<=0){ alertes.push({type:'sans_prix', grave:true, msg:`« ${mat.nom} » n'a aucun prix → comptée 0 € (coût sous-estimé).`}); }
+      if(pu<=0){ alertes.push({type:'sans_prix', grave:true, materialId:mat.id, msg:`« ${mat.nom} » n'a aucun prix → comptée 0 € (coût sous-estimé).`}); }
       // Alerte quantité incohérente avec l'unité kg : une denrée ≥ 5 kg/batch est suspecte
       // (typiquement des grammes saisis comme des kg → coût ×1000).
       if(!estEmb && unite==='kg' && q>=5){
-        alertes.push({type:'qte_suspecte', grave:true, msg:`« ${mat.nom} » : ${q} kg par batch — anormalement élevé. As-tu saisi des grammes au lieu de kg ? (0,150 = 150 g)`});
+        alertes.push({type:'qte_suspecte', grave:true, materialId:mat.id, msg:`« ${mat.nom} » : ${q} kg par batch — anormalement élevé. As-tu saisi des grammes au lieu de kg ? (0,150 = 150 g)`});
       }
       lignes.push({nom:mat.nom, q, unite, pu, cout, estEmb});
     }
@@ -7934,7 +7934,22 @@ async function renderCostAudit(){
     const r=a.recipe;
     const graves=a.alertes.filter(x=>x.grave);
     const borderCol = graves.length ? '#b3261e' : '#cfe3d4';
-    const alertHtml = a.alertes.length ? a.alertes.map(al=>`<div style="font-size:.8rem;color:${al.grave?'#b3261e':'#8a6d3b'};padding:3px 0">${al.grave?'⚠':'ℹ️'} ${esc(al.msg)}</div>`).join('') : '';
+    // Raccourci de correction selon le type d'anomalie.
+    const fixBtn = (al)=>{
+      const rid = r.id;
+      if(al.type==='sans_prix' && al.materialId!=null)
+        return `<button class="btn ghost sm" style="padding:2px 10px;font-size:.72rem;margin-left:6px" onclick="matForm(${al.materialId})" title="Renseigner le prix de cette matière">💶 Ajouter le prix</button>`;
+      if(al.type==='qte_suspecte' && al.materialId!=null)
+        return `<button class="btn ghost sm" style="padding:2px 10px;font-size:.72rem;margin-left:6px" onclick="recForm(${rid})" title="Corriger la quantité dans la recette">✎ Corriger la quantité</button>`;
+      if(al.type==='matiere_manquante')
+        return `<button class="btn ghost sm" style="padding:2px 10px;font-size:.72rem;margin-left:6px" onclick="recForm(${rid})" title="Réparer l'ingrédient dans la recette">🔧 Réparer la recette</button>`;
+      if(al.type==='cout_aberrant')
+        return `<button class="btn ghost sm" style="padding:2px 10px;font-size:.72rem;margin-left:6px" onclick="recForm(${rid})" title="Vérifier les quantités et unités">✎ Vérifier la recette</button>`;
+      if(al.type==='sans_rendement')
+        return `<button class="btn ghost sm" style="padding:2px 10px;font-size:.72rem;margin-left:6px" onclick="recForm(${rid})" title="Renseigner le rendement">✎ Ajouter le rendement</button>`;
+      return '';
+    };
+    const alertHtml = a.alertes.length ? a.alertes.map(al=>`<div style="font-size:.8rem;color:${al.grave?'#b3261e':'#8a6d3b'};padding:3px 0;display:flex;align-items:center;flex-wrap:wrap;gap:2px"><span>${al.grave?'⚠':'ℹ️'} ${esc(al.msg)}</span>${fixBtn(al)}</div>`).join('') : '';
     // lignes ingrédients, la plus chère en premier
     const lignesSorted=[...a.lignes].sort((x,y)=>y.cout-x.cout);
     const lignesHtml = lignesSorted.map(l=>{
