@@ -5,7 +5,42 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v673';
+const APP_VERSION = 'v679';
+// [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
+// crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
+function genUuid(){
+  try{ if(self.crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){}
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c=>{
+    const r=Math.random()*16|0, v=c==='x'?r:(r&0x3|0x8); return v.toString(16);
+  });
+}
+// Garantit qu'un enregistrement (commande/client) porte un uuid unique et une source d'origine.
+// source : 'app' (créé dans l'app) ou 'site' (viendra du e-commerce). Par défaut 'app'.
+function withSync(obj, source){
+  obj = obj || {};
+  if(!obj.uuid) obj.uuid = genUuid();
+  if(!obj.source) obj.source = source || 'app';
+  return obj;
+}
+// Migration idempotente : complète les commandes/clients existants sans uuid (créés avant la
+// préparation à la synchro). Ne s'exécute qu'une fois (flag), et ne touche que les enregistrements
+// dépourvus d'uuid. Sans danger : aucune donnée existante n'est modifiée, seuls 2 champs sont ajoutés.
+async function migrateAddUuids(){
+  if(localStorage.getItem('sm_uuidMigrated')==='1') return;
+  let n=0;
+  try{
+    const orders = await db.orders.toArray();
+    for(const o of orders){
+      if(!o.uuid){ await db.orders.update(o.id, {uuid:genUuid(), source:o.source||'app'}); n++; }
+    }
+    const clients = await db.clients.toArray();
+    for(const c of clients){
+      if(!c.uuid){ await db.clients.update(c.id, {uuid:genUuid(), source:c.source||'app'}); n++; }
+    }
+    localStorage.setItem('sm_uuidMigrated','1');
+    if(n>0) console.log(`[synchro] ${n} enregistrement(s) ont reçu un uuid.`);
+  }catch(e){ console.error('migrateAddUuids', e); }
+}
 
 const db = new Dexie('sensations_macarons');
 db.version(1).stores({
@@ -4183,7 +4218,7 @@ async function docConvertToOrder(id){
     issuDevis:d.numero
   };
   syncPaymentFields(o);
-  const oid=await db.orders.add(o);
+  const oid=await db.orders.add(withSync(o,'app'));
   await db.documents.update(id, {statut:'accepte', orderId:oid});
   markUnsaved();
   closeModal(); toast('Devis converti en commande ✓');
@@ -5043,7 +5078,7 @@ async function renderPicking(){
   try{ window._equipSpecsCache = await equipGetSpecs(); }catch(e){ window._equipSpecsCache = {}; }
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Préparation / Picking</h1><p>Affectation des batchs optimisée par emplacement</p></div>
-     <button class="btn gold" onclick="scanAffectStock()" title="Scanner un lot et l'affecter à une commande">📷 Scanner un lot</button></div>
+     <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn gold" onclick="pickGroupOpen()" title="Sortir tous les parfums de toutes les commandes d'un coup">📦 Picking groupé</button><button class="btn gold" onclick="scanAffectStock()" title="Scanner un lot et l'affecter à une commande">📷 Scanner un lot</button></div></div>
    <div class="pick-tabs">
      <button class="${_pickMode==='commandes'?'active':''}" onclick="pickSetMode('commandes')">📋 Commandes</button>
      <button class="${_pickMode==='marche'?'active':''}" onclick="pickSetMode('marche')">⛺ Départ marché</button>
@@ -7855,7 +7890,7 @@ function lotPU(l){
 }
 // Prix unitaire "courant" d'une matière = dernier lot reçu avec prix > 0
 function prixCourant(materialId, lots){
-  const ls = lots.filter(l=>l.materialId===materialId && lotPU(l)>0)
+  const ls = lots.filter(l=>+l.materialId===+materialId && lotPU(l)>0)
                  .sort((a,b)=>(b.dateReception||'').localeCompare(a.dateReception||''));
   return ls.length ? lotPU(ls[0]) : 0;
 }
@@ -7874,7 +7909,7 @@ function coutRecette(recipeId, items, lots){
 // ════════════════════════════════════════════════════════════════════════
 // Calcul pur (testable) : renvoie pour chaque recette le détail + les alertes.
 function auditRecipeCosts(recipes, recipeItems, mats, lots){
-  const matById = id => mats.find(m=>m.id===id);
+  const matById = id => mats.find(m=>+m.id===+id);
   const out = [];
   for(const r of recipes){
     const its = recipeItems.filter(it=>it.recipeId===r.id);
@@ -9278,7 +9313,7 @@ async function doDelClient(id){
 async function saveClient(id){
   const o={nom:val('f_nom'),prenom:val('f_prenom'),societe:val('f_societe'),type:val('f_type'),tel:val('f_tel'),email:val('f_email'),ref:val('f_ref'),adresse:val('f_adr'),notes:val('f_notes')};
   if(!o.nom){toast('Le nom est requis');return;}
-  if(id) await db.clients.update(id,o); else await db.clients.add(o);
+  if(id) await db.clients.update(id,o); else await db.clients.add(withSync(o,'app'));
   closeModal(); renderClients(); toast('Client enregistré ✓');
 }
 async function delClient(id){
@@ -10279,7 +10314,7 @@ async function cmdView(id){
         return `<button class="btn ${cur?'':'ghost'} sm" onclick="setOrderStatus(${id},'${st}')" ${cur?'style="pointer-events:none"':''}>${cur?'● ':''}${st}</button>`;}).join('')}
     </div>
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
-    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn ghost" onclick="retroplanningView(${id})" title="Rétroplanning de production">🕘 Rétroplanning</button>${paiementsDe(o).length?'':`<button class="btn ghost" onclick="cmdToDevis(${id})" title="Repasser cette commande en devis">📝 En devis</button>`}<button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn ghost" onclick="retroplanningView(${id})" title="Rétroplanning de production">🕘 Rétroplanning</button><button class="btn ghost" onclick="closeModal();pickScanOpen(${id})" title="Préparer cette commande en scannant les lots">📦 Préparer (scan)</button><button class="btn ghost" onclick="printOrderPrepSheet(${id})" title="Imprimer un bon de préparation avec QR (optionnel)">🏷 Bon de prépa (QR)</button>${paiementsDe(o).length?'':`<button class="btn ghost" onclick="cmdToDevis(${id})" title="Repasser cette commande en devis">📝 En devis</button>`}<button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
 function lineTotalStored(ln){
@@ -10697,7 +10732,7 @@ async function saveQuickClient(){
     cid=existing.id;
     toast('Client déjà existant — sélectionné');
   } else {
-    cid=await db.clients.add({nom, tel, type, email:'', adresse:'', notes:''});
+    cid=await db.clients.add(withSync({nom, tel, type, email:'', adresse:'', notes:''},'app'));
     toast('Client ajouté ✓');
   }
   // rouvrir la commande en préservant les lignes et en sélectionnant le client
@@ -11442,7 +11477,7 @@ async function saveCmd(id){
   // en base), puis on tente le passage en « Livrée » via ensureOrderDecremented.
   const _wantLivree = (o.statut==='Livrée') && (o.histo!==true);
   if(_wantLivree) o.statut = 'Terminée';
-  if(id) await db.orders.update(id,o); else oid=await db.orders.add(o);
+  if(id) await db.orders.update(id,o); else oid=await db.orders.add(withSync(o,'app'));
   if(_wantLivree){
     const ok = await ensureOrderDecremented(oid);
     if(ok){ await db.orders.update(oid, {statut:'Livrée'}); }
@@ -15784,10 +15819,10 @@ async function prospectToClient(id){
   const p=await db.prospects.get(id); if(!p) return;
   if(p.clientId){ toast('Déjà lié à une fiche client'); return; }
   if(!confirm(`Créer une fiche client pour « ${p.nom} » ?`)) return;
-  const clientId = await db.clients.add({
+  const clientId = await db.clients.add(withSync({
     nom:p.nom, tel:p.tel||'', email:p.email||'', adresse:p.adresse||'',
     type:'pro', notes:[p.tarifPro?`Tarif pro : ${p.tarifPro}`:'', p.frequence?`Fréquence : ${p.frequence}`:'', p.notes||''].filter(Boolean).join('\n')
-  });
+  },'app'));
   await db.prospects.update(id, {clientId, majTs:Date.now()});
   toast('Fiche client créée ✓');
   renderProspects();
@@ -21351,10 +21386,314 @@ async function delEvent(id){
 /* ============================================================
    ÉTIQUETTES QR  (une étiquette imprimable par batch)
    ============================================================ */
+/* [PICKING GROUPÉ] Agrège le RESTE à préparer (besoin − déjà affecté) de TOUTES les commandes
+   « à préparer », par parfum. Pour chaque parfum : total à sortir + détail par commande, trié
+   par date de livraison (FIFO). Sert au picking par vague avec répartition auto. */
+async function pickGroupNeeds(selectedIds){
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recName2 = id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const clientNom = id=>{ const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'—'; };
+  // Commandes à préparer, triées par date de livraison (la plus proche d'abord).
+  // Si une sélection est fournie, on ne garde que ces commandes-là.
+  const selSet = (selectedIds && selectedIds.length) ? new Set(selectedIds.map(Number)) : null;
+  const aPrep = orders.filter(o=>normStatus(o.statut)==='À préparer' && (!selSet || selSet.has(+o.id)))
+    .sort((a,b)=>(a.dateEvenement||a.date||'').localeCompare(b.dateEvenement||b.date||''));
+  // orderItems déjà affectés, par commande+parfum.
+  const allItems = await db.orderItems.toArray().catch(()=>[]);
+  const parParfum = {};   // parfumNormalisé -> {nom, total, lignes:[{orderId, clientNom, livraison, reste}]}
+  for(const o of aPrep){
+    const needs = orderFlavorNeeds(o);
+    // déjà affecté à cette commande, par parfum normalisé
+    const deja = {};
+    allItems.filter(it=>it.orderId===o.id).forEach(it=>{
+      const p=prods.find(x=>x.id===it.productionId); if(!p) return;
+      const nom=p.libre?(p.produitLibre||''):recName2(p.recipeId);
+      const k=aiNormalize(nom); deja[k]=(deja[k]||0)+(+it.qte||0);
+    });
+    Object.keys(needs).forEach(nom=>{
+      const k=aiNormalize(nom);
+      const reste=Math.max(0, needs[nom]-(deja[k]||0));
+      if(reste<=0) return;
+      (parParfum[k] ||= {nom, total:0, lignes:[]});
+      parParfum[k].total += reste;
+      parParfum[k].lignes.push({orderId:o.id, clientNom:clientNom(o.clientId), livraison:o.dateEvenement||o.date||'', reste});
+    });
+  }
+  // Tableau trié par nom de parfum.
+  return Object.keys(parParfum).sort((a,b)=>parParfum[a].nom.localeCompare(parParfum[b].nom)).map(k=>parParfum[k]);
+}
+
+/* Répartit une quantité disponible entre des commandes (déjà triées FIFO), sans dépasser le
+   reste de chacune. Renvoie [{orderId, qte}] + le reliquat non affecté. Fonction pure. */
+function pickGroupAllocate(qteDispo, lignes){
+  let reste = round3(+qteDispo||0);
+  const affectations = [];
+  for(const ln of lignes){
+    if(reste<=0) break;
+    const besoin = round3(+ln.reste||0);
+    if(besoin<=0) continue;
+    const pris = Math.min(reste, besoin);
+    affectations.push({orderId:ln.orderId, qte:round3(pris)});
+    reste = round3(reste - pris);
+  }
+  return {affectations, reliquat:round3(reste)};
+}
+
+/* ============================================================
+   PICKING PAR SCAN (cas B) : on scanne une commande, elle devient la cible ;
+   chaque lot scanné s'affecte automatiquement à cette commande, la checklist
+   des parfums attendus se remplit, et on valide quand tout est complet.
+   ============================================================ */
+async function pickScanOpen(orderId){
+  const o = await db.orders.get(orderId);
+  if(!o){ toast('Commande introuvable sur cet appareil'); return; }
+  window._pickScanOrderId = orderId;
+  await pickScanRender();
+}
+async function pickScanRender(){
+  const orderId = window._pickScanOrderId;
+  const o = await db.orders.get(orderId); if(!o) return;
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clientNom = id=>{ const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'—'; };
+  const needs = orderFlavorNeeds(o);
+  const items = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
+  const prods = await db.productions.toArray();
+  const recipes = await db.recipes.toArray();
+  const recName2 = id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const dejaParParfum = {};
+  items.forEach(it=>{
+    const p = prods.find(x=>x.id===it.productionId); if(!p) return;
+    const nom = p.libre?(p.produitLibre||''):recName2(p.recipeId);
+    const k = aiNormalize(nom);
+    dejaParParfum[k] = (dejaParParfum[k]||0) + (+it.qte||0);
+  });
+  let tousComplets = Object.keys(needs).length>0;
+  const rows = Object.keys(needs).map(nom=>{
+    const k = aiNormalize(nom);
+    const attendu = needs[nom];
+    const fait = dejaParParfum[k]||0;
+    const complet = fait>=attendu;
+    if(!complet) tousComplets=false;
+    const col = complet ? '#2e7d32' : (fait>0 ? '#b08a3a' : '#b3261e');
+    return `<div class="sum-box" style="border-left:3px solid ${col}">
+      <span>${complet?'✅':'⬜'} <b>${esc(nom)}</b></span>
+      <b style="color:${col}">${qty(fait)}/${qty(attendu)}</b></div>`;
+  }).join('');
+  const titre = `${clientNom(o.clientId)} · livraison ${o.dateEvenement?fmtDate(o.dateEvenement):(o.date?fmtDate(o.date):'—')}`;
+  openModal(`<h3>📦 Préparation par scan</h3>
+    <p class="note">${esc(titre)}</p>
+    ${rows||'<p class="note">Cette commande est sans parfum à préparer.</p>'}
+    <div class="sum-box" style="border:2px solid ${tousComplets?'#2e7d32':'#aa7c39'};background:${tousComplets?'#eef6ee':'#fbf5ea'}">
+      <span>${tousComplets?'Commande complète ✓':'Scanne les lots à mettre dans le carton'}</span></div>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+      <button class="btn ghost" onclick="closeModal();window._pickScanOrderId=null">Fermer</button>
+      <button class="btn gold" onclick="pickScanLot()">📷 Scanner un lot</button>
+      ${tousComplets?`<button class="btn gold" onclick="pickScanFinish()">✓ Marquer préparée</button>`:''}
+    </div>`);
+}
+function pickScanLot(){
+  openScanner(async code=>{
+    try{ await pickScanAffectLot(code); }
+    catch(e){ console.error('pickScanLot',e); toast('Erreur lors du scan'); }
+  });
+}
+async function pickScanAffectLot(code){
+  const orderId = window._pickScanOrderId;
+  if(!orderId){ toast('Aucune commande cible'); return; }
+  const o = await db.orders.get(orderId); if(!o) return;
+  const target = normTxt(_extractLot(code)||'');
+  if(!target){ return; }
+  const prods = await db.productions.toArray();
+  const recipes = await db.recipes.toArray();
+  const recName2 = id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const matches = prods.filter(p=>{
+    if(!prodVendable(p) || round3(+p.qteRestante||0)<=0) return false;
+    const full=normTxt(p.lotProduction||''); const base=normTxt(lotBaseSansSuffixe(p.lotProduction||''));
+    return full===target || base===target || full.includes(target);
+  });
+  if(!matches.length){ toast(`Lot « ${code} » : pas de stock vendable.`); await pickScanRender(); return; }
+  const p = matches[0];
+  const nom = p.libre?(p.produitLibre||''):recName2(p.recipeId);
+  const k = aiNormalize(nom);
+  const needs = orderFlavorNeeds(o);
+  const attendu = Object.keys(needs).reduce((s,n)=>(aiNormalize(n)===k?s+needs[n]:s),0);
+  if(attendu<=0){ toast(`⚠ « ${nom} » n'est pas demandé par cette commande.`); await pickScanRender(); return; }
+  const items = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
+  let dejaParfum = 0;
+  items.forEach(it=>{ const pp=prods.find(x=>x.id===it.productionId); if(pp){ const kn=aiNormalize(pp.libre?(pp.produitLibre||''):recName2(pp.recipeId)); if(kn===k) dejaParfum+=(+it.qte||0); } });
+  const reste = Math.max(0, attendu - dejaParfum);
+  if(reste<=0){ toast(`« ${nom} » déjà complet.`); await pickScanRender(); return; }
+  const take = Math.min(reste, round3(+p.qteRestante||0));
+  try{
+    await db.transaction('rw', db.productions, db.orderItems, async()=>{
+      const fresh = await db.productions.get(p.id);
+      const t = Math.min(take, round3(+fresh.qteRestante||0));
+      if(t<=0) throw new Error('Plus de stock');
+      await db.orderItems.add({orderId, productionId:p.id, qte:round3(t)});
+      await db.productions.update(p.id, {qteRestante: subQty(fresh.qteRestante, t)});
+    });
+    toast(`✓ ${qty(take)} ${nom} ajouté(s) · lot ${p.lotProduction||''}`);
+    if(typeof markUnsaved==='function') markUnsaved();
+  }catch(err){ toast(err.message||'Erreur'); }
+  await pickScanRender();
+}
+async function pickScanFinish(){
+  const orderId = window._pickScanOrderId; if(!orderId) return;
+  try{ await db.orders.update(orderId, {statut:'Terminée'}); if(typeof markUnsaved==='function') markUnsaved(); }
+  catch(e){ console.error(e); }
+  closeModal(); window._pickScanOrderId=null;
+  toast('Commande marquée préparée ✓');
+}
+
+/* [PICKING GROUPÉ] Étape 1 : choisir les commandes à inclure dans la vague (cases à cocher). */
+async function pickGroupOpen(){
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clientNom = id=>{ const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'—'; };
+  const aPrep = orders.filter(o=>normStatus(o.statut)==='À préparer')
+    .sort((a,b)=>(a.dateEvenement||a.date||'').localeCompare(b.dateEvenement||b.date||''));
+  if(!aPrep.length){ openModal(`<h3>📦 Picking groupé</h3><p class="note">Aucune commande « à préparer ».</p><div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`); return; }
+  window._pickGroupAll = aPrep.map(o=>o.id);
+  const rows = aPrep.map(o=>{
+    const nbMac = Object.values(orderFlavorNeeds(o)).reduce((s,q)=>s+q,0);
+    const liv = o.dateEvenement?fmtDate(o.dateEvenement):(o.date?fmtDate(o.date):'—');
+    return `<label class="sum-box" style="align-items:center;cursor:pointer">
+      <span style="flex:1"><b>${esc(clientNom(o.clientId))}</b><br><span style="font-size:.78rem;color:#7a6a60">livraison ${liv} · ${qty(nbMac)} macaron(s)</span></span>
+      <input type="checkbox" id="pg_${o.id}" checked style="width:22px;height:22px"></label>`;
+  }).join('');
+  openModal(`<h3>📦 Picking groupé</h3>
+    <p class="note">Coche les commandes à sortir dans cette vague (décoche les livraisons lointaines que tu ne veux pas préparer maintenant).</p>
+    ${rows}
+    <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="pickGroupValiderSelection()">Voir ce qu'il faut sortir →</button>
+    </div>`);
+}
+function pickGroupValiderSelection(){
+  const all = window._pickGroupAll||[];
+  const sel = all.filter(id=>{ const el=document.getElementById('pg_'+id); return el && el.checked; });
+  if(!sel.length){ toast('Coche au moins une commande'); return; }
+  window._pickGroupSel = sel;
+  pickGroupShow(sel);
+}
+/* [PICKING GROUPÉ] Étape 2 : vue « à sortir » agrégée sur la sélection. */
+async function pickGroupShow(selectedIds){
+  const groups = await pickGroupNeeds(selectedIds);
+  if(!groups.length){ openModal(`<h3>📦 Picking groupé</h3><p class="note">Aucune commande « à préparer » avec du reste à sortir.</p><div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`); return; }
+  const rows = groups.map(g=>{
+    const detail = g.lignes.map(l=>`${esc(l.clientNom)} ${qty(l.reste)}`).join(' · ');
+    return `<div class="sum-box" style="align-items:flex-start;border-left:3px solid #aa7c39">
+      <div style="flex:1"><b>${esc(g.nom)}</b><br><span style="font-size:.78rem;color:#7a6a60">${detail}</span></div>
+      <b style="font-size:1.1rem;color:#aa7c39">${qty(g.total)}</b></div>`;
+  }).join('');
+  const totalPieces = groups.reduce((s,g)=>s+g.total,0);
+  openModal(`<h3>📦 Picking groupé — à sortir</h3>
+    <p class="note">Total de toutes les commandes « à préparer ». Sors chaque parfum, scanne un lot : l'app répartit automatiquement aux commandes (livraison la plus proche d'abord).</p>
+    ${rows}
+    <div class="sum-box" style="border:2px solid #aa7c39;background:#fbf5ea"><span>Total à sortir</span><b>${qty(totalPieces)} macarons</b></div>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn gold" onclick="pickGroupScan()">📷 Scanner un lot</button>
+    </div>`);
+}
+function pickGroupScan(){
+  openScanner(async code=>{ try{ await pickGroupAffect(code); }catch(e){ console.error('pickGroupScan',e); toast('Erreur lors du scan'); } });
+}
+async function pickGroupAffect(code){
+  const target = normTxt(_extractLot(code)||''); if(!target){ return; }
+  const prods = await db.productions.toArray();
+  const recipes = await db.recipes.toArray();
+  const recName2 = id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
+  const matches = prods.filter(p=>{
+    if(!prodVendable(p) || round3(+p.qteRestante||0)<=0) return false;
+    const full=normTxt(p.lotProduction||''); const base=normTxt(lotBaseSansSuffixe(p.lotProduction||''));
+    return full===target || base===target || full.includes(target);
+  });
+  if(!matches.length){ toast(`Lot « ${code} » : pas de stock vendable.`); await pickGroupShow(window._pickGroupSel); return; }
+  const p = matches[0];
+  const nom = p.libre?(p.produitLibre||''):recName2(p.recipeId);
+  const k = aiNormalize(nom);
+  // Récupère les commandes qui demandent ce parfum (déjà triées FIFO par pickGroupNeeds).
+  const groups = await pickGroupNeeds(window._pickGroupSel);
+  const g = groups.find(x=>aiNormalize(x.nom)===k);
+  if(!g){ toast(`« ${nom} » n'est demandé par aucune commande de la vague.`); await pickGroupShow(window._pickGroupSel); return; }
+  const dispo = round3(+p.qteRestante||0);
+  const {affectations, reliquat} = pickGroupAllocate(dispo, g.lignes);
+  if(!affectations.length){ toast(`« ${nom} » : commandes déjà servies.`); await pickGroupShow(window._pickGroupSel); return; }
+  // Applique : un orderItem par commande, décrément global du lot.
+  try{
+    await db.transaction('rw', db.productions, db.orderItems, async()=>{
+      const fresh = await db.productions.get(p.id);
+      let restantLot = round3(+fresh.qteRestante||0);
+      for(const a of affectations){
+        const t = Math.min(a.qte, restantLot); if(t<=0) break;
+        await db.orderItems.add({orderId:a.orderId, productionId:p.id, qte:round3(t)});
+        restantLot = round3(restantLot - t);
+      }
+      await db.productions.update(p.id, {qteRestante: round3(restantLot)});
+    });
+    const nbCmd = affectations.length;
+    const totalAff = affectations.reduce((s,a)=>s+a.qte,0);
+    toast(`✓ ${qty(totalAff)} ${nom} réparti(s) sur ${nbCmd} commande(s)${reliquat>0?` · ${qty(reliquat)} en trop gardé(s) en stock`:''}`);
+    if(typeof markUnsaved==='function') markUnsaved();
+  }catch(err){ toast(err.message||'Erreur'); }
+  await pickGroupShow(window._pickGroupSel);   // rafraîchit la vue groupée (même sélection)
+}
+
+
 function traceUrl(lotProduction){
   // URL absolue vers l'app, avec ancre #trace=<lot> ouverte au chargement
   const base = location.href.split('#')[0];
   return base + '#trace=' + encodeURIComponent(lotProduction || '');
+}
+// URL vers le picking par scan d'une commande (ancre #order=<id>).
+function orderUrl(orderId){
+  const base = location.href.split('#')[0];
+  return base + '#order=' + encodeURIComponent(orderId);
+}
+/* [OPTIONNEL] Bon de préparation imprimable d'une commande, avec QR code.
+   Scanner ce QR (appareil photo ou scan de l'app) ouvre directement le picking de la commande.
+   Fonctionnalité de confort : le picking reste utilisable sans, via les boutons de l'app. */
+async function printOrderPrepSheet(orderId){
+  const o = await db.orders.get(orderId);
+  if(!o){ toast('Commande introuvable'); return; }
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const c = clients.find(x=>+x.id===+o.clientId);
+  const clientNom = c?(c.nom||c.prenom||'Client'):'—';
+  const needs = orderFlavorNeeds(o);
+  const liv = o.dateEvenement?fmtDate(o.dateEvenement):(o.date?fmtDate(o.date):'—');
+  // Génère le QR de la commande.
+  const tmp = document.createElement('canvas');
+  try{ QR.render(tmp, orderUrl(orderId), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
+  const qrImg = tmp.toDataURL('image/png');
+  const lignes = Object.keys(needs).map(nom=>`<tr><td>${esc(nom)}</td><td style="text-align:right">☐ ${qty(needs[nom])}</td></tr>`).join('');
+  const win = window.open('', '_blank', 'width=600,height=800');
+  if(!win){ toast('Autorise les fenêtres pour imprimer'); return; }
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Bon de préparation</title>
+    <style>
+      @page { size:A4; margin:14mm; }
+      *{box-sizing:border-box;font-family:Arial,Helvetica,sans-serif;color:#000}
+      .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:14px}
+      h1{font-size:20pt;margin:0 0 4px}
+      .meta{font-size:11pt;color:#333}
+      .qr{width:32mm;height:32mm}.qr img{width:32mm;height:32mm;image-rendering:pixelated}
+      table{width:100%;border-collapse:collapse;margin-top:8px}
+      td{padding:7px 6px;border-bottom:1px solid #ccc;font-size:13pt}
+      .foot{margin-top:18px;font-size:9pt;color:#777}
+    </style></head><body>
+    <div class="head">
+      <div><h1>Bon de préparation</h1>
+        <div class="meta"><b>${esc(clientNom)}</b><br>Livraison : ${esc(liv)}</div></div>
+      <div class="qr"><img src="${qrImg}"></div>
+    </div>
+    <table><tr><td><b>Parfum</b></td><td style="text-align:right"><b>À préparer</b></td></tr>${lignes}</table>
+    <div class="foot">Scanne le QR ci-dessus avec l'app pour ouvrir la préparation par scan de cette commande.</div>
+    <script>window.onload=function(){setTimeout(function(){window.print();},300);};window.onafterprint=function(){window.close();};<\/script>
+    </body></html>`);
+  win.document.close();
 }
 async function renderLabels(){
   const prods = await db.productions.orderBy('date').reverse().toArray();
@@ -21937,6 +22276,14 @@ async function printOrderLabels(orderId, mode){
 // Ouvrir une fiche traçabilité à partir de l'ancre #trace=<lot> (QR scanné)
 async function handleTraceAnchor(){
   const h = location.hash || '';
+  // Commande scannée → picking par scan.
+  const mo = h.match(/#order=(.+)$/);
+  if(mo){
+    const oid = +decodeURIComponent(mo[1]);
+    history.replaceState(null,'',location.pathname);
+    if(oid && typeof pickScanOpen==='function'){ await pickScanOpen(oid); return true; }
+    return false;
+  }
   const m = h.match(/#trace=(.+)$/);
   if(!m) return false;
   const lot = decodeURIComponent(m[1]);
@@ -24151,7 +24498,7 @@ async function migSaveOrder(){
   const o={ clientId:clientId||null, date, montant:money2(montant),
     statut:'Livrée', paiement:'Payé', histo:true, histoLabel:label||'',
     lignes, paiements:[], notes:'(reprise / historique)' };
-  await db.orders.add(o);
+  await db.orders.add(withSync(o,'app'));
   markUnsaved();
   const nbMac=parfums.reduce((s,p)=>s+p.qte,0);
   const nbDon=dons.reduce((s,p)=>s+p.qte,0);
@@ -31109,6 +31456,7 @@ function startClock(){
   }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }
 
   try{ await fixSplitComponentInheritance(); }catch(e){ console.error('fixSplitComp',e); }
+  try{ await migrateAddUuids(); }catch(e){ console.error('migrateUuids',e); }
   // Cache recettes/matières prêt AVANT le premier rendu : prodNomComplet() (appelé sans
   // « recipes » en portée, ex. Stock par parfum) s'appuie sur window._allRecipesCache. Sans ce
   // rafraîchissement initial, le cache peut être vide/périmé et les lots s'afficheraient à tort
