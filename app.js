@@ -7888,11 +7888,28 @@ function lotPU(l){
   if(l.prixUnitaire!=null && !isNaN(l.prixUnitaire)) return +l.prixUnitaire;
   return (l.qteInitiale>0) ? (+l.prix||0)/l.qteInitiale : 0;
 }
-// Prix unitaire "courant" d'une matière = dernier lot reçu avec prix > 0
-function prixCourant(materialId, lots){
+// Prix unitaire "courant" d'une matière, exprimé dans l'UNITÉ NATIVE de la matière
+// (par gramme si la matière est en g, par kg si elle est en kg ; à l'unité pour un emballage).
+// Priorité : 1) dernier lot reçu avec un prix réel > 0 (FIFO par date).
+//            2) à défaut, prix indicatif de la matière (prixDefaut), TOUJOURS saisi en €/kg
+//               pour une denrée → on le convertit dans l'unité native pour rester homogène
+//               avec lotPU (sinon coût ×1000 sur une matière gérée en grammes).
+// `mats` est optionnel : sans lui, on garde l'ancien comportement (lots uniquement).
+function prixCourant(materialId, lots, mats){
   const ls = lots.filter(l=>+l.materialId===+materialId && lotPU(l)>0)
                  .sort((a,b)=>(b.dateReception||'').localeCompare(a.dateReception||''));
-  return ls.length ? lotPU(ls[0]) : 0;
+  if(ls.length) return lotPU(ls[0]);
+  // Repli sur le prix indicatif de la matière, si disponible.
+  if(mats){
+    const m = mats.find(x=>+x.id===+materialId);
+    if(m && +m.prixDefaut>0){
+      if(m.categorie==='emballage') return money2(+m.prixDefaut);   // déjà à l'unité
+      const uNative = m.unite || 'kg';
+      // prixDefaut est en €/kg ; lotPU est par unité native → convertir si la matière est en g.
+      return uNative==='g' ? (+m.prixDefaut)/1000 : +m.prixDefaut;
+    }
+  }
+  return 0;
 }
 // Coût matière théorique d'une recette (par batch) selon prix courants
 function coutRecette(recipeId, items, lots){
@@ -7924,7 +7941,7 @@ function auditRecipeCosts(recipes, recipeItems, mats, lots){
         lignes.push({nom:'(matière supprimée)', q, unite:'?', pu:0, cout:0, manquante:true});
         continue;
       }
-      const pu = prixCourant(it.materialId, lots);   // prix au kg (ou à l'unité pour emballage)
+      const pu = prixCourant(it.materialId, lots, mats);   // prix réel du lot, à défaut prix indicatif
       const cout = q * pu;
       coutBatch += cout;
       const estEmb = (mat.categorie==='emballage');
