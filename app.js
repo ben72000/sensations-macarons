@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v681';
+const APP_VERSION = 'v682';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1172,7 +1172,20 @@ function lineChart(series, opt){
     if(!pts.length) return;
     const d = pts.map((p,i)=>`${i?'L':'M'}${xPos(xIdx[p.x]).toFixed(1)},${yPos(p.y).toFixed(1)}`).join(' ');
     paths+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round" data-serie="${si}" class="lc-line"/>`;
-    pts.forEach(p=>{ paths+=`<circle cx="${xPos(xIdx[p.x]).toFixed(1)}" cy="${yPos(p.y).toFixed(1)}" r="3.2" fill="${col}" data-serie="${si}" class="lc-dot"/>`; });
+    pts.forEach(p=>{
+      const cx=xPos(xIdx[p.x]), cy=yPos(p.y);
+      // Marqueur « + » : si ce point porte un flag mark (ex. livraison facturée), on dessine
+      // une croix dorée par-dessus pour signaler l'impact direct sur la courbe.
+      if(p.mark){
+        const r=5;
+        paths+=`<g class="lc-plus" data-serie="${si}"><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r+2}" fill="#fff" stroke="${col}" stroke-width="1.5"/>`+
+               `<line x1="${(cx-r).toFixed(1)}" y1="${cy.toFixed(1)}" x2="${(cx+r).toFixed(1)}" y2="${cy.toFixed(1)}" stroke="${col}" stroke-width="2"/>`+
+               `<line x1="${cx.toFixed(1)}" y1="${(cy-r).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${(cy+r).toFixed(1)}" stroke="${col}" stroke-width="2"/>`+
+               (p.markLabel?`<title>${esc(p.markLabel)}</title>`:'')+`</g>`;
+      } else {
+        paths+=`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.2" fill="${col}" data-serie="${si}" class="lc-dot"/>`;
+      }
+    });
   });
   // légende — cliquable pour isoler une courbe (clic = met en avant, reclic = tout réafficher)
   let leg='';
@@ -12098,6 +12111,86 @@ function computeDeliveryCost(o){
   const total = money2(coutCarburant + coutTemps);
   return {distAller, distAR, coutCarburant, coutTemps, minutesAller, minutes, conso, total, actif: (distAller>0||minutesAller>0)};
 }
+
+/* ============================================================
+   MANQUE À GAGNER LIVRAISON — données pour le graphique double courbe.
+   Courbe BASSE  : CA réel cumulé (livraisons facturées incluses, déjà dans le CA).
+   Courbe HAUTE  : CA réel + manque à gagner cumulé (= coût réel des livraisons
+                   renseignées mais NON facturées uniquement).
+   Marqueur «+»  : posé sur la courbe basse à chaque commande où une livraison a
+                   été facturée (ligne prestation isLivraison présente).
+   gran : 'jour' | 'semaine' | 'mois' → clé de regroupement de l'axe X.
+   ============================================================ */
+// Clé de période ISO selon la granularité. Pour la semaine : année + n° ISO.
+function _periodKey(dateStr, gran){
+  const ds=(dateStr||'').slice(0,10); if(!ds) return '';
+  if(gran==='mois') return ds.slice(0,7);                 // AAAA-MM
+  if(gran==='jour') return ds;                            // AAAA-MM-JJ
+  // semaine ISO
+  const _p=ds.split('-').map(Number);
+  const d=new Date(Date.UTC(_p[0],(_p[1]||1)-1,_p[2]||1));
+  const day=(d.getUTCDay()+6)%7;                          // lundi=0
+  d.setUTCDate(d.getUTCDate()-day+3);                     // jeudi de la semaine
+  const firstThu=new Date(Date.UTC(d.getUTCFullYear(),0,4));
+  const week=1+Math.round(((d-firstThu)/86400000-3+((firstThu.getUTCDay()+6)%7))/7);
+  return d.getUTCFullYear()+'-S'+String(week).padStart(2,'0');
+}
+// Une commande a-t-elle une livraison FACTURÉE ? (ligne prestation isLivraison)
+function _aLivraisonFacturee(o){
+  return Array.isArray(o.lignes) && o.lignes.some(l=>l && l.type==='prestation' && l.isLivraison);
+}
+// Construit les séries cumulées + l'encart de synthèse, pour une granularité donnée.
+async function deliveryGapData(gran){
+  gran = gran || 'mois';
+  const orders = await db.orders.toArray().catch(()=>[]);
+  // 1) Agrégation par période : CA réel encaissé, manque à gagner (livr. non facturées),
+  //    et présence d'au moins une livraison facturée dans la période.
+  const perio = {};   // key -> {ca, manque, facturee, nbFact, nbNonFact}
+  const ensure = k => (perio[k] || (perio[k] = {ca:0, manque:0, facturee:false, nbFact:0, nbNonFact:0}));
+  orders.filter(o=>!o.histo).forEach(o=>{
+    const dCmd = o.dateEvenement || o.date || '';
+    const kCmd = _periodKey(dCmd, gran);
+    // CA réel = somme des paiements, datés (on garde la date du paiement pour le CA encaissé,
+    // mais on rattache à la période de la commande pour rester cohérent avec la livraison).
+    let caCmd = 0;
+    paiementsDe(o).forEach(p=>{ caCmd += (+p.montant||0); });
+    if(kCmd){ ensure(kCmd).ca += caCmd; }
+    // Livraison renseignée ? (distance ou temps saisi → coût calculable)
+    const liv = computeDeliveryCost(o);
+    if(liv.actif && kCmd){
+      if(_aLivraisonFacturee(o)){
+        ensure(kCmd).facturee = true;
+        ensure(kCmd).nbFact++;
+      }else{
+        // Non facturée → manque à gagner = coût réel calculé.
+        ensure(kCmd).manque += liv.total;
+        ensure(kCmd).nbNonFact++;
+      }
+    }
+  });
+  // 2) Tri des périodes + cumul.
+  const keys = Object.keys(perio).sort((a,b)=>a.localeCompare(b));
+  let cumCA=0, cumManque=0;
+  const ptsReel=[], ptsPotentiel=[];
+  let totCA=0, totManque=0, totNbFact=0, totNbNonFact=0;
+  keys.forEach(k=>{
+    const e=perio[k];
+    cumCA += e.ca; cumManque += e.manque;
+    totCA += e.ca; totManque += e.manque; totNbFact += e.nbFact; totNbNonFact += e.nbNonFact;
+    ptsReel.push({x:k, y:money2(cumCA), mark:e.facturee, markLabel:e.facturee?`${e.nbFact} livraison(s) facturée(s)`:''});
+    ptsPotentiel.push({x:k, y:money2(cumCA+cumManque)});
+  });
+  return {
+    keys,
+    series:[
+      {label:'CA réel facturé', color:'#AA7C39', points:ptsReel},
+      {label:'CA potentiel (+ livraisons non facturées)', color:'#a5453b', points:ptsPotentiel}
+    ],
+    synth:{ ca:money2(totCA), manque:money2(totManque), potentiel:money2(totCA+totManque),
+            nbFact:totNbFact, nbNonFact:totNbNonFact,
+            pctManque: totCA>0 ? Math.round((totManque/totCA)*1000)/10 : 0 }
+  };
+}
 /* ============================================================
    MARGES — rentabilité réelle d'une vente
    Brute  = prix de vente − coût matières − coût emballages − consommables
@@ -14316,6 +14409,8 @@ async function renderStats(){
 // tout double comptage — ils alimentent déjà le coût de revient via les lots.
 const CHARGE_CATS = ['Assurance professionnelle','Hébergement / site web','Abonnements / logiciels','Équipement','Loyer','Énergie','Transport / déplacement','Stand / marché','Marketing','Frais bancaires','Cotisations / impôts','Formation','Autre'];
 let _comptaMonth = null;
+// Granularité du graphique « manque à gagner livraison » : 'jour' | 'semaine' | 'mois'.
+let _gapGran = 'mois';
 function comptaSetMonth(m){ _comptaMonth = m; renderCompta(); }
 // Raccourci de navigation depuis l'écran Comptabilité vers un autre écran.
 // Centralise le pattern view=… + setActiveView + render…() pour les chiffres cliquables.
@@ -14609,8 +14704,80 @@ async function renderCompta(){
      ${catRows||'<p class="note">Aucune charge. Ajoutez vos dépenses (matières, emballages, loyer…) pour suivre votre résultat réel.</p>'}
      <button class="btn ghost sm" style="margin-top:8px" onclick="renderChargesList()">Voir / gérer les charges</button></div>
 
+   <div class="panel" id="gapPanel">
+     <h2>🚚 Livraisons : manque à gagner</h2>
+     <p class="note" style="margin-top:-4px;margin-bottom:10px">Comparaison entre votre <b>CA réel</b> et le <b>CA potentiel</b> si chaque livraison renseignée avait été facturée. L'écart entre les deux courbes = ce que vous laissez sur la table. Un <b>+</b> marque les périodes où une livraison a été facturée.</p>
+     <div class="flex" style="gap:6px;margin-bottom:12px">
+       <button class="btn sm ${_gapGran==='jour'?'gold':'ghost'}" onclick="gapSetGran('jour')">Jour</button>
+       <button class="btn sm ${_gapGran==='semaine'?'gold':'ghost'}" onclick="gapSetGran('semaine')">Semaine</button>
+       <button class="btn sm ${_gapGran==='mois'?'gold':'ghost'}" onclick="gapSetGran('mois')">Mois</button>
+     </div>
+     <div id="gapChartZone"><div class="empty">Chargement…</div></div>
+   </div>
+
    <p class="note" style="margin-top:10px">Le coût matières est une estimation moyenne (coût recette ÷ rendement) pour donner une marge indicative. Pour la comptabilité officielle, appuyez-vous sur vos charges saisies et l'export.</p>`;
+  // Rendu asynchrone du graphique manque à gagner (après injection du conteneur).
+  gapRenderChart();
  } catch(err){ renderViewError('compta', err); }
+}
+// Change la granularité du graphique manque à gagner et redessine juste cette zone.
+function gapSetGran(g){
+  _gapGran = g;
+  // Met à jour l'état visuel des boutons sans tout re-render.
+  ['jour','semaine','mois'].forEach(k=>{
+    const btns=[...document.querySelectorAll('#gapPanel .btn.sm')];
+    const b=btns.find(x=>x.textContent.trim().toLowerCase()===k);
+    if(b){ b.classList.toggle('gold', k===g); b.classList.toggle('ghost', k!==g); }
+  });
+  gapRenderChart();
+}
+// Construit le graphique double courbe + l'encart de synthèse dans #gapChartZone.
+async function gapRenderChart(){
+  const zone=document.getElementById('gapChartZone');
+  if(!zone) return;
+  try{
+    const data = await deliveryGapData(_gapGran);
+    if(!data.keys.length){
+      zone.innerHTML='<div class="empty">Aucune livraison renseignée pour le moment. Renseignez la distance/temps de livraison sur vos commandes pour suivre le manque à gagner.</div>';
+      return;
+    }
+    const granLabel = _gapGran==='jour'?'jour':(_gapGran==='semaine'?'semaine':'mois');
+    const xfmt = x => {
+      if(_gapGran==='mois') return monthLabel ? monthLabel(x) : x;
+      if(_gapGran==='semaine') return x.replace('-S',' · S');
+      return x.slice(8)+'/'+x.slice(5,7);   // JJ/MM
+    };
+    const chart = lineChart(data.series, {zero:true, xlabel:xfmt, fmt:v=>Math.round(v)+'€'});
+    const s = data.synth;
+    // Encart de synthèse — clair et lisible, recalculé selon la granularité affichée.
+    const encart = `
+      <div class="panel" style="margin-top:14px;background:#fbf7f0;border-color:#ecdfc9">
+        <div class="flex" style="justify-content:space-between;flex-wrap:wrap;gap:14px">
+          <div style="min-width:120px">
+            <div style="font-size:.72rem;color:#9a8a82;text-transform:uppercase;letter-spacing:.04em">Votre CA réel</div>
+            <div style="font-size:1.4rem;font-weight:700;color:#AA7C39">${euro(s.ca)}</div>
+          </div>
+          <div style="min-width:120px">
+            <div style="font-size:.72rem;color:#9a8a82;text-transform:uppercase;letter-spacing:.04em">Manque à gagner</div>
+            <div style="font-size:1.4rem;font-weight:700;color:#a5453b">${euro(s.manque)}</div>
+            <div style="font-size:.72rem;color:#9a8a82">soit ${s.pctManque}% de votre CA</div>
+          </div>
+          <div style="min-width:120px">
+            <div style="font-size:.72rem;color:#9a8a82;text-transform:uppercase;letter-spacing:.04em">CA potentiel</div>
+            <div style="font-size:1.4rem;font-weight:700;color:#3f7d52">${euro(s.potentiel)}</div>
+          </div>
+        </div>
+        <p class="note" style="margin-top:10px;margin-bottom:0">
+          <b>${s.nbNonFact}</b> livraison(s) non facturée(s) représentent <b>${euro(s.manque)}</b> de CA non perçu.
+          <b>${s.nbFact}</b> livraison(s) facturée(s) (marquées d'un <b style="color:#AA7C39">+</b> sur la courbe).
+          ${s.manque>0 ? 'Facturer vos livraisons rapprocherait la courbe rouge de la verte.' : 'Bravo : aucune livraison non facturée sur cette vue.'}
+        </p>
+      </div>`;
+    zone.innerHTML = chart + encart;
+  }catch(e){
+    console.error('gapRenderChart', e);
+    zone.innerHTML='<div class="empty">Erreur lors du calcul du manque à gagner.</div>';
+  }
 }
 // Liste détaillée des charges (gestion : éditer / supprimer)
 /* ============================================================
