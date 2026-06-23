@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v699';
+const APP_VERSION = 'v701';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23238,9 +23238,9 @@ const GUIDE_THEMES = [
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
       detail:"L'agenda liste tes commandes à venir, triées par date de livraison. Touche le nom d'un client pour DÉPLIER la commande (chevron) : tu vois alors l'enchaînement complet de ses étapes calées — coques, ganache/crémeux, repos, montage, maturation, décongélation, livraison — avec les horaires dans tes plages A/B. Touche une étape pour ouvrir son rétroplanning détaillé. Les commandes qui partagent des fournées avec d'autres la même semaine portent un badge « 🔗 mutualisée » ; sur chaque étape concernée (coques, ganache, montage), tu vois par parfum avec quelles commandes c'est regroupé, et deux raccourcis : « voir » (déplie la commande liée dans l'agenda) et « détail » (ouvre son rétroplanning). Règle clé : les coques des macarons standard sont calées le JOUR du montage (coques fraîches) ; si c'est impossible ou absurde, l'app propose de les congeler (badge ❄️). La section « 🧩 Mutualisation par semaine » regroupe toute la production d'une même semaine : coques et montage mutualisés, besoin cumulé par parfum (nombre de batchs), délai de ganache, commandes regroupées (badge ★), et plan de congélation/décongélation du surplus. La section « 📊 Besoins par parfum et par jour » donne le cumul au jour le jour.",
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","Touche une étape pour son rétroplanning détaillé"] },
-    { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour analyser ton temps.",
-      detail:"Ouvre une session de production et lance des chronos par tâche (pesée, macaronnage, cuisson…). Plusieurs tâches tournent en parallèle. Le tableau blanc montre ta journée en barres, et le journal garde l'historique. Sert à optimiser ton organisation.",
-      steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail","Consulte le tableau blanc et le journal"] },
+    { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
+      detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
+      steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail en rattachant le parfum","Plus tu mesures, plus les temps par parfum se fiabilisent","Consulte le tableau blanc et le journal"] },
     { v:'recettes', t:'Recettes (BOM)', ico:'❀', resume:"Tes recettes détaillées avec leurs ingrédients.",
       detail:"Définis chaque recette avec ses matières et quantités (la nomenclature). C'est la base qui permet de calculer les coûts et de déduire le stock à chaque production.",
       steps:["Crée une recette","Ajoute les matières et quantités","Elle servira au calcul des coûts et productions"] },
@@ -26393,6 +26393,10 @@ const TT_ACTIVITIES = ['Déplacements / livraisons','Administratif','Courses','P
 // Catalogue des tâches, groupées par phase. La phase porte une couleur (barres du tableau blanc).
 // Modifiable : l'utilisateur peut ajouter ses propres tâches (stockées dans les réglages).
 const PROD_TASK_CATALOG = [
+  { phase:'Préparation ganache', color:'#7a4b2a', tasks:[
+    'Pesée des ingrédients',
+    'Émulsion',
+  ]},
   { phase:'Préparation', color:'#c1a27c', tasks:[
     'Pesée du tant pour tant (poudre d\'amandes + sucre glace)',
     'Pesée des ingrédients meringue (eau, blanc d\'œuf en poudre, sucre semoule)',
@@ -26400,6 +26404,8 @@ const PROD_TASK_CATALOG = [
   { phase:'Meringue', color:'#caa23b', tasks:[
     'Mise en chauffe de la meringue',
     'Foisonnement de la meringue',
+    'Rajout colorant',
+    'Foisonnement meringue après division',
     'Pesée de la meringue pour division',
   ]},
   { phase:'Macaronnage', color:'#aa7c39', tasks:[
@@ -26407,6 +26413,7 @@ const PROD_TASK_CATALOG = [
     'Macaronnage',
     'Pochage',
     'Tapage des plaques',
+    'Claquage des bulles',
   ]},
   { phase:'Cuisson', color:'#c0392b', tasks:[
     'Cuisson des coques',
@@ -26414,7 +26421,7 @@ const PROD_TASK_CATALOG = [
   ]},
   { phase:'Garnissage', color:'#3f7d52', tasks:[
     'Chablonnage des coques',
-    'Cristallisation du beurre de cacao',
+    'Mise en congélation des coques pour cristallisation des coques',
     'Préparation de la ganache pour pochage',
     'Pochage de la ganache',
     'Assemblage des coques (finition macaron)',
@@ -30338,12 +30345,19 @@ function prodTaskMrpCategory(task){
   const phase = (task.phase||'').toLowerCase();
   const label = (task.label||'').toLowerCase();
   if(phase==='préparation'||phase==='preparation'||phase==='meringue'||phase==='macaronnage'||phase==='cuisson') return 'coques';
+  // Nouvelle phase dédiée : toute la préparation de la ganache (pesée, émulsion) → ganache.
+  if(phase==='préparation ganache'||phase==='preparation ganache') return 'ganache';
   if(phase==='garnissage'){
-    // Chablonnage + cristallisation du beurre de cacao = opérations SPÉCIFIQUES à certaines recettes
-    // (ganaches humides type framboise). Elles ne s'appliquent pas à toutes les productions, donc on
-    // les EXCLUT des catégories génériques (sinon elles fausseraient les temps de toutes les recettes).
-    // → gérées via les "temps spécifiques par recette" (cadre dédié).
-    if(label.includes('chablonnage')||label.includes('cristallisation')||label.includes('beurre de cacao')) return null;
+    // Mise en congélation des coques pour cristallisation : finalise les COQUES (manip active sur coques).
+    // À attraper AVANT la règle d'exclusion de "cristallisation", sinon elle serait ignorée à tort.
+    if(label.includes('congélation')||label.includes('congelation')) return 'coques';
+    // Chablonnage = finalise la coque, mais SPÉCIFIQUE à certaines recettes (ganaches humides :
+    // framboise, citron…). Compté comme COQUES : grâce au rattachement par parfum sur la tâche, ce
+    // temps tombe sur le parfum réellement chablonné et ne dilue pas les autres.
+    if(label.includes('chablonnage')) return 'coques';
+    // Cristallisation du beurre de cacao : reste exclue des catégories génériques (opération très
+    // spécifique, gérée via les "temps spécifiques par recette" si besoin).
+    if(label.includes('cristallisation')||label.includes('beurre de cacao')) return null;
     if(label.includes('ganache')&&label.includes('prépar')) return 'ganache';
     // pochage ganache, assemblage → montage
     return 'montage';

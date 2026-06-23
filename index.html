@@ -195,6 +195,11 @@ h1,h2,h3,.serif{font-family:'Bellota','Georgia','Times New Roman',serif;letter-s
 .ai-fold>summary{cursor:pointer;list-style:none;padding:16px 20px;font-size:1.05rem;font-weight:600;color:var(--bordeaux);display:flex;align-items:center;gap:10px;user-select:none}
 .ai-fold>summary::-webkit-details-marker{display:none}
 .ai-fold>summary .ai-fold-arrow{margin-left:auto;transition:transform .2s;color:#9a8a82;font-size:.9rem}
+.cmd-retro>summary::-webkit-details-marker{display:none}
+.cmd-retro .cmd-chevron{transition:transform .2s ease}
+.cmd-retro[open] .cmd-chevron{transform:rotate(90deg)}
+.btn-mut{background:#eef4fb;border:1px solid #cfe0f2;color:#3b6ea5;font-size:.68rem;font-weight:600;padding:1px 7px;border-radius:6px;cursor:pointer;line-height:1.4}
+.btn-mut:active{background:#dce9f6}
 .ai-fold[open]>summary .ai-fold-arrow{transform:rotate(180deg)}
 .ai-fold>summary:active{background:var(--creme-2)}
 .ai-fold .ai-fold-body{padding:0 16px 12px}
@@ -1288,9 +1293,9 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=694" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=694"></script>
-<script src="utils.js?v=694"></script>
-<script src="app.js?v=694"></script>
+<script src="html5-qrcode.min.js?v=701" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=701"></script>
+<script src="utils.js?v=701"></script>
+<script src="app.js?v=701"></script>
 </body>
 </html>
