@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v690';
+const APP_VERSION = 'v691';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1773,8 +1773,8 @@ function radialInit(){
     if(!_rmState.open && inCorner(t.clientX,t.clientY)){
       _rmState.tracking=true; _rmState.startX=t.clientX; _rmState.startY=t.clientY;
     }
-    // amorce fermeture : pouce posé HORS du coin, et on n'est pas déjà sur l'accueil
-    else if(!_rmState.open && view!=='dash' && !inCorner(t.clientX,t.clientY)){
+    // amorce le geste : pouce posé HORS du coin → ouvrira le menu (depuis n'importe quelle page).
+    else if(!_rmState.open && !inCorner(t.clientX,t.clientY)){
       _cl.tracking=true; _cl.x0=t.clientX; _cl.y0=t.clientY;
       _cl.lastX=t.clientX; _cl.lastY=t.clientY; _cl.armed=false;
     }
@@ -1839,16 +1839,17 @@ function radialInit(){
         transform-origin:100% 100%;border-radius:${m.style.borderRadius||0};box-shadow:${m.style.boxShadow||'none'};
         background:var(--creme,#F5F0E8)`;
       document.body.appendChild(ghost);
-      // 2) on remet la vraie page à zéro et on rend l'ACCUEIL DESSOUS, immédiatement.
+      // 2) on remet la VRAIE page à zéro — SANS changer de page : on reste sur la page courante,
+      //    le geste ne fait qu'OUVRIR LE MENU par-dessus (retour menu, pas retour accueil).
       m.style.transition='none'; m.style.transform=''; m.style.opacity='';
       m.style.borderRadius=''; m.style.boxShadow=''; m.style.transformOrigin='';
-      if(view!=='dash') goView('dash');
-      // 3) on anime le calque qui glisse et sort, révélant l'accueil déjà présent dessous.
+      // 3) on anime le calque qui glisse et sort, révélant la page (inchangée) dessous,
+      //    puis on ouvre le menu.
       requestAnimationFrame(()=>{
         ghost.style.transition='transform .28s cubic-bezier(.4,0,.6,1), opacity .28s ease';
         ghost.style.transform='translate(100%,100%) rotate(10deg) scale(.5)';
         ghost.style.opacity='0';
-        setTimeout(()=>{ ghost.remove(); }, 320);
+        setTimeout(()=>{ ghost.remove(); if(typeof openSheet==='function') openSheet(); }, 300);
       });
     } else {
       // pas validé : la feuille revient se poser en place
