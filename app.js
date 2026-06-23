@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v717';
+const APP_VERSION = 'v718';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22805,7 +22805,8 @@ async function buildDump(){
 }
 // Clés localStorage incluses dans les sauvegardes (réglages persistants, hors état purement transitoire).
 const BACKUP_LS_KEYS = ['sm_settings','sm_autoPay','sm_privacyMode','sm_nav_adv','sm_lastExport','sm_lastICloud','sm_autoBackupDate',
-  'sm_facture','sm_recurringCharges','sm_mrp_times','sm_availability','sm_planPrioOrder','sm_pmsEod'];
+  'sm_facture','sm_recurringCharges','sm_mrp_times','sm_availability','sm_planPrioOrder','sm_pmsEod',
+  'sm_navFavoris','sm_navUsage','sm_optimBatch','sm_availExceptions'];
 function collectLocalSettings(){
   const o={};
   BACKUP_LS_KEYS.forEach(k=>{ const v=localStorage.getItem(k); if(v!=null) o[k]=v; });
