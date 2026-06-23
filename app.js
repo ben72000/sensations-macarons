@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v723';
+const APP_VERSION = 'v731';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1366,7 +1366,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -7225,29 +7225,17 @@ async function saveProd(){
     : (composant==='ganache' ? (garnType==='cremeux' ? '-CR' : '-GA') : '');
   lot = cleanBase + suffComp;   // pas encore de lettre d'emplacement
   if(!lotBaseSansSuffixe(lot)){ toast('N° de lot vide — saisissez un identifiant.'); return; }
-  // COQUES : 1 macaron = 2 coques. La quantité SAISIE est en macarons (rendement recette) ;
-  // on stocke le nombre de COQUES (×2). Les matières restent calées sur le nombre de macarons.
-  let qTh=qteTheorique, qRe=qteReelle, facteurQte=qteTheorique;
-  if(composant==='coques'){
-    qTh = qteTheorique*COQUES_PAR_MACARON;
-    qRe = qteReelle*COQUES_PAR_MACARON;
-    facteurQte = qteTheorique;   // matières basées sur les macarons (pas les coques)
-  }
+  // COQUES : 1 macaron = 2 coques. La quantité saisie est en MACARONS ; la conversion en coques
+  // (×2) et le calage des matières (facteurQte) sont gérés dans lancerBatchAvecFiche.
   try{
-    const prodId = await enregistrerProduction(recipeId, qTh, qRe, date, lot, '', '',
-      {composant, lotBase:cleanBase, facteurQte, garnitureType:garnType||undefined});
-    // [TEMPS PAR RECETTE] Démarre une tâche d'ATELIER liée à ce batch (porte le recipeId).
-    try{
-      const _rec = await db.recipes.get(recipeId);
-      const taskId = prodTaskStartForBatch({recipeId, composant, lotBase:cleanBase, parfumNom:_rec?_rec.produitNom:''});
-      if(prodId!=null && taskId) await db.productions.update(prodId, {atelierTaskId:taskId});
-    }catch(e){ console.error('atelier batch', e); }
-    renderProductions();
     const lbl = composant==='coques'?'Coques':composant==='ganache'?(garnType==='cremeux'?'Crémeux':'Ganache'):'Production';
-    const extra = composant==='coques'?` (${qty(qTh)} coques pour ${qty(qteTheorique)} macarons)`:'';
-    toast(`${lbl} démarrée ✓${extra}`);
-    // Affiche aussitôt la fiche recette recalculée aux quantités du batch, pour produire.
-    await ficheRecetteProduction(recipeId, facteurQte, composant, lot);
+    const extra = composant==='coques'?` (${qty(qteTheorique*COQUES_PAR_MACARON)} coques pour ${qty(qteTheorique)} macarons)`:'';
+    // Séquence unique (batch + chrono + POPUP RECETTE) via le helper, qui garantit la fiche.
+    await lancerBatchAvecFiche({
+      recipeId, qteMacarons:qteTheorique, qteReelleMacarons:qteReelle,
+      composant, lotBase:cleanBase, lot, garnitureType:garnType||undefined, date,
+      toastLabel:`${lbl} démarrée ✓${extra}`
+    });
   }catch(err){
     toast(err.message || 'Erreur production');
   }
@@ -9255,6 +9243,7 @@ const _NAV_PAGES = [
   {v:'agendaprod',   t:'Agenda production',         k:'agenda production planning fabrication retroplanning'},
   {v:'atelier',      t:'Atelier (chronos)',         k:'atelier chrono temps minutage mesure'},
   {v:'stockparfums', t:'Stock par parfum',          k:'stock parfum macaron disponible'},
+  {v:'histostock',   t:'Historique du stock',        k:'historique mouvements stock entrees sorties journal flux'},
   {v:'couts',        t:'Coûts & prix',              k:'cout prix revient marge tarif'},
   {v:'sauvegardes',  t:'Sauvegarde & sécurité',     k:'sauvegarde backup securite export restauration'},
   {v:'produits',     t:'Offre / Coffrets',          k:'produit coffret offre catalogue boite assortiment'},
@@ -11965,10 +11954,16 @@ async function cmdDeleteConfirm(id){
   }
   // snapshot pour annulation
   const snap = { order:o?{...o}:null, items:items.map(x=>({...x})), events:evs.map(e=>({...e})), embRestock:embRestock.map(x=>({...x})) };
+  const _recCacheDel = await db.recipes.toArray().catch(()=>[]);
+  const _mvRestock=[]; // [JOURNAL STOCK] recrédits à journaliser hors transaction
   await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,db.materialLots,async()=>{
     for(const it of items){
       const prod = await db.productions.get(it.productionId);
-      if(prod){ await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, it.qte)}); }
+      if(prod){
+        await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, it.qte)});
+        _mvRestock.push({ parfumNom: prodNomComplet(prod, _recCacheDel), composant:'macaron', sens:+1,
+          qte:round3(+it.qte||0), type:'recredit', productionId:prod.id, orderId:id, note:'suppression commande' });
+      }
     }
     // re-crédit des emballages (boîtes + sac)
     for(const e of embRestock){ await restockLotsByMaterial(e.materialId, e.nb); }
@@ -11976,20 +11971,29 @@ async function cmdDeleteConfirm(id){
     await db.events.where('refId').equals(id).delete();
     await db.orders.delete(id);
   });
+  // [JOURNAL STOCK] recrédite le stock fini des batchs liés (commande supprimée).
+  for(const mv of _mvRestock){ await logStockMove(mv); }
   logDeletion('commande', id, reason, note, o?`${fmtDate(o.date)} · ${euro(o.montant)}`:'');
   try{ await db.packagingConsumption.where('orderId').equals(id).delete(); }catch(e){}
   closeModal(); renderCmd();
   // annulation rapide : restaure la commande, ses liens, son événement, et ré-décrémente le stock
   showUndoToast(totBatch?`Commande supprimée — ${totBatch} recrédité(s)`:'Commande supprimée', async ()=>{
+    const _mvUndo=[];
     await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,db.materialLots,async()=>{
       if(snap.order) await db.orders.put(snap.order);
       for(const it of snap.items){ await db.orderItems.put(it);
         const prod=await db.productions.get(it.productionId);
-        if(prod){ await db.productions.update(prod.id,{qteRestante: subQty(prod.qteRestante, it.qte)}); } }
+        if(prod){
+          await db.productions.update(prod.id,{qteRestante: subQty(prod.qteRestante, it.qte)});
+          _mvUndo.push({ parfumNom: prodNomComplet(prod, _recCacheDel), composant:'macaron', sens:-1,
+            qte:round3(+it.qte||0), type:'recredit', productionId:prod.id, orderId:id, note:'annulation suppression (undo)' });
+        } }
       // ré-décrémente les emballages recrédités (on annule la restitution)
       for(const e of (snap.embRestock||[])){ await decrementLotsByMaterial(e.materialId, e.nb); }
       for(const e of snap.events){ await db.events.put(e); }
     });
+    // [JOURNAL STOCK] miroir : l'undo annule le recrédit (re-sortie du stock).
+    for(const mv of _mvUndo){ await logStockMove(mv); }
     renderCmd();
   });
 }
@@ -12026,11 +12030,17 @@ async function delCmd(id){
     (embRestock.length?`\n• Les emballages (boîtes / sacs) seront recrédités au stock.`:'') +
     (ev.length?`\n• L'entrée du calendrier sera supprimée.`:'');
   if(!confirm(msg))return;
+  const _recCacheDel2 = await db.recipes.toArray().catch(()=>[]);
+  const _mvRestock2=[]; // [JOURNAL STOCK] recrédits à journaliser hors transaction
   await db.transaction('rw',db.orders,db.orderItems,db.productions,db.events,db.materialLots,async()=>{
     // 1) recréditer le stock fini des batchs liés
     for(const it of items){
       const prod = await db.productions.get(it.productionId);
-      if(prod){ await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, it.qte)}); }
+      if(prod){
+        await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, it.qte)});
+        _mvRestock2.push({ parfumNom: prodNomComplet(prod, _recCacheDel2), composant:'macaron', sens:+1,
+          qte:round3(+it.qte||0), type:'recredit', productionId:prod.id, orderId:id, note:'suppression commande' });
+      }
     }
     // 1b) recréditer les emballages (boîtes + sac)
     for(const e of embRestock){ await restockLotsByMaterial(e.materialId, e.nb); }
@@ -12041,6 +12051,8 @@ async function delCmd(id){
     // 4) supprimer la commande
     await db.orders.delete(id);
   });
+  // [JOURNAL STOCK] recrédite le stock fini des batchs liés (commande supprimée).
+  for(const mv of _mvRestock2){ await logStockMove(mv); }
   try{ await db.packagingConsumption.where('orderId').equals(id).delete(); }catch(e){}
   renderCmd(); toast(totBatch?`Commande supprimée — ${totBatch} macaron(s) recrédité(s) ✓`:'Commande supprimée ✓');
 }
@@ -12800,6 +12812,7 @@ async function marketIsHisto(marketId){
 async function marketAddSortie(marketId, productionId, qte, parfum){
   qte=round3(qte);
   if(qte<=0) throw new Error('Quantité invalide');
+  let _mvMk=null; // [JOURNAL STOCK] à journaliser hors transaction
   // Mode historique : on enregistre le mouvement sans toucher au stock ni plafonner.
   if(await marketIsHisto(marketId)){
     await db.marketMoves.add({marketId, productionId:productionId||null, type:'sortie', qte, parfum:parfum||'', motif:'', date:today(), histo:true});
@@ -12813,7 +12826,11 @@ async function marketAddSortie(marketId, productionId, qte, parfum){
     await db.productions.update(productionId, {qteRestante: subQty(p.qteRestante, qte)});
     await db.marketMoves.add({marketId, productionId, type:'sortie', qte, parfum:parfum||'', motif:'',
       date:today(), stockAvant, stockApres:subQty(stockAvant,qte)});
+    _mvMk={ parfumNom: parfum || prodNomComplet(p), composant:'macaron', sens:-1, qte,
+      type:'marche', productionId, marketId, note:'sortie marché' };
   });
+  // [JOURNAL STOCK] sortie de stock fini vers le marché (skip en mode histo, traité ci-dessus).
+  if(_mvMk) await logStockMove(_mvMk);
 }
 
 // ===== VUE DÉDIÉE : STOCK PAR PARFUM (pastilles colorées, comme la boutique) =====
@@ -13036,6 +13053,174 @@ async function stockParfumDetail(nom){
     ${degustations.length?`<h3 style="font-size:1rem;margin:16px 0 8px">🥄 Dégustations <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— offerts, non vendables (${qty(totalDeg)} pièce(s))</span></h3>${rowsDeg}`:''}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
+// ════════════════════════════════════════════════════════════════════════════
+// HISTORIQUE DES MOUVEMENTS DE STOCK (lecture du journal stockMoves — moteur de stock)
+// Résumé par parfum (entrées / sorties / net) + détail chronologique, avec filtres
+// période / type / composant / parfum. Source unique : table db.stockMoves (v20).
+// ════════════════════════════════════════════════════════════════════════════
+// Libellés & emojis des types de mouvement (clés = champ `type` de stockMoves).
+const STOCKMOVE_TYPES = {
+  production:  {lbl:'Production',   emoji:'⚙️'},
+  assemblage:  {lbl:'Assemblage',  emoji:'🧩'},
+  livraison:   {lbl:'Livraison',   emoji:'📦'},
+  marche:      {lbl:'Marché',      emoji:'⛺'},
+  perte:       {lbl:'Perte / casse', emoji:'🗑️'},
+  degustation: {lbl:'Dégustation', emoji:'🥄'},
+  recredit:    {lbl:'Recrédit',    emoji:'↩️'},
+  ajustement:  {lbl:'Ajustement',  emoji:'🔧'}
+};
+function stockMoveTypeMeta(t){ return STOCKMOVE_TYPES[t] || {lbl:(t||'?'), emoji:'•'}; }
+// Libellés des composants.
+const STOCKMOVE_COMPOSANTS = { macaron:'Macaron', coques:'Coques', ganache:'Ganache' };
+// État des filtres (persistant en mémoire de session ; pas de localStorage requis).
+let _histStockFiltres = { periode:'30', type:'tous', composant:'tous', parfum:'tous', q:'' };
+function setHistStockFiltre(champ, valeur){ _histStockFiltres[champ]=valeur; renderHistoStock(); }
+function setHistStockRecherche(v){ _histStockFiltres.q = v||''; renderHistoStock(); }
+
+async function renderHistoStock(){
+  let moves;
+  try{ moves = await db.stockMoves.toArray(); }catch(e){ moves = []; }
+  const F = _histStockFiltres;
+  // ── Bornes de période ──
+  const now = Date.now();
+  const joursMs = { '7':7, '30':30, '90':90 };
+  let bornISO = null;
+  if(F.periode!=='tout' && joursMs[F.periode]){
+    bornISO = new Date(now - joursMs[F.periode]*86400000).toISOString();
+  }
+  // ── Application des filtres ──
+  const qNorm = (typeof aiNormalize==='function') ? aiNormalize(F.q||'') : (F.q||'').toLowerCase().trim();
+  const filtres = moves.filter(m=>{
+    if(bornISO && (m.ts||'') < bornISO) return false;
+    if(F.type!=='tous' && m.type!==F.type) return false;
+    if(F.composant!=='tous' && (m.composant||'macaron')!==F.composant) return false;
+    if(F.parfum!=='tous' && stockMoveKey(m.parfumNom||'') !== F.parfum) return false;
+    if(qNorm){ const blob = aiNormalize([m.parfumNom, stockMoveTypeMeta(m.type).lbl, m.note].filter(Boolean).join(' ')); if(!blob.includes(qNorm)) return false; }
+    return true;
+  });
+  // ── Résumé par parfum (entrées / sorties / net) ──
+  const parParfum = {};
+  filtres.forEach(m=>{
+    const k = stockMoveKey(m.parfumNom||'');
+    const b = (parParfum[k] ||= { nom:m.parfumNom||'(?)', entrees:0, sorties:0, nb:0 });
+    const q = round3(+m.qte||0);
+    if(m.sens<0) b.sorties = addQty(b.sorties, q); else b.entrees = addQty(b.entrees, q);
+    b.nb++;
+  });
+  const resume = Object.values(parParfum)
+    .map(b=>({...b, net: round3(b.entrees - b.sorties)}))
+    .sort((a,b)=> Math.abs(b.net)-Math.abs(a.net) || b.nb-a.nb);
+  // ── Liste des parfums présents dans le journal (pour le filtre déroulant) ──
+  const parfumsConnus = {};
+  moves.forEach(m=>{ const k=stockMoveKey(m.parfumNom||''); if(k && !parfumsConnus[k]) parfumsConnus[k]=m.parfumNom||k; });
+  const parfumsOpts = Object.keys(parfumsConnus).sort((a,b)=>parfumsConnus[a].localeCompare(parfumsConnus[b]));
+  // ── Détail chronologique (plus récent en premier) ──
+  const detail = filtres.slice().sort((a,b)=> (b.ts||'').localeCompare(a.ts||''));
+
+  // ── Construction HTML ──
+  const _col = nom => (typeof flavorColor==='function') ? flavorColor(nom) : '#cbb89f';
+  const _pastille = nom => `<span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:${_col(nom)};flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>`;
+
+  // Boutons-pilule génériques
+  const pill = (champ, val, label, actif) =>
+    `<button onclick="setHistStockFiltre('${champ}','${val}')" style="padding:6px 11px;border-radius:999px;border:1px solid ${actif?'#3f7d52':'var(--hair)'};background:${actif?'#eaf3ec':'#fff'};color:${actif?'#2e6b42':'#6a5a52'};font-size:.8rem;font-weight:${actif?'600':'400'};white-space:nowrap;cursor:pointer">${label}</button>`;
+
+  const filtresPeriode = [['7','7 j'],['30','30 j'],['90','90 j'],['tout','Tout']]
+    .map(([v,l])=>pill('periode',v,l,F.periode===v)).join('');
+  const filtresType = [['tous','Tous',''],...Object.keys(STOCKMOVE_TYPES).map(t=>[t,STOCKMOVE_TYPES[t].lbl,STOCKMOVE_TYPES[t].emoji])]
+    .map(([v,l,e])=>pill('type',v,(e?e+' ':'')+l,F.type===v)).join('');
+  const filtresComp = [['tous','Tous'],['macaron','Macaron'],['coques','Coques'],['ganache','Ganache']]
+    .map(([v,l])=>pill('composant',v,l,F.composant===v)).join('');
+  const filtreParfumSelect = `<select onchange="setHistStockFiltre('parfum', this.value)" style="padding:7px 10px;border-radius:10px;border:1px solid var(--hair);font-size:.85rem;max-width:100%">
+      <option value="tous" ${F.parfum==='tous'?'selected':''}>Tous les parfums</option>
+      ${parfumsOpts.map(k=>`<option value="${esc(k)}" ${F.parfum===k?'selected':''}>${esc(parfumsConnus[k])}</option>`).join('')}
+    </select>`;
+
+  // Cartes résumé par parfum
+  const cartesResume = resume.length ? resume.map(b=>{
+    const netCol = b.net>0 ? '#2e6b42' : (b.net<0 ? '#b3261e' : '#6a5a52');
+    const netTxt = (b.net>0?'+':'') + qty(b.net);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:11px 13px;border:1px solid var(--hair);border-radius:12px;background:#fbf8f3;margin:6px 0">
+      ${_pastille(b.nom)}
+      <span style="flex:1;font-weight:600;color:var(--bordeaux);font-size:.95rem">${esc(b.nom)}</span>
+      <span style="font-size:.78rem;color:#3f7d52">↑ ${qty(b.entrees)}</span>
+      <span style="font-size:.78rem;color:#b3261e">↓ ${qty(b.sorties)}</span>
+      <span style="font-weight:700;color:${netCol};min-width:54px;text-align:right">${netTxt}</span>
+    </div>`;
+  }).join('') : '<p class="note">Aucun mouvement sur la période / les filtres choisis.</p>';
+
+  // Lignes du détail chronologique
+  const lignesDetail = detail.length ? detail.map(m=>{
+    const meta = stockMoveTypeMeta(m.type);
+    const entree = m.sens>0;
+    const signe = entree ? '+' : '−';
+    const sCol = entree ? '#2e6b42' : '#b3261e';
+    const compLbl = STOCKMOVE_COMPOSANTS[m.composant||'macaron'] || (m.composant||'');
+    // Affichage horodaté à la SECONDE (spécifique à cet écran : utile quand plusieurs
+    // mouvements tombent dans la même minute, ex. assemblage ou livraison multi-lots).
+    // On n'utilise pas fmtTime (HH:MM, partagé par toute l'app) pour ne rien changer ailleurs.
+    let quand = '—';
+    if(m.ts){
+      const d = new Date(m.ts);
+      if(!isNaN(d)){
+        const hh=String(d.getHours()).padStart(2,'0'), mm=String(d.getMinutes()).padStart(2,'0'), ss=String(d.getSeconds()).padStart(2,'0');
+        quand = `${d.toLocaleDateString('fr-FR')} à ${hh}:${mm}:${ss}`;
+      } else {
+        quand = (m.ts||'').slice(0,19).replace('T',' ');
+      }
+    }
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--hair)">
+      <span style="font-size:1.05rem;flex:none">${meta.emoji}</span>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px">
+          ${_pastille(m.parfumNom)}
+          <span style="font-weight:600;color:var(--bordeaux);font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.parfumNom||'(?)')}</span>
+          <span style="font-size:.68rem;color:#9a8a82;background:#f0e9df;padding:1px 6px;border-radius:6px;flex:none">${esc(compLbl)}</span>
+        </div>
+        <div style="font-size:.72rem;color:#9a8a82;margin-top:2px">${meta.lbl}${m.note?` · ${esc(m.note)}`:''} · ${esc(quand)}</div>
+      </div>
+      <span style="font-weight:700;color:${sCol};flex:none;min-width:48px;text-align:right">${signe}${qty(m.qte)}</span>
+    </div>`;
+  }).join('') : '<p class="note" style="padding:10px 12px">Aucun mouvement à afficher.</p>';
+
+  const totalEntrees = round3(filtres.filter(m=>m.sens>0).reduce((s,m)=>s+(+m.qte||0),0));
+  const totalSorties = round3(filtres.filter(m=>m.sens<0).reduce((s,m)=>s+(+m.qte||0),0));
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Historique du stock</h1>
+     <p>${filtres.length} mouvement(s) · ↑ ${qty(totalEntrees)} entré(s) · ↓ ${qty(totalSorties)} sorti(s)</p></div>
+     <div class="flex"><button class="btn" onclick="goView('stockparfums')">🍬 Stock →</button></div></div>
+
+   <div class="panel">
+     <p class="note" style="margin-bottom:10px">Journal de tous les flux de stock : production, assemblage, livraison, marché, pertes, dégustations et recrédits. Filtre pour cibler ce que tu cherches.</p>
+     <div style="display:flex;flex-direction:column;gap:9px">
+       <div><div style="font-size:.7rem;color:#9a8a82;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Période</div>
+         <div style="display:flex;gap:6px;flex-wrap:wrap">${filtresPeriode}</div></div>
+       <div><div style="font-size:.7rem;color:#9a8a82;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Type de mouvement</div>
+         <div style="display:flex;gap:6px;flex-wrap:wrap">${filtresType}</div></div>
+       <div><div style="font-size:.7rem;color:#9a8a82;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Composant</div>
+         <div style="display:flex;gap:6px;flex-wrap:wrap">${filtresComp}</div></div>
+       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+         ${filtreParfumSelect}
+         <input type="search" placeholder="🔍 Rechercher (parfum, note…)" value="${esc(F.q)}"
+           oninput="setHistStockRecherche(this.value)"
+           style="flex:1;min-width:140px;padding:7px 10px;border-radius:10px;border:1px solid var(--hair);font-size:.85rem">
+       </div>
+     </div>
+   </div>
+
+   <div class="panel">
+     <h2 style="font-size:1.02rem;color:var(--bordeaux);margin:0 0 8px">📊 Résumé par parfum</h2>
+     <p class="note" style="margin-bottom:8px">Bilan entrées (↑) / sorties (↓) et net sur la sélection. Trié par ampleur du mouvement.</p>
+     ${cartesResume}
+   </div>
+
+   <div class="panel">
+     <h2 style="font-size:1.02rem;color:var(--bordeaux);margin:0 0 8px">🕑 Détail chronologique</h2>
+     <div style="border:1px solid var(--hair);border-radius:12px;overflow:hidden">${lignesDetail}</div>
+   </div>`;
+}
+
 // Stock fini disponible AGRÉGÉ PAR PARFUM (sans se soucier des lots).
 // Retourne [{parfum, dispo, recipeId, batches:[{id,qteRestante,date}]}] trié par parfum.
 async function stockFiniParParfum(){
@@ -13062,6 +13247,7 @@ async function stockFiniParParfum(){
 async function marketAddSortieParfum(marketId, parfum, qteDemandee){
   let reste=round3(qteDemandee);
   if(reste<=0) throw new Error('Quantité invalide');
+  const _mvMkList=[]; // [JOURNAL STOCK] sorties FIFO à journaliser hors transaction
   // Mode historique : un seul mouvement par parfum, sans FIFO ni rattachement à un lot réel,
   // sans impact stock ni plafond (le stock du jour du marché n'existe plus aujourd'hui).
   if(await marketIsHisto(marketId)){
@@ -13084,9 +13270,13 @@ async function marketAddSortieParfum(marketId, parfum, qteDemandee){
       await db.productions.update(p.id, {qteRestante: subQty(p.qteRestante, pris)});
       await db.marketMoves.add({marketId, productionId:p.id, type:'sortie', qte:pris, parfum, motif:'',
         date:today(), stockAvant, stockApres:subQty(stockAvant,pris)});
+      _mvMkList.push({ parfumNom: parfum, composant:'macaron', sens:-1, qte:pris,
+        type:'marche', productionId:p.id, marketId, note:'sortie marché' });
       reste=subQty(reste, pris);
     }
   });
+  // [JOURNAL STOCK] une entrée par lot prélevé (hors transaction).
+  for(const mv of _mvMkList){ await logStockMove(mv); }
 }
 // Enregistre un don ou une perte (sort définitivement du stock embarqué, pas de retour atelier).
 async function marketAddLoss(marketId, productionId, qte, type, parfum, motif){
@@ -13100,6 +13290,7 @@ async function marketAddLoss(marketId, productionId, qte, type, parfum, motif){
 async function marketAddRetour(marketId, productionId, qte, parfum, destination){
   qte=round3(qte);
   if(qte<0) throw new Error('Quantité invalide');
+  let _mvRet=null; // [JOURNAL STOCK] retour à journaliser hors transaction
   // Mode historique : on enregistre le retour comme donnée, sans ré-incrémenter le stock
   // et sans exiger d'emplacement (rien n'est rangé réellement).
   if(await marketIsHisto(marketId)){
@@ -13122,7 +13313,11 @@ async function marketAddRetour(marketId, productionId, qte, parfum, destination)
     if(p.dlcAuto!==false){ patch.dlcProduit=computeDlcFromHistory(hist, nowIso); patch.dlcAuto=true; }
     await db.productions.update(productionId, patch);
     await db.marketMoves.add({marketId, productionId, type:'retour', qte, parfum:parfum||'', motif:'', date:today(), destination});
+    if(qte>0) _mvRet={ parfumNom: parfum || prodNomComplet(p), composant:'macaron', sens:+1, qte,
+      type:'marche', productionId, marketId, note:'retour marché (invendus)' };
   });
+  // [JOURNAL STOCK] réincrémente le stock fini : invendus rapportés (skip si histo / qte 0).
+  if(_mvRet) await logStockMove(_mvRet);
 }
 // Agrège les mouvements d'un marché par lot/parfum : embarqué, retour, don, perte, vendu.
 function marketLineSummary(moves){
@@ -18183,7 +18378,7 @@ async function renderEvents(){
 function aiNormalize(s){
   return (s||'').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // enlève accents
-    .replace(/['']/g,"'").replace(/\s+/g,' ').trim();
+    .replace(/[\u2018\u2019\u02BC\u2032]/g,"'").replace(/\s+/g,' ').trim();
 }
 // Distance de Levenshtein (nb de modifications), sur noms normalisés.
 function levenshtein(a, b){
@@ -22098,13 +22293,17 @@ async function pickScanAffectLot(code){
   if(reste<=0){ toast(`« ${nom} » déjà complet.`); await pickScanRender(); return; }
   const take = Math.min(reste, round3(+p.qteRestante||0));
   try{
+    let _mvScan=null;
     await db.transaction('rw', db.productions, db.orderItems, async()=>{
       const fresh = await db.productions.get(p.id);
       const t = Math.min(take, round3(+fresh.qteRestante||0));
       if(t<=0) throw new Error('Plus de stock');
       await db.orderItems.add({orderId, productionId:p.id, qte:round3(t)});
       await db.productions.update(p.id, {qteRestante: subQty(fresh.qteRestante, t)});
+      _mvScan={ parfumNom: nom || prodNomComplet(fresh), composant:'macaron', sens:-1, qte:round3(t),
+        type:'livraison', productionId:p.id, orderId, note:'picking scan' };
     });
+    if(_mvScan) await logStockMove(_mvScan);
     toast(`✓ ${qty(take)} ${nom} ajouté(s) · lot ${p.lotProduction||''}`);
     if(typeof markUnsaved==='function') markUnsaved();
   }catch(err){ toast(err.message||'Erreur'); }
@@ -22195,16 +22394,22 @@ async function pickGroupAffect(code){
   if(!affectations.length){ toast(`« ${nom} » : commandes déjà servies.`); await pickGroupShow(window._pickGroupSel); return; }
   // Applique : un orderItem par commande, décrément global du lot.
   try{
+    let _mvGrp=null;
     await db.transaction('rw', db.productions, db.orderItems, async()=>{
       const fresh = await db.productions.get(p.id);
       let restantLot = round3(+fresh.qteRestante||0);
+      const avant = restantLot;
       for(const a of affectations){
         const t = Math.min(a.qte, restantLot); if(t<=0) break;
         await db.orderItems.add({orderId:a.orderId, productionId:p.id, qte:round3(t)});
         restantLot = round3(restantLot - t);
       }
       await db.productions.update(p.id, {qteRestante: round3(restantLot)});
+      const sorti = round3(avant - restantLot);
+      if(sorti>0) _mvGrp={ parfumNom: nom || prodNomComplet(fresh), composant:'macaron', sens:-1, qte:sorti,
+        type:'livraison', productionId:p.id, note:'picking scan groupé (vague)' };
     });
+    if(_mvGrp) await logStockMove(_mvGrp);
     const nbCmd = affectations.length;
     const totalAff = affectations.reduce((s,a)=>s+a.qte,0);
     toast(`✓ ${qty(totalAff)} ${nom} réparti(s) sur ${nbCmd} commande(s)${reliquat>0?` · ${qty(reliquat)} en trop gardé(s) en stock`:''}`);
@@ -23329,7 +23534,7 @@ const GUIDE_THEMES = [
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
       detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps et sa pastille de couleur), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (par parfum, au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »).",
-      steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée"] },
+      steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","🆕 Dans le plan détaillé, touche une ganache (▶ lancer) : l'app te propose de lancer le batch et le chrono d'un seul geste, avec confirmation et quantité ajustable","🆕 Touche aussi une meringue (▶ lancer) : elle lance les coques de tous ses parfums d'un coup (meringue commune) + les chronos, avec confirmation et quantités ajustables"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
       steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail en rattachant le parfum","Consulte l'onglet « Temps/parfum » pour voir tes temps mesurés par étape et par parfum","Plus tu mesures, plus les temps se fiabilisent (✓)"] },
@@ -23345,8 +23550,11 @@ const GUIDE_THEMES = [
       detail:"Suis tes matières et emballages en cartes claires, avec dates de péremption et alertes « à commander » sous le seuil. Réceptionne tes lots avec leur prix pour un coût réel. Génère une liste de courses avec le meilleur fournisseur.",
       steps:["Réceptionne tes lots à l'achat","Surveille les alertes de seuil","Génère ta liste de courses (bouton 🛒)"] },
     { v:'stockparfums', t:'Stock par parfum', ico:'🍬', resume:"Tes macarons finis disponibles, par parfum.",
-      detail:"Vue colorée de ton stock de macarons vendables, parfum par parfum, cohérente avec ta boutique. Depuis cette version, chaque entrée et sortie de stock (production terminée, assemblage, livraison) commence à être enregistrée en coulisse dans un journal des mouvements : c'est le socle du futur moteur de stock (historique des flux, prévisions de vente). Rien à faire de ton côté, ça se remplit tout seul au fil de ton activité.",
+      detail:"Vue colorée de ton stock de macarons vendables, parfum par parfum, cohérente avec ta boutique. Chaque entrée et sortie de stock est désormais enregistrée en coulisse dans un journal des mouvements : production terminée, assemblage, livraison (picking, scan, liaison de batchs), pertes et casse, dégustations distribuées, marchés (départ et retour d'invendus), et recrédits quand une commande est supprimée. C'est le socle du moteur de stock : il permettra l'historique des flux et les prévisions de vente. Rien à faire de ton côté, ça se remplit tout seul au fil de ton activité.",
       steps:["Consulte les quantités par parfum","Repère ce qui manque pour tes commandes"] },
+    { v:'histostock', t:'Historique du stock', ico:'🕑', resume:"Tous les mouvements de ton stock : entrées, sorties, par parfum.",
+      detail:"Le journal complet de tes flux de stock. En haut, un résumé par parfum avec le bilan entrées (↑), sorties (↓) et le net sur la période. En dessous, le détail chronologique de chaque mouvement (production, assemblage, livraison, marché, perte, dégustation, recrédit), du plus récent au plus ancien. Tu peux filtrer par période (7, 30, 90 jours ou tout), par type de mouvement, par composant (macaron, coques, ganache), par parfum, et faire une recherche libre. C'est la mémoire de ton stock : ce qui rentre, ce qui sort, et pourquoi.",
+      steps:["Choisis une période et un type de mouvement","Repère les parfums qui tournent (net négatif = forte sortie)","Touche un parfum dans le filtre pour isoler son historique"] },
     { v:'fournisseurs', t:'Fournisseurs', ico:'⚑', resume:"Ton répertoire de fournisseurs.",
       detail:"Référence tes fournisseurs pour les associer à tes lots et comparer les prix.",
       steps:["Ajoute un fournisseur","Associe-le à tes réceptions de lots"] },
@@ -26839,6 +27047,234 @@ async function prodTaskRattachManuel(taskId){
 // le temps réel par recette. Le label reprend le composant + le parfum (ex. « Coques — Chocolat »).
 // Une session d'atelier est ouverte automatiquement si aucune n'est active. Renvoie l'id de tâche
 // (mémorisé sur la production pour pouvoir l'arrêter à la fin du batch).
+// ════════════════════════════════════════════════════════════════════════════
+// HELPER UNIQUE DE LANCEMENT D'UN BATCH (source de vérité du lancement mono-parfum).
+// Garantit PAR CONSTRUCTION la séquence complète, dans le bon ordre :
+//   1) enregistrerProduction (crée le batch, décompte les matières)
+//   2) prodTaskStartForBatch (démarre le chrono d'atelier) + liaison atelierTaskId
+//   3) renderProductions (rafraîchit l'écran)
+//   4) ficheRecetteProduction (POPUP RECETTE : grammages recalculés au batch) ← TOUJOURS
+// Tout point de lancement mono-parfum (formulaire, plan interactif, futurs) DOIT passer
+// par ici pour hériter automatiquement de la popup recette. Ne pas dupliquer la séquence.
+//
+// opts = { recipeId, qteMacarons, composant:'complet'|'coques'|'ganache', lotBase, lot,
+//          garnitureType?, date?, qteReelleMacarons?, toastLabel? }
+//   - qteMacarons = quantité THÉORIQUE (macarons). qteReelleMacarons : réel si différent (déf = théorique).
+//   - Pour 'coques' : on stocke qteMacarons×2 coques, matières calées sur les macarons (facteurQte).
+//   - Renvoie le prodId créé (ou lève une erreur, gérée par l'appelant).
+async function lancerBatchAvecFiche(opts){
+  opts = opts || {};
+  const recipeId = +opts.recipeId;
+  const qMac = Math.max(0, Math.round(+opts.qteMacarons||0));
+  const qMacReel = (opts.qteReelleMacarons==null || opts.qteReelleMacarons==='') ? qMac : Math.max(0, Math.round(+opts.qteReelleMacarons||0));
+  const composant = opts.composant || 'complet';
+  const date = opts.date || today();
+  const lotBase = opts.lotBase || '';
+  const lot = opts.lot || lotBase;
+  const garnType = opts.garnitureType || undefined;
+  if(!recipeId) throw new Error('Recette manquante');
+  if(qMac<=0) throw new Error('Quantité invalide');
+  // Coques : qteRestante stockée en COQUES (×2) ; matières basées sur les MACARONS (facteurQte).
+  let qTh=qMac, qRe=qMacReel, facteurQte=qMac;
+  if(composant==='coques'){ qTh=qMac*COQUES_PAR_MACARON; qRe=qMacReel*COQUES_PAR_MACARON; facteurQte=qMac; }
+  // 1) création du batch
+  const prodId = await enregistrerProduction(recipeId, qTh, qRe, date, lot, '', '',
+    {composant, lotBase, facteurQte, garnitureType:garnType});
+  // 2) chrono d'atelier rattaché
+  try{
+    const _rec = await db.recipes.get(recipeId).catch(()=>null);
+    const taskId = prodTaskStartForBatch({recipeId, composant, lotBase, parfumNom:_rec?_rec.produitNom:''});
+    if(prodId!=null && taskId) await db.productions.update(prodId, {atelierTaskId:taskId});
+  }catch(e){ console.error('lancerBatchAvecFiche chrono', e); }
+  // 3) rafraîchit l'écran des productions
+  try{ if(typeof renderProductions==='function') renderProductions(); }catch(e){}
+  // toast optionnel AVANT la popup (la popup est modale et masquerait un toast tardif)
+  if(opts.toastLabel){ try{ toast(opts.toastLabel); }catch(e){} }
+  // 4) POPUP RECETTE garantie (grammages recalculés au batch)
+  try{ await ficheRecetteProduction(recipeId, facteurQte, composant, lot); }catch(e){ console.error('lancerBatchAvecFiche fiche', e); }
+  return prodId;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PLAN DE TRAVAIL INTERACTIF — clic sur une étape COQUES (meringue) du plan détaillé.
+// Une meringue mutualise 1 à 3 parfums (m.repartition = { parfum: nbMacarons }). Cliquer
+// lance UN batch coques par parfum, tous reliés par un meringueBatchId commun (comme le mode
+// duo de saveProd), démarre un chrono par batch, puis affiche la fiche meringue (multi-parfums)
+// — ou la fiche simple si un seul parfum. Confirmation + quantités ajustables AVANT tout.
+// Cohérence affiché ↔ action : le résumé liste exactement les parfums/quantités qui seront lancés.
+// ────────────────────────────────────────────────────────────────────────────
+// Phrase de résumé de l'action meringue, recalculée à partir des quantités saisies.
+function _planMeringuePhrase(items){
+  // items = [{nom, q}] (déjà filtrés q>0). Affiche « X coques au total · parfum1 N + parfum2 M ».
+  const valides = items.filter(it=>+it.q>0);
+  if(!valides.length) return 'Aucun parfum à lancer (quantités à 0).';
+  const totalMac = valides.reduce((s,it)=>s+(+it.q||0),0);
+  const totalCoques = totalMac*COQUES_PAR_MACARON;
+  const detail = valides.map(it=>`<b>${esc(it.nom)}</b> ${qty(it.q)}`).join(' + ');
+  const nbBatch = valides.length;
+  return `Lancer <b>${nbBatch}</b> batch${nbBatch>1?'s':''} de coques (${detail}) = <b>${qty(totalCoques)}</b> coques au total${nbBatch>1?', meringue commune,':''} et démarrer le${nbBatch>1?'s':''} chrono${nbBatch>1?'s':''} ?`;
+}
+// Met à jour la phrase quand une quantité change. window._planMeringueItems porte la liste courante.
+function planMeringueMajPhrase(){
+  const items = (window._planMeringueItems||[]).map((it,idx)=>({nom:it.nom, recipeId:it.recipeId, q:Math.max(0,Math.round(+val('f_planMer_'+idx)||0))}));
+  window._planMeringueItems = items;
+  const el = document.getElementById('planMerPhrase');
+  if(el) el.innerHTML = _planMeringuePhrase(items);
+}
+// Étape 1 : ouvre la confirmation. repartition = objet { nomParfum: nbMacarons }.
+async function planLancerMeringue(repartition, idxMeringue){
+  let rep = repartition;
+  if(typeof rep === 'string'){ try{ rep = JSON.parse(rep); }catch(e){ rep = {}; } }
+  const noms = Object.keys(rep||{});
+  if(!noms.length){ toast('Meringue vide'); return; }
+  // Résout chaque parfum → recette. On signale honnêtement ceux sans recette (non lançables).
+  const items = [];
+  const manquants = [];
+  for(const nom of noms){
+    const recette = await _planRecetteParNom(nom);
+    if(recette) items.push({ nom, recipeId:recette.id, q:Math.max(0,Math.round(+rep[nom]||0)) });
+    else manquants.push(nom);
+  }
+  if(!items.length){
+    openModal(`<h3>Meringue non lançable</h3>
+      <p class="note">Aucun parfum de cette meringue n'a de recette associée : ${esc(noms.join(', '))}. Vérifie les recettes.</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  window._planMeringueItems = items;
+  const champs = items.map((it,idx)=>{
+    const col = (typeof flavorColor==='function') ? flavorColor(it.nom) : '#cbb89f';
+    return `<div class="field" style="display:flex;align-items:center;gap:8px">
+      <span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:${col};flex:none"></span>
+      <label style="flex:1;margin:0">${esc(it.nom)}</label>
+      <input type="number" id="f_planMer_${idx}" min="0" value="${it.q}" oninput="planMeringueMajPhrase()" style="width:90px;font-size:1.05rem">
+    </div>`;
+  }).join('');
+  const avert = manquants.length
+    ? `<p class="note" style="color:#b3261e;margin-top:6px">⚠️ Sans recette (non lancés) : ${esc(manquants.join(', '))}.</p>` : '';
+  openModal(`<h3>🥣 Meringue ${idxMeringue!=null?('· '+(idxMeringue+1)):''} — coques</h3>
+    <p class="note" style="margin-bottom:8px">Ajuste les quantités (macarons) par parfum. Chaque parfum = un batch de coques ; ils partagent une même meringue.</p>
+    ${champs}
+    ${avert}
+    <div class="sum-box" style="background:#f6f1e7;align-items:flex-start;margin-top:8px">
+      <div id="planMerPhrase" style="font-size:.9rem;line-height:1.45">${_planMeringuePhrase(items)}</div>
+    </div>
+    <p class="note" style="margin-top:8px">Cela créera le(s) batch(s) coques (statut <b>démarré</b>, matières décomptées) et lancera le(s) chrono(s). La fiche de pesée s'affiche ensuite.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="planLancerMeringueConfirm()">✓ Lancer coques + chrono</button>
+    </div>`);
+}
+// Étape 2 : exécute après confirmation. N batchs coques liés par meringueBatchId + chronos + fiche.
+async function planLancerMeringueConfirm(){
+  const items = (window._planMeringueItems||[])
+    .map((it,idx)=>({ ...it, q:Math.max(0,Math.round(+val('f_planMer_'+idx)||0)) }))
+    .filter(it=>it.q>0);
+  if(!items.length){ toast('Indique au moins une quantité'); return; }
+  const date = today();
+  // meringueBatchId commun (sauf si un seul parfum : pas de mutualisation).
+  const meringueBatchId = items.length>1 ? ('MER-' + lotDateJJMMAA(date) + '-' + genLotCode(3)) : undefined;
+  const parts = [];   // pour la fiche meringue
+  try{
+    for(const it of items){
+      const rec = await db.recipes.get(it.recipeId).catch(()=>null);
+      if(!rec) continue;
+      const base = (lotDateJJMMAA(date) + (typeof flavorCodeRec==='function'?flavorCodeRec(rec):'')).toUpperCase().replace(/\s+/g,'');
+      const cleanBase = base || (lotDateJJMMAA(date)+'COQ');
+      const lot = cleanBase + '-CO';
+      const prodId = await enregistrerProduction(
+        it.recipeId, it.q*COQUES_PAR_MACARON, it.q*COQUES_PAR_MACARON, date, lot, '', '',
+        { composant:'coques', lotBase:cleanBase, facteurQte:it.q, meringueBatchId }
+      );
+      try{
+        const taskId = prodTaskStartForBatch({recipeId:it.recipeId, composant:'coques', lotBase:cleanBase, parfumNom:rec.produitNom||it.nom});
+        if(prodId!=null && taskId) await db.productions.update(prodId, {atelierTaskId:taskId});
+      }catch(e){ console.error('plan meringue chrono', e); }
+      parts.push({ rid:it.recipeId, q:it.q, lot, rec });
+    }
+  }catch(err){
+    toast(err.message || 'Erreur lancement coques');
+    return;
+  }
+  closeModal();
+  if(typeof renderProductions==='function') renderProductions();
+  const totalCoques = items.reduce((s,it)=>s+it.q*COQUES_PAR_MACARON,0);
+  toast(`🥣 ${items.length>1?'Meringue commune':'Coques'} lancée ✓ — ${qty(totalCoques)} coques · chrono${items.length>1?'s':''} lancé${items.length>1?'s':''}`);
+  // Fiche : meringue (multi-parfums, ≥2) ou fiche simple (1 parfum).
+  try{
+    if(parts.length>=2){ await ficheMeringueProduction(parts, meringueBatchId); }
+    else if(parts.length===1){ await ficheRecetteProduction(parts[0].rid, parts[0].q, 'coques', parts[0].lot); }
+  }catch(e){ console.error('plan meringue fiche', e); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PLAN DE TRAVAIL INTERACTIF — clic sur une étape GANACHE du plan détaillé.
+// Objectif (Benjamin) : tout converge vers le plan. Cliquer sur une ganache ouvre une
+// confirmation montrant EXACTEMENT ce qui sera lancé (cohérence affiché ↔ action), avec
+// quantité ajustable. À la confirmation : crée le batch ganache (statut démarré, matières
+// décomptées) ET démarre le chrono d'atelier rattaché — comme un lancement manuel.
+// On commence par la GANACHE car c'est le cas 1:1 sans ambiguïté (un parfum = un batch).
+// ────────────────────────────────────────────────────────────────────────────
+// Retrouve la recette d'un parfum par son nom (normalisé, robuste aux accents/casse).
+async function _planRecetteParNom(parfum){
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const k = (typeof aiNormalize==='function') ? aiNormalize(parfum||'') : String(parfum||'').toLowerCase().trim();
+  return recipes.find(r => ((typeof aiNormalize==='function')?aiNormalize(r.produitNom||''):String(r.produitNom||'').toLowerCase().trim()) === k) || null;
+}
+// Phrase de résumé de l'action (réutilisée dans la modale et mise à jour au changement de qté).
+function _planGanachePhrase(parfum, qte){
+  return `Lancer la production de la ganache <b>${esc(parfum)}</b> (<b>${qty(qte)}</b> macaron${qte>1?'s':''}) et démarrer le chrono d'atelier ?`;
+}
+// Met à jour la phrase de résumé quand la quantité change dans la modale.
+function planGanacheMajPhrase(parfum){
+  const q = Math.max(0, Math.round(+val('f_planGanQte')||0));
+  const el = document.getElementById('planGanPhrase');
+  if(el) el.innerHTML = _planGanachePhrase(parfum, q);
+}
+// Étape 1 : ouvre la confirmation. parfum = nom affiché dans le plan ; qteSuggere = quantité du plan.
+async function planLancerGanache(parfum, qteSuggere){
+  const rec = await _planRecetteParNom(parfum);
+  if(!rec){
+    openModal(`<h3>Ganache introuvable</h3>
+      <p class="note">Aucune recette ne correspond au parfum « ${esc(parfum)} ». Vérifie le nom de la recette.</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const q0 = Math.max(1, Math.round(+qteSuggere||0));
+  const col = (typeof flavorColor==='function') ? flavorColor(parfum) : '#cbb89f';
+  openModal(`<h3><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${col};vertical-align:middle;margin-right:6px"></span>🍫 Ganache ${esc(parfum)}</h3>
+    <div class="field"><label>Quantité (macarons)</label>
+      <input type="number" id="f_planGanQte" min="1" value="${q0}" oninput="planGanacheMajPhrase(${JSON.stringify(parfum)})" style="font-size:1.1rem"></div>
+    <div class="sum-box" style="background:#f6f1e7;align-items:flex-start">
+      <div id="planGanPhrase" style="font-size:.9rem;line-height:1.45">${_planGanachePhrase(parfum, q0)}</div>
+    </div>
+    <p class="note" style="margin-top:8px">Cela créera le batch (statut <b>démarré</b>, matières décomptées) et lancera le chrono d'atelier rattaché. La DLC ne courra qu'à la fin de production.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="planLancerGanacheConfirm(${rec.id}, ${JSON.stringify(parfum)})">✓ Lancer ganache + chrono</button>
+    </div>`);
+}
+// Étape 2 : exécute après confirmation. Reproduit fidèlement la chaîne de saveProd (ganache) :
+// enregistrerProduction → prodTaskStartForBatch → liaison atelierTaskId → fiche de production.
+async function planLancerGanacheConfirm(recipeId, parfum){
+  const q = Math.max(1, Math.round(+val('f_planGanQte')||0));
+  if(q<=0){ toast('Quantité invalide'); return; }
+  const rec = await db.recipes.get(recipeId).catch(()=>null);
+  if(!rec){ toast('Recette introuvable'); return; }
+  // N° de lot : JJMMAA + code parfum + suffixe -GA (ganache), comme un lancement manuel.
+  const date = today();
+  const base = (lotDateJJMMAA(date) + (typeof flavorCodeRec==='function'?flavorCodeRec(rec):'')).toUpperCase().replace(/\s+/g,'');
+  const cleanBase = base || (lotDateJJMMAA(date)+'GAN');
+  const lot = cleanBase + '-GA';
+  try{
+    await lancerBatchAvecFiche({ recipeId, qteMacarons:q, composant:'ganache', lotBase:cleanBase, lot, date });
+    closeModal();
+    toast(`Ganache ${parfum} démarrée ✓ · chrono lancé`);
+  }catch(err){
+    toast(err.message || 'Erreur lancement ganache');
+  }
+}
+
 function prodTaskStartForBatch(meta){
   meta = meta || {};
   const compLbl = ({coques:'Coques', ganache:'Ganache', cremeux:'Crémeux', assemble:'Assemblage', complet:'Production'})[meta.composant] || 'Production';
@@ -29789,15 +30225,18 @@ function _agendaPlanOpSection(plan){
   };
 
   const semaines = plan.semaines.map(s=>{
-    // GANACHE
-    const ganache = s.ganache.map(g=>`<div class="sum-box" style="flex-direction:column;align-items:stretch">
+    // GANACHE — chaque carte est CLIQUABLE : lance le batch ganache + chrono (avec confirmation).
+    const ganache = s.ganache.map(g=>{
+      const _qLance = g.qteProduite||g.qte;
+      return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick='planLancerGanache(${JSON.stringify(g.parfum)}, ${(+_qLance)||0})' title="Lancer la production de cette ganache + chrono">
       <div style="display:flex;align-items:center;width:100%">
         <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qteProduite||g.qte} mac</span>${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">📦 dont ${g.surplusStock} stock</span>`:''}</span></div>
-        <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
+        <div style="display:flex;align-items:center;gap:5px"><span style="color:#aa7c39;font-size:.68rem;font-weight:600">▶ lancer</span><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
       </div>
       ${poolLigne(g.commandes, g.surplusStock)}
-    </div>`).join('');
-    // COQUES (meringues appariées)
+    </div>`;
+    }).join('');
+    // COQUES (meringues appariées) — CLIQUABLE : lance le(s) batch(s) coques + chrono(s).
     const coques = s.coques.map((m,i)=>{
       const rep = Object.entries(m.repartition).map(([p,q])=>`${dot(p)}${esc(p)} <b>${q}</b>`).join(' <span style="color:#c9b8a4">+</span> ');
       const detailTemps = (m.actifMin!=null && m.cuissonMin!=null)
@@ -29805,11 +30244,15 @@ function _agendaPlanOpSection(plan){
       // Horaire calé dans les vraies plages A/B (début travail → fin cuisson).
       const fmtH = d => { try{ return new Date(d).toLocaleString('fr-FR',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
       const horaireCale = m.debut
-        ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 ${fmtH(m.debut)} → fin cuisson ${(()=>{try{return new Date(m.finCuisson||m.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}${m.congeler?' <span style="background:#3b6ea5;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️ à congeler</span>':''}</div>`
+        ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 ${fmtH(m.debut)} → fin cuisson ${(()=>{try{return new Date(m.finCuisson||m.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}${m.congeler?`<br><span style="display:inline-block;white-space:nowrap;background:#3b6ea5;color:#fff;font-size:.56rem;font-weight:600;padding:2px 8px;border-radius:7px;margin-top:3px">❄️ à congeler</span>`:''}</div>`
         : (m.congeler?`<div style="font-size:.72rem;color:#3b6ea5;margin-top:2px">❄️ à congeler (pas de place dans la fenêtre de fraîcheur)</div>`:'');
-      return `<div class="sum-box">
+      // repartition encodée pour l'attribut onclick='…' (délimité par apostrophes simples).
+      // esc() gère déjà " < > & ; on échappe EN PLUS l'apostrophe simple (&#39;) car un parfum
+      // comme « Fleur d'oranger » casserait sinon l'attribut. Décodé par le navigateur au clic.
+      const repJson = esc(JSON.stringify(m.repartition)).replace(/'/g,'&#39;');
+      return `<div class="sum-box" style="cursor:pointer" onclick='planLancerMeringue("${repJson}", ${i})' title="Lancer les coques de cette meringue + chrono">
         <div style="flex:1">🥣 Meringue ${i+1} · ${rep}${m.partielle?' <span style="color:#b08a3a;font-size:.7rem">(partielle)</span>':''}${detailTemps}${horaireCale}</div>
-        <div><b>${fmtMin(m.dureeMin)}</b></div>
+        <div style="text-align:right"><span style="color:#aa7c39;font-size:.68rem;font-weight:600;display:block">▶ lancer</span><b>${fmtMin(m.dureeMin)}</b></div>
       </div>`;
     }).join('');
     // MONTAGE
@@ -29827,9 +30270,9 @@ function _agendaPlanOpSection(plan){
     }).join('');
 
     return `<div class="panel" style="margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #e8dccd;padding-bottom:6px;margin-bottom:10px">
-        <h3 style="margin:0">${esc(s.label)}</h3>
-        <span style="font-size:.76rem;color:#9a8576">${s.totalMacarons} mac · ${fmtMin(s.totalMin)} de travail</span>
+      <div style="border-bottom:2px solid #d8c4a8;padding-bottom:8px;margin-bottom:12px">
+        <h3 style="margin:0;font-size:1.25rem;color:var(--bordeaux);text-transform:capitalize;font-weight:700;line-height:1.2">${esc(s.label)}</h3>
+        <div style="font-size:.76rem;color:#9a8576;margin-top:3px">${s.totalMacarons} macaron${s.totalMacarons>1?'s':''} · ${fmtMin(s.totalMin)} de travail</div>
       </div>
       <div style="margin-bottom:10px">
         <div style="font-weight:600;color:#7a4b2a;margin-bottom:4px">🍫 Ganaches <span style="font-weight:400;color:#9a8576;font-size:.76rem">· une par parfum · ${fmtMin(s.totalGanacheMin)}</span></div>
