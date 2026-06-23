@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v697';
+const APP_VERSION = 'v698';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23235,9 +23235,9 @@ const GUIDE_THEMES = [
     { v:'productions', t:'Productions', ico:'⚙', resume:"Lancer et suivre tes fabrications, lot par lot.",
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
-    { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Toutes tes commandes planifiées par jour, avec rétroplanning de fraîcheur et mutualisation par semaine.",
-      detail:"L'app calcule le rétroplanning de chaque commande à rebours depuis la livraison (coques, ganache, repos, montage, maturation) et cale chaque tâche dans tes plages horaires A/B. Règle clé : les coques des macarons standard sont calées le JOUR du montage (coques fraîches) ; si le jour J est impossible ou absurde (pas de place, avant 7h, ou plus de 6h d'attente avant le montage), l'app propose de les congeler (badge ❄️). La section « 🧩 Mutualisation par semaine » regroupe toute la production d'une même semaine : coques et montage sont mutualisés sur la semaine entière, et pour chaque parfum tu vois le besoin cumulé (nombre de batchs), le délai de ganache, et les commandes regroupées (badge ★). Les produits finis qui ne sont pas livrés le jour du montage ou le lendemain sont signalés « ❄️ à congeler », avec la date à laquelle les ressortir (décongélation) avant livraison. La section « 📊 Besoins par parfum et par jour » donne le même cumul au jour le jour.",
-      steps:["Consulte tes journées de production à venir","Ouvre « Mutualisation par semaine » pour voir les fournées regroupables","Repère les badges ★ : parfums regroupables, et ❄️ : produits à congeler/ressortir","Touche une tâche pour le rétroplanning complet de la commande"] },
+    { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
+      detail:"L'agenda liste tes commandes à venir, triées par date de livraison. Touche le nom d'un client pour DÉPLIER la commande (chevron) : tu vois alors l'enchaînement complet de ses étapes calées — coques, ganache/crémeux, repos, montage, maturation, décongélation, livraison — avec les horaires dans tes plages A/B. Touche une étape pour ouvrir son rétroplanning détaillé. Règle clé : les coques des macarons standard sont calées le JOUR du montage (coques fraîches) ; si c'est impossible ou absurde, l'app propose de les congeler (badge ❄️). La section « 🧩 Mutualisation par semaine » regroupe toute la production d'une même semaine : coques et montage mutualisés, besoin cumulé par parfum (nombre de batchs), délai de ganache, commandes regroupées (badge ★), et plan de congélation/décongélation du surplus. La section « 📊 Besoins par parfum et par jour » donne le cumul au jour le jour.",
+      steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé","Ouvre « Mutualisation par semaine » pour les fournées regroupables et la congélation"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour analyser ton temps.",
       detail:"Ouvre une session de production et lance des chronos par tâche (pesée, macaronnage, cuisson…). Plusieurs tâches tournent en parallèle. Le tableau blanc montre ta journée en barres, et le journal garde l'historique. Sert à optimiser ton organisation.",
       steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail","Consulte le tableau blanc et le journal"] },
@@ -29082,13 +29082,121 @@ async function retroplanningCale(orderId){
 }
 
 // [ÉCRAN] Agenda de production consolidé : toutes les commandes à venir, fusionnées par jour.
+
+// [VUE COMMANDES REPLIABLES] Pour chaque commande à venir, calcule son rétroplanning calé
+// (mêmes étapes que la modale détaillée) et le présente en une ligne « client + chevron »
+// dépliable, montrant l'enchaînement complet. Remplace le déroulé jour-par-jour.
+// Renvoie { commandes:[{ id, clientNom, livraison, livraisonTxt, nbMacarons, parfumsTxt,
+//   etapes:[{cle, label, type, debutTxt, finTxt, jourTxt, congeler, congelRaison, tropLongue}],
+//   aCongeler, aDebordement }], horizonJours }.
+async function buildCommandesRetro(horizonJours){
+  horizonJours = +horizonJours || 45;
+  const orders  = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clientNom = id => { const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'—'; };
+  const today0 = new Date(); today0.setHours(0,0,0,0);
+  const horizon = new Date(today0); horizon.setDate(horizon.getDate()+horizonJours);
+
+  const fmtJour = d => { try{ return new Date(d).toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short'}); }catch(e){ return ''; } };
+  const fmtH    = d => { try{ return new Date(d).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
+  const fmtLiv  = d => { try{ return new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}); }catch(e){ return String(d).slice(0,10); } };
+
+  const out = [];
+  for(const o of orders){
+    const st = (typeof normStatus==='function') ? normStatus(o.statut) : (o.statut||'');
+    if(st==='Livrée') continue;
+    const dLiv = o.dateEvenement || o.date || '';
+    if(!dLiv) continue;
+    const dLiv0 = new Date(String(dLiv).slice(0,10)+'T12:00:00');
+    if(dLiv0 < today0 || dLiv0 > horizon) continue;
+
+    let cale=null;
+    try{ cale = await retroplanningCale(o.id); }catch(e){}
+    if(!cale || !cale.ok || !Array.isArray(cale.jalonsCales)) continue;
+
+    // Liste lisible des parfums de la commande.
+    const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
+    const pf = {};
+    lignes.forEach(ln=>{
+      const src = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
+      src.forEach(p=>{ const n=(p.nom||'').trim(); const q=+p.qte||0; if(n&&q>0) pf[n]=(pf[n]||0)+q; });
+    });
+    const parfumsTxt = Object.keys(pf).sort((a,b)=>pf[b]-pf[a]).map(n=>`${n} (${pf[n]})`).join(', ');
+
+    const etapes = cale.jalonsCales.map(j=>({
+      cle:j.cle, label:j.label, type:j.type,
+      debutTxt: j.debut?fmtH(j.debut):'', finTxt: j.fin?fmtH(j.fin):'',
+      jourTxt: j.debut?fmtJour(j.debut):'',
+      congeler: !!j.congeler, congelRaison: j.congelRaison||'', tropLongue: !!j.tropLongue
+    }));
+
+    out.push({
+      id:o.id, clientNom:clientNom(o.clientId),
+      livraison:String(dLiv).slice(0,10), livraisonTxt:fmtLiv(dLiv),
+      livraisonJourTxt: fmtJour(cale.livraison),
+      nbMacarons:cale.nbMacarons||0, parfumsTxt,
+      etapes,
+      aCongeler: etapes.some(e=>e.congeler),
+      aDebordement: !!cale.aDesDebordements
+    });
+  }
+  // Tri par date de livraison croissante (la plus proche en premier).
+  out.sort((a,b)=> a.livraison<b.livraison?-1 : a.livraison>b.livraison?1 : 0);
+  return { commandes:out, horizonJours };
+}
+
+// Rendu repliable : une carte par commande, dépliée au clic sur l'en-tête (chevron).
+function _agendaCommandesSection(cr){
+  if(!cr || !cr.commandes || !cr.commandes.length){
+    return `<div class="panel"><p class="note">Aucune commande à produire sur les ${cr?cr.horizonJours:45} prochains jours.</p></div>`;
+  }
+  const META = {
+    coques:  {ico:'🟤', col:'#8a6d3b'},
+    ganache: {ico:'🍫', col:'#7a4b2a'},
+    cremeux: {ico:'🟠', col:'#c0651a'},
+    'congel-cremeux':{ico:'❄️', col:'#3b6ea5'},
+    'repos-ganache': {ico:'😴', col:'#5a8a6a'},
+    montage: {ico:'🔧', col:'#3f7d52'},
+    maturation:{ico:'🧊', col:'#5a8a6a'},
+    decongel:{ico:'🌡', col:'#3b6ea5'},
+    livraison:{ico:'🎁', col:'#3f7d52'}
+  };
+  const cartes = cr.commandes.map(c=>{
+    const etapes = c.etapes.map(e=>{
+      const m = META[e.cle] || {ico:'•', col:'#8a7a72'};
+      const horaire = e.type==='ancre'
+        ? `<b>${esc(e.jourTxt)}</b>`
+        : (e.debutTxt ? `${esc(e.jourTxt)} · <b>${esc(e.debutTxt)}${e.finTxt?'→'+esc(e.finTxt):''}</b>` : '');
+      const congelBadge = e.congeler ? ` <span style="background:#3b6ea5;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️</span>` : '';
+      const warn = e.tropLongue ? ` <span style="color:var(--red);font-size:.72rem">⚠</span>` : '';
+      return `<div class="sum-box" style="align-items:flex-start;border-left:3px solid ${m.col};cursor:pointer;margin:4px 0"
+        onclick="event.stopPropagation();retroplanningView(${c.id})">
+        <div style="flex:1">
+          <div>${m.ico} <b style="color:${m.col}">${esc(e.label)}</b>${congelBadge}${warn}</div>
+          <div style="font-size:.78rem;color:#9a8576;margin-top:1px">${horaire}</div>
+        </div>
+        <span style="color:var(--bordeaux);font-size:.75rem">détail →</span>
+      </div>`;
+    }).join('');
+    const badges = `${c.aCongeler?'<span style="background:#3b6ea5;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️ congel.</span> ':''}${c.aDebordement?'<span style="background:#a5453b;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">⚠ tendu</span> ':''}`;
+    return `<details class="panel cmd-retro" style="margin-bottom:12px" data-cmd="${c.id}">
+      <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="flex:1">
+          <div style="font-weight:700;color:var(--bordeaux);font-size:1rem">${esc(c.clientNom)} <span style="font-weight:400;color:#9a8576;font-size:.82rem">· livraison ${esc(c.livraisonTxt)}</span></div>
+          <div style="font-size:.8rem;color:#9a8576;margin-top:2px">${c.nbMacarons} macaron${c.nbMacarons>1?'s':''}${c.parfumsTxt?' · '+esc(c.parfumsTxt):''} ${badges}</div>
+        </div>
+        <span class="cmd-chevron" style="color:var(--caramel,#AA7C39);font-size:1.1rem;line-height:1">▸</span>
+      </summary>
+      <div style="margin-top:10px">${etapes}</div>
+    </details>`;
+  }).join('');
+  return cartes;
+}
+
 async function renderAgendaProduction(){
   const main = document.getElementById('main');
   main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
     <p class="note">⏳ Calcul du rétroplanning de chaque commande…</p>`;
-  let ag;
-  try{ ag = await buildAgendaProduction(45); }
-  catch(e){ console.error('agendaProd',e); main.innerHTML += '<p class="note" style="color:var(--red)">Erreur de calcul.</p>'; return; }
 
   // Besoins cumulés par parfum et par jour (fondation mutualisation) — affichés en tête.
   let ppj=null;
@@ -29096,47 +29204,17 @@ async function renderAgendaProduction(){
   let mut=null;
   try{ mut = await buildMutualisationSemaine(45); }catch(e){ console.error('mutualisationSemaine',e); }
 
-  // Icône + couleur par type de tâche.
-  const META = {
-    coques:  {ico:'🟤', col:'#8a6d3b', nom:'Coques'},
-    ganache: {ico:'🍫', col:'#7a4b2a', nom:'Ganache'},
-    cremeux: {ico:'🟠', col:'#c0651a', nom:'Crémeux'},
-    montage: {ico:'🔧', col:'#3f7d52', nom:'Montage'}
-  };
+  // Vue COMMANDES REPLIABLES : une carte par commande (client + chevron), dépliant l'enchaînement
+  // complet de ses étapes calées. Remplace le déroulé jour-par-jour pour la lisibilité.
+  let cr=null;
+  try{ cr = await buildCommandesRetro(45); }catch(e){ console.error('commandesRetro',e); }
 
-  let corps;
-  if(!ag.jours.length){
-    corps = `<div class="panel"><p class="note">Aucune tâche de production planifiée sur les ${ag.horizonJours} prochains jours.<br>Les commandes à venir (avec une date d'événement et des parfums) apparaîtront ici automatiquement.</p></div>`;
-  } else {
-    corps = ag.jours.map(j=>{
-      const taches = j.taches.map(t=>{
-        const m = META[t.cle] || {ico:'•', col:'#8a7a72', nom:t.label};
-        const livTxt = (()=>{ try{ return new Date(t.livraison+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}); }catch(e){ return t.livraison; } })();
-        const raisonTxt = { pas_de_place:'pas de place le jour J', trop_tot:'sinon coques avant 7h', trou:'sinon trop d’attente avant montage' }[t.congelRaison] || '';
-        const congelBadge = t.congeler ? ` <span style="background:#3b6ea5;color:#fff;font-size:.62rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️ à congeler</span>` : '';
-        return `<div class="sum-box" style="align-items:flex-start;border-left:3px solid ${m.col};cursor:pointer" onclick="retroplanningView(${t.orderId})">
-          <div style="flex:1">
-            <div><b>${t.heure}${t.finHeure?'–'+t.finHeure:''}</b> · ${m.ico} <b style="color:${m.col}">${m.nom}</b>${congelBadge}</div>
-            <div style="font-size:.82rem;color:#7a6a60;margin-top:2px">${esc(t.clientNom)} · livraison ${livTxt}${t.tropLongue?' <span style="color:var(--red)">⚠ ne tient pas</span>':''}${t.congeler&&raisonTxt?` <span style="color:#3b6ea5">· ${raisonTxt}</span>`:''}</div>
-          </div>
-          <span style="color:var(--bordeaux);font-size:.8rem">détail →</span>
-        </div>`;
-      }).join('');
-      return `<div class="panel" style="margin-bottom:14px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #e8dccd;padding-bottom:6px;margin-bottom:8px">
-          <h2 style="margin:0;text-transform:capitalize">${esc(j.label)}</h2>
-          ${j.semaineType?`<span class="tag" style="background:#aa7c39;color:#fff">Semaine ${esc(j.semaineType)}</span>`:''}
-        </div>
-        ${taches}
-      </div>`;
-    }).join('');
-  }
-
-  main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>${ag.jours.length} jour(s) de travail planifié(s) · ${ag.horizonJours} prochains jours</p></div></div>
-    <p class="note" style="margin-bottom:14px">🟤 Coques · 🍫 Ganache · 🟠 Crémeux · 🔧 Montage. Chaque tâche est calée dans tes plages A/B. Touche une tâche pour voir le rétroplanning complet de la commande.</p>
+  const nbCmd = cr && cr.commandes ? cr.commandes.length : 0;
+  main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div></div>
+    <p class="note" style="margin-bottom:14px">Touche le nom d'une commande pour déplier toutes ses étapes (coques, ganache, repos, montage, maturation, livraison), puis une étape pour son rétroplanning détaillé.</p>
     ${_agendaMutualSection(mut)}
     ${_agendaParfumsSection(ppj)}
-    ${corps}`;
+    ${_agendaCommandesSection(cr)}`;
 }
 // Section « Besoins par parfum et par jour » : cumul de toutes les commandes (croisées), pour
 // préparer la mutualisation. Affiche, par jour de montage, chaque parfum et la quantité totale,
