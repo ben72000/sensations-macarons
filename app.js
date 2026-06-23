@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v720';
+const APP_VERSION = 'v721';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -12054,16 +12054,23 @@ async function cmdLink(orderId){
 async function unlinkBatch(itemId, orderId){
   const item = await db.orderItems.get(itemId);
   if(!item){ cmdLink(orderId); return; }
+  let _mvUnlink=null; // [JOURNAL STOCK] recrédit à journaliser hors transaction
   await db.transaction('rw',db.orderItems,db.productions,async()=>{
     const prod = await db.productions.get(item.productionId);
-    if(prod){ await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, item.qte)}); }
+    if(prod){
+      await db.productions.update(prod.id,{qteRestante: addQty(prod.qteRestante, item.qte)});
+      _mvUnlink={ parfumNom: prodNomComplet(prod), composant:'macaron', sens:+1, qte:round3(+item.qte||0),
+        type:'recredit', productionId:prod.id, orderId, note:'déliaison batch' };
+    }
     await db.orderItems.delete(itemId);
   });
+  if(_mvUnlink) await logStockMove(_mvUnlink);
   toast('Batch détaché — stock fini restitué'); cmdLink(orderId);
 }
 async function saveLink(orderId){
   const prodId=+val('f_prod'), q=+val('f_q');
   if(!q||q<=0){toast('Quantité invalide');return;}
+  let _mvLink=null; // [JOURNAL STOCK] mouvement à journaliser hors transaction (stockMoves non déclaré dans la transaction rw)
   try{
     await db.transaction('rw',db.orderItems,db.productions,async()=>{
       // lecture + contrôle + écriture DANS la transaction : aucun état asymétrique possible
@@ -12072,8 +12079,11 @@ async function saveLink(orderId){
       if(round3(q) > round3(+prod.qteRestante)) throw new Error('Quantité > stock du batch');
       await db.orderItems.add({orderId,productionId:prodId,qte:round3(q)});
       await db.productions.update(prodId,{qteRestante: subQty(prod.qteRestante, q)});
+      _mvLink={ parfumNom: prodNomComplet(prod), composant:'macaron', sens:-1, qte:round3(q),
+        type:'livraison', productionId:prodId, orderId, note:'liaison manuelle' };
     });
   }catch(err){ toast(err.message||'Erreur de liaison'); return; }
+  if(_mvLink) await logStockMove(_mvLink);
   closeModal(); renderCmd(); toast('Batch lié à la commande ✓');
 }
 
