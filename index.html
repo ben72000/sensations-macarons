@@ -1085,8 +1085,13 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
   .sheet-grid button .ico{font-size:1.1rem;color:var(--caramel);width:20px;text-align:center}
   .sheet-grid button.active{border-color:var(--caramel);background:var(--creme-2);font-weight:600}
   /* Favoris : étoile sur chaque entrée + section en tête du menu */
-  .fav-star{position:absolute;top:4px;right:6px;font-size:.95rem;color:#d8c9b0;line-height:1;padding:3px;cursor:pointer}
+  .fav-star{position:absolute;top:4px;right:6px;font-size:.95rem;color:var(--caramel,#AA7C39);line-height:1;padding:0;pointer-events:none}
   .fav-star.on{color:var(--caramel,#AA7C39)}
+  /* Flash visuel quand un appui long épingle/désépingle */
+  @keyframes lpFlash{0%{transform:scale(1)}40%{transform:scale(.96);background:var(--creme-2,#fbf7f0)}100%{transform:scale(1)}}
+  .sheet-grid button.lp-flash{animation:lpFlash .22s ease}
+  /* Carte favorite en cours de glissement (réordonnancement) */
+  .fav-card.fav-dragging{opacity:.85;transform:scale(1.06);box-shadow:0 6px 18px rgba(80,50,30,.22);z-index:5}
   .nav-fav-title{font-size:.74rem;font-weight:700;color:var(--caramel,#AA7C39);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px}
   .nav-fav-empty{font-size:.8rem;color:#9a8a82;background:#fbf7f0;border:1px dashed #e0d5c5;border-radius:12px;padding:10px 12px;margin-bottom:14px}
   .nav-fav-grid{margin-bottom:16px}
@@ -1271,9 +1276,9 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=689" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=689"></script>
-<script src="utils.js?v=689"></script>
-<script src="app.js?v=689"></script>
+<script src="html5-qrcode.min.js?v=690" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=690"></script>
+<script src="utils.js?v=690"></script>
+<script src="app.js?v=690"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v689';
+const APP_VERSION = 'v690';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1440,13 +1440,55 @@ function navApplyStars(){
     if(!star){
       star=document.createElement('span');
       star.className='fav-star';
-      star.addEventListener('click', e=>navFavClick(e, v));
+      // Indicateur visuel uniquement : l'épinglage se fait par APPUI LONG sur la carte
+      // (voir navSetupLongPress). On ne met PAS de listener de clic ici, pour éviter
+      // que toucher l'étoile ouvre la page (conflit de zone tactile).
+      star.style.pointerEvents='none';
       btn.appendChild(star);
       btn.style.position='relative';
     }
     const on=favs.includes(v);
-    star.textContent = on ? '★' : '☆';
+    star.textContent = on ? '★' : '';      // étoile pleine si favori, rien sinon (plus discret)
     star.classList.toggle('on', on);
+  });
+  navSetupLongPress();
+}
+// Appui long (~480ms) sur une carte de la grille = épingler/désépingler en favori.
+// Un tap court reste une navigation normale. Évite le conflit de zone tactile de l'étoile.
+function navSetupLongPress(){
+  const grid=document.getElementById('sheetGrid');
+  if(!grid) return;
+  grid.querySelectorAll('button[data-v]').forEach(btn=>{
+    if(btn.closest('#navFavZone') || btn.closest('#navRecentZone')) return;
+    if(btn._lpBound) return;               // une seule fois par bouton
+    btn._lpBound=true;
+    let timer=null, longFired=false, sx=0, sy=0;
+    const start=(x,y)=>{
+      longFired=false; sx=x; sy=y;
+      timer=setTimeout(()=>{
+        longFired=true;
+        const v=btn.dataset.v;
+        const nowFav=navFavToggle(v);
+        if(navigator.vibrate) navigator.vibrate(15);     // retour haptique léger
+        // Retour visuel immédiat + reconstruction des zones.
+        btn.classList.add('lp-flash');
+        setTimeout(()=>btn.classList.remove('lp-flash'), 220);
+        navRenderFavoris(); navRenderRecents(); navApplyStars();
+        if(typeof toast==='function') toast(nowFav?'⭐ Ajouté aux favoris':'Retiré des favoris');
+      }, 480);
+    };
+    const cancel=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
+    const moved=(x,y)=>{ if(Math.abs(x-sx)>10||Math.abs(y-sy)>10) cancel(); };  // scroll = annule
+    btn.addEventListener('touchstart', e=>{ const t=e.touches[0]; start(t.clientX,t.clientY); }, {passive:true});
+    btn.addEventListener('touchmove',  e=>{ const t=e.touches[0]; moved(t.clientX,t.clientY); }, {passive:true});
+    btn.addEventListener('touchend',   cancel);
+    btn.addEventListener('touchcancel',cancel);
+    // Souris (test desktop)
+    btn.addEventListener('mousedown', e=>start(e.clientX,e.clientY));
+    btn.addEventListener('mouseup', cancel);
+    btn.addEventListener('mouseleave', cancel);
+    // Si l'appui long a épinglé, on bloque le clic de navigation qui suivrait.
+    btn.addEventListener('click', e=>{ if(longFired){ e.preventDefault(); e.stopPropagation(); longFired=false; } }, true);
   });
 }
 // Construit/rafraîchit la section « ⭐ Mes favoris » en tête du menu.
@@ -1462,13 +1504,62 @@ function navRenderFavoris(){
     grid.insertBefore(host, grid.firstChild);
   }
   if(!favs.length){
-    host.innerHTML='<div class="nav-fav-empty">⭐ Touchez l\'étoile d\'une page pour l\'épingler ici.</div>';
+    host.innerHTML='<div class="nav-fav-empty">⭐ Reste appuyé sur une page (appui long) pour l\'épingler ici.</div>';
     return;
   }
-  const cards=favs.map(v=>`<button data-v="${v}" class="fav-card"><span class="ico">${esc(navViewIco(v))}</span><span>${esc(navViewLabel(v))}</span></button>`).join('');
-  host.innerHTML=`<div class="nav-fav-title">⭐ Mes favoris</div><div class="sheet-grid nav-fav-grid">${cards}</div>`;
-  // Câbler la navigation sur les cartes favorites.
-  host.querySelectorAll('button[data-v]').forEach(b=>b.addEventListener('click', ()=>navTo(b)));
+  const cards=favs.map(v=>`<button data-v="${v}" class="fav-card" data-fav="${v}"><span class="ico">${esc(navViewIco(v))}</span><span>${esc(navViewLabel(v))}</span></button>`).join('');
+  host.innerHTML=`<div class="nav-fav-title">⭐ Mes favoris <span style="font-weight:400;color:#9a8576;text-transform:none;letter-spacing:0">· maintiens et glisse pour réordonner</span></div><div class="sheet-grid nav-fav-grid" id="navFavGrid">${cards}</div>`;
+  // Câbler la navigation sur les cartes favorites (tap court).
+  host.querySelectorAll('button[data-v]').forEach(b=>b.addEventListener('click', ()=>{ if(!b._dragged) navTo(b); b._dragged=false; }));
+  navSetupFavDrag();
+}
+// Réordonnancement des favoris par glisser-déposer tactile (au pouce).
+function navSetupFavDrag(){
+  const gridF=document.getElementById('navFavGrid');
+  if(!gridF) return;
+  let dragEl=null, longTimer=null, dragging=false;
+  const cards=()=>[...gridF.querySelectorAll('.fav-card')];
+
+  const startDrag=(card)=>{
+    dragging=true; dragEl=card;
+    card.classList.add('fav-dragging');
+    card._dragged=true;
+    if(navigator.vibrate) navigator.vibrate(15);
+  };
+  const endDrag=()=>{
+    if(longTimer){ clearTimeout(longTimer); longTimer=null; }
+    if(!dragging || !dragEl){ dragging=false; dragEl=null; return; }
+    dragEl.classList.remove('fav-dragging');
+    // Recalcule l'ordre d'après la position DOM actuelle des cartes.
+    const newOrder=cards().map(c=>c.dataset.fav);
+    navFavSave(newOrder);
+    dragEl=null; dragging=false;
+    navRenderFavoris(); navApplyStars();
+  };
+  const moveTo=(x,y)=>{
+    if(!dragging || !dragEl) return;
+    // Carte sous le doigt (hors celle qu'on déplace) → on insère avant/après.
+    const target=document.elementFromPoint(x,y);
+    const overCard=target && target.closest('.fav-card');
+    if(overCard && overCard!==dragEl && overCard.parentNode===gridF){
+      const rect=overCard.getBoundingClientRect();
+      const after=(x > rect.left+rect.width/2);
+      gridF.insertBefore(dragEl, after ? overCard.nextSibling : overCard);
+    }
+  };
+
+  cards().forEach(card=>{
+    card.addEventListener('touchstart', e=>{
+      const t=e.touches[0];
+      longTimer=setTimeout(()=>startDrag(card), 280);   // appui ~280ms avant de saisir
+    }, {passive:true});
+    card.addEventListener('touchmove', e=>{
+      if(longTimer && !dragging){ clearTimeout(longTimer); longTimer=null; }  // bougé trop tôt = scroll
+      if(dragging){ e.preventDefault(); const t=e.touches[0]; moveTo(t.clientX,t.clientY); }
+    }, {passive:false});
+    card.addEventListener('touchend', endDrag);
+    card.addEventListener('touchcancel', endDrag);
+  });
 }
 
 // Bandeau « Récemment consulté » — alimenté automatiquement par le traçage d'usage.
