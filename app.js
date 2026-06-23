@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v719';
+const APP_VERSION = 'v720';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -161,6 +161,23 @@ db.version(18).stores({
 //   demarchage, sourceClientId (si nourri depuis un vrai client), notes, couleur, createdTs, majTs.
 db.version(19).stores({
   personas: '++id, nom, profil, sourceClientId'
+});
+// v20 : JOURNAL DES MOUVEMENTS DE STOCK fini (consommation effective — moteur de stock).
+// Trace chaque entrée/sortie de stock au niveau du composant (macaron | coques | ganache),
+// alors que jusqu'ici seul qteRestante des productions reflétait l'état courant SANS historique.
+// C'est la source de vérité des flux : socle des prévisions de vente et de la décision auto.
+//   ts          : horodatage ISO (indexé, pour tri/filtre par période)
+//   parfumNorm  : clé normalisée du parfum (indexée, pour regrouper)
+//   parfumNom   : libellé lisible (snapshot, survit au renommage/suppression)
+//   composant   : 'macaron' | 'coques' | 'ganache'
+//   sens        : +1 (entrée en stock) | -1 (sortie de stock)
+//   qte         : quantité TOUJOURS positive (le signe est porté par `sens`)
+//   type        : 'production'|'livraison'|'assemblage'|'marche'|'perte'|'degustation'|'ajustement'|'recredit'
+//   productionId, orderId, marketId : références d'origine (selon le type), facultatives
+//   note        : commentaire libre facultatif
+// Démarrage à zéro : on ne journalise que les mouvements À PARTIR de la v20 (pas de reconstruction).
+db.version(20).stores({
+  stockMoves: '++id, ts, parfumNorm, type, composant'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -5536,6 +5553,9 @@ async function pickMarkReady(orderId){
   // Snapshot des noms pour l'historique (au cas où la matière serait supprimée plus tard).
   const _nomMat = id => { const m=_allMats.find(x=>+x.id===+id); return m?m.nom:'(emballage supprimé)'; };
   const pkgHistory = [];   // lignes à journaliser après le décompte (table packagingConsumption)
+  const stockMovesLog = []; // [JOURNAL STOCK] mouvements à journaliser APRÈS la transaction (stockMoves
+                            // n'est pas dans la transaction rw ci-dessous : on suit le pattern pkgHistory).
+  let _recCache = null; try{ _recCache = await db.recipes.toArray(); }catch(_){ _recCache = []; }
   try{
     await db.transaction('rw', db.orderItems, db.productions, db.materialLots, db.orders, async()=>{
       if(dejaLie<=0){
@@ -5547,6 +5567,9 @@ async function pickMarkReady(orderId){
           if(take<=0) continue;
           await db.orderItems.add({orderId, productionId:pk.prodId, qte:round3(take)});
           await db.productions.update(pk.prodId, {qteRestante: subQty(prod.qteRestante, take)});
+          // [JOURNAL STOCK] sortie de stock fini à la livraison (collecté, journalisé hors transaction)
+          stockMovesLog.push({ parfumNom: prodNomComplet(prod, _recCache), composant:'macaron',
+            sens:-1, qte:take, type:'livraison', productionId:pk.prodId, orderId });
         }
       }
       // décrément automatique des EMBALLAGES (coffrets) + SAC, une seule fois par commande
@@ -5580,6 +5603,8 @@ async function pickMarkReady(orderId){
     try{ for(const h of pkgHistory){ await db.packagingConsumption.add(h); } }
     catch(e){ console.warn('packagingConsumption indisponible', e); }
   }
+  // [JOURNAL STOCK] Journalise les sorties de stock fini de cette livraison (hors transaction).
+  for(const mv of stockMovesLog){ await logStockMove(mv); }
   if(pkgManques.length) toast('Commande prête ✓ — stock emballage insuffisant : '+pkgManques.join(', '));
   else toast(dejaLie>0?'Commande prête ✓':'Commande prête ✓ — batchs & emballages décomptés');
   pickRenderOrders();
@@ -6369,8 +6394,15 @@ async function prodTermineConfirm(id){
     patch.dlcAuto = true;
   }
   await db.productions.update(id, patch);
+  // [JOURNAL STOCK] entrée en stock : un batch devient mobilisable au passage en « terminé ».
+  // composant : coques | ganache | macaron (un batch 'complet'/'assemble' = des macarons finis).
+  try{
+    const _compMv = (comp==='coques') ? 'coques' : (comp==='ganache') ? 'ganache' : 'macaron';
+    const _qteMv = round3(+p.qteRestante||0);
+    await logStockMove({ parfumNom: prodNomComplet(p), composant:_compMv, sens:+1, qte:_qteMv,
+      type:'production', productionId:id });
+  }catch(_){}
   closeModal(); renderProductions();
-  toast(`Production terminée ✓ · ${empLettre(dest)}${patch.dlcProduit?` · DLC ${fmtDate(patch.dlcProduit)}`:''}`);
   // [TEMPS PAR RECETTE] Si une tâche d'atelier est rattachée à ce batch, demander à l'arrêter ou la poursuivre.
   try{
     if(p.atelierTaskId){
@@ -6599,9 +6631,21 @@ async function prodAssembleSave(thisId){
                       {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')},
                       ..._assembleFromComp]
       });
-      return {lotAsm, dlc, qteAsm, deg, compConsos:_compConsos, recipeId:coques.recipeId, parfumNom:(_rec?_rec.produitNom:'')};
+      return {lotAsm, dlc, qteAsm, deg, compConsos:_compConsos, recipeId:coques.recipeId, parfumNom:(_rec?_rec.produitNom:''),
+        // [JOURNAL STOCK] mouvements de cet assemblage, journalisés hors transaction (stockMoves
+        // n'est pas dans la transaction rw). Sortie coques + sortie ganache → entrée macaron.
+        _stockMoves:[
+          { parfumNom:(window._prodRecName?window._prodRecName(coques.recipeId):(_rec?_rec.produitNom:'')),
+            composant:'coques', sens:-1, qte:coquesUtilisees, type:'assemblage', productionId:coques.id },
+          { parfumNom:(window._prodRecName?window._prodRecName(ganache.recipeId):(_rec?_rec.produitNom:'')),
+            composant:'ganache', sens:-1, qte:qteAsm, type:'assemblage', productionId:ganache.id },
+          { parfumNom:(_rec?_rec.produitNom:''), composant:'macaron', sens:+1, qte:qteAsm,
+            type:'assemblage', note: deg?'dégustation':'' }
+        ]};
     });
     closeModal(); renderProductions();
+    // [JOURNAL STOCK] journalise les mouvements de l'assemblage (hors transaction).
+    if(res && Array.isArray(res._stockMoves)){ for(const mv of res._stockMoves){ await logStockMove(mv); } }
     const _compTxt = (res.compConsos && res.compConsos.length)
       ? ' · ' + res.compConsos.map(c=>`${qty(res.qteAsm)} ${c.nom}`).join(', ') + ' décompté(s)'
       : '';
@@ -8794,13 +8838,18 @@ async function scanAffectConfirm(){
   const q=+val('scanAffQte')||0;
   if(q<=0){ toast('Quantité invalide'); return; }
   try{
+    let _mvLog=null;
     await db.transaction('rw', db.productions, db.orderItems, async()=>{
       const p=await db.productions.get(prodId); if(!p) throw new Error('Lot introuvable');
       const take=Math.min(round3(q), round3(+p.qteRestante||0));
       if(take<=0) throw new Error('Plus de stock disponible sur ce lot');
       await db.orderItems.add({orderId, productionId:prodId, qte:round3(take)});
       await db.productions.update(prodId, {qteRestante: subQty(p.qteRestante, take)});
+      // [JOURNAL STOCK] préparé ici (stockMoves hors transaction), journalisé juste après.
+      _mvLog={ parfumNom: prodNomComplet(p), composant:'macaron', sens:-1, qte:take,
+        type:'livraison', productionId:prodId, orderId };
     });
+    if(_mvLog) await logStockMove(_mvLog);
     closeModal();
     toast(`✓ ${qty(q)} affecté(s) à la commande · stock décompté`);
     if(typeof markUnsaved==='function') markUnsaved();
@@ -23256,7 +23305,7 @@ const GUIDE_THEMES = [
       detail:"Suis tes matières et emballages en cartes claires, avec dates de péremption et alertes « à commander » sous le seuil. Réceptionne tes lots avec leur prix pour un coût réel. Génère une liste de courses avec le meilleur fournisseur.",
       steps:["Réceptionne tes lots à l'achat","Surveille les alertes de seuil","Génère ta liste de courses (bouton 🛒)"] },
     { v:'stockparfums', t:'Stock par parfum', ico:'🍬', resume:"Tes macarons finis disponibles, par parfum.",
-      detail:"Vue colorée de ton stock de macarons vendables, parfum par parfum, cohérente avec ta boutique.",
+      detail:"Vue colorée de ton stock de macarons vendables, parfum par parfum, cohérente avec ta boutique. Depuis cette version, chaque entrée et sortie de stock (production terminée, assemblage, livraison) commence à être enregistrée en coulisse dans un journal des mouvements : c'est le socle du futur moteur de stock (historique des flux, prévisions de vente). Rien à faire de ton côté, ça se remplit tout seul au fil de ton activité.",
       steps:["Consulte les quantités par parfum","Repère ce qui manque pour tes commandes"] },
     { v:'fournisseurs', t:'Fournisseurs', ico:'⚑', resume:"Ton répertoire de fournisseurs.",
       detail:"Référence tes fournisseurs pour les associer à tes lots et comparer les prix.",
@@ -30004,6 +30053,54 @@ async function stockMobilisableParParfum(){
     b.mobilisable = addQty(b.finis, b.assemblable);
   });
   return out;
+}
+
+// [JOURNAL DE STOCK] Normalisation de la clé parfum. On réutilise aiNormalize (la norme
+// dominante du code parfum : minuscules + retrait d'accents) pour que les mouvements se
+// regroupent EXACTEMENT comme les parfums ailleurs dans l'app. Source de vérité unique.
+function stockMoveKey(nom){
+  return (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
+}
+
+// [JOURNAL DE STOCK] Enregistre UN mouvement de stock fini dans la table stockMoves.
+// Socle de la « consommation effective » du moteur de stock : chaque entrée/sortie est tracée
+// (date, parfum, composant, sens, quantité, type, références). Démarrage à zéro en v20.
+//
+// IMPORTANT — non bloquant par construction : toute erreur (table absente sur un vieil appareil,
+// base bloquée…) est avalée silencieusement. Journaliser ne doit JAMAIS faire échouer le
+// mouvement de stock réel (qteRestante) qui, lui, reste la source de vérité de l'état courant.
+// On n'enveloppe donc PAS l'appelant : on se contente d'ajouter la trace en parallèle.
+//
+// Paramètres (objet) :
+//   parfumNom (req) · composant 'macaron'|'coques'|'ganache' (déf 'macaron')
+//   sens +1|-1 (req) · qte > 0 (req, valeur absolue) · type (req)
+//   productionId? · orderId? · marketId? · note? · ts? (déf maintenant)
+// Renvoie l'id du mouvement (ou null si non journalisé). await optionnel.
+async function logStockMove(m){
+  try{
+    if(!m) return null;
+    const qte = round3(Math.abs(+m.qte||0));
+    if(qte<=0) return null;                       // pas de mouvement nul
+    const sens = (+m.sens<0) ? -1 : 1;            // normalise à ±1
+    const nom  = (m.parfumNom!=null) ? String(m.parfumNom) : '';
+    const rec = {
+      ts:        m.ts || new Date().toISOString(),
+      parfumNorm: stockMoveKey(nom),
+      parfumNom:  nom,
+      composant: m.composant || 'macaron',
+      sens, qte,
+      type:      m.type || 'ajustement'
+    };
+    if(m.productionId!=null) rec.productionId = m.productionId;
+    if(m.orderId!=null)      rec.orderId      = m.orderId;
+    if(m.marketId!=null)     rec.marketId     = m.marketId;
+    if(m.note)               rec.note         = String(m.note);
+    return await db.stockMoves.add(rec);
+  }catch(e){
+    // Silencieux : la trace est secondaire, l'état réel (qteRestante) prime.
+    try{ console.warn('logStockMove ignoré:', e && e.message); }catch(_){}
+    return null;
+  }
 }
 
 // [OPTIMISATION BATCH] Interrupteur ON/OFF persistant. Par défaut OFF : on produit exactement
