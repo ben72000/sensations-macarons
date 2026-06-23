@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v702';
+const APP_VERSION = 'v703';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23236,7 +23236,7 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda liste tes commandes à venir, triées par date de livraison. Touche le nom d'un client pour DÉPLIER la commande (chevron) : tu vois alors l'enchaînement complet de ses étapes calées — coques, ganache/crémeux, repos, montage, maturation, décongélation, livraison — avec les horaires dans tes plages A/B. Touche une étape pour ouvrir son rétroplanning détaillé. Les commandes qui partagent des fournées avec d'autres la même semaine portent un badge « 🔗 mutualisée » ; sur chaque étape concernée (coques, ganache, montage), tu vois par parfum avec quelles commandes c'est regroupé, et deux raccourcis : « voir » (déplie la commande liée dans l'agenda) et « détail » (ouvre son rétroplanning). Règle clé : les coques des macarons standard sont calées le JOUR du montage (coques fraîches) ; si c'est impossible ou absurde, l'app propose de les congeler (badge ❄️). La section « 🧩 Mutualisation par semaine » regroupe toute la production d'une même semaine : coques et montage mutualisés, besoin cumulé par parfum (nombre de batchs), délai de ganache, commandes regroupées (badge ★), et plan de congélation/décongélation du surplus. La section « 📊 Besoins par parfum et par jour » donne le cumul au jour le jour.",
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps), les coques (meringues mutualisées, 2 parfums appariés par meringue), et les montages (par parfum, au prorata de la quantité). Chaque temps indique sa source : « mesuré » (chronométré à l'atelier, fiable), « recette » (ta saisie) ou « estimé » (valeur par défaut). En dessous, l'agenda liste tes commandes triées par livraison. Touche le nom d'un client pour DÉPLIER la commande (chevron) : tu vois l'enchaînement de ses étapes calées avec les horaires dans tes plages A/B. Touche une étape pour son rétroplanning détaillé. Les commandes qui partagent des fournées portent un badge « 🔗 mutualisée » avec les raccourcis « voir » et « détail » vers les commandes liées. Règle clé : coques calées le JOUR du montage (fraîches), congélation proposée si impossible (badge ❄️).",
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","Touche une étape pour son rétroplanning détaillé"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
@@ -29448,6 +29448,15 @@ async function renderAgendaProduction(){
   let mut=null;
   try{ mut = await buildMutualisationSemaine(45); }catch(e){ console.error('mutualisationSemaine',e); }
 
+  // Plan opérationnel détaillé parfum par parfum (étape 1 du moteur). Temps : mesuré si fiable,
+  // sinon recette, sinon défaut.
+  let planOp=null;
+  try{
+    const recipesPlan = await db.recipes.toArray().catch(()=>[]);
+    let tEtape=null; try{ tEtape = await prodTempsParEtapeParParfum(90); }catch(_){}
+    planOp = buildPlanOperationnelSemaine(mut, recipesPlan, tEtape);
+  }catch(e){ console.error('planOperationnel',e); }
+
   // Vue COMMANDES REPLIABLES : une carte par commande (client + chevron), dépliant l'enchaînement
   // complet de ses étapes calées. Remplace le déroulé jour-par-jour pour la lisibilité.
   let cr=null;
@@ -29456,6 +29465,7 @@ async function renderAgendaProduction(){
   const nbCmd = cr && cr.commandes ? cr.commandes.length : 0;
   main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div></div>
     <p class="note" style="margin-bottom:14px">Touche le nom d'une commande pour déplier toutes ses étapes (coques, ganache, repos, montage, maturation, livraison), puis une étape pour son rétroplanning détaillé.</p>
+    ${_agendaPlanOpSection(planOp)}
     ${_agendaMutualSection(mut)}
     ${_agendaParfumsSection(ppj)}
     ${_agendaCommandesSection(cr)}`;
@@ -29494,6 +29504,63 @@ function _agendaParfumsSection(ppj){
 // de production groupé par jour. Ne retient que les tâches de TRAVAIL (présence requise) : coques,
 // ganache, crémeux, montage — pas les attentes (repos, maturation) qui ne mobilisent pas l'atelier.
 // Renvoie { jours:[{date:'YYYY-MM-DD', label, taches:[{heure, cle, label, commande, clientNom, fin, plage}]}], conflits:[...] }.
+
+
+// [PLAN OPÉRATIONNEL — affichage] Section dépliable montrant, par semaine, le détail PARFUM PAR PARFUM
+// de chaque étape (ganache, coques, montage) avec quantité, temps et source du temps (mesuré/recette/défaut).
+function _agendaPlanOpSection(plan){
+  if(!plan || !plan.semaines || !plan.semaines.length) return '';
+  const srcBadge = src => {
+    const m = { 'mesuré':{t:'mesuré',c:'#3f7d52'}, 'recette':{t:'recette',c:'#8a6d3b'}, 'défaut':{t:'estimé',c:'#b08a3a'} }[src] || {t:src,c:'#9a8576'};
+    return `<span style="background:${m.c};color:#fff;font-size:.54rem;font-weight:600;padding:0 5px;border-radius:6px">${m.t}</span>`;
+  };
+  const fmtMin = m => m>=60 ? `${Math.floor(m/60)}h${String(Math.round(m%60)).padStart(2,'0')}` : `${Math.round(m)} min`;
+
+  const semaines = plan.semaines.map(s=>{
+    // GANACHE
+    const ganache = s.ganache.map(g=>`<div class="sum-box">
+      <div style="flex:1"><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qte} mac</span></div>
+      <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
+    </div>`).join('');
+    // COQUES (meringues appariées)
+    const coques = s.coques.map((m,i)=>{
+      const rep = Object.entries(m.repartition).map(([p,q])=>`${esc(p)} <b>${q}</b>`).join(' + ');
+      return `<div class="sum-box">
+        <div style="flex:1">🥣 Meringue ${i+1} · ${rep}${m.partielle?' <span style="color:#b08a3a;font-size:.7rem">(partielle)</span>':''}</div>
+        <div><b>${fmtMin(m.dureeMin)}</b></div>
+      </div>`;
+    }).join('');
+    // MONTAGE
+    const montage = s.montage.map(g=>`<div class="sum-box">
+      <div style="flex:1"><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qte} mac</span> <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span></div>
+      <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
+    </div>`).join('');
+
+    return `<div class="panel" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #e8dccd;padding-bottom:6px;margin-bottom:10px">
+        <h3 style="margin:0">${esc(s.label)}</h3>
+        <span style="font-size:.76rem;color:#9a8576">${s.totalMacarons} mac · ${fmtMin(s.totalMin)} de travail</span>
+      </div>
+      <div style="margin-bottom:10px">
+        <div style="font-weight:600;color:#7a4b2a;margin-bottom:4px">🍫 Ganaches <span style="font-weight:400;color:#9a8576;font-size:.76rem">· une par parfum · ${fmtMin(s.totalGanacheMin)}</span></div>
+        ${ganache}
+      </div>
+      <div style="margin-bottom:10px">
+        <div style="font-weight:600;color:#8a6d3b;margin-bottom:4px">🟤 Coques <span style="font-weight:400;color:#9a8576;font-size:.76rem">· meringues mutualisées · ${fmtMin(s.totalCoquesMin)}</span></div>
+        ${coques}
+      </div>
+      <div>
+        <div style="font-weight:600;color:#3f7d52;margin-bottom:4px">🔧 Montage <span style="font-weight:400;color:#9a8576;font-size:.76rem">· par parfum · ${fmtMin(s.totalMontageMin)}</span></div>
+        ${montage}
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<details style="margin-bottom:16px" open>
+    <summary style="cursor:pointer;font-weight:600;color:var(--bordeaux);font-size:.95rem;padding:6px 0">🧭 Plan de travail détaillé <span style="font-weight:400;color:#9a8576;font-size:.82rem">· étape par étape, parfum par parfum</span></summary>
+    <div style="margin-top:10px">${semaines}</div>
+  </details>`;
+}
 
 // [MUTUALISATION HEBDO] Panneau de synthèse par semaine : besoins cumulés par parfum (coques+montage
 // mutualisés sur la semaine), délai de ganache, et plan de congélation/décongélation du surplus.
@@ -29650,6 +29717,81 @@ async function buildMutualisationSemaine(horizonJours){
   });
   return { semaines, horizonJours };
 }
+
+// [PLAN OPÉRATIONNEL — étape 1] Produit, par SEMAINE, le détail PARFUM PAR PARFUM de chaque étape
+// (coques / ganache / montage), à partir de la pool de cumul (buildMutualisationSemaine).
+// TEMPS À 3 NIVEAUX (règle validée) : mesuré à l'atelier si fiable, sinon saisie recette, sinon défaut.
+//   - GANACHE : temps FIXE par parfum.
+//   - MONTAGE : AU PRORATA (temps/batch × qte/60).
+//   - COQUES : meringues appariées (_packMeringues), 35 min/meringue.
+// mut = buildMutualisationSemaine(...) ; recipes = db.recipes.toArray() ; tEtape = prodTempsParEtapeParParfum(90).
+// Renvoie { semaines:[{ wk, label,
+//   ganache:[{parfum, qte, dureeMin, source, commandes}],
+//   coques:[{parfums, repartition, macarons, dureeMin, partielle}],
+//   montage:[{parfum, qte, dureeMin, parBatchMin, source, commandes}],
+//   totalGanacheMin, totalCoquesMin, totalMontageMin, totalMin, totalMacarons }], horizonJours }.
+function buildPlanOperationnelSemaine(mut, recipes, tEtape){
+  if(!mut || !mut.semaines) return { semaines:[], horizonJours:(mut&&mut.horizonJours)||45 };
+  recipes = recipes || [];
+  tEtape  = tEtape || { coques:{}, ganache:{}, montage:{} };
+  const t = (typeof getMrpTimes==='function') ? getMrpTimes()
+            : { coques:{estimatedTime:35}, montage:{estimatedTime:15}, ganache:{estimatedTime:12} };
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const round1 = x => Math.round(x*10)/10;
+  const norm = nom => (typeof aiNormalize==='function') ? aiNormalize(nom) : String(nom||'').toLowerCase().trim();
+  const recByNom = nom => {
+    const n=(nom||'').trim().toLowerCase();
+    return recipes.find(r=>((r.produitNom||'').trim().toLowerCase())===n) || null;
+  };
+
+  // GANACHE : temps fixe par parfum. Mesuré (fiable) > recette > défaut 12.
+  const tempsGanache = nom => {
+    const k = norm(nom);
+    const mes = tEtape.ganache && tEtape.ganache[k];
+    if(mes && mes.fiable && mes.nbMac>0) return { min: round1(mes.minTotal/ (mes.nbSessions||1)), source:'mesuré' };
+    const r = recByNom(nom);
+    if(r && r.tempsGanacheMin!=null && +r.tempsGanacheMin>0) return { min:+r.tempsGanacheMin, source:'recette' };
+    return { min: t.ganache.estimatedTime, source:'défaut' };
+  };
+  // MONTAGE : temps PAR BATCH (60). Mesuré (fiable, ramené au batch) > recette > défaut 15.
+  const tempsMontageBatch = nom => {
+    const k = norm(nom);
+    const mes = tEtape.montage && tEtape.montage[k];
+    if(mes && mes.fiable && mes.nbMac>0) return { perBatch: round1(mes.minTotal/mes.nbMac*TB), source:'mesuré' };
+    const r = recByNom(nom);
+    if(r && r.tempsMontageMin!=null && +r.tempsMontageMin>0) return { perBatch:+r.tempsMontageMin, source:'recette' };
+    return { perBatch: t.montage.estimatedTime, source:'défaut' };
+  };
+
+  const semaines = mut.semaines.map(s=>{
+    const ganache = s.parfums.map(p=>{
+      const g = tempsGanache(p.nom);
+      return { parfum:p.nom, qte:p.qte, dureeMin:g.min, source:g.source,
+               commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId})) };
+    });
+    const montage = s.parfums.map(p=>{
+      const m = tempsMontageBatch(p.nom);
+      return { parfum:p.nom, qte:p.qte, parBatchMin:m.perBatch, source:m.source,
+               dureeMin: round1(m.perBatch * (p.qte/TB)),
+               commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId})) };
+    });
+    const lignesCoques = s.parfums.map(p=>({ parfum:p.nom, besoinNet:p.qte }));
+    const meringues = (typeof _packMeringues==='function') ? _packMeringues(lignesCoques) : [];
+    const coques = meringues.map(m=>({
+      parfums:m.parfums, repartition:m.repartition, macarons:m.macarons,
+      partielle:m.partielle, dureeMin: t.coques.estimatedTime
+    }));
+    const totalGanacheMin = Math.round(ganache.reduce((a,g)=>a+g.dureeMin,0));
+    const totalMontageMin = Math.round(montage.reduce((a,g)=>a+g.dureeMin,0));
+    const totalCoquesMin  = coques.reduce((a,m)=>a+m.dureeMin,0);
+    const totalMacarons   = s.parfums.reduce((a,p)=>a+p.qte,0);
+    return { wk:s.wk, label:s.label, ganache, coques, montage,
+             totalGanacheMin, totalCoquesMin, totalMontageMin,
+             totalMin: totalGanacheMin+totalMontageMin+totalCoquesMin, totalMacarons };
+  });
+  return { semaines, horizonJours: mut.horizonJours||45 };
+}
+
 
 // [FONDATION MUTUALISATION] Agrège les besoins en macarons PAR PARFUM et PAR JOUR DE MONTAGE,
 // en croisant TOUTES les commandes à venir. Ne mutualise rien encore : se contente de CUMULER
