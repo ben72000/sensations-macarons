@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v721';
+const APP_VERSION = 'v723';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -6681,6 +6681,11 @@ async function prodDegDistribueSave(id){
   if(q<=0){ toast('Quantité invalide'); return; }
   if(q>reste+1e-9){ toast(`Maximum ${qty(reste)}.`); return; }
   await db.productions.update(id, {qteRestante: subQty(reste, q)});
+  // [JOURNAL STOCK] sortie du stock dégustation (macarons offerts/distribués). Tracé pour la
+  // complétude (suivi des dons en dégustation) ; ce stock n'est pas compté comme mobilisable
+  // vendable, on l'isole donc avec le type 'degustation'.
+  await logStockMove({ parfumNom: prodNomComplet(p), composant:'macaron', sens:-1, qte:round3(q),
+    type:'degustation', productionId:id, note:'dégustation distribuée' });
   closeModal(); renderProductions();
   toast(`🥄 ${qty(q)} dégustation(s) distribuée(s) · reste ${qty(subQty(reste,q))}`);
 }
@@ -8002,6 +8007,7 @@ async function saveLoss(prodId){
   if(enCoqDeg){
     const dest=(document.querySelector('input[name="f_lossDest"]:checked')||{}).value||'frigo';
     const recName = (window._prodRecName)||((rid)=>'#'+rid);
+    let _mvCoqDeg=null;
     await db.transaction('rw', db.productions, async()=>{
       const src=await db.productions.get(prodId);
       const nowIso=new Date().toISOString();
@@ -8018,7 +8024,17 @@ async function saveLoss(prodId){
         histEmplacement:[{lieu:dest, ts:nowIso, motif:'coques de dégustation (cassées récupérables)'}],
         assembleFrom:[{id:src.id, lot:src.lotProduction, composant:'coques', qte:qteP, parfum:recName(src.recipeId)}]
       });
+      // [JOURNAL STOCK] transfert interne : ces coques restent comptées comme coques assemblables
+      // (degDeclasse n'est pas exclu du stock mobilisable), donc on journalise les DEUX faces
+      // pour un net coques nul, fidèle à ce que voit le stock. Note = reclassement.
+      _mvCoqDeg = { nom: prodNomComplet(src, null), qte:round3(qteP) };
     });
+    if(_mvCoqDeg){
+      await logStockMove({ parfumNom:_mvCoqDeg.nom, composant:'coques', sens:-1, qte:_mvCoqDeg.qte,
+        type:'ajustement', productionId:prodId, note:'reclassement → coques dégustation' });
+      await logStockMove({ parfumNom:_mvCoqDeg.nom, composant:'coques', sens:+1, qte:_mvCoqDeg.qte,
+        type:'ajustement', note:'coques dégustation (cassées récupérables)' });
+    }
     closeModal(); renderProductions();
     toast(`🟤 ${qty(qteP)} coque(s) reclassée(s) en coques de dégustation`);
     return;
@@ -8027,6 +8043,7 @@ async function saveLoss(prodId){
   if(enDeg){
     const dest=(document.querySelector('input[name="f_lossDest"]:checked')||{}).value||'frigo';
     const recName = (window._prodRecName)||((rid)=>'#'+rid);
+    let _mvCasse=null;
     await db.transaction('rw', db.productions, async()=>{
       const src=await db.productions.get(prodId);
       const nowIso=new Date().toISOString();
@@ -8046,7 +8063,14 @@ async function saveLoss(prodId){
         histEmplacement:[{lieu:dest, ts:nowIso, motif:'dégustation (cassé mais garni)'}],
         assembleFrom:[{id:src.id, lot:src.lotProduction, composant:'casse-garni', qte:qteP, parfum:recName(src.recipeId)}]
       });
+      // [JOURNAL STOCK] sortie nette du stock vendable : le composant source quitte le mobilisable
+      // pour le stock dégustation (non vendable, non compté par stockMobilisable). On journalise
+      // donc UNE sortie (le composant du lot source : macaron, coques ou ganache).
+      const _compSrc = (prodComposant(src)==='coques') ? 'coques' : (prodComposant(src)==='ganache') ? 'ganache' : 'macaron';
+      _mvCasse = { parfumNom: prodNomComplet(src, null), composant:_compSrc, sens:-1, qte:round3(qteP),
+        type:'perte', productionId:prodId, note:'cassé garni → dégustation' };
     });
+    if(_mvCasse) await logStockMove(_mvCasse);
     closeModal(); renderProductions();
     toast(`🥄 ${qty(qteP)} cassé(s) garni(s) basculé(s) en dégustation (non perdu)`);
     return;
@@ -8074,6 +8098,12 @@ async function saveLoss(prodId){
     await db.losses.add(loss);
     await db.productions.update(prodId, {qteRestante: subQty(p.qteRestante, qteP)});
   });
+  // [JOURNAL STOCK] perte pure : sortie définitive du stock (composant du lot source).
+  {
+    const _compSrc = (prodComposant(p)==='coques') ? 'coques' : (prodComposant(p)==='ganache') ? 'ganache' : 'macaron';
+    await logStockMove({ parfumNom: prodNomComplet(p, recipe?[recipe]:null), composant:_compSrc, sens:-1,
+      qte:round3(qteP), type:'perte', productionId:prodId, note: loss.motif||'' });
+  }
   closeModal(); renderProductions();
   toast(`Perte déclarée : ${qty(qteP)} pièce(s) · ${euro(loss.coutTotal)}`);
 }
@@ -30036,7 +30066,11 @@ async function stockMobilisableParParfum(){
     prodsAll = (await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0);
     recipes = await db.recipes.toArray();
   }catch(e){ return out; }
-  const key = nom => (typeof normTxt==='function') ? normTxt(nom||'') : String(nom||'').toLowerCase().trim();
+  // [CLÉ UNIQUE] On réutilise stockMoveKey (= aiNormalize) pour que le regroupement du stock
+  // mobilisable soit STRICTEMENT identique à celui du journal des mouvements (stockMoves).
+  // Avant : normTxt (sans gestion des espaces multiples ni des apostrophes typographiques),
+  // ce qui pouvait diverger du journal sur des parfums comme « Café  noisette ».
+  const key = nom => stockMoveKey(nom);
   const ensure = nom => {
     const k = key(nom);
     return (out[k] ||= { nom, finis:0, coquesMac:0, ganacheMac:0, assemblable:0, mobilisable:0 });
@@ -30147,7 +30181,9 @@ function arrondirPalierProduction(qte){
 
 function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob){
   stockMob = stockMob || {};
-  const _stockKey = nom => (typeof normTxt==='function') ? normTxt(nom||'') : String(nom||'').toLowerCase().trim();
+  // [CLÉ UNIQUE] Même clé que la construction de stockMob (stockMoveKey = aiNormalize) et que
+  // le journal des mouvements : un seul et même regroupement parfum dans tout le moteur de stock.
+  const _stockKey = nom => stockMoveKey(nom);
   const stockDe = nom => { const b = stockMob[_stockKey(nom)]; return b ? (b.mobilisable||0) : 0; };
   if(!mut || !mut.semaines) return { semaines:[], horizonJours:(mut&&mut.horizonJours)||45 };
   recipes = recipes || [];
