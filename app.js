@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v682';
+const APP_VERSION = 'v684';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1351,6 +1351,58 @@ const VIEWS = {
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
 let _histReady=false;
+/* ============================================================
+   NAVIGATION — traçage d'usage (local), favoris & récents.
+   - navUsage : { counts:{view:n}, last:{view:ts}, recents:[view,...] }
+   - 100% local (localStorage), rien ne sort de l'appareil.
+   - Sert à : (1) accès « récents », (2) plus tard, réorganisation du menu
+     selon la fréquence réelle d'ouverture des pages.
+   ============================================================ */
+const NAV_USAGE_KEY = 'sm_navUsage';
+const NAV_FAV_KEY   = 'sm_navFavoris';
+const NAV_RECENTS_MAX = 6;
+// Vues qu'on ne veut jamais tracer/proposer (techniques ou transitoires).
+const NAV_USAGE_EXCLUDE = new Set(['migration']);
+
+function navUsageLoad(){
+  try{ const o=JSON.parse(localStorage.getItem(NAV_USAGE_KEY)||'{}');
+       return {counts:o.counts||{}, last:o.last||{}, recents:Array.isArray(o.recents)?o.recents:[]}; }
+  catch(e){ return {counts:{}, last:{}, recents:[]}; }
+}
+function navUsageSave(u){ try{ localStorage.setItem(NAV_USAGE_KEY, JSON.stringify(u)); }catch(e){} }
+
+// Appelé à chaque changement de vue (depuis goView). Incrémente le compteur,
+// note la date, et met à jour la liste des récents (dédupliquée, plafonnée).
+function navUsageTrack(v){
+  if(!v || NAV_USAGE_EXCLUDE.has(v)) return;
+  const u=navUsageLoad();
+  u.counts[v]=(u.counts[v]||0)+1;
+  u.last[v]=Date.now();
+  u.recents=[v, ...u.recents.filter(x=>x!==v)].slice(0, NAV_RECENTS_MAX);
+  navUsageSave(u);
+}
+// Top N des vues les plus ouvertes (pour usage futur : réorg. du menu).
+function navUsageTop(n){
+  const u=navUsageLoad();
+  return Object.entries(u.counts).sort((a,b)=>b[1]-a[1]).slice(0, n||5).map(e=>({view:e[0], n:e[1]}));
+}
+// Liste des récents (hors vue courante), pour l'accès rapide.
+function navRecents(excludeCurrent){
+  const u=navUsageLoad();
+  return u.recents.filter(v=>v && (!excludeCurrent || v!==view));
+}
+// --- Favoris (épinglés manuellement par l'utilisateur) ---
+function navFavLoad(){ try{ const a=JSON.parse(localStorage.getItem(NAV_FAV_KEY)||'[]'); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
+function navFavSave(a){ try{ localStorage.setItem(NAV_FAV_KEY, JSON.stringify(a)); }catch(e){} }
+function navIsFav(v){ return navFavLoad().includes(v); }
+function navFavToggle(v){
+  const a=navFavLoad();
+  const i=a.indexOf(v);
+  if(i>=0) a.splice(i,1); else a.push(v);
+  navFavSave(a);
+  return a.includes(v);
+}
+
 function setActiveView(v){
   document.querySelectorAll('.nav button, .tabbar button, .sheet-grid button').forEach(x=>{
     if(x.dataset && x.dataset.v) x.classList.toggle('active', x.dataset.v===v);
@@ -1374,6 +1426,7 @@ function goView(v, opts){
   }
   if(typeof hideUndo==='function') hideUndo();
   view=v; setActiveView(view); render();
+  if(typeof navUsageTrack==='function') navUsageTrack(v);   // traçage usage (favoris/récents/stats)
   if(_histReady && !_popping && !opts.replace){
     try{ history.pushState({view:v, kind:'view'}, '', '#'+v); }catch(e){}
   }
@@ -12184,7 +12237,7 @@ async function deliveryGapData(gran){
     keys,
     series:[
       {label:'CA réel facturé', color:'#AA7C39', points:ptsReel},
-      {label:'CA potentiel (+ livraisons non facturées)', color:'#a5453b', points:ptsPotentiel}
+      {label:'CA potentiel (+ livraisons non facturées)', color:'#3f7d52', points:ptsPotentiel}
     ],
     synth:{ ca:money2(totCA), manque:money2(totManque), potentiel:money2(totCA+totManque),
             nbFact:totNbFact, nbNonFact:totNbNonFact,
@@ -14770,7 +14823,7 @@ async function gapRenderChart(){
         <p class="note" style="margin-top:10px;margin-bottom:0">
           <b>${s.nbNonFact}</b> livraison(s) non facturée(s) représentent <b>${euro(s.manque)}</b> de CA non perçu.
           <b>${s.nbFact}</b> livraison(s) facturée(s) (marquées d'un <b style="color:#AA7C39">+</b> sur la courbe).
-          ${s.manque>0 ? 'Facturer vos livraisons rapprocherait la courbe rouge de la verte.' : 'Bravo : aucune livraison non facturée sur cette vue.'}
+          ${s.manque>0 ? 'Facturer vos livraisons rapprocherait la courbe dorée (CA réel) de la verte (potentiel).' : 'Bravo : aucune livraison non facturée sur cette vue.'}
         </p>
       </div>`;
     zone.innerHTML = chart + encart;
