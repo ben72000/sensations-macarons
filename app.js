@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v701';
+const APP_VERSION = 'v702';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23240,7 +23240,7 @@ const GUIDE_THEMES = [
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","Touche une étape pour son rétroplanning détaillé"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
-      steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail en rattachant le parfum","Plus tu mesures, plus les temps par parfum se fiabilisent","Consulte le tableau blanc et le journal"] },
+      steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail en rattachant le parfum","Consulte l'onglet « Temps/parfum » pour voir tes temps mesurés par étape et par parfum","Plus tu mesures, plus les temps se fiabilisent (✓)"] },
     { v:'recettes', t:'Recettes (BOM)', ico:'❀', resume:"Tes recettes détaillées avec leurs ingrédients.",
       detail:"Définis chaque recette avec ses matières et quantités (la nomenclature). C'est la base qui permet de calculer les coûts et de déduire le stock à chaque production.",
       steps:["Crée une recette","Ajoute les matières et quantités","Elle servira au calcul des coûts et productions"] },
@@ -27036,6 +27036,167 @@ function prodSessTempsParRecette(s){
    prodSessTempsParRecette. On rapporte ensuite au nombre de macarons FINIS de chaque recette.
    Repli : si une recette manque de données, l'appelant utilise la moyenne globale.
 */
+
+// [CROISEMENT PHASE × PARFUM] Pour une session, répartit le temps réel par CATÉGORIE D'ÉTAPE
+// (coques / ganache / montage) ET par recette (parfum), en réutilisant le balayage temporel de
+// prodSessTempsParRecette mais en filtrant les tâches selon prodTaskMrpCategory.
+// Permet d'obtenir « temps de ganache de la vanille » distinct de « temps de montage de la vanille ».
+// Le temps non distribué (vaisselle, pauses) n'est PAS rattaché aux étapes de production.
+// Renvoie { coques:{recipeId:ms}, ganache:{recipeId:ms}, montage:{recipeId:ms} }.
+function prodSessTempsParCategorieParRecette(s){
+  const tasks = (s&&s.tasks)||[];
+  const CATS = ['coques','ganache','montage'];
+  const out = { coques:{}, ganache:{}, montage:{} };
+
+  CATS.forEach(cat=>{
+    // Intervalles des tâches de CETTE catégorie portant au moins une recette.
+    const intervals = [];
+    const allRecs = new Set();
+    tasks.forEach(t=>{
+      const meta = { phase:t.phase, label:t.label };
+      const c = (typeof prodTaskMrpCategory==='function') ? prodTaskMrpCategory(meta) : null;
+      if(c!==cat) return;
+      const recs = (Array.isArray(t.parfums)?t.parfums:[]).map(x=>+x).filter(r=>Number.isFinite(r)&&r>0);
+      if(!recs.length) return;
+      const st = +t.start||0;
+      const en = +t.end || Date.now();
+      if(st<=0 || en<=st) return;
+      intervals.push({st, en, recs});
+      recs.forEach(r=>allRecs.add(r));
+    });
+    if(!intervals.length) return;
+
+    allRecs.forEach(r=>{ out[cat][r]=0; });
+    const points = new Set();
+    intervals.forEach(iv=>{ points.add(iv.st); points.add(iv.en); });
+    const sorted = Array.from(points).sort((a,b)=>a-b);
+    for(let i=0;i<sorted.length-1;i++){
+      const a=sorted[i], b=sorted[i+1];
+      const dur=b-a; if(dur<=0) continue;
+      const actives = new Set();
+      intervals.forEach(iv=>{ if(iv.st<=a && iv.en>=b){ iv.recs.forEach(r=>actives.add(r)); } });
+      if(actives.size===0) continue;
+      const part = dur/actives.size;
+      actives.forEach(r=>{ out[cat][r]+=part; });
+    }
+  });
+  return out;
+}
+
+// [CROISEMENT PHASE × PARFUM — agrégat fenêtre] Cumule sur N jours le temps mesuré par catégorie
+// et par parfum (nom normalisé), avec les pièces produites, pour en déduire un temps fiable par
+// (étape, parfum). Sert à alimenter le plan : « ganache vanille = X min (fixe), montage vanille = Y min/batch ».
+// Renvoie { ganache:{nom:{minTotal, nbMac, nbSessions, fiable}},
+//           montage:{nom:{minTotal, nbMac, nbSessions, fiable}},
+//           coques:{nom:{minTotal, nbMac, nbSessions, fiable}} }.
+async function prodTempsParEtapeParParfum(jours){
+  jours = +jours || 90;
+  const since = new Date(); since.setDate(since.getDate()-jours);
+  const sinceStr = since.toISOString().slice(0,10);
+  const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recName = rid => (recipes.find(r=>+r.id===+rid)||{}).produitNom || '';
+  const norm = nom => (typeof aiNormalize==='function') ? aiNormalize(nom) : String(nom||'').toLowerCase().trim();
+
+  const CATS = ['coques','ganache','montage'];
+  // cat -> nomNorm -> { minTotal, nbSessions(Set) }
+  const acc = { coques:{}, ganache:{}, montage:{} };
+  const sessSet = { coques:{}, ganache:{}, montage:{} };
+
+  sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
+    const parCat = prodSessTempsParCategorieParRecette(s);
+    CATS.forEach(cat=>{
+      Object.keys(parCat[cat]||{}).forEach(rid=>{
+        const nom = recName(rid); if(!nom) return;
+        const k = norm(nom);
+        const min = parCat[cat][rid]/60000;
+        (acc[cat][k] ||= 0); acc[cat][k] += min;
+        (sessSet[cat][k] ||= new Set()).add(s.id||s.date);
+      });
+    });
+  });
+
+  // Macarons produits par parfum (nom normalisé) sur la fenêtre — pour le prorata/fiabilité.
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const macParNom = {};
+  prods.forEach(p=>{
+    const c = p.composant || 'complet';
+    if(c!=='complet' && c!=='assemble') return;
+    if(p.libre || p.recipeId==null) return;
+    const d = (p.date || (p.prodTimestamp||'').slice(0,10) || '');
+    if(String(d).slice(0,10) < sinceStr) return;
+    const nom = recName(p.recipeId); if(!nom) return;
+    const k = norm(nom);
+    macParNom[k] = (macParNom[k]||0) + (+p.qteReelle||+p.qteProduite||0);
+  });
+
+  const out = { coques:{}, ganache:{}, montage:{} };
+  CATS.forEach(cat=>{
+    Object.keys(acc[cat]).forEach(k=>{
+      const minTotal = acc[cat][k];
+      const nbMac = macParNom[k]||0;
+      const nbSessions = (sessSet[cat][k]||new Set()).size;
+      // Fiable si assez de matière mesurée ET plusieurs sessions (la moyenne a du sens).
+      const fiable = (minTotal>=10 && nbMac>=30 && nbSessions>=2);
+      out[cat][k] = { minTotal:Math.round(minTotal*10)/10, nbMac, nbSessions, fiable };
+    });
+  });
+  return out;
+}
+
+
+// [ONGLET TEMPS/PARFUM] Affiche les temps réels mesurés à l'atelier, croisés par ÉTAPE et par PARFUM.
+// Permet de vérifier que les mesures sont justes avant de s'en servir dans le plan opérationnel.
+async function prodRenderTempsParfum(){
+  const host = document.getElementById('prodBoardHost');
+  if(!host) return;
+  host.innerHTML = `<p class="note">⏳ Calcul des temps mesurés par parfum…</p>`;
+  let agg;
+  try{ agg = await prodTempsParEtapeParParfum(90); }
+  catch(e){ console.error('tempsParEtapeParParfum',e); host.innerHTML='<p class="note" style="color:var(--red)">Erreur de calcul.</p>'; return; }
+
+  const CATS = [
+    { cle:'ganache', titre:'🍫 Ganache', col:'#7a4b2a', note:"Temps fixe par parfum (indépendant de la quantité)." },
+    { cle:'montage', titre:'🔧 Montage', col:'#3f7d52', note:"Temps qui dépend de la quantité (au prorata des macarons)." },
+    { cle:'coques',  titre:'🟤 Coques',  col:'#8a6d3b', note:"Inclut chablonnage et congélation pour les parfums concernés." }
+  ];
+
+  const sections = CATS.map(c=>{
+    const data = agg[c.cle]||{};
+    const noms = Object.keys(data).sort((a,b)=>data[b].minTotal-data[a].minTotal);
+    if(!noms.length){
+      return `<div class="panel" style="margin-bottom:12px">
+        <h3 style="margin:0 0 4px;color:${c.col}">${c.titre}</h3>
+        <p class="note" style="margin:0">Aucune mesure pour l'instant. Chronomètre des tâches de cette étape en rattachant le parfum.</p>
+      </div>`;
+    }
+    const lignes = noms.map(nom=>{
+      const d = data[nom];
+      // Pour le montage : temps ramené à un batch de 60 (comparable au paramètre par défaut).
+      const parBatch = (c.cle==='montage' && d.nbMac>0) ? Math.round((d.minTotal/d.nbMac*60)*10)/10 : null;
+      const fiabBadge = d.fiable
+        ? `<span style="background:#3f7d52;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">✓ fiable</span>`
+        : `<span style="background:#c9a227;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">~ à confirmer</span>`;
+      const detailMontage = parBatch!=null ? ` <span style="color:#9a8576;font-size:.74rem">(≈ ${parBatch} min / 60 mac)</span>` : '';
+      return `<div class="sum-box" style="align-items:flex-start">
+        <div style="flex:1">
+          <div><b style="text-transform:capitalize">${esc(nom)}</b> · <b style="color:${c.col}">${d.minTotal} min</b>${detailMontage} ${fiabBadge}</div>
+          <div style="font-size:.74rem;color:#9a8576;margin-top:1px">${d.nbMac} macarons mesurés · ${d.nbSessions} session${d.nbSessions>1?'s':''}</div>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="panel" style="margin-bottom:12px">
+      <h3 style="margin:0 0 2px;color:${c.col}">${c.titre}</h3>
+      <p class="note" style="margin:0 0 8px">${c.note}</p>
+      ${lignes}
+    </div>`;
+  }).join('');
+
+  host.innerHTML = `
+    <div class="banner" style="background:#f4f7fb;border-color:#cdd9e6;margin-bottom:12px">🎯 <div>Temps <b>réellement mesurés</b> à l'atelier sur les 90 derniers jours, séparés par <b>étape</b> et par <b>parfum</b>. Plus tu chronomètres en rattachant le parfum, plus ces temps deviennent fiables (✓). Ils nourriront le plan de production : <b>mesuré si fiable, sinon ta saisie recette, sinon valeur par défaut</b>.</div></div>
+    ${sections}`;
+}
+
 async function prodTempsParParfum(jours){
   jours = +jours || 90;
   const since = new Date(); since.setDate(since.getDate()-jours);
@@ -27548,10 +27709,12 @@ function renderAtelier(){
       <button class="at-tab ${_atelierTab==='pilotage'?'active':''}" onclick="atelierSwitch('pilotage')">⏱ Pilotage</button>
       <button class="at-tab ${_atelierTab==='tableau'?'active':''}" onclick="atelierSwitch('tableau')">📊 Tableau</button>
       <button class="at-tab ${_atelierTab==='journal'?'active':''}" onclick="atelierSwitch('journal')">📅 Journal</button>
+      <button class="at-tab ${_atelierTab==='temps'?'active':''}" onclick="atelierSwitch('temps')">🎯 Temps/parfum</button>
     </div>
     <div id="prodBoardHost"></div>`;
   if(_atelierTab==='tableau') prodRenderGantt();
   else if(_atelierTab==='journal') prodRenderJournal();
+  else if(_atelierTab==='temps') prodRenderTempsParfum();
   else prodRenderBoard();
 }
 function atelierSwitch(tab){
@@ -27559,10 +27722,11 @@ function atelierSwitch(tab){
   const host=document.getElementById('prodBoardHost'); if(!host) return;
   const btns=document.querySelectorAll('.at-tab');
   btns.forEach(b=>b.classList.remove('active'));
-  const idx = tab==='pilotage'?0 : tab==='tableau'?1 : 2;
+  const idx = tab==='pilotage'?0 : tab==='tableau'?1 : tab==='journal'?2 : 3;
   if(btns[idx]) btns[idx].classList.add('active');
   if(tab==='tableau') prodRenderGantt();
   else if(tab==='journal') prodRenderJournal();
+  else if(tab==='temps') prodRenderTempsParfum();
   else prodRenderBoard();
 }
 
