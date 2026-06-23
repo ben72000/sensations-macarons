@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v698';
+const APP_VERSION = 'v699';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23236,8 +23236,8 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda liste tes commandes à venir, triées par date de livraison. Touche le nom d'un client pour DÉPLIER la commande (chevron) : tu vois alors l'enchaînement complet de ses étapes calées — coques, ganache/crémeux, repos, montage, maturation, décongélation, livraison — avec les horaires dans tes plages A/B. Touche une étape pour ouvrir son rétroplanning détaillé. Règle clé : les coques des macarons standard sont calées le JOUR du montage (coques fraîches) ; si c'est impossible ou absurde, l'app propose de les congeler (badge ❄️). La section « 🧩 Mutualisation par semaine » regroupe toute la production d'une même semaine : coques et montage mutualisés, besoin cumulé par parfum (nombre de batchs), délai de ganache, commandes regroupées (badge ★), et plan de congélation/décongélation du surplus. La section « 📊 Besoins par parfum et par jour » donne le cumul au jour le jour.",
-      steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé","Ouvre « Mutualisation par semaine » pour les fournées regroupables et la congélation"] },
+      detail:"L'agenda liste tes commandes à venir, triées par date de livraison. Touche le nom d'un client pour DÉPLIER la commande (chevron) : tu vois alors l'enchaînement complet de ses étapes calées — coques, ganache/crémeux, repos, montage, maturation, décongélation, livraison — avec les horaires dans tes plages A/B. Touche une étape pour ouvrir son rétroplanning détaillé. Les commandes qui partagent des fournées avec d'autres la même semaine portent un badge « 🔗 mutualisée » ; sur chaque étape concernée (coques, ganache, montage), tu vois par parfum avec quelles commandes c'est regroupé, et deux raccourcis : « voir » (déplie la commande liée dans l'agenda) et « détail » (ouvre son rétroplanning). Règle clé : les coques des macarons standard sont calées le JOUR du montage (coques fraîches) ; si c'est impossible ou absurde, l'app propose de les congeler (badge ❄️). La section « 🧩 Mutualisation par semaine » regroupe toute la production d'une même semaine : coques et montage mutualisés, besoin cumulé par parfum (nombre de batchs), délai de ganache, commandes regroupées (badge ★), et plan de congélation/décongélation du surplus. La section « 📊 Besoins par parfum et par jour » donne le cumul au jour le jour.",
+      steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","Touche une étape pour son rétroplanning détaillé"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour analyser ton temps.",
       detail:"Ouvre une session de production et lance des chronos par tâche (pesée, macaronnage, cuisson…). Plusieurs tâches tournent en parallèle. Le tableau blanc montre ta journée en barres, et le journal garde l'historique. Sert à optimiser ton organisation.",
       steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail","Consulte le tableau blanc et le journal"] },
@@ -29083,19 +29083,49 @@ async function retroplanningCale(orderId){
 
 // [ÉCRAN] Agenda de production consolidé : toutes les commandes à venir, fusionnées par jour.
 
+
+// [MUTUALISATION — index par commande] À partir de buildMutualisationSemaine, construit pour chaque
+// commande la liste de ses partages PAR PARFUM : « sur la vanille de la semaine 26, je suis
+// regroupé avec ces autres commandes ». Sert à afficher le lien précis sur chaque étape et le
+// badge global, + les raccourcis « voir / détail » vers les commandes liées.
+// Renvoie une Map orderId -> { wk, wkLabel, parfums:[{nom, qte, autres:[{orderId, client, qte}]}], aDesPartages }.
+function _buildMutualIndex(mut){
+  const idx = new Map();
+  if(!mut || !mut.semaines) return idx;
+  mut.semaines.forEach(s=>{
+    s.parfums.forEach(p=>{
+      if(p.commandes.length < 2) return;   // pas de partage si une seule commande sur ce parfum
+      p.commandes.forEach(c=>{
+        if(c.orderId==null) return;
+        const autres = p.commandes.filter(x=>x.orderId!==c.orderId)
+                                  .map(x=>({ orderId:x.orderId, client:x.client, qte:x.qte }));
+        if(!autres.length) return;
+        let entry = idx.get(c.orderId);
+        if(!entry){ entry = { wk:s.wk, wkLabel:s.label, parfums:[], aDesPartages:true }; idx.set(c.orderId, entry); }
+        entry.parfums.push({ nom:p.nom, qte:c.qte, autres });
+      });
+    });
+  });
+  return idx;
+}
+
 // [VUE COMMANDES REPLIABLES] Pour chaque commande à venir, calcule son rétroplanning calé
 // (mêmes étapes que la modale détaillée) et le présente en une ligne « client + chevron »
 // dépliable, montrant l'enchaînement complet. Remplace le déroulé jour-par-jour.
 // Renvoie { commandes:[{ id, clientNom, livraison, livraisonTxt, nbMacarons, parfumsTxt,
 //   etapes:[{cle, label, type, debutTxt, finTxt, jourTxt, congeler, congelRaison, tropLongue}],
 //   aCongeler, aDebordement }], horizonJours }.
-async function buildCommandesRetro(horizonJours){
+async function buildCommandesRetro(horizonJours, mut){
   horizonJours = +horizonJours || 45;
   const orders  = await db.orders.toArray().catch(()=>[]);
   const clients = await db.clients.toArray().catch(()=>[]);
   const clientNom = id => { const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'—'; };
   const today0 = new Date(); today0.setHours(0,0,0,0);
   const horizon = new Date(today0); horizon.setDate(horizon.getDate()+horizonJours);
+  // Index des partages par commande (parfum → autres commandes de la même semaine).
+  const mutIdx = _buildMutualIndex(mut);
+  // Étapes concernées par la mutualisation (par parfum) : coques, montage, ganache/crémeux.
+  const ETAPES_MUTUALISABLES = new Set(['coques','montage','ganache','cremeux']);
 
   const fmtJour = d => { try{ return new Date(d).toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short'}); }catch(e){ return ''; } };
   const fmtH    = d => { try{ return new Date(d).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
@@ -29123,12 +29153,22 @@ async function buildCommandesRetro(horizonJours){
     });
     const parfumsTxt = Object.keys(pf).sort((a,b)=>pf[b]-pf[a]).map(n=>`${n} (${pf[n]})`).join(', ');
 
-    const etapes = cale.jalonsCales.map(j=>({
-      cle:j.cle, label:j.label, type:j.type,
-      debutTxt: j.debut?fmtH(j.debut):'', finTxt: j.fin?fmtH(j.fin):'',
-      jourTxt: j.debut?fmtJour(j.debut):'',
-      congeler: !!j.congeler, congelRaison: j.congelRaison||'', tropLongue: !!j.tropLongue
-    }));
+    const partages = mutIdx.get(o.id) || null;   // { wk, wkLabel, parfums:[...] } ou null
+    const etapes = cale.jalonsCales.map(j=>{
+      // Si l'étape est mutualisable et que la commande a des partages, on attache la liste
+      // des parfums partagés (pour cette étape, tous les parfums partagés s'appliquent).
+      let partagesEtape = null;
+      if(partages && ETAPES_MUTUALISABLES.has(j.cle) && partages.parfums.length){
+        partagesEtape = partages.parfums.map(pp=>({ nom:pp.nom, autres:pp.autres }));
+      }
+      return {
+        cle:j.cle, label:j.label, type:j.type,
+        debutTxt: j.debut?fmtH(j.debut):'', finTxt: j.fin?fmtH(j.fin):'',
+        jourTxt: j.debut?fmtJour(j.debut):'',
+        congeler: !!j.congeler, congelRaison: j.congelRaison||'', tropLongue: !!j.tropLongue,
+        partages: partagesEtape
+      };
+    });
 
     out.push({
       id:o.id, clientNom:clientNom(o.clientId),
@@ -29137,7 +29177,8 @@ async function buildCommandesRetro(horizonJours){
       nbMacarons:cale.nbMacarons||0, parfumsTxt,
       etapes,
       aCongeler: etapes.some(e=>e.congeler),
-      aDebordement: !!cale.aDesDebordements
+      aDebordement: !!cale.aDesDebordements,
+      partages   // badge global : non-null si la commande partage des fournées
     });
   }
   // Tri par date de livraison croissante (la plus proche en premier).
@@ -29169,17 +29210,33 @@ function _agendaCommandesSection(cr){
         : (e.debutTxt ? `${esc(e.jourTxt)} · <b>${esc(e.debutTxt)}${e.finTxt?'→'+esc(e.finTxt):''}</b>` : '');
       const congelBadge = e.congeler ? ` <span style="background:#3b6ea5;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️</span>` : '';
       const warn = e.tropLongue ? ` <span style="color:var(--red);font-size:.72rem">⚠</span>` : '';
+      // Détail de mutualisation par parfum sur cette étape (coques/ganache/montage partagés).
+      let mutualBloc = '';
+      if(e.partages && e.partages.length){
+        const lignesP = e.partages.map(pp=>{
+          const liens = pp.autres.map(a=>`<span style="display:inline-flex;gap:3px;align-items:center;margin:2px 4px 0 0">
+            <span style="color:#5a6b80">${esc(a.client)} (${a.qte})</span>
+            <button class="btn-mut" onclick="event.stopPropagation();goToCommande(${a.orderId})" title="Voir la commande dans l'agenda">voir</button>
+            <button class="btn-mut" onclick="event.stopPropagation();retroplanningView(${a.orderId})" title="Rétroplanning détaillé">détail</button>
+          </span>`).join('');
+          return `<div style="font-size:.74rem;color:#3b6ea5;margin-top:3px">🔗 <b>${esc(pp.nom)}</b> regroupé avec ${liens}</div>`;
+        }).join('');
+        mutualBloc = `<div style="margin-top:5px;padding-top:5px;border-top:1px dashed #cfe0f2">${lignesP}</div>`;
+      }
       return `<div class="sum-box" style="align-items:flex-start;border-left:3px solid ${m.col};cursor:pointer;margin:4px 0"
         onclick="event.stopPropagation();retroplanningView(${c.id})">
         <div style="flex:1">
           <div>${m.ico} <b style="color:${m.col}">${esc(e.label)}</b>${congelBadge}${warn}</div>
           <div style="font-size:.78rem;color:#9a8576;margin-top:1px">${horaire}</div>
+          ${mutualBloc}
         </div>
         <span style="color:var(--bordeaux);font-size:.75rem">détail →</span>
       </div>`;
     }).join('');
-    const badges = `${c.aCongeler?'<span style="background:#3b6ea5;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️ congel.</span> ':''}${c.aDebordement?'<span style="background:#a5453b;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">⚠ tendu</span> ':''}`;
-    return `<details class="panel cmd-retro" style="margin-bottom:12px" data-cmd="${c.id}">
+    const mutBadge = (c.partages && c.partages.parfums.length)
+      ? `<span style="background:#3b6ea5;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">🔗 mutualisée</span> ` : '';
+    const badges = `${mutBadge}${c.aCongeler?'<span style="background:#3b6ea5;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️ congel.</span> ':''}${c.aDebordement?'<span style="background:#a5453b;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">⚠ tendu</span> ':''}`;
+    return `<details class="panel cmd-retro" style="margin-bottom:12px" data-cmd="${c.id}" id="cmd-retro-${c.id}">
       <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div style="flex:1">
           <div style="font-weight:700;color:var(--bordeaux);font-size:1rem">${esc(c.clientNom)} <span style="font-weight:400;color:#9a8576;font-size:.82rem">· livraison ${esc(c.livraisonTxt)}</span></div>
@@ -29191,6 +29248,22 @@ function _agendaCommandesSection(cr){
     </details>`;
   }).join('');
   return cartes;
+}
+
+// Raccourci « voir B » : déplie la commande cible dans l'agenda et fait défiler vers elle.
+function goToCommande(orderId){
+  const el = document.getElementById('cmd-retro-'+orderId);
+  if(!el){ // pas dans la vue courante (hors horizon ou autre écran) → ouvrir le détail
+    if(typeof retroplanningView==='function') retroplanningView(orderId);
+    return;
+  }
+  el.open = true;
+  el.scrollIntoView({ behavior:'smooth', block:'center' });
+  // Flash visuel pour repérer la carte cible.
+  el.style.transition = 'box-shadow .3s';
+  const old = el.style.boxShadow;
+  el.style.boxShadow = '0 0 0 3px #3b6ea5';
+  setTimeout(()=>{ el.style.boxShadow = old; }, 900);
 }
 
 async function renderAgendaProduction(){
@@ -29207,7 +29280,7 @@ async function renderAgendaProduction(){
   // Vue COMMANDES REPLIABLES : une carte par commande (client + chevron), dépliant l'enchaînement
   // complet de ses étapes calées. Remplace le déroulé jour-par-jour pour la lisibilité.
   let cr=null;
-  try{ cr = await buildCommandesRetro(45); }catch(e){ console.error('commandesRetro',e); }
+  try{ cr = await buildCommandesRetro(45, mut); }catch(e){ console.error('commandesRetro',e); }
 
   const nbCmd = cr && cr.commandes ? cr.commandes.length : 0;
   main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div></div>
@@ -29368,9 +29441,9 @@ async function buildMutualisationSemaine(horizonJours){
         const slot = (slotWk.parfums[nom] ||= { qte:0, ganacheDelaiH:gDelai, commandes:[] });
         slot.qte += qte;
         if(slot.ganacheDelaiH==null && gDelai!=null) slot.ganacheDelaiH=gDelai;
-        slot.commandes.push({ client:cn, qte, montage:montageKey, livraison:String(dLiv).slice(0,10), aCongeler, sortir });
+        slot.commandes.push({ orderId:o.id, client:cn, qte, montage:montageKey, livraison:String(dLiv).slice(0,10), aCongeler, sortir });
         if(aCongeler){
-          slotWk.aCongeler.push({ client:cn, parfum:nom, qte, montage:montageKey, livraison:String(dLiv).slice(0,10), sortir });
+          slotWk.aCongeler.push({ orderId:o.id, client:cn, parfum:nom, qte, montage:montageKey, livraison:String(dLiv).slice(0,10), sortir });
         }
       });
       slotWk.ids.add(o.id);
