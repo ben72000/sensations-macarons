@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v703';
+const APP_VERSION = 'v705';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23236,7 +23236,7 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps), les coques (meringues mutualisées, 2 parfums appariés par meringue), et les montages (par parfum, au prorata de la quantité). Chaque temps indique sa source : « mesuré » (chronométré à l'atelier, fiable), « recette » (ta saisie) ou « estimé » (valeur par défaut). En dessous, l'agenda liste tes commandes triées par livraison. Touche le nom d'un client pour DÉPLIER la commande (chevron) : tu vois l'enchaînement de ses étapes calées avec les horaires dans tes plages A/B. Touche une étape pour son rétroplanning détaillé. Les commandes qui partagent des fournées portent un badge « 🔗 mutualisée » avec les raccourcis « voir » et « détail » vers les commandes liées. Règle clé : coques calées le JOUR du montage (fraîches), congélation proposée si impossible (badge ❄️).",
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps et sa pastille de couleur), les coques (meringues mutualisées, 2 parfums appariés par meringue), et les montages (par parfum, au prorata de la quantité). Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (fraîches), congélation proposée si impossible (badge ❄️).",
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","Touche une étape pour son rétroplanning détaillé"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
@@ -29515,25 +29515,49 @@ function _agendaPlanOpSection(plan){
     return `<span style="background:${m.c};color:#fff;font-size:.54rem;font-weight:600;padding:0 5px;border-radius:6px">${m.t}</span>`;
   };
   const fmtMin = m => m>=60 ? `${Math.floor(m/60)}h${String(Math.round(m%60)).padStart(2,'0')}` : `${Math.round(m)} min`;
+  // Pastille de couleur du parfum (réutilise flavorColor, cohérent avec le reste de l'app).
+  const dot = nom => `<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${(typeof flavorColor==='function')?flavorColor(nom):'#cbb89f'};border:1px solid rgba(0,0,0,.1);margin-right:7px;vertical-align:middle;flex:none"></span>`;
+  // [POOL] Décomposition d'une fournée par commande : qui contribue (et reçoit) combien.
+  // 2+ commandes = fournée réellement fusionnée → badge + détail « répartition retour ».
+  const poolLigne = (commandes) => {
+    const cmds = (commandes||[]).filter(c=>+c.qte>0);
+    if(cmds.length<=1){
+      const c = cmds[0];
+      return c ? `<div style="font-size:.72rem;color:#9a8576;margin-top:2px;padding-left:19px">${esc(c.client)} · ${c.qte}</div>` : '';
+    }
+    const total = cmds.reduce((a,c)=>a+(+c.qte||0),0);
+    const detail = cmds.map(c=>`${esc(c.client)} <b>${c.qte}</b>`).join(' <span style="color:#ccd">·</span> ');
+    return `<div style="font-size:.72rem;color:#3b6ea5;margin-top:3px;padding-left:19px">
+      <span style="background:#3b6ea5;color:#fff;font-size:.54rem;font-weight:600;padding:0 5px;border-radius:6px">🔗 fusionnée</span>
+      <span style="color:#9a8576"> ${total} = </span>${detail}
+      <span style="color:#9a8576"> → à répartir au montage</span>
+    </div>`;
+  };
 
   const semaines = plan.semaines.map(s=>{
     // GANACHE
-    const ganache = s.ganache.map(g=>`<div class="sum-box">
-      <div style="flex:1"><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qte} mac</span></div>
-      <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
+    const ganache = s.ganache.map(g=>`<div class="sum-box" style="flex-direction:column;align-items:stretch">
+      <div style="display:flex;align-items:center;width:100%">
+        <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qte} mac</span></span></div>
+        <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
+      </div>
+      ${poolLigne(g.commandes)}
     </div>`).join('');
     // COQUES (meringues appariées)
     const coques = s.coques.map((m,i)=>{
-      const rep = Object.entries(m.repartition).map(([p,q])=>`${esc(p)} <b>${q}</b>`).join(' + ');
+      const rep = Object.entries(m.repartition).map(([p,q])=>`${dot(p)}${esc(p)} <b>${q}</b>`).join(' <span style="color:#c9b8a4">+</span> ');
       return `<div class="sum-box">
         <div style="flex:1">🥣 Meringue ${i+1} · ${rep}${m.partielle?' <span style="color:#b08a3a;font-size:.7rem">(partielle)</span>':''}</div>
         <div><b>${fmtMin(m.dureeMin)}</b></div>
       </div>`;
     }).join('');
     // MONTAGE
-    const montage = s.montage.map(g=>`<div class="sum-box">
-      <div style="flex:1"><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qte} mac</span> <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span></div>
-      <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
+    const montage = s.montage.map(g=>`<div class="sum-box" style="flex-direction:column;align-items:stretch">
+      <div style="display:flex;align-items:center;width:100%">
+        <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qte} mac</span> <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span></span></div>
+        <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
+      </div>
+      ${poolLigne(g.commandes)}
     </div>`).join('');
 
     return `<div class="panel" style="margin-bottom:14px">
