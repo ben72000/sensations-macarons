@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v714';
+const APP_VERSION = 'v715';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -30216,9 +30216,17 @@ async function retroplanningView(orderId){
   };
 
   if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
-    // Vue CALÉE, en ordre CHRONOLOGIQUE (du premier geste à la livraison) et NUMÉROTÉE.
-    // jalonsCales est ordonné à rebours (livraison → début) : on inverse pour l'exécution.
-    const chrono = cale.jalonsCales.slice().reverse();
+    // Vue CALÉE, en ordre CHRONOLOGIQUE STRICT (tri par heure de début réelle).
+    // Lecture linéaire haut→bas : la 1re étape est ce que tu fais en PREMIER, la dernière = livraison.
+    const chrono = cale.jalonsCales.slice().sort((a,b)=>{
+      const ta = a.debut ? new Date(a.debut).getTime() : Infinity;
+      const tb = b.debut ? new Date(b.debut).getTime() : Infinity;
+      if(ta!==tb) return ta-tb;
+      // À heure égale, la livraison (ancre) passe en dernier.
+      if(a.type==='ancre') return 1;
+      if(b.type==='ancre') return -1;
+      return 0;
+    });
     // Numérotation : seules les étapes de TRAVAIL et d'attente sont numérotées (pas la livraison finale).
     let _num = 0;
     const rows = chrono.map(j=>{
