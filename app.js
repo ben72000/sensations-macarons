@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v706';
+const APP_VERSION = 'v713';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -3548,6 +3548,7 @@ async function recForm(id, prefill){
          <input type="number" step="0.5" min="0" id="f_ganacheDelai" value="${r.ganacheDelaiH!=null?r.ganacheDelaiH:12}" placeholder="12">
          <p class="note">Par défaut 12 h. Mets 0 pour les ganaches qui n'ont pas besoin de ce délai (exception).</p></div>
        <label class="switch-row"><input type="checkbox" id="f_coquesCongel" ${r.coquesCongelObligatoire?'checked':''}> ❄️ Coques à <b>congeler obligatoirement</b> avant montage (cas du grand format)</label>
+       <label class="switch-row"><input type="checkbox" id="f_chablonnee" ${r.chablonnee?'checked':''}> 🖌 Coques <b>chablonnées</b> (ajoute ~13 min / 200 coques au temps de production — ganaches humides : citron, framboise, coco citron vert…)</label>
      </div>
    </details>
    <details style="margin:8px 0" ${(r.congelObligatoire||r.heuresMaxSortie||r.jourJUniquement||r.joursToleranceFrigo!=null)?'open':''}><summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">🌡 Conservation (propre à la recette)</summary>
@@ -3766,6 +3767,7 @@ async function saveRec(id){
           return {componentId:cid, poids:Math.max(0, +val('cmpP_'+cid)||0)}; }),
     ganacheDelaiH: Math.max(0, +val('f_ganacheDelai')||0),
     coquesCongelObligatoire: !!document.getElementById('f_coquesCongel')?.checked,
+    chablonnee: !!document.getElementById('f_chablonnee')?.checked,
     congelObligatoire: !!document.getElementById('f_congelObl')?.checked,
     jourJUniquement: !!document.getElementById('f_jourJ')?.checked,
     heuresMaxSortie: (val('f_heuresMax')==='')?null:Math.max(0, +val('f_heuresMax')||0),
@@ -18657,7 +18659,7 @@ const APP_KB = [
     r:`<p>Une meringue = <b>240 coques (120 macarons) en standard</b>, <b>48 coques (24 macarons) en grand format</b>. La mutualisation (2 parfums dans une meringue) n'est <b>pas une règle</b> : elle ne sert qu'à combler la capacité. Un parfum qui a besoin de 120 remplit une meringue entière à lui seul. Règle : <b>1 division = 1 couleur = 1 parfum</b> (sauf personnalisation).</p>` },
   { id:'cuisson', titre:'Cuisson en cascade',
     tags:'cuisson four plaque cascade 39 12 coques 20 28 minutes enfourner',
-    r:`<p>1 plaque = <b>39 coques</b> (standard, 20 min) ou <b>12 coques</b> (grand format, 28 min). Enfournement en cascade : la 2ᵉ plaque part 7 min après la 1ʳᵉ, la 3ᵉ quand la 1ʳᵉ sort, etc. Le plan de production estime le temps four et le traite comme un temps passif (on prépare les ganaches pendant).</p>` },
+    r:`<p>1 plaque = <b>39 coques</b> (standard, 20 min) ou <b>12 coques</b> (grand format, 28 min). Enfournement en cascade : la 2ᵉ plaque part 6 min après la 1ʳᵉ, la 3ᵉ quand la 1ʳᵉ sort, etc. Le plan de production estime le temps four et le traite comme un temps passif (on prépare les ganaches pendant).</p>` },
   { id:'marches', titre:'Marchés (CA, fond de caisse, charges)',
     tags:'marche marches fond caisse stand deplacement ca especes cb cloture depart retour',
     r:`<p>Onglet <b>Marchés</b>. Renseigne lieu, horaires, quantité prévue, <b>fond de caisse</b>, et les <b>charges du marché</b> (stand, distance, carburant, temps de route). Le CA se ventile espèces/CB/autre (le fond de caisse est déduit des espèces). Les invendus se calculent par différentiel <b>départ − retour</b>. À la clôture, tout alimente la comptabilité.</p>` },
@@ -23236,8 +23238,8 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps et sa pastille de couleur), les coques (meringues mutualisées, 2 parfums appariés par meringue), et les montages (par parfum, au prorata de la quantité). Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler).",
-      steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","Touche une étape pour son rétroplanning détaillé"] },
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps et sa pastille de couleur), les coques (meringues mutualisées, 2 parfums appariés par meringue ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (par parfum, au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler).",
+      steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
       steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail en rattachant le parfum","Consulte l'onglet « Temps/parfum » pour voir tes temps mesurés par étape et par parfum","Plus tu mesures, plus les temps se fiabilisent (✓)"] },
@@ -29170,6 +29172,56 @@ function _retroPlacerCoquesJourJ(montageDebut, dureeCoques, conf){
   return { congeler:false, raison:'', debut:atDayMin(jour,best.debutMin), fin:atDayMin(jour,best.finMin), tropLongue:false };
 }
 
+// [CALAGE COQUES — placement meringue par meringue] Place chaque meringue de la semaine dans les
+// plages A/B, travail actif en UN créneau continu, calé au plus PRÈS du montage mais en gardant
+// 1h de coussin minimum (fenêtre : montage−9h → montage−1h). Cuisson en cascade (présence requise).
+// Si aucune plage ne convient dans la fenêtre → meringue la VEILLE avec congélation des coques.
+// meringues = plan.coques (avec actifMin, cuissonMin) ; montageDebut = Date ; conf = getAvailability().
+// Renvoie [{ index, parfums, debut, fin, finCuisson, congeler, raison }].
+function calerCoquesSemaine(meringues, montageDebut, conf){
+  conf = conf || (typeof getAvailability==='function' ? getAvailability() : null);
+  const COUSSIN_MIN = 60;          // 1h de coussin minimum avant le montage
+  const FRAICHEUR_MAX_MIN = (typeof PROC!=='undefined' && PROC.coquesTrouMaxH!=null ? PROC.coquesTrouMaxH : 9) * 60;
+  const out = [];
+  if(!montageDebut) return out;
+
+  // Limite haute de fin de cuisson : au plus tard montage − coussin.
+  let finCuissonMax = new Date(montageDebut.getTime() - COUSSIN_MIN*60000);
+  // Limite basse : montage − 9h (au-delà, congélation).
+  const finCuissonMin = new Date(montageDebut.getTime() - FRAICHEUR_MAX_MIN*60000);
+
+  // On place les meringues à rebours (la dernière cuite en premier, au plus près du montage),
+  // chaque meringue avant la précédente pour ne pas se chevaucher.
+  meringues.forEach((m, idx)=>{
+    const actif = +m.actifMin || 0;
+    const cuisson = +m.cuissonMin || 0;
+    const dureeTotale = actif + cuisson;   // travail actif + cuisson (présence requise) en continu
+    // On veut que la cuisson finisse au plus tard à finCuissonMax, donc le bloc actif+cuisson
+    // finit à finCuissonMax. _retroPlacerActive cale un bloc continu finissant au plus tard voulu.
+    const r = (typeof _retroPlacerActive==='function')
+      ? _retroPlacerActive(finCuissonMax, dureeTotale, conf)
+      : { debut:null, fin:null, tropLongue:true };
+
+    if(r.tropLongue || !r.debut){
+      // Pas de place dans la fenêtre → veille + congélation.
+      out.push({ index:idx, parfums:m.parfums, repartition:m.repartition, debut:null, fin:null,
+                 finCuisson:null, congeler:true, raison:'pas_de_place', actifMin:actif, cuissonMin:cuisson });
+      return;
+    }
+    const finCuisson = r.fin;
+    // Vérifie la règle de fraîcheur : fin de cuisson ne doit pas être avant montage−9h.
+    const congeler = finCuisson < finCuissonMin;
+    out.push({ index:idx, parfums:m.parfums, repartition:m.repartition,
+               debut:r.debut, fin:r.fin, finCuisson, congeler,
+               raison: congeler ? 'trop_tot_9h' : '', actifMin:actif, cuissonMin:cuisson });
+    // La meringue suivante (à rebours) doit finir avant le début de celle-ci.
+    finCuissonMax = new Date(r.debut.getTime());
+  });
+
+  return out;
+}
+
+
 async function retroplanningCale(orderId){
   const o = await db.orders.get(orderId);
   if(!o) return { ok:false, error:'Commande introuvable.' };
@@ -29546,19 +29598,31 @@ function _agendaPlanOpSection(plan){
     // COQUES (meringues appariées)
     const coques = s.coques.map((m,i)=>{
       const rep = Object.entries(m.repartition).map(([p,q])=>`${dot(p)}${esc(p)} <b>${q}</b>`).join(' <span style="color:#c9b8a4">+</span> ');
+      const detailTemps = (m.actifMin!=null && m.cuissonMin!=null)
+        ? `<div style="font-size:.7rem;color:#9a8576;margin-top:1px">🙋 ${m.actifMin} min actif${m.chablonMin>0?` <span style="color:#3f7d52">(dont 🖌 ${m.chablonMin} min chablonnage)</span>`:''} · 🔥 ${m.cuissonMin} min four (${m.nbPlaques} pl.)</div>` : '';
+      // Horaire calé dans les vraies plages A/B (début travail → fin cuisson).
+      const fmtH = d => { try{ return new Date(d).toLocaleString('fr-FR',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
+      const horaireCale = m.debut
+        ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 ${fmtH(m.debut)} → fin cuisson ${(()=>{try{return new Date(m.finCuisson||m.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}${m.congeler?' <span style="background:#3b6ea5;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️ à congeler</span>':''}</div>`
+        : (m.congeler?`<div style="font-size:.72rem;color:#3b6ea5;margin-top:2px">❄️ à congeler (pas de place dans la fenêtre de fraîcheur)</div>`:'');
       return `<div class="sum-box">
-        <div style="flex:1">🥣 Meringue ${i+1} · ${rep}${m.partielle?' <span style="color:#b08a3a;font-size:.7rem">(partielle)</span>':''}</div>
+        <div style="flex:1">🥣 Meringue ${i+1} · ${rep}${m.partielle?' <span style="color:#b08a3a;font-size:.7rem">(partielle)</span>':''}${detailTemps}${horaireCale}</div>
         <div><b>${fmtMin(m.dureeMin)}</b></div>
       </div>`;
     }).join('');
     // MONTAGE
-    const montage = s.montage.map(g=>`<div class="sum-box" style="flex-direction:column;align-items:stretch">
+    const montage = s.montage.map(g=>{
+      const specTxt = (g.specMin>0 && g.specDetail && g.specDetail.length)
+        ? `<div style="font-size:.7rem;color:#8a6d3b;margin-top:2px;padding-left:19px">⚙️ +${fmtMin(g.specMin)} : ${g.specDetail.map(d=>esc(d.nom)+' '+fmtMin(d.min)).join(' · ')}</div>` : '';
+      return `<div class="sum-box" style="flex-direction:column;align-items:stretch">
       <div style="display:flex;align-items:center;width:100%">
         <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qte} mac</span> <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span></span></div>
         <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
       </div>
+      ${specTxt}
       ${poolLigne(g.commandes)}
-    </div>`).join('');
+    </div>`;
+    }).join('');
 
     return `<div class="panel" style="margin-bottom:14px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #e8dccd;padding-bottom:6px;margin-bottom:10px">
@@ -29676,7 +29740,9 @@ async function buildMutualisationSemaine(horizonJours){
     if(dMontage < today0 || dMontage > horizon) continue;
 
     const wk = _isoWeekKey(montageKey) || montageKey;
-    const slotWk = (parSemaine[wk] ||= { parfums:{}, ids:new Set(), aCongeler:[] });
+    const slotWk = (parSemaine[wk] ||= { parfums:{}, ids:new Set(), aCongeler:[], montageRef:null });
+    // Montage de référence de la semaine = le plus PRÉCOCE (première échéance qui contraint les coques).
+    if(!slotWk.montageRef || montageKey < slotWk.montageRef) slotWk.montageRef = montageKey;
 
     // Produit fini à congeler ? Oui si la livraison est à plus d'1 jour après le montage.
     const dLiv0 = new Date(String(dLiv).slice(0,10)+'T12:00:00');
@@ -29737,9 +29803,35 @@ async function buildMutualisationSemaine(horizonJours){
       const fmt=x=>x.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
       label=`Semaine ${m[2]} · ${fmt(lundi)} → ${fmt(dim)}`;
     }
-    return { wk, label, totalMacarons, nbCommandes:s.ids.size, parfums, aCongeler:s.aCongeler };
+    return { wk, label, totalMacarons, nbCommandes:s.ids.size, parfums, aCongeler:s.aCongeler, montageRef:s.montageRef };
   });
   return { semaines, horizonJours };
+}
+
+
+// [TEMPS COQUES — modèle réel] Sépare le travail ACTIF (présence requise) du temps FOUR (cuisson).
+// Calibré sur relevé atelier RÉEL de Benjamin pour 200 coques (chablonnage exclu du temps général) :
+//   FIXE par fournée (meringue) : pesée ingrédients 3 + chauffe 4 + foisonnement 15 + pesée tant pour tant 6 = 28 min.
+//   PROPORTIONNEL au nb de coques : 63 min pour 200 coques (silpat, incorporation, macaronnage, pochages,
+//     tapages, claquages, appairages, vaisselle) = 0,315 min/coque.
+//   CHABLONNAGE : proportionnel, AJOUTÉ seulement pour les parfums concernés (citron, framboise, coco citron
+//     vert) — non inclus ici, géré à part. (13 min pour ~200 coques concernées ≈ 0,065 min/coque.)
+// Préchauffage four (~7 min) : se fait EN PARALLÈLE du macaronnage (four lancé au macaronnage, chaud à
+//   l'enfournement) → non ajouté au total, juste masqué par le travail actif.
+// Cuisson = présence requise, via cuissonCascade (four 2 plaques, décalage 6 min).
+// nbCoques = macarons × 2. coquesChablonnees = nb de coques chablonnées dans la fournée
+// (0,065 min/coque = 13 min / 200 coques, sans distinction parfum/format).
+// Renvoie { actifMin, cuissonMin, nbPlaques, totalMin, chablonMin }.
+function tempsCoquesFournee(nbCoques, coquesChablonnees){
+  nbCoques = Math.max(0, +nbCoques||0);
+  const nbChablon = Math.max(0, Math.min(nbCoques, +coquesChablonnees||0));
+  const FIXE_MIN = 28;                 // meringue (pesées + chauffe + foisonnement), fixe par fournée
+  const PAR_COQUE = 63/200;            // 0,315 min/coque : travail proportionnel relevé (hors chablonnage)
+  const CHABLON_PAR_COQUE = 13/200;    // 0,065 min/coque : chablonnage proportionnel (parfums concernés)
+  const chablonMin = Math.round(CHABLON_PAR_COQUE * nbChablon);
+  const actifMin = Math.round(FIXE_MIN + PAR_COQUE * nbCoques) + chablonMin;
+  const cuisson = (typeof cuissonCascade==='function') ? cuissonCascade(nbCoques, 'standard') : { makespanMin:0, nbPlaques:0 };
+  return { actifMin, cuissonMin: cuisson.makespanMin, nbPlaques: cuisson.nbPlaques, totalMin: actifMin + cuisson.makespanMin, chablonMin };
 }
 
 // [PLAN OPÉRATIONNEL — étape 1] Produit, par SEMAINE, le détail PARFUM PAR PARFUM de chaque étape
@@ -29795,16 +29887,55 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape){
     });
     const montage = s.parfums.map(p=>{
       const m = tempsMontageBatch(p.nom);
+      const base = round1(m.perBatch * (p.qte/TB));
+      // Temps spécifiques de la recette (noisettes, incrustation…), hors chablonnage (déjà compté aux coques).
+      let specMin = 0; const specDetail = [];
+      const rec = recByNom(p.nom);
+      if(rec && Array.isArray(rec.tempsSpecifiques)){
+        rec.tempsSpecifiques.forEach(op=>{
+          const d = Math.max(0, +op.duree||0); if(d<=0) return;
+          const nomOp = (op.nom||'').toLowerCase();
+          if(nomOp.includes('chablon')) return;   // chablonnage géré au niveau des coques
+          const min = (op.unite==='macaron') ? d*p.qte : d*(p.qte/TB);
+          specMin += min; specDetail.push({ nom:op.nom||'opération', min:round1(min) });
+        });
+      }
       return { parfum:p.nom, qte:p.qte, parBatchMin:m.perBatch, source:m.source,
-               dureeMin: round1(m.perBatch * (p.qte/TB)),
+               dureeMin: round1(base + specMin), baseMin:base, specMin:round1(specMin), specDetail,
                commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId})) };
     });
     const lignesCoques = s.parfums.map(p=>({ parfum:p.nom, besoinNet:p.qte }));
     const meringues = (typeof _packMeringues==='function') ? _packMeringues(lignesCoques) : [];
-    const coques = meringues.map(m=>({
-      parfums:m.parfums, repartition:m.repartition, macarons:m.macarons,
-      partielle:m.partielle, dureeMin: t.coques.estimatedTime
-    }));
+    const coques = meringues.map(m=>{
+      // Coques chablonnées de cette meringue : somme des coques des parfums dont la recette a chablonnee=true.
+      let coquesChablon = 0;
+      Object.entries(m.repartition||{}).forEach(([nom,q])=>{
+        const r = recByNom(nom);
+        if(r && r.chablonnee) coquesChablon += (+q||0)*2;   // q macarons → 2 coques chacun
+      });
+      const tc = (typeof tempsCoquesFournee==='function') ? tempsCoquesFournee((m.macarons||0)*2, coquesChablon) : null;
+      return {
+        parfums:m.parfums, repartition:m.repartition, macarons:m.macarons, partielle:m.partielle,
+        dureeMin: tc ? tc.totalMin : t.coques.estimatedTime,
+        actifMin: tc ? tc.actifMin : null, cuissonMin: tc ? tc.cuissonMin : null, nbPlaques: tc ? tc.nbPlaques : null,
+        chablonMin: tc ? tc.chablonMin : 0
+      };
+    });
+    // [CALAGE HORAIRE DES COQUES] Place chaque meringue dans les vraies plages A/B (getAvailability),
+    // étalée à rebours depuis le montage de référence de la semaine, ≤9h avant (sinon congélation).
+    if(s.montageRef && typeof calerCoquesSemaine==='function'){
+      try{
+        const montageDebut = new Date(s.montageRef+'T'+( (typeof PROC!=='undefined'&&PROC.montageHeureDef)||'14')+':00:00');
+        const cal = calerCoquesSemaine(coques, montageDebut, (typeof getAvailability==='function'?getAvailability():null));
+        cal.forEach(c=>{
+          if(coques[c.index]){
+            coques[c.index].debut = c.debut; coques[c.index].fin = c.fin;
+            coques[c.index].finCuisson = c.finCuisson;
+            coques[c.index].congeler = c.congeler; coques[c.index].congelRaison = c.raison;
+          }
+        });
+      }catch(e){ console.error('calerCoquesSemaine',e); }
+    }
     const totalGanacheMin = Math.round(ganache.reduce((a,g)=>a+g.dureeMin,0));
     const totalMontageMin = Math.round(montage.reduce((a,g)=>a+g.dureeMin,0));
     const totalCoquesMin  = coques.reduce((a,m)=>a+m.dureeMin,0);
@@ -29973,34 +30104,71 @@ async function retroplanningView(orderId){
   };
 
   let corps, sousTitre, debordementBanner='';
+  // [DÉTAIL PARFUM] Parfums de la commande, et meringues appariées pour les coques.
+  const _lignesCmd = (typeof orderToLines==='function') ? orderToLines(o) : [];
+  const _pf = {};
+  _lignesCmd.forEach(ln=>{
+    const src = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
+    src.forEach(p=>{ const n=(p.nom||'').trim(); const q=+p.qte||0; if(n&&q>0) _pf[n]=(_pf[n]||0)+q; });
+  });
+  const _parfumsListe = Object.keys(_pf).sort((a,b)=>_pf[b]-_pf[a]);
+  const _dot = nom => `<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${(typeof flavorColor==='function')?flavorColor(nom):'#cbb89f'};border:1px solid rgba(0,0,0,.1);margin-right:5px;vertical-align:middle;flex:none"></span>`;
+  // Détail HTML par type d'étape (ganache/montage en ligne ; coques groupées par meringue).
+  const _detailParfums = cle => {
+    if(!_parfumsListe.length) return '';
+    if(cle==='coques'){
+      const lignesC = _parfumsListe.map(n=>({parfum:n, besoinNet:_pf[n]}));
+      const meringues = (typeof _packMeringues==='function') ? _packMeringues(lignesC) : [];
+      if(!meringues.length) return '';
+      const items = meringues.map((m,i)=>{
+        const rep = Object.entries(m.repartition).map(([p,q])=>`${_dot(p)}${esc(p)} <b>${q}</b>`).join(' <span style="color:#c9b8a4">+</span> ');
+        return `<div style="font-size:.76rem;color:#7a6a60;margin-top:2px">🥣 Meringue ${i+1} · ${rep}${m.partielle?' <span style="color:#b08a3a">(partielle)</span>':''}</div>`;
+      }).join('');
+      return `<div style="margin-top:4px;padding-left:4px">${items}</div>`;
+    }
+    if(cle==='ganache' || cle==='cremeux' || cle==='montage'){
+      const enLigne = _parfumsListe.map(n=>`<span style="white-space:nowrap;margin-right:8px;display:inline-block">${_dot(n)}${esc(n)} <b>${_pf[n]}</b></span>`).join('');
+      return `<div style="margin-top:4px;padding-left:4px;font-size:.78rem;color:#7a6a60;line-height:1.7">${enLigne}</div>`;
+    }
+    return '';
+  };
+
   if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
-    // Vue CALÉE : on affiche début → fin pour les tâches de travail, et la période pour les attentes.
-    const rows = cale.jalonsCales.map(j=>{
+    // Vue CALÉE, en ordre CHRONOLOGIQUE (du premier geste à la livraison) et NUMÉROTÉE.
+    // jalonsCales est ordonné à rebours (livraison → début) : on inverse pour l'exécution.
+    const chrono = cale.jalonsCales.slice().reverse();
+    // Numérotation : seules les étapes de TRAVAIL et d'attente sont numérotées (pas la livraison finale).
+    let _num = 0;
+    const rows = chrono.map(j=>{
       const meta = TYPE_META[j.type] || TYPE_META.active;
+      const isLivraison = (j.cle==='livraison' || j.type==='ancre');
+      const numBadge = isLivraison ? '🏁' : `<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--bordeaux);color:#fff;font-size:.72rem;font-weight:700;flex:none">${++_num}</span>`;
       if(j.tropLongue){
-        return `<div class="sugg-row" style="align-items:flex-start">
+        return `<div class="sugg-row" style="align-items:flex-start;gap:8px">
+          ${numBadge}
           <div class="sugg-main">
             <div><b style="color:#b3261e">⚠️ ${esc(j.label)}</b></div>
-            <div style="font-size:.8rem;color:#b3261e;margin-top:1px">Trop longue pour tes créneaux habituels — à étaler sur plusieurs sessions (confirme l'organisation).</div>
+            <div style="font-size:.8rem;color:#b3261e;margin-top:1px">Trop longue pour tes créneaux habituels — à étaler sur plusieurs sessions.</div>
+            ${_detailParfums(j.cle)}
           </div></div>`;
       }
       let quand;
       if(j.type==='ancre'){
         quand = esc(fmtJ(j.debut));
       } else if(j.type==='libre'){
-        // période passive : du ... au ...
         const mj = (a,b)=> dayKey2(a)===dayKey2(b);
         quand = mj(j.debut,j.fin)
           ? `${esc(fmtJour(j.debut))} de ${esc(fmtHeure(j.debut))} à ${esc(fmtHeure(j.fin))}`
           : `de ${esc(fmtJour(j.debut))} ${esc(fmtHeure(j.debut))} à ${esc(fmtJour(j.fin))} ${esc(fmtHeure(j.fin))}`;
       } else {
-        // tâche active/encadrée : jour + créneau début-fin
         quand = `${esc(fmtJour(j.debut))} · ${esc(fmtHeure(j.debut))} → ${esc(fmtHeure(j.fin))}`;
       }
-      return `<div class="sugg-row" style="align-items:flex-start">
+      return `<div class="sugg-row" style="align-items:flex-start;gap:8px">
+        ${numBadge}
         <div class="sugg-main">
-          <div><b style="color:${meta.col}">${meta.ico} ${esc(j.label)}</b>${meta.tag?` <span style="font-size:.7rem;color:#9a8a82">· ${meta.tag}</span>`:''}</div>
+          <div><b style="color:${meta.col}">${meta.ico} ${esc(j.label)}</b>${meta.tag?` <span style="font-size:.7rem;color:#9a8a82">· ${meta.tag}</span>`:''}${j.congeler?' <span style="background:#3b6ea5;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️ à congeler</span>':''}</div>
           <div style="font-size:.82rem;color:#8a6d3b;margin-top:1px">${quand}</div>
+          ${_detailParfums(j.cle)}
         </div></div>`;
     }).join('');
     sousTitre = `Calé sur tes disponibilités · ${cale.nbMacarons} macaron(s)`;
@@ -30512,7 +30680,7 @@ const PROC = {
   maturationH: 24,     // maturation au frais avant vente (passif)
   cremeuxCongelH: 6,   // congélation du crémeux avant montage (passif, règle générale)
   decongelFrigoH: 2,   // grand format congelé : passage au frigo avant service (passif)
-  relancePlaqueMin: 7, // on enfourne la plaque suivante 7 min après la précédente
+  relancePlaqueMin: 6, // décalage minimum entre 2 enfournements (plaque 2 entre 6 min après plaque 1)
   coquesTrouMaxH: 9,   // coques VIDES : 6h de fraîcheur + 3h de tolérance avant garnissage ; au-delà = congélation
   coquesHeureMinMatin: 7 // démarrer les coques avant 7h du matin = absurde → congélation
 };
@@ -30522,7 +30690,7 @@ const CUISSON = {
   grand:    { coquesParPlaque:12, cuissonMin:28, coquesParMeringue:48,  macaronsParMeringue:24  }
 };
 // Temps FOUR total (makespan) pour cuire `nbCoques` d'un format donné, en cascade :
-// P1 à t=0, P2 à t=+7, puis P3 quand P1 sort, P4 7 min après, etc. (four ~2 plaques).
+// P1 à t=0, P2 à t=+6, puis P3 quand P1 sort, P4 6 min après, etc. (four ~2 plaques).
 // Renvoie {nbPlaques, makespanMin, four:[{plaque,entree,sortie}]}.
 function cuissonCascade(nbCoques, format){
   const C = CUISSON[format] || CUISSON.standard;
