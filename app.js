@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v687';
+const APP_VERSION = 'v689';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1403,13 +1403,15 @@ function navFavToggle(v){
   return a.includes(v);
 }
 
-// Libellé lisible d'une vue, lu depuis le bouton correspondant du menu.
+// Libellé lisible d'une vue, lu depuis la table _NAV_PAGES (source fiable, sans étoile parasite).
 function navViewLabel(v){
+  const pg = (typeof _NAV_PAGES!=='undefined') ? _NAV_PAGES.find(p=>p.v===v) : null;
+  if(pg) return pg.t;
+  // Repli : libellé du bouton, en retirant l'icône ET l'étoile éventuelle.
   const b=document.querySelector(`#sheetGrid button[data-v="${v}"]`);
   if(!b) return v;
-  // Le texte du bouton = icône + libellé ; on retire l'icône (premier span).
   const clone=b.cloneNode(true);
-  const ico=clone.querySelector('.ico'); if(ico) ico.remove();
+  clone.querySelectorAll('.ico, .fav-star').forEach(el=>el.remove());
   return clone.textContent.trim();
 }
 function navViewIco(v){
@@ -1423,15 +1425,16 @@ function navFavClick(ev, v){
   navFavToggle(v);
   navRenderFavoris();
   if(typeof navRenderRecents==='function') navRenderRecents();
+  if(typeof navApplyStars==='function') navApplyStars();
 }
-// Construit/rafraîchit la section « ⭐ Mes favoris » en tête du menu,
-// et met à jour l'état des étoiles sur chaque bouton.
-function navRenderFavoris(){
+// Pose/rafraîchit l'étoile de favori sur les boutons de la GRILLE PRINCIPALE uniquement.
+// Appelée APRÈS le rendu des zones favoris/récents pour les exclure (sinon étoiles parasites).
+function navApplyStars(){
   const grid=document.getElementById('sheetGrid');
   if(!grid) return;
   const favs=navFavLoad();
-  // 1) Étoile sur chaque bouton data-v (ajoutée une seule fois, état rafraîchi à chaque appel).
   grid.querySelectorAll('button[data-v]').forEach(btn=>{
+    if(btn.closest('#navFavZone') || btn.closest('#navRecentZone')) return;  // jamais sur les cartes
     const v=btn.dataset.v;
     let star=btn.querySelector('.fav-star');
     if(!star){
@@ -1445,7 +1448,13 @@ function navRenderFavoris(){
     star.textContent = on ? '★' : '☆';
     star.classList.toggle('on', on);
   });
-  // 2) Section favoris en haut.
+}
+// Construit/rafraîchit la section « ⭐ Mes favoris » en tête du menu.
+function navRenderFavoris(){
+  const grid=document.getElementById('sheetGrid');
+  if(!grid) return;
+  const favs=navFavLoad();
+  // Section favoris en haut.
   let host=document.getElementById('navFavZone');
   if(!host){
     host=document.createElement('div');
@@ -1549,6 +1558,7 @@ function openSheet(){
     navAdvEnsureVisible();
     if(typeof navRenderFavoris==='function') navRenderFavoris();
     if(typeof navRenderRecents==='function') navRenderRecents();
+    if(typeof navApplyStars==='function') navApplyStars();
     const pb=document.getElementById('sheetPrivacyBtn'); if(pb) pb.textContent = privacyModeEnabled()?'👁️ Afficher les données':'🙈 Mode discret';
     if(_histReady && !_popping){ try{ history.pushState({kind:'sheet'}, '', '#menu'); }catch(e){} } }
 }
@@ -23164,9 +23174,9 @@ const GUIDE_THEMES = [
     { v:'dash', t:'Tableau de bord', ico:'◷', resume:"Ta vue d'ensemble : CA, stock, alertes.",
       detail:"Le cœur de l'app : chiffre d'affaires du mois, total, macarons en stock, alertes. Chaque chiffre a un petit « i » pour comprendre ce qu'il signifie.",
       steps:["Consulte tes indicateurs clés","Touche un « i » pour l'explication","Touche une carte pour aller plus loin"] },
-    { v:'compta', t:'Comptabilité', ico:'📒', resume:"CA facturé vs encaissé, charges, cotisations.",
-      detail:"Deux lectures de ton CA (facturé et encaissé), tes charges, et tes cotisations sociales calculées au bon taux. Pour piloter sans être comptable.",
-      steps:["Compare CA facturé et encaissé","Vérifie tes charges et cotisations"] },
+    { v:'compta', t:'Comptabilité', ico:'📒', resume:"CA facturé vs encaissé, charges, cotisations, manque à gagner livraison.",
+      detail:"Deux lectures de ton CA (facturé et encaissé), tes charges, et tes cotisations sociales calculées au bon taux. Inclut le graphique « Manque à gagner livraison » : deux courbes cumulées (CA réel en doré, CA potentiel en vert) qui chiffrent ce que tu laisses sur la table en ne facturant pas tes livraisons. Un « + » marque les périodes où une livraison a été facturée. Zoom jour / semaine / mois, et encart de synthèse chiffré dessous.",
+      steps:["Compare CA facturé et encaissé","Vérifie tes charges et cotisations","Consulte le manque à gagner livraison (courbes dorée vs verte)","Change la granularité (jour/semaine/mois) pour zoomer"] },
     { v:'analyse', t:'Analyse & assistant', ico:'🤖', resume:"Anti-gaspi, alertes et conseils.",
       detail:"Analyse ton activité : alertes de rupture à venir, suggestions anti-gaspi, et indicateurs de sérénité.",
       steps:["Consulte les alertes et conseils","Anticipe tes ruptures et pertes"] },
@@ -23174,8 +23184,20 @@ const GUIDE_THEMES = [
       detail:"Classe tes parfums par rentabilité réelle (marge), pour orienter ta production vers ce qui paie.",
       steps:["Compare les marges par parfum","Oriente ta production en conséquence"] },
     { v:'couts', t:'Coûts & prix', ico:'€', resume:"Calculer tes coûts de revient et fixer tes prix.",
-      detail:"Calcule le coût de revient de chaque recette (matières, emballage, main-d'œuvre, pertes) pour fixer des prix justes et rentables.",
-      steps:["Vérifie le coût de revient d'une recette","Ajuste tes prix de vente"] },
+      detail:"Calcule le coût de revient de chaque recette (matières, emballage, main-d'œuvre, pertes) pour fixer des prix justes et rentables. Si une matière n'a pas de prix de lot, l'app retombe automatiquement sur son prix indicatif (au kilo) pour ne pas sous-estimer le coût.",
+      steps:["Vérifie le coût de revient d'une recette","Ajuste tes prix de vente","Renseigne un prix indicatif sur les matières sans lot chiffré"] },
+    { v:'pilotage', t:'Pilotage stratégique', ico:'📈', resume:"Ton centre de pilotage financier en temps réel.",
+      detail:"Vue de pilotage qui rassemble tes indicateurs clés au même endroit : CA du mois et de l'année, marge brute, marge nette, panier moyen. Pensé pour prendre des décisions d'un coup d'œil, avec un accès direct à l'analyse de rentabilité détaillée.",
+      steps:["Consulte tes KPI du mois et de l'année","Touche un « i » pour comprendre un indicateur","Ouvre la rentabilité détaillée pour creuser"] },
+    { v:'stats', t:'Statistiques', ico:'📊', resume:"Tes tendances : parfums, produits, évolution dans le temps.",
+      detail:"Analyse tes ventes sous tous les angles : consommation par parfum, préférences par produit, évolution du CA et des volumes dans le temps. Basé sur tes commandes payées, pour voir ce qui marche vraiment et anticiper tes productions.",
+      steps:["Repère tes parfums et produits phares","Suis l'évolution de ton CA et de tes volumes","Adapte ton offre aux tendances réelles"] },
+    { v:'rentabilite', t:'Analyse de rentabilité', ico:'📈', resume:"Ce que chaque client te rapporte vraiment.",
+      detail:"Va au-delà du chiffre d'affaires : coût de production réel (matières + emballages) et classement de tes clients par rentabilité. Pour savoir qui te fait vraiment gagner ta vie, pas seulement qui commande le plus.",
+      steps:["Consulte le classement clients par rentabilité","Repère les clients à forte vs faible marge","Oriente ta relation commerciale en conséquence"] },
+    { v:'revenuhoraire', t:'Mon revenu horaire', ico:'⏳', resume:"Combien tu peux réellement te payer de l'heure.",
+      detail:"Estime ce que tu peux espérer te verser, d'après tes ventes et ta production réelles. L'app affiche d'abord un niveau de confiance selon la complétude de tes données (plus elles sont complètes, plus le calcul est juste), puis le revenu horaire estimé. Un repère précieux pour savoir si ton activité te rémunère correctement.",
+      steps:["Regarde ton niveau de confiance (fiabilité des données)","Complète tes données pour affiner le calcul","Lis ton revenu horaire estimé"] },
   ]},
   { titre:'Organisation & sécurité', emoji:'🛟', color:'#5a8aa0', items:[
     { v:'pms', t:'Plan de maîtrise sanitaire', ico:'🌡', resume:"Relevés de température et nettoyage (HACCP).",
