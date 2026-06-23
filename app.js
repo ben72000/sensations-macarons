@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v692';
+const APP_VERSION = 'v694';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1285,7 +1285,7 @@ async function runUndo(){
 }
 const overlay=document.getElementById('overlay'), modal=document.getElementById('modal');
 function openModal(html){ modal.innerHTML=html; overlay.classList.add('show');
-  if(_histReady && !_popping){ try{ history.pushState({kind:'modal'}, '', '#modal'); }catch(e){} } }
+  if(_histReady && !_popping){ try{ history.pushState({kind:'modal', view:view}, '', '#modal'); }catch(e){} } }
 // ============================================================
 //  AFFICHAGE D'UN DOCUMENT IMPRIMABLE (facture, étiquettes, liste…)
 //  dans une COUCHE intégrée à l'app (pas une fenêtre séparée).
@@ -1309,7 +1309,7 @@ function openPrintView(htmlDoc, opts){
   const doc = frame.contentWindow.document;
   doc.open(); doc.write(htmlDoc); doc.close();
   // entrée d'historique pour que le bouton « retour » ferme la vue au lieu de quitter l'app
-  if(_histReady){ try{ history.pushState({kind:'printview'}, '', '#print'); }catch(e){} }
+  if(_histReady){ try{ history.pushState({kind:'printview', view:view}, '', '#print'); }catch(e){} }
   document.body.style.overflow='hidden';
 }
 function printPrintView(){
@@ -1342,6 +1342,9 @@ overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(); })
 
 // --------- Router ---------
 let view='dash';
+// Sens de la dernière navigation, pour l'animation de profondeur (cascade) :
+// 'forward' = on ouvre une rubrique (glisse par-dessus) ; 'back' = retour (redescend/révèle).
+let _navDir='forward';
 const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
@@ -1593,6 +1596,7 @@ function goView(v, opts){
     if(!pmsGuardUnsaved()) return;
   }
   if(typeof hideUndo==='function') hideUndo();
+  _navDir='forward';
   view=v; setActiveView(view); render();
   if(typeof navUsageTrack==='function') navUsageTrack(v);   // traçage usage (favoris/récents/stats)
   if(_histReady && !_popping && !opts.replace){
@@ -1636,7 +1640,7 @@ function openSheet(){
     if(typeof navRenderFavoris==='function') navRenderFavoris();
     if(typeof navApplyStars==='function') navApplyStars();
     const pb=document.getElementById('sheetPrivacyBtn'); if(pb) pb.textContent = privacyModeEnabled()?'👁️ Afficher les données':'🙈 Mode discret';
-    if(_histReady && !_popping){ try{ history.pushState({kind:'sheet'}, '', '#menu'); }catch(e){} } }
+    if(_histReady && !_popping){ try{ history.pushState({kind:'sheet', view:view}, '', '#menu'); }catch(e){} } }
 }
 function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); }
 
@@ -1965,7 +1969,11 @@ function render(){
   // Joue l'animation de transition APRÈS que le contenu est prêt (les vues sont async).
   // Sinon l'animation se joue sur l'ANCIEN contenu pendant le calcul de la nouvelle vue,
   // ce qui donne un effet de double affichage / rechargement (visible sur Recettes & Dashboard).
-  const playIn = ()=>{ if(main){ main.classList.remove('view-in'); void main.offsetWidth; main.classList.add('view-in'); } };
+  const playIn = ()=>{ if(main){
+    main.classList.remove('view-in','view-in-fwd','view-in-back');
+    void main.offsetWidth;
+    main.classList.add('view-in', _navDir==='back' ? 'view-in-back' : 'view-in-fwd');
+  } };
   try {
     const r = fn();
     if (r && typeof r.then === 'function') {
@@ -2009,10 +2017,12 @@ function initHistoryNav(){
       // 2) le menu (feuille iPhone) ouvert ? le retour le ferme.
       const sh=document.getElementById('sheetOverlay');
       if(sh && sh.classList.contains('show')){ closeSheet(); return; }
-      // 3) sinon, restaurer la vue indiquée par l'état (ou le dashboard).
+      // 3) sinon, restaurer la vue indiquée par l'état.
+      //    RÈGLE : si l'état ne précise pas de vue, on RESTE sur la rubrique courante
+      //    (ne jamais retomber sur l'accueil après une saisie/fermeture de modal).
       const st=e.state;
-      const v=(st && st.view) ? st.view : 'dash';
-      if(VIEWS[v]){ view=v; setActiveView(view); render(); }
+      const v=(st && st.view) ? st.view : view;
+      if(VIEWS[v]){ _navDir='back'; view=v; setActiveView(view); render(); }
     } finally { _popping=false; }
   });
 }

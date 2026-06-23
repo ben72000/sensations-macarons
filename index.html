@@ -88,7 +88,19 @@ h1,h2,h3,.serif{font-family:'Bellota','Georgia','Times New Roman',serif;letter-s
 .main{margin-left:236px;flex:1;min-width:0;max-width:calc(100% - 236px);padding:32px 40px 60px;overflow-x:hidden}
 @keyframes viewIn{ from{opacity:0} to{opacity:1} }
 .main.view-in{ animation:viewIn .22s ease }
-@media (prefers-reduced-motion: reduce){ .main.view-in{ animation:none } }
+/* Effet de PROFONDEUR (cascade) : la rubrique qui s'ouvre se pose par-dessus,
+   celle qui revient remonte du dessous. Illusion d'empilement, une seule vue active. */
+@keyframes viewInFwd{
+  from{ opacity:0; transform:translateY(14px) scale(.97); box-shadow:0 -8px 24px rgba(80,50,30,.10) }
+  to{ opacity:1; transform:translateY(0) scale(1); box-shadow:none }
+}
+@keyframes viewInBack{
+  from{ opacity:0; transform:scale(1.03) }
+  to{ opacity:1; transform:scale(1) }
+}
+.main.view-in-fwd{ animation:viewInFwd .26s cubic-bezier(.32,.72,.32,1) }
+.main.view-in-back{ animation:viewInBack .24s ease }
+@media (prefers-reduced-motion: reduce){ .main.view-in, .main.view-in-fwd, .main.view-in-back{ animation:none } }
 .topbar{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px;flex-wrap:wrap;gap:12px;
   padding-bottom:18px;border-bottom:1px solid var(--hair)}
 .topbar h1{font-size:2.05rem;font-weight:600;color:var(--bordeaux);line-height:1.05}
@@ -1276,9 +1288,9 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=692" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=692"></script>
-<script src="utils.js?v=692"></script>
-<script src="app.js?v=692"></script>
+<script src="html5-qrcode.min.js?v=694" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=694"></script>
+<script src="utils.js?v=694"></script>
+<script src="app.js?v=694"></script>
 </body>
 </html>
