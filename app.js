@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v713';
+const APP_VERSION = 'v714';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23238,7 +23238,7 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps et sa pastille de couleur), les coques (meringues mutualisées, 2 parfums appariés par meringue ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (par parfum, au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler).",
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps et sa pastille de couleur), les coques (meringues mutualisées, 2 parfums appariés par meringue ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (par parfum, au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »).",
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
@@ -29221,6 +29221,46 @@ function calerCoquesSemaine(meringues, montageDebut, conf){
   return out;
 }
 
+// [MATURATION FLEXIBLE] Cale les coques en jouant sur la maturation si besoin.
+// Règle métier (Benjamin) : la fraîcheur des coques (montées le jour de leur confection) PRIME
+// sur la maturation de 24h. Si la maturation pleine force une congélation des coques, on RÉDUIT
+// la maturation par paliers (jusqu'à 12h minimum) et on garde la PREMIÈRE valeur qui évite la
+// congélation — ce qui maximise la maturation. Réduction en DERNIER RECOURS uniquement.
+// livraison = Date de remise au client ; maturationIdealeH = 24 par défaut ; decongelH = avance grand format.
+// Renvoie { coques:[...], maturationRetenueH, maturationReduite:bool, montageDebut }.
+function calerCoquesAvecMaturation(meringues, livraison, maturationIdealeH, conf, decongelH){
+  conf = conf || (typeof getAvailability==='function' ? getAvailability() : null);
+  const MAT_MIN_H = 12;            // plancher de maturation (qualité)
+  const PAS_H = 3;                 // paliers de réduction
+  const matIdeale = (maturationIdealeH!=null) ? +maturationIdealeH : 24;
+  const dec = (+decongelH||0);
+  // Point de référence après froid (grand format) puis maturation.
+  const refApresFroid = new Date(new Date(livraison).getTime() - dec*3600000);
+
+  const essai = matH => {
+    const montageDebut = new Date(refApresFroid.getTime() - matH*3600000);
+    const coques = calerCoquesSemaine(meringues, montageDebut, conf);
+    const congele = coques.some(c=>c.congeler);
+    return { coques, congele, montageDebut, matH };
+  };
+
+  // 1) Essai à la maturation idéale.
+  let res = essai(matIdeale);
+  if(!res.congele || matIdeale<=MAT_MIN_H){
+    return { coques:res.coques, maturationRetenueH:matIdeale, maturationReduite:false, montageDebut:res.montageDebut };
+  }
+  // 2) Réduction par paliers tant que ça congèle, jusqu'au plancher.
+  for(let mat=matIdeale-PAS_H; mat>=MAT_MIN_H; mat-=PAS_H){
+    const r = essai(mat);
+    if(!r.congele){
+      return { coques:r.coques, maturationRetenueH:mat, maturationReduite:true, montageDebut:r.montageDebut };
+    }
+    res = r;
+  }
+  // 3) Même au plancher ça congèle : on garde le plancher (meilleure tentative) + signal congélation.
+  return { coques:res.coques, maturationRetenueH:MAT_MIN_H, maturationReduite:true, montageDebut:res.montageDebut, congelInevitable:true };
+}
+
 
 async function retroplanningCale(orderId){
   const o = await db.orders.get(orderId);
@@ -29294,13 +29334,51 @@ async function retroplanningCale(orderId){
     }
   }
 
+  // [MATURATION FLEXIBLE] Règle métier : la fraîcheur des coques (montées le jour de leur confection)
+  // PRIME sur la maturation de 24h. Si les coques finissent congelées, on RÉDUIT la maturation par
+  // paliers (jusqu'à 12h min) pour reculer le montage et tenter de garder les coques fraîches le jour J.
+  // On garde la PREMIÈRE maturation qui évite la congélation (donc la plus proche de 24h possible).
+  let maturationRetenueH = (rp.maturationH!=null) ? rp.maturationH : 0;
+  let maturationReduite = false;
+  if(rp.aStandard && rp.maturationH>12){
+    const coquesJalon = jalonsCales.find(j=>j.cle==='coques');
+    if(coquesJalon && coquesJalon.congeler){
+      const MAT_MIN_H = 12, PAS_H = 3;
+      const matIdx = jalonsCales.findIndex(j=>j.cle==='maturation');
+      for(let mat=rp.maturationH-PAS_H; mat>=MAT_MIN_H; mat-=PAS_H){
+        // Recalcule le montage avec cette maturation réduite, puis les coques le jour du montage.
+        const refApresFroid = rp.decongelH>0 ? new Date(new Date(rp.livraison).getTime()-rp.decongelH*3600000) : new Date(rp.livraison);
+        const finMontageTest = new Date(refApresFroid.getTime() - mat*3600000);
+        const rMontage = _retroPlacerActive(finMontageTest, durees.montage, conf);
+        if(rMontage.tropLongue || !rMontage.debut) continue;
+        const cTest = _retroPlacerCoquesJourJ(rMontage.debut, durees.coques, conf);
+        if(!cTest.congeler && cTest.debut){
+          // Trouvé : cette maturation garde les coques fraîches. On applique tout.
+          maturationRetenueH = mat; maturationReduite = true;
+          const montageJalon = jalonsCales.find(j=>j.cle==='montage');
+          if(montageJalon){ montageJalon.debut = rMontage.debut; montageJalon.fin = rMontage.fin; montageJalon.tropLongue=false; }
+          if(matIdx>=0){
+            jalonsCales[matIdx].duree = mat*60;
+            jalonsCales[matIdx].label = `Maturation (${mat} h au frais)`;
+            jalonsCales[matIdx].debut = new Date(rMontage.fin);
+            jalonsCales[matIdx].fin = new Date(refApresFroid);
+          }
+          coquesJalon.debut = cTest.debut; coquesJalon.fin = cTest.fin;
+          coquesJalon.congeler = false; coquesJalon.tropLongue = false; coquesJalon.congelRaison = '';
+          break;
+        }
+      }
+    }
+  }
+
   const aDesDebordements = jalonsCales.some(j=>j.tropLongue);
   const debutProd = jalonsCales.find(j=>j.debut && j.type!=='ancre');
   return {
     ok:true, livraison:rp.livraison, nbMacarons:nbMac, durees,
     jalonsCales, aDesDebordements,
     debutProduction: debutProd ? debutProd.debut : null,
-    contraintes:rp.contraintes
+    contraintes:rp.contraintes,
+    maturationRetenueH, maturationReduite
   };
 }
 
@@ -29726,12 +29804,12 @@ async function buildMutualisationSemaine(horizonJours){
     if(!dLiv) continue;
 
     // Jour de montage calé (pilote la fraîcheur). À défaut, repli sur la date de livraison.
-    let montageKey=null;
+    let montageKey=null, montageISO=null;
     try{
       const cale = await retroplanningCale(o.id);
       if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
         const m = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
-        if(m) montageKey = new Date(m.debut).toISOString().slice(0,10);
+        if(m){ montageKey = new Date(m.debut).toISOString().slice(0,10); montageISO = m.debut; }
       }
     }catch(e){}
     if(!montageKey) montageKey = String(dLiv).slice(0,10);
@@ -29740,9 +29818,12 @@ async function buildMutualisationSemaine(horizonJours){
     if(dMontage < today0 || dMontage > horizon) continue;
 
     const wk = _isoWeekKey(montageKey) || montageKey;
-    const slotWk = (parSemaine[wk] ||= { parfums:{}, ids:new Set(), aCongeler:[], montageRef:null });
+    const slotWk = (parSemaine[wk] ||= { parfums:{}, ids:new Set(), aCongeler:[], montageRef:null, montageRefISO:null });
     // Montage de référence de la semaine = le plus PRÉCOCE (première échéance qui contraint les coques).
-    if(!slotWk.montageRef || montageKey < slotWk.montageRef) slotWk.montageRef = montageKey;
+    if(!slotWk.montageRef || montageKey < slotWk.montageRef){
+      slotWk.montageRef = montageKey;
+      slotWk.montageRefISO = montageISO || (montageKey+'T14:00:00');
+    }
 
     // Produit fini à congeler ? Oui si la livraison est à plus d'1 jour après le montage.
     const dLiv0 = new Date(String(dLiv).slice(0,10)+'T12:00:00');
@@ -29803,7 +29884,7 @@ async function buildMutualisationSemaine(horizonJours){
       const fmt=x=>x.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
       label=`Semaine ${m[2]} · ${fmt(lundi)} → ${fmt(dim)}`;
     }
-    return { wk, label, totalMacarons, nbCommandes:s.ids.size, parfums, aCongeler:s.aCongeler, montageRef:s.montageRef };
+    return { wk, label, totalMacarons, nbCommandes:s.ids.size, parfums, aCongeler:s.aCongeler, montageRef:s.montageRef, montageRefISO:s.montageRefISO };
   });
   return { semaines, horizonJours };
 }
@@ -29925,7 +30006,8 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape){
     // étalée à rebours depuis le montage de référence de la semaine, ≤9h avant (sinon congélation).
     if(s.montageRef && typeof calerCoquesSemaine==='function'){
       try{
-        const montageDebut = new Date(s.montageRef+'T'+( (typeof PROC!=='undefined'&&PROC.montageHeureDef)||'14')+':00:00');
+        // Vraie heure de montage calée par le rétroplanning (sinon repli 14h sur la date).
+        const montageDebut = s.montageRefISO ? new Date(s.montageRefISO) : new Date(s.montageRef+'T14:00:00');
         const cal = calerCoquesSemaine(coques, montageDebut, (typeof getAvailability==='function'?getAvailability():null));
         cal.forEach(c=>{
           if(coques[c.index]){
@@ -30172,6 +30254,9 @@ async function retroplanningView(orderId){
         </div></div>`;
     }).join('');
     sousTitre = `Calé sur tes disponibilités · ${cale.nbMacarons} macaron(s)`;
+    if(cale.maturationReduite){
+      debordementBanner += `<div class="banner" style="background:#eef5ee;border-color:#bcd8bc;margin-top:8px">🧊 <div><b>Maturation ajustée à ${cale.maturationRetenueH} h</b> (au lieu de 24 h) pour garder les coques fraîches le jour du montage et éviter la congélation. La fraîcheur des coques prime sur la durée de maturation.</div></div>`;
+    }
     if(cale.aDesDebordements){
       debordementBanner = `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-top:8px">⚠️ <div>Une ou plusieurs étapes ne tiennent pas dans tes créneaux habituels. Il faudra les étaler sur plusieurs sessions, ou élargir tes disponibilités sur cette période.</div></div>`;
     }
