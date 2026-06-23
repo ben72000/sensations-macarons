@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v691';
+const APP_VERSION = 'v692';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1424,7 +1424,6 @@ function navFavClick(ev, v){
   ev.stopPropagation();              // ne pas déclencher la navigation du bouton
   navFavToggle(v);
   navRenderFavoris();
-  if(typeof navRenderRecents==='function') navRenderRecents();
   if(typeof navApplyStars==='function') navApplyStars();
 }
 // Pose/rafraîchit l'étoile de favori sur les boutons de la GRILLE PRINCIPALE uniquement.
@@ -1473,7 +1472,7 @@ function navSetupLongPress(){
         // Retour visuel immédiat + reconstruction des zones.
         btn.classList.add('lp-flash');
         setTimeout(()=>btn.classList.remove('lp-flash'), 220);
-        navRenderFavoris(); navRenderRecents(); navApplyStars();
+        navRenderFavoris(); navApplyStars();
         if(typeof toast==='function') toast(nowFav?'⭐ Ajouté aux favoris':'Retiré des favoris');
       }, 480);
     };
@@ -1563,26 +1562,13 @@ function navSetupFavDrag(){
 }
 
 // Bandeau « Récemment consulté » — alimenté automatiquement par le traçage d'usage.
-// Exclut la page courante et celles déjà en favoris (évite les doublons visuels).
+// Récents RETIRÉS du menu (réorganisation automatique jugée peu intuitive).
+// Le traçage d'usage continue en arrière-plan (pour une future réorg. pilotée par données),
+// mais plus aucun bandeau « récemment consulté » ne s'affiche. Cette fonction nettoie
+// simplement la zone si un ancien rendu en avait laissé une.
 function navRenderRecents(){
-  const grid=document.getElementById('sheetGrid');
-  if(!grid) return;
-  const favs=navFavLoad();
-  const rec=navRecents(true).filter(v=>!favs.includes(v)).slice(0,6);
-  let host=document.getElementById('navRecentZone');
-  if(!host){
-    host=document.createElement('div');
-    host.id='navRecentZone';
-    // Placé juste après la zone favoris (ou en tête si pas de favoris).
-    const fav=document.getElementById('navFavZone');
-    if(fav && fav.nextSibling) grid.insertBefore(host, fav.nextSibling);
-    else if(fav) grid.appendChild(host);
-    else grid.insertBefore(host, grid.firstChild);
-  }
-  if(!rec.length){ host.innerHTML=''; return; }   // rien à montrer : zone vide discrète
-  const cards=rec.map(v=>`<button data-v="${v}" class="rec-card"><span class="ico">${esc(navViewIco(v))}</span><span>${esc(navViewLabel(v))}</span></button>`).join('');
-  host.innerHTML=`<div class="nav-rec-title">🕘 Récemment consulté</div><div class="sheet-grid nav-rec-grid">${cards}</div>`;
-  host.querySelectorAll('button[data-v]').forEach(b=>b.addEventListener('click', ()=>navTo(b)));
+  const host=document.getElementById('navRecentZone');
+  if(host) host.remove();
 }
 
 function setActiveView(v){
@@ -1648,7 +1634,6 @@ function openSheet(){
   const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
     navAdvEnsureVisible();
     if(typeof navRenderFavoris==='function') navRenderFavoris();
-    if(typeof navRenderRecents==='function') navRenderRecents();
     if(typeof navApplyStars==='function') navApplyStars();
     const pb=document.getElementById('sheetPrivacyBtn'); if(pb) pb.textContent = privacyModeEnabled()?'👁️ Afficher les données':'🙈 Mode discret';
     if(_histReady && !_popping){ try{ history.pushState({kind:'sheet'}, '', '#menu'); }catch(e){} } }
@@ -1834,7 +1819,7 @@ function radialInit(){
       const rect=m.getBoundingClientRect();
       const ghost=m.cloneNode(true);
       ghost.id='radialGhost';
-      ghost.style.cssText=`position:fixed;left:0;top:0;width:100%;z-index:58;margin:0;
+      ghost.style.cssText=`position:fixed;left:0;top:0;width:100%;z-index:62;margin:0;
         pointer-events:none;transform:${m.style.transform||''};opacity:${m.style.opacity||1};
         transform-origin:100% 100%;border-radius:${m.style.borderRadius||0};box-shadow:${m.style.boxShadow||'none'};
         background:var(--creme,#F5F0E8)`;
@@ -1843,13 +1828,15 @@ function radialInit(){
       //    le geste ne fait qu'OUVRIR LE MENU par-dessus (retour menu, pas retour accueil).
       m.style.transition='none'; m.style.transform=''; m.style.opacity='';
       m.style.borderRadius=''; m.style.boxShadow=''; m.style.transformOrigin='';
-      // 3) on anime le calque qui glisse et sort, révélant la page (inchangée) dessous,
-      //    puis on ouvre le menu.
+      // 2b) on ouvre le menu TOUT DE SUITE (ghost au-dessus, z-index 62 > menu 60) : ainsi le menu
+      //     est déjà présent quand la feuille s'envole, plus aucune « page nue » visible entre les deux.
+      if(typeof openSheet==='function') openSheet();
+      // 3) on anime le calque (la page quittée) qui glisse et sort, révélant le menu dessous.
       requestAnimationFrame(()=>{
         ghost.style.transition='transform .28s cubic-bezier(.4,0,.6,1), opacity .28s ease';
         ghost.style.transform='translate(100%,100%) rotate(10deg) scale(.5)';
         ghost.style.opacity='0';
-        setTimeout(()=>{ ghost.remove(); if(typeof openSheet==='function') openSheet(); }, 300);
+        setTimeout(()=>{ ghost.remove(); }, 300);
       });
     } else {
       // pas validé : la feuille revient se poser en place
