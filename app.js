@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v684';
+const APP_VERSION = 'v687';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1403,6 +1403,88 @@ function navFavToggle(v){
   return a.includes(v);
 }
 
+// Libellé lisible d'une vue, lu depuis le bouton correspondant du menu.
+function navViewLabel(v){
+  const b=document.querySelector(`#sheetGrid button[data-v="${v}"]`);
+  if(!b) return v;
+  // Le texte du bouton = icône + libellé ; on retire l'icône (premier span).
+  const clone=b.cloneNode(true);
+  const ico=clone.querySelector('.ico'); if(ico) ico.remove();
+  return clone.textContent.trim();
+}
+function navViewIco(v){
+  const b=document.querySelector(`#sheetGrid button[data-v="${v}"]`);
+  const ico=b && b.querySelector('.ico');
+  return ico ? ico.textContent : '•';
+}
+// Bascule un favori puis rafraîchit l'affichage du menu (étoiles + section du haut).
+function navFavClick(ev, v){
+  ev.stopPropagation();              // ne pas déclencher la navigation du bouton
+  navFavToggle(v);
+  navRenderFavoris();
+  if(typeof navRenderRecents==='function') navRenderRecents();
+}
+// Construit/rafraîchit la section « ⭐ Mes favoris » en tête du menu,
+// et met à jour l'état des étoiles sur chaque bouton.
+function navRenderFavoris(){
+  const grid=document.getElementById('sheetGrid');
+  if(!grid) return;
+  const favs=navFavLoad();
+  // 1) Étoile sur chaque bouton data-v (ajoutée une seule fois, état rafraîchi à chaque appel).
+  grid.querySelectorAll('button[data-v]').forEach(btn=>{
+    const v=btn.dataset.v;
+    let star=btn.querySelector('.fav-star');
+    if(!star){
+      star=document.createElement('span');
+      star.className='fav-star';
+      star.addEventListener('click', e=>navFavClick(e, v));
+      btn.appendChild(star);
+      btn.style.position='relative';
+    }
+    const on=favs.includes(v);
+    star.textContent = on ? '★' : '☆';
+    star.classList.toggle('on', on);
+  });
+  // 2) Section favoris en haut.
+  let host=document.getElementById('navFavZone');
+  if(!host){
+    host=document.createElement('div');
+    host.id='navFavZone';
+    grid.insertBefore(host, grid.firstChild);
+  }
+  if(!favs.length){
+    host.innerHTML='<div class="nav-fav-empty">⭐ Touchez l\'étoile d\'une page pour l\'épingler ici.</div>';
+    return;
+  }
+  const cards=favs.map(v=>`<button data-v="${v}" class="fav-card"><span class="ico">${esc(navViewIco(v))}</span><span>${esc(navViewLabel(v))}</span></button>`).join('');
+  host.innerHTML=`<div class="nav-fav-title">⭐ Mes favoris</div><div class="sheet-grid nav-fav-grid">${cards}</div>`;
+  // Câbler la navigation sur les cartes favorites.
+  host.querySelectorAll('button[data-v]').forEach(b=>b.addEventListener('click', ()=>navTo(b)));
+}
+
+// Bandeau « Récemment consulté » — alimenté automatiquement par le traçage d'usage.
+// Exclut la page courante et celles déjà en favoris (évite les doublons visuels).
+function navRenderRecents(){
+  const grid=document.getElementById('sheetGrid');
+  if(!grid) return;
+  const favs=navFavLoad();
+  const rec=navRecents(true).filter(v=>!favs.includes(v)).slice(0,6);
+  let host=document.getElementById('navRecentZone');
+  if(!host){
+    host=document.createElement('div');
+    host.id='navRecentZone';
+    // Placé juste après la zone favoris (ou en tête si pas de favoris).
+    const fav=document.getElementById('navFavZone');
+    if(fav && fav.nextSibling) grid.insertBefore(host, fav.nextSibling);
+    else if(fav) grid.appendChild(host);
+    else grid.insertBefore(host, grid.firstChild);
+  }
+  if(!rec.length){ host.innerHTML=''; return; }   // rien à montrer : zone vide discrète
+  const cards=rec.map(v=>`<button data-v="${v}" class="rec-card"><span class="ico">${esc(navViewIco(v))}</span><span>${esc(navViewLabel(v))}</span></button>`).join('');
+  host.innerHTML=`<div class="nav-rec-title">🕘 Récemment consulté</div><div class="sheet-grid nav-rec-grid">${cards}</div>`;
+  host.querySelectorAll('button[data-v]').forEach(b=>b.addEventListener('click', ()=>navTo(b)));
+}
+
 function setActiveView(v){
   document.querySelectorAll('.nav button, .tabbar button, .sheet-grid button').forEach(x=>{
     if(x.dataset && x.dataset.v) x.classList.toggle('active', x.dataset.v===v);
@@ -1465,6 +1547,8 @@ function pmsGuardUnsaved(){
 function openSheet(){
   const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
     navAdvEnsureVisible();
+    if(typeof navRenderFavoris==='function') navRenderFavoris();
+    if(typeof navRenderRecents==='function') navRenderRecents();
     const pb=document.getElementById('sheetPrivacyBtn'); if(pb) pb.textContent = privacyModeEnabled()?'👁️ Afficher les données':'🙈 Mode discret';
     if(_histReady && !_popping){ try{ history.pushState({kind:'sheet'}, '', '#menu'); }catch(e){} } }
 }
@@ -8976,6 +9060,48 @@ function _gsFields(prim, blobParts){
   };
 }
 
+// Pages du menu indexées pour la recherche globale (navigation).
+// Chaque entrée : vue, libellé affiché, et synonymes/mots-clés pour la tolérance de recherche.
+const _NAV_PAGES = [
+  {v:'dash',         t:'Accueil / Tableau de bord', k:'accueil dashboard tableau bord home'},
+  {v:'clients',      t:'Clients et prospects',      k:'client prospect contact carnet adresses'},
+  {v:'commandes',    t:'Commandes',                 k:'commande vente bon panier'},
+  {v:'documents',    t:'Devis & Factures',          k:'devis facture document facturation avoir'},
+  {v:'cal',          t:'Calendrier / Agenda',       k:'calendrier agenda planning rendez-vous date'},
+  {v:'fournisseurs', t:'Fournisseurs',              k:'fournisseur achat appro grossiste'},
+  {v:'matieres',     t:'Matières & lots / Stock',   k:'matiere lot stock ingredient denree inventaire reception'},
+  {v:'recettes',     t:'Recettes (BOM)',            k:'recette bom formule composition ganache coque'},
+  {v:'productions',  t:'Productions',               k:'production batch fabrication fournee lancement'},
+  {v:'agendaprod',   t:'Agenda production',         k:'agenda production planning fabrication retroplanning'},
+  {v:'atelier',      t:'Atelier (chronos)',         k:'atelier chrono temps minutage mesure'},
+  {v:'stockparfums', t:'Stock par parfum',          k:'stock parfum macaron disponible'},
+  {v:'couts',        t:'Coûts & prix',              k:'cout prix revient marge tarif'},
+  {v:'sauvegardes',  t:'Sauvegarde & sécurité',     k:'sauvegarde backup securite export restauration'},
+  {v:'produits',     t:'Offre / Coffrets',          k:'produit coffret offre catalogue boite assortiment'},
+  {v:'achats',       t:'Optimisation achats',       k:'achat optimisation appro commande fournisseur'},
+  {v:'picking',      t:'Préparation / Picking',     k:'picking preparation prelevement colisage'},
+  {v:'mrp',          t:'Plan de production',        k:'mrp plan production besoin planification'},
+  {v:'rentaparfum',  t:'Rentabilité parfums',       k:'rentabilite parfum marge profit'},
+  {v:'pilotage',     t:'Pilotage stratégique',      k:'pilotage strategie tableau kpi indicateur'},
+  {v:'revenuhoraire',t:'Mon revenu horaire',        k:'revenu horaire taux heure remuneration salaire'},
+  {v:'stats',        t:'Statistiques',              k:'statistique stat graphique analyse chiffre'},
+  {v:'compta',       t:'Comptabilité',              k:'comptabilite compta ca chiffre affaires resultat charges urssaf encaissement'},
+  {v:'consommables', t:'Consommables',              k:'consommable fourniture jetable'},
+  {v:'boites',       t:'Boîtes de conservation',    k:'boite conservation contenant rangement'},
+  {v:'equipements',  t:'Équipements de stockage',   k:'equipement stockage frigo congelateur materiel'},
+  {v:'composants',   t:'Composants',                k:'composant sous-ensemble piece'},
+  {v:'analyse',      t:'Analyse & Production',      k:'analyse production'},
+  {v:'previsionnel', t:'Prévisionnel stocks',       k:'previsionnel prevision stock anticipation'},
+  {v:'evenements',   t:'Événements & acomptes',     k:'evenement acompte mariage reception devis'},
+  {v:'marches',      t:'Marchés',                   k:'marche stand vente exterieur foire'},
+  {v:'guide',        t:"Guide / mode d'emploi",     k:'guide aide mode emploi documentation tutoriel'},
+  {v:'assistant',    t:'Assistant',                 k:'assistant aide ia chat'},
+  {v:'pms',          t:'HACCP / PMS',               k:'haccp pms hygiene temperature releve sanitaire'},
+  {v:'dlc',          t:'Suivi DLC',                 k:'dlc date limite peremption fraicheur'},
+  {v:'tracabilite',  t:'Traçabilité',               k:'tracabilite trace lot origine'},
+  {v:'etiquettes',   t:'Étiquettes QR',             k:'etiquette qr code impression label'}
+];
+
 async function buildGlobalIndex(){
   const now = Date.now();
   if(_globalIndex && (now - _globalIndexTs) < _GLOBAL_INDEX_MS) return _globalIndex;
@@ -9073,6 +9199,17 @@ async function buildGlobalIndex(){
     }, _gsFields(c.nom, [c.ref, c.taille])));
   });
 
+  // --- Pages du menu (navigation) : ressortent en tête car priorité forte ---
+  _NAV_PAGES.forEach(pg=>{
+    idx.push(Object.assign({
+      kind:'page', id:pg.v,
+      titre: pg.t,
+      sous: 'Aller à cette page',
+      action:`closeSheet();goView('${pg.v}')`,
+      _navBoost:true
+    }, _gsFields(pg.t, [pg.k])));
+  });
+
   _globalIndex = idx; _globalIndexTs = Date.now();
   return idx;
 }
@@ -9085,7 +9222,8 @@ const _GS_META = {
   parfum:   {label:'Parfum',   color:'#c9a227', ico:'🍬'},
   material: {label:'Matière',  color:'#3f7d52', ico:'⬛'},
   prod:     {label:'Lot',      color:'#5a3a8a', ico:'⚙'},
-  coffret:  {label:'Coffret',  color:'#6b5d54', ico:'◫'}
+  coffret:  {label:'Coffret',  color:'#6b5d54', ico:'◫'},
+  page:     {label:'Page',     color:'#AA7C39', ico:'➔'}
 };
 
 async function globalSearchRun(q, suffix){
@@ -9121,7 +9259,9 @@ function searchRank(items, q){
   const scored=[];
   for(let i=0;i<items.length;i++){
     const it=items[i];
-    const sc=searchScore(terms, it._prim||'', it._blob||'', it._digits||'', qd);
+    let sc=searchScore(terms, it._prim||'', it._blob||'', it._digits||'', qd);
+    // Les pages de navigation remontent en tête quand elles correspondent : accès rapide voulu.
+    if(sc>=0 && it._navBoost) sc+=120;
     if(sc>=0) scored.push({it,sc,i});
   }
   scored.sort((a,b)=> b.sc-a.sc || a.i-b.i);

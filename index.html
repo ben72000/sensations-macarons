@@ -1076,6 +1076,19 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
   .sheet-grid button *{pointer-events:none}
   .sheet-grid button .ico{font-size:1.1rem;color:var(--caramel);width:20px;text-align:center}
   .sheet-grid button.active{border-color:var(--caramel);background:var(--creme-2);font-weight:600}
+  /* Favoris : étoile sur chaque entrée + section en tête du menu */
+  .fav-star{position:absolute;top:4px;right:6px;font-size:.95rem;color:#d8c9b0;line-height:1;padding:3px;cursor:pointer}
+  .fav-star.on{color:var(--caramel,#AA7C39)}
+  .nav-fav-title{font-size:.74rem;font-weight:700;color:var(--caramel,#AA7C39);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px}
+  .nav-fav-empty{font-size:.8rem;color:#9a8a82;background:#fbf7f0;border:1px dashed #e0d5c5;border-radius:12px;padding:10px 12px;margin-bottom:14px}
+  .nav-fav-grid{margin-bottom:16px}
+  .nav-fav-grid button.fav-card{border-color:var(--caramel,#AA7C39);background:var(--creme-2,#fbf7f0)}
+  #navFavZone{margin-bottom:6px}
+  /* Récents : bandeau automatique, un peu plus discret que les favoris */
+  .nav-rec-title{font-size:.74rem;font-weight:700;color:#9a8576;text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px}
+  .nav-rec-grid{margin-bottom:16px}
+  .nav-rec-grid button.rec-card{border-color:#e0d5c5;background:#fff}
+  #navRecentZone{margin-bottom:6px}
   .sheet-data{display:flex;flex-direction:column;gap:8px}
   .sheet-data .btn{width:100%}
 }
@@ -1250,9 +1263,9 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=684" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=684"></script>
-<script src="utils.js?v=684"></script>
-<script src="app.js?v=684"></script>
+<script src="html5-qrcode.min.js?v=687" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=687"></script>
+<script src="utils.js?v=687"></script>
+<script src="app.js?v=687"></script>
 </body>
 </html>
