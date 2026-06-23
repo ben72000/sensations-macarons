@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v715';
+const APP_VERSION = 'v717';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23238,7 +23238,7 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps et sa pastille de couleur), les coques (meringues mutualisées, 2 parfums appariés par meringue ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (par parfum, au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »).",
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps et sa pastille de couleur), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (par parfum, au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »).",
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
@@ -28729,6 +28729,7 @@ const MACARONS_PAR_MERINGUE = 120;       // capacité utile réelle d'une mering
 // combler une meringue partiellement vide (optimisation du remplissage, pas une règle).
 // lignes : [{parfum, besoinNet, ...}]. Renvoie [{parfums:[...], repartition:{p:qte}, macarons, nbBatchs, partielle}].
 function _packMeringues(lignes){
+  const MAX_PARFUMS = 3;   // une meringue se divise en 3 parts max (3 parfums/colorants)
   // 1) Chaque parfum : autant de meringues PLEINES mono-parfum que possible, + un reste < 120.
   const meringues=[]; const restes=[];   // restes : {parfum, qte<120}
   lignes.forEach(l=>{
@@ -28740,24 +28741,31 @@ function _packMeringues(lignes){
     }
     if(q>0) restes.push({parfum:l.parfum, qte:q});
   });
-  // 2) Apparier les restes pour remplir au mieux (first-fit decreasing).
-  restes.sort((a,b)=>b.qte-a.qte);
-  while(restes.length){
-    const a=restes.shift();
-    // cherche le plus gros reste d'un AUTRE parfum qui tient avec a (≤120)
-    let bestIdx=-1;
-    for(let i=0;i<restes.length;i++){
-      if(restes[i].parfum!==a.parfum && a.qte+restes[i].qte<=MACARONS_PAR_MERINGUE){ bestIdx=i; break; }
-    }
-    if(bestIdx>=0){
-      const b=restes.splice(bestIdx,1)[0];
-      meringues.push({parfums:[a.parfum,b.parfum], repartition:{[a.parfum]:a.qte,[b.parfum]:b.qte},
-        macarons:a.qte+b.qte, nbBatchs:2, partielle:(a.qte+b.qte)<MACARONS_PAR_MERINGUE});
-    } else {
-      // reste seul → meringue partielle (un seul parfum, pas assez pour la remplir)
-      meringues.push({parfums:[a.parfum], repartition:{[a.parfum]:a.qte},
-        macarons:a.qte, nbBatchs:1, partielle:true});
-    }
+  // 2) Regrouper les restes pour faire le MINIMUM de meringues.
+  //    Règle métier : 3 parfums MAX par meringue (contrainte forte, prime sur le 120 strict) ;
+  //    on privilégie 2 parfums et on bascule sur 3 quand ça économise une meringue.
+  //    Nb mini de meringues = max(capacité, nb parfums / 3). On distribue du plus gros reste au
+  //    plus petit, dans le panier le moins rempli ayant encore < 3 parfums (équilibrage).
+  if(restes.length){
+    restes.sort((a,b)=>b.qte-a.qte);
+    const totalMac = restes.reduce((a,r)=>a+r.qte,0);
+    const parCapacite = Math.ceil(totalMac / MACARONS_PAR_MERINGUE);
+    const parParfums  = Math.ceil(restes.length / MAX_PARFUMS);
+    const nbMer = Math.max(1, parCapacite, parParfums);
+    const paniers = Array.from({length:nbMer}, ()=>({items:[], qte:0}));
+    restes.forEach(r=>{
+      let cible=-1, minQte=Infinity;
+      for(let i=0;i<paniers.length;i++){
+        if(paniers[i].items.length<MAX_PARFUMS && paniers[i].qte<minQte){ cible=i; minQte=paniers[i].qte; }
+      }
+      if(cible<0){ paniers.push({items:[r], qte:r.qte}); return; }
+      paniers[cible].items.push(r); paniers[cible].qte+=r.qte;
+    });
+    paniers.filter(p=>p.items.length).forEach(p=>{
+      const rep={}; p.items.forEach(g=>rep[g.parfum]=g.qte);
+      meringues.push({parfums:p.items.map(g=>g.parfum), repartition:rep, macarons:p.qte,
+        nbBatchs:Math.min(p.items.length, BATCHS_PAR_MERINGUE), partielle:p.qte<MACARONS_PAR_MERINGUE});
+    });
   }
   return meringues;
 }
@@ -29595,6 +29603,7 @@ async function renderAgendaProduction(){
   const nbCmd = cr && cr.commandes ? cr.commandes.length : 0;
   main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div></div>
     <p class="note" style="margin-bottom:14px">Touche le nom d'une commande pour déplier toutes ses étapes (coques, ganache, repos, montage, maturation, livraison), puis une étape pour son rétroplanning détaillé.</p>
+    ${_optimBatchToggle()}
     ${_agendaPlanOpSection(planOp)}
     ${_agendaMutualSection(mut)}
     ${_agendaParfumsSection(ppj)}
@@ -29638,6 +29647,26 @@ function _agendaParfumsSection(ppj){
 
 // [PLAN OPÉRATIONNEL — affichage] Section dépliable montrant, par semaine, le détail PARFUM PAR PARFUM
 // de chaque étape (ganache, coques, montage) avec quantité, temps et source du temps (mesuré/recette/défaut).
+// [OPTIMISATION BATCH] Interrupteur visible dans l'agenda. ON = arrondi aux paliers (30/60/120,
+// surplus au stock) ; OFF = quantités commandées exactes. À activer selon le temps de prod dispo.
+function _optimBatchToggle(){
+  const on = (typeof getOptimBatch==='function') ? getOptimBatch() : false;
+  return `<div class="panel" style="margin-bottom:12px;padding:12px 14px;background:${on?'#f3eefb':'#faf8f3'};border:1px solid ${on?'#d8c8ef':'#e8e0d0'}">
+    <label class="switch-row" style="margin:0;cursor:pointer">
+      <input type="checkbox" ${on?'checked':''} onchange="toggleOptimBatch(this.checked)">
+      <span><b>📦 Optimisation des batchs</b> ${on?'<span style="color:#7a5cab;font-weight:600">activée</span>':'<span style="color:#9a8576">désactivée</span>'}</span>
+    </label>
+    <p class="note" style="margin:6px 0 0 0;font-size:.78rem">${on
+      ? 'Les petites commandes sont arrondies au palier rationnel (30, 60 ou 120). Le surplus part au stock. Désactive quand le temps de prod est trop serré : les commandes seules primeront.'
+      : 'Tu produis exactement les quantités commandées. Active quand tu as le temps : les fournées seront arrondies à 30 minimum (le surplus alimente ton stock).'}</p>
+  </div>`;
+}
+function toggleOptimBatch(on){
+  if(typeof setOptimBatch==='function') setOptimBatch(!!on);
+  if(typeof renderAgendaProduction==='function') renderAgendaProduction();
+  else if(typeof goView==='function') goView('agenda');
+}
+
 function _agendaPlanOpSection(plan){
   if(!plan || !plan.semaines || !plan.semaines.length) return '';
   const srcBadge = src => {
@@ -29649,17 +29678,21 @@ function _agendaPlanOpSection(plan){
   const dot = nom => `<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${(typeof flavorColor==='function')?flavorColor(nom):'#cbb89f'};border:1px solid rgba(0,0,0,.1);margin-right:7px;vertical-align:middle;flex:none"></span>`;
   // [POOL] Décomposition d'une fournée par commande : qui contribue (et reçoit) combien.
   // 2+ commandes = fournée réellement fusionnée → badge + détail « répartition retour ».
-  const poolLigne = (commandes) => {
+  const poolLigne = (commandes, surplusStock) => {
     const cmds = (commandes||[]).filter(c=>+c.qte>0);
+    const surp = +surplusStock||0;
+    const stockTxt = surp>0 ? ` <span style="color:#7a5cab">·</span> <span style="color:#7a5cab">📦 stock <b>${surp}</b></span>` : '';
     if(cmds.length<=1){
       const c = cmds[0];
-      return c ? `<div style="font-size:.72rem;color:#9a8576;margin-top:2px;padding-left:19px">${esc(c.client)} · ${c.qte}</div>` : '';
+      if(!c && surp<=0) return '';
+      const cli = c ? `${esc(c.client)} · ${c.qte}` : '';
+      return `<div style="font-size:.72rem;color:#9a8576;margin-top:2px;padding-left:19px">${cli}${stockTxt}</div>`;
     }
     const total = cmds.reduce((a,c)=>a+(+c.qte||0),0);
     const detail = cmds.map(c=>`${esc(c.client)} <b>${c.qte}</b>`).join(' <span style="color:#ccd">·</span> ');
     return `<div style="font-size:.72rem;color:#3b6ea5;margin-top:3px;padding-left:19px">
       <span style="background:#3b6ea5;color:#fff;font-size:.54rem;font-weight:600;padding:0 5px;border-radius:6px">🔗 fusionnée</span>
-      <span style="color:#9a8576"> ${total} = </span>${detail}
+      <span style="color:#9a8576"> ${total+surp} = </span>${detail}${stockTxt}
       <span style="color:#9a8576"> → à répartir au montage</span>
     </div>`;
   };
@@ -29668,10 +29701,10 @@ function _agendaPlanOpSection(plan){
     // GANACHE
     const ganache = s.ganache.map(g=>`<div class="sum-box" style="flex-direction:column;align-items:stretch">
       <div style="display:flex;align-items:center;width:100%">
-        <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qte} mac</span></span></div>
+        <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qteProduite||g.qte} mac</span>${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">📦 dont ${g.surplusStock} stock</span>`:''}</span></div>
         <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
       </div>
-      ${poolLigne(g.commandes)}
+      ${poolLigne(g.commandes, g.surplusStock)}
     </div>`).join('');
     // COQUES (meringues appariées)
     const coques = s.coques.map((m,i)=>{
@@ -29694,11 +29727,11 @@ function _agendaPlanOpSection(plan){
         ? `<div style="font-size:.7rem;color:#8a6d3b;margin-top:2px;padding-left:19px">⚙️ +${fmtMin(g.specMin)} : ${g.specDetail.map(d=>esc(d.nom)+' '+fmtMin(d.min)).join(' · ')}</div>` : '';
       return `<div class="sum-box" style="flex-direction:column;align-items:stretch">
       <div style="display:flex;align-items:center;width:100%">
-        <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qte} mac</span> <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span></span></div>
+        <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qteProduite||g.qte} mac</span>${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="${g.qte} commandés + ${g.surplusStock} pour le stock">📦 dont ${g.surplusStock} stock</span>`:''} <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span></span></div>
         <div style="display:flex;align-items:center;gap:5px"><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
       </div>
       ${specTxt}
-      ${poolLigne(g.commandes)}
+      ${poolLigne(g.commandes, g.surplusStock)}
     </div>`;
     }).join('');
 
@@ -29927,6 +29960,38 @@ function tempsCoquesFournee(nbCoques, coquesChablonnees){
 //   coques:[{parfums, repartition, macarons, dureeMin, partielle}],
 //   montage:[{parfum, qte, dureeMin, parBatchMin, source, commandes}],
 //   totalGanacheMin, totalCoquesMin, totalMontageMin, totalMin, totalMacarons }], horizonJours }.
+// [OPTIMISATION BATCH] Interrupteur ON/OFF persistant. Par défaut OFF : on produit exactement
+// les quantités commandées (priorité absolue aux commandes). Quand ON : on arrondit au palier
+// rationnel (30/60/120) et le surplus va au stock — à activer quand le temps de prod le permet.
+const OPTIM_BATCH_KEY = 'sm_optimBatch';
+function getOptimBatch(){
+  try{ return localStorage.getItem(OPTIM_BATCH_KEY)==='1'; }catch(e){ return false; }
+}
+function setOptimBatch(on){
+  try{ localStorage.setItem(OPTIM_BATCH_KEY, on?'1':'0'); }catch(e){}
+}
+
+// [OPTIMISATION BATCH] Arrondit une quantité commandée au palier de production rationnel.
+// Règle métier (Benjamin) : les commandes priment sur le réassort, MAIS pas d'absurdité —
+// on ne lance pas une meringue pour 14 macarons. Paliers : 30 (mini), 60 (demi-meringue),
+// 120 (meringue pleine) ; au-delà de 120 → meringues pleines + reste arrondi au palier.
+// Le SURPLUS (produire − commandé) est destiné au STOCK (point d'ancrage du futur moteur de stock).
+// Renvoie { produire, surplus, paliers:[...] }.
+function arrondirPalierProduction(qte){
+  qte = Math.max(0, Math.round(+qte||0));
+  if(qte === 0) return { produire:0, surplus:0, paliers:[] };
+  const PLEINE = 120;
+  const pleines = Math.floor(qte / PLEINE);
+  let reste = qte - pleines*PLEINE;
+  const paliers = [];
+  for(let i=0;i<pleines;i++) paliers.push(PLEINE);
+  if(reste > 0){
+    paliers.push(reste<=30 ? 30 : (reste<=60 ? 60 : 120));
+  }
+  const produire = paliers.reduce((a,b)=>a+b,0);
+  return { produire, surplus: produire - qte, paliers };
+}
+
 function buildPlanOperationnelSemaine(mut, recipes, tEtape){
   if(!mut || !mut.semaines) return { semaines:[], horizonJours:(mut&&mut.horizonJours)||45 };
   recipes = recipes || [];
@@ -29961,14 +30026,32 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape){
   };
 
   const semaines = mut.semaines.map(s=>{
+    // [OPTIMISATION BATCH] Pour chaque parfum, on arrondit la quantité commandée au palier rationnel.
+    // La PRODUCTION (coques, montage, ganache, temps) est pilotée par la quantité ARRONDIE ;
+    // le surplus est tracé comme destiné au stock. Les commandes restent la référence affichée.
+    const prodInfo = {};
+    const _optimOn = (typeof getOptimBatch==='function') ? getOptimBatch() : false;
+    s.parfums.forEach(p=>{
+      if(_optimOn){
+        const ar = arrondirPalierProduction(p.qte);
+        prodInfo[p.nom] = { commande:p.qte, produire:ar.produire, surplus:ar.surplus, paliers:ar.paliers };
+      } else {
+        // OFF : on produit exactement la commande (priorité absolue aux commandes).
+        prodInfo[p.nom] = { commande:p.qte, produire:p.qte, surplus:0, paliers:[p.qte] };
+      }
+    });
+    const qProd = nom => (prodInfo[nom] ? prodInfo[nom].produire : 0);
     const ganache = s.parfums.map(p=>{
       const g = tempsGanache(p.nom);
-      return { parfum:p.nom, qte:p.qte, dureeMin:g.min, source:g.source,
+      const pi = prodInfo[p.nom] || {commande:p.qte, produire:p.qte, surplus:0};
+      return { parfum:p.nom, qte:p.qte, qteProduite:pi.produire, surplusStock:pi.surplus, paliers:pi.paliers, dureeMin:g.min, source:g.source,
                commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId})) };
     });
     const montage = s.parfums.map(p=>{
       const m = tempsMontageBatch(p.nom);
-      const base = round1(m.perBatch * (p.qte/TB));
+      const pi = prodInfo[p.nom] || {commande:p.qte, produire:p.qte, surplus:0, paliers:[]};
+      const qp = pi.produire;   // on monte tout ce qu'on produit (commande + surplus stock)
+      const base = round1(m.perBatch * (qp/TB));
       // Temps spécifiques de la recette (noisettes, incrustation…), hors chablonnage (déjà compté aux coques).
       let specMin = 0; const specDetail = [];
       const rec = recByNom(p.nom);
@@ -29977,15 +30060,15 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape){
           const d = Math.max(0, +op.duree||0); if(d<=0) return;
           const nomOp = (op.nom||'').toLowerCase();
           if(nomOp.includes('chablon')) return;   // chablonnage géré au niveau des coques
-          const min = (op.unite==='macaron') ? d*p.qte : d*(p.qte/TB);
+          const min = (op.unite==='macaron') ? d*qp : d*(qp/TB);
           specMin += min; specDetail.push({ nom:op.nom||'opération', min:round1(min) });
         });
       }
-      return { parfum:p.nom, qte:p.qte, parBatchMin:m.perBatch, source:m.source,
+      return { parfum:p.nom, qte:p.qte, qteProduite:qp, surplusStock:pi.surplus, paliers:pi.paliers, parBatchMin:m.perBatch, source:m.source,
                dureeMin: round1(base + specMin), baseMin:base, specMin:round1(specMin), specDetail,
                commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId})) };
     });
-    const lignesCoques = s.parfums.map(p=>({ parfum:p.nom, besoinNet:p.qte }));
+    const lignesCoques = s.parfums.map(p=>({ parfum:p.nom, besoinNet:qProd(p.nom) }));
     const meringues = (typeof _packMeringues==='function') ? _packMeringues(lignesCoques) : [];
     const coques = meringues.map(m=>{
       // Coques chablonnées de cette meringue : somme des coques des parfums dont la recette a chablonnee=true.
