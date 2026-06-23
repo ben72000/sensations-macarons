@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v731';
+const APP_VERSION = 'v734';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23533,7 +23533,7 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps et sa pastille de couleur), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (par parfum, au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »).",
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps, sa pastille de couleur et désormais son CRÉNEAU HORAIRE calé dans tes plages A/B — placé pour que la ganache ait fini de reposer 12h avant le montage), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (par parfum, au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »).",
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","🆕 Dans le plan détaillé, touche une ganache (▶ lancer) : l'app te propose de lancer le batch et le chrono d'un seul geste, avec confirmation et quantité ajustable","🆕 Touche aussi une meringue (▶ lancer) : elle lance les coques de tous ses parfums d'un coup (meringue commune) + les chronos, avec confirmation et quantités ajustables"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
@@ -29811,62 +29811,95 @@ async function retroplanningCale(orderId){
   // On s'appuie sur les paramètres exposés par retroplanningCommande pour savoir quelles
   // phases existent et leur durée (en heures pour les phases libres).
   const H = 60; // minutes par heure
-  const seq = [];   // dans l'ordre PRODUCTION (du plus tôt au plus tard) ; on inversera pour remonter
-  seq.push({ cle:'coques', label:'Coques (meringue + cuisson)', type:'encadree', duree:durees.coques });
+  // ════════════════════════════════════════════════════════════════════════════
+  // CALAGE EN 2 BRANCHES PARALLÈLES qui convergent au MONTAGE (pivot).
+  //   • Branche AVAL (commune) : montage → maturation → (décongélation) → livraison.
+  //   • Branche GANACHE : repos ganache COLLÉ au montage (montage − repos) ; ganache collée
+  //       à la fin = au début du repos. La ganache peut donc tomber la veille (repos 12 h).
+  //   • Branche COQUES : calées le JOUR DU MONTAGE, juste avant le montage (_retroPlacerCoquesJourJ,
+  //       qui gère la règle « jour même » + bascule congélation si impossible).
+  // Coques et ganache ne sont PLUS chaînées l'une à l'autre : deux branches indépendantes.
+  // Résultat : ordre d'exécution correct (ganache avant coques quand repos 12 h), repos collé
+  // à la ganache, et coques le jour du montage respecté par construction.
+  // ────────────────────────────────────────────────────────────────────────────
+  const jalonsCales = [];
+  const pushJ = (cle, label, type, debut, fin, extra) => {
+    jalonsCales.push(Object.assign({ cle, label, type, duree:0,
+      debut:debut||null, fin:fin||null, tropLongue:false }, extra||{}));
+  };
+
+  // 1) MONTAGE = pivot. Calé dans les plages A/B, finissant au plus tard à (livraison − maturation − décongel).
+  let finMontageVoulue = new Date(rp.livraison);
+  if(rp.decongelH>0) finMontageVoulue = new Date(finMontageVoulue.getTime() - rp.decongelH*H*60000);
+  if(rp.maturationH>0) finMontageVoulue = new Date(finMontageVoulue.getTime() - rp.maturationH*H*60000);
+  const placMontage = _retroPlacerActive(finMontageVoulue, durees.montage, conf);
+  const montageDebut = placMontage.debut;
+  const montageFin   = placMontage.fin;
+
+  // 2) BRANCHE GANACHE : repos collé au montage, ganache collée au début du repos.
   if(rp.aCremeux){
-    seq.push({ cle:'cremeux', label:'Préparation du crémeux', type:'active', duree:durees.cremeux });
-    if(rp.cremeuxCongelH>0) seq.push({ cle:'congel-cremeux', label:`Congélation crémeux (${rp.cremeuxCongelH} h)`, type:'libre', duree:rp.cremeuxCongelH*H });
+    // Crémeux : préparation active + éventuelle congélation avant le montage.
+    let finCremeuxVoulue = montageDebut ? new Date(montageDebut) : finMontageVoulue;
+    if(rp.cremeuxCongelH>0){
+      const congelFin = new Date(finCremeuxVoulue);
+      const congelDebut = new Date(congelFin.getTime() - rp.cremeuxCongelH*H*60000);
+      pushJ('congel-cremeux', `Congélation crémeux (${rp.cremeuxCongelH} h)`, 'libre', congelDebut, congelFin, {duree:rp.cremeuxCongelH*H});
+      finCremeuxVoulue = congelDebut;
+    }
+    const placCremeux = _retroPlacerActive(finCremeuxVoulue, durees.cremeux, conf);
+    pushJ('cremeux', 'Préparation du crémeux', 'active', placCremeux.debut, placCremeux.fin, {duree:durees.cremeux, tropLongue:placCremeux.tropLongue});
   } else {
-    seq.push({ cle:'ganache', label:'Préparation ganache / crémeux', type:'active', duree:durees.ganache });
-    if(rp.reposGanacheH>0) seq.push({ cle:'repos-ganache', label:`Repos ganache (${rp.reposGanacheH} h)`, type:'libre', duree:rp.reposGanacheH*H });
+    // Ganache : on place d'abord le travail actif au plus tard possible (montage − repos minimum),
+    // puis le REPOS occupe TOUT l'intervalle entre la fin réelle de la ganache et le montage.
+    // Ainsi le repos est COLLÉ à la ganache (pas de trou) et dure AU MOINS reposGanacheH (minimum
+    // métier) — souvent davantage si la ganache tombe la veille au soir, ce qui est sans problème.
+    const finGanacheVoulue = (montageDebut && rp.reposGanacheH>0)
+      ? new Date(montageDebut.getTime() - rp.reposGanacheH*H*60000)
+      : (montageDebut ? new Date(montageDebut) : finMontageVoulue);
+    const placGanache = _retroPlacerActive(finGanacheVoulue, durees.ganache, conf);
+    pushJ('ganache', 'Préparation ganache / crémeux', 'active', placGanache.debut, placGanache.fin, {duree:durees.ganache, tropLongue:placGanache.tropLongue});
+    // Repos = de la fin réelle de la ganache jusqu'au montage (collé des deux côtés).
+    if(rp.reposGanacheH>0 && placGanache.fin && montageDebut){
+      const reposDebut = new Date(placGanache.fin);
+      const reposFin = new Date(montageDebut);
+      const reposReelMin = Math.max(0, (reposFin - reposDebut)/60000);
+      const reposReelH = Math.round(reposReelMin/60*10)/10;
+      pushJ('repos-ganache', `Repos ganache (${reposReelH} h)`, 'libre', reposDebut, reposFin,
+        {duree:reposReelMin, reposMinH:rp.reposGanacheH});
+    }
   }
-  seq.push({ cle:'montage', label:'Montage / assemblage', type:'active', duree:durees.montage });
-  if(rp.maturationH>0) seq.push({ cle:'maturation', label:`Maturation (${rp.maturationH} h au frais)`, type:'libre', duree:rp.maturationH*H });
-  if(rp.decongelH>0) seq.push({ cle:'decongel', label:`Décongélation au frigo (${rp.decongelH} h)`, type:'libre', duree:rp.decongelH*H });
 
-  // Remonter depuis la livraison : chaque étape finit quand la suivante (vers livraison) commence.
-  let refFin = new Date(rp.livraison);
-  const rev = [];
-  for(let i=seq.length-1;i>=0;i--){
-    const e = seq[i];
-    if(e.type==='libre'){
-      const fin = new Date(refFin);
-      const debut = new Date(fin.getTime() - e.duree*60000);
-      rev.push({ ...e, debut, fin, tropLongue:false });
-      refFin = debut;
+  // 3) BRANCHE COQUES : le JOUR DU MONTAGE, juste avant le montage (règle métier + congélation).
+  if(montageDebut){
+    const c = _retroPlacerCoquesJourJ(montageDebut, durees.coques, conf);
+    if(c.congeler){
+      const jourMontage = new Date(montageDebut); jourMontage.setHours(8,0,0,0);
+      pushJ('coques', 'Coques (meringue + cuisson)', 'encadree',
+        c.debut || jourMontage, c.fin || new Date(jourMontage.getTime()+durees.coques*60000),
+        {duree:durees.coques, congeler:true, congelRaison:c.raison, tropLongue:(c.raison==='pas_de_place')});
     } else {
-      const r = _retroPlacerActive(refFin, e.duree, conf);
-      rev.push({ ...e, debut:r.debut, fin:r.fin, tropLongue:r.tropLongue });
-      if(!r.tropLongue && r.debut) refFin = r.debut;
+      pushJ('coques', 'Coques (meringue + cuisson)', 'encadree', c.debut, c.fin,
+        {duree:durees.coques, congeler:false});
     }
+  } else {
+    // Pas de montage calé (cas dégénéré) : coques en repli à rebours.
+    const c = _retroPlacerActive(finMontageVoulue, durees.coques, conf);
+    pushJ('coques', 'Coques (meringue + cuisson)', 'encadree', c.debut, c.fin, {duree:durees.coques, tropLongue:c.tropLongue});
   }
-  rev.push({ cle:'livraison', label:'Livraison', type:'ancre', duree:0, debut:new Date(rp.livraison), fin:new Date(rp.livraison), tropLongue:false });
-  const jalonsCales = rev.reverse();
 
-  // RÈGLE MÉTIER — coques le JOUR DU MONTAGE (macaron standard) :
-  // le calage à rebours ci-dessus peut renvoyer les coques la veille (la remontée les place
-  // dans la 1re plage qui rentre). On les RECALE donc explicitement le jour du montage, avant
-  // le montage. Si c'est impossible ou absurde (pas de place / avant 7h / trou > 6h), on bascule
-  // en EXCEPTION « coques à congeler » plutôt que de décaler silencieusement à la veille.
-  if(rp.aStandard){
-    const montage = jalonsCales.find(j=>j.cle==='montage' && j.debut);
-    const coques  = jalonsCales.find(j=>j.cle==='coques');
-    if(montage && coques){
-      const c = _retroPlacerCoquesJourJ(montage.debut, durees.coques, conf);
-      if(c.congeler){
-        // Exception assumée : coques à congeler. On les affiche le jour du montage si on a pu
-        // calculer un créneau (trop tôt / trou), sinon le matin du jour du montage par défaut.
-        const jourMontage = new Date(montage.debut); jourMontage.setHours(8,0,0,0);
-        coques.debut = c.debut || jourMontage;
-        coques.fin   = c.fin   || new Date(jourMontage.getTime() + durees.coques*60000);
-        coques.congeler = true;
-        coques.congelRaison = c.raison;   // 'pas_de_place' | 'trop_tot' | 'trou'
-        coques.tropLongue = (c.raison==='pas_de_place');   // pas de place = vrai conflit à signaler
-      } else {
-        coques.debut = c.debut; coques.fin = c.fin; coques.congeler = false; coques.tropLongue = false;
-      }
-    }
+  // 4) MONTAGE puis branche AVAL (maturation, décongélation) et ANCRE livraison.
+  pushJ('montage', 'Montage / assemblage', 'active', montageDebut, montageFin, {duree:durees.montage, tropLongue:placMontage.tropLongue});
+  if(rp.maturationH>0){
+    const matDebut = montageFin ? new Date(montageFin) : finMontageVoulue;
+    const matFin = new Date(matDebut.getTime() + rp.maturationH*H*60000);
+    pushJ('maturation', `Maturation (${rp.maturationH} h au frais)`, 'libre', matDebut, matFin, {duree:rp.maturationH*H});
   }
+  if(rp.decongelH>0){
+    const decFin = new Date(rp.livraison);
+    const decDebut = new Date(decFin.getTime() - rp.decongelH*H*60000);
+    pushJ('decongel', `Décongélation au frigo (${rp.decongelH} h)`, 'libre', decDebut, decFin, {duree:rp.decongelH*H});
+  }
+  pushJ('livraison', 'Livraison', 'ancre', new Date(rp.livraison), new Date(rp.livraison), {duree:0});
 
   // [MATURATION FLEXIBLE] Règle métier : la fraîcheur des coques (montées le jour de leur confection)
   // PRIME sur la maturation de 24h. Si les coques finissent congelées, on RÉDUIT la maturation par
@@ -30119,7 +30152,27 @@ async function renderAgendaProduction(){
     const recipesPlan = await db.recipes.toArray().catch(()=>[]);
     let tEtape=null; try{ tEtape = await prodTempsParEtapeParParfum(90); }catch(_){}
     let stockMob={}; try{ stockMob = await stockMobilisableParParfum(); }catch(_){}
-    planOp = buildPlanOperationnelSemaine(mut, recipesPlan, tEtape, stockMob);
+    // [FUSION HORAIRES GANACHE] Source de vérité unique : le rétroplanning par commande calcule
+    // déjà l'horaire de chaque ganache. Plutôt que de recalculer dans le plan (risque de divergence),
+    // on pré-collecte ici { orderId → {debut, fin} de la ganache } depuis retroplanningCale (async),
+    // et on le passe au plan. Pour une ganache mutualisée, le plan gardera le créneau le plus précoce.
+    const ganacheCaleParCmd = {};
+    try{
+      const orderIds = new Set();
+      (mut && mut.semaines ? mut.semaines : []).forEach(s=>{
+        (s.parfums||[]).forEach(p=>(p.commandes||[]).forEach(c=>{ if(c.orderId!=null) orderIds.add(c.orderId); }));
+      });
+      for(const oid of orderIds){
+        try{
+          const cale = await retroplanningCale(oid);
+          if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
+            const jg = cale.jalonsCales.find(j=>(j.cle==='ganache'||j.cle==='cremeux') && j.debut);
+            if(jg) ganacheCaleParCmd[oid] = { debut:jg.debut, fin:jg.fin };
+          }
+        }catch(_){}
+      }
+    }catch(e){ console.error('preCollecteGanache', e); }
+    planOp = buildPlanOperationnelSemaine(mut, recipesPlan, tEtape, stockMob, ganacheCaleParCmd);
   }catch(e){ console.error('planOperationnel',e); }
 
   // Vue COMMANDES REPLIABLES : une carte par commande (client + chevron), dépliant l'enchaînement
@@ -30228,11 +30281,17 @@ function _agendaPlanOpSection(plan){
     // GANACHE — chaque carte est CLIQUABLE : lance le batch ganache + chrono (avec confirmation).
     const ganache = s.ganache.map(g=>{
       const _qLance = g.qteProduite||g.qte;
+      // Créneau horaire calé (travail actif → fin), avec rappel du repos avant montage.
+      const fmtHg = d => { try{ return new Date(d).toLocaleString('fr-FR',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
+      const horaireGan = g.debut
+        ? `<div style="font-size:.72rem;color:#7a4b2a;margin-top:2px">🕐 ${fmtHg(g.debut)} → fin ${(()=>{try{return new Date(g.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}${g.reposH?` <span style="color:#9a8576">· puis repos ${g.reposH}h avant montage</span>`:''}</div>`
+        : (g.horaireImpossible ? `<div style="font-size:.72rem;color:#b3261e;margin-top:2px">🕐 Pas de créneau dispo avant le montage (à anticiper)</div>` : '');
       return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick='planLancerGanache(${JSON.stringify(g.parfum)}, ${(+_qLance)||0})' title="Lancer la production de cette ganache + chrono">
       <div style="display:flex;align-items:center;width:100%">
         <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qteProduite||g.qte} mac</span>${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">📦 dont ${g.surplusStock} stock</span>`:''}</span></div>
         <div style="display:flex;align-items:center;gap:5px"><span style="color:#aa7c39;font-size:.68rem;font-weight:600">▶ lancer</span><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
       </div>
+      ${horaireGan}
       ${poolLigne(g.commandes, g.surplusStock)}
     </div>`;
     }).join('');
@@ -30622,7 +30681,8 @@ function arrondirPalierProduction(qte){
   return { produire, surplus: produire - qte, paliers };
 }
 
-function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob){
+function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCaleParCmd){
+  ganacheCaleParCmd = ganacheCaleParCmd || {};
   stockMob = stockMob || {};
   // [CLÉ UNIQUE] Même clé que la construction de stockMob (stockMoveKey = aiNormalize) et que
   // le journal des mouvements : un seul et même regroupement parfum dans tout le moteur de stock.
@@ -30738,6 +30798,26 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob){
         });
       }catch(e){ console.error('calerCoquesSemaine',e); }
     }
+    // [FUSION HORAIRE GANACHE — source de vérité unique] Au lieu de recalculer un horaire (qui
+    // pourrait diverger du rétroplanning par commande), on RÉUTILISE l'horaire ganache déjà calé
+    // par retroplanningCale (pré-collecté dans ganacheCaleParCmd : orderId → {debut, fin}).
+    // Une ganache mutualisée concerne plusieurs commandes → on garde le créneau le plus PRÉCOCE
+    // (le montage le plus urgent contraint la prépa). Ainsi plan et rétroplanning affichent le MÊME
+    // horaire : aucune divergence possible.
+    ganache.forEach(g=>{
+      let best=null;
+      (g.commandes||[]).forEach(c=>{
+        const cal = c.orderId!=null ? ganacheCaleParCmd[c.orderId] : null;
+        if(cal && cal.debut){
+          const d = new Date(cal.debut);
+          if(!best || d < new Date(best.debut)) best = { debut:cal.debut, fin:cal.fin };
+        }
+      });
+      const rec = recByNom(g.parfum);
+      g.reposH = (rec && rec.ganacheDelaiH!=null) ? +rec.ganacheDelaiH : 12;
+      if(best){ g.debut = best.debut; g.fin = best.fin; }
+      else { g.horaireImpossible = true; }   // aucune commande n'a d'horaire calé (rare)
+    });
     const totalGanacheMin = Math.round(ganache.reduce((a,g)=>a+g.dureeMin,0));
     const totalMontageMin = Math.round(montage.reduce((a,g)=>a+g.dureeMin,0));
     const totalCoquesMin  = coques.reduce((a,m)=>a+m.dureeMin,0);
