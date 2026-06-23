@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v694';
+const APP_VERSION = 'v697';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23235,6 +23235,9 @@ const GUIDE_THEMES = [
     { v:'productions', t:'Productions', ico:'⚙', resume:"Lancer et suivre tes fabrications, lot par lot.",
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
+    { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Toutes tes commandes planifiées par jour, avec rétroplanning de fraîcheur et mutualisation par semaine.",
+      detail:"L'app calcule le rétroplanning de chaque commande à rebours depuis la livraison (coques, ganache, repos, montage, maturation) et cale chaque tâche dans tes plages horaires A/B. Règle clé : les coques des macarons standard sont calées le JOUR du montage (coques fraîches) ; si le jour J est impossible ou absurde (pas de place, avant 7h, ou plus de 6h d'attente avant le montage), l'app propose de les congeler (badge ❄️). La section « 🧩 Mutualisation par semaine » regroupe toute la production d'une même semaine : coques et montage sont mutualisés sur la semaine entière, et pour chaque parfum tu vois le besoin cumulé (nombre de batchs), le délai de ganache, et les commandes regroupées (badge ★). Les produits finis qui ne sont pas livrés le jour du montage ou le lendemain sont signalés « ❄️ à congeler », avec la date à laquelle les ressortir (décongélation) avant livraison. La section « 📊 Besoins par parfum et par jour » donne le même cumul au jour le jour.",
+      steps:["Consulte tes journées de production à venir","Ouvre « Mutualisation par semaine » pour voir les fournées regroupables","Repère les badges ★ : parfums regroupables, et ❄️ : produits à congeler/ressortir","Touche une tâche pour le rétroplanning complet de la commande"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour analyser ton temps.",
       detail:"Ouvre une session de production et lance des chronos par tâche (pesée, macaronnage, cuisson…). Plusieurs tâches tournent en parallèle. Le tableau blanc montre ta journée en barres, et le journal garde l'historique. Sert à optimiser ton organisation.",
       steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail","Consulte le tableau blanc et le journal"] },
@@ -28951,6 +28954,51 @@ function _retroPlacerActive(finVoulue, duree, conf, guardDays=180){
   return { debut:null, fin:null, tropLongue:true };
 }
 
+// Place les coques (macaron STANDARD) le MÊME JOUR que le montage, dans une plage AVANT le montage.
+// Bascule vers « à congeler » (exception) si le jour J est impossible ou absurde :
+//   - aucune plage ne rentre avant le montage ce jour-là, OU
+//   - les coques devraient démarrer avant 7h du matin (heure absurde), OU
+//   - le trou coques→montage dépasse 6h le même jour (grosse perte de temps).
+// Renvoie { debut, fin, tropLongue, congeler, raison } ; congeler=true => coques à congeler.
+function _retroPlacerCoquesJourJ(montageDebut, dureeCoques, conf){
+  const HEURE_MIN = (typeof PROC!=='undefined' && PROC.coquesHeureMinMatin!=null) ? PROC.coquesHeureMinMatin : 7;   // avant 7h = absurde
+  const TROU_MAX_MIN = (typeof PROC!=='undefined' && PROC.coquesTrouMaxH!=null ? PROC.coquesTrouMaxH : 6) * 60;       // > 6h d'attente = trop
+  const hm = s => { const [h,m]=String(s).split(':').map(Number); return (h||0)*60+(m||0); };
+  const dayKey = d => { const x=new Date(d); x.setHours(0,0,0,0); return x; };
+  const atDayMin = (day,min) => { const r=dayKey(day); r.setMinutes(min); return r; };
+  const slotsOf = day => {
+    const raw = (typeof availSlotsForDate==='function') ? availSlotsForDate(day, conf) : [];
+    return raw.map(([s,e])=>[hm(s), hm(e)]).sort((a,b)=>a[0]-b[0]);
+  };
+  const jour = dayKey(montageDebut);
+  const montageMin = montageDebut.getHours()*60 + montageDebut.getMinutes();
+  const slots = slotsOf(jour);
+  // Cherche, le JOUR DU MONTAGE, la plage la plus TARDIVE qui permet de finir les coques
+  // avant le début du montage. (finPossible = min(fin de plage, début montage))
+  let best=null;
+  for(let k=slots.length-1;k>=0;k--){
+    const [a,b]=slots[k];
+    const finPossible = Math.min(b, montageMin);
+    if(finPossible - a >= dureeCoques){
+      best = { debutMin: finPossible - dureeCoques, finMin: finPossible };
+      break;
+    }
+  }
+  if(!best){
+    return { congeler:true, raison:'pas_de_place', debut:null, fin:null, tropLongue:false };
+  }
+  // Critère « heure absurde » : démarrage avant 7h.
+  if(best.debutMin < HEURE_MIN*60){
+    return { congeler:true, raison:'trop_tot', debut:atDayMin(jour,best.debutMin), fin:atDayMin(jour,best.finMin), tropLongue:false };
+  }
+  // Critère « trou trop grand » : attente entre fin des coques et début du montage.
+  if(montageMin - best.finMin > TROU_MAX_MIN){
+    return { congeler:true, raison:'trou', debut:atDayMin(jour,best.debutMin), fin:atDayMin(jour,best.finMin), tropLongue:false };
+  }
+  // OK : coques le jour J, fraîches, avant le montage.
+  return { congeler:false, raison:'', debut:atDayMin(jour,best.debutMin), fin:atDayMin(jour,best.finMin), tropLongue:false };
+}
+
 async function retroplanningCale(orderId){
   const o = await db.orders.get(orderId);
   if(!o) return { ok:false, error:'Commande introuvable.' };
@@ -28997,6 +29045,32 @@ async function retroplanningCale(orderId){
   }
   rev.push({ cle:'livraison', label:'Livraison', type:'ancre', duree:0, debut:new Date(rp.livraison), fin:new Date(rp.livraison), tropLongue:false });
   const jalonsCales = rev.reverse();
+
+  // RÈGLE MÉTIER — coques le JOUR DU MONTAGE (macaron standard) :
+  // le calage à rebours ci-dessus peut renvoyer les coques la veille (la remontée les place
+  // dans la 1re plage qui rentre). On les RECALE donc explicitement le jour du montage, avant
+  // le montage. Si c'est impossible ou absurde (pas de place / avant 7h / trou > 6h), on bascule
+  // en EXCEPTION « coques à congeler » plutôt que de décaler silencieusement à la veille.
+  if(rp.aStandard){
+    const montage = jalonsCales.find(j=>j.cle==='montage' && j.debut);
+    const coques  = jalonsCales.find(j=>j.cle==='coques');
+    if(montage && coques){
+      const c = _retroPlacerCoquesJourJ(montage.debut, durees.coques, conf);
+      if(c.congeler){
+        // Exception assumée : coques à congeler. On les affiche le jour du montage si on a pu
+        // calculer un créneau (trop tôt / trou), sinon le matin du jour du montage par défaut.
+        const jourMontage = new Date(montage.debut); jourMontage.setHours(8,0,0,0);
+        coques.debut = c.debut || jourMontage;
+        coques.fin   = c.fin   || new Date(jourMontage.getTime() + durees.coques*60000);
+        coques.congeler = true;
+        coques.congelRaison = c.raison;   // 'pas_de_place' | 'trop_tot' | 'trou'
+        coques.tropLongue = (c.raison==='pas_de_place');   // pas de place = vrai conflit à signaler
+      } else {
+        coques.debut = c.debut; coques.fin = c.fin; coques.congeler = false; coques.tropLongue = false;
+      }
+    }
+  }
+
   const aDesDebordements = jalonsCales.some(j=>j.tropLongue);
   const debutProd = jalonsCales.find(j=>j.debut && j.type!=='ancre');
   return {
@@ -29016,6 +29090,12 @@ async function renderAgendaProduction(){
   try{ ag = await buildAgendaProduction(45); }
   catch(e){ console.error('agendaProd',e); main.innerHTML += '<p class="note" style="color:var(--red)">Erreur de calcul.</p>'; return; }
 
+  // Besoins cumulés par parfum et par jour (fondation mutualisation) — affichés en tête.
+  let ppj=null;
+  try{ ppj = await buildParfumsParJour(45); }catch(e){ console.error('parfumsParJour',e); }
+  let mut=null;
+  try{ mut = await buildMutualisationSemaine(45); }catch(e){ console.error('mutualisationSemaine',e); }
+
   // Icône + couleur par type de tâche.
   const META = {
     coques:  {ico:'🟤', col:'#8a6d3b', nom:'Coques'},
@@ -29032,10 +29112,12 @@ async function renderAgendaProduction(){
       const taches = j.taches.map(t=>{
         const m = META[t.cle] || {ico:'•', col:'#8a7a72', nom:t.label};
         const livTxt = (()=>{ try{ return new Date(t.livraison+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}); }catch(e){ return t.livraison; } })();
+        const raisonTxt = { pas_de_place:'pas de place le jour J', trop_tot:'sinon coques avant 7h', trou:'sinon trop d’attente avant montage' }[t.congelRaison] || '';
+        const congelBadge = t.congeler ? ` <span style="background:#3b6ea5;color:#fff;font-size:.62rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️ à congeler</span>` : '';
         return `<div class="sum-box" style="align-items:flex-start;border-left:3px solid ${m.col};cursor:pointer" onclick="retroplanningView(${t.orderId})">
           <div style="flex:1">
-            <div><b>${t.heure}${t.finHeure?'–'+t.finHeure:''}</b> · ${m.ico} <b style="color:${m.col}">${m.nom}</b></div>
-            <div style="font-size:.82rem;color:#7a6a60;margin-top:2px">${esc(t.clientNom)} · livraison ${livTxt}${t.tropLongue?' <span style="color:var(--red)">⚠ ne tient pas</span>':''}</div>
+            <div><b>${t.heure}${t.finHeure?'–'+t.finHeure:''}</b> · ${m.ico} <b style="color:${m.col}">${m.nom}</b>${congelBadge}</div>
+            <div style="font-size:.82rem;color:#7a6a60;margin-top:2px">${esc(t.clientNom)} · livraison ${livTxt}${t.tropLongue?' <span style="color:var(--red)">⚠ ne tient pas</span>':''}${t.congeler&&raisonTxt?` <span style="color:#3b6ea5">· ${raisonTxt}</span>`:''}</div>
           </div>
           <span style="color:var(--bordeaux);font-size:.8rem">détail →</span>
         </div>`;
@@ -29052,12 +29134,273 @@ async function renderAgendaProduction(){
 
   main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>${ag.jours.length} jour(s) de travail planifié(s) · ${ag.horizonJours} prochains jours</p></div></div>
     <p class="note" style="margin-bottom:14px">🟤 Coques · 🍫 Ganache · 🟠 Crémeux · 🔧 Montage. Chaque tâche est calée dans tes plages A/B. Touche une tâche pour voir le rétroplanning complet de la commande.</p>
+    ${_agendaMutualSection(mut)}
+    ${_agendaParfumsSection(ppj)}
     ${corps}`;
+}
+// Section « Besoins par parfum et par jour » : cumul de toutes les commandes (croisées), pour
+// préparer la mutualisation. Affiche, par jour de montage, chaque parfum et la quantité totale,
+// avec le nombre de commandes concernées (★ = mutualisable car ≥ 2 commandes le même jour).
+function _agendaParfumsSection(ppj){
+  if(!ppj || !ppj.jours || !ppj.jours.length) return '';
+  const jours = ppj.jours.map(j=>{
+    const lignes = j.parfums.map(p=>{
+      const mutual = p.nbCommandes>=2;
+      const detail = p.commandes.map(c=>`${esc(c.client)} (${c.qte})`).join(', ');
+      return `<div class="sum-box" style="align-items:flex-start">
+        <div style="flex:1">
+          <div><b>${esc(p.nom)}</b> · <b style="color:var(--caramel,#AA7C39)">${p.qte}</b> macaron${p.qte>1?'s':''}
+            ${mutual?`<span style="background:#3f7d52;color:#fff;font-size:.6rem;font-weight:600;padding:1px 6px;border-radius:7px">★ ${p.nbCommandes} cmd à regrouper</span>`:''}</div>
+          <div style="font-size:.78rem;color:#9a8576;margin-top:2px">${esc(detail)}</div>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="panel" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #e8dccd;padding-bottom:6px;margin-bottom:8px">
+        <h3 style="margin:0;text-transform:capitalize">${esc(j.label)}</h3>
+        <span style="font-size:.78rem;color:#9a8576">${j.totalJour} macaron${j.totalJour>1?'s':''}</span>
+      </div>
+      ${lignes}
+    </div>`;
+  }).join('');
+  return `<details style="margin-bottom:16px">
+    <summary style="cursor:pointer;font-weight:600;color:var(--bordeaux);font-size:.95rem;padding:6px 0">📊 Besoins par parfum et par jour <span style="font-weight:400;color:#9a8576;font-size:.82rem">· cumul de toutes les commandes (★ = regroupable)</span></summary>
+    <div style="margin-top:10px">${jours}</div>
+  </details>`;
 }
 // [AGENDA CONSOLIDÉ] Fusionne le rétroplanning calé de TOUTES les commandes à venir en un agenda
 // de production groupé par jour. Ne retient que les tâches de TRAVAIL (présence requise) : coques,
 // ganache, crémeux, montage — pas les attentes (repos, maturation) qui ne mobilisent pas l'atelier.
 // Renvoie { jours:[{date:'YYYY-MM-DD', label, taches:[{heure, cle, label, commande, clientNom, fin, plage}]}], conflits:[...] }.
+
+// [MUTUALISATION HEBDO] Panneau de synthèse par semaine : besoins cumulés par parfum (coques+montage
+// mutualisés sur la semaine), délai de ganache, et plan de congélation/décongélation du surplus.
+function _agendaMutualSection(mut){
+  if(!mut || !mut.semaines || !mut.semaines.length) return '';
+  const semaines = mut.semaines.map(s=>{
+    const lignes = s.parfums.map(p=>{
+      const mutual = p.nbCommandes>=2;
+      const detail = p.commandes.map(c=>`${esc(c.client)} (${c.qte})${c.aCongeler?' ❄️':''}`).join(', ');
+      const gan = (p.ganacheDelaiH!=null) ? `<span style="background:#8a6d3b;color:#fff;font-size:.58rem;padding:1px 6px;border-radius:7px">⏱ ganache ${p.ganacheDelaiH}h</span>` : '';
+      return `<div class="sum-box" style="align-items:flex-start">
+        <div style="flex:1">
+          <div><b>${esc(p.nom)}</b> · <b style="color:var(--caramel,#AA7C39)">${p.qte}</b> macaron${p.qte>1?'s':''}
+            <span style="color:#9a8576;font-size:.74rem">(${p.batchs} batch${p.batchs>1?'s':''})</span>
+            ${mutual?`<span style="background:#3f7d52;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">★ ${p.nbCommandes} cmd regroupées</span>`:''}
+            ${gan}</div>
+          <div style="font-size:.78rem;color:#9a8576;margin-top:2px">${esc(detail)}</div>
+        </div>
+      </div>`;
+    }).join('');
+    const congelBloc = s.aCongeler.length ? `
+      <div style="margin-top:8px;background:#eef4fb;border:1px solid #cfe0f2;border-radius:9px;padding:8px 10px">
+        <div style="font-weight:600;color:#3b6ea5;font-size:.82rem;margin-bottom:4px">❄️ À congeler puis ressortir</div>
+        ${s.aCongeler.map(c=>`<div style="font-size:.78rem;color:#5a6b80;padding:1px 0">
+          <b>${esc(c.parfum)}</b> ×${c.qte} <span style="color:#9a8576">(${esc(c.client)})</span> — monté le ${esc(c.montage)}, livré le ${esc(c.livraison)} → <b>sortir le ${esc(c.sortir)}</b>
+        </div>`).join('')}
+      </div>` : '';
+    return `<div class="panel" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #e8dccd;padding-bottom:6px;margin-bottom:8px">
+        <h3 style="margin:0">${esc(s.label)}</h3>
+        <span style="font-size:.78rem;color:#9a8576">${s.totalMacarons} macaron${s.totalMacarons>1?'s':''} · ${s.nbCommandes} cmd</span>
+      </div>
+      ${lignes}
+      ${congelBloc}
+    </div>`;
+  }).join('');
+  return `<details style="margin-bottom:16px">
+    <summary style="cursor:pointer;font-weight:600;color:var(--bordeaux);font-size:.95rem;padding:6px 0">🧩 Mutualisation par semaine <span style="font-weight:400;color:#9a8576;font-size:.82rem">· coques + montage regroupés, surplus congelé</span></summary>
+    <div style="margin-top:10px">${semaines}</div>
+  </details>`;
+}
+
+// [MUTUALISATION HEBDO] Regroupe la production PAR SEMAINE ISO de montage, en croisant TOUTES
+// les commandes de la semaine. Règle métier validée par Benjamin :
+//  - COQUES + MONTAGE mutualisés sur toute la semaine (max de regroupement) ; les produits finis
+//    non livrés le jour du montage ou le lendemain partent au CONGÉLATEUR.
+//  - GANACHES mutualisées par parfum sur toute la semaine, systématiquement (même sans gain de batch).
+//  - L'app signale quels macarons sont à congeler et quand les ressortir (décongélation).
+// Ne modifie PAS le moteur de calage : fournit une VUE de synthèse hebdomadaire.
+// Renvoie { semaines:[{ wk, label, totalMacarons, nbCommandes,
+//    parfums:[{nom, qte, nbCommandes, batchs, ganacheDelaiH, commandes:[{client, qte, montage, livraison, aCongeler, sortir}]}],
+//    aCongeler:[{client, parfum, qte, montage, livraison, sortir}] }], horizonJours }.
+async function buildMutualisationSemaine(horizonJours){
+  horizonJours = +horizonJours || 45;
+  const orders  = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const clientNom = id => { const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'—'; };
+  // parfum → recette (pour ganacheDelaiH et heuresMaxSortie). Match souple sur le nom de produit.
+  const recipeByParfum = nom => {
+    const n=(nom||'').trim().toLowerCase();
+    return recipes.find(r=>((r.produitNom||'').trim().toLowerCase())===n) || null;
+  };
+  const TB  = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const today0 = new Date(); today0.setHours(0,0,0,0);
+  const horizon = new Date(today0); horizon.setDate(horizon.getDate()+horizonJours);
+
+  // wk → { parfum → { qte, ganacheDelaiH, commandes:[...] }, commandesIds:Set, aCongeler:[...] }
+  const parSemaine = {};
+
+  for(const o of orders){
+    const st = (typeof normStatus==='function') ? normStatus(o.statut) : (o.statut||'');
+    if(st==='Livrée') continue;
+    const dLiv = o.dateEvenement || o.date || '';
+    if(!dLiv) continue;
+
+    // Jour de montage calé (pilote la fraîcheur). À défaut, repli sur la date de livraison.
+    let montageKey=null;
+    try{
+      const cale = await retroplanningCale(o.id);
+      if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
+        const m = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
+        if(m) montageKey = new Date(m.debut).toISOString().slice(0,10);
+      }
+    }catch(e){}
+    if(!montageKey) montageKey = String(dLiv).slice(0,10);
+
+    const dMontage = new Date(montageKey+'T12:00:00');
+    if(dMontage < today0 || dMontage > horizon) continue;
+
+    const wk = _isoWeekKey(montageKey) || montageKey;
+    const slotWk = (parSemaine[wk] ||= { parfums:{}, ids:new Set(), aCongeler:[] });
+
+    // Produit fini à congeler ? Oui si la livraison est à plus d'1 jour après le montage.
+    const dLiv0 = new Date(String(dLiv).slice(0,10)+'T12:00:00');
+    const ecartJours = Math.round((dLiv0 - dMontage)/86400000);
+    const aCongeler = ecartJours > 1;
+
+    const cn = clientNom(o.clientId);
+    const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
+    lignes.forEach(ln=>{
+      const src = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
+      src.forEach(p=>{
+        const nom=(p.nom||'').trim(); const qte=+p.qte||0;
+        if(!nom || qte<=0) return;
+        const rec = recipeByParfum(nom);
+        const gDelai = rec && rec.ganacheDelaiH!=null ? +rec.ganacheDelaiH : null;
+        // Date de sortie du congélateur : livraison moins l'avance de sortie de la recette.
+        // À défaut de paramètre dédié, on ressort la veille de la livraison.
+        let sortir=null;
+        if(aCongeler){
+          const hMax = rec && rec.heuresMaxSortie!=null && +rec.heuresMaxSortie>0 ? +rec.heuresMaxSortie : 24;
+          const ds = new Date(dLiv0.getTime() - hMax*3600000);
+          sortir = ds.toISOString().slice(0,10);
+        }
+        const slot = (slotWk.parfums[nom] ||= { qte:0, ganacheDelaiH:gDelai, commandes:[] });
+        slot.qte += qte;
+        if(slot.ganacheDelaiH==null && gDelai!=null) slot.ganacheDelaiH=gDelai;
+        slot.commandes.push({ client:cn, qte, montage:montageKey, livraison:String(dLiv).slice(0,10), aCongeler, sortir });
+        if(aCongeler){
+          slotWk.aCongeler.push({ client:cn, parfum:nom, qte, montage:montageKey, livraison:String(dLiv).slice(0,10), sortir });
+        }
+      });
+      slotWk.ids.add(o.id);
+    });
+  }
+
+  const semaines = Object.keys(parSemaine).sort().map(wk=>{
+    const s = parSemaine[wk];
+    const parfums = Object.keys(s.parfums).sort().map(nom=>{
+      const p=s.parfums[nom];
+      return {
+        nom, qte:p.qte,
+        nbCommandes:p.commandes.length,
+        batchs:Math.ceil(p.qte/TB),
+        ganacheDelaiH:p.ganacheDelaiH,
+        commandes:p.commandes
+      };
+    }).sort((a,b)=>b.qte-a.qte);
+    const totalMacarons = parfums.reduce((t,p)=>t+p.qte,0);
+    // Libellé lisible de la semaine : « Semaine 26 · 22 → 28 juin ».
+    let label = wk;
+    const m = /(\d{4})-W(\d{2})/.exec(wk);
+    if(m){
+      // lundi de la semaine ISO
+      const simple=new Date(Date.UTC(+m[1],0,1+(+m[2]-1)*7));
+      const dow=(simple.getUTCDay()+6)%7;
+      const lundi=new Date(simple); lundi.setUTCDate(simple.getUTCDate()-dow);
+      const dim=new Date(lundi); dim.setUTCDate(lundi.getUTCDate()+6);
+      const fmt=x=>x.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
+      label=`Semaine ${m[2]} · ${fmt(lundi)} → ${fmt(dim)}`;
+    }
+    return { wk, label, totalMacarons, nbCommandes:s.ids.size, parfums, aCongeler:s.aCongeler };
+  });
+  return { semaines, horizonJours };
+}
+
+// [FONDATION MUTUALISATION] Agrège les besoins en macarons PAR PARFUM et PAR JOUR DE MONTAGE,
+// en croisant TOUTES les commandes à venir. Ne mutualise rien encore : se contente de CUMULER
+// pour qu'on puisse voir « le 26/06 : 75 vanille (2 commandes), 40 pistache (1 commande)… ».
+// Le jour retenu = jour du MONTAGE calé (c'est lui qui pilote la fraîcheur et les coques jour J).
+// Renvoie { jours:[{date, label, semaineType, parfums:[{nom, qte, nbCommandes, commandes:[{client, qte, livraison}]}], totalJour}], horizonJours }.
+async function buildParfumsParJour(horizonJours){
+  horizonJours = +horizonJours || 45;
+  const orders  = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clientNom = id => { const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'—'; };
+  const today0 = new Date(); today0.setHours(0,0,0,0);
+  const horizon = new Date(today0); horizon.setDate(horizon.getDate()+horizonJours);
+
+  // 'YYYY-MM-DD' -> { parfum -> { qte, commandes:[{client, qte, livraison}] } }
+  const parJour = {};
+
+  for(const o of orders){
+    const st = (typeof normStatus==='function') ? normStatus(o.statut) : (o.statut||'');
+    if(st==='Livrée') continue;
+    const dLiv = o.dateEvenement || o.date || '';
+    if(!dLiv) continue;
+
+    // Jour de montage calé (pilote la fraîcheur). À défaut, on retombe sur la date de livraison.
+    let jourKey=null;
+    try{
+      const cale = await retroplanningCale(o.id);
+      if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
+        const montage = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
+        if(montage) jourKey = new Date(montage.debut).toISOString().slice(0,10);
+      }
+    }catch(e){}
+    if(!jourKey) jourKey = String(dLiv).slice(0,10);
+
+    const d = new Date(jourKey+'T12:00:00');
+    if(d < today0 || d > horizon) continue;
+
+    // Cumul des parfums de la commande (coffrets, événements, vrac, dons → parfums ; grands → items).
+    const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
+    const cn = clientNom(o.clientId);
+    lignes.forEach(ln=>{
+      const src = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
+      src.forEach(p=>{
+        const nom=(p.nom||'').trim(); const qte=+p.qte||0;
+        if(!nom || qte<=0) return;
+        (parJour[jourKey] ||= {});
+        const slot = (parJour[jourKey][nom] ||= { qte:0, commandes:[] });
+        slot.qte += qte;
+        slot.commandes.push({ client:cn, qte, livraison:String(dLiv).slice(0,10) });
+      });
+    });
+  }
+
+  const jours = Object.keys(parJour).sort().map(key=>{
+    const parfumsObj = parJour[key];
+    const parfums = Object.keys(parfumsObj).sort().map(nom=>({
+      nom,
+      qte: parfumsObj[nom].qte,
+      nbCommandes: parfumsObj[nom].commandes.length,
+      commandes: parfumsObj[nom].commandes
+    })).sort((a,b)=>b.qte-a.qte);   // du parfum le plus demandé au moins demandé
+    const totalJour = parfums.reduce((s,p)=>s+p.qte,0);
+    const d = new Date(key+'T12:00:00');
+    return {
+      date:key,
+      label:d.toLocaleDateString('fr-FR',{weekday:'long', day:'2-digit', month:'long'}),
+      semaineType:(typeof availWeekType==='function') ? availWeekType(key) : '',
+      parfums, totalJour
+    };
+  });
+  return { jours, horizonJours };
+}
+
 async function buildAgendaProduction(horizonJours){
   horizonJours = +horizonJours || 30;
   const orders = await db.orders.toArray().catch(()=>[]);
@@ -29092,7 +29435,9 @@ async function buildAgendaProduction(horizonJours){
         orderId: o.id,
         clientNom: clientNom(o.clientId),
         livraison: dLiv,
-        tropLongue: !!j.tropLongue
+        tropLongue: !!j.tropLongue,
+        congeler: !!j.congeler,
+        congelRaison: j.congelRaison || ''
       });
     });
   }
