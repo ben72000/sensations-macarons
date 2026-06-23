@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v754';
+const APP_VERSION = 'v764';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -11897,7 +11897,7 @@ async function checkForecastForOrder(orderId){
     if(!o || !o.date) return;
     const dans = daysTo(o.date);
     if(dans===null || dans>=8 || normStatus(o.statut)==='Livrée') return; // hors fenêtre d'alerte
-    const f = await computeForecast({horizon:8});
+    const f = await computeForecast({horizon:8, skipFaisabilite:true});
     const dem = _orderParfumDemand(o);
     // y a-t-il un parfum de cette commande en rupture prévisionnelle ?
     const concernes = f.lignes.filter(l=> dem[l.parfum] && l.soldePrev<0);
@@ -13659,6 +13659,36 @@ function _isTantPourTant(nom){
 // Coût de revient COMPLET d'une recette/parfum (par batch ET par pièce).
 // Intègre : matières (prix courant), pertes (rendement utile), consommables/pièce,
 // et main-d'œuvre si activée. Renvoie aussi la ventilation coque/garniture.
+// [COÛT + MAIN D'ŒUVRE MESURÉE] Prépare l'option {minParMacaronMesure} à passer à coutRevientRecette
+// pour une recette donnée, EXACTEMENT comme l'écran rentabilité : on n'ajoute la main-d'œuvre que si
+// elle est activée en mode « mesure » (réglages laborEnabled + laborSource==='mesure'). Priorité au
+// temps RÉEL propre du parfum s'il est fiable (distingue GF/classique), sinon moyenne globale lissée,
+// sinon undefined (=> matières seules, comportement inchangé). Centralise la règle : source unique.
+//   mesureParRec = sortie de prodTempsParParfum(90)  → {recipeId:{minParMac, fiable}}
+//   mesureGlobal = sortie de prodTempsLissePerMacaron(90).minParMacaron (si fiable)
+function _optMesureRecette(recipe, settings, mesureParRec, mesureGlobal){
+  const s = settings || (typeof getSettings==='function'?getSettings():{});
+  if(!(s.laborEnabled && s.laborSource==='mesure')) return undefined;   // MO mesurée non activée
+  let minPourCetteRec = (mesureGlobal!=null && mesureGlobal>0) ? +mesureGlobal : null;
+  if(mesureParRec && recipe){
+    const e = mesureParRec[recipe.id];
+    if(e && e.fiable && e.minParMac>0) minPourCetteRec = e.minParMac;   // temps réel propre du parfum
+  }
+  return (minPourCetteRec!=null && minPourCetteRec>0) ? {minParMacaronMesure:minPourCetteRec} : undefined;
+}
+
+// [COÛT + MAIN D'ŒUVRE — préchargement] Charge en une fois les mesures d'atelier nécessaires au helper
+// _optMesureRecette, si et seulement si la MO mesurée est activée. Renvoie {mesureParRec, mesureGlobal}.
+// Repli silencieux (tout null) si désactivé ou en cas d'erreur → coût matières seules.
+async function _chargeMesuresMO(settings){
+  const s = settings || (typeof getSettings==='function'?getSettings():{});
+  const out = { mesureParRec:null, mesureGlobal:null };
+  if(!(s.laborEnabled && s.laborSource==='mesure')) return out;
+  try{ const tl = await prodTempsLissePerMacaron(90); if(tl && tl.fiable) out.mesureGlobal = tl.minParMacaron; }catch(_){}
+  try{ out.mesureParRec = await prodTempsParParfum(90); }catch(_){}
+  return out;
+}
+
 function coutRevientRecette(recipe, recipeItems, lots, settings, opts){
   const s = settings || getSettings();
   const items = recipeItems.filter(it=>it.recipeId===recipe.id);
@@ -14566,11 +14596,11 @@ async function computeForecast(opts){
     const stock = stockByParfum[nom]||0;
     const resv = (datedByParfum[nom]||[]).slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
     let solde = stock;
-    let firstShortDate=null, firstShortDans=null, manqueTotal=0;
+    let firstShortDate=null, firstShortDans=null, firstShortOrderId=null, manqueTotal=0;
     const echeances = resv.map(r=>{
       solde -= r.qte;
       const rupture = solde < 0;
-      if(rupture && firstShortDate===null){ firstShortDate=r.date; firstShortDans=r.dans; }
+      if(rupture && firstShortDate===null){ firstShortDate=r.date; firstShortDans=r.dans; firstShortOrderId=(r.orderId!=null?r.orderId:null); }
       return {...r, soldeApres:solde, rupture};
     });
     const reserved = resv.reduce((s,r)=>s+r.qte,0);
@@ -14586,7 +14616,9 @@ async function computeForecast(opts){
     const alerte = manqueApresMob > 0 && echeances.some(e=> e.rupture && e.dans!=null && e.dans < horizon);
     return {parfum:nom, stock, reserved, soldePrev, manque:manqueTotal,
       assemblable, mobilisable:(stock+assemblable), soldePrevMob, manqueApresMob,
-      firstShortDate, firstShortDans, alerte, echeances};
+      firstShortDate, firstShortDans, firstShortOrderId, alerte, echeances,
+      // faisabilité temporelle (remplie ci-dessous pour les lignes en alerte)
+      faisabilite:null};
   }).sort((a,b)=>{
     // priorité : alerte d'abord, puis solde prévisionnel croissant
     if(a.alerte!==b.alerte) return a.alerte?-1:1;
@@ -14594,6 +14626,39 @@ async function computeForecast(opts){
   });
 
   const alertes = lignes.filter(l=>l.alerte);
+
+  // [🥈 TEMPS RESTANT] Pour chaque parfum en ALERTE de rupture, on demande au rétroplanning calé
+  // (retroplanningCale) la date à laquelle il faut COMMENCER la production de la commande qui crée
+  // la rupture (debutProduction, déjà calé dans les plages A/B). En la comparant à maintenant, on
+  // sait si l'alerte est encore RATTRAPABLE ou non — ce qui transforme « rupture » en action concrète :
+  //   • retard   : le début requis est déjà passé → il fallait s'y mettre avant, urgence (congeler / arbitrer).
+  //   • urgent   : il faut commencer dans les 2 jours.
+  //   • ok       : il reste de la marge avant de devoir lancer.
+  // Appelé UNIQUEMENT pour les lignes en alerte (pas toutes) → coût maîtrisé. Repli silencieux.
+  if(!opts.skipFaisabilite){
+    const _now = new Date();
+    for(const l of alertes){
+      if(l.firstShortOrderId==null) continue;
+      let cale=null;
+      try{ cale = await retroplanningCale(l.firstShortOrderId); }catch(_){ cale=null; }
+      if(!cale || !cale.ok || !cale.debutProduction){ continue; }
+      const debutProd = new Date(cale.debutProduction);
+      const joursAvantDebut = Math.ceil((debutProd - _now)/86400000);
+      let statut, message;
+      if(debutProd < _now){
+        const retardJ = Math.max(1, Math.ceil((_now - debutProd)/86400000));
+        statut = 'retard';
+        message = `Il fallait commencer il y a ${retardJ} j (le ${debutProd.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})}). Lance d'urgence ou ajuste la commande.`;
+      } else if(joursAvantDebut <= 2){
+        statut = 'urgent';
+        message = `À lancer maintenant : commence au plus tard le ${debutProd.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})} pour tenir la livraison.`;
+      } else {
+        statut = 'ok';
+        message = `Encore le temps : tu peux commencer d'ici le ${debutProd.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})} (dans ${joursAvantDebut} j).`;
+      }
+      l.faisabilite = { statut, message, debutRequis: cale.debutProduction, joursAvantDebut, aDesDebordements: !!cale.aDesDebordements };
+    }
+  }
 
   // 4) DEMANDE MARCHÉ GLOBALE (sans historique de répartition) : on l'impute sur le
   // stock total RESTANT après toutes les réservations déjà projetées par parfum.
@@ -14619,7 +14684,7 @@ async function computeForecast(opts){
 }
 // Résumé court des alertes pour la popup quotidienne.
 async function forecastAlerts(){
-  const f = await computeForecast({horizon:8});
+  const f = await computeForecast({horizon:8, skipFaisabilite:true});
   return f.alertes;
 }
 
@@ -15767,7 +15832,7 @@ function coffretsParTaille(orders){
 }
 // Rentabilité des GRANDS FORMATS (gros macarons à l'unité).
 // Compte les ventes par produit (type 'grand'), CA réel encaissé, et marge si la recette existe.
-function bigFormatStats(orders, recipes, recipeItems, lots){
+function bigFormatStats(orders, recipes, recipeItems, lots, settings, mesureParRec, mesureGlobal){
   const recByNorm={}; (recipes||[]).forEach(r=>{ recByNorm[aiNormalize(r.produitNom)]=r; });
   const map={};   // nom -> {nom, qte, ca, recipe, coutUnit}
   (orders||[]).forEach(o=>{
@@ -15790,7 +15855,7 @@ function bigFormatStats(orders, recipes, recipeItems, lots){
     const r=recByNorm[aiNormalize(m.nom)];
     if(r && r.grandFormat){
       m.recipe=r;
-      try{ const cr=coutRevientRecette(r, recipeItems, lots); m.coutUnit=+cr.coutRevientUnit||0; }catch(e){ m.coutUnit=null; }
+      try{ const _opt=(typeof _optMesureRecette==='function')?_optMesureRecette(r, settings, mesureParRec, mesureGlobal):undefined; const cr=coutRevientRecette(r, recipeItems, lots, settings, _opt); m.coutUnit=+cr.coutRevientUnit||0; }catch(e){ m.coutUnit=null; }
     }
   });
   const list=Object.values(map).map(m=>{
@@ -15851,7 +15916,8 @@ async function renderParfums(){
   const avgP = computeAvgSellPrice(data);
   _parfumsAvgP = avgP;
   // Indicateur : rentabilité des grands formats (gros macarons).
-  const bf = bigFormatStats(orders, recipes, recipeItems, lots);
+  const _moBF = await _chargeMesuresMO(s);
+  const bf = bigFormatStats(orders, recipes, recipeItems, lots, s, _moBF.mesureParRec, _moBF.mesureGlobal);
   const bigBox = bf.totQte>0 ? `<div class="panel" style="margin-bottom:12px">
     <h2>🍪 Rentabilité grands formats</h2>
     ${bf.best?`<div class="banner" style="background:#f6f1e8;border-color:#8a6d3b;margin:4px 0 10px"><div>🏆 Le plus vendu : <b>${esc(bf.best.nom)}</b> — ${bf.best.qte} vendu${bf.best.qte>1?'s':''} (${euro(bf.best.ca)})</div></div>`:''}
@@ -16188,6 +16254,8 @@ async function parfumBatchSim(){
   const [recipes, recipeItems, lots]=await Promise.all([db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()]);
   if(!recipes.length){ toast('Crée d\'abord une recette'); return; }
   const s=getSettings();
+  // [COÛT + MO MESURÉE] précharge les mesures d'atelier (si MO mesurée activée) pour un coût complet.
+  const _mo = await _chargeMesuresMO(s);
   const opts=recipes.map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('');
   openModal(`<h3>🧮 Marge prévisionnelle d'un batch</h3>
     <div class="field"><label>Parfum</label><select id="bs_rec" onchange="parfumBatchSimUpdate()">${opts}</select></div>
@@ -16198,7 +16266,7 @@ async function parfumBatchSim(){
     <div id="bs_out"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
   // stocke les données pour le calcul live
-  window._bsData={recipes, recipeItems, lots, settings:s};
+  window._bsData={recipes, recipeItems, lots, settings:s, mesureParRec:_mo.mesureParRec, mesureGlobal:_mo.mesureGlobal};
   // pré-remplit le prix avec le prix de vente moyen si dispo
   parfumBatchSimUpdate();
 }
@@ -16207,7 +16275,8 @@ function parfumBatchSimUpdate(){
   const out=document.getElementById('bs_out'); if(!out) return;
   const rid=+val('bs_rec'); const n=Math.max(1,+val('bs_n')||1); const prix=+val('bs_prix')||0;
   const r=d.recipes.find(x=>x.id===rid); if(!r){ out.innerHTML=''; return; }
-  const c=coutRevientRecette(r, d.recipeItems, d.lots, d.settings);
+  const _opt=_optMesureRecette(r, d.settings, d.mesureParRec, d.mesureGlobal);
+  const c=coutRevientRecette(r, d.recipeItems, d.lots, d.settings, _opt);
   const pieces=round3(c.piecesUtiles*n);
   const coutTotal=money2(c.coutRevientBatch*n);
   const ca=money2(prix*pieces);
@@ -18292,6 +18361,16 @@ async function renderForecast(){
               : '<span class="tag warn">à produire</span>')
           : '<span class="tag ok">OK</span>');
     const dateInfo = l.firstShortDate ? dateBadge(l.firstShortDate, l.firstShortDans) : '—';
+    // [🥈 FAISABILITÉ] pastille + message d'action quand le rétroplanning a tranché.
+    const fa = l.faisabilite;
+    const faPastille = fa
+      ? (fa.statut==='retard' ? ' <span title="En retard sur le délai de production">🔴</span>'
+        : fa.statut==='urgent' ? ' <span title="À lancer maintenant">🟠</span>'
+        : ' <span title="Encore le temps de produire">🟢</span>')
+      : '';
+    const faLigne = fa
+      ? `<tr style="background:#fdf3f2"><td colspan="8" style="padding-top:0;border-top:none;font-size:.78rem;color:${fa.statut==='retard'?'#b3261e':(fa.statut==='urgent'?'#a5680f':'#3f7d52')}">${fa.statut==='retard'?'⏰':(fa.statut==='urgent'?'⚡':'✓')} ${esc(fa.message)}</td></tr>`
+      : '';
     return `<tr ${l.alerte?'style="background:#fdf3f2"':''}>
       <td><b>${esc(l.parfum)}</b></td>
       <td>${qty(l.stock)}</td>
@@ -18300,7 +18379,7 @@ async function renderForecast(){
       <td>${(l.assemblable>0)?`<span style="color:#3f7d52" title="Montable tout de suite depuis coques + ganache en stock">+${qty(l.assemblable)}</span>`:'—'}</td>
       <td>${l.manque>0?`<b style="color:var(--red,#b3261e)">${qty(l.manque)}</b>`:'—'}</td>
       <td>${dateInfo}</td>
-      <td>${etat}</td></tr>`;
+      <td>${etat}${faPastille}</td></tr>${faLigne}`;
   }).join('');
 
   // détail des échéances en rupture (pour planifier les journées de production)
@@ -18318,7 +18397,7 @@ async function renderForecast(){
    <div class="panel"><h2>Stock prévisionnel par parfum</h2>
    ${f.lignes.length?`<div class="table-wrap"><table><thead><tr><th>Parfum</th><th>Stock actuel</th><th>Réservé</th><th>Prévisionnel</th><th>Montable</th><th>Manque</th><th>1ère rupture</th><th>État</th></tr></thead>
      <tbody>${rows}</tbody></table></div>
-     <p class="note">« Réservé » = macarons engagés par les commandes à venir non livrées. « Prévisionnel » = stock fini actuel − réservé (le stock fini ne compte QUE les macarons finis, pas les coques/ganache). « Montable » = macarons assemblables tout de suite depuis les coques + ganache déjà en stock. Une rupture sous ${f.horizon} jours déclenche une alerte, SAUF si le montable la couvre (état « à monter »).</p>`
+     <p class="note">« Réservé » = macarons engagés par les commandes à venir non livrées. « Prévisionnel » = stock fini actuel − réservé (le stock fini ne compte QUE les macarons finis, pas les coques/ganache). « Montable » = macarons assemblables tout de suite depuis les coques + ganache déjà en stock. Une rupture sous ${f.horizon} jours déclenche une alerte, SAUF si le montable la couvre (état « à monter »). Sur chaque alerte, une pastille indique si tu as encore le TEMPS de produire : 🔴 en retard (il fallait déjà commencer), 🟠 à lancer maintenant, 🟢 encore le temps — avec la date limite pour démarrer.</p>`
      :`<div class="empty">Aucune donnée. Lancez des productions et créez des commandes pour activer le prévisionnel.</div>`}
    </div>
    ${detailRupture?`<h2 style="font-family:'Bellota',serif;color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
@@ -23563,7 +23642,7 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps, sa pastille de couleur et son CRÉNEAU HORAIRE calé dans tes plages A/B — l'horaire affiché est le MÊME que celui calculé dans le rétroplanning détaillé de la commande, pour une cohérence totale entre les deux vues ; quand un parfum est mutualisé entre plusieurs commandes, c'est le créneau le plus PRÉCOCE qui est retenu. Le rétroplanning réserve désormais le temps de TOUTES les ganaches de la commande (une par parfum : 6 parfums = 6 ganaches), et non plus un temps forfaitaire par lot de 60 — le planning reflète donc le vrai temps de préparation. Comme tu ne peux faire qu'UNE ganache à la fois, celles d'une même soirée sont ENCHAÎNÉES les unes après les autres (et non affichées au même horaire) : chacune démarre quand la précédente finit. Si la séquence risque de déborder au-delà de l'heure limite (montage moins repos), tout le bloc recule juste ce qu'il faut pour que la dernière ganache finisse à temps — le repos de chacune reste garanti (mention « enchaînée pour tenir le repos »). Le repos de la ganache est COLLÉ à la fin de sa préparation et court jusqu'au montage : il dure donc AU MOINS le repos minimum de la recette — souvent plus si la ganache tombe la veille au soir, ce qui est sans problème), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (par parfum, au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). Mieux : le rétroplanning AJUSTE désormais les durées à ta cadence RÉELLE par parfum — si tes chronos d'atelier montrent qu'un parfum est plus lent (ou plus rapide) que la moyenne, ses créneaux sont étirés ou resserrés en conséquence (uniquement quand la mesure est fiable ; sinon on garde le temps standard). Sur une commande à plusieurs parfums, l'ajustement est pondéré par les quantités. STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). ORDRE D'EXÉCUTION (rétroplanning détaillé) : le planning suit deux branches PARALLÈLES qui convergent au montage. Branche ganache : préparation de la ganache, puis repos jusqu'au montage. Branche coques : coques réalisées le JOUR du montage, juste avant l'assemblage. Résultat, dans l'ordre chronologique affiché : ganache → repos → coques → montage → maturation → livraison. La ganache passe donc AVANT les coques (à cause de son repos), et les coques restent collées au montage. Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »).",
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps, sa pastille de couleur et son CRÉNEAU HORAIRE calé dans tes plages A/B — l'horaire affiché est le MÊME que celui calculé dans le rétroplanning détaillé de la commande, pour une cohérence totale entre les deux vues ; quand un parfum est mutualisé entre plusieurs commandes, c'est le créneau le plus PRÉCOCE qui est retenu. Le rétroplanning réserve désormais le temps de TOUTES les ganaches de la commande (une par parfum : 6 parfums = 6 ganaches), et non plus un temps forfaitaire par lot de 60 — le planning reflète donc le vrai temps de préparation. Comme tu ne peux faire qu'UNE ganache à la fois, celles d'une même soirée sont ENCHAÎNÉES les unes après les autres (et non affichées au même horaire) : chacune démarre quand la précédente finit. Si la séquence risque de déborder au-delà de l'heure limite (montage moins repos), tout le bloc recule juste ce qu'il faut pour que la dernière ganache finisse à temps — le repos de chacune reste garanti (mention « enchaînée pour tenir le repos »). Le repos de la ganache est COLLÉ à la fin de sa préparation et court jusqu'au montage : il dure donc AU MOINS le repos minimum de la recette — souvent plus si la ganache tombe la veille au soir, ce qui est sans problème), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (PAR PARFUM : comme tu montes chaque parfum séparément, chacun mobilise au moins un batch entamé — le temps est compté au batch arrondi au supérieur, pas au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). Mieux : le rétroplanning AJUSTE désormais les durées à ta cadence RÉELLE par parfum — si tes chronos d'atelier montrent qu'un parfum est plus lent (ou plus rapide) que la moyenne, ses créneaux sont étirés ou resserrés en conséquence (uniquement quand la mesure est fiable ; sinon on garde le temps standard). Sur une commande à plusieurs parfums, l'ajustement est pondéré par les quantités. STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). ORDRE D'EXÉCUTION (rétroplanning détaillé) : le planning suit deux branches PARALLÈLES qui convergent au montage. Branche ganache : préparation de la ganache, puis repos jusqu'au montage. Branche coques : coques réalisées le JOUR du montage, juste avant l'assemblage. Résultat, dans l'ordre chronologique affiché : ganache → repos → coques → montage → maturation → livraison. La ganache passe donc AVANT les coques (à cause de son repos), et les coques restent collées au montage. Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »).",
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","🆕 Dans le plan détaillé, touche une ganache (▶ lancer) : l'app te propose de lancer le batch et le chrono d'un seul geste, avec confirmation et quantité ajustable","🆕 Touche aussi une meringue (▶ lancer) : elle lance les coques de tous ses parfums d'un coup (meringue commune) + les chronos, avec confirmation et quantités ajustables","🆕 Touche enfin un montage (▶ monter) : l'app ouvre l'assemblage de ce parfum pré-rempli avec un lot de coques et un lot de garniture déjà terminés (il faut donc les avoir produits avant) — tu ajustes la quantité et la destination, le chrono d'assemblage et le décompte se font tout seuls"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
@@ -23642,13 +23721,13 @@ const GUIDE_THEMES = [
       detail:"Estime ce que tu peux espérer te verser, d'après tes ventes et ta production réelles. L'app affiche d'abord un niveau de confiance selon la complétude de tes données (plus elles sont complètes, plus le calcul est juste), puis le revenu horaire estimé. Un repère précieux pour savoir si ton activité te rémunère correctement.",
       steps:["Regarde ton niveau de confiance (fiabilité des données)","Complète tes données pour affiner le calcul","Lis ton revenu horaire estimé"] },
     { v:'auditcouts', t:'Audit des co\u00fbts', ico:'\u{1F50D}', resume:"V\u00e9rifier que tes co\u00fbts de revient ne sont pas sous-estim\u00e9s.",
-      detail:"Un contr\u00f4le de fiabilit\u00e9 de tes co\u00fbts : l'audit rep\u00e8re les mati\u00e8res qui comptent pour 0 \u20ac dans tes recettes \u2014 celles sans prix de lot r\u00e9ceptionn\u00e9 ni prix indicatif. Tant qu'une mati\u00e8re vaut 0 \u20ac, elle fausse ton co\u00fbt de revient \u00e0 la baisse et gonfle artificiellement ta marge. L'\u00e9cran liste ces trous pour que tu les combles (en r\u00e9ceptionnant un lot avec son prix, ou en saisissant un prix indicatif au kilo).",
+      detail:"Un contr\u00f4le de fiabilit\u00e9 de tes co\u00fbts : l'audit rep\u00e8re les mati\u00e8res qui comptent pour 0 \u20ac dans tes recettes \u2014 celles sans prix de lot r\u00e9ceptionn\u00e9 ni prix indicatif. Tant qu'une mati\u00e8re vaut 0 \u20ac, elle fausse ton co\u00fbt de revient \u00e0 la baisse et gonfle artificiellement ta marge. L'\u00e9cran liste ces trous pour que tu les combles (en r\u00e9ceptionnant un lot avec son prix, ou en saisissant un prix indicatif au kilo). \u00c0 noter : si tu actives la main-d'\u0153uvre mesur\u00e9e dans les r\u00e9glages (co\u00fbt = temps r\u00e9el chronom\u00e9tr\u00e9 \u00d7 ton taux horaire), le simulateur de marge et le co\u00fbt des grands formats l'int\u00e8grent d\u00e9sormais, comme l'analyse de rentabilit\u00e9 \u2014 ton co\u00fbt de revient refl\u00e8te alors mati\u00e8res ET ton vrai temps de travail par parfum.",
       steps:["Rep\u00e8re les mati\u00e8res \u00e0 0 \u20ac signal\u00e9es","R\u00e9ceptionne un lot avec prix ou saisis un prix indicatif","Recontr\u00f4le que tes co\u00fbts sont complets"] },
     { v:'mrp', t:'Plan de production (faisabilit\u00e9)', ico:'\u{1F4CB}', resume:"V\u00e9rifier si tu peux tenir tes commandes sur une p\u00e9riode.",
-      detail:"Le calcul des besoins : \u00e0 partir de tes commandes non livr\u00e9es, il \u00e9value la faisabilit\u00e9 de ta production sur une p\u00e9riode donn\u00e9e. Pour chaque commande, le r\u00e9troplanning calcule quand commencer chaque \u00e9tape, et l'\u00e9cran fait remonter les conflits de production (chevauchements, surcharges) sur les prochains jours. C'est la vue \u00ab est-ce que \u00e7a passe ? \u00bb, compl\u00e9mentaire de l'agenda de production qui, lui, organise le d\u00e9tail du travail.",
+      detail:"Le calcul des besoins : \u00e0 partir de tes commandes non livr\u00e9es, il \u00e9value la faisabilit\u00e9 de ta production sur une p\u00e9riode donn\u00e9e. Pour chaque commande, le r\u00e9troplanning calcule quand commencer chaque \u00e9tape, et l'\u00e9cran fait remonter les conflits de production (chevauchements) sur les prochains jours \u2014 en calant d'abord chaque t\u00e2che dans tes vraies plages de travail A/B, pour ne signaler que les VRAIS conflits (deux t\u00e2ches actives qui tombent vraiment en m\u00eame temps) et plus les faux conflits des jours o\u00f9 tu ne travailles pas. C'est la vue \u00ab est-ce que \u00e7a passe ? \u00bb, compl\u00e9mentaire de l'agenda de production qui, lui, organise le d\u00e9tail du travail.",
       steps:["D\u00e9finis la p\u00e9riode \u00e0 v\u00e9rifier","Parcours le r\u00e9troplanning par commande","Traite les conflits de production signal\u00e9s"] },
     { v:'previsionnel', t:'Pr\u00e9visionnel stocks', ico:'\u{1F4C9}', resume:"Anticiper les ruptures de stock par parfum.",
-      detail:"Anticipe tes ruptures parfum par parfum. Pour chacun, l'\u00e9cran affiche le stock fini actuel (uniquement les macarons FINIS, ni les coques ni les ganaches), le \u00ab r\u00e9serv\u00e9 \u00bb (les macarons d\u00e9j\u00e0 engag\u00e9s par des commandes \u00e0 venir non livr\u00e9es), le \u00ab pr\u00e9visionnel \u00bb (stock actuel moins r\u00e9serv\u00e9) et le \u00ab montable \u00bb (ce que tu peux ASSEMBLER tout de suite \u00e0 partir des coques + ganache d\u00e9j\u00e0 en stock). Si un parfum risque de tomber en rupture sous l'horizon que tu d\u00e9finis, une alerte se d\u00e9clenche \u2014 SAUF si le montable suffit \u00e0 couvrir le besoin : dans ce cas l'\u00e9tat passe \u00e0 \u00ab \u00e0 monter \u00bb (un simple assemblage te sauve, pas besoin de relancer une production).",
+      detail:"Anticipe tes ruptures parfum par parfum. Pour chacun, l'\u00e9cran affiche le stock fini actuel (uniquement les macarons FINIS, ni les coques ni les ganaches), le \u00ab r\u00e9serv\u00e9 \u00bb (les macarons d\u00e9j\u00e0 engag\u00e9s par des commandes \u00e0 venir non livr\u00e9es), le \u00ab pr\u00e9visionnel \u00bb (stock actuel moins r\u00e9serv\u00e9) et le \u00ab montable \u00bb (ce que tu peux ASSEMBLER tout de suite \u00e0 partir des coques + ganache d\u00e9j\u00e0 en stock). Si un parfum risque de tomber en rupture sous l'horizon que tu d\u00e9finis, une alerte se d\u00e9clenche \u2014 SAUF si le montable suffit \u00e0 couvrir le besoin : dans ce cas l'\u00e9tat passe \u00e0 \u00ab \u00e0 monter \u00bb (un simple assemblage te sauve, pas besoin de relancer une production). Mieux encore : chaque alerte est crois\u00e9e avec le r\u00e9troplanning pour te dire si tu as encore le TEMPS de produire avant la livraison \u2014 une pastille 🔴 (en retard, il fallait d\u00e9j\u00e0 commencer), 🟠 (\u00e0 lancer maintenant) ou 🟢 (encore le temps) t'indique l'urgence r\u00e9elle et la date limite pour d\u00e9marrer la production.",
       steps:["Consulte le pr\u00e9visionnel par parfum","Rep\u00e8re les alertes de rupture \u00e0 venir","Lance une production sur les parfums menac\u00e9s"] },
   ]},
   { titre:'Organisation & sécurité', emoji:'🛟', color:'#5a8aa0', items:[
@@ -29768,7 +29847,48 @@ function _retroGanacheTotalMin(o, recipes, tEtape, facteur){
   return { totalMin: total*f, nbParfums: parfums.size };
 }
 
-function _retroDurees(nbMacarons, facteurCadence, ganacheTotalMin){
+// [MONTAGE PAR PARFUM — durée juste] Le montage se fait PARFUM PAR PARFUM, et chaque parfum mobilise
+// au moins un batch entamé (un batch commencé = un batch travaillé). _retroDurees faisait
+// \u00ab 15 \u00d7 ceil(nbMacTotal/60) \u00bb (batchs GLOBAUX), ce qui sous-estimait : 6 parfums de 14 mac
+// donnaient 2 batchs au lieu de 6. On somme donc, par parfum distinct, perBatch \u00d7 ceil(qte/60),
+// avec la MÊME règle de source que le plan (mesuré fiable > recette > défaut). Source unique.
+// Retourne { totalMin } ; déjà multiplié par le facteur de cadence.
+function _retroMontageTotalMin(o, recipes, tEtape, facteur){
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const t = (typeof getMrpTimes==='function') ? getMrpTimes() : {montage:{estimatedTime:15}};
+  const defPerBatch = t.montage.estimatedTime;
+  const f = (typeof facteur==='number' && isFinite(facteur) && facteur>0) ? facteur : 1;
+  const norm = nom => (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
+  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
+  // Quantité par parfum distinct (classiques + grands formats).
+  const qParNom = {};
+  lignes.forEach(ln=>{
+    const arr = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
+    arr.forEach(pp=>{ if(+pp.qte>0){ const k=norm(pp.nom); if(k) qParNom[k]=(qParNom[k]||0)+(+pp.qte); } });
+  });
+  const noms = Object.keys(qParNom);
+  if(!noms.length){ // repli : prorata global comme avant
+    const nb = Math.max(1, Math.ceil(((typeof _retroNbMacarons==='function')?_retroNbMacarons(o):0)/TB));
+    return { totalMin: defPerBatch*nb*f };
+  }
+  const recByNomK = {};
+  (recipes||[]).forEach(r=>{ recByNomK[norm(r.produitNom||'')] = r; });
+  const perBatchDe = k => {
+    const mes = tEtape && tEtape.montage && tEtape.montage[k];
+    if(mes && mes.fiable && mes.nbMac>0) return mes.minTotal/mes.nbMac*TB;   // ramené au batch
+    const r = recByNomK[k];
+    if(r && r.tempsMontageMin!=null && +r.tempsMontageMin>0) return +r.tempsMontageMin;
+    return defPerBatch;
+  };
+  let total = 0;
+  noms.forEach(k=>{
+    const nbBatchs = Math.max(1, Math.ceil(qParNom[k]/TB));   // batchs entamés pour CE parfum
+    total += perBatchDe(k) * nbBatchs;
+  });
+  return { totalMin: total*f };
+}
+
+function _retroDurees(nbMacarons, facteurCadence, ganacheTotalMin, montageTotalMin){
   const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
   const MM = (typeof MACARONS_PAR_MERINGUE!=='undefined') ? MACARONS_PAR_MERINGUE : 120;
   const t = (typeof getMrpTimes==='function') ? getMrpTimes() : {coques:{estimatedTime:35},montage:{estimatedTime:15},ganache:{estimatedTime:12}};
@@ -29785,9 +29905,13 @@ function _retroDurees(nbMacarons, facteurCadence, ganacheTotalMin){
   const ganacheMin = (typeof ganacheTotalMin==='number' && isFinite(ganacheTotalMin) && ganacheTotalMin>0)
     ? ganacheTotalMin
     : t.ganache.estimatedTime * nbBatchs * f;
+  // [MONTAGE PAR PARFUM] idem : si montageTotalMin fourni (somme par parfum, ceil par batch), on l'utilise.
+  const montageMin = (typeof montageTotalMin==='number' && isFinite(montageTotalMin) && montageTotalMin>0)
+    ? montageTotalMin
+    : t.montage.estimatedTime * nbBatchs * f;
   return {
     coques: t.coques.estimatedTime * nbMeringues * f,
-    montage: t.montage.estimatedTime * nbBatchs * f,
+    montage: montageMin,
     ganache: ganacheMin,
     cremeux: ganacheMin,
     nbBatchs, nbMeringues, facteurCadence: f
@@ -30020,7 +30144,9 @@ async function retroplanningCale(orderId){
   // Même source de temps que le plan (mesuré fiable > recette > défaut). Repli silencieux si indispo.
   let tEtapeRetro=null; try{ tEtapeRetro = await prodTempsParEtapeParParfum(90); }catch(_){}
   let ganacheTotalMin; try{ ganacheTotalMin = _retroGanacheTotalMin(o, recipes, tEtapeRetro, facteurCadence).totalMin; }catch(_){ ganacheTotalMin = undefined; }
-  const durees = _retroDurees(nbMac, facteurCadence, ganacheTotalMin);
+  // [MONTAGE PAR PARFUM] durée montage JUSTE = somme par parfum de perBatch × ceil(qte/60). Repli silencieux.
+  let montageTotalMin; try{ montageTotalMin = _retroMontageTotalMin(o, recipes, tEtapeRetro, facteurCadence).totalMin; }catch(_){ montageTotalMin = undefined; }
+  const durees = _retroDurees(nbMac, facteurCadence, ganacheTotalMin, montageTotalMin);
 
   // Construire la séquence des étapes du plus tard (livraison) au plus tôt, avec durée + type.
   // On s'appuie sur les paramètres exposés par retroplanningCommande pour savoir quelles
@@ -30964,7 +31090,12 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
       const m = tempsMontageBatch(p.nom);
       const pi = prodInfo[p.nom] || {commande:p.qte, produire:p.qte, surplus:0, paliers:[]};
       const qp = pi.produire;   // on monte tout ce qu'on produit (commande + surplus stock)
-      const base = round1(m.perBatch * (qp/TB));
+      // [MONTAGE PAR PARFUM] Le montage se fait PARFUM PAR PARFUM : chaque parfum mobilise au moins
+      // un batch entamé (un batch commencé est un batch travaillé). On compte donc le nombre de batchs
+      // ARRONDI AU SUPÉRIEUR (ceil), pas un prorata fractionnaire qui sous-estimait fortement
+      // (ex. 14 mac donnaient 0,23 batch = 3,5 min au lieu d'un batch = 15 min).
+      const nbBatchsMontage = Math.max(qp>0?1:0, Math.ceil(qp/TB));
+      const base = round1(m.perBatch * nbBatchsMontage);
       // Temps spécifiques de la recette (noisettes, incrustation…), hors chablonnage (déjà compté aux coques).
       let specMin = 0; const specDetail = [];
       const rec = recByNom(p.nom);
@@ -30973,7 +31104,8 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
           const d = Math.max(0, +op.duree||0); if(d<=0) return;
           const nomOp = (op.nom||'').toLowerCase();
           if(nomOp.includes('chablon')) return;   // chablonnage géré au niveau des coques
-          const min = (op.unite==='macaron') ? d*qp : d*(qp/TB);
+          // Op « par macaron » = × quantité ; op « par batch » = × nb de batchs entamés (ceil).
+          const min = (op.unite==='macaron') ? d*qp : d*nbBatchsMontage;
           specMin += min; specDetail.push({ nom:op.nom||'opération', min:round1(min) });
         });
       }
@@ -32090,7 +32222,7 @@ function renderMRP(){
      <div id="mrpCommandes"></div>
    </div>
    <div class="panel" id="mrpConflitsPanel" style="display:none"><h2>⚠ Conflits de production (14 j)</h2>
-     <p class="note" style="margin-top:0">Tâches de travail (coques, ganache, crémeux, montage) de commandes différentes qui se chevauchent — impossibles à faire en même temps. Les temps de repos/maturation ne comptent pas (passifs).</p>
+     <p class="note" style="margin-top:0">Tâches de travail (coques, ganache, crémeux, montage) de commandes différentes qui se chevauchent — impossibles à faire en même temps. Les tâches sont calées dans tes vraies plages de travail (A/B) avant comparaison, donc plus de faux conflit sur un jour ou une heure où tu ne travailles pas. Les temps de repos/maturation ne comptent pas (passifs).</p>
      <div id="mrpConflits"></div>
    </div>
 
@@ -32149,36 +32281,11 @@ async function mrpRenderCommandes(){
    Les étapes d'ATTENTE (repos, maturation, congélation) sont passives et
    ne créent jamais de conflit (plusieurs lots peuvent reposer en parallèle).
    ============================================================ */
-// Durée (minutes) d'une tâche de travail selon le nb de batchs de la commande.
-function _retroDureeTache(cle, nbBatchs, nbMeringues, times){
-  const t = times || (typeof getMrpTimes==='function' ? getMrpTimes() : {coques:{estimatedTime:35},ganache:{estimatedTime:12},montage:{estimatedTime:15}});
-  const b = Math.max(1, nbBatchs||1);
-  const m = Math.max(1, nbMeringues||1);
-  if(cle==='coques')  return Math.round((t.coques?.estimatedTime||35) * m);     // par meringue
-  if(cle==='ganache') return Math.round((t.ganache?.estimatedTime||12) * b);    // par batch
-  if(cle==='cremeux') return Math.round((t.ganache?.estimatedTime||12) * b);    // ~ ganache
-  if(cle==='montage') return Math.round((t.montage?.estimatedTime||15) * b);    // par batch
-  return 20;
-}
-
-// Construit la liste des tâches de travail datées (avec durée) pour une commande.
-function retroTachesTravail(o, recipes, times, clName){
-  const r = retroplanningCommande(o, recipes);
-  if(r.error || !r.jalons) return [];
-  // Volume de la commande → nb de batchs / meringues (pour dimensionner les durées).
-  const dem = (typeof _orderParfumDemand==='function') ? _orderParfumDemand(o) : {};
-  const totMac = Object.values(dem).reduce((s,q)=>s+(+q||0),0);
-  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
-  const MM = (typeof MACARONS_PAR_MERINGUE!=='undefined') ? MACARONS_PAR_MERINGUE : 120;
-  const nbBatchs = Math.max(1, Math.ceil(totMac/TB));
-  const nbMeringues = Math.max(1, Math.ceil(totMac/MM));
-  return r.jalons.filter(j=>j.type==='travail').map(j=>{
-    const dur = _retroDureeTache(j.cle, nbBatchs, nbMeringues, times);
-    const debut = new Date(j.date);
-    const fin = new Date(debut.getTime() + dur*60000);
-    return { orderId:o.id, client:clName||'', cle:j.cle, label:j.label, debut, fin, dureeMin:dur, dateLiv:o.date };
-  });
-}
+// [CODE RETIRÉ v759] _retroDureeTache + retroTachesTravail : ces deux fonctions calculaient des
+// tâches de travail THÉORIQUES (non calées dans les plages A/B) avec les anciennes durées
+// (ganache/montage × nbBatchs global). Depuis v758, retroConflicts s'appuie sur retroplanningCale
+// (calage réel + durées par parfum), ce qui les a rendues inutiles. Supprimées pour éviter toute
+// réutilisation accidentelle d'un calcul périmé.
 
 // Détecte les conflits (chevauchements) entre tâches de travail de commandes DIFFÉRENTES.
 async function retroConflicts(startDate, endDate){
@@ -32190,9 +32297,28 @@ async function retroConflicts(startDate, endDate){
   const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
   const times = (typeof getMrpTimes==='function') ? getMrpTimes() : null;
 
-  // Toutes les tâches de travail, toutes commandes confondues.
+  // [POINT C — CALAGE RÉEL] On compare les tâches CALÉES dans les vraies plages A/B (via
+  // retroplanningCale), pas des tâches théoriques qui pourraient tomber un jour/heure non
+  // travaillé (faux conflits). retroplanningCale intègre déjà toutes les corrections de durée
+  // (ganache/montage par parfum, facteur de cadence, étalement) → conflits justes par construction.
+  // Seuls les jalons de TRAVAIL ACTIF créent un conflit : 'active' (ganache/crémeux/montage) et
+  // 'encadree' (coques, présence requise). Les passifs ('libre'/'ancre' : repos, maturation,
+  // congélation, livraison) n'en créent jamais.
+  const TYPES_TRAVAIL = new Set(['active','encadree']);
   let taches = [];
-  orders.forEach(o=>{ taches = taches.concat(retroTachesTravail(o, recipes, times, clName(o.clientId))); });
+  for(const o of orders){
+    let cale=null;
+    try{ cale = await retroplanningCale(o.id); }catch(_){ cale=null; }
+    if(!cale || !cale.ok || !Array.isArray(cale.jalonsCales)) continue;
+    cale.jalonsCales.forEach(j=>{
+      if(!TYPES_TRAVAIL.has(j.type)) return;
+      if(!j.debut || !j.fin) return;
+      const debut = new Date(j.debut), fin = new Date(j.fin);
+      if(!(fin>debut)) return;
+      taches.push({ orderId:o.id, client:clName(o.clientId)||'', cle:j.cle, label:j.label,
+                    debut, fin, dureeMin: Math.round((fin-debut)/60000), dateLiv:o.date });
+    });
+  }
   taches.sort((a,b)=> a.debut - b.debut);
 
   // Recherche des chevauchements entre commandes différentes.
