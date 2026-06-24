@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v859';
+const APP_VERSION = 'v860';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1363,7 +1363,10 @@ let view='accueil';
 // 'forward' = on ouvre une rubrique (glisse par-dessus) ; 'back' = retour (redescend/révèle).
 let _navDir='forward';
 const VIEWS = {
-  accueil:renderAccueil,
+  // [LE FIL — EN STAND-BY] Accueil temporairement routé vers le dashboard historique (renderDash).
+  // renderAccueil (« Le Fil ») reste intégralement dans le code, dormant. Pour le REBRANCHER :
+  // remettre `accueil:renderAccueil,` ci-dessous. Rien d'autre à toucher.
+  accueil:renderDash,
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
