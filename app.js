@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v847';
+const APP_VERSION = 'v848';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -32146,6 +32146,22 @@ async function buildMutualisationSemaine(horizonJours){
           slotWk.aCongeler.push({ orderId:o.id, client:cn, parfum:nom, qte, montage:montageKey, livraison:String(dLiv).slice(0,10), sortir });
         }
       });
+      // [FIX cas A] Les macarons « sans parfum » du coffret doivent peser dans le PLAN OPÉRATIONNEL
+      // (ganaches/coques/montages), pas seulement à la livraison. On les agrège sous « À définir »
+      // (même convention que _parfumsQtesDeLignes / _orderParfumDemand). Sans recette → temps par
+      // défaut. Ils seront remplacés par de vrais parfums au figeage, au démarrage de la prod.
+      const _sp = +ln.sansParfum||0;
+      if(_sp>0){
+        const nom='À définir';
+        let sortir=null;
+        if(aCongeler){ const ds=new Date(dLiv0.getTime()-24*3600000); sortir=ds.toISOString().slice(0,10); }
+        const slot = (slotWk.parfums[nom] ||= { qte:0, ganacheDelaiH:null, commandes:[] });
+        slot.qte += _sp;
+        slot.commandes.push({ orderId:o.id, client:cn, qte:_sp, montage:montageKey, livraison:String(dLiv).slice(0,10), aCongeler, sortir, aDefinir:true });
+        if(aCongeler){
+          slotWk.aCongeler.push({ orderId:o.id, client:cn, parfum:nom, qte:_sp, montage:montageKey, livraison:String(dLiv).slice(0,10), sortir });
+        }
+      }
       slotWk.ids.add(o.id);
     });
   }
