@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v822';
+const APP_VERSION = 'v826';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -31142,11 +31142,85 @@ async function _planSemaineGenere(wk){
     return `<div style="font-size:.78rem;color:#9a8576;padding:6px 2px">Aucune plage de travail définie sur cette semaine. <span class="act" onclick="availEditor()">Définir mes créneaux →</span></div>`;
   }
   const S = schedulePersonalPlan(daySpecs, plan, {});
-  return _planSemaineRenderHTML(S);
+  return _planSemaineRenderHTML(S, plan);
 }
 
 // Rend le HTML du résultat schedulePersonalPlan (mot du chef + déroulé par jour), version « dépli ».
-function _planSemaineRenderHTML(S){
+// [DIAGNOSTIC DE RÉORGANISATION — niveau 1] Quand une semaine déborde, transforme le constat en
+// conseil actionnable : nomme ce qui ne rentre pas, puis propose des leviers CLASSÉS par pertinence,
+// chacun avec son POURQUOI. S'appuie uniquement sur des données sûres (tâches non placées + recettes
+// du plan), pas d'approximation. Renvoie '' si la semaine tient (ok).
+function _diagReorganisation(S, plan){
+  if(!S || S.ok || !Array.isArray(S.unplaced) || !S.unplaced.length) return '';
+  const fmtH = m => m>=60 ? `${Math.floor(m/60)}h${String(Math.round(m%60)).padStart(2,'0')}` : `${Math.round(m)} min`;
+  const manqueMin = Math.max(0, (S.totalActive||0) - (S.totalAvail||0));
+  const lignesParParfum = {};
+  (plan.lignes||[]).forEach(l=>{ lignesParParfum[l.parfum] = l; });
+
+  // Tâches qui débordent, regroupées par type.
+  const ganachesOut = S.unplaced.filter(u=>u.type==='ganache');
+  const montagesOut = S.unplaced.filter(u=>u.type==='montage');
+
+  // Construction des leviers, du plus ciblé au plus général.
+  const leviers = [];
+
+  // LEVIER 1 — Anticiper les ganaches qui supportent un repos long (sortir du jour J).
+  const ganachesReposLong = ganachesOut.filter(u=>{
+    const l = lignesParParfum[u.parfum];
+    return l && +l.ganacheDelaiH > 0;
+  });
+  if(ganachesReposLong.length){
+    const noms = ganachesReposLong.map(u=>u.parfum);
+    const minLib = ganachesReposLong.reduce((s,u)=>s+(u.dur||0),0);
+    const delaiMax = Math.max(...ganachesReposLong.map(u=>+(lignesParParfum[u.parfum]?.ganacheDelaiH)||0));
+    leviers.push({
+      titre: `Prépare ${noms.length>1?'ces ganaches':'la ganache '+noms[0]} la veille au soir.`,
+      pourquoi: `${noms.length>1?'Elles supportent':'Elle supporte'} ${delaiMax} h de repos : ${noms.length>1?'les sortir':'la sortir'} du jour du montage libère ${fmtH(minLib)} au pic de charge.`,
+      action: null
+    });
+  }
+
+  // LEVIER 2 — Étaler/repousser les montages qui débordent (sans date de livraison précise ici :
+  // on reste prudent, on ne promet pas une date — c'est le niveau 2 qui croisera les commandes).
+  if(montagesOut.length){
+    const noms = montagesOut.map(u=>u.parfum);
+    const minM = montagesOut.reduce((s,u)=>s+(u.dur||0),0);
+    leviers.push({
+      titre: `Repousse ${noms.length>1?'ces montages':'le montage '+noms[0]} si ${noms.length>1?'leurs commandes le permettent':'sa commande le permet'}.`,
+      pourquoi: `${fmtH(minM)} de montage ne rentrent pas. Vérifie la date de livraison : ce qui n'est pas dû tout de suite peut passer plus tard.`,
+      action: null
+    });
+  }
+
+  // LEVIER 3 — Ajouter du créneau (toujours proposé, avec le montant exact à combler).
+  leviers.push({
+    titre: `Ajoute ~${fmtH(manqueMin)} de créneau cette semaine.`,
+    pourquoi: `Un créneau supplémentaire d'environ ${fmtH(manqueMin)} suffit à absorber le débordement — tout se recalcule au retour.`,
+    action: `<button class="btn ghost sm" onclick="availEditor()" style="margin-top:4px">🗓️ Ajuster mes créneaux</button>`
+  });
+
+  // Phrase de résumé : ce qui ne rentre pas (toujours en tête).
+  const tousNoms = S.unplaced.map(u=>`${u.type==='ganache'?'🍫':u.type==='montage'?'🧩':'🥚'} ${esc(u.label)} (${fmtH(u.dur)})`);
+  const resume = tousNoms.join(' · ');
+
+  const leviersHTML = leviers.map((lv,i)=>`
+    <div style="display:flex;gap:9px;padding:7px 0;border-bottom:1px solid #f0e4cf">
+      <div style="flex:0 0 22px;height:22px;border-radius:50%;background:#AA7C39;color:#fff;font-size:.74rem;font-weight:700;display:flex;align-items:center;justify-content:center">${i+1}</div>
+      <div style="font-size:.8rem;line-height:1.4">
+        <b>${lv.titre}</b>
+        <div style="color:#9a7a4a;font-size:.74rem;margin-top:1px">${lv.pourquoi}</div>
+        ${lv.action||''}
+      </div>
+    </div>`).join('');
+
+  return `<div style="background:#fbf5ec;border:1px solid #ecd9b8;border-radius:10px;padding:11px 12px;margin-bottom:10px">
+    <div style="font-size:.86rem;font-weight:600;color:var(--bordeaux);margin-bottom:3px">🔧 Comment faire rentrer la semaine</div>
+    <div style="font-size:.74rem;color:#8a5a0f;margin-bottom:7px">Ne trouvent pas de place : ${resume}.</div>
+    ${leviersHTML}
+  </div>`;
+}
+
+function _planSemaineRenderHTML(S, plan){
   if(!S) return '';
   const JOURS = ['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
   const minToHM = mm => String(Math.floor(mm/60)).padStart(2,'0')+':'+String(mm%60).padStart(2,'0');
@@ -31167,7 +31241,9 @@ function _planSemaineRenderHTML(S){
     ? `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-bottom:8px">⚠ <div>${S.warnings.map(esc).join('<br>')}</div></div>` : '';
   const chef = insights
     ? `<div style="background:#faf6ef;border-radius:10px;padding:9px 11px;margin-bottom:8px"><div style="font-size:.86rem;font-weight:600;color:var(--bordeaux);margin-bottom:4px">🧑‍🍳 Le mot du chef</div><ul class="perso-insights" style="font-size:.82rem">${insights}</ul></div>` : '';
-  return `${warn}${chef}${dayBlocks||'<div style="font-size:.78rem;color:#9a8576;padding:4px 2px">Aucune tâche planifiable avec ces créneaux.</div>'}`;
+  // Diagnostic de réorganisation (uniquement quand ça déborde), placé EN TÊTE car c'est le plus actionnable.
+  const diag = (plan && !S.ok) ? _diagReorganisation(S, plan) : '';
+  return `${diag}${warn}${chef}${dayBlocks||'<div style="font-size:.78rem;color:#9a8576;padding:4px 2px">Aucune tâche planifiable avec ces créneaux.</div>'}`;
 }
 
 function _agendaPlanOpSection(plan){
@@ -32797,6 +32873,7 @@ function schedulePersonalPlan(daySpecs, plan, opts){
   const blocks=_flattenAvailability(daySpecs);
   const times=getMrpTimes();
   const events=[];           // {date,start,end,label,kind,passive}
+  const unplaced=[];         // tâches qui ne rentrent dans aucun créneau : {id,type,parfum,label,dur,after}
   const warnings=[], insights=[];
   if(!blocks.length) return {events, warnings:['Aucun créneau de disponibilité renseigné.'], insights, blocks, ok:false, totalActive:0, totalAvail:0};
 
@@ -32849,6 +32926,14 @@ function schedulePersonalPlan(daySpecs, plan, opts){
     }
     // pas de place : tâche non planifiée
     warnings.push(`« ${task.label} » (${task.dur} min) ne rentre dans aucun créneau disponible.`);
+    // Version STRUCTURÉE pour le diagnostic de réorganisation : on sépare type et parfum depuis l'id.
+    const _sep = String(task.id||'').indexOf(':');
+    unplaced.push({
+      id: task.id,
+      type: task.type || (_sep>0 ? task.id.slice(0,_sep) : ''),
+      parfum: _sep>0 ? task.id.slice(_sep+1) : '',
+      label: task.label, dur: task.dur, after: task.after || null
+    });
     return null;
   }
   // placement : phase 1 et 2 entrelacées (meringue puis ganache pendant le passif), puis phase 3.
@@ -32898,7 +32983,7 @@ function schedulePersonalPlan(daySpecs, plan, opts){
   if(totalActive>totalAvail) insights.push(`⚠ Il manque ${Math.ceil((totalActive-totalAvail)/60*10)/10} h de créneau : envisage d'étaler sur un jour de plus, ou de réduire les quantités les moins prioritaires.`);
   else insights.push(`✅ Tout tient dans tes créneaux, avec ${Math.floor((totalAvail-totalActive)/60)}h${String((totalAvail-totalActive)%60).padStart(2,'0')} de marge pour les imprévus (nettoyage, étiquetage, pauses).`);
 
-  return {events, warnings, insights, blocks, ok: warnings.length===0,
+  return {events, warnings, insights, unplaced, blocks, ok: warnings.length===0,
     totalActive, totalAvail, placed, readyInfo, nbMeringues:plan.nbMeringues, nbBatchsTotal:plan.nbBatchsTotal};
 }
 
