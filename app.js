@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v830';
+const APP_VERSION = 'v833';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -31378,7 +31378,7 @@ function _agendaPlanOpSection(plan){
       // Créneau horaire de montage calé (pivot du rétroplanning), affiché comme la ganache.
       const fmtHg = d => { try{ return new Date(d).toLocaleString('fr-FR',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
       const horaireMont = g.debut
-        ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 ${fmtHg(g.debut)}${g.fin?` → fin ${(()=>{try{return new Date(g.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}`:''}</div>`
+        ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 ${fmtHg(g.debut)}${g.fin?` → fin ${(()=>{try{return new Date(g.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}`:''}${g._enchaine?` <span style="color:#9a8576">· enchaîné (un montage à la fois)</span>`:''}</div>`
         : '';
       // [FIX échappement préventif] Même principe que coques/ganache : pas de nom de parfum réinjecté
       // dans l'attribut (un parfum « Fleur d'oranger » casserait l'onclick à apostrophe). On passe une clé.
@@ -31388,7 +31388,13 @@ function _agendaPlanOpSection(plan){
       return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick="planLancerMontageByKey('${montKey}')" title="Assembler ce parfum (coques + garniture déjà produites)">
       <div style="display:flex;align-items:center;width:100%">
         <div style="flex:1;display:flex;align-items:center;flex-wrap:wrap">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qteProduite||g.qte} mac</span>${g.aMarche?` <span style="background:#c97a2a;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="Contient une estimation marché (compo apprise sur l'historique)">⛺ estimé</span>`:''}${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="${g.qte} commandés + ${g.surplusStock} pour le stock">📦 dont ${g.surplusStock} stock</span>`:''} <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span>${(g.stock>0)?`<div style="font-size:.7rem;color:#9a8576;width:100%;margin-top:1px">commandé <b>${g.qte}</b> · 📦 en stock <b style="color:#3f7d52">${g.stock}</b> · à produire <b>${g.besoinNet}</b></div>`:''}</span></div>
-        <div style="display:flex;align-items:center;gap:5px"><span style="color:#3f7d52;font-size:.68rem;font-weight:600">▶ monter</span><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
+        <div style="display:flex;align-items:center;gap:5px"><span style="color:#3f7d52;font-size:.68rem;font-weight:600">▶ monter</span>${
+          g.rienAMonter
+            ? `<b style="color:#3f7d52">✓ déjà en stock</b>`
+            : (g.reassortMin>0
+                ? `<b>${fmtMin(g.commandeMin)}</b><span style="color:#9a8576;font-size:.7rem;font-weight:400"> commande <span style="color:#c97a2a">+ ${fmtMin(g.reassortMin)} réassort</span></span>`
+                : `<b>${fmtMin(g.dureeMin)}</b>`)
+        } ${srcBadge(g.source)}</div>
       </div>
       ${horaireMont}
       ${specTxt}
@@ -31411,7 +31417,7 @@ function _agendaPlanOpSection(plan){
         ${coques}
       </div>
       <div>
-        <div style="font-weight:600;color:#3f7d52;margin-bottom:4px">🔧 Montage <span style="font-weight:400;color:#9a8576;font-size:.76rem">· par parfum · ${fmtMin(s.totalMontageMin)}</span></div>
+        <div style="font-weight:600;color:#3f7d52;margin-bottom:4px">🔧 Montage <span style="font-weight:400;color:#9a8576;font-size:.76rem">· par parfum · ${fmtMin(s.totalMontageMin)}${(s.totalMontageReassortMin>0)?` <span style="color:#9a8576">(${fmtMin(s.totalMontageCommandeMin)} commandes <span style="color:#c97a2a">+ ${fmtMin(s.totalMontageReassortMin)} réassort</span>)</span>`:''}</span></div>
         ${montage}
       </div>
     </div>`;
@@ -32004,8 +32010,25 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
           specMin += min; specDetail.push({ nom:op.nom||'opération', min:round1(min) });
         });
       }
+      const dureeTot = round1(base + specMin);
+      // [MONTAGE — COMMANDE vs RÉASSORT] On monte qp = besoinNet (sert les commandes) + surplus
+      // (réassort : clôturer le batch entamé, seulement si l'arrondi batch est coché → surplus>0).
+      // On VENTILE le temps total au prorata des quantités, sans double-compter le « au moins 1 batch » :
+      // diviser qp en deux sous-quantités et ré-imputer le temps proportionnellement. Quand surplus=0
+      // (case réassort décochée), tout le temps va à la commande et reassortMin reste 0.
+      const bn = Math.max(0, +pi.besoinNet||0);     // quantité servant les commandes
+      const su = Math.max(0, +pi.surplus||0);       // quantité de réassort (surplus d'arrondi batch)
+      let commandeMin = dureeTot, reassortMin = 0;
+      if(qp>0 && su>0){
+        // Prorata : la part commande = bn/qp du temps total, le reste = réassort.
+        commandeMin = round1(dureeTot * (bn/qp));
+        reassortMin = round1(dureeTot - commandeMin);   // garantit commandeMin + reassortMin === dureeTot
+      }
+      // « rien à monter » : le stock fini couvre la commande ET aucun réassort (qp=0).
+      const rienAMonter = (qp<=0);
       return { parfum:p.nom, qte:p.qte, qteProduite:qp, stock:pi.stock, besoinNet:pi.besoinNet, surplusStock:pi.surplus, paliers:pi.paliers, parBatchMin:m.perBatch, source:m.source,
-               dureeMin: round1(base + specMin), baseMin:base, specMin:round1(specMin), specDetail,
+               dureeMin: dureeTot, baseMin:base, specMin:round1(specMin), specDetail,
+               commandeMin, reassortMin, rienAMonter,
                aMarche: p.commandes.some(c=>c.marche),
                commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId, marche:c.marche, marketId:c.marketId})) };
     });
@@ -32101,9 +32124,11 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
         });
       });
     })();
-    // [CRÉNEAU MONTAGE] Chaque parfum du montage reçoit le créneau montage CALÉ de sa commande
-    // (pivot du rétroplanning, déjà dans les plages A/B). Mutualisé entre commandes → créneau le
-    // plus PRÉCOCE (le montage le plus urgent contraint). Affiché comme la ganache pour cohérence.
+    // [CRÉNEAU MONTAGE — étape 1] Chaque parfum du montage reçoit l'ÉCHÉANCE de montage calée de sa
+    // commande (pivot du rétroplanning, déjà dans les plages A/B). Mutualisé entre commandes →
+    // échéance la plus PRÉCOCE (le montage le plus urgent contraint). On ne fixe PAS encore
+    // g.debut/g.fin : ce créneau brut est partagé par tous les parfums d'une même commande, donc
+    // les afficher tels quels les empilerait au même horaire (faux : un seul opérateur, deux bras).
     montage.forEach(g=>{
       let best=null;
       (g.commandes||[]).forEach(c=>{
@@ -32114,14 +32139,43 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
           if(!best || d < new Date(best.debut)) best = { debut:cal.debut, fin:cal.fin };
         }
       });
-      if(best){ g.debut = best.debut; g.fin = best.fin; }
+      g._echeanceMont = best ? best.fin : null;   // le montage doit être FINI au plus tard à best.fin
+      if(!best) g.horaireImpossible = true;
     });
+    // [CRÉNEAU MONTAGE — étape 2] ÉTALEMENT SÉQUENTIEL À REBOURS. Comme les ganaches, on ne peut
+    // monter qu'UN parfum à la fois (deux bras). Le montage est l'étape FINALE (collée à la
+    // maturation/livraison) : on cale donc à REBOURS depuis l'échéance commune. Les montages qui
+    // partagent la même échéance forment un groupe ; le DERNIER finit pile à l'échéance, chaque
+    // précédent finit quand le suivant commence. Le bloc démarre donc à (échéance − durée totale).
+    // Symétrique de _etalerGanaches, mais ancré sur la FIN (le montage ne peut pas déborder après
+    // l'échéance sans repousser la livraison).
+    (function _etalerMontages(){
+      const groupes = {};
+      montage.forEach(g=>{ if(!g._echeanceMont) return; (groupes[g._echeanceMont] ||= []).push(g); });
+      Object.keys(groupes).forEach(echIso=>{
+        const grp = groupes[echIso];
+        const dureesMs = grp.map(g=>Math.max(1, Math.round(+g.dureeMin||0))*60000);
+        const totalMs = dureesMs.reduce((a,b)=>a+b,0);
+        // Enchaînement au plus tôt à partir de (échéance − total) → le dernier finit à l'échéance.
+        const echeanceMs = new Date(echIso).getTime();
+        let curseur = echeanceMs - totalMs;
+        grp.forEach((g,i)=>{
+          g.debut = new Date(curseur).toISOString();
+          g.fin   = new Date(curseur + dureesMs[i]).toISOString();
+          curseur += dureesMs[i];   // la suivante démarre à la fin de celle-ci
+        });
+        if(grp.length>1) grp.forEach(g=>{ g._enchaine = true; }); // info : séquence (plusieurs montages enchaînés)
+      });
+    })();
     const totalGanacheMin = Math.round(ganache.reduce((a,g)=>a+g.dureeMin,0));
     const totalMontageMin = Math.round(montage.reduce((a,g)=>a+g.dureeMin,0));
+    const totalMontageCommandeMin = Math.round(montage.reduce((a,g)=>a+(+g.commandeMin||0),0));
+    const totalMontageReassortMin = Math.round(montage.reduce((a,g)=>a+(+g.reassortMin||0),0));
     const totalCoquesMin  = coques.reduce((a,m)=>a+m.dureeMin,0);
     const totalMacarons   = s.parfums.reduce((a,p)=>a+p.qte,0);
     return { wk:s.wk, label:s.label, ganache, coques, montage,
              totalGanacheMin, totalCoquesMin, totalMontageMin,
+             totalMontageCommandeMin, totalMontageReassortMin,
              totalMin: totalGanacheMin+totalMontageMin+totalCoquesMin, totalMacarons };
   });
   return { semaines, horizonJours: mut.horizonJours||45 };
@@ -33135,6 +33189,52 @@ let _mrpStart=null, _mrpEnd=null, _mrpPlan=null, _mrpDispo=0, _mrpMatCheck=null;
 // (calage réel + durées par parfum), ce qui les a rendues inutiles. Supprimées pour éviter toute
 // réutilisation accidentelle d'un calcul périmé.
 
+// [HELPER PUR — extrait de retroConflicts, v831] Détection de chevauchements à partir d'une LISTE
+// DE TÂCHES déjà calées (aucune lecture de base). Sépare la logique pure (triable, testable en
+// isolation) de la collecte des données. Réutilisé tel quel par retroConflicts (données réelles)
+// ET par la simulation « et si je livrais le X ? » (une commande à date fictive, en mémoire).
+// taches : [{orderId, client, cle, label, debut:Date, fin:Date, dureeMin, dateLiv}]
+// Renvoie { conflits:[{a,b,debut,fin,minutes}], taches } — comportement identique à l'ancien inline.
+function _retroDetecterConflits(taches){
+  const arr = (taches||[]).slice().sort((a,b)=> a.debut - b.debut);
+  const conflits = [];
+  for(let i=0;i<arr.length;i++){
+    for(let j=i+1;j<arr.length;j++){
+      const A=arr[i], B=arr[j];
+      if(B.debut >= A.fin) break;                 // trié par début : plus de chevauchement possible avec A
+      if(A.orderId===B.orderId) continue;          // même commande : pas un conflit
+      const overlapStart = new Date(Math.max(A.debut, B.debut));
+      const overlapEnd   = new Date(Math.min(A.fin, B.fin));
+      const minutes = Math.round((overlapEnd - overlapStart)/60000);
+      if(minutes>0) conflits.push({a:A, b:B, debut:overlapStart, fin:overlapEnd, minutes});
+    }
+  }
+  return { conflits, taches:arr };
+}
+
+// [HELPER PUR — v831] Transforme un jeu de jalons calés (issus de retroplanningCale/Parfums) en
+// tâches de TRAVAIL exploitables par _retroDetecterConflits. Seuls les jalons 'active' et 'encadree'
+// comptent (le repos/maturation/livraison ne créent jamais de conflit). On passe le calage déjà
+// fait → ce helper ne touche NI la base NI le réseau, il est donc testable en Node.
+// entrees : [{orderId, dateLiv, clientNom, cale}] où cale = retour de retroplanningCale(Parfums).
+function _retroTachesDepuisCales(entrees){
+  const TYPES_TRAVAIL = new Set(['active','encadree']);
+  const taches = [];
+  (entrees||[]).forEach(e=>{
+    const cale = e.cale;
+    if(!cale || !cale.ok || !Array.isArray(cale.jalonsCales)) return;
+    cale.jalonsCales.forEach(j=>{
+      if(!TYPES_TRAVAIL.has(j.type)) return;
+      if(!j.debut || !j.fin) return;
+      const debut = new Date(j.debut), fin = new Date(j.fin);
+      if(!(fin>debut)) return;
+      taches.push({ orderId:e.orderId, client:e.clientNom||'', cle:j.cle, label:j.label,
+                    debut, fin, dureeMin: Math.round((fin-debut)/60000), dateLiv:e.dateLiv });
+    });
+  });
+  return taches;
+}
+
 // Détecte les conflits (chevauchements) entre tâches de travail de commandes DIFFÉRENTES.
 async function retroConflicts(startDate, endDate){
   let orders;
@@ -33152,37 +33252,17 @@ async function retroConflicts(startDate, endDate){
   // Seuls les jalons de TRAVAIL ACTIF créent un conflit : 'active' (ganache/crémeux/montage) et
   // 'encadree' (coques, présence requise). Les passifs ('libre'/'ancre' : repos, maturation,
   // congélation, livraison) n'en créent jamais.
-  const TYPES_TRAVAIL = new Set(['active','encadree']);
-  let taches = [];
+  // [v831] Calage de chaque commande (lecture base), puis délégation aux helpers PURS
+  // _retroTachesDepuisCales + _retroDetecterConflits. La logique de détection est désormais
+  // isolée et testée en Node ; ici on ne fait que collecter les données réelles.
+  const entrees = [];
   for(const o of orders){
     let cale=null;
     try{ cale = await retroplanningCale(o.id); }catch(_){ cale=null; }
-    if(!cale || !cale.ok || !Array.isArray(cale.jalonsCales)) continue;
-    cale.jalonsCales.forEach(j=>{
-      if(!TYPES_TRAVAIL.has(j.type)) return;
-      if(!j.debut || !j.fin) return;
-      const debut = new Date(j.debut), fin = new Date(j.fin);
-      if(!(fin>debut)) return;
-      taches.push({ orderId:o.id, client:clName(o.clientId)||'', cle:j.cle, label:j.label,
-                    debut, fin, dureeMin: Math.round((fin-debut)/60000), dateLiv:o.date });
-    });
+    entrees.push({ orderId:o.id, dateLiv:o.date, clientNom:clName(o.clientId)||'', cale });
   }
-  taches.sort((a,b)=> a.debut - b.debut);
-
-  // Recherche des chevauchements entre commandes différentes.
-  const conflits = [];
-  for(let i=0;i<taches.length;i++){
-    for(let j=i+1;j<taches.length;j++){
-      const A=taches[i], B=taches[j];
-      if(B.debut >= A.fin) break;                 // trié par début : plus de chevauchement possible avec A
-      if(A.orderId===B.orderId) continue;          // même commande : pas un conflit
-      // chevauchement si A.debut < B.fin && B.debut < A.fin (déjà garanti B.debut<A.fin)
-      const overlapStart = new Date(Math.max(A.debut, B.debut));
-      const overlapEnd   = new Date(Math.min(A.fin, B.fin));
-      const minutes = Math.round((overlapEnd - overlapStart)/60000);
-      if(minutes>0) conflits.push({a:A, b:B, debut:overlapStart, fin:overlapEnd, minutes});
-    }
-  }
+  const taches = _retroTachesDepuisCales(entrees);
+  const { conflits } = _retroDetecterConflits(taches);
   return { conflits, taches, nbCommandes:orders.length };
 }
 
