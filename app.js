@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v857';
+const APP_VERSION = 'v859';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1614,6 +1614,7 @@ function goView(v, opts){
     if(!pmsGuardUnsaved()) return;
   }
   if(typeof hideUndo==='function') hideUndo();
+  if(v==='accueil') window._filRetour=null;   // retour au fil par tout chemin → on consomme le marqueur
   _navDir='forward';
   view=v; setActiveView(view); render();
   if(typeof navUsageTrack==='function') navUsageTrack(v);   // traçage usage (favoris/récents/stats)
@@ -2538,8 +2539,18 @@ function _accueilBuildCards(brain, presse){
       titre = 'Prendre de l\'avance ?';
       detail = "Renseigne tes créneaux de disponibilité pour que l'app te propose d'avancer une fournée.";
     }
+    // [SAUT CONTEXTUEL — « PRENDRE DE L'AVANCE »] On n'envoie pas vers le plan brut : on vise la
+    // SEMAINE EN COURS dépliée PUIS le déroulé d'étapes concrètes (mode 'avance' → scroll sur la
+    // 1re tâche lançable, cf. _planConsumeFocus). Parfum prioritaire = 1re ligne du plan (champ RÉEL
+    // brain.plan, vérifié). Date = aujourd'hui (la semaine en cours porte ce qu'on peut démarrer).
+    const _avProchainParfum = (brain && Array.isArray(brain.plan) && brain.plan[0]) ? brain.plan[0].parfum : null;
+    const _avAuj = new Date().toISOString().slice(0,10);
+    const _avOnclick = (dispo!=null && dispo>=60)
+      ? `planFocusTache('${_avAuj}', ${_avProchainParfum?`'${String(_avProchainParfum).replace(/'/g,"\\'")}'`:'null'}, 'avance')`
+      : `goView('agendaprod')`;   // pas de marge aujourd'hui → ouverture simple, pas de focus trompeur
     cards.push({ key:'avance', badge, accent, kicker:'Aperçu du jour', titre, detail,
-      cta:'Voir le plan de la semaine', onclick:`goView('agendaprod')`, dest:'plan de production' });
+      cta:(dispo!=null && dispo>=60)?'Voir les étapes à lancer':'Voir le plan de la semaine',
+      onclick:_avOnclick, dest:'plan de production' });
   })();
 
   return cards;
@@ -31716,6 +31727,24 @@ function prodActualiser(){
   if(typeof renderAgendaProduction==='function') renderAgendaProduction();
 }
 
+// [RETOUR AU FIL] Marqueur d'origine : posé quand un saut PART de l'accueil (« Le Fil »). Tant qu'il
+// est présent, les écrans atteints depuis le fil affichent un bouton « ← Retour au fil ». Consommé
+// au clic du bouton (ou quand on revient à l'accueil). Aucune incidence sur la navigation par le menu :
+// si le marqueur est absent, rien ne s'affiche et le comportement reste celui d'avant.
+function filMarquerOrigine(){ window._filRetour = { ts: Date.now() }; }
+function filRetourActif(){ return !!(window._filRetour); }
+// Bouton de retour au fil. Rendu UNIQUEMENT si on vient du fil. Style discret, aligné à l'identité.
+function _filRetourBanner(){
+  if(!filRetourActif()) return '';
+  return `<button class="btn ghost" onclick="filRetourGo()" title="Revenir à l'accueil"
+    style="margin-bottom:10px;border-color:#e0d3c2;color:#7a4b2a">← Retour au fil</button>`;
+}
+// Clic : efface le marqueur et revient à l'accueil rafraîchi.
+function filRetourGo(){
+  window._filRetour = null;
+  if(typeof goView==='function') goView('accueil');
+}
+
 async function renderAgendaProduction(){
   const main = document.getElementById('main');
   main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
@@ -31822,6 +31851,7 @@ async function renderAgendaProduction(){
   const nbCmd = cr && cr.commandes ? cr.commandes.length : 0;
   main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div>
       <button class="btn ghost" onclick="prodActualiser()" title="Synchroniser l'écran avec l'heure réelle">🔄 Actualiser</button></div>
+    ${_filRetourBanner()}
     ${_prodBarreVivante()}
     ${_prodRaccourciPlanning()}
     ${_prodAlerteParfums()}
@@ -31959,9 +31989,12 @@ async function planSemaineToggle(wk, bandEl){
 //
 // dateTacheISO : date de début de la tâche (ex. début de prod d'une commande). parfum : optionnel,
 // pour un futur surlignage plus fin. L'intention est posée puis consommée en fin de renderAgendaProduction.
-function planFocusTache(dateTacheISO, parfum){
+function planFocusTache(dateTacheISO, parfum, mode){
+  if(typeof filMarquerOrigine==='function') filMarquerOrigine();   // on vient du fil → bouton « ← Retour au fil »
   const wk = (typeof _isoWeekKey==='function') ? _isoWeekKey(dateTacheISO) : null;
-  window._planFocusPending = wk ? { wk, parfum: parfum||null } : null;
+  // mode : 'avance' = après dépli, scroller jusqu'au déroulé d'étapes et surligner la 1re tâche lançable.
+  //        (par défaut) = on s'arrête au bandeau de la semaine (comportement carte « tâche du moment »).
+  window._planFocusPending = wk ? { wk, parfum: parfum||null, mode: mode||null } : null;
   if(typeof goView==='function') goView('agendaprod');
 }
 // Consomme une éventuelle intention de focus après le rendu du plan : trouve le bandeau de la semaine,
@@ -31989,8 +32022,30 @@ function _planConsumeFocus(){
       band.style.transition = 'box-shadow .3s';
       band.style.boxShadow = '0 0 0 3px rgba(170,124,57,.55)';
       setTimeout(()=>{ band.style.boxShadow = oldShadow||''; }, 1600);
+      // [MODE AVANCE] On ne s'arrête pas au bandeau : on amène à la 1re ÉTAPE CONCRÈTE à lancer.
+      // Le dépli est généré en async par planSemaineToggle → on attend qu'il soit chargé, puis on
+      // cible la 1re sum-box cliquable (onclick planLancer…ByKey = la tâche la plus en amont).
+      if(intent.mode==='avance'){
+        const depliBox = band.nextElementSibling;
+        _planFocusPremiereEtape(depliBox, 0);
+      }
     }catch(e){ console.error('_planConsumeFocus', e); }
   }, 60);
+}
+// Attend (poll borné) que le déroulé de la semaine soit généré, puis scrolle sur la PREMIÈRE étape
+// concrète lançable et la surligne. tries = nombre d'essais déjà faits (borne anti-boucle).
+function _planFocusPremiereEtape(depliBox, tries){
+  if(!depliBox || tries>40) return;   // ~4 s max (40 × 100 ms) puis abandon silencieux
+  const pret = depliBox.classList && depliBox.classList.contains('faiz-depli')
+            && depliBox.dataset && depliBox.dataset.loaded==='1';
+  if(!pret){ setTimeout(()=>_planFocusPremiereEtape(depliBox, tries+1), 100); return; }
+  const etape = depliBox.querySelector('.sum-box[onclick^="planLancer"]');
+  if(!etape) return;   // pas d'étape lançable (rien à avancer) : on laisse la semaine dépliée telle quelle
+  etape.scrollIntoView({ behavior:'smooth', block:'center' });
+  const old = etape.style.boxShadow;
+  etape.style.transition = 'box-shadow .3s';
+  etape.style.boxShadow = '0 0 0 3px rgba(170,124,57,.7)';
+  setTimeout(()=>{ etape.style.boxShadow = old||''; }, 1900);
 }
 
 
