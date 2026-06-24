@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v766';
+const APP_VERSION = 'v778';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -2590,7 +2590,7 @@ async function renderMaterials(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Matières & emballages</h1><p id="matCount">${mats.length} référence(s)</p></div>
-     <div class="flex" style="flex-wrap:wrap;gap:8px"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Référence</button><button class="btn ghost" onclick="genShoppingList()">🛒 Liste de courses</button><button class="btn ghost" onclick="inventaireForm()">📋 Inventaire</button></div></div>
+     <div class="flex" style="flex-wrap:wrap;gap:8px"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Référence</button><button class="btn ghost" onclick="genShoppingList()">🛒 Liste de courses</button><button class="btn ghost" onclick="genShoppingListPrev()">🔮 Courses prévisionnelles</button><button class="btn ghost" onclick="inventaireForm()">📋 Inventaire</button></div></div>
    <div class="panel"><h2>Inventaire (stock = somme des lots actifs)</h2>
      <input class="search" id="matSearch" style="width:100%;margin-bottom:12px" placeholder="Nom de référence, unité, état…" value="${esc(matSearch)}" oninput="matFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
    ${mats.length?`
@@ -2768,6 +2768,28 @@ function _setMatSec(key, open){
 // Génère une liste de courses imprimable à partir des matières ACTUELLEMENT filtrées
 // à l'écran (catégorie + recherche, ex. « à commander »). Pour chaque matière, interroge
 // l'historique des lots pour proposer le fournisseur au meilleur prix.
+// [HELPER COURSES] Meilleur fournisseur pour une matière : pour chaque fournisseur,
+// on prend son lot le plus récent, et on retient le prix unitaire le plus bas.
+// Extrait de genShoppingList pour être partagé avec la liste prévisionnelle.
+// `lots` et `suppliers` sont passés en paramètre (chargés une fois par l'appelant).
+function _bestSupplierFor(materialId, lots, suppliers){
+  const supName = id => (suppliers.find(s=>s.id===id)||{}).nom || '—';
+  const perSup = new Map();
+  for(const l of lots){
+    if(l.materialId!==materialId || !l.supplierId) continue;
+    const cur = perSup.get(l.supplierId);
+    const newer = !cur || (l.dateReception||'') > (cur.dateReception||'')
+      || ((l.dateReception||'')===(cur.dateReception||'') && (l.id||0)>(cur.id||0));
+    if(newer) perSup.set(l.supplierId, l);
+  }
+  const offres=[];
+  for(const [sid,lot] of perSup){ const pu=lotPU(lot); if(pu>0) offres.push({sid,pu,date:lot.dateReception||''}); }
+  if(!offres.length) return null;
+  offres.sort((a,b)=>a.pu-b.pu);
+  return { nom:supName(offres[0].sid), pu:offres[0].pu, date:offres[0].date,
+           nbAutres:offres.length-1, ecart: offres.length>1 ? money2(offres[offres.length-1].pu-offres[0].pu) : 0 };
+}
+
 async function genShoppingList(){
   if(!_matCache){ toast('Données non chargées'); return; }
   // 1) Reproduire le filtre courant (catégorie + texte de recherche).
@@ -2776,24 +2798,7 @@ async function genShoppingList(){
   if(!list.length){ toast('Aucune matière dans le filtre actuel'); return; }
   // 2) Charger lots + fournisseurs pour le meilleur prix.
   const [lots, suppliers] = await Promise.all([db.materialLots.toArray(), db.suppliers.toArray()]);
-  const supName = id => (suppliers.find(s=>s.id===id)||{}).nom || '—';
-  // Meilleur prix par matière : pour chaque fournisseur, son lot le plus récent ; on garde le PU mini.
-  function bestSupplier(materialId){
-    const perSup = new Map();
-    for(const l of lots){
-      if(l.materialId!==materialId || !l.supplierId) continue;
-      const cur = perSup.get(l.supplierId);
-      const newer = !cur || (l.dateReception||'') > (cur.dateReception||'')
-        || ((l.dateReception||'')===(cur.dateReception||'') && (l.id||0)>(cur.id||0));
-      if(newer) perSup.set(l.supplierId, l);
-    }
-    const offres=[];
-    for(const [sid,lot] of perSup){ const pu=lotPU(lot); if(pu>0) offres.push({sid,pu,date:lot.dateReception||''}); }
-    if(!offres.length) return null;
-    offres.sort((a,b)=>a.pu-b.pu);
-    return { nom:supName(offres[0].sid), pu:offres[0].pu, date:offres[0].date,
-             nbAutres:offres.length-1, ecart: offres.length>1 ? money2(offres[offres.length-1].pu-offres[0].pu) : 0 };
-  }
+  const bestSupplier = materialId => _bestSupplierFor(materialId, lots, suppliers);
   // 3) Construire les lignes.
   const lignes = list.map(r=>{
     const mat=r.mat;
@@ -2805,6 +2810,48 @@ async function genShoppingList(){
   // 4) Modale d'aperçu + bouton imprimer.
   const aCommander = lignes.filter(l=>l.low).length;
   openShoppingListModal(lignes, aCommander);
+}
+
+// [COURSES PRÉVISIONNELLES] Liste de courses fondée sur les BESOINS RÉELS à venir
+// (commandes datées + marchés) et non sur le seuil statique. S'appuie sur le moteur
+// besoinMatieresPrevisionnel : pour produire le « net à produire » de chaque parfum sur
+// l'horizon, il faut telle quantité de chaque matière → on compare au stock → ce qui manque.
+// Réutilise _bestSupplierFor pour le fournisseur au meilleur prix (source de vérité unique).
+async function genShoppingListPrev(horizonJours){
+  const horizon = horizonJours || 14;
+  toast('Calcul des besoins à venir…');
+  let res;
+  try{
+    res = await besoinMatieresPrevisionnel(horizon);
+  }catch(e){
+    console.error('genShoppingListPrev', e);
+    toast('Erreur lors du calcul des besoins'); return;
+  }
+  if(!res || !res.lignes.length){
+    openModal(`<h3>🔮 Courses prévisionnelles</h3>
+      <p class="note">Aucune production n'est nécessaire sur les <b>${horizon} prochains jours</b> : ton stock de macarons (et les coques/ganaches mobilisables) couvre déjà les commandes et marchés à venir. Rien à acheter de ce côté.</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  // Fournisseur au meilleur prix : on charge lots + fournisseurs une fois.
+  const [lots, suppliers] = await Promise.all([db.materialLots.toArray(), db.suppliers.toArray()]);
+  // Construire les lignes au format attendu par _shopRow, enrichies du détail parfums.
+  const lignes = res.lignes.map(l=>{
+    // Agréger le besoin par parfum (un même parfum peut apparaître plusieurs fois si plusieurs items).
+    const parParfum = {};
+    (l.parfums||[]).forEach(p=>{ parParfum[p.nom] = (parParfum[p.nom]||0) + (p.qte||0); });
+    const parfums = Object.keys(parParfum).map(nom=>({nom, qte:parParfum[nom]}))
+      .sort((a,b)=>b.qte-a.qte);
+    return {
+      nom: l.nom, unite: l.unite||'', stock: l.stock, seuil: l.besoin,
+      manque: l.manque, low: l.manque>0,
+      best: _bestSupplierFor(l.materialId, lots, suppliers),
+      _planContext: true,        // bascule le libellé « seuil » → « besoin plan » dans _shopRow
+      _parfums: parfums          // détail des parfums à produire qui mobilisent cette matière
+    };
+  });
+  const aCommander = lignes.filter(l=>l.low).length;
+  openShoppingListModal(lignes, aCommander, {prev:true, horizon, nbAProduire:res.nbAProduire});
 }
 
 /* ============================================================
@@ -2943,19 +2990,29 @@ function _shopRow(l){
   const best = l.best
     ? `<b>${esc(l.best.nom)}</b> <span class="ws-time">${euro(l.best.pu)}/${esc(l.unite||'u')}</span>${l.best.nbAutres>0?` <span class="tag ok" style="font-size:.6rem">meilleur prix (−${euro(l.best.ecart)})</span>`:''}`
     : `<span style="color:#c9bcae">aucun historique d'achat</span>`;
+  // Mode prévisionnel : détail des parfums à produire qui consomment cette matière.
+  const parfumsTxt = (l._parfums && l._parfums.length)
+    ? `<div class="shop-sub" style="color:#9a8a82;font-size:.78rem">pour : ${l._parfums.map(p=>`${esc(p.nom)} (${qty(p.qte)})`).join(', ')}</div>`
+    : '';
   return `<div class="shop-line">
     <div class="shop-chk">☐</div>
     <div class="shop-main">
       <div class="shop-name"><b>${esc(l.nom)}</b> ${l.low?'<span class="tag low" style="font-size:.6rem">à commander</span>':''}</div>
       <div class="shop-sub">Stock ${qty(l.stock)} / ${l._planContext?'besoin plan':'seuil'} ${qty(l.seuil)} ${esc(l.unite)} · à prévoir : <b>${manqueTxt}</b></div>
+      ${parfumsTxt}
       <div class="shop-sup">🏪 ${best}</div>
     </div>
   </div>`;
 }
-function openShoppingListModal(lignes, aCommander){
+function openShoppingListModal(lignes, aCommander, opts){
+  opts = opts || {};
   const dateStr = new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  openModal(`<h3>🛒 Liste de courses</h3>
-    <p class="note">${lignes.length} référence(s)${aCommander?` · <b>${aCommander} à commander</b>`:''}. Le fournisseur indiqué est celui au <b>meilleur prix</b> d'après ton historique d'achat.</p>
+  const titre = opts.prev ? '🔮 Courses prévisionnelles' : '🛒 Liste de courses';
+  const note = opts.prev
+    ? `Pour honorer tes commandes et marchés des <b>${opts.horizon} prochains jours</b>, tu dois produire <b>${opts.nbAProduire} parfum(s)</b>. Voici les matières nécessaires${aCommander?` · <b>${aCommander} à acheter</b>`:''}. Les quantités tiennent compte de ton stock actuel.`
+    : `${lignes.length} référence(s)${aCommander?` · <b>${aCommander} à commander</b>`:''}. Le fournisseur indiqué est celui au <b>meilleur prix</b> d'après ton historique d'achat.`;
+  openModal(`<h3>${titre}</h3>
+    <p class="note">${note}</p>
     <div class="shop-list" id="shopList">${lignes.map(_shopRow).join('')}</div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Fermer</button>
@@ -2969,9 +3026,11 @@ function _printShop(){
   const rows = lignes.map(l=>{
     const manque = l.manque>0 ? `${qty(l.manque)} ${esc(l.unite)}` : '—';
     const best = l.best ? `${esc(l.best.nom)} — ${euro(l.best.pu)}/${esc(l.unite||'u')}` : '—';
+    const parfums = (l._parfums && l._parfums.length)
+      ? `<div style="color:#777;font-size:10px">pour : ${l._parfums.map(p=>`${esc(p.nom)} (${qty(p.qte)})`).join(', ')}</div>` : '';
     return `<tr>
       <td style="width:22px;text-align:center">☐</td>
-      <td><b>${esc(l.nom)}</b>${l.low?' <span style="color:#a9772a;font-size:10px">(à commander)</span>':''}</td>
+      <td><b>${esc(l.nom)}</b>${l.low?' <span style="color:#a9772a;font-size:10px">(à commander)</span>':''}${parfums}</td>
       <td style="text-align:right;white-space:nowrap">${manque}</td>
       <td>${best}</td></tr>`;
   }).join('');
@@ -10178,6 +10237,8 @@ async function renderCmd(){
     return `Coffret ${ln.taille||'?'}`;
   };
   // index de recherche par commande, calculé une seule fois
+  // [🥉 PRODUISIBILITÉ] Stock mobilisable par parfum, chargé UNE fois pour toutes les commandes.
+  let _mobMapCmd = {}; try{ _mobMapCmd = await stockMobilisableParParfum(); }catch(_){ _mobMapCmd = {}; }
   _cmdCache = orders.map(o=>{
     const lignes = orderToLines(o);
     const resume = lignes.length ? lignes.map(lineLabel).join(' + ') : '—';
@@ -10196,7 +10257,8 @@ async function renderCmd(){
       resume, prodTxt, o.notes, o.reglement, o.paiement, 'cmd'+o.id, '#'+o.id, refCmd, fmtDate(o.date),
       facetTxt, (lotsByOrder[o.id]||[]).join(' ')].filter(Boolean).join(' '));
     const digits = onlyDigits([o.id, refCmd, cl.tel, o.montant].filter(v=>v!=null&&v!=='').join(' '));
-    return {o, resume, nbLies:(itemsByOrder[o.id]||[]).length, _prim:prim, _blob:blob, _digits:digits, _facets};
+    const produisibilite = (typeof _orderProduisibilite==='function') ? _orderProduisibilite(o, _mobMapCmd) : null;
+    return {o, resume, nbLies:(itemsByOrder[o.id]||[]).length, _prim:prim, _blob:blob, _digits:digits, _facets, produisibilite};
   });
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Commandes</h1><p id="cmdCount">${orders.length} commande(s)</p></div>
@@ -10283,6 +10345,37 @@ function _cmdRenderTagBar(){
   }
   bar.innerHTML = html;
 }
+// [🥉 PRODUISIBILITÉ COMMANDE] Calcule, pour une commande, si elle est couvrable par le stock ACTUEL.
+// Croise sa demande par parfum (_orderParfumDemand, noms bruts) avec le stock mobilisable
+// (stockMobilisableParParfum, clés aiNormalize) → on normalise pour faire le pont.
+// Statut le PLUS CONTRAIGNANT de ses parfums :
+//   • 'stock'    : tous les parfums couverts par des macarons FINIS en stock.
+//   • 'montable' : au moins un parfum nécessite un assemblage (coques+ganache dispo), tout est couvrable.
+//   • 'produire' : au moins un parfum manque même en comptant le mobilisable → il faut produire.
+// IMPORTANT : indication sur le stock TOTAL (pas de réservation entre commandes) — comme le plan.
+// Renvoie { statut, manqueTotal } ou null si commande livrée / sans demande.
+function _orderProduisibilite(o, mobMap){
+  if(!o || (typeof normStatus==='function' && normStatus(o.statut)==='Livrée')) return null;
+  const dem = (typeof _orderParfumDemand==='function') ? _orderParfumDemand(o) : {};
+  const noms = Object.keys(dem);
+  if(!noms.length) return null;
+  const _k = nom => (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
+  let besoinAssemblage = false, manqueTotal = 0;
+  noms.forEach(nom=>{
+    const besoin = +dem[nom]||0; if(besoin<=0) return;
+    const b = mobMap[_k(nom)] || null;
+    const finis = b ? (+b.finis||0) : 0;
+    const assemblable = b ? (+b.assemblable||0) : 0;
+    if(finis >= besoin) return;                      // couvert par les finis
+    const apresFinis = besoin - finis;
+    if(assemblable >= apresFinis){ besoinAssemblage = true; return; }   // couvert en montant
+    manqueTotal += (apresFinis - assemblable);       // reste à produire
+  });
+  if(manqueTotal > 0) return { statut:'produire', manqueTotal };
+  if(besoinAssemblage) return { statut:'montable', manqueTotal:0 };
+  return { statut:'stock', manqueTotal:0 };
+}
+
 function _cmdRow(row, grp){
   const o=row.o;
   const checked = _cmdSel.has(o.id) ? 'checked' : '';
@@ -10309,6 +10402,17 @@ function _cmdRow(row, grp){
   const clientNom = o.clientId ? nameP(_cmdClName(o.clientId)) : '—';
   const adresse = o.lieuLivraison ? nameP(o.lieuLivraison) : '';
 
+  // [🥉 PRODUISIBILITÉ] Badge indiquant si la commande est couvrable par le stock actuel.
+  // Indication sur le stock total (pas de réservation entre commandes).
+  const prod = row.produisibilite;
+  const prodBadge = prod
+    ? (prod.statut==='stock'
+        ? '<span class="tag ok" title="Tous les parfums sont disponibles en macarons finis (stock total, sans réservation entre commandes)">📦 en stock</span>'
+      : prod.statut==='montable'
+        ? '<span class="tag" style="background:#3b6ea5;color:#fff" title="Couvrable en assemblant les coques + ganache déjà en stock">🔧 à monter</span>'
+        : `<span class="tag warn" title="Il manque ${prod.manqueTotal} macaron(s) à produire">🍳 à produire${prod.manqueTotal?' '+prod.manqueTotal:''}</span>`)
+    : '';
+
   return `${periodeBandeau}<div class="cmd-card">
     <div class="cmd-card-head">
       <div class="cmd-client">
@@ -10318,7 +10422,7 @@ function _cmdRow(row, grp){
       </div>
       <input type="checkbox" class="cmd-check" ${checked} onclick="cmdToggleOne(${o.id},this.checked)" title="Sélectionner">
     </div>
-    <div class="cmd-contenu">${esc(row.resume)}${o.perso?' <span class="tag event">perso</span>':''}</div>
+    <div class="cmd-contenu">${esc(row.resume)}${o.perso?' <span class="tag event">perso</span>':''}${prodBadge?' '+prodBadge:''}</div>
     <div class="cmd-primary">
       <button class="cmd-pill detail" onclick="cmdView(${o.id})" title="Voir le détail">👁 Détails</button>
       <span class="cmd-montant">${euro(+o.montant)}</span>
@@ -14658,6 +14762,65 @@ async function computeForecast(opts){
       }
       l.faisabilite = { statut, message, debutRequis: cale.debutProduction, joursAvantDebut, aDesDebordements: !!cale.aDesDebordements };
     }
+
+    // [SURCHARGE INTER-COMMANDES] La faisabilité ci-dessus regarde chaque commande ISOLÉMENT.
+    // Ici on croise les commandes entre elles : si la production qui crée la rupture CHEVAUCHE
+    // (mêmes plages A/B) celle d'autres commandes, lancer maintenant ne suffit pas — il y a
+    // embouteillage. On réutilise retroConflicts (tâches calées A/B, déjà corrigé en v758) UNE
+    // seule fois sur l'horizon, puis on rattache à chaque commande le nb de chevauchements.
+    try{
+      const _todayStr = todayStr;
+      const _finHorizon = (()=>{ const d=new Date(_todayStr); d.setDate(d.getDate()+Math.max(14, horizon)); return d.toISOString().slice(0,10); })();
+      const cf = await retroConflicts(_todayStr, _finHorizon);
+      if(cf && Array.isArray(cf.conflits) && cf.conflits.length){
+        // orderId -> { minutes cumulées, set des commandes en conflit avec elle }
+        const parCmd = {};
+        cf.conflits.forEach(c=>{
+          const ai=c.a&&c.a.orderId, bi=c.b&&c.b.orderId;
+          if(ai==null||bi==null) return;
+          (parCmd[ai] ||= {min:0, autres:new Set()}); parCmd[ai].min += c.minutes; parCmd[ai].autres.add(bi);
+          (parCmd[bi] ||= {min:0, autres:new Set()}); parCmd[bi].min += c.minutes; parCmd[bi].autres.add(ai);
+        });
+        for(const l of alertes){
+          if(l.firstShortOrderId==null || !l.faisabilite) continue;
+          const info = parCmd[l.firstShortOrderId];
+          if(info && info.autres.size>0){
+            l.faisabilite.surcharge = { nbAutres: info.autres.size, minutes: Math.round(info.min) };
+            l.faisabilite.message += ` ⚠️ Attention : cette production en chevauche ${info.autres.size} autre(s) sur tes créneaux — risque d'embouteillage.`;
+          }
+        }
+      }
+    }catch(e){ console.error('forecast.surcharge', e); }
+
+    // [FAISABILITÉ MATIÈRES] Une production peut tenir dans le temps mais être BLOQUÉE par
+    // une rupture de matière première. On calcule, pour les parfums en alerte (= à produire),
+    // les matières que leur production consomme et on signale celles en rupture GLOBALE de stock.
+    // Réutilise _calcBesoinMatieres (helper pur partagé avec la liste de courses prévisionnelle).
+    // Indication sur le stock TOTAL des lots, sans réservation entre productions.
+    try{
+      const [recipesM, recipeItemsM, lotsM, matsM] = await Promise.all([
+        db.recipes.toArray().catch(()=>[]),
+        db.recipeItems.toArray().catch(()=>[]),
+        db.materialLots.toArray().catch(()=>[]),
+        db.materials.toArray().catch(()=>[])
+      ]);
+      const aProduireList = alertes
+        .filter(l => (+l.manqueApresMob||0) > 0)
+        .map(l => ({ parfum:l.parfum, aProduire:+l.manqueApresMob||0 }));
+      if(aProduireList.length){
+        const bm = _calcBesoinMatieres(aProduireList, recipesM, recipeItemsM, lotsM, matsM);
+        for(const l of alertes){
+          const info = bm.byParfum[l.parfum];
+          if(info && info.materiauxManquants.length){
+            const noms = info.materiauxManquants.map(m=>m.nom).join(', ');
+            const matFais = { bloque:true, materiaux: info.materiauxManquants };
+            const msg = ` 🧱 Matière insuffisante : ${noms} en rupture pour cette production — réapprovisionne avant de lancer.`;
+            if(l.faisabilite){ l.faisabilite.matiere = matFais; l.faisabilite.message += msg; }
+            else { l.faisabilite = { statut:'matiere', message:msg.trim(), matiere:matFais }; }
+          }
+        }
+      }
+    }catch(e){ console.error('forecast.faisabiliteMatiere', e); }
   }
 
   // 4) DEMANDE MARCHÉ GLOBALE (sans historique de répartition) : on l'impute sur le
@@ -14682,6 +14845,113 @@ async function computeForecast(opts){
     marketVentile: marketRepartition.length>0,   // true si la demande marché a été ventilée par parfum
     alerteMarcheGlobal };
 }
+
+// [BESOIN MATIÈRES PRÉVISIONNEL] Brique commune : calcule, pour honorer les commandes + marchés
+// [HELPER PUR] Calcule les besoins matières pour produire une liste de parfums.
+// Entrée : aProduireList = [{parfum, aProduire}] (quantités de macarons à produire, déjà nettes).
+//          recipes, recipeItems, lots, mats = données déjà chargées par l'appelant (pas d'accès DB ici).
+// Sortie : { lignes:[{materialId,nom,unite,besoin,stock,manque,parfums:[{nom,qte}]}] triées,
+//            nbAProduire, sansRecette:[noms],
+//            byParfum:{ parfum -> { materiauxManquants:[{materialId,nom,unite,manque,besoinParfum}] } } }.
+// byParfum permet de savoir, pour CHAQUE parfum, quelles de SES matières sont en rupture globale.
+// Formule = celle de l'app : besoin = qteParBatch × (aProduire / rendement), unités natives.
+function _calcBesoinMatieres(aProduireList, recipes, recipeItems, lots, mats){
+  const matById = Object.fromEntries(mats.map(m=>[m.id, m]));
+  const bomByRecipe = {};
+  recipeItems.forEach(it=>{ if(it.recipeId!=null){ (bomByRecipe[it.recipeId] ||= []).push(it); } });
+  const stockByMat = {};
+  lots.forEach(l=>{ const id=l.materialId; if(id!=null) stockByMat[id] = (stockByMat[id]||0) + (+l.qteRestante||0); });
+
+  const besoinByMat = {};   // materialId -> { besoin, parfums:[{nom,qte}] }
+  const sansRecette = [];
+  let nbAProduire = 0;
+  // Trace par parfum : materialId -> qté de cette matière consommée par CE parfum.
+  const consoParfum = {};   // parfum -> { materialId -> besoinParfum }
+
+  aProduireList.forEach(item=>{
+    const aProduire = +item.aProduire||0;
+    if(aProduire <= 0) return;
+    nbAProduire++;
+    const rec = recipeForFlavorName(item.parfum, recipes);
+    if(!rec){ sansRecette.push(item.parfum); return; }
+    const rendement = (+rec.rendement>0) ? +rec.rendement : 1;
+    const facteur = aProduire / rendement;
+    const bom = bomByRecipe[rec.id] || [];
+    consoParfum[item.parfum] = consoParfum[item.parfum] || {};
+    bom.forEach(it=>{
+      const mid = it.materialId; if(mid==null) return;
+      const besoin = (+it.qteParBatch||0) * facteur;
+      if(besoin<=0) return;
+      const e = (besoinByMat[mid] ||= { besoin:0, parfums:[] });
+      e.besoin += besoin;
+      e.parfums.push({ nom:item.parfum, qte:aProduire });
+      consoParfum[item.parfum][mid] = (consoParfum[item.parfum][mid]||0) + besoin;
+    });
+  });
+
+  const lignes = Object.keys(besoinByMat).map(midStr=>{
+    const mid = +midStr;
+    const m = matById[mid] || {};
+    const besoin = round3(besoinByMat[mid].besoin);
+    const stock = round3(stockByMat[mid]||0);
+    const manque = Math.max(0, round3(besoin - stock));
+    return { materialId:mid, nom:m.nom||'(matière supprimée)', unite:m.unite||'',
+             besoin, stock, manque, parfums:besoinByMat[mid].parfums };
+  });
+  lignes.sort((a,b)=> (b.manque - a.manque) || a.nom.localeCompare(b.nom));
+
+  // Quelles matières sont GLOBALEMENT en rupture (manque>0) ?
+  const manqueByMat = {};
+  lignes.forEach(l=>{ if(l.manque>0) manqueByMat[l.materialId] = l; });
+  // Pour chaque parfum, lister SES matières qui sont en rupture globale.
+  const byParfum = {};
+  Object.keys(consoParfum).forEach(parfum=>{
+    const materiauxManquants = [];
+    Object.keys(consoParfum[parfum]).forEach(midStr=>{
+      const mid = +midStr;
+      if(manqueByMat[mid]){
+        const ml = manqueByMat[mid];
+        materiauxManquants.push({ materialId:mid, nom:ml.nom, unite:ml.unite,
+          manque:ml.manque, besoinParfum:round3(consoParfum[parfum][mid]) });
+      }
+    });
+    materiauxManquants.sort((a,b)=> b.manque - a.manque);
+    byParfum[parfum] = { materiauxManquants };
+  });
+
+  return { lignes, nbAProduire, sansRecette, byParfum };
+}
+
+// à venir sur l'horizon, les matières premières nécessaires et ce qui MANQUE par rapport au stock.
+// Base = « net à produire » par parfum (manqueApresMob de computeForecast : demande − stock fini −
+// mobilisable), pour ne pas acheter de matières pour des macarons déjà en stock ou montables.
+// Formule de consommation = celle de l'app : besoin = qteParBatch × (qtéAProduire / rendement).
+// HYPOTHÈSE assumée : on compte les matières de TOUTES les parties de la recette (coques + ganache).
+//   Le mobilisable (déjà déduit en amont) couvre le cas « coques+ganache déjà faites » ; au-delà,
+//   produire un macaron consomme bien l'ensemble de son BOM. Les ajouts au montage (ex. éclats) sont
+//   dans le BOM de la recette → comptés. Si un écart apparaît, on pourra raffiner par partie.
+// Renvoie { horizon, lignes:[{materialId, nom, unite, besoin, stock, manque, parfums:[{nom,qte}]}],
+//           nbAProduire, nbMatieresManquantes, sansRecette:[noms] }.
+// IMPORTANT : indication sur le stock TOTAL des lots (pas de réservation entre productions).
+async function besoinMatieresPrevisionnel(horizonJours){
+  const horizon = horizonJours!=null ? horizonJours : 14;
+  const f = await computeForecast({horizon, skipFaisabilite:true});
+  const [recipes, recipeItems, lots, mats] = await Promise.all([
+    db.recipes.toArray().catch(()=>[]),
+    db.recipeItems.toArray().catch(()=>[]),
+    db.materialLots.toArray().catch(()=>[]),
+    db.materials.toArray().catch(()=>[])
+  ]);
+  // Net à produire par parfum (manqueApresMob>0).
+  const aProduireList = f.lignes
+    .filter(l => (+l.manqueApresMob||0) > 0)
+    .map(l => ({ parfum:l.parfum, aProduire:+l.manqueApresMob||0 }));
+  const r = _calcBesoinMatieres(aProduireList, recipes, recipeItems, lots, mats);
+  return { horizon, lignes:r.lignes, nbAProduire:r.nbAProduire,
+           nbMatieresManquantes: r.lignes.filter(l=>l.manque>0).length,
+           sansRecette: r.sansRecette };
+}
+
 // Résumé court des alertes pour la popup quotidienne.
 async function forecastAlerts(){
   const f = await computeForecast({horizon:8, skipFaisabilite:true});
@@ -18363,12 +18633,18 @@ async function renderForecast(){
               : '<span class="tag warn">à produire</span>')
           : '<span class="tag ok">OK</span>');
     const fa = l.faisabilite;
+    const faMat = fa && fa.matiere && fa.matiere.bloque;
     const faPastille = fa
-      ? (fa.statut==='retard' ? '🔴' : fa.statut==='urgent' ? '🟠' : '🟢')
+      ? ((fa.statut==='retard' ? '🔴' : fa.statut==='urgent' ? '🟠' : fa.statut==='matiere' ? '' : '🟢') + ((fa.surcharge && fa.surcharge.nbAutres>0) ? '🔀' : '') + (faMat ? '🧱' : ''))
       : '';
-    // Bandeau d'action faisabilité, intégré DANS la carte (couleur selon urgence).
-    const faBox = fa
-      ? `<div style="margin-top:6px;padding:6px 9px;border-radius:8px;font-size:.78rem;line-height:1.35;background:${fa.statut==='retard'?'#fdeceb':(fa.statut==='urgent'?'#fdf4e6':'#eef6ee')};color:${fa.statut==='retard'?'#b3261e':(fa.statut==='urgent'?'#8a5a0f':'#3f7d52')}">${fa.statut==='retard'?'⏰':(fa.statut==='urgent'?'⚡':'✓')} ${esc(fa.message)}</div>`
+    // Bandeau d'action faisabilité TEMPORELLE, intégré DANS la carte (couleur selon urgence).
+    // (le statut 'matiere' seul n'a pas de message temporel → pas de bandeau temporel)
+    const faBox = (fa && fa.statut!=='matiere')
+      ? `<div style="margin-top:6px;padding:6px 9px;border-radius:8px;font-size:.78rem;line-height:1.35;background:${fa.statut==='retard'?'#fdeceb':(fa.statut==='urgent'?'#fdf4e6':'#eef6ee')};color:${fa.statut==='retard'?'#b3261e':(fa.statut==='urgent'?'#8a5a0f':'#3f7d52')}">${fa.statut==='retard'?'⏰':(fa.statut==='urgent'?'⚡':'✓')} ${esc(fa.statut==='matiere'?'':fa.message.split('🧱')[0].trim())}</div>`
+      : '';
+    // Bandeau MATIÈRE séparé (rouge brique) : liste les matières en rupture pour ce parfum.
+    const faMatBox = faMat
+      ? `<div style="margin-top:6px;padding:6px 9px;border-radius:8px;font-size:.78rem;line-height:1.35;background:#f4ece6;color:#9c4a1a">🧱 Bloqué par les matières : ${fa.matiere.materiaux.map(m=>`<b>${esc(m.nom)}</b> (manque ${qty(m.manque)} ${esc(m.unite)})`).join(', ')}. Réapprovisionne avant de lancer.</div>`
       : '';
     // Ligne de chiffres : commandé(réservé) · stock · prévisionnel · (montable) · (manque).
     const ligneChiffres = `<div style="font-size:.8rem;color:#6b5d54;margin-top:3px">`+
@@ -18388,6 +18664,7 @@ async function renderForecast(){
       ${ligneChiffres}
       ${dateLigne}
       ${faBox}
+      ${faMatBox}
     </div>`;
   }).join('');
 
@@ -18405,7 +18682,7 @@ async function renderForecast(){
    ${marketBanner}
    <div class="panel"><h2>Stock prévisionnel par parfum</h2>
    ${f.lignes.length?`${cards}
-     <p class="note">« Réservé » = macarons engagés par les commandes à venir non livrées. « Prévisionnel » = stock fini actuel − réservé (le stock fini ne compte QUE les macarons finis, pas les coques/ganache). « Montable » = macarons assemblables tout de suite depuis les coques + ganache déjà en stock. Une rupture sous ${f.horizon} jours déclenche une alerte, SAUF si le montable la couvre (état « à monter »). Sur chaque alerte, une pastille indique si tu as encore le TEMPS de produire : 🔴 en retard (il fallait déjà commencer), 🟠 à lancer maintenant, 🟢 encore le temps — avec la date limite pour démarrer.</p>`
+     <p class="note">« Réservé » = macarons engagés par les commandes à venir non livrées. « Prévisionnel » = stock fini actuel − réservé (le stock fini ne compte QUE les macarons finis, pas les coques/ganache). « Montable » = macarons assemblables tout de suite depuis les coques + ganache déjà en stock. Une rupture sous ${f.horizon} jours déclenche une alerte, SAUF si le montable la couvre (état « à monter »). Sur chaque alerte, une pastille indique si tu as encore le TEMPS de produire : 🔴 en retard (il fallait déjà commencer), 🟠 à lancer maintenant, 🟢 encore le temps — avec la date limite pour démarrer. Une pastille 🔀 supplémentaire signale une SURCHARGE : la production de cette commande en chevauche d'autres sur tes créneaux (risque d'embouteillage même si tu t'y mets à temps). Enfin, une pastille 🧱 signale qu'une MATIÈRE PREMIÈRE manque pour cette production : même en t'y mettant à temps, il faut d'abord réapprovisionner (le détail des matières en rupture est affiché sous la carte).</p>`
      :`<div class="empty">Aucune donnée. Lancez des productions et créez des commandes pour activer le prévisionnel.</div>`}
    </div>
    ${detailRupture?`<h2 style="font-family:'Bellota',serif;color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
@@ -23621,7 +23898,7 @@ async function fixIntegrityIssue(table, ids, fix){
 const GUIDE_THEMES = [
   { titre:'Ventes & clients', emoji:'🛍️', color:'#aa7c39', items:[
     { v:'commandes', t:'Commandes', ico:'✎', resume:"Créer et suivre tes commandes, de la prise à la livraison.",
-      detail:"Saisis une commande avec ses coffrets, événements ou accompagnements. Suis son statut (à préparer, prête, livrée), enregistre les paiements, et génère la facture. La livraison se renseigne dans un bloc dépliable, avec ton carnet d'adresses pour pré-remplir distance et temps.",
+      detail:"Saisis une commande avec ses coffrets, événements ou accompagnements. Suis son statut (à préparer, prête, livrée), enregistre les paiements, et génère la facture. Chaque commande affiche aussi un badge de PRODUISIBILITÉ selon ton stock actuel : 📦 en stock (tout est déjà fini), 🔧 à monter (couvrable en assemblant coques + ganache déjà en stock) ou 🍳 à produire (il manque X macarons à fabriquer). C'est une indication sur le stock total — deux commandes peuvent viser le même stock, il n'est pas réservé. La livraison se renseigne dans un bloc dépliable, avec ton carnet d'adresses pour pré-remplir distance et temps.",
       steps:["Touche « + Nouvelle commande »","Choisis le client et ajoute les produits","Renseigne la livraison si besoin (bloc dépliable)","Suis le statut et facture quand c'est prêt"] },
     { v:'clients', t:'Clients', ico:'♣', resume:"Ton carnet de clients, avec historique et habitudes d'achat.",
       detail:"Chaque fiche client montre son panier moyen, son parfum préféré, sa fréquence de commande, et un badge VIP pour les meilleurs. Pratique pour personnaliser ta relation et repérer tes clients fidèles.",
@@ -23735,7 +24012,7 @@ const GUIDE_THEMES = [
       detail:"Le calcul des besoins : \u00e0 partir de tes commandes non livr\u00e9es, il \u00e9value la faisabilit\u00e9 de ta production sur une p\u00e9riode donn\u00e9e. Pour chaque commande, le r\u00e9troplanning calcule quand commencer chaque \u00e9tape, et l'\u00e9cran fait remonter les conflits de production (chevauchements) sur les prochains jours \u2014 en calant d'abord chaque t\u00e2che dans tes vraies plages de travail A/B, pour ne signaler que les VRAIS conflits (deux t\u00e2ches actives qui tombent vraiment en m\u00eame temps) et plus les faux conflits des jours o\u00f9 tu ne travailles pas. C'est la vue \u00ab est-ce que \u00e7a passe ? \u00bb, compl\u00e9mentaire de l'agenda de production qui, lui, organise le d\u00e9tail du travail.",
       steps:["D\u00e9finis la p\u00e9riode \u00e0 v\u00e9rifier","Parcours le r\u00e9troplanning par commande","Traite les conflits de production signal\u00e9s"] },
     { v:'previsionnel', t:'Pr\u00e9visionnel stocks', ico:'\u{1F4C9}', resume:"Anticiper les ruptures de stock par parfum.",
-      detail:"Anticipe tes ruptures parfum par parfum. Pour chacun, l'\u00e9cran affiche le stock fini actuel (uniquement les macarons FINIS, ni les coques ni les ganaches), le \u00ab r\u00e9serv\u00e9 \u00bb (les macarons d\u00e9j\u00e0 engag\u00e9s par des commandes \u00e0 venir non livr\u00e9es), le \u00ab pr\u00e9visionnel \u00bb (stock actuel moins r\u00e9serv\u00e9) et le \u00ab montable \u00bb (ce que tu peux ASSEMBLER tout de suite \u00e0 partir des coques + ganache d\u00e9j\u00e0 en stock). Si un parfum risque de tomber en rupture sous l'horizon que tu d\u00e9finis, une alerte se d\u00e9clenche \u2014 SAUF si le montable suffit \u00e0 couvrir le besoin : dans ce cas l'\u00e9tat passe \u00e0 \u00ab \u00e0 monter \u00bb (un simple assemblage te sauve, pas besoin de relancer une production). Mieux encore : chaque alerte est crois\u00e9e avec le r\u00e9troplanning pour te dire si tu as encore le TEMPS de produire avant la livraison \u2014 une pastille 🔴 (en retard, il fallait d\u00e9j\u00e0 commencer), 🟠 (\u00e0 lancer maintenant) ou 🟢 (encore le temps) t'indique l'urgence r\u00e9elle et la date limite pour d\u00e9marrer la production.",
+      detail:"Anticipe tes ruptures parfum par parfum. Pour chacun, l'\u00e9cran affiche le stock fini actuel (uniquement les macarons FINIS, ni les coques ni les ganaches), le \u00ab r\u00e9serv\u00e9 \u00bb (les macarons d\u00e9j\u00e0 engag\u00e9s par des commandes \u00e0 venir non livr\u00e9es), le \u00ab pr\u00e9visionnel \u00bb (stock actuel moins r\u00e9serv\u00e9) et le \u00ab montable \u00bb (ce que tu peux ASSEMBLER tout de suite \u00e0 partir des coques + ganache d\u00e9j\u00e0 en stock). Si un parfum risque de tomber en rupture sous l'horizon que tu d\u00e9finis, une alerte se d\u00e9clenche \u2014 SAUF si le montable suffit \u00e0 couvrir le besoin : dans ce cas l'\u00e9tat passe \u00e0 \u00ab \u00e0 monter \u00bb (un simple assemblage te sauve, pas besoin de relancer une production). Mieux encore : chaque alerte est crois\u00e9e avec le r\u00e9troplanning pour te dire si tu as encore le TEMPS de produire avant la livraison \u2014 une pastille 🔴 (en retard, il fallait d\u00e9j\u00e0 commencer), 🟠 (\u00e0 lancer maintenant) ou 🟢 (encore le temps) t'indique l'urgence r\u00e9elle et la date limite pour d\u00e9marrer la production. Et comme cette analyse regarde chaque commande isol\u00e9ment, une pastille 🔀 s'ajoute quand la production en CHEVAUCHE d'autres sur tes cr\u00e9neaux de travail : m\u00eame en t'y mettant \u00e0 temps, tu risques l'embouteillage si plusieurs grosses productions tombent les m\u00eames jours \u2014 le signal t'invite \u00e0 \u00e9taler ou anticiper. Enfin, une pastille 🧱 s'ajoute quand une MATI\u00c8RE PREMI\u00c8RE manque pour produire ce parfum : l'app calcule, \u00e0 partir de la recette, combien de chaque ingr\u00e9dient il faudrait pour produire la quantit\u00e9 manquante, et compare \u00e0 ton stock de mati\u00e8res. Si une mati\u00e8re est en rupture, m\u00eame en t'y mettant \u00e0 temps tu ne pourras pas lancer la production \u2014 le d\u00e9tail des mati\u00e8res \u00e0 r\u00e9approvisionner (et la quantit\u00e9 manquante) s'affiche sous la carte. Pour pr\u00e9parer tes achats, le bouton \u00ab Courses pr\u00e9visionnelles \u00bb de l'\u00e9cran Stock mati\u00e8res liste justement tout ce qu'il faut acheter pour honorer tes commandes et march\u00e9s \u00e0 venir.",
       steps:["Consulte le pr\u00e9visionnel par parfum","Rep\u00e8re les alertes de rupture \u00e0 venir","Lance une production sur les parfums menac\u00e9s"] },
   ]},
   { titre:'Organisation & sécurité', emoji:'🛟', color:'#5a8aa0', items:[
@@ -30765,6 +31042,70 @@ function _agendaMutualSection(mut){
 // Renvoie { semaines:[{ wk, label, totalMacarons, nbCommandes,
 //    parfums:[{nom, qte, nbCommandes, batchs, ganacheDelaiH, commandes:[{client, qte, montage, livraison, aCongeler, sortir}]}],
 //    aCongeler:[{client, parfum, qte, montage, livraison, sortir}] }], horizonJours }.
+
+// ════════════════════════════════════════════════════════════════════════════
+// [PLAN MARCHÉS] Un marché a une DATE et une QUANTITÉ prévue, mais PAS de parfums fermes :
+// la répartition par parfum est estimée par marketForecast (apprise sur l'historique des
+// marchés clos). Pour intégrer un marché dans le moteur de plan (qui raisonne par parfum et
+// par commande), on le transforme en « pseudo-commande » : un objet en MÉMOIRE qui ressemble
+// assez à une commande pour passer dans retroplanningCommande (même calage, même affichage —
+// source de vérité unique, aucune logique de calage dupliquée).
+// GARDE-FOUS : (1) l'objet n'est JAMAIS persisté en base (vit le temps du calcul) ; (2) il est
+// marqué _pseudoMarche pour qu'on ne le confonde jamais avec une vraie commande ; (3) on ne
+// ventile par parfum QUE si l'historique est fiable (≥ SEUIL_MARCHE_FIABLE marchés clos), sinon
+// on renvoie null et le marché restera affiché en « quantité globale » sans calage par parfum.
+// ────────────────────────────────────────────────────────────────────────────
+const SEUIL_MARCHE_FIABLE = 5;   // nb minimum de marchés clos pour ventiler par parfum
+
+// Parse l'heure d'OUVERTURE du marché depuis le champ texte libre `horaires` (« 8h–13h »,
+// « 9h30-18h », « 8:00 à 13:00 »…). Repli sur defautH (8h, heure typique d'un marché) si illisible.
+// Renvoie { h, m, source:'horaires'|'défaut' }.
+function _parseHeureMarche(horaires, defautH){
+  const def = (defautH!=null) ? defautH : 8;
+  if(!horaires || typeof horaires!=='string') return {h:def, m:0, source:'défaut'};
+  const m = horaires.match(/(\d{1,2})\s*[h:]\s*(\d{2})?/i);   // 1er motif d'heure
+  if(!m) return {h:def, m:0, source:'défaut'};
+  const hh = Math.min(23, Math.max(0, parseInt(m[1],10)));
+  const mm = m[2]!=null ? Math.min(59, parseInt(m[2],10)) : 0;
+  return {h:hh, m:mm, source:'horaires'};
+}
+
+// Ventile une quantité totale selon une répartition [{parfum, pct}]. Le DERNIER parfum absorbe
+// le reste pour que la somme soit EXACTE (même logique que la ventilation du prévisionnel).
+// Renvoie [{nom, qte}] (parfums à qté > 0 uniquement).
+function _ventilerMarche(prevuQte, repartition){
+  const totPct = (repartition||[]).reduce((s,r)=>s+(+r.pct||0),0);
+  if(!(prevuQte>0) || !repartition || !repartition.length || totPct<=0) return [];
+  const out=[]; let cumule=0;
+  repartition.forEach((r,i)=>{
+    const part = (i===repartition.length-1) ? (prevuQte-cumule) : Math.round(prevuQte*(+r.pct||0)/totPct);
+    if(i!==repartition.length-1) cumule += part;
+    if(part>0) out.push({nom:r.parfum, qte:part});
+  });
+  return out.filter(p=>p.qte>0);
+}
+
+// Construit la pseudo-commande marché (objet en mémoire compatible retroplanningCommande/orderToLines).
+// Renvoie null si l'historique n'est pas fiable ou si la compo n'est pas exploitable.
+function _pseudoCommandeDepuisMarche(market, repartition, nbMarchesClos){
+  if(!market || !market.date) return null;
+  if(!(+market.prevuQte>0)) return null;
+  if(!(nbMarchesClos >= SEUIL_MARCHE_FIABLE)) return null;
+  const parfums = _ventilerMarche(+market.prevuQte, repartition||[]);
+  if(!parfums.length) return null;
+  const hp = _parseHeureMarche(market.horaires, 8);
+  const heureLivraison = String(hp.h).padStart(2,'0')+':'+String(hp.m).padStart(2,'0');
+  return {
+    _pseudoMarche: true,           // marqueur : NE JAMAIS confondre avec une vraie commande
+    marketId: market.id,
+    nom: market.nom || 'Marché',
+    date: String(market.date).slice(0,10),
+    heureLivraison,
+    _heureSource: hp.source,
+    lignes: [{ type:'coffret', taille:6, parfums }]
+  };
+}
+
 async function buildMutualisationSemaine(horizonJours){
   horizonJours = +horizonJours || 45;
   const orders  = await db.orders.toArray().catch(()=>[]);
