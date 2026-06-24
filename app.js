@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v841';
+const APP_VERSION = 'v843';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19326,8 +19326,15 @@ const APP_KB = [
     tags:'picking preparation liaison batch commande prete affecter zone fifo',
     r:`<p>La liaison batch↔commande est <b>automatique</b> : le picking calcule les besoins, affecte les batchs (optimisé par zone, FIFO par DLC) et, au clic <b>« Commande prête »</b>, crée les liens, décrémente le stock fini et les emballages, et passe la commande en « Terminée ». La liaison manuelle 🔗 reste possible en secours, sans double décompte. Les <b>macarons grand format</b> ont leur <b>propre recette et leur propre stock</b> : coche « Recette grand format » sur la fiche recette. Un grand format n'est jamais servi à partir du stock des petits macarons du même parfum (et inversement) — s'il manque du stock grand format, le picking affiche « stock insuffisant ».</p>` },
   { id:'plan-prod', titre:'Plan de production & planification personnelle',
-    tags:'plan production mrp ordonnancement planning meringue capacite temps disponibilite chef',
-    r:`<p>Onglet <b>Plan de production</b>. Il agrège les besoins, calcule les batchs et le temps. La <b>planification personnelle</b> te laisse décrire ta disponibilité (jour par jour, plusieurs créneaux) et génère un planning minute par minute : meringues remplies à la capacité (240 coques = 120 macarons standard ; 48 coques = 24 grands formats), ganaches placées pendant la cuisson, montages ensuite, puis maturation 24 h. Le « mot du chef » explique chaque choix de façon chiffrée.</p>` },
+    tags:'plan production mrp ordonnancement planning meringue capacite temps disponibilite chef montage reassort stock simulation',
+    r:`<p>Onglet <b>Plan de production</b>. Il agrège les besoins, calcule les batchs et le temps, puis place tout dans tes vrais créneaux. La <b>planification personnelle</b> part de ta disponibilité (jour par jour, plusieurs créneaux) et génère un planning calé à l'heure : ganaches d'abord (elles ont besoin de leur repos), coques le jour du montage, montages, puis maturation. Le « mot du chef » explique chaque choix de façon chiffrée.</p>
+    <p><b>Ce que tu produis vs ce qui est commandé.</b> En tête de semaine, le plan distingue clairement <b>les macarons pour commande</b> (ce que les clients ont demandé, avec en petit la part déjà couverte par ton stock) et <b>les macarons pour réassort</b> (le surplus quand tu arrondis une fournée). Tu vois ainsi d'un coup d'œil l'effort réel : ce qui part en commande, ce qui alimente ton stock.</p>
+    <p><b>Temps de montage réaliste.</b> Le garnissage est compté au plus juste : une part fixe de mise en place par fournée entamée, plus un temps proportionnel au nombre de macarons. Une petite série n'est donc plus surévaluée comme un gros batch, et le temps total colle à ce que tu vis à l'atelier. Chaque durée indique sa source : « mesuré » (chronométré), « recette » (ta saisie) ou « estimé » (défaut).</p>
+    <p><b>Faisabilité à la semaine.</b> Chaque semaine affiche si ça <b>tient</b> dans tes créneaux (vert) ou si ça <b>déborde</b> (orange, avec de combien). Le verdict est cliquable : il déplie le déroulé heure par heure avec tes vraies plages, sans rien re-saisir.</p>` },
+  { id:'retroplanning', titre:'Rétroplanning d\u2019une commande & simulation de date',
+    tags:'retroplanning rétroplanning simulation date livraison demarrage quand commencer marge etapes calage',
+    r:`<p>Depuis le détail d'une commande, le bouton <b>🕘 Rétroplanning</b> ouvre son déroulé de production calé sur tes disponibilités : chaque étape (ganaches, repos, coques, montage, maturation, livraison) avec son créneau horaire, dans l'ordre où tu dois t'y prendre. Les jours sont séparés visuellement pour voir d'un coup ce qui se fait quand.</p>
+    <p><b>Simuler une autre date de livraison.</b> En bas du rétroplanning, déplie <b>« 🔮 Simuler une autre date de livraison »</b>. Tu saisis une date (et une heure) à tester : l'app rejoue tout le calage <b>sans rien modifier</b> à ta commande, et te dit <b>quand il faudrait commencer la production</b> et <b>si ça tient</b> dans tes créneaux. Elle compare aussi à ta date réelle : démarrage repoussé (tu gagnes de la marge) ou avancé (il faut t'y mettre plus tôt). Pratique pour répondre à un client qui demande « et si je le veux le X ? » avant de t'engager.</p>` },
   { id:'meringue', titre:'Meringues : capacité et mutualisation',
     tags:'meringue meringues capacite 240 coques mutualisation parfum couleur division',
     r:`<p>Une meringue = <b>240 coques (120 macarons) en standard</b>, <b>48 coques (24 macarons) en grand format</b>. La mutualisation (2 parfums dans une meringue) n'est <b>pas une règle</b> : elle ne sert qu'à combler la capacité. Un parfum qui a besoin de 120 remplit une meringue entière à lui seul. Règle : <b>1 division = 1 couleur = 1 parfum</b> (sauf personnalisation).</p>` },
@@ -31384,7 +31391,7 @@ function _agendaPlanOpSection(plan){
       // Créneau horaire calé (travail actif → fin), avec rappel du repos avant montage.
       const fmtHg = d => { try{ return new Date(d).toLocaleString('fr-FR',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
       const horaireGan = g.debut
-        ? `<div style="font-size:.72rem;color:#7a4b2a;margin-top:2px">🕐 ${fmtHg(g.debut)} → fin ${(()=>{try{return new Date(g.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}${g.reposH?` <span style="color:#9a8576">· puis repos ${g.reposH}h avant montage</span>`:''}${g._recale?` <span style="color:#9a8576">· enchaînée pour tenir le repos</span>`:''}</div>`
+        ? `<div style="font-size:.72rem;color:#7a4b2a;margin-top:2px">🕐 <b>${fmtHg(g.debut)}</b> → fin <b>${(()=>{try{return new Date(g.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}</b>${g.reposH?` <span style="color:#9a8576">· puis repos ${g.reposH}h avant montage</span>`:''}${g._recale?` <span style="color:#9a8576">· enchaînée pour tenir le repos</span>`:''}</div>`
         : (g.horaireImpossible ? `<div style="font-size:.72rem;color:#b3261e;margin-top:2px">🕐 Pas de créneau dispo avant le montage (à anticiper)</div>` : '');
       // [FIX échappement préventif] Clé de registre plutôt que le nom du parfum dans l'attribut.
       window._planGanacheLanceReg = window._planGanacheLanceReg || {};
@@ -31407,7 +31414,7 @@ function _agendaPlanOpSection(plan){
       // Horaire calé dans les vraies plages A/B (début travail → fin cuisson).
       const fmtH = d => { try{ return new Date(d).toLocaleString('fr-FR',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
       const horaireCale = m.debut
-        ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 ${fmtH(m.debut)} → fin cuisson ${(()=>{try{return new Date(m.finCuisson||m.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}${m.congeler?`<br><span style="display:inline-block;white-space:nowrap;background:#3b6ea5;color:#fff;font-size:.56rem;font-weight:600;padding:2px 8px;border-radius:7px;margin-top:3px">❄️ à congeler</span>`:''}</div>`
+        ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 <b>${fmtH(m.debut)}</b> → fin cuisson <b>${(()=>{try{return new Date(m.finCuisson||m.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}</b>${m.congeler?`<br><span style="display:inline-block;white-space:nowrap;background:#3b6ea5;color:#fff;font-size:.56rem;font-weight:600;padding:2px 8px;border-radius:7px;margin-top:3px">❄️ à congeler</span>`:''}</div>`
         : (m.congeler?`<div style="font-size:.72rem;color:#3b6ea5;margin-top:2px">❄️ à congeler (pas de place dans la fenêtre de fraîcheur)</div>`:'');
       // [FIX échappement] On ne sérialise plus la répartition dans l'attribut onclick : esc() encode
       // les guillemets en &quot;, que le navigateur redécode en " au clic — ce qui cassait la chaîne JS
@@ -31429,7 +31436,7 @@ function _agendaPlanOpSection(plan){
       // Créneau horaire de montage calé (pivot du rétroplanning), affiché comme la ganache.
       const fmtHg = d => { try{ return new Date(d).toLocaleString('fr-FR',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
       const horaireMont = g.debut
-        ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 ${fmtHg(g.debut)}${g.fin?` → fin ${(()=>{try{return new Date(g.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}`:''}${g._enchaine?` <span style="color:#9a8576">· enchaîné (un montage à la fois)</span>`:''}</div>`
+        ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 <b>${fmtHg(g.debut)}</b>${g.fin?` → fin <b>${(()=>{try{return new Date(g.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}</b>`:''}${g._enchaine?` <span style="color:#9a8576">· enchaîné (un montage à la fois)</span>`:''}</div>`
         : '';
       // [FIX échappement préventif] Même principe que coques/ganache : pas de nom de parfum réinjecté
       // dans l'attribut (un parfum « Fleur d'oranger » casserait l'onclick à apostrophe). On passe une clé.
@@ -32628,11 +32635,29 @@ async function retroSimuler(orderId){
       }
     }
 
+    // NIVEAU 3 : impact sur la semaine cible (chevauche-t-elle les autres commandes ?).
+    let impactTxt = '';
+    try{
+      const imp = await _retroImpactSemaine(orderId, dateSim, sim);
+      if(imp && imp.ok){
+        if(imp.nbAutresCommandes===0){
+          impactTxt = `<div style="font-size:.8rem;color:#7a6a60;margin-top:8px;padding-top:7px;border-top:1px solid #00000012">📅 <b>Semaine ${esc(imp.semaineLabel)}</b> : aucune autre commande cette semaine-là, tu as le champ libre.</div>`;
+        } else if(!imp.conflits.length){
+          impactTxt = `<div style="font-size:.8rem;color:#3f7d52;margin-top:8px;padding-top:7px;border-top:1px solid #00000012">📅 <b>Semaine ${esc(imp.semaineLabel)}</b> : ${imp.nbAutresCommandes} autre${imp.nbAutresCommandes>1?'s':''} commande${imp.nbAutresCommandes>1?'s':''}, mais <b>aucun chevauchement</b> — la semaine peut l'absorber.</div>`;
+        } else {
+          const fmtH = m => m>=60 ? `${Math.floor(m/60)}h${String(Math.round(m%60)).padStart(2,'0')}` : `${Math.round(m)} min`;
+          const details = imp.conflits.map(c=>`<div style="margin-top:2px">• <b>${esc(c.client)}</b> — chevauchement de <b>${fmtH(c.minutes)}</b></div>`).join('');
+          impactTxt = `<div style="font-size:.8rem;color:#a8521f;margin-top:8px;padding-top:7px;border-top:1px solid #00000012">📅 <b>Semaine ${esc(imp.semaineLabel)}</b> : ⚠️ ça <b>chevaucherait ${imp.conflits.length} commande${imp.conflits.length>1?'s':''}</b> (${fmtH(imp.totalMinutes)} au total) — risque d'embouteillage à l'atelier.${details}</div>`;
+        }
+      }
+    }catch(e){ console.error('retroSim niveau 3', e); }
+
     if(out) out.innerHTML = `
       <div style="background:${verdictBg};border:1px solid ${verdictCol}33;border-radius:9px;padding:9px 11px;font-size:.82rem;color:${verdictCol}">
         ${verdictTxt}
         <div style="color:#5a4a44;margin-top:4px">${debutTxt}</div>
         ${compaTxt}
+        ${impactTxt}
       </div>`;
   }catch(e){
     console.error('retroSimuler', e);
@@ -33517,6 +33542,70 @@ async function retroConflicts(startDate, endDate){
   const taches = _retroTachesDepuisCales(entrees);
   const { conflits } = _retroDetecterConflits(taches);
   return { conflits, taches, nbCommandes:orders.length };
+}
+
+// [SIMULATION — NIVEAU 3 / ÉTAPE C] Impact d'une commande déplacée à une date FICTIVE sur sa semaine
+// cible : est-ce que ça chevauche les autres commandes de cette semaine, combien, lesquelles ?
+// 100 % EN MÉMOIRE : on ne touche JAMAIS db.orders. On lit les AUTRES commandes de la semaine (leur
+// calage réel), puis on injecte la commande simulée avec son calage FICTIF (simCale, déjà calculé au
+// niveau 1-2), et on délègue aux helpers PURS _retroTachesDepuisCales + _retroDetecterConflits.
+// On ne renvoie que les conflits qui IMPLIQUENT la commande simulée (orderId).
+// Retour : { ok, nbAutresCommandes, conflits:[{client, minutes, label}], totalMinutes, semaineLabel }.
+async function _retroImpactSemaine(orderId, dateSim, simCale){
+  try{
+    if(!dateSim || !simCale || !simCale.ok) return { ok:false };
+    // Bornes lundi→dimanche de la semaine de la date fictive (heure locale, cohérent avec l'app).
+    const d = new Date(dateSim); if(isNaN(d)) return { ok:false };
+    const day = (d.getDay()+6)%7;                 // lundi=0
+    const lundi = new Date(d); lundi.setDate(d.getDate()-day); lundi.setHours(0,0,0,0);
+    const dim = new Date(lundi); dim.setDate(lundi.getDate()+6); dim.setHours(23,59,59,999);
+    const toStr = x => x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+    const startStr = toStr(lundi), endStr = toStr(dim);
+
+    // AUTRES commandes de la semaine cible (jamais la commande simulée elle-même).
+    let orders;
+    try{ orders = await db.orders.where('date').between(startStr, endStr, true, true).toArray(); }
+    catch(e){ const all=await db.orders.toArray().catch(()=>[]); orders=all.filter(o=>o.date&&o.date>=startStr&&o.date<=endStr); }
+    orders = orders.filter(o=> o.id!==orderId && (typeof normStatus==='function'?normStatus(o.statut):o.statut)!=='Livrée');
+
+    const clients = await db.clients.toArray().catch(()=>[]);
+    const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+
+    // Calage RÉEL des autres commandes (lecture base, aucune écriture).
+    const entrees = [];
+    for(const o of orders){
+      let cale=null;
+      try{ cale = await retroplanningCale(o.id); }catch(_){ cale=null; }
+      entrees.push({ orderId:o.id, dateLiv:o.date, clientNom:clName(o.clientId)||'', cale });
+    }
+    // Commande SIMULÉE injectée à sa date fictive avec son calage fictif (en mémoire).
+    const oSim = await db.orders.get(orderId).catch(()=>null);
+    entrees.push({ orderId, dateLiv:dateSim, clientNom: oSim ? (clName(oSim.clientId)||'cette commande') : 'cette commande', cale: simCale });
+
+    const taches = _retroTachesDepuisCales(entrees);
+    const { conflits } = _retroDetecterConflits(taches);
+    // Ne garder que les conflits impliquant la commande simulée, agrégés par AUTRE commande.
+    const parAutre = new Map();
+    conflits.forEach(c=>{
+      const implique = (c.a.orderId===orderId) || (c.b.orderId===orderId);
+      if(!implique) return;
+      const autre = (c.a.orderId===orderId) ? c.b : c.a;
+      const key = autre.orderId;
+      const prev = parAutre.get(key) || { client:autre.client||'—', minutes:0, labels:new Set() };
+      prev.minutes += c.minutes;
+      if(autre.label) prev.labels.add(autre.label);
+      parAutre.set(key, prev);
+    });
+    const liste = Array.from(parAutre.values()).map(v=>({ client:v.client, minutes:v.minutes, labels:Array.from(v.labels) }))
+                       .sort((a,b)=> b.minutes - a.minutes);
+    const totalMinutes = liste.reduce((s,v)=>s+v.minutes,0);
+    const fmt = x => x.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
+    return { ok:true, nbAutresCommandes:orders.length, conflits:liste, totalMinutes,
+             semaineLabel:`${fmt(lundi)} → ${fmt(dim)}` };
+  }catch(e){
+    console.error('_retroImpactSemaine', e);
+    return { ok:false };
+  }
 }
 
 // Affiche les conflits de production détectés sur les 14 prochains jours.
