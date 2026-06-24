@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v826';
+const APP_VERSION = 'v830';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -31108,6 +31108,29 @@ async function planSemaineToggle(wk, bandEl){
 
 // Construit le HTML du planning heure par heure d'une semaine (wk ISO 'YYYY-Www').
 // daySpecs = vraies plages A/B de chaque jour de la semaine (depuis aujourd'hui pour la semaine en cours).
+// [DIAGNOSTIC niveau 2] Pour chaque parfum, la date de livraison la PLUS PROCHE parmi les commandes
+// non livrées de la fenêtre [debut, fin]. Sert à dire, pour une tâche qui déborde, de combien de marge
+// on dispose avant l'échéance réelle (« livré le 15 → 3 jours de marge »). Lecture directe de db.orders
+// car le plan agrège les besoins sans garder la trace des dates. Renvoie { parfum: 'YYYY-MM-DD' }.
+async function _datesLivraisonParParfum(debut, fin){
+  const out = {};
+  let orders = [];
+  try{ orders = await db.orders.toArray(); }catch(_){ return out; }
+  orders.forEach(o=>{
+    if(!o || !o.date) return;
+    if(typeof normStatus==='function' && normStatus(o.statut)==='Livrée') return;
+    // On élargit la fenêtre vers le futur : une commande de la semaine peut être livrée plus tard.
+    if(o.date < debut) return;
+    let dem = {};
+    try{ dem = (typeof _orderParfumDemand==='function') ? _orderParfumDemand(o) : {}; }catch(_){ dem = {}; }
+    for(const parfum in dem){
+      if(+dem[parfum] <= 0) continue;
+      if(!out[parfum] || o.date < out[parfum]) out[parfum] = o.date;
+    }
+  });
+  return out;
+}
+
 async function _planSemaineGenere(wk){
   const m = /(\d{4})-W(\d{2})/.exec(wk||'');
   if(!m) return '<div style="font-size:.78rem;color:#9a8576">Semaine non reconnue.</div>';
@@ -31142,7 +31165,10 @@ async function _planSemaineGenere(wk){
     return `<div style="font-size:.78rem;color:#9a8576;padding:6px 2px">Aucune plage de travail définie sur cette semaine. <span class="act" onclick="availEditor()">Définir mes créneaux →</span></div>`;
   }
   const S = schedulePersonalPlan(daySpecs, plan, {});
-  return _planSemaineRenderHTML(S, plan);
+  // [niveau 2] Dates de livraison par parfum (marge réelle avant échéance) pour enrichir le diagnostic.
+  let datesLiv = {};
+  if(!S.ok){ try{ datesLiv = await _datesLivraisonParParfum(debut, dimStr); }catch(_){ datesLiv = {}; } }
+  return _planSemaineRenderHTML(S, plan, datesLiv);
 }
 
 // Rend le HTML du résultat schedulePersonalPlan (mot du chef + déroulé par jour), version « dépli ».
@@ -31150,21 +31176,26 @@ async function _planSemaineGenere(wk){
 // conseil actionnable : nomme ce qui ne rentre pas, puis propose des leviers CLASSÉS par pertinence,
 // chacun avec son POURQUOI. S'appuie uniquement sur des données sûres (tâches non placées + recettes
 // du plan), pas d'approximation. Renvoie '' si la semaine tient (ok).
-function _diagReorganisation(S, plan){
+function _diagReorganisation(S, plan, datesLiv){
   if(!S || S.ok || !Array.isArray(S.unplaced) || !S.unplaced.length) return '';
+  datesLiv = datesLiv || {};
   const fmtH = m => m>=60 ? `${Math.floor(m/60)}h${String(Math.round(m%60)).padStart(2,'0')}` : `${Math.round(m)} min`;
   const manqueMin = Math.max(0, (S.totalActive||0) - (S.totalAvail||0));
   const lignesParParfum = {};
   (plan.lignes||[]).forEach(l=>{ lignesParParfum[l.parfum] = l; });
+  // Date de référence = aujourd'hui (pour calculer une marge en jours jusqu'à la livraison).
+  const todayStr = (typeof today==='function') ? today().slice(0,10) : new Date().toISOString().slice(0,10);
+  const joursEntre = (d1, d2) => {
+    try{ return Math.round((new Date(d2+'T00:00') - new Date(d1+'T00:00')) / 86400000); }catch(_){ return null; }
+  };
+  const fmtDateCourt = ds => { try{ return new Date(ds+'T00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}); }catch(_){ return ds; } };
 
-  // Tâches qui débordent, regroupées par type.
   const ganachesOut = S.unplaced.filter(u=>u.type==='ganache');
   const montagesOut = S.unplaced.filter(u=>u.type==='montage');
 
-  // Construction des leviers, du plus ciblé au plus général.
   const leviers = [];
 
-  // LEVIER 1 — Anticiper les ganaches qui supportent un repos long (sortir du jour J).
+  // LEVIER 1 — Anticiper les ganaches qui supportent un repos long.
   const ganachesReposLong = ganachesOut.filter(u=>{
     const l = lignesParParfum[u.parfum];
     return l && +l.ganacheDelaiH > 0;
@@ -31180,26 +31211,44 @@ function _diagReorganisation(S, plan){
     });
   }
 
-  // LEVIER 2 — Étaler/repousser les montages qui débordent (sans date de livraison précise ici :
-  // on reste prudent, on ne promet pas une date — c'est le niveau 2 qui croisera les commandes).
+  // LEVIER 2 — Repousser les montages, avec la MARGE RÉELLE jusqu'à la livraison (niveau 2).
   if(montagesOut.length){
-    const noms = montagesOut.map(u=>u.parfum);
+    // On enrichit chaque montage de sa date de livraison la plus proche, si connue.
+    const details = montagesOut.map(u=>{
+      const dLiv = datesLiv[u.parfum] || null;
+      const marge = dLiv ? joursEntre(todayStr, dLiv) : null;
+      return { parfum:u.parfum, dur:u.dur, dLiv, marge };
+    });
+    // Trie par marge décroissante : ceux qui ont le plus de marge sont les meilleurs candidats à repousser.
+    details.sort((a,b)=> (b.marge==null?-1:b.marge) - (a.marge==null?-1:a.marge));
     const minM = montagesOut.reduce((s,u)=>s+(u.dur||0),0);
+    // Construit un pourquoi précis selon ce qu'on sait des échéances.
+    const avecMarge = details.filter(d=>d.marge!=null && d.marge>=2);
+    let pourquoi;
+    if(avecMarge.length){
+      const d = avecMarge[0];
+      const autres = avecMarge.length>1 ? ` (et ${avecMarge.length-1} autre${avecMarge.length>2?'s':''})` : '';
+      pourquoi = `${d.parfum} n'est livré que le ${fmtDateCourt(d.dLiv)} — ${d.marge} jours de marge${autres}. Le produire la semaine suivante ne met aucune livraison en retard.`;
+    } else if(details.some(d=>d.marge!=null && d.marge<=1)){
+      pourquoi = `${fmtH(minM)} de montage ne rentrent pas, mais ${details.find(d=>d.marge!=null&&d.marge<=1).parfum} est dû très bientôt — à traiter en priorité, pas à repousser.`;
+    } else {
+      pourquoi = `${fmtH(minM)} de montage ne rentrent pas. Vérifie les dates de livraison : ce qui n'est pas dû tout de suite peut passer plus tard.`;
+    }
+    const noms = details.map(d=>d.parfum);
     leviers.push({
-      titre: `Repousse ${noms.length>1?'ces montages':'le montage '+noms[0]} si ${noms.length>1?'leurs commandes le permettent':'sa commande le permet'}.`,
-      pourquoi: `${fmtH(minM)} de montage ne rentrent pas. Vérifie la date de livraison : ce qui n'est pas dû tout de suite peut passer plus tard.`,
+      titre: `Repousse ${noms.length>1?'un montage':'le montage '+noms[0]} si l'échéance le permet.`,
+      pourquoi,
       action: null
     });
   }
 
-  // LEVIER 3 — Ajouter du créneau (toujours proposé, avec le montant exact à combler).
+  // LEVIER 3 — Ajouter du créneau (toujours, avec le montant exact).
   leviers.push({
     titre: `Ajoute ~${fmtH(manqueMin)} de créneau cette semaine.`,
     pourquoi: `Un créneau supplémentaire d'environ ${fmtH(manqueMin)} suffit à absorber le débordement — tout se recalcule au retour.`,
     action: `<button class="btn ghost sm" onclick="availEditor()" style="margin-top:4px">🗓️ Ajuster mes créneaux</button>`
   });
 
-  // Phrase de résumé : ce qui ne rentre pas (toujours en tête).
   const tousNoms = S.unplaced.map(u=>`${u.type==='ganache'?'🍫':u.type==='montage'?'🧩':'🥚'} ${esc(u.label)} (${fmtH(u.dur)})`);
   const resume = tousNoms.join(' · ');
 
@@ -31220,7 +31269,7 @@ function _diagReorganisation(S, plan){
   </div>`;
 }
 
-function _planSemaineRenderHTML(S, plan){
+function _planSemaineRenderHTML(S, plan, datesLiv){
   if(!S) return '';
   const JOURS = ['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
   const minToHM = mm => String(Math.floor(mm/60)).padStart(2,'0')+':'+String(mm%60).padStart(2,'0');
@@ -31242,7 +31291,7 @@ function _planSemaineRenderHTML(S, plan){
   const chef = insights
     ? `<div style="background:#faf6ef;border-radius:10px;padding:9px 11px;margin-bottom:8px"><div style="font-size:.86rem;font-weight:600;color:var(--bordeaux);margin-bottom:4px">🧑‍🍳 Le mot du chef</div><ul class="perso-insights" style="font-size:.82rem">${insights}</ul></div>` : '';
   // Diagnostic de réorganisation (uniquement quand ça déborde), placé EN TÊTE car c'est le plus actionnable.
-  const diag = (plan && !S.ok) ? _diagReorganisation(S, plan) : '';
+  const diag = (plan && !S.ok) ? _diagReorganisation(S, plan, datesLiv) : '';
   return `${diag}${warn}${chef}${dayBlocks||'<div style="font-size:.78rem;color:#9a8576;padding:4px 2px">Aucune tâche planifiable avec ces créneaux.</div>'}`;
 }
 
