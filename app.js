@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v848';
+const APP_VERSION = 'v851';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -29897,12 +29897,21 @@ const MACARONS_PAR_MERINGUE = 120;       // capacité utile réelle d'une mering
 //
 // Sortie : { ok, repartition:[{nom, qte, source:'stock'|'production'}], totalAttribue,
 //            plafond, nbParfumsAjoutes, reste, note }.
+// Nombre de parfums DIFFÉRENTS d'un coffret selon l'offre (BOX_FLAVOR_LIMIT). C'est à la fois le
+// plafond ET la cible : un coffret généré vise ce nombre de parfums (6→3, 8→4, 16→4, 25→5).
 function PLAFOND_PARFUMS_COFFRET(taille){
   const t = +taille||0;
-  if(t<=6)  return 2;
-  if(t<=8)  return 4;
+  // Source unique : la table de l'offre si dispo, sinon repli équivalent.
+  if(typeof BOX_FLAVOR_LIMIT!=='undefined' && BOX_FLAVOR_LIMIT){
+    if(BOX_FLAVOR_LIMIT[t]!=null) return BOX_FLAVOR_LIMIT[t];
+    // taille hors table : on prend la plus grande borne connue (25→5).
+    const cles = Object.keys(BOX_FLAVOR_LIMIT).map(Number).sort((a,b)=>a-b);
+    for(const c of cles){ if(t<=c) return BOX_FLAVOR_LIMIT[c]; }
+    return BOX_FLAVOR_LIMIT[cles[cles.length-1]];
+  }
+  if(t<=6)  return 3;
   if(t<=16) return 4;
-  return 5;                 // 25 et au-delà
+  return 5;
 }
 function suggererParfumsPur(quantite, taille, parfumsPresents, stockLibre, catalogue, opts){
   opts = opts || {};
@@ -29922,13 +29931,16 @@ function suggererParfumsPur(quantite, taille, parfumsPresents, stockLibre, catal
   // normalise une clé de comparaison stock/catalogue (insensible casse/accents léger).
   const norm = n => (n||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
 
-  // ── ÉTAPE 1 : écouler le STOCK dormant (gros stocks d'abord, pour vider en priorité).
-  // On peut puiser dans un parfum DÉJÀ présent (ça ne consomme pas de slot) ou dans un
-  // nouveau (consomme un slot). Les parfums déjà présents passent en premier (gratuit en slot).
+  // ── ÉTAPE 1 : écouler le STOCK dormant, MAIS en respectant la ventilation du coffret.
+  // Un coffret doit rester un assortiment : on plafonne ce qu'un seul parfum prend, pour ne pas
+  // qu'un gros stock monopolise tout le coffret et écrase la cible de parfums différents.
+  // Part max par parfum ≈ quantité répartie sur le nombre de parfums cible (arrondi au-dessus),
+  // pour laisser de la place aux autres. Les parfums DÉJÀ présents ne consomment pas de slot.
+  const cibleParfums = Math.max(1, plafond);
+  const partMaxStock = Math.max(1, Math.ceil(Q / cibleParfums));
   const stockArr = Object.keys(stockLibre||{})
     .map(nom=>({ nom, qte:Math.max(0, Math.floor(+stockLibre[nom]||0)) }))
     .filter(x=>x.qte>0)
-    // priorité : parfums présents d'abord (slot gratuit), puis plus gros stock.
     .sort((a,b)=>{
       const pa = presents.has(a.nom)?0:1, pb = presents.has(b.nom)?0:1;
       if(pa!==pb) return pa-pb;
@@ -29939,53 +29951,40 @@ function suggererParfumsPur(quantite, taille, parfumsPresents, stockLibre, catal
     if(reste<=0) break;
     const estPresent = presents.has(s.nom);
     if(!estPresent && slotsRestants<=0) continue;   // plus de place pour un nouveau parfum
-    const prendre = Math.min(s.qte, reste);
+    // On limite la prise à la part équilibrée (sauf parfum déjà présent : on peut le compléter plus).
+    const cap = estPresent ? reste : partMaxStock;
+    const prendre = Math.min(s.qte, reste, cap);
     if(prendre<=0) continue;
     repartition.push({ nom:s.nom, qte:prendre, source:'stock' });
     reste -= prendre;
     if(!estPresent){ presents.add(s.nom); slotsRestants--; }
   }
 
-  // ── ÉTAPE 2 : compléter le reste au plus RENTABLE.
-  // Tri du catalogue : coût matière croissant, départage par temps croissant.
+  // ── ÉTAPE 2 : compléter le reste au plus RENTABLE, en VISANT le nombre de parfums cible.
+  // Un coffret doit avoir une vraie ventilation (autant de parfums différents que l'offre le prévoit),
+  // pas tout sur un seul. On répartit AU MACARON PRÈS (les paliers de batch 30/60/120 concernent la
+  // production groupée, pas la composition d'un coffret). Quantités inégales autorisées, mais on
+  // étale sur tous les slots disponibles pour atteindre la cible.
   if(reste>0 && slotsRestants>0){
     const dispo = (catalogue||[])
       .filter(c=> c && c.nom && !repartition.some(r=>norm(r.nom)===norm(c.nom)) && !presents.has(c.nom))
       .sort((a,b)=>{
         const ca=+a.coutMatUnit||0, cb=+b.coutMatUnit||0;
-        if(ca!==cb) return ca-cb;                       // moins cher en matière d'abord
+        if(ca!==cb) return ca-cb;                        // moins cher en matière d'abord
         return (+a.tempsUnitMin||0)-(+b.tempsUnitMin||0); // départage par temps
       });
-    // Nombre de parfums à produire = min(slots, parfums dispo). On répartit le reste en
-    // respectant les paliers : chaque parfum produit reçoit un multiple de palier si possible.
+    // On retient autant de parfums que de slots restants (= viser la cible), bornés au catalogue dispo.
     const aProduire = dispo.slice(0, slotsRestants);
     if(aProduire.length){
-      // Répartition par paliers : on attribue palier par palier au parfum le mieux classé
-      // tant qu'il reste de la quantité, sans dépasser. Le plus petit palier sert d'unité.
-      const unite = palierSet[0];
-      if(paliers){
-        // On vise des multiples de l'unité. Tant qu'il reste >= unite, on sert le 1er parfum.
-        let idx = 0;
-        // garantir au moins 1 parfum servi même si reste < unite
-        while(reste>0 && aProduire.length){
-          const c = aProduire[idx % aProduire.length];
-          const part = (reste>=unite) ? unite : reste;   // dernier reliquat < unité : on le donne quand même
-          const exist = repartition.find(r=>r.nom===c.nom && r.source==='production');
-          if(exist) exist.qte += part; else repartition.push({ nom:c.nom, qte:part, source:'production' });
-          reste -= part;
-          idx++;
-          // si on a fait un tour complet en ne donnant que des unités, on continue d'empiler
-          if(idx>10000) break; // garde-fou anti-boucle
-        }
-      } else {
-        // Sans paliers : on répartit équitablement le reste sur les parfums retenus.
-        const base = Math.floor(reste/aProduire.length);
-        let extra = reste - base*aProduire.length;
-        aProduire.forEach(c=>{
-          let q = base + (extra>0?1:0); if(extra>0) extra--;
-          if(q>0){ repartition.push({ nom:c.nom, qte:q, source:'production' }); reste -= q; }
-        });
-      }
+      // Répartition équilibrée au macaron près : base + 1 pour les premiers (les plus rentables).
+      // Ex. 6 macarons sur 3 parfums → 2+2+2 ; 7 sur 3 → 3+2+2.
+      const n = aProduire.length;
+      const base = Math.floor(reste/n);
+      let extra = reste - base*n;
+      aProduire.forEach(c=>{
+        let q = base + (extra>0?1:0); if(extra>0) extra--;
+        if(q>0){ repartition.push({ nom:c.nom, qte:q, source:'production' }); reste -= q; }
+      });
     }
   }
 
@@ -30009,10 +30008,13 @@ function detecterCommandesADeterminer(commandes, maintenant){
   const now = maintenant ? new Date(maintenant) : new Date();
   const jourNow = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const out = [];
+  const vus = new Set();   // [FIX doublon] une commande ne doit apparaître qu'UNE fois dans l'alerte,
+                           // même si la collecte amont l'a listée plusieurs fois (ex. via mut).
   (commandes||[]).forEach(c=>{
     const sp = +c.sansParfum||0;
     if(sp<=0) return;
     if(!c.debutProduction) return;
+    if(c.id!=null){ if(vus.has(c.id)) return; vus.add(c.id); }
     const dp = new Date(c.debutProduction);
     if(isNaN(dp)) return;
     const jourDP = new Date(dp.getFullYear(), dp.getMonth(), dp.getDate()).getTime();
@@ -31286,7 +31288,7 @@ function _prodAlerteParfums(){
     const fmtJ = iso => { try{ return new Date(iso).toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'}); }catch(e){ return ''; } };
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;background:#fff;border:1px solid #e7cf94;margin-top:6px">
       <div style="flex:1">
-        <div style="font-size:.88rem;color:var(--bordeaux);font-weight:600">${esc(a.client||'Commande')} · <b>${a.sansParfum}</b> macaron${a.sansParfum>1?'s':''} à déterminer</div>
+        <div style="font-size:.88rem;color:var(--bordeaux);font-weight:600">${esc(a.client||'Commande')} · <b>${a.sansParfum}</b> macaron${a.sansParfum>1?'s':''} à déterminer <span style="font-size:.66rem;color:#bbb;font-weight:400">#${esc(String(a.id))}</span></div>
         <div style="font-size:.74rem;color:#9a8a82;margin-top:1px">Production démarrée le ${esc(fmtJ(a.debutProduction))} — choisis maintenant, avec ton stock réel du jour.</div>
       </div>
       <button class="btn gold sm" style="white-space:nowrap" onclick="suggererParfumsProd(${a.id})">🎯 Choisir</button>
