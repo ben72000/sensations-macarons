@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v843';
+const APP_VERSION = 'v845';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -11312,6 +11312,7 @@ function drawCoffretLine(ln,i){
     })()}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité par parfum)</label>
     <div class="flav-grid">${flavRows}${sansParfumRow}</div>
+    ${sansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${sansParfum} macaron${sansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>` : ''}
     <div class="sum-box" style="border:2px solid ${rempliCol};background:${totQ===cap?'#eef6ee':(totQ>cap?'#fdf2f1':'#fbf8f3')}">
       <span>${nbDiff} parfum(s)${sansParfum?` + ${sansParfum} sans parfum`:''}</span>
       <b style="color:${rempliCol};font-size:1.1rem">${rempliTxt}${totQ===cap?' ✓':''}</b></div>
@@ -11327,6 +11328,72 @@ function setCoffretTaille(i,v){ cmdLines[i].taille=+v;
 function setCoffretParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 function setCoffretEmbMode(i,v){ cmdLines[i].embMode=v; if(v!=='autre') cmdLines[i].embMatId=null; drawLines(); }
 function setCoffretEmbMat(i,v){ cmdLines[i].embMatId = v?+v:null; drawLines(); }
+
+// [SUGGESTION PARFUMS — UI] Propose une répartition pour les macarons « sans parfum » d'une ligne
+// coffret. Appelle la collecte (stock dormant + au plus rentable), affiche une modale de validation.
+async function suggererParfumsLigne(i){
+  const ln = cmdLines[i]; if(!ln) return;
+  const sansParfum = +ln.sansParfum||0;
+  if(sansParfum<=0) return;
+  const taille = +ln.taille||25;
+  const parfumsPresents = Object.keys(ln.parfums||{}).filter(k=> (+ln.parfums[k]||0)>0);
+  const dateLiv = (typeof val==='function' ? val('f_dateEvenement') : '') || '';
+  openModal(`<h3>🎯 Suggestion de parfums</h3><div style="padding:14px;text-align:center;color:#9a8576">⏳ Analyse du stock et des coûts…</div>`);
+  try{
+    const res = await suggererParfumsCommande(sansParfum, taille, parfumsPresents, dateLiv, {paliers:true, parfumsAutorises:FLAVORS});
+    if(!res || !res.ok || !res.repartition.length){
+      openModal(`<h3>🎯 Suggestion de parfums</h3>
+        <div class="banner" style="background:#fdf8e9;border-color:#e8d09a">📋 <div>${esc((res&&res.note)||'Aucune suggestion possible (ni stock dormant, ni recette disponible).')}</div></div>
+        <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+      return;
+    }
+    // Regroupe par source pour l'affichage.
+    const stockRows = res.repartition.filter(r=>r.source==='stock');
+    const prodRows  = res.repartition.filter(r=>r.source==='production');
+    const bloc = (titre, rows, col, ico) => rows.length ? `
+      <div style="margin-top:8px">
+        <div style="font-size:.78rem;font-weight:700;color:${col};margin-bottom:3px">${ico} ${titre}</div>
+        ${rows.map(r=>`<div style="display:flex;justify-content:space-between;font-size:.86rem;padding:2px 0">
+          <span style="text-transform:capitalize">${esc(r.nom)}</span><b>${r.qte} mac</b></div>`).join('')}
+      </div>` : '';
+    const payload = encodeURIComponent(JSON.stringify(res.repartition));
+    openModal(`<h3>🎯 Suggestion de parfums</h3>
+      <p class="note" style="margin-bottom:6px">Pour les <b>${sansParfum}</b> macaron${sansParfum>1?'s':''} sans parfum de ce coffret (plafond ${res.plafond} parfums).</p>
+      ${bloc('Puisé dans ton stock dormant', stockRows, '#3f7d52', '📦')}
+      ${bloc('À produire (au plus rentable)', prodRows, '#c97a2a', '🏭')}
+      ${res.reste>0?`<p class="note" style="color:var(--red);margin-top:6px">${esc(res.note)}</p>`:''}
+      <div class="modal-actions">
+        <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Annuler</button>
+        <button class="btn gold" onclick="appliquerSuggestionParfums(${i},'${payload}')">Appliquer</button>
+      </div>`);
+  }catch(e){
+    console.error('suggererParfumsLigne', e);
+    openModal(`<h3>🎯 Suggestion de parfums</h3>
+      <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Erreur pendant l'analyse.</div></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+  }
+}
+
+// Applique la répartition suggérée : ajoute les parfums à la ligne et consomme le « sans parfum ».
+function appliquerSuggestionParfums(i, payload){
+  const ln = cmdLines[i]; if(!ln) return;
+  let rep; try{ rep = JSON.parse(decodeURIComponent(payload)); }catch(e){ rep = []; }
+  if(!Array.isArray(rep) || !rep.length){ closeModal(); return; }
+  ln.parfums = ln.parfums || {};
+  let totalApplique = 0;
+  rep.forEach(r=>{
+    const nom = r.nom, q = Math.max(0, +r.qte||0);
+    if(!nom || q<=0) return;
+    ln.parfums[nom] = (+ln.parfums[nom]||0) + q;   // cumule si le parfum existait déjà
+    totalApplique += q;
+  });
+  // Consomme le « sans parfum » à hauteur de ce qui a été attribué (le reste éventuel demeure).
+  const reste = Math.max(0, (+ln.sansParfum||0) - totalApplique);
+  if(reste>0) ln.sansParfum = reste; else delete ln.sansParfum;
+  closeModal();
+  drawLines();
+}
+
 
 function drawEventLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
@@ -29810,6 +29877,238 @@ const MACARONS_PAR_MERINGUE = 120;       // capacité utile réelle d'une mering
 // La mutualisation n'est pas imposée : un parfum qui a besoin de ≥120 macarons
 // remplit des meringues entières à lui seul ; on ne regroupe 2 parfums que pour
 // combler une meringue partiellement vide (optimisation du remplissage, pas une règle).
+// ───────────────────────────────────────────────────────────────────────────
+// [SUGGESTION PARFUMS] Moteur PUR de suggestion de parfums pour les macarons « sans
+// parfum » d'un coffret. Aucune dépendance à la base : tout arrive en paramètres, donc
+// testable au harnais Node. La collecte des données (stock, coûts, temps) est faite par
+// un appelant async séparé.
+//
+// Entrées :
+//   quantite       : nb de macarons à attribuer (le « sansParfum » de la ligne).
+//   taille         : format du coffret (6, 8, 16, 25, ou autre).
+//   parfumsPresents: noms déjà ventilés dans la ligne (pour respecter le plafond).
+//   stockLibre     : { nomParfum: qteDisponible } — stock dormant NON réservé.
+//   catalogue      : [{ nom, coutMatUnit, tempsUnitMin }] — parfums produisibles, avec coût/temps.
+//   opts           : { paliers:true, palierSet:[30,60,120] } — arrondi batch.
+//
+// Logique : (1) plafond de parfums selon le format ; (2) écouler le STOCK dormant d'abord
+// (gros stocks en tête) ; (3) compléter le reste au plus RENTABLE (coût matière croissant,
+// départage par temps) ; (4) respecter les paliers de batch si demandé.
+//
+// Sortie : { ok, repartition:[{nom, qte, source:'stock'|'production'}], totalAttribue,
+//            plafond, nbParfumsAjoutes, reste, note }.
+function PLAFOND_PARFUMS_COFFRET(taille){
+  const t = +taille||0;
+  if(t<=6)  return 2;
+  if(t<=8)  return 4;
+  if(t<=16) return 4;
+  return 5;                 // 25 et au-delà
+}
+function suggererParfumsPur(quantite, taille, parfumsPresents, stockLibre, catalogue, opts){
+  opts = opts || {};
+  const paliers = opts.paliers!==false;
+  const palierSet = (opts.palierSet && opts.palierSet.length) ? opts.palierSet.slice().sort((a,b)=>a-b) : [30,60,120];
+  const Q = Math.max(0, Math.round(+quantite||0));
+  if(Q<=0) return { ok:false, note:'Aucun macaron à attribuer.', repartition:[], totalAttribue:0 };
+
+  const plafond = PLAFOND_PARFUMS_COFFRET(taille);
+  const presents = new Set((parfumsPresents||[]).map(n=> (n||'').trim()).filter(Boolean));
+  // Combien de NOUVEAUX parfums on peut encore ajouter sans dépasser le plafond.
+  let slotsRestants = Math.max(0, plafond - presents.size);
+
+  const repartition = [];   // [{nom, qte, source}]
+  let reste = Q;
+
+  // normalise une clé de comparaison stock/catalogue (insensible casse/accents léger).
+  const norm = n => (n||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+
+  // ── ÉTAPE 1 : écouler le STOCK dormant (gros stocks d'abord, pour vider en priorité).
+  // On peut puiser dans un parfum DÉJÀ présent (ça ne consomme pas de slot) ou dans un
+  // nouveau (consomme un slot). Les parfums déjà présents passent en premier (gratuit en slot).
+  const stockArr = Object.keys(stockLibre||{})
+    .map(nom=>({ nom, qte:Math.max(0, Math.floor(+stockLibre[nom]||0)) }))
+    .filter(x=>x.qte>0)
+    // priorité : parfums présents d'abord (slot gratuit), puis plus gros stock.
+    .sort((a,b)=>{
+      const pa = presents.has(a.nom)?0:1, pb = presents.has(b.nom)?0:1;
+      if(pa!==pb) return pa-pb;
+      return b.qte - a.qte;
+    });
+
+  for(const s of stockArr){
+    if(reste<=0) break;
+    const estPresent = presents.has(s.nom);
+    if(!estPresent && slotsRestants<=0) continue;   // plus de place pour un nouveau parfum
+    const prendre = Math.min(s.qte, reste);
+    if(prendre<=0) continue;
+    repartition.push({ nom:s.nom, qte:prendre, source:'stock' });
+    reste -= prendre;
+    if(!estPresent){ presents.add(s.nom); slotsRestants--; }
+  }
+
+  // ── ÉTAPE 2 : compléter le reste au plus RENTABLE.
+  // Tri du catalogue : coût matière croissant, départage par temps croissant.
+  if(reste>0 && slotsRestants>0){
+    const dispo = (catalogue||[])
+      .filter(c=> c && c.nom && !repartition.some(r=>norm(r.nom)===norm(c.nom)) && !presents.has(c.nom))
+      .sort((a,b)=>{
+        const ca=+a.coutMatUnit||0, cb=+b.coutMatUnit||0;
+        if(ca!==cb) return ca-cb;                       // moins cher en matière d'abord
+        return (+a.tempsUnitMin||0)-(+b.tempsUnitMin||0); // départage par temps
+      });
+    // Nombre de parfums à produire = min(slots, parfums dispo). On répartit le reste en
+    // respectant les paliers : chaque parfum produit reçoit un multiple de palier si possible.
+    const aProduire = dispo.slice(0, slotsRestants);
+    if(aProduire.length){
+      // Répartition par paliers : on attribue palier par palier au parfum le mieux classé
+      // tant qu'il reste de la quantité, sans dépasser. Le plus petit palier sert d'unité.
+      const unite = palierSet[0];
+      if(paliers){
+        // On vise des multiples de l'unité. Tant qu'il reste >= unite, on sert le 1er parfum.
+        let idx = 0;
+        // garantir au moins 1 parfum servi même si reste < unite
+        while(reste>0 && aProduire.length){
+          const c = aProduire[idx % aProduire.length];
+          const part = (reste>=unite) ? unite : reste;   // dernier reliquat < unité : on le donne quand même
+          const exist = repartition.find(r=>r.nom===c.nom && r.source==='production');
+          if(exist) exist.qte += part; else repartition.push({ nom:c.nom, qte:part, source:'production' });
+          reste -= part;
+          idx++;
+          // si on a fait un tour complet en ne donnant que des unités, on continue d'empiler
+          if(idx>10000) break; // garde-fou anti-boucle
+        }
+      } else {
+        // Sans paliers : on répartit équitablement le reste sur les parfums retenus.
+        const base = Math.floor(reste/aProduire.length);
+        let extra = reste - base*aProduire.length;
+        aProduire.forEach(c=>{
+          let q = base + (extra>0?1:0); if(extra>0) extra--;
+          if(q>0){ repartition.push({ nom:c.nom, qte:q, source:'production' }); reste -= q; }
+        });
+      }
+    }
+  }
+
+  const totalAttribue = repartition.reduce((s,r)=>s+r.qte,0);
+  const nbParfumsAjoutes = new Set(repartition.map(r=>r.nom).filter(n=>!(parfumsPresents||[]).includes(n))).size;
+  let note = '';
+  if(reste>0 && slotsRestants<=0 && PLAFOND_PARFUMS_COFFRET(taille)<=presents.size){
+    note = `Plafond de ${plafond} parfums atteint : ${reste} macaron(s) à répartir sur les parfums existants.`;
+  } else if(reste>0){
+    note = `${reste} macaron(s) n'ont pas pu être attribués (catalogue ou stock insuffisant).`;
+  }
+  return { ok:true, repartition, totalAttribue, plafond, nbParfumsAjoutes, reste, note };
+}
+
+// [SUGGESTION PARFUMS — DÉTECTION] Helper PUR : parmi des commandes décrites par
+// { id, client, sansParfum, debutProduction(ISO|null) }, renvoie celles dont la production
+// DOIT démarrer (debutProduction atteint ou passé, au jour près) ET qui ont encore des macarons
+// à déterminer (sansParfum>0). C'est le « moment clé » : on ne fige les parfums qu'ici, avec la
+// réalité du jour. maintenant = Date de référence (injectable pour test).
+function detecterCommandesADeterminer(commandes, maintenant){
+  const now = maintenant ? new Date(maintenant) : new Date();
+  const jourNow = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const out = [];
+  (commandes||[]).forEach(c=>{
+    const sp = +c.sansParfum||0;
+    if(sp<=0) return;
+    if(!c.debutProduction) return;
+    const dp = new Date(c.debutProduction);
+    if(isNaN(dp)) return;
+    const jourDP = new Date(dp.getFullYear(), dp.getMonth(), dp.getDate()).getTime();
+    // « Pile au début de production » = le jour J du début de prod est arrivé (ou dépassé).
+    if(jourDP <= jourNow){
+      out.push({ id:c.id, client:c.client||'', sansParfum:sp, debutProduction:c.debutProduction });
+    }
+  });
+  // Les plus urgentes d'abord (début de prod le plus ancien = le plus en retard).
+  out.sort((a,b)=> new Date(a.debutProduction) - new Date(b.debutProduction));
+  return out;
+}
+
+
+// appelle le moteur pur. ASYNC car lit la base. AUCUNE écriture.
+//   quantite, taille, parfumsPresents : cf. moteur pur.
+//   dateLiv : date de livraison de la commande (pour calculer le stock NON réservé aux commandes
+//             de la fenêtre). Optionnel : si absente, on prend le stock mobilisable brut.
+// Renvoie le même objet que suggererParfumsPur, enrichi de { stockLibre, catalogue } pour debug.
+async function suggererParfumsCommande(quantite, taille, parfumsPresents, dateLiv, opts){
+  opts = opts || {};
+  // 1) Stock mobilisable brut par parfum (clé = nom normalisé via stockMoveKey).
+  let mob = {};
+  try{ mob = await stockMobilisableParParfum(); }catch(e){ mob = {}; }
+
+  // 2) Réservations : besoins des commandes dont la date tombe dans la fenêtre de calcul.
+  //    On retranche du stock ce qui est déjà promis à ces commandes, pour ne garder que le
+  //    stock DORMANT réellement libre. Fenêtre : de today à dateLiv + marge (par défaut large).
+  const reserve = {};   // nomNorm -> qte réservée
+  try{
+    const today0 = new Date(); today0.setHours(0,0,0,0);
+    const finFenetre = dateLiv ? new Date(dateLiv) : new Date(today0.getTime()+ (opts.fenetreJours||21)*86400000);
+    finFenetre.setHours(23,59,59,999);
+    const toStr = x => x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+    const sStr = toStr(today0), eStr = toStr(finFenetre);
+    let cmds;
+    try{ cmds = await db.orders.where('date').between(sStr, eStr, true, true).toArray(); }
+    catch(_){ const all=await db.orders.toArray().catch(()=>[]); cmds=all.filter(o=>o.date&&o.date>=sStr&&o.date<=eStr); }
+    cmds = (cmds||[]).filter(o=> (typeof normStatus==='function'?normStatus(o.statut):o.statut)!=='Livrée');
+    cmds.forEach(o=>{
+      _parfumsQtesDe(o).forEach(p=>{
+        const k = (typeof stockMoveKey==='function') ? stockMoveKey(p.nom) : (p.nom||'').toLowerCase();
+        reserve[k] = (reserve[k]||0) + (+p.qte||0);
+      });
+    });
+  }catch(e){ /* fenêtre indisponible : on garde le stock brut */ }
+
+  // 3) Stock LIBRE = mobilisable − réservé (jamais négatif). Clé d'affichage = nom lisible.
+  const stockLibre = {};
+  Object.values(mob).forEach(b=>{
+    const k = (typeof stockMoveKey==='function') ? stockMoveKey(b.nom) : (b.nom||'').toLowerCase();
+    const libre = Math.max(0, Math.floor((+b.mobilisable||0) - (reserve[k]||0)));
+    if(libre>0) stockLibre[b.nom] = libre;   // on garde le nom lisible comme clé
+  });
+
+  // 4) Catalogue produisible : chaque recette active → { nom, coutMatUnit, tempsUnitMin }.
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recipeItems = await db.recipeItems.toArray().catch(()=>[]);
+  const lots = await db.lots.toArray().catch(()=>[]);
+  const tempsParNom = await prodTempsParParfumParNom(90).catch(()=>({}));
+  const settings = (typeof getSettings==='function') ? getSettings() : {};
+  const normNom = n => (typeof aiNormalize==='function') ? aiNormalize(n) : (n||'').toLowerCase();
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const tDef = (typeof MRP_TIME_DEFAULTS!=='undefined') ? MRP_TIME_DEFAULTS : null;
+  const tempsDefautMac = tDef ? ((+(tDef.montage&&tDef.montage.estimatedTime)||4)/Math.max(1,TB) + 0.4) : 0.4;
+  const catalogue = [];
+  // Liste blanche optionnelle : ne suggérer que des parfums que l'appelant sait afficher/commander
+  // (ex. la grille du formulaire = constante FLAVORS). Évite de proposer un parfum dont le nom de
+  // recette ne correspond à aucune entrée du formulaire. Comparaison normalisée.
+  const blanche = (opts.parfumsAutorises && opts.parfumsAutorises.length)
+    ? new Set(opts.parfumsAutorises.map(normNom)) : null;
+  recipes.forEach(r=>{
+    if(r.actif===false) return;
+    const nom = r.produitNom; if(!nom) return;
+    if(blanche && !blanche.has(normNom(nom))) return;   // hors liste blanche → ignoré
+    let coutMatUnit = 0;
+    try{ const cr = coutRevientRecette(r, recipeItems, lots, settings, {}); coutMatUnit = +cr.coutMatUnit||0; }catch(_){ coutMatUnit = 0; }
+    const tk = tempsParNom[normNom(nom)];
+    const tempsUnitMin = (tk && tk.minParMac>0) ? tk.minParMac : tempsDefautMac;
+    catalogue.push({ nom, coutMatUnit, tempsUnitMin });
+  });
+  // De même, on filtre le stock dormant sur la liste blanche (cohérence d'affichage).
+  let stockLibreFiltre = stockLibre;
+  if(blanche){
+    stockLibreFiltre = {};
+    Object.keys(stockLibre).forEach(nom=>{ if(blanche.has(normNom(nom))) stockLibreFiltre[nom]=stockLibre[nom]; });
+  }
+
+  // 5) Appel du moteur pur.
+  const res = suggererParfumsPur(quantite, taille, parfumsPresents, stockLibreFiltre, catalogue,
+    { paliers: opts.paliers!==false, palierSet: opts.palierSet });
+  res.stockLibre = stockLibreFiltre;
+  res.catalogue = catalogue;
+  return res;
+}
+
 // lignes : [{parfum, besoinNet, ...}]. Renvoie [{parfums:[...], repartition:{p:qte}, macarons, nbBatchs, partielle}].
 function _packMeringues(lignes){
   const MAX_PARFUMS = 3;   // une meringue se divise en 3 parts max (3 parfums/colorants)
@@ -30042,6 +30341,10 @@ function retroplanningDepuisParfums(dateLiv, hmRaw, parfumsNoms, recipes){
 
   // 1) Date + heure de livraison.
   if(!dateLiv) return {error:'Aucune date de livraison.'};
+  // [FIX point 3 — racine] Sans parfum, il n'y a rien à produire : caler un planning sur du vide
+  // produit un déroulé fantôme (ganache « À définir », ordre incohérent). On bloque ici, ce qui
+  // protège d'un coup TOUS les appelants (rétroplanning réel, simulation, mutualisation).
+  if(!(parfumsNoms||[]).length){ return {error:'Aucun parfum sélectionné : rien à produire, donc pas de rétroplanning.'}; }
   const hm = (hmRaw && /^\d{1,2}:\d{2}/.test(hmRaw)) ? hmRaw : '10:00';
   const hmFull = (hm.length===4?'0'+hm:hm).slice(0,5);   // garantit 'HH:MM'
   const _dp = dateLiv.split('-').map(Number);
@@ -30067,6 +30370,17 @@ function retroplanningDepuisParfums(dateLiv, hmRaw, parfumsNoms, recipes){
     // au frigo avant service. On ne l'applique que si la recette impose effectivement le congélateur.
     if(r.grandFormat && (r.congelObligatoire || r.coquesCongelObligatoire)) gfCongele = true;
   });
+  // [FIX point 3 — repos par défaut] reposGanacheH démarre à 0 et n'est relevé que par les recettes
+  // TROUVÉES. Si un (ou tous les) parfum(s) n'a pas de recette correspondante, aucun repos n'était
+  // appliqué → la ganache se calait à montage−0 (même créneau que les coques) et pouvait apparaître
+  // APRÈS elles : ordre métier cassé. Sécurité : si on a des parfums à produire mais qu'AUCUNE recette
+  // n'a été trouvée (recsUtilisees vide), on applique le repos standard de 12 h — une ganache a
+  // toujours besoin de reposer. On ne touche PAS au cas où une recette fixe explicitement un délai 0
+  // (choix volontaire respecté), seulement au cas « recette manquante ».
+  const REPOS_GANACHE_DEFAUT = (typeof PROC!=='undefined' && PROC.reposGanacheDefautH!=null) ? PROC.reposGanacheDefautH : 12;
+  if(reposGanacheH===0 && recsUtilisees.length===0 && (parfumsNoms||[]).length>0){
+    reposGanacheH = REPOS_GANACHE_DEFAUT;
+  }
   // Congélation du crémeux avant montage (règle générale : 6 h). 0 si pas de crémeux.
   const cremeuxCongelH = aCremeux ? (typeof PROC!=='undefined' ? (PROC.cremeuxCongelH||6) : 6) : 0;
   // Décongélation au frigo avant service (2 h) : seulement si le grand format a été congelé.
@@ -30198,6 +30512,20 @@ function _parfumsQtesDeLignes(lignes){
 function _parfumsQtesDe(o){
   const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
   return _parfumsQtesDeLignes(lignes);
+}
+// [SUGGESTION PARFUMS] Total des macarons « sans parfum » d'une commande (toutes lignes coffret),
+// et la taille de coffret de référence (pour le plafond de parfums). On prend la plus grande ligne
+// coffret comme référence de format si plusieurs.
+function _sansParfumTotalDe(o){
+  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
+  let total = 0, taille = 0;
+  (lignes||[]).forEach(ln=>{
+    if(ln.type==='coffret'){
+      const sp = +ln.sansParfum||0;
+      if(sp>0){ total += sp; if((+ln.taille||0)>taille) taille = +ln.taille||0; }
+    }
+  });
+  return { total, taille: taille||25 };
 }
 
 // nbMacarons depuis une liste neutre [{nom,qte}].
@@ -30942,6 +31270,114 @@ function _prodRaccourciPlanning(){
   </div>`;
 }
 
+// [SUGGESTION PARFUMS] Bandeau d'alerte « parfums à déterminer maintenant ». Recalculé à chaque
+// rendu de Production (pas d'état persistant) : window._prodAlertesParfums est rempli par la collecte
+// dans renderAgendaProduction. Affiche une carte par commande dont la prod démarre et qui a encore
+// des macarons sans parfum, avec un bouton qui ouvre la suggestion (données fraîches du jour).
+function _prodAlerteParfums(){
+  const al = (typeof window!=='undefined' && Array.isArray(window._prodAlertesParfums)) ? window._prodAlertesParfums : [];
+  if(!al.length) return '';
+  const cartes = al.map(a=>{
+    const fmtJ = iso => { try{ return new Date(iso).toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'}); }catch(e){ return ''; } };
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;background:#fff;border:1px solid #e7cf94;margin-top:6px">
+      <div style="flex:1">
+        <div style="font-size:.88rem;color:var(--bordeaux);font-weight:600">${esc(a.client||'Commande')} · <b>${a.sansParfum}</b> macaron${a.sansParfum>1?'s':''} à déterminer</div>
+        <div style="font-size:.74rem;color:#9a8a82;margin-top:1px">Production démarrée le ${esc(fmtJ(a.debutProduction))} — choisis maintenant, avec ton stock réel du jour.</div>
+      </div>
+      <button class="btn gold sm" style="white-space:nowrap" onclick="suggererParfumsProd(${a.id})">🎯 Choisir</button>
+    </div>`;
+  }).join('');
+  return `<div class="panel" style="padding:11px 14px;margin-bottom:14px;border:1px solid #e7cf94;background:#fdf8ec">
+    <div style="font-size:.84rem;font-weight:700;color:#8a6d1f">🎯 Parfums à déterminer maintenant</div>
+    <div style="font-size:.74rem;color:#9a8a82;margin-top:1px">Ces commandes entrent en production et ont des macarons « au choix » à trancher.</div>
+    ${cartes}
+  </div>`;
+}
+
+// Ouvre la suggestion pour une commande au moment de la production (données fraîches du jour),
+// puis fige les parfums validés EN BASE. Réutilise le moteur de collecte + la modale.
+async function suggererParfumsProd(orderId){
+  openModal(`<h3>🎯 Suggestion de parfums</h3><div style="padding:14px;text-align:center;color:#9a8576">⏳ Analyse du stock et des coûts du jour…</div>`);
+  try{
+    const o = await db.orders.get(orderId);
+    if(!o){ closeModal(); return; }
+    const sp = _sansParfumTotalDe(o);
+    if(sp.total<=0){ closeModal(); toast && toast('Plus de macaron à déterminer'); if(typeof renderAgendaProduction==='function') renderAgendaProduction(); return; }
+    const parfumsPresents = _parfumsQtesDe(o).map(p=>p.nom);
+    const dateLiv = (o.dateEvenement || o.date || '').slice(0,10);
+    const res = await suggererParfumsCommande(sp.total, sp.taille, parfumsPresents, dateLiv, {paliers:true, parfumsAutorises:(typeof FLAVORS!=='undefined'?FLAVORS:null)});
+    if(!res || !res.ok || !res.repartition.length){
+      openModal(`<h3>🎯 Suggestion de parfums</h3>
+        <div class="banner" style="background:#fdf8e9;border-color:#e8d09a">📋 <div>${esc((res&&res.note)||'Aucune suggestion possible (ni stock dormant, ni recette disponible).')}</div></div>
+        <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+      return;
+    }
+    const stockRows = res.repartition.filter(r=>r.source==='stock');
+    const prodRows  = res.repartition.filter(r=>r.source==='production');
+    const bloc = (titre, rows, col, ico) => rows.length ? `
+      <div style="margin-top:8px">
+        <div style="font-size:.78rem;font-weight:700;color:${col};margin-bottom:3px">${ico} ${titre}</div>
+        ${rows.map(r=>`<div style="display:flex;justify-content:space-between;font-size:.86rem;padding:2px 0">
+          <span style="text-transform:capitalize">${esc(r.nom)}</span><b>${r.qte} mac</b></div>`).join('')}
+      </div>` : '';
+    const payload = encodeURIComponent(JSON.stringify(res.repartition));
+    openModal(`<h3>🎯 Suggestion de parfums</h3>
+      <p class="note" style="margin-bottom:6px">Pour les <b>${sp.total}</b> macaron${sp.total>1?'s':''} sans parfum (plafond ${res.plafond} parfums). Une fois validé, c'est <b>figé</b> dans la commande.</p>
+      ${bloc('Puisé dans ton stock dormant', stockRows, '#3f7d52', '📦')}
+      ${bloc('À produire (au plus rentable)', prodRows, '#c97a2a', '🏭')}
+      ${res.reste>0?`<p class="note" style="color:var(--red);margin-top:6px">${esc(res.note)}</p>`:''}
+      <div class="modal-actions">
+        <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Annuler</button>
+        <button class="btn gold" onclick="figerParfumsProd(${orderId},'${payload}')">Valider &amp; figer</button>
+      </div>`);
+  }catch(e){
+    console.error('suggererParfumsProd', e);
+    openModal(`<h3>🎯 Suggestion de parfums</h3>
+      <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Erreur pendant l'analyse.</div></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+  }
+}
+
+// Fige les parfums validés DANS la commande (base) : ajoute aux lignes coffret et consomme le
+// sansParfum. Écriture réelle via db.orders.update. Puis recalcule l'écran Production (l'alerte
+// disparaît d'elle-même puisqu'il n'y a plus de sansParfum).
+async function figerParfumsProd(orderId, payload){
+  let rep; try{ rep = JSON.parse(decodeURIComponent(payload)); }catch(e){ rep = []; }
+  if(!Array.isArray(rep) || !rep.length){ closeModal(); return; }
+  try{
+    const o = await db.orders.get(orderId);
+    if(!o){ closeModal(); return; }
+    const lignes = orderToLines(o);
+    let restant = rep.slice();   // file des {nom, qte} à répartir
+    // On verse les parfums dans les lignes coffret ayant du sansParfum, dans l'ordre.
+    lignes.forEach(ln=>{
+      if(ln.type!=='coffret') return;
+      let sp = +ln.sansParfum||0;
+      if(sp<=0) return;
+      ln.parfums = Array.isArray(ln.parfums) ? ln.parfums : [];
+      // convertit parfums en map de travail
+      const map = {}; (ln.parfums||[]).forEach(p=>{ if(p&&p.nom) map[p.nom]=(+p.qte||0); });
+      for(const item of restant){
+        if(sp<=0) break;
+        if(item.qte<=0) continue;
+        const prendre = Math.min(item.qte, sp);
+        map[item.nom] = (map[item.nom]||0) + prendre;
+        item.qte -= prendre; sp -= prendre;
+      }
+      ln.parfums = Object.keys(map).filter(k=>map[k]>0).map(nom=>({nom, qte:map[nom]}));
+      if(sp>0) ln.sansParfum = sp; else delete ln.sansParfum;
+    });
+    await db.orders.update(orderId, { lignes });
+    closeModal();
+    try{ toast('Parfums figés dans la commande ✓'); }catch(_){}
+    if(typeof renderAgendaProduction==='function') renderAgendaProduction();
+  }catch(e){
+    console.error('figerParfumsProd', e);
+    closeModal();
+    try{ toast('Erreur lors de l\'enregistrement'); }catch(_){}
+  }
+}
+
 // Handler du bouton Actualiser : recalcule l'écran à l'instant présent (heure, temps restant,
 // verdicts de faisabilité, commandes/marchés à jour). Simple re-render de l'écran courant.
 function prodActualiser(){
@@ -30988,6 +31424,12 @@ async function renderAgendaProduction(){
           }
         }));
       });
+      // [SUGGESTION PARFUMS] Collecte des commandes dont la prod démarre et qui ont des macarons
+      // à déterminer. On réutilise le calage déjà calculé (pas de calcul en plus). debutProduction =
+      // premier jalon de TRAVAIL (le plus précoce des jalons calés avec un début).
+      const _alertesParfums = [];
+      const _clientsCache = await db.clients.toArray().catch(()=>[]);
+      const _nomClient = cid => { const c=_clientsCache.find(x=>x.id===cid); return c ? [c.prenom,c.nom].filter(Boolean).join(' ') : ''; };
       for(const oid of orderIds){
         try{
           const cale = await retroplanningCale(oid);
@@ -30997,9 +31439,20 @@ async function renderAgendaProduction(){
             // [CRÉNEAU MONTAGE] même source que la ganache : le jalon montage calé (pivot du rétroplanning).
             const jm = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
             if(jm) montageCaleParCmd[oid] = { debut:jm.debut, fin:jm.fin };
+            // Début de production = jalon de travail le plus précoce.
+            const debuts = cale.jalonsCales.filter(j=>j.debut).map(j=>new Date(j.debut).getTime()).filter(t=>!isNaN(t));
+            const debutProd = debuts.length ? new Date(Math.min(...debuts)).toISOString() : null;
+            const o = await db.orders.get(oid).catch(()=>null);
+            if(o){
+              const sp = _sansParfumTotalDe(o);
+              if(sp.total>0){
+                _alertesParfums.push({ id:oid, client:_nomClient(o.clientId)||'', sansParfum:sp.total, taille:sp.taille, debutProduction:debutProd });
+              }
+            }
           }
         }catch(_){}
       }
+      window._prodAlertesParfums = detecterCommandesADeterminer(_alertesParfums);
       // [MARCHÉS] Calage horaire via le cœur neutre (heure d'ouverture lue sur la fiche marché).
       const _markets = await db.markets.toArray().catch(()=>[]);
       for(const key of Object.keys(marketParfums)){
@@ -31040,6 +31493,7 @@ async function renderAgendaProduction(){
       <button class="btn ghost" onclick="prodActualiser()" title="Synchroniser l'écran avec l'heure réelle">🔄 Actualiser</button></div>
     ${_prodBarreVivante()}
     ${_prodRaccourciPlanning()}
+    ${_prodAlerteParfums()}
     <p class="note" style="margin-bottom:14px">Touche le nom d'une commande pour déplier toutes ses étapes (coques, ganache, repos, montage, maturation, livraison), puis une étape pour son rétroplanning détaillé.</p>
     ${_optimBatchToggle()}
     ${_agendaPlanOpSection(planOp)}
@@ -32592,6 +33046,13 @@ async function retroSimuler(orderId){
     if(!o){ if(out) out.innerHTML = `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Commande introuvable.</div></div>`; return; }
     const recipes = await db.recipes.toArray().catch(()=>[]);
     const parfumsQtes = _parfumsQtesDe(o);
+    // [FIX point 3 — racine] Sans parfum sélectionné, il n'y a RIEN à produire : pas de ganache, pas
+    // de coques. Caler un planning sur une commande vide produit un déroulé fantôme (ganache « À
+    // définir », ordre incohérent). On le dit clairement plutôt que d'afficher un faux résultat.
+    if(!parfumsQtes.length){
+      if(out) out.innerHTML = `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a">📋 <div>Cette commande n'a <b>aucun parfum</b> sélectionné — il n'y a rien à produire, donc rien à simuler. Ajoute des parfums à la commande pour tester une date.</div></div>`;
+      return;
+    }
 
     // Calage à la date FICTIVE (simulation pure).
     const sim = await retroplanningCaleParfums(dateSim, heureSim, parfumsQtes, recipes);
@@ -33560,9 +34021,19 @@ async function _retroImpactSemaine(orderId, dateSim, simCale){
     const lundi = new Date(d); lundi.setDate(d.getDate()-day); lundi.setHours(0,0,0,0);
     const dim = new Date(lundi); dim.setDate(lundi.getDate()+6); dim.setHours(23,59,59,999);
     const toStr = x => x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
-    const startStr = toStr(lundi), endStr = toStr(dim);
 
-    // AUTRES commandes de la semaine cible (jamais la commande simulée elle-même).
+    // [FIX point 2] Un CONFLIT naît du chevauchement de TÂCHES DE TRAVAIL, pas des dates de livraison.
+    // Le travail d'une commande (ganache + repos) peut tomber PLUSIEURS JOURS avant sa livraison, donc
+    // une commande livrée hors de la semaine cible peut quand même travailler dedans (et inversement).
+    // On élargit donc la fenêtre de SÉLECTION : large en amont (le travail amont d'une livraison plus
+    // tardive peut chevaucher), un peu en aval. La détection fine reste sur les vraies tâches calées,
+    // donc élargir ne crée pas de faux conflits — ça évite seulement d'en RATER.
+    const MARGE_AMONT = 10, MARGE_AVAL = 9;       // jours : couvre repos long + production étalée
+    const winStart = new Date(lundi);  winStart.setDate(lundi.getDate()-MARGE_AMONT);
+    const winEnd   = new Date(dim);    winEnd.setDate(dim.getDate()+MARGE_AVAL);
+    const startStr = toStr(winStart), endStr = toStr(winEnd);
+
+    // AUTRES commandes dont la livraison tombe dans la fenêtre élargie (jamais la commande simulée).
     let orders;
     try{ orders = await db.orders.where('date').between(startStr, endStr, true, true).toArray(); }
     catch(e){ const all=await db.orders.toArray().catch(()=>[]); orders=all.filter(o=>o.date&&o.date>=startStr&&o.date<=endStr); }
@@ -33583,6 +34054,17 @@ async function _retroImpactSemaine(orderId, dateSim, simCale){
     entrees.push({ orderId, dateLiv:dateSim, clientNom: oSim ? (clName(oSim.clientId)||'cette commande') : 'cette commande', cale: simCale });
 
     const taches = _retroTachesDepuisCales(entrees);
+    // [FIX point 2] « Autres commandes de la semaine » = celles dont au moins une TÂCHE de travail
+    // tombe dans la semaine cible (lundi→dimanche), pas toute la fenêtre élargie de sélection.
+    const lundiMs = lundi.getTime(), dimMs = dim.getTime();
+    const autresActives = new Set();
+    taches.forEach(t=>{
+      if(t.orderId===orderId) return;
+      const db_ = t.debut instanceof Date ? t.debut.getTime() : new Date(t.debut).getTime();
+      const df_ = t.fin   instanceof Date ? t.fin.getTime()   : new Date(t.fin).getTime();
+      // chevauchement de la tâche avec la fenêtre semaine
+      if(df_ >= lundiMs && db_ <= dimMs) autresActives.add(t.orderId);
+    });
     const { conflits } = _retroDetecterConflits(taches);
     // Ne garder que les conflits impliquant la commande simulée, agrégés par AUTRE commande.
     const parAutre = new Map();
@@ -33600,7 +34082,7 @@ async function _retroImpactSemaine(orderId, dateSim, simCale){
                        .sort((a,b)=> b.minutes - a.minutes);
     const totalMinutes = liste.reduce((s,v)=>s+v.minutes,0);
     const fmt = x => x.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
-    return { ok:true, nbAutresCommandes:orders.length, conflits:liste, totalMinutes,
+    return { ok:true, nbAutresCommandes:autresActives.size, conflits:liste, totalMinutes,
              semaineLabel:`${fmt(lundi)} → ${fmt(dim)}` };
   }catch(e){
     console.error('_retroImpactSemaine', e);
