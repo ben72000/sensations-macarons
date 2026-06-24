@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v806';
+const APP_VERSION = 'v810';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -27554,6 +27554,13 @@ function planMeringueMajPhrase(){
   if(el) el.innerHTML = _planMeringuePhrase(items);
 }
 // Étape 1 : ouvre la confirmation. repartition = objet { nomParfum: nbMacarons }.
+// Pont depuis le plan : retrouve la répartition stockée par clé (évite toute sérialisation JSON dans
+// l'attribut onclick) puis lance la meringue normalement.
+function planLancerMeringueByKey(key, idxMeringue){
+  const rep = (window._planMeringueReg||{})[key];
+  if(!rep){ toast('Meringue introuvable, rafraîchis le plan'); return; }
+  return planLancerMeringue(rep, idxMeringue);
+}
 async function planLancerMeringue(repartition, idxMeringue){
   let rep = repartition;
   if(typeof rep === 'string'){ try{ rep = JSON.parse(rep); }catch(e){ rep = {}; } }
@@ -27658,12 +27665,19 @@ function _planGanachePhrase(parfum, qte){
   return `Lancer la production de la ganache <b>${esc(parfum)}</b> (<b>${qty(qte)}</b> macaron${qte>1?'s':''}) et démarrer le chrono d'atelier ?`;
 }
 // Met à jour la phrase de résumé quand la quantité change dans la modale.
-function planGanacheMajPhrase(parfum){
+function planGanacheMajPhrase(){
+  const parfum = (window._planGanacheCtx||{}).parfum || '';
   const q = Math.max(0, Math.round(+val('f_planGanQte')||0));
   const el = document.getElementById('planGanPhrase');
   if(el) el.innerHTML = _planGanachePhrase(parfum, q);
 }
 // Étape 1 : ouvre la confirmation. parfum = nom affiché dans le plan ; qteSuggere = quantité du plan.
+// Pont depuis le plan : retrouve {parfum, qte} par clé puis ouvre la confirmation ganache.
+function planLancerGanacheByKey(key){
+  const ctx = (window._planGanacheLanceReg||{})[key];
+  if(!ctx){ toast('Ganache introuvable, rafraîchis le plan'); return; }
+  return planLancerGanache(ctx.parfum, ctx.qte);
+}
 async function planLancerGanache(parfum, qteSuggere){
   const rec = await _planRecetteParNom(parfum);
   if(!rec){
@@ -27674,21 +27688,27 @@ async function planLancerGanache(parfum, qteSuggere){
   }
   const q0 = Math.max(1, Math.round(+qteSuggere||0));
   const col = (typeof flavorColor==='function') ? flavorColor(parfum) : '#cbb89f';
+  // Contexte stocké (comme les coques avec _planMeringueItems) : évite de réinjecter le nom du parfum
+  // dans les attributs onclick/oninput — robuste aux apostrophes et guillemets dans les noms.
+  window._planGanacheCtx = { recipeId: rec.id, parfum };
   openModal(`<h3><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${col};vertical-align:middle;margin-right:6px"></span>🍫 Ganache ${esc(parfum)}</h3>
     <div class="field"><label>Quantité (macarons)</label>
-      <input type="number" id="f_planGanQte" min="1" value="${q0}" oninput="planGanacheMajPhrase(${JSON.stringify(parfum)})" style="font-size:1.1rem"></div>
+      <input type="number" id="f_planGanQte" min="1" value="${q0}" oninput="planGanacheMajPhrase()" style="font-size:1.1rem"></div>
     <div class="sum-box" style="background:#f6f1e7;align-items:flex-start">
       <div id="planGanPhrase" style="font-size:.9rem;line-height:1.45">${_planGanachePhrase(parfum, q0)}</div>
     </div>
     <p class="note" style="margin-top:8px">Cela créera le batch (statut <b>démarré</b>, matières décomptées) et lancera le chrono d'atelier rattaché. La DLC ne courra qu'à la fin de production.</p>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
-      <button class="btn gold" onclick="planLancerGanacheConfirm(${rec.id}, ${JSON.stringify(parfum)})">✓ Lancer ganache + chrono</button>
+      <button class="btn gold" onclick="planLancerGanacheConfirm()">✓ Lancer ganache + chrono</button>
     </div>`);
 }
 // Étape 2 : exécute après confirmation. Reproduit fidèlement la chaîne de saveProd (ganache) :
 // enregistrerProduction → prodTaskStartForBatch → liaison atelierTaskId → fiche de production.
-async function planLancerGanacheConfirm(recipeId, parfum){
+async function planLancerGanacheConfirm(){
+  const ctx = window._planGanacheCtx || {};
+  const recipeId = ctx.recipeId, parfum = ctx.parfum;
+  if(recipeId==null){ toast('Contexte ganache perdu, réessaie'); return; }
   const q = Math.max(1, Math.round(+val('f_planGanQte')||0));
   if(q<=0){ toast('Quantité invalide'); return; }
   const rec = await db.recipes.get(recipeId).catch(()=>null);
@@ -27715,6 +27735,12 @@ async function planLancerGanacheConfirm(recipeId, parfum){
 // (prodAssembleForm) pré-renseigné — SOURCE UNIQUE : tout le décompte (coques×2 + garniture),
 // le chrono d'atelier « Assemblage », la DLC et le journal de stock sont gérés par ce formulaire.
 // Si un sous-lot manque, on l'explique clairement au lieu de planter.
+// Pont depuis le plan : retrouve {parfum, qte} stockés par clé (pas de nom réinjecté dans l'attribut).
+function planLancerMontageByKey(key){
+  const ctx = (window._planMontageReg||{})[key];
+  if(!ctx){ toast('Montage introuvable, rafraîchis le plan'); return; }
+  return planLancerMontage(ctx.parfum, ctx.qte);
+}
 async function planLancerMontage(parfum, qteSuggere){
   const rec = await _planRecetteParNom(parfum);
   if(!rec){
@@ -31095,14 +31121,19 @@ function _agendaPlanOpSection(plan){
 
   const semaines = plan.semaines.map(s=>{
     // GANACHE — chaque carte est CLIQUABLE : lance le batch ganache + chrono (avec confirmation).
-    const ganache = s.ganache.map(g=>{
+    const ganache = s.ganache.map((gi_g,gi)=>{
+      const g = gi_g;
       const _qLance = g.qteProduite||g.qte;
       // Créneau horaire calé (travail actif → fin), avec rappel du repos avant montage.
       const fmtHg = d => { try{ return new Date(d).toLocaleString('fr-FR',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
       const horaireGan = g.debut
         ? `<div style="font-size:.72rem;color:#7a4b2a;margin-top:2px">🕐 ${fmtHg(g.debut)} → fin ${(()=>{try{return new Date(g.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}${g.reposH?` <span style="color:#9a8576">· puis repos ${g.reposH}h avant montage</span>`:''}${g._recale?` <span style="color:#9a8576">· enchaînée pour tenir le repos</span>`:''}</div>`
         : (g.horaireImpossible ? `<div style="font-size:.72rem;color:#b3261e;margin-top:2px">🕐 Pas de créneau dispo avant le montage (à anticiper)</div>` : '');
-      return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick='planLancerGanache(${JSON.stringify(g.parfum)}, ${(+_qLance)||0})' title="Lancer la production de cette ganache + chrono">
+      // [FIX échappement préventif] Clé de registre plutôt que le nom du parfum dans l'attribut.
+      window._planGanacheLanceReg = window._planGanacheLanceReg || {};
+      const ganKey = `${s.wk||'wk'}_${gi}`;
+      window._planGanacheLanceReg[ganKey] = { parfum:g.parfum, qte:(+_qLance)||0 };
+      return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick="planLancerGanacheByKey('${ganKey}')" title="Lancer la production de cette ganache + chrono">
       <div style="display:flex;align-items:center;width:100%">
         <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qteProduite||g.qte} mac</span>${g.aMarche?` <span style="background:#c97a2a;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="Contient une estimation marché (compo apprise sur l'historique)">⛺ estimé</span>`:''}${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">📦 dont ${g.surplusStock} stock</span>`:''}</span></div>
         <div style="display:flex;align-items:center;gap:5px"><span style="color:#aa7c39;font-size:.68rem;font-weight:600">▶ lancer</span><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
@@ -31121,17 +31152,20 @@ function _agendaPlanOpSection(plan){
       const horaireCale = m.debut
         ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 ${fmtH(m.debut)} → fin cuisson ${(()=>{try{return new Date(m.finCuisson||m.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}${m.congeler?`<br><span style="display:inline-block;white-space:nowrap;background:#3b6ea5;color:#fff;font-size:.56rem;font-weight:600;padding:2px 8px;border-radius:7px;margin-top:3px">❄️ à congeler</span>`:''}</div>`
         : (m.congeler?`<div style="font-size:.72rem;color:#3b6ea5;margin-top:2px">❄️ à congeler (pas de place dans la fenêtre de fraîcheur)</div>`:'');
-      // repartition encodée pour l'attribut onclick='…' (délimité par apostrophes simples).
-      // esc() gère déjà " < > & ; on échappe EN PLUS l'apostrophe simple (&#39;) car un parfum
-      // comme « Fleur d'oranger » casserait sinon l'attribut. Décodé par le navigateur au clic.
-      const repJson = esc(JSON.stringify(m.repartition)).replace(/'/g,'&#39;');
-      return `<div class="sum-box" style="cursor:pointer" onclick='planLancerMeringue("${repJson}", ${i})' title="Lancer les coques de cette meringue + chrono">
+      // [FIX échappement] On ne sérialise plus la répartition dans l'attribut onclick : esc() encode
+      // les guillemets en &quot;, que le navigateur redécode en " au clic — ce qui cassait la chaîne JS
+      // et rendait l'encart coques inerte. À la place, on stocke la répartition dans un registre global
+      // et on ne passe qu'une CLÉ (robuste à tous les noms de parfums). Même pattern que la ganache.
+      window._planMeringueReg = window._planMeringueReg || {};
+      const repKey = `${s.wk||'wk'}_${i}`;
+      window._planMeringueReg[repKey] = m.repartition;
+      return `<div class="sum-box" style="cursor:pointer" onclick="planLancerMeringueByKey('${repKey}', ${i})" title="Lancer les coques de cette meringue + chrono">
         <div style="flex:1">🥣 Meringue ${i+1} · ${rep}${m.partielle?' <span style="color:#b08a3a;font-size:.7rem">(partielle)</span>':''}${detailTemps}${horaireCale}</div>
         <div style="text-align:right"><span style="color:#aa7c39;font-size:.68rem;font-weight:600;display:block">▶ lancer</span><b>${fmtMin(m.dureeMin)}</b></div>
       </div>`;
     }).join('');
     // MONTAGE
-    const montage = s.montage.map(g=>{
+    const montage = s.montage.map((g,mi)=>{
       const specTxt = (g.specMin>0 && g.specDetail && g.specDetail.length)
         ? `<div style="font-size:.7rem;color:#8a6d3b;margin-top:2px;padding-left:19px">⚙️ +${fmtMin(g.specMin)} : ${g.specDetail.map(d=>esc(d.nom)+' '+fmtMin(d.min)).join(' · ')}</div>` : '';
       const _qMont = g.qteProduite||g.qte;
@@ -31140,7 +31174,12 @@ function _agendaPlanOpSection(plan){
       const horaireMont = g.debut
         ? `<div style="font-size:.72rem;color:#3f7d52;margin-top:2px">🕐 ${fmtHg(g.debut)}${g.fin?` → fin ${(()=>{try{return new Date(g.fin).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}})()}`:''}</div>`
         : '';
-      return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick='planLancerMontage(${JSON.stringify(g.parfum)}, ${(+_qMont)||0})' title="Assembler ce parfum (coques + garniture déjà produites)">
+      // [FIX échappement préventif] Même principe que coques/ganache : pas de nom de parfum réinjecté
+      // dans l'attribut (un parfum « Fleur d'oranger » casserait l'onclick à apostrophe). On passe une clé.
+      window._planMontageReg = window._planMontageReg || {};
+      const montKey = `${s.wk||'wk'}_${mi}`;
+      window._planMontageReg[montKey] = { parfum:g.parfum, qte:(+_qMont)||0 };
+      return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick="planLancerMontageByKey('${montKey}')" title="Assembler ce parfum (coques + garniture déjà produites)">
       <div style="display:flex;align-items:center;width:100%">
         <div style="flex:1;display:flex;align-items:center;flex-wrap:wrap">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qteProduite||g.qte} mac</span>${g.aMarche?` <span style="background:#c97a2a;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="Contient une estimation marché (compo apprise sur l'historique)">⛺ estimé</span>`:''}${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="${g.qte} commandés + ${g.surplusStock} pour le stock">📦 dont ${g.surplusStock} stock</span>`:''} <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span>${(g.stock>0)?`<div style="font-size:.7rem;color:#9a8576;width:100%;margin-top:1px">commandé <b>${g.qte}</b> · 📦 en stock <b style="color:#3f7d52">${g.stock}</b> · à produire <b>${g.besoinNet}</b></div>`:''}</span></div>
         <div style="display:flex;align-items:center;gap:5px"><span style="color:#3f7d52;font-size:.68rem;font-weight:600">▶ monter</span><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
