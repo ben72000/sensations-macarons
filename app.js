@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v845';
+const APP_VERSION = 'v847';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -30071,7 +30071,7 @@ async function suggererParfumsCommande(quantite, taille, parfumsPresents, dateLi
   // 4) Catalogue produisible : chaque recette active → { nom, coutMatUnit, tempsUnitMin }.
   const recipes = await db.recipes.toArray().catch(()=>[]);
   const recipeItems = await db.recipeItems.toArray().catch(()=>[]);
-  const lots = await db.lots.toArray().catch(()=>[]);
+  const lots = await db.materialLots.toArray().catch(()=>[]);
   const tempsParNom = await prodTempsParParfumParNom(90).catch(()=>({}));
   const settings = (typeof getSettings==='function') ? getSettings() : {};
   const normNom = n => (typeof aiNormalize==='function') ? aiNormalize(n) : (n||'').toLowerCase();
@@ -30506,6 +30506,11 @@ function _parfumsQtesDeLignes(lignes){
   (lignes||[]).forEach(ln=>{
     const arr = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
     arr.forEach(p=>{ if(p && p.nom && +p.qte>0) out.push({nom:p.nom, qte:+p.qte}); });
+    // [FIX invisibilité] Les macarons « sans parfum » comptent dans la PRODUCTION (volume, temps,
+    // rétroplanning) au même titre que les autres — sinon une commande 100 % « à définir » pèse 0
+    // macaron et devient muette dans Production. On les agrège sous « À définir » (même convention
+    // que _orderParfumDemand). Ils seront remplacés par de vrais parfums au moment du figeage.
+    if(+ln.sansParfum>0) out.push({ nom:'À définir', qte:+ln.sansParfum });
   });
   return out;
 }
@@ -31303,7 +31308,7 @@ async function suggererParfumsProd(orderId){
     if(!o){ closeModal(); return; }
     const sp = _sansParfumTotalDe(o);
     if(sp.total<=0){ closeModal(); toast && toast('Plus de macaron à déterminer'); if(typeof renderAgendaProduction==='function') renderAgendaProduction(); return; }
-    const parfumsPresents = _parfumsQtesDe(o).map(p=>p.nom);
+    const parfumsPresents = _parfumsQtesDe(o).map(p=>p.nom).filter(n=>n!=='À définir');
     const dateLiv = (o.dateEvenement || o.date || '').slice(0,10);
     const res = await suggererParfumsCommande(sp.total, sp.taille, parfumsPresents, dateLiv, {paliers:true, parfumsAutorises:(typeof FLAVORS!=='undefined'?FLAVORS:null)});
     if(!res || !res.ok || !res.repartition.length){
