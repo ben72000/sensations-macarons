@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v833';
+const APP_VERSION = 'v834';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -31391,11 +31391,16 @@ function _agendaPlanOpSection(plan){
         <div style="display:flex;align-items:center;gap:5px"><span style="color:#3f7d52;font-size:.68rem;font-weight:600">▶ monter</span>${
           g.rienAMonter
             ? `<b style="color:#3f7d52">✓ déjà en stock</b>`
-            : (g.reassortMin>0
-                ? `<b>${fmtMin(g.commandeMin)}</b><span style="color:#9a8576;font-size:.7rem;font-weight:400"> commande <span style="color:#c97a2a">+ ${fmtMin(g.reassortMin)} réassort</span></span>`
-                : `<b>${fmtMin(g.dureeMin)}</b>`)
+            : `<b>${fmtMin(g.dureeMin)}</b>`
         } ${srcBadge(g.source)}</div>
       </div>
+      ${(!g.rienAMonter && (g.qteCommande>0 || g.qteReassort>0))
+        ? `<div style="font-size:.72rem;color:#9a8576;margin-top:2px">🔧 ${g.qteProduite} à monter${
+            (g.qteReassort>0)
+              ? ` · <b style="color:#3f7d52">${g.qteCommande} commande</b> <span style="color:#c97a2a">+ ${g.qteReassort} réassort</span>`
+              : `<span style="color:#3f7d52"> (commande)</span>`
+          }</div>`
+        : ''}
       ${horaireMont}
       ${specTxt}
       ${poolLigne(g.commandes, g.surplusStock)}
@@ -31417,7 +31422,7 @@ function _agendaPlanOpSection(plan){
         ${coques}
       </div>
       <div>
-        <div style="font-weight:600;color:#3f7d52;margin-bottom:4px">🔧 Montage <span style="font-weight:400;color:#9a8576;font-size:.76rem">· par parfum · ${fmtMin(s.totalMontageMin)}${(s.totalMontageReassortMin>0)?` <span style="color:#9a8576">(${fmtMin(s.totalMontageCommandeMin)} commandes <span style="color:#c97a2a">+ ${fmtMin(s.totalMontageReassortMin)} réassort</span>)</span>`:''}</span></div>
+        <div style="font-weight:600;color:#3f7d52;margin-bottom:4px">🔧 Montage <span style="font-weight:400;color:#9a8576;font-size:.76rem">· par parfum · ${fmtMin(s.totalMontageMin)}${(s.totalMontageQteReassort>0)?` <span style="color:#9a8576">(${s.totalMontageQteCommande} commande <span style="color:#c97a2a">+ ${s.totalMontageQteReassort} réassort</span> à monter)</span>`:''}</span></div>
         ${montage}
       </div>
     </div>`;
@@ -32011,24 +32016,19 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
         });
       }
       const dureeTot = round1(base + specMin);
-      // [MONTAGE — COMMANDE vs RÉASSORT] On monte qp = besoinNet (sert les commandes) + surplus
-      // (réassort : clôturer le batch entamé, seulement si l'arrondi batch est coché → surplus>0).
-      // On VENTILE le temps total au prorata des quantités, sans double-compter le « au moins 1 batch » :
-      // diviser qp en deux sous-quantités et ré-imputer le temps proportionnellement. Quand surplus=0
-      // (case réassort décochée), tout le temps va à la commande et reassortMin reste 0.
-      const bn = Math.max(0, +pi.besoinNet||0);     // quantité servant les commandes
-      const su = Math.max(0, +pi.surplus||0);       // quantité de réassort (surplus d'arrondi batch)
-      let commandeMin = dureeTot, reassortMin = 0;
-      if(qp>0 && su>0){
-        // Prorata : la part commande = bn/qp du temps total, le reste = réassort.
-        commandeMin = round1(dureeTot * (bn/qp));
-        reassortMin = round1(dureeTot - commandeMin);   // garantit commandeMin + reassortMin === dureeTot
-      }
+      // [MONTAGE — COMMANDE vs RÉASSORT, par QUANTITÉS] On monte qp = besoinNet (sert les commandes)
+      // + surplus (réassort : clôturer le batch entamé, seulement si l'arrondi batch est coché).
+      // On NE ventile PAS le temps en minutes : un montage = un seul batch/geste, découper son temps
+      // donnerait des chiffres faux (« 0 min commande »). On garde donc UN temps total et on expose
+      // les QUANTITÉS (exactes) : qteCommande = besoinNet, qteReassort = surplus. L'UI affiche
+      // « X à monter (a commande + b réassort) ». Quand surplus=0, qteReassort=0 → pas de mention.
+      const qteCommande = Math.max(0, +pi.besoinNet||0);   // macarons servant les commandes
+      const qteReassort = Math.max(0, +pi.surplus||0);     // macarons de réassort (surplus d'arrondi batch)
       // « rien à monter » : le stock fini couvre la commande ET aucun réassort (qp=0).
       const rienAMonter = (qp<=0);
       return { parfum:p.nom, qte:p.qte, qteProduite:qp, stock:pi.stock, besoinNet:pi.besoinNet, surplusStock:pi.surplus, paliers:pi.paliers, parBatchMin:m.perBatch, source:m.source,
                dureeMin: dureeTot, baseMin:base, specMin:round1(specMin), specDetail,
-               commandeMin, reassortMin, rienAMonter,
+               qteCommande, qteReassort, rienAMonter,
                aMarche: p.commandes.some(c=>c.marche),
                commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId, marche:c.marche, marketId:c.marketId})) };
     });
@@ -32139,8 +32139,10 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
           if(!best || d < new Date(best.debut)) best = { debut:cal.debut, fin:cal.fin };
         }
       });
-      g._echeanceMont = best ? best.fin : null;   // le montage doit être FINI au plus tard à best.fin
-      if(!best) g.horaireImpossible = true;
+      // [RIEN À MONTER] Si le stock fini couvre tout (qp=0), pas de créneau : on ne planifie pas
+      // une tâche vide. Elle s'affichera « ✓ déjà en stock » sans horaire ni durée fantôme.
+      g._echeanceMont = (best && !g.rienAMonter) ? best.fin : null;
+      if(!best && !g.rienAMonter) g.horaireImpossible = true;
     });
     // [CRÉNEAU MONTAGE — étape 2] ÉTALEMENT SÉQUENTIEL À REBOURS. Comme les ganaches, on ne peut
     // monter qu'UN parfum à la fois (deux bras). Le montage est l'étape FINALE (collée à la
@@ -32169,13 +32171,13 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
     })();
     const totalGanacheMin = Math.round(ganache.reduce((a,g)=>a+g.dureeMin,0));
     const totalMontageMin = Math.round(montage.reduce((a,g)=>a+g.dureeMin,0));
-    const totalMontageCommandeMin = Math.round(montage.reduce((a,g)=>a+(+g.commandeMin||0),0));
-    const totalMontageReassortMin = Math.round(montage.reduce((a,g)=>a+(+g.reassortMin||0),0));
+    const totalMontageQteCommande = montage.reduce((a,g)=>a+(+g.qteCommande||0),0);
+    const totalMontageQteReassort = montage.reduce((a,g)=>a+(+g.qteReassort||0),0);
     const totalCoquesMin  = coques.reduce((a,m)=>a+m.dureeMin,0);
     const totalMacarons   = s.parfums.reduce((a,p)=>a+p.qte,0);
     return { wk:s.wk, label:s.label, ganache, coques, montage,
              totalGanacheMin, totalCoquesMin, totalMontageMin,
-             totalMontageCommandeMin, totalMontageReassortMin,
+             totalMontageQteCommande, totalMontageQteReassort,
              totalMin: totalGanacheMin+totalMontageMin+totalCoquesMin, totalMacarons };
   });
   return { semaines, horizonJours: mut.horizonJours||45 };
