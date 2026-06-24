@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v810';
+const APP_VERSION = 'v814';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -27719,9 +27719,11 @@ async function planLancerGanacheConfirm(){
   const cleanBase = base || (lotDateJJMMAA(date)+'GAN');
   const lot = cleanBase + '-GA';
   try{
-    await lancerBatchAvecFiche({ recipeId, qteMacarons:q, composant:'ganache', lotBase:cleanBase, lot, date });
-    closeModal();
-    toast(`Ganache ${parfum} démarrée ✓ · chrono lancé`);
+    // lancerBatchAvecFiche affiche déjà la FICHE RECETTE (modale) qui remplace ce popup de confirmation.
+    // On NE fait donc PAS closeModal() après : cela fermerait la fiche à peine ouverte (bug v810).
+    // Le toast est passé en option pour s'afficher AVANT la fiche (sinon masqué par la modale).
+    await lancerBatchAvecFiche({ recipeId, qteMacarons:q, composant:'ganache', lotBase:cleanBase, lot, date,
+      toastLabel:`Ganache ${parfum} démarrée ✓ · chrono lancé` });
   }catch(err){
     toast(err.message || 'Erreur lancement ganache');
   }
