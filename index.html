@@ -1138,7 +1138,43 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 #radialMenu .rm-label.active{fill:#fff;font-size:12px;font-weight:600}
 #radialScrim{position:fixed;inset:0;z-index:59;background:rgba(40,20,28,0);pointer-events:none;transition:background .25s}
 #radialScrim.show{background:rgba(40,20,28,.32);pointer-events:auto}
+/* ===== ACCUEIL « LE FIL » (aubergine) ===== */
+.acc-wrap{min-height:calc(100vh - 0px);background:radial-gradient(120% 80% at 50% 0%,#3d1a28,#2a1320 50%,#1c0c14);margin:-16px -16px 0;padding:0 0 40px;color:#E8DDCD;overflow:hidden}
+.acc-head{display:flex;justify-content:space-between;align-items:flex-start;padding:20px 22px 0;max-width:460px;margin:0 auto}
+.acc-brand{font-size:.56rem;letter-spacing:.3em;text-transform:uppercase;color:#c6974f;font-weight:600;padding-top:4px}
+.acc-clock{text-align:right;display:flex;flex-direction:column}
+.acc-time{font-family:ui-monospace,monospace;font-size:.92rem;color:#c6974f;font-weight:600}
+.acc-date{font-size:.6rem;color:rgba(232,221,205,.5);text-transform:capitalize;margin-top:1px}
+.acc-section-title{text-align:center;margin-top:18px;font-family:'Bellota',serif;font-size:1.3rem;font-weight:700;color:#fff}
+.acc-scene{display:flex;align-items:center;justify-content:center;padding:14px 18px 6px;max-width:460px;margin:0 auto;min-height:360px;touch-action:pan-y}
+.acc-card{width:100%;max-width:300px;background:#fbf6f0;border-radius:22px;padding:22px 20px 18px;box-shadow:0 26px 60px rgba(0,0,0,.5);display:flex;flex-direction:column;min-height:340px;will-change:transform,opacity}
+.acc-card-loading{align-items:center;justify-content:center}
+.acc-loading{color:#9a8576;font-size:.85rem}
+.acc-badge{display:flex;align-items:center;gap:8px;font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;font-weight:700}
+.acc-badge-dot{width:8px;height:8px;border-radius:99px;flex:none}
+.acc-card-body{flex:1;display:flex;flex-direction:column;margin-top:14px}
+.acc-kicker{font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:#AA7C39;font-weight:600}
+.acc-titre{font-family:'Bellota',serif;font-size:1.3rem;font-weight:700;color:#52252F;line-height:1.14;margin-top:4px}
+.acc-detail{font-size:.85rem;color:#6b5d54;line-height:1.45;margin-top:10px}
+.acc-cta{margin-top:16px;width:100%;border:none;border-radius:14px;padding:14px;background:linear-gradient(135deg,#c6974f,#AA7C39);color:#fff;font-weight:600;font-size:.92rem;font-family:inherit;cursor:pointer;box-shadow:0 5px 16px rgba(170,124,57,.32)}
+.acc-cta:active{transform:scale(.98)}
+.acc-dest{text-align:center;font-size:.66rem;color:#a99685;margin-top:7px}
+.acc-dots{display:flex;justify-content:center;gap:7px;margin-top:8px}
+.acc-dot{width:7px;height:7px;border-radius:99px;background:rgba(232,221,205,.25);transition:all .25s;cursor:pointer}
+.acc-dot.on{width:22px;background:#c6974f}
+.acc-kpis-toggle-wrap{max-width:460px;margin:24px auto 0;padding:0 18px}
+.acc-kpis-toggle{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:transparent;border:none;color:rgba(232,221,205,.7);font-size:.8rem;font-family:inherit;cursor:pointer;padding:8px}
+.acc-chev{display:inline-block;transition:transform .3s;color:#c6974f}
+.acc-kpis{overflow:hidden;transition:max-height .4s ease,opacity .3s;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
+.acc-kpi{background:rgba(255,255,255,.05);border:1px solid rgba(232,221,205,.1);border-radius:14px;padding:12px;cursor:pointer;position:relative}
+.acc-kpi-corner{position:absolute;right:9px;top:7px;font-size:.85rem;opacity:.55}
+.acc-kpi-lbl{font-size:.65rem;color:rgba(232,221,205,.6);line-height:1.2;padding-right:16px}
+.acc-kpi-val{font-family:'Bellota',serif;font-size:1.3rem;font-weight:700;color:#fff;margin-top:3px}
+.acc-kpi-sub{font-size:.61rem;color:#c6974f;margin-top:2px}
+.acc-menu-fab{position:fixed;bottom:22px;right:20px;width:56px;height:56px;border-radius:50%;border:1px solid rgba(232,221,205,.14);background:rgba(255,255,255,.08);color:#E8DDCD;font-size:1.4rem;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.45);z-index:50}
+.acc-menu-fab:active{transform:scale(.97)}
 </style>
+
 </head>
 <body>
 <!-- Horodateur global : date + heure en direct, fixe en haut à droite, sur toutes les pages. -->
@@ -1295,9 +1331,9 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=851" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=851"></script>
-<script src="utils.js?v=851"></script>
-<script src="app.js?v=851"></script>
+<script src="html5-qrcode.min.js?v=857" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=857"></script>
+<script src="utils.js?v=857"></script>
+<script src="app.js?v=857"></script>
 </body>
 </html>

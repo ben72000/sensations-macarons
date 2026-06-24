@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v851';
+const APP_VERSION = 'v857';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1358,11 +1358,12 @@ function closeModal(opts){
 overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(); });
 
 // --------- Router ---------
-let view='dash';
+let view='accueil';
 // Sens de la dernière navigation, pour l'animation de profondeur (cascade) :
 // 'forward' = on ouvre une rubrique (glisse par-dessus) ; 'back' = retour (redescend/révèle).
 let _navDir='forward';
 const VIEWS = {
+  accueil:renderAccueil,
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
@@ -2331,6 +2332,278 @@ async function renderDashProduction(){
     <div class="table-wrap"><table class="dash-tbl"><tbody>${rows}</tbody></table></div>
     ${reste}</div>`;
 }
+/* ============================================================
+   ACCUEIL « LE FIL » (étape 1 — coquille + carrousel de production)
+   ------------------------------------------------------------
+   Écran d'accueil épuré, identité aubergine. Carrousel de 3 cartes de
+   PRODUCTION (tâche du moment, commande qui presse, prendre de l'avance),
+   chiffres du Dashboard repliables, bouton menu.
+   PRINCIPE : cet écran ne fait AUCUN accès db. direct ni calcul métier — il
+   COMPOSE des helpers existants (atelierBrain, commandeQuiPresse, getAvailability)
+   et des sauts contextuels (planFocusTache, retroplanningView). Coquille rendue
+   instantanément, cartes peuplées en asynchrone (comme renderAssistant/renderAtelierVoix).
+   ============================================================ */
+let _accueilSlide = 0;   // index de carte courant (mémorisé entre peuplements)
+
+function renderAccueil(){
+  const main = document.getElementById('main');
+  // Coquille INSTANTANÉE : fond aubergine, carrousel à l'état "chargement", chiffres repliés, menu.
+  main.innerHTML = `
+   <div class="acc-wrap">
+     <div class="acc-head">
+       <span class="acc-brand">Sensations Macarons</span>
+       <span class="acc-clock" id="accClock"></span>
+     </div>
+     <div class="acc-section-title" id="accSectionTitle">Production</div>
+     <div class="acc-scene" id="accScene">
+       <div class="acc-card acc-card-loading">
+         <div class="acc-loading">⏳ Lecture de ta situation…</div>
+       </div>
+     </div>
+     <div class="acc-dots" id="accDots"></div>
+
+     <div class="acc-kpis-toggle-wrap">
+       <button class="acc-kpis-toggle" id="accKpiToggle" onclick="accueilToggleKpis()">
+         <span id="accKpiToggleLbl">Mes chiffres du jour</span>
+         <span class="acc-chev" id="accKpiChev">▾</span>
+       </button>
+       <div class="acc-kpis" id="accKpis" style="max-height:0;opacity:0"></div>
+     </div>
+   </div>
+   <button class="acc-menu-fab" title="Menu" onclick="openSheet()">☰</button>`;
+
+  // Horloge (réutilise le timer d'accueil existant si présent, sinon tic local).
+  _accueilStartClock();
+  // Peuplement asynchrone des cartes et des chiffres (ne bloque pas l'affichage).
+  _accueilPeuplerCartes();
+}
+
+// Horloge de l'accueil : met à jour #accClock chaque seconde. Réutilise _homeClockTimer logique.
+let _accClockTimer = null;
+function _accueilStartClock(){
+  const tick = ()=>{
+    const el = document.getElementById('accClock'); if(!el){ if(_accClockTimer){clearInterval(_accClockTimer);_accClockTimer=null;} return; }
+    const now = new Date();
+    el.innerHTML = `<span class="acc-time">${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>`
+                 + `<span class="acc-date">${now.toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short'})}</span>`;
+  };
+  if(_accClockTimer) clearInterval(_accClockTimer);
+  tick(); _accClockTimer = setInterval(tick, 1000);
+}
+
+// Replie / déplie le bloc chiffres.
+function accueilToggleKpis(){
+  const box = document.getElementById('accKpis');
+  const chev = document.getElementById('accKpiChev');
+  const lbl = document.getElementById('accKpiToggleLbl');
+  if(!box) return;
+  const open = box.style.maxHeight!=='0px' && box.style.maxHeight!=='0';
+  if(open){ box.style.maxHeight='0'; box.style.opacity='0'; if(chev) chev.style.transform=''; if(lbl) lbl.textContent='Mes chiffres du jour'; }
+  else { box.style.maxHeight='320px'; box.style.opacity='1'; if(chev) chev.style.transform='rotate(180deg)'; if(lbl) lbl.textContent='Masquer les chiffres'; }
+}
+
+// Construit les 3 cartes à partir des helpers existants, puis branche le carrousel.
+async function _accueilPeuplerCartes(){
+  // On appelle UNE fois le cerveau (retards, dlc, dispo) + la commande qui presse.
+  let brain=null, presse=null;
+  try{ brain = (typeof atelierBrain==='function') ? await atelierBrain() : null; }catch(e){ console.error('accueil.brain',e); }
+  try{ presse = (typeof commandeQuiPresse==='function') ? await commandeQuiPresse() : null; }catch(e){ console.error('accueil.presse',e); }
+
+  const scene = document.getElementById('accScene');
+  if(!scene) return;   // l'utilisateur a déjà quitté l'écran
+
+  const cards = _accueilBuildCards(brain, presse);
+  // garde l'index courant dans les bornes
+  if(_accueilSlide >= cards.length) _accueilSlide = 0;
+  _accueilRenderScene(cards);
+
+  // Peuplement des CHIFFRES (repliés par défaut) — via un helper dédié qui CONCENTRE les accès
+  // données de l'accueil et réutilise les briques existantes (caDuMois, analyzeFlavorProfitability,
+  // prodVendable), au lieu de redupliquer le calcul du Dashboard.
+  try{
+    const kpis = await _accueilKpis();
+    const box = document.getElementById('accKpis');
+    if(box && kpis){
+      box.innerHTML = `
+        <div class="acc-kpi" onclick="caMonthDetail()"><span class="acc-kpi-corner">€</span><div class="acc-kpi-lbl">CA ${esc(kpis.moisLbl)}</div><div class="acc-kpi-val">${kpis.privacy?'•••':euro(kpis.caMois)}</div><div class="acc-kpi-sub">${kpis.nbEnc} encaissement(s) ›</div></div>
+        <div class="acc-kpi" onclick="goView('rentabilite')"><span class="acc-kpi-corner">📈</span><div class="acc-kpi-lbl">Marge nette / macaron</div><div class="acc-kpi-val">${kpis.privacy?'•••':(kpis.marge!=null?euro(kpis.marge):'—')}</div><div class="acc-kpi-sub">${kpis.marge!=null?'après coûts ›':'pas encore de ventes ›'}</div></div>
+        <div class="acc-kpi" onclick="goView('rentabilite')"><span class="acc-kpi-corner">🎁</span><div class="acc-kpi-lbl">Coût des dons</div><div class="acc-kpi-val">${kpis.privacy?'•••':(kpis.coutDons!=null?euro(kpis.coutDons):'—')}</div><div class="acc-kpi-sub">${(kpis.coutDons!=null&&kpis.piecesDon>0)?`${qty(kpis.piecesDon)} offert(s) ›`:'aucun don ›'}</div></div>
+        <div class="acc-kpi" onclick="goView('stockparfums')"><span class="acc-kpi-corner">🍬</span><div class="acc-kpi-lbl">Macarons en stock</div><div class="acc-kpi-val">${qtyP(kpis.stock)}</div><div class="acc-kpi-sub">par parfum ›</div></div>`;
+    }
+  }catch(e){ console.error('accueil.kpis', e); }
+}
+
+// [HELPER DONNÉES ACCUEIL] Concentre les accès données des CHIFFRES de l'accueil en un seul endroit,
+// et réutilise les briques existantes (source unique de vérité) plutôt que de redupliquer le calcul :
+//  - CA du mois        → caDuMois (même fonction que le Dashboard et son détail)
+//  - marge nette/dons  → analyzeFlavorProfitability (idem rentabilité)
+//  - macarons en stock → prodVendable (idem Stock par parfum)
+// Renvoie un objet plat prêt à afficher. Repli silencieux par champ.
+async function _accueilKpis(){
+  const out = { moisLbl:'ce mois', caMois:0, nbEnc:0, marge:null, coutDons:null, piecesDon:0, stock:0,
+    privacy: (typeof privacyModeEnabled==='function') ? privacyModeEnabled() : false };
+  try{
+    const mk = monthKey(today());
+    out.moisLbl = (typeof monthLabel==='function') ? monthLabel(mk) : 'ce mois';
+    const caObj = await caDuMois(mk);
+    out.caMois = caObj ? caObj.total : 0;
+  }catch(e){ console.error('kpis.ca', e); }
+  try{
+    const [recipes, materials, orders, markets, productions, ri, lots, mm] = await Promise.all([
+      db.recipes.toArray().catch(()=>[]), db.materials.toArray().catch(()=>[]),
+      db.orders.toArray().catch(()=>[]), (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]),
+      db.productions.toArray().catch(()=>[]), db.recipeItems.toArray().catch(()=>[]),
+      db.materialLots.toArray().catch(()=>[]), (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[])
+    ]);
+    // encaissements du mois (commandes) — même logique que le Dashboard
+    let nbEnc = 0; const mkCur = monthKey(today());
+    orders.forEach(o=>{ if(o.histo) return; (typeof paiementsDe==='function'?paiementsDe(o):[]).forEach(p=>{ if(ymKey(p.date||o.date||'')===mkCur) nbEnc++; }); });
+    out.nbEnc = nbEnc;
+    // marge nette / dons
+    const _An = (typeof analyzeFlavorProfitability==='function') ? analyzeFlavorProfitability({recipes, recipeItems:ri, lots, mats:materials, orders, markets, marketMoves:mm, productions, settings:(typeof getSettings==='function'?getSettings():{})}) : null;
+    if(_An && _An.totals){
+      if(_An.totals.pieces>0) out.marge = money2(_An.totals.margeNette / _An.totals.pieces);
+      out.coutDons = _An.totals.coutDons||0; out.piecesDon = _An.totals.piecesDon||0;
+    }
+    // stock de macarons vendables
+    out.stock = productions.filter(prodVendable).reduce((s,p)=>s+(+p.qteRestante||0),0);
+  }catch(e){ console.error('kpis.calc', e); }
+  return out;
+}
+
+// Construit le MODÈLE des 3 cartes (données pures, pas de DOM). Tolérant : si une donnée manque,
+// la carte affiche un état neutre plutôt que de disparaître.
+function _accueilBuildCards(brain, presse){
+  const cards = [];
+
+  // CARTE 1 — TÂCHE DU MOMENT (situation issue d'atelierBrain).
+  // On privilégie : un retard de lancement > une commande proche > "rien d'urgent".
+  (function(){
+    // Champs RÉELS disponibles (vérifiés dans app.js) :
+    //  retardsLancement[i] : { orderId, client, dateLivraison, retards[], plusUrgent, nbRetards }
+    //  commandesProches[i] : { orderId, client, date, joursAvantRetrait, etat }
+    // On compose nous-mêmes le message à partir de ces champs (pas de .message/.debutRequis inventés).
+    let badge='À lancer', accent='#d08374', kicker='Maintenant', titre='Rien ne presse', detail="Aucune tâche urgente détectée. Tu peux avancer sereinement.", cta='Ouvrir le plan de travail', onclick=`goView('agendaprod')`, dest='plan de travail';
+    if(brain && brain.aDesRetards && brain.retardsLancement[0]){
+      const r = brain.retardsLancement[0];
+      kicker='Production en retard'; accent='#b04a3e'; badge='Urgent';
+      titre = `Commande ${r.client||'(client ?)'}`;
+      const jalon = r.plusUrgent && r.plusUrgent.label ? r.plusUrgent.label : 'une étape';
+      detail = `Le lancement de ${jalon} a pris du retard${r.nbRetards>1?` (${r.nbRetards} étapes concernées)`:''}. À traiter en priorité.`;
+      cta='Voir le rétroplanning'; onclick=`retroplanningView(${r.orderId})`; dest=`commande #${r.orderId}`;
+    } else if(brain && brain.aDesCommandesProches && brain.commandesProches[0]){
+      const c = brain.commandesProches[0];
+      kicker='Commande proche'; accent='#d98324'; badge='À préparer';
+      titre = `Commande ${c.client||'(client ?)'}`;
+      const quand = c.etat==='aujourdhui' ? "à remettre aujourd'hui" : c.etat==='retard' ? "déjà dépassée" : "à remettre demain";
+      detail = `Retrait ${quand}. Prépare cette commande.`;
+      cta='Voir la commande'; onclick=`retroplanningView(${c.orderId})`; dest=`commande #${c.orderId}`;
+    }
+    cards.push({ key:'tache', badge, accent, kicker, titre, detail, cta, onclick, dest });
+  })();
+
+  // CARTE 2 — COMMANDE QUI PRESSE (helper dédié, saut vers son rétroplanning).
+  (function(){
+    if(presse && presse.orderId!=null){
+      const stLbl = presse.statut==='retard' ? 'En retard' : presse.statut==='urgent' ? 'Urgent' : 'À surveiller';
+      const accent = presse.statut==='retard' ? '#b04a3e' : presse.statut==='urgent' ? '#d98324' : '#7faa6a';
+      let detail;
+      if(presse.statut==='retard') detail = "La production de cette commande aurait dû démarrer. À lancer en priorité.";
+      else if(presse.statut==='urgent') detail = "La production doit démarrer très bientôt pour tenir la livraison.";
+      else detail = "Production à venir : tu as encore de la marge.";
+      cards.push({ key:'commande', badge:stLbl, accent, kicker:'Commande à produire',
+        titre: presse.clientNom ? `Commande ${presse.clientNom}` : `Commande #${presse.orderId}`,
+        detail, cta:'Voir le rétroplanning',
+        onclick:`retroplanningView(${presse.orderId})`, dest:`commande #${presse.orderId}, calée` });
+    } else {
+      cards.push({ key:'commande', badge:'À jour', accent:'#7faa6a', kicker:'Commandes',
+        titre:'Aucune production pressante', detail:"Toutes tes commandes ont leur production sous contrôle.",
+        cta:'Voir la production', onclick:`goView('agendaprod')`, dest:'plan de production' });
+    }
+  })();
+
+  // CARTE 3 — PRENDRE DE L'AVANCE (dispo du jour issue d'atelierBrain).
+  (function(){
+    const dispo = brain ? brain.dispoAujMin : null;
+    let titre, detail, badge='Aujourd\'hui', accent='#7faa6a';
+    if(dispo!=null && dispo>=60){
+      const h = Math.floor(dispo/60), m = dispo%60;
+      titre = 'Prendre de l\'avance ?';
+      detail = `Il te reste ~${h}h${m?String(m).padStart(2,'0'):''} de créneau libre aujourd'hui. Tu pourrais avancer une fournée pour souffler demain.`;
+    } else if(dispo!=null){
+      titre = 'Journée bien remplie';
+      detail = "Peu de marge aujourd'hui. On verra pour prendre de l'avance un autre jour.";
+      badge='Info'; accent='#9a8576';
+    } else {
+      titre = 'Prendre de l\'avance ?';
+      detail = "Renseigne tes créneaux de disponibilité pour que l'app te propose d'avancer une fournée.";
+    }
+    cards.push({ key:'avance', badge, accent, kicker:'Aperçu du jour', titre, detail,
+      cta:'Voir le plan de la semaine', onclick:`goView('agendaprod')`, dest:'plan de production' });
+  })();
+
+  return cards;
+}
+
+// Rend la scène (carte courante) + les points, et branche le swipe. Vanilla, translation simple.
+function _accueilRenderScene(cards){
+  const scene = document.getElementById('accScene');
+  const dots = document.getElementById('accDots');
+  const sectionTitle = document.getElementById('accSectionTitle');
+  if(!scene) return;
+  window._accueilCards = cards;
+
+  const draw = ()=>{
+    const c = cards[_accueilSlide]; if(!c) return;
+    if(sectionTitle) sectionTitle.textContent = c.key==='tache' ? 'Maintenant' : c.key==='commande' ? 'Production à lancer' : 'Prendre de l\'avance';
+    scene.innerHTML = `
+      <div class="acc-card" id="accCard">
+        <div class="acc-badge"><span class="acc-badge-dot" style="background:${c.accent}"></span><span style="color:${c.accent}">${esc(c.badge)}</span></div>
+        <div class="acc-card-body">
+          <div class="acc-kicker">${esc(c.kicker)}</div>
+          <div class="acc-titre">${esc(c.titre)}</div>
+          <div class="acc-detail">${esc(c.detail)}</div>
+        </div>
+        <button class="acc-cta" onclick="${c.onclick}">${esc(c.cta)} →</button>
+        ${c.dest?`<div class="acc-dest">t'amène à <b>${esc(c.dest)}</b></div>`:''}
+      </div>`;
+    if(dots){
+      dots.innerHTML = cards.map((_,i)=>`<span class="acc-dot${i===_accueilSlide?' on':''}" onclick="_accueilGoTo(${i})"></span>`).join('');
+    }
+    _accueilBindSwipe();
+  };
+  window._accueilDraw = draw;
+  draw();
+}
+
+function _accueilGoTo(i){
+  const cards = window._accueilCards||[]; if(i<0||i>=cards.length) return;
+  _accueilSlide = i; if(window._accueilDraw) window._accueilDraw();
+}
+
+// Gestion tactile du swipe (translation + fondu), sans dépendance.
+function _accueilBindSwipe(){
+  const card = document.getElementById('accCard'); if(!card) return;
+  let startX=null, dx=0;
+  const onStart = e=>{ startX = (e.touches?e.touches[0].clientX:e.clientX); card.style.transition='none'; };
+  const onMove = e=>{ if(startX==null) return; const x=(e.touches?e.touches[0].clientX:e.clientX); dx=x-startX; card.style.transform=`translateX(${dx}px)`; card.style.opacity=String(Math.max(0,1-Math.abs(dx)/320)); };
+  const onEnd = ()=>{
+    if(startX==null) return; const cards=window._accueilCards||[];
+    card.style.transition='transform .26s ease, opacity .26s ease';
+    if(dx<-55 && _accueilSlide<cards.length-1){ _accueilSlide++; if(window._accueilDraw) window._accueilDraw(); }
+    else if(dx>55 && _accueilSlide>0){ _accueilSlide--; if(window._accueilDraw) window._accueilDraw(); }
+    else { card.style.transform=''; card.style.opacity='1'; }
+    startX=null; dx=0;
+  };
+  card.addEventListener('touchstart', onStart, {passive:true});
+  card.addEventListener('touchmove', onMove, {passive:true});
+  card.addEventListener('touchend', onEnd);
+  card.addEventListener('mousedown', onStart);
+  card.addEventListener('mousemove', e=>{ if(startX!=null) onMove(e); });
+  card.addEventListener('mouseup', onEnd);
+  card.addEventListener('mouseleave', ()=>{ if(startX!=null) onEnd(); });
+}
+
 // Horloge live de l'accueil (HH:MM, dans le bandeau du tableau de bord)
 let _homeClockTimer = null;
 function startHomeClock(){
@@ -11415,12 +11688,20 @@ function drawEventLine(ln,i){
     <div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0, +ln.equip||0)}</div>
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}</div>
+    ${(()=>{
+      // Compteur de remplissage des parfums, même logique que les coffrets : vert si pile,
+      // rouge si au-dessus, orange (neutre) en dessous. En gras, s'incrémente à la saisie.
+      const cible = +ln.evQte||0;
+      const col = totQ===cible ? '#2e7d32' : (totQ>cible ? '#b3261e' : '#c77d2e');
+      const bg  = totQ===cible ? '#eef6ee' : (totQ>cible ? '#fdf2f1' : '#fbf8f3');
+      const txt = totQ>cible ? `${totQ}/${cible} — dépasse de ${totQ-cible} !`
+                : totQ===cible ? `${totQ}/${cible} ✓`
+                : `${totQ}/${cible}${totQ>0?` — ${cible-totQ} sans parfum`:''}`;
+      return `<div class="sum-box" style="border:2px solid ${col};background:${bg}">
+        <span>Parfums attribués</span>
+        <b style="color:${col};font-size:1.1rem">${txt}</b></div>`;
+    })()}
     <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(PYRA_PRICE)}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
-    ${(totQ>+ln.evQte)
-      ? `<p class="note" style="color:var(--red)">⚠ ${totQ} parfums saisis pour ${ln.evQte} macarons : trop de parfums (max ${ln.evQte}).</p>`
-      : (totQ>0 && totQ<+ln.evQte)
-        ? `<p class="note" style="color:#7a6a62">${ln.evQte-totQ} macaron(s) sans parfum précisé → seront comptés « non spécifié ».</p>`
-        : ''}
     ${lineRemiseRow(ln,i)}
   </div>`;
 }
@@ -30856,6 +31137,49 @@ async function retroplanningCale(orderId){
   return retroplanningCaleParfums(dateLiv, o.heureLivraison, _parfumsQtesDe(o), recipes);
 }
 
+// [SAUT CONTEXTUEL — CARTE « COMMANDE QUI PRESSE »] Sélectionne la commande dont la PRODUCTION
+// presse le plus, pour l'accueil-fil. Critère retenu (décision Benjamin) : le DÉBUT DE PRODUCTION
+// le plus pressant — c'est là-dessus qu'on peut encore agir. Le bouton de la carte ouvrira
+// retroplanningView(orderId). Seuil ≤ 2 j = urgent (cohérent avec la faisabilité du prévisionnel).
+//
+// _classerUrgenceProd est PUR (début de prod ISO + instant courant → statut), donc testable en
+// isolation ; commandeQuiPresse lit la base et délègue le calage à retroplanningCale.
+function _classerUrgenceProd(debutProdISO, now){
+  const debutProd = new Date(debutProdISO);
+  const joursAvantDebut = Math.ceil((debutProd - now) / 86400000);
+  if(debutProd < now) return { rang:2, statut:'retard', joursAvantDebut };
+  if(joursAvantDebut <= 2) return { rang:1, statut:'urgent', joursAvantDebut };
+  return { rang:0, statut:'ok', joursAvantDebut };
+}
+async function commandeQuiPresse(){
+  const STATUT_FINI = new Set(['Terminée','Livrée']);
+  const now = new Date();
+  let orders=[], clients=[];
+  try{ [orders, clients] = await Promise.all([db.orders.toArray(), db.clients.toArray()]); }
+  catch(_){ return null; }
+  const nomClient = id => { const c=clients.find(x=>+x.id===+id); return c ? ([c.prenom,c.nom].filter(Boolean).join(' ')||c.nom||'') : ''; };
+  const candidats = [];
+  for(const o of orders){
+    if(o.histo) continue;                                   // commandes historisées : pas d'action
+    const st = (typeof normStatus==='function') ? normStatus(o.statut) : o.statut;
+    if(STATUT_FINI.has(st)) continue;                       // déjà fait → ne presse plus
+    let cale=null;
+    try{ cale = await retroplanningCale(o.id); }catch(_){ cale=null; }
+    if(!cale || !cale.ok || !cale.debutProduction) continue; // pas de prod calée → on ignore
+    const u = _classerUrgenceProd(cale.debutProduction, now);
+    candidats.push({
+      orderId: o.id, clientNom: nomClient(o.clientId),
+      statut: u.statut, rang: u.rang, joursAvantDebut: u.joursAvantDebut,
+      debutProduction: cale.debutProduction, livraison: cale.livraison,
+      aDesDebordements: !!cale.aDesDebordements,
+    });
+  }
+  if(!candidats.length) return null;
+  // retard d'abord, puis le début de production le plus ancien (le plus pressant)
+  candidats.sort((a,b)=> b.rang - a.rang || new Date(a.debutProduction) - new Date(b.debutProduction));
+  return candidats[0];
+}
+
 // [CŒUR DE CALAGE HORAIRE NEUTRE] Cale le rétroplanning dans les plages A/B à partir de données
 // BRUTES (date, heure, parfums+quantités), sans objet commande. Appelé par retroplanningCale (pour
 // les commandes) et par le plan pour les MARCHÉS (parfums ventilés passés directement). Aucun
@@ -31507,6 +31831,8 @@ async function renderAgendaProduction(){
     ${_agendaMutualSection(mut)}
     ${_agendaParfumsSection(ppj)}
     ${_agendaCommandesSection(cr)}`;
+  // [SAUT CONTEXTUEL] Si on est arrivé ici via planFocusTache, positionne le plan sur la bonne semaine.
+  if(typeof _planConsumeFocus==='function') _planConsumeFocus();
 }
 // Section « Besoins par parfum et par jour » : cumul de toutes les commandes (croisées), pour
 // préparer la mutualisation. Affiche, par jour de montage, chaque parfum et la quantité totale,
@@ -31625,7 +31951,49 @@ async function planSemaineToggle(wk, bandEl){
   }
 }
 
-// Construit le HTML du planning heure par heure d'une semaine (wk ISO 'YYYY-Www').
+// [SAUT CONTEXTUEL — CARTE « TÂCHE DU MOMENT »] Ouvre le plan de Production ET le positionne sur la
+// SEMAINE de la tâche : déplie son bandeau de faisabilité (réutilise planSemaineToggle, source unique),
+// fait défiler jusqu'à lui et le surligne brièvement. Pas d'ancrage au pixel sur une sous-tâche (les
+// tâches n'ont pas d'id propre) : on amène au bon CONTEXTE déjà déplié, prêt à lire/lancer — ce qui
+// supprime la re-navigation. Si la date est inconnue, on ouvre simplement le plan (fallback gracieux).
+//
+// dateTacheISO : date de début de la tâche (ex. début de prod d'une commande). parfum : optionnel,
+// pour un futur surlignage plus fin. L'intention est posée puis consommée en fin de renderAgendaProduction.
+function planFocusTache(dateTacheISO, parfum){
+  const wk = (typeof _isoWeekKey==='function') ? _isoWeekKey(dateTacheISO) : null;
+  window._planFocusPending = wk ? { wk, parfum: parfum||null } : null;
+  if(typeof goView==='function') goView('agendaprod');
+}
+// Consomme une éventuelle intention de focus après le rendu du plan : trouve le bandeau de la semaine,
+// le déplie s'il ne l'est pas, scrolle dessus et le surligne. Robuste : si le bandeau n'existe pas
+// (semaine hors plan), on ne fait rien de visible (le plan reste ouvert normalement).
+function _planConsumeFocus(){
+  const intent = window._planFocusPending;
+  if(!intent || !intent.wk) return;
+  window._planFocusPending = null;   // consommée une seule fois
+  // Laisse le DOM se peindre, puis cible le bandeau de la bonne semaine.
+  setTimeout(()=>{
+    try{
+      const sel = `.faiz-band[data-wk="${String(intent.wk).replace(/"/g,'')}"]`;
+      const band = document.querySelector(sel);
+      if(!band) return;   // semaine absente du plan : on laisse le plan ouvert tel quel
+      // Déplie si ce n'est pas déjà fait (planSemaineToggle gère la génération du déroulé).
+      const depli = band.nextElementSibling;
+      const dejaOuvert = depli && depli.classList.contains('faiz-depli') && depli.style.display!=='none' && depli.dataset.loaded==='1';
+      if(!dejaOuvert && typeof planSemaineToggle==='function'){
+        planSemaineToggle(intent.wk, band);
+      }
+      band.scrollIntoView({ behavior:'smooth', block:'start' });
+      // Surlignage bref pour matérialiser « c'est ici ».
+      const oldShadow = band.style.boxShadow;
+      band.style.transition = 'box-shadow .3s';
+      band.style.boxShadow = '0 0 0 3px rgba(170,124,57,.55)';
+      setTimeout(()=>{ band.style.boxShadow = oldShadow||''; }, 1600);
+    }catch(e){ console.error('_planConsumeFocus', e); }
+  }, 60);
+}
+
+
 // daySpecs = vraies plages A/B de chaque jour de la semaine (depuis aujourd'hui pour la semaine en cours).
 // [DIAGNOSTIC niveau 2] Pour chaque parfum, la date de livraison la PLUS PROCHE parmi les commandes
 // non livrées de la fenêtre [debut, fin]. Sert à dire, pour une tâche qui déborde, de combien de marge
@@ -31797,9 +32165,14 @@ function _planSemaineRenderHTML(S, plan, datesLiv){
     const d = new Date(date+'T00:00');
     const rows = byDay[date].map(e=>{
       const icon = e.kind==='coques'?'🥚':e.kind==='ganache'?'🍫':e.kind==='montage'?'🧩':'•';
+      // Badge congélation explicite (calage horaire v854) : coques montées hors fenêtre de fraîcheur
+      // ou recette à congélation obligatoire. Visible au premier coup d'œil, pas seulement dans la note.
+      const congelBadge = e.congeler
+        ? ` <span style="background:#3b6ea5;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="Coques à congeler puis décongeler avant montage">❄️ congélation</span>`
+        : '';
       return `<div class="perso-ev">
         <div class="perso-ev-time">${minToHM(e.start)}<br><span>${minToHM(e.end)}</span></div>
-        <div class="perso-ev-body"><div class="perso-ev-lbl">${icon} ${esc(e.label)}</div>
+        <div class="perso-ev-body"><div class="perso-ev-lbl">${icon} ${esc(e.label)}${congelBadge}</div>
           ${e.note?`<div class="perso-ev-note">${esc(e.note)}</div>`:''}</div></div>`;
     }).join('');
     return `<div style="margin-top:6px"><div style="text-transform:capitalize;font-weight:600;color:var(--bordeaux);font-size:.86rem;border-bottom:1px solid #ece2d4;padding-bottom:3px;margin-bottom:2px">${JOURS[d.getDay()]} ${d.toLocaleDateString('fr-FR',{day:'2-digit',month:'long'})}</div>${rows}</div>`;
@@ -33455,6 +33828,30 @@ function mrpFindRecipe(recipes, parfum){
 }
 
 // GÉNÉRATION DU PLAN DE PRODUCTION pour une période [startDate, endDate].
+// [UNIFICATION MODÈLE DE TEMPS — source unique] Durées montage/ganache d'une ligne de plan, selon le
+// MÊME modèle que le plan de travail détaillé : montage fixe+variable (_montageMinutes), ganache UNE
+// fois par parfum. Source : mesuré fiable (tEtape) > recette > défaut. Utilisé par generateProductionOrder
+// ET _planFromNeeds pour que le dépli de faisabilité ne contredise plus le plan détaillé.
+function _dureesLignePlan(parfum, besoinNet, nbBatchs, rec, times, tEtape){
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const k = (typeof aiNormalize==='function') ? aiNormalize(parfum||'') : String(parfum||'').toLowerCase().trim();
+  // Montage : fixe+variable, source mesuré > recette > défaut.
+  let perBatch, src;
+  const mesM = tEtape && tEtape.montage && tEtape.montage[k];
+  if(mesM && mesM.fiable && mesM.nbMac>0){ perBatch = mesM.minTotal/mesM.nbMac*TB; src='mesuré'; }
+  else if(rec && rec.tempsMontageMin!=null && +rec.tempsMontageMin>0){ perBatch = +rec.tempsMontageMin; src='recette'; }
+  else { perBatch = times.montage.estimatedTime; src='défaut'; }
+  const tMontage = (typeof _montageMinutes==='function')
+    ? _montageMinutes(besoinNet, perBatch, src)
+    : nbBatchs*times.montage.estimatedTime;
+  // Ganache : UNE fois par parfum (pas × nbBatchs). Mesuré > recette > défaut.
+  let tGanache;
+  const mesG = tEtape && tEtape.ganache && tEtape.ganache[k];
+  if(mesG && mesG.fiable && mesG.nbMac>0){ tGanache = Math.round(mesG.minTotal/(mesG.nbSessions||1)); }
+  else if(rec && rec.tempsGanacheMin!=null && +rec.tempsGanacheMin>0){ tGanache = +rec.tempsGanacheMin; }
+  else { tGanache = times.ganache.estimatedTime; }
+  return { tMontage, tGanache };
+}
 async function generateProductionOrder(startDate, endDate, tempsDisponibleMinutes){
   // requête ciblée sur l'index date (bornée) plutôt qu'un scan global
   // Requête bornée sur l'index date ; repli sur un filtre mémoire si l'index
@@ -33468,6 +33865,11 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   }
   const {stock, recipes} = await mrpCurrentStockByParfum();
   const times = getMrpTimes();
+  // [UNIFICATION MODÈLE DE TEMPS] Temps mesurés par parfum (mesuré fiable > recette > défaut), pour
+  // que tMontage/tGanache des lignes suivent le MÊME modèle que le plan de travail détaillé
+  // (fixe+variable pour le montage, une ganache PAR PARFUM). Évite la contradiction avec le dépli.
+  let _tEtape = null; try{ _tEtape = await prodTempsParEtapeParParfum(90); }catch(_){ _tEtape = null; }
+  const _normP = nom => (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
   // 1) Besoin brut agrégé par parfum
   const brut={};
   orders.forEach(o=>{ if(normStatus(o.statut)==='Livrée') return; const dem=_orderParfumDemand(o);
@@ -33527,8 +33929,8 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
     if(!rec) warnings.push(parfum);
     const poidsUnit = rec && rec.poidsGarnitureUnit!=null ? +rec.poidsGarnitureUnit : 0;
     const garnitureG = Math.round(nbBatchs*TAILLE_BATCH_MACARONS*poidsUnit);
-    const tMontage = nbBatchs*times.montage.estimatedTime;   // par batch
-    const tGanache = nbBatchs*times.ganache.estimatedTime;   // par batch
+    // [UNIFICATION] Durées via le helper commun (même modèle que le plan détaillé).
+    const { tMontage, tGanache } = _dureesLignePlan(parfum, besoinNet, nbBatchs, rec, times, _tEtape);
     // Délai de repos ganache avant montage (réglage recette, défaut 12 h ; 0 = exception)
     const ganacheDelaiH = (rec && rec.ganacheDelaiH!=null) ? +rec.ganacheDelaiH : 12;
     const coquesCongelObl = !!(rec && rec.coquesCongelObligatoire);
@@ -33762,22 +34164,41 @@ function schedulePersonalPlan(daySpecs, plan, opts){
     id:'montage:'+l.parfum, phase:3, label:`Montage ${l.parfum}`,
     dur:l.tMontage, type:'montage',
     after: (l.ganacheDelaiH>0 ? 'ganache:'+l.parfum : null),
+    ganacheDelaiMin: (l.ganacheDelaiH>0 ? Math.round(l.ganacheDelaiH*60) : 0),  // repos requis avant montage
+    coquesCongelObl: !!l.coquesCongelObl,                                        // congélation imposée par la recette
     note:`Garnissage de ${l.besoinNet} macarons. Nécessite coques cuites + ganache prête${l.ganacheDelaiH>0?` (reposée ${l.ganacheDelaiH} h)`:''}.${l.coquesCongelObl?' ❄️ Coques congelées obligatoires pour cette recette.':''} Lance la maturation de ${PROC.maturationH} h juste après.`
   }));
 
   // 2) Placement glouton dans les blocs, en respectant l'ordre des phases.
   //    On garde un curseur par bloc ; une tâche ne peut pas être coupée (atomique)
   //    sauf le montage qu'on autorise à se fractionner par batch si besoin.
+  //
+  //    CALAGE HORAIRE RÉEL (v854) : pour faire respecter le repos ganache 12 h et la
+  //    fraîcheur des coques, on raisonne en MINUTES ABSOLUES (à travers les jours), pas
+  //    seulement en offset dans un bloc. _absMin(date, offset) donne un instant comparable
+  //    d'un jour à l'autre. placedEnd[id] mémorise la fin absolue de chaque tâche posée,
+  //    pour que le montage puisse exiger « début ≥ fin ganache + délai ».
+  const _dayIndex = ds => { const [y,m,d]=String(ds).split('-').map(Number); return Math.floor(Date.UTC(y,(m||1)-1,d||1)/86400000); };
+  const _absMin = (ds, off) => _dayIndex(ds)*1440 + off;
+  const placedEnd = {};   // task.id -> minutes absolues de fin de la tâche placée
   let bi=0;
-  function place(task){
-    // cherche le premier bloc ayant assez de place à partir du curseur courant
+  // place(task, notBefore) : notBefore = instant absolu (minutes) minimal de DÉBUT, ou null.
+  // Le début effectif est calé sur max(curseur du bloc, notBefore converti dans ce jour).
+  function place(task, notBefore){
+    notBefore = (notBefore==null) ? -Infinity : notBefore;
     for(let k=bi;k<blocks.length;k++){
-      const b=blocks[k]; const free=(b.end-b.start)-b.used;
-      if(free>=task.dur){
-        const startAbs=b.start+b.used; const endAbs=startAbs+task.dur;
-        b.used+=task.dur; bi=k;
-        events.push({date:b.date, start:startAbs, end:endAbs, label:task.label, kind:task.type, note:task.note});
-        return {date:b.date, end:endAbs, blockIdx:k};
+      const b=blocks[k];
+      let startOff = b.start + b.used;                 // curseur courant du bloc
+      const nbOffInBlock = notBefore - _dayIndex(b.date)*1440;  // notBefore exprimé en offset de CE jour
+      if(nbOffInBlock > startOff) startOff = nbOffInBlock;       // ne pas démarrer avant la contrainte
+      // la tâche doit tenir entièrement dans le bloc à partir de startOff
+      if(startOff >= b.start && startOff + task.dur <= b.end){
+        const endOff = startOff + task.dur;
+        b.used = endOff - b.start; bi=k;
+        events.push({date:b.date, start:startOff, end:endOff, label:task.label, kind:task.type, note:task.note});
+        const ev = {date:b.date, start:startOff, end:endOff, blockIdx:k};
+        if(task.id) placedEnd[task.id] = _absMin(b.date, endOff);
+        return ev;
       }
     }
     // pas de place : tâche non planifiée
@@ -33788,7 +34209,8 @@ function schedulePersonalPlan(daySpecs, plan, opts){
       id: task.id,
       type: task.type || (_sep>0 ? task.id.slice(0,_sep) : ''),
       parfum: _sep>0 ? task.id.slice(_sep+1) : '',
-      label: task.label, dur: task.dur, after: task.after || null
+      label: task.label, dur: task.dur, after: task.after || null,
+      raison: task._raison || null
     });
     return null;
   }
@@ -33798,9 +34220,50 @@ function schedulePersonalPlan(daySpecs, plan, opts){
   const interleaved=[]; let gi=0;
   ph1.forEach(m=>{ interleaved.push(m); if(gi<ph2.length) interleaved.push(ph2[gi++]); });
   while(gi<ph2.length) interleaved.push(ph2[gi++]);
-  interleaved.forEach(place);
-  // montages en dernier (dépendent de tout le reste), après maturation des coques cuites
-  ph3.forEach(place);
+  interleaved.forEach(t=>place(t));
+  // Instant où les COQUES sont prêtes au montage = fin de la dernière tâche coques + sa cuisson
+  // passive (makespan four). On prend le max sur toutes les meringues posées.
+  let coquesPretesAbs = -Infinity;
+  active.filter(t=>t.phase===1).forEach(m=>{
+    const fin = placedEnd[m.id];
+    if(fin!=null) coquesPretesAbs = Math.max(coquesPretesAbs, fin + (m.passiveAfter||0));
+  });
+  // montages en dernier (dépendent de tout le reste) — AVEC calage horaire réel :
+  //  (1) repos ganache : début montage ≥ fin ganache + délai recette (ganacheDelaiMin).
+  //  (2) fraîcheur coques : si le trou coques→montage dépasse coquesTrouMaxH, on marque la
+  //      congélation explicite sur l'event (réutilise le seuil unique PROC.coquesTrouMaxH).
+  const FRESH_MAX_MIN = (PROC.coquesTrouMaxH!=null ? PROC.coquesTrouMaxH : 9) * 60;
+  ph3.forEach(t=>{
+    let notBefore = -Infinity, raisonDelai=false;
+    if(t.after){
+      const ganFin = placedEnd[t.after];
+      if(ganFin==null){
+        // la ganache dont dépend ce montage n'a pas pu être placée → montage impossible.
+        t._raison='ganache_absente';
+        const ev = place(t, +Infinity); // forcera l'unplaced en conservant la raison
+        return;
+      }
+      notBefore = ganFin + (t.ganacheDelaiMin||0);
+      raisonDelai = (t.ganacheDelaiMin||0) > 0;
+    }
+    if(raisonDelai) t._raison='repos_ganache';
+    const ev = place(t, notBefore);
+    if(ev){
+      // fraîcheur : congélation si coques trop vieilles au moment du montage, OU si la recette l'impose.
+      const montageStartAbs = _absMin(ev.date, ev.start);
+      const trouMin = (coquesPretesAbs>-Infinity) ? (montageStartAbs - coquesPretesAbs) : 0;
+      const congeler = t.coquesCongelObl || (trouMin > FRESH_MAX_MIN);
+      // on enrichit l'event poussé dans `events` (dernier de la liste pour cette tâche).
+      const pushed = events[events.length-1];
+      if(pushed && pushed.label===t.label){
+        pushed.congeler = !!congeler;
+        pushed.trouCoquesH = Math.round(trouMin/60*10)/10;
+        if(congeler){
+          pushed.note = (pushed.note||'') + ` ❄️ Coques à CONGELER : ${t.coquesCongelObl?'imposé par la recette':`trou de ${pushed.trouCoquesH} h depuis la cuisson (> ${PROC.coquesTrouMaxH} h de fraîcheur)`}. Décongélation au frigo avant montage.`;
+        }
+      }
+    }
+  });
 
   // 3) Diagnostic chiffré + insights argumentés (le « chef » explique ses choix).
   const totalActive = active.reduce((s,t)=>s+t.dur,0);
@@ -34226,6 +34689,7 @@ async function persoGenerate(){
 async function _planFromNeeds(needs){
   const {stock, recipes}=await mrpCurrentStockByParfum();
   const times=getMrpTimes();
+  let _tEtape=null; try{ _tEtape = await prodTempsParEtapeParParfum(90); }catch(_){ _tEtape=null; }
   const lignes=[]; const warnings=[];
   for(const parfum in needs){
     const besoinBrut=+needs[parfum]||0; if(besoinBrut<=0) continue;
@@ -34234,9 +34698,10 @@ async function _planFromNeeds(needs){
     const nbBatchs=Math.ceil(besoinNet/TAILLE_BATCH_MACARONS);
     const rec=mrpFindRecipe(recipes,parfum); if(!rec) warnings.push(parfum);
     const poidsUnit=rec&&rec.poidsGarnitureUnit!=null?+rec.poidsGarnitureUnit:0;
+    const { tMontage, tGanache } = _dureesLignePlan(parfum, besoinNet, nbBatchs, rec, times, _tEtape);
     lignes.push({parfum, recipeId:rec?rec.id:null, besoinBrut, enStock, besoinNet, nbBatchs,
       coques:nbBatchs*COQUES_PAR_BATCH, garnitureG:Math.round(nbBatchs*TAILLE_BATCH_MACARONS*poidsUnit),
-      poidsUnit, tMontage:nbBatchs*times.montage.estimatedTime, tGanache:nbBatchs*times.ganache.estimatedTime,
+      poidsUnit, tMontage, tGanache,
       garnitureManque:!rec||poidsUnit<=0});
   }
   lignes.sort((a,b)=>b.besoinNet-a.besoinNet);
