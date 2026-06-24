@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v836';
+const APP_VERSION = 'v837';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -30254,17 +30254,15 @@ function _retroMontageTotalMinDe(parfumsQtes, recipes, tEtape, facteur){
   }
   const recByNomK = {};
   (recipes||[]).forEach(r=>{ recByNomK[norm(r.produitNom||'')] = r; });
-  const perBatchDe = k => {
-    const mes = tEtape && tEtape.montage && tEtape.montage[k];
-    if(mes && mes.fiable && mes.nbMac>0) return mes.minTotal/mes.nbMac*TB;
-    const r = recByNomK[k];
-    if(r && r.tempsMontageMin!=null && +r.tempsMontageMin>0) return +r.tempsMontageMin;
-    return defPerBatch;
-  };
   let total = 0;
   noms.forEach(k=>{
-    const nbBatchs = Math.max(1, Math.ceil(qParNom[k]/TB));
-    total += perBatchDe(k) * nbBatchs;
+    // [MODÈLE FIXE+VARIABLE] Même calcul que le plan opérationnel (_montageMinutes) pour des horaires
+    // cohérents : part fixe par batch + part variable par macaron. Détermine la source du perBatch.
+    const mes = tEtape && tEtape.montage && tEtape.montage[k];
+    let perBatch, source;
+    if(mes && mes.fiable && mes.nbMac>0){ perBatch = mes.minTotal/mes.nbMac*TB; source='mesuré'; }
+    else { const r = recByNomK[k]; if(r && r.tempsMontageMin!=null && +r.tempsMontageMin>0){ perBatch=+r.tempsMontageMin; source='recette'; } else { perBatch=defPerBatch; source='défaut'; } }
+    total += (typeof _montageMinutes==='function') ? _montageMinutes(qParNom[k], perBatch, source) : perBatch*Math.max(1, Math.ceil(qParNom[k]/TB));
   });
   return { totalMin: total*f };
 }
@@ -32045,12 +32043,11 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
       const m = tempsMontageBatch(p.nom);
       const pi = prodInfo[p.nom] || {commande:p.qte, produire:p.qte, surplus:0, paliers:[]};
       const qp = pi.produire;   // on monte tout ce qu'on produit (commande + surplus stock)
-      // [MONTAGE PAR PARFUM] Le montage se fait PARFUM PAR PARFUM : chaque parfum mobilise au moins
-      // un batch entamé (un batch commencé est un batch travaillé). On compte donc le nombre de batchs
-      // ARRONDI AU SUPÉRIEUR (ceil), pas un prorata fractionnaire qui sous-estimait fortement
-      // (ex. 14 mac donnaient 0,23 batch = 3,5 min au lieu d'un batch = 15 min).
+      // [MONTAGE PAR PARFUM — MODÈLE FIXE+VARIABLE] Le temps de montage = part fixe de mise en place
+      // (par batch entamé) + part variable proportionnelle aux macarons garnis. Voir _montageMinutes.
+      // Remplace l'ancien « perBatch × nbBatchs » qui surestimait les petites séries.
       const nbBatchsMontage = Math.max(qp>0?1:0, Math.ceil(qp/TB));
-      const base = round1(m.perBatch * nbBatchsMontage);
+      const base = _montageMinutes(qp, m.perBatch, m.source);
       // Temps spécifiques de la recette (noisettes, incrustation…), hors chablonnage (déjà compté aux coques).
       let specMin = 0; const specDetail = [];
       const rec = recByNom(p.nom);
@@ -32737,6 +32734,37 @@ const MRP_TIME_FLOOR = {
   vaisselle: 0,
   entretien: 0
 };
+// [MODÈLE MONTAGE FIXE + VARIABLE] Le temps de montage d'un parfum = une PART FIXE (mise en place :
+// sortir/remplir la poche, installer le poste — indépendante de la quantité, payée une fois par batch
+// entamé) + une PART VARIABLE proportionnelle au nombre de macarons réellement garnis. Calibré sur les
+// données terrain de Benjamin : 26 min pour 55 macarons garnis = 4 min de mise en place + 0,4 min/mac
+// (16 min pochage + 10 min assemblage, prép. incluse). Remplace l'ancien « batch entier » qui surestimait
+// les petites séries (10 mac comptaient 1 batch = 15 min au lieu de ~8 min réelles).
+const MONTAGE_FIXE_MIN    = 4;     // part fixe de mise en place, par batch entamé
+const MONTAGE_PAR_MAC_MIN = 0.4;   // part variable, par macaron (pochage + assemblage)
+// Calcule le temps de montage (minutes) pour une quantité donnée, selon le modèle fixe+variable.
+// - perBatch : temps « pour un batch de 60 » issu de la source (mesuré / recette / défaut). On en
+//   dérive la part variable par macaron : parMac = max(0, (perBatch − fixe)/TB). Si perBatch n'est pas
+//   fourni (défaut), on utilise directement MONTAGE_PAR_MAC_MIN. La part fixe est comptée une fois par
+//   batch ENTAMÉ (ceil(qté/TB)), car chaque batch a sa propre mise en place.
+// - source : 'défaut' → modèle calibré (4 + 0,4×qté) ; 'mesuré'/'recette' → on respecte leur perBatch
+//   en le décomposant sur le même squelette (part fixe + variable dérivée).
+function _montageMinutes(qte, perBatch, source){
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const q = Math.max(0, Math.round(+qte||0));
+  if(q<=0) return 0;
+  const nbBatchs = Math.max(1, Math.ceil(q/TB));
+  let parMac;
+  if(source==='défaut' || perBatch==null){
+    parMac = MONTAGE_PAR_MAC_MIN;
+  } else {
+    // Mesure ou recette : on dérive la part variable de leur perBatch (mise en place déjà incluse
+    // dedans), en retirant la part fixe puis en répartissant sur un batch plein. Jamais négatif.
+    parMac = Math.max(0, ((+perBatch||0) - MONTAGE_FIXE_MIN) / TB);
+  }
+  const fixe = MONTAGE_FIXE_MIN * nbBatchs;
+  return Math.round((fixe + parMac*q) * 10) / 10;
+}
 function getMrpTimes(){
   try{
     const s=JSON.parse(localStorage.getItem(MRP_TIME_KEY)||'{}');
