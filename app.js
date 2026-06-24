@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v839';
+const APP_VERSION = 'v840';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -32508,13 +32508,115 @@ async function retroplanningView(orderId){
   const contraintes = (r.contraintes&&r.contraintes.length)
     ? `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a;margin-top:8px">📋 <div><b>Contraintes prises en compte :</b><br>${r.contraintes.map(esc).join('<br>')}</div></div>`
     : '';
+  // [SIMULATION — ÉTAPE B] Bloc « et si je livrais le X ? » : rejoue le calage à une date fictive
+  // (sans rien écrire en base) et affiche heure de démarrage + faisabilité + comparaison au réel.
+  // La date réelle pré-remplit le sélecteur. Le calcul est délégué à retroSimuler (réutilise
+  // retroplanningCaleParfums, le moteur paramétré par date). Repliable pour ne pas alourdir la vue.
+  const _dateLivReelle = (o.dateEvenement || o.date || '').slice(0,10);
+  const _heureLivReelle = o.heureLivraison || '';
+  const simBloc = `
+    <div style="margin-top:12px;border-top:1px solid #eadfd3;padding-top:10px">
+      <button type="button" onclick="retroSimToggle(this)" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;font-size:.92rem;font-weight:600;color:var(--bordeaux);display:flex;align-items:center;gap:6px;padding:0">
+        <span class="retrosim-chev" style="transition:transform .2s">▸</span> 🔮 Simuler une autre date de livraison
+      </button>
+      <div class="retrosim-body" style="display:none;margin-top:10px">
+        <p class="note" style="margin-top:0">Teste une date différente sans rien modifier : l'app recalcule quand il faudrait démarrer et si ça tient dans tes créneaux.</p>
+        <div class="row2">
+          <div class="field"><label>Date de livraison testée</label><input type="date" id="retroSimDate" value="${esc(_dateLivReelle)}"></div>
+          <div class="field"><label>Heure</label><input type="time" id="retroSimHeure" value="${esc(_heureLivReelle||'10:00')}"></div>
+        </div>
+        <button class="btn gold sm" style="width:100%;margin-top:4px" onclick="retroSimuler(${orderId})">🔮 Simuler cette date</button>
+        <div id="retroSimResult" style="margin-top:10px"></div>
+      </div>
+    </div>`;
   openModal(`<h3>🕘 Rétroplanning</h3>
     <p style="margin-bottom:4px"><b>Livraison ${esc(cl?cl.nom:'')}</b> · ${esc(fmtJ(r.livraison))}</p>
     <p class="note" style="margin-bottom:10px">${esc(sousTitre)}. 🔴 travail actif · 🟡 présence requise (cuisson) · 🟢 sans surveillance (peut tourner la nuit).</p>
     ${corps}
     ${debordementBanner}
     ${contraintes}
+    ${simBloc}
     <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn gold" onclick="retroplanningICS(${orderId})" title="Ajouter ces étapes à ton calendrier iPhone">📲 Ajouter au calendrier</button></div>`);
+}
+
+// [SIMULATION] Replie/déplie le bloc de simulation.
+function retroSimToggle(btn){
+  const body = btn.parentElement.querySelector('.retrosim-body');
+  const chev = btn.querySelector('.retrosim-chev');
+  if(!body) return;
+  const open = body.style.display!=='none';
+  body.style.display = open ? 'none' : 'block';
+  if(chev) chev.style.transform = open ? '' : 'rotate(90deg)';
+}
+
+// [SIMULATION — niveaux 1 & 2] Rejoue le calage à la date fictive et affiche le résultat.
+// AUCUNE écriture en base : on lit la commande, on appelle le moteur paramétré (retroplanningCaleParfums)
+// avec la date/heure saisies, et on compare au calage réel. Niveau 1 = heure de démarrage + faisabilité ;
+// niveau 2 = comparaison au réel (jours de marge gagnés/perdus).
+async function retroSimuler(orderId){
+  const out = document.getElementById('retroSimResult');
+  if(out) out.innerHTML = `<div style="font-size:.8rem;color:#9a8576">⏳ Calcul…</div>`;
+  try{
+    const dateSim = (document.getElementById('retroSimDate')||{}).value || '';
+    const heureSim = (document.getElementById('retroSimHeure')||{}).value || '';
+    if(!dateSim){ if(out) out.innerHTML = `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Choisis une date à tester.</div></div>`; return; }
+    const o = await db.orders.get(orderId);
+    if(!o){ if(out) out.innerHTML = `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Commande introuvable.</div></div>`; return; }
+    const recipes = await db.recipes.toArray().catch(()=>[]);
+    const parfumsQtes = _parfumsQtesDe(o);
+
+    // Calage à la date FICTIVE (simulation pure).
+    const sim = await retroplanningCaleParfums(dateSim, heureSim, parfumsQtes, recipes);
+    // Calage RÉEL (référence pour la comparaison).
+    const dateReelle = (o.dateEvenement || o.date || '').slice(0,10);
+    const reel = await retroplanningCale(orderId).catch(()=>null);
+
+    if(!sim || !sim.ok){
+      if(out) out.innerHTML = `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>${esc((sim&&sim.error)||'Simulation impossible pour cette date.')}</div></div>`;
+      return;
+    }
+
+    const fmtDH = iso => { try{ const d=new Date(iso); return d.toLocaleString('fr-FR',{weekday:'long',day:'2-digit',month:'long',hour:'2-digit',minute:'2-digit'}); }catch(e){ return '—'; } };
+    const jourDe = iso => { try{ const d=new Date(iso); d.setHours(0,0,0,0); return d.getTime(); }catch(e){ return null; } };
+
+    // NIVEAU 1 : heure de démarrage impliquée + verdict de faisabilité.
+    const debutSim = sim.debutProduction;
+    const tient = !sim.aDesDebordements;
+    const verdictCol = tient ? '#3f7d52' : '#a8521f';
+    const verdictBg  = tient ? '#eef6ee' : '#fdf4e6';
+    const verdictTxt = tient
+      ? `✓ <b>Ça tient</b> dans tes créneaux à cette date.`
+      : `⚠️ <b>Ça déborde</b> de tes créneaux à cette date — il faudrait t'y prendre autrement.`;
+    const debutTxt = debutSim
+      ? `Il faudrait <b>commencer la production le ${esc(fmtDH(debutSim))}</b>.`
+      : `Démarrage non calculable pour cette date.`;
+
+    // NIVEAU 2 : comparaison au réel (jours de marge sur le démarrage).
+    let compaTxt = '';
+    if(reel && reel.ok && reel.debutProduction && debutSim){
+      const jSim = jourDe(debutSim), jReel = jourDe(reel.debutProduction);
+      if(jSim!=null && jReel!=null){
+        const deltaJ = Math.round((jSim - jReel)/86400000);
+        if(deltaJ===0){
+          compaTxt = `<div style="font-size:.8rem;color:#7a6a60;margin-top:6px">Même jour de démarrage que la date réelle (${esc(fmtDate(dateReelle))}).</div>`;
+        } else if(deltaJ>0){
+          compaTxt = `<div style="font-size:.8rem;color:#3f7d52;margin-top:6px">↩︎ Démarrage <b>repoussé de ${deltaJ} jour${deltaJ>1?'s':''}</b> par rapport à ta date réelle (${esc(fmtDate(dateReelle))}) — tu gagnes de la marge.</div>`;
+        } else {
+          compaTxt = `<div style="font-size:.8rem;color:#a8521f;margin-top:6px">⏪ Démarrage <b>avancé de ${-deltaJ} jour${-deltaJ>1?'s':''}</b> par rapport à ta date réelle (${esc(fmtDate(dateReelle))}) — il faut s'y mettre plus tôt.</div>`;
+        }
+      }
+    }
+
+    if(out) out.innerHTML = `
+      <div style="background:${verdictBg};border:1px solid ${verdictCol}33;border-radius:9px;padding:9px 11px;font-size:.82rem;color:${verdictCol}">
+        ${verdictTxt}
+        <div style="color:#5a4a44;margin-top:4px">${debutTxt}</div>
+        ${compaTxt}
+      </div>`;
+  }catch(e){
+    console.error('retroSimuler', e);
+    if(out) out.innerHTML = `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Erreur pendant la simulation.</div></div>`;
+  }
 }
 // Helper : clé de jour (YYYY-MM-DD local) pour comparer deux dates.
 function dayKey2(d){ return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
