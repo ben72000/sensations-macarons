@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v840';
+const APP_VERSION = 'v841';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -32451,12 +32451,33 @@ async function retroplanningView(orderId){
     });
     // Numérotation : seules les étapes de TRAVAIL et d'attente sont numérotées (pas la livraison finale).
     let _num = 0;
+    // [SÉPARATEUR DE JOUR] On insère un bandeau de jour avant chaque étape qui change de journée,
+    // pour distinguer visuellement à quel jour appartient chaque tâche. _jourCourant suit le jour rendu.
+    let _jourCourant = null;
+    const _fmtJourSep = iso => { try{ const d=new Date(iso); return d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'}); }catch(e){ return ''; } };
     const rows = chrono.map(j=>{
       const meta = TYPE_META[j.type] || TYPE_META.active;
       const isLivraison = (j.cle==='livraison' || j.type==='ancre');
+      // Bandeau de jour si on change de journée (basé sur le début de l'étape, ou la livraison pour l'ancre).
+      let sepJour = '';
+      const refIso = j.debut || (isLivraison ? j.fin : null);
+      if(refIso){
+        // Clé jour en heure LOCALE (cohérente avec fmtJour affiché), pas depuis l'ISO UTC qui
+        // décalerait le jour pour les étapes de fin de soirée (fuseau positif).
+        let jk = '';
+        try{ const d=new Date(refIso); jk = d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }catch(e){ jk = String(refIso).slice(0,10); }
+        if(jk !== _jourCourant){
+          _jourCourant = jk;
+          const lbl = _fmtJourSep(refIso);
+          sepJour = `<div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px">
+            <span style="flex:none;font-size:.8rem;font-weight:700;color:var(--bordeaux);text-transform:capitalize">📅 ${esc(lbl)}</span>
+            <span style="flex:1;height:1px;background:#e3d6c4"></span>
+          </div>`;
+        }
+      }
       const numBadge = isLivraison ? '🏁' : `<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--bordeaux);color:#fff;font-size:.72rem;font-weight:700;flex:none">${++_num}</span>`;
       if(j.tropLongue){
-        return `<div class="sugg-row" style="align-items:flex-start;gap:8px">
+        return `${sepJour}<div class="sugg-row" style="align-items:flex-start;gap:8px">
           ${numBadge}
           <div class="sugg-main">
             <div><b style="color:#b3261e">⚠️ ${esc(j.label)}</b></div>
@@ -32470,12 +32491,12 @@ async function retroplanningView(orderId){
       } else if(j.type==='libre'){
         const mj = (a,b)=> dayKey2(a)===dayKey2(b);
         quand = mj(j.debut,j.fin)
-          ? `${esc(fmtJour(j.debut))} de ${esc(fmtHeure(j.debut))} à ${esc(fmtHeure(j.fin))}`
-          : `de ${esc(fmtJour(j.debut))} ${esc(fmtHeure(j.debut))} à ${esc(fmtJour(j.fin))} ${esc(fmtHeure(j.fin))}`;
+          ? `${esc(fmtJour(j.debut))} de <b>${esc(fmtHeure(j.debut))}</b> à <b>${esc(fmtHeure(j.fin))}</b>`
+          : `de ${esc(fmtJour(j.debut))} <b>${esc(fmtHeure(j.debut))}</b> à ${esc(fmtJour(j.fin))} <b>${esc(fmtHeure(j.fin))}</b>`;
       } else {
-        quand = `${esc(fmtJour(j.debut))} · ${esc(fmtHeure(j.debut))} → ${esc(fmtHeure(j.fin))}`;
+        quand = `${esc(fmtJour(j.debut))} · <b>${esc(fmtHeure(j.debut))}</b> → <b>${esc(fmtHeure(j.fin))}</b>`;
       }
-      return `<div class="sugg-row" style="align-items:flex-start;gap:8px">
+      return `${sepJour}<div class="sugg-row" style="align-items:flex-start;gap:8px">
         ${numBadge}
         <div class="sugg-main">
           <div><b style="color:${meta.col}">${meta.ico} ${esc(j.label)}</b>${meta.tag?` <span style="font-size:.7rem;color:#9a8a82">· ${meta.tag}</span>`:''}${j.congeler?' <span style="background:#3b6ea5;color:#fff;font-size:.58rem;font-weight:600;padding:1px 6px;border-radius:7px">❄️ à congeler</span>':''}</div>
