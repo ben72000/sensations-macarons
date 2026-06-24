@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v834';
+const APP_VERSION = 'v835';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -28159,6 +28159,16 @@ async function prodTempsParEtapeParParfum(jours){
     macParNom[k] = (macParNom[k]||0) + (+p.qteReelle||+p.qteProduite||0);
   });
 
+  // [PLANCHER DE PLAUSIBILITÉ — MONTAGE] Garde-fou en attendant que les vraies mesures s'accumulent.
+  // Le montage utilise la formule perBatch = minTotal/nbMac × TB. minTotal (temps pointé) et nbMac
+  // (macarons produits) viennent de deux sources distinctes : un chrono trop court OU un gros volume
+  // produit peut écraser le ratio et donner un perBatch absurde (ex. 1 min pour 60 macarons), qui
+  // passe quand même le filtre 'fiable'. Règle métier (Benjamin) : garnir 60 macarons ne peut pas
+  // descendre sous 15 min, grand minimum. Sous ce seuil, on REJETTE la mesure (fiable=false) → le
+  // calcul retombe sur le fallback recette/défaut déjà prévu. On ne maquille pas le chiffre, on
+  // écarte une donnée non crédible. Ne s'applique QU'AU montage (la ganache a une autre formule).
+  const TB_PLAUS = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const MONTAGE_PERBATCH_MIN_PLAUSIBLE = 15;   // min/batch plancher (à affiner quand les vraies mesures arriveront)
   const out = { coques:{}, ganache:{}, montage:{} };
   CATS.forEach(cat=>{
     Object.keys(acc[cat]).forEach(k=>{
@@ -28166,8 +28176,13 @@ async function prodTempsParEtapeParParfum(jours){
       const nbMac = macParNom[k]||0;
       const nbSessions = (sessSet[cat][k]||new Set()).size;
       // Fiable si assez de matière mesurée ET plusieurs sessions (la moyenne a du sens).
-      const fiable = (minTotal>=10 && nbMac>=30 && nbSessions>=2);
-      out[cat][k] = { minTotal:Math.round(minTotal*10)/10, nbMac, nbSessions, fiable };
+      let fiable = (minTotal>=10 && nbMac>=30 && nbSessions>=2);
+      let rejetImplausible = false;
+      if(cat==='montage' && fiable && nbMac>0){
+        const perBatch = minTotal/nbMac*TB_PLAUS;
+        if(perBatch < MONTAGE_PERBATCH_MIN_PLAUSIBLE){ fiable = false; rejetImplausible = true; }
+      }
+      out[cat][k] = { minTotal:Math.round(minTotal*10)/10, nbMac, nbSessions, fiable, rejetImplausible };
     });
   });
   return out;
