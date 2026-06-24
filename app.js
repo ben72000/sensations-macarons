@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v814';
+const APP_VERSION = 'v822';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1365,7 +1365,7 @@ let _navDir='forward';
 const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
-  productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking, mrp:renderMRP,
+  productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
   tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
@@ -24007,9 +24007,6 @@ const GUIDE_THEMES = [
     { v:'auditcouts', t:'Audit des co\u00fbts', ico:'\u{1F50D}', resume:"V\u00e9rifier que tes co\u00fbts de revient ne sont pas sous-estim\u00e9s.",
       detail:"Un contr\u00f4le de fiabilit\u00e9 de tes co\u00fbts : l'audit rep\u00e8re les mati\u00e8res qui comptent pour 0 \u20ac dans tes recettes \u2014 celles sans prix de lot r\u00e9ceptionn\u00e9 ni prix indicatif. Tant qu'une mati\u00e8re vaut 0 \u20ac, elle fausse ton co\u00fbt de revient \u00e0 la baisse et gonfle artificiellement ta marge. L'\u00e9cran liste ces trous pour que tu les combles (en r\u00e9ceptionnant un lot avec son prix, ou en saisissant un prix indicatif au kilo). \u00c0 noter : si tu actives la main-d'\u0153uvre mesur\u00e9e dans les r\u00e9glages (co\u00fbt = temps r\u00e9el chronom\u00e9tr\u00e9 \u00d7 ton taux horaire), le simulateur de marge et le co\u00fbt des grands formats l'int\u00e8grent d\u00e9sormais, comme l'analyse de rentabilit\u00e9 \u2014 ton co\u00fbt de revient refl\u00e8te alors mati\u00e8res ET ton vrai temps de travail par parfum.",
       steps:["Rep\u00e8re les mati\u00e8res \u00e0 0 \u20ac signal\u00e9es","R\u00e9ceptionne un lot avec prix ou saisis un prix indicatif","Recontr\u00f4le que tes co\u00fbts sont complets"] },
-    { v:'mrp', t:'Plan de production (faisabilit\u00e9)', ico:'\u{1F4CB}', resume:"V\u00e9rifier si tu peux tenir tes commandes sur une p\u00e9riode.",
-      detail:"Le calcul des besoins : \u00e0 partir de tes commandes non livr\u00e9es, il \u00e9value la faisabilit\u00e9 de ta production sur une p\u00e9riode donn\u00e9e. Pour chaque commande, le r\u00e9troplanning calcule quand commencer chaque \u00e9tape, et l'\u00e9cran fait remonter les conflits de production (chevauchements) sur les prochains jours \u2014 en calant d'abord chaque t\u00e2che dans tes vraies plages de travail A/B, pour ne signaler que les VRAIS conflits (deux t\u00e2ches actives qui tombent vraiment en m\u00eame temps) et plus les faux conflits des jours o\u00f9 tu ne travailles pas. C'est la vue \u00ab est-ce que \u00e7a passe ? \u00bb, compl\u00e9mentaire de l'agenda de production qui, lui, organise le d\u00e9tail du travail.",
-      steps:["D\u00e9finis la p\u00e9riode \u00e0 v\u00e9rifier","Parcours le r\u00e9troplanning par commande","Traite les conflits de production signal\u00e9s"] },
     { v:'previsionnel', t:'Pr\u00e9visionnel stocks', ico:'\u{1F4C9}', resume:"Anticiper les ruptures de stock par parfum.",
       detail:"Anticipe tes ruptures parfum par parfum. Pour chacun, l'\u00e9cran affiche le stock fini actuel (uniquement les macarons FINIS, ni les coques ni les ganaches), le \u00ab r\u00e9serv\u00e9 \u00bb (les macarons d\u00e9j\u00e0 engag\u00e9s par des commandes \u00e0 venir non livr\u00e9es), le \u00ab pr\u00e9visionnel \u00bb (stock actuel moins r\u00e9serv\u00e9) et le \u00ab montable \u00bb (ce que tu peux ASSEMBLER tout de suite \u00e0 partir des coques + ganache d\u00e9j\u00e0 en stock). Si un parfum risque de tomber en rupture sous l'horizon que tu d\u00e9finis, une alerte se d\u00e9clenche \u2014 SAUF si le montable suffit \u00e0 couvrir le besoin : dans ce cas l'\u00e9tat passe \u00e0 \u00ab \u00e0 monter \u00bb (un simple assemblage te sauve, pas besoin de relancer une production). Mieux encore : chaque alerte est crois\u00e9e avec le r\u00e9troplanning pour te dire si tu as encore le TEMPS de produire avant la livraison \u2014 une pastille 🔴 (en retard, il fallait d\u00e9j\u00e0 commencer), 🟠 (\u00e0 lancer maintenant) ou 🟢 (encore le temps) t'indique l'urgence r\u00e9elle et la date limite pour d\u00e9marrer la production. Et comme cette analyse regarde chaque commande isol\u00e9ment, une pastille 🔀 s'ajoute quand la production en CHEVAUCHE d'autres sur tes cr\u00e9neaux de travail : m\u00eame en t'y mettant \u00e0 temps, tu risques l'embouteillage si plusieurs grosses productions tombent les m\u00eames jours \u2014 le signal t'invite \u00e0 \u00e9taler ou anticiper. Enfin, une pastille 🧱 s'ajoute quand une MATI\u00c8RE PREMI\u00c8RE manque pour produire ce parfum : l'app calcule, \u00e0 partir de la recette, combien de chaque ingr\u00e9dient il faudrait pour produire la quantit\u00e9 manquante, et compare \u00e0 ton stock de mati\u00e8res. Si une mati\u00e8re est en rupture, m\u00eame en t'y mettant \u00e0 temps tu ne pourras pas lancer la production \u2014 le d\u00e9tail des mati\u00e8res \u00e0 r\u00e9approvisionner (et la quantit\u00e9 manquante) s'affiche sous la carte. Pour pr\u00e9parer tes achats, le bouton \u00ab Courses pr\u00e9visionnelles \u00bb de l'\u00e9cran Stock mati\u00e8res liste justement tout ce qu'il faut acheter pour honorer tes commandes et march\u00e9s \u00e0 venir.",
       steps:["Consulte le pr\u00e9visionnel par parfum","Rep\u00e8re les alertes de rupture \u00e0 venir","Lance une production sur les parfums menac\u00e9s"] },
@@ -30819,6 +30816,85 @@ function goToCommande(orderId){
   setTimeout(()=>{ el.style.boxShadow = old; }, 900);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// SOCLE « ÉCRAN VIVANT » — synchronisation de la Production avec l'heure réelle.
+// Objectif (Benjamin) : savoir à tout moment OÙ j'en suis dans ma journée, combien de
+// temps il me reste pour produire, et pouvoir ajuster mon planning d'un geste.
+// ────────────────────────────────────────────────────────────────────────────
+// Temps de travail restant AUJOURD'HUI à partir de l'instant présent (minutes).
+// Réutilise availMinutesOnDay avec fromMin = heure courante : ne compte que ce qui reste
+// devant soi dans les plages A/B du jour (exceptions ponctuelles comprises via availSlotsForDate).
+function _prodTempsRestantAujourdhui(conf){
+  conf = conf || ((typeof getAvailability==='function') ? getAvailability() : null);
+  const now = new Date();
+  const fromMin = now.getHours()*60 + now.getMinutes();
+  let restant = 0, totalJour = 0;
+  try{
+    restant = (typeof availMinutesOnDay==='function') ? availMinutesOnDay(now, fromMin, null, conf) : 0;
+    totalJour = (typeof availMinutesOnDay==='function') ? availMinutesOnDay(now, null, null, conf) : 0;
+  }catch(_){}
+  // Heure de fin du dernier créneau du jour (pour « avant HH:MM »).
+  let finJour = null;
+  try{
+    const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(now, conf) : [];
+    if(slots && slots.length){
+      const finMin = Math.max(...slots.map(([s,e])=>hmToMin(e)));
+      finJour = String(Math.floor(finMin/60)).padStart(2,'0')+':'+String(finMin%60).padStart(2,'0');
+    }
+  }catch(_){}
+  return { restant, totalJour, finJour, fromMin, enCreneau: restant>0 };
+}
+
+// Rendu de la barre temps réel (heure courante + temps restant + bouton synchroniser).
+function _prodBarreVivante(){
+  const t = _prodTempsRestantAujourdhui();
+  const now = new Date();
+  const dateLbl = now.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
+  const heure = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  const fmtH = m => m>=60 ? `${Math.floor(m/60)}h${String(m%60).padStart(2,'0')}` : `${m} min`;
+  // Carte « temps restant » : valeur + total du jour en repère.
+  const carteRestant = t.totalJour>0
+    ? `<div class="val">${t.enCreneau?fmtH(t.restant):'—'} <small>${t.enCreneau?`/ ${fmtH(t.totalJour)}`:'hors créneau'}</small></div>`
+    : `<div class="val" style="font-size:.92rem">pas de créneau</div>`;
+  // Phrase contextuelle selon la situation du moment.
+  let phrase;
+  if(t.totalJour<=0){
+    phrase = `Aucune plage de travail définie aujourd'hui. <span class="act" style="color:#ffe;text-decoration:underline" onclick="availEditor()">définir mes créneaux</span>`;
+  } else if(!t.enCreneau){
+    phrase = `Tu es hors de tes créneaux de travail pour le moment.`;
+  } else {
+    phrase = `Il te reste <b>${fmtH(t.restant)}</b> de travail${t.finJour?` avant <b>${t.finJour}</b>`:''} aujourd'hui.`;
+  }
+  return `<div class="prod-now" style="background:linear-gradient(135deg,#52252F,#6e3340);color:#fff;border-radius:13px;padding:13px 15px;margin:0 0 14px;box-shadow:0 2px 8px var(--shadow,rgba(82,37,47,.12))">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px">
+      <div style="font-size:1.02rem;font-weight:700"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ee0a1;margin-right:6px;vertical-align:middle"></span>${esc(dateLbl)} · ${heure} <span style="font-weight:400;opacity:.8;font-size:.78rem">maintenant</span></div>
+      <button onclick="prodActualiser()" style="background:rgba(255,255,255,.16);border:none;color:#fff;border-radius:8px;padding:6px 11px;font-size:.76rem;font-weight:600;cursor:pointer">🔄 Actualiser</button>
+    </div>
+    <div style="background:rgba(255,255,255,.1);border-radius:9px;padding:9px 11px;max-width:230px">
+      <div style="font-size:.68rem;opacity:.82;margin-bottom:2px">⏱ Temps de production restant aujourd'hui</div>
+      ${carteRestant}
+    </div>
+    <div style="margin-top:9px;font-size:.78rem;opacity:.94">📍 ${phrase}</div>
+  </div>`;
+}
+
+// Raccourci « Changement de planning ? » → ouvre l'éditeur de disponibilité ; au retour,
+// renderAgendaProduction se rafraîchit (déjà câblé : availSave appelle le refresh Production).
+function _prodRaccourciPlanning(){
+  return `<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;margin-bottom:14px">
+    <div style="font-size:.82rem">🗓️ <b>Changement de planning ?</b>
+      <div style="font-size:.74rem;color:#9a8a82;margin-top:1px">Pas dispo cet après-midi, un créneau en plus… ajuste, tout se recalcule.</div></div>
+    <button class="btn sm" onclick="availEditor()" style="white-space:nowrap">Ajuster</button>
+  </div>`;
+}
+
+// Handler du bouton Actualiser : recalcule l'écran à l'instant présent (heure, temps restant,
+// verdicts de faisabilité, commandes/marchés à jour). Simple re-render de l'écran courant.
+function prodActualiser(){
+  try{ toast('Production synchronisée à l\'instant présent ✓'); }catch(_){}
+  if(typeof renderAgendaProduction==='function') renderAgendaProduction();
+}
+
 async function renderAgendaProduction(){
   const main = document.getElementById('main');
   main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
@@ -30906,7 +30982,10 @@ async function renderAgendaProduction(){
   try{ cr = await buildCommandesRetro(45, mut); }catch(e){ console.error('commandesRetro',e); }
 
   const nbCmd = cr && cr.commandes ? cr.commandes.length : 0;
-  main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div></div>
+  main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div>
+      <button class="btn ghost" onclick="prodActualiser()" title="Synchroniser l'écran avec l'heure réelle">🔄 Actualiser</button></div>
+    ${_prodBarreVivante()}
+    ${_prodRaccourciPlanning()}
     <p class="note" style="margin-bottom:14px">Touche le nom d'une commande pour déplier toutes ses étapes (coques, ganache, repos, montage, maturation, livraison), puis une étape pour son rétroplanning détaillé.</p>
     ${_optimBatchToggle()}
     ${_agendaPlanOpSection(planOp)}
@@ -32292,7 +32371,7 @@ function availSave(silencieux){
   saveAvailability(out);
   if(silencieux) return;   // sauvegarde sans fermer le modal (enchaînement vers exceptions)
   closeModal(); toast('Disponibilités enregistrées ✓');
-  if(view==='mrp') renderMRP();
+  if(view==='agendaprod') renderAgendaProduction();
 }
 
 // --- UI : gestion des exceptions de planning (vacances, fermetures, horaires ponctuels) ---
@@ -32367,7 +32446,7 @@ function availExceptionAdd(){
   saveAvailExceptions(list);
   toast('Exception ajoutée ✓');
   availExceptionsForm();
-  if(view==='mrp') renderMRP();
+  if(view==='agendaprod') renderAgendaProduction();
 }
 
 // Raccourcis rapides.
@@ -32393,7 +32472,7 @@ function availExceptionQuick(kind){
   }
   saveAvailExceptions(list);
   availExceptionsForm();
-  if(view==='mrp') renderMRP();
+  if(view==='agendaprod') renderAgendaProduction();
 }
 
 // Supprime une exception.
@@ -32401,7 +32480,7 @@ function availExceptionRemove(id){
   saveAvailExceptions(getAvailExceptions().filter(e=>e.id!==id));
   toast('Exception supprimée');
   availExceptionsForm();
-  if(view==='mrp') renderMRP();
+  if(view==='agendaprod') renderAgendaProduction();
 }
 
 
@@ -32904,82 +32983,8 @@ function validateTask(taskType, actualMinutes){
 
 // ---------- UI ----------
 let _mrpStart=null, _mrpEnd=null, _mrpPlan=null, _mrpDispo=0, _mrpMatCheck=null;
-function renderMRP(){
-  if(!_mrpStart){ _mrpStart=today(); }
-  if(!_mrpEnd){ const d=new Date(today()); d.setDate(d.getDate()+7); _mrpEnd=d.toISOString().slice(0,10); }
-  document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Plan de production</h1><p>Du besoin au planning, en 3 étapes</p></div>
-     <button class="btn ghost" onclick="availEditor()">🗓 Mes disponibilités</button></div>
-
-   <div class="step-head"><span class="step-num">1</span><div><b>Qu'est-ce que je dois produire ?</b><br><span class="note">Tes besoins : commandes + prévisionnel + dates limites. Rien à faire, juste à lire.</span></div></div>
-   <div id="mrpConseil"><div class="banner">🧭 <div>L'assistant prépare ton conseil de production…</div></div></div>
-
-   <div class="step-head"><span class="step-num">2</span><div><b>Est-ce que ça tient dans mon temps ?</b><br><span class="note">L'app confronte ces besoins à ta disponibilité et te dit si c'est jouable, ou s'il faut étaler.</span></div></div>
-   <div class="panel">
-     <p class="note" style="margin-top:0">Vérifie la faisabilité sur une période donnée, à partir de tes commandes.</p>
-     <div class="row2">
-       <div class="field"><label>Du</label><input type="date" id="mrp_start" value="${_mrpStart}"></div>
-       <div class="field"><label>Au</label><input type="date" id="mrp_end" value="${_mrpEnd}"></div>
-     </div>
-     <div class="field"><label>Temps disponible (minutes) — optionnel</label>
-       <input type="number" inputmode="numeric" min="0" step="15" id="mrp_dispo" value="${_mrpDispo||''}" placeholder="ex : 240"></div>
-     <button class="btn" onclick="mrpGenerate()">Vérifier la faisabilité</button>
-   </div>
-   <div id="mrpResult"></div>
-   <div class="panel" id="mrpCommandesPanel" style="display:none"><h2>🕘 Rétroplanning par commande</h2>
-     <p class="note" style="margin-top:0">Les commandes non livrées de la période. Pour chacune, le rétroplanning calcule quand commencer chaque étape.</p>
-     <div id="mrpCommandes"></div>
-   </div>
-   <div class="panel" id="mrpConflitsPanel" style="display:none"><h2>⚠ Conflits de production (14 j)</h2>
-     <p class="note" style="margin-top:0">Tâches de travail (coques, ganache, crémeux, montage) de commandes différentes qui se chevauchent — impossibles à faire en même temps. Les tâches sont calées dans tes vraies plages de travail (A/B) avant comparaison, donc plus de faux conflit sur un jour ou une heure où tu ne travailles pas. Les temps de repos/maturation ne comptent pas (passifs).</p>
-     <div id="mrpConflits"></div>
-   </div>
-
-   <div class="step-head"><span class="step-num">3</span><div><b>Dans quel ordre je m'y prends ?</b><br><span class="note">Génère ton planning minute par minute : meringues, ganaches (avec repos), cuisson en cascade, montages, maturation.</span></div></div>
-   <div class="panel" style="border:1.5px solid var(--gold,#AA7C39)">
-     <p class="note" style="margin-top:0">Le « chef d'atelier » ordonnance tes tâches en optimisant les temps passifs (croûtage, cuisson, maturation) et la mutualisation des meringues, selon la disponibilité que tu décris.</p>
-     <button class="btn gold" onclick="persoPlanForm()">📅 Définir ma disponibilité & générer mon planning</button>
-   </div>`;
-  renderProductionPlan();
-  mrpRenderCommandes();
-  mrpRenderConflits();
-}
 
 // Liste les commandes non livrées de la période du plan, avec un bouton rétroplanning par commande.
-async function mrpRenderCommandes(){
-  const box=document.getElementById('mrpCommandes');
-  const panel=document.getElementById('mrpCommandesPanel');
-  if(!box) return;
-  const start=_mrpStart||today();
-  const end=_mrpEnd||start;
-  let orders;
-  try{ orders = await db.orders.where('date').between(start, end, true, true).toArray(); }
-  catch(e){ const all=await db.orders.toArray().catch(()=>[]); orders=all.filter(o=>o.date&&o.date>=start&&o.date<=end); }
-  // Non livrées uniquement.
-  orders = orders.filter(o=> (typeof normStatus==='function'?normStatus(o.statut):o.statut)!=='Livrée');
-  orders.sort((a,b)=>(a.date||'').localeCompare(b.date||'') || (a.heureLivraison||'').localeCompare(b.heureLivraison||''));
-  if(!orders.length){
-    if(panel) panel.style.display='none';
-    box.innerHTML='';
-    return;
-  }
-  if(panel) panel.style.display='block';
-  const clients = await db.clients.toArray().catch(()=>[]);
-  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
-  box.innerHTML = orders.map(o=>{
-    const nbPieces = (typeof _orderParfumDemand==='function')
-      ? Object.values(_orderParfumDemand(o)).reduce((s,q)=>s+(+q||0),0) : 0;
-    const dateLbl = o.date ? fmtDate(o.date) : '—';
-    const heure = o.heureLivraison ? ` · ${esc(o.heureLivraison)}` : '';
-    return `<div class="sugg-row">
-      <div class="sugg-main">
-        <div><b>${esc(clName(o.clientId))}</b> <span style="color:#9a8a82;font-size:.8rem">${esc(dateLbl)}${heure}</span></div>
-        ${nbPieces?`<div style="font-size:.78rem;color:#9a8a82">${qty(nbPieces)} macaron(s)</div>`:''}
-      </div>
-      <button class="btn ghost sm" onclick="retroplanningView(${o.id})" title="Rétroplanning de cette commande">🕘 Rétroplanning</button>
-    </div>`;
-  }).join('');
-}
 
 /* ============================================================
    DÉTECTION DE CONFLITS DE PRODUCTION (rétroplanning multi-commandes)
@@ -33048,144 +33053,9 @@ async function retroConflicts(startDate, endDate){
 }
 
 // Affiche les conflits de production détectés sur les 14 prochains jours.
-async function mrpRenderConflits(){
-  const box=document.getElementById('mrpConflits');
-  const panel=document.getElementById('mrpConflitsPanel');
-  if(!box) return;
-  const start=today();
-  const end=(()=>{ const d=new Date(today()); d.setDate(d.getDate()+14); return d.toISOString().slice(0,10); })();
-  let res;
-  try{ res=await retroConflicts(start, end); }catch(e){ console.error('retroConflicts',e); if(panel)panel.style.display='none'; box.innerHTML=''; return; }
-  if(!res.conflits.length){
-    // On affiche un encart rassurant seulement s'il y a au moins 2 commandes (sinon inutile).
-    if(res.nbCommandes>=2){
-      if(panel) panel.style.display='block';
-      box.innerHTML='<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Aucun chevauchement détecté entre tes tâches de production sur 14 jours.</div></div>';
-    } else {
-      if(panel) panel.style.display='none'; box.innerHTML='';
-    }
-    return;
-  }
-  if(panel) panel.style.display='block';
-  const fmtH = d => d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-  const fmtJour = d => d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
-  // Regrouper par jour du chevauchement.
-  const parJour = {};
-  res.conflits.forEach(c=>{ const k=c.debut.toISOString().slice(0,10); (parJour[k]=parJour[k]||[]).push(c); });
-  const jours = Object.keys(parJour).sort();
-  const blocs = jours.map(k=>{
-    const items = parJour[k].sort((a,b)=>a.debut-b.debut).map(c=>{
-      return `<div class="sum-box" style="align-items:flex-start;background:#fdf3f2">
-        <span style="font-size:.86rem">
-          <b>${fmtH(c.debut)}–${fmtH(c.fin)}</b> · chevauchement ${c.minutes} min<br>
-          <span style="color:#8a6d3b">${esc(c.a.label)} <span style="color:#9a8a82">(${esc(c.a.client)})</span></span><br>
-          <span style="color:#8a6d3b">${esc(c.b.label)} <span style="color:#9a8a82">(${esc(c.b.client)})</span></span>
-        </span></div>`;
-    }).join('');
-    return `<div style="margin-bottom:10px"><div style="font-weight:600;color:#5a3a2a;margin-bottom:4px">${fmtJour(parJour[k][0].debut)}</div>${items}</div>`;
-  }).join('');
-  box.innerHTML = `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a;margin-bottom:8px">⚠ <div><b>${res.conflits.length} chevauchement(s)</b> sur 14 jours. Décale une tâche, anticipe d'un jour, ou prévois de l'aide sur ces créneaux.</div></div>${blocs}`;
-}
-async function mrpGenerate(){
-  _mrpStart=val('mrp_start')||today();
-  _mrpEnd=val('mrp_end')||_mrpStart;
-  _mrpDispo=+val('mrp_dispo')||0;
-  const box=document.getElementById('mrpResult'); if(box) box.innerHTML='<div class="banner">⏳ <div>Calcul du plan…</div></div>';
-  let plan; try{ plan=await generateProductionOrder(_mrpStart, _mrpEnd, _mrpDispo); }
-  catch(e){ if(box) box.innerHTML=`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Erreur : ${esc(e.message||'calcul impossible')}</div></div>`; return; }
-  _mrpPlan=plan;
-  // [CONNEXION A] Vérifie le stock matières nécessaire à ce plan (affiché dans le résultat).
-  try{ _mrpMatCheck = await mrpCheckMatieres(plan); }catch(e){ console.error('mrpCheckMatieres',e); _mrpMatCheck=null; }
-  mrpRenderResult();
-}
-function mrpRenderResult(){
-  const box=document.getElementById('mrpResult'); if(!box||!_mrpPlan) return;
-  const p=_mrpPlan;
-  if(!p.lignes.length){ box.innerHTML='<div class="banner" style="background:#eef6ee;border-color:#bcdcc0">✅ <div>Rien à produire : le stock couvre les commandes de la période.</div></div>'; return; }
-  const h=Math.floor(p.tempsTotal/60), m=p.tempsTotal%60;
-  const dh=Math.floor(p.tempsDisponible/60), dm=p.tempsDisponible%60;
-  const pct=Math.min(100, p.chargePct);
-  const barCol = p.depassement ? 'var(--red,#b04a3e)' : (p.chargePct>=80?'var(--caramel,#AA7C39)':'var(--green,#3f7d52)');
-  // TÂCHES : d'abord les MERINGUES (remplies à 120 macarons / 240 coques),
-  // puis ganache + montage PAR parfum.
-  const meringueRows = p.meringues.map((mg,i)=>{
-    const key='meringue:'+i;
-    const done=_mrpDone.has(key);
-    const rep = mg.repartition ? Object.entries(mg.repartition).map(([pf,q])=>`${pf} ${q}`).join(' + ') : mg.parfums.join(' + ');
-    const macs = mg.macarons!=null ? mg.macarons : (mg.nbBatchs*TAILLE_BATCH_MACARONS);
-    const sub = mg.partielle
-      ? `Meringue partielle : ${macs}/${MACARONS_PAR_MERINGUE} macarons (${macs*2} coques)`
-      : (mg.parfums.length>1
-          ? `Meringue pleine mutualisée → ${rep} · ${macs} macarons (240 coques)`
-          : `Meringue pleine → ${rep} · ${macs} macarons (240 coques)`);
-    return `<div class="pick-row${done?' done':''}">
-      <div class="pick-check" onclick="mrpToggleTask('${key}','coques',${p.tMeringue/Math.max(1,p.nbMeringues)})">${done?'✓':''}</div>
-      <div class="pick-main"><div class="pick-name">🥚 Meringue ${i+1} : ${esc(rep)}</div>
-        <div class="pick-sub">${esc(sub)}</div></div>
-      <div class="pick-qty">${Math.round(p.tMeringue/Math.max(1,p.nbMeringues))}'</div></div>`;
-  }).join('');
-  // ganache + montage par parfum
-  const detailRows = p.lignes.map(l=>{
-    const kg='ganache:'+l.parfum, km='montage:'+l.parfum;
-    const dg=_mrpDone.has(kg), dm2=_mrpDone.has(km);
-    return `<div class="pick-row${dg?' done':''}">
-        <div class="pick-check" onclick="mrpToggleTask('${kg.replace(/'/g,"\\'")}','ganache',${l.tGanache})">${dg?'✓':''}</div>
-        <div class="pick-main"><div class="pick-name">Ganache ${esc(l.parfum)}</div>
-          <div class="pick-sub">${l.garnitureManque?'⚠ poids garniture non renseigné':l.garnitureG+' g'} · ${l.nbBatchs} batch${l.nbBatchs>1?'s':''}</div></div>
-        <div class="pick-qty">${l.tGanache}'</div></div>
-      <div class="pick-row${dm2?' done':''}">
-        <div class="pick-check" onclick="mrpToggleTask('${km.replace(/'/g,"\\'")}','montage',${l.tMontage})">${dm2?'✓':''}</div>
-        <div class="pick-main"><div class="pick-name">Montage ${esc(l.parfum)}</div>
-          <div class="pick-sub">${l.besoinNet} macarons (stock ${l.enStock}/${l.besoinBrut})</div></div>
-        <div class="pick-qty">${l.tMontage}'</div></div>
-      ${l.recipeId?`<div style="text-align:right;margin:-2px 0 10px"><button class="btn ghost sm" onclick="closeModal&&closeModal();prodForm({recipeId:${l.recipeId}, qte:${Math.max(1, Math.round(+l.besoinNet||0))}})" title="Lancer la production de ${esc(l.parfum)} pré-remplie">⚙ Produire ${esc(l.parfum)} (${l.besoinNet})</button></div>`:''}`;
-  }).join('');
-  box.innerHTML=`
-   <div class="panel">
-     <h2>Capacité de production</h2>
-     <div class="mrp-gauge-meta"><span>Estimé : <b>${h?h+'h ':''}${String(m).padStart(2,'0')}min</b></span>
-       <span>Dispo : <b>${p.tempsDisponible?`${dh?dh+'h ':''}${String(dm).padStart(2,'0')}min`:'—'}</b></span></div>
-     <div class="mrp-gauge"><span style="width:${pct}%;background:${barCol}"></span></div>
-     <p class="note" style="margin-top:6px">${p.nbBatchsTotal} batch(s) de ${TAILLE_BATCH_MACARONS} → <b>${p.nbMeringues} meringue(s)</b> de ${MACARONS_PAR_MERINGUE} macarons max (240 coques). Regroupement de 2 parfums uniquement pour combler une meringue.</p>
-     ${p.depassement?`<p class="note" style="color:var(--red,#b04a3e)">⚠ Dépassement de ${p.tempsTotal-p.tempsDisponible} min : réduis la période ou ajoute du temps.</p>`:(p.tempsDisponible?`<p class="note">✓ Tient dans le temps disponible (${p.chargePct}%).</p>`:'')}
-     ${p.warnings.length?`<p class="note" style="color:var(--caramel)">ℹ Recette/poids garniture manquant pour : ${p.warnings.map(esc).join(', ')}.</p>`:''}
-     ${p.marketTotal>0?`<p class="note" style="color:var(--gold,#AA7C39)">⛺ Inclut <b>${qty(p.marketTotal)} macaron(s)</b> de marché(s) programmé(s) sur la période (quantité prévue à emporter).</p>`:''}
-     ${mrpMatieresBanner(_mrpMatCheck)}
-   </div>
-   <div class="panel"><h2>🥚 Meringues à couler (mutualisées)</h2>${meringueRows||'<p class="note">Aucune.</p>'}</div>
-   <div class="panel"><h2>Ganache & montage par parfum</h2>${detailRows}</div>`;
-}
 // état des tâches cochées (en mémoire pour la session de production en cours)
-let _mrpDone = new Set();
 // Au clic : ouvre l'écran inline de validation du temps réel.
-function mrpToggleTask(key, type, estMin){
-  if(_mrpDone.has(key)){ _mrpDone.delete(key); mrpRenderResult(); return; }
-  mrpValidatePrompt(key, type, estMin);
-}
 // Validation inline du temps réel passé (pré-rempli avec l'estimation).
-function mrpValidatePrompt(key, type, estMin){
-  const pref=key.split(':')[0];
-  const labelType = pref==='meringue'?'Meringue (mutualisée)':pref==='coques'?'Coques':pref==='ganache'?'Ganache':'Montage';
-  const reste=key.split(':').slice(1).join(':');
-  openModal(`<h3>Tâche terminée</h3>
-    <p style="margin-bottom:8px">${esc(labelType)}${reste?` — ${esc(pref==='meringue'?('meringue n°'+(+reste+1)):reste)}`:''}</p>
-    <div class="field"><label>Temps réel passé ? (min)${pref==='meringue'?' <span style="color:#9a8a82;font-weight:400">— pour 1 meringue</span>':''}</label>
-      <input type="number" inputmode="numeric" min="0" id="mrp_real" value="${estMin}"></div>
-    <p class="note">L'estimation s'ajustera automatiquement d'après tes temps réels (apprentissage).</p>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
-      <button class="btn" onclick="mrpConfirmTask('${key.replace(/'/g,"\\'")}','${type}')">Valider</button></div>`);
-  setTimeout(()=>{ const i=document.getElementById('mrp_real'); if(i){ i.focus(); i.select&&i.select(); } }, 80);
-}
-function mrpConfirmTask(key, type){
-  const real=+val('mrp_real');
-  if(isNaN(real)||real<0){ toast('Temps invalide'); return; }
-  validateTask(type, real);     // apprentissage : met à jour l'estimation en base
-  _mrpDone.add(key);
-  closeModal();
-  // recalcule le plan pour refléter les nouvelles estimations sur les tâches restantes
-  mrpGenerate().then(()=>{ /* _mrpDone conservé */ });
-  toast('Tâche validée ✓ — estimation ajustée');
-}
 
 /* ---------- Planification personnelle (UI) ---------- */
 let _persoDays = null;   // [{date, slotsTxt}]
@@ -33345,8 +33215,8 @@ function persoRenderResult(){
     </div>
     ${dayBlocks||'<div class="banner">Aucune tâche planifiable avec ces créneaux.</div>'}
     <div class="panel"><button class="btn ghost" onclick="persoPlanForm()">✎ Ajuster ma disponibilité</button></div>`;
-  // CIBLE : sur l'écran Plan de production, on injecte dans #mrpResult (comportement historique).
-  // Ailleurs (ex. Agenda de production), cet élément n'existe pas → on affiche dans une modale.
+  // Le chef d'atelier s'affiche dans une modale (l'écran Production n'a pas de conteneur dédié).
+  // La branche #mrpResult est conservée par sécurité mais n'est plus alimentée depuis la fusion.
   const box=document.getElementById('mrpResult');
   if(box){
     box.innerHTML=html;
