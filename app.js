@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v794';
+const APP_VERSION = 'v806';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -2326,7 +2326,7 @@ async function renderDashProduction(){
     </tr>`;
   }).join('');
   const reste = plan.length>top.length ? `<div class="note" style="margin-top:6px">+ ${plan.length-top.length} autre(s) production(s) conseillée(s)</div>` : '';
-  box.innerHTML=`<div class="panel clickable" onclick="goView('mrp')" title="Ouvrir le plan de production" style="cursor:pointer">
+  box.innerHTML=`<div class="panel clickable" onclick="goView('agendaprod')" title="Ouvrir la production" style="cursor:pointer">
     <h2>🍩 À produire <span class="collapse-hint">${plan.length} conseil(s) · 14 j ›</span></h2>
     <div class="table-wrap"><table class="dash-tbl"><tbody>${rows}</tbody></table></div>
     ${reste}</div>`;
@@ -9299,7 +9299,7 @@ const _NAV_PAGES = [
   {v:'matieres',     t:'Matières & lots / Stock',   k:'matiere lot stock ingredient denree inventaire reception'},
   {v:'recettes',     t:'Recettes (BOM)',            k:'recette bom formule composition ganache coque'},
   {v:'productions',  t:'Productions',               k:'production batch fabrication fournee lancement'},
-  {v:'agendaprod',   t:'Agenda production',         k:'agenda production planning fabrication retroplanning'},
+  {v:'agendaprod',   t:'Production',                 k:'production planning fabrication retroplanning agenda plan mrp besoin faisabilite seance chef atelier ordonnancement'},
   {v:'atelier',      t:'Atelier (chronos)',         k:'atelier chrono temps minutage mesure'},
   {v:'stockparfums', t:'Stock par parfum',          k:'stock parfum macaron disponible'},
   {v:'histostock',   t:'Historique du stock',        k:'historique mouvements stock entrees sorties journal flux'},
@@ -9308,7 +9308,6 @@ const _NAV_PAGES = [
   {v:'produits',     t:'Offre / Coffrets',          k:'produit coffret offre catalogue boite assortiment'},
   {v:'achats',       t:'Optimisation achats',       k:'achat optimisation appro commande fournisseur'},
   {v:'picking',      t:'Préparation / Picking',     k:'picking preparation prelevement colisage'},
-  {v:'mrp',          t:'Plan de production',        k:'mrp plan production besoin planification'},
   {v:'rentaparfum',  t:'Rentabilité parfums',       k:'rentabilite parfum marge profit'},
   {v:'pilotage',     t:'Pilotage stratégique',      k:'pilotage strategie tableau kpi indicateur'},
   {v:'revenuhoraire',t:'Mon revenu horaire',        k:'revenu horaire taux heure remuneration salaire'},
@@ -19438,7 +19437,7 @@ function renderAssistant(){
      <div class="flex" style="gap:8px;flex-wrap:wrap"><button class="btn" onclick="aiRun()">Envoyer</button>
        <button class="btn ghost" onclick="document.getElementById('aiFileInput').click()" title="Joindre un fichier texte (.txt) ou une photo (support visuel)">📎 Joindre</button>
        <button class="btn gold" onclick="document.getElementById('aiInput').value='aide';aiRun()">❓ Aide</button>
-       <button class="btn" onclick="goView('mrp')">🧭 Plan de production</button>
+       <button class="btn" onclick="goView('agendaprod')">🧭 Production</button>
        <button class="btn ghost" onclick="aiClearAll()">Effacer</button></div>
      <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> ou un <b>PDF</b> (généré par ordi) est lu et ajouté à ta demande ; une <b>photo</b> ou un PDF scanné reste un aperçu temporaire (non lu, non enregistré). Base d'aide : <b>${APP_VERSION}</b>.</p>
      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
@@ -22019,7 +22018,7 @@ async function aiQueryOrdo(){
   const total = mPleines.length + (plan.standard&&plan.standard.complement&&plan.standard.complement.parts&&plan.standard.complement.parts.length?1:0) + mGF.length;
   aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🧭 Tes fournées optimisées (${total} meringue(s))</h3>
     ${blocs.join('')}
-    <p class="note" style="margin-top:8px">L'ordonnanceur regroupe tes parfums pour minimiser le nombre de meringues. <button class="btn ghost sm" onclick="goView('mrp')">🧭 Ouvrir le plan complet</button></p>`);
+    <p class="note" style="margin-top:8px">L'ordonnanceur regroupe tes parfums pour minimiser le nombre de meringues. <button class="btn ghost sm" onclick="goView('agendaprod')">🧭 Ouvrir la production</button></p>`);
 }
 
 async function aiQueryStock(params){
@@ -22194,7 +22193,7 @@ async function aiQueryProductionNeeds(){
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">À produire (commandes à préparer)</h3>${prod}
     <h3 style="font-size:.95rem;margin:12px 0 6px">Matières premières nécessaires</h3>${mat||'<p class="note">Aucune recette liée.</p>'}
     ${N.sansRecette.length?`<p class="note" style="color:var(--red,#b3261e)">⚠ Sans recette : ${N.sansRecette.map(x=>esc(x.parfum)).join(', ')}.</p>`:''}
-    <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('stockparfums')">📦 Voir mon stock</button> <button class="btn ghost sm" onclick="goView('mrp')">🧭 Plan complet</button></p>`);
+    <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('stockparfums')">📦 Voir mon stock</button> <button class="btn ghost sm" onclick="goView('agendaprod')">🧭 Production</button></p>`);
 }
 // Réponse PRÉDICTIVE : jours avant rupture par parfum, selon le rythme de ventes.
 async function aiQueryPredict(){
@@ -23926,8 +23925,8 @@ const GUIDE_THEMES = [
     { v:'productions', t:'Productions', ico:'⚙', resume:"Lancer et suivre tes fabrications, lot par lot.",
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
-    { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps, sa pastille de couleur et son CRÉNEAU HORAIRE calé dans tes plages A/B — l'horaire affiché est le MÊME que celui calculé dans le rétroplanning détaillé de la commande, pour une cohérence totale entre les deux vues ; quand un parfum est mutualisé entre plusieurs commandes, c'est le créneau le plus PRÉCOCE qui est retenu. Le rétroplanning réserve désormais le temps de TOUTES les ganaches de la commande (une par parfum : 6 parfums = 6 ganaches), et non plus un temps forfaitaire par lot de 60 — le planning reflète donc le vrai temps de préparation. Comme tu ne peux faire qu'UNE ganache à la fois, celles d'une même soirée sont ENCHAÎNÉES les unes après les autres (et non affichées au même horaire) : chacune démarre quand la précédente finit. Si la séquence risque de déborder au-delà de l'heure limite (montage moins repos), tout le bloc recule juste ce qu'il faut pour que la dernière ganache finisse à temps — le repos de chacune reste garanti (mention « enchaînée pour tenir le repos »). Le repos de la ganache est COLLÉ à la fin de sa préparation et court jusqu'au montage : il dure donc AU MOINS le repos minimum de la recette — souvent plus si la ganache tombe la veille au soir, ce qui est sans problème), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (PAR PARFUM, désormais avec leur CRÉNEAU HORAIRE calé dans tes plages A/B comme les ganaches — comme tu montes chaque parfum séparément, chacun mobilise au moins un batch entamé — le temps est compté au batch arrondi au supérieur, pas au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). Mieux : le rétroplanning AJUSTE désormais les durées à ta cadence RÉELLE par parfum — si tes chronos d'atelier montrent qu'un parfum est plus lent (ou plus rapide) que la moyenne, ses créneaux sont étirés ou resserrés en conséquence (uniquement quand la mesure est fiable ; sinon on garde le temps standard). Sur une commande à plusieurs parfums, l'ajustement est pondéré par les quantités. STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). ORDRE D'EXÉCUTION (rétroplanning détaillé) : le planning suit deux branches PARALLÈLES qui convergent au montage. Branche ganache : préparation de la ganache, puis repos jusqu'au montage. Branche coques : coques réalisées le JOUR du montage, juste avant l'assemblage. Résultat, dans l'ordre chronologique affiché : ganache → repos → coques → montage → maturation → livraison. La ganache passe donc AVANT les coques (à cause de son repos), et les coques restent collées au montage. Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »). MARCHÉS DANS LE PLAN : tes marchés à venir sont aussi intégrés au plan de production, à condition d’avoir au moins 5 marchés clos dans ton historique (en-dessous, la répartition par parfum n’est pas assez fiable pour produire dessus). La quantité prévue du marché est ventilée par parfum selon ta répartition APPRISE (marketForecast, la même que le prévisionnel), puis chaque parfum est calé horairement comme une commande (ganache + repos, coques le jour du montage, montage) — l’heure de référence étant l’ouverture du marché lue sur sa fiche. Ces lignes portent un badge « ⛺ estimé » pour bien les distinguer des commandes fermes : ce sont des prévisions, pas des engagements.",
+    { v:'agendaprod', t:'Production', ico:'🗓', resume:"Ton écran unique de production : ce qu'il y a à faire par semaine, si ça tient dans ton temps, et le déroulé heure par heure — commandes et marchés réunis.",
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps, sa pastille de couleur et son CRÉNEAU HORAIRE calé dans tes plages A/B — l'horaire affiché est le MÊME que celui calculé dans le rétroplanning détaillé de la commande, pour une cohérence totale entre les deux vues ; quand un parfum est mutualisé entre plusieurs commandes, c'est le créneau le plus PRÉCOCE qui est retenu. Le rétroplanning réserve désormais le temps de TOUTES les ganaches de la commande (une par parfum : 6 parfums = 6 ganaches), et non plus un temps forfaitaire par lot de 60 — le planning reflète donc le vrai temps de préparation. Comme tu ne peux faire qu'UNE ganache à la fois, celles d'une même soirée sont ENCHAÎNÉES les unes après les autres (et non affichées au même horaire) : chacune démarre quand la précédente finit. Si la séquence risque de déborder au-delà de l'heure limite (montage moins repos), tout le bloc recule juste ce qu'il faut pour que la dernière ganache finisse à temps — le repos de chacune reste garanti (mention « enchaînée pour tenir le repos »). Le repos de la ganache est COLLÉ à la fin de sa préparation et court jusqu'au montage : il dure donc AU MOINS le repos minimum de la recette — souvent plus si la ganache tombe la veille au soir, ce qui est sans problème), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (PAR PARFUM, désormais avec leur CRÉNEAU HORAIRE calé dans tes plages A/B comme les ganaches — comme tu montes chaque parfum séparément, chacun mobilise au moins un batch entamé — le temps est compté au batch arrondi au supérieur, pas au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). Mieux : le rétroplanning AJUSTE désormais les durées à ta cadence RÉELLE par parfum — si tes chronos d'atelier montrent qu'un parfum est plus lent (ou plus rapide) que la moyenne, ses créneaux sont étirés ou resserrés en conséquence (uniquement quand la mesure est fiable ; sinon on garde le temps standard). Sur une commande à plusieurs parfums, l'ajustement est pondéré par les quantités. STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). ORDRE D'EXÉCUTION (rétroplanning détaillé) : le planning suit deux branches PARALLÈLES qui convergent au montage. Branche ganache : préparation de la ganache, puis repos jusqu'au montage. Branche coques : coques réalisées le JOUR du montage, juste avant l'assemblage. Résultat, dans l'ordre chronologique affiché : ganache → repos → coques → montage → maturation → livraison. La ganache passe donc AVANT les coques (à cause de son repos), et les coques restent collées au montage. Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »). MARCHÉS DANS LE PLAN : tes marchés à venir sont aussi intégrés au plan de production, à condition d’avoir au moins 5 marchés clos dans ton historique (en-dessous, la répartition par parfum n’est pas assez fiable pour produire dessus). La quantité prévue du marché est ventilée par parfum selon ta répartition APPRISE (marketForecast, la même que le prévisionnel), puis chaque parfum est calé horairement comme une commande (ganache + repos, coques le jour du montage, montage) — l’heure de référence étant l’ouverture du marché lue sur sa fiche.  FAISABILITÉ À LA SEMAINE : chaque semaine affiche d'un coup d'œil si ça TIENT dans tes créneaux (vert) ou si ça DÉBORDE (orange, avec de combien). Ce verdict est CLIQUABLE : touche-le et il déplie le déroulé heure par heure de cette semaine — le « mot du chef » explique l'ordre choisi (ganaches d'abord pour le repos, coques le jour du montage), avec tes vraies plages de travail et zéro re-saisie. Le « comment je m'organise » naît directement du « est-ce que ça tient ».",
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","🆕 Dans le plan détaillé, touche une ganache (▶ lancer) : l'app te propose de lancer le batch et le chrono d'un seul geste, avec confirmation et quantité ajustable","🆕 Touche aussi une meringue (▶ lancer) : elle lance les coques de tous ses parfums d'un coup (meringue commune) + les chronos, avec confirmation et quantités ajustables","🆕 Touche enfin un montage (▶ monter) : l'app ouvre l'assemblage de ce parfum pré-rempli avec un lot de coques et un lot de garniture déjà terminés (il faut donc les avoir produits avant) — tu ajustes la quantité et la destination, le chrono d'assemblage et le décompte se font tout seuls"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
@@ -28706,7 +28705,7 @@ function renderAtelier(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML = `
     <div class="topbar"><div><h1>Atelier de production</h1><p>Mesure du temps par tâche — chronos parallèles</p></div>
-      <button class="btn ghost" onclick="goView('mrp')">🧭 Plan de production →</button></div>
+      <button class="btn ghost" onclick="goView('agendaprod')">🧭 Production →</button></div>
     <div class="banner" style="background:#eef5f0;border-color:#bcd9c6">⏱ <div>C'est <b>ICI</b> que tu mesures ton <b>temps de travail</b> : chaque tâche chronométrée nourrit les <b>estimations du Plan de production</b> (plus tu mesures, plus le calage horaire de tes journées devient juste). <span style="color:#6a8a5a">À ne pas confondre avec le chrono de la page Productions, qui sert seulement au suivi de fraîcheur (DLC).</span></div></div>
     ${prodSessDexieKo()?`<div class="banner" style="background:#fdeaea;border-color:#d9534f">⚠ <div><b>La sauvegarde sécurisée des chronos a rencontré un souci</b> (${esc(prodSessDexieKo())}). Tes sessions sont encore en mémoire locale mais moins protégées.<br><button class="btn gold sm" style="margin-top:8px" onclick="reparerBaseSessions()">🔧 Réparer la base maintenant</button></div></div>`:''}
     ${(typeof unsavedCount==='function'&&unsavedCount()>0)?`<div class="banner" style="background:#fff7e6;border-color:#e8d09a">☁️ <div><b>Pense à sauvegarder sur iCloud.</b> Tes sessions ne sont vraiment à l'abri qu'une fois exportées hors de l'appareil. <button class="btn gold sm" style="margin-top:6px" onclick="shareBackupToICloud()">Sauvegarder maintenant</button></div></div>`:''}
@@ -30607,7 +30606,7 @@ async function retroplanningCaleParfums(dateLiv, heureLiv, parfumsQtes, recipes)
   };
 }
 
-// [ÉCRAN] Agenda de production consolidé : toutes les commandes à venir, fusionnées par jour.
+// [ÉCRAN] Production (écran unique) : toutes les commandes et marchés à venir, fusionnés par semaine.
 
 
 // [MUTUALISATION — index par commande] À partir de buildMutualisationSemaine, construit pour chaque
@@ -30794,7 +30793,7 @@ function goToCommande(orderId){
 
 async function renderAgendaProduction(){
   const main = document.getElementById('main');
-  main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
+  main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
     <p class="note">⏳ Calcul du rétroplanning de chaque commande…</p>`;
 
   // Besoins cumulés par parfum et par jour (fondation mutualisation) — affichés en tête.
@@ -30879,7 +30878,7 @@ async function renderAgendaProduction(){
   try{ cr = await buildCommandesRetro(45, mut); }catch(e){ console.error('commandesRetro',e); }
 
   const nbCmd = cr && cr.commandes ? cr.commandes.length : 0;
-  main.innerHTML = `<div class="topbar"><div><h1>Agenda de production</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div></div>
+  main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div></div>
     <p class="note" style="margin-bottom:14px">Touche le nom d'une commande pour déplier toutes ses étapes (coques, ganache, repos, montage, maturation, livraison), puis une étape pour son rétroplanning détaillé.</p>
     ${_optimBatchToggle()}
     ${_agendaPlanOpSection(planOp)}
@@ -30945,20 +30944,123 @@ function toggleOptimBatch(on){
   else if(typeof goView==='function') goView('agenda');
 }
 
-// [FAISABILITÉ — BANDEAU] Rend le verdict d'une semaine sous forme d'un bandeau compact :
-// vert « tient dans tes créneaux », orange « déborde de X h ». Rien si pas de dispo renseignée
-// (on n'affiche pas de faux verdict). fa = sortie de _faisabiliteSemaine.
-function _faisabiliteBandeau(fa){
+// [FAISABILITÉ — BANDEAU] Rend le verdict d'une semaine. CLIQUABLE : déplie le planning heure par
+// heure de CETTE semaine (le « comment » naît du verdict — pas de fonction juxtaposée). vert « tient »,
+// orange « déborde ». Rien si pas de dispo (on n'affiche pas de faux verdict). fa = _faisabiliteSemaine.
+function _faisabiliteBandeau(fa, wk){
   if(!fa) return '';
   if(!(fa.tempsDispo>0)){
-    // Pas de plages de travail définies sur la semaine → on invite à les renseigner, sans alarmer.
     return `<div style="margin-top:6px;font-size:.74rem;color:#9a8576">⏱ Disponibilité non définie sur cette semaine — <span class="act" onclick="availEditor()">définir mes créneaux</span> pour vérifier que ça tient.</div>`;
   }
   const fmtH = m => m>=60 ? `${Math.floor(m/60)}h${String(Math.round(m%60)).padStart(2,'0')}` : `${Math.round(m)} min`;
-  if(fa.depassement){
-    return `<div style="margin-top:6px;padding:5px 9px;border-radius:8px;font-size:.76rem;background:#fdf4e6;color:#8a5a0f">⚠️ <b>Ça déborde de ${fmtH(fa.debordementMin)}</b> sur tes créneaux de la semaine (${fmtH(fa.tempsTotal)} à faire pour ${fmtH(fa.tempsDispo)} dispo · ${fa.chargePct}%). À étaler ou anticiper.</div>`;
+  const wkAttr = esc(wk||'');
+  const bg = fa.depassement ? '#fdf4e6' : '#eef6ee';
+  const col = fa.depassement ? '#8a5a0f' : '#3f7d52';
+  const verdict = fa.depassement
+    ? `⚠️ <b>Ça déborde de ${fmtH(fa.debordementMin)}</b> sur tes créneaux (${fmtH(fa.tempsTotal)} à faire pour ${fmtH(fa.tempsDispo)} dispo · ${fa.chargePct}%).`
+    : `✓ <b>Tient dans tes créneaux</b> (${fmtH(fa.tempsTotal)} à faire pour ${fmtH(fa.tempsDispo)} dispo · ${fa.chargePct}%).`;
+  const cta = fa.depassement ? 'comment l\'organiser ? →' : 'voir le déroulé →';
+  // Bandeau cliquable + zone de dépli (remplie à la demande par planSemaineToggle).
+  return `<div class="faiz-band" data-wk="${wkAttr}" onclick="planSemaineToggle(${JSON.stringify(wk||'')}, this)"
+      style="margin-top:8px;padding:8px 11px;border-radius:9px;font-size:.78rem;background:${bg};color:${col};cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none">
+      <span style="flex:1">${verdict}</span>
+      <span class="faiz-cta" style="font-weight:700;text-decoration:underline;text-underline-offset:2px;white-space:nowrap">${cta}</span>
+      <span class="faiz-chev" style="font-size:.95rem;transition:transform .2s">›</span>
+    </div>
+    <div class="faiz-depli" data-wk="${wkAttr}" style="display:none;margin-top:8px"></div>`;
+}
+
+// [DÉPLI PLANNING SEMAINE] Génère/affiche le planning heure par heure d'UNE semaine au clic sur son
+// verdict. Réutilise la chaîne existante (generateProductionOrder + schedulePersonalPlan), alimentée
+// AUTOMATIQUEMENT par les dates de la semaine et tes vraies plages A/B — aucune re-saisie, aucune
+// modale : le « comment » se déplie sous le « ça tient / ça déborde ». Source de vérité unique.
+async function planSemaineToggle(wk, bandEl){
+  if(!bandEl) return;
+  const depli = bandEl.parentElement.querySelector(`.faiz-depli[data-wk="${(wk||'').replace(/"/g,'')}"]`)
+             || bandEl.nextElementSibling;
+  const chev = bandEl.querySelector('.faiz-chev');
+  if(!depli) return;
+  // Repli si déjà ouvert.
+  if(depli.style.display!=='none' && depli.dataset.loaded==='1'){
+    depli.style.display='none'; if(chev) chev.style.transform='';
+    return;
   }
-  return `<div style="margin-top:6px;padding:5px 9px;border-radius:8px;font-size:.76rem;background:#eef6ee;color:#3f7d52">✓ <b>Tient dans tes créneaux</b> (${fmtH(fa.tempsTotal)} à faire pour ${fmtH(fa.tempsDispo)} dispo · ${fa.chargePct}%).</div>`;
+  if(chev) chev.style.transform='rotate(90deg)';
+  depli.style.display='block';
+  if(depli.dataset.loaded==='1') return;   // déjà généré, on ré-ouvre simplement
+  depli.innerHTML = `<div style="font-size:.78rem;color:#9a8576;padding:6px 2px">⏳ Construction du déroulé…</div>`;
+  try{
+    const res = await _planSemaineGenere(wk);
+    depli.innerHTML = res;
+    depli.dataset.loaded = '1';
+  }catch(e){
+    console.error('planSemaineToggle', e);
+    depli.innerHTML = `<div style="font-size:.78rem;color:#b04a3e;padding:6px 2px">Impossible de générer le déroulé de cette semaine.</div>`;
+  }
+}
+
+// Construit le HTML du planning heure par heure d'une semaine (wk ISO 'YYYY-Www').
+// daySpecs = vraies plages A/B de chaque jour de la semaine (depuis aujourd'hui pour la semaine en cours).
+async function _planSemaineGenere(wk){
+  const m = /(\d{4})-W(\d{2})/.exec(wk||'');
+  if(!m) return '<div style="font-size:.78rem;color:#9a8576">Semaine non reconnue.</div>';
+  const simple = new Date(Date.UTC(+m[1],0,1+(+m[2]-1)*7));
+  const dow = (simple.getUTCDay()+6)%7;
+  const lundi = new Date(simple); lundi.setUTCDate(simple.getUTCDate()-dow);
+  const dim = new Date(lundi); dim.setUTCDate(lundi.getUTCDate()+6);
+  const lundiStr = lundi.toISOString().slice(0,10);
+  const dimStr = dim.toISOString().slice(0,10);
+  const todayStr = today().slice(0,10);
+  const debut = (lundiStr < todayStr) ? todayStr : lundiStr;
+
+  // Plan de besoins de la semaine (commandes + marchés + stock), via le moteur commun.
+  const plan = await generateProductionOrder(debut, dimStr, 0);
+  if(!plan || !plan.lignes.length){
+    return `<div style="font-size:.8rem;color:#3f7d52;background:#eef6ee;padding:8px 10px;border-radius:8px">✓ Rien à produire cette semaine : ton stock couvre déjà commandes et marchés.</div>`;
+  }
+  // daySpecs = vraies plages de travail de chaque jour (lundi→dimanche, depuis aujourd'hui).
+  const conf = (typeof getAvailability==='function') ? getAvailability() : null;
+  const daySpecs = [];
+  const cur = new Date(debut+'T00:00:00');
+  const end = new Date(dimStr+'T00:00:00');
+  let guard = 0;
+  while(cur <= end && guard++ < 60){
+    const dateStr = cur.toISOString().slice(0,10);
+    const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
+    const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b])=>b>a);
+    if(slotsMin.length) daySpecs.push({ date:dateStr, slots:slotsMin });
+    cur.setDate(cur.getDate()+1);
+  }
+  if(!daySpecs.length){
+    return `<div style="font-size:.78rem;color:#9a8576;padding:6px 2px">Aucune plage de travail définie sur cette semaine. <span class="act" onclick="availEditor()">Définir mes créneaux →</span></div>`;
+  }
+  const S = schedulePersonalPlan(daySpecs, plan, {});
+  return _planSemaineRenderHTML(S);
+}
+
+// Rend le HTML du résultat schedulePersonalPlan (mot du chef + déroulé par jour), version « dépli ».
+function _planSemaineRenderHTML(S){
+  if(!S) return '';
+  const JOURS = ['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
+  const minToHM = mm => String(Math.floor(mm/60)).padStart(2,'0')+':'+String(mm%60).padStart(2,'0');
+  const byDay = {}; (S.events||[]).forEach(e=>{ (byDay[e.date] ||= []).push(e); });
+  const dayBlocks = Object.keys(byDay).sort().map(date=>{
+    const d = new Date(date+'T00:00');
+    const rows = byDay[date].map(e=>{
+      const icon = e.kind==='coques'?'🥚':e.kind==='ganache'?'🍫':e.kind==='montage'?'🧩':'•';
+      return `<div class="perso-ev">
+        <div class="perso-ev-time">${minToHM(e.start)}<br><span>${minToHM(e.end)}</span></div>
+        <div class="perso-ev-body"><div class="perso-ev-lbl">${icon} ${esc(e.label)}</div>
+          ${e.note?`<div class="perso-ev-note">${esc(e.note)}</div>`:''}</div></div>`;
+    }).join('');
+    return `<div style="margin-top:6px"><div style="text-transform:capitalize;font-weight:600;color:var(--bordeaux);font-size:.86rem;border-bottom:1px solid #ece2d4;padding-bottom:3px;margin-bottom:2px">${JOURS[d.getDay()]} ${d.toLocaleDateString('fr-FR',{day:'2-digit',month:'long'})}</div>${rows}</div>`;
+  }).join('');
+  const insights = (S.insights||[]).map(t=>`<li>${esc(t)}</li>`).join('');
+  const warn = (S.warnings&&S.warnings.length)
+    ? `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-bottom:8px">⚠ <div>${S.warnings.map(esc).join('<br>')}</div></div>` : '';
+  const chef = insights
+    ? `<div style="background:#faf6ef;border-radius:10px;padding:9px 11px;margin-bottom:8px"><div style="font-size:.86rem;font-weight:600;color:var(--bordeaux);margin-bottom:4px">🧑‍🍳 Le mot du chef</div><ul class="perso-insights" style="font-size:.82rem">${insights}</ul></div>` : '';
+  return `${warn}${chef}${dayBlocks||'<div style="font-size:.78rem;color:#9a8576;padding:4px 2px">Aucune tâche planifiable avec ces créneaux.</div>'}`;
 }
 
 function _agendaPlanOpSection(plan){
@@ -31053,7 +31155,7 @@ function _agendaPlanOpSection(plan){
       <div style="border-bottom:2px solid #d8c4a8;padding-bottom:8px;margin-bottom:12px">
         <h3 style="margin:0;font-size:1.25rem;color:var(--bordeaux);text-transform:capitalize;font-weight:700;line-height:1.2">${esc(s.label)}</h3>
         <div style="font-size:.76rem;color:#9a8576;margin-top:3px">${s.totalMacarons} macaron${s.totalMacarons>1?'s':''} · ${fmtMin(s.totalMin)} de travail</div>
-        ${_faisabiliteBandeau(s.faisabilite)}
+        ${_faisabiliteBandeau(s.faisabilite, s.wk)}
       </div>
       <div style="margin-bottom:10px">
         <div style="font-weight:600;color:#7a4b2a;margin-bottom:4px">🍫 Ganaches <span style="font-weight:400;color:#9a8576;font-size:.76rem">· une par parfum · ${fmtMin(s.totalGanacheMin)}</span></div>
@@ -33177,7 +33279,7 @@ async function _planFromNeeds(needs){
 const _JOURS_FR=['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
 function _minToHM(m){ return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); }
 function persoRenderResult(){
-  const box=document.getElementById('mrpResult'); if(!box||!_persoPlan) return;
+  if(!_persoPlan) return;
   const S=_persoPlan;
   // grouper les événements par jour
   const byDay={}; S.events.forEach(e=>{ (byDay[e.date] ||= []).push(e); });
@@ -33194,7 +33296,7 @@ function persoRenderResult(){
   }).join('');
   const insightHtml=S.insights.map(t=>`<li>${esc(t)}</li>`).join('');
   const warnHtml=S.warnings.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⚠ <div>${S.warnings.map(esc).join('<br>')}</div></div>`:'';
-  box.innerHTML=`
+  const html=`
     ${warnHtml}
     <div class="panel" style="background:#faf6ef">
       <h2>🧑‍🍳 Le mot du chef d'atelier</h2>
@@ -33202,7 +33304,17 @@ function persoRenderResult(){
     </div>
     ${dayBlocks||'<div class="banner">Aucune tâche planifiable avec ces créneaux.</div>'}
     <div class="panel"><button class="btn ghost" onclick="persoPlanForm()">✎ Ajuster ma disponibilité</button></div>`;
-  box.scrollIntoView({behavior:'smooth', block:'start'});
+  // CIBLE : sur l'écran Plan de production, on injecte dans #mrpResult (comportement historique).
+  // Ailleurs (ex. Agenda de production), cet élément n'existe pas → on affiche dans une modale.
+  const box=document.getElementById('mrpResult');
+  if(box){
+    box.innerHTML=html;
+    box.scrollIntoView({behavior:'smooth', block:'start'});
+  } else {
+    openModal(`<h3>🧑‍🍳 Mon planning de séance</h3>
+      <div style="max-height:70vh;overflow:auto">${html}</div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+  }
 }
 
 /* ============================================================
