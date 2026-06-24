@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v778';
+const APP_VERSION = 'v794';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -18644,7 +18644,7 @@ async function renderForecast(){
       : '';
     // Bandeau MATIÈRE séparé (rouge brique) : liste les matières en rupture pour ce parfum.
     const faMatBox = faMat
-      ? `<div style="margin-top:6px;padding:6px 9px;border-radius:8px;font-size:.78rem;line-height:1.35;background:#f4ece6;color:#9c4a1a">🧱 Bloqué par les matières : ${fa.matiere.materiaux.map(m=>`<b>${esc(m.nom)}</b> (manque ${qty(m.manque)} ${esc(m.unite)})`).join(', ')}. Réapprovisionne avant de lancer.</div>`
+      ? `<div style="margin-top:6px;padding:6px 9px;border-radius:8px;font-size:.78rem;line-height:1.35;background:#f4ece6;color:#9c4a1a">🧱 Bloqué par les matières : ${fa.matiere.materiaux.map(m=>`<b>${esc(m.nom)}</b> (manque ${qty(m.manque)} ${esc(m.unite)})`).join(', ')}. Réapprovisionne avant de lancer.<div style="margin-top:5px"><button class="btn ghost sm" style="font-size:.72rem;padding:3px 9px" onclick="event.stopPropagation(); genShoppingListPrev()">🛒 Voir les courses prévisionnelles</button></div></div>`
       : '';
     // Ligne de chiffres : commandé(réservé) · stock · prévisionnel · (montable) · (manque).
     const ligneChiffres = `<div style="font-size:.8rem;color:#6b5d54;margin-top:3px">`+
@@ -23927,7 +23927,7 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Agenda production', ico:'🗓', resume:"Tes commandes à produire, chacune dépliable pour voir l'enchaînement de ses étapes, avec mutualisation par semaine.",
-      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps, sa pastille de couleur et son CRÉNEAU HORAIRE calé dans tes plages A/B — l'horaire affiché est le MÊME que celui calculé dans le rétroplanning détaillé de la commande, pour une cohérence totale entre les deux vues ; quand un parfum est mutualisé entre plusieurs commandes, c'est le créneau le plus PRÉCOCE qui est retenu. Le rétroplanning réserve désormais le temps de TOUTES les ganaches de la commande (une par parfum : 6 parfums = 6 ganaches), et non plus un temps forfaitaire par lot de 60 — le planning reflète donc le vrai temps de préparation. Comme tu ne peux faire qu'UNE ganache à la fois, celles d'une même soirée sont ENCHAÎNÉES les unes après les autres (et non affichées au même horaire) : chacune démarre quand la précédente finit. Si la séquence risque de déborder au-delà de l'heure limite (montage moins repos), tout le bloc recule juste ce qu'il faut pour que la dernière ganache finisse à temps — le repos de chacune reste garanti (mention « enchaînée pour tenir le repos »). Le repos de la ganache est COLLÉ à la fin de sa préparation et court jusqu'au montage : il dure donc AU MOINS le repos minimum de la recette — souvent plus si la ganache tombe la veille au soir, ce qui est sans problème), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (PAR PARFUM, désormais avec leur CRÉNEAU HORAIRE calé dans tes plages A/B comme les ganaches — comme tu montes chaque parfum séparément, chacun mobilise au moins un batch entamé — le temps est compté au batch arrondi au supérieur, pas au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). Mieux : le rétroplanning AJUSTE désormais les durées à ta cadence RÉELLE par parfum — si tes chronos d'atelier montrent qu'un parfum est plus lent (ou plus rapide) que la moyenne, ses créneaux sont étirés ou resserrés en conséquence (uniquement quand la mesure est fiable ; sinon on garde le temps standard). Sur une commande à plusieurs parfums, l'ajustement est pondéré par les quantités. STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). ORDRE D'EXÉCUTION (rétroplanning détaillé) : le planning suit deux branches PARALLÈLES qui convergent au montage. Branche ganache : préparation de la ganache, puis repos jusqu'au montage. Branche coques : coques réalisées le JOUR du montage, juste avant l'assemblage. Résultat, dans l'ordre chronologique affiché : ganache → repos → coques → montage → maturation → livraison. La ganache passe donc AVANT les coques (à cause de son repos), et les coques restent collées au montage. Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »).",
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps, sa pastille de couleur et son CRÉNEAU HORAIRE calé dans tes plages A/B — l'horaire affiché est le MÊME que celui calculé dans le rétroplanning détaillé de la commande, pour une cohérence totale entre les deux vues ; quand un parfum est mutualisé entre plusieurs commandes, c'est le créneau le plus PRÉCOCE qui est retenu. Le rétroplanning réserve désormais le temps de TOUTES les ganaches de la commande (une par parfum : 6 parfums = 6 ganaches), et non plus un temps forfaitaire par lot de 60 — le planning reflète donc le vrai temps de préparation. Comme tu ne peux faire qu'UNE ganache à la fois, celles d'une même soirée sont ENCHAÎNÉES les unes après les autres (et non affichées au même horaire) : chacune démarre quand la précédente finit. Si la séquence risque de déborder au-delà de l'heure limite (montage moins repos), tout le bloc recule juste ce qu'il faut pour que la dernière ganache finisse à temps — le repos de chacune reste garanti (mention « enchaînée pour tenir le repos »). Le repos de la ganache est COLLÉ à la fin de sa préparation et court jusqu'au montage : il dure donc AU MOINS le repos minimum de la recette — souvent plus si la ganache tombe la veille au soir, ce qui est sans problème), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (PAR PARFUM, désormais avec leur CRÉNEAU HORAIRE calé dans tes plages A/B comme les ganaches — comme tu montes chaque parfum séparément, chacun mobilise au moins un batch entamé — le temps est compté au batch arrondi au supérieur, pas au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). Mieux : le rétroplanning AJUSTE désormais les durées à ta cadence RÉELLE par parfum — si tes chronos d'atelier montrent qu'un parfum est plus lent (ou plus rapide) que la moyenne, ses créneaux sont étirés ou resserrés en conséquence (uniquement quand la mesure est fiable ; sinon on garde le temps standard). Sur une commande à plusieurs parfums, l'ajustement est pondéré par les quantités. STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). ORDRE D'EXÉCUTION (rétroplanning détaillé) : le planning suit deux branches PARALLÈLES qui convergent au montage. Branche ganache : préparation de la ganache, puis repos jusqu'au montage. Branche coques : coques réalisées le JOUR du montage, juste avant l'assemblage. Résultat, dans l'ordre chronologique affiché : ganache → repos → coques → montage → maturation → livraison. La ganache passe donc AVANT les coques (à cause de son repos), et les coques restent collées au montage. Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »). MARCHÉS DANS LE PLAN : tes marchés à venir sont aussi intégrés au plan de production, à condition d’avoir au moins 5 marchés clos dans ton historique (en-dessous, la répartition par parfum n’est pas assez fiable pour produire dessus). La quantité prévue du marché est ventilée par parfum selon ta répartition APPRISE (marketForecast, la même que le prévisionnel), puis chaque parfum est calé horairement comme une commande (ganache + repos, coques le jour du montage, montage) — l’heure de référence étant l’ouverture du marché lue sur sa fiche. Ces lignes portent un badge « ⛺ estimé » pour bien les distinguer des commandes fermes : ce sont des prévisions, pas des engagements.",
       steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","🆕 Dans le plan détaillé, touche une ganache (▶ lancer) : l'app te propose de lancer le batch et le chrono d'un seul geste, avec confirmation et quantité ajustable","🆕 Touche aussi une meringue (▶ lancer) : elle lance les coques de tous ses parfums d'un coup (meringue commune) + les chronos, avec confirmation et quantités ajustables","🆕 Touche enfin un montage (▶ monter) : l'app ouvre l'assemblage de ce parfum pré-rempli avec un lot de coques et un lot de garniture déjà terminés (il faut donc les avoir produits avant) — tu ajustes la quantité et la destination, le chrono d'assemblage et le décompte se font tout seuls"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
@@ -29945,30 +29945,32 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
    seront raffinées dans une version ultérieure.
    ============================================================ */
 // Renvoie { livraison:Date, jalons:[{cle, label, date:Date, type:'travail'|'attente', note}], contraintes:[...] }
-function retroplanningCommande(o, recipes){
+// [CŒUR DE CALAGE NEUTRE] Calcule le rétroplanning à partir de données BRUTES (date, heure, parfums),
+// sans objet commande. Appelé aussi bien par les commandes (retroplanningCommande, qui extrait ces
+// données de l'objet o) que par les MARCHÉS (qui n'ont pas de commande). Aucun « pseudo-objet » :
+// un marché reste un marché, une commande reste une commande ; seules les 3 données utiles transitent.
+//   dateLiv       : 'YYYY-MM-DD' (date de remise / de vente)
+//   hmRaw         : 'HH:MM' (heure de remise) ou null → défaut 10:00
+//   parfumsNoms   : [string] noms de parfums concernés (pour retrouver les recettes → contraintes)
+//   recipes       : db.recipes (déjà chargé)
+// Renvoie le MÊME format que l'ancien retroplanningCommande.
+function retroplanningDepuisParfums(dateLiv, hmRaw, parfumsNoms, recipes){
   recipes = recipes || window._allRecipesCache || [];
   const recByNom = {};
   recipes.forEach(r=>{ recByNom[aiNormalize ? aiNormalize(r.produitNom) : (r.produitNom||'').toLowerCase()] = r; });
   const normNom = n => aiNormalize ? aiNormalize(n) : (n||'').toLowerCase();
 
   // 1) Date + heure de livraison.
-  const dateLiv = o.dateEvenement || o.date || '';
-  if(!dateLiv) return {error:'Aucune date de livraison sur cette commande.'};
-  const hm = (o.heureLivraison && /^\d{1,2}:\d{2}/.test(o.heureLivraison)) ? o.heureLivraison : '10:00';
+  if(!dateLiv) return {error:'Aucune date de livraison.'};
+  const hm = (hmRaw && /^\d{1,2}:\d{2}/.test(hmRaw)) ? hmRaw : '10:00';
   const hmFull = (hm.length===4?'0'+hm:hm).slice(0,5);   // garantit 'HH:MM'
-  // Construction EXPLICITE en heure locale (évite l'interprétation UTC d'une date seule) :
-  // on découpe la date et l'heure et on les pose composant par composant.
   const _dp = dateLiv.split('-').map(Number);
   const _tp = hmFull.split(':').map(Number);
   const livraison = new Date(_dp[0], (_dp[1]||1)-1, _dp[2]||1, _tp[0]||0, _tp[1]||0, 0, 0);
 
   // 2) Recettes impliquées → contraintes (repos ganache max, jour J, congélation, maturation).
-  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
   const recsUtilisees = [];
-  lignes.forEach(ln=>{
-    const parfums = ln.type==='grand' ? (ln.items||[]) : (ln.parfums||[]);
-    parfums.forEach(p=>{ const r=recByNom[normNom(p.nom)]; if(r && !recsUtilisees.includes(r)) recsUtilisees.push(r); });
-  });
+  (parfumsNoms||[]).forEach(nom=>{ const r=recByNom[normNom(nom)]; if(r && !recsUtilisees.includes(r)) recsUtilisees.push(r); });
   // Contraintes agrégées (on prend la plus forte).
   let reposGanacheH = 0, jourJ = false, congelObl = false, maturationRequise = true, aCremeux = false, gfCongele = false, aStandard = false;
   recsUtilisees.forEach(r=>{
@@ -30077,6 +30079,21 @@ function retroplanningCommande(o, recipes){
   return {livraison, jalons, contraintes, reposGanacheH, maturationH, cremeuxCongelH, decongelH, jourJ, congelObl, aCremeux, gfCongele, aStandard, recsUtilisees:recsUtilisees.length};
 }
 
+// [COMMANDE] Rétroplanning d'une vraie commande : extrait (date, heure, parfums) de l'objet o et
+// délègue au cœur neutre. Comportement IDENTIQUE à l'ancienne version (régression nulle).
+function retroplanningCommande(o, recipes){
+  const dateLiv = o.dateEvenement || o.date || '';
+  if(!dateLiv) return {error:'Aucune date de livraison sur cette commande.'};
+  // Parfums concernés, extraits des lignes de la commande (grand format → items, sinon parfums).
+  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
+  const parfumsNoms = [];
+  lignes.forEach(ln=>{
+    const parfums = ln.type==='grand' ? (ln.items||[]) : (ln.parfums||[]);
+    parfums.forEach(p=>{ if(p && p.nom) parfumsNoms.push(p.nom); });
+  });
+  return retroplanningDepuisParfums(dateLiv, o.heureLivraison, parfumsNoms, recipes);
+}
+
 /* [CHANTIER 1] COUCHE DE CALAGE du rétroplanning sur les plages de disponibilité.
    N'altère PAS retroplanningCommande : on récupère ses paramètres et on RECONSTRUIT
    la cascade à rebours en calant chaque étape selon son type (3 types), en lisant les
@@ -30087,14 +30104,28 @@ function retroplanningCommande(o, recipes){
    Durées actives/encadrées = temps MRP × volume ; durées libres = constantes (heures).
 */
 
-function _retroNbMacarons(o){
-  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
-  let n=0;
-  lignes.forEach(ln=>{
-    if(ln.type==='grand'){ (ln.items||[]).forEach(p=>{ n+=(+p.qte||0); }); }
-    else { (ln.parfums||[]).forEach(p=>{ n+=(+p.qte||0); }); }
+// [EXTRACTEUR NEUTRE] Réduit une commande (ou tout objet à lignes) à la liste [{nom, qte}] des
+// parfums, seule donnée dont les calculs de durée du rétroplanning ont besoin. Pour les MARCHÉS,
+// on passe directement la liste ventilée sans construire d'objet commande (cf. retroplanningCaleParfums).
+function _parfumsQtesDeLignes(lignes){
+  const out = [];
+  (lignes||[]).forEach(ln=>{
+    const arr = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
+    arr.forEach(p=>{ if(p && p.nom && +p.qte>0) out.push({nom:p.nom, qte:+p.qte}); });
   });
-  return n;
+  return out;
+}
+function _parfumsQtesDe(o){
+  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
+  return _parfumsQtesDeLignes(lignes);
+}
+
+// nbMacarons depuis une liste neutre [{nom,qte}].
+function _retroNbMacaronsDe(parfumsQtes){
+  let n=0; (parfumsQtes||[]).forEach(p=>{ n+=(+p.qte||0); }); return n;
+}
+function _retroNbMacarons(o){
+  return _retroNbMacaronsDe(_parfumsQtesDe(o));
 }
 
 // [GANACHE PAR PARFUM — durée juste] La ganache se fait UNE FOIS PAR PARFUM (temps fixe par parfum),
@@ -30103,33 +30134,29 @@ function _retroNbMacarons(o){
 // temps ganache de CHAQUE parfum distinct, avec la MÊME règle de source que le plan opérationnel
 // (mesuré fiable > recette > défaut) — source unique, donc rétroplanning et plan concordent.
 // Retourne { totalMin, nbParfums } ; totalMin déjà multiplié par le facteur de cadence.
-function _retroGanacheTotalMin(o, recipes, tEtape, facteur){
+function _retroGanacheTotalMinDe(parfumsQtes, recipes, tEtape, facteur){
   const t = (typeof getMrpTimes==='function') ? getMrpTimes() : {ganache:{estimatedTime:12}};
   const defMin = t.ganache.estimatedTime;
   const f = (typeof facteur==='number' && isFinite(facteur) && facteur>0) ? facteur : 1;
   const norm = nom => (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
-  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
-  // Parfums DISTINCTS de la commande (classiques + grands formats), clé normalisée.
+  // Parfums DISTINCTS, clé normalisée.
   const parfums = new Set();
-  lignes.forEach(ln=>{
-    const arr = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
-    arr.forEach(pp=>{ if(+pp.qte>0){ const k=norm(pp.nom); if(k) parfums.add(k); } });
-  });
+  (parfumsQtes||[]).forEach(pp=>{ if(+pp.qte>0){ const k=norm(pp.nom); if(k) parfums.add(k); } });
   if(!parfums.size) return { totalMin: defMin*f, nbParfums: 1 };
   const recByNomK = {};
   (recipes||[]).forEach(r=>{ recByNomK[norm(r.produitNom||'')] = r; });
   let total = 0;
   parfums.forEach(k=>{
-    // 1) mesuré fiable (même seuil que le plan) : minTotal / nbSessions
     const mes = tEtape && tEtape.ganache && tEtape.ganache[k];
     if(mes && mes.fiable && mes.nbMac>0){ total += (mes.minTotal/(mes.nbSessions||1)); return; }
-    // 2) recette : tempsGanacheMin
     const r = recByNomK[k];
     if(r && r.tempsGanacheMin!=null && +r.tempsGanacheMin>0){ total += (+r.tempsGanacheMin); return; }
-    // 3) défaut
     total += defMin;
   });
   return { totalMin: total*f, nbParfums: parfums.size };
+}
+function _retroGanacheTotalMin(o, recipes, tEtape, facteur){
+  return _retroGanacheTotalMinDe(_parfumsQtesDe(o), recipes, tEtape, facteur);
 }
 
 // [MONTAGE PAR PARFUM — durée juste] Le montage se fait PARFUM PAR PARFUM, et chaque parfum mobilise
@@ -30138,39 +30165,38 @@ function _retroGanacheTotalMin(o, recipes, tEtape, facteur){
 // donnaient 2 batchs au lieu de 6. On somme donc, par parfum distinct, perBatch \u00d7 ceil(qte/60),
 // avec la MÊME règle de source que le plan (mesuré fiable > recette > défaut). Source unique.
 // Retourne { totalMin } ; déjà multiplié par le facteur de cadence.
-function _retroMontageTotalMin(o, recipes, tEtape, facteur){
+function _retroMontageTotalMinDe(parfumsQtes, recipes, tEtape, facteur){
   const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
   const t = (typeof getMrpTimes==='function') ? getMrpTimes() : {montage:{estimatedTime:15}};
   const defPerBatch = t.montage.estimatedTime;
   const f = (typeof facteur==='number' && isFinite(facteur) && facteur>0) ? facteur : 1;
   const norm = nom => (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
-  const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
-  // Quantité par parfum distinct (classiques + grands formats).
+  // Quantité par parfum distinct.
   const qParNom = {};
-  lignes.forEach(ln=>{
-    const arr = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
-    arr.forEach(pp=>{ if(+pp.qte>0){ const k=norm(pp.nom); if(k) qParNom[k]=(qParNom[k]||0)+(+pp.qte); } });
-  });
+  (parfumsQtes||[]).forEach(pp=>{ if(+pp.qte>0){ const k=norm(pp.nom); if(k) qParNom[k]=(qParNom[k]||0)+(+pp.qte); } });
   const noms = Object.keys(qParNom);
-  if(!noms.length){ // repli : prorata global comme avant
-    const nb = Math.max(1, Math.ceil(((typeof _retroNbMacarons==='function')?_retroNbMacarons(o):0)/TB));
+  if(!noms.length){ // repli : prorata global
+    const nb = Math.max(1, Math.ceil(_retroNbMacaronsDe(parfumsQtes)/TB));
     return { totalMin: defPerBatch*nb*f };
   }
   const recByNomK = {};
   (recipes||[]).forEach(r=>{ recByNomK[norm(r.produitNom||'')] = r; });
   const perBatchDe = k => {
     const mes = tEtape && tEtape.montage && tEtape.montage[k];
-    if(mes && mes.fiable && mes.nbMac>0) return mes.minTotal/mes.nbMac*TB;   // ramené au batch
+    if(mes && mes.fiable && mes.nbMac>0) return mes.minTotal/mes.nbMac*TB;
     const r = recByNomK[k];
     if(r && r.tempsMontageMin!=null && +r.tempsMontageMin>0) return +r.tempsMontageMin;
     return defPerBatch;
   };
   let total = 0;
   noms.forEach(k=>{
-    const nbBatchs = Math.max(1, Math.ceil(qParNom[k]/TB));   // batchs entamés pour CE parfum
+    const nbBatchs = Math.max(1, Math.ceil(qParNom[k]/TB));
     total += perBatchDe(k) * nbBatchs;
   });
   return { totalMin: total*f };
+}
+function _retroMontageTotalMin(o, recipes, tEtape, facteur){
+  return _retroMontageTotalMinDe(_parfumsQtesDe(o), recipes, tEtape, facteur);
 }
 
 function _retroDurees(nbMacarons, facteurCadence, ganacheTotalMin, montageTotalMin){
@@ -30213,37 +30239,28 @@ function _retroDurees(nbMacarons, facteurCadence, ganacheTotalMin, montageTotalM
 //   facteur de la commande = MOYENNE PONDEREE par les quantites de chaque parfum
 //   (un parfum sans mesure fiable compte avec un facteur 1 = cadence theorique).
 // Renvoie 1 si rien de fiable => zero regression.
-async function _retroFacteurCadence(o, recipes){
+async function _retroFacteurCadenceDe(parfumsQtes, recipes){
   try{
     if(typeof prodTempsParParfumParNom!=='function' || typeof getMrpTimes!=='function') return 1;
-    const lignes = (typeof orderToLines==='function') ? orderToLines(o) : [];
-    // Quantites par parfum (classiques + grands formats), cle = nom normalise.
-    const qParNom = {};
     const _k = nom => (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
-    lignes.forEach(ln=>{
-      const arr = (ln.type==='grand') ? (ln.items||[]) : (ln.parfums||[]);
-      arr.forEach(pp=>{ const k=_k(pp.nom); if(!k) return; qParNom[k]=(qParNom[k]||0)+(+pp.qte||0); });
-    });
+    const qParNom = {};
+    (parfumsQtes||[]).forEach(pp=>{ const k=_k(pp.nom); if(!k) return; qParNom[k]=(qParNom[k]||0)+(+pp.qte||0); });
     const noms = Object.keys(qParNom);
     if(!noms.length) return 1;
-
-    // Temps THEORIQUE moyen d'un macaron (toutes etapes), pour comparer a la mesure globale/macaron.
     const t = getMrpTimes();
     const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
     const MM = (typeof MACARONS_PAR_MERINGUE!=='undefined') ? MACARONS_PAR_MERINGUE : 120;
-    // par macaron : coques (par meringue) + ganache + montage (par batch).
     const theoParMac = (t.coques.estimatedTime/MM) + (t.ganache.estimatedTime/TB) + (t.montage.estimatedTime/TB);
     if(!(theoParMac>0)) return 1;
-
     const mesures = await prodTempsParParfumParNom(90);
     let sommePondere=0, sommeQte=0;
     noms.forEach(k=>{
       const q = qParNom[k]||0; if(q<=0) return;
       const m = mesures[k];
-      let f = 1;   // defaut : parfum sans mesure fiable => cadence theorique
+      let f = 1;
       if(m && m.fiable && m.minParMac>0){
         f = m.minParMac / theoParMac;
-        if(f<0.5) f=0.5; else if(f>2.5) f=2.5;   // bornes anti-aberration
+        if(f<0.5) f=0.5; else if(f>2.5) f=2.5;
       }
       sommePondere += f*q; sommeQte += q;
     });
@@ -30251,6 +30268,9 @@ async function _retroFacteurCadence(o, recipes){
     const facteur = sommePondere/sommeQte;
     return (isFinite(facteur) && facteur>0) ? facteur : 1;
   }catch(e){ return 1; }
+}
+async function _retroFacteurCadence(o, recipes){
+  return _retroFacteurCadenceDe(_parfumsQtesDe(o), recipes);
 }
 
 // Place une tâche ACTIVE/ENCADRÉE de durée 'duree' (min) finissant AU PLUS TARD à 'finVoulue'.
@@ -30418,19 +30438,31 @@ async function retroplanningCale(orderId){
   const o = await db.orders.get(orderId);
   if(!o) return { ok:false, error:'Commande introuvable.' };
   const recipes = await db.recipes.toArray().catch(()=>[]);
-  const rp = (typeof retroplanningCommande==='function') ? retroplanningCommande(o, recipes) : null;
+  // Délègue au cœur neutre : on extrait les parfums/quantités de la commande, rien d'autre.
+  const dateLiv = o.dateEvenement || o.date || '';
+  return retroplanningCaleParfums(dateLiv, o.heureLivraison, _parfumsQtesDe(o), recipes);
+}
+
+// [CŒUR DE CALAGE HORAIRE NEUTRE] Cale le rétroplanning dans les plages A/B à partir de données
+// BRUTES (date, heure, parfums+quantités), sans objet commande. Appelé par retroplanningCale (pour
+// les commandes) et par le plan pour les MARCHÉS (parfums ventilés passés directement). Aucun
+// pseudo-objet commande : un marché reste un marché. Renvoie le MÊME format que retroplanningCale.
+async function retroplanningCaleParfums(dateLiv, heureLiv, parfumsQtes, recipes){
+  recipes = recipes || await db.recipes.toArray().catch(()=>[]);
+  const parfumsNoms = (parfumsQtes||[]).map(p=>p.nom);
+  const rp = (typeof retroplanningDepuisParfums==='function') ? retroplanningDepuisParfums(dateLiv, heureLiv, parfumsNoms, recipes) : null;
   if(!rp || rp.error) return { ok:false, error:(rp&&rp.error)||'Rétroplanning indisponible.' };
 
   const conf = (typeof getAvailability==='function') ? getAvailability() : null;
-  const nbMac = _retroNbMacarons(o);
+  const nbMac = _retroNbMacaronsDe(parfumsQtes);
   // [TEMPS MESURES PAR PARFUM] facteur de cadence reel (1 si aucune mesure fiable => inchange).
-  const facteurCadence = await _retroFacteurCadence(o, recipes);
+  const facteurCadence = await _retroFacteurCadenceDe(parfumsQtes, recipes);
   // [GANACHE PAR PARFUM] durée ganache JUSTE = somme des temps par parfum distinct (pas 12 × nbBatchs).
   // Même source de temps que le plan (mesuré fiable > recette > défaut). Repli silencieux si indispo.
   let tEtapeRetro=null; try{ tEtapeRetro = await prodTempsParEtapeParParfum(90); }catch(_){}
-  let ganacheTotalMin; try{ ganacheTotalMin = _retroGanacheTotalMin(o, recipes, tEtapeRetro, facteurCadence).totalMin; }catch(_){ ganacheTotalMin = undefined; }
+  let ganacheTotalMin; try{ ganacheTotalMin = _retroGanacheTotalMinDe(parfumsQtes, recipes, tEtapeRetro, facteurCadence).totalMin; }catch(_){ ganacheTotalMin = undefined; }
   // [MONTAGE PAR PARFUM] durée montage JUSTE = somme par parfum de perBatch × ceil(qte/60). Repli silencieux.
-  let montageTotalMin; try{ montageTotalMin = _retroMontageTotalMin(o, recipes, tEtapeRetro, facteurCadence).totalMin; }catch(_){ montageTotalMin = undefined; }
+  let montageTotalMin; try{ montageTotalMin = _retroMontageTotalMinDe(parfumsQtes, recipes, tEtapeRetro, facteurCadence).totalMin; }catch(_){ montageTotalMin = undefined; }
   const durees = _retroDurees(nbMac, facteurCadence, ganacheTotalMin, montageTotalMin);
 
   // Construire la séquence des étapes du plus tard (livraison) au plus tôt, avec durée + type.
@@ -30786,8 +30818,18 @@ async function renderAgendaProduction(){
     const montageCaleParCmd = {};
     try{
       const orderIds = new Set();
+      // [MARCHÉS] On collecte aussi les contributions marché (clé 'mk'+marketId), avec leurs parfums
+      // ventilés, pour caler leurs ganaches/montages par le MÊME cœur neutre que les commandes.
+      const marketParfums = {};   // 'mk'+id → { date, heure, parfumsQtes:[{nom,qte}] }
       (mut && mut.semaines ? mut.semaines : []).forEach(s=>{
-        (s.parfums||[]).forEach(p=>(p.commandes||[]).forEach(c=>{ if(c.orderId!=null) orderIds.add(c.orderId); }));
+        (s.parfums||[]).forEach(p=>(p.commandes||[]).forEach(c=>{
+          if(c.orderId!=null){ orderIds.add(c.orderId); }
+          else if(c.marche && c.marketId!=null){
+            const key = 'mk'+c.marketId;
+            const slot = (marketParfums[key] ||= { date:c.livraison, heure:null, parfumsQtes:[] });
+            slot.parfumsQtes.push({ nom:p.nom, qte:c.qte });
+          }
+        }));
       });
       for(const oid of orderIds){
         try{
@@ -30801,8 +30843,34 @@ async function renderAgendaProduction(){
           }
         }catch(_){}
       }
+      // [MARCHÉS] Calage horaire via le cœur neutre (heure d'ouverture lue sur la fiche marché).
+      const _markets = await db.markets.toArray().catch(()=>[]);
+      for(const key of Object.keys(marketParfums)){
+        const mInfo = marketParfums[key];
+        const mk = _markets.find(x=>('mk'+x.id)===key);
+        const heure = mk ? _parseHeureMarche(mk.horaires, 8) : {h:8,m:0};
+        const heureStr = String(heure.h).padStart(2,'0')+':'+String(heure.m).padStart(2,'0');
+        try{
+          const cale = await retroplanningCaleParfums(mInfo.date, heureStr, mInfo.parfumsQtes, recipesPlan);
+          if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
+            const jg = cale.jalonsCales.find(j=>(j.cle==='ganache'||j.cle==='cremeux') && j.debut);
+            if(jg) ganacheCaleParCmd[key] = { debut:jg.debut, fin:jg.fin };
+            const jm = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
+            if(jm) montageCaleParCmd[key] = { debut:jm.debut, fin:jm.fin };
+          }
+        }catch(_){}
+      }
     }catch(e){ console.error('preCollecteGanache', e); }
     planOp = buildPlanOperationnelSemaine(mut, recipesPlan, tEtape, stockMob, ganacheCaleParCmd, montageCaleParCmd);
+    // [FAISABILITÉ PAR SEMAINE] Attache à chaque semaine son verdict « tient / déborde » + conflits,
+    // calculé par le moteur existant (generateProductionOrder). Repli silencieux par semaine.
+    if(planOp && Array.isArray(planOp.semaines)){
+      const _confAvail = (typeof getAvailability==='function') ? getAvailability() : null;
+      for(const s of planOp.semaines){
+        try{ s.faisabilite = await _faisabiliteSemaine(s.wk, _confAvail); }
+        catch(_){ s.faisabilite = null; }
+      }
+    }
   }catch(e){ console.error('planOperationnel',e); }
 
   // Vue COMMANDES REPLIABLES : une carte par commande (client + chevron), dépliant l'enchaînement
@@ -30877,6 +30945,22 @@ function toggleOptimBatch(on){
   else if(typeof goView==='function') goView('agenda');
 }
 
+// [FAISABILITÉ — BANDEAU] Rend le verdict d'une semaine sous forme d'un bandeau compact :
+// vert « tient dans tes créneaux », orange « déborde de X h ». Rien si pas de dispo renseignée
+// (on n'affiche pas de faux verdict). fa = sortie de _faisabiliteSemaine.
+function _faisabiliteBandeau(fa){
+  if(!fa) return '';
+  if(!(fa.tempsDispo>0)){
+    // Pas de plages de travail définies sur la semaine → on invite à les renseigner, sans alarmer.
+    return `<div style="margin-top:6px;font-size:.74rem;color:#9a8576">⏱ Disponibilité non définie sur cette semaine — <span class="act" onclick="availEditor()">définir mes créneaux</span> pour vérifier que ça tient.</div>`;
+  }
+  const fmtH = m => m>=60 ? `${Math.floor(m/60)}h${String(Math.round(m%60)).padStart(2,'0')}` : `${Math.round(m)} min`;
+  if(fa.depassement){
+    return `<div style="margin-top:6px;padding:5px 9px;border-radius:8px;font-size:.76rem;background:#fdf4e6;color:#8a5a0f">⚠️ <b>Ça déborde de ${fmtH(fa.debordementMin)}</b> sur tes créneaux de la semaine (${fmtH(fa.tempsTotal)} à faire pour ${fmtH(fa.tempsDispo)} dispo · ${fa.chargePct}%). À étaler ou anticiper.</div>`;
+  }
+  return `<div style="margin-top:6px;padding:5px 9px;border-radius:8px;font-size:.76rem;background:#eef6ee;color:#3f7d52">✓ <b>Tient dans tes créneaux</b> (${fmtH(fa.tempsTotal)} à faire pour ${fmtH(fa.tempsDispo)} dispo · ${fa.chargePct}%).</div>`;
+}
+
 function _agendaPlanOpSection(plan){
   if(!plan || !plan.semaines || !plan.semaines.length) return '';
   const srcBadge = src => {
@@ -30918,7 +31002,7 @@ function _agendaPlanOpSection(plan){
         : (g.horaireImpossible ? `<div style="font-size:.72rem;color:#b3261e;margin-top:2px">🕐 Pas de créneau dispo avant le montage (à anticiper)</div>` : '');
       return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick='planLancerGanache(${JSON.stringify(g.parfum)}, ${(+_qLance)||0})' title="Lancer la production de cette ganache + chrono">
       <div style="display:flex;align-items:center;width:100%">
-        <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qteProduite||g.qte} mac</span>${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">📦 dont ${g.surplusStock} stock</span>`:''}</span></div>
+        <div style="flex:1;display:flex;align-items:center">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#7a4b2a">${g.qteProduite||g.qte} mac</span>${g.aMarche?` <span style="background:#c97a2a;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="Contient une estimation marché (compo apprise sur l'historique)">⛺ estimé</span>`:''}${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px">📦 dont ${g.surplusStock} stock</span>`:''}</span></div>
         <div style="display:flex;align-items:center;gap:5px"><span style="color:#aa7c39;font-size:.68rem;font-weight:600">▶ lancer</span><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
       </div>
       ${horaireGan}
@@ -30956,7 +31040,7 @@ function _agendaPlanOpSection(plan){
         : '';
       return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick='planLancerMontage(${JSON.stringify(g.parfum)}, ${(+_qMont)||0})' title="Assembler ce parfum (coques + garniture déjà produites)">
       <div style="display:flex;align-items:center;width:100%">
-        <div style="flex:1;display:flex;align-items:center;flex-wrap:wrap">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qteProduite||g.qte} mac</span>${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="${g.qte} commandés + ${g.surplusStock} pour le stock">📦 dont ${g.surplusStock} stock</span>`:''} <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span>${(g.stock>0)?`<div style="font-size:.7rem;color:#9a8576;width:100%;margin-top:1px">commandé <b>${g.qte}</b> · 📦 en stock <b style="color:#3f7d52">${g.stock}</b> · à produire <b>${g.besoinNet}</b></div>`:''}</span></div>
+        <div style="flex:1;display:flex;align-items:center;flex-wrap:wrap">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qteProduite||g.qte} mac</span>${g.aMarche?` <span style="background:#c97a2a;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="Contient une estimation marché (compo apprise sur l'historique)">⛺ estimé</span>`:''}${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="${g.qte} commandés + ${g.surplusStock} pour le stock">📦 dont ${g.surplusStock} stock</span>`:''} <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span>${(g.stock>0)?`<div style="font-size:.7rem;color:#9a8576;width:100%;margin-top:1px">commandé <b>${g.qte}</b> · 📦 en stock <b style="color:#3f7d52">${g.stock}</b> · à produire <b>${g.besoinNet}</b></div>`:''}</span></div>
         <div style="display:flex;align-items:center;gap:5px"><span style="color:#3f7d52;font-size:.68rem;font-weight:600">▶ monter</span><b>${fmtMin(g.dureeMin)}</b> ${srcBadge(g.source)}</div>
       </div>
       ${horaireMont}
@@ -30969,6 +31053,7 @@ function _agendaPlanOpSection(plan){
       <div style="border-bottom:2px solid #d8c4a8;padding-bottom:8px;margin-bottom:12px">
         <h3 style="margin:0;font-size:1.25rem;color:var(--bordeaux);text-transform:capitalize;font-weight:700;line-height:1.2">${esc(s.label)}</h3>
         <div style="font-size:.76rem;color:#9a8576;margin-top:3px">${s.totalMacarons} macaron${s.totalMacarons>1?'s':''} · ${fmtMin(s.totalMin)} de travail</div>
+        ${_faisabiliteBandeau(s.faisabilite)}
       </div>
       <div style="margin-bottom:10px">
         <div style="font-weight:600;color:#7a4b2a;margin-bottom:4px">🍫 Ganaches <span style="font-weight:400;color:#9a8576;font-size:.76rem">· une par parfum · ${fmtMin(s.totalGanacheMin)}</span></div>
@@ -31186,6 +31271,59 @@ async function buildMutualisationSemaine(horizonJours){
     });
   }
 
+  // [PLAN MARCHÉS] Injection des marchés à venir, VENTILÉS par parfum (marketForecast) si l'historique
+  // est fiable (≥ SEUIL_MARCHE_FIABLE marchés clos). Le montage est calé HORAIREMENT par le cœur neutre
+  // retroplanningCaleParfums — AUCUN pseudo-objet commande : on passe directement (date, heure, parfums).
+  // Les contributions marché sont marquées marche:true / marketId pour rester distinctes des commandes.
+  try{
+    const markets = await db.markets.toArray().catch(()=>[]);
+    let fc=null; try{ fc = await marketForecast(); }catch(_){ fc=null; }
+    const repartition = (fc && fc.repartition) ? fc.repartition : [];
+    const nbClos = fc ? fc.nbMarches : 0;
+    const todayStr = today().slice(0,10);
+    const futurs = markets.filter(m=> m.date && String(m.date).slice(0,10) >= todayStr
+      && m.statut!=='clos' && (+m.prevuQte||0)>0);
+    for(const mk of futurs){
+      const pseudo = _pseudoCommandeDepuisMarche(mk, repartition, nbClos);
+      if(!pseudo) continue;   // historique insuffisant ou compo non exploitable → pas de ventilation
+      const parfumsQtes = pseudo.lignes[0].parfums.map(p=>({nom:p.nom, qte:p.qte}));
+
+      // Montage calé horairement par le cœur NEUTRE (date du marché + heure d'ouverture + parfums).
+      let montageKey=null, montageISO=null;
+      try{
+        const cale = await retroplanningCaleParfums(pseudo.date, pseudo.heureLivraison, parfumsQtes, recipes);
+        if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
+          const m = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
+          if(m){ montageKey = new Date(m.debut).toISOString().slice(0,10); montageISO = m.debut; }
+        }
+      }catch(_){}
+      if(!montageKey) montageKey = pseudo.date;   // repli : date du marché
+
+      const dMontage = new Date(montageKey+'T12:00:00');
+      if(dMontage < today0 || dMontage > horizon) continue;
+
+      const wk = _isoWeekKey(montageKey) || montageKey;
+      const slotWk = (parSemaine[wk] ||= { parfums:{}, ids:new Set(), aCongeler:[], montageRef:null, montageRefISO:null });
+      if(!slotWk.montageRef || montageKey < slotWk.montageRef){
+        slotWk.montageRef = montageKey;
+        slotWk.montageRefISO = montageISO || (montageKey+'T14:00:00');
+      }
+      parfumsQtes.forEach(p=>{
+        const nom=(p.nom||'').trim(); const qte=+p.qte||0;
+        if(!nom || qte<=0) return;
+        const rec = recipeByParfum(nom);
+        const gDelai = rec && rec.ganacheDelaiH!=null ? +rec.ganacheDelaiH : null;
+        const slot = (slotWk.parfums[nom] ||= { qte:0, ganacheDelaiH:gDelai, commandes:[] });
+        slot.qte += qte;
+        if(slot.ganacheDelaiH==null && gDelai!=null) slot.ganacheDelaiH=gDelai;
+        // marche:true + marketId : contribution marché, JAMAIS confondue avec une commande (pas d'orderId).
+        slot.commandes.push({ marche:true, marketId:mk.id, client:'⛺ '+(mk.nom||'Marché'),
+          qte, montage:montageKey, livraison:pseudo.date, aCongeler:false, sortir:null, estime:true });
+      });
+      slotWk.ids.add('mk'+mk.id);   // id distinct (string) — pas de collision avec un orderId numérique
+    }
+  }catch(e){ console.error('buildMutualisation.marches', e); }
+
   const semaines = Object.keys(parSemaine).sort().map(wk=>{
     const s = parSemaine[wk];
     const parfums = Object.keys(s.parfums).sort().map(nom=>{
@@ -31382,6 +31520,55 @@ function arrondirPalierProduction(qte){
   return { produire, surplus: produire - qte, paliers };
 }
 
+// [FAISABILITÉ PAR SEMAINE] Verdict « tient / déborde » d'une semaine du plan, en réutilisant
+// le moteur de faisabilité existant (generateProductionOrder) borné aux dates de la semaine, et
+// le temps de travail réel disponible (plages A/B). Source de vérité UNIQUE : aucun calcul de
+// charge réécrit, on appelle le même moteur que l'écran Plan de production.
+//   wk = clé ISO 'YYYY-Www'. Renvoie null si bornes illisibles, sinon
+//   { lundi, dim, debut, tempsTotal, tempsDispo, depassement, debordementMin, chargePct }.
+async function _faisabiliteSemaine(wk, conf){
+  const m = /(\d{4})-W(\d{2})/.exec(wk||'');
+  if(!m) return null;
+  // Bornes ISO de la semaine (même calcul que l'affichage des semaines du plan).
+  const simple = new Date(Date.UTC(+m[1],0,1+(+m[2]-1)*7));
+  const dow = (simple.getUTCDay()+6)%7;
+  const lundi = new Date(simple); lundi.setUTCDate(simple.getUTCDate()-dow);
+  const dim = new Date(lundi); dim.setUTCDate(lundi.getUTCDate()+6);
+  const lundiStr = lundi.toISOString().slice(0,10);
+  const dimStr = dim.toISOString().slice(0,10);
+  // On ne compte jamais le passé : la charge part d'aujourd'hui pour la semaine en cours.
+  const todayStr = today().slice(0,10);
+  const debut = (lundiStr < todayStr) ? todayStr : lundiStr;
+  if(dimStr < todayStr) return null;   // semaine entièrement passée → pas de verdict
+
+  // Temps de travail réellement disponible sur la fenêtre [debut, dim] selon les plages A/B.
+  conf = conf || ((typeof getAvailability==='function') ? getAvailability() : null);
+  let tempsDispo = 0;
+  try{
+    const cur = new Date(debut+'T00:00:00');
+    const end = new Date(dimStr+'T00:00:00');
+    let guard = 0;
+    while(cur <= end && guard++ < 60){
+      tempsDispo += (typeof availMinutesOnDay==='function') ? availMinutesOnDay(cur, null, null, conf) : 0;
+      cur.setDate(cur.getDate()+1);
+    }
+  }catch(_){ tempsDispo = 0; }
+
+  // Verdict via le moteur existant (commandes + marchés + stock), borné à la semaine.
+  let plan;
+  try{ plan = await generateProductionOrder(debut, dimStr, tempsDispo); }
+  catch(_){ return null; }
+  if(!plan) return null;
+  return {
+    lundi:lundiStr, dim:dimStr, debut,
+    tempsTotal: plan.tempsTotal||0,
+    tempsDispo,
+    depassement: tempsDispo>0 && (plan.tempsTotal||0) > tempsDispo,
+    debordementMin: Math.max(0, (plan.tempsTotal||0) - tempsDispo),
+    chargePct: tempsDispo>0 ? Math.round((plan.tempsTotal||0)/tempsDispo*100) : 0
+  };
+}
+
 function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCaleParCmd, montageCaleParCmd){
   ganacheCaleParCmd = ganacheCaleParCmd || {};
   montageCaleParCmd = montageCaleParCmd || {};
@@ -31444,7 +31631,8 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
       const g = tempsGanache(p.nom);
       const pi = prodInfo[p.nom] || {commande:p.qte, produire:p.qte, surplus:0};
       return { parfum:p.nom, qte:p.qte, qteProduite:pi.produire, surplusStock:pi.surplus, paliers:pi.paliers, dureeMin:g.min, source:g.source,
-               commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId})) };
+               aMarche: p.commandes.some(c=>c.marche),
+               commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId, marche:c.marche, marketId:c.marketId})) };
     });
     const montage = s.parfums.map(p=>{
       const m = tempsMontageBatch(p.nom);
@@ -31471,7 +31659,8 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
       }
       return { parfum:p.nom, qte:p.qte, qteProduite:qp, stock:pi.stock, besoinNet:pi.besoinNet, surplusStock:pi.surplus, paliers:pi.paliers, parBatchMin:m.perBatch, source:m.source,
                dureeMin: round1(base + specMin), baseMin:base, specMin:round1(specMin), specDetail,
-               commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId})) };
+               aMarche: p.commandes.some(c=>c.marche),
+               commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId, marche:c.marche, marketId:c.marketId})) };
     });
     const lignesCoques = s.parfums.map(p=>({ parfum:p.nom, besoinNet:qProd(p.nom) }));
     const meringues = (typeof _packMeringues==='function') ? _packMeringues(lignesCoques) : [];
@@ -31517,7 +31706,9 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
     ganache.forEach(g=>{
       let best=null;
       (g.commandes||[]).forEach(c=>{
-        const cal = c.orderId!=null ? ganacheCaleParCmd[c.orderId] : null;
+        // Clé unifiée : orderId pour une commande, 'mk'+marketId pour une contribution marché.
+        const ckey = (c.orderId!=null) ? c.orderId : (c.marche && c.marketId!=null ? 'mk'+c.marketId : null);
+        const cal = ckey!=null ? ganacheCaleParCmd[ckey] : null;
         if(cal && cal.debut){
           const d = new Date(cal.debut);
           if(!best || d < new Date(best.debut)) best = { debut:cal.debut, fin:cal.fin };
@@ -31569,7 +31760,8 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
     montage.forEach(g=>{
       let best=null;
       (g.commandes||[]).forEach(c=>{
-        const cal = c.orderId!=null ? montageCaleParCmd[c.orderId] : null;
+        const ckey = (c.orderId!=null) ? c.orderId : (c.marche && c.marketId!=null ? 'mk'+c.marketId : null);
+        const cal = ckey!=null ? montageCaleParCmd[ckey] : null;
         if(cal && cal.debut){
           const d = new Date(cal.debut);
           if(!best || d < new Date(best.debut)) best = { debut:cal.debut, fin:cal.fin };
