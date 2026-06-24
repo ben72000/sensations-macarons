@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v837';
+const APP_VERSION = 'v839';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -31114,8 +31114,12 @@ function _faisabiliteBandeau(fa, wk){
     ? `⚠️ <b>Ça déborde de ${fmtH(fa.debordementMin)}</b> sur tes créneaux (${fmtH(fa.tempsTotal)} à faire pour ${fmtH(fa.tempsDispo)} dispo · ${fa.chargePct}%).`
     : `✓ <b>Tient dans tes créneaux</b> (${fmtH(fa.tempsTotal)} à faire pour ${fmtH(fa.tempsDispo)} dispo · ${fa.chargePct}%).`;
   const cta = fa.depassement ? 'comment l\'organiser ? →' : 'voir le déroulé →';
-  // Bandeau cliquable + zone de dépli (remplie à la demande par planSemaineToggle).
-  return `<div class="faiz-band" data-wk="${wkAttr}" onclick="planSemaineToggle(${JSON.stringify(wk||'')}, this)"
+  // [FIX onclick] On passe wk entre guillemets SIMPLES (l'attribut onclick est en guillemets doubles).
+  // JSON.stringify produisait des guillemets DOUBLES qui fermaient l'attribut → handler cassé, aucun
+  // tap. On échappe apostrophe/antislash pour les semaines au libellé exotique. Même garde-fou que les
+  // onclick du plan détaillé (clés plutôt que noms à apostrophe).
+  const wkJs = String(wk||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return `<div class="faiz-band" data-wk="${wkAttr}" onclick="planSemaineToggle('${wkJs}', this)"
       style="margin-top:8px;padding:8px 11px;border-radius:9px;font-size:.78rem;background:${bg};color:${col};cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none">
       <span style="flex:1">${verdict}</span>
       <span class="faiz-cta" style="font-weight:700;text-decoration:underline;text-underline-offset:2px;white-space:nowrap">${cta}</span>
@@ -31457,7 +31461,11 @@ function _agendaPlanOpSection(plan){
     return `<div class="panel" style="margin-bottom:14px">
       <div style="border-bottom:2px solid #d8c4a8;padding-bottom:8px;margin-bottom:12px">
         <h3 style="margin:0;font-size:1.25rem;color:var(--bordeaux);text-transform:capitalize;font-weight:700;line-height:1.2">${esc(s.label)}</h3>
-        <div style="font-size:.76rem;color:#9a8576;margin-top:3px">${s.totalMacarons} macaron${s.totalMacarons>1?'s':''} · ${fmtMin(s.totalMin)} de travail</div>
+        <div style="font-size:.76rem;color:#9a8576;margin-top:3px">
+          <div><b style="color:#7a6a60">${s.totalMacaronsCommande}</b> macaron${s.totalMacaronsCommande>1?'s':''} pour commande${(s.totalMacaronsEnStock>0)?` <span style="font-size:.68rem;color:#9a8576">(dont ${s.totalMacaronsEnStock} en stock)</span>`:''}</div>
+          ${(s.totalMacaronsReassort>0)?`<div style="color:#c97a2a"><b>${s.totalMacaronsReassort}</b> macaron${s.totalMacaronsReassort>1?'s':''} pour réassort</div>`:''}
+          <div style="margin-top:1px">${fmtMin(s.totalMin)} de travail</div>
+        </div>
         ${_faisabiliteBandeau(s.faisabilite, s.wk)}
       </div>
       <div style="margin-bottom:10px">
@@ -32220,10 +32228,24 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
     const totalMontageQteCommande = montage.reduce((a,g)=>a+(+g.qteCommande||0),0);
     const totalMontageQteReassort = montage.reduce((a,g)=>a+(+g.qteReassort||0),0);
     const totalCoquesMin  = coques.reduce((a,m)=>a+m.dureeMin,0);
-    const totalMacarons   = s.parfums.reduce((a,p)=>a+p.qte,0);
+    // [TOTAL MACARONS] Trois notions distinctes pour un affichage clair selon l'optimisation :
+    // - commandé  = ce que les clients ont demandé (p.qte brut), invariant ;
+    // - produit   = ce qu'on fabrique réellement (somme des 'produire' = besoin net + surplus réassort) ;
+    // - réassort  = produit − commandé net = le surplus d'arrondi batch (0 si optim désactivée).
+    // L'affichage montre commandé seul si pas de réassort, sinon « commandé + réassort = produit ».
+    const totalMacaronsCommande = s.parfums.reduce((a,p)=>a+(+p.qte||0),0);
+    const totalMacaronsProduits = s.parfums.reduce((a,p)=>a+qProd(p.nom),0);
+    const totalMacaronsReassort = Math.max(0, totalMacaronsProduits - totalMacaronsCommande);
+    // Part des commandes déjà couverte par le stock fini (commandé − besoin net à produire), bornée.
+    const totalMacaronsEnStock = s.parfums.reduce((a,p)=>{
+      const pi = prodInfo[p.nom]; const bn = pi ? +pi.besoinNet||0 : +p.qte||0;
+      return a + Math.max(0, (+p.qte||0) - bn);
+    }, 0);
+    const totalMacarons   = totalMacaronsCommande;   // rétrocompat : reste le commandé par défaut
     return { wk:s.wk, label:s.label, ganache, coques, montage,
              totalGanacheMin, totalCoquesMin, totalMontageMin,
              totalMontageQteCommande, totalMontageQteReassort,
+             totalMacaronsCommande, totalMacaronsProduits, totalMacaronsReassort, totalMacaronsEnStock,
              totalMin: totalGanacheMin+totalMontageMin+totalCoquesMin, totalMacarons };
   });
   return { semaines, horizonJours: mut.horizonJours||45 };
