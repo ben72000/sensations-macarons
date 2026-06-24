@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v835';
+const APP_VERSION = 'v836';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -28236,9 +28236,43 @@ async function prodRenderTempsParfum(){
     </div>`;
   }).join('');
 
+  // [TEMPS DE RÉFÉRENCE] Rappel des valeurs utilisées en fallback (recette/défaut) + reset manuel.
+  // Ces temps sont auto-appris (moyenne mobile) à chaque session validée. En cas de dérive, le bouton
+  // les réinitialise aux valeurs par défaut. Le plancher de plausibilité empêche désormais une nouvelle
+  // dérive sous le crédible (montage ≥ 15 min/batch).
+  const _tref = getMrpTimes();
+  const _lbl = { coques:'Coques (par meringue)', montage:'Montage (par batch de 60)', ganache:'Ganache (par batch)', vaisselle:'Vaisselle (par batch)', entretien:'Entretien (par session)' };
+  const _trefRows = Object.keys(_lbl).map(k=>{
+    const def = MRP_TIME_DEFAULTS[k].estimatedTime, cur = _tref[k].estimatedTime;
+    const modifie = (cur!==def);
+    return `<div class="sum-box"><span>${_lbl[k]}</span><b>${cur} min${modifie?` <span style="color:#9a8576;font-weight:400;font-size:.78rem">(défaut ${def})</span>`:''}</b></div>`;
+  }).join('');
+  const trefCard = `<div class="panel" style="margin-bottom:12px">
+    <div style="font-weight:600;margin-bottom:8px">⏱️ Temps de référence (fallback)</div>
+    <p class="note" style="margin-top:0">Valeurs utilisées quand aucune mesure fiable n'est disponible. Auto-apprises à chaque session, avec un plancher de plausibilité pour éviter les dérives.</p>
+    ${_trefRows}
+    <button class="btn ghost sm" style="margin-top:8px" onclick="mrpTimesResetConfirm()">↩︎ Réinitialiser aux valeurs par défaut</button>
+  </div>`;
+
   host.innerHTML = `
     <div class="banner" style="background:#f4f7fb;border-color:#cdd9e6;margin-bottom:12px">🎯 <div>Temps <b>réellement mesurés</b> à l'atelier sur les 90 derniers jours, séparés par <b>étape</b> et par <b>parfum</b>. Plus tu chronomètres en rattachant le parfum, plus ces temps deviennent fiables (✓). Ils nourriront le plan de production : <b>mesuré si fiable, sinon ta saisie recette, sinon valeur par défaut</b>.</div></div>
+    ${trefCard}
     ${sections}`;
+}
+
+// Reset manuel des temps de référence (avec confirmation, car efface l'historique d'apprentissage).
+function mrpTimesResetConfirm(){
+  openModal(`<h3>↩︎ Réinitialiser les temps de référence</h3>
+    <p>Cela remet les temps de fallback (coques, montage, ganache…) à leurs <b>valeurs par défaut</b> et efface l'historique d'apprentissage (moyenne mobile). Tes <b>chronos et sessions</b> ne sont pas touchés — les temps se ré-apprendront aux prochaines productions.</p>
+    <p class="note">Utile si une mesure aberrante a faussé une estimation.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="mrpTimesResetDo()">↩︎ Réinitialiser</button></div>`);
+}
+function mrpTimesResetDo(){
+  try{ localStorage.removeItem(MRP_TIME_KEY); }catch(_){}
+  closeModal();
+  toast('Temps de référence réinitialisés ✓');
+  if(typeof prodRenderTempsParfum==='function' && typeof _atelierTab!=='undefined' && _atelierTab==='temps') prodRenderTempsParfum();
 }
 
 async function prodTempsParParfum(jours){
@@ -32690,15 +32724,35 @@ const MRP_TIME_DEFAULTS = {
   vaisselle: { estimatedTime: 10, totalRealTime: 0, completions: 0 },  // par batch — charge de prod
   entretien: { estimatedTime: 15, totalRealTime: 0, completions: 0 }   // par SESSION — indép. du volume
 };
+// [PLANCHERS DE PLAUSIBILITÉ] Temps minimaux physiquement crédibles par étape (par batch/meringue).
+// L'auto-apprentissage (validateTask) peut, sur une mesure aberrante (chrono lancé/arrêté trop vite),
+// faire descendre estimatedTime sous le crédible (ex. montage à 1 min/batch). Ces planchers servent à
+// (1) refuser d'apprendre une valeur sous le seuil et (2) réparer une valeur déjà corrompue au chargement.
+// Seul le montage a une valeur métier confirmée (Benjamin : garnir 60 macarons ≥ 15 min). Les autres
+// sont laissés à 0 (pas de plancher) tant qu'aucune valeur sûre n'est établie — on ne devine pas.
+const MRP_TIME_FLOOR = {
+  coques:    0,
+  montage:   15,   // min/batch — garnir 60 macarons ne peut pas descendre sous 15 min (donnée métier)
+  ganache:   0,
+  vaisselle: 0,
+  entretien: 0
+};
 function getMrpTimes(){
   try{
     const s=JSON.parse(localStorage.getItem(MRP_TIME_KEY)||'{}');
     const out={};
+    let repare=false;
     for(const k of Object.keys(MRP_TIME_DEFAULTS)){
       const d=MRP_TIME_DEFAULTS[k], v=s[k]||{};
-      out[k]={ estimatedTime: v.estimatedTime!=null?+v.estimatedTime:d.estimatedTime,
-               totalRealTime: +v.totalRealTime||0, completions: +v.completions||0 };
+      let est = v.estimatedTime!=null ? +v.estimatedTime : d.estimatedTime;
+      // [AUTO-RÉPARATION] Si une valeur APPRISE est tombée sous le plancher physique (apprentissage
+      // faussé par une mesure aberrante), on la ramène au défaut codé. Ne touche pas aux étapes sans
+      // plancher (floor=0). Réparation silencieuse et persistée pour ne pas se répéter à chaque appel.
+      const floor = MRP_TIME_FLOOR[k]||0;
+      if(floor>0 && est<floor){ est = d.estimatedTime; repare=true; }
+      out[k]={ estimatedTime: est, totalRealTime: +v.totalRealTime||0, completions: +v.completions||0 };
     }
+    if(repare){ try{ localStorage.setItem(MRP_TIME_KEY, JSON.stringify(out)); }catch(_){} }
     return out;
   }catch(e){ return JSON.parse(JSON.stringify(MRP_TIME_DEFAULTS)); }
 }
@@ -33175,13 +33229,22 @@ function validateTask(taskType, actualMinutes){
   const t=getMrpTimes();
   if(!t[taskType]) return null;
   const m=Math.max(0, +actualMinutes||0);
+  // [GARDE-FOU APPRENTISSAGE] On refuse d'apprendre une mesure physiquement implausible (sous le
+  // plancher de l'étape) : un chrono lancé/arrêté trop vite ne doit pas corrompre l'estimation
+  // moyenne. La session n'est simplement pas prise en compte pour cette étape (on ne touche ni à
+  // estimatedTime ni au cumul). Sans plancher (floor=0), tout est appris comme avant.
+  const floor = MRP_TIME_FLOOR[taskType]||0;
+  if(floor>0 && m>0 && m<floor){ return null; }
   const e=t[taskType];
   e.completions += 1;
   e.totalRealTime = money2(e.totalRealTime + m);
   // moyenne mobile : on lisse l'estimation vers la moyenne réelle observée
   const moyenneReelle = e.totalRealTime / e.completions;
   // pondération douce (70% historique lissé, 30% dernière mesure) pour rester réactif sans osciller
-  e.estimatedTime = Math.round((moyenneReelle*0.7 + m*0.3));
+  let est = Math.round((moyenneReelle*0.7 + m*0.3));
+  // Filet de sécurité : même la moyenne lissée ne descend jamais sous le plancher.
+  if(floor>0 && est<floor) est = floor;
+  e.estimatedTime = est;
   saveMrpTimes(t);
   return e;
 }
