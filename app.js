@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v860';
+const APP_VERSION = 'v862';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -32113,7 +32113,11 @@ async function _planSemaineGenere(wk){
   // [niveau 2] Dates de livraison par parfum (marge réelle avant échéance) pour enrichir le diagnostic.
   let datesLiv = {};
   if(!S.ok){ try{ datesLiv = await _datesLivraisonParParfum(debut, dimStr); }catch(_){ datesLiv = {}; } }
-  return _planSemaineRenderHTML(S, plan, datesLiv);
+  // [SIMULATION « et si »] On mémorise le contexte de CETTE semaine pour pouvoir rejouer le scheduler
+  // (en mémoire, sans toucher db) quand l'utilisateur teste « et si je reporte ce montage ? ».
+  window._planSimCtx = window._planSimCtx || {};
+  window._planSimCtx[wk] = { daySpecs, plan, debut, fin:dimStr, datesLiv };
+  return _planSemaineRenderHTML(S, plan, datesLiv, wk);
 }
 
 // Rend le HTML du résultat schedulePersonalPlan (mot du chef + déroulé par jour), version « dépli ».
@@ -32121,7 +32125,45 @@ async function _planSemaineGenere(wk){
 // conseil actionnable : nomme ce qui ne rentre pas, puis propose des leviers CLASSÉS par pertinence,
 // chacun avec son POURQUOI. S'appuie uniquement sur des données sûres (tâches non placées + recettes
 // du plan), pas d'approximation. Renvoie '' si la semaine tient (ok).
-function _diagReorganisation(S, plan, datesLiv){
+// [SIMULATION « et si » — niveau 2] Rejoue le scheduler de la semaine `wk` en REPORTANT le montage du
+// parfum donné (coques + ganache restent produites). Tout est calculé EN MÉMOIRE depuis le contexte
+// mémorisé (_planSimCtx) : aucune écriture en base, aucune modification du plan réel. Affiche le verdict
+// (la semaine rentre-t-elle ?) et le planning re-simulé dans le conteneur dédié.
+function planSimReportMontage(wk, parfum){
+  const ctx = (window._planSimCtx||{})[wk];
+  const cont = document.getElementById('planSimResult-'+String(wk).replace(/[^0-9A-Za-z\-]/g,''));
+  if(!ctx){ if(cont) cont.innerHTML = `<div style="font-size:.74rem;color:#9a8576">Contexte de simulation expiré, rouvre le plan.</div>`; return; }
+  let Sav, Ssim;
+  try{
+    Sav  = schedulePersonalPlan(ctx.daySpecs, ctx.plan, {});                       // état actuel
+    Ssim = schedulePersonalPlan(ctx.daySpecs, ctx.plan, { skipMontage:[parfum] }); // état simulé
+  }catch(e){ console.error('planSimReportMontage', e); if(cont) cont.innerHTML = `<div style="font-size:.74rem;color:#a52a2a">Erreur de simulation.</div>`; return; }
+  const fmtH = m => m>=60 ? `${Math.floor(m/60)}h${String(Math.round(m%60)).padStart(2,'0')}` : `${Math.round(m)} min`;
+  const manqueAv  = Math.max(0, (Sav.totalActive||0)  - (Sav.totalAvail||0));
+  const manqueSim = Math.max(0, (Ssim.totalActive||0) - (Ssim.totalAvail||0));
+  const gagne = manqueAv - manqueSim;   // minutes de débordement résorbées par le report
+  let verdict;
+  if(Ssim.ok){
+    verdict = `<div style="background:#eef6ee;border:1px solid #bcdcc0;border-radius:8px;padding:8px 10px;font-size:.8rem;color:#256b2f">
+      ✓ <b>En reportant le montage ${esc(parfum)}, la semaine rentre.</b> Tu produis ses coques et sa ganache maintenant, tu l'assembles plus tard.</div>`;
+  } else {
+    verdict = `<div style="background:#fdf6ee;border:1px solid #e8cfa6;border-radius:8px;padding:8px 10px;font-size:.8rem;color:#8a5a0f">
+      ↩ Reporter ${esc(parfum)} libère <b>${fmtH(gagne)}</b>, mais il reste <b>${fmtH(manqueSim)}</b> de trop. Reporte aussi un autre montage ou ajoute du créneau.</div>`;
+  }
+  // Planning re-simulé (sans le diagnostic récursif : on passe un wk vide pour éviter de re-greffer des boutons).
+  let planningHTML = '';
+  try{ planningHTML = _planSemaineRenderHTML(Ssim, ctx.plan, ctx.datesLiv, null); }catch(_){}
+  if(cont){
+    cont.innerHTML = `${verdict}
+      <div style="margin-top:6px;border-left:3px solid #AA7C39;padding-left:9px">
+        <div style="font-size:.72rem;color:#9a7a4a;margin-bottom:3px;font-weight:600">Semaine simulée (montage ${esc(parfum)} reporté) :</div>
+        ${planningHTML}
+      </div>
+      <button class="btn ghost sm" onclick="this.parentElement.innerHTML=''" style="margin-top:6px">✕ Fermer la simulation</button>`;
+  }
+}
+
+function _diagReorganisation(S, plan, datesLiv, wk){
   if(!S || S.ok || !Array.isArray(S.unplaced) || !S.unplaced.length) return '';
   datesLiv = datesLiv || {};
   const fmtH = m => m>=60 ? `${Math.floor(m/60)}h${String(Math.round(m%60)).padStart(2,'0')}` : `${Math.round(m)} min`;
@@ -32180,10 +32222,21 @@ function _diagReorganisation(S, plan, datesLiv){
       pourquoi = `${fmtH(minM)} de montage ne rentrent pas. Vérifie les dates de livraison : ce qui n'est pas dû tout de suite peut passer plus tard.`;
     }
     const noms = details.map(d=>d.parfum);
+    // [SIMULATION « et si »] Pour chaque montage qui a de la MARGE (≥2 j), un bouton qui rejoue le
+    // scheduler sans ce montage et affiche le verdict + la semaine re-simulée. wk requis (contexte).
+    let simBtns = '';
+    if(wk){
+      const reportables = details.filter(d=>d.marge!=null && d.marge>=2);
+      if(reportables.length){
+        simBtns = `<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:5px">`
+          + reportables.map(d=>`<button class="btn ghost sm" onclick="planSimReportMontage('${String(wk).replace(/'/g,"")}','${esc(d.parfum).replace(/'/g,"&#39;")}')" title="Tester : reporter ce montage à plus tard">🔬 Et si je reporte ${esc(d.parfum)} ?</button>`).join('')
+          + `</div><div id="planSimResult-${String(wk).replace(/[^0-9A-Za-z\-]/g,'')}" style="margin-top:6px"></div>`;
+      }
+    }
     leviers.push({
       titre: `Repousse ${noms.length>1?'un montage':'le montage '+noms[0]} si l'échéance le permet.`,
       pourquoi,
-      action: null
+      action: simBtns || null
     });
   }
 
@@ -32194,7 +32247,18 @@ function _diagReorganisation(S, plan, datesLiv){
     action: `<button class="btn ghost sm" onclick="availEditor()" style="margin-top:4px">🗓️ Ajuster mes créneaux</button>`
   });
 
-  const tousNoms = S.unplaced.map(u=>`${u.type==='ganache'?'🍫':u.type==='montage'?'🧩':'🥚'} ${esc(u.label)} (${fmtH(u.dur)})`);
+  // [NIVEAU 2 — échéance par tâche] On accole à CHAQUE tâche qui déborde (ganache/coques/montage,
+  // pas seulement les montages) sa marge réelle jusqu'à la livraison la plus proche, via datesLiv déjà
+  // calculé. Lecture immédiate : ce qui presse vs ce qui peut attendre. Sans date connue → rien d'accolé.
+  const _echeanceTxt = u => {
+    const dLiv = datesLiv[u.parfum] || null;
+    if(!dLiv) return '';
+    const marge = joursEntre(todayStr, dLiv);
+    if(marge==null) return '';
+    if(marge<=1) return ` <span style="color:#a52a2a;font-weight:600">· dû ${marge<=0?'aujourd’hui':'demain'} ⚠</span>`;
+    return ` <span style="color:#3f7d52">· livré ${fmtDateCourt(dLiv)}, ${marge} j de marge</span>`;
+  };
+  const tousNoms = S.unplaced.map(u=>`${u.type==='ganache'?'🍫':u.type==='montage'?'🧩':'🥚'} ${esc(u.label)} (${fmtH(u.dur)})${_echeanceTxt(u)}`);
   const resume = tousNoms.join(' · ');
 
   const leviersHTML = leviers.map((lv,i)=>`
@@ -32214,7 +32278,7 @@ function _diagReorganisation(S, plan, datesLiv){
   </div>`;
 }
 
-function _planSemaineRenderHTML(S, plan, datesLiv){
+function _planSemaineRenderHTML(S, plan, datesLiv, wk){
   if(!S) return '';
   const JOURS = ['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
   const minToHM = mm => String(Math.floor(mm/60)).padStart(2,'0')+':'+String(mm%60).padStart(2,'0');
@@ -32241,7 +32305,7 @@ function _planSemaineRenderHTML(S, plan, datesLiv){
   const chef = insights
     ? `<div style="background:#faf6ef;border-radius:10px;padding:9px 11px;margin-bottom:8px"><div style="font-size:.86rem;font-weight:600;color:var(--bordeaux);margin-bottom:4px">🧑‍🍳 Le mot du chef</div><ul class="perso-insights" style="font-size:.82rem">${insights}</ul></div>` : '';
   // Diagnostic de réorganisation (uniquement quand ça déborde), placé EN TÊTE car c'est le plus actionnable.
-  const diag = (plan && !S.ok) ? _diagReorganisation(S, plan, datesLiv) : '';
+  const diag = (plan && !S.ok) ? _diagReorganisation(S, plan, datesLiv, wk) : '';
   return `${diag}${warn}${chef}${dayBlocks||'<div style="font-size:.78rem;color:#9a8576;padding:4px 2px">Aucune tâche planifiable avec ces créneaux.</div>'}`;
 }
 
@@ -34186,6 +34250,9 @@ function _totalAvail(blocks){ return blocks.reduce((s,b)=>s+(b.end-b.start),0); 
 // déclenche les temps passifs (cuisson/maturation) en tâche de fond.
 function schedulePersonalPlan(daySpecs, plan, opts){
   opts=opts||{};
+  // [SIMULATION] parfums dont le montage est reporté (voir garde plus bas). Accepte Set ou tableau.
+  const skipMontage = (opts.skipMontage instanceof Set) ? opts.skipMontage
+                    : new Set(Array.isArray(opts.skipMontage) ? opts.skipMontage : []);
   const blocks=_flattenAvailability(daySpecs);
   const times=getMrpTimes();
   const events=[];           // {date,start,end,label,kind,passive}
@@ -34218,14 +34285,20 @@ function schedulePersonalPlan(daySpecs, plan, opts){
     passiveAfter: (l.ganacheDelaiH>0 ? Math.round(l.ganacheDelaiH*60) : 0),
     note:`${l.garnitureManque?'⚠ poids garniture à renseigner. ':''}${l.garnitureG||'?'} g pour ${l.nbBatchs} batch(s). À préparer pendant la cuisson des coques pour ne pas perdre de temps machine.${l.ganacheDelaiH>0?` ⏱ Repos ${l.ganacheDelaiH} h avant montage.`:' (montage possible sans délai pour cette recette.)'}`
   }));
-  lignes.forEach(l=> active.push({
+  lignes.forEach(l=> {
+    // [SIMULATION « et si »] opts.skipMontage = ensemble de parfums dont on REPORTE le montage à
+    // plus tard (coques + ganache restent produites cette semaine). On ne génère alors pas la tâche
+    // montage : elle disparaît de active/ph3/totalActive. Défaut (Set vide) : comportement inchangé.
+    if(skipMontage.has(l.parfum)) return;
+    active.push({
     id:'montage:'+l.parfum, phase:3, label:`Montage ${l.parfum}`,
     dur:l.tMontage, type:'montage',
     after: (l.ganacheDelaiH>0 ? 'ganache:'+l.parfum : null),
     ganacheDelaiMin: (l.ganacheDelaiH>0 ? Math.round(l.ganacheDelaiH*60) : 0),  // repos requis avant montage
     coquesCongelObl: !!l.coquesCongelObl,                                        // congélation imposée par la recette
     note:`Garnissage de ${l.besoinNet} macarons. Nécessite coques cuites + ganache prête${l.ganacheDelaiH>0?` (reposée ${l.ganacheDelaiH} h)`:''}.${l.coquesCongelObl?' ❄️ Coques congelées obligatoires pour cette recette.':''} Lance la maturation de ${PROC.maturationH} h juste après.`
-  }));
+    });
+  });
 
   // 2) Placement glouton dans les blocs, en respectant l'ordre des phases.
   //    On garde un curseur par bloc ; une tâche ne peut pas être coupée (atomique)
