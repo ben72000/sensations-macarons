@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v914';
+const APP_VERSION = 'v915';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22870,18 +22870,23 @@ async function _diagReservationsStock(debutStr, finStr){
     let stockBrut = {};
     try{ const r = await mrpCurrentStockByParfum(); stockBrut = (r&&r.stock)||{}; }catch(_){ stockBrut={}; }
     const normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
-    // Borne de l'horizon de concurrence = debut + 7 j (même longueur que la fenêtre du verdict).
-    const dConc = new Date(debutStr+'T00:00:00'); dConc.setDate(dConc.getDate()+HORIZON_CONCURRENCE-1);
+    // Horizon de concurrence = les H jours QUI SUIVENT la fenêtre (depuis finStr, comme le helper du moteur).
+    const dConc = new Date(finStr+'T00:00:00'); dConc.setDate(dConc.getDate()+HORIZON_CONCURRENCE);
     const concStr = dConc.toISOString().slice(0,10);
-    // Besoin DANS la fenêtre [debut, fin] et réservations des commandes [debut, concurrence] hors fenêtre.
+    // Besoin DANS la fenêtre [debut, fin] et réservations des commandes (fin, concurrence] hors fenêtre.
     const besoinFenetre = {};      // commandes livrables dans [debut, fin]
     const reserveProche = {};      // commandes livrables dans (fin, concurrence] — déjà promises mais hors fenêtre
+    const _tracesProches = [];     // trace brute pour transparence : quelles commandes proches détectées
     orders.forEach(o=>{
       if(!o || !o.date) return;
       if((o.statut||'')==='Livrée' || normStatus(o.statut)==='Livrée') return;
       const dem = _orderParfumDemand(o);
       const dans = (o.date >= debutStr && o.date <= finStr);
       const proche = (o.date > finStr && o.date <= concStr);
+      if(proche){
+        const detail = Object.keys(dem).map(n=>n+' '+dem[n]).join(', ') || '(aucune demande)';
+        _tracesProches.push('#'+(o.id!=null?o.id:'?')+' '+o.date+' ['+(o.statut||'?')+'] → '+detail);
+      }
       for(const nom in dem){
         if(dans) besoinFenetre[nom] = (besoinFenetre[nom]||0) + dem[nom];
         else if(proche) reserveProche[nom] = (reserveProche[nom]||0) + dem[nom];
@@ -22906,7 +22911,8 @@ async function _diagReservationsStock(debutStr, finStr){
     lignes.sort((a,b)=> b.ecart - a.ecart);
     diagPublish('reservations', '📦 Stock disponible vs réservé', {
       'Fenêtre du verdict': debutStr+' → '+finStr,
-      'Horizon de concurrence': debutStr+' → '+concStr+' (7 j : au-delà, une commande ne réserve plus)',
+      'Horizon de concurrence': finStr+' → '+concStr+' (7 j APRÈS la fenêtre : au-delà, une commande ne réserve plus)',
+      'Commandes proches détectées (hors fenêtre)': _tracesProches.length ? _tracesProches : 'aucune commande entre '+finStr+' et '+concStr,
       'Lecture': 'phys=stock physique · besoin=commandes DANS la fenêtre · réservé=commandes proches HORS fenêtre qui puisent déjà dans ce stock · dispo réel=phys−réservé',
       'Par parfum (écart = ce que le verdict OUBLIE de produire)': lignes.length ? lignes.map(l=>
         `${l.nom} : phys ${l.phys}, besoin ${l.bes}, réservé proche ${l.res} → dispo réel ${l.dispoReel} · à produire actuel ${l.netActuel} vs corrigé ${l.netCorrige}${l.ecart>0?' ⚠ +'+l.ecart:''}`
@@ -35603,8 +35609,8 @@ async function _reservationsProche(startDate, endDate, horizonJours){
   const H = (horizonJours!=null) ? horizonJours : 7;
   const res = {};
   try{
-    // Borne haute de concurrence = endDate + (H-1) jours (même longueur que la fenêtre 7 j).
-    const dConc = new Date(endDate+'T00:00:00'); dConc.setDate(dConc.getDate()+H-1);
+    // Borne haute de concurrence = endDate + H jours (les H jours pleins QUI SUIVENT la fenêtre).
+    const dConc = new Date(endDate+'T00:00:00'); dConc.setDate(dConc.getDate()+H);
     const concStr = dConc.toISOString().slice(0,10);
     let orders = [];
     try{ orders = await db.orders.where('date').between(endDate, concStr, false, true).toArray(); }
