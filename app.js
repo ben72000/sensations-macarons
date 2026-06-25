@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v917';
+const APP_VERSION = 'v918';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -34507,6 +34507,75 @@ function arrondirPalierProduction(qte){
 // charge réécrit, on appelle le même moteur que l'écran Plan de production.
 //   wk = clé ISO 'YYYY-Www'. Renvoie null si bornes illisibles, sinon
 //   { lundi, dim, debut, tempsTotal, tempsDispo, depassement, debordementMin, chargePct }.
+// [CONVERGENCE MOTEUR 1 → MOTEUR 2 — étape 1, lecture seule] Somme les MINUTES DE TRAVAIL RÉELLES que
+// le moteur 2 (rétroplanning : buildMutualisationSemaine → _buildPlanOpAutonome) a calées dans la fenêtre
+// [debutStr, finStr]. Ces créneaux (window._planParfumCreneaux) sont EXACTEMENT ceux qu'affiche l'ordre du
+// jour : même besoin (stock MOBILISABLE déduit), même congélation, même placement horaire. But : permettre
+// à la faisabilité (étape 2) de juger la VRAIE production au lieu d'un second calcul divergent (moteur 1).
+//
+// Un créneau a {type, parfum, debut, fin, qte}. debut/fin sont des dates ISO parsables. On compte un créneau
+// si sa DATE LOCALE de début ∈ [debutStr, finStr] (peu importe sa semaine ISO : le rétroplanning peut caler
+// un montage hors de la semaine de livraison). Durée = (fin − debut) en minutes ; à défaut de fin, 0.
+//
+// AUTO-PEUPLEMENT : si le registre est vide (faisabilité appelée avant tout affichage du Plan/ordre du jour),
+// on le construit nous-mêmes via le même chemin que _ordreProductionDuJour (aucun écran, aucun DOM touché).
+// Lecture seule : ne modifie ni la base, ni le plan. Publie un diag de transparence.
+async function _chargeCreneauxFenetre(debutStr, finStr){
+  if(!debutStr || !finStr) return null;
+  const ymdOf = d => { const x=new Date(d); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+  const dureeMin = c => { try{ const a=new Date(c.debut).getTime(), b=new Date(c.fin).getTime();
+    return (isFinite(a)&&isFinite(b)&&b>a) ? Math.round((b-a)/60000) : 0; }catch(_){ return 0; } };
+  // 1) S'assurer que le registre des créneaux est peuplé (même pattern que _ordreProductionDuJour).
+  let reg = (typeof window!=='undefined' && window._planParfumCreneaux) ? window._planParfumCreneaux : null;
+  if(!reg || !Object.keys(reg).length){
+    // [GARDE ANTI-RÉCURSION] _buildPlanOpAutonome appelle _faisabiliteSemaine AVANT de peupler le registre.
+    // Sans ce flag, _faisabiliteFenetre → _chargeCreneauxFenetre → _buildPlanOpAutonome → _faisabiliteSemaine
+    // → … boucle. Pendant un peuplement déjà en cours, on NE relance PAS : on renvoie « registre vide » et la
+    // faisabilité retombe sur son repli (moteur 1). Le verdict final, lui, sera recalculé avec le registre plein.
+    if(typeof window!=='undefined' && window.__chargeCreneauxPeuplementEnCours){
+      return { tempsTotal:0, nbCreneaux:0, registreVide:true, parType:{}, recursionGuard:true };
+    }
+    try{
+      if(typeof buildMutualisationSemaine==='function' && typeof _buildPlanOpAutonome==='function'){
+        if(typeof window!=='undefined') window.__chargeCreneauxPeuplementEnCours = true;
+        const mut = await buildMutualisationSemaine(45);
+        await _buildPlanOpAutonome(mut);   // peuple window._planParfumCreneaux pour toutes les semaines
+        reg = (typeof window!=='undefined' && window._planParfumCreneaux) ? window._planParfumCreneaux : null;
+      }
+    }catch(e){ console.error('_chargeCreneauxFenetre auto-peuplement', e); }
+    finally{ if(typeof window!=='undefined') window.__chargeCreneauxPeuplementEnCours = false; }
+  }
+  if(!reg){ return { tempsTotal:0, nbCreneaux:0, registreVide:true, parType:{} }; }
+  // 2) Sommer les minutes des créneaux dont la date locale de début ∈ [debut, fin], toutes semaines confondues.
+  let tempsTotal=0, nbCreneaux=0; const parType={ ganache:0, coques:0, montage:0 };
+  const _detail=[];
+  for(const wk in reg){
+    const creneaux = reg[wk] || [];
+    creneaux.forEach(c=>{
+      if(!c || !c.debut) return;
+      const dloc = ymdOf(c.debut);
+      if(dloc < debutStr || dloc > finStr) return;   // hors fenêtre
+      const d = dureeMin(c);
+      tempsTotal += d; nbCreneaux++;
+      if(parType[c.type]!=null) parType[c.type]+=d; else parType[c.type]=d;
+      if(_detail.length<40) _detail.push(dloc+' '+c.type+(c.parfum?(' '+c.parfum):'')+' '+d+'min');
+    });
+  }
+  // 3) Diag transparence (rubrique technique) : ce que la faisabilité VERRA en étape 2.
+  try{
+    if(typeof diagPublish==='function'){
+      diagPublish('chargeCreneaux', '⏱️ Charge réelle (créneaux moteur 2)', {
+        'Fenêtre': debutStr+' → '+finStr,
+        'Source': 'window._planParfumCreneaux (rétroplanning, même registre que l\'ordre du jour)',
+        'Créneaux dans la fenêtre': nbCreneaux,
+        'Temps total (min)': tempsTotal,
+        'Détail par étape (min)': 'ganache '+(parType.ganache||0)+' · coques '+(parType.coques||0)+' · montage '+(parType.montage||0),
+        'Créneaux (échantillon)': _detail.length ? _detail : 'aucun créneau dans la fenêtre'
+      });
+    }
+  }catch(_){}
+  return { tempsTotal, nbCreneaux, registreVide:false, parType };
+}
 // [FAISABILITÉ — fenêtre explicite] Charge vs disponibilité sur une fenêtre [debut, fin] quelconque.
 // Utilisé par le verdict (fenêtre GLISSANTE de 7 jours : aujourd'hui + 6) et par _faisabiliteSemaine
 // (bornes ISO, pour l'écran Production). Ne compte jamais le passé : debut est déjà ≥ aujourd'hui côté appelant.
@@ -34524,17 +34593,50 @@ async function _faisabiliteFenetre(debutStr, finStr, conf, besoinAdditionnel){
       cur.setDate(cur.getDate()+1);
     }
   }catch(_){ tempsDispo = 0; }
-  let plan;
-  try{ plan = await generateProductionOrder(debutStr, finStr, tempsDispo, besoinAdditionnel); }
-  catch(_){ return null; }
-  if(!plan) return null;
+  // [CONVERGENCE — étape 2] La charge de référence est désormais celle des CRÉNEAUX RÉELS du moteur 2
+  // (rétroplanning : stock mobilisable déduit, congélation, placement horaire) — la VRAIE production que
+  // l'ordre du jour affiche. Le moteur 1 (generateProductionOrder) ne sert plus à JUGER la faisabilité.
+  //
+  // EXCEPTION besoinAdditionnel : une SIMULATION d'ajout (« et si j'ajoute X ») ne peut PAS être lue dans
+  // les créneaux (ils ne contiennent pas l'ajout fictif). Dans ce seul cas, on garde le moteur 1, seul
+  // capable d'intégrer un besoin additionnel. Sinon, charge = créneaux moteur 2.
+  const simulation = !!(besoinAdditionnel && typeof besoinAdditionnel==='object' && Object.keys(besoinAdditionnel).length);
+  let charge = 0, chargeM1 = null, source = '';
+  // Charge moteur 1 calculée DANS TOUS LES CAS pour le diag comparatif (transparence avant débranchement).
+  try{
+    const plan = await generateProductionOrder(debutStr, finStr, tempsDispo, besoinAdditionnel);
+    chargeM1 = plan ? (plan.tempsTotal||0) : null;
+  }catch(_){ chargeM1 = null; }
+  if(simulation){
+    if(chargeM1==null) return null;
+    charge = chargeM1; source = 'moteur 1 (simulation besoinAdditionnel)';
+  } else {
+    let cr = null;
+    try{ cr = await _chargeCreneauxFenetre(debutStr, finStr); }catch(_){ cr = null; }
+    if(cr && !cr.registreVide){ charge = cr.tempsTotal||0; source = 'créneaux moteur 2'; }
+    else { charge = chargeM1!=null ? chargeM1 : 0; source = 'moteur 1 (créneaux indisponibles — repli)'; }
+  }
+  // [DIAG COMPARATIF] Pour valider en réel avant de débrancher le moteur 1 (étape 3) : on montre les DEUX
+  // charges côte à côte et laquelle a été retenue. Écart = mesure de la divergence des deux moteurs.
+  try{
+    if(typeof diagPublish==='function'){
+      diagPublish('faisabiliteSource', '⚖️ Faisabilité — source de charge', {
+        'Fenêtre': debutStr+' → '+finStr,
+        'Charge RETENUE (min)': charge+'  ['+source+']',
+        'Charge moteur 1 (ancien calcul)': chargeM1!=null ? chargeM1+' min' : 'indisponible',
+        'Écart (créneaux − moteur 1)': (chargeM1!=null && !simulation) ? (charge-chargeM1)+' min' : 'n/a (simulation ou M1 absent)',
+        'Capacité (min)': tempsDispo,
+        'Lecture': 'La faisabilité juge désormais la VRAIE production (créneaux moteur 2), sauf en simulation d\'ajout où seul le moteur 1 sait intégrer le besoin fictif.'
+      });
+    }
+  }catch(_){}
   return {
     debut:debutStr, fin:finStr,
-    tempsTotal: plan.tempsTotal||0,
+    tempsTotal: charge,
     tempsDispo,
-    depassement: tempsDispo>0 && (plan.tempsTotal||0) > tempsDispo,
-    debordementMin: Math.max(0, (plan.tempsTotal||0) - tempsDispo),
-    chargePct: tempsDispo>0 ? Math.round((plan.tempsTotal||0)/tempsDispo*100) : 0
+    depassement: tempsDispo>0 && charge > tempsDispo,
+    debordementMin: Math.max(0, charge - tempsDispo),
+    chargePct: tempsDispo>0 ? Math.round(charge/tempsDispo*100) : 0
   };
 }
 async function _faisabiliteSemaine(wk, conf, besoinAdditionnel){
