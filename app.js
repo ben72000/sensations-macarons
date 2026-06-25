@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v918';
+const APP_VERSION = 'v919';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -34618,15 +34618,20 @@ async function _faisabiliteFenetre(debutStr, finStr, conf, besoinAdditionnel){
   }
   // [DIAG COMPARATIF] Pour valider en réel avant de débrancher le moteur 1 (étape 3) : on montre les DEUX
   // charges côte à côte et laquelle a été retenue. Écart = mesure de la divergence des deux moteurs.
+  // [FIX v919] Clé SUFFIXÉE par la fenêtre : _faisabiliteSemaine est appelé en BOUCLE par _buildPlanOpAutonome
+  // (une fois par semaine du plan). Avec une clé fixe, seul le DERNIER passage restait visible (diag trompeur
+  // montrant une autre semaine que le verdict). Une clé par fenêtre garde un diag distinct pour CHAQUE semaine.
   try{
     if(typeof diagPublish==='function'){
-      diagPublish('faisabiliteSource', '⚖️ Faisabilité — source de charge', {
+      const _ecart = (chargeM1!=null && !simulation) ? Math.round((charge-chargeM1)*10)/10 : null;
+      diagPublish('faisabiliteSource:'+debutStr+'_'+finStr, '⚖️ Faisabilité '+debutStr+'→'+finStr, {
         'Fenêtre': debutStr+' → '+finStr,
         'Charge RETENUE (min)': charge+'  ['+source+']',
-        'Charge moteur 1 (ancien calcul)': chargeM1!=null ? chargeM1+' min' : 'indisponible',
-        'Écart (créneaux − moteur 1)': (chargeM1!=null && !simulation) ? (charge-chargeM1)+' min' : 'n/a (simulation ou M1 absent)',
+        'Charge moteur 1 (ancien calcul)': chargeM1!=null ? (Math.round(chargeM1*10)/10)+' min' : 'indisponible',
+        'Écart (créneaux − moteur 1)': _ecart!=null ? (_ecart+' min') : 'n/a (simulation ou M1 absent)',
         'Capacité (min)': tempsDispo,
-        'Lecture': 'La faisabilité juge désormais la VRAIE production (créneaux moteur 2), sauf en simulation d\'ajout où seul le moteur 1 sait intégrer le besoin fictif.'
+        'Charge %': tempsDispo>0 ? Math.round(charge/tempsDispo*100)+' %' : 'n/a',
+        'Lecture': 'La faisabilité juge la VRAIE production (créneaux moteur 2), sauf simulation d\'ajout (moteur 1). Un diag par semaine du plan.'
       });
     }
   }catch(_){}
