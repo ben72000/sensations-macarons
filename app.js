@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v915';
+const APP_VERSION = 'v917';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22918,7 +22918,7 @@ async function _diagReservationsStock(debutStr, finStr){
         `${l.nom} : phys ${l.phys}, besoin ${l.bes}, réservé proche ${l.res} → dispo réel ${l.dispoReel} · à produire actuel ${l.netActuel} vs corrigé ${l.netCorrige}${l.ecart>0?' ⚠ +'+l.ecart:''}`
       ) : 'Aucun parfum avec stock/besoin/réservation sur la période',
       'Total macarons oubliés (écart)': lignes.reduce((t,l)=>t+l.ecart,0),
-      'État': 'Correction ACTIVE dans generateProductionOrder : le besoin déduit désormais le stock RÉELLEMENT disponible (physique − réservé proche). Neutre tant que réservé=0.'
+      'État': '[v917] Réservation ABANDONNÉE. Le moteur applique désormais le modèle POOL : besoin = demandes du pool − stock physique brut (voir diag « Pool de production & éclatement FIFO »). Ce diag-ci ne sert plus que d historique/comparaison.'
     });
     return lignes;
   }catch(e){ console.error('diagReservations',e); diagPublish('reservations','📦 Stock disponible — erreur',{erreur:String(e&&e.message||e)}); return null; }
@@ -33436,7 +33436,11 @@ async function _planSemaineGenere(wk){
   const debut = (lundiStr < todayStr) ? todayStr : lundiStr;
 
   // Plan de besoins de la semaine (commandes + marchés + stock), via le moteur commun.
-  const plan = await generateProductionOrder(debut, dimStr, 0);
+  // [POOL 14 j] L'ordre du jour anticipe la demande des 14 jours suivant la fenêtre : grâce à la
+  // congélation des macarons assemblés, on peut produire maintenant pour amortir les lancements de
+  // batch sans risque DLC. La FAISABILITÉ (verdict 7 j) reste calculée à part, sur la fenêtre stricte.
+  const POOL_HORIZON_JOURS = 14;
+  const plan = await generateProductionOrder(debut, dimStr, 0, null, {poolHorizonJours:POOL_HORIZON_JOURS});
   if(!plan || !plan.lignes.length){
     return `<div style="font-size:.8rem;color:#3f7d52;background:#eef6ee;padding:8px 10px;border-radius:8px">✓ Rien à produire cette semaine : ton stock couvre déjà commandes et marchés.</div>`;
   }
@@ -34543,7 +34547,11 @@ async function _faisabiliteSemaine(wk, conf, besoinAdditionnel){
   const dim = new Date(lundi); dim.setUTCDate(lundi.getUTCDate()+6);
   const lundiStr = lundi.toISOString().slice(0,10);
   const dimStr = dim.toISOString().slice(0,10);
-  const todayStr = today().slice(0,10);
+  // [DATE LOCALE — cohérence avec l'ordre du jour] today() repose sur toISOString() (UTC) et provoque un
+  // off-by-one en France le soir (UTC+1/+2) : la fenêtre se décalait d'un jour vs l'ordre du jour (qui, lui,
+  // utilise la date locale). On force la date LOCALE ici pour que verdict et ordre du jour voient le MÊME jour.
+  const _now = new Date();
+  const todayStr = _now.getFullYear()+'-'+String(_now.getMonth()+1).padStart(2,'0')+'-'+String(_now.getDate()).padStart(2,'0');
   if(dimStr < todayStr) return null;   // semaine entièrement passée → pas de verdict
   // [FENÊTRE GLISSANTE 7 JOURS] La SEMAINE COURANTE (celle qui contient aujourd'hui) est toujours vue
   // sur aujourd'hui + 6 jours — JAMAIS bornée au dimanche. Sinon, un dimanche, la fenêtre se réduirait à
@@ -35605,6 +35613,8 @@ async function _montageDureeParfum(parfum, besoinNet){
 // les retirer du stock avant de conclure « déjà couvert ». NEUTRE quand il n'y a aucune commande proche
 // (réservé=0 → stock inchangé). Règle métier (Benjamin) : horizon de concurrence = 7 jours (au-delà, le
 // stock a le temps d'être reconstitué, la commande ne réserve plus).
+// [DÉPRÉCIÉ v917] Plus appelée : le modèle POOL/FIFO (§4) a remplacé la réservation. Conservée
+// temporairement pour référence ; à supprimer une fois le pool validé sur appareil réel.
 async function _reservationsProche(startDate, endDate, horizonJours){
   const H = (horizonJours!=null) ? horizonJours : 7;
   const res = {};
@@ -35625,25 +35635,30 @@ async function _reservationsProche(startDate, endDate, horizonJours){
   }catch(e){ console.error('reservationsProche', e); }
   return res;
 }
-async function generateProductionOrder(startDate, endDate, tempsDisponibleMinutes, besoinAdditionnel){
+async function generateProductionOrder(startDate, endDate, tempsDisponibleMinutes, besoinAdditionnel, opts){
+  // [MODÈLE POOL — §4] Le besoin de production = (somme des demandes sur l'HORIZON) − stock physique BRUT.
+  // Plus de "réservation" de stock pour une commande future (mauvaise abstraction : cadenas inexistants).
+  // Le stock va naturellement à la commande la plus proche (FIFO) au moment de SERVIR ; ce calcul-ci ne
+  // s'occupe que du VOLUME à produire. opts.poolHorizonJours élargit la fenêtre de demande au-delà de
+  // endDate (anticipation rendue licite par la congélation des macarons assemblés) sans changer le stock.
+  opts = opts || {};
+  const _poolH = (+opts.poolHorizonJours>0) ? (+opts.poolHorizonJours) : 0;
+  let _endPool = endDate;
+  if(_poolH>0){
+    try{ const dP=new Date(endDate+'T00:00:00'); dP.setDate(dP.getDate()+_poolH); _endPool=dP.toISOString().slice(0,10); }
+    catch(_){ _endPool=endDate; }
+  }
   // requête ciblée sur l'index date (bornée) plutôt qu'un scan global
   // Requête bornée sur l'index date ; repli sur un filtre mémoire si l'index
   // n'est pas (encore) disponible dans la base locale (ancienne version non migrée).
   let orders;
   try{
-    orders = await db.orders.where('date').between(startDate, endDate, true, true).toArray();
+    orders = await db.orders.where('date').between(startDate, _endPool, true, true).toArray();
   }catch(e){
     const all = await db.orders.toArray();
-    orders = all.filter(o=> o.date && o.date>=startDate && o.date<=endDate);
+    orders = all.filter(o=> o.date && o.date>=startDate && o.date<=_endPool);
   }
   const {stock, recipes} = await mrpCurrentStockByParfum();
-  // [STOCK RÉELLEMENT DISPONIBLE] Le stock physique peut être déjà promis à des commandes proches hors
-  // fenêtre : on les déduit pour ne pas conclure à tort « déjà couvert ». NEUTRE si aucune réservation.
-  let _reserve = {};
-  try{ _reserve = await _reservationsProche(startDate, endDate, 7); }catch(_){ _reserve = {}; }
-  const _stockDispo = {};
-  for(const nom in stock){ _stockDispo[nom] = Math.max(0, (+stock[nom]||0) - (+_reserve[nom]||0)); }
-  for(const nom in _reserve){ if(_stockDispo[nom]==null) _stockDispo[nom] = 0; }
   const times = getMrpTimes();
   // [UNIFICATION MODÈLE DE TEMPS] Temps mesurés par parfum (mesuré fiable > recette > défaut), pour
   // que tMontage/tGanache des lignes suivent le MÊME modèle que le plan de travail détaillé
@@ -35668,7 +35683,7 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   let _mrpMarketTotal = 0;
   try{
     const _allMk = await db.markets.toArray().catch(()=>[]);
-    const _mkFenetre = _allMk.filter(m=> m.date && m.date>=startDate && m.date<=endDate && m.statut!=='clos' && (+m.prevuQte||0)>0);
+    const _mkFenetre = _allMk.filter(m=> m.date && m.date>=startDate && m.date<=_endPool && m.statut!=='clos' && (+m.prevuQte||0)>0);
     if(_mkFenetre.length){
       let _rep = [];
       try{ const _mf = await marketForecast(); _rep = (_mf && _mf.repartition) ? _mf.repartition : []; }catch(e){ _rep=[]; }
@@ -35707,8 +35722,9 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   for(const parfum in brut){
     const besoinBrut=brut[parfum];
     const enStockPhys=stock[parfum]||0;
-    const reserve=_reserve[parfum]||0;
-    const enStock=(_stockDispo[parfum]!=null) ? _stockDispo[parfum] : enStockPhys;  // net des réservations proches
+    // [POOL] Besoin = demande agrégée sur l'horizon − stock physique BRUT (aucune réservation).
+    const enStock=enStockPhys;
+    const reserve=0;
     const besoinNet=Math.max(0, besoinBrut-enStock);
     if(besoinNet<=0) continue;
     const nbBatchs=Math.ceil(besoinNet/TAILLE_BATCH_MACARONS);
@@ -35738,12 +35754,56 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   const tempsTotal = tMeringue + tGanacheTot + tMontageTot;
 
   const dispo = +tempsDisponibleMinutes||0;
+
+  // [DIAG POOL + ÉCLATEMENT FIFO — transparence §4] Publie, quand le pool est élargi, le raisonnement :
+  // demandes datées versées au pool, stock physique brut, besoin net (= pool − stock), puis l'éclatement
+  // FIFO (le stock le plus ancien va à la commande la plus PROCHE ; le frais produit couvre les suivantes).
+  // Lecture seule : n'altère ni le calcul ni la base. Vit dans la rubrique technique.
+  try{
+    if(_poolH>0 && typeof diagPublish==='function'){
+      // Demandes datées par parfum sur le pool (commandes seules ; marchés/simu déjà fondus dans brut).
+      const _demDatee = {};   // parfum -> [{date, qte}]
+      orders.forEach(o=>{ if(!o||!o.date||normStatus(o.statut)==='Livrée') return;
+        const dem=_orderParfumDemand(o);
+        for(const nom in dem){ (_demDatee[nom]=_demDatee[nom]||[]).push({date:o.date, qte:dem[nom]}); }
+      });
+      const _fifoLignes = [];
+      Object.keys(brut).sort().forEach(parfum=>{
+        const pool = brut[parfum];
+        const phys = +stock[parfum]||0;
+        const net = Math.max(0, pool - phys);
+        // Éclatement FIFO : on sert les commandes par date croissante, stock d'abord puis frais produit.
+        const cmds = (_demDatee[parfum]||[]).slice().sort((a,b)=> a.date<b.date?-1:a.date>b.date?1:0);
+        let stockRest = phys, fraisRest = net;
+        const trace = cmds.map(c=>{
+          let q=c.qte, duStock=Math.min(stockRest,q); stockRest-=duStock; q-=duStock;
+          let duFrais=Math.min(fraisRest,q); fraisRest-=duFrais;
+          const parts=[]; if(duStock>0) parts.push(duStock+' stock'); if(duFrais>0) parts.push(duFrais+' frais');
+          return c.date+' : '+c.qte+' ('+(parts.join(' + ')||'0')+')';
+        });
+        const marche = pool - cmds.reduce((t,c)=>t+c.qte,0);   // part marché/simu non datée par commande
+        _fifoLignes.push(
+          `${parfum} : pool ${pool}${marche>0?' (dont '+marche+' marché/simu)':''} − stock ${phys} = à produire ${net}`
+          + (trace.length ? '  ·  FIFO → '+trace.join(' | ') : '')
+        );
+      });
+      diagPublish('pool', '🫗 Pool de production & éclatement FIFO', {
+        'Fenêtre stricte (faisabilité)': startDate+' → '+endDate,
+        'Pool élargi (quoi produire)': startDate+' → '+_endPool+' (+'+_poolH+' j ; anticipation congelable)',
+        'Modèle': 'besoin = demandes du pool − stock physique BRUT (aucune réservation). Le stock va à la commande la plus PROCHE en FIFO ; le frais couvre les suivantes.',
+        'Par parfum': _fifoLignes.length ? _fifoLignes : 'Aucun besoin sur le pool',
+        'Total à produire (net)': lignes.reduce((t,l)=>t+(+l.besoinNet||0),0)
+      });
+    }
+  }catch(e){ console.error('diag pool', e); }
+
   return {lignes, meringues, nbMeringues:meringues.length, nbBatchsTotal,
     tMeringue, tGanacheTot, tMontageTot, tempsTotal, tempsDisponible:dispo,
     depassement: dispo>0 && tempsTotal>dispo,
     chargePct: dispo>0 ? Math.round(tempsTotal/dispo*100) : 0,
     warnings, nbParfums:lignes.length,
-    marketTotal: round3(_mrpMarketTotal)};   // demande marché intégrée au plan (info affichage)
+    marketTotal: round3(_mrpMarketTotal),   // demande marché intégrée au plan (info affichage)
+    poolHorizonJours:_poolH, poolDebut:startDate, poolFin:_endPool, fenetreFin:endDate};   // périmètre du pool (transparence/diag)
 }
 
 // [CONNEXION A] Vérifie si le stock de MATIÈRES PREMIÈRES suffit à exécuter le plan de production.
