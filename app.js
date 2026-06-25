@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v892';
+const APP_VERSION = 'v894';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22638,22 +22638,88 @@ async function _ordreProductionDuJour(){
   try{
     const td = (typeof today==='function') ? today().slice(0,10) : new Date().toISOString().slice(0,10);
     const wk = (typeof _isoWeekKey==='function') ? _isoWeekKey(td) : null;
-    if(!wk) return '';
-    const r = await _planSemaineSchedule(wk, {});
-    if(!r || !r.S || !Array.isArray(r.S.events)) return '';
-    const duJour = r.S.events.filter(e=> e.date===td && e.start!=null)
-                             .sort((a,b)=> a.start - b.start);
+    if(!wk || typeof _wkBornes!=='function') return '';
+    const b = _wkBornes(wk);
+    if(!b) return '';
+    // Plan de la semaine COMPLÈTE (depuis lundi, pas depuis today) pour voir toute la chaîne.
+    let plan;
+    try{ plan = await generateProductionOrder(b.lundiStr, b.dimStr, 0); }catch(_){ return ''; }
+    if(!plan || !plan.lignes || !plan.lignes.length) return '';
+    const conf = (typeof getAvailability==='function') ? getAvailability() : null;
+    const daySpecs = [];
+    const cur = new Date(b.lundiStr+'T00:00:00'); const end = new Date(b.dimStr+'T00:00:00');
+    let guard=0;
+    while(cur<=end && guard++<60){
+      const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
+      const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b2])=>b2>a);
+      if(slotsMin.length) daySpecs.push({ date:cur.toISOString().slice(0,10), slots:slotsMin });
+      cur.setDate(cur.getDate()+1);
+    }
+    const S = schedulePersonalPlan(daySpecs, plan, {});
+    if(!S || !Array.isArray(S.events)) return '';
+    const evs = S.events.filter(e=> e.start!=null);
+    const duJour = evs.filter(e=> e.date===td).sort((a,b2)=> a.start - b2.start);
     if(!duJour.length) return '';
-    const hm = mm => String(Math.floor(mm/60)).padStart(2,'0')+':'+String(mm%60).padStart(2,'0');
-    const icone = k => k==='meringue'?'🥚' : k==='ganache'?'🍫' : k==='montage'?'🧁' : '•';
+
+    const hm = mm => { const t=Math.round(+mm||0); return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0'); };
+    const icone = k => k==='coques'?'🥚' : k==='ganache'?'🍫' : k==='montage'?'🧁' : '•';
+    const jourLabel = (dStr)=>{
+      if(dStr===td) return "aujourd'hui";
+      const diff = Math.round((new Date(td) - new Date(dStr))/86400000);
+      if(diff===1) return 'hier';
+      if(diff===2) return 'avant-hier';
+      if(diff>0) return `il y a ${diff} j`;
+      if(diff===-1) return 'demain';
+      if(diff<0) return `dans ${-diff} j`;
+      try{ return new Date(dStr+'T00:00:00').toLocaleDateString('fr-FR',{weekday:'long'}); }catch(_){ return dStr; }
+    };
+    const parfumDe = id => { const m=/^(?:montage|ganache):(.+?)(?:@report)?$/.exec(id||''); return m?m[1]:null; };
+    const ganacheParParfum = {};
+    evs.forEach(e=>{ if(e.kind==='ganache'){ const p=parfumDe(e.id); if(p) ganacheParParfum[p]=e; } });
+    const coquesParParfum = {};
+    evs.forEach(e=>{ if(e.kind==='coques' && e.repartition){
+      Object.keys(e.repartition).forEach(p=>{ (coquesParParfum[p] ||= []).push(e); });
+    }});
+    // [ÉTAPE 1] État RÉEL des composants (coques/ganache déjà produits), pour confronter au plan.
+    let compStock = {};
+    try{ compStock = (typeof composantsStockByParfum==='function') ? await composantsStockByParfum() : {}; }catch(_){ compStock = {}; }
+    const normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
+
     const lignes = duJour.map((e,i)=>{
-      const repos = /repos|❄️|congel/i.test(e.note||'') ? '' : '';
+      const p = parfumDe(e.id);
+      let chaine = '';
+      let alerte = '';
+      if(e.kind==='montage' && p){
+        const bouts = [];
+        const cq = (coquesParParfum[p]||[]).sort((a,b2)=> (a.date+String(a.start)).localeCompare(b2.date+String(b2.start)))[0];
+        if(cq){ const passe = cq.date < td; bouts.push(`coques ${jourLabel(cq.date)}${passe?' ❄️':''}`); }
+        const gn = ganacheParParfum[p];
+        if(gn){ const passe = gn.date < td; bouts.push(`ganache ${jourLabel(gn.date)}${passe?' (reposée)':''}`); }
+        if(bouts.length) chaine = `<div style="font-size:.74rem;color:#7a9a6a;margin-top:1px">↳ ${bouts.join(' · ')}</div>`;
+        // CONFRONTATION AU RÉEL : les coques et la ganache existent-elles vraiment ?
+        const st = compStock[normP(p)] || {coques:0, garniture:0};
+        const coquesNec = (+e.besoinNet||0) * COQUES_PAR_MACARON;
+        const manques = [];
+        if(coquesNec>0 && (+st.coques||0) < coquesNec){
+          manques.push(`coques (${Math.round(+st.coques||0)}/${coquesNec})`);
+        }
+        if((+st.garniture||0) <= 0){
+          manques.push('ganache pas prête');
+        }
+        if(manques.length){
+          alerte = `<div style="font-size:.76rem;color:#b3261e;background:#fdeceb;border:1px solid #f0b8b3;border-radius:7px;padding:4px 7px;margin-top:3px">⚠️ Pas montable en l'état : ${manques.join(' · ')}. À produire d'abord.</div>`;
+        }
+      }
+      const noteCourt = e.note ? `<div style="font-size:.74rem;color:#8a7a72">${esc(String(e.note).slice(0,90))}${String(e.note).length>90?'…':''}</div>` : '';
       return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:1px">
         <div style="display:flex;justify-content:space-between"><span><b>${i+1}.</b> ${icone(e.kind)} ${esc(e.label)}</span><b style="color:#5b3a78">${hm(e.start)}</b></div>
-        ${e.note?`<div style="font-size:.76rem;color:#8a7a72">${esc(String(e.note).slice(0,120))}${String(e.note).length>120?'…':''}</div>`:''}</div>`;
+        ${chaine}${alerte}${noteCourt}</div>`;
     }).join('');
     return `<div style="margin-bottom:10px">
-      <div style="font-weight:700;font-size:.95rem;color:var(--bordeaux);margin-bottom:6px">▶️ Par quoi commencer aujourd'hui</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-weight:700;font-size:.95rem;color:var(--bordeaux)">▶️ Par quoi commencer aujourd'hui</span>
+        <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem">📋 Voir le plan</button>
+      </div>
       ${lignes}
     </div>`;
   }catch(e){ console.error('ordreJour',e); return ''; }
@@ -35331,6 +35397,7 @@ function schedulePersonalPlan(daySpecs, plan, opts){
     const cuis = cuissonCascade((mg.macarons||0)*2, 'standard');
     active.push({
       id:'meringue:'+i, phase:1, label:`Meringue ${i+1} — ${rep}`,
+      repartition: mg.repartition || null,
       dur:tMer, type:'coques', passiveAfter:cuis.makespanMin,
       note:`Coulage + dressage de ${(mg.macarons||0)*2} coques${remplissage}. Cuisson : ${cuis.nbPlaques} plaque(s) en cascade (~${cuis.makespanMin} min four). Pendant la cuisson, on enchaîne une ganache pour ne pas perdre de temps.`
     });
@@ -35355,6 +35422,7 @@ function schedulePersonalPlan(daySpecs, plan, opts){
     active.push({
     id:'montage:'+l.parfum, phase:3, label:`Montage ${l.parfum}`,
     dur:l.tMontage, type:'montage',
+    besoinNet: +l.besoinNet||0,
     after: (l.ganacheDelaiH>0 ? 'ganache:'+l.parfum : null),
     ganacheDelaiMin: (l.ganacheDelaiH>0 ? Math.round(l.ganacheDelaiH*60) : 0),  // repos requis avant montage
     coquesCongelObl: !!l.coquesCongelObl,                                        // congélation imposée par la recette
@@ -35418,7 +35486,7 @@ function schedulePersonalPlan(daySpecs, plan, opts){
       if(startOff >= b.start && startOff + task.dur <= b.end){
         const endOff = startOff + task.dur;
         b.used = endOff - b.start; bi=k;
-        events.push({date:b.date, start:startOff, end:endOff, label:task.label, kind:task.type, note:task.note});
+        events.push({date:b.date, start:startOff, end:endOff, label:task.label, kind:task.type, note:task.note, id:task.id, repartition:task.repartition||null, besoinNet:task.besoinNet||0});
         const ev = {date:b.date, start:startOff, end:endOff, blockIdx:k};
         if(task.id) placedEnd[task.id] = _absMin(b.date, endOff);
         return ev;
