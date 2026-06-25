@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v902';
+const APP_VERSION = 'v904';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -21470,6 +21470,21 @@ async function atelierBrain(opts){
       else lignesAvecMarche.push({ parfum:rec.produitNom, recipeId:rec.id, qte:v.pieces, nbBatchs:Math.max(1,Math.ceil(v.pieces/rendement)), besoinNet:v.pieces, type:'marche', raison:'Marché ventilé' });
     });
     try{ matCheckAvecMarche = await mrpCheckMatieres({lignes:lignesAvecMarche}) || matCheck; }catch(e){ console.error('brain.mat2',e); }
+    // [DIAG v904] Tracer l'origine de chaque matière manquante : quels parfums la consomment et de quel
+    // type (commande / marché / réassort). Permet de voir d'un coup d'œil pourquoi une matière inattendue
+    // (ex. purée de noisette) apparaît dans la liste d'achats. Débranché une fois validé.
+    try{
+      const _items = await db.recipeItems.toArray().catch(()=>[]);
+      const _manques = (matCheckAvecMarche.manques||[]);
+      const _trace = _manques.slice(0,6).map(m=>{
+        // parfums dont la recette utilise cette matière ET qui sont dans le plan (avec nbBatchs>0)
+        const contrib = lignesAvecMarche.filter(l=> l.recipeId && (+l.nbBatchs>0)
+          && _items.some(it=> it.recipeId===l.recipeId && it.materialId===m.materialId && (+it.qteParBatch>0)));
+        const detail = contrib.map(l=> `${l.parfum||'?'}[${l.type||'?'}×${l.nbBatchs}b]`).join('+') || 'AUCUN parfum?!';
+        return `${m.nom}: ${detail}`;
+      });
+      window._diagMatieres = _trace.join(' || ');
+    }catch(ex){ window._diagMatieres = 'DIAG-MAT-ERR '+(ex&&ex.message||ex); }
   }
 
   // --- 6) OPTIMISATION FOURNÉES : repérer les micro-productions à arrondir au batch plein.
@@ -21679,7 +21694,7 @@ async function atelierVoix(opts){
       const q = (manque!=null && manque>0) ? ` (${(typeof qty==='function')?qty(manque):Math.round(manque*1000)/1000}${m.unite?' '+m.unite:''})` : '';
       return `${esc2(nom)}${q}`;
     }).join(', ');
-    sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#b3261e">🛒 <b>À acheter</b> avant de lancer la fabrication ci-dessus : ${liste}.</div>`);
+    sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#b3261e">🛒 <b>À acheter</b> avant de lancer la fabrication ci-dessus : ${liste}.${window._diagMatieres?`<div style="font-size:.62rem;color:#7a2230;background:#fff3f2;padding:3px 6px;border-radius:6px;margin-top:4px;word-break:break-all">DIAG-MAT: ${esc2(window._diagMatieres)}</div>`:''}</div>`);
   }
 
   // --- 5) MARCHÉS (conseil de production marché) — seulement si pertinent ---
@@ -22647,18 +22662,19 @@ async function _ordreProductionDuJour(){
     // SOURCE UNIQUE : on lit les créneaux calés PAR PARFUM mémorisés par l'écran Plan (_agendaPlanOpSection),
     // qui place ganache/coques/montage selon le RÉTROPLANNING (calé sur la livraison) — exactement les
     // horaires que tu vois à l'écran. Le registre est peuplé dès que l'écran Plan a été affiché une fois.
-    const creneaux = (window._planParfumCreneaux && window._planParfumCreneaux[wk]) ? window._planParfumCreneaux[wk] : null;
+    // AUTONOMIE : si le registre n'est pas encore peuplé, on le calcule NOUS-MÊMES via la fonction
+    // commune _buildPlanOpAutonome (même source que l'écran Plan), sans ouvrir aucun écran ni toucher au DOM.
+    let creneaux = (window._planParfumCreneaux && window._planParfumCreneaux[wk]) ? window._planParfumCreneaux[wk] : null;
     if(!creneaux){
-      window._diagOrdre='td='+td+' | wk='+wk+' | registre ABSENT (ouvre l\'écran Plan une fois)';
-      return `<div style="margin-bottom:12px"><div style="font-size:.68rem;color:#b3261e;background:#fff3f2;padding:3px 6px;border-radius:6px;margin-bottom:6px;word-break:break-all">${window._diagOrdre}</div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <span style="font-weight:700;font-size:1rem;color:var(--bordeaux,#52252F)">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
-          <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem;white-space:nowrap">\ud83d\udccb Voir le plan</button>
-        </div>
-        <div style="background:var(--paper,#fbf8f3);border:1px solid var(--creme,#E8DDCD);border-left:3px solid var(--caramel,#AA7C39);border-radius:12px;padding:11px 13px;font-size:.85rem;color:var(--ink,#2b1a1f)">
-          Ouvre une fois l'écran <b>Plan de production</b> pour que je puisse lire ton planning calé, puis reviens me demander \u2014 je te donnerai l'ordre exact du jour.
-        </div>
-      </div>`;
+      try{
+        const mut = await buildMutualisationSemaine(45);
+        await _buildPlanOpAutonome(mut);   // peuple window._planParfumCreneaux pour toutes les semaines
+        creneaux = (window._planParfumCreneaux && window._planParfumCreneaux[wk]) ? window._planParfumCreneaux[wk] : null;
+      }catch(ex){ window._diagOrdre='td='+td+' | AUTO-ERR '+(ex&&ex.message||ex); }
+    }
+    if(!creneaux){
+      window._diagOrdre=(window._diagOrdre||('td='+td+' | wk='+wk))+' | registre indisponible';
+      return '';
     }
     // Conversion en events {date, start(min), end, kind, label, id, besoinNet, repartition, congeler}.
     const ymdOf = d => { const x=new Date(d); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
@@ -32529,35 +32545,22 @@ function filRetourGo(){
   if(typeof goView==='function') goView('accueil');
 }
 
-async function renderAgendaProduction(){
-  const main = document.getElementById('main');
-  main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
-    <p class="note">⏳ Calcul du rétroplanning de chaque commande…</p>`;
-
-  // Besoins cumulés par parfum et par jour (fondation mutualisation) — affichés en tête.
-  let ppj=null;
-  try{ ppj = await buildParfumsParJour(45); }catch(e){ console.error('parfumsParJour',e); }
-  let mut=null;
-  try{ mut = await buildMutualisationSemaine(45); }catch(e){ console.error('mutualisationSemaine',e); }
-
-  // Plan opérationnel détaillé parfum par parfum (étape 1 du moteur). Temps : mesuré si fiable,
-  // sinon recette, sinon défaut.
+// [SOURCE UNIQUE — extraction v903] Calcule le PLAN OPÉRATIONNEL détaillé (créneaux calés par parfum,
+// ganache/coques/montage selon le rétroplanning) SANS toucher au DOM. Appelée par l'écran Production ET
+// par le Copilote (_ordreProductionDuJour), garantissant des horaires identiques sans aucune manip.
+// Effet de bord assumé : peuple window._prodAlertesParfums et window._planParfumCreneaux (via _agendaPlanOpSection
+// au rendu) — ici on remplit aussi _planParfumCreneaux directement pour que le Copilote soit autonome.
+async function _buildPlanOpAutonome(mut){
   let planOp=null;
   try{
     const recipesPlan = await db.recipes.toArray().catch(()=>[]);
     let tEtape=null; try{ tEtape = await prodTempsParEtapeParParfum(90); }catch(_){}
     let stockMob={}; try{ stockMob = await stockMobilisableParParfum(); }catch(_){}
-    // [FUSION HORAIRES GANACHE] Source de vérité unique : le rétroplanning par commande calcule
-    // déjà l'horaire de chaque ganache. Plutôt que de recalculer dans le plan (risque de divergence),
-    // on pré-collecte ici { orderId → {debut, fin} de la ganache } depuis retroplanningCale (async),
-    // et on le passe au plan. Pour une ganache mutualisée, le plan gardera le créneau le plus précoce.
     const ganacheCaleParCmd = {};
     const montageCaleParCmd = {};
     try{
       const orderIds = new Set();
-      // [MARCHÉS] On collecte aussi les contributions marché (clé 'mk'+marketId), avec leurs parfums
-      // ventilés, pour caler leurs ganaches/montages par le MÊME cœur neutre que les commandes.
-      const marketParfums = {};   // 'mk'+id → { date, heure, parfumsQtes:[{nom,qte}] }
+      const marketParfums = {};
       (mut && mut.semaines ? mut.semaines : []).forEach(s=>{
         (s.parfums||[]).forEach(p=>(p.commandes||[]).forEach(c=>{
           if(c.orderId!=null){ orderIds.add(c.orderId); }
@@ -32568,9 +32571,6 @@ async function renderAgendaProduction(){
           }
         }));
       });
-      // [SUGGESTION PARFUMS] Collecte des commandes dont la prod démarre et qui ont des macarons
-      // à déterminer. On réutilise le calage déjà calculé (pas de calcul en plus). debutProduction =
-      // premier jalon de TRAVAIL (le plus précoce des jalons calés avec un début).
       const _alertesParfums = [];
       const _clientsCache = await db.clients.toArray().catch(()=>[]);
       const _nomClient = cid => { const c=_clientsCache.find(x=>x.id===cid); return c ? [c.prenom,c.nom].filter(Boolean).join(' ') : ''; };
@@ -32580,10 +32580,8 @@ async function renderAgendaProduction(){
           if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
             const jg = cale.jalonsCales.find(j=>(j.cle==='ganache'||j.cle==='cremeux') && j.debut);
             if(jg) ganacheCaleParCmd[oid] = { debut:jg.debut, fin:jg.fin };
-            // [CRÉNEAU MONTAGE] même source que la ganache : le jalon montage calé (pivot du rétroplanning).
             const jm = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
             if(jm) montageCaleParCmd[oid] = { debut:jm.debut, fin:jm.fin };
-            // Début de production = jalon de travail le plus précoce.
             const debuts = cale.jalonsCales.filter(j=>j.debut).map(j=>new Date(j.debut).getTime()).filter(t=>!isNaN(t));
             const debutProd = debuts.length ? new Date(Math.min(...debuts)).toISOString() : null;
             const o = await db.orders.get(oid).catch(()=>null);
@@ -32597,7 +32595,6 @@ async function renderAgendaProduction(){
         }catch(_){}
       }
       window._prodAlertesParfums = detecterCommandesADeterminer(_alertesParfums);
-      // [MARCHÉS] Calage horaire via le cœur neutre (heure d'ouverture lue sur la fiche marché).
       const _markets = await db.markets.toArray().catch(()=>[]);
       for(const key of Object.keys(marketParfums)){
         const mInfo = marketParfums[key];
@@ -32616,16 +32613,41 @@ async function renderAgendaProduction(){
       }
     }catch(e){ console.error('preCollecteGanache', e); }
     planOp = buildPlanOperationnelSemaine(mut, recipesPlan, tEtape, stockMob, ganacheCaleParCmd, montageCaleParCmd);
-    // [FAISABILITÉ PAR SEMAINE] Attache à chaque semaine son verdict « tient / déborde » + conflits,
-    // calculé par le moteur existant (generateProductionOrder). Repli silencieux par semaine.
     if(planOp && Array.isArray(planOp.semaines)){
       const _confAvail = (typeof getAvailability==='function') ? getAvailability() : null;
       for(const s of planOp.semaines){
         try{ s.faisabilite = await _faisabiliteSemaine(s.wk, _confAvail); }
         catch(_){ s.faisabilite = null; }
       }
+      // [AUTONOMIE COPILOTE] On peuple directement le registre des créneaux par parfum (sans attendre le
+      // rendu HTML _agendaPlanOpSection), pour que _ordreProductionDuJour soit utilisable sans ouvrir l'écran.
+      window._planParfumCreneaux = window._planParfumCreneaux || {};
+      planOp.semaines.forEach(s=>{
+        if(!s.wk) return;
+        const _etapes = [];
+        (s.ganache||[]).forEach(g=>{ if(g && g.debut) _etapes.push({ type:'ganache', parfum:g.parfum, debut:g.debut, fin:g.fin, qte:(g.qteProduite||g.qte||0) }); });
+        (s.coques||[]).forEach(m=>{ if(m && m.debut) _etapes.push({ type:'coques', repartition:m.repartition||null, debut:m.debut, fin:m.finCuisson||m.fin, congeler:!!m.congeler }); });
+        (s.montage||[]).forEach(g=>{ if(g && g.debut) _etapes.push({ type:'montage', parfum:g.parfum, debut:g.debut, fin:g.fin, qte:(g.qteProduite||g.qte||0), besoinNet:(+g.qte||0) }); });
+        window._planParfumCreneaux[s.wk] = _etapes;
+      });
     }
   }catch(e){ console.error('planOperationnel',e); }
+  return planOp;
+}
+async function renderAgendaProduction(){
+  const main = document.getElementById('main');
+  main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
+    <p class="note">⏳ Calcul du rétroplanning de chaque commande…</p>`;
+
+  // Besoins cumulés par parfum et par jour (fondation mutualisation) — affichés en tête.
+  let ppj=null;
+  try{ ppj = await buildParfumsParJour(45); }catch(e){ console.error('parfumsParJour',e); }
+  let mut=null;
+  try{ mut = await buildMutualisationSemaine(45); }catch(e){ console.error('mutualisationSemaine',e); }
+
+  // Plan opérationnel détaillé parfum par parfum (étape 1 du moteur). Temps : mesuré si fiable,
+  // sinon recette, sinon défaut.
+  const planOp = await _buildPlanOpAutonome(mut);
 
   // Vue COMMANDES REPLIABLES : une carte par commande (client + chevron), dépliant l'enchaînement
   // complet de ses étapes calées. Remplace le déroulé jour-par-jour pour la lisibilité.
