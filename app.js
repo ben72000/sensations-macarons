@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v890';
+const APP_VERSION = 'v891';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19494,8 +19494,8 @@ function parseIntent(texte, ctx){
       label:'Conseil pour ton prochain marché'};
   }
   // CONSEIL GLOBAL : "conseille-moi", "quoi faire", "par quoi je commence", "qu'est-ce que je dois faire"
-  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je )?commenc|je commence par quoi|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr)\b/.test(t)
-     && !/stock|combien|reste/.test(t)){
+  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je |on )?commenc|(je|on) commence par quoi|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr|quel plan de production|propose[s]? (moi )?(un )?plan|quel plan (proposes?|tu propose)|plan de prod du jour)/.test(t)
+     && !/\bstock\b|combien|reste/.test(t)){
     return {intent:'query_advice', params:{}, critical:false, label:'Mon conseil de production du moment'};
   }
   // EN RETARD : "qu'est-ce qui est en retard", "mes retards", "suis-je en retard"
@@ -22615,10 +22615,12 @@ async function aiRun(){
       case 'adjust_stock': return aiConfirmAdjustStock(r);
       case 'add_box': return aiSay(`<p>Pour ajouter des coffrets, ouvrez d'abord une commande. Dites par exemple : <b>« Crée une commande pour [client] »</b>, puis ajoutez les produits.</p>`);
       default:
-        // Dernier recours : on tente la base de connaissance avant d'abandonner.
-        { const hits=kbSearch(txt); if(hits.length) return aiHelp(txt); }
-        return aiSay(`<p>Je n'ai pas compris « ${esc(txt)} ».</p>
-          <p class="note">Pose une question d'aide (ex. <i>« comment fonctionne le picking ? »</i>) ou tape <b>aide</b>. Exemples d'actions : <i>Quel est le stock de chocolat ?</i> · <i>Crée une commande pour M. Dupont vendredi</i> · <i>Commandes à préparer demain</i>.</p>`);
+        // Dernier recours. On ne montre un article d'aide QUE si la phrase est explicitement une
+        // demande d'aide (« comment… », « c'est quoi… », « explique… »). Sinon, un simple mot-clé qui
+        // matche un article ne doit PAS transformer une question d'action en cours théorique.
+        if(isHelpQuery(txt)){ const hits=kbSearch(txt); if(hits.length) return aiHelp(txt); }
+        return aiSay(`<p>Je n'ai pas bien compris « ${esc(txt)} ».</p>
+          <p class="note">Reformule, ou essaie : <i>Conseille-moi quoi faire</i> · <i>Quel est le stock de chocolat ?</i> · <i>Commandes à préparer demain</i>. Pour le mode d'emploi, demande <b>« comment ça marche »</b> ou tape <b>aide</b>.</p>`);
     }
   } catch(e){
     aiSay(`<p>Une erreur est survenue : ${esc(e.message||'inconnue')}.</p><p class="note">Réessaie ou reformule ta demande.</p>`);
