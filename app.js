@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v908';
+const APP_VERSION = 'v909';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22652,6 +22652,100 @@ async function aiRun(){
 // [COCKPIT] ORDRE DE PRODUCTION DU JOUR : « par quoi je commence aujourd'hui ? ». Réutilise le plan
 // déjà calé à l'heure (schedulePersonalPlan via _planSemaineSchedule) et en extrait les tâches du jour,
 // triées chronologiquement → un vrai ordre de marche (1. …, 2. …), avec heure et repos ganache.
+// [ARBITRAGE RÉASSORT — étape 2a, lecture seule] Pour chaque parfum AYANT du réassort (surplusStock>0)
+// et dont la ganache n'est PAS déjà faite (sinon protégé), calcule un score de « sacrifiabilité » en
+// croisant 5 critères À POIDS ÉGAL (normalisés 0..1) : temps libéré, coût matière économisé, pénibilité,
+// stock déjà disponible, (faible) manque à gagner. Le candidat à retirer EN PREMIER = score le plus haut.
+// L'ARGUMENT cite les 2-3 critères qui ont le plus pesé. Pour 2a : publié en rubrique technique uniquement,
+// l'ordre du jour n'est PAS encore modifié.
+async function _arbitrageReassort(planOp, wk){
+  try{
+    if(!planOp || !Array.isArray(planOp.semaines)) return null;
+    const sem = planOp.semaines.find(s=>s.wk===wk) || planOp.semaines[0];
+    if(!sem) return null;
+    // Parfums avec réassort = lignes de montage avec surplusStock>0.
+    const candidatsBruts = (sem.montage||[]).filter(g=> g && (+g.surplusStock||0) > 0);
+    if(!candidatsBruts.length){ diagPublish('arbitrage','♟️ Arbitrage réassort',{etat:'Aucun réassort à arbitrer cette semaine'}); return {candidats:[], proteges:[]}; }
+    // Ganaches déjà prêtes → parfums PROTÉGÉS (on ne les réduit pas).
+    let compStock = {};
+    try{ compStock = (typeof composantsStockByParfum==='function') ? await composantsStockByParfum() : {}; }catch(_){ compStock={}; }
+    const normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
+    const ganachePrete = p => { const st = compStock[normP(p)]; return st && (+st.garniture||0) > 0; };
+    // Stock fini par parfum.
+    let stockFini = {};
+    try{ const r = (typeof mrpCurrentStockByParfum==='function') ? await mrpCurrentStockByParfum() : null; stockFini = (r&&r.stock)||{}; }catch(_){ stockFini={}; }
+    const stockDe = p => { const k=Object.keys(stockFini).find(n=>normP(n)===normP(p)); return k?(+stockFini[k]||0):0; };
+    // Coût + pénibilité + marge par recette.
+    const [recipes, recipeItems, lots] = await Promise.all([
+      db.recipes.toArray().catch(()=>[]), db.recipeItems.toArray().catch(()=>[]), db.materialLots.toArray().catch(()=>[])
+    ]);
+    const settings = (typeof getSettings==='function') ? getSettings() : {};
+    const recDe = p => recipes.find(r=> normP(r.produitNom)===normP(p)) || null;
+
+    const proteges = [];
+    const items = [];
+    for(const g of candidatsBruts){
+      const parfum = g.parfum;
+      if(ganachePrete(parfum)){ proteges.push(parfum); continue; }   // règle 2 : ganache prête = protégé
+      const surplus = +g.surplusStock||0;
+      const rec = recDe(parfum);
+      // temps libéré (min) : on approxime par la part réassort de la durée de la ligne (proportionnelle au surplus).
+      const qProd = +g.qteProduite || surplus; const partReassort = qProd>0 ? surplus/qProd : 1;
+      const tempsLibere = Math.round((+g.dureeMin||0) * partReassort);
+      // coût matière + pénibilité (coût opérations spéciales) + marge via coutRevientRecette.
+      let coutMatUnit=0, penibUnit=0, margeUnit=0;
+      if(rec){
+        try{
+          const c = coutRevientRecette(rec, recipeItems, lots, settings, {});
+          coutMatUnit = +((c&&c.coutMatUnit))||0;
+          penibUnit = +((c&&c.coutSpecUnit))||0;        // € de main d'œuvre des opérations spéciales (proxy pénibilité)
+          const pv = +rec.prixVenteUnitaire || +settings.prixVenteUnitaire || 0;
+          margeUnit = Math.max(0, pv - ((c&&c.coutRevientUnit)||0));
+        }catch(_){}
+      }
+      items.push({
+        parfum, surplus,
+        critTemps: tempsLibere,                          // + = bon à retirer (libère du temps)
+        critCout: coutMatUnit * surplus,                 // + = bon à retirer (économise des matières)
+        critPenib: penibUnit * surplus,                  // + = bon à retirer (recette pénible)
+        critStock: stockDe(parfum),                      // + = bon à retirer (déjà beaucoup en stock)
+        critManqueAGagner: margeUnit * surplus           // + = MAUVAIS à retirer (on perd cette marge)
+      });
+    }
+    if(!items.length){ diagPublish('arbitrage','♟️ Arbitrage réassort',{etat:'Tous les parfums à réassort ont leur ganache prête (protégés)','Protégés':proteges}); return {candidats:[], proteges}; }
+    // Normalisation 0..1 de chaque critère sur l'ensemble des candidats.
+    const maxOf = key => Math.max(...items.map(i=>i[key]), 0) || 1;
+    const mT=maxOf('critTemps'), mC=maxOf('critCout'), mP=maxOf('critPenib'), mS=maxOf('critStock'), mG=maxOf('critManqueAGagner');
+    items.forEach(i=>{
+      const nT=i.critTemps/mT, nC=i.critCout/mC, nP=i.critPenib/mP, nS=i.critStock/mS, nG=i.critManqueAGagner/mG;
+      // Score = somme à poids ÉGAL. Les 4 premiers poussent au retrait (+), le manque à gagner retient (−).
+      i.score = Math.round((nT + nC + nP + nS + (1 - nG)) / 5 * 100);
+      i._contribs = [
+        {k:'temps libéré', v:nT, txt:i.critTemps+' min'},
+        {k:'coût matière', v:nC, txt:(typeof euro==='function'?euro(i.critCout):i.critCout.toFixed(2))},
+        {k:'pénibilité', v:nP, txt:(typeof euro==='function'?euro(i.critPenib):i.critPenib.toFixed(2))+' MO spéc.'},
+        {k:'stock dispo', v:nS, txt:i.critStock+' en stock'},
+        {k:'manque à gagner', v:(1-nG), txt:(typeof euro==='function'?euro(i.critManqueAGagner):i.critManqueAGagner.toFixed(2))+' de marge'}
+      ];
+    });
+    // Classement : score décroissant = ordre de sacrifice (le 1er à retirer en tête).
+    items.sort((a,b)=> b.score - a.score);
+    // Argument : les 2 critères qui ont le plus pesé pour ce parfum.
+    items.forEach(i=>{
+      const tops = [...i._contribs].sort((a,b)=>b.v-a.v).slice(0,2);
+      i.argument = tops.map(t=>`${t.k} (${t.txt})`).join(' + ');
+    });
+    // Publication rubrique technique (2a : on montre le raisonnement, on n'applique rien).
+    diagPublish('arbitrage', '♟️ Arbitrage réassort — ordre de sacrifice', {
+      'Semaine': wk,
+      'Parfums à réassort': candidatsBruts.length,
+      'Protégés (ganache prête)': proteges.length ? proteges : 'aucun',
+      'Ordre de sacrifice (1er à retirer en tête)': items.map((i,n)=>`${n+1}. ${i.parfum} — score ${i.score} — ${i.argument} [réassort ${i.surplus}]`),
+      'Note': '5 critères à poids égal : temps libéré, coût matière, pénibilité, stock dispo, (−)manque à gagner. Score haut = meilleur candidat à retirer.'
+    });
+    return { candidats:items, proteges };
+  }catch(e){ console.error('arbitrageReassort',e); diagPublish('arbitrage','♟️ Arbitrage réassort — erreur',{erreur:String(e&&e.message||e)}); return null; }
+}
 // [VERDICT ADAPTATIF — étape 1, lecture seule] Calcule la zone de charge de la SEMAINE (commandes +
 // réassort) et renvoie l'en-tête contractualisé : verdict + périmètre + discours adapté. Seuils de
 // départ 🟢 ≤80% / 🟡 80-100% / 🔴 >100% (affinables via rubrique technique). Ne touche PAS encore au
@@ -22865,6 +22959,16 @@ async function aiQueryAdvice(){
       const _ymd = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
       const _wkNow = (typeof _isoWeekKey==='function') ? _isoWeekKey(_ymd(new Date())) : null;
       if(_wkNow){ const v = await _verdictSemaine(_wkNow); if(v && v.html) verdictHtml = v.html; }
+      // [ARBITRAGE 2a] On calcule l'ordre de sacrifice du réassort et on le publie en rubrique technique
+      // (lecture seule : l'ordre du jour n'est pas encore modifié). Permet de valider que les arbitrages
+      // sont sensés avant de les appliquer (2b).
+      try{
+        if(_wkNow && typeof _buildPlanOpAutonome==='function' && typeof buildMutualisationSemaine==='function'){
+          const mut = await buildMutualisationSemaine(45);
+          const planOp = await _buildPlanOpAutonome(mut);
+          await _arbitrageReassort(planOp, _wkNow);
+        }
+      }catch(_){}
     }catch(_){}
     if(out){
       out.innerHTML = (html || ordre || verdictHtml)
