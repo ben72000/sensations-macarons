@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v894';
+const APP_VERSION = 'v895';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22722,7 +22722,7 @@ async function _ordreProductionDuJour(){
       </div>
       ${lignes}
     </div>`;
-  }catch(e){ console.error('ordreJour',e); return ''; }
+  }catch(e){ console.error('ordreJour',e); return `<div style="font-size:.74rem;color:#b3261e;margin-bottom:8px">⚠️ Ordre du jour indisponible (${esc(String(e&&e.message||e).slice(0,80))}).</div>`; }
 }
 async function aiQueryAdvice(){
   const out=document.getElementById('aiOut');
