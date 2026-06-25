@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v862';
+const APP_VERSION = 'v865';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -178,6 +178,22 @@ db.version(19).stores({
 // Démarrage à zéro : on ne journalise que les mouvements À PARTIR de la v20 (pas de reconstruction).
 db.version(20).stores({
   stockMoves: '++id, ts, parfumNorm, type, composant'
+});
+// v21 : OVERRIDES DE PLANIFICATION (report manuel d'étape). Permet d'imposer qu'une étape (le
+// MONTAGE d'un parfum) soit réalisée une semaine plus tard que ce que le rétroplanning calculerait,
+// quand l'utilisateur applique un report depuis le diagnostic « faire rentrer la semaine ». Le plan
+// est sinon entièrement DÉRIVÉ des dates de commande : cette table est le seul endroit où une
+// décision manuelle de décalage est mémorisée. Le scheduler la lit pour retirer le montage de la
+// semaine source et l'injecter dans la semaine cible.
+//   wkSource   : semaine ISO d'origine ('AAAA-Www') — d'où le montage est retiré (indexée)
+//   wkCible    : semaine ISO cible ('AAAA-Www') — où le montage est réinjecté
+//   parfum     : libellé du parfum concerné (le montage de CE parfum est déplacé)
+//   etape      : 'montage' (seule étape reportable pour l'instant ; champ explicite pour l'avenir)
+//   createdTs  : horodatage ISO de la décision
+// Unicité logique sur (wkSource, parfum, etape) : un même montage n'a qu'un seul override actif
+// (gérée par planOverrideAdd, qui remplace l'existant).
+db.version(21).stores({
+  planOverrides: '++id, wkSource, parfum, etape'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -24295,8 +24311,8 @@ const GUIDE_THEMES = [
       detail:"Démarre une production à partir d'une recette, suis tes coques et ganaches, assemble tes macarons. L'app calcule les matières consommées et garde la trace de chaque lot pour la traçabilité.",
       steps:["Choisis une recette et lance la production","Suis les étapes (coques, ganache, assemblage)","L'app déduit automatiquement les matières"] },
     { v:'agendaprod', t:'Production', ico:'🗓', resume:"Ton écran unique de production : ce qu'il y a à faire par semaine, si ça tient dans ton temps, et le déroulé heure par heure — commandes et marchés réunis.",
-      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps, sa pastille de couleur et son CRÉNEAU HORAIRE calé dans tes plages A/B — l'horaire affiché est le MÊME que celui calculé dans le rétroplanning détaillé de la commande, pour une cohérence totale entre les deux vues ; quand un parfum est mutualisé entre plusieurs commandes, c'est le créneau le plus PRÉCOCE qui est retenu. Le rétroplanning réserve désormais le temps de TOUTES les ganaches de la commande (une par parfum : 6 parfums = 6 ganaches), et non plus un temps forfaitaire par lot de 60 — le planning reflète donc le vrai temps de préparation. Comme tu ne peux faire qu'UNE ganache à la fois, celles d'une même soirée sont ENCHAÎNÉES les unes après les autres (et non affichées au même horaire) : chacune démarre quand la précédente finit. Si la séquence risque de déborder au-delà de l'heure limite (montage moins repos), tout le bloc recule juste ce qu'il faut pour que la dernière ganache finisse à temps — le repos de chacune reste garanti (mention « enchaînée pour tenir le repos »). Le repos de la ganache est COLLÉ à la fin de sa préparation et court jusqu'au montage : il dure donc AU MOINS le repos minimum de la recette — souvent plus si la ganache tombe la veille au soir, ce qui est sans problème), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (PAR PARFUM, désormais avec leur CRÉNEAU HORAIRE calé dans tes plages A/B comme les ganaches — comme tu montes chaque parfum séparément, chacun mobilise au moins un batch entamé — le temps est compté au batch arrondi au supérieur, pas au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). Mieux : le rétroplanning AJUSTE désormais les durées à ta cadence RÉELLE par parfum — si tes chronos d'atelier montrent qu'un parfum est plus lent (ou plus rapide) que la moyenne, ses créneaux sont étirés ou resserrés en conséquence (uniquement quand la mesure est fiable ; sinon on garde le temps standard). Sur une commande à plusieurs parfums, l'ajustement est pondéré par les quantités. STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). ORDRE D'EXÉCUTION (rétroplanning détaillé) : le planning suit deux branches PARALLÈLES qui convergent au montage. Branche ganache : préparation de la ganache, puis repos jusqu'au montage. Branche coques : coques réalisées le JOUR du montage, juste avant l'assemblage. Résultat, dans l'ordre chronologique affiché : ganache → repos → coques → montage → maturation → livraison. La ganache passe donc AVANT les coques (à cause de son repos), et les coques restent collées au montage. Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »). MARCHÉS DANS LE PLAN : tes marchés à venir sont aussi intégrés au plan de production, à condition d’avoir au moins 5 marchés clos dans ton historique (en-dessous, la répartition par parfum n’est pas assez fiable pour produire dessus). La quantité prévue du marché est ventilée par parfum selon ta répartition APPRISE (marketForecast, la même que le prévisionnel), puis chaque parfum est calé horairement comme une commande (ganache + repos, coques le jour du montage, montage) — l’heure de référence étant l’ouverture du marché lue sur sa fiche.  FAISABILITÉ À LA SEMAINE : chaque semaine affiche d'un coup d'œil si ça TIENT dans tes créneaux (vert) ou si ça DÉBORDE (orange, avec de combien). Ce verdict est CLIQUABLE : touche-le et il déplie le déroulé heure par heure de cette semaine — le « mot du chef » explique l'ordre choisi (ganaches d'abord pour le repos, coques le jour du montage), avec tes vraies plages de travail et zéro re-saisie. Le « comment je m'organise » naît directement du « est-ce que ça tient ».",
-      steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","🆕 Dans le plan détaillé, touche une ganache (▶ lancer) : l'app te propose de lancer le batch et le chrono d'un seul geste, avec confirmation et quantité ajustable","🆕 Touche aussi une meringue (▶ lancer) : elle lance les coques de tous ses parfums d'un coup (meringue commune) + les chronos, avec confirmation et quantités ajustables","🆕 Touche enfin un montage (▶ monter) : l'app ouvre l'assemblage de ce parfum pré-rempli avec un lot de coques et un lot de garniture déjà terminés (il faut donc les avoir produits avant) — tu ajustes la quantité et la destination, le chrono d'assemblage et le décompte se font tout seuls"] },
+      detail:"L'agenda s'ouvre sur le « 🧭 Plan de travail détaillé » : pour chaque semaine, il liste étape par étape et PARFUM PAR PARFUM tout ce qu'il y a à faire — les ganaches (une par parfum, avec son temps, sa pastille de couleur et son CRÉNEAU HORAIRE calé dans tes plages A/B — l'horaire affiché est le MÊME que celui calculé dans le rétroplanning détaillé de la commande, pour une cohérence totale entre les deux vues ; quand un parfum est mutualisé entre plusieurs commandes, c'est le créneau le plus PRÉCOCE qui est retenu. Le rétroplanning réserve désormais le temps de TOUTES les ganaches de la commande (une par parfum : 6 parfums = 6 ganaches), et non plus un temps forfaitaire par lot de 60 — le planning reflète donc le vrai temps de préparation. Comme tu ne peux faire qu'UNE ganache à la fois, celles d'une même soirée sont ENCHAÎNÉES les unes après les autres (et non affichées au même horaire) : chacune démarre quand la précédente finit. Si la séquence risque de déborder au-delà de l'heure limite (montage moins repos), tout le bloc recule juste ce qu'il faut pour que la dernière ganache finisse à temps — le repos de chacune reste garanti (mention « enchaînée pour tenir le repos »). Le repos de la ganache est COLLÉ à la fin de sa préparation et court jusqu'au montage : il dure donc AU MOINS le repos minimum de la recette — souvent plus si la ganache tombe la veille au soir, ce qui est sans problème), les coques (meringues mutualisées, jusqu'à 3 parfums par meringue — une meringue se divise en 3 parts max — regroupés pour faire le MINIMUM de meringues ; le temps des coques est calibré sur tes relevés atelier réels : travail actif (meringue fixe + reste proportionnel au nombre de coques) séparé du temps four en cascade ; les coques chablonnées ajoutent ~13 min/200 coques si la recette est marquée « chablonnée »), et les montages (PAR PARFUM, désormais avec leur CRÉNEAU HORAIRE calé dans tes plages A/B comme les ganaches — comme tu montes chaque parfum séparément, chacun mobilise au moins un batch entamé — le temps est compté au batch arrondi au supérieur, pas au prorata, incluant les opérations spécifiques de la recette comme l'incrustation de noisettes). Chaque meringue de coques est CALÉE HORAIREMENT dans tes vraies plages A/B, étalée au plus près du montage (en gardant 1h de coussin) : tu vois l'heure de début et la fin de cuisson. Si une meringue ne tient pas dans la fenêtre de fraîcheur (9h avant le montage), elle est marquée « ❄️ à congeler ». Chaque temps indique sa source : « mesuré » (chronométré à l'atelier), « recette » (ta saisie) ou « estimé » (défaut). Mieux : le rétroplanning AJUSTE désormais les durées à ta cadence RÉELLE par parfum — si tes chronos d'atelier montrent qu'un parfum est plus lent (ou plus rapide) que la moyenne, ses créneaux sont étirés ou resserrés en conséquence (uniquement quand la mesure est fiable ; sinon on garde le temps standard). Sur une commande à plusieurs parfums, l'ajustement est pondéré par les quantités. STOCK PRIS EN COMPTE : le plan regarde ton stock mobilisable par parfum (macarons finis + ce qui est assemblable = min des coques et de la ganache en stock) et l'affiche à côté de chaque parfum : « commandé 14 · 📦 en stock 8 · à produire 6 ». Tu ne produis que le manque. OPTIMISATION BATCH (interrupteur en haut de l'agenda) : DÉSACTIVÉE par défaut, tu produis exactement les quantités commandées. ACTIVÉE quand tu as le temps, les petites commandes sont arrondies au palier rationnel (30, 60 ou 120) et le surplus est marqué « 📦 stock ». Règle : dans l'idéal des batchs de 30 minimum, mais quand le temps de prod ne suffit plus, désactive et les commandes priment. Le calcul automatique (temps dispo + stock) viendra avec le moteur de stock. POOL : quand plusieurs commandes veulent le même parfum la même semaine, leurs quantités sont FUSIONNÉES en une seule fournée (badge « 🔗 fusionnée ») et tu vois la répartition retour — qui reçoit combien au montage (ex. « Vanille 75 = Maximilian 40 · Emma 35 »). La fusion vaut sur toute la semaine même si les livraisons diffèrent (surplus congelé). En dessous, l'agenda liste tes commandes triées par livraison ; touche un client pour déplier ses étapes calées, touche une étape pour son rétroplanning. Règle clé : coques calées le JOUR du montage (les coques VIDES ne tiennent pas plus de ~9h à l'air avant garnissage — 6h de fraîcheur + 3h de tolérance) ; au-delà, congélation proposée (badge ❄️). ORDRE D'EXÉCUTION (rétroplanning détaillé) : le planning suit deux branches PARALLÈLES qui convergent au montage. Branche ganache : préparation de la ganache, puis repos jusqu'au montage. Branche coques : coques réalisées le JOUR du montage, juste avant l'assemblage. Résultat, dans l'ordre chronologique affiché : ganache → repos → coques → montage → maturation → livraison. La ganache passe donc AVANT les coques (à cause de son repos), et les coques restent collées au montage. Une fois garnis, les macarons maturent sans souci 24-48h (sauf grand format, citron et framboise, à livrer le jour même ou à congeler). MATURATION FLEXIBLE : la fraîcheur des coques (montées le jour de leur confection) prime sur la maturation de 24h. Si le planning est trop serré et forcerait à congeler les coques, le rétroplanning RÉDUIT automatiquement la maturation par paliers (jusqu'à 12h minimum) pour reculer le montage et garder les coques fraîches — il garde la maturation la plus longue possible et te signale l'ajustement (« Maturation ajustée à 21h »). MARCHÉS DANS LE PLAN : tes marchés à venir sont aussi intégrés au plan de production, à condition d’avoir au moins 5 marchés clos dans ton historique (en-dessous, la répartition par parfum n’est pas assez fiable pour produire dessus). La quantité prévue du marché est ventilée par parfum selon ta répartition APPRISE (marketForecast, la même que le prévisionnel), puis chaque parfum est calé horairement comme une commande (ganache + repos, coques le jour du montage, montage) — l’heure de référence étant l’ouverture du marché lue sur sa fiche.  FAISABILITÉ À LA SEMAINE : chaque semaine affiche d'un coup d'œil si ça TIENT dans tes créneaux (vert) ou si ça DÉBORDE (orange, avec de combien). Ce verdict est CLIQUABLE : touche-le et il déplie le déroulé heure par heure de cette semaine — le « mot du chef » explique l'ordre choisi (ganaches d'abord pour le repos, coques le jour du montage), avec tes vraies plages de travail et zéro re-saisie. Le « comment je m'organise » naît directement du « est-ce que ça tient ». QUAND UNE SEMAINE DÉBORDE — « 🔧 COMMENT FAIRE RENTRER LA SEMAINE » : sous le verdict orange, l'app ne se contente pas de constater. Elle NOMME ce qui ne trouve pas de place (les ganaches, coques ou montages en trop, avec leur durée) et propose des LEVIERS classés par pertinence, chacun avec son POURQUOI : anticiper la veille les ganaches qui supportent un repos long (ça libère du temps au pic), repousser un montage dont l'échéance le permet, ou ajouter juste ce qu'il faut de créneau (le montant exact est calculé). ÉCHÉANCE PAR TÂCHE : à côté de chaque tâche qui déborde, tu vois sa marge réelle jusqu'à la livraison — « livré le 12 juil., 8 j de marge » en vert quand ça peut attendre, « dû demain ⚠ » en rouge quand c'est urgent à ne pas repousser. Cette échéance tient compte des COMMANDES ET DES MARCHÉS (la date la plus proche des deux). SIMULATION « ET SI ? » : pour un montage qui a de la marge, un bouton « 🔬 Et si je reporte ce montage ? » rejoue le planning EN MÉMOIRE (rien n'est modifié dans tes données) en retirant juste ce montage — tu gardes ses coques et sa ganache cette semaine, tu assembles plus tard. L'app te dit aussitôt si « la semaine rentre » ou combien de temps il reste encore de trop, et t'affiche la semaine allégée heure par heure pour décider en connaissance de cause.",
+      steps:["Parcours tes commandes triées par livraison","Touche un client pour déplier toutes ses étapes","Touche une étape pour son rétroplanning détaillé (étapes numérotées dans l'ordre chronologique, avec le détail des parfums et meringues)","Sur une étape mutualisée, touche « voir » pour sauter à la commande liée","🆕 Dans le plan détaillé, touche une ganache (▶ lancer) : l'app te propose de lancer le batch et le chrono d'un seul geste, avec confirmation et quantité ajustable","🆕 Touche aussi une meringue (▶ lancer) : elle lance les coques de tous ses parfums d'un coup (meringue commune) + les chronos, avec confirmation et quantités ajustables","🆕 Touche enfin un montage (▶ monter) : l'app ouvre l'assemblage de ce parfum pré-rempli avec un lot de coques et un lot de garniture déjà terminés (il faut donc les avoir produits avant) — tu ajustes la quantité et la destination, le chrono d'assemblage et le décompte se font tout seuls","🆕 Si une semaine déborde (verdict orange), déplie-la : le bloc « 🔧 Comment faire rentrer la semaine » te montre ce qui ne rentre pas (avec l'échéance de chaque tâche) et te propose des leviers ; pour un montage qui a de la marge, touche « 🔬 Et si je reporte ce montage ? » pour tester en mémoire si la semaine rentre, sans rien changer à tes données"] },
     { v:'atelier', t:'Atelier (chronos)', ico:'⏱', resume:"Chronométrer tes tâches pour mesurer ton temps réel par parfum et par étape.",
       detail:"Ouvre une session de production et lance des chronos par tâche, organisés en phases : Préparation ganache (pesée, émulsion), Préparation coques, Meringue, Macaronnage, Cuisson, Garnissage, Entretien. Rattache le parfum en cours à chaque tâche : l'app mesure alors ton temps réel par parfum ET par étape (la phase « Préparation ganache » nourrit le temps de ganache, l'amont coques nourrit le temps des coques, le pochage/assemblage nourrit le montage). Ces temps mesurés affinent automatiquement les estimations du plan de production. Plusieurs tâches tournent en parallèle ; le tableau blanc montre ta journée en barres et le journal garde l'historique.",
       steps:["Ouvre une session dans l'onglet Pilotage","Lance les tâches au fil du travail en rattachant le parfum","Consulte l'onglet « Temps/parfum » pour voir tes temps mesurés par étape et par parfum","Plus tu mesures, plus les temps se fiabilisent (✓)"] },
@@ -32057,6 +32073,61 @@ function _planFocusPremiereEtape(depliBox, tries){
 // non livrées de la fenêtre [debut, fin]. Sert à dire, pour une tâche qui déborde, de combien de marge
 // on dispose avant l'échéance réelle (« livré le 15 → 3 jours de marge »). Lecture directe de db.orders
 // car le plan agrège les besoins sans garder la trace des dates. Renvoie { parfum: 'YYYY-MM-DD' }.
+// ============================================================================================
+// [REPORT MANUEL — socle de données, étape 1] Helpers de gestion des overrides de planification.
+// Aucune UI ici : ces fonctions posent les fondations. Tant qu'aucun override n'est créé (l'UI
+// viendra plus tard), le plan reste strictement inchangé.
+// --------------------------------------------------------------------------------------------
+// Semaine ISO suivante. Robuste aux changements d'année : on reconstruit le lundi de la semaine
+// donnée, on ajoute 7 jours, et on recalcule la clé ISO via _isoWeekKey (source de vérité unique).
+function _semaineSuivante(wk){
+  const m = /(\d{4})-W(\d{2})/.exec(wk||'');
+  if(!m) return null;
+  // Lundi de la semaine ISO (même construction que _planSemaineGenere).
+  const simple = new Date(Date.UTC(+m[1],0,1+(+m[2]-1)*7));
+  const dow = (simple.getUTCDay()+6)%7;
+  const lundi = new Date(simple); lundi.setUTCDate(simple.getUTCDate()-dow);
+  lundi.setUTCDate(lundi.getUTCDate()+7);   // +1 semaine
+  const iso = lundi.toISOString().slice(0,10);
+  return (typeof _isoWeekKey==='function') ? _isoWeekKey(iso) : null;
+}
+// Crée (ou remplace) un override de report du montage d'un parfum, de wkSource vers wkSource+1.
+// Unicité logique sur (wkSource, parfum, etape) : on supprime un éventuel doublon avant d'insérer.
+async function planOverrideAdd(wkSource, parfum, etape){
+  etape = etape || 'montage';
+  const wkCible = _semaineSuivante(wkSource);
+  if(!wkSource || !parfum || !wkCible) return null;
+  try{
+    // Supprime un override existant pour le même (wkSource, parfum, etape) — un seul actif à la fois.
+    const dejas = await db.planOverrides.where('wkSource').equals(wkSource).toArray();
+    for(const o of dejas){ if(o.parfum===parfum && (o.etape||'montage')===etape){ await db.planOverrides.delete(o.id); } }
+    const rec = { wkSource, wkCible, parfum, etape, createdTs: new Date().toISOString() };
+    const id = await db.planOverrides.add(rec);
+    return { id, ...rec };
+  }catch(e){ console.error('planOverrideAdd', e); return null; }
+}
+// Supprime l'override de report du montage d'un parfum pour une semaine source donnée (annulation).
+async function planOverrideRemove(wkSource, parfum, etape){
+  etape = etape || 'montage';
+  try{
+    const dejas = await db.planOverrides.where('wkSource').equals(wkSource).toArray();
+    let n=0;
+    for(const o of dejas){ if(o.parfum===parfum && (o.etape||'montage')===etape){ await db.planOverrides.delete(o.id); n++; } }
+    return n;
+  }catch(e){ console.error('planOverrideRemove', e); return 0; }
+}
+// Lit les overrides CONCERNANT une semaine donnée : ceux qui PARTENT d'elle (wkSource) et ceux qui
+// ARRIVENT dans elle (wkCible). Le scheduler s'en sert pour retirer/injecter les montages.
+async function planOverridesForWeek(wk){
+  try{
+    const sortants = await db.planOverrides.where('wkSource').equals(wk).toArray();
+    const tous = await db.planOverrides.toArray();
+    const entrants = tous.filter(o=> o.wkCible===wk);
+    return { sortants, entrants };
+  }catch(e){ console.error('planOverridesForWeek', e); return { sortants:[], entrants:[] }; }
+}
+// ============================================================================================
+
 async function _datesLivraisonParParfum(debut, fin){
   const out = {};
   let orders = [];
@@ -32073,6 +32144,35 @@ async function _datesLivraisonParParfum(debut, fin){
       if(!out[parfum] || o.date < out[parfum]) out[parfum] = o.date;
     }
   });
+  // [NIVEAU 2 #3 — MARCHÉS] Un besoin peut aussi venir d'un marché programmé (quantité prévue à
+  // emporter), pas seulement d'une commande. On ventile chaque marché futur par parfum via la
+  // répartition apprise (marketForecast), même pattern que le calcul de besoins, et on retient la
+  // date la plus proche entre commandes ET marchés. Sans historique de répartition, on ne peut pas
+  // attribuer la date à un parfum précis → on s'abstient (pas de fausse échéance).
+  try{
+    const markets = await db.markets.toArray();
+    const futureMarkets = markets.filter(m=> m && m.date && m.date>=debut && m.statut!=='clos' && (+m.prevuQte||0)>0);
+    // [COHÉRENCE PLAN] Le plan n'intègre les marchés QUE si l'historique est fiable (≥ SEUIL_MARCHE_FIABLE
+    // marchés clos, cf. _pseudoCommandeDepuisMarche). On applique le MÊME seuil ici : sinon une tâche marché
+    // afficherait une échéance alors qu'elle n'est pas dans le plan. Même source de vérité, pas de « 5 » en dur.
+    const nbMarchesClos = markets.filter(m=> m && m.statut==='clos').length;
+    const seuilOk = (typeof SEUIL_MARCHE_FIABLE==='number') ? (nbMarchesClos >= SEUIL_MARCHE_FIABLE) : (nbMarchesClos >= 5);
+    if(futureMarkets.length && seuilOk){
+      let repartition = [];
+      try{ const mf = await marketForecast(); repartition = (mf && mf.repartition) ? mf.repartition : []; }catch(_){ repartition = []; }
+      const totPct = repartition.reduce((s,r)=>s+(+r.pct||0),0);
+      if(repartition.length && totPct>0){
+        futureMarkets.forEach(m=>{
+          repartition.forEach(r=>{
+            if((+r.pct||0)<=0) return;
+            const parfum = r.parfum;
+            if(!parfum) return;
+            if(!out[parfum] || m.date < out[parfum]) out[parfum] = m.date;
+          });
+        });
+      }
+    }
+  }catch(_){ /* marchés indisponibles : on garde les dates issues des commandes */ }
   return out;
 }
 
