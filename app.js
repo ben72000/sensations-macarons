@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v897';
+const APP_VERSION = 'v898';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22696,32 +22696,54 @@ async function _ordreProductionDuJour(){
     try{ compStock = (typeof composantsStockByParfum==='function') ? await composantsStockByParfum() : {}; }catch(_){ compStock = {}; }
     const normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
 
-    const lignes = duJour.map((e,i)=>{
+    const carte = (e,i)=>{
       const p = parfumDe(e.id);
-      let chaine = ''; let alerte = '';
+      const num = `<span style="flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--caramel,#AA7C39);color:#fff;font-size:.72rem;font-weight:700">${i+1}</span>`;
+      const heure = `<b style="color:var(--bordeaux,#52252F);font-variant-numeric:tabular-nums;font-size:.92rem">${hm(e.start)}</b>`;
+      const titre = `<span style="font-weight:600;color:var(--ink,#2b1a1f)">${icone(e.kind)} ${esc(e.label)}</span>`;
+      // Montage : confronter au stock réel pour décider PRÊT vs À PRODUIRE.
+      let accent = 'var(--caramel,#AA7C39)';
+      let corps = '';
       if(e.kind==='montage' && p){
-        const bouts = [];
-        const cq = (coquesParParfum[p]||[]).sort((a,b2)=> (a.date+String(a.start)).localeCompare(b2.date+String(b2.start)))[0];
-        if(cq){ const passe = cq.date < td; bouts.push(`coques ${jourLabel(cq.date)}${passe?' \u2744\ufe0f':''}`); }
-        const gn = ganacheParParfum[p];
-        if(gn){ const passe = gn.date < td; bouts.push(`ganache ${jourLabel(gn.date)}${passe?' (repos\u00e9e)':''}`); }
-        if(bouts.length) chaine = `<div style="font-size:.74rem;color:#7a9a6a;margin-top:1px">\u21b3 ${bouts.join(' \u00b7 ')}</div>`;
         const st = compStock[normP(p)] || {coques:0, garniture:0};
         const coquesNec = (+e.besoinNet||0) * COQUES_PAR_MACARON;
-        const manques = [];
-        if(coquesNec>0 && (+st.coques||0) < coquesNec) manques.push(`coques (${Math.round(+st.coques||0)}/${coquesNec})`);
-        if((+st.garniture||0) <= 0) manques.push('ganache pas pr\u00eate');
-        if(manques.length) alerte = `<div style="font-size:.76rem;color:#b3261e;background:#fdeceb;border:1px solid #f0b8b3;border-radius:7px;padding:4px 7px;margin-top:3px">\u26a0\ufe0f Pas montable en l'\u00e9tat : ${manques.join(' \u00b7 ')}. \u00c0 produire d'abord.</div>`;
+        const coquesOK = !(coquesNec>0 && (+st.coques||0) < coquesNec);
+        const ganacheOK = (+st.garniture||0) > 0;
+        if(coquesOK && ganacheOK){
+          // RÉELLEMENT prêt : ligne verte de confirmation (fait avéré).
+          accent = 'var(--green,#3f7d52)';
+          corps = `<div style="display:flex;align-items:center;gap:5px;font-size:.75rem;color:var(--green,#3f7d52);margin-top:3px"><span>\u2713</span><span>Coques et ganache pr\u00eates \u2014 tu peux monter.</span></div>`;
+        } else {
+          // PAS prêt : pas de fausse ligne verte. Bandeau « à produire d'abord ».
+          accent = 'var(--red,#b04a3e)';
+          const manques = [];
+          if(!coquesOK) manques.push(`coques <b>${Math.round(+st.coques||0)}/${coquesNec}</b>`);
+          if(!ganacheOK) manques.push('ganache <b>non faite</b>');
+          // Ce que le plan prévoyait (en gris, pour situer — pas en vert rassurant).
+          const cq = (coquesParParfum[p]||[]).sort((a,b2)=> (a.date+String(a.start)).localeCompare(b2.date+String(b2.start)))[0];
+          const prevu = cq ? `<div style="font-size:.72rem;color:#a99">\u21b3 pr\u00e9vu : coques ${jourLabel(cq.date)} \u2014 pas encore faites</div>` : '';
+          corps = `<div style="margin-top:4px;background:#fbeae7;border:1px solid #e9c3bc;border-radius:8px;padding:5px 8px;font-size:.76rem;color:var(--red,#b04a3e)">\u26a0\ufe0f <b>\u00c0 produire d'abord</b> : ${manques.join(' \u00b7 ')}.</div>${prevu}`;
+        }
+      } else if(e.kind==='ganache'){
+        accent = '#c9a227';
+        corps = `<div style="font-size:.73rem;color:#8a7a72;margin-top:3px">${esc(String(e.note||'').slice(0,80))}</div>`;
+      } else if(e.kind==='coques'){
+        accent = '#7a4b82';
+        corps = `<div style="font-size:.73rem;color:#8a7a72;margin-top:3px">${esc(String(e.note||'').slice(0,80))}</div>`;
       }
-      const noteCourt = e.note ? `<div style="font-size:.74rem;color:#8a7a72">${esc(String(e.note).slice(0,90))}${String(e.note).length>90?'\u2026':''}</div>` : '';
-      return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:1px">
-        <div style="display:flex;justify-content:space-between"><span><b>${i+1}.</b> ${icone(e.kind)} ${esc(e.label)}</span><b style="color:#5b3a78">${hm(e.start)}</b></div>
-        ${chaine}${alerte}${noteCourt}</div>`;
-    }).join('');
-    return `<div style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <span style="font-weight:700;font-size:.95rem;color:var(--bordeaux)">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
-        <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem">\ud83d\udccb Voir le plan</button>
+      return `<div style="display:flex;gap:9px;background:var(--paper,#fbf8f3);border:1px solid var(--creme,#E8DDCD);border-left:3px solid ${accent};border-radius:12px;padding:9px 11px;margin-bottom:7px;box-shadow:0 1px 2px rgba(82,37,47,.04)">
+        ${num}
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">${titre}${heure}</div>
+          ${corps}
+        </div>
+      </div>`;
+    };
+    const lignes = duJour.map(carte).join('');
+    return `<div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-weight:700;font-size:1rem;color:var(--bordeaux,#52252F);letter-spacing:.2px">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
+        <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem;white-space:nowrap">\ud83d\udccb Voir le plan</button>
       </div>
       ${lignes}
     </div>`;
