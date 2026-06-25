@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v907';
+const APP_VERSION = 'v908';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22652,6 +22652,59 @@ async function aiRun(){
 // [COCKPIT] ORDRE DE PRODUCTION DU JOUR : « par quoi je commence aujourd'hui ? ». Réutilise le plan
 // déjà calé à l'heure (schedulePersonalPlan via _planSemaineSchedule) et en extrait les tâches du jour,
 // triées chronologiquement → un vrai ordre de marche (1. …, 2. …), avec heure et repos ganache.
+// [VERDICT ADAPTATIF — étape 1, lecture seule] Calcule la zone de charge de la SEMAINE (commandes +
+// réassort) et renvoie l'en-tête contractualisé : verdict + périmètre + discours adapté. Seuils de
+// départ 🟢 ≤80% / 🟡 80-100% / 🔴 >100% (affinables via rubrique technique). Ne touche PAS encore au
+// contenu de l'ordre du jour (étape 2). Publie son diag dans la rubrique technique.
+const VERDICT_SEUILS = { confortable: 80, juste: 100 };   // bornes en % de charge
+async function _verdictSemaine(wk){
+  try{
+    if(typeof _faisabiliteSemaine!=='function') return null;
+    const conf = (typeof getAvailability==='function') ? getAvailability() : null;
+    const f = await _faisabiliteSemaine(wk, conf);   // commandes + réassort, depuis aujourd'hui
+    if(!f) return null;
+    const charge = +f.chargePct || 0;
+    let zone, emoji, titre, discours, couleur;
+    if(charge <= VERDICT_SEUILS.confortable){
+      zone='confortable'; emoji='🟢'; couleur='var(--green,#3f7d52)';
+      titre='Tu as le temps';
+      discours='Tu es bien organisé : voici ton planning optimisé pour tes commandes et le réassort associé.';
+    } else if(charge <= VERDICT_SEUILS.juste){
+      zone='juste'; emoji='🟡'; couleur='#d98324';
+      titre='Ça passe juste';
+      discours='Ta semaine est bien remplie. On garde tes commandes et on ajuste le réassort pour que tout rentre.';
+    } else {
+      zone='tendu'; emoji='🔴'; couleur='var(--red,#b04a3e)';
+      titre='Le temps va manquer';
+      const trop = (typeof fmtHM==='function') ? fmtHM(f.debordementMin||0) : Math.round((f.debordementMin||0))+' min';
+      discours=`A priori tu ne pourras pas tout caser (commandes + réassort) : il manque environ <b>${trop}</b>. On priorise tes commandes, et on regarde comment reporter le réassort.`;
+    }
+    // Périmètre affiché (contrat). En zones juste/tendu il sera affiné à l'étape 2 ; ici on annonce l'intention.
+    const perimetre = (zone==='confortable') ? 'Commandes + réassort'
+                    : (zone==='juste') ? 'Commandes + réassort ajusté'
+                    : 'Commandes prioritaires';
+    diagPublish('verdict', '⚖️ Verdict de la semaine', {
+      'Semaine (wk)': wk,
+      'Charge': charge+'%',
+      'Temps nécessaire': (typeof fmtHM==='function')?fmtHM(f.tempsTotal||0):(f.tempsTotal||0)+' min',
+      'Temps disponible': (typeof fmtHM==='function')?fmtHM(f.tempsDispo||0):(f.tempsDispo||0)+' min',
+      'Débordement': (f.debordementMin>0) ? ((typeof fmtHM==='function')?fmtHM(f.debordementMin):f.debordementMin+' min') : 'aucun',
+      'Zone': zone+' '+emoji,
+      'Seuils': '🟢 ≤'+VERDICT_SEUILS.confortable+'% · 🟡 ≤'+VERDICT_SEUILS.juste+'% · 🔴 >'+VERDICT_SEUILS.juste+'%',
+      'Périmètre retenu': perimetre
+    });
+    // En-tête contractualisé (verdict + discours + périmètre). Bouton « voir le détail » : Production.
+    const html = `<div style="margin-bottom:12px;background:var(--paper,#fbf8f3);border:1px solid var(--creme,#E8DDCD);border-left:4px solid ${couleur};border-radius:12px;padding:11px 13px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="font-weight:700;font-size:.98rem;color:${couleur}">${emoji} ${titre}</span>
+        <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.7rem;white-space:nowrap">📋 Voir le détail</button>
+      </div>
+      <div style="font-size:.84rem;color:var(--ink,#2b1a1f);line-height:1.4">${discours}</div>
+      <div style="font-size:.72rem;color:#9a8576;margin-top:6px">📍 ${perimetre} · charge ${charge}% cette semaine</div>
+    </div>`;
+    return { zone, charge, html, faisabilite:f };
+  }catch(e){ console.error('verdictSemaine',e); diagPublish('verdict','⚖️ Verdict — erreur',{erreur:String(e&&e.message||e)}); return null; }
+}
 async function _ordreProductionDuJour(){
   try{
     // Date du jour en LOCAL (today() de utils.js est en UTC → décale le soir en France ; on reconstruit).
@@ -22805,9 +22858,17 @@ async function aiQueryAdvice(){
   try{
     const html = (typeof atelierVoix==='function') ? await atelierVoix() : '';
     const ordre = (typeof _ordreProductionDuJour==='function') ? await _ordreProductionDuJour() : '';
+    // [VERDICT ADAPTATIF — étape 1] En-tête contractualisé : verdict de charge de la semaine courante,
+    // affiché AU-DESSUS de l'ordre du jour (lecture seule, ne modifie pas encore le contenu).
+    let verdictHtml = '';
+    try{
+      const _ymd = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      const _wkNow = (typeof _isoWeekKey==='function') ? _isoWeekKey(_ymd(new Date())) : null;
+      if(_wkNow){ const v = await _verdictSemaine(_wkNow); if(v && v.html) verdictHtml = v.html; }
+    }catch(_){}
     if(out){
-      out.innerHTML = (html || ordre)
-        ? `<div style="margin-top:4px">${ordre}${html}<p class="note" style="margin-top:8px">💬 Tu peux aussi me demander : « qu'est-ce qui est en retard ? », « le stock de chocolat », « les commandes de demain »…</p></div>`
+      out.innerHTML = (html || ordre || verdictHtml)
+        ? `<div style="margin-top:4px">${verdictHtml}${ordre}${html}<p class="note" style="margin-top:8px">💬 Tu peux aussi me demander : « qu'est-ce qui est en retard ? », « le stock de chocolat », « les commandes de demain »…</p></div>`
         : `<div class="panel"><p>Rien d'urgent à signaler pour le moment. Tu peux avancer sereinement.</p></div>`;
     }
   }catch(e){ console.error('aiQueryAdvice',e); if(out) out.innerHTML=`<div class="panel"><p>Je n'ai pas pu générer le conseil. Réessaie.</p></div>`; }
