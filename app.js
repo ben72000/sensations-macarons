@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v906';
+const APP_VERSION = 'v907';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -21683,9 +21683,9 @@ async function atelierVoix(opts){
     const fiable = b.tempsLisseFiable;
     const nuance = fiable ? '' : ` <span style="color:#9a8a82">(estimation encore approximative — chronomètre plus de productions pour l'affiner)</span>`;
     if(b.tempsSuffisant){
-      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#3f7d52;border-left:3px solid #bcd9c4;padding-left:8px">⏱ <b>Temps de fabrication.</b> Produire les macarons listés ci-dessus représente <b>${fmtHM(b.besoinMin)}</b> de travail, soit ${b.tauxChargeHorizon!=null?`${b.tauxChargeHorizon}% de`:'une petite part de'} tes disponibilités sur 14 j — <b>ça tient largement</b>. <span style="color:#9a8a82">(ne compte pas les lots à écouler ci-dessus, qui sont juste à vendre, pas à fabriquer)</span>${nuance}</div>`);
+      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#3f7d52;border-left:3px solid #bcd9c4;padding-left:8px">⏱ <b>Temps de fabrication.</b> Produire tes commandes et réassorts des 14 prochains jours représente <b>${fmtHM(b.besoinMin)}</b> de travail, soit ${b.tauxChargeHorizon!=null?`${b.tauxChargeHorizon}% de`:'une petite part de'} tes disponibilités sur 14 j — <b>ça tient largement</b>. <span style="color:#9a8a82">(ne compte pas les lots à écouler ci-dessus, qui sont juste à vendre, pas à fabriquer)</span>${nuance}</div>`);
     } else {
-      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#d98324;border-left:3px solid #e8cfa6;padding-left:8px">⏱ <b>Attention au temps de fabrication.</b> Produire les macarons listés ci-dessus demande environ <b>${fmtHM(b.tempsManquantMin)}</b> de plus que tes disponibilités sur 14 j. Pense à étaler ou élargir tes créneaux.${nuance}</div>`);
+      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#d98324;border-left:3px solid #e8cfa6;padding-left:8px">⏱ <b>Attention au temps de fabrication.</b> Produire tes commandes et réassorts des 14 prochains jours demande environ <b>${fmtHM(b.tempsManquantMin)}</b> de plus que tes disponibilités sur 14 j. Pense à étaler ou élargir tes créneaux.${nuance}</div>`);
     }
   }
 
@@ -21697,7 +21697,7 @@ async function atelierVoix(opts){
       const q = (manque!=null && manque>0) ? ` (${(typeof qty==='function')?qty(manque):Math.round(manque*1000)/1000}${m.unite?' '+m.unite:''})` : '';
       return `${esc2(nom)}${q}`;
     }).join(', ');
-    sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#b3261e">🛒 <b>À acheter</b> avant de lancer la fabrication ci-dessus : ${liste}.</div>`);
+    sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#b3261e">🛒 <b>À acheter</b> pour honorer tes commandes et réassorts des ${b.horizon||14} prochains jours : ${liste}.</div>`);
   }
 
   // --- 5) MARCHÉS (conseil de production marché) — seulement si pertinent ---
