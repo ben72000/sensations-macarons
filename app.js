@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v920';
+const APP_VERSION = 'v921';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -15385,6 +15385,41 @@ async function besoinMatieresPrevisionnel(horizonJours){
     .filter(l => (+l.manqueApresMob||0) > 0)
     .map(l => ({ parfum:l.parfum, aProduire:+l.manqueApresMob||0 }));
   const r = _calcBesoinMatieres(aProduireList, recipes, recipeItems, lots, mats);
+  // [ÉTAPE A — ORIGINE COMMANDE vs MARCHÉ, lecture seule] Pour chaque parfum à produire, on mesure quelle
+  // FRACTION de sa demande provient de MARCHÉS prévisionnels (échéances marquées marche:true dans
+  // computeForecast) vs de COMMANDES fermes. Objectif : prouver que certaines matières (ex. purée de
+  // noisette) n'apparaissent dans les courses QU'À CAUSE d'un marché prévisionnel, pas d'une commande.
+  // On ne modifie NI le calcul des matières NI la liste : on publie seulement un diag de transparence.
+  try{
+    if(typeof diagPublish==='function'){
+      // Part marché par parfum : somme des échéances marché / somme totale des échéances (de la demande).
+      const partMarcheParfum = {};   // parfum -> {marche, total, pct}
+      (f.lignes||[]).forEach(l=>{
+        const ech = l.echeances||[];
+        let tot=0, mk=0;
+        ech.forEach(e=>{ const q=+e.qte||0; tot+=q; if(e.marche||e.marketId!=null) mk+=q; });
+        partMarcheParfum[l.parfum] = { marche:mk, total:tot, pct: tot>0 ? Math.round(mk/tot*100) : 0 };
+      });
+      // Pour chaque matière MANQUANTE, agréger la part marché pondérée par la conso de chaque parfum.
+      const _trace = (r.lignes||[]).filter(l=>l.manque>0).slice(0,15).map(l=>{
+        let totQ=0, mkQ=0; const parts=[];
+        (l.parfums||[]).forEach(p=>{
+          const pm = partMarcheParfum[p.nom] || {pct:0};
+          const q = +p.qte||0; totQ += q; mkQ += q*(pm.pct/100);
+          parts.push(`${p.nom} ${pm.pct}%mk`);
+        });
+        const pctMat = totQ>0 ? Math.round(mkQ/totQ*100) : 0;
+        const tag = pctMat>=100 ? '⚠ 100% MARCHÉ' : pctMat>0 ? (pctMat+'% marché') : 'commandes';
+        return `${l.nom} (manque ${l.manque}${l.unite||''}) — ${tag}  ←  ${parts.join(' + ')}`;
+      });
+      diagPublish('matieresOrigine', '🔎 Courses prévisionnelles — origine commande/marché', {
+        'Horizon': horizon+' j',
+        'Lecture': 'Pour chaque matière manquante : part de son besoin venant de MARCHÉS prévisionnels vs COMMANDES fermes. ⚠ 100% MARCHÉ = matière achetée uniquement pour une prévision (ex. purée de noisette).',
+        'Matières manquantes (origine)': _trace.length ? _trace : 'aucune matière manquante',
+        'Note': 'Une part marché élevée = besoin fondé sur une PRÉVISION, pas une commande ferme. À séparer visuellement (étape B).'
+      });
+    }
+  }catch(ex){ console.error('diag matieresOrigine', ex); }
   return { horizon, lignes:r.lignes, nbAProduire:r.nbAProduire,
            nbMatieresManquantes: r.lignes.filter(l=>l.manque>0).length,
            sansRecette: r.sansRecette };
