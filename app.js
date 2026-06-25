@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v870';
+const APP_VERSION = 'v871';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -15947,9 +15947,9 @@ async function renderCompta(){
     const mkPts = sel => A.serie.map((s,i)=>({x:i, y:sel(s)}));
     const labelByIdx = A.serie.map(s=>monthLabel(s.mois));
     chart = lineChart([
-      {name:'CA facturé', points:mkPts(s=>s.caFacture), color:'#c9a227'},
-      {name:'CA encaissé', points:mkPts(s=>s.ca), color:'#52252F'},
-      {name:'Résultat', points:mkPts(s=>s.resultat), color:'#3f7d52'}
+      {label:'CA facturé', points:mkPts(s=>s.caFacture), color:'#c9a227'},
+      {label:'CA encaissé', points:mkPts(s=>s.ca), color:'#52252F'},
+      {label:'Résultat', points:mkPts(s=>s.resultat), color:'#3f7d52'}
     ], {zero:true, xlabel:i=>labelByIdx[i]||'', fmt:v=>Math.round(v)+'€'});
   }
 
@@ -16305,7 +16305,7 @@ async function renderPilotage(){
   // mini-courbe CA encaissé
   let chart='';
   if(S.serie.length){
-    chart = lineChart([{name:'CA encaissé', points:S.serie.map((s,i)=>({x:i,y:s.ca})), color:'#52252F'}],
+    chart = lineChart([{label:'CA encaissé', points:S.serie.map((s,i)=>({x:i,y:s.ca})), color:'#52252F'}],
       {zero:true, xlabel:i=>monthLabel(S.serie[i]?.mois)||'', fmt:v=>Math.round(v)+'€'});
   }
 
@@ -18724,7 +18724,7 @@ async function renderMarketStats(){
   // CA par mois
   const byMonth={}; data.forEach(d=>{ const m=monthKey(d.mk.date); byMonth[m]=addMoney(byMonth[m]||0,d.T.caTotal); });
   const months=Object.keys(byMonth).sort();
-  let chart=''; if(months.length) chart=lineChart([{name:'CA marchés', points:months.map((m,i)=>({x:i,y:byMonth[m]})), color:'#52252F'}], {zero:true, xlabel:i=>monthLabel(months[i]), fmt:v=>Math.round(v)+'€'});
+  let chart=''; if(months.length) chart=lineChart([{label:'CA marchés', points:months.map((m,i)=>({x:i,y:byMonth[m]})), color:'#52252F'}], {zero:true, xlabel:i=>monthLabel(months[i]), fmt:v=>Math.round(v)+'€'});
 
   // parfums les + / - vendus (somme vendu par parfum)
   const byParfum={};
