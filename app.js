@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v891';
+const APP_VERSION = 'v892';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22631,14 +22631,42 @@ async function aiRun(){
 
 // ---- CONSULTATIONS ----
 // CONSEIL GLOBAL : affiche la voix complète (le cerveau) dans le fil du dialogue.
+// [COCKPIT] ORDRE DE PRODUCTION DU JOUR : « par quoi je commence aujourd'hui ? ». Réutilise le plan
+// déjà calé à l'heure (schedulePersonalPlan via _planSemaineSchedule) et en extrait les tâches du jour,
+// triées chronologiquement → un vrai ordre de marche (1. …, 2. …), avec heure et repos ganache.
+async function _ordreProductionDuJour(){
+  try{
+    const td = (typeof today==='function') ? today().slice(0,10) : new Date().toISOString().slice(0,10);
+    const wk = (typeof _isoWeekKey==='function') ? _isoWeekKey(td) : null;
+    if(!wk) return '';
+    const r = await _planSemaineSchedule(wk, {});
+    if(!r || !r.S || !Array.isArray(r.S.events)) return '';
+    const duJour = r.S.events.filter(e=> e.date===td && e.start!=null)
+                             .sort((a,b)=> a.start - b.start);
+    if(!duJour.length) return '';
+    const hm = mm => String(Math.floor(mm/60)).padStart(2,'0')+':'+String(mm%60).padStart(2,'0');
+    const icone = k => k==='meringue'?'🥚' : k==='ganache'?'🍫' : k==='montage'?'🧁' : '•';
+    const lignes = duJour.map((e,i)=>{
+      const repos = /repos|❄️|congel/i.test(e.note||'') ? '' : '';
+      return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:1px">
+        <div style="display:flex;justify-content:space-between"><span><b>${i+1}.</b> ${icone(e.kind)} ${esc(e.label)}</span><b style="color:#5b3a78">${hm(e.start)}</b></div>
+        ${e.note?`<div style="font-size:.76rem;color:#8a7a72">${esc(String(e.note).slice(0,120))}${String(e.note).length>120?'…':''}</div>`:''}</div>`;
+    }).join('');
+    return `<div style="margin-bottom:10px">
+      <div style="font-weight:700;font-size:.95rem;color:var(--bordeaux);margin-bottom:6px">▶️ Par quoi commencer aujourd'hui</div>
+      ${lignes}
+    </div>`;
+  }catch(e){ console.error('ordreJour',e); return ''; }
+}
 async function aiQueryAdvice(){
   const out=document.getElementById('aiOut');
   if(out) out.innerHTML=`<div class="panel"><p class="note">Analyse de ta situation…</p></div>`;
   try{
     const html = (typeof atelierVoix==='function') ? await atelierVoix() : '';
+    const ordre = (typeof _ordreProductionDuJour==='function') ? await _ordreProductionDuJour() : '';
     if(out){
-      out.innerHTML = html
-        ? `<div style="margin-top:4px">${html}<p class="note" style="margin-top:8px">💬 Tu peux aussi me demander : « qu'est-ce qui est en retard ? », « le stock de chocolat », « les commandes de demain »…</p></div>`
+      out.innerHTML = (html || ordre)
+        ? `<div style="margin-top:4px">${ordre}${html}<p class="note" style="margin-top:8px">💬 Tu peux aussi me demander : « qu'est-ce qui est en retard ? », « le stock de chocolat », « les commandes de demain »…</p></div>`
         : `<div class="panel"><p>Rien d'urgent à signaler pour le moment. Tu peux avancer sereinement.</p></div>`;
     }
   }catch(e){ console.error('aiQueryAdvice',e); if(out) out.innerHTML=`<div class="panel"><p>Je n'ai pas pu générer le conseil. Réessaie.</p></div>`; }
