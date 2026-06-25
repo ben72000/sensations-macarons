@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v896';
+const APP_VERSION = 'v897';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22636,36 +22636,43 @@ async function aiRun(){
 // triées chronologiquement → un vrai ordre de marche (1. …, 2. …), avec heure et repos ganache.
 async function _ordreProductionDuJour(){
   try{
-    // Date du jour en LOCAL (évite le décalage UTC de toISOString qui, en France UTC+1/+2,
-    // renvoie la veille pour un minuit local). On reste cohérent avec ce même format partout.
+    // Date du jour en LOCAL (today() de utils.js est en UTC → décale le soir en France ; on reconstruit).
     const ymd = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     const td = ymd(new Date());
     const wk = (typeof _isoWeekKey==='function') ? _isoWeekKey(td) : null;
-    if(!wk || typeof _wkBornes!=='function') return '<div style="color:#b3261e;font-size:.75rem">DIAG-1 wk/bornes KO</div>';
+    if(!wk || typeof _wkBornes!=='function') return '';
     const b = _wkBornes(wk);
-    if(!b) return '<div style="color:#b3261e;font-size:.75rem">DIAG-2 bornes nulles</div>';
-    // Plan de la semaine COMPLÈTE (depuis lundi, pas depuis today) pour voir toute la chaîne.
-    let plan;
-    try{ plan = await generateProductionOrder(b.lundiStr, b.dimStr, 0); }catch(ex){ return '<div style="color:#b3261e;font-size:.75rem">DIAG-3 genProd: '+esc(String(ex&&ex.message||ex).slice(0,60))+'</div>'; }
-    if(!plan || !plan.lignes || !plan.lignes.length) return '<div style="color:#b3261e;font-size:.75rem">DIAG-4 plan vide ('+((plan&&plan.lignes&&plan.lignes.length)||0)+' lignes)</div>';
-    const conf = (typeof getAvailability==='function') ? getAvailability() : null;
-    const daySpecs = [];
-    const cur = new Date(b.lundiStr+'T00:00:00'); const end = new Date(b.dimStr+'T00:00:00');
-    let guard=0;
-    while(cur<=end && guard++<60){
-      const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
-      const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b2])=>b2>a);
-      if(slotsMin.length) daySpecs.push({ date:ymd(cur), slots:slotsMin });
-      cur.setDate(cur.getDate()+1);
-    }
-    const S = schedulePersonalPlan(daySpecs, plan, {});
-    if(!S || !Array.isArray(S.events)) return '<div style="color:#b3261e;font-size:.75rem">DIAG-5 S.events KO</div>';
-    const evs = S.events.filter(e=> e.start!=null);
-    const duJour = evs.filter(e=> e.date===td).sort((a,b2)=> a.start - b2.start);
-    if(!duJour.length) return '<div style="color:#b3261e;font-size:.75rem">DIAG-6 0 tache auj (td='+esc(td)+', '+evs.length+' events, jours: '+esc([...new Set(evs.map(e=>e.date))].join(','))+')</div>';
+    if(!b) return '';
+
+    // --- PLAN 1 : à partir d'AUJOURD'HUI (ce qu'il RESTE à faire) → source de l'ordre du jour réel.
+    let rToday = null;
+    try{ rToday = await _planSemaineSchedule(wk, {}); }catch(_){ rToday = null; }
+    const evsToday = (rToday && rToday.S && Array.isArray(rToday.S.events)) ? rToday.S.events.filter(e=>e.start!=null) : [];
+    const duJour = evsToday.filter(e=> e.date===td).sort((a,b2)=> a.start - b2.start);
+    if(!duJour.length) return '';
+
+    // --- PLAN 2 : semaine COMPLÈTE depuis lundi → seulement pour retrouver la CHAÎNE (coques/ganache).
+    let evsFull = [];
+    try{
+      const planFull = await generateProductionOrder(b.lundiStr, b.dimStr, 0);
+      if(planFull && planFull.lignes && planFull.lignes.length){
+        const conf = (typeof getAvailability==='function') ? getAvailability() : null;
+        const daySpecs = [];
+        const cur = new Date(b.lundiStr+'T00:00:00'); const end = new Date(b.dimStr+'T00:00:00');
+        let guard=0;
+        while(cur<=end && guard++<60){
+          const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
+          const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b2])=>b2>a);
+          if(slotsMin.length) daySpecs.push({ date:ymd(cur), slots:slotsMin });
+          cur.setDate(cur.getDate()+1);
+        }
+        const Sf = schedulePersonalPlan(daySpecs, planFull, {});
+        if(Sf && Array.isArray(Sf.events)) evsFull = Sf.events.filter(e=>e.start!=null);
+      }
+    }catch(_){ evsFull = []; }
 
     const hm = mm => { const t=Math.round(+mm||0); return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0'); };
-    const icone = k => k==='coques'?'🥚' : k==='ganache'?'🍫' : k==='montage'?'🧁' : '•';
+    const icone = k => k==='coques'?'\ud83e\udd5a' : k==='ganache'?'\ud83c\udf6b' : k==='montage'?'\ud83e\uddc1' : '\u2022';
     const jourLabel = (dStr)=>{
       if(dStr===td) return "aujourd'hui";
       const diff = Math.round((new Date(td) - new Date(dStr))/86400000);
@@ -22677,55 +22684,48 @@ async function _ordreProductionDuJour(){
       try{ return new Date(dStr+'T00:00:00').toLocaleDateString('fr-FR',{weekday:'long'}); }catch(_){ return dStr; }
     };
     const parfumDe = id => { const m=/^(?:montage|ganache):(.+?)(?:@report)?$/.exec(id||''); return m?m[1]:null; };
+    // Chaîne reconstruite depuis le plan COMPLET (evsFull) : où sont coques + ganache de chaque parfum.
     const ganacheParParfum = {};
-    evs.forEach(e=>{ if(e.kind==='ganache'){ const p=parfumDe(e.id); if(p) ganacheParParfum[p]=e; } });
+    evsFull.forEach(e=>{ if(e.kind==='ganache'){ const p=parfumDe(e.id); if(p) ganacheParParfum[p]=e; } });
     const coquesParParfum = {};
-    evs.forEach(e=>{ if(e.kind==='coques' && e.repartition){
+    evsFull.forEach(e=>{ if(e.kind==='coques' && e.repartition){
       Object.keys(e.repartition).forEach(p=>{ (coquesParParfum[p] ||= []).push(e); });
     }});
-    // [ÉTAPE 1] État RÉEL des composants (coques/ganache déjà produits), pour confronter au plan.
+    // \u00c9tat R\u00c9EL des composants (coques/ganache d\u00e9j\u00e0 produits).
     let compStock = {};
     try{ compStock = (typeof composantsStockByParfum==='function') ? await composantsStockByParfum() : {}; }catch(_){ compStock = {}; }
     const normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
 
     const lignes = duJour.map((e,i)=>{
       const p = parfumDe(e.id);
-      let chaine = '';
-      let alerte = '';
+      let chaine = ''; let alerte = '';
       if(e.kind==='montage' && p){
         const bouts = [];
         const cq = (coquesParParfum[p]||[]).sort((a,b2)=> (a.date+String(a.start)).localeCompare(b2.date+String(b2.start)))[0];
-        if(cq){ const passe = cq.date < td; bouts.push(`coques ${jourLabel(cq.date)}${passe?' ❄️':''}`); }
+        if(cq){ const passe = cq.date < td; bouts.push(`coques ${jourLabel(cq.date)}${passe?' \u2744\ufe0f':''}`); }
         const gn = ganacheParParfum[p];
-        if(gn){ const passe = gn.date < td; bouts.push(`ganache ${jourLabel(gn.date)}${passe?' (reposée)':''}`); }
-        if(bouts.length) chaine = `<div style="font-size:.74rem;color:#7a9a6a;margin-top:1px">↳ ${bouts.join(' · ')}</div>`;
-        // CONFRONTATION AU RÉEL : les coques et la ganache existent-elles vraiment ?
+        if(gn){ const passe = gn.date < td; bouts.push(`ganache ${jourLabel(gn.date)}${passe?' (repos\u00e9e)':''}`); }
+        if(bouts.length) chaine = `<div style="font-size:.74rem;color:#7a9a6a;margin-top:1px">\u21b3 ${bouts.join(' \u00b7 ')}</div>`;
         const st = compStock[normP(p)] || {coques:0, garniture:0};
         const coquesNec = (+e.besoinNet||0) * COQUES_PAR_MACARON;
         const manques = [];
-        if(coquesNec>0 && (+st.coques||0) < coquesNec){
-          manques.push(`coques (${Math.round(+st.coques||0)}/${coquesNec})`);
-        }
-        if((+st.garniture||0) <= 0){
-          manques.push('ganache pas prête');
-        }
-        if(manques.length){
-          alerte = `<div style="font-size:.76rem;color:#b3261e;background:#fdeceb;border:1px solid #f0b8b3;border-radius:7px;padding:4px 7px;margin-top:3px">⚠️ Pas montable en l'état : ${manques.join(' · ')}. À produire d'abord.</div>`;
-        }
+        if(coquesNec>0 && (+st.coques||0) < coquesNec) manques.push(`coques (${Math.round(+st.coques||0)}/${coquesNec})`);
+        if((+st.garniture||0) <= 0) manques.push('ganache pas pr\u00eate');
+        if(manques.length) alerte = `<div style="font-size:.76rem;color:#b3261e;background:#fdeceb;border:1px solid #f0b8b3;border-radius:7px;padding:4px 7px;margin-top:3px">\u26a0\ufe0f Pas montable en l'\u00e9tat : ${manques.join(' \u00b7 ')}. \u00c0 produire d'abord.</div>`;
       }
-      const noteCourt = e.note ? `<div style="font-size:.74rem;color:#8a7a72">${esc(String(e.note).slice(0,90))}${String(e.note).length>90?'…':''}</div>` : '';
+      const noteCourt = e.note ? `<div style="font-size:.74rem;color:#8a7a72">${esc(String(e.note).slice(0,90))}${String(e.note).length>90?'\u2026':''}</div>` : '';
       return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:1px">
         <div style="display:flex;justify-content:space-between"><span><b>${i+1}.</b> ${icone(e.kind)} ${esc(e.label)}</span><b style="color:#5b3a78">${hm(e.start)}</b></div>
         ${chaine}${alerte}${noteCourt}</div>`;
     }).join('');
     return `<div style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <span style="font-weight:700;font-size:.95rem;color:var(--bordeaux)">▶️ Par quoi commencer aujourd'hui</span>
-        <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem">📋 Voir le plan</button>
+        <span style="font-weight:700;font-size:.95rem;color:var(--bordeaux)">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
+        <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem">\ud83d\udccb Voir le plan</button>
       </div>
       ${lignes}
     </div>`;
-  }catch(e){ console.error('ordreJour',e); return '<div style="color:#b3261e;font-size:.75rem">DIAG-X '+esc(String(e&&e.message||e).slice(0,80))+'</div>'; }
+  }catch(e){ console.error('ordreJour',e); return ''; }
 }
 async function aiQueryAdvice(){
   const out=document.getElementById('aiOut');
