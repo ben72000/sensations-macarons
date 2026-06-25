@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v921';
+const APP_VERSION = 'v923';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -3159,7 +3159,8 @@ async function genShoppingListPrev(horizonJours){
       manque: l.manque, low: l.manque>0,
       best: _bestSupplierFor(l.materialId, lots, suppliers),
       _planContext: true,        // bascule le libellé « seuil » → « besoin plan » dans _shopRow
-      _parfums: parfums          // détail des parfums à produire qui mobilisent cette matière
+      _parfums: parfums,         // détail des parfums à produire qui mobilisent cette matière
+      _pctMarche: (l._pctMarche!=null ? l._pctMarche : 0)   // part marché (badge « prévision marché » si 100%)
     };
   });
   const aCommander = lignes.filter(l=>l.low).length;
@@ -3306,10 +3307,15 @@ function _shopRow(l){
   const parfumsTxt = (l._parfums && l._parfums.length)
     ? `<div class="shop-sub" style="color:#9a8a82;font-size:.78rem">pour : ${l._parfums.map(p=>`${esc(p.nom)} (${qty(p.qte)})`).join(', ')}</div>`
     : '';
+  // [ÉTAPE B] Badge discret UNIQUEMENT pour les matières achetées à 100% pour une PRÉVISION marché
+  // (aucune commande ferme ne les réclame). Signale à Benjamin que cet achat repose sur une prévision.
+  const previsionTag = (l._pctMarche!=null && l._pctMarche>=100)
+    ? ' <span class="tag" style="font-size:.58rem;background:#f3e7c4;color:#8a6d1f;border:1px solid #e3cf93">🔮 prévision marché</span>'
+    : '';
   return `<div class="shop-line">
     <div class="shop-chk">☐</div>
     <div class="shop-main">
-      <div class="shop-name"><b>${esc(l.nom)}</b> ${l.low?'<span class="tag low" style="font-size:.6rem">à commander</span>':''}</div>
+      <div class="shop-name"><b>${esc(l.nom)}</b> ${l.low?'<span class="tag low" style="font-size:.6rem">à commander</span>':''}${previsionTag}</div>
       <div class="shop-sub">Stock ${qty(l.stock)} / ${l._planContext?'besoin plan':'seuil'} ${qty(l.seuil)} ${esc(l.unite)} · à prévoir : <b>${manqueTxt}</b></div>
       ${parfumsTxt}
       <div class="shop-sup">🏪 ${best}</div>
@@ -15385,30 +15391,35 @@ async function besoinMatieresPrevisionnel(horizonJours){
     .filter(l => (+l.manqueApresMob||0) > 0)
     .map(l => ({ parfum:l.parfum, aProduire:+l.manqueApresMob||0 }));
   const r = _calcBesoinMatieres(aProduireList, recipes, recipeItems, lots, mats);
-  // [ÉTAPE A — ORIGINE COMMANDE vs MARCHÉ, lecture seule] Pour chaque parfum à produire, on mesure quelle
-  // FRACTION de sa demande provient de MARCHÉS prévisionnels (échéances marquées marche:true dans
-  // computeForecast) vs de COMMANDES fermes. Objectif : prouver que certaines matières (ex. purée de
-  // noisette) n'apparaissent dans les courses QU'À CAUSE d'un marché prévisionnel, pas d'une commande.
-  // On ne modifie NI le calcul des matières NI la liste : on publie seulement un diag de transparence.
+  // [ORIGINE COMMANDE vs MARCHÉ] Part de la demande de chaque PARFUM venant de MARCHÉS prévisionnels
+  // (échéances marquées marche:true dans computeForecast) vs COMMANDES fermes. Sert (A) au diag de
+  // transparence et (B) à attacher à chaque matière sa part marché, pour la SIGNALER dans la liste.
+  const partMarcheParfum = {};   // parfum -> {marche, total, pct}
+  (f.lignes||[]).forEach(l=>{
+    const ech = l.echeances||[];
+    let tot=0, mk=0;
+    ech.forEach(e=>{ const q=+e.qte||0; tot+=q; if(e.marche||e.marketId!=null) mk+=q; });
+    partMarcheParfum[l.parfum] = { marche:mk, total:tot, pct: tot>0 ? Math.round(mk/tot*100) : 0 };
+  });
+  // Part marché PAR MATIÈRE = part marché des parfums consommateurs, pondérée par la quantité produite.
+  // Attachée à la ligne (_pctMarche) pour l'affichage : badge « prévision marché » si 100% (étape B).
+  (r.lignes||[]).forEach(l=>{
+    let totQ=0, mkQ=0;
+    (l.parfums||[]).forEach(p=>{
+      const pm = partMarcheParfum[p.nom] || {pct:0};
+      const q = +p.qte||0; totQ += q; mkQ += q*(pm.pct/100);
+    });
+    l._pctMarche = totQ>0 ? Math.round(mkQ/totQ*100) : 0;
+  });
+  // [DIAG — origine, lecture seule] Transparence : part marché/commande de chaque matière manquante.
   try{
     if(typeof diagPublish==='function'){
-      // Part marché par parfum : somme des échéances marché / somme totale des échéances (de la demande).
-      const partMarcheParfum = {};   // parfum -> {marche, total, pct}
-      (f.lignes||[]).forEach(l=>{
-        const ech = l.echeances||[];
-        let tot=0, mk=0;
-        ech.forEach(e=>{ const q=+e.qte||0; tot+=q; if(e.marche||e.marketId!=null) mk+=q; });
-        partMarcheParfum[l.parfum] = { marche:mk, total:tot, pct: tot>0 ? Math.round(mk/tot*100) : 0 };
-      });
-      // Pour chaque matière MANQUANTE, agréger la part marché pondérée par la conso de chaque parfum.
       const _trace = (r.lignes||[]).filter(l=>l.manque>0).slice(0,15).map(l=>{
-        let totQ=0, mkQ=0; const parts=[];
-        (l.parfums||[]).forEach(p=>{
+        const parts = (l.parfums||[]).map(p=>{
           const pm = partMarcheParfum[p.nom] || {pct:0};
-          const q = +p.qte||0; totQ += q; mkQ += q*(pm.pct/100);
-          parts.push(`${p.nom} ${pm.pct}%mk`);
+          return `${p.nom} ${pm.pct}%mk`;
         });
-        const pctMat = totQ>0 ? Math.round(mkQ/totQ*100) : 0;
+        const pctMat = +l._pctMarche||0;
         const tag = pctMat>=100 ? '⚠ 100% MARCHÉ' : pctMat>0 ? (pctMat+'% marché') : 'commandes';
         return `${l.nom} (manque ${l.manque}${l.unite||''}) — ${tag}  ←  ${parts.join(' + ')}`;
       });
@@ -15416,7 +15427,7 @@ async function besoinMatieresPrevisionnel(horizonJours){
         'Horizon': horizon+' j',
         'Lecture': 'Pour chaque matière manquante : part de son besoin venant de MARCHÉS prévisionnels vs COMMANDES fermes. ⚠ 100% MARCHÉ = matière achetée uniquement pour une prévision (ex. purée de noisette).',
         'Matières manquantes (origine)': _trace.length ? _trace : 'aucune matière manquante',
-        'Note': 'Une part marché élevée = besoin fondé sur une PRÉVISION, pas une commande ferme. À séparer visuellement (étape B).'
+        'Note': 'Les matières 100% marché portent un badge « prévision marché » dans la liste (étape B).'
       });
     }
   }catch(ex){ console.error('diag matieresOrigine', ex); }
@@ -34756,6 +34767,11 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
     return { perBatch: t.montage.estimatedTime, source:'défaut' };
   };
 
+  // [DIAG STOCK vs BESOIN — instrumentation, lecture seule] Pour chaque parfum/semaine, on capture le nom
+  // demandé, la clé de regroupement (stockMoveKey), le stock mobilisable trouvé et son détail (finis /
+  // assemblable). But : élucider les cas où un parfum est programmé à produire ALORS QUE du stock fini
+  // existe (ex. Vanille). Si stock=0 mais qu'il y a du fini, c'est un décalage de CLÉ ou une EXCLUSION.
+  const _diagStockBesoin = [];
   const semaines = mut.semaines.map(s=>{
     // [OPTIMISATION BATCH] Pour chaque parfum, on arrondit la quantité commandée au palier rationnel.
     // La PRODUCTION (coques, montage, ganache, temps) est pilotée par la quantité ARRONDIE ;
@@ -34766,6 +34782,15 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
       const stockDispo = stockDe(p.nom);
       // Besoin NET après stock : ce qu'il reste à produire une fois le stock mobilisé.
       const besoinNet = Math.max(0, p.qte - stockDispo);
+      // [DIAG] Détail du mobilisable trouvé pour ce parfum (par sa clé).
+      try{
+        const _k = _stockKey(p.nom);
+        const _b = stockMob[_k] || null;
+        _diagStockBesoin.push({
+          parfum:p.nom, cle:_k, demande:p.qte, stockTrouve:stockDispo, besoinNet,
+          detail: _b ? `finis ${round3(_b.finis||0)} · assemblable ${round3(_b.assemblable||0)} · coques ${round3(_b.coquesMac||0)} · ganache ${round3(_b.ganacheMac||0)}` : 'AUCUNE entrée stockMob pour cette clé'
+        });
+      }catch(_){}
       if(_optimOn){
         const ar = arrondirPalierProduction(besoinNet);
         prodInfo[p.nom] = { commande:p.qte, stock:stockDispo, besoinNet, produire:ar.produire, surplus:ar.surplus, paliers:ar.paliers };
@@ -34982,9 +35007,23 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
              totalMacaronsCommande, totalMacaronsProduits, totalMacaronsReassort, totalMacaronsEnStock,
              totalMin: totalGanacheMin+totalMontageMin+totalCoquesMin, totalMacarons };
   });
+  // [DIAG STOCK vs BESOIN] Publie la table parfum → clé → stock trouvé → à produire. Met en évidence les
+  // cas suspects : besoin programmé alors que le stock devrait couvrir (élucide la Vanille). Lecture seule.
+  try{
+    if(typeof diagPublish==='function' && _diagStockBesoin.length){
+      const _susp = _diagStockBesoin.filter(d=> d.besoinNet>0 && /finis [1-9]/.test(d.detail));
+      diagPublish('stockBesoin', '📦 Stock vs besoin par parfum (production)', {
+        'Lecture': 'Pour chaque parfum à produire : nom demandé, clé de regroupement, stock mobilisable trouvé, à produire. Un « à produire > 0 » AVEC des « finis » non nuls = stock non pris en compte (décalage de clé ou exclusion).',
+        'Parfums (demande → stock → à produire)': _diagStockBesoin.map(d=>
+          `${d.parfum} [clé: ${d.cle}] : demande ${d.demande}, stock ${d.stockTrouve}, à produire ${d.besoinNet}  ·  ${d.detail}`),
+        '⚠ Suspects (à produire malgré du stock fini)': _susp.length
+          ? _susp.map(d=>`${d.parfum} : ${d.detail} mais à produire ${d.besoinNet} (stock vu = ${d.stockTrouve})`)
+          : 'aucun'
+      });
+    }
+  }catch(_){}
   return { semaines, horizonJours: mut.horizonJours||45 };
 }
-
 
 // [FONDATION MUTUALISATION] Agrège les besoins en macarons PAR PARFUM et PAR JOUR DE MONTAGE,
 // en croisant TOUTES les commandes à venir. Ne mutualise rien encore : se contente de CUMULER
