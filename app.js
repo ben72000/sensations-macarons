@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v898';
+const APP_VERSION = 'v899';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22644,32 +22644,34 @@ async function _ordreProductionDuJour(){
     const b = _wkBornes(wk);
     if(!b) return '';
 
-    // --- PLAN 1 : à partir d'AUJOURD'HUI (ce qu'il RESTE à faire) → source de l'ordre du jour réel.
-    let rToday = null;
-    try{ rToday = await _planSemaineSchedule(wk, {}); }catch(_){ rToday = null; }
-    const evsToday = (rToday && rToday.S && Array.isArray(rToday.S.events)) ? rToday.S.events.filter(e=>e.start!=null) : [];
-    const duJour = evsToday.filter(e=> e.date===td).sort((a,b2)=> a.start - b2.start);
-    if(!duJour.length) return '';
-
-    // --- PLAN 2 : semaine COMPLÈTE depuis lundi → seulement pour retrouver la CHAÎNE (coques/ganache).
-    let evsFull = [];
-    try{
-      const planFull = await generateProductionOrder(b.lundiStr, b.dimStr, 0);
-      if(planFull && planFull.lignes && planFull.lignes.length){
-        const conf = (typeof getAvailability==='function') ? getAvailability() : null;
-        const daySpecs = [];
-        const cur = new Date(b.lundiStr+'T00:00:00'); const end = new Date(b.dimStr+'T00:00:00');
-        let guard=0;
-        while(cur<=end && guard++<60){
-          const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
-          const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b2])=>b2>a);
-          if(slotsMin.length) daySpecs.push({ date:ymd(cur), slots:slotsMin });
-          cur.setDate(cur.getDate()+1);
-        }
-        const Sf = schedulePersonalPlan(daySpecs, planFull, {});
-        if(Sf && Array.isArray(Sf.events)) evsFull = Sf.events.filter(e=>e.start!=null);
-      }
-    }catch(_){ evsFull = []; }
+    // SOURCE UNIQUE : on s'appuie sur le MÊME contexte que l'écran Plan de production. _planSemaineGenere
+    // calcule le plan avec TES réglages (reports manuels, overrides, dispos) et mémorise daySpecs+plan+
+    // schedOpts dans window._planSimCtx[wk]. On rejoue schedulePersonalPlan avec CES options → résultat
+    // identique au plan affiché (plus aucune divergence). On ignore le HTML retourné.
+    try{ if(typeof _planSemaineGenere==='function') await _planSemaineGenere(wk); }catch(_){}
+    const ctx = (window._planSimCtx && window._planSimCtx[wk]) ? window._planSimCtx[wk] : null;
+    if(!ctx || !ctx.plan || !Array.isArray(ctx.daySpecs)) return '';
+    let S;
+    try{ S = schedulePersonalPlan(ctx.daySpecs, ctx.plan, ctx.schedOpts||{}); }catch(_){ return ''; }
+    if(!S || !Array.isArray(S.events)) return '';
+    const evs = S.events.filter(e=> e.start!=null);
+    const duJour = evs.filter(e=> e.date===td).sort((a,b2)=> a.start - b2.start);
+    // evsFull = mêmes events (la chaîne coques/ganache se lit dans le même planning, source unique).
+    const evsFull = evs;
+    if(!duJour.length){
+      // Honnête : aujourd'hui, rien n'est calé. On le DIT (au lieu de disparaître), et on indique la suite.
+      const prochain = evs.filter(e=> e.date>td).sort((a,b2)=> (a.date+String(a.start)).localeCompare(b2.date+String(b2.start)))[0];
+      const quand = prochain ? (()=>{ const diff=Math.round((new Date(prochain.date)-new Date(td))/86400000); if(diff===1)return 'demain'; if(diff===2)return 'apr\u00e8s-demain'; if(diff>0)return 'dans '+diff+' jours'; try{ return new Date(prochain.date+'T00:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'}); }catch(_){ return prochain.date; } })() : null;
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-weight:700;font-size:1rem;color:var(--bordeaux,#52252F)">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
+          <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem;white-space:nowrap">\ud83d\udccb Voir le plan</button>
+        </div>
+        <div style="background:var(--paper,#fbf8f3);border:1px solid var(--creme,#E8DDCD);border-left:3px solid var(--green,#3f7d52);border-radius:12px;padding:11px 13px;font-size:.85rem;color:var(--ink,#2b1a1f)">
+          \u2705 Rien de calé en production aujourd'hui${quand?` \u2014 ta prochaine \u00e9tape est <b>${esc(quand)}</b>.`:'.'} Tu peux souffler ou prendre de l'avance.
+        </div>
+      </div>`;
+    }
 
     const hm = mm => { const t=Math.round(+mm||0); return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0'); };
     const icone = k => k==='coques'?'\ud83e\udd5a' : k==='ganache'?'\ud83c\udf6b' : k==='montage'?'\ud83e\uddc1' : '\u2022';
