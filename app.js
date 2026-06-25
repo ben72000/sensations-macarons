@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v912';
+const APP_VERSION = 'v913';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22859,6 +22859,63 @@ function _recommandationReassort(verdict, arbitrage){
       <ul style="margin:0;padding-left:18px">${items}</ul>${concl}</div>`;
   }catch(e){ console.error('recoReassort',e); diagPublish('reco','🎯 Recommandation — erreur',{erreur:String(e&&e.message||e)}); return null; }
 }
+// [DIAG RÉSERVATIONS — observation pure, ne modifie AUCUN calcul] Pour la fenêtre du verdict, montre par
+// parfum : stock physique brut, besoin des commandes DANS la fenêtre, et stock déjà promis à des commandes
+// HORS fenêtre mais proches (≤ horizon de concurrence). Objectif : voir noir sur blanc si le stock compté
+// comme « disponible » est en réalité réservé ailleurs. On corrigera le calcul seulement après cette preuve.
+async function _diagReservationsStock(debutStr, finStr){
+  try{
+    const HORIZON_CONCURRENCE = 7; // jours : au-delà, une commande ne réserve plus le stock d'aujourd'hui
+    const orders = await db.orders.toArray().catch(()=>[]);
+    let stockBrut = {};
+    try{ const r = await mrpCurrentStockByParfum(); stockBrut = (r&&r.stock)||{}; }catch(_){ stockBrut={}; }
+    const normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
+    // Borne de l'horizon de concurrence = debut + 7 j (même longueur que la fenêtre du verdict).
+    const dConc = new Date(debutStr+'T00:00:00'); dConc.setDate(dConc.getDate()+HORIZON_CONCURRENCE-1);
+    const concStr = dConc.toISOString().slice(0,10);
+    // Besoin DANS la fenêtre [debut, fin] et réservations des commandes [debut, concurrence] hors fenêtre.
+    const besoinFenetre = {};      // commandes livrables dans [debut, fin]
+    const reserveProche = {};      // commandes livrables dans (fin, concurrence] — déjà promises mais hors fenêtre
+    orders.forEach(o=>{
+      if(!o || !o.date) return;
+      if((o.statut||'')==='Livrée' || normStatus(o.statut)==='Livrée') return;
+      const dem = _orderParfumDemand(o);
+      const dans = (o.date >= debutStr && o.date <= finStr);
+      const proche = (o.date > finStr && o.date <= concStr);
+      for(const nom in dem){
+        if(dans) besoinFenetre[nom] = (besoinFenetre[nom]||0) + dem[nom];
+        else if(proche) reserveProche[nom] = (reserveProche[nom]||0) + dem[nom];
+      }
+    });
+    // Tableau par parfum concerné (ceux qui ont du stock OU un besoin OU une réservation).
+    const parfums = [...new Set([...Object.keys(stockBrut), ...Object.keys(besoinFenetre), ...Object.keys(reserveProche)])];
+    const lignes = parfums.map(nom=>{
+      const k = normP(nom);
+      const phys = +stockBrut[nom] || 0;
+      const bes = Object.keys(besoinFenetre).filter(x=>normP(x)===k).reduce((t,x)=>t+besoinFenetre[x],0);
+      const res = Object.keys(reserveProche).filter(x=>normP(x)===k).reduce((t,x)=>t+reserveProche[x],0);
+      if(phys===0 && bes===0 && res===0) return null;
+      // Stock RÉELLEMENT disponible pour la fenêtre = physique − réservé par les commandes proches hors fenêtre.
+      const dispoReel = Math.max(0, phys - res);
+      // Ce que le calcul ACTUEL ferait (déduit tout le stock physique) vs ce qu'il DEVRAIT faire (dispo réel).
+      const netActuel = Math.max(0, bes - phys);
+      const netCorrige = Math.max(0, bes - dispoReel);
+      const ecart = netCorrige - netActuel;
+      return { nom, phys, bes, res, dispoReel, netActuel, netCorrige, ecart };
+    }).filter(Boolean).filter(l=> l.bes>0 || l.res>0); // on garde les parfums avec enjeu
+    lignes.sort((a,b)=> b.ecart - a.ecart);
+    diagPublish('reservations', '📦 Stock disponible vs réservé', {
+      'Fenêtre du verdict': debutStr+' → '+finStr,
+      'Horizon de concurrence': debutStr+' → '+concStr+' (7 j : au-delà, une commande ne réserve plus)',
+      'Lecture': 'phys=stock physique · besoin=commandes DANS la fenêtre · réservé=commandes proches HORS fenêtre qui puisent déjà dans ce stock · dispo réel=phys−réservé',
+      'Par parfum (écart = ce que le verdict OUBLIE de produire)': lignes.length ? lignes.map(l=>
+        `${l.nom} : phys ${l.phys}, besoin ${l.bes}, réservé proche ${l.res} → dispo réel ${l.dispoReel} · à produire actuel ${l.netActuel} vs corrigé ${l.netCorrige}${l.ecart>0?' ⚠ +'+l.ecart:''}`
+      ) : 'Aucun parfum avec stock/besoin/réservation sur la période',
+      'Total macarons oubliés (écart)': lignes.reduce((t,l)=>t+l.ecart,0)
+    });
+    return lignes;
+  }catch(e){ console.error('diagReservations',e); diagPublish('reservations','📦 Stock disponible — erreur',{erreur:String(e&&e.message||e)}); return null; }
+}
 // [VERDICT ADAPTATIF — étape 1, lecture seule] Calcule la zone de charge de la SEMAINE (commandes +
 // réassort) et renvoie l'en-tête contractualisé : verdict + périmètre + discours adapté. Seuils de
 // départ 🟢 ≤80% / 🟡 80-100% / 🔴 >100% (affinables via rubrique technique). Ne touche PAS encore au
@@ -22870,6 +22927,9 @@ async function _verdictSemaine(wk){
     const conf = (typeof getAvailability==='function') ? getAvailability() : null;
     const f = await _faisabiliteSemaine(wk, conf);   // commandes + réassort, depuis aujourd'hui
     if(!f) return null;
+    // [DIAG RÉSERVATIONS] Observation : le stock compté « disponible » est-il en réalité réservé par des
+    // commandes proches hors fenêtre ? Ne modifie pas le verdict, publie juste la preuve en rubrique technique.
+    try{ if(f.debut && f.fin) await _diagReservationsStock(f.debut, f.fin); }catch(_){}
     const charge = +f.chargePct || 0;
     let zone, emoji, titre, discours, couleur;
     if(charge <= VERDICT_SEUILS.confortable){
