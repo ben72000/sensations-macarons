@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v895';
+const APP_VERSION = 'v896';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22636,15 +22636,18 @@ async function aiRun(){
 // triées chronologiquement → un vrai ordre de marche (1. …, 2. …), avec heure et repos ganache.
 async function _ordreProductionDuJour(){
   try{
-    const td = (typeof today==='function') ? today().slice(0,10) : new Date().toISOString().slice(0,10);
+    // Date du jour en LOCAL (évite le décalage UTC de toISOString qui, en France UTC+1/+2,
+    // renvoie la veille pour un minuit local). On reste cohérent avec ce même format partout.
+    const ymd = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    const td = ymd(new Date());
     const wk = (typeof _isoWeekKey==='function') ? _isoWeekKey(td) : null;
-    if(!wk || typeof _wkBornes!=='function') return '';
+    if(!wk || typeof _wkBornes!=='function') return '<div style="color:#b3261e;font-size:.75rem">DIAG-1 wk/bornes KO</div>';
     const b = _wkBornes(wk);
-    if(!b) return '';
+    if(!b) return '<div style="color:#b3261e;font-size:.75rem">DIAG-2 bornes nulles</div>';
     // Plan de la semaine COMPLÈTE (depuis lundi, pas depuis today) pour voir toute la chaîne.
     let plan;
-    try{ plan = await generateProductionOrder(b.lundiStr, b.dimStr, 0); }catch(_){ return ''; }
-    if(!plan || !plan.lignes || !plan.lignes.length) return '';
+    try{ plan = await generateProductionOrder(b.lundiStr, b.dimStr, 0); }catch(ex){ return '<div style="color:#b3261e;font-size:.75rem">DIAG-3 genProd: '+esc(String(ex&&ex.message||ex).slice(0,60))+'</div>'; }
+    if(!plan || !plan.lignes || !plan.lignes.length) return '<div style="color:#b3261e;font-size:.75rem">DIAG-4 plan vide ('+((plan&&plan.lignes&&plan.lignes.length)||0)+' lignes)</div>';
     const conf = (typeof getAvailability==='function') ? getAvailability() : null;
     const daySpecs = [];
     const cur = new Date(b.lundiStr+'T00:00:00'); const end = new Date(b.dimStr+'T00:00:00');
@@ -22652,14 +22655,14 @@ async function _ordreProductionDuJour(){
     while(cur<=end && guard++<60){
       const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
       const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b2])=>b2>a);
-      if(slotsMin.length) daySpecs.push({ date:cur.toISOString().slice(0,10), slots:slotsMin });
+      if(slotsMin.length) daySpecs.push({ date:ymd(cur), slots:slotsMin });
       cur.setDate(cur.getDate()+1);
     }
     const S = schedulePersonalPlan(daySpecs, plan, {});
-    if(!S || !Array.isArray(S.events)) return '';
+    if(!S || !Array.isArray(S.events)) return '<div style="color:#b3261e;font-size:.75rem">DIAG-5 S.events KO</div>';
     const evs = S.events.filter(e=> e.start!=null);
     const duJour = evs.filter(e=> e.date===td).sort((a,b2)=> a.start - b2.start);
-    if(!duJour.length) return '';
+    if(!duJour.length) return '<div style="color:#b3261e;font-size:.75rem">DIAG-6 0 tache auj (td='+esc(td)+', '+evs.length+' events, jours: '+esc([...new Set(evs.map(e=>e.date))].join(','))+')</div>';
 
     const hm = mm => { const t=Math.round(+mm||0); return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0'); };
     const icone = k => k==='coques'?'🥚' : k==='ganache'?'🍫' : k==='montage'?'🧁' : '•';
@@ -22722,7 +22725,7 @@ async function _ordreProductionDuJour(){
       </div>
       ${lignes}
     </div>`;
-  }catch(e){ console.error('ordreJour',e); return `<div style="font-size:.74rem;color:#b3261e;margin-bottom:8px">⚠️ Ordre du jour indisponible (${esc(String(e&&e.message||e).slice(0,80))}).</div>`; }
+  }catch(e){ console.error('ordreJour',e); return '<div style="color:#b3261e;font-size:.75rem">DIAG-X '+esc(String(e&&e.message||e).slice(0,80))+'</div>'; }
 }
 async function aiQueryAdvice(){
   const out=document.getElementById('aiOut');
