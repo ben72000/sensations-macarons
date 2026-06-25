@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v909';
+const APP_VERSION = 'v910';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22663,13 +22663,46 @@ async function _arbitrageReassort(planOp, wk){
     if(!planOp || !Array.isArray(planOp.semaines)) return null;
     const sem = planOp.semaines.find(s=>s.wk===wk) || planOp.semaines[0];
     if(!sem) return null;
-    // Parfums avec réassort = lignes de montage avec surplusStock>0.
-    const candidatsBruts = (sem.montage||[]).filter(g=> g && (+g.surplusStock||0) > 0);
-    if(!candidatsBruts.length){ diagPublish('arbitrage','♟️ Arbitrage réassort',{etat:'Aucun réassort à arbitrer cette semaine'}); return {candidats:[], proteges:[]}; }
+    const normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
+    // ── DEUX SOURCES DE RÉASSORT, fusionnées par parfum ──────────────────────────────────────────
+    // (A) ARRONDI = surplusStock du planOp (opportunisme : levier rentabilité, actif si option batch ON).
+    // (B) VÉLOCITÉ = besoin d'anticipation des ventes (computeSalesVelocity : perDay*H − stock), avec
+    //     joursRestants = distance à la rupture (mesure du « précieux »). Seuil non-urgent = 14 j.
+    const SEUIL_RUPTURE_URGENT = 14;   // validé Benjamin : aligné sur l'horizon de réassort H=14
+    const HORIZON_VELOCITE = 14;
+    const parMap = {}; // normParfum → {parfum, arrondi, velocite, joursRestants, perMonth, dureeArrondi, qteProdArrondi}
+    // (A) Arrondi : lignes de montage avec surplusStock>0.
+    (sem.montage||[]).forEach(g=>{
+      if(!g || (+g.surplusStock||0)<=0) return;
+      const k=normP(g.parfum);
+      parMap[k] = parMap[k] || {parfum:g.parfum, arrondi:0, velocite:0, joursRestants:null, perMonth:null};
+      parMap[k].arrondi += (+g.surplusStock||0);
+      parMap[k].dureeArrondi = (+g.dureeMin||0);
+      parMap[k].qteProdArrondi = (+g.qteProduite||0);
+    });
+    // (B) Vélocité : besoin = ceil(perDay*H − stock), avec joursRestants.
+    try{
+      if(typeof computeSalesVelocity==='function'){
+        const v = await computeSalesVelocity({months:3, horizonDays:HORIZON_VELOCITE});
+        if(v && v.hasData!==false && Array.isArray(v.lignes)){
+          v.lignes.forEach(l=>{
+            if(!l || (+l.perDay||0)<=0) return;
+            const besoin = Math.ceil((+l.perDay||0)*HORIZON_VELOCITE - (+l.stock||0));
+            if(besoin<=0) return;
+            const k=normP(l.parfum);
+            parMap[k] = parMap[k] || {parfum:l.parfum, arrondi:0, velocite:0, joursRestants:null, perMonth:null};
+            parMap[k].velocite += besoin;
+            parMap[k].joursRestants = (l.joursRestants!=null) ? l.joursRestants : parMap[k].joursRestants;
+            parMap[k].perMonth = (l.perMonth!=null) ? l.perMonth : parMap[k].perMonth;
+          });
+        }
+      }
+    }catch(_){}
+    const candidatsBruts = Object.values(parMap).filter(p=> (p.arrondi+p.velocite) > 0);
+    if(!candidatsBruts.length){ diagPublish('arbitrage','♟️ Arbitrage réassort',{etat:'Aucun réassort à arbitrer cette semaine (ni arrondi ni vélocité)'}); return {candidats:[], proteges:[]}; }
     // Ganaches déjà prêtes → parfums PROTÉGÉS (on ne les réduit pas).
     let compStock = {};
     try{ compStock = (typeof composantsStockByParfum==='function') ? await composantsStockByParfum() : {}; }catch(_){ compStock={}; }
-    const normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
     const ganachePrete = p => { const st = compStock[normP(p)]; return st && (+st.garniture||0) > 0; };
     // Stock fini par parfum.
     let stockFini = {};
@@ -22684,14 +22717,18 @@ async function _arbitrageReassort(planOp, wk){
 
     const proteges = [];
     const items = [];
-    for(const g of candidatsBruts){
-      const parfum = g.parfum;
+    for(const p of candidatsBruts){
+      const parfum = p.parfum;
       if(ganachePrete(parfum)){ proteges.push(parfum); continue; }   // règle 2 : ganache prête = protégé
-      const surplus = +g.surplusStock||0;
+      const surplusArrondi = +p.arrondi||0;
+      const surplusVelocite = +p.velocite||0;
+      const surplus = surplusArrondi + surplusVelocite;              // réassort total du parfum
       const rec = recDe(parfum);
-      // temps libéré (min) : on approxime par la part réassort de la durée de la ligne (proportionnelle au surplus).
-      const qProd = +g.qteProduite || surplus; const partReassort = qProd>0 ? surplus/qProd : 1;
-      const tempsLibere = Math.round((+g.dureeMin||0) * partReassort);
+      // temps libéré (min) : durée de la ligne arrondi proportionnelle à la part réassort + estimation
+      // montage pour la part vélocité (si pas de ligne arrondi). On reste sur l'ordre de grandeur.
+      let tempsLibere = 0;
+      if(p.dureeArrondi && p.qteProdArrondi>0){ tempsLibere = Math.round(p.dureeArrondi * (surplus/p.qteProdArrondi)); }
+      else if(typeof _montageDureeParfum==='function'){ try{ tempsLibere = Math.round(await _montageDureeParfum(parfum, surplus)); }catch(_){ tempsLibere=0; } }
       // coût matière + pénibilité (coût opérations spéciales) + marge via coutRevientRecette.
       let coutMatUnit=0, penibUnit=0, margeUnit=0;
       if(rec){
@@ -22703,13 +22740,27 @@ async function _arbitrageReassort(planOp, wk){
           margeUnit = Math.max(0, pv - ((c&&c.coutRevientUnit)||0));
         }catch(_){}
       }
+      // ── MANQUE À GAGNER PONDÉRÉ PAR NATURE (le juste milieu) ──
+      // Arrondi = opportunisme : manque à gagner = marge d'opportunité seule (faible) → sacrifiable.
+      const magArrondi = margeUnit * surplusArrondi;
+      // Vélocité = besoin : marge + PÉNALITÉ risque de rupture, d'autant plus forte que joursRestants est petit.
+      // joursRestants > 14 → non urgent (facteur ~1, comme un arrondi). joursRestants ≤ 14 → facteur croissant
+      // jusqu'à ~4 quand la rupture est imminente (0 j). Au-delà du seuil, pas de pénalité.
+      const jr = (p.joursRestants!=null) ? p.joursRestants : 999;
+      let facteurRupture = 1;
+      if(jr <= SEUIL_RUPTURE_URGENT){ facteurRupture = 1 + 3 * (SEUIL_RUPTURE_URGENT - jr) / SEUIL_RUPTURE_URGENT; } // 1→4
+      const magVelocite = margeUnit * surplusVelocite * facteurRupture;
+      const manqueAGagner = magArrondi + magVelocite;
+      // Nature dominante (pour l'affichage) : majoritairement arrondi, vélocité, ou mixte.
+      const nature = surplusVelocite===0 ? 'arrondi' : surplusArrondi===0 ? 'vélocité' : 'mixte';
       items.push({
-        parfum, surplus,
+        parfum, surplus, surplusArrondi, surplusVelocite, nature,
+        joursRestants: (p.joursRestants!=null)?p.joursRestants:null, urgent: jr<=SEUIL_RUPTURE_URGENT,
         critTemps: tempsLibere,                          // + = bon à retirer (libère du temps)
         critCout: coutMatUnit * surplus,                 // + = bon à retirer (économise des matières)
         critPenib: penibUnit * surplus,                  // + = bon à retirer (recette pénible)
         critStock: stockDe(parfum),                      // + = bon à retirer (déjà beaucoup en stock)
-        critManqueAGagner: margeUnit * surplus           // + = MAUVAIS à retirer (on perd cette marge)
+        critManqueAGagner: manqueAGagner                 // + = MAUVAIS à retirer (on perd marge + risque rupture)
       });
     }
     if(!items.length){ diagPublish('arbitrage','♟️ Arbitrage réassort',{etat:'Tous les parfums à réassort ont leur ganache prête (protégés)','Protégés':proteges}); return {candidats:[], proteges}; }
@@ -22740,8 +22791,12 @@ async function _arbitrageReassort(planOp, wk){
       'Semaine': wk,
       'Parfums à réassort': candidatsBruts.length,
       'Protégés (ganache prête)': proteges.length ? proteges : 'aucun',
-      'Ordre de sacrifice (1er à retirer en tête)': items.map((i,n)=>`${n+1}. ${i.parfum} — score ${i.score} — ${i.argument} [réassort ${i.surplus}]`),
-      'Note': '5 critères à poids égal : temps libéré, coût matière, pénibilité, stock dispo, (−)manque à gagner. Score haut = meilleur candidat à retirer.'
+      'Ordre de sacrifice (1er à retirer en tête)': items.map((i,n)=>{
+        const det = i.nature==='mixte' ? `arrondi ${i.surplusArrondi}+vélocité ${i.surplusVelocite}` : `${i.nature} ${i.surplus}`;
+        const rupt = i.urgent ? ` ⚠ rupture ${i.joursRestants}j` : (i.joursRestants!=null ? ` (rupture ${i.joursRestants}j, non urgent)` : '');
+        return `${n+1}. ${i.parfum} — score ${i.score} — ${i.argument} [${det}${rupt}]`;
+      }),
+      'Note': '2 réassorts mêlés : ARRONDI (opportunisme, sacrifiable) + VÉLOCITÉ (besoin, protégé si rupture ≤14j). 5 critères à poids égal ; manque à gagner vélocité pénalisé par la proximité de rupture. Score haut = meilleur candidat à retirer.'
     });
     return { candidats:items, proteges };
   }catch(e){ console.error('arbitrageReassort',e); diagPublish('arbitrage','♟️ Arbitrage réassort — erreur',{erreur:String(e&&e.message||e)}); return null; }
