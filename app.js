@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v871';
+const APP_VERSION = 'v873';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19351,7 +19351,7 @@ function parseIntent(texte, ctx){
 
   // ---- CONSULTATIONS (non critiques) ----
   // CONSEIL GLOBAL : "conseille-moi", "quoi faire", "par quoi je commence", "qu'est-ce que je dois faire"
-  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je )?commenc|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr)\b/.test(t)
+  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je )?commenc|je commence par quoi|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr)\b/.test(t)
      && !/stock|combien|reste/.test(t)){
     return {intent:'query_advice', params:{}, critical:false, label:'Mon conseil de production du moment'};
   }
@@ -19360,7 +19360,7 @@ function parseIntent(texte, ctx){
     return {intent:'query_retards', params:{}, critical:false, label:'Ce qui est en retard'};
   }
   // PÉRIME / DLC : "qu'est-ce qui périme", "dlc proche", "ce qui va se perdre"
-  if(/\b(perim|perime|dlc|date limite|va se perdre|vont se perdre|gaspill|a ecouler|bientot perim|expire|expiration)\b/.test(t)
+  if(/\b(perim|perime|perimer|va perim|vont perim|bientot perim|dlc|date limite|va se perdre|vont se perdre|se perdre|se perd|gaspill|a ecouler|a vendre vite|expire|expiration)\b/.test(t)
      && !/matiere|matieres|ingredient/.test(t)){
     return {intent:'query_dlc_finis', params:{}, critical:false, label:'Ce qui approche de sa DLC'};
   }
@@ -19381,25 +19381,28 @@ function parseIntent(texte, ctx){
       label: fl?`Localiser les macarons « ${fl} »`:'Localiser des macarons finis'};
   }
   // stock d'une matière
-  if(/\b(stock|combien|reste|il reste|quantite)\b/.test(t) && !/commande/.test(t)){
+  if(/\b(stock|combien|reste|il reste|quantite)\b/.test(t) && !/commande/.test(t)
+     && !/(gagn|rapport|encaiss|chiffre|recette|vente)/.test(t)
+     && !/fait combien|combien.*fait|j'?ai fait/.test(t)){
     const mat=aiFindMaterial(t,materials);
     return {intent:'query_stock', params:{material:mat}, critical:false,
       label: mat?`Consulter le stock de « ${mat.nom} »`:'Consulter le stock'};
   }
   // commandes à préparer / à une date
-  if(/\b(commande|commandes)\b/.test(t) && /\b(a preparer|preparer|affiche|montre|liste|voir|quelles)\b/.test(t)){
+  if(/\b(commande|commandes)\b/.test(t) && /\b(a preparer|preparer|affiche|montre|liste|voir|quelles|du jour|aujourd|mes commandes|j'?ai quoi|quoi comme|a venir|cette semaine|demain)\b/.test(t)){
     const date=aiParseDate(t);
     return {intent:'query_orders', params:{date, statut: /preparer/.test(t)?'À préparer':null}, critical:false,
       label: date?`Afficher les commandes du ${date}`:'Afficher les commandes à préparer'};
   }
   // top clients par parfum
-  if(/\b(client|clients)\b/.test(t) && /\b(plus|top|meilleur|commandent|achetent|consomment)\b/.test(t)){
+  if(/\b(client|clients)\b/.test(t) && /\b(plus|top|meilleur|meilleurs|fideles|gros|principaux|commandent|achetent|consomment|qui commande)\b/.test(t)){
     const fl=aiFindFlavor(t,flavors);
     return {intent:'query_top_clients', params:{flavor:fl}, critical:false,
       label: fl?`Clients qui commandent le plus de « ${fl} »`:'Meilleurs clients'};
   }
   // chiffre d'affaires
-  if(/\b(chiffre d'affaires|chiffre d affaires|chiffre|recette|recettes)\b/.test(t)
+  if(/\b(chiffre d'affaires|chiffre d affaires|chiffre|recette|recettes|gagne|gagner|rapporte|rapporter|encaisse|encaisser)\b/.test(t)
+     || (/\b(combien|total|montant)\b/.test(t) && /\b(gagn|fait|rapport|encaiss|mois|euros?|ca|chiffre)\b/.test(t))
      || (/\b(vente|ventes)\b/.test(t) && /\b(combien|total|mois|montant|euros?)\b/.test(t))){
     return {intent:'query_revenue', params:{}, critical:false, label:'Consulter le chiffre d\'affaires'};
   }
@@ -19436,7 +19439,7 @@ function parseIntent(texte, ctx){
 
   // ---- ANALYSE AVANCÉE (consultations) ----
   // tendances de consommation (hausse/baisse)
-  if(/\b(tendance|tendances|evolue|evolution|hausse|baisse|progresse|recule|monte|descend)\b/.test(t)){
+  if(/\b(tendance|tendances|evolue|evolution|hausse|baisse|progresse|recule|monte|descend|se vend|ca marche|qu'?est ce qui (se vend|marche|cartonne)|cartonne|popularite|plus demande)\b/.test(t)){
     return {intent:'query_trends', params:{}, critical:false, label:'Analyser les tendances de consommation'};
   }
   // anomalies / variations inhabituelles
@@ -22138,7 +22141,39 @@ async function renderPredictiveAlerts(){
     <p class="note" style="margin-top:6px">Estimation basée sur la vélocité de vente moyenne et le stock fini actuel. Pensez à planifier une production.</p>
   </div>`;
 }
-function aiSay(html){ document.getElementById('aiOut').innerHTML = `<div class="panel">${html}</div>`; }
+// ============================================================================================
+// [COCKPIT — raccourcis contextuels génériques] À chaque intention de l'assistant, on associe un ou
+// plusieurs raccourcis qui amènent à l'écran (ou l'objet précis) concerné. Principe : une réponse de
+// l'assistant ne doit pas être un cul-de-sac — elle propose toujours « et ensuite, va agir ici ».
+// Chaque raccourci : { label, view, cible? (objet précis), action? (fonction directe au lieu d'un goView) }.
+// Étape 1 : on démarre avec query_revenue seul, pour valider le mécanisme avant de généraliser.
+const INTENT_SHORTCUTS = {
+  query_revenue: [
+    { label:'📊 Ouvrir la compta', view:'compta' },
+    { label:'📈 Rentabilité', view:'rentabilite' },
+    { label:'⤓ Export comptable', action:'exportComptaCSV' }
+  ]
+};
+// Génère le HTML des boutons de raccourci pour une intention donnée. Renvoie '' si aucun raccourci.
+// `action` (fonction globale à appeler) prime sur `view` (navigation). `cible` (optionnelle) sera
+// utilisée plus tard pour amener à un objet précis (ex. stock d'un parfum, fiche d'un client).
+function aiShortcuts(intent, params){
+  const list = (intent && INTENT_SHORTCUTS[intent]) ? INTENT_SHORTCUTS[intent] : null;
+  if(!list || !list.length) return '';
+  const btns = list.map(sc=>{
+    const onclick = sc.action
+      ? `${sc.action}()`
+      : `goView('${sc.view}'${sc.cible?`,${JSON.stringify(sc.cible)}`:''})`;
+    return `<button class="btn ghost sm" onclick="${onclick}" style="margin:2px 4px 0 0">${esc(sc.label)}</button>`;
+  }).join('');
+  return `<div style="margin-top:10px;padding-top:8px;border-top:1px solid #f0eae0;display:flex;flex-wrap:wrap;align-items:center">
+    <span style="font-size:.72rem;color:#9a8a82;margin-right:6px">Aller plus loin :</span>${btns}</div>`;
+}
+function aiSay(html){
+  // [COCKPIT] On accole les raccourcis contextuels de l'intention courante (mémorisée par le dispatcher).
+  const sc = (typeof aiShortcuts==='function') ? aiShortcuts(window._aiCurrentIntent, window._aiCurrentParams) : '';
+  document.getElementById('aiOut').innerHTML = `<div class="panel">${html}${sc}</div>`;
+}
 
 // Envoi fluide : Entrée envoie, Maj+Entrée = nouvelle ligne. Anti double-déclenchement.
 let _aiRunning=false;
@@ -22249,6 +22284,9 @@ async function aiRun(){
     const clients=await db.clients.toArray();
     const materials=await db.materials.toArray();
     const r=parseIntent(txt,{flavors,clients,materials});
+    // [COCKPIT] On mémorise l'intention courante pour qu'aiSay puisse y accoler ses raccourcis contextuels.
+    window._aiCurrentIntent = r.intent;
+    window._aiCurrentParams = r.params || {};
     aiPending=null;
     // Question d'aide / mode d'emploi → base de connaissance (sauf si une intention
     // d'ACTION ou de DONNÉES précise a été reconnue, qu'on laisse passer en priorité).
