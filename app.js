@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v904';
+const APP_VERSION = 'v906';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -21299,6 +21299,24 @@ async function atelierBrain(opts){
   // --- 3) MATIÈRES : de quoi manque-t-il pour exécuter ce plan ?
   let matCheck = {manques:[], ok:true, details:[]};
   try{ matCheck = await mrpCheckMatieres({lignes:lignesPlan}) || matCheck; }catch(e){ console.error('brain.mat',e); }
+  // [DIAG → rubrique technique] Origine de chaque matière à acheter : quels parfums du PLAN (horizon
+  // complet) la réclament, avec leur type (commande/marché/réassort) et leur raison. Prouve que la liste
+  // « à acheter » couvre TOUT l'horizon, pas seulement l'ordre du jour affiché « ci-dessus ».
+  try{
+    const _itemsD = await db.recipeItems.toArray().catch(()=>[]);
+    const _trace = (matCheck.manques||[]).slice(0,12).map(m=>{
+      const contrib = (lignesPlan||[]).filter(l=> l.recipeId && (+l.nbBatchs>0)
+        && _itemsD.some(it=> it.recipeId===l.recipeId && it.materialId===m.materialId && (+it.qteParBatch>0)));
+      const detail = contrib.map(l=> `${l.parfum||'?'} [${l.type||'?'}${l.raison?' · '+l.raison:''}]`).join(' + ') || 'AUCUN parfum ?!';
+      return `${m.nom} (${m.manqueAff||0}${m.unite||''}) ← ${detail}`;
+    });
+    diagPublish('matieres', '🛒 Matières à acheter — origine', {
+      'Périmètre': 'horizon '+horizon+' j ('+(lignesPlan?lignesPlan.length:0)+' lignes de production)',
+      'Nb matières à acheter': (matCheck.manques||[]).length,
+      'Origine par matière': _trace,
+      'Note': 'Type « commande » = besoin d\'une commande ferme ; « marche » = prévision marché ; « reassort » = batch arrondi.'
+    });
+  }catch(ex){ diagPublish('matieres','🛒 Matières — erreur', {erreur:String(ex&&ex.message||ex)}); }
 
   // --- 4) TEMPS : besoin estimé (chrono) vs dispo (planning d'aujourd'hui)
   let minParMac = null;
@@ -21470,21 +21488,6 @@ async function atelierBrain(opts){
       else lignesAvecMarche.push({ parfum:rec.produitNom, recipeId:rec.id, qte:v.pieces, nbBatchs:Math.max(1,Math.ceil(v.pieces/rendement)), besoinNet:v.pieces, type:'marche', raison:'Marché ventilé' });
     });
     try{ matCheckAvecMarche = await mrpCheckMatieres({lignes:lignesAvecMarche}) || matCheck; }catch(e){ console.error('brain.mat2',e); }
-    // [DIAG v904] Tracer l'origine de chaque matière manquante : quels parfums la consomment et de quel
-    // type (commande / marché / réassort). Permet de voir d'un coup d'œil pourquoi une matière inattendue
-    // (ex. purée de noisette) apparaît dans la liste d'achats. Débranché une fois validé.
-    try{
-      const _items = await db.recipeItems.toArray().catch(()=>[]);
-      const _manques = (matCheckAvecMarche.manques||[]);
-      const _trace = _manques.slice(0,6).map(m=>{
-        // parfums dont la recette utilise cette matière ET qui sont dans le plan (avec nbBatchs>0)
-        const contrib = lignesAvecMarche.filter(l=> l.recipeId && (+l.nbBatchs>0)
-          && _items.some(it=> it.recipeId===l.recipeId && it.materialId===m.materialId && (+it.qteParBatch>0)));
-        const detail = contrib.map(l=> `${l.parfum||'?'}[${l.type||'?'}×${l.nbBatchs}b]`).join('+') || 'AUCUN parfum?!';
-        return `${m.nom}: ${detail}`;
-      });
-      window._diagMatieres = _trace.join(' || ');
-    }catch(ex){ window._diagMatieres = 'DIAG-MAT-ERR '+(ex&&ex.message||ex); }
   }
 
   // --- 6) OPTIMISATION FOURNÉES : repérer les micro-productions à arrondir au batch plein.
@@ -21694,7 +21697,7 @@ async function atelierVoix(opts){
       const q = (manque!=null && manque>0) ? ` (${(typeof qty==='function')?qty(manque):Math.round(manque*1000)/1000}${m.unite?' '+m.unite:''})` : '';
       return `${esc2(nom)}${q}`;
     }).join(', ');
-    sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#b3261e">🛒 <b>À acheter</b> avant de lancer la fabrication ci-dessus : ${liste}.${window._diagMatieres?`<div style="font-size:.62rem;color:#7a2230;background:#fff3f2;padding:3px 6px;border-radius:6px;margin-top:4px;word-break:break-all">DIAG-MAT: ${esc2(window._diagMatieres)}</div>`:''}</div>`);
+    sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#b3261e">🛒 <b>À acheter</b> avant de lancer la fabrication ci-dessus : ${liste}.</div>`);
   }
 
   // --- 5) MARCHÉS (conseil de production marché) — seulement si pertinent ---
@@ -22670,10 +22673,10 @@ async function _ordreProductionDuJour(){
         const mut = await buildMutualisationSemaine(45);
         await _buildPlanOpAutonome(mut);   // peuple window._planParfumCreneaux pour toutes les semaines
         creneaux = (window._planParfumCreneaux && window._planParfumCreneaux[wk]) ? window._planParfumCreneaux[wk] : null;
-      }catch(ex){ window._diagOrdre='td='+td+' | AUTO-ERR '+(ex&&ex.message||ex); }
+      }catch(ex){ diagPublish('ordreJour','▶️ Ordre du jour — erreur',{td:td, wk:wk, erreur:'AUTO '+(ex&&ex.message||ex)}); }
     }
     if(!creneaux){
-      window._diagOrdre=(window._diagOrdre||('td='+td+' | wk='+wk))+' | registre indisponible';
+      diagPublish('ordreJour','▶️ Ordre du jour',{td:td, wk:wk, etat:'registre indisponible'});
       return '';
     }
     // Conversion en events {date, start(min), end, kind, label, id, besoinNet, repartition, congeler}.
@@ -22691,17 +22694,23 @@ async function _ordreProductionDuJour(){
     });
     const duJour = evs.filter(e=> e.date===td).sort((a,b2)=> a.start - b2.start);
     const evsFull = evs;
-    // DIAG (conservé jusqu'à validation réelle) : registre présent, jours, horaires des montages.
+    // [DIAG → rubrique technique] Ordre du jour : registre présent, jours, horaires des montages.
     { const _jours=[...new Set(evs.map(e=>e.date))].sort().join(',');
-      const _mtg=evs.filter(e=>e.kind==='montage').map(e=>e.date+'@'+Math.floor(e.start/60)+'h').slice(0,4).join(' ');
-      window._diagOrdre='td='+td+' | wk='+wk+' | registre='+(creneaux?creneaux.length+' creneaux':'ABSENT')+' | jours=['+_jours+'] | duJour='+duJour.length+' | montages: '+_mtg;
+      const _mtg=evs.filter(e=>e.kind==='montage').map(e=>e.date+'@'+Math.floor(e.start/60)+'h').slice(0,6);
+      diagPublish('ordreJour', '▶️ Ordre du jour', {
+        'Aujourd\'hui (td)': td, 'Semaine (wk)': wk,
+        'Registre créneaux': creneaux ? (creneaux.length+' créneaux') : 'ABSENT',
+        'Jours présents': _jours,
+        'Tâches aujourd\'hui': duJour.length,
+        'Montages calés': _mtg
+      });
     }
 
     if(!duJour.length){
       // Honnête : aujourd'hui, rien n'est calé. On le DIT (au lieu de disparaître), et on indique la suite.
       const prochain = evs.filter(e=> e.date>td).sort((a,b2)=> (a.date+String(a.start)).localeCompare(b2.date+String(b2.start)))[0];
       const quand = prochain ? (()=>{ const diff=Math.round((new Date(prochain.date)-new Date(td))/86400000); if(diff===1)return 'demain'; if(diff===2)return 'apr\u00e8s-demain'; if(diff>0)return 'dans '+diff+' jours'; try{ return new Date(prochain.date+'T00:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'}); }catch(_){ return prochain.date; } })() : null;
-      return `<div style="margin-bottom:12px"><div style="font-size:.68rem;color:#b3261e;background:#fff3f2;padding:3px 6px;border-radius:6px;margin-bottom:6px;word-break:break-all">${window._diagOrdre||'(pas de diag)'}</div>
+      return `<div style="margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <span style="font-weight:700;font-size:1rem;color:var(--bordeaux,#52252F)">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
           <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem;white-space:nowrap">\ud83d\udccb Voir le plan</button>
@@ -22781,7 +22790,7 @@ async function _ordreProductionDuJour(){
       </div>`;
     };
     const lignes = duJour.map(carte).join('');
-    return `<div style="margin-bottom:12px"><div style="font-size:.68rem;color:#b3261e;background:#fff3f2;padding:3px 6px;border-radius:6px;margin-bottom:6px;word-break:break-all">${window._diagOrdre||'(pas de diag)'}</div>
+    return `<div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span style="font-weight:700;font-size:1rem;color:var(--bordeaux,#52252F);letter-spacing:.2px">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
         <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem;white-space:nowrap">\ud83d\udccb Voir le plan</button>
@@ -27060,6 +27069,50 @@ function persistStorageStatus(){
   if(v==='0') return {ok:false, label:'⚠️ Stockage non garanti (best-effort)', detail:'Le navigateur n\'a pas accordé la persistance. Tes données restent là, mais pourraient être purgées si l\'appareil manque d\'espace. Garde des exports réguliers.'};
   return {ok:null, label:'ℹ️ Persistance non disponible', detail:'Ce navigateur ne propose pas le verrouillage du stockage. Garde des exports réguliers.'};
 }
+// [RUBRIQUE TECHNIQUE — registre de diagnostic permanent] Chaque moteur publie son diag ici via
+// diagPublish(cle, label, data). La rubrique « Sauvegarde & sécurité » l'affiche en sourdine, consultable
+// à tout moment. Remplace les marqueurs DIAG rouges qui polluaient les écrans utilisateur.
+window._diagRegistry = window._diagRegistry || {};
+function diagPublish(cle, label, data){
+  try{
+    window._diagRegistry[cle] = { label: label||cle, data: data, ts: Date.now() };
+  }catch(_){}
+}
+function _diagRegistrySection(){
+  const reg = window._diagRegistry || {};
+  const cles = Object.keys(reg);
+  if(!cles.length){
+    return `<div class="panel"><h2>🔧 Diagnostic technique</h2>
+      <p class="note">Aucun diagnostic publié pour l'instant. Les moteurs (ordre du jour, matières, faisabilité…) publient ici leurs valeurs clés dès qu'ils tournent. Utilise l'app puis reviens : les diagnostics apparaîtront.</p></div>`;
+  }
+  // Tri par horodatage décroissant (le plus récent en haut).
+  cles.sort((a,b)=> (reg[b].ts||0) - (reg[a].ts||0));
+  const blocs = cles.map(c=>{
+    const d = reg[c];
+    const quand = d.ts ? new Date(d.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+    let corps;
+    if(d.data && typeof d.data === 'object'){
+      // Affichage clé→valeur lisible (1 niveau), listes mises en puces.
+      corps = Object.keys(d.data).map(k=>{
+        let v = d.data[k];
+        if(Array.isArray(v)) v = v.length ? ('<ul style="margin:2px 0 2px 16px;padding:0">'+v.map(x=>`<li>${esc(String(x))}</li>`).join('')+'</ul>') : '<i>(vide)</i>';
+        else v = esc(String(v));
+        return `<div style="margin:2px 0"><b style="color:#7a4b2a">${esc(k)}</b> : ${v}</div>`;
+      }).join('');
+    } else {
+      corps = `<div style="word-break:break-all">${esc(String(d.data))}</div>`;
+    }
+    return `<details style="margin-bottom:8px;border:1px solid var(--hair,#e6ddd0);border-radius:8px;padding:6px 10px;background:#faf7f1">
+      <summary style="cursor:pointer;font-weight:600;color:var(--bordeaux,#52252F)">${esc(d.label)} <span style="font-weight:400;color:#9a8576;font-size:.78rem">· ${quand}</span></summary>
+      <div style="font-size:.8rem;color:#4a3a32;margin-top:6px;font-family:ui-monospace,monospace">${corps}</div>
+    </details>`;
+  }).join('');
+  return `<div class="panel"><h2>🔧 Diagnostic technique</h2>
+    <p class="note" style="margin-bottom:8px">Instrumentation en sourdine de chaque moteur (valeurs clés, périmètres, origines des calculs). Consultable à tout moment, ici uniquement — n'apparaît pas dans les écrans normaux.</p>
+    ${blocs}
+    <p class="note" style="margin-top:6px"><span class="act" onclick="window._diagRegistry={};renderBackups();toast&&toast('Diagnostics effacés')">Vider les diagnostics</span></p>
+  </div>`;
+}
 async function renderBackups(){
   const backups = await db.backups.orderBy('date').reverse().toArray();
   const lastExport = localStorage.getItem('sm_lastExport');
@@ -27096,6 +27149,7 @@ async function renderBackups(){
      </div>
      <p class="note"><b>☁️ Sauvegarder sur iCloud</b> : ouvre le partage iOS — choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé ensuite). « Sauvegarder maintenant » garde une copie dans l'app. L'import « Importer » <b>remplace</b> tout ; « en fusion » <b>ajoute</b> sans rien effacer. Une sauvegarde automatique se fait à l'ouverture.</p>
    </div>
+   ${_diagRegistrySection()}
    <div class="panel"><h2>Sauvegarde iCloud & rappel</h2>
      <p class="note" style="margin-bottom:8px">${lastICloudInfo().txt} ${lastExport?`Dernier export hors appareil : <b>${fmtDate(lastExport)}</b>${dExp!==null?` (il y a ${Math.abs(dExp)} j)`:''}.`:'Aucun export hors appareil enregistré.'}</p>
      <button class="btn gold" style="margin-bottom:10px" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud maintenant</button>
