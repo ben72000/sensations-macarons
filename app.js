@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v900';
+const APP_VERSION = 'v901';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22644,27 +22644,41 @@ async function _ordreProductionDuJour(){
     const b = _wkBornes(wk);
     if(!b) return '';
 
-    // SOURCE UNIQUE : on s'appuie sur le MÊME contexte que l'écran Plan de production. _planSemaineGenere
-    // calcule le plan avec TES réglages (reports manuels, overrides, dispos) et mémorise daySpecs+plan+
-    // schedOpts dans window._planSimCtx[wk]. On rejoue schedulePersonalPlan avec CES options → résultat
-    // identique au plan affiché (plus aucune divergence). On ignore le HTML retourné.
+    // OPTION 1 (cohérence écran Plan) : on calcule le plan sur la SEMAINE COMPLÈTE depuis LUNDI
+    // (mêmes bornes que l'écran, qui étale les montages selon les livraisons), PAS depuis aujourd'hui
+    // (ce qui les comprimait à 14h ce jour). On récupère les schedOpts (reports manuels) via le ctx
+    // déjà calculé par l'écran, mais on REBÂTIT daySpecs+plan sur lundi→dimanche.
+    let schedOpts = {};
     try{ if(typeof _planSemaineGenere==='function') await _planSemaineGenere(wk); }catch(_){}
     const ctx = (window._planSimCtx && window._planSimCtx[wk]) ? window._planSimCtx[wk] : null;
-    try{
-      const _S = ctx ? schedulePersonalPlan(ctx.daySpecs, ctx.plan, ctx.schedOpts||{}) : null;
-      const _ev = (_S&&_S.events)?_S.events.filter(e=>e.start!=null):[];
-      const _jours=[...new Set(_ev.map(e=>e.date))].sort().join(',');
-      const _mtg=_ev.filter(e=>e.kind==='montage').map(e=>e.date+'@'+Math.floor(e.start/60)+'h').slice(0,3).join(' ');
-      window._diagOrdre='td='+td+' | wk='+wk+' | ctx='+(ctx?'OUI':'NON')+' | debut='+(ctx&&ctx.debut)+' | jours=['+_jours+'] | montages: '+_mtg;
-    }catch(ex){ window._diagOrdre='DIAG-ERR '+(ex&&ex.message||ex); }
-    if(!ctx || !ctx.plan || !Array.isArray(ctx.daySpecs)) return '';
+    if(ctx && ctx.schedOpts) schedOpts = ctx.schedOpts;
+
+    // Plan de besoins sur la semaine COMPLÈTE (lundi→dimanche).
+    let plan;
+    try{ plan = await generateProductionOrder(b.lundiStr, b.dimStr, 0); }catch(_){ plan = null; }
+    if(!plan || !plan.lignes || !plan.lignes.length){ window._diagOrdre='td='+td+' | wk='+wk+' | plan VIDE depuis lundi'; return ''; }
+    // daySpecs depuis LUNDI (toute la semaine), construits en LOCAL.
+    const conf = (typeof getAvailability==='function') ? getAvailability() : null;
+    const daySpecs = [];
+    { const cur = new Date(b.lundiStr+'T00:00:00'); const end = new Date(b.dimStr+'T00:00:00'); let g=0;
+      while(cur<=end && g++<60){
+        const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
+        const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b2])=>b2>a);
+        if(slotsMin.length) daySpecs.push({ date:ymd(cur), slots:slotsMin });
+        cur.setDate(cur.getDate()+1);
+      } }
     let S;
-    try{ S = schedulePersonalPlan(ctx.daySpecs, ctx.plan, ctx.schedOpts||{}); }catch(_){ return ''; }
-    if(!S || !Array.isArray(S.events)) return '';
+    try{ S = schedulePersonalPlan(daySpecs, plan, schedOpts||{}); }catch(ex){ window._diagOrdre='td='+td+' | SCHED-ERR '+(ex&&ex.message||ex); return ''; }
+    if(!S || !Array.isArray(S.events)){ window._diagOrdre='td='+td+' | S.events KO'; return ''; }
     const evs = S.events.filter(e=> e.start!=null);
     const duJour = evs.filter(e=> e.date===td).sort((a,b2)=> a.start - b2.start);
-    // evsFull = mêmes events (la chaîne coques/ganache se lit dans le même planning, source unique).
     const evsFull = evs;
+    // DIAG (conservé jusqu'à validation réelle) : bornes, jours présents, horaires des montages.
+    { const _jours=[...new Set(evs.map(e=>e.date))].sort().join(',');
+      const _mtg=evs.filter(e=>e.kind==='montage').map(e=>e.date+'@'+Math.floor(e.start/60)+'h').slice(0,4).join(' ');
+      window._diagOrdre='td='+td+' | wk='+wk+' | lundi='+b.lundiStr+'→'+b.dimStr+' | jours=['+_jours+'] | duJour='+duJour.length+' | montages: '+_mtg;
+    }
+
     if(!duJour.length){
       // Honnête : aujourd'hui, rien n'est calé. On le DIT (au lieu de disparaître), et on indique la suite.
       const prochain = evs.filter(e=> e.date>td).sort((a,b2)=> (a.date+String(a.start)).localeCompare(b2.date+String(b2.start)))[0];
