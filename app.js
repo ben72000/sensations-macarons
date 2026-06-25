@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v899';
+const APP_VERSION = 'v900';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22650,6 +22650,13 @@ async function _ordreProductionDuJour(){
     // identique au plan affiché (plus aucune divergence). On ignore le HTML retourné.
     try{ if(typeof _planSemaineGenere==='function') await _planSemaineGenere(wk); }catch(_){}
     const ctx = (window._planSimCtx && window._planSimCtx[wk]) ? window._planSimCtx[wk] : null;
+    try{
+      const _S = ctx ? schedulePersonalPlan(ctx.daySpecs, ctx.plan, ctx.schedOpts||{}) : null;
+      const _ev = (_S&&_S.events)?_S.events.filter(e=>e.start!=null):[];
+      const _jours=[...new Set(_ev.map(e=>e.date))].sort().join(',');
+      const _mtg=_ev.filter(e=>e.kind==='montage').map(e=>e.date+'@'+Math.floor(e.start/60)+'h').slice(0,3).join(' ');
+      window._diagOrdre='td='+td+' | wk='+wk+' | ctx='+(ctx?'OUI':'NON')+' | debut='+(ctx&&ctx.debut)+' | jours=['+_jours+'] | montages: '+_mtg;
+    }catch(ex){ window._diagOrdre='DIAG-ERR '+(ex&&ex.message||ex); }
     if(!ctx || !ctx.plan || !Array.isArray(ctx.daySpecs)) return '';
     let S;
     try{ S = schedulePersonalPlan(ctx.daySpecs, ctx.plan, ctx.schedOpts||{}); }catch(_){ return ''; }
@@ -22662,7 +22669,7 @@ async function _ordreProductionDuJour(){
       // Honnête : aujourd'hui, rien n'est calé. On le DIT (au lieu de disparaître), et on indique la suite.
       const prochain = evs.filter(e=> e.date>td).sort((a,b2)=> (a.date+String(a.start)).localeCompare(b2.date+String(b2.start)))[0];
       const quand = prochain ? (()=>{ const diff=Math.round((new Date(prochain.date)-new Date(td))/86400000); if(diff===1)return 'demain'; if(diff===2)return 'apr\u00e8s-demain'; if(diff>0)return 'dans '+diff+' jours'; try{ return new Date(prochain.date+'T00:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'}); }catch(_){ return prochain.date; } })() : null;
-      return `<div style="margin-bottom:12px">
+      return `<div style="margin-bottom:12px"><div style="font-size:.68rem;color:#b3261e;background:#fff3f2;padding:3px 6px;border-radius:6px;margin-bottom:6px;word-break:break-all">${window._diagOrdre||'(pas de diag)'}</div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <span style="font-weight:700;font-size:1rem;color:var(--bordeaux,#52252F)">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
           <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem;white-space:nowrap">\ud83d\udccb Voir le plan</button>
@@ -22742,7 +22749,7 @@ async function _ordreProductionDuJour(){
       </div>`;
     };
     const lignes = duJour.map(carte).join('');
-    return `<div style="margin-bottom:12px">
+    return `<div style="margin-bottom:12px"><div style="font-size:.68rem;color:#b3261e;background:#fff3f2;padding:3px 6px;border-radius:6px;margin-bottom:6px;word-break:break-all">${window._diagOrdre||'(pas de diag)'}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span style="font-weight:700;font-size:1rem;color:var(--bordeaux,#52252F);letter-spacing:.2px">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
         <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem;white-space:nowrap">\ud83d\udccb Voir le plan</button>
