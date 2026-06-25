@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v873';
+const APP_VERSION = 'v890';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -2792,6 +2792,15 @@ let recSearch='';   // texte de recherche recettes (persisté entre re-renders)
 let _matCatFilter='all';   // 'all' | 'denree' | 'emballage'
 let _matCache=null, _lotCache=null;
 async function renderMaterials(){
+  // [COCKPIT — étape 3] Focus depuis l'assistant (« stock de chocolat » → 🧂 Stock de Chocolat) :
+  // on pré-remplit la recherche pour ouvrir l'écran déjà filtré sur cette matière.
+  try{
+    const f = window._viewFocus;
+    if(f && f.view==='matieres' && f.type==='matiere' && f.val){
+      matSearch = String(f.val);
+      window._viewFocus = null;
+    }
+  }catch(_){}
   // Tri alphabétique STRICT par nom, insensible à la casse et aux accents,
   // indépendant de l'ordre de saisie (l'index IndexedDB trie mal les accents/majuscules).
   const mats = (await db.materials.toArray())
@@ -4997,6 +5006,16 @@ function prodEnCoursToggle(){
   if(chev) chev.style.transform = open?'rotate(0)':'rotate(90deg)';
 }
 async function renderProductions(){
+  // [COCKPIT — étape 3] Si l'assistant nous a envoyés ici avec un focus sur un parfum précis
+  // (« où est ma vanille » → 📦 Stock de Vanille), on pré-remplit la recherche pour ouvrir l'écran
+  // déjà filtré sur ce parfum. Niveau B « gratuit » : on réutilise le filtre existant (prodnSearch).
+  try{
+    const f = window._viewFocus;
+    if(f && f.view==='productions' && f.type==='parfum' && f.val){
+      prodnSearch = String(f.val);
+      window._viewFocus = null;   // consommé une seule fois
+    }
+  }catch(_){}
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
   window._allRecipesCache = recipes;   // cache global pour prodNomComplet (appelants sans recipes en portée)
@@ -5233,8 +5252,7 @@ async function renderProductions(){
      return `<div class="panel"><h2>📉 Stock consommé par la production <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— matières décrémentées à mesure que tu produis</span></h2>
        ${collapseList(blocs, 1, {moreLabel:n=>`Voir les ${n} batch(s) précédent(s)`, lessLabel:'Réduire'})}</div>`;
    })()}`;
-  prodbatFilter(prodnSearch);
-}
+  prodbatFilter(prodnSearch);}
 // Déclare une production "rangée" (la sort de la vue Production). Geste délibéré, réversible.
 async function prodRanger(id){
   await db.productions.update(id, {rangee:true, rangeeTs:new Date().toISOString()});
@@ -9841,6 +9859,16 @@ function searchRenderBody(bodyId, countId, emptyId, items, q, rowFn, cols, unitL
 // #main) ; on insère ensuite une barre d'onglets en tête pour naviguer entre les trois.
 let _clientsHubTab = 'clients';
 async function renderClientsHub(){
+  // [COCKPIT — étape 3] Focus depuis l'assistant (« la fiche d'Emma » → 👤 Fiche de Emma) : on force
+  // l'onglet clients et on pré-remplit la recherche pour ouvrir l'écran déjà filtré sur ce client.
+  try{
+    const f = window._viewFocus;
+    if(f && f.view==='clients' && f.type==='client' && f.val){
+      _clientsHubTab = 'clients';
+      clientSearch = String(f.val);
+      window._viewFocus = null;
+    }
+  }catch(_){}
   const tab = _clientsHubTab||'clients';
   // Appelle la sous-vue d'origine (remplit #main comme avant).
   if(tab==='prospects') await renderProspects();
@@ -10391,6 +10419,9 @@ async function confirmMarkPaid(id, fromModal){
   toast('Encaissement enregistré ✓ ('+euro(mt)+' le '+fmtDate(date)+')');
 }
 let cmdSearch='';
+// [COCKPIT — filtre jour] Date ISO (AAAA-MM-JJ) sur laquelle filtrer les commandes (sur o.date),
+// ou null = pas de filtre. Positionné par le Copilote (« commandes de demain ») ou effaçable à la main.
+let cmdJourFiltre=null;
 let _cmdCache=null;
 // --- Filtres par tags libres empilables (cumul en ET, par-dessus la recherche texte) ---
 // Un tag = une facette structurée "categorie:valeur" (ex. "format:8", "parfum:framboise",
@@ -10517,6 +10548,16 @@ async function cmdPeriodCompute(){
 async function renderCmd(){
   _cmdSel = new Set();   // sélection réinitialisée à chaque ouverture de l'écran
   cmdTags = new Set();   // filtres par tags réinitialisés à chaque ouverture
+  // [COCKPIT — étape 3] Filtre jour : réinitialisé par défaut, mais positionné si le Copilote nous a
+  // envoyés ici avec un focus date (« commandes de demain » → 📋 Commandes du JJ/MM).
+  cmdJourFiltre = null;
+  try{
+    const f = window._viewFocus;
+    if(f && f.view==='commandes' && f.type==='jour' && f.val){
+      cmdJourFiltre = String(f.val);
+      window._viewFocus = null;
+    }
+  }catch(_){}
   // Les commandes "historiques" (reprise/migration) ne s'affichent pas ici :
   // elles comptent dans le CA mais ne sont pas opérationnelles.
   const orders = (await db.orders.toArray()).filter(o=>!o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
@@ -10814,12 +10855,20 @@ function _cmdRowMini(row, opts){
     <button class="cmd-pill detail" style="flex:none" onclick="traceOrder(${o.id})" title="Traçabilité">🔎</button>
   </div>`;
 }
-function cmdFilter(q){
-  cmdSearch=q||'';
+// [COCKPIT] Positionne (ou enlève si null) le filtre jour des commandes, puis rafraîchit la liste.
+function cmdSetJourFiltre(dateIso){
+  cmdJourFiltre = dateIso || null;
+  if(typeof cmdFilter==='function') cmdFilter(cmdSearch);
+}
+function cmdFilter(q){  cmdSearch=q||'';
   if(!_cmdCache) return;
   const body=document.getElementById('cmdBody'); if(!body) return;
+  // 0) [COCKPIT] filtre JOUR (sur o.date) s'il est actif, AVANT tags et recherche.
+  const sourceCache = cmdJourFiltre
+    ? _cmdCache.filter(e=> (e.o && e.o.date) === cmdJourFiltre)
+    : _cmdCache;
   // 1) filtre par tags actifs (ET logique), 2) puis recherche texte sur le sous-ensemble.
-  const base = cmdTags.size ? _cmdCache.filter(cmdMatchTags) : _cmdCache;
+  const base = cmdTags.size ? sourceCache.filter(cmdMatchTags) : sourceCache;
   const rows=searchRank(base, q);
   const cnt=document.getElementById('cmdCount');
   if(cnt){
@@ -10881,6 +10930,14 @@ function cmdFilter(q){
     </details>`;
   }
   if(rows.length>LIMIT) html += `<div class="note" style="text-align:center">… ${rows.length-LIMIT} autre(s) résultat(s). Affinez la recherche.</div>`;
+  // [COCKPIT] Bandeau filtre jour actif (avec bouton pour l'enlever).
+  if(cmdJourFiltre){
+    const lbl = (typeof fmtDate==='function') ? fmtDate(cmdJourFiltre) : cmdJourFiltre;
+    html = `<div style="display:flex;align-items:center;gap:8px;background:#f3eef7;border:1px solid #d9c9e6;border-radius:10px;padding:7px 11px;margin-bottom:10px;font-size:.82rem;color:#5b3a78">
+      <span style="flex:1">📅 Commandes du <b>${esc(lbl)}</b></span>
+      <button class="btn ghost sm" onclick="cmdSetJourFiltre(null)">✕ Tout afficher</button>
+    </div>` + html;
+  }
   body.innerHTML = html;
 }
 // Ligne séparatrice colorée par mois/année (couleur dérivée du mois → contraste entre groupes).
@@ -19037,7 +19094,7 @@ async function renderForecast(){
       ? `<div style="font-size:.76rem;color:#9a8a82;margin-top:2px">1ère rupture : ${dateBadge(l.firstShortDate, l.firstShortDans)}</div>`
       : '';
     const bg = l.alerte ? 'background:#fdf3f2;' : '';
-    return `<div class="sum-box" style="flex-direction:column;align-items:stretch;${bg}margin-bottom:8px">
+    return `<div class="sum-box" data-focus="parfum:${esc(l.parfum)}" style="flex-direction:column;align-items:stretch;${bg}margin-bottom:8px">
       <div style="display:flex;align-items:center;width:100%;gap:6px">
         <div style="flex:1"><b style="text-transform:capitalize">${esc(l.parfum)}</b></div>
         <div>${faPastille?faPastille+' ':''}${etat}</div>
@@ -19067,6 +19124,9 @@ async function renderForecast(){
      :`<div class="empty">Aucune donnée. Lancez des productions et créez des commandes pour activer le prévisionnel.</div>`}
    </div>
    ${detailRupture?`<h2 style="font-family:'Bellota',serif;color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
+  // [COCKPIT — étape 3, niveau A] Si l'assistant nous a envoyés ici avec un focus parfum
+  // (« comment se vend la pistache »), scrolle sur sa carte et la surligne brièvement.
+  if(typeof _consumeViewFocus==='function') _consumeViewFocus('previsionnel');
 }
 
 /* ============================================================
@@ -19327,18 +19387,79 @@ function aiFindClient(txt, clients){
   let best=null;
   for(const c of clients){
     const cn=aiNormalize(c.nom);
-    if(n.includes(cn)){ if(!best||cn.length>best.score) best={client:c,score:cn.length}; }
-    else { // match sur le dernier mot (nom de famille)
-      const parts=cn.split(' '); const last=parts[parts.length-1];
-      if(last.length>=3 && new RegExp('\\b'+last+'\\b').test(n)){ if(!best) best={client:c,score:last.length}; }
+    if(n.includes(cn)){ if(!best||cn.length>best.score) best={client:c,score:cn.length+100}; }  // nom complet = priorité forte
+    else {
+      const parts=cn.split(' ').filter(Boolean);
+      const last=parts[parts.length-1];     // nom de famille
+      const first=parts[0];                 // prénom
+      // match sur le nom de famille (priorité moyenne)
+      if(last && last.length>=3 && new RegExp('\\b'+last+'\\b').test(n)){
+        if(!best||best.score<last.length+50) best={client:c,score:last.length+50};
+      }
+      // match sur le prénom seul (priorité plus basse — on appelle souvent par le prénom)
+      else if(first && first.length>=3 && first!==last && new RegExp('\\b'+first+'\\b').test(n)){
+        if(!best) best={client:c,score:first.length};
+      }
     }
   }
   return best?best.client:null;
 }
 
+// [COCKPIT — souplesse de langage] Correction orthographique LÉGÈRE et CIBLÉE, appliquée UNIQUEMENT
+// à l'entrée du Copilote (jamais à aiNormalize, qui sert à 144 comparaisons exactes dans toute l'app).
+// On corrige des fautes métier fréquentes et NON ambiguës, mot entier par mot entier (frontières \b),
+// pour ne pas créer d'effet de bord (ex. ne pas transformer un vrai nom). Déterministe, instantané.
+const _AI_CORRECTIONS = {
+  // abréviations / langage SMS
+  'ke':'que', 'koi':'quoi', 'kel':'quel', 'kelle':'quelle', 'jai':"j'ai", 'ya':'il y a',
+  'auj':"aujourd'hui", 'ajd':"aujourd'hui", 'aujourdhui':"aujourd'hui", 'dmain':'demain',
+  // fautes de frappe fréquentes (métier)
+  'stok':'stock', 'stoc':'stock', 'comande':'commande', 'comandes':'commandes',
+  'commmande':'commande', 'cmd':'commande', 'cmde':'commande',
+  'marcher':'marche', 'marcher':'marche', 'maché':'marche', 'mache':'marche',
+  'chiffre daffaire':'chiffre affaire', 'daffaire':'affaire', 'ca':'ca',
+  'liraison':'livraison', 'livrason':'livraison', 'livré':'livrer',
+  'recet':'recette', 'recete':'recette', 'matiere':'matiere', 'matieres':'matieres',
+  'rupure':'rupture', 'ruptur':'rupture', 'preparé':'preparer', 'prepare':'preparer',
+  'conseil':'conseil', 'conseille':'conseil', 'conseille':'conseil'
+};
+function aiCorrigeFautes(tNorm){
+  if(!tNorm) return tNorm;
+  // Corrections multi-mots d'abord (ex. "chiffre daffaire"), puis mot à mot.
+  let s = tNorm;
+  for(const k in _AI_CORRECTIONS){
+    if(k.includes(' ')){
+      s = s.replace(new RegExp('\\b'+k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','g'), _AI_CORRECTIONS[k]);
+    }
+  }
+  s = s.split(' ').map(w=>{
+    const c = _AI_CORRECTIONS[w];
+    return (c && !c.includes(' ')) ? c : w;
+  }).join(' ');
+  return s;
+}
+// [COCKPIT] Parse une période relative dans le texte → {depuis:ISO|null, label}. « depuis 6 mois »,
+// « ces 3 derniers mois », « ce mois », « cette année », « cette semaine ». null = tout l'historique.
+function _aiParsePeriode(t){
+  const now = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  let m = t.match(/\b(\d+)\s*(mois|semaine|semaines|jour|jours|an|ans|annee|annees)\b/);
+  if(m){
+    const n = +m[1]; const u = m[2]; const d = new Date(now);
+    if(/mois/.test(u)) d.setMonth(d.getMonth()-n);
+    else if(/semaine/.test(u)) d.setDate(d.getDate()-7*n);
+    else if(/jour/.test(u)) d.setDate(d.getDate()-n);
+    else d.setFullYear(d.getFullYear()-n);   // an(s)/annee(s)
+    return {depuis:iso(d), label:`depuis ${n} ${u}`};
+  }
+  if(/\bce mois\b|\bce mois ci\b|\bdu mois\b/.test(t)){ const d=new Date(now.getFullYear(),now.getMonth(),1); return {depuis:iso(d), label:'ce mois-ci'}; }
+  if(/\bcette annee\b|\bde l'?annee\b/.test(t)){ const d=new Date(now.getFullYear(),0,1); return {depuis:iso(d), label:'cette année'}; }
+  if(/\bcette semaine\b/.test(t)){ const d=new Date(now); d.setDate(d.getDate()-now.getDay()); return {depuis:iso(d), label:'cette semaine'}; }
+  return {depuis:null, label:'sur tout ton historique'};
+}
 function parseIntent(texte, ctx){
   ctx=ctx||{}; const flavors=ctx.flavors||[]; const clients=ctx.clients||[]; const materials=ctx.materials||[];
-  const raw=texte||''; const t=aiNormalize(raw);
+  const raw=texte||''; const t=aiCorrigeFautes(aiNormalize(raw));
   if(!t) return {intent:'unknown', params:{}, critical:false};
 
   // ---- ACTIONS CRITIQUES prioritaires sur les consultations homonymes ----
@@ -19350,6 +19471,28 @@ function parseIntent(texte, ctx){
   }
 
   // ---- CONSULTATIONS (non critiques) ----
+  // FAISABILITÉ D'AJOUT (simulation) : « si je rajoute une commande de 25 macarons pour jeudi, c'est
+  // faisable ? ». Question hypothétique → on SIMULE l'ajout sans rien créer. Exige un marqueur
+  // hypothétique/faisabilité + une notion d'ajout/commande + un nombre de macarons.
+  if(/\b(faisable|possible|jouable|tiens je|y a t il (la )?place|si je (rajoute|ajoute|prends|met)|si j ajoute)\b/.test(t)
+     && /\b(rajoute|ajoute|commande|macaron|macarons|prends|caser|caler)\b/.test(t)){
+    const nb = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
+    if(nb && nb>0){
+      const date = (typeof aiParseDate==='function') ? aiParseDate(t) : null;
+      const fl = aiFindFlavor(t, flavors);
+      return {intent:'query_faisabilite_ajout', params:{nb, date, flavor:fl}, critical:false,
+        label:`Faisabilité : +${nb} macarons${date?' le '+date:''}`};
+    }
+  }
+  // CONSEIL MARCHÉ : « que prendre / qu'emmener pour mon marché [de demain] », « conseille-moi pour
+  // le marché », « ma répartition pour le marché ». Placé AVANT le conseil global car « conseille » +
+  // « marché » doit aller vers le prédictif marché, pas vers le conseil de production général.
+  if(/\bmarche[s]?\b/.test(t)
+     && /\b(prendre|emmener|emporter|amener|conseil|conseill|prepare|prevoir|prevois|repartition|repartir|combien|quoi (pour|prendre|emmener)|que (prendre|faut|emmener))/.test(t)){
+    const date = aiParseDate(t);
+    return {intent:'query_market_advice', params:{date}, critical:false,
+      label:'Conseil pour ton prochain marché'};
+  }
   // CONSEIL GLOBAL : "conseille-moi", "quoi faire", "par quoi je commence", "qu'est-ce que je dois faire"
   if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je )?commenc|je commence par quoi|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr)\b/.test(t)
      && !/stock|combien|reste/.test(t)){
@@ -19373,12 +19516,31 @@ function parseIntent(texte, ctx){
      && !/quoi produire|que produire|quoi faire/.test(t)){
     return {intent:'query_ordo', params:{}, critical:false, label:'Organiser mes fournées'};
   }
+  // RECETTE (éventuellement mise à l'échelle) : « donne-moi la recette des macarons citron pour 25
+  // pièces », « recette de la ganache vanille ». Capte le parfum et un nombre de pièces optionnel.
+  if(/\b(recette|recettes|ingredients|ingredient|proportions|quantites|dosage)\b/.test(t)){
+    const fl = aiFindFlavor(t, flavors);
+    const nb = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
+    return {intent:'query_recipe', params:{flavor:fl, pieces:(nb&&nb>0)?nb:null}, critical:false,
+      label: fl?`Recette « ${fl} »`:'Consulter une recette'};
+  }
   // LOCALISATION des macarons finis : "où sont mes macarons vanille", "emplacement chocolat"
   if(/\b(ou (se trouve|sont|est|se trouvent)|localis|emplacement|range|rangee|rangees|range ou|trouve mes|dans quel|quel congelateur|quel frigo)\b/.test(t)
      && /\bmacaron|macarons\b/.test(t) || (/\bou\b/.test(t) && aiFindFlavor(t,flavors))){
     const fl=aiFindFlavor(t,flavors);
     return {intent:'query_locate', params:{flavor:fl}, critical:false,
       label: fl?`Localiser les macarons « ${fl} »`:'Localiser des macarons finis'};
+  }
+  // STOCK MATIÈRE SUFFISANT POUR UNE ÉCHÉANCE : « est-ce qu'il me reste assez de lait pour ma
+  // commande de demain ? ». Compare le besoin matière (jusqu'à l'échéance) au stock. Exige une matière
+  // reconnue + une notion de suffisance/échéance. Placé AVANT query_stock (qui montre le stock brut).
+  {
+    const _matPour = aiFindMaterial(t, materials);
+    if(_matPour && /\b(assez|suffi|suffisant|reste assez|tiendra|tenir|pour (ma |la |le |mes |demain|jeudi|aujourd|cette semaine)|pour ma commande|pour la commande)\b/.test(t)){
+      const date = (typeof aiParseDate==='function') ? aiParseDate(t) : null;
+      return {intent:'query_stock_pour', params:{material:_matPour, date}, critical:false,
+        label:`Assez de ${_matPour.nom} ?`};
+    }
   }
   // stock d'une matière
   if(/\b(stock|combien|reste|il reste|quantite)\b/.test(t) && !/commande/.test(t)
@@ -19402,15 +19564,39 @@ function parseIntent(texte, ctx){
   }
   // chiffre d'affaires
   if(/\b(chiffre d'affaires|chiffre d affaires|chiffre|recette|recettes|gagne|gagner|rapporte|rapporter|encaisse|encaisser)\b/.test(t)
+     || /\b(mon|le|du|ton|notre) ca\b/.test(t)   // « mon CA », « le CA » (évite la collision avec « ça »)
      || (/\b(combien|total|montant)\b/.test(t) && /\b(gagn|fait|rapport|encaiss|mois|euros?|ca|chiffre)\b/.test(t))
      || (/\b(vente|ventes)\b/.test(t) && /\b(combien|total|mois|montant|euros?)\b/.test(t))){
     return {intent:'query_revenue', params:{}, critical:false, label:'Consulter le chiffre d\'affaires'};
   }
 
+  // CLIENT PRÉCIS : « la fiche de Dupont », « les commandes d'Emma », « coordonnées de M. Martin »,
+  // « qui est Untel ». Ne se déclenche que si un client est RECONNU et qu'il n'y a pas de verbe de
+  // création/suppression (sinon on laisse passer create_order/delete_order). Placée avant les actions
+  // critiques pour capter la consultation, mais après query_top_clients (qui est une LISTE, pas un client).
+  if(!/\b(cree|creer|crée|ajoute|enregistre|supprime|supprimer|annule|annuler|nouvelle|nouveau)\b/.test(t)){
+    const cli = aiFindClient(t, clients);
+    // ÉCHÉANCE DE LIVRAISON : « quand dois-je livrer la commande d'Emma », « c'est quand la livraison
+    // de Mélanie », « quand est prête la commande de X ». Exige un client reconnu + un mot d'échéance.
+    // Placée AVANT query_client pour capter « quand » plutôt que de montrer la fiche.
+    if(cli && /\b(quand|echeance|livrer|livraison|a livrer|remettre|a remettre|prete|prête|delai|date)\b/.test(t)){
+      return {intent:'query_delivery', params:{client:cli}, critical:false,
+        label:`Échéance de livraison — ${cli.nom}`};
+    }
+    if(cli && /\b(fiche|coordonnees|coordonnée|contact|telephone|tel|email|e mail|mail|adresse|infos?|information|qui est|details|détail|profil|commandes? (de|d'|du|pour)|historique)\b/.test(t)){
+      return {intent:'query_client', params:{client:cli}, critical:false,
+        label:`Voir le client ${cli.nom}`};
+    }
+  }
+
   // ---- ACTIONS CRITIQUES (validation obligatoire) ----
   // créer une commande
-  if(/\b(cree|creer|crée|nouvelle commande|ajoute une commande|ajoute une cmd|enregistre une commande|fais une commande|prends une commande)\b/.test(t) && /commande/.test(t)
-     || ((/\bcree|creer|ajoute|fais\b/.test(t)) && /commande/.test(t))){
+  // créer une commande — MAIS pas si c'est une question hypothétique de faisabilité (« si je rajoute
+  // une commande, c'est faisable ? »), qui ne doit JAMAIS déclencher une vraie création.
+  const _hypothetique = /\b(si j|si je|c'?est faisable|c est faisable|est ce faisable|est ce que (c'?est |c est |je )?(faisable|possible)|faisable ou|je peux|aurais je|aurai je|y a t il (la )?place|tiens je|est ce jouable|d'?ajouter|d ajouter)\b/.test(t);
+  if(!_hypothetique && (
+       (/\b(cree|creer|crée|nouvelle commande|ajoute une commande|ajoute une cmd|enregistre une commande|fais une commande|prends une commande)\b/.test(t) && /commande/.test(t))
+       || ((/\bcree|creer|ajoute|fais\b/.test(t)) && /commande/.test(t)))){
     const client=aiFindClient(t,clients);
     const date=aiParseDate(t);
     const nb=aiParseNumber(t);
@@ -19438,9 +19624,18 @@ function parseIntent(texte, ctx){
   }
 
   // ---- ANALYSE AVANCÉE (consultations) ----
+  // TOP PARFUM : « quel est le parfum le plus vendu », « mon meilleur parfum », « quel parfum se vend
+  // le plus depuis 6 mois ». Placé AVANT les tendances : « parfum » + superlatif → classement, pas tendance.
+  if(/\bparfum[s]?\b/.test(t)
+     && /\b(le plus vendu|les plus vendus|plus vendu|meilleur|meilleurs|se vend le (plus|mieux)|se vendent le (plus|mieux)|top|cartonne le plus|numero un|numero 1|star|phare|populaire|plus populaire|plus demande)\b/.test(t)){
+    // Période optionnelle : « depuis N mois », « ce mois », « cette année », sinon tout l'historique.
+    const periode = _aiParsePeriode(t);
+    return {intent:'query_top_parfum', params:{periode}, critical:false,
+      label:'Le parfum le plus vendu'};
+  }
   // tendances de consommation (hausse/baisse)
   if(/\b(tendance|tendances|evolue|evolution|hausse|baisse|progresse|recule|monte|descend|se vend|ca marche|qu'?est ce qui (se vend|marche|cartonne)|cartonne|popularite|plus demande)\b/.test(t)){
-    return {intent:'query_trends', params:{}, critical:false, label:'Analyser les tendances de consommation'};
+    return {intent:'query_trends', params:{flavor: aiFindFlavor(t, flavors)}, critical:false, label:'Analyser les tendances de consommation'};
   }
   // anomalies / variations inhabituelles
   if(/\b(anomalie|anomalies|inhabituel|inhabituelle|atypique|pic|creux|bizarre|etrange)\b/.test(t)){
@@ -21470,9 +21665,9 @@ async function atelierVoix(opts){
     const fiable = b.tempsLisseFiable;
     const nuance = fiable ? '' : ` <span style="color:#9a8a82">(estimation encore approximative — chronomètre plus de productions pour l'affiner)</span>`;
     if(b.tempsSuffisant){
-      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#3f7d52">⏱ <b>Ça devrait tenir dans ton temps.</b> Charge estimée ${fmtHM(b.besoinMin)} sur tes 14 j disponibles${b.tauxChargeHorizon!=null?` (${b.tauxChargeHorizon}% de ta dispo)`:''}.${nuance}</div>`);
+      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#3f7d52;border-left:3px solid #bcd9c4;padding-left:8px">⏱ <b>Temps de fabrication.</b> Produire les macarons listés ci-dessus représente <b>${fmtHM(b.besoinMin)}</b> de travail, soit ${b.tauxChargeHorizon!=null?`${b.tauxChargeHorizon}% de`:'une petite part de'} tes disponibilités sur 14 j — <b>ça tient largement</b>. <span style="color:#9a8a82">(ne compte pas les lots à écouler ci-dessus, qui sont juste à vendre, pas à fabriquer)</span>${nuance}</div>`);
     } else {
-      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#d98324">⏱ <b>Attention au temps.</b> Il manque environ ${fmtHM(b.tempsManquantMin)} sur l'horizon de 14 j. Pense à étaler ou élargir tes disponibilités.${nuance}</div>`);
+      sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#d98324;border-left:3px solid #e8cfa6;padding-left:8px">⏱ <b>Attention au temps de fabrication.</b> Produire les macarons listés ci-dessus demande environ <b>${fmtHM(b.tempsManquantMin)}</b> de plus que tes disponibilités sur 14 j. Pense à étaler ou élargir tes créneaux.${nuance}</div>`);
     }
   }
 
@@ -21484,7 +21679,7 @@ async function atelierVoix(opts){
       const q = (manque!=null && manque>0) ? ` (${(typeof qty==='function')?qty(manque):Math.round(manque*1000)/1000}${m.unite?' '+m.unite:''})` : '';
       return `${esc2(nom)}${q}`;
     }).join(', ');
-    sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#b3261e">🛒 <b>Matières manquantes</b> pour tout produire : ${liste}. À acheter avant de lancer.</div>`);
+    sections.push(`<div style="font-size:.84rem;margin-bottom:8px;color:#b3261e">🛒 <b>À acheter</b> avant de lancer la fabrication ci-dessus : ${liste}.</div>`);
   }
 
   // --- 5) MARCHÉS (conseil de production marché) — seulement si pertinent ---
@@ -22148,11 +22343,28 @@ async function renderPredictiveAlerts(){
 // Chaque raccourci : { label, view, cible? (objet précis), action? (fonction directe au lieu d'un goView) }.
 // Étape 1 : on démarre avec query_revenue seul, pour valider le mécanisme avant de généraliser.
 const INTENT_SHORTCUTS = {
-  query_revenue: [
-    { label:'📊 Ouvrir la compta', view:'compta' },
-    { label:'📈 Rentabilité', view:'rentabilite' },
-    { label:'⤓ Export comptable', action:'exportComptaCSV' }
-  ]
+  query_advice:           [ { label:'🏭 Plan de production', view:'agendaprod' } ],
+  query_retards:          [ { label:'📋 Commandes', view:'commandes' }, { label:'🏭 Plan de production', view:'agendaprod' } ],
+  query_dlc_finis:        [ { label:'📦 Stock des macarons', view:'productions' } ],
+  query_faisabilite:      [ { label:'🏭 Plan de production', view:'agendaprod' } ],
+  query_ordo:             [ { label:'🏭 Plan de production', view:'agendaprod' } ],
+  query_locate:           [ { label:'📦 Stock des macarons', labelWithFocus:'📦 Stock de {val}', view:'productions', focusType:'parfum', focusParam:'flavor' } ],
+  query_stock:            [ { label:'🧂 Gérer les matières', labelWithFocus:'🧂 Stock de {val}', view:'matieres', focusType:'matiere', focusParam:'material' }, { label:'🍬 Stock par parfum', view:'stockparfums' } ],
+  query_orders:           [ { label:'📋 Toutes les commandes', labelWithFocus:'📋 Commandes du {val}', view:'commandes', focusType:'jour', focusParam:'date' } ],
+  query_delivery:         [ { label:'👤 Voir la fiche', labelWithFocus:'👤 Fiche de {val}', view:'clients', openFn:'clientForm', focusType:'client', focusParam:'client' }, { label:'📋 Commandes', view:'commandes' } ],
+  query_client:           [ { label:'👤 Voir la fiche', labelWithFocus:'👤 Fiche de {val}', view:'clients', openFn:'clientForm', focusType:'client', focusParam:'client' } ],
+  query_market_advice:    [ { label:'⛺ Ouvrir les marchés', view:'marches' } ],
+  query_stock_pour:       [ { label:'🧂 Gérer les matières', labelWithFocus:'🧂 Stock de {val}', view:'matieres', focusType:'matiere', focusParam:'material' }, { label:'🛒 Réapprovisionner', view:'achats' } ],
+  query_faisabilite_ajout:[ { label:'🏭 Plan de production', view:'agendaprod' } ],
+  query_recipe:           [ { label:'📖 Ouvrir les recettes', view:'recettes' } ],
+  query_top_parfum:       [ { label:'📈 Rentabilité par parfum', view:'rentaparfum' }, { label:'🔮 Prévisionnel', view:'previsionnel' } ],
+  query_top_clients:      [ { label:'👥 Mes clients', view:'clients' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
+  query_revenue:          [ { label:'📊 Ouvrir la compta', view:'compta' }, { label:'📈 Rentabilité', view:'rentabilite' }, { label:'⤓ Export comptable', action:'exportComptaCSV' } ],
+  query_trends:           [ { label:'🔮 Prévisionnel', labelWithFocus:'🔮 Prévisionnel · {val}', view:'previsionnel', focusType:'parfum', focusParam:'flavor' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
+  query_anomalies:        [ { label:'🔎 Analyse', view:'analyse' } ],
+  query_production_needs: [ { label:'🏭 Plan de production', view:'agendaprod' } ],
+  query_rupture:          [ { label:'🔮 Prévisionnel', view:'previsionnel' }, { label:'📦 Stock des macarons', view:'productions' } ],
+  query_predict:          [ { label:'🔮 Prévisionnel', view:'previsionnel' }, { label:'📦 Stock des macarons', view:'productions' } ]
 };
 // Génère le HTML des boutons de raccourci pour une intention donnée. Renvoie '' si aucun raccourci.
 // `action` (fonction globale à appeler) prime sur `view` (navigation). `cible` (optionnelle) sera
@@ -22160,11 +22372,36 @@ const INTENT_SHORTCUTS = {
 function aiShortcuts(intent, params){
   const list = (intent && INTENT_SHORTCUTS[intent]) ? INTENT_SHORTCUTS[intent] : null;
   if(!list || !list.length) return '';
+  params = params || {};
   const btns = list.map(sc=>{
-    const onclick = sc.action
-      ? `${sc.action}()`
-      : `goView('${sc.view}'${sc.cible?`,${JSON.stringify(sc.cible)}`:''})`;
-    return `<button class="btn ghost sm" onclick="${onclick}" style="margin:2px 4px 0 0">${esc(sc.label)}</button>`;
+    // [ÉTAPE 3] Si le raccourci déclare un focus (focusType) ET que le paramètre correspondant existe
+    // dans l'intention (ex. focusParam:'flavor' → params.flavor), on amène à l'OBJET PRÉCIS via
+    // aiFocusGo (scroll + surbrillance). Sinon, navigation simple vers l'écran.
+    let onclick;
+    // Le param ciblé peut être une chaîne OU un objet {id, nom} (cas material/client via aiFind…).
+    const rawParam = sc.focusParam ? params[sc.focusParam] : null;
+    const focusVal = (rawParam!=null && rawParam!=='')
+      ? String((typeof rawParam==='object' && rawParam.nom!=null) ? rawParam.nom : rawParam)
+      : null;
+    // [ÉTAPE 4 — inspiré de la barre de recherche centrale] OUVERTURE DIRECTE de l'objet précis :
+    // si le raccourci déclare openFn (ex. clientForm, matForm) ET qu'on peut résoudre un id depuis le
+    // param (objet {id,…}), on ouvre directement la fiche/le détail — niveau le plus fin, mieux qu'un
+    // simple filtrage d'écran. C'est exactement ce que fait globalSearch (clientForm(id), cmdView(id)…).
+    const openId = (sc.openFn && rawParam && typeof rawParam==='object' && rawParam.id!=null)
+      ? rawParam.id : null;
+    if(sc.action){
+      onclick = `${sc.action}()`;
+    } else if(sc.openFn && openId!=null){
+      onclick = `${sc.openFn}(${JSON.stringify(openId)})`;
+    } else if(sc.focusType && focusVal){
+      onclick = `aiFocusGo('${sc.view}','${sc.focusType}',${JSON.stringify(focusVal)})`;
+    } else {
+      onclick = `goView('${sc.view}')`;
+    }
+    // Le label peut s'enrichir de la valeur ciblée (ex. « Stock de Vanille », « Fiche de Emma »).
+    const label = ((openId!=null || (sc.focusType && focusVal)) && sc.labelWithFocus)
+      ? sc.labelWithFocus.replace('{val}', focusVal||'') : sc.label;
+    return `<button class="btn ghost sm" onclick="${onclick}" style="margin:2px 4px 0 0">${esc(label)}</button>`;
   }).join('');
   return `<div style="margin-top:10px;padding-top:8px;border-top:1px solid #f0eae0;display:flex;flex-wrap:wrap;align-items:center">
     <span style="font-size:.72rem;color:#9a8a82;margin-right:6px">Aller plus loin :</span>${btns}</div>`;
@@ -22273,6 +22510,56 @@ function aiClearAll(){
   const out=document.getElementById('aiOut'); if(out) out.innerHTML='';
   aiRemovePhoto();
 }
+// ============================================================================================
+// [COCKPIT — enchaînement conversationnel] « quand dois-je livrer la commande d'Emma ? » puis
+// « et pour Mélanie ? » : on comprend que la 2e phrase reprend la MÊME intention, avec juste un
+// paramètre changé (client, parfum, date ou matière). Principe : si la phrase est une « continuité »
+// (courte, « et pour X ? ») et que la dernière intention accepte le type de paramètre détecté, on
+// rejoue cette intention avec le nouveau paramètre. Sinon → null = repli sur le parsing normal
+// (la phrase est alors traitée comme une nouvelle question, ce qui ne bloque jamais l'utilisateur).
+//
+// Table : pour chaque intention rejouable, le champ de params à remplacer et le TYPE attendu.
+const INTENT_RELANCE = {
+  query_client:        { champ:'client',   type:'client'  },
+  query_delivery:      { champ:'client',   type:'client'  },
+  query_locate:        { champ:'flavor',   type:'parfum'  },
+  query_trends:        { champ:'flavor',   type:'parfum'  },
+  query_top_clients:   { champ:'flavor',   type:'parfum'  },
+  query_orders:        { champ:'date',     type:'date'    },
+  query_market_advice: { champ:'date',     type:'date'    },
+  query_stock:         { champ:'material', type:'matiere' },
+  query_stock_pour:    { champ:'material', type:'matiere' }
+};
+// Détecte une phrase de continuité : « et … ? », « et pour X », « et chez X », « et la pistache »,
+// « et demain », « et pour Mélanie ». On reste prudent : la phrase doit être courte et commencer par
+// un marqueur de continuité, pour ne jamais intercepter une vraie question complète.
+function aiEstContinuite(tNorm){
+  if(!tNorm) return false;
+  const mots = tNorm.split(/\s+/).filter(Boolean);
+  if(mots.length>6) return false;                 // une continuité est brève
+  return /^(et|ok et|aussi|puis|sinon)\b/.test(tNorm)   // commence par un marqueur de liaison
+      || /^(et )?(pour|chez|avec|le|la|les|du|de|d')\b/.test(tNorm);
+}
+// Tente l'enchaînement. Renvoie {intent, params} si réussi, sinon null.
+function aiTryRelance(rawTxt, ctx){
+  const t = (typeof aiNormalize==='function') ? aiNormalize(rawTxt) : (rawTxt||'').toLowerCase();
+  if(!aiEstContinuite(t)) return null;
+  const lastIntent = window._aiCurrentIntent;
+  const spec = lastIntent ? INTENT_RELANCE[lastIntent] : null;
+  if(!spec) return null;                           // dernière intention non rejouable
+  // Extraire le nouveau paramètre selon le type attendu par la dernière intention.
+  let val = null;
+  if(spec.type==='client')  val = (typeof aiFindClient==='function')  ? aiFindClient(rawTxt, ctx.clients||[])   : null;
+  else if(spec.type==='parfum')  val = (typeof aiFindFlavor==='function')  ? aiFindFlavor(t, ctx.flavors||[])    : null;
+  else if(spec.type==='matiere') val = (typeof aiFindMaterial==='function')? aiFindMaterial(t, ctx.materials||[]): null;
+  else if(spec.type==='date')    val = (typeof aiParseDate==='function')   ? aiParseDate(t)                      : null;
+  if(val==null || val==='') return null;           // rien d'exploitable → repli parsing normal
+  // Rejouer la dernière intention avec les anciens params + le champ remplacé.
+  const params = Object.assign({}, window._aiCurrentParams||{});
+  params[spec.champ] = val;
+  return { intent:lastIntent, params, _relance:true };
+}
+// ============================================================================================
 async function aiRun(){
   if(_aiRunning) return;            // évite les envois multiples (taps rapides)
   const ta=document.getElementById('aiInput');
@@ -22283,7 +22570,14 @@ async function aiRun(){
     const flavors=FLAVORS;
     const clients=await db.clients.toArray();
     const materials=await db.materials.toArray();
-    const r=parseIntent(txt,{flavors,clients,materials});
+    let r=parseIntent(txt,{flavors,clients,materials});
+    // [ENCHAÎNEMENT] Si le parsing classique ne reconnaît rien (unknown), la phrase est peut-être une
+    // continuité (« et pour Mélanie ? »). On tente de rejouer la dernière intention avec le nouveau
+    // paramètre. Si ça échoue, on garde le résultat unknown (parsing normal, jamais bloquant).
+    if(r.intent==='unknown'){
+      const relance = aiTryRelance(txt, {flavors,clients,materials});
+      if(relance) r = relance;
+    }
     // [COCKPIT] On mémorise l'intention courante pour qu'aiSay puisse y accoler ses raccourcis contextuels.
     window._aiCurrentIntent = r.intent;
     window._aiCurrentParams = r.params || {};
@@ -22303,6 +22597,13 @@ async function aiRun(){
       case 'query_locate': return aiQueryLocate(r.params);
       case 'query_orders': return aiQueryOrders(r.params);
       case 'query_top_clients': return aiQueryTopClients(r.params);
+      case 'query_top_parfum': return aiQueryTopParfum(r.params);
+      case 'query_recipe': return aiQueryRecipe(r.params);
+      case 'query_faisabilite_ajout': return aiQueryFaisabiliteAjout(r.params);
+      case 'query_stock_pour': return aiQueryStockPour(r.params);
+      case 'query_client': return aiQueryClient(r.params);
+      case 'query_delivery': return aiQueryDelivery(r.params);
+      case 'query_market_advice': return aiQueryMarketAdvice(r.params);
       case 'query_revenue': return aiQueryRevenue();
       case 'query_trends': return aiQueryTrends();
       case 'query_anomalies': return aiQueryAnomalies();
@@ -22567,6 +22868,273 @@ async function aiQueryTopClients(params){
   if(!rank.length) return aiSay(`<p class="note">Aucune donnée${fl?' pour « '+esc(fl)+' »':''} (commandes payées uniquement).</p>`);
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Clients — ${fl?'parfum '+esc(fl):'tous macarons'} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
     ${rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientForm(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b>${qty(x.n)} macaron(s)</b></div>`).join('')}`);
+}
+// [COCKPIT] TOP PARFUM : « quel est le parfum le plus vendu (depuis 6 mois) ». Réutilise computeStats
+// (source unique) en filtrant les commandes sur la période demandée. Ne recalcule rien : filtre + trie.
+async function aiQueryTopParfum(params){
+  const periode = (params && params.periode) || {depuis:null, label:'sur tout ton historique'};
+  let orders = await db.orders.toArray();
+  const clients = await db.clients.toArray();
+  if(periode.depuis){ orders = orders.filter(o=> (o.date||'') >= periode.depuis); }
+  const R = computeStats(orders, clients, orderToLines);
+  const rank = Object.keys(R.parfums||{})
+    .map(nom=>({nom, n:R.parfums[nom]}))
+    .filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,10);
+  if(!rank.length){
+    return aiSay(`<p class="note">Aucune vente enregistrée ${esc(periode.label)} (commandes payées uniquement).</p>`);
+  }
+  const top = rank[0];
+  const total = rank.reduce((s,x)=>s+x.n,0);
+  const pct = total>0 ? Math.round(top.n/total*100) : 0;
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🏆 Parfums les plus vendus <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${esc(periode.label)}, commandes payées)</span></h3>
+    <div style="font-size:.86rem;margin-bottom:8px;color:#3f3a44">Ton numéro 1 : <b>${esc(top.nom)}</b> avec ${qty(top.n)} macarons (${pct}% du top 10).</div>
+    ${rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. <b>${esc(x.nom)}</b></span><b>${qty(x.n)} mac.</b></div>`).join('')}`);
+}
+// [COCKPIT] RECETTE (éventuellement mise à l'échelle) : « la recette des macarons citron pour 25 pièces ».
+// Lit la recette du parfum + ses ingrédients (recipeItems), met à l'échelle au prorata du rendement.
+// Ne modifie rien : lecture + règle de trois.
+async function aiQueryRecipe(params){
+  const flavor = params && params.flavor;
+  const pieces = params && params.pieces;
+  if(!flavor){
+    const recs = await db.recipes.toArray();
+    const noms = recs.map(r=>r.produitNom).filter(Boolean).slice(0,12);
+    return aiSay(`<p class="note">Pour quelle recette ? Par exemple : « la recette du citron pour 25 pièces ».${noms.length?`<br>Tes recettes : ${noms.map(esc).join(', ')}.`:''}</p>`);
+  }
+  const recipes = await db.recipes.toArray();
+  const norm = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
+  const k = norm(flavor);
+  let rec = recipes.find(r=> norm(r.produitNom)===k)
+         || recipes.find(r=>{ const rn=norm(r.produitNom); return rn && (rn.includes(k) || k.includes(rn)); });
+  if(!rec){
+    return aiSay(`<p class="note">Je n'ai pas trouvé de recette « ${esc(flavor)} ». Vérifie le nom dans l'onglet Recettes.</p>`);
+  }
+  const items = await db.recipeItems.where('recipeId').equals(rec.id).toArray();
+  if(!items.length){
+    return aiSay(`<h3 style="font-size:1rem">Recette ${esc(rec.produitNom)}</h3><p class="note">Aucun ingrédient renseigné pour cette recette (BOM vide).</p>`);
+  }
+  const mats = await db.materials.toArray();
+  const matById = Object.fromEntries(mats.map(m=>[m.id,m]));
+  const rendement = (+rec.rendement>0) ? +rec.rendement : null;
+  // Facteur d'échelle : si on demande N pièces et qu'on connaît le rendement → N/rendement, sinon 1 batch.
+  const facteur = (pieces && rendement) ? (pieces/rendement) : 1;
+  const lignes = items.map(it=>{
+    const m = matById[it.materialId] || {nom:'Matière #'+it.materialId, unite:''};
+    const q = (+it.qteParBatch||0) * facteur;
+    return { nom:m.nom, unite:m.unite||'kg', q, partie:it.partie||'' };
+  });
+  // Regroupement par partie (ganache, coques…) si renseigné.
+  const parParties = {};
+  lignes.forEach(l=>{ (parParties[l.partie||'—'] ||= []).push(l); });
+  const fmtQ = q => (q>=1 ? (Math.round(q*1000)/1000) : (Math.round(q*10000)/10000));
+  const corps = Object.keys(parParties).map(partie=>{
+    const head = partie!=='—' ? `<div style="font-weight:600;font-size:.85rem;margin:8px 0 3px;text-transform:capitalize">${esc(partie)}</div>` : '';
+    return head + parParties[partie].map(l=>
+      `<div class="sum-box"><span>${esc(l.nom)}</span><b>${fmtQ(l.q)} ${esc(l.unite)}</b></div>`).join('');
+  }).join('');
+  const sousTitre = (pieces && rendement)
+    ? `pour <b>${pieces} pièces</b> (recette de base : ${rendement} pièces/batch)`
+    : (rendement ? `pour <b>1 batch = ${rendement} pièces</b>` : `quantités d'un batch`);
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:4px">🍋 Recette ${esc(rec.produitNom)}</h3>
+    <div style="font-size:.82rem;color:#6a5a72;margin-bottom:6px">${sousTitre}</div>
+    ${corps}
+    ${(pieces && !rendement)?`<p class="note" style="margin-top:6px">⚠️ Rendement non renseigné pour cette recette : impossible de mettre à l'échelle, quantités d'un batch affichées.</p>`:''}`);
+}
+// [COCKPIT] FAISABILITÉ D'AJOUT (simulation) : « si je rajoute 25 macarons café jeudi, c'est faisable ? »
+// Compare la charge de la semaine AVANT et APRÈS l'ajout fictif, via _faisabiliteSemaine (qui réutilise
+// generateProductionOrder avec un besoin additionnel). Ne crée RIEN : simulation pure en mémoire.
+async function aiQueryFaisabiliteAjout(params){
+  const nb = params && +params.nb;
+  if(!nb || nb<=0) return aiSay(`<p class="note">Précise un nombre de macarons, par ex. « si je rajoute 25 macarons jeudi, c'est faisable ? ».</p>`);
+  const fmtH = m => { m=Math.round(+m||0); const h=Math.floor(m/60), mm=m%60; return `${h?h+'h ':''}${String(mm).padStart(2,'0')}min`; };
+  const date = (params && params.date) || today();
+  const wk = (typeof _isoWeekKey==='function') ? _isoWeekKey(date) : null;
+  if(!wk) return aiSay(`<p class="note">Je n'ai pas pu situer la date « ${esc(String(date))} » dans une semaine de production.</p>`);
+  const conf = (typeof getAvailability==='function') ? getAvailability() : null;
+  // Parfum cible : celui demandé, sinon le parfum le plus présent (à défaut « À définir »).
+  const flavor = (params && params.flavor) ? params.flavor : 'À définir';
+  const besoinAdd = { [flavor]: nb };
+  let avant, apres;
+  try{
+    avant = await _faisabiliteSemaine(wk, conf);
+    apres = await _faisabiliteSemaine(wk, conf, besoinAdd);
+  }catch(e){ console.error('faisabilite.ajout',e); }
+  if(!avant || !apres){
+    return aiSay(`<p class="note">La semaine du ${esc(fmtDate(date))} est passée ou hors planning : je ne peux pas simuler l'ajout. Renseigne tes disponibilités pour cette semaine.</p>`);
+  }
+  const dispo = apres.tempsDispo||0;
+  const surcout = Math.max(0, (apres.tempsTotal||0) - (avant.tempsTotal||0));
+  const tient = dispo>0 ? !apres.depassement : null;
+  const depassMin = apres.debordementMin||0;
+  let verdict, couleur, bg, bord;
+  if(dispo<=0){
+    verdict = `Tes disponibilités ne sont pas renseignées pour la semaine du ${fmtDate(date)} — je ne peux pas trancher. La production demandée passerait à <b>${fmtH(apres.tempsTotal)}</b>.`;
+    couleur='#6a5a52'; bg='#f4f1ec'; bord='#e0d8cc';
+  } else if(tient){
+    verdict = `✅ <b>Oui, c'est faisable.</b> Ajouter ${nb} macarons${params.flavor?' '+esc(params.flavor):''} porte ta charge à <b>${fmtH(apres.tempsTotal)}</b> sur <b>${fmtH(dispo)}</b> dispo (${apres.chargePct}%). Il te reste de la marge.`;
+    couleur='#2f6040'; bg='#eef5f0'; bord='#bcd9c4';
+  } else {
+    verdict = `⚠️ <b>Ça déborde.</b> Avec ${nb} macarons en plus, la charge passe à <b>${fmtH(apres.tempsTotal)}</b> pour <b>${fmtH(dispo)}</b> dispo — il manque <b>${fmtH(depassMin)}</b>. Il faudrait étaler, élargir tes créneaux, ou reporter une autre production.`;
+    couleur='#b3261e'; bg='#fdeceb'; bord='#f0b8b3';
+  }
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🧮 Simulation — +${nb} macarons${params.flavor?' '+esc(params.flavor):''} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(semaine du ${esc(fmtDate(date))})</span></h3>
+    <div style="background:${bg};border:1px solid ${bord};border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:.86rem;color:${couleur}">${verdict}</div>
+    <div class="sum-box"><span>Charge actuelle</span><b>${fmtH(avant.tempsTotal)}</b></div>
+    <div class="sum-box"><span>Avec ton ajout</span><b>${fmtH(apres.tempsTotal)}</b></div>
+    <div class="sum-box"><span>Surcoût de l'ajout</span><b>+${fmtH(surcout)}</b></div>
+    ${dispo>0?`<div class="sum-box"><span>Disponible cette semaine</span><b>${fmtH(dispo)}</b></div>`:''}
+    <p class="note" style="margin-top:6px">Simulation indicative — rien n'est créé ni modifié.</p>`);
+}
+// [COCKPIT] STOCK MATIÈRE SUFFISANT POUR UNE ÉCHÉANCE : « assez de lait pour ma commande de demain ? »
+// Réutilise besoinMatieresPrevisionnel (source unique) sur l'horizon jusqu'à la date, et compare le
+// besoin de la matière visée à son stock. Ne modifie rien.
+async function aiQueryStockPour(params){
+  const mat = params && params.material;
+  if(!mat) return aiSay(`<p class="note">Quelle matière ? Par exemple : « est-ce qu'il me reste assez de lait pour demain ? ».</p>`);
+  // Horizon en jours jusqu'à la date demandée (demain = 1). Par défaut : 1 jour (demain).
+  let horizon = 1;
+  if(params.date){
+    const d = (typeof daysTo==='function') ? daysTo(params.date) : null;
+    if(d!=null) horizon = Math.max(1, d);
+  }
+  let res;
+  try{ res = await besoinMatieresPrevisionnel(horizon); }catch(e){ console.error('stockPour',e); }
+  if(!res || !Array.isArray(res.lignes)){
+    return aiSay(`<p class="note">Je n'ai pas pu calculer le besoin en ${esc(mat.nom)} sur cette période.</p>`);
+  }
+  const norm = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
+  const k = norm(mat.nom);
+  const ligne = res.lignes.find(l=> (l.materialId===mat.id) || norm(l.nom)===k || norm(l.nom).includes(k) || k.includes(norm(l.nom)));
+  const fmtQ = q => Math.round((+q||0)*1000)/1000;
+  // Cas : la matière n'est requise par aucune production sur l'horizon (donc pas de besoin).
+  if(!ligne){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🧀 ${esc(mat.nom)}</h3>
+      <div style="background:#eef5f0;border:1px solid #bcd9c4;border-radius:10px;padding:9px 11px;font-size:.86rem;color:#2f6040">✅ Aucune production prévue d'ici là n'a besoin de ${esc(mat.nom)} — donc pas de souci de ce côté.</div>`);
+  }
+  const besoin = +ligne.besoin||0, stock = +ligne.stock||0, manque = +ligne.manque||0, unite = ligne.unite||'';
+  const echeance = params.date ? ` pour le ${fmtDate(params.date)}` : ' pour demain';
+  let verdict, bg, bord, col;
+  if(manque>0){
+    verdict = `⚠️ <b>Non, il en manque.</b> Il te faut <b>${fmtQ(besoin)} ${esc(unite)}</b> de ${esc(mat.nom)}${echeance}, tu en as <b>${fmtQ(stock)} ${esc(unite)}</b> → il manque <b>${fmtQ(manque)} ${esc(unite)}</b>. Pense à réapprovisionner.`;
+    bg='#fdeceb'; bord='#f0b8b3'; col='#b3261e';
+  } else {
+    const marge = stock - besoin;
+    verdict = `✅ <b>Oui, tu en as assez.</b> Besoin de <b>${fmtQ(besoin)} ${esc(unite)}</b>${echeance}, tu en as <b>${fmtQ(stock)} ${esc(unite)}</b> (marge de ${fmtQ(marge)} ${esc(unite)}).`;
+    bg='#eef5f0'; bord='#bcd9c4'; col='#2f6040';
+  }
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🧀 ${esc(mat.nom)}${params.date?` <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(d'ici le ${esc(fmtDate(params.date))})</span>`:''}</h3>
+    <div style="background:${bg};border:1px solid ${bord};border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:.86rem;color:${col}">${verdict}</div>
+    <div class="sum-box"><span>Besoin estimé</span><b>${fmtQ(besoin)} ${esc(unite)}</b></div>
+    <div class="sum-box"><span>En stock</span><b>${fmtQ(stock)} ${esc(unite)}</b></div>
+    <p class="note" style="margin-top:6px">Besoin calculé pour la production restant à faire d'ici là.</p>`);
+}
+// [COCKPIT] Résumé d'un CLIENT précis (« la fiche de X », « les commandes d'Emma »). Affiche nom,
+// type, contact et nombre de commandes, puis aiSay accole le raccourci vers sa fiche (focus client).
+async function aiQueryClient(params){
+  const c = params && params.client;
+  if(!c) return aiSay(`<p class="note">Je n'ai pas identifié de client précis. Essaie « la fiche de [nom] ».</p>`);
+  let nbCmd = 0, dernier = null;
+  try{
+    const orders = await db.orders.toArray();
+    const siens = orders.filter(o=> +o.clientId === +c.id);
+    nbCmd = siens.length;
+    dernier = siens.map(o=>o.date).filter(Boolean).sort().slice(-1)[0] || null;
+  }catch(_){}
+  const contact = [c.tel, c.email, c.societe].filter(Boolean).map(x=>esc(x)).join(' · ');
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">${esc(c.nom)} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${esc(c.type||'Particulier')})</span></h3>
+    ${contact?`<div class="sum-box"><span>Contact</span><b style="font-weight:500">${contact}</b></div>`:''}
+    <div class="sum-box"><span>Commandes</span><b>${nbCmd}</b></div>
+    ${dernier?`<div class="sum-box"><span>Dernière commande</span><b>${esc(dernier)}</b></div>`:''}`);
+}
+// [COCKPIT] ÉCHÉANCE DE LIVRAISON d'un client : « quand dois-je livrer la commande d'Emma ? ».
+// Source unique pour la date de référence : _orderRefDate (dateEvenement || date). Montre les
+// commandes NON livrées à venir, avec date, « dans X jours », heure et lieu si renseignés, et contenu.
+async function aiQueryDelivery(params){
+  const c = params && params.client;
+  if(!c) return aiSay(`<p class="note">Je n'ai pas identifié de client. Essaie « quand livrer la commande de [nom] ».</p>`);
+  const orders = await db.orders.toArray();
+  const td = today();
+  // Commandes du client, non livrées, triées par date de référence (livraison/événement).
+  const siennes = orders
+    .filter(o=> +o.clientId === +c.id && normStatus(o.statut)!=='Livrée')
+    .map(o=>({o, ref:_orderRefDate(o)}))
+    .filter(x=>x.ref)
+    .sort((a,b)=> a.ref.localeCompare(b.ref));
+  if(!siennes.length){
+    return aiSay(`<h3 style="font-size:1rem">Livraisons — ${esc(c.nom)}</h3><p class="note">Aucune commande à livrer pour ${esc(c.nom)} (tout est livré, ou aucune commande enregistrée).</p>`);
+  }
+  const lignesHtml = siennes.map(({o,ref})=>{
+    const dans = (typeof daysTo==='function') ? daysTo(ref) : null;
+    const quand = dans==null ? '' : (dans<0 ? `<span style="color:#b3261e;font-weight:600">en retard de ${-dans} j</span>`
+                  : dans===0 ? `<span style="color:#b3261e;font-weight:600">aujourd'hui</span>`
+                  : dans===1 ? `<span style="color:#b5701a;font-weight:600">demain</span>`
+                  : `dans ${dans} j`);
+    const heure = o.heureLivraison ? ` à ${esc(o.heureLivraison)}` : '';
+    const lieu = o.lieuLivraison ? ` · ${esc(o.lieuLivraison)}` : '';
+    let contenu=''; try{ const ls=orderToLines(o); contenu = ls.length ? ls.map(lineLabel).join(' + ') : ''; }catch(_){}
+    return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:2px">
+      <div style="display:flex;justify-content:space-between"><span><b>${fmtDate(ref)}</b>${heure}${lieu}</span><span>${quand}</span></div>
+      ${contenu?`<div style="font-size:.8rem;color:#6a5a52">${esc(contenu)}</div>`:''}</div>`;
+  }).join('');
+  const prochaine = siennes[0];
+  const dansP = (typeof daysTo==='function') ? daysTo(prochaine.ref) : null;
+  const phrase = dansP==null ? '' :
+    (dansP<0 ? `La commande de ${esc(c.nom)} était à livrer le ${fmtDate(prochaine.ref)} (en retard).`
+     : dansP===0 ? `À livrer aujourd'hui pour ${esc(c.nom)}.`
+     : dansP===1 ? `À livrer demain pour ${esc(c.nom)}.`
+     : `Prochaine livraison pour ${esc(c.nom)} : le ${fmtDate(prochaine.ref)} (dans ${dansP} j).`);
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">📦 Livraisons — ${esc(c.nom)}</h3>
+    ${phrase?`<div style="font-size:.86rem;margin-bottom:8px;color:#3f3a44">${phrase}</div>`:''}
+    ${lignesHtml}`);
+}
+// [COCKPIT] CONSEIL MARCHÉ — branche le Copilote sur les moteurs marché existants (sources uniques) :
+// marketForecast (historique appris) → marketCrossPlan (volume + argumentaire) → marketVentilation
+// (pièces par parfum). Trouve le prochain marché à venir (ou celui de la date demandée). Ne recalcule
+// rien : compose les moteurs et explique le « pourquoi » de chaque chiffre.
+async function aiQueryMarketAdvice(params){
+  const markets = await db.markets.toArray().catch(()=>[]);
+  const td = today();
+  // Marchés à venir non clos, triés par date croissante.
+  const aVenir = markets.filter(m=> m.date && m.date>=td && m.statut!=='clos')
+                        .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  // Cible : marché à la date demandée si fournie, sinon le plus proche à venir.
+  let mk = null;
+  if(params && params.date){ mk = aVenir.find(m=>m.date===params.date) || null; }
+  if(!mk) mk = aVenir[0] || null;
+  if(!mk){
+    return aiSay(`<p class="note">Aucun marché à venir n'est programmé${params&&params.date?` pour le ${fmtDate(params.date)}`:''}. Crée un marché dans l'onglet Marchés pour obtenir un conseil de préparation.</p>`);
+  }
+  // Moteurs (sources uniques, déjà éprouvés).
+  let fc=null; try{ fc = await marketForecast(); }catch(e){}
+  const settings = (typeof getSettings==='function') ? getSettings() : {};
+  const cible = Array.isArray(settings.marketMix) ? settings.marketMix : [];
+  const histo = (fc && Array.isArray(fc.repartition)) ? fc.repartition : [];
+  const cross = marketCrossPlan(+mk.prevuQte||0, fc, {mode:'croise', fraisPct:30});
+  const ventil = marketVentilation(cible, histo, cross.volume, {mode:'croise'});
+  const lignes = (ventil.lignes||[]).filter(l=>l.pieces>0);
+
+  const lieu = mk.lieu ? ` · ${esc(mk.lieu)}` : '';
+  const titre = `${esc(mk.nom||'Marché')}${lieu} — ${fmtDate(mk.date)}`;
+
+  // Détail par parfum, avec l'origine de chaque pourcentage (transparence = ton argumentaire).
+  const detailParfums = lignes.length
+    ? lignes.map(l=>{
+        const src = (l.pctCible!=null && l.pctHisto!=null)
+          ? `ta cible ${l.pctCible}% × historique ${l.pctHisto}%`
+          : (l.pctHisto!=null ? `historique ${l.pctHisto}%` : (l.pctCible!=null ? `ta cible ${l.pctCible}%` : ''));
+        return `<div class="sum-box"><span><b>${esc(l.parfum)}</b> <span style="color:#9a8a82;font-size:.78rem">${src?`(${src})`:''}</span></span><b>${l.pieces} pc</b></div>`;
+      }).join('')
+    : `<p class="note">Pas encore de répartition par parfum (définis ta cible dans les réglages Marchés, ou clôture quelques marchés pour bâtir l'historique).</p>`;
+
+  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🛒 Conseil pour ${titre}</h3>
+    <div style="background:#f3eef7;border:1px solid #d9c9e6;border-radius:10px;padding:9px 11px;margin-bottom:8px">
+      <div style="font-size:1.05rem;font-weight:700;color:#5b3a78">À emmener : ${cross.volume} pièces</div>
+      <div style="font-size:.8rem;color:#6a5a72;margin-top:3px">dont ${cross.frais} frais + ${cross.congele} congelés</div>
+    </div>
+    <div style="font-size:.82rem;color:#5a4a52;margin-bottom:8px">💡 ${esc(cross.explication)}</div>
+    <div style="font-weight:600;font-size:.9rem;margin:8px 0 4px">Répartition conseillée par parfum</div>
+    ${detailParfums}
+    ${fc&&fc.nbMarches>0?`<p class="note" style="margin-top:8px">Basé sur tes <b>${fc.nbMarches}</b> marché(s) passé(s) (moyenne ${fc.moyenneVendu} pc/marché).</p>`:''}`);
 }
 async function aiQueryRevenue(){
   const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
@@ -32059,6 +32627,47 @@ async function planSemaineToggle(wk, bandEl){
 //
 // dateTacheISO : date de début de la tâche (ex. début de prod d'une commande). parfum : optionnel,
 // pour un futur surlignage plus fin. L'intention est posée puis consommée en fin de renderAgendaProduction.
+// ============================================================================================
+// [COCKPIT — étape 3, niveau A] Focus contextuel GÉNÉRIQUE : amener à l'objet précis d'un écran par
+// scroll + surbrillance (sans pré-filtrer l'écran). Calqué sur le pattern éprouvé planFocusTache :
+// on pose une intention de focus, on navigue, et l'écran cible la consomme à son rendu en cherchant
+// l'élément qui porte l'attribut data-focus="type:valeur". Robuste : si l'élément n'existe pas, on
+// ne fait rien de visible (l'écran reste ouvert normalement).
+function aiFocusGo(view, type, val){
+  window._viewFocus = (view && type && val!=null) ? { view, type, val:String(val) } : null;
+  if(typeof goView==='function') goView(view);
+}
+// À appeler au DÉBUT du rendu d'un écran susceptible de recevoir un focus. Cherche l'élément marqué
+// data-focus="type:valeur", scrolle dessus et le surligne brièvement. `viewName` = nom de l'écran
+// courant (pour ne consommer le focus que sur le bon écran). Consommé une seule fois.
+function _consumeViewFocus(viewName){
+  const f = window._viewFocus;
+  if(!f || f.view!==viewName) return;
+  window._viewFocus = null;   // une seule fois
+  setTimeout(()=>{
+    try{
+      const valClean = String(f.val).replace(/"/g,'');
+      // 1) Match exact sur data-focus="type:valeur".
+      let el = document.querySelector(`[data-focus="${f.type}:${valClean}"]`);
+      // 2) Repli tolérant (casse + accents) : on compare la valeur normalisée de chaque candidat.
+      if(!el && typeof aiNormalize==='function'){
+        const cible = aiNormalize(valClean);
+        const cands = document.querySelectorAll(`[data-focus^="${f.type}:"]`);
+        for(const c of cands){
+          const v = (c.getAttribute('data-focus')||'').slice(f.type.length+1);
+          if(aiNormalize(v)===cible){ el = c; break; }
+        }
+      }
+      if(!el) return;   // objet absent de cet écran : on laisse l'écran tel quel
+      el.scrollIntoView({ behavior:'smooth', block:'center' });
+      const old = el.style.boxShadow;
+      el.style.transition = 'box-shadow .3s';
+      el.style.boxShadow = '0 0 0 3px rgba(170,124,57,.6)';
+      setTimeout(()=>{ el.style.boxShadow = old||''; }, 1700);
+    }catch(e){ console.error('_consumeViewFocus', e); }
+  }, 80);
+}
+// ============================================================================================
 function planFocusTache(dateTacheISO, parfum, mode){
   if(typeof filMarquerOrigine==='function') filMarquerOrigine();   // on vient du fil → bouton « ← Retour au fil »
   const wk = (typeof _isoWeekKey==='function') ? _isoWeekKey(dateTacheISO) : null;
@@ -33307,7 +33916,7 @@ function arrondirPalierProduction(qte){
 // charge réécrit, on appelle le même moteur que l'écran Plan de production.
 //   wk = clé ISO 'YYYY-Www'. Renvoie null si bornes illisibles, sinon
 //   { lundi, dim, debut, tempsTotal, tempsDispo, depassement, debordementMin, chargePct }.
-async function _faisabiliteSemaine(wk, conf){
+async function _faisabiliteSemaine(wk, conf, besoinAdditionnel){
   const m = /(\d{4})-W(\d{2})/.exec(wk||'');
   if(!m) return null;
   // Bornes ISO de la semaine (même calcul que l'affichage des semaines du plan).
@@ -33337,7 +33946,7 @@ async function _faisabiliteSemaine(wk, conf){
 
   // Verdict via le moteur existant (commandes + marchés + stock), borné à la semaine.
   let plan;
-  try{ plan = await generateProductionOrder(debut, dimStr, tempsDispo); }
+  try{ plan = await generateProductionOrder(debut, dimStr, tempsDispo, besoinAdditionnel); }
   catch(_){ return null; }
   if(!plan) return null;
   return {
@@ -34384,7 +34993,7 @@ async function _montageDureeParfum(parfum, besoinNet){
   return (typeof _montageMinutes==='function') ? _montageMinutes(q, perBatch, src)
        : Math.ceil(q/TB)*times.montage.estimatedTime;
 }
-async function generateProductionOrder(startDate, endDate, tempsDisponibleMinutes){
+async function generateProductionOrder(startDate, endDate, tempsDisponibleMinutes, besoinAdditionnel){
   // requête ciblée sur l'index date (bornée) plutôt qu'un scan global
   // Requête bornée sur l'index date ; repli sur un filtre mémoire si l'index
   // n'est pas (encore) disponible dans la base locale (ancienne version non migrée).
@@ -34406,6 +35015,11 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   const brut={};
   orders.forEach(o=>{ if(normStatus(o.statut)==='Livrée') return; const dem=_orderParfumDemand(o);
     for(const nom in dem) brut[nom]=(brut[nom]||0)+dem[nom]; });
+  // [SIMULATION] Besoin additionnel fictif (ex. « si je rajoute 25 macarons café jeudi »), injecté
+  // SANS toucher la base : on l'ajoute au besoin brut comme une commande de plus. Absent = identique.
+  if(besoinAdditionnel && typeof besoinAdditionnel==='object'){
+    for(const nom in besoinAdditionnel){ const q=+besoinAdditionnel[nom]||0; if(q>0) brut[nom]=(brut[nom]||0)+q; }
+  }
 
   // 1b) MARCHÉS PROGRAMMÉS dans la fenêtre [startDate, endDate] : la quantité prévue
   // à emporter est un besoin de production, au même titre qu'une commande.
