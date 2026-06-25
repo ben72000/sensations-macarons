@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v901';
+const APP_VERSION = 'v902';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22644,39 +22644,41 @@ async function _ordreProductionDuJour(){
     const b = _wkBornes(wk);
     if(!b) return '';
 
-    // OPTION 1 (cohérence écran Plan) : on calcule le plan sur la SEMAINE COMPLÈTE depuis LUNDI
-    // (mêmes bornes que l'écran, qui étale les montages selon les livraisons), PAS depuis aujourd'hui
-    // (ce qui les comprimait à 14h ce jour). On récupère les schedOpts (reports manuels) via le ctx
-    // déjà calculé par l'écran, mais on REBÂTIT daySpecs+plan sur lundi→dimanche.
-    let schedOpts = {};
-    try{ if(typeof _planSemaineGenere==='function') await _planSemaineGenere(wk); }catch(_){}
-    const ctx = (window._planSimCtx && window._planSimCtx[wk]) ? window._planSimCtx[wk] : null;
-    if(ctx && ctx.schedOpts) schedOpts = ctx.schedOpts;
-
-    // Plan de besoins sur la semaine COMPLÈTE (lundi→dimanche).
-    let plan;
-    try{ plan = await generateProductionOrder(b.lundiStr, b.dimStr, 0); }catch(_){ plan = null; }
-    if(!plan || !plan.lignes || !plan.lignes.length){ window._diagOrdre='td='+td+' | wk='+wk+' | plan VIDE depuis lundi'; return ''; }
-    // daySpecs depuis LUNDI (toute la semaine), construits en LOCAL.
-    const conf = (typeof getAvailability==='function') ? getAvailability() : null;
-    const daySpecs = [];
-    { const cur = new Date(b.lundiStr+'T00:00:00'); const end = new Date(b.dimStr+'T00:00:00'); let g=0;
-      while(cur<=end && g++<60){
-        const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
-        const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b2])=>b2>a);
-        if(slotsMin.length) daySpecs.push({ date:ymd(cur), slots:slotsMin });
-        cur.setDate(cur.getDate()+1);
-      } }
-    let S;
-    try{ S = schedulePersonalPlan(daySpecs, plan, schedOpts||{}); }catch(ex){ window._diagOrdre='td='+td+' | SCHED-ERR '+(ex&&ex.message||ex); return ''; }
-    if(!S || !Array.isArray(S.events)){ window._diagOrdre='td='+td+' | S.events KO'; return ''; }
-    const evs = S.events.filter(e=> e.start!=null);
+    // SOURCE UNIQUE : on lit les créneaux calés PAR PARFUM mémorisés par l'écran Plan (_agendaPlanOpSection),
+    // qui place ganache/coques/montage selon le RÉTROPLANNING (calé sur la livraison) — exactement les
+    // horaires que tu vois à l'écran. Le registre est peuplé dès que l'écran Plan a été affiché une fois.
+    const creneaux = (window._planParfumCreneaux && window._planParfumCreneaux[wk]) ? window._planParfumCreneaux[wk] : null;
+    if(!creneaux){
+      window._diagOrdre='td='+td+' | wk='+wk+' | registre ABSENT (ouvre l\'écran Plan une fois)';
+      return `<div style="margin-bottom:12px"><div style="font-size:.68rem;color:#b3261e;background:#fff3f2;padding:3px 6px;border-radius:6px;margin-bottom:6px;word-break:break-all">${window._diagOrdre}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-weight:700;font-size:1rem;color:var(--bordeaux,#52252F)">\u25b6\ufe0f Par quoi commencer aujourd'hui</span>
+          <button class="btn ghost sm" onclick="goView('agendaprod')" style="font-size:.72rem;white-space:nowrap">\ud83d\udccb Voir le plan</button>
+        </div>
+        <div style="background:var(--paper,#fbf8f3);border:1px solid var(--creme,#E8DDCD);border-left:3px solid var(--caramel,#AA7C39);border-radius:12px;padding:11px 13px;font-size:.85rem;color:var(--ink,#2b1a1f)">
+          Ouvre une fois l'écran <b>Plan de production</b> pour que je puisse lire ton planning calé, puis reviens me demander \u2014 je te donnerai l'ordre exact du jour.
+        </div>
+      </div>`;
+    }
+    // Conversion en events {date, start(min), end, kind, label, id, besoinNet, repartition, congeler}.
+    const ymdOf = d => { const x=new Date(d); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+    const minOf = d => { const x=new Date(d); return x.getHours()*60+x.getMinutes(); };
+    const labelType = t => t==='ganache'?'Ganache':t==='coques'?'Coques':t==='montage'?'Montage':t;
+    const evs = (creneaux||[]).filter(c=>c && c.debut).map(c=>{
+      const p = c.parfum || (c.repartition ? Object.keys(c.repartition).join(' + ') : '');
+      return {
+        date: ymdOf(c.debut), start: minOf(c.debut), end: c.fin?minOf(c.fin):null,
+        kind: c.type, label: labelType(c.type)+(p?' '+p:''),
+        id: c.type+':'+(c.parfum||''), besoinNet: c.besoinNet||0,
+        repartition: c.repartition||null, congeler: !!c.congeler, parfum: c.parfum||null
+      };
+    });
     const duJour = evs.filter(e=> e.date===td).sort((a,b2)=> a.start - b2.start);
     const evsFull = evs;
-    // DIAG (conservé jusqu'à validation réelle) : bornes, jours présents, horaires des montages.
+    // DIAG (conservé jusqu'à validation réelle) : registre présent, jours, horaires des montages.
     { const _jours=[...new Set(evs.map(e=>e.date))].sort().join(',');
       const _mtg=evs.filter(e=>e.kind==='montage').map(e=>e.date+'@'+Math.floor(e.start/60)+'h').slice(0,4).join(' ');
-      window._diagOrdre='td='+td+' | wk='+wk+' | lundi='+b.lundiStr+'→'+b.dimStr+' | jours=['+_jours+'] | duJour='+duJour.length+' | montages: '+_mtg;
+      window._diagOrdre='td='+td+' | wk='+wk+' | registre='+(creneaux?creneaux.length+' creneaux':'ABSENT')+' | jours=['+_jours+'] | duJour='+duJour.length+' | montages: '+_mtg;
     }
 
     if(!duJour.length){
@@ -33482,6 +33484,17 @@ function _agendaPlanOpSection(plan){
   };
 
   const semaines = plan.semaines.map(s=>{
+    // [SOURCE UNIQUE — ordre du jour Copilote] On mémorise les créneaux calés PAR PARFUM (rétroplanning :
+    // ganache/coques/montage avec leur Date réelle), tels qu'affichés ici. Le Copilote (_ordreProductionDuJour)
+    // lit CE registre pour montrer exactement les mêmes horaires que cet écran — zéro divergence.
+    if(s.wk){
+      window._planParfumCreneaux = window._planParfumCreneaux || {};
+      const _etapes = [];
+      (s.ganache||[]).forEach(g=>{ if(g && g.debut) _etapes.push({ type:'ganache', parfum:g.parfum, debut:g.debut, fin:g.fin, qte:(g.qteProduite||g.qte||0) }); });
+      (s.coques||[]).forEach(m=>{ if(m && m.debut) _etapes.push({ type:'coques', repartition:m.repartition||null, debut:m.debut, fin:m.finCuisson||m.fin, congeler:!!m.congeler }); });
+      (s.montage||[]).forEach(g=>{ if(g && g.debut) _etapes.push({ type:'montage', parfum:g.parfum, debut:g.debut, fin:g.fin, qte:(g.qteProduite||g.qte||0), besoinNet:(+g.qte||0) }); });
+      window._planParfumCreneaux[s.wk] = _etapes;
+    }
     // GANACHE — chaque carte est CLIQUABLE : lance le batch ganache + chrono (avec confirmation).
     const ganache = s.ganache.map((gi_g,gi)=>{
       const g = gi_g;
