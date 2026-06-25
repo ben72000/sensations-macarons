@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v919';
+const APP_VERSION = 'v920';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -34593,45 +34593,46 @@ async function _faisabiliteFenetre(debutStr, finStr, conf, besoinAdditionnel){
       cur.setDate(cur.getDate()+1);
     }
   }catch(_){ tempsDispo = 0; }
-  // [CONVERGENCE — étape 2] La charge de référence est désormais celle des CRÉNEAUX RÉELS du moteur 2
-  // (rétroplanning : stock mobilisable déduit, congélation, placement horaire) — la VRAIE production que
-  // l'ordre du jour affiche. Le moteur 1 (generateProductionOrder) ne sert plus à JUGER la faisabilité.
-  //
-  // EXCEPTION besoinAdditionnel : une SIMULATION d'ajout (« et si j'ajoute X ») ne peut PAS être lue dans
-  // les créneaux (ils ne contiennent pas l'ajout fictif). Dans ce seul cas, on garde le moteur 1, seul
-  // capable d'intégrer un besoin additionnel. Sinon, charge = créneaux moteur 2.
+  // [CONVERGENCE — étape 3] La charge vient des CRÉNEAUX RÉELS du moteur 2 (rétroplanning : stock
+  // mobilisable déduit, congélation, placement horaire) — la VRAIE production que l'ordre du jour affiche.
+  // Le moteur 1 (generateProductionOrder) est DÉBRANCHÉ de la faisabilité courante : il n'est plus appelé
+  // QUE dans deux cas résiduels —
+  //   (a) SIMULATION d'ajout (besoinAdditionnel) : les créneaux ne contiennent pas l'ajout fictif, seul le
+  //       moteur 1 sait l'intégrer ;
+  //   (b) REPLI d'urgence : si les créneaux sont indisponibles (registre vide non peuplable), on retombe sur
+  //       le moteur 1 plutôt que de renvoyer une charge de 0 (qui ferait un verdict faussement rassurant).
+  // En fonctionnement normal (créneaux présents, pas de simulation), le moteur 1 n'est PLUS appelé.
   const simulation = !!(besoinAdditionnel && typeof besoinAdditionnel==='object' && Object.keys(besoinAdditionnel).length);
-  let charge = 0, chargeM1 = null, source = '';
-  // Charge moteur 1 calculée DANS TOUS LES CAS pour le diag comparatif (transparence avant débranchement).
-  try{
-    const plan = await generateProductionOrder(debutStr, finStr, tempsDispo, besoinAdditionnel);
-    chargeM1 = plan ? (plan.tempsTotal||0) : null;
-  }catch(_){ chargeM1 = null; }
+  let charge = 0, source = '', m1Repli = null;
   if(simulation){
-    if(chargeM1==null) return null;
-    charge = chargeM1; source = 'moteur 1 (simulation besoinAdditionnel)';
+    // (a) Simulation : seul le moteur 1 intègre le besoin additionnel fictif.
+    try{ const plan = await generateProductionOrder(debutStr, finStr, tempsDispo, besoinAdditionnel);
+      charge = plan ? (plan.tempsTotal||0) : 0; }catch(_){ return null; }
+    source = 'moteur 1 (simulation besoinAdditionnel)';
   } else {
     let cr = null;
     try{ cr = await _chargeCreneauxFenetre(debutStr, finStr); }catch(_){ cr = null; }
-    if(cr && !cr.registreVide){ charge = cr.tempsTotal||0; source = 'créneaux moteur 2'; }
-    else { charge = chargeM1!=null ? chargeM1 : 0; source = 'moteur 1 (créneaux indisponibles — repli)'; }
+    if(cr && !cr.registreVide){
+      charge = cr.tempsTotal||0; source = 'créneaux moteur 2';
+    } else {
+      // (b) Repli : créneaux indisponibles → moteur 1 comme filet de sécurité.
+      try{ const plan = await generateProductionOrder(debutStr, finStr, tempsDispo, null);
+        m1Repli = plan ? (plan.tempsTotal||0) : 0; }catch(_){ m1Repli = 0; }
+      charge = m1Repli; source = 'moteur 1 (créneaux indisponibles — repli)';
+    }
   }
-  // [DIAG COMPARATIF] Pour valider en réel avant de débrancher le moteur 1 (étape 3) : on montre les DEUX
-  // charges côte à côte et laquelle a été retenue. Écart = mesure de la divergence des deux moteurs.
-  // [FIX v919] Clé SUFFIXÉE par la fenêtre : _faisabiliteSemaine est appelé en BOUCLE par _buildPlanOpAutonome
-  // (une fois par semaine du plan). Avec une clé fixe, seul le DERNIER passage restait visible (diag trompeur
-  // montrant une autre semaine que le verdict). Une clé par fenêtre garde un diag distinct pour CHAQUE semaine.
+  // [DIAG] Transparence : charge retenue + source. Plus de comparaison systématique (moteur 1 débranché en
+  // v920 : la convergence a été validée en réel — écart négligeable en semaine légère, significatif en semaine
+  // chargée, toujours en faveur du calcul juste). Clé par fenêtre (un diag distinct par semaine du plan).
   try{
     if(typeof diagPublish==='function'){
-      const _ecart = (chargeM1!=null && !simulation) ? Math.round((charge-chargeM1)*10)/10 : null;
       diagPublish('faisabiliteSource:'+debutStr+'_'+finStr, '⚖️ Faisabilité '+debutStr+'→'+finStr, {
         'Fenêtre': debutStr+' → '+finStr,
         'Charge RETENUE (min)': charge+'  ['+source+']',
-        'Charge moteur 1 (ancien calcul)': chargeM1!=null ? (Math.round(chargeM1*10)/10)+' min' : 'indisponible',
-        'Écart (créneaux − moteur 1)': _ecart!=null ? (_ecart+' min') : 'n/a (simulation ou M1 absent)',
         'Capacité (min)': tempsDispo,
         'Charge %': tempsDispo>0 ? Math.round(charge/tempsDispo*100)+' %' : 'n/a',
-        'Lecture': 'La faisabilité juge la VRAIE production (créneaux moteur 2), sauf simulation d\'ajout (moteur 1). Un diag par semaine du plan.'
+        'Moteur 1': simulation ? 'utilisé (simulation)' : (m1Repli!=null ? 'utilisé (repli — créneaux absents)' : 'non appelé (débranché)'),
+        'Lecture': 'La faisabilité juge la VRAIE production (créneaux moteur 2). Moteur 1 réservé à la simulation d\'ajout et au repli d\'urgence.'
       });
     }
   }catch(_){}
