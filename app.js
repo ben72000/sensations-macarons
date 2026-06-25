@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v913';
+const APP_VERSION = 'v914';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22911,7 +22911,8 @@ async function _diagReservationsStock(debutStr, finStr){
       'Par parfum (écart = ce que le verdict OUBLIE de produire)': lignes.length ? lignes.map(l=>
         `${l.nom} : phys ${l.phys}, besoin ${l.bes}, réservé proche ${l.res} → dispo réel ${l.dispoReel} · à produire actuel ${l.netActuel} vs corrigé ${l.netCorrige}${l.ecart>0?' ⚠ +'+l.ecart:''}`
       ) : 'Aucun parfum avec stock/besoin/réservation sur la période',
-      'Total macarons oubliés (écart)': lignes.reduce((t,l)=>t+l.ecart,0)
+      'Total macarons oubliés (écart)': lignes.reduce((t,l)=>t+l.ecart,0),
+      'État': 'Correction ACTIVE dans generateProductionOrder : le besoin déduit désormais le stock RÉELLEMENT disponible (physique − réservé proche). Neutre tant que réservé=0.'
     });
     return lignes;
   }catch(e){ console.error('diagReservations',e); diagPublish('reservations','📦 Stock disponible — erreur',{erreur:String(e&&e.message||e)}); return null; }
@@ -35592,6 +35593,32 @@ async function _montageDureeParfum(parfum, besoinNet){
   return (typeof _montageMinutes==='function') ? _montageMinutes(q, perBatch, src)
        : Math.ceil(q/TB)*times.montage.estimatedTime;
 }
+// [STOCK RÉELLEMENT DISPONIBLE — réservations] Renvoie, par parfum, le nombre de macarons déjà PROMIS à
+// des commandes livrables APRÈS endDate mais dans l'horizon de concurrence (endDate + N jours). Ces macarons
+// puisent dans le stock physique sans appartenir au besoin de la fenêtre [startDate,endDate] : il faut donc
+// les retirer du stock avant de conclure « déjà couvert ». NEUTRE quand il n'y a aucune commande proche
+// (réservé=0 → stock inchangé). Règle métier (Benjamin) : horizon de concurrence = 7 jours (au-delà, le
+// stock a le temps d'être reconstitué, la commande ne réserve plus).
+async function _reservationsProche(startDate, endDate, horizonJours){
+  const H = (horizonJours!=null) ? horizonJours : 7;
+  const res = {};
+  try{
+    // Borne haute de concurrence = endDate + (H-1) jours (même longueur que la fenêtre 7 j).
+    const dConc = new Date(endDate+'T00:00:00'); dConc.setDate(dConc.getDate()+H-1);
+    const concStr = dConc.toISOString().slice(0,10);
+    let orders = [];
+    try{ orders = await db.orders.where('date').between(endDate, concStr, false, true).toArray(); }
+    catch(_){ const all = await db.orders.toArray(); orders = all.filter(o=> o.date && o.date>endDate && o.date<=concStr); }
+    orders.forEach(o=>{
+      if(!o || !o.date) return;
+      if((o.statut||'')==='Livrée' || normStatus(o.statut)==='Livrée') return;
+      if(o.date<=endDate || o.date>concStr) return;   // strictement APRÈS la fenêtre, dans l'horizon
+      const dem = _orderParfumDemand(o);
+      for(const nom in dem){ res[nom] = (res[nom]||0) + dem[nom]; }
+    });
+  }catch(e){ console.error('reservationsProche', e); }
+  return res;
+}
 async function generateProductionOrder(startDate, endDate, tempsDisponibleMinutes, besoinAdditionnel){
   // requête ciblée sur l'index date (bornée) plutôt qu'un scan global
   // Requête bornée sur l'index date ; repli sur un filtre mémoire si l'index
@@ -35604,6 +35631,13 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
     orders = all.filter(o=> o.date && o.date>=startDate && o.date<=endDate);
   }
   const {stock, recipes} = await mrpCurrentStockByParfum();
+  // [STOCK RÉELLEMENT DISPONIBLE] Le stock physique peut être déjà promis à des commandes proches hors
+  // fenêtre : on les déduit pour ne pas conclure à tort « déjà couvert ». NEUTRE si aucune réservation.
+  let _reserve = {};
+  try{ _reserve = await _reservationsProche(startDate, endDate, 7); }catch(_){ _reserve = {}; }
+  const _stockDispo = {};
+  for(const nom in stock){ _stockDispo[nom] = Math.max(0, (+stock[nom]||0) - (+_reserve[nom]||0)); }
+  for(const nom in _reserve){ if(_stockDispo[nom]==null) _stockDispo[nom] = 0; }
   const times = getMrpTimes();
   // [UNIFICATION MODÈLE DE TEMPS] Temps mesurés par parfum (mesuré fiable > recette > défaut), pour
   // que tMontage/tGanache des lignes suivent le MÊME modèle que le plan de travail détaillé
@@ -35666,7 +35700,9 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   const lignes=[]; const warnings=[];
   for(const parfum in brut){
     const besoinBrut=brut[parfum];
-    const enStock=stock[parfum]||0;
+    const enStockPhys=stock[parfum]||0;
+    const reserve=_reserve[parfum]||0;
+    const enStock=(_stockDispo[parfum]!=null) ? _stockDispo[parfum] : enStockPhys;  // net des réservations proches
     const besoinNet=Math.max(0, besoinBrut-enStock);
     if(besoinNet<=0) continue;
     const nbBatchs=Math.ceil(besoinNet/TAILLE_BATCH_MACARONS);
@@ -35679,7 +35715,7 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
     // Délai de repos ganache avant montage (réglage recette, défaut 12 h ; 0 = exception)
     const ganacheDelaiH = (rec && rec.ganacheDelaiH!=null) ? +rec.ganacheDelaiH : 12;
     const coquesCongelObl = !!(rec && rec.coquesCongelObligatoire);
-    lignes.push({parfum, recipeId:rec?rec.id:null, besoinBrut, enStock, besoinNet, nbBatchs,
+    lignes.push({parfum, recipeId:rec?rec.id:null, besoinBrut, enStock, enStockPhys, reserve, besoinNet, nbBatchs,
       coques:nbBatchs*COQUES_PAR_BATCH, garnitureG, poidsUnit, tMontage, tGanache,
       ganacheDelaiH, coquesCongelObl,
       garnitureManque: !rec || poidsUnit<=0});
