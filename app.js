@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v923';
+const APP_VERSION = 'v924';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -34799,14 +34799,18 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
       }
     });
     const qProd = nom => (prodInfo[nom] ? prodInfo[nom].produire : 0);
-    const ganache = s.parfums.map(p=>{
+    // [FIX v924] Un parfum entièrement couvert par le stock (qteProduite=0) n'a RIEN à produire : on ne
+    // génère NI ganache, NI coques, NI montage pour lui. Sans ce filtre, la ligne était créée et l'affichage
+    // « qteProduite||qte » retombait sur qte (>0), montrant une fausse tâche (ex. Vanille « 14 mac · 12 min »
+    // alors que 47 finis couvrent les 14). On filtre à la SOURCE pour que le temps total n'en tienne pas compte.
+    const ganache = s.parfums.filter(p=> qProd(p.nom) > 0).map(p=>{
       const g = tempsGanache(p.nom);
       const pi = prodInfo[p.nom] || {commande:p.qte, produire:p.qte, surplus:0};
       return { parfum:p.nom, qte:p.qte, qteProduite:pi.produire, surplusStock:pi.surplus, paliers:pi.paliers, dureeMin:g.min, source:g.source,
                aMarche: p.commandes.some(c=>c.marche),
                commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId, marche:c.marche, marketId:c.marketId})) };
     });
-    const montage = s.parfums.map(p=>{
+    const montage = s.parfums.filter(p=> qProd(p.nom) > 0).map(p=>{
       const m = tempsMontageBatch(p.nom);
       const pi = prodInfo[p.nom] || {commande:p.qte, produire:p.qte, surplus:0, paliers:[]};
       const qp = pi.produire;   // on monte tout ce qu'on produit (commande + surplus stock)
@@ -34845,7 +34849,7 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
                aMarche: p.commandes.some(c=>c.marche),
                commandes:p.commandes.map(c=>({client:c.client, qte:c.qte, orderId:c.orderId, marche:c.marche, marketId:c.marketId})) };
     });
-    const lignesCoques = s.parfums.map(p=>({ parfum:p.nom, besoinNet:qProd(p.nom) }));
+    const lignesCoques = s.parfums.filter(p=> qProd(p.nom) > 0).map(p=>({ parfum:p.nom, besoinNet:qProd(p.nom) }));
     const meringues = (typeof _packMeringues==='function') ? _packMeringues(lignesCoques) : [];
     const coques = meringues.map(m=>{
       // Coques chablonnées de cette meringue : somme des coques des parfums dont la recette a chablonnee=true.
