@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v925';
+const APP_VERSION = 'v926';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19540,7 +19540,7 @@ function parseIntent(texte, ctx){
       label:'Conseil pour ton prochain marché'};
   }
   // CONSEIL GLOBAL : "conseille-moi", "quoi faire", "par quoi je commence", "qu'est-ce que je dois faire"
-  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je |on )?commenc|(je|on) commence par quoi|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr|quel plan de production|propose[s]? (moi )?(un )?plan|quel plan (proposes?|tu propose)|plan de prod du jour)/.test(t)
+  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je |on )?commenc|(je|on) commence par quoi|commence t on|programme (du jour|de la journee|du matin)|quel est le programme|programme aujourd|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr|quel plan de production|propose[s]? (moi )?(un )?plan|quel plan (proposes?|tu propose)|plan de prod du jour)/.test(t)
      && !/\bstock\b|combien|reste/.test(t)){
     return {intent:'query_advice', params:{}, critical:false, label:'Mon conseil de production du moment'};
   }
@@ -19564,7 +19564,10 @@ function parseIntent(texte, ctx){
   }
   // RECETTE (éventuellement mise à l'échelle) : « donne-moi la recette des macarons citron pour 25
   // pièces », « recette de la ganache vanille ». Capte le parfum et un nombre de pièces optionnel.
-  if(/\b(recette|recettes|ingredients|ingredient|proportions|quantites|dosage)\b/.test(t)){
+  // GARDE : si la phrase interroge une DISPONIBILITÉ de stock (« assez de X », « il me reste », « stock de »),
+  // ce n'est PAS une demande de recette mais de stock (query_stock_pour, traité juste après) → on laisse passer.
+  if(/\b(recette|recettes|ingredients|ingredient|proportions|quantites|dosage)\b/.test(t)
+     && !/\b(assez|suffi|suffisant|il me reste|me reste|reste t il|stock de|en stock|j'?ai assez|ai je assez)\b/.test(t)){
     const fl = aiFindFlavor(t, flavors);
     const nb = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
     return {intent:'query_recipe', params:{flavor:fl, pieces:(nb&&nb>0)?nb:null}, critical:false,
@@ -19597,10 +19600,11 @@ function parseIntent(texte, ctx){
       label: mat?`Consulter le stock de « ${mat.nom} »`:'Consulter le stock'};
   }
   // commandes à préparer / à une date
-  if(/\b(commande|commandes)\b/.test(t) && /\b(a preparer|preparer|affiche|montre|liste|voir|quelles|du jour|aujourd|mes commandes|j'?ai quoi|quoi comme|a venir|cette semaine|demain)\b/.test(t)){
+  if((/\b(commande|commandes)\b/.test(t) && /\b(a preparer|preparer|affiche|montre|liste|voir|quelles|du jour|aujourd|mes commandes|j'?ai quoi|quoi comme|a venir|cette semaine|demain)\b/.test(t))
+     || (/\b(livraison|livraisons|livrer)\b/.test(t) && /\b(prochaine|prochaines|a venir|mes|qui|prochainement|du jour|aujourd|cette semaine|demain|liste|montre|affiche)\b/.test(t) && !aiFindClient(t,clients))){
     const date=aiParseDate(t);
     return {intent:'query_orders', params:{date, statut: /preparer/.test(t)?'À préparer':null}, critical:false,
-      label: date?`Afficher les commandes du ${date}`:'Afficher les commandes à préparer'};
+      label: date?`Afficher les commandes du ${date}`:'Afficher les commandes / livraisons à venir'};
   }
   // top clients par parfum
   if(/\b(client|clients)\b/.test(t) && /\b(plus|top|meilleur|meilleurs|fideles|gros|principaux|commandent|achetent|consomment|qui commande)\b/.test(t)){
@@ -19688,8 +19692,11 @@ function parseIntent(texte, ctx){
     return {intent:'query_anomalies', params:{}, critical:false, label:'Détecter les anomalies de vente'};
   }
   // besoins de production / matières à produire
-  if(/\b(produire|production|fabriquer|batch|combien.*macaron|preparer.*production)\b/.test(t)
-     && /\b(faut|besoin|combien|matiere|matieres|premiere|prevoir|planifie|planifier)\b/.test(t)){
+  if((/\b(produire|production|fabriquer|batch|combien.*macaron|preparer.*production)\b/.test(t)
+      && /\b(faut|besoin|combien|matiere|matieres|premiere|prevoir|planifie|planifier)\b/.test(t))
+     || /\b(quoi|que|qu'?est ce que|qu'?est-ce que)\b.*\b(lancer|produire|fabriquer|fournée|fournees)\b/.test(t)
+     || /\b(je dois|dois je|faut il|a faire)\b.*\b(lancer|produire|fabriquer|preparer)\b/.test(t)
+     || /\b(quoi|que|qu'?est ce que) (je )?(dois|doit) (lancer|produire|fabriquer|faire comme prod)/.test(t)){
     return {intent:'query_production_needs', params:{}, critical:false, label:'Calculer les besoins de production'};
   }
   // rupture PRÉDICTIVE (rythme de ventes) : "quand", "combien de temps", "prévision", "tenir"
@@ -20059,31 +20066,30 @@ function aiHelp(txt){
 function renderAssistant(){
   _aiPhotoPreview=null;   // aucune pièce jointe ne persiste entre deux visites
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Copilote</h1><p>Ton assistant de pilotage — conseils & questions</p></div></div>
-   <div id="atelierVoixBox"><div class="banner">🧭 <div>Analyse de ta situation en cours…</div></div></div>
-   <div class="banner">🤖 <div>Pose ta question ou demande un conseil (« conseille-moi », « qu'est-ce qui est en retard ? »). Le copilote fonctionne <b>hors-ligne</b>. Toute action critique demande ta validation.</div></div>
-   <div class="panel">
-     <div class="field"><label>Ta demande</label>
-       <textarea id="aiInput" rows="2" placeholder="ex : Conseille-moi · Quel est le stock de chocolat ? · Crée une commande pour M. Dupont vendredi" onkeydown="aiInputKey(event)"></textarea>
-     </div>
+   <div class="topbar"><div><h1>Copilote</h1><p>Pose ta question, enchaîne la discussion</p></div></div>
+   <div id="aiThread" style="min-height:38vh;max-height:62vh;overflow-y:auto;padding:4px 2px 8px"></div>
+   <div id="aiOut"></div>
+   <div class="panel" style="position:sticky;bottom:0;background:var(--paper,#fbf7f1);padding-top:10px">
      <div id="aiAttachWrap" style="display:none;margin-bottom:8px"></div>
      <input type="file" id="aiFileInput" accept=".txt,.csv,.md,.text,.pdf,text/plain,text/csv,text/markdown,application/pdf,image/*" style="display:none" onchange="aiAttachFile(this.files)">
-     <div class="flex" style="gap:8px;flex-wrap:wrap"><button class="btn" onclick="aiRun()">Envoyer</button>
-       <button class="btn ghost" onclick="document.getElementById('aiFileInput').click()" title="Joindre un fichier texte (.txt) ou une photo (support visuel)">📎 Joindre</button>
-       <button class="btn gold" onclick="document.getElementById('aiInput').value='aide';aiRun()">❓ Aide</button>
-       <button class="btn" onclick="goView('agendaprod')">🧭 Production</button>
-       <button class="btn ghost" onclick="aiClearAll()">Effacer</button></div>
-     <p class="note" style="margin-top:6px">📎 Un <b>.txt</b> ou un <b>PDF</b> (généré par ordi) est lu et ajouté à ta demande ; une <b>photo</b> ou un PDF scanné reste un aperçu temporaire (non lu, non enregistré). Base d'aide : <b>${APP_VERSION}</b>.</p>
-     <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-       ${['Conseille-moi quoi faire','Organise mes fournées','Qu\'est-ce qui est en retard ?','Qu\'est-ce qui périme bientôt ?','Est-ce que je tiens dans mon temps ?','Quel est le stock de chocolat ?','Commandes à préparer demain','Aide'].map(s=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify(s)};aiRun()">${esc(s)}</button>`).join('')}
+     <div class="field" style="margin-bottom:6px">
+       <input id="aiInput" type="text" inputmode="text" enterkeyhint="send" autocomplete="off"
+         placeholder="Écris ta demande…" onkeydown="aiInputKey(event)" style="width:100%">
      </div>
-   </div>
-   <div id="aiOut"></div>`;
-  ttScheduleSerenityRefresh();   // la jauge de sérénité reste calculée en arrière-plan (utilisée ailleurs)
-  renderAtelierVoix();
-  // Écran épuré : sérénité, prévisions marché et anti-gaspi ne sont plus affichés ici
-  // (prévisions toujours accessibles depuis l'écran Marchés ; le code reste en place).
+     <div class="flex" style="gap:8px;flex-wrap:wrap">
+       <button class="btn ghost" onclick="document.getElementById('aiFileInput').click()" title="Joindre un fichier .txt/PDF ou une photo">📎 Joindre</button>
+       <button class="btn ghost" onclick="aiClearThread()">🗑️ Nouveau fil</button>
+     </div>
+   </div>`;
+  // Message d'accueil discret dans le fil (épuré, pas de briefing proactif).
+  aiPush('bot', `<p style="margin:0">Bonjour 👋 Je suis ton copilote de pilotage. Demande-moi un conseil, un stock, une recette, tes commandes… <span class="note">Je fonctionne hors-ligne ; toute action critique te demande validation.</span></p>`);
 }
+// [CHAT — D1] Auto-agrandissement de l'input (1 à ~5 lignes), pour un ressenti de chat.
+function aiAutoGrow(ta){ if(!ta) return; ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }
+// Lance une suggestion rapide : remplit l'input et envoie.
+function aiQuick(s){ const ta=document.getElementById('aiInput'); if(ta){ ta.value=s; } aiRun(); }
+// Repart sur un fil vierge (non persistant : on vide simplement l'affichage).
+function aiClearThread(){ const t=document.getElementById('aiThread'); if(t){ t.innerHTML=''; } aiClarifyPending=null; aiPending=null; window._aiCurrentIntent=null; window._aiCurrentParams=null; renderAssistant(); }
 
 // [LA VOIX] Rendu de l'encart de conseil proactif (écran Assistant).
 async function renderAtelierVoix(){
@@ -22471,10 +22477,32 @@ function aiShortcuts(intent, params){
   return `<div style="margin-top:10px;padding-top:8px;border-top:1px solid #f0eae0;display:flex;flex-wrap:wrap;align-items:center">
     <span style="font-size:.72rem;color:#9a8a82;margin-right:6px">Aller plus loin :</span>${btns}</div>`;
 }
+// [CHAT — D1] Fil conversationnel : on EMPILE les messages au lieu d'écraser. Deux rôles : « moi »
+// (bulle alignée à droite, fond caramel clair) et « copilote » (bulle à gauche, fond crème). Le fil
+// vit le temps de la visite (non persistant). aiPush ajoute une bulle et fait défiler vers le bas.
+function aiPush(role, html){
+  const thread = document.getElementById('aiThread');
+  if(!thread) return;
+  const mine = (role==='me');
+  const wrap = document.createElement('div');
+  wrap.style.cssText = `display:flex;margin:8px 0;${mine?'justify-content:flex-end':'justify-content:flex-start'}`;
+  const bulle = document.createElement('div');
+  bulle.className = mine ? 'ai-bulle ai-bulle-me' : 'ai-bulle ai-bulle-bot';
+  bulle.style.cssText = mine
+    ? 'max-width:82%;background:#f3e7d2;border:1px solid #e6d3b0;color:#4a3a2a;border-radius:16px 16px 4px 16px;padding:9px 13px;font-size:.92rem;line-height:1.45;white-space:pre-wrap;word-break:break-word'
+    : 'max-width:92%;background:#fff;border:1px solid #ece1d2;color:#3a2a2f;border-radius:16px 16px 16px 4px;padding:11px 14px;box-shadow:0 2px 8px rgba(73,15,37,.05)';
+  bulle.innerHTML = html;
+  wrap.appendChild(bulle);
+  thread.appendChild(wrap);
+  // défilement doux vers le dernier message.
+  requestAnimationFrame(()=>{ thread.scrollTop = thread.scrollHeight; const m=document.getElementById('main'); if(m) window.scrollTo(0, document.body.scrollHeight); });
+}
 function aiSay(html){
   // [COCKPIT] On accole les raccourcis contextuels de l'intention courante (mémorisée par le dispatcher).
   const sc = (typeof aiShortcuts==='function') ? aiShortcuts(window._aiCurrentIntent, window._aiCurrentParams) : '';
-  document.getElementById('aiOut').innerHTML = `<div class="panel">${html}${sc}</div>`;
+  // [CHAT — D1] Si le fil existe, on pousse une bulle copilote ; sinon repli sur l'ancien rendu (#aiOut).
+  if(document.getElementById('aiThread')){ aiPush('bot', `${html}${sc}`); return; }
+  const out=document.getElementById('aiOut'); if(out){ out.innerHTML = `<div class="panel">${html}${sc}</div>`; }
 }
 
 // Envoi fluide : Entrée envoie, Maj+Entrée = nouvelle ligne. Anti double-déclenchement.
@@ -22482,7 +22510,7 @@ let _aiRunning=false;
 // Aperçu photo en mémoire vive UNIQUEMENT (jamais enregistré en base/cache). Réinitialisé à chaque rendu.
 let _aiPhotoPreview=null;
 function aiInputKey(ev){
-  if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); aiRun(); }
+  if(ev.key==='Enter'){ ev.preventDefault(); aiRun(); }
 }
 // Gère la pièce jointe choisie : .txt/.csv/.md → injecté dans la demande ; image → aperçu temporaire.
 function aiAttachFile(files){
@@ -22645,6 +22673,8 @@ async function aiRun(){
   const txt=(ta?.value||'').trim();
   if(!txt){ return; }
   _aiRunning=true;
+  // [CHAT — D1] On affiche d'abord le message de l'utilisateur dans le fil, puis on vide l'input.
+  if(document.getElementById('aiThread')){ aiPush('me', esc(txt)); if(ta){ ta.value=''; } }
   try{
     const flavors=FLAVORS;
     const clients=await db.clients.toArray();
