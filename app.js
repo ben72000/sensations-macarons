@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v910';
+const APP_VERSION = 'v912';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -22801,6 +22801,64 @@ async function _arbitrageReassort(planOp, wk){
     return { candidats:items, proteges };
   }catch(e){ console.error('arbitrageReassort',e); diagPublish('arbitrage','♟️ Arbitrage réassort — erreur',{erreur:String(e&&e.message||e)}); return null; }
 }
+// [RECOMMANDATION RÉASSORT — étape 2b-1, lecture seule actionnable] À partir du verdict (zone + débordement)
+// et de l'arbitrage (ordre de sacrifice + temps libéré par parfum), calcule CONCRÈTEMENT quels réassorts
+// retirer pour rentrer/se dégager de la marge. Ne modifie PAS le plan : produit une recommandation argumentée
+// que l'utilisateur applique s'il le souhaite (l'application réelle = 2b-2 / étape 3 report). Publie en
+// rubrique technique et renvoie un fragment HTML pour le verdict.
+function _recommandationReassort(verdict, arbitrage){
+  try{
+    if(!verdict || !arbitrage || !Array.isArray(arbitrage.candidats)) return null;
+    const zone = verdict.zone;
+    const cands = arbitrage.candidats;   // déjà triés : 1er à sacrifier en tête
+    if(!cands.length) return null;
+    const f = verdict.faisabilite || {};
+    const debord = Math.max(0, +f.debordementMin || 0);   // minutes en trop (zone rouge surtout)
+    const fmt = m => (typeof fmtHM==='function') ? fmtHM(m) : Math.round(m)+' min';
+
+    // On retire les réassorts dans l'ordre de sacrifice, en cumulant le temps libéré, jusqu'à couvrir
+    // le débordement (zone rouge) OU jusqu'à dégager une marge de confort (zone jaune : cible ~10% du dispo).
+    const cibleMin = zone==='tendu' ? debord
+                   : zone==='juste' ? Math.max(0, Math.round((+f.tempsDispo||0) * 0.10))  // 10% de marge visée
+                   : 0;
+    if(cibleMin<=0 || zone==='confortable'){
+      diagPublish('reco', '🎯 Recommandation réassort', { Zone:zone, Action:'Aucune réduction nécessaire — réassort complet conservé' });
+      return null;
+    }
+    let cumul=0; const aRetirer=[];
+    for(const c of cands){
+      if(cumul >= cibleMin) break;
+      aRetirer.push(c); cumul += (+c.critTemps||0);
+    }
+    const reste = cands.filter(c=> !aRetirer.includes(c));
+    const suffit = cumul >= cibleMin;
+
+    diagPublish('reco', '🎯 Recommandation réassort', {
+      'Zone': zone,
+      'Cible à libérer': fmt(cibleMin)+(zone==='tendu'?' (débordement)':' (marge de confort 10%)'),
+      'Temps libéré par la reco': fmt(cumul),
+      'Suffit à rentrer': suffit ? 'oui' : 'non (déborde encore)',
+      'Réassorts à retirer': aRetirer.map(c=>`${c.parfum} (libère ${fmt(c.critTemps)} · ${c.nature}${c.urgent?' ⚠ rupture proche':''})`),
+      'Réassorts conservés': reste.map(c=>c.parfum)
+    });
+
+    // Fragment HTML pour le verdict (recommandation argumentée).
+    const items = aRetirer.map(c=>{
+      const det = c.nature==='mixte' ? `arrondi ${c.surplusArrondi}+vélocité ${c.surplusVelocite}` : `${c.surplus} ${c.nature}`;
+      const warn = c.urgent ? ` <span style="color:var(--red,#b04a3e)">⚠ rupture proche</span>` : '';
+      return `<li style="margin:3px 0"><b>${esc(c.parfum)}</b> <span style="color:#6a5a52">— libère ${esc(fmt(c.critTemps))} (${esc(det)})${warn}</span><br><span style="font-size:.78rem;color:#9a8576">${esc(c.argument||'')}</span></li>`;
+    }).join('');
+    const intro = zone==='tendu'
+      ? `Pour repasser sous la limite, allège le réassort dans cet ordre (le moins regrettable d'abord) :`
+      : `Ça rentre, mais c'est serré. Pour te dégager de la marge, tu pourrais alléger en priorité :`;
+    const concl = suffit
+      ? `<div style="font-size:.78rem;color:var(--green,#3f7d52);margin-top:6px">✓ Ça suffit : le reste de ton réassort tient.</div>`
+      : `<div style="font-size:.78rem;color:var(--red,#b04a3e);margin-top:6px">⚠ Même en retirant tout ce réassort, la semaine reste tendue : pense à reporter des montages ou élargir tes créneaux.</div>`;
+    return `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--creme,#E8DDCD)">
+      <div style="font-size:.82rem;color:var(--ink,#2b1a1f);margin-bottom:4px">${intro}</div>
+      <ul style="margin:0;padding-left:18px">${items}</ul>${concl}</div>`;
+  }catch(e){ console.error('recoReassort',e); diagPublish('reco','🎯 Recommandation — erreur',{erreur:String(e&&e.message||e)}); return null; }
+}
 // [VERDICT ADAPTATIF — étape 1, lecture seule] Calcule la zone de charge de la SEMAINE (commandes +
 // réassort) et renvoie l'en-tête contractualisé : verdict + périmètre + discours adapté. Seuils de
 // départ 🟢 ≤80% / 🟡 80-100% / 🔴 >100% (affinables via rubrique technique). Ne touche PAS encore au
@@ -22834,6 +22892,7 @@ async function _verdictSemaine(wk){
                     : 'Commandes prioritaires';
     diagPublish('verdict', '⚖️ Verdict de la semaine', {
       'Semaine (wk)': wk,
+      'Fenêtre analysée': (f.debut||'?')+' → '+(f.fin||'?')+(f.glissant?' (7 jours glissants — inclut le lundi suivant)':' (semaine future, bornes propres)'),
       'Charge': charge+'%',
       'Temps nécessaire': (typeof fmtHM==='function')?fmtHM(f.tempsTotal||0):(f.tempsTotal||0)+' min',
       'Temps disponible': (typeof fmtHM==='function')?fmtHM(f.tempsDispo||0):(f.tempsDispo||0)+' min',
@@ -23007,23 +23066,31 @@ async function aiQueryAdvice(){
   try{
     const html = (typeof atelierVoix==='function') ? await atelierVoix() : '';
     const ordre = (typeof _ordreProductionDuJour==='function') ? await _ordreProductionDuJour() : '';
-    // [VERDICT ADAPTATIF — étape 1] En-tête contractualisé : verdict de charge de la semaine courante,
-    // affiché AU-DESSUS de l'ordre du jour (lecture seule, ne modifie pas encore le contenu).
+    // [VERDICT ADAPTATIF] En-tête contractualisé + recommandation actionnable de réduction du réassort.
     let verdictHtml = '';
     try{
       const _ymd = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
       const _wkNow = (typeof _isoWeekKey==='function') ? _isoWeekKey(_ymd(new Date())) : null;
-      if(_wkNow){ const v = await _verdictSemaine(_wkNow); if(v && v.html) verdictHtml = v.html; }
-      // [ARBITRAGE 2a] On calcule l'ordre de sacrifice du réassort et on le publie en rubrique technique
-      // (lecture seule : l'ordre du jour n'est pas encore modifié). Permet de valider que les arbitrages
-      // sont sensés avant de les appliquer (2b).
-      try{
-        if(_wkNow && typeof _buildPlanOpAutonome==='function' && typeof buildMutualisationSemaine==='function'){
-          const mut = await buildMutualisationSemaine(45);
-          const planOp = await _buildPlanOpAutonome(mut);
-          await _arbitrageReassort(planOp, _wkNow);
+      if(_wkNow){
+        const v = await _verdictSemaine(_wkNow);
+        // Arbitrage (2a) + recommandation (2b-1) : on calcule l'ordre de sacrifice et, selon la zone,
+        // quels réassorts retirer pour rentrer / se dégager de la marge. Recommandation seulement (le
+        // plan n'est PAS modifié) : l'utilisateur décide. L'application réelle = étape 3 (report).
+        let arb = null;
+        try{
+          if(typeof _buildPlanOpAutonome==='function' && typeof buildMutualisationSemaine==='function'){
+            const mut = await buildMutualisationSemaine(45);
+            const planOp = await _buildPlanOpAutonome(mut);
+            arb = await _arbitrageReassort(planOp, _wkNow);
+          }
+        }catch(_){}
+        if(v && v.html){
+          let reco = '';
+          try{ if(arb && v.zone!=='confortable') reco = _recommandationReassort(v, arb) || ''; }catch(_){}
+          // On injecte la reco À L'INTÉRIEUR de la carte verdict (juste avant sa fermeture </div> finale).
+          verdictHtml = reco ? v.html.replace(/<\/div>\s*$/, reco+'</div>') : v.html;
         }
-      }catch(_){}
+      }
     }catch(_){}
     if(out){
       out.innerHTML = (html || ordre || verdictHtml)
@@ -34369,6 +34436,36 @@ function arrondirPalierProduction(qte){
 // charge réécrit, on appelle le même moteur que l'écran Plan de production.
 //   wk = clé ISO 'YYYY-Www'. Renvoie null si bornes illisibles, sinon
 //   { lundi, dim, debut, tempsTotal, tempsDispo, depassement, debordementMin, chargePct }.
+// [FAISABILITÉ — fenêtre explicite] Charge vs disponibilité sur une fenêtre [debut, fin] quelconque.
+// Utilisé par le verdict (fenêtre GLISSANTE de 7 jours : aujourd'hui + 6) et par _faisabiliteSemaine
+// (bornes ISO, pour l'écran Production). Ne compte jamais le passé : debut est déjà ≥ aujourd'hui côté appelant.
+async function _faisabiliteFenetre(debutStr, finStr, conf, besoinAdditionnel){
+  if(!debutStr || !finStr) return null;
+  if(finStr < debutStr) return null;
+  conf = conf || ((typeof getAvailability==='function') ? getAvailability() : null);
+  let tempsDispo = 0;
+  try{
+    const cur = new Date(debutStr+'T00:00:00');
+    const end = new Date(finStr+'T00:00:00');
+    let guard = 0;
+    while(cur <= end && guard++ < 60){
+      tempsDispo += (typeof availMinutesOnDay==='function') ? availMinutesOnDay(cur, null, null, conf) : 0;
+      cur.setDate(cur.getDate()+1);
+    }
+  }catch(_){ tempsDispo = 0; }
+  let plan;
+  try{ plan = await generateProductionOrder(debutStr, finStr, tempsDispo, besoinAdditionnel); }
+  catch(_){ return null; }
+  if(!plan) return null;
+  return {
+    debut:debutStr, fin:finStr,
+    tempsTotal: plan.tempsTotal||0,
+    tempsDispo,
+    depassement: tempsDispo>0 && (plan.tempsTotal||0) > tempsDispo,
+    debordementMin: Math.max(0, (plan.tempsTotal||0) - tempsDispo),
+    chargePct: tempsDispo>0 ? Math.round((plan.tempsTotal||0)/tempsDispo*100) : 0
+  };
+}
 async function _faisabiliteSemaine(wk, conf, besoinAdditionnel){
   const m = /(\d{4})-W(\d{2})/.exec(wk||'');
   if(!m) return null;
@@ -34379,37 +34476,26 @@ async function _faisabiliteSemaine(wk, conf, besoinAdditionnel){
   const dim = new Date(lundi); dim.setUTCDate(lundi.getUTCDate()+6);
   const lundiStr = lundi.toISOString().slice(0,10);
   const dimStr = dim.toISOString().slice(0,10);
-  // On ne compte jamais le passé : la charge part d'aujourd'hui pour la semaine en cours.
   const todayStr = today().slice(0,10);
-  const debut = (lundiStr < todayStr) ? todayStr : lundiStr;
   if(dimStr < todayStr) return null;   // semaine entièrement passée → pas de verdict
-
-  // Temps de travail réellement disponible sur la fenêtre [debut, dim] selon les plages A/B.
-  conf = conf || ((typeof getAvailability==='function') ? getAvailability() : null);
-  let tempsDispo = 0;
-  try{
-    const cur = new Date(debut+'T00:00:00');
-    const end = new Date(dimStr+'T00:00:00');
-    let guard = 0;
-    while(cur <= end && guard++ < 60){
-      tempsDispo += (typeof availMinutesOnDay==='function') ? availMinutesOnDay(cur, null, null, conf) : 0;
-      cur.setDate(cur.getDate()+1);
-    }
-  }catch(_){ tempsDispo = 0; }
-
-  // Verdict via le moteur existant (commandes + marchés + stock), borné à la semaine.
-  let plan;
-  try{ plan = await generateProductionOrder(debut, dimStr, tempsDispo, besoinAdditionnel); }
-  catch(_){ return null; }
-  if(!plan) return null;
-  return {
-    lundi:lundiStr, dim:dimStr, debut,
-    tempsTotal: plan.tempsTotal||0,
-    tempsDispo,
-    depassement: tempsDispo>0 && (plan.tempsTotal||0) > tempsDispo,
-    debordementMin: Math.max(0, (plan.tempsTotal||0) - tempsDispo),
-    chargePct: tempsDispo>0 ? Math.round((plan.tempsTotal||0)/tempsDispo*100) : 0
-  };
+  // [FENÊTRE GLISSANTE 7 JOURS] La SEMAINE COURANTE (celle qui contient aujourd'hui) est toujours vue
+  // sur aujourd'hui + 6 jours — JAMAIS bornée au dimanche. Sinon, un dimanche, la fenêtre se réduirait à
+  // une seule journée et ignorerait le lundi chargé du lendemain : l'outil de pilotage perdrait tout
+  // son sens pile au pire moment. Pour les semaines FUTURES, on garde leurs bornes propres (lundi→dimanche).
+  const estSemaineCourante = (lundiStr <= todayStr && todayStr <= dimStr);
+  let debut, fin;
+  if(estSemaineCourante){
+    debut = todayStr;
+    const d7 = new Date(todayStr+'T00:00:00'); d7.setDate(d7.getDate()+6);
+    fin = d7.toISOString().slice(0,10);          // aujourd'hui + 6 = 7 jours glissants
+  } else {
+    debut = lundiStr; fin = dimStr;              // semaine future : ses propres bornes
+  }
+  const f = await _faisabiliteFenetre(debut, fin, conf, besoinAdditionnel);
+  if(!f) return null;
+  return { lundi:lundiStr, dim:dimStr, debut:f.debut, fin:f.fin, glissant:estSemaineCourante,
+           tempsTotal:f.tempsTotal, tempsDispo:f.tempsDispo,
+           depassement:f.depassement, debordementMin:f.debordementMin, chargePct:f.chargePct };
 }
 
 function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCaleParCmd, montageCaleParCmd){
