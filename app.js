@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v954';
+const APP_VERSION = 'v955';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -24704,15 +24704,16 @@ async function aiQueryCourses(){
   try{ res = await besoinMatieresPrevisionnel(); }catch(e){ console.error('courses',e); }
   const lignes = (res && res.lignes) ? res.lignes.filter(l=>(+l.manque||0)>0) : [];
   if(!lignes.length){
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma liste de courses</h3>
-      <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Rien à racheter pour l'horizon à venir : ton stock couvre les besoins.</span></div>`);
+    return aiSay(`${aiHero('0', 'Liste de courses', {color:'var(--vert,#3f7d52)'})}
+      ${aiSynth('Rien à racheter : ton stock couvre les besoins à venir.', {tone:'ok', icon:'✅'})}`);
   }
-  const items = lignes.sort((a,b)=>(b.manque||0)-(a.manque||0)).slice(0,20)
-    .map(l=>`<div class="sum-box"><span>${esc(l.nom)}</span><b style="color:var(--red,#b3261e)">manque ${qty(l.manque)} ${esc(l.unite||'')}</b></div>`).join('');
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma liste de courses</h3>
-    ${aiSynth(`<b>${lignes.length} matière${lignes.length>1?'s':''}</b> à racheter pour couvrir tes besoins à venir.`, {icon:'🛒'})}
-    ${items}
-    <p class="note">Basé sur les besoins réels à venir (commandes + marchés) moins ton stock.</p>`);
+  const nL=lignes.length;
+  const tri = lignes.sort((a,b)=>(b.manque||0)-(a.manque||0));
+  const items = tri.slice(0,20).map(l=>`<div class="sum-box"><span>${esc(l.nom)}</span><b style="color:var(--red,#b3261e)">manque ${qty(l.manque)} ${esc(l.unite||'')}</b></div>`).join('');
+  return aiSay(`${aiHero(`${nL} <span style="font-size:1rem;font-weight:600">matière${nL>1?'s':''}</span>`, 'À racheter')}
+    ${aiSynth(`Pour couvrir tes besoins à venir. Le plus gros manque : <b>${esc(tri[0].nom)}</b>.`, {icon:'🛒'})}
+    ${aiDetails(items, `Voir la liste (${nL})`)}
+    ${aiSuite([{label:'⬛ Gérer les matières', view:'matieres'}])}`);
 }
 
 // [VAGUE 2] DÉLAI AVANT RUPTURE par parfum — réutilise computeSalesVelocity.
@@ -24839,12 +24840,15 @@ async function aiQueryDlcMatieres(){
     .map(l=>({nom:nomMat(l.materialId), dlc:l.dlc, q:+l.qteRestante||0, perime:l.dlc<auj}))
     .sort((a,b)=>(a.dlc||'').localeCompare(b.dlc||''));
   if(!proches.length){
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Matières proches de péremption</h3>
-      <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Aucune matière ne périme dans les 30 prochains jours.</span></div>`);
+    return aiSay(`${aiHero('0', 'Matière proche de péremption', {color:'var(--vert,#3f7d52)'})}
+      ${aiSynth('Aucune matière ne périme dans les 30 prochains jours.', {tone:'ok', icon:'✅'})}`);
   }
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Matières proches de péremption <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(30 j)</span></h3>
-    ${proches.slice(0,15).map(l=>`<div class="sum-box"><span>${l.perime?'⚠ ':''}${esc(l.nom)} <span style="color:#9a8a82;font-size:.72rem">(reste ${qty(l.q)})</span></span><b style="color:${l.perime?'var(--red,#b3261e)':'#caa23b'}">${l.perime?'périmé':'DLC'} ${fmtDate(l.dlc)}</b></div>`).join('')}
-    <p class="note">Lots dont la date limite approche. Utilise-les en priorité.</p>`);
+  const nbP=proches.length, perimes=proches.filter(l=>l.perime).length;
+  const detail = proches.slice(0,15).map(l=>`<div class="sum-box"><span>${l.perime?'⚠ ':''}${esc(l.nom)} <span style="color:#9a8a82;font-size:.72rem">(reste ${qty(l.q)})</span></span><b style="color:${l.perime?'var(--red,#b3261e)':'#caa23b'}">${l.perime?'périmé':'DLC'} ${fmtDate(l.dlc)}</b></div>`).join('');
+  return aiSay(`${aiHero(`${nbP} <span style="font-size:1rem;font-weight:600">lot${nbP>1?'s':''}</span>`, 'Matières à surveiller (30 j)', {color: perimes?'var(--red)':'#caa23b'})}
+    ${aiSynth(perimes?`<b>${perimes}</b> déjà périmé${perimes>1?'s':''}. Le plus urgent : <b>${esc(proches[0].nom)}</b>.`:`Le plus proche : <b>${esc(proches[0].nom)}</b> (DLC ${fmtDate(proches[0].dlc)}). À utiliser en priorité.`, {tone:'warn', icon:'🗓️'})}
+    ${aiDetails(detail, `Voir les ${nbP} lot${nbP>1?'s':''}`)}
+    ${aiSuite([{label:'⬛ Gérer les matières', view:'matieres'}])}`);
 }
 
 // [VAGUE 2] STATS D'UN PARFUM (ventes, éventuellement sur une période). Source : computeStats.
@@ -25694,31 +25698,31 @@ async function aiQueryPanierMoyen(params){
   params=params||{};
   if(params.client){
     let D=null; try{ D=await getClientDashboardData(params.client.id); }catch(e){}
-    if(!D || !D.nbCommandes) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Panier moyen — ${esc(params.client.nom||'')}</h3><p class="note">Aucune commande pour ce client.</p>`);
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Panier moyen — ${esc(params.client.nom||'')}</h3>
-      ${aiHero(euro(D.panierMoyen), 'Panier moyen', {sub:`sur ${D.nbCommandes} commande${D.nbCommandes>1?'s':''}`})}`);
+    if(!D || !D.nbCommandes) return aiSay(`${aiHero('—', `Panier moyen — ${esc(params.client.nom||'')}`)}${aiSynth('Aucune commande pour ce client pour l\'instant.', {icon:'📭'})}`);
+    return aiSay(`${aiHero(euro(D.panierMoyen), `Panier moyen — ${esc(params.client.nom||'')}`, {sub:`sur ${D.nbCommandes} commande${D.nbCommandes>1?'s':''}`})}
+      ${aiSynth(`Montant moyen d'une commande de ${esc(params.client.nom||'ce client')}.`, {icon:'🧺'})}
+      ${aiSuite([{label:'👤 Voir sa fiche', ask:`parle-moi de ${params.client.nom||''}`}])}`);
   }
   // Global : moyenne sur toutes les commandes.
   const orders=await db.orders.toArray();
   const valides=orders.filter(o=>!o.histo && (+o.montant||0)>0);
-  if(!valides.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Panier moyen</h3><p class="note">Pas encore de commandes chiffrées.</p>`);
+  if(!valides.length) return aiSay(`${aiHero('—', 'Panier moyen')}${aiSynth('Pas encore de commandes chiffrées.', {icon:'📭'})}`);
   const total=valides.reduce((s,o)=>s+(+o.montant||0),0);
   const moy=total/valides.length;
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Panier moyen</h3>
-    ${aiHero(euro(moy), 'Toutes commandes', {sub:`sur ${valides.length} commandes`})}
-    <p class="note">Montant moyen d'une commande, tous clients confondus.</p>`);
+  return aiSay(`${aiHero(euro(moy), 'Panier moyen', {sub:`sur ${valides.length} commandes`})}
+    ${aiSynth('Montant moyen d\'une commande, tous clients confondus.', {icon:'🧺'})}
+    ${aiSuite([{label:'⭐ Mes meilleurs clients', ask:'mes meilleurs clients'}])}`);
 }
 
 // [V943] DONS ET PERTES (gaspillage). Source : marketMoves type don/perte (+ retours = invendus ramenés).
 async function aiQueryGaspillage(){
   const moves=await (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]);
-  if(!moves.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Dons et pertes</h3>${aiSynth('Aucun mouvement de marché enregistré : pas de don ni de perte à signaler.',{icon:'♻️',tone:'ok'})}`);
+  if(!moves.length) return aiSay(`${aiSynth('Aucun mouvement de marché enregistré : pas de don ni de perte à signaler.',{icon:'♻️',tone:'ok'})}`);
   let don=0, perte=0, retour=0;
   moves.forEach(mv=>{ const q=+mv.qte||0; if(mv.type==='don')don+=q; else if(mv.type==='perte')perte+=q; else if(mv.type==='retour')retour+=q; });
   const total=don+perte;
   const tone = total===0?'ok':total<20?'':'warn';
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Dons et pertes</h3>
-    ${aiHero(`${qty(total)}`, 'Macarons donnés ou perdus', {sub: total>0?`${qty(don)} dons · ${qty(perte)} pertes`:'aucun gaspillage', color: total===0?'#2e7d32':total<20?'var(--bordeaux)':'#b3261e'})}
+  return aiSay(`${aiHero(`${qty(total)}`, 'Macarons donnés ou perdus', {sub: total>0?`${qty(don)} dons · ${qty(perte)} pertes`:'aucun gaspillage', color: total===0?'#2e7d32':total<20?'var(--bordeaux)':'#b3261e'})}
     ${aiSynth(total===0?'Aucun gaspillage enregistré, bravo.':`Sur tous tes marchés : ${qty(don)} donnés, ${qty(perte)} perdus${retour>0?`, ${qty(retour)} invendus ramenés (récupérables)`:''}.`,{icon: total===0?'✅':'♻️', tone})}
     <p class="note">Les dons valorisent les invendus (associations) ; les pertes sont du gâchis sec à réduire.</p>`);
 }
