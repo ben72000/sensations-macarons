@@ -96,6 +96,61 @@
 .rd-foot{font-size:.74rem;color:#9a8a82;text-align:center;margin-top:16px}
 .rd-link{color:var(--caramel);font-weight:600;cursor:pointer}
 
+
+/* ----- R&D carnet « Mes idées » ----- */
+.rd-sec{font-size:.7rem;text-transform:uppercase;letter-spacing:1.4px;color:var(--caramel);
+  margin:20px 2px 10px;font-weight:700;display:flex;align-items:center;gap:7px}
+.rd-sec-n{background:var(--creme);color:var(--bordeaux);border-radius:9px;padding:1px 7px;font-size:.7rem;letter-spacing:0}
+.rd-stat{font-size:.62rem;text-transform:uppercase;letter-spacing:.5px;padding:3px 9px;border-radius:10px;font-weight:700}
+.rd-stat.atester{background:#fbeede;color:#9a5b16}
+.rd-stat.prometteuse{background:#eef6ef;color:#2e7d32}
+.rd-stat.abandonnee{background:#f6ece9;color:#b04a3e}
+.rd-stat.adoptee{background:var(--caramel);color:#fff}
+.rd-idee-note{font-size:.8rem;color:#6a5a72;margin:8px 0 0;line-height:1.4;font-style:italic}
+.rd-idee-tests{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap}
+.rd-rate{color:var(--caramel);letter-spacing:2px;font-size:.82rem}
+.rd-idee-meta{font-size:.74rem;color:#9a8a82}
+.rd-carnet-act{display:flex;gap:7px;margin-top:11px;align-items:stretch}
+.rd-carnet-act .rd-test{flex:1}
+.rd-menu-btn{flex:0 0 44px;background:#f6f2ec;border:1px solid var(--creme);border-radius:10px;
+  font-size:1.1rem;color:#9a8a82;cursor:pointer;font-weight:700;line-height:1}
+.rd-carnet-menu{flex-direction:column;gap:5px;margin-top:9px;padding-top:9px;border-top:1px solid var(--creme)}
+.rd-carnet-menu button{text-align:left;background:#faf7f2;border:1px solid var(--creme);border-radius:9px;
+  padding:9px 11px;font-size:.8rem;color:var(--bordeaux);cursor:pointer;font-weight:600}
+.rd-carnet-menu .rd-del{background:#f6ece9;color:#b04a3e;border-color:#e3c4bd}
+
+
+/* ----- R&D journal « Tests » ----- */
+.rd-form{background:#fff;border:1px solid var(--creme);border-radius:16px;padding:15px;margin-bottom:16px;box-shadow:0 2px 10px var(--shadow)}
+.rd-form-h{display:flex;justify-content:space-between;align-items:center;font-family:Georgia,serif;
+  font-size:1.05rem;font-weight:600;color:var(--bordeaux);margin-bottom:12px}
+.rd-form-x{background:none;border:none;font-size:1.05rem;color:#9a8a82;cursor:pointer}
+.rd-f-duo{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.rd-f-in{flex:1;border:1.5px solid var(--creme);border-radius:10px;padding:10px;font-size:.9rem;
+  color:var(--bordeaux);background:#faf7f2;width:100%}
+.rd-f-x{color:var(--caramel);font-weight:700;font-size:1.1rem}
+.rd-f-lbl{display:block;font-size:.78rem;font-weight:700;color:var(--bordeaux);margin:10px 0 5px}
+.rd-f-lbl.ok{color:#2e7d32}.rd-f-lbl.ko{color:#b04a3e}
+.rd-f-opt{font-weight:400;color:#9a8a82;font-size:.72rem}
+.rd-f-ta{width:100%;border:1.5px solid var(--creme);border-radius:10px;padding:10px;font-size:.86rem;
+  color:var(--bordeaux);background:#faf7f2;resize:vertical;font-family:inherit;line-height:1.4}
+.rd-stars{display:flex;gap:6px;margin:2px 0 4px}
+.rd-star{font-size:1.8rem;color:var(--creme);cursor:pointer;transition:.1s;line-height:1}
+.rd-star.on{color:var(--caramel)}
+.rd-test-card{background:#fff;border:1px solid var(--creme);border-radius:14px;padding:13px;margin-bottom:11px;box-shadow:0 2px 8px var(--shadow)}
+.rd-test-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px}
+.rd-test-h b{font-family:Georgia,serif;font-size:1rem;color:var(--bordeaux)}
+.rd-test-d{font-size:.72rem;color:#9a8a82}
+.rd-test-essai{font-size:.8rem;color:#6a5a72;margin:6px 0;line-height:1.4}
+.rd-verdict{font-size:.82rem;margin-top:7px;padding:9px 11px;border-radius:10px;line-height:1.45}
+.rd-verdict.v-ok{background:#eef6ef;color:#2c6b3f}
+.rd-verdict.v-mid{background:#fbeede;color:#9a5b16}
+.rd-verdict.v-ko{background:#f6ece9;color:#9a3d32}
+.rd-test-seg{font-size:.74rem;margin-top:7px;line-height:1.5}
+.seg-ok{color:#2e7d32}.seg-ko{color:#b04a3e}
+.rd-test-act{margin-top:9px}
+.rd-del-mini{background:none;border:none;color:#b3a59c;font-size:.74rem;cursor:pointer;padding:2px}
+
 </style>
 <style>
 :root{
@@ -1467,10 +1522,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=965" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=965"></script>
-<script src="utils.js?v=965"></script>
-<script src="app.js?v=965"></script>
+<script src="html5-qrcode.min.js?v=968" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=968"></script>
+<script src="utils.js?v=968"></script>
+<script src="app.js?v=968"></script>
 <div class="froid-sheet" id="froid-sheet" onclick="if(event.target.id==='froid-sheet')_froidCloseDessus()">
   <div class="froid-sheet-card">
     <button class="froid-closex" onclick="_froidCloseDessus()">✕</button>

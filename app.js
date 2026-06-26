@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v965';
+const APP_VERSION = 'v968';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -657,6 +657,308 @@ async function renderRDJournalStub(){ const m=document.getElementById('main'); i
   m.innerHTML=`<div class="rd-wrap"><div class="rd-head"><h2 class="rd-title">Journal de tests</h2><p class="rd-sub">Bientôt disponible</p></div>
   ${pend?`<div class="rd-hint">Idée prête à tester : <b>${esc(pend.a)} × ${esc(pend.b)}</b>. Le formulaire de test arrive à la prochaine étape.</div>`:''}
   <div class="rd-empty"><span class="ic">🧪</span>Le journal de tests arrive à la prochaine étape.<br><span class="rd-link" onclick="goView('rd')">← Retour à Imaginer</span></div></div>`; }
+
+// ===================== R&D : ÉCRAN « MES IDÉES » (carnet) =====================
+// Réutilise rdOrigBadge + la grammaire visuelle des barres de score.
+// Idées groupées par statut. Chaque idée résume ses tests et permet d'agir.
+
+// Libellés/couleurs de statut
+const RD_STATUTS = {
+  a_tester:    {label:'À tester',    cls:'atester'},
+  en_test:     {label:'En test',     cls:'atester'},
+  prometteuse: {label:'Prometteuse', cls:'prometteuse'},
+  adoptee:     {label:'Adoptée',     cls:'adoptee'},
+  abandonnee:  {label:'Abandonnée',  cls:'abandonnee'},
+};
+
+// Mini barres réutilisables (mêmes classes que l'écran Imaginer).
+function rdScoresHtml(orig, gour){
+  return `<div class="rd-scores">
+    <div class="rd-score"><div class="rd-s-lbl">Originalité</div><div class="rd-bar orig"><i style="width:${orig||0}%"></i></div><div class="rd-s-val">${orig||0}</div></div>
+    <div class="rd-score"><div class="rd-s-lbl">Gourmandise</div><div class="rd-bar gour"><i style="width:${gour||0}%"></i></div><div class="rd-s-val">${gour||0}</div></div>
+  </div>`;
+}
+
+// ★ note moyenne d'une liste de tests.
+function rdEtoiles(n){
+  const f=Math.round(n||0);
+  return '★★★★★☆☆☆☆☆'.slice(5-f, 10-f);
+}
+
+// Résumé des tests d'une idée : nb + dernier verdict + note.
+function rdResumeTests(tests){
+  if(!tests.length) return '<span class="rd-idee-meta">Pas encore de test</span>';
+  const der = tests.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0];
+  const noteMoy = tests.reduce((s,t)=>s+(+t.note||0),0)/tests.length;
+  return `<div class="rd-idee-tests">
+    <span class="rd-rate">${rdEtoiles(noteMoy)}</span>
+    <span class="rd-idee-meta">${tests.length} test${tests.length>1?'s':''}${der.diagnostic?` · « ${esc(der.diagnostic.slice(0,60))}${der.diagnostic.length>60?'…':''} »`:''}</span>
+  </div>`;
+}
+
+// Carte d'une idée du carnet.
+function rdCarteCarnet(idee, tests){
+  const st = RD_STATUTS[idee.statut] || RD_STATUTS.a_tester;
+  return `<div class="rd-idee" id="rd-carnet-${idee.id}">
+    <div class="rd-idee-top">
+      ${rdOrigBadge(idee.origine)}
+      <span class="rd-stat ${st.cls}">${st.label}</span>
+    </div>
+    <div class="rd-duo">${esc(idee.a)} <span class="x">×</span> ${esc(idee.b)}</div>
+    ${rdScoresHtml(idee.originalite, idee.gourmandise)}
+    ${idee.note?`<p class="rd-idee-note">${esc(idee.note)}</p>`:''}
+    ${rdResumeTests(tests)}
+    <div class="rd-carnet-act">
+      <button class="rd-test" onclick="rdCarnetTester(${idee.id})">🧪 Noter un test</button>
+      <button class="rd-menu-btn" onclick="rdCarnetMenu(${idee.id})">⋯</button>
+    </div>
+    <div class="rd-carnet-menu" id="rd-cmenu-${idee.id}" style="display:none">
+      ${idee.statut!=='prometteuse'?`<button onclick="rdChangeStatut(${idee.id},'prometteuse')">⭐ Marquer prometteuse</button>`:''}
+      ${idee.statut!=='adoptee'?`<button onclick="rdChangeStatut(${idee.id},'adoptee')">✅ Adopter (au catalogue)</button>`:''}
+      ${idee.statut!=='abandonnee'?`<button onclick="rdChangeStatut(${idee.id},'abandonnee')">✕ Abandonner</button>`:''}
+      ${idee.statut!=='a_tester'?`<button onclick="rdChangeStatut(${idee.id},'a_tester')">↩ Remettre à tester</button>`:''}
+      <button class="rd-del" onclick="rdCarnetSupprimer(${idee.id})">🗑 Supprimer</button>
+    </div>
+  </div>`;
+}
+
+// --- actions carnet ---
+function rdCarnetMenu(id){
+  const el=document.getElementById('rd-cmenu-'+id);
+  if(el) el.style.display = el.style.display==='none' ? 'flex' : 'none';
+}
+async function rdChangeStatut(id, statut){
+  await db.rdIdees.update(id, {statut});
+  toast(statut==='adoptee'?'Adoptée ✅':statut==='prometteuse'?'Prometteuse ⭐':statut==='abandonnee'?'Abandonnée':'Remise à tester');
+  renderRDIdees();
+}
+async function rdCarnetSupprimer(id){
+  if(!confirm('Supprimer cette idée et ses tests ?')) return;
+  await db.rdIdees.delete(id);
+  try{ const ts=await db.rdTests.where('ideeId').equals(id).toArray(); for(const t of ts) await db.rdTests.delete(t.id); }catch(e){}
+  toast('Supprimé');
+  renderRDIdees();
+}
+async function rdCarnetTester(id){
+  const idee = await db.rdIdees.get(id);
+  if(idee){ window._rdTestPourIdee = idee; if(idee.statut==='a_tester') await db.rdIdees.update(id,{statut:'en_test'}); }
+  goView('rdjournal');
+}
+
+// --- écran ---
+async function renderRDIdees(){
+  const main=document.getElementById('main'); if(!main) return;
+  const idees = await db.rdIdees.toArray().catch(()=>[]);
+  const tests = await db.rdTests.toArray().catch(()=>[]);
+  const testsParIdee = {};
+  tests.forEach(t=>{ if(t.ideeId!=null){ (testsParIdee[t.ideeId]=testsParIdee[t.ideeId]||[]).push(t); } });
+
+  if(!idees.length){
+    main.innerHTML = `<div class="rd-wrap">
+      <div class="rd-head"><h2 class="rd-title">Mes idées</h2><p class="rd-sub">Ton carnet de créations</p></div>
+      <div class="rd-empty"><span class="ic">💡</span>Ton carnet est vide pour l'instant.<br>
+        Va dans <b>Imaginer</b> et garde les associations qui t'inspirent.<br>
+        <button class="rd-go" style="max-width:240px;margin:14px auto 0" onclick="goView('rd')">✨ Imaginer des associations</button></div>
+    </div>`;
+    return;
+  }
+
+  // Groupes ordonnés
+  const ordre = ['a_tester','en_test','prometteuse','adoptee','abandonnee'];
+  const titres = {a_tester:'À tester', en_test:'En cours de test', prometteuse:'Prometteuses', adoptee:'Adoptées', abandonnee:'Abandonnées'};
+  const groupes = {};
+  idees.forEach(i=>{ (groupes[i.statut]=groupes[i.statut]||[]).push(i); });
+
+  let corps='';
+  ordre.forEach(st=>{
+    const lot=groupes[st]; if(!lot||!lot.length) return;
+    // tri interne : prometteuses par note décroissante, sinon par date récente
+    lot.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    corps += `<h3 class="rd-sec">${titres[st]} <span class="rd-sec-n">${lot.length}</span></h3>`;
+    corps += lot.map(i=>rdCarteCarnet(i, testsParIdee[i.id]||[])).join('');
+  });
+
+  main.innerHTML = `<div class="rd-wrap">
+    <div class="rd-head"><h2 class="rd-title">Mes idées</h2><p class="rd-sub">${idees.length} idée${idees.length>1?'s':''} dans ton carnet</p></div>
+    ${corps}
+    <p class="rd-foot"><span class="rd-link" onclick="goView('rd')">✨ Imaginer</span> · <span class="rd-link" onclick="goView('rdjournal')">🧪 Journal</span></p>
+  </div>`;
+}
+// =============================================================================
+
+// ===================== R&D : ÉCRAN « JOURNAL » (tests) =====================
+// Formulaire de test à diagnostic structuré (★, essai, marché/raté) + liste.
+// À l'enregistrement, le verdict remonte vers l'idée (note moyenne, statut).
+
+// État du formulaire (réinitialisé à chaque ouverture).
+window._rdForm = window._rdForm || null;
+
+// Sélecteur d'étoiles cliquable (0-5).
+function rdEtoilesInput(note){
+  let h='<div class="rd-stars" id="rd-stars">';
+  for(let i=1;i<=5;i++){
+    h+=`<span class="rd-star ${i<=note?'on':''}" onclick="rdFormSetNote(${i})">★</span>`;
+  }
+  h+='</div>';
+  return h;
+}
+function rdFormSetNote(n){
+  if(!window._rdForm) window._rdForm={};
+  window._rdForm.note = (window._rdForm.note===n)?n-1:n; // retoucher la même = -1
+  const cont=document.getElementById('rd-stars');
+  if(cont){ const stars=cont.querySelectorAll('.rd-star'); stars.forEach((s,i)=>s.classList.toggle('on', i< window._rdForm.note)); }
+}
+
+// Ouvre le formulaire (depuis une idée ou libre).
+function rdOuvrirForm(idee){
+  window._rdForm = {
+    ideeId: idee?idee.id:null,
+    a: idee?idee.a:'', b: idee?idee.b:'',
+    note: 0, essai:'', marche:'', rate:'',
+    date: new Date().toISOString().slice(0,10)
+  };
+  renderRDJournal();
+  setTimeout(()=>{ const el=document.getElementById('rd-form'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }, 60);
+}
+function rdFermerForm(){ window._rdForm=null; renderRDJournal(); }
+
+// Lit les champs texte du formulaire dans l'état (avant enregistrement).
+function rdFormSync(){
+  if(!window._rdForm) return;
+  const g=(id)=>{ const e=document.getElementById(id); return e?e.value:''; };
+  window._rdForm.a = g('rd-f-a') || window._rdForm.a;
+  window._rdForm.b = g('rd-f-b') || window._rdForm.b;
+  window._rdForm.essai = g('rd-f-essai');
+  window._rdForm.marche = g('rd-f-marche');
+  window._rdForm.rate = g('rd-f-rate');
+  const d=g('rd-f-date'); if(d) window._rdForm.date=d;
+}
+
+// Enregistre le test, fait remonter le verdict vers l'idée, ferme le formulaire.
+async function rdEnregistrerTest(){
+  rdFormSync();
+  const f=window._rdForm; if(!f) return;
+  if(!f.a || !f.b){ toast('Indique les deux composants testés'); return; }
+  // Si pas d'idée liée, on en crée/retrouve une (le test reste rattaché au carnet).
+  let ideeId=f.ideeId;
+  if(!ideeId){
+    try{
+      const idee=await rdEnregistrerIdee({a:f.a,b:f.b,type:'pxp',origine:'libre',originalite:0,gourmandise:0}, 'en_test');
+      ideeId=idee.id;
+    }catch(e){ console.error(e); }
+  }
+  const test={ ideeId, a:f.a, b:f.b, note:+f.note||0,
+    essai:f.essai||'', diagnostic:f.marche||'', // 'diagnostic' = ce qui a marché (résumé principal)
+    marche:f.marche||'', rate:f.rate||'', date:f.date };
+  try{ await db.rdTests.add(test); }catch(e){ console.error('addTest',e); toast('Erreur à l\'enregistrement'); return; }
+
+  // Remontée vers l'idée : recalcul note moyenne + bascule de statut.
+  if(ideeId!=null){
+    try{
+      const tests=await db.rdTests.where('ideeId').equals(ideeId).toArray();
+      const moy=tests.reduce((s,t)=>s+(+t.note||0),0)/(tests.length||1);
+      const idee=await db.rdIdees.get(ideeId);
+      if(idee){
+        let patch={ noteMoy:Math.round(moy*10)/10 };
+        // bascule auto : bon test (≥4) → prometteuse ; mauvais répété → reste tel quel (Benjamin décide)
+        if(idee.statut==='en_test' || idee.statut==='a_tester'){
+          if(moy>=4) patch.statut='prometteuse';
+          else patch.statut='en_test';
+        }
+        await db.rdIdees.update(ideeId, patch);
+      }
+    }catch(e){ console.error('remontée',e); }
+  }
+  window._rdTestPourIdee=null;
+  window._rdForm=null;
+  toast('Test enregistré 🧪');
+  renderRDJournal();
+}
+
+// Verdict coloré selon la note.
+function rdVerdictCls(note){ return note>=4?'v-ok':note>=3?'v-mid':'v-ko'; }
+
+// Carte d'un test dans la liste.
+function rdCarteTest(t){
+  const titre = `${esc(t.a||'?')} × ${esc(t.b||'?')}`;
+  const diag = t.diagnostic || t.marche || '';
+  const segs=[];
+  if(t.marche) segs.push(`<span class="seg-ok">✓ ${esc(t.marche)}</span>`);
+  if(t.rate)   segs.push(`<span class="seg-ko">✗ ${esc(t.rate)}</span>`);
+  return `<div class="rd-test-card">
+    <div class="rd-test-h"><b>${titre}</b><span class="rd-test-d">${t.date?fmtDate(t.date):''}</span></div>
+    <span class="rd-rate">${rdEtoiles(t.note)}</span>
+    ${t.essai?`<p class="rd-test-essai">${esc(t.essai)}</p>`:''}
+    ${diag?`<div class="rd-verdict ${rdVerdictCls(t.note)}">${esc(diag)}</div>`:''}
+    ${segs.length?`<div class="rd-test-seg">${segs.join(' · ')}</div>`:''}
+    <div class="rd-test-act"><button class="rd-del-mini" onclick="rdSupprimerTest(${t.id})">🗑 Supprimer ce test</button></div>
+  </div>`;
+}
+async function rdSupprimerTest(id){
+  if(!confirm('Supprimer ce test ?')) return;
+  const t=await db.rdTests.get(id);
+  await db.rdTests.delete(id);
+  // recalcul de la note moyenne de l'idée
+  if(t && t.ideeId!=null){
+    try{
+      const tests=await db.rdTests.where('ideeId').equals(t.ideeId).toArray();
+      const moy=tests.length?tests.reduce((s,x)=>s+(+x.note||0),0)/tests.length:null;
+      await db.rdIdees.update(t.ideeId, {noteMoy: moy!=null?Math.round(moy*10)/10:null});
+    }catch(e){}
+  }
+  toast('Test supprimé');
+  renderRDJournal();
+}
+
+// --- écran ---
+async function renderRDJournal(){
+  const main=document.getElementById('main'); if(!main) return;
+
+  // si on arrive depuis « Tester » une idée, ouvrir le formulaire pré-rempli
+  if(window._rdTestPourIdee && !window._rdForm){
+    const id=window._rdTestPourIdee;
+    window._rdForm = { ideeId:id.id, a:id.a, b:id.b, note:0, essai:'', marche:'', rate:'', date:new Date().toISOString().slice(0,10) };
+    window._rdTestPourIdee=null;
+  }
+
+  const tests = await db.rdTests.toArray().catch(()=>[]);
+  tests.sort((a,b)=>(b.date||'').localeCompare(a.date||'') || (b.id-a.id));
+  const f=window._rdForm;
+
+  const formHtml = f ? `
+    <div class="rd-form" id="rd-form">
+      <div class="rd-form-h">${f.ideeId?'Tester une idée':'Nouveau test'}<button class="rd-form-x" onclick="rdFermerForm()">✕</button></div>
+      <div class="rd-f-duo">
+        <input id="rd-f-a" class="rd-f-in" placeholder="Composant 1" value="${esc(f.a||'')}">
+        <span class="rd-f-x">×</span>
+        <input id="rd-f-b" class="rd-f-in" placeholder="Composant 2" value="${esc(f.b||'')}">
+      </div>
+      <label class="rd-f-lbl">Ta note</label>
+      ${rdEtoilesInput(f.note)}
+      <label class="rd-f-lbl">Ce que tu as essayé <span class="rd-f-opt">(proportions, technique)</span></label>
+      <textarea id="rd-f-essai" class="rd-f-ta" rows="2" placeholder="Ex. ganache pistache 60/40, insert framboise pectine NH…">${esc(f.essai||'')}</textarea>
+      <label class="rd-f-lbl ok">✓ Ce qui a marché</label>
+      <textarea id="rd-f-marche" class="rd-f-ta" rows="2" placeholder="Ex. équilibre acidité/sucre, belle tenue">${esc(f.marche||'')}</textarea>
+      <label class="rd-f-lbl ko">✗ Ce qui a raté / à revoir</label>
+      <textarea id="rd-f-rate" class="rd-f-ta" rows="2" placeholder="Ex. insert trop liquide, coque ramollie à J+2">${esc(f.rate||'')}</textarea>
+      <label class="rd-f-lbl">Date</label>
+      <input id="rd-f-date" type="date" class="rd-f-in" value="${esc(f.date||'')}">
+      <button class="rd-go" onclick="rdEnregistrerTest()">🧪 Enregistrer le test</button>
+    </div>` : `
+    <button class="rd-go" onclick="rdOuvrirForm(null)" style="margin-bottom:14px">+ Noter un nouveau test</button>`;
+
+  const liste = tests.length
+    ? `<h3 class="rd-sec">Derniers essais <span class="rd-sec-n">${tests.length}</span></h3>` + tests.map(rdCarteTest).join('')
+    : (f ? '' : `<div class="rd-empty"><span class="ic">🧪</span>Aucun test pour l'instant.<br>Note ton premier essai ci-dessus, ou pars d'une idée gardée.</div>`);
+
+  main.innerHTML = `<div class="rd-wrap">
+    <div class="rd-head"><h2 class="rd-title">Journal de tests</h2><p class="rd-sub">Garde la trace de ce que tu essaies</p></div>
+    ${formHtml}
+    ${liste}
+    <p class="rd-foot"><span class="rd-link" onclick="goView('rd')">✨ Imaginer</span> · <span class="rd-link" onclick="goView('rdidees')">💡 Mes idées</span></p>
+  </div>`;
+}
+// =============================================================================
 
 // ===================== R&D : ÉCRAN « IMAGINER » =====================
 // Branche les 3 moteurs (Toi / Inconnu / Ensemble) sur l'UI validée en maquette.
@@ -2048,8 +2350,8 @@ const VIEWS = {
   // remettre `accueil:renderAccueil,` ci-dessous. Rien d'autre à toucher.
   accueil:renderDash,
   rd:renderRD,
-  rdidees:renderRDIdeesStub,
-  rdjournal:renderRDJournalStub,
+  rdidees:renderRDIdees,
+  rdjournal:renderRDJournal,
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
@@ -10320,6 +10622,9 @@ const _NAV_PAGES = [
   {v:'evenements',   t:'Événements & acomptes',     k:'evenement acompte mariage reception devis'},
   {v:'marches',      t:'Marchés',                   k:'marche stand vente exterieur foire'},
   {v:'guide',        t:"Guide / mode d'emploi",     k:'guide aide mode emploi documentation tutoriel'},
+  {v:'rd',           t:'Atelier R&D',               k:'rd recherche developpement creation association parfum idee test imaginer innovation'},
+  {v:'rdidees',      t:'Mes idées (R&D)',           k:'idee carnet creation association rd'},
+  {v:'rdjournal',    t:'Journal de tests (R&D)',    k:'test journal essai diagnostic recette rd'},
   {v:'assistant',    t:'Assistant',                 k:'assistant aide ia chat'},
   {v:'pms',          t:'HACCP / PMS',               k:'haccp pms hygiene temperature releve sanitaire'},
   {v:'dlc',          t:'Suivi DLC',                 k:'dlc date limite peremption fraicheur'},
@@ -20856,6 +21161,14 @@ function parseIntent(texte, ctx){
   if(/\b(seuil de rentabilite|point mort|combien (je dois|faut il) vendre pour (etre|devenir) rentable|combien pour (etre|devenir) rentable|combien pour couvrir (mes|les) (charges|frais|couts)|combien je dois vendre pour|a partir de combien (je suis|c'?est) rentable|break even|equilibre)\b/.test(t)){
     return {intent:'query_seuil_rentabilite', params:{}, critical:false, label:'Seuil de rentabilité'};
   }
+  // [R&D] CRÉATION : « propose-moi une association », « une idée de parfum », « invente un macaron »,
+  // « atelier R&D ». Ouvre l'atelier de création. Placé avant strategie pour éviter le chevauchement.
+  if(/\b(propose|propose moi|suggere|trouve moi|invente|imagine|donne moi)\b.*\b(association|idee|parfum|macaron|recette|combinaison|accord|duo|creation)\b/.test(t)
+     || /\b(atelier )?r ?(et|&) ?d\b/.test(t)
+     || /\b(idee|nouvelle? idee|inspiration|nouveau parfum|nouvelle creation|nouvelle association)\b.*\b(parfum|macaron|recette|creation)\b/.test(t)
+     || /\b(aide moi a (creer|inventer|imaginer)|envie de creer|trouver de nouveaux parfums|nouvelles associations)\b/.test(t)){
+    return {intent:'query_rd', params:{}, critical:false, label:'Atelier R&D — création'};
+  }
   // [V944] RECOMMANDATIONS STRATÉGIQUES (niveau activité) : « qu'est-ce que je devrais améliorer »,
   // « conseils pour mon activité », « ma stratégie ». Source : computeStrategic. Distinct de reco_business
   // (qui est par parfum) : ici une vue activité globale.
@@ -21370,6 +21683,13 @@ const APP_KB = [
     <p><b>La clé, c\u2019est le manque à gagner.</b> Pour un arrondi, il est <b>faible</b> (juste un gain d\u2019opportunité perdu) → score de sacrifiabilité élevé → on le retire en premier. Pour une vélocité, il intègre le <b>risque de rupture</b> : plus la rupture est proche, plus ce réassort est précieux, plus son score baisse, plus on le protège. La <b>hiérarchie émerge donc toute seule</b> : on rabote d\u2019abord les arrondis, et seulement si ça ne suffit pas, on touche aux vélocités — en commençant par celles dont la rupture est la plus lointaine.</p>
     <p><b>Le seuil « non urgent ».</b> Au-delà de <b>14 jours</b> avant rupture, un réassort vélocité est considéré comme non urgent : il devient presque aussi sacrifiable qu\u2019un arrondi. En-dessous, il est protégé d\u2019autant plus fort que la rupture approche.</p>
     <p><b>Important : l\u2019app recommande, tu décides.</b> Cet arbitrage <b>ne modifie jamais ton plan tout seul</b>. Il s\u2019affiche comme une proposition dans le verdict de la semaine (quand elle est juste ou tendue), et le détail complet du raisonnement — score et arguments par parfum — reste consultable dans la rubrique technique. Le retrait effectif, c\u2019est toi qui le valides.</p>` },
+  { id:'atelier-rd', titre:'Atelier R\u0026D : imaginer, tester, garder ce qui marche',
+    tags:'rd recherche developpement creation atelier association parfum idee test imaginer innovation moteur toi inconnu ensemble greffe fusion originalite gourmandise carnet journal sucre sale curseur signature',
+    r:`<p>L\u2019atelier R\u0026D est l\u2019amont cr\u00e9atif : un espace pour <b>inventer de nouvelles associations</b>, les <b>tester</b>, et garder une trace de ce qui marche. Il est distinct du reste de l\u2019app (qui g\u00e8re ton activit\u00e9 existante) et ne touche \u00e0 rien de ta production.</p>
+    <p><b>Trois fa\u00e7ons d\u2019inventer.</b> En haut de l\u2019\u00e9cran « Imaginer », tu choisis un moteur. <b>Toi</b> s\u2019inspire de tes propres recettes : il rep\u00e8re tes familles r\u00e9currentes et tes duos signature, et propose dans ta patte. <b>Inconnu</b> ignore tout de ton m\u00e9tier et raisonne sur les affinit\u00e9s aromatiques pures, pour aller chercher l\u2019inattendu. <b>Ensemble</b> fait converger les deux, de deux fa\u00e7ons au choix : la <b>greffe</b> (un ancrage de ta signature + une rencontre inattendue) ou la <b>fusion</b> (un \u00e9quilibre entre les deux logiques).</p>
+    <p><b>Deux scores, un curseur.</b> Chaque proposition affiche son <b>originalit\u00e9</b> (\u00e0 quel point c\u2019est inattendu) et sa <b>gourmandise</b> (\u00e0 quel point \u00e7a s\u2019accorde). Le curseur te laisse pencher vers l\u2019un ou l\u2019autre \u00e0 chaque g\u00e9n\u00e9ration. Tu travailles en <b>sucr\u00e9</b> ou en <b>sal\u00e9</b>, et tu peux croiser un parfum avec une <b>texture</b> plut\u00f4t qu\u2019un autre parfum.</p>
+    <p><b>Le cycle.</b> Garde les associations qui t\u2019inspirent : elles rejoignent ton <b>carnet d\u2019id\u00e9es</b>. Quand tu en testes une, note ton essai dans le <b>journal</b> avec un diagnostic structur\u00e9 \u2014 ce que tu as essay\u00e9, <b>ce qui a march\u00e9</b>, <b>ce qui a rat\u00e9</b>, et une note. Les id\u00e9es bien not\u00e9es <b>remontent toutes seules</b> en « prometteuses » dans ton carnet. C\u2019est ainsi que tes essais nourrissent peu \u00e0 peu ta cr\u00e9ation.</p>
+    <p><b>La palette d\u2019ingr\u00e9dients.</b> L\u2019atelier part d\u2019un r\u00e9pertoire pr\u00e9-rempli (surtout sucr\u00e9, avec une amorce sal\u00e9e \u00e0 enrichir). Tes parfums actuels y figurent, marqu\u00e9s « d\u00e9j\u00e0 au catalogue ». Tu peux y revenir depuis l\u2019assistant en demandant simplement « propose-moi une association » ou « une id\u00e9e de parfum ».</p>` },
   { id:'retroplanning', titre:'Rétroplanning d\u2019une commande & simulation de date',
     tags:'retroplanning rétroplanning simulation date livraison demarrage quand commencer marge etapes calage',
     r:`<p>Depuis le détail d'une commande, le bouton <b>🕘 Rétroplanning</b> ouvre son déroulé de production calé sur tes disponibilités : chaque étape (ganaches, repos, coques, montage, maturation, livraison) avec son créneau horaire, dans l'ordre où tu dois t'y prendre. Les jours sont séparés visuellement pour voir d'un coup ce qui se fait quand.</p>
@@ -23867,6 +24187,7 @@ const INTENT_SHORTCUTS = {
   query_temps_prod:       [ { label:'⚙ Production', view:'agendaprod' }, { label:'🗂 Recettes', view:'recettes' } ],
   query_nb_batchs:        [ { label:'⚙ Production', view:'agendaprod' } ],
   query_conversion_gf:    [ { label:'⚙ Production', view:'agendaprod' } ],
+  query_rd:               [ { label:'✨ Atelier R&D', view:'rd' }, { label:'💡 Mes idées', view:'rdidees' } ],
   query_marge_commande:   [ { label:'📈 Rentabilité clients', view:'rentabilite' }, { label:'📋 Commandes', view:'commandes' } ],
   query_cout_commande:    [ { label:'📋 Commandes', view:'commandes' }, { label:'📈 Rentabilité parfums', view:'rentaparfum' } ],
   query_parfums_sans:     [ { label:'🗂 Recettes', view:'recettes' } ],
@@ -24329,6 +24650,7 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_revenu_horaire': return aiQueryRevenuHoraire();
       case 'query_seuil_rentabilite': return aiQuerySeuilRentabilite();
       case 'query_strategie': return aiQueryStrategie();
+      case 'query_rd': return aiQueryRD();
       case 'query_fournisseur': return aiQueryFournisseur(r.params);
       case 'query_profil_client': return aiQueryProfilClient(r.params);
       case 'query_prevision': return aiQueryPrevision();
@@ -26247,6 +26569,17 @@ async function aiQuerySeuilRentabilite(){
 }
 
 // [V944] RECOMMANDATIONS STRATÉGIQUES (niveau activité). Source : computeStrategic.reco.
+// [R&D] Réponse de l'assistant : présente l'atelier et propose de l'ouvrir.
+async function aiQueryRD(){
+  let nIdees=0, nIng=0;
+  try{ nIdees=await db.rdIdees.count(); }catch(e){}
+  try{ nIng=await db.rdIngredients.count(); }catch(e){}
+  const sousTitre = nIdees>0 ? `${nIdees} idée${nIdees>1?'s':''} déjà dans ton carnet` : `${nIng} ingrédients dans ta palette`;
+  aiSay(`${aiHero('✨', 'Atelier R&D', {color:'var(--caramel)', sub:sousTitre})}
+    ${aiSynth("Trois façons d'inventer : <b>Toi</b> (dans ta patte), <b>Inconnu</b> (les accords purs), <b>Ensemble</b> (les deux qui convergent). Garde, teste, et les idées prometteuses remontent toutes seules.", {icon:'🧪'})}
+    ${aiSuite([{label:"✨ Ouvrir l'atelier", view:'rd'}, {label:'💡 Mes idées', view:'rdidees'}])}`);
+}
+
 async function aiQueryStrategie(){
   let S=null; try{ S=await computeStrategic(); }catch(e){}
   const reco=(S&&S.reco)?S.reco:[];
@@ -28350,6 +28683,11 @@ const GUIDE_THEMES = [
     { v:'equipements', t:'\u00c9quipements de stockage', ico:'\u2744', resume:"Tes cong\u00e9los et frigos, avec l'occupation par parfum.",
       detail:"Visualise tes \u00e9quipements de stockage au froid (cong\u00e9lateurs, frigos) d\u00e9coup\u00e9s en niveaux. Chaque niveau affiche une jauge color\u00e9e par parfum qui montre, en temps r\u00e9el, ce qui y est stock\u00e9 et le taux d'occupation \u2014 calcul\u00e9 \u00e0 partir de tes productions et de leurs emplacements. Combin\u00e9 \u00e0 tes bo\u00eetes de conservation, c'est ta vue d'ensemble de la place disponible avant de lancer une grosse fourn\u00e9e.",
       steps:["Renseigne les niveaux de tes \u00e9quipements","Lis les jauges d'occupation par parfum","Anticipe la place avant une grosse production"] },
+  ]},
+  { titre:'Création & R&D', emoji:'✨', color:'#7a4b9a', items:[
+    { v:'rd', t:'Atelier R&D', ico:'✨', resume:"Imaginer de nouvelles associations de parfums, les tester, garder ce qui marche.",
+      detail:"L'atelier de création réunit trois façons d'inventer. « Toi » s'inspire de tes propres recettes (tes familles, tes duos signature) pour proposer dans ta patte. « Inconnu » raisonne sur les affinités aromatiques pures, indépendamment de ton métier, pour aller chercher l'inattendu. « Ensemble » fait converger les deux — soit en greffant une rencontre inattendue sur un ancrage de ta signature, soit en fusionnant les deux logiques. Chaque proposition affiche deux scores : son originalité et sa gourmandise, que tu équilibres avec un curseur. Garde les idées qui t'inspirent dans ton carnet, note tes tests avec un diagnostic (ce qui a marché, ce qui a raté), et les idées prometteuses remontent toutes seules. Tu peux travailler en sucré ou en salé.",
+      steps:["Choisis un moteur (Toi / Inconnu / Ensemble) et règle le curseur","Touche « Proposer » et garde les associations qui t'inspirent","Note tes essais dans le journal avec leur diagnostic","Les idées bien notées deviennent « prometteuses » dans ton carnet"] },
   ]},
   { titre:'Stock & achats', emoji:'📦', color:'#3f7d52', items:[
     { v:'matieres', t:'Matières & lots', ico:'⬛', resume:"Gérer tes matières premières, lots et DLC.",
@@ -41282,7 +41620,10 @@ function startClock(){
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
-    try{ const r=await rdSeedSiVide(); diagPublish('rd_seed','R&D · seed ingrédients', r); }catch(e){ console.error('rdSeed',e); }
+    try{ const r=await rdSeedSiVide();
+      let nIdees=0,nTests=0; try{nIdees=await db.rdIdees.count();}catch(_){}; try{nTests=await db.rdTests.count();}catch(_){}
+      diagPublish('rd_seed','R&D · module', {...r, idees:nIdees, tests:nTests});
+    }catch(e){ console.error('rdSeed',e); }
     try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
     try{ await prodSessHydrate(); }catch(e){ console.error('prodSessHydrate',e); }
   }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }
