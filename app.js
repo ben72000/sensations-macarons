@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v968';
+const APP_VERSION = 'v969';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -3290,9 +3290,29 @@ async function renderDash(){
          </div>`;
        }).join('')}</div>`:`<div class="empty">Aucune échéance à venir</div>`}
      </div>
+   </div>
+   <div class="dash-music">
+     <span class="dash-music-lbl">🎧 Pour la session</span>
+     <div class="dash-music-btns">
+       <button class="dash-music-btn" onclick="rdOuvrirMusique('amb2025')">Ambiance 2025</button>
+       <button class="dash-music-btn" onclick="rdOuvrirMusique('boucle')">En boucle</button>
+       <button class="dash-music-btn" onclick="rdOuvrirMusique('podcasts')">Mes podcasts</button>
+     </div>
    </div>`;
   startHomeClock();
   renderDashProduction();
+}
+
+// Playlists Spotify de Benjamin (liens en dur). Ouvre l'app Spotify native.
+const SM_PLAYLISTS = {
+  amb2025:  'https://open.spotify.com/playlist/37i9dQZEVXd6bJaUVN27yN',
+  boucle:   'https://open.spotify.com/playlist/37i9dQZF1EpvvB9zWlEmIf',
+  podcasts: 'https://open.spotify.com/playlist/1WN7adKpsPErflsuhNzLE8'
+};
+function rdOuvrirMusique(cle){
+  const url = SM_PLAYLISTS[cle];
+  if(!url) return;
+  try{ window.open(url, '_blank'); }catch(e){ location.href = url; }
 }
 // Carte « À produire » sur l'accueil : résume le plan de production (les + prioritaires),
 // pour amener l'info à l'utilisateur sans passer par l'assistant. Cliquable → plan complet.
