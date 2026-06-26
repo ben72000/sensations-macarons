@@ -156,9 +156,14 @@
 .dash-music{margin:14px 0 4px;padding:12px 14px;background:#faf7f2;border:1px solid var(--hair,#e8ddcd);border-radius:14px}
 .dash-music-lbl{display:block;font-size:.74rem;color:#9a8a82;font-weight:600;margin-bottom:8px}
 .dash-music-btns{display:flex;gap:7px;flex-wrap:wrap}
-.dash-music-btn{flex:1;min-width:90px;background:#fff;border:1.5px solid #e8ddcd;border-radius:10px;
-  padding:9px 8px;font-size:.8rem;font-weight:600;color:var(--bordeaux,#52252F);cursor:pointer;transition:.15s}
-.dash-music-btn:active{background:#1DB954;color:#fff;border-color:#1DB954}
+.dash-music-btn{flex:1;min-width:96px;display:flex;flex-direction:column;align-items:center;gap:5px;
+  background:#fff;border:1.5px solid #e8ddcd;border-radius:12px;padding:11px 8px;
+  font-size:.78rem;font-weight:600;color:var(--bordeaux,#52252F);cursor:pointer;transition:.18s ease}
+.dash-music-btn .dm-ico{width:22px;height:22px;color:var(--caramel,#AA7C39);transition:.18s ease}
+.dash-music-btn span{line-height:1.1}
+.dash-music-btn:active,.dash-music-btn:hover{background:linear-gradient(135deg,#1DB954,#14953f);
+  color:#fff;border-color:transparent;box-shadow:0 4px 14px rgba(29,185,84,.32);transform:translateY(-1px)}
+.dash-music-btn:active .dm-ico,.dash-music-btn:hover .dm-ico{color:#fff}
 
 </style>
 <style>
@@ -1531,10 +1536,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=969" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=969"></script>
-<script src="utils.js?v=969"></script>
-<script src="app.js?v=969"></script>
+<script src="html5-qrcode.min.js?v=971" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=971"></script>
+<script src="utils.js?v=971"></script>
+<script src="app.js?v=971"></script>
 <div class="froid-sheet" id="froid-sheet" onclick="if(event.target.id==='froid-sheet')_froidCloseDessus()">
   <div class="froid-sheet-card">
     <button class="froid-closex" onclick="_froidCloseDessus()">✕</button>

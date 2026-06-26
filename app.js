@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v969';
+const APP_VERSION = 'v971';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -3294,9 +3294,9 @@ async function renderDash(){
    <div class="dash-music">
      <span class="dash-music-lbl">🎧 Pour la session</span>
      <div class="dash-music-btns">
-       <button class="dash-music-btn" onclick="rdOuvrirMusique('amb2025')">Ambiance 2025</button>
-       <button class="dash-music-btn" onclick="rdOuvrirMusique('boucle')">En boucle</button>
-       <button class="dash-music-btn" onclick="rdOuvrirMusique('podcasts')">Mes podcasts</button>
+       <button class="dash-music-btn" onclick="rdOuvrirMusique('amb2025')"><svg class="dm-ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 4.2a1 1 0 0 0-1.2-1l-7 1.6A1 1 0 0 0 10 5.8v8.4A3.3 3.3 0 1 0 12 17V9.3l5-1.1v4.2A3.3 3.3 0 1 0 19 15V4.2z"/></svg><span>Ambiance 2025</span></button>
+       <button class="dash-music-btn" onclick="rdOuvrirMusique('boucle')"><svg class="dm-ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 20.3 4.6 13a4.6 4.6 0 0 1 6.5-6.5l.9.9.9-.9A4.6 4.6 0 0 1 19.4 13L12 20.3z"/></svg><span>En boucle</span></button>
+       <button class="dash-music-btn" onclick="rdOuvrirMusique('podcasts')"><svg class="dm-ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M7 11a1 1 0 0 0-2 0 7 7 0 0 0 6 6.9V21H9a1 1 0 0 0 0 2h6a1 1 0 0 0 0-2h-2v-3.1A7 7 0 0 0 19 11a1 1 0 0 0-2 0 5 5 0 0 1-10 0z"/></svg><span>Mes podcasts</span></button>
      </div>
    </div>`;
   startHomeClock();
@@ -27698,46 +27698,47 @@ async function renderLabels(){
 
 // Dessine une étiquette sur un canvas et renvoie le canvas (50×25 mm @ ~12 px/mm = 600×300).
 async function labelToCanvas(d){
-  const PXMM = 12;               // résolution : 12 pixels par mm (net pour le thermique)
-  const W = 50*PXMM, H = 25*PXMM;
+  // Format Phomemo D520BT : 105 × 55 mm à 203 dpi (résolution réelle de l'imprimante).
+  // Taille pixel EXACTE → Labelife imprime sans recadrage ni réglage de dimensions.
+  const DPI = 203;
+  const mm = v => Math.round(v / 25.4 * DPI);
+  const W = mm(105), H = mm(55);   // 839 × 440
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
-  // Fond blanc.
   ctx.fillStyle = '#fff'; ctx.fillRect(0,0,W,H);
   ctx.fillStyle = '#000';
-  const pad = 1.2*PXMM;
-  // QR à gauche (carré calé sur la hauteur utile).
-  const qrSize = H - pad*2;
+  const pad = mm(4), gap = mm(4);
+  // QR à gauche, carré 30 mm, centré verticalement.
+  const qr = mm(30), qrY = Math.round((H - qr)/2);
   if(d.qr){
     await new Promise(res=>{
       const img = new Image();
-      img.onload = ()=>{ ctx.drawImage(img, pad, pad, qrSize, qrSize); res(); };
+      img.onload = ()=>{ ctx.imageSmoothingEnabled=false; ctx.drawImage(img, pad, qrY, qr, qr); res(); };
       img.onerror = ()=>res();
       img.src = d.qr;
     });
   }
-  // Zone texte à droite.
-  const tx = pad + qrSize + 1.2*PXMM;
+  // Zone texte à droite (large : ~63 mm).
+  const tx = pad + qr + gap;
   const tw = W - tx - pad;
-  let y = pad + 0.5*PXMM;
-  // Helper : texte tronqué à la largeur dispo.
-  const drawLine = (txt, sizeMm, bold)=>{
-    ctx.font = `${bold?'bold ':''}${sizeMm*PXMM}px Arial, Helvetica, sans-serif`;
+  let y = mm(7);
+  const drawLine = (txt, sizeMm, bold, gapAfterMm)=>{
+    ctx.font = `${bold?'bold ':''}${mm(sizeMm)}px Arial, Helvetica, sans-serif`;
     let s = String(txt==null?'':txt);
     while(s.length>1 && ctx.measureText(s).width > tw){ s = s.slice(0,-1); }
-    if(s.length<String(txt).length && s.length>1){ s = s.slice(0,-1)+'…'; }
-    y += sizeMm*PXMM;
+    if(s.length<String(txt==null?'':txt).length && s.length>1){ s = s.slice(0,-1)+'…'; }
     ctx.fillText(s, tx, y);
-    y += 0.5*PXMM;
+    y += mm(sizeMm) + mm(gapAfterMm!=null?gapAfterMm:2);
   };
-  // Produit (gras) + pastille emplacement.
-  drawLine(d.produit + (d.empLettre?'  ['+d.empLettre+']':''), 2.9, true);
-  drawLine('Lot : '+d.lot, 2.3, false);
-  if(d.emplacement) drawLine('Empl. : '+d.emplacement, 2.3, false);
-  drawLine('Fab. : '+d.fab, 2.3, false);
-  // DLC en gras (info critique).
-  drawLine('DLC : '+d.dlc, 2.7, true);
+  ctx.textBaseline = 'top';
+  // Produit (gras, grand) + pastille emplacement.
+  drawLine(d.produit + (d.empLettre?'  ['+d.empLettre+']':''), 7, true, 4);
+  drawLine('Lot : '+d.lot, 4.5, false, 3);
+  if(d.emplacement) drawLine('Empl. : '+d.emplacement, 4.5, false, 3);
+  drawLine('Fab. : '+d.fab, 4.5, false, 4);
+  // DLC en gras (info critique, en évidence).
+  drawLine('DLC : '+d.dlc, 6, true, 0);
   return cv;
 }
 
@@ -28029,22 +28030,18 @@ function printLabelSheet(labels, titre){
 }
 // Impression d'une étiquette unique (compat. bouton existant).
 async function printLabel(prodId){
-  const d = await buildLabelData(prodId);
-  if(!d){ toast('Batch introuvable'); return; }
-  printLabelSheet([d], 'Étiquette '+d.lot);
+  // v971 : impression sans friction → PNG 105×55 mm + partage natif (plus de popup navigateur).
+  return shareLabelImage(prodId);
 }
 // Impression EN LOT : N copies d'un même batch.
 async function printLabelCopies(prodId){
-  const n = Math.max(1, Math.min(200, +(document.getElementById('lblCopies_'+prodId)?.value)||1));
+  // v971 : génère UNE image PNG 105×55 mm et la partage. Le nombre d'exemplaires se règle
+  // directement dans Labelife au moment d'imprimer (plus fiable qu'une feuille multi-pages).
   const p = await db.productions.get(prodId);
   if(p && prodStatut(p)!=='termine'){
-    if(!confirm('Cette production est encore « démarrée » : sa DLC n\'est pas figée. Imprimer quand même une étiquette sans DLC ?')) return;
+    if(!confirm('Cette production est encore « démarrée » : sa DLC n\'est pas figée. Générer quand même l\'étiquette sans DLC ?')) return;
   }
-  const d = await buildLabelData(prodId);
-  if(!d){ toast('Batch introuvable'); return; }
-  const sheet=[]; for(let i=0;i<n;i++) sheet.push(d);
-  printLabelSheet(sheet, `${n} étiquette(s) — ${d.lot}`);
-  toast(`${n} étiquette(s) envoyée(s) à l'impression`);
+  return shareLabelImage(prodId);
 }
 // Impression des étiquettes liées à UNE commande : un batch par produit lié,
 // nombre d'étiquettes = quantité de pièces liées (ou 1 par lien selon le choix).
