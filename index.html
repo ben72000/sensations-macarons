@@ -713,6 +713,11 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .ai-details>summary::before{content:'▸ ';color:var(--caramel)}
 .ai-details[open]>summary::before{content:'▾ '}
 .ai-details-body{padding:2px 12px 10px}
+.ai-suite{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px}
+.ai-suite-btn{flex:1 1 auto;min-width:46%;border:1.5px solid var(--hair);background:#fff;color:var(--bordeaux);font-size:.82rem;font-weight:600;padding:9px 10px;border-radius:9px;cursor:pointer;transition:.15s;text-align:center}
+.ai-suite-btn:active{transform:scale(.98)}
+.ai-suite-btn.primary{background:var(--bordeaux);color:var(--creme-2);border-color:var(--bordeaux)}
+.ai-suite-btn.primary:active{background:var(--bordeaux-3)}
 /* HORODATEUR GLOBAL — discret, fixe en haut à droite, présent sur toutes les pages.
    Semi-transparent et non cliquable pour ne pas gêner ; passe sous les modales (z-index modéré). */
 .clock{position:fixed;top:8px;right:12px;z-index:30;pointer-events:none;
@@ -1386,10 +1391,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=950" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=950"></script>
-<script src="utils.js?v=950"></script>
-<script src="app.js?v=950"></script>
+<script src="html5-qrcode.min.js?v=952" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=952"></script>
+<script src="utils.js?v=952"></script>
+<script src="app.js?v=952"></script>
 <div class="froid-sheet" id="froid-sheet" onclick="if(event.target.id==='froid-sheet')_froidCloseDessus()">
   <div class="froid-sheet-card">
     <button class="froid-closex" onclick="_froidCloseDessus()">✕</button>

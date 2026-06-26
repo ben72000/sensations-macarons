@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v950';
+const APP_VERSION = 'v952';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -23292,6 +23292,24 @@ function aiSynth(html, opts){
 function aiDetails(html, label){
   return `<details class="ai-details"><summary>${esc(label || 'Voir le détail')}</summary><div class="ai-details-body">${html}</div></details>`;
 }
+// [V952 — SUITE CONTEXTUELLE] Propose 1-2 actions logiques APRÈS la réponse, adaptées au RÉSULTAT.
+// Chaque proposition : { label, ask } → relance l'assistant (aiQuick) ; OU { label, view } → va à l'écran ;
+// OU { label, action } → JS direct. Le 1er bouton est "primaire" (mis en avant). On reste sobre : 2 max.
+// Pensé pour le fil : « tu veux faire X ? » sans quitter l'assistant quand c'est une question de suivi.
+function aiSuite(props){
+  props = (props||[]).filter(Boolean).slice(0,2);
+  if(!props.length) return '';
+  const btn = (p,i)=>{
+    const cls = i===0 ? 'ai-suite-btn primary' : 'ai-suite-btn';
+    let onclick;
+    if(p.ask)        onclick = `aiQuick(${JSON.stringify(p.ask)})`;
+    else if(p.view)  onclick = `goView('${p.view}')`;
+    else if(p.action) onclick = p.action;
+    else return '';
+    return `<button class="${cls}" onclick="${onclick}">${p.label}</button>`;
+  };
+  return `<div class="ai-suite">${props.map(btn).join('')}</div>`;
+}
 function aiSay(html){
   // [COCKPIT] On accole les raccourcis contextuels de l'intention courante (mémorisée par le dispatcher).
   const sc = (typeof aiShortcuts==='function') ? aiShortcuts(window._aiCurrentIntent, window._aiCurrentParams) : '';
@@ -24348,17 +24366,22 @@ async function aiQueryRetards(){
   const out=document.getElementById('aiOut');
   if(out) out.innerHTML=`<div class="panel"><p class="note">Vérification des retards…</p></div>`;
   let b; try{ b=await atelierBrain(); }catch(e){ b=null; }
-  if(!b){ return aiSay(`<p>Je n'ai pas pu vérifier les retards. Réessaie.</p>`); }
+  if(!b){ return aiSay(`${aiSynth('Je n\'ai pas pu vérifier les retards, réessaie dans un instant.', {tone:'warn', icon:'⚠️'})}`); }
   if(!b.aDesRetards || !b.retardsLancement || !b.retardsLancement.length){
-    return aiSay(`<p>✅ <b>Aucune commande en retard de lancement.</b> Tes productions sont dans les temps.</p>`);
+    return aiSay(`${aiHero('0', 'Commande en retard', {color:'var(--vert,#3f7d52)'})}
+      ${aiSynth('Tes productions sont dans les temps, rien à rattraper.', {tone:'ok', icon:'✅'})}
+      ${aiSuite([{label:'📋 Qu\'est-ce que je dois préparer ?', ask:'qu\'est-ce que je dois préparer'}])}`);
   }
+  const n=b.retardsLancement.length;
   const rows = b.retardsLancement.slice(0,8).map(r=>{
     const quoi = r.plusUrgent ? r.plusUrgent.label : 'une étape';
     const lien = r.orderId ? ` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="cmdView(${r.orderId})">🔎 Voir</button>` : '';
     return `<div class="sum-box" style="border-left:3px solid #b3261e"><span style="flex:1"><b>${esc(r.client)}</b> — l'étape « ${esc(quoi)} » aurait dû démarrer.${lien}</span></div>`;
   }).join('');
-  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">⚠️ ${b.retardsLancement.length} commande(s) en retard de lancement</h3>${rows}
-    <p class="note" style="margin-top:8px">Ouvre la voix complète (« conseille-moi ») pour le détail et les conseils d'organisation.</p>`);
+  aiSay(`${aiHero(`${n} <span style="font-size:1rem;font-weight:600">commande${n>1?'s':''}</span>`, 'En retard de lancement', {color:'var(--red)'})}
+    ${aiSynth(`L'étape la plus urgente concerne <b>${esc(b.retardsLancement[0].client)}</b>. À lancer en priorité.`, {tone:'warn', icon:'⏰'})}
+    ${aiDetails(rows, `Voir les ${n} commande${n>1?'s':''}`)}
+    ${aiSuite([{label:'🏭 Voir le plan de production', view:'agendaprod'},{label:'🧭 Conseille-moi', ask:'conseille-moi'}])}`);
 }
 
 // PÉRIME : produits finis proches de leur DLC (le cerveau).
@@ -24463,13 +24486,28 @@ async function aiQueryStock(params){
   const lots=await db.materialLots.where('materialId').equals(params.material.id).and(l=>+l.qteRestante>0).toArray();
   const tot=lots.reduce((s,l)=>s+(+l.qteRestante||0),0);
   const proche=lots.slice().sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999'))[0];
-  const ambig = params.material._ambig && params.material._ambig.length>1 ? `<p class="note">Plusieurs matières correspondent : ${params.material._ambig.map(esc).join(", ")}. Affichage de « ${esc(params.material.nom)} ». Précisez le nom complet pour une autre.</p>` : "";
-  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Stock — ${esc(params.material.nom)}</h3>${ambig}
-    <div class="sum-box"><span>Quantité disponible</span><b>${qty(tot)} ${esc(params.material.unite||'')}</b></div>
+  const unite=esc(params.material.unite||'');
+  const sousSeuil = params.material.seuil && tot<params.material.seuil;
+  const ambig = params.material._ambig && params.material._ambig.length>1 ? aiSynth(`Plusieurs matières correspondent (${params.material._ambig.map(esc).join(', ')}). J'affiche « ${esc(params.material.nom)} ».`, {tone:'warn', icon:'❓'}) : '';
+  // Chiffre clé d'abord : la quantité dispo, en grand. Synthèse courte. Détail (lots/DLC) replié.
+  const heroVal = `${qty(tot)} <span style="font-size:1rem;font-weight:600">${unite}</span>`;
+  const synthese = tot<=0
+    ? aiSynth(`Tu n'as plus de <b>${esc(params.material.nom)}</b> en stock.`, {tone:'warn', icon:'⚠️'})
+    : sousSeuil
+      ? aiSynth(`Sous ton seuil d'alerte (${qty(params.material.seuil)} ${unite}) — pense à racheter.`, {tone:'warn', icon:'⚠️'})
+      : aiSynth(`De quoi voir venir${proche?`, la DLC la plus proche est le ${fmtDate(proche.dlc)||'—'}`:''}.`, {icon:'✅'});
+  const detail = `
     <div class="sum-box"><span>Lots actifs</span><b>${lots.length}</b></div>
-    ${proche?`<div class="sum-box"><span>DLC la plus proche</span><b>${fmtDate(proche.dlc)||'—'}</b></div>`:''}
-    ${params.material.seuil&&tot<params.material.seuil?`<p class="note" style="color:var(--red)">⚠ Sous le seuil d'alerte (${qty(params.material.seuil)}).</p>`:''}
-    <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('achats')">🛒 Acheter / réapprovisionner</button></p>`);
+    ${proche?`<div class="sum-box"><span>DLC la plus proche</span><b>${fmtDate(proche.dlc)||'—'}</b></div>`:''}`;
+  // Suite adaptative au RÉSULTAT : rien à 0/sous seuil → courses ; sinon, accès matières.
+  const suite = (tot<=0 || sousSeuil)
+    ? aiSuite([{label:'🛒 Qu\'est-ce que je dois racheter ?', ask:'qu\'est-ce que je dois acheter'},
+               {label:'⬛ Gérer les matières', view:'matieres'}])
+    : aiSuite([{label:'📦 Vais-je bientôt en manquer ?', ask:'qu\'est-ce qui va bientôt me manquer'}]);
+  aiSay(`${ambig}${aiHero(heroVal, `Stock — ${esc(params.material.nom)}`, {color: (tot<=0||sousSeuil)?'var(--red)':'var(--bordeaux)'})}
+    ${synthese}
+    ${aiDetails(detail, 'Voir les lots')}
+    ${suite}`);
 }
 // LOCALISATION des macarons finis par parfum : détail des batchs + emplacements,
 // présenté dans une popup lisible. Si aucun parfum reconnu, propose la liste.
@@ -24582,8 +24620,7 @@ async function aiQueryUrssaf(params){
   try{ B = await computeMonthlyBilan(ym); }catch(e){ console.error('aiQueryUrssaf',e); return aiSay(`<p class="note">Impossible de calculer les cotisations (données comptables incomplètes).</p>`); }
   if(!B || B.caTotal<=0){
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Cotisations URSSAF — ${libelle}</h3>
-      <p class="note">Aucun encaissement enregistré pour ${ym}. La base de cotisation est le CA <b>encaissé</b> du mois.</p>
-      ${aiShortcuts('query_urssaf',{})}`);
+      <p class="note">Aucun encaissement enregistré pour ${ym}. La base de cotisation est le CA <b>encaissé</b> du mois.</p>`);
   }
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">À déclarer à l'URSSAF — ${libelle} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${ym})</span></h3>
     <div class="sum-box"><span>CA encaissé (base de déclaration)</span><b>${euro(B.caTotal)}</b></div>
@@ -24726,8 +24763,7 @@ async function aiQueryDerniereCommande(params){
     <div class="sum-box"><span>Date</span><b>${fmtDate(last.date)} <span style="color:#9a8a82;font-weight:400;font-size:.74rem">(${ilYa})</span></b></div>
     ${last.montant?`<div class="sum-box"><span>Montant</span><b>${euro(last.montant)}</b></div>`:''}
     <div class="sum-box"><span>Total commandes</span><b>${cmds.length}</b></div>
-    ${freqTxt?`<p class="note">Fréquence : ${freqTxt}.</p>`:''}
-    ${aiShortcuts('query_derniere_commande',{client:cli})}`);
+    ${freqTxt?`<p class="note">Fréquence : ${freqTxt}.</p>`:''}`);
 }
 
 // [VAGUE 2] MACARONS FINIS EN STOCK (par parfum ou total). Source : db.productions composant complet.
@@ -24742,17 +24778,17 @@ async function aiQueryStockFinis(params){
   if(params.flavor){
     const hit=entries.find(([nom])=>n(nom)===n(params.flavor)) || entries.find(([nom])=>n(nom).includes(n(params.flavor)));
     const q=hit?hit[1]:0;
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Macarons finis — ${esc(params.flavor)}</h3>
-      <div class="sum-box"><span>En stock</span><b>${qty(q)} pièce${q>1?'s':''}</b></div>
-      <p class="note">Macarons déjà assemblés et disponibles. ${aiShortcuts('query_stock_finis',{flavor:params.flavor})}</p>`);
+    return aiSay(`${aiHero(`${qty(q)} <span style="font-size:1rem;font-weight:600">pièce${q>1?'s':''}</span>`, `Macarons finis — ${esc(params.flavor)}`, {color:q>0?'var(--bordeaux)':'var(--red)'})}
+      ${aiSynth(q>0?`Déjà assemblés et prêts à vendre.`:`Aucun ${esc(params.flavor)} assemblé pour l'instant.`, {icon:q>0?'🍬':'📭'})}`);
   }
   if(!entries.length){
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Macarons finis en stock</h3><p class="note">Aucun macaron fini en stock actuellement.</p>`);
+    return aiSay(`${aiHero('0', 'Macarons finis en stock')}${aiSynth('Aucun macaron fini en stock actuellement.', {icon:'📭'})}`);
   }
   const total=entries.reduce((s,[,q])=>s+q,0);
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Macarons finis en stock <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${qty(total)} au total)</span></h3>
-    ${entries.slice(0,12).map(([nom,q])=>`<div class="sum-box"><span>${esc(nom)}</span><b>${qty(q)}</b></div>`).join('')}
-    <p class="note">Macarons déjà assemblés et disponibles à la vente. ${aiShortcuts('query_stock_finis',{})}</p>`);
+  const repartition = entries.slice(0,14).map(([nom,q])=>`<div class="sum-box"><span>${esc(nom)}</span><b>${qty(q)}</b></div>`).join('');
+  return aiSay(`${aiHero(qty(total), 'Macarons finis en stock', {sub:`${entries.length} parfum${entries.length>1?'s':''}`})}
+    ${aiSynth(`Prêts à vendre. Ton plus gros stock : <b>${esc(entries[0][0])}</b> (${qty(entries[0][1])}).`, {icon:'🍬'})}
+    ${aiDetails(repartition, 'Répartition par parfum')}`);
 }
 
 // [VAGUE 2] CLIENTS À RELANCER (inactifs depuis longtemps vs leur fréquence).
@@ -24778,7 +24814,7 @@ async function aiQueryClientsRelance(){
   }
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Clients à relancer <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${rows.length})</span></h3>
     ${rows.slice(0,10).map(r=>`<div class="sum-box"><span>${r.id?`<span class="link-name" onclick="clientForm(${r.id})">${esc(r.nom)}</span>`:esc(r.nom)} <span style="color:#9a8a82;font-size:.72rem">(${r.n} cmd${r.n>1?'s':''}${r.freq!=null?`, ~${r.freq>=14?Math.round(r.freq/7)+' sem':r.freq+' j'}`:''})</span></span><b style="color:var(--red,#b3261e)">${r.joursDepuis} j</b></div>`).join('')}
-    <p class="note">Clients qui n'ont pas commandé depuis nettement plus longtemps que leur habitude. ${aiShortcuts('query_clients_relance',{})}</p>`);
+    <p class="note">Clients qui n'ont pas commandé depuis nettement plus longtemps que leur habitude.</p>`);
 }
 
 // [VAGUE 2] PÉREMPTION DES MATIÈRES (lots avec DLC proche). Source : db.materialLots.
@@ -24825,7 +24861,7 @@ async function aiQueryStatsParfum(params){
   }
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Statistiques — ${esc(clef||fl)} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${libPeriode})</span></h3>
     <div class="sum-box"><span>Macarons vendus</span><b>${qty(vendu)}</b></div>
-    <p class="note">Commandes payées. ${aiShortcuts('query_stats_parfum',{flavor:clef||fl})}</p>`);
+    <p class="note">Commandes payées.</p>`);
 }
 
 // [CHANTIER B] Helper commun : charge les données de profitabilité (source unique analyzeFlavorProfitability).
@@ -24855,7 +24891,7 @@ async function aiQueryCoutRevient(params){
   const cu = row && row.cost ? row.cost.coutRevientUnit : null;
   if(cu==null){
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Coût de revient — ${esc(params.flavor)}</h3>
-      <p class="note">Coût indisponible : il faut une recette (BOM) et des lots reçus avec prix pour ce parfum.</p>${aiShortcuts('query_cout_revient',{flavor:params.flavor})}`);
+      <p class="note">Coût indisponible : il faut une recette (BOM) et des lots reçus avec prix pour ce parfum.</p>`);
   }
   const pvm = row.prixVenteMoyen, marge = row.margeUnit;
   const detail = `${pvm!=null?`<div class="sum-box"><span>Prix de vente moyen</span><b>${euro(pvm)}</b></div>`:''}${marge!=null?`<div class="sum-box"><span>Marge unitaire</span><b style="color:${marge>=0?'#2e7d32':'var(--red,#b3261e)'}">${euro(marge)}${row.tauxMarge!=null?` · ${row.tauxMarge}%`:''}</b></div>`:''}`;
@@ -24882,7 +24918,7 @@ async function aiQueryPrixVente(params){
     <div class="sum-box"><span>Prix de vente moyen</span><b>${euro(row.prixVenteMoyen)}</b></div>
     ${cu!=null?`<div class="sum-box"><span>Coût de revient</span><b>${euro(cu)}</b></div>`:''}
     ${row.margeUnit!=null?`<div class="sum-box"><span>Marge unitaire</span><b style="color:${row.margeUnit>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(row.margeUnit)}${row.tauxMarge!=null?` · ${row.tauxMarge}%`:''}</b></div>`:''}
-    <p class="note">Calculé sur tes commandes payées. ${aiShortcuts('query_prix_vente',{flavor:row.nom})}</p>`);
+    <p class="note">Calculé sur tes commandes payées.</p>`);
 }
 
 // [CHANTIER B] VALEUR DU STOCK valorisé.
@@ -24922,14 +24958,13 @@ async function aiQueryProchainMarche(){
   const futurs = markets.filter(m=>m.date && m.date>=auj).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   if(!futurs.length){
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Mon prochain marché</h3>
-      <p class="note">Aucun marché à venir enregistré. Tu peux en planifier dans l'écran Marchés.</p>${aiShortcuts('query_prochain_marche',{})}`);
+      <p class="note">Aucun marché à venir enregistré. Tu peux en planifier dans l'écran Marchés.</p>`);
   }
   const m=futurs[0];
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Mon prochain marché</h3>
     <div class="sum-box"><span><b>${esc(m.nom||m.lieu||'Marché')}</b></span><b>${fmtDate(m.date)}</b></div>
     ${m.lieu&&m.nom?`<div class="sum-box"><span>Lieu</span><b>${esc(m.lieu)}</b></div>`:''}
-    ${futurs.length>1?`<p class="note" style="margin-top:6px">Puis : ${futurs.slice(1,4).map(x=>`${esc(x.nom||x.lieu||'marché')} (${fmtDate(x.date)})`).join(' · ')}</p>`:''}
-    ${aiShortcuts('query_prochain_marche',{})}`);
+    ${futurs.length>1?`<p class="note" style="margin-top:6px">Puis : ${futurs.slice(1,4).map(x=>`${esc(x.nom||x.lieu||'marché')} (${fmtDate(x.date)})`).join(' · ')}</p>`:''}`);
 }
 
 // [CHANTIER B] COMPARAISON DE DEUX MOIS (par défaut : ce mois vs mois dernier).
@@ -24948,7 +24983,7 @@ async function aiQueryCompareMois(){
     <div class="sum-box"><span>${m0} (ce mois)</span><b>${euro(M0.ca||0)}</b></div>
     <div class="sum-box"><span>${m1} (mois dernier)</span><b>${euro(M1.ca||0)}</b></div>
     <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Écart</b></span><b style="color:${col}">${fleche} ${euro(Math.abs(dCA))}${pct!=null?` (${pct>0?'+':''}${pct}%)`:''}</b></div>
-    <p class="note">CA des commandes payées. Macarons : ${qty(M0.macaronsStd||0)} ce mois vs ${qty(M1.macaronsStd||0)} le mois dernier. ${aiShortcuts('query_compare_mois',{})}</p>`);
+    <p class="note">CA des commandes payées. Macarons : ${qty(M0.macaronsStd||0)} ce mois vs ${qty(M1.macaronsStd||0)} le mois dernier.</p>`);
 }
 
 // [CHANTIER B] RECOMMANDATIONS BUSINESS (réutilise flavorRecommendations).
@@ -24958,7 +24993,7 @@ async function aiQueryRecoBusiness(){
   try{ recos = (typeof flavorRecommendations==='function') ? flavorRecommendations(A, data) : []; }catch(e){ console.error('reco',e); }
   if(!recos || !recos.length){
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Recommandations business</h3>
-      <p class="note">Pas encore assez de données (ventes + coûts) pour des recommandations fiables. Réceptionne des lots avec prix et enregistre des ventes payées.</p>${aiShortcuts('query_reco_business',{})}`);
+      <p class="note">Pas encore assez de données (ventes + coûts) pour des recommandations fiables. Réceptionne des lots avec prix et enregistre des ventes payées.</p>`);
   }
   const lignes = recos.slice(0,6).map(r=>{
     const txt = (typeof r==='string') ? r : (r.txt||r.message||r.label||JSON.stringify(r));
@@ -24966,7 +25001,7 @@ async function aiQueryRecoBusiness(){
   }).join('');
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Recommandations business</h3>
     ${lignes}
-    <p class="note">Basé sur ta rentabilité par parfum et tes ventes. ${aiShortcuts('query_reco_business',{})}</p>`);
+    <p class="note">Basé sur ta rentabilité par parfum et tes ventes.</p>`);
 }
 
 // [LOT 2] RENTABILITÉ — par parfum (analyzeFlavorProfitability) ou par client (computeOrderMargins).
@@ -24989,7 +25024,7 @@ async function aiQueryRentabilite(params){
       const data = {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings:getSettings()};
       const A = analyzeFlavorProfitability(data);
       const vendus = A.rows.filter(r=>r.tauxMarge!=null && r.piecesVendues>0);
-      if(!vendus.length) return aiSay(`<p class="note">Pas encore assez de ventes avec coût de revient connu pour classer la rentabilité des parfums.</p>${aiShortcuts('query_rentabilite',{cible:'parfum'})}`);
+      if(!vendus.length) return aiSay(`<p class="note">Pas encore assez de ventes avec coût de revient connu pour classer la rentabilité des parfums.</p>`);
       const tri = [...vendus].sort((a,b)=> sensPire ? a.tauxMarge-b.tauxMarge : b.tauxMarge-a.tauxMarge);
       const head = tri[0];
       const liste = tri.slice(0,6).map((x,i)=>`<div class="sum-box"><span>${i+1}. <b>${esc(x.nom)}</b></span><b style="color:${x.tauxMarge>=0?'#3f7d52':'var(--red,#b3261e)'}">${x.tauxMarge}% · ${euro(x.margeBrute)}</b></div>`).join('');
@@ -25184,7 +25219,7 @@ async function aiQueryCoutCommande(params){
     <div class="sum-box"><span>Matières premières</span><b>${euro(M.coutMat)}</b></div>
     ${M.coutEmb!=null?`<div class="sum-box"><span>Emballage</span><b>${euro(M.coutEmb)}</b></div>`:''}
     <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>CA de la commande</b></span><b>${euro(M.ca)}</b></div>
-    <p class="note">Coût des matières consommées pour cette commande. ${aiShortcuts('query_cout_commande',{})}</p>`);
+    <p class="note">Coût des matières consommées pour cette commande.</p>`);
 }
 
 // [V938] PARFUMS COMPATIBLES AVEC UN ALLERGÈNE (sans X). Inverse de query_allergenes.
@@ -25227,7 +25262,7 @@ async function aiQueryIngredientPour(params){
   const lignesMat = items.filter(it=>it.materialId===mat.id);
   if(!lignesMat.length){
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:4px">Quantité de ${esc(mat.nom)} — ${esc(rec.produitNom)}</h3>
-      <p class="note">La recette « ${esc(rec.produitNom)} » n'utilise pas ${esc(mat.nom)}.</p>${aiShortcuts('query_recipe',{flavor:rec.produitNom})}`);
+      <p class="note">La recette « ${esc(rec.produitNom)} » n'utilise pas ${esc(mat.nom)}.</p>`);
   }
   const total = lignesMat.reduce((s,it)=>s+((+it.qteParBatch||0)*facteur),0);
   const fmtQ = q => (q>=1 ? Math.round(q*1000)/1000 : Math.round(q*10000)/10000);
@@ -25242,7 +25277,7 @@ async function aiQueryIngredientPour(params){
     <div style="font-size:.82rem;color:#6a5a72;margin-bottom:6px">${sousTitre}</div>
     <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>${esc(mat.nom)}</b></span><b style="color:var(--bordeaux)">${fmtQ(total)} ${esc(mat.unite||'kg')}</b></div>
     ${detail}
-    <p class="note">Calculé depuis ta recette. ${aiShortcuts('query_recipe',{flavor:rec.produitNom})}</p>`);
+    <p class="note">Calculé depuis ta recette.</p>`);
 }
 async function aiQueryRecipe(params){
   const flavor = params && params.flavor;
@@ -25814,19 +25849,15 @@ async function aiQueryRevenue(params){
   if(cible){
     const M = R.global.parMois[cible];
     if(!M || (!M.ca && !M.macaronsStd)){
-      return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires — ${libelleMois}</h3>
-        <p class="note">Aucune vente enregistrée pour ${cible} (commandes payées).</p>`);
+      return aiSay(`${aiHero(euro(0), `Chiffre d'affaires — ${libelleMois}`)}
+        ${aiSynth(`Aucune vente enregistrée pour ${cible}.`, {icon:'📭'})}`);
     }
     if(params.enMacarons){
-      return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Macarons vendus — ${libelleMois} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${cible})</span></h3>
-        <div class="sum-box"><span>Macarons standards écoulés</span><b>${qty(M.macaronsStd)}</b></div>
-        ${M.nbGrandsFormats>0?`<div class="sum-box"><span>Grands formats</span><b>${qty(M.nbGrandsFormats)}</b></div>`:''}
-        <div class="sum-box"><span>CA du mois</span><b>${euro(M.ca)}</b></div>`);
+      return aiSay(`${aiHero(qty(M.macaronsStd), `Macarons vendus — ${libelleMois}`, {sub: M.nbGrandsFormats>0?`+ ${qty(M.nbGrandsFormats)} grand format${M.nbGrandsFormats>1?'s':''}`:''})}
+        ${aiSynth(`Soit ${euro(M.ca)} de chiffre d'affaires sur la période.`, {icon:'🍬'})}`);
     }
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires — ${libelleMois} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${cible}, commandes payées)</span></h3>
-      <div class="sum-box"><span>CA du mois</span><b>${euro(M.ca)}</b></div>
-      <div class="sum-box"><span>Macarons standards écoulés</span><b>${qty(M.macaronsStd)}</b></div>
-      ${M.nbGrandsFormats>0?`<div class="sum-box"><span>Grands formats</span><b>${qty(M.nbGrandsFormats)}</b></div>`:''}`);
+    return aiSay(`${aiHero(euro(M.ca), `Chiffre d'affaires — ${libelleMois}`, {color:'var(--vert,#3f7d52)'})}
+      ${aiSynth(`${qty(M.macaronsStd)} macarons écoulés${M.nbGrandsFormats>0?` (+ ${qty(M.nbGrandsFormats)} grand format${M.nbGrandsFormats>1?'s':''})`:''}, commandes payées.`, {icon:'💰'})}`);
   }
   // Sinon : vue globale (comportement d'origine).
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
@@ -25909,12 +25940,18 @@ async function aiQueryRupture(){
   const recipes=await db.recipes.toArray().catch(()=>[]);
   const recByNom={}; recipes.forEach(r=>{ recByNom[aiNormalize(r.produitNom)]=r; });
   if(!risques.length && !sousSeuil.length && !prev.length)
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3><p class="note">Aucun risque détecté : produits finis couverts sous 8 jours, matières suffisantes et au-dessus des seuils.</p>`);
-  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3>
+    return aiSay(`${aiHero('0', 'Risque de rupture', {color:'var(--vert,#3f7d52)'})}
+      ${aiSynth('Produits finis couverts, matières au-dessus des seuils. Rien à anticiper dans l\'immédiat.', {tone:'ok', icon:'✅'})}`);
+  const nbRisques = prev.length + risques.length + sousSeuil.length;
+  const _premierR = prev[0] ? prev[0].parfum : (risques[0]? risques[0].nom : (sousSeuil[0]?sousSeuil[0].nom:''));
+  aiSay(`${aiHero(`${nbRisques} <span style="font-size:1rem;font-weight:600">alerte${nbRisques>1?'s':''}</span>`, 'Risque de rupture', {color:'var(--red)'})}
+    ${aiSynth(`Le plus pressant : <b>${esc(_premierR)}</b>. Anticipe pour ne pas te retrouver à court.`, {tone:'warn', icon:'⚠️'})}
+    ${aiDetails(`<h3 style="font-size:1rem;margin-bottom:8px">Risques de rupture</h3>
     ${prev.length?'<p style="margin:4px 0;font-weight:600;color:var(--red,#b3261e)">Produits finis — rupture prévue sous 8 jours</p>'+prev.map(a=>{ const rec=recByNom[aiNormalize(a.parfum)]; const btn=rec?` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="prodForm({recipeId:${rec.id}, qte:${Math.max(1,Math.round(+a.manque||30))}})">⚙ Produire</button>`:''; return `<div class="sum-box"><span style="flex:1">${esc(a.parfum)}${a.firstShortDate?` · ${fmtDate(a.firstShortDate)}`:''} — <b style="color:var(--red,#b3261e)">manque ${qty(a.manque||0)}</b>${btn}</span></div>`; }).join(''):''}
     ${risques.length?'<p style="margin:10px 0 4px;font-weight:600;color:var(--red,#b3261e)">Matières insuffisantes pour les commandes planifiées</p>'+risques.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">manque ${qty(m.manque)} ${esc(m.unite)} (${qty(m.dispo)}/${qty(m.requis)})</b></div>`).join(''):''}
     ${sousSeuil.length?'<p style="margin:10px 0 4px;font-weight:600">Matières sous le seuil d\'alerte</p>'+sousSeuil.map(m=>`<div class="sum-box"><span>${esc(m.nom)}</span><b style="color:var(--red,#b3261e)">${qty(m.dispo)} / seuil ${qty(m.seuil)} ${esc(m.unite)}</b></div>`).join(''):''}
-    <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('achats')">🛒 Réapprovisionner</button> <button class="btn ghost sm" onclick="goView('previsionnel')">📊 Prévisionnel stocks</button></p>`);
+`, 'Voir le détail des alertes')}
+    ${aiSuite([{label:'🛒 Ma liste de courses', ask:'qu\'est-ce que je dois acheter'},{label:'📊 Prévisionnel stocks', view:'previsionnel'}])}`);
 }
 
 // ---- ACTIONS CRITIQUES : résumé + validation explicite ----
