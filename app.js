@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v926';
+const APP_VERSION = 'v929';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19562,6 +19562,23 @@ function parseIntent(texte, ctx){
      && !/quoi produire|que produire|quoi faire/.test(t)){
     return {intent:'query_ordo', params:{}, critical:false, label:'Organiser mes fournées'};
   }
+  // [LOT 3] ALLERGÈNES : « quels allergènes dans le macaron chocolat », « y a-t-il du lait dans la
+  // ganache citron ». Deux formes : liste complète, ou question oui/non sur UN allergène précis.
+  if(/\b(allergene|allergenes|allergie|allergies|allergene|contient|contiennent|y a t il (du|de|des)|il y a (du|de|des)|presence de|sans gluten|sans lait|sans)\b/.test(t)
+     && (/\b(allergene|allergenes|allergie)\b/.test(t)
+         || /\b(gluten|crustace|crustaces|oeuf|oeufs|poisson|poissons|arachide|arachides|soja|lait|fruits a coque|fruit a coque|noix|amande|celeri|moutarde|sesame|sulfite|sulfites|lupin|mollusque|mollusques)\b/.test(t))){
+    const fl = aiFindFlavor(t, flavors);
+    // Allergène précis éventuellement visé par la question.
+    let allergene=null;
+    const mapAll=[['gluten','Gluten'],['crustace','Crustacés'],['oeuf','Œufs'],['poisson','Poissons'],
+      ['arachide','Arachides'],['soja','Soja'],['lait','Lait'],['fruits a coque','Fruits à coque'],
+      ['fruit a coque','Fruits à coque'],['noix','Fruits à coque'],['amande','Fruits à coque'],
+      ['celeri','Céleri'],['moutarde','Moutarde'],['sesame','Sésame'],['sulfite','Sulfites'],
+      ['lupin','Lupin'],['mollusque','Mollusques']];
+    for(const [k,v] of mapAll){ if(new RegExp('\\b'+k).test(t)){ allergene=v; break; } }
+    return {intent:'query_allergenes', params:{flavor:fl, allergene}, critical:false,
+      label: fl?`Allergènes — ${fl}`:'Allergènes d\'un parfum'};
+  }
   // RECETTE (éventuellement mise à l'échelle) : « donne-moi la recette des macarons citron pour 25
   // pièces », « recette de la ganache vanille ». Capte le parfum et un nombre de pièces optionnel.
   // GARDE : si la phrase interroge une DISPONIBILITÉ de stock (« assez de X », « il me reste », « stock de »),
@@ -19593,8 +19610,9 @@ function parseIntent(texte, ctx){
   }
   // stock d'une matière
   if(/\b(stock|combien|reste|il reste|quantite)\b/.test(t) && !/commande/.test(t)
-     && !/(gagn|rapport|encaiss|chiffre|recette|vente)/.test(t)
-     && !/fait combien|combien.*fait|j'?ai fait/.test(t)){
+     && !/(gagn|rapport|encaiss|chiffre|recette|vente|vend|vendu|vendus)/.test(t)
+     && !/(urssaf|cotisation|cotisations|charges sociales|declarer|declaration|me doit|me doivent|on me doit|reste a payer|impaye|echeances? de paiement|a encaisser)/.test(t)
+     && !/fait combien|combien.*fait|j'?ai fait|combien (de )?macarons?/.test(t)){
     const mat=aiFindMaterial(t,materials);
     return {intent:'query_stock', params:{material:mat}, critical:false,
       label: mat?`Consulter le stock de « ${mat.nom} »`:'Consulter le stock'};
@@ -19606,18 +19624,48 @@ function parseIntent(texte, ctx){
     return {intent:'query_orders', params:{date, statut: /preparer/.test(t)?'À préparer':null}, critical:false,
       label: date?`Afficher les commandes du ${date}`:'Afficher les commandes / livraisons à venir'};
   }
+  // [LOT 2] RENTABILITÉ (marge, pas volume) : « le parfum le plus rentable », « quel client me fait
+  // gagner / perdre de l'argent », « ma meilleure marge ». Distingue la cible parfum vs client.
+  // Placée AVANT top_parfum/top_clients pour que « rentable » prime sur « le plus vendu ».
+  if(/\b(rentable|rentables|rentabilite|marge|marges|gagner de l'?argent|perdre de l'?argent|me fait gagner|me fait perdre|fait gagner de l'?argent|fait perdre de l'?argent|le plus profitable|profitable|gagne de l'?argent|coute de l'?argent)\b/.test(t)){
+    let cible=null;
+    if(/\b(parfum|parfums|macaron|macarons|recette|recettes|saveur)\b/.test(t)) cible='parfum';
+    else if(/\b(client|clients|qui)\b/.test(t)) cible='client';
+    const sens = /\b(perdre|perd|coute|moins rentable|le pire|pas rentable|negative?)\b/.test(t) ? 'pire' : 'meilleur';
+    return {intent:'query_rentabilite', params:{cible, sens}, critical:false,
+      label: cible==='client'?'Rentabilité par client':(cible==='parfum'?'Rentabilité par parfum':'Rentabilité')};
+  }
   // top clients par parfum
   if(/\b(client|clients)\b/.test(t) && /\b(plus|top|meilleur|meilleurs|fideles|gros|principaux|commandent|achetent|consomment|qui commande)\b/.test(t)){
     const fl=aiFindFlavor(t,flavors);
     return {intent:'query_top_clients', params:{flavor:fl}, critical:false,
       label: fl?`Clients qui commandent le plus de « ${fl} »`:'Meilleurs clients'};
   }
+  // [LOT 3] URSSAF : « combien dois-je déclarer à l'URSSAF ce mois », « mes cotisations », « charges
+  // sociales du mois ». Réutilise le bilan mensuel (computeMonthlyBilan). Période : ce mois / mois dernier.
+  if(/\b(urssaf|cotisation|cotisations|charges sociales|declarer|declaration|a declarer|micro entreprise|auto entrepreneur)\b/.test(t)){
+    let periode='moisCourant';
+    if(/\b(mois (dernier|precedent|passe)|le mois d'?avant)\b/.test(t)) periode='moisDernier';
+    return {intent:'query_urssaf', params:{periode}, critical:false, label:'Cotisations URSSAF à déclarer'};
+  }
+  // [LOT 3] PAIEMENTS DUS / IMPAYÉS : « combien me doit-on encore », « les échéances de paiement »,
+  // « qui me doit de l'argent », « restes à payer ». Placée AVANT le CA pour ne pas être happée par « combien ».
+  if(/\b(me doit|me doivent|on me doit|qui me doit|reste a payer|restes a payer|reste a encaisser|impaye|impayes|impaye|en attente de paiement|pas (encore )?paye|pas (encore )?regle|echeances? de paiement|solde du|soldes dus|a encaisser|qui doit (payer|me))\b/.test(t)){
+    return {intent:'query_paiements_dus', params:{}, critical:false, label:'Paiements en attente'};
+  }
   // chiffre d'affaires
   if(/\b(chiffre d'affaires|chiffre d affaires|chiffre|recette|recettes|gagne|gagner|rapporte|rapporter|encaisse|encaisser)\b/.test(t)
      || /\b(mon|le|du|ton|notre) ca\b/.test(t)   // « mon CA », « le CA » (évite la collision avec « ça »)
      || (/\b(combien|total|montant)\b/.test(t) && /\b(gagn|fait|rapport|encaiss|mois|euros?|ca|chiffre)\b/.test(t))
-     || (/\b(vente|ventes)\b/.test(t) && /\b(combien|total|mois|montant|euros?)\b/.test(t))){
-    return {intent:'query_revenue', params:{}, critical:false, label:'Consulter le chiffre d\'affaires'};
+     || (/\b(vente|ventes)\b/.test(t) && /\b(combien|total|mois|montant|euros?)\b/.test(t))
+     || /\bj'?ai fait combien\b|\bfait combien (ce|le|cette)\b|\bcombien j'?ai (fait|gagn|encaiss|vendu)\b|\bcombien (de )?macarons? (ai je |j'?ai )?vendu/.test(t)){
+    // Période : « ce mois » / « le mois dernier » → clé AAAA-MM ; sinon null (vue globale).
+    let periode=null;
+    if(/\b(mois (dernier|precedent|passe)|le mois d'?avant)\b/.test(t)) periode='moisDernier';
+    else if(/\b(ce mois|du mois|ce mois ci|mois en cours|courant)\b/.test(t)) periode='moisCourant';
+    // Compte-t-on des macarons plutôt que des euros ?
+    const enMacarons = /\bcombien (de )?macarons?\b/.test(t);
+    return {intent:'query_revenue', params:{periode, enMacarons}, critical:false, label:'Consulter le chiffre d\'affaires'};
   }
 
   // CLIENT PRÉCIS : « la fiche de Dupont », « les commandes d'Emma », « coordonnées de M. Martin »,
@@ -19720,6 +19768,31 @@ function aiExtractName(raw){
 
 let aiPending = null; // action critique en attente de validation
 let aiClarifyPending = null; // [étape C1] clarification en attente : {intent, params, champ, type}
+// [D2 — CONTEXTE GLISSANT] Dernier sujet évoqué, pour que les phrases courtes en héritent sans répéter.
+// Mis à jour à chaque message qui mentionne un de ces éléments ; sert à COMBLER un paramètre manquant
+// (jamais à écraser une valeur explicite). Se renouvelle naturellement → « oubli » au changement de sujet.
+let aiContexte = { parfum:null, client:null, matiere:null, periode:null };
+// Met à jour le contexte depuis les params d'une intention résolue (ne stocke que ce qui est présent).
+function _aiMajContexte(params){
+  if(!params) return;
+  if(params.flavor!=null && params.flavor!=='')   aiContexte.parfum  = params.flavor;
+  if(params.client!=null && params.client!=='')    aiContexte.client  = params.client;
+  if(params.material!=null && params.material!=='')aiContexte.matiere = params.material;
+  if(params.periode!=null && params.periode!=='')  aiContexte.periode = params.periode;
+}
+// Tente de combler le paramètre manquant d'une intention depuis le contexte glissant.
+// Renvoie true si le trou a été comblé (params modifié en place), false sinon.
+function _aiCombleDepuisContexte(intent, params){
+  const spec = INTENT_RELANCE[intent];
+  if(!spec || !params) return false;
+  if(params[spec.champ]!=null && params[spec.champ]!=='') return false;   // déjà rempli → ne pas écraser
+  const src = spec.type==='parfum'?aiContexte.parfum
+            : spec.type==='client'?aiContexte.client
+            : spec.type==='matiere'?aiContexte.matiere
+            : spec.type==='date'?aiContexte.periode : null;
+  if(src!=null && src!==''){ params[spec.champ]=src; return true; }
+  return false;
+}
 /* ============================================================
    ASSISTANT — ANTI-GASPI & JAUGE DE SÉRÉNITÉ
    Branché sur l'architecture réelle de l'app :
@@ -22431,6 +22504,10 @@ const INTENT_SHORTCUTS = {
   query_top_parfum:       [ { label:'📈 Rentabilité par parfum', view:'rentaparfum' }, { label:'🔮 Prévisionnel', view:'previsionnel' } ],
   query_top_clients:      [ { label:'👥 Mes clients', view:'clients' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
   query_revenue:          [ { label:'📊 Ouvrir la compta', view:'compta' }, { label:'📈 Rentabilité', view:'rentabilite' }, { label:'⤓ Export comptable', action:'exportComptaCSV' } ],
+  query_rentabilite:      [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'👥 Rentabilité clients', view:'rentabilite' } ],
+  query_urssaf:           [ { label:'📊 Ouvrir la compta', view:'compta' } ],
+  query_paiements_dus:    [ { label:'📋 Voir les commandes', view:'commandes' } ],
+  query_allergenes:       [ { label:'📖 Voir les recettes', view:'recettes' } ],
   query_trends:           [ { label:'🔮 Prévisionnel', labelWithFocus:'🔮 Prévisionnel · {val}', view:'previsionnel', focusType:'parfum', focusParam:'flavor' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
   query_anomalies:        [ { label:'🔎 Analyse', view:'analyse' } ],
   query_production_needs: [ { label:'🏭 Plan de production', view:'agendaprod' } ],
@@ -22622,7 +22699,8 @@ const INTENT_RELANCE = {
   query_market_advice: { champ:'date',     type:'date'    },
   query_stock:         { champ:'material', type:'matiere', question:'De quel ingrédient veux-tu connaître le stock ?' },
   query_stock_pour:    { champ:'material', type:'matiere', question:'Le stock de quelle matière veux-tu vérifier ?' },
-  query_recipe:        { champ:'flavor',   type:'parfum',  question:'La recette de quel parfum veux-tu voir ?' }
+  query_recipe:        { champ:'flavor',   type:'parfum',  question:'La recette de quel parfum veux-tu voir ?' },
+  query_allergenes:    { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu connaître les allergènes ?' }
 };
 // [CLARIFICATION — étape C1] Routage unique pour résoudre un paramètre depuis du texte, selon son type.
 // Factorise le code déjà présent dans aiTryRelance (client/parfum/matiere/date). Réutilisé par le
@@ -22695,6 +22773,7 @@ async function aiRun(){
         const r2 = { intent:pend.intent, params, _clarified:true };
         window._aiCurrentIntent = r2.intent; window._aiCurrentParams = r2.params;
         aiPending=null;
+        _aiMajContexte(params);   // [D2] le param fourni en réponse devient le sujet courant
         return _aiDispatch(r2, txt, _ctx);
       }
       // non résolu → on laisse le parsing normal s'occuper du nouveau message.
@@ -22707,6 +22786,12 @@ async function aiRun(){
     if(r.intent==='unknown'){
       const relance = aiTryRelance(txt, _ctx);
       if(relance) r = relance;
+    }
+    // [D2 — CONTEXTE GLISSANT] Avant toute clarification : si le paramètre essentiel manque mais que le
+    // contexte récent le connaît (même parfum/client/matière/période évoqué juste avant), on comble en
+    // silence. « stock de pistache » puis « et la recette ? » → recette de pistache, sans reposer la question.
+    if(r.intent && r.intent!=='unknown'){
+      _aiCombleDepuisContexte(r.intent, r.params || (r.params={}));
     }
     // [CLARIFICATION — étape C1, DÉCLENCHEMENT] L'intention est reconnue mais son paramètre ESSENTIEL
     // manque (Groupe A : query_stock, locate, client, delivery, recipe, stock_pour). Au lieu de deviner
@@ -22722,6 +22807,8 @@ async function aiRun(){
     window._aiCurrentIntent = r.intent;
     window._aiCurrentParams = r.params || {};
     aiPending=null;
+    // [D2] Mise à jour du contexte glissant depuis les paramètres résolus (sujet du moment).
+    _aiMajContexte(r.params);
     // Question d'aide / mode d'emploi → base de connaissance (sauf si une intention
     // d'ACTION ou de DONNÉES précise a été reconnue, qu'on laisse passer en priorité).
     if(isHelpQuery(txt) && (r.intent==='unknown' || !r.intent || r.intent==='add_box')){
@@ -22754,7 +22841,11 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_client': return aiQueryClient(r.params);
       case 'query_delivery': return aiQueryDelivery(r.params);
       case 'query_market_advice': return aiQueryMarketAdvice(r.params);
-      case 'query_revenue': return aiQueryRevenue();
+      case 'query_revenue': return aiQueryRevenue(r.params);
+      case 'query_rentabilite': return aiQueryRentabilite(r.params);
+      case 'query_allergenes': return aiQueryAllergenes(r.params);
+      case 'query_paiements_dus': return aiQueryPaiementsDus();
+      case 'query_urssaf': return aiQueryUrssaf(r.params);
       case 'query_trends': return aiQueryTrends();
       case 'query_anomalies': return aiQueryAnomalies();
       case 'query_production_needs': return aiQueryProductionNeeds();
@@ -23521,6 +23612,138 @@ async function aiQueryTopClients(params){
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Clients — ${fl?'parfum '+esc(fl):'tous macarons'} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
     ${rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientForm(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b>${qty(x.n)} macaron(s)</b></div>`).join('')}`);
 }
+// [LOT 3] URSSAF — réutilise computeMonthlyBilan(ym) (source unique de la compta) pour donner les
+// cotisations à provisionner sur un mois, avec ventilation marchandise/service. Ne recalcule rien.
+async function aiQueryUrssaf(params){
+  params = params || {};
+  const d = new Date();
+  if(params.periode==='moisDernier') d.setMonth(d.getMonth()-1);
+  const ym = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  const libelle = params.periode==='moisDernier' ? 'le mois dernier' : 'ce mois-ci';
+  let B;
+  try{ B = await computeMonthlyBilan(ym); }catch(e){ console.error('aiQueryUrssaf',e); return aiSay(`<p class="note">Impossible de calculer les cotisations (données comptables incomplètes).</p>`); }
+  if(!B || B.caTotal<=0){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Cotisations URSSAF — ${libelle}</h3>
+      <p class="note">Aucun encaissement enregistré pour ${ym}. La base de cotisation est le CA <b>encaissé</b> du mois.</p>
+      ${aiShortcuts('query_urssaf',{})}`);
+  }
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">À déclarer à l'URSSAF — ${libelle} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${ym})</span></h3>
+    <div class="sum-box"><span>CA encaissé (base de déclaration)</span><b>${euro(B.caTotal)}</b></div>
+    ${B.goods>0?`<div class="sum-box"><span>· Vente de marchandise × ${B.tauxGoods}%</span><b>${euro(B.cotisGoods)}</b></div>`:''}
+    ${B.service>0?`<div class="sum-box"><span>· Prestation de service × ${B.tauxService}%</span><b>${euro(B.cotisService)}</b></div>`:''}
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:6px"><span><b>Cotisations à provisionner</b></span><b style="color:var(--bordeaux)">${euro(B.cotisTotal)}</b></div>
+    <p class="note" style="margin-top:6px">Estimation sur les encaissements du mois (base micro-entreprise). Taux réglables dans ⚙ Paramètres. À vérifier auprès de l'URSSAF / ton comptable.</p>`);
+}
+// [LOT 3] PAIEMENTS DUS — liste les commandes dont le solde (orderBalance) reste > 0, triées par date.
+// Source de vérité : orderBalance / orderPayStatus (registre des paiements). Ne modifie rien.
+async function aiQueryPaiementsDus(){
+  const orders = await db.orders.toArray();
+  const clients = await db.clients.toArray();
+  const clName=(id)=>{ const c=clients.find(x=>x.id===id); return c?c.nom:'Client'; };
+  const dus = orders
+    .filter(o=> !o.histo && orderBalance(o) > 0.01)
+    .map(o=>({ id:o.id, client:clName(o.clientId), clientId:o.clientId, date:o.date||'',
+               total:(+o.montant)||0, paye:orderPaid(o), reste:orderBalance(o), statut:orderPayStatus(o) }))
+    .sort((a,b)=> (a.date||'').localeCompare(b.date||''));
+  if(!dus.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Paiements en attente</h3>
+      <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Tout est réglé : aucune commande avec un solde dû.</span></div>`);
+  }
+  const total = Math.round(dus.reduce((s,x)=>s+x.reste,0)*100)/100;
+  const lignes = dus.map(x=>`<div class="sum-box"><span>${x.clientId?`<span class="link-name" onclick="clientForm(${x.clientId})">${esc(x.client)}</span>`:esc(x.client)}${x.date?` · ${fmtDate(x.date)}`:''} <span class="tag" style="font-size:.66rem;background:${x.statut==='Partiel'?'#fbeede':'#fdecea'};color:${x.statut==='Partiel'?'#9a5b16':'#b3261e'}">${esc(x.statut)}</span></span><b style="color:var(--red,#b3261e)">${euro(x.reste)}${x.statut==='Partiel'?` <span style="font-weight:400;font-size:.72rem;color:#9a8a82">/ ${euro(x.total)}</span>`:''}</b></div>`).join('');
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Paiements en attente <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${dus.length} commande${dus.length>1?'s':''})</span></h3>
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-bottom:8px"><span><b>Total dû</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
+    ${lignes}`);
+}
+// [LOT 3] ALLERGÈNES — source de vérité : la recette du parfum (r.allergenes). Repli sur la table
+// réglementaire par défaut (allergenesPourNom) si la recette n'a rien de saisi. Répond soit la liste,
+// soit oui/non quand un allergène précis est visé.
+async function aiQueryAllergenes(params){
+  params = params || {};
+  const flavor = params.flavor;
+  if(!flavor){
+    return aiSay(`<p>De quel parfum veux-tu connaître les allergènes ?</p>
+      <p class="note">Ex. « allergènes du macaron chocolat » ou « y a-t-il du lait dans la ganache citron ».</p>`);
+  }
+  const recipes = await db.recipes.toArray();
+  // Recherche de la recette par nom (comme aiFindFlavor a déjà résolu le libellé).
+  const norm = (s)=> (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const rec = recipes.find(r=> norm(r.produitNom)===norm(flavor))
+           || recipes.find(r=> norm(r.produitNom).includes(norm(flavor)) || norm(flavor).includes(norm(r.produitNom)));
+  let liste = (rec && rec.allergenes && rec.allergenes.length) ? rec.allergenes.slice()
+            : (allergenesPourNom(rec?rec.produitNom:flavor) || null);
+  const source = (rec && rec.allergenes && rec.allergenes.length) ? 'ta recette'
+               : (liste ? 'la fiche réglementaire par défaut' : null);
+  if(!liste){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Allergènes — ${esc(flavor)}</h3>
+      <p class="note">Aucun allergène renseigné pour ce parfum, et pas de correspondance par défaut. Renseigne-les dans la fiche recette.</p>`);
+  }
+  // Question oui/non sur un allergène précis.
+  if(params.allergene){
+    const present = liste.some(a=> norm(a)===norm(params.allergene));
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">${esc(flavor)} — ${esc(params.allergene)} ?</h3>
+      <div class="sum-box" style="border-left:4px solid ${present?'var(--red,#b3261e)':'#3f7d52'}">
+        <span><b>${present?'⚠ Oui':'✓ Non'}</b>, ${esc(flavor)} ${present?'contient':'ne contient pas'} ${esc(params.allergene.toLowerCase())}.</span></div>
+      <p class="note" style="margin-top:6px">Allergènes complets : ${liste.map(a=>esc(a)).join(' · ')} <span style="color:#9a8a82">(${source})</span>.</p>`);
+  }
+  // Liste complète.
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Allergènes — ${esc(flavor)}</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">
+      ${liste.map(a=>`<span class="tag" style="background:#fbeede;color:#9a5b16;border:1px solid #e8cfa0;font-size:.8rem">${esc(a)}</span>`).join('')}</div>
+    <p class="note">D'après ${source}. Toujours vérifier l'étiquetage avant remise au client.</p>`);
+}
+// [LOT 2] RENTABILITÉ — par parfum (analyzeFlavorProfitability) ou par client (computeOrderMargins).
+// Réutilise les MÊMES moteurs que les écrans dédiés (source unique), ne recalcule rien de neuf.
+// Donne le top/flop en réponse directe + un raccourci vers l'écran complet.
+async function aiQueryRentabilite(params){
+  params = params || {};
+  let cible = params.cible;
+  if(!cible){
+    return aiSay(`<p>Tu veux la rentabilité <b>par parfum</b> ou <b>par client</b> ?</p>
+      <p class="note">Dis par exemple : « le parfum le plus rentable » ou « quel client me fait gagner le plus ».</p>`);
+  }
+  const sensPire = (params.sens==='pire');
+  try{
+    if(cible==='parfum'){
+      const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
+        db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
+        db.orders.toArray(), db.markets.toArray(), db.marketMoves.toArray(), db.productions.toArray()
+      ]);
+      const data = {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings:getSettings()};
+      const A = analyzeFlavorProfitability(data);
+      const vendus = A.rows.filter(r=>r.tauxMarge!=null && r.piecesVendues>0);
+      if(!vendus.length) return aiSay(`<p class="note">Pas encore assez de ventes avec coût de revient connu pour classer la rentabilité des parfums.</p>${aiShortcuts('query_rentabilite',{cible:'parfum'})}`);
+      const tri = [...vendus].sort((a,b)=> sensPire ? a.tauxMarge-b.tauxMarge : b.tauxMarge-a.tauxMarge);
+      const head = tri[0];
+      const liste = tri.slice(0,6).map((x,i)=>`<div class="sum-box"><span>${i+1}. <b>${esc(x.nom)}</b></span><b style="color:${x.tauxMarge>=0?'#3f7d52':'var(--red,#b3261e)'}">${x.tauxMarge}% · ${euro(x.margeBrute)}</b></div>`).join('');
+      return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">${sensPire?'Parfums les MOINS rentables':'Parfums les plus rentables'} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(taux de marge brute)</span></h3>
+        <div style="font-size:.86rem;margin-bottom:8px">${sensPire?'Le moins rentable':'Ton plus rentable'} : <b>${esc(head.nom)}</b> — ${head.tauxMarge}% de marge (${euro(head.margeBrute)} sur ${qty(head.piecesVendues)} pièces).</div>
+        ${liste}`);
+    }
+    // cible === 'client'
+    const [orders, recipes, recipeItems, lots, clients] = await Promise.all([
+      db.orders.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.clients.toArray()
+    ]);
+    const clName=(id)=>{ const c=clients.find(x=>x.id===id); return c?c.nom:'Client'; };
+    const paid = orders.filter(o=> !o.histo && (+o.montant>0) && (typeof orderPaid==='function') && orderPaid(o)+1e-9 >= (+o.montant));
+    if(!paid.length) return aiSay(`<p class="note">Aucune commande payée pour calculer la rentabilité par client.</p>${aiShortcuts('query_rentabilite',{cible:'client'})}`);
+    const byClient={};
+    paid.forEach(o=>{ const m=computeOrderMargins(o,recipes,recipeItems,lots); const k=o.clientId||0;
+      (byClient[k] ||= {id:k, nom:clName(k), ca:0, nette:0, n:0}); const c=byClient[k];
+      c.ca=Math.round((c.ca+m.ca)*100)/100; c.nette=Math.round((c.nette+m.margeNette)*100)/100; c.n++; });
+    const rows=Object.values(byClient).map(c=>({...c, tauxNet:c.ca>0?Math.round(c.nette/c.ca*1000)/10:0}));
+    if(!rows.length) return aiSay(`<p class="note">Pas assez de données de marge par client.</p>`);
+    const tri=[...rows].sort((a,b)=> sensPire ? a.nette-b.nette : b.nette-a.nette);
+    const head=tri[0];
+    const liste=tri.slice(0,6).map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientForm(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b style="color:${x.nette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(x.nette)} · ${x.tauxNet}%</b></div>`).join('');
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">${sensPire?'Clients les MOINS rentables':'Clients les plus rentables'} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(marge nette)</span></h3>
+      <div style="font-size:.86rem;margin-bottom:8px">${sensPire?'Le moins rentable':'Ton client le plus rentable'} : <b>${esc(head.nom)}</b> — ${euro(head.nette)} de marge nette sur ${head.n} commande(s).</div>
+      ${liste}`);
+  }catch(e){
+    console.error('aiQueryRentabilite', e);
+    return aiSay(`<p class="note">Impossible de calculer la rentabilité (données incomplètes).</p>`);
+  }
+}
 // [COCKPIT] TOP PARFUM : « quel est le parfum le plus vendu (depuis 6 mois) ». Réutilise computeStats
 // (source unique) en filtrant les commandes sur la période demandée. Ne recalcule rien : filtre + trie.
 async function aiQueryTopParfum(params){
@@ -23788,10 +24011,35 @@ async function aiQueryMarketAdvice(params){
     ${detailParfums}
     ${fc&&fc.nbMarches>0?`<p class="note" style="margin-top:8px">Basé sur tes <b>${fc.nbMarches}</b> marché(s) passé(s) (moyenne ${fc.moyenneVendu} pc/marché).</p>`:''}`);
 }
-async function aiQueryRevenue(){
+async function aiQueryRevenue(params){
+  params = params || {};
   const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
   const R=computeStats(orders,clients,orderToLines);
   const mois=Object.keys(R.global.parMois).sort();
+  // [LOT 2] Résolution de période en clé AAAA-MM (date LOCALE, jamais UTC).
+  const _cleMois = (d)=> d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  let cible=null, libelleMois='';
+  if(params.periode==='moisCourant'){ const d=new Date(); cible=_cleMois(d); libelleMois='ce mois-ci'; }
+  else if(params.periode==='moisDernier'){ const d=new Date(); d.setMonth(d.getMonth()-1); cible=_cleMois(d); libelleMois='le mois dernier'; }
+  // Si une période précise est demandée, on répond ciblé sur ce mois.
+  if(cible){
+    const M = R.global.parMois[cible];
+    if(!M || (!M.ca && !M.macaronsStd)){
+      return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires — ${libelleMois}</h3>
+        <p class="note">Aucune vente enregistrée pour ${cible} (commandes payées).</p>`);
+    }
+    if(params.enMacarons){
+      return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Macarons vendus — ${libelleMois} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${cible})</span></h3>
+        <div class="sum-box"><span>Macarons standards écoulés</span><b>${qty(M.macaronsStd)}</b></div>
+        ${M.nbGrandsFormats>0?`<div class="sum-box"><span>Grands formats</span><b>${qty(M.nbGrandsFormats)}</b></div>`:''}
+        <div class="sum-box"><span>CA du mois</span><b>${euro(M.ca)}</b></div>`);
+    }
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires — ${libelleMois} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${cible}, commandes payées)</span></h3>
+      <div class="sum-box"><span>CA du mois</span><b>${euro(M.ca)}</b></div>
+      <div class="sum-box"><span>Macarons standards écoulés</span><b>${qty(M.macaronsStd)}</b></div>
+      ${M.nbGrandsFormats>0?`<div class="sum-box"><span>Grands formats</span><b>${qty(M.nbGrandsFormats)}</b></div>`:''}`);
+  }
+  // Sinon : vue globale (comportement d'origine).
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
     <div class="sum-box"><span>CA total</span><b>${euro(R.global.caTotal)}</b></div>
     <div class="sum-box"><span>Commandes payées</span><b>${R.nbValides}</b></div>
