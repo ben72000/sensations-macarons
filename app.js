@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v961';
+const APP_VERSION = 'v965';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -196,6 +196,21 @@ db.version(21).stores({
   planOverrides: '++id, wkSource, parfum, etape'
 });
 
+// --- v22 : module R&D (création) ------------------------------------------------------------
+// 3 tables qui forment le cycle créatif : un répertoire d'ingrédients (rdIngredients),
+// un carnet d'idées d'associations (rdIdees), un journal de tests rattachés (rdTests).
+// rdIngredients : registre 'sucre'|'sale'|'mixte', famille aromatique, type, intensité,
+//   auCatalogue=1 pour les parfums déjà produits. Sert de palette au générateur.
+// rdIdees : composants associés (a/b), type 'pxp'(parfum×parfum)|'pxt'(parfum×texture),
+//   scores originalite/gourmandise (0-100), statut, note libre.
+// rdTests : test daté rattaché à une idée (ideeId, optionnel), diagnostic structuré
+//   (marche/rate), note ★ (0-5).
+db.version(22).stores({
+  rdIngredients: '++id, nom, registre, famille, type, auCatalogue',
+  rdIdees:       '++id, statut, type, a, b, originalite, gourmandise, date',
+  rdTests:       '++id, ideeId, date, note'
+});
+
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
 // Sur iPhone, si l'app installée ET Safari ont la base ouverte en même temps, une montée de
 // version du schéma peut être BLOQUÉE : la nouvelle table (ex. prodSessions) n'est alors pas
@@ -217,6 +232,655 @@ const FLAVORS = [
   'Popcorn','Café'
 ];
 const BOX_SIZES = [6, 8, 16, 25];
+
+// === R&D : seed du répertoire d'ingrédients (84 entrées, surtout sucré + amorce salée) ===
+const RD_SEED_INGREDIENTS = [
+  {nom:'Framboise',registre:'sucre',famille:'fruite_rouge',type:'fruit',intensite:3,auCatalogue:1},
+  {nom:'Fraise',registre:'sucre',famille:'fruite_rouge',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Cassis',registre:'sucre',famille:'fruite_rouge',type:'fruit',intensite:4,auCatalogue:0},
+  {nom:'Mûre',registre:'sucre',famille:'fruite_rouge',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Cerise',registre:'sucre',famille:'fruite_rouge',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Groseille',registre:'sucre',famille:'fruite_rouge',type:'fruit',intensite:4,auCatalogue:0},
+  {nom:'Citron',registre:'sucre',famille:'agrume',type:'fruit',intensite:4,auCatalogue:1},
+  {nom:'Citron vert',registre:'sucre',famille:'agrume',type:'fruit',intensite:4,auCatalogue:1},
+  {nom:'Orange',registre:'sucre',famille:'agrume',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Mandarine',registre:'sucre',famille:'agrume',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Pamplemousse',registre:'sucre',famille:'agrume',type:'fruit',intensite:4,auCatalogue:0},
+  {nom:'Yuzu',registre:'sucre',famille:'agrume',type:'fruit',intensite:5,auCatalogue:0},
+  {nom:'Bergamote',registre:'sucre',famille:'agrume',type:'fruit',intensite:4,auCatalogue:0},
+  {nom:'Pistache',registre:'sucre',famille:'fruit_coque',type:'fruit',intensite:3,auCatalogue:1},
+  {nom:'Noisette',registre:'sucre',famille:'fruit_coque',type:'fruit',intensite:3,auCatalogue:1},
+  {nom:'Amande',registre:'sucre',famille:'fruit_coque',type:'fruit',intensite:2,auCatalogue:0},
+  {nom:'Noix',registre:'sucre',famille:'fruit_coque',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Noix de pécan',registre:'sucre',famille:'fruit_coque',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Cacahuète',registre:'sucre',famille:'fruit_coque',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Praliné',registre:'sucre',famille:'torrefie',type:'preparation',intensite:4,auCatalogue:1},
+  {nom:'Café',registre:'sucre',famille:'torrefie',type:'aromate',intensite:4,auCatalogue:1},
+  {nom:'Chocolat noir',registre:'sucre',famille:'torrefie',type:'preparation',intensite:4,auCatalogue:1},
+  {nom:'Chocolat au lait',registre:'sucre',famille:'torrefie',type:'preparation',intensite:3,auCatalogue:1},
+  {nom:'Chocolat blanc',registre:'sucre',famille:'lacte',type:'preparation',intensite:3,auCatalogue:0},
+  {nom:'Mangue',registre:'sucre',famille:'exotique',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Passion',registre:'sucre',famille:'exotique',type:'fruit',intensite:5,auCatalogue:0},
+  {nom:'Ananas',registre:'sucre',famille:'exotique',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Coco',registre:'sucre',famille:'exotique',type:'fruit',intensite:3,auCatalogue:1},
+  {nom:'Banane',registre:'sucre',famille:'exotique',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Litchi',registre:'sucre',famille:'exotique',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Abricot',registre:'sucre',famille:'fruite_jaune',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Pêche',registre:'sucre',famille:'fruite_jaune',type:'fruit',intensite:2,auCatalogue:0},
+  {nom:'Pomme',registre:'sucre',famille:'fruite_jaune',type:'fruit',intensite:2,auCatalogue:0},
+  {nom:'Poire',registre:'sucre',famille:'fruite_jaune',type:'fruit',intensite:2,auCatalogue:0},
+  {nom:'Prune',registre:'sucre',famille:'fruite_jaune',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Figue',registre:'sucre',famille:'fruite_jaune',type:'fruit',intensite:3,auCatalogue:0},
+  {nom:'Vanille',registre:'sucre',famille:'lacte',type:'aromate',intensite:3,auCatalogue:1},
+  {nom:'Caramel',registre:'sucre',famille:'lacte',type:'preparation',intensite:4,auCatalogue:1},
+  {nom:'Caramel beurre salé',registre:'sucre',famille:'lacte',type:'preparation',intensite:4,auCatalogue:1},
+  {nom:'Dulcey',registre:'sucre',famille:'lacte',type:'preparation',intensite:3,auCatalogue:0},
+  {nom:'Miel',registre:'sucre',famille:'lacte',type:'aromate',intensite:3,auCatalogue:0},
+  {nom:'Lait concentré',registre:'sucre',famille:'lacte',type:'preparation',intensite:2,auCatalogue:0},
+  {nom:'Cannelle',registre:'sucre',famille:'epice',type:'epice',intensite:4,auCatalogue:0},
+  {nom:'Cardamome',registre:'sucre',famille:'epice',type:'epice',intensite:5,auCatalogue:0},
+  {nom:'Vanille bourbon',registre:'sucre',famille:'epice',type:'aromate',intensite:3,auCatalogue:1},
+  {nom:'Gingembre',registre:'sucre',famille:'epice',type:'epice',intensite:4,auCatalogue:0},
+  {nom:'Fève tonka',registre:'sucre',famille:'epice',type:'epice',intensite:5,auCatalogue:0},
+  {nom:'Safran',registre:'sucre',famille:'epice',type:'epice',intensite:5,auCatalogue:0},
+  {nom:'Poivre de Timut',registre:'sucre',famille:'epice',type:'epice',intensite:5,auCatalogue:0},
+  {nom:'Anis étoilé',registre:'sucre',famille:'epice',type:'epice',intensite:4,auCatalogue:0},
+  {nom:'Réglisse',registre:'sucre',famille:'epice',type:'aromate',intensite:4,auCatalogue:0},
+  {nom:'Rose',registre:'sucre',famille:'floral',type:'aromate',intensite:4,auCatalogue:0},
+  {nom:'Fleur d’oranger',registre:'sucre',famille:'floral',type:'aromate',intensite:4,auCatalogue:0},
+  {nom:'Violette',registre:'sucre',famille:'floral',type:'aromate',intensite:4,auCatalogue:0},
+  {nom:'Lavande',registre:'sucre',famille:'floral',type:'aromate',intensite:5,auCatalogue:0},
+  {nom:'Jasmin',registre:'sucre',famille:'floral',type:'aromate',intensite:4,auCatalogue:0},
+  {nom:'Basilic',registre:'sucre',famille:'herbace',type:'herbe',intensite:4,auCatalogue:0},
+  {nom:'Menthe',registre:'sucre',famille:'herbace',type:'herbe',intensite:4,auCatalogue:0},
+  {nom:'Verveine',registre:'sucre',famille:'herbace',type:'herbe',intensite:3,auCatalogue:0},
+  {nom:'Thé matcha',registre:'sucre',famille:'herbace',type:'aromate',intensite:3,auCatalogue:0},
+  {nom:'Thé Earl Grey',registre:'sucre',famille:'herbace',type:'aromate',intensite:3,auCatalogue:0},
+  {nom:'Shiso',registre:'sucre',famille:'herbace',type:'herbe',intensite:5,auCatalogue:0},
+  {nom:'Romarin',registre:'sucre',famille:'herbace',type:'herbe',intensite:4,auCatalogue:0},
+  {nom:'Spéculoos',registre:'sucre',famille:'torrefie',type:'preparation',intensite:3,auCatalogue:0},
+  {nom:'Popcorn',registre:'sucre',famille:'torrefie',type:'preparation',intensite:3,auCatalogue:0},
+  {nom:'Marron',registre:'sucre',famille:'fruit_coque',type:'preparation',intensite:3,auCatalogue:0},
+  {nom:'Nocciolata',registre:'sucre',famille:'torrefie',type:'preparation',intensite:4,auCatalogue:0},
+  {nom:'Foie gras',registre:'sale',famille:'umami',type:'preparation',intensite:4,auCatalogue:0},
+  {nom:'Parmesan',registre:'sale',famille:'lacte_sale',type:'fromage',intensite:4,auCatalogue:0},
+  {nom:'Chèvre',registre:'sale',famille:'lacte_sale',type:'fromage',intensite:3,auCatalogue:0},
+  {nom:'Olive noire',registre:'sale',famille:'vegetal_sale',type:'aromate',intensite:4,auCatalogue:0},
+  {nom:'Tomate séchée',registre:'sale',famille:'vegetal_sale',type:'aromate',intensite:4,auCatalogue:0},
+  {nom:'Betterave',registre:'sale',famille:'vegetal_sale',type:'legume',intensite:3,auCatalogue:0},
+  {nom:'Truffe',registre:'sale',famille:'umami',type:'aromate',intensite:5,auCatalogue:0},
+  {nom:'Insert coulant',registre:'mixte',famille:'texture_coulant',type:'texture',intensite:0,auCatalogue:0},
+  {nom:'Croustillant',registre:'mixte',famille:'texture_croquant',type:'texture',intensite:0,auCatalogue:0},
+  {nom:'Crémeux',registre:'mixte',famille:'texture_onctueux',type:'texture',intensite:0,auCatalogue:0},
+  {nom:'Confit / marmelade',registre:'mixte',famille:'texture_fondant',type:'texture',intensite:0,auCatalogue:0},
+  {nom:'Gelée',registre:'mixte',famille:'texture_gelifie',type:'texture',intensite:0,auCatalogue:0},
+  {nom:'Praliné croquant',registre:'mixte',famille:'texture_croquant',type:'texture',intensite:0,auCatalogue:1},
+  {nom:'Poivre',registre:'mixte',famille:'epice',type:'epice',intensite:4,auCatalogue:0},
+  {nom:'Piment d’Espelette',registre:'mixte',famille:'epice',type:'epice',intensite:4,auCatalogue:0},
+  {nom:'Sésame',registre:'mixte',famille:'torrefie',type:'aromate',intensite:3,auCatalogue:0},
+  {nom:'Thym',registre:'mixte',famille:'herbace',type:'herbe',intensite:4,auCatalogue:0}
+];
+
+// Familles aromatiques : libellés lisibles pour l'UI.
+const RD_FAMILLE_LABELS = {
+  fruite_rouge:'Fruits rouges', agrume:'Agrumes', fruit_coque:'Fruits à coque',
+  torrefie:'Torréfié', lacte:'Lacté', exotique:'Exotique', fruite_jaune:'Vergers',
+  epice:'Épices', floral:'Floral', herbace:'Herbacé', umami:'Umami',
+  lacte_sale:'Fromage', vegetal_sale:'Végétal salé',
+  texture_coulant:'Texture coulante', texture_croquant:'Texture croquante',
+  texture_onctueux:'Texture onctueuse', texture_fondant:'Texture fondante',
+  texture_gelifie:'Texture gélifiée'
+};
+
+// Seed idempotent : ne s'exécute que si la table est vide. Appelé au démarrage (non bloquant).
+async function rdSeedSiVide(){
+  try{
+    const n = await db.rdIngredients.count();
+    if(n>0) return {seeded:false, count:n};
+    await db.rdIngredients.bulkAdd(RD_SEED_INGREDIENTS.map(x=>({...x})));
+    const after = await db.rdIngredients.count();
+    return {seeded:true, count:after};
+  }catch(e){ console.error('rdSeedSiVide', e); return {seeded:false, error:String(e&&e.message||e)}; }
+}
+
+// ===================== R&D : MOTEUR DE SCORING & GÉNÉRATEUR =====================
+// Validé en isolation (19 assertions). Deux scores 0-100 : gourmandise (accord) &
+// originalité (surprise). Le générateur tire/filtre/score/trie avec diversité.
+// ============================================================================
+// MOTEUR DE SCORING R&D — conçu et testé en isolation avant intégration.
+// Deux scores 0-100 par association : gourmandise (accord) & originalité (surprise).
+// ============================================================================
+
+// --- Table d'affinités entre familles de GOÛT (0 à 1) ---
+// Symétrique. 1 = mariage évident/gourmand ; 0.1 = très éloigné (terrain original).
+// Diagonale (même famille) gérée à part : accord élevé mais originalité quasi nulle.
+const RD_AFFINITE = {
+  fruite_rouge: { fruit_coque:0.9, lacte:0.85, torrefie:0.7, floral:0.75, agrume:0.55, epice:0.5, exotique:0.5, herbace:0.45, fruite_jaune:0.6, fruite_rouge:0.6 },
+  agrume:       { lacte:0.8, floral:0.6, herbace:0.7, exotique:0.7, epice:0.55, fruit_coque:0.5, fruite_rouge:0.55, torrefie:0.35, fruite_jaune:0.55, agrume:0.5 },
+  fruit_coque:  { torrefie:0.95, lacte:0.9, fruite_rouge:0.9, epice:0.7, fruite_jaune:0.65, exotique:0.5, floral:0.45, agrume:0.5, herbace:0.35, fruit_coque:0.6 },
+  torrefie:     { fruit_coque:0.95, lacte:0.9, epice:0.75, exotique:0.55, fruite_rouge:0.7, fruite_jaune:0.5, agrume:0.35, floral:0.4, herbace:0.35, torrefie:0.65 },
+  lacte:        { fruit_coque:0.9, torrefie:0.9, fruite_rouge:0.85, agrume:0.8, exotique:0.75, epice:0.7, floral:0.7, fruite_jaune:0.75, herbace:0.55, lacte:0.6 },
+  exotique:     { lacte:0.75, agrume:0.7, floral:0.6, epice:0.6, torrefie:0.55, fruit_coque:0.5, fruite_rouge:0.5, herbace:0.5, fruite_jaune:0.55, exotique:0.55 },
+  fruite_jaune: { lacte:0.75, fruit_coque:0.65, epice:0.65, fruite_rouge:0.6, floral:0.55, herbace:0.5, agrume:0.55, torrefie:0.5, exotique:0.55, fruite_jaune:0.55 },
+  epice:        { torrefie:0.75, fruit_coque:0.7, lacte:0.7, fruite_jaune:0.65, exotique:0.6, agrume:0.55, fruite_rouge:0.5, floral:0.55, herbace:0.5, epice:0.5 },
+  floral:       { fruite_rouge:0.75, lacte:0.7, agrume:0.6, exotique:0.6, epice:0.55, fruite_jaune:0.55, herbace:0.5, fruit_coque:0.45, torrefie:0.4, floral:0.5 },
+  herbace:      { agrume:0.7, lacte:0.55, exotique:0.5, fruite_rouge:0.45, fruite_jaune:0.5, epice:0.5, floral:0.5, fruit_coque:0.35, torrefie:0.35, herbace:0.5 },
+  // salé (amorce) — affinités entre eux et avec quelques familles passerelles
+  umami:        { lacte_sale:0.7, vegetal_sale:0.65, torrefie:0.4, lacte:0.4, umami:0.5 },
+  lacte_sale:   { vegetal_sale:0.7, umami:0.7, fruite_jaune:0.5, fruite_rouge:0.5, epice:0.5, lacte_sale:0.5 },
+  vegetal_sale: { lacte_sale:0.7, umami:0.65, herbace:0.6, agrume:0.45, vegetal_sale:0.5 },
+};
+
+// Affinité entre deux familles (symétrique, repli 0.3 si non listée).
+function rdAffinite(fa, fb){
+  if(fa===fb) return (RD_AFFINITE[fa] && RD_AFFINITE[fa][fb]) || 0.55;
+  const a = RD_AFFINITE[fa] && RD_AFFINITE[fa][fb];
+  const b = RD_AFFINITE[fb] && RD_AFFINITE[fb][fa];
+  if(a!=null && b!=null) return (a+b)/2;
+  if(a!=null) return a;
+  if(b!=null) return b;
+  return 0.3; // familles sans affinité connue : terrain neutre/éloigné
+}
+
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+// --- Scoring d'une association de deux ingrédients de goût ---
+// Retourne {gourmandise, originalite} sur 0-100.
+function rdScorePaire(x, y){
+  const aff = rdAffinite(x.famille, y.famille);           // 0..1
+  const memeFamille = x.famille === y.famille;
+  const intens = ((x.intensite||3) + (y.intensite||3)) / 2; // 1..5
+
+  // GOURMANDISE : portée par l'affinité, légèrement tempérée si les deux sont très intenses
+  // (deux ingrédients très puissants ensemble = moins « facile »).
+  let gour = aff*100;
+  if(intens >= 4.5) gour -= 12;
+  else if(intens >= 4) gour -= 6;
+  gour = clamp(Math.round(gour), 5, 98);
+
+  // ORIGINALITÉ : distance entre familles (1-affinité) + bonus intensité + malus même famille.
+  let orig = (1-aff)*70 + (intens-3)*10 + 30;
+  if(memeFamille) orig -= 35;        // deux agrumes ensemble = peu original
+  orig = clamp(Math.round(orig), 5, 98);
+
+  return { gourmandise: gour, originalite: orig };
+}
+
+// --- Scoring parfum × texture ---
+// Une texture s'accorde avec presque tout (gourmandise tirée par l'ingrédient seul),
+// l'originalité vient du choix de la texture (coulant/gélifié plus surprenants que crémeux).
+const RD_TEXTURE_ORIG = { texture_onctueux:25, texture_croquant:40, texture_fondant:45, texture_coulant:60, texture_gelifie:65 };
+function rdScoreTexture(ingr, texture){
+  const intens = ingr.intensite||3;
+  let gour = clamp(Math.round(72 + (intens-3)*5), 50, 95);
+  let orig = clamp(Math.round((RD_TEXTURE_ORIG[texture.famille]||40) + (intens-3)*5), 10, 95);
+  return { gourmandise: gour, originalite: orig };
+}
+
+// --- Tri selon le curseur (0=original pur ... 100=gourmand pur) ---
+// Retourne un score de pertinence : pondère les deux axes selon le curseur.
+function rdPertinence(scores, curseur){
+  const wGour = curseur/100;       // 0..1
+  const wOrig = 1 - wGour;
+  return scores.gourmandise*wGour + scores.originalite*wOrig;
+}
+
+// --- Générateur ---
+function rdGenere(ingredients, opts){
+  opts = opts || {};
+  const curseur = opts.curseur!=null ? opts.curseur : 50;
+  const registre = opts.registre || 'sucre';     // 'sucre' | 'sale'
+  const mode = opts.mode || 'pxp';               // 'pxp' | 'pxt'
+  const n = opts.n || 3;
+  const dejaVus = new Set(opts.dejaVus || []);   // clés "a||b" déjà testées/abandonnées
+  const parfumImpose = opts.parfumImpose ? opts.parfumImpose.toLowerCase() : null;
+  const eviter = (opts.eviter||[]).map(s=>s.toLowerCase());
+
+  // Palette du bon registre (+ mixte). Les textures sont à part.
+  const goûts = ingredients.filter(i=> i.type!=='texture' && (i.registre===registre || i.registre==='mixte'));
+  const textures = ingredients.filter(i=> i.type==='texture');
+
+  const okIngr = (i)=> !eviter.some(e=> i.nom.toLowerCase().includes(e));
+  const cle = (a,b)=>[a,b].sort().join('||');
+
+  const candidats = [];
+  if(mode==='pxt'){
+    goûts.filter(okIngr).forEach(g=>{
+      if(parfumImpose && !g.nom.toLowerCase().includes(parfumImpose)) return;
+      textures.forEach(t=>{
+        const sc = rdScoreTexture(g, t);
+        candidats.push({a:g.nom, b:t.nom, type:'pxt', ...sc, _k:cle(g.nom,t.nom)});
+      });
+    });
+  } else {
+    const pool = goûts.filter(okIngr);
+    for(let i=0;i<pool.length;i++) for(let j=i+1;j<pool.length;j++){
+      const a=pool[i], b=pool[j];
+      if(parfumImpose && !a.nom.toLowerCase().includes(parfumImpose) && !b.nom.toLowerCase().includes(parfumImpose)) continue;
+      const sc = rdScorePaire(a,b);
+      candidats.push({a:a.nom, b:b.nom, type:'pxp', ...sc, _k:cle(a.nom,b.nom)});
+    }
+  }
+  // Exclure déjà vus
+  let pool = candidats.filter(c=> !dejaVus.has(c._k));
+  // Trier par pertinence (curseur) puis prendre les n premiers parmi un top élargi
+  // avec un peu d'aléa pour ne pas toujours ressortir les mêmes.
+  pool.sort((x,y)=> rdPertinence(y,curseur) - rdPertinence(x,curseur));
+  const top = pool.slice(0, Math.min(pool.length, Math.max(n*6, 18)));
+  // mélange léger du top pour varier d'une génération à l'autre
+  for(let i=top.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [top[i],top[j]]=[top[j],top[i]]; }
+  top.sort((x,y)=> rdPertinence(y,curseur) - rdPertinence(x,curseur));
+  // Sélection DIVERSIFIÉE : on évite de reproposer un ingrédient déjà retenu dans ce lot,
+  // pour que les n propositions ne tournent pas autour du même ingrédient vedette.
+  const sel=[]; const usedIngr=new Set();
+  for(const c of top){
+    if(sel.length>=n) break;
+    const an=c.a.toLowerCase(), bn=c.b.toLowerCase();
+    if(usedIngr.has(an) || usedIngr.has(bn)) continue;
+    sel.push(c); usedIngr.add(an); usedIngr.add(bn);
+  }
+  // Si la diversité stricte n'a pas rempli n (petit pool/contrainte), on complète sans la contrainte.
+  if(sel.length<n){
+    for(const c of top){ if(sel.length>=n) break; if(!sel.includes(c)) sel.push(c); }
+  }
+  return sel.map(({_k,...rest})=>rest);
+}
+// =============================================================================
+
+// ===================== R&D : MOTEUR A (STYLE) + CONVERGENCE =====================
+// Validé en isolation (11 assertions). Lit les recettes réelles, extrait le style
+// (familles fréquentes, duos signature, intensité), propose dans la signature.
+// Convergence A×B : 'greffe' (ancrage style + partenaire éloigné) ou 'fusion' (moyenne).
+// ----------------------------------------------------------------------------
+// 1) PROFIL DE STYLE : extrait des recettes la signature de Benjamin.
+// ----------------------------------------------------------------------------
+const _n = (s)=> (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+
+// Reconnaît, dans un nom de parfum, les ingrédients du répertoire (le plus long d'abord
+// pour capter "citron vert" avant "citron").
+function rdIngredientsDansNom(nom, ingredients){
+  const k=_n(nom); const hits=[];
+  const tries=[...ingredients].sort((a,b)=>b.nom.length-a.nom.length);
+  let reste=k;
+  tries.forEach(i=>{ const ni=_n(i.nom); if(ni && reste.includes(ni)){ hits.push(i); reste=reste.replace(ni,' '); } });
+  return hits;
+}
+
+// Construit le profil : familles fréquentes, duos signature, intensité moyenne.
+function rdProfilStyle(recipes, ingredients){
+  const familleCount={}, duos=[], ingrCount={};
+  let intensSum=0, intensN=0;
+  recipes.forEach(r=>{
+    const ings = rdIngredientsDansNom(r.produitNom, ingredients);
+    ings.forEach(i=>{
+      familleCount[i.famille]=(familleCount[i.famille]||0)+1;
+      ingrCount[i.nom]=(ingrCount[i.nom]||0)+1;
+      if(i.intensite){ intensSum+=i.intensite; intensN++; }
+    });
+    // duo signature = recette à 2 ingrédients identifiés
+    if(ings.length===2){ duos.push([ings[0].nom, ings[1].nom].sort()); }
+  });
+  const famillesTriees=Object.entries(familleCount).sort((a,b)=>b[1]-a[1]).map(([f])=>f);
+  return {
+    familles: famillesTriees,                       // tes familles, plus fréquentes d'abord
+    familleCount,
+    duos,                                           // tes duos signature
+    ingrCount,                                      // tes ingrédients récurrents
+    intensiteMoyenne: intensN? intensSum/intensN : 3,
+    nbRecettesLues: recipes.length,
+    nbReconnues: Object.keys(ingrCount).length
+  };
+}
+
+// ----------------------------------------------------------------------------
+// 2) MOTEUR A : propose dans le style. Curseur 0=fidèle ... 100=explorateur.
+// ----------------------------------------------------------------------------
+function rdGenereStyle(recipes, ingredients, opts){
+  opts=opts||{};
+  const curseur = opts.curseur!=null?opts.curseur:30;  // défaut plutôt fidèle
+  const registre = opts.registre||'sucre';
+  const n = opts.n||3;
+  const dejaVus = new Set(opts.dejaVus||[]);
+  const profil = rdProfilStyle(recipes, ingredients);
+
+  const goûts = ingredients.filter(i=> i.type!=='texture' && (i.registre===registre||i.registre==='mixte'));
+  const cle=(a,b)=>[a,b].sort().join('||');
+
+  // Poids "appartenance au style" d'une famille : fréquente chez toi → score haut.
+  const maxFam = Math.max(1, ...Object.values(profil.familleCount));
+  const famScore = (f)=> (profil.familleCount[f]||0)/maxFam;   // 0..1
+
+  // fidèle : on reste sur familles fréquentes ; explorateur : on s'autorise les cousines.
+  // seuil d'ouverture monte avec le curseur.
+  const ouverture = curseur/100;  // 0 fidèle .. 1 explorateur
+
+  const candidats=[];
+  for(let i=0;i<goûts.length;i++) for(let j=i+1;j<goûts.length;j++){
+    const a=goûts[i], b=goûts[j];
+    const fa=famScore(a.famille), fb=famScore(b.famille);
+    const styleScore=(fa+fb)/2;   // 0..1 : à quel point ça vit dans ton univers
+    // fidèle exige un styleScore élevé ; explorateur tolère plus bas.
+    const seuil = 0.6*(1-ouverture);   // 0.6 (fidèle) -> 0 (explorateur)
+    if(styleScore < seuil) continue;
+    // bonus si c'est une variation d'un duo signature (un ingrédient commun avec un duo connu)
+    const sc=rdScorePaire(a,b);
+    let bonusSignature=0;
+    profil.duos.forEach(d=>{ if(d.includes(a.nom)||d.includes(b.nom)) bonusSignature+=8; });
+    bonusSignature=Math.min(bonusSignature,20);
+    candidats.push({a:a.nom,b:b.nom,type:'pxp',origine:'style',
+      gourmandise:sc.gourmandise, originalite:sc.originalite,
+      _style:Math.round(styleScore*100), _bonus:bonusSignature, _k:cle(a.nom,b.nom)});
+  }
+  // pertinence "style" : proximité à ton univers (fidèle) vs ouverture (explorateur),
+  // toujours pondéré par la gourmandise pour rester appétissant.
+  function pertStyle(c){
+    return c._style*(1-ouverture)*0.7 + c.originalite*ouverture*0.5 + c.gourmandise*0.3 + c._bonus;
+  }
+  let pool=candidats.filter(c=>!dejaVus.has(c._k));
+  pool.sort((x,y)=>pertStyle(y)-pertStyle(x));
+  const top=pool.slice(0,Math.max(n*6,18));
+  for(let i=top.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[top[i],top[j]]=[top[j],top[i]];}
+  top.sort((x,y)=>pertStyle(y)-pertStyle(x));
+  const sel=[];const used=new Set();
+  for(const c of top){ if(sel.length>=n)break; const an=_n(c.a),bn=_n(c.b);
+    if(used.has(an)||used.has(bn))continue; sel.push(c);used.add(an);used.add(bn); }
+  if(sel.length<n) for(const c of top){ if(sel.length>=n)break; if(!sel.includes(c))sel.push(c); }
+  return { profil, idees: sel.map(({_k,...r})=>r) };
+}
+
+// ----------------------------------------------------------------------------
+// 3) CONVERGENCE A×B : deux façons (greffe | fusion).
+// ----------------------------------------------------------------------------
+function rdGenereEnsemble(recipes, ingredients, opts){
+  opts=opts||{};
+  const facon = opts.facon||'greffe';   // 'greffe' | 'fusion'
+  const registre = opts.registre||'sucre';
+  const n=opts.n||3;
+  const dejaVus=new Set(opts.dejaVus||[]);
+  const profil=rdProfilStyle(recipes, ingredients);
+  const goûts=ingredients.filter(i=> i.type!=='texture' && (i.registre===registre||i.registre==='mixte'));
+  const cle=(a,b)=>[a,b].sort().join('||');
+  const maxFam=Math.max(1,...Object.values(profil.familleCount));
+  const famScore=(f)=>(profil.familleCount[f]||0)/maxFam;
+
+  const candidats=[];
+  if(facon==='greffe'){
+    // A pose l'ancrage = ingrédient d'une famille fréquente chez toi.
+    // B greffe = un partenaire de famille ÉLOIGNÉE (affinité basse → surprise).
+    const ancres=goûts.filter(i=>famScore(i.famille)>=0.5);
+    const base=ancres.length?ancres:goûts;   // au mieux avec le peu
+    base.forEach(anc=>{
+      goûts.forEach(part=>{
+        if(_n(anc.nom)===_n(part.nom)) return;
+        const aff=rdAffinite(anc.famille, part.famille);
+        if(aff>0.55) return;                  // on veut la rencontre inattendue
+        const sc=rdScorePaire(anc,part);
+        candidats.push({a:anc.nom,b:part.nom,type:'pxp',origine:'ensemble',facon:'greffe',
+          gourmandise:sc.gourmandise, originalite:sc.originalite,
+          _ancre:Math.round(famScore(anc.famille)*100), _k:cle(anc.nom,part.nom)});
+      });
+    });
+    // pertinence : ancrage fort chez toi + bonne originalité (le pied dans l'inconnu)
+    candidats.sort((x,y)=>(y._ancre*0.5+y.originalite*0.6) - (x._ancre*0.5+x.originalite*0.6));
+  } else {
+    // FUSION : moyenne équilibrée style (A) + affinité (B).
+    for(let i=0;i<goûts.length;i++) for(let j=i+1;j<goûts.length;j++){
+      const a=goûts[i],b=goûts[j];
+      const sc=rdScorePaire(a,b);
+      const style=(famScore(a.famille)+famScore(b.famille))/2*100;
+      const fusion=(style + sc.gourmandise + sc.originalite)/3;
+      candidats.push({a:a.nom,b:b.nom,type:'pxp',origine:'ensemble',facon:'fusion',
+        gourmandise:sc.gourmandise, originalite:sc.originalite, _fusion:Math.round(fusion), _k:cle(a.nom,b.nom)});
+    }
+    candidats.sort((x,y)=>y._fusion-x._fusion);
+  }
+  let pool=candidats.filter(c=>!dejaVus.has(c._k));
+  const top=pool.slice(0,Math.max(n*6,18));
+  for(let i=top.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[top[i],top[j]]=[top[j],top[i]];}
+  // re-trie selon la façon
+  if(facon==='greffe') top.sort((x,y)=>(y._ancre*0.5+y.originalite*0.6)-(x._ancre*0.5+x.originalite*0.6));
+  else top.sort((x,y)=>y._fusion-x._fusion);
+  const sel=[];const used=new Set();
+  for(const c of top){ if(sel.length>=n)break; const an=_n(c.a),bn=_n(c.b);
+    if(used.has(an)||used.has(bn))continue; sel.push(c);used.add(an);used.add(bn); }
+  if(sel.length<n) for(const c of top){ if(sel.length>=n)break; if(!sel.includes(c))sel.push(c); }
+  return sel.map(({_k,...r})=>r);
+}
+// =============================================================================
+
+// Stubs temporaires (étapes 4-5 à venir) : écrans Idées et Journal.
+async function renderRDIdeesStub(){ const m=document.getElementById('main'); if(!m)return;
+  m.innerHTML=`<div class="rd-wrap"><div class="rd-head"><h2 class="rd-title">Mes idées</h2><p class="rd-sub">Bientôt disponible</p></div>
+  <div class="rd-empty"><span class="ic">💡</span>Le carnet d'idées arrive à la prochaine étape.<br><span class="rd-link" onclick="goView('rd')">← Retour à Imaginer</span></div></div>`; }
+async function renderRDJournalStub(){ const m=document.getElementById('main'); if(!m)return;
+  const pend = window._rdTestPourIdee;
+  m.innerHTML=`<div class="rd-wrap"><div class="rd-head"><h2 class="rd-title">Journal de tests</h2><p class="rd-sub">Bientôt disponible</p></div>
+  ${pend?`<div class="rd-hint">Idée prête à tester : <b>${esc(pend.a)} × ${esc(pend.b)}</b>. Le formulaire de test arrive à la prochaine étape.</div>`:''}
+  <div class="rd-empty"><span class="ic">🧪</span>Le journal de tests arrive à la prochaine étape.<br><span class="rd-link" onclick="goView('rd')">← Retour à Imaginer</span></div></div>`; }
+
+// ===================== R&D : ÉCRAN « IMAGINER » =====================
+// Branche les 3 moteurs (Toi / Inconnu / Ensemble) sur l'UI validée en maquette.
+// État global léger (pas de framework). Le rendu réinjecte selon window._rd*.
+
+// --- état ---
+window._rdMoteur   = window._rdMoteur   || 'style';   // 'style' | 'inconnu' | 'ensemble'
+window._rdRegistre = window._rdRegistre || 'sucre';   // 'sucre' | 'sale'
+window._rdMode     = window._rdMode     || 'pxp';     // 'pxp' | 'pxt' (B et style en pxp ; pxt dispo en inconnu)
+window._rdFacon    = window._rdFacon    || 'greffe';  // convergence : 'greffe' | 'fusion'
+window._rdCur      = (window._rdCur!=null) ? window._rdCur : 50;  // curseur 0..100
+window._rdProps    = window._rdProps    || [];        // dernières propositions affichées
+
+// Libellé du curseur selon le moteur courant.
+function rdCurLabel(){
+  const v=+window._rdCur, m=window._rdMoteur;
+  if(m==='style'){
+    if(v<25) return 'Très fidèle — variations fines de tes classiques';
+    if(v<45) return 'Plutôt fidèle, avec un pas de côté';
+    if(v<=55) return 'Équilibré — ta patte, un peu élargie';
+    if(v<75) return 'Explorateur — cousines plus lointaines';
+    return 'Grand large — tes familles, poussées loin';
+  }
+  if(m==='inconnu'){
+    if(v<25) return "Surprends-moi — priorité à l'audace";
+    if(v<45) return 'Plutôt original, avec un garde-fou';
+    if(v<=55) return 'Équilibré — surprise et plaisir';
+    if(v<75) return "Plutôt gourmand, une pointe d'originalité";
+    return 'Valeur sûre — priorité au plaisir';
+  }
+  return 'Le curseur affine selon la façon choisie';
+}
+
+// Récupère recettes + ingrédients, lance le bon moteur, stocke les propositions.
+async function rdGenererMaintenant(){
+  const ingredients = await db.rdIngredients.toArray().catch(()=>[]);
+  if(!ingredients.length){ window._rdProps=[]; rdRenderProps(); return; }
+  let recipes=[]; try{ recipes = await db.recipes.toArray(); }catch(e){}
+  // exclure les idées déjà testées/abandonnées (clé a||b normalisée)
+  let dejaVus=[];
+  try{
+    const idees = await db.rdIdees.toArray();
+    const _n=(s)=>(s||'').toLowerCase();
+    dejaVus = idees.filter(i=>i.statut==='abandonnee'||i.statut==='adoptee')
+                   .map(i=>[_n(i.a),_n(i.b)].sort().join('||'));
+  }catch(e){}
+
+  const opts = { curseur:+window._rdCur, registre:window._rdRegistre, n:3, dejaVus };
+  let props=[];
+  try{
+    if(window._rdMoteur==='style'){
+      const r = rdGenereStyle(recipes, ingredients, opts);
+      window._rdProfil = r.profil;
+      props = r.idees;
+    } else if(window._rdMoteur==='inconnu'){
+      props = rdGenere(ingredients, {...opts, mode:window._rdMode});
+    } else {
+      props = rdGenereEnsemble(recipes, ingredients, {...opts, facon:window._rdFacon});
+    }
+  }catch(e){ console.error('rdGenerer', e); }
+  window._rdProps = props || [];
+  rdRenderProps();
+}
+
+// Marqueur d'origine d'une idée.
+function rdOrigBadge(origine){
+  if(origine==='style')    return '<span class="rd-orig st">🏠 Toi</span>';
+  if(origine==='ensemble') return '<span class="rd-orig en">🔀 Ensemble</span>';
+  return '<span class="rd-orig in">✨ Inconnu</span>';
+}
+
+// Carte d'une proposition, avec les deux barres et les actions.
+function rdCarteIdee(d, idx){
+  const orig = d.origine || (window._rdMoteur==='style'?'style':window._rdMoteur==='ensemble'?'ensemble':'inconnu');
+  const typeTxt = d.type==='pxt' ? 'Parfum × Texture' : 'Parfum × Parfum';
+  return `<div class="rd-idee" id="rd-idee-${idx}">
+    <div class="rd-idee-top">${rdOrigBadge(orig)}<span class="rd-type">${typeTxt}</span></div>
+    <div class="rd-duo">${esc(d.a)} <span class="x">×</span> ${esc(d.b)}</div>
+    <div class="rd-scores">
+      <div class="rd-score"><div class="rd-s-lbl">Originalité</div><div class="rd-bar orig"><i style="width:${d.originalite}%"></i></div><div class="rd-s-val">${d.originalite}</div></div>
+      <div class="rd-score"><div class="rd-s-lbl">Gourmandise</div><div class="rd-bar gour"><i style="width:${d.gourmandise}%"></i></div><div class="rd-s-val">${d.gourmandise}</div></div>
+    </div>
+    <div class="rd-idee-act">
+      <button class="rd-keep" onclick="rdGarderIdee(${idx})">💡 Garder</button>
+      <button class="rd-test" onclick="rdTesterIdee(${idx})">🧪 Tester</button>
+      <button class="rd-skip" onclick="rdPasserIdee(${idx})">passer</button>
+    </div>
+  </div>`;
+}
+
+// Réinjecte uniquement la zone des propositions (sans reconstruire tout l'écran).
+function rdRenderProps(){
+  const zone=document.getElementById('rd-props'); if(!zone) return;
+  const props=window._rdProps||[];
+  if(!props.length){
+    zone.innerHTML = `<div class="rd-empty"><span class="ic">🧪</span>
+      Aucune proposition pour l'instant.<br>Règle le curseur et touche <b>Proposer</b>.</div>`;
+    return;
+  }
+  zone.innerHTML = props.map((d,i)=>rdCarteIdee(d,i)).join('');
+}
+
+// --- actions sur une proposition ---
+async function rdGarderIdee(idx){
+  const d=(window._rdProps||[])[idx]; if(!d) return;
+  await rdEnregistrerIdee(d, 'a_tester');
+  const el=document.getElementById('rd-idee-'+idx);
+  if(el){ el.style.opacity=.5; el.querySelector('.rd-idee-act').innerHTML='<span class="rd-saved">✓ gardée dans tes idées</span>'; }
+  toast('Idée gardée 💡');
+}
+async function rdTesterIdee(idx){
+  const d=(window._rdProps||[])[idx]; if(!d) return;
+  const idee = await rdEnregistrerIdee(d, 'en_test');
+  // ouvrira le journal pré-rempli (étape 5). Pour l'instant : on bascule l'écran et on signale.
+  window._rdTestPourIdee = idee;
+  toast('Idée prête à tester 🧪');
+  goView('rdjournal'); // créé à l'étape 5 ; fallback géré là-bas
+}
+function rdPasserIdee(idx){
+  const el=document.getElementById('rd-idee-'+idx);
+  if(el){ el.style.transition='.2s'; el.style.opacity=0; el.style.height=el.offsetHeight+'px';
+    setTimeout(()=>{ el.style.height='0'; el.style.margin='0'; el.style.padding='0'; },180); }
+}
+
+// Enregistre une idée (idempotent sur a||b||type) et renvoie l'objet.
+async function rdEnregistrerIdee(d, statut){
+  const _n=(s)=>(s||'').toLowerCase();
+  const k=[_n(d.a),_n(d.b)].sort().join('||');
+  const existantes = await db.rdIdees.toArray().catch(()=>[]);
+  const hit = existantes.find(i=>[_n(i.a),_n(i.b)].sort().join('||')===k && i.type===d.type);
+  if(hit){
+    if(statut && hit.statut==='a_tester' && statut==='en_test'){ await db.rdIdees.update(hit.id,{statut}); hit.statut=statut; }
+    return hit;
+  }
+  const obj={ a:d.a, b:d.b, type:d.type||'pxp', origine:d.origine||window._rdMoteur,
+    originalite:d.originalite, gourmandise:d.gourmandise, statut:statut||'a_tester',
+    note:'', date:new Date().toISOString().slice(0,10) };
+  const id=await db.rdIdees.add(obj); obj.id=id; return obj;
+}
+
+// --- changements d'état (re-render léger) ---
+function rdSetMoteur(m){ window._rdMoteur=m; window._rdProps=[]; renderRD(); }
+function rdSetRegistre(r){ window._rdRegistre=r; renderRD(); }
+function rdSetFacon(f){ window._rdFacon=f; renderRD(); }
+function rdSetMode(m){ window._rdMode=m; renderRD(); }
+function rdCurMove(v){ window._rdCur=+v; const t=document.getElementById('rd-curtxt'); if(t)t.textContent=rdCurLabel(); }
+
+// --- écran principal ---
+async function renderRD(){
+  const main=document.getElementById('main'); if(!main) return;
+  const ingredients = await db.rdIngredients.toArray().catch(()=>[]);
+  const nIng = ingredients.length;
+  const m=window._rdMoteur, reg=window._rdRegistre;
+
+  // bandeau "peu de recettes" pour le moteur style
+  let styleHint='';
+  if(m==='style'){
+    let nRec=0; try{ nRec=await db.recipes.count(); }catch(e){}
+    if(nRec<3) styleHint = `<div class="rd-hint">Encore peu de recettes : je m'inspire de ce que j'ai, ça s'affinera à mesure que tu en ajoutes.</div>`;
+  }
+
+  // options spécifiques au moteur
+  let options='';
+  if(m==='inconnu'){
+    options = `<div class="rd-chips">
+      <span class="rd-chip ${window._rdMode==='pxp'?'on':''}" onclick="rdSetMode('pxp')">Parfum × Parfum</span>
+      <span class="rd-chip ${window._rdMode==='pxt'?'on':''}" onclick="rdSetMode('pxt')">Parfum × Texture</span>
+    </div>`;
+  } else if(m==='ensemble'){
+    options = `<div class="rd-facon">
+      <button class="rd-facon-btn ${window._rdFacon==='greffe'?'on':''}" onclick="rdSetFacon('greffe')">
+        <b>Greffe</b><span>ta signature + une rencontre inattendue</span></button>
+      <button class="rd-facon-btn ${window._rdFacon==='fusion'?'on':''}" onclick="rdSetFacon('fusion')">
+        <b>Fusion</b><span>un équilibre entre les deux moteurs</span></button>
+    </div>`;
+  }
+
+  main.innerHTML = `
+  <div class="rd-wrap">
+    <div class="rd-head">
+      <h2 class="rd-title">Atelier R&amp;D</h2>
+      <p class="rd-sub">Imagine, teste, garde ce qui marche</p>
+    </div>
+
+    <div class="rd-moteurs">
+      <button class="rd-mot ${m==='style'?'on':''}" onclick="rdSetMoteur('style')"><span class="mi">🏠</span>Toi</button>
+      <button class="rd-mot ${m==='inconnu'?'on':''}" onclick="rdSetMoteur('inconnu')"><span class="mi">✨</span>Inconnu</button>
+      <button class="rd-mot ${m==='ensemble'?'on':''}" onclick="rdSetMoteur('ensemble')"><span class="mi">🔀</span>Ensemble</button>
+    </div>
+    <p class="rd-mot-desc">${
+      m==='style' ? "Inspiré de tes recettes : ta patte, tes familles, tes duos."
+      : m==='inconnu' ? "Indépendant de ton métier : les accords aromatiques purs, l'inattendu."
+      : "Tes deux moteurs convergent pour inventer ensemble."
+    }</p>
+
+    ${styleHint}
+
+    <div class="rd-gen">
+      <div class="rd-reg">
+        <button class="rd-reg-btn ${reg==='sucre'?'on':''}" onclick="rdSetRegistre('sucre')">🍯 Sucré</button>
+        <button class="rd-reg-btn ${reg==='sale'?'on':''}" onclick="rdSetRegistre('sale')">🧀 Salé</button>
+      </div>
+
+      ${options}
+
+      ${m!=='ensemble' ? `
+      <div class="rd-cur-lbl"><span>${m==='style'?'🏠 Fidèle':'🌶️ Original'}</span><span>${m==='style'?'Explorateur 🧭':'Gourmand 🍯'}</span></div>
+      <input type="range" min="0" max="100" value="${window._rdCur}" class="rd-range" oninput="rdCurMove(this.value)">
+      <div class="rd-cur-txt" id="rd-curtxt">${rdCurLabel()}</div>` : ''}
+
+      <button class="rd-go" onclick="rdGenererMaintenant()">✨ Proposer 3 associations</button>
+    </div>
+
+    ${nIng===0 ? `<div class="rd-empty"><span class="ic">📦</span>Le répertoire d'ingrédients n'est pas encore chargé.<br>Ferme et rouvre l'app, il s'installe au démarrage.</div>` : ''}
+
+    <div id="rd-props"></div>
+
+    <p class="rd-foot">${nIng} ingrédients dans ta palette · <span class="rd-link" onclick="goView('rdidees')">💡 Mes idées</span> · <span class="rd-link" onclick="goView('rdjournal')">🧪 Journal</span></p>
+  </div>`;
+
+  rdRenderProps();
+}
+// =============================================================================
+
 // 14 allergènes à déclaration obligatoire (règlement INCO 1169/2011). Servent à
 // l'étiquetage et seront réutilisés par la boutique en ligne (information avant achat).
 const ALLERGENS = [
@@ -1383,6 +2047,9 @@ const VIEWS = {
   // renderAccueil (« Le Fil ») reste intégralement dans le code, dormant. Pour le REBRANCHER :
   // remettre `accueil:renderAccueil,` ci-dessous. Rien d'autre à toucher.
   accueil:renderDash,
+  rd:renderRD,
+  rdidees:renderRDIdeesStub,
+  rdjournal:renderRDJournalStub,
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
@@ -40615,6 +41282,7 @@ function startClock(){
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
+    try{ const r=await rdSeedSiVide(); diagPublish('rd_seed','R&D · seed ingrédients', r); }catch(e){ console.error('rdSeed',e); }
     try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
     try{ await prodSessHydrate(); }catch(e){ console.error('prodSessHydrate',e); }
   }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }

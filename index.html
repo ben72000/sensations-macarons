@@ -20,6 +20,82 @@
 /* Bellota : titres et accents (remplace l'ancienne Fraunces) */
 @font-face{font-family:'Bellota';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/BellotaText-Regular.ttf') format('truetype')}
 @font-face{font-family:'Bellota';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/BellotaText-Bold.ttf') format('truetype')}
+
+/* ===================== R&D « Imaginer » ===================== */
+.rd-wrap{padding:4px 2px 30px;max-width:520px;margin:0 auto}
+.rd-head{padding:6px 4px 14px}
+.rd-title{font-family:Georgia,'Times New Roman',serif;font-size:1.5rem;margin:0;color:var(--bordeaux);font-weight:600}
+.rd-sub{margin:3px 0 0;font-size:.82rem;color:#9a8a82}
+/* sélecteur 3 moteurs */
+.rd-moteurs{display:flex;gap:7px;margin:6px 0 8px}
+.rd-mot{flex:1;background:#fff;border:1.5px solid var(--creme);border-radius:13px;padding:11px 4px;
+  font-size:.84rem;font-weight:600;color:var(--bordeaux);cursor:pointer;transition:.15s;
+  display:flex;flex-direction:column;align-items:center;gap:3px}
+.rd-mot .mi{font-size:1.25rem}
+.rd-mot.on{background:linear-gradient(135deg,var(--caramel-2),var(--caramel));color:#fff;border-color:transparent;
+  box-shadow:0 5px 16px rgba(170,124,57,.35)}
+.rd-mot-desc{font-size:.78rem;color:#6a5a72;margin:0 2px 12px;line-height:1.4;min-height:1.4em}
+.rd-hint{background:#fbeede;border:1px solid #e8cfa0;color:#9a5b16;border-radius:11px;
+  padding:9px 12px;font-size:.78rem;line-height:1.4;margin-bottom:12px}
+/* bloc générateur */
+.rd-gen{background:linear-gradient(155deg,#fff,var(--creme-2));border:1px solid var(--creme);
+  border-radius:16px;padding:14px;margin-bottom:14px;box-shadow:0 2px 10px var(--shadow)}
+.rd-reg{display:flex;gap:7px;margin-bottom:11px}
+.rd-reg-btn{flex:1;background:#fff;border:1.5px solid var(--creme);border-radius:11px;padding:9px;
+  font-size:.84rem;font-weight:600;color:var(--bordeaux);cursor:pointer}
+.rd-reg-btn.on{background:var(--bordeaux);color:#fff;border-color:transparent}
+.rd-chips{display:flex;gap:7px;margin-bottom:11px}
+.rd-chip{flex:1;text-align:center;font-size:.78rem;padding:8px;border-radius:11px;
+  background:#fff;border:1.5px solid var(--creme);color:var(--bordeaux);cursor:pointer;font-weight:600}
+.rd-chip.on{background:var(--caramel);color:#fff;border-color:transparent}
+/* façon de convergence */
+.rd-facon{display:flex;flex-direction:column;gap:7px;margin-bottom:11px}
+.rd-facon-btn{text-align:left;background:#fff;border:1.5px solid var(--creme);border-radius:12px;
+  padding:10px 12px;cursor:pointer;color:var(--bordeaux);display:flex;flex-direction:column;gap:1px}
+.rd-facon-btn b{font-size:.88rem}
+.rd-facon-btn span{font-size:.73rem;color:#9a8a82;font-weight:400}
+.rd-facon-btn.on{border-color:var(--caramel);background:#fbeede}
+.rd-facon-btn.on span{color:#9a5b16}
+/* curseur */
+.rd-cur-lbl{display:flex;justify-content:space-between;font-size:.72rem;margin:2px 0 5px;color:var(--bordeaux);font-weight:600}
+.rd-range{width:100%;-webkit-appearance:none;height:6px;border-radius:6px;
+  background:linear-gradient(90deg,var(--caramel),#b04a3e);outline:none;margin:2px 0 4px}
+.rd-range::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;
+  background:#fff;border:3px solid var(--caramel);cursor:pointer;box-shadow:0 2px 7px rgba(0,0,0,.25)}
+.rd-cur-txt{font-size:.74rem;color:#6a5a72;text-align:center;margin-bottom:4px;font-style:italic}
+.rd-go{display:block;width:100%;border:none;border-radius:13px;padding:13px;margin-top:10px;
+  font-size:.94rem;font-weight:600;color:#fff;cursor:pointer;
+  background:linear-gradient(135deg,var(--caramel-2),var(--caramel));box-shadow:0 4px 16px rgba(170,124,57,.4)}
+/* carte idée */
+.rd-idee{background:#fff;border:1px solid var(--creme);border-radius:15px;padding:14px;margin-bottom:12px;
+  box-shadow:0 2px 9px var(--shadow);overflow:hidden}
+.rd-idee-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+.rd-orig{font-size:.66rem;font-weight:700;padding:3px 9px;border-radius:11px;letter-spacing:.3px}
+.rd-orig.st{background:#eef6ef;color:#2e7d32}
+.rd-orig.in{background:#f0e8f5;color:#7a4b9a}
+.rd-orig.en{background:#fbeede;color:#9a5b16}
+.rd-type{font-size:.64rem;text-transform:uppercase;letter-spacing:1.3px;color:#b3a59c}
+.rd-duo{font-family:Georgia,serif;font-size:1.2rem;font-weight:600;color:var(--bordeaux);margin-bottom:4px}
+.rd-duo .x{color:var(--caramel);margin:0 5px;font-weight:400}
+.rd-scores{display:flex;gap:10px;margin:11px 0 4px}
+.rd-score{flex:1}
+.rd-s-lbl{font-size:.62rem;text-transform:uppercase;letter-spacing:.7px;color:#9a8a82;margin-bottom:3px}
+.rd-bar{height:7px;border-radius:6px;background:var(--creme);overflow:hidden}
+.rd-bar i{display:block;height:100%;border-radius:6px}
+.rd-bar.orig i{background:linear-gradient(90deg,#b04a3e,#d98324)}
+.rd-bar.gour i{background:linear-gradient(90deg,var(--caramel),#e0b25e)}
+.rd-s-val{font-size:.72rem;margin-top:2px;color:var(--bordeaux);font-weight:700}
+.rd-idee-act{display:flex;gap:7px;margin-top:12px}
+.rd-idee-act button{flex:1;font-size:.78rem;padding:9px;border-radius:10px;cursor:pointer;font-weight:600;border:1px solid transparent}
+.rd-keep{background:#eef6ef;color:#2e7d32;border-color:#bcdcc2!important}
+.rd-test{background:#fbeede;color:#9a5b16;border-color:#e8cfa0!important}
+.rd-skip{background:#f6f2ec;color:#9a8a82;border-color:var(--creme)!important;flex:0 0 70px!important}
+.rd-saved{font-size:.8rem;color:#2e7d32;font-weight:600;padding:6px 0;display:block;text-align:center}
+.rd-empty{text-align:center;padding:28px 16px;color:#9a8a82;font-size:.84rem;line-height:1.5}
+.rd-empty .ic{font-size:2rem;display:block;margin-bottom:8px;opacity:.55}
+.rd-foot{font-size:.74rem;color:#9a8a82;text-align:center;margin-top:16px}
+.rd-link{color:var(--caramel);font-weight:600;cursor:pointer}
+
 </style>
 <style>
 :root{
@@ -1391,10 +1467,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=961" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=961"></script>
-<script src="utils.js?v=961"></script>
-<script src="app.js?v=961"></script>
+<script src="html5-qrcode.min.js?v=965" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=965"></script>
+<script src="utils.js?v=965"></script>
+<script src="app.js?v=965"></script>
 <div class="froid-sheet" id="froid-sheet" onclick="if(event.target.id==='froid-sheet')_froidCloseDessus()">
   <div class="froid-sheet-card">
     <button class="froid-closex" onclick="_froidCloseDessus()">✕</button>
