@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v929';
+const APP_VERSION = 'v932';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19256,7 +19256,9 @@ async function renderEvents(){
 function aiNormalize(s){
   return (s||'').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // enlève accents
-    .replace(/[\u2018\u2019\u02BC\u2032]/g,"'").replace(/\s+/g,' ').trim();
+    .replace(/[\u2018\u2019\u02BC\u2032]/g,"'")       // apostrophes typographiques → '
+    .replace(/[-\u2010\u2011\u2012\u2013\u2014]/g,' ') // tirets/traits d'union → espace (qu'est-ce → qu'est ce)
+    .replace(/\s+/g,' ').trim();
 }
 // Distance de Levenshtein (nb de modifications), sur noms normalisés.
 function levenshtein(a, b){
@@ -19534,37 +19536,41 @@ function parseIntent(texte, ctx){
   // le marché », « ma répartition pour le marché ». Placé AVANT le conseil global car « conseille » +
   // « marché » doit aller vers le prédictif marché, pas vers le conseil de production général.
   if(/\bmarche[s]?\b/.test(t)
-     && /\b(prendre|emmener|emporter|amener|conseil|conseill|prepare|prevoir|prevois|repartition|repartir|combien|quoi (pour|prendre|emmener)|que (prendre|faut|emmener))/.test(t)){
+     && /\b(prendre|emmener|emporter|amener|conseil|conseill|prepare|prevoir|prevois|repartition|repartir|combien|quoi (pour|prendre|emmener|emporter|amener)|que (prendre|faut|emmener)|qu'?est ce que je (prends|prend|emmene|emporte|amene)|j'?emmene|j'?emporte|j'?amene)/.test(t)){
     const date = aiParseDate(t);
     return {intent:'query_market_advice', params:{date}, critical:false,
       label:'Conseil pour ton prochain marché'};
   }
   // CONSEIL GLOBAL : "conseille-moi", "quoi faire", "par quoi je commence", "qu'est-ce que je dois faire"
-  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je |on )?commenc|(je|on) commence par quoi|commence t on|programme (du jour|de la journee|du matin)|quel est le programme|programme aujourd|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr|quel plan de production|propose[s]? (moi )?(un )?plan|quel plan (proposes?|tu propose)|plan de prod du jour)/.test(t)
-     && !/\bstock\b|combien|reste/.test(t)){
+  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je |on )?commenc|(je|on) commence par quoi|commence t on|programme (du jour|de la journee|du matin)|quel est le programme|programme aujourd|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr|quel plan de production|propose[s]? (moi )?(un )?plan|quel plan (proposes?|tu propose)|plan de prod du jour|c'?est quoi le programme|je fais quoi (en premier|d'?abord|maintenant)|qu'?est ce que je fais en premier|(un )?plan pour (aujourd|la journee|ce jour|demain)|je sais pas par ou commencer|sais pas par ou commencer|qu'?est ce qui est prioritaire|c'?est quoi le plus urgent|le plus urgent|quoi en premier|on fait quoi)/.test(t)
+     && !/\bstock\b|combien|reste/.test(t)
+     && !/\b(ecouler|lancer|produire|fabriquer|perime|perimer|monter|en production|livrer|a livrer)\b/.test(t)
+     && !/\b(de quoi faire|assez de|cloche)\b/.test(t)
+     && !/\b(business|commercial|commerciaux|ma marge|mes marges|rentabilite|gagner plus|vendre plus|mon ca|mes profits|mes benefices|mon chiffre|mon activite)\b/.test(t)){
     return {intent:'query_advice', params:{}, critical:false, label:'Mon conseil de production du moment'};
   }
   // EN RETARD : "qu'est-ce qui est en retard", "mes retards", "suis-je en retard"
-  if(/\b(en retard|du retard|des retards|mes retards|retard de|retards de|suis je en retard|j'?ai du retard|quoi.*retard|qu'?est ce.*retard)\b/.test(t)){
+  if(/\b(en retard|du retard|des retards|mes retards|retard de|retards de|suis je en retard|j'?ai du retard|quoi.*retard|qu'?est ce.*retard|a la bourre|suis je a la bourre|en retard sur|pas dans les temps|du mal a suivre|qui traine|qui traînent|ca traine|a jour ou pas|tout est a jour|suis je a jour|est ce que tout est a jour|pas a jour)\b/.test(t)){
     return {intent:'query_retards', params:{}, critical:false, label:'Ce qui est en retard'};
   }
   // PÉRIME / DLC : "qu'est-ce qui périme", "dlc proche", "ce qui va se perdre"
-  if(/\b(perim|perime|perimer|va perim|vont perim|bientot perim|dlc|date limite|va se perdre|vont se perdre|se perdre|se perd|gaspill|a ecouler|a vendre vite|expire|expiration)\b/.test(t)
+  if(/\b(perim|perime|perimer|va perim|vont perim|bientot perim|dlc|date limite|va se perdre|vont se perdre|se perdre|se perd|gaspill|a ecouler|ecouler|je dois ecouler|a vendre vite|expire|expiration|perimes|bientot perimes|sont perimes|presque perimes|craint niveau date|va tourner|vont tourner|fin de vie|en fin de vie)\b/.test(t)
      && !/matiere|matieres|ingredient/.test(t)){
     return {intent:'query_dlc_finis', params:{}, critical:false, label:'Ce qui approche de sa DLC'};
   }
   // FAISABILITÉ TEMPS : "est-ce que je tiens", "j'ai le temps", "ça rentre dans mon planning"
-  if(/\b(je tiens|tiens je|le temps de|assez de temps|ai je le temps|ca rentre|ca tient|tient ca|dans (mon|le) temps|dans (mon|le) planning|delais? tenable|tenir (mes|les) delais|surcharge|surcharg)\b/.test(t)){
+  if(/\b(je tiens|tiens je|le temps de|assez de temps|ai je le temps|ca rentre|ca tient|tient ca|dans (mon|le) temps|dans (mon|le) planning|delais? tenable|tenir (mes|les) delais|surcharge|surcharg|j'?ai le temps|ai je le temps|est ce que j'?ai le temps|jouable|c'?est jouable|est ce jouable|est ce gerable|gerable|dans les temps|dans les clous|ca passe|est ce que ca passe|ma semaine tient|est ce que ma semaine tient|semaine tient)\b/.test(t)){
     return {intent:'query_faisabilite', params:{}, critical:false, label:'Faisabilité dans mon temps'};
   }
   // ORGANISER LES FOURNÉES : "organise ma production", "groupe mes fournées", "optimise mes meringues"
-  if(/\b(organise|organiser|groupe|grouper|regroupe|regrouper|optimise|optimiser|ordonnanc|mes fournees|ma production|mes meringues|combien de meringues|plan de fabrication|comment produire)\b/.test(t)
-     && !/quoi produire|que produire|quoi faire/.test(t)){
+  if(/\b(organise|organiser|groupe|grouper|regroupe|regrouper|optimise|optimiser|ordonnanc|mes fournees|ma production|mes meringues|combien de meringues|plan de fabrication|plan de fournees|fais moi un plan de fournees|comment produire)\b/.test(t)
+     && !/quoi produire|que produire|quoi faire/.test(t)
+     && !/\b(rentabilite|ma marge|mes marges|business|gagner plus|vendre plus)\b/.test(t)){
     return {intent:'query_ordo', params:{}, critical:false, label:'Organiser mes fournées'};
   }
   // [LOT 3] ALLERGÈNES : « quels allergènes dans le macaron chocolat », « y a-t-il du lait dans la
   // ganache citron ». Deux formes : liste complète, ou question oui/non sur UN allergène précis.
-  if(/\b(allergene|allergenes|allergie|allergies|allergene|contient|contiennent|y a t il (du|de|des)|il y a (du|de|des)|presence de|sans gluten|sans lait|sans)\b/.test(t)
+  if(/\b(allergene|allergenes|allergie|allergies|allergene|contient|contiennent|y a t il (du|de|des)|il y a (du|de|des)|presence de|sans gluten|sans lait|sans|a du|a de la|a des|contient elle|contient il)\b/.test(t)
      && (/\b(allergene|allergenes|allergie)\b/.test(t)
          || /\b(gluten|crustace|crustaces|oeuf|oeufs|poisson|poissons|arachide|arachides|soja|lait|fruits a coque|fruit a coque|noix|amande|celeri|moutarde|sesame|sulfite|sulfites|lupin|mollusque|mollusques)\b/.test(t))){
     const fl = aiFindFlavor(t, flavors);
@@ -19579,20 +19585,57 @@ function parseIntent(texte, ctx){
     return {intent:'query_allergenes', params:{flavor:fl, allergene}, critical:false,
       label: fl?`Allergènes — ${fl}`:'Allergènes d\'un parfum'};
   }
+  // [CHANTIER B] COÛT DE REVIENT d'un parfum : « combien me coûte un macaron chocolat », « le coût de
+  // revient de la pistache », « ça me coûte combien à produire ». Source : coutRevientRecette via la row.
+  if(/\b(cout de revient|cout unitaire|combien (ca |me |il )?(coute|coute t il)|coute combien|prix de revient|cout de prod|cout de production|cout de fabrication|ca me coute|combien (ca|il) revient|revient a combien|me revient|il me coute|me coute)\b/.test(t)
+     && !/\b(client|urssaf|cotisation|stock total|mon stock|coute de l'?argent|rentable|rentabilite|perdre de l'?argent)\b/.test(t)){
+    const fl = aiFindFlavor(t, flavors);
+    return {intent:'query_cout_revient', params:{flavor:fl}, critical:false,
+      label: fl?`Coût de revient — ${fl}`:'Coût de revient d\'un parfum'};
+  }
+  // [CHANTIER B] PRIX DE VENTE MOYEN d'un parfum : « à combien je vends le chocolat », « mon prix de
+  // vente moyen pistache ». Source : prixVenteMoyen de la row.
+  if(/\b(prix de vente|prix moyen|prix de vente moyen|a combien (je |je le )?(vends|vend|le vends)|je le vends combien|je vends a combien|tarif moyen|combien je (le )?vends|je vends .{0,20} a combien|a quel prix je (le )?vends|je vends le .{0,15} a combien)\b/.test(t)){
+    const fl = aiFindFlavor(t, flavors);
+    return {intent:'query_prix_vente', params:{flavor:fl}, critical:false,
+      label: fl?`Prix de vente moyen — ${fl}`:'Prix de vente moyen'};
+  }
+  // [CHANTIER B] VALEUR DU STOCK (matières/finis valorisés) : « combien vaut mon stock », « la valeur de
+  // mes matières », « j'ai pour combien de stock ». Source : analyzeFlavorProfitability.valStock.
+  if(/\b(valeur (de )?(mon |mes |du )?stock|combien vaut (mon |le )?stock|mon stock vaut|j'?ai pour combien (de |en )?stock|valeur (de )?mes matieres|combien (vaut|represente) mon stock|stock valorise|valorisation (du |de mon )?stock|valeur de mes stocks|combien d'?argent (dans |en )?(mon )?stock|mon stock represente combien|stock represente)\b/.test(t)){
+    return {intent:'query_valeur_stock', params:{}, critical:false, label:'Valeur de mon stock'};
+  }
+  // [CHANTIER B] PROCHAIN MARCHÉ : « c'est quand mon prochain marché », « mon prochain marché », « date du
+  // prochain marché ». Source : table markets triée par date.
+  if(/\b(prochain marche|prochains marches|quand (est|a lieu|c'?est) (mon |le )?(prochain )?marche|date (du |de mon )?(prochain )?marche|mon prochain marche|c'?est quand le marche|quand mon marche|marche prochain)\b/.test(t)){
+    return {intent:'query_prochain_marche', params:{}, critical:false, label:'Mon prochain marché'};
+  }
+  // [CHANTIER B] COMPARAISON DE DEUX MOIS : « compare mai et juin », « ce mois vs le mois dernier ».
+  // Source : computeStats.parMois. On résout 2 périodes.
+  if(/\b(compare|comparer|comparaison|versus|vs|par rapport (au|a) (mois|mai|juin|...)|ce mois (vs|contre|compare|par rapport)|evolution mois|ce mois par rapport)\b/.test(t)
+     && /\b(mois|janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)\b/.test(t)){
+    return {intent:'query_compare_mois', params:{}, critical:false, label:'Comparer deux mois'};
+  }
+  // [CHANTIER B] RECOMMANDATIONS BUSINESS : « comment améliorer ma marge », « des conseils business »,
+  // « comment gagner plus ». Source : flavorRecommendations. NB distinct de query_advice (production du jour).
+  if(/\b(ameliorer ma marge|ameliorer mes marges|gagner plus|comment gagner|conseils? business|conseils? commercial|conseils? commerciaux|comment (je peux )?ameliorer|optimiser ma rentabilite|augmenter (ma marge|mon ca|mes profits|mes benefices)|des conseils pour (gagner|vendre|ma marge|mon ca)|comment vendre plus|booster mes ventes|developper mon (ca|activite|chiffre))\b/.test(t)){
+    return {intent:'query_reco_business', params:{}, critical:false, label:'Recommandations business'};
+  }
   // RECETTE (éventuellement mise à l'échelle) : « donne-moi la recette des macarons citron pour 25
   // pièces », « recette de la ganache vanille ». Capte le parfum et un nombre de pièces optionnel.
   // GARDE : si la phrase interroge une DISPONIBILITÉ de stock (« assez de X », « il me reste », « stock de »),
   // ce n'est PAS une demande de recette mais de stock (query_stock_pour, traité juste après) → on laisse passer.
-  if(/\b(recette|recettes|ingredients|ingredient|proportions|quantites|dosage)\b/.test(t)
-     && !/\b(assez|suffi|suffisant|il me reste|me reste|reste t il|stock de|en stock|j'?ai assez|ai je assez)\b/.test(t)){
+  if(/\b(recette|recettes|ingredients|ingredient|proportions|quantites|dosage|comment (je )?(fais|faire|prepare|preparer)|comment on fait|composition (de|du|de la))\b/.test(t)
+     && !/\b(du mois|ce mois|mois dernier|ce mois ci)\b/.test(t)
+     && !/\b(assez|suffi|suffisant|il me reste|me reste|reste t il|stock de|en stock|j'?ai assez|ai je assez|produire|fabriquer|en production|a produire)\b/.test(t)){
     const fl = aiFindFlavor(t, flavors);
     const nb = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
     return {intent:'query_recipe', params:{flavor:fl, pieces:(nb&&nb>0)?nb:null}, critical:false,
       label: fl?`Recette « ${fl} »`:'Consulter une recette'};
   }
   // LOCALISATION des macarons finis : "où sont mes macarons vanille", "emplacement chocolat"
-  if(/\b(ou (se trouve|sont|est|se trouvent)|localis|emplacement|range|rangee|rangees|range ou|trouve mes|dans quel|quel congelateur|quel frigo)\b/.test(t)
-     && /\bmacaron|macarons\b/.test(t) || (/\bou\b/.test(t) && aiFindFlavor(t,flavors))){
+  if(/\b(ou (se trouve|sont|est|se trouvent)|localis|emplacement|range|rangee|rangees|range ou|trouve mes|dans quel|quel congelateur|quel frigo|conges?|congelo|congelateur|frigo|chambre froide|localise|localiser|retrouve|retrouver)\b/.test(t)
+     && (/\bmacaron|macarons\b/.test(t) || aiFindFlavor(t,flavors)) || (/\bou\b/.test(t) && aiFindFlavor(t,flavors))){
     const fl=aiFindFlavor(t,flavors);
     return {intent:'query_locate', params:{flavor:fl}, critical:false,
       label: fl?`Localiser les macarons « ${fl} »`:'Localiser des macarons finis'};
@@ -19602,24 +19645,28 @@ function parseIntent(texte, ctx){
   // reconnue + une notion de suffisance/échéance. Placé AVANT query_stock (qui montre le stock brut).
   {
     const _matPour = aiFindMaterial(t, materials);
-    if(_matPour && /\b(assez|suffi|suffisant|reste assez|tiendra|tenir|pour (ma |la |le |mes |demain|jeudi|aujourd|cette semaine)|pour ma commande|pour la commande)\b/.test(t)){
+    if(_matPour && /\b(assez|suffi|suffisant|reste assez|tiendra|tenir|pour (ma |la |le |mes |demain|jeudi|aujourd|cette semaine)|pour ma commande|pour la commande|de quoi faire (ma|la) commande|de quoi faire)\b/.test(t)){
       const date = (typeof aiParseDate==='function') ? aiParseDate(t) : null;
       return {intent:'query_stock_pour', params:{material:_matPour, date}, critical:false,
         label:`Assez de ${_matPour.nom} ?`};
     }
   }
   // stock d'une matière
-  if(/\b(stock|combien|reste|il reste|quantite)\b/.test(t) && !/commande/.test(t)
+  if(/\b(stock|combien|reste|il reste|quantite|j'?ai encore|j'?ai assez|me reste|niveau de stock|reste t il|en ai je)\b/.test(t) && !/commande/.test(t)
      && !/(gagn|rapport|encaiss|chiffre|recette|vente|vend|vendu|vendus)/.test(t)
      && !/(urssaf|cotisation|cotisations|charges sociales|declarer|declaration|me doit|me doivent|on me doit|reste a payer|impaye|echeances? de paiement|a encaisser)/.test(t)
-     && !/fait combien|combien.*fait|j'?ai fait|combien (de )?macarons?/.test(t)){
+     && !/fait combien|combien.*fait|j'?ai fait|combien (de )?macarons?/.test(t)
+     && !/\b(produire|produise|fabriquer|fabrique|lancer|lance|en production|coques|ganaches?)\b/.test(t)
+     && !/\b(rentre|paiement|paiements|a recevoir|a encaisser|recevoir)\b/.test(t)
+     && !/\b(revient|coute|coute t il|vends|vend|valeur|represente combien|d'?argent)\b/.test(t)){
     const mat=aiFindMaterial(t,materials);
     return {intent:'query_stock', params:{material:mat}, critical:false,
       label: mat?`Consulter le stock de « ${mat.nom} »`:'Consulter le stock'};
   }
   // commandes à préparer / à une date
-  if((/\b(commande|commandes)\b/.test(t) && /\b(a preparer|preparer|affiche|montre|liste|voir|quelles|du jour|aujourd|mes commandes|j'?ai quoi|quoi comme|a venir|cette semaine|demain)\b/.test(t))
-     || (/\b(livraison|livraisons|livrer)\b/.test(t) && /\b(prochaine|prochaines|a venir|mes|qui|prochainement|du jour|aujourd|cette semaine|demain|liste|montre|affiche)\b/.test(t) && !aiFindClient(t,clients))){
+  if((/\b(commande|commandes)\b/.test(t) && /\b(a preparer|preparer|affiche|montre|liste|voir|quelles|du jour|aujourd|mes commandes|j'?ai quoi|quoi comme|a venir|cette semaine|demain)\b/.test(t) && !/\b(paye|payee|payees|payes|pas (encore )?paye|regle|reglee|reglees|regles|pas regle|ne sont pas regle|impaye|impayee|pas (encore )?regle|doit|doivent|en attente)\b/.test(t))
+     || (/\b(livraison|livraisons|livrer)\b/.test(t) && /\b(prochaine|prochaines|a venir|mes|qui|prochainement|du jour|aujourd|cette semaine|demain|liste|montre|affiche)\b/.test(t) && !aiFindClient(t,clients))
+     || (/\b(a preparer|a livrer|qu'?est ce que j'?ai a preparer|j'?ai quoi a preparer|a faire pour|que (je )?dois livrer|qu'?est ce que je dois livrer|prochaines commandes|mes prochaines commandes)\b/.test(t) && !/produire|fabriquer|lancer/.test(t) && !aiFindClient(t,clients))){
     const date=aiParseDate(t);
     return {intent:'query_orders', params:{date, statut: /preparer/.test(t)?'À préparer':null}, critical:false,
       label: date?`Afficher les commandes du ${date}`:'Afficher les commandes / livraisons à venir'};
@@ -19627,7 +19674,7 @@ function parseIntent(texte, ctx){
   // [LOT 2] RENTABILITÉ (marge, pas volume) : « le parfum le plus rentable », « quel client me fait
   // gagner / perdre de l'argent », « ma meilleure marge ». Distingue la cible parfum vs client.
   // Placée AVANT top_parfum/top_clients pour que « rentable » prime sur « le plus vendu ».
-  if(/\b(rentable|rentables|rentabilite|marge|marges|gagner de l'?argent|perdre de l'?argent|me fait gagner|me fait perdre|fait gagner de l'?argent|fait perdre de l'?argent|le plus profitable|profitable|gagne de l'?argent|coute de l'?argent)\b/.test(t)){
+  if(/\b(rentable|rentables|rentabilite|marge|marges|gagner de l'?argent|perdre de l'?argent|me fait gagner|me fait perdre|fait gagner de l'?argent|fait perdre de l'?argent|le plus profitable|profitable|gagne de l'?argent|coute de l'?argent|me rapporte|rapporte le plus|rapporte le moins|qui rapporte|je gagne le plus|sur quel (macaron|parfum|client)|ou je gagne)\b/.test(t)){
     let cible=null;
     if(/\b(parfum|parfums|macaron|macarons|recette|recettes|saveur)\b/.test(t)) cible='parfum';
     else if(/\b(client|clients|qui)\b/.test(t)) cible='client';
@@ -19636,21 +19683,22 @@ function parseIntent(texte, ctx){
       label: cible==='client'?'Rentabilité par client':(cible==='parfum'?'Rentabilité par parfum':'Rentabilité')};
   }
   // top clients par parfum
-  if(/\b(client|clients)\b/.test(t) && /\b(plus|top|meilleur|meilleurs|fideles|gros|principaux|commandent|achetent|consomment|qui commande)\b/.test(t)){
+  if((/\b(client|clients)\b/.test(t) && /\b(plus|top|meilleur|meilleurs|fideles|gros|principaux|commandent|achetent|consomment|qui commande)\b/.test(t))
+     || /\bqui (commande|achete|consomme|prend) le plus\b/.test(t)){
     const fl=aiFindFlavor(t,flavors);
     return {intent:'query_top_clients', params:{flavor:fl}, critical:false,
       label: fl?`Clients qui commandent le plus de « ${fl} »`:'Meilleurs clients'};
   }
   // [LOT 3] URSSAF : « combien dois-je déclarer à l'URSSAF ce mois », « mes cotisations », « charges
   // sociales du mois ». Réutilise le bilan mensuel (computeMonthlyBilan). Période : ce mois / mois dernier.
-  if(/\b(urssaf|cotisation|cotisations|charges sociales|declarer|declaration|a declarer|micro entreprise|auto entrepreneur)\b/.test(t)){
+  if(/\b(urssaf|cotisation|cotisations|charges sociales|declarer|declaration|a declarer|micro entreprise|auto entrepreneur|mes charges)\b/.test(t)){
     let periode='moisCourant';
     if(/\b(mois (dernier|precedent|passe)|le mois d'?avant)\b/.test(t)) periode='moisDernier';
     return {intent:'query_urssaf', params:{periode}, critical:false, label:'Cotisations URSSAF à déclarer'};
   }
   // [LOT 3] PAIEMENTS DUS / IMPAYÉS : « combien me doit-on encore », « les échéances de paiement »,
   // « qui me doit de l'argent », « restes à payer ». Placée AVANT le CA pour ne pas être happée par « combien ».
-  if(/\b(me doit|me doivent|on me doit|qui me doit|reste a payer|restes a payer|reste a encaisser|impaye|impayes|impaye|en attente de paiement|pas (encore )?paye|pas (encore )?regle|echeances? de paiement|solde du|soldes dus|a encaisser|qui doit (payer|me))\b/.test(t)){
+  if(/\b(me doit|me doivent|on me doit|qui me doit|reste a payer|restes a payer|reste a encaisser|impaye|impayes|impaye|en attente de paiement|pas (encore )?paye[e]?s?|pas (encore )?regle[e]?s?|commandes? (pas )?(encore )?payee?s?|non payee?s?|non regle[e]?s?|ne sont pas regle[e]?s?|pas regle[e]?s?|paiements? en attente|en attente de paiement|qui doit (encore )?me payer|qui me doit encore|paiements? a recevoir|reste t il des paiements|a recevoir|echeances? de paiement|solde du|soldes dus|a encaisser|qui doit (payer|me))\b/.test(t)){
     return {intent:'query_paiements_dus', params:{}, critical:false, label:'Paiements en attente'};
   }
   // chiffre d'affaires
@@ -19658,13 +19706,16 @@ function parseIntent(texte, ctx){
      || /\b(mon|le|du|ton|notre) ca\b/.test(t)   // « mon CA », « le CA » (évite la collision avec « ça »)
      || (/\b(combien|total|montant)\b/.test(t) && /\b(gagn|fait|rapport|encaiss|mois|euros?|ca|chiffre)\b/.test(t))
      || (/\b(vente|ventes)\b/.test(t) && /\b(combien|total|mois|montant|euros?)\b/.test(t))
-     || /\bj'?ai fait combien\b|\bfait combien (ce|le|cette)\b|\bcombien j'?ai (fait|gagn|encaiss|vendu)\b|\bcombien (de )?macarons? (ai je |j'?ai )?vendu/.test(t)){
+     || /\bj'?ai fait combien\b|\bfait combien (ce|le|cette)\b|\bcombien j'?ai (fait|gagn|encaiss|vendu|rentre)\b|\bcombien (de )?macarons? (ai je |j'?ai )?vendu/.test(t)
+     || /\b(mes recettes du mois|recettes du mois|mes recettes ce mois)\b/.test(t)
+     || /\bcombien j'?ai rentre\b/.test(t)){
     // Période : « ce mois » / « le mois dernier » → clé AAAA-MM ; sinon null (vue globale).
     let periode=null;
     if(/\b(mois (dernier|precedent|passe)|le mois d'?avant)\b/.test(t)) periode='moisDernier';
     else if(/\b(ce mois|du mois|ce mois ci|mois en cours|courant)\b/.test(t)) periode='moisCourant';
     // Compte-t-on des macarons plutôt que des euros ?
     const enMacarons = /\bcombien (de )?macarons?\b/.test(t);
+    if(/\b(rentable|marge|profitable|je gagne le plus|sur quel|qui cloche|anomalie)\b/.test(t)) {} else
     return {intent:'query_revenue', params:{periode, enMacarons}, critical:false, label:'Consulter le chiffre d\'affaires'};
   }
 
@@ -19724,19 +19775,20 @@ function parseIntent(texte, ctx){
   // ---- ANALYSE AVANCÉE (consultations) ----
   // TOP PARFUM : « quel est le parfum le plus vendu », « mon meilleur parfum », « quel parfum se vend
   // le plus depuis 6 mois ». Placé AVANT les tendances : « parfum » + superlatif → classement, pas tendance.
-  if(/\bparfum[s]?\b/.test(t)
-     && /\b(le plus vendu|les plus vendus|plus vendu|meilleur|meilleurs|se vend le (plus|mieux)|se vendent le (plus|mieux)|top|cartonne le plus|numero un|numero 1|star|phare|populaire|plus populaire|plus demande)\b/.test(t)){
+  if((/\b(parfum[s]?|macaron[s]?|saveur[s]?)\b/.test(t) || /\b(numero un|numero 1|mon top) en vente/.test(t) || /en ventes?\b/.test(t))
+     && /\b(le plus vendu|les plus vendus|plus vendu|meilleur|meilleurs|se vend le (plus|mieux)|se vendent le (plus|mieux)|top|cartonne le plus|numero un|numero 1|star|phare|populaire|plus populaire|plus demande|marche le mieux|le plus ecoule|plus ecoule)\b/.test(t)){
     // Période optionnelle : « depuis N mois », « ce mois », « cette année », sinon tout l'historique.
     const periode = _aiParsePeriode(t);
     return {intent:'query_top_parfum', params:{periode}, critical:false,
       label:'Le parfum le plus vendu'};
   }
   // tendances de consommation (hausse/baisse)
-  if(/\b(tendance|tendances|evolue|evolution|hausse|baisse|progresse|recule|monte|descend|se vend|ca marche|qu'?est ce qui (se vend|marche|cartonne)|cartonne|popularite|plus demande)\b/.test(t)){
+  if(/\b(tendance|tendances|evolue|evolution|hausse|baisse|progresse|progressent|en progression|recule|reculent|monte|montent|descend|descendent|se vend|ca marche|qu'?est ce qui (se vend|marche|cartonne)|cartonne|popularite|de plus en plus|de moins en moins)\b/.test(t)
+     && !/\b(le mieux|le plus|meilleur|se vend le|numero un|numero 1|^top|mon top)\b/.test(t)){
     return {intent:'query_trends', params:{flavor: aiFindFlavor(t, flavors)}, critical:false, label:'Analyser les tendances de consommation'};
   }
   // anomalies / variations inhabituelles
-  if(/\b(anomalie|anomalies|inhabituel|inhabituelle|atypique|pic|creux|bizarre|etrange)\b/.test(t)){
+  if(/\b(anomalie|anomalies|inhabituel|inhabituelle|inhabituels|inhabituelles|atypique|atypiques|pic|pics|creux|bizarre|bizarres|etrange|etranges|anormal|anormale|anormaux|anormales|suspect|suspecte|suspects|suspectes|qui cloche|ecart|ecarts|comportements? (etrange|anormal|bizarre)|trucs bizarres|choses? anormale)\b/.test(t)){
     return {intent:'query_anomalies', params:{}, critical:false, label:'Détecter les anomalies de vente'};
   }
   // besoins de production / matières à produire
@@ -19744,7 +19796,14 @@ function parseIntent(texte, ctx){
       && /\b(faut|besoin|combien|matiere|matieres|premiere|prevoir|planifie|planifier)\b/.test(t))
      || /\b(quoi|que|qu'?est ce que|qu'?est-ce que)\b.*\b(lancer|produire|fabriquer|fournée|fournees)\b/.test(t)
      || /\b(je dois|dois je|faut il|a faire)\b.*\b(lancer|produire|fabriquer|preparer)\b/.test(t)
-     || /\b(quoi|que|qu'?est ce que) (je )?(dois|doit) (lancer|produire|fabriquer|faire comme prod)/.test(t)){
+     || /\b(quoi|que|qu'?est ce que) (je )?(dois|doit) (lancer|produire|fabriquer|faire comme prod)/.test(t)
+     || /\bcombien (de )?macarons? (je )?(dois|doit|faut) (faire|produire|lancer|fabriquer)/.test(t)
+     || /\bcombien (je )?(dois|doit|faut)( il)? (en )?(faire|produire|lancer|fabriquer)/.test(t)
+     || /\bcombien faut il (que je |que j'?)(produise|fasse|fabrique|lance)/.test(t)
+     || /\bcombien (de )?(coques|ganaches?|macarons?) (je )?(dois|doit|faut)/.test(t)
+     || /\b(mes besoins de production|ma liste de production|besoins de prod)\b/.test(t)
+     || /\b(quelles? quantites? (a )?produire|quantites? a produire)\b/.test(t)
+     || /\b(mettre en production|a mettre en prod)\b/.test(t)){
     return {intent:'query_production_needs', params:{}, critical:false, label:'Calculer les besoins de production'};
   }
   // rupture PRÉDICTIVE (rythme de ventes) : "quand", "combien de temps", "prévision", "tenir"
@@ -19753,7 +19812,7 @@ function parseIntent(texte, ctx){
     return {intent:'query_predict', params:{}, critical:false, label:'Prévoir les ruptures selon le rythme de ventes'};
   }
   // risque de rupture (immédiat : commandes + seuils)
-  if(/\b(rupture|risque|manque|manquer|epuise|epuiser|epuisement)\b/.test(t)){
+  if(/\b(rupture|ruptures|risque|manque|manquer|va me manquer|vais manquer|epuise|epuisee|epuisees|epuiser|epuisement|a court|racheter d'?urgence|tomber a zero|presque (epuise|fini|vide)|bientot (epuise|vide|fini)|menace de manquer|a racheter)\b/.test(t)){
     return {intent:'query_rupture', params:{}, critical:false, label:'Détecter les risques de rupture'};
   }
 
@@ -22505,6 +22564,12 @@ const INTENT_SHORTCUTS = {
   query_top_clients:      [ { label:'👥 Mes clients', view:'clients' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
   query_revenue:          [ { label:'📊 Ouvrir la compta', view:'compta' }, { label:'📈 Rentabilité', view:'rentabilite' }, { label:'⤓ Export comptable', action:'exportComptaCSV' } ],
   query_rentabilite:      [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'👥 Rentabilité clients', view:'rentabilite' } ],
+  query_cout_revient:     [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📖 Voir la recette', view:'recettes' } ],
+  query_prix_vente:       [ { label:'📈 Rentabilité parfums', view:'rentaparfum' } ],
+  query_valeur_stock:     [ { label:'📦 Voir le stock', view:'stock' } ],
+  query_prochain_marche:  [ { label:'🏪 Voir les marchés', view:'marches' } ],
+  query_compare_mois:     [ { label:'📊 Ouvrir la compta', view:'compta' } ],
+  query_reco_business:    [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📊 Compta', view:'compta' } ],
   query_urssaf:           [ { label:'📊 Ouvrir la compta', view:'compta' } ],
   query_paiements_dus:    [ { label:'📋 Voir les commandes', view:'commandes' } ],
   query_allergenes:       [ { label:'📖 Voir les recettes', view:'recettes' } ],
@@ -22700,7 +22765,9 @@ const INTENT_RELANCE = {
   query_stock:         { champ:'material', type:'matiere', question:'De quel ingrédient veux-tu connaître le stock ?' },
   query_stock_pour:    { champ:'material', type:'matiere', question:'Le stock de quelle matière veux-tu vérifier ?' },
   query_recipe:        { champ:'flavor',   type:'parfum',  question:'La recette de quel parfum veux-tu voir ?' },
-  query_allergenes:    { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu connaître les allergènes ?' }
+  query_allergenes:    { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu connaître les allergènes ?' },
+  query_cout_revient:  { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu le coût de revient ?' },
+  query_prix_vente:    { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu le prix de vente moyen ?' }
 };
 // [CLARIFICATION — étape C1] Routage unique pour résoudre un paramètre depuis du texte, selon son type.
 // Factorise le code déjà présent dans aiTryRelance (client/parfum/matiere/date). Réutilisé par le
@@ -22843,6 +22910,12 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_market_advice': return aiQueryMarketAdvice(r.params);
       case 'query_revenue': return aiQueryRevenue(r.params);
       case 'query_rentabilite': return aiQueryRentabilite(r.params);
+      case 'query_cout_revient': return aiQueryCoutRevient(r.params);
+      case 'query_prix_vente': return aiQueryPrixVente(r.params);
+      case 'query_valeur_stock': return aiQueryValeurStock();
+      case 'query_prochain_marche': return aiQueryProchainMarche();
+      case 'query_compare_mois': return aiQueryCompareMois();
+      case 'query_reco_business': return aiQueryRecoBusiness();
       case 'query_allergenes': return aiQueryAllergenes(r.params);
       case 'query_paiements_dus': return aiQueryPaiementsDus();
       case 'query_urssaf': return aiQueryUrssaf(r.params);
@@ -23692,6 +23765,132 @@ async function aiQueryAllergenes(params){
       ${liste.map(a=>`<span class="tag" style="background:#fbeede;color:#9a5b16;border:1px solid #e8cfa0;font-size:.8rem">${esc(a)}</span>`).join('')}</div>
     <p class="note">D'après ${source}. Toujours vérifier l'étiquetage avant remise au client.</p>`);
 }
+// [CHANTIER B] Helper commun : charge les données de profitabilité (source unique analyzeFlavorProfitability).
+async function _aiProfitData(){
+  const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
+    db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
+    db.orders.toArray(), db.markets.toArray(), (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]), db.productions.toArray()
+  ]);
+  const data = {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings:getSettings()};
+  return { data, A: analyzeFlavorProfitability(data) };
+}
+// Retrouve la row d'un parfum par nom (normalisé).
+function _aiRowParfum(A, flavor){
+  if(!A || !A.rows) return null;
+  const n=(s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  return A.rows.find(r=>n(r.nom)===n(flavor)) || A.rows.find(r=>n(r.nom).includes(n(flavor)) || n(flavor).includes(n(r.nom))) || null;
+}
+
+// [CHANTIER B] COÛT DE REVIENT d'un parfum.
+async function aiQueryCoutRevient(params){
+  params=params||{};
+  if(!params.flavor){
+    return aiSay(`<p>De quel parfum veux-tu le coût de revient ?</p><p class="note">Ex. « combien me coûte un macaron chocolat ».</p>`);
+  }
+  const {A}=await _aiProfitData();
+  const row=_aiRowParfum(A, params.flavor);
+  const cu = row && row.cost ? row.cost.coutRevientUnit : null;
+  if(cu==null){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Coût de revient — ${esc(params.flavor)}</h3>
+      <p class="note">Coût indisponible : il faut une recette (BOM) et des lots reçus avec prix pour ce parfum.</p>${aiShortcuts('query_cout_revient',{flavor:params.flavor})}`);
+  }
+  const pvm = row.prixVenteMoyen, marge = row.margeUnit;
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Coût de revient — ${esc(row.nom)}</h3>
+    <div class="sum-box"><span>Coût de revient unitaire</span><b>${euro(cu)}</b></div>
+    ${pvm!=null?`<div class="sum-box"><span>Prix de vente moyen</span><b>${euro(pvm)}</b></div>`:''}
+    ${marge!=null?`<div class="sum-box"><span>Marge unitaire</span><b style="color:${marge>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(marge)}${row.tauxMarge!=null?` · ${row.tauxMarge}%`:''}</b></div>`:''}
+    <p class="note">Coût = matières + emballage + main d'œuvre mesurée. ${aiShortcuts('query_cout_revient',{flavor:row.nom})}</p>`);
+}
+
+// [CHANTIER B] PRIX DE VENTE MOYEN d'un parfum.
+async function aiQueryPrixVente(params){
+  params=params||{};
+  if(!params.flavor){
+    return aiSay(`<p>De quel parfum veux-tu le prix de vente moyen ?</p><p class="note">Ex. « à combien je vends le chocolat ».</p>`);
+  }
+  const {A}=await _aiProfitData();
+  const row=_aiRowParfum(A, params.flavor);
+  if(!row || row.prixVenteMoyen==null){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Prix de vente moyen — ${esc(params.flavor)}</h3>
+      <p class="note">Pas encore de vente enregistrée pour ce parfum (le prix moyen se calcule sur les commandes payées).</p>`);
+  }
+  const cu = row.cost ? row.cost.coutRevientUnit : null;
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Prix de vente moyen — ${esc(row.nom)}</h3>
+    <div class="sum-box"><span>Prix de vente moyen</span><b>${euro(row.prixVenteMoyen)}</b></div>
+    ${cu!=null?`<div class="sum-box"><span>Coût de revient</span><b>${euro(cu)}</b></div>`:''}
+    ${row.margeUnit!=null?`<div class="sum-box"><span>Marge unitaire</span><b style="color:${row.margeUnit>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(row.margeUnit)}${row.tauxMarge!=null?` · ${row.tauxMarge}%`:''}</b></div>`:''}
+    <p class="note">Calculé sur tes commandes payées. ${aiShortcuts('query_prix_vente',{flavor:row.nom})}</p>`);
+}
+
+// [CHANTIER B] VALEUR DU STOCK valorisé.
+async function aiQueryValeurStock(){
+  const {A}=await _aiProfitData();
+  const val = A ? A.valStock : null;
+  if(val==null){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3><p class="note">Valeur indisponible (il faut des recettes et des lots avec prix).</p>`);
+  }
+  // Top contributeurs au stock valorisé.
+  const top=(A.rows||[]).filter(r=>r.valStockCout>0).sort((a,b)=>b.valStockCout-a.valStockCout).slice(0,6);
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(au coût de revient)</span></h3>
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-bottom:8px"><span><b>Valeur totale (finis)</b></span><b style="color:var(--bordeaux)">${euro(val)}</b></div>
+    ${top.length?'<p class="note" style="margin:4px 0">Principaux contributeurs :</p>'+top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''):''}
+    <p class="note">Stock de macarons finis valorisé au coût de revient. ${aiShortcuts('query_valeur_stock',{})}</p>`);
+}
+
+// [CHANTIER B] PROCHAIN MARCHÉ.
+async function aiQueryProchainMarche(){
+  const markets = await db.markets.toArray().catch(()=>[]);
+  const _local = new Date(); const auj = _local.getFullYear()+'-'+String(_local.getMonth()+1).padStart(2,'0')+'-'+String(_local.getDate()).padStart(2,'0');
+  const futurs = markets.filter(m=>m.date && m.date>=auj).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  if(!futurs.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Mon prochain marché</h3>
+      <p class="note">Aucun marché à venir enregistré. Tu peux en planifier dans l'écran Marchés.</p>${aiShortcuts('query_prochain_marche',{})}`);
+  }
+  const m=futurs[0];
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Mon prochain marché</h3>
+    <div class="sum-box"><span><b>${esc(m.nom||m.lieu||'Marché')}</b></span><b>${fmtDate(m.date)}</b></div>
+    ${m.lieu&&m.nom?`<div class="sum-box"><span>Lieu</span><b>${esc(m.lieu)}</b></div>`:''}
+    ${futurs.length>1?`<p class="note" style="margin-top:6px">Puis : ${futurs.slice(1,4).map(x=>`${esc(x.nom||x.lieu||'marché')} (${fmtDate(x.date)})`).join(' · ')}</p>`:''}
+    ${aiShortcuts('query_prochain_marche',{})}`);
+}
+
+// [CHANTIER B] COMPARAISON DE DEUX MOIS (par défaut : ce mois vs mois dernier).
+async function aiQueryCompareMois(){
+  const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
+  const R=computeStats(orders,clients,orderToLines);
+  const cle=(d)=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  const d0=new Date(); const d1=new Date(); d1.setMonth(d1.getMonth()-1);
+  const m0=cle(d0), m1=cle(d1);
+  const M0=R.global.parMois[m0]||{ca:0,macaronsStd:0}, M1=R.global.parMois[m1]||{ca:0,macaronsStd:0};
+  const dCA=(M0.ca||0)-(M1.ca||0);
+  const pct = (M1.ca>0) ? Math.round(dCA/M1.ca*1000)/10 : null;
+  const fleche = dCA>0?'▲':dCA<0?'▼':'=';
+  const col = dCA>0?'#3f7d52':dCA<0?'var(--red,#b3261e)':'#9a8a82';
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Comparaison — ce mois vs mois dernier</h3>
+    <div class="sum-box"><span>${m0} (ce mois)</span><b>${euro(M0.ca||0)}</b></div>
+    <div class="sum-box"><span>${m1} (mois dernier)</span><b>${euro(M1.ca||0)}</b></div>
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Écart</b></span><b style="color:${col}">${fleche} ${euro(Math.abs(dCA))}${pct!=null?` (${pct>0?'+':''}${pct}%)`:''}</b></div>
+    <p class="note">CA des commandes payées. Macarons : ${qty(M0.macaronsStd||0)} ce mois vs ${qty(M1.macaronsStd||0)} le mois dernier. ${aiShortcuts('query_compare_mois',{})}</p>`);
+}
+
+// [CHANTIER B] RECOMMANDATIONS BUSINESS (réutilise flavorRecommendations).
+async function aiQueryRecoBusiness(){
+  const {data, A}=await _aiProfitData();
+  let recos=[];
+  try{ recos = (typeof flavorRecommendations==='function') ? flavorRecommendations(A, data) : []; }catch(e){ console.error('reco',e); }
+  if(!recos || !recos.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Recommandations business</h3>
+      <p class="note">Pas encore assez de données (ventes + coûts) pour des recommandations fiables. Réceptionne des lots avec prix et enregistre des ventes payées.</p>${aiShortcuts('query_reco_business',{})}`);
+  }
+  const lignes = recos.slice(0,6).map(r=>{
+    const txt = (typeof r==='string') ? r : (r.txt||r.message||r.label||JSON.stringify(r));
+    return `<div class="sum-box" style="align-items:flex-start"><span>💡 ${esc(txt)}</span></div>`;
+  }).join('');
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Recommandations business</h3>
+    ${lignes}
+    <p class="note">Basé sur ta rentabilité par parfum et tes ventes. ${aiShortcuts('query_reco_business',{})}</p>`);
+}
+
 // [LOT 2] RENTABILITÉ — par parfum (analyzeFlavorProfitability) ou par client (computeOrderMargins).
 // Réutilise les MÊMES moteurs que les écrans dédiés (source unique), ne recalcule rien de neuf.
 // Donne le top/flop en réponse directe + un raccourci vers l'écran complet.
