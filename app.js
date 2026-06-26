@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v933';
+const APP_VERSION = 'v937';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19336,9 +19336,27 @@ async function applyFlavorTypoFix(){
 // extrait un nombre écrit en chiffres ou en lettres (1..20 + dizaines simples)
 function aiParseNumber(txt){
   const mots={un:1,une:1,deux:2,trois:3,quatre:4,cinq:5,six:6,sept:7,huit:8,neuf:9,dix:10,
-    onze:11,douze:12,treize:13,quatorze:14,quinze:15,seize:16,vingt:20,trente:30,quarante:40,cinquante:50,cent:100};
+    onze:11,douze:12,treize:13,quatorze:14,quinze:15,seize:16,vingt:20,trente:30,quarante:40,cinquante:50,
+    soixante:60,cent:100};
+  // [V936] 1) Chiffres directs (priorité).
   const m=txt.match(/\b(\d+(?:[.,]\d+)?)\b/);
   if(m) return parseFloat(m[1].replace(',','.'));
+  // 2) « demi-douzaine » = 6 (avant douzaine).
+  if(/\bdemi[-\s]?douzaine\b/.test(txt)) return 6;
+  // 3) Douzaines multiples : « deux douzaines » = 24, « une douzaine » = 12.
+  const md=txt.match(/\b(\w+)\s+douzaines?\b/);
+  if(md){ const k=md[1]; const base=(k==='une'||k==='un')?1:(mots[k]||1); return base*12; }
+  if(/\bdouzaine\b/.test(txt)) return 12;
+  // 4) Approximatifs en -aine : dizaine→10, quinzaine→15, vingtaine→20, trentaine→30, etc.
+  const approx={dizaine:10,quinzaine:15,vingtaine:20,trentaine:30,quarantaine:40,cinquantaine:50,
+    soixantaine:60,centaine:100};
+  for(const k in approx){ if(new RegExp('\\b'+k+'\\b').test(txt)) return approx[k]; }
+  // 5) « quelques » ≈ 3 (estimation utile pour une commande approximative).
+  if(/\bquelques\b/.test(txt)) return 3;
+  // 6) Composés « vingt-cinq », « trente-six »… (tiret déjà normalisé en espace) : dizaine + unité.
+  const mc=txt.match(/\b(vingt|trente|quarante|cinquante|soixante)\s+(un|une|deux|trois|quatre|cinq|six|sept|huit|neuf)\b/);
+  if(mc){ return mots[mc[1]] + mots[mc[2]]; }
+  // 7) Nombres en lettres simples.
   for(const k in mots){ if(new RegExp('\\b'+k+'\\b').test(txt)) return mots[k]; }
   return null;
 }
@@ -19347,6 +19365,29 @@ function aiParseDate(txt, base){
   const d = base ? new Date(base) : new Date();
   const jours={dimanche:0,lundi:1,mardi:2,mercredi:3,jeudi:4,vendredi:5,samedi:6};
   if(/\baujourd'?hui\b/.test(txt)){ return d.toISOString().slice(0,10); }
+  // [V936] Échéances relatives « dans/d'ici/sous N jour(s)/semaine(s)/mois ». On accepte le nombre en
+  // chiffres OU en lettres (un, deux, une…). Testé AVANT « demain » et les jours de semaine.
+  {
+    const motsNb={un:1,une:1,deux:2,trois:3,quatre:4,cinq:5,six:6,sept:7,huit:8,neuf:9,dix:10,
+      onze:11,douze:12,treize:13,quatorze:14,quinze:15,vingt:20,trente:30};
+    // unité jour/semaine/mois précédée d'un nombre (chiffre ou lettre) après dans/d'ici/sous/en
+    const reUnit=/\b(?:dans|d'?ici|sous|en|d'?ici a)\s+([a-zàâäéèêëïîôöùûüç]+|\d+)\s*(jours?|semaines?|mois|sem)\b/;
+    const mu=txt.match(reUnit);
+    if(mu){
+      let n = /^\d+$/.test(mu[1]) ? parseInt(mu[1],10) : (motsNb[mu[1]]!=null?motsNb[mu[1]]:null);
+      if(n!=null){
+        const unite=mu[2];
+        if(/^jour/.test(unite)) d.setDate(d.getDate()+n);
+        else if(/^(semaine|sem)/.test(unite)) d.setDate(d.getDate()+n*7);
+        else if(/^mois/.test(unite)) d.setDate(d.getDate()+n*30);
+        return d.toISOString().slice(0,10);
+      }
+    }
+    // « la semaine prochaine » / « semaine pro » → +7 ; « le mois prochain » → +30
+    if(/\b(la )?semaine prochaine\b|\bsemaine pro\b/.test(txt)){ d.setDate(d.getDate()+7); return d.toISOString().slice(0,10); }
+    if(/\b(le )?mois prochain\b/.test(txt)){ d.setDate(d.getDate()+30); return d.toISOString().slice(0,10); }
+    if(/\bce week ?end\b|\bce weekend\b/.test(txt)){ const target=6; let delta=(target-d.getDay()+7)%7; d.setDate(d.getDate()+delta); return d.toISOString().slice(0,10); }
+  }
   // « après-demain » DOIT être testé AVANT « demain » : sinon /\bdemain\b/ matche
   // l'intérieur de « apres-demain » (le tiret/espace est une frontière de mot) et on
   // se tromperait d'un jour. On tolère le tiret ou l'espace entre « apres » et « demain ».
@@ -19504,6 +19545,29 @@ function _aiParsePeriode(t){
   if(/\bcette annee\b|\bde l'?annee\b/.test(t)){ const d=new Date(now.getFullYear(),0,1); return {depuis:iso(d), label:'cette année'}; }
   if(/\bcette semaine\b/.test(t)){ const d=new Date(now); d.setDate(d.getDate()-now.getDay()); return {depuis:iso(d), label:'cette semaine'}; }
   return {depuis:null, label:'sur tout ton historique'};
+}
+// [V936 — PHRASES COMPOSÉES] Détecte deux demandes dans une même phrase (« stock chocolat ET recette
+// pistache »). Règle PRUDENTE : on ne découpe QUE si le découpage produit au moins deux intentions
+// reconnues ET DIFFÉRENTES. Sinon on renvoie null (la phrase est traitée normalement, en un seul bloc).
+// Ne JAMAIS découper les actions critiques (sécurité) ni les phrases courtes (un « et » interne fréquent).
+function aiSplitComposite(rawTxt, ctx){
+  const t = (typeof aiNormalize==='function') ? aiNormalize(rawTxt) : (rawTxt||'').toLowerCase();
+  if(!t || t.split(/\s+/).length < 5) return null;           // trop court → pas de découpage
+  // Connecteurs de séparation : « et », « puis », « ensuite », « , ». On évite « ou » (alternative).
+  const morceaux = t.split(/\s+et\s+|\s+puis\s+|\s+ensuite\s+|\s*,\s*/).map(s=>s.trim()).filter(Boolean);
+  if(morceaux.length < 2) return null;
+  const vus=new Set(); const res=[];
+  for(const seg of morceaux){
+    if(seg.split(/\s+/).length < 2) continue;                // segment trop maigre → ignoré
+    let r;
+    try{ r = parseIntent(seg, ctx); }catch(e){ r=null; }
+    if(!r || r.intent==='unknown') return null;              // un segment non reconnu → on abandonne le découpage
+    if(r.critical) return null;                              // jamais découper une action critique
+    if(vus.has(r.intent)) continue;                          // même intention répétée → on n'ajoute pas de doublon
+    vus.add(r.intent); res.push({seg, r});
+  }
+  // Composé valide seulement si ≥2 intentions DIFFÉRENTES reconnues.
+  return (res.length >= 2) ? res : null;
 }
 function parseIntent(texte, ctx){
   ctx=ctx||{}; const flavors=ctx.flavors||[]; const clients=ctx.clients||[]; const materials=ctx.materials||[];
@@ -19678,6 +19742,24 @@ function parseIntent(texte, ctx){
       else if(/\b(ce mois|du mois|ce mois ci|mois en cours)\b/.test(t)) periode='moisCourant';
       return {intent:'query_stats_parfum', params:{flavor:_flStat, periode}, critical:false,
         label:`Statistiques — ${_flStat}`};
+    }
+  }
+  // [V937] QUANTITÉ D'UN INGRÉDIENT POUR PRODUIRE N MACARONS D'UN PARFUM :
+  // « quelle quantité de crème pour fabriquer 20 macarons chocolat au lait »,
+  // « combien de sucre pour faire 50 macarons vanille », « il me faut combien de beurre pour 30 pistache ».
+  // C'est une recette MISE À L'ÉCHELLE filtrée sur un ingrédient. Source : recipeItems (même calcul que la recette).
+  // Placée AVANT query_recipe et query_stock_pour : ces deux-là happeraient « pour » sinon.
+  {
+    const _matIng = aiFindMaterial(t, materials);
+    const _flIng  = aiFindFlavor(t, flavors);
+    const _veutQuantite = /\b(quelle quantite|quelle qte|combien (de|d')|il (me |m'?en )?faut combien|il faut combien|j'?ai besoin de combien|quelle dose|quel poids|quelle masse|combien il (me )?faut)\b/.test(t);
+    const _pourProduire = /\b(pour (fabriquer|faire|produire|monter|realiser|preparer|avoir|obtenir)|pour|afin de (faire|produire|fabriquer))\b/.test(t);
+    const _aMacarons = /\bmacarons?\b/.test(t) || (typeof aiParseNumber==='function' && aiParseNumber(t)!=null && _flIng);
+    if(_matIng && _flIng && _veutQuantite && _pourProduire && _aMacarons
+       && !/\b(assez|suffi|suffisant|il me reste|en stock|reste t il)\b/.test(t)){   // « assez … » = stock, pas recette
+      const pieces = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
+      return {intent:'query_ingredient_pour', params:{material:_matIng, flavor:_flIng, pieces:(pieces&&pieces>0)?pieces:null},
+        critical:false, label:`Quantité de ${_matIng.nom} pour ${_flIng}`};
     }
   }
   // RECETTE (éventuellement mise à l'échelle) : « donne-moi la recette des macarons citron pour 25
@@ -19907,6 +19989,7 @@ function _aiMajContexte(params){
 function _aiCombleDepuisContexte(intent, params){
   const spec = INTENT_RELANCE[intent];
   if(!spec || !params) return false;
+  if(spec.critique || Array.isArray(spec.champs)) return false;  // [C2] action critique/multi-champs : jamais deviné depuis le contexte
   if(params[spec.champ]!=null && params[spec.champ]!=='') return false;   // déjà rempli → ne pas écraser
   const src = spec.type==='parfum'?aiContexte.parfum
             : spec.type==='client'?aiContexte.client
@@ -22837,7 +22920,19 @@ const INTENT_RELANCE = {
   query_recipe:        { champ:'flavor',   type:'parfum',  question:'La recette de quel parfum veux-tu voir ?' },
   query_allergenes:    { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu connaître les allergènes ?' },
   query_cout_revient:  { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu le coût de revient ?' },
-  query_prix_vente:    { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu le prix de vente moyen ?' }
+  query_prix_vente:    { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu le prix de vente moyen ?' },
+  // [V937] Deux paramètres essentiels (ingrédient + parfum), demandés dans l'ordre via C3.
+  query_ingredient_pour: { champs:[
+    { champ:'material', type:'matiere', question:'De quel ingrédient veux-tu connaître la quantité ?' },
+    { champ:'flavor',   type:'parfum',  question:'Pour quel parfum (et combien de macarons) ?' }
+  ]},
+  // [C2] Action critique migrée vers le mécanisme unifié : deux paramètres essentiels, demandés dans
+  // l'ordre (matière puis valeur). `critique:true` interdit le comblement silencieux depuis le contexte
+  // (on n'ajuste JAMAIS le stock d'une matière devinée — on demande explicitement).
+  adjust_stock:        { critique:true, champs:[
+    { champ:'material', type:'matiere', question:'De quelle matière veux-tu ajuster le stock ?' },
+    { champ:'value',    type:'nombre',  question:'À quelle valeur veux-tu fixer ce stock ? (indique un nombre)' }
+  ]}
 };
 // [CLARIFICATION — étape C1] Routage unique pour résoudre un paramètre depuis du texte, selon son type.
 // Factorise le code déjà présent dans aiTryRelance (client/parfum/matiere/date). Réutilisé par le
@@ -22848,6 +22943,7 @@ function _aiResolveParam(type, rawTxt, tNorm, ctx){
   if(type==='parfum')  return (typeof aiFindFlavor==='function')  ? aiFindFlavor(tNorm, ctx.flavors||[])     : null;
   if(type==='matiere') return (typeof aiFindMaterial==='function')? aiFindMaterial(tNorm, ctx.materials||[]) : null;
   if(type==='date')    return (typeof aiParseDate==='function')   ? aiParseDate(tNorm)                        : null;
+  if(type==='nombre'){ const m=(tNorm||'').match(/-?\d+(?:[.,]\d+)?/); return m ? parseFloat(m[0].replace(',','.')) : null; }
   return null;
 }
 // Liste des intentions « clarifiables » : une entrée INTENT_RELANCE AVEC une question = paramètre
@@ -22855,6 +22951,26 @@ function _aiResolveParam(type, rawTxt, tNorm, ctx){
 function _aiClarifySpec(intent){
   const s = INTENT_RELANCE[intent];
   return (s && s.question) ? s : null;
+}
+// [C3 — CLARIFICATION À DEUX NIVEAUX] Certaines intentions exigent PLUSIEURS paramètres essentiels
+// (ex. ajuster un stock : la matière ET la valeur). On les déclare via un tableau `champs:[...]` dans
+// INTENT_RELANCE (chaque entrée {champ,type,question}). Ce helper renvoie le PREMIER champ essentiel
+// encore manquant dans params (ou null si tout est rempli). Compatible avec le format simple à un champ.
+function _aiChampsEssentiels(intent){
+  const s = INTENT_RELANCE[intent];
+  if(!s) return [];
+  if(Array.isArray(s.champs)) return s.champs.filter(c=>c && c.question);   // multi-champs (C3)
+  if(s.question) return [{champ:s.champ, type:s.type, question:s.question}]; // champ unique (C1)
+  return [];
+}
+function _aiProchainChampManquant(intent, params){
+  params = params || {};
+  const champs = _aiChampsEssentiels(intent);
+  for(const c of champs){
+    const v = params[c.champ];
+    if(v==null || v==='') return c;   // premier trou rencontré, dans l'ordre déclaré
+  }
+  return null;
 }
 // Détecte une phrase de continuité : « et … ? », « et pour X », « et chez X », « et la pistache »,
 // « et demain », « et pour Mélanie ». On reste prudent : la phrase doit être courte et commencer par
@@ -22911,9 +23027,34 @@ async function aiRun(){
         window._aiCurrentIntent = r2.intent; window._aiCurrentParams = r2.params;
         aiPending=null;
         _aiMajContexte(params);   // [D2] le param fourni en réponse devient le sujet courant
+        // [C3] Reste-t-il un AUTRE paramètre essentiel à clarifier ? Si oui, on pose la 2e question
+        // (en gardant ce qu'on vient de résoudre). Sinon, on dispatche.
+        const _suite = _aiProchainChampManquant(pend.intent, params);
+        if(_suite){
+          aiClarifyPending = { intent:pend.intent, params, champ:_suite.champ, type:_suite.type };
+          return aiSay(`<p>${esc(_suite.question)}</p>`);
+        }
         return _aiDispatch(r2, txt, _ctx);
       }
       // non résolu → on laisse le parsing normal s'occuper du nouveau message.
+    }
+
+    // [V936 — PHRASES COMPOSÉES] Avant le parsing simple : la phrase contient-elle deux demandes
+    // distinctes (« stock chocolat ET recette pistache ») ? Si oui, on traite chacune et on affiche les
+    // réponses l'une sous l'autre. Jamais pour les actions critiques (aiSplitComposite les exclut déjà).
+    const _compose = aiSplitComposite(txt, _ctx);
+    if(_compose && _compose.length >= 2){
+      for(const part of _compose){
+        const rp = part.r;
+        // On comble depuis le contexte si un paramètre manque, mais on ne BLOQUE pas sur une clarification
+        // au milieu d'une phrase composée (on répond au mieux pour chaque sous-demande).
+        _aiCombleDepuisContexte(rp.intent, rp.params || (rp.params={}));
+        window._aiCurrentIntent = rp.intent; window._aiCurrentParams = rp.params || {};
+        _aiMajContexte(rp.params);
+        try{ await _aiDispatch(rp, part.seg, _ctx); }
+        catch(e){ aiSay(`<p class="note">Je n'ai pas pu traiter « ${esc(part.seg)} ».</p>`); }
+      }
+      return;
     }
 
     let r=parseIntent(txt,_ctx);
@@ -22930,11 +23071,10 @@ async function aiRun(){
     if(r.intent && r.intent!=='unknown'){
       _aiCombleDepuisContexte(r.intent, r.params || (r.params={}));
     }
-    // [CLARIFICATION — étape C1, DÉCLENCHEMENT] L'intention est reconnue mais son paramètre ESSENTIEL
-    // manque (Groupe A : query_stock, locate, client, delivery, recipe, stock_pour). Au lieu de deviner
-    // ou d'échouer, on pose UNE question ciblée et on mémorise l'intention pour interpréter la réponse.
-    const _cl = _aiClarifySpec(r.intent);
-    if(_cl && (r.params==null || r.params[_cl.champ]==null)){
+    // [CLARIFICATION — C1/C3, DÉCLENCHEMENT] L'intention est reconnue mais un paramètre ESSENTIEL manque.
+    // _aiProchainChampManquant gère 1 OU plusieurs champs essentiels (C3) : il renvoie le premier trou.
+    const _cl = _aiProchainChampManquant(r.intent, r.params);
+    if(_cl){
       aiClarifyPending = { intent:r.intent, params:r.params||{}, champ:_cl.champ, type:_cl.type };
       window._aiCurrentIntent = r.intent; window._aiCurrentParams = r.params||{};
       aiPending=null;
@@ -22973,6 +23113,7 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_top_clients': return aiQueryTopClients(r.params);
       case 'query_top_parfum': return aiQueryTopParfum(r.params);
       case 'query_recipe': return aiQueryRecipe(r.params);
+      case 'query_ingredient_pour': return aiQueryIngredientPour(r.params);
       case 'query_faisabilite_ajout': return aiQueryFaisabiliteAjout(r.params);
       case 'query_stock_pour': return aiQueryStockPour(r.params);
       case 'query_client': return aiQueryClient(r.params);
@@ -24221,6 +24362,43 @@ async function aiQueryTopParfum(params){
 // [COCKPIT] RECETTE (éventuellement mise à l'échelle) : « la recette des macarons citron pour 25 pièces ».
 // Lit la recette du parfum + ses ingrédients (recipeItems), met à l'échelle au prorata du rendement.
 // Ne modifie rien : lecture + règle de trois.
+// [V937] QUANTITÉ D'UN INGRÉDIENT POUR N PIÈCES D'UN PARFUM. Réutilise EXACTEMENT le calcul de mise à
+// l'échelle de la recette (recipeItems × pieces/rendement), filtré sur l'ingrédient demandé. Source unique.
+async function aiQueryIngredientPour(params){
+  params = params || {};
+  const mat = params.material, flavor = params.flavor, pieces = params.pieces;
+  if(!mat) return aiSay(`<p>De quel ingrédient veux-tu connaître la quantité ?</p>`);
+  if(!flavor) return aiSay(`<p>Pour quel parfum veux-tu la quantité de ${esc(mat.nom)} ?</p>`);
+  const recipes = await db.recipes.toArray();
+  const norm = (s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const rec = recipes.find(r=>norm(r.produitNom)===norm(flavor))
+           || recipes.find(r=>norm(r.produitNom).includes(norm(flavor)) || norm(flavor).includes(norm(r.produitNom)));
+  if(!rec) return aiSay(`<p class="note">Je n'ai pas trouvé de recette « ${esc(flavor)} ». Vérifie le nom dans l'onglet Recettes.</p>`);
+  const items = await db.recipeItems.where('recipeId').equals(rec.id).toArray();
+  if(!items.length) return aiSay(`<h3 style="font-size:1rem">Recette ${esc(rec.produitNom)}</h3><p class="note">Aucun ingrédient renseigné (BOM vide).</p>`);
+  const rendement = (+rec.rendement>0) ? +rec.rendement : null;
+  const facteur = (pieces && rendement) ? (pieces/rendement) : 1;
+  // On filtre les lignes correspondant à l'ingrédient demandé (une recette peut l'utiliser à plusieurs endroits).
+  const lignesMat = items.filter(it=>it.materialId===mat.id);
+  if(!lignesMat.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:4px">Quantité de ${esc(mat.nom)} — ${esc(rec.produitNom)}</h3>
+      <p class="note">La recette « ${esc(rec.produitNom)} » n'utilise pas ${esc(mat.nom)}.</p>${aiShortcuts('query_recipe',{flavor:rec.produitNom})}`);
+  }
+  const total = lignesMat.reduce((s,it)=>s+((+it.qteParBatch||0)*facteur),0);
+  const fmtQ = q => (q>=1 ? Math.round(q*1000)/1000 : Math.round(q*10000)/10000);
+  const sousTitre = (pieces && rendement)
+    ? `pour <b>${pieces} ${pieces>1?'macarons':'macaron'}</b> (recette de base : ${rendement} pièces/batch)`
+    : (rendement ? `pour <b>1 batch = ${rendement} pièces</b>` : `pour un batch`);
+  // Détail par partie si l'ingrédient apparaît dans plusieurs (ganache, coques…).
+  const detail = lignesMat.length>1
+    ? lignesMat.map(it=>`<div class="sum-box"><span>${esc(it.partie||'—')}</span><b>${fmtQ((+it.qteParBatch||0)*facteur)} ${esc(mat.unite||'kg')}</b></div>`).join('')
+    : '';
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:4px">Quantité de ${esc(mat.nom)} — ${esc(rec.produitNom)}</h3>
+    <div style="font-size:.82rem;color:#6a5a72;margin-bottom:6px">${sousTitre}</div>
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>${esc(mat.nom)}</b></span><b style="color:var(--bordeaux)">${fmtQ(total)} ${esc(mat.unite||'kg')}</b></div>
+    ${detail}
+    <p class="note">Calculé depuis ta recette. ${aiShortcuts('query_recipe',{flavor:rec.produitNom})}</p>`);
+}
 async function aiQueryRecipe(params){
   const flavor = params && params.flavor;
   const pieces = params && params.pieces;
@@ -24700,8 +24878,10 @@ function aiConfirmDeleteOrder(r){
 }
 function aiConfirmAdjustStock(r){
   const p=r.params;
-  if(!p.material) return aiSay(`<p>Quelle matière ajuster ? Précisez, par exemple : <b>« Ajuste le stock de chocolat à 5 »</b>.</p>`);
-  if(p.value==null) return aiSay(`<p>À quelle valeur ajuster le stock de <b>${esc(p.material.nom)}</b> ? Précisez un nombre.</p>`);
+  // [C2] Les paramètres essentiels (matière + valeur) sont désormais garantis par le mécanisme de
+  // clarification C1/C3 en amont. On garde un filet de sécurité minimal (jamais bloquant côté UX).
+  if(!p || !p.material) return aiSay(`<p>De quelle matière veux-tu ajuster le stock ?</p>`);
+  if(p.value==null) return aiSay(`<p>À quelle valeur veux-tu fixer le stock de <b>${esc(p.material.nom)}</b> ?</p>`);
   aiPending={type:'adjust_stock', params:p};
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">⚠ Action à valider — Ajuster le stock</h3>
     <div class="sum-box"><span>Matière</span><b>${esc(p.material.nom)}</b></div>
