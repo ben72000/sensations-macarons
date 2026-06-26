@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v944';
+const APP_VERSION = 'v948';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19602,6 +19602,34 @@ function aiSplitComposite(rawTxt, ctx){
   // Composé valide seulement si ≥2 intentions DIFFÉRENTES reconnues.
   return (res.length >= 2) ? res : null;
 }
+// [V946 — LEXIQUE CENTRAL DE SYNONYMES] Familles de tournures réutilisables par les intentions.
+// Chaque entrée est un FRAGMENT de regex (sans \b) à composer. Un synonyme ajouté ici profite à toutes
+// les intentions qui s'appuient sur la famille. Objectif : reconnaître les formulations naturelles de
+// Benjamin sans gonfler 60 regex à la main. On teste avec aiLexTest(t, 'famille') ou en interpolant.
+const AI_LEX = {
+  combien:   "combien|cmb|quelle quantite|quelle qte|quel nombre|y'?a combien|y a combien|il y a combien|j'?en ai combien|j'?ai combien|reste combien|il (m'?en |me )?reste combien",
+  cestquoi:  "c'?est quoi|quel est|quelle est|quels sont|quelles sont|donne moi|montre moi|affiche|dis moi|peux tu (me )?(dire|donner|montrer)|j'?aimerais (savoir|connaitre)|je voudrais (savoir|connaitre|voir)|fais moi voir|fais voir",
+  cequejai:  "ce que j'?ai|ce qu'?il me reste|ce qui me reste|ce dont je dispose",
+  stock:     "stock|stocks|reserve|reserves|inventaire|en rayon|sous la main|dispo|disponible|disponibles|ce qu'?il me reste|ce qui me reste|en reserve|d'?avance",
+  argent:    "argent|sous|euros?|fric|caisse|recette[s]?|encaisse|encaissement|rentree[s]?|chiffre|revenu[s]?|gains?",
+  gagner:    "gagne|gagner|rapporte|rapporter|me rapporte|touche|toucher|empoche|je sors combien|me met dans la poche",
+  rentable:  "rentable|rentabilite|le plus paye|qui paie le mieux|le plus interessant|qui rapporte le plus|le plus juteux|qui marche le mieux financierement",
+  couter:    "coute|coute t il|me coute|revient a|prix de revient|cout de revient|ca me coute|me revient",
+  temps:     "temps|duree|combien de temps|ca prend combien|en combien de temps|il faut combien de temps|combien d'?heures|combien de minutes|ca me prend combien",
+  produire:  "produire|produc|fabriquer|fabriqu|monter|preparer|prepare|sortir|ecouler|lancer|mettre en prod",
+  vendre:    "vendre|vend|vendu|vente[s]?|ecoule|ecouler|partir|part bien|se vend|s'?est vendu|qui se vend",
+  client:    "client|cliente|clients|clientes|acheteur|acheteuse|qui achete|mes acheteurs",
+  commande:  "commande|commandes|cmd|achat[s]?|reservation[s]?",
+  livrer:    "livr|livraison|livraisons|a livrer|remettre|deposer|apporter|aller porter|me deplacer pour",
+  retard:    "retard|retards|en retard|a la bourre|depasse|en souffrance|pas a temps|trop tard|urgent|urgence|presse|qui presse",
+  rupture:   "rupture|epuise|epuiser|a court|tomber a court|plus de|il me manque|manque|bientot plus|presque plus|en panne de",
+  marche:    "marche|marches|stand|foire|braderie|vente exterieure|vente dehors|sur le marche",
+  prochain:  "prochain|prochaine|a venir|qui vient|suivant|d'?apres|futur|bientot|qui arrive",
+  recette:   "recette|recettes|formule|composition|comment (je )?(fais|prepare|faire)|proportions",
+};
+function aiLexFrag(){ var fams=Array.prototype.slice.call(arguments); return '(' + fams.map(function(f){return AI_LEX[f]||f;}).join('|') + ')'; }
+function aiLexTest(t){ var fams=Array.prototype.slice.call(arguments,1); try{ return new RegExp('(^|[^a-z])'+aiLexFrag.apply(null,fams)).test(t); }catch(_){ return false; } }
+
 function parseIntent(texte, ctx){
   ctx=ctx||{}; const flavors=ctx.flavors||[]; const clients=ctx.clients||[]; const materials=ctx.materials||[];
   const raw=texte||''; const t=aiCorrigeFautes(aiNormalize(raw));
@@ -19647,7 +19675,8 @@ function parseIntent(texte, ctx){
      && !/\b(business|commercial|commerciaux|ma marge|mes marges|rentabilite|gagner plus|vendre plus|mon ca|mes profits|mes benefices|mon chiffre|mon activite)\b/.test(t)
      && !/\b(ameliorer|me developper|developper|me concentrer|priorites strategiques|strategie|axes? d'?amelioration|progresser|pourrais ameliorer|devrais ameliorer)\b/.test(t)
      && !/\b(acheter|racheter|commander en matiere|liste de courses|liste d'?achats?)\b/.test(t)
-     && !/\b(utiliser en priorite|utiliser vite|a utiliser)\b/.test(t)){
+     && !/\b(utiliser en priorite|utiliser vite|a utiliser)\b/.test(t)
+     && !/\b(dois preparer|a preparer|quoi preparer|que preparer|qu'?est ce que je (dois |doit )?prepare)\b/.test(t)){
     return {intent:'query_advice', params:{}, critical:false, label:'Mon conseil de production du moment'};
   }
   // EN RETARD : "qu'est-ce qui est en retard", "mes retards", "suis-je en retard"
@@ -19705,19 +19734,19 @@ function parseIntent(texte, ctx){
   }
   // [CHANTIER B] PRIX DE VENTE MOYEN d'un parfum : « à combien je vends le chocolat », « mon prix de
   // vente moyen pistache ». Source : prixVenteMoyen de la row.
-  if(/\b(prix de vente|prix moyen|prix de vente moyen|a combien (je |je le )?(vends|vend|le vends)|je le vends combien|je vends a combien|tarif moyen|combien je (le )?vends|je vends .{0,20} a combien|a quel prix je (le )?vends|je vends le .{0,15} a combien)\b/.test(t)){
+  if(/\b(prix de vente|prix moyen|prix de vente moyen|a combien (je |je le )?(vends|vend|le vends)|je le vends combien|je vends a combien|tarif moyen|combien je (le )?vends|je vends .{0,20} a combien|a quel prix je (le )?vends|je vends le .{0,15} a combien|je vends mes macarons? combien|mes macarons? (je les |je )?vends combien|je vends (ca|mes macarons|les macarons) combien|combien je vends mes)\b/.test(t)){
     const fl = aiFindFlavor(t, flavors);
     return {intent:'query_prix_vente', params:{flavor:fl}, critical:false,
       label: fl?`Prix de vente moyen — ${fl}`:'Prix de vente moyen'};
   }
   // [CHANTIER B] VALEUR DU STOCK (matières/finis valorisés) : « combien vaut mon stock », « la valeur de
   // mes matières », « j'ai pour combien de stock ». Source : analyzeFlavorProfitability.valStock.
-  if(/\b(valeur (de )?(mon |mes |du )?stock|combien vaut (mon |le )?stock|mon stock vaut|j'?ai pour combien (de |en )?stock|valeur (de )?mes matieres|combien (vaut|represente) mon stock|stock valorise|valorisation (du |de mon )?stock|valeur de mes stocks|combien d'?argent (dans |en )?(mon )?stock|mon stock represente combien|stock represente)\b/.test(t)){
+  if(/\b(valeur (de )?(mon |mes |du )?stock|combien vaut (mon |le )?stock|mon stock vaut|j'?ai pour combien (de |en )?stock|valeur (de )?mes matieres|combien (vaut|represente) mon stock|stock valorise|valorisation (du |de mon )?stock|valeur de mes stocks|combien d'?argent (dans |en )?(mon )?stock|mon stock represente combien|stock represente|ca vaut combien (tout )?mon stock|tout mon stock (ca |il )?vaut combien|valeur de mes macarons|combien valent mes macarons|mes macarons en stock valent|ca vaut combien tout ca)\b/.test(t)){
     return {intent:'query_valeur_stock', params:{}, critical:false, label:'Valeur de mon stock'};
   }
   // [CHANTIER B] PROCHAIN MARCHÉ : « c'est quand mon prochain marché », « mon prochain marché », « date du
   // prochain marché ». Source : table markets triée par date.
-  if(/\b(prochain marche|prochains marches|quand (est|a lieu|c'?est) (mon |le )?(prochain )?marche|date (du |de mon )?(prochain )?marche|mon prochain marche|c'?est quand le marche|quand mon marche|marche prochain)\b/.test(t)){
+  if(/\b(prochain marche|prochains marches|quand (est|a lieu|c'?est) (mon |le )?(prochain )?marche|date (du |de mon )?(prochain )?marche|mon prochain marche|c'?est quand le marche|quand mon marche|marche prochain|marche bientot|j'?ai (un |bientot un )?marche (bientot|prochainement|qui arrive)|un marche bientot|marche qui arrive|mon prochain stand)\b/.test(t)){
     return {intent:'query_prochain_marche', params:{}, critical:false, label:'Mon prochain marché'};
   }
   // [CHANTIER B] COMPARAISON DE DEUX MOIS : « compare mai et juin », « ce mois vs le mois dernier ».
@@ -19733,8 +19762,9 @@ function parseIntent(texte, ctx){
   }
   // [VAGUE 2] LISTE DE COURSES / QUOI ACHETER : « qu'est-ce que je dois acheter », « ma liste de courses »,
   // « quoi racheter ». Source : besoinMatieresPrevisionnel. Distinct de query_rupture (alerte) : ici la liste.
-  if(/\b(liste de courses|liste de course|quoi (acheter|racheter)|qu'?est ce que je (dois|doit) (acheter|racheter|commander en matiere)|je dois acheter quoi|a acheter|courses a faire|faire les courses|quoi commander (au fournisseur|chez le fournisseur)|que faut il acheter|qu'?est ce qu'?il faut (acheter|racheter)|ce que je dois acheter|liste d'?achats?|mes achats a prevoir|mes courses a faire)\b/.test(t)
-     && !/\b(macaron|parfum|coffret)\b/.test(t)){
+  if(/\b(liste de courses|liste de course|quoi (acheter|racheter)|qu'?est ce que je (dois|doit) (acheter|racheter|commander en matiere)|je dois acheter quoi|je dois racheter quoi|racheter quoi|acheter quoi|dois racheter|a acheter|a racheter|courses a faire|faire les courses|quoi commander (au fournisseur|chez le fournisseur)|que faut il acheter|qu'?est ce qu'?il faut (acheter|racheter)|ce que je dois acheter|liste d'?achats?|mes achats a prevoir|mes courses a faire)\b/.test(t)
+     && !/\b(macaron|parfum|coffret)\b/.test(t)
+     && !/\b(urgence|d'?urgence|en urgence|vite)\b/.test(t)){
     return {intent:'query_courses', params:{}, critical:false, label:'Ma liste de courses'};
   }
   // [VAGUE 2] DANS COMBIEN DE TEMPS EN RUPTURE (par parfum) : « dans combien de temps je tombe en rupture
@@ -19766,7 +19796,7 @@ function parseIntent(texte, ctx){
   }
   // [VAGUE 2] CLIENTS À RELANCER / INACTIFS : « quels clients je devrais relancer », « qui n'a pas commandé
   // depuis longtemps ». Source : fréquence/dernière commande par client. (pas de client précis = liste)
-  if(/\b(relancer|a relancer|clients? inactifs?|clients? perdus?|clients? endormis?|qui (n'?a pas|n'?ont pas) commande depuis|qui je (dois|devrais) relancer|qui relancer|clients? a recontacter|recontacter|clients? dormants?|clients? a reveiller|qui a disparu|plus de nouvelles de|inactifs?|n'?a plus commande|n'?ont plus commande|plus commande depuis)\b/.test(t)){
+  if(/\b(relancer|a relancer|clients? inactifs?|clients? perdus?|clients? endormis?|qui (n'?a pas|n'?ont pas) commande depuis|qui je (dois|devrais) relancer|qui relancer|clients? a recontacter|recontacter|clients? dormants?|clients? a reveiller|qui a disparu|plus de nouvelles de|inactifs?|n'?a plus commande|n'?ont plus commande|plus commande depuis|qui (je |je dois |dois je )?rappeler|a rappeler|qui rappeler|aux abonnes absents|abonnes absents|qu'?on (n'?)?entend plus|disparus?|plus signe de vie)\b/.test(t)){
     return {intent:'query_clients_relance', params:{}, critical:false, label:'Clients à relancer'};
   }
   // [VAGUE 2] PÉREMPTION DES MATIÈRES : « quelles matières périment bientôt », « dlc de mes matières ».
@@ -19789,7 +19819,7 @@ function parseIntent(texte, ctx){
     }
   }
   // [V938] TEMPS DE PRODUCTION pour N macarons d'un parfum, OU pour une commande d'un client.
-  if(/\b(combien de temps|ca (me )?prend combien|ca prend combien|temps de (production|fabrication)|temps pour (produire|faire|fabriquer)|combien (de temps )?(pour|il faut pour)|en combien de temps|duree de (production|fabrication))\b/.test(t)
+  if(/\b(combien de temps|ca (me )?prend combien|ca prend combien|temps de (production|fabrication)|temps pour (produire|faire|fabriquer)|temps pour \d|temps pour|combien (de temps )?(pour|il faut pour)|en combien de temps|duree de (production|fabrication))\b/.test(t)
      && (/\b(produire|faire|fabriquer|preparer|monter|macaron|macarons|commande)\b/.test(t) || (aiFindFlavor(t,flavors) && (typeof aiParseNumber==='function') && aiParseNumber(t)!=null))
      && !/\bavant (rupture|de manquer)\b|\ben rupture\b/.test(t)){
     const _flT = aiFindFlavor(t, flavors);
@@ -19832,7 +19862,7 @@ function parseIntent(texte, ctx){
   // [V938] PARFUMS COMPATIBLES AVEC UN ALLERGÈNE (sans gluten…). L'INVERSE de query_allergenes.
   if(/\b(quels?|lesquels?|parfums?|macarons?)\b/.test(t)
      && /\b(sans|n'?ont pas de|n'?ont pas|n'?a pas de|compatibles?)\b/.test(t)
-     && (/\b(gluten|lait|oeuf|oeufs|soja|fruits a coque|fruit a coque|arachide|arachides|sesame|sulfite|sulfites|noix|amande|allergene|allergenes)\b/.test(t) || /œufs?/.test(t))
+     && (/\b(gluten|lait|lactose|oeuf|oeufs|soja|fruits a coque|fruit a coque|arachide|arachides|sesame|sulfite|sulfites|noix|amande|allergene|allergenes)\b/.test(t) || /œufs?/.test(t))
      && !aiFindFlavor(t, flavors)){
     let allergene=null;
     const mapAll=[['gluten','Gluten'],['lait','Lait'],['œuf','Œufs'],['oeuf','Œufs'],['soja','Soja'],
@@ -19909,6 +19939,8 @@ function parseIntent(texte, ctx){
      && !/\b(rentre|paiement|paiements|a recevoir|a encaisser|recevoir)\b/.test(t)
      && !/\b(revient|coute|coute t il|vends|vend|valeur|represente combien|d'?argent)\b/.test(t)
      && !/\b(rupture|tient combien|tiens combien|avant rupture|tomber a court)\b/.test(t)
+     && !/\b(combien de temps|quand)\b.{0,20}plus de\b/.test(t)
+     && !/\bplus de (chocolat|pistache|vanille|framboise|caramel|citron|coco|praline|popcorn|cannelle|mangue|fraise|myrtille)\b.{0,15}(quand|bientot)/.test(t)
      && !/\b(coffret|coffrets|boite|boites|boîte|boîtes|emballage|emballages)\b/.test(t)
      && !/\b(don|dons|donne|perte|pertes|perdu|jete|jeter|invendus?|gachis)\b|gaspill/.test(t)
      && !/\b(panier moyen|ticket moyen|depense|depenses|charges?|frais|en moyenne|moyenne par)\b/.test(t)
@@ -19965,7 +19997,7 @@ function parseIntent(texte, ctx){
   // [V943] BILAN D'UN MARCHÉ : « comment s'est passé le dernier marché », « combien j'ai fait au marché
   // de [lieu] », « bilan du marché ». Source : marketLineSummary (vendu/invendu/don/perte par parfum).
   if(/\bmarche\b/.test(t)
-     && /\b(bilan|comment (s'?est|ca s'?est) (passe|deroule)|s'?est passe comment|combien (j'?ai )?(fait|vendu|gagne)|resultat|ca s'?est passe comment|invendus?|ecoulement|comment etait)\b/.test(t)
+     && /\b(bilan|comment (s'?est|ca s'?est) (passe|deroule)|s'?est passe comment|ca a donne quoi|ca a (bien )?donne|ca a marche|j'?ai (bien )?vendu|bien vendu|combien (j'?ai )?(fait|vendu|gagne)|resultat|ca s'?est passe comment|invendus?|ecoulement|comment etait|ca a rapporte)\b/.test(t)
      && !/\b(prochain|prochaine|quand|a venir)\b/.test(t)){    // « prochain marché » = autre intention
     return {intent:'query_bilan_marche', params:{}, critical:false, label:'Bilan du dernier marché'};
   }
@@ -19981,7 +20013,7 @@ function parseIntent(texte, ctx){
   // « le profil de [nom] ». Source : getClientDashboardData. Exige un client reconnu.
   {
     const _cliP = (!/\b(cree|creer|ajoute|supprime|annule|nouvelle|nouveau)\b/.test(t)) ? aiFindClient(t, clients) : null;
-    if(_cliP && /\b(parle moi (de|du)|profil (de|du)|qui est|c'?est qui|bon client|fidele|fidelite|infos? sur|info sur|en savoir plus sur|presente moi|resume (moi )?(le client|la cliente)|son historique|habitudes? de|client)\b/.test(t)){
+    if(_cliP && /\b(parle moi (un peu )?(de|du)|parle moi|profil (de|du)|qui est|c'?est qui|bon client|fidele|fidelite|infos? sur|info sur|en savoir plus sur|presente moi|resume (moi )?(le client|la cliente)|son historique|habitudes? de|commande souvent|commande t (il|elle) souvent|elle commande|il commande|achete souvent|client)\b/.test(t)){
       return {intent:'query_profil_client', params:{client:_cliP}, critical:false, label:`Profil — ${_cliP.nom||''}`.trim()};
     }
   }
@@ -20025,7 +20057,7 @@ function parseIntent(texte, ctx){
   // commandes à préparer / à une date
   if((/\b(commande|commandes)\b/.test(t) && (/\b(a preparer|preparer|affiche|montre|liste|voir|quelles|du jour|aujourd|mes commandes|j'?ai quoi|quoi comme|a venir|cette semaine|demain)\b/.test(t) || aiParseDate(t)) && !/\b(paye|payee|payees|payes|pas (encore )?paye|regle|reglee|reglees|regles|pas regle|ne sont pas regle|impaye|impayee|pas (encore )?regle|doit|doivent|en attente)\b/.test(t))
      || (/\b(livraison|livraisons|livrer|je livre|dois je livrer)\b/.test(t) && /\b(prochaine|prochaines|a venir|mes|qui|prochainement|du jour|aujourd|cette semaine|demain|liste|montre|affiche|je livre|le \d|du \d)\b/.test(t) && !aiFindClient(t,clients))
-     || (/\b(a preparer|a livrer|qu'?est ce que j'?ai a preparer|j'?ai quoi a preparer|a faire pour|que (je )?dois livrer|qu'?est ce que je dois livrer|qu'?est ce que je livre|prochaines commandes|mes prochaines commandes)\b/.test(t) && !/produire|fabriquer|lancer/.test(t) && !aiFindClient(t,clients))){
+     || (/\b(a preparer|a livrer|qu'?est ce que j'?ai a preparer|j'?ai quoi a preparer|a faire pour|que (je )?dois livrer|qu'?est ce que je dois livrer|qu'?est ce que je livre|qu'?est ce que je (dois )?prepare|que (dois je|je dois) preparer|quoi preparer|prochaines commandes|mes prochaines commandes)\b/.test(t) && !/produire|fabriquer|lancer/.test(t) && !aiFindClient(t,clients))){
     const date=aiParseDate(t);
     return {intent:'query_orders', params:{date, statut: /preparer/.test(t)?'À préparer':null}, critical:false,
       label: date?`Afficher les commandes du ${date}`:'Afficher les commandes / livraisons à venir'};
@@ -20033,7 +20065,7 @@ function parseIntent(texte, ctx){
   // [LOT 2] RENTABILITÉ (marge, pas volume) : « le parfum le plus rentable », « quel client me fait
   // gagner / perdre de l'argent », « ma meilleure marge ». Distingue la cible parfum vs client.
   // Placée AVANT top_parfum/top_clients pour que « rentable » prime sur « le plus vendu ».
-  if(/\b(rentable|rentables|rentabilite|marge|marges|gagner de l'?argent|perdre de l'?argent|me fait gagner|me fait perdre|fait gagner de l'?argent|fait perdre de l'?argent|le plus profitable|profitable|gagne de l'?argent|coute de l'?argent|me rapporte|rapporte le plus|rapporte le moins|qui rapporte|je gagne le plus|sur quel (macaron|parfum|client)|ou je gagne)\b/.test(t)){
+  if(/\b(rentable|rentables|rentabilite|marge|marges|gagner de l'?argent|perdre de l'?argent|me fait gagner|me fait perdre|fait gagner de l'?argent|fait perdre de l'?argent|le plus profitable|profitable|gagne de l'?argent|coute de l'?argent|me rapporte|rapporte le plus|rapporte le moins|qui rapporte|je gagne le plus|paie le mieux|paye le mieux|qui paie le mieux|le plus paye|le plus juteux|sur quel (macaron|parfum|client)|ou je gagne)\b/.test(t)){
     let cible=null;
     if(/\b(parfum|parfums|macaron|macarons|recette|recettes|saveur)\b/.test(t)) cible='parfum';
     else if(/\b(client|clients|qui)\b/.test(t)) cible='client';
@@ -20135,7 +20167,7 @@ function parseIntent(texte, ctx){
   // ---- ANALYSE AVANCÉE (consultations) ----
   // TOP PARFUM : « quel est le parfum le plus vendu », « mon meilleur parfum », « quel parfum se vend
   // le plus depuis 6 mois ». Placé AVANT les tendances : « parfum » + superlatif → classement, pas tendance.
-  if((/\b(parfum[s]?|macaron[s]?|saveur[s]?)\b/.test(t) || /\b(numero un|numero 1|mon top) en vente/.test(t) || /en ventes?\b/.test(t))
+  if((/\b(parfum[s]?|macaron[s]?|saveur[s]?)\b/.test(t) || /\b(numero un|numero 1|mon top) en vente/.test(t) || /en ventes?\b/.test(t) || /\b(qu'?est ce qui|ce qui) se vend le (mieux|plus)\b/.test(t) || /\bqui (se vend|cartonne) le (mieux|plus)\b/.test(t))
      && /\b(le plus vendu|les plus vendus|plus vendu|meilleur|meilleurs|se vend le (plus|mieux)|se vendent le (plus|mieux)|top|cartonne le plus|numero un|numero 1|star|phare|populaire|plus populaire|plus demande|marche le mieux|le plus ecoule|plus ecoule)\b/.test(t)){
     // Période optionnelle : « depuis N mois », « ce mois », « cette année », sinon tout l'historique.
     const periode = _aiParsePeriode(t);
@@ -20148,7 +20180,7 @@ function parseIntent(texte, ctx){
     return {intent:'query_trends', params:{flavor: aiFindFlavor(t, flavors)}, critical:false, label:'Analyser les tendances de consommation'};
   }
   // anomalies / variations inhabituelles
-  if(/\b(anomalie|anomalies|inhabituel|inhabituelle|inhabituels|inhabituelles|atypique|atypiques|pic|pics|creux|bizarre|bizarres|etrange|etranges|anormal|anormale|anormaux|anormales|suspect|suspecte|suspects|suspectes|qui cloche|ecart|ecarts|comportements? (etrange|anormal|bizarre)|trucs bizarres|choses? anormale)\b/.test(t)){
+  if(/\b(anomalie|anomalies|inhabituel|inhabituelle|inhabituels|inhabituelles|atypique|atypiques|pic|pics|creux|bizarre|bizarres|etrange|etranges|anormal|anormale|anormaux|anormales|suspect|suspecte|suspects|suspectes|qui cloche|ecart|ecarts|comportements? (etrange|anormal|bizarre)|trucs bizarres|choses? anormale|des erreurs|une erreur|y a des erreurs|il y a des erreurs|y a t il des erreurs|quelque chose de faux|incoherence[s]?)\b/.test(t)){
     return {intent:'query_anomalies', params:{}, critical:false, label:'Détecter les anomalies de vente'};
   }
   // besoins de production / matières à produire
@@ -20167,8 +20199,10 @@ function parseIntent(texte, ctx){
     return {intent:'query_production_needs', params:{}, critical:false, label:'Calculer les besoins de production'};
   }
   // rupture PRÉDICTIVE (rythme de ventes) : "quand", "combien de temps", "prévision", "tenir"
-  if(/\b(rupture|stock|tenir|epuise|epuiser|tiendra|durera|reste)\b/.test(t)
-     && /\b(quand|combien de temps|prevision|previsions|prevoir|rythme|vais|jusqu|tiendra|durera|tenir)\b/.test(t)){
+  if((/\b(rupture|stock|tenir|epuise|epuiser|tiendra|durera|reste)\b/.test(t)
+     && /\b(quand|combien de temps|prevision|previsions|prevoir|rythme|vais|jusqu|tiendra|durera|tenir)\b/.test(t))
+     || /\b(combien de temps|quand).{0,20}plus de\b/.test(t)
+     || /\bplus de (chocolat|pistache|vanille|framboise|caramel|citron|coco|praline|popcorn|cannelle|mangue|fraise|myrtille)\b.{0,15}(quand|bientot)/.test(t)){
     return {intent:'query_predict', params:{}, critical:false, label:'Prévoir les ruptures selon le rythme de ventes'};
   }
   // risque de rupture (immédiat : commandes + seuils)
@@ -23339,6 +23373,14 @@ async function aiRun(){
       aiPending=null;
       return aiSay(`<p>${esc(_cl.question)}</p>`);
     }
+    // [V948 — DÉSAMBIGUÏSATION] Si la phrase repose sur un terme PIVOT ambigu sans signal qui tranche,
+    // on demande « tu veux X ou Y ? » plutôt que de deviner. Jamais pour une action critique, jamais en
+    // pleine clarification, et seulement si l'intention gagnante fait partie d'une paire confondable.
+    if(r.intent && r.intent!=='unknown' && !r.critical && !aiClarifyPending){
+      const _tAmb = (typeof aiCorrigeFautes==='function' && typeof aiNormalize==='function') ? aiCorrigeFautes(aiNormalize(txt)) : (txt||'').toLowerCase();
+      const _amb = aiDetecterAmbiguite(_tAmb, r.intent);
+      if(_amb){ aiPending=null; return aiAskAmbiguite(_amb); }
+    }
     // [COCKPIT] On mémorise l'intention courante pour qu'aiSay puisse y accoler ses raccourcis contextuels.
     window._aiCurrentIntent = r.intent;
     window._aiCurrentParams = r.params || {};
@@ -23430,12 +23472,147 @@ async function _aiDispatch(r, txt, _ctx){
         // demande d'aide (« comment… », « c'est quoi… », « explique… »). Sinon, un simple mot-clé qui
         // matche un article ne doit PAS transformer une question d'action en cours théorique.
         if(isHelpQuery(txt)){ const hits=kbSearch(txt); if(hits.length) return aiHelp(txt); }
+        // [V945] FILET DE RATTRAPAGE : au lieu d'un cul-de-sac, on détecte le thème et on propose des
+        // pistes cliquables. Si aucun thème ne ressort, on retombe sur le message générique.
+        {
+          const _filet = aiFiletThematique(txt, (typeof aiNormalize==='function'?aiNormalize(txt):txt.toLowerCase()));
+          if(_filet) return _filet;
+        }
         return aiSay(`<p>Je n'ai pas bien compris « ${esc(txt)} ».</p>
           <p class="note">Reformule, ou essaie : <i>Conseille-moi quoi faire</i> · <i>Quel est le stock de chocolat ?</i> · <i>Commandes à préparer demain</i>. Pour le mode d'emploi, demande <b>« comment ça marche »</b> ou tape <b>aide</b>.</p>`);
     }
 }
 
-// ---- CONSULTATIONS ----
+// [V948 — DÉSAMBIGUÏSATION : PAIRES CONFONDABLES] Quand une phrase repose sur un terme PIVOT ambigu sans
+// signal qui tranche, on demande « tu veux X ou Y ? » plutôt que de deviner. Chaque paire définit :
+//  - pivot   : regex du terme ambigu qui crée le doute (ex. « stock » seul)
+//  - leveA/B : signaux qui LÈVENT l'ambiguïté vers A ou vers B (si présents → pas de question, on tranche)
+//  - a / b   : {intent, label, ex} les deux interprétations proposées (boutons cliquables)
+// On ne pose la question QUE si : pivot présent ET aucun signal de levée d'aucun côté ET l'intention
+// gagnante de parseIntent est bien l'une des deux (sinon on ne s'en mêle pas).
+const AI_PAIRES = [
+  { id:'stock_valeur',
+    pivot:/\bmon stock\b|\bmes stocks\b|\ble stock\b/,
+    leveA:/\bvaleur|vaut|euros?|argent|combien (ca|il|ca me) (vaut|coute)|valoris|prix|represente combien|en €|en euro/,
+    leveB:/\bcombien (de|d')|il me reste|il reste|quelle quantite|niveau de|reste t il|j'?ai combien|stock de [a-z]|de creme|de beurre|de sucre|de chocolat|de farine|matiere|chocolat|vanille|pistache|framboise|caramel|citron|coco|praline|macarons?/,
+    a:{intent:'query_valeur_stock', label:'💰 La valeur (en €)', ex:'combien vaut mon stock'},
+    b:{intent:'query_stock', label:'📦 La quantité dispo', ex:'combien il me reste en stock'} },
+  { id:'meilleur_parfum',
+    pivot:/\b(mon |le )?meilleur (parfum|macaron)\b|\bmon parfum (phare|star|numero)\b/,
+    leveA:/\brentable|rentabilite|marge|rapporte|gagne|paie le mieux|profit|argent/,
+    leveB:/\bvendu|vente|ecoule|populaire|demande|cartonne|le plus pris|quantite|volume/,
+    a:{intent:'query_rentabilite', label:'📈 Le plus rentable (marge)', ex:'le parfum le plus rentable'},
+    b:{intent:'query_top_parfum', label:'🔢 Le plus vendu (volume)', ex:'le parfum le plus vendu'} },
+  { id:'marche_quand',
+    pivot:/\b(le|mon|au) marche\b/,
+    leveA:/\bprochain|a venir|quand|prepare|emmen|emport|amen|prendre|prends|prend|quoi (pour|prendre)|pour (le|mon) marche|de chaque|future?|qui vient/,
+    leveB:/\bbilan|passe|donne quoi|j'?ai (fait|gagne|vendu|ecoule)|vendu|resultat|invendus?|ecoulement|comment (s'?est|ca|etait)|dernier|rapporte/,
+    a:{intent:'query_market_advice', label:'🧺 Préparer le prochain', ex:'qu\'est-ce que j\'emmène au marché'},
+    b:{intent:'query_bilan_marche', label:'📊 Bilan du dernier', ex:'comment s\'est passé le dernier marché'} },
+  { id:'combien_chocolat',
+    pivot:/\bcombien (le|la|un|une|coute|coute t il)?\s*(chocolat|vanille|pistache|framboise|caramel|citron|coco|praline|popcorn|cannelle|mangue|fraise|myrtille)\b/,
+    leveA:/\bcoute|revient|produire|fabriquer|cout|matiere|me coute/,
+    leveB:/\bvends|vendre|vente|prix de vente|au client|le client paie|je le vends/,
+    a:{intent:'query_cout_revient', label:'🏭 Ce qu\'il me coûte', ex:'combien me coûte un macaron chocolat'},
+    b:{intent:'query_prix_vente', label:'🏷️ Le prix de vente', ex:'à combien je vends le chocolat'} },
+];
+// Détecte une paire ambiguë. Renvoie la paire si on doit demander, sinon null.
+function aiDetecterAmbiguite(t, intentGagnant){
+  for(const pr of AI_PAIRES){
+    if(!pr.pivot.test(t)) continue;
+    // l'intention gagnante doit être l'une des deux interprétations (sinon on ne s'en mêle pas)
+    if(intentGagnant!==pr.a.intent && intentGagnant!==pr.b.intent) continue;
+    // si un signal LÈVE l'ambiguïté d'un côté, on laisse trancher (pas de question)
+    if(pr.leveA.test(t) || pr.leveB.test(t)) continue;
+    return pr;
+  }
+  return null;
+}
+// Construit la question de choix à 2 boutons (+ reformuler).
+function aiAskAmbiguite(pr){
+  const btn = (it)=>`<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="aiQuick(${JSON.stringify(it.ex)})">${it.label}</button>`;
+  return aiSay(`<p>Petite précision&nbsp;: tu veux dire…</p>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0">${btn(pr.a)}${btn(pr.b)}</div>
+    <p class="note">Touche l'une des deux, ou reformule ta demande.</p>`);
+}
+
+// [V945 — FILET DE RATTRAPAGE THÉMATIQUE] Quand parseIntent ne reconnaît rien de net (unknown), plutôt
+// que de finir en cul-de-sac « pas compris », on détecte le THÈME dominant de la phrase et on propose
+// 2-3 intentions de ce thème sous forme de question à choix. Objectif : zéro cul-de-sac, toujours une
+// porte de sortie utile. Chaque intention a un libellé court + une phrase-exemple cliquable.
+const AI_THEMES = [
+  { theme:'argent', mots:['argent','gagne','gagner','rapporte','rentable','rentabilite','marge','benefice','profit','chiffre','ca','revenu','vendu','encaisse','euro','prix','coute','cout','paie','paye','urssaf','cotisation','charges','depense','frais','panier','ticket'],
+    intentions:[
+      {id:'query_revenue', label:'💶 Mon chiffre d\'affaires', ex:'mon chiffre d\'affaires du mois'},
+      {id:'query_rentabilite', label:'📈 Ce qui est le plus rentable', ex:'le parfum le plus rentable'},
+      {id:'query_revenu_horaire', label:'⏳ Mon revenu horaire', ex:'combien je gagne de l\'heure'},
+      {id:'query_charges', label:'🧾 Mes charges', ex:'mes charges du mois'},
+      {id:'query_urssaf', label:'🏛️ Ce que je dois à l\'URSSAF', ex:'combien déclarer à l\'URSSAF'},
+      {id:'query_paiements_dus', label:'💳 Qui me doit de l\'argent', ex:'qui me doit de l\'argent'},
+    ]},
+  { theme:'stock', mots:['stock','reserve','inventaire','reste','dispo','disponible','rupture','manque','couverture','autonomie','epuise','matiere','ingredient','approvisionnement'],
+    intentions:[
+      {id:'query_stock', label:'📦 Stock d\'une matière', ex:'combien de chocolat en stock'},
+      {id:'query_stock_finis', label:'🍬 Macarons finis en stock', ex:'combien de macarons finis en stock'},
+      {id:'query_rupture', label:'⚠️ Risque de rupture', ex:'dans combien de temps en rupture de pistache'},
+      {id:'query_couverture_stock', label:'🛡️ Couverture de stock', ex:'pour combien de temps j\'ai du stock'},
+      {id:'query_courses', label:'🛒 Ma liste de courses', ex:'ma liste de courses'},
+      {id:'query_valeur_stock', label:'💰 Valeur de mon stock', ex:'combien vaut mon stock'},
+    ]},
+  { theme:'production', mots:['produire','produc','fabriquer','fournee','batch','temps','combien de temps','meringue','coque','ganache','montage','four','recette','faisabilite','tient','organiser','planning','semaine'],
+    intentions:[
+      {id:'query_advice', label:'🧭 Par quoi je commence', ex:'par quoi je commence aujourd\'hui'},
+      {id:'query_temps_prod', label:'⏱️ Temps de production', ex:'combien de temps pour 50 macarons chocolat'},
+      {id:'query_nb_batchs', label:'🔢 Nombre de fournées', ex:'combien de fournées pour 100 pistache'},
+      {id:'query_faisabilite', label:'✅ Est-ce que ma semaine tient', ex:'est-ce que ma semaine tient'},
+      {id:'query_recipe', label:'📖 Une recette', ex:'la recette du chocolat'},
+      {id:'query_production_needs', label:'🏭 Ce que je dois produire', ex:'qu\'est-ce que je dois produire'},
+    ]},
+  { theme:'commandes', mots:['commande','commandes','livrer','livraison','preparer','retard','echeance','client a livrer','a faire'],
+    intentions:[
+      {id:'query_orders', label:'📋 Mes commandes', ex:'mes commandes de la semaine'},
+      {id:'query_prochaine_livraison', label:'🚚 Ma prochaine livraison', ex:'quelle est ma prochaine livraison'},
+      {id:'query_retards', label:'⏰ Mes retards', ex:'qu\'est-ce qui est en retard'},
+      {id:'query_dlc_finis', label:'📅 Macarons qui périment', ex:'quels macarons périment bientôt'},
+    ]},
+  { theme:'clients', mots:['client','clients','fidele','fidelite','relancer','relance','panier','meilleur','profil','habitude'],
+    intentions:[
+      {id:'query_profil_client', label:'👤 Profil d\'un client', ex:'parle-moi de [client]'},
+      {id:'query_top_clients', label:'🏆 Mes meilleurs clients', ex:'mes meilleurs clients'},
+      {id:'query_clients_relance', label:'📣 Clients à relancer', ex:'quels clients relancer'},
+      {id:'query_derniere_commande', label:'🕒 Dernière commande d\'un client', ex:'la dernière commande de [client]'},
+      {id:'query_panier_moyen', label:'🧮 Panier moyen', ex:'c\'est quoi mon panier moyen'},
+    ]},
+  { theme:'marche', mots:['marche','marches','stand','foire','vendre dehors','emmener','emporter','prendre au marche','invendus','don','perte','gaspillage'],
+    intentions:[
+      {id:'query_market_advice', label:'🧺 Que prendre au marché', ex:'qu\'est-ce que j\'emmène au marché'},
+      {id:'query_bilan_marche', label:'📊 Bilan du dernier marché', ex:'comment s\'est passé le dernier marché'},
+      {id:'query_prochain_marche', label:'📆 Mon prochain marché', ex:'c\'est quand mon prochain marché'},
+      {id:'query_gaspillage', label:'♻️ Dons et pertes', ex:'combien j\'ai gaspillé'},
+    ]},
+];
+// Détecte le thème dominant d'une phrase non reconnue (score = nb de mots-clés du thème présents).
+function aiDetecterTheme(tNorm){
+  let best=null, bestScore=0;
+  for(const th of AI_THEMES){
+    let sc=0;
+    for(const m of th.mots){ if(tNorm.includes(m)) sc++; }
+    if(sc>bestScore){ bestScore=sc; best=th; }
+  }
+  return bestScore>0 ? best : null;
+}
+// Construit la réponse « tu veux dire… ? » avec des exemples cliquables (réinjectés comme une demande).
+function aiFiletThematique(txt, tNorm){
+  const th = aiDetecterTheme(tNorm);
+  if(!th) return null;   // aucun thème → on laissera le message générique habituel
+  const choix = th.intentions.map(it=>
+    `<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="aiQuick(${JSON.stringify(it.ex)})">${it.label}</button>`
+  ).join('');
+  return aiSay(`<p>Je ne suis pas sûr d'avoir bien compris. Tu veux dire&nbsp;:</p>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0">${choix}</div>
+    <p class="note">Touche une proposition, ou reformule ta demande.</p>`);
+}
+
 // CONSEIL GLOBAL : affiche la voix complète (le cerveau) dans le fil du dialogue.
 // [COCKPIT] ORDRE DE PRODUCTION DU JOUR : « par quoi je commence aujourd'hui ? ». Réutilise le plan
 // déjà calé à l'heure (schedulePersonalPlan via _planSemaineSchedule) et en extrait les tâches du jour,

@@ -1,11 +1,11 @@
-const CACHE = 'sm-iphone-v944';
+const CACHE = 'sm-iphone-v948';
 const ASSETS = [
   './',
   './index.html',
-  './utils.js?v=944',
-  './app.js?v=944',
+  './utils.js?v=948',
+  './app.js?v=948',
   './dexie.min.js',
-  './qr_min.js?v=944',
+  './qr_min.js?v=948',
   './pdf_extract.js',
   './manifest.webmanifest',
   './icon-192.png',
@@ -25,7 +25,7 @@ self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE).then(c =>
       c.addAll(ASSETS).then(()=>{
-        return c.add('./html5-qrcode.min.js?v=944').catch(()=>{});
+        return c.add('./html5-qrcode.min.js?v=948').catch(()=>{});
       })
     ).then(() => self.skipWaiting())
   );
