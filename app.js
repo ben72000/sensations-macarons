@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v952';
+const APP_VERSION = 'v954';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -24389,18 +24389,24 @@ async function aiQueryDlcFinis(){
   const out=document.getElementById('aiOut');
   if(out) out.innerHTML=`<div class="panel"><p class="note">Recherche des DLC proches…</p></div>`;
   let b; try{ b=await atelierBrain(); }catch(e){ b=null; }
-  if(!b){ return aiSay(`<p>Je n'ai pas pu vérifier les DLC. Réessaie.</p>`); }
+  if(!b){ return aiSay(`${aiSynth('Je n\'ai pas pu vérifier les DLC, réessaie dans un instant.', {tone:'warn', icon:'⚠️'})}`); }
   if(!b.aDesDlcProches || !b.dlcFinis || !b.dlcFinis.length){
-    return aiSay(`<p>✅ <b>Aucun produit fini proche de sa DLC.</b> Rien ne risque de se perdre dans l'immédiat.</p>`);
+    return aiSay(`${aiHero('0', 'Produit proche de péremption', {color:'var(--vert,#3f7d52)'})}
+      ${aiSynth('Rien ne risque de se perdre dans l\'immédiat.', {tone:'ok', icon:'✅'})}`);
   }
+  const nDlc=b.dlcFinis.length;
   const rows = b.dlcFinis.slice(0,10).map(d=>{
     const q = (typeof qty==='function')?qty(d.qte):d.qte;
     const when = d.joursAvantDLC<0?'DLC dépassée':d.joursAvantDLC===0?'périme aujourd\'hui':d.joursAvantDLC===1?'périme demain':`dans ${d.joursAvantDLC} j`;
     const col = d.urgent?'#b3261e':'#d98324';
     return `<div class="sum-box" style="border-left:3px solid ${col}"><span style="flex:1"><b>${q} ${esc(d.parfum)}</b> <span style="color:#9a8a82">(lot ${esc(d.lot)})</span> — ${when}</span></div>`;
   }).join('');
-  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🧊 ${b.dlcFinis.length} produit(s) à écouler en priorité</h3>${rows}
-    <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('stockparfums')">📦 Voir le stock par parfum</button></p>`);
+  const _d0=b.dlcFinis[0];
+  const _when0 = _d0.joursAvantDLC<0?'a dépassé sa DLC':_d0.joursAvantDLC===0?'périme aujourd\'hui':_d0.joursAvantDLC===1?'périme demain':`périme dans ${_d0.joursAvantDLC} jours`;
+  aiSay(`${aiHero(`${nDlc} <span style="font-size:1rem;font-weight:600">lot${nDlc>1?'s':''}</span>`, 'À écouler en priorité', {color:'var(--red)'})}
+    ${aiSynth(`Le plus pressant : <b>${esc(_d0.parfum)}</b>, qui ${_when0}.`, {tone:'warn', icon:'🧊'})}
+    ${aiDetails(rows, `Voir les ${nDlc} lot${nDlc>1?'s':''}`)}
+    ${aiSuite([{label:'📦 Stock par parfum', view:'stockparfums'}])}`);
 }
 
 // FAISABILITÉ : est-ce que la charge tient dans le temps disponible (le cerveau).
@@ -24604,9 +24610,12 @@ async function aiQueryTopClients(params){
   const fl=params.flavor;
   const rank=Object.keys(R.parClient).map(id=>({id:+id, nom:R.parClient[id].nom, n: fl?(R.parClient[id].parfums[fl]||0):R.parClient[id].macarons}))
     .filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,10);
-  if(!rank.length) return aiSay(`<p class="note">Aucune donnée${fl?' pour « '+esc(fl)+' »':''} (commandes payées uniquement).</p>`);
-  aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Clients — ${fl?'parfum '+esc(fl):'tous macarons'} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
-    ${rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientForm(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b>${qty(x.n)} macaron(s)</b></div>`).join('')}`);
+  if(!rank.length) return aiSay(`${aiHero('—', 'Meilleur client')}${aiSynth(`Aucune donnée${fl?' pour « '+esc(fl)+' »':''} pour l'instant.`, {icon:'📭'})}`);
+  const t=rank[0];
+  aiSay(`${aiHero(esc(t.nom), fl?`Meilleur client — ${esc(fl)}`:'Ton meilleur client', {color:'var(--caramel)', sub:`${qty(t.n)} macaron${t.n>1?'s':''}`})}
+    ${aiSynth(`En tête${rank[1]?`, devant <b>${esc(rank[1].nom)}</b>`:''}. Pense à le chouchouter.`, {icon:'⭐'})}
+    ${aiDetails(rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientForm(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b>${qty(x.n)} mac.</b></div>`).join(''), 'Voir le classement')}
+    ${aiSuite([{label:'🔔 Qui relancer ?', ask:'qui je dois relancer'}])}`);
 }
 // [LOT 3] URSSAF — réutilise computeMonthlyBilan(ym) (source unique de la compta) pour donner les
 // cotisations à provisionner sur un mois, avec ventilation marchandise/service. Ne recalcule rien.
@@ -24641,14 +24650,16 @@ async function aiQueryPaiementsDus(){
                total:(+o.montant)||0, paye:orderPaid(o), reste:orderBalance(o), statut:orderPayStatus(o) }))
     .sort((a,b)=> (a.date||'').localeCompare(b.date||''));
   if(!dus.length){
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Paiements en attente</h3>
-      <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Tout est réglé : aucune commande avec un solde dû.</span></div>`);
+    return aiSay(`${aiHero(euro(0), 'Paiements en attente', {color:'var(--vert,#3f7d52)'})}
+      ${aiSynth('Tout est réglé, aucune commande avec un solde dû.', {tone:'ok', icon:'✅'})}`);
   }
   const total = Math.round(dus.reduce((s,x)=>s+x.reste,0)*100)/100;
   const lignes = dus.map(x=>`<div class="sum-box"><span>${x.clientId?`<span class="link-name" onclick="clientForm(${x.clientId})">${esc(x.client)}</span>`:esc(x.client)}${x.date?` · ${fmtDate(x.date)}`:''} <span class="tag" style="font-size:.66rem;background:${x.statut==='Partiel'?'#fbeede':'#fdecea'};color:${x.statut==='Partiel'?'#9a5b16':'#b3261e'}">${esc(x.statut)}</span></span><b style="color:var(--red,#b3261e)">${euro(x.reste)}${x.statut==='Partiel'?` <span style="font-weight:400;font-size:.72rem;color:#9a8a82">/ ${euro(x.total)}</span>`:''}</b></div>`).join('');
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Paiements en attente <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${dus.length} commande${dus.length>1?'s':''})</span></h3>
-    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-bottom:8px"><span><b>Total dû</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
-    ${lignes}`);
+  const _plusGros = dus.slice().sort((a,b)=>b.reste-a.reste)[0];
+  return aiSay(`${aiHero(euro(total), 'Total dû', {color:'var(--red)', sub:`${dus.length} commande${dus.length>1?'s':''} en attente`})}
+    ${aiSynth(`Le plus gros reste à encaisser : <b>${esc(_plusGros.client)}</b> (${euro(_plusGros.reste)}).`, {icon:'💸'})}
+    ${aiDetails(lignes, `Voir les ${dus.length} commande${dus.length>1?'s':''}`)}
+    ${aiSuite([{label:'📋 Voir les commandes', view:'commandes'}])}`);
 }
 // [LOT 3] ALLERGÈNES — source de vérité : la recette du parfum (r.allergenes). Repli sur la table
 // réglementaire par défaut (allergenesPourNom) si la recette n'a rien de saisi. Répond soit la liste,
@@ -24926,8 +24937,7 @@ async function aiQueryValeurStock(){
   let A=null, err=null;
   try{ const r=await _aiProfitData(); A=r.A; }catch(e){ err=e; }
   if(err || !A || !A.totals){
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
-      <p class="note">Le calcul n'a pas pu aboutir${err?` (${esc(err.message||'erreur interne')})`:''}. Réessaie, ou vérifie tes recettes et tes lots de matières.</p>`);
+    return aiSay(`${aiSynth(`Le calcul n'a pas pu aboutir${err?` (${esc(err.message||'erreur interne')})`:''}. Vérifie tes recettes et tes lots de matières.`, {tone:'warn', icon:'⚠️'})}`);
   }
   const rows = A.rows||[];
   const val = +A.totals.valStock || 0;
@@ -24937,18 +24947,19 @@ async function aiQueryValeurStock(){
     const totalPieces = avecStock.reduce((s,r)=>s+(+r.stock||0),0);
     if(totalPieces>0){
       const sansCout = avecStock.filter(r=>!(r.cost && +r.cost.coutRevientUnit>0));
-      return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
+      return aiSay(`${aiHero('—', 'Valeur de mon stock')}
         ${aiSynth(`Tu as <b>${qty(totalPieces)} macaron${totalPieces>1?'s':''}</b> en stock, mais leur valeur ne peut pas être chiffrée : ${sansCout.length} recette${sansCout.length>1?'s':''} sur ${avecStock.length} n'${sansCout.length>1?'ont':'a'} pas de coût de revient.`, {icon:'⚠️', tone:'warn'})}
         <p class="note">Le coût de revient a besoin d'une recette (BOM) et de lots reçus avec un prix.</p>
         ${sansCout.length?aiDetails(sansCout.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${qty(r.stock)} pc · coût ?</b></div>`).join(''),'Recettes sans coût'):''}`);
     }
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
+    return aiSay(`${aiHero(euro(0), 'Valeur de mon stock')}
       ${aiSynth(`Aucun macaron fini en stock actuellement — la valeur immobilisée est donc nulle.`, {icon:'📦'})}`);
   }
   const top=rows.filter(r=>r.valStockCout>0).sort((a,b)=>b.valStockCout-a.valStockCout).slice(0,6);
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
-    ${aiHero(euro(val), 'Stock fini valorisé', {sub:'au coût de revient'})}
-    ${top.length?aiDetails(top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''),'Principaux contributeurs'):''}`);
+  return aiSay(`${aiHero(euro(val), 'Stock fini valorisé', {sub:'au coût de revient'})}
+    ${aiSynth(top.length?`Principal contributeur : <b>${esc(top[0].nom)}</b> (${euro(top[0].valStockCout)}).`:`Valeur immobilisée dans tes macarons finis.`, {icon:'💰'})}
+    ${top.length?aiDetails(top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''),'Principaux contributeurs'):''}
+    ${aiSuite([{label:'🍬 Stock par parfum', view:'stockparfums'}])}`);
 }
 
 // [CHANTIER B] PROCHAIN MARCHÉ.
@@ -25068,14 +25079,15 @@ async function aiQueryTopParfum(params){
     .map(nom=>({nom, n:R.parfums[nom]}))
     .filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,10);
   if(!rank.length){
-    return aiSay(`<p class="note">Aucune vente enregistrée ${esc(periode.label)} (commandes payées uniquement).</p>`);
+    return aiSay(`${aiHero('—', 'Parfum le plus vendu')}${aiSynth(`Aucune vente enregistrée ${esc(periode.label)}.`, {icon:'📭'})}`);
   }
   const top = rank[0];
   const total = rank.reduce((s,x)=>s+x.n,0);
   const pct = total>0 ? Math.round(top.n/total*100) : 0;
-  aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🏆 Parfums les plus vendus <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${esc(periode.label)}, commandes payées)</span></h3>
-    <div style="font-size:.86rem;margin-bottom:8px;color:#3f3a44">Ton numéro 1 : <b>${esc(top.nom)}</b> avec ${qty(top.n)} macarons (${pct}% du top 10).</div>
-    ${rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. <b>${esc(x.nom)}</b></span><b>${qty(x.n)} mac.</b></div>`).join('')}`);
+  aiSay(`${aiHero(esc(top.nom), 'Ton parfum nº 1', {color:'var(--caramel)', sub:`${qty(top.n)} macarons · ${pct}% du top 10`})}
+    ${aiSynth(`En tête ${esc(periode.label)}${rank[1]?`, devant <b>${esc(rank[1].nom)}</b>`:''}.`, {icon:'🏆'})}
+    ${aiDetails(rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. <b>${esc(x.nom)}</b></span><b>${qty(x.n)} mac.</b></div>`).join(''), 'Voir le classement complet')}
+    ${aiSuite([{label:'📈 Et le plus rentable ?', ask:'quel parfum est le plus rentable'}])}`);
 }
 // [COCKPIT] RECETTE (éventuellement mise à l'échelle) : « la recette des macarons citron pour 25 pièces ».
 // Lit la recette du parfum + ses ingrédients (recipeItems), met à l'échelle au prorata du rendement.
@@ -25713,6 +25725,8 @@ async function aiQueryGaspillage(){
 
 async function aiQueryProchaineLivraison(){
   const orders = await db.orders.toArray();
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom || 'Client';
   const aVenir = orders
     .filter(o=> !o.histo && normStatus(o.statut)!=='Livrée')
     .map(o=>({o, ref:_orderRefDate(o)}))
@@ -25727,12 +25741,10 @@ async function aiQueryProchaineLivraison(){
     if(retards.length){
       const r=retards[retards.length-1]; // la plus récente échue
       const dans=(typeof daysTo==='function')?daysTo(r.ref):null;
-      return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma prochaine livraison</h3>
-        ${aiSynth(`Aucune livraison à venir, mais <b>${retards.length} commande${retards.length>1?'s'  :''} en retard</b> ${retards.length>1?'restent':'reste'} à livrer.`, {icon:'⚠️', tone:'warn'})}
+      return aiSay(`        ${aiSynth(`Aucune livraison à venir, mais <b>${retards.length} commande${retards.length>1?'s'  :''} en retard</b> ${retards.length>1?'restent':'reste'} à livrer.`, {icon:'⚠️', tone:'warn'})}
         <p class="note">La plus ancienne : ${esc(clName(r.o.clientId))}, prévue le ${fmtDate(r.ref)}${dans!=null?` (il y a ${-dans} j)`:''}.</p>`);
     }
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma prochaine livraison</h3>
-      ${aiSynth(`Aucune livraison programmée pour le moment.`, {icon:'📦'})}`);
+    return aiSay(`      ${aiSynth(`Aucune livraison programmée pour le moment.`, {icon:'📦'})}`);
   }
   const p = futures[0];
   const dans = (typeof daysTo==='function') ? daysTo(p.ref) : null;
@@ -25743,10 +25755,10 @@ async function aiQueryProchaineLivraison(){
   let contenu=''; try{ const ls=orderToLines(p.o); contenu = ls.length ? ls.map(lineLabel).join(' + ') : ''; }catch(_){}
   // Combien d'autres livraisons suivent, pour le contexte.
   const autres = futures.length-1;
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma prochaine livraison</h3>
-    ${aiHero(quand?quand.charAt(0).toUpperCase()+quand.slice(1):fmtDate(p.ref), `${esc(clName(p.o.clientId))}`, {color:col, sub:`${fmtDate(p.ref)}${heure}${lieu?` · ${lieu}`:''}`})}
+  return aiSay(`    ${aiHero(quand?quand.charAt(0).toUpperCase()+quand.slice(1):fmtDate(p.ref), `${esc(clName(p.o.clientId))}`, {color:col, sub:`${fmtDate(p.ref)}${heure}${lieu?` · ${lieu}`:''}`})}
     ${contenu?`<div class="sum-box"><span>À livrer</span><b style="font-weight:600">${esc(contenu)}</b></div>`:''}
-    ${autres>0?`<p class="note">${autres} autre${autres>1?'s':''} livraison${autres>1?'s':''} suivent ensuite.</p>`:'<p class="note">C\'est ta seule livraison programmée.</p>'}`);
+    ${autres>0?`<p class="note">${autres} autre${autres>1?'s':''} livraison${autres>1?'s':''} suivent ensuite.</p>`:'<p class="note">C\'est ta seule livraison programmée.</p>'}
+    ${aiSuite([{label:'📋 Toutes mes commandes', view:'commandes'},{label:'🏭 Suis-je dans les temps ?', ask:'est-ce que je suis dans les temps'}])}`);
 }
 async function aiQueryDelivery(params){
   const c = params && params.client;
