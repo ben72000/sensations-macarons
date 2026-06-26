@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v937';
+const APP_VERSION = 'v939';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19641,6 +19641,10 @@ function parseIntent(texte, ctx){
      && (/\b(allergene|allergenes|allergie)\b/.test(t)
          || /\b(gluten|crustace|crustaces|oeuf|oeufs|poisson|poissons|arachide|arachides|soja|lait|fruits a coque|fruit a coque|noix|amande|celeri|moutarde|sesame|sulfite|sulfites|lupin|mollusque|mollusques)\b/.test(t))){
     const fl = aiFindFlavor(t, flavors);
+    // [V938] Si aucun parfum n'est nommé ET tournure « quels/lesquels … sans / n'ont pas de » → c'est
+    // l'inverse (query_parfums_sans, plus bas), pas la fiche allergènes d'un parfum.
+    if(!fl && /\b(quels?|lesquels?|parfums?|macarons?)\b/.test(t) && /\b(sans|n'?ont pas|n'?a pas|compatibles?)\b/.test(t)){ /* tombe vers query_parfums_sans */ }
+    else {
     // Allergène précis éventuellement visé par la question.
     let allergene=null;
     const mapAll=[['gluten','Gluten'],['crustace','Crustacés'],['oeuf','Œufs'],['poisson','Poissons'],
@@ -19651,11 +19655,13 @@ function parseIntent(texte, ctx){
     for(const [k,v] of mapAll){ if(new RegExp('\\b'+k).test(t)){ allergene=v; break; } }
     return {intent:'query_allergenes', params:{flavor:fl, allergene}, critical:false,
       label: fl?`Allergènes — ${fl}`:'Allergènes d\'un parfum'};
+    }
   }
   // [CHANTIER B] COÛT DE REVIENT d'un parfum : « combien me coûte un macaron chocolat », « le coût de
   // revient de la pistache », « ça me coûte combien à produire ». Source : coutRevientRecette via la row.
   if(/\b(cout de revient|cout unitaire|combien (ca |me |il )?(coute|coute t il)|coute combien|prix de revient|cout de prod|cout de production|cout de fabrication|ca me coute|combien (ca|il) revient|revient a combien|me revient|il me coute|me coute)\b/.test(t)
-     && !/\b(client|urssaf|cotisation|stock total|mon stock|coute de l'?argent|rentable|rentabilite|perdre de l'?argent)\b/.test(t)){
+     && !/\b(client|urssaf|cotisation|stock total|mon stock|coute de l'?argent|rentable|rentabilite|perdre de l'?argent)\b/.test(t)
+     && !/\bcommande\b/.test(t)){
     const fl = aiFindFlavor(t, flavors);
     return {intent:'query_cout_revient', params:{flavor:fl}, critical:false,
       label: fl?`Coût de revient — ${fl}`:'Coût de revient d\'un parfum'};
@@ -19744,6 +19750,59 @@ function parseIntent(texte, ctx){
         label:`Statistiques — ${_flStat}`};
     }
   }
+  // [V938] TEMPS DE PRODUCTION pour N macarons d'un parfum, OU pour une commande d'un client.
+  if(/\b(combien de temps|ca (me )?prend combien|ca prend combien|temps de (production|fabrication)|temps pour (produire|faire|fabriquer)|combien (de temps )?(pour|il faut pour)|en combien de temps|duree de (production|fabrication))\b/.test(t)
+     && (/\b(produire|faire|fabriquer|preparer|monter|macaron|macarons|commande)\b/.test(t) || (aiFindFlavor(t,flavors) && (typeof aiParseNumber==='function') && aiParseNumber(t)!=null))
+     && !/\bavant (rupture|de manquer)\b|\ben rupture\b/.test(t)){
+    const _flT = aiFindFlavor(t, flavors);
+    const _cliT = (!/\b(cree|creer|ajoute|supprime|annule)\b/.test(t)) ? aiFindClient(t, clients) : null;
+    const _nbT = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
+    if(_cliT && /\bcommande\b/.test(t)){
+      return {intent:'query_temps_prod', params:{client:_cliT}, critical:false, label:`Temps de production — commande ${_cliT.nom||''}`.trim()};
+    }
+    if(_flT){
+      return {intent:'query_temps_prod', params:{flavor:_flT, pieces:(_nbT&&_nbT>0)?_nbT:null}, critical:false, label:`Temps de production — ${_flT}`};
+    }
+  }
+  // [V938] NOMBRE DE BATCHS / FOURNÉES pour N macarons d'un parfum.
+  if(/\b(combien d'?(ordres? de fabrication)|combien de (batchs?|fournees?|tournees?|ordres? de fabrication)|combien de fois (je dois )?(produire|enfourner)|ca fait combien de (batchs?|fournees?))\b/.test(t)){
+    const _flB = aiFindFlavor(t, flavors);
+    const _nbB = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
+    return {intent:'query_nb_batchs', params:{flavor:_flB, pieces:(_nbB&&_nbB>0)?_nbB:null}, critical:false,
+      label: _flB?`Fournées — ${_flB}`:'Nombre de fournées'};
+  }
+  // [V938] CONVERSION GRAND FORMAT ↔ STANDARD (équivalent coques).
+  if(/\b(grand format|grands formats|gros macaron|gros macarons)\b/.test(t)
+     && /\b(equivaut|equivalent|ca fait combien|combien de (coques|macarons|standards?)|en coques|en standards?|conversion|correspond a combien)\b/.test(t)){
+    const _nbG = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
+    return {intent:'query_conversion_gf', params:{nb:(_nbG&&_nbG>0)?_nbG:1}, critical:false, label:'Conversion grand format'};
+  }
+  // [V938] MARGE SUR UNE COMMANDE PRÉCISE (la dernière du client).
+  {
+    const _cliM = (!/\b(cree|creer|ajoute|supprime|annule)\b/.test(t)) ? aiFindClient(t, clients) : null;
+    if(_cliM && /\b(marge|combien (je )?(gagne|gagner|fais|fait)|benefice|rentabilite|je gagne combien|rapporte)\b/.test(t) && /\bcommande\b/.test(t)){
+      return {intent:'query_marge_commande', params:{client:_cliM}, critical:false, label:`Marge — commande ${_cliM.nom||''}`.trim()};
+    }
+  }
+  // [V938] COÛT MATIÈRE D'UNE COMMANDE.
+  {
+    const _cliC = (!/\b(cree|creer|ajoute|supprime|annule)\b/.test(t)) ? aiFindClient(t, clients) : null;
+    if(_cliC && /\bcommande\b/.test(t) && /\b(cout (matiere|des matieres|en matiere|de revient)|matieres? (me )?coute|matieres? me coutent|combien (me )?coutent? les matieres|me coute en matiere|matieres premieres|en cout)\b/.test(t)){
+      return {intent:'query_cout_commande', params:{client:_cliC}, critical:false, label:`Coût matière — commande ${_cliC.nom||''}`.trim()};
+    }
+  }
+  // [V938] PARFUMS COMPATIBLES AVEC UN ALLERGÈNE (sans gluten…). L'INVERSE de query_allergenes.
+  if(/\b(quels?|lesquels?|parfums?|macarons?)\b/.test(t)
+     && /\b(sans|n'?ont pas de|n'?ont pas|n'?a pas de|compatibles?)\b/.test(t)
+     && (/\b(gluten|lait|oeuf|oeufs|soja|fruits a coque|fruit a coque|arachide|arachides|sesame|sulfite|sulfites|noix|amande|allergene|allergenes)\b/.test(t) || /œufs?/.test(t))
+     && !aiFindFlavor(t, flavors)){
+    let allergene=null;
+    const mapAll=[['gluten','Gluten'],['lait','Lait'],['œuf','Œufs'],['oeuf','Œufs'],['soja','Soja'],
+      ['fruits a coque','Fruits à coque'],['fruit a coque','Fruits à coque'],['noix','Fruits à coque'],['amande','Fruits à coque'],
+      ['arachide','Arachides'],['sesame','Sésame'],['sulfite','Sulfites']];
+    for(const [k,v] of mapAll){ if(new RegExp(k).test(t)){ allergene=v; break; } }
+    return {intent:'query_parfums_sans', params:{allergene}, critical:false, label: allergene?`Parfums sans ${allergene}`:'Parfums compatibles'};
+  }
   // [V937] QUANTITÉ D'UN INGRÉDIENT POUR PRODUIRE N MACARONS D'UN PARFUM :
   // « quelle quantité de crème pour fabriquer 20 macarons chocolat au lait »,
   // « combien de sucre pour faire 50 macarons vanille », « il me faut combien de beurre pour 30 pistache ».
@@ -19756,7 +19815,7 @@ function parseIntent(texte, ctx){
     const _pourProduire = /\b(pour (fabriquer|faire|produire|monter|realiser|preparer|avoir|obtenir)|pour|afin de (faire|produire|fabriquer))\b/.test(t);
     const _aMacarons = /\bmacarons?\b/.test(t) || (typeof aiParseNumber==='function' && aiParseNumber(t)!=null && _flIng);
     if(_matIng && _flIng && _veutQuantite && _pourProduire && _aMacarons
-       && !/\b(assez|suffi|suffisant|il me reste|en stock|reste t il)\b/.test(t)){   // « assez … » = stock, pas recette
+       && !/\b(assez|suffi|suffisant|il me reste|en stock|reste t il|ordres? de fabrication|combien de (batchs?|fournees?|tournees?))\b/.test(t)){   // « assez … » = stock, pas recette
       const pieces = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
       return {intent:'query_ingredient_pour', params:{material:_matIng, flavor:_flIng, pieces:(pieces&&pieces>0)?pieces:null},
         critical:false, label:`Quantité de ${_matIng.nom} pour ${_flIng}`};
@@ -22723,6 +22782,12 @@ const INTENT_SHORTCUTS = {
   query_clients_relance:  [ { label:'👥 Mes clients', view:'clients' } ],
   query_dlc_matieres:     [ { label:'📦 Voir les matières', view:'matieres' } ],
   query_stats_parfum:     [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📊 Compta', view:'compta' } ],
+  query_temps_prod:       [ { label:'⚙ Production', view:'agendaprod' }, { label:'🗂 Recettes', view:'recettes' } ],
+  query_nb_batchs:        [ { label:'⚙ Production', view:'agendaprod' } ],
+  query_conversion_gf:    [ { label:'⚙ Production', view:'agendaprod' } ],
+  query_marge_commande:   [ { label:'📈 Rentabilité clients', view:'rentabilite' }, { label:'📋 Commandes', view:'commandes' } ],
+  query_cout_commande:    [ { label:'📋 Commandes', view:'commandes' }, { label:'📈 Rentabilité parfums', view:'rentaparfum' } ],
+  query_parfums_sans:     [ { label:'🗂 Recettes', view:'recettes' } ],
   query_urssaf:           [ { label:'📊 Ouvrir la compta', view:'compta' } ],
   query_paiements_dus:    [ { label:'📋 Voir les commandes', view:'commandes' } ],
   query_allergenes:       [ { label:'📖 Voir les recettes', view:'recettes' } ],
@@ -22791,6 +22856,26 @@ function aiPush(role, html){
   thread.appendChild(wrap);
   // défilement doux vers le dernier message.
   requestAnimationFrame(()=>{ thread.scrollTop = thread.scrollHeight; const m=document.getElementById('main'); if(m) window.scrollTo(0, document.body.scrollHeight); });
+}
+// [SORTIE — BRIQUE 1] Composants de rendu réutilisables pour des réponses lisibles et hiérarchisées.
+// Un seul vocabulaire visuel partagé par toutes les réponses, au lieu de reconstruire du HTML au cas par cas.
+//   aiHero(valeur, label, opts)  → le CHIFFRE CLÉ mis en avant (gros, coloré), libellé discret au-dessus.
+//   aiSynth(html, opts)          → une phrase de SYNTHÈSE en tête (vue d'ensemble avant le détail).
+//   aiDetails(html, label)       → un bloc de détail REPLIABLE (caché par défaut) pour ne pas noyer.
+function aiHero(valeur, label, opts){
+  opts = opts || {};
+  const col = opts.color || 'var(--bordeaux)';
+  const sub = opts.sub ? `<div class="ai-hero-sub">${opts.sub}</div>` : '';
+  const lab = label ? `<div class="ai-hero-label">${esc(label)}</div>` : '';
+  return `<div class="ai-hero">${lab}<div class="ai-hero-val" style="color:${col}">${valeur}</div>${sub}</div>`;
+}
+function aiSynth(html, opts){
+  opts = opts || {};
+  const ic = opts.icon ? `<span class="ai-synth-ic">${opts.icon}</span>` : '';
+  return `<div class="ai-synth${opts.tone?(' '+opts.tone):''}">${ic}<span>${html}</span></div>`;
+}
+function aiDetails(html, label){
+  return `<details class="ai-details"><summary>${esc(label || 'Voir le détail')}</summary><div class="ai-details-body">${html}</div></details>`;
 }
 function aiSay(html){
   // [COCKPIT] On accole les raccourcis contextuels de l'intention courante (mémorisée par le dispatcher).
@@ -22922,6 +23007,8 @@ const INTENT_RELANCE = {
   query_cout_revient:  { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu le coût de revient ?' },
   query_prix_vente:    { champ:'flavor',   type:'parfum',  question:'De quel parfum veux-tu le prix de vente moyen ?' },
   // [V937] Deux paramètres essentiels (ingrédient + parfum), demandés dans l'ordre via C3.
+  query_marge_commande: { champ:'client', type:'client', question:'La marge sur la commande de quel client ?' },
+  query_cout_commande:   { champ:'client', type:'client', question:'Le coût matière de la commande de quel client ?' },
   query_ingredient_pour: { champs:[
     { champ:'material', type:'matiere', question:'De quel ingrédient veux-tu connaître la quantité ?' },
     { champ:'flavor',   type:'parfum',  question:'Pour quel parfum (et combien de macarons) ?' }
@@ -23114,6 +23201,12 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_top_parfum': return aiQueryTopParfum(r.params);
       case 'query_recipe': return aiQueryRecipe(r.params);
       case 'query_ingredient_pour': return aiQueryIngredientPour(r.params);
+      case 'query_temps_prod': return aiQueryTempsProd(r.params);
+      case 'query_nb_batchs': return aiQueryNbBatchs(r.params);
+      case 'query_conversion_gf': return aiQueryConversionGF(r.params);
+      case 'query_marge_commande': return aiQueryMargeCommande(r.params);
+      case 'query_cout_commande': return aiQueryCoutCommande(r.params);
+      case 'query_parfums_sans': return aiQueryParfumsSans(r.params);
       case 'query_faisabilite_ajout': return aiQueryFaisabiliteAjout(r.params);
       case 'query_stock_pour': return aiQueryStockPour(r.params);
       case 'query_client': return aiQueryClient(r.params);
@@ -23990,13 +24083,14 @@ async function aiQueryCourses(){
   const lignes = (res && res.lignes) ? res.lignes.filter(l=>(+l.manque||0)>0) : [];
   if(!lignes.length){
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma liste de courses</h3>
-      <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Rien à racheter pour l'horizon à venir : ton stock couvre les besoins.</span></div>${aiShortcuts('query_courses',{})}`);
+      <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Rien à racheter pour l'horizon à venir : ton stock couvre les besoins.</span></div>`);
   }
   const items = lignes.sort((a,b)=>(b.manque||0)-(a.manque||0)).slice(0,20)
     .map(l=>`<div class="sum-box"><span>${esc(l.nom)}</span><b style="color:var(--red,#b3261e)">manque ${qty(l.manque)} ${esc(l.unite||'')}</b></div>`).join('');
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma liste de courses <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${lignes.length} matière${lignes.length>1?'s':''})</span></h3>
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma liste de courses</h3>
+    ${aiSynth(`<b>${lignes.length} matière${lignes.length>1?'s':''}</b> à racheter pour couvrir tes besoins à venir.`, {icon:'🛒'})}
     ${items}
-    <p class="note">Basé sur les besoins réels à venir (commandes + marchés) moins ton stock. ${aiShortcuts('query_courses',{})}</p>`);
+    <p class="note">Basé sur les besoins réels à venir (commandes + marchés) moins ton stock.</p>`);
 }
 
 // [VAGUE 2] DÉLAI AVANT RUPTURE par parfum — réutilise computeSalesVelocity.
@@ -24019,17 +24113,17 @@ async function aiQueryVelocite(params){
     }
     const col = L.joursRestants<=14?'var(--red,#b3261e)':L.joursRestants<=30?'#caa23b':'#3f7d52';
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Délai avant rupture — ${esc(L.parfum)}</h3>
-      <div class="sum-box"><span>Stock fini actuel</span><b>${qty(L.stock)} pièces</b></div>
-      <div class="sum-box"><span>Vélocité</span><b>${L.perDay} /jour (~${L.perMonth}/mois)</b></div>
-      <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Rupture estimée dans</b></span><b style="color:${col}">${L.joursRestants} jour${L.joursRestants>1?'s':''}${L.dateRupture?` (${fmtDate(L.dateRupture)})`:''}</b></div>
-      ${aiShortcuts('query_velocite',{flavor:L.parfum})}`);
+      ${aiHero(`${L.joursRestants} <span style="font-size:1rem;font-weight:600">jour${L.joursRestants>1?'s':''}</span>`, 'Rupture estimée dans', {color:col, sub: L.dateRupture?`vers le ${fmtDate(L.dateRupture)}`:''})}
+      ${aiDetails(`
+        <div class="sum-box"><span>Stock fini actuel</span><b>${qty(L.stock)} pièces</b></div>
+        <div class="sum-box"><span>Vélocité</span><b>${L.perDay} /jour (~${L.perMonth}/mois)</b></div>`, 'Comment c\'est calculé')}`);
   }
   // Sans parfum : les plus urgents.
   const urgents = lignes.filter(l=>l.joursRestants!=null).sort((a,b)=>a.joursRestants-b.joursRestants).slice(0,8);
   if(!urgents.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Délai avant rupture</h3><p class="note">Aucune rupture prévisible (pas de vélocité mesurable).</p>`);
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Délai avant rupture <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(par parfum)</span></h3>
     ${urgents.map(l=>`<div class="sum-box"><span>${esc(l.parfum)} <span style="color:#9a8a82;font-size:.74rem">(${qty(l.stock)} en stock)</span></span><b style="color:${l.joursRestants<=14?'var(--red,#b3261e)':l.joursRestants<=30?'#caa23b':'#3f7d52'}">${l.joursRestants} j</b></div>`).join('')}
-    <p class="note">Estimé d'après tes ventes des 3 derniers mois. ${aiShortcuts('query_velocite',{})}</p>`);
+    <p class="note">Estimé d'après tes ventes des 3 derniers mois.</p>`);
 }
 
 // [VAGUE 2] DERNIÈRE COMMANDE D'UN CLIENT.
@@ -24190,11 +24284,11 @@ async function aiQueryCoutRevient(params){
       <p class="note">Coût indisponible : il faut une recette (BOM) et des lots reçus avec prix pour ce parfum.</p>${aiShortcuts('query_cout_revient',{flavor:params.flavor})}`);
   }
   const pvm = row.prixVenteMoyen, marge = row.margeUnit;
+  const detail = `${pvm!=null?`<div class="sum-box"><span>Prix de vente moyen</span><b>${euro(pvm)}</b></div>`:''}${marge!=null?`<div class="sum-box"><span>Marge unitaire</span><b style="color:${marge>=0?'#2e7d32':'var(--red,#b3261e)'}">${euro(marge)}${row.tauxMarge!=null?` · ${row.tauxMarge}%`:''}</b></div>`:''}`;
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Coût de revient — ${esc(row.nom)}</h3>
-    <div class="sum-box"><span>Coût de revient unitaire</span><b>${euro(cu)}</b></div>
-    ${pvm!=null?`<div class="sum-box"><span>Prix de vente moyen</span><b>${euro(pvm)}</b></div>`:''}
-    ${marge!=null?`<div class="sum-box"><span>Marge unitaire</span><b style="color:${marge>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(marge)}${row.tauxMarge!=null?` · ${row.tauxMarge}%`:''}</b></div>`:''}
-    <p class="note">Coût = matières + emballage + main d'œuvre mesurée. ${aiShortcuts('query_cout_revient',{flavor:row.nom})}</p>`);
+    ${aiHero(euro(cu), 'Coût de revient unitaire', {sub: marge!=null?`marge ${euro(marge)}${row.tauxMarge!=null?` · ${row.tauxMarge}%`:''}`:''})}
+    ${detail?aiDetails(detail,'Prix de vente et marge'):''}
+    <p class="note">Coût = matières + emballage + main d'œuvre mesurée.</p>`);
 }
 
 // [CHANTIER B] PRIX DE VENTE MOYEN d'un parfum.
@@ -24226,10 +24320,9 @@ async function aiQueryValeurStock(){
   }
   // Top contributeurs au stock valorisé.
   const top=(A.rows||[]).filter(r=>r.valStockCout>0).sort((a,b)=>b.valStockCout-a.valStockCout).slice(0,6);
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(au coût de revient)</span></h3>
-    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-bottom:8px"><span><b>Valeur totale (finis)</b></span><b style="color:var(--bordeaux)">${euro(val)}</b></div>
-    ${top.length?'<p class="note" style="margin:4px 0">Principaux contributeurs :</p>'+top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''):''}
-    <p class="note">Stock de macarons finis valorisé au coût de revient. ${aiShortcuts('query_valeur_stock',{})}</p>`);
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
+    ${aiHero(euro(val), 'Stock fini valorisé', {sub:'au coût de revient'})}
+    ${top.length?aiDetails(top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''),'Principaux contributeurs'):''}`);
 }
 
 // [CHANTIER B] PROCHAIN MARCHÉ.
@@ -24320,7 +24413,7 @@ async function aiQueryRentabilite(params){
     ]);
     const clName=(id)=>{ const c=clients.find(x=>x.id===id); return c?c.nom:'Client'; };
     const paid = orders.filter(o=> !o.histo && (+o.montant>0) && (typeof orderPaid==='function') && orderPaid(o)+1e-9 >= (+o.montant));
-    if(!paid.length) return aiSay(`<p class="note">Aucune commande payée pour calculer la rentabilité par client.</p>${aiShortcuts('query_rentabilite',{cible:'client'})}`);
+    if(!paid.length) return aiSay(`<p class="note">Aucune commande payée pour calculer la rentabilité par client.</p>`);
     const byClient={};
     paid.forEach(o=>{ const m=computeOrderMargins(o,recipes,recipeItems,lots); const k=o.clientId||0;
       (byClient[k] ||= {id:k, nom:clName(k), ca:0, nette:0, n:0}); const c=byClient[k];
@@ -24364,6 +24457,132 @@ async function aiQueryTopParfum(params){
 // Ne modifie rien : lecture + règle de trois.
 // [V937] QUANTITÉ D'UN INGRÉDIENT POUR N PIÈCES D'UN PARFUM. Réutilise EXACTEMENT le calcul de mise à
 // l'échelle de la recette (recipeItems × pieces/rendement), filtré sur l'ingrédient demandé. Source unique.
+// [V938] Helper : retrouve la recette d'un parfum (par nom normalisé).
+async function _aiRecetteParfum(flavor){
+  const recipes = await db.recipes.toArray();
+  const n=(s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  return recipes.find(r=>n(r.produitNom)===n(flavor))
+      || recipes.find(r=>n(r.produitNom).includes(n(flavor)) || n(flavor).includes(n(r.produitNom))) || null;
+}
+
+// [V938] TEMPS DE PRODUCTION (estimation du montage) pour N macarons d'un parfum, ou pour une commande.
+async function aiQueryTempsProd(params){
+  params=params||{};
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const fmtDuree = (min)=>{ min=Math.round(min); if(min<60) return `${min} min`; const h=Math.floor(min/60), m=min%60; return m?`${h} h ${m} min`:`${h} h`; };
+  // Cas commande d'un client : somme des macarons de sa dernière commande.
+  if(params.client){
+    const orders=await db.orders.toArray();
+    const cmds=orders.filter(o=>o.clientId===params.client.id && o.date).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    if(!cmds.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Temps de production — ${esc(params.client.nom||'')}</h3><p class="note">Aucune commande pour ce client.</p>`);
+    const last=cmds[0];
+    let totMac=0;
+    (orderToLines(last)||[]).forEach(ln=>{ const p=ln.parfums||ln.items||{}; Object.values(p).forEach(q=>totMac+=(+q||0)); });
+    if(!totMac) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Temps de production — commande ${esc(params.client.nom||'')}</h3><p class="note">Je n'arrive pas à compter les macarons de cette commande.</p>`);
+    const montage = (typeof _montageMinutes==='function') ? _montageMinutes(totMac, null, 'défaut') : 0;
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Temps de production — commande ${esc(params.client.nom||'')}</h3>
+      <div class="sum-box"><span>Macarons</span><b>${qty(totMac)}</b></div>
+      <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Montage estimé</b></span><b style="color:var(--bordeaux)">${fmtDuree(montage)}</b></div>
+      <p class="note">Estimation du temps de montage (hors ganache et cuisson). Vue complète dans Production.</p>`);
+  }
+  // Cas parfum + nombre.
+  if(!params.flavor) return aiSay(`<p>Pour quel parfum (et combien de macarons) veux-tu le temps de production ?</p>`);
+  const n = params.pieces || TB;
+  const montage = (typeof _montageMinutes==='function') ? _montageMinutes(n, null, 'défaut') : 0;
+  const nbBatchs = Math.max(1, Math.ceil(n/TB));
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Temps de production — ${esc(params.flavor)}</h3>
+    <div class="sum-box"><span>Quantité</span><b>${qty(n)} macaron${n>1?'s':''}</b></div>
+    <div class="sum-box"><span>Fournées (batchs)</span><b>${nbBatchs}</b></div>
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Montage estimé</b></span><b style="color:var(--bordeaux)">${fmtDuree(montage)}</b></div>
+    <p class="note">Estimation du montage (assemblage). La ganache et la cuisson s'ajoutent selon ton planning. ${aiShortcuts('query_ordo',{})}</p>`);
+}
+
+// [V938] NOMBRE DE BATCHS / FOURNÉES pour N macarons.
+async function aiQueryNbBatchs(params){
+  params=params||{};
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const n = params.pieces;
+  if(!n) return aiSay(`<p>Combien de macarons veux-tu produire ? (et de quel parfum si pertinent)</p>`);
+  // Rendement spécifique de la recette si dispo, sinon taille de batch standard.
+  let rendement = TB, recNom=null;
+  if(params.flavor){ const rec=await _aiRecetteParfum(params.flavor); if(rec){ recNom=rec.produitNom; if(+rec.rendement>0) rendement=+rec.rendement; } }
+  const nb = Math.max(1, Math.ceil(n/rendement));
+  const dernier = n % rendement;
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Fournées${recNom?` — ${esc(recNom)}`:''}</h3>
+    <div class="sum-box"><span>Quantité visée</span><b>${qty(n)} macarons</b></div>
+    <div class="sum-box"><span>Par fournée</span><b>${qty(rendement)}</b></div>
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Nombre de fournées</b></span><b style="color:var(--bordeaux)">${nb}</b></div>
+    ${(dernier>0 && nb>1)?`<p class="note">La dernière fournée ne sera remplie qu'à ${qty(dernier)}/${qty(rendement)}. Arrondir à ${qty(nb*rendement)} optimiserait le four.</p>`:'<p class="note">Les fournées tombent juste.</p>'}`);
+}
+
+// [V938] CONVERSION GRAND FORMAT ↔ STANDARD (équivalent coques).
+async function aiQueryConversionGF(params){
+  params=params||{};
+  const ratio = (typeof GF_COQUE_RATIO!=='undefined') ? GF_COQUE_RATIO : 3.5;
+  const nb = params.nb || 1;
+  const eq = nb * ratio;
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Conversion grand format</h3>
+    ${aiHero(`≈ ${qty(Math.round(eq*10)/10)} coques`, `${qty(nb)} grand${nb>1?'s':''} format${nb>1?'s':''} équivaut à`, {color:'var(--caramel)'})}
+    <p class="note">1 grand format ≈ ${ratio} coques standard (en charge de production). Utile pour estimer le temps four.</p>`);
+}
+
+// [V938] MARGE SUR UNE COMMANDE PRÉCISE (dernière commande du client).
+async function aiQueryMargeCommande(params){
+  params=params||{};
+  if(!params.client) return aiSay(`<p>La marge sur la commande de quel client ?</p>`);
+  const [orders, recipes, recipeItems, lots]=await Promise.all([db.orders.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()]);
+  const cmds=orders.filter(o=>o.clientId===params.client.id && o.date).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  if(!cmds.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Marge — ${esc(params.client.nom||'')}</h3><p class="note">Aucune commande pour ce client.</p>`);
+  const last=cmds[0];
+  const M=computeOrderMargins(last, recipes, recipeItems, lots);
+  const col = M.margeNette>=0?'#2e7d32':'var(--red,#b3261e)';
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Marge — commande ${esc(params.client.nom||'')} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${fmtDate(last.date)})</span></h3>
+    ${aiHero(`${euro(M.margeNette)}`, 'Marge nette', {color:col, sub: M.tauxNet!=null?`taux ${M.tauxNet}%`:''})}
+    ${aiDetails(`
+      <div class="sum-box"><span>Chiffre d'affaires</span><b>${euro(M.ca)}</b></div>
+      <div class="sum-box"><span>Coût matières</span><b>${euro(M.coutMat)}</b></div>
+      <div class="sum-box"><span>Marge brute</span><b>${euro(M.margeBrute)}</b></div>`, 'Détail du calcul')}
+    <p class="note">Après matières, emballage et charges sociales.</p>`);
+}
+
+// [V938] COÛT MATIÈRE D'UNE COMMANDE.
+async function aiQueryCoutCommande(params){
+  params=params||{};
+  if(!params.client) return aiSay(`<p>Le coût matière de la commande de quel client ?</p>`);
+  const [orders, recipes, recipeItems, lots]=await Promise.all([db.orders.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()]);
+  const cmds=orders.filter(o=>o.clientId===params.client.id && o.date).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  if(!cmds.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Coût matière — ${esc(params.client.nom||'')}</h3><p class="note">Aucune commande pour ce client.</p>`);
+  const last=cmds[0];
+  const M=computeOrderMargins(last, recipes, recipeItems, lots);
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Coût matière — commande ${esc(params.client.nom||'')} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${fmtDate(last.date)})</span></h3>
+    <div class="sum-box"><span>Matières premières</span><b>${euro(M.coutMat)}</b></div>
+    ${M.coutEmb!=null?`<div class="sum-box"><span>Emballage</span><b>${euro(M.coutEmb)}</b></div>`:''}
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>CA de la commande</b></span><b>${euro(M.ca)}</b></div>
+    <p class="note">Coût des matières consommées pour cette commande. ${aiShortcuts('query_cout_commande',{})}</p>`);
+}
+
+// [V938] PARFUMS COMPATIBLES AVEC UN ALLERGÈNE (sans X). Inverse de query_allergenes.
+async function aiQueryParfumsSans(params){
+  params=params||{};
+  if(!params.allergene) return aiSay(`<p>Sans quel allergène ? (ex. « quels parfums sont sans gluten »)</p>`);
+  const recipes = await db.recipes.toArray();
+  const n=(s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const cible=n(params.allergene);
+  const ok=[], avec=[];
+  const noms = recipes.length ? recipes.map(r=>r.produitNom).filter(Boolean) : (typeof FLAVORS!=='undefined'?FLAVORS:[]);
+  noms.forEach(nom=>{
+    const rec = recipes.find(r=>r.produitNom===nom);
+    let allerg = (rec && rec.allergenes && rec.allergenes.length) ? rec.allergenes : (allergenesPourNom(nom)||[]);
+    const contient = allerg.some(a=>n(a)===cible);
+    if(contient) avec.push(nom); else ok.push(nom);
+  });
+  if(!ok.length && !avec.length) return aiSay(`<p class="note">Aucune recette pour évaluer la compatibilité.</p>`);
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Parfums sans ${esc(params.allergene)}</h3>
+    ${ok.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">${ok.map(p=>`<span class="tag" style="background:#eef6ef;color:#2e7d32;border:1px solid #bcdcc2;font-size:.8rem">✓ ${esc(p)}</span>`).join('')}</div>`:'<p class="note">Aucun parfum sans cet allergène.</p>'}
+    ${avec.length?`<p class="note">Contiennent ${esc(params.allergene.toLowerCase())} : ${avec.map(esc).join(', ')}.</p>`:''}
+    <p class="note">Vérifie toujours l'étiquetage avant remise au client.</p>`);
+}
+
 async function aiQueryIngredientPour(params){
   params = params || {};
   const mat = params.material, flavor = params.flavor, pieces = params.pieces;

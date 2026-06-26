@@ -698,6 +698,21 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .prod-card-status{margin-bottom:11px;font-size:.86rem}
 .prod-card-actions{display:flex;gap:7px;flex-wrap:wrap;padding-top:11px;border-top:1px dashed #ece3d5}
 .sum-box b{color:var(--bordeaux)}
+/* [SORTIE — BRIQUE 1] Composants de réponse hiérarchisée de l'assistant. */
+.ai-hero{text-align:center;padding:14px 12px 12px;margin:4px 0 8px;background:linear-gradient(135deg,var(--creme-2),#f0e8da);border:1px solid var(--hair);border-radius:var(--r-sm)}
+.ai-hero-label{font-size:.74rem;letter-spacing:.04em;text-transform:uppercase;color:#9a8a82;font-weight:600;margin-bottom:2px}
+.ai-hero-val{font-size:1.9rem;font-weight:700;line-height:1.05}
+.ai-hero-sub{font-size:.8rem;color:#6a5a72;margin-top:3px}
+.ai-synth{display:flex;align-items:flex-start;gap:7px;font-size:.9rem;line-height:1.35;color:var(--ink);background:rgba(170,124,57,.08);border-left:3px solid var(--caramel);border-radius:6px;padding:8px 11px;margin:2px 0 8px}
+.ai-synth.warn{background:rgba(179,38,30,.07);border-left-color:#b3261e}
+.ai-synth.ok{background:rgba(46,125,50,.08);border-left-color:#2e7d32}
+.ai-synth-ic{flex:0 0 auto;font-size:1rem;line-height:1.2}
+.ai-details{margin:6px 0 2px;border:1px solid var(--hair);border-radius:8px;background:#fdfbf7;overflow:hidden}
+.ai-details>summary{cursor:pointer;padding:8px 12px;font-size:.82rem;color:var(--bordeaux);font-weight:600;list-style:none;user-select:none}
+.ai-details>summary::-webkit-details-marker{display:none}
+.ai-details>summary::before{content:'▸ ';color:var(--caramel)}
+.ai-details[open]>summary::before{content:'▾ '}
+.ai-details-body{padding:2px 12px 10px}
 /* HORODATEUR GLOBAL — discret, fixe en haut à droite, présent sur toutes les pages.
    Semi-transparent et non cliquable pour ne pas gêner ; passe sous les modales (z-index modéré). */
 .clock{position:fixed;top:8px;right:12px;z-index:30;pointer-events:none;
@@ -1331,9 +1346,9 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=937" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=937"></script>
-<script src="utils.js?v=937"></script>
-<script src="app.js?v=937"></script>
+<script src="html5-qrcode.min.js?v=939" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=939"></script>
+<script src="utils.js?v=939"></script>
+<script src="app.js?v=939"></script>
 </body>
 </html>
