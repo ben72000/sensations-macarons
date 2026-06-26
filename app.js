@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v971';
+const APP_VERSION = 'v973';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -2355,7 +2355,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -6000,6 +6000,144 @@ function prodEnCoursToggle(){
   const chev=document.getElementById('prodEnCoursChev');
   if(chev) chev.style.transform = open?'rotate(0)':'rotate(90deg)';
 }
+// ===================== PRODUCTION V2 — AFFICHAGE ÉPURÉ DES LOTS (bloc C) =====================
+// Étape 1 : la vue « En attente », lots groupés par parfum, lignes épurées.
+// Nom au vrai stade (Coque / Ganache / produit assemblé), date + heure de fab, quantité.
+// Réutilise les fonctions existantes (prodComposant, prodNomComplet, flavorColor, prodTermineTs…).
+
+// Nom épuré d'un lot selon son stade. Garniture = TOUJOURS « Ganache » (règle Benjamin).
+function prodNomEpure(p, recipes){
+  const comp = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
+  const parfum = (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : 'Produit';
+  if(comp==='coques')      return 'Coque ' + parfum;
+  if(comp==='ganache')     return 'Ganache ' + parfum;        // jamais « Crémeux »
+  if(comp==='degustation') return parfum + ' (dégustation)';
+  return parfum;                                              // complet / assemblé
+}
+
+// Quantité « réelle » d'un lot (réel sinon théorique).
+function prodQteAffichee(p){
+  return (p.qteReelle!=null) ? p.qteReelle
+       : (p.qteProduite!=null) ? p.qteProduite
+       : (p.qteTheorique!=null) ? p.qteTheorique : 0;
+}
+
+// Date + heure de fab, format court « 26.06 · 14:25 ». Repli sur la date saisie.
+function prodFabCourt(p){
+  const ts = p.prodTermineTs || p.prodDebutTs || p.prodTimestamp || '';
+  let d;
+  if(ts){ d = new Date(ts); }
+  else if(p.date){ d = new Date(p.date+'T00:00'); }
+  else return '—';
+  if(isNaN(d.getTime())) return '—';
+  const jj = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mi = String(d.getMinutes()).padStart(2,'0');
+  // si pas d'heure réelle (repli sur date seule à 00:00), n'affiche que la date
+  const aHeure = !!(p.prodTermineTs || p.prodDebutTs || p.prodTimestamp);
+  return aHeure ? `${jj}.${mm} · ${hh}:${mi}` : `${jj}.${mm}`;
+}
+
+// Couleur du trait d'étape.
+function prodStageColor(comp){
+  if(comp==='coques')   return '#caa23b';
+  if(comp==='ganache')  return '#8a6d3b';
+  if(comp==='assemble' || comp==='complet') return '#3f7d52';
+  return '#b08d57';
+}
+
+// Une ligne de lot épurée.
+function prodLotLigne(p, recipes){
+  const comp = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
+  const nom = prodNomEpure(p, recipes);
+  const qte = prodQteAffichee(p);
+  const fab = prodFabCourt(p);
+  const stageCol = prodStageColor(comp);
+  const dispatched = Array.isArray(p.placements) && p.placements.length>1;
+  return `<div class="pv2-lot" onclick="prodV2OpenPop(${p.id})">
+    <div class="pv2-stage" style="background:${stageCol}"></div>
+    <div class="pv2-main">
+      <div class="pv2-nom">${esc(nom)}</div>
+      <div class="pv2-date">${esc(fab)}</div>
+      ${dispatched?`<div class="pv2-disp">⊟ dispatché · ${p.placements.length} boîtes</div>`:''}
+    </div>
+    <div class="pv2-qte">${qty(qte)}<small>pièces</small></div>
+    <div class="pv2-grip" onclick="event.stopPropagation();prodV2MiniMenu(${p.id})">⋯</div>
+  </div>`;
+}
+
+// Regroupe les lots par PARFUM (le nom de la recette, indépendamment du stade).
+function prodGroupeParParfum(prods, recipes){
+  const groupes = {};
+  prods.forEach(p=>{
+    const parfum = (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : 'Autres';
+    (groupes[parfum] = groupes[parfum] || []).push(p);
+  });
+  // tri : parfums alpha ; dans chaque parfum, lots du plus récent au plus ancien
+  return Object.keys(groupes).sort((a,b)=>a.localeCompare(b)).map(parfum=>{
+    const lots = groupes[parfum].sort((a,b)=>{
+      const ta = a.prodTermineTs||a.prodTimestamp||a.date||'';
+      const tb = b.prodTermineTs||b.prodTimestamp||b.date||'';
+      return String(tb).localeCompare(String(ta));
+    });
+    const total = lots.reduce((s,p)=>s+prodQteAffichee(p),0);
+    return { parfum, lots, total };
+  });
+}
+
+// Écran V2 — étape 1 (zone « En attente »).
+async function renderProductionsV2(){
+  const main = document.getElementById('main'); if(!main) return;
+  const prods = await db.productions.orderBy('date').reverse().toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  window._allRecipesCache = recipes;
+
+  // « En attente » = lots terminés, non rangés, avec du stock restant.
+  const enAttente = prods.filter(p=>{
+    const st = (typeof prodStatut==='function') ? prodStatut(p) : 'termine';
+    const reste = (p.qteRestante!=null) ? +p.qteRestante : prodQteAffichee(p);
+    return st==='termine' && !p.rangee && reste>0;
+  });
+
+  const groupes = prodGroupeParParfum(enAttente, recipes);
+  const nbLots = enAttente.length;
+
+  let corps;
+  if(!groupes.length){
+    corps = `<div class="pv2-empty"><span class="ic">⏳</span>Aucun lot en attente de rangement.<br>Les lots fraîchement produits apparaîtront ici.</div>`;
+  } else {
+    corps = groupes.map(g=>{
+      const col = (typeof flavorColor==='function') ? flavorColor(g.parfum) : '#cbb89f';
+      return `<div class="pv2-parfum">
+        <div class="pv2-parfum-h">
+          <span class="pv2-dot" style="background:${col}"></span>
+          <span class="pv2-parfum-nom">${esc(g.parfum)}</span>
+          <span class="pv2-parfum-tot">${g.lots.length} lot${g.lots.length>1?'s':''} · ${qty(g.total)}</span>
+        </div>
+        ${g.lots.map(p=>prodLotLigne(p, recipes)).join('')}
+      </div>`;
+    }).join('');
+  }
+
+  main.innerHTML = `<div class="pv2-wrap">
+    <div class="pv2-head">
+      <h1 class="pv2-title">Production</h1>
+      <div class="pv2-sub">Lots frais à ranger · touche un lot pour tout voir</div>
+    </div>
+    <div class="pv2-zones">
+      <button class="pv2-zone on">⏳ En attente <span class="z-n">${nbLots}</span></button>
+      <button class="pv2-zone" onclick="goView('stockparfums')">📦 Stock par parfum</button>
+    </div>
+    ${corps}
+  </div>`;
+}
+
+// Stubs temporaires (étapes suivantes du bloc C) : pop-up détail + mini-menu.
+function prodV2OpenPop(id){ toast('Détail du lot — à venir (étape 2)'); }
+function prodV2MiniMenu(id){ toast('Raccourcis rapides — à venir (étape 2)'); }
+// =============================================================================
+
 async function renderProductions(){
   // [COCKPIT — étape 3] Si l'assistant nous a envoyés ici avec un focus sur un parfum précis
   // (« où est ma vanille » → 📦 Stock de Vanille), on pré-remplit la recherche pour ouvrir l'écran
@@ -27732,9 +27870,19 @@ async function labelToCanvas(d){
     y += mm(sizeMm) + mm(gapAfterMm!=null?gapAfterMm:2);
   };
   ctx.textBaseline = 'top';
-  // Produit (gras, grand) + pastille emplacement.
-  drawLine(d.produit + (d.empLettre?'  ['+d.empLettre+']':''), 7, true, 4);
+  // TITRE : nom (vrai stade du batch) + pastille emplacement, AUTO-RÉTRÉCI pour tout afficher
+  // (police 7 mm réduite jusqu'à 4.2 mm si besoin, sans jamais tronquer le nom).
+  const titre = d.produit + (d.empLettre?'  ['+d.empLettre+']':'');
+  let titleMm = 7;
+  ctx.font = 'bold '+mm(titleMm)+'px Arial, Helvetica, sans-serif';
+  while(titleMm > 4.2 && ctx.measureText(titre).width > tw){
+    titleMm -= 0.2;
+    ctx.font = 'bold '+mm(titleMm)+'px Arial, Helvetica, sans-serif';
+  }
+  ctx.fillText(titre, tx, y);
+  y += mm(titleMm) + mm(4);
   drawLine('Lot : '+d.lot, 4.5, false, 3);
+  if(d.nbPieces!=null) drawLine((typeof qty==='function'?qty(d.nbPieces):d.nbPieces)+' pièces', 4.5, false, 3);
   if(d.emplacement) drawLine('Empl. : '+d.emplacement, 4.5, false, 3);
   drawLine('Fab. : '+d.fab, 4.5, false, 4);
   // DLC en gras (info critique, en évidence).
@@ -27971,8 +28119,22 @@ async function buildLabelData(prodId){
   const rec = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
   const tmp = document.createElement('canvas');
   try{ QR.render(tmp, traceUrl(p.lotProduction||''), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
+  // Nom AFFICHÉ = vrai stade du batch (un composant n'est pas le produit fini) :
+  //  coques → « Coques <parfum> » · ganache/crémeux → « Ganache/Crémeux <parfum> »
+  //  complet/assemblé → nom du produit fini.
+  const _comp = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
+  const _parfum = rec ? rec.produitNom : (p.produitLibre || 'Produit');
+  let _nomAffiche = _parfum;
+  if(_comp==='coques')       _nomAffiche = 'Coques ' + _parfum;
+  else if(_comp==='ganache') _nomAffiche = ((typeof garnLabel==='function'?garnLabel(p):'ganache').charAt(0).toUpperCase()+ (typeof garnLabel==='function'?garnLabel(p):'ganache').slice(1)) + ' ' + _parfum;
+  else if(_comp==='degustation') _nomAffiche = _parfum + ' (dégustation)';
+  // sinon (complet/assemble) on garde le nom du produit fini.
+  // Nombre de pièces du lot (réel sinon théorique).
+  const _nbPieces = (p.qteReelle!=null)?p.qteReelle:(p.qteProduite!=null?p.qteProduite:(p.qteTheorique!=null?p.qteTheorique:null));
   return {
-    produit: rec?rec.produitNom:'Produit',
+    produit: _nomAffiche,
+    composant: _comp,
+    nbPieces: _nbPieces,
     lot: p.lotProduction||'—',
     dlc: p.dlcProduit ? fmtDate(p.dlcProduit) : '—',
     // Fabrication = heure de FIN de production (prodTermineTs).
