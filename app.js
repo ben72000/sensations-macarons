@@ -24313,13 +24313,30 @@ async function aiQueryPrixVente(params){
 
 // [CHANTIER B] VALEUR DU STOCK valorisé.
 async function aiQueryValeurStock(){
-  const {A}=await _aiProfitData();
-  const val = (A && A.totals) ? A.totals.valStock : null;
-  if(val==null){
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3><p class="note">Valeur indisponible (il faut des recettes et des lots avec prix).</p>`);
+  let A=null, err=null;
+  try{ const r=await _aiProfitData(); A=r.A; }catch(e){ err=e; }
+  if(err || !A || !A.totals){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
+      <p class="note">Le calcul n'a pas pu aboutir${err?` (${esc(err.message||'erreur interne')})`:''}. Vérifie que tes recettes ont des ingrédients (BOM) et que tes lots de matières ont un prix.</p>`);
   }
-  // Top contributeurs au stock valorisé.
-  const top=(A.rows||[]).filter(r=>r.valStockCout>0).sort((a,b)=>b.valStockCout-a.valStockCout).slice(0,6);
+  const rows = A.rows||[];
+  const val = +A.totals.valStock || 0;
+  // Diagnostic : y a-t-il du stock fini (peu importe sa valeur) et un coût de revient connu ?
+  const avecStock = rows.filter(r=>(+r.stock||0)>0);
+  const totalPieces = avecStock.reduce((s,r)=>s+(+r.stock||0),0);
+  const sansCout = avecStock.filter(r=>!(r.cost && +r.cost.coutRevientUnit>0));
+  if(val<=0){
+    // On a peut-être du stock mais aucun coût valorisable.
+    if(totalPieces>0){
+      return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
+        ${aiSynth(`Tu as <b>${qty(totalPieces)} macaron${totalPieces>1?'s':''}</b> en stock, mais leur valeur ne peut pas être chiffrée : ${sansCout.length} recette${sansCout.length>1?'s':''} sur ${avecStock.length} n'${sansCout.length>1?'ont':'a'} pas de coût de revient calculable.`, {icon:'⚠️', tone:'warn'})}
+        <p class="note">Le coût de revient a besoin d'ingrédients dans la recette (BOM) et de lots de matières reçus avec un prix. Sans prix sur les lots, la valorisation reste à 0.</p>
+        ${sansCout.length?aiDetails(sansCout.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${qty(r.stock)} pc · coût ?</b></div>`).join(''),'Recettes sans coût'):''}`);
+    }
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
+      ${aiSynth(`Aucun macaron fini en stock actuellement — la valeur immobilisée est donc nulle.`, {icon:'📦'})}`);
+  }
+  const top=rows.filter(r=>r.valStockCout>0).sort((a,b)=>b.valStockCout-a.valStockCout).slice(0,6);
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
     ${aiHero(euro(val), 'Stock fini valorisé', {sub:'au coût de revient'})}
     ${top.length?aiDetails(top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''),'Principaux contributeurs'):''}`);
