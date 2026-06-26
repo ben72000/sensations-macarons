@@ -24313,33 +24313,50 @@ async function aiQueryPrixVente(params){
 
 // [CHANTIER B] VALEUR DU STOCK valorisé.
 async function aiQueryValeurStock(){
-  let A=null, err=null;
-  try{ const r=await _aiProfitData(); A=r.A; }catch(e){ err=e; }
-  if(err || !A || !A.totals){
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
-      <p class="note">Le calcul n'a pas pu aboutir${err?` (${esc(err.message||'erreur interne')})`:''}. Vérifie que tes recettes ont des ingrédients (BOM) et que tes lots de matières ont un prix.</p>`);
-  }
-  const rows = A.rows||[];
-  const val = +A.totals.valStock || 0;
-  // Diagnostic : y a-t-il du stock fini (peu importe sa valeur) et un coût de revient connu ?
-  const avecStock = rows.filter(r=>(+r.stock||0)>0);
-  const totalPieces = avecStock.reduce((s,r)=>s+(+r.stock||0),0);
-  const sansCout = avecStock.filter(r=>!(r.cost && +r.cost.coutRevientUnit>0));
-  if(val<=0){
-    // On a peut-être du stock mais aucun coût valorisable.
-    if(totalPieces>0){
-      return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
-        ${aiSynth(`Tu as <b>${qty(totalPieces)} macaron${totalPieces>1?'s':''}</b> en stock, mais leur valeur ne peut pas être chiffrée : ${sansCout.length} recette${sansCout.length>1?'s':''} sur ${avecStock.length} n'${sansCout.length>1?'ont':'a'} pas de coût de revient calculable.`, {icon:'⚠️', tone:'warn'})}
-        <p class="note">Le coût de revient a besoin d'ingrédients dans la recette (BOM) et de lots de matières reçus avec un prix. Sans prix sur les lots, la valorisation reste à 0.</p>
-        ${sansCout.length?aiDetails(sansCout.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${qty(r.stock)} pc · coût ?</b></div>`).join(''),'Recettes sans coût'):''}`);
+  let A=null, err=null, data=null;
+  try{ const r=await _aiProfitData(); A=r.A; data=r.data; }catch(e){ err=e; }
+  // [DIAGNOSTIC v939] Sonde les valeurs intermédiaires pour localiser pourquoi la valorisation peut être nulle.
+  try{
+    const D = data || {};
+    const lots = D.lots||[]; const recipes = D.recipes||[]; const items = D.recipeItems||[]; const prods = D.productions||[];
+    const lotsAvecPrix = lots.filter(l=>{ try{ return (typeof lotPU==='function') && lotPU(l)>0; }catch(_){ return false; } }).length;
+    const prodsStock = prods.filter(p=>(+p.qteRestante||0)>0);
+    const stockTot = prodsStock.reduce((s,p)=>s+(+p.qteRestante||0),0);
+    // Échantillon : coût de revient des recettes ayant du stock
+    const recIdsAvecStock = [...new Set(prodsStock.map(p=>p.recipeId))];
+    const echantillon = recIdsAvecStock.slice(0,5).map(rid=>{
+      const rec = recipes.find(r=>r.id===rid);
+      let cu=null, nbItems=0;
+      if(rec){ nbItems=items.filter(it=>it.recipeId===rid).length;
+        try{ const c=coutRevientRecette(rec, items, lots, (typeof getSettings==='function'?getSettings():{}), {}); cu=c&&c.coutRevientUnit; }catch(e){ cu='ERR:'+e.message; } }
+      return {nom:rec?rec.produitNom:('recipe#'+rid), nbItems, cu};
+    });
+    const lignesDiag = echantillon.map(e=>`<div class="sum-box" style="font-size:.8rem"><span>${esc(e.nom)} <span style="color:#9a8a82">(${e.nbItems} ingr.)</span></span><b>${e.cu==null?'pas de recette':(typeof e.cu==='number'?euro(e.cu)+'/pc':esc(String(e.cu)))}</b></div>`).join('');
+    const diag = `<div style="background:#fff6e9;border:1px dashed #e0b878;border-radius:8px;padding:8px 10px;margin:6px 0;font-size:.8rem">
+      <b>🔎 Diagnostic valorisation</b>
+      <div class="sum-box" style="font-size:.8rem"><span>Lots de matières</span><b>${lots.length} (dont ${lotsAvecPrix} avec prix)</b></div>
+      <div class="sum-box" style="font-size:.8rem"><span>Recettes</span><b>${recipes.length}</b></div>
+      <div class="sum-box" style="font-size:.8rem"><span>Productions en stock</span><b>${prodsStock.length} lots · ${qty(stockTot)} pc</b></div>
+      <div class="sum-box" style="font-size:.8rem"><span>Stock rattaché à une recette</span><b>${recIdsAvecStock.filter(id=>recipes.some(r=>r.id===id)).length}/${recIdsAvecStock.length}</b></div>
+      ${err?`<div class="sum-box" style="font-size:.8rem"><span>Erreur calcul</span><b style="color:#b3261e">${esc(err.message||'?')}</b></div>`:''}
+      <div style="margin-top:4px;font-weight:600">Coût de revient (recettes en stock) :</div>
+      ${lignesDiag||'<span style="color:#9a8a82">aucune recette avec stock</span>'}
+      <div style="margin-top:4px"><b>Total valStock calculé : ${A&&A.totals?euro(+A.totals.valStock||0):'(calcul échoué)'}</b></div>
+    </div>`;
+    // On affiche le diagnostic AVANT la réponse normale, le temps d'identifier la cause.
+    if(err || !A || !A.totals || !(+A.totals.valStock>0)){
+      return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>${diag}
+        <p class="note">Ce diagnostic est temporaire : il sert à localiser pourquoi la valeur ressort nulle. Envoie-moi cette capture.</p>`);
     }
+    // valStock > 0 : réponse normale + petit diag discret
+    const rows = A.rows||[];
+    const top=rows.filter(r=>r.valStockCout>0).sort((a,b)=>b.valStockCout-a.valStockCout).slice(0,6);
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
-      ${aiSynth(`Aucun macaron fini en stock actuellement — la valeur immobilisée est donc nulle.`, {icon:'📦'})}`);
+      ${aiHero(euro(+A.totals.valStock), 'Stock fini valorisé', {sub:'au coût de revient'})}
+      ${top.length?aiDetails(top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''),'Principaux contributeurs'):''}`);
+  }catch(ediag){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3><p class="note">Diagnostic impossible : ${esc(ediag.message||'erreur')}.</p>`);
   }
-  const top=rows.filter(r=>r.valStockCout>0).sort((a,b)=>b.valStockCout-a.valStockCout).slice(0,6);
-  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
-    ${aiHero(euro(val), 'Stock fini valorisé', {sub:'au coût de revient'})}
-    ${top.length?aiDetails(top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''),'Principaux contributeurs'):''}`);
 }
 
 // [CHANTIER B] PROCHAIN MARCHÉ.
