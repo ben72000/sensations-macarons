@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v939';
+const APP_VERSION = 'v940';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19445,12 +19445,25 @@ function _pushItem(items, qte, label){
   if(qte>0 && label.length>=2) items.push({qte, raw:label});
 }
 function aiFindFlavor(txt, flavors){
-  for(const f of flavors){ if(aiNormalize(txt).includes(aiNormalize(f))) return f; }
-  // mots-clés partiels
+  const n=aiNormalize(txt);
+  // 1) Correspondance exacte du nom de parfum dans la phrase (le plus fiable). On prend le PLUS LONG
+  //    nom qui matche, pour préférer « Chocolat au lait » à « Chocolat » si les deux sont présents.
+  let best=null;
+  for(const f of flavors){ if(n.includes(aiNormalize(f))){ if(!best || aiNormalize(f).length>aiNormalize(best).length) best=f; } }
+  if(best) return best;
+  // 2) Mots-clés partiels → on cherche d'abord un parfum RÉEL contenant le mot-clé (ex. « chocolat »
+  //    → la 1re recette dont le nom contient « chocolat »), AVANT tout mapping codé en dur.
+  const kws=['chocolat','vanille','framboise','pistache','citron','cafe','caramel','coco','praline','popcorn','cannelle','myrtille','mangue','fraise','passion'];
+  for(const k of kws){
+    if(n.includes(k)){
+      const reel = flavors.find(f=>aiNormalize(f).includes(k));
+      if(reel) return reel;
+    }
+  }
+  // 3) Dernier repli : mapping indicatif, uniquement si le nom existe réellement dans flavors.
   const map={chocolat:'Chocolat noir', vanille:'Vanille', framboise:'Framboise', pistache:'Pistache',
     citron:'Citron crémeux', cafe:'Café', caramel:'Caramel beurre salé', coco:'Coco Rafaello',
     praline:'Praliné noisettes', popcorn:'Popcorn', cannelle:'Cannelle noisette'};
-  const n=aiNormalize(txt);
   for(const k in map){ if(n.includes(k) && flavors.includes(map[k])) return map[k]; }
   return null;
 }
@@ -24313,50 +24326,32 @@ async function aiQueryPrixVente(params){
 
 // [CHANTIER B] VALEUR DU STOCK valorisé.
 async function aiQueryValeurStock(){
-  let A=null, err=null, data=null;
-  try{ const r=await _aiProfitData(); A=r.A; data=r.data; }catch(e){ err=e; }
-  // [DIAGNOSTIC v939] Sonde les valeurs intermédiaires pour localiser pourquoi la valorisation peut être nulle.
-  try{
-    const D = data || {};
-    const lots = D.lots||[]; const recipes = D.recipes||[]; const items = D.recipeItems||[]; const prods = D.productions||[];
-    const lotsAvecPrix = lots.filter(l=>{ try{ return (typeof lotPU==='function') && lotPU(l)>0; }catch(_){ return false; } }).length;
-    const prodsStock = prods.filter(p=>(+p.qteRestante||0)>0);
-    const stockTot = prodsStock.reduce((s,p)=>s+(+p.qteRestante||0),0);
-    // Échantillon : coût de revient des recettes ayant du stock
-    const recIdsAvecStock = [...new Set(prodsStock.map(p=>p.recipeId))];
-    const echantillon = recIdsAvecStock.slice(0,5).map(rid=>{
-      const rec = recipes.find(r=>r.id===rid);
-      let cu=null, nbItems=0;
-      if(rec){ nbItems=items.filter(it=>it.recipeId===rid).length;
-        try{ const c=coutRevientRecette(rec, items, lots, (typeof getSettings==='function'?getSettings():{}), {}); cu=c&&c.coutRevientUnit; }catch(e){ cu='ERR:'+e.message; } }
-      return {nom:rec?rec.produitNom:('recipe#'+rid), nbItems, cu};
-    });
-    const lignesDiag = echantillon.map(e=>`<div class="sum-box" style="font-size:.8rem"><span>${esc(e.nom)} <span style="color:#9a8a82">(${e.nbItems} ingr.)</span></span><b>${e.cu==null?'pas de recette':(typeof e.cu==='number'?euro(e.cu)+'/pc':esc(String(e.cu)))}</b></div>`).join('');
-    const diag = `<div style="background:#fff6e9;border:1px dashed #e0b878;border-radius:8px;padding:8px 10px;margin:6px 0;font-size:.8rem">
-      <b>🔎 Diagnostic valorisation</b>
-      <div class="sum-box" style="font-size:.8rem"><span>Lots de matières</span><b>${lots.length} (dont ${lotsAvecPrix} avec prix)</b></div>
-      <div class="sum-box" style="font-size:.8rem"><span>Recettes</span><b>${recipes.length}</b></div>
-      <div class="sum-box" style="font-size:.8rem"><span>Productions en stock</span><b>${prodsStock.length} lots · ${qty(stockTot)} pc</b></div>
-      <div class="sum-box" style="font-size:.8rem"><span>Stock rattaché à une recette</span><b>${recIdsAvecStock.filter(id=>recipes.some(r=>r.id===id)).length}/${recIdsAvecStock.length}</b></div>
-      ${err?`<div class="sum-box" style="font-size:.8rem"><span>Erreur calcul</span><b style="color:#b3261e">${esc(err.message||'?')}</b></div>`:''}
-      <div style="margin-top:4px;font-weight:600">Coût de revient (recettes en stock) :</div>
-      ${lignesDiag||'<span style="color:#9a8a82">aucune recette avec stock</span>'}
-      <div style="margin-top:4px"><b>Total valStock calculé : ${A&&A.totals?euro(+A.totals.valStock||0):'(calcul échoué)'}</b></div>
-    </div>`;
-    // On affiche le diagnostic AVANT la réponse normale, le temps d'identifier la cause.
-    if(err || !A || !A.totals || !(+A.totals.valStock>0)){
-      return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>${diag}
-        <p class="note">Ce diagnostic est temporaire : il sert à localiser pourquoi la valeur ressort nulle. Envoie-moi cette capture.</p>`);
-    }
-    // valStock > 0 : réponse normale + petit diag discret
-    const rows = A.rows||[];
-    const top=rows.filter(r=>r.valStockCout>0).sort((a,b)=>b.valStockCout-a.valStockCout).slice(0,6);
+  let A=null, err=null;
+  try{ const r=await _aiProfitData(); A=r.A; }catch(e){ err=e; }
+  if(err || !A || !A.totals){
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
-      ${aiHero(euro(+A.totals.valStock), 'Stock fini valorisé', {sub:'au coût de revient'})}
-      ${top.length?aiDetails(top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''),'Principaux contributeurs'):''}`);
-  }catch(ediag){
-    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3><p class="note">Diagnostic impossible : ${esc(ediag.message||'erreur')}.</p>`);
+      <p class="note">Le calcul n'a pas pu aboutir${err?` (${esc(err.message||'erreur interne')})`:''}. Réessaie, ou vérifie tes recettes et tes lots de matières.</p>`);
   }
+  const rows = A.rows||[];
+  const val = +A.totals.valStock || 0;
+  // Pas de valeur chiffrable : on distingue « aucun stock » de « du stock mais sans coût de revient ».
+  if(val<=0){
+    const avecStock = rows.filter(r=>(+r.stock||0)>0);
+    const totalPieces = avecStock.reduce((s,r)=>s+(+r.stock||0),0);
+    if(totalPieces>0){
+      const sansCout = avecStock.filter(r=>!(r.cost && +r.cost.coutRevientUnit>0));
+      return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
+        ${aiSynth(`Tu as <b>${qty(totalPieces)} macaron${totalPieces>1?'s':''}</b> en stock, mais leur valeur ne peut pas être chiffrée : ${sansCout.length} recette${sansCout.length>1?'s':''} sur ${avecStock.length} n'${sansCout.length>1?'ont':'a'} pas de coût de revient.`, {icon:'⚠️', tone:'warn'})}
+        <p class="note">Le coût de revient a besoin d'une recette (BOM) et de lots reçus avec un prix.</p>
+        ${sansCout.length?aiDetails(sansCout.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${qty(r.stock)} pc · coût ?</b></div>`).join(''),'Recettes sans coût'):''}`);
+    }
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
+      ${aiSynth(`Aucun macaron fini en stock actuellement — la valeur immobilisée est donc nulle.`, {icon:'📦'})}`);
+  }
+  const top=rows.filter(r=>r.valStockCout>0).sort((a,b)=>b.valStockCout-a.valStockCout).slice(0,6);
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3>
+    ${aiHero(euro(val), 'Stock fini valorisé', {sub:'au coût de revient'})}
+    ${top.length?aiDetails(top.map(r=>`<div class="sum-box"><span>${esc(r.nom)}</span><b>${euro(r.valStockCout)}</b></div>`).join(''),'Principaux contributeurs'):''}`);
 }
 
 // [CHANTIER B] PROCHAIN MARCHÉ.
@@ -24500,35 +24495,71 @@ async function _aiRecetteParfum(flavor){
 }
 
 // [V938] TEMPS DE PRODUCTION (estimation du montage) pour N macarons d'un parfum, ou pour une commande.
+// [V939] Calcule le temps de production COMPLET et détaillé par étape pour un volume de macarons.
+// Réutilise le vrai modèle de durées de l'app (getMrpTimes + _dureesLignePlan) : coques (par meringue),
+// ganache (1×/parfum), montage (fixe+variable/batch), vaisselle (/batch), entretien (1×/session).
+async function _aiTempsProdDetail(nMac, parfum){
+  const TB  = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const MM  = (typeof MACARONS_PAR_MERINGUE!=='undefined') ? MACARONS_PAR_MERINGUE : 120;
+  const times = (typeof getMrpTimes==='function') ? getMrpTimes() : {coques:{estimatedTime:35},montage:{estimatedTime:15},ganache:{estimatedTime:12},vaisselle:{estimatedTime:10},entretien:{estimatedTime:15}};
+  const n = Math.max(0, Math.round(+nMac||0));
+  const nbBatchs    = Math.max(1, Math.ceil(n/TB));
+  const nbMeringues = Math.max(1, Math.ceil(n/MM));
+  // Recette du parfum (pour des durées spécifiques mesurées/saisies si dispo).
+  let rec=null;
+  try{ const recipes=await db.recipes.toArray(); rec=(typeof mrpFindRecipe==='function')?mrpFindRecipe(recipes,parfum):null; }catch(_){}
+  let tEtape=null; try{ tEtape=await prodTempsParEtapeParParfum(90); }catch(_){}
+  // Montage + ganache via le modèle officiel.
+  let tMontage, tGanache;
+  try{ const d=_dureesLignePlan(parfum, n, nbBatchs, rec, times, tEtape); tMontage=d.tMontage; tGanache=d.tGanache; }
+  catch(_){ tMontage=(typeof _montageMinutes==='function')?_montageMinutes(n,null,'défaut'):nbBatchs*15; tGanache=times.ganache.estimatedTime; }
+  const tCoques    = nbMeringues * (times.coques.estimatedTime||35);
+  const tVaisselle = nbBatchs    * (times.vaisselle.estimatedTime||10);
+  const tEntretien = (times.entretien.estimatedTime||15);     // une session
+  const total = Math.round(tCoques + tGanache + tMontage + tVaisselle + tEntretien);
+  return { n, nbBatchs, nbMeringues, tCoques, tGanache, tMontage, tVaisselle, tEntretien, total,
+           etapes:[
+             {nom:'Coques (meringue + pochage + cuisson)', min:tCoques, detail:`${nbMeringues} meringue${nbMeringues>1?'s':''}`},
+             {nom:'Ganache', min:tGanache, detail:'une préparation'},
+             {nom:'Montage (assemblage)', min:tMontage, detail:`${nbBatchs} fournée${nbBatchs>1?'s':''}`},
+             {nom:'Vaisselle / nettoyage poste', min:tVaisselle, detail:''},
+             {nom:'Mise en place / entretien', min:tEntretien, detail:'une session'}
+           ] };
+}
+function _aiFmtDuree(min){ min=Math.round(min); if(min<60) return `${min} min`; const h=Math.floor(min/60), m=min%60; return m?`${h} h ${m} min`:`${h} h`; }
+
+// [V938→V939] TEMPS DE PRODUCTION COMPLET (toutes étapes) pour N macarons d'un parfum, ou une commande.
 async function aiQueryTempsProd(params){
   params=params||{};
   const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
-  const fmtDuree = (min)=>{ min=Math.round(min); if(min<60) return `${min} min`; const h=Math.floor(min/60), m=min%60; return m?`${h} h ${m} min`:`${h} h`; };
-  // Cas commande d'un client : somme des macarons de sa dernière commande.
+  // Cas commande d'un client : somme des macarons de sa dernière commande, tous parfums.
   if(params.client){
     const orders=await db.orders.toArray();
     const cmds=orders.filter(o=>o.clientId===params.client.id && o.date).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
     if(!cmds.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Temps de production — ${esc(params.client.nom||'')}</h3><p class="note">Aucune commande pour ce client.</p>`);
     const last=cmds[0];
-    let totMac=0;
-    (orderToLines(last)||[]).forEach(ln=>{ const p=ln.parfums||ln.items||{}; Object.values(p).forEach(q=>totMac+=(+q||0)); });
+    // Regroupe par parfum pour un calcul correct (ganache 1×/parfum).
+    const parParfum={};
+    (orderToLines(last)||[]).forEach(ln=>{ const p=ln.parfums||ln.items||{}; Object.entries(p).forEach(([nom,q])=>{ parParfum[nom]=(parParfum[nom]||0)+(+q||0); }); });
+    const noms=Object.keys(parParfum); const totMac=Object.values(parParfum).reduce((s,q)=>s+q,0);
     if(!totMac) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Temps de production — commande ${esc(params.client.nom||'')}</h3><p class="note">Je n'arrive pas à compter les macarons de cette commande.</p>`);
-    const montage = (typeof _montageMinutes==='function') ? _montageMinutes(totMac, null, 'défaut') : 0;
+    let total=0; const blocs=[];
+    for(const nom of noms){ const d=await _aiTempsProdDetail(parParfum[nom], nom); total+=d.total;
+      blocs.push(`<div class="sum-box"><span>${esc(nom)} <span style="color:#9a8a82;font-size:.74rem">(${qty(parParfum[nom])} pc)</span></span><b>${_aiFmtDuree(d.total)}</b></div>`); }
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Temps de production — commande ${esc(params.client.nom||'')}</h3>
-      <div class="sum-box"><span>Macarons</span><b>${qty(totMac)}</b></div>
-      <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Montage estimé</b></span><b style="color:var(--bordeaux)">${fmtDuree(montage)}</b></div>
-      <p class="note">Estimation du temps de montage (hors ganache et cuisson). Vue complète dans Production.</p>`);
+      ${aiHero(_aiFmtDuree(total), 'Temps total estimé', {sub:`${qty(totMac)} macarons · ${noms.length} parfum${noms.length>1?'s':''}`})}
+      ${aiDetails(blocs.join(''), 'Détail par parfum')}
+      <p class="note">Temps de travail estimé (toutes étapes). Le repos de la ganache (12 h) et la maturation s'ajoutent en temps d'attente, pas de travail.</p>`);
   }
   // Cas parfum + nombre.
   if(!params.flavor) return aiSay(`<p>Pour quel parfum (et combien de macarons) veux-tu le temps de production ?</p>`);
   const n = params.pieces || TB;
-  const montage = (typeof _montageMinutes==='function') ? _montageMinutes(n, null, 'défaut') : 0;
-  const nbBatchs = Math.max(1, Math.ceil(n/TB));
+  const d = await _aiTempsProdDetail(n, params.flavor);
+  const lignes = d.etapes.map(e=>`<div class="sum-box"><span>${esc(e.nom)}${e.detail?` <span style="color:#9a8a82;font-size:.74rem">(${esc(e.detail)})</span>`:''}</span><b>${_aiFmtDuree(e.min)}</b></div>`).join('');
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Temps de production — ${esc(params.flavor)}</h3>
-    <div class="sum-box"><span>Quantité</span><b>${qty(n)} macaron${n>1?'s':''}</b></div>
-    <div class="sum-box"><span>Fournées (batchs)</span><b>${nbBatchs}</b></div>
-    <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Montage estimé</b></span><b style="color:var(--bordeaux)">${fmtDuree(montage)}</b></div>
-    <p class="note">Estimation du montage (assemblage). La ganache et la cuisson s'ajoutent selon ton planning. ${aiShortcuts('query_ordo',{})}</p>`);
+    ${aiHero(_aiFmtDuree(d.total), 'Temps de travail estimé', {sub:`${qty(d.n)} macarons · ${d.nbBatchs} fournée${d.nbBatchs>1?'s':''}`})}
+    ${aiDetails(lignes, 'Détail étape par étape')}
+    <p class="note">Temps de travail actif. À part : le repos ganache (12 h) et la maturation (24 h) sont des temps d'attente, pas de manipulation. Affine ces durées dans Production en chronométrant.</p>`);
 }
 
 // [V938] NOMBRE DE BATCHS / FOURNÉES pour N macarons.
