@@ -1188,6 +1188,46 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .acc-kpi-sub{font-size:.61rem;color:#c6974f;margin-top:2px}
 .acc-menu-fab{position:fixed;bottom:22px;right:20px;width:56px;height:56px;border-radius:50%;border:1px solid rgba(232,221,205,.14);background:rgba(255,255,255,.08);color:#E8DDCD;font-size:1.4rem;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.45);z-index:50}
 .acc-menu-fab:active{transform:scale(.97)}
+
+/* [V950] Visualisation 2D des espaces froids (écran Stock par parfum) */
+.stock-switch{display:flex;gap:6px;background:rgba(82,37,47,.06);padding:4px;border-radius:12px;margin:0 0 14px}
+.stock-switch button{flex:1;border:none;background:transparent;color:var(--bordeaux);font-size:.82rem;font-weight:600;padding:9px 6px;border-radius:9px;cursor:pointer;transition:.16s}
+.stock-switch button.on{background:var(--bordeaux);color:var(--creme-2);box-shadow:0 2px 8px rgba(82,37,47,.25)}
+.froid-modes{display:flex;gap:6px;background:rgba(82,37,47,.06);padding:4px;border-radius:11px;margin-bottom:10px}
+.froid-modes button{flex:1;border:none;background:transparent;color:var(--bordeaux);font-size:.72rem;font-weight:600;padding:7px 4px;border-radius:8px;cursor:pointer;transition:.16s}
+.froid-modes button.on{background:var(--or,#AA7C39);color:#fff}
+.froid-legend{display:flex;flex-wrap:wrap;gap:5px 12px;margin:4px 2px 14px;font-size:.72rem;color:#6a5a52}
+.froid-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+.froid-equip{margin-bottom:16px}
+.froid-equip-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.froid-equip-name{font-family:'Bellota',serif;font-size:1.02rem;color:var(--bordeaux);font-weight:600;display:flex;align-items:center;gap:8px}
+.froid-badge{font-size:.64rem;font-weight:700;color:#fff;padding:2px 8px;border-radius:20px}
+.froid-badge.frigo{background:#6aa3a0}.froid-badge.congel{background:#3b6ea5}
+.froid-equip-fill{font-size:.74rem;color:#9a8a82}
+.froid-cabinet{border:2px solid var(--hair,#e3d9cc);border-radius:8px;overflow:hidden;background:#faf7f1}
+.froid-shelf{position:relative;height:44px;border-bottom:1px solid var(--hair,#ece3d6);cursor:pointer;display:flex;align-items:stretch;transition:.14s}
+.froid-shelf:last-child{border-bottom:none}
+.froid-shelf:active{background:rgba(170,124,57,.1)}
+.froid-shelf.reserve{cursor:default;background:repeating-linear-gradient(45deg,rgba(82,37,47,.05),rgba(82,37,47,.05) 6px,transparent 6px,transparent 12px)}
+.froid-shelf-label{position:absolute;left:7px;top:5px;font-size:.64rem;color:#3d2a30;font-weight:600;z-index:3;text-shadow:0 1px 2px rgba(255,255,255,.7)}
+.froid-shelf-pct{position:absolute;right:7px;top:5px;font-size:.64rem;font-weight:700;color:#3d2a30;z-index:3;text-shadow:0 1px 2px rgba(255,255,255,.7)}
+.froid-seg{height:100%;transition:width .4s ease,background .3s}
+.froid-shelf-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#b3a496;font-size:.66rem;font-style:italic}
+.froid-sheet{position:fixed;inset:0;background:rgba(28,12,20,.66);display:none;align-items:flex-end;z-index:120;backdrop-filter:blur(3px)}
+.froid-sheet.open{display:flex}
+.froid-sheet-card{background:linear-gradient(180deg,#fdfaf5,#f5f0e8);color:#2a1f24;width:100%;max-width:480px;margin:0 auto;border-radius:20px 20px 0 0;padding:18px 16px 26px;position:relative;animation:froidUp .25s ease;max-height:88vh;overflow:auto}
+@keyframes froidUp{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
+.froid-sheet-card h3{font-family:'Bellota',serif;font-size:1.15rem;color:var(--bordeaux);margin-bottom:2px}
+.froid-sheet-meta{font-size:.76rem;color:#9a8a82;margin-bottom:14px}
+.froid-tray{position:relative;background:#fff;border:2px solid var(--hair,#e3d9cc);border-radius:6px;margin:0 auto}
+.froid-dim{position:absolute;font-size:.6rem;color:#b3a496}
+.froid-dim.w{bottom:-15px;left:0;right:0;text-align:center}
+.froid-dim.h{top:0;bottom:0;right:-28px;display:flex;align-items:center;writing-mode:vertical-rl}
+.froid-boxcell{position:absolute;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:.56rem;font-weight:700;color:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.55);overflow:hidden}
+.froid-sheet-legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:18px;font-size:.74rem}
+.froid-sheet-legend i{width:12px;height:12px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:-1px}
+.froid-sheet-free{font-size:.78rem;color:var(--bordeaux);background:rgba(170,124,57,.12);padding:8px 10px;border-radius:9px;margin-top:14px;font-weight:600}
+.froid-closex{position:absolute;top:14px;right:16px;font-size:1.3rem;color:#9a8a82;cursor:pointer;background:none;border:none}
 </style>
 
 </head>
@@ -1346,9 +1386,19 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=948" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=948"></script>
-<script src="utils.js?v=948"></script>
-<script src="app.js?v=948"></script>
+<script src="html5-qrcode.min.js?v=950" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=950"></script>
+<script src="utils.js?v=950"></script>
+<script src="app.js?v=950"></script>
+<div class="froid-sheet" id="froid-sheet" onclick="if(event.target.id==='froid-sheet')_froidCloseDessus()">
+  <div class="froid-sheet-card">
+    <button class="froid-closex" onclick="_froidCloseDessus()">✕</button>
+    <h3 id="froid-sheet-title">Étage</h3>
+    <div class="froid-sheet-meta" id="froid-sheet-meta"></div>
+    <div id="froid-tray-wrap" style="padding:6px 30px 26px 4px"></div>
+    <div class="froid-sheet-legend" id="froid-sheet-legend"></div>
+    <div class="froid-sheet-free" id="froid-sheet-free"></div>
+  </div>
+</div>
 </body>
 </html>

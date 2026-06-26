@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v948';
+const APP_VERSION = 'v950';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -13413,6 +13413,199 @@ function flavorPickRow(nom, qte, setJs, maxq){
       : `<span style="flex:none;color:#c2b8b0;font-size:1rem">0</span>`}
   </div>`;
 }
+// [V950 — VISUALISATION 2D DES ESPACES FROIDS] Vue spatiale de l'occupation des frigos/congélateurs,
+// accessible depuis « Stock par parfum » via un switch (liste ↔ espaces froids). Réutilise les fonctions
+// d'occupation existantes (equipGetSpecs, buildPlacementsMap, levelOccupancy, levelFlavorSegments,
+// levelFloorArea, boxFloorArea, levelLayersForHeight, flavorColor). Trois modes couleur : parfum / taux /
+// type de contenu. Vue de FACE (étages empilés) + vue de DESSUS au clic (plateau à l'échelle réelle).
+// État du switch et du mode mémorisés au niveau module (pas de localStorage).
+window._stockVue = window._stockVue || 'liste';      // 'liste' | 'froid'
+window._froidMode = window._froidMode || 'parfum';    // 'parfum' | 'taux' | 'type'
+const FROID_COMP_COLORS = { coques:'#d8a657', ganache:'#8a6d9c', complet:'#6aa06a', degustation:'#b0884f' };
+const FROID_COMP_LABELS = { coques:'Coques', ganache:'Ganache', complet:'Macarons finis', degustation:'Dégustation' };
+function froidTauxColor(t){
+  t=Math.max(0,Math.min(1,t));
+  const mix=(a,b,k)=>`rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*k)).join(',')})`;
+  if(t<0.5) return mix([122,160,106],[201,138,60],t/0.5);
+  return mix([201,138,60],[179,38,30],(t-0.5)/0.5);
+}
+// Bascule le switch liste/froid puis re-render.
+function stockSetVue(v){ window._stockVue=v; renderStockParfums(); }
+// Change le mode couleur de la vue froide puis re-render.
+function froidSetMode(m){ window._froidMode=m; renderStockParfums(); }
+
+// Construit le HTML de la vue froide (appelée par renderStockParfums quand _stockVue==='froid').
+async function _renderStockFroidHtml(){
+  const specs = await equipGetSpecs();
+  const eqsRaw = (await db.pmsEquipments.toArray().catch(()=>[])).filter(e=>!e.marcheOnly);
+  const boxes = await db.storageBoxes.orderBy('nom').toArray().catch(()=>[]);
+  const boxesByNom={}; boxes.forEach(b=>{ boxesByNom[b.nom]=b; });
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recName = rid => (recipes.find(r=>r.id===rid)||{}).produitNom||'(?)';
+  const prodParfum = new Map();
+  const prodComp = new Map();
+  prods.forEach(p=>{
+    prodParfum.set(p.id, p.libre?(p.produitLibre||'(libre)'):recName(p.recipeId));
+    prodComp.set(p.id, prodComposant(p));
+  });
+  const placements = buildPlacementsMap(prods, boxesByNom);
+  const mode = window._froidMode||'parfum';
+
+  // Résout le {key,nom,type,icon,lettre} d'un équipement physique.
+  const meta = e => (typeof empInfo==='function') ? empInfo(e.emplacementKey||e.key||e.type||'') : {key:'',nom:e.nom||'',type:e.type||'',icon:'🧊',lettre:'?'};
+
+  // Y a-t-il au moins un équipement avec des niveaux renseignés ?
+  const eqs = eqsRaw.map(e=>{
+    const k = e.emplacementKey || e.key || (e.type==='frigo'?'frigo':null);
+    const m = (typeof empInfo==='function' && k) ? empInfo(k) : null;
+    return { raw:e, key:k, nom:(m&&m.nom)||e.nom||'Équipement', type:(m&&m.type)||e.type||'', icon:(m&&m.icon)||'🧊', lettre:(m&&m.lettre)||'?', spec:(k?specs[k]:null) };
+  });
+  const anyNiveaux = eqs.some(e=>e.spec && Array.isArray(e.spec.niveaux) && e.spec.niveaux.length);
+  if(!anyNiveaux){
+    return `<div class="panel"><p class="note">Pour visualiser l'occupation, renseigne d'abord les <b>niveaux</b> de tes équipements dans l'onglet Équipements (dimensions des clayettes/tiroirs).</p>
+      <button class="btn" onclick="goView('equipements')">⚙ Configurer mes équipements</button></div>`;
+  }
+
+  // Données d'un niveau (taux, segments par parfum/type), à partir des placements réels.
+  const niveauData = (eKey, lv, idx)=>{
+    const pls = placements.get(eKey+'|'+(lv.nom||('Niveau '+(idx+1)))) || [];
+    const occ = levelOccupancy(lv, pls) || {tauxVolume:0, nbMacarons:0, nbBoites:0};
+    // ventilation par parfum (réutilise levelFlavorSegments) et par type de contenu.
+    const fs = levelFlavorSegments(lv, pls, prodParfum);
+    const aire = levelFloorArea(lv)||1;
+    const parType={};
+    pls.forEach(pl=>{
+      const couches = levelLayersForHeight(lv, +pl.box.h||0) || 1;
+      const emp = (boxFloorArea(pl.box)/couches) * Math.max(0,+pl.nbBoites||0);
+      const c = prodComp.get(pl.prodId)||'complet';
+      (parType[c]=parType[c]||{key:c,emp:0,mac:0}).emp+=emp;
+      parType[c].mac += Math.max(0,+pl.nbMacarons||0);
+    });
+    const types = Object.values(parType).map(s=>({key:s.key, part:s.emp/aire, mac:s.mac})).sort((a,b)=>b.part-a.part);
+    return { pls, taux:occ.tauxVolume||fs.taux||0, nbMac:occ.nbMacarons||fs.nbMacarons||0,
+             nbBoites:occ.nbBoites||0, parfums:fs.segments, types };
+  };
+
+  // Rendu vue de FACE d'un équipement.
+  const renderEquip = (e, ei)=>{
+    const s=e.spec; if(!s||!Array.isArray(s.niveaux)||!s.niveaux.length){
+      return `<div class="froid-equip"><div class="froid-equip-head"><span class="froid-equip-name">${e.icon} ${esc(e.nom)}</span></div><p class="note">Niveaux non renseignés.</p></div>`;
+    }
+    let totMac=0; const tauxArr=[];
+    const shelves = s.niveaux.map((lv,li)=>{
+      if(lv.reserve){
+        return `<div class="froid-shelf reserve"><span class="froid-shelf-label">🔒 ${esc(lv.nom||('Niveau '+(li+1)))} · MP</span></div>`;
+      }
+      const d=niveauData(e.key, lv, li); totMac+=d.nbMac; tauxArr.push(d.taux);
+      let segs;
+      if(!d.pls.length){ segs=`<div class="froid-shelf-empty">vide</div>`; }
+      else if(mode==='taux'){ segs=`<div class="froid-seg" style="width:${Math.round(d.taux*100)}%;background:${froidTauxColor(d.taux)}"></div>`; }
+      else {
+        const list = (mode==='parfum') ? d.parfums.map(x=>({col:flavorColor(x.parfum),part:x.part})) : d.types.map(x=>({col:FROID_COMP_COLORS[x.key]||'#b08d57',part:x.part}));
+        segs = list.map(x=>`<div class="froid-seg" style="width:${Math.max(3,Math.round(x.part*100))}%;background:${x.col}"></div>`).join('');
+      }
+      return `<div class="froid-shelf" onclick="_froidDessus(${ei},${li})">
+        <span class="froid-shelf-label">${esc(lv.nom||('Niveau '+(li+1)))}</span>
+        <span class="froid-shelf-pct">${Math.round(d.taux*100)}%</span>${segs}</div>`;
+    }).join('');
+    const avg = tauxArr.length ? Math.round(tauxArr.reduce((a,b)=>a+b,0)/tauxArr.length*100) : 0;
+    const badge = e.type==='frigo' ? 'frigo' : 'congel';
+    return `<div class="froid-equip">
+      <div class="froid-equip-head">
+        <span class="froid-equip-name">${e.icon} ${esc(e.nom)} <span class="froid-badge ${badge}">${e.lettre}</span></span>
+        <span class="froid-equip-fill">${avg}% · ${qty(totMac)} mac.</span>
+      </div>
+      <div class="froid-cabinet">${shelves}</div></div>`;
+  };
+
+  // Légende (selon le mode).
+  let legend='';
+  if(mode==='taux'){
+    legend = `<span><i style="background:${froidTauxColor(0.15)}"></i>Peu rempli</span>
+      <span><i style="background:${froidTauxColor(0.55)}"></i>Moyen</span>
+      <span><i style="background:${froidTauxColor(0.92)}"></i>Presque plein</span>`;
+  } else {
+    const seen=new Set(), items=[];
+    eqs.forEach(e=>{ if(!e.spec||!e.spec.niveaux)return; e.spec.niveaux.forEach((lv,li)=>{
+      if(lv.reserve)return; const d=niveauData(e.key,lv,li);
+      const list = (mode==='parfum') ? d.parfums.map(x=>({k:x.parfum,col:flavorColor(x.parfum),lab:x.parfum}))
+                                     : d.types.map(x=>({k:x.key,col:FROID_COMP_COLORS[x.key]||'#b08d57',lab:FROID_COMP_LABELS[x.key]||x.key}));
+      list.forEach(x=>{ if(seen.has(x.k))return; seen.add(x.k); items.push(`<span><i style="background:${x.col}"></i>${esc(x.lab)}</span>`); });
+    }); });
+    legend = items.join('') || '<span class="note">Aucun macaron rangé pour le moment.</span>';
+  }
+
+  const modeBtn=(m,l)=>`<button class="${mode===m?'on':''}" onclick="froidSetMode('${m}')">${l}</button>`;
+  return `<div class="panel">
+    <div class="froid-modes">${modeBtn('parfum','Par parfum')}${modeBtn('taux','Remplissage')}${modeBtn('type','Type de contenu')}</div>
+    <div class="froid-legend">${legend}</div>
+    ${eqs.map((e,ei)=>renderEquip(e,ei)).join('')}
+    <p class="note" style="text-align:center;margin-top:6px">Touche un étage pour le voir de dessus, à l'échelle réelle.</p>
+  </div>`;
+}
+
+// Vue de DESSUS d'un niveau (modale) : plateau à l'échelle, boîtes posées (disposition plausible).
+async function _froidDessus(ei, li){
+  try{
+    const specs = await equipGetSpecs();
+    const eqsRaw = (await db.pmsEquipments.toArray().catch(()=>[])).filter(e=>!e.marcheOnly);
+    const eqs = eqsRaw.map(e=>{ const k=e.emplacementKey||e.key||(e.type==='frigo'?'frigo':null);
+      const m=(typeof empInfo==='function'&&k)?empInfo(k):null;
+      return {nom:(m&&m.nom)||e.nom||'Équipement', key:k, spec:(k?specs[k]:null)}; });
+    const e=eqs[ei]; if(!e||!e.spec) return;
+    const lv=e.spec.niveaux[li]; if(!lv||lv.reserve) return;
+    const boxes=await db.storageBoxes.orderBy('nom').toArray().catch(()=>[]);
+    const boxesByNom={}; boxes.forEach(b=>boxesByNom[b.nom]=b);
+    const prods=await db.productions.toArray().catch(()=>[]);
+    const recipes=await db.recipes.toArray().catch(()=>[]);
+    const recName=rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'(?)';
+    const prodParfum=new Map(), prodComp=new Map();
+    prods.forEach(p=>{ prodParfum.set(p.id,p.libre?(p.produitLibre||'(libre)'):recName(p.recipeId)); prodComp.set(p.id,prodComposant(p)); });
+    const placements=buildPlacementsMap(prods, boxesByNom);
+    const pls=placements.get(e.key+'|'+(lv.nom||('Niveau '+(li+1))))||[];
+    const occ=levelOccupancy(lv,pls)||{tauxVolume:0,nbMacarons:0,nbBoites:0};
+    const mode=window._froidMode||'parfum';
+
+    // échelle : largeur cible ~320px pour lv.L
+    const maxW=320, scale=lv.L>0?maxW/lv.L:1;
+    const trayW=(lv.L||0)*scale, trayH=(lv.l||0)*scale;
+    let cells='', cx=0, cy=0, rowH=0;
+    pls.forEach(pl=>{
+      const nb=Math.max(1,+pl.nbBoites||1);
+      for(let n=0;n<nb;n++){
+        let bw=(pl.box.L||0)*scale, bh=(pl.box.l||0)*scale;
+        if(bw<=0||bh<=0){ bw=Math.max(14,bw); bh=Math.max(14,bh); }
+        if(cx+bw>trayW+0.5){ cx=0; cy+=rowH+3; rowH=0; }
+        const parfum=prodParfum.get(pl.prodId)||'(?)', comp=prodComp.get(pl.prodId)||'complet';
+        const col = mode==='parfum'?flavorColor(parfum):(mode==='type'?(FROID_COMP_COLORS[comp]||'#b08d57'):froidTauxColor(occ.tauxVolume||0));
+        const lab = mode==='parfum'?esc(parfum).slice(0,3):(mode==='type'?(FROID_COMP_LABELS[comp]||'').slice(0,3):'');
+        cells+=`<div class="froid-boxcell" style="left:${cx}px;top:${cy}px;width:${Math.max(10,bw-2)}px;height:${Math.max(10,bh-2)}px;background:${col}" title="${esc(pl.box.nom||'')} · ${esc(parfum)}">${lab}</div>`;
+        cx+=bw+3; rowH=Math.max(rowH,bh);
+      }
+    });
+    const trayHfin=Math.max(trayH, cy+rowH);
+    const reste=Math.max(0,Math.round((1-(occ.tauxVolume||0))*100));
+    const legList = mode==='type'
+      ? Object.values(pls.reduce((m,pl)=>{const c=prodComp.get(pl.prodId)||'complet';(m[c]=m[c]||{k:c,mac:0}).mac+=Math.max(0,+pl.nbMacarons||0);return m;},{}))
+          .map(s=>`<span><i style="background:${FROID_COMP_COLORS[s.k]||'#b08d57'}"></i>${FROID_COMP_LABELS[s.k]||s.k}${s.mac?' · '+qty(s.mac)+' mac':''}</span>`).join('')
+      : Object.values(pls.reduce((m,pl)=>{const p=prodParfum.get(pl.prodId)||'(?)';(m[p]=m[p]||{k:p,mac:0}).mac+=Math.max(0,+pl.nbMacarons||0);return m;},{}))
+          .map(s=>`<span><i style="background:${flavorColor(s.k)}"></i>${esc(s.k)}${s.mac?' · '+qty(s.mac)+' mac':''}</span>`).join('');
+
+    const host=document.getElementById('froid-sheet');
+    host.querySelector('#froid-sheet-title').textContent=(lv.nom||'Étage')+' — '+e.nom;
+    host.querySelector('#froid-sheet-meta').textContent=
+      `${lv.L||'?'}×${lv.l||'?'} cm · ${Math.round((occ.tauxVolume||0)*100)}% occupé · ${occ.nbBoites||0} boîte(s) · ${qty(occ.nbMacarons||0)} macarons`;
+    host.querySelector('#froid-tray-wrap').innerHTML = pls.length
+      ? `<div class="froid-tray" style="width:${trayW}px;height:${trayHfin}px">${cells}<span class="froid-dim w">${lv.L||'?'} cm</span><span class="froid-dim h">${lv.l||'?'} cm</span></div>`
+      : `<p class="note" style="text-align:center;padding:24px 0">Cet étage est vide.</p>`;
+    host.querySelector('#froid-sheet-legend').innerHTML = mode==='taux' ? '' : legList;
+    host.querySelector('#froid-sheet-free').textContent = reste>5?`Il reste ~${reste}% de place sur cet étage`:'Étage quasiment plein';
+    host.classList.add('open');
+  }catch(err){ console.error('froidDessus',err); }
+}
+function _froidCloseDessus(){ const h=document.getElementById('froid-sheet'); if(h) h.classList.remove('open'); }
+
 async function renderStockParfums(){
   const tous=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0);
   const prods=tous.filter(p=>prodVendable(p));
@@ -13491,10 +13684,11 @@ async function renderStockParfums(){
   };
   const cardsPetits = nomsPetits.map(carteDe).join('');
   const cardsGF = nomsGF.map(carteDe).join('');
-  document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Stock par parfum</h1>
-     <p>${enStock} parfum(s) en stock · ${qty(totalDispo)} macaron(s) vendable(s)</p></div>
-     <div class="flex"><button class="btn" onclick="goView('productions')">🍩 Productions →</button></div></div>
+  // [V950] Switch liste ↔ espaces froids. La liste existante est conservée à l'identique ;
+  // on l'enveloppe simplement et on affiche l'une ou l'autre selon window._stockVue.
+  const _vue = window._stockVue || 'liste';
+  const _swBtn = (v,l)=>`<button class="${_vue===v?'on':''}" onclick="stockSetVue('${v}')">${l}</button>`;
+  const listeHtml = `
    <div class="panel">
      <p class="note" style="margin-bottom:12px">Vue d'ensemble des macarons finis <b>vendables</b> disponibles, par parfum. Les pastilles reprennent les couleurs de la boutique. Les parfums à 0 sont grisés.</p>
      <div class="flavor-stock-grid">${cardsPetits}</div>
@@ -13503,6 +13697,14 @@ async function renderStockParfums(){
      <p class="note" style="margin-bottom:12px">Macarons grand format (vente à l'unité), comptés séparément des petits.</p>
      <div class="flavor-stock-grid">${cardsGF}</div>`:''}
    </div>`;
+  let froidHtml='';
+  if(_vue==='froid'){ try{ froidHtml = await _renderStockFroidHtml(); }catch(e){ console.error('froid',e); froidHtml=`<div class="panel"><p class="note">Impossible d'afficher l'occupation pour le moment.</p></div>`; } }
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Stock par parfum</h1>
+     <p>${enStock} parfum(s) en stock · ${qty(totalDispo)} macaron(s) vendable(s)</p></div>
+     <div class="flex"><button class="btn" onclick="goView('productions')">🍩 Productions →</button></div></div>
+   <div class="stock-switch">${_swBtn('liste','📋 Liste')}${_swBtn('froid','❄️ Espaces froids')}</div>
+   ${_vue==='froid' ? froidHtml : listeHtml}`;
 }
 // Détail d'un parfum : liste de ses batchs en stock, chacun ouvrant la traçabilité complète.
 async function stockParfumDetail(nom){
@@ -20492,6 +20694,15 @@ const APP_KB = [
     <p><b>Ce que tu produis vs ce qui est commandé.</b> En tête de semaine, le plan distingue clairement <b>les macarons pour commande</b> (ce que les clients ont demandé, avec en petit la part déjà couverte par ton stock) et <b>les macarons pour réassort</b> (le surplus quand tu arrondis une fournée). Tu vois ainsi d'un coup d'œil l'effort réel : ce qui part en commande, ce qui alimente ton stock.</p>
     <p><b>Temps de montage réaliste.</b> Le garnissage est compté au plus juste : une part fixe de mise en place par fournée entamée, plus un temps proportionnel au nombre de macarons. Une petite série n'est donc plus surévaluée comme un gros batch, et le temps total colle à ce que tu vis à l'atelier. Chaque durée indique sa source : « mesuré » (chronométré), « recette » (ta saisie) ou « estimé » (défaut).</p>
     <p><b>Faisabilité à la semaine.</b> Chaque semaine affiche si ça <b>tient</b> dans tes créneaux (vert) ou si ça <b>déborde</b> (orange, avec de combien). Le verdict est cliquable : il déplie le déroulé heure par heure avec tes vraies plages, sans rien re-saisir.</p>` },
+  { id:'reassort-arbitrage', titre:'Réassort : arrondi vs vélocité, et comment l\u2019app arbitre',
+    tags:'reassort arrondi velocite arbitrage sacrifice surplus stock rupture opportunisme besoin verdict semaine tendue rouge manque a gagner score',
+    r:`<p>Quand une semaine déborde, l\u2019app peut proposer de <b>réduire le réassort</b> (les macarons que tu produis en plus des commandes) pour rentrer dans tes créneaux. Mais tout réassort ne se vaut pas : il en existe <b>deux natures</b>, et l\u2019app ne les sacrifie pas de la même façon.</p>
+    <p><b>1. Le réassort d\u2019arrondi (opportunisme).</b> Quand tu lances une fournée pour une commande, autant la remplir : tu produis un peu plus « tant qu\u2019à faire ». Ce n\u2019est pas un besoin, c\u2019est un bon plan pour amortir le coût de la fournée. Le <b>sacrifier ne crée aucun manque</b> : tu produis juste la quantité commandée. C\u2019est donc le <b>premier candidat au retrait</b> quand le temps manque.</p>
+    <p><b>2. Le réassort de vélocité (besoin).</b> Là, tu produis en plus parce que ton <b>rythme de vente</b> dit que tu vas bientôt manquer de ce parfum. Le sacrifier a une <b>vraie conséquence</b> : tu rapproches une rupture. C\u2019est un réassort « subi », qu\u2019on protège — et d\u2019autant plus que la rupture est proche.</p>
+    <p><b>Comment l\u2019app arbitre.</b> Elle ne traite pas les deux à égalité ni n\u2019en garde qu\u2019un seul : elle les fait entrer dans un <b>même score</b>, en mesurant pour chaque parfum à quel point il est « sacrifiable ». Cinq critères pèsent à parts égales : le <b>temps libéré</b> si on le retire, le <b>coût matière économisé</b>, la <b>pénibilité</b> de la recette, le <b>stock déjà disponible</b>, et le <b>manque à gagner</b> (qui, lui, retient le retrait).</p>
+    <p><b>La clé, c\u2019est le manque à gagner.</b> Pour un arrondi, il est <b>faible</b> (juste un gain d\u2019opportunité perdu) → score de sacrifiabilité élevé → on le retire en premier. Pour une vélocité, il intègre le <b>risque de rupture</b> : plus la rupture est proche, plus ce réassort est précieux, plus son score baisse, plus on le protège. La <b>hiérarchie émerge donc toute seule</b> : on rabote d\u2019abord les arrondis, et seulement si ça ne suffit pas, on touche aux vélocités — en commençant par celles dont la rupture est la plus lointaine.</p>
+    <p><b>Le seuil « non urgent ».</b> Au-delà de <b>14 jours</b> avant rupture, un réassort vélocité est considéré comme non urgent : il devient presque aussi sacrifiable qu\u2019un arrondi. En-dessous, il est protégé d\u2019autant plus fort que la rupture approche.</p>
+    <p><b>Important : l\u2019app recommande, tu décides.</b> Cet arbitrage <b>ne modifie jamais ton plan tout seul</b>. Il s\u2019affiche comme une proposition dans le verdict de la semaine (quand elle est juste ou tendue), et le détail complet du raisonnement — score et arguments par parfum — reste consultable dans la rubrique technique. Le retrait effectif, c\u2019est toi qui le valides.</p>` },
   { id:'retroplanning', titre:'Rétroplanning d\u2019une commande & simulation de date',
     tags:'retroplanning rétroplanning simulation date livraison demarrage quand commencer marge etapes calage',
     r:`<p>Depuis le détail d'une commande, le bouton <b>🕘 Rétroplanning</b> ouvre son déroulé de production calé sur tes disponibilités : chaque étape (ganaches, repos, coques, montage, maturation, livraison) avec son créneau horaire, dans l'ordre où tu dois t'y prendre. Les jours sont séparés visuellement pour voir d'un coup ce qui se fait quand.</p>
