@@ -24314,7 +24314,7 @@ async function aiQueryPrixVente(params){
 // [CHANTIER B] VALEUR DU STOCK valorisé.
 async function aiQueryValeurStock(){
   const {A}=await _aiProfitData();
-  const val = A ? A.valStock : null;
+  const val = (A && A.totals) ? A.totals.valStock : null;
   if(val==null){
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Valeur de mon stock</h3><p class="note">Valeur indisponible (il faut des recettes et des lots avec prix).</p>`);
   }
