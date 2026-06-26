@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v932';
+const APP_VERSION = 'v933';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -19546,7 +19546,9 @@ function parseIntent(texte, ctx){
      && !/\bstock\b|combien|reste/.test(t)
      && !/\b(ecouler|lancer|produire|fabriquer|perime|perimer|monter|en production|livrer|a livrer)\b/.test(t)
      && !/\b(de quoi faire|assez de|cloche)\b/.test(t)
-     && !/\b(business|commercial|commerciaux|ma marge|mes marges|rentabilite|gagner plus|vendre plus|mon ca|mes profits|mes benefices|mon chiffre|mon activite)\b/.test(t)){
+     && !/\b(business|commercial|commerciaux|ma marge|mes marges|rentabilite|gagner plus|vendre plus|mon ca|mes profits|mes benefices|mon chiffre|mon activite)\b/.test(t)
+     && !/\b(acheter|racheter|commander en matiere|liste de courses|liste d'?achats?)\b/.test(t)
+     && !/\b(utiliser en priorite|utiliser vite|a utiliser)\b/.test(t)){
     return {intent:'query_advice', params:{}, critical:false, label:'Mon conseil de production du moment'};
   }
   // EN RETARD : "qu'est-ce qui est en retard", "mes retards", "suis-je en retard"
@@ -19555,11 +19557,12 @@ function parseIntent(texte, ctx){
   }
   // PÉRIME / DLC : "qu'est-ce qui périme", "dlc proche", "ce qui va se perdre"
   if(/\b(perim|perime|perimer|va perim|vont perim|bientot perim|dlc|date limite|va se perdre|vont se perdre|se perdre|se perd|gaspill|a ecouler|ecouler|je dois ecouler|a vendre vite|expire|expiration|perimes|bientot perimes|sont perimes|presque perimes|craint niveau date|va tourner|vont tourner|fin de vie|en fin de vie)\b/.test(t)
-     && !/matiere|matieres|ingredient/.test(t)){
+     && !/matiere|matieres|ingredient|ingredients|lot|lots/.test(t)){
     return {intent:'query_dlc_finis', params:{}, critical:false, label:'Ce qui approche de sa DLC'};
   }
   // FAISABILITÉ TEMPS : "est-ce que je tiens", "j'ai le temps", "ça rentre dans mon planning"
-  if(/\b(je tiens|tiens je|le temps de|assez de temps|ai je le temps|ca rentre|ca tient|tient ca|dans (mon|le) temps|dans (mon|le) planning|delais? tenable|tenir (mes|les) delais|surcharge|surcharg|j'?ai le temps|ai je le temps|est ce que j'?ai le temps|jouable|c'?est jouable|est ce jouable|est ce gerable|gerable|dans les temps|dans les clous|ca passe|est ce que ca passe|ma semaine tient|est ce que ma semaine tient|semaine tient)\b/.test(t)){
+  if(/\b(je tiens|tiens je|le temps de|assez de temps|ai je le temps|ca rentre|ca tient|tient ca|dans (mon|le) temps|dans (mon|le) planning|delais? tenable|tenir (mes|les) delais|surcharge|surcharg|j'?ai le temps|ai je le temps|est ce que j'?ai le temps|jouable|c'?est jouable|est ce jouable|est ce gerable|gerable|dans les temps|dans les clous|ca passe|est ce que ca passe|ma semaine tient|est ce que ma semaine tient|semaine tient)\b/.test(t)
+     && !/\bje tiens en\b|\btiens en (chocolat|pistache|vanille|framboise|caramel|citron|popcorn)\b/.test(t)){
     return {intent:'query_faisabilite', params:{}, critical:false, label:'Faisabilité dans mon temps'};
   }
   // ORGANISER LES FOURNÉES : "organise ma production", "groupe mes fournées", "optimise mes meringues"
@@ -19621,12 +19624,69 @@ function parseIntent(texte, ctx){
   if(/\b(ameliorer ma marge|ameliorer mes marges|gagner plus|comment gagner|conseils? business|conseils? commercial|conseils? commerciaux|comment (je peux )?ameliorer|optimiser ma rentabilite|augmenter (ma marge|mon ca|mes profits|mes benefices)|des conseils pour (gagner|vendre|ma marge|mon ca)|comment vendre plus|booster mes ventes|developper mon (ca|activite|chiffre))\b/.test(t)){
     return {intent:'query_reco_business', params:{}, critical:false, label:'Recommandations business'};
   }
+  // [VAGUE 2] LISTE DE COURSES / QUOI ACHETER : « qu'est-ce que je dois acheter », « ma liste de courses »,
+  // « quoi racheter ». Source : besoinMatieresPrevisionnel. Distinct de query_rupture (alerte) : ici la liste.
+  if(/\b(liste de courses|liste de course|quoi (acheter|racheter)|qu'?est ce que je (dois|doit) (acheter|racheter|commander en matiere)|je dois acheter quoi|a acheter|courses a faire|faire les courses|quoi commander (au fournisseur|chez le fournisseur)|que faut il acheter|qu'?est ce qu'?il faut (acheter|racheter)|ce que je dois acheter|liste d'?achats?|mes achats a prevoir|mes courses a faire)\b/.test(t)
+     && !/\b(macaron|parfum|coffret)\b/.test(t)){
+    return {intent:'query_courses', params:{}, critical:false, label:'Ma liste de courses'};
+  }
+  // [VAGUE 2] DANS COMBIEN DE TEMPS EN RUPTURE (par parfum) : « dans combien de temps je tombe en rupture
+  // de pistache », « quand vais-je manquer de chocolat ». Source : computeSalesVelocity → joursRestants.
+  if((/\b(dans combien de temps|quand (vais|je vais|serai|est ce que je vais)|combien de temps (avant|il me reste)|tient combien de temps|tiens combien de temps|jusqu'?a quand (je tiens|je tiendrai)|combien de jours)\b/.test(t)
+      && /\b(rupture|manque|manquer|tenir|tient|tiens|epuise|tomber a (zero|court)|en avoir plus|a court|fini|vide)\b/.test(t))
+     || /\b(tient combien de temps|tiens combien de temps en|jusqu'?a quand je tiens|je tiens en)\b/.test(t)){
+    const fl = aiFindFlavor(t, flavors);
+    if(fl) return {intent:'query_velocite', params:{flavor:fl}, critical:false, label:`Avant rupture — ${fl}`};
+    // sans parfum précis → on laisse query_predict (vue globale des ruptures) plus bas.
+  }
+  // [VAGUE 2] DERNIÈRE COMMANDE D'UN CLIENT : « c'est quand la dernière commande de Mélanie », « ça fait
+  // longtemps que X n'a pas commandé ». Source : commandes du client + fréquence. Exige un client reconnu.
+  // (placée AVANT query_client pour capter l'angle « dernière commande / depuis quand »).
+  {
+    const _cliDC = (!/\b(cree|creer|crée|ajoute|enregistre|supprime|annule|nouvelle|nouveau)\b/.test(t)) ? aiFindClient(t, clients) : null;
+    if(_cliDC && /\b(derniere commande|dernier achat|dernier passage|depuis quand|ca fait longtemps|a pas commande|n'?a pas commande|pas commande depuis|quand a t il (commande|achete)|quand (a|est ce qu'?il a|est ce que .{0,12} a) commande|a commande (pour la derniere fois|quand|la derniere fois)|quand .{0,12} a commande|sa derniere|son dernier|la derniere fois)\b/.test(t)){
+      return {intent:'query_derniere_commande', params:{client:_cliDC}, critical:false,
+        label:`Dernière commande — ${_cliDC.nom||''}`.trim()};
+    }
+  }
+  // [VAGUE 2] MACARONS FINIS EN STOCK : « combien de macarons en stock », « mon stock de produits finis ».
+  // Source : db.productions composant complet. Distinct de query_stock (matières premières).
+  if(/\b(macarons? (finis?|en stock|de stock|disponibles?|pretes?|deja faits?)|produits? finis?|stock de (macarons?|produits? finis?|finis?)|combien (de )?macarons? (j'?ai |en )?(stock|dispo|disponibles?|finis?|prets?)|j'?ai combien de macarons|combien de macarons .{0,12} (j'?ai )?(en |de )?stock|macarons? .{0,12} en stock|macarons? d'?avance|coffrets? en stock|stock de coffrets?)\b/.test(t)){
+    const fl = aiFindFlavor(t, flavors);
+    return {intent:'query_stock_finis', params:{flavor:fl}, critical:false,
+      label: fl?`Macarons finis — ${fl}`:'Macarons finis en stock'};
+  }
+  // [VAGUE 2] CLIENTS À RELANCER / INACTIFS : « quels clients je devrais relancer », « qui n'a pas commandé
+  // depuis longtemps ». Source : fréquence/dernière commande par client. (pas de client précis = liste)
+  if(/\b(relancer|a relancer|clients? inactifs?|clients? perdus?|clients? endormis?|qui (n'?a pas|n'?ont pas) commande depuis|qui je (dois|devrais) relancer|qui relancer|clients? a recontacter|recontacter|clients? dormants?|clients? a reveiller|qui a disparu|plus de nouvelles de|inactifs?|n'?a plus commande|n'?ont plus commande|plus commande depuis)\b/.test(t)){
+    return {intent:'query_clients_relance', params:{}, critical:false, label:'Clients à relancer'};
+  }
+  // [VAGUE 2] PÉREMPTION DES MATIÈRES : « quelles matières périment bientôt », « dlc de mes matières ».
+  // Source : db.materialLots (champ dlc). Distinct de query_dlc_finis (produits finis).
+  if(/\b(matiere|matieres|matiere premiere|matieres premieres|ingredient|ingredients|lot|lots)\b/.test(t)
+     && /\b(perime|perimer|periment|perement|va perim|vont perim|vont se perim|bientot perim|dlc|date limite|peremption|expire|expirent|expiration|vont expirer|va se perdre|a utiliser (vite|en priorite)|bientot perime|perimes|perimees?|proches? de (la )?(date limite|peremption))\b/.test(t)){
+    return {intent:'query_dlc_matieres', params:{}, critical:false, label:'Matières proches de péremption'};
+  }
+  // [VAGUE 2] STATS D'UN PARFUM PRÉCIS : « combien j'ai vendu de pistache ce mois », « les chiffres de la
+  // vanille ». Source : computeStats (parfums + parMois). Exige un parfum reconnu + un angle ventes/chiffres.
+  {
+    const _flStat = aiFindFlavor(t, flavors);
+    if(_flStat && /\b(combien (j'?ai |de )?(vendu|ecoule|fait)|combien de .{0,15} vendus?|les chiffres|statistiques?|stats|combien (en )?ai je vendu|j'?ai vendu combien|ventes de|chiffres de|performance|combien (j'?en ai )?vendu)\b/.test(t)
+       && !/\b(rentable|marge|cout|coute|recette|stock|allergene|ou (sont|est))\b/.test(t)){
+      let periode=null;
+      if(/\b(mois (dernier|precedent|passe)|le mois d'?avant)\b/.test(t)) periode='moisDernier';
+      else if(/\b(ce mois|du mois|ce mois ci|mois en cours)\b/.test(t)) periode='moisCourant';
+      return {intent:'query_stats_parfum', params:{flavor:_flStat, periode}, critical:false,
+        label:`Statistiques — ${_flStat}`};
+    }
+  }
   // RECETTE (éventuellement mise à l'échelle) : « donne-moi la recette des macarons citron pour 25
   // pièces », « recette de la ganache vanille ». Capte le parfum et un nombre de pièces optionnel.
   // GARDE : si la phrase interroge une DISPONIBILITÉ de stock (« assez de X », « il me reste », « stock de »),
   // ce n'est PAS une demande de recette mais de stock (query_stock_pour, traité juste après) → on laisse passer.
   if(/\b(recette|recettes|ingredients|ingredient|proportions|quantites|dosage|comment (je )?(fais|faire|prepare|preparer)|comment on fait|composition (de|du|de la))\b/.test(t)
      && !/\b(du mois|ce mois|mois dernier|ce mois ci)\b/.test(t)
+     && !/\b(perime|perim|expire|expirent|periment|dlc|peremption|lots?)\b/.test(t)
      && !/\b(assez|suffi|suffisant|il me reste|me reste|reste t il|stock de|en stock|j'?ai assez|ai je assez|produire|fabriquer|en production|a produire)\b/.test(t)){
     const fl = aiFindFlavor(t, flavors);
     const nb = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
@@ -19658,7 +19718,9 @@ function parseIntent(texte, ctx){
      && !/fait combien|combien.*fait|j'?ai fait|combien (de )?macarons?/.test(t)
      && !/\b(produire|produise|fabriquer|fabrique|lancer|lance|en production|coques|ganaches?)\b/.test(t)
      && !/\b(rentre|paiement|paiements|a recevoir|a encaisser|recevoir)\b/.test(t)
-     && !/\b(revient|coute|coute t il|vends|vend|valeur|represente combien|d'?argent)\b/.test(t)){
+     && !/\b(revient|coute|coute t il|vends|vend|valeur|represente combien|d'?argent)\b/.test(t)
+     && !/\b(rupture|tient combien|tiens combien|avant rupture|tomber a court)\b/.test(t)
+     && !/\bmacarons?\b/.test(t)){
     const mat=aiFindMaterial(t,materials);
     return {intent:'query_stock', params:{material:mat}, critical:false,
       label: mat?`Consulter le stock de « ${mat.nom} »`:'Consulter le stock'};
@@ -19728,7 +19790,8 @@ function parseIntent(texte, ctx){
     // ÉCHÉANCE DE LIVRAISON : « quand dois-je livrer la commande d'Emma », « c'est quand la livraison
     // de Mélanie », « quand est prête la commande de X ». Exige un client reconnu + un mot d'échéance.
     // Placée AVANT query_client pour capter « quand » plutôt que de montrer la fiche.
-    if(cli && /\b(quand|echeance|livrer|livraison|a livrer|remettre|a remettre|prete|prête|delai|date)\b/.test(t)){
+    if(cli && /\b(quand|echeance|livrer|livraison|a livrer|remettre|a remettre|prete|prête|delai|date)\b/.test(t)
+       && !/\b(derniere commande|dernier achat|dernier passage|depuis quand|a commande|a t il commande|sa derniere|son dernier|la derniere fois|pas commande)\b/.test(t)){
       return {intent:'query_delivery', params:{client:cli}, critical:false,
         label:`Échéance de livraison — ${cli.nom}`};
     }
@@ -22570,6 +22633,13 @@ const INTENT_SHORTCUTS = {
   query_prochain_marche:  [ { label:'🏪 Voir les marchés', view:'marches' } ],
   query_compare_mois:     [ { label:'📊 Ouvrir la compta', view:'compta' } ],
   query_reco_business:    [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📊 Compta', view:'compta' } ],
+  query_courses:          [ { label:'📦 Voir les stocks', view:'matieres' }, { label:'🏪 Fournisseurs', view:'fournisseurs' } ],
+  query_velocite:         [ { label:'📦 Stock par parfum', view:'stockparfums' }, { label:'⚙ Production', view:'agendaprod' } ],
+  query_derniere_commande:[ { label:'👤 Fiche client', view:'clients' } ],
+  query_stock_finis:      [ { label:'📦 Stock par parfum', view:'stockparfums' } ],
+  query_clients_relance:  [ { label:'👥 Mes clients', view:'clients' } ],
+  query_dlc_matieres:     [ { label:'📦 Voir les matières', view:'matieres' } ],
+  query_stats_parfum:     [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📊 Compta', view:'compta' } ],
   query_urssaf:           [ { label:'📊 Ouvrir la compta', view:'compta' } ],
   query_paiements_dus:    [ { label:'📋 Voir les commandes', view:'commandes' } ],
   query_allergenes:       [ { label:'📖 Voir les recettes', view:'recettes' } ],
@@ -22916,6 +22986,13 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_prochain_marche': return aiQueryProchainMarche();
       case 'query_compare_mois': return aiQueryCompareMois();
       case 'query_reco_business': return aiQueryRecoBusiness();
+      case 'query_courses': return aiQueryCourses();
+      case 'query_velocite': return aiQueryVelocite(r.params);
+      case 'query_derniere_commande': return aiQueryDerniereCommande(r.params);
+      case 'query_stock_finis': return aiQueryStockFinis(r.params);
+      case 'query_clients_relance': return aiQueryClientsRelance();
+      case 'query_dlc_matieres': return aiQueryDlcMatieres();
+      case 'query_stats_parfum': return aiQueryStatsParfum(r.params);
       case 'query_allergenes': return aiQueryAllergenes(r.params);
       case 'query_paiements_dus': return aiQueryPaiementsDus();
       case 'query_urssaf': return aiQueryUrssaf(r.params);
@@ -23765,6 +23842,183 @@ async function aiQueryAllergenes(params){
       ${liste.map(a=>`<span class="tag" style="background:#fbeede;color:#9a5b16;border:1px solid #e8cfa0;font-size:.8rem">${esc(a)}</span>`).join('')}</div>
     <p class="note">D'après ${source}. Toujours vérifier l'étiquetage avant remise au client.</p>`);
 }
+// [VAGUE 2] LISTE DE COURSES — réutilise besoinMatieresPrevisionnel (besoins réels à venir).
+async function aiQueryCourses(){
+  let res=null;
+  try{ res = await besoinMatieresPrevisionnel(); }catch(e){ console.error('courses',e); }
+  const lignes = (res && res.lignes) ? res.lignes.filter(l=>(+l.manque||0)>0) : [];
+  if(!lignes.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma liste de courses</h3>
+      <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Rien à racheter pour l'horizon à venir : ton stock couvre les besoins.</span></div>${aiShortcuts('query_courses',{})}`);
+  }
+  const items = lignes.sort((a,b)=>(b.manque||0)-(a.manque||0)).slice(0,20)
+    .map(l=>`<div class="sum-box"><span>${esc(l.nom)}</span><b style="color:var(--red,#b3261e)">manque ${qty(l.manque)} ${esc(l.unite||'')}</b></div>`).join('');
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Ma liste de courses <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${lignes.length} matière${lignes.length>1?'s':''})</span></h3>
+    ${items}
+    <p class="note">Basé sur les besoins réels à venir (commandes + marchés) moins ton stock. ${aiShortcuts('query_courses',{})}</p>`);
+}
+
+// [VAGUE 2] DÉLAI AVANT RUPTURE par parfum — réutilise computeSalesVelocity.
+async function aiQueryVelocite(params){
+  params=params||{};
+  let V=null;
+  try{ V = await computeSalesVelocity({months:3, horizonDays:14}); }catch(e){ console.error('velocite',e); }
+  const lignes = (V && V.lignes) ? V.lignes : [];
+  if(!lignes.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Délai avant rupture</h3><p class="note">Pas assez d'historique de ventes pour estimer une vélocité.</p>`);
+  }
+  const n=(s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  if(params.flavor){
+    const L = lignes.find(l=>n(l.parfum)===n(params.flavor)) || lignes.find(l=>n(l.parfum).includes(n(params.flavor)));
+    if(!L) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Délai avant rupture — ${esc(params.flavor)}</h3><p class="note">Pas de donnée de vente récente pour ce parfum.</p>`);
+    if(L.joursRestants==null){
+      return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Délai avant rupture — ${esc(L.parfum)}</h3>
+        <div class="sum-box"><span>Stock fini</span><b>${qty(L.stock)} pièces</b></div>
+        <p class="note">Aucune vente récente : pas de date de rupture prévisible (vélocité nulle).</p>`);
+    }
+    const col = L.joursRestants<=14?'var(--red,#b3261e)':L.joursRestants<=30?'#caa23b':'#3f7d52';
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Délai avant rupture — ${esc(L.parfum)}</h3>
+      <div class="sum-box"><span>Stock fini actuel</span><b>${qty(L.stock)} pièces</b></div>
+      <div class="sum-box"><span>Vélocité</span><b>${L.perDay} /jour (~${L.perMonth}/mois)</b></div>
+      <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Rupture estimée dans</b></span><b style="color:${col}">${L.joursRestants} jour${L.joursRestants>1?'s':''}${L.dateRupture?` (${fmtDate(L.dateRupture)})`:''}</b></div>
+      ${aiShortcuts('query_velocite',{flavor:L.parfum})}`);
+  }
+  // Sans parfum : les plus urgents.
+  const urgents = lignes.filter(l=>l.joursRestants!=null).sort((a,b)=>a.joursRestants-b.joursRestants).slice(0,8);
+  if(!urgents.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Délai avant rupture</h3><p class="note">Aucune rupture prévisible (pas de vélocité mesurable).</p>`);
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Délai avant rupture <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(par parfum)</span></h3>
+    ${urgents.map(l=>`<div class="sum-box"><span>${esc(l.parfum)} <span style="color:#9a8a82;font-size:.74rem">(${qty(l.stock)} en stock)</span></span><b style="color:${l.joursRestants<=14?'var(--red,#b3261e)':l.joursRestants<=30?'#caa23b':'#3f7d52'}">${l.joursRestants} j</b></div>`).join('')}
+    <p class="note">Estimé d'après tes ventes des 3 derniers mois. ${aiShortcuts('query_velocite',{})}</p>`);
+}
+
+// [VAGUE 2] DERNIÈRE COMMANDE D'UN CLIENT.
+async function aiQueryDerniereCommande(params){
+  params=params||{};
+  const cli=params.client;
+  if(!cli) return aiSay(`<p>De quel client veux-tu connaître la dernière commande ?</p>`);
+  const orders=await db.orders.toArray();
+  const cmds = orders.filter(o=>o.clientId===cli.id && o.date).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  if(!cmds.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">${esc(cli.nom||'Client')}</h3><p class="note">Aucune commande enregistrée pour ce client.</p>`);
+  }
+  const last=cmds[0];
+  const _local=new Date(); const auj=new Date(_local.getFullYear(),_local.getMonth(),_local.getDate());
+  const dLast=new Date(last.date); const jours=Math.round((auj-dLast)/86400000);
+  const ilYa = jours<=0?"aujourd'hui":jours===1?'hier':`il y a ${jours} jours`;
+  // fréquence moyenne
+  let freqTxt='';
+  if(cmds.length>=2){
+    const dates=cmds.map(c=>new Date(c.date)).sort((a,b)=>a-b);
+    let totGap=0; for(let i=1;i<dates.length;i++) totGap+=(dates[i]-dates[i-1])/86400000;
+    const fj=Math.round(totGap/(dates.length-1));
+    freqTxt = fj>=14?`environ toutes les ${Math.round(fj/7)} semaines`:fj>=1?`environ tous les ${fj} jours`:'très régulièrement';
+  }
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">${esc(cli.nom||'Client')} — dernière commande</h3>
+    <div class="sum-box"><span>Date</span><b>${fmtDate(last.date)} <span style="color:#9a8a82;font-weight:400;font-size:.74rem">(${ilYa})</span></b></div>
+    ${last.montant?`<div class="sum-box"><span>Montant</span><b>${euro(last.montant)}</b></div>`:''}
+    <div class="sum-box"><span>Total commandes</span><b>${cmds.length}</b></div>
+    ${freqTxt?`<p class="note">Fréquence : ${freqTxt}.</p>`:''}
+    ${aiShortcuts('query_derniere_commande',{client:cli})}`);
+}
+
+// [VAGUE 2] MACARONS FINIS EN STOCK (par parfum ou total). Source : db.productions composant complet.
+async function aiQueryStockFinis(params){
+  params=params||{};
+  const prods=await db.productions.toArray();
+  const byParfum={};
+  prods.forEach(p=>{ if(prodComposant(p)!=='complet') return; const q=+p.qteRestante||0; if(q<=0) return;
+    const nom=p.nom||p.parfum||'?'; byParfum[nom]=(byParfum[nom]||0)+q; });
+  const entries=Object.entries(byParfum).filter(([,q])=>q>0).sort((a,b)=>b[1]-a[1]);
+  const n=(s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  if(params.flavor){
+    const hit=entries.find(([nom])=>n(nom)===n(params.flavor)) || entries.find(([nom])=>n(nom).includes(n(params.flavor)));
+    const q=hit?hit[1]:0;
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Macarons finis — ${esc(params.flavor)}</h3>
+      <div class="sum-box"><span>En stock</span><b>${qty(q)} pièce${q>1?'s':''}</b></div>
+      <p class="note">Macarons déjà assemblés et disponibles. ${aiShortcuts('query_stock_finis',{flavor:params.flavor})}</p>`);
+  }
+  if(!entries.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Macarons finis en stock</h3><p class="note">Aucun macaron fini en stock actuellement.</p>`);
+  }
+  const total=entries.reduce((s,[,q])=>s+q,0);
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Macarons finis en stock <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${qty(total)} au total)</span></h3>
+    ${entries.slice(0,12).map(([nom,q])=>`<div class="sum-box"><span>${esc(nom)}</span><b>${qty(q)}</b></div>`).join('')}
+    <p class="note">Macarons déjà assemblés et disponibles à la vente. ${aiShortcuts('query_stock_finis',{})}</p>`);
+}
+
+// [VAGUE 2] CLIENTS À RELANCER (inactifs depuis longtemps vs leur fréquence).
+async function aiQueryClientsRelance(){
+  const [orders, clients]=await Promise.all([db.orders.toArray(), db.clients.toArray()]);
+  const _local=new Date(); const auj=new Date(_local.getFullYear(),_local.getMonth(),_local.getDate());
+  const rows=[];
+  clients.forEach(c=>{
+    const cmds=orders.filter(o=>o.clientId===c.id && o.date).map(o=>new Date(o.date)).sort((a,b)=>a-b);
+    if(!cmds.length) return;
+    const last=cmds[cmds.length-1];
+    const joursDepuis=Math.round((auj-last)/86400000);
+    let freq=null;
+    if(cmds.length>=2){ let g=0; for(let i=1;i<cmds.length;i++) g+=(cmds[i]-cmds[i-1])/86400000; freq=Math.round(g/(cmds.length-1)); }
+    // Inactif si : pas commandé depuis > 2× sa fréquence (ou > 60 j si fréquence inconnue).
+    const seuil = freq!=null ? Math.max(freq*2, 30) : 60;
+    if(joursDepuis>=seuil) rows.push({nom:c.nom, id:c.id, joursDepuis, freq, n:cmds.length});
+  });
+  rows.sort((a,b)=>b.joursDepuis-a.joursDepuis);
+  if(!rows.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Clients à relancer</h3>
+      <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Aucun client en sommeil : tes clients réguliers sont à jour.</span></div>`);
+  }
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Clients à relancer <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${rows.length})</span></h3>
+    ${rows.slice(0,10).map(r=>`<div class="sum-box"><span>${r.id?`<span class="link-name" onclick="clientForm(${r.id})">${esc(r.nom)}</span>`:esc(r.nom)} <span style="color:#9a8a82;font-size:.72rem">(${r.n} cmd${r.n>1?'s':''}${r.freq!=null?`, ~${r.freq>=14?Math.round(r.freq/7)+' sem':r.freq+' j'}`:''})</span></span><b style="color:var(--red,#b3261e)">${r.joursDepuis} j</b></div>`).join('')}
+    <p class="note">Clients qui n'ont pas commandé depuis nettement plus longtemps que leur habitude. ${aiShortcuts('query_clients_relance',{})}</p>`);
+}
+
+// [VAGUE 2] PÉREMPTION DES MATIÈRES (lots avec DLC proche). Source : db.materialLots.
+async function aiQueryDlcMatieres(){
+  const [lots, mats]=await Promise.all([db.materialLots.toArray(), db.materials.toArray()]);
+  const nomMat=(id)=>{ const m=mats.find(x=>x.id===id); return m?(m.nom||m.libelle||'Matière'):'Matière'; };
+  const _local=new Date(); const auj=_local.getFullYear()+'-'+String(_local.getMonth()+1).padStart(2,'0')+'-'+String(_local.getDate()).padStart(2,'0');
+  const horizon=new Date(_local); horizon.setDate(horizon.getDate()+30);
+  const hStr=horizon.getFullYear()+'-'+String(horizon.getMonth()+1).padStart(2,'0')+'-'+String(horizon.getDate()).padStart(2,'0');
+  const proches=lots.filter(l=>l.dlc && (+l.qteRestante||0)>0 && l.dlc<=hStr)
+    .map(l=>({nom:nomMat(l.materialId), dlc:l.dlc, q:+l.qteRestante||0, perime:l.dlc<auj}))
+    .sort((a,b)=>(a.dlc||'').localeCompare(b.dlc||''));
+  if(!proches.length){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Matières proches de péremption</h3>
+      <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Aucune matière ne périme dans les 30 prochains jours.</span></div>`);
+  }
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Matières proches de péremption <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(30 j)</span></h3>
+    ${proches.slice(0,15).map(l=>`<div class="sum-box"><span>${l.perime?'⚠ ':''}${esc(l.nom)} <span style="color:#9a8a82;font-size:.72rem">(reste ${qty(l.q)})</span></span><b style="color:${l.perime?'var(--red,#b3261e)':'#caa23b'}">${l.perime?'périmé':'DLC'} ${fmtDate(l.dlc)}</b></div>`).join('')}
+    <p class="note">Lots dont la date limite approche. Utilise-les en priorité.</p>`);
+}
+
+// [VAGUE 2] STATS D'UN PARFUM (ventes, éventuellement sur une période). Source : computeStats.
+async function aiQueryStatsParfum(params){
+  params=params||{};
+  const fl=params.flavor;
+  if(!fl) return aiSay(`<p>De quel parfum veux-tu les statistiques ?</p>`);
+  const [orders, clients]=await Promise.all([db.orders.toArray(), db.clients.toArray()]);
+  const n=(s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  // Filtre période sur les commandes payées.
+  let periodOrders=orders, libPeriode='sur tout l\'historique';
+  if(params.periode){
+    const d=new Date(); if(params.periode==='moisDernier') d.setMonth(d.getMonth()-1);
+    const ym=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    periodOrders=orders.filter(o=>(o.date||'').slice(0,7)===ym);
+    libPeriode = params.periode==='moisDernier'?'le mois dernier':'ce mois-ci';
+  }
+  const R=computeStats(periodOrders, clients, orderToLines);
+  // Trouver le parfum dans R.global.parfums (clés = noms).
+  let vendu=0, clef=null;
+  Object.keys(R.global.parfums||{}).forEach(k=>{ if(n(k)===n(fl) || n(k).includes(n(fl))){ vendu+=R.global.parfums[k]; clef=k; } });
+  if(!vendu){
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Statistiques — ${esc(fl)}</h3>
+      <p class="note">Aucune vente de ${esc(fl)} ${libPeriode} (commandes payées).</p>`);
+  }
+  return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Statistiques — ${esc(clef||fl)} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${libPeriode})</span></h3>
+    <div class="sum-box"><span>Macarons vendus</span><b>${qty(vendu)}</b></div>
+    <p class="note">Commandes payées. ${aiShortcuts('query_stats_parfum',{flavor:clef||fl})}</p>`);
+}
+
 // [CHANTIER B] Helper commun : charge les données de profitabilité (source unique analyzeFlavorProfitability).
 async function _aiProfitData(){
   const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
