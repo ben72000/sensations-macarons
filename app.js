@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v984';
+const APP_VERSION = 'v985';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -31161,6 +31161,199 @@ function _diagRegistrySection(){
     <p class="note" style="margin-top:6px"><span class="act" onclick="window._diagRegistry={};renderBackups();toast&&toast('Diagnostics effacés')">Vider les diagnostics</span></p>
   </div>`;
 }
+// ===================== OUTIL : AJOUTER UNE CONSO MANQUANTE À UN LOT (correction rétroactive) =====================
+// Cas d'usage : un ingrédient a été ajouté au BOM APRÈS qu'un lot a été produit. Le lot n'a donc
+// pas décrémenté cet ingrédient. Cet outil rattache la consommation manquante, en FIFO (ou lot
+// imposé), avec le MÊME enregistrement que la consommation normale (snapshot de traçabilité figé,
+// gestion crème/lait ouvert). Ne touche à RIEN d'autre de la traçabilité existante du lot.
+
+// Calcule la quantité théorique d'une matière pour un lot, depuis le BOM courant.
+async function consoFixBesoin(prodId, materialId){
+  const p = await db.productions.get(prodId); if(!p) return {besoin:0, raison:'lot introuvable'};
+  if(!p.recipeId) return {besoin:0, raison:'lot non rattaché à une recette'};
+  const rec = await db.recipes.get(p.recipeId); if(!rec) return {besoin:0, raison:'recette introuvable'};
+  const items = await db.recipeItems.where('recipeId').equals(p.recipeId).toArray();
+  const it = items.find(x=>+x.materialId===+materialId);
+  if(!it) return {besoin:0, raison:'cette matière ne figure pas (ou plus) au BOM'};
+  const rend = +rec.rendement||1;
+  const qteRef = (+p.qteProduite||+p.qteReelle||0);
+  const facteur = rend>0 ? (qteRef/rend) : 0;
+  const besoin = round3((+it.qteParBatch||0)*facteur);
+  return {besoin, item:it, recipe:rec, qteRef, facteur};
+}
+
+// Quantité DÉJÀ consommée de cette matière par ce lot (pour ne pas double-compter).
+async function consoFixDejaConsomme(prodId, materialId){
+  const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  let total = 0;
+  for(const c of conso){
+    let matId = c.snapMaterialId;
+    if(matId==null && c.materialLotId!=null){
+      const lot = await db.materialLots.get(c.materialLotId).catch(()=>null);
+      matId = lot ? lot.materialId : null;
+    }
+    if(+matId===+materialId) total += (+c.qteConsommee||0);
+  }
+  return round3(total);
+}
+
+// Applique la correction : consomme `qte` de `materialId` pour le lot `prodId`.
+// lotImposeId : si fourni, prend d'abord sur ce lot ; sinon FIFO pur. Complète en FIFO si besoin.
+// Retourne {ok, consomme, parts:[{lotId, pris}], manque}.
+async function consoFixApply(prodId, materialId, qte, lotImposeId){
+  let result = {ok:false, consomme:0, parts:[], manque:0};
+  if(!(qte>0)) { result.manque=0; result.ok=true; return result; }
+  const mat = await db.materials.get(materialId).catch(()=>null);
+  const peri = !!(mat && mat.perissableOuvert);
+  const nbJoursOuv = peri ? Math.max(1, +mat.joursApresOuverture||7) : 0;
+  const nowIso = new Date().toISOString();
+  let dlcOuvertureMin = null;
+
+  await db.transaction('rw', db.productions, db.materialLots, db.prodConsumption, async()=>{
+    let besoin = round3(qte);
+    // ordre des lots : lot imposé d'abord, puis FIFO sur le reste
+    let lots = (await db.materialLots.where('materialId').equals(materialId).and(l=>+l.qteRestante>0).toArray());
+    lots = lots.sort(lotFifoCompare);
+    if(lotImposeId){
+      const idx = lots.findIndex(l=>+l.id===+lotImposeId);
+      if(idx>0){ const [chosen]=lots.splice(idx,1); lots.unshift(chosen); }
+    }
+    for(const lot of lots){
+      if(besoin<=1e-9) break;
+      const pris = round3(Math.min(besoin, +lot.qteRestante));
+      if(pris<=0) continue;
+      const patch = {qteRestante: subQty(lot.qteRestante, pris)};
+      if(peri){
+        let ouvertLe = lot.ouvertLe;
+        if(!ouvertLe){ patch.ouvertLe = nowIso;
+          const d=new Date(nowIso); d.setDate(d.getDate()+nbJoursOuv);
+          patch.dlcOuverture = d.toISOString().slice(0,10);
+        }
+        const dOuv = lot.dlcOuverture || patch.dlcOuverture;
+        if(dOuv && (!dlcOuvertureMin || dOuv<dlcOuvertureMin)) dlcOuvertureMin = dOuv;
+      }
+      await db.materialLots.update(lot.id, patch);
+      // MÊME enregistrement que la conso normale : snapshot figé pour la traçabilité.
+      await db.prodConsumption.add({productionId:prodId, materialLotId:lot.id, qteConsommee:pris,
+        snapMaterialId:materialId, snapLotFournisseur:lot.lotFournisseur||'',
+        snapSupplierId:lot.supplierId||0, snapDlc:lot.dlc||'',
+        snapDlcOuverture: peri ? (lot.dlcOuverture||patch.dlcOuverture||'') : '',
+        correction:true, correctionTs:nowIso});   // marqueur : conso ajoutée a posteriori
+      result.parts.push({lotId:lot.id, pris});
+      result.consomme = round3(result.consomme + pris);
+      besoin = subQty(besoin, pris);
+    }
+    if(dlcOuvertureMin){ await db.productions.update(prodId, {dlcContrainteOuverture: dlcOuvertureMin}); }
+    result.manque = round3(Math.max(0, qte - result.consomme));
+    result.ok = true;
+  });
+  return result;
+}
+// =============================================================================
+
+// ----- UI : formulaire de correction de consommation (rubrique technique) -----
+
+async function consoFixForm(){
+  // lots de production rattachés à une recette (sinon pas de BOM → rien à corriger)
+  const prods = await db.productions.orderBy('date').reverse().toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recById = {}; recipes.forEach(r=>recById[+r.id]=r);
+  const candidats = prods.filter(p=>p.recipeId && recById[+p.recipeId]);
+  if(!candidats.length){ toast('Aucun lot rattaché à une recette'); return; }
+
+  const opts = candidats.slice(0,200).map(p=>{
+    const r = recById[+p.recipeId];
+    const lot = p.lotProduction || ('#'+p.id);
+    const d = p.date ? fmtDate(p.date) : '';
+    return `<option value="${p.id}">${esc(r.produitNom)} · lot ${esc(lot)}${d?' · '+esc(d):''}</option>`;
+  }).join('');
+
+  openModal(`<h3>🔧 Rattacher une consommation manquante</h3>
+    <p class="note" style="margin-bottom:10px">Choisis le lot concerné, puis la matière à rattacher. L'app calcule la quantité depuis la recette corrigée.</p>
+    <div class="field"><label>Lot de production</label>
+      <select id="cf_prod" onchange="consoFixLoadMats()"><option value="">— choisir —</option>${opts}</select></div>
+    <div class="field" id="cf_matWrap" style="opacity:.5"><label>Matière à rattacher</label>
+      <select id="cf_mat" onchange="consoFixPreview()" disabled><option value="">— choisir d'abord un lot —</option></select></div>
+    <div id="cf_preview"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+    </div>`);
+}
+
+// Charge les matières du BOM du lot choisi.
+async function consoFixLoadMats(){
+  const prodId = +val('cf_prod')||0;
+  const sel = document.getElementById('cf_mat');
+  const wrap = document.getElementById('cf_matWrap');
+  const prev = document.getElementById('cf_preview');
+  if(prev) prev.innerHTML='';
+  if(!prodId){ if(sel){sel.innerHTML='';sel.disabled=true;} if(wrap)wrap.style.opacity='.5'; return; }
+  const p = await db.productions.get(prodId);
+  const items = await db.recipeItems.where('recipeId').equals(p.recipeId).toArray().catch(()=>[]);
+  const mats = await db.materials.toArray().catch(()=>[]);
+  const matById = {}; mats.forEach(m=>matById[+m.id]=m);
+  const opts = items.map(it=>{
+    const m = matById[+it.materialId];
+    return `<option value="${it.materialId}">${esc(m?m.nom:('#'+it.materialId))}</option>`;
+  }).join('');
+  if(sel){ sel.innerHTML = `<option value="">— choisir —</option>${opts}`; sel.disabled=false; }
+  if(wrap) wrap.style.opacity='1';
+}
+
+// Aperçu : besoin calculé + déjà consommé + lots FIFO disponibles + choix du lot.
+async function consoFixPreview(){
+  const prodId = +val('cf_prod')||0;
+  const materialId = +val('cf_mat')||0;
+  const prev = document.getElementById('cf_preview');
+  if(!prev) return;
+  if(!prodId || !materialId){ prev.innerHTML=''; return; }
+
+  const b = await consoFixBesoin(prodId, materialId);
+  if(!b.besoin){ prev.innerHTML=`<p class="note" style="color:#b3261e;margin-top:8px">${esc(b.raison||'Rien à rattacher')}.</p>`; return; }
+  const deja = await consoFixDejaConsomme(prodId, materialId);
+  const reste = round3(Math.max(0, b.besoin - deja));
+  const mat = await db.materials.get(materialId).catch(()=>null);
+  const u = mat && mat.unite ? mat.unite : 'g';
+
+  // lots dispo (FIFO)
+  const lots = (await db.materialLots.where('materialId').equals(materialId).and(l=>+l.qteRestante>0).toArray().catch(()=>[])).sort(lotFifoCompare);
+  const dispoTotal = round3(lots.reduce((s,l)=>s+(+l.qteRestante||0),0));
+  const lotOpts = lots.map(l=>`<option value="${l.id}">${esc(l.lotFournisseur||('lot #'+l.id))} · ${qty(l.qteRestante)} ${esc(u)}${l.dlc?' · DLC '+fmtDate(l.dlc):''}</option>`).join('');
+
+  prev.innerHTML = `
+    <div class="panel" style="margin-top:10px">
+      <div class="sum-box"><span>Besoin théorique (BOM × ${b.qteRef} produits)</span><b>${qty(b.besoin)} ${esc(u)}</b></div>
+      ${deja>0?`<div class="sum-box"><span>Déjà consommé par ce lot</span><b>${qty(deja)} ${esc(u)}</b></div>`:''}
+      <div class="sum-box"><span><b>À rattacher</b></span><b style="color:var(--bordeaux,#52252F)">${qty(reste)} ${esc(u)}</b></div>
+      <div class="sum-box"><span>Stock disponible</span><b style="color:${dispoTotal>=reste?'#3f7d52':'#b3261e'}">${qty(dispoTotal)} ${esc(u)}</b></div>
+    </div>
+    ${reste<=0?`<p class="note" style="color:#3f7d52;margin-top:8px">✓ Ce lot a déjà toute sa consommation de cette matière. Rien à rattacher.</p>`:`
+    <div class="field" style="margin-top:8px"><label>Quantité à rattacher (${esc(u)})</label>
+      <input type="number" id="cf_qte" min="0" step="0.1" value="${reste}"></div>
+    <div class="field"><label>Prise sur le stock</label>
+      <select id="cf_lot"><option value="">FIFO (le plus ancien d'abord) — recommandé</option>${lotOpts}</select></div>
+    ${dispoTotal<reste?`<p class="note" style="color:#b3261e">⚠ Stock insuffisant (${qty(dispoTotal)} ${esc(u)}). On rattachera au maximum possible ; le reste sera signalé.</p>`:''}
+    <button class="btn" style="margin-top:8px;width:100%" onclick="consoFixGo(${prodId},${materialId})">✓ Rattacher ${qty(reste)} ${esc(u)}</button>`}
+  `;
+}
+
+async function consoFixGo(prodId, materialId){
+  const qte = round3(+val('cf_qte')||0);
+  const lotImpose = +val('cf_lot')||0;
+  if(qte<=0){ toast('Quantité nulle'); return; }
+  const p = await db.productions.get(prodId);
+  const nomLot = p ? (p.lotProduction||('#'+p.id)) : '';
+  const res = await consoFixApply(prodId, materialId, qte, lotImpose||null);
+  closeModal();
+  if(res.manque>0){
+    toast(`${qty(res.consomme)} rattaché(s) · ${qty(res.manque)} manquant(s) (stock épuisé)`);
+  } else {
+    toast(`✓ Consommation rattachée au lot ${nomLot} (${qty(res.consomme)})`);
+  }
+  if(view==='sauvegardes' && typeof renderBackups==='function') renderBackups();
+}
+// =============================================================================
+
 async function renderBackups(){
   const backups = await db.backups.orderBy('date').reverse().toArray();
   const lastExport = localStorage.getItem('sm_lastExport');
@@ -31196,6 +31389,10 @@ async function renderBackups(){
        <button class="btn ghost" onclick="view='integrite';setActiveView&&setActiveView('integrite');renderIntegrity()">🔍 Vérifier l'intégrité</button>
      </div>
      <p class="note"><b>☁️ Sauvegarder sur iCloud</b> : ouvre le partage iOS — choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé ensuite). « Sauvegarder maintenant » garde une copie dans l'app. L'import « Importer » <b>remplace</b> tout ; « en fusion » <b>ajoute</b> sans rien effacer. Une sauvegarde automatique se fait à l'ouverture.</p>
+   </div>
+   <div class="panel"><h2>🔧 Corriger la consommation d'un lot</h2>
+     <p class="note" style="margin-bottom:8px">Si un ingrédient a été <b>ajouté au BOM après</b> la production d'un lot, ce lot n'a pas décrémenté cet ingrédient. Cet outil rattache la consommation manquante (FIFO, traçabilité préservée) sans rien supprimer.</p>
+     <button class="btn" onclick="consoFixForm()">🔧 Rattacher une consommation manquante</button>
    </div>
    ${_diagRegistrySection()}
    <div class="panel"><h2>Sauvegarde iCloud & rappel</h2>
