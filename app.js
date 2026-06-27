@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v986';
+const APP_VERSION = 'v987';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1610,6 +1610,46 @@ async function seedEmballages(){
 // RÈGLE : un lot de REPRISE (stock de départ migration, repriseStock:true) est TOUJOURS
 // consommé en premier (priorité absolue), avant tout autre lot. Ensuite, ordre normal :
 // DLC la plus proche d'abord, puis réception la plus ancienne.
+// ===================== TRI DES MENUS DÉROULANTS (sélection fluide) =====================
+// Helpers réutilisables pour ordonner les options des <select> de façon pratique :
+// - alphabétique (clients, matières, fournisseurs, recettes/ingrédients)
+// - par date décroissante (lots de production : le plus récent en premier)
+// On trie des COPIES (slice) pour ne jamais muter les tableaux d'origine.
+
+// Comparateur alphabétique français, insensible à la casse et aux accents.
+function smartAlpha(a, b){
+  return String(a==null?'':a).localeCompare(String(b==null?'':b), 'fr', {sensitivity:'base', numeric:true});
+}
+
+// Trie une liste d'objets par un champ texte (A→Z). Ne mute pas l'original.
+function sortByName(list, key){
+  key = key || 'nom';
+  return (list||[]).slice().sort((x,y)=>smartAlpha(
+    typeof key==='function'?key(x):x[key],
+    typeof key==='function'?key(y):y[key]
+  ));
+}
+
+// Trie une liste par date décroissante (le plus récent d'abord). Ne mute pas l'original.
+// dateKey peut être un nom de champ ou une fonction. Replis successifs pour rester robuste.
+function sortByDateDesc(list, dateKey){
+  const getTs = o=>{
+    let v = typeof dateKey==='function' ? dateKey(o) : (dateKey?o[dateKey]:null);
+    if(v==null) v = o.prodTermineTs || o.createdTs || o.date || o.id || 0;
+    if(typeof v==='number') return v;
+    const t = new Date(v).getTime();
+    return isNaN(t) ? 0 : t;
+  };
+  return (list||[]).slice().sort((x,y)=>getTs(y)-getTs(x));
+}
+
+// Pour les lots de production : récent d'abord, en s'appuyant sur l'horodatage de fin/fab,
+// puis sur la date, puis sur l'id (les plus grands = plus récents) comme dernier repli.
+function sortProdsRecent(prods){
+  return sortByDateDesc(prods, p => p.prodTermineTs || p.prodTimestamp || (p.date?p.date+'T00:00':null) || (+p.id||0));
+}
+// =============================================================================
+
 function lotFifoCompare(a, b){
   const ra = a.repriseStock?0:1, rb = b.repriseStock?0:1;
   if(ra!==rb) return ra-rb;                       // les lots de reprise en tête
@@ -4536,8 +4576,8 @@ async function lotForm(_id, presetMat){
   const mats = await db.materials.toArray();
   const sups = await db.suppliers.toArray();
   if(!mats.length){toast('Crée d\'abord une matière');return;}
-  const matOpts = mats.map(m=>`<option value="${m.id}" data-unite="${esc(m.unite)}" data-emb="${m.categorie==='emballage'?1:0}" ${presetMat===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (${esc(m.unite)})</option>`).join('');
-  const supOpts = `<option value="0">— non précisé —</option>`+sups.map(s=>`<option value="${s.id}">${esc(s.nom)}</option>`).join('');
+  const matOpts = sortByName(mats,'nom').map(m=>`<option value="${m.id}" data-unite="${esc(m.unite)}" data-emb="${m.categorie==='emballage'?1:0}" ${presetMat===m.id?'selected':''}>${esc(m.nom)}${m.marque?' — '+esc(m.marque):''} (${esc(m.unite)})</option>`).join('');
+  const supOpts = `<option value="0">— non précisé —</option>`+sortByName(sups,'nom').map(s=>`<option value="${s.id}">${esc(s.nom)}</option>`).join('');
   openModal(`<h3>Réception d'un lot</h3>
    <div class="field"><label>Matière</label><select id="f_mat" onchange="majPrixUnit()">${matOpts}</select></div>
    <div class="row2">
@@ -8504,7 +8544,7 @@ async function prodForm(prefill){  const recipes = await db.recipes.toArray();
     return;
   }
   _prodReelTouched=false;
-  const opts = recipes.map(r=>`<option value="${r.id}" data-rend="${r.rendement}">${esc(r.produitNom)} (${r.rendement}/batch)</option>`).join('');
+  const opts = sortByName(recipes,'produitNom').map(r=>`<option value="${r.id}" data-rend="${r.rendement}">${esc(r.produitNom)} (${r.rendement}/batch)</option>`).join('');
   // [ÉTAPE 2a] Composants du catalogue (ex : chantilly vanille-coco) productibles comme garniture séparée.
   const _composantsCat = await db.components.toArray().catch(()=>[]);
   const _compOpts = _composantsCat.map(c=>`<option value="${c.id}" data-rend="${c.rendement||1}">${esc(c.nom||'')} (${c.rendement||1}/batch)</option>`).join('');
@@ -12703,7 +12743,7 @@ async function cmdForm(id, opts){
   const preselect = opts.clientId || o.clientId || 0;
   // trier les clients par nom pour un défilement lisible même à plusieurs centaines
   cmdClientsCache.sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
-  const clOpts = '<option value="0">— aucun —</option>'+cmdClientsCache.map(c=>`<option value="${c.id}" ${preselect===c.id?'selected':''}>${esc(c.nom)}${c.tel?' · '+esc(c.tel):''}</option>`).join('');
+  const clOpts = '<option value="0">— aucun —</option>'+sortByName(cmdClientsCache,'nom').map(c=>`<option value="${c.id}" ${preselect===c.id?'selected':''}>${esc(c.nom)}${c.tel?' · '+esc(c.tel):''}</option>`).join('');
   const curStatut = o.statut==='En cours' ? 'À préparer' : (o.statut||'À préparer');
   const stOpts = ORDER_STATUS.map(s=>`<option ${curStatut===s?'selected':''}>${s}</option>`).join('');
   const regOpts = `<option value="">—</option>`+PAY_METHODS.map(s=>`<option ${o.reglement===s?'selected':''}>${s}</option>`).join('');
@@ -14014,7 +14054,7 @@ async function cmdLink(orderId){
   // dégustation/dons. On exclut les sous-lots coques, ganache et crémeux, qui ne se livrent pas
   // en l'état et n'encombrent que le menu déroulant.
   const estProduitFini = p => { const c=prodComposant(p); return c==='complet' || c==='assemble' || c==='degustation'; };
-  const dispo = prods.filter(p=>+p.qteRestante>0 && estProduitFini(p));
+  const dispo = sortProdsRecent(prods.filter(p=>+p.qteRestante>0 && estProduitFini(p)));
   const existing = await db.orderItems.where('orderId').equals(orderId).toArray();
   // total de macarons de la commande (coffrets + événement + dons ; les grands formats sont à part)
   const ord = await db.orders.get(orderId);
@@ -18632,7 +18672,7 @@ async function parfumBatchSim(){
   const s=getSettings();
   // [COÛT + MO MESURÉE] précharge les mesures d'atelier (si MO mesurée activée) pour un coût complet.
   const _mo = await _chargeMesuresMO(s);
-  const opts=recipes.map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('');
+  const opts=sortByName(recipes,'produitNom').map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('');
   openModal(`<h3>🧮 Marge prévisionnelle d'un batch</h3>
     <div class="field"><label>Parfum</label><select id="bs_rec" onchange="parfumBatchSimUpdate()">${opts}</select></div>
     <div class="row2">
@@ -19628,7 +19668,7 @@ async function settingsForm(){
   // réelle (permet le décompte de stock — étape suivante). Liste optionnelle par type.
   const _embMatsForLink = (await db.materials.toArray()).filter(m=>m.categorie==='emballage')
     .sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
-  const _embLinkOpts = (sel)=>'<option value="">— non rattaché —</option>'+_embMatsForLink.map(m=>`<option value="${m.id}" ${(+sel===+m.id)?'selected':''}>${m.usage==='sac'?'🛍️ ':'📦 '}${esc(m.nom)}</option>`).join('');
+  const _embLinkOpts = (sel)=>'<option value="">— non rattaché —</option>'+sortByName(_embMatsForLink,'nom').map(m=>`<option value="${m.id}" ${(+sel===+m.id)?'selected':''}>${m.usage==='sac'?'🛍️ ':'📦 '}${esc(m.nom)}</option>`).join('');
   window._embLinkOptsHtml = _embLinkOpts(0);   // pour addPackTypeRow (nouvelle ligne)
   // Coût RÉEL d'emballage par format, calculé sur les lots effectivement reçus (factures).
   let realMap=new Map();
@@ -30841,7 +30881,7 @@ async function renderMigration(){
 
    <div class="panel"><h2>2 · Stock de départ — produits finis</h2>
      <p class="note" style="margin-bottom:8px">Crée un lot de produits finis déjà en stock (compté comme « terminé », sans consommer de matières). Idéal pour partir avec ton stock réel d'aujourd'hui.</p>
-     <div class="field"><label>Parfum / recette</label><select id="mig_rec">${(await db.recipes.toArray()).map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('')||'<option value="">(crée d\'abord une recette)</option>'}</select></div>
+     <div class="field"><label>Parfum / recette</label><select id="mig_rec">${sortByName(await db.recipes.toArray(),'produitNom').map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('')||'<option value="">(crée d\'abord une recette)</option>'}</select></div>
      <div class="row2">
        <div class="field"><label>Quantité en stock (macarons)</label><input type="number" min="1" id="mig_qte" placeholder="ex : 24"></div>
        <div class="field"><label>DLC (optionnel)</label><input type="date" id="mig_dlc"></div>
@@ -30855,7 +30895,7 @@ async function renderMigration(){
 
    <div class="panel"><h2>2 bis · Stock de départ — coques vides</h2>
      <p class="note" style="margin-bottom:8px">Saisis tes <b>coques cuites non garnies</b> déjà en stock. Elles entrent dans le système d'assemblage : tu pourras ensuite les garnir (2 coques + 1 ganache = 1 macaron) depuis l'écran Production. Comptées <b>en coques</b> (pas en paires).</p>
-     <div class="field"><label>Parfum / recette des coques</label><select id="mig_coqRec">${(await db.recipes.toArray()).map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('')||'<option value="">(crée d\'abord une recette)</option>'}</select></div>
+     <div class="field"><label>Parfum / recette des coques</label><select id="mig_coqRec">${sortByName(await db.recipes.toArray(),'produitNom').map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('')||'<option value="">(crée d\'abord une recette)</option>'}</select></div>
      <div class="row2">
        <div class="field"><label>Nombre de coques en stock</label><input type="number" min="1" step="1" id="mig_coqQte" placeholder="ex : 80"></div>
        <div class="field"><label>DLC (optionnel)</label><input type="date" id="mig_coqDlc"></div>
@@ -30872,7 +30912,7 @@ async function renderMigration(){
 
    <div class="panel"><h2>2 ter · Stock de départ — garnitures (crémeux / ganache)</h2>
      <p class="note" style="margin-bottom:8px">Saisis tes <b>garnitures déjà prêtes</b> (crémeux ou ganache) en stock, rattachées à leur parfum. Elles entrent dans le système d'assemblage comme une garniture produite (sous-lot <b>-CR</b> ou <b>-GA</b>). Comptées <b>en doses</b> (1 dose = 1 macaron à garnir). Rangement <b>frigo</b>.</p>
-     <div class="field"><label>Parfum / recette de la garniture</label><select id="mig_garnRec">${(await db.recipes.toArray()).map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('')||'<option value="">(crée d\'abord une recette)</option>'}</select></div>
+     <div class="field"><label>Parfum / recette de la garniture</label><select id="mig_garnRec">${sortByName(await db.recipes.toArray(),'produitNom').map(r=>`<option value="${r.id}">${esc(r.produitNom)}</option>`).join('')||'<option value="">(crée d\'abord une recette)</option>'}</select></div>
      <div class="field"><label>Type de garniture</label>
        <div class="opt-table">
          <label class="opt-row"><input type="radio" name="mig_garnType" value="cremeux" checked> <span class="opt-ico">🟠</span> <span class="opt-main"><b>Crémeux</b><br><span class="opt-sub">sous-lot <b>-CR</b></span></span></label>
@@ -31258,7 +31298,7 @@ async function consoFixForm(){
   const prods = await db.productions.orderBy('date').reverse().toArray().catch(()=>[]);
   const recipes = await db.recipes.toArray().catch(()=>[]);
   const recById = {}; recipes.forEach(r=>recById[+r.id]=r);
-  const candidats = prods.filter(p=>p.recipeId && recById[+p.recipeId]);
+  const candidats = sortProdsRecent(prods.filter(p=>p.recipeId && recById[+p.recipeId]));
   if(!candidats.length){ toast('Aucun lot rattaché à une recette'); return; }
 
   const opts = candidats.slice(0,200).map(p=>{
