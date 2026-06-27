@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v985';
+const APP_VERSION = 'v986';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -42694,15 +42694,17 @@ async function pmsValidateDailyCleaning(){
 // ---------- RAPPELS iOS (calendrier .ics) ----------
 // iOS bloque les push planifiés d'une PWA sans serveur. On génère donc des rappels récurrents
 // dans le Calendrier de l'iPhone, qui notifie même app fermée.
-// Règle matin : semaine PAIRE → 4h30, semaine IMPAIRE → 9h (alternance sans fin).
-// Soir : 21h tous les jours.
+// Règle matin (lun→ven) : semaine PAIRE → 4h30, semaine IMPAIRE → 9h (alternance bihebdo).
+// Week-ends (sam+dim) : toujours 9h, sans alternance. Soir : 21h tous les jours.
+// BYDAY indispensable : sans lui, WEEKLY ne déclenche qu'UN jour par cycle (le jour de l'ancre).
 function pmsRemindersInfo(){
   openModal(`<h3>🔔 Rappels HACCP sur iPhone</h3>
     <div class="banner">📅 <div>iOS n'autorise pas une app web à sonner seule à heure fixe. La solution fiable : ajouter des <b>rappels récurrents</b> à ton <b>Calendrier iPhone</b> — ils te notifieront <b>même l'app fermée</b>.</div></div>
     <p class="note" style="margin-bottom:8px">Ce fichier programme :</p>
     <ul style="margin:0 0 10px 18px;font-size:.88rem;color:#5a4a42;line-height:1.5">
-      <li><b>Matin — semaines paires</b> : contrôle T° à <b>4h30</b></li>
-      <li><b>Matin — semaines impaires</b> : contrôle T° à <b>9h00</b></li>
+      <li><b>Matin, lun→ven — semaines paires</b> : contrôle T° à <b>4h30</b></li>
+      <li><b>Matin, lun→ven — semaines impaires</b> : contrôle T° à <b>9h00</b></li>
+      <li><b>Matin, week-ends</b> : contrôle T° à <b>9h00</b> (sam + dim, toute l'année)</li>
       <li><b>Soir</b> : contrôle T° à <b>21h00</b>, tous les jours</li>
     </ul>
     <p class="note" style="margin-bottom:10px">Touche le bouton, puis dans iOS choisis <b>« Calendrier »</b> pour ajouter les rappels. À faire une seule fois.</p>
@@ -42716,8 +42718,9 @@ function pmsBuildICS(){
   const pad=n=>String(n).padStart(2,'0');
   // Ancres 2026 (vérifiées) : lundi 8/6 = semaine 24 PAIRE ; lundi 15/6 = semaine 25 IMPAIRE.
   // DTSTART local + RRULE bihebdomadaire → alternance perpétuelle.
-  const dtMatinPair   = '20260608T043000'; // 4h30, semaines paires
-  const dtMatinImpair = '20260615T090000'; // 9h00, semaines impaires
+  const dtMatinPair   = '20260608T043000'; // 4h30, semaines PAIRES (lun 8/6 = sem. ISO 24 paire), lun→ven
+  const dtMatinImpair = '20260615T090000'; // 9h00, semaines IMPAIRES (lun 15/6 = sem. ISO 25 impaire), lun→ven
+  const dtWeekend     = '20260606T090000'; // 9h00, tous les week-ends (sam 6/6), sam+dim, sans alternance
   const dtSoir        = '20260608T210000'; // 21h00 tous les jours
   const stamp = (()=>{ const d=new Date(); return d.getUTCFullYear()+pad(d.getUTCMonth()+1)+pad(d.getUTCDate())+'T'+pad(d.getUTCHours())+pad(d.getUTCMinutes())+pad(d.getUTCSeconds())+'Z'; })();
   const uid=()=> 'sm-'+Math.random().toString(36).slice(2)+'@sensations-macarons';
@@ -42735,9 +42738,10 @@ function pmsBuildICS(){
     'BEGIN:STANDARD','DTSTART:19701025T030000','TZOFFSETFROM:+0200','TZOFFSETTO:+0100','RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU','END:STANDARD',
     'BEGIN:DAYLIGHT','DTSTART:19700329T020000','TZOFFSETFROM:+0100','TZOFFSETTO:+0200','RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU','END:DAYLIGHT',
     'END:VTIMEZONE',
-    vevent(dtMatinPair,   'FREQ=WEEKLY;INTERVAL=2', '🌡 Contrôle T° HACCP (matin 4h30)', 'Releve de temperature - semaines paires. Valide dans l app Sensations Macarons.'),
-    vevent(dtMatinImpair, 'FREQ=WEEKLY;INTERVAL=2', '🌡 Contrôle T° HACCP (matin 9h)',   'Releve de temperature - semaines impaires. Valide dans l app Sensations Macarons.'),
-    vevent(dtSoir,        'FREQ=DAILY',             '🌡 Contrôle T° HACCP (soir 21h)',   'Releve de temperature du soir. Valide dans l app Sensations Macarons.'),
+    vevent(dtMatinPair,   'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TU,WE,TH,FR', '🌡 Contrôle T° HACCP (matin 4h30)', 'Releve de temperature - semaines paires, du lundi au vendredi. Valide dans l app Sensations Macarons.'),
+    vevent(dtMatinImpair, 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TU,WE,TH,FR', '🌡 Contrôle T° HACCP (matin 9h)',   'Releve de temperature - semaines impaires, du lundi au vendredi. Valide dans l app Sensations Macarons.'),
+    vevent(dtWeekend,     'FREQ=WEEKLY;BYDAY=SA,SU',                     '🌡 Contrôle T° HACCP (week-end 9h)','Releve de temperature - tous les week-ends a 9h. Valide dans l app Sensations Macarons.'),
+    vevent(dtSoir,        'FREQ=DAILY',                                  '🌡 Contrôle T° HACCP (soir 21h)',   'Releve de temperature du soir, tous les jours. Valide dans l app Sensations Macarons.'),
     'END:VCALENDAR'
   ].join('\r\n');
   return body;
