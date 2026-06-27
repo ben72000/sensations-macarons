@@ -354,6 +354,48 @@
   border-radius:12px;background:#fdf8ef;color:#8a5b16;font-weight:600;font-size:.86rem;cursor:pointer}
 .rg-undo-perm:active{background:#f6ecd8}
 
+
+/* Production V2 : lignes-résumé des 3 encarts d'actions */
+.pv2-encarts{margin:10px 0 4px;display:flex;flex-direction:column;gap:7px}
+.pv2-enc{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:12px;cursor:pointer;border:1.5px solid;transition:.12s}
+.pv2-enc:active{filter:brightness(.97)}
+.pv2-enc.enc-vert{background:#f4faf5;border-color:#cfe3d4}
+.pv2-enc.enc-or{background:#fdf8ee;border-color:#e6d2a0}
+.pv2-enc.enc-jaune{background:#fff8ec;border-color:#e8cfa0}
+.pv2-enc-ic{font-size:1.2rem;flex-shrink:0}
+.pv2-enc-main{flex:1;min-width:0}
+.pv2-enc-titre{font-size:.9rem;font-weight:600;color:var(--bordeaux,#52252F)}
+.pv2-enc-sub{font-size:.72rem;color:#9a8a82;margin-top:1px}
+.pv2-enc-n{flex-shrink:0;min-width:24px;height:24px;border-radius:12px;background:rgba(0,0,0,.08);color:#5a4a42;
+  font-size:.82rem;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 7px}
+.enc-vert .pv2-enc-n{background:#d8ecdd;color:#2e7d32}
+.enc-or .pv2-enc-n{background:#f2e3bd;color:#a8841f}
+.enc-jaune .pv2-enc-n{background:#f3e2c0;color:#8a6d3b}
+.pv2-enc-go{color:#c4b5aa;font-size:1.1rem;flex-shrink:0}
+
+
+/* Production V2 : lignes parfum repliables façon « stock par parfum » */
+.pv2-pf{background:#fff;border:1px solid var(--creme,#E8DDCD);border-radius:13px;margin-bottom:9px;overflow:hidden}
+.pv2-pf-h{display:flex;align-items:center;gap:11px;padding:13px 14px;cursor:pointer;transition:.12s}
+.pv2-pf-h:active{background:var(--creme-2,#F5F0E8)}
+.pv2-pf .fs-pastille{width:26px;height:26px;border-radius:50%;flex-shrink:0}
+.pv2-pf .fs-nom{font-weight:600;color:var(--bordeaux,#52252F);font-size:.96rem}
+.pv2-pf-qte{margin-left:auto;text-align:right;color:var(--bordeaux,#52252F);font-size:1.05rem;white-space:nowrap}
+.pv2-pf-qte b{font-size:1.15rem}
+.pv2-pf-chev{color:#c4b5aa;font-size:1.05rem;transition:transform .2s;flex-shrink:0;margin-left:2px}
+.pv2-pf.open .pv2-pf-chev{transform:rotate(90deg)}
+.pv2-pf-body{display:none;padding:0 12px 8px;border-top:1px solid var(--creme-2,#F5F0E8)}
+.pv2-pf.open .pv2-pf-body{display:block;animation:pv2dep .18s ease}
+@keyframes pv2dep{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+
+
+/* Production : onglets En attente / Stock par parfum (vue intégrée) */
+.prod-vue-tabs{display:flex;gap:7px;margin:0 0 12px}
+.pvt-btn{flex:1;background:#fff;border:1.5px solid var(--creme,#E8DDCD);border-radius:12px;padding:10px;
+  font-size:.84rem;font-weight:600;color:var(--bordeaux,#52252F);cursor:pointer;text-align:center;transition:.12s}
+.pvt-btn.on{background:linear-gradient(135deg,#c6974f,#AA7C39);color:#fff;border-color:transparent;box-shadow:0 4px 14px rgba(170,124,57,.3)}
+.prod-stk-head{font-size:.8rem;color:#9a8a82;margin:0 2px 10px;padding:0 2px}
+
 </style>
 <style>
 :root{
@@ -1725,10 +1767,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=987" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=987"></script>
-<script src="utils.js?v=987"></script>
-<script src="app.js?v=987"></script>
+<script src="html5-qrcode.min.js?v=991" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=991"></script>
+<script src="utils.js?v=991"></script>
+<script src="app.js?v=991"></script>
 <div class="froid-sheet" id="froid-sheet" onclick="if(event.target.id==='froid-sheet')_froidCloseDessus()">
   <div class="froid-sheet-card">
     <button class="froid-closex" onclick="_froidCloseDessus()">✕</button>

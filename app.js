@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v987';
+const APP_VERSION = 'v991';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -6128,6 +6128,56 @@ function prodGroupeParParfum(prods, recipes){
 }
 
 // Écran V2 — étape 1 (zone « En attente »).
+// ----- PRODUCTION V2 : lignes-résumé des 3 encarts d'actions (repliés, → détail complet) -----
+
+// Navigue vers l'écran Productions complet et fait défiler jusqu'à l'encart ciblé.
+function prodV2GoEncart(ancre){
+  goView('productions');
+  setTimeout(()=>{
+    const el=document.getElementById(ancre);
+    if(el){ el.scrollIntoView({behavior:'smooth', block:'start'});
+      el.style.transition='box-shadow .3s'; el.style.boxShadow='0 0 0 3px rgba(170,124,57,.4)';
+      setTimeout(()=>{ el.style.boxShadow=''; }, 1200);
+    }
+  }, 120);
+}
+
+// Construit les 3 lignes-résumé (n'affiche que celles qui ont au moins une action).
+function prodV2EncartsResume(prods, recName){
+  let html='';
+  try{
+    const sugg = (typeof assemblySuggestions==='function') ? assemblySuggestions(prods, recName) : [];
+    const degust = (typeof degustationSuggestions==='function') ? degustationSuggestions(prods, recName) : [];
+    const orph = (typeof orphanComponents==='function') ? orphanComponents(prods, recName) : [];
+
+    const ligne = (cls, ico, titre, n, ancre, sousTitre) => n>0 ? `
+      <div class="pv2-enc ${cls}" onclick="prodV2GoEncart('${ancre}')">
+        <span class="pv2-enc-ic">${ico}</span>
+        <div class="pv2-enc-main">
+          <div class="pv2-enc-titre">${titre}</div>
+          <div class="pv2-enc-sub">${sousTitre}</div>
+        </div>
+        <span class="pv2-enc-n">${n}</span>
+        <span class="pv2-enc-go">›</span>
+      </div>` : '';
+
+    html += ligne('enc-vert', '🔗', 'Assemblages à finaliser', sugg.length, 'enc-assemblages',
+      `${sugg.length} rapprochement${sugg.length>1?'s':''} possible${sugg.length>1?'s':''}`);
+    html += ligne('enc-or', '🥄', 'Coques cassées → dégustation', degust.length, 'enc-degustation',
+      `${degust.length} possibilité${degust.length>1?'s':''} de récupération`);
+    html += ligne('enc-jaune', '⚠️', 'Composants orphelins', orph.length, 'enc-orphelins',
+      `${orph.length} en attente de leur moitié`);
+  }catch(e){ /* si un calcul échoue, on n'affiche simplement pas les résumés */ }
+  return html ? `<div class="pv2-encarts">${html}</div>` : '';
+}
+// =============================================================================
+
+// Replie/déplie un groupe parfum dans Production v2 (chevron).
+function prodV2TogglePf(gid){
+  const el = document.getElementById(gid);
+  if(el) el.classList.toggle('open');
+}
+
 async function renderProductionsV2(){
   const main = document.getElementById('main'); if(!main) return;
   const prods = await db.productions.orderBy('date').reverse().toArray().catch(()=>[]);
@@ -6148,19 +6198,33 @@ async function renderProductionsV2(){
   if(!groupes.length){
     corps = `<div class="pv2-empty"><span class="ic">⏳</span>Aucun lot en attente de rangement.<br>Les lots fraîchement produits apparaîtront ici.</div>`;
   } else {
-    corps = groupes.map(g=>{
+    corps = groupes.map((g,gi)=>{
       const col = (typeof flavorColor==='function') ? flavorColor(g.parfum) : '#cbb89f';
-      return `<div class="pv2-parfum">
-        <div class="pv2-parfum-h">
-          <span class="pv2-dot" style="background:${col}"></span>
-          <span class="pv2-parfum-nom">${esc(g.parfum)}</span>
-          <span class="pv2-parfum-tot">${g.lots.length} lot${g.lots.length>1?'s':''} · ${qty(g.total)}</span>
+      // Totaux par stade pour le résumé inline « gan X - coque Y · dég Z » (même format que Stock par parfum).
+      let coques=0, ganache=0, degust=0;
+      g.lots.forEach(p=>{
+        const c = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
+        const q = (typeof prodQteAffichee==='function') ? prodQteAffichee(p) : 0;
+        if(c==='coques') coques += q;
+        else if(c==='ganache') ganache += q;
+        else if(c==='degustation') degust += q;
+      });
+      const gid = 'pv2g'+gi;
+      const detail = ` <span style="color:#9a8a82;font-size:.72rem">|</span> <span style="color:#8a6d3b;font-size:.72rem">gan ${qty(ganache)} - coque ${qty(coques)}</span>${degust>0?` <span style="color:#caa23b;font-size:.72rem">· 🥄 dég ${qty(degust)}</span>`:''}`;
+      return `<div class="pv2-pf" id="${gid}">
+        <div class="pv2-pf-h" onclick="prodV2TogglePf('${gid}')">
+          <span class="fs-pastille" style="background:${col}"></span>
+          <span class="fs-nom">${esc(g.parfum)}</span>
+          <span class="pv2-pf-qte"><b>${qty(g.total)}</b>${detail}</span>
+          <span class="pv2-pf-chev">›</span>
         </div>
-        ${g.lots.map(p=>prodLotLigne(p, recipes)).join('')}
+        <div class="pv2-pf-body">${g.lots.map(p=>prodLotLigne(p, recipes)).join('')}</div>
       </div>`;
     }).join('');
   }
 
+  const _recName = id => { const r = recipes.find(x=>+x.id===+id); return r?r.produitNom:'(recette supprimée)'; };
+  const encartsHtml = prodV2EncartsResume(prods, _recName);
   main.innerHTML = `<div class="pv2-wrap">
     <div class="pv2-head">
       <h1 class="pv2-title">Production</h1>
@@ -6170,6 +6234,7 @@ async function renderProductionsV2(){
       <button class="pv2-zone on">⏳ En attente <span class="z-n">${nbLots}</span></button>
       <button class="pv2-zone" onclick="goView('stockparfums')">📦 Stock par parfum</button>
     </div>
+    ${encartsHtml}
     ${corps}
   </div>`;
   // Cockpit chrono flottant : bulle + rafraîchissement live tant qu'on est sur cet écran.
@@ -6596,7 +6661,7 @@ async function renderProductions(){
        </div>`;
      }).join('')}
    </div>`:''}
-   ${sugg.length?`<div class="panel" style="border:1.5px solid #cfe3d4;background:#f4faf5">
+   ${sugg.length?`<div class="panel" id="enc-assemblages" style="border:1.5px solid #cfe3d4;background:#f4faf5">
      <h2 style="color:#2e7d32">🔗 Assemblages à finaliser <span style="font-weight:400;font-size:.82rem;color:#6a8a72">— ${sugg.length} rapprochement(s) possible(s)</span></h2>
      <p class="note" style="margin-bottom:8px">Coques et ganaches réellement <b>en stock</b> (quantités réelles, casse déduite) pouvant être assemblées. Vérifie le parfum avant de valider.</p>
      ${sugg.map(s=>`<div class="sugg-row">
@@ -6609,7 +6674,7 @@ async function renderProductions(){
         <button class="btn gold sm" onclick="prodAssembleForm(${s.coqId})" title="Assembler ces composants">🔗 Assembler</button>
       </div>`).join('')}
    </div>`:''}
-   ${degustSugg.length?`<div class="panel" style="border:1.5px solid #e6d2a0;background:#fdf8ee">
+   ${degustSugg.length?`<div class="panel" id="enc-degustation" style="border:1.5px solid #e6d2a0;background:#fdf8ee">
      <h2 style="color:#caa23b">🥄 Sauver des coques cassées en dégustation <span style="font-weight:400;font-size:.82rem;color:#b09a5b">— ${degustSugg.length} possibilité(s)</span></h2>
      <p class="note" style="margin-bottom:8px">Des <b>coques cassées récupérables</b> peuvent être garnies avec un <b>surplus de ganache</b> (n'importe quel parfum, puisque c'est offert). Résultat : des macarons de <b>dégustation</b>, non vendables — plutôt que du gaspillage.</p>
      ${degustSugg.map(s=>`<div class="sugg-row">
@@ -6622,7 +6687,7 @@ async function renderProductions(){
         <button class="btn sm" style="background:#caa23b;color:#fff" onclick="prodAssembleForm(${s.coqId}, {deg:true, otherId:${s.ganId}})" title="Assembler en dégustation">🥄 Assembler</button>
       </div>`).join('')}
    </div>`:''}
-   ${orphans.length?`<div class="panel" style="border:1.5px solid #e8cfa0;background:#fff8ec">
+   ${orphans.length?`<div class="panel" id="enc-orphelins" style="border:1.5px solid #e8cfa0;background:#fff8ec">
      <h2 style="color:#8a6d3b">⚠ Composants orphelins <span style="font-weight:400;font-size:.82rem;color:#a8895b">— ${orphans.length} en attente de leur moitié</span></h2>
      <p class="note" style="margin-bottom:8px">Ces composants ne peuvent pas devenir des macarons : il leur manque l'autre moitié. Produis ce qui manque pour ne pas les perdre.</p>
      ${orphans.map(o=>`<div class="sugg-row">
@@ -6633,6 +6698,12 @@ async function renderProductions(){
         <button class="btn ghost sm" onclick="prodForm(${o.recipeId?`{recipeId:${o.recipeId}, qte:${Math.max(1, Math.round(+o.macPotentiels||0))}}`:''})" title="Produire le composant manquant, pré-rempli">⚙ Produire ${o.manque==='ganache'?(o.garnLabel||'ganache'):'coques'}</button>
       </div>`).join('')}
    </div>`:''}
+   <div class="prod-vue-tabs">
+     <button class="pvt-btn on" id="pvt-att" onclick="prodSetVue('attente')">⏳ En attente</button>
+     <button class="pvt-btn" id="pvt-stk" onclick="prodSetVue('stock')">📦 Stock par parfum</button>
+   </div>
+   <div id="prodVueStock" style="display:none"></div>
+   <div id="prodVueAttente">
    <div class="panel">
      ${coquesSuspectsN>0?`<div class="banner" style="background:#fff8ec;border-color:#e8cfa0;margin-bottom:8px">🔧 <div><b>${coquesSuspectsN} ancien(s) lot(s) de coques</b> à corriger (quantité non doublée). <span class="act" onclick="reviewCoquesMigration(false)">Vérifier et corriger →</span></div></div>`:''}
      <input class="search" id="prodbatSearch" style="width:100%;margin-bottom:6px" placeholder="N° lot, parfum, date, emplacement (F/B/C/A)…" value="${esc(prodnSearch)}" oninput="prodbatFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
@@ -6669,7 +6740,8 @@ async function renderProductions(){
      });
      return `<div class="panel"><h2>📉 Stock consommé par la production <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— matières décrémentées à mesure que tu produis</span></h2>
        ${collapseList(blocs, 1, {moreLabel:n=>`Voir les ${n} batch(s) précédent(s)`, lessLabel:'Réduire'})}</div>`;
-   })()}`;
+   })()}
+   </div>`;
   prodbatFilter(prodnSearch);}
 // Déclare une production "rangée" (la sort de la vue Production). Geste délibéré, réversible.
 async function prodRanger(id){
@@ -7011,16 +7083,52 @@ function _prodbatFilterInner(q){
     // Couleur du parfum pour l'en-tête (cohérence avec la bande des cartes). Ganache = neutre.
     const _grpCol = (g.key!==GANACHE_KEY && typeof flavorColor==='function' && g.name) ? flavorColor(g.name) : '#8a6d3b';
     const _grpDot = `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${_grpCol};border:1.5px solid rgba(0,0,0,.12);flex:none"></span>`;
+    // Résumé inline « gan X - coque Y · 🥄 dég Z » (format Stock par parfum), visible sans déplier.
+    let _gCoq=0, _gGan=0, _gDeg=0, _gTot=0;
+    g.rows.forEach(r=>{
+      const pp=r.p; const cc=prodComposant(pp); const qq=round3(+pp.qteRestante||0);
+      if(qq<=0) return;
+      _gTot+=qq;
+      if(cc==='coques') _gCoq+=qq;
+      else if(cc==='ganache') _gGan+=qq;
+      else if(cc==='degustation') _gDeg+=qq;
+    });
+    const _resume = (_gTot>0 || _gCoq>0 || _gGan>0 || _gDeg>0)
+      ? ` <span style="color:#9a8a82;font-size:.72rem">|</span> <span style="color:#8a6d3b;font-size:.72rem">gan ${qty(_gGan)} - coque ${qty(_gCoq)}</span>${_gDeg>0?` <span style="color:#caa23b;font-size:.72rem">· 🥄 dég ${qty(_gDeg)}</span>`:''}`
+      : '';
     // chevron replié par défaut ; le détail (les cartes) est masqué jusqu'au clic
     html+=`<div class="prod-sec-head" onclick="prodGroupToggle('${gid}')" style="cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none;border-left:6px solid ${_grpCol};padding-left:8px">
       <span id="${gid}_chev" style="transition:transform .15s;display:inline-block">▸</span>
-      ${_grpDot}<span style="font-weight:700">${esc(g.name)}</span>${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}</span></div>
+      ${_grpDot}<span style="font-weight:700">${esc(g.name)}</span>${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}${_resume}</span></div>
     <div id="${gid}" class="prod-grp-body" style="display:none">${g.rows.map(_prodbatRow).join('')}</div>`;
   });
   body.innerHTML = html +
     (rows.length>400?`<div class="note" style="text-align:center">… ${rows.length-400} autre(s). Affinez la recherche.</div>`:'');
   startProdChrono();
 }
+// Bascule entre la vue « En attente » (lots à ranger) et « Stock par parfum » (clone intégré),
+// sans quitter l'écran Production. Le stock est construit à la demande (lecture seule).
+async function prodSetVue(vue){
+  const att = document.getElementById('prodVueAttente');
+  const stk = document.getElementById('prodVueStock');
+  const bAtt = document.getElementById('pvt-att');
+  const bStk = document.getElementById('pvt-stk');
+  if(!att || !stk) return;
+  if(vue==='stock'){
+    att.style.display='none'; stk.style.display='block';
+    if(bAtt) bAtt.classList.remove('on'); if(bStk) bStk.classList.add('on');
+    // (re)génère le clone à chaque affichage pour rester à jour
+    stk.innerHTML = '<div class="empty">Chargement du stock…</div>';
+    try{
+      const {listeHtml, totalDispo, enStock} = await buildStockParfumsListeHtml();
+      stk.innerHTML = `<div class="prod-stk-head">${enStock} parfum(s) en stock · ${qty(totalDispo)} macaron(s) vendable(s)</div>${listeHtml}`;
+    }catch(e){ console.error('clone stock',e); stk.innerHTML='<div class="empty" style="color:#b3261e">Impossible d\'afficher le stock pour le moment.</div>'; }
+  } else {
+    stk.style.display='none'; att.style.display='block';
+    if(bStk) bStk.classList.remove('on'); if(bAtt) bAtt.classList.add('on');
+  }
+}
+
 // Replie / déplie un groupe de parfum dans la vue Production.
 function prodGroupToggle(gid){
   const body=document.getElementById(gid); const chev=document.getElementById(gid+'_chev');
@@ -11066,8 +11174,7 @@ const _NAV_PAGES = [
   {v:'matieres',     t:'Matières & lots / Stock',   k:'matiere lot stock ingredient denree inventaire reception'},
   {v:'recettes',     t:'Recettes (BOM)',            k:'recette bom formule composition ganache coque'},
   {v:'productions',  t:'Productions',               k:'production batch fabrication fournee lancement'},
-  {v:'productionsv2',t:'🆕 Production v2 (test)',    k:'production v2 test nouvelle vue lots epure popup rangement'},
-  {v:'rangement',    t:'🆕 Rangement guidé (test)',  k:'rangement guide ranger boites emplacement plan picking test'},
+  {v:'rangement',    t:'📦 Rangement guidé',  k:'rangement guide ranger boites emplacement plan picking'},
   {v:'agendaprod',   t:'Production',                 k:'production planning fabrication retroplanning agenda plan mrp besoin faisabilite seance chef atelier ordonnancement'},
   {v:'atelier',      t:'Atelier (chronos)',         k:'atelier chrono temps minutage mesure'},
   {v:'stockparfums', t:'Stock par parfum',          k:'stock parfum macaron disponible'},
@@ -15047,7 +15154,10 @@ async function _froidDessus(ei, li){
 }
 function _froidCloseDessus(){ const h=document.getElementById('froid-sheet'); if(h) h.classList.remove('open'); }
 
-async function renderStockParfums(){
+// Helper réutilisable : construit la liste « Stock par parfum » (cartes finis + grand format).
+// Lecture seule. Utilisé par l'écran Stock du menu ET par la vue Stock intégrée à Production.
+async function buildStockParfumsListeHtml(){
+
   const tous=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0);
   const prods=tous.filter(p=>prodVendable(p));
   // Composants en stock à compter à part par parfum : coques/ganache assemblables qui ne
@@ -15138,6 +15248,13 @@ async function renderStockParfums(){
      <p class="note" style="margin-bottom:12px">Macarons grand format (vente à l'unité), comptés séparément des petits.</p>
      <div class="flavor-stock-grid">${cardsGF}</div>`:''}
    </div>`;
+  return {listeHtml, totalDispo, enStock};
+}
+
+async function renderStockParfums(){
+  const {listeHtml, totalDispo, enStock} = await buildStockParfumsListeHtml();
+  const _vue = window._stockVue || 'liste';
+  const _swBtn = (v,l)=>`<button class="${_vue===v?'on':''}" onclick="stockSetVue('${v}')">${l}</button>`;
   let froidHtml='';
   if(_vue==='froid'){ try{ froidHtml = await _renderStockFroidHtml(); }catch(e){ console.error('froid',e); froidHtml=`<div class="panel"><p class="note">Impossible d'afficher l'occupation pour le moment.</p></div>`; } }
   document.getElementById('main').innerHTML=`
