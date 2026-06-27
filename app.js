@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v973';
+const APP_VERSION = 'v980';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -2602,6 +2602,7 @@ function goView(v, opts){
     if(!pmsGuardUnsaved()) return;
   }
   if(typeof hideUndo==='function') hideUndo();
+  if(view==='productionsv2' && v!=='productionsv2' && typeof chronoFloatRemove==='function') chronoFloatRemove();
   if(v==='accueil') window._filRetour=null;   // retour au fil par tout chemin → on consomme le marqueur
   _navDir='forward';
   view=v; setActiveView(view); render();
@@ -6131,11 +6132,254 @@ async function renderProductionsV2(){
     </div>
     ${corps}
   </div>`;
+  // Cockpit chrono flottant : bulle + rafraîchissement live tant qu'on est sur cet écran.
+  if(typeof chronoFloatStart==='function') chronoFloatStart();
 }
 
-// Stubs temporaires (étapes suivantes du bloc C) : pop-up détail + mini-menu.
-function prodV2OpenPop(id){ toast('Détail du lot — à venir (étape 2)'); }
-function prodV2MiniMenu(id){ toast('Raccourcis rapides — à venir (étape 2)'); }
+// =============================================================================
+
+// ===================== ATELIER CHRONO FLOTTANT (bloc A, point 1) =====================
+// Une bulle flottante sur l'écran Production V2 ouvre un pop-up refermable montrant les
+// chronos actifs avec leurs contrôles (pause/stop), sans quitter la production.
+// Réutilise prodSessActive, prodTaskRunning, prodTaskPauseToggle, prodTaskStop, prodTaskPicker.
+
+let _chronoFloatTimer = null;
+
+// Compte les tâches en cours (pour le badge de la bulle).
+function chronoFloatCount(){
+  try{
+    const s = (typeof prodSessActive==='function') ? prodSessActive() : null;
+    if(!s) return 0;
+    return (s.tasks||[]).filter(t=>typeof prodTaskRunning==='function' && prodTaskRunning(t)).length;
+  }catch(e){ return 0; }
+}
+
+// Injecte (ou met à jour) la bulle flottante sur l'écran courant.
+function chronoFloatBulle(){
+  let b = document.getElementById('chronoFloatBulle');
+  if(!b){
+    b = document.createElement('button');
+    b.id = 'chronoFloatBulle';
+    b.className = 'chrono-bulle';
+    b.onclick = chronoFloatOpen;
+    document.body.appendChild(b);
+  }
+  const n = chronoFloatCount();
+  b.innerHTML = `⏱${n>0?`<span class="cb-badge">${n}</span>`:''}`;
+  b.classList.toggle('running', n>0);
+}
+
+// Retire la bulle (quand on quitte l'écran production).
+function chronoFloatRemove(){
+  const b=document.getElementById('chronoFloatBulle'); if(b) b.remove();
+  chronoFloatClose();
+  if(_chronoFloatTimer){ clearInterval(_chronoFloatTimer); _chronoFloatTimer=null; }
+}
+
+// Ouvre le pop-up cockpit.
+function chronoFloatOpen(){
+  const s = (typeof prodSessActive==='function') ? prodSessActive() : null;
+  const running = s ? (s.tasks||[]).filter(t=>prodTaskRunning(t)) : [];
+
+  let corps;
+  if(!s){
+    corps = `<div class="cf-empty">Aucune session de production en cours.
+      <button class="btn" style="margin-top:10px" onclick="prodSessionStart();chronoFloatRefresh();chronoFloatRenderBody()">▶ Démarrer une session</button></div>`;
+  } else if(!running.length){
+    corps = `<div class="cf-empty">Aucun chrono en cours.
+      <button class="btn" style="margin-top:10px" onclick="chronoFloatClose();prodTaskPicker()">＋ Lancer une tâche</button></div>`;
+  } else {
+    corps = running.map(t=>{
+      const paused = (typeof prodTaskPaused==='function') && prodTaskPaused(t);
+      return `<div class="cf-task" style="border-left-color:${t.color||'#aa7c39'}">
+        <div class="cf-task-top">
+          <span class="cf-dot" style="background:${t.color||'#aa7c39'}"></span>
+          <span class="cf-label">${esc(t.label||'Tâche')}</span>
+        </div>
+        <div class="cf-task-bot">
+          <span class="cf-chrono" data-prodchrono="${t.id}">${prodFmt(prodTaskNet(t))}</span>
+          <div class="cf-ctrl">
+            <button class="cf-btn" onclick="prodTaskPauseToggle('${t.id}');chronoFloatRenderBody()" title="${paused?'Reprendre':'Pause'}">${paused?'▶':'⏸'}</button>
+            <button class="cf-btn" onclick="prodTaskStop('${t.id}');chronoFloatRefresh();chronoFloatRenderBody()" title="Terminer">⏹</button>
+          </div>
+        </div>
+        ${paused?'<div class="cf-pause">⏸ en pause</div>':''}
+      </div>`;
+    }).join('') + `<button class="btn ghost" style="width:100%;margin-top:8px" onclick="chronoFloatClose();prodTaskPicker()">＋ Lancer une autre tâche</button>`;
+  }
+
+  let host = document.getElementById('chronoFloatHost');
+  if(!host){ host=document.createElement('div'); host.id='chronoFloatHost'; document.body.appendChild(host); }
+  host.innerHTML = `<div class="cf-back show" id="cfBack" onclick="if(event.target===this)chronoFloatClose()">
+    <div class="cf-pop">
+      <div class="cf-pop-h">
+        <span>⏱ Atelier chrono</span>
+        <button class="cf-x" onclick="chronoFloatClose()">✕</button>
+      </div>
+      <div class="cf-pop-body" id="cfBody">${corps}</div>
+      <div class="cf-pop-foot"><button class="btn ghost sm" onclick="chronoFloatClose();goView('atelier')">Ouvrir l'atelier complet →</button></div>
+    </div>
+  </div>`;
+  // tick live sur les chronos du pop-up
+  chronoFloatTick();
+}
+
+// Réinjecte seulement le corps (après une action).
+function chronoFloatRenderBody(){
+  const body=document.getElementById('cfBody'); if(!body) return;
+  const back=document.getElementById('cfBack'); if(!back) return;
+  // recompose en réutilisant la même logique : on rouvre
+  chronoFloatOpen();
+}
+
+function chronoFloatClose(){
+  const host=document.getElementById('chronoFloatHost'); if(host) host.innerHTML='';
+}
+
+// Met à jour la bulle (badge) + les chronos visibles.
+function chronoFloatRefresh(){ chronoFloatBulle(); }
+
+// Tick live : met à jour les durées affichées (bulle + pop-up).
+function chronoFloatTick(){
+  const els = document.querySelectorAll('#cfBody [data-prodchrono]');
+  if(typeof prodSessActive!=='function'){ return; }
+  const s = prodSessActive();
+  if(!s) return;
+  els.forEach(el=>{
+    const id = el.getAttribute('data-prodchrono');
+    const t = (s.tasks||[]).find(x=>String(x.id)===String(id));
+    if(t && typeof prodTaskNet==='function' && typeof prodFmt==='function'){ el.textContent = prodFmt(prodTaskNet(t)); }
+  });
+}
+
+// Démarre le rafraîchissement périodique tant qu'on est sur la production.
+function chronoFloatStart(){
+  chronoFloatBulle();
+  if(_chronoFloatTimer) clearInterval(_chronoFloatTimer);
+  _chronoFloatTimer = setInterval(()=>{ chronoFloatBulle(); chronoFloatTick(); }, 1000);
+}
+// =============================================================================
+
+// ===================== PRODUCTION V2 — POP-UP DÉTAIL LOT (bloc C, étape 2) =====================
+// Au clic sur un lot : pop-up flottant avec identité technique, dispatch, traça ascendante,
+// QR, et raccourcis. Réutilise les fonctions existantes (shareLabelImage, declareLossForm,
+// doMoveEmplacement, delProd, buildLabelData) — on ne réinvente rien.
+
+// Construit l'arborescence ascendante : lot → matières consommées → fournisseurs.
+async function prodTracaAscendante(prodId, nomLot){
+  const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  let html = `<div class="node lvl1">🧁 ${esc(nomLot)}</div>`;
+  if(!conso.length){
+    html += `<div class="node lvl2" style="color:#9a8a82">Aucune matière première tracée pour ce lot</div>`;
+    return html;
+  }
+  for(const c of conso){
+    let matNom='Matière', lotF='—', supNom='', dlc='', archive=false;
+    const lot = c.materialLotId!=null ? await db.materialLots.get(c.materialLotId).catch(()=>null) : null;
+    if(lot){
+      const mat = await db.materials.get(lot.materialId).catch(()=>null);
+      const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId).catch(()=>null) : null;
+      matNom = mat?mat.nom:'Matière'; lotF = lot.lotFournisseur||'—'; supNom = sup?sup.nom:''; dlc = lot.dlc?fmtDate(lot.dlc):'';
+    } else {
+      // lot archivé → données figées au moment de la production
+      const mat = c.snapMaterialId ? await db.materials.get(c.snapMaterialId).catch(()=>null) : null;
+      const sup = c.snapSupplierId ? await db.suppliers.get(c.snapSupplierId).catch(()=>null) : null;
+      matNom = mat?mat.nom:'Matière'; lotF = c.snapLotFournisseur||'—'; supNom = sup?sup.nom:''; dlc = c.snapDlc?fmtDate(c.snapDlc):''; archive=true;
+    }
+    html += `<div class="node lvl2">${esc(matNom)} — lot ${esc(lotF)}${archive?' <span class="pv2-arch">archivé</span>':''}</div>`;
+    if(supNom || dlc){
+      html += `<div class="node lvl3 mp">→ ${esc(supNom||'fournisseur non précisé')}${dlc?' · DLC '+esc(dlc):''}</div>`;
+    }
+  }
+  return html;
+}
+
+// Ouvre le pop-up détail d'un lot.
+async function prodV2OpenPop(id){
+  const p = await db.productions.get(id);
+  if(!p){ toast('Lot introuvable'); return; }
+  const recipes = window._allRecipesCache || await db.recipes.toArray().catch(()=>[]);
+  const d = await buildLabelData(id).catch(()=>null);
+  const nom = prodNomEpure(p, recipes);
+  const qte = prodQteAffichee(p);
+  const fab = prodFabCourt(p);
+  const empTxt = p.emplacement ? `${empIcon(p.emplacement)} ${empNom(p.emplacement)} · ${empLettre(p.emplacement)}` : 'Non rangé';
+  const lotTech = p.lotProduction || ('#'+p.id);
+  const dlc = p.dlcProduit ? fmtDate(p.dlcProduit) : '—';
+  const dispatched = Array.isArray(p.placements) && p.placements.length>1;
+
+  // section dispatch (liens par boîte)
+  let dispHtml='';
+  if(dispatched){
+    dispHtml = `<div class="pv2-pop-sec">Dispatché en plusieurs boîtes</div>
+      <div class="pv2-disp-box">${p.placements.map((pl,i)=>{
+        const e = pl.emplacement ? `${empIcon(pl.emplacement)} ${empLettre(pl.emplacement)}` : '—';
+        const q = pl.qte!=null?qty(pl.qte):'';
+        return `<div class="pv2-disp-chip" onclick="prodV2VoirBoite(${id},${i})">📦 Boîte ${i+1}<small>${q} · ${esc(e)}</small></div>`;
+      }).join('')}</div>`;
+  }
+
+  // traça ascendante
+  const traca = await prodTracaAscendante(id, nom);
+
+  const qrHtml = (d && d.qr) ? `<div class="pv2-pop-sec">QR de traçabilité</div>
+    <div class="pv2-qr-box"><img src="${d.qr}" alt="QR"></div>` : '';
+
+  const html = `<div class="pv2-pop-back show" id="pv2PopBack" onclick="if(event.target===this)prodV2ClosePop()">
+    <div class="pv2-pop">
+      <div class="pv2-pop-h">
+        <div><div class="nom">${esc(nom)}</div><div class="meta">${esc(fab)} · ${qty(qte)} pièces</div></div>
+        <button class="pv2-pop-x" onclick="prodV2ClosePop()">✕</button>
+      </div>
+      <div class="pv2-pop-body">
+        <div class="pv2-pop-sec">Raccourcis</div>
+        <div class="pv2-acts">
+          <div class="pv2-act" onclick="prodV2ClosePop();shareLabelImage(${id})">🖨 Étiquette</div>
+          <div class="pv2-act" onclick="prodV2ClosePop();prodEditTimes(${id})">✏️ Quantité</div>
+          <div class="pv2-act" onclick="prodV2ClosePop();declareLossForm(${id})">⚠️ Casse</div>
+          <div class="pv2-act" onclick="prodV2ClosePop();prodV2Deplacer(${id})">📍 Déplacer</div>
+          <div class="pv2-act full" onclick="prodV2ClosePop();scanAffectChooseOrder(${id})">🔗 Relier à un client</div>
+          <div class="pv2-act full danger" onclick="prodV2ClosePop();delProd(${id})">🗑 Supprimer ce lot</div>
+        </div>
+        ${dispHtml}
+        <div class="pv2-pop-sec">Identité technique</div>
+        <div class="pv2-kv"><span class="k">Lot technique</span><span class="v">${esc(lotTech)}</span></div>
+        <div class="pv2-kv"><span class="k">Emplacement</span><span class="v">${esc(empTxt)}</span></div>
+        <div class="pv2-kv"><span class="k">DLC</span><span class="v">${esc(dlc)}</span></div>
+        <div class="pv2-pop-sec">Traçabilité ascendante</div>
+        <div class="pv2-tree">${traca}</div>
+        ${qrHtml}
+      </div>
+    </div>
+  </div>`;
+
+  // injecte le pop-up dans le DOM (au-dessus de tout)
+  let host = document.getElementById('pv2PopHost');
+  if(!host){ host=document.createElement('div'); host.id='pv2PopHost'; document.body.appendChild(host); }
+  host.innerHTML = html;
+  document.body.style.overflow='hidden';
+}
+
+function prodV2ClosePop(){
+  const host = document.getElementById('pv2PopHost');
+  if(host) host.innerHTML='';
+  document.body.style.overflow='';
+}
+
+// Mini-menu (poignée ⋯) : ouvre directement le pop-up complet (plus simple et cohérent).
+function prodV2MiniMenu(id){ prodV2OpenPop(id); }
+
+// Déplacement : réutilise le sélecteur d'emplacement existant si présent, sinon doMoveEmplacement.
+function prodV2Deplacer(id){
+  // setEmplacement = sélecteur de déplacement existant (fonctionne quel que soit l'emplacement actuel).
+  if(typeof setEmplacement==='function'){ setEmplacement(id); return; }
+  toast('Déplacement indisponible');
+}
+
+// Voir une boîte précise d'un lot dispatché.
+function prodV2VoirBoite(id, idx){
+  toast('Boîte '+(idx+1)+' du lot — localisation à enrichir');
+}
 // =============================================================================
 
 async function renderProductions(){
@@ -9415,7 +9659,15 @@ async function declareLossForm(prodId){
     <p style="margin-bottom:8px"><b>${esc(recipe?recipe.produitNom:'?')}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${prodComposant(p)==='coques'?' · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">🟤 coques</span>':''}</p>
     <div class="sum-box"><span>Stock disponible de ce batch</span><b>${qty(dispo)} ${uLoss}</b></div>
     <div class="field" style="margin-top:10px"><label>Quantité perdue (${uLoss})</label>
-      <input type="number" id="f_lossQte" min="0" max="${dispo}" step="1" value="" placeholder="ex : 3"></div>
+      <input type="number" id="f_lossQte" min="0" max="${dispo}" step="1" value="" placeholder="ex : 3">
+      <div class="loss-quick" style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">
+        <button type="button" class="btn ghost sm" onclick="lossQuickAdd(1,${dispo})">+1</button>
+        <button type="button" class="btn ghost sm" onclick="lossQuickAdd(2,${dispo})">+2</button>
+        <button type="button" class="btn ghost sm" onclick="lossQuickAdd(3,${dispo})">+3</button>
+        <button type="button" class="btn ghost sm" onclick="lossQuickAdd(5,${dispo})">+5</button>
+        <button type="button" class="btn ghost sm" onclick="lossQuickSet(${dispo},${dispo})" title="Tout le lot">Tout (${dispo})</button>
+        <button type="button" class="btn ghost sm" onclick="lossQuickSet(0,${dispo})" title="Remettre à zéro">↺</button>
+      </div></div>
     <div class="field"><label>Motif</label><select id="f_lossMotif">${motifOpts}</select></div>
     <label class="switch-row"><input type="checkbox" id="f_lossDeg" onchange="lossDegSwitch(this.checked)"> 🥄 Cassé mais garni → bascule en dégustation (offert, non perdu)</label>
     ${prodComposant(p)==='coques'?`<label class="switch-row"><input type="checkbox" id="f_lossCoqDeg" onchange="lossCoqDegSwitch(this.checked)"> 🟤 Coques cassées mais récupérables → coques de dégustation (à assembler plus tard)</label>`:''}
@@ -9429,6 +9681,17 @@ async function declareLossForm(prodId){
     <p class="note" id="lossDegHint">La perte sort définitivement du stock fini et alimente le taux de perte. Le coût des pièces perdues est imputé au coût de revient global.</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn danger" onclick="saveLoss(${prodId})">Déclarer</button></div>`);
+}
+function lossQuickAdd(n, maxv){
+  const el=document.getElementById('f_lossQte'); if(!el) return;
+  let v=(+el.value||0)+n;
+  if(maxv!=null && v>maxv) v=maxv;
+  el.value=v;
+}
+function lossQuickSet(v, maxv){
+  const el=document.getElementById('f_lossQte'); if(!el) return;
+  if(maxv!=null && v>maxv) v=maxv;
+  el.value=v;
 }
 function lossDegSwitch(on){
   const w=document.getElementById('f_lossDestWrap'); if(w) w.style.display=on?'block':'none';
@@ -14920,9 +15183,28 @@ async function stockParfumDetail(nom){
       </div>
     </div>`;
   };
-  const rows = prods.map(_ligneBatch).join('') || '<p class="note">Aucun macaron fini en stock pour ce parfum.</p>';
-  const rowsComp = composants.map(_ligneBatch).join('');
-  const rowsDeg = degustations.map(_ligneBatch).join('');
+  // Ligne épurée (bloc C) : nom au vrai stade + date/heure de fab + quantité, cliquable → pop-up V2.
+  const _ligneBatchEpure = p => {
+    const comp = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
+    const nomEp = (typeof prodNomEpure==='function') ? prodNomEpure(p, recipes) : nom;
+    const fab = (typeof prodFabCourt==='function') ? prodFabCourt(p) : '';
+    const stageCol = (typeof prodStageColor==='function') ? prodStageColor(comp) : '#b08d57';
+    const q = (typeof prodQteAffichee==='function') ? prodQteAffichee(p) : (+p.qteRestante||0);
+    const dispatched = Array.isArray(p.placements) && p.placements.length>1;
+    return `<div class="pv2-lot" onclick="closeModal();prodV2OpenPop(${p.id})">
+      <div class="pv2-stage" style="background:${stageCol}"></div>
+      <div class="pv2-main">
+        <div class="pv2-nom">${esc(nomEp)}</div>
+        <div class="pv2-date">Fab. ${esc(fab)}</div>
+        ${dispatched?`<div class="pv2-disp">⊟ dispatché · ${p.placements.length} boîtes</div>`:''}
+      </div>
+      <div class="pv2-qte">${qty(p.qteRestante)}<small>pièces</small></div>
+      <div class="pv2-grip">›</div>
+    </div>`;
+  };
+  const rows = prods.map(_ligneBatchEpure).join('') || '<p class="note">Aucun macaron fini en stock pour ce parfum.</p>';
+  const rowsComp = composants.map(_ligneBatchEpure).join('');
+  const rowsDeg = degustations.map(_ligneBatchEpure).join('');
   const total=prods.reduce((s,p)=>addQty(s,p.qteRestante),0);
   const totalComp=composants.reduce((s,p)=>addQty(s,p.qteRestante),0);
   const totalDeg=degustations.reduce((s,p)=>addQty(s,p.qteRestante),0);
@@ -33843,7 +34125,15 @@ function prodRenderGantt(targetSession){
         </div>
       </div>
       <div class="gantt-rows">${rows}</div>
-      <p class="note gantt-hint">Chaque barre = une tâche. Deux barres sur la même tranche horaire = tâches menées en parallèle (ex. cuisson pendant la meringue suivante).</p>
+      ${(function(){
+        var reel=prodSessReelMs(s), cumul=prodSessCumulMs(s), gain=Math.max(0,cumul-reel);
+        return `<div class="gantt-totaux">
+          <div class="gt-box"><span class="gt-lbl">Temps réel</span><b>${prodDurShort(reel)}</b><span class="gt-sub">passé au mur</span></div>
+          <div class="gt-box"><span class="gt-lbl">Cumul des tâches</span><b>${prodDurShort(cumul)}</b><span class="gt-sub">si faites à la chaîne</span></div>
+          ${gain>=60000?`<div class="gt-box gt-gain"><span class="gt-lbl">Gagné en parallèle</span><b>${prodDurShort(gain)}</b><span class="gt-sub">grâce au chevauchement</span></div>`:''}
+        </div>`;
+      })()}
+      <p class="note gantt-hint">Chaque barre = une tâche. Deux barres sur la même tranche horaire = tâches menées en parallèle (ex. cuisson pendant la meringue suivante). Le « temps réel » ne compte jamais deux fois une même tranche.</p>
     </div>`;
   if((s.tasks||[]).some(prodTaskRunning)) prodStartTicking();
 }
@@ -33882,7 +34172,7 @@ function prodRenderJournal(){
           <div class="pj-date">${fmtDate(s.date)} ${open?'<span class="pj-live">● en cours</span>':''}</div>
           <div class="pj-time">${fmtH(s.start)}${s.end?'–'+fmtH(s.end):''} · ${tasks.length} tâche(s)</div>
         </div>
-        <div class="pj-tot" style="text-align:right">${prodDurShort(reelMs)}<br><span style="font-size:.62rem;color:#9a8a82;font-weight:400">réel${gainMs>=60000?` · cumul ${prodDurShort(totMs)}`:''}</span></div>
+        <div class="pj-tot" style="text-align:right">${prodDurShort(reelMs)}<br><span style="font-size:.62rem;color:#9a8a82;font-weight:400">temps réel${gainMs>=60000?` <span style="color:#3f7d52" title="Tâches menées en parallèle : le temps réel passé au mur, chevauchements déduits. Le cumul additionne les tâches comme si elles étaient faites à la chaîne.">· cumul ${prodDurShort(totMs)} · ⏱ ${prodDurShort(gainMs)} gagné en parallèle</span>`:''}</span></div>
       </div>
       <div class="pj-chips">${phaseChips}</div>
       <div class="pj-actions">
@@ -34465,7 +34755,7 @@ async function ttOpenHistory(){
         </div>
         <div class="ws-line-r">
           <span class="ws-cost">${euro(x.coutTotal)}</span>
-          <span class="ws-del" onclick="ttDeleteSession(${x.id})" title="Supprimer">🗑</span>
+          <span class="ws-edit" onclick="ttEditSession(${x.id})" title="Modifier">✎</span><span class="ws-del" onclick="ttDeleteSession(${x.id})" title="Supprimer">🗑</span>
         </div>
       </div>`;
     }).join('');
@@ -34485,6 +34775,69 @@ async function ttOpenHistory(){
     :'<p class="empty">Aucune session enregistrée pour l\'instant. Lance une activité depuis le feu vert pour commencer à chronométrer ton temps de travail.</p>'}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
+// ===================== ATELIER CHRONO — ÉDITION D'UNE SESSION (bloc A, point 3) =====================
+// Manque comblé : on pouvait supprimer une session mais pas la corriger. ttEditSession ouvre un
+// formulaire pré-rempli (activité, durée, taux) et met à jour la session en recalculant le coût.
+
+async function ttEditSession(id){
+  const s = await db.workSessions.get(id);
+  if(!s){ toast('Session introuvable'); return; }
+  const set = (typeof getSettings==='function') ? getSettings() : {};
+  const tauxDef = (+s.tauxHoraire || +set.laborRate || 0);
+  const curAct = s.activite || '';
+  const baseActs = ['', ...TT_ACTIVITIES];
+  if(curAct && !baseActs.includes(curAct)) baseActs.push(curAct);
+  const actOpts = baseActs.map(a=>`<option value="${esc(a)}" ${a===curAct?'selected':''}>${a?esc(a):'— non précisé —'}</option>`).join('');
+  const dureeMin = +s.dureeMin || 0;
+
+  openModal(`<h3>✎ Modifier la session</h3>
+    <p class="note" style="margin-bottom:8px">${s.date?fmtDate(s.date):''}${s.debut?` · ${fmtTime(s.debut)}${s.fin?'–'+fmtTime(s.fin):''}`:''}</p>
+    <div class="field"><label>Activité</label><select id="tte_act">${actOpts}</select>
+      <input id="tte_autre" placeholder="Préciser si « Autre »… (laisser vide sinon)" style="margin-top:6px"></div>
+    <div class="field"><label>Durée (minutes)</label>
+      <input type="number" min="0" step="1" id="tte_dur" inputmode="numeric" value="${dureeMin}"></div>
+    <div class="field"><label>Taux horaire (€/h)</label>
+      <input type="number" min="0" step="0.5" id="tte_rate" value="${tauxDef||''}" placeholder="ex : 12"></div>
+    <p class="note" id="tte_cost"></p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal();ttOpenHistory()">Annuler</button>
+      <button class="btn" onclick="ttEditSave(${id})">Enregistrer</button>
+    </div>`);
+
+  const dur=document.getElementById('tte_dur'), rate=document.getElementById('tte_rate'), cost=document.getElementById('tte_cost');
+  const upd=()=>{
+    const m=+dur.value||0, t=+rate.value||0;
+    const h=Math.round(m/60*100)/100;
+    cost.textContent = (m>0&&t>0) ? `Coût recalculé : ${euro(money2(h*t))} (${h.toFixed(2)} h)` : '';
+  };
+  if(dur){ dur.addEventListener('input',upd); }
+  if(rate){ rate.addEventListener('input',upd); }
+  upd();
+}
+
+async function ttEditSave(id){
+  const s = await db.workSessions.get(id);
+  if(!s){ toast('Session introuvable'); return; }
+  let act = (typeof val==='function' ? val('tte_act') : '') || '';
+  const autre = (typeof val==='function' ? val('tte_autre') : '') || '';
+  if(autre.trim()){ act = act && act!=='Autre' ? act : ('Autre : '+autre.trim()); }
+  const dureeMin = Math.max(0, Math.floor(+val('tte_dur')||0));
+  const taux = Math.max(0, +val('tte_rate')||0);
+  const heures = Math.round(dureeMin/60*100)/100;
+  await db.workSessions.update(id, {
+    activite: act,
+    dureeMin: dureeMin,
+    dureeHeures: heures,
+    tauxHoraire: money2(taux),
+    coutTotal: money2(heures*taux)
+  });
+  closeModal();
+  ttOpenHistory();
+  if(view==='pointeuse' && typeof renderTimeTracker==='function') renderTimeTracker();
+  toast('Session modifiée ✓');
+}
+// =============================================================================
+
 async function ttDeleteSession(id){
   if(!confirm('Supprimer cette session de travail ?')) return;
   await db.workSessions.delete(id).catch(()=>{});
@@ -40707,6 +41060,160 @@ function lotPlacementCtx(p, recipe){
   const unite = comp==='coques' ? 'coque' : ((comp==='ganache'||comp==='cremeux') ? 'dose' : 'macaron');
   return {nb, grandFormat, congele: aMaturerEff?false:congele, aMaturer:aMaturerEff, congelObligatoire, unite, composant:comp, dejaPlace, totalLot};
 }
+// ===================== RANGEMENT GUIDÉ — MOTEUR DU PLAN GLOBAL (étape 1) =====================
+// Orchestrateur : pour tous les lots en attente, calcule un plan de placement complet en
+// réutilisant le moteur existant (lotPlacementCtx, suggestBox, splitPlacement, occupation,
+// demande proche pour le picking). Accumule l'occupation d'un lot au suivant pour ne pas
+// sur-remplir un même niveau. Regroupe le résultat PAR EMPLACEMENT (vue cible).
+//
+// Sortie : {
+//   parEmplacement: [ { equipKey, equipNom, equipIcon, equipType,
+//                       niveaux: [ { nivIndex, niveauNom, role, acces,
+//                                    instructions: [ { prodId, nom, fab, qte, boiteNom, nbBoites,
+//                                                      pourquoi, sortVite, congele } ] } ] } ],
+//   nonPlaces: [ { prodId, nom, qte, raison } ],
+//   totalLots, totalPieces
+// }
+
+async function buildPlanRangementGlobal(){
+  const specsMap = await equipGetSpecs();
+  const boxes = await db.storageBoxes.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  window._allRecipesCache = recipes;
+  const recById = {}; recipes.forEach(r=>recById[+r.id]=r);
+  const allProds = await db.productions.toArray().catch(()=>[]);
+
+  // Lots EN ATTENTE de rangement = terminés, non rangés, avec du reste non placé.
+  const enAttente = allProds.filter(p=>{
+    const st = (typeof prodStatut==='function') ? prodStatut(p) : 'termine';
+    if(st!=='termine' || p.rangee) return false;
+    const ctx = lotPlacementCtx(p, recById[+p.recipeId]);
+    return ctx.nb > 0;
+  });
+
+  // Occupation réelle de départ (placements existants).
+  const boxesByNom = {}; boxes.forEach(b=>{ boxesByNom[b.nom]=b; });
+  const placements = buildPlacementsMap(allProds, boxesByNom);
+  const occMap = new Map();
+  for(const e of EMPLACEMENTS){
+    const spec=specsMap[e.key]; if(!spec||!Array.isArray(spec.niveaux)) continue;
+    spec.niveaux.forEach((lv,i)=>{
+      const key=e.key+'|'+(lv.nom||('niveau '+(i+1)));
+      const occ=levelOccupancy(lv, placements.get(key)||[]);
+      if(occ) occMap.set(key, occ);
+    });
+  }
+
+  // Demande proche (picking) une seule fois.
+  let demandeMap = {};
+  try{ demandeMap = await computeDemandeProche({}); }catch(e){ demandeMap = {}; }
+
+  // Tri des lots : ceux qui SORTENT VITE d'abord (ils prennent les meilleures places).
+  const withDemande = enAttente.map(p=>{
+    const recipe = recById[+p.recipeId];
+    const ctx = lotPlacementCtx(p, recipe);
+    const dem = (recipe && typeof demandeProchePour==='function')
+      ? demandeProchePour(demandeMap, recipe.produitNom) : {urgent:false, qte:0, joursAvant:null};
+    return {p, recipe, ctx, dem};
+  });
+  withDemande.sort((a,b)=>{
+    const ua = a.dem.urgent?0:1, ub = b.dem.urgent?0:1;
+    if(ua!==ub) return ua-ub;
+    const ja = a.dem.joursAvant==null?9999:a.dem.joursAvant;
+    const jb = b.dem.joursAvant==null?9999:b.dem.joursAvant;
+    return ja-jb;
+  });
+
+  // accumulateur de plan par clé d'emplacement+niveau
+  const planByKey = new Map(); // key -> { equipKey, nivIndex, niveauNom, instructions:[] }
+  const nonPlaces = [];
+
+  for(const item of withDemande){
+    const {p, recipe, ctx, dem} = item;
+    const box = (typeof suggestBox==='function') ? suggestBox(boxes, ctx.nb, ctx.grandFormat) : (boxes[0]||null);
+    if(!box){ nonPlaces.push({prodId:p.id, nom:prodNomEpure(p,recipes), qte:ctx.nb, raison:'aucune boîte'}); continue; }
+
+    const res = splitPlacement(specsMap, box, ctx, occMap, dem);
+    if(!res.parts.length){
+      nonPlaces.push({prodId:p.id, nom:prodNomEpure(p,recipes), qte:ctx.nb, raison:'pas de place'});
+      continue;
+    }
+
+    const ratio = ctx.nb>0 ? (dem.qte/ctx.nb) : 0;
+    const sortVite = !!dem.urgent || ratio>=0.4;
+    const nom = prodNomEpure(p, recipes);
+    const fab = (typeof prodFabCourt==='function') ? prodFabCourt(p) : '';
+
+    res.parts.forEach(part=>{
+      const key = part.equipKey+'|'+(part.niveauNom||('niveau '+(part.nivIndex+1)));
+      if(!planByKey.has(key)) planByKey.set(key, {equipKey:part.equipKey, nivIndex:part.nivIndex, niveauNom:part.niveauNom, instructions:[]});
+      planByKey.get(key).instructions.push({
+        prodId:p.id, nom, fab, qte:part.nbMacarons, boiteNom:part.boiteNom, nbBoites:part.nbBoites,
+        sortVite, congele:!!ctx.congele,
+        pourquoi: _rangementPourquoi(part, ctx, dem, sortVite)
+      });
+    });
+
+    // met à jour occMap pour le lot suivant (déjà fait dans splitPlacement en local, mais on
+    // doit le répercuter ici pour la persistance entre lots).
+    res.parts.forEach(part=>{
+      const key = part.equipKey+'|'+(part.niveauNom||('niveau '+(part.nivIndex+1)));
+      const spec = specsMap[part.equipKey];
+      const lv = spec && spec.niveaux ? spec.niveaux[part.nivIndex] : null;
+      if(!lv) return;
+      const box2 = box;
+      const couches = (typeof levelLayersForHeight==='function') ? (levelLayersForHeight(lv, +box2.h||0)||1) : 1;
+      const coutBoite = (typeof boxFloorArea==='function') ? boxFloorArea(box2)/couches : 0;
+      const prev = occMap.get(key) || {empreinteUtilisee:0, tauxVolume:0};
+      const newEmp = (prev.empreinteUtilisee||0) + (part.nbBoites||0)*coutBoite;
+      const aire = (typeof levelFloorArea==='function') ? levelFloorArea(lv) : 1;
+      occMap.set(key, {empreinteUtilisee:newEmp, tauxVolume: Math.min(1, aire>0?newEmp/aire:0)});
+    });
+  }
+
+  // Regroupe par emplacement, dans l'ordre des EMPLACEMENTS, niveaux dans l'ordre.
+  const parEmplacement = [];
+  let totalPieces=0; const lotsVus=new Set();
+  for(const e of EMPLACEMENTS){
+    const spec=specsMap[e.key]; if(!spec||!Array.isArray(spec.niveaux)) continue;
+    const niveaux=[];
+    spec.niveaux.forEach((lv,i)=>{
+      const key=e.key+'|'+(lv.nom||('niveau '+(i+1)));
+      const entry=planByKey.get(key);
+      if(!entry || !entry.instructions.length) return;
+      entry.instructions.forEach(ins=>{ totalPieces+=ins.qte; lotsVus.add(ins.prodId); });
+      niveaux.push({
+        nivIndex:i, niveauNom:lv.nom||('niveau '+(i+1)),
+        role:(typeof nivRole==='function')?nivRole(lv):'standard',
+        acces:(typeof nivAcces==='function')?nivAcces(lv):'facile',
+        instructions:entry.instructions
+      });
+    });
+    if(niveaux.length){
+      parEmplacement.push({
+        equipKey:e.key, equipNom:e.nom, equipIcon:e.icon, equipType:e.type, niveaux
+      });
+    }
+  }
+
+  return {
+    parEmplacement, nonPlaces,
+    totalLots: lotsVus.size, totalPieces
+  };
+}
+
+// Construit la phrase « pourquoi » d'une instruction (transparence du raisonnement).
+function _rangementPourquoi(part, ctx, dem, sortVite){
+  if(ctx.congele) return 'Surplus / réserve longue → congélateur';
+  if(sortVite){
+    if(dem.urgent) return 'Commande imminente → à portée de main';
+    if(dem.joursAvant!=null) return `Sort dans ${dem.joursAvant} j → accessible`;
+    return 'Part demandée → accessible';
+  }
+  return 'Pas de commande proche → range plus profond';
+}
+// =============================================================================
+
 // Libellé d'unité avec accord pluriel, à partir du contexte de placement (coque/dose/macaron).
 function uniteLabel(ctx, n){
   const u = (ctx && ctx.unite) || 'macaron';

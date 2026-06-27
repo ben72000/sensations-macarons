@@ -197,6 +197,98 @@
 .pv2-empty{text-align:center;padding:30px 16px;color:#9a8a82;font-size:.86rem;line-height:1.5}
 .pv2-empty .ic{font-size:2rem;display:block;margin-bottom:8px;opacity:.5}
 
+
+/* ----- Production V2 : pop-up détail lot ----- */
+.pv2-pop-back{position:fixed;inset:0;background:rgba(40,20,28,.45);backdrop-filter:blur(2px);
+  display:none;align-items:center;justify-content:center;padding:18px;z-index:1000}
+.pv2-pop-back.show{display:flex}
+.pv2-pop{background:var(--paper,#fbf8f3);border-radius:20px;width:100%;max-width:380px;max-height:88vh;
+  overflow-y:auto;box-shadow:0 18px 50px rgba(0,0,0,.35);animation:pv2pop .2s ease}
+@keyframes pv2pop{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+.pv2-pop-h{position:sticky;top:0;background:linear-gradient(135deg,#52252F,#6e3340);color:#fff;
+  padding:16px 18px;border-radius:20px 20px 0 0;display:flex;justify-content:space-between;align-items:flex-start;z-index:1}
+.pv2-pop-h .nom{font-family:Georgia,serif;font-size:1.2rem;font-weight:600}
+.pv2-pop-h .meta{font-size:.74rem;opacity:.85;margin-top:3px}
+.pv2-pop-x{background:rgba(255,255,255,.18);border:none;color:#fff;width:30px;height:30px;border-radius:50%;
+  font-size:1rem;cursor:pointer;flex-shrink:0}
+.pv2-pop-body{padding:16px 18px}
+.pv2-pop-sec{font-size:.68rem;text-transform:uppercase;letter-spacing:1.2px;color:var(--caramel,#AA7C39);
+  font-weight:700;margin:18px 0 8px}
+.pv2-pop-sec:first-child{margin-top:0}
+.pv2-kv{display:flex;justify-content:space-between;font-size:.84rem;padding:6px 0;border-bottom:1px solid var(--creme,#E8DDCD)}
+.pv2-kv .k{color:#9a8a82}.pv2-kv .v{color:var(--bordeaux,#52252F);font-weight:600;font-family:monospace;font-size:.8rem}
+.pv2-acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+.pv2-act{background:#fff;border:1.5px solid var(--creme,#E8DDCD);border-radius:11px;padding:11px 8px;font-size:.8rem;
+  font-weight:600;color:var(--bordeaux,#52252F);cursor:pointer;display:flex;align-items:center;gap:6px;justify-content:center;text-align:center}
+.pv2-act:active{background:var(--creme-2,#F5F0E8)}
+.pv2-act.full{grid-column:1/3}
+.pv2-act.danger{color:#b04a3e;border-color:#e3c4bd}
+.pv2-disp-box{display:flex;gap:7px;flex-wrap:wrap;margin-top:4px}
+.pv2-disp-chip{background:#fff;border:1.5px solid var(--caramel,#AA7C39);border-radius:9px;padding:7px 11px;
+  font-size:.78rem;color:var(--bordeaux,#52252F);cursor:pointer;font-weight:600}
+.pv2-disp-chip small{color:#9a8a82;font-weight:400;display:block;font-size:.68rem;margin-top:1px}
+.pv2-qr-box{text-align:center;padding:10px;background:#fff;border:1px solid var(--creme,#E8DDCD);border-radius:12px}
+.pv2-qr-box img{width:120px;height:120px;image-rendering:pixelated}
+.pv2-tree{font-size:.82rem;line-height:1.55}
+.pv2-tree .node{padding:2px 0}
+.pv2-tree .lvl1{font-weight:600;color:var(--bordeaux,#52252F)}
+.pv2-tree .lvl2{padding-left:16px;color:#5a4a52;position:relative}
+.pv2-tree .lvl2:before{content:'\2514';position:absolute;left:4px;color:var(--caramel,#AA7C39)}
+.pv2-tree .lvl3{padding-left:32px;color:#8a7a82;position:relative;font-size:.77rem}
+.pv2-tree .lvl3:before{content:'\2514';position:absolute;left:20px;color:#c4b5aa}
+.pv2-tree .mp{color:#3f7d52;font-weight:600}
+.pv2-arch{background:#fbeede;color:#9a5b16;font-size:.62rem;padding:1px 6px;border-radius:7px;font-weight:600}
+
+
+/* bouton éditer session (atelier chrono) */
+.ws-edit{cursor:pointer;color:#9a8a82;font-size:.95rem;padding:0 4px;margin-right:2px}
+.ws-edit:active{color:var(--caramel,#AA7C39)}
+
+
+/* résumé temps réel/cumul/gain (Gantt atelier) */
+.gantt-totaux{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.gt-box{flex:1;min-width:90px;background:#fff;border:1px solid var(--creme,#E8DDCD);border-radius:11px;
+  padding:9px 11px;display:flex;flex-direction:column;gap:1px}
+.gt-box b{font-size:1.05rem;color:var(--bordeaux,#52252F)}
+.gt-lbl{font-size:.64rem;text-transform:uppercase;letter-spacing:.6px;color:#9a8a82;font-weight:700}
+.gt-sub{font-size:.66rem;color:#9a8a82}
+.gt-gain{background:#eef6ef;border-color:#bcd9c4}
+.gt-gain b{color:#3f7d52}
+
+
+/* ===================== Atelier chrono flottant (cockpit) ===================== */
+.chrono-bulle{position:fixed;right:16px;bottom:84px;z-index:900;width:54px;height:54px;border-radius:50%;
+  border:none;background:linear-gradient(135deg,#6e3340,#52252F);color:#fff;font-size:1.4rem;cursor:pointer;
+  box-shadow:0 6px 20px rgba(82,37,47,.4);display:flex;align-items:center;justify-content:center}
+.chrono-bulle.running{background:linear-gradient(135deg,#c6974f,#AA7C39);animation:cbpulse 2s infinite}
+@keyframes cbpulse{0%,100%{box-shadow:0 6px 20px rgba(170,124,57,.4)}50%{box-shadow:0 6px 28px rgba(170,124,57,.7)}}
+.cb-badge{position:absolute;top:-2px;right:-2px;background:#b04a3e;color:#fff;font-size:.66rem;font-weight:700;
+  min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid var(--paper,#fbf8f3)}
+.cf-back{position:fixed;inset:0;background:rgba(40,20,28,.45);backdrop-filter:blur(2px);
+  display:none;align-items:flex-end;justify-content:center;padding:0 0 70px;z-index:950}
+.cf-back.show{display:flex}
+.cf-pop{background:var(--paper,#fbf8f3);border-radius:20px;width:calc(100% - 28px);max-width:380px;
+  box-shadow:0 18px 50px rgba(0,0,0,.35);animation:cfpop .22s ease;overflow:hidden}
+@keyframes cfpop{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+.cf-pop-h{background:linear-gradient(135deg,#52252F,#6e3340);color:#fff;padding:14px 18px;font-weight:600;
+  display:flex;justify-content:space-between;align-items:center}
+.cf-x{background:rgba(255,255,255,.18);border:none;color:#fff;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:.9rem}
+.cf-pop-body{padding:14px 16px;max-height:50vh;overflow-y:auto}
+.cf-pop-foot{padding:0 16px 14px;text-align:center}
+.cf-empty{text-align:center;color:#9a8a82;font-size:.86rem;padding:14px 6px}
+.cf-task{background:#fff;border:1px solid var(--creme,#E8DDCD);border-left-width:4px;border-radius:11px;
+  padding:10px 12px;margin-bottom:8px}
+.cf-task-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.cf-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.cf-label{font-size:.86rem;font-weight:600;color:var(--bordeaux,#52252F)}
+.cf-task-bot{display:flex;align-items:center;justify-content:space-between}
+.cf-chrono{font-family:monospace;font-size:1.05rem;font-weight:700;color:var(--bordeaux,#52252F)}
+.cf-ctrl{display:flex;gap:6px}
+.cf-btn{width:34px;height:34px;border-radius:9px;border:1px solid var(--creme,#E8DDCD);background:#faf7f2;
+  cursor:pointer;font-size:.9rem}
+.cf-btn:active{background:var(--creme,#E8DDCD)}
+.cf-pause{font-size:.7rem;color:#9a5b16;margin-top:5px}
+
 </style>
 <style>
 :root{
@@ -1568,10 +1660,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=973" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=973"></script>
-<script src="utils.js?v=973"></script>
-<script src="app.js?v=973"></script>
+<script src="html5-qrcode.min.js?v=980" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=980"></script>
+<script src="utils.js?v=980"></script>
+<script src="app.js?v=980"></script>
 <div class="froid-sheet" id="froid-sheet" onclick="if(event.target.id==='froid-sheet')_froidCloseDessus()">
   <div class="froid-sheet-card">
     <button class="froid-closex" onclick="_froidCloseDessus()">✕</button>
