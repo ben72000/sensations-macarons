@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v996';
+const APP_VERSION = 'v999';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -6282,39 +6282,231 @@ function chronoFloatRemove(){
 }
 
 // Ouvre le pop-up cockpit.
-function chronoFloatOpen(){
-  const s = (typeof prodSessActive==='function') ? prodSessActive() : null;
-  const running = s ? (s.tasks||[]).filter(t=>prodTaskRunning(t)) : [];
+// ===================== ATELIER — NOUVEAU PANNEAU FLOTTANT (assemblage) =====================
+// Structure (haut → bas) : pastilles Parfum · historique « Déjà fait » (3 dernières + déroulé) ·
+// tâche(s) en cours + chrono (avec alarme Terminer/Prolonger) · tâche suivante suggérée · liste complète.
+// État UI local (non persistant) :
+let _atParfum = null;       // recipeId du parfum alimenté (sélection à la volée)
+let _atHistOpen = false;    // historique déroulé ?
+let _atPicker = false;      // sélecteur « toutes les étapes » ouvert ?
 
-  let corps;
-  if(!s){
-    corps = `<div class="cf-empty">Aucune session de production en cours.
-      <button class="btn" style="margin-top:10px" onclick="prodSessionStart();chronoFloatRefresh();chronoFloatRenderBody()">▶ Démarrer une session</button></div>`;
-  } else if(!running.length){
-    corps = `<div class="cf-empty">Aucun chrono en cours.
-      <button class="btn" style="margin-top:10px" onclick="chronoFloatClose();prodTaskPicker()">＋ Lancer une tâche</button></div>`;
+const AT_ICONS = { Caramel:'🍮' };
+
+// Parfums alimentables = batchs en cours de production (recipeId distincts) + secours = parfums déjà
+// rattachés dans la session courante. Retourne [{recipeId, nom}].
+async function atParfumsDispo(){
+  const out = []; const seen = new Set();
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const nameOf = rid => { const r=recipes.find(x=>+x.id===+rid); return r?r.produitNom:('#'+rid); };
+  // 1) batchs en production
+  try{
+    const prods = await db.productions.toArray();
+    prods.forEach(p=>{
+      if((p.prodStatut||'termine')!=='demarre') return;
+      if(p.libre || p.recipeId==null) return;
+      if(seen.has(+p.recipeId)) return;
+      seen.add(+p.recipeId); out.push({recipeId:+p.recipeId, nom:nameOf(p.recipeId)});
+    });
+  }catch(e){}
+  // 2) parfums déjà rattachés dans la session (au cas où la prod est déjà terminée)
+  const s = prodSessActive();
+  if(s){ (s.tasks||[]).forEach(t=>{ (t.parfums||[]).forEach(rid=>{
+    if(seen.has(+rid)) return; seen.add(+rid); out.push({recipeId:+rid, nom:nameOf(rid)});
+  });});}
+  return out;
+}
+
+// Tâches terminées de la session, ordonnées (historique). Retourne [{id,label,parfumNom,recipeId}].
+function atHistorique(recipesById){
+  const s = prodSessActive(); if(!s) return [];
+  return (s.tasks||[]).filter(t=>t.end)
+    .slice().sort((a,b)=>(+a.start||0)-(+b.start||0))
+    .map(t=>{
+      const rid = (t.parfums&&t.parfums[0]!=null)?t.parfums[0]:null;
+      return { id:t.id, label:t.label, recipeId:rid, parfumNom: rid!=null ? (recipesById[rid]||('#'+rid)) : '' };
+    });
+}
+
+// Tâche(s) en cours (non terminées). On distingue celles du parfum courant et les passives d'autres parfums.
+function atEnCours(){
+  const s = prodSessActive(); if(!s) return [];
+  return (s.tasks||[]).filter(t=>!t.end);
+}
+
+// Dernière tâche (terminée ou en cours) du parfum courant, pour alimenter la suggestion.
+function atLastLabel(recipeId){
+  const s = prodSessActive(); if(!s) return null;
+  const mine = (s.tasks||[]).filter(t=>{
+    const parfs=t.parfums||[]; return recipeId==null ? parfs.length===0 : parfs.map(Number).includes(+recipeId);
+  }).slice().sort((a,b)=>(+a.start||0)-(+b.start||0));
+  return mine.length ? mine[mine.length-1].label : null;
+}
+
+function atFmt(ms){ const s=Math.max(0,Math.floor(ms/1000)); const m=Math.floor(s/60),x=s%60; return m+':'+String(x).padStart(2,'0'); }
+function atShort(t){ return t && t.length>26 ? t.slice(0,24)+'…' : (t||''); }
+
+// Rend tout le corps du panneau (#cfBody).
+async function atRenderBody(){
+  const body=document.getElementById('cfBody'); if(!body) return;
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recipesById = {}; recipes.forEach(r=>recipesById[+r.id]=r.produitNom);
+  const parfums = await atParfumsDispo();
+  // parfum courant par défaut = 1er dispo
+  if(_atParfum==null && parfums.length) _atParfum = parfums[0].recipeId;
+
+  // ---- pastilles parfum ----
+  let pills = parfums.map(p=>`<button class="at-pill ${(+_atParfum===+p.recipeId)?'on':''}" onclick="atSetParfum(${p.recipeId})">${esc(p.nom)}</button>`).join('');
+  if(!parfums.length) pills = `<span class="at-none">Aucun batch en cours — tâches transverses</span>`;
+
+  // ---- historique ----
+  const hist = atHistorique(recipesById);
+  let histHtml;
+  if(!hist.length){
+    histHtml = `<div class="at-hist-empty">Les étapes terminées s'afficheront ici, dans l'ordre.</div>`;
   } else {
-    corps = running.map(t=>{
-      const paused = (typeof prodTaskPaused==='function') && prodTaskPaused(t);
-      return `<div class="cf-task" style="border-left-color:${t.color||'#aa7c39'}">
-        <div class="cf-task-top">
-          <span class="cf-dot" style="background:${t.color||'#aa7c39'}"></span>
-          <span class="cf-label">${esc(t.label||'Tâche')}</span>
-        </div>
-        <div class="cf-task-bot">
-          <span class="cf-chrono" data-prodchrono="${t.id}">${prodFmt(prodTaskNet(t))}</span>
-          <div class="cf-ctrl">
-            <button class="cf-btn" onclick="prodTaskPauseToggle('${t.id}');chronoFloatRenderBody()" title="${paused?'Reprendre':'Pause'}">${paused?'▶':'⏸'}</button>
-            <button class="cf-btn" onclick="prodTaskStop('${t.id}');chronoFloatRefresh();chronoFloatRenderBody()" title="Terminer">⏹</button>
-          </div>
-        </div>
-        ${paused?'<div class="cf-pause">⏸ en pause</div>':''}
-      </div>`;
-    }).join('') + `<button class="btn ghost" style="width:100%;margin-top:8px" onclick="chronoFloatClose();prodTaskPicker()">＋ Lancer une autre tâche</button>`;
+    const N=hist.length; const showAll=_atHistOpen||N<=3; const start=showAll?0:N-3;
+    histHtml = hist.map((h,i)=>({h,i})).slice(start).map(({h,i})=>`
+      <div class="at-hist-row">
+        <span class="at-hist-num">${i+1}</span>
+        <span class="at-hist-name">${esc(atShort(h.label))}</span>
+        ${h.parfumNom?`<span class="at-hist-parf">${esc(h.parfumNom)}</span>`:''}
+        <button class="at-hist-del" onclick="atHistDelete('${h.id}')" title="Supprimer cette saisie">✕</button>
+      </div>`).join('') +
+      (N>3?`<button class="at-hist-more" onclick="atHistToggle()">${_atHistOpen?'▴ Réduire':('▾ Voir les '+(N-3)+' précédente'+((N-3)>1?'s':''))}</button>`:'');
   }
 
+  // ---- en cours ----
+  const enCours = atEnCours();
+  const mine = enCours.filter(t=>{ const parfs=t.parfums||[]; return _atParfum==null? parfs.length===0 : parfs.map(Number).includes(+_atParfum); });
+  const autres = enCours.filter(t=>!mine.includes(t) && t.passive);
+  let nowHtml='';
+  mine.forEach(t=>{
+    if(t.ringing){
+      nowHtml += `<div class="at-now ringing">
+        <span class="at-ring-dot"></span>
+        <div class="at-now-txt"><div class="at-now-name">${esc(atShort(t.label))}</div>
+          <div class="at-now-sub">Minuteur écoulé · juge le résultat</div></div></div>
+        <div class="at-ring-actions">
+          <button class="at-ring-finish" onclick="atAlarmFinish('${t.id}')">Terminer</button>
+          <div class="at-ring-ext"><input id="atext_${t.id}" type="number" min="1" value="3">min<button onclick="atAlarmExtend('${t.id}')">Prolonger</button></div>
+        </div>`;
+    } else {
+      const el = prodTaskNet(t);
+      const alarm = t.passive && t.alarmAt ? `<div class="at-now-alarm">reste ${atFmt(Math.max(0,t.alarmAt-Date.now()))}</div>`:'';
+      nowHtml += `<div class="at-now ${t.passive?'passive':'active'}">${alarm}
+        <div class="at-now-txt"><div class="at-now-name">${esc(atShort(t.label))}</div>
+          <div class="at-now-sub">${t.passive?'minuteur':'en cours'}</div></div>
+        <span class="at-now-chrono" data-prodchrono="${t.id}">${atFmt(el)}</span>
+        <button class="at-now-stop" onclick="prodTaskStop('${t.id}');chronoFloatRenderBody()">⏹</button></div>`;
+    }
+  });
+  autres.forEach(t=>{
+    const el=prodTaskNet(t); const rid=(t.parfums&&t.parfums[0]); const nm=rid!=null?(recipesById[rid]||''):'';
+    nowHtml += `<div class="at-now passive faded">
+      <div class="at-now-txt"><div class="at-now-name">${esc(atShort(t.label))}</div>
+        <div class="at-now-sub">${esc(nm)} · ${t.ringing?'a sonné':'continue en parallèle'}</div></div>
+      <span class="at-now-chrono" data-prodchrono="${t.id}">${atFmt(el)}</span></div>`;
+  });
+  if(!nowHtml) nowHtml = `<div class="at-now-empty">Aucune tâche en cours pour ce parfum.</div>`;
+
+  // ---- suivante (depuis le moteur) ----
+  const last = atLastLabel(_atParfum);
+  let sug = [];
+  try{ sug = await prodSuggestNext(_atParfum, last, 1); }catch(e){}
+  const nxt = sug && sug[0];
+  let nextHtml='';
+  if(nxt){
+    const why = last ? 'suite habituelle' : 'tu commences souvent par là';
+    const mini = prodIsPassive(nxt)?'<span class="at-next-mini">minuteur</span>':'';
+    nextHtml = `<button class="at-next" onclick="atLaunch('${esc(nxt).replace(/'/g,"\\'")}')">
+      <span class="at-next-dot"></span><span>${esc(nxt)}${mini}</span><span class="at-next-why">${why}</span></button>`;
+  }
+
+  // ---- liste complète (repliable) ----
+  let listeHtml='';
+  if(_atPicker){
+    const groups={};
+    prodAllTasks().forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });
+    listeHtml = Object.keys(groups).map(phase=>{
+      const g=groups[phase];
+      return `<div class="at-grp"><div class="at-grp-phase" style="color:${g.color}">${esc(phase)}</div>
+        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${esc(l).replace(/'/g,"\\'")}')"><span class="at-d"></span>${esc(l)}${prodIsPassive(l)?'<span class="at-pp">minuteur</span>':''}</button>`).join('')}</div>`;
+    }).join('');
+  }
+
+  body.innerHTML = `
+    <div class="at-parf"><span class="at-parf-lab">Parfum</span><div class="at-pills">${pills}</div></div>
+    <div class="at-eyebrow">Déjà fait${hist.length?` · ${hist.length}`:''}</div>
+    <div class="at-hist">${histHtml}</div>
+    <div class="at-eyebrow">En cours</div>
+    <div class="at-now-wrap">${nowHtml}</div>
+    <div class="at-eyebrow or" style="margin-top:14px">Et maintenant</div>
+    ${nextHtml}
+    <button class="at-toggle-list" onclick="atTogglePicker()">${_atPicker?'▴ Masquer toutes les étapes':'▾ Choisir une autre étape'}</button>
+    <div class="at-liste">${listeHtml}</div>
+  `;
+  chronoFloatTick();
+}
+
+// Actions UI
+function atSetParfum(rid){ _atParfum=+rid; chronoFloatRenderBody(); }
+function atHistToggle(){ _atHistOpen=!_atHistOpen; chronoFloatRenderBody(); }
+function atTogglePicker(){ _atPicker=!_atPicker; chronoFloatRenderBody(); }
+function atHistDelete(taskId){
+  const s=prodSessActive(); if(!s) return;
+  s.tasks=(s.tasks||[]).filter(t=>t.id!==taskId);
+  prodSessUpsert(s);
+  chronoFloatRenderBody();
+}
+// Lancer une étape : semi-passive → on demande la durée d'abord ; sinon on lance directement.
+let _atPendingPassive=null;
+function atLaunch(label){
+  if(prodIsPassive(label) && _atPendingPassive!==label){
+    _atPendingPassive=label; atShowDurPrompt(label); return;
+  }
+  _atPendingPassive=null;
+  prodTaskStartSmart(label, {recipeId:_atParfum});
+  _atPicker=false;
+  chronoFloatRenderBody();
+}
+function atShowDurPrompt(label){
+  const def = prodPassiveDefaultMin(label)||10;
+  const body=document.getElementById('cfBody'); if(!body) return;
+  const box=document.createElement('div'); box.className='at-dur-overlay';
+  box.innerHTML=`<div class="at-dur">
+    <div class="at-dur-h">Minuteur — ${esc(atShort(label))}</div>
+    <div class="at-dur-row"><input id="atDurMin" type="number" min="1" value="${def}"> minutes</div>
+    <div class="at-dur-actions">
+      <button class="at-dur-cancel" onclick="atDurCancel()">Annuler</button>
+      <button class="at-dur-go" onclick="atDurGo('${esc(label).replace(/'/g,"\\'")}')">Lancer</button>
+    </div>
+    <div class="at-dur-hint">À la sonnerie, le chrono se met en pause : tu choisis de terminer ou de prolonger.</div>
+  </div>`;
+  body.appendChild(box);
+}
+function atDurCancel(){ _atPendingPassive=null; const o=document.querySelector('.at-dur-overlay'); if(o)o.remove(); }
+function atDurGo(label){
+  const min = parseInt((document.getElementById('atDurMin')||{}).value)||prodPassiveDefaultMin(label)||10;
+  _atPendingPassive=null;
+  prodTaskStartSmart(label, {recipeId:_atParfum, durMin:min});
+  _atPicker=false;
+  chronoFloatRenderBody();
+}
+function atAlarmFinish(taskId){ prodAlarmFinish(taskId); chronoFloatRenderBody(); }
+function atAlarmExtend(taskId){
+  const add=parseInt((document.getElementById('atext_'+taskId)||{}).value)||3;
+  prodAlarmExtend(taskId, add); chronoFloatRenderBody();
+}
+// =============================================================================
+
+
+function chronoFloatOpen(){
+  const s = (typeof prodSessActive==='function') ? prodSessActive() : null;
   let host = document.getElementById('chronoFloatHost');
   if(!host){ host=document.createElement('div'); host.id='chronoFloatHost'; document.body.appendChild(host); }
+  const corps = s ? `<div class="cf-empty">Chargement…</div>`
+    : `<div class="cf-empty">Aucune session de production en cours.
+      <button class="btn" style="margin-top:10px" onclick="prodSessionStart();chronoFloatRefresh();chronoFloatRenderBody()">▶ Démarrer une session</button></div>`;
   host.innerHTML = `<div class="cf-back show" id="cfBack" onclick="if(event.target===this)chronoFloatClose()">
     <div class="cf-pop">
       <div class="cf-pop-h">
@@ -6325,7 +6517,8 @@ function chronoFloatOpen(){
       <div class="cf-pop-foot"><button class="btn ghost sm" onclick="chronoFloatClose();goView('atelier')">Ouvrir l'atelier complet →</button></div>
     </div>
   </div>`;
-  // tick live sur les chronos du pop-up
+  // Corps riche (parfum + historique + en cours + suivante) rempli en async.
+  if(s && typeof atRenderBody==='function'){ atRenderBody(); }
   chronoFloatTick();
 }
 
@@ -6333,8 +6526,9 @@ function chronoFloatOpen(){
 function chronoFloatRenderBody(){
   const body=document.getElementById('cfBody'); if(!body) return;
   const back=document.getElementById('cfBack'); if(!back) return;
-  // recompose en réutilisant la même logique : on rouvre
-  chronoFloatOpen();
+  // Nouveau panneau riche (parfum + historique + en cours + suivante). Repli sur l'ancien si absent.
+  if(typeof atRenderBody==='function'){ atRenderBody(); }
+  else chronoFloatOpen();
 }
 
 function chronoFloatClose(){
@@ -6346,6 +6540,15 @@ function chronoFloatRefresh(){ chronoFloatBulle(); }
 
 // Tick live : met à jour les durées affichées (bulle + pop-up).
 function chronoFloatTick(){
+  // Vérifie d'abord si une alarme de tâche semi-passive vient d'échoir.
+  if(typeof prodCheckAlarms==='function'){
+    let rang=false; try{ rang=prodCheckAlarms(); }catch(e){}
+    if(rang){
+      try{ if(typeof prodAlarmBeep==='function') prodAlarmBeep(); }catch(e){}
+      // re-render pour afficher l'état « sonne » (Terminer / Prolonger)
+      if(typeof atRenderBody==='function' && document.getElementById('cfBody')){ atRenderBody(); return; }
+    }
+  }
   const els = document.querySelectorAll('#cfBody [data-prodchrono]');
   if(typeof prodSessActive!=='function'){ return; }
   const s = prodSessActive();
@@ -28550,14 +28753,17 @@ async function buildLabelsPDF(items){
 async function labelsBatchForm(){
   const prods = await db.productions.orderBy('date').reverse().toArray().catch(()=>[]);
   const recipes = await db.recipes.toArray().catch(()=>[]);
-  // lots avec un minimum de sens (terminés ou avec stock) ; tri par date récente
   let lots = prods.filter(p=>p.lotProduction);
   if(typeof sortProdsRecent==='function') lots = sortProdsRecent(lots);
-  lots = lots.slice(0, 150);
+  lots = lots.slice(0, 200);
   if(!lots.length){ toast('Aucun lot à étiqueter'); return; }
 
   const recName = id => { const r=recipes.find(x=>+x.id===+id); return r?r.produitNom:''; };
-  const rows = lots.map(p=>{
+  const today = new Date().toISOString().slice(0,10);
+  const lotDay = p => ((p.prodTermineTs||p.date||'')+'').slice(0,10);
+
+  // Rendu d'une ligne lot (commun à toutes les sections).
+  const rowOf = p => {
     const nom = p.libre ? (p.produitLibre||'(libre)') : (recName(p.recipeId)|| (typeof prodNomEpure==='function'?prodNomEpure(p,recipes):''));
     const comp = (typeof prodComposant==='function')?prodComposant(p):'';
     const compLbl = ({coques:'Coques',ganache:'Ganache',assemble:'Assemblé',degustation:'Dégust.',complet:''})[comp]||'';
@@ -28571,15 +28777,61 @@ async function labelsBatchForm(){
         <label>Pièces/boîte <input type="number" min="0" placeholder="${nbDef!==''?nbDef:'auto'}" id="lbpieces_${p.id}" class="lb-num"></label>
       </div>
     </div>`;
-  }).join('');
+  };
+
+  // Famille d'un lot pour le regroupement.
+  const familyOf = p => {
+    const c = (typeof prodComposant==='function')?prodComposant(p):'complet';
+    if(c==='coques') return 'coques';
+    if(c==='ganache') return 'ganache';
+    if(c==='degustation') return 'degust';
+    return 'finis'; // complet / assemblé
+  };
+
+  // Une section repliable. open=true pour la déplier par défaut.
+  let _sid = 0;
+  const section = (titre, lotsArr, open) => {
+    if(!lotsArr.length) return '';
+    const id = 'lbsec_'+(_sid++);
+    return `<div class="lb-sec">
+      <div class="lb-sec-head" onclick="lbSecToggle('${id}')"><span class="lb-sec-chev" id="${id}_chev">${open?'▾':'▸'}</span> <b>${esc(titre)}</b> <span class="lb-sec-n">${lotsArr.length}</span></div>
+      <div class="lb-sec-body" id="${id}" style="display:${open?'block':'none'}">${lotsArr.map(rowOf).join('')}</div>
+    </div>`;
+  };
+
+  // 1) Lots du jour (toutes familles confondues), dépliés.
+  const dujour = lots.filter(p=>lotDay(p)===today);
+  // 2) Par famille — on EXCLUT les lots du jour (déjà dans la section Aujourd'hui) pour éviter
+  //    des identifiants dupliqués et une double sélection du même lot.
+  const reste = lots.filter(p=>lotDay(p)!==today);
+  const coques = reste.filter(p=>familyOf(p)==='coques');
+  const ganache = reste.filter(p=>familyOf(p)==='ganache');
+  const finis  = reste.filter(p=>familyOf(p)==='finis');
+  const degust = reste.filter(p=>familyOf(p)==='degust');
+
+  const sections =
+    section("📅 Aujourd'hui", dujour, true) +
+    section('🟤 Coques', coques, false) +
+    section('🍫 Ganache', ganache, false) +
+    section('🍬 Macarons finis', finis, false) +
+    section('🥄 Dégustation', degust, false);
 
   openModal(`<h3>📄 Étiquettes groupées (PDF)</h3>
     <p class="note" style="margin-bottom:8px">Coche les lots, règle le <b>nombre d'étiquettes</b> et les <b>pièces par boîte</b> à afficher. L'app crée <b>un seul PDF</b> : tu ne le récupères qu'une fois dans Labelife pour imprimer toute la série.</p>
-    <div class="lb-list">${rows}</div>
+    <div class="lb-list">${sections}</div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="lbGenerate()">📄 Générer le PDF</button>
     </div>`);
+}
+
+// Replie / déplie une section de l'écran d'étiquettes groupées.
+function lbSecToggle(id){
+  const body=document.getElementById(id); const chev=document.getElementById(id+'_chev');
+  if(!body) return;
+  const open=body.style.display!=='none';
+  body.style.display=open?'none':'block';
+  if(chev) chev.textContent=open?'▸':'▾';
 }
 
 // Affiche/masque les réglages d'un lot selon sa case.
@@ -33191,8 +33443,271 @@ function prodSessUpsert(sess){
   const a=prodSessLoad(); const i=a.findIndex(s=>s.id===sess.id);
   if(i>=0) a[i]=sess; else a.push(sess);
   prodSessSave(a);
+  try{ if(typeof prodTransInvalidate==='function') prodTransInvalidate(); }catch(e){}
 }
 function prodSessRemove(id){ prodSessSave(prodSessLoad().filter(s=>s.id!==id)); }
+
+// ===================== ATELIER — TÂCHES SEMI-PASSIVES & COUPURE INTELLIGENTE =====================
+// Une tâche « semi-passive » tourne toute seule (cuisson, repos, foisonnement…) : elle ne se coupe
+// JAMAIS au lancement d'une autre tâche. Elle a un minuteur ; à la sonnerie, le chrono se met en pause
+// et l'utilisateur choisit de Terminer ou de Prolonger. Une tâche « active » (pesée, pochage…) est
+// manuelle : lancer une nouvelle active coupe l'active en cours DU MÊME PARFUM.
+//
+// Durées par défaut (minutes), modifiables au lancement. La liste est volontairement courte ; tout le
+// reste est « actif ». L'utilisateur ajustera à l'usage.
+const PROD_PASSIVE_DEFAULTS = {
+  'Mise en chauffe de la meringue': 4,
+  'Foisonnement de la meringue': 8,
+  'Foisonnement meringue après division': 6,
+  'Cuisson des coques': 21,
+  'Refroidissement des coques': 15,
+  'Mise en congélation des coques pour cristallisation des coques': 30,
+};
+
+// Une tâche est-elle semi-passive ? (par label exact, robustesse via inclusion de mots-clés)
+function prodIsPassive(label){
+  if(!label) return false;
+  if(PROD_PASSIVE_DEFAULTS[label]!=null) return true;
+  const l = label.toLowerCase();
+  return /cuisson|refroidiss|foisonn|cong[ée]l|cristallis|repos|mise en chauffe/.test(l);
+}
+// Durée par défaut (minutes) d'une semi-passive, sinon null.
+function prodPassiveDefaultMin(label){
+  if(PROD_PASSIVE_DEFAULTS[label]!=null) return PROD_PASSIVE_DEFAULTS[label];
+  // réglage perso éventuel mémorisé
+  try{ const s=getSettings(); const m=(s.prodPassiveMin||{})[label]; if(m!=null) return +m; }catch(e){}
+  if(prodIsPassive(label)) return 10; // valeur de repli raisonnable
+  return null;
+}
+// Mémorise la durée choisie pour une tâche (devient le défaut la prochaine fois).
+function prodPassiveRememberMin(label, min){
+  try{ const s=getSettings(); s.prodPassiveMin=s.prodPassiveMin||{}; s.prodPassiveMin[label]=+min; saveSettings(s); }catch(e){}
+}
+
+// Détermine quelles tâches actives en cours doivent être coupées quand on lance `label` pour `recipeId`.
+// Règle : on coupe UNIQUEMENT les tâches ACTIVES, non terminées, rattachées au MÊME parfum (recipeId).
+// Les semi-passives ne sont jamais coupées ici. Les tâches d'autres parfums ne sont jamais touchées.
+// Retourne la liste des taskId à clôturer.
+function prodTasksToCutOnStart(session, recipeId){
+  if(!session || !Array.isArray(session.tasks)) return [];
+  return session.tasks.filter(t=>{
+    if(t.end) return false;                          // déjà terminée
+    if(prodIsPassive(t.label)) return false;         // semi-passive : on ne coupe pas
+    // même parfum ? une tâche sans parfum rattaché est considérée transverse → on la coupe aussi
+    const parfs = Array.isArray(t.parfums)?t.parfums:[];
+    if(recipeId==null) return parfs.length===0;      // tâche transverse coupe transverse
+    return parfs.length===0 || parfs.map(Number).includes(+recipeId);
+  }).map(t=>t.id);
+}
+// =============================================================================
+
+
+// ===================== ATELIER — ALARME DES TÂCHES SEMI-PASSIVES =====================
+// Une semi-passive est lancée avec une durée (minutes). À l'échéance, le chrono se met en PAUSE
+// (temps de jugement non compté) et l'état « sonne » s'affiche. L'utilisateur Termine, ou Prolonge
+// de N minutes (le minuteur repart, l'échéance recule, le temps additionnel s'ajoutera). Son+vibration
+// uniquement quand l'app est ouverte (contrainte iOS assumée).
+
+// Démarre une tâche en gérant la coupure intelligente + l'alarme si semi-passive.
+// opts: { recipeId, durMin } (durMin seulement pour semi-passives ; sinon défaut).
+function prodTaskStartSmart(label, opts){
+  opts = opts||{};
+  const s = prodSessionStart();
+  // 1) Coupure : fermer les actives du même parfum (jamais passives / autres parfums)
+  const toCut = prodTasksToCutOnStart(s, opts.recipeId);
+  toCut.forEach(id=>{ const t=(s.tasks||[]).find(x=>x.id===id); if(t && !t.end){
+    if(prodTaskPaused(t)){ t.pausedAccum=(+t.pausedAccum||0)+Math.max(0,Date.now()-(+t.pauseAt)); t.pauseAt=null; }
+    t.end=Date.now();
+  }});
+  // 2) Créer la nouvelle tâche
+  const meta = prodTaskMeta(label);
+  const passive = prodIsPassive(label);
+  const durMin = passive ? (opts.durMin!=null ? +opts.durMin : prodPassiveDefaultMin(label)) : null;
+  const t = { id:prodNewId(), label:meta.label, phase:meta.phase, color:meta.color,
+              start:Date.now(), end:null, pausedAccum:0, pauseAt:null,
+              passive:passive, durMin:durMin,
+              alarmAt: passive ? (Date.now()+durMin*60000) : null,
+              ringing:false };
+  if(passive && opts.durMin!=null) prodPassiveRememberMin(label, opts.durMin);
+  s.tasks=s.tasks||[]; s.tasks.push(t);
+  prodSessUpsert(s);
+  prodStartTicking();
+  try{ prodTaskAutoRattach(t.id); }catch(e){}
+  return t;
+}
+
+// Vérifie les alarmes échues parmi les tâches en cours ; pour chacune, met le chrono en pause de
+// jugement et marque ringing. Retourne true si au moins une nouvelle alarme a sonné (→ son/vibration).
+function prodCheckAlarms(){
+  const s = prodSessActive(); if(!s) return false;
+  let rang=false;
+  (s.tasks||[]).forEach(t=>{
+    if(t.end || !t.passive || t.ringing) return;
+    if(t.alarmAt && Date.now()>=t.alarmAt){
+      t.ringing = true;
+      if(!prodTaskPaused(t)) t.pauseAt = t.alarmAt;  // pause à l'instant exact de l'échéance
+      rang=true;
+    }
+  });
+  if(rang) prodSessUpsert(s);
+  return rang;
+}
+
+// Termine définitivement une tâche qui sonne (durée réelle = temps minuté, pause de jugement exclue).
+function prodAlarmFinish(taskId){
+  const s = prodSessActive(); if(!s) return;
+  const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t) return;
+  if(prodTaskPaused(t)){ t.pausedAccum=(+t.pausedAccum||0)+Math.max(0,Date.now()-(+t.pauseAt)); t.pauseAt=null; }
+  t.ringing=false; t.end=Date.now();
+  prodSessUpsert(s);
+  if(!prodAnyRunning()) prodStopTicking();
+}
+
+// Prolonge une tâche qui sonne de addMin minutes : le minuteur repart, l'échéance recule, le temps de
+// pause de jugement n'est pas compté (on l'ajoute à pausedAccum), le total minuté s'additionnera.
+function prodAlarmExtend(taskId, addMin){
+  const s = prodSessActive(); if(!s) return;
+  const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t) return;
+  addMin = Math.max(1, +addMin||1);
+  // clore la pause de jugement (ce temps ne compte pas dans la durée réelle)
+  if(prodTaskPaused(t)){ t.pausedAccum=(+t.pausedAccum||0)+Math.max(0,Date.now()-(+t.pauseAt)); t.pauseAt=null; }
+  t.ringing=false;
+  t.alarmAt = Date.now()+addMin*60000;  // nouvelle échéance
+  t.durMin = (+t.durMin||0)+addMin;      // durée cible cumulée (pour info)
+  prodSessUpsert(s);
+  prodStartTicking();
+}
+
+// Joue un signal sonore + vibration (app ouverte). Best-effort, silencieux si non supporté.
+function prodAlarmBeep(){
+  try{
+    const Ctx = window.AudioContext||window.webkitAudioContext;
+    if(Ctx){
+      const ctx = window._prodAudioCtx || (window._prodAudioCtx = new Ctx());
+      const beep = (delay)=>{
+        const o=ctx.createOscillator(), g=ctx.createGain();
+        o.type='sine'; o.frequency.value=880;
+        o.connect(g); g.connect(ctx.destination);
+        const t0=ctx.currentTime+delay;
+        g.gain.setValueAtTime(0.0001,t0);
+        g.gain.exponentialRampToValueAtTime(0.3,t0+0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001,t0+0.35);
+        o.start(t0); o.stop(t0+0.36);
+      };
+      beep(0); beep(0.45); beep(0.9);
+    }
+  }catch(e){}
+  try{ if(navigator.vibrate) navigator.vibrate([200,120,200,120,300]); }catch(e){}
+}
+// =============================================================================
+
+
+// ===================== ATELIER — MOTEUR D'APPRENTISSAGE DES ENCHAÎNEMENTS =====================
+// Apprend, à partir de l'historique réel des sessions (db.prodSessions), dans quel ORDRE l'utilisateur
+// enchaîne ses tâches — pondéré par le PARFUM concerné. Sert à proposer la prochaine étape probable
+// et à reconstruire la « séquence type » d'une fournée. 100% lecture, aucun effet de bord.
+//
+// Modèle : pour chaque session, on ordonne les tâches par heure de début (start). Une « transition »
+// est un couple (tâche A → tâche B) observé quand B suit immédiatement A. On compte ces transitions
+// globalement ET par parfum (recipeId rattaché). On en déduit, pour une tâche donnée, la suite la
+// plus fréquente.
+
+// Charge toutes les sessions (table + cache localStorage), tolérant aux absences.
+async function prodAllSessions(){
+  let sess = [];
+  try{ sess = await db.prodSessions.toArray(); }catch(e){ sess = []; }
+  // fusion défensive avec le cache local éventuel (certaines sessions peuvent n'être qu'en cache)
+  try{
+    const raw = localStorage.getItem(PROD_SESS_KEY);
+    if(raw){ const cache = JSON.parse(raw)||[]; 
+      const ids = new Set(sess.map(s=>s.id));
+      cache.forEach(s=>{ if(!ids.has(s.id)) sess.push(s); });
+    }
+  }catch(e){}
+  return sess;
+}
+
+// Construit l'index des transitions à partir d'une liste de sessions.
+// Retourne { global:{A:{B:n}}, parParfum:{ recipeId:{A:{B:n}} }, freq:{A:n} }.
+function prodBuildTransitions(sessions){
+  const global = {};      // global[A][B] = nb d'observations A→B
+  const parParfum = {};   // parParfum[recipeId][A][B] = nb
+  const freq = {};        // freq[A] = nb total de fois où A a été lancée
+
+  const bump = (obj,a,b)=>{ (obj[a]=obj[a]||{})[b]=(obj[a][b]||0)+1; };
+
+  (sessions||[]).forEach(s=>{
+    const tasks = (s.tasks||[]).filter(t=>t && t.label && t.start!=null)
+                               .slice().sort((x,y)=>(+x.start||0)-(+y.start||0));
+    for(let i=0;i<tasks.length;i++){
+      const a = tasks[i].label;
+      freq[a] = (freq[a]||0)+1;
+      if(i+1<tasks.length){
+        const b = tasks[i+1].label;
+        bump(global,a,b);
+        // par parfum : on attribue la transition à chaque parfum rattaché à la tâche A
+        const parfs = Array.isArray(tasks[i].parfums)?tasks[i].parfums:[];
+        parfs.forEach(rid=>{ parParfum[rid]=parParfum[rid]||{}; bump(parParfum[rid],a,b); });
+      }
+    }
+  });
+  return { global, parParfum, freq };
+}
+
+// Cache mémoire de l'index (recalculé à la demande). Invalidé après écriture de session.
+let _prodTransIndex = null;
+async function prodTransIndex(force){
+  if(_prodTransIndex && !force) return _prodTransIndex;
+  const sessions = await prodAllSessions();
+  _prodTransIndex = prodBuildTransitions(sessions);
+  return _prodTransIndex;
+}
+function prodTransInvalidate(){ _prodTransIndex = null; }
+
+// Suggère la/les prochaine(s) tâche(s) probable(s) après `lastLabel`, pour un parfum donné (recipeId).
+// Si pas d'historique pour ce parfum, retombe sur le global. Si pas de lastLabel, propose les tâches
+// de démarrage les plus fréquentes. Retourne un tableau de labels, ordonné par probabilité décroissante.
+async function prodSuggestNext(recipeId, lastLabel, limit){
+  limit = limit||3;
+  const idx = await prodTransIndex();
+  const pickFrom = (table)=>{
+    if(!lastLabel || !table[lastLabel]) return null;
+    return Object.entries(table[lastLabel]).sort((a,b)=>b[1]-a[1]).map(e=>e[0]);
+  };
+  // 1) transitions du parfum, 2) sinon transitions globales
+  let res = (recipeId!=null && idx.parParfum[recipeId] && pickFrom(idx.parParfum[recipeId])) || null;
+  if(!res) res = pickFrom(idx.global);
+  // 3) si toujours rien (pas de lastLabel ou inconnu) : tâches les plus fréquentes en début de session
+  if(!res){
+    res = Object.entries(idx.freq).sort((a,b)=>b[1]-a[1]).map(e=>e[0]);
+  }
+  return (res||[]).slice(0, limit);
+}
+
+// Reconstruit une « séquence type » pour un parfum : on part de la tâche de démarrage la plus
+// fréquente puis on suit la transition dominante, sans boucler, jusqu'à épuisement (max 25 étapes).
+async function prodSequenceType(recipeId, maxLen){
+  maxLen = maxLen||25;
+  const idx = await prodTransIndex();
+  const table = (recipeId!=null && idx.parParfum[recipeId]) ? idx.parParfum[recipeId] : idx.global;
+  // tâche de départ : la plus fréquente globalement qui apparaît comme source
+  const sources = Object.keys(table);
+  if(!sources.length) return [];
+  // heuristique de départ : la source avec le plus d'occurrences en freq
+  let start = sources.sort((a,b)=>(idx.freq[b]||0)-(idx.freq[a]||0))[0];
+  const seq=[start]; const seen=new Set([start]);
+  let cur=start;
+  while(seq.length<maxLen && table[cur]){
+    const nextArr = Object.entries(table[cur]).sort((a,b)=>b[1]-a[1]);
+    let nx=null;
+    for(const [lbl] of nextArr){ if(!seen.has(lbl)){ nx=lbl; break; } }
+    if(!nx) break;
+    seq.push(nx); seen.add(nx); cur=nx;
+  }
+  return seq;
+}
+// =============================================================================
+
 // La session ouverte du jour (end=null), s'il y en a une.
 function prodSessActive(){ return prodSessLoad().find(s=>!s.end); }
 // Générateur d'id simple et unique.
@@ -34899,6 +35414,49 @@ function prodDurShort(ms){
   return m? `${h} h ${String(m).padStart(2,'0')}` : `${h} h`;
 }
 // Sélecteur de tâche à lancer (catalogue groupé par phase + ajout perso).
+// === Version « couche flottante » du sélecteur de tâche ===
+// Affiche le choix de tâche DANS le panneau chrono flottant (cfBody), sans ouvrir de modale.
+// Ainsi, si une saisie de production (modale) est ouverte derrière, elle reste INTACTE.
+function prodTaskPickerFloat(){
+  const body=document.getElementById('cfBody');
+  if(!body){ prodTaskPicker(); return; } // repli : si pas de panneau flottant, ancienne modale
+  const groups = {};
+  prodAllTasks().forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });
+  const blocks = Object.keys(groups).map(phase=>{
+    const g=groups[phase];
+    return `<div class="ptp-group">
+      <div class="ptp-phase" style="color:${g.color}">${esc(phase)}</div>
+      <div class="ptp-tasks">
+        ${g.items.map(l=>`<button class="ptp-task" style="border-left:3px solid ${g.color}" onclick="prodPickTaskFloat(${JSON.stringify(l).replace(/"/g,'&quot;')})">${esc(l)}</button>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+  body.innerHTML = `<div class="cf-pick">
+    <button class="cf-pick-back" onclick="chronoFloatRenderBody()">‹ Retour</button>
+    <p class="note" style="margin:4px 0 8px">Choisis la tâche à chronométrer.</p>
+    <div class="ptp-list">${blocks}</div>
+    <div class="field" style="margin-top:10px"><label>Ou une tâche personnalisée</label>
+      <div style="display:flex;gap:8px"><input id="ptp_custom_f" placeholder="Nom de la tâche…" style="flex:1"><button class="btn" onclick="prodPickCustomFloat()">Lancer</button></div>
+    </div>
+  </div>`;
+}
+function prodPickTaskFloat(label){
+  prodTaskStart(label);
+  if(typeof prodRenderBoard==='function') prodRenderBoard();
+  chronoFloatRefresh(); chronoFloatRenderBody();
+  toast(`▶ ${label}`);
+}
+function prodPickCustomFloat(){
+  const label=(val('ptp_custom_f')||'').trim();
+  if(!label){ toast('Donne un nom à la tâche'); return; }
+  const s=getSettings(); const list=s.prodCustomTasks||[];
+  if(!list.some(c=>(typeof c==='string'?c:c.label)===label)){ list.push(label); s.prodCustomTasks=list; saveSettings(s); }
+  prodTaskStart(label);
+  if(typeof prodRenderBoard==='function') prodRenderBoard();
+  chronoFloatRefresh(); chronoFloatRenderBody();
+  toast(`▶ ${label}`);
+}
+
 function prodTaskPicker(){
   const groups = {};
   prodAllTasks().forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });

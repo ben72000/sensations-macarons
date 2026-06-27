@@ -414,6 +414,91 @@
 .lb-fields label{font-size:.74rem;color:#7a6a62;display:flex;flex-direction:column;gap:3px}
 .lb-num{width:84px;padding:6px 8px;border:1.5px solid var(--creme,#E8DDCD);border-radius:8px;font-size:.9rem}
 
+
+/* Sections repliables de l'écran d'étiquettes groupées */
+.lb-sec{margin-bottom:6px}
+.lb-sec-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;
+  background:#faf6f0;border:1px solid var(--creme,#E8DDCD);border-radius:10px;user-select:none;color:var(--bordeaux,#52252F)}
+.lb-sec-chev{color:#9a8a82;width:14px;flex:none}
+.lb-sec-n{margin-left:auto;background:#AA7C39;color:#fff;border-radius:10px;padding:1px 9px;font-size:.74rem;font-weight:700}
+.lb-sec-body{display:flex;flex-direction:column;gap:6px;padding:6px 2px 2px}
+
+
+/* Sélecteur de tâche dans le panneau chrono flottant (ne pas écraser la saisie derrière) */
+.cf-pick-back{background:none;border:none;color:#AA7C39;font-size:.86rem;font-weight:600;cursor:pointer;padding:4px 0;margin-bottom:4px}
+.cf-pick .ptp-list{display:flex;flex-direction:column;gap:8px;max-height:42vh;overflow-y:auto}
+
+
+/* ===== Atelier chrono — nouveau panneau (épure crème) ===== */
+.at-parf{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.at-parf-lab{font-size:.78rem;color:#9a8a82}
+.at-pills{display:flex;gap:7px;margin-left:auto;flex-wrap:wrap}
+.at-pill{font-size:.82rem;padding:6px 15px;border-radius:18px;border:1px solid var(--creme,#E8DDCD);background:#fff;color:#9a8a82;cursor:pointer;font-weight:600}
+.at-pill.on{background:var(--bordeaux,#52252F);color:#fff;border-color:var(--bordeaux,#52252F)}
+.at-none{font-size:.78rem;color:#9a8a82;margin-left:auto;font-style:italic}
+.at-eyebrow{font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;color:#9a8a82;font-weight:700;margin:0 2px 8px}
+.at-eyebrow.or{color:#AA7C39}
+
+/* historique */
+.at-hist{background:#faf6f0;border:1px solid var(--creme,#E8DDCD);border-radius:12px;padding:9px 11px;margin-bottom:16px}
+.at-hist-row{display:flex;align-items:center;gap:8px;padding:5px 5px;border-radius:7px;font-size:.79rem;color:#9a8a82}
+.at-hist-num{font-variant-numeric:tabular-nums;color:#cbb89f;font-weight:700;width:18px;flex:none;font-size:.72rem}
+.at-hist-name{color:#3a2c28;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.at-hist-parf{font-size:.65rem;padding:1px 8px;border-radius:10px;border:1px solid var(--creme,#E8DDCD);color:var(--bordeaux,#52252F);background:#fff;flex:none}
+.at-hist-del{background:none;border:none;color:#cbb89f;cursor:pointer;font-size:.82rem;padding:2px 4px;flex:none}
+.at-hist-del:active{color:#b0573f}
+.at-hist-empty{font-size:.74rem;color:#9a8a82;font-style:italic;padding:3px 5px}
+.at-hist-more{background:none;border:none;color:#AA7C39;font-size:.74rem;font-weight:700;cursor:pointer;padding:6px 5px 2px;width:100%;text-align:left}
+
+/* en cours */
+.at-now-wrap{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+.at-now{border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;position:relative;background:#faf6f0;border:1px solid var(--creme,#E8DDCD)}
+.at-now::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:3px;background:#cbb89f}
+.at-now.active::before{background:#AA7C39}
+.at-now.passive::before{background:#b0573f}
+.at-now.ringing{background:#fdf8ef}
+.at-now.ringing::before{background:#AA7C39}
+.at-now.faded{opacity:.5}
+.at-now-txt{flex:1;min-width:0}
+.at-now-name{font-weight:700;font-size:.91rem;color:var(--bordeaux,#52252F);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.at-now-sub{font-size:.71rem;color:#9a8a82;margin-top:2px}
+.at-now-chrono{font-variant-numeric:tabular-nums;font-weight:700;font-size:1.1rem;color:#3a2c28;letter-spacing:.5px}
+.at-now-stop{background:#fff;border:1px solid var(--creme,#E8DDCD);color:#9a8a82;border-radius:9px;width:34px;height:34px;font-size:.9rem;cursor:pointer;flex:none}
+.at-now-alarm{position:absolute;top:8px;right:13px;font-size:.66rem;color:#9a8a82;font-variant-numeric:tabular-nums}
+.at-now-empty{background:#faf6f0;border:1px dashed var(--creme,#E8DDCD);border-radius:12px;padding:15px;text-align:center;color:#9a8a82;font-size:.83rem}
+.at-ring-dot{width:7px;height:7px;border-radius:50%;background:#AA7C39;flex:none;animation:atbreathe 1.5s ease-in-out infinite}
+@keyframes atbreathe{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1.1)}}
+.at-ring-actions{display:flex;gap:8px;align-items:stretch;margin:8px 0 2px}
+.at-ring-finish{flex:1;background:#fff;color:#2f6240;border:1px solid #cfe3d4;border-radius:11px;padding:11px;font-size:.85rem;font-weight:700;cursor:pointer}
+.at-ring-ext{display:flex;align-items:center;gap:7px;font-size:.8rem;color:#7a6a52;background:#fff;border:1px solid var(--creme,#E8DDCD);border-radius:11px;padding:0 10px}
+.at-ring-ext input{width:42px;padding:6px 4px;border:1px solid var(--creme,#E8DDCD);border-radius:7px;text-align:center;font-size:.85rem}
+.at-ring-ext button{background:transparent;color:#AA7C39;border:none;font-size:.8rem;font-weight:700;cursor:pointer;padding:6px 2px}
+
+/* suivante */
+.at-next{display:flex;align-items:center;gap:12px;width:100%;text-align:left;cursor:pointer;background:#fff;border:1px solid #AA7C39;border-radius:13px;padding:13px 15px;font-size:.93rem;font-weight:700;color:var(--bordeaux,#52252F)}
+.at-next:active{background:#faf6f0}
+.at-next-dot{width:8px;height:8px;border-radius:50%;background:#AA7C39;flex:none}
+.at-next-why{margin-left:auto;font-size:.7rem;color:#9a8a82;font-weight:600;text-align:right}
+.at-next-mini{font-size:.66rem;color:#b0573f;font-weight:700;margin-left:6px}
+.at-toggle-list{background:none;border:none;color:#AA7C39;font-size:.78rem;font-weight:700;cursor:pointer;padding:12px 2px 4px;width:100%;text-align:left}
+.at-grp{margin-bottom:11px}
+.at-grp-phase{font-size:.74rem;font-weight:700;margin-bottom:6px}
+.at-grp-task{display:flex;align-items:center;gap:9px;text-align:left;width:100%;cursor:pointer;padding:10px 12px;border-radius:10px;background:#fff;border:1px solid #efe7da;font-size:.85rem;color:#3a2c28;margin-bottom:5px}
+.at-grp-task:active{background:#faf6f0}
+.at-d{width:6px;height:6px;border-radius:50%;background:#9a8a82;flex:none}
+.at-pp{margin-left:auto;font-size:.63rem;color:#b0573f;font-weight:700}
+
+/* prompt de durée (alarme) */
+.at-dur-overlay{position:absolute;inset:0;background:rgba(40,20,30,.4);display:flex;align-items:center;justify-content:center;border-radius:18px;z-index:5}
+.at-dur{background:#fff;border-radius:14px;padding:16px;width:84%;max-width:280px;box-shadow:0 14px 40px rgba(0,0,0,.3)}
+.at-dur-h{font-weight:700;color:var(--bordeaux,#52252F);font-size:.92rem;margin-bottom:12px}
+.at-dur-row{display:flex;align-items:center;gap:8px;font-size:.85rem;color:#7a6a52}
+.at-dur-row input{width:70px;padding:8px;border:1px solid var(--creme,#E8DDCD);border-radius:8px;text-align:center;font-size:1rem}
+.at-dur-actions{display:flex;gap:8px;margin-top:14px}
+.at-dur-cancel{flex:1;background:#fff;border:1px solid var(--creme,#E8DDCD);color:#9a8a82;border-radius:10px;padding:10px;font-weight:700;cursor:pointer}
+.at-dur-go{flex:1;background:var(--bordeaux,#52252F);border:none;color:#fff;border-radius:10px;padding:10px;font-weight:700;cursor:pointer}
+.at-dur-hint{font-size:.71rem;color:#9a8a82;margin-top:10px;line-height:1.45}
+
 </style>
 <style>
 :root{
@@ -1785,10 +1870,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=996" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=996"></script>
-<script src="utils.js?v=996"></script>
-<script src="app.js?v=996"></script>
+<script src="html5-qrcode.min.js?v=999" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=999"></script>
+<script src="utils.js?v=999"></script>
+<script src="app.js?v=999"></script>
 <div class="froid-sheet" id="froid-sheet" onclick="if(event.target.id==='froid-sheet')_froidCloseDessus()">
   <div class="froid-sheet-card">
     <button class="froid-closex" onclick="_froidCloseDessus()">✕</button>
