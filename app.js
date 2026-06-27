@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1003';
+const APP_VERSION = 'v1004';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -209,6 +209,17 @@ db.version(22).stores({
   rdIngredients: '++id, nom, registre, famille, type, auCatalogue',
   rdIdees:       '++id, statut, type, a, b, originalite, gourmandise, date',
   rdTests:       '++id, ideeId, date, note'
+});
+
+// --- v23 : bibliothèque de références R&D (générateur de recettes) ---------------------------
+// rdRefs : recette MÈRE (un entremet, une fiche chef…). Ne porte pas d'ADN propre.
+//   titre, source ('moi'|'chiara'|'bau'|'lenotre'|'autre'), format, date, note.
+// rdPreps : PRÉPARATION rattachée à une mère (refId). C'est elle qui porte l'ADN.
+//   role ('garniture'|'structure'), type (ganache/cremeux/gel…), ingredients[] = [{nom,qte,unite,famille?}],
+//   etapes[] (texte reformulé), adn (profil 5 familles + rapports, calculé), cuisson, conservation, note.
+db.version(23).stores({
+  rdRefs:  '++id, source, format, date',
+  rdPreps: '++id, refId, role, type'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -1182,6 +1193,443 @@ async function renderRD(){
   rdRenderProps();
 }
 // =============================================================================
+
+// ============================================================================
+// ░░ R&D V0 — BIBLIOTHÈQUE DE RÉFÉRENCES + MOTEUR ADN ░░
+// (route cachée 'rdrefs', invisible au menu jusqu'à validation iPhone)
+// Moteur classification+encodage validé en isolation (29 assertions Node).
+// ============================================================================
+
+const RD_FAMILLES = ['gras','liquide','sucre','arome','structurant'];
+const RD_FAM_LABEL = { gras:'Matière grasse', liquide:'Liquide', sucre:'Sucre', arome:'Arôme', structurant:'Structurant' };
+const RD_FAM_COLOR = { gras:'#c98b4b', liquide:'#5b8aa6', sucre:'#c25b7a', arome:'#7a9b54', structurant:'#8a6fae' };
+
+// Règles de décomposition métier (1re règle qui matche). split = {famille:fraction}, somme=1.
+const RD_RULES = [
+  { test:/(masse\s+g[ée]latine|g[ée]latine\s+r[ée]hydrat)/i, split:{structurant:1/6, liquide:5/6}, note:'masse gélatine 1:5' },
+  { test:/g[ée]latine|agar|pectine|gomme|carragh?[ée]nane/i, split:{structurant:1}, note:'gélifiant' },
+  { test:/chocolat\s+noir|couverture\s+noir|cacao\s+70|cacao\s+(7|8|9)\d/i, split:{gras:.45, sucre:.35, arome:.20}, note:'chocolat noir' },
+  { test:/chocolat\s+(au\s+)?lait|couverture\s+lait/i, split:{gras:.35, sucre:.45, arome:.20}, note:'chocolat lait' },
+  { test:/chocolat\s+blanc|couverture\s+blanc|dulcey|ivoire/i, split:{gras:.38, sucre:.50, arome:.12}, note:'chocolat blanc' },
+  { test:/p[aâ]te\s+de\s+cacao|cacao\s+(p[aâ]te|100)/i, split:{gras:.50, arome:.50}, note:'pâte de cacao' },
+  { test:/cacao\s+(en\s+)?poudre|poudre\s+de\s+cacao/i, split:{arome:.7, gras:.3}, note:'cacao poudre' },
+  { test:/beurre\s+(de\s+)?cacao/i, split:{gras:1}, note:'beurre de cacao' },
+  { test:/beurre|margarine|huile/i, split:{gras:1}, note:'corps gras' },
+  { test:/p[aâ]te\s+(de\s+)?(pistache|noisette|amande|praline|praliné|noix|cacahu)/i, split:{gras:.45, arome:.40, sucre:.15}, note:'pâte fruit à coque' },
+  { test:/pralin[ée]/i, split:{gras:.35, sucre:.40, arome:.25}, note:'praliné' },
+  { test:/poudre\s+(d[\'’]?)?(amande|noisette|pistache)/i, split:{gras:.5, arome:.5}, note:'poudre fruit à coque' },
+  { test:/cr[èe]me\s+(liquide|fleurette|enti[èe]re|fra[îi]che|35|fouett)/i, split:{gras:.35, liquide:.65}, note:'crème' },
+  { test:/cr[èe]me\b/i, split:{gras:.35, liquide:.65}, note:'crème' },
+  { test:/mascarpone/i, split:{gras:.45, liquide:.55}, note:'mascarpone' },
+  { test:/lait\s+(de\s+)?coco/i, split:{gras:.2, liquide:.6, arome:.2}, note:'lait de coco' },
+  { test:/lait\s+concentr[ée]/i, split:{liquide:.5, sucre:.5}, note:'lait concentré' },
+  { test:/\blait\b/i, split:{liquide:.96, gras:.04}, note:'lait' },
+  { test:/yaourt|fromage\s+blanc|skyr/i, split:{liquide:.85, gras:.15}, note:'laitage' },
+  { test:/sucre\s+invert|trimoline|glucose|sirop\s+de\s+glucose|isomalt|cassonade|sucre\s+(en\s+)?poudre|sucre\s+glace|sucre\b/i, split:{sucre:1}, note:'sucre' },
+  { test:/miel|sirop\s+d[\'’]?[ée]rable|sirop\s+d[\'’]?agave/i, split:{sucre:.8, liquide:.1, arome:.1}, note:'sirop sucré' },
+  { test:/fondant\s+p[aâ]tissier/i, split:{sucre:1}, note:'fondant' },
+  { test:/jaune\s+d[\'’]?o?eufs?/i, split:{liquide:.5, gras:.5}, note:'jaune d’œuf' },
+  { test:/blanc\s+d[\'’]?o?eufs?/i, split:{liquide:1}, note:'blanc d’œuf' },
+  { test:/\bo?eufs?\b/i, split:{liquide:.74, gras:.26}, note:'œuf entier' },
+  { test:/pur[ée]e|pulpe|coulis|compot[ée]e/i, split:{liquide:.7, arome:.25, sucre:.05}, note:'purée de fruit' },
+  { test:/\bjus\b|sirop\s+de\s+(fruit|kirsch|rhum)|kirsch|rhum|alcool|liqueur|eau\s+de\s+vie/i, split:{liquide:.8, arome:.2}, note:'jus/alcool' },
+  { test:/\beau\b/i, split:{liquide:1}, note:'eau' },
+  { test:/farine|f[ée]cule|amidon|maïzena|maizena/i, split:{structurant:.6, sucre:.4}, note:'farine/amidon' },
+  { test:/vanille|caf[ée]|extrait|ar[ôo]me|zeste|[ée]pice|cannelle|cardamome|tonka|safran|poivre|fleur\s+d|rose|lavande|menthe|basilic|matcha|th[ée]\b|gingembre|r[ée]glisse/i, split:{arome:1}, note:'arôme/épice' },
+  { test:/\bsel\b|fleur\s+de\s+sel/i, split:{arome:1}, note:'sel' },
+];
+
+function rdClassifyFamille(nom){
+  const n = String(nom||'');
+  for(const r of RD_RULES){
+    if(r.test.test(n)){
+      const tot = Object.values(r.split).reduce((a,b)=>a+b,0) || 1;
+      const split = {};
+      for(const k of Object.keys(r.split)) split[k] = r.split[k]/tot;
+      return { split, note:r.note, auto:true, classe:true };
+    }
+  }
+  return { split:null, note:'non classé', auto:true, classe:false };
+}
+
+function rdToGrams(qte, unite){
+  const q = +qte || 0;
+  const u = String(unite||'g').toLowerCase().trim();
+  if(u==='kg') return q*1000;
+  if(u==='g'||u==='gr'||u==='') return q;
+  if(u==='l') return q*1000;
+  if(u==='ml') return q;
+  if(u==='cl') return q*10;
+  if(u==='unite'||u==='unité'||u==='u'||u==='piece'||u==='pièce') return q*50;
+  return q;
+}
+
+// Encode l'ADN d'une préparation. ingredients = [{nom,qte,unite,famille?}]
+function rdEncodeADN(ingredients){
+  const grammes = { gras:0, liquide:0, sucre:0, arome:0, structurant:0 };
+  let masseTotale = 0;
+  const nonClasses = [];
+  const details = [];
+  for(const ing of (ingredients||[])){
+    const g = rdToGrams(ing.qte, ing.unite);
+    masseTotale += g;
+    let cls;
+    if(ing.famille && RD_FAMILLES.includes(ing.famille)){
+      cls = { split:{[ing.famille]:1}, note:'manuel', auto:false, classe:true };
+    } else {
+      cls = rdClassifyFamille(ing.nom);
+    }
+    if(!cls.classe || !cls.split){
+      nonClasses.push(ing.nom);
+      details.push({ nom:ing.nom, grammes:g, split:null, note:cls.note, auto:cls.auto });
+      continue;
+    }
+    for(const fam of Object.keys(cls.split)) grammes[fam] += g * cls.split[fam];
+    details.push({ nom:ing.nom, grammes:g, split:cls.split, note:cls.note, auto:cls.auto });
+  }
+  const attribuee = RD_FAMILLES.reduce((a,f)=>a+grammes[f],0) || 1;
+  const profil = {};
+  for(const f of RD_FAMILLES) profil[f] = +(100*grammes[f]/attribuee).toFixed(1);
+  const safe = (a,b)=> b>0 ? +(a/b).toFixed(3) : 0;
+  const rapports = {
+    grasLiquide:   safe(grammes.gras, grammes.liquide),
+    sucreMasse:    safe(grammes.sucre, attribuee),
+    structLiquide: safe(grammes.structurant, grammes.liquide),
+    aromeMasse:    safe(grammes.arome, attribuee),
+  };
+  return { masseTotale:+masseTotale.toFixed(1), attribuee:+attribuee.toFixed(1),
+           grammes, profil, rapports, nonClasses, details };
+}
+
+// ---- Sources : libellés + couleurs de badge ----
+const RD_SRC_LABEL = { moi:'Moi', chiara:'Chiara', bau:'Bau', lenotre:'Lenôtre', autre:'Autre' };
+
+// ---- Parsing d'un texte collé (best-effort) -> {titre, ingredients[], etapes[]} ----
+// Heuristique simple : lignes "qte unite nom" pour les ingrédients, lignes longues = étapes.
+function rdParseTexte(txt){
+  const lignes = String(txt||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  const ingredients=[], etapes=[];
+  let titre='';
+  const reIng = /^(\d+[.,]?\d*)\s*(kg|g|gr|l|ml|cl|unit[ée]s?|pi[èe]ces?)?\s+(.+)$/i;
+  lignes.forEach((l,i)=>{
+    if(i===0 && !reIng.test(l) && l.length<60){ titre=l; return; }
+    const m = l.match(reIng);
+    if(m){
+      ingredients.push({ nom:m[3].trim(), qte:parseFloat(m[1].replace(',','.')), unite:(m[2]||'g').toLowerCase() });
+    } else if(l.length>25){
+      etapes.push(l);
+    }
+  });
+  return { titre, ingredients, etapes };
+}
+
+// ---- État écran ----
+let _rdRefTab = 'biblio';     // biblio | depot | diag
+let _rdDiagPrep = null;       // préparation en cours de diagnostic
+let _rdDepot = null;          // brouillon de dépôt
+
+async function renderRdRefs(){
+  const main=document.getElementById('main'); if(!main) return;
+  if(_rdRefTab==='diag' && _rdDiagPrep){ return rdRefsRenderDiag(main); }
+  if(_rdRefTab==='depot'){ return rdRefsRenderDepot(main); }
+  return rdRefsRenderBiblio(main);
+}
+
+function rdRefsShell(inner, activeTab){
+  return `
+  <div class="rdr-wrap">
+    <div class="rdr-hd">
+      <h2>Bibliothèque R&amp;D</h2>
+      <p>Les références qui nourrissent le générateur</p>
+      <div class="rdr-orline"></div>
+    </div>
+    <div class="rdr-tabs">
+      <div class="rdr-tab ${activeTab==='biblio'?'on':''}" onclick="rdRefsTab('biblio')">📚 Références</div>
+      <div class="rdr-tab ${activeTab==='depot'?'on':''}" onclick="rdRefsTab('depot')">＋ Déposer</div>
+      <div class="rdr-tab ${activeTab==='diag'?'on':''}" onclick="rdRefsTab('diag')">🧬 Diagnostic</div>
+    </div>
+    <div class="rdr-pane">${inner}</div>
+  </div>
+  ${rdRefsCSS()}`;
+}
+
+function rdRefsTab(t){
+  _rdRefTab = t;
+  if(t!=='diag') _rdDiagPrep=null;
+  renderRdRefs();
+}
+
+async function rdRefsRenderBiblio(main){
+  let refs=[], preps=[];
+  try{ refs = await db.rdRefs.toArray(); }catch(e){}
+  try{ preps = await db.rdPreps.toArray(); }catch(e){}
+
+  let body='';
+  if(!refs.length){
+    body = `<div class="rdr-empty"><span class="ic">📚</span>
+      Aucune référence pour l'instant.<br>
+      Dépose une recette pour commencer à nourrir le générateur.</div>`;
+  } else {
+    body = refs.map(r=>{
+      const mine = preps.filter(p=>p.refId===r.id);
+      const open = window._rdOpenRef===r.id;
+      const rows = mine.length ? mine.map(p=>{
+        const garn = (p.role==='garniture');
+        return `<div class="rdr-prep" ${garn?`onclick="rdRefsDiag(${p.id})"`:''}>
+          <span class="rdr-dot ${garn?'g':'s'}"></span>
+          <div class="grow"><div class="rdr-pnom">${esc(p.nom||'Préparation')}</div>
+            <div class="rdr-psub">${esc(p.type||'')}${garn?'':' · structure'}</div></div>
+          <span class="rdr-rtag ${garn?'g':'s'}">${garn?'garniture':'structure'}</span>
+        </div>`;
+      }).join('') : `<div class="rdr-prep" style="justify-content:center;color:#9a8a82;font-size:.78rem">Aucune préparation</div>`;
+      const ic = r.source==='moi'?'🏠': (['bau','lenotre','chiara'].includes(r.source)?'📖':'🍰');
+      return `<div class="rdr-mere ${open?'open':''}">
+        <div class="rdr-mh" onclick="rdRefsToggle(${r.id})">
+          <span class="ic">${ic}</span>
+          <div class="grow"><div class="rdr-mt">${esc(r.titre||'Sans titre')}</div>
+            <div class="rdr-mmeta"><span class="rdr-src">${esc(RD_SRC_LABEL[r.source]||r.source||'?')}</span> &nbsp;${esc(r.format||'')} · ${mine.length} préparation${mine.length>1?'s':''}</div></div>
+          <span class="rdr-chev">▸</span>
+        </div>
+        <div class="rdr-preps">${rows}</div>
+      </div>`;
+    }).join('');
+  }
+
+  main.innerHTML = rdRefsShell(`
+    <div class="rdr-note">Chaque <b>recette mère</b> regroupe ses préparations.
+    Le générateur lit surtout les préparations <b>garniture</b> — touche-en une pour voir son ADN.</div>
+    ${body}
+    <p class="rdr-foot">${refs.length} référence${refs.length>1?'s':''} · ${preps.length} préparation${preps.length>1?'s':''}</p>
+  `, 'biblio');
+}
+
+function rdRefsToggle(id){ window._rdOpenRef = (window._rdOpenRef===id? null : id); renderRdRefs(); }
+
+async function rdRefsDiag(prepId){
+  try{ _rdDiagPrep = await db.rdPreps.get(prepId); }catch(e){ _rdDiagPrep=null; }
+  _rdRefTab='diag'; renderRdRefs();
+}
+
+async function rdRefsRenderDiag(main){
+  const p = _rdDiagPrep;
+  if(!p){
+    main.innerHTML = rdRefsShell(`<div class="rdr-empty"><span class="ic">🧬</span>
+      Choisis une préparation dans la bibliothèque pour voir son ADN.</div>`, 'diag');
+    return;
+  }
+  const adn = rdEncodeADN(p.ingredients||[]);
+  let par=null; try{ par = await db.rdRefs.get(p.refId); }catch(e){}
+
+  const fams = RD_FAMILLES.map(f=>{
+    const pct = adn.profil[f]||0;
+    return `<div class="rdr-fam">
+      <span class="rdr-flbl">${RD_FAM_LABEL[f]}</span>
+      <div class="rdr-fbg"><div class="rdr-fbar" style="width:${pct}%;background:${RD_FAM_COLOR[f]};${pct<6?'min-width:0;padding:0':''}">${pct>=6?pct+'%':''}</div></div>
+      <span class="rdr-fpct">${pct}%</span>
+    </div>`;
+  }).join('');
+
+  // rapports (sans verdict hors-plage tant que V2 absente : on affiche juste la valeur)
+  const R = adn.rapports;
+  const ratioRow = (nom,sub,val)=>`<div class="rdr-rr">
+    <div class="rdr-rnom">${nom}<small>${sub}</small></div>
+    <div class="rdr-rval">${val}</div></div>`;
+  const ratios = `<div class="rdr-ratios"><div class="rdr-rt">Rapports-clés structurels</div>
+    ${ratioRow('Gras / Liquide','texture · onctuosité', R.grasLiquide)}
+    ${ratioRow('Sucre / Masse','conservation + goût', R.sucreMasse)}
+    ${ratioRow('Structurant / Liquide','tenue', R.structLiquide)}
+    ${ratioRow('Arôme / Masse','intensité', R.aromeMasse)}
+    <div class="rdr-rhint">Les plages de validité (garde-fous) arrivent à la prochaine étape.</div>
+  </div>`;
+
+  const ings = (p.ingredients||[]).map((ing,idx)=>{
+    const cls = (ing.famille && RD_FAMILLES.includes(ing.famille))
+      ? {split:{[ing.famille]:1},classe:true,auto:false}
+      : rdClassifyFamille(ing.nom);
+    let chip;
+    if(!cls.classe){ chip = `<span class="rdr-chip nc">À classer ✎</span>`; }
+    else {
+      const f = Object.keys(cls.split)[0];
+      const multi = Object.keys(cls.split).length>1;
+      chip = `<span class="rdr-chip ${cls.auto?'auto':''}" style="background:${RD_FAM_COLOR[f]}">${RD_FAM_LABEL[f]}${multi?'+':''}${cls.auto?' ✎':''}</span>`;
+    }
+    return `<div class="rdr-ing">
+      <span class="rdr-inom">${esc(ing.nom)}</span>
+      <span class="rdr-iqte">${ing.qte||''} ${esc(ing.unite||'g')}</span>
+      ${chip}</div>`;
+  }).join('');
+
+  const nc = adn.nonClasses.length
+    ? `<div class="rdr-ncwarn"><b>${adn.nonClasses.length} ingrédient${adn.nonClasses.length>1?'s':''} non classé${adn.nonClasses.length>1?'s':''}</b> : ${adn.nonClasses.map(esc).join(', ')}. Touche le chip pour le classer.</div>`
+    : '';
+
+  const etapes = (p.etapes||[]).length
+    ? `<div class="rdr-etapes"><div class="rdr-rt">Déroulé</div>
+       ${p.etapes.map((e,i)=>`<div class="rdr-et"><span class="rdr-etn">${i+1}</span><span class="rdr-ettx">${esc(e)}</span></div>`).join('')}</div>`
+    : '';
+
+  main.innerHTML = rdRefsShell(`
+    <div class="rdr-back" onclick="rdRefsTab('biblio')">‹ Retour à la bibliothèque</div>
+    <div class="rdr-adn">
+      <h3>${esc(p.nom||'Préparation')}</h3>
+      <div class="rdr-asub">${esc(par?par.titre:'')}${par?' · ':''}${esc(RD_SRC_LABEL[par&&par.source]||'')} · ${esc(p.role||'')}${p.type?' · '+esc(p.type):''}</div>
+      ${fams}
+      ${ratios}
+    </div>
+    <div class="rdr-compo">
+      <div class="rdr-rt">Composition · familles classées <span style="color:#9a8a82;font-weight:400;font-size:.7rem">(${adn.masseTotale} g)</span></div>
+      ${ings}
+      ${nc}
+      <div class="rdr-chint">Chip <b>en pointillé</b> = classé auto, à confirmer. Chocolat = gras+sucre, masse gélatine = structurant+liquide (1:5) — décomposés à l'encodage.</div>
+    </div>
+    ${etapes}
+  `, 'diag');
+}
+
+async function rdRefsRenderDepot(main){
+  main.innerHTML = rdRefsShell(`
+    <div class="rdr-note">Tu déposes une référence ici. Elle reste <b>dans l'app</b>, sur ton téléphone.
+    Je classe les ingrédients automatiquement — tu corriges si besoin.</div>
+
+    <div class="rdr-field">
+      <label>Coller une recette</label>
+      <textarea id="rdr-paste" placeholder="Titre, puis ingrédients (ex : 200 g crème liquide), puis le déroulé…"></textarea>
+      <div class="rdr-hint">Je repère le titre, les ingrédients avec quantités, et les étapes. Tu valides avant enregistrement.</div>
+    </div>
+
+    <div class="rdr-field">
+      <label>Titre de la préparation</label>
+      <input id="rdr-titre" placeholder="ex : Ganache montée chocolat">
+    </div>
+
+    <div class="rdr-row2">
+      <div class="rdr-field">
+        <label>Source</label>
+        <select id="rdr-source">
+          <option value="moi">Moi</option><option value="chiara">Chiara</option>
+          <option value="bau">Bau</option><option value="lenotre">Lenôtre</option><option value="autre">Autre</option>
+        </select>
+      </div>
+      <div class="rdr-field">
+        <label>Rôle</label>
+        <select id="rdr-role">
+          <option value="garniture">Garniture</option><option value="structure">Structure</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="rdr-field">
+      <label>Type</label>
+      <input id="rdr-type" placeholder="ex : ganache, crémeux, gel, biscuit…">
+    </div>
+
+    <button class="rdr-cta" onclick="rdRefsAnalyser()">Analyser &amp; prévisualiser l'ADN →</button>
+  `, 'depot');
+}
+
+// Analyse le texte collé, crée mère+prépa, ouvre le diagnostic
+async function rdRefsAnalyser(){
+  const txt = (document.getElementById('rdr-paste')||{}).value||'';
+  const titreInput = (document.getElementById('rdr-titre')||{}).value||'';
+  const source = (document.getElementById('rdr-source')||{}).value||'autre';
+  const role = (document.getElementById('rdr-role')||{}).value||'garniture';
+  const type = (document.getElementById('rdr-type')||{}).value||'';
+  const parsed = rdParseTexte(txt);
+  const titre = (titreInput || parsed.titre || 'Préparation').trim();
+
+  if(!parsed.ingredients.length){
+    alert('Aucun ingrédient détecté. Vérifie le format : une ligne par ingrédient, ex « 200 g crème liquide ».');
+    return;
+  }
+  try{
+    // une mère par dépôt pour l'instant (V0) ; le rattachement à une mère existante viendra ensuite
+    const refId = await db.rdRefs.add({ titre, source, format:type||'préparation', date:new Date().toISOString(), note:'' });
+    const prepId = await db.rdPreps.add({
+      refId, nom:titre, role, type,
+      ingredients: parsed.ingredients.map(x=>({nom:x.nom, qte:x.qte, unite:x.unite})),
+      etapes: parsed.etapes, adn:null, cuisson:'', conservation:'', note:''
+    });
+    _rdDiagPrep = await db.rdPreps.get(prepId);
+    window._rdOpenRef = refId;
+    _rdRefTab='diag';
+    renderRdRefs();
+  }catch(e){ alert('Erreur enregistrement : '+(e&&e.message||e)); }
+}
+
+function rdRefsCSS(){ return `<style>
+  .rdr-wrap{--bx:#52252F;--bxd:#2a1320;--cr:#faf6f0;--cr2:#f1e9df;--or:#AA7C39;--tx:#3a2530;--mut:#9a8a82;--ter:#b3654a;background:var(--cr);min-height:100vh;margin:-12px -12px 0;}
+  .rdr-hd{background:linear-gradient(160deg,#52252F,#2a1320);color:#faf6f0;padding:20px 18px 16px}
+  .rdr-hd h2{font-family:Georgia,serif;font-weight:600;font-size:1.3rem;margin:0 0 3px}
+  .rdr-hd p{margin:0;font-size:.82rem;color:#e8d8c4;opacity:.85}
+  .rdr-orline{height:2px;width:46px;background:var(--or);margin-top:9px;border-radius:2px}
+  .rdr-tabs{display:flex;background:#2a1320;padding:0 8px}
+  .rdr-tab{flex:1;text-align:center;padding:11px 4px;color:#c7a9b0;font-size:.78rem;font-weight:600;border-bottom:2.5px solid transparent}
+  .rdr-tab.on{color:#faf6f0;border-bottom-color:var(--or)}
+  .rdr-pane{padding:16px 14px 70px}
+  .rdr-note{background:#f5ebd9;border-left:3px solid var(--or);padding:11px 13px;border-radius:8px;font-size:.78rem;color:#6b5020;line-height:1.45;margin-bottom:15px}
+  .rdr-note b{color:#8a6420}
+  .rdr-empty{text-align:center;color:var(--mut);padding:40px 20px;font-size:.86rem;line-height:1.5}
+  .rdr-empty .ic{display:block;font-size:2rem;margin-bottom:10px}
+  .rdr-foot{text-align:center;font-size:.74rem;color:var(--mut);margin-top:18px}
+  .rdr-mere{background:#fff;border-radius:14px;margin-bottom:12px;overflow:hidden;border:1px solid var(--cr2);box-shadow:0 1px 3px rgba(82,37,47,.08)}
+  .rdr-mh{padding:13px 14px;display:flex;align-items:flex-start;gap:10px;cursor:pointer}
+  .rdr-mh .ic{font-size:1.2rem}
+  .rdr-mh .grow{flex:1;min-width:0}
+  .rdr-mt{font-family:Georgia,serif;font-weight:600;font-size:1.02rem;color:var(--bx)}
+  .rdr-mmeta{font-size:.74rem;color:var(--mut);margin-top:2px}
+  .rdr-src{display:inline-block;background:var(--cr2);color:var(--bx);font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:20px}
+  .rdr-chev{color:var(--or);transition:transform .2s;margin-top:3px}
+  .rdr-mere.open .rdr-chev{transform:rotate(90deg)}
+  .rdr-preps{display:none;border-top:1px solid var(--cr2);background:var(--cr)}
+  .rdr-mere.open .rdr-preps{display:block}
+  .rdr-prep{padding:11px 14px;border-bottom:1px solid var(--cr2);display:flex;align-items:center;gap:9px}
+  .rdr-prep:last-child{border-bottom:none}
+  .rdr-dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .rdr-dot.g{background:var(--or)} .rdr-dot.s{background:var(--mut)}
+  .rdr-prep .grow{flex:1;min-width:0}
+  .rdr-pnom{font-weight:600;font-size:.9rem;color:var(--tx)}
+  .rdr-psub{font-size:.72rem;color:var(--mut);margin-top:1px}
+  .rdr-rtag{font-size:.64rem;font-weight:700;padding:2px 7px;border-radius:20px;flex:none}
+  .rdr-rtag.g{background:#f5ebd9;color:#8a6420} .rdr-rtag.s{background:#ece6e8;color:#7a6068}
+  .rdr-back{display:inline-flex;gap:6px;color:var(--or);font-size:.82rem;font-weight:600;margin-bottom:14px;cursor:pointer}
+  .rdr-adn,.rdr-compo,.rdr-etapes{background:#fff;border-radius:14px;padding:15px;border:1px solid var(--cr2);box-shadow:0 1px 3px rgba(82,37,47,.08);margin-bottom:14px}
+  .rdr-adn h3{font-family:Georgia,serif;font-size:1.05rem;color:var(--bx);margin:0 0 2px}
+  .rdr-asub{font-size:.74rem;color:var(--mut);margin-bottom:14px}
+  .rdr-fam{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .rdr-flbl{width:84px;font-size:.75rem;color:var(--tx);flex:none}
+  .rdr-fbg{flex:1;height:18px;background:var(--cr2);border-radius:6px;overflow:hidden}
+  .rdr-fbar{height:100%;border-radius:6px;display:flex;align-items:center;justify-content:flex-end;padding-right:6px;color:#fff;font-size:.66rem;font-weight:700}
+  .rdr-fpct{width:38px;text-align:right;font-size:.74rem;font-weight:700;color:var(--tx);flex:none}
+  .rdr-ratios{margin-top:15px;border-top:1px dashed var(--cr2);padding-top:13px}
+  .rdr-rt{font-size:.7rem;font-weight:700;color:var(--or);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}
+  .rdr-rr{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--cr)}
+  .rdr-rr:last-of-type{border-bottom:none}
+  .rdr-rnom{font-size:.82rem;color:var(--tx)} .rdr-rnom small{display:block;color:var(--mut);font-size:.68rem;margin-top:1px}
+  .rdr-rval{font-family:Menlo,monospace;font-size:.95rem;font-weight:700;color:var(--bx)}
+  .rdr-rhint{font-size:.7rem;color:var(--mut);margin-top:10px;font-style:italic}
+  .rdr-ing{display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--cr)}
+  .rdr-ing:last-of-type{border-bottom:none}
+  .rdr-inom{flex:1;font-size:.85rem;color:var(--tx)}
+  .rdr-iqte{font-family:Menlo,monospace;font-size:.8rem;color:var(--mut);width:64px;text-align:right}
+  .rdr-chip{font-size:.64rem;font-weight:700;padding:3px 8px;border-radius:20px;color:#fff;flex:none;min-width:78px;text-align:center}
+  .rdr-chip.auto{opacity:.6;border:1px dashed rgba(255,255,255,.55)}
+  .rdr-chip.nc{background:var(--ter)}
+  .rdr-chint{font-size:.72rem;color:var(--mut);margin-top:11px;line-height:1.4}
+  .rdr-chint b{color:var(--ter)}
+  .rdr-ncwarn{background:#fbeee9;border-left:3px solid var(--ter);padding:9px 11px;border-radius:7px;font-size:.74rem;color:#8a3a22;margin-top:11px}
+  .rdr-et{display:flex;gap:10px;margin-bottom:11px}
+  .rdr-et:last-child{margin-bottom:0}
+  .rdr-etn{width:21px;height:21px;border-radius:50%;background:var(--bx);color:var(--cr);font-size:.72rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+  .rdr-ettx{font-size:.85rem;color:var(--tx);line-height:1.45}
+  .rdr-field{margin-bottom:13px}
+  .rdr-field label{display:block;font-size:.72rem;font-weight:700;color:var(--bx);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
+  .rdr-field input,.rdr-field textarea,.rdr-field select{width:100%;border:1px solid var(--cr2);border-radius:10px;padding:10px 12px;font-size:.9rem;background:#fff;color:var(--tx);font-family:inherit}
+  .rdr-field textarea{min-height:100px;resize:vertical}
+  .rdr-hint{font-size:.72rem;color:var(--mut);margin-top:6px;line-height:1.4}
+  .rdr-row2{display:flex;gap:10px} .rdr-row2 .rdr-field{flex:1}
+  .rdr-cta{width:100%;background:linear-gradient(160deg,#AA7C39,#946a2e);color:#fff;border:none;border-radius:12px;padding:14px;font-size:.95rem;font-weight:700;margin-top:4px;box-shadow:0 2px 8px rgba(170,124,57,.3)}
+</style>`; }
+// ░░ FIN R&D V0 ░░
 
 // 14 allergènes à déclaration obligatoire (règlement INCO 1169/2011). Servent à
 // l'étiquetage et seront réutilisés par la boutique en ligne (information avant achat).
@@ -2395,7 +2843,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
