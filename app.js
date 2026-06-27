@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1005';
+const APP_VERSION = 'v1006';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1398,6 +1398,7 @@ async function rdRefsRenderBiblio(main){
   main.innerHTML = rdRefsShell(`
     <div class="rdr-note">Chaque <b>recette mère</b> regroupe ses préparations.
     Le générateur lit surtout les préparations <b>garniture</b> — touche-en une pour voir son ADN.</div>
+    <button class="rdr-import" onclick="rdRefsImportMine()">🏠 Importer mes recettes de l'app</button>
     ${body}
     <p class="rdr-foot">${refs.length} référence${refs.length>1?'s':''} · ${preps.length} préparation${preps.length>1?'s':''}</p>
   `, 'biblio');
@@ -1556,6 +1557,75 @@ async function rdRefsAnalyser(){
   }catch(e){ alert('Erreur enregistrement : '+(e&&e.message||e)); }
 }
 
+
+// ---- IMPORT des recettes de l'app vers la bibliothèque (source « moi ») ----
+function rdSplitItemsByPartie(items){
+  const garniture=[], structure=[];
+  for(const it of (items||[])){
+    const pa=(it.partie||'').toLowerCase();
+    if(pa==='ganache'||pa==='cremeux') garniture.push(it); else structure.push(it);
+  }
+  return {garniture, structure};
+}
+function rdItemsToIngredients(items, matName){
+  return (items||[]).map(it=>({ nom: matName(it.materialId)||('Matière #'+it.materialId),
+    qte:(+it.qteParBatch||0)*1000, unite:'g' })).filter(x=>x.qte>0);
+}
+function rdGuessType(items){
+  const ps=new Set((items||[]).map(it=>(it.partie||'').toLowerCase()));
+  if(ps.has('cremeux')&&!ps.has('ganache')) return 'crémeux';
+  if(ps.has('cremeux')&&ps.has('ganache')) return 'ganache + crémeux';
+  return 'ganache';
+}
+function rdBuildImport(recipe, items, matName){
+  const sp=rdSplitItemsByPartie(items); const preps=[];
+  if(sp.garniture.length) preps.push({ nom:recipe.produitNom||'Garniture', role:'garniture',
+    type:rdGuessType(sp.garniture), ingredients:rdItemsToIngredients(sp.garniture, matName) });
+  if(sp.structure.length) preps.push({ nom:'Coque', role:'structure', type:'coque',
+    ingredients:rdItemsToIngredients(sp.structure, matName) });
+  return { mere:{ titre:recipe.produitNom||'Recette', source:'moi', format:'macaron', srcRecipeId:recipe.id }, preps };
+}
+
+// Importe (ou met à jour) toutes les recettes de l'app. Idempotent via srcRecipeId.
+async function rdRefsImportMine(){
+  try{
+    const recipes = await db.recipes.toArray();
+    const allItems = await db.recipeItems.toArray();
+    const mats = await db.materials.toArray();
+    const matName = id => { const m=mats.find(x=>+x.id===+id); return m?m.nom:null; };
+    if(!recipes.length){ alert('Aucune recette dans l\'app à importer.'); return; }
+    let nMere=0, nPrep=0, maj=0;
+    for(const rec of recipes){
+      const items = allItems.filter(it=>+it.recipeId===+rec.id);
+      const built = rdBuildImport(rec, items, matName);
+      if(!built.preps.length) continue;
+      // idempotence : on cherche une mère déjà importée pour cette recette source
+      let existing = await db.rdRefs.where('source').equals('moi').toArray();
+      existing = existing.find(r=>+r.srcRecipeId===+rec.id);
+      let refId;
+      if(existing){
+        refId = existing.id;
+        await db.rdRefs.update(refId, { titre:built.mere.titre, format:built.mere.format });
+        // on retire les anciennes préparations de cette mère puis on réécrit (mise à jour propre)
+        const old = await db.rdPreps.where('refId').equals(refId).toArray();
+        for(const o of old) await db.rdPreps.delete(o.id);
+        maj++;
+      } else {
+        refId = await db.rdRefs.add({ ...built.mere, date:new Date().toISOString(), note:'' });
+        nMere++;
+      }
+      for(const pr of built.preps){
+        await db.rdPreps.add({ refId, nom:pr.nom, role:pr.role, type:pr.type,
+          ingredients:pr.ingredients, etapes:[], adn:null, cuisson:'', conservation:'', note:'' });
+        nPrep++;
+      }
+    }
+    window._rdOpenRef=null;
+    renderRdRefs();
+    toast(`${nMere} recette(s) importée(s)${maj?`, ${maj} mise(s) à jour`:''} · ${nPrep} préparation(s)`);
+  }catch(e){ alert('Erreur import : '+(e&&e.message||e)); }
+}
+
 function rdRefsCSS(){ return `<style>
   .rdr-wrap{--bx:#52252F;--bxd:#2a1320;--cr:#faf6f0;--cr2:#f1e9df;--or:#AA7C39;--tx:#3a2530;--mut:#9a8a82;--ter:#b3654a;background:var(--cr);min-height:100vh;margin:-12px -12px 0;}
   .rdr-hd{background:linear-gradient(160deg,#52252F,#2a1320);color:#faf6f0;padding:20px 18px 16px}
@@ -1628,6 +1698,7 @@ function rdRefsCSS(){ return `<style>
   .rdr-hint{font-size:.72rem;color:var(--mut);margin-top:6px;line-height:1.4}
   .rdr-row2{display:flex;gap:10px} .rdr-row2 .rdr-field{flex:1}
   .rdr-cta{width:100%;background:linear-gradient(160deg,#AA7C39,#946a2e);color:#fff;border:none;border-radius:12px;padding:14px;font-size:.95rem;font-weight:700;margin-top:4px;box-shadow:0 2px 8px rgba(170,124,57,.3)}
+  .rdr-import{width:100%;background:#fff;border:1.5px solid var(--or);color:var(--bx);border-radius:12px;padding:12px;font-size:.88rem;font-weight:700;margin-bottom:14px;box-shadow:0 1px 3px rgba(82,37,47,.06)}
 </style>`; }
 // ░░ FIN R&D V0 ░░
 
