@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v995';
+const APP_VERSION = 'v996';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -6600,6 +6600,7 @@ async function renderProductions(){
    <div class="topbar"><div><h1>Productions</h1><p id="prodCount">${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p>
 </div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button>
+     <button class="btn ghost" style="margin-left:6px" onclick="labelsBatchForm()" title="Générer un PDF de plusieurs étiquettes pour Labelife">📄 Étiquettes groupées</button>
      <button class="btn ghost" style="margin-left:6px" onclick="goView('stockparfums')" title="Voir tout mon stock : parfums et emplacements">📦 Tout mon stock</button>
      <button class="btn ghost" style="margin-left:6px" onclick="quickLossForm()">⚠ Casse / Perte</button></div>
    ${kpi.count?`<div class="prod-kpi-mini">
@@ -28245,7 +28246,7 @@ async function renderLabels(){
   const linkCount = id => oitems.filter(it=>it.orderId===id).length;
 
   document.getElementById('main').innerHTML=`
-   <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 25 mm — Phomemo D520BT</p></div></div>
+   <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 25 mm — Phomemo D520BT</p></div><div class="flex"><button class="btn gold" onclick="labelsBatchForm()">📄 Étiquettes groupées (PDF)</button></div></div>
    <div class="banner">▤ <div>Étiquettes noir sur blanc optimisées pour l'impression thermique (produit, lot, DLC, date, QR de traçabilité). <b>📄 PDF (Labelife)</b> génère un PDF à partager vers Labelife (qui accepte l'import PDF) — le plus direct. <b>🖼 Image</b> génère un PNG (à enregistrer puis ouvrir dans Labelife si le partage PDF ne marche pas). <b>⎙ Imprimer</b> passe par AirPrint si ton imprimante le gère.</div></div>
 
    ${orders.length?`<div class="panel"><h2>Imprimer les étiquettes d'une commande</h2>
@@ -28448,6 +28449,158 @@ async function shareLabelPDF(prodId){
     setTimeout(()=>URL.revokeObjectURL(url), 2000);
     toast('PDF enregistré — ouvre-le dans Labelife (Importer un PDF)');
   }catch(e){ console.error('shareLabelPDF',e); toast('Erreur lors de la génération du PDF'); }
+}
+// =============================================================================
+
+// ===================== ÉTIQUETTES GROUPÉES → PDF MULTI-PAGES (pour Labelife) =====================
+// Génère UN SEUL PDF de plusieurs étiquettes (1 page = 1 étiquette, 105×55 mm). On ne récupère le
+// fichier qu'UNE fois dans Labelife pour imprimer toute la série. Chaque lot : nb d'étiquettes (copies)
+// et nb de pièces affiché (override) réglables indépendamment.
+
+// Construit un PDF multi-pages à partir d'une liste d'images JPEG (Uint8Array), toutes au même format mm.
+function _buildMultiImagePDF(jpegList, wMm, hMm, pxW, pxH){
+  const ptW = (wMm * 72 / 25.4), ptH = (hMm * 72 / 25.4);
+  const enc = s => { const out=new Uint8Array(s.length); for(let i=0;i<s.length;i++) out[i]=s.charCodeAt(i)&0xff; return out; };
+  const parts=[]; const offsets=[]; let pos=0;
+  const push=b=>{ parts.push(b); pos+=b.length; };
+  const pushStr=s=>push(enc(s));
+  const n = jpegList.length;
+
+  pushStr('%PDF-1.4\n');
+  // Numérotation des objets :
+  // 1 = Catalog, 2 = Pages, puis pour chaque page i (0..n-1) :
+  //   page obj   = 3 + i*3
+  //   content    = 4 + i*3
+  //   image      = 5 + i*3
+  const pageObjNum = i => 3 + i*3;
+  const contentObjNum = i => 4 + i*3;
+  const imageObjNum = i => 5 + i*3;
+
+  offsets[1]=pos; pushStr('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  // Pages : liste des kids
+  let kids='';
+  for(let i=0;i<n;i++) kids += pageObjNum(i)+' 0 R ';
+  offsets[2]=pos; pushStr('2 0 obj\n<< /Type /Pages /Kids ['+kids.trim()+'] /Count '+n+' >>\nendobj\n');
+
+  for(let i=0;i<n;i++){
+    const pn=pageObjNum(i), cn=contentObjNum(i), imn=imageObjNum(i);
+    // Page
+    offsets[pn]=pos;
+    pushStr(pn+' 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+ptW.toFixed(2)+' '+ptH.toFixed(2)+
+      '] /Resources << /XObject << /Im'+i+' '+imn+' 0 R >> >> /Contents '+cn+' 0 R >>\nendobj\n');
+    // Content
+    const content='q\n'+ptW.toFixed(2)+' 0 0 '+ptH.toFixed(2)+' 0 0 cm\n/Im'+i+' Do\nQ\n';
+    offsets[cn]=pos;
+    pushStr(cn+' 0 obj\n<< /Length '+content.length+' >>\nstream\n'+content+'endstream\nendobj\n');
+    // Image
+    const jpeg=jpegList[i];
+    offsets[imn]=pos;
+    pushStr(imn+' 0 obj\n<< /Type /XObject /Subtype /Image /Width '+pxW+' /Height '+pxH+
+      ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+jpeg.length+' >>\nstream\n');
+    push(jpeg);
+    pushStr('\nendstream\nendobj\n');
+  }
+
+  const totalObjs = 2 + n*3;
+  const xrefPos=pos;
+  let xref='xref\n0 '+(totalObjs+1)+'\n0000000000 65535 f \n';
+  for(let i=1;i<=totalObjs;i++){ xref += String(offsets[i]||0).padStart(10,'0')+' 00000 n \n'; }
+  pushStr(xref);
+  pushStr('trailer\n<< /Size '+(totalObjs+1)+' /Root 1 0 R >>\nstartxref\n'+xrefPos+'\n%%EOF');
+
+  let total=0; parts.forEach(p=>total+=p.length);
+  const out=new Uint8Array(total); let o=0; parts.forEach(p=>{ out.set(p,o); o+=p.length; });
+  return out;
+}
+
+// items : [{prodId, copies, nbPieces}]. Génère et partage le PDF groupé.
+async function buildLabelsPDF(items){
+  if(!items || !items.length){ toast('Aucune étiquette sélectionnée'); return; }
+  const jpegList=[]; let pxW=839, pxH=440;
+  for(const it of items){
+    const d = await buildLabelData(it.prodId);
+    if(!d) continue;
+    if(it.nbPieces!=null && it.nbPieces!=='' && !isNaN(+it.nbPieces)) d.nbPieces = +it.nbPieces; // override pièces/boîte
+    const cv = await labelToCanvas(d);
+    pxW=cv.width; pxH=cv.height;
+    const dataURL = cv.toDataURL('image/jpeg', 0.92);
+    const bytes = _dataURLtoBytes(dataURL);
+    const copies = Math.max(1, +it.copies||1);
+    for(let c=0;c<copies;c++) jpegList.push(bytes);
+  }
+  if(!jpegList.length){ toast('Rien à générer'); return; }
+  const pdfBytes = _buildMultiImagePDF(jpegList, 105, 55, pxW, pxH);
+  const blob = new Blob([pdfBytes], {type:'application/pdf'});
+  const fileName = 'etiquettes-'+jpegList.length+'-'+(new Date().toISOString().slice(0,10))+'.pdf';
+  const file = new File([blob], fileName, {type:'application/pdf'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({ files:[file], title:'Étiquettes ('+jpegList.length+')' }); return; }
+    catch(eShare){ if(eShare && eShare.name==='AbortError') return; }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=fileName;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  toast(jpegList.length+' étiquette(s) dans le PDF — ouvre-le dans Labelife');
+}
+// =============================================================================
+
+// ----- UI : sélection des lots pour le PDF d'étiquettes groupées -----
+
+async function labelsBatchForm(){
+  const prods = await db.productions.orderBy('date').reverse().toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  // lots avec un minimum de sens (terminés ou avec stock) ; tri par date récente
+  let lots = prods.filter(p=>p.lotProduction);
+  if(typeof sortProdsRecent==='function') lots = sortProdsRecent(lots);
+  lots = lots.slice(0, 150);
+  if(!lots.length){ toast('Aucun lot à étiqueter'); return; }
+
+  const recName = id => { const r=recipes.find(x=>+x.id===+id); return r?r.produitNom:''; };
+  const rows = lots.map(p=>{
+    const nom = p.libre ? (p.produitLibre||'(libre)') : (recName(p.recipeId)|| (typeof prodNomEpure==='function'?prodNomEpure(p,recipes):''));
+    const comp = (typeof prodComposant==='function')?prodComposant(p):'';
+    const compLbl = ({coques:'Coques',ganache:'Ganache',assemble:'Assemblé',degustation:'Dégust.',complet:''})[comp]||'';
+    const nbDef = (p.qteReelle!=null)?p.qteReelle:(p.qteProduite!=null?p.qteProduite:'');
+    const fab = p.prodTermineTs ? fmtDate(p.prodTermineTs) : (p.date?fmtDate(p.date):'');
+    return `<div class="lb-row" data-prod="${p.id}">
+      <label class="lb-check"><input type="checkbox" class="lb-sel" data-prod="${p.id}" onchange="lbRowToggle(${p.id})"> <span class="lb-nom">${esc((compLbl?compLbl+' ':'')+nom)}</span></label>
+      <div class="lb-lot">${esc(p.lotProduction)}${fab?' · '+esc(fab):''}</div>
+      <div class="lb-fields" id="lbf_${p.id}" style="display:none">
+        <label>Étiquettes <input type="number" min="1" value="1" id="lbcopies_${p.id}" class="lb-num"></label>
+        <label>Pièces/boîte <input type="number" min="0" placeholder="${nbDef!==''?nbDef:'auto'}" id="lbpieces_${p.id}" class="lb-num"></label>
+      </div>
+    </div>`;
+  }).join('');
+
+  openModal(`<h3>📄 Étiquettes groupées (PDF)</h3>
+    <p class="note" style="margin-bottom:8px">Coche les lots, règle le <b>nombre d'étiquettes</b> et les <b>pièces par boîte</b> à afficher. L'app crée <b>un seul PDF</b> : tu ne le récupères qu'une fois dans Labelife pour imprimer toute la série.</p>
+    <div class="lb-list">${rows}</div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="lbGenerate()">📄 Générer le PDF</button>
+    </div>`);
+}
+
+// Affiche/masque les réglages d'un lot selon sa case.
+function lbRowToggle(prodId){
+  const cb = document.querySelector('.lb-sel[data-prod="'+prodId+'"]');
+  const f = document.getElementById('lbf_'+prodId);
+  if(f) f.style.display = (cb && cb.checked) ? 'flex' : 'none';
+}
+
+async function lbGenerate(){
+  const checks = Array.from(document.querySelectorAll('.lb-sel:checked'));
+  if(!checks.length){ toast('Coche au moins un lot'); return; }
+  const items = checks.map(cb=>{
+    const id = +cb.getAttribute('data-prod');
+    const copies = +(document.getElementById('lbcopies_'+id)||{}).value || 1;
+    const pv = (document.getElementById('lbpieces_'+id)||{}).value;
+    const nbPieces = (pv!=null && pv!=='') ? +pv : null;
+    return { prodId:id, copies, nbPieces };
+  });
+  closeModal();
+  await buildLabelsPDF(items);
 }
 // =============================================================================
 
