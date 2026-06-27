@@ -289,6 +289,71 @@
 .cf-btn:active{background:var(--creme,#E8DDCD)}
 .cf-pause{font-size:.7rem;color:#9a5b16;margin-top:5px}
 
+
+/* ===================== Rangement guidé (écran) ===================== */
+.rg-wrap{padding:4px 2px 20px;max-width:480px;margin:0 auto}
+.rg-head{padding:8px 4px 4px}
+.rg-title{font-family:Georgia,serif;font-size:1.4rem;color:var(--bordeaux,#52252F);margin:0;font-weight:600}
+.rg-sub{font-size:.8rem;color:#9a8a82;margin-top:2px}
+.rg-loading,.rg-empty{text-align:center;padding:30px 16px;color:#9a8a82;font-size:.9rem;line-height:1.5}
+.rg-empty .ic{font-size:2rem;display:block;margin-bottom:8px;color:#3f7d52}
+.rg-intro{background:#fff;border:1px solid var(--creme,#E8DDCD);border-radius:13px;padding:13px 15px;margin:14px 0;font-size:.84rem;line-height:1.5;color:#5a4a52}
+.rg-intro b{color:var(--bordeaux,#52252F)}
+.rg-equip{margin-top:16px;border-radius:15px;overflow:hidden;border:1px solid var(--creme,#E8DDCD);background:#fff}
+.rg-equip-h{padding:13px 15px;display:flex;align-items:center;gap:10px;color:#fff;font-weight:600}
+.rg-equip-h.frigo{background:linear-gradient(135deg,#6aa3a0,#4e8582)}
+.rg-equip-h.congel{background:linear-gradient(135deg,#5a7fa5,#3b6ea5)}
+.rg-e-ic{font-size:1.3rem}
+.rg-e-nom{font-family:Georgia,serif;font-size:1.05rem}
+.rg-e-tot{margin-left:auto;font-size:.72rem;opacity:.9;font-weight:400}
+.rg-niv{padding:12px 15px;border-top:1px solid var(--creme-2,#F5F0E8)}
+.rg-niv:first-of-type{border-top:none}
+.rg-niv-h{display:flex;align-items:center;gap:7px;margin-bottom:8px;flex-wrap:wrap}
+.rg-niv-nom{font-weight:600;font-size:.84rem;color:var(--bordeaux,#52252F)}
+.rg-tag{font-size:.63rem;padding:1px 7px;border-radius:7px;font-weight:600}
+.tag-facile{background:#e7f3ea;color:#2e6b3f}
+.tag-moyenne{background:#fbf4e3;color:#9a7320}
+.tag-difficile{background:#f7e7e4;color:#a3402f}
+.tag-transit{background:#e7f3ea;color:#3f7d52}
+.tag-reserve{background:#efeaf5;color:#6a4b9a}
+.rg-instr{display:flex;align-items:flex-start;gap:11px;padding:10px;border:1px solid var(--creme,#E8DDCD);border-radius:11px;margin-bottom:7px;cursor:pointer;transition:.12s;background:#fff}
+.rg-instr:active{background:var(--creme-2,#F5F0E8)}
+.rg-instr.done{background:#f1f7f2;border-color:#bcd9c4;opacity:.65}
+.rg-check{width:24px;height:24px;border-radius:7px;border:2px solid var(--caramel,#AA7C39);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:.9rem;color:transparent;margin-top:1px}
+.rg-instr.done .rg-check{background:#3f7d52;border-color:#3f7d52;color:#fff}
+.rg-instr-main{flex:1;min-width:0}
+.rg-instr-l1{font-size:.88rem;font-weight:600;color:var(--bordeaux,#52252F)}
+.rg-stage{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.rg-snow{font-size:.66rem;color:#9a7320;font-weight:600}
+.rg-instr-box{font-size:.76rem;color:#7a6a60;margin-top:2px}
+.rg-chg{color:var(--caramel,#AA7C39);font-weight:600;cursor:pointer;margin-left:6px}
+.rg-instr-why{font-size:.7rem;color:#3f7d52;margin-top:3px;font-style:italic}
+.rg-instr-why.surplus{color:#9a7320}
+.rg-nonplace{background:#fdf6f4;border:1px solid #e8cfc8;border-radius:12px;padding:12px 14px;margin-top:14px;font-size:.82rem;color:#8a4232}
+.rg-spacer{height:80px}
+.rg-bar{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(transparent,var(--paper,#fbf8f3) 24%);padding:18px 14px 14px;z-index:50}
+.rg-bar-in{max-width:480px;margin:0 auto;display:flex;gap:9px;align-items:center}
+.rg-prog{flex:1;height:9px;background:var(--creme,#E8DDCD);border-radius:6px;overflow:hidden}
+.rg-prog-f{height:100%;background:linear-gradient(90deg,#c6974f,#AA7C39);width:0;transition:.3s}
+.rg-prog-txt{font-size:.74rem;color:#9a8a82;font-weight:600;white-space:nowrap}
+.rg-btn-done{display:block;width:100%;max-width:480px;margin:9px auto 0;padding:13px;border:none;border-radius:12px;background:linear-gradient(135deg,#4e8582,#3f7d6e);color:#fff;font-weight:600;font-size:.9rem;cursor:pointer}
+
+
+/* panneau changement de boîte (rangement guidé) */
+.rg-box-list{display:flex;flex-direction:column;gap:7px}
+.rg-box-opt{display:flex;align-items:center;gap:10px;padding:12px;border:1.5px solid var(--creme,#E8DDCD);
+  border-radius:11px;cursor:pointer;background:#fff}
+.rg-box-opt.sel{border-color:var(--caramel,#AA7C39);background:#fdf8ef}
+.rg-box-opt b{color:var(--bordeaux,#52252F)}
+.rg-box-opt small{color:#9a8a82;margin-left:auto;text-align:right}
+
+
+/* mémoire de préférence de boîte + annulation permanente (rangement guidé) */
+.rg-pref{font-size:.64rem;color:#6a4b9a;background:#efeaf5;padding:1px 6px;border-radius:7px;font-weight:600}
+.rg-undo-perm{display:block;width:100%;max-width:480px;margin:9px auto 0;padding:12px;border:1.5px solid #c89a3f;
+  border-radius:12px;background:#fdf8ef;color:#8a5b16;font-weight:600;font-size:.86rem;cursor:pointer}
+.rg-undo-perm:active{background:#f6ecd8}
+
 </style>
 <style>
 :root{
@@ -1660,10 +1725,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 <div id="radialMenu" aria-hidden="true"></div>
 
 <script src="dexie.min.js"></script>
-<script src="html5-qrcode.min.js?v=980" onerror="window._h5qrMissing=true"></script>
-<script src="qr_min.js?v=980"></script>
-<script src="utils.js?v=980"></script>
-<script src="app.js?v=980"></script>
+<script src="html5-qrcode.min.js?v=984" onerror="window._h5qrMissing=true"></script>
+<script src="qr_min.js?v=984"></script>
+<script src="utils.js?v=984"></script>
+<script src="app.js?v=984"></script>
 <div class="froid-sheet" id="froid-sheet" onclick="if(event.target.id==='froid-sheet')_froidCloseDessus()">
   <div class="froid-sheet-card">
     <button class="froid-closex" onclick="_froidCloseDessus()">✕</button>

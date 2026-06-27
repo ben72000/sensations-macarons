@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v980';
+const APP_VERSION = 'v984';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -2355,7 +2355,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -6338,6 +6338,7 @@ async function prodV2OpenPop(id){
           <div class="pv2-act" onclick="prodV2ClosePop();prodEditTimes(${id})">✏️ Quantité</div>
           <div class="pv2-act" onclick="prodV2ClosePop();declareLossForm(${id})">⚠️ Casse</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prodV2Deplacer(${id})">📍 Déplacer</div>
+          ${p.rangee ? `<div class="pv2-act full" onclick="prodV2ClosePop();prodRetourProduction(${id}, ${JSON.stringify(nom).replace(/"/g,'&quot;')})">↩ Remettre à ranger</div>` : ''}
           <div class="pv2-act full" onclick="prodV2ClosePop();scanAffectChooseOrder(${id})">🔗 Relier à un client</div>
           <div class="pv2-act full danger" onclick="prodV2ClosePop();delProd(${id})">🗑 Supprimer ce lot</div>
         </div>
@@ -6648,6 +6649,11 @@ async function prodDeranger(id){
     boiteNom:null, niveauNom:null, niveauIndex:null,
     placements:[]
   };
+  // Mémoire de préférence : on retient la boîte réellement choisie pour la reproposer
+  // EN PRIORITÉ au prochain rangement (sans masquer les autres options). Source = boiteNom
+  // courant, sinon la 1re boîte des placements existants.
+  const boiteChoisie = p.boiteNom || (Array.isArray(p.placements) && p.placements[0] ? p.placements[0].boiteNom : null);
+  if(boiteChoisie) patch.boitePreferee = boiteChoisie;
   // Retire l'emplacement (et nettoie le suffixe de lot) si le lot en avait un.
   if(p.emplacement){
     const nowIso=new Date().toISOString();
@@ -11020,6 +11026,8 @@ const _NAV_PAGES = [
   {v:'matieres',     t:'Matières & lots / Stock',   k:'matiere lot stock ingredient denree inventaire reception'},
   {v:'recettes',     t:'Recettes (BOM)',            k:'recette bom formule composition ganache coque'},
   {v:'productions',  t:'Productions',               k:'production batch fabrication fournee lancement'},
+  {v:'productionsv2',t:'🆕 Production v2 (test)',    k:'production v2 test nouvelle vue lots epure popup rangement'},
+  {v:'rangement',    t:'🆕 Rangement guidé (test)',  k:'rangement guide ranger boites emplacement plan picking test'},
   {v:'agendaprod',   t:'Production',                 k:'production planning fabrication retroplanning agenda plan mrp besoin faisabilite seance chef atelier ordonnancement'},
   {v:'atelier',      t:'Atelier (chronos)',         k:'atelier chrono temps minutage mesure'},
   {v:'stockparfums', t:'Stock par parfum',          k:'stock parfum macaron disponible'},
@@ -41130,7 +41138,14 @@ async function buildPlanRangementGlobal(){
 
   for(const item of withDemande){
     const {p, recipe, ctx, dem} = item;
-    const box = (typeof suggestBox==='function') ? suggestBox(boxes, ctx.nb, ctx.grandFormat) : (boxes[0]||null);
+    // Priorité de choix de boîte : (1) override manuel en cours, (2) boîte préférée
+    // mémorisée d'un rangement précédent, (3) reco de l'algorithme. Aucune n'est verrouillée :
+    // l'utilisateur peut toujours changer via « changer ».
+    const override = (window._rangBoxOverride||{})[p.id];
+    let box = override ? boxes.find(b=>b.nom===override) : null;
+    let boxSource = box ? 'override' : null;
+    if(!box && p.boitePreferee){ box = boxes.find(b=>b.nom===p.boitePreferee); if(box) boxSource='preferee'; }
+    if(!box){ box = (typeof suggestBox==='function') ? suggestBox(boxes, ctx.nb, ctx.grandFormat) : (boxes[0]||null); boxSource='algo'; }
     if(!box){ nonPlaces.push({prodId:p.id, nom:prodNomEpure(p,recipes), qte:ctx.nb, raison:'aucune boîte'}); continue; }
 
     const res = splitPlacement(specsMap, box, ctx, occMap, dem);
@@ -41149,7 +41164,7 @@ async function buildPlanRangementGlobal(){
       if(!planByKey.has(key)) planByKey.set(key, {equipKey:part.equipKey, nivIndex:part.nivIndex, niveauNom:part.niveauNom, instructions:[]});
       planByKey.get(key).instructions.push({
         prodId:p.id, nom, fab, qte:part.nbMacarons, boiteNom:part.boiteNom, nbBoites:part.nbBoites,
-        sortVite, congele:!!ctx.congele,
+        sortVite, congele:!!ctx.congele, boxSource,
         pourquoi: _rangementPourquoi(part, ctx, dem, sortVite)
       });
     });
@@ -41211,6 +41226,326 @@ function _rangementPourquoi(part, ctx, dem, sortVite){
     return 'Part demandée → accessible';
   }
   return 'Pas de commande proche → range plus profond';
+}
+// =============================================================================
+
+// ===================== RANGEMENT GUIDÉ — ÉCRAN (étape 2) =====================
+// Affiche le plan global (buildPlanRangementGlobal) en vue par emplacement, avec check-list
+// à cocher et progression. À ce stade : cocher est visuel (mémoire de session). L'application
+// réelle des emplacements arrivera à l'étape 4.
+
+let _rangPlan = null;        // plan calculé
+let _rangDone = new Set();   // clés d'instructions cochées (prodId|equipKey|nivIndex)
+
+function _rangInsKey(ins, equipKey, nivIndex){ return ins.prodId+'|'+equipKey+'|'+nivIndex; }
+
+async function renderRangementGuide(){
+  const main=document.getElementById('main'); if(!main) return;
+  main.innerHTML = `<div class="rg-wrap"><div class="rg-head"><h1 class="rg-title">Rangement guidé</h1>
+    <div class="rg-sub">Calcul du plan…</div></div><div class="rg-loading">⏳ L'app répartit tes lots…</div></div>`;
+
+  let plan;
+  try{ plan = await buildPlanRangementGlobal(); }
+  catch(e){ main.innerHTML = `<div class="rg-wrap"><p class="note">Impossible de calculer le plan : ${esc(e.message||'erreur')}</p></div>`; return; }
+  _rangPlan = plan;
+
+  if(!plan.parEmplacement.length){
+    const undoBtn = (_rangSnapshot && _rangSnapshot.length)
+      ? `<button class="rg-undo-perm" onclick="rangUndoAll()">↩ Annuler le dernier rangement (${_rangSnapshot.length} lot${_rangSnapshot.length>1?'s':''})</button>` : '';
+    main.innerHTML = `<div class="rg-wrap"><div class="rg-head"><h1 class="rg-title">Rangement guidé</h1></div>
+      <div class="rg-empty"><span class="ic">✓</span>${_rangSnapshot&&_rangSnapshot.length?'Rangement effectué !':'Rien à ranger pour le moment.'}<br>${_rangSnapshot&&_rangSnapshot.length?'Tu peux encore tout annuler ci-dessous.':'Les lots fraîchement produits apparaîtront ici à ranger.'}</div>${undoBtn}</div>`;
+    return;
+  }
+
+  // total d'instructions (pour la progression)
+  let totalIns=0;
+  plan.parEmplacement.forEach(e=>e.niveaux.forEach(n=>totalIns+=n.instructions.length));
+
+  const blocs = plan.parEmplacement.map(e=>{
+    const cls = e.equipType==='frigo' ? 'frigo' : 'congel';
+    let nbIns=0, nbP=0;
+    e.niveaux.forEach(n=>n.instructions.forEach(i=>{nbIns++;nbP+=i.qte;}));
+    const niveaux = e.niveaux.map(n=>{
+      const role = NIV_ROLES[n.role]||NIV_ROLES.standard;
+      const acc = NIV_ACCES[n.acces]||NIV_ACCES.facile;
+      const tagRole = n.role!=='standard' ? `<span class="rg-tag tag-${n.role}">${role.ico} ${esc(role.label.toLowerCase())}</span>` : '';
+      const lignes = n.instructions.map(ins=>{
+        const key=_rangInsKey(ins,e.equipKey,n.nivIndex);
+        const done=_rangDone.has(key);
+        const col=(typeof flavorColor==='function')?flavorColor(ins.nom):'#cbb89f';
+        const whyCls = ins.congele||!ins.sortVite ? 'surplus' : '';
+        return `<div class="rg-instr ${done?'done':''}" onclick="rangToggle('${key}')">
+          <div class="rg-check">✓</div>
+          <div class="rg-instr-main">
+            <div class="rg-instr-l1"><span class="rg-stage" style="background:${col}"></span>${qty(ins.qte)} ${esc(ins.nom.toLowerCase())} · ${esc(ins.fab)}${ins.congele?' <span class="rg-snow">❄️ à congeler</span>':''}</div>
+            <div class="rg-instr-box">${esc(ins.boiteNom)}${ins.nbBoites>1?` ×${ins.nbBoites}`:''}${ins.boxSource==='preferee'?' <span class="rg-pref">↩ ton choix</span>':''} <span class="rg-chg" onclick="event.stopPropagation();rangChangeBox('${key}')">changer ›</span></div>
+            <div class="rg-instr-why ${whyCls}">${esc(ins.pourquoi)}</div>
+          </div>
+        </div>`;
+      }).join('');
+      return `<div class="rg-niv">
+        <div class="rg-niv-h"><span class="rg-niv-nom">${esc(n.niveauNom)}</span>
+          <span class="rg-tag tag-${n.acces}">${acc.ico} accès ${esc(acc.label.toLowerCase())}</span>${tagRole}</div>
+        ${lignes}</div>`;
+    }).join('');
+    return `<div class="rg-equip">
+      <div class="rg-equip-h ${cls}"><span class="rg-e-ic">${e.equipIcon}</span>
+        <span class="rg-e-nom">${esc(e.equipNom)}</span>
+        <span class="rg-e-tot">${nbIns} instruction${nbIns>1?'s':''} · ${qty(nbP)} pièces</span></div>
+      ${niveaux}</div>`;
+  }).join('');
+
+  // lots non plaçables
+  const nonP = (plan.nonPlaces&&plan.nonPlaces.length) ? `<div class="rg-nonplace">
+    <b>⚠️ ${plan.nonPlaces.length} lot${plan.nonPlaces.length>1?'s':''} sans place trouvée :</b>
+    ${plan.nonPlaces.map(x=>`<div>· ${qty(x.qte)} ${esc(x.nom.toLowerCase())} <span class="note">(${esc(x.raison)})</span></div>`).join('')}
+    <div class="note" style="margin-top:4px">Libère de la place ou range-les manuellement.</div></div>` : '';
+
+  main.innerHTML = `<div class="rg-wrap">
+    <div class="rg-head"><h1 class="rg-title">Rangement guidé</h1>
+      <div class="rg-sub">Un plan complet, prêt à suivre</div></div>
+    <div class="rg-intro">L'app a réparti <b>${plan.totalLots} lot${plan.totalLots>1?'s':''}</b> selon la place réelle, la fraîcheur et ce qui <b>part bientôt</b>. Suis les instructions, coche au fur et à mesure.</div>
+    ${blocs}
+    ${nonP}
+    <div class="rg-spacer"></div>
+  </div>
+  <div class="rg-bar" id="rgBar">
+    <div class="rg-bar-in">
+      <div class="rg-prog"><div class="rg-prog-f" id="rgProgF"></div></div>
+      <span class="rg-prog-txt" id="rgProgT">0 / ${totalIns} rangé</span>
+    </div>
+    <button class="rg-btn-done" onclick="rangFinish()">✓ Tout est rangé</button>
+    ${(_rangSnapshot && _rangSnapshot.length) ? `<button class="rg-undo-perm" onclick="rangUndoAll()">↩ Annuler le dernier rangement (${_rangSnapshot.length} lot${_rangSnapshot.length>1?'s':''})</button>` : ''}
+  </div>`;
+  rangUpdateProgress();
+}
+
+function rangToggle(key){
+  if(_rangDone.has(key)) _rangDone.delete(key); else _rangDone.add(key);
+  // bascule visuelle sans tout re-render
+  const main=document.getElementById('main');
+  renderRangementGuide();   // simple et sûr à ce stade ; optimisable plus tard
+}
+
+function rangUpdateProgress(){
+  if(!_rangPlan) return;
+  let total=0; _rangPlan.parEmplacement.forEach(e=>e.niveaux.forEach(n=>total+=n.instructions.length));
+  const done=_rangDone.size;
+  const f=document.getElementById('rgProgF'), t=document.getElementById('rgProgT');
+  if(f) f.style.width=(total>0?done/total*100:0)+'%';
+  if(t) t.textContent=`${done} / ${total} rangé`;
+}
+
+// Étape 3 : changer la boîte d'un lot → recalcul du plan.
+async function rangChangeBox(key){
+  const prodId = +String(key).split('|')[0];
+  const p = await db.productions.get(prodId);
+  if(!p){ toast('Lot introuvable'); return; }
+  const boxes = await db.storageBoxes.toArray().catch(()=>[]);
+  const recipe = p.recipeId ? await db.recipes.get(p.recipeId).catch(()=>null) : null;
+  const ctx = lotPlacementCtx(p, recipe);
+  const gf = ctx.grandFormat;
+  const capOf = b => gf ? (+b.capaciteGF||0) : (+b.capacite||0);
+  const q = ctx.nb;
+  const nom = prodNomEpure(p, window._allRecipesCache||[]);
+  const sugg = (typeof suggestBox==='function') ? suggestBox(boxes, q, gf) : null;
+  const courant = (window._rangBoxOverride||{})[prodId] || (sugg?sugg.nom:null);
+
+  // boîtes assez grandes (la part tient si possible), triées par capacité croissante
+  let elig = boxes.filter(b=>capOf(b)>0).sort((a,b)=>capOf(a)-capOf(b));
+  // la boîte préférée d'abord (sans retirer les autres : souplesse maximale)
+  if(p.boitePreferee){ elig = elig.slice().sort((a,b)=>(b.nom===p.boitePreferee?1:0)-(a.nom===p.boitePreferee?1:0)); }
+  const opts = elig.map(b=>{
+    const cap=capOf(b);
+    const sel = b.nom===courant;
+    const recommande = sugg && b.nom===sugg.nom;
+    const prefere = p.boitePreferee && b.nom===p.boitePreferee;
+    const tient = cap>=q;
+    const nbB = tient ? 1 : Math.ceil(q/cap);
+    const tags = [];
+    if(prefere) tags.push('↩ ton choix précédent');
+    if(recommande) tags.push('recommandée');
+    return `<div class="rg-box-opt ${sel?'sel':''}" onclick="rangPickBox(${prodId},${JSON.stringify(b.nom).replace(/\"/g,'&quot;')})">
+      <b>${esc(b.nom)}</b>
+      <small>${cap} ${gf?'GF':'pièces'}${tient?'':` · ×${nbB} boîtes`}${tags.length?' · '+tags.join(' · '):''}</small>
+    </div>`;
+  }).join('');
+
+  openModal(`<h3>Changer la boîte</h3>
+    <p class="note" style="margin-bottom:10px">Pour ${qty(q)} ${esc(nom.toLowerCase())} — l'app recalcule l'emplacement selon ton choix.</p>
+    <div class="rg-box-list">${opts}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+// Choix d'une boîte → mémorise l'override et recalcule le plan.
+async function rangPickBox(prodId, nom){
+  window._rangBoxOverride = window._rangBoxOverride || {};
+  window._rangBoxOverride[prodId] = nom;
+  closeModal();
+  await renderRangementGuide();
+  toast('Boîte changée · plan recalculé');
+}
+// ===================== RANGEMENT GUIDÉ — APPLICATION DU PLAN (étape 4) =====================
+// Applique le plan calculé aux vrais enregistrements, lot par lot, en réutilisant
+// doMoveEmplacement (règles froid/DLC/lot) + le format placements existant. Capture un
+// snapshot AVANT écriture pour permettre l'annulation (restauration fidèle).
+
+let _rangSnapshot = null;   // [{id, before:{...champs}}] pour annuler
+
+// Regroupe les parts du plan PAR LOT (un lot peut avoir plusieurs parts sur plusieurs niveaux).
+function _rangPartsParLot(plan){
+  const parLot = new Map(); // prodId -> { equipKey (1er), placements:[{equipKey,niveauNom,boiteNom,nbMacarons}] }
+  plan.parEmplacement.forEach(e=>{
+    e.niveaux.forEach(n=>{
+      n.instructions.forEach(ins=>{
+        if(!parLot.has(ins.prodId)) parLot.set(ins.prodId, {prodId:ins.prodId, equipKey:e.equipKey, placements:[]});
+        parLot.get(ins.prodId).placements.push({
+          equipKey:e.equipKey, niveauNom:n.niveauNom, nivIndex:n.nivIndex,
+          boiteNom:ins.boiteNom, nbMacarons:ins.qte
+        });
+      });
+    });
+  });
+  return parLot;
+}
+
+// Capture l'état actuel d'un lot (pour annulation).
+function _rangSnapLot(p){
+  return {
+    id:p.id,
+    emplacement:p.emplacement, emplacementMaj:p.emplacementMaj,
+    histEmplacement:p.histEmplacement ? JSON.parse(JSON.stringify(p.histEmplacement)) : undefined,
+    lotProduction:p.lotProduction,
+    placements:p.placements ? JSON.parse(JSON.stringify(p.placements)) : undefined,
+    niveauIndex:p.niveauIndex, niveauNom:p.niveauNom, boiteNom:p.boiteNom,
+    rangee:p.rangee, rangeeTs:p.rangeeTs,
+    dlcProduit:p.dlcProduit, dlcAuto:p.dlcAuto,
+    venuDuCongelateur:p.venuDuCongelateur
+  };
+}
+
+// Applique le plan. Retourne {ok, applied, failed:[{prodId,nom,raison}]}.
+async function applyPlanRangement(plan){
+  const parLot = _rangPartsParLot(plan);
+  const snapshot = [];
+  const failed = [];
+  let applied = 0;
+
+  for(const [prodId, info] of parLot){
+    const p = await db.productions.get(prodId);
+    if(!p){ failed.push({prodId, raison:'lot introuvable'}); continue; }
+
+    // snapshot AVANT toute écriture sur ce lot
+    snapshot.push({id:prodId, before:_rangSnapLot(p)});
+
+    // 1) déplacement vers l'équipement cible (règles froid/DLC/lot via doMoveEmplacement)
+    let moveOk = true;
+    if(p.emplacement !== info.equipKey){
+      moveOk = await doMoveEmplacement(prodId, info.equipKey, {silent:true, confirmedFrigo:true});
+    }
+    if(!moveOk){
+      failed.push({prodId, raison:'déplacement refusé (règle froid/DLC)'});
+      // on retire le snapshot de ce lot puisqu'on n'a rien écrit
+      snapshot.pop();
+      continue;
+    }
+
+    // 2) écriture des placements (format identique au rangement manuel)
+    const placementsCumul = info.placements.map(pl=>({
+      equipKey:pl.equipKey, niveauNom:pl.niveauNom, boiteNom:pl.boiteNom, nbMacarons:pl.nbMacarons
+    }));
+    const totalLot = round3(+p.qteRestante||0);
+    const totalPlace = round3(placementsCumul.reduce((a,pl)=>a+(+pl.nbMacarons||0),0));
+    const toutRange = totalPlace >= totalLot - 0.001;
+    const premier = info.placements[0] || {};
+
+    await db.productions.update(prodId, {
+      niveauIndex:premier.nivIndex, niveauNom:premier.niveauNom, boiteNom:premier.boiteNom,
+      placements:placementsCumul,
+      rangee:toutRange, rangeeTs: toutRange ? new Date().toISOString() : (p.rangeeTs||null)
+    });
+    applied++;
+  }
+
+  _rangSnapshot = snapshot.length ? snapshot : null;
+  return {ok:failed.length===0, applied, failed, snapshotCount:snapshot.length};
+}
+
+// Annule le dernier rangement appliqué : restaure l'instantané.
+async function undoPlanRangement(){
+  if(!_rangSnapshot || !_rangSnapshot.length){ toast('Rien à annuler'); return false; }
+  for(const snap of _rangSnapshot){
+    const before = snap.before;
+    // reconstruit un patch qui REMET exactement les champs d'avant (y compris suppressions)
+    const patch = {
+      emplacement:before.emplacement, emplacementMaj:before.emplacementMaj,
+      histEmplacement:before.histEmplacement, lotProduction:before.lotProduction,
+      placements:before.placements, niveauIndex:before.niveauIndex,
+      niveauNom:before.niveauNom, boiteNom:before.boiteNom,
+      rangee:before.rangee, rangeeTs:before.rangeeTs,
+      dlcProduit:before.dlcProduit, dlcAuto:before.dlcAuto,
+      venuDuCongelateur:before.venuDuCongelateur
+    };
+    await db.productions.update(snap.id, patch);
+  }
+  const n=_rangSnapshot.length;
+  _rangSnapshot = null;
+  toast(`Rangement annulé · ${n} lot${n>1?'s':''} restauré${n>1?'s':''}`);
+  return true;
+}
+// =============================================================================
+
+// Annulation globale permanente : défait tout le dernier rangement (tous les lots).
+async function rangUndoAll(){
+  if(!_rangSnapshot || !_rangSnapshot.length){ toast('Rien à annuler'); return; }
+  const n=_rangSnapshot.length;
+  if(!confirm(`Annuler le dernier rangement ?\n${n} lot${n>1?'s':''} reviendront « à ranger ».`)) return;
+  await undoPlanRangement();
+  await renderRangementGuide();
+}
+
+// Étape 4 : confirmation récapitulative → application → filet d'annulation.
+async function rangFinish(){
+  if(!_rangPlan || !_rangPlan.parEmplacement.length){ toast('Aucun plan à appliquer'); return; }
+  const parLot = _rangPartsParLot(_rangPlan);
+  const nbLots = parLot.size;
+  let nbPlacements=0, nbPieces=0;
+  _rangPlan.parEmplacement.forEach(e=>e.niveaux.forEach(n=>n.instructions.forEach(i=>{nbPlacements++;nbPieces+=i.qte;})));
+  // changements de boîte manuels
+  const overrides = window._rangBoxOverride||{};
+  const nbModifs = Object.keys(overrides).length;
+
+  // récap par emplacement
+  const recapEmp = _rangPlan.parEmplacement.map(e=>{
+    let n=0,pc=0; e.niveaux.forEach(nv=>nv.instructions.forEach(i=>{n++;pc+=i.qte;}));
+    return `<div style="display:flex;justify-content:space-between;font-size:.84rem;padding:4px 0;border-bottom:1px solid var(--creme,#E8DDCD)"><span>${e.equipIcon} ${esc(e.equipNom)}</span><span style="color:#7a6a60">${n} instr. · ${qty(pc)} pièces</span></div>`;
+  }).join('');
+
+  openModal(`<h3>Confirmer le rangement</h3>
+    <p class="note" style="margin-bottom:10px">L'app va enregistrer les emplacements de <b>${nbLots} lot${nbLots>1?'s':''}</b> (${qty(nbPieces)} pièces, ${nbPlacements} instruction${nbPlacements>1?'s':''})${nbModifs?` · dont <b>${nbModifs} boîte${nbModifs>1?'s':''} modifiée${nbModifs>1?'s':''}</b>`:''}.</p>
+    <div class="panel" style="margin-bottom:10px">${recapEmp}</div>
+    <p class="note" style="font-size:.76rem;color:#7a6a60">Les règles de fraîcheur (chaîne du froid, DLC) sont respectées. Tu pourras annuler juste après.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="rangFinishGo()">✓ Confirmer et ranger</button>
+    </div>`);
+}
+
+async function rangFinishGo(){
+  closeModal();
+  const res = await applyPlanRangement(_rangPlan);
+  // réinitialise les overrides (le plan est appliqué)
+  window._rangBoxOverride = {};
+  _rangDone = new Set();
+  if(res.failed && res.failed.length){
+    const noms = res.failed.map(f=>'#'+f.prodId+' ('+f.raison+')').join(', ');
+    toast(`${res.applied} rangé(s) · ${res.failed.length} refusé(s) : ${noms}`);
+  } else {
+    toast(`${res.applied} lot${res.applied>1?'s':''} rangé${res.applied>1?'s':''} ✓`);
+  }
+  // Le bouton « Annuler ce rangement » reste affiché tant que _rangSnapshot existe
+  // (permanent jusqu'au prochain rangement), via renderRangementGuide.
+  await renderRangementGuide();
 }
 // =============================================================================
 
