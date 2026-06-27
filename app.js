@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v999';
+const APP_VERSION = 'v1003';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -8550,6 +8550,122 @@ async function prodTermineConfirm(id){
   }catch(e){ console.error('atelier fin batch', e); }
 }
 
+// ===================== APRÈS ASSEMBLAGE : ÉTIQUETTE + DISPATCH BOÎTES =====================
+// Après un assemblage, on propose d'imprimer l'étiquette (PDF/Image). Si la quantité dépasse la plus
+// grande boîte disponible, on demande d'abord la répartition en boîtes → une étiquette par boîte.
+
+// Plus grande capacité de boîte connue (matières catégorie emballage). 0 si aucune.
+async function asmMaxBoxCapacity(){
+  try{
+    const mats = await db.materials.toArray();
+    const caps = mats.filter(m=>m.categorie==='emballage' && +m.capacite>0).map(m=>+m.capacite);
+    return caps.length ? Math.max(...caps) : 0;
+  }catch(e){ return 0; }
+}
+// Toutes les capacités disponibles, triées décroissant (pour proposer une répartition).
+async function asmBoxCapacities(){
+  try{
+    const mats = await db.materials.toArray();
+    const caps = [...new Set(mats.filter(m=>m.categorie==='emballage' && +m.capacite>0).map(m=>+m.capacite))];
+    return caps.sort((a,b)=>b-a);
+  }catch(e){ return []; }
+}
+
+// Point d'entrée : appelé après un assemblage réussi (non dégustation).
+async function asmAfterAssemble(prodId, qteAsm){
+  if(prodId==null) return;
+  const maxCap = await asmMaxBoxCapacity();
+  // Dispatch demandé seulement si la quantité dépasse une taille de boîte.
+  if(maxCap>0 && qteAsm>maxCap){
+    await asmDispatchPrompt(prodId, qteAsm, maxCap);
+  } else {
+    asmLabelPrompt(prodId, qteAsm, null);
+  }
+}
+
+// Proposition simple d'étiquette (1 boîte) : « Imprimer l'étiquette ? » PDF / Image.
+function asmLabelPrompt(prodId, nbPieces, boiteInfo){
+  const piecesTxt = nbPieces!=null ? `${qty(nbPieces)} pièce(s)` : '';
+  openModal(`<h3>🏷 Étiquette du lot assemblé</h3>
+    <p class="note">${boiteInfo?`${esc(boiteInfo)} · `:''}${piecesTxt}. Tu peux imprimer son étiquette tout de suite.</p>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:8px">
+      <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Plus tard</button>
+      <button class="btn gold" onclick="asmLabelGo(${prodId}, ${nbPieces!=null?nbPieces:'null'}, 'pdf')">📄 PDF</button>
+      <button class="btn gold" onclick="asmLabelGo(${prodId}, ${nbPieces!=null?nbPieces:'null'}, 'image')">🖼 Image</button>
+    </div>`);
+}
+// Génère l'étiquette avec la quantité voulue (override nbPieces) en PDF ou Image.
+async function asmLabelGo(prodId, nbPieces, kind){
+  closeModal();
+  if(kind==='pdf'){
+    if(nbPieces!=null && typeof buildLabelsPDF==='function'){
+      await buildLabelsPDF([{prodId, copies:1, nbPieces}]);   // réutilise le moteur (override pièces)
+    } else if(typeof shareLabelPDF==='function'){ await shareLabelPDF(prodId); }
+  } else {
+    if(typeof shareLabelImage==='function') await shareLabelImage(prodId);
+  }
+}
+
+// Si la quantité dépasse une boîte : demander la répartition, puis une étiquette par boîte.
+async function asmDispatchPrompt(prodId, qteTotal, maxCap){
+  const caps = await asmBoxCapacities();
+  // Proposition par défaut : remplir des boîtes de la plus grande capacité.
+  const nbBoites = Math.ceil(qteTotal / maxCap);
+  const capsOpts = caps.map(c=>`<option value="${c}" ${c===maxCap?'selected':''}>Boîte de ${c}</option>`).join('');
+  window._asmDispatch = { prodId, qteTotal };
+  openModal(`<h3>📦 Répartition en boîtes</h3>
+    <p class="note">Ce lot de <b>${qty(qteTotal)} macarons</b> dépasse une boîte (max ${maxCap}). Indique comment tu le répartis : on imprimera <b>une étiquette par boîte</b>, avec la bonne quantité.</p>
+    <div class="field"><label>Taille de boîte</label><select id="asmCap" onchange="asmDispatchRecalc()">${capsOpts}</select></div>
+    <div class="field"><label>Nombre de boîtes pleines</label><input type="number" id="asmNb" min="1" value="${nbBoites}" oninput="asmDispatchRecalc()"></div>
+    <div id="asmDispatchInfo" class="sum-box" style="display:block"></div>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:8px">
+      <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Plus tard</button>
+      <button class="btn gold" onclick="asmDispatchGo('pdf')">📄 PDF (toutes)</button>
+      <button class="btn gold" onclick="asmDispatchGo('image')">🖼 Images</button>
+    </div>`);
+  asmDispatchRecalc();
+}
+// Recalcule la répartition (boîtes pleines + reste) et l'affiche.
+function asmDispatchRecalc(){
+  const d = window._asmDispatch||{}; const total = d.qteTotal||0;
+  const cap = parseInt(val('asmCap'))||0;
+  const nb = parseInt(val('asmNb'))||0;
+  const info = document.getElementById('asmDispatchInfo'); if(!info) return;
+  if(cap<=0 || nb<=0){ info.innerHTML='<span>Renseigne la taille et le nombre.</span>'; return; }
+  const dansBoites = cap*nb;
+  const reste = total - dansBoites;
+  let txt = `<span>${nb} boîte(s) de ${cap} = <b>${qty(Math.min(dansBoites,total))}</b></span>`;
+  if(reste>0) txt += `<br><span style="color:#AA7C39">+ 1 boîte avec le reste : <b>${qty(reste)}</b></span>`;
+  else if(reste<0) txt += `<br><span style="color:#b3261e">Dépasse le lot de ${qty(-reste)} — ajuste</span>`;
+  info.innerHTML = txt;
+}
+// Construit la liste des étiquettes (une par boîte) et génère le PDF / les images.
+async function asmDispatchGo(kind){
+  const d = window._asmDispatch||{}; const total = d.qteTotal||0; const prodId = d.prodId;
+  const cap = parseInt(val('asmCap'))||0; const nb = parseInt(val('asmNb'))||0;
+  if(cap<=0 || nb<=0){ toast('Renseigne la répartition'); return; }
+  const dansBoites = cap*nb;
+  if(dansBoites>total){ toast('La répartition dépasse le lot'); return; }
+  const reste = total - dansBoites;
+  // items : nb boîtes pleines (cap pièces) + éventuellement 1 boîte avec le reste
+  const items = [];
+  if(nb>0) items.push({prodId, copies:nb, nbPieces:cap});
+  if(reste>0) items.push({prodId, copies:1, nbPieces:reste});
+  closeModal();
+  if(kind==='pdf'){
+    if(typeof buildLabelsPDF==='function') await buildLabelsPDF(items);
+  } else {
+    // images : on partage chaque étiquette distincte (cap, puis reste). Le moteur image gère 1 lot ;
+    // pour le dispatch, le PDF est le plus pratique. En image, on envoie au moins l'étiquette « cap ».
+    if(typeof shareLabelImage==='function'){
+      toast('Astuce : le PDF regroupe toutes les boîtes en un envoi');
+      await shareLabelImage(prodId);
+    }
+  }
+}
+// =============================================================================
+
+
 // ====== ASSEMBLAGE coques + ganache → macaron assemblé (vendable) ======
 // Réunit un sous-lot COQUES et un sous-lot GANACHE (idéalement même n° de lot de base)
 // en une production « assemble » qui alimente le stock vendable, avec traçabilité de bout en bout.
@@ -8728,13 +8844,26 @@ async function prodAssembleSave(thisId){
       }
       const coquesUtilisees = qteAsm*COQUES_PAR_MACARON;
       const nowIso=new Date().toISOString();
+      // [HEURE DE FABRICATION] L'assemblé est « fini » quand ses composants le sont : on ancre la DLC et
+      // l'étiquette sur la fin la plus tardive des composants (coques/ganache), pas sur l'heure du clic.
+      // À défaut (composant sans fin connue), on retombe sur maintenant.
+      const _finsComp = [coques.prodTermineTs, ganache.prodTermineTs, coques.prodTimestamp, ganache.prodTimestamp].filter(Boolean);
+      const finFabIso = _finsComp.length ? _finsComp.sort().slice(-1)[0] : nowIso;
       const motif = deg ? 'assemblage dégustation' : 'assemblage';
-      // DLC : 7 j frigo / 4 mois congélo, plafonné par la DLC la plus courte des composants
-      const baseDlc = computeDlcFromHistory([{lieu:dest, ts:nowIso, motif}], nowIso);
+      // DLC : 7 j frigo / 4 mois congélo, plafonné par la DLC la plus courte des composants —
+      // SAUF si l'assemblage part directement au congélateur : la congélation fige la dégradation,
+      // donc on garde la DLC congélo (+4 mois) sans la rabattre sur les composants frais.
+      // Ancre temporelle : au frigo, la DLC court depuis la FIN de fabrication (finFabIso) ; au congélo,
+      // depuis l'entrée au congélo = le rangement (nowIso).
+      const _dlcAnchorIso = isFreezer(dest) ? nowIso : finFabIso;
+      const baseDlc = computeDlcFromHistory([{lieu:dest, ts:_dlcAnchorIso, motif}], _dlcAnchorIso);
       let dlc=baseDlc;
-      [coques.dlcProduit, ganache.dlcProduit, coques.dlcContrainteOuverture, ganache.dlcContrainteOuverture].forEach(d=>{
-        if(d && (!dlc || d<dlc)) dlc=d;
-      });
+      const _destCongelo = isFreezer(dest);
+      if(!_destCongelo){
+        [coques.dlcProduit, ganache.dlcProduit, coques.dlcContrainteOuverture, ganache.dlcContrainteOuverture].forEach(d=>{
+          if(d && (!dlc || d<dlc)) dlc=d;
+        });
+      }
       const lotBase = coques.lotBase || ganache.lotBase || lotBaseSansSuffixe(coques.lotProduction||'');
       const suff = deg ? '-DG' : '-AS';
       const lotAsm = lotAvecEmplacement((lotBase||genLotCode(3))+suff, dest);
@@ -8748,28 +8877,28 @@ async function prodAssembleSave(thisId){
           const lp = await db.productions.get(pv.prodId);
           if(lp){
             await db.productions.update(pv.prodId, {qteRestante: subQty(lp.qteRestante, pv.qte)});
-            // la DLC du macaron ne peut pas dépasser celle de la chantache utilisée
-            if(lp.dlcProduit && (!dlc || lp.dlcProduit<dlc)) dlc=lp.dlcProduit;
+            // la DLC du macaron ne peut pas dépasser celle de la chantache utilisée — sauf au congélo.
+            if(!_destCongelo && lp.dlcProduit && (!dlc || lp.dlcProduit<dlc)) dlc=lp.dlcProduit;
           }
           _assembleFromComp.push({id:pv.prodId, lot:pv.lot, composant:'garniture-sup', componentId:cc.componentId, qte:pv.qte, parfum:cc.nom});
         }
       }
       // crée la production assemblée : 'assemble' (vendable) ou 'degustation' (offert, non vendable)
-      await db.productions.add({
+      const _asmId = await db.productions.add({
         recipeId: coques.recipeId, lotProduction: lotAsm, date: today(),
         composant: deg ? 'degustation' : 'assemble', lotBase,
         degustation: !!deg,
         qteTheorique:qteAsm, qteReelle:qteAsm, ecart:0,
         qteProduite:qteAsm, qteRestante:qteAsm,
         dlcProduit:dlc, dlcAuto:true, dlcLimiteeParOuverture: (dlc!==baseDlc),
-        prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
+        prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:finFabIso, prodTimestamp:finFabIso,
         emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
         histEmplacement:[{lieu:dest, ts:nowIso, motif}],
         assembleFrom:[{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:coquesUtilisees, parfum:(window._prodRecName?window._prodRecName(coques.recipeId):'')},
                       {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')},
                       ..._assembleFromComp]
       });
-      return {lotAsm, dlc, qteAsm, deg, compConsos:_compConsos, recipeId:coques.recipeId, parfumNom:(_rec?_rec.produitNom:''),
+      return {asmId:_asmId, lotAsm, dlc, qteAsm, deg, compConsos:_compConsos, recipeId:coques.recipeId, parfumNom:(_rec?_rec.produitNom:''),
         // [JOURNAL STOCK] mouvements de cet assemblage, journalisés hors transaction (stockMoves
         // n'est pas dans la transaction rw). Sortie coques + sortie ganache → entrée macaron.
         _stockMoves:[
@@ -8797,6 +8926,11 @@ async function prodAssembleSave(thisId){
     if(!res.deg && res.recipeId!=null){
       try{ prodTaskStartForBatch({recipeId:res.recipeId, composant:'assemble', lotBase:res.lotAsm||'', parfumNom:res.parfumNom||''}); }
       catch(e){ console.error('atelier assemblage', e); }
+    }
+    // [ÉTIQUETTE IMMÉDIATE] Pour un vrai assemblage (pas dégustation), proposer d'imprimer l'étiquette
+    // avec la quantité assemblée, et demander le dispatch en boîtes si la quantité dépasse une boîte.
+    if(!res.deg && res.asmId!=null){
+      try{ await asmAfterAssemble(res.asmId, res.qteAsm); }catch(e){ console.error('étiquette assemblage', e); }
     }
   }catch(err){ toast(err.message||'Erreur assemblage'); }
 }
@@ -9749,6 +9883,8 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
       }
       // Mémorise la contrainte de DLC d'ouverture sur la production (sert au plafonnement + ordonnancement).
       if(dlcOuvertureMin){ await db.productions.update(prodId, {dlcContrainteOuverture: dlcOuvertureMin}); }
+      // [SYNCHRO ATELIER] démarrer le chrono de ce batch (tâche « Production » rattachée au parfum).
+      try{ await prodEnsureBatchChrono(prodId, recipeId, (meta&&meta.composant)||'complet'); }catch(e){}
       return prodId;
     });
 }
@@ -9826,6 +9962,8 @@ async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, 
         }
       }
       if(dlcOuvertureMin){ await db.productions.update(prodId, {dlcContrainteOuverture: dlcOuvertureMin}); }
+      // [SYNCHRO ATELIER] démarrer le chrono de ce batch composant (rattaché à sa recette).
+      try{ await prodEnsureBatchChrono(prodId, (meta&&meta.recipeId)!=null?meta.recipeId:null, (meta&&meta.composant)||'ganache'); }catch(e){}
       return prodId;
     });
 }
@@ -11201,7 +11339,7 @@ async function prodEditTimes(prodId){
   const deb=isoToLocalInput(p.prodDebutTs||p.prodTimestamp||'');
   const fin=isoToLocalInput(p.prodTermineTs||'');
   openModal(`<h3>\u270e Heures du batch</h3>
-    <p class="note" style="margin-bottom:10px">Ajuste le debut et la fin reels de la production. Sert a mesurer le temps de fabrication au plus juste.</p>
+    <p class="note" style="margin-bottom:10px">Ajuste le début et la fin réels de la production. <b>Renseigner une heure de fin termine le batch</b> à cette heure : sa DLC s'ancre dessus et il entre en stock. Laisser la fin vide = batch encore en cours.</p>
     <div class="field"><label>Debut de production</label><input type="datetime-local" id="f_pDebut" value="${deb}"></div>
     <div class="field"><label>Fin de production ${prodStatut(p)==='demarre'?'(laisser vide si en cours)':''}</label><input type="datetime-local" id="f_pFin" value="${fin}"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
@@ -11211,10 +11349,49 @@ async function prodSaveTimes(prodId){
   const debIso=localInputToIso(val('f_pDebut'));
   const finIso=localInputToIso(val('f_pFin'));
   if(debIso && finIso && new Date(finIso)<new Date(debIso)){ toast('La fin est avant le debut'); return; }
+  const p = await db.productions.get(prodId); if(!p){ toast('Batch introuvable'); return; }
+  const etaitEnCours = prodStatut(p)==='demarre';
   const patch={};
   if(debIso){ patch.prodDebutTs=debIso; }
-  if(finIso){ patch.prodTermineTs=finIso; } else { patch.prodTermineTs=''; }
+  if(finIso){
+    // Renseigner une heure de fin TERMINE le batch à cette heure → la DLC s'ancre dessus.
+    patch.prodTermineTs=finIso;
+    patch.prodStatut='termine';
+    // DLC recalculée sur l'heure de fin saisie (cohérence partout, pas seulement à l'affichage).
+    if(p.dlcAuto!==false){
+      try{
+        const hist=[{lieu:(p.emplacement||''), ts:finIso, motif:'fin de production (édition)'}];
+        let dlc = computeDlcFromHistory(hist, finIso);
+        // Plafond d'ouverture : ne s'applique pas si le lot est au congélateur (congélation = DLC gelée).
+        if(!isFreezer(p.emplacement||'') && p.dlcContrainteOuverture && (!dlc || p.dlcContrainteOuverture < dlc)){
+          dlc = p.dlcContrainteOuverture; patch.dlcLimiteeParOuverture = true;
+        }
+        if(dlc){ patch.dlcProduit = dlc; patch.dlcAuto = true; }
+      }catch(e){ console.error('dlc édition', e); }
+    }
+  } else {
+    // Vider la fin repasse le batch « en cours » (DLC non encore ancrée).
+    patch.prodTermineTs='';
+    patch.prodStatut='demarre';
+  }
   await db.productions.update(prodId, patch);
+
+  // Si le batch vient de passer de « en cours » à « terminé », il entre en stock — comme un terminé
+  // normal. Protection anti-doublon : on ne crée le mouvement que s'il n'en existe pas déjà un.
+  if(etaitEnCours && finIso){
+    try{
+      const dejaMv = await db.stockMoves.where('productionId').equals(prodId).count().catch(()=>0);
+      if(!dejaMv){
+        const comp = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
+        const _compMv = (comp==='coques') ? 'coques' : (comp==='ganache') ? 'ganache' : 'macaron';
+        const _qteMv = round3(+p.qteRestante||0);
+        if(_qteMv>0){
+          await logStockMove({ parfumNom: prodNomComplet(p), composant:_compMv, sens:+1, qte:_qteMv,
+            type:'production', productionId:prodId });
+        }
+      }
+    }catch(e){ console.error('entrée stock édition', e); }
+  }
   closeModal();
   if(view==='matieres') renderMaterials(); else if(view==='productions') renderProductions();
   toast('Heures mises a jour \u2713');
@@ -33527,12 +33704,15 @@ function prodTaskStartSmart(label, opts){
               start:Date.now(), end:null, pausedAccum:0, pauseAt:null,
               passive:passive, durMin:durMin,
               alarmAt: passive ? (Date.now()+durMin*60000) : null,
-              ringing:false };
+              ringing:false,
+              parfums: (opts.recipeId!=null ? [+opts.recipeId] : []) };
   if(passive && opts.durMin!=null) prodPassiveRememberMin(label, opts.durMin);
   s.tasks=s.tasks||[]; s.tasks.push(t);
   prodSessUpsert(s);
   prodStartTicking();
-  try{ prodTaskAutoRattach(t.id); }catch(e){}
+  // Rattachement : si un parfum est explicitement sélectionné (panneau), on le garde tel quel.
+  // Sinon, on tente le rattachement auto (1 parfum → direct ; plusieurs → picker intelligent).
+  if(opts.recipeId==null){ try{ prodTaskAutoRattach(t.id); }catch(e){} }
   return t;
 }
 
@@ -33823,25 +34003,42 @@ async function prodTaskRattachPicker(taskId, recsEnCours){
   const recipes = await db.recipes.toArray().catch(()=>[]);
   const s = prodSessActive(); if(!s) return;
   const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t) return;
-  // Liste : parfums en cours en haut (pré-cochés si un seul), puis le reste.
+  // Présélection intelligente : 1) parfums EN COURS de production, puis 2) parfums des LOTS RÉCENTS
+  // (dernières 12 h). On pré-coche les deux ; l'utilisateur décoche ce qui ne concerne pas la tâche.
   const enCours = recsEnCours||[];
+  let recents = [];
+  try{
+    const prods = await db.productions.toArray();
+    const limite = Date.now() - 12*3600*1000;
+    recents = prods.filter(p=>{
+      if(p.libre || p.recipeId==null) return false;
+      const ts = Date.parse(p.prodDebutTs||p.prodTimestamp||p.date||'')||0;
+      return ts>=limite;
+    }).map(p=>+p.recipeId);
+  }catch(e){}
+  const recentsSet = new Set(recents);
+  const enCoursSet = new Set(enCours.map(Number));
   const dejaSet = new Set((Array.isArray(t.parfums)?t.parfums:[]).map(x=>+x));
+  // Ordre : en cours d'abord, puis récents, puis le reste — chaque groupe alpha.
+  const rang = r => enCoursSet.has(+r.id)?0 : (recentsSet.has(+r.id)?1:2);
   const recsTri = recipes.slice().filter(r=>r.produitNom).sort((a,b)=>{
-    const sa=enCours.includes(a.id)?0:1, sb=enCours.includes(b.id)?0:1;
-    return sa-sb || (a.produitNom||'').localeCompare(b.produitNom||'');
+    return rang(a)-rang(b) || (a.produitNom||'').localeCompare(b.produitNom||'');
   });
   window._taskRattachId = taskId;
   window._taskRattachRecs = recsTri.map(r=>r.id);
   const rows = recsTri.map(r=>{
-    const checked = (dejaSet.has(r.id) || enCours.includes(r.id)) ? 'checked' : '';
+    // pré-coché si : déjà rattaché, OU en cours, OU lot récent
+    const checked = (dejaSet.has(+r.id) || enCoursSet.has(+r.id) || recentsSet.has(+r.id)) ? 'checked' : '';
     const gf = r.grandFormat ? ' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">GF</span>' : '';
-    const enc = enCours.includes(r.id) ? ' <span style="color:#3f7d52;font-size:.72rem">en production</span>' : '';
+    let enc='';
+    if(enCoursSet.has(+r.id)) enc = ' <span style="color:#3f7d52;font-size:.72rem">en production</span>';
+    else if(recentsSet.has(+r.id)) enc = ' <span style="color:#AA7C39;font-size:.72rem">lot récent</span>';
     return `<label class="sum-box" style="align-items:center;cursor:pointer">
       <span style="flex:1">${esc(r.produitNom)}${gf}${enc}</span>
       <input type="checkbox" id="trc_${r.id}" ${checked} style="width:22px;height:22px"></label>`;
   }).join('');
   openModal(`<h3>🎯 Parfum(s) de cette tâche</h3>
-    <p class="note">Plusieurs parfums sont en production. Coche celui (ou ceux) concerné(s) par « ${esc(t.label)} ». Sert à attribuer le temps au bon parfum.</p>
+    <p class="note">Coche le(s) parfum(s) concerné(s) par « ${esc(t.label)} ». L'app a pré-coché les parfums <b>en cours</b> et des <b>lots récents</b> — décoche ceux qui ne sont pas concernés. Sert à attribuer le temps au bon parfum.</p>
     ${rows}
     <div class="modal-actions">
       <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Plus tard</button>
@@ -34168,6 +34365,22 @@ async function planLancerMontage(parfum, qteSuggere){
   // le meilleur lot coques (FIFO) et le meilleur lot garniture en « otherId ». L'utilisateur
   // garde la main sur la quantité et la destination ; la confirmation finale reste dans ce form.
   prodAssembleForm(coquesLots[0].id, { otherId: garnitLots[0].id });
+}
+
+// [SYNCHRO PRODUCTION ↔ ATELIER] Garantit qu'un batch a démarré son chrono d'atelier (tâche
+// « Production » rattachée à son parfum) et qu'il est lié via atelierTaskId. Idempotent : ne fait
+// rien si le batch a déjà une tâche liée. Appelé à CHAQUE création de batch (voie normale).
+async function prodEnsureBatchChrono(prodId, recipeId, composant){
+  try{
+    const p = await db.productions.get(prodId); if(!p) return;
+    if(p.atelierTaskId) return; // déjà lié → ne pas doubler
+    let nom = '';
+    if(recipeId!=null){ const r = await db.recipes.get(recipeId).catch(()=>null); nom = r?r.produitNom:''; }
+    else if(p.libre){ nom = p.produitLibre||''; }
+    const taskId = prodTaskStartForBatch({ recipeId, composant: composant||p.composant||'complet',
+                                           lotBase: p.lotBase||'', parfumNom: nom });
+    if(taskId) await db.productions.update(prodId, {atelierTaskId: taskId});
+  }catch(e){ console.error('prodEnsureBatchChrono', e); }
 }
 
 function prodTaskStartForBatch(meta){
