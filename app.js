@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1004';
+const APP_VERSION = 'v1005';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -1187,7 +1187,7 @@ async function renderRD(){
 
     <div id="rd-props"></div>
 
-    <p class="rd-foot">${nIng} ingrédients dans ta palette · <span class="rd-link" onclick="goView('rdidees')">💡 Mes idées</span> · <span class="rd-link" onclick="goView('rdjournal')">🧪 Journal</span></p>
+    <p class="rd-foot">${nIng} ingrédients dans ta palette · <span class="rd-link" onclick="goView('rdidees')">💡 Mes idées</span> · <span class="rd-link" onclick="goView('rdjournal')">🧪 Journal</span> · <span class="rd-link" onclick="goView('rdrefs')">📚 Bibliothèque</span></p>
   </div>`;
 
   rdRenderProps();
