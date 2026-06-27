@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v993';
+const APP_VERSION = 'v995';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -6439,7 +6439,7 @@ async function prodV2OpenPop(id){
       <div class="pv2-pop-body">
         <div class="pv2-pop-sec">Raccourcis</div>
         <div class="pv2-acts">
-          <div class="pv2-act" onclick="prodV2ClosePop();shareLabelImage(${id})">🖨 Étiquette</div>
+          <div class="pv2-act" onclick="prodV2ClosePop();shareLabelPDF(${id})">📄 Étiquette PDF (Labelife)</div><div class="pv2-act" onclick="prodV2ClosePop();shareLabelImage(${id})">🖼 Étiquette image</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prodEditTimes(${id})">✏️ Quantité</div>
           <div class="pv2-act" onclick="prodV2ClosePop();declareLossForm(${id})">⚠️ Casse</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prodV2Deplacer(${id})">📍 Déplacer</div>
@@ -6987,7 +6987,7 @@ function _prodbatRowInner(row){
        <button class="qa" style="background:#3f7d52;color:#fff" onclick="setEmplacement(${p.id})" title="Choisir l'emplacement de stockage — range le batch et remplit la visualisation">📍 Ranger</button>
        ${linkBtn}
        <button class="qa" onclick="printLabel(${p.id})" title="Imprimer l'étiquette de ce batch">⎙ Étiquette</button>
-       <button class="qa" onclick="shareLabelImage(${p.id})" title="Image d'étiquette à partager vers Phomemo">📤 Phomemo</button>
+       <button class="qa" onclick="shareLabelPDF(${p.id})" title="PDF d'étiquette à partager vers Labelife">📄 PDF</button><button class="qa" onclick="shareLabelImage(${p.id})" title="Image d'étiquette à partager">🖼 Image</button>
        <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Tracer</button>
        ${p.recipeId?`<button class="qa" onclick="ficheRecetteProductionFromBatch(${p.id})" title="Voir la fiche de production : grammages recalculés + mode opératoire, consultable pendant la production">📋 Fiche & protocole</button>`:''}
        <button class="qa del" onclick="delProd(${p.id})" title="Supprimer">🗑</button>
@@ -11072,7 +11072,7 @@ async function traceProd(prodId){
     ${lossBlock}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
     ${cmdLines.length?cmdLines.join(''):'<p class="note">Ce batch n\'est lié à aucune commande pour l\'instant.</p>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button>${(prodVendable(prod) && round3(+prod.qteRestante||0)>0)?`<button class="btn gold" onclick="closeModal();scanAffectChooseOrder(${prodId})" title="Affecter ce lot à une commande à préparer">🎯 Affecter à une commande</button>`:''}<button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn gold" onclick="shareLabelImage(${prodId})" title="Générer une image à partager vers l'app Phomemo">📤 Image (Phomemo)</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button>${(prodVendable(prod) && round3(+prod.qteRestante||0)>0)?`<button class="btn gold" onclick="closeModal();scanAffectChooseOrder(${prodId})" title="Affecter ce lot à une commande à préparer">🎯 Affecter à une commande</button>`:''}<button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn gold" onclick="shareLabelPDF(${prodId})" title="Générer un PDF à partager vers Labelife">📄 PDF (Labelife)</button><button class="btn gold" onclick="shareLabelImage(${prodId})" title="Générer une image à partager">🖼 Image</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
  }catch(e){
   console.error('traceProd', e);
   toast('Erreur lors de l\'affichage de la traçabilité du batch');
@@ -28246,7 +28246,7 @@ async function renderLabels(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Étiquettes</h1><p>Format thermique 50 × 25 mm — Phomemo D520BT</p></div></div>
-   <div class="banner">▤ <div>Étiquettes noir sur blanc optimisées pour l'impression thermique (produit, lot, DLC, date, QR de traçabilité). <b>📤 Image (Phomemo)</b> génère l'étiquette en image à partager vers l'app Phomemo (impression Bluetooth). <b>⎙ Imprimer</b> passe par AirPrint si ton imprimante le gère.</div></div>
+   <div class="banner">▤ <div>Étiquettes noir sur blanc optimisées pour l'impression thermique (produit, lot, DLC, date, QR de traçabilité). <b>📄 PDF (Labelife)</b> génère un PDF à partager vers Labelife (qui accepte l'import PDF) — le plus direct. <b>🖼 Image</b> génère un PNG (à enregistrer puis ouvrir dans Labelife si le partage PDF ne marche pas). <b>⎙ Imprimer</b> passe par AirPrint si ton imprimante le gère.</div></div>
 
    ${orders.length?`<div class="panel"><h2>Imprimer les étiquettes d'une commande</h2>
      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Client</th><th>Batchs liés</th><th></th></tr></thead><tbody>
@@ -28281,7 +28281,7 @@ async function renderLabels(){
         <div class="label-actions">
           <label class="copies">Copies <input type="number" id="lblCopies_${p.id}" min="1" max="200" value="1"></label>
           <button class="btn ghost sm" onclick="printLabelCopies(${p.id})">⎙ Imprimer</button>
-          <button class="btn gold sm" onclick="shareLabelImage(${p.id})" title="Générer une image à partager vers l'app Phomemo">📤 Image (Phomemo)</button>
+          <button class="btn gold sm" onclick="shareLabelPDF(${p.id})" title="Générer un PDF à partager vers Labelife">📄 PDF</button><button class="btn gold sm" onclick="shareLabelImage(${p.id})" title="Générer une image à partager">🖼 Image</button>
         </div>
      </div>`;}).join('')}
    </div>`:`<div class="empty">Aucun batch produit. Lance une production pour générer ses étiquettes.</div>`}
@@ -28364,6 +28364,93 @@ async function labelToCanvas(d){
 }
 
 // Génère l'image d'étiquette d'un batch et la partage (ou la télécharge en repli).
+// ===================== ÉTIQUETTE EN PDF (pour partage direct vers Labelife) =====================
+// Labelife (app Phomemo) accepte l'import d'un PDF via le partage iOS — mais souvent PAS une image PNG.
+// On enrobe donc le canvas d'étiquette (105×55 mm) dans un PDF minimal valide, sans dépendance externe,
+// puis on le partage via navigator.share. Si Labelife apparaît dans la feuille de partage, l'envoi est direct.
+
+// Construit un PDF (Uint8Array) d'une seule page contenant l'image JPEG fournie, au format mm donné.
+function _buildSingleImagePDF(jpegBytes, wMm, hMm, pxW, pxH){
+  // 1 mm = 72/25.4 points PDF
+  const ptW = (wMm * 72 / 25.4), ptH = (hMm * 72 / 25.4);
+  const enc = s => { const out=new Uint8Array(s.length); for(let i=0;i<s.length;i++) out[i]=s.charCodeAt(i)&0xff; return out; };
+  const parts = [];
+  const offsets = [];
+  let pos = 0;
+  const push = (bytes) => { parts.push(bytes); pos += bytes.length; };
+  const pushStr = (s) => push(enc(s));
+
+  pushStr('%PDF-1.4\n');
+
+  // obj 1 : Catalog
+  offsets[1]=pos; pushStr('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  // obj 2 : Pages
+  offsets[2]=pos; pushStr('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
+  // obj 3 : Page
+  offsets[3]=pos; pushStr('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+ptW.toFixed(2)+' '+ptH.toFixed(2)+
+    '] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>\nendobj\n');
+  // obj 4 : Contents (place l'image plein cadre)
+  const content = 'q\n'+ptW.toFixed(2)+' 0 0 '+ptH.toFixed(2)+' 0 0 cm\n/Im0 Do\nQ\n';
+  offsets[4]=pos; pushStr('4 0 obj\n<< /Length '+content.length+' >>\nstream\n'+content+'endstream\nendobj\n');
+  // obj 5 : Image XObject (JPEG = DCTDecode)
+  offsets[5]=pos;
+  pushStr('5 0 obj\n<< /Type /XObject /Subtype /Image /Width '+pxW+' /Height '+pxH+
+    ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+jpegBytes.length+' >>\nstream\n');
+  push(jpegBytes);
+  pushStr('\nendstream\nendobj\n');
+
+  // xref
+  const xrefPos = pos;
+  let xref = 'xref\n0 6\n0000000000 65535 f \n';
+  for(let i=1;i<=5;i++){ xref += String(offsets[i]).padStart(10,'0')+' 00000 n \n'; }
+  pushStr(xref);
+  pushStr('trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+xrefPos+'\n%%EOF');
+
+  // concat
+  let total=0; parts.forEach(p=>total+=p.length);
+  const out=new Uint8Array(total); let o=0;
+  parts.forEach(p=>{ out.set(p,o); o+=p.length; });
+  return out;
+}
+
+// Décode un dataURL base64 (jpeg) en Uint8Array.
+function _dataURLtoBytes(dataURL){
+  const b64 = dataURL.split(',')[1];
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  return bytes;
+}
+
+async function shareLabelPDF(prodId){
+  try{
+    const d = await buildLabelData(prodId);
+    if(!d){ toast('Batch introuvable'); return; }
+    const cv = await labelToCanvas(d);
+    // JPEG (DCTDecode) pour un PDF léger et compatible ; fond blanc déjà dessiné par labelToCanvas.
+    const dataURL = cv.toDataURL('image/jpeg', 0.92);
+    const jpegBytes = _dataURLtoBytes(dataURL);
+    const pdfBytes = _buildSingleImagePDF(jpegBytes, 105, 55, cv.width, cv.height);
+    const blob = new Blob([pdfBytes], {type:'application/pdf'});
+    const fileName = 'etiquette-'+(d.lot||'lot').replace(/[^\w-]/g,'_')+'.pdf';
+    const file = new File([blob], fileName, {type:'application/pdf'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{
+        await navigator.share({ files:[file], title:'Étiquette '+d.lot });
+        return;
+      }catch(eShare){ if(eShare && eShare.name==='AbortError') return; }
+    }
+    // Repli : téléchargement du PDF (à ouvrir ensuite dans Labelife via « Importer un PDF »).
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    toast('PDF enregistré — ouvre-le dans Labelife (Importer un PDF)');
+  }catch(e){ console.error('shareLabelPDF',e); toast('Erreur lors de la génération du PDF'); }
+}
+// =============================================================================
+
 async function shareLabelImage(prodId){
   try{
     const d = await buildLabelData(prodId);
