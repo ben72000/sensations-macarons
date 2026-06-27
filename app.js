@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v991';
+const APP_VERSION = 'v993';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -2642,7 +2642,7 @@ function goView(v, opts){
     if(!pmsGuardUnsaved()) return;
   }
   if(typeof hideUndo==='function') hideUndo();
-  if(view==='productionsv2' && v!=='productionsv2' && typeof chronoFloatRemove==='function') chronoFloatRemove();
+  if((view==='productions'||view==='productionsv2') && v!=='productions' && v!=='productionsv2' && typeof chronoFloatRemove==='function') chronoFloatRemove();
   if(v==='accueil') window._filRetour=null;   // retour au fil par tout chemin → on consomme le marqueur
   _navDir='forward';
   view=v; setActiveView(view); render();
@@ -6598,13 +6598,14 @@ async function renderProductions(){
   });
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Productions</h1><p id="prodCount">${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p>
-     ${(() => { const nbRangees = prods.filter(p=>prodEstRangee(p)).length; return nbRangees?`<p style="margin-top:2px"><span class="act" onclick="prodVoirRangees()" style="font-size:.8rem">📦 ${nbRangees} production(s) rangée(s) masquée(s) — voir →</span></p>`:''; })()}</div>
+</div>
      <button class="btn gold" onclick="prodForm()">⚙ Nouvelle production</button>
      <button class="btn ghost" style="margin-left:6px" onclick="goView('stockparfums')" title="Voir tout mon stock : parfums et emplacements">📦 Tout mon stock</button>
      <button class="btn ghost" style="margin-left:6px" onclick="quickLossForm()">⚠ Casse / Perte</button></div>
-   ${kpi.count?`<div class="cards" style="margin-bottom:18px">
-     <div class="card"><div class="lbl">Taux de perte ${kpiI('taux_perte')}</div><div class="val" style="color:${kpi.taux>=10?'#b3261e':(kpi.taux>=5?'#d98324':'#2e7d32')}">${kpi.taux}%</div><div class="sub">${qty(kpi.totalPerdu)} perdues / ${qty(kpi.totalProduit)} produites</div></div>
-     <div class="card"><div class="lbl">Valeur perdue (casse) ${kpiI('valeur_perdue')}</div><div class="val">${euro(kpi.valeurPerdue)}</div><div class="sub">${kpi.count} déclaration(s) · imputé au coût de revient</div></div>
+   ${kpi.count?`<div class="prod-kpi-mini">
+     <span class="pkm-item">${kpiI('taux_perte')} <span class="pkm-lbl">Perte</span> <b style="color:${kpi.taux>=10?'#b3261e':(kpi.taux>=5?'#d98324':'#2e7d32')}">${kpi.taux}%</b> <span class="pkm-sub">${qty(kpi.totalPerdu)}/${qty(kpi.totalProduit)}</span></span>
+     <span class="pkm-sep">·</span>
+     <span class="pkm-item">${kpiI('valeur_perdue')} <span class="pkm-lbl">Valeur</span> <b>${euro(kpi.valeurPerdue)}</b> <span class="pkm-sub">${kpi.count} décl.</span></span>
    </div>`:''}
    ${enRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${enRetard.length} production(s) ouverte(s) depuis plus de ${PROD_OPEN_MAX_DAYS} jours.</b> Une production ne peut pas rester « démarrée » au-delà de ${PROD_OPEN_MAX_DAYS} jours : terminez-la (✓ Terminer) pour figer la DLC, ou supprimez-la.</div></div>`:''}
    ${ouvertes.length && !enRetard.length?`<div class="banner" style="flex-direction:column;align-items:stretch">
@@ -6661,8 +6662,9 @@ async function renderProductions(){
        </div>`;
      }).join('')}
    </div>`:''}
-   ${sugg.length?`<div class="panel" id="enc-assemblages" style="border:1.5px solid #cfe3d4;background:#f4faf5">
-     <h2 style="color:#2e7d32">🔗 Assemblages à finaliser <span style="font-weight:400;font-size:.82rem;color:#6a8a72">— ${sugg.length} rapprochement(s) possible(s)</span></h2>
+   ${sugg.length?`<div class="panel enc-collapsible" id="enc-assemblages" style="border:1.5px solid #cfe3d4;background:#f4faf5">
+     <div class="enc-head" onclick="encToggle('enc-assemblages')"><h2 style="color:#2e7d32;margin:0">🔗 Assemblages à finaliser <span style="font-weight:400;font-size:.82rem;color:#6a8a72">— ${sugg.length} rapprochement(s) possible(s)</span></h2><span class="enc-chev">▸</span></div>
+     <div class="enc-body" style="display:none">
      <p class="note" style="margin-bottom:8px">Coques et ganaches réellement <b>en stock</b> (quantités réelles, casse déduite) pouvant être assemblées. Vérifie le parfum avant de valider.</p>
      ${sugg.map(s=>`<div class="sugg-row">
         <div class="sugg-main">
@@ -6673,9 +6675,11 @@ async function renderProductions(){
         </div>
         <button class="btn gold sm" onclick="prodAssembleForm(${s.coqId})" title="Assembler ces composants">🔗 Assembler</button>
       </div>`).join('')}
+     </div>
    </div>`:''}
-   ${degustSugg.length?`<div class="panel" id="enc-degustation" style="border:1.5px solid #e6d2a0;background:#fdf8ee">
-     <h2 style="color:#caa23b">🥄 Sauver des coques cassées en dégustation <span style="font-weight:400;font-size:.82rem;color:#b09a5b">— ${degustSugg.length} possibilité(s)</span></h2>
+   ${degustSugg.length?`<div class="panel enc-collapsible" id="enc-degustation" style="border:1.5px solid #e6d2a0;background:#fdf8ee">
+     <div class="enc-head" onclick="encToggle('enc-degustation')"><h2 style="color:#caa23b;margin:0">🥄 Sauver des coques cassées en dégustation <span style="font-weight:400;font-size:.82rem;color:#b09a5b">— ${degustSugg.length} possibilité(s)</span></h2><span class="enc-chev">▸</span></div>
+     <div class="enc-body" style="display:none">
      <p class="note" style="margin-bottom:8px">Des <b>coques cassées récupérables</b> peuvent être garnies avec un <b>surplus de ganache</b> (n'importe quel parfum, puisque c'est offert). Résultat : des macarons de <b>dégustation</b>, non vendables — plutôt que du gaspillage.</p>
      ${degustSugg.map(s=>`<div class="sugg-row">
         <div class="sugg-main">
@@ -6686,9 +6690,11 @@ async function renderProductions(){
         </div>
         <button class="btn sm" style="background:#caa23b;color:#fff" onclick="prodAssembleForm(${s.coqId}, {deg:true, otherId:${s.ganId}})" title="Assembler en dégustation">🥄 Assembler</button>
       </div>`).join('')}
+     </div>
    </div>`:''}
-   ${orphans.length?`<div class="panel" id="enc-orphelins" style="border:1.5px solid #e8cfa0;background:#fff8ec">
-     <h2 style="color:#8a6d3b">⚠ Composants orphelins <span style="font-weight:400;font-size:.82rem;color:#a8895b">— ${orphans.length} en attente de leur moitié</span></h2>
+   ${orphans.length?`<div class="panel enc-collapsible" id="enc-orphelins" style="border:1.5px solid #e8cfa0;background:#fff8ec">
+     <div class="enc-head" onclick="encToggle('enc-orphelins')"><h2 style="color:#8a6d3b;margin:0">⚠ Composants orphelins <span style="font-weight:400;font-size:.82rem;color:#a8895b">— ${orphans.length} en attente de leur moitié</span></h2><span class="enc-chev">▸</span></div>
+     <div class="enc-body" style="display:none">
      <p class="note" style="margin-bottom:8px">Ces composants ne peuvent pas devenir des macarons : il leur manque l'autre moitié. Produis ce qui manque pour ne pas les perdre.</p>
      ${orphans.map(o=>`<div class="sugg-row">
         <div class="sugg-main">
@@ -6697,6 +6703,7 @@ async function renderProductions(){
         </div>
         <button class="btn ghost sm" onclick="prodForm(${o.recipeId?`{recipeId:${o.recipeId}, qte:${Math.max(1, Math.round(+o.macPotentiels||0))}}`:''})" title="Produire le composant manquant, pré-rempli">⚙ Produire ${o.manque==='ganache'?(o.garnLabel||'ganache'):'coques'}</button>
       </div>`).join('')}
+     </div>
    </div>`:''}
    <div class="prod-vue-tabs">
      <button class="pvt-btn on" id="pvt-att" onclick="prodSetVue('attente')">⏳ En attente</button>
@@ -6742,7 +6749,9 @@ async function renderProductions(){
        ${collapseList(blocs, 1, {moreLabel:n=>`Voir les ${n} batch(s) précédent(s)`, lessLabel:'Réduire'})}</div>`;
    })()}
    </div>`;
-  prodbatFilter(prodnSearch);}
+  prodbatFilter(prodnSearch);
+  // Cockpit chrono flottant : bulle + rafraîchissement live tant qu'on est sur cet écran.
+  if(typeof chronoFloatStart==='function') chronoFloatStart();}
 // Déclare une production "rangée" (la sort de la vue Production). Geste délibéré, réversible.
 async function prodRanger(id){
   await db.productions.update(id, {rangee:true, rangeeTs:new Date().toISOString()});
@@ -7127,6 +7136,16 @@ async function prodSetVue(vue){
     stk.style.display='none'; att.style.display='block';
     if(bStk) bStk.classList.remove('on'); if(bAtt) bAtt.classList.add('on');
   }
+}
+
+// Replie / déplie un encart d'actions (assemblages, dégustation, orphelins) — replié par défaut.
+function encToggle(id){
+  const panel=document.getElementById(id); if(!panel) return;
+  const body=panel.querySelector('.enc-body'); const chev=panel.querySelector('.enc-chev');
+  if(!body) return;
+  const open=body.style.display!=='none';
+  body.style.display=open?'none':'block';
+  if(chev) chev.style.transform=open?'rotate(0deg)':'rotate(90deg)';
 }
 
 // Replie / déplie un groupe de parfum dans la vue Production.
@@ -22268,8 +22287,13 @@ const APP_KB = [
     tags:'matiere matieres emballage emballages lot lots reception stock denree capacite reference',
     r:`<p>Onglet <b>Matières & emballages</b>. Les références sont toujours affichées dans l'<b>ordre alphabétique</b>, quel que soit l'ordre de saisie. Tu peux renseigner une <b>marque de produit</b> (ex : Valrhona) distincte du <b>fournisseur</b> : la marque se définit sur la fiche matière, le fournisseur se choisit à la <b>réception du lot</b> (ex : fournisseur « Délice et Création », marque « Valrhona »). Les <b>denrées alimentaires</b> sont achetées et valorisées <b>au kilogramme</b> (prix indicatif en <b>€/kg</b>, stock en kg, réception du lot en kg → prix au kg réel), mais dans les <b>recettes</b> tu saisis les quantités <b>en grammes</b> (l'app convertit automatiquement pour le coût et le stock). Les <b>emballages</b> restent comptés <b>à l'unité</b> et portent une <b>capacité</b> (nb de macarons) qui les relie aux coffrets. Le stock réel se gère par <b>lots</b> (réception) — ne saisis jamais les matières/emballages en charges (double comptage).</p>` },
   { id:'productions', titre:'Productions (batchs) & recherche',
-    tags:'production productions batch fabrication lot emplacement recherche parfum dlc rendement',
-    r:`<p>Onglet <b>Productions</b>. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock fini suit la quantité <b>réelle</b>. La barre de recherche filtre par n° de lot, parfum, date, statut ; une seule <b>lettre d'emplacement</b> (F/B/C/A) ou les puces de zone filtrent par emplacement. Tu peux découper un batch, ajuster le réel, déclarer une perte, imprimer l'étiquette.</p>` },
+    tags:'production productions batch fabrication lot emplacement recherche parfum dlc rendement stock repli chevron onglet',
+    r:`<p>Onglet <b>Productions</b>. Une production consomme les matières selon la quantité <b>théorique</b> (FIFO par DLC) ; le stock fini suit la quantité <b>réelle</b>. La barre de recherche filtre par n° de lot, parfum, date, statut ; une seule <b>lettre d'emplacement</b> (F/B/C/A) ou les puces de zone filtrent par emplacement. Tu peux découper un batch, ajuster le réel, déclarer une perte, imprimer l'étiquette.</p>
+    <p>🆕 <b>Vue repliée par parfum</b> : chaque parfum est une ligne avec son total et le détail compact <b>« gan X - coque Y · 🥄 dég Z »</b>, visible sans ouvrir. Touche la ligne (chevron) pour déplier ses lots. 🆕 <b>Deux onglets</b> en haut : <b>« ⏳ En attente »</b> (lots à ranger) et <b>« 📦 Stock par parfum »</b> (tes quantités rangées) cohabitent dans le même écran, sans changer de page. 🆕 En haut, trois <b>encarts d'actions</b> repliés mettent en avant ce que tu peux faire (assemblages à finaliser, coques cassées à sauver en dégustation, composants orphelins) avec un compteur ; touche-les pour le détail complet.</p>` },
+  { id:'rangement', titre:'Rangement guidé',
+    tags:'rangement guide ranger boites emplacement plan picking frigo congelateur boite preference annuler',
+    r:`<p><b>Rangement guidé</b> (menu). L'app calcule un <b>plan de rangement</b> de tous tes lots frais en attente : pour chaque emplacement (frigo, congélateur…) et chaque niveau, elle te dit quel lot ranger, dans quelle <b>boîte</b>, et pourquoi (urgence de sortie, accessibilité). Tu coches au fur et à mesure ; tu peux <b>changer la boîte</b> d'un lot en un geste (l'app recalcule). Quand tu touches <b>« ✓ Tout est rangé »</b>, un récapitulatif s'affiche, puis l'app enregistre les emplacements pour de vrai (règles de fraîcheur respectées).</p>
+    <p>🆕 <b>Annulation</b> : un bouton <b>« ↩ Annuler le dernier rangement »</b> reste disponible tant que tu n'as pas relancé un rangement (remet tous les lots « à ranger »). Tu peux aussi remettre <b>un seul lot</b> à ranger depuis son pop-up. 🆕 <b>Mémoire de boîte</b> : quand tu remets un lot à ranger, l'app retient la boîte que tu avais choisie et te la propose <b>en priorité</b> la prochaine fois (badge « ↩ ton choix »), sans masquer les autres options.</p>` },
   { id:'picking', titre:'Préparation / Picking & liaison batch↔commande',
     tags:'picking preparation liaison batch commande prete affecter zone fifo',
     r:`<p>La liaison batch↔commande est <b>automatique</b> : le picking calcule les besoins, affecte les batchs (optimisé par zone, FIFO par DLC) et, au clic <b>« Commande prête »</b>, crée les liens, décrémente le stock fini et les emballages, et passe la commande en « Terminée ». La liaison manuelle 🔗 reste possible en secours, sans double décompte. Les <b>macarons grand format</b> ont leur <b>propre recette et leur propre stock</b> : coche « Recette grand format » sur la fiche recette. Un grand format n'est jamais servi à partir du stock des petits macarons du même parfum (et inversement) — s'il manque du stock grand format, le picking affiche « stock insuffisant ».</p>` },
@@ -22321,8 +22345,9 @@ const APP_KB = [
     tags:'discret confidentialite flou masquer nom prix montant privacy',
     r:`<p>Le <b>mode discret</b> floute les noms de clients et masque les montants/volumes. Active-le depuis le bouton 🙈 sur les pages Commandes et Clients, ou depuis le Menu (☰). La saisie et les détails restent lisibles pour travailler.</p>` },
   { id:'haccp', titre:'HACCP / Plan de Maîtrise Sanitaire',
-    tags:'haccp pms hygiene temperature releve nettoyage ddpp frigo congelateur',
-    r:`<p>Onglet <b>PMS</b>. Relevés de température matin/soir (avec action corrective obligatoire si hors plage), plan de nettoyage (quotidien/hebdo/mensuel) et export DDPP sur 30 jours.</p>` },
+    tags:'haccp pms hygiene temperature releve nettoyage ddpp frigo congelateur rappel ios calendrier',
+    r:`<p>Onglet <b>PMS</b>. Relevés de température matin/soir (avec action corrective obligatoire si hors plage), plan de nettoyage (quotidien/hebdo/mensuel) et export DDPP sur 30 jours.</p>
+    <p>🔔 <b>Rappels iOS</b> : le bouton « Rappels iOS » génère un fichier de rappels récurrents pour ton <b>Calendrier iPhone</b> (ils sonnent même app fermée). Horaires : <b>matin lun→ven</b> selon la semaine (paire 4h30 / impaire 9h), <b>week-ends</b> toujours 9h, <b>soir</b> 21h tous les jours. Si tu avais d'anciens rappels qui ne sonnaient qu'un jour par quinzaine, supprime-les d'abord dans ton calendrier, puis ré-ajoute les nouveaux.</p>` },
   { id:'tracabilite', titre:'Traçabilité & étiquettes',
     tags:'tracabilite tracage etiquette lot dlc impression label origine ddpp confidentialite quantite recette ingredient',
     r:`<p>La <b>traçabilité</b> relie chaque batch aux lots de matières consommés (FIFO). Tu peux imprimer une <b>étiquette</b> par batch (parfum, lot, DLC) depuis Productions ou l'onglet Étiquettes. La traçabilité destinée à la <b>DDPP</b> (écrans et exports CSV) conserve toutes les informations — matières, lots fournisseurs, fournisseurs, DLC, origine — mais <b>masque les quantités d'ingrédients</b> pour préserver la confidentialité de tes recettes.</p>` },
@@ -22334,7 +22359,8 @@ const APP_KB = [
     r:`<p>L'onglet <b>Reprise / migration</b> sert à démarrer avec ton historique. Tu peux saisir des <b>commandes historiques</b> (date, montant, client ou libellé) : elles <b>comptent dans le chiffre d'affaires</b> et les stats, mais sont marquées « historique » — l'app ne demande <b>ni production, ni picking, ni matières</b> et ne génère <b>aucune alerte</b> dessus (elles n'apparaissent pas dans la liste des commandes opérationnelles). Tu peux y ajouter le <b>détail des parfums</b> (parfum + quantité) : cela <b>alimente les statistiques et les tendances</b> (parfums populaires, saisonnalité) sans modifier le montant saisi. Tu peux aussi enregistrer ton <b>stock de départ de produits finis</b> (lot déjà « terminé », sans consommer de matières) et, pour les matières premières, utiliser la <b>réception de lot</b> habituelle dans Matières &amp; emballages.</p>` },
   { id:'sauvegarde', titre:'Sauvegarde & restauration',
     tags:'sauvegarde backup restauration export import donnees fichier rappel ios safari perte purge securite icloud cloud drive partage',
-    r:`<p>Onglet <b>Sauvegarde &amp; sécurité</b>. Le plus simple : <b>☁️ Sauvegarder sur iCloud</b> — l'app ouvre le partage iOS, choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé, les fois suivantes vont plus vite). Tu peux aussi <b>Exporter</b> un fichier .json à ranger ailleurs (e-mail, autre cloud), puis le <b>réimporter</b> pour restaurer (remplacement ou fusion). ⚠️ Important : effacer l'historique Safari <b>supprime aussi la base de l'app</b> (limite iOS) — seule une copie hors appareil (iCloud, fichier) te protège. À l'ouverture, l'app fait une <b>sauvegarde interne quotidienne</b> et te <b>propose automatiquement</b> d'enregistrer sur iCloud si ta dernière sauvegarde dépasse le délai réglé (mets <b>1 jour</b> pour un rappel quotidien). Note : une app web ne peut pas écrire seule dans iCloud sans ce petit geste de validation — c'est une sécurité d'iOS.</p>` },
+    r:`<p>Onglet <b>Sauvegarde &amp; sécurité</b>. Le plus simple : <b>☁️ Sauvegarder sur iCloud</b> — l'app ouvre le partage iOS, choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé, les fois suivantes vont plus vite). Tu peux aussi <b>Exporter</b> un fichier .json à ranger ailleurs (e-mail, autre cloud), puis le <b>réimporter</b> pour restaurer (remplacement ou fusion). ⚠️ Important : effacer l'historique Safari <b>supprime aussi la base de l'app</b> (limite iOS) — seule une copie hors appareil (iCloud, fichier) te protège. À l'ouverture, l'app fait une <b>sauvegarde interne quotidienne</b> et te <b>propose automatiquement</b> d'enregistrer sur iCloud si ta dernière sauvegarde dépasse le délai réglé (mets <b>1 jour</b> pour un rappel quotidien). Note : une app web ne peut pas écrire seule dans iCloud sans ce petit geste de validation — c'est une sécurité d'iOS.</p>
+    <p>🔧 <b>Corriger la consommation d'un lot</b> : si tu as ajouté un ingrédient au BOM <b>après</b> avoir produit un lot (cas classique : une crème oubliée dans la recette), ce lot n'a pas décrémenté cet ingrédient. Cet outil (dans cette rubrique) <b>rattache la consommation manquante</b> en FIFO, avec la traçabilité préservée, sans rien supprimer. Pense à sauvegarder avant.</p>` },
   { id:'assistant', titre:'Assistant IA (hors-ligne)',
     tags:'assistant ia aide question stock commande tendance rupture comment fonctionne localiser ou sont joindre piece fichier photo txt notes coller',
     r:`<p>L'assistant fonctionne <b>hors-ligne</b>. Il sait : <b>localiser tes macarons</b> (« où sont mes macarons vanille ? »), <b>créer une commande en langage naturel</b>, répondre sur le stock, le CA, les tendances, les ruptures, et expliquer le fonctionnement. Tu peux <b>📎 Joindre</b> un <b>fichier texte (.txt)</b> : son contenu est ajouté à ta demande. Une <b>photo</b> peut être jointe comme simple <b>aperçu visuel temporaire</b> (l'assistant ne lit pas son contenu, et rien n'est enregistré dans l'app). Depuis l'app Notes de l'iPhone, fais <b>Copier</b> puis colle le texte dans le champ (l'accès direct aux notes Apple n'est pas possible). Toute action critique demande validation. Envoi : touche <b>Entrée</b>.</p>` },
