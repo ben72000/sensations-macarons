@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1014';
+const APP_VERSION = 'v1013';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -32998,20 +32998,20 @@ const FACT_STYLE = `   <style>
      .avis-bloc .avis-txt { font-family:'Bellota',cursive; font-weight:700; font-size:13px; color:#490F25; line-height:1.3; }
      .avis-bloc .avis-sub { margin-top:1mm; font-size:10px; color:#6a5a52; line-height:1.4; }
      .avis-bloc .avis-qr { display:block; margin:2.5mm auto 0; width:32mm; height:32mm; }
-     /* RIB + QR côte à côte, chacun dans sa carte, bloc solidaire */
-     .rib-avis-row { display:flex; gap:5mm; align-items:stretch; max-width:140mm; break-inside:avoid; page-break-inside:avoid; }
-     .rib-avis-row .rib { flex:1; margin-top:0; max-width:none; }
-     .rib-avis-row .avis-bloc { flex:0 0 46mm; margin-top:0; display:flex; flex-direction:column; justify-content:center; }
-     .rib-avis-row .avis-bloc .avis-txt { font-size:11.5px; }
-     .rib-avis-row .avis-bloc .avis-sub { font-size:8.5px; }
-     .rib-avis-row .avis-bloc .avis-qr { width:28mm; height:28mm; margin:1.5mm auto 0; }
+     .rib-avis-col { max-width:115mm; break-inside:avoid; page-break-inside:avoid; }
+     .avis-bloc.avis-h { display:flex; align-items:center; gap:4mm; text-align:left; }
+     .avis-bloc.avis-h .avis-qr { width:26mm; height:26mm; margin:0; flex:0 0 26mm; }
+     .avis-bloc.avis-h .avis-side { flex:1; }
      /* Bas de facture compact + solidaire (évite le saut de page du bloc RIB+QR) */
      .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; }
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
-     .bas-final .rib-avis-row { margin-top:3mm; }
-     .bas-final .rib { padding:2mm 3.5mm; font-size:10.5px; line-height:1.5; }
-     .bas-final .avis-bloc { padding:2.5mm 3mm; }
+     .bas-final .rib-avis-col { margin-top:3mm; }
+     .bas-final .rib { margin-top:0; padding:2mm 3.5mm; font-size:10.5px; line-height:1.5; }
+     .bas-final .avis-bloc { margin-top:2.5mm; padding:2.5mm 3mm; }
+     .bas-final .avis-bloc.avis-h .avis-qr { width:24mm; height:24mm; flex:0 0 24mm; }
+     .bas-final .avis-bloc .avis-txt { font-size:12px; }
+     .bas-final .avis-bloc .avis-sub { font-size:9px; margin-top:0.5mm; }
      .bas-keep { break-inside:avoid; page-break-inside:avoid; }
      .grand .lg.brut { color:#6a5a52; font-size:12.5px; }
      .grand .lg.reduc { color:#9a4a10; font-weight:600; font-size:12.5px; }
@@ -33130,18 +33130,20 @@ function factRibBloc(e, compact){
 // Bloc « avis Google » : invitation discrète à laisser un commentaire, avec le QR code
 // (généré en amont en data-URI, scannable, logo central). S'affiche sous le RIB.
 function factAvisBloc(){
-  // Carte « avis Google » : invitation + QR, centrés. Affichée à côté du RIB (chacun sa carte).
-  return `<div class="avis-bloc">`
-    + `<div class="avis-txt">Les géants ont la pub.<br>Nous, on a vos avis \uD83E\uDD0D</div>`
-    + `<div class="avis-sub">Scannez pour partager votre expérience sur Google</div>`
+  // Disposition « bandeau » : QR à gauche, invitation à droite (compact, intégré sous le RIB).
+  return `<div class="avis-bloc avis-h">`
     + `<img class="avis-qr" src="${FACT_GOOGLE_QR}" alt="Avis Google">`
+    + `<div class="avis-side">`
+    +   `<div class="avis-txt">Les géants ont la pub.<br>Nous, on a vos avis \uD83E\uDD0D</div>`
+    +   `<div class="avis-sub">Scannez pour partager votre expérience sur Google</div>`
+    + `</div>`
     + `</div>`;
 }
-// Bloc « bas de document » unifié : Coordonnées bancaires et QR avis CÔTE À CÔTE,
-// chacun dans sa propre carte, le tout solidaire (jamais coupé entre deux pages).
+// Bloc « bas de document » unifié : Coordonnées bancaires (pleine largeur) puis QR avis
+// juste en dessous, le tout solidaire (jamais coupé entre deux pages).
 function factRibAvisCol(e){
   const rib = factRibBloc(e);
-  return `<div class="rib-avis-row">${rib}${factAvisBloc()}</div>`;
+  return `<div class="rib-avis-col">${rib}${factAvisBloc()}</div>`;
 }
 // === DEVIS : aperçu / impression (→ « Enregistrer en PDF » sur iOS) + envoi par mail ===
 // Génère le HTML d'un devis (registre documents, type:'devis') avec le même rendu
@@ -33343,20 +33345,20 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .avis-bloc .avis-txt { font-family:'Bellota',cursive; font-weight:700; font-size:13px; color:#490F25; line-height:1.3; }
      .avis-bloc .avis-sub { margin-top:1mm; font-size:10px; color:#6a5a52; line-height:1.4; }
      .avis-bloc .avis-qr { display:block; margin:2.5mm auto 0; width:32mm; height:32mm; }
-     /* RIB + QR côte à côte, chacun dans sa carte, bloc solidaire */
-     .rib-avis-row { display:flex; gap:5mm; align-items:stretch; max-width:140mm; break-inside:avoid; page-break-inside:avoid; }
-     .rib-avis-row .rib { flex:1; margin-top:0; max-width:none; }
-     .rib-avis-row .avis-bloc { flex:0 0 46mm; margin-top:0; display:flex; flex-direction:column; justify-content:center; }
-     .rib-avis-row .avis-bloc .avis-txt { font-size:11.5px; }
-     .rib-avis-row .avis-bloc .avis-sub { font-size:8.5px; }
-     .rib-avis-row .avis-bloc .avis-qr { width:28mm; height:28mm; margin:1.5mm auto 0; }
+     .rib-avis-col { max-width:115mm; break-inside:avoid; page-break-inside:avoid; }
+     .avis-bloc.avis-h { display:flex; align-items:center; gap:4mm; text-align:left; }
+     .avis-bloc.avis-h .avis-qr { width:26mm; height:26mm; margin:0; flex:0 0 26mm; }
+     .avis-bloc.avis-h .avis-side { flex:1; }
      /* Bas de facture compact + solidaire (évite le saut de page du bloc RIB+QR) */
      .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; }
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
-     .bas-final .rib-avis-row { margin-top:3mm; }
-     .bas-final .rib { padding:2mm 3.5mm; font-size:10.5px; line-height:1.5; }
-     .bas-final .avis-bloc { padding:2.5mm 3mm; }
+     .bas-final .rib-avis-col { margin-top:3mm; }
+     .bas-final .rib { margin-top:0; padding:2mm 3.5mm; font-size:10.5px; line-height:1.5; }
+     .bas-final .avis-bloc { margin-top:2.5mm; padding:2.5mm 3mm; }
+     .bas-final .avis-bloc.avis-h .avis-qr { width:24mm; height:24mm; flex:0 0 24mm; }
+     .bas-final .avis-bloc .avis-txt { font-size:12px; }
+     .bas-final .avis-bloc .avis-sub { font-size:9px; margin-top:0.5mm; }
      .bas-keep { break-inside:avoid; page-break-inside:avoid; }
      .grand .lg.brut { color:#6a5a52; font-size:12.5px; }
      .grand .lg.reduc { color:#9a4a10; font-weight:600; font-size:12.5px; }
