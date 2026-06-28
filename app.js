@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1013';
+const APP_VERSION = 'v1014';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -32956,8 +32956,8 @@ const FACT_STYLE = `   <style>
        table { width:100%; }
        .totaux { width:auto; max-width:100%; }
      }
-     .entete { background:#E8DDCD; color:#490F25; padding:10mm 18mm 8mm; text-align:center; border-bottom:2.5pt solid #490F25; }
-     .entete .logo { width:78mm; max-width:80%; height:auto; display:block; margin:0 auto 6mm; }
+     .entete { background:#E8DDCD; color:#490F25; padding:6.5mm 18mm 5mm; text-align:center; border-bottom:2.5pt solid #490F25; }
+     .entete .logo { width:74mm; max-width:80%; height:auto; display:block; margin:0 auto 3.5mm; }
      .entete .em { font-size:11.5px; line-height:1.55; color:#5a3a30; max-width:120mm; margin:0 auto; transform:translateX(5%); }
      .entete .em-l { display:block; }
      .corps { padding:8mm 18mm 0; }
@@ -32980,9 +32980,9 @@ const FACT_STYLE = `   <style>
      .ln-sub { display:block; padding-left:5mm; font-size:11px; color:#7a6a60; }
      .ln-loc { display:block; margin-top:1mm; font-size:11px; color:#8a5a2a; font-style:italic; }
      .cmd-table tr.sub td, .cmd-table tr.rem td, .cmd-table tr.liv td { color:#6a5a52; font-size:12px; border-bottom:none; padding-top:1mm; padding-bottom:1mm; }
-     .cmd-table tr.cmd-total td { font-weight:600; color:#490F25; border-top:1px solid #e0d5c5; border-bottom:none; }
+     .cmd-table tr.cmd-total td { font-weight:600; color:#490F25; border-top:1px solid #e0d5c5; border-bottom:none; padding-top:1.2mm; padding-bottom:1.2mm; }
      .grand { margin-top:4mm; width:100%; }
-     .grand .lg { display:flex; justify-content:space-between; padding:1.8mm 0; font-size:13px; }
+     .grand .lg { display:flex; justify-content:space-between; padding:1mm 0; font-size:13px; }
      .grand .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:19px; color:#490F25; }
      .tva { margin-top:5mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
      .acompte-mention { margin-top:4mm; padding:2.5mm 4mm; background:#fbeede; border:1.2px solid #d98324; border-radius:2mm; color:#9a4a10; font-weight:600; font-size:12px; text-align:center; }
