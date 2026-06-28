@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1012';
+const APP_VERSION = 'v1013';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -33002,6 +33002,16 @@ const FACT_STYLE = `   <style>
      .avis-bloc.avis-h { display:flex; align-items:center; gap:4mm; text-align:left; }
      .avis-bloc.avis-h .avis-qr { width:26mm; height:26mm; margin:0; flex:0 0 26mm; }
      .avis-bloc.avis-h .avis-side { flex:1; }
+     /* Bas de facture compact + solidaire (évite le saut de page du bloc RIB+QR) */
+     .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; }
+     .bas-final .tva { margin-top:0; font-size:10px; }
+     .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
+     .bas-final .rib-avis-col { margin-top:3mm; }
+     .bas-final .rib { margin-top:0; padding:2mm 3.5mm; font-size:10.5px; line-height:1.5; }
+     .bas-final .avis-bloc { margin-top:2.5mm; padding:2.5mm 3mm; }
+     .bas-final .avis-bloc.avis-h .avis-qr { width:24mm; height:24mm; flex:0 0 24mm; }
+     .bas-final .avis-bloc .avis-txt { font-size:12px; }
+     .bas-final .avis-bloc .avis-sub { font-size:9px; margin-top:0.5mm; }
      .bas-keep { break-inside:avoid; page-break-inside:avoid; }
      .grand .lg.brut { color:#6a5a52; font-size:12.5px; }
      .grand .lg.reduc { color:#9a4a10; font-weight:600; font-size:12.5px; }
@@ -33124,7 +33134,7 @@ function factAvisBloc(){
   return `<div class="avis-bloc avis-h">`
     + `<img class="avis-qr" src="${FACT_GOOGLE_QR}" alt="Avis Google">`
     + `<div class="avis-side">`
-    +   `<div class="avis-txt">Votre avis compte beaucoup pour moi \uD83E\uDD0D</div>`
+    +   `<div class="avis-txt">Les géants ont la pub.<br>Nous, on a vos avis \uD83E\uDD0D</div>`
     +   `<div class="avis-sub">Scannez pour partager votre expérience sur Google</div>`
     + `</div>`
     + `</div>`;
@@ -33222,11 +33232,9 @@ async function genererDevisDoc(docId){
          <div class="lg total"><span>Total du devis</span><span>${euro(total)}</span></div>
        </div>
        <div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider votre devis.</div>
-       <div class="bas-doc bas-keep" style="flex-direction:column;gap:4mm">
-         <div class="bas-txt">
-           <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
-           <div class="paiement">Devis valable ${d.validiteJours||30} jours à compter de la date d'émission.<br>Bon pour accord — date et signature :</div>
-         </div>
+       <div class="bas-final">
+         <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
+         <div class="paiement">Devis valable ${d.validiteJours||30} jours à compter de la date d'émission.<br>Bon pour accord — date et signature :</div>
          ${factRibAvisCol(e)}
        </div>
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
@@ -33341,6 +33349,16 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .avis-bloc.avis-h { display:flex; align-items:center; gap:4mm; text-align:left; }
      .avis-bloc.avis-h .avis-qr { width:26mm; height:26mm; margin:0; flex:0 0 26mm; }
      .avis-bloc.avis-h .avis-side { flex:1; }
+     /* Bas de facture compact + solidaire (évite le saut de page du bloc RIB+QR) */
+     .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; }
+     .bas-final .tva { margin-top:0; font-size:10px; }
+     .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
+     .bas-final .rib-avis-col { margin-top:3mm; }
+     .bas-final .rib { margin-top:0; padding:2mm 3.5mm; font-size:10.5px; line-height:1.5; }
+     .bas-final .avis-bloc { margin-top:2.5mm; padding:2.5mm 3mm; }
+     .bas-final .avis-bloc.avis-h .avis-qr { width:24mm; height:24mm; flex:0 0 24mm; }
+     .bas-final .avis-bloc .avis-txt { font-size:12px; }
+     .bas-final .avis-bloc .avis-sub { font-size:9px; margin-top:0.5mm; }
      .bas-keep { break-inside:avoid; page-break-inside:avoid; }
      .grand .lg.brut { color:#6a5a52; font-size:12.5px; }
      .grand .lg.reduc { color:#9a4a10; font-weight:600; font-size:12.5px; }
@@ -33504,9 +33522,11 @@ async function genererFactureMultiple(ids){
          <div class="lg total"><span>Total à payer</span><span>${euro(grandTotal)}</span></div>
          ${totalPaye>0?`<div class="lg"><span>Déjà réglé</span><span>−${euro(totalPaye)}</span></div><div class="lg"><span><b>Reste à payer</b></span><span><b>${euro(reste)}</b></span></div>`:''}
        </div>
-       <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
-       ${e.paiement?`<div class="paiement">${esc(e.paiement)}</div>`:''}
-       ${factRibAvisCol(e)}
+       <div class="bas-final">
+         <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
+         ${e.paiement?`<div class="paiement">${esc(e.paiement)}</div>`:''}
+         ${factRibAvisCol(e)}
+       </div>
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
      </div>
    </div>
