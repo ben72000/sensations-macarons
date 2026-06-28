@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1015';
+const APP_VERSION = 'v1016';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -14980,6 +14980,8 @@ async function saveCmd(id){
       fraisLivraison:o.fraisLivraison||0,
       // Sacs / emballages choisis sur la commande.
       sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
+      // Personnalisation des couleurs : conservée pour l'encadré du devis/facture.
+      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[],
       notes:o.notes,
       acompte: 0,                           // acompte reçu (déclenche la conversion une fois > 0)
       validiteJours:30, expiration:exp.toISOString().slice(0,10),
