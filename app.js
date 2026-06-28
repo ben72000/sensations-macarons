@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1014';
+const APP_VERSION = 'v1015';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -6453,7 +6453,7 @@ async function docConvertToOrder(id){
     tempsLivraisonMin:d.tempsLivraisonMin||0, consoVehicule:(d.consoVehicule!=null?d.consoVehicule:null),
     fraisLivraison:d.fraisLivraison||0, sacMatId:d.sacMatId||0, sacNb:d.sacNb||0,
     lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0,
-    perso:false, persoMacarons:0, montant:d.montant||0,
+    perso:!!(d.perso||+d.persoMacarons>0), persoMacarons:+d.persoMacarons||0, persoCouleurs:Array.isArray(d.persoCouleurs)?d.persoCouleurs:[], montant:d.montant||0,
     paiements:[{date:today, montant:money2(acompte), moyen:'Acompte'}],
     statut:'À préparer', notes:(d.notes||'')+`\n(Issu du devis ${d.numero})`,
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[],
@@ -6531,6 +6531,7 @@ async function cmdToDevisConfirm(id){
       tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
       fraisLivraison:o.fraisLivraison||0, sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
       lignes:o.lignes||[], remiseGlobale:o.remiseGlobale||0,
+      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[],
       montant:+o.montant||0, acompte:0, orderId:null,
       notes:(o.notes||'')+`\n(Repassé en devis depuis la commande ${orderNumber(o)})`
     };
@@ -13806,7 +13807,8 @@ async function cmdForm(id, opts){
               distanceKm:dv.distanceKm||0, prixCarburant:dv.prixCarburant||0,
               tempsLivraisonMin:dv.tempsLivraisonMin||0, consoVehicule:(dv.consoVehicule!=null?dv.consoVehicule:null),
               fraisLivraison:dv.fraisLivraison||0, sacMatId:dv.sacMatId||0, sacNb:dv.sacNb||0,
-              statut:'À préparer', paiement:'En attente', perso:false}
+              perso:!!(dv.perso||+dv.persoMacarons>0), persoMacarons:+dv.persoMacarons||0, persoCouleurs:Array.isArray(dv.persoCouleurs)?dv.persoCouleurs:[],
+              statut:'À préparer', paiement:'En attente'}
             : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
   } else {
     o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
@@ -13892,7 +13894,11 @@ async function cmdForm(id, opts){
    </div>
    <label class="switch-row"><input type="checkbox" id="f_perso" ${o.perso||+o.persoMacarons>0?'checked':''} onchange="cmdPersoToggle()"> Personnalisation des couleurs (+0,25 €/macaron)</label>
    <div class="field" id="f_persoWrap" style="${(o.perso||+o.persoMacarons>0)?'':'display:none'}"><label>Nombre de macarons personnalisés <span style="color:#9a8a82;font-weight:400">— pas forcément le total de la commande</span></label>
-     <input type="number" min="0" step="1" id="f_persoNb" value="${o.persoMacarons||''}" placeholder="ex : 24" oninput="cmdRecalc()"></div>
+     <input type="number" min="0" step="1" id="f_persoNb" value="${o.persoMacarons||''}" placeholder="ex : 24" oninput="cmdRecalc()">
+     <div style="margin-top:8px"><label style="font-weight:400;color:#7a6a60">Détail couleur \u2194 parfum <span style="color:#9a8a82">— apparaît dans un encadré sur le devis et la facture (facultatif)</span></label>
+       <div id="f_persoCoulList">${cmdPersoCoulRows(o.persoCouleurs)}</div>
+       <button type="button" class="btn ghost" style="margin-top:4px;padding:5px 12px;font-size:.8rem" onclick="cmdPersoCoulAdd()">+ Ajouter une couleur</button>
+     </div></div>
    <div class="row2">
      <div class="row2" style="align-items:end">
        <div class="field" style="margin:0"><label>Remise globale (€)</label><input type="number" min="0" step="0.01" id="f_remisegEur" placeholder="0" oninput="cmdGlobalRemiseFromEuro(this.value)"></div>
@@ -14658,6 +14664,63 @@ function cmdPersoCount(){
   const on=document.getElementById('f_perso')?.checked;
   return on ? Math.max(0, +(document.getElementById('f_persoNb')?.value)||0) : 0;
 }
+// --- Détail couleur \u2194 parfum de la personnalisation (encadré devis/facture) ---
+// Stocké dans o.persoCouleurs = [{couleur:'Rose pâle', parfum:'Framboise'}, ...].
+// Saisie libre, purement descriptive : n'entre PAS dans le total (le montant reste
+// persoMacarons \u00d7 0,25 \u20ac, géré par la ligne « Macarons personnalisés »).
+function cmdPersoCoulRows(list){
+  const arr = Array.isArray(list) ? list : [];
+  const rows = arr.length ? arr : [{couleur:'',parfum:''}];
+  return rows.map(r=>cmdPersoCoulRowHtml(r.couleur||'', r.parfum||'')).join('');
+}
+function cmdPersoCoulRowHtml(couleur, parfum){
+  return `<div class="perso-coul-row" style="display:flex;gap:6px;margin-top:4px;align-items:center">`
+    + `<input type="text" class="pc-coul" value="${esc(couleur)}" placeholder="Couleur (ex : Rose pâle)" style="flex:1">`
+    + `<span style="color:#b09a86">\u2192</span>`
+    + `<input type="text" class="pc-parf" value="${esc(parfum)}" placeholder="Parfum" style="flex:1">`
+    + `<button type="button" class="btn ghost" style="padding:4px 9px;font-size:.85rem" onclick="this.closest('.perso-coul-row').remove()">\u00d7</button>`
+    + `</div>`;
+}
+function cmdPersoCoulAdd(){
+  const box=document.getElementById('f_persoCoulList'); if(!box) return;
+  box.insertAdjacentHTML('beforeend', cmdPersoCoulRowHtml('',''));
+}
+// Relit les lignes saisies → tableau nettoyé (on ignore les lignes entièrement vides).
+function cmdPersoCoulCollect(){
+  const box=document.getElementById('f_persoCoulList'); if(!box) return [];
+  const out=[];
+  box.querySelectorAll('.perso-coul-row').forEach(row=>{
+    const c=(row.querySelector('.pc-coul')?.value||'').trim();
+    const p=(row.querySelector('.pc-parf')?.value||'').trim();
+    if(c||p) out.push({couleur:c, parfum:p});
+  });
+  return out;
+}
+// Encadré HTML « Personnalisation » pour les documents (devis + facture).
+// Rendu compact à droite du contenu. Renvoie '' si rien à afficher.
+// nbPerso : nombre de macarons personnalisés ; coul : tableau {couleur,parfum}.
+function factPersoBox(nbPerso, coul){
+  const n = Math.max(0, +nbPerso||0);
+  const lignes = Array.isArray(coul) ? coul.filter(c=>c && (c.couleur||c.parfum)) : [];
+  if(n<=0 && !lignes.length) return '';
+  const PU = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
+  const items = lignes.map(c=>{
+    const col = flavorColor(c.parfum||'');
+    return `<div class="perso-li">`
+      + `<span class="perso-dot" style="background:${col}"></span>`
+      + `<span class="perso-coul">${esc(c.couleur||'')}</span>`
+      + (c.parfum?`<span class="perso-arr">\u2192</span><span class="perso-parf">${esc(c.parfum)}</span>`:'')
+      + `</div>`;
+  }).join('');
+  const calc = n>0
+    ? `<div class="perso-calc"><span class="formule">${n} \u00d7 ${euro(money2(PU))}</span><span class="montant">${euro(money2(n*PU))}</span></div>`
+    : '';
+  return `<div class="perso-box">`
+    + `<div class="perso-titre">\ud83c\udfa8 Personnalisation</div>`
+    + items
+    + calc
+    + `</div>`;
+}
 // Remise globale — synchronisation €/%. La référence stockée reste le % (champ f_remiseg),
 // appliqué au sous-total (après remises de ligne), pour rester compatible avec saveCmd et l'aval.
 function _cmdSousTotalAvantGlobal(){
@@ -14884,6 +14947,7 @@ async function saveCmd(id){
     lignes, remiseGlobale,
     perso:document.getElementById('f_perso').checked,
     persoMacarons: cmdPersoCount(),
+    persoCouleurs: cmdPersoCoulCollect(),
     sacMatId: +val('f_sacMat')||0,                    // modèle de sac choisi (matière emballage usage:'sac'), 0 = aucun
     sacNb: Math.max(0, Math.round(+val('f_sacNb')||0)),// nombre de sacs saisi à la main
     montant,
@@ -33019,6 +33083,22 @@ const FACT_STYLE = `   <style>
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
      .barre { text-align:center; padding:10px; background:#490F25; }
      .barre button { font-family:'Outfit'; font-size:14px; padding:9px 22px; border:none; border-radius:8px; background:#E8DDCD; color:#490F25; font-weight:600; cursor:pointer; }
+     /* Encadré « Personnalisation » (devis + facture) : colonne compacte à droite */
+     .cmd-body { display:flex; align-items:stretch; gap:0; }
+     .cmd-body > .cmd-table, .cmd-body > table { flex:1; }
+     .fact-body { display:flex; align-items:flex-start; gap:0; }
+     .fact-body > table { flex:1; }
+     .perso-box { flex:0 0 52mm; border-left:1px solid #e3d4c2; background:#fbf6ef; padding:2.6mm 3mm; font-size:10.5px; break-inside:avoid; page-break-inside:avoid; }
+     .perso-box .perso-titre { font-weight:700; color:#490F25; font-size:11px; letter-spacing:.03em; margin-bottom:2mm; }
+     .perso-box .perso-li { display:flex; align-items:center; gap:5px; padding:1.1mm 0; border-bottom:1px dotted #e8dccb; }
+     .perso-box .perso-li:last-of-type { border-bottom:none; }
+     .perso-box .perso-dot { width:11px; height:11px; border-radius:50%; flex:0 0 11px; border:1px solid rgba(0,0,0,.12); }
+     .perso-box .perso-coul { color:#6a5a52; }
+     .perso-box .perso-arr { color:#b09a86; margin:0 1px; }
+     .perso-box .perso-parf { font-weight:600; color:#3a2a24; }
+     .perso-box .perso-calc { margin-top:2.4mm; padding-top:2mm; border-top:1px solid #e3d4c2; display:flex; justify-content:space-between; align-items:baseline; }
+     .perso-box .perso-calc .formule { color:#6a5a52; font-size:10px; }
+     .perso-box .perso-calc .montant { font-weight:700; color:#490F25; font-size:12px; }
 </style>`;
 // Coordonnées émetteur (saisies une fois, stockées en local).
 function factGetEmetteur(){
@@ -33178,12 +33258,15 @@ async function genererDevisDoc(docId){
           <span class="cmd-ref">Devis ${esc(d.numero||'')}${d.dateEvenement?`<span class="cmd-event">📅 Événement : ${fmtDate(d.dateEvenement)}</span>`:''}</span>
           <span class="cmd-date">${fmtDate(d.date)||''}</span>
         </div>
+        <div class="cmd-body">
         <table class="cmd-table">
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
             ${gpct>0?`<tr class="sub"><td>Sous-total</td><td class="mt">${euro(sousTotal)}</td></tr><tr class="rem"><td>Remise (${gpct}%)</td><td class="mt">−${euro(remiseGEuro)}</td></tr>`:''}
           </tbody>
         </table>
+        ${factPersoBox(d.persoMacarons, d.persoCouleurs)}
+        </div>
       </div>`;
 
   const clientBloc = client
@@ -33366,6 +33449,22 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
      .barre { text-align:center; padding:10px; background:#490F25; }
      .barre button { font-family:'Outfit'; font-size:14px; padding:9px 22px; border:none; border-radius:8px; background:#E8DDCD; color:#490F25; font-weight:600; cursor:pointer; }
+     /* Encadré « Personnalisation » (devis + facture) : colonne compacte à droite */
+     .cmd-body { display:flex; align-items:stretch; gap:0; }
+     .cmd-body > .cmd-table, .cmd-body > table { flex:1; }
+     .fact-body { display:flex; align-items:flex-start; gap:0; }
+     .fact-body > table { flex:1; }
+     .perso-box { flex:0 0 52mm; border-left:1px solid #e3d4c2; background:#fbf6ef; padding:2.6mm 3mm; font-size:10.5px; break-inside:avoid; page-break-inside:avoid; }
+     .perso-box .perso-titre { font-weight:700; color:#490F25; font-size:11px; letter-spacing:.03em; margin-bottom:2mm; }
+     .perso-box .perso-li { display:flex; align-items:center; gap:5px; padding:1.1mm 0; border-bottom:1px dotted #e8dccb; }
+     .perso-box .perso-li:last-of-type { border-bottom:none; }
+     .perso-box .perso-dot { width:11px; height:11px; border-radius:50%; flex:0 0 11px; border:1px solid rgba(0,0,0,.12); }
+     .perso-box .perso-coul { color:#6a5a52; }
+     .perso-box .perso-arr { color:#b09a86; margin:0 1px; }
+     .perso-box .perso-parf { font-weight:600; color:#3a2a24; }
+     .perso-box .perso-calc { margin-top:2.4mm; padding-top:2mm; border-top:1px solid #e3d4c2; display:flex; justify-content:space-between; align-items:baseline; }
+     .perso-box .perso-calc .formule { color:#6a5a52; font-size:10px; }
+     .perso-box .perso-calc .montant { font-weight:700; color:#490F25; font-size:12px; }
    </style></head><body>
    <div class="barre noprint"><button onclick="window.print()">🖨 Imprimer / Enregistrer en PDF</button></div>
    <div class="page">
@@ -33394,10 +33493,13 @@ async function _genererFactureSimple_DEPRECATED(orderId){
            ${o.statut?'Statut : '+esc(normStatus(o.statut)==='Terminée'?'Prête':normStatus(o.statut)):''}
          </div>
        </div>
+       <div class="fact-body">
        <table>
          <thead><tr><th>Désignation</th><th class="mt">Montant</th></tr></thead>
          <tbody>${rowsHtml||'<tr><td colspan="2">—</td></tr>'}</tbody>
        </table>
+       ${factPersoBox(o.persoMacarons, o.persoCouleurs)}
+       </div>
        <div class="totaux">
          ${(gpct>0||(+o.fraisLivraison>0))?`<div class="lg"><span>Sous-total produits</span><span>${euro(sousTotal)}</span></div>`:''}
          ${gpct>0?`<div class="lg"><span>Remise (${gpct}%)</span><span>−${euro(remiseGEuro)}</span></div>`:''}
@@ -33458,6 +33560,7 @@ async function genererFactureMultiple(ids){
           <span class="cmd-ref">Commande ${esc(orderNumber(o))}${o.dateEvenement?`<span class="cmd-event">📅 Événement : ${fmtDate(o.dateEvenement)}</span>`:''}</span>
           <span class="cmd-date">${fmtDate(o.date)||''}</span>
         </div>
+        <div class="cmd-body">
         <table class="cmd-table">
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
@@ -33466,6 +33569,8 @@ async function genererFactureMultiple(ids){
             <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
           </tbody>
         </table>
+        ${factPersoBox(o.persoMacarons, o.persoCouleurs)}
+        </div>
       </div>`;
   }).join('');
 
