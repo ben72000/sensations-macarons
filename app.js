@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1037';
+const APP_VERSION = 'v1039';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -34975,12 +34975,20 @@ function prodSessActive(){ return prodSessLoad().find(s=>!s.end); }
 function prodNewId(){ return 'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
 
 // Durée nette d'une tâche (pauses déduites), en ms. Fonctionne tâche finie ou en cours.
+// Plafond de sécurité pour une tâche restée OUVERTE (chrono oublié) : au-delà, on considère
+// qu'elle n'a pas été arrêtée et on ne compte pas la durée absurde. Une vraie tâche d'atelier
+// (pesée, pochage, cuisson, repos) ne dépasse pas ce seuil. N'affecte PAS les tâches terminées.
+const PROD_TASK_OPEN_MAX_MS = 6*60*60*1000; // 6 heures
 function prodTaskNet(t){
+  const open = !t.end;
   const end = t.end || Date.now();
-  const gross = Math.max(0, end - t.start);
+  let gross = Math.max(0, end - t.start);
   const accum = +t.pausedAccum||0;
   const live = (+t.pauseAt||0)>0 ? Math.max(0, Date.now()-(+t.pauseAt)) : 0;
-  return Math.max(0, gross - accum - live);
+  let net = Math.max(0, gross - accum - live);
+  // Garde-fou : une tâche jamais terminée qui dépasse le plafond = chrono oublié → on borne.
+  if(open && net > PROD_TASK_OPEN_MAX_MS) net = PROD_TASK_OPEN_MAX_MS;
+  return net;
 }
 function prodTaskPaused(t){ return t && (+t.pauseAt||0)>0; }
 // Durée RÉELLE d'une session (« mur à mur ») : enveloppe des tâches, du début de la première
@@ -40667,6 +40675,99 @@ function stockMoveKey(nom){
 
 
 
+
+// ============================================================
+// CORRECTION DES CHRONOS D'ATELIER RESTÉS OUVERTS
+// ------------------------------------------------------------
+// Une tâche jamais arrêtée (t.end absent) voit sa durée gonfler jusqu'à « maintenant »,
+// faussant le suivi des temps. Cet outil détecte ces tâches anormales et les ferme
+// proprement, en estimant une fin réaliste :
+//   • fin de la dernière tâche TERMINÉE de la même session, si elle existe ;
+//   • sinon, début de la tâche + durée médiane des tâches du même nom (ou 30 min par défaut).
+// ============================================================
+
+const CHRONO_ANORMAL_MS = 6*60*60*1000; // au-delà de 6 h ouvert = anormal (chrono oublié)
+
+// Détecte les tâches ouvertes anormalement longues (sans rien modifier).
+function _chronosOuvertsAnormaux(){
+  const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
+  const out = [];
+  sessions.forEach(s=>{
+    (s.tasks||[]).forEach(t=>{
+      if(t.end) return;                          // déjà terminée
+      if(!(+t.start>0)) return;
+      const ouvertMs = Date.now() - (+t.start);
+      if(ouvertMs <= CHRONO_ANORMAL_MS) return;  // encore dans le raisonnable (peut-être en cours réel)
+      out.push({ sessId:s.id, date:s.date, taskId:t.id, nom:t.nom||'(tâche)', start:+t.start, ouvertMs });
+    });
+  });
+  return out;
+}
+
+// Estime une fin réaliste pour une tâche restée ouverte.
+function _estimeFinTache(s, t){
+  // 1) fin de la dernière tâche terminée de la session (cohérence avec le déroulé réel)
+  const finsConnues = (s.tasks||[]).filter(x=>x.end && +x.end>+t.start).map(x=>+x.end);
+  if(finsConnues.length){
+    return Math.min(...finsConnues.filter(f=>f>+t.start)) || (+t.start + 30*60000);
+  }
+  // 2) durée médiane des tâches de même nom (terminées), sinon 30 min
+  const memeNom = (s.tasks||[]).filter(x=>x.end && (x.nom||'')===(t.nom||'')).map(x=>prodTaskNet(x)).filter(d=>d>0).sort((a,b)=>a-b);
+  const med = memeNom.length ? memeNom[Math.floor(memeNom.length/2)] : 30*60000;
+  return +t.start + med;
+}
+
+// Aperçu (sans écrire).
+function corrigerChronosOuvertsPreview(){
+  const anomalies = _chronosOuvertsAnormaux();
+  if(!anomalies.length){
+    openModal(`<h2>Chronos restés ouverts</h2>
+      <p class="note">Aucun chrono anormal détecté. Tout est cohérent ✓</p>
+      <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const lignes = anomalies.slice(0,12).map(a=>{
+    const h = Math.round(a.ouvertMs/3600000);
+    return `<div style="font-size:.8rem;color:#6a5a52;padding:4px 0;border-bottom:1px solid #f3ede3">
+      ${esc(a.nom)} · ${esc(a.date||'')} · <b style="color:#b04a3e">ouvert depuis ~${h} h</b></div>`;
+  }).join('');
+  openModal(`<h2>Chronos d'atelier restés ouverts</h2>
+    <p class="note">${anomalies.length} chrono(s) n'ont jamais été arrêtés et gonflent le suivi des temps. Je peux les fermer proprement en estimant une fin réaliste (fin de la dernière tâche terminée de la séance, ou durée habituelle de la même tâche).</p>
+    ${lignes}${anomalies.length>12?`<p class="note">… et ${anomalies.length-12} autre(s).</p>`:''}
+    <p class="note" style="margin-top:10px;color:#b04a3e">⚠️ Sauvegarde iCloud conseillée avant.</p>
+    <div class="flex" style="justify-content:flex-end;gap:8px;margin-top:12px">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="corrigerChronosOuvertsRun()">Fermer ${anomalies.length} chrono(s)</button>
+    </div>`);
+}
+
+// Exécute la fermeture (écrit).
+function corrigerChronosOuvertsRun(){
+  try{
+    closeModal();
+    const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
+    let n = 0;
+    sessions.forEach(s=>{
+      let modif = false;
+      (s.tasks||[]).forEach(t=>{
+        if(t.end) return;
+        if(!(+t.start>0)) return;
+        if((Date.now()-(+t.start)) <= CHRONO_ANORMAL_MS) return;
+        // fige une éventuelle pause en cours
+        if((+t.pauseAt||0)>0){ t.pausedAccum=(+t.pausedAccum||0)+Math.max(0,Date.now()-(+t.pauseAt)); t.pauseAt=null; }
+        t.end = _estimeFinTache(s, t);
+        if(t.end <= t.start) t.end = t.start + 30*60000;
+        t.finEstimee = true;   // trace : fin estimée par l'outil, pas mesurée
+        modif = true; n++;
+      });
+      if(modif) prodSessUpsert(s);
+    });
+    if(typeof markUnsaved==='function') markUnsaved();
+    toast(`✓ ${n} chrono(s) fermé(s) proprement`);
+    if(typeof view!=='undefined' && view==='tempsproduction' && typeof renderTempsProduction==='function') renderTempsProduction();
+  }catch(e){ toast('Erreur : '+(e&&e.message||e)); }
+}
+
 // ============================================================
 // RAPPORT « TEMPS DE PRODUCTION »
 // ------------------------------------------------------------
@@ -40779,10 +40880,14 @@ async function renderTempsProduction(){
     .sort((a,b)=>b.reel-a.reel)
     .map(e=>{
       const moy = e.nbMesure>0 ? e.reel/e.nbMesure : 0;
+      // Garde-fou : le temps actif ne peut pas dépasser la durée réelle (impossible physiquement).
+      // Si c'est le cas (chrono oublié résiduel), on plafonne l'affichage et on le signale.
+      const actifPlafonne = (e.reel>0 && e.actif>e.reel);
+      const actifAff = actifPlafonne ? e.reel : e.actif;
       return `<tr><td style="font-weight:600;color:var(--bordeaux)">${esc(e.nom)}</td>
         <td style="text-align:right">${e.nb}</td>
         <td style="text-align:right;color:var(--bordeaux);font-weight:600">${fmtDureeMs(e.reel)}</td>
-        <td style="text-align:right;color:var(--gold);font-weight:600">${fmtDureeMs(e.actif)}</td>
+        <td style="text-align:right;color:var(--gold);font-weight:600">${fmtDureeMs(actifAff)}${actifPlafonne?' <span title="Temps actif plafonné à la durée réelle (chrono probablement oublié)" style="color:#b04a3e;cursor:help">⚠</span>':''}</td>
         <td style="text-align:right">${fmtDureeMs(moy)}</td></tr>`;
     }).join('') || `<tr><td colspan="5" class="note" style="padding:10px">Aucune production sur la période.</td></tr>`;
 
@@ -40807,7 +40912,7 @@ async function renderTempsProduction(){
   main.innerHTML = `
    <div class="topbar"><div><h1>⏱️ Temps de production</h1>
      <p>Temps réellement passé par production, parfum et période.</p></div>
-     <div class="flex"><button class="btn" onclick="goView('histostock')">📦 Historique →</button></div></div>
+     <div class="flex"><button class="btn ghost sm" onclick="corrigerChronosOuvertsPreview()" title="Détecter et fermer les chronos jamais arrêtés">🔧 Chronos ouverts</button><button class="btn" onclick="goView('histostock')">📦 Historique →</button></div></div>
 
    <div class="panel">
      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${periodes}</div>
@@ -40903,11 +41008,15 @@ async function _reconstructStockPlan(){
     if(dejaEntree.has('P'+p.id)) continue;
     // Une production au composant 'degustation' est une ENTRÉE de stock dégustation (type dédié).
     const estDeg = (p.composant==='degustation') || p.degustation===true;
-    const comp = estDeg ? 'macaron'
+    // Un 'assemble' = macaron fini issu d'un assemblage → entrée typée 'assemblage'
+    // (cohérent avec les sorties coques/ganache du même assemblage, et avec le temps réel).
+    const estAsm = (p.composant==='assemble');
+    const comp = (estDeg || estAsm) ? 'macaron'
                : (p.composant==='coques') ? 'coques'
                : (p.composant==='ganache') ? 'ganache' : 'macaron';
+    const typeEntree = estDeg ? 'degustation' : (estAsm ? 'assemblage' : 'production');
     entrees.push({ ts, qte:q, nom:prodNomComplet(p, recipes), composant:comp,
-      type: estDeg ? 'degustation' : 'production', productionId:p.id });
+      type: typeEntree, productionId:p.id });
   }
 
   // ASSEMBLAGES : pour chaque production assemblée, recréer les SORTIES des composants
@@ -41014,6 +41123,19 @@ async function reconstructStockHistoryRun(){
   try{
     closeModal();
     toast('Reconstruction en cours…');
+    // MIGRATION : re-typer les entrées d'assemblage déjà reconstruites qui ont été
+    // classées 'production' par erreur (elles doivent être 'assemblage' pour apparaître
+    // avec les sorties coques/ganache du même assemblage).
+    try{
+      const prodsRef = await db.productions.toArray().catch(()=>[]);
+      const asmIds = new Set(prodsRef.filter(p=>p.composant==='assemble').map(p=>+p.id));
+      const existants = await db.stockMoves.toArray().catch(()=>[]);
+      for(const m of existants){
+        if(m.reconstruit && m.sens>0 && m.type==='production' && m.productionId!=null && asmIds.has(+m.productionId)){
+          try{ await db.stockMoves.update(m.id, {type:'assemblage'}); }catch(_){}
+        }
+      }
+    }catch(_){}
     const plan = await _reconstructStockPlan();
     let ok = 0;
     for(const e of plan.entrees){
