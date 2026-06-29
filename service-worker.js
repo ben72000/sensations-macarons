@@ -1,4 +1,4 @@
-const CACHE = 'sm-iphone-v57';
+const CACHE = 'sm-iphone-v59';
 const ASSETS = [
   './',
   './index.html',
@@ -10,7 +10,11 @@ const ASSETS = [
   './rd_pack_bau.json',
   './manifest.webmanifest',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './Outfit-Regular.ttf',
+  './Outfit-SemiBold.ttf',
+  './Outfit-Bold.ttf',
+  './Fraunces-Variable.ttf'
 ];
 
 // INSTALL : précache + activation IMMÉDIATE de la nouvelle version (skipWaiting).
