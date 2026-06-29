@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1040';
+const APP_VERSION = 'v1041';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -35480,13 +35480,24 @@ function prodTaskStartForBatch(meta){
   const phaseMap = {coques:'Macaronnage', ganache:'Garnissage', cremeux:'Garnissage', assemble:'Garnissage', complet:'Macaronnage'};
   const phase = phaseMap[meta.composant] || 'Macaronnage';
   const s = prodSessionStart();
+  s.tasks = s.tasks||[];
+  // ANTI-DOUBLON : si une tâche identique (même recette + même composant) est DÉJÀ en cours
+  // (non terminée), on ne crée pas de second chrono. Évite les doublons sur double-tap ou
+  // double-appel. On retourne l'id de la tâche existante.
+  const rid = (meta.recipeId!=null) ? +meta.recipeId : null;
+  const comp = meta.composant||'complet';
+  const dejaEnCours = s.tasks.find(t=>!t.end
+        && (t.composant||'complet')===comp
+        && ((rid!=null && Array.isArray(t.parfums) && t.parfums.map(Number).includes(rid))
+            || (rid==null && t.label===label)));
+  if(dejaEnCours) return dejaEnCours.id;
   const t = { id:prodNewId(), label, phase, color:'#aa7c39',
               start:Date.now(), end:null, pausedAccum:0, pauseAt:null,
-              parfums: (meta.recipeId!=null ? [+meta.recipeId] : []),
-              composant: meta.composant||'complet',
+              parfums: (rid!=null ? [rid] : []),
+              composant: comp,
               lotBase: meta.lotBase||'',
               fromBatch: true };
-  s.tasks = s.tasks||[]; s.tasks.push(t);
+  s.tasks.push(t);
   prodSessUpsert(s);
   prodStartTicking();
   if(typeof prodRenderBoard==='function') prodRenderBoard();
