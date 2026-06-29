@@ -58,11 +58,42 @@
     paint('PROMISE', (r && (r.message||r.toString && r.toString())) || 'rejet non géré',
       '', '', '', r && r.stack);
   });
+  // [DIAG AFFICHAGE] Sonde visuelle : montre ce que le navigateur applique réellement
+  // (largeur viewport, zoom, CSS chargé, sidebar visible). Tranche la cause d'un layout cassé.
+  window.addEventListener('load', function(){
+    setTimeout(function(){
+      try{
+        var vv = window.visualViewport || {};
+        var body = document.body;
+        var bg = body ? getComputedStyle(body).backgroundColor : '?';
+        var bodyFont = body ? getComputedStyle(body).fontFamily : '?';
+        var side = document.querySelector('.side');
+        var sideDisp = side ? getComputedStyle(side).display : 'absente';
+        var main = document.getElementById('main');
+        var mainML = main ? getComputedStyle(main).marginLeft : '?';
+        var styleTags = document.querySelectorAll('style').length;
+        var sheets = document.styleSheets ? document.styleSheets.length : 0;
+        // le CSS s'applique-t-il ? un .btn devrait avoir un border-radius non nul si oui
+        var probe = document.createElement('div'); probe.className='btn'; probe.style.position='absolute'; probe.style.left='-9999px';
+        (body||document.documentElement).appendChild(probe);
+        var br = getComputedStyle(probe).borderRadius; probe.remove();
+        var info = 'innerWidth=' + window.innerWidth + 'px  (media 820? ' + (window.innerWidth<=820?'OUI→mobile':'NON→desktop') + ')'
+          + '\n  devicePixelRatio=' + window.devicePixelRatio
+          + '  visualViewport.scale=' + (vv.scale!=null?vv.scale:'?') + '  vv.width=' + (vv.width!=null?Math.round(vv.width):'?')
+          + '\n  body bg=' + bg + '  (attendu rgb(251,248,243)) '
+          + '\n  body font=' + String(bodyFont).slice(0,40)
+          + '\n  <style> tags=' + styleTags + '  styleSheets=' + sheets
+          + '\n  .btn border-radius=' + br + '  (attendu ~10px = CSS appliqué)'
+          + '\n  .side display=' + sideDisp + '  .main margin-left=' + mainML;
+        paint('AFFICHAGE', info, '', '', '', '');
+      }catch(err){ paint('AFFICHAGE', 'sonde échouée: '+(err&&err.message||err)); }
+    }, 700);
+  });
 })();
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1027';
+const APP_VERSION = 'v1028';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
