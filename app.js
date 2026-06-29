@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1055';
+const APP_VERSION = 'v1056';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -34830,6 +34830,20 @@ let _ttTick = null;
 //               pausedAccum:ms, pauseAt:ms|null } ] }
 // Les tâches en cours ont end=null. Une session est « ouverte » tant que end=null.
 const PROD_SESS_KEY = 'sm_prodSessions';
+// Registre des sessions supprimées VOLONTAIREMENT (tombstones). Sans lui, la réhydratation
+// depuis IndexedDB ne distingue pas « session perdue par purge iOS » (à restaurer) de
+// « session supprimée exprès » (à ne jamais faire revenir) → la suppression revenait au reboot.
+const PROD_SESS_DELETED_KEY = 'sm_prodSessDeleted';
+function prodSessDeletedIds(){
+  try{ const a=JSON.parse(localStorage.getItem(PROD_SESS_DELETED_KEY)||'[]'); return Array.isArray(a)?a:[]; }
+  catch(e){ return []; }
+}
+function prodSessMarkDeleted(id){
+  try{
+    const ids=prodSessDeletedIds();
+    if(!ids.includes(id)){ ids.push(id); localStorage.setItem(PROD_SESS_DELETED_KEY, JSON.stringify(ids)); }
+  }catch(e){}
+}
 function prodSessLoad(){
   try{ const a=JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]'); return Array.isArray(a)?a:[]; }
   catch(e){ return []; }
@@ -34935,9 +34949,17 @@ async function prodSessHydrate(){
     // Cas nominal : IndexedDB fait foi. On fusionne cache + base en gardant, pour chaque id,
     // la version la PLUS RÉCENTE (_ts). Ça restaure les sessions perdues du cache (purge iOS)
     // ET évite qu'une version Dexie périmée n'écrase une modif récente encore en cache.
+    // MAIS on ne restaure JAMAIS une session supprimée volontairement (tombstone).
+    const deleted = new Set(prodSessDeletedIds());
     const byId = new Map(cache.map(s=>[s.id, s]));
-    let restored = 0, refreshed = 0;
+    let restored = 0, refreshed = 0, purged = 0;
     fromDexie.forEach(s=>{
+      if(deleted.has(s.id)){
+        // session supprimée exprès mais encore présente en base → on la purge de Dexie pour de bon
+        try{ if(db.prodSessions && db.prodSessions.delete) db.prodSessions.delete(s.id).catch(()=>{}); }catch(e){}
+        purged++;
+        return;
+      }
       const cur = byId.get(s.id);
       if(!cur){ byId.set(s.id, s); restored++; }
       else if((+s._ts||0) > (+cur._ts||0)){ byId.set(s.id, s); refreshed++; }
@@ -34947,7 +34969,9 @@ async function prodSessHydrate(){
       try{ localStorage.setItem(PROD_SESS_KEY, JSON.stringify(merged)); }catch(e){}
       // on re-persiste la fusion pour réaligner la base sur la vérité fusionnée
       prodSessPersistDexie(merged);
-      console.log('prodSessHydrate: '+restored+' restaurée(s), '+refreshed+' rafraîchie(s) depuis IndexedDB');
+      console.log('prodSessHydrate: '+restored+' restaurée(s), '+refreshed+' rafraîchie(s), '+purged+' purgée(s)');
+    } else if(purged>0){
+      console.log('prodSessHydrate: '+purged+' session(s) supprimée(s) purgée(s) de la base');
     }
   }catch(e){ console.error('prodSessHydrate', e); }
 }
@@ -34959,7 +34983,16 @@ function prodSessUpsert(sess){
   prodSessSave(a);
   try{ if(typeof prodTransInvalidate==='function') prodTransInvalidate(); }catch(e){}
 }
-function prodSessRemove(id){ prodSessSave(prodSessLoad().filter(s=>s.id!==id)); }
+function prodSessRemove(id){
+  prodSessMarkDeleted(id);                                  // 1) marque comme supprimée définitivement
+  prodSessSave(prodSessLoad().filter(s=>s.id!==id));        // 2) retire du cache + re-persiste (bulkDelete des absents)
+  // 3) suppression Dexie EXPLICITE (ceinture + bretelles : ne dépend pas du diff de bulkDelete)
+  try{
+    if(db.prodSessions && typeof db.prodSessions.delete==='function'){
+      db.prodSessions.delete(id).catch(()=>{});
+    }
+  }catch(e){}
+}
 
 // ===================== ATELIER — TÂCHES SEMI-PASSIVES & COUPURE INTELLIGENTE =====================
 // Une tâche « semi-passive » tourne toute seule (cuisson, repos, foisonnement…) : elle ne se coupe
