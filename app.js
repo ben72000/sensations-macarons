@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1016';
+const APP_VERSION = 'v1018';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -14699,27 +14699,92 @@ function cmdPersoCoulCollect(){
 // Encadré HTML « Personnalisation » pour les documents (devis + facture).
 // Rendu compact à droite du contenu. Renvoie '' si rien à afficher.
 // nbPerso : nombre de macarons personnalisés ; coul : tableau {couleur,parfum}.
+// --- Pastille de couleur d'après le NOM tapé à la main (devis/facture) ---
+// Map des couleurs françaises courantes vers une teinte. Tolérant aux accents,
+// pluriels et nuances (« bleu ciel », « rose pâle », « vert d'eau »...).
+const PERSO_COULEURS = {
+  'blanc':'#f4f1ea','creme':'#f3ead6','ivoire':'#f3ead6','beige':'#e4d5b7',
+  'jaune':'#f3d54e','or':'#d4af37','dore':'#d4af37','moutarde':'#d9a520',
+  'orange':'#e8862e','corail':'#f48b6c','saumon':'#f6a08a','peche':'#f7b894',
+  'rouge':'#cf3b35','bordeaux':'#6e1f2a','framboise':'#cb2e62','cerise':'#b6243c',
+  'rose':'#e87aa6','fuchsia':'#d6357f','magenta':'#c81e6e',
+  'violet':'#8a5cae','mauve':'#b08fc7','lavande':'#b9a7d6','parme':'#cdb4d8','prune':'#7a3b5e',
+  'bleu':'#3f78c4','bleu ciel':'#7fb6e6','ciel':'#7fb6e6','turquoise':'#3bb3b0','cyan':'#3bb8c9',
+  'marine':'#22386b','indigo':'#3b4fa0','petrole':'#1f6f78','canard':'#1f7a82',
+  'vert':'#4ca65a','vert d eau':'#a8d8c0','menthe':'#9fd9bf','olive':'#8a8a3c','kaki':'#7d7a4a','emeraude':'#1f9e73','anis':'#bcd24a','pistache':'#9bc081',
+  'marron':'#7a4a2b','chocolat':'#5a3722','cafe':'#6f4a2f','caramel':'#c08a4a','noisette':'#b07a4a',
+  'gris':'#9a948c','argent':'#c2c2c2','anthracite':'#4a4a4a','noir':'#2a2424','taupe':'#9a8a7a'
+};
+function _persoNorm(s){ return (s==null?'':String(s)).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim(); }
+// Renvoie la teinte d'un nom de couleur libre, ou null si non reconnu.
+function couleurNomToHex(nom){
+  const n=_persoNorm(nom);
+  if(!n) return null;
+  if(PERSO_COULEURS[n]) return PERSO_COULEURS[n];
+  // Cherche la clé la plus spécifique contenue dans le texte (ex « rose pale » -> « rose »).
+  let best=null,bestLen=0;
+  for(const k in PERSO_COULEURS){ if((' '+n+' ').includes(' '+k+' ') && k.length>bestLen){ best=PERSO_COULEURS[k]; bestLen=k.length; } }
+  if(best) return best;
+  // mot à mot
+  for(const w of n.split(' ')){ if(PERSO_COULEURS[w]) return PERSO_COULEURS[w]; }
+  return null;
+}
+// Détecte un libellé bicolore et renvoie [hexA, hexB] si deux couleurs sont trouvées, sinon null.
+function couleurBicolore(nom){
+  // On découpe le texte BRUT sur les séparateurs (/ - + , « et ») AVANT toute
+  // normalisation, car _persoNorm retire la ponctuation. On enlève juste « bicolore ».
+  const raw=(nom==null?'':String(nom)).replace(/bicolore/ig,' ');
+  const parts = raw.split(/\s*(?:\/|\+|\-|,|\bet\b)\s*/i).map(p=>p.trim()).filter(Boolean);
+  if(parts.length>=2){
+    const a=couleurNomToHex(parts[0]); const b=couleurNomToHex(parts[1]);
+    if(a&&b&&a!==b) return [a,b];
+  }
+  return null;
+}
+// Génère la pastille HTML : disque plein (une couleur) ou disque coupé VERTICALEMENT
+// en deux (bicolore : moitié gauche couleur A, moitié droite couleur B).
+// Repli : si rien n'est reconnu, on garde le gris neutre habituel.
+function persoPastille(nomCouleur){
+  const bi=couleurBicolore(nomCouleur);
+  if(bi){
+    return `<span class="perso-dot perso-dot-bi" style="background:linear-gradient(90deg, ${bi[0]} 0 50%, ${bi[1]} 50% 100%)"></span>`;
+  }
+  const hex=couleurNomToHex(nomCouleur) || '#cbb89f';
+  return `<span class="perso-dot" style="background:${hex}"></span>`;
+}
 function factPersoBox(nbPerso, coul){
-  const n = Math.max(0, +nbPerso||0);
+  // Encadré descriptif : uniquement le détail couleur \u2192 parfum. Le montant de la
+  // personnalisation figure désormais comme une LIGNE du tableau (factPersoLigne),
+  // donc il entre dans le total brut et subit la remise globale.
   const lignes = Array.isArray(coul) ? coul.filter(c=>c && (c.couleur||c.parfum)) : [];
-  if(n<=0 && !lignes.length) return '';
-  const PU = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
+  if(!lignes.length) return '';
   const items = lignes.map(c=>{
-    const col = flavorColor(c.parfum||'');
     return `<div class="perso-li">`
-      + `<span class="perso-dot" style="background:${col}"></span>`
+      + persoPastille(c.couleur||'')
       + `<span class="perso-coul">${esc(c.couleur||'')}</span>`
       + (c.parfum?`<span class="perso-arr">\u2192</span><span class="perso-parf">${esc(c.parfum)}</span>`:'')
       + `</div>`;
   }).join('');
-  const calc = n>0
-    ? `<div class="perso-calc"><span class="formule">${n} \u00d7 ${euro(money2(PU))}</span><span class="montant">${euro(money2(n*PU))}</span></div>`
-    : '';
   return `<div class="perso-box">`
     + `<div class="perso-titre">\ud83c\udfa8 Personnalisation</div>`
     + items
-    + calc
     + `</div>`;
+}
+// Ligne de tableau « Personnalisation des couleurs » : n \u00d7 0,25 \u20ac = montant.
+// Renvoie '' si pas de macaron personnalisé. Sert au devis et aux factures.
+function factPersoLigne(nbPerso){
+  const n = Math.max(0, +nbPerso||0);
+  if(n<=0) return '';
+  const PU = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
+  const desc = `<span class="ln-main">Personnalisation des couleurs</span>`
+    + `<span class="ln-sub">${n} macaron${n>1?'s':''} \u00d7 ${euro(money2(PU))}</span>`;
+  return `<tr><td class="desc">${desc}</td><td class="mt">${euro(money2(n*PU))}</td></tr>`;
+}
+// Montant brut de la personnalisation (entre dans le total imposable à la remise).
+function persoMontant(nbPerso){
+  const n = Math.max(0, +nbPerso||0);
+  const PU = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
+  return money2(n*PU);
 }
 // Remise globale — synchronisation €/%. La référence stockée reste le % (champ f_remiseg),
 // appliqué au sous-total (après remises de ligne), pour rester compatible avec saveCmd et l'aval.
@@ -14751,7 +14816,11 @@ function cmdRecalc(){
   if(gEurEl && document.activeElement!==gEurEl){ gEurEl.value = remiseG>0?remiseG:''; }
   const persoNb = cmdPersoCount();
   const persoSup = money2(persoNb*PERSO_PRIX_UNIT);
-  const total = Math.max(0, addMoney(subMoney(sousTotal, remiseG), persoSup));
+  // La personnalisation entre dans la base imposable à la remise globale (au même titre
+  // que les lignes) : on l'ajoute au sous-total AVANT d'appliquer le %, puis on remise le tout.
+  const baseAvantGlobal = addMoney(sousTotal, persoSup);
+  const remiseGTot = money2(baseAvantGlobal*gpct/100);
+  const total = Math.max(0, subMoney(baseAvantGlobal, remiseGTot));
   const mt=document.getElementById('f_mt');
   if(mt && mt.dataset.auto==='1'){ mt.value = total?total.toFixed(2):''; }
   const brk=document.getElementById('priceBreak');
@@ -14762,8 +14831,8 @@ function cmdRecalc(){
       brk.innerHTML =
         `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
         (remiseLignes>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
-        (gpct>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseG)}</b></div>`:'')+
         (persoNb>0?`<div style="display:flex;justify-content:space-between;color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×0,25 €)</span><b>+${euro(persoSup)}</b></div>`:'')+
+        (gpct>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseGTot)}</b></div>`:'')+
         `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(total)}</b></div>`;
     } else brk.style.display='none';
   }
@@ -14927,15 +14996,18 @@ async function saveCmd(id){
   let montant = money2(+val('f_mt')||0);
   if(!_cmdPriceManual){
     const sousTotal = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
-    const remiseG = money2(sousTotal*remiseGlobale/100);
     const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
-    montant = Math.max(0, money2(sousTotal - remiseG + persoSup));
+    // La perso entre dans la base imposable à la remise globale (cohérent avec cmdRecalc).
+    const baseAvantGlobal = money2(sousTotal + persoSup);
+    const remiseG = money2(baseAvantGlobal*remiseGlobale/100);
+    montant = Math.max(0, money2(baseAvantGlobal - remiseG));
   }
   if(montant<=0){
     const sousTotal = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
-    const remiseG = money2(sousTotal*remiseGlobale/100);
     const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
-    const recalc = Math.max(0, money2(sousTotal - remiseG + persoSup));
+    const baseAvantGlobal = money2(sousTotal + persoSup);
+    const remiseG = money2(baseAvantGlobal*remiseGlobale/100);
+    const recalc = Math.max(0, money2(baseAvantGlobal - remiseG));
     if(recalc>0) montant = recalc;
   }
   const o={
@@ -33073,6 +33145,16 @@ const FACT_STYLE = `   <style>
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
      .bas-final .rib-avis-col { margin-top:3mm; }
+     .bas-final .rib-avis-row { display:flex; gap:4mm; align-items:stretch; margin-top:2mm; }
+     .bas-final .rib-avis-half { flex:1 1 0; min-width:0; display:flex; }
+     .bas-final .rib-avis-half > .rib, .bas-final .rib-avis-half > .avis-bloc { margin-top:0; width:100%; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; }
+     .bas-final .rib-avis-row .rib { max-width:none; padding:2mm 3mm; font-size:9px; line-height:1.45; }
+     .bas-final .rib-avis-row .rib-inline .rib-titre { display:block; margin-bottom:0.8mm; }
+     .bas-final .rib-avis-row .avis-bloc { padding:1.5mm 3mm; }
+     .bas-final .rib-avis-row .avis-bloc.avis-h { flex-direction:row; gap:2.5mm; align-items:center; }
+     .bas-final .rib-avis-row .avis-bloc.avis-h .avis-qr { width:11mm; height:11mm; flex:0 0 11mm; }
+     .bas-final .rib-avis-row .avis-bloc .avis-txt { font-size:9px; line-height:1.25; }
+     .bas-final .rib-avis-row .avis-bloc .avis-sub { font-size:7.5px; line-height:1.2; }
      .bas-final .rib { margin-top:0; padding:2mm 3.5mm; font-size:10.5px; line-height:1.5; }
      .bas-final .avis-bloc { margin-top:2.5mm; padding:2.5mm 3mm; }
      .bas-final .avis-bloc.avis-h .avis-qr { width:24mm; height:24mm; flex:0 0 24mm; }
@@ -33176,11 +33258,14 @@ function factLineDescHtml(ln){
 // Cas événement avec pyramides : DEUX <tr> — d'abord les macarons (part macarons),
 // puis une ligne « Prestation de service — location de pyramide » (quantité × prix unitaire).
 // La somme des deux montants reste STRICTEMENT égale au sous-total de la ligne (aucun double comptage).
-function factLineRows(ln){
+function factLineRows(ln, brut){
+  // brut=true : affiche le montant AVANT remise de ligne (utilisé par le devis, qui montre
+  // le prix brut par ligne puis applique la remise une seule fois sur le total).
+  const montantLn = brut ? lineTotalBrut(ln) : lineTotalStored(ln);
   if(ln.type==='evenement' && (+ln.equip||0)>0){
     const nbPyr = +ln.equip||0;
     const partPyr = money2(nbPyr*EQUIP_PRICE);                  // part location pyramides
-    const partMaca = money2(lineTotalStored(ln) - partPyr);     // reste = part macarons (garantit l'égalité)
+    const partMaca = money2(montantLn - partPyr);               // reste = part macarons (garantit l'égalité)
     const rowMaca = `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(partMaca)}</td></tr>`;
     const descPyr = `<span class="ln-main">Prestation de service — location de pyramide</span>`+
                     `<span class="ln-sub">${nbPyr} pyramide${nbPyr>1?'s':''} × ${euro(EQUIP_PRICE)}</span>`+
@@ -33188,7 +33273,7 @@ function factLineRows(ln){
     const rowPyr = `<tr><td class="desc">${descPyr}</td><td class="mt">${euro(partPyr)}</td></tr>`;
     return rowMaca + rowPyr;
   }
-  return `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(lineTotalStored(ln))}</td></tr>`;
+  return `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(montantLn)}</td></tr>`;
 }
 // Bloc « Coordonnées bancaires » pour le pied de page des documents (devis + facture).
 // Renvoie '' si l'émetteur n'a pas renseigné d'IBAN, sinon un bloc HTML échappé multi-lignes.
@@ -33207,6 +33292,10 @@ function factRibBloc(e, compact){
     }
   }
   const lignes = parts.map(l=>esc(l)).join('<br>');
+  if(compact){
+    // Lecture horizontale : titre et coordonnées sur la même ligne.
+    return `<div class="rib rib-inline"><span class="rib-titre">Coordonnées bancaires</span> ${lignes}</div>`;
+  }
   return `<div class="rib"><span class="rib-titre">Coordonnées bancaires</span><br>${lignes}</div>`;
 }
 // Bloc « avis Google » : invitation discrète à laisser un commentaire, avec le QR code
@@ -33224,8 +33313,13 @@ function factAvisBloc(){
 // Bloc « bas de document » unifié : Coordonnées bancaires (pleine largeur) puis QR avis
 // juste en dessous, le tout solidaire (jamais coupé entre deux pages).
 function factRibAvisCol(e){
-  const rib = factRibBloc(e);
-  return `<div class="rib-avis-col">${rib}${factAvisBloc()}</div>`;
+  // RIB en mode compact (IBAN/BIC sur une ligne) + QR avis, côte à côte sur deux
+  // demi-colonnes, dans le prolongement direct de l'encadré d'acompte.
+  const rib = factRibBloc(e, true);
+  return `<div class="rib-avis-col rib-avis-row">`
+    + `<div class="rib-avis-half">${rib}</div>`
+    + `<div class="rib-avis-half">${factAvisBloc()}</div>`
+    + `</div>`;
 }
 // === DEVIS : aperçu / impression (→ « Enregistrer en PDF » sur iOS) + envoi par mail ===
 // Génère le HTML d'un devis (registre documents, type:'devis') avec le même rendu
@@ -33242,18 +33336,17 @@ async function genererDevisDoc(docId){
   }
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   const lignes = d.lignes || [];
-  // Sous-total = somme des lignes (remises de ligne incluses)
-  const sousTotal = lignes.reduce((s,ln)=>s+lineTotalStored(ln),0);
+  const persoMt = persoMontant(d.persoMacarons);   // montant brut de la personnalisation
   const gpct = Math.max(0, Math.min(100, +d.remiseGlobale||0));
-  const remiseGEuro = Math.round(sousTotal*gpct/100*100)/100;
-  // Total = montant stocké du devis si dispo (déjà net), sinon recalcul
-  const total = (d.montant!=null) ? +d.montant : (sousTotal - remiseGEuro);
-  // Total BRUT (avant toute réduction) et montant cumulé des réductions accordées
-  // (remises de ligne + remise globale), pour l'afficher noir sur blanc avant le total.
-  const totalBrut = money2(lignes.reduce((s,ln)=>s+lineTotalBrut(ln),0));
+  // Total = montant stocké du devis si dispo (déjà net, perso incluse, remise appliquée).
+  // Sous-total BRUT = lignes en brut + personnalisation. La remise s'applique UNE fois sur ce brut.
+  const totalBrut = money2(lignes.reduce((s,ln)=>s+lineTotalBrut(ln),0) + persoMt);
+  const total = (d.montant!=null) ? +d.montant : money2(totalBrut - money2(totalBrut*gpct/100));
   const reductions = money2(Math.max(0, totalBrut - total));
+  // Pourcentage de remise à afficher : le % global saisi si présent, sinon le % effectif.
+  const reducPct = gpct>0 ? gpct : (totalBrut>0 ? Math.round(reductions/totalBrut*1000)/10 : 0);
 
-  const rows = lignes.map(ln=>factLineRows(ln)).join('');
+  const rows = lignes.map(ln=>factLineRows(ln, true)).join('');   // true = prix BRUT par ligne
   const section = `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -33264,7 +33357,7 @@ async function genererDevisDoc(docId){
         <table class="cmd-table">
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
-            ${gpct>0?`<tr class="sub"><td>Sous-total</td><td class="mt">${euro(sousTotal)}</td></tr><tr class="rem"><td>Remise (${gpct}%)</td><td class="mt">−${euro(remiseGEuro)}</td></tr>`:''}
+            ${factPersoLigne(d.persoMacarons)}
           </tbody>
         </table>
         ${factPersoBox(d.persoMacarons, d.persoCouleurs)}
@@ -33313,7 +33406,7 @@ async function genererDevisDoc(docId){
        <div class="meta-rule"></div>
        ${section}
        <div class="grand">
-         ${reductions>0?`<div class="lg brut"><span>Total avant réductions</span><span>${euro(totalBrut)}</span></div><div class="lg reduc"><span>Réductions accordées</span><span>\u2212${euro(reductions)}</span></div>`:''}
+         ${reductions>0?`<div class="lg brut"><span>Total avant réductions</span><span>${euro(totalBrut)}</span></div><div class="lg reduc"><span>Réductions accordées${reducPct>0?` (−${reducPct}%)`:''}</span><span>\u2212${euro(reductions)}</span></div>`:''}
          <div class="lg total"><span>Total du devis</span><span>${euro(total)}</span></div>
        </div>
        <div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider votre devis.</div>
@@ -33439,6 +33532,16 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
      .bas-final .rib-avis-col { margin-top:3mm; }
+     .bas-final .rib-avis-row { display:flex; gap:4mm; align-items:stretch; margin-top:2mm; }
+     .bas-final .rib-avis-half { flex:1 1 0; min-width:0; display:flex; }
+     .bas-final .rib-avis-half > .rib, .bas-final .rib-avis-half > .avis-bloc { margin-top:0; width:100%; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; }
+     .bas-final .rib-avis-row .rib { max-width:none; padding:2mm 3mm; font-size:9px; line-height:1.45; }
+     .bas-final .rib-avis-row .rib-inline .rib-titre { display:block; margin-bottom:0.8mm; }
+     .bas-final .rib-avis-row .avis-bloc { padding:1.5mm 3mm; }
+     .bas-final .rib-avis-row .avis-bloc.avis-h { flex-direction:row; gap:2.5mm; align-items:center; }
+     .bas-final .rib-avis-row .avis-bloc.avis-h .avis-qr { width:11mm; height:11mm; flex:0 0 11mm; }
+     .bas-final .rib-avis-row .avis-bloc .avis-txt { font-size:9px; line-height:1.25; }
+     .bas-final .rib-avis-row .avis-bloc .avis-sub { font-size:7.5px; line-height:1.2; }
      .bas-final .rib { margin-top:0; padding:2mm 3.5mm; font-size:10.5px; line-height:1.5; }
      .bas-final .avis-bloc { margin-top:2.5mm; padding:2.5mm 3mm; }
      .bas-final .avis-bloc.avis-h .avis-qr { width:24mm; height:24mm; flex:0 0 24mm; }
@@ -33546,16 +33649,20 @@ async function genererFactureMultiple(ids){
   // Construit une section par commande
   const sections = orders.map(o=>{
     const lignes = orderToLines(o);
-    const sousTotal = lignes.reduce((s,ln)=>s+lineTotalStored(ln),0);
+    const persoMt = persoMontant(o.persoMacarons);            // montant brut personnalisation
     const gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
-    const remiseGEuro = Math.round(sousTotal*gpct/100*100)/100;
     const frais = +o.fraisLivraison||0;
-    // total de la commande = montant stocké (déjà net, livraison incluse) si dispo, sinon recalcul
-    const totalCmd = (o.montant!=null) ? +o.montant : (sousTotal - remiseGEuro + frais);
+    // Sous-total BRUT = lignes brutes + personnalisation. La remise s'applique une fois sur ce brut.
+    const brutCmd = money2(lignes.reduce((s,ln)=>s+lineTotalBrut(ln),0) + persoMt);
+    // total commande = montant stocké (déjà net, perso + remise incluses, livraison en sus) si dispo.
+    const totalCmd = (o.montant!=null) ? +o.montant : money2(brutCmd - money2(brutCmd*gpct/100) + frais);
+    // Réduction = brut − (total − frais). Le % affiché : global saisi, sinon effectif.
+    const reducCmd = money2(Math.max(0, brutCmd - money2(totalCmd - frais)));
+    const reducPct = gpct>0 ? gpct : (brutCmd>0 ? Math.round(reducCmd/brutCmd*1000)/10 : 0);
     grandTotal += totalCmd;
-    grandBrut += money2(lignes.reduce((s,ln)=>s+lineTotalBrut(ln),0));
+    grandBrut += brutCmd;
     grandNetHorsLiv += money2(totalCmd - frais);
-    const rows = lignes.map(ln=>factLineRows(ln)).join('');
+    const rows = lignes.map(ln=>factLineRows(ln, true)).join('');   // true = prix BRUT par ligne
     return `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -33566,7 +33673,8 @@ async function genererFactureMultiple(ids){
         <table class="cmd-table">
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
-            ${gpct>0?`<tr class="sub"><td>Sous-total</td><td class="mt">${euro(sousTotal)}</td></tr><tr class="rem"><td>Remise (${gpct}%)</td><td class="mt">−${euro(remiseGEuro)}</td></tr>`:''}
+            ${factPersoLigne(o.persoMacarons)}
+            ${reducCmd>0?`<tr class="sub"><td>Total avant réductions</td><td class="mt">${euro(brutCmd)}</td></tr><tr class="rem"><td>Réductions accordées${reducPct>0?` (−${reducPct}%)`:''}</td><td class="mt">−${euro(reducCmd)}</td></tr>`:''}
             ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
             <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
           </tbody>
@@ -33625,7 +33733,7 @@ async function genererFactureMultiple(ids){
        <div class="meta-rule"></div>
        ${sections}
        <div class="grand">
-         ${money2(grandBrut-grandNetHorsLiv)>0?`<div class="lg brut"><span>Total avant réductions</span><span>${euro(grandBrut)}</span></div><div class="lg reduc"><span>Réductions accordées</span><span>\u2212${euro(money2(grandBrut-grandNetHorsLiv))}</span></div>`:''}
+         ${money2(grandBrut-grandNetHorsLiv)>0?(()=>{const r=money2(grandBrut-grandNetHorsLiv);const p=grandBrut>0?Math.round(r/grandBrut*1000)/10:0;return `<div class="lg brut"><span>Total avant réductions</span><span>${euro(grandBrut)}</span></div><div class="lg reduc"><span>Réductions accordées${p>0?` (−${p}%)`:''}</span><span>\u2212${euro(r)}</span></div>`;})():''}
          <div class="lg total"><span>Total à payer</span><span>${euro(grandTotal)}</span></div>
          ${totalPaye>0?`<div class="lg"><span>Déjà réglé</span><span>−${euro(totalPaye)}</span></div><div class="lg"><span><b>Reste à payer</b></span><span><b>${euro(reste)}</b></span></div>`:''}
        </div>
