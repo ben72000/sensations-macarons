@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1036';
+const APP_VERSION = 'v1037';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -40890,6 +40890,7 @@ async function _reconstructStockPlan(){
   const dejaEntree = new Set(existing.filter(m=>m.reconstruit && m.sens>0 && m.productionId!=null).map(m=>'P'+m.productionId));
   const dejaSortie = new Set(existing.filter(m=>m.reconstruit && m.sens<0 && m.orderId!=null && m.productionId!=null).map(m=>'O'+m.orderId+'_'+m.productionId));
   const dejaPerte  = new Set(existing.filter(m=>m.reconstruit && m.type==='perte' && m.lossId!=null).map(m=>'L'+m.lossId));
+  const dejaAsmSortie = new Set(existing.filter(m=>m.reconstruit && m.type==='assemblage' && m.sens<0 && m.asmId!=null && m.composant).map(m=>'A'+m.asmId+'_'+m.composant+'_'+m.productionId));
 
   const entrees = [];
   for(const p of prods){
@@ -40907,6 +40908,27 @@ async function _reconstructStockPlan(){
                : (p.composant==='ganache') ? 'ganache' : 'macaron';
     entrees.push({ ts, qte:q, nom:prodNomComplet(p, recipes), composant:comp,
       type: estDeg ? 'degustation' : 'production', productionId:p.id });
+  }
+
+  // ASSEMBLAGES : pour chaque production assemblée, recréer les SORTIES des composants
+  // sources (coques + ganache consommées), lues dans le champ assembleFrom.
+  const asmSorties = [];
+  for(const p of prods){
+    const estAsm = (p.composant==='assemble') || (p.composant==='degustation' && Array.isArray(p.assembleFrom) && p.assembleFrom.length);
+    if(!estAsm) continue;
+    if(!Array.isArray(p.assembleFrom) || !p.assembleFrom.length) continue;
+    const ts = p.prodTermineTs || p.prodTimestamp || (p.date ? p.date+'T08:00' : '');
+    if(!ts) continue;
+    for(const src of p.assembleFrom){
+      const q = round3(+src.qte||0); if(q<=0) continue;
+      const compSrc = (src.composant==='coques') ? 'coques'
+                    : (src.composant==='ganache') ? 'ganache'
+                    : (src.composant==='garniture-sup') ? 'ganache' : 'macaron';
+      if(dejaAsmSortie.has('A'+p.id+'_'+compSrc+'_'+(src.id!=null?src.id:''))) continue;
+      const nom = src.parfum || (src.id!=null ? (prodNomComplet(prods.find(x=>+x.id===+src.id)||{}, recipes)) : prodNomComplet(p, recipes));
+      asmSorties.push({ ts, qte:q, nom, composant:compSrc, type:'assemblage',
+        asmId:p.id, productionId:(src.id!=null?src.id:null) });
+    }
   }
 
   const ordById = {}; orders.forEach(o=>{ ordById[o.id]=o; });
@@ -40941,7 +40963,7 @@ async function _reconstructStockPlan(){
     pertes.push({ ts, qte:q, nom, composant:comp, type:'perte', lossId:l.id, productionId:l.productionId, note:l.motif||'' });
   }
 
-  return { entrees, sorties, pertes, existing:existing.length };
+  return { entrees, sorties, pertes, asmSorties, existing:existing.length };
 }
 
 // Affiche l'aperçu (modale) avant toute écriture.
@@ -40950,14 +40972,15 @@ async function reconstructStockHistoryPreview(){
     toast('Calcul en cours…');
     const plan = await _reconstructStockPlan();
     const pertes = plan.pertes||[];
-    const nE = plan.entrees.length, nS = plan.sorties.length, nP = pertes.length;
+    const asmS = plan.asmSorties||[];
+    const nE = plan.entrees.length, nS = plan.sorties.length, nP = pertes.length, nA = asmS.length;
     // séparer entrées production vs dégustation pour l'affichage
     const nDeg = plan.entrees.filter(e=>e.type==='degustation').length;
     const nProd = nE - nDeg;
-    const qE = round3(plan.entrees.reduce((s,m)=>s+m.qte,0));
     const qS = round3(plan.sorties.reduce((s,m)=>s+m.qte,0));
     const qP = round3(pertes.reduce((s,m)=>s+m.qte,0));
-    if(nE+nS+nP===0){
+    const qA = round3(asmS.reduce((s,m)=>s+m.qte,0));
+    if(nE+nS+nP+nA===0){
       openModal(`<h2>Reconstruction de l'historique</h2>
         <p class="note">Rien à reconstruire : soit c'est déjà fait, soit aucune trace exploitable n'a été trouvée.</p>
         <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
@@ -40966,19 +40989,20 @@ async function reconstructStockHistoryPreview(){
     const echant = plan.entrees.slice().sort((a,b)=>a.ts<b.ts?1:-1).slice(0,5)
       .map(e=>`<div style="font-size:.78rem;color:#6a5a52">${esc(e.ts.slice(0,16))} · +${qty(e.qte)} · ${esc(e.nom)} <span style="color:#9a8a82">(${esc(e.composant)}${e.type==='degustation'?', dégustation':''})</span></div>`).join('');
     openModal(`<h2>Reconstruction de l'historique de stock</h2>
-      <p class="note">Recrée les mouvements passés à partir des traces sûres : productions terminées, dégustations, commandes livrées et pertes enregistrées. Tout est <b>marqué comme reconstruit</b> (retirable d'un clic). Les ajustements manuels et recrédits passés ne peuvent pas être reconstruits (aucune trace).</p>
+      <p class="note">Recrée les mouvements passés à partir des traces sûres : productions, dégustations, assemblages, livraisons et pertes. Tout est <b>marqué comme reconstruit</b> (retirable d'un clic). Les ajustements manuels et recrédits passés ne peuvent pas être reconstruits (aucune trace).</p>
       <div class="panel" style="background:#faf6f0;border:1px solid var(--hair)">
         <div style="display:flex;justify-content:space-between;padding:6px 0"><span>📦 Entrées (productions)</span><b>${nProd} mvts</b></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--hair)"><span>🔗 Assemblages (sorties coques/ganache)</span><b>${nA} mvts · −${qty(qA)}</b></div>
         <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--hair)"><span>🥄 Dégustations</span><b>${nDeg} mvts</b></div>
         <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--hair)"><span>📤 Sorties (livraisons)</span><b>${nS} mvts · −${qty(qS)}</b></div>
         <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--hair)"><span>⚠️ Pertes</span><b>${nP} mvts · −${qty(qP)}</b></div>
-        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--hair)"><span><b>Total à créer</b></span><b>${nE+nS+nP} mouvements</b></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--hair)"><span><b>Total à créer</b></span><b>${nE+nS+nP+nA} mouvements</b></div>
       </div>
       ${echant?`<p class="note" style="margin-bottom:4px">Aperçu (5 dernières entrées) :</p>${echant}`:''}
       <p class="note" style="margin-top:10px;color:#b04a3e">⚠️ Pense à sauvegarder ta base (iCloud) avant, par précaution.</p>
       <div class="flex" style="justify-content:flex-end;gap:8px;margin-top:12px">
         <button class="btn ghost" onclick="closeModal()">Annuler</button>
-        <button class="btn gold" onclick="reconstructStockHistoryRun()">Reconstruire ${nE+nS+nP} mouvements</button>
+        <button class="btn gold" onclick="reconstructStockHistoryRun()">Reconstruire ${nE+nS+nP+nA} mouvements</button>
       </div>`);
   }catch(e){
     toast('Erreur aperçu : '+(e&&e.message||e));
@@ -41019,6 +41043,17 @@ async function reconstructStockHistoryRun(){
           composant:pr.composant, sens:-1, qte:pr.qte, type:'perte',
           productionId:pr.productionId, lossId:pr.lossId, reconstruit:true,
           note:'reconstruit (rattrapage)'+(pr.note?(' · '+pr.note):'')
+        });
+        ok++;
+      }catch(_){}
+    }
+    for(const a of (plan.asmSorties||[])){
+      try{
+        await db.stockMoves.add({
+          ts:a.ts, parfumNorm:stockMoveKey(a.nom), parfumNom:a.nom,
+          composant:a.composant, sens:-1, qte:a.qte, type:'assemblage',
+          asmId:a.asmId, productionId:a.productionId, reconstruit:true,
+          note:'reconstruit (rattrapage)'
         });
         ok++;
       }catch(_){}
