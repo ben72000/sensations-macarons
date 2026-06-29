@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diagnostic Sensations</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px;background:#faf6f0;color:#2b1a1f}
+  h1{font-size:1.2rem;margin:0 0 4px}
+  p.sub{margin:0 0 16px;font-size:.85rem;color:#7a6a62}
+  .row{background:#fff;border-radius:10px;padding:12px 14px;margin-bottom:8px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+  .row b{display:block;font-size:.9rem;margin-bottom:4px;word-break:break-all}
+  .ok{color:#2f7d52}
+  .bad{color:#b04a3e;font-weight:600}
+  .pending{color:#9a8a82}
+  pre{background:#1c0c14;color:#f5e9d0;padding:12px;border-radius:10px;font-size:.72rem;overflow:auto;white-space:pre-wrap;word-break:break-word;margin-top:16px}
+  .big{font-size:1rem;font-weight:600;margin:16px 0 8px}
+</style>
+</head>
+<body>
+<h1>Diagnostic Sensations Macarons</h1>
+<p class="sub">Teste le chargement de chaque fichier. Vert = OK, rouge = problème.</p>
+<div id="results"></div>
+<div class="big">Erreurs JavaScript captées :</div>
+<pre id="errlog">(en attente…)</pre>
+
+<script>
+// Capte toute erreur JS globale (c'est ce qui cause l'écran blanc)
+var errors = [];
+window.onerror = function(msg, src, line, col, err){
+  errors.push('ERREUR: ' + msg + '\n  fichier: ' + (src||'?') + '\n  ligne: ' + line + ':' + col);
+  render();
+  return false;
+};
+window.addEventListener('unhandledrejection', function(e){
+  errors.push('PROMESSE REJETÉE: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  render();
+});
+function render(){
+  document.getElementById('errlog').textContent = errors.length ? errors.join('\n\n') : '(aucune erreur captée pour l\'instant)';
+}
+
+// Liste des fichiers que index.html charge réellement
+var files = [
+  'index.html',
+  'app.js',
+  'dexie.min.js',
+  'qr.min.js',
+  'service-worker.js',
+  'rd_packs.json',
+  'rd_pack_alice.json',
+  'rd_pack_bau.json',
+  'manifest.webmanifest',
+  'Outfit-Regular.ttf',
+  'Outfit-SemiBold.ttf',
+  'Outfit-Bold.ttf',
+  'Fraunces-Variable.ttf'
+];
+
+var box = document.getElementById('results');
+files.forEach(function(f){
+  var div = document.createElement('div');
+  div.className = 'row';
+  div.innerHTML = '<b>'+f+'</b><span class="pending">test en cours…</span>';
+  box.appendChild(div);
+  var span = div.querySelector('span');
+  // cache-buster pour ne pas tester une vieille version en cache
+  fetch(f + '?diag=' + Date.now(), {cache:'no-store'})
+    .then(function(r){
+      if(r.ok){
+        span.className = 'ok';
+        span.textContent = '✓ OK (' + r.status + ') — ' + (r.headers.get('content-type')||'type ?');
+      } else {
+        span.className = 'bad';
+        span.textContent = '✗ ERREUR ' + r.status + ' (' + r.statusText + ') — fichier introuvable ou mal nommé';
+      }
+    })
+    .catch(function(e){
+      span.className = 'bad';
+      span.textContent = '✗ ÉCHEC RÉSEAU : ' + e.message;
+    });
+});
+
+render();
+</script>
+</body>
+</html>
