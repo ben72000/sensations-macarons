@@ -9,41 +9,53 @@ pre{background:#1c0c14;color:#f5e9d0;padding:14px;border-radius:10px;font-size:.
 </style></head><body>
 <h1>Diagnostic base — mouvements de stock</h1>
 <pre id="log">Lecture en cours…</pre>
-<script src="dexie.min.js"></script>
 <script>
 function L(m){ document.getElementById('log').textContent = m; }
-(async function(){
-  try{
-    if(typeof Dexie === 'undefined'){ L('❌ dexie.min.js non chargé (vérifie qu\'il est dans le dossier)'); return; }
-    const db = new Dexie('sensations_macarons');
-    // On NE déclare PAS de schéma : on ouvre la base telle qu'elle existe sur l'appareil,
-    // pour lire sa version réelle et ses tables réelles, sans rien modifier.
-    await db.open();
-    let out = '✓ Base ouverte\n';
-    out += 'Version réelle de TA base : ' + db.verno + '\n';
-    out += '(le code de l\'app monte jusqu\'à la version 23)\n\n';
-    const names = db.tables.map(t=>t.name);
-    out += 'Nombre de tables : ' + names.length + '\n';
-    const hasSM = names.includes('stockMoves');
-    out += hasSM ? '✓ table stockMoves PRÉSENTE\n' : '❌ table stockMoves ABSENTE → c\'est la cause du journal vide\n';
-    if(hasSM){
-      const n = await db.stockMoves.count();
-      out += '\n📦 stockMoves : ' + n + ' mouvement(s)\n';
-      if(n>0){
-        const all = await db.stockMoves.toArray();
-        out += 'Derniers mouvements :\n';
-        all.slice(-5).reverse().forEach(m=>{ out += '  '+(m.ts||'').slice(0,16)+' | '+(m.type||'?')+' | '+(m.parfumNom||'?')+' | '+(m.sens<0?'-':'+')+m.qte+'\n'; });
+// Lecture DIRECTE via IndexedDB natif (n'utilise pas le dexie maison, donc pas de db.open).
+(function(){
+  // Ouvre SANS numéro de version : on récupère la version réelle telle quelle, sans rien migrer.
+  const req = indexedDB.open('sensations_macarons');
+  req.onerror = function(){ L('Erreur ouverture IndexedDB : ' + (req.error && req.error.message)); };
+  req.onsuccess = function(){
+    try{
+      const idb = req.result;
+      let out = '✓ Base ouverte (lecture seule)\n';
+      out += 'Version réelle de TA base : ' + idb.version + '\n';
+      out += '(le code de l\'app vise la version 23)\n\n';
+      const stores = Array.from(idb.objectStoreNames);
+      out += 'Nombre de tables : ' + stores.length + '\n';
+      const hasSM = stores.includes('stockMoves');
+      out += hasSM ? '✓ table stockMoves PRÉSENTE\n' : '❌ table stockMoves ABSENTE → cause du journal vide\n';
+      // tables cles
+      out += '\n— Tables clés —\n';
+      ['productions','orders','stockMoves','planOverrides','rdRefs','rdPreps'].forEach(function(t){
+        out += (stores.includes(t)?'✓ ':'✗ ') + t + '\n';
+      });
+      if(hasSM){
+        const tx = idb.transaction('stockMoves','readonly');
+        const st = tx.objectStore('stockMoves');
+        const cr = st.count();
+        cr.onsuccess = function(){
+          out += '\n📦 stockMoves : ' + cr.result + ' mouvement(s)\n';
+          if(cr.result>0){
+            const ar = st.getAll();
+            ar.onsuccess = function(){
+              const all = ar.result || [];
+              out += 'Derniers mouvements :\n';
+              all.slice(-5).reverse().forEach(function(m){ out += '  '+String(m.ts||'').slice(0,16)+' | '+(m.type||'?')+' | '+(m.parfumNom||'?')+' | '+(m.sens<0?'-':'+')+m.qte+'\n'; });
+              L(out);
+            };
+            ar.onerror = function(){ L(out + '\n(lecture détails impossible)'); };
+          } else {
+            out += '→ table présente mais VIDE.\n';
+            L(out);
+          }
+        };
+        cr.onerror = function(){ L(out + '\n(count impossible)'); };
       } else {
-        out += '→ table présente mais vide.\n';
+        L(out);
       }
-    }
-    out += '\n— Autres tables clés —\n';
-    for(const t of ['productions','orders','stockMoves','planOverrides','rdRefs']){
-      out += (names.includes(t)? '✓ ':'✗ ') + t + '\n';
-    }
-    L(out);
-  }catch(e){
-    L('Erreur : ' + (e && e.message ? e.message : e) + '\n\nSi le message parle de version, ferme COMPLÈTEMENT l\'app et réessaie.');
-  }
+    }catch(e){ L('Erreur lecture : ' + (e && e.message ? e.message : e)); }
+  };
 })();
 </script></body></html>
