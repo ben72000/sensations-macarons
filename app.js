@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1042';
+const APP_VERSION = 'v1043';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -31047,6 +31047,9 @@ const GUIDE_THEMES = [
     { v:'histostock', t:'Historique du stock', ico:'🕑', resume:"Tous les mouvements de ton stock : entrées, sorties, par parfum.",
       detail:"Le journal complet de tes flux de stock. En haut, un résumé par parfum avec le bilan entrées (↑), sorties (↓) et le net sur la période. En dessous, le détail chronologique de chaque mouvement (production, assemblage, livraison, marché, perte, dégustation, recrédit), du plus récent au plus ancien. Tu peux filtrer par période (7, 30, 90 jours ou tout), par type de mouvement, par composant (macaron, coques, ganache), par parfum, et faire une recherche libre. C'est la mémoire de ton stock : ce qui rentre, ce qui sort, et pourquoi.",
       steps:["Choisis une période et un type de mouvement","Repère les parfums qui tournent (net négatif = forte sortie)","Touche un parfum dans le filtre pour isoler son historique"] },
+    { v:'tempsproduction', t:'Temps de production', ico:'⏱', resume:"Le temps que te prend chaque batch : durée réelle et temps actif.",
+      detail:"Le suivi de tes temps de fabrication, alimenté par les chronos d'atelier. En haut, le total sur la période : durée réelle (du début à la fin) et temps actif (travail effectif, pauses déduites). En dessous, le détail par parfum, par jour et par batch. Tu peux filtrer par période (7, 30, 90 jours ou tout). Un bouton « Chronos ouverts » détecte et ferme proprement les chronos jamais arrêtés qui fausseraient le suivi.",
+      steps:["Choisis une période","Compare durée réelle et temps actif par parfum","Nettoie les chronos restés ouverts si besoin"] },
     { v:'fournisseurs', t:'Fournisseurs', ico:'⚑', resume:"Ton répertoire de fournisseurs.",
       detail:"Référence tes fournisseurs pour les associer à tes lots et comparer les prix.",
       steps:["Ajoute un fournisseur","Associe-le à tes réceptions de lots"] },
