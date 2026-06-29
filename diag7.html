@@ -1,79 +1,42 @@
 <!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
+<html lang="fr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Test logStockMove</title>
 <style>
 body{font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px;background:#faf6f0;color:#2b1a1f}
-h1{font-size:1.05rem;margin:0 0 8px}
-p.sub{font-size:.8rem;color:#7a6a62;margin:0 0 12px}
+h1{font-size:1.05rem;margin:0 0 8px}p.sub{font-size:.8rem;color:#7a6a62;margin:0 0 12px}
 button{font-size:.95rem;padding:12px 18px;border:none;border-radius:10px;background:#52252F;color:#fff;font-weight:600;margin-bottom:12px}
 pre{background:#1c0c14;color:#f5e9d0;padding:14px;border-radius:10px;font-size:.76rem;white-space:pre-wrap;word-break:break-word;line-height:1.5;min-height:120px}
-</style>
-</head>
-<body>
+#hidden-app{position:absolute;left:-99999px;top:0;width:1px;height:1px;overflow:hidden}
+</style></head><body>
 <h1>Test d'enregistrement d'un mouvement de stock</h1>
-<p class="sub">Charge ton app, puis tente un vrai enregistrement de test et affiche le résultat exact. N'écrit qu'UN mouvement de test (type « ajustement », identifiable).</p>
+<p class="sub">Charge ton app dans une zone cachée, puis teste un vrai enregistrement.</p>
 <button id="go">Lancer le test</button>
-<pre id="log">Prêt. Appuie sur « Lancer le test ».</pre>
-
-<!-- On charge les mêmes scripts que l'app, dans le même ordre -->
+<pre id="log">Chargement de l'app…</pre>
+<div id="hidden-app">
+  <div id="main"></div>
+  <div id="overlay"><div id="modal"></div></div>
+  <div id="toast"></div><div id="tabbar"></div><div id="sheetOverlay"></div>
+</div>
+<script>
+var logs=[];function L(m){logs.push(m);document.getElementById('log').textContent=logs.join('\n');}
+window.onerror=function(){return false;};
+</script>
 <script src="dexie.min.js"></script>
+<script src="app.js"></script>
 <script>
-var logs = [];
-function L(m){ logs.push(m); document.getElementById('log').textContent = logs.join('\n'); }
-// Capture toute erreur globale survenant pendant le chargement d'app.js
-window.onerror = function(msg, src, line){ L('⚠️ Erreur chargement app: ' + msg + ' @ ' + String(src||'').split('/').pop() + ':' + line); return false; };
-</script>
-<script src="app.js" onerror="L('❌ app.js introuvable')"></script>
-<script>
-document.getElementById('go').addEventListener('click', async function(){
-  logs = []; L('Démarrage du test…');
-
-  // 1. Vérifs de base
-  if(typeof db === 'undefined'){ L('❌ db non défini (app.js pas chargé ?)'); return; }
-  if(typeof logStockMove !== 'function'){ L('❌ logStockMove n\'est pas une fonction'); return; }
+window.addEventListener('load',function(){ setTimeout(function(){ if(logs.length<=1) L('✓ App chargée. Appuie sur « Lancer le test ».'); },600); });
+document.getElementById('go').addEventListener('click',async function(){
+  logs=[];L('Démarrage du test…');
+  if(typeof db==='undefined'){L('❌ db non défini');return;}
+  if(typeof logStockMove!=='function'){L('❌ logStockMove pas une fonction');return;}
   L('✓ db et logStockMove disponibles');
-
-  // 2. Compte AVANT
-  var avant = null;
-  try{ avant = await db.stockMoves.count(); L('✓ stockMoves AVANT : ' + avant + ' mouvement(s)'); }
-  catch(e){ L('❌ lecture count impossible : ' + (e&&e.message)); return; }
-
-  // 3. Tentative d'écriture DIRECTE (sans passer par logStockMove) pour isoler
-  L('\n— Test A : écriture directe db.stockMoves.add —');
-  try{
-    var idA = await db.stockMoves.add({
-      ts: new Date().toISOString(), parfumNorm:'test', parfumNom:'TEST DIRECT',
-      composant:'macaron', sens:1, qte:1, type:'ajustement', note:'test diag direct'
-    });
-    L('✓ add direct réussi, id = ' + idA);
-  }catch(e){
-    L('❌ add direct ÉCHOUÉ : ' + (e&&e.message ? e.message : e));
-    L('   → c\'est la cause : l\'écriture elle-même échoue.');
-  }
-
-  // 4. Tentative via logStockMove (la vraie fonction de l'app)
+  var avant=null;
+  try{avant=await db.stockMoves.count();L('✓ stockMoves AVANT : '+avant);}catch(e){L('❌ count impossible : '+(e&&e.message));return;}
+  L('\n— Test A : écriture directe —');
+  try{var idA=await db.stockMoves.add({ts:new Date().toISOString(),parfumNorm:'test',parfumNom:'TEST DIRECT',composant:'macaron',sens:1,qte:1,type:'ajustement',note:'test diag direct'});L('✓ add direct réussi, id = '+idA);}catch(e){L('❌ add direct ÉCHOUÉ : '+(e&&e.message?e.message:e));}
   L('\n— Test B : via logStockMove —');
-  try{
-    var idB = await logStockMove({
-      parfumNom:'TEST VIA LOG', composant:'macaron', sens:1, qte:2,
-      type:'ajustement', note:'test diag logStockMove'
-    });
-    L(idB ? ('✓ logStockMove réussi, id = ' + idB) : '⚠️ logStockMove a renvoyé null (mouvement ignoré ou erreur avalée)');
-  }catch(e){
-    L('❌ logStockMove a levé : ' + (e&&e.message ? e.message : e));
-  }
-
-  // 5. Compte APRÈS
-  try{
-    var apres = await db.stockMoves.count();
-    L('\n📦 stockMoves APRÈS : ' + apres + ' mouvement(s) (avant: ' + avant + ')');
-    if(apres > avant){ L('✅ L\'écriture FONCTIONNE. Le souci était ailleurs (filtre, ou aucun appel réel lors de tes opérations).'); }
-    else { L('❌ Aucun mouvement ajouté malgré les tentatives → l\'écriture échoue. Voir les messages ❌ ci-dessus pour la cause exacte.'); }
-  }catch(e){ L('lecture finale impossible : ' + (e&&e.message)); }
+  try{var idB=await logStockMove({parfumNom:'TEST VIA LOG',composant:'macaron',sens:1,qte:2,type:'ajustement',note:'test diag log'});L(idB?('✓ logStockMove réussi, id = '+idB):'⚠️ logStockMove a renvoyé null (ignoré ou erreur avalée)');}catch(e){L('❌ logStockMove a levé : '+(e&&e.message?e.message:e));}
+  try{var apres=await db.stockMoves.count();L('\n📦 stockMoves APRÈS : '+apres+' (avant: '+avant+')');if(apres>avant)L('✅ L\'écriture FONCTIONNE. Le souci est ailleurs (les opérations n\'appellent pas logStockMove, ou un filtre masque l\'affichage).');else L('❌ Rien ajouté → l\'écriture échoue. Voir les ❌ ci-dessus.');}catch(e){L('lecture finale impossible : '+(e&&e.message));}
 });
-</script>
-</body>
-</html>
+</script></body></html>
