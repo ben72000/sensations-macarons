@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1039';
+const APP_VERSION = 'v1040';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -41008,9 +41008,11 @@ async function _reconstructStockPlan(){
     if(dejaEntree.has('P'+p.id)) continue;
     // Une production au composant 'degustation' est une ENTRÉE de stock dégustation (type dédié).
     const estDeg = (p.composant==='degustation') || p.degustation===true;
-    // Un 'assemble' = macaron fini issu d'un assemblage → entrée typée 'assemblage'
-    // (cohérent avec les sorties coques/ganache du même assemblage, et avec le temps réel).
-    const estAsm = (p.composant==='assemble');
+    // Un assemblage se reconnaît au champ assembleFrom (liste des composants consommés),
+    // pas seulement au composant 'assemble' : d'anciennes prods migrées peuvent être
+    // 'complet' tout en ayant été assemblées. assembleFrom rempli = assemblage.
+    const aAssembleFrom = Array.isArray(p.assembleFrom) && p.assembleFrom.length>0;
+    const estAsm = (p.composant==='assemble') || (aAssembleFrom && !estDeg);
     const comp = (estDeg || estAsm) ? 'macaron'
                : (p.composant==='coques') ? 'coques'
                : (p.composant==='ganache') ? 'ganache' : 'macaron';
@@ -41023,8 +41025,8 @@ async function _reconstructStockPlan(){
   // sources (coques + ganache consommées), lues dans le champ assembleFrom.
   const asmSorties = [];
   for(const p of prods){
-    const estAsm = (p.composant==='assemble') || (p.composant==='degustation' && Array.isArray(p.assembleFrom) && p.assembleFrom.length);
-    if(!estAsm) continue;
+    // Tout ce qui a un assembleFrom rempli est un assemblage (composant 'assemble',
+    // 'degustation' issue d'assemblage, ou 'complet' migré).
     if(!Array.isArray(p.assembleFrom) || !p.assembleFrom.length) continue;
     const ts = p.prodTermineTs || p.prodTimestamp || (p.date ? p.date+'T08:00' : '');
     if(!ts) continue;
@@ -41079,6 +41081,14 @@ async function _reconstructStockPlan(){
 async function reconstructStockHistoryPreview(){
   try{
     toast('Calcul en cours…');
+    // Inspection rapide : répartition des productions par composant (pour comprendre le classement).
+    let _diagComp = '';
+    try{
+      const _pr = await db.productions.toArray().catch(()=>[]);
+      const _byComp = {};
+      _pr.forEach(p=>{ const c=p.composant||'complet'; _byComp[c]=(_byComp[c]||0)+1; });
+      _diagComp = Object.keys(_byComp).sort().map(c=>`${c}: ${_byComp[c]}`).join(' · ');
+    }catch(_){}
     const plan = await _reconstructStockPlan();
     const pertes = plan.pertes||[];
     const asmS = plan.asmSorties||[];
@@ -41128,7 +41138,8 @@ async function reconstructStockHistoryRun(){
     // avec les sorties coques/ganache du même assemblage).
     try{
       const prodsRef = await db.productions.toArray().catch(()=>[]);
-      const asmIds = new Set(prodsRef.filter(p=>p.composant==='assemble').map(p=>+p.id));
+      // Un assemblage = production avec assembleFrom rempli (capte aussi les 'complet' migrés).
+      const asmIds = new Set(prodsRef.filter(p=>Array.isArray(p.assembleFrom)&&p.assembleFrom.length>0 && p.composant!=='degustation').map(p=>+p.id));
       const existants = await db.stockMoves.toArray().catch(()=>[]);
       for(const m of existants){
         if(m.reconstruit && m.sens>0 && m.type==='production' && m.productionId!=null && asmIds.has(+m.productionId)){
