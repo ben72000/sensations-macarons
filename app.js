@@ -3,123 +3,9 @@
    Couche données : Dexie.js (IndexedDB) — 100% offline
    ============================================================ */
 
-/* ============================================================
-   [DIAG ÉCRAN BLANC] Capteur d'erreur global VISIBLE.
-   Transforme tout écran blanc en message précis à l'écran.
-   Capte : erreurs JS synchrones (window.onerror), rejets de
-   promesse non gérés (unhandledrejection), et toute exception
-   précoce avant le premier render(). Retrait = étape finale
-   explicite une fois le bug identifié et corrigé.
-   ============================================================ */
-(function installCrashCatcher(){
-  var shown = [];
-  function paint(kind, msg, src, line, col, stack){
-    try{
-      shown.push({kind:kind, msg:msg, src:src, line:line, col:col, stack:stack, t:new Date().toISOString()});
-      var id='__crashDiag';
-      var box=document.getElementById(id);
-      if(!box){
-        box=document.createElement('div');
-        box.id=id;
-        box.style.cssText='position:fixed;left:0;right:0;top:0;z-index:2147483647;'
-          +'background:#2a1320;color:#ffd9c2;font:12px/1.45 -apple-system,system-ui,sans-serif;'
-          +'padding:14px 16px calc(14px + env(safe-area-inset-top));max-height:60vh;overflow:auto;'
-          +'border-bottom:2px solid #AA7C39;box-shadow:0 6px 20px rgba(0,0,0,.4);white-space:pre-wrap;word-break:break-word';
-        var b=document.createElement('button');
-        b.textContent='Copier le diagnostic';
-        b.style.cssText='margin-top:10px;background:#AA7C39;color:#2a1320;border:0;border-radius:8px;padding:8px 12px;font-weight:700;font-size:12px';
-        b.onclick=function(){
-          var t=shown.map(function(e){return '['+e.kind+'] '+e.msg+'\n  @ '+(e.src||'?')+':'+(e.line||'?')+':'+(e.col||'?')+(e.stack?('\n'+e.stack):'');}).join('\n\n');
-          try{ navigator.clipboard.writeText('Sensations Macarons '+(typeof APP_VERSION!=='undefined'?APP_VERSION:'?')+'\n\n'+t); b.textContent='Copié ✓ — colle-le à Claude'; }
-          catch(_){ b.textContent='Sélectionne le texte ci-dessus à la main'; }
-        };
-        var close=document.createElement('button');
-        close.textContent='Masquer';
-        close.style.cssText='margin:10px 0 0 8px;background:transparent;color:#ffd9c2;border:1px solid #AA7C39;border-radius:8px;padding:8px 12px;font-size:12px';
-        close.onclick=function(){ box.style.display='none'; };
-        box._list=document.createElement('div');
-        box.appendChild(document.createTextNode('⚠️ Erreur capturée au démarrage'));
-        box.appendChild(box._list);
-        box.appendChild(b); box.appendChild(close);
-        (document.body||document.documentElement).appendChild(box);
-      }
-      var line1='\n\n[#'+shown.length+' '+kind+'] '+msg;
-      var loc=(src? ('\n  @ '+src+':'+(line||'?')+':'+(col||'?')) : '');
-      box._list.appendChild(document.createTextNode(line1+loc));
-      if(stack) box._list.appendChild(document.createTextNode('\n'+String(stack).split('\n').slice(0,6).join('\n')));
-    }catch(_){ /* le capteur ne doit jamais aggraver la situation */ }
-  }
-  window.addEventListener('error', function(e){
-    paint('JS', (e && e.message) || 'erreur inconnue',
-      e && e.filename, e && e.lineno, e && e.colno, e && e.error && e.error.stack);
-  });
-  window.addEventListener('unhandledrejection', function(e){
-    var r=e && e.reason;
-    paint('PROMISE', (r && (r.message||r.toString && r.toString())) || 'rejet non géré',
-      '', '', '', r && r.stack);
-  });
-  // [PURGE CACHE] Réinitialisation dure du cache + service worker, SANS toucher aux données
-  // IndexedDB (les recettes/commandes restent). Utile quand iOS sert une vieille version en boucle.
-  // Déclenchable depuis la console OU via #reset dans l'URL. NE supprime PAS la base de données.
-  window.smHardReset = async function(){
-    try{
-      if('serviceWorker' in navigator){
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map(r=>r.unregister()));
-      }
-      if(window.caches){
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k=>caches.delete(k)));
-      }
-    }catch(e){ /* on recharge quand même */ }
-    location.reload(true);
-  };
-  // Auto-déclenchement si l'URL contient #reset (pratique : taper l'URL + #reset dans Safari).
-  if(location.hash==='#reset'){ try{ history.replaceState(null,'',location.pathname); }catch(_){}; window.smHardReset(); }
-  // [DIAG AFFICHAGE] Sonde visuelle : montre ce que le navigateur applique réellement
-  // (largeur viewport, zoom, CSS chargé, sidebar visible). Tranche la cause d'un layout cassé.
-  window.addEventListener('load', function(){
-    setTimeout(function(){
-      try{
-        var vv = window.visualViewport || {};
-        var body = document.body;
-        var bg = body ? getComputedStyle(body).backgroundColor : '?';
-        var bodyFont = body ? getComputedStyle(body).fontFamily : '?';
-        var side = document.querySelector('.side');
-        var sideDisp = side ? getComputedStyle(side).display : 'absente';
-        var main = document.getElementById('main');
-        var mainML = main ? getComputedStyle(main).marginLeft : '?';
-        var styleTags = document.querySelectorAll('style').length;
-        var sheets = document.styleSheets ? document.styleSheets.length : 0;
-        // le CSS s'applique-t-il ? un .btn devrait avoir un border-radius non nul si oui
-        var probe = document.createElement('div'); probe.className='btn'; probe.style.position='absolute'; probe.style.left='-9999px';
-        (body||document.documentElement).appendChild(probe);
-        var br = getComputedStyle(probe).borderRadius; probe.remove();
-        // Mesure de la taille de TEXTE réellement rendue (révèle l'auto-sizing iOS).
-        var htmlFS = getComputedStyle(document.documentElement).fontSize;
-        var bodyFS = body ? getComputedStyle(body).fontSize : '?';
-        var tsa = body ? (getComputedStyle(body).webkitTextSizeAdjust || getComputedStyle(body).textSizeAdjust || 'non défini') : '?';
-        var probH = document.createElement('h1'); probH.textContent='Mesure'; probH.className='';
-        probH.style.cssText='position:absolute;left:-9999px;font-size:1.5rem';
-        (body||document.documentElement).appendChild(probH);
-        var h1FS = getComputedStyle(probH).fontSize; probH.remove();
-        var info = 'innerWidth=' + window.innerWidth + 'px  (media 820? ' + (window.innerWidth<=820?'OUI→mobile':'NON→desktop') + ')'
-          + '\n  devicePixelRatio=' + window.devicePixelRatio
-          + '  visualViewport.scale=' + (vv.scale!=null?vv.scale:'?') + '  vv.width=' + (vv.width!=null?Math.round(vv.width):'?')
-          + '\n  html font-size=' + htmlFS + '  body font-size=' + bodyFS + '  (attendu 16px)'
-          + '\n  text-size-adjust=' + tsa + '  (doit être 100%)'
-          + '\n  h1@1.5rem rendu=' + h1FS + '  (attendu 24px — si >> c\'est l\'auto-sizing iOS)'
-          + '\n  body bg=' + bg + '  .btn radius=' + br
-          + '\n  .side display=' + sideDisp + '  .main margin-left=' + mainML;
-        paint('AFFICHAGE', info, '', '', '', '');
-      }catch(err){ paint('AFFICHAGE', 'sonde échouée: '+(err&&err.message||err)); }
-    }, 700);
-  });
-})();
-
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1030';
+const APP_VERSION = 'v1023';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
@@ -3788,19 +3674,11 @@ function render(){
 // Affiche une erreur de rendu dans le conteneur principal au lieu de laisser un écran vide.
 function renderViewError(v, err){
   console.error('Erreur de rendu vue', v, err);
-  // [DIAG ÉCRAN BLANC] remonte aussi l'erreur de vue dans le capteur visible.
-  try{ window.dispatchEvent(new ErrorEvent('error', {message:'[vue '+v+'] '+((err&&err.message)||String(err)), error:err})); }catch(_){}
-  try{
-    const main=document.getElementById('main'); if(!main) return;
-    const safe = s => { try{ return esc(s); }catch(_){ return String(s==null?'':s).replace(/[<>&]/g,''); } };
-    main.innerHTML = `<div class="topbar"><div><h1>Affichage indisponible</h1><p>Vue « ${safe(v)} »</p></div></div>
-      <div class="panel"><div class="empty">Une erreur est survenue à l'affichage de cette vue.<br>
-        <span style="color:#9a8a82;font-size:.8rem">${safe((err&&err.message)||String(err)||'erreur inconnue')}</span><br><br>
-        <button class="btn ghost sm" onclick="render()">Réessayer</button></div></div>`;
-  }catch(_){
-    // dernier rempart : si même l'affichage d'erreur échoue, on écrit en texte brut.
-    try{ const m=document.getElementById('main'); if(m) m.textContent='Affichage indisponible (vue '+v+'). Voir le bandeau de diagnostic en haut.'; }catch(__){}
-  }
+  const main=document.getElementById('main'); if(!main) return;
+  main.innerHTML = `<div class="topbar"><div><h1>Affichage indisponible</h1><p>Vue « ${esc(v)} »</p></div></div>
+    <div class="panel"><div class="empty">Une erreur est survenue à l'affichage de cette vue.<br>
+      <span style="color:#9a8a82;font-size:.8rem">${esc((err&&err.message)||String(err)||'erreur inconnue')}</span><br><br>
+      <button class="btn ghost sm" onclick="render()">Réessayer</button></div></div>`;
 }
 
 /* ============================================================
