@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1041';
+const APP_VERSION = 'v1042';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -11705,6 +11705,7 @@ async function traceLot(lotId){
   if(!lot){ toast('Lot introuvable'); return; }
   const mat = await db.materials.get(lot.materialId);
   const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId) : null;
+  _tracePush('lot', lotId, mat?mat.nom:'Lot matiere');
   const conso = await db.prodConsumption.where('materialLotId').equals(lotId).toArray();
   const orders = await db.orders.toArray();
   const clients = await db.clients.toArray();
@@ -11717,15 +11718,19 @@ async function traceLot(lotId){
     const oi = await db.orderItems.where('productionId').equals(prod.id).toArray();
     const cmdList = oi.map(it=>{ const o=orders.find(x=>x.id===it.orderId); const cl=o?clients.find(cc=>cc.id===o.clientId):null;
       return `<div style="font-size:.8rem;color:#6a5a52;padding:2px 0">→ ${esc(cl?cl.nom:'—')} · ${it.qte} pièces · ${o?fmtDate(o.date):''}</div>`; });
-    blocks.push(`<div class="trace-step"><b>${esc(rec?rec.produitNom:'?')}</b> · batch ${esc(prod.lotProduction||'—')}
-      <div style="margin-top:4px">${cmdList.join('')||'<span class="note">Aucune commande servie depuis ce batch.</span>'}</div></div>`);
+    blocks.push(`<div class="trace-step" style="cursor:pointer;display:flex;justify-content:space-between;align-items:flex-start;gap:8px" onclick="traceGo('prod',${prod.id})">
+      <div><b>${esc(rec?rec.produitNom:'?')}</b> · batch ${esc(prod.lotProduction||'—')}${c.qteConsommee!=null?` · <span style="color:#9a8a82;font-size:.8rem">${qty(c.qteConsommee)} consomme</span>`:''}
+      <div style="margin-top:4px">${cmdList.join('')||'<span class="note">Aucune commande servie depuis ce batch.</span>'}</div></div>
+      <span style="color:var(--caramel,#AA7C39);font-weight:700;flex:none">→</span></div>`);
   }
-  openModal(`<h3>Traçabilité — lot de matière</h3>
+  const _qi = lot.qteInitiale!=null?qty(lot.qteInitiale):null;
+  const _qr = lot.qteRestante!=null?qty(lot.qteRestante):null;
+  openModal(`${_traceArianeHTML()}<h3>Traçabilité — lot de matière</h3>
     <p style="margin-bottom:8px"><b>${esc(mat?mat.nom:'?')}</b> · lot fourn. <b>${esc(lot.lotFournisseur||'—')}</b><br>
-    <span style="color:#9a8a82;font-size:.85rem">${esc(sup?sup.nom:'fournisseur non précisé')} · reçu ${fmtDate(lot.dateReception)} · DLC ${fmtDate(lot.dlc)||'—'}</span></p>
-    <h3 style="font-size:1rem;margin:14px 0 8px">➡ Produits & clients impactés</h3>
+    <span style="color:#9a8a82;font-size:.85rem">${esc(sup?sup.nom:'fournisseur non précisé')} · reçu ${fmtDate(lot.dateReception)} · DLC ${fmtDate(lot.dlc)||'—'}</span>${(_qi||_qr)?`<br><span style="color:#9a8a82;font-size:.85rem">${_qi?`Quantité reçue : <b>${_qi}</b>`:''}${(_qi&&_qr)?' · ':''}${_qr?`Restant : <b>${_qr}</b>`:''}${(lot.prix!=null&&+lot.prix>0)?` · ${euro(lot.prix)}`:''}</span>`:''}</p>
+    <h3 style="font-size:1rem;margin:14px 0 8px">➡ Produits & clients impactés (clique pour remonter)</h3>
     ${blocks.length?blocks.join(''):'<p class="note">Ce lot n\'a encore été utilisé dans aucune production.</p>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    <div class="modal-actions">${_traceBackBtnHTML()}<button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 
 /* ============================================================
@@ -12174,12 +12179,92 @@ async function prodSaveTimes(prodId){
   if(view==='matieres') renderMaterials(); else if(view==='productions') renderProductions();
   toast('Heures mises a jour \u2713');
 }
+
+// ============================================================
+// FIL D'ARIANE — navigation de traçabilité (amont/aval)
+// ------------------------------------------------------------
+// Une pile mémorise les fiches visitées (batch, lot matière, commande).
+// Chaque fonction de traçabilité (traceProd, traceLot, traceOrder) pousse
+// son entrée et affiche le fil en haut de la modale. « ← Retour » dépile.
+// On reste 100% fidèle au visuel existant (trace-step, modal, couleurs).
+// ============================================================
+
+let _tracePile = [];   // [{kind:'prod'|'lot'|'order', id, label}]
+let _traceNavInterne = false;  // vrai uniquement pendant une navigation interne (traceGo/traceBack/traceJumpTo)
+
+// Pousse une étape SAUF si c'est déjà la fiche courante (évite les doublons sur re-rendu).
+// Si l'appel ne vient PAS d'une navigation interne, c'est une ENTRÉE depuis un écran → on
+// réinitialise le fil pour repartir proprement.
+function _tracePush(kind, id, label){
+  if(!_traceNavInterne){ _tracePile = []; }   // entrée depuis un écran → nouveau fil
+  _traceNavInterne = false;                     // consommé
+  const last = _tracePile[_tracePile.length-1];
+  if(last && last.kind===kind && String(last.id)===String(id)) return;
+  _tracePile.push({kind, id, label});
+}
+
+// Réinitialise le fil (à appeler quand on OUVRE une traçabilité depuis un écran, pas en navigant).
+function traceReset(){ _tracePile = []; }
+
+// Ouvre une fiche en repartant à zéro (point d'entrée depuis un écran).
+function traceOpen(kind, id){
+  traceReset();
+  if(kind==='prod') return traceProd(id);
+  if(kind==='lot')  return traceLot(id);
+  if(kind==='order')return traceOrder(id);
+}
+
+// Navigue vers une fiche (empile, sans réinitialiser).
+function traceGo(kind, id){
+  _traceNavInterne = true;
+  if(kind==='prod') return traceProd(id);
+  if(kind==='lot')  return traceLot(id);
+  if(kind==='order')return traceOrder(id);
+}
+
+// Retour : dépile la fiche courante et ré-ouvre la précédente.
+function traceBack(){
+  if(_tracePile.length<=1){ closeModal(); _tracePile=[]; return; }
+  _tracePile.pop();                          // enlève la courante
+  const prev = _tracePile.pop();             // précédente (sera re-push par sa fonction)
+  if(prev){ _traceNavInterne = true; traceGo(prev.kind, prev.id); }
+  else closeModal();
+}
+
+// Génère le HTML du fil d'Ariane (vide si une seule étape).
+function _traceArianeHTML(){
+  if(_tracePile.length<=1) return '';
+  const parts = _tracePile.map((e,i)=>{
+    const isCur = (i===_tracePile.length-1);
+    if(isCur) return `<span style="color:var(--bordeaux);font-weight:700">${esc(e.label)}</span>`;
+    return `<a onclick="traceJumpTo(${i})" style="color:var(--caramel,#AA7C39);cursor:pointer;text-decoration:none">${esc(e.label)}</a>`;
+  });
+  return `<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;font-size:.78rem;margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid var(--hair)">
+    ${parts.join('<span style="color:#c9b89f">›</span>')}</div>`;
+}
+
+// Saut direct à une étape du fil (clic sur un maillon).
+function traceJumpTo(idx){
+  if(idx<0 || idx>=_tracePile.length) return;
+  const target = _tracePile[idx];
+  _tracePile = _tracePile.slice(0, idx);   // on retire tout à partir de la cible (re-push par sa fonction)
+  _traceNavInterne = true;
+  traceGo(target.kind, target.id);
+}
+
+// Bouton retour réutilisable (à insérer dans modal-actions).
+function _traceBackBtnHTML(){
+  if(_tracePile.length<=1) return '';
+  return `<button class="btn ghost" onclick="traceBack()">← Retour</button>`;
+}
+
 async function traceProd(prodId){
  try{
   const prod = await db.productions.get(prodId);
   if(!prod){ toast('Production introuvable'); return; }
   const recipe = prod.recipeId!=null ? await db.recipes.get(prod.recipeId).catch(()=>null) : null;
   const _prodNom = recipe ? recipe.produitNom : (prod.libre ? (prod.produitLibre||'(libre)') : '(recette non enregistrée)');
+  _tracePush('prod', prodId, _prodNom);
   const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
   const lines=[];
   for(const c of conso){
@@ -12194,8 +12279,10 @@ async function traceProd(prodId){
     }
     const mat = await db.materials.get(lot.materialId).catch(()=>null);
     const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId).catch(()=>null) : null;
-    lines.push(`<div class="trace-step"><b>${esc(mat?mat.nom:'?')}</b><br>
-      <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(lot.lotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(lot.dlc)||'—'}</span></div>`);
+    lines.push(`<div class="trace-step" style="border-left:3px solid #5b8aa6;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px" onclick="traceGo('lot',${lot.id})">
+      <div><b>${esc(mat?mat.nom:'?')}</b><br>
+      <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(lot.lotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(lot.dlc)||'—'}</span></div>
+      <span style="color:var(--caramel,#AA7C39);font-weight:700;flex:none">→</span></div>`);
   }
   // commandes liées
   const oi = await db.orderItems.where('productionId').equals(prodId).toArray().catch(()=>[]);
@@ -12217,9 +12304,16 @@ async function traceProd(prodId){
           `<div class="trace-step">${qty(l.qte)} pièce(s) · ${esc(l.motif||'—')} · ${fmtDate(l.date)}${l.coutTotal?` · ${euro(l.coutTotal)}`:''}${l.note?`<br><span style="font-size:.8rem;color:#9a8a82">${esc(l.note)}</span>`:''}</div>`
         ).join('')
     : '';
+  // Reste en stock non encore utilisé : quantité + emplacement (aval).
+  const _reste = round3(+prod.qteRestante||0);
+  const stockBlock = (_reste>0)
+    ? `<div class="trace-step" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+         <span>📍 En stock (non utilisé) · <b>${qty(_reste)}</b> pièce(s) · ${empTagHtml(prod.emplacement)}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:''}</span>
+         <span class="tag" style="flex:none">disponible</span></div>`
+    : '';
   const _deb=prod.prodDebutTs||prod.prodTimestamp||''; const _fin=prod.prodTermineTs||'';
   const _dur=(_deb&&_fin)?ttFormat(new Date(_fin)-new Date(_deb)):'';
-  openModal(`<h3>Traçabilité — batch</h3>
+  openModal(`${_traceArianeHTML()}<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(_prodNom)}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
     <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prodComposant(prod)!=='complet'?` · <span class="tag" style="background:${prodComposant(prod)==='assemble'?'#3f7d52':prodComposant(prod)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff">${prodComposant(prod)==='coques'?'🟤 Coques':prodComposant(prod)==='ganache'?'🍫 Ganache':prodComposant(prod)==='degustation'?'🥄 Dégustation (offert)':'✓ Assemblé'}</span>`:''}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${_dur?` · <b>durée ${_dur}</b>`:''}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'')}</span><br>
@@ -12227,11 +12321,11 @@ async function traceProd(prodId){
     ${(prod.histEmplacement&&prod.histEmplacement.length>1)?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span style="font-weight:600">Parcours de conservation</span>${prod.histEmplacement.map(h=>`<span style="font-size:.8rem;color:#6b5a52">${empIcon(h.lieu)} ${esc(empNom(h.lieu))} (${empLettre(h.lieu)}) — ${fmtDateTime(h.ts)}${h.motif?` · ${esc(h.motif)}`:''}</span>`).join('')}</div>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
     ${lines.length?lines.join(''):(prodComposant(prod)==='assemble'?'<p class="note">Macaron assemblé : matières tracées via les sous-lots ci-dessous.</p>':'<p class="note">Aucune consommation enregistrée.</p>')}
-    ${(prod.assembleFrom&&prod.assembleFrom.length)?`<h3 style="font-size:1rem;margin:18px 0 8px">🔗 ${prod.degOrigine==='casse-garni'?'Issu de pièces cassées mais garnies':'Assemblé à partir de'}${prodComposant(prod)==='degustation'?' <span class="tag" style="background:#caa23b;color:#fff;font-size:.66rem">dégustation</span>':''}</h3>${prod.assembleFrom.map(s=>`<div class="trace-step">${s.composant==='coques'?'🟤 Coques':s.composant==='ganache'?'🍫 Ganache':'💔 Cassé garni'}${s.parfum?` <b>${esc(s.parfum)}</b>`:''} · lot <b>${esc(s.lot||('#'+s.id))}</b> · ${qty(s.qte)} pièce(s)</div>`).join('')}`:''}
+    ${(prod.assembleFrom&&prod.assembleFrom.length)?`<h3 style="font-size:1rem;margin:18px 0 8px">🔗 ${prod.degOrigine==='casse-garni'?'Issu de pièces cassées mais garnies':'Assemblé à partir de'}${prodComposant(prod)==='degustation'?' <span class="tag" style="background:#caa23b;color:#fff;font-size:.66rem">dégustation</span>':''}</h3>${prod.assembleFrom.map(s=>`<div class="trace-step"${s.id!=null?` style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px" onclick="traceGo('prod',${s.id})"`:''}><div>${s.composant==='coques'?'🟤 Coques':s.composant==='ganache'?'🍫 Ganache':'💔 Cassé garni'}${s.parfum?` <b>${esc(s.parfum)}</b>`:''} · lot <b>${esc(s.lot||('#'+s.id))}</b> · ${qty(s.qte)} pièce(s)</div>${s.id!=null?`<span style="color:var(--caramel,#AA7C39);font-weight:700;flex:none">→</span>`:''}</div>`).join('')}`:''}
     ${lossBlock}
-    <h3 style="font-size:1rem;margin:18px 0 8px">➡ Commandes servies</h3>
-    ${cmdLines.length?cmdLines.join(''):'<p class="note">Ce batch n\'est lié à aucune commande pour l\'instant.</p>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button>${(prodVendable(prod) && round3(+prod.qteRestante||0)>0)?`<button class="btn gold" onclick="closeModal();scanAffectChooseOrder(${prodId})" title="Affecter ce lot à une commande à préparer">🎯 Affecter à une commande</button>`:''}<button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn gold" onclick="shareLabelPDF(${prodId})" title="Générer un PDF à partager vers Labelife">📄 PDF (Labelife)</button><button class="btn gold" onclick="shareLabelImage(${prodId})" title="Générer une image à partager">🖼 Image</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
+    <h3 style="font-size:1rem;margin:18px 0 8px">➡ Devenir de ce lot</h3>
+    ${stockBlock}${cmdLines.length?cmdLines.join(''):(stockBlock?'':'<p class="note">Ce batch n\'est lié à aucune commande pour l\'instant.</p>')}
+    <div class="modal-actions">${_traceBackBtnHTML()}<button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="prodEditTimes(${prodId})">✎ Heures</button>${(prodVendable(prod) && round3(+prod.qteRestante||0)>0)?`<button class="btn gold" onclick="closeModal();scanAffectChooseOrder(${prodId})" title="Affecter ce lot à une commande à préparer">🎯 Affecter à une commande</button>`:''}<button class="btn gold" onclick="printLabel(${prodId})">⎙ Imprimer l'étiquette</button><button class="btn gold" onclick="shareLabelPDF(${prodId})" title="Générer un PDF à partager vers Labelife">📄 PDF (Labelife)</button><button class="btn gold" onclick="shareLabelImage(${prodId})" title="Générer une image à partager">🖼 Image</button><button class="btn" onclick="exportTraceProd(${prodId})">⬇ Exporter CSV</button></div>`);
  }catch(e){
   console.error('traceProd', e);
   toast('Erreur lors de l\'affichage de la traçabilité du batch');
@@ -12243,6 +12337,7 @@ async function traceOrder(orderId){
   const order = await db.orders.get(orderId);
   if(!order){ toast('Commande introuvable'); return; }
   const client = order.clientId ? await db.clients.get(order.clientId).catch(()=>null) : null;
+  _tracePush('order', orderId, client?('Cmd '+client.nom):('Commande #'+orderId));
   const items = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
   const blocks=[];
   for(const it of items){
@@ -12264,13 +12359,15 @@ async function traceOrder(orderId){
       sub.push(`<div style="font-size:.8rem;color:#6a5a52;padding:2px 0">• ${esc(mat?mat.nom:'?')} — lot ${esc(lot.lotFournisseur||'—')} (${esc(sup?sup.nom:'?')})</div>`);
     }
     const nomProd = recipe ? recipe.produitNom : (prod.libre ? (prod.produitLibre||'(production libre)') : '(recette non enregistrée)');
-    blocks.push(`<div class="trace-step"><b>${esc(nomProd)}</b> · ${it.qte} pièces · batch ${esc(prod.lotProduction||'—')}
-      <div style="margin-top:4px">${sub.join('')||'<span class="note">pas de matières tracées</span>'}</div></div>`);
+    blocks.push(`<div class="trace-step" style="cursor:pointer;display:flex;justify-content:space-between;align-items:flex-start;gap:8px" onclick="traceGo('prod',${prod.id})">
+      <div><b>${esc(nomProd)}</b> · ${it.qte} pièces · batch ${esc(prod.lotProduction||'—')}
+      <div style="margin-top:4px">${sub.join('')||'<span class="note">pas de matières tracées</span>'}</div></div>
+      <span style="color:var(--caramel,#AA7C39);font-weight:700;flex:none">→</span></div>`);
   }
-  openModal(`<h3>Traçabilité — commande</h3>
+  openModal(`${_traceArianeHTML()}<h3>Traçabilité — commande</h3>
     <p style="margin-bottom:8px"><b>${client?esc(client.nom):'—'}</b> · ${fmtDate(order.date)} · ${esc(order.statut||'')}</p>
     ${blocks.length?blocks.join(''):'<p class="note">Aucune production liée. Lie cette commande à un ou plusieurs batchs depuis l\'écran Commandes.</p>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="exportTraceOrder(${orderId})">⬇ Exporter CSV</button></div>`);
+    <div class="modal-actions">${_traceBackBtnHTML()}<button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="exportTraceOrder(${orderId})">⬇ Exporter CSV</button></div>`);
  }catch(e){
   console.error('traceOrder', e);
   toast('Erreur lors de l\'affichage de la traçabilité');
@@ -16823,7 +16920,10 @@ async function renderHistoStock(){
         quand = (m.ts||'').slice(0,19).replace('T',' ');
       }
     }
-    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--hair)">
+    // Point d'entrée traçabilité depuis l'historique : prod → batch, sinon commande.
+    const _traceCible = (m.productionId!=null) ? `traceOpen('prod',${m.productionId})`
+                      : (m.orderId!=null) ? `traceOpen('order',${m.orderId})` : '';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--hair)${_traceCible?';cursor:pointer':''}"${_traceCible?` onclick="${_traceCible}"`:''}>
       <span style="font-size:1.05rem;flex:none">${meta.emoji}</span>
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px">
@@ -16833,7 +16933,7 @@ async function renderHistoStock(){
         </div>
         <div style="font-size:.72rem;color:#9a8a82;margin-top:2px">${meta.lbl}${m.note?` · ${esc(m.note)}`:''} · ${esc(quand)}</div>
       </div>
-      <span style="font-weight:700;color:${sCol};flex:none;min-width:48px;text-align:right">${signe}${qty(m.qte)}</span>
+      <span style="font-weight:700;color:${sCol};flex:none;min-width:48px;text-align:right">${signe}${qty(m.qte)}</span>${_traceCible?'<span style="color:var(--caramel,#AA7C39);flex:none">›</span>':''}
     </div>`;
   }).join('') : '<p class="note" style="padding:10px 12px">Aucun mouvement à afficher.</p>';
 
