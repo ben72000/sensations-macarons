@@ -77,13 +77,21 @@
         var probe = document.createElement('div'); probe.className='btn'; probe.style.position='absolute'; probe.style.left='-9999px';
         (body||document.documentElement).appendChild(probe);
         var br = getComputedStyle(probe).borderRadius; probe.remove();
+        // Mesure de la taille de TEXTE réellement rendue (révèle l'auto-sizing iOS).
+        var htmlFS = getComputedStyle(document.documentElement).fontSize;
+        var bodyFS = body ? getComputedStyle(body).fontSize : '?';
+        var tsa = body ? (getComputedStyle(body).webkitTextSizeAdjust || getComputedStyle(body).textSizeAdjust || 'non défini') : '?';
+        var probH = document.createElement('h1'); probH.textContent='Mesure'; probH.className='';
+        probH.style.cssText='position:absolute;left:-9999px;font-size:1.5rem';
+        (body||document.documentElement).appendChild(probH);
+        var h1FS = getComputedStyle(probH).fontSize; probH.remove();
         var info = 'innerWidth=' + window.innerWidth + 'px  (media 820? ' + (window.innerWidth<=820?'OUI→mobile':'NON→desktop') + ')'
           + '\n  devicePixelRatio=' + window.devicePixelRatio
           + '  visualViewport.scale=' + (vv.scale!=null?vv.scale:'?') + '  vv.width=' + (vv.width!=null?Math.round(vv.width):'?')
-          + '\n  body bg=' + bg + '  (attendu rgb(251,248,243)) '
-          + '\n  body font=' + String(bodyFont).slice(0,40)
-          + '\n  <style> tags=' + styleTags + '  styleSheets=' + sheets
-          + '\n  .btn border-radius=' + br + '  (attendu ~10px = CSS appliqué)'
+          + '\n  html font-size=' + htmlFS + '  body font-size=' + bodyFS + '  (attendu 16px)'
+          + '\n  text-size-adjust=' + tsa + '  (doit être 100%)'
+          + '\n  h1@1.5rem rendu=' + h1FS + '  (attendu 24px — si >> c\'est l\'auto-sizing iOS)'
+          + '\n  body bg=' + bg + '  .btn radius=' + br
           + '\n  .side display=' + sideDisp + '  .main margin-left=' + mainML;
         paint('AFFICHAGE', info, '', '', '', '');
       }catch(err){ paint('AFFICHAGE', 'sonde échouée: '+(err&&err.message||err)); }
@@ -93,7 +101,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1028';
+const APP_VERSION = 'v1029';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
