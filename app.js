@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1059';
+const APP_VERSION = 'v1060';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -26252,17 +26252,31 @@ async function renderPredictiveAlerts(){
 // l'assistant ne doit pas être un cul-de-sac — elle propose toujours « et ensuite, va agir ici ».
 // Chaque raccourci : { label, view, cible? (objet précis), action? (fonction directe au lieu d'un goView) }.
 // Étape 1 : on démarre avec query_revenue seul, pour valider le mécanisme avant de généraliser.
+// [COCKPIT] Actions rapides déclenchables depuis les raccourcis du copilote.
+// Certaines nécessitent navigation PUIS action (ex. lancer une session depuis l'atelier) :
+// on encapsule ça ici pour que le raccourci reste un simple appel de fonction.
+function aiActNouvelleCommande(){ if(typeof cmdForm==='function') cmdForm(); }
+function aiActNouveauClient(){ if(typeof clientForm==='function') clientForm(); }
+function aiActNouvelleMatiere(){ if(typeof matForm==='function') matForm(); }
+function aiActNouvelleRecette(){ if(typeof recForm==='function') recForm(); }
+function aiActNouveauDevis(){ if(typeof cmdForm==='function') cmdForm(null,{devis:true}); }
+function aiActLancerSession(){
+  // va à l'atelier puis démarre une session de chrono (si pas déjà en cours)
+  try{ goView('atelier'); }catch(e){}
+  setTimeout(()=>{ try{ if(typeof prodSessActive==='function' && !prodSessActive() && typeof prodSessionStart==='function'){ prodSessionStart(); } if(typeof prodRenderBoard==='function') prodRenderBoard(); }catch(e){} }, 120);
+}
+
 const INTENT_SHORTCUTS = {
-  query_advice:           [ { label:'🏭 Plan de production', view:'agendaprod' } ],
-  query_retards:          [ { label:'📋 Commandes', view:'commandes' }, { label:'🏭 Plan de production', view:'agendaprod' } ],
-  query_dlc_finis:        [ { label:'📦 Stock des macarons', view:'productions' } ],
-  query_faisabilite:      [ { label:'🏭 Plan de production', view:'agendaprod' } ],
-  query_ordo:             [ { label:'🏭 Plan de production', view:'agendaprod' } ],
+  query_advice:           [ { label:'🏭 Plan de production', view:'agendaprod' }, { label:'▶ Lancer une session', action:'aiActLancerSession' } ],
+  query_retards:          [ { label:'📋 Commandes', view:'commandes' }, { label:'🏭 Plan de production', view:'agendaprod' }, { label:'➕ Nouvelle commande', action:'aiActNouvelleCommande' } ],
+  query_dlc_finis:        [ { label:'📦 Stock des macarons', view:'productions' }, { label:'▶ Lancer une session', action:'aiActLancerSession' } ],
+  query_faisabilite:      [ { label:'🏭 Plan de production', view:'agendaprod' }, { label:'▶ Lancer une session', action:'aiActLancerSession' } ],
+  query_ordo:             [ { label:'🏭 Plan de production', view:'agendaprod' }, { label:'▶ Lancer une session', action:'aiActLancerSession' } ],
   query_locate:           [ { label:'📦 Stock des macarons', labelWithFocus:'📦 Stock de {val}', view:'productions', focusType:'parfum', focusParam:'flavor' } ],
-  query_stock:            [ { label:'🧂 Gérer les matières', labelWithFocus:'🧂 Stock de {val}', view:'matieres', focusType:'matiere', focusParam:'material' }, { label:'🍬 Stock par parfum', view:'stockparfums' } ],
-  query_orders:           [ { label:'📋 Toutes les commandes', labelWithFocus:'📋 Commandes du {val}', view:'commandes', focusType:'jour', focusParam:'date' } ],
-  query_delivery:         [ { label:'👤 Voir la fiche', labelWithFocus:'👤 Fiche de {val}', view:'clients', openFn:'clientForm', focusType:'client', focusParam:'client' }, { label:'📋 Commandes', view:'commandes' } ],
-  query_prochaine_livraison: [ { label:'📋 Toutes les commandes', view:'commandes' }, { label:'📅 Agenda', view:'cal' } ],
+  query_stock:            [ { label:'🧂 Gérer les matières', labelWithFocus:'🧂 Stock de {val}', view:'matieres', focusType:'matiere', focusParam:'material' }, { label:'🍬 Stock par parfum', view:'stockparfums' }, { label:'🛒 Réapprovisionner', view:'achats' } ],
+  query_orders:           [ { label:'📋 Toutes les commandes', labelWithFocus:'📋 Commandes du {val}', view:'commandes', focusType:'jour', focusParam:'date' }, { label:'➕ Nouvelle commande', action:'aiActNouvelleCommande' } ],
+  query_delivery:         [ { label:'👤 Voir la fiche', labelWithFocus:'👤 Fiche de {val}', view:'clients', openFn:'clientForm', focusType:'client', focusParam:'client' }, { label:'📋 Commandes', view:'commandes' }, { label:'➕ Nouvelle commande', action:'aiActNouvelleCommande' } ],
+  query_prochaine_livraison: [ { label:'📋 Toutes les commandes', view:'commandes' }, { label:'📅 Agenda', view:'cal' }, { label:'➕ Nouvelle commande', action:'aiActNouvelleCommande' } ],
   query_bilan_marche:     [ { label:'🏪 Marchés', view:'marches' }, { label:'📊 Compta', view:'compta' } ],
   query_charges:          [ { label:'📊 Compta', view:'compta' }, { label:'📈 Pilotage', view:'pilotage' } ],
   query_couverture_stock: [ { label:'📦 Stock par parfum', view:'stockparfums' }, { label:'📉 Prévisionnel', view:'previsionnel' } ],
@@ -26271,16 +26285,16 @@ const INTENT_SHORTCUTS = {
   query_seuil_rentabilite:[ { label:'⏳ Revenu horaire', view:'revenuhoraire' }, { label:'📊 Compta', view:'compta' } ],
   query_strategie:        [ { label:'📈 Pilotage', view:'pilotage' }, { label:'📊 Compta', view:'compta' } ],
   query_fournisseur:      [ { label:'🏪 Fournisseurs', view:'fournisseurs' }, { label:'📦 Matières', view:'matieres' } ],
-  query_profil_client:    [ { label:'👤 Fiche client', view:'clients' }, { label:'📋 Commandes', view:'commandes' } ],
+  query_profil_client:    [ { label:'👤 Fiche client', view:'clients' }, { label:'📋 Commandes', view:'commandes' }, { label:'➕ Nouvelle commande', action:'aiActNouvelleCommande' } ],
   query_prevision:        [ { label:'📈 Prévisionnel', view:'previsionnel' }, { label:'⚙ Production', view:'agendaprod' } ],
   query_stock_boites:     [ { label:'📦 Coffrets', view:'boites' }, { label:'🧰 Consommables', view:'consommables' } ],
   query_panier_moyen:     [ { label:'👥 Clients', view:'clients' }, { label:'📊 Compta', view:'compta' } ],
   query_gaspillage:       [ { label:'🏪 Marchés', view:'marches' } ],
-  query_client:           [ { label:'👤 Voir la fiche', labelWithFocus:'👤 Fiche de {val}', view:'clients', openFn:'clientForm', focusType:'client', focusParam:'client' } ],
+  query_client:           [ { label:'👤 Voir la fiche', labelWithFocus:'👤 Fiche de {val}', view:'clients', openFn:'clientForm', focusType:'client', focusParam:'client' }, { label:'➕ Nouveau client', action:'aiActNouveauClient' } ],
   query_market_advice:    [ { label:'⛺ Ouvrir les marchés', view:'marches' } ],
-  query_stock_pour:       [ { label:'🧂 Gérer les matières', labelWithFocus:'🧂 Stock de {val}', view:'matieres', focusType:'matiere', focusParam:'material' }, { label:'🛒 Réapprovisionner', view:'achats' } ],
-  query_faisabilite_ajout:[ { label:'🏭 Plan de production', view:'agendaprod' } ],
-  query_recipe:           [ { label:'📖 Ouvrir les recettes', view:'recettes' } ],
+  query_stock_pour:       [ { label:'🧂 Gérer les matières', labelWithFocus:'🧂 Stock de {val}', view:'matieres', focusType:'matiere', focusParam:'material' }, { label:'🛒 Réapprovisionner', view:'achats' }, { label:'➕ Nouvelle matière', action:'aiActNouvelleMatiere' } ],
+  query_faisabilite_ajout:[ { label:'🏭 Plan de production', view:'agendaprod' }, { label:'➕ Nouvelle commande', action:'aiActNouvelleCommande' } ],
+  query_recipe:           [ { label:'📖 Ouvrir les recettes', view:'recettes' }, { label:'➕ Nouvelle recette', action:'aiActNouvelleRecette' } ],
   query_top_parfum:       [ { label:'📈 Rentabilité par parfum', view:'rentaparfum' }, { label:'🔮 Prévisionnel', view:'previsionnel' } ],
   query_top_clients:      [ { label:'👥 Mes clients', view:'clients' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
   query_revenue:          [ { label:'📊 Ouvrir la compta', view:'compta' }, { label:'📈 Rentabilité', view:'rentabilite' }, { label:'⤓ Export comptable', action:'exportComptaCSV' } ],
@@ -26291,37 +26305,41 @@ const INTENT_SHORTCUTS = {
   query_prochain_marche:  [ { label:'🏪 Voir les marchés', view:'marches' } ],
   query_compare_mois:     [ { label:'📊 Ouvrir la compta', view:'compta' } ],
   query_reco_business:    [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📊 Compta', view:'compta' } ],
-  query_courses:          [ { label:'📦 Voir les stocks', view:'matieres' }, { label:'🏪 Fournisseurs', view:'fournisseurs' } ],
+  query_courses:          [ { label:'📦 Voir les stocks', view:'matieres' }, { label:'🏪 Fournisseurs', view:'fournisseurs' }, { label:'🛒 Réapprovisionner', view:'achats' } ],
   query_velocite:         [ { label:'📦 Stock par parfum', view:'stockparfums' }, { label:'⚙ Production', view:'agendaprod' } ],
   query_derniere_commande:[ { label:'👤 Fiche client', view:'clients' } ],
   query_stock_finis:      [ { label:'📦 Stock par parfum', view:'stockparfums' } ],
-  query_clients_relance:  [ { label:'👥 Mes clients', view:'clients' } ],
-  query_dlc_matieres:     [ { label:'📦 Voir les matières', view:'matieres' } ],
+  query_clients_relance:  [ { label:'👥 Mes clients', view:'clients' }, { label:'➕ Nouvelle commande', action:'aiActNouvelleCommande' } ],
+  query_dlc_matieres:     [ { label:'📦 Voir les matières', view:'matieres' }, { label:'🛒 Réapprovisionner', view:'achats' } ],
   query_stats_parfum:     [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📊 Compta', view:'compta' } ],
-  query_temps_prod:       [ { label:'⚙ Production', view:'agendaprod' }, { label:'🗂 Recettes', view:'recettes' } ],
-  query_nb_batchs:        [ { label:'⚙ Production', view:'agendaprod' } ],
+  query_temps_prod:       [ { label:'⚙ Production', view:'agendaprod' }, { label:'🗂 Recettes', view:'recettes' }, { label:'▶ Lancer une session', action:'aiActLancerSession' } ],
+  query_nb_batchs:        [ { label:'⚙ Production', view:'agendaprod' }, { label:'▶ Lancer une session', action:'aiActLancerSession' } ],
   query_conversion_gf:    [ { label:'⚙ Production', view:'agendaprod' } ],
   query_rd:               [ { label:'✨ Atelier R&D', view:'rd' }, { label:'💡 Mes idées', view:'rdidees' } ],
   query_marge_commande:   [ { label:'📈 Rentabilité clients', view:'rentabilite' }, { label:'📋 Commandes', view:'commandes' } ],
   query_cout_commande:    [ { label:'📋 Commandes', view:'commandes' }, { label:'📈 Rentabilité parfums', view:'rentaparfum' } ],
-  query_parfums_sans:     [ { label:'🗂 Recettes', view:'recettes' } ],
+  query_parfums_sans:     [ { label:'🗂 Recettes', view:'recettes' }, { label:'➕ Nouvelle recette', action:'aiActNouvelleRecette' } ],
   query_urssaf:           [ { label:'📊 Ouvrir la compta', view:'compta' } ],
   query_paiements_dus:    [ { label:'📋 Voir les commandes', view:'commandes' } ],
   query_allergenes:       [ { label:'📖 Voir les recettes', view:'recettes' } ],
   query_trends:           [ { label:'🔮 Prévisionnel', labelWithFocus:'🔮 Prévisionnel · {val}', view:'previsionnel', focusType:'parfum', focusParam:'flavor' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
   query_anomalies:        [ { label:'🔎 Analyse', view:'analyse' } ],
-  query_production_needs: [ { label:'🏭 Plan de production', view:'agendaprod' } ],
-  query_rupture:          [ { label:'🔮 Prévisionnel', view:'previsionnel' }, { label:'📦 Stock des macarons', view:'productions' } ],
+  query_production_needs: [ { label:'🏭 Plan de production', view:'agendaprod' }, { label:'▶ Lancer une session', action:'aiActLancerSession' } ],
+  query_rupture:          [ { label:'🔮 Prévisionnel', view:'previsionnel' }, { label:'📦 Stock des macarons', view:'productions' }, { label:'▶ Lancer une session', action:'aiActLancerSession' } ],
   query_predict:          [ { label:'🔮 Prévisionnel', view:'previsionnel' }, { label:'📦 Stock des macarons', view:'productions' } ]
 };
 // Génère le HTML des boutons de raccourci pour une intention donnée. Renvoie '' si aucun raccourci.
 // `action` (fonction globale à appeler) prime sur `view` (navigation). `cible` (optionnelle) sera
 // utilisée plus tard pour amener à un objet précis (ex. stock d'un parfum, fiche d'un client).
-function aiShortcuts(intent, params){
+function aiShortcuts(intent, params, resultShortcuts){
   const list = (intent && INTENT_SHORTCUTS[intent]) ? INTENT_SHORTCUTS[intent] : null;
-  if(!list || !list.length) return '';
+  // Raccourcis spécifiques au RÉSULTAT (les plus pertinents) rendus en premier.
+  const resultBtns = (Array.isArray(resultShortcuts) && resultShortcuts.length) ? aiRenderShortcutBtns(resultShortcuts) : '';
+  // labels déjà présents (pour éviter qu'un raccourci générique répète un raccourci résultat)
+  const usedLabels = new Set((resultShortcuts||[]).map(s=>s&&s.label).filter(Boolean));
+  if((!list || !list.length) && !resultBtns) return '';
   params = params || {};
-  const btns = list.map(sc=>{
+  const btns = (list||[]).filter(sc=>!usedLabels.has(sc.label)).map(sc=>{
     // [ÉTAPE 3] Si le raccourci déclare un focus (focusType) ET que le paramètre correspondant existe
     // dans l'intention (ex. focusParam:'flavor' → params.flavor), on amène à l'OBJET PRÉCIS via
     // aiFocusGo (scroll + surbrillance). Sinon, navigation simple vers l'écran.
@@ -26352,7 +26370,7 @@ function aiShortcuts(intent, params){
     return `<button class="btn ghost sm" onclick="${onclick}" style="margin:2px 4px 0 0">${esc(label)}</button>`;
   }).join('');
   return `<div style="margin-top:10px;padding-top:8px;border-top:1px solid #f0eae0;display:flex;flex-wrap:wrap;align-items:center">
-    <span style="font-size:.72rem;color:#9a8a82;margin-right:6px">Aller plus loin :</span>${btns}</div>`;
+    <span style="font-size:.72rem;color:#9a8a82;margin-right:6px">Aller plus loin :</span>${resultBtns}${btns}</div>`;
 }
 // [CHAT — D1] Fil conversationnel : on EMPILE les messages au lieu d'écraser. Deux rôles : « moi »
 // (bulle alignée à droite, fond caramel clair) et « copilote » (bulle à gauche, fond crème). Le fil
@@ -26412,12 +26430,28 @@ function aiSuite(props){
   };
   return `<div class="ai-suite">${props.map(btn).join('')}</div>`;
 }
-function aiSay(html){
-  // [COCKPIT] On accole les raccourcis contextuels de l'intention courante (mémorisée par le dispatcher).
-  const sc = (typeof aiShortcuts==='function') ? aiShortcuts(window._aiCurrentIntent, window._aiCurrentParams) : '';
+function aiSay(html, resultShortcuts){
+  // [COCKPIT] Raccourcis = ceux spécifiques au RÉSULTAT (passés par la réponse, les plus pertinents)
+  // PUIS ceux génériques de l'intention courante. Les premiers priment et évitent les doublons.
+  const scResult = (Array.isArray(resultShortcuts) && resultShortcuts.length)
+    ? aiRenderShortcutBtns(resultShortcuts) : '';
+  const sc = (typeof aiShortcuts==='function') ? aiShortcuts(window._aiCurrentIntent, window._aiCurrentParams, resultShortcuts) : '';
   // [CHAT — D1] Si le fil existe, on pousse une bulle copilote ; sinon repli sur l'ancien rendu (#aiOut).
   if(document.getElementById('aiThread')){ aiPush('bot', `${html}${sc}`); return; }
   const out=document.getElementById('aiOut'); if(out){ out.innerHTML = `<div class="panel">${html}${sc}</div>`; }
+}
+// Rend une liste de raccourcis « bruts » {label, view|action|openFn+id|ask} en boutons.
+function aiRenderShortcutBtns(list){
+  const btns = (list||[]).filter(Boolean).map(sc=>{
+    let onclick;
+    if(sc.action)      onclick = /\(/.test(sc.action) ? sc.action : `${sc.action}()`;
+    else if(sc.openFn && sc.id!=null) onclick = `${sc.openFn}(${JSON.stringify(sc.id)})`;
+    else if(sc.ask)    onclick = `aiQuick(${JSON.stringify(sc.ask)})`;
+    else if(sc.view)   onclick = `goView('${sc.view}')`;
+    else return '';
+    return `<button class="btn ghost sm" onclick="${onclick}" style="margin:2px 4px 0 0">${esc(sc.label)}</button>`;
+  }).filter(Boolean).join('');
+  return btns;
 }
 
 // Envoi fluide : Entrée envoie, Maj+Entrée = nouvelle ligne. Anti double-déclenchement.
@@ -27481,10 +27515,15 @@ async function aiQueryRetards(){
     const lien = r.orderId ? ` <button class="btn ghost sm" style="padding:1px 8px;font-size:.72rem" onclick="cmdView(${r.orderId})">🔎 Voir</button>` : '';
     return `<div class="sum-box" style="border-left:3px solid #b3261e"><span style="flex:1"><b>${esc(r.client)}</b> — l'étape « ${esc(quoi)} » aurait dû démarrer.${lien}</span></div>`;
   }).join('');
+  // [COCKPIT — raccourcis RÉSULTAT] ciblés sur la commande la plus urgente + action immédiate.
+  const top = b.retardsLancement[0];
+  const resultSc = [];
+  if(top && top.orderId!=null) resultSc.push({ label:`🔎 Commande de ${top.client||'ce client'}`, action:`cmdView(${top.orderId})` });
+  resultSc.push({ label:'▶ Lancer une session', action:'aiActLancerSession' });
   aiSay(`${aiHero(`${n} <span style="font-size:1rem;font-weight:600">commande${n>1?'s':''}</span>`, 'En retard de lancement', {color:'var(--red)'})}
     ${aiSynth(`L'étape la plus urgente concerne <b>${esc(b.retardsLancement[0].client)}</b>. À lancer en priorité.`, {tone:'warn', icon:'⏰'})}
     ${aiDetails(rows, `Voir les ${n} commande${n>1?'s':''}`)}
-    ${aiSuite([{label:'🏭 Voir le plan de production', view:'agendaprod'},{label:'🧭 Conseille-moi', ask:'conseille-moi'}])}`);
+    ${aiSuite([{label:'🏭 Voir le plan de production', view:'agendaprod'},{label:'🧭 Conseille-moi', ask:'conseille-moi'}])}`, resultSc);
 }
 
 // PÉRIME : produits finis proches de leur DLC (le cerveau).
