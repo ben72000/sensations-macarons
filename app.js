@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1043';
+const APP_VERSION = 'v1044';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3161,7 +3161,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -12455,6 +12455,7 @@ const _NAV_PAGES = [
   {v:'stockparfums', t:'Stock par parfum',          k:'stock parfum macaron disponible'},
   {v:'histostock',   t:'Historique du stock',        k:'historique mouvements stock entrees sorties journal flux'},
   {v:'tempsproduction', t:'Temps de production',     k:'temps production duree chrono atelier suivi travail heures batch reel actif'},
+  {v:'controletemps', t:'Contrôle des temps',     k:'controle verification correction temps chrono tache parfum lot session erreur ouvert reassigner duree'},
   {v:'couts',        t:'Coûts & prix',              k:'cout prix revient marge tarif'},
   {v:'sauvegardes',  t:'Sauvegarde & sécurité',     k:'sauvegarde backup securite export restauration'},
   {v:'produits',     t:'Offre / Coffrets',          k:'produit coffret offre catalogue boite assortiment'},
@@ -40790,6 +40791,283 @@ function stockMoveKey(nom){
 
 
 
+
+// ============================================================
+// CONTRÔLE DES TEMPS — vérification + correction manuelle
+// ------------------------------------------------------------
+// Panneau qui, pour chaque séance de production, montre ses tâches (parfum, lot,
+// durée), un état de santé, et des actions de correction rapides :
+//   ✎ corriger durée/horaires · 🏷 réassigner parfum · ⏹ fermer chrono ouvert · 🗑 supprimer.
+// Travaille sur TOUTES les sessions (pas seulement l'active).
+// Réutilise les fonctions existantes : prodSessLoad, prodSessUpsert, prodTaskNet,
+// prodSessReelMs, fmtDureeMs, _estimeFinTache.
+// ============================================================
+
+// Retrouve {sess, task} d'une tâche par son id, dans toutes les sessions.
+function _ctFindTask(taskId){
+  const sessions = prodSessLoad();
+  for(const s of sessions){
+    const t = (s.tasks||[]).find(x=>String(x.id)===String(taskId));
+    if(t) return {sess:s, task:t};
+  }
+  return {sess:null, task:null};
+}
+
+// Analyse de santé d'une session : retourne {ok, alerts:[...], actifMs, reelMs}.
+function _ctSanteSession(s){
+  const tasks = (s.tasks||[]);
+  const alerts = [];
+  let actifMs = 0;
+  tasks.forEach(t=>{
+    actifMs += prodTaskNet(t);
+    const recs = Array.isArray(t.parfums) ? t.parfums.filter(r=>r!=null) : [];
+    const estBatch = t.fromBatch || (t.composant && t.composant!=='complet');
+    // tâche issue d'un batch mais sans parfum rattaché
+    if(estBatch && recs.length===0){
+      alerts.push({type:'sans_parfum', taskId:t.id, msg:`« ${t.label||'tâche'} » n'a aucun parfum rattaché.`});
+    }
+    // chrono resté ouvert anormalement
+    if(!t.end && (+t.start>0) && (Date.now()-(+t.start))>CHRONO_ANORMAL_MS){
+      alerts.push({type:'ouvert', taskId:t.id, msg:`« ${t.label||'tâche'} » est un chrono jamais arrêté.`});
+    }
+  });
+  const reelMs = prodSessReelMs(s);
+  // temps actif > temps réel = impossible physiquement
+  if(reelMs>0 && actifMs > reelMs + 60000){  // tolérance 1 min
+    alerts.push({type:'actif_sup', taskId:null, msg:`Le temps actif (${fmtDureeMs(actifMs)}) dépasse le temps réel (${fmtDureeMs(reelMs)}).`});
+  }
+  return {ok:alerts.length===0, alerts, actifMs, reelMs};
+}
+
+// ---- VUE PRINCIPALE ----
+async function renderControleTemps(){
+  const main = document.getElementById('main'); if(!main) return;
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recName = id => { const r = recipes.find(x=>+x.id===+id); return r?(r.produitNom||('recette #'+id)):('recette #'+id); };
+  window._ctRecipes = recipes;  // pour le sélecteur de réassignation
+
+  const sessions = prodSessLoad().slice().sort((a,b)=>{
+    const ea = +a.start||0, eb = +b.start||0; return eb-ea;   // plus récent d'abord
+  });
+
+  const fmtHM = ms => { if(!(+ms>0)) return '—'; const d=new Date(+ms); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+  const compLbl = c => ({coques:'Coques', ganache:'Ganache', cremeux:'Crémeux', assemble:'Assemblage', complet:'Production', degustation:'Dégustation'})[c]||'Production';
+
+  // Construit le HTML d'une tâche.
+  function taskHTML(s, t, estLive){
+    const recs = Array.isArray(t.parfums) ? t.parfums.filter(r=>r!=null) : [];
+    const parfum = recs.length ? recs.map(recName).join(' + ') : null;
+    const nom = parfum ? `${compLbl(t.composant)} — ${parfum}` : (t.label || `${compLbl(t.composant)} — (sans parfum)`);
+    const lot = t.lotBase ? `lot ${esc(t.lotBase)}` : '';
+    const ouvert = !t.end;
+    const anormal = ouvert && (+t.start>0) && (Date.now()-(+t.start))>CHRONO_ANORMAL_MS;
+    const sansParfum = (t.fromBatch || (t.composant && t.composant!=='complet')) && recs.length===0;
+    const dur = fmtDureeMs(prodTaskNet(t));
+    // ligne meta : lot · état/horaires
+    let etat;
+    if(anormal) etat = '⚠ jamais arrêté · ' + fmtHM(t.start) + ' → (en cours)';
+    else if(ouvert) etat = 'en cours · démarrée ' + fmtHM(t.start);
+    else etat = fmtHM(t.start) + ' → ' + fmtHM(t.end);
+    if(t.finEstimee) etat += ' · fin estimée';
+    const metaParts = [lot, etat].filter(Boolean).join(' · ');
+
+    // actions
+    const acts = [];
+    if(sansParfum || anormal){
+      // tâche en alerte : priorité aux corrections critiques
+      if(sansParfum) acts.push(`<button class="btn ghost sm" onclick="ctReassignParfum('${t.id}')" title="Définir le parfum">🏷 Parfum</button>`);
+      if(anormal){
+        acts.push(`<button class="btn ghost sm" style="border-color:#e5b4ae;color:#b04a3e" onclick="ctFermerChrono('${t.id}')" title="Fermer ce chrono (fin estimée)">⏹ Fermer</button>`);
+        acts.push(`<button class="btn ghost sm" style="border-color:#e5b4ae;color:#b04a3e" onclick="ctSupprimerTache('${t.id}')" title="Supprimer cette tâche">🗑</button>`);
+      }
+    } else {
+      acts.push(`<button class="btn ghost sm" onclick="ctEditTache('${t.id}')" title="Corriger la durée ou les horaires">✎</button>`);
+      acts.push(`<button class="btn ghost sm" onclick="ctReassignParfum('${t.id}')" title="Changer le parfum">🏷</button>`);
+      acts.push(`<button class="btn ghost sm" onclick="ctSupprimerTache('${t.id}')" title="Supprimer cette tâche">🗑</button>`);
+    }
+    const alertCls = (sansParfum||anormal) ? ' style="background:#fdf6f5;border-radius:8px;padding:9px 8px"' : '';
+    const durHtml = (!sansParfum && !anormal) ? `<span style="font-weight:700;color:var(--caramel,#AA7C39);flex:none">${dur}</span>` : '';
+    return `<div class="trace-step"${alertCls.replace('class','')} style="display:flex;justify-content:space-between;align-items:center;gap:8px${(sansParfum||anormal)?';background:#fdf6f5':''}">
+      <div style="min-width:0"><div style="font-weight:600;color:var(--bordeaux)">${esc(nom)}</div>
+      <div style="font-size:.76rem;color:${anormal||sansParfum?'#b04a3e':'#9a8a82'};margin-top:2px">${esc(metaParts)}</div></div>
+      <div style="display:flex;align-items:center;gap:6px;flex:none">${durHtml}${acts.join('')}</div>
+    </div>`;
+  }
+
+  // Construit le HTML d'une session.
+  function sessHTML(s, estLive){
+    const sante = _ctSanteSession(s);
+    const tasks = (s.tasks||[]);
+    const dateLbl = s.date || (s.start? new Date(+s.start).toLocaleDateString('fr-FR') : '');
+    const heure = (s.start? new Date(+s.start).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : '');
+    const healthBadge = sante.ok
+      ? `<span style="font-size:.76rem;padding:3px 10px;border-radius:20px;font-weight:600;background:#e7f3ec;color:#3f7d52">✓ cohérent</span>`
+      : `<span style="font-size:.76rem;padding:3px 10px;border-radius:20px;font-weight:600;background:#fdf3f2;color:#b04a3e">⚠ ${sante.alerts.length} alerte${sante.alerts.length>1?'s':''}</span>`;
+    const alertBoxes = sante.alerts.filter(a=>a.type==='actif_sup').map(a=>
+      `<div style="background:#fdf3f2;border:1px solid #e5b4ae;border-radius:9px;padding:9px 11px;font-size:.8rem;color:#7a3a32;margin:8px 0">${esc(a.msg)} Corrige un chrono ouvert ci-dessous.</div>`).join('');
+    const tasksHtml = tasks.length ? tasks.map(t=>taskHTML(s,t,estLive)).join('') : '<p class="note" style="padding:6px 0">Aucune tâche dans cette séance.</p>';
+    const totaux = tasks.length ? `<div style="display:flex;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--hair)">
+      <div style="flex:1;text-align:center;background:var(--creme-2,#F5F0E8);border-radius:9px;padding:8px"><div style="font-weight:700;color:var(--bordeaux);font-size:1.02rem">${fmtDureeMs(sante.actifMs)}</div><div style="font-size:.72rem;color:#9a8a82">actif total</div></div>
+      <div style="flex:1;text-align:center;background:var(--creme-2,#F5F0E8);border-radius:9px;padding:8px"><div style="font-weight:700;color:var(--bordeaux);font-size:1.02rem">${fmtDureeMs(sante.reelMs)}</div><div style="font-size:.72rem;color:#9a8a82">réel (mur à mur)</div></div>
+    </div>` : '';
+    const liveStyle = estLive ? 'background:linear-gradient(135deg,#52252F,#3d1a22);color:#fff' : '';
+    const liveTitleCol = estLive ? 'color:#fff' : 'color:var(--bordeaux)';
+    const liveDateCol = estLive ? 'color:#e8d5c0' : 'color:#9a8a82';
+    return `<div class="card" style="${liveStyle}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid ${estLive?'rgba(255,255,255,.15)':'var(--hair)'}">
+        <div><div style="font-weight:700;${liveTitleCol}">${estLive?'⏱ Séance en cours':('Séance du '+esc(dateLbl))}</div>
+        <div style="font-size:.78rem;${liveDateCol}">${tasks.length} tâche${tasks.length>1?'s':''}${heure?' · démarrée '+esc(heure):''}</div></div>
+        ${healthBadge}
+      </div>
+      ${alertBoxes}
+      ${tasksHtml}
+      ${totaux}
+    </div>`;
+  }
+
+  const active = sessions.find(s=>!s.end);
+  const passees = sessions.filter(s=>s.end);
+
+  let html = `<div class="topbar"><div><h1>🔍 Contrôle des temps</h1>
+    <p style="color:#8a776c;font-size:.86rem">Vérifie que chaque minute est rattachée au bon parfum. Corrige d'un geste si besoin.</p></div>
+    <div class="flex"><button class="btn" onclick="goView('tempsproduction')">⏱ Temps de production →</button></div></div>`;
+
+  if(active) html += sessHTML(active, true);
+  if(passees.length){
+    html += passees.map(s=>sessHTML(s,false)).join('');
+  }
+  if(!active && !passees.length){
+    html += `<div class="card"><p class="note">Aucune séance de production enregistrée pour l'instant.</p></div>`;
+  }
+
+  main.innerHTML = html;
+}
+
+// ---- ACTIONS DE CORRECTION ----
+
+// ✎ Corriger durée / horaires d'une tâche (toutes sessions).
+function ctEditTache(taskId){
+  const {sess, task} = _ctFindTask(taskId);
+  if(!task){ toast('Tâche introuvable'); return; }
+  const netMin = Math.round(prodTaskNet(task)/60000);
+  const fmtHM = ms => { const d=new Date(+ms); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+  const startHM = (+task.start>0) ? fmtHM(task.start) : '';
+  const endHM = task.end ? fmtHM(task.end) : '';
+  const pauseMin = Math.round(((+task.pausedAccum||0))/60000);
+  openModal(`<h3>Corriger le temps — ${esc(task.label||'tâche')}</h3>
+    <p class="note">${task.end?'Tâche terminée : corrige sa durée ou ses horaires.':'Tâche en cours.'}${pauseMin>0?`<br>Pauses déjà déduites : <b>${pauseMin} min</b> (conservées).`:''}</p>
+    <div class="field"><label>Durée nette (minutes)</label>
+      <input type="number" min="0" step="1" id="cte_dur" value="${netMin}" inputmode="numeric"></div>
+    <details style="margin:6px 0">
+      <summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">Ou saisir les horaires réels</summary>
+      <div class="row2" style="margin-top:8px">
+        <div class="field"><label>Heure de début</label><input type="time" id="cte_start" value="${startHM}"></div>
+        <div class="field"><label>Heure de fin</label><input type="time" id="cte_end" value="${endHM}"></div>
+      </div>
+      <p class="note">Si renseignés, les horaires priment sur la durée. Durée nette = (fin − début) − pauses.</p>
+    </details>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="ctEditTacheSave('${task.id}')">Enregistrer</button>
+    </div>`);
+}
+
+function ctEditTacheSave(taskId){
+  const {sess, task} = _ctFindTask(taskId);
+  if(!sess || !task){ toast('Tâche introuvable'); return; }
+  const pauseMs = (+task.pausedAccum||0);
+  const startHM = (val('cte_start')||'').trim();
+  const endHM = (val('cte_end')||'').trim();
+  const durMin = +val('cte_dur');
+  const dayBase = new Date(+task.start||Date.now()); dayBase.setSeconds(0,0);
+  const tsFromHM = hm => { const m=/^(\d{1,2}):(\d{2})$/.exec(hm); if(!m) return null; const d=new Date(dayBase); d.setHours(+m[1],+m[2],0,0); return d.getTime(); };
+  const startTs = tsFromHM(startHM);
+  const endTs = endHM ? tsFromHM(endHM) : null;
+  // MODE horaires (prioritaire)
+  if(startTs!=null && endHM){
+    if(endTs==null){ toast('Heure de fin invalide'); return; }
+    if(endTs < startTs){ toast('La fin ne peut pas précéder le début'); return; }
+    const net = (endTs - startTs) - pauseMs;
+    if(net < 0){ toast('Durée négative : les pauses dépassent l\'intervalle'); return; }
+    task.start = startTs; task.end = endTs; task.pauseAt = null; task.finEstimee = false;
+    prodSessUpsert(sess); closeModal(); toast('Temps corrigé ✓'); renderControleTemps(); return;
+  }
+  // MODE durée nette (sur la base du début existant)
+  if(durMin>=0){
+    const base = (+task.start>0) ? +task.start : Date.now();
+    task.start = base;
+    task.end = base + durMin*60000 + pauseMs;
+    task.pauseAt = null; task.finEstimee = false;
+    prodSessUpsert(sess); closeModal(); toast('Durée corrigée ✓'); renderControleTemps(); return;
+  }
+  toast('Saisie invalide');
+}
+
+// 🏷 Réassigner / définir le parfum d'une tâche.
+function ctReassignParfum(taskId){
+  const {sess, task} = _ctFindTask(taskId);
+  if(!task){ toast('Tâche introuvable'); return; }
+  const recipes = window._ctRecipes || [];
+  const cur = (Array.isArray(task.parfums)&&task.parfums.length) ? +task.parfums[0] : null;
+  const opts = recipes.slice().sort((a,b)=>(a.produitNom||'').localeCompare(b.produitNom||''))
+    .map(r=>`<option value="${r.id}"${cur===+r.id?' selected':''}>${esc(r.produitNom||('recette #'+r.id))}</option>`).join('');
+  openModal(`<h3>Parfum de la tâche</h3>
+    <p class="note">Rattache cette tâche au bon parfum : son temps sera attribué à ce parfum.</p>
+    <div class="field"><label>Parfum / recette</label>
+      <select id="ct_parfum"><option value="">— aucun —</option>${opts}</select></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="ctReassignParfumSave('${task.id}')">Enregistrer</button>
+    </div>`);
+}
+
+function ctReassignParfumSave(taskId){
+  const {sess, task} = _ctFindTask(taskId);
+  if(!sess || !task){ toast('Tâche introuvable'); return; }
+  const v = (val('ct_parfum')||'').trim();
+  if(v===''){ task.parfums = []; }
+  else { const rid = +v; if(!Number.isFinite(rid)){ toast('Parfum invalide'); return; } task.parfums = [rid];
+    // met aussi à jour le libellé pour rester cohérent à l'affichage
+    const recipes = window._ctRecipes || [];
+    const r = recipes.find(x=>+x.id===rid);
+    const compLbl = ({coques:'Coques', ganache:'Ganache', cremeux:'Crémeux', assemble:'Assemblage', complet:'Production', degustation:'Dégustation'})[task.composant]||'Production';
+    if(r) task.label = `${compLbl} — ${r.produitNom||''}`.trim();
+  }
+  prodSessUpsert(sess); closeModal(); toast('Parfum mis à jour ✓'); renderControleTemps();
+}
+
+// ⏹ Fermer un chrono resté ouvert (fin estimée), réutilise _estimeFinTache.
+function ctFermerChrono(taskId){
+  const {sess, task} = _ctFindTask(taskId);
+  if(!sess || !task){ toast('Tâche introuvable'); return; }
+  if(task.end){ toast('Cette tâche est déjà terminée'); renderControleTemps(); return; }
+  if((+task.pauseAt||0)>0){ task.pausedAccum=(+task.pausedAccum||0)+Math.max(0,Date.now()-(+task.pauseAt)); task.pauseAt=null; }
+  task.end = _estimeFinTache(sess, task);
+  if(task.end <= task.start) task.end = task.start + 30*60000;
+  task.finEstimee = true;
+  prodSessUpsert(sess); toast('Chrono fermé ✓'); renderControleTemps();
+}
+
+// 🗑 Supprimer une tâche (doublon ou erreur).
+function ctSupprimerTache(taskId){
+  const {sess, task} = _ctFindTask(taskId);
+  if(!sess || !task){ toast('Tâche introuvable'); return; }
+  openModal(`<h3>Supprimer cette tâche ?</h3>
+    <p class="note">« ${esc(task.label||'tâche')} » sera retirée de la séance. Son temps ne sera plus compté. Action définitive.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" style="background:#b04a3e;border-color:#b04a3e" onclick="ctSupprimerTacheRun('${task.id}')">Supprimer</button>
+    </div>`);
+}
+
+function ctSupprimerTacheRun(taskId){
+  const {sess, task} = _ctFindTask(taskId);
+  if(!sess || !task){ toast('Tâche introuvable'); return; }
+  sess.tasks = (sess.tasks||[]).filter(x=>String(x.id)!==String(taskId));
+  prodSessUpsert(sess); closeModal(); toast('Tâche supprimée ✓'); renderControleTemps();
+}
+
+
 // ============================================================
 // CORRECTION DES CHRONOS D'ATELIER RESTÉS OUVERTS
 // ------------------------------------------------------------
@@ -41026,7 +41304,7 @@ async function renderTempsProduction(){
   main.innerHTML = `
    <div class="topbar"><div><h1>⏱️ Temps de production</h1>
      <p>Temps réellement passé par production, parfum et période.</p></div>
-     <div class="flex"><button class="btn ghost sm" onclick="corrigerChronosOuvertsPreview()" title="Détecter et fermer les chronos jamais arrêtés">🔧 Chronos ouverts</button><button class="btn" onclick="goView('histostock')">📦 Historique →</button></div></div>
+     <div class="flex"><button class="btn ghost sm" onclick="goView('controletemps')" title="Vérifier et corriger le temps de chaque séance">🔍 Contrôle des temps</button><button class="btn ghost sm" onclick="corrigerChronosOuvertsPreview()" title="Détecter et fermer les chronos jamais arrêtés">🔧 Chronos ouverts</button><button class="btn" onclick="goView('histostock')">📦 Historique →</button></div></div>
 
    <div class="panel">
      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${periodes}</div>
