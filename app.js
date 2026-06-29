@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1050';
+const APP_VERSION = 'v1051';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -34644,12 +34644,12 @@ const PROD_TASK_CATALOG = [
     'Refroidissement des coques',
   ]},
   { phase:'Garnissage', color:'#3f7d52', tasks:[
-    'Mise en congélation des coques pour cristallisation des coques',
     'Préparation de la ganache pour pochage',
     'Pochage de la ganache',
     'Assemblage des coques (finition macaron)',
   ]},
   { phase:'Finition / Manipulation coques', color:'#9a6f9e', tasks:[
+    'Mise en congélation des coques',
     'Appairage des coques',
     'Rangement des coques en boîte',
     'Re-disposition des coques avant garnissage',
@@ -34901,7 +34901,7 @@ const PROD_PASSIVE_DEFAULTS = {
   'Foisonnement meringue après division': 6,
   'Cuisson des coques': 21,
   'Refroidissement des coques': 15,
-  'Mise en congélation des coques pour cristallisation des coques': 30,
+  'Mise en congélation des coques': 30,
 };
 
 // Une tâche est-elle semi-passive ? (par label exact, robustesse via inclusion de mots-clés)
@@ -36080,6 +36080,133 @@ async function prodTempsParEtapeParParfum(jours){
 
 // [ONGLET TEMPS/PARFUM] Affiche les temps réels mesurés à l'atelier, croisés par ÉTAPE et par PARFUM.
 // Permet de vérifier que les mesures sont justes avant de s'en servir dans le plan opérationnel.
+
+// ============================================================
+// ATELIER — onglet « Mes tâches » : gérer les tâches personnalisées
+// Lister, renommer, changer de phase, supprimer, et en créer de nouvelles.
+// Les tâches perso sont stockées dans getSettings().prodCustomTasks, sous forme
+// de chaîne (ancien format) ou d'objet {label, phase, color}. On normalise à l'écriture.
+// ============================================================
+
+// Normalise une entrée perso en objet {label, phase, color}.
+function _mtNorm(c){
+  if(typeof c==='string') return {label:c, phase:'Personnalisé', color:'#8a7a72'};
+  return {label:c.label||'', phase:c.phase||'Personnalisé', color:c.color||'#8a7a72'};
+}
+// Couleur associée à une phase (reprend celle du catalogue si la phase existe).
+function _mtPhaseColor(phase){
+  const g = PROD_TASK_CATALOG.find(g=>g.phase===phase);
+  if(g) return g.color;
+  // phases spécifiques connues
+  if(phase==='Préparation des coques (avant garnissage)') return '#d08a4a';
+  return '#8a7a72';
+}
+
+function prodRenderMesTaches(){
+  const host = document.getElementById('prodBoardHost');
+  if(!host) return;
+  const list = (getSettings().prodCustomTasks||[]).map(_mtNorm);
+
+  const phaseOpts = PROD_PHASE_ORDER.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');
+
+  let rows;
+  if(!list.length){
+    rows = `<p class="note" style="text-align:center;padding:16px 0">Aucune tâche personnalisée pour l'instant. Crée-en une ci-dessous, ou lance une tâche personnalisée depuis le chrono.</p>`;
+  } else {
+    rows = list.map((c,i)=>`
+      <div class="mt-row" style="display:flex;align-items:center;gap:8px;padding:11px 12px;border:1px solid var(--hair);border-radius:11px;margin-bottom:7px;background:#fff">
+        <span style="width:10px;height:10px;border-radius:50%;background:${_mtPhaseColor(c.phase)};flex:none"></span>
+        <div style="min-width:0;flex:1">
+          <div style="font-weight:600;color:var(--bordeaux)">${esc(c.label)}</div>
+          <div style="font-size:.74rem;color:#9a8a82">${esc(c.phase)}</div>
+        </div>
+        <button class="btn ghost sm" onclick="mtEdit(${i})" title="Renommer / changer de phase">✎</button>
+        <button class="btn ghost sm" style="border-color:#e5b4ae;color:#b04a3e" onclick="mtDelete(${i})" title="Supprimer">🗑</button>
+      </div>`).join('');
+  }
+
+  host.innerHTML = `
+    <div class="card">
+      <h3 style="margin:0 0 4px">🛠 Mes tâches personnalisées</h3>
+      <p class="note" style="margin:0 0 12px">Renomme, reclasse ou supprime tes tâches. Tu peux aussi en créer de nouvelles en choisissant leur phase, pour qu'elles apparaissent au bon endroit dans le déroulé.</p>
+      ${rows}
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">＋ Créer une tâche personnalisée</h3>
+      <div class="field"><label>Nom de la tâche</label><input id="mt_new_label" placeholder="Ex. Tamisage de la poudre d'amande"></div>
+      <div class="field"><label>Phase (emplacement dans le déroulé)</label>
+        <select id="mt_new_phase">${phaseOpts}</select></div>
+      <button class="btn gold" onclick="mtCreate()">Créer la tâche</button>
+    </div>`;
+}
+
+// Écrit la liste normalisée dans les réglages.
+function _mtSave(list){
+  const s = getSettings();
+  s.prodCustomTasks = list;
+  saveSettings(s);
+  if(typeof markUnsaved==='function') markUnsaved();
+}
+
+// ✎ Renommer / changer de phase.
+function mtEdit(idx){
+  const list = (getSettings().prodCustomTasks||[]).map(_mtNorm);
+  const c = list[idx]; if(!c){ toast('Tâche introuvable'); return; }
+  const phaseOpts = PROD_PHASE_ORDER.map(p=>`<option value="${esc(p)}"${p===c.phase?' selected':''}>${esc(p)}</option>`).join('');
+  openModal(`<h3>Modifier la tâche</h3>
+    <div class="field"><label>Nom de la tâche</label><input id="mt_ed_label" value="${esc(c.label)}"></div>
+    <div class="field"><label>Phase</label><select id="mt_ed_phase">${phaseOpts}</select></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="mtEditSave(${idx})">Enregistrer</button>
+    </div>`);
+}
+
+function mtEditSave(idx){
+  const list = (getSettings().prodCustomTasks||[]).map(_mtNorm);
+  if(!list[idx]){ toast('Tâche introuvable'); return; }
+  const label = (val('mt_ed_label')||'').trim();
+  const phase = (val('mt_ed_phase')||'Personnalisé').trim();
+  if(!label){ toast('Le nom ne peut pas être vide'); return; }
+  // évite un doublon avec une autre entrée perso
+  if(list.some((x,j)=>j!==idx && x.label===label)){ toast('Une tâche porte déjà ce nom'); return; }
+  list[idx] = {label, phase, color:_mtPhaseColor(phase)};
+  _mtSave(list);
+  closeModal(); toast('Tâche modifiée ✓'); prodRenderMesTaches();
+}
+
+// 🗑 Supprimer.
+function mtDelete(idx){
+  const list = (getSettings().prodCustomTasks||[]).map(_mtNorm);
+  const c = list[idx]; if(!c){ toast('Tâche introuvable'); return; }
+  openModal(`<h3>Supprimer cette tâche ?</h3>
+    <p class="note">« ${esc(c.label)} » sera retirée de tes tâches personnalisées. Les temps déjà mesurés avec cette tâche ne sont pas affectés.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" style="background:#b04a3e;border-color:#b04a3e" onclick="mtDeleteRun(${idx})">Supprimer</button>
+    </div>`);
+}
+
+function mtDeleteRun(idx){
+  const list = (getSettings().prodCustomTasks||[]).map(_mtNorm);
+  if(!list[idx]){ toast('Tâche introuvable'); return; }
+  list.splice(idx,1);
+  _mtSave(list);
+  closeModal(); toast('Tâche supprimée ✓'); prodRenderMesTaches();
+}
+
+// ＋ Créer.
+function mtCreate(){
+  const label = (val('mt_new_label')||'').trim();
+  const phase = (val('mt_new_phase')||'Personnalisé').trim();
+  if(!label){ toast('Donne un nom à la tâche'); return; }
+  const list = (getSettings().prodCustomTasks||[]).map(_mtNorm);
+  if(list.some(x=>x.label===label)){ toast('Une tâche porte déjà ce nom'); return; }
+  list.push({label, phase, color:_mtPhaseColor(phase)});
+  _mtSave(list);
+  toast('Tâche créée ✓'); prodRenderMesTaches();
+}
+
 async function prodRenderTempsParfum(){
   const host = document.getElementById('prodBoardHost');
   if(!host) return;
@@ -36677,11 +36804,13 @@ function renderAtelier(){
       <button class="at-tab ${_atelierTab==='tableau'?'active':''}" onclick="atelierSwitch('tableau')">📊 Tableau</button>
       <button class="at-tab ${_atelierTab==='journal'?'active':''}" onclick="atelierSwitch('journal')">📅 Journal</button>
       <button class="at-tab ${_atelierTab==='temps'?'active':''}" onclick="atelierSwitch('temps')">🎯 Temps/parfum</button>
+      <button class="at-tab ${_atelierTab==='mestaches'?'active':''}" onclick="atelierSwitch('mestaches')">🛠 Mes tâches</button>
     </div>
     <div id="prodBoardHost"></div>`;
   if(_atelierTab==='tableau') prodRenderGantt();
   else if(_atelierTab==='journal') prodRenderJournal();
   else if(_atelierTab==='temps') prodRenderTempsParfum();
+  else if(_atelierTab==='mestaches') prodRenderMesTaches();
   else prodRenderBoard();
 }
 function atelierSwitch(tab){
@@ -36689,11 +36818,12 @@ function atelierSwitch(tab){
   const host=document.getElementById('prodBoardHost'); if(!host) return;
   const btns=document.querySelectorAll('.at-tab');
   btns.forEach(b=>b.classList.remove('active'));
-  const idx = tab==='pilotage'?0 : tab==='tableau'?1 : tab==='journal'?2 : 3;
+  const idx = tab==='pilotage'?0 : tab==='tableau'?1 : tab==='journal'?2 : tab==='temps'?3 : 4;
   if(btns[idx]) btns[idx].classList.add('active');
   if(tab==='tableau') prodRenderGantt();
   else if(tab==='journal') prodRenderJournal();
   else if(tab==='temps') prodRenderTempsParfum();
+  else if(tab==='mestaches') prodRenderMesTaches();
   else prodRenderBoard();
 }
 
