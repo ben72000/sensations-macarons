@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simulation reconstruction historique</title>
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px;background:#faf6f0;color:#2b1a1f}
+h1{font-size:1.05rem;margin:0 0 8px}p.sub{font-size:.8rem;color:#7a6a62;margin:0 0 12px}
+button{font-size:.95rem;padding:12px 18px;border:none;border-radius:10px;background:#52252F;color:#fff;font-weight:600;margin-bottom:12px}
+pre{background:#1c0c14;color:#f5e9d0;padding:14px;border-radius:10px;font-size:.74rem;white-space:pre-wrap;word-break:break-word;line-height:1.5;min-height:120px}
+.warn{background:#fff3cd;color:#7a5a00;padding:10px;border-radius:8px;font-size:.8rem;margin-bottom:10px}
+#hidden-app{position:absolute;left:-99999px;top:0;width:1px;height:1px;overflow:hidden}
+</style></head><body>
+<h1>Simulation — reconstruction de l'historique de stock</h1>
+<div class="warn">⚠️ Cette page NE MODIFIE RIEN. Elle calcule seulement ce qui serait reconstruit, pour que tu valides avant.</div>
+<button id="go">Lancer la simulation</button>
+<pre id="log">Chargement de l'app…</pre>
+<div id="hidden-app"><div id="main"></div><div id="overlay"><div id="modal"></div></div><div id="toast"></div><div id="tabbar"></div><div id="sheetOverlay"></div></div>
+<script>
+var logs=[];function L(m){logs.push(m);document.getElementById('log').textContent=logs.join('\n');}
+window.onerror=function(){return false;};
+function fmtMin(ms){ if(!ms||ms<0) return '—'; var h=Math.floor(ms/3600000), m=Math.round((ms%3600000)/60000); return h+' h '+(m<10?'0':'')+m; }
+</script>
+<script src="dexie.min.js"></script>
+<script src="app.js"></script>
+<script>
+window.addEventListener('load',function(){ setTimeout(function(){ if(logs.length<=1) L('✓ App chargée. Appuie sur « Lancer la simulation ».'); },600); });
+document.getElementById('go').addEventListener('click',async function(){
+  logs=[];L('Calcul en cours…');
+  if(typeof db==='undefined'){L('❌ db non défini');return;}
+  try{
+    var recipes = await db.recipes.toArray().catch(function(){return [];});
+    window._allRecipesCache = recipes;
+    var prods = await db.productions.toArray();
+    var existing = await db.stockMoves.count();
+
+    // ENTREES : productions terminées
+    var entrees=[], qEntree=0, dmin=null, dmax=null;
+    prods.forEach(function(p){
+      var fini = (p.prodStatut==='termine') || (p.prodTermineTs && p.prodTermineTs.length>0) || (p.prodStatut==null);
+      if(!fini) return;
+      var q = Math.round((+p.qteReelle|| +p.qteProduite ||0)*1000)/1000;
+      if(q<=0) return;
+      var ts = p.prodTermineTs || p.prodTimestamp || (p.date?p.date+'T08:00':'') ;
+      if(!ts) return;
+      entrees.push({ts:ts, qte:q, nom:(typeof prodNomComplet==='function'?prodNomComplet(p,recipes):'?'), comp:p.composant||'macaron', prodId:p.id});
+      qEntree += q;
+      var d=ts.slice(0,10); if(!dmin||d<dmin)dmin=d; if(!dmax||d>dmax)dmax=d;
+    });
+
+    // SORTIES : orderItems de commandes livrées
+    var orders = await db.orders.toArray().catch(function(){return [];});
+    var ordById={}; orders.forEach(function(o){ordById[o.id]=o;});
+    var items = await db.orderItems.toArray().catch(function(){return [];});
+    var sorties=[], qSortie=0;
+    items.forEach(function(it){
+      var o=ordById[it.orderId]; if(!o) return;
+      var st=(typeof normStatus==='function')?normStatus(o.statut):o.statut;
+      if(st!=='Livrée' && st!=='Terminée') return;
+      var q=Math.round((+it.qte||0)*1000)/1000; if(q<=0) return;
+      sorties.push({orderId:it.orderId, prodId:it.productionId, qte:q});
+      qSortie += q;
+    });
+
+    var out='';
+    out+='📦 Mouvements DÉJÀ dans le journal : '+existing+'\n\n';
+    out+='— CE QUI SERAIT RECONSTRUIT —\n\n';
+    out+='ENTRÉES (productions terminées) :\n';
+    out+='  • '+entrees.length+' mouvements (+)\n';
+    out+='  • '+qEntree+' macarons au total\n';
+    out+='  • période : '+(dmin||'?')+' → '+(dmax||'?')+'\n\n';
+    out+='SORTIES (commandes livrées) :\n';
+    out+='  • '+sorties.length+' mouvements (−)\n';
+    out+='  • '+qSortie+' macarons au total\n\n';
+    out+='TOTAL : '+(entrees.length+sorties.length)+' mouvements seraient créés.\n\n';
+    // échantillon
+    out+='— Échantillon des 5 dernières entrées —\n';
+    entrees.sort(function(a,b){return a.ts<b.ts?1:-1;}).slice(0,5).forEach(function(e){
+      out+='  '+e.ts.slice(0,16)+' | +'+e.qte+' | '+e.nom+' ('+e.comp+')\n';
+    });
+    out+='\n✅ Simulation terminée. RIEN n\'a été écrit. Si les chiffres te semblent cohérents, dis-le moi et je prépare l\'outil de reconstruction réel (réversible).';
+    L(out);
+  }catch(e){ L('Erreur simulation : '+(e&&e.message?e.message:e)); }
+});
+</script></body></html>
