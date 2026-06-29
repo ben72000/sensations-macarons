@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1062';
+const APP_VERSION = 'v1064';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -23078,7 +23078,7 @@ function parseIntent(texte, ctx){
   }
   // [VAGUE 2] MACARONS FINIS EN STOCK : « combien de macarons en stock », « mon stock de produits finis ».
   // Source : db.productions composant complet. Distinct de query_stock (matières premières).
-  if(/\b(macarons? (finis?|en stock|de stock|disponibles?|pretes?|deja faits?)|produits? finis?|stock de (macarons?|produits? finis?|finis?)|combien (de )?macarons? (j'?ai |en )?(stock|dispo|disponibles?|finis?|prets?)|j'?ai combien de macarons|combien de macarons .{0,12} (j'?ai )?(en |de )?stock|macarons? .{0,12} en stock|macarons? d'?avance)\b/.test(t)
+  if(/\b(macarons? (finis?|en stock|de stock|disponibles?|pretes?|deja faits?)|produits? finis?|stock de (macarons?|produits? finis?|finis?)|combien (de )?macarons? (j'?ai |en )?(stock|dispo|disponibles?|finis?|prets?)|j'?ai combien de macarons|combien j'?ai de macarons|combien de macarons (j'?ai|il me reste|me reste|d'?avance|prets?|pretes?)|(il me |me )reste combien de macarons|combien de macarons .{0,12} (j'?ai )?(en |de )?stock|macarons? .{0,12} en stock|macarons? d'?avance|mon stock fini|stock fini)\b/.test(t)
      && !/\b(coffret|coffrets|boite|boites|boîte|boîtes|emballage|emballages)\b/.test(t)){
     const fl = aiFindFlavor(t, flavors);
     return {intent:'query_stock_finis', params:{flavor:fl}, critical:false,
@@ -23110,8 +23110,9 @@ function parseIntent(texte, ctx){
   }
   // [V938] TEMPS DE PRODUCTION pour N macarons d'un parfum, OU pour une commande d'un client.
   if(/\b(combien de temps|ca (me )?prend combien|ca prend combien|temps de (production|fabrication)|temps pour (produire|faire|fabriquer)|temps pour \d|temps pour|combien (de temps )?(pour|il faut pour)|en combien de temps|duree de (production|fabrication))\b/.test(t)
-     && (/\b(produire|faire|fabriquer|preparer|monter|macaron|macarons|commande)\b/.test(t) || (aiFindFlavor(t,flavors) && (typeof aiParseNumber==='function') && aiParseNumber(t)!=null))
-     && !/\bavant (rupture|de manquer)\b|\ben rupture\b/.test(t)){
+     && (/\b(produire|production|faire|fabriquer|preparer|monter|macaron|macarons|commande|batch|batchs|fournee|fournees|ca me prend|ca prend)\b/.test(t) || (aiFindFlavor(t,flavors) && (typeof aiParseNumber==='function') && aiParseNumber(t)!=null))
+     && !/\bavant (rupture|de manquer)\b|\ben rupture\b/.test(t)
+     && !/\b(stock|reste|rentable|marge|client|ca du mois|chiffre)\b/.test(t)){
     const _flT = aiFindFlavor(t, flavors);
     const _cliT = (!/\b(cree|creer|ajoute|supprime|annule)\b/.test(t)) ? aiFindClient(t, clients) : null;
     const _nbT = (typeof aiParseNumber==='function') ? aiParseNumber(t) : null;
@@ -23121,10 +23122,10 @@ function parseIntent(texte, ctx){
     if(_flT){
       return {intent:'query_temps_prod', params:{flavor:_flT, pieces:(_nbT&&_nbT>0)?_nbT:null}, critical:false, label:`Temps de production — ${_flT}`};
     }
-    // [v1061] Temps GÉNÉRIQUE d'un batch/d'une fournée, sans parfum ni client précisé.
-    if(/\b(batch|batchs|fournee|fournees|tournee|tournees|un macaron|une fournee|production)\b/.test(t)){
-      return {intent:'query_temps_prod', params:{generique:true}, critical:false, label:'Temps de production — un batch'};
-    }
+    // [v1062] Cas générique par défaut : toute question de DURÉE de production restée sans parfum,
+    // client ni nombre précis (ex. « combien de temps pour produire », « ça me prend combien de temps »,
+    // « temps de production »). On répond par l'estimation d'un batch standard.
+    return {intent:'query_temps_prod', params:{generique:true}, critical:false, label:'Temps de production — un batch'};
   }
   // [V938] NOMBRE DE BATCHS / FOURNÉES pour N macarons d'un parfum.
   if(/\b(combien d'?(ordres? de fabrication)|combien de (batchs?|fournees?|tournees?|ordres? de fabrication)|combien de fois (je dois )?(produire|enfourner)|ca fait combien de (batchs?|fournees?))\b/.test(t)){
@@ -23233,6 +23234,8 @@ function parseIntent(texte, ctx){
   }
   // stock d'une matière
   if(/\b(stock|combien|reste|il reste|quantite|j'?ai encore|j'?ai assez|me reste|niveau de stock|reste t il|en ai je)\b/.test(t) && !/commande/.test(t)
+     && !/\b(combien (de |j'?ai de )?clients?|nombre de clients?)\b/.test(t)
+     && !/\b(prend combien de temps|combien de temps (pour|ca|ça)|temps (pour|de) (produire|production|fabrication|faire))\b/.test(t)
      && !/(gagn|rapport|encaiss|chiffre|recette|vente|vend|vendu|vendus)/.test(t)
      && !/(urssaf|cotisation|cotisations|charges sociales|declarer|declaration|me doit|me doivent|on me doit|reste a payer|impaye|echeances? de paiement|a encaisser)/.test(t)
      && !/fait combien|combien.*fait|j'?ai fait|combien (de )?macarons?/.test(t)
@@ -23427,7 +23430,7 @@ function parseIntent(texte, ctx){
   // chiffre d'affaires
   if(/\b(chiffre d'affaires|chiffre d affaires|chiffre|recette|recettes|gagne|gagner|rapporte|rapporter|encaisse|encaisser)\b/.test(t)
      || /\b(mon|le|du|ton|notre) ca\b/.test(t)   // « mon CA », « le CA » (évite la collision avec « ça »)
-     || (/\b(combien|total|montant)\b/.test(t) && /\b(gagn|fait|rapport|encaiss|mois|euros?|ca|chiffre)\b/.test(t))
+     || (/\b(combien|total|montant)\b/.test(t) && /\b(gagn|fait|rapport|encaiss|mois|euros?|ca|chiffre)\b/.test(t) && !/\b(temps|prend combien|combien de temps|produire|fabriquer|batch|fournee)\b/.test(t))
      || (/\b(vente|ventes)\b/.test(t) && /\b(combien|total|mois|montant|euros?)\b/.test(t))
      || /\bj'?ai fait combien\b|\bfait combien (ce|le|cette)\b|\bcombien j'?ai (fait|gagn|encaiss|vendu|rentre)\b|\bcombien (de )?macarons? (ai je |j'?ai )?vendu/.test(t)
      || /\b(mes recettes du mois|recettes du mois|mes recettes ce mois)\b/.test(t)
@@ -23518,7 +23521,8 @@ function parseIntent(texte, ctx){
   // besoins de production / matières à produire
   if((/\b(produire|production|fabriquer|batch|combien.*macaron|preparer.*production)\b/.test(t)
       && /\b(faut|besoin|combien|matiere|matieres|premiere|prevoir|planifie|planifier)\b/.test(t))
-     || /\b(quoi|que|qu'?est ce que|qu'?est-ce que)\b.*\b(lancer|produire|fabriquer|fournée|fournees)\b/.test(t)
+     || /\b(quoi|que|qu'?est ce que|qu'?est-ce que)\b.*\b(lancer|produire|produis|produit|fabriquer|fabrique|fournée|fournees)\b/.test(t)
+     || /\b(qu'?est ce que|qu'?est-ce que|que|quoi) (je )?(produis|produit|fabrique|prepare|dois (produire|faire))\b/.test(t)
      || /\b(je dois|dois je|faut il|a faire)\b.*\b(lancer|produire|fabriquer|preparer)\b/.test(t)
      || /\b(quoi|que|qu'?est ce que) (je )?(dois|doit) (lancer|produire|fabriquer|faire comme prod)/.test(t)
      || /\bcombien (de )?macarons? (je )?(dois|doit|faut) (faire|produire|lancer|fabriquer)/.test(t)
@@ -26344,7 +26348,7 @@ const INTENT_SHORTCUTS = {
   query_rentabilite:      [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'👥 Rentabilité clients', view:'rentabilite' } ],
   query_cout_revient:     [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📖 Voir la recette', view:'recettes' } ],
   query_prix_vente:       [ { label:'📈 Rentabilité parfums', view:'rentaparfum' } ],
-  query_valeur_stock:     [ { label:'📦 Voir le stock', view:'stock' } ],
+  query_valeur_stock:     [ { label:'📦 Voir le stock', view:'matieres' }, { label:'🍬 Stock par parfum', view:'stockparfums' } ],
   query_prochain_marche:  [ { label:'🏪 Voir les marchés', view:'marches' } ],
   query_compare_mois:     [ { label:'📊 Ouvrir la compta', view:'compta' } ],
   query_reco_business:    [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📊 Compta', view:'compta' } ],
@@ -26419,7 +26423,7 @@ function aiShortcuts(intent, params, resultShortcuts){
     }
     const label = ((openId!=null || (sc.focusType && focusVal)) && sc.labelWithFocus)
       ? sc.labelWithFocus.replace('{val}', focusValAffiche||'') : sc.label;
-    return `<button class="btn ghost sm" onclick="${onclick}" style="margin:2px 4px 0 0">${esc(label)}</button>`;
+    return `<button class="btn ghost sm" onclick="${esc(onclick)}" style="margin:2px 4px 0 0">${esc(label)}</button>`;
   }).join('');
   return `<div style="margin-top:10px;padding-top:8px;border-top:1px solid #f0eae0;display:flex;flex-wrap:wrap;align-items:center">
     <span style="font-size:.72rem;color:#9a8a82;margin-right:6px">Aller plus loin :</span>${resultBtns}${btns}</div>`;
@@ -26478,7 +26482,7 @@ function aiSuite(props){
     else if(p.view)  onclick = `goView('${p.view}')`;
     else if(p.action) onclick = p.action;
     else return '';
-    return `<button class="${cls}" onclick="${onclick}">${p.label}</button>`;
+    return `<button class="${cls}" onclick="${esc(onclick)}">${esc(p.label)}</button>`;
   };
   return `<div class="ai-suite">${props.map(btn).join('')}</div>`;
 }
@@ -26502,7 +26506,7 @@ function aiRenderShortcutBtns(list){
     else if(sc.ask)    onclick = `aiQuick(${JSON.stringify(sc.ask)})`;   // reste dans le fil → pas de marqueur
     else if(sc.view)   onclick = `assistantMarquerRetour('${sc.view}');goView('${sc.view}')`;
     else return '';
-    return `<button class="btn ghost sm" onclick="${onclick}" style="margin:2px 4px 0 0">${esc(sc.label)}</button>`;
+    return `<button class="btn ghost sm" onclick="${esc(onclick)}" style="margin:2px 4px 0 0">${esc(sc.label)}</button>`;
   }).filter(Boolean).join('');
   return btns;
 }
@@ -26949,7 +26953,7 @@ function aiDetecterAmbiguite(t, intentGagnant){
 }
 // Construit la question de choix à 2 boutons (+ reformuler).
 function aiAskAmbiguite(pr){
-  const btn = (it)=>`<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="aiQuick(${JSON.stringify(it.ex)})">${it.label}</button>`;
+  const btn = (it)=>`<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="${esc('aiQuick('+JSON.stringify(it.ex)+')')}">${esc(it.label)}</button>`;
   return aiSay(`<p>Petite précision&nbsp;: tu veux dire…</p>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0">${btn(pr.a)}${btn(pr.b)}</div>
     <p class="note">Touche l'une des deux, ou reformule ta demande.</p>`);
@@ -27025,7 +27029,7 @@ function aiFiletThematique(txt, tNorm){
   const th = aiDetecterTheme(tNorm);
   if(!th) return null;   // aucun thème → on laissera le message générique habituel
   const choix = th.intentions.map(it=>
-    `<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="aiQuick(${JSON.stringify(it.ex)})">${it.label}</button>`
+    `<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="${esc('aiQuick('+JSON.stringify(it.ex)+')')}">${esc(it.label)}</button>`
   ).join('');
   return aiSay(`<p>Je ne suis pas sûr d'avoir bien compris. Tu veux dire&nbsp;:</p>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0">${choix}</div>
