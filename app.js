@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1030';
+const APP_VERSION = 'v1031';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -33357,13 +33357,13 @@ const FACT_STYLE = `   <style>
      .avis-bloc .avis-txt { font-family:'Bellota',cursive; font-weight:700; font-size:13px; color:#490F25; line-height:1.3; }
      .avis-bloc .avis-sub { margin-top:1mm; font-size:10px; color:#6a5a52; line-height:1.4; }
      .avis-bloc .avis-qr { display:block; margin:2.5mm auto 0; width:32mm; height:32mm; }
-     .rib-avis-col { max-width:115mm; break-inside:avoid; page-break-inside:avoid; }
+     .rib-avis-col { max-width:100%; width:100%; break-inside:avoid; page-break-inside:avoid; }
      .avis-bloc.avis-h { display:flex; align-items:center; gap:4mm; text-align:left; }
      .avis-bloc.avis-h .avis-qr { width:26mm; height:26mm; margin:0; flex:0 0 26mm; }
      .avis-bloc.avis-h .avis-side { flex:1; }
      /* Bas de facture compact + solidaire (évite le saut de page du bloc RIB+QR) */
      .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; }
-     .bas-final .legal-bloc { margin-top:3mm; }
+     .bas-final .legal-bloc { margin-top:3mm; width:100%; box-sizing:border-box; }
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
      .bas-final .rib-avis-col { margin-top:0; }
@@ -33748,13 +33748,13 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .avis-bloc .avis-txt { font-family:'Bellota',cursive; font-weight:700; font-size:13px; color:#490F25; line-height:1.3; }
      .avis-bloc .avis-sub { margin-top:1mm; font-size:10px; color:#6a5a52; line-height:1.4; }
      .avis-bloc .avis-qr { display:block; margin:2.5mm auto 0; width:32mm; height:32mm; }
-     .rib-avis-col { max-width:115mm; break-inside:avoid; page-break-inside:avoid; }
+     .rib-avis-col { max-width:100%; width:100%; break-inside:avoid; page-break-inside:avoid; }
      .avis-bloc.avis-h { display:flex; align-items:center; gap:4mm; text-align:left; }
      .avis-bloc.avis-h .avis-qr { width:26mm; height:26mm; margin:0; flex:0 0 26mm; }
      .avis-bloc.avis-h .avis-side { flex:1; }
      /* Bas de facture compact + solidaire (évite le saut de page du bloc RIB+QR) */
      .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; }
-     .bas-final .legal-bloc { margin-top:3mm; }
+     .bas-final .legal-bloc { margin-top:3mm; width:100%; box-sizing:border-box; }
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
      .bas-final .rib-avis-col { margin-top:0; }
