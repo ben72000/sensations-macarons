@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diag historique stock</title>
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px;background:#faf6f0;color:#2b1a1f}
+h1{font-size:1.1rem;margin:0 0 12px}
+pre{background:#1c0c14;color:#f5e9d0;padding:14px;border-radius:10px;font-size:.8rem;white-space:pre-wrap;word-break:break-word;line-height:1.5}
+.big{font-size:1.05rem;font-weight:700}
+</style></head><body>
+<h1>Diagnostic — historique de stock</h1>
+<pre id="log">Lecture de la base…</pre>
+<script src="dexie.min.js"></script>
+<script>
+function L(m){ document.getElementById('log').textContent = m; }
+(async function(){
+  try{
+    const db = new Dexie('sensations_macarons');
+    // ouverture en lecture seule sans imposer de schema (mode dynamique)
+    await db.open().catch(async ()=>{ await db.close(); db.version(1).stores({}); await db.open(); });
+    const names = db.tables.map(t=>t.name);
+    let out = 'Tables trouvées: ' + names.length + '\n';
+    out += names.includes('stockMoves') ? '✓ table stockMoves existe\n' : '❌ table stockMoves ABSENTE\n';
+    if(names.includes('stockMoves')){
+      const n = await db.stockMoves.count();
+      out += '\n📦 stockMoves contient: ' + n + ' mouvement(s)\n';
+      if(n>0){
+        const all = await db.stockMoves.orderBy('ts').toArray().catch(async()=>await db.stockMoves.toArray());
+        const first = all[0], last = all[all.length-1];
+        out += 'Premier: ' + (first.ts||'?') + '\n';
+        out += 'Dernier: ' + (last.ts||'?') + '\n';
+        out += '\nDerniers 5 mouvements:\n';
+        all.slice(-5).reverse().forEach(m=>{
+          out += `  ${(m.ts||'').slice(0,16)} | ${m.type||'?'} | ${m.parfumNom||'?'} | ${m.sens<0?'-':'+'}${m.qte} | ${m.composant||''}\n`;
+        });
+      } else {
+        out += '\n→ La table existe mais est VIDE.\n→ Cela signifie qu\'aucun mouvement n\'a encore été enregistré\n  (aucune production / casse / réassort / vente marché depuis\n  l\'activation du journal de stock).\n→ Ce n\'est PAS un bug d\'affichage : il n\'y a simplement rien à montrer.\n';
+      }
+    }
+    // compter quelques autres tables pour contexte
+    out += '\n— Contexte —\n';
+    for(const t of ['productions','orders','markets','materials']){
+      if(names.includes(t)){ try{ out += t+': '+(await db[t].count())+'\n'; }catch(e){} }
+    }
+    L(out);
+  }catch(e){
+    L('Erreur lecture base: ' + (e&&e.message||e));
+  }
+})();
+</script></body></html>
