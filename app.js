@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1044';
+const APP_VERSION = 'v1045';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -40931,6 +40931,22 @@ async function renderControleTemps(){
   let html = `<div class="topbar"><div><h1>🔍 Contrôle des temps</h1>
     <p style="color:#8a776c;font-size:.86rem">Vérifie que chaque minute est rattachée au bon parfum. Corrige d'un geste si besoin.</p></div>
     <div class="flex"><button class="btn" onclick="goView('tempsproduction')">⏱ Temps de production →</button></div></div>`;
+
+  // Bandeau récapitulatif : jusqu'où remonte l'historique des chronos.
+  const nbSess = sessions.length;
+  const nbTaches = sessions.reduce((n,s)=>n+((s.tasks||[]).length),0);
+  if(nbSess>0){
+    const debuts = sessions.map(s=>+s.start||0).filter(x=>x>0);
+    const minTs = debuts.length?Math.min(...debuts):0;
+    const maxTs = debuts.length?Math.max(...debuts):0;
+    const fmtJ = ts => ts>0 ? new Date(ts).toLocaleDateString('fr-FR') : '—';
+    const periode = (minTs && maxTs) ? (minTs===maxTs ? `le ${fmtJ(minTs)}` : `du ${fmtJ(minTs)} au ${fmtJ(maxTs)}`) : '—';
+    html += `<div class="card" style="background:var(--creme-2,#F5F0E8);border:1px solid var(--hair)">
+      <div style="font-size:.86rem;color:#6a5a52">📒 <b>${nbSess}</b> séance${nbSess>1?'s':''} enregistrée${nbSess>1?'s':''} · <b>${nbTaches}</b> tâche${nbTaches>1?'s':''} chronométrée${nbTaches>1?'s':''}<br>
+      Historique disponible <b>${periode}</b>.</div>
+      <div style="font-size:.78rem;color:#9a8a82;margin-top:6px">Seules les productions qui ont été chronométrées apparaissent ici. Celles faites sans lancer de chrono n'ont pas de temps à contrôler.</div>
+    </div>`;
+  }
 
   if(active) html += sessHTML(active, true);
   if(passees.length){
