@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1053';
+const APP_VERSION = 'v1054';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7064,7 +7064,9 @@ function chronoFloatRemove(){
 // Structure (haut → bas) : pastilles Parfum · historique « Déjà fait » (3 dernières + déroulé) ·
 // tâche(s) en cours + chrono (avec alarme Terminer/Prolonger) · tâche suivante suggérée · liste complète.
 // État UI local (non persistant) :
-let _atParfum = null;       // recipeId du parfum alimenté (sélection à la volée)
+let _atParfum = null;       // recipeId du parfum de l'onglet actif (null si onglet mutualisé)
+let _atOnglet = null;       // onglet actif : un recipeId (number) OU 'mutualise'
+let _atMutSel = [];         // en mode mutualisé : recipeIds cochés (parfums concernés)
 let _atHistOpen = false;    // historique déroulé ?
 let _atPicker = false;      // sélecteur « toutes les étapes » ouvert ?
 
@@ -7095,28 +7097,51 @@ async function atParfumsDispo(){
 }
 
 // Tâches terminées de la session, ordonnées (historique). Retourne [{id,label,parfumNom,recipeId}].
+// ---- LOGIQUE PARTAGÉE DES ONGLETS PARFUM (flottant + atelier complet) ----
+// L'onglet actif est soit un recipeId (parfum), soit 'mutualise'.
+// Une tâche "appartient" à l'onglet parfum si ce parfum est dans t.parfums.
+// Une tâche est "mutualisée" si elle a 2+ parfums rattachés.
+function _atTaskParfums(t){ return (Array.isArray(t.parfums)?t.parfums:[]).map(Number).filter(r=>Number.isFinite(r)); }
+function _atTaskEstMutualisee(t){ return _atTaskParfums(t).length>=2; }
+function _atTaskMatchOnglet(t){
+  if(_atOnglet==='mutualise') return _atTaskEstMutualisee(t);
+  if(_atOnglet==null) return _atTaskParfums(t).length===0;   // pas d'onglet → tâches sans parfum
+  return _atTaskParfums(t).includes(+_atOnglet);
+}
+// Synchronise _atParfum (compat avec l'existant) selon l'onglet : recipeId si parfum, null si mutualisé.
+function _atSyncParfum(){ _atParfum = (_atOnglet==='mutualise' || _atOnglet==null) ? null : +_atOnglet; }
+
 function atHistorique(recipesById){
   const s = prodSessActive(); if(!s) return [];
-  return (s.tasks||[]).filter(t=>t.end)
+  return (s.tasks||[]).filter(t=>t.end && _atTaskMatchOnglet(t))
     .slice().sort((a,b)=>(+a.start||0)-(+b.start||0))
     .map(t=>{
-      const rid = (t.parfums&&t.parfums[0]!=null)?t.parfums[0]:null;
-      return { id:t.id, label:t.label, recipeId:rid, parfumNom: rid!=null ? (recipesById[rid]||('#'+rid)) : '' };
+      const parfs = _atTaskParfums(t);
+      // libellé parfum : un seul → son nom ; plusieurs → noms joints (mutualisé)
+      let parfumNom = '';
+      if(parfs.length===1) parfumNom = recipesById[parfs[0]]||('#'+parfs[0]);
+      else if(parfs.length>=2) parfumNom = parfs.map(r=>recipesById[r]||('#'+r)).join(' + ');
+      return { id:t.id, label:t.label, recipeId:parfs[0]!=null?parfs[0]:null, parfumNom, multi:parfs.length>=2 };
     });
 }
 
-// Tâche(s) en cours (non terminées). On distingue celles du parfum courant et les passives d'autres parfums.
+// Tâche(s) en cours (non terminées) correspondant à l'onglet actif.
 function atEnCours(){
+  const s = prodSessActive(); if(!s) return [];
+  return (s.tasks||[]).filter(t=>!t.end && _atTaskMatchOnglet(t));
+}
+
+// Toutes les tâches en cours (tous onglets), pour afficher les passives d'autres parfums en sourdine.
+function atEnCoursToutes(){
   const s = prodSessActive(); if(!s) return [];
   return (s.tasks||[]).filter(t=>!t.end);
 }
 
-// Dernière tâche (terminée ou en cours) du parfum courant, pour alimenter la suggestion.
+// Dernière tâche (terminée ou en cours) de l'onglet actif, pour alimenter la suggestion.
 function atLastLabel(recipeId){
   const s = prodSessActive(); if(!s) return null;
-  const mine = (s.tasks||[]).filter(t=>{
-    const parfs=t.parfums||[]; return recipeId==null ? parfs.length===0 : parfs.map(Number).includes(+recipeId);
-  }).slice().sort((a,b)=>(+a.start||0)-(+b.start||0));
+  const mine = (s.tasks||[]).filter(t=>_atTaskMatchOnglet(t))
+    .slice().sort((a,b)=>(+a.start||0)-(+b.start||0));
   return mine.length ? mine[mine.length-1].label : null;
 }
 
@@ -7129,12 +7154,34 @@ async function atRenderBody(){
   const recipes = await db.recipes.toArray().catch(()=>[]);
   const recipesById = {}; recipes.forEach(r=>recipesById[+r.id]=r.produitNom);
   const parfums = await atParfumsDispo();
-  // parfum courant par défaut = 1er dispo
-  if(_atParfum==null && parfums.length) _atParfum = parfums[0].recipeId;
+  // Onglet par défaut = 1er parfum dispo. Si l'onglet courant n'est plus valide, on réinitialise.
+  const validIds = parfums.map(p=>+p.recipeId);
+  if(_atOnglet!=='mutualise' && _atOnglet!=null && !validIds.includes(+_atOnglet)) _atOnglet = null;
+  if(_atOnglet==null && parfums.length) _atOnglet = parfums[0].recipeId;
+  _atSyncParfum();
 
-  // ---- pastilles parfum ----
-  let pills = parfums.map(p=>`<button class="at-pill ${(+_atParfum===+p.recipeId)?'on':''}" onclick="atSetParfum(${p.recipeId})">${esc(p.nom)}</button>`).join('');
-  if(!parfums.length) pills = `<span class="at-none">Aucun batch en cours — tâches transverses</span>`;
+  // ---- onglets parfum [Parfum 1] [Parfum 2] … [⇄ Mutualisé] ----
+  let tabsHtml;
+  if(!parfums.length){
+    tabsHtml = `<span class="at-none">Aucun batch en cours — tâches transverses</span>`;
+  } else {
+    const pf = parfums.map(p=>`<button class="at-tabp ${(+_atOnglet===+p.recipeId)?'on':''}" onclick="atSetOnglet(${p.recipeId})">${esc(p.nom)}</button>`).join('');
+    const mutOn = (_atOnglet==='mutualise')?'on':'';
+    const mut = (parfums.length>=2) ? `<button class="at-tabp mut ${mutOn}" onclick="atSetOnglet('mutualise')">⇄ Mutualisé</button>` : '';
+    tabsHtml = pf + mut;
+  }
+
+  // ---- zone mutualisée : cases à cocher des parfums concernés ----
+  let mutBoxHtml = '';
+  if(_atOnglet==='mutualise'){
+    // par défaut, tous les parfums dispo sont cochés si aucune sélection
+    if(!_atMutSel.length) _atMutSel = parfums.map(p=>+p.recipeId);
+    const checks = parfums.map(p=>{
+      const on = _atMutSel.includes(+p.recipeId);
+      return `<label class="at-mutchk"><input type="checkbox" ${on?'checked':''} onchange="atMutToggle(${p.recipeId})"> ${esc(p.nom)}</label>`;
+    }).join('');
+    mutBoxHtml = `<div class="at-mutbox"><div class="at-mutlab">⇄ Tâche partagée — parfums concernés :</div><div class="at-mutchks">${checks}</div></div>`;
+  }
 
   // ---- historique ----
   const hist = atHistorique(recipesById);
@@ -7154,9 +7201,8 @@ async function atRenderBody(){
   }
 
   // ---- en cours ----
-  const enCours = atEnCours();
-  const mine = enCours.filter(t=>{ const parfs=t.parfums||[]; return _atParfum==null? parfs.length===0 : parfs.map(Number).includes(+_atParfum); });
-  const autres = enCours.filter(t=>!mine.includes(t) && t.passive);
+  const mine = atEnCours();   // déjà filtré sur l'onglet actif
+  const autres = atEnCoursToutes().filter(t=>!mine.includes(t) && t.passive);
   let nowHtml='';
   mine.forEach(t=>{
     if(t.ringing){
@@ -7185,16 +7231,17 @@ async function atRenderBody(){
         <div class="at-now-sub">${esc(nm)} · ${t.ringing?'a sonné':'continue en parallèle'}</div></div>
       <span class="at-now-chrono" data-prodchrono="${t.id}">${atFmt(el)}</span></div>`;
   });
-  if(!nowHtml) nowHtml = `<div class="at-now-empty">Aucune tâche en cours pour ce parfum.</div>`;
+  if(!nowHtml) nowHtml = `<div class="at-now-empty">${_atOnglet==='mutualise'?'Aucune tâche mutualisée en cours.':'Aucune tâche en cours pour ce parfum.'}</div>`;
 
   // ---- suivante (depuis le moteur) ----
+  const estMut = (_atOnglet==='mutualise');
   const last = atLastLabel(_atParfum);
   let sug = [];
-  try{ sug = await prodSuggestNext(_atParfum, last, 1); }catch(e){}
+  try{ sug = await prodSuggestNext(_atParfum, last, 1, {mutualise:estMut}); }catch(e){}
   const nxt = sug && sug[0];
   let nextHtml='';
   if(nxt){
-    const why = last ? 'suite habituelle' : 'tu commences souvent par là';
+    const why = estMut ? 'le temps sera partagé entre les parfums cochés' : (last ? 'suite habituelle' : 'tu commences souvent par là');
     const mini = prodIsPassive(nxt)?'<span class="at-next-mini">minuteur</span>':'';
     nextHtml = `<button class="at-next" onclick="atLaunch('${esc(nxt).replace(/'/g,"\\'")}')">
       <span class="at-next-dot"></span><span>${esc(nxt)}${mini}</span><span class="at-next-why">${why}</span></button>`;
@@ -7204,9 +7251,15 @@ async function atRenderBody(){
   let listeHtml='';
   if(_atPicker){
     const groups={};
-    // recette du parfum actif → inclut ses tâches spécifiques (chablonnage, fruits secs…).
-    const recAct = (_atParfum!=null) ? recipes.find(r=>+r.id===+_atParfum) : null;
-    prodAllTasks(recAct).forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });
+    // recette(s) concernée(s) → inclut leurs tâches spécifiques (chablonnage, fruits secs…).
+    let recsActs = [];
+    if(_atOnglet==='mutualise'){ recsActs = _atMutSel.map(rid=>recipes.find(r=>+r.id===+rid)).filter(Boolean); }
+    else if(_atParfum!=null){ const r=recipes.find(r=>+r.id===+_atParfum); if(r) recsActs=[r]; }
+    // base sans recette + spécifiques de chaque recette concernée (dédupliquées par prodAllTasks)
+    const seen=new Set();
+    const pushTask=t=>{ const k=t.phase+'|'+t.label; if(!seen.has(k)){ seen.add(k); (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); } };
+    if(recsActs.length){ recsActs.forEach(r=>prodAllTasks(r).forEach(pushTask)); }
+    else { prodAllTasks().forEach(pushTask); }
     listeHtml = prodSortPhases(Object.keys(groups)).map(phase=>{
       const g=groups[phase];
       return `<div class="at-grp"><div class="at-grp-phase" style="color:${g.color}">${esc(phase)}</div>
@@ -7215,7 +7268,8 @@ async function atRenderBody(){
   }
 
   body.innerHTML = `
-    <div class="at-parf"><span class="at-parf-lab">Parfum</span><div class="at-pills">${pills}</div></div>
+    <div class="at-parf"><span class="at-parf-lab">Parfum</span><div class="at-tabps">${tabsHtml}</div></div>
+    ${mutBoxHtml}
     <div class="at-eyebrow">Déjà fait${hist.length?` · ${hist.length}`:''}</div>
     <div class="at-hist">${histHtml}</div>
     <div class="at-eyebrow">En cours</div>
@@ -7229,7 +7283,19 @@ async function atRenderBody(){
 }
 
 // Actions UI
-function atSetParfum(rid){ _atParfum=+rid; chronoFloatRenderBody(); }
+function atSetOnglet(v){
+  _atOnglet = (v==='mutualise') ? 'mutualise' : +v;
+  if(_atOnglet!=='mutualise') _atMutSel = [];   // reset sélection mutualisée en sortant
+  _atSyncParfum();
+  chronoFloatRenderBody();
+}
+function atMutToggle(rid){
+  rid=+rid;
+  const i=_atMutSel.indexOf(rid);
+  if(i>=0) _atMutSel.splice(i,1); else _atMutSel.push(rid);
+  chronoFloatRenderBody();
+}
+function atSetParfum(rid){ atSetOnglet(rid); }   // compat : ancien point d'entrée
 function atHistToggle(){ _atHistOpen=!_atHistOpen; chronoFloatRenderBody(); }
 function atTogglePicker(){ _atPicker=!_atPicker; chronoFloatRenderBody(); }
 function atHistDelete(taskId){
@@ -7238,6 +7304,12 @@ function atHistDelete(taskId){
   prodSessUpsert(s);
   chronoFloatRenderBody();
 }
+// Parfum(s) à rattacher selon l'onglet actif : [recipeId] sur un parfum, les cochés en mutualisé.
+function _atParfumsPourLancement(){
+  if(_atOnglet==='mutualise') return _atMutSel.slice();
+  if(_atParfum!=null) return [+_atParfum];
+  return [];
+}
 // Lancer une étape : semi-passive → on demande la durée d'abord ; sinon on lance directement.
 let _atPendingPassive=null;
 function atLaunch(label){
@@ -7245,7 +7317,8 @@ function atLaunch(label){
     _atPendingPassive=label; atShowDurPrompt(label); return;
   }
   _atPendingPassive=null;
-  prodTaskStartSmart(label, {recipeId:_atParfum});
+  const parfs=_atParfumsPourLancement();
+  prodTaskStartSmart(label, {recipeId: parfs.length===1?parfs[0]:null, parfums: parfs});
   _atPicker=false;
   chronoFloatRenderBody();
 }
@@ -7268,7 +7341,8 @@ function atDurCancel(){ _atPendingPassive=null; const o=document.querySelector('
 function atDurGo(label){
   const min = parseInt((document.getElementById('atDurMin')||{}).value)||prodPassiveDefaultMin(label)||10;
   _atPendingPassive=null;
-  prodTaskStartSmart(label, {recipeId:_atParfum, durMin:min});
+  const parfs=_atParfumsPourLancement();
+  prodTaskStartSmart(label, {recipeId: parfs.length===1?parfs[0]:null, parfums: parfs, durMin:min});
   _atPicker=false;
   chronoFloatRenderBody();
 }
@@ -34952,9 +35026,14 @@ function prodTasksToCutOnStart(session, recipeId){
 // opts: { recipeId, durMin } (durMin seulement pour semi-passives ; sinon défaut).
 function prodTaskStartSmart(label, opts){
   opts = opts||{};
+  // Parfums à rattacher : priorité à opts.parfums[] (mode mutualisé / multi), sinon opts.recipeId.
+  let parfums = [];
+  if(Array.isArray(opts.parfums) && opts.parfums.length){ parfums = opts.parfums.map(Number).filter(r=>Number.isFinite(r)); }
+  else if(opts.recipeId!=null){ parfums = [+opts.recipeId]; }
+  const parfumPrincipal = parfums.length ? parfums[0] : null;
   const s = prodSessionStart();
   // 1) Coupure : fermer les actives du même parfum (jamais passives / autres parfums)
-  const toCut = prodTasksToCutOnStart(s, opts.recipeId);
+  const toCut = prodTasksToCutOnStart(s, parfumPrincipal);
   toCut.forEach(id=>{ const t=(s.tasks||[]).find(x=>x.id===id); if(t && !t.end){
     if(prodTaskPaused(t)){ t.pausedAccum=(+t.pausedAccum||0)+Math.max(0,Date.now()-(+t.pauseAt)); t.pauseAt=null; }
     t.end=Date.now();
@@ -34968,14 +35047,13 @@ function prodTaskStartSmart(label, opts){
               passive:passive, durMin:durMin,
               alarmAt: passive ? (Date.now()+durMin*60000) : null,
               ringing:false,
-              parfums: (opts.recipeId!=null ? [+opts.recipeId] : []) };
+              parfums: parfums.slice() };
   if(passive && opts.durMin!=null) prodPassiveRememberMin(label, opts.durMin);
   s.tasks=s.tasks||[]; s.tasks.push(t);
   prodSessUpsert(s);
   prodStartTicking();
-  // Rattachement : si un parfum est explicitement sélectionné (panneau), on le garde tel quel.
-  // Sinon, on tente le rattachement auto (1 parfum → direct ; plusieurs → picker intelligent).
-  if(opts.recipeId==null){ try{ prodTaskAutoRattach(t.id); }catch(e){} }
+  // Rattachement auto SEULEMENT si aucun parfum n'a été fourni (ni recipeId ni parfums[]).
+  if(!parfums.length){ try{ prodTaskAutoRattach(t.id); }catch(e){} }
   return t;
 }
 
@@ -35075,6 +35153,7 @@ async function prodAllSessions(){
 function prodBuildTransitions(sessions){
   const global = {};      // global[A][B] = nb d'observations A→B
   const parParfum = {};   // parParfum[recipeId][A][B] = nb
+  const mutualise = {};   // mutualise[A][B] = nb, sur les tâches rattachées à 2+ parfums
   const freq = {};        // freq[A] = nb total de fois où A a été lancée
 
   const bump = (obj,a,b)=>{ (obj[a]=obj[a]||{})[b]=(obj[a][b]||0)+1; };
@@ -35091,10 +35170,12 @@ function prodBuildTransitions(sessions){
         // par parfum : on attribue la transition à chaque parfum rattaché à la tâche A
         const parfs = Array.isArray(tasks[i].parfums)?tasks[i].parfums:[];
         parfs.forEach(rid=>{ parParfum[rid]=parParfum[rid]||{}; bump(parParfum[rid],a,b); });
+        // contexte mutualisé : la tâche A concerne 2+ parfums en même temps
+        if(parfs.filter(r=>r!=null).length>=2){ bump(mutualise,a,b); }
       }
     }
   });
-  return { global, parParfum, freq };
+  return { global, parParfum, mutualise, freq };
 }
 
 // Cache mémoire de l'index (recalculé à la demande). Invalidé après écriture de session.
@@ -35110,16 +35191,24 @@ function prodTransInvalidate(){ _prodTransIndex = null; }
 // Suggère la/les prochaine(s) tâche(s) probable(s) après `lastLabel`, pour un parfum donné (recipeId).
 // Si pas d'historique pour ce parfum, retombe sur le global. Si pas de lastLabel, propose les tâches
 // de démarrage les plus fréquentes. Retourne un tableau de labels, ordonné par probabilité décroissante.
-async function prodSuggestNext(recipeId, lastLabel, limit){
+async function prodSuggestNext(recipeId, lastLabel, limit, opts){
   limit = limit||3;
+  opts = opts||{};
   const idx = await prodTransIndex();
   const pickFrom = (table)=>{
     if(!lastLabel || !table[lastLabel]) return null;
     return Object.entries(table[lastLabel]).sort((a,b)=>b[1]-a[1]).map(e=>e[0]);
   };
-  // 1) transitions du parfum, 2) sinon transitions globales
-  let res = (recipeId!=null && idx.parParfum[recipeId] && pickFrom(idx.parParfum[recipeId])) || null;
-  if(!res) res = pickFrom(idx.global);
+  let res = null;
+  if(opts.mutualise){
+    // contexte mutualisé : 1) transitions mutualisées, 2) sinon global
+    res = pickFrom(idx.mutualise) || null;
+    if(!res) res = pickFrom(idx.global);
+  } else {
+    // 1) transitions du parfum, 2) sinon transitions globales
+    res = (recipeId!=null && idx.parParfum[recipeId] && pickFrom(idx.parParfum[recipeId])) || null;
+    if(!res) res = pickFrom(idx.global);
+  }
   // 3) si toujours rien (pas de lastLabel ou inconnu) : tâches les plus fréquentes en début de session
   if(!res){
     res = Object.entries(idx.freq).sort((a,b)=>b[1]-a[1]).map(e=>e[0]);
@@ -36970,7 +37059,7 @@ function prodJournalDelete(sessId){
 }
 // ---- ÉCRAN DE PILOTAGE (étape 2 : vue liste des tâches actives) ----
 // (La vue « tableau blanc » Gantt arrive à l'étape 3.)
-function prodRenderBoard(){
+async function prodRenderBoard(){
   const host = document.getElementById('prodBoardHost');
   if(!host) return;
   const s = prodSessActive();
@@ -36983,9 +37072,46 @@ function prodRenderBoard(){
     </div>`;
     return;
   }
-  const running = (s.tasks||[]).filter(prodTaskRunning);
-  const done = (s.tasks||[]).filter(t=>t.end);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const recipesById = {}; recipes.forEach(r=>recipesById[+r.id]=r.produitNom);
+  const parfums = await atParfumsDispo();
+  // Onglet partagé avec le flottant. Réinit si l'onglet courant n'est plus valide.
+  const validIds = parfums.map(p=>+p.recipeId);
+  if(_atOnglet!=='mutualise' && _atOnglet!=null && !validIds.includes(+_atOnglet)) _atOnglet = null;
+  if(_atOnglet==null && parfums.length) _atOnglet = parfums[0].recipeId;
+  _atSyncParfum();
+
+  // ---- onglets parfum ----
+  let tabsHtml='';
+  if(parfums.length){
+    const pf = parfums.map(p=>`<button class="pb-tabp ${(+_atOnglet===+p.recipeId)?'on':''}" onclick="prodBoardSetOnglet(${p.recipeId})">${esc(p.nom)}</button>`).join('');
+    const mut = (parfums.length>=2) ? `<button class="pb-tabp mut ${_atOnglet==='mutualise'?'on':''}" onclick="prodBoardSetOnglet('mutualise')">⇄ Mutualisé</button>` : '';
+    tabsHtml = `<div class="pb-tabps">${pf}${mut}</div>`;
+  }
+
+  // ---- zone mutualisée ----
+  let mutBoxHtml='';
+  if(_atOnglet==='mutualise'){
+    if(!_atMutSel.length) _atMutSel = parfums.map(p=>+p.recipeId);
+    const checks = parfums.map(p=>{
+      const on=_atMutSel.includes(+p.recipeId);
+      return `<label class="pb-mutchk"><input type="checkbox" ${on?'checked':''} onchange="prodBoardMutToggle(${p.recipeId})"> ${esc(p.nom)}</label>`;
+    }).join('');
+    mutBoxHtml = `<div class="pb-mutbox"><div class="pb-mutlab">⇄ Tâche partagée — parfums concernés :</div><div class="pb-mutchks">${checks}</div></div>`;
+  }
+
+  // ---- tâches filtrées sur l'onglet ----
+  const running = (s.tasks||[]).filter(t=>prodTaskRunning(t) && _atTaskMatchOnglet(t));
+  const done = (s.tasks||[]).filter(t=>t.end && _atTaskMatchOnglet(t));
   const startedTxt = new Date(s.start).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+
+  // libellé du parfum d'une tâche (pour rappel visuel)
+  const parfTag = t=>{
+    const ps=_atTaskParfums(t);
+    if(!ps.length) return '';
+    const nom = ps.length===1 ? (recipesById[ps[0]]||'') : ps.map(r=>recipesById[r]||('#'+r)).join(' + ');
+    return `<span class="prodt-parf${ps.length>=2?' multi':''}">${esc(nom)}</span>`;
+  };
 
   const runCards = running.length ? running.map(t=>{
     const paused = prodTaskPaused(t);
@@ -36993,6 +37119,7 @@ function prodRenderBoard(){
       <div class="prodt-top">
         <span class="prodt-dot" style="background:${t.color}"></span>
         <span class="prodt-label">${esc(t.label)}</span>
+        ${parfTag(t)}
       </div>
       <div class="prodt-bottom">
         <span class="prodt-chrono" data-prodchrono="${t.id}">${prodFmt(prodTaskNet(t))}</span>
@@ -37005,7 +37132,7 @@ function prodRenderBoard(){
       </div>
       ${paused?'<div class="prodt-pausetag">⏸ en pause</div>':''}
     </div>`;
-  }).join('') : `<p class="note" style="text-align:center;padding:14px 0">Aucune tâche en cours. Lance-en une ci-dessous 👇</p>`;
+  }).join('') : `<p class="note" style="text-align:center;padding:14px 0">${_atOnglet==='mutualise'?'Aucune tâche mutualisée en cours.':'Aucune tâche en cours pour ce parfum.'} Lance-en une ci-dessous 👇</p>`;
 
   const doneList = done.length ? `
     <div class="prodb-done">
@@ -37013,10 +37140,16 @@ function prodRenderBoard(){
       ${done.map(t=>`<div class="prodb-done-row">
         <span class="prodt-dot" style="background:${t.color}"></span>
         <span class="pd-label">${esc(t.label)}</span>
+        ${parfTag(t)}
         <span class="pd-dur">${prodDurShort(prodTaskNet(t))}</span>
         <button class="pt-btn pt-edit" onclick="prodTaskEditForm('${t.id}')" title="Modifier le temps" style="margin-left:8px">✎</button>
       </div>`).join('')}
     </div>` : '';
+
+  // bouton lancer : rappelle le rattachement courant
+  const addLabel = (_atOnglet==='mutualise')
+    ? `＋ Lancer une tâche <span style="font-weight:400;opacity:.85">(partagée entre les parfums cochés)</span>`
+    : (_atParfum!=null ? `＋ Lancer une tâche <span style="font-weight:400;opacity:.85">(rattachée à ${esc(recipesById[_atParfum]||'')})</span>` : '＋ Lancer une tâche');
 
   host.innerHTML = `
     <div class="prodb-session">
@@ -37025,11 +37158,30 @@ function prodRenderBoard(){
         <button class="btn ghost sm" onclick="prodConfirmEndSession()">⏹ Clôturer</button>
       </div>
     </div>
+    ${tabsHtml}
+    ${mutBoxHtml}
     <div class="prodb-running">${runCards}</div>
-    <button class="btn prodb-addbtn" onclick="prodTaskPicker()">＋ Lancer une tâche</button>
+    <button class="btn prodb-addbtn" onclick="prodBoardLaunch()">${addLabel}</button>
     ${doneList}`;
 
   if((s.tasks||[]).some(prodTaskRunning)) prodStartTicking();
+}
+
+// Actions onglets de l'atelier complet (état partagé avec le flottant).
+function prodBoardSetOnglet(v){
+  _atOnglet = (v==='mutualise') ? 'mutualise' : +v;
+  if(_atOnglet!=='mutualise') _atMutSel = [];
+  _atSyncParfum();
+  prodRenderBoard();
+}
+function prodBoardMutToggle(rid){
+  rid=+rid; const i=_atMutSel.indexOf(rid);
+  if(i>=0) _atMutSel.splice(i,1); else _atMutSel.push(rid);
+  prodRenderBoard();
+}
+// Lancer une tâche depuis l'atelier complet : ouvre le sélecteur, rattachement selon l'onglet.
+function prodBoardLaunch(){
+  prodTaskPicker();   // sélecteur modal existant ; le rattachement se fait via _atParfumsPourLancement au pick
 }
 // Durée courte lisible (ex. « 1 h 20 », « 14 min »).
 function prodDurShort(ms){
@@ -37082,9 +37234,19 @@ function prodPickCustomFloat(){
   toast(`▶ ${label}`);
 }
 
-function prodTaskPicker(){
+async function prodTaskPicker(){
   const groups = {};
-  prodAllTasks().forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });
+  // recettes concernées par l'onglet (pour inclure leurs tâches spécifiques)
+  let recsActs = [];
+  try{
+    const recipes = await db.recipes.toArray().catch(()=>[]);
+    if(_atOnglet==='mutualise'){ recsActs = (_atMutSel||[]).map(rid=>recipes.find(r=>+r.id===+rid)).filter(Boolean); }
+    else if(_atParfum!=null){ const r=recipes.find(r=>+r.id===+_atParfum); if(r) recsActs=[r]; }
+  }catch(e){}
+  const seen=new Set();
+  const pushTask=t=>{ const k=t.phase+'|'+t.label; if(!seen.has(k)){ seen.add(k); (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); } };
+  if(recsActs.length){ recsActs.forEach(r=>prodAllTasks(r).forEach(pushTask)); }
+  else { prodAllTasks().forEach(pushTask); }
   const blocks = prodSortPhases(Object.keys(groups)).map(phase=>{
     const g=groups[phase];
     return `<div class="ptp-group">
@@ -37094,8 +37256,9 @@ function prodTaskPicker(){
       </div>
     </div>`;
   }).join('');
+  const ratTxt = (_atOnglet==='mutualise') ? 'Partagée entre les parfums cochés.' : (_atParfum!=null ? `Rattachée au parfum sélectionné.` : '');
   openModal(`<h3>Lancer une tâche</h3>
-    <p class="note">Choisis la tâche à chronométrer. Elle démarre tout de suite et tourne en parallèle des autres.</p>
+    <p class="note">Choisis la tâche à chronométrer. Elle démarre tout de suite et tourne en parallèle des autres.${ratTxt?' <b>'+esc(ratTxt)+'</b>':''}</p>
     <div class="ptp-list">${blocks}</div>
     <div class="field" style="margin-top:10px"><label>Ou une tâche personnalisée</label>
       <div style="display:flex;gap:8px"><input id="ptp_custom" placeholder="Nom de la tâche…" style="flex:1"><button class="btn" onclick="prodPickCustom()">Lancer</button></div>
@@ -37104,7 +37267,8 @@ function prodTaskPicker(){
 }
 function prodPickTask(label){
   closeModal();
-  prodTaskStart(label);
+  const parfs=_atParfumsPourLancement();
+  prodTaskStartSmart(label, {recipeId: parfs.length===1?parfs[0]:null, parfums: parfs});
   prodRenderBoard();
   toast(`▶ ${label}`);
 }
@@ -37115,7 +37279,8 @@ function prodPickCustom(){
   const s=getSettings(); const list=s.prodCustomTasks||[];
   if(!list.some(c=>(typeof c==='string'?c:c.label)===label)){ list.push(label); s.prodCustomTasks=list; saveSettings(s); }
   closeModal();
-  prodTaskStart(label);
+  const parfs=_atParfumsPourLancement();
+  prodTaskStartSmart(label, {recipeId: parfs.length===1?parfs[0]:null, parfums: parfs});
   prodRenderBoard();
   toast(`▶ ${label}`);
 }

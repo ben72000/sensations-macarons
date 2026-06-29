@@ -435,6 +435,17 @@
 .at-pills{display:flex;gap:7px;margin-left:auto;flex-wrap:wrap}
 .at-pill{font-size:.82rem;padding:6px 15px;border-radius:18px;border:1px solid var(--creme,#E8DDCD);background:#fff;color:#9a8a82;cursor:pointer;font-weight:600}
 .at-pill.on{background:var(--bordeaux,#52252F);color:#fff;border-color:var(--bordeaux,#52252F)}
+/* Onglets parfum (refonte) */
+.at-tabps{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+.at-tabp{font-size:.82rem;padding:8px 14px;border-radius:11px;border:1.5px solid var(--creme,#E8DDCD);background:#fff;color:#8a7a72;cursor:pointer;font-weight:600;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.at-tabp.on{background:var(--bordeaux,#52252F);color:#fff;border-color:var(--bordeaux,#52252F)}
+.at-tabp.mut.on{background:var(--caramel,#AA7C39);border-color:var(--caramel,#AA7C39)}
+/* Zone mutualisée : cases à cocher des parfums concernés */
+.at-mutbox{background:#f5ecd9;border:1px solid #e3d3ab;border-radius:11px;padding:10px 12px;margin:0 0 14px}
+.at-mutlab{font-size:.78rem;color:#8a6d2f;font-weight:600;margin-bottom:7px}
+.at-mutchks{display:flex;gap:8px;flex-wrap:wrap}
+.at-mutchk{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #e3d3ab;border-radius:18px;padding:6px 12px;font-size:.82rem;color:var(--bordeaux,#52252F);cursor:pointer}
+.at-mutchk input{width:16px;height:16px}
 .at-none{font-size:.78rem;color:#9a8a82;margin-left:auto;font-style:italic}
 .at-eyebrow{font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;color:#9a8a82;font-weight:700;margin:0 2px 8px}
 .at-eyebrow.or{color:#AA7C39}
@@ -959,6 +970,19 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .prodb-sess-time{font-weight:400;font-size:.8rem;opacity:.85;margin-left:6px}
 .prodb-live-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#3fb968;margin-right:6px;animation:plpulse 1s ease-in-out infinite;vertical-align:middle}
 .prodb-running{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+/* Onglets parfum atelier complet */
+.pb-tabps{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.pb-tabp{font-size:.85rem;padding:9px 15px;border-radius:11px;border:1.5px solid #e0d5c5;background:#fff;color:#8a7a72;cursor:pointer;font-weight:600;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.pb-tabp.on{background:var(--bordeaux,#52252F);color:#fff;border-color:var(--bordeaux,#52252F)}
+.pb-tabp.mut.on{background:var(--caramel,#AA7C39);border-color:var(--caramel,#AA7C39)}
+.pb-mutbox{background:#f5ecd9;border:1px solid #e3d3ab;border-radius:11px;padding:11px 13px;margin-bottom:12px}
+.pb-mutlab{font-size:.8rem;color:#8a6d2f;font-weight:600;margin-bottom:7px}
+.pb-mutchks{display:flex;gap:8px;flex-wrap:wrap}
+.pb-mutchk{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #e3d3ab;border-radius:18px;padding:6px 13px;font-size:.84rem;color:var(--bordeaux,#52252F);cursor:pointer}
+.pb-mutchk input{width:16px;height:16px}
+/* Rappel parfum sur les cartes de tâche */
+.prodt-parf{font-size:.66rem;background:#f0e9df;color:#6a5a52;border-radius:18px;padding:2px 9px;margin-left:auto}
+.prodt-parf.multi{background:#f5ecd9;color:var(--caramel,#AA7C39)}
 .prodt-card{background:#fff;border:1px solid #ece3d5;border-left:4px solid #8a7a72;border-radius:14px;padding:13px 15px;box-shadow:0 2px 8px rgba(73,15,37,.05)}
 .prodt-card.is-paused{opacity:.7;background:#faf6f0}
 .prodt-top{display:flex;align-items:center;gap:9px;margin-bottom:9px}
