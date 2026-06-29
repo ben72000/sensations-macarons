@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1048';
+const APP_VERSION = 'v1049';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -40946,7 +40946,14 @@ async function renderControleTemps(){
   function sessHTML(s, estLive){
     const sante = _ctSanteSession(s);
     const tasks = (s.tasks||[]);
-    const dateLbl = s.date || (s.start? new Date(+s.start).toLocaleDateString('fr-FR') : '');
+    // Date en JJ/MM/AAAA (s.date est en ISO AAAA-MM-JJ, on reformate proprement).
+    let dateLbl = '';
+    if(s.date && /^\d{4}-\d{2}-\d{2}/.test(s.date)){
+      const [Y,M,D] = s.date.slice(0,10).split('-');
+      dateLbl = `${D}/${M}/${Y}`;
+    } else if(s.start){
+      dateLbl = new Date(+s.start).toLocaleDateString('fr-FR');
+    }
     const heure = (s.start? new Date(+s.start).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : '');
     const healthBadge = sante.ok
       ? `<span style="font-size:.76rem;padding:3px 10px;border-radius:20px;font-weight:600;background:#e7f3ec;color:#3f7d52">✓ cohérent</span>`
@@ -40968,6 +40975,7 @@ async function renderControleTemps(){
         ? `<button class="btn ghost sm" style="${btnStyle}" onclick="ctClotureSession('${s.id}')" title="Fixer l'heure de fin réelle de cette séance">⏹ Clôturer la séance</button>`
         : `<button class="btn ghost sm" style="${btnStyle}" onclick="ctClotureSession('${s.id}')" title="Corriger l'heure de fin">✎ Heure de fin</button>`}
       ${tasks.length>=2?`<button class="btn ghost sm" style="${btnStyle}" onclick="ctScinderSession('${s.id}')" title="Séparer si deux journées se sont mélangées">✂️ Scinder</button>`:''}
+      <button class="btn ghost sm" style="${estLive?'background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.25);color:#f3b8ae':'border-color:#e5b4ae;color:#b04a3e'}" onclick="ctSupprimerSession('${s.id}')" title="Supprimer entièrement cette séance">🗑 Supprimer la séance</button>
     </div>`;
     return `<div class="card" style="${liveStyle}">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid ${estLive?'rgba(255,255,255,.15)':'var(--hair)'}">
@@ -41296,6 +41304,27 @@ function ctScinderSessionSave(sessId){
   prodSessUpsert(nouvelle);
   if(typeof markUnsaved==='function') markUnsaved();
   closeModal(); toast('Séance scindée en deux ✓'); renderControleTemps();
+}
+
+// 🗑 Supprimer entièrement une séance (erreur de saisie, séance fantôme…).
+function ctSupprimerSession(sessId){
+  const s = _ctFindSession(sessId);
+  if(!s){ toast('Séance introuvable'); return; }
+  const nbT = (s.tasks||[]).length;
+  openModal(`<h3>Supprimer toute la séance ?</h3>
+    <p class="note">Cette séance${nbT>0?` et ses <b>${nbT}</b> tâche(s)`:''} seront définitivement supprimées. ${nbT>0?'Leur temps ne sera plus compté nulle part. ':''}Action irréversible.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" style="background:#b04a3e;border-color:#b04a3e" onclick="ctSupprimerSessionRun('${s.id}')">Supprimer la séance</button>
+    </div>`);
+}
+
+function ctSupprimerSessionRun(sessId){
+  const s = _ctFindSession(sessId);
+  if(!s){ toast('Séance introuvable'); return; }
+  prodSessRemove(s.id);
+  if(typeof markUnsaved==='function') markUnsaved();
+  closeModal(); toast('Séance supprimée ✓'); renderControleTemps();
 }
 
 
