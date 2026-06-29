@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diag 10 — quelle base ?</title>
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px;background:#faf6f0;color:#2b1a1f}
+h1{font-size:1.05rem;margin:0 0 8px}
+button{font-size:.95rem;padding:12px 18px;border:none;border-radius:10px;background:#52252F;color:#fff;font-weight:600;margin-bottom:12px}
+pre{background:#1c0c14;color:#f5e9d0;padding:14px;border-radius:10px;font-size:.74rem;white-space:pre-wrap;word-break:break-word;line-height:1.5;min-height:120px}
+</style></head><body>
+<h1>Diag 10 — où sont tes productions ?</h1>
+<button id="go">Analyser</button>
+<pre id="log">Prêt.</pre>
+<script>
+var logs=[];function L(m){logs.push(m);document.getElementById('log').textContent=logs.join('\n');}
+document.getElementById('go').addEventListener('click',function(){
+  logs=[];L('Analyse via IndexedDB natif (lecture brute, comme diag6)…');
+  // 1. Lister TOUTES les bases IndexedDB existantes
+  if(indexedDB.databases){
+    indexedDB.databases().then(function(dbs){
+      L('Bases IndexedDB présentes sur cet appareil :');
+      dbs.forEach(function(d){ logs.push('  • '+d.name+' (v'+d.version+')'); });
+      document.getElementById('log').textContent=logs.join('\n');
+      inspecter();
+    }).catch(function(){ inspecter(); });
+  } else { L('(indexedDB.databases non supporté, on ouvre directement)'); inspecter(); }
+
+  function inspecter(){
+    var req = indexedDB.open('sensations_macarons');
+    req.onsuccess = function(){
+      var idb = req.result;
+      logs.push('\n— Base "sensations_macarons" (v'+idb.version+') —');
+      var stores = Array.from(idb.objectStoreNames);
+      logs.push('Tables : '+stores.length);
+      // compter productions et quelques tables
+      var toCount = ['productions','orders','orderItems','stockMoves','clients','recipes'];
+      var done=0;
+      toCount.forEach(function(t){
+        if(!stores.includes(t)){ logs.push('  ✗ '+t+' (absente)'); done++; if(done===toCount.length)fin(); return; }
+        try{
+          var tx=idb.transaction(t,'readonly'); var st=tx.objectStore(t); var cr=st.count();
+          cr.onsuccess=function(){ logs.push('  '+t+' : '+cr.result); document.getElementById('log').textContent=logs.join('\n'); done++; if(done===toCount.length)fin(); };
+          cr.onerror=function(){ logs.push('  '+t+' : erreur'); done++; if(done===toCount.length)fin(); };
+        }catch(e){ logs.push('  '+t+' : '+e.message); done++; if(done===toCount.length)fin(); }
+      });
+      function fin(){ logs.push('\n→ Si productions > 0 ici mais 0 dans diag9, c\'est que l\'app installée (icône) et Safari utilisent des bases séparées.'); document.getElementById('log').textContent=logs.join('\n'); }
+    };
+    req.onerror=function(){ L('Erreur ouverture base'); };
+  }
+});
+</script></body></html>
