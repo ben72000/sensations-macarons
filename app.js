@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1064';
+const APP_VERSION = 'v1067';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -2119,6 +2119,11 @@ const EXPORT_REMINDER_DAYS_DEFAULT = 3;   // fréquence par défaut du rappel d'
 const SETTINGS_DEFAULTS = {
   socialGoods: 12.3,     // % charges sociales sur vente de marchandise (produit fini)
   socialService: 25.6,   // % charges sociales sur prestation de service
+  // [v1067] Impôt sur le revenu — micro-entreprise au barème progressif (taux marginal saisi).
+  irTrancheMarginale: 0,     // % de la tranche d'imposition du foyer (0, 11, 30, 41, 45). 0 = non imposable.
+  irAbattementGoods: 71,     // % d'abattement forfaitaire sur la vente de marchandise (BIC)
+  irAbattementService: 50,   // % d'abattement forfaitaire sur la prestation de service (BIC services / BNC : 34%)
+  irAbattementMin: 305,      // abattement minimum légal (€) appliqué sur l'année
   packaging: { 6:1.26, 8:2.18, 16:1.90, 25:2.32 }, // € emballage/consommable par coffret (tarifs réels reçus le 28/11/2025)
   packagingDate: '2025-11-28', // date de réception de référence de ces tarifs (mise à jour à chaque nouvelle réception)
   // Main-d'œuvre (optionnelle) : prise en compte dans le coût de revient si activée.
@@ -2156,6 +2161,10 @@ function getSettings(){
     return {
       socialGoods: s.socialGoods!=null?+s.socialGoods:SETTINGS_DEFAULTS.socialGoods,
       socialService: s.socialService!=null?+s.socialService:SETTINGS_DEFAULTS.socialService,
+      irTrancheMarginale: s.irTrancheMarginale!=null?+s.irTrancheMarginale:SETTINGS_DEFAULTS.irTrancheMarginale,
+      irAbattementGoods: s.irAbattementGoods!=null?+s.irAbattementGoods:SETTINGS_DEFAULTS.irAbattementGoods,
+      irAbattementService: s.irAbattementService!=null?+s.irAbattementService:SETTINGS_DEFAULTS.irAbattementService,
+      irAbattementMin: s.irAbattementMin!=null?+s.irAbattementMin:SETTINGS_DEFAULTS.irAbattementMin,
       laborEnabled: s.laborEnabled===true,
       laborRate: s.laborRate!=null?+s.laborRate:SETTINGS_DEFAULTS.laborRate,
       vehicleConso: s.vehicleConso!=null?+s.vehicleConso:SETTINGS_DEFAULTS.vehicleConso,
@@ -3161,7 +3170,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -3415,6 +3424,16 @@ function goView(v, opts){
   // raccourci a pu le poser avant ; sinon on le pose ici. On ignore le retour à l'assistant lui-même.
   if(view==='assistant' && v!=='assistant'){
     window._assistantRetour = { cible: v, attente: false };
+    // [v1065] On mémorise le contenu du fil (discussion + raccourcis) pour le restaurer au retour,
+    // afin de ne pas perdre la question posée et sa réponse en revenant sur le copilote.
+    try{
+      const _th=document.getElementById('aiThread');
+      const _ou=document.getElementById('aiOut');
+      window._assistantThreadSave = {
+        thread: _th ? _th.innerHTML : null,
+        out: _ou ? _ou.innerHTML : null
+      };
+    }catch(e){}
   } else if(window._assistantRetour && window._assistantRetour.attente && v!=='assistant'){
     window._assistantRetour.cible = v; window._assistantRetour.attente = false;
   }
@@ -12549,6 +12568,7 @@ const _NAV_PAGES = [
   {v:'revenuhoraire',t:'Mon revenu horaire',        k:'revenu horaire taux heure remuneration salaire'},
   {v:'stats',        t:'Statistiques',              k:'statistique stat graphique analyse chiffre'},
   {v:'compta',       t:'Comptabilité',              k:'comptabilite compta ca chiffre affaires resultat charges urssaf encaissement'},
+  {v:'netpoche',     t:'Net dans la poche',          k:'net poche revenu reel impot tranche imposition urssaf cotisation combien reste gagne vraiment apres deduction fil rouge'},
   {v:'consommables', t:'Consommables',              k:'consommable fourniture jetable'},
   {v:'boites',       t:'Boîtes de conservation',    k:'boite conservation contenant rangement'},
   {v:'equipements',  t:'Équipements de stockage',   k:'equipement stockage frigo congelateur materiel'},
@@ -15993,6 +16013,95 @@ async function computeMonthlyBilan(ym){
   return {ym, goods, service, caTotal, tauxGoods, tauxService, cotisGoods, cotisService, cotisTotal,
     detailGoods, detailService};
 }
+
+// ============================================================
+//  NET DANS LA POCHE — [v1067] le KPI ultime
+//  À partir du CA ENCAISSÉ ventilé marchandise/service, déduit cotisations sociales
+//  URSSAF, impôt sur le revenu (micro-entreprise, barème progressif via taux marginal
+//  saisi, après abattement forfaitaire), puis charges réelles de la période.
+//  Granularité : période = { type:'mois'|'annee'|'tout', ym?, year? }.
+//  IMPORTANT : les charges réelles réduisent la POCHE mais PAS l'imposable (en micro,
+//  l'abattement forfaitaire remplace la déduction des charges réelles — on ne cumule pas).
+// ============================================================
+function _moisDeLannee(year){ const a=[]; for(let m=1;m<=12;m++) a.push(year+'-'+String(m).padStart(2,'0')); return a; }
+async function _listeMoisAvecActivite(){
+  // tous les mois 'YYYY-MM' où il y a au moins un encaissement ou une charge
+  const set=new Set();
+  const orders=await db.orders.toArray();
+  orders.forEach(o=>{
+    const pays=(o.paiements&&o.paiements.length)?o.paiements:(o.paiement==='Payé'&&o.datePaiement?[{date:o.datePaiement}]:[]);
+    pays.forEach(p=>{ if(p&&p.date) set.add(monthKey(p.date)); });
+  });
+  const markets=await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
+  markets.forEach(mk=>{ if(mk.statut==='clos'&&mk.date) set.add(monthKey(mk.date)); });
+  const charges=await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
+  charges.forEach(c=>{ if(c&&c.date) set.add(monthKey(c.date)); });
+  return [...set].filter(Boolean).sort();
+}
+async function _chargesPeriode(moisList){
+  // somme des charges réelles sur la liste de mois (par catégorie + total)
+  const charges=await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
+  const inSet=new Set(moisList);
+  let total=0; const parCat={};
+  charges.forEach(c=>{ if(!c||!c.date) return; if(!inSet.has(monthKey(c.date))) return;
+    const v=money2(+c.montant||0); if(v<=0) return; total=money2(total+v);
+    const cat=c.categorie||'Autre'; parCat[cat]=money2((parCat[cat]||0)+v);
+  });
+  return { total, parCat };
+}
+async function computeNetPoche(periode){
+  periode=periode||{type:'mois'};
+  const s=getSettings();
+  // 1) Déterminer la liste des mois concernés
+  let moisList=[];
+  if(periode.type==='mois'){ moisList=[periode.ym || monthKey(today())]; }
+  else if(periode.type==='annee'){ moisList=_moisDeLannee(periode.year || (new Date().getFullYear())); }
+  else { moisList=await _listeMoisAvecActivite(); if(!moisList.length) moisList=[monthKey(today())]; }
+  // 2) Agréger les bilans mensuels (CA encaissé ventilé + cotisations)
+  let goods=0, service=0, cotisGoods=0, cotisService=0;
+  for(const ym of moisList){
+    const B=await computeMonthlyBilan(ym);
+    goods=money2(goods+B.goods); service=money2(service+B.service);
+    cotisGoods=money2(cotisGoods+B.cotisGoods); cotisService=money2(cotisService+B.cotisService);
+  }
+  const caTotal=money2(goods+service);
+  const cotisTotal=money2(cotisGoods+cotisService);
+  // 3) Base imposable = CA après abattement forfaitaire (jamais négatif), avec minimum légal
+  const abG=+s.irAbattementGoods||0, abS=+s.irAbattementService||0;
+  let baseGoods=money2(goods*(1-abG/100));
+  let baseService=money2(service*(1-abS/100));
+  let baseImposable=money2(baseGoods+baseService);
+  // abattement minimum (305 € / an) : la base ne peut pas dépasser CA - minAbattement.
+  // Appliqué seulement sur une période annuelle ou « tout » pour rester fidèle au calcul légal.
+  const abMin=+s.irAbattementMin||0;
+  if((periode.type==='annee'||periode.type==='tout') && abMin>0 && caTotal>0){
+    const baseMax=money2(Math.max(0, caTotal-abMin));
+    if(baseImposable>baseMax) baseImposable=baseMax;
+  }
+  // 4) Impôt sur le revenu = base imposable × taux marginal (tranche du foyer)
+  const tranche=+s.irTrancheMarginale||0;
+  const impotRevenu=money2(baseImposable*tranche/100);
+  // 5) Charges réelles de la période (énergie, etc.) — réduisent la poche, pas l'imposable
+  const ch=await _chargesPeriode(moisList);
+  const chargesReelles=ch.total;
+  // 6) Net dans la poche
+  const netAvantCharges=money2(caTotal - cotisTotal - impotRevenu);
+  const netPoche=money2(netAvantCharges - chargesReelles);
+  // 7) Indicateurs de synthèse
+  const totalPonctions=money2(cotisTotal + impotRevenu + chargesReelles);
+  const tauxPonction = caTotal>0 ? money2(totalPonctions/caTotal*100) : 0;
+  const tauxNet = caTotal>0 ? money2(netPoche/caTotal*100) : 0;
+  return {
+    periode, moisList, nbMois:moisList.length,
+    goods, service, caTotal,
+    cotisGoods, cotisService, cotisTotal, tauxGoods:+s.socialGoods||0, tauxService:+s.socialService||0,
+    abG, abS, baseGoods, baseService, baseImposable, abMinApplique:(periode.type==='annee'||periode.type==='tout')&&abMin>0,
+    tranche, impotRevenu,
+    chargesReelles, chargesParCat:ch.parCat,
+    netAvantCharges, netPoche,
+    totalPonctions, tauxPonction, tauxNet
+  };
+}
 // Construit le texte du bilan mensuel (export .txt).
 function buildBilanText(B){
   const L=[];
@@ -19314,6 +19423,113 @@ async function comptaFluxDetail(type){
     <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total ${esc(titre.toLowerCase())}</b></span><b style="color:var(--bordeaux)">${euro(money2(total))}</b></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
+// ============================================================
+//  ÉCRAN « NET DANS LA POCHE » — [v1067] le fil rouge du revenu réel
+// ============================================================
+let _netPocheState = null;   // { type:'mois'|'annee'|'tout', ym, year }
+function netPocheSetType(type){
+  _netPocheState = _netPocheState || {};
+  _netPocheState.type = type;
+  if(type==='mois' && !_netPocheState.ym) _netPocheState.ym = monthKey(today());
+  if(type==='annee' && !_netPocheState.year) _netPocheState.year = new Date().getFullYear();
+  renderNetPoche();
+}
+function netPocheSetMonth(ym){ _netPocheState=_netPocheState||{}; _netPocheState.ym=ym; _netPocheState.type='mois'; renderNetPoche(); }
+function netPocheSetYear(y){ _netPocheState=_netPocheState||{}; _netPocheState.year=+y; _netPocheState.type='annee'; renderNetPoche(); }
+async function renderNetPoche(){
+  const main=document.getElementById('main'); if(!main) return;
+  if(!_netPocheState) _netPocheState={ type:'mois', ym:monthKey(today()), year:new Date().getFullYear() };
+  const st=_netPocheState;
+  main.innerHTML=`<div class="topbar"><div><h1>Net dans la poche</h1><p>Ce qu'il te reste vraiment, net de tout</p></div>
+    <button class="btn ghost sm" onclick="goView('compta')" title="Retour à la comptabilité">↩ Compta</button></div>
+    <div class="panel"><p class="note">Calcul en cours…</p></div>`;
+  let R; try{ R=await computeNetPoche(st); }catch(e){ console.error('renderNetPoche',e); main.querySelector('.panel').innerHTML='<p class="note">Impossible de calculer pour le moment.</p>'; return; }
+
+  // Sélecteur de période
+  const moisDispo = await _listeMoisAvecActivite();
+  const anneesDispo = [...new Set(moisDispo.map(m=>m.slice(0,4)))].sort().reverse();
+  const moisOpts = (moisDispo.length?moisDispo:[monthKey(today())]).slice().reverse()
+    .map(m=>`<option value="${m}" ${m===st.ym?'selected':''}>${esc(monthLabel(m))}</option>`).join('');
+  const anneeOpts = (anneesDispo.length?anneesDispo:[String(new Date().getFullYear())])
+    .map(y=>`<option value="${y}" ${(+y===+st.year)?'selected':''}>${esc(y)}</option>`).join('');
+  const seg = (lbl,type)=>`<button class="btn ${st.type===type?'':'ghost'} sm" onclick="netPocheSetType('${type}')" style="flex:1">${lbl}</button>`;
+  const libellePeriode = st.type==='mois'?monthLabel(st.ym):(st.type==='annee'?('Année '+st.year):'Depuis le début');
+
+  // Carte HERO : le KPI ultime
+  const couleurNet = R.netPoche>=0 ? 'var(--bordeaux,#52252F)' : 'var(--red,#b3261e)';
+  const hero=`<div style="background:linear-gradient(135deg,#52252F,#2a1320);border-radius:18px;padding:20px 18px;color:#fff;text-align:center;box-shadow:0 6px 20px rgba(73,15,37,.25)">
+    <div style="font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:#e8c9a0;opacity:.9">Net dans ta poche · ${esc(libellePeriode)}</div>
+    <div style="font-size:2.5rem;font-weight:800;font-family:'Bellota',Georgia,serif;margin:6px 0;line-height:1">${euro(R.netPoche)}</div>
+    <div style="font-size:.82rem;color:#e8c9a0">soit <b>${R.tauxNet}%</b> de ton chiffre d'affaires encaissé</div>
+  </div>`;
+
+  // Déroulé en cascade (chaque étape explique CE qu'elle retire et POURQUOI)
+  const lignePos=(lbl,val,sub)=>`<div class="sum-box"><span>${lbl}${sub?` <span style="color:#9a8a82;font-size:.72rem">${sub}</span>`:''}</span><b>${euro(val)}</b></div>`;
+  const ligneNeg=(lbl,val,sub)=>`<div class="sum-box"><span>${lbl}${sub?` <span style="color:#9a8a82;font-size:.72rem">${sub}</span>`:''}</span><b style="color:var(--red,#b3261e)">− ${euro(val)}</b></div>`;
+  const ligneTot=(lbl,val)=>`<div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:4px"><span><b>${lbl}</b></span><b style="color:var(--bordeaux)">${euro(val)}</b></div>`;
+
+  const cascade=`<div class="panel">
+    <h2 style="font-size:1rem">Le calcul, étape par étape</h2>
+    <p class="note" style="margin:-2px 0 10px">À partir de ton <b>CA encaissé</b> réel, on retire dans l'ordre : ce que prend l'URSSAF, puis l'impôt sur le revenu, puis tes charges. Tout est au centime.</p>
+    ${lignePos('CA encaissé', R.caTotal, R.service>0?`marchandise ${euro(R.goods)} + service ${euro(R.service)}`:'vente de macarons')}
+    ${ligneNeg('Cotisations sociales URSSAF', R.cotisTotal, `marchandise ${R.tauxGoods}% + service ${R.tauxService}%`)}
+    <div class="sum-box" style="background:#faf6f0"><span style="font-size:.8rem;color:#7a6a60">Base imposable (après abattement ${R.abG}%${R.service>0?` / ${R.abS}%`:''})</span><b style="color:#7a6a60">${euro(R.baseImposable)}</b></div>
+    ${ligneNeg('Impôt sur le revenu', R.impotRevenu, R.tranche>0?`ta tranche : ${R.tranche}%`:'tranche 0% (non imposable)')}
+    ${ligneTot('Net avant charges', R.netAvantCharges)}
+    ${R.chargesReelles>0?ligneNeg('Charges réelles (énergie, etc.)', R.chargesReelles, 'ne réduisent pas l\'impôt en micro'):'<div class="sum-box"><span>Charges réelles</span><b>0,00 €</b></div>'}
+    ${ligneTot('NET DANS TA POCHE', R.netPoche)}
+  </div>`;
+
+  // Synthèse des ponctions
+  const synth=`<div class="panel">
+    <h2 style="font-size:1rem">Où part ton argent</h2>
+    <div class="sum-box"><span>🏛️ URSSAF (cotisations sociales)</span><b>${euro(R.cotisTotal)}</b></div>
+    <div class="sum-box"><span>💸 Impôt sur le revenu</span><b>${euro(R.impotRevenu)}</b></div>
+    <div class="sum-box"><span>🧾 Charges réelles</span><b>${euro(R.chargesReelles)}</b></div>
+    <div class="sum-box" style="border-top:1px solid #ece1d2"><span>Total prélevé</span><b style="color:var(--red,#b3261e)">${euro(R.totalPonctions)} <span style="font-weight:400;font-size:.72rem;color:#9a8a82">(${R.tauxPonction}% du CA)</span></b></div>
+    <p class="note" style="margin-top:8px">Sur 100 € encaissés, il te reste <b>${R.tauxNet} €</b> net dans la poche.</p>
+  </div>`;
+
+  // Paramètres fiscaux
+  const sset=getSettings();
+  const params=`<div class="panel">
+    <h2 style="font-size:1rem">Mes paramètres fiscaux</h2>
+    <p class="note" style="margin:-2px 0 8px">Ajuste-les à ta situation réelle pour un calcul exact.</p>
+    <div class="row2">
+      <div class="field"><label>Ma tranche d'imposition (%)</label>
+        <select id="np_tranche" onchange="netPocheSaveTranche(this.value)">
+          ${[0,11,30,41,45].map(t=>`<option value="${t}" ${(+sset.irTrancheMarginale===t)?'selected':''}>${t} %${t===0?' (non imposable)':''}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Abattement marchandise (%)</label><input type="number" step="1" min="0" max="100" id="np_abg" value="${sset.irAbattementGoods}" onchange="netPocheSaveAbat()"></div>
+    </div>
+    <p class="note">L'abattement forfaitaire (71% marchandise / 50% service) remplace la déduction de tes charges réelles : c'est la règle de la micro-entreprise. Ta tranche dépend de l'ensemble des revenus de ton foyer — indique celle de ta dernière déclaration.</p>
+  </div>`;
+
+  main.innerHTML=`<div class="topbar"><div><h1>Net dans la poche</h1><p>Ce qu'il te reste vraiment, net de tout</p></div>
+    <button class="btn ghost sm" onclick="goView('compta')" title="Retour à la comptabilité">↩ Compta</button></div>
+    <div class="flex" style="gap:6px;margin-bottom:10px">${seg('Mois','mois')}${seg('Année','annee')}${seg('Tout','tout')}</div>
+    ${st.type==='mois'?`<div class="field" style="margin-bottom:12px"><select onchange="netPocheSetMonth(this.value)" style="width:100%;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${moisOpts}</select></div>`:''}
+    ${st.type==='annee'?`<div class="field" style="margin-bottom:12px"><select onchange="netPocheSetYear(this.value)" style="width:100%;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${anneeOpts}</select></div>`:''}
+    ${hero}
+    <div style="height:12px"></div>
+    ${cascade}
+    ${synth}
+    ${params}
+    <p class="note" style="text-align:center;margin-top:4px">Estimation indicative basée sur tes encaissements et tes paramètres. À recouper avec ton comptable / ta déclaration.</p>`;
+}
+function netPocheSaveTranche(v){
+  const s=JSON.parse(localStorage.getItem('sm_settings')||'{}');
+  s.irTrancheMarginale=Math.max(0,+v||0);
+  localStorage.setItem('sm_settings', JSON.stringify(s));
+  toast('Tranche enregistrée ✓'); renderNetPoche();
+}
+function netPocheSaveAbat(){
+  const s=JSON.parse(localStorage.getItem('sm_settings')||'{}');
+  const g=+val('np_abg'); if(g>=0&&g<=100) s.irAbattementGoods=g;
+  localStorage.setItem('sm_settings', JSON.stringify(s));
+  toast('Abattement enregistré ✓'); renderNetPoche();
+}
+
 async function renderCompta(){
  try {
   const A = await computeAccounting({ periodeStart: comptaPeriodeStart(_comptaPeriode), periodeEnd: comptaPeriodeEnd(_comptaPeriode) });
@@ -19360,7 +19576,7 @@ async function renderCompta(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Comptabilité</h1><p>${esc(monthLabel(_comptaMonth))} · CA comptabilisé à l'encaissement réel</p></div>
-     <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️':'🙈'}</button><button class="btn gold" onclick="chargeForm()">＋ Charge</button></div></div>
+     <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️':'🙈'}</button><button class="btn ghost sm" onclick="recurringChargesForm()" title="Paiements mensuels récurrents (énergie, loyer, assurance…)">🔁 Récurrentes</button><button class="btn gold" onclick="chargeForm()">＋ Charge</button></div></div>
    <div class="banner">📒 <div>Deux lectures du chiffre d'affaires : le <b>CA facturé</b> (total des commandes, à leur date) et le <b>CA encaissé</b> (règlements reçus, à leur date réelle). Une commande « en attente de paiement » est facturée mais n'entre pas dans le CA encaissé. Le CA des <b>marchés clôturés</b> est inclus (à leur date de clôture).${A.totalMarches>0?` Dont marchés : <b>${euro(A.totalMarches)}</b>.`:''}</div></div>
    <div class="flex" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
      <button class="btn" onclick="view='rentabilite';setActiveView&&setActiveView('rentabilite');renderProfit()">📈 Analyse de rentabilité</button>
@@ -19369,6 +19585,14 @@ async function renderCompta(){
    </div>
 
    ${comptaFlowSchema(A)}
+   <div id="comptaNetPoche" class="panel lnk" onclick="netPocheSetMonth('${_comptaMonth}')" style="cursor:pointer;background:linear-gradient(135deg,#52252F,#2a1320);color:#fff;border:none">
+     <div style="display:flex;justify-content:space-between;align-items:center">
+       <div><div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:#e8c9a0">💰 Net dans ta poche · ${esc(monthLabel(_comptaMonth))}</div>
+         <div id="cnpVal" style="font-size:1.7rem;font-weight:800;font-family:'Bellota',Georgia,serif;margin-top:2px">…</div>
+         <div id="cnpSub" style="font-size:.74rem;color:#e8c9a0"></div></div>
+       <div style="font-size:1.4rem;color:#e8c9a0">›</div>
+     </div>
+   </div>
    <div class="kpi-grid">
      <div class="kpi lnk" onclick="comptaDetail('facture')"><span>CA facturé</span><b>${euro(A.totalFacture)}</b><small class="kpi-note">toutes commandes, payées ou non</small>${NAV_GO}</div>
      <div class="kpi lnk" onclick="comptaDetail('encaisse')"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b><small class="kpi-note">argent réellement reçu · base URSSAF</small>${NAV_GO}</div>
@@ -19427,6 +19651,15 @@ async function renderCompta(){
    <p class="note" style="margin-top:10px">Le coût matières est une estimation moyenne (coût recette ÷ rendement) pour donner une marge indicative. Pour la comptabilité officielle, appuyez-vous sur vos charges saisies et l'export.</p>`;
   // Rendu asynchrone du graphique manque à gagner (après injection du conteneur).
   gapRenderChart();
+  // [v1067] Remplissage différé du bloc « Net dans la poche » (calcul async sur le mois affiché).
+  (async()=>{
+    try{
+      const RN=await computeNetPoche({type:'mois', ym:_comptaMonth});
+      const v=document.getElementById('cnpVal'), sub=document.getElementById('cnpSub');
+      if(v) v.textContent=euro(RN.netPoche);
+      if(sub) sub.textContent=`${RN.tauxNet}% du CA · après URSSAF, impôt${RN.chargesReelles>0?' et charges':''} — touche pour le détail`;
+    }catch(e){ const v=document.getElementById('cnpVal'); if(v) v.textContent='—'; }
+  })();
  } catch(err){ renderViewError('compta', err); }
 }
 // Change la granularité du graphique manque à gagner et redessine juste cette zone.
@@ -23235,6 +23468,7 @@ function parseIntent(texte, ctx){
   // stock d'une matière
   if(/\b(stock|combien|reste|il reste|quantite|j'?ai encore|j'?ai assez|me reste|niveau de stock|reste t il|en ai je)\b/.test(t) && !/commande/.test(t)
      && !/\b(combien (de |j'?ai de )?clients?|nombre de clients?)\b/.test(t)
+     && !/\b(dans (la|ma) poche|net dans la poche|je touche (vraiment|au final|net)|reste (vraiment|au final|net)|revenu net|mon net)\b/.test(t)
      && !/\b(prend combien de temps|combien de temps (pour|ca|ça)|temps (pour|de) (produire|production|fabrication|faire))\b/.test(t)
      && !/(gagn|rapport|encaiss|chiffre|recette|vente|vend|vendu|vendus)/.test(t)
      && !/(urssaf|cotisation|cotisations|charges sociales|declarer|declaration|me doit|me doivent|on me doit|reste a payer|impaye|echeances? de paiement|a encaisser)/.test(t)
@@ -23426,6 +23660,11 @@ function parseIntent(texte, ctx){
   // « qui me doit de l'argent », « restes à payer ». Placée AVANT le CA pour ne pas être happée par « combien ».
   if(/\b(me doit|me doivent|on me doit|qui me doit|reste a payer|restes a payer|reste a encaisser|impaye|impayes|impaye|en attente de paiement|pas (encore )?paye[e]?s?|pas (encore )?regle[e]?s?|commandes? (pas )?(encore )?payee?s?|non payee?s?|non regle[e]?s?|ne sont pas regle[e]?s?|pas regle[e]?s?|paiements? en attente|en attente de paiement|qui doit (encore )?me payer|qui me doit encore|paiements? a recevoir|reste t il des paiements|a recevoir|echeances? de paiement|solde du|soldes dus|a encaisser|qui doit (payer|me))\b/.test(t)){
     return {intent:'query_paiements_dus', params:{}, critical:false, label:'Paiements en attente'};
+  }
+  // [v1067] NET DANS LA POCHE : « combien il me reste dans la poche », « mon revenu net », « combien
+  // je gagne vraiment après impôts ». Doit passer AVANT query_revenue (CA brut) : c'est le net de tout.
+  if(/\b(dans (ma|la) poche|dans ma poche|reste dans la poche|net dans la poche|mon (vrai )?revenu net|revenu net|combien (il )?me reste (vraiment|au final|net|a la fin)|combien je gagne (vraiment|reellement|net|au final)|net de tout|apres (les )?(impots?|charges|tout)|ce qui me reste vraiment|combien je touche (vraiment|au final|net)|mon net|salaire net|combien (je )?me verse)\b/.test(t)){
+    return {intent:'query_net_poche', params:{}, critical:false, label:'Mon net dans la poche'};
   }
   // chiffre d'affaires
   if(/\b(chiffre d'affaires|chiffre d affaires|chiffre|recette|recettes|gagne|gagner|rapporte|rapporter|encaisse|encaisser)\b/.test(t)
@@ -23967,6 +24206,20 @@ function renderAssistant(){
        <button class="btn ghost" onclick="aiClearThread()">🗑️ Nouveau fil</button>
      </div>
    </div>`;
+  // [v1065] Restauration du fil : si on revient sur le copilote après avoir suivi un raccourci
+  // (ou navigué ailleurs), on retrouve la discussion telle qu'on l'a laissée — question, réponse
+  // et raccourcis. Sinon (1re ouverture ou « Nouveau fil »), message d'accueil habituel.
+  const _save = window._assistantThreadSave;
+  if(_save && (_save.thread || _save.out)){
+    const _th=document.getElementById('aiThread');
+    const _ou=document.getElementById('aiOut');
+    if(_th && _save.thread!=null) _th.innerHTML=_save.thread;
+    if(_ou && _save.out!=null) _ou.innerHTML=_save.out;
+    window._assistantThreadSave=null;   // consommé une fois
+    // défilement en bas du fil restauré
+    requestAnimationFrame(()=>{ if(_th) _th.scrollTop=_th.scrollHeight; });
+    return;
+  }
   // Message d'accueil discret dans le fil (épuré, pas de briefing proactif).
   aiPush('bot', `<p style="margin:0">Bonjour 👋 Je suis ton copilote de pilotage. Demande-moi un conseil, un stock, une recette, tes commandes… <span class="note">Je fonctionne hors-ligne ; toute action critique te demande validation.</span></p>`);
 }
@@ -23975,7 +24228,7 @@ function aiAutoGrow(ta){ if(!ta) return; ta.style.height='auto'; ta.style.height
 // Lance une suggestion rapide : remplit l'input et envoie.
 function aiQuick(s){ const ta=document.getElementById('aiInput'); if(ta){ ta.value=s; } aiRun(); }
 // Repart sur un fil vierge (non persistant : on vide simplement l'affichage).
-function aiClearThread(){ const t=document.getElementById('aiThread'); if(t){ t.innerHTML=''; } aiClarifyPending=null; aiPending=null; window._aiCurrentIntent=null; window._aiCurrentParams=null; renderAssistant(); }
+function aiClearThread(){ window._assistantThreadSave=null; const t=document.getElementById('aiThread'); if(t){ t.innerHTML=''; } aiClarifyPending=null; aiPending=null; window._aiCurrentIntent=null; window._aiCurrentParams=null; renderAssistant(); }
 
 // [LA VOIX] Rendu de l'encart de conseil proactif (écran Assistant).
 async function renderAtelierVoix(){
@@ -26345,6 +26598,7 @@ const INTENT_SHORTCUTS = {
   query_top_parfum:       [ { label:'📈 Rentabilité par parfum', view:'rentaparfum' }, { label:'🔮 Prévisionnel', view:'previsionnel' } ],
   query_top_clients:      [ { label:'👥 Mes clients', view:'clients' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
   query_revenue:          [ { label:'📊 Ouvrir la compta', view:'compta' }, { label:'📈 Rentabilité', view:'rentabilite' }, { label:'⤓ Export comptable', action:'exportComptaCSV' } ],
+  query_net_poche:        [ { label:'💰 Net dans la poche', view:'netpoche' }, { label:'📊 Comptabilité', view:'compta' } ],
   query_rentabilite:      [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'👥 Rentabilité clients', view:'rentabilite' } ],
   query_cout_revient:     [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📖 Voir la recette', view:'recettes' } ],
   query_prix_vente:       [ { label:'📈 Rentabilité parfums', view:'rentaparfum' } ],
@@ -26864,6 +27118,7 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_gaspillage': return aiQueryGaspillage();
       case 'query_market_advice': return aiQueryMarketAdvice(r.params);
       case 'query_revenue': return aiQueryRevenue(r.params);
+      case 'query_net_poche': return aiQueryNetPoche(r.params);
       case 'query_rentabilite': return aiQueryRentabilite(r.params);
       case 'query_cout_revient': return aiQueryCoutRevient(r.params);
       case 'query_prix_vente': return aiQueryPrixVente(r.params);
@@ -29129,6 +29384,20 @@ async function aiQueryMarketAdvice(params){
     <div style="font-weight:600;font-size:.9rem;margin:8px 0 4px">Répartition conseillée par parfum</div>
     ${detailParfums}
     ${fc&&fc.nbMarches>0?`<p class="note" style="margin-top:8px">Basé sur tes <b>${fc.nbMarches}</b> marché(s) passé(s) (moyenne ${fc.moyenneVendu} pc/marché).</p>`:''}`);
+}
+async function aiQueryNetPoche(params){
+  params=params||{};
+  let R; try{ R=await computeNetPoche({type:'mois', ym:monthKey(today())}); }
+  catch(e){ return aiSay(`<p class="note">Je n'ai pas pu calculer ton net pour le moment.</p>`); }
+  const couleur = R.netPoche>=0 ? 'var(--bordeaux)' : 'var(--red)';
+  return aiSay(`${aiHero(euro(R.netPoche), 'Net dans ta poche · ce mois', {color:couleur, sub:`${R.tauxNet}% de ton CA encaissé`})}
+    ${aiSynth(`Sur <b>${euro(R.caTotal)}</b> encaissés ce mois, il te reste <b>${euro(R.netPoche)}</b> net — une fois retirés l'URSSAF (${euro(R.cotisTotal)}), l'impôt sur le revenu (${euro(R.impotRevenu)}${R.tranche>0?`, tranche ${R.tranche}%`:''})${R.chargesReelles>0?` et tes charges (${euro(R.chargesReelles)})`:''}.`, {icon:'💰'})}
+    ${aiDetails(`<div class="sum-box"><span>CA encaissé</span><b>${euro(R.caTotal)}</b></div>
+      <div class="sum-box"><span>− Cotisations URSSAF</span><b style="color:var(--red)">− ${euro(R.cotisTotal)}</b></div>
+      <div class="sum-box"><span>− Impôt sur le revenu</span><b style="color:var(--red)">− ${euro(R.impotRevenu)}</b></div>
+      ${R.chargesReelles>0?`<div class="sum-box"><span>− Charges réelles</span><b style="color:var(--red)">− ${euro(R.chargesReelles)}</b></div>`:''}
+      <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Net dans la poche</b></span><b style="color:var(--bordeaux)">${euro(R.netPoche)}</b></div>`, 'Le détail du calcul')}`,
+    [{ label:'💰 Voir le détail complet', view:'netpoche' }]);
 }
 async function aiQueryRevenue(params){
   params = params || {};
