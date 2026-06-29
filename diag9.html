@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inspection productions</title>
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px;background:#faf6f0;color:#2b1a1f}
+h1{font-size:1.05rem;margin:0 0 8px}
+button{font-size:.95rem;padding:12px 18px;border:none;border-radius:10px;background:#52252F;color:#fff;font-weight:600;margin-bottom:12px}
+pre{background:#1c0c14;color:#f5e9d0;padding:14px;border-radius:10px;font-size:.72rem;white-space:pre-wrap;word-break:break-word;line-height:1.5;min-height:120px}
+#hidden-app{position:absolute;left:-99999px;top:0;width:1px;height:1px;overflow:hidden}
+</style></head><body>
+<h1>Inspection de tes productions (lecture seule)</h1>
+<button id="go">Inspecter</button>
+<pre id="log">Chargement…</pre>
+<div id="hidden-app"><div id="main"></div><div id="overlay"><div id="modal"></div></div><div id="toast"></div><div id="tabbar"></div><div id="sheetOverlay"></div></div>
+<script>
+var logs=[];function L(m){logs.push(m);document.getElementById('log').textContent=logs.join('\n');}
+window.onerror=function(){return false;};
+</script>
+<script src="dexie.min.js"></script>
+<script src="app.js"></script>
+<script>
+window.addEventListener('load',function(){setTimeout(function(){if(logs.length<=1)L('✓ Prêt. Appuie sur Inspecter.');},600);});
+document.getElementById('go').addEventListener('click',async function(){
+  logs=[];L('Inspection…');
+  try{
+    var prods = await db.productions.toArray();
+    var out='Total productions en base : '+prods.length+'\n\n';
+    // Compter par statut
+    var parStatut={};
+    prods.forEach(function(p){ var s=(p.prodStatut===undefined?'(absent)':p.prodStatut); parStatut[s]=(parStatut[s]||0)+1; });
+    out+='— Répartition par prodStatut —\n';
+    for(var k in parStatut){ out+='  '+k+' : '+parStatut[k]+'\n'; }
+    out+='\n';
+    // Champs présents sur la 1ere prod
+    if(prods.length){
+      out+='— Champs de la 1ère production (exemple réel) —\n';
+      var p0=prods[prods.length-1]; // la plus récente probablement
+      ['id','recipeId','composant','prodStatut','prodTermineTs','prodDebutTs','prodTimestamp','date','qteReelle','qteProduite','qteRestante','libre','composantCatalogue'].forEach(function(f){
+        out+='  '+f+' : '+JSON.stringify(p0[f])+'\n';
+      });
+      out+='\n— 3 dernières productions (champs clés) —\n';
+      prods.slice(-3).forEach(function(p){
+        out+='  id'+p.id+' | statut='+p.prodStatut+' | termineTs='+(p.prodTermineTs||'∅')+' | qReelle='+p.qteReelle+' | qRest='+p.qteRestante+' | date='+(p.date||'∅')+'\n';
+      });
+    }
+    // Combien ont une qte exploitable
+    var avecQte = prods.filter(function(p){ return (+p.qteReelle||+p.qteProduite||0)>0; }).length;
+    var avecTs = prods.filter(function(p){ return p.prodTermineTs||p.prodTimestamp||p.date; }).length;
+    out+='\n— Exploitables —\n';
+    out+='  avec quantité > 0 : '+avecQte+'\n';
+    out+='  avec une date/horodatage : '+avecTs+'\n';
+    L(out);
+  }catch(e){ L('Erreur : '+(e&&e.message?e.message:e)); }
+});
+</script></body></html>
