@@ -58,6 +58,24 @@
     paint('PROMISE', (r && (r.message||r.toString && r.toString())) || 'rejet non géré',
       '', '', '', r && r.stack);
   });
+  // [PURGE CACHE] Réinitialisation dure du cache + service worker, SANS toucher aux données
+  // IndexedDB (les recettes/commandes restent). Utile quand iOS sert une vieille version en boucle.
+  // Déclenchable depuis la console OU via #reset dans l'URL. NE supprime PAS la base de données.
+  window.smHardReset = async function(){
+    try{
+      if('serviceWorker' in navigator){
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.unregister()));
+      }
+      if(window.caches){
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k=>caches.delete(k)));
+      }
+    }catch(e){ /* on recharge quand même */ }
+    location.reload(true);
+  };
+  // Auto-déclenchement si l'URL contient #reset (pratique : taper l'URL + #reset dans Safari).
+  if(location.hash==='#reset'){ try{ history.replaceState(null,'',location.pathname); }catch(_){}; window.smHardReset(); }
   // [DIAG AFFICHAGE] Sonde visuelle : montre ce que le navigateur applique réellement
   // (largeur viewport, zoom, CSS chargé, sidebar visible). Tranche la cause d'un layout cassé.
   window.addEventListener('load', function(){
@@ -101,7 +119,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1029';
+const APP_VERSION = 'v1030';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
