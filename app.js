@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1056';
+const APP_VERSION = 'v1057';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -46768,7 +46768,8 @@ function startClock(){
   initHistoryNav();
   ttInit();
   try{ mascotInit(); }catch(e){ console.error('mascotInit',e); }
-  try{ radialInit(); }catch(e){ console.error('radialInit',e); }
+  // Menu radial (camembert) et geste de balayage vers le coin : désactivés à la demande.
+  // try{ radialInit(); }catch(e){ console.error('radialInit',e); }
   startClock();
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
   try{ await refreshEmbEstRatio(); }catch(e){ console.error('embEstRatio',e); }
