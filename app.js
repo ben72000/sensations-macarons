@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1033';
+const APP_VERSION = 'v1035';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3161,7 +3161,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -12357,6 +12357,7 @@ const _NAV_PAGES = [
   {v:'atelier',      t:'Atelier (chronos)',         k:'atelier chrono temps minutage mesure'},
   {v:'stockparfums', t:'Stock par parfum',          k:'stock parfum macaron disponible'},
   {v:'histostock',   t:'Historique du stock',        k:'historique mouvements stock entrees sorties journal flux'},
+  {v:'tempsproduction', t:'Temps de production',     k:'temps production duree chrono atelier suivi travail heures batch reel actif'},
   {v:'couts',        t:'Coûts & prix',              k:'cout prix revient marge tarif'},
   {v:'sauvegardes',  t:'Sauvegarde & sécurité',     k:'sauvegarde backup securite export restauration'},
   {v:'produits',     t:'Offre / Coffrets',          k:'produit coffret offre catalogue boite assortiment'},
@@ -40664,6 +40665,205 @@ function stockMoveKey(nom){
   return (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
 }
 
+
+
+// ============================================================
+// RAPPORT « TEMPS DE PRODUCTION »
+// ------------------------------------------------------------
+// Deux mesures, côte à côte :
+//   • Durée RÉELLE : prodDebutTs → prodTermineTs de chaque batch (temps mur-à-mur)
+//   • Temps ACTIF  : cumul des tâches chrono d'atelier (prodTaskNet), via les sessions
+// Agrégé en 4 niveaux : total général · par parfum · par jour · ligne par batch.
+// S'appuie sur les fonctions existantes (prodSessLoad, prodTaskNet, prodNomComplet).
+// ============================================================
+
+let _tempsProdPeriode = '30';   // '7' | '30' | '90' | 'tout'
+function setTempsProdPeriode(p){ _tempsProdPeriode = p; renderTempsProduction(); }
+
+// Formate une durée en millisecondes -> "Xh YY" (ou "Ym" si < 1h).
+function fmtDureeMs(ms){
+  ms = +ms || 0;
+  if(ms<=0) return '—';
+  const totMin = Math.round(ms/60000);
+  const h = Math.floor(totMin/60), m = totMin%60;
+  if(h<=0) return m+' min';
+  return h+' h '+(m<10?'0':'')+m;
+}
+
+// Durée réelle d'un batch (début -> fin). Renvoie ms, ou 0 si incalculable.
+function _batchDureeReelleMs(p){
+  const deb = p.prodDebutTs || p.prodTimestamp || (p.date ? p.date+'T08:00:00' : '');
+  const fin = p.prodTermineTs || '';
+  if(!deb || !fin) return 0;
+  const d = new Date(deb).getTime(), f = new Date(fin).getTime();
+  if(!(f>d)) return 0;
+  return f - d;
+}
+
+async function renderTempsProduction(){
+  const main = document.getElementById('main'); if(!main) return;
+  const jours = _tempsProdPeriode==='tout' ? 100000 : (+_tempsProdPeriode||30);
+  const since = new Date(); since.setDate(since.getDate()-jours);
+  const sinceStr = since.toISOString().slice(0,10);
+
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  window._allRecipesCache = recipes;
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
+
+  // ── Temps ACTIF par recette (ms), via les sessions sur la fenêtre ──
+  const actifParRec = {};
+  sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
+    const parRec = (typeof prodSessTempsParRecette==='function') ? prodSessTempsParRecette(s) : {};
+    Object.keys(parRec).forEach(rid=>{ actifParRec[rid] = (actifParRec[rid]||0) + parRec[rid]; });
+  });
+  const actifTotal = Object.values(actifParRec).reduce((a,b)=>a+b,0);
+
+  // ── Batches terminés sur la fenêtre (pour durée réelle + groupements) ──
+  const batches = prods.filter(p=>{
+    const fini = (p.prodStatut==='termine') || (p.prodTermineTs && String(p.prodTermineTs).length>0) || (p.prodStatut==null);
+    if(!fini) return false;
+    const d = (p.prodTermineTs||p.prodTimestamp||p.date||'').slice(0,10);
+    return d >= sinceStr;
+  });
+
+  // Durée réelle totale + agrégations
+  let reelTotal = 0;
+  const parParfum = {};   // nomNorm -> {nom, reel, actif, nb}
+  const parJour = {};     // 'YYYY-MM-DD' -> {reel, actif, nb}
+  const lignes = [];      // par batch
+  batches.forEach(p=>{
+    const dms = _batchDureeReelleMs(p);
+    reelTotal += dms;
+    const nom = prodNomComplet(p, recipes);
+    const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
+    const jour = (p.prodTermineTs||p.prodTimestamp||p.date||'').slice(0,10);
+    (parParfum[k] ||= {nom, reel:0, actif:0, nb:0, nbMesure:0});
+    parParfum[k].reel += dms;
+    parParfum[k].nb += 1;
+    if(dms>0) parParfum[k].nbMesure += 1;   // ne compter que les batches RÉELLEMENT mesurés
+    (parJour[jour] ||= {reel:0, actif:0, nb:0});
+    parJour[jour].reel += dms;
+    parJour[jour].nb += 1;
+    lignes.push({ ts:(p.prodTermineTs||p.prodTimestamp||p.date||''), nom, lot:p.lotProduction||('#'+p.id), reel:dms, recipeId:p.recipeId });
+  });
+
+  // Le temps actif est calculé par RECETTE (pas par batch). On le rattache au parfum par son nom.
+  // Réinitialise proprement l'actif par parfum à partir de actifParRec.
+  Object.keys(parParfum).forEach(k=>{ parParfum[k].actif = 0; });
+  Object.keys(actifParRec).forEach(rid=>{
+    const r = recipes.find(x=>+x.id===+rid); if(!r) return;
+    const nom = r.produitNom||''; if(!nom) return;
+    const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
+    if(parParfum[k]) parParfum[k].actif += actifParRec[rid];
+    else parParfum[k] = {nom, reel:0, actif:actifParRec[rid], nb:0, nbMesure:0};
+  });
+
+  // Actif par jour : réparti via les sessions datées
+  sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
+    const jour = (s.date||'').slice(0,10); if(!jour) return;
+    const parRec = (typeof prodSessTempsParRecette==='function') ? prodSessTempsParRecette(s) : {};
+    const ms = Object.values(parRec).reduce((a,b)=>a+b,0);
+    (parJour[jour] ||= {reel:0, actif:0, nb:0});
+    parJour[jour].actif += ms;
+  });
+
+  // ── Rendu ──
+  const periodes = [['7','7 jours'],['30','30 jours'],['90','90 jours'],['tout','Tout']]
+    .map(([v,l])=>`<button class="btn ${_tempsProdPeriode===v?'':'ghost'} sm" onclick="setTempsProdPeriode('${v}')">${l}</button>`).join('');
+
+  const nbMesure = batches.filter(p=>_batchDureeReelleMs(p)>0).length;
+  const ratio = reelTotal>0 ? Math.round(actifTotal/reelTotal*100) : 0;
+
+  const lignesParfum = Object.values(parParfum)
+    .sort((a,b)=>b.reel-a.reel)
+    .map(e=>{
+      const moy = e.nbMesure>0 ? e.reel/e.nbMesure : 0;
+      return `<tr><td style="font-weight:600;color:var(--bordeaux)">${esc(e.nom)}</td>
+        <td style="text-align:right">${e.nb}</td>
+        <td style="text-align:right;color:var(--bordeaux);font-weight:600">${fmtDureeMs(e.reel)}</td>
+        <td style="text-align:right;color:var(--gold);font-weight:600">${fmtDureeMs(e.actif)}</td>
+        <td style="text-align:right">${fmtDureeMs(moy)}</td></tr>`;
+    }).join('') || `<tr><td colspan="5" class="note" style="padding:10px">Aucune production sur la période.</td></tr>`;
+
+  const lignesJour = Object.keys(parJour).sort().reverse()
+    .map(j=>{
+      const e = parJour[j];
+      const lbl = (typeof fmtDate==='function') ? fmtDate(j) : j;
+      return `<tr><td>${esc(lbl)}</td>
+        <td style="text-align:right">${e.nb}</td>
+        <td style="text-align:right;color:var(--bordeaux);font-weight:600">${fmtDureeMs(e.reel)}</td>
+        <td style="text-align:right;color:var(--gold);font-weight:600">${fmtDureeMs(e.actif)}</td></tr>`;
+    }).join('') || `<tr><td colspan="4" class="note" style="padding:10px">Aucune session sur la période.</td></tr>`;
+
+  const lignesBatch = lignes
+    .sort((a,b)=>a.ts<b.ts?1:-1)
+    .slice(0,60)
+    .map(l=>`<tr><td style="white-space:nowrap;font-size:.8rem">${esc(String(l.ts).slice(0,16).replace('T',' '))}</td>
+      <td style="font-weight:600;color:var(--bordeaux)">${esc(l.nom)} <span style="color:#9a8a82;font-size:.78rem">· ${esc(l.lot)}</span></td>
+      <td style="text-align:right;color:var(--bordeaux);font-weight:600">${fmtDureeMs(l.reel)}</td></tr>`).join('')
+    || `<tr><td colspan="3" class="note" style="padding:10px">Aucun batch sur la période.</td></tr>`;
+
+  main.innerHTML = `
+   <div class="topbar"><div><h1>⏱️ Temps de production</h1>
+     <p>Temps réellement passé par production, parfum et période.</p></div>
+     <div class="flex"><button class="btn" onclick="goView('histostock')">📦 Historique →</button></div></div>
+
+   <div class="panel">
+     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${periodes}</div>
+     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+       <div style="background:linear-gradient(135deg,#52252F,#3d1a22);color:#fff;border-radius:14px;padding:16px">
+         <div style="font-size:.72rem;opacity:.85;text-transform:uppercase;letter-spacing:.04em">⏱ Durée réelle totale</div>
+         <div style="font-size:1.7rem;font-weight:700;margin-top:4px">${fmtDureeMs(reelTotal)}</div>
+         <div style="font-size:.74rem;opacity:.8;margin-top:2px">${nbMesure} batch(es) mesuré(s)${batches.length>nbMesure?` · ${batches.length-nbMesure} sans durée`:''}</div>
+       </div>
+       <div style="background:linear-gradient(135deg,#AA7C39,#8a6322);color:#fff;border-radius:14px;padding:16px">
+         <div style="font-size:.72rem;opacity:.85;text-transform:uppercase;letter-spacing:.04em">🔧 Temps actif atelier</div>
+         <div style="font-size:1.7rem;font-weight:700;margin-top:4px">${fmtDureeMs(actifTotal)}</div>
+         <div style="font-size:.74rem;opacity:.8;margin-top:2px">${ratio>0?ratio+'% du temps réel':'chronos d\'atelier'}</div>
+       </div>
+     </div>
+     <div style="display:flex;gap:16px;font-size:.76rem;margin-top:12px;color:#6a5a52">
+       <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#52252F;margin-right:4px;vertical-align:middle"></span>Durée réelle (début → fin)</span>
+       <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#AA7C39;margin-right:4px;vertical-align:middle"></span>Temps actif (chronos)</span>
+     </div>
+   </div>
+
+   <div class="panel">
+     <h2>Par parfum / recette</h2>
+     <table style="width:100%;border-collapse:collapse;font-size:.88rem">
+       <tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Parfum</th>
+       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Batches</th>
+       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Réel</th>
+       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Actif</th>
+       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Moy./batch</th></tr>
+       ${lignesParfum}
+     </table>
+   </div>
+
+   <div class="panel">
+     <h2>Par jour</h2>
+     <table style="width:100%;border-collapse:collapse;font-size:.88rem">
+       <tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Jour</th>
+       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Batches</th>
+       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Réel</th>
+       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Actif</th></tr>
+       ${lignesJour}
+     </table>
+   </div>
+
+   <div class="panel">
+     <h2>Détail par batch</h2>
+     <table style="width:100%;border-collapse:collapse;font-size:.88rem">
+       <tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Date</th>
+       <th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Parfum / lot</th>
+       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Réel</th></tr>
+       ${lignesBatch}
+     </table>
+     ${lignes.length>60?`<p class="note" style="margin-top:8px">Affichage des 60 batches les plus récents (${lignes.length} au total).</p>`:''}
+   </div>
+  `;
+}
 
 // ============================================================
 // RECONSTRUCTION DE L'HISTORIQUE DE STOCK (rattrapage rétroactif)
