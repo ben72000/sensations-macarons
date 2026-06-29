@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1067';
+const APP_VERSION = 'v1068';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3170,7 +3170,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -12569,6 +12569,7 @@ const _NAV_PAGES = [
   {v:'stats',        t:'Statistiques',              k:'statistique stat graphique analyse chiffre'},
   {v:'compta',       t:'Comptabilité',              k:'comptabilite compta ca chiffre affaires resultat charges urssaf encaissement'},
   {v:'netpoche',     t:'Net dans la poche',          k:'net poche revenu reel impot tranche imposition urssaf cotisation combien reste gagne vraiment apres deduction fil rouge'},
+  {v:'chargesventil',t:'Charges ventilées',          k:'charges ventilation investissement recurrent structurel marketing formation equipement stand diminuer allege croisiere depenses'},
   {v:'consommables', t:'Consommables',              k:'consommable fourniture jetable'},
   {v:'boites',       t:'Boîtes de conservation',    k:'boite conservation contenant rangement'},
   {v:'equipements',  t:'Équipements de stockage',   k:'equipement stockage frigo congelateur materiel'},
@@ -16039,15 +16040,17 @@ async function _listeMoisAvecActivite(){
   return [...set].filter(Boolean).sort();
 }
 async function _chargesPeriode(moisList){
-  // somme des charges réelles sur la liste de mois (par catégorie + total)
+  // somme des charges réelles sur la liste de mois (par catégorie + total + par nature)
   const charges=await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
   const inSet=new Set(moisList);
-  let total=0; const parCat={};
+  let total=0, invest=0, recurrent=0; const parCat={}; const investParCat={}, recurrentParCat={};
   charges.forEach(c=>{ if(!c||!c.date) return; if(!inSet.has(monthKey(c.date))) return;
     const v=money2(+c.montant||0); if(v<=0) return; total=money2(total+v);
     const cat=c.categorie||'Autre'; parCat[cat]=money2((parCat[cat]||0)+v);
+    if(chargeNature(cat)==='invest'){ invest=money2(invest+v); investParCat[cat]=money2((investParCat[cat]||0)+v); }
+    else { recurrent=money2(recurrent+v); recurrentParCat[cat]=money2((recurrentParCat[cat]||0)+v); }
   });
-  return { total, parCat };
+  return { total, parCat, invest, recurrent, investParCat, recurrentParCat };
 }
 async function computeNetPoche(periode){
   periode=periode||{type:'mois'};
@@ -16098,6 +16101,8 @@ async function computeNetPoche(periode){
     abG, abS, baseGoods, baseService, baseImposable, abMinApplique:(periode.type==='annee'||periode.type==='tout')&&abMin>0,
     tranche, impotRevenu,
     chargesReelles, chargesParCat:ch.parCat,
+    chargesInvest:ch.invest, chargesRecurrent:ch.recurrent,
+    chargesInvestParCat:ch.investParCat, chargesRecurrentParCat:ch.recurrentParCat,
     netAvantCharges, netPoche,
     totalPonctions, tauxPonction, tauxNet
   };
@@ -19226,6 +19231,11 @@ async function renderStats(){
 // Les matières premières et emballages se saisissent en LOTS (pas ici), pour éviter
 // tout double comptage — ils alimentent déjà le coût de revient via les lots.
 const CHARGE_CATS = ['Assurance professionnelle','Hébergement / site web','Abonnements / logiciels','Équipement','Loyer','Énergie','Transport / déplacement','Stand / marché','Marketing','Frais bancaires','Cotisations / impôts','Formation','Autre'];
+// [v1068] Nature des charges : « investissement » (forte au démarrage, amenée à s'alléger)
+// vs « récurrent » (structurel, incompressible). Table fixe — classification par catégorie.
+const CHARGE_INVEST_CATS = ['Marketing','Formation','Équipement','Stand / marché'];
+// Renvoie 'invest' | 'recurrent' pour une catégorie de charge donnée.
+function chargeNature(categorie){ return CHARGE_INVEST_CATS.includes(categorie) ? 'invest' : 'recurrent'; }
 let _comptaMonth = null;
 // Granularité du graphique « manque à gagner livraison » : 'jour' | 'semaine' | 'mois'.
 let _gapGran = 'mois';
@@ -19490,6 +19500,27 @@ async function renderNetPoche(){
     <p class="note" style="margin-top:8px">Sur 100 € encaissés, il te reste <b>${R.tauxNet} €</b> net dans la poche.</p>
   </div>`;
 
+  // [v1068] Tes charges, vues autrement : investissement (s'allège) vs récurrent (structurel)
+  let blocNature='';
+  if(R.chargesReelles>0){
+    const ligneNat=(emoji,lbl,val,cats)=>{
+      const detail=Object.keys(cats||{}).sort((a,b)=>cats[b]-cats[a])
+        .map(c=>`<div style="display:flex;justify-content:space-between;font-size:.78rem;color:#7a6a60;padding:1px 0 1px 22px"><span>${esc(c)}</span><span>${euro(cats[c])}</span></div>`).join('');
+      return `<div class="sum-box"><span>${emoji} ${lbl}</span><b>${euro(val)}</b></div>${detail}`;
+    };
+    const phrase = R.chargesInvest>0
+      ? `Sur tes <b>${euro(R.chargesReelles)}</b> de charges, <b>${euro(R.chargesInvest)}</b> sont de l'investissement amené à s'alléger une fois que tu es bien lancé. Ton vrai niveau de charges « de croisière » est plutôt <b>${euro(R.chargesRecurrent)}</b>.`
+      : `Toutes tes charges sont structurelles (récurrentes) sur cette période — pas d'investissement de démarrage à amortir.`;
+    blocNature=`<div class="panel">
+      <h2 style="font-size:1rem">Tes charges, vues autrement</h2>
+      <p class="note" style="margin:-2px 0 10px">On sépare ce qui va s'alléger avec le temps de ce qui restera là quoi qu'il arrive.</p>
+      ${ligneNat('🚀','Investissement <span style="color:#9a8a82;font-size:.72rem">(va s\'alléger)</span>', R.chargesInvest, R.chargesInvestParCat)}
+      ${ligneNat('🏠','Récurrent <span style="color:#9a8a82;font-size:.72rem">(structurel)</span>', R.chargesRecurrent, R.chargesRecurrentParCat)}
+      <div class="sum-box" style="border-top:1px solid #ece1d2"><span>Total charges</span><b>${euro(R.chargesReelles)}</b></div>
+      <p class="note" style="margin-top:8px">${phrase}</p>
+    </div>`;
+  }
+
   // Paramètres fiscaux
   const sset=getSettings();
   const params=`<div class="panel">
@@ -19514,6 +19545,7 @@ async function renderNetPoche(){
     <div style="height:12px"></div>
     ${cascade}
     ${synth}
+    ${blocNature}
     ${params}
     <p class="note" style="text-align:center;margin-top:4px">Estimation indicative basée sur tes encaissements et tes paramètres. À recouper avec ton comptable / ta déclaration.</p>`;
 }
@@ -19528,6 +19560,97 @@ function netPocheSaveAbat(){
   const g=+val('np_abg'); if(g>=0&&g<=100) s.irAbattementGoods=g;
   localStorage.setItem('sm_settings', JSON.stringify(s));
   toast('Abattement enregistré ✓'); renderNetPoche();
+}
+
+// ============================================================
+//  ÉCRAN « CHARGES VENTILÉES » — [v1068] investissement vs récurrent, charge par charge
+// ============================================================
+let _chargesVentilState = null;   // { type:'mois'|'annee'|'tout', ym, year }
+function chargesVentilSetType(type){
+  _chargesVentilState = _chargesVentilState || {};
+  _chargesVentilState.type = type;
+  if(type==='mois' && !_chargesVentilState.ym) _chargesVentilState.ym = monthKey(today());
+  if(type==='annee' && !_chargesVentilState.year) _chargesVentilState.year = new Date().getFullYear();
+  renderChargesVentil();
+}
+function chargesVentilSetMonth(ym){ _chargesVentilState=_chargesVentilState||{}; _chargesVentilState.ym=ym; _chargesVentilState.type='mois'; renderChargesVentil(); }
+function chargesVentilSetYear(y){ _chargesVentilState=_chargesVentilState||{}; _chargesVentilState.year=+y; _chargesVentilState.type='annee'; renderChargesVentil(); }
+async function renderChargesVentil(){
+  const main=document.getElementById('main'); if(!main) return;
+  if(!_chargesVentilState) _chargesVentilState={ type:'mois', ym:monthKey(today()), year:new Date().getFullYear() };
+  const st=_chargesVentilState;
+  // Déterminer les mois de la période
+  let moisList=[];
+  if(st.type==='mois') moisList=[st.ym || monthKey(today())];
+  else if(st.type==='annee') moisList=_moisDeLannee(st.year || new Date().getFullYear());
+  else { moisList=await _listeMoisAvecActivite(); if(!moisList.length) moisList=[monthKey(today())]; }
+  // Récupérer les charges détaillées de la période
+  const charges=await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
+  const inSet=new Set(moisList);
+  const items=charges.filter(c=>c&&c.date&&inSet.has(monthKey(c.date))&&money2(+c.montant||0)>0);
+
+  // Sélecteur de période
+  const moisDispo = await _listeMoisAvecActivite();
+  const anneesDispo = [...new Set(moisDispo.map(m=>m.slice(0,4)))].sort().reverse();
+  const moisOpts = (moisDispo.length?moisDispo:[monthKey(today())]).slice().reverse()
+    .map(m=>`<option value="${m}" ${m===st.ym?'selected':''}>${esc(monthLabel(m))}</option>`).join('');
+  const anneeOpts = (anneesDispo.length?anneesDispo:[String(new Date().getFullYear())])
+    .map(y=>`<option value="${y}" ${(+y===+st.year)?'selected':''}>${esc(y)}</option>`).join('');
+  const seg=(lbl,type)=>`<button class="btn ${st.type===type?'':'ghost'} sm" onclick="chargesVentilSetType('${type}')" style="flex:1">${lbl}</button>`;
+  const libellePeriode = st.type==='mois'?monthLabel(st.ym):(st.type==='annee'?('Année '+st.year):'Depuis le début');
+
+  // Regrouper par nature puis catégorie
+  const groupe={ invest:{}, recurrent:{} };
+  let totalInvest=0, totalRecurrent=0;
+  items.forEach(c=>{
+    const cat=c.categorie||'Autre'; const nat=chargeNature(cat); const v=money2(+c.montant||0);
+    (groupe[nat][cat]=groupe[nat][cat]||[]).push(c);
+    if(nat==='invest') totalInvest=money2(totalInvest+v); else totalRecurrent=money2(totalRecurrent+v);
+  });
+  const total=money2(totalInvest+totalRecurrent);
+
+  const renderGroupe=(nat,emoji,titre,sous,totalNat)=>{
+    const cats=Object.keys(groupe[nat]).sort((a,b)=>{
+      const sa=groupe[nat][a].reduce((s,c)=>s+(+c.montant||0),0), sb=groupe[nat][b].reduce((s,c)=>s+(+c.montant||0),0);
+      return sb-sa;
+    });
+    if(!cats.length) return `<div class="panel"><h2 style="font-size:1rem">${emoji} ${titre}</h2><p class="note">Aucune charge ${sous} sur cette période.</p></div>`;
+    const body=cats.map(cat=>{
+      const lignes=groupe[nat][cat].slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+      const sousTot=money2(lignes.reduce((s,c)=>s+money2(+c.montant||0),0));
+      const detail=lignes.map(c=>`<div style="display:flex;justify-content:space-between;font-size:.8rem;color:#7a6a60;padding:2px 0 2px 16px">
+        <span>${esc(fmtDate(c.date))}${c.libelle?' · '+esc(c.libelle):''}</span><span>${euro(money2(+c.montant||0))}</span></div>`).join('');
+      return `<div class="sum-box"><span><b>${esc(cat)}</b></span><b>${euro(sousTot)}</b></div>${detail}`;
+    }).join('');
+    return `<div class="panel">
+      <h2 style="font-size:1rem">${emoji} ${titre} <span style="color:#9a8a82;font-size:.72rem;font-weight:400">${sous}</span></h2>
+      ${body}
+      <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Total ${titre.toLowerCase()}</b></span><b style="color:var(--bordeaux)">${euro(totalNat)}</b></div>
+    </div>`;
+  };
+
+  const partInvest = total>0 ? Math.round(totalInvest/total*100) : 0;
+  const hero=`<div style="background:linear-gradient(135deg,#52252F,#2a1320);border-radius:18px;padding:18px;color:#fff;box-shadow:0 6px 20px rgba(73,15,37,.25)">
+    <div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:#e8c9a0">Charges · ${esc(libellePeriode)}</div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:6px">
+      <div><div style="font-size:.74rem;color:#e8c9a0">🚀 Investissement</div><div style="font-size:1.5rem;font-weight:800;font-family:'Bellota',Georgia,serif">${euro(totalInvest)}</div></div>
+      <div style="text-align:right"><div style="font-size:.74rem;color:#e8c9a0">🏠 Récurrent</div><div style="font-size:1.5rem;font-weight:800;font-family:'Bellota',Georgia,serif">${euro(totalRecurrent)}</div></div>
+    </div>
+    ${total>0?`<div style="margin-top:10px;height:8px;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.18)"><div style="height:100%;width:${partInvest}%;background:#e8c9a0"></div></div>
+    <div style="font-size:.72rem;color:#e8c9a0;margin-top:4px">${partInvest}% de tes charges sont de l'investissement amené à s'alléger</div>`:''}
+  </div>`;
+
+  main.innerHTML=`<div class="topbar"><div><h1>Charges ventilées</h1><p>Ce qui va s'alléger vs ce qui reste</p></div>
+    <button class="btn ghost sm" onclick="goView('compta')" title="Retour à la comptabilité">↩ Compta</button></div>
+    <div class="flex" style="gap:6px;margin-bottom:10px">${seg('Mois','mois')}${seg('Année','annee')}${seg('Tout','tout')}</div>
+    ${st.type==='mois'?`<div class="field" style="margin-bottom:12px"><select onchange="chargesVentilSetMonth(this.value)" style="width:100%;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${moisOpts}</select></div>`:''}
+    ${st.type==='annee'?`<div class="field" style="margin-bottom:12px"><select onchange="chargesVentilSetYear(this.value)" style="width:100%;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${anneeOpts}</select></div>`:''}
+    ${hero}
+    <div style="height:12px"></div>
+    ${total<=0?`<div class="panel"><p class="note">Aucune charge enregistrée sur cette période. Tu peux en ajouter depuis la Compta (＋ Charge).</p></div>`:`
+    ${renderGroupe('invest','🚀','Investissement','(va s\'alléger)', totalInvest)}
+    ${renderGroupe('recurrent','🏠','Récurrent','(structurel)', totalRecurrent)}`}
+    <p class="note" style="text-align:center;margin-top:4px">L'investissement (marketing, formation, équipement, stand) est fort au démarrage puis s'allège. Le récurrent (loyer, énergie, assurance, abonnements…) reste structurel.</p>`;
 }
 
 async function renderCompta(){
@@ -19591,6 +19714,13 @@ async function renderCompta(){
          <div id="cnpVal" style="font-size:1.7rem;font-weight:800;font-family:'Bellota',Georgia,serif;margin-top:2px">…</div>
          <div id="cnpSub" style="font-size:.74rem;color:#e8c9a0"></div></div>
        <div style="font-size:1.4rem;color:#e8c9a0">›</div>
+     </div>
+   </div>
+   <div class="panel lnk" onclick="chargesVentilSetMonth('${_comptaMonth}')" style="cursor:pointer">
+     <div style="display:flex;justify-content:space-between;align-items:center">
+       <div><div style="font-weight:700">🚀🏠 Charges ventilées</div>
+         <div class="note" style="margin-top:2px">Investissement (va s'alléger) vs récurrent (structurel)</div></div>
+       <div style="font-size:1.2rem;color:var(--caramel,#AA7C39)">›</div>
      </div>
    </div>
    <div class="kpi-grid">
