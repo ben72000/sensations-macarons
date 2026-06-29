@@ -1,0 +1,2695 @@
+[
+ {
+  "titre": "Bau — Ganaches de base",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache à cadrer",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 335,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 70,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir crème+miel, verser en trois fois sur le chocolat en émulsionnant au centre.",
+     "À 35-40 °C, ajouter le beurre, mixer. Couler en cadre, cristalliser 16-18 °C 12 h puis 24 h."
+    ],
+    "note": "Variantes : 370 g noir 60% / 500 g lait 40% / 650 g blanc 35%."
+   },
+   {
+    "nom": "Ganache à cadrer framboise",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 350,
+      "unite": "g"
+     },
+     {
+      "nom": "Pulpe de framboise",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 70,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Chauffer (sans bouillir) pulpe+miel, émulsionner en trois fois.",
+     "À 35-40 °C, ajouter le beurre, mixer, couler en cadre, cristalliser."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Ganache Namachoco",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 175,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 60,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir la crème, émulsionner en trois fois.",
+     "À 35-40 °C, ajouter le beurre, mixer, cristalliser 12 h."
+    ],
+    "note": "Ganache fraîche, conservation 1 jour."
+   },
+   {
+    "nom": "Ganache pour bonbons moulés",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 170,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 160,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 30,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir crème+miel, émulsionner en trois fois, ajouter le beurre à 35-40 °C, mixer.",
+     "Pocher à 27-28 °C dans les moules, cristalliser."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Ganache pour tartes/entremets",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 300,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir crème+miel, émulsionner en trois fois, mixer. Utiliser aussitôt."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Ganache montée",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 90,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 310,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 0,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir 110 g de crème, émulsionner en trois fois, mixer.",
+     "Ajouter le reste de crème froide (200 g), filmer au contact, reposer 3 h min, fouetter."
+    ],
+    "note": "200 g chaud + 110 g froid = 310 g crème. Variantes lait/blanc avec plus de chocolat."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Crémeux & crèmes",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Crème anglaise de base",
+    "role": "structure",
+    "type": "crème anglaise",
+    "ingredients": [
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 250,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Blanchir jaunes+sucre, ajouter lait+crème, cuire à la nappe 82-84 °C, mixer."
+    ],
+    "note": "3 jaunes ≈ 60 g."
+   },
+   {
+    "nom": "Crémeux à parfumer",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 500,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Ramollir la gélatine. Blanchir jaunes+sucre, ajouter la crème, cuire à la nappe 82-84 °C, ajouter la gélatine, mixer."
+    ],
+    "note": "6 jaunes ≈ 120 g. Gélatine en feuilles (sèche)."
+   },
+   {
+    "nom": "Crémeux au chocolat",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 190,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 250,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Crème anglaise (jaunes+sucre+lait+crème) à 82-84 °C, émulsionner en trois fois sur le chocolat, mixer, reposer une nuit."
+    ],
+    "note": "5 jaunes ≈ 100 g. Variante blanc 225 g + 3 g gélatine."
+   },
+   {
+    "nom": "Namelaka",
+    "role": "garniture",
+    "type": "namelaka",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 5,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 400,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir le lait+glucose+gélatine, émulsionner en trois fois, ajouter la crème froide, mixer, cristalliser."
+    ],
+    "note": "Crème ultra-fondante ('ultra-crémeux' en japonais)."
+   },
+   {
+    "nom": "Panacotta au chocolat",
+    "role": "garniture",
+    "type": "panacotta",
+    "ingredients": [
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 300,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 110,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Ramollir la gélatine. Bouillir lait+crème, ajouter la gélatine, émulsionner en trois fois sur le chocolat fondu."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Pralinés, caramels, pâtes",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Praliné maison",
+    "role": "garniture",
+    "type": "praliné",
+    "ingredients": [
+     {
+      "nom": "Noisettes",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Amandes blanchies",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 150,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Torréfier les fruits secs 150 °C 10 min. Caramel à sec, enrober les fruits secs chauds, refroidir, mixer en pâte fine."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Intérieur praliné à cadrer",
+    "role": "garniture-insert",
+    "type": "praliné",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Praliné maison",
+      "qte": 200,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat, incorporer le praliné, refroidir à 27-28 °C, couler en cadre."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Intérieur praliné moulés",
+    "role": "garniture-insert",
+    "type": "praliné",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Praliné maison",
+      "qte": 200,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat, incorporer le praliné, refroidir à 27-28 °C, pocher dans les moules."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Caramel à cadrer",
+    "role": "garniture-insert",
+    "type": "caramel",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 75,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 320,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 170,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 30,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Cuire eau+glucose+240 g sucre à 180 °C. Bouillir crème+sel+80 g sucre. Ajouter beurre puis crème chaude+chocolat, cuire à 120 °C, couler en cadre."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Sauce chocolat-caramel",
+    "role": "garniture",
+    "type": "sauce",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 220,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 470,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 240,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 75,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Chauffer crème+glucose. Caramel à sec 180-185 °C, ajouter beurre puis crème, ébullition, émulsionner en trois fois sur le chocolat, mixer."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Mousses",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Mousse au chocolat (blancs d'œufs)",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 300,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Blancs d'œufs",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir la crème, émulsionner en trois fois, ajouter les jaunes. Monter les blancs+sucre, incorporer en deux fois, reposer 12 h."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Mousse au chocolat (sans œufs)",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 285,
+      "unite": "g"
+     },
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 3,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 500,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir le lait+gélatine, émulsionner en trois fois. Monter la crème mousseuse, incorporer à 35-50 °C, reposer 12 h."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Mousse chantilly au chocolat",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 320,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 600,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Monter 400 g de crème mousseuse. Chauffer 200 g de crème, émulsionner en trois fois, incorporer la crème montée à 45-50 °C, reposer 12 h."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Mousse au chocolat pâte à bombe",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Œuf entier",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 45,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau",
+      "qte": 30,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Monter la crème mousseuse. Fondre le chocolat. Pâte à bombe (jaunes+œuf+sucre+eau au bain-marie 82 °C). Incorporer crème puis pâte à bombe, reposer 12 h."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Bavaroise au chocolat",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 6,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème anglaise",
+      "qte": 350,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 450,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Crème anglaise + gélatine, émulsionner en trois fois. Monter la crème mousseuse, incorporer à 45-50 °C, reposer 12 h."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Forêt-noire",
+  "source": "bau",
+  "format": "entremets",
+  "note": "Montage 3 disques imbibés kirsch, crème légère, griottes, glaçage ganache, tuiles. Congélable (décor tuiles après décongélation).",
+  "preps": [
+   {
+    "nom": "Crème légère au kirsch",
+    "role": "garniture",
+    "type": "crème montée",
+    "ingredients": [
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 2,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Kirsch",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Vanille",
+      "qte": 1,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Ramollir la gélatine, la dissoudre dans un peu de crème chaude.",
+     "Fouetter la crème entière avec sucre et vanille jusqu'à texture chantilly souple.",
+     "Incorporer crème/gélatine et kirsch, fouetter en chantilly légère."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Ganache au chocolat noir (glaçage)",
+    "role": "garniture",
+    "type": "ganache",
+    "ref": "Bau — Ganache pour tartes/entremets",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 60%",
+      "qte": 135,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 150,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Émulsion classique en trois fois, utiliser pour glacer le gâteau."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Sachertorte",
+  "source": "bau",
+  "format": "entremets",
+  "note": "Biscuit Sacher en 3 couches, purée d'abricots, ganache, glaçage brillantissime. Congélation 12 h puis glaçage.",
+  "preps": [
+   {
+    "nom": "Purée d'abricots secs",
+    "role": "garniture-insert",
+    "type": "purée",
+    "ingredients": [
+     {
+      "nom": "Abricots secs",
+      "qte": 240,
+      "unite": "g"
+     },
+     {
+      "nom": "Liqueur d'abricots",
+      "qte": 35,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Bouillir les abricots secs 15 min à l'eau, égoutter.",
+     "Ajouter la liqueur, mixer en purée."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Ganache au chocolat noir (Sacher)",
+    "role": "garniture",
+    "type": "ganache",
+    "ref": "Bau — Ganache pour tartes/entremets",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 235,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Émulsion classique, ajouter le beurre à 35-40 °C, mixer."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Royal",
+  "source": "bau",
+  "format": "entremets",
+  "note": "Dacquoise + croustillant praliné + mousse chocolat noir crème anglaise, finition spray velours.",
+  "preps": [
+   {
+    "nom": "Croustillant praliné",
+    "role": "garniture-insert",
+    "type": "croustillant",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Praliné maison",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Crêpes dentelle écrasées",
+      "qte": 40,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat, ajouter le praliné, incorporer les crêpes dentelle.",
+     "Dresser sur la dacquoise, réfrigérer."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Mousse au chocolat noir (crème anglaise)",
+    "role": "garniture",
+    "type": "mousse",
+    "ref": "Bau — Mousse crème anglaise",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 350,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Crème anglaise (jaunes + sucre + lait + 150 g crème) à 82-84 °C, émulsionner sur le chocolat.",
+     "Incorporer 200 g de crème montée mousseuse à bonne température."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Tarte extraordinairement chocolat",
+  "source": "bau",
+  "format": "tarte",
+  "note": "Fond sablé amandes imperméabilisé, ganache noire coulée. À déguster le jour même.",
+  "preps": [
+   {
+    "nom": "Ganache au chocolat noir (tarte)",
+    "role": "garniture",
+    "type": "ganache",
+    "ref": "Bau — Ganache pour tartes/entremets",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 350,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel d'acacia",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Émulsion en trois fois crème + miel sur chocolat, beurre à 35-40 °C, mixer.",
+     "Couler sur le fond cuit, reposer 2 h au frais."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Opéra",
+  "source": "bau",
+  "format": "entremets",
+  "note": "3 biscuits Joconde imbibés café, ganache montée blanc/café, crémeux noir, glaçage brillantissime.",
+  "preps": [
+   {
+    "nom": "Ganache montée chocolat blanc/café",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Café expresso",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat blanc 35%",
+      "qte": 140,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 220,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Émulsion en trois fois café bouillant sur chocolat fondu.",
+     "Ajouter la crème froide, cristalliser 3 h, fouetter avant usage."
+    ],
+    "note": "Café remplace la crème d'émulsion (technique ganache montée)."
+   },
+   {
+    "nom": "Crémeux au chocolat noir (Opéra)",
+    "role": "garniture",
+    "type": "crémeux",
+    "ref": "Bau — Crémeux au chocolat",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 45,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 110,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Crème anglaise à 82-84 °C, émulsionner sur le chocolat, cristalliser 3 h."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bûche praliné noisette",
+  "source": "bau",
+  "format": "entremets",
+  "note": "Biscuit roulé garni de ganache montée praliné, roulé et masqué, décor noisettes.",
+  "preps": [
+   {
+    "nom": "Ganache montée chocolat/praliné noisette",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Praliné noisette maison",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 560,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat, ajouter le praliné. Émulsion en trois fois 160 g crème bouillante.",
+     "Ajouter 400 g crème froide, mixer, cristalliser 3 h, fouetter avant usage."
+    ],
+    "note": "Décor : 200 g noisettes concassées + sucre glace."
+   }
+  ]
+ },
+ {
+  "titre": "Klemanga",
+  "source": "bau",
+  "format": "entremets",
+  "note": "Biscuit coco, insert coulis mangue/passion, mousse chantilly chocolat noir, décor cacao.",
+  "preps": [
+   {
+    "nom": "Coulis mangue/passion",
+    "role": "garniture-insert",
+    "type": "coulis gélifié",
+    "ingredients": [
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 1.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Mangue fraîche",
+      "qte": 165,
+      "unite": "g"
+     },
+     {
+      "nom": "Pulpe de mangue",
+      "qte": 85,
+      "unite": "g"
+     },
+     {
+      "nom": "Pulpe de fruit de la Passion",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Ramollir la gélatine. Chauffer les pulpes à 50 °C, sucrer si besoin.",
+     "Incorporer la gélatine, mélanger aux cubes de mangue fraîche, réfrigérer."
+    ],
+    "note": "Sucre facultatif selon maturité."
+   },
+   {
+    "nom": "Mousse chantilly au chocolat noir (Klemanga)",
+    "role": "garniture",
+    "type": "mousse",
+    "ref": "Bau — Mousse chantilly au chocolat",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 130,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 220,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Monter 140 g crème mousseuse. Chauffer 80 g crème, émulsionner sur le chocolat.",
+     "Incorporer la crème montée à 45-50 °C."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Gâteau craquant aux trois chocolats",
+  "source": "bau",
+  "format": "entremets",
+  "note": "Brownie amandes, feuilles de chocolat tempéré, 3 crémeux/ganache montée (noir, lait, blanc).",
+  "preps": [
+   {
+    "nom": "Ganache montée chocolat blanc/vanille (3 choc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc 35%",
+      "qte": 35,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 160,
+      "unite": "g"
+     },
+     {
+      "nom": "Vanille",
+      "qte": 1,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Émulsion en trois fois 60 g crème + vanille bouillante sur chocolat fondu.",
+     "Ajouter 100 g crème froide, mixer, cristalliser 1 nuit, fouetter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Crème anglaise de base (3 choc)",
+    "role": "structure",
+    "type": "crème anglaise",
+    "ref": "Bau — Crème anglaise de base",
+    "ingredients": [
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 150,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Cuire à la nappe 82-84 °C, mixer."
+    ],
+    "note": "3 jaunes ≈ 60 g. Sert de base aux deux crémeux."
+   },
+   {
+    "nom": "Crémeux au chocolat noir (3 choc)",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {
+      "nom": "Crème anglaise",
+      "qte": 225,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 85,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Émulsionner la crème anglaise chaude sur le chocolat, mixer, cristalliser."
+    ],
+    "note": "Crème anglaise = base ci-dessus."
+   },
+   {
+    "nom": "Crémeux au chocolat au lait (3 choc)",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {
+      "nom": "Crème anglaise",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Émulsionner la crème anglaise chaude sur le chocolat, mixer, cristalliser."
+    ],
+    "note": "Crème anglaise = base ci-dessus."
+   }
+  ]
+ },
+ {
+  "titre": "Entremets palet or",
+  "source": "bau",
+  "format": "entremets",
+  "note": "Biscuit cake chocolat 3 disques, ganache noire, glaçage brillantissime, feuille d'or.",
+  "preps": [
+   {
+    "nom": "Ganache au chocolat noir (palet or)",
+    "role": "garniture",
+    "type": "ganache",
+    "ref": "Bau — Ganache pour tartes/entremets",
+    "ingredients": [
+     {
+      "nom": "Crème liquide entière",
+      "qte": 300,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 200,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Émulsion classique crème + miel sur chocolat, mixer."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Flore",
+  "source": "bau",
+  "format": "entremets",
+  "note": "Biscuit chocolat, insert crémeux jasmin, framboises, mousse chocolat noir, glaçage blanc.",
+  "preps": [
+   {
+    "nom": "Crémeux au jasmin",
+    "role": "garniture-insert",
+    "type": "crémeux",
+    "ref": "Bau — Crémeux à parfumer",
+    "ingredients": [
+     {
+      "nom": "Thé au jasmin (feuilles)",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 2,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Infuser le jasmin dans la crème, filtrer.",
+     "Crème anglaise jaunes + sucre + crème à 82-84 °C, ajouter la gélatine, mixer, couler, congeler."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Mousse au chocolat noir (Flore, sans œufs)",
+    "role": "garniture",
+    "type": "mousse",
+    "ref": "Bau — Mousse au chocolat sans œufs",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 60%",
+      "qte": 170,
+      "unite": "g"
+     },
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 2,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 250,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat, bouillir lait + gélatine, émulsionner en trois fois.",
+     "Incorporer la crème montée mousseuse à 35-50 °C."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache Nyangbo (cadrée)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache à cadrer chocolat Nyangbo",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir Nyangbo 68%",
+      "qte": 130,
+      "unite": "g"
+     },
+     {
+      "nom": "Sorbitol",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Agar-agar",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau",
+      "qte": 17,
+      "unite": "g"
+     },
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 0.75,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 17,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 300,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Hacher le chocolat. Porter à ébullition le sorbitol, l'agar-agar et l'eau.",
+     "Ajouter la gélatine trempée essorée et le glucose, redonner une ébullition, puis ajouter la crème liquide.",
+     "Reporter à ébullition, verser sur le chocolat haché, émulsionner.",
+     "Couler en cadre ou plaque, filmer au contact, laisser prendre puis reposer une nuit au congélateur."
+    ],
+    "note": "Ganache à découper. Agar-agar à faire bouillir pour activer le pouvoir gélifiant."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Panacotta ivoire tonka",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Panacotta chocolat blanc à la tonka",
+    "role": "garniture",
+    "type": "panacotta",
+    "ingredients": [
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat blanc 35%",
+      "qte": 175,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 300,
+      "unite": "g"
+     },
+     {
+      "nom": "Fève tonka",
+      "qte": 0.5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Ramollir la gélatine. Fondre le chocolat blanc.",
+     "Bouillir le lait, ajouter la gélatine essorée, émulsionner en trois fois sur le chocolat.",
+     "Ajouter la crème froide et râper la fève tonka, mixer.",
+     "Couler en moules ou verrines, réserver une nuit au frais."
+    ],
+    "note": "Laisser épaissir avant de couler pour éviter que la tonka remonte."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Coulis de fraise (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Coulis de fraise par macération",
+    "role": "garniture-insert",
+    "type": "coulis",
+    "ingredients": [
+     {
+      "nom": "Fraises",
+      "qte": 130,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 25,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Couper les fraises en morceaux.",
+     "Bouillir l'eau et le sucre, verser sur les fraises, laisser macérer une nuit au frais.",
+     "Filtrer délicatement pour récupérer le jus translucide sans écraser les fruits."
+    ],
+    "note": "Jus clair de macération, sans cuisson des fruits."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Panacotta chocolat noir",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Panacotta au chocolat noir 60%",
+    "role": "garniture",
+    "type": "panacotta",
+    "ingredients": [
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat noir 60%",
+      "qte": 130,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 300,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Ramollir la gélatine. Fondre le chocolat.",
+     "Bouillir le lait, ajouter la gélatine essorée, émulsionner en trois fois sur le chocolat.",
+     "Ajouter la crème froide, mixer.",
+     "Dresser en verrines, réserver une nuit au frais."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Crème brûlée vanille (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Crème brûlée vanille (insert cuit)",
+    "role": "garniture-insert",
+    "type": "crème brûlée",
+    "ingredients": [
+     {
+      "nom": "Lait entier",
+      "qte": 65,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Vanille",
+      "qte": 2,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 190,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 80,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Bouillir le lait et le sucre, infuser la vanille grattée, filtrer.",
+     "Mélanger la crème froide avec les jaunes, verser le lait sucré vanillé.",
+     "Couler en verrines, cuire 17-20 min à 90-100 °C, refroidir au frais."
+    ],
+    "note": "4 jaunes ≈ 80 g. 1 gousse de vanille."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Confit framboise/myrtille (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Confit framboise/myrtille",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Sucre semoule",
+      "qte": 65,
+      "unite": "g"
+     },
+     {
+      "nom": "Framboises",
+      "qte": 75,
+      "unite": "g"
+     },
+     {
+      "nom": "Myrtilles",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Bouillir le sucre et les framboises 1-2 min.",
+     "Ajouter les myrtilles, laisser frémir un court instant.",
+     "Réserver au frais."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Mousse chaude au chocolat noir (siphon)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Mousse chaude au chocolat noir (agar)",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 80,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Agar-agar",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 135,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat.",
+     "Mélanger le sucre et l'agar-agar, ajouter le lait, faire bouillir.",
+     "Émulsionner en trois fois sur le chocolat fondu.",
+     "Verser en siphon, maintenir à 45-50 °C au bain-marie pour servir chaud."
+    ],
+    "note": "Agar-agar bouilli impératif pour le pouvoir gélifiant."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Cœur praliné (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Cœur praliné (insert praliné gélifié)",
+    "role": "garniture-insert",
+    "type": "praliné",
+    "ingredients": [
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Praliné maison",
+      "qte": 150,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Ramollir la gélatine. Chauffer la crème, hors du feu ajouter la gélatine essorée.",
+     "Verser sur le praliné en trois fois, émulsionner.",
+     "Pocher en moules à glaçons, congeler 3 h minimum."
+    ],
+    "note": "Insert prêt à enchâsser."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Mousse ivoire fleur d'oranger",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Mousse chocolat blanc/fleur d'oranger",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc 35%",
+      "qte": 130,
+      "unite": "g"
+     },
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 70,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau de fleur d'oranger",
+      "qte": 5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Ramollir la gélatine.",
+     "Bouillir le lait, hors du feu ajouter la gélatine essorée, verser sur le chocolat en trois fois.",
+     "Monter la crème en texture mousseuse souple.",
+     "Mélange chocolat à 35-45 °C, incorporer à la crème montée, ajouter l'eau de fleur d'oranger."
+    ],
+    "note": "Mousse allégée chocolat blanc."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Semi-confit de mandarine (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Semi-confit de mandarine",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Mandarines entières",
+      "qte": 280,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel toutes fleurs",
+      "qte": 25,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Blanchir les mandarines entières dans l'eau plusieurs fois pour réduire l'amertume.",
+     "Trancher fin, retirer les pépins.",
+     "Réduire à feu doux avec le miel pour éliminer le maximum d'eau."
+    ],
+    "note": "4 mandarines ≈ 280 g. Confit d'agrume amer adouci."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache au café (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache au café (tarte aux noix)",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 60%",
+      "qte": 80,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 70,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel d'acacia",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Café soluble",
+      "qte": 5,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 15,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat.",
+     "Bouillir la crème, le miel et le café soluble, émulsionner en trois fois sur le chocolat.",
+     "À 35-40 °C, ajouter le beurre, mixer."
+    ],
+    "note": "1 c. à s. de café soluble ≈ 5 g."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Noix au caramel (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Noix au caramel",
+    "role": "garniture-insert",
+    "type": "caramel",
+    "ingredients": [
+     {
+      "nom": "Crème liquide entière",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 70,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Cerneaux de noix",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Bouillir la crème. Caraméliser le sucre à sec en trois ajouts.",
+     "Ajouter le beurre puis la crème chaude, hors du feu incorporer le chocolat.",
+     "Ajouter les cerneaux de noix concassés."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache montée ivoire/fleur d'oranger",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée chocolat blanc/fleur d'oranger",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc 35%",
+      "qte": 160,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 380,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau de fleur d'oranger",
+      "qte": 3,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Chauffer 110 g de crème, émulsionner en trois fois sur le chocolat.",
+     "Ajouter 270 g de crème froide et un peu d'eau de fleur d'oranger.",
+     "Filmer au contact, reposer (idéalement une nuit), fouetter avant usage."
+    ],
+    "note": "110 g chaud + 270 g froid = 380 g crème."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache chocolat au lait/miel",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache chocolat au lait au miel (ondulés)",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 225,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 25,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat.",
+     "Bouillir crème et miel, émulsionner en trois fois sur le chocolat.",
+     "Laisser cristalliser 3 h dans un endroit frais (hors réfrigérateur)."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache à cuire chocolat noir",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache à cuire au chocolat noir",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 40,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat, émulsionner avec lait + crème chauds.",
+     "Ajouter le sucre et les jaunes battus.",
+     "Couler sur fond cuit et cuire (prise par les jaunes)."
+    ],
+    "note": "2 jaunes ≈ 40 g. Ganache à faire prendre au four."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Crème au café (base anglaise)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Crème au café (sur crème anglaise)",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {
+      "nom": "Crème anglaise",
+      "qte": 500,
+      "unite": "g"
+     },
+     {
+      "nom": "Café soluble",
+      "qte": 10,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Peser 500 g de crème anglaise chaude.",
+     "Ajouter le café soluble, bien mélanger.",
+     "Réserver au frais."
+    ],
+    "note": "Crème anglaise de base = jaunes/sucre/lait/crème à 82-84 °C."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Compotée banane/passion (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Compotée de banane/passion",
+    "role": "garniture-insert",
+    "type": "compotée",
+    "ingredients": [
+     {
+      "nom": "Beurre",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Pulpe de fruit de la Passion",
+      "qte": 35,
+      "unite": "g"
+     },
+     {
+      "nom": "Bananes",
+      "qte": 240,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le beurre, compoter les bananes en dés.",
+     "Ajouter la pulpe de passion, cuire brièvement, refroidir."
+    ],
+    "note": "2 fruits de la Passion ≈ 35 g de pulpe ; 2-3 bananes ≈ 240 g."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Crémeux chocolat blanc/citron vert",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Crémeux chocolat blanc au citron vert",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {
+      "nom": "Zeste de citron vert",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 3,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat blanc 35%",
+      "qte": 225,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Ramollir la gélatine. Mélanger jaunes, sucre et zestes hachés.",
+     "Ajouter lait et crème, cuire à la nappe 82-84 °C, mixer, ajouter la gélatine essorée, passer au chinois.",
+     "Émulsionner en trois fois sur le chocolat blanc fondu, mixer."
+    ],
+    "note": "Zeste de 2 citrons verts ≈ 4 g. 5 jaunes ≈ 100 g."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Caramel à la crème (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Caramel à la crème (spoon)",
+    "role": "garniture-insert",
+    "type": "caramel",
+    "ingredients": [
+     {
+      "nom": "Crème liquide entière",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 90,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Bouillir la crème.",
+     "Fondre le miel puis caraméliser le sucre, décuire avec la crème chaude.",
+     "Cuire brièvement, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Mousse de lait vanillée",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Mousse de lait vanillée",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {
+      "nom": "Gélatine en feuilles",
+      "qte": 6,
+      "unite": "g"
+     },
+     {
+      "nom": "Vanille",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre glace",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 300,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Ramollir la gélatine. Chauffer une partie du lait avec la vanille et le sucre glace, dissoudre la gélatine.",
+     "Mélanger au lait froid restant.",
+     "Foisonner au siphon ou au fouet, dresser, réserver au frais."
+    ],
+    "note": "1/4 de gousse de vanille. Mousse légère lactée."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache montée ivoire/truffe (macarons)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée ivoire/truffe",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc 35%",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 270,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile de noisette",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Truffe noire hachée",
+      "qte": 20,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir 80 g de crème, émulsionner en trois fois sur le chocolat.",
+     "Ajouter 190 g de crème froide, l'huile de noisette et la truffe hachée, mixer.",
+     "Filmer au contact, reposer une nuit, fouetter avant usage."
+    ],
+    "note": "80 g chaud + 190 g froid = 270 g crème. 2 c. à s. d'huile de noisette ≈ 10 g. Garniture directe de macaron."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache namachoco au lait de soja",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache namachoco au lait de soja",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 350,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait de soja",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 10,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat.",
+     "Bouillir le lait de soja avec le miel et le glucose, émulsionner en trois fois sur le chocolat, mixer.",
+     "Couler en cadre, réserver au frais 3 h minimum."
+    ],
+    "note": "Variante sans crème (lait de soja)."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache montée ivoire vanille Tahiti",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée ivoire à la vanille de Tahiti",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Vanille",
+      "qte": 2,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat blanc 35%",
+      "qte": 45,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 220,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Bouillir 90 g de crème avec les grains de vanille, émulsionner en trois fois sur le chocolat.",
+     "Ajouter 130 g de crème froide.",
+     "Cristalliser 3 h minimum, fouetter avant usage."
+    ],
+    "note": "1 gousse de vanille de Tahiti. 90 g chaud + 130 g froid = 220 g crème."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache chocolat noir/miel (barres)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache chocolat noir 60% au miel (barres)",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 60%",
+      "qte": 360,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 300,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 20,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat.",
+     "Bouillir crème et miel, émulsionner en trois fois sur le chocolat.",
+     "À 35-40 °C, ajouter le beurre, mixer."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Ganache chocolat noir/miel (crousti-fondant)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache chocolat noir 70% au miel (bonbons)",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 140,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 130,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel d'acacia",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 15,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat.",
+     "Bouillir crème et miel, émulsionner en trois fois sur le chocolat.",
+     "À 35-40 °C, ajouter le beurre, mixer."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Croustillant praliné dentelle",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Croustillant praliné/crêpes dentelle",
+    "role": "garniture-insert",
+    "type": "croustillant",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 26,
+      "unite": "g"
+     },
+     {
+      "nom": "Praliné maison",
+      "qte": 90,
+      "unite": "g"
+     },
+     {
+      "nom": "Brisures de crêpes dentelle",
+      "qte": 35,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat, ajouter le praliné, ramener à 26 °C.",
+     "Incorporer les brisures de crêpes dentelle.",
+     "Couler en moules, réfrigérer 1 h."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Crème légère aux deux citrons",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Crème légère citron vert et jaune",
+    "role": "garniture",
+    "type": "crème montée",
+    "ingredients": [
+     {
+      "nom": "Zeste de citron",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Vanille",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 130,
+      "unite": "g"
+     },
+     {
+      "nom": "Blancs d'œufs",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Pulpe de citron vert",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 25,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Cuire l'eau et le sucre en sirop, monter les blancs et serrer avec le sirop (meringue).",
+     "Monter la crème, incorporer pulpe de citron, zestes, vanille et glucose.",
+     "Mélanger délicatement avec la meringue."
+    ],
+    "note": "2 blancs ≈ 60 g. Crème aérée acidulée."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Mousse glacée noisette/chocolat (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Appareil noisette/chocolat noir (base anglaise)",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 60%",
+      "qte": 75,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 65,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 85,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de noisette",
+      "qte": 75,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 170,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Crème anglaise (jaunes+sucre+lait+glucose) à 82-84 °C.",
+     "Émulsionner en trois fois sur le chocolat et la pâte de noisette.",
+     "Fouetter la crème, incorporer délicatement."
+    ],
+    "note": "3 jaunes ≈ 60 g. Hors congélation = crémeux noisette riche."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Gelée de poire (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Gelée de poire fraîche",
+    "role": "garniture-insert",
+    "type": "gel",
+    "ingredients": [
+     {
+      "nom": "Poires fraîches",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Jus de citron",
+      "qte": 5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mixer les poires fraîches avec le jus de citron.",
+     "Gélifier selon la base de la recette, couler, prendre au frais."
+    ],
+    "note": "Un peu de jus de citron pour éviter l'oxydation."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Sauce chocolat/caramel/passion",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Sauce chocolat/caramel/passion",
+    "role": "garniture",
+    "type": "sauce",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 235,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Jus de fruit de la Passion",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Chauffer crème et glucose.",
+     "Caraméliser le sucre, ajouter le beurre puis la crème chaude, émulsionner en trois fois sur le chocolat.",
+     "Ajouter le jus de passion, mixer."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Crémeux chocolat lait/clémentine",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Crémeux chocolat au lait/clémentine",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait 40%",
+      "qte": 140,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaunes d'œufs",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Lait entier",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Zeste de clémentine",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Mélanger jaunes et sucre, ajouter lait, crème et zeste.",
+     "Cuire à la nappe 82-84 °C, filtrer, mixer.",
+     "Émulsionner en trois fois sur le chocolat, mixer, cristalliser."
+    ],
+    "note": "2 jaunes ≈ 40 g. Zeste de 1 clémentine ≈ 2 g."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Chantilly fleur d'oranger",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chantilly à l'eau de fleur d'oranger",
+    "role": "garniture",
+    "type": "crème montée",
+    "ingredients": [
+     {
+      "nom": "Vanille",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau de fleur d'oranger",
+      "qte": 3,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fouetter la crème froide avec le sucre et les grains de vanille en chantilly souple.",
+     "Parfumer à l'eau de fleur d'oranger."
+    ],
+    "note": "1/4 de gousse de vanille."
+   }
+  ]
+ },
+ {
+  "titre": "Bau — Caramel mou au chocolat (insert)",
+  "source": "bau",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Caramel mou au chocolat",
+    "role": "garniture-insert",
+    "type": "caramel",
+    "ingredients": [
+     {
+      "nom": "Chocolat noir 70%",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre semoule",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 15,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Chauffer la crème et le sel.",
+     "Caraméliser le sucre et le miel, décuire avec la crème chaude, cuire à 115 °C.",
+     "Verser sur le chocolat, ajouter le beurre, mélanger, couler, cristalliser une nuit."
+    ],
+    "note": ""
+   }
+  ]
+ }
+]

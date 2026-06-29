@@ -1,33 +1,23 @@
-const CACHE = 'sm-iphone-v1020';
+const CACHE = 'sm-iphone-v57';
 const ASSETS = [
   './',
   './index.html',
-  './utils.js?v=1020',
-  './app.js?v=1020',
+  './app.js',
   './dexie.min.js',
-  './qr_min.js?v=1020',
-  './pdf_extract.js',
+  './qr.min.js',
+  './rd_packs.json',
+  './rd_pack_alice.json',
+  './rd_pack_bau.json',
   './manifest.webmanifest',
   './icon-192.png',
-  './icon-512.png',
-  './fonts/Outfit-Light.ttf',
-  './fonts/Outfit-Regular.ttf',
-  './fonts/Outfit-Medium.ttf',
-  './fonts/Outfit-SemiBold.ttf',
-  './fonts/Outfit-Bold.ttf',
-  './fonts/Fraunces-Variable.ttf',
-  './fonts/BellotaText-Regular.ttf',
-  './fonts/BellotaText-Bold.ttf'
+  './icon-512.png'
 ];
 
 // INSTALL : précache + activation IMMÉDIATE de la nouvelle version (skipWaiting).
+// On n'attend plus un clic utilisateur : la mise à jour s'applique d'elle-même.
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c =>
-      c.addAll(ASSETS).then(()=>{
-        return c.add('./html5-qrcode.min.js?v=1020').catch(()=>{});
-      })
-    ).then(() => self.skipWaiting())
+    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
   );
 });
 
@@ -40,10 +30,17 @@ self.addEventListener('activate', e => {
   );
 });
 
+// Permet à l'application de demander l'activation immédiate de la version en attente
+// (déclenché par le bouton « Recharger l'application »).
 self.addEventListener('message', e => {
   if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
+// FETCH :
+// - Pour le CODE (index.html, app.js, et la navigation) : NETWORK-FIRST.
+//   On tente d'abord le réseau (donc la dernière version en ligne) ; en cas d'échec
+//   (hors-ligne), on retombe sur le cache. Fini les vieux app.js servis indéfiniment.
+// - Pour le RESTE (librairies, icônes) : Stale-While-Revalidate (rapide + hors-ligne).
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
@@ -53,11 +50,11 @@ self.addEventListener('fetch', e => {
 
   const isCode = req.mode === 'navigate'
     || url.pathname.endsWith('/app.js')
-    || url.pathname.endsWith('/utils.js')
     || url.pathname.endsWith('/index.html')
     || url.pathname === '/' || url.pathname.endsWith('/');
 
   if (isCode) {
+    // network-first
     e.respondWith(
       fetch(req).then(res => {
         if (res && res.status === 200 && res.type === 'basic') {
@@ -65,11 +62,12 @@ self.addEventListener('fetch', e => {
           caches.open(CACHE).then(c => c.put(req, copy));
         }
         return res;
-      }).catch(() => caches.open(CACHE).then(c => c.match(req, {ignoreSearch:true}).then(r => r || c.match('./index.html'))))
+      }).catch(() => caches.open(CACHE).then(c => c.match(req).then(r => r || c.match('./index.html'))))
     );
     return;
   }
 
+  // stale-while-revalidate pour le reste
   e.respondWith(
     caches.open(CACHE).then(cache =>
       cache.match(req).then(cached => {

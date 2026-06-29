@@ -1,0 +1,2450 @@
+[
+ {
+  "titre": "Baileys & Coffee Caramel",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée Baileys",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr 34%",
+      "qte": 255,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Liqueur Baileys",
+      "qte": 70,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82%",
+      "qte": 55,
+      "unite": "g"
+     },
+     {
+      "nom": "Grains de café Arabica",
+      "qte": 15,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Infuser les grains de café dans la crème + glucose portés à ébullition, couvrir, laisser 30 min.",
+     "Reporter à ébullition, filtrer sur le chocolat blanc, compenser la crème perdue pour revenir à 200 g.",
+     "Émulsionner au mixeur, ajouter beurre et liqueur, ré-émulsionner.",
+     "Filmer au contact, reposer une nuit au frais. Monter avant usage."
+    ],
+    "note": "Café infusé puis retiré (arôme, pas en masse finale)."
+   },
+   {
+    "nom": "Caramel au café",
+    "role": "garniture-insert",
+    "type": "caramel",
+    "ingredients": [
+     {
+      "nom": "Sucre",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82.5%",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de café",
+      "qte": 8,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Caraméliser sucre + glucose à sec jusqu'à couleur soutenue.",
+     "Décuire avec la crème chaude, porter à ébullition (1 min si plus épais voulu).",
+     "À 50 °C, ajouter beurre, pâte de café et sel, émulsionner au mixeur.",
+     "Refroidir complètement au frais."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Pâte de café",
+    "role": "structure",
+    "type": "pâte aromatique",
+    "ingredients": [
+     {
+      "nom": "Eau",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Café soluble",
+      "qte": 65,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Dissoudre le café dans l'eau bouillante.",
+     "Caraméliser le sucre à sec, décuire avec le café progressivement jusqu'à liquide homogène.",
+     "Réduire sans surcuire (texture sirop de glucose une fois froid)."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Amaretti",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée amande-Amaretto",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr 34%",
+      "qte": 130,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 275,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte d'amande 100%",
+      "qte": 75,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Liqueur Amaretto",
+      "qte": 40,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème + glucose bouillants sur chocolat blanc + pâte d'amande.",
+     "Laisser une minute, ajouter la liqueur, émulsionner au mixeur jusqu'à lisse.",
+     "Filmer au contact, reposer une nuit au frais. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Confit abricot-passion",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée d'abricot",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Purée de passion",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Abricots secs",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Zeste de citron",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Vanille",
+      "qte": 0.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Fève tonka",
+      "qte": 0.3,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 2.2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mixer les purées avec les abricots secs réhydratés, ajouter zeste, vanille, tonka.",
+     "Incorporer en pluie le sucre mélangé à la pectine dans la purée froide (<40 °C).",
+     "Porter à ébullition en remuant, cuire 1 min.",
+     "Refroidir au frais ; détendre en texture confiture avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Amaretti (décor)",
+    "role": "structure",
+    "type": "biscuit",
+    "ingredients": [
+     {
+      "nom": "Poudre d'amande",
+      "qte": 140,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Blanc d'œuf",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Jus de citron",
+      "qte": 5,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre glace (enrobage)",
+      "qte": 75,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger les secs. Monter le blanc avec le jus de citron en pics fermes.",
+     "Incorporer les secs, façonner des billes ~9 g, rouler dans le sucre glace.",
+     "Cuire à 180 °C, 9-10 min, cœur encore légèrement humide."
+    ],
+    "note": "Décor optionnel."
+   }
+  ]
+ },
+ {
+  "titre": "Cinnabon",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée fromage frais",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr 34%",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 250,
+      "unite": "g"
+     },
+     {
+      "nom": "Fromage frais (cream cheese)",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre inverti",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2,
+      "unite": "g"
+     },
+     {
+      "nom": "Zeste d'orange",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Vanille",
+      "qte": 1,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Porter crème + glucose + sucre inverti + zeste + vanille à ébullition, verser sur chocolat blanc + sel.",
+     "Laisser une minute, ajouter le fromage frais, émulsionner au mixeur jusqu'à lisse.",
+     "Filmer au contact, reposer une nuit au frais. Monter avant usage."
+    ],
+    "note": "Cannelle 10 g ajoutée à la poudre d'amande de la coque (30 paires). Variante : chocolat blanc caramélisé."
+   },
+   {
+    "nom": "Croustillant pécan",
+    "role": "garniture-insert",
+    "type": "croustillant",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr 34%",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Royaltine (vafel)",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de pécan 100%",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 0.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Cannelle de Ceylan",
+      "qte": 3,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile végétale",
+      "qte": 10,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre chocolat blanc + huile, mélanger à la pâte de pécan, sel et cannelle.",
+     "Ajouter la royaltine, étaler en couche régulière, congeler."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Pâte de pécan",
+    "role": "structure",
+    "type": "pâte aromatique",
+    "ingredients": [
+     {
+      "nom": "Noix de pécan",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile végétale raffinée",
+      "qte": 12,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Torréfier les pécans à 150-160 °C ~10 min.",
+     "Mixer en pâte avec l'huile, par incréments, jusqu'à fluidité."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Brioches cannelle (décor)",
+    "role": "structure",
+    "type": "brioche",
+    "ingredients": [
+     {
+      "nom": "Lait tiède",
+      "qte": 75,
+      "unite": "g"
+     },
+     {
+      "nom": "Levure sèche",
+      "qte": 2.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Farine de blé",
+      "qte": 165,
+      "unite": "g"
+     },
+     {
+      "nom": "Jaune d'œuf",
+      "qte": 18,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 0.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre (garniture)",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Cannelle de Ceylan",
+      "qte": 5,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre mou (garniture)",
+      "qte": 20,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Pétrir la pâte (crochet), pousse 2 h. Étaler, garnir beurre + sucre-cannelle, rouler, trancher.",
+     "Cuire 7-8 min à 180 °C."
+    ],
+    "note": "Décor optionnel ; 1 jaune ≈ 18 g."
+   }
+  ]
+ },
+ {
+  "titre": "Dorblu & Pain Borodino",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache fromage Dorblu",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 290,
+      "unite": "g"
+     },
+     {
+      "nom": "Fromage Dorblu (bleu)",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose bouillants sur chocolat+sel.",
+     "Laisser une minute, ajouter le fromage, émulsionner au mixeur.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Insert pain Borodino",
+    "role": "garniture-insert",
+    "type": "insert",
+    "ingredients": [
+     {
+      "nom": "Crème 30%",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Fromage Dorblu (bleu)",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Pain Borodino",
+      "qte": 55,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2.5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mixer tous les ingrédients ensemble au mixeur plongeant.",
+     "Prêt à l'emploi immédiatement."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Chapelure caramélisée",
+    "role": "structure",
+    "type": "croustillant",
+    "ingredients": [
+     {
+      "nom": "Pain Borodino",
+      "qte": 90,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 35,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82%",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 1,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mixer pain+sucre+sel. Fondre le beurre, incorporer la chapelure.",
+     "Étaler, caraméliser au four 170 °C 10-15 min en remuant, refroidir, re-mixer."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Ferrero Rocher",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée chocolat au lait (base)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait Callebaut",
+      "qte": 225,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 225,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose bouillants sur chocolat au lait, émulsionner au mixeur.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Ganache montée noisette",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait Callebaut",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 300,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de noisette 100%",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 1.5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose bouillants sur chocolat+sel+pâte de noisette, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Croustillant noisette (variante 1)",
+    "role": "garniture-insert",
+    "type": "croustillant",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait Callebaut",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Royaltine",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de noisette 100%",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile végétale raffinée",
+      "qte": 10,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre chocolat+huile, mélanger à la pâte. Ajouter la royaltine, étaler, congeler."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Croustillant noisette (variante 2)",
+    "role": "garniture-insert",
+    "type": "croustillant",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait Callebaut",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile végétale",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de noisette 100%",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Praliné noisette 50%",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Royaltine",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 0.5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre chocolat+huile, mélanger pâte+praliné. Ajouter royaltine, étaler, congeler."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Praliné noisette",
+    "role": "structure",
+    "type": "praliné",
+    "ingredients": [
+     {
+      "nom": "Noisettes",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile végétale",
+      "qte": 18,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Torréfier les noisettes. Caramel à sec, enrober les noisettes chaudes, refroidir.",
+     "Mixer en pâte avec l'huile."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Glaçage chocolat décor",
+    "role": "structure",
+    "type": "glaçage",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait Callebaut",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile végétale raffinée",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Noisettes concassées",
+      "qte": 25,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre chocolat, émulsionner avec l'huile, ajouter la noisette concassée. Trempage à 35-40 °C."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Gorgonzola & Poire",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache fromage Gorgonzola",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 280,
+      "unite": "g"
+     },
+     {
+      "nom": "Fromage Gorgonzola",
+      "qte": 75,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose bouillants sur chocolat+sel, ajouter le fromage, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Confit de poire",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de poire",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 3,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger sucre+pectine, incorporer en pluie à la purée froide (<50 °C).",
+     "Porter à ébullition, cuire 1 min, refroidir."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Poire confite",
+    "role": "garniture-insert",
+    "type": "compotée",
+    "ingredients": [
+     {
+      "nom": "Poire",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Couper la poire en dés, compoter avec le sucre (vanille optionnelle) 1-2 min, garder al dente, égoutter, refroidir."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Confit de figue",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de figue",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Jus de citron",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 35,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger sucre+pectine, incorporer à la purée+jus froide, ébullition 1 min, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Mint",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée menthe",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 190,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 285,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Feuilles de menthe fraîche",
+      "qte": 12,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Infuser la menthe dans la crème+glucose bouillants 15-30 min.",
+     "Reporter à ébullition, filtrer sur le chocolat, compenser à 300 g, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": "Menthe infusée puis retirée (arôme)."
+   },
+   {
+    "nom": "Confit de framboise",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de framboise",
+      "qte": 140,
+      "unite": "g"
+     },
+     {
+      "nom": "Jus de citron",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 2.5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger sucre+pectine, incorporer à la purée+jus froide, ébullition 1 min, refroidir."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Crème OREO",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 85,
+      "unite": "g"
+     },
+     {
+      "nom": "Cacao noir en poudre",
+      "qte": 12,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre inverti",
+      "qte": 8,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82%",
+      "qte": 10,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Chauffer chocolat+crème+cacao+inverti à ébullition, ajouter le beurre froid, émulsionner.",
+     "Filmer au contact, reposer une nuit. Ne pas monter."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Biscuit OREO",
+    "role": "structure",
+    "type": "biscuit",
+    "ingredients": [
+     {
+      "nom": "Farine de blé",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Cacao noir en poudre",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Levure chimique",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre glace",
+      "qte": 70,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82%",
+      "qte": 95,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Crémer beurre+sucre glace+sel, ajouter les secs, abaisser 3 mm, détailler 4 cm, cuire 160 °C 15 min."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Malibu & Mangue",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée Malibu",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 255,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 190,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Liqueur Malibu",
+      "qte": 75,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82%",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose bouillants sur chocolat, ajouter liqueur et beurre, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Confit de mangue",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de mangue Alphonso",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger sucre+pectine, incorporer à la purée froide, ébullition 1 min, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Matcha & Mangue",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée matcha",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 280,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Thé matcha",
+      "qte": 8,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose bouillants sur chocolat+matcha, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Confit de mangue",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de mangue Alphonso",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger sucre+pectine, incorporer à la purée froide, ébullition 1 min, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "OREO",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée vanille OREO",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 280,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre inverti",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de vanille",
+      "qte": 8,
+      "unite": "g"
+     },
+     {
+      "nom": "Biscuit OREO",
+      "qte": 70,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+inverti+glucose bouillants sur chocolat+vanille, émulsionner. Incorporer le biscuit concassé.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Crème OREO",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 85,
+      "unite": "g"
+     },
+     {
+      "nom": "Cacao noir en poudre",
+      "qte": 12,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre inverti",
+      "qte": 8,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82%",
+      "qte": 10,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Chauffer chocolat+cacao+glucose+inverti, verser crème chaude, émulsionner, ajouter beurre froid.",
+     "Filmer au contact, reposer une nuit. Ne pas monter."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Biscuit OREO",
+    "role": "structure",
+    "type": "biscuit",
+    "ingredients": [
+     {
+      "nom": "Farine de blé",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Cacao noir en poudre",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Levure chimique",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre glace",
+      "qte": 70,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82%",
+      "qte": 95,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Crémer beurre+sucre glace+sel, ajouter les secs, abaisser 3 mm, détailler 4 cm, cuire 160 °C 15 min."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Prosecco & Fraise",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée Prosecco",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 145,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre inverti (Trimoline)",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Masse gélatine",
+      "qte": 35,
+      "unite": "g"
+     },
+     {
+      "nom": "Prosecco",
+      "qte": 115,
+      "unite": "g"
+     },
+     {
+      "nom": "Zeste d'orange",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Vanille",
+      "qte": 4,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Crème+vanille à ébullition, dissoudre la gélatine, verser sur chocolat+glucose+inverti+zeste.",
+     "Émulsionner, ajouter le Prosecco, ré-émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": "Masse gélatine 35 g = 5 g poudre + 30 g eau."
+   },
+   {
+    "nom": "Confit Prosecco & Fraise",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de fraise",
+      "qte": 85,
+      "unite": "g"
+     },
+     {
+      "nom": "Prosecco",
+      "qte": 65,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Acide citrique",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Zeste d'orange",
+      "qte": 1,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Chauffer purée+Prosecco+glucose+zeste à 35-40 °C, incorporer sucre+pectine, ébullition 1 min, ajouter l'acide, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Pumpkin Latte",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée potiron-latte",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 210,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 165,
+      "unite": "g"
+     },
+     {
+      "nom": "Purée de potiron",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de café",
+      "qte": 8,
+      "unite": "g"
+     },
+     {
+      "nom": "Mélange d'épices",
+      "qte": 3,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Porter crème+glucose+pâte de café+épices+purée à ébullition, verser sur chocolat, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Ganache classique potiron-latte",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 300,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 140,
+      "unite": "g"
+     },
+     {
+      "nom": "Purée de potiron",
+      "qte": 160,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de café",
+      "qte": 12,
+      "unite": "g"
+     },
+     {
+      "nom": "Mélange d'épices",
+      "qte": 3,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre",
+      "qte": 60,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Porter crème+glucose+pâte de café+épices+purée à ébullition, verser sur chocolat, émulsionner. À 40 °C, ajouter le beurre, ré-émulsionner.",
+     "Filmer au contact, reposer une nuit."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Mélange d'épices",
+    "role": "structure",
+    "type": "épices",
+    "ingredients": [
+     {
+      "nom": "Cannelle",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Gingembre",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Muscade",
+      "qte": 5,
+      "unite": "g"
+     },
+     {
+      "nom": "Clou de girofle",
+      "qte": 5,
+      "unite": "g"
+     },
+     {
+      "nom": "Piment de la Jamaïque",
+      "qte": 1.5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger toutes les épices, conserver en bocal hermétique."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Pâte de café",
+    "role": "structure",
+    "type": "pâte aromatique",
+    "ingredients": [
+     {
+      "nom": "Eau",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Café soluble",
+      "qte": 65,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Dissoudre le café dans l'eau bouillante. Caraméliser le sucre à sec, décuire avec le café, réduire sans surcuire."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Confit de potiron",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de potiron",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 2.5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger sucre+pectine, incorporer à la purée froide, ébullition 1 min, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Rafaello",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée coco",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 310,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de coco 100%",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 1.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Vanille",
+      "qte": 1,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+vanille bouillants sur chocolat+sel+glucose+pâte de coco, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Crème coco",
+    "role": "garniture",
+    "type": "crème",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 55,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème de coco 24%",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Copeaux de coco",
+      "qte": 28,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Chauffer chocolat+crème de coco, ajouter les copeaux, émulsionner.",
+     "Filmer au contact, reposer une nuit."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Croustillant amande-coco",
+    "role": "garniture-insert",
+    "type": "croustillant",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile végétale",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte d'amande 100%",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de coco 100%",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Royaltine",
+      "qte": 55,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre chocolat+huile, mélanger pâtes amande+coco. Ajouter royaltine, étaler, congeler."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Glaçage chocolat blanc décor",
+    "role": "structure",
+    "type": "glaçage",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile végétale",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat, émulsionner avec l'huile. Trempage à 35-40 °C."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Snickers",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée chocolat au lait (base)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait Callebaut",
+      "qte": 225,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 225,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose bouillants sur chocolat au lait, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Ganache montée cacahuète",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait Callebaut",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 265,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de cacahuète 100%",
+      "qte": 65,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2.5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose bouillants sur chocolat+sel+pâte de cacahuète, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Caramel coulant",
+    "role": "garniture-insert",
+    "type": "caramel",
+    "ingredients": [
+     {
+      "nom": "Sucre",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82.5%",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Caraméliser sucre+glucose, décuire avec crème chaude, ébullition 1 min. À 50 °C, ajouter beurre+sel, émulsionner, refroidir."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Caramel salé décor",
+    "role": "structure",
+    "type": "caramel",
+    "ingredients": [
+     {
+      "nom": "Sucre",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 90,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82.5%",
+      "qte": 155,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 3,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Caraméliser sucre+glucose, décuire avec crème chaude, ébullition 1-2 min, sel. À 50 °C, ajouter beurre froid, émulsionner, refroidir."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Glaçage chocolat décor",
+    "role": "structure",
+    "type": "glaçage",
+    "ingredients": [
+     {
+      "nom": "Chocolat au lait Callebaut",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Huile végétale",
+      "qte": 50,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le chocolat, émulsionner avec l'huile. Trempage à 35-40 °C."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Petit pain d'épices",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée caramel-épices",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat Zephyr Caramel",
+      "qte": 180,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 275,
+      "unite": "g"
+     },
+     {
+      "nom": "Miel",
+      "qte": 15,
+      "unite": "g"
+     },
+     {
+      "nom": "Cannelle",
+      "qte": 5,
+      "unite": "g"
+     },
+     {
+      "nom": "Gingembre moulu",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Muscade",
+      "qte": 1,
+      "unite": "g"
+     },
+     {
+      "nom": "Zeste d'orange",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Infuser crème+zeste+épices 30 min, reporter à ébullition, filtrer sur chocolat+miel, compenser à 300 g, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Gel citron-poire",
+    "role": "garniture-insert",
+    "type": "gel",
+    "ingredients": [
+     {
+      "nom": "Purée de poire",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Jus de citron",
+      "qte": 55,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau",
+      "qte": 35,
+      "unite": "g"
+     },
+     {
+      "nom": "Zeste de citron",
+      "qte": 5,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 4,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Chauffer purée+jus+eau+zeste+glucose à 35-40 °C, incorporer sucre+pectine, ébullition 1 min, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Vanille & Passion",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée vanille",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 275,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de vanille",
+      "qte": 7,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose+vanille bouillants sur chocolat, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Confit de passion",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de passion",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 4,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger sucre+pectine, incorporer à la purée froide, ébullition 1 min, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Pamplemousse & Fraise & Pistache",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée pistache-pamplemousse",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 180,
+      "unite": "g"
+     },
+     {
+      "nom": "Pulpe de pamplemousse rose",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 13,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre inverti",
+      "qte": 13,
+      "unite": "g"
+     },
+     {
+      "nom": "Pâte de pistache 100%",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 1,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Verser crème+glucose bouillants sur chocolat+pâte de pistache, émulsionner. Ajouter la pulpe de pamplemousse, ré-émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": ""
+   },
+   {
+    "nom": "Confit fraise-pamplemousse",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de fraise",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Pulpe de pamplemousse",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 30,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 2.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Acide citrique",
+      "qte": 0.5,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Chauffer purées+glucose à 35-40 °C, incorporer sucre+pectine, ébullition 1 min, ajouter l'acide, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Cheesecake Caramel",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache fromage caramel",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {
+      "nom": "Chocolat Zephyr Caramel",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 240,
+      "unite": "g"
+     },
+     {
+      "nom": "Fromage frais (cream cheese)",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 3,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Poudre de yaourt Yopol",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Masse gélatine",
+      "qte": 28,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Crème+glucose à ébullition, dissoudre la gélatine, verser sur chocolat+sel+fromage+poudre yaourt, émulsionner.",
+     "Filmer au contact, reposer une nuit. Ne pas monter."
+    ],
+    "note": "Masse gélatine 28 g = 4 g poudre + 24 g eau."
+   },
+   {
+    "nom": "Caramel coulant",
+    "role": "garniture-insert",
+    "type": "caramel",
+    "ingredients": [
+     {
+      "nom": "Sucre",
+      "qte": 120,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82.5%",
+      "qte": 40,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Caraméliser sucre+glucose, décuire avec crème chaude, ébullition 1 min. À 50 °C, ajouter beurre+sel, émulsionner, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Lavande & Cassis",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée lavande-cassis",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 210,
+      "unite": "g"
+     },
+     {
+      "nom": "Purée de cassis",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 240,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Lavande (fleurs séchées)",
+      "qte": 2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Infuser la lavande dans la crème bouillante 15 min, reporter à ébullition, filtrer sur chocolat+glucose, compenser à 240 g, émulsionner. Ajouter la purée de cassis, ré-émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": "Lavande infusée puis retirée (arôme)."
+   },
+   {
+    "nom": "Ganache montée lavande",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 190,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 285,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Lavande (fleurs séchées)",
+      "qte": 1.9,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Infuser la lavande dans crème+glucose bouillants 15 min, reporter à ébullition, filtrer sur chocolat, compenser à 300 g, émulsionner.",
+     "Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": "Lavande infusée puis retirée (arôme)."
+   },
+   {
+    "nom": "Confit de cassis",
+    "role": "garniture-insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de cassis",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 2.2,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger sucre+pectine, incorporer à la purée froide, ébullition 1 min, refroidir."
+    ],
+    "note": ""
+   }
+  ]
+ },
+ {
+  "titre": "Lavande Raf",
+  "source": "alice",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache montée café-lavande",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Zephyr",
+      "qte": 190,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 300,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 20,
+      "unite": "g"
+     },
+     {
+      "nom": "Lavande (fleurs séchées)",
+      "qte": 2,
+      "unite": "g"
+     },
+     {
+      "nom": "Grains de café",
+      "qte": 15,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Porter crème+glucose+lavande+grains de café à ébullition, couvrir, infuser 15 min, ré-ébullition.",
+     "Tarer le bol de chocolat, passer la crème au chinois dessus (retenir lavande et grains), compenser la crème perdue avec de la crème froide jusqu'à 300 g.",
+     "Émulsionner. Filmer au contact, reposer une nuit. Monter avant usage."
+    ],
+    "note": "Aux coques : 4 g de café soluble dans la meringue (pour ~60 coques), saupoudrer les coques de café moulu."
+   },
+   {
+    "nom": "Gel café",
+    "role": "garniture-insert",
+    "type": "gel",
+    "ingredients": [
+     {
+      "nom": "Sucre",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 50,
+      "unite": "g"
+     },
+     {
+      "nom": "Café espresso",
+      "qte": 200,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Réunir sucre+glucose+espresso, porter à ébullition, réduire jusqu'à 106 °C.",
+     "Hors du feu, transférer en poche, refroidir complètement au froid."
+    ],
+    "note": "Centre liquide, à injecter au cœur du ganache (alternative : le caramel café)."
+   },
+   {
+    "nom": "Caramel café",
+    "role": "garniture-insert",
+    "type": "caramel",
+    "ingredients": [
+     {
+      "nom": "Sucre",
+      "qte": 80,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème 30%",
+      "qte": 110,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre 82.5%",
+      "qte": 25,
+      "unite": "g"
+     },
+     {
+      "nom": "Sel",
+      "qte": 1.5,
+      "unite": "g"
+     },
+     {
+      "nom": "Café soluble",
+      "qte": 6,
+      "unite": "g"
+     },
+     {
+      "nom": "Eau froide",
+      "qte": 6,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Caraméliser sucre+glucose à sec jusqu'à une teinte foncée ; chauffer la crème avec le café.",
+     "Décuire avec la crème chaude, porter à ébullition. À 50 °C, ajouter beurre+eau+sel, émulsionner, refroidir."
+    ],
+    "note": "Centre café alternatif au gel, plus facile à travailler. Caramel volontairement foncé et amer."
+   }
+  ]
+ }
+]
