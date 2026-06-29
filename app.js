@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1032';
+const APP_VERSION = 'v1033';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -9315,15 +9315,9 @@ async function prodTermineConfirm(id){
   try{
     const _compMv = (comp==='coques') ? 'coques' : (comp==='ganache') ? 'ganache' : 'macaron';
     const _qteMv = round3(+p.qteRestante||0);
-    // [DIAG TEMPORAIRE] visibilite du journal de stock
-    if(_qteMv<=0){
-      toast('\u26a0 DIAG: qte a journaliser = '+_qteMv+' \u2192 mouvement ignore (qteRestante vide)');
-    } else {
-      const _mvId = await logStockMove({ parfumNom: prodNomComplet(p), composant:_compMv, sens:+1, qte:_qteMv,
-        type:'production', productionId:id });
-      toast(_mvId ? ('\u2713 DIAG: stock journalise (mvt #'+_mvId+', '+_qteMv+' '+_compMv+')') : '\u274c DIAG: logStockMove a renvoye null');
-    }
-  }catch(_e){ toast('\u274c DIAG: erreur journal stock \u2014 '+(_e&&_e.message||_e)); }
+    await logStockMove({ parfumNom: prodNomComplet(p), composant:_compMv, sens:+1, qte:_qteMv,
+      type:'production', productionId:id });
+  }catch(_){}
   closeModal(); renderProductions();
   // [TEMPS PAR RECETTE] Si une tâche d'atelier est rattachée à ce batch, demander à l'arrêter ou la poursuivre.
   try{
@@ -16848,7 +16842,7 @@ async function renderHistoStock(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Historique du stock</h1>
      <p>${filtres.length} mouvement(s) · ↑ ${qty(totalEntrees)} entré(s) · ↓ ${qty(totalSorties)} sorti(s)</p></div>
-     <div class="flex"><button class="btn" onclick="goView('stockparfums')">🍬 Stock →</button></div></div>
+     <div class="flex" style="gap:6px"><button class="btn ghost sm" onclick="reconstructStockHistoryPreview()" title="Recréer l'historique passé à partir des productions et commandes">🔄 Reconstruire l'historique</button><button class="btn" onclick="goView('stockparfums')">🍬 Stock →</button></div></div>
 
    <div class="panel">
      <p class="note" style="margin-bottom:10px">Journal de tous les flux de stock : production, assemblage, livraison, marché, pertes, dégustations et recrédits. Filtre pour cibler ce que tu cherches.</p>
@@ -40668,6 +40662,160 @@ async function stockMobilisableParParfum(){
 // regroupent EXACTEMENT comme les parfums ailleurs dans l'app. Source de vérité unique.
 function stockMoveKey(nom){
   return (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
+}
+
+
+// ============================================================
+// RECONSTRUCTION DE L'HISTORIQUE DE STOCK (rattrapage rétroactif)
+// ------------------------------------------------------------
+// Recrée les mouvements PASSÉS qui n'ont pas été journalisés (avant que
+// le journal fonctionne). Sources SÛRES uniquement :
+//   • ENTRÉES : productions terminées (prodTermineTs / statut termine) → +qteReelle
+//   • SORTIES : orderItems de commandes Livrées/Terminées → -qte
+// Chaque mouvement reconstruit porte reconstruit:true → RÉVERSIBLE et IDEMPOTENT
+// (on ne recrée pas un mouvement déjà reconstruit pour la même source).
+// ============================================================
+
+// Calcule (sans rien écrire) la liste des mouvements à reconstruire.
+async function _reconstructStockPlan(){
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  window._allRecipesCache = recipes;
+  const prods  = await db.productions.toArray().catch(()=>[]);
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const items  = await db.orderItems.toArray().catch(()=>[]);
+  const existing = await db.stockMoves.toArray().catch(()=>[]);
+
+  // Clés des reconstructions déjà faites (idempotence)
+  const dejaEntree = new Set(existing.filter(m=>m.reconstruit && m.sens>0 && m.productionId!=null).map(m=>'P'+m.productionId));
+  const dejaSortie = new Set(existing.filter(m=>m.reconstruit && m.sens<0 && m.orderId!=null && m.productionId!=null).map(m=>'O'+m.orderId+'_'+m.productionId));
+
+  const entrees = [];
+  for(const p of prods){
+    const fini = (p.prodStatut==='termine') || (p.prodTermineTs && String(p.prodTermineTs).length>0) || (p.prodStatut==null);
+    if(!fini) continue;
+    const q = round3(+p.qteReelle || +p.qteProduite || 0);
+    if(q<=0) continue;
+    const ts = p.prodTermineTs || p.prodTimestamp || (p.date ? p.date+'T08:00' : '');
+    if(!ts) continue;
+    if(dejaEntree.has('P'+p.id)) continue;
+    const comp = (p.composant==='coques') ? 'coques' : (p.composant==='ganache') ? 'ganache' : 'macaron';
+    entrees.push({ ts, qte:q, nom:prodNomComplet(p, recipes), composant:comp, productionId:p.id });
+  }
+
+  const ordById = {}; orders.forEach(o=>{ ordById[o.id]=o; });
+  const sorties = [];
+  for(const it of items){
+    const o = ordById[it.orderId]; if(!o) continue;
+    const st = normStatus(o.statut);
+    if(st!=='Livrée' && st!=='Terminée') continue;
+    const q = round3(+it.qte||0); if(q<=0) continue;
+    if(it.productionId==null) continue;
+    if(dejaSortie.has('O'+it.orderId+'_'+it.productionId)) continue;
+    // retrouver le parfum via la production liée
+    const prod = prods.find(pp=>+pp.id===+it.productionId);
+    const nom = prod ? prodNomComplet(prod, recipes) : '(production supprimée)';
+    const ts = o.dateLivraison || o.date || (prod && (prod.prodTermineTs||prod.date)) || today();
+    const tsIso = String(ts).length>10 ? ts : (ts+'T12:00');
+    sorties.push({ ts:tsIso, qte:q, nom, composant:'macaron', orderId:it.orderId, productionId:it.productionId });
+  }
+
+  return { entrees, sorties, existing:existing.length };
+}
+
+// Affiche l'aperçu (modale) avant toute écriture.
+async function reconstructStockHistoryPreview(){
+  try{
+    toast('Calcul en cours…');
+    const plan = await _reconstructStockPlan();
+    const nE = plan.entrees.length, nS = plan.sorties.length;
+    const qE = round3(plan.entrees.reduce((s,m)=>s+m.qte,0));
+    const qS = round3(plan.sorties.reduce((s,m)=>s+m.qte,0));
+    if(nE+nS===0){
+      openModal(`<h2>Reconstruction de l'historique</h2>
+        <p class="note">Rien à reconstruire : soit c'est déjà fait, soit aucune production terminée / commande livrée n'a été trouvée.</p>
+        <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+      return;
+    }
+    const echant = plan.entrees.slice().sort((a,b)=>a.ts<b.ts?1:-1).slice(0,5)
+      .map(e=>`<div style="font-size:.78rem;color:#6a5a52">${esc(e.ts.slice(0,16))} · +${qty(e.qte)} · ${esc(e.nom)} <span style="color:#9a8a82">(${esc(e.composant)})</span></div>`).join('');
+    openModal(`<h2>Reconstruction de l'historique de stock</h2>
+      <p class="note">Cette opération va recréer les mouvements passés à partir de tes productions terminées et commandes livrées. Les mouvements ajoutés sont <b>marqués comme reconstruits</b> : tu pourras les retirer d'un seul clic si besoin.</p>
+      <div class="panel" style="background:#faf6f0;border:1px solid var(--hair)">
+        <div style="display:flex;justify-content:space-between;padding:6px 0"><span>📦 Entrées (productions)</span><b>${nE} mvts · +${qty(qE)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--hair)"><span>📤 Sorties (livraisons)</span><b>${nS} mvts · −${qty(qS)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--hair)"><span><b>Total à créer</b></span><b>${nE+nS} mouvements</b></div>
+      </div>
+      ${echant?`<p class="note" style="margin-bottom:4px">Aperçu (5 dernières entrées) :</p>${echant}`:''}
+      <p class="note" style="margin-top:10px;color:#b04a3e">⚠️ Pense à sauvegarder ta base (iCloud) avant, par précaution.</p>
+      <div class="flex" style="justify-content:flex-end;gap:8px;margin-top:12px">
+        <button class="btn ghost" onclick="closeModal()">Annuler</button>
+        <button class="btn gold" onclick="reconstructStockHistoryRun()">Reconstruire ${nE+nS} mouvements</button>
+      </div>`);
+  }catch(e){
+    toast('Erreur aperçu : '+(e&&e.message||e));
+  }
+}
+
+// Exécute la reconstruction (écrit réellement, après confirmation).
+async function reconstructStockHistoryRun(){
+  try{
+    closeModal();
+    toast('Reconstruction en cours…');
+    const plan = await _reconstructStockPlan();
+    let ok = 0;
+    for(const e of plan.entrees){
+      try{
+        await db.stockMoves.add({
+          ts:e.ts, parfumNorm:stockMoveKey(e.nom), parfumNom:e.nom,
+          composant:e.composant, sens:1, qte:e.qte, type:'production',
+          productionId:e.productionId, reconstruit:true, note:'reconstruit (rattrapage)'
+        });
+        ok++;
+      }catch(_){}
+    }
+    for(const s of plan.sorties){
+      try{
+        await db.stockMoves.add({
+          ts:s.ts, parfumNorm:stockMoveKey(s.nom), parfumNom:s.nom,
+          composant:s.composant, sens:-1, qte:s.qte, type:'livraison',
+          orderId:s.orderId, productionId:s.productionId, reconstruit:true, note:'reconstruit (rattrapage)'
+        });
+        ok++;
+      }catch(_){}
+    }
+    if(typeof markUnsaved==='function') markUnsaved();
+    toast(`✓ ${ok} mouvement(s) reconstruit(s)`);
+    if(view==='histostock' && typeof renderHistoStock==='function') renderHistoStock();
+  }catch(e){
+    toast('Erreur reconstruction : '+(e&&e.message||e));
+  }
+}
+
+// Annule (retire) tous les mouvements reconstruits — réversibilité totale.
+async function reconstructStockHistoryUndo(){
+  try{
+    const all = await db.stockMoves.toArray().catch(()=>[]);
+    const recon = all.filter(m=>m.reconstruit);
+    if(!recon.length){ toast('Aucun mouvement reconstruit à retirer'); return; }
+    openModal(`<h2>Retirer les mouvements reconstruits</h2>
+      <p class="note">${recon.length} mouvement(s) marqué(s) « reconstruit » seront supprimés. Tes mouvements réels (non reconstruits) ne sont pas touchés.</p>
+      <div class="flex" style="justify-content:flex-end;gap:8px">
+        <button class="btn ghost" onclick="closeModal()">Annuler</button>
+        <button class="btn danger" onclick="reconstructStockHistoryUndoRun()">Retirer ${recon.length} mouvement(s)</button>
+      </div>`);
+  }catch(e){ toast('Erreur : '+(e&&e.message||e)); }
+}
+async function reconstructStockHistoryUndoRun(){
+  try{
+    closeModal();
+    const all = await db.stockMoves.toArray().catch(()=>[]);
+    const recon = all.filter(m=>m.reconstruit);
+    let n=0;
+    for(const m of recon){ try{ await db.stockMoves.delete(m.id); n++; }catch(_){} }
+    if(typeof markUnsaved==='function') markUnsaved();
+    toast(`✓ ${n} mouvement(s) reconstruit(s) retiré(s)`);
+    if(view==='histostock' && typeof renderHistoStock==='function') renderHistoStock();
+  }catch(e){ toast('Erreur : '+(e&&e.message||e)); }
 }
 
 // [JOURNAL DE STOCK] Enregistre UN mouvement de stock fini dans la table stockMoves.
