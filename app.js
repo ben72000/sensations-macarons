@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1024';
+const APP_VERSION = 'v1025';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
@@ -2958,8 +2958,9 @@ async function runUndo(){
   const t=document.getElementById('toast'); if(t) t.classList.remove('show','with-action');
   if(typeof fn==='function'){ try{ await fn(); toast('Action annulée ✓'); }catch(e){ toast('Annulation impossible'); } }
 }
-const overlay=document.getElementById('overlay'), modal=document.getElementById('modal');
-function openModal(html){ modal.innerHTML=html; overlay.classList.add('show');
+let overlay=document.getElementById('overlay'), modal=document.getElementById('modal');
+if(!overlay||!modal){ document.addEventListener('DOMContentLoaded', function(){ overlay=overlay||document.getElementById('overlay'); modal=modal||document.getElementById('modal'); if(overlay){ overlay.addEventListener('click', function(e){ if(e.target===overlay) closeModal(); }); } }); }
+function openModal(html){ if(!modal||!overlay){ modal=modal||document.getElementById('modal'); overlay=overlay||document.getElementById('overlay'); if(!modal||!overlay) return; } modal.innerHTML=html; overlay.classList.add('show');
   if(_histReady && !_popping){ try{ history.pushState({kind:'modal', view:view}, '', '#modal'); }catch(e){} } }
 // ============================================================
 //  AFFICHAGE D'UN DOCUMENT IMPRIMABLE (facture, étiquettes, liste…)
@@ -3003,7 +3004,7 @@ function closePrintView(opts){
   }
 }
 function closeModal(opts){
-  overlay.classList.remove('show'); modal.innerHTML='';
+  if(overlay) overlay.classList.remove('show'); if(modal) modal.innerHTML='';
   _privacySuspend=0; // fin d'une éventuelle suspension du masquage (saisie/détail commande)
   // sécurité : couper toute caméra de scan encore active
   if(typeof stopScanStream==='function'){ try{ stopScanStream(); }catch(e){} }
@@ -3013,7 +3014,7 @@ function closeModal(opts){
     try{ history.back(); }catch(e){}
   }
 }
-overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(); });
+if(overlay){ overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(); }); }
 
 // --------- Router ---------
 let view='accueil';
