@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1025';
+const APP_VERSION = 'v1026';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
@@ -3674,12 +3674,23 @@ function render(){
 }
 // Affiche une erreur de rendu dans le conteneur principal au lieu de laisser un écran vide.
 function renderViewError(v, err){
-  console.error('Erreur de rendu vue', v, err);
-  const main=document.getElementById('main'); if(!main) return;
-  main.innerHTML = `<div class="topbar"><div><h1>Affichage indisponible</h1><p>Vue « ${esc(v)} »</p></div></div>
-    <div class="panel"><div class="empty">Une erreur est survenue à l'affichage de cette vue.<br>
-      <span style="color:#9a8a82;font-size:.8rem">${esc((err&&err.message)||String(err)||'erreur inconnue')}</span><br><br>
-      <button class="btn ghost sm" onclick="render()">Réessayer</button></div></div>`;
+  try{ console.error('Erreur de rendu vue', v, err); }catch(_){}
+  let main=document.getElementById('main');
+  if(!main){ try{ main=document.querySelector('.main')||document.body; }catch(_){ return; } }
+  if(!main) return;
+  let msg='erreur inconnue';
+  try{ msg = (err&&err.message) ? err.message : String(err); }catch(_){}
+  let stack=''; try{ if(err&&err.stack){ stack = String(err.stack).split('\n').slice(0,3).join(' | '); } }catch(_){}
+  const safe = (x)=>{ try{ return (typeof esc==='function')? esc(x) : String(x).replace(/[<>&]/g,''); }catch(_){ return ''; } };
+  try{
+    main.innerHTML = `<div class="topbar"><div><h1>Affichage indisponible</h1><p>Vue « ${safe(v)} »</p></div></div>
+      <div class="panel"><div class="empty">Une erreur est survenue à l'affichage de cette vue.<br>
+        <span style="color:#9a8a82;font-size:.8rem">${safe(msg)}</span>
+        ${stack?`<br><span style="color:#b8a99f;font-size:.66rem">${safe(stack)}</span>`:''}<br><br>
+        <button class="btn ghost sm" onclick="render()">Réessayer</button></div></div>`;
+  }catch(_){
+    try{ main.textContent = 'Affichage indisponible : ' + msg; }catch(__){}
+  }
 }
 
 /* ============================================================
@@ -3860,8 +3871,8 @@ async function renderDash(){
   const mkInMonth = d => ymKey(d||'') === _mkCourant;
   // CA DU MOIS : on utilise la MÊME fonction que le détail (caDuMois) — source unique de vérité.
   // La carte et le détail ne peuvent donc plus diverger : même calcul, mêmes données.
-  const _caMoisObj = await caDuMois(_mkCourant);
-  const caMonth = _caMoisObj.total;
+  let _caMoisObj = {total:0}; try{ _caMoisObj = await caDuMois(_mkCourant) || {total:0}; }catch(e){ console.error('caDuMois dash',e); }
+  const caMonth = _caMoisObj.total || 0;
   const _moisCourantLbl = (typeof monthLabel==='function') ? monthLabel(monthKey(today())) : 'ce mois';
   // Nombre d'ENCAISSEMENTS du mois (commandes + marchés) — cohérent avec le détail affiché.
   let _nbEncMois = 0;
@@ -3875,7 +3886,7 @@ async function renderDash(){
   // alertes stock & DLC
   let low=[], dlcAlert=[];
   for(const mat of materials){
-    const {total,dlcMin}=await stockParMatiere(mat.id);
+    let total=0, dlcMin=null; try{ const _sm=await stockParMatiere(mat.id)||{}; total=_sm.total||0; dlcMin=_sm.dlcMin||null; }catch(e){ console.error('stockParMatiere dash',mat&&mat.id,e); }
     if(total<=(+mat.seuil||0)) low.push({nom:mat.nom,total,unite:mat.unite,seuil:mat.seuil});
     // Les emballages (carton, film…) ne périment pas → pas d'alerte DLC pour eux.
     if(dlcMin && mat.categorie!=='emballage'){ const d=daysTo(dlcMin); if(d!==null && d<=7) dlcAlert.push({nom:mat.nom,dlc:dlcMin,j:d}); }
