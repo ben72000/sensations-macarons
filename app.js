@@ -5,8 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1019';
-const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
+const APP_VERSION = 'v1020';
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
@@ -2865,14 +2864,6 @@ const ymLabel = ym => { const [y,m]=ym.split('-'); return new Date(y,+m-1,1).toL
 // --------- Toast & Modal ---------
 let tt;
 function toast(msg){ const t=document.getElementById('toast'); if(!t) return; t.innerHTML=esc(msg); t.classList.remove('with-action'); t.classList.add('show'); clearTimeout(tt); tt=setTimeout(()=>t.classList.remove('show'),2400); }
-// Affiche le résumé de la mise à jour courante (pastille « Mise à jour » de l'accueil).
-// Réutilise le toast, avec un délai un peu plus long car le texte est plus dense.
-function homeShowMaj(){
-  const t=document.getElementById('toast'); if(!t) return;
-  t.innerHTML='<b>'+esc(APP_VERSION)+'</b> \u2014 '+esc(APP_MAJ);
-  t.classList.remove('with-action'); t.classList.add('show');
-  clearTimeout(tt); tt=setTimeout(()=>t.classList.remove('show'),6000);
-}
 // ---- ANNULATION RAPIDE (undo) ----
 // Le toast affiche un message + un lien « Annuler » discret, au même endroit que les
 // notifications habituelles (non invasif). Disparaît seul après quelques secondes.
@@ -3852,7 +3843,7 @@ async function renderDash(){
        <span class="hhc-sub">${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</span>
        <span class="hhc-clock" id="homeClock">${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
        <span class="hhc-ca">${privacyModeEnabled()?'•••':euro(caMonth)}<span class="hhc-ca-lbl">CA ${esc(_moisCourantLbl)}</span></span>
-       <span style="margin-top:6px;font-size:.62rem;opacity:.5;letter-spacing:.05em">${APP_VERSION}</span><span class="hhc-maj" onclick="homeShowMaj()" title="Quoi de neuf">\u2728 Mise \u00e0 jour ${APP_VERSION}</span>
+       <span style="margin-top:6px;font-size:.62rem;opacity:.5;letter-spacing:.05em">${APP_VERSION}</span>
      </div>
    </div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
@@ -33154,11 +33145,11 @@ const FACT_STYLE = `   <style>
      .avis-bloc.avis-h .avis-qr { width:26mm; height:26mm; margin:0; flex:0 0 26mm; }
      .avis-bloc.avis-h .avis-side { flex:1; }
      /* Bas de facture compact + solidaire (évite le saut de page du bloc RIB+QR) */
-     .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; }
-     .bas-final .legal-bloc { margin-top:3mm; }
+     .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; width:100%; box-sizing:border-box; }
+     .bas-final .legal-bloc { margin-top:3mm; width:100%; box-sizing:border-box; }
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
-     .bas-final .rib-avis-col { margin-top:0; }
+     .bas-final .rib-avis-col { margin-top:0; max-width:none; width:100%; }
      .bas-final .rib-avis-row { display:flex; gap:4mm; align-items:stretch; margin-top:0; width:100%; box-sizing:border-box; }
      .bas-final .rib-avis-half { flex:1 1 0; min-width:0; display:flex; }
      .bas-final .rib-avis-half > .rib, .bas-final .rib-avis-half > .avis-bloc { margin-top:0; width:100%; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; }
@@ -33545,11 +33536,11 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .avis-bloc.avis-h .avis-qr { width:26mm; height:26mm; margin:0; flex:0 0 26mm; }
      .avis-bloc.avis-h .avis-side { flex:1; }
      /* Bas de facture compact + solidaire (évite le saut de page du bloc RIB+QR) */
-     .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; }
-     .bas-final .legal-bloc { margin-top:3mm; }
+     .bas-final { break-inside:avoid; page-break-inside:avoid; margin-top:4mm; width:100%; box-sizing:border-box; }
+     .bas-final .legal-bloc { margin-top:3mm; width:100%; box-sizing:border-box; }
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
-     .bas-final .rib-avis-col { margin-top:0; }
+     .bas-final .rib-avis-col { margin-top:0; max-width:none; width:100%; }
      .bas-final .rib-avis-row { display:flex; gap:4mm; align-items:stretch; margin-top:0; width:100%; box-sizing:border-box; }
      .bas-final .rib-avis-half { flex:1 1 0; min-width:0; display:flex; }
      .bas-final .rib-avis-half > .rib, .bas-final .rib-avis-half > .avis-bloc { margin-top:0; width:100%; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; }
