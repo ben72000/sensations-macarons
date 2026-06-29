@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1060';
+const APP_VERSION = 'v1061';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -23112,6 +23112,10 @@ function parseIntent(texte, ctx){
     if(_flT){
       return {intent:'query_temps_prod', params:{flavor:_flT, pieces:(_nbT&&_nbT>0)?_nbT:null}, critical:false, label:`Temps de production — ${_flT}`};
     }
+    // [v1061] Temps GÉNÉRIQUE d'un batch/d'une fournée, sans parfum ni client précisé.
+    if(/\b(batch|batchs|fournee|fournees|tournee|tournees|un macaron|une fournee|production)\b/.test(t)){
+      return {intent:'query_temps_prod', params:{generique:true}, critical:false, label:'Temps de production — un batch'};
+    }
   }
   // [V938] NOMBRE DE BATCHS / FOURNÉES pour N macarons d'un parfum.
   if(/\b(combien d'?(ordres? de fabrication)|combien de (batchs?|fournees?|tournees?|ordres? de fabrication)|combien de fois (je dois )?(produire|enfourner)|ca fait combien de (batchs?|fournees?))\b/.test(t)){
@@ -23178,6 +23182,13 @@ function parseIntent(texte, ctx){
       return {intent:'query_ingredient_pour', params:{material:_matIng, flavor:_flIng, pieces:(pieces&&pieces>0)?pieces:null},
         critical:false, label:`Quantité de ${_matIng.nom} pour ${_flIng}`};
     }
+  }
+  // [v1061] PARFUMS SANS RECETTE : « quels parfums n'ont pas de recette », « lesquels sans recette ».
+  // Doit passer AVANT query_recipe (qui happerait « recette »). Cas distinct des allergènes.
+  if(/\b(quels?|lesquels?|liste|quel sont|combien de)\b/.test(t)
+     && /\b(parfums?|macarons?|recettes?)\b/.test(t)
+     && /\b(sans recette|pas de recette|n'?ont pas (de )?recette|n'?a pas (de )?recette|manque (la |de )?recette|non rattaches?|sans bom)\b/.test(t)){
+    return {intent:'query_parfums_sans', params:{mode:'recette'}, critical:false, label:'Parfums sans recette'};
   }
   // RECETTE (éventuellement mise à l'échelle) : « donne-moi la recette des macarons citron pour 25
   // pièces », « recette de la ganache vanille ». Capte le parfum et un nombre de pièces optionnel.
@@ -23348,8 +23359,15 @@ function parseIntent(texte, ctx){
      || (/\b(livraison|livraisons|livrer|je livre|dois je livrer)\b/.test(t) && /\b(prochaine|prochaines|a venir|mes|qui|prochainement|du jour|aujourd|cette semaine|demain|liste|montre|affiche|je livre|le \d|du \d)\b/.test(t) && !aiFindClient(t,clients))
      || (/\b(a preparer|a livrer|qu'?est ce que j'?ai a preparer|j'?ai quoi a preparer|a faire pour|que (je )?dois livrer|qu'?est ce que je dois livrer|qu'?est ce que je livre|qu'?est ce que je (dois )?prepare|que (dois je|je dois) preparer|quoi preparer|prochaines commandes|mes prochaines commandes)\b/.test(t) && !/produire|fabriquer|lancer/.test(t) && !aiFindClient(t,clients))){
     const date=aiParseDate(t);
-    return {intent:'query_orders', params:{date, statut: /preparer/.test(t)?'À préparer':null}, critical:false,
-      label: date?`Afficher les commandes du ${date}`:'Afficher les commandes / livraisons à venir'};
+    // [v1061] PÉRIODE : « du jour / aujourd'hui » → jour ; « cette semaine » → semaine ; « demain » → demain.
+    // Distingue une plage (jour/semaine) d'une date exacte, pour filtrer correctement dans aiQueryOrders.
+    let periode=null;
+    if(/\bcette semaine\b|\bde la semaine\b|\bsemaine\b/.test(t)) periode='semaine';
+    else if(/\bdu jour\b|\baujourd'?hui\b/.test(t)) periode='jour';
+    else if(/\bapres[-\s]demain\b/.test(t)) periode='apresdemain';
+    else if(/\bdemain\b/.test(t)) periode='demain';
+    return {intent:'query_orders', params:{date, periode, statut: /preparer/.test(t)?'À préparer':null}, critical:false,
+      label: periode?`Afficher les commandes (${periode})`:(date?`Afficher les commandes du ${date}`:'Afficher les commandes / livraisons à venir')};
   }
   // [LOT 2] RENTABILITÉ (marge, pas volume) : « le parfum le plus rentable », « quel client me fait
   // gagner / perdre de l'argent », « ma meilleure marge ». Distingue la cible parfum vs client.
@@ -26365,8 +26383,13 @@ function aiShortcuts(intent, params, resultShortcuts){
       onclick = `goView('${sc.view}')`;
     }
     // Le label peut s'enrichir de la valeur ciblée (ex. « Stock de Vanille », « Fiche de Emma »).
+    // [v1061] Pour un focus « jour », on AFFICHE la date au format lisible (29 juin) plutôt que l'ISO brut.
+    let focusValAffiche = focusVal;
+    if(sc.focusType==='jour' && focusVal && /^\d{4}-\d{2}-\d{2}$/.test(focusVal) && typeof fmtDate==='function'){
+      try{ focusValAffiche = fmtDate(focusVal); }catch(_){}
+    }
     const label = ((openId!=null || (sc.focusType && focusVal)) && sc.labelWithFocus)
-      ? sc.labelWithFocus.replace('{val}', focusVal||'') : sc.label;
+      ? sc.labelWithFocus.replace('{val}', focusValAffiche||'') : sc.label;
     return `<button class="btn ghost sm" onclick="${onclick}" style="margin:2px 4px 0 0">${esc(label)}</button>`;
   }).join('');
   return `<div style="margin-top:10px;padding-top:8px;border-top:1px solid #f0eae0;display:flex;flex-wrap:wrap;align-items:center">
@@ -27491,9 +27514,12 @@ async function aiQueryAdvice(){
       }
     }catch(_){}
     if(out){
+      // [v1061] On accole les raccourcis « Aller plus loin » de query_advice (aiQueryAdvice écrit
+      // directement dans #aiOut sans passer par aiSay, d'où l'absence de raccourcis auparavant).
+      const sc = (typeof aiShortcuts==='function') ? aiShortcuts('query_advice', window._aiCurrentParams) : '';
       out.innerHTML = (html || ordre || verdictHtml)
-        ? `<div style="margin-top:4px">${verdictHtml}${ordre}${html}<p class="note" style="margin-top:8px">💬 Tu peux aussi me demander : « qu'est-ce qui est en retard ? », « le stock de chocolat », « les commandes de demain »…</p></div>`
-        : `<div class="panel"><p>Rien d'urgent à signaler pour le moment. Tu peux avancer sereinement.</p></div>`;
+        ? `<div style="margin-top:4px">${verdictHtml}${ordre}${html}<p class="note" style="margin-top:8px">💬 Tu peux aussi me demander : « qu'est-ce qui est en retard ? », « le stock de chocolat », « les commandes de demain »…</p>${sc}</div>`
+        : `<div class="panel"><p>Rien d'urgent à signaler pour le moment. Tu peux avancer sereinement.</p>${sc}</div>`;
     }
   }catch(e){ console.error('aiQueryAdvice',e); if(out) out.innerHTML=`<div class="panel"><p>Je n'ai pas pu générer le conseil. Réessaie.</p></div>`; }
 }
@@ -27737,10 +27763,33 @@ async function aiQueryOrders(params){
   let orders=await db.orders.toArray();
   const clients=await db.clients.toArray();
   const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
-  if(params.date) orders=orders.filter(o=>o.date===params.date);
+  // [v1061] Filtrage par PÉRIODE (plage de dates) prioritaire sur la date exacte.
+  let titrePeriode='';
+  if(params.periode){
+    const d0=new Date(); d0.setHours(0,0,0,0);
+    let debut, fin, lbl;
+    if(params.periode==='jour'){ debut=new Date(d0); fin=new Date(d0); lbl="du jour"; }
+    else if(params.periode==='demain'){ debut=new Date(d0); debut.setDate(debut.getDate()+1); fin=new Date(debut); lbl="de demain"; }
+    else if(params.periode==='apresdemain'){ debut=new Date(d0); debut.setDate(debut.getDate()+2); fin=new Date(debut); lbl="d'après-demain"; }
+    else if(params.periode==='semaine'){
+      // semaine courante lundi→dimanche
+      const dow=(d0.getDay()+6)%7; // 0=lundi
+      debut=new Date(d0); debut.setDate(debut.getDate()-dow);
+      fin=new Date(debut); fin.setDate(fin.getDate()+6);
+      lbl="de cette semaine";
+    }
+    if(debut && fin){
+      const iso=x=>x.toISOString().slice(0,10);
+      const dDeb=iso(debut), dFin=iso(fin);
+      orders=orders.filter(o=>o.date && o.date>=dDeb && o.date<=dFin);
+      titrePeriode=' '+lbl;
+    }
+  } else if(params.date){
+    orders=orders.filter(o=>o.date===params.date);
+  }
   if(params.statut) orders=orders.filter(o=>normStatus(o.statut)===params.statut);
   orders.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  const titre=`Commandes${params.statut?' à préparer':''}${params.date?' du '+fmtDate(params.date):''}`;
+  const titre=`Commandes${params.statut?' à préparer':''}${titrePeriode}${(!params.periode&&params.date)?' du '+fmtDate(params.date):''}`;
   if(!orders.length) return aiSay(`<h3 style="font-size:1rem">${titre}</h3><p class="note">Aucune commande.</p>`);
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">${titre} (${orders.length})</h3>
     ${orders.map(o=>`<div class="sum-box"><span>${esc(clName(o.clientId))} · ${fmtDate(o.date)}</span><b>${euro(o.montant)} · ${esc(normStatus(o.statut))}</b></div>`).join('')}`);
@@ -27925,9 +27974,15 @@ async function aiQueryDerniereCommande(params){
 async function aiQueryStockFinis(params){
   params=params||{};
   const prods=await db.productions.toArray();
+  const recipes = window._allRecipesCache || await db.recipes.toArray().catch(()=>[]);
   const byParfum={};
   prods.forEach(p=>{ if(prodComposant(p)!=='complet') return; const q=+p.qteRestante||0; if(q<=0) return;
-    const nom=p.nom||p.parfum||'?'; byParfum[nom]=(byParfum[nom]||0)+q; });
+    // [v1061] Résolution fiable du nom : prodNomComplet (via recipeId) plutôt que p.nom/p.parfum
+    // qui sont souvent absents sur un assemblage → évite l'affichage « ? ».
+    let nom = p.nom||p.parfum;
+    if(!nom || nom==='?'){ try{ nom = prodNomComplet(p, recipes); }catch(_){ nom='?'; } }
+    if(!nom || /recette supprim/.test(nom)) nom = p.nom||p.parfum||'Parfum inconnu';
+    byParfum[nom]=(byParfum[nom]||0)+q; });
   const entries=Object.entries(byParfum).filter(([,q])=>q>0).sort((a,b)=>b[1]-a[1]);
   const n=(s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   if(params.flavor){
@@ -28306,6 +28361,16 @@ async function aiQueryTempsProd(params){
       ${aiDetails(blocs.join(''), 'Détail par parfum')}
       <p class="note">Temps de travail estimé (toutes étapes). Le repos de la ganache (12 h) et la maturation s'ajoutent en temps d'attente, pas de travail.</p>`);
   }
+  // [v1061] Temps GÉNÉRIQUE d'un batch (aucun parfum/client précisé) : estimation moyenne sur un
+  // batch standard, en s'appuyant sur le détail d'étapes du moteur. Invite à préciser un parfum.
+  if(params.generique){
+    const d = await _aiTempsProdDetail(TB, null);
+    const lignes = (d.etapes||[]).map(e=>`<div class="sum-box"><span>${esc(e.nom)}${e.detail?` <span style="color:#9a8a82;font-size:.74rem">(${esc(e.detail)})</span>`:''}</span><b>${_aiFmtDuree(e.min)}</b></div>`).join('');
+    return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Temps de production — un batch</h3>
+      ${aiHero(_aiFmtDuree(d.total), 'Temps de travail estimé', {sub:`pour une fournée standard de ${qty(TB)} macarons`})}
+      ${lignes?aiDetails(lignes, 'Détail étape par étape'):''}
+      <p class="note">Estimation moyenne pour un batch (toutes étapes actives). Le temps réel varie selon le parfum — précise-le pour un calcul exact (ex. « temps pour produire la pistache »). Le repos ganache (12 h) et la maturation (24 h) sont des temps d'attente, pas de manipulation.</p>`);
+  }
   // Cas parfum + nombre.
   if(!params.flavor) return aiSay(`<p>Pour quel parfum (et combien de macarons) veux-tu le temps de production ?</p>`);
   const n = params.pieces || TB;
@@ -28384,6 +28449,32 @@ async function aiQueryCoutCommande(params){
 // [V938] PARFUMS COMPATIBLES AVEC UN ALLERGÈNE (sans X). Inverse de query_allergenes.
 async function aiQueryParfumsSans(params){
   params=params||{};
+  // [v1061] MODE « sans recette » : parfums qui apparaissent dans les ventes/commandes mais n'ont
+  // aucune recette définie (impossible de calculer coût/marge, ni d'intégrer leurs besoins matières).
+  if(params.mode==='recette'){
+    const recipes = await db.recipes.toArray();
+    const norm = (s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+    const recSet = new Set(recipes.map(r=>norm(r.produitNom)).filter(Boolean));
+    // parfums « connus » = ceux apparaissant dans les commandes (lignes) + la liste FLAVORS de référence.
+    const orders = await db.orders.toArray();
+    const venduSet = new Map(); // norm → libellé d'origine
+    orders.forEach(o=>{
+      let lignes=[]; try{ lignes = (typeof orderToLines==='function') ? orderToLines(o) : []; }catch(e){ lignes=[]; }
+      lignes.forEach(l=>{ const nom=l.parfum||l.flavor||l.nom; if(nom){ const k=norm(nom); if(!venduSet.has(k)) venduSet.set(k, nom); } });
+    });
+    if(typeof FLAVORS!=='undefined') FLAVORS.forEach(f=>{ const k=norm(f); if(!venduSet.has(k)) venduSet.set(k, f); });
+    const sansRecette=[];
+    venduSet.forEach((libelle,k)=>{ if(!recSet.has(k)) sansRecette.push(libelle); });
+    sansRecette.sort((a,b)=>a.localeCompare(b));
+    if(!sansRecette.length){
+      return aiSay(`${aiHero('0', 'Parfum sans recette', {color:'var(--vert,#3f7d52)'})}
+        ${aiSynth('Tous tes parfums vendus ont une recette définie. Rien à compléter.', {tone:'ok', icon:'✅'})}`);
+    }
+    return aiSay(`${aiHero(`${sansRecette.length} <span style="font-size:1rem;font-weight:600">parfum${sansRecette.length>1?'s':''}</span>`, 'Sans recette définie', {color:'var(--red)'})}
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 8px">${sansRecette.map(p=>`<span class="tag" style="background:#fdecea;color:#b3261e;border:1px solid #efc4bd;font-size:.8rem">${esc(p)}</span>`).join('')}</div>
+      ${aiSynth('Ces parfums apparaissent dans tes ventes mais n\'ont pas de recette — impossible de calculer leur coût/marge ni leurs besoins matières. Crée-leur une recette.', {icon:'📖', tone:'warn'})}`,
+      [{ label:'➕ Nouvelle recette', action:'aiActNouvelleRecette' }, { label:'🗂 Ouvrir les recettes', view:'recettes' }]);
+  }
   if(!params.allergene) return aiSay(`<p>Sans quel allergène ? (ex. « quels parfums sont sans gluten »)</p>`);
   const recipes = await db.recipes.toArray();
   const n=(s)=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
@@ -28915,7 +29006,7 @@ async function aiQueryProchaineLivraison(){
   const autres = futures.length-1;
   return aiSay(`    ${aiHero(quand?quand.charAt(0).toUpperCase()+quand.slice(1):fmtDate(p.ref), `${esc(clName(p.o.clientId))}`, {color:col, sub:`${fmtDate(p.ref)}${heure}${lieu?` · ${lieu}`:''}`})}
     ${contenu?`<div class="sum-box"><span>À livrer</span><b style="font-weight:600">${esc(contenu)}</b></div>`:''}
-    ${autres>0?`<p class="note">${autres} autre${autres>1?'s':''} livraison${autres>1?'s':''} suivent ensuite.</p>`:'<p class="note">C\'est ta seule livraison programmée.</p>'}
+    ${autres>0?`<p class="note">${autres} autre${autres>1?'s':''} livraison${autres>1?'s':''} ${autres>1?'suivent':'suit'} ensuite.</p>`:'<p class="note">C\'est ta seule livraison programmée.</p>'}
     ${aiSuite([{label:'📋 Toutes mes commandes', view:'commandes'},{label:'🏭 Suis-je dans les temps ?', ask:'est-ce que je suis dans les temps'}])}`);
 }
 async function aiQueryDelivery(params){
