@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1031';
+const APP_VERSION = 'v1032';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -9315,9 +9315,15 @@ async function prodTermineConfirm(id){
   try{
     const _compMv = (comp==='coques') ? 'coques' : (comp==='ganache') ? 'ganache' : 'macaron';
     const _qteMv = round3(+p.qteRestante||0);
-    await logStockMove({ parfumNom: prodNomComplet(p), composant:_compMv, sens:+1, qte:_qteMv,
-      type:'production', productionId:id });
-  }catch(_){}
+    // [DIAG TEMPORAIRE] visibilite du journal de stock
+    if(_qteMv<=0){
+      toast('\u26a0 DIAG: qte a journaliser = '+_qteMv+' \u2192 mouvement ignore (qteRestante vide)');
+    } else {
+      const _mvId = await logStockMove({ parfumNom: prodNomComplet(p), composant:_compMv, sens:+1, qte:_qteMv,
+        type:'production', productionId:id });
+      toast(_mvId ? ('\u2713 DIAG: stock journalise (mvt #'+_mvId+', '+_qteMv+' '+_compMv+')') : '\u274c DIAG: logStockMove a renvoye null');
+    }
+  }catch(_e){ toast('\u274c DIAG: erreur journal stock \u2014 '+(_e&&_e.message||_e)); }
   closeModal(); renderProductions();
   // [TEMPS PAR RECETTE] Si une tâche d'atelier est rattachée à ce batch, demander à l'arrêter ou la poursuivre.
   try{
