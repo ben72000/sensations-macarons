@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1054';
+const APP_VERSION = 'v1055';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -36936,10 +36936,20 @@ function prodRenderGantt(targetSession){
   const span = Math.max(1, t1 - t0);
   const fmtH = ms => new Date(ms).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
 
-  // Graduations horaires (toutes les heures rondes dans la plage).
+  // Graduations à intervalle ADAPTATIF : on choisit un pas « rond » qui produit au plus
+  // ~8 graduations, pour ne jamais les entasser (même si la session est anormalement longue).
   const ticks=[];
+  const PAS_RONDS = [5,10,15,20,30,60,120,180,240,360,720,1440]; // en minutes
+  const spanMin = span/60000;
+  let pasMin = PAS_RONDS[PAS_RONDS.length-1];
+  for(const p of PAS_RONDS){ if(spanMin/p <= 8){ pasMin = p; break; } }
+  const pasMs = pasMin*60000;
   const startH=new Date(t0); startH.setMinutes(0,0,0);
-  for(let h=startH.getTime(); h<=t1; h+=3600000){ if(h>=t0) ticks.push(h); }
+  // on aligne le 1er tick sur un multiple du pas après t0
+  let first = startH.getTime();
+  while(first < t0) first += pasMs;
+  for(let h=first; h<=t1; h+=pasMs){ ticks.push(h); }
+  // format : si le pas est < 1h on garde HH:MM ; au-delà aussi (HH:MM reste lisible)
 
   const _recNames = (window._allRecipesCache||[]);
   const _recNm = rid => { const r=_recNames.find(x=>+x.id===+rid); return r?r.produitNom:('#'+rid); };
