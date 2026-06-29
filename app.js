@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1057';
+const APP_VERSION = 'v1059';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -1866,7 +1866,7 @@ async function rdRefsImportMine(){
 function rdRefsCSS(){ return `<style>
   .rdr-wrap{--bx:#52252F;--bxd:#2a1320;--cr:#faf6f0;--cr2:#f1e9df;--or:#AA7C39;--tx:#3a2530;--mut:#9a8a82;--ter:#b3654a;background:var(--cr);min-height:100vh;margin:-12px -12px 0;}
   .rdr-hd{background:linear-gradient(160deg,#52252F,#2a1320);color:#faf6f0;padding:20px 18px 16px}
-  .rdr-hd h2{font-family:Georgia,serif;font-weight:600;font-size:1.3rem;margin:0 0 3px}
+  .rdr-hd h2{font-family:'Bellota',Georgia,serif;font-weight:600;font-size:1.3rem;margin:0 0 3px}
   .rdr-hd p{margin:0;font-size:.82rem;color:#e8d8c4;opacity:.85}
   .rdr-orline{height:2px;width:46px;background:var(--or);margin-top:9px;border-radius:2px}
   .rdr-tabs{display:flex;background:#2a1320;padding:0 8px}
@@ -1882,7 +1882,7 @@ function rdRefsCSS(){ return `<style>
   .rdr-mh{padding:13px 14px;display:flex;align-items:flex-start;gap:10px;cursor:pointer}
   .rdr-mh .ic{font-size:1.2rem}
   .rdr-mh .grow{flex:1;min-width:0}
-  .rdr-mt{font-family:Georgia,serif;font-weight:600;font-size:1.02rem;color:var(--bx)}
+  .rdr-mt{font-family:'Bellota',Georgia,serif;font-weight:600;font-size:1.02rem;color:var(--bx)}
   .rdr-mmeta{font-size:.74rem;color:var(--mut);margin-top:2px}
   .rdr-src{display:inline-block;background:var(--cr2);color:var(--bx);font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:20px}
   .rdr-chev{color:var(--or);transition:transform .2s;margin-top:3px}
@@ -1900,7 +1900,7 @@ function rdRefsCSS(){ return `<style>
   .rdr-rtag.g{background:#f5ebd9;color:#8a6420} .rdr-rtag.s{background:#ece6e8;color:#7a6068}
   .rdr-back{display:inline-flex;gap:6px;color:var(--or);font-size:.82rem;font-weight:600;margin-bottom:14px;cursor:pointer}
   .rdr-adn,.rdr-compo,.rdr-etapes{background:#fff;border-radius:14px;padding:15px;border:1px solid var(--cr2);box-shadow:0 1px 3px rgba(82,37,47,.08);margin-bottom:14px}
-  .rdr-adn h3{font-family:Georgia,serif;font-size:1.05rem;color:var(--bx);margin:0 0 2px}
+  .rdr-adn h3{font-family:'Bellota',Georgia,serif;font-size:1.05rem;color:var(--bx);margin:0 0 2px}
   .rdr-asub{font-size:.74rem;color:var(--mut);margin-bottom:14px}
   .rdr-fam{display:flex;align-items:center;gap:8px;margin-bottom:9px}
   .rdr-flbl{width:84px;font-size:.75rem;color:var(--tx);flex:none}
@@ -3573,11 +3573,9 @@ function radialInit(){
   const mainEl=()=>document.getElementById('main');
   window.addEventListener('touchstart', e=>{
     const t=e.touches[0]; if(!t) return;
-    if(!_rmState.open && inCorner(t.clientX,t.clientY)){
-      _rmState.tracking=true; _rmState.startX=t.clientX; _rmState.startY=t.clientY;
-    }
-    // amorce le geste : pouce posé HORS du coin → ouvrira le menu (depuis n'importe quelle page).
-    else if(!_rmState.open && !inCorner(t.clientX,t.clientY)){
+    // Camembert radial désactivé : on n'arme plus _rmState depuis le coin.
+    // Seul le geste de balayage vers le coin (retour menu) reste actif.
+    if(!inCorner(t.clientX,t.clientY)){
       _cl.tracking=true; _cl.x0=t.clientX; _cl.y0=t.clientY;
       _cl.lastX=t.clientX; _cl.lastY=t.clientY; _cl.armed=false;
     }
@@ -4060,7 +4058,7 @@ async function renderDash(){
        <span class="hhc-sub">${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</span>
        <span class="hhc-clock" id="homeClock">${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
        <span class="hhc-ca">${privacyModeEnabled()?'•••':euro(caMonth)}<span class="hhc-ca-lbl">CA ${esc(_moisCourantLbl)}</span></span>
-       <span style="margin-top:6px;font-size:.62rem;opacity:.5;letter-spacing:.05em">${APP_VERSION}</span><span class="hhc-maj" onclick="homeShowMaj()" title="Quoi de neuf">\u2728 Mise \u00e0 jour ${APP_VERSION}</span>
+       <span style="margin-top:6px;font-size:.62rem;opacity:.5;letter-spacing:.05em">${APP_VERSION}</span>
      </div>
    </div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
@@ -46768,8 +46766,8 @@ function startClock(){
   initHistoryNav();
   ttInit();
   try{ mascotInit(); }catch(e){ console.error('mascotInit',e); }
-  // Menu radial (camembert) et geste de balayage vers le coin : désactivés à la demande.
-  // try{ radialInit(); }catch(e){ console.error('radialInit',e); }
+  // Camembert radial retiré ; seul le geste de balayage vers le coin (retour menu) reste actif.
+  try{ radialInit(); }catch(e){ console.error('radialInit',e); }
   startClock();
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
   try{ await refreshEmbEstRatio(); }catch(e){ console.error('embEstRatio',e); }

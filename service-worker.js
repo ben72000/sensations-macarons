@@ -1,4 +1,4 @@
-const CACHE = 'sm-iphone-v92';
+const CACHE = 'sm-iphone-v94';
 const ASSETS = [
   './',
   './index.html',
@@ -14,7 +14,8 @@ const ASSETS = [
   './Outfit-Regular.ttf',
   './Outfit-SemiBold.ttf',
   './Outfit-Bold.ttf',
-  './Fraunces-Variable.ttf'
+  './BellotaText-Regular.ttf',
+  './BellotaText-Bold.ttf'
 ];
 
 // INSTALL : précache + activation IMMÉDIATE de la nouvelle version (skipWaiting).
