@@ -987,8 +987,9 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .ptp-task{text-align:left;background:#fff;border:1px solid #ece3d5;border-radius:10px;padding:11px 13px;font-size:.88rem;color:#3a2a2e;cursor:pointer;font-family:inherit}
 .ptp-task:active{background:#fbf4ec}
 /* Onglets Atelier */
-.atelier-tabs{display:flex;gap:8px;margin-bottom:16px}
-.at-tab{flex:1;appearance:none;border:1.5px solid #e0d5c5;background:#fff;cursor:pointer;border-radius:11px;padding:10px;font-family:inherit;font-weight:600;font-size:.88rem;color:#8a7a72;-webkit-tap-highlight-color:transparent}
+.atelier-tabs{display:flex;gap:8px;margin-bottom:16px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+.atelier-tabs::-webkit-scrollbar{display:none}
+.at-tab{flex:0 0 auto;white-space:nowrap;appearance:none;border:1.5px solid #e0d5c5;background:#fff;cursor:pointer;border-radius:11px;padding:10px 14px;font-family:inherit;font-weight:600;font-size:.88rem;color:#8a7a72;-webkit-tap-highlight-color:transparent}
 .at-tab.active{background:var(--bordeaux,#490F25);color:var(--creme,#E8DDCD);border-color:var(--bordeaux,#490F25)}
 /* Tableau blanc (Gantt) */
 .gantt-wrap{background:#fff;border:1px solid #ece3d5;border-radius:16px;padding:14px;box-shadow:0 2px 12px rgba(73,15,37,.05);overflow:hidden}
