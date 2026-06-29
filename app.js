@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1049';
+const APP_VERSION = 'v1050';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7204,8 +7204,10 @@ async function atRenderBody(){
   let listeHtml='';
   if(_atPicker){
     const groups={};
-    prodAllTasks().forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });
-    listeHtml = Object.keys(groups).map(phase=>{
+    // recette du parfum actif → inclut ses tâches spécifiques (chablonnage, fruits secs…).
+    const recAct = (_atParfum!=null) ? recipes.find(r=>+r.id===+_atParfum) : null;
+    prodAllTasks(recAct).forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });
+    listeHtml = prodSortPhases(Object.keys(groups)).map(phase=>{
       const g=groups[phase];
       return `<div class="at-grp"><div class="at-grp-phase" style="color:${g.color}">${esc(phase)}</div>
         ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${esc(l).replace(/'/g,"\\'")}')"><span class="at-d"></span>${esc(l)}${prodIsPassive(l)?'<span class="at-pp">minuteur</span>':''}</button>`).join('')}</div>`;
@@ -34642,19 +34644,88 @@ const PROD_TASK_CATALOG = [
     'Refroidissement des coques',
   ]},
   { phase:'Garnissage', color:'#3f7d52', tasks:[
-    'Chablonnage des coques',
     'Mise en congélation des coques pour cristallisation des coques',
     'Préparation de la ganache pour pochage',
     'Pochage de la ganache',
     'Assemblage des coques (finition macaron)',
+  ]},
+  { phase:'Finition / Manipulation coques', color:'#9a6f9e', tasks:[
+    'Appairage des coques',
+    'Rangement des coques en boîte',
+    'Re-disposition des coques avant garnissage',
   ]},
   { phase:'Entretien', color:'#5a8aa0', tasks:[
     'Vaisselle',
     'Nettoyage des surfaces (plan de maîtrise sanitaire)',
   ]},
 ];
+
+// ============================================================
+// TÂCHES SPÉCIFIQUES À CERTAINES RECETTES
+// ------------------------------------------------------------
+// Ces tâches n'apparaissent dans le chrono QUE pour les parfums concernés.
+// L'association se fait par mot-clé (match partiel sur le nom normalisé via aiNormalize),
+// + une règle "grand format" branchée sur le champ existant recipe.grandFormat.
+// `phase`/`color` situent la tâche dans le catalogue ; `keywords` = mots-clés de parfums
+// concernés ; `grandFormat:true` = s'applique aussi à toute recette grand format.
+// ============================================================
+const PROD_TASK_SPECIFIQUES = [
+  { label:'Chablonnage des coques', phase:'Préparation des coques (avant garnissage)', color:'#d08a4a',
+    keywords:['citron creme','citron cremeux','framboise','coco citron vert','chocolat noir valrhona','chocolat noir','valrhona'], grandFormat:true },
+  { label:'Préparation des noisettes (couper en deux)', phase:'Préparation', color:'#c1a27c',
+    keywords:['cannelle noisette','praline','coco rafaello'], grandFormat:false },
+  { label:'Rajout des noisettes dans les coques', phase:'Préparation des coques (avant garnissage)', color:'#d08a4a',
+    keywords:['cannelle noisette','praline','coco rafaello'], grandFormat:false },
+  { label:'Coup de pinceau de poudre dorée (décor)', phase:'Finition / Manipulation coques', color:'#9a6f9e',
+    keywords:['nocciolata'], grandFormat:false },
+];
+
+// Ordre de référence des phases (= déroulé d'une production). Sert à trier les groupes
+// dans les sélecteurs, y compris les phases qui n'arrivent que via les tâches spécifiques
+// (ex. « Préparation des coques (avant garnissage) » entre Cuisson et Garnissage).
+const PROD_PHASE_ORDER = [
+  'Préparation ganache',
+  'Préparation',
+  'Meringue',
+  'Macaronnage',
+  'Cuisson',
+  'Préparation des coques (avant garnissage)',
+  'Garnissage',
+  'Finition / Manipulation coques',
+  'Entretien',
+  'Personnalisé',
+];
+function prodPhaseRank(phase){
+  const i = PROD_PHASE_ORDER.indexOf(phase);
+  return i<0 ? PROD_PHASE_ORDER.length : i;   // phases inconnues à la fin
+}
+// Trie une liste de noms de phases selon l'ordre de référence.
+function prodSortPhases(phases){
+  return phases.slice().sort((a,b)=>prodPhaseRank(a)-prodPhaseRank(b));
+}
+
+// Retourne les tâches spécifiques applicables à une recette donnée (objet recipe).
+// Match partiel : le nom normalisé de la recette CONTIENT le mot-clé.
+function prodTachesSpecifiques(recipe){
+  if(!recipe) return [];
+  const nom = (typeof aiNormalize==='function') ? aiNormalize(recipe.produitNom||'') : (recipe.produitNom||'').toLowerCase();
+  const out = [];
+  PROD_TASK_SPECIFIQUES.forEach(sp=>{
+    let ok = (sp.keywords||[]).some(k=>nom.includes(aiNormalize(k)));
+    if(!ok && sp.grandFormat && recipe.grandFormat) ok = true;   // grand format → auto
+    if(ok) out.push({label:sp.label, phase:sp.phase, color:sp.color, specifique:true});
+  });
+  return out;
+}
+
+// Variante par recipeId (asynchrone, va chercher la recette).
+async function prodTachesSpecifiquesParId(recipeId){
+  if(recipeId==null) return [];
+  const r = await db.recipes.get(+recipeId).catch(()=>null);
+  return prodTachesSpecifiques(r);
+}
 // Liste à plat de toutes les tâches connues (catalogue + ajouts perso de l'utilisateur).
-function prodAllTasks(){
+function prodAllTasks(recipe){
   const custom = (getSettings().prodCustomTasks||[]);
   const base = [];
   PROD_TASK_CATALOG.forEach(g=>g.tasks.forEach(t=>base.push({label:t, phase:g.phase, color:g.color})));
@@ -34662,6 +34733,13 @@ function prodAllTasks(){
     if(typeof c==='string') base.push({label:c, phase:'Personnalisé', color:'#8a7a72'});
     else if(c && c.label) base.push({label:c.label, phase:c.phase||'Personnalisé', color:c.color||'#8a7a72'});
   });
+  // Tâches spécifiques de la recette courante (n'apparaissent que pour les parfums concernés).
+  if(recipe){
+    const spec = prodTachesSpecifiques(recipe);
+    spec.forEach(sp=>{
+      if(!base.some(b=>b.label===sp.label)) base.push({label:sp.label, phase:sp.phase, color:sp.color, specifique:true});
+    });
+  }
   return base;
 }
 // Retrouve la couleur/phase d'une tâche par son label (pour les barres).
@@ -36839,7 +36917,7 @@ function prodTaskPickerFloat(){
   if(!body){ prodTaskPicker(); return; } // repli : si pas de panneau flottant, ancienne modale
   const groups = {};
   prodAllTasks().forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });
-  const blocks = Object.keys(groups).map(phase=>{
+  const blocks = prodSortPhases(Object.keys(groups)).map(phase=>{
     const g=groups[phase];
     return `<div class="ptp-group">
       <div class="ptp-phase" style="color:${g.color}">${esc(phase)}</div>
@@ -36877,7 +36955,7 @@ function prodPickCustomFloat(){
 function prodTaskPicker(){
   const groups = {};
   prodAllTasks().forEach(t=>{ (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); });
-  const blocks = Object.keys(groups).map(phase=>{
+  const blocks = prodSortPhases(Object.keys(groups)).map(phase=>{
     const g=groups[phase];
     return `<div class="ptp-group">
       <div class="ptp-phase" style="color:${g.color}">${esc(phase)}</div>
