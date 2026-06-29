@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1045';
+const APP_VERSION = 'v1048';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -40817,9 +40817,34 @@ function _ctFindTask(taskId){
 function _ctSanteSession(s){
   const tasks = (s.tasks||[]);
   const alerts = [];
-  let actifMs = 0;
+  // Temps actif = UNION des intervalles de travail (et non somme brute), pour ne pas
+  // compter deux fois un temps où plusieurs chronos tournent en parallèle. Un assemblage
+  // de 3 parfums lancés en même temps = un seul temps réel de travail, pas la somme.
+  const segs = [];
   tasks.forEach(t=>{
-    actifMs += prodTaskNet(t);
+    const net = prodTaskNet(t);
+    if(net<=0) return;
+    const st = +t.start||0;
+    if(st<=0) return;
+    // fin effective bornée par le plafond (cohérent avec prodTaskNet) si chrono ouvert
+    let en = t.end ? (+t.end) : (st + net);
+    // on retire les pauses en ramenant la fin sur la durée nette (approximation sûre :
+    // l'intervalle couvert ne dépasse jamais net depuis le début)
+    if(en - st > net) en = st + net;
+    segs.push([st, en]);
+  });
+  // union des segments triés
+  segs.sort((a,b)=>a[0]-b[0]);
+  let actifMs = 0;
+  let curS = null, curE = null;
+  for(const [a,b] of segs){
+    if(curS===null){ curS=a; curE=b; continue; }
+    if(a<=curE){ if(b>curE) curE=b; }      // chevauchement → on étend
+    else { actifMs += (curE-curS); curS=a; curE=b; }  // disjoint → on clôt
+  }
+  if(curS!==null) actifMs += (curE-curS);
+
+  tasks.forEach(t=>{
     const recs = Array.isArray(t.parfums) ? t.parfums.filter(r=>r!=null) : [];
     const estBatch = t.fromBatch || (t.composant && t.composant!=='complet');
     // tâche issue d'un batch mais sans parfum rattaché
@@ -40832,7 +40857,8 @@ function _ctSanteSession(s){
     }
   });
   const reelMs = prodSessReelMs(s);
-  // temps actif > temps réel = impossible physiquement
+  // temps actif > temps réel = impossible physiquement (ne devrait plus arriver avec l'union,
+  // sauf vrai chrono aberrant) → reste comme garde-fou de dernier recours.
   if(reelMs>0 && actifMs > reelMs + 60000){  // tolérance 1 min
     alerts.push({type:'actif_sup', taskId:null, msg:`Le temps actif (${fmtDureeMs(actifMs)}) dépasse le temps réel (${fmtDureeMs(reelMs)}).`});
   }
@@ -40857,7 +40883,8 @@ async function renderControleTemps(){
   function taskHTML(s, t, estLive){
     const recs = Array.isArray(t.parfums) ? t.parfums.filter(r=>r!=null) : [];
     const parfum = recs.length ? recs.map(recName).join(' + ') : null;
-    const nom = parfum ? `${compLbl(t.composant)} — ${parfum}` : (t.label || `${compLbl(t.composant)} — (sans parfum)`);
+    const etape = compLbl(t.composant);
+    const nom = parfum ? `${etape} — ${parfum}` : (t.label || `${etape} — (sans parfum)`);
     const lot = t.lotBase ? `lot ${esc(t.lotBase)}` : '';
     const ouvert = !t.end;
     const anormal = ouvert && (+t.start>0) && (Date.now()-(+t.start))>CHRONO_ANORMAL_MS;
@@ -40871,10 +40898,15 @@ async function renderControleTemps(){
     if(t.finEstimee) etat += ' · fin estimée';
     const metaParts = [lot, etat].filter(Boolean).join(' · ');
 
+    // Couleurs adaptées au fond (séance en cours = fond bordeaux → texte clair lisible).
+    const cNom  = estLive ? '#f7ece0' : 'var(--bordeaux)';
+    const cMeta = estLive ? (anormal||sansParfum ? '#f3b8ae' : '#d8c3ac') : (anormal||sansParfum ? '#b04a3e' : '#9a8a82');
+    const cEtape= estLive ? '#f0c97a' : 'var(--caramel,#AA7C39)';
+    const cDur  = estLive ? '#f0c97a' : 'var(--caramel,#AA7C39)';
+
     // actions
     const acts = [];
     if(sansParfum || anormal){
-      // tâche en alerte : priorité aux corrections critiques
       if(sansParfum) acts.push(`<button class="btn ghost sm" onclick="ctReassignParfum('${t.id}')" title="Définir le parfum">🏷 Parfum</button>`);
       if(anormal){
         acts.push(`<button class="btn ghost sm" style="border-color:#e5b4ae;color:#b04a3e" onclick="ctFermerChrono('${t.id}')" title="Fermer ce chrono (fin estimée)">⏹ Fermer</button>`);
@@ -40885,12 +40917,28 @@ async function renderControleTemps(){
       acts.push(`<button class="btn ghost sm" onclick="ctReassignParfum('${t.id}')" title="Changer le parfum">🏷</button>`);
       acts.push(`<button class="btn ghost sm" onclick="ctSupprimerTache('${t.id}')" title="Supprimer cette tâche">🗑</button>`);
     }
-    const alertCls = (sansParfum||anormal) ? ' style="background:#fdf6f5;border-radius:8px;padding:9px 8px"' : '';
-    const durHtml = (!sansParfum && !anormal) ? `<span style="font-weight:700;color:var(--caramel,#AA7C39);flex:none">${dur}</span>` : '';
-    return `<div class="trace-step"${alertCls.replace('class','')} style="display:flex;justify-content:space-between;align-items:center;gap:8px${(sansParfum||anormal)?';background:#fdf6f5':''}">
-      <div style="min-width:0"><div style="font-weight:600;color:var(--bordeaux)">${esc(nom)}</div>
-      <div style="font-size:.76rem;color:${anormal||sansParfum?'#b04a3e':'#9a8a82'};margin-top:2px">${esc(metaParts)}</div></div>
-      <div style="display:flex;align-items:center;gap:6px;flex:none">${durHtml}${acts.join('')}</div>
+    const durHtml = (!sansParfum && !anormal) ? `<span style="font-weight:700;color:${cDur};flex:none">${dur}</span>` : '';
+    const bgAlert = (sansParfum||anormal) ? (estLive ? ';background:rgba(255,255,255,.08)' : ';background:#fdf6f5') : '';
+
+    // Détail dépliable : étape précise + phase + horaires + lot complet.
+    const detailId = 'ctd_'+t.id;
+    const phase = t.phase ? esc(t.phase) : '';
+    const detailHtml = `<div id="${detailId}" style="display:none;margin-top:6px;padding:8px 10px;border-radius:8px;background:${estLive?'rgba(255,255,255,.07)':'#faf6f0'};font-size:.78rem;color:${estLive?'#d8c3ac':'#6a5a52'}">
+      <div><b style="color:${estLive?'#f0c97a':'var(--caramel,#AA7C39)'}">Étape :</b> ${esc(etape)}${phase?` · ${phase}`:''}</div>
+      <div><b style="color:${estLive?'#f0c97a':'var(--caramel,#AA7C39)'}">Intitulé complet :</b> ${esc(t.label||nom)}</div>
+      ${lot?`<div><b style="color:${estLive?'#f0c97a':'var(--caramel,#AA7C39)'}">Lot :</b> ${esc(t.lotBase)}</div>`:''}
+      <div><b style="color:${estLive?'#f0c97a':'var(--caramel,#AA7C39)'}">Horaires :</b> ${fmtHM(t.start)}${t.end?(' → '+fmtHM(t.end)):' → (en cours)'}${t.finEstimee?' · fin estimée':''}</div>
+      <div style="margin-top:5px"><button class="btn ghost sm" onclick="ctEditTache('${t.id}')">✎ Corriger</button> <button class="btn ghost sm" onclick="ctReassignParfum('${t.id}')">🏷 Parfum</button></div>
+    </div>`;
+
+    return `<div class="trace-step" style="display:block${bgAlert}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div style="min-width:0;cursor:pointer" onclick="ctToggleDetail('${detailId}',this)">
+          <div style="font-weight:600;color:${cNom}"><span style="color:${cEtape}">▸</span> ${esc(nom)}</div>
+          <div style="font-size:.76rem;color:${cMeta};margin-top:2px">${esc(metaParts)}</div></div>
+        <div style="display:flex;align-items:center;gap:6px;flex:none">${durHtml}${acts.join('')}</div>
+      </div>
+      ${detailHtml}
     </div>`;
   }
 
@@ -40913,6 +40961,14 @@ async function renderControleTemps(){
     const liveStyle = estLive ? 'background:linear-gradient(135deg,#52252F,#3d1a22);color:#fff' : '';
     const liveTitleCol = estLive ? 'color:#fff' : 'color:var(--bordeaux)';
     const liveDateCol = estLive ? 'color:#e8d5c0' : 'color:#9a8a82';
+    // Barre d'actions au niveau SÉANCE : clôturer/corriger l'heure de fin, scinder.
+    const btnStyle = estLive ? 'background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.25);color:#f7ece0' : '';
+    const sessActs = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+      ${!s.end
+        ? `<button class="btn ghost sm" style="${btnStyle}" onclick="ctClotureSession('${s.id}')" title="Fixer l'heure de fin réelle de cette séance">⏹ Clôturer la séance</button>`
+        : `<button class="btn ghost sm" style="${btnStyle}" onclick="ctClotureSession('${s.id}')" title="Corriger l'heure de fin">✎ Heure de fin</button>`}
+      ${tasks.length>=2?`<button class="btn ghost sm" style="${btnStyle}" onclick="ctScinderSession('${s.id}')" title="Séparer si deux journées se sont mélangées">✂️ Scinder</button>`:''}
+    </div>`;
     return `<div class="card" style="${liveStyle}">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid ${estLive?'rgba(255,255,255,.15)':'var(--hair)'}">
         <div><div style="font-weight:700;${liveTitleCol}">${estLive?'⏱ Séance en cours':('Séance du '+esc(dateLbl))}</div>
@@ -40922,6 +40978,7 @@ async function renderControleTemps(){
       ${alertBoxes}
       ${tasksHtml}
       ${totaux}
+      ${sessActs}
     </div>`;
   }
 
@@ -40960,6 +41017,17 @@ async function renderControleTemps(){
 }
 
 // ---- ACTIONS DE CORRECTION ----
+
+// Déplie / replie le détail d'une tâche (chevron).
+function ctToggleDetail(detailId, el){
+  const d = document.getElementById(detailId);
+  if(!d) return;
+  const open = d.style.display==='none';
+  d.style.display = open ? 'block' : 'none';
+  // fait pivoter le chevron ▸ → ▾
+  const chev = el && el.querySelector('span');
+  if(chev) chev.textContent = open ? '▾' : '▸';
+}
 
 // ✎ Corriger durée / horaires d'une tâche (toutes sessions).
 function ctEditTache(taskId){
@@ -41024,13 +41092,14 @@ function ctReassignParfum(taskId){
   const {sess, task} = _ctFindTask(taskId);
   if(!task){ toast('Tâche introuvable'); return; }
   const recipes = window._ctRecipes || [];
-  const cur = (Array.isArray(task.parfums)&&task.parfums.length) ? +task.parfums[0] : null;
-  const opts = recipes.slice().sort((a,b)=>(a.produitNom||'').localeCompare(b.produitNom||''))
-    .map(r=>`<option value="${r.id}"${cur===+r.id?' selected':''}>${esc(r.produitNom||('recette #'+r.id))}</option>`).join('');
-  openModal(`<h3>Parfum de la tâche</h3>
-    <p class="note">Rattache cette tâche au bon parfum : son temps sera attribué à ce parfum.</p>
-    <div class="field"><label>Parfum / recette</label>
-      <select id="ct_parfum"><option value="">— aucun —</option>${opts}</select></div>
+  const cur = new Set((Array.isArray(task.parfums)?task.parfums:[]).map(Number));
+  const lignes = recipes.slice().sort((a,b)=>(a.produitNom||'').localeCompare(b.produitNom||''))
+    .map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--hair);border-radius:9px;margin-bottom:5px;cursor:pointer">
+      <input type="checkbox" class="ct_pf" value="${r.id}"${cur.has(+r.id)?' checked':''} style="width:18px;height:18px;flex:none">
+      <span>${esc(r.produitNom||('recette #'+r.id))}</span></label>`).join('');
+  openModal(`<h3>Parfum(s) de la tâche</h3>
+    <p class="note">Coche le ou les parfums réellement concernés par cette tâche. <b>Un seul</b> si tu t'es trompé en en déclarant deux ; <b>plusieurs</b> si la tâche est mutualisée (le temps sera partagé entre eux).</p>
+    <div style="max-height:48vh;overflow:auto;margin:8px 0">${lignes||'<p class="note">Aucune recette enregistrée.</p>'}</div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="ctReassignParfumSave('${task.id}')">Enregistrer</button>
@@ -41040,16 +41109,19 @@ function ctReassignParfum(taskId){
 function ctReassignParfumSave(taskId){
   const {sess, task} = _ctFindTask(taskId);
   if(!sess || !task){ toast('Tâche introuvable'); return; }
-  const v = (val('ct_parfum')||'').trim();
-  if(v===''){ task.parfums = []; }
-  else { const rid = +v; if(!Number.isFinite(rid)){ toast('Parfum invalide'); return; } task.parfums = [rid];
-    // met aussi à jour le libellé pour rester cohérent à l'affichage
-    const recipes = window._ctRecipes || [];
-    const r = recipes.find(x=>+x.id===rid);
-    const compLbl = ({coques:'Coques', ganache:'Ganache', cremeux:'Crémeux', assemble:'Assemblage', complet:'Production', degustation:'Dégustation'})[task.composant]||'Production';
-    if(r) task.label = `${compLbl} — ${r.produitNom||''}`.trim();
+  const checks = Array.from(document.querySelectorAll('.ct_pf:checked'))
+    .map(c=>+c.value).filter(n=>Number.isFinite(n));
+  task.parfums = checks;   // 0, 1 ou plusieurs parfums
+  // met à jour le libellé pour rester cohérent à l'affichage
+  const recipes = window._ctRecipes || [];
+  const compLbl = ({coques:'Coques', ganache:'Ganache', cremeux:'Crémeux', assemble:'Assemblage', complet:'Production', degustation:'Dégustation'})[task.composant]||'Production';
+  if(checks.length){
+    const noms = checks.map(rid=>{ const r=recipes.find(x=>+x.id===rid); return r?(r.produitNom||''):''; }).filter(Boolean);
+    task.label = `${compLbl} — ${noms.join(' + ')}`.trim();
   }
-  prodSessUpsert(sess); closeModal(); toast('Parfum mis à jour ✓'); renderControleTemps();
+  prodSessUpsert(sess); closeModal();
+  toast(checks.length>1?`${checks.length} parfums rattachés ✓`:(checks.length===1?'Parfum mis à jour ✓':'Parfum retiré ✓'));
+  renderControleTemps();
 }
 
 // ⏹ Fermer un chrono resté ouvert (fin estimée), réutilise _estimeFinTache.
@@ -41082,6 +41154,150 @@ function ctSupprimerTacheRun(taskId){
   sess.tasks = (sess.tasks||[]).filter(x=>String(x.id)!==String(taskId));
   prodSessUpsert(sess); closeModal(); toast('Tâche supprimée ✓'); renderControleTemps();
 }
+
+// ============================================================
+// CONTRÔLE DES TEMPS — gestion au niveau SÉANCE
+// Clôturer une séance restée ouverte · corriger son heure de fin · scinder une
+// séance où plusieurs journées se sont mélangées (détection d'un grand trou).
+// ============================================================
+
+// Helper : retrouve une session par id.
+function _ctFindSession(sessId){
+  return prodSessLoad().find(s=>String(s.id)===String(sessId)) || null;
+}
+
+// Heure de fin "naturelle" suggérée = fin de la dernière tâche terminée de la séance.
+function _ctFinSuggeree(s){
+  const fins = (s.tasks||[]).filter(t=>t.end && +t.end>0).map(t=>+t.end);
+  if(fins.length) return Math.max(...fins);
+  // sinon, début de la dernière tâche + 30 min, ou start de session
+  const starts = (s.tasks||[]).map(t=>+t.start||0).filter(x=>x>0);
+  if(starts.length) return Math.max(...starts) + 30*60000;
+  return (+s.start||Date.now());
+}
+
+// ⏹ Clôturer une séance ouverte / ✎ corriger son heure de fin.
+function ctClotureSession(sessId){
+  const s = _ctFindSession(sessId);
+  if(!s){ toast('Séance introuvable'); return; }
+  const ouverte = !s.end;
+  const suggestee = s.end ? +s.end : _ctFinSuggeree(s);
+  const d = new Date(suggestee);
+  const dateVal = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const heureVal = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  const nbOuvertes = (s.tasks||[]).filter(t=>!t.end).length;
+  openModal(`<h3>${ouverte?'Clôturer la séance':'Corriger l\'heure de fin'}</h3>
+    <p class="note">${ouverte?'Fixe l\'heure à laquelle cette séance s\'est réellement terminée. Les tâches encore ouvertes seront fermées à cette heure.':'Ajuste l\'heure de fin de cette séance.'}${nbOuvertes>0?`<br><b>${nbOuvertes}</b> tâche(s) encore ouverte(s) seront fermées.`:''}</p>
+    <div class="row2">
+      <div class="field"><label>Date de fin</label><input type="date" id="ctcs_date" value="${dateVal}"></div>
+      <div class="field"><label>Heure de fin</label><input type="time" id="ctcs_heure" value="${heureVal}"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="ctClotureSessionSave('${s.id}')">${ouverte?'Clôturer':'Enregistrer'}</button>
+    </div>`);
+}
+
+function ctClotureSessionSave(sessId){
+  const s = _ctFindSession(sessId);
+  if(!s){ toast('Séance introuvable'); return; }
+  const dateStr = (val('ctcs_date')||'').trim();
+  const heureStr = (val('ctcs_heure')||'').trim();
+  const m = /^(\d{1,2}):(\d{2})$/.exec(heureStr);
+  if(!dateStr || !m){ toast('Date ou heure invalide'); return; }
+  const fin = new Date(dateStr+'T00:00:00'); fin.setHours(+m[1], +m[2], 0, 0);
+  const finTs = fin.getTime();
+  if(!(finTs>0)){ toast('Date/heure invalide'); return; }
+  // la fin ne peut précéder le début de la première tâche
+  const debuts = (s.tasks||[]).map(t=>+t.start||0).filter(x=>x>0);
+  const minStart = debuts.length?Math.min(...debuts):(+s.start||0);
+  if(minStart>0 && finTs<minStart){ toast('La fin ne peut pas précéder le début de la séance'); return; }
+  // fermer les tâches encore ouvertes à cette heure (en figeant les pauses en cours)
+  (s.tasks||[]).forEach(t=>{
+    if(!t.end){
+      if((+t.pauseAt||0)>0){ t.pausedAccum=(+t.pausedAccum||0)+Math.max(0,Date.now()-(+t.pauseAt)); t.pauseAt=null; }
+      // fin = heure de clôture, mais jamais avant le début de la tâche
+      t.end = (finTs >= (+t.start||0)) ? finTs : (+t.start||finTs);
+      t.finEstimee = true;
+    }
+  });
+  s.end = finTs;
+  prodSessUpsert(s);
+  if(typeof markUnsaved==='function') markUnsaved();
+  closeModal(); toast('Séance clôturée ✓'); renderControleTemps();
+}
+
+// ✂️ Scinder une séance : détecte les "trous" entre tâches et propose un point de coupure.
+function ctScinderSession(sessId){
+  const s = _ctFindSession(sessId);
+  if(!s){ toast('Séance introuvable'); return; }
+  const tasks = (s.tasks||[]).slice().filter(t=>+t.start>0).sort((a,b)=>(+a.start)-(+b.start));
+  if(tasks.length<2){ toast('Trop peu de tâches pour scinder'); return; }
+  // calcule les écarts entre la fin d'une tâche et le début de la suivante
+  const trous = [];
+  for(let i=1;i<tasks.length;i++){
+    const prevEnd = +tasks[i-1].end || +tasks[i-1].start;
+    const curStart = +tasks[i].start;
+    const gap = curStart - prevEnd;
+    if(gap>0) trous.push({idx:i, gap, at:curStart, prevEnd});
+  }
+  trous.sort((a,b)=>b.gap-a.gap);   // plus grand trou d'abord
+  if(!trous.length || trous[0].gap < 30*60000){
+    openModal(`<h3>Scinder la séance</h3>
+      <p class="note">Aucune coupure évidente détectée (pas de pause de plus de 30 min entre deux tâches). La séance semble continue.</p>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const fmtDT = ts => { const d=new Date(ts); return d.toLocaleDateString('fr-FR')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+  const opts = trous.slice(0,5).map((tr,i)=>{
+    const gapH = Math.round(tr.gap/3600000*10)/10;
+    return `<label style="display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid var(--hair);border-radius:9px;margin-bottom:6px;cursor:pointer">
+      <input type="radio" name="ct_coupe" value="${tr.idx}"${i===0?' checked':''} style="width:18px;height:18px;flex:none">
+      <span style="font-size:.85rem">Couper avant la tâche de <b>${esc(fmtDT(tr.at))}</b><br>
+      <span style="color:#9a8a82;font-size:.78rem">pause de ${gapH>=1?gapH+' h':Math.round(tr.gap/60000)+' min'} avant cette tâche</span></span></label>`;
+  }).join('');
+  openModal(`<h3>Scinder la séance en deux</h3>
+    <p class="note">Choisis où couper : les tâches avant le point de coupure restent dans cette séance, celles après forment une nouvelle séance. Utile quand deux journées se sont mélangées.</p>
+    ${opts}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="ctScinderSessionSave('${s.id}')">Scinder ici</button>
+    </div>`);
+}
+
+function ctScinderSessionSave(sessId){
+  const s = _ctFindSession(sessId);
+  if(!s){ toast('Séance introuvable'); return; }
+  const sel = document.querySelector('input[name="ct_coupe"]:checked');
+  if(!sel){ toast('Choisis un point de coupure'); return; }
+  const tasks = (s.tasks||[]).slice().filter(t=>+t.start>0).sort((a,b)=>(+a.start)-(+b.start));
+  const idx = +sel.value;
+  if(!(idx>0 && idx<tasks.length)){ toast('Point de coupure invalide'); return; }
+  const avant = tasks.slice(0, idx);
+  const apres = tasks.slice(idx);
+  if(!avant.length || !apres.length){ toast('Coupure invalide'); return; }
+  // Séance 1 (existante) : tâches avant, fin = dernière fin connue avant la coupure
+  const finAvant = Math.max(...avant.map(t=>+t.end||+t.start));
+  s.tasks = avant;
+  s.end = s.end ? Math.min(+s.end, finAvant) : finAvant;
+  prodSessUpsert(s);
+  // Séance 2 (nouvelle) : tâches après
+  const debutApres = Math.min(...apres.map(t=>+t.start));
+  const finApres = apres.some(t=>!t.end) ? null : Math.max(...apres.map(t=>+t.end));
+  const d2 = new Date(debutApres);
+  const nouvelle = {
+    id: prodNewId(),
+    date: `${d2.getFullYear()}-${String(d2.getMonth()+1).padStart(2,'0')}-${String(d2.getDate()).padStart(2,'0')}`,
+    start: debutApres,
+    end: finApres,
+    note: (s.note||'')+' (scindée)',
+    tasks: apres
+  };
+  prodSessUpsert(nouvelle);
+  if(typeof markUnsaved==='function') markUnsaved();
+  closeModal(); toast('Séance scindée en deux ✓'); renderControleTemps();
+}
+
 
 
 // ============================================================
