@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1061';
+const APP_VERSION = 'v1062';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3410,8 +3410,17 @@ function goView(v, opts){
   if(typeof hideUndo==='function') hideUndo();
   if((view==='productions'||view==='productionsv2') && v!=='productions' && v!=='productionsv2' && typeof chronoFloatRemove==='function') chronoFloatRemove();
   if(v==='accueil') window._filRetour=null;   // retour au fil par tout chemin → on consomme le marqueur
+  // [v1062] Retour au copilote : tout départ DEPUIS l'assistant vers un autre écran pose le marqueur
+  // (couvre aussi les boutons inline des réponses : Voir, Stock, Produire…). Le clic explicite d'un
+  // raccourci a pu le poser avant ; sinon on le pose ici. On ignore le retour à l'assistant lui-même.
+  if(view==='assistant' && v!=='assistant'){
+    window._assistantRetour = { cible: v, attente: false };
+  } else if(window._assistantRetour && window._assistantRetour.attente && v!=='assistant'){
+    window._assistantRetour.cible = v; window._assistantRetour.attente = false;
+  }
   _navDir='forward';
   view=v; setActiveView(view); render();
+  if(typeof assistantRetourSync==='function'){ try{ assistantRetourSync(); }catch(e){} }
   if(typeof navUsageTrack==='function') navUsageTrack(v);   // traçage usage (favoris/récents/stats)
   if(_histReady && !_popping && !opts.replace){
     try{ history.pushState({view:v, kind:'view'}, '', '#'+v); }catch(e){}
@@ -23343,6 +23352,22 @@ function parseIntent(texte, ctx){
      && !/\bmarche (s'?est|ca s'?est)\b/.test(t)){
     return {intent:'query_gaspillage', params:{}, critical:false, label:'Dons et pertes'};
   }
+  // [v1062] PÉRIODE SEULE → commandes de cette période. Dans le fil du copilote, taper juste
+  // « cette semaine », « du jour », « demain » sous-entend « mes commandes de … ». On ne déclenche
+  // QUE si le message se résume à une expression de période (pas d'autre domaine : CA, stock, marge,
+  // recette, production, client nommé…), pour ne pas happer « mon CA cette semaine ».
+  {
+    const _periodeSeule = /^(et\s+)?(pour\s+)?(cette\s+semaine|de\s+la\s+semaine|du\s+jour|aujourd'?hui|demain|apres[-\s]demain|ce\s+week\s?end)\s*\??$/i;
+    if(_periodeSeule.test(t.trim())
+       && !/\b(ca|chiffre|stock|marge|rentab|recette|produire|fabriquer|cout|urssaf|client|marche)\b/.test(t)){
+      let periode='jour';
+      if(/cette\s+semaine|de\s+la\s+semaine|ce\s+week/.test(t)) periode='semaine';
+      else if(/apres[-\s]demain/.test(t)) periode='apresdemain';
+      else if(/\bdemain\b/.test(t)) periode='demain';
+      return {intent:'query_orders', params:{date:null, periode, statut:null}, critical:false,
+        label:`Commandes (${periode})`};
+    }
+  }
   // [V942] LA PROCHAINE LIVRAISON (commande à venir la plus proche, tous clients) : « quand dois-je
   // livrer ma prochaine commande », « quelle est ma prochaine livraison », « ma prochaine commande à
   // livrer ». Réponse CIBLÉE (une date + compte à rebours), distincte du récap mensuel query_orders.
@@ -26373,14 +26398,18 @@ function aiShortcuts(intent, params, resultShortcuts){
     // simple filtrage d'écran. C'est exactement ce que fait globalSearch (clientForm(id), cmdView(id)…).
     const openId = (sc.openFn && rawParam && typeof rawParam==='object' && rawParam.id!=null)
       ? rawParam.id : null;
+    // [v1062] On préfixe l'onclick par un marqueur « retour au copilote » : si le raccourci mène à un
+    // écran (goView/focusGo) on en garde la trace pour afficher le bouton de retour sur l'écran d'arrivée.
+    // Les actions/openFn qui ouvrent une simple modale (sans changer de vue) n'afficheront pas le bouton
+    // (la modale se referme et ramène au fil) — le marqueur en attente est alors sans effet, c'est voulu.
     if(sc.action){
-      onclick = `${sc.action}()`;
+      onclick = `assistantMarquerRetour();${sc.action}()`;
     } else if(sc.openFn && openId!=null){
-      onclick = `${sc.openFn}(${JSON.stringify(openId)})`;
+      onclick = `assistantMarquerRetour();${sc.openFn}(${JSON.stringify(openId)})`;
     } else if(sc.focusType && focusVal){
-      onclick = `aiFocusGo('${sc.view}','${sc.focusType}',${JSON.stringify(focusVal)})`;
+      onclick = `assistantMarquerRetour('${sc.view}');aiFocusGo('${sc.view}','${sc.focusType}',${JSON.stringify(focusVal)})`;
     } else {
-      onclick = `goView('${sc.view}')`;
+      onclick = `assistantMarquerRetour('${sc.view}');goView('${sc.view}')`;
     }
     // Le label peut s'enrichir de la valeur ciblée (ex. « Stock de Vanille », « Fiche de Emma »).
     // [v1061] Pour un focus « jour », on AFFICHE la date au format lisible (29 juin) plutôt que l'ISO brut.
@@ -26467,10 +26496,11 @@ function aiSay(html, resultShortcuts){
 function aiRenderShortcutBtns(list){
   const btns = (list||[]).filter(Boolean).map(sc=>{
     let onclick;
-    if(sc.action)      onclick = /\(/.test(sc.action) ? sc.action : `${sc.action}()`;
-    else if(sc.openFn && sc.id!=null) onclick = `${sc.openFn}(${JSON.stringify(sc.id)})`;
-    else if(sc.ask)    onclick = `aiQuick(${JSON.stringify(sc.ask)})`;
-    else if(sc.view)   onclick = `goView('${sc.view}')`;
+    // [v1062] marqueur « retour au copilote » pour les raccourcis menant à un écran/objet.
+    if(sc.action)      onclick = 'assistantMarquerRetour();'+(/\(/.test(sc.action) ? sc.action : `${sc.action}()`);
+    else if(sc.openFn && sc.id!=null) onclick = `assistantMarquerRetour();${sc.openFn}(${JSON.stringify(sc.id)})`;
+    else if(sc.ask)    onclick = `aiQuick(${JSON.stringify(sc.ask)})`;   // reste dans le fil → pas de marqueur
+    else if(sc.view)   onclick = `assistantMarquerRetour('${sc.view}');goView('${sc.view}')`;
     else return '';
     return `<button class="btn ghost sm" onclick="${onclick}" style="margin:2px 4px 0 0">${esc(sc.label)}</button>`;
   }).filter(Boolean).join('');
@@ -39845,6 +39875,48 @@ function prodActualiser(){
 // si le marqueur est absent, rien ne s'affiche et le comportement reste celui d'avant.
 function filMarquerOrigine(){ window._filRetour = { ts: Date.now() }; }
 function filRetourActif(){ return !!(window._filRetour); }
+
+// ============================================================
+//  RETOUR AU COPILOTE — bouton flottant après un raccourci de l'assistant
+// ============================================================
+// Quand on suit un raccourci du copilote qui QUITTE l'assistant (va sur un écran ou ouvre un objet),
+// on pose un marqueur : la vue de DÉPART est 'assistant', et on note la vue d'arrivée attendue.
+// Un bouton flottant « ↩ Copilote » apparaît alors sur l'écran d'arrivée, et UNIQUEMENT là :
+// dès qu'on navigue ailleurs (menu, autre écran), il disparaît (choix Benjamin = visible tant qu'on
+// reste sur l'écran où le raccourci a mené).
+function assistantMarquerRetour(targetView){
+  // On retient la vue d'arrivée ; si elle n'est pas fournie, on l'apprendra au 1er goView qui suit.
+  window._assistantRetour = { cible: targetView||null, attente: !targetView };
+}
+function assistantRetourSync(){
+  const m = window._assistantRetour;
+  let host = document.getElementById('assistantRetourBtn');
+  // Conditions d'affichage : marqueur présent ET on est sur la vue d'arrivée (jamais sur l'assistant lui-même).
+  const surCible = m && !m.attente && view===m.cible && view!=='assistant';
+  if(!surCible){
+    if(host) host.remove();
+    // si on est reparti ailleurs (ni la cible ni l'assistant en attente), on oublie le marqueur
+    if(m && !m.attente && view!==m.cible){ window._assistantRetour=null; }
+    return;
+  }
+  if(!host){
+    host=document.createElement('button');
+    host.id='assistantRetourBtn';
+    host.setAttribute('type','button');
+    host.onclick=assistantRetourGo;
+    host.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:78px;z-index:55;'
+      +'background:var(--bordeaux,#52252F);color:#fff;border:none;border-radius:22px;'
+      +'padding:9px 18px;font-size:.9rem;font-weight:600;font-family:inherit;'
+      +'box-shadow:0 4px 14px rgba(73,15,37,.28);cursor:pointer';
+    host.innerHTML='↩ Retour au copilote';
+    document.body.appendChild(host);
+  }
+}
+function assistantRetourGo(){
+  window._assistantRetour=null;
+  const b=document.getElementById('assistantRetourBtn'); if(b) b.remove();
+  if(typeof goView==='function') goView('assistant');
+}
 // Bouton de retour au fil. Rendu UNIQUEMENT si on vient du fil. Style discret, aligné à l'identité.
 function _filRetourBanner(){
   if(!filRetourActif()) return '';
