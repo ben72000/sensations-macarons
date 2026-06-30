@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1082';
+const APP_VERSION = 'v1083';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -38421,18 +38421,33 @@ function prodSessParfumsSave(){
 
 // Collecte unique des données brutes sur une fenêtre de N jours.
 // Sert de socle commun aux 3 couches (audit, indicateur, simulateur).
-async function revenuHoraireData(jours){
-  jours = +jours || REVH_DEFAULT_DAYS;
-  const since = new Date(); since.setDate(since.getDate()-jours);
-  const sinceStr = since.toISOString().slice(0,10);
+async function revenuHoraireData(arg){
+  // [v1083] La période peut être : un NOMBRE de jours (compat : derniers N jours jusqu'à aujourd'hui),
+  // ou un OBJET {start, end} pour une période précise au jour près (comme la comptabilité).
+  let sinceStr, untilStr, jours;
+  if(arg && typeof arg==='object'){
+    sinceStr = arg.start || '0000-01-01';     // pas de borne basse → tout depuis le début
+    untilStr = arg.end   || '9999-12-31';     // pas de borne haute → jusqu'à aujourd'hui/futur
+    // durée de la fenêtre demandée, en jours (sert aux calculs de couverture/charges)
+    const d0 = new Date((arg.start||'1970-01-01')+'T00:00:00');
+    const d1 = new Date((arg.end||new Date().toISOString().slice(0,10))+'T00:00:00');
+    jours = Math.max(1, Math.round((d1 - d0)/86400000) + 1);
+  } else {
+    jours = +arg || REVH_DEFAULT_DAYS;
+    const since = new Date(); since.setDate(since.getDate()-jours);
+    sinceStr = since.toISOString().slice(0,10);
+    untilStr = '9999-12-31';
+  }
+  // Helper : une date (YYYY-MM-DD) est-elle dans la fenêtre [sinceStr, untilStr] ?
+  const inWin = ds => { ds=(ds||'').slice(0,10); return ds && ds>=sinceStr && ds<=untilStr; };
 
   // 1) TEMPS MESURÉ (en heures) sur la fenêtre : pointeuse (workSessions) + atelier (prodSessions)
   const ws = await db.workSessions.toArray().catch(()=>[]);
-  const wsIn = ws.filter(s=>(s.date||'').slice(0,10) >= sinceStr);
+  const wsIn = ws.filter(s=>inWin(s.date));
   const hPointeuse = wsIn.reduce((a,s)=>a+(+s.dureeHeures|| ((+s.dureeMin||0)/60) ||0),0);
 
   const psAll = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
-  const psIn = psAll.filter(s=>(s.date||'').slice(0,10) >= sinceStr);
+  const psIn = psAll.filter(s=>inWin(s.date));
   let msAtelier = 0;
   psIn.forEach(s=>{ (s.tasks||[]).forEach(t=>{ msAtelier += (typeof prodTaskNet==='function')?prodTaskNet(t):0; }); });
   const hAtelier = msAtelier/3600000;
@@ -38463,15 +38478,15 @@ async function revenuHoraireData(jours){
     const regs = Array.isArray(o.paiements)?o.paiements:[];
     let encO = 0;
     if(regs.length){
-      regs.forEach(p=>{ if((p.date||'').slice(0,10) >= sinceStr) encO += (+p.montant||0); });
-    } else if(o.datePaiement && (o.datePaiement.slice(0,10) >= sinceStr)){
+      regs.forEach(p=>{ if(inWin(p.date)) encO += (+p.montant||0); });
+    } else if(o.datePaiement && inWin(o.datePaiement)){
       encO += (+o.montant||0);
     }
     if(encO>0){ caCommandes += encO; detailCommandes.push({ label:_cliNom(o.clientId)+(o.dateLivraison?' · '+o.dateLivraison.slice(0,10):''), montant:money2(encO) }); }
   });
   detailCommandes.sort((a,b)=>b.montant-a.montant);
   const markets = await db.markets.toArray().catch(()=>[]);
-  const closIn = markets.filter(mk=>mk.statut==='clos' && ((mk.dateCloture||mk.date||'').slice(0,10) >= sinceStr));
+  const closIn = markets.filter(mk=>mk.statut==='clos' && inWin(mk.dateCloture||mk.date));
   let caMarches = 0;
   const detailMarches = [];     // [v1077] {label, montant} par marché clos sur la fenêtre
   closIn.forEach(mk=>{ const ca=mk.ca||{}; const m=money2((+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0));
@@ -38481,7 +38496,7 @@ async function revenuHoraireData(jours){
 
   // 3) CHARGES (réelles, datées) sur la fenêtre + charges récurrentes actives (référence mensuelle)
   const charges = await db.charges.toArray().catch(()=>[]);
-  const chargesIn = charges.filter(c=>(c.date||'').slice(0,10) >= sinceStr);
+  const chargesIn = charges.filter(c=>inWin(c.date));
   const totalCharges = money2(chargesIn.reduce((a,c)=>a+(+c.montant||0),0));
   const detailChargesPonct = chargesIn.map(c=>({ label:(c.libelle||c.categorie||'Charge')+(c.date?' · '+c.date.slice(0,10):''), montant:money2(+c.montant||0) })).sort((a,b)=>b.montant-a.montant);
   const recur = (typeof getRecurringCharges==='function'?getRecurringCharges():[]).filter(m=>m.actif!==false && +m.montant>0);
@@ -38506,13 +38521,16 @@ async function revenuHoraireData(jours){
 
   // [v1076] DURÉE RÉELLE D'ACTIVITÉ sur la fenêtre. Sert à étendre correctement les charges récurrentes
   // mensuelles : on ne peut pas multiplier un coût mensuel par la fenêtre théorique (« Tout » = 99999 j
-  // = 3333 mois !). On borne au temps réellement écoulé entre la 1re donnée de la fenêtre et aujourd'hui.
-  const _auj = new Date(); _auj.setHours(0,0,0,0);
+  // = 3333 mois !). On borne au temps réellement écoulé entre la 1re donnée de la fenêtre et la FIN
+  // de la fenêtre (aujourd'hui par défaut, ou la date de fin si une période perso passée est demandée).
+  const _aujStr = new Date().toISOString().slice(0,10);
+  const _finStr = (untilStr && untilStr < '9999-12-31') ? (untilStr < _aujStr ? untilStr : _aujStr) : _aujStr;
+  const _auj = new Date(_finStr+'T00:00:00');
   const _dates = [];
   orders.forEach(o=>{
     const regs = Array.isArray(o.paiements)?o.paiements:[];
-    if(regs.length){ regs.forEach(p=>{ const ds=(p.date||'').slice(0,10); if(ds && ds>=sinceStr) _dates.push(ds); }); }
-    else if(o.datePaiement){ const ds=o.datePaiement.slice(0,10); if(ds>=sinceStr) _dates.push(ds); }
+    if(regs.length){ regs.forEach(p=>{ const ds=(p.date||'').slice(0,10); if(inWin(ds)) _dates.push(ds); }); }
+    else if(o.datePaiement){ const ds=o.datePaiement.slice(0,10); if(inWin(ds)) _dates.push(ds); }
   });
   closIn.forEach(mk=>{ const ds=(mk.dateCloture||mk.date||'').slice(0,10); if(ds) _dates.push(ds); });
   chargesIn.forEach(c=>{ const ds=(c.date||'').slice(0,10); if(ds) _dates.push(ds); });
@@ -38565,9 +38583,9 @@ async function revenuHoraireData(jours){
 //    déduite : c'est justement ce qu'on cherche à rémunérer).
 //  • dénominateur = temps total = atelier (production) + pointeuse (hors-production).
 //  • on fournit AVANT et APRÈS cotisations sociales (~socialGoods % du CA marchandise).
-async function revenuHoraireCalcul(jours){
-  jours = +jours || REVH_DEFAULT_DAYS;
-  const d = await revenuHoraireData(jours);
+async function revenuHoraireCalcul(arg){
+  // [v1083] accepte un nombre de jours (compat) OU un objet {start,end} (période précise).
+  const d = await revenuHoraireData((arg && typeof arg==='object') ? arg : (+arg || REVH_DEFAULT_DAYS));
   const s = getSettings();
 
   // Coût matières + emballages des VENTES de la période, via l'analyse de rentabilité par parfum
@@ -38621,13 +38639,13 @@ async function revenuHoraireCalcul(jours){
   // Charges fixes sur la fenêtre : récurrent mensuel × DURÉE RÉELLE D'ACTIVITÉ + charges ponctuelles datées.
   // [v1076] On utilise moisActivite (borné au temps réellement écoulé) et PAS jours/30 : sinon la vue
   // « Tout » (99999 j) multiplierait le récurrent par 3333 mois → charges fictives de ~146 000 €.
-  const moisEquiv = (d.moisActivite!=null && d.moisActivite>0) ? d.moisActivite : (jours/30);
+  const moisEquiv = (d.moisActivite!=null && d.moisActivite>0) ? d.moisActivite : ((d.jours||90)/30);
   const chargesFixes = money2(d.chargesRecurMensuel*moisEquiv + d.totalCharges);
   // [v1076 — DIAG] Trace du calcul des charges fixes (évite le retour du bug « 3333 mois »).
   try{
     if(typeof diagPublish==='function'){
       diagPublish('revhCharges', '🧮 Revenu horaire — calcul des charges fixes', {
-        'Fenêtre demandée': (jours>=99999?'Tout':jours+' j'),
+        'Fenêtre demandée': ((d.jours||0)>=99999?'Tout':(d.jours||0)+' j'),
         'Durée réelle d\'activité retenue': moisEquiv.toFixed(2)+' mois',
         'Récurrent mensuel': euro(d.chargesRecurMensuel),
         'Charges ponctuelles datées': euro(d.totalCharges),
@@ -38748,6 +38766,10 @@ function revenuHoraireAudit(d){
 }
 
 let _revhDays = REVH_DEFAULT_DAYS;
+// [v1083] Mode période : 'jours' (derniers N jours) ou 'perso' (dates précises au jour près).
+let _revhMode = 'jours';
+let _revhDateDebut = '';   // YYYY-MM-DD (vide = pas de borne basse)
+let _revhDateFin = '';     // YYYY-MM-DD (vide = jusqu'à aujourd'hui)
 // [v1077] LIGNE TRAÇABLE : une carte cliquable du calcul du revenu horaire.
 //  - libelle / valeur : ce qui s'affiche replié (toujours visible).
 //  - formule : phrase « comment ce chiffre est obtenu » (en clair).
@@ -38785,7 +38807,11 @@ async function renderRevenuHoraire(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML = `<div class="topbar"><div><h1>Mon revenu horaire</h1><p>Chargement…</p></div></div>`;
   let d, audit, calc;
-  try{ calc = await revenuHoraireCalcul(_revhDays); d = calc; audit = revenuHoraireAudit(d); }
+  // [v1083] période : derniers N jours, ou plage précise {start,end}.
+  const periodeArg = (_revhMode==='perso')
+    ? { start:_revhDateDebut||null, end:_revhDateFin||null }
+    : _revhDays;
+  try{ calc = await revenuHoraireCalcul(periodeArg); d = calc; audit = revenuHoraireAudit(d); }
   catch(e){ console.error('revenuHoraire',e); main.innerHTML=`<div class="topbar"><div><h1>Mon revenu horaire</h1></div></div><div class="panel"><p class="note">Erreur de chargement des données.</p></div>`; return; }
 
   const dot = n => n==='ok'?'#3f7d52':(n==='warn'?'#d98324':'#b3261e');
@@ -38796,17 +38822,37 @@ async function renderRevenuHoraire(){
       <span style="flex:1"><b>${esc(c.label)}</b><br><span style="font-size:.82rem;color:#9a8a82">${esc(c.detail)}</span></span>
     </div>`).join('');
 
-  const periodBtns = [30,90,0].map(j=>{
-    const lib = j===0?'Tout':j+' j';
-    const on = (_revhDays===j || (j===0 && _revhDays>=99999));
-    return `<button class="btn ${on?'gold':'ghost'} sm" onclick="revhSetDays(${j===0?99999:j})">${lib}</button>`;
-  }).join('');
+  const periodBtns = (()=>{
+    const quick = [30,90,0].map(j=>{
+      const lib = j===0?'Tout':j+' j';
+      const on = (_revhMode==='jours' && (_revhDays===j || (j===0 && _revhDays>=99999)));
+      return `<button class="btn ${on?'gold':'ghost'} sm" onclick="revhSetDays(${j===0?99999:j})">${lib}</button>`;
+    }).join('');
+    const persoOn = _revhMode==='perso';
+    const btnPerso = `<button class="btn ${persoOn?'gold':'ghost'} sm" onclick="revhModePerso()">📅 Période précise</button>`;
+    return quick + btnPerso;
+  })();
+  // [v1083] Bloc dates au jour près (visible en mode perso), calqué sur la comptabilité.
+  const persoBloc = (_revhMode==='perso') ? `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a;margin:8px 0">📅 <div style="flex:1">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div><label style="font-size:.74rem;color:#7a6a62;display:block">Du</label><input type="date" id="revhDateDebut" value="${esc(_revhDateDebut)}" style="padding:6px;border:1px solid var(--hair);border-radius:8px"></div>
+        <div><label style="font-size:.74rem;color:#7a6a62;display:block">Au</label><input type="date" id="revhDateFin" value="${esc(_revhDateFin)}" style="padding:6px;border:1px solid var(--hair);border-radius:8px"></div>
+        <button class="btn gold sm" onclick="revhSetDates()">Appliquer</button>
+      </div>
+      <p class="note" style="margin:6px 0 0">Choisis une période exacte — par exemple les jours où tu as vraiment pointé ton temps. Laisse un champ vide pour ne pas le borner.</p>
+    </div></div>` : '';
+  // Libellé de la période active.
+  const periodeLabel = (_revhMode==='perso')
+    ? `du ${_revhDateDebut?fmtDate(_revhDateDebut):'début'} au ${_revhDateFin?fmtDate(_revhDateFin):"aujourd'hui"}`
+    : (_revhDays>=99999?'toutes les données':`les ${_revhDays} derniers jours`);
 
   main.innerHTML = `
     <div class="topbar"><div><h1>Mon revenu horaire</h1>
       <p>Combien tu peux espérer te payer, d'après tes ventes et ta production réelles.</p></div></div>
     <div class="panel">
-      <div class="flex" style="gap:6px;justify-content:flex-end;margin-bottom:10px">${periodBtns}</div>
+      <div class="flex" style="gap:6px;justify-content:flex-end;margin-bottom:10px;flex-wrap:wrap">${periodBtns}</div>
+      ${persoBloc}
+      <p class="note" style="margin:-4px 2px 10px;color:#9a8a82">Période analysée : <b>${esc(periodeLabel)}</b></p>
       <div class="banner" style="background:#eef5f0;border-color:#bcd9c6"><div>
         <b>Étape 1 — Fiabilité de tes données.</b> Avant tout calcul, voici ce que l'outil sait mesurer sur les ${d.jours>=99999?'données disponibles':`${d.jours} derniers jours`}. Plus tes sources sont vertes, plus l'estimation de revenu (étape suivante) sera juste.
       </div></div>
@@ -38935,7 +38981,31 @@ async function renderRevenuHoraire(){
       </details>
     </div>`;
 }
-function revhSetDays(j){ _revhDays = j; renderRevenuHoraire(); }
+// [v1083] Handlers du sélecteur de période du revenu horaire.
+function revhSetDays(j){ _revhMode='jours'; _revhDays = j; renderRevenuHoraire(); }
+// Bascule en mode « période précise » (dates au jour près).
+function revhModePerso(){
+  _revhMode='perso';
+  // pré-remplit avec une plage par défaut si vide : les 90 derniers jours.
+  if(!_revhDateDebut && !_revhDateFin){
+    const fin=new Date(); const deb=new Date(); deb.setDate(deb.getDate()-90);
+    _revhDateDebut=deb.toISOString().slice(0,10); _revhDateFin=fin.toISOString().slice(0,10);
+  }
+  renderRevenuHoraire();
+}
+// Applique les dates saisies dans les champs Du/Au.
+function revhSetDates(){
+  const deb=document.getElementById('revhDateDebut'); const fin=document.getElementById('revhDateFin');
+  _revhDateDebut = deb ? (deb.value||'') : _revhDateDebut;
+  _revhDateFin   = fin ? (fin.value||'') : _revhDateFin;
+  // garde-fou : si début > fin, on échange pour rester cohérent.
+  if(_revhDateDebut && _revhDateFin && _revhDateDebut>_revhDateFin){
+    const t=_revhDateDebut; _revhDateDebut=_revhDateFin; _revhDateFin=t;
+  }
+  _revhMode='perso';
+  renderRevenuHoraire();
+}
+
 
 // ---- VUE ATELIER (héberge le board de pilotage) ----
 let _atelierTab = 'pilotage';   // 'pilotage' | 'tableau'
