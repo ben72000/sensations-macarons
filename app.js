@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1083';
+const APP_VERSION = 'v1085';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -6674,7 +6674,7 @@ async function docOpen(id){
         <div style="margin-top:8px"><button class="btn ghost" onclick="docApercu(${d.id})">👁️ Voir / imprimer la facture</button></div>
       `}
     `:''}
-    ${d.type==='devis'?`<div style="margin-top:10px"><button class="btn gold" style="width:100%" onclick="genererDevisDoc(${d.id})">🖨 Imprimer / Envoyer le devis</button></div>`:''}
+    ${d.type==='devis'?`<div style="margin-top:10px"><button class="btn gold" style="width:100%" onclick="genererDevisDoc(${d.id})">👁️ Visualiser le devis <span style="font-weight:400;opacity:.85">· imprimer / envoyer</span></button></div>`:''}
     <div style="display:flex;gap:8px;margin-top:10px">
       ${docEstDefinitif(d)?'':`<button class="btn ghost del" onclick="docDelete(${d.id})">Supprimer</button>`}
       <button class="btn ghost" onclick="closeModal()">Fermer</button>
@@ -31506,6 +31506,164 @@ async function labelToCanvas(d){
 // (_buildSingleImagePDF / _buildMultiImagePDF). Aucune dépendance externe → compatible offline.
 // Avantage double : (1) produit un .pdf joignable au mail ; (2) n'utilise PAS l'impression Safari,
 // donc PLUS d'URL/en-tête ajoutés automatiquement par le navigateur en pied de page.
+// ===================== DEVIS/FACTURE → PDF par DESSIN CANVAS (fiable iOS) =====================
+// [v1084] La rasterisation HTML via <foreignObject> est non fiable sur iOS Safari (reste figée).
+// On dessine donc le document DIRECTEMENT sur un canvas (comme les étiquettes Phomemo, qui marchent),
+// puis on l'emballe en PDF avec les générateurs maison. 100% offline, aucune dépendance.
+//   doc  = { titre, ref, date, validite, emetteur:{...}, client:[lignes texte], lignes:[{desc,montant}],
+//            sousTotal, remisePct, remise, total, mentions:[...], pied }
+function _docToCanvasPages(doc){
+  const DPI = 150;                                   // densité confortable pour du texte
+  const mm = v => Math.round(v / 25.4 * DPI);
+  const W = mm(210), H = mm(297);                    // A4
+  const M = mm(15);                                  // marge
+  const colX = W - M;                                // bord droit (montants alignés à droite)
+  // Palette identité Sensations Macarons
+  const AUBERGINE = '#52252F', AUBERGINE_FONCE = '#490F25', OR = '#AA7C39';
+  const CREME = '#fbeede', CREME_2 = '#f0e8da', TEXTE = '#3a2a2e', TEXTE_DOUX = '#6a5a52', GRIS = '#9a8a82';
+  const pages = [];
+  let cv, ctx, y;
+  const euros = n => (Math.round((+n||0)*100)/100).toFixed(2).replace('.',',')+' \u20AC';
+  const font = (px,bold)=>{ ctx.font = `${bold?'bold ':''}${px}px Georgia, "Times New Roman", serif`; };
+  function rrect(x,yy,w,h,r){ // rectangle arrondi
+    ctx.beginPath();
+    ctx.moveTo(x+r,yy); ctx.lineTo(x+w-r,yy); ctx.quadraticCurveTo(x+w,yy,x+w,yy+r);
+    ctx.lineTo(x+w,yy+h-r); ctx.quadraticCurveTo(x+w,yy+h,x+w-r,yy+h);
+    ctx.lineTo(x+r,yy+h); ctx.quadraticCurveTo(x,yy+h,x,yy+h-r);
+    ctx.lineTo(x,yy+r); ctx.quadraticCurveTo(x,yy,x+r,yy); ctx.closePath();
+  }
+  function newPage(){
+    cv = document.createElement('canvas'); cv.width=W; cv.height=H;
+    ctx = cv.getContext('2d');
+    ctx.fillStyle=CREME; ctx.fillRect(0,0,W,H);             // fond crème global
+    ctx.textBaseline='top';
+    pages.push(cv); y = M;
+  }
+  function drawWrapped(txt, x, maxW, px, bold, color){
+    font(px,bold); ctx.fillStyle=color||TEXTE;
+    const words=String(txt).split(/\s+/); let line='';
+    for(const w of words){
+      const test=line?line+' '+w:w;
+      if(ctx.measureText(test).width>maxW && line){ ctx.fillText(line,x,y); y+=px*1.35; line=w; }
+      else line=test;
+    }
+    if(line){ ctx.fillText(line,x,y); y+=px*1.35; }
+  }
+  function ensureSpace(need){ if(y+need > H-M-mm(16)){ drawFooter(); newPage(); } }
+  function drawFooter(){
+    // filet doré + pied centré
+    ctx.strokeStyle=OR; ctx.lineWidth=mm(0.4);
+    ctx.beginPath(); ctx.moveTo(M,H-M-mm(8)); ctx.lineTo(W-M,H-M-mm(8)); ctx.stroke();
+    font(mm(2.5),false); ctx.fillStyle=GRIS; ctx.textAlign='center';
+    ctx.fillText(doc.pied||'', W/2, H-M-mm(5.5));
+    ctx.fillText('Merci de votre confiance', W/2, H-M-mm(2.5)); ctx.textAlign='left';
+  }
+  newPage();
+  const e = doc.emetteur||{};
+  // — BANDEAU D'EN-TÊTE aubergine avec titre + réf en blanc/doré
+  const hBand = mm(20);
+  ctx.fillStyle=AUBERGINE; rrect(M, y, W-2*M, hBand, mm(2.5)); ctx.fill();
+  font(mm(6),true); ctx.fillStyle='#fff'; ctx.fillText(doc.titre||'Devis', M+mm(5), y+mm(4.5));
+  font(mm(3.2),true); ctx.fillStyle='#f0d9b5'; ctx.textAlign='right';
+  ctx.fillText(doc.ref||'', colX-mm(5), y+mm(6)); ctx.textAlign='left';
+  // nom de la maison dans le bandeau (sous le titre)
+  font(mm(2.8),false); ctx.fillStyle='#e8c9a0';
+  ctx.fillText(e.nom||'', M+mm(5), y+mm(12.5));
+  y += hBand + mm(7);
+  // — Coordonnées émetteur (gauche) + bloc client (droite, sur carte crème foncée)
+  const yEmet = y;
+  font(mm(2.5),true); ctx.fillStyle=OR; ctx.fillText('ÉMETTEUR', M, y); y+=mm(4);
+  font(mm(2.7),false); ctx.fillStyle=TEXTE_DOUX;
+  (e.lignes||[]).forEach(l=>{ ctx.fillText(l, M, y); y+=mm(3.7); });
+  const yEmetEnd = y;
+  // carte client
+  const cardX = W/2 + mm(5), cardW = colX - cardX;
+  let yc = yEmet;
+  const clientLines = doc.client||['Client de passage'];
+  const cardH = mm(7) + clientLines.length*mm(3.9) + mm(3);
+  ctx.fillStyle=CREME_2; rrect(cardX-mm(3), yc-mm(2), cardW+mm(3), cardH, mm(2)); ctx.fill();
+  ctx.strokeStyle=OR; ctx.lineWidth=mm(0.3); rrect(cardX-mm(3), yc-mm(2), cardW+mm(3), cardH, mm(2)); ctx.stroke();
+  font(mm(2.4),true); ctx.fillStyle=OR; ctx.fillText('CLIENT', cardX, yc); yc+=mm(5);
+  font(mm(2.8),false); ctx.fillStyle=TEXTE;
+  clientLines.forEach(l=>{ ctx.fillText(l, cardX, yc); yc+=mm(3.9); });
+  y = Math.max(yEmetEnd, yc) + mm(6);
+  // — Date + validité
+  font(mm(2.7),false); ctx.fillStyle=TEXTE_DOUX;
+  ctx.fillText('Date : '+(doc.date||''), M, y);
+  if(doc.validite){ ctx.textAlign='right'; ctx.fillText('Valable jusqu\'au : '+doc.validite, colX, y); ctx.textAlign='left'; }
+  y += mm(7);
+  // — TABLEAU : en-tête aubergine arrondi
+  const thH = mm(8);
+  ctx.fillStyle=AUBERGINE_FONCE; rrect(M, y, W-2*M, thH, mm(1.5)); ctx.fill();
+  font(mm(2.9),true); ctx.fillStyle='#fff';
+  ctx.fillText('Désignation', M+mm(4), y+mm(2.5));
+  ctx.textAlign='right'; ctx.fillText('Montant', colX-mm(4), y+mm(2.5)); ctx.textAlign='left';
+  y += thH + mm(2.5);
+  // — Lignes (zébrage léger + filet doré fin)
+  (doc.lignes||[]).forEach((ln,i)=>{
+    ensureSpace(mm(10));
+    const yStart=y;
+    if(i%2===1){ // bande alternée très claire
+      ctx.fillStyle='#fff7ec'; ctx.fillRect(M, y-mm(1), W-2*M, mm(7));
+    }
+    const maxDescW = (W-2*M) - mm(36);
+    drawWrapped(ln.desc||'', M+mm(4), maxDescW, mm(2.8), false, TEXTE);
+    font(mm(2.9),true); ctx.fillStyle=AUBERGINE; ctx.textAlign='right';
+    ctx.fillText(euros(ln.montant), colX-mm(4), yStart); ctx.textAlign='left';
+    y = Math.max(y, yStart+mm(5)) + mm(1.5);
+    ctx.strokeStyle='#e6d3b8'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(M,y); ctx.lineTo(W-M,y); ctx.stroke(); y+=mm(2);
+  });
+  // — TOTAUX dans un encadré crème bordé doré
+  ensureSpace(mm(30)); y += mm(3);
+  const boxX = W - M - mm(78), boxW = mm(78);
+  const nbTot = ((+doc.remise||0)>0?2:0)+1;
+  const boxH = nbTot*mm(6) + mm(6);
+  ctx.fillStyle='#fff7ec'; rrect(boxX, y, boxW, boxH, mm(2)); ctx.fill();
+  ctx.strokeStyle=OR; ctx.lineWidth=mm(0.4); rrect(boxX, y, boxW, boxH, mm(2)); ctx.stroke();
+  let yt = y + mm(3);
+  const totLine=(lbl,val,bold,color)=>{
+    font(mm(bold?3.4:2.8),bold); ctx.fillStyle=color||TEXTE;
+    ctx.fillText(lbl, boxX+mm(4), yt);
+    ctx.textAlign='right'; ctx.fillText(euros(val), boxX+boxW-mm(4), yt); ctx.textAlign='left';
+    yt += mm(bold?6.5:5.2);
+  };
+  if((+doc.remise||0)>0){ totLine('Sous-total', doc.sousTotal, false, TEXTE_DOUX); totLine(`Remise (${doc.remisePct||0}%)`, -Math.abs(doc.remise), false, '#b3261e'); }
+  totLine('TOTAL', doc.total, true, AUBERGINE);
+  y = y + boxH + mm(7);
+  // — Mentions légales
+  font(mm(2.5),false); ctx.fillStyle=TEXTE_DOUX;
+  (doc.mentions||[]).forEach(m=>{ ensureSpace(mm(7)); drawWrapped(m, M, W-2*M, mm(2.5), false, TEXTE_DOUX); y+=mm(1.5); });
+  drawFooter();
+  return pages;
+}
+
+// Construit le Blob PDF d'un document « dessiné » (1+ pages canvas) puis le partage avec objet maîtrisé.
+async function sharePdfFromDoc(doc, fileName, shareTitle, shareText){
+  try{
+    const pages = _docToCanvasPages(doc);
+    if(!pages.length) throw new Error('rendu vide');
+    const jpegList = pages.map(cv => _dataURLtoBytes(cv.toDataURL('image/jpeg', 0.92)));
+    const pxW = pages[0].width, pxH = pages[0].height;
+    const pdfBytes = (jpegList.length===1)
+      ? _buildSingleImagePDF(jpegList[0], 210, 297, pxW, pxH)
+      : _buildMultiImagePDF(jpegList, 210, 297, pxW, pxH);
+    const blob = new Blob([pdfBytes], {type:'application/pdf'});
+    const safeName = (fileName||'document').replace(/[^\w.-]/g,'_').replace(/\.pdf$/i,'')+'.pdf';
+    const file = new File([blob], safeName, {type:'application/pdf'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{ await navigator.share({ files:[file], title: shareTitle||safeName, text: shareText||'' }); return true; }
+      catch(eShare){ if(eShare && eShare.name==='AbortError') return false; }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=safeName;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    toast('PDF enregistré \u2713 joins-le à ton mail');
+    return true;
+  }catch(e){ console.error('sharePdfFromDoc', e); toast('Erreur lors de la création du PDF'); return false; }
+}
+// ====================================================================================
 async function _htmlToA4Canvases(htmlDoc, opts){
   opts = opts || {};
   const A4_W_MM = 210, A4_H_MM = 297;
@@ -31552,7 +31710,12 @@ async function _htmlToA4Canvases(htmlDoc, opts){
     const svgBlob = new Blob([svg], {type:'image/svg+xml;charset=utf-8'});
     const url = URL.createObjectURL(svgBlob);
     try{
-      await new Promise((res,rej)=>{ img.onload=res; img.onerror=()=>rej(new Error('svg img load')); img.src=url; });
+      await new Promise((res,rej)=>{
+        const to = setTimeout(()=>rej(new Error('svg img timeout')), 6000);  // [v1084] anti-blocage iOS
+        img.onload=()=>{ clearTimeout(to); res(); };
+        img.onerror=()=>{ clearTimeout(to); rej(new Error('svg img load')); };
+        img.src=url;
+      });
       const cv = document.createElement('canvas');
       cv.width = pxW; cv.height = pxPageH;
       const ctx = cv.getContext('2d');
@@ -35603,9 +35766,34 @@ async function genererDevisDoc(docId){
     signature
   ].filter(l=>l!==null && l!==undefined).join('\n');
   const mailto = `mailto:${encodeURIComponent(emailCible)}?subject=${encodeURIComponent(objet)}&body=${encodeURIComponent(corps)}`;
-  // [v1081] Bouton principal : partage du PDF avec OBJET = numéro du devis (via navigator.share).
-  // Le PDF est généré sans passer par l'impression Safari → pas d'URL ajoutée en pied de page.
+  // [v1084] Données STRUCTURÉES du devis pour le PDF dessiné au canvas (fiable iOS, contrairement
+  // à la rasterisation HTML). On reconstruit chaque ligne en {desc, montant} depuis les données brutes.
+  const emetteurLignes = [
+    e.exploitant||'', e.adresse||'', e.cpville||'',
+    e.siret?('SIRET '+e.siret):'', e.tel?('Tél : '+e.tel):'', e.email||''
+  ].filter(Boolean);
+  const clientLignes = client
+    ? [ [client.civilite,client.prenom,client.nom].filter(Boolean).join(' ')||client.nom||'',
+        client.societe||'', client.adresse||'', client.tel?('Tél : '+client.tel):'', client.email||'' ].filter(Boolean)
+    : ['Client de passage'];
+  const docLignes = lignes.map(ln=>({ desc:factLineDesc(ln), montant:lineTotalBrut(ln) }));
+  if(persoMt>0) docLignes.push({ desc:'Personnalisation', montant:persoMt });
+  const docData = {
+    titre:'DEVIS', ref:`${d.numero||''}`, date:fmtDate(d.date)||'',
+    validite: d.expiration?fmtDate(d.expiration):(d.validiteJours?`${d.validiteJours} j après émission`:''),
+    emetteur:{ nom:e.nom||'Sensations Macarons', lignes:emetteurLignes },
+    client: clientLignes,
+    lignes: docLignes,
+    sousTotal: totalBrut, remisePct: reducPct, remise: reductions, total: total,
+    mentions:[
+      `Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider ce devis.`,
+      'TVA non applicable, article 293 B du Code général des impôts.',
+      `Devis valable ${d.validiteJours||30} jours à compter de la date d'émission. Bon pour accord — date et signature :`
+    ],
+    pied:`${e.nom||''}${e.siret?' · SIRET '+e.siret:''} · Micro-entreprise`
+  };
   window._lastDocHtml = devisHtml;
+  window._lastDocData = docData;   // [v1084] données pour le PDF canvas
   window._lastDocMeta = { fileName:`Devis ${d.numero||''}`, objet, corps, mailto };
   const btnPdfMail = `<button class="pv-btn" onclick="envoyerDocPdfMail()">✉️ Envoyer par mail (PDF)</button>`;
   const btnMailto  = `<a class="pv-btn" href="${mailto}" title="Mail sans pièce jointe (corps pré-rempli)">✏️ Mail seul</a>`;
@@ -35613,11 +35801,18 @@ async function genererDevisDoc(docId){
 
   openPrintView(devisHtml, { title:`Devis ${d.numero||''}`, extraButtons: extraBtns });
 }
-// [v1081] Génère le PDF du dernier document affiché (devis/facture) et le partage avec l'objet maîtrisé.
+// [v1081/v1084] Génère le PDF du dernier document affiché et le partage avec l'objet maîtrisé.
+// On privilégie le PDF DESSINÉ au canvas (fiable iOS) si on a les données structurées ; sinon repli HTML.
 async function envoyerDocPdfMail(){
-  const html = window._lastDocHtml; const meta = window._lastDocMeta||{};
-  if(!html){ toast('Ouvre d\'abord le document'); return; }
+  const meta = window._lastDocMeta||{};
+  const data = window._lastDocData;
   toast('Préparation du PDF…');
+  if(data){
+    const ok = await sharePdfFromDoc(data, meta.fileName||'Document', meta.objet||'Document', meta.corps||'');
+    if(ok!==false) return;
+  }
+  const html = window._lastDocHtml;
+  if(!html){ toast('Ouvre d\'abord le document'); return; }
   await sharePdfFromHtml(html, meta.fileName||'Document', meta.objet||'Document', meta.corps||'');
 }
 // [v1081] Mémorise le document courant pour l'envoi PDF, avec un objet = libellé (n° facture/devis).
@@ -35629,9 +35824,11 @@ function _prepDocPdfMail(html, libelle, client){
     '', 'Bien cordialement.'
   ].join('\n');
   window._lastDocHtml = html;
+  window._lastDocData = null;   // [v1084] pas de données structurées ici → repli HTML (facture)
   window._lastDocMeta = { fileName:libelle, objet:libelle, corps,
     mailto:`mailto:${client&&client.email?encodeURIComponent(client.email):''}?subject=${encodeURIComponent(libelle)}&body=${encodeURIComponent(corps)}` };
 }
+
 // Boutons de la barre d'aperçu : envoi PDF (objet maîtrisé) + mail seul (repli).
 function _docMailBtns(){
   const m = window._lastDocMeta||{};
