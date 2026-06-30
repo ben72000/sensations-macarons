@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1079';
+const APP_VERSION = 'v1080';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -14176,7 +14176,7 @@ function orderToLines(o){
   // ancien format : un seul type
   if(o.type==='evenement'){
     const parfums=[]; (o.parfums||[]).forEach(p=>{if(p.qte>0)parfums.push({nom:p.nom,qte:p.qte});});
-    return [{type:'evenement', evQte:o.evQte||EVENT_MIN, equip:o.equip||0, parfums, pyraVendue:!!o.pyraVendue, pyraPrixVente:(o.pyraPrixVente!=null?+o.pyraPrixVente:null), pyraCoutAchat:(o.pyraCoutAchat!=null?+o.pyraCoutAchat:null)}];
+    return [{type:'evenement', evQte:o.evQte||EVENT_MIN, equip:o.equip||0, parfums, sansParfum:(+o.sansParfum||0), pyraVendue:!!o.pyraVendue, pyraPrixVente:(o.pyraPrixVente!=null?+o.pyraPrixVente:null), pyraCoutAchat:(o.pyraCoutAchat!=null?+o.pyraCoutAchat:null)}];
   }
   if(o.type==='grand'){
     const items=[]; (o.bigItems||[]).forEach(p=>{if(p.qte>0)items.push({nom:p.nom,qte:p.qte});});
@@ -14199,7 +14199,7 @@ function _parfumsToObj(p){
 function _lineToEdit(ln){
   const t=ln.type;
   if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null};
-  if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), _configChoisie:!!ln._configChoisie};
+  if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), _configChoisie:!!ln._configChoisie};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacNb>0?+ln.sacNb:0)};
@@ -14722,7 +14722,23 @@ function drawEventLine(ln,i){
     const q=ln.parfums[f]||0;
     return flavorPickRow(f, q, `setEventParfum(${i},${fi},VAL)`, Math.max(ln.evQte,50));
   }).join('');
-  const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
+  // [v1080] « Sans parfum déterminé » sur l'événement, comme pour les coffrets : une partie (ou tout)
+  // des macarons reste à définir plus tard. Compté dans le total au même titre qu'un parfum attribué.
+  const evSansParfum = +ln.sansParfum||0;
+  const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0) + evSansParfum;
+  const evCap = Math.max(1, +ln.evQte||0);
+  const evSpOn = evSansParfum>0;
+  let evSpOpts=''; for(let n=1;n<=evCap;n++) evSpOpts+=`<option value="${n}" ${evSansParfum===n?'selected':''}>${n}</option>`;
+  const evSansParfumRow = `<div onclick="setEventSansParfum(${i}, ${evSpOn?0:1})"
+      style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:4px 0;cursor:pointer;
+      border:1px solid var(--hair);border-radius:12px;
+      background:${evSpOn?'#f0ece4':'#fbf8f3'};${evSpOn?'border-color:#cdbfa8':''}">
+    <span style="width:22px;height:22px;border-radius:50%;background:repeating-linear-gradient(45deg,#cbb,#cbb 3px,#ddd 3px,#ddd 6px);flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);${evSpOn?'outline:2px solid #8a7a62;outline-offset:1px':''}"></span>
+    <span style="flex:1;font-size:1rem;color:${evSpOn?'var(--bordeaux)':'#6a5a52'};font-weight:${evSpOn?'600':'400'}">Sans parfum déterminé <span style="font-size:.72rem;color:#9a8a82;font-weight:400">— à définir plus tard</span></span>
+    ${evSpOn
+      ? `<select onclick="event.stopPropagation()" onchange="setEventSansParfum(${i},+this.value)" style="font-size:1rem;padding:4px 8px">${evSpOpts}</select>`
+      : `<span style="color:#9a8a82;font-size:.9rem">+ ajouter</span>`}
+  </div>`;
   // --- Logique pyramide intégrée ---
   const hasPyra=(+ln.equip||0)>0;                 // une pyramide est présente
   const prixMac = hasPyra ? PYRA_PRICE : EVENT_PRICE;   // 1,60€ conditionné à la pyramide
@@ -14749,18 +14765,20 @@ function drawEventLine(ln,i){
       :`<p class="note" style="margin:6px 2px 0;font-size:.72rem">Louée, la pyramide est une <b>prestation de service</b>, à retourner après l'événement.</p>`}
     </div>`:''}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
-    <div class="flav-grid">${flavRows}</div>
+    <div class="flav-grid">${flavRows}${evSansParfumRow}</div>
+    ${evSansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${evSansParfum} macaron${evSansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>` : ''}
     ${(()=>{
       // Compteur de remplissage des parfums, même logique que les coffrets : vert si pile,
       // rouge si au-dessus, orange (neutre) en dessous. En gras, s'incrémente à la saisie.
       const cible = +ln.evQte||0;
       const col = totQ===cible ? '#2e7d32' : (totQ>cible ? '#b3261e' : '#c77d2e');
       const bg  = totQ===cible ? '#eef6ee' : (totQ>cible ? '#fdf2f1' : '#fbf8f3');
+      const nbDiff = Object.values(ln.parfums).filter(q=>+q>0).length;
       const txt = totQ>cible ? `${totQ}/${cible} — dépasse de ${totQ-cible} !`
                 : totQ===cible ? `${totQ}/${cible} ✓`
                 : `${totQ}/${cible}${totQ>0?` — ${cible-totQ} sans parfum`:''}`;
       return `<div class="sum-box" style="border:2px solid ${col};background:${bg}">
-        <span>Parfums attribués</span>
+        <span>${nbDiff} parfum(s) attribué(s)${evSansParfum?` + ${evSansParfum} sans parfum`:''}</span>
         <b style="color:${col};font-size:1.1rem">${txt}</b></div>`;
     })()}
     <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(PYRA_PRICE)}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
@@ -14846,6 +14864,8 @@ function setEventEquip(i,v){
   cmdRecalc();
 }
 function setEventParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
+// [v1080] « Sans parfum déterminé » sur l'événement (même mécanique que les coffrets).
+function setEventSansParfum(i,v){ const q=Math.max(0,+v||0); if(q>0) cmdLines[i].sansParfum=q; else delete cmdLines[i].sansParfum; drawLines(); }
 // [v1079] Pyramide : bascule location/vente + saisie prix de vente et coût d'achat.
 function setPyraMode(i, vendue){
   cmdLines[i].pyraVendue = !!vendue;
@@ -15129,7 +15149,7 @@ function cmdLinesToStored(){
   return (cmdLines||[]).map(ln=>{
     const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
     if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, sansParfum:(+ln.sansParfum||0)||undefined, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', remisePct:rp, parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacMatId>0?Math.max(0,Math.round(+ln.sacNb||0)):0), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
@@ -15445,12 +15465,15 @@ async function saveCmd(id){
       // [v1079] Si pyramide vendue : un prix de vente > 0 est requis (sinon la vente n'a pas de sens).
       if(ln.pyraVendue && (+ln.pyraPrixVente||0)<=0){ toast('Pyramide vendue : indique un prix de vente'); return; }
 
-      // Parfums : on autorise le partiel (reste = non spécifié), mais on interdit le dépassement.
+      // Parfums : on autorise le partiel. Le « sans parfum déterminé » explicite compte dans le total.
       const totParf=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0);
-      if(totParf>(ln.evQte||0)){ toast(`Trop de parfums : ${totParf} pour ${ln.evQte} macarons (max ${ln.evQte})`); return; }
-      if(totParf>0 && totParf<(ln.evQte||0)){
-        const reste=(ln.evQte||0)-totParf;
-        if(!confirm(`${reste} macaron(s) sans parfum précisé seront comptés « non spécifié ». Continuer ?`)) return;
+      const totSP=+ln.sansParfum||0;
+      const totAttribue=totParf+totSP;          // [v1080] parfums choisis + sans parfum explicite
+      if(totAttribue>(ln.evQte||0)){ toast(`Trop de macarons attribués : ${totAttribue} pour ${ln.evQte} (max ${ln.evQte})`); return; }
+      // Reste non spécifié = ce qui n'est NI un parfum choisi NI marqué « sans parfum ».
+      if(totAttribue>0 && totAttribue<(ln.evQte||0)){
+        const reste=(ln.evQte||0)-totAttribue;
+        if(!confirm(`${reste} macaron(s) ne sont ni attribués ni marqués « sans parfum ». Ils seront comptés « non spécifié ». Continuer ?`)) return;
       }
     }
     if(ln.type==='grand'){
