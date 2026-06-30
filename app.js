@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1085';
+const APP_VERSION = 'v1086';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -35801,20 +35801,18 @@ async function genererDevisDoc(docId){
 
   openPrintView(devisHtml, { title:`Devis ${d.numero||''}`, extraButtons: extraBtns });
 }
-// [v1081/v1084] Génère le PDF du dernier document affiché et le partage avec l'objet maîtrisé.
-// On privilégie le PDF DESSINÉ au canvas (fiable iOS) si on a les données structurées ; sinon repli HTML.
+
+// [v1086] Génère le PDF du dernier document affiché (le VRAI devis/facture HTML) et le partage.
+// Le PDF « dessiné au canvas » a été retiré : il changeait la mise en page du devis. On rasterise
+// donc le HTML réel (rendu fidèle), avec un délai de sécurité contre tout blocage iOS.
 async function envoyerDocPdfMail(){
   const meta = window._lastDocMeta||{};
-  const data = window._lastDocData;
-  toast('Préparation du PDF…');
-  if(data){
-    const ok = await sharePdfFromDoc(data, meta.fileName||'Document', meta.objet||'Document', meta.corps||'');
-    if(ok!==false) return;
-  }
   const html = window._lastDocHtml;
   if(!html){ toast('Ouvre d\'abord le document'); return; }
+  toast('Préparation du PDF…');
   await sharePdfFromHtml(html, meta.fileName||'Document', meta.objet||'Document', meta.corps||'');
 }
+
 // [v1081] Mémorise le document courant pour l'envoi PDF, avec un objet = libellé (n° facture/devis).
 function _prepDocPdfMail(html, libelle, client){
   const nomClient = client ? [client.prenom, client.nom].filter(Boolean).join(' ') : '';
