@@ -1230,6 +1230,15 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .ai-cle-voisins-lbl{color:#b0a298}
 .ai-cle-lien{border:1px solid var(--hair);background:#fff;color:var(--bordeaux);font-size:.72rem;padding:2px 8px;border-radius:8px;cursor:pointer}
 .ai-cle-lien:active{transform:scale(.97)}
+/* [v1077] Lignes traçables du revenu horaire : carte dépliable montrant l'origine du calcul. */
+.revh-trace{margin:0}
+.revh-trace>summary{list-style:none}
+.revh-trace>summary::-webkit-details-marker{display:none}
+.revh-trace>summary .revh-chevron{transition:.15s}
+.revh-trace[open]>summary .revh-chevron::after{content:''}
+.revh-trace[open]>summary .revh-chevron{color:var(--caramel,#AA7C39)}
+.revh-trace[open]>summary{background:#fbf6ee !important;border-radius:8px 8px 0 0}
+.revh-trace[open]{background:#fdfaf4;border-radius:8px;margin-bottom:4px}
 .ai-suite{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px}
 .ai-suite-btn{flex:1 1 auto;min-width:46%;border:1.5px solid var(--hair);background:#fff;color:var(--bordeaux);font-size:.82rem;font-weight:600;padding:9px 10px;border-radius:9px;cursor:pointer;transition:.15s;text-align:center}
 .ai-suite-btn:active{transform:scale(.98)}

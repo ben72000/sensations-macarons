@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1076';
+const APP_VERSION = 'v1078';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -14551,7 +14551,7 @@ async function saveQuickClient(){
 
 function addLine(type){
   if(type==='coffret') cmdLines.push({type:'coffret', taille:6, parfums:{}});
-  else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:0, parfums:{}});
+  else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:0, evFiltrePyr:0, parfums:{}});
   else if(type==='grand') cmdLines.push({type:'grand', tarif:'particulier', items:{}});
   else if(type==='vrac') cmdLines.push({type:'vrac', parfums:{}});
   else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
@@ -14722,9 +14722,9 @@ function drawEventLine(ln,i){
     <div class="line-head"><span class="line-type">Événement <span class="line-sub">${hasPyra?`${euro(PYRA_PRICE)}/macaron (pyramide)`:`${euro(EVENT_PRICE)}/macaron`} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <div class="row2">
       <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
-      <div class="field"><label>Pyramides / présentoirs</label><input type="number" min="0" inputmode="numeric" value="${(+ln.equip||0)>0?ln.equip:''}" placeholder="toutes les options" oninput="setEventEquip(${i},this.value)"></div>
+      <div class="field"><label>Pyramides / présentoirs <span style="font-weight:400;color:#9a8a82;font-size:.74rem">(max)</span></label><input type="number" min="0" inputmode="numeric" value="${(()=>{const f=(ln.evFiltrePyr!=null?+ln.evFiltrePyr:+ln.equip||0);return f>0?f:'';})()}" placeholder="toutes les options" oninput="setEventEquip(${i},this.value)"></div>
     </div>
-    <div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0, +ln.equip||0)}</div>
+    <div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0, (ln.evFiltrePyr!=null?+ln.evFiltrePyr:+ln.equip||0), +ln.equip||0)}</div>
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}</div>
     ${(()=>{
@@ -14746,18 +14746,31 @@ function drawEventLine(ln,i){
 }
 // HTML du bloc options : la liste se base sur la DEMANDE client (stable),
 // l'option mise en avant est la quantité RETENUE (choisie). Les deux sont dissociées.
-function eventPyraOptsHtml(i, demande, choisi, nbPyr){
+// [v1078] La config retenue est identifiée par le COUPLE (total, nb pyramides) : deux configs peuvent
+// avoir le même total de macarons (ex. 105 = 1× Matfer OU 3× Bloc 35) — il faut donc aussi comparer
+// le nombre de pyramides, sinon plusieurs lignes s'affichent « choisi » en même temps.
+function eventPyraOptsHtml(i, demande, choisi, nbPyr, nChoisi){
   nbPyr = +nbPyr||0;
   const multiOpt = pyraOptions(demande||0, undefined, nbPyr);
   const boxes = (choisi>0) ? pyraBoxes(choisi) : null;  // boîtes calculées sur la quantité retenue
   const filtreTxt = nbPyr>0 ? ` · max ${nbPyr} pyramide${nbPyr>1?'s':''}` : '';
+  // nombre de pyramides de la config retenue : fourni explicitement, sinon on prend l'equip courant.
+  const nRetenu = (nChoisi!=null) ? (+nChoisi||0) : (+cmdLines[i]?.equip||0);
   let corps;
   if(multiOpt.opts.length){
-    corps = multiOpt.opts.map(o=>`
-      <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${o.total===choisi?'#eef6ef':'#fff'};border:1px solid ${o.total===choisi?'#3f7d52':'var(--hair)'}">
+    // une seule option est « la choisie » : même total ET même nombre de pyramides.
+    const estChoisie = (o)=> o.total===choisi && (nRetenu>0 ? o.n===nRetenu : true);
+    // si plusieurs options matchent encore (nRetenu non décisif), on n'en marque qu'UNE (la 1re).
+    let dejaMarque = false;
+    corps = multiOpt.opts.map(o=>{
+      const sel = estChoisie(o) && !dejaMarque;
+      if(sel) dejaMarque = true;
+      return `
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${sel?'#eef6ef':'#fff'};border:1px solid ${sel?'#3f7d52':'var(--hair)'}">
         <span style="flex:1;font-size:.86rem"><b style="color:var(--bordeaux)">${o.total}</b> <span style="color:#6a5a52">— ${esc(o.desc)}</span></span>
-        ${o.total===choisi?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="pickEventConfig(${i},${o.total},${o.n})">Choisir</button>`}
-      </div>`).join('');
+        ${sel?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="pickEventConfig(${i},${o.total},${o.n})">Choisir</button>`}
+      </div>`;
+    }).join('');
   } else if(nbPyr>0){
     corps = `<p class="note" style="margin:0;color:#b08a3a">Aucune configuration jusqu'à <b>${nbPyr} pyramide(s)</b> pour une demande de ${demande} (jusqu'à ${Math.ceil((demande||0)*1.1)}). Augmente le nombre de pyramides, ou mets <b>0</b> pour voir toutes les options.</p>`;
   } else {
@@ -14774,7 +14787,11 @@ function eventPyraOptsHtml(i, demande, choisi, nbPyr){
 // SANS toucher la demande client (la liste d'options reste stable).
 function pickEventConfig(i, total, n){
   cmdLines[i].evQte = +total||0;
-  cmdLines[i].equip = +n||1;
+  cmdLines[i].equip = +n||1;             // nombre de pyramides RETENU (sert au prix, à l'emballage, à la facture)
+  cmdLines[i]._configChoisie = true;     // [v1078] marque qu'un choix explicite a eu lieu
+  // On NE touche PAS evFiltrePyr : le filtre des options reste celui que l'utilisateur a saisi,
+  // pour qu'il puisse encore voir et choisir une autre config (ex. passer de 1× Matfer à 3× Bloc 35).
+  if(cmdLines[i].evFiltrePyr==null) cmdLines[i].evFiltrePyr = 0;  // 0 = toutes les options
   drawLines();                    // redessine : champ pyramides + surbrillance + prix
   cmdRecalc();
 }
@@ -14784,20 +14801,24 @@ function setEventQte(i,v){
   cmdLines[i].evDemande = val;
   cmdLines[i].evQte = val;        // par défaut la quantité retenue suit la demande tant qu'on n'a pas choisi
   const box=document.getElementById('pyraOpts_'+i);
-  // On rafraîchit dès que le bloc existe (même si equip=0 : le filtre 0 montre toutes les options).
-  if(box) box.innerHTML=eventPyraOptsHtml(i, val, val, +cmdLines[i].equip||0);
+  // On rafraîchit dès que le bloc existe (même si filtre=0 : le filtre 0 montre toutes les options).
+  if(box) box.innerHTML=eventPyraOptsHtml(i, val, val, +cmdLines[i].evFiltrePyr||0, +cmdLines[i].equip||0);
   cmdRecalc();
 }
 function setEventEquip(i,v){
   const raw=(v==null?'':String(v)).trim();
   const n=+raw||0;                       // vide ou 0 → 0 (= aucun filtre, toutes les options)
-  const prev=+cmdLines[i].equip||0;
-  cmdLines[i].equip=n;
-  // Rafraîchit le bloc d'options si le nombre a changé (y compris vers 0 = tout afficher).
+  const prev=+cmdLines[i].evFiltrePyr||0;
+  // [v1078] Le champ « Pyramides » est un MAXIMUM (filtre des options), dissocié du nombre RETENU
+  // (cmdLines[i].equip, fixé en choisissant une config). Ainsi, choisir une config ne fait pas
+  // disparaître les autres : le filtre reste celui que tu as tapé.
+  cmdLines[i].evFiltrePyr = n;
+  // Si aucune config n'a encore été retenue, on aligne le retenu sur le filtre (compat. prix/emballage).
+  if(!cmdLines[i]._configChoisie){ cmdLines[i].equip = n; }
   if(n!==prev){
     const box=document.getElementById('pyraOpts_'+i);
     const demande=(cmdLines[i].evDemande!=null?+cmdLines[i].evDemande:+cmdLines[i].evQte||0);
-    if(box) box.innerHTML=eventPyraOptsHtml(i, demande, +cmdLines[i].evQte||0, n);
+    if(box) box.innerHTML=eventPyraOptsHtml(i, demande, +cmdLines[i].evQte||0, n, +cmdLines[i].equip||0);
   }
   cmdRecalc();
 }
@@ -38199,27 +38220,38 @@ async function revenuHoraireData(jours){
 
   // 2) CA ENCAISSÉ sur la fenêtre (cash basis), via les paiements datés des commandes + marchés clos
   const orders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const _cliNom = id => { const c=clients.find(x=>x.id===id); return c?(c.nom||c.prenom||'Client'):'Client'; };
   let caCommandes = 0;
+  const detailCommandes = [];   // [v1077] {label, montant} par commande encaissée sur la fenêtre
   orders.forEach(o=>{
     const regs = Array.isArray(o.paiements)?o.paiements:[];
+    let encO = 0;
     if(regs.length){
-      regs.forEach(p=>{ if((p.date||'').slice(0,10) >= sinceStr) caCommandes += (+p.montant||0); });
+      regs.forEach(p=>{ if((p.date||'').slice(0,10) >= sinceStr) encO += (+p.montant||0); });
     } else if(o.datePaiement && (o.datePaiement.slice(0,10) >= sinceStr)){
-      caCommandes += (+o.montant||0);
+      encO += (+o.montant||0);
     }
+    if(encO>0){ caCommandes += encO; detailCommandes.push({ label:_cliNom(o.clientId)+(o.dateLivraison?' · '+o.dateLivraison.slice(0,10):''), montant:money2(encO) }); }
   });
+  detailCommandes.sort((a,b)=>b.montant-a.montant);
   const markets = await db.markets.toArray().catch(()=>[]);
   const closIn = markets.filter(mk=>mk.statut==='clos' && ((mk.dateCloture||mk.date||'').slice(0,10) >= sinceStr));
   let caMarches = 0;
-  closIn.forEach(mk=>{ const ca=mk.ca||{}; caMarches += (+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0); });
+  const detailMarches = [];     // [v1077] {label, montant} par marché clos sur la fenêtre
+  closIn.forEach(mk=>{ const ca=mk.ca||{}; const m=money2((+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0));
+    caMarches += m; detailMarches.push({ label:(mk.nom||'Marché')+(mk.dateCloture||mk.date?' · '+(mk.dateCloture||mk.date).slice(0,10):''), montant:m }); });
+  detailMarches.sort((a,b)=>b.montant-a.montant);
   const caEncaisse = money2(caCommandes + caMarches);
 
   // 3) CHARGES (réelles, datées) sur la fenêtre + charges récurrentes actives (référence mensuelle)
   const charges = await db.charges.toArray().catch(()=>[]);
   const chargesIn = charges.filter(c=>(c.date||'').slice(0,10) >= sinceStr);
   const totalCharges = money2(chargesIn.reduce((a,c)=>a+(+c.montant||0),0));
+  const detailChargesPonct = chargesIn.map(c=>({ label:(c.libelle||c.categorie||'Charge')+(c.date?' · '+c.date.slice(0,10):''), montant:money2(+c.montant||0) })).sort((a,b)=>b.montant-a.montant);
   const recur = (typeof getRecurringCharges==='function'?getRecurringCharges():[]).filter(m=>m.actif!==false && +m.montant>0);
   const chargesRecurMensuel = money2(recur.reduce((a,m)=>a+(+m.montant||0),0));
+  const detailRecur = recur.map(m=>({ label:m.libelle||m.categorie||'Récurrent', montant:money2(+m.montant||0) })).sort((a,b)=>b.montant-a.montant);
 
   // 4) CAPACITÉ À VENDRE : taux d'invendus moyen des marchés clos de la fenêtre.
   //    Le taux n'est pas stocké sur le marché : on le recalcule via marketTotals (comme partout).
@@ -38272,7 +38304,9 @@ async function revenuHoraireData(jours){
     caEncaisse, caCommandes:money2(caCommandes), caMarches:money2(caMarches),
     totalCharges, chargesRecurMensuel, nbCharges: chargesIn.length,
     nbMarchesClos: closIn.length, tauxInvendusMoyen,
-    moisActivite   // [v1076] durée réelle d'activité (mois), pour étendre les charges récurrentes
+    moisActivite,   // [v1076] durée réelle d'activité (mois), pour étendre les charges récurrentes
+    // [v1077] DÉTAILS pour traçabilité (cartes cliquables de l'écran revenu horaire)
+    detailCommandes, detailMarches, detailChargesPonct, detailRecur
   };
 }
 
@@ -38436,6 +38470,39 @@ function revenuHoraireAudit(d){
 }
 
 let _revhDays = REVH_DEFAULT_DAYS;
+// [v1077] LIGNE TRAÇABLE : une carte cliquable du calcul du revenu horaire.
+//  - libelle / valeur : ce qui s'affiche replié (toujours visible).
+//  - formule : phrase « comment ce chiffre est obtenu » (en clair).
+//  - lignes : [{label, montant}] détail réel poste par poste / commande par commande.
+//  - vue / vueLabel : écran source vers lequel renvoyer (bouton « voir l'écran complet »).
+//  - sousTotal : libellé du total du détail (def. « Total »).
+//  - neg : true si la ligne est une soustraction (affiche « − »).
+//  - accent : true pour les lignes de résultat (marge), mises en gras.
+function revhLigneTracable(o){
+  o = o||{};
+  const sign = o.neg ? '− ' : '';
+  const valAff = (o.valeurStr!=null) ? o.valeurStr : (sign + euro(o.valeur||0));
+  const aDetail = (Array.isArray(o.lignes) && o.lignes.length) || o.formule;
+  const lab = o.accent ? `<b>${esc(o.libelle)}</b>` : esc(o.libelle);
+  const valHtml = o.accent ? `<b>${valAff}</b>` : `<b>${valAff}</b>`;
+  if(!aDetail){
+    return `<div class="sum-box"${o.borderTop?' style="border-top:1px solid #e6dccd"':''}><span>${lab}</span>${valHtml}</div>`;
+  }
+  // corps déplié
+  const det = (o.lignes||[]).slice(0, o.max||12).map(l=>
+    `<div class="sum-box" style="background:#fff"><span style="font-size:.84rem">${esc(l.label)}</span><b style="font-size:.84rem">${l.neg?'− ':''}${euro(l.montant)}</b></div>`
+  ).join('');
+  const reste = (o.lignes && o.lignes.length>(o.max||12)) ? `<p class="note" style="margin:4px 2px">+ ${o.lignes.length-(o.max||12)} autre(s)…</p>` : '';
+  const totLab = o.sousTotal || 'Total';
+  const totLigne = (o.lignes && o.lignes.length>1)
+    ? `<div class="sum-box" style="background:#fff;border-top:1px solid #ece1d2"><span style="font-size:.84rem"><b>${esc(totLab)}</b></span><b style="font-size:.84rem">${sign}${euro(o.valeur||0)}</b></div>` : '';
+  const btn = o.vue ? `<div style="margin-top:8px"><button class="btn ghost sm" onclick="goView('${o.vue}')">${esc(o.vueLabel||'Voir l\'écran complet')} ›</button></div>` : '';
+  const formule = o.formule ? `<p class="note" style="margin:2px 2px 8px"><b>Comment c'est obtenu :</b> ${o.formule}</p>` : '';
+  return `<details class="revh-trace">
+    <summary class="sum-box" style="cursor:pointer;list-style:none${o.borderTop?';border-top:1px solid #e6dccd':''}"><span>${lab} <span class="revh-chevron" style="color:#b39a86;font-size:.74rem">détail ›</span></span>${valHtml}</summary>
+    <div style="padding:6px 4px 4px">${formule}${det}${reste}${totLigne}${btn}</div>
+  </details>`;
+}
 async function renderRevenuHoraire(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML = `<div class="topbar"><div><h1>Mon revenu horaire</h1><p>Chargement…</p></div></div>`;
@@ -38499,16 +38566,48 @@ async function renderRevenuHoraire(){
           </div>
         </div>
         <h2 style="margin-top:14px;font-size:1rem">D'où vient ce chiffre</h2>
-        <div class="sum-box"><span>CA encaissé</span><b>${euro(c.caEncaisse)}</b></div>
-        <div class="sum-box"><span>− Matières des ventes</span><b>− ${euro(c.coutMatieres)}</b></div>
-        ${c.coutEmballages>0?`<div class="sum-box"><span>− Emballages</span><b>− ${euro(c.coutEmballages)}</b></div>`:''}
-        <div class="sum-box"><span>− Charges fixes (sur ${(c.moisActivite!=null?c.moisActivite:(c.jours/30)).toFixed(1)} mois d'activité)</span><b>− ${euro(c.chargesFixes)}</b></div>
-        <div class="sum-box" style="border-top:1px solid #e6dccd"><span><b>= Marge avant rémunération</b></span><b>${euro(c.margeAvantRemu)}</b></div>
-        <div class="sum-box"><span>− Cotisations sociales</span><b>− ${euro(c.cotisations)}</b></div>
-        <div class="sum-box"><span><b>= Marge nette</b></span><b>${euro(c.margeApresCotis)}</b></div>
-        <div class="sum-box" style="margin-top:6px"><span>Temps total travaillé</span><b>${c.heures.toFixed(1)} h</b></div>
-        <div class="sum-box"><span style="padding-left:10px">· dont production (atelier)</span><b>${c.hAtelier.toFixed(1)} h</b></div>
-        <div class="sum-box"><span style="padding-left:10px">· dont hors-production (pointeuse)</span><b>${c.hPointeuse.toFixed(1)} h</b></div>
+        <p class="note" style="margin:-2px 2px 8px">Touche une ligne pour voir comment elle est calculée, poste par poste.</p>
+        ${revhLigneTracable({
+          libelle:'CA encaissé', valeur:c.caEncaisse,
+          formule:`l'argent réellement <b>reçu</b> sur la période : ${euro(c.caCommandes)} de commandes payées + ${euro(c.caMarches)} de marchés clôturés.`,
+          lignes:[
+            ...(c.detailCommandes||[]).map(x=>({label:'🧾 '+x.label, montant:x.montant})),
+            ...(c.detailMarches||[]).map(x=>({label:'🏪 '+x.label, montant:x.montant}))
+          ],
+          sousTotal:'Total encaissé', vue:'compta', vueLabel:'Voir la comptabilité'
+        })}
+        ${revhLigneTracable({
+          libelle:'Matières des ventes', valeur:c.coutMatieres, neg:true,
+          formule:`coût des ingrédients consommés par les macarons vendus = pièces vendues × coût de revient matière de chaque parfum${(c.anomaliesCout&&c.anomaliesCout.length)?`. ⚠ ${c.anomaliesCout.length} recette(s) au coût aberrant ont été écartées (voir alerte plus haut).`:''}.`,
+          lignes:(c.anomaliesCout&&c.anomaliesCout.length)? c.anomaliesCout.map(a=>({label:'⚠ écarté : '+a.nom+' ('+euro(a.coutUnit)+'/pc)', montant:0})) : [],
+          vue:'rentaparfum', vueLabel:'Voir la rentabilité par parfum'
+        })}
+        ${c.coutEmballages>0?revhLigneTracable({libelle:'Emballages', valeur:c.coutEmballages, neg:true, formule:'coût des coffrets et emballages des ventes de la période.'}):''}
+        ${revhLigneTracable({
+          libelle:'Charges fixes', valeur:c.chargesFixes, neg:true,
+          formule:`tes charges récurrentes étalées sur ta durée réelle d'activité : ${euro(c.chargesRecurMensuel)}/mois × ${(c.moisActivite!=null?c.moisActivite:(c.jours/30)).toFixed(1)} mois${c.totalCharges>0?` + ${euro(c.totalCharges)} de charges ponctuelles datées`:''}.`,
+          lignes:[
+            ...(c.detailRecur||[]).map(x=>({label:'🔁 '+x.label+' (mensuel)', montant:money2(x.montant*(c.moisActivite!=null?c.moisActivite:(c.jours/30)))})),
+            ...(c.detailChargesPonct||[]).map(x=>({label:'📅 '+x.label, montant:x.montant}))
+          ],
+          sousTotal:'Total charges fixes', vue:'chargesventil', vueLabel:'Voir mes charges'
+        })}
+        ${revhLigneTracable({libelle:'= Marge avant rémunération', valeur:c.margeAvantRemu, accent:true, borderTop:true,
+          formule:`CA encaissé − matières − ${c.coutEmballages>0?'emballages − ':''}charges fixes. C'est ce qui reste pour te rémunérer, avant cotisations.`})}
+        ${revhLigneTracable({
+          libelle:'Cotisations sociales', valeur:c.cotisations, neg:true,
+          formule:`cotisations micro-entrepreneur estimées : ${(+getSettings().socialGoods||0)}% du CA marchandise encaissé.`,
+          vue:'compta', vueLabel:'Voir la comptabilité'})}
+        ${revhLigneTracable({libelle:'= Marge nette', valeur:c.margeApresCotis, accent:true,
+          formule:'marge avant rémunération − cotisations sociales. C\'est ta rémunération nette pour le temps travaillé.'})}
+        ${revhLigneTracable({
+          libelle:'Temps total travaillé', valeurStr:c.heures.toFixed(1)+' h',
+          formule:`tout le temps mesuré sur la période : ${c.hAtelier.toFixed(1)} h de production (atelier) + ${c.hPointeuse.toFixed(1)} h hors-production (pointeuse).`,
+          lignes:[
+            {label:'🏭 Production (atelier) — '+(c.nbSessionsAtelier||0)+' session(s)', montant:0},
+            {label:'⏱ Hors-production (pointeuse) — '+(c.nbSessionsPointeuse||0)+' session(s)', montant:0}
+          ],
+          vue:'pointeuse', vueLabel:'Voir la pointeuse'})}
         ${!fiable?`<p class="note" style="margin-top:10px;color:#d98324">⚠ Données encore partielles : ce chiffre est indicatif. Complète tes sources (voir ci-dessus) pour le fiabiliser.</p>`:''}
         ${c.coutMatieres===0?`<p class="note" style="margin-top:8px">Note : le coût matières des ventes n'a pas pu être estimé (pas de ventes rattachées à des recettes chiffrées sur la période).</p>`:''}
         <p class="note" style="margin-top:8px">La main-d'œuvre n'est pas déduite ici : ce revenu horaire <b>est</b> ta rémunération du temps travaillé. À comparer avec ce que tu voudrais te payer — l'écart te dit s'il faut ajuster prix, vitesse ou volume de ventes.</p>
