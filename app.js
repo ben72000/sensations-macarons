@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1086';
+const APP_VERSION = 'v1089';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -15602,8 +15602,10 @@ async function saveCmd(id){
   }
   closeModal(); renderCmd(); toast('Commande enregistrée ✓');
   // Vérification prévisionnelle immédiate : la commande crée-t-elle un risque sous 8 jours ?
-  await checkForecastForOrder(oid);
+  // [v1087] protégé : une erreur de prévisionnel ne doit JAMAIS faire croire que l'enregistrement a échoué.
+  try{ await checkForecastForOrder(oid); }catch(e){ console.error('checkForecastForOrder', e); }
 }
+
 // Contrôle ciblé après création/modif : alerte si CETTE commande (livraison < 8 j) est en stock insuffisant.
 async function checkForecastForOrder(orderId){
   try{
@@ -16932,13 +16934,14 @@ async function marketAddSortie(marketId, productionId, qte, parfum){
 //            où VAL sera remplacé par la valeur choisie.
 //  - maxq : quantité max du menu (def 60)
 function flavorPickRow(nom, qte, setJs, maxq){
-  maxq = maxq||60;
+  maxq = maxq||60;                      // [v1087] n'est plus un plafond dur : sert d'indice de saisie
   const col = (typeof flavorColor==='function') ? flavorColor(nom) : '#ccc';
   const on = (+qte)>0;
   // clic sur la ligne : si décoché → met 1 ; si coché → remet 0 (toggle)
   const toggleJs = setJs.replace('VAL', on?'0':'1');
-  let qOpts=''; for(let n=1;n<=maxq;n++) qOpts+=`<option value="${n}" ${(+qte)===n?'selected':''}>${n}</option>`;
   const changeJs = setJs.replace('VAL','+this.value');
+  // [v1087] Champ numérique libre (plus de menu déroulant plafonné). On peut saisir n'importe quelle
+  // quantité (ex. 150 macarons d'un même parfum). min=0, step=1, pas de max → aucune limite.
   return `<div onclick="${toggleJs}"
       style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:4px 0;cursor:pointer;
       border:1px solid var(--hair);border-radius:12px;
@@ -16947,7 +16950,7 @@ function flavorPickRow(nom, qte, setJs, maxq){
       box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);${on?'outline:2px solid #3f7d52;outline-offset:1px':''}"></span>
     <span style="flex:1;font-size:1rem;color:${on?'var(--bordeaux)':'#6a5a52'};font-weight:${on?'600':'400'}">${esc(nom)}</span>
     ${on
-      ? `<select onclick="event.stopPropagation()" onchange="${changeJs}" style="flex:none;min-width:64px;font-size:1rem">${qOpts}</select>`
+      ? `<input type="number" inputmode="numeric" min="0" step="1" value="${+qte}" onclick="event.stopPropagation()" onchange="${changeJs}" style="flex:none;width:78px;font-size:1rem;text-align:center;padding:6px 8px;border:1px solid var(--hair);border-radius:8px">`
       : `<span style="flex:none;color:#c2b8b0;font-size:1rem">0</span>`}
   </div>`;
 }
@@ -34600,7 +34603,7 @@ function migParfumDraw(){
         box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);${on?'outline:2px solid #3f7d52;outline-offset:1px':''}"></span>
       <span style="flex:1;font-size:1rem;color:${on?'var(--bordeaux)':'#6a5a52'};font-weight:${on?'600':'400'}">${esc(f)}</span>
       ${on
-        ? `<select onclick="event.stopPropagation()" onchange="migParfumQte('${fe}',+this.value)" style="flex:none;min-width:64px;font-size:1rem">${qOpts(cur.qte)}</select>`
+        ? `<input type="number" inputmode="numeric" min="0" step="1" value="${+cur.qte||0}" onclick="event.stopPropagation()" onchange="migParfumQte('${fe}',+this.value)" style="flex:none;width:78px;font-size:1rem;text-align:center;padding:6px 8px;border:1px solid var(--hair);border-radius:8px">`
         : `<span style="flex:none;color:#c2b8b0;font-size:1rem">0</span>`}
     </div>`;
   }).join('');
@@ -34640,7 +34643,7 @@ function migDonDraw(){
         ${isNS?'display:flex;align-items:center;justify-content:center;font-size:.8rem':''}">${isNS?'?':''}</span>
       <span style="flex:1;font-size:1rem;color:${on?'var(--bordeaux)':'#6a5a52'};font-weight:${on?'600':'400'};${isNS?'font-style:italic':''}">${esc(f)}</span>
       ${on
-        ? `<select onclick="event.stopPropagation()" onchange="migDonQte('${fe}',+this.value)" style="flex:none;min-width:64px;font-size:1rem">${qOpts(cur.qte)}</select>`
+        ? `<input type="number" inputmode="numeric" min="0" step="1" value="${+cur.qte||0}" onclick="event.stopPropagation()" onchange="migDonQte('${fe}',+this.value)" style="flex:none;width:78px;font-size:1rem;text-align:center;padding:6px 8px;border:1px solid var(--hair);border-radius:8px">`
         : `<span style="flex:none;color:#c2b8b0;font-size:1rem">0</span>`}
     </div>`;
   }).join('');
@@ -35456,6 +35459,8 @@ const FACT_STYLE = `   <style>
      .bas-final .legal-bloc { margin-top:3mm; width:100%; box-sizing:border-box; }
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
+     .bas-final .retard { margin-top:1.5mm; font-size:9px; color:#8a7a72; line-height:1.35; }
+     .bas-final .mediateur { margin-top:1.5mm; font-size:9px; color:#8a7a72; line-height:1.35; }
      .bas-final .rib-avis-col { margin-top:0; }
      .bas-final .rib-avis-row { display:flex; gap:4mm; align-items:stretch; margin-top:0; width:100%; box-sizing:border-box; }
      .bas-final .rib-avis-half { flex:1 1 0; min-width:0; display:flex; }
@@ -35518,6 +35523,8 @@ function factEmetteurForm(retourOrderId){
     <div class="field"><label>Nom commercial (interne, pour le pied de page)</label><input id="fa_nom" value="${esc(e.nom||'Sensations Macarons')}"></div>
     <div class="field"><label>Mentions de paiement (facultatif)</label><input id="fa_paiement" maxlength="80" value="${esc(e.paiement||'Paiement à réception.')}"></div>
     <div class="field"><label>Coordonnées bancaires <span style="color:#9a8a82;font-weight:400">— IBAN / BIC, apparaît en pied de page (facultatif)</span></label><textarea id="fa_iban" maxlength="160" rows="3" placeholder="ex :&#10;IBAN : FR76 1234 5678 9012 3456 7890 123&#10;BIC : ABCDEFGH&#10;Titulaire : Sensations Macarons">${esc(e.iban||'')}</textarea></div>
+    <div class="field"><label>Médiateur de la consommation <span style="color:#9a8a82;font-weight:400">— nom + adresse (obligatoire pour les ventes aux particuliers)</span></label><input id="fa_mediateurNom" maxlength="120" value="${esc(e.mediateurNom||'MCP Médiation, 12 square Desnouettes, 75015 Paris')}" placeholder="ex : MCP Médiation, 12 square Desnouettes, 75015 Paris"></div>
+    <div class="field"><label>Site du médiateur <span style="color:#9a8a82;font-weight:400">— adresse du site (obligatoire : permet au client de saisir le médiateur)</span></label><input id="fa_mediateurUrl" maxlength="120" value="${esc(e.mediateurUrl||'https://mcpmediation.org')}" placeholder="ex : https://mcpmediation.org"></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="factSaveEmetteurAndBack(${retourOrderId||0})">Enregistrer</button>
@@ -35525,7 +35532,8 @@ function factEmetteurForm(retourOrderId){
 }
 async function factSaveEmetteurAndBack(orderId){
   const o={ nom:val('fa_nom'), exploitant:val('fa_exploitant'), adresse:val('fa_adresse'),
-    cpville:val('fa_cpville'), siret:val('fa_siret'), tel:val('fa_tel'), email:val('fa_email'), paiement:val('fa_paiement'), iban:val('fa_iban') };
+    cpville:val('fa_cpville'), siret:val('fa_siret'), tel:val('fa_tel'), email:val('fa_email'), paiement:val('fa_paiement'), iban:val('fa_iban'),
+    mediateurNom:val('fa_mediateurNom'), mediateurUrl:val('fa_mediateurUrl') };
   factSaveEmetteur(o);
   closeModal();
   toast('Coordonnées enregistrées ✓');
@@ -35923,6 +35931,8 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .bas-final .legal-bloc { margin-top:3mm; width:100%; box-sizing:border-box; }
      .bas-final .tva { margin-top:0; font-size:10px; }
      .bas-final .paiement { margin-top:1.5mm; font-size:10px; }
+     .bas-final .retard { margin-top:1.5mm; font-size:9px; color:#8a7a72; line-height:1.35; }
+     .bas-final .mediateur { margin-top:1.5mm; font-size:9px; color:#8a7a72; line-height:1.35; }
      .bas-final .rib-avis-col { margin-top:0; }
      .bas-final .rib-avis-row { display:flex; gap:4mm; align-items:stretch; margin-top:0; width:100%; box-sizing:border-box; }
      .bas-final .rib-avis-half { flex:1 1 0; min-width:0; display:flex; }
@@ -36015,6 +36025,30 @@ async function _genererFactureSimple_DEPRECATED(orderId){
   openPrintView(factureHtml, {title:`Facture ${numFact}`});
 }
 
+// [v1088] Mentions légales de paiement obligatoires entre professionnels (Art. L441-10 C. com.).
+// Affichées sur TOUTES les factures (décision Benjamin : le plus simple et conforme, l'activité
+// étant mixte particuliers/pros). Le taux d'intérêt légal change chaque semestre par arrêté : on
+// cite donc la RÈGLE (« 3 fois le taux d'intérêt légal ») sans figer un nombre qui serait vite faux.
+function factMentionsRetardB2B(){
+  return `<div class="retard">`
+    + `En cas de retard de paiement : pénalités au taux de 3 fois le taux d'intérêt légal en vigueur, `
+    + `exigibles sans rappel, et indemnité forfaitaire pour frais de recouvrement de 40 €. `
+    + `Escompte pour paiement anticipé : néant.`
+    + `</div>`;
+}
+
+// [v1088] Mention du médiateur de la consommation (Code conso. L.616-1 / R.616-1), obligatoire pour
+// les ventes aux particuliers. Ne s'affiche QUE si l'émetteur a renseigné un médiateur (nom + URL),
+// car on ne peut pas inventer ces coordonnées sur un document légal : Benjamin doit d'abord adhérer
+// à un médiateur agréé, puis saisir nom + site dans ses coordonnées de facturation.
+function factMentionMediateur(e){
+  const nom=(e&&e.mediateurNom||'').trim();
+  const url=(e&&e.mediateurUrl||'').trim();
+  if(!nom && !url) return '';
+  const detail=[nom, url].filter(Boolean).join(' — ');
+  return `<div class="mediateur">Conformément aux articles L.616-1 et R.616-1 du Code de la consommation, en cas de litige le client peut saisir gratuitement le médiateur de la consommation dont relève l'entreprise : ${esc(detail)}.</div>`;
+}
+
 // Facture regroupant PLUSIEURS commandes (sélection multiple).
 // Chaque commande apparaît avec : sa référence, sa date, le détail de ses lignes,
 // ses remises éventuelles et ses frais de livraison s'il y en a. Puis un total général.
@@ -36085,6 +36119,15 @@ async function genererFactureMultiple(ids){
     ? `${esc([client.civilite,client.prenom,client.nom].filter(Boolean).join(' ')||client.nom||'')}${client.societe?'<br>'+esc(client.societe):''}${client.adresse?'<br>'+esc(client.adresse):''}${client.tel?'<br>Tél : '+esc(client.tel):''}${client.email?'<br>'+esc(client.email):''}`
     : (clientIds.length>1 ? 'Clients multiples' : 'Client de passage');
 
+  // [v1088] Date de livraison / exécution (Art. 242 nonies A CGI) : obligatoire dès qu'elle
+  // diffère de la date d'émission. Pour chaque commande, on retient la date d'événement si
+  // renseignée, sinon la date de la commande. Si toutes les commandes partagent UNE même date
+  // de livraison et qu'elle diffère de l'émission, on l'affiche explicitement dans les détails.
+  // Si les dates diffèrent entre commandes, chaque section porte déjà sa propre date/événement.
+  const _emissionISO = today();
+  const _livDates = [...new Set(orders.map(o => o.dateEvenement || o.date || '').filter(Boolean))];
+  const _dateLivUnique = (_livDates.length === 1 && _livDates[0] !== _emissionISO) ? _livDates[0] : '';
+
   // Numéro de facture groupée : basé sur la 1re et dernière commande
   // Sur le BROUILLON, on n'affiche pas un numéro légal (il n'est attribué qu'à la validation).
   // On montre le prochain numéro PRÉVU, clairement marqué « (brouillon) » pour éviter toute
@@ -36120,6 +36163,7 @@ async function genererFactureMultiple(ids){
            <div class="lbl">Détails</div>
            Facture n° : <b><span id="factNumero">${esc(numFact)}</span></b><br>
            Date d'émission : <span id="factDate">${fmtDate(today())}</span><br>
+           ${_dateLivUnique ? `Date de livraison : ${fmtDate(_dateLivUnique)}<br>` : ''}
            ${orders.length>1 ? orders.length+' commande(s) regroupée(s)' : ''}
          </div>
        </div>
@@ -36135,6 +36179,8 @@ async function genererFactureMultiple(ids){
          <div class="legal-bloc">
            <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
            ${e.paiement?`<div class="paiement">${esc(e.paiement)}</div>`:''}
+           ${factMentionsRetardB2B()}
+           ${factMentionMediateur(e)}
          </div>
        </div>
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
