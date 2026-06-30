@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1080';
+const APP_VERSION = 'v1081';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -31496,6 +31496,107 @@ async function labelToCanvas(d){
 // puis on le partage via navigator.share. Si Labelife apparaît dans la feuille de partage, l'envoi est direct.
 
 // Construit un PDF (Uint8Array) d'une seule page contenant l'image JPEG fournie, au format mm donné.
+// ===================== HTML → PDF A4 (sans librairie, hors-ligne) =====================
+// [v1081] Convertit un document HTML (devis/facture) en un vrai PDF multi-pages A4, en rasterisant
+// le HTML via SVG <foreignObject> sur un canvas, puis en l'emballant avec les générateurs PDF maison
+// (_buildSingleImagePDF / _buildMultiImagePDF). Aucune dépendance externe → compatible offline.
+// Avantage double : (1) produit un .pdf joignable au mail ; (2) n'utilise PAS l'impression Safari,
+// donc PLUS d'URL/en-tête ajoutés automatiquement par le navigateur en pied de page.
+async function _htmlToA4Canvases(htmlDoc, opts){
+  opts = opts || {};
+  const A4_W_MM = 210, A4_H_MM = 297;
+  const SCALE = opts.scale || 2;                 // densité (2 = ~150 dpi, bon compromis netteté/poids)
+  const pxW = Math.round(A4_W_MM / 25.4 * 96 * SCALE);   // largeur cible en px
+  const pxPageH = Math.round(A4_H_MM / 25.4 * 96 * SCALE);
+
+  // 1) On rend le HTML dans un conteneur hors-écran à la bonne largeur (en px CSS, avant scale).
+  const cssW = Math.round(A4_W_MM / 25.4 * 96);  // 793 px ≈ A4 à 96 dpi
+  const holder = document.createElement('div');
+  holder.style.cssText = `position:fixed;left:-99999px;top:0;width:${cssW}px;background:#fff;z-index:-1`;
+  // On extrait le <body> du document fourni (le HTML complet contient <html><head><style>…).
+  // Pour conserver les styles, on injecte le doc entier dans une iframe, puis on mesure sa hauteur.
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = `position:fixed;left:-99999px;top:0;width:${cssW}px;height:10px;border:0;background:#fff`;
+  document.body.appendChild(iframe);
+  const idoc = iframe.contentWindow.document;
+  idoc.open(); idoc.write(htmlDoc); idoc.close();
+  // Laisser le navigateur poser la mise en page et charger la police embarquée.
+  await new Promise(r=> setTimeout(r, opts.delay||350));
+  const body = idoc.body;
+  const fullH = Math.max(body.scrollHeight, body.offsetHeight, idoc.documentElement.scrollHeight);
+
+  // 2) Sérialiser le contenu rendu en XHTML pour le <foreignObject>.
+  //    On clone le <html> de l'iframe (avec ses styles) dans le SVG.
+  const htmlClone = idoc.documentElement.cloneNode(true);
+  // s'assurer du namespace XHTML
+  htmlClone.setAttribute('xmlns','http://www.w3.org/1999/xhtml');
+  const serialized = new XMLSerializer().serializeToString(htmlClone);
+
+  // 3) Découpe en pages A4 : on rasterise des bandes successives de hauteur = 1 page.
+  const pageHcss = Math.round(A4_H_MM / 25.4 * 96);   // hauteur d'une page A4 en px CSS (~1122)
+  const nbPages = Math.max(1, Math.ceil(fullH / pageHcss));
+  const canvases = [];
+  for(let p=0; p<nbPages; p++){
+    const yOff = p * pageHcss;
+    // SVG qui décale le contenu vers le haut de yOff, dans une fenêtre de la taille d'une page.
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${cssW}" height="${pageHcss}">`+
+      `<foreignObject x="0" y="${-yOff}" width="${cssW}" height="${fullH}">`+
+      serialized+
+      `</foreignObject></svg>`;
+    const img = new Image();
+    const svgBlob = new Blob([svg], {type:'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(svgBlob);
+    try{
+      await new Promise((res,rej)=>{ img.onload=res; img.onerror=()=>rej(new Error('svg img load')); img.src=url; });
+      const cv = document.createElement('canvas');
+      cv.width = pxW; cv.height = pxPageH;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+      ctx.drawImage(img, 0, 0, pxW, pxPageH);
+      canvases.push(cv);
+    } finally { URL.revokeObjectURL(url); }
+  }
+  document.body.removeChild(iframe);
+  return { canvases, A4_W_MM, A4_H_MM };
+}
+
+// Génère un Blob PDF (A4, 1+ pages) à partir d'un document HTML. Retourne {blob, fileName?}.
+async function htmlToPdfBlob(htmlDoc, opts){
+  opts = opts || {};
+  const { canvases, A4_W_MM, A4_H_MM } = await _htmlToA4Canvases(htmlDoc, opts);
+  if(!canvases.length) throw new Error('rendu vide');
+  const jpegList = canvases.map(cv=> _dataURLtoBytes(cv.toDataURL('image/jpeg', opts.quality||0.9)));
+  const pxW = canvases[0].width, pxH = canvases[0].height;
+  const pdfBytes = (jpegList.length===1)
+    ? _buildSingleImagePDF(jpegList[0], A4_W_MM, A4_H_MM, pxW, pxH)
+    : _buildMultiImagePDF(jpegList, A4_W_MM, A4_H_MM, pxW, pxH);
+  return new Blob([pdfBytes], {type:'application/pdf'});
+}
+
+// Partage un document HTML en PDF (mail/AirDrop/…) avec un OBJET maîtrisé (= titre du partage).
+// Fallback : téléchargement du PDF si le partage de fichier n'est pas disponible.
+async function sharePdfFromHtml(htmlDoc, fileName, shareTitle, shareText){
+  try{
+    const blob = await htmlToPdfBlob(htmlDoc, {});
+    const safeName = (fileName||'document').replace(/[^\w.-]/g,'_').replace(/\.pdf$/i,'')+'.pdf';
+    const file = new File([blob], safeName, {type:'application/pdf'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{
+        await navigator.share({ files:[file], title: shareTitle||safeName, text: shareText||'' });
+        return true;
+      }catch(eShare){ if(eShare && eShare.name==='AbortError') return false; }
+    }
+    // Repli : téléchargement direct (l'utilisateur joint ensuite le PDF à son mail).
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=safeName;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    toast('PDF enregistré ✓ joins-le à ton mail');
+    return true;
+  }catch(e){ console.error('sharePdfFromHtml', e); toast('Erreur lors de la création du PDF'); return false; }
+}
+// ====================================================================================
 function _buildSingleImagePDF(jpegBytes, wMm, hMm, pxW, pxH){
   // 1 mm = 72/25.4 points PDF
   const ptW = (wMm * 72 / 25.4), ptH = (hMm * 72 / 25.4);
@@ -35498,10 +35599,43 @@ async function genererDevisDoc(docId){
     signature
   ].filter(l=>l!==null && l!==undefined).join('\n');
   const mailto = `mailto:${encodeURIComponent(emailCible)}?subject=${encodeURIComponent(objet)}&body=${encodeURIComponent(corps)}`;
-  extraBtns = `<a class="pv-btn" href="${mailto}">✉️ Envoyer par mail</a>`;
+  // [v1081] Bouton principal : partage du PDF avec OBJET = numéro du devis (via navigator.share).
+  // Le PDF est généré sans passer par l'impression Safari → pas d'URL ajoutée en pied de page.
+  window._lastDocHtml = devisHtml;
+  window._lastDocMeta = { fileName:`Devis ${d.numero||''}`, objet, corps, mailto };
+  const btnPdfMail = `<button class="pv-btn" onclick="envoyerDocPdfMail()">✉️ Envoyer par mail (PDF)</button>`;
+  const btnMailto  = `<a class="pv-btn" href="${mailto}" title="Mail sans pièce jointe (corps pré-rempli)">✏️ Mail seul</a>`;
+  extraBtns = btnPdfMail + btnMailto;
 
   openPrintView(devisHtml, { title:`Devis ${d.numero||''}`, extraButtons: extraBtns });
 }
+// [v1081] Génère le PDF du dernier document affiché (devis/facture) et le partage avec l'objet maîtrisé.
+async function envoyerDocPdfMail(){
+  const html = window._lastDocHtml; const meta = window._lastDocMeta||{};
+  if(!html){ toast('Ouvre d\'abord le document'); return; }
+  toast('Préparation du PDF…');
+  await sharePdfFromHtml(html, meta.fileName||'Document', meta.objet||'Document', meta.corps||'');
+}
+// [v1081] Mémorise le document courant pour l'envoi PDF, avec un objet = libellé (n° facture/devis).
+function _prepDocPdfMail(html, libelle, client){
+  const nomClient = client ? [client.prenom, client.nom].filter(Boolean).join(' ') : '';
+  const corps = [
+    `Bonjour${nomClient ? ' '+nomClient : ''},`, '',
+    `Veuillez trouver ci-joint ${/facture/i.test(libelle)?'votre facture':'votre devis'} : ${libelle}.`,
+    '', 'Bien cordialement.'
+  ].join('\n');
+  window._lastDocHtml = html;
+  window._lastDocMeta = { fileName:libelle, objet:libelle, corps,
+    mailto:`mailto:${client&&client.email?encodeURIComponent(client.email):''}?subject=${encodeURIComponent(libelle)}&body=${encodeURIComponent(corps)}` };
+}
+// Boutons de la barre d'aperçu : envoi PDF (objet maîtrisé) + mail seul (repli).
+function _docMailBtns(){
+  const m = window._lastDocMeta||{};
+  const btnPdf = `<button class="pv-btn" onclick="envoyerDocPdfMail()">✉️ Envoyer par mail (PDF)</button>`;
+  const btnMail = m.mailto ? `<a class="pv-btn" href="${m.mailto}" title="Mail sans pièce jointe">✏️ Mail seul</a>` : '';
+  return btnPdf + btnMail;
+}
+
 // Génère et imprime la facture d'une commande (→ « Enregistrer en PDF » sur iOS).
 async function genererFacture(orderId){
   // Une facture d'une seule commande utilise désormais le même rendu élégant
@@ -35812,13 +35946,11 @@ async function genererFactureMultiple(ids){
   // Le numéro définitif et le verrouillage n'interviennent qu'à la VALIDATION.
   try{
     const orderIds = orders.map(o=>o.id);
-    const existing = (await db.documents.where('type').equals('facture').toArray())
-      .find(d => Array.isArray(d.orderIds) && d.orderIds.length===orderIds.length && d.orderIds.every(x=>orderIds.includes(x)));
-    const totalPaye = orders.reduce((s,o)=>s+(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0),0);
-    // Si une facture DÉFINITIVE existe déjà pour ces commandes, on ne la touche pas (inaltérable).
+
     if(existing && docEstDefinitif(existing)){
       if(view==="documents") renderDocuments();
-      openPrintView(factureHtml, {title:`Facture ${existing.numero}`});
+      _prepDocPdfMail(factureHtml, `Facture ${existing.numero}`, client);
+      openPrintView(factureHtml, {title:`Facture ${existing.numero}`, extraButtons:_docMailBtns()});
       return;
     }
     const docFact = {
@@ -35839,10 +35971,9 @@ async function genererFactureMultiple(ids){
     if(view==="documents") renderDocuments();
     toast('Brouillon de facture créé — à vérifier puis valider');
   }catch(e){}
-  openPrintView(factureHtml, {title:`Facture (brouillon) ${numFact}`});
+  _prepDocPdfMail(factureHtml, `Facture ${numFact}`, client);
+  openPrintView(factureHtml, {title:`Facture (brouillon) ${numFact}`, extraButtons:_docMailBtns()});
 }
-
-
 function orderNumber(o){
   const y = (o.date||today()).slice(0,4);
   return `${y}-${String(o.id||0).padStart(3,'0')}`;
