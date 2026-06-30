@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1089';
+const APP_VERSION = 'v1091';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -35747,6 +35747,7 @@ async function genererDevisDoc(docId){
          <div class="legal-bloc">
            <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
            <div class="paiement">Devis valable ${d.validiteJours||30} jours à compter de la date d'émission.<br>Bon pour accord — date et signature :</div>
+           ${factMentionMediateur(e)}
          </div>
        </div>
        <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
@@ -38727,11 +38728,16 @@ async function revenuHoraireData(arg){
   });
   detailCommandes.sort((a,b)=>b.montant-a.montant);
   const markets = await db.markets.toArray().catch(()=>[]);
-  const closIn = markets.filter(mk=>mk.statut==='clos' && inWin(mk.dateCloture||mk.date));
+  // [v1091] On date le CA d'un marché par la DATE OÙ IL A EU LIEU (mk.date, saisie par Benjamin),
+  // et seulement à défaut par la date de clôture. La clôture est une action administrative datée à
+  // today() : s'y fier rangeait le CA d'un marché de Noël clos en juin DANS juin. La date événement
+  // est la bonne base d'encaissement (les ventes sur marché sont encaissées le jour même).
+  const mkDateFin = mk => (mk.date||mk.dateCloture||'');
+  const closIn = markets.filter(mk=>mk.statut==='clos' && inWin(mkDateFin(mk)));
   let caMarches = 0;
   const detailMarches = [];     // [v1077] {label, montant} par marché clos sur la fenêtre
   closIn.forEach(mk=>{ const ca=mk.ca||{}; const m=money2((+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0));
-    caMarches += m; detailMarches.push({ label:(mk.nom||'Marché')+(mk.dateCloture||mk.date?' · '+(mk.dateCloture||mk.date).slice(0,10):''), montant:m }); });
+    caMarches += m; detailMarches.push({ label:(mk.nom||'Marché')+(mkDateFin(mk)?' · '+mkDateFin(mk).slice(0,10):''), montant:m }); });
   detailMarches.sort((a,b)=>b.montant-a.montant);
   const caEncaisse = money2(caCommandes + caMarches);
 
@@ -38773,7 +38779,7 @@ async function revenuHoraireData(arg){
     if(regs.length){ regs.forEach(p=>{ const ds=(p.date||'').slice(0,10); if(inWin(ds)) _dates.push(ds); }); }
     else if(o.datePaiement){ const ds=o.datePaiement.slice(0,10); if(inWin(ds)) _dates.push(ds); }
   });
-  closIn.forEach(mk=>{ const ds=(mk.dateCloture||mk.date||'').slice(0,10); if(ds) _dates.push(ds); });
+  closIn.forEach(mk=>{ const ds=mkDateFin(mk).slice(0,10); if(ds) _dates.push(ds); });
   chargesIn.forEach(c=>{ const ds=(c.date||'').slice(0,10); if(ds) _dates.push(ds); });
   wsIn.forEach(s=>{ const ds=(s.date||'').slice(0,10); if(ds) _dates.push(ds); });
   psIn.forEach(s=>{ const ds=(s.date||'').slice(0,10); if(ds) _dates.push(ds); });
