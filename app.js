@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1081';
+const APP_VERSION = 'v1082';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -29975,6 +29975,10 @@ async function aiQueryRevenuHoraire(){
   if(!R || R.heures==null || R.heures<=0){
     return aiSay(`${aiHero('—', 'Mon revenu horaire')}${aiSynth('Pas encore assez d\'heures pointées. Utilise la pointeuse pendant tes sessions : le calcul se construira tout seul.',{icon:'⏳'})}`);
   }
+  // [v1082] Si le temps pointé ne couvre pas la période, on s'abstient plutôt que d'afficher un chiffre faux.
+  if(R.calculable===false){
+    return aiSay(`${aiHero('—', 'Mon revenu horaire')}${aiSynth(`Je préfère ne pas avancer de chiffre : tes ${Math.round(R.heures)} h pointées ne couvrent pas la période de ton chiffre d'affaires (≈ ${(R.moisActivite||0).toFixed(1)} mois). Diviser des mois de marge par quelques heures donnerait un résultat trompeur.`,{icon:'⏸', tone:'warn'})}${aiSynth('Pour le débloquer : pointe ton temps régulièrement, ou demande-moi le revenu horaire « sur 30 jours ».',{icon:'💡'})}`);
+  }
   const apres=R.revHoraireApresCotis, avant=R.revHoraireAvantCotis;
   const val = apres!=null ? apres : avant;
   const tone = val==null?'':val>=15?'ok':val>=10?'':'warn';
@@ -38435,6 +38439,20 @@ async function revenuHoraireData(jours){
 
   const heuresMesurees = round3(hPointeuse + hAtelier);
 
+  // [v1082] COUVERTURE TEMPORELLE DES POINTAGES : sur combien de jours DISTINCTS as-tu réellement
+  // pointé du temps (pointeuse + atelier) ? Sert à juger si le temps mesuré couvre la période du CA.
+  // Le revenu horaire n'a de sens que si le temps pointé représente bien le travail de la période ;
+  // sinon (ex. 34,9 h pointées pour plusieurs mois de CA), diviser la marge par ce temps est trompeur.
+  const _joursPointes = new Set();
+  wsIn.forEach(s=>{ const ds=(s.date||'').slice(0,10); if(ds) _joursPointes.add(ds); });
+  psIn.forEach(s=>{ const ds=(s.date||'').slice(0,10); if(ds) _joursPointes.add(ds); });
+  const nbJoursPointes = _joursPointes.size;
+  let pointageMinStr=null, pointageMaxStr=null;
+  if(nbJoursPointes>0){
+    const arr=[..._joursPointes].sort();
+    pointageMinStr=arr[0]; pointageMaxStr=arr[arr.length-1];
+  }
+
   // 2) CA ENCAISSÉ sur la fenêtre (cash basis), via les paiements datés des commandes + marchés clos
   const orders = await db.orders.toArray().catch(()=>[]);
   const clients = await db.clients.toArray().catch(()=>[]);
@@ -38514,10 +38532,24 @@ async function revenuHoraireData(jours){
   }
   moisActivite = Math.round(moisActivite*100)/100;
 
+  // [v1082] TAUX DE COUVERTURE : est-ce que les pointages s'étendent sur (à peu près) toute la période
+  // d'activité, ou seulement sur un petit bout ? On compare l'amplitude des jours pointés (1er→dernier)
+  // à l'amplitude de la période d'activité. Faible → le temps mesuré ne représente pas la période.
+  const joursActivite = (moisActivite*30) || 0;       // durée de la période, en jours
+  let amplitudePointage = 0;
+  if(pointageMinStr && pointageMaxStr){
+    amplitudePointage = Math.round((new Date(pointageMaxStr+'T00:00:00') - new Date(pointageMinStr+'T00:00:00'))/86400000) + 1;
+  }
+  // couverture = part de la période d'activité réellement « balayée » par des pointages.
+  const couverture = (joursActivite>0) ? Math.min(1, amplitudePointage/joursActivite) : 0;
+
   return {
     jours, sinceStr,
     heuresMesurees, hPointeuse:round3(hPointeuse), hAtelier:round3(hAtelier),
     nbSessionsPointeuse: wsIn.length, nbSessionsAtelier: psIn.length,
+    nbJoursPointes, amplitudePointage, joursActivite:Math.round(joursActivite),
+    couverture: Math.round(couverture*100)/100,   // [v1082] 0..1 : couverture temporelle des pointages
+    pointageMinStr, pointageMaxStr,
     caEncaisse, caCommandes:money2(caCommandes), caMarches:money2(caMarches),
     totalCharges, chargesRecurMensuel, nbCharges: chargesIn.length,
     nbMarchesClos: closIn.length, tauxInvendusMoyen,
@@ -38613,8 +38645,28 @@ async function revenuHoraireCalcul(jours){
   const margeApresCotis = money2(margeAvantRemu - cotisations);
 
   const h = d.heuresMesurees;
-  const revAvant = h>0 ? money2(margeAvantRemu/h) : null;
-  const revApres = h>0 ? money2(margeApresCotis/h) : null;
+  // [v1082] GARDE-FOU « PAS DE CHIFFRE ABSURDE ». Le revenu horaire ne se calcule QUE si le temps
+  // mesuré couvre vraiment la période du CA. Trois conditions cumulatives doivent tenir :
+  //  (1) un minimum d'heures pointées (sinon l'échantillon est trop maigre) ;
+  //  (2) les pointages s'étendent sur une part suffisante de la période d'activité (couverture) ;
+  //  (3) une cohérence d'échelle : pas des mois de CA pour quelques heures pointées.
+  // Si une condition manque, on N'AFFICHE PAS de taux : on l'admet honnêtement et on dit ce qui manque.
+  const SEUIL_HEURES_MIN = 8;          // au moins ~1 journée de travail pointée
+  const SEUIL_COUVERTURE = 0.5;        // les pointages couvrent au moins la moitié de la période
+  // Heures théoriques minimales attendues si on avait pointé ~ne serait-ce qu'un peu chaque semaine
+  // de la période : sert à détecter le cas « beaucoup de mois, presque pas d'heures ».
+  const semainesPeriode = Math.max(1, (d.joursActivite||0)/7);
+  const heuresAttenduesMin = semainesPeriode * 2;   // hypothèse plancher très basse : 2 h/semaine
+  const ratioVraisemblance = heuresAttenduesMin>0 ? (h/heuresAttenduesMin) : 0;
+
+  const raisonsAbstention = [];
+  if(h < SEUIL_HEURES_MIN) raisonsAbstention.push('pas assez d\'heures pointées');
+  if((d.couverture||0) < SEUIL_COUVERTURE) raisonsAbstention.push('couverture temporelle insuffisante');
+  if(ratioVraisemblance < 0.25) raisonsAbstention.push('échelle incohérente (beaucoup de mois, peu d\'heures)');
+  const calculable = (h>0 && raisonsAbstention.length===0);
+
+  const revAvant = calculable ? money2(margeAvantRemu/h) : null;
+  const revApres = calculable ? money2(margeApresCotis/h) : null;
 
   return {
     ...d,
@@ -38623,6 +38675,7 @@ async function revenuHoraireCalcul(jours){
     revHoraireAvantCotis: revAvant,
     revHoraireApresCotis: revApres,
     heures: h,
+    calculable, raisonsAbstention,   // [v1082] le calcul s'abstient si les données ne le permettent pas
     anomaliesCout: _anomaliesCout   // [v1075] recettes écartées car coût unitaire implausible
   };
 }
@@ -38631,12 +38684,13 @@ async function revenuHoraireCalcul(jours){
 // Aucun revenu n'est encore calculé ici : on prépare le terrain honnêtement.
 function revenuHoraireAudit(d){
   const checks = [];
-  // a) Temps mesuré
+  // a) Temps mesuré — on juge la COUVERTURE (le temps couvre-t-il la période ?), pas que le volume.
+  const _couvPct = Math.round((d.couverture||0)*100);
   checks.push({
     cle:'temps', label:'Temps de travail mesuré',
-    niveau: d.heuresMesurees>=20 ? 'ok' : (d.heuresMesurees>0 ? 'warn' : 'ko'),
+    niveau: (d.heuresMesurees>=8 && (d.couverture||0)>=0.5) ? 'ok' : (d.heuresMesurees>0 ? 'warn' : 'ko'),
     detail: d.heuresMesurees>0
-      ? `${d.heuresMesurees.toFixed(1)} h mesurées (${d.hPointeuse.toFixed(1)} h pointeuse + ${d.hAtelier.toFixed(1)} h atelier)`
+      ? `${d.heuresMesurees.toFixed(1)} h sur ${d.nbJoursPointes||0} jour(s) pointé(s) · couvre ${_couvPct}% de la période. ${(d.couverture||0)<0.5?'Trop peu pour un revenu horaire fiable.':'Couverture suffisante.'}`
       : 'Aucun temps mesuré sur la période — lance tes chronos pour fiabiliser le calcul.'
   });
   // b) CA encaissé
@@ -38674,16 +38728,23 @@ function revenuHoraireAudit(d){
   }
   const nbOk = checks.filter(c=>c.niveau==='ok').length;
   let confiance, confLabel;
-  // [v1075] La présence d'une anomalie plafonne la confiance à « moyenne » : on ne peut pas dire
-  // « fiable » si on a dû écarter des données incohérentes.
-  if(nbAnom>0){
+  // [v1082] Si le temps mesuré ne couvre pas la période, le revenu horaire n'est PAS calculé.
+  // La confiance le dit franchement (priorité sur tout le reste).
+  const semainesP = Math.max(1, (d.joursActivite||0)/7);
+  const ratioVrais = (semainesP*2)>0 ? (d.heuresMesurees/(semainesP*2)) : 0;
+  const nonCalculable = !(d.heuresMesurees>=8 && (d.couverture||0)>=0.5 && ratioVrais>=0.25);
+  if(nonCalculable){
+    confiance='ko';
+    confLabel='Indéterminée — pas assez de temps pointé pour rapporter la marge à un horaire fiable. Le revenu horaire n\'est pas affiché tant que tes pointages ne couvrent pas la période.';
+  }
+  else if(nbAnom>0){
     confiance='warn';
     confLabel=`Moyenne — ${nbAnom} coût${nbAnom>1?'s':''} incohérent${nbAnom>1?'s':''} écarté${nbAnom>1?'s':''} du calcul. Corrige ${nbAnom>1?'ces recettes':'cette recette'} pour fiabiliser le résultat.`;
   }
   else if(nbOk>=4){ confiance='ok'; confLabel='Élevée — les estimations seront fiables.'; }
   else if(nbOk>=2){ confiance='warn'; confLabel=`Moyenne — ${nbOk}/4 sources fiables, estimations indicatives.`; }
   else { confiance='ko'; confLabel=`Faible — ${nbOk}/4 sources fiables, complète tes données d'abord.`; }
-  return { checks, nbOk, confiance, confLabel, nbAnomalies:nbAnom };
+  return { checks, nbOk, confiance, confLabel, nbAnomalies:nbAnom, nonCalculable };
 }
 
 let _revhDays = REVH_DEFAULT_DAYS;
@@ -38770,7 +38831,7 @@ async function renderRevenuHoraire(){
           <br>Un macaron coûte normalement quelques dizaines de centimes en matière. Un coût aussi élevé vient presque toujours d'un <b>rendement</b> mal saisi (ex. 1 au lieu de 60) ou d'un <b>prix matière</b> erroné. ${c.anomaliesCout.length>1?'Ces recettes ont':'Cette recette a'} été <b>écartée${c.anomaliesCout.length>1?'s':''} du calcul</b> pour ne pas le fausser — corrige-${c.anomaliesCout.length>1?'les':'la'} pour un revenu horaire juste.
           <div style="margin-top:8px"><button class="btn ghost sm" onclick="goView('recettes')">🧪 Vérifier mes recettes</button></div>
         </div></div>`:''}
-        <div class="row2">
+        ${c.calculable ? `<div class="row2">
           <div class="card" style="background:#eef5f0;border-color:#bcd9c6">
             <div class="lbl">Avant cotisations</div>
             <div class="val" style="color:#2e7d32">${euroOrTiret(c.revHoraireAvantCotis)}/h</div>
@@ -38781,7 +38842,18 @@ async function renderRevenuHoraire(){
             <div class="val" style="color:#AA7C39">${euroOrTiret(c.revHoraireApresCotis)}/h</div>
             <div class="sub">marge nette ${euro(c.margeApresCotis)} ÷ ${c.heures.toFixed(1)} h</div>
           </div>
-        </div>
+        </div>` : `<div class="card" style="background:#fbf6ee;border:2px solid #e5d3b3;text-align:left">
+          <div style="font-size:1.05rem;font-weight:700;color:var(--bordeaux);margin-bottom:6px">⏸ Revenu horaire non calculable pour l'instant</div>
+          <p class="note" style="margin:0 0 8px">Le revenu horaire = ta marge ÷ ton temps de travail. Pour qu'il ait du sens, le <b>temps pointé</b> doit couvrir la <b>période</b> du chiffre d'affaires. Ce n'est pas encore le cas ${c.raisonsAbstention&&c.raisonsAbstention.length?`(${c.raisonsAbstention.map(r=>esc(r)).join(' ; ')})`:''} :</p>
+          <div class="sum-box" style="background:#fff"><span>Temps pointé</span><b>${c.heures.toFixed(1)} h sur ${c.nbJoursPointes||0} jour(s)</b></div>
+          <div class="sum-box" style="background:#fff"><span>Période du chiffre d'affaires</span><b>≈ ${(c.moisActivite||0).toFixed(1)} mois</b></div>
+          <div class="sum-box" style="background:#fff"><span>Couverture des pointages</span><b>${Math.round((c.couverture||0)*100)}%</b></div>
+          <p class="note" style="margin:8px 2px 0">Plutôt que d'afficher un chiffre trompeur (des mois de marge ÷ quelques heures), l'app préfère <b>s'abstenir</b>. Pour le débloquer : pointe ton temps de façon régulière, ou consulte le revenu horaire sur une fenêtre courte (ex. « 30 jours ») correspondant à tes pointages réels.</p>
+          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn ghost sm" onclick="goView('pointeuse')">⏱ Pointer mon temps</button>
+            <button class="btn ghost sm" onclick="revhSetDays(30)">📅 Voir sur 30 jours</button>
+          </div>
+        </div>`}
         <h2 style="margin-top:14px;font-size:1rem">D'où vient ce chiffre</h2>
         <p class="note" style="margin:-2px 2px 8px">Touche une ligne pour voir comment elle est calculée, poste par poste.</p>
         ${revhLigneTracable({
