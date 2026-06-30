@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1075';
+const APP_VERSION = 'v1076';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -38237,13 +38237,42 @@ async function revenuHoraireData(jours){
   }
   const tauxInvendusMoyen = invendusN>0 ? Math.round(invendusSum/invendusN) : null;
 
+  // [v1076] DURÉE RÉELLE D'ACTIVITÉ sur la fenêtre. Sert à étendre correctement les charges récurrentes
+  // mensuelles : on ne peut pas multiplier un coût mensuel par la fenêtre théorique (« Tout » = 99999 j
+  // = 3333 mois !). On borne au temps réellement écoulé entre la 1re donnée de la fenêtre et aujourd'hui.
+  const _auj = new Date(); _auj.setHours(0,0,0,0);
+  const _dates = [];
+  orders.forEach(o=>{
+    const regs = Array.isArray(o.paiements)?o.paiements:[];
+    if(regs.length){ regs.forEach(p=>{ const ds=(p.date||'').slice(0,10); if(ds && ds>=sinceStr) _dates.push(ds); }); }
+    else if(o.datePaiement){ const ds=o.datePaiement.slice(0,10); if(ds>=sinceStr) _dates.push(ds); }
+  });
+  closIn.forEach(mk=>{ const ds=(mk.dateCloture||mk.date||'').slice(0,10); if(ds) _dates.push(ds); });
+  chargesIn.forEach(c=>{ const ds=(c.date||'').slice(0,10); if(ds) _dates.push(ds); });
+  wsIn.forEach(s=>{ const ds=(s.date||'').slice(0,10); if(ds) _dates.push(ds); });
+  psIn.forEach(s=>{ const ds=(s.date||'').slice(0,10); if(ds) _dates.push(ds); });
+  let moisActivite;
+  if(_dates.length){
+    const _min = _dates.reduce((a,b)=> a<b?a:b);
+    const _d0 = new Date(_min+'T00:00:00');
+    const _joursReels = Math.max(1, Math.round((_auj - _d0)/86400000) + 1);
+    // On prend le plus PETIT entre la fenêtre demandée et la durée réelle écoulée.
+    const _joursBorne = Math.min(jours, _joursReels);
+    moisActivite = _joursBorne/30;
+  } else {
+    // Aucune donnée datée : on retombe sur la fenêtre, mais bornée à 12 mois pour rester sain.
+    moisActivite = Math.min(jours, 365)/30;
+  }
+  moisActivite = Math.round(moisActivite*100)/100;
+
   return {
     jours, sinceStr,
     heuresMesurees, hPointeuse:round3(hPointeuse), hAtelier:round3(hAtelier),
     nbSessionsPointeuse: wsIn.length, nbSessionsAtelier: psIn.length,
     caEncaisse, caCommandes:money2(caCommandes), caMarches:money2(caMarches),
     totalCharges, chargesRecurMensuel, nbCharges: chargesIn.length,
-    nbMarchesClos: closIn.length, tauxInvendusMoyen
+    nbMarchesClos: closIn.length, tauxInvendusMoyen,
+    moisActivite   // [v1076] durée réelle d'activité (mois), pour étendre les charges récurrentes
   };
 }
 
@@ -38306,9 +38335,24 @@ async function revenuHoraireCalcul(jours){
     // approche prudente : si non calculable finement, laissé à 0 (n'invente pas).
   }catch(e){ console.error('revh coûts ventes', e); }
 
-  // Charges fixes sur la fenêtre : récurrent mensuel × (jours/30) + charges ponctuelles datées.
-  const moisEquiv = jours/30;
+  // Charges fixes sur la fenêtre : récurrent mensuel × DURÉE RÉELLE D'ACTIVITÉ + charges ponctuelles datées.
+  // [v1076] On utilise moisActivite (borné au temps réellement écoulé) et PAS jours/30 : sinon la vue
+  // « Tout » (99999 j) multiplierait le récurrent par 3333 mois → charges fictives de ~146 000 €.
+  const moisEquiv = (d.moisActivite!=null && d.moisActivite>0) ? d.moisActivite : (jours/30);
   const chargesFixes = money2(d.chargesRecurMensuel*moisEquiv + d.totalCharges);
+  // [v1076 — DIAG] Trace du calcul des charges fixes (évite le retour du bug « 3333 mois »).
+  try{
+    if(typeof diagPublish==='function'){
+      diagPublish('revhCharges', '🧮 Revenu horaire — calcul des charges fixes', {
+        'Fenêtre demandée': (jours>=99999?'Tout':jours+' j'),
+        'Durée réelle d\'activité retenue': moisEquiv.toFixed(2)+' mois',
+        'Récurrent mensuel': euro(d.chargesRecurMensuel),
+        'Charges ponctuelles datées': euro(d.totalCharges),
+        'Charges fixes totales': euro(chargesFixes),
+        'Garde-fou': 'moisEquiv borné à la durée réelle écoulée (et non jours/30) pour ne pas multiplier le récurrent par une fenêtre théorique géante.'
+      });
+    }
+  }catch(_){}
 
   // Cotisations sociales : socialGoods % du CA marchandise encaissé (approche micro-entrepreneur).
   const cotisations = money2(d.caEncaisse * (+s.socialGoods||0)/100);
@@ -38458,7 +38502,7 @@ async function renderRevenuHoraire(){
         <div class="sum-box"><span>CA encaissé</span><b>${euro(c.caEncaisse)}</b></div>
         <div class="sum-box"><span>− Matières des ventes</span><b>− ${euro(c.coutMatieres)}</b></div>
         ${c.coutEmballages>0?`<div class="sum-box"><span>− Emballages</span><b>− ${euro(c.coutEmballages)}</b></div>`:''}
-        <div class="sum-box"><span>− Charges fixes (sur ${(c.jours/30).toFixed(1)} mois)</span><b>− ${euro(c.chargesFixes)}</b></div>
+        <div class="sum-box"><span>− Charges fixes (sur ${(c.moisActivite!=null?c.moisActivite:(c.jours/30)).toFixed(1)} mois d'activité)</span><b>− ${euro(c.chargesFixes)}</b></div>
         <div class="sum-box" style="border-top:1px solid #e6dccd"><span><b>= Marge avant rémunération</b></span><b>${euro(c.margeAvantRemu)}</b></div>
         <div class="sum-box"><span>− Cotisations sociales</span><b>− ${euro(c.cotisations)}</b></div>
         <div class="sum-box"><span><b>= Marge nette</b></span><b>${euro(c.margeApresCotis)}</b></div>
