@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1074';
+const APP_VERSION = 'v1075';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -38261,19 +38261,47 @@ async function revenuHoraireCalcul(jours){
   // Coût matières + emballages des VENTES de la période, via l'analyse de rentabilité par parfum
   // (coutVentes = pièces vendues × coût de revient matière unitaire ; déjà calculé ailleurs).
   let coutMatieres = 0, coutEmballages = 0;
+  let _anomaliesCout = [];   // [v1075] recettes au coût unitaire implausible, écartées du calcul
   try{
     const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
       db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray(),
       db.orders.toArray(), db.markets.toArray(), db.marketMoves.toArray(), db.productions.toArray()
     ]);
     const A = analyzeFlavorProfitability({recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings:s});
-    // coût matières des ventes : somme des coutVentes par parfum.
-    const coutVentesTotal = (A.rows||[]).reduce((a,r)=>a + (+r.coutVentes||0), 0);
+    // [v1075] GARDE-FOU DE PLAUSIBILITÉ. Un coût de revient matière par macaron au-delà de ce seuil
+    // n'est pas un vrai coût : c'est presque toujours une recette mal paramétrée (rendement saisi à 1
+    // au lieu de ~60, ou prix matière aberrant). Sans ce filtre, UNE recette fausse fait exploser le
+    // coût total (ex. 47 €/pièce × 3000 pièces = 142 000 €) et rend le revenu horaire absurdement négatif.
+    // On ÉCARTE ces lignes du calcul, on les SIGNALE, et on dégrade la confiance — plutôt qu'un faux chiffre.
+    const SEUIL_COUT_UNIT_PLAUSIBLE = 8;   // €/macaron — borne haute très généreuse (réel ~0,30–2 €)
+    let coutVentesTotal = 0;
+    (A.rows||[]).forEach(r=>{
+      const cu = (r.cost && +r.cost.coutRevientUnit) || 0;
+      const cv = +r.coutVentes||0;
+      if(cu > SEUIL_COUT_UNIT_PLAUSIBLE && (r.piecesVendues>0)){
+        _anomaliesCout.push({ nom:r.nom||'?', coutUnit:money2(cu), pieces:round3(r.piecesVendues),
+                              rendement:(r.cost&&r.cost.rendement)||null });
+        return;   // écartée du total
+      }
+      coutVentesTotal += cv;
+    });
+    coutVentesTotal = money2(coutVentesTotal);
     const caTotalAnalyse = (A.totals && +A.totals.ca) || (A.rows||[]).reduce((a,r)=>a + (+r.ca||0), 0);
     // prorata : part du CA de la fenêtre sur le CA total analysé (évite de surcompter,
     // car l'analyse couvre toutes les périodes, pas seulement la fenêtre).
     const ratio = caTotalAnalyse>0 ? Math.min(1, d.caEncaisse/caTotalAnalyse) : 0;
     coutMatieres = money2(coutVentesTotal * ratio);
+    // [v1075 — DIAG, lecture seule] Trace des recettes écartées pour le débogage (rubrique Technique).
+    try{
+      if(typeof diagPublish==='function' && _anomaliesCout.length){
+        diagPublish('revhAnomalies', '⚠ Revenu horaire — coûts de revient écartés', {
+          'Seuil de plausibilité': SEUIL_COUT_UNIT_PLAUSIBLE+' €/macaron',
+          'Recettes écartées': _anomaliesCout.map(a=>`${a.nom} : ${a.coutUnit} €/pièce${a.rendement!=null?` (rendement ${a.rendement})`:''} × ${a.pieces} vendues`),
+          'Effet': 'Ces lignes auraient ajouté un coût matière aberrant. Écartées du numérateur du revenu horaire.',
+          'À corriger': 'Vérifier le rendement (nb par batch) et les prix matière de ces recettes.'
+        });
+      }
+    }catch(_){}
     // emballages : estimés via coût d'emballage moyen par macaron vendu (table packaging)
     // approche prudente : si non calculable finement, laissé à 0 (n'invente pas).
   }catch(e){ console.error('revh coûts ventes', e); }
@@ -38299,7 +38327,8 @@ async function revenuHoraireCalcul(jours){
     margeAvantRemu, margeApresCotis,
     revHoraireAvantCotis: revAvant,
     revHoraireApresCotis: revApres,
-    heures: h
+    heures: h,
+    anomaliesCout: _anomaliesCout   // [v1075] recettes écartées car coût unitaire implausible
   };
 }
 
@@ -38339,12 +38368,27 @@ function revenuHoraireAudit(d){
       ? `${d.nbMarchesClos} marché(s) clôturé(s)${d.tauxInvendusMoyen!=null?` · ${d.tauxInvendusMoyen}% d'invendus en moyenne`:''}`
       : 'Pas de marché clôturé sur la période — la capacité de vente reste à estimer.'
   });
+  // e) [v1075] Anomalies de coût détectées (recettes au coût unitaire implausible, écartées).
+  const nbAnom = (d.anomaliesCout||[]).length;
+  if(nbAnom>0){
+    checks.push({
+      cle:'anomalie', label:'Cohérence des coûts de revient',
+      niveau:'warn',
+      detail:`${nbAnom} recette${nbAnom>1?'s':''} au coût anormalement élevé (${(d.anomaliesCout||[]).slice(0,3).map(a=>esc(a.nom)).join(', ')}${nbAnom>3?'…':''}) — probablement un rendement ou un prix matière mal saisi. ${nbAnom>1?'Elles ont':'Elle a'} été écartée${nbAnom>1?'s':''} du calcul pour ne pas le fausser.`
+    });
+  }
   const nbOk = checks.filter(c=>c.niveau==='ok').length;
   let confiance, confLabel;
-  if(nbOk>=4){ confiance='ok'; confLabel='Élevée — les estimations seront fiables.'; }
+  // [v1075] La présence d'une anomalie plafonne la confiance à « moyenne » : on ne peut pas dire
+  // « fiable » si on a dû écarter des données incohérentes.
+  if(nbAnom>0){
+    confiance='warn';
+    confLabel=`Moyenne — ${nbAnom} coût${nbAnom>1?'s':''} incohérent${nbAnom>1?'s':''} écarté${nbAnom>1?'s':''} du calcul. Corrige ${nbAnom>1?'ces recettes':'cette recette'} pour fiabiliser le résultat.`;
+  }
+  else if(nbOk>=4){ confiance='ok'; confLabel='Élevée — les estimations seront fiables.'; }
   else if(nbOk>=2){ confiance='warn'; confLabel=`Moyenne — ${nbOk}/4 sources fiables, estimations indicatives.`; }
   else { confiance='ko'; confLabel=`Faible — ${nbOk}/4 sources fiables, complète tes données d'abord.`; }
-  return { checks, nbOk, confiance, confLabel };
+  return { checks, nbOk, confiance, confLabel, nbAnomalies:nbAnom };
 }
 
 let _revhDays = REVH_DEFAULT_DAYS;
@@ -38393,6 +38437,11 @@ async function renderRevenuHoraire(){
       }
       return `<div class="panel">
         <h2>Ton revenu horaire réel</h2>
+        ${(c.anomaliesCout&&c.anomaliesCout.length)?`<div class="banner" style="background:#fdecea;border-color:#e7a9a3;margin-bottom:10px"><div>
+          <b>⚠ ${c.anomaliesCout.length} recette${c.anomaliesCout.length>1?'s':''} au coût anormalement élevé</b> — ${c.anomaliesCout.slice(0,3).map(a=>`<b>${esc(a.nom)}</b> (${euro(a.coutUnit)}/pièce${a.rendement!=null?`, rendement ${qty(a.rendement)}`:''})`).join(', ')}${c.anomaliesCout.length>3?'…':''}.
+          <br>Un macaron coûte normalement quelques dizaines de centimes en matière. Un coût aussi élevé vient presque toujours d'un <b>rendement</b> mal saisi (ex. 1 au lieu de 60) ou d'un <b>prix matière</b> erroné. ${c.anomaliesCout.length>1?'Ces recettes ont':'Cette recette a'} été <b>écartée${c.anomaliesCout.length>1?'s':''} du calcul</b> pour ne pas le fausser — corrige-${c.anomaliesCout.length>1?'les':'la'} pour un revenu horaire juste.
+          <div style="margin-top:8px"><button class="btn ghost sm" onclick="goView('recettes')">🧪 Vérifier mes recettes</button></div>
+        </div></div>`:''}
         <div class="row2">
           <div class="card" style="background:#eef5f0;border-color:#bcd9c6">
             <div class="lbl">Avant cotisations</div>
