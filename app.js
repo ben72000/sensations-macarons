@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1078';
+const APP_VERSION = 'v1079';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -2109,6 +2109,16 @@ const EVENT_MIN_EQUIP = 1;      // au moins 1 pyramide obligatoire
 const PYRA_PRICE = 1.60;        // prix au macaron en mode événement-pyramide
 // Prix unitaire du macaron en événement : 1,60€ si pyramide présente, sinon tarif événement standard.
 function eventUnitPrice(ln){ return ((+(ln&&ln.equip)||0)>0) ? PYRA_PRICE : EVENT_PRICE; }
+// [v1079] PYRAMIDE : location (service) OU vente (marchandise cédée), au choix par ligne.
+//  - location (défaut) : EQUIP_PRICE par pyramide, compté en SERVICE (prestation).
+//  - vente : prix de vente libre (pyraPrixVente), compté en MARCHANDISE, avec coût d'achat (pyraCoutAchat).
+function pyraEstVente(ln){ return !!(ln && ln.pyraVendue); }
+// Prix UNITAIRE d'une pyramide sur la ligne (location ou vente).
+function pyraPrixUnit(ln){ return pyraEstVente(ln) ? money2(+ln.pyraPrixVente||0) : EQUIP_PRICE; }
+// Montant TOTAL des pyramides de la ligne (nb retenu × prix unitaire).
+function pyraTotalLigne(ln){ return money2((+(ln&&ln.equip)||0) * pyraPrixUnit(ln)); }
+// Coût d'achat total des pyramides VENDUES (0 en location).
+function pyraCoutLigne(ln){ return pyraEstVente(ln) ? money2((+(ln&&ln.equip)||0) * (+ln.pyraCoutAchat||0)) : 0; }
 
 /* ============================================================
    PARAMÈTRES DE GESTION (réglables, persistés en localStorage)
@@ -14002,7 +14012,7 @@ async function cmdView(id){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       return `<div class="cmd-line"><div class="line-type">Événement</div>
         <div class="sum-box"><span>Macarons</span><b>${ln.evQte||0} × ${euro(eventUnitPrice(ln))}</b></div>
-        <div class="sum-box"><span>Pyramides / présentoirs</span><b>${ln.equip||0} × ${euro(EQUIP_PRICE)}</b></div>
+        <div class="sum-box"><span>Pyramides / présentoirs ${pyraEstVente(ln)?'<span style="color:var(--gold,#AA7C39);font-size:.74rem">(vendues)</span>':'<span style="color:#9a8a82;font-size:.74rem">(location)</span>'}</span><b>${ln.equip||0} × ${euro(pyraPrixUnit(ln))}</b></div>
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:''}
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
@@ -14126,7 +14136,7 @@ function lineTotalStored(ln){
     const limit=BOX_FLAVOR_LIMIT[ln.taille]||0;
     base = money2(pu + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE);
   }
-  else if(ln.type==='evenement') base = money2((ln.evQte||0)*eventUnitPrice(ln) + (ln.equip||0)*EQUIP_PRICE);
+  else if(ln.type==='evenement') base = money2((ln.evQte||0)*eventUnitPrice(ln) + pyraTotalLigne(ln));
   else if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
   else if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln); const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
   else if(ln.type==='don') return 0; // toujours gratuit, pas de remise à appliquer
@@ -14166,7 +14176,7 @@ function orderToLines(o){
   // ancien format : un seul type
   if(o.type==='evenement'){
     const parfums=[]; (o.parfums||[]).forEach(p=>{if(p.qte>0)parfums.push({nom:p.nom,qte:p.qte});});
-    return [{type:'evenement', evQte:o.evQte||EVENT_MIN, equip:o.equip||0, parfums}];
+    return [{type:'evenement', evQte:o.evQte||EVENT_MIN, equip:o.equip||0, parfums, pyraVendue:!!o.pyraVendue, pyraPrixVente:(o.pyraPrixVente!=null?+o.pyraPrixVente:null), pyraCoutAchat:(o.pyraCoutAchat!=null?+o.pyraCoutAchat:null)}];
   }
   if(o.type==='grand'){
     const items=[]; (o.bigItems||[]).forEach(p=>{if(p.qte>0)items.push({nom:p.nom,qte:p.qte});});
@@ -14189,7 +14199,7 @@ function _parfumsToObj(p){
 function _lineToEdit(ln){
   const t=ln.type;
   if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null};
-  if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
+  if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), _configChoisie:!!ln._configChoisie};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacNb>0?+ln.sacNb:0)};
@@ -14716,7 +14726,7 @@ function drawEventLine(ln,i){
   // --- Logique pyramide intégrée ---
   const hasPyra=(+ln.equip||0)>0;                 // une pyramide est présente
   const prixMac = hasPyra ? PYRA_PRICE : EVENT_PRICE;   // 1,60€ conditionné à la pyramide
-  const totalLigne = (+ln.evQte||0)*prixMac + (+ln.equip||0)*EQUIP_PRICE;
+  const totalLigne = (+ln.evQte||0)*prixMac + pyraTotalLigne(ln);
 
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Événement <span class="line-sub">${hasPyra?`${euro(PYRA_PRICE)}/macaron (pyramide)`:`${euro(EVENT_PRICE)}/macaron`} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
@@ -14725,6 +14735,19 @@ function drawEventLine(ln,i){
       <div class="field"><label>Pyramides / présentoirs <span style="font-weight:400;color:#9a8a82;font-size:.74rem">(max)</span></label><input type="number" min="0" inputmode="numeric" value="${(()=>{const f=(ln.evFiltrePyr!=null?+ln.evFiltrePyr:+ln.equip||0);return f>0?f:'';})()}" placeholder="toutes les options" oninput="setEventEquip(${i},this.value)"></div>
     </div>
     <div id="pyraOpts_${i}">${eventPyraOptsHtml(i, (ln.evDemande!=null?+ln.evDemande:+ln.evQte||0), +ln.evQte||0, (ln.evFiltrePyr!=null?+ln.evFiltrePyr:+ln.equip||0), +ln.equip||0)}</div>
+    ${(+ln.equip||0)>0?`<div style="background:#faf7f2;border:1px solid var(--hair);border-radius:11px;padding:10px 12px;margin:4px 0">
+      <div style="font-size:.78rem;color:#7a6a62;font-weight:600;margin-bottom:6px">Pyramide${(+ln.equip||0)>1?'s':''} : louée${(+ln.equip||0)>1?'s':''} ou vendue${(+ln.equip||0)>1?'s':''} ?</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn ${!pyraEstVente(ln)?'':'ghost'} sm" style="flex:1" onclick="setPyraMode(${i},false)">🔄 Location <span style="font-size:.72rem;opacity:.8">(${euro(EQUIP_PRICE)})</span></button>
+        <button class="btn ${pyraEstVente(ln)?'':'ghost'} sm" style="flex:1" onclick="setPyraMode(${i},true)">🛍 Vente</button>
+      </div>
+      ${pyraEstVente(ln)?`<div class="row2" style="margin-top:8px">
+        <div class="field"><label>Prix de vente / pyramide</label><input type="number" min="0" step="0.01" inputmode="decimal" value="${ln.pyraPrixVente!=null?ln.pyraPrixVente:''}" placeholder="0,00" oninput="setPyraPrix(${i},this.value)"></div>
+        <div class="field"><label>Coût d'achat / pyramide <span style="font-weight:400;color:#9a8a82;font-size:.72rem">(pour ta marge)</span></label><input type="number" min="0" step="0.01" inputmode="decimal" value="${ln.pyraCoutAchat!=null?ln.pyraCoutAchat:''}" placeholder="0,00" oninput="setPyraCout(${i},this.value)"></div>
+      </div>
+      <p class="note" style="margin:4px 2px 0;font-size:.72rem">Vendue, la pyramide compte comme <b>marchandise</b> (et non comme prestation de service) — ${(+ln.equip||0)} × ${euro(+ln.pyraPrixVente||0)} = <b>${euro(pyraTotalLigne(ln))}</b>.</p>`
+      :`<p class="note" style="margin:6px 2px 0;font-size:.72rem">Louée, la pyramide est une <b>prestation de service</b>, à retourner après l'événement.</p>`}
+    </div>`:''}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}</div>
     ${(()=>{
@@ -14823,6 +14846,24 @@ function setEventEquip(i,v){
   cmdRecalc();
 }
 function setEventParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
+// [v1079] Pyramide : bascule location/vente + saisie prix de vente et coût d'achat.
+function setPyraMode(i, vendue){
+  cmdLines[i].pyraVendue = !!vendue;
+  if(vendue && cmdLines[i].pyraPrixVente==null) cmdLines[i].pyraPrixVente = 0;
+  drawLines();   // redessine : affiche/masque les champs prix+coût et met à jour le total
+  cmdRecalc();
+}
+function setPyraPrix(i, v){
+  cmdLines[i].pyraPrixVente = Math.max(0, +String(v).replace(',', '.')||0);
+  // mise à jour discrète du total sans tout redessiner (on garde le focus sur le champ)
+  cmdRecalc();
+  const box=document.getElementById('pyraOpts_'+i);
+  // on rafraîchit juste la note de total via un redraw léger de la ligne si nécessaire
+}
+function setPyraCout(i, v){
+  cmdLines[i].pyraCoutAchat = Math.max(0, +String(v).replace(',', '.')||0);
+  cmdRecalc();
+}
 
 function drawBigLine(ln,i){
   const pu=bigPrice(ln.tarif);
@@ -15000,7 +15041,7 @@ function lineTotalBase(ln){
     const over = Math.max(0, nbDiff-limit);
     return money2(base + over*FLAVOR_SURCHARGE);
   }
-  if(ln.type==='evenement') return addMoney(mulMoney(ln.evQte||0,eventUnitPrice(ln)), mulMoney(ln.equip||0,EQUIP_PRICE));
+  if(ln.type==='evenement') return addMoney(mulMoney(ln.evQte||0,eventUnitPrice(ln)), pyraTotalLigne(ln));
   if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln); const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='don') return 0;
@@ -15088,7 +15129,7 @@ function cmdLinesToStored(){
   return (cmdLines||[]).map(ln=>{
     const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
     if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', remisePct:rp, parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacMatId>0?Math.max(0,Math.round(+ln.sacNb||0)):0), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
@@ -15401,6 +15442,9 @@ async function saveCmd(id){
     if(ln.type==='evenement'){
       if((ln.evQte||0)<EVENT_MIN){ toast(`Événement : minimum ${EVENT_MIN} macarons`); return; }
       if((ln.equip||0)<EVENT_MIN_EQUIP){ toast(`Événement : au moins ${EVENT_MIN_EQUIP} pyramide obligatoire`); return; }
+      // [v1079] Si pyramide vendue : un prix de vente > 0 est requis (sinon la vente n'a pas de sens).
+      if(ln.pyraVendue && (+ln.pyraPrixVente||0)<=0){ toast('Pyramide vendue : indique un prix de vente'); return; }
+
       // Parfums : on autorise le partiel (reste = non spécifié), mais on interdit le dépassement.
       const totParf=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0);
       if(totParf>(ln.evQte||0)){ toast(`Trop de parfums : ${totParf} pour ${ln.evQte} macarons (max ${ln.evQte})`); return; }
@@ -16663,11 +16707,19 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
     const net = lineTotalStored(ln); // prix de vente net de remises de ligne
     if(ln.type==='prestation'){ caService=money2(caService+net); return; } // service : pas de matière/emballage
     if(ln.type==='evenement'){
-      // l'événement mêle marchandise (macarons) et service (location pyramide/déplacement)
+      // l'événement mêle marchandise (macarons) et, pour la pyramide, SOIT location (service) SOIT vente (marchandise).
       const maca = money2((+ln.evQte||0)*eventUnitPrice(ln));
-      const presta = money2((+ln.equip||0)*EQUIP_PRICE);
-      caGoods=money2(caGoods+maca); caService=money2(caService+presta);
+      const pyraMontant = pyraTotalLigne(ln);
+      caGoods=money2(caGoods+maca);
       coutMat=money2(coutMat+(+ln.evQte||0)*avgUnit);
+      if(pyraEstVente(ln)){
+        // [v1079] pyramide VENDUE → marchandise cédée (caGoods) + son coût d'achat en coût de revient.
+        caGoods=money2(caGoods+pyraMontant);
+        coutMat=money2(coutMat+pyraCoutLigne(ln));
+      } else {
+        // pyramide LOUÉE → prestation de service.
+        caService=money2(caService+pyraMontant);
+      }
       return;
     }
     // coffret / grand / don / histo : marchandise
@@ -20687,7 +20739,7 @@ function diagFlavorCAGap(orders, markets, marketMoves){
         valMac += money2(lineTotalStored(ln));
         lineParfumsOf(ln).forEach(p=>totalPiecesMac+=+p.qte);
       }
-      if(ln.type==='evenement'){ cat.pyramides += (+ln.equip||0)*EQUIP_PRICE; }
+      if(ln.type==='evenement'){ cat.pyramides += pyraTotalLigne(ln); }
     });
     if(totalPiecesMac<=0){ cat.sansParfum += montant; nb.sansParfum++; return; }
     // Répartition du montant réel entre macarons (→ parfums) et prestation (→ à part).
@@ -35193,7 +35245,7 @@ function factLineDesc(ln){
   const parfums = (ln.parfums||[]).filter(p=>+p.qte>0).map(p=>`${p.nom} ×${p.qte}`).join(', ');
   const items = (ln.items||[]).filter(p=>+p.qte>0).map(p=>`${p.nom} ×${p.qte}`).join(', ');
   if(ln.type==='coffret') return `Coffret ${ln.taille} macarons${parfums?' — '+parfums:''}`;
-  if(ln.type==='evenement') return `Prestation événement : ${ln.evQte||0} macarons${ln.equip?` + ${ln.equip} pièce(s) montée(s)`:''}${parfums?' — '+parfums:''}`;
+
   if(ln.type==='grand') return `Macarons grand format${items?' — '+items:''}`;
   if(ln.type==='vrac') return `Macarons (vrac)${parfums?' — '+parfums:''}`;
   if(ln.type==='don') return `Don (offert)${(parfums||items)?' — '+(parfums||items):''}`;
@@ -35234,13 +35286,24 @@ function factLineRows(ln, brut){
   const montantLn = brut ? lineTotalBrut(ln) : lineTotalStored(ln);
   if(ln.type==='evenement' && (+ln.equip||0)>0){
     const nbPyr = +ln.equip||0;
-    const partPyr = money2(nbPyr*EQUIP_PRICE);                  // part location pyramides
-    const partMaca = money2(montantLn - partPyr);               // reste = part macarons (garantit l'égalité)
+    const partPyr = pyraTotalLigne(ln);                        // part pyramides (location ou vente)
+    // En cas de remise de ligne (montantLn < brut), la part pyramide doit suivre la même proportion
+    // pour garantir l'égalité des deux <tr> avec le sous-total. On recalcule au prorata si besoin.
+    const brutLn = lineTotalBrut(ln);
+    const partPyrAff = (brutLn>0 && montantLn!==brutLn) ? money2(montantLn * (partPyr/brutLn)) : partPyr;
+    const partMaca = money2(montantLn - partPyrAff);           // reste = part macarons (garantit l'égalité)
     const rowMaca = `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(partMaca)}</td></tr>`;
-    const descPyr = `<span class="ln-main">Prestation de service — location de pyramide</span>`+
-                    `<span class="ln-sub">${nbPyr} pyramide${nbPyr>1?'s':''} × ${euro(EQUIP_PRICE)}</span>`+
-                    `<span class="ln-loc">à retourner dans un délai de 48h après l'événement</span>`;
-    const rowPyr = `<tr><td class="desc">${descPyr}</td><td class="mt">${euro(partPyr)}</td></tr>`;
+    let descPyr;
+    if(pyraEstVente(ln)){
+      // [v1079] pyramide VENDUE → marchandise, libellé de vente, pas de mention de retour.
+      descPyr = `<span class="ln-main">Vente — pyramide / présentoir</span>`+
+                `<span class="ln-sub">${nbPyr} pyramide${nbPyr>1?'s':''} × ${euro(pyraPrixUnit(ln))}</span>`;
+    } else {
+      descPyr = `<span class="ln-main">Prestation de service — location de pyramide</span>`+
+                `<span class="ln-sub">${nbPyr} pyramide${nbPyr>1?'s':''} × ${euro(EQUIP_PRICE)}</span>`+
+                `<span class="ln-loc">à retourner dans un délai de 48h après l'événement</span>`;
+    }
+    const rowPyr = `<tr><td class="desc">${descPyr}</td><td class="mt">${euro(partPyrAff)}</td></tr>`;
     return rowMaca + rowPyr;
   }
   return `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(montantLn)}</td></tr>`;
