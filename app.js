@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1068';
+const APP_VERSION = 'v1071';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3170,7 +3170,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -12570,6 +12570,7 @@ const _NAV_PAGES = [
   {v:'compta',       t:'Comptabilité',              k:'comptabilite compta ca chiffre affaires resultat charges urssaf encaissement'},
   {v:'netpoche',     t:'Net dans la poche',          k:'net poche revenu reel impot tranche imposition urssaf cotisation combien reste gagne vraiment apres deduction fil rouge'},
   {v:'chargesventil',t:'Charges ventilées',          k:'charges ventilation investissement recurrent structurel marketing formation equipement stand diminuer allege croisiere depenses'},
+  {v:'optimisation', t:'Optimisation fiscale',        k:'optimisation fiscale seuil seuils tva franchise micro entreprise regime reel bascule plafond plafonds limite vente service prestation marchandise depassement surveillance alerte'},
   {v:'consommables', t:'Consommables',              k:'consommable fourniture jetable'},
   {v:'boites',       t:'Boîtes de conservation',    k:'boite conservation contenant rangement'},
   {v:'equipements',  t:'Équipements de stockage',   k:'equipement stockage frigo congelateur materiel'},
@@ -16105,6 +16106,77 @@ async function computeNetPoche(periode){
     chargesInvestParCat:ch.investParCat, chargesRecurrentParCat:ch.recurrentParCat,
     netAvantCharges, netPoche,
     totalPonctions, tauxPonction, tauxNet
+  };
+}
+
+// ============================================================
+//  SEUILS FISCAUX — [v1069] surveillance micro-entreprise (CA 2026)
+//  Compare le CA encaissé annuel (ventilé vente/service) aux seuils légaux 2026 :
+//   - franchise de TVA : vente 85 000 (base) / 93 500 (majoré) ; service 37 500 / 41 250
+//   - régime micro : vente 203 100 ; service 83 600 ; global mixte 203 100 (dont 83 600 service max)
+//  Calcule la position, la distance au seuil, et une projection de fin d'année au rythme actuel.
+//  NB : pas de conseil — uniquement des repères factuels. Les coachings = service, les macarons = vente.
+// ============================================================
+const SEUILS_FISCAUX_2026 = {
+  tvaVenteBase:85000, tvaVenteMajore:93500,
+  tvaServiceBase:37500, tvaServiceMajore:41250,
+  microVente:203100, microService:83600, microGlobal:203100
+};
+async function computeSeuilsFiscaux(year){
+  year = year || new Date().getFullYear();
+  const moisList=_moisDeLannee(year);
+  let goods=0, service=0;
+  const parMois=[];
+  // [v1069] séries cumulées pour le graphique de trajectoire
+  const cumulGoods=[], cumulService=[], cumulTotal=[];
+  for(const ym of moisList){
+    const B=await computeMonthlyBilan(ym);
+    goods=money2(goods+B.goods); service=money2(service+B.service);
+    parMois.push({ym, goods:B.goods, service:B.service});
+    cumulGoods.push(goods); cumulService.push(service); cumulTotal.push(money2(goods+service));
+  }
+  const caTotal=money2(goods+service);
+  // Projection fin d'année : extrapolation linéaire au rythme des mois écoulés AVEC activité.
+  const now=new Date();
+  const moisEcoules = (year < now.getFullYear()) ? 12 : (year > now.getFullYear() ? 0 : (now.getMonth()+1));
+  const proj = (val)=> moisEcoules>0 ? money2(val/moisEcoules*12) : 0;
+  const projGoods=proj(goods), projService=proj(service), projTotal=money2(projGoods+projService);
+  // Mois projeté d'atteinte d'un seuil au rythme actuel (null si jamais atteint sur l'année).
+  const moisAtteinte = (valActuel, seuil)=>{
+    if(moisEcoules<=0 || valActuel<=0) return null;
+    const rythme = valActuel/moisEcoules;            // par mois
+    if(rythme<=0) return null;
+    const moisNec = seuil/rythme;                    // nb de mois pour atteindre le seuil
+    if(moisNec>12) return null;                       // pas atteint dans l'année
+    return Math.ceil(moisNec);                        // n° de mois (1-12)
+  };
+  // Statut d'une jauge : 'ok' (<70%), 'attention' (70-90%), 'proche' (90-100%), 'depasse' (>=100%)
+  const statut = (val, seuil)=>{
+    const r = seuil>0 ? val/seuil : 0;
+    if(r>=1) return 'depasse'; if(r>=0.9) return 'proche'; if(r>=0.7) return 'attention'; return 'ok';
+  };
+  const jauge = (label, val, seuil, type, projVal)=>({
+    label, val, seuil, type,
+    pct: seuil>0 ? Math.min(100, Math.round(val/seuil*100)) : 0,
+    pctReel: seuil>0 ? Math.round(val/seuil*100) : 0,
+    reste: money2(Math.max(0, seuil-val)),
+    statut: statut(val, seuil),
+    projection: projVal,
+    projStatut: statut(projVal, seuil),
+    moisAtteinte: moisAtteinte(val, seuil)
+  });
+  return {
+    year, goods, service, caTotal, moisEcoules,
+    projGoods, projService, projTotal,
+    parMois, cumulGoods, cumulService, cumulTotal,
+    S: SEUILS_FISCAUX_2026,
+    // Jauges TVA (les plus proches/sensibles)
+    tvaVente: jauge('TVA · vente (macarons)', goods, SEUILS_FISCAUX_2026.tvaVenteBase, 'tva_vente', projGoods),
+    tvaService: jauge('TVA · service (coachings)', service, SEUILS_FISCAUX_2026.tvaServiceBase, 'tva_service', projService),
+    // Jauges régime micro
+    microVente: jauge('Régime micro · vente', goods, SEUILS_FISCAUX_2026.microVente, 'micro_vente', projGoods),
+    microService: jauge('Régime micro · service', service, SEUILS_FISCAUX_2026.microService, 'micro_service', projService),
+    microGlobal: jauge('Régime micro · global', caTotal, SEUILS_FISCAUX_2026.microGlobal, 'micro_global', projTotal)
   };
 }
 // Construit le texte du bilan mensuel (export .txt).
@@ -19653,6 +19725,206 @@ async function renderChargesVentil(){
     <p class="note" style="text-align:center;margin-top:4px">L'investissement (marketing, formation, équipement, stand) est fort au démarrage puis s'allège. Le récurrent (loyer, énergie, assurance, abonnements…) reste structurel.</p>`;
 }
 
+// ============================================================
+//  ÉCRAN « OPTIMISATION FISCALE » — [v1069] surveillance des seuils micro-entreprise
+// ============================================================
+let _optimYear = null;
+function optimSetYear(y){ _optimYear=+y; renderOptimisation(); }
+let _optimVue = 'global';   // [v1069] 'global' | 'vente' | 'service'
+function optimSetVue(v){ _optimVue=v; renderOptimisation(); }
+// [v1069] Dessine la trajectoire de CA cumulé (SVG pur) : courbe réelle + projection pointillée
+// + lignes de seuil. vue = 'global'|'vente'|'service'. Renvoie une chaîne HTML.
+function _svgTrajectoire(R, vue){
+  const W=340, H=240, padL=8, padR=12, padT=16, padB=26;
+  const innerW=W-padL-padR, innerH=H-padT-padB;
+  let serie, projVal, seuils, couleurCourbe;
+  if(vue==='vente'){
+    serie=R.cumulGoods; projVal=R.projGoods; couleurCourbe='#c98b4b';
+    seuils=[{v:R.S.tvaVenteBase,lbl:'TVA',c:'#AA7C39'},{v:R.S.microVente,lbl:'Micro',c:'#b3261e'}];
+  } else if(vue==='service'){
+    serie=R.cumulService; projVal=R.projService; couleurCourbe='#5b8aa6';
+    seuils=[{v:R.S.tvaServiceBase,lbl:'TVA',c:'#AA7C39'},{v:R.S.microService,lbl:'Micro',c:'#b3261e'}];
+  } else {
+    serie=R.cumulTotal; projVal=R.projTotal; couleurCourbe='#7a3b52';
+    seuils=[{v:R.S.tvaVenteBase,lbl:'TVA vente',c:'#AA7C39'},{v:R.S.microGlobal,lbl:'Micro',c:'#b3261e'}];
+  }
+  const me=R.moisEcoules;
+  const dataMax=Math.max(projVal, serie[serie.length-1]||0);
+  const yMax=Math.max(seuils[0].v*1.15, dataMax*1.1, 1);
+  const x=(i)=> padL + (innerW*(i/11));
+  const y=(val)=> padT + innerH - (innerH*Math.min(1,val/yMax));
+  const ptsReels=[];
+  for(let i=0;i<Math.max(1,me);i++){ if(i<serie.length) ptsReels.push([x(i), y(serie[i])]); }
+  if(me<=0 && serie.length) ptsReels.push([x(0), y(serie[0])]);
+  const pathReel = ptsReels.map((p,i)=>(i===0?'M':'L')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const aire = ptsReels.length>1
+    ? pathReel+` L ${ptsReels[ptsReels.length-1][0].toFixed(1)} ${(padT+innerH).toFixed(1)} L ${ptsReels[0][0].toFixed(1)} ${(padT+innerH).toFixed(1)} Z`
+    : '';
+  let pathProj='';
+  if(me>0 && me<12 && ptsReels.length){
+    const last=ptsReels[ptsReels.length-1];
+    pathProj=`M ${last[0].toFixed(1)} ${last[1].toFixed(1)} L ${x(11).toFixed(1)} ${y(projVal).toFixed(1)}`;
+  }
+  const lignesSeuil=seuils.filter(s=>s.v<=yMax*1.02).map(s=>{
+    const yy=y(s.v);
+    return `<line x1="${padL}" y1="${yy.toFixed(1)}" x2="${(W-padR).toFixed(1)}" y2="${yy.toFixed(1)}" stroke="${s.c}" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.85"/>
+      <text x="${(W-padR-2).toFixed(1)}" y="${(yy-3).toFixed(1)}" text-anchor="end" font-size="9" fill="${s.c}" font-weight="600">${s.lbl} ${Math.round(s.v/1000)}k</text>`;
+  }).join('');
+  let marqueur='';
+  if(me>0 && ptsReels.length){
+    const p=ptsReels[ptsReels.length-1];
+    marqueur=`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4.5" fill="${couleurCourbe}" stroke="#fff" stroke-width="2"/>`;
+  }
+  const moisInit=['J','F','M','A','M','J','J','A','S','O','N','D'];
+  const axeX=moisInit.map((m,i)=>`<text x="${x(i).toFixed(1)}" y="${(H-8).toFixed(1)}" text-anchor="middle" font-size="8" fill="#9a8a82">${m}</text>`).join('');
+  const gid='grad_'+vue;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;max-width:480px;margin:0 auto">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${couleurCourbe}" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="${couleurCourbe}" stop-opacity="0.02"/>
+    </linearGradient></defs>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="#fbf8f3" rx="10"/>
+    ${aire?`<path d="${aire}" fill="url(#${gid})"/>`:''}
+    ${lignesSeuil}
+    ${pathProj?`<path d="${pathProj}" fill="none" stroke="${couleurCourbe}" stroke-width="2" stroke-dasharray="5 4" opacity="0.55"/>`:''}
+    ${pathReel?`<path d="${pathReel}" fill="none" stroke="${couleurCourbe}" stroke-width="2.4"/>`:''}
+    ${marqueur}
+    ${axeX}
+  </svg>`;
+}
+async function renderOptimisation(){
+  const main=document.getElementById('main'); if(!main) return;
+  if(!_optimYear) _optimYear = new Date().getFullYear();
+  main.innerHTML=`<div class="topbar"><div><h1>Optimisation fiscale</h1><p>Surveillance des seuils micro-entreprise</p></div>
+    <button class="btn ghost sm" onclick="goView('compta')" title="Retour à la comptabilité">↩ Compta</button></div>
+    <div class="panel"><p class="note">Calcul en cours…</p></div>`;
+  let R; try{ R=await computeSeuilsFiscaux(_optimYear); }catch(e){ console.error('renderOptimisation',e); main.querySelector('.panel').innerHTML='<p class="note">Impossible de calculer pour le moment.</p>'; return; }
+
+  // Sélecteur d'année (années avec activité + année courante)
+  const moisDispo = await _listeMoisAvecActivite();
+  const annees = [...new Set(moisDispo.map(m=>+m.slice(0,4)))];
+  const yNow=new Date().getFullYear(); if(!annees.includes(yNow)) annees.push(yNow);
+  annees.sort((a,b)=>b-a);
+  const anneeOpts = annees.map(y=>`<option value="${y}" ${y===_optimYear?'selected':''}>${y}</option>`).join('');
+
+  // Couleurs de statut
+  const COL = { ok:'#3f7d52', attention:'#AA7C39', proche:'#d98b3a', depasse:'#b3261e' };
+  const LBL = { ok:'Tranquille', attention:'À surveiller', proche:'Proche du seuil', depasse:'Seuil dépassé' };
+  const moisNom = (n)=> (n&&n>=1&&n<=12) ? _MOIS_FR[n-1] : null;
+
+  // Carte jauge réutilisable
+  const carteJauge = (j, explication)=>{
+    const col = COL[j.statut];
+    const projCol = COL[j.projStatut];
+    const projTxt = j.moisAtteinte
+      ? `À ce rythme, tu atteindrais ce seuil vers <b>${moisNom(j.moisAtteinte)}</b>.`
+      : (j.projStatut==='depasse'
+          ? `À ce rythme, ta projection de fin d'année (<b>${euro(j.projection)}</b>) dépasse ce seuil.`
+          : `À ce rythme, ta projection de fin d'année est <b>${euro(j.projection)}</b> — sous le seuil.`);
+    const badge = `<span style="background:${col};color:#fff;font-size:.68rem;padding:2px 8px;border-radius:10px;font-weight:600">${LBL[j.statut]}</span>`;
+    return `<div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h2 style="font-size:.98rem;margin:0">${j.label}</h2>${badge}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.82rem;color:#5a4a42;margin-bottom:4px">
+        <span><b style="color:${col};font-size:1.05rem">${euro(j.val)}</b> sur ${euro(j.seuil)}</span>
+        <span style="color:#9a8a82">${j.pctReel}%</span>
+      </div>
+      <div style="height:12px;border-radius:6px;overflow:hidden;background:#efe6da;position:relative">
+        <div style="height:100%;width:${j.pct}%;background:${col};transition:width .3s"></div>
+        ${j.statut!=='depasse'&&j.projStatut!=='ok'?`<div style="position:absolute;top:0;height:100%;width:2px;left:${Math.min(100,Math.round(j.projection/j.seuil*100))}%;background:${projCol};opacity:.7"></div>`:''}
+      </div>
+      <p class="note" style="margin:6px 0 4px">Il te reste <b>${euro(j.reste)}</b> avant ce seuil. ${projTxt}</p>
+      <p class="note" style="font-size:.74rem;color:#9a8a82;margin:0">${explication}</p>
+    </div>`;
+  };
+
+  // Bandeau de situation globale
+  const pire = [R.tvaVente,R.tvaService,R.microGlobal].reduce((acc,j)=>{
+    const ordre={ok:0,attention:1,proche:2,depasse:3};
+    return ordre[j.statut]>ordre[acc.statut]?j:acc;
+  });
+  const heroCol = COL[pire.statut];
+  const heroMsg = pire.statut==='ok'
+    ? `Tu es loin de tous les seuils. Rien à surveiller pour l'instant — continue comme ça.`
+    : pire.statut==='attention'
+      ? `Un seuil commence à se rapprocher. Rien d'urgent, mais garde un œil dessus.`
+      : pire.statut==='proche'
+        ? `Tu approches d'un seuil. C'est le moment d'anticiper ce qui se passe si tu le franchis.`
+        : `Un seuil est franchi. Lis bien les conséquences ci-dessous et rapproche-toi d'un comptable.`;
+  const hero=`<div style="background:linear-gradient(135deg,#52252F,#2a1320);border-radius:18px;padding:18px;color:#fff;box-shadow:0 6px 20px rgba(73,15,37,.25)">
+    <div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:#e8c9a0">Ta situation · ${R.year}</div>
+    <div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+      <div style="width:12px;height:12px;border-radius:50%;background:${heroCol};box-shadow:0 0 8px ${heroCol}"></div>
+      <div style="font-size:1.05rem;font-weight:700;font-family:'Bellota',Georgia,serif">${LBL[pire.statut]}</div>
+    </div>
+    <div style="font-size:.84rem;color:#e8c9a0">${heroMsg}</div>
+    <div style="font-size:.74rem;color:#cdb89a;margin-top:8px">CA encaissé ${R.year} : <b>${euro(R.caTotal)}</b> · vente ${euro(R.goods)} + service ${euro(R.service)}</div>
+  </div>`;
+
+  // Explication d'ouverture : pourquoi cet écran, comment lire
+  const intro=`<div class="panel">
+    <h2 style="font-size:1rem">À quoi sert cet écran</h2>
+    <p class="note" style="margin:-2px 0 8px">En micro-entreprise, ce ne sont pas tes dépenses qui comptent fiscalement (l'abattement forfaitaire les remplace), mais ton <b>chiffre d'affaires</b>. Deux familles de seuils le surveillent, et les franchir change les règles du jeu. Cet écran te dit où tu en es par rapport à chacun.</p>
+    <p class="note" style="margin:0">Point clé pour toi : tes <b>macarons</b> comptent comme de la <b>vente</b>, tes <b>coachings</b> comme du <b>service</b>. Les seuils sont différents pour chacun, et l'outil suit les deux compteurs séparément — c'est le piège classique des activités mixtes.</p>
+  </div>`;
+
+  // Bloc TVA
+  const blocTVA=`<div class="panel" style="background:#faf6f0">
+    <h2 style="font-size:1.02rem;margin-bottom:2px">🧾 Franchise de TVA</h2>
+    <p class="note" style="margin:0">Tant que tu restes sous ces seuils, tu ne factures <b>pas de TVA</b> à tes clients (et tu n'en récupères pas non plus). Au-delà, tu deviens redevable : tu ajoutes 20% sur tes prix ou tu rognes ta marge. Les seuils 2026 sont inchangés.</p>
+  </div>
+  ${carteJauge(R.tvaVente, `Seuil de base : ${euro(R.S.tvaVenteBase)} (franchise perdue au 1er janvier suivant). Seuil majoré : ${euro(R.S.tvaVenteMajore)} (TVA due dès le 1er jour de dépassement). Concerne ta vente de macarons.`)}
+  ${carteJauge(R.tvaService, `Seuil de base : ${euro(R.S.tvaServiceBase)}. Seuil majoré : ${euro(R.S.tvaServiceMajore)}. Concerne tes prestations / coachings. Ce seuil est bien plus bas que celui de la vente — c'est souvent lui qu'on franchit en premier.`)}`;
+
+  // Bloc régime micro
+  const blocMicro=`<div class="panel" style="background:#faf6f0">
+    <h2 style="font-size:1.02rem;margin-bottom:2px">🏛️ Maintien du régime micro</h2>
+    <p class="note" style="margin:0">Au-delà de ces seuils <b>deux années de suite</b>, tu sors de la micro et bascules au régime réel : comptabilité complète, charges déductibles, mais bien plus de paperasse. Un seul dépassement isolé ne change rien — tu gardes la micro l'année suivante.</p>
+  </div>
+  ${carteJauge(R.microVente, `Seuil 2026 : ${euro(R.S.microVente)} pour la vente de marchandises. Tu en es très loin — c'est rassurant.`)}
+  ${carteJauge(R.microService, `Seuil 2026 : ${euro(R.S.microService)} pour les prestations de service.`)}
+  ${carteJauge(R.microGlobal, `En activité mixte, ton CA <b>global</b> (vente + service) ne doit pas dépasser ${euro(R.S.microGlobal)}, avec au maximum ${euro(R.S.microService)} de service à l'intérieur. C'est le compteur d'ensemble.`)}`;
+
+  // Note de prudence
+  const note=`<div class="panel">
+    <p class="note" style="margin:0"><b>Bon à savoir.</b> Les projections supposent que ton rythme actuel se prolonge à l'identique jusqu'à fin d'année — la réalité variera (saisons, marchés, commandes). Cet écran t'aide à anticiper, il ne remplace pas un expert-comptable, surtout au moment de décider de franchir un seuil ou d'opter volontairement pour la TVA ou le réel.</p>
+  </div>`;
+
+  // [v1069] Graphique de trajectoire : CA cumulé + projection + seuils, avec onglets de vue
+  const ongl=(lbl,v)=>`<button class="btn ${_optimVue===v?'':'ghost'} sm" onclick="optimSetVue('${v}')" style="flex:1">${lbl}</button>`;
+  // Légende dynamique selon la vue active
+  const vueData = _optimVue==='vente'
+    ? {jProc:R.tvaVente, nom:'tes macarons (vente)'}
+    : _optimVue==='service'
+      ? {jProc:R.tvaService, nom:'tes coachings (service)'}
+      : {jProc:[R.tvaVente,R.tvaService].sort((a,b)=>b.pctReel-a.pctReel)[0], nom:'ton CA total'};
+  const _MOIS_G=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  const jp=vueData.jProc;
+  const legende = jp.moisAtteinte
+    ? `📍 Au rythme actuel, ${vueData.nom} atteindrait le seuil <b>${jp.label.includes('TVA')?'TVA':'micro'}</b> vers <b>${_MOIS_G[jp.moisAtteinte-1]}</b>.`
+    : `📍 Au rythme actuel, ${vueData.nom} reste <b>sous les seuils</b> jusqu'à fin d'année. Trajectoire tranquille.`;
+  const blocGraph=`<div class="panel">
+    <h2 style="font-size:1rem;margin-bottom:2px">Ta trajectoire ${R.year}</h2>
+    <p class="note" style="margin:-2px 0 8px">CA cumulé depuis janvier (trait plein) et projection au rythme actuel (pointillés). Les lignes en tirets sont tes seuils.</p>
+    <div class="flex" style="gap:6px;margin-bottom:10px">${ongl('Global','global')}${ongl('Vente','vente')}${ongl('Service','service')}</div>
+    ${_svgTrajectoire(R, _optimVue)}
+    <p class="note" style="margin:8px 0 0;text-align:center">${legende}</p>
+  </div>`;
+
+  main.innerHTML=`<div class="topbar"><div><h1>Optimisation fiscale</h1><p>Surveillance des seuils micro-entreprise</p></div>
+    <button class="btn ghost sm" onclick="goView('compta')" title="Retour à la comptabilité">↩ Compta</button></div>
+    <div class="field" style="margin-bottom:12px"><label>Année surveillée</label>
+      <select onchange="optimSetYear(this.value)" style="width:100%;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${anneeOpts}</select></div>
+    ${hero}
+    <div style="height:12px"></div>
+    ${blocGraph}
+    ${intro}
+    ${blocTVA}
+    ${blocMicro}
+    ${note}`;
+}
+
 async function renderCompta(){
  try {
   const A = await computeAccounting({ periodeStart: comptaPeriodeStart(_comptaPeriode), periodeEnd: comptaPeriodeEnd(_comptaPeriode) });
@@ -19720,6 +19992,13 @@ async function renderCompta(){
      <div style="display:flex;justify-content:space-between;align-items:center">
        <div><div style="font-weight:700">🚀🏠 Charges ventilées</div>
          <div class="note" style="margin-top:2px">Investissement (va s'alléger) vs récurrent (structurel)</div></div>
+       <div style="font-size:1.2rem;color:var(--caramel,#AA7C39)">›</div>
+     </div>
+   </div>
+   <div class="panel lnk" onclick="goView('optimisation')" style="cursor:pointer">
+     <div style="display:flex;justify-content:space-between;align-items:center">
+       <div><div style="font-weight:700">🎯 Optimisation fiscale</div>
+         <div class="note" style="margin-top:2px">Surveillance des seuils (TVA, régime micro) ventilés vente / service</div></div>
        <div style="font-size:1.2rem;color:var(--caramel,#AA7C39)">›</div>
      </div>
    </div>
@@ -23086,7 +23365,12 @@ function aiParseOrderItems(raw, flavors){
   // retire la portion date ("le 19 juin", "pour le 5/06"…) pour ne pas confondre le jour avec une quantité
   n=n.replace(/\b(le|pour le|du|the)\s+\d{1,2}\s*(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre|\/\d|[-.]\d)/g,' ');
   n=n.replace(/\b\d{1,2}[\/.-]\d{1,2}([\/.-]\d{2,4})?\b/g,' ');
-  // ne garde que ce qui suit un mot déclencheur de contenu si présent (de/avec/:)
+  // [v1071] retire « coffret de N » / « boite de N » / « N pieces au total » pour que le N de la TAILLE
+  // ne soit pas pris pour une quantité de parfum. On retire aussi l'heure « a 12h », « 12h30 ».
+  n=n.replace(/\b(coffret|coffrets|boite|boites|boite|boites|sachet|sachets)\s+(de\s+)?\d+\b/g,' ');
+  n=n.replace(/\ba?\s*\d{1,2}\s*h(\s*\d{2})?\b/g,' ');
+  // normalise la ponctuation de fin et les séparateurs (point/virgule/slash → séparateur d'items)
+  n=n.replace(/[.]/g,' , ').replace(/\s*\/\s*/g,' , ');
   const items=[];
   // motif : <nombre> macaron(s) <parfum...> — on EXIGE le mot "macaron" pour fiabiliser
   // (sinon on tente aussi <nombre> <parfum> après "de"/"avec")
@@ -23111,7 +23395,9 @@ function aiParseOrderItems(raw, flavors){
     else if(cands.length>1){ it.flavor=null; it.candidates=cands; }
     else { it.flavor=null; it.candidates=[]; it.unknown=true; }
   });
-  return items;
+  // [v1071] on écarte les items « fantômes » : un raw qui ne correspond à AUCUN parfum et qui est un
+  // simple connecteur résiduel (avec, et, pour…) n'est pas une vraie ligne de commande.
+  return items.filter(it=> it.flavor || (it.raw && !/^(avec|et|pour|de|d'|au|aux|plus|le|la|les)$/.test(it.raw)));
 }
 function _pushItem(items, qte, label){
   label=(label||'').trim().replace(/\b(macarons?|pieces?|pcs?|de|d'|au|aux|a|la|le|les|du|nom|chez|pour)\b/g,' ').replace(/\s+/g,' ').trim();
@@ -23188,15 +23474,31 @@ const _AI_CORRECTIONS = {
   // abréviations / langage SMS
   'ke':'que', 'koi':'quoi', 'kel':'quel', 'kelle':'quelle', 'jai':"j'ai", 'ya':'il y a',
   'auj':"aujourd'hui", 'ajd':"aujourd'hui", 'aujourdhui':"aujourd'hui", 'dmain':'demain',
+  'stp':"s'il te plait", 'svp':"s'il vous plait", 'pcq':'parce que', 'pq':'pourquoi',
+  'jsuis':'je suis', 'jsais':'je sais', 'jvais':'je vais', 'jdois':'je dois', 'jpeux':'je peux',
+  'jveux':'je veux', 'jvoudrais':'je voudrais', 'jaimerais':"j'aimerais", 'cki':'qui', 'ki':'qui',
+  'ckoi':'quoi', 'ms':'mais', 'tjs':'toujours', 'tt':'tout', 'bcp':'beaucoup', 'tro':'trop',
+  'g':"j'ai", 'c':"c'est", 'cT':"c'etait", 'cest':"c'est", 'jte':'je te', 'jme':'je me',
+  'qd':'quand', 'qq':'quelque', 'qqn':"quelqu'un", 'qqch':'quelque chose', 'rien':'rien',
+  'la':'la', 'ms':'mais', 'dc':'donc', 'dak':'ok', 'ok':'ok',
   // fautes de frappe fréquentes (métier)
-  'stok':'stock', 'stoc':'stock', 'comande':'commande', 'comandes':'commandes',
-  'commmande':'commande', 'cmd':'commande', 'cmde':'commande',
-  'marcher':'marche', 'marcher':'marche', 'maché':'marche', 'mache':'marche',
-  'chiffre daffaire':'chiffre affaire', 'daffaire':'affaire', 'ca':'ca',
+  'stok':'stock', 'stoc':'stock', 'stoks':'stock', 'comande':'commande', 'comandes':'commandes',
+  'commmande':'commande', 'cmd':'commande', 'cmde':'commande', 'comand':'commande',
+  'marcher':'marche', 'maché':'marche', 'mache':'marche', 'marché':'marche',
+  'chiffre daffaire':'chiffre affaire', 'daffaire':'affaire',
   'liraison':'livraison', 'livrason':'livraison', 'livré':'livrer',
-  'recet':'recette', 'recete':'recette', 'matiere':'matiere', 'matieres':'matieres',
-  'rupure':'rupture', 'ruptur':'rupture', 'preparé':'preparer', 'prepare':'preparer',
-  'conseil':'conseil', 'conseille':'conseil', 'conseille':'conseil'
+  'recet':'recette', 'recete':'recette', 'recettte':'recette',
+  'rupure':'rupture', 'ruptur':'rupture', 'rupteur':'rupture', 'preparé':'preparer', 'prepare':'preparer',
+  'conseille':'conseil', 'macron':'macaron',
+  'chocola':'chocolat', 'chocolatt':'chocolat', 'vanile':'vanille', 'vanil':'vanille',
+  'framboize':'framboise', 'framboi':'framboise', 'pistach':'pistache', 'pistace':'pistache',
+  'carmel':'caramel', 'caramelle':'caramel', 'citre':'citron', 'citro':'citron',
+  // conjugaisons / formes parlées
+  'gagné':'gagne', 'rentré':'rentre', 'fabrique':'fabriquer', 'produi':'produire',
+  'depasser':'depasser', 'depasse':'depasser', 'baisser':'baisser', 'augmenter':'augmenter',
+  'machete':"m'achete", 'macheter':"m'acheter", 'macommande':'me commande', 'mappelle':"m'appelle",
+  // chiffre d'affaires
+  'ca':'ca'
 };
 function aiCorrigeFautes(tNorm){
   if(!tNorm) return tNorm;
@@ -23207,9 +23509,11 @@ function aiCorrigeFautes(tNorm){
       s = s.replace(new RegExp('\\b'+k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','g'), _AI_CORRECTIONS[k]);
     }
   }
+  // Mot à mot : la clé est un mot unique, mais le remplacement PEUT être multi-mots
+  // (ex. "jdois" → "je dois", "g" → "j'ai"). On reconstruit en gérant l'expansion.
   s = s.split(' ').map(w=>{
     const c = _AI_CORRECTIONS[w];
-    return (c && !c.includes(' ')) ? c : w;
+    return c ? c : w;
   }).join(' ');
   return s;
 }
@@ -23260,25 +23564,33 @@ function aiSplitComposite(rawTxt, ctx){
 // les intentions qui s'appuient sur la famille. Objectif : reconnaître les formulations naturelles de
 // Benjamin sans gonfler 60 regex à la main. On teste avec aiLexTest(t, 'famille') ou en interpolant.
 const AI_LEX = {
-  combien:   "combien|cmb|quelle quantite|quelle qte|quel nombre|y'?a combien|y a combien|il y a combien|j'?en ai combien|j'?ai combien|reste combien|il (m'?en |me )?reste combien",
-  cestquoi:  "c'?est quoi|quel est|quelle est|quels sont|quelles sont|donne moi|montre moi|affiche|dis moi|peux tu (me )?(dire|donner|montrer)|j'?aimerais (savoir|connaitre)|je voudrais (savoir|connaitre|voir)|fais moi voir|fais voir",
-  cequejai:  "ce que j'?ai|ce qu'?il me reste|ce qui me reste|ce dont je dispose",
-  stock:     "stock|stocks|reserve|reserves|inventaire|en rayon|sous la main|dispo|disponible|disponibles|ce qu'?il me reste|ce qui me reste|en reserve|d'?avance",
-  argent:    "argent|sous|euros?|fric|caisse|recette[s]?|encaisse|encaissement|rentree[s]?|chiffre|revenu[s]?|gains?",
-  gagner:    "gagne|gagner|rapporte|rapporter|me rapporte|touche|toucher|empoche|je sors combien|me met dans la poche",
-  rentable:  "rentable|rentabilite|le plus paye|qui paie le mieux|le plus interessant|qui rapporte le plus|le plus juteux|qui marche le mieux financierement",
-  couter:    "coute|coute t il|me coute|revient a|prix de revient|cout de revient|ca me coute|me revient",
-  temps:     "temps|duree|combien de temps|ca prend combien|en combien de temps|il faut combien de temps|combien d'?heures|combien de minutes|ca me prend combien",
-  produire:  "produire|produc|fabriquer|fabriqu|monter|preparer|prepare|sortir|ecouler|lancer|mettre en prod",
-  vendre:    "vendre|vend|vendu|vente[s]?|ecoule|ecouler|partir|part bien|se vend|s'?est vendu|qui se vend",
-  client:    "client|cliente|clients|clientes|acheteur|acheteuse|qui achete|mes acheteurs",
-  commande:  "commande|commandes|cmd|achat[s]?|reservation[s]?",
-  livrer:    "livr|livraison|livraisons|a livrer|remettre|deposer|apporter|aller porter|me deplacer pour",
-  retard:    "retard|retards|en retard|a la bourre|depasse|en souffrance|pas a temps|trop tard|urgent|urgence|presse|qui presse",
-  rupture:   "rupture|epuise|epuiser|a court|tomber a court|plus de|il me manque|manque|bientot plus|presque plus|en panne de",
-  marche:    "marche|marches|stand|foire|braderie|vente exterieure|vente dehors|sur le marche",
-  prochain:  "prochain|prochaine|a venir|qui vient|suivant|d'?apres|futur|bientot|qui arrive",
-  recette:   "recette|recettes|formule|composition|comment (je )?(fais|prepare|faire)|proportions",
+  combien:   "combien|cmb|quelle quantite|quelle qte|quel nombre|y'?a combien|y a combien|il y a combien|j'?en ai combien|j'?ai combien|reste combien|il (m'?en |me )?reste combien|j'?en suis a combien|ca fait combien|ca represente combien|a hauteur de combien|niveau combien",
+  cestquoi:  "c'?est quoi|quel est|quelle est|quels sont|quelles sont|donne moi|montre moi|affiche|dis moi|peux tu (me )?(dire|donner|montrer|sortir|afficher)|pourrais tu (me )?(dire|donner|montrer)|j'?aimerais (savoir|connaitre|voir)|je voudrais (savoir|connaitre|voir)|je veux (savoir|connaitre|voir)|fais moi voir|fais voir|balance moi|sors moi|file moi|c'?est combien|ca donne quoi|ou en (suis|est) (je|on)|ou j'?en suis",
+  cequejai:  "ce que j'?ai|ce qu'?il me reste|ce qui me reste|ce dont je dispose|ce qu'?il reste|ce que je possede",
+  stock:     "stock|stocks|stok|stoc|reserve|reserves|inventaire|en rayon|sous la main|dispo|disponible|disponibles|ce qu'?il me reste|ce qui me reste|en reserve|d'?avance|en magasin|au frigo|au congel|en boite|qu'?il me reste|encore en stock",
+  argent:    "argent|sous|euros?|fric|caisse|recette[s]?|encaisse|encaissement|encaissements|rentree[s]?|chiffre|chiffre d'?affaire[s]?|ca|revenu[s]?|gains?|thune|tune|blé|pognon|oseille|rentre[e]? d'?argent",
+  gagner:    "gagne|gagner|gagné|rapporte|rapporter|me rapporte|touche|toucher|empoche|empocher|je sors combien|me met dans la poche|encaisse|encaisser|rentre|rentrer|fait|fais|realise|realiser|generé|genere|generer",
+  rentable:  "rentable|rentabilite|le plus paye|qui paie le mieux|le plus interessant|qui rapporte le plus|le plus juteux|qui marche le mieux financierement|le plus profitable|la meilleure marge|le mieux margé",
+  couter:    "coute|coute t il|me coute|revient a|prix de revient|cout de revient|ca me coute|me revient|cout|couts|combien ca coute|combien me coute",
+  temps:     "temps|duree|combien de temps|ca prend combien|en combien de temps|il faut combien de temps|combien d'?heures|combien de minutes|ca me prend combien|ca va me prendre combien|le temps de|delai|en combien|j'?en ai pour combien",
+  produire:  "produire|produc|produi|fabriquer|fabriqu|fabrique|monter|monte|preparer|prepare|prepa|sortir|ecouler|lancer|mettre en prod|mettre en production|faire|faut faire|a faire|confectionner|realiser|tourner|bosser sur|m'?attaquer a",
+  vendre:    "vendre|vend|vendu|vente[s]?|ecoule|ecouler|partir|part bien|se vend|s'?est vendu|qui se vend|qui part|le plus vendu|best seller|carton|qui cartonne|qui marche",
+  client:    "client|cliente|clients|clientes|acheteur|acheteuse|acheteurs|qui achete|mes acheteurs|ma clientele|mes habitues|mes fideles|qui commande|qui me commande",
+  commande:  "commande|commandes|comande|comandes|cmd|cmde|achat[s]?|reservation[s]?|comande|a faire|a livrer|a preparer|sur le feu|en cours|recues?",
+  livrer:    "livr|livraison|livraisons|livrason|a livrer|remettre|deposer|deposé|apporter|aller porter|me deplacer pour|porter|emmener chez|deposer chez",
+  retard:    "retard|retards|en retard|a la bourre|a la ramasse|depasse|en souffrance|pas a temps|trop tard|urgent|urgence|presse|qui presse|qui traine|en rade|loupe|loupe[e]?[s]?|raté|que j'?ai zappé|en plan",
+  rupture:   "rupture|epuise|epuiser|epuisé|a court|tomber a court|plus de|il me manque|manque|manquer|bientot plus|presque plus|en panne de|a sec|plus rien|vide|presque vide|sur la fin|bientot fini|au bout du rouleau",
+  marche:    "marche|marches|stand|foire|braderie|vente exterieure|vente dehors|sur le marche|au marche|le marché|mon marche|expo|salon|evenement de vente",
+  prochain:  "prochain|prochaine|a venir|qui vient|suivant|d'?apres|futur|bientot|qui arrive|qui s'?annonce|de prevu|en approche|imminente?",
+  recette:   "recette|recettes|recete|formule|composition|comment (je )?(fais|prepare|faire)|proportions|ingredients|les quantites|le procede|la methode|comment c'?est fait|de quoi c'?est fait",
+  // [v1070] nouvelles familles
+  netpoche:  "dans (la|ma) poche|net dans la poche|reste dans la poche|revenu net|mon (vrai )?revenu net|net de tout|apres (les )?(impots?|charges|cotisations|tout)|ce qui me reste vraiment|combien je touche vraiment|combien je touche net|combien je touche au final|combien je gagne vraiment|combien je gagne net|mon net|salaire net|combien (je )?me verse|ce qui me reste au final|au final il me reste|il me reste quoi au final|une fois tout deduit|une fois tout paye",
+  seuils:    "seuil|seuils|plafond|plafonds|franchise (de )?tva|\\btva\\b|passer (a|à) la tva|redevable|bascule|basculer|regime reel|sortir (de|du) (la )?micro|depasser (le|un|mon)? ?(seuil|plafond)|combien avant (la tva|le seuil|le plafond|de depasser)|optimisation fiscale|optimiser (ma|la) fiscalite|ma trajectoire fiscale|ou j'?en suis (sur|avec|pour) (les seuils|la tva)|jusqu'?ou je peux aller|encore de la marge avant",
+  charges:   "charge[s]?|depense[s]?|frais|cout[s]? fixe[s]?|sortie[s]? d'?argent|ce que je depense|mes factures|loyer|assurance|abonnement[s]?|investissement[s]?|ce que j'?investis|mes couts",
+  hello:     "salut|bonjour|bonsoir|coucou|hello|hey|wesh|bjr|bsr|hola|bonne journee|bien le bonjour",
+  merci:     "merci|merci beaucoup|merci bien|nickel merci|super merci|cool merci|thanks|thx|je te remercie|c'?est gentil|sympa merci",
+  toi:       "qui es tu|qui est tu|tu es qui|t'?es qui|c'?est quoi (ton nom|ce truc)|tu es quoi|t'?es quoi|tu sers a quoi|a quoi tu sers|tu fais quoi|qu'?est ce que tu sais faire|tu sais faire quoi|tes capacites|ce que tu peux faire|comment tu marches|comment ca marche",
+  aide:      "aide|aidez|help|au secours|j'?ai besoin d'?aide|comment (faire|on fait|ca marche|ca fonctionne)|tu peux m'?aider|peux tu m'?aider|guide moi|montre moi comment|explique moi|j'?y comprends rien|je suis perdu|je m'?y perds",
 };
 function aiLexFrag(){ var fams=Array.prototype.slice.call(arguments); return '(' + fams.map(function(f){return AI_LEX[f]||f;}).join('|') + ')'; }
 function aiLexTest(t){ var fams=Array.prototype.slice.call(arguments,1); try{ return new RegExp('(^|[^a-z])'+aiLexFrag.apply(null,fams)).test(t); }catch(_){ return false; } }
@@ -23288,12 +23600,67 @@ function parseIntent(texte, ctx){
   const raw=texte||''; const t=aiCorrigeFautes(aiNormalize(raw));
   if(!t) return {intent:'unknown', params:{}, critical:false};
 
+  // [v1070] ---- SMALL TALK (salutations, remerciements, identité, aide) ----
+  // Salutation seule ou en ouverture (« salut », « bonjour ça va », « coucou »).
+  if(aiLexTest(t,'hello') && t.split(' ').length<=4 && !/\b(stock|commande|ca|combien|retard|client|recette|marche|produire|livr|seuil|tva|poche)\b/.test(t)){
+    return {intent:'greeting', params:{}, critical:false, label:'Salutation'};
+  }
+  // Remerciement.
+  if(aiLexTest(t,'merci') && t.split(' ').length<=5){
+    return {intent:'thanks', params:{}, critical:false, label:'Remerciement'};
+  }
+  // « qui es-tu », « tu fais quoi », « tu sais faire quoi ».
+  if(aiLexTest(t,'toi')){
+    return {intent:'about', params:{}, critical:false, label:'À propos de l\'assistant'};
+  }
+  // « aide », « comment ça marche », « je suis perdu ».
+  if(aiLexTest(t,'aide') && !/\b(stock|commande|combien|ca|recette|recettes|marche|client|produire|fabriquer|livr|seuil|tva|poche|retard|rupture|faire (la|le|du|de la)|pistache|chocolat|vanille|framboise|caramel|citron|coco|praline|journee|ma journee|prioriser|par quoi|par ou)\b/.test(t) && !/organis/.test(t)){
+    return {intent:'help', params:{}, critical:false, label:'Aide'};
+  }
+
   // ---- ACTIONS CRITIQUES prioritaires sur les consultations homonymes ----
   // ajuster le stock (doit passer avant query_stock car contient "stock")
   if(/\b(ajuste|ajuster|corrige|corriger|fixe|mets|met|regle|regler)\b/.test(t) && /stock/.test(t)){
     const mat=aiFindMaterial(t,materials); const nb=aiParseNumber(t);
     return {intent:'adjust_stock', critical:true, params:{material:mat, value:nb},
       label:`Ajuster le stock${mat?' de '+mat.nom:''}${nb!=null?' à '+nb:''}`};
+  }
+  // [v1071] LANCER UNE PRODUCTION : « lance une prod de 60 framboise », « démarre une production de
+  // 120 macarons chocolat », « produis 60 vanille ». Action critique → on extrait parfum + quantité,
+  // on montre le récap, et la création réelle passe par la modale de prod (double confirmation).
+  if(/\b(lance|lancer|lance moi|demarre|demarrer|demarre moi|cree|creer)\b.{0,18}\b(prod|production|fournee|batch|serie)\b/.test(t)
+     || /\b(prod|production|fournee|batch)\b.{0,18}\b(de|d')\b.{0,30}\b(macarons?|pieces?)\b/.test(t)
+     || /\b(produis|produit|fabrique|fais)( moi)? \d/.test(t)
+     || (/\b(lance|lancer|demarre|demarrer|produire|produis|fabrique[r]?)\b/.test(t) && /\bmacarons?\b/.test(t) && aiParseNumber(t)>0 && aiFindFlavor(t,flavors))){
+    const nb = aiParseNumber(t);
+    const fl = aiFindFlavor(t, flavors);
+    return {intent:'action_lancer_prod', critical:true, params:{nb, flavor:fl},
+      label:`Lancer une production${nb?' de '+nb:''}${fl?' '+fl:''}`};
+  }
+  // [v1071] CRÉER UNE COMMANDE (détection précoce, avant les consultations type query_orders).
+  // « enregistre/crée/ajoute/note/prends une commande pour X … ». On exige un verbe de création EXPLICITE
+  // accolé à « commande » pour ne pas confondre avec « mes commandes » (consultation). La création réelle
+  // passe par le brouillon validable (aiConfirmCreateOrder), jamais directement.
+  {
+    const _hypo = /\b(si j|si je|c'?est faisable|est ce faisable|est ce (que )?(c'?est |je )?(faisable|possible)|faisable ou|y a t il (la )?place|tiens je|jouable)\b/.test(t);
+    if(!_hypo && /\b(enregistre|enregistrer|cree|creer|crée|ajoute|ajouter|note|noter|prends|prendre|fais|faire|saisis|saisir|rentre|rentrer)\b.{0,24}\b(commande|comande|coffret)\b/.test(t)){
+      const client=aiFindClient(t,clients);
+      const date=aiParseDate(t);
+      const nb=aiParseNumber(t);
+      let taille=null; const mm=t.match(/coffret[s]? de (\d+)|(\d+) macaron/); if(mm) taille=+(mm[1]||mm[2]);
+      const items=aiParseOrderItems(raw, flavors);
+      const grand=/\b(grand format|grands formats|gros macaron|grand macaron)\b/.test(t);
+      // [v1071] options libres mentionnées (sac, heure) → on les remonte en NOTE pour validation manuelle,
+      // sans automatiser de manipulation d'emballage risquée.
+      let noteOpts=[];
+      if(/\b(pas de sac|sans sac|aucun sac)\b/.test(t)) noteOpts.push('sans sac');
+      else if(/\bavec (un )?sac\b/.test(t)) noteOpts.push('avec sac');
+      const mh=t.match(/\ba?\s*(\d{1,2})\s*h(\s*(\d{2}))?\b/); if(mh) noteOpts.push('livraison '+mh[1]+'h'+(mh[3]||''));
+      return {intent:'create_order', critical:true,
+        params:{client, clientNameRaw: !client?aiExtractName(raw):null, date, taille, qte:nb,
+          flavor:aiFindFlavor(t,flavors), items, grandHint:grand, raw, noteOpts},
+        label:`Créer une commande${client?' pour '+client.nom:''}${date?' le '+date:''}`};
+    }
   }
 
   // ---- CONSULTATIONS (non critiques) ----
@@ -23321,7 +23688,7 @@ function parseIntent(texte, ctx){
       label:'Conseil pour ton prochain marché'};
   }
   // CONSEIL GLOBAL : "conseille-moi", "quoi faire", "par quoi je commence", "qu'est-ce que je dois faire"
-  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je |on )?commenc|(je|on) commence par quoi|commence t on|programme (du jour|de la journee|du matin)|quel est le programme|programme aujourd|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr|quel plan de production|propose[s]? (moi )?(un )?plan|quel plan (proposes?|tu propose)|plan de prod du jour|c'?est quoi le programme|je fais quoi (en premier|d'?abord|maintenant)|qu'?est ce que je fais en premier|(un )?plan pour (aujourd|la journee|ce jour|demain)|je sais pas par ou commencer|sais pas par ou commencer|qu'?est ce qui est prioritaire|c'?est quoi le plus urgent|le plus urgent|quoi en premier|on fait quoi)/.test(t)
+  if(/\b(conseille|conseil|que (dois|doit|faut|fait)|qu'?est ce que je (dois|fais|fait)|quoi faire|quoi produire|par quoi (je |on )?commenc|(je|on) commence par quoi|par ou (je |on )?commenc|commence t on|programme (du jour|de la journee|du matin)|quel est le programme|programme aujourd|faut que je fasse quoi|faut il faire quoi|aide moi a (m'?)?organis|organise moi|priorite|priorites|que faire|quoi prioriser|sur quoi (je )?me concentr|quel plan de production|propose[s]? (moi )?(un )?plan|quel plan (proposes?|tu propose)|plan de prod du jour|c'?est quoi le programme|je fais quoi (en premier|d'?abord|maintenant)|qu'?est ce que je fais en premier|(un )?plan pour (aujourd|la journee|ce jour|demain)|je sais pas par ou commencer|sais pas par ou commencer|qu'?est ce qui est prioritaire|c'?est quoi le plus urgent|le plus urgent|quoi en premier|on fait quoi)/.test(t)
      && !/\bstock\b|combien|reste/.test(t)
      && !/\b(ecouler|lancer|produire|fabriquer|perime|perimer|monter|en production|livrer|a livrer)\b/.test(t)
      && !/\b(de quoi faire|assez de|cloche)\b/.test(t)
@@ -23613,6 +23980,9 @@ function parseIntent(texte, ctx){
      && !/\b(don|dons|donne|perte|pertes|perdu|jete|jeter|invendus?|gachis)\b|gaspill/.test(t)
      && !/\b(panier moyen|ticket moyen|depense|depenses|charges?|frais|en moyenne|moyenne par)\b/.test(t)
      && !/\b(couverture|autonomie|pour combien de temps|combien de temps (je tiens|j'?ai|il me reste)|stock (couvre|tient|suffit)|tient combien de temps|me (paie|paye|verse).{0,12}(heure|de l'?heure)|de l'?heure|par heure|rentable|pour (etre|devenir) rentable|point mort|couvrir (mes|les) charges)\b/.test(t)
+     && !/\b(dans (la|ma) poche|au final|revenu net|net de tout|une fois tout (deduit|paye)|apres (les )?(impots?|charges|cotisations|tout)|me reste (vraiment|au final|net|apres tout)|ce ki me reste|ce qui me reste (vraiment|au final|apres))\b/.test(t)
+     && !/\b(seuil|seuils|plafond|plafonds|\btva\b|franchise|micro entreprise|regime reel|combien avant (de )?(depasser|la tva|le seuil|le plafond))\b/.test(t)
+     && !/\b(investis|investit|investi|investissement|marketing|formation|equipement|pub|publicite)\b/.test(t)
      && !/\bmacarons?\b/.test(t)){
     const mat=aiFindMaterial(t,materials);
     return {intent:'query_stock', params:{material:mat}, critical:false,
@@ -23773,8 +24143,9 @@ function parseIntent(texte, ctx){
       label: cible==='client'?'Rentabilité par client':(cible==='parfum'?'Rentabilité par parfum':'Rentabilité')};
   }
   // top clients par parfum
-  if((/\b(client|clients)\b/.test(t) && /\b(plus|top|meilleur|meilleurs|fideles|gros|principaux|commandent|achetent|consomment|qui commande)\b/.test(t))
-     || /\bqui (commande|achete|consomme|prend) le plus\b/.test(t)){
+  if((/\b(client|clients|clientele|acheteur|acheteurs|habitues|fideles)\b/.test(t) && /\b(plus|top|meilleur|meilleurs|fideles|gros|grosse|principaux|principales|commandent|achetent|consomment|qui commande)\b/.test(t))
+     || /\bqui (m'?(achete|commande|prend|consomme)|achete|commande|consomme|prend) (le )?plus\b/.test(t)
+     || /\b(mes (meilleurs|plus gros|principaux|gros) (clients?|acheteurs?))\b/.test(t)){
     const fl=aiFindFlavor(t,flavors);
     return {intent:'query_top_clients', params:{flavor:fl}, critical:false,
       label: fl?`Clients qui commandent le plus de « ${fl} »`:'Meilleurs clients'};
@@ -23790,6 +24161,11 @@ function parseIntent(texte, ctx){
   // « qui me doit de l'argent », « restes à payer ». Placée AVANT le CA pour ne pas être happée par « combien ».
   if(/\b(me doit|me doivent|on me doit|qui me doit|reste a payer|restes a payer|reste a encaisser|impaye|impayes|impaye|en attente de paiement|pas (encore )?paye[e]?s?|pas (encore )?regle[e]?s?|commandes? (pas )?(encore )?payee?s?|non payee?s?|non regle[e]?s?|ne sont pas regle[e]?s?|pas regle[e]?s?|paiements? en attente|en attente de paiement|qui doit (encore )?me payer|qui me doit encore|paiements? a recevoir|reste t il des paiements|a recevoir|echeances? de paiement|solde du|soldes dus|a encaisser|qui doit (payer|me))\b/.test(t)){
     return {intent:'query_paiements_dus', params:{}, critical:false, label:'Paiements en attente'};
+  }
+  // [v1069] SEUILS FISCAUX : « est-ce que j'approche d'un seuil », « tva », « plafond micro »,
+  // « combien avant la tva ». Mène à l'écran Optimisation fiscale.
+  if(/\b(seuil|seuils|plafond|plafonds|franchise (de )?tva|\btva\b|passer (a|à) la tva|redevable|bascule|basculer|regime reel|sortir (de|du) (la )?micro|depasse[r]? (le|un|mon)? ?(seuil|plafond)|combien avant (la tva|le seuil|le plafond)|optimisation fiscale|optimiser (ma|la) fiscalite)\b/.test(t)){
+    return {intent:'query_seuils', params:{}, critical:false, label:'Surveillance des seuils fiscaux'};
   }
   // [v1067] NET DANS LA POCHE : « combien il me reste dans la poche », « mon revenu net », « combien
   // je gagne vraiment après impôts ». Doit passer AVANT query_revenue (CA brut) : c'est le net de tout.
@@ -23893,6 +24269,8 @@ function parseIntent(texte, ctx){
      || /\b(quoi|que|qu'?est ce que|qu'?est-ce que)\b.*\b(lancer|produire|produis|produit|fabriquer|fabrique|fournée|fournees)\b/.test(t)
      || /\b(qu'?est ce que|qu'?est-ce que|que|quoi) (je )?(produis|produit|fabrique|prepare|dois (produire|faire))\b/.test(t)
      || /\b(je dois|dois je|faut il|a faire)\b.*\b(lancer|produire|fabriquer|preparer)\b/.test(t)
+     || /\b(je dois|faut que je) (produire|produis|fabriquer|fabrique|preparer|prepare|lancer|monter)\b.*\b(quoi|aujourd|demain|ce jour|maintenant)\b/.test(t)
+     || /\b(je (produis|fabrique|prepare|monte|lance)) quoi\b/.test(t)
      || /\b(quoi|que|qu'?est ce que) (je )?(dois|doit) (lancer|produire|fabriquer|faire comme prod)/.test(t)
      || /\bcombien (de )?macarons? (je )?(dois|doit|faut) (faire|produire|lancer|fabriquer)/.test(t)
      || /\bcombien (je )?(dois|doit|faut)( il)? (en )?(faire|produire|lancer|fabriquer)/.test(t)
@@ -26729,6 +27107,7 @@ const INTENT_SHORTCUTS = {
   query_top_clients:      [ { label:'👥 Mes clients', view:'clients' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
   query_revenue:          [ { label:'📊 Ouvrir la compta', view:'compta' }, { label:'📈 Rentabilité', view:'rentabilite' }, { label:'⤓ Export comptable', action:'exportComptaCSV' } ],
   query_net_poche:        [ { label:'💰 Net dans la poche', view:'netpoche' }, { label:'📊 Comptabilité', view:'compta' } ],
+  query_seuils:           [ { label:'🎯 Optimisation fiscale', view:'optimisation' }, { label:'💰 Net dans la poche', view:'netpoche' } ],
   query_rentabilite:      [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'👥 Rentabilité clients', view:'rentabilite' } ],
   query_cout_revient:     [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📖 Voir la recette', view:'recettes' } ],
   query_prix_vente:       [ { label:'📈 Rentabilité parfums', view:'rentaparfum' } ],
@@ -27249,6 +27628,7 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_market_advice': return aiQueryMarketAdvice(r.params);
       case 'query_revenue': return aiQueryRevenue(r.params);
       case 'query_net_poche': return aiQueryNetPoche(r.params);
+      case 'query_seuils': return aiQuerySeuils(r.params);
       case 'query_rentabilite': return aiQueryRentabilite(r.params);
       case 'query_cout_revient': return aiQueryCoutRevient(r.params);
       case 'query_prix_vente': return aiQueryPrixVente(r.params);
@@ -27274,7 +27654,12 @@ async function _aiDispatch(r, txt, _ctx){
       case 'create_order': return aiConfirmCreateOrder(r);
       case 'delete_order': return aiConfirmDeleteOrder(r);
       case 'adjust_stock': return aiConfirmAdjustStock(r);
+      case 'action_lancer_prod': return aiActionLancerProd(r);
       case 'add_box': return aiSay(`<p>Pour ajouter des coffrets, ouvrez d'abord une commande. Dites par exemple : <b>« Crée une commande pour [client] »</b>, puis ajoutez les produits.</p>`);
+      case 'greeting': return aiQueryGreeting();
+      case 'thanks': return aiQueryThanks();
+      case 'about': return aiQueryAbout();
+      case 'help': return aiQueryHelp();
       default:
         // Dernier recours. On ne montre un article d'aide QUE si la phrase est explicitement une
         // demande d'aide (« comment… », « c'est quoi… », « explique… »). Sinon, un simple mot-clé qui
@@ -29515,6 +29900,63 @@ async function aiQueryMarketAdvice(params){
     ${detailParfums}
     ${fc&&fc.nbMarches>0?`<p class="note" style="margin-top:8px">Basé sur tes <b>${fc.nbMarches}</b> marché(s) passé(s) (moyenne ${fc.moyenneVendu} pc/marché).</p>`:''}`);
 }
+// [v1070] ---- RÉPONSES CONVERSATIONNELLES (small talk) ----
+// Variation aléatoire des formulations pour un ton vivant, pas robotique.
+function _aiPick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+async function aiQueryGreeting(){
+  const h = new Date().getHours();
+  const moment = h<6?'':(h<12?'Bonne matinée':(h<18?'Bel après-midi':'Bonne soirée'));
+  const saluts = ['Salut Benjamin !','Hello Benjamin !','Coucou !','Bonjour !'];
+  const relances = [
+    'Qu\'est-ce que je peux faire pour toi ?',
+    'On regarde quoi aujourd\'hui ?',
+    'Dis-moi ce qu\'il te faut.',
+    'Par quoi on commence ?'
+  ];
+  return aiSay(`${aiSynth(`${_aiPick(saluts)} ${moment?moment+'. ':''}${_aiPick(relances)}`, {icon:'👋'})}
+    <p class="note" style="margin-top:6px">Tu peux me demander tes ventes, ton stock, ce qui est en retard, ce qu'il te reste dans la poche, où tu en es des seuils… en langage normal.</p>`,
+    [{label:'📋 Ma journée', view:'assistant', ask:'par quoi je commence'},{label:'💰 Mon net', view:'netpoche'}]);
+}
+async function aiQueryThanks(){
+  const reponses = [
+    'Avec plaisir !','De rien, c\'est mon rôle.','Quand tu veux !','À ton service.','Pas de quoi !'
+  ];
+  return aiSay(aiSynth(`${_aiPick(reponses)} Si tu as besoin d'autre chose, je suis là.`, {icon:'🙂'}));
+}
+async function aiQueryAbout(){
+  return aiSay(`${aiSynth('Je suis ton copilote intégré à l\'app — je connais tes commandes, ton stock, ta prod, ta compta et ta fiscalité.', {icon:'🤖'})}
+    <p class="note" style="margin-top:6px">Je ne suis pas une intelligence qui discute de tout : je suis spécialisé sur <b>ton activité</b>. Pose-moi des questions concrètes sur Sensations Macarons et je te sors la réponse ou je t'amène au bon endroit.</p>
+    <p class="note" style="margin-top:4px">Exemples : « combien j'ai gagné ce mois », « il me reste quoi en chocolat », « qu'est-ce qui est en retard », « où j'en suis sur la TVA ».</p>`,
+    [{label:'❓ Ce que je sais faire', view:'assistant', ask:'aide'}]);
+}
+async function aiQueryHelp(){
+  return aiSay(`${aiSynth('Voici les grandes choses que tu peux me demander, en langage naturel :', {icon:'💡'})}
+    ${aiDetails(`
+      <div class="sum-box"><span>💰 Argent</span><b>« combien j'ai gagné », « mon net », « les seuils »</b></div>
+      <div class="sum-box"><span>📦 Stock</span><b>« combien de chocolat », « qu'est-ce qui va me manquer »</b></div>
+      <div class="sum-box"><span>📋 Commandes</span><b>« mes commandes demain », « qu'est-ce qui est en retard »</b></div>
+      <div class="sum-box"><span>🍫 Production</span><b>« je produis quoi aujourd'hui », « combien de temps pour un batch »</b></div>
+      <div class="sum-box"><span>👥 Clients</span><b>« mes meilleurs clients », « qui m'achète le plus »</b></div>
+    `, 'Voir des exemples')}
+    <p class="note" style="margin-top:6px">Pas besoin de formuler parfaitement — écris comme tu parles, même avec des fautes, je comprends.</p>`,
+    [{label:'📊 Comptabilité', view:'compta'},{label:'📦 Stock', view:'stockparfums'}]);
+}
+async function aiQuerySeuils(params){
+  let R; try{ R=await computeSeuilsFiscaux(new Date().getFullYear()); }
+  catch(e){ return aiSay(`<p class="note">Je n'ai pas pu calculer tes seuils pour le moment.</p>`); }
+  const LBL={ ok:'tranquille', attention:'à surveiller', proche:'proche du seuil', depasse:'dépassé' };
+  const COL={ ok:'var(--vert,#3f7d52)', attention:'var(--caramel,#AA7C39)', proche:'#d98b3a', depasse:'var(--red,#b3261e)' };
+  const _MOIS=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  const ligne=(j)=>{
+    const proj = j.moisAtteinte ? ` · seuil atteignable vers ${_MOIS[j.moisAtteinte-1]}` : '';
+    return `<div class="sum-box"><span>${j.label} <span style="color:${COL[j.statut]};font-size:.72rem">(${LBL[j.statut]})</span></span><b>${euro(j.val)} / ${euro(j.seuil)}${proj}</b></div>`;
+  };
+  const pire = [R.tvaVente,R.tvaService,R.microGlobal].reduce((acc,j)=>{
+    const o={ok:0,attention:1,proche:2,depasse:3}; return o[j.statut]>o[acc.statut]?j:acc; });
+  return aiSay(`${aiSynth(`Sur ${R.year}, ton CA encaissé est de <b>${euro(R.caTotal)}</b> (vente ${euro(R.goods)} + service ${euro(R.service)}). Le seuil le plus sensible est « ${pire.label} » : ${LBL[pire.statut]}.`, {icon:'🎯'})}
+    ${aiDetails(`${ligne(R.tvaService)}${ligne(R.tvaVente)}${ligne(R.microGlobal)}`, 'Tes seuils principaux')}`,
+    [{ label:'🎯 Voir tous les seuils', view:'optimisation' }]);
+}
 async function aiQueryNetPoche(params){
   params=params||{};
   let R; try{ R=await computeNetPoche({type:'mois', ym:monthKey(today())}); }
@@ -29651,6 +30093,60 @@ async function aiQueryRupture(){
 // ---- ACTIONS CRITIQUES : résumé + validation explicite ----
 // Brouillon de commande en cours de dialogue (multi-parfums + format).
 let _aiOrderDraft=null;
+// [v1071] LANCER UNE PRODUCTION depuis une phrase. On extrait parfum + quantité, on résout le parfum
+// vers une recette réelle, on montre un récap, et le bouton Valider ouvre la modale de prod pré-remplie
+// (qui demande une 2e confirmation avant de créer quoi que ce soit). Double sécurité, zéro création muette.
+async function aiActionLancerProd(r){
+  const p=r.params||{};
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const flavorsDispo = recipes.map(x=>x.produitNom).filter(Boolean);
+  // Si le parfum n'a pas été capté par parseIntent, on retente sur le texte courant.
+  let flavor = p.flavor;
+  let nb = p.nb;
+  // Résolution parfum → recette
+  let rec = flavor ? recipeForFlavorName(flavor, recipes) : null;
+  // Cas 1 : parfum manquant ou non résolu → on demande lequel, en proposant les parfums connus.
+  if(!rec){
+    const choix = flavorsDispo.slice(0,12).map(f=>
+      `<button class="btn ghost sm" onclick="aiLancerProdChoixParfum(${JSON.stringify(f).replace(/"/g,'&quot;')}, ${nb||0})" style="margin:2px 4px 0 0">${esc(f)}</button>`
+    ).join('');
+    return aiSay(`${aiSynth(flavor?`Je n'ai pas reconnu le parfum « ${esc(flavor)} » dans tes recettes.`:`Quel parfum veux-tu produire${nb?' (×'+nb+')':''} ?`, {icon:'🍫'})}
+      <p class="note" style="margin:6px 0 4px">Choisis le parfum :</p>
+      <div>${choix||'<span class="note">Aucune recette enregistrée.</span>'}</div>`);
+  }
+  // Cas 2 : quantité manquante → on propose le rendement de la recette + saisie.
+  if(!nb || nb<=0){
+    const rendement = +rec.rendement || 120;
+    return aiSay(`${aiSynth(`Combien de <b>${esc(rec.produitNom)}</b> veux-tu produire ?`, {icon:'🔢'})}
+      <div class="flex" style="gap:6px;margin-top:8px;flex-wrap:wrap">
+        ${[rendement, rendement*2, 60, 120].filter((v,i,a)=>a.indexOf(v)===i).map(v=>
+          `<button class="btn ghost sm" onclick="aiLancerProdGo(${rec.id}, ${v})">${v} pièces</button>`).join('')}
+      </div>
+      <p class="note" style="margin-top:6px">Ou ouvre directement le formulaire pour choisir la quantité.</p>
+      <div style="margin-top:6px"><button class="btn gold sm" onclick="aiLancerProdGo(${rec.id}, 0)">Ouvrir le formulaire</button></div>`);
+  }
+  // Cas 3 : tout est clair → récap + validation.
+  return aiSay(`${aiSynth(`Voici ce que j'ai compris. Vérifie, puis lance la production.`, {icon:'🏭'})}
+    <div class="sum-box"><span>Parfum</span><b>${esc(rec.produitNom)}</b></div>
+    <div class="sum-box"><span>Quantité</span><b>${nb} macarons</b></div>
+    <p class="note" style="margin:6px 0">En validant, j'ouvre le lancement de production pré-rempli. Les matières seront déduites selon la recette, et tu confirmes une dernière fois dans le formulaire.</p>
+    <div class="flex" style="gap:8px;margin-top:8px">
+      <button class="btn ghost" onclick="aiPush&&aiPush('user','Annuler')">Annuler</button>
+      <button class="btn gold" onclick="aiLancerProdGo(${rec.id}, ${nb})">▶ Lancer la production</button>
+    </div>`);
+}
+// Le parfum a été choisi parmi les boutons : on relance la logique avec parfum résolu.
+async function aiLancerProdChoixParfum(nom, nb){
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const rec = recipeForFlavorName(nom, recipes);
+  if(!rec){ return aiSay(`<p class="note">Parfum introuvable, désolé.</p>`); }
+  return aiActionLancerProd({params:{flavor:nom, nb:nb||0}});
+}
+// Validation finale : ouvre la modale de prod pré-remplie (recette + quantité). qte=0 → formulaire vierge.
+function aiLancerProdGo(recipeId, qte){
+  try{ if(typeof prodForm==='function'){ prodForm(qte>0?{recipeId, qte}:{recipeId}); } }
+  catch(e){ console.error('aiLancerProdGo',e); toast('Impossible d\'ouvrir le formulaire de production'); }
+}
 function aiConfirmCreateOrder(r){
   const p=r.params;
   _aiOrderDraft={
@@ -29658,7 +30154,7 @@ function aiConfirmCreateOrder(r){
     items:(p.items&&p.items.length)?p.items.map(it=>({qte:it.qte, raw:it.raw, flavor:it.flavor||null,
       candidates:it.candidates||[], unknown:!!it.unknown,
       format: p.grandHint?'grand':null })) : [],
-    taille:p.taille||null
+    taille:p.taille||null, noteOpts:p.noteOpts||[]
   };
   aiRenderOrderDraft();
 }
@@ -29709,6 +30205,7 @@ function aiRenderOrderDraft(){
     <div class="sum-box"><span>Client</span><b>${esc(clientLine)}${D.client?` · ${esc(D.client.type||'Particulier')}`:(D.clientNameRaw?' (nouveau)':'')}</b></div>
     <div class="sum-box"><span>Date</span><b>${D.date?fmtDate(D.date):'aujourd\'hui'}</b></div>
     ${rows}
+    ${(D.noteOpts&&D.noteOpts.length)?`<div class="sum-box"><span>À ne pas oublier</span><b>${D.noteOpts.map(esc).join(' · ')}</b></div>`:''}
     ${D.items.some(it=>it.flavor && it.format!=='grand')?`<div class="sum-box"><span>Conditionnement standard</span><b>${condit}</b></div>`:''}
     <p class="note">${D.client?(estPro?'Client pro détecté → tarif pro au macaron, sans coffret.':'Client particulier → coffret.'):'Type de client inconnu : coffret par défaut (précise le client pour le tarif pro).'} Je pré-remplis le formulaire ; tu vérifies et enregistres.</p>
     <div class="flex" style="gap:8px;margin-top:10px"><button class="btn ghost" onclick="_aiOrderDraft=null;document.getElementById('aiOut').innerHTML=''">Annuler</button>
