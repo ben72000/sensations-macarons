@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1071';
+const APP_VERSION = 'v1072';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -16017,6 +16017,206 @@ async function computeMonthlyBilan(ym){
 }
 
 // ============================================================
+//  PRÉVISION DE REVENU — [v1072] « combien vais-je gagner le mois prochain ? »
+//  Méthode honnête, croisant DEUX signaux complémentaires :
+//   1) TENDANCE : moyenne pondérée du CA encaissé des derniers mois (poids ↑ aux mois récents).
+//   2) CARNET : montant des commandes DÉJÀ enregistrées dont la livraison tombe sur le mois visé
+//      (signal concret, plancher minimal — ces commandes existent vraiment).
+//  On présente une FOURCHETTE [carnet ... max(tendance, carnet)] plutôt qu'un faux chiffre précis :
+//  on ne peut pas deviner les commandes pas encore passées, mais on montre le plancher et la projection.
+// ============================================================
+function _ymAddMonths(ym, n){
+  // ym = 'YYYY-MM' → renvoie la clé du mois décalé de n (n peut être négatif).
+  const [y,m]=ym.split('-').map(Number);
+  const d=new Date(y, (m-1)+n, 1);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+}
+async function computePrevisionRevenu(ymCible){
+  // Mois visé : par défaut le mois PROCHAIN (par rapport à aujourd'hui).
+  const now=new Date();
+  const ymCourant = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const cible = ymCible || _ymAddMonths(ymCourant, 1);
+
+  // 1) TENDANCE : on prend jusqu'à 4 mois précédant le mois visé qui ont de l'activité.
+  const moisActifs = await _listeMoisAvecActivite();           // triés ? on re-trie par sécurité
+  const histo = moisActifs.filter(m=>m < cible).sort();        // antérieurs au mois visé
+  const derniers = histo.slice(-4);                            // au plus 4 mois récents
+  const bilans=[];
+  for(const ym of derniers){ const B=await computeMonthlyBilan(ym); bilans.push({ym, ca:B.caTotal}); }
+  // Moyenne pondérée : le mois le plus récent pèse le plus (poids 1,2,3,4…).
+  let tendance=0, sommePoids=0;
+  bilans.forEach((b,i)=>{ const poids=i+1; tendance=money2(tendance+b.ca*poids); sommePoids+=poids; });
+  tendance = sommePoids>0 ? money2(tendance/sommePoids) : 0;
+
+  // 2) CARNET : commandes dont la livraison tombe sur le mois visé. On somme le RESTE À ENCAISSER
+  //    (montant total − déjà encaissé) car les acomptes déjà payés sont comptés dans un autre mois.
+  const orders = await db.orders.toArray().catch(()=>[]);
+  let carnet=0, nbCmd=0;
+  orders.forEach(o=>{
+    if(!o || o.histo) return;                                  // ignore reprises d'historique
+    const dLiv = o.dateLivraison || o.date || '';
+    if(monthKey(dLiv)!==cible) return;
+    const total=money2(+o.montant||0); if(total<=0) return;
+    const dejaEnc=(o.paiements&&o.paiements.length)
+      ? o.paiements.reduce((s,p)=>money2(s+money2(+p.montant||0)),0)
+      : ((o.paiement==='Payé'||o.reglement)&&o.datePaiement?total:0);
+    const reste=money2(Math.max(0, total-dejaEnc));
+    if(reste>0){ carnet=money2(carnet+reste); nbCmd++; }
+  });
+
+  // Synthèse : plancher = carnet (sûr) ; estimation haute = max(tendance, carnet).
+  const bas = carnet;
+  const haut = money2(Math.max(tendance, carnet));
+  // Estimation « centrale » : si on a une tendance et un carnet, on prend le max des deux comme point
+  // de mire (le carnet ne peut que monter d'ici la fin du mois). Sinon ce qu'on a.
+  const central = haut;
+  return {
+    cible, libelle: monthLabel(cible),
+    tendance, carnet, nbCmd, bas, haut, central,
+    nbMoisHisto: bilans.length, bilans,
+    aTendance: bilans.length>0, aCarnet: carnet>0
+  };
+}
+
+// ============================================================
+//  FREINS AU REVENU — [v1072] « qu'est-ce qui m'empêche de gagner plus ? »
+//  Diagnostic factuel : cherche les trous CONCRETS dans les données et les chiffre.
+//  Chaque frein = { cle, titre, montant?, detail, gravite('haut'|'moyen'|'info'), action? }.
+//  On ne fabrique JAMAIS un frein qui n'existe pas : si rien n'est détecté, on le dit.
+// ============================================================
+async function computeFreinsRevenu(){
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const markets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
+  const freins=[];
+  const _stat = (typeof normStatus==='function') ? normStatus : (s=>s||'');
+
+  // 1) COMMANDES LIVRÉES NON SOLDÉES : livrées mais reste à encaisser → argent dû, le plus prioritaire.
+  let duLivre=0, nbDuLivre=0;
+  // 2) ARGENT EN ATTENTE GLOBAL : reste à encaisser sur toute commande non historique (livrée ou non).
+  let enAttente=0, nbAttente=0;
+  orders.forEach(o=>{
+    if(!o || o.histo) return;
+    const total=money2(+o.montant||0); if(total<=0) return;
+    const enc=(typeof paiementsDe==='function'?paiementsDe(o):[]).reduce((s,p)=>money2(s+money2(+p.montant||0)),0);
+    const reste=money2(total-enc);
+    if(reste>0.01){
+      enAttente=money2(enAttente+reste); nbAttente++;
+      if(_stat(o.statut)==='Livrée'){ duLivre=money2(duLivre+reste); nbDuLivre++; }
+    }
+  });
+  if(duLivre>0.01){
+    freins.push({ cle:'livre_non_paye', titre:'Des commandes livrées ne sont pas encore payées',
+      montant:duLivre, gravite:'haut',
+      detail:`${nbDuLivre} commande${nbDuLivre>1?'s':''} déjà livrée${nbDuLivre>1?'s':''} mais pas soldée${nbDuLivre>1?'s':''}. Cet argent t'est dû — une relance suffit souvent.`,
+      action:{label:'💸 Voir les impayés', intent:'query_paiements_dus'} });
+  }
+  // l'argent en attente NON livré (commandes à venir non payées) = info, pas un frein dur
+  const attenteNonLivre = money2(enAttente - duLivre);
+  if(attenteNonLivre>0.01 && duLivre<=0.01){
+    freins.push({ cle:'attente', titre:'De l\'argent est en attente d\'encaissement',
+      montant:attenteNonLivre, gravite:'moyen',
+      detail:`${nbAttente} commande${nbAttente>1?'s':''} avec un reste à encaisser. Normal si elles ne sont pas encore livrées, mais à suivre.`,
+      action:{label:'💸 Voir les paiements dus', intent:'query_paiements_dus'} });
+  }
+
+  // 3) PART DU SERVICE (coaching) : sur les mois récents, quel poids a le service ? Faible = levier,
+  //    car le coaching est plus margé (abattement 50% mais aucun coût matière/production).
+  const moisActifs = await _listeMoisAvecActivite();
+  const derniers = moisActifs.slice(-3);
+  let g=0, s=0;
+  for(const ym of derniers){ const B=await computeMonthlyBilan(ym); g=money2(g+B.goods); s=money2(s+B.service); }
+  const caRecent=money2(g+s);
+  const partSvc = caRecent>0 ? Math.round(s/caRecent*100) : 0;
+  if(caRecent>0 && partSvc<10){
+    freins.push({ cle:'peu_service', titre:'Très peu de coaching dans ton activité',
+      gravite:'moyen',
+      detail:`Sur tes 3 derniers mois, le coaching ne pèse que ${partSvc}% de ton CA. Une prestation ne coûte ni matière ni production : c'est souvent le levier de marge le plus rapide.`,
+      action:null });
+  }
+
+  // 4) INVENDUS MARCHÉS : sur les marchés clos récents, des invendus chiffrés = production perdue.
+  let nbMarchesInv=0, totalInv=0;
+  markets.forEach(mk=>{
+    if(mk.statut!=='clos') return;
+    const inv=mk.invendus||mk.invendu||null;
+    if(inv && typeof inv==='object'){
+      const n=Object.values(inv).reduce((a,v)=>a+(+v||0),0);
+      if(n>0){ nbMarchesInv++; totalInv+=n; }
+    }
+  });
+  if(totalInv>0){
+    freins.push({ cle:'invendus', titre:'Des invendus sur tes marchés',
+      gravite:'info',
+      detail:`Environ ${totalInv} macaron${totalInv>1?'s':''} invendus sur tes derniers marchés clos. Ajuster les quantités produites par parfum réduit cette perte.`,
+      action:{label:'🏪 Voir les marchés', view:'marches'} });
+  }
+
+  // Tri par gravité (haut > moyen > info) puis par montant décroissant.
+  const ordre={haut:0, moyen:1, info:2};
+  freins.sort((a,b)=> (ordre[a.gravite]-ordre[b.gravite]) || ((b.montant||0)-(a.montant||0)));
+  return { freins, enAttente, duLivre, partSvc, caRecent };
+}
+
+// ============================================================
+//  SUGGESTION DE PARFUMS — [v1072] « quel parfum lancer pour cet automne ? »
+//  Force de proposition HONNÊTE : on ne « crée » pas un parfum par magie, on RECOMMANDE des pistes
+//  argumentées à partir de ta base aromatique R&D (familles, intensité, déjà au catalogue ou non) et
+//  d'une table de saisonnalité (connaissance pâtissière de base). On explique POURQUOI chaque piste.
+// ============================================================
+// Familles aromatiques qui « collent » à chaque saison (pondération : 2 = cœur de saison, 1 = possible).
+const SAISON_FAMILLES = {
+  printemps: { floral:2, agrume:2, fruite_rouge:2, herbace:2, exotique:1, lacte:1 },
+  ete:       { fruite_rouge:2, fruite_jaune:2, agrume:2, exotique:2, floral:1, herbace:1 },
+  automne:   { fruit_coque:2, epice:2, torrefie:2, lacte:1, fruite_jaune:1, umami:1 },
+  hiver:     { epice:2, torrefie:2, fruit_coque:2, agrume:1, lacte:1, exotique:1 }
+};
+const SAISON_LABEL = { printemps:'le printemps', ete:'l\'été', automne:'l\'automne', hiver:'l\'hiver' };
+function _saisonDepuisTexte(t){
+  if(/\bprintemps\b/.test(t)) return 'printemps';
+  if(/\b(ete|estival)\b/.test(t)) return 'ete';
+  if(/\b(automne|automnal)\b/.test(t)) return 'automne';
+  if(/\b(hiver|hivernal|noel|fetes?)\b/.test(t)) return 'hiver';
+  // sinon, saison courante (hémisphère nord)
+  const m=new Date().getMonth()+1;
+  if(m>=3&&m<=5) return 'printemps'; if(m>=6&&m<=8) return 'ete'; if(m>=9&&m<=11) return 'automne'; return 'hiver';
+}
+const FAMILLE_LABEL = {
+  floral:'floral', agrume:'agrume', fruite_rouge:'fruit rouge', fruite_jaune:'fruit jaune',
+  exotique:'exotique', herbace:'herbacé', fruit_coque:'fruit à coque', epice:'épicé',
+  torrefie:'torréfié', lacte:'lacté', umami:'umami', vegetal_sale:'végétal salé',
+  lacte_sale:'lacté salé', texture_croquant:'croquant', texture_onctueux:'onctueux',
+  texture_gelifie:'gélifié', texture_fondant:'fondant', texture_coulant:'coulant'
+};
+async function computeSuggestionParfums(saison){
+  saison = saison || _saisonDepuisTexte('');
+  const fams = SAISON_FAMILLES[saison] || SAISON_FAMILLES.automne;
+  // Base aromatique : DB enrichie si dispo, sinon seed.
+  let base=[];
+  try{ base = await db.rdIngredients.toArray(); }catch(e){}
+  if(!base || !base.length) base = (typeof RD_SEED_INGREDIENTS!=='undefined') ? RD_SEED_INGREDIENTS : [];
+  // On ne propose que des parfums « sucrés » plausibles en macaron, PAS déjà au catalogue.
+  const candidats = base.filter(x=> x && x.registre==='sucre' && fams[x.famille] && +x.auCatalogue!==1);
+  // Score = poids saison de la famille × (1 + intensité normalisée). Les parfums marquants ressortent.
+  candidats.forEach(c=>{ c._score = (fams[c.famille]||1) * (1 + (Math.min(5,+c.intensite||3)/5)); });
+  candidats.sort((a,b)=> b._score - a._score);
+  // On évite de proposer 5 fois la même famille : on diversifie (max 2 par famille).
+  const parFam={}; const retenus=[];
+  for(const c of candidats){
+    const n=parFam[c.famille]||0; if(n>=2) continue;
+    parFam[c.famille]=n+1; retenus.push(c);
+    if(retenus.length>=5) break;
+  }
+  // Parfums déjà au catalogue de ces familles (pour dire « tu es déjà fort sur X »).
+  const dejaCat = base.filter(x=> x && +x.auCatalogue===1 && fams[x.famille]).map(x=>x.nom);
+  return {
+    saison, saisonLabel: SAISON_LABEL[saison]||saison,
+    familles: Object.keys(fams).map(f=>({cle:f, label:FAMILLE_LABEL[f]||f, poids:fams[f]})),
+    suggestions: retenus.map(c=>({nom:c.nom, famille:c.famille, familleLabel:FAMILLE_LABEL[c.famille]||c.famille, intensite:+c.intensite||3})),
+    dejaCatalogue: dejaCat
+  };
+}
+
+// ============================================================
 //  NET DANS LA POCHE — [v1067] le KPI ultime
 //  À partir du CA ENCAISSÉ ventilé marchandise/service, déduit cotisations sociales
 //  URSSAF, impôt sur le revenu (micro-entreprise, barème progressif via taux marginal
@@ -23777,7 +23977,8 @@ function parseIntent(texte, ctx){
   }
   // [CHANTIER B] RECOMMANDATIONS BUSINESS : « comment améliorer ma marge », « des conseils business »,
   // « comment gagner plus ». Source : flavorRecommendations. NB distinct de query_advice (production du jour).
-  if(/\b(ameliorer ma marge|ameliorer mes marges|gagner plus|comment gagner|conseils? business|conseils? commercial|conseils? commerciaux|comment (je peux )?ameliorer|optimiser ma rentabilite|augmenter (ma marge|mon ca|mes profits|mes benefices)|des conseils pour (gagner|vendre|ma marge|mon ca)|comment vendre plus|booster mes ventes|developper mon (ca|activite|chiffre))\b/.test(t)){
+  if(/\b(ameliorer ma marge|ameliorer mes marges|gagner plus|comment gagner|conseils? business|conseils? commercial|conseils? commerciaux|comment (je peux )?ameliorer|optimiser ma rentabilite|augmenter (ma marge|mon ca|mes profits|mes benefices)|des conseils pour (gagner|vendre|ma marge|mon ca)|comment vendre plus|booster mes ventes|developper mon (ca|activite|chiffre))\b/.test(t)
+     && !/\b(empeche|m'?empeche|bloque|me bloque|perds|plombe|freine|me coute|pourquoi je gagne pas)\b/.test(t)){
     return {intent:'query_reco_business', params:{}, critical:false, label:'Recommandations business'};
   }
   // [VAGUE 2] LISTE DE COURSES / QUOI ACHETER : « qu'est-ce que je dois acheter », « ma liste de courses »,
@@ -24027,6 +24228,26 @@ function parseIntent(texte, ctx){
   }
   // [R&D] CRÉATION : « propose-moi une association », « une idée de parfum », « invente un macaron »,
   // « atelier R&D ». Ouvre l'atelier de création. Placé avant strategie pour éviter le chevauchement.
+  // [v1072] CONSEIL OUVERT (« est-ce une bonne idée de… ») : on ne tranche pas à la place de Benjamin,
+  // on donne un CADRE de réflexion (pour / contre / ce que tes chiffres disent). Détection large d'une
+  // question d'opinion stratégique. On capte un thème si possible (cadeaux, prix, marchés…).
+  if(/\b(est ce (une|que c'?est une) bonne idee|bonne idee de|ca vaut le coup de|est ce que je devrais|devrais je|est ce judicieux|est ce pertinent|tu en penses quoi de|qu'?en penses tu de|c'?est malin de|c'?est pertinent de|vaut il mieux|est ce rentable de (faire|lancer|proposer|offrir|me lancer))\b/.test(t)
+     && !/\b(livrer|livraison)\b/.test(t)){   // « ça vaut le coup de livrer X » est déjà géré ailleurs (rentabilité livraison)
+    let theme='generique';
+    if(/\b(offrir|offre|cadeau|cadeaux|gratuit|gratuite|degustation|echantillon|echantillons|faire connaitre|me faire connaitre|notoriete|decouvrir)\b/.test(t)) theme='cadeaux';
+    else if(/\b(baisser|reduire|diminuer|augmenter|monter|hausse|prix|tarif|tarifs|plus cher|moins cher)\b/.test(t)) theme='prix';
+    else if(/\b(marche|marches|stand|foire|braderie|salon)\b/.test(t)) theme='marches';
+    else if(/\b(coffret|coffrets|grand format|nouveau produit|nouvelle gamme|gamme)\b/.test(t)) theme='gamme';
+    return {intent:'query_conseil_ouvert', params:{theme}, critical:false, label:'Un avis sur ton idée'};
+  }
+  // [v1072] SUGGESTION DE PARFUMS (force de proposition) : « quel parfum lancer pour cet automne »,
+  // « propose-moi un nouveau parfum », « une idée de parfum pour l'été ». S'appuie sur la base R&D.
+  // Placée AVANT query_rd (atelier création ouvert) car plus spécifique : gère la saison et propose concrètement.
+  if(/\b(quel parfum|quels parfums|quel nouveau parfum|une idee de parfum|des idees de parfum|propose[s]?( moi)? (un |des )?(nouveau[x]? )?parfum|suggere[s]?( moi)? (un |des )?parfum|nouveau parfum|nouveaux parfums|idee[s]? de (nouveau[x]? )?parfum|quel parfum (lancer|creer|tester|proposer|ajouter|sortir|pourrais)|parfum pour (cet |l'?|le |la )?(automne|hiver|ete|printemps|saison|noel|rentree)|quel parfum pour)\b/.test(t)
+     && !/\b(rapporte|rapportent|rentable|rentables|marche le mieux|se vend|vend le mieux|le plus vendu|gagne le plus|rapporte le plus|plus de marge|meilleure marge|le plus rentable|cartonne|plus populaire|prefere|preferes)\b/.test(t)){
+    const saison = _saisonDepuisTexte(t);
+    return {intent:'query_suggestion_parfum', params:{saison}, critical:false, label:'Idées de parfums'};
+  }
   if(/\b(propose|propose moi|suggere|trouve moi|invente|imagine|donne moi)\b.*\b(association|idee|parfum|macaron|recette|combinaison|accord|duo|creation)\b/.test(t)
      || /\b(atelier )?r ?(et|&) ?d\b/.test(t)
      || /\b(idee|nouvelle? idee|inspiration|nouveau parfum|nouvelle creation|nouvelle association)\b.*\b(parfum|macaron|recette|creation)\b/.test(t)
@@ -24066,7 +24287,8 @@ function parseIntent(texte, ctx){
   // [V943] PRÉVISION DE VENTES : « qu'est-ce qui va bien se vendre », « mes prévisions », « ce qui va
   // partir ». Source : computeForecast. Distinct de query_predict (rupture) : ici la demande à venir.
   if(/\b(prevision|previsions|previsionnel|qu'?est ce qui va (bien )?(se vendre|partir|marcher)|ce qui va (se vendre|partir)|tendance des ventes|ventes a venir|qu'?est ce qui se vend le mieux en ce moment)\b/.test(t)
-     && !/\brupture\b/.test(t)){
+     && !/\brupture\b/.test(t)
+     && !/\b(revenu|revenus|gain|gains|ca\b|chiffre|recette|recettes|argent|gagner|gagne|encaisser|encaisse|toucher)\b/.test(t)){
     return {intent:'query_prevision', params:{}, critical:false, label:'Prévision de ventes'};
   }
   // [V943] COFFRETS / BOÎTES EN STOCK : « combien de coffrets de 12 il me reste », « mes boîtes en stock ».
@@ -24161,6 +24383,23 @@ function parseIntent(texte, ctx){
   // « qui me doit de l'argent », « restes à payer ». Placée AVANT le CA pour ne pas être happée par « combien ».
   if(/\b(me doit|me doivent|on me doit|qui me doit|reste a payer|restes a payer|reste a encaisser|impaye|impayes|impaye|en attente de paiement|pas (encore )?paye[e]?s?|pas (encore )?regle[e]?s?|commandes? (pas )?(encore )?payee?s?|non payee?s?|non regle[e]?s?|ne sont pas regle[e]?s?|pas regle[e]?s?|paiements? en attente|en attente de paiement|qui doit (encore )?me payer|qui me doit encore|paiements? a recevoir|reste t il des paiements|a recevoir|echeances? de paiement|solde du|soldes dus|a encaisser|qui doit (payer|me))\b/.test(t)){
     return {intent:'query_paiements_dus', params:{}, critical:false, label:'Paiements en attente'};
+  }
+  // [v1072] FREINS AU REVENU : « qu'est-ce qui m'empêche de gagner plus », « comment gagner plus »,
+  // « qu'est-ce qui me bloque », « où je perds de l'argent ». Diagnostic des freins concrets.
+  if(/\b(qu'?est ce qui m'?empeche|qu'?est ce qui me bloque|qui m'?empeche|m'?empeche de gagner|empeche de gagner plus|comment (je peux )?gagner plus|gagner plus|comment (gagner|gagner plus|augmenter mes? (revenus?|gains?))|ou (je |est ce que je )?perds (de l'?argent|du fric)|qu'?est ce qui me coute|ce qui me freine|ce qui me bloque|qu'?est ce qui me plombe|qu'?est ce qui plombe|pourquoi je gagne pas plus|comment faire plus de (chiffre|ca)|booster mon (chiffre|ca|revenu)|leviers? (de croissance|pour gagner))\b/.test(t)){
+    return {intent:'query_freins_revenu', params:{}, critical:false, label:'Ce qui freine ton revenu'};
+  }
+  // [v1072] PRÉVISION DE REVENU (futur) : « combien vais-je gagner le mois prochain », « d'après toi
+  // combien je vais encaisser en juillet », « mes prévisions de revenu ». Doit passer AVANT query_revenue
+  // (qui regarde le PASSÉ) et net_poche. On exige un marqueur de FUTUR/PROJECTION + une notion de gain.
+  if((/\b(vais je|je vais|vais|on va|je devrais|je vais faire|combien (je )?vais|d'?apres toi)\b/.test(t)
+       && /\b(gagn|encaiss|rentr|faire|toucher|revenu|chiffre|ca\b)/.test(t))
+     || /\b(prevision|previsions|prevoir|projection|estimation|estime|estimer)\b.{0,20}\b(revenu|gain|ca\b|chiffre|recette|argent|gagner|encaisser)\b/.test(t)
+     || /\b(revenu|gain|ca\b|chiffre|recette).{0,18}\b(mois prochain|le mois prochain|mois a venir|prochain mois|a venir|futur|prevu)\b/.test(t)
+     || /\b(combien|quel)\b.{0,30}\b(mois prochain|le mois prochain|prochain mois|mois a venir)\b/.test(t)){
+    // mois cible éventuel (sinon mois prochain par défaut, géré dans le moteur)
+    const dt = (typeof aiParseDate==='function') ? aiParseDate(t) : null;
+    return {intent:'query_prevision_revenu', params:{date:dt}, critical:false, label:'Prévision de revenu'};
   }
   // [v1069] SEUILS FISCAUX : « est-ce que j'approche d'un seuil », « tva », « plafond micro »,
   // « combien avant la tva ». Mène à l'écran Optimisation fiscale.
@@ -27107,6 +27346,10 @@ const INTENT_SHORTCUTS = {
   query_top_clients:      [ { label:'👥 Mes clients', view:'clients' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
   query_revenue:          [ { label:'📊 Ouvrir la compta', view:'compta' }, { label:'📈 Rentabilité', view:'rentabilite' }, { label:'⤓ Export comptable', action:'exportComptaCSV' } ],
   query_net_poche:        [ { label:'💰 Net dans la poche', view:'netpoche' }, { label:'📊 Comptabilité', view:'compta' } ],
+  query_prevision_revenu: [ { label:'📈 Prévisionnel', view:'previsionnel' }, { label:'📊 Comptabilité', view:'compta' } ],
+  query_freins_revenu:    [ { label:'💸 Paiements dus', view:'assistant' }, { label:'📊 Comptabilité', view:'compta' } ],
+  query_suggestion_parfum:[ { label:'🎨 Atelier R&D', view:'rdrefs' }, { label:'📈 Rentabilité par parfum', view:'rentaparfum' } ],
+  query_conseil_ouvert:   [ { label:'📊 Mes chiffres', view:'compta' }, { label:'📈 Rentabilité', view:'rentabilite' } ],
   query_seuils:           [ { label:'🎯 Optimisation fiscale', view:'optimisation' }, { label:'💰 Net dans la poche', view:'netpoche' } ],
   query_rentabilite:      [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'👥 Rentabilité clients', view:'rentabilite' } ],
   query_cout_revient:     [ { label:'📈 Rentabilité parfums', view:'rentaparfum' }, { label:'📖 Voir la recette', view:'recettes' } ],
@@ -27628,6 +27871,10 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_market_advice': return aiQueryMarketAdvice(r.params);
       case 'query_revenue': return aiQueryRevenue(r.params);
       case 'query_net_poche': return aiQueryNetPoche(r.params);
+      case 'query_prevision_revenu': return aiQueryPrevisionRevenu(r.params);
+      case 'query_freins_revenu': return aiQueryFreinsRevenu(r.params);
+      case 'query_suggestion_parfum': return aiQuerySuggestionParfum(r.params);
+      case 'query_conseil_ouvert': return aiQueryConseilOuvert(r.params);
       case 'query_seuils': return aiQuerySeuils(r.params);
       case 'query_rentabilite': return aiQueryRentabilite(r.params);
       case 'query_cout_revient': return aiQueryCoutRevient(r.params);
@@ -29970,6 +30217,179 @@ async function aiQueryNetPoche(params){
       ${R.chargesReelles>0?`<div class="sum-box"><span>− Charges réelles</span><b style="color:var(--red)">− ${euro(R.chargesReelles)}</b></div>`:''}
       <div class="sum-box" style="border-top:2px solid var(--bordeaux)"><span><b>Net dans la poche</b></span><b style="color:var(--bordeaux)">${euro(R.netPoche)}</b></div>`, 'Le détail du calcul')}`,
     [{ label:'💰 Voir le détail complet', view:'netpoche' }]);
+}
+// [v1072] Prévision de revenu pour un mois à venir. Croise tendance pondérée + carnet de commandes.
+async function aiQueryPrevisionRevenu(params){
+  params=params||{};
+  // Mois cible : si une date a été extraite, on prend son mois ; sinon le mois prochain (défaut moteur).
+  let ymCible=null;
+  if(params.date){ ymCible = monthKey(params.date); }
+  let R; try{ R=await computePrevisionRevenu(ymCible); }
+  catch(e){ console.error('aiQueryPrevisionRevenu',e); return aiSay(`<p class="note">Je n'ai pas pu établir de prévision pour le moment.</p>`); }
+
+  // Cas où on n'a aucune base (ni historique, ni carnet) : on le dit franchement.
+  if(!R.aTendance && !R.aCarnet){
+    return aiSay(`${aiSynth(`Je n'ai pas encore assez d'éléments pour estimer ${R.libelle} : ni historique de mois précédents, ni commande déjà enregistrée pour ce mois-là.`, {icon:'🤔'})}
+      <p class="note" style="margin-top:6px">Dès que tu auras quelques mois d'activité ou des commandes pour ${R.libelle}, je pourrai te donner une fourchette.</p>`);
+  }
+
+  // Construction du message principal.
+  const memeValeur = Math.abs(R.bas - R.haut) < 1;
+  const titre = memeValeur ? euro(R.central) : `${euro(R.bas)} – ${euro(R.haut)}`;
+  let phrase;
+  if(R.aCarnet && R.aTendance){
+    phrase = `Pour <b>${R.libelle}</b>, tu as déjà <b>${euro(R.carnet)}</b> de commandes enregistrées (${R.nbCmd} commande${R.nbCmd>1?'s':''}) — c'est ton plancher. Au rythme de tes derniers mois, tu devrais plutôt tourner autour de <b>${euro(R.tendance)}</b>. La vérité sera entre les deux, selon les commandes qui vont encore tomber.`;
+  } else if(R.aCarnet){
+    phrase = `Pour <b>${R.libelle}</b>, tu as déjà <b>${euro(R.carnet)}</b> de commandes enregistrées (${R.nbCmd} commande${R.nbCmd>1?'s':''}). Je n'ai pas encore d'historique pour projeter au-delà, mais ce montant est ton point de départ sûr.`;
+  } else {
+    phrase = `Pour <b>${R.libelle}</b>, tu n'as pas encore de commande enregistrée. Au rythme de tes derniers mois, tu pourrais tourner autour de <b>${euro(R.tendance)}</b> — à confirmer au fil des commandes.`;
+  }
+
+  const detailHisto = R.bilans.length
+    ? aiDetails(R.bilans.map(b=>`<div class="sum-box"><span>${esc(monthLabel(b.ym))}</span><b>${euro(b.ca)}</b></div>`).join('')
+        + `<div class="sum-box" style="border-top:1px solid #ece1d2"><span>Tendance (moyenne pondérée)</span><b>${euro(R.tendance)}</b></div>`,
+        'Les mois sur lesquels je m\'appuie')
+    : '';
+
+  return aiSay(`${aiHero(titre, `Prévision · ${R.libelle}`, {color:'var(--bordeaux)', sub: memeValeur?'estimation':'fourchette estimée'})}
+    ${aiSynth(phrase, {icon:'🔮'})}
+    ${detailHisto}
+    <p class="note" style="margin-top:6px">C'est une estimation à partir de tes données : elle s'affine à mesure que les commandes arrivent. Elle ne tient pas compte d'un imprévu (gros marché, annulation…).</p>`,
+    [{ label:'📈 Prévisionnel', view:'previsionnel' }, { label:'📊 Comptabilité', view:'compta' }]);
+}
+// [v1072] Diagnostic « qu'est-ce qui m'empêche de gagner plus ? ». Liste les freins concrets et chiffrés.
+async function aiQueryFreinsRevenu(params){
+  let R; try{ R=await computeFreinsRevenu(); }
+  catch(e){ console.error('aiQueryFreinsRevenu',e); return aiSay(`<p class="note">Je n'ai pas pu faire le diagnostic pour le moment.</p>`); }
+  // Aucun frein détecté → on le dit franchement, sans inventer.
+  if(!R.freins.length){
+    return aiSay(`${aiSynth(`Bonne nouvelle : je ne repère aucun frein évident dans tes chiffres en ce moment. Pas d'argent qui dort, pas d'impayé en souffrance.`, {icon:'✅'})}
+      <p class="note" style="margin-top:6px">Pour aller plus loin sur la croissance (parfums, marges, mix vente/coaching), demande-moi « comment gagner plus ».</p>`,
+      [{label:'💡 Comment gagner plus', view:'assistant', ask:'comment gagner plus'}]);
+  }
+  const COLG={haut:'var(--red,#b3261e)', moyen:'var(--caramel,#AA7C39)', info:'#5b8aa6'};
+  const PUCE={haut:'🔴', moyen:'🟠', info:'🔵'};
+  // Bloc par frein : titre, montant éventuel, explication, et raccourci d'action si fourni.
+  const blocs = R.freins.map(f=>{
+    const montant = (f.montant!=null && f.montant>0) ? ` <b style="color:${COLG[f.gravite]}">${euro(f.montant)}</b>` : '';
+    return `<div class="panel" style="border-left:3px solid ${COLG[f.gravite]}">
+      <div style="font-weight:700;margin-bottom:2px">${PUCE[f.gravite]} ${esc(f.titre)}${montant}</div>
+      <p class="note" style="margin:0">${esc(f.detail)}</p>
+    </div>`;
+  }).join('');
+  // Synthèse d'en-tête : on met en avant le plus gros levier chiffré s'il existe.
+  const chiffrable = R.freins.find(f=>f.montant>0);
+  const intro = chiffrable
+    ? `J'ai regardé tes chiffres. Le levier le plus direct : <b>${euro(chiffrable.montant)}</b> liés à « ${esc(chiffrable.titre.toLowerCase())} ». Voici tout ce que je repère, du plus prioritaire au moins urgent.`
+    : `J'ai regardé tes chiffres. Voici ce qui pourrait te freiner, du plus prioritaire au moins urgent.`;
+  // Raccourcis-résultat : on remonte les actions des freins qui en ont une.
+  const resultSc=[];
+  R.freins.forEach(f=>{ if(f.action){ resultSc.push(f.action.view?{label:f.action.label,view:f.action.view}
+      :{label:f.action.label, view:'assistant', ask:f.action.intent==='query_paiements_dus'?'qui me doit de l\'argent':null}); } });
+  return aiSay(`${aiSynth(intro, {icon:'🔍'})}
+    <div style="margin-top:8px">${blocs}</div>
+    <p class="note" style="margin-top:4px">Ce diagnostic se base sur tes données réelles. Il pointe des pistes — à toi de juger ce qui colle à ta réalité.</p>`,
+    resultSc.length?resultSc:[{label:'💸 Mes paiements dus', view:'assistant', ask:'qui me doit de l\'argent'}]);
+}
+// [v1072] Force de proposition : suggestions de parfums pour une saison, argumentées via la base R&D.
+async function aiQuerySuggestionParfum(params){
+  params=params||{};
+  let R; try{ R=await computeSuggestionParfums(params.saison); }
+  catch(e){ console.error('aiQuerySuggestionParfum',e); return aiSay(`<p class="note">Je n'ai pas pu préparer d'idées pour le moment.</p>`); }
+  if(!R.suggestions.length){
+    return aiSay(`${aiSynth(`Pour ${R.saisonLabel}, tu sembles déjà couvrir les familles de saison avec ton catalogue actuel — pas de manque évident à combler.`, {icon:'🎨'})}
+      <p class="note" style="margin-top:6px">Si tu veux explorer des associations créatives, ouvre l'atelier R&D.</p>`,
+      [{label:'🎨 Atelier R&D', view:'rdrefs'}]);
+  }
+  // Familles « cœur de saison » (poids 2) pour expliquer la logique.
+  const coeur = R.familles.filter(f=>f.poids>=2).map(f=>f.label);
+  const listeFam = coeur.length>1 ? coeur.slice(0,-1).join(', ')+' et '+coeur.slice(-1) : (coeur[0]||'');
+  // Cartes de suggestion.
+  const cartes = R.suggestions.map(s=>{
+    const etoiles = '●'.repeat(Math.max(1,Math.min(5,s.intensite)));
+    return `<div class="panel" style="border-left:3px solid var(--gold,#AA7C39)">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <b>${esc(s.nom)}</b>
+        <span style="font-size:.72rem;color:#9a8a82">${esc(s.familleLabel)} · intensité ${etoiles}</span>
+      </div>
+    </div>`;
+  }).join('');
+  const dejaTxt = R.dejaCatalogue.length
+    ? `Tu es déjà bien installé sur ${R.dejaCatalogue.slice(0,4).map(esc).join(', ')}${R.dejaCatalogue.length>4?'…':''} — ces idées viennent les compléter, pas les répéter.`
+    : '';
+  return aiSay(`${aiSynth(`Pour <b>${R.saisonLabel}</b>, les familles qui collent le mieux sont ${listeFam ? '<b>'+esc(listeFam)+'</b>' : 'celles de saison'}. Voici des pistes à explorer, choisies dans ta base aromatique et pas encore à ton catalogue :`, {icon:'🍂'})}
+    <div style="margin-top:8px">${cartes}</div>
+    ${dejaTxt?`<p class="note" style="margin-top:6px">${dejaTxt}</p>`:''}
+    <p class="note" style="margin-top:4px">Ce sont des <b>pistes</b>, pas des recettes prêtes : je m'appuie sur les familles aromatiques de saison. À toi de tester ce qui t'inspire — l'atelier R&D peut t'aider à construire l'association.</p>`,
+    [{label:'🎨 Atelier R&D', view:'rdrefs'}, {label:'📈 Mes parfums qui marchent', view:'rentaparfum'}]);
+}
+// [v1072] Conseil ouvert : on ne tranche pas, on donne un CADRE honnête (pour / contre / repère chiffré).
+// L'assistant reconnaît des intentions, il ne raisonne pas comme un LLM : on l'assume et on reste utile.
+async function aiQueryConseilOuvert(params){
+  params=params||{};
+  const theme=params.theme||'generique';
+  // Repère chiffré tiré des données réelles, selon le thème (best effort).
+  let repere='';
+  try{
+    if(theme==='cadeaux' || theme==='gamme'){
+      // marge moyenne indicative : on s'appuie sur le CA récent vs un ordre de grandeur de coût.
+      const moisActifs=await _listeMoisAvecActivite(); const derniers=moisActifs.slice(-3);
+      let g=0,s=0; for(const ym of derniers){ const B=await computeMonthlyBilan(ym); g=money2(g+B.goods); s=money2(s+B.service); }
+      if(g+s>0) repere=`Sur tes 3 derniers mois, tu as encaissé ${euro(money2(g+s))} (dont ${euro(s)} de coaching).`;
+    } else if(theme==='marches'){
+      const markets=await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
+      const clos=markets.filter(m=>m.statut==='clos');
+      if(clos.length){
+        let ca=0; clos.forEach(mk=>{ const c=mk.ca||{}; ca=money2(ca+money2(+c.especes||0)+money2(+c.cb||0)+money2(+c.autre||0)); });
+        repere=`Tu as ${clos.length} marché${clos.length>1?'s':''} clos, pour ${euro(ca)} de CA cumulé (moyenne ${euro(money2(ca/clos.length))}/marché).`;
+      }
+    }
+  }catch(e){}
+
+  // Cadres pour/contre par thème.
+  const CADRES={
+    cadeaux:{
+      titre:'Offrir pour te faire connaître',
+      pour:['Fait goûter ta qualité — le macaron donne envie d\'en racheter.','Crée du bouche-à-oreille, surtout en local.','Peu coûteux en matière par rapport à l\'impact si la personne revient.'],
+      contre:['Chaque coffret offert est une marge en moins immédiate.','Risque d\'attirer des « chasseurs de gratuit » qui ne reviennent pas.','Difficile de mesurer le retour réel sur l\'investissement.'],
+      conseil:'Souvent payant si c\'est ciblé (prescripteurs, événements, clients fidèles) et limité dans le temps, plutôt qu\'offert à tout-va.'
+    },
+    prix:{
+      titre:'Ajuster tes prix',
+      pour:['Monter les prix améliore directement ta marge si la demande suit.','Un prix plus élevé peut renforcer l\'image « artisan premium ».'],
+      contre:['Baisser les prix rogne la marge et est dur à inverser ensuite.','Une hausse mal expliquée peut faire fuir des habitués.'],
+      conseil:'Avant de toucher aux prix, regarde ta marge réelle par produit. Une petite hausse ciblée vaut souvent mieux qu\'une baisse générale.'
+    },
+    marches:{
+      titre:'Faire plus de marchés',
+      pour:['Vente directe, encaissement immédiat, visibilité locale.','Tu rencontres tes clients et tu testes des parfums en direct.'],
+      contre:['Temps et fatigue : une journée de marché, c\'est une journée sans produire.','Invendus possibles si les quantités sont mal calibrées.','Frais d\'emplacement et de déplacement.'],
+      conseil:'Compare le CA moyen par marché à ce que la même journée te rapporterait en production de commandes. Garde les marchés qui valent le coup.'
+    },
+    gamme:{
+      titre:'Lancer un nouveau produit / une nouvelle gamme',
+      pour:['Donne une raison de revenir à tes clients existants.','Permet de tester un format plus margé (coffret, grand format).'],
+      contre:['Complexifie ta production et ta gestion de stock.','Demande du temps de mise au point avant d\'être rentable.'],
+      conseil:'Lance petit, en édition limitée, pour tester l\'accueil sans déstabiliser ton organisation.'
+    },
+    generique:{
+      titre:'Ton idée',
+      pour:['Toute initiative qui te rapproche de tes clients a de la valeur.'],
+      contre:['Chaque nouveauté a un coût en temps et en énergie — la ressource la plus rare chez un artisan seul.'],
+      conseil:'Pose-toi trois questions : est-ce que ça me rapporte (marge ou clients), est-ce que ça me coûte trop de temps, est-ce réversible si ça ne marche pas ?'
+    }
+  };
+  const C=CADRES[theme]||CADRES.generique;
+  const li=(arr)=>arr.map(x=>`<li style="margin-bottom:3px">${esc(x)}</li>`).join('');
+  return aiSay(`${aiSynth(`Je ne vais pas décider à ta place, mais voici de quoi y voir clair sur « ${esc(C.titre.toLowerCase())} ».`, {icon:'⚖️'})}
+    ${repere?`<p class="note" style="margin:4px 0 8px">${repere}</p>`:''}
+    <div class="panel"><div style="font-weight:700;color:var(--vert,#3f7d52);margin-bottom:4px">✅ Ce qui plaide pour</div>
+      <ul style="margin:0;padding-left:18px;font-size:.86rem">${li(C.pour)}</ul></div>
+    <div class="panel"><div style="font-weight:700;color:var(--red,#b3261e);margin-bottom:4px">⚠️ Ce qui doit te faire réfléchir</div>
+      <ul style="margin:0;padding-left:18px;font-size:.86rem">${li(C.contre)}</ul></div>
+    <p class="note" style="margin-top:4px"><b>En résumé :</b> ${esc(C.conseil)}</p>
+    <p class="note" style="margin-top:4px;font-size:.74rem;color:#9a8a82">Je te donne un cadre de réflexion à partir de bon sens artisanal et de tes chiffres — le choix final t'appartient, tu connais ton terrain mieux que moi.</p>`,
+    [{label:'📊 Mes chiffres', view:'compta'}, {label:'📈 Rentabilité', view:'rentabilite'}]);
 }
 async function aiQueryRevenue(params){
   params = params || {};
