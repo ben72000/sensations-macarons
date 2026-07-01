@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1111';
+const APP_VERSION = 'v1112';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -35828,6 +35828,19 @@ function factLineDescHtml(ln){
 // Cas événement avec pyramides : DEUX <tr> — d'abord les macarons (part macarons),
 // puis une ligne « Prestation de service — location de pyramide » (quantité × prix unitaire).
 // La somme des deux montants reste STRICTEMENT égale au sous-total de la ligne (aucun double comptage).
+// [RABAIS TOTAL CONSENTI] Cumule TOUS les rabais du document (remises de ligne + remise perso
+// + remise globale) et l'exprime en euros et en % du total BRUT (avant toute remise).
+// brutAbsolu = Σ bruts de ligne (avant remise de ligne) + supplément perso BRUT (avant remise perso).
+// rabais = brutAbsolu − totalNet (le montant réellement facturé, hors frais de livraison).
+function docRabaisTotal(lignes, persoNb, totalNetHorsLivraison){
+  const PU = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
+  const brutLignes = (lignes||[]).reduce((s,ln)=>s+lineTotalBrut(ln),0);
+  const persoBrut = money2(Math.max(0,+persoNb||0)*PU);
+  const brutAbsolu = money2(brutLignes + persoBrut);
+  const rabais = money2(Math.max(0, brutAbsolu - money2(+totalNetHorsLivraison||0)));
+  const pct = brutAbsolu>0 ? Math.round(rabais/brutAbsolu*1000)/10 : 0;
+  return { brutAbsolu, rabais, pct };
+}
 function factLineRows(ln, brut){
   // brut=true : affiche le montant AVANT remise de ligne (utilisé par le devis, qui montre
   // le prix brut par ligne puis applique la remise une seule fois sur le total).
@@ -35999,6 +36012,7 @@ async function genererDevisDoc(docId){
        <div class="grand">
          ${reductions>0?`<div class="lg brut"><span>Total avant réductions</span><span>${euro(totalBrut)}</span></div><div class="lg reduc"><span>Réductions accordées${reducPct>0?` (−${reducPct}%)`:''}</span><span>\u2212${euro(reductions)}</span></div>`:''}
          <div class="lg total"><span>Total du devis</span><span>${euro(total)}</span></div>
+         ${(()=>{ const R=docRabaisTotal(lignes, d.persoMacarons, total); return R.rabais>0?`<div class="lg reduc" style="color:#3f7d52;font-size:.9rem"><span>Rabais total consenti${R.pct>0?` (−${R.pct}%)`:''}</span><span>\u2212${euro(R.rabais)}</span></div>`:''; })()}
        </div>
        ${d.acompteMention!==false?`<div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider votre devis.</div>`:''}
        <div class="bas-final">
@@ -36365,6 +36379,7 @@ async function genererFactureMultiple(ids){
             ${reducCmd>0?`<tr class="sub"><td>Total avant réductions</td><td class="mt">${euro(brutCmd)}</td></tr><tr class="rem"><td>Réductions accordées${reducPct>0?` (−${reducPct}%)`:''}</td><td class="mt">−${euro(reducCmd)}</td></tr>`:''}
             ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
             <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
+            ${(()=>{ const R=docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd-frais)); return R.rabais>0?`<tr class="rem" style="color:#3f7d52"><td>Rabais total consenti${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">\u2212${euro(R.rabais)}</td></tr>`:''; })()}
           </tbody>
         </table>
         ${factPersoBox(o.persoMacarons, o.persoCouleurs)}
