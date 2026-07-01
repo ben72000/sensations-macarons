@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1109';
+const APP_VERSION = 'v1111';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7344,7 +7344,7 @@ function atMutToggle(rid){
 }
 function atSetParfum(rid){ atSetOnglet(rid); }   // compat : ancien point d'entrée
 function atHistToggle(){ _atHistOpen=!_atHistOpen; chronoFloatRenderBody(); }
-function atTogglePicker(){ _atPicker=!_atPicker; chronoFloatRenderBody(); }
+function atTogglePicker(){ _atPicker=!_atPicker; if(typeof chronoFloatRenderBody==='function') chronoFloatRenderBody(); if(typeof prodRenderBoard==='function' && document.getElementById('prodBoardHost')) prodRenderBoard(); }
 function atHistDelete(taskId){
   const s=prodSessActive(); if(!s) return;
   s.tasks=(s.tasks||[]).filter(t=>t.id!==taskId);
@@ -7367,7 +7367,8 @@ function atLaunch(label){
   const parfs=_atParfumsPourLancement();
   prodTaskStartSmart(label, {recipeId: parfs.length===1?parfs[0]:null, parfums: parfs});
   _atPicker=false;
-  chronoFloatRenderBody();
+  if(typeof chronoFloatRenderBody==='function') chronoFloatRenderBody();
+  if(typeof prodRenderBoard==='function' && document.getElementById('prodBoardHost')) prodRenderBoard();
 }
 function atShowDurPrompt(label){
   const def = prodPassiveDefaultMin(label)||10;
@@ -7391,7 +7392,8 @@ function atDurGo(label){
   const parfs=_atParfumsPourLancement();
   prodTaskStartSmart(label, {recipeId: parfs.length===1?parfs[0]:null, parfums: parfs, durMin:min});
   _atPicker=false;
-  chronoFloatRenderBody();
+  if(typeof chronoFloatRenderBody==='function') chronoFloatRenderBody();
+  if(typeof prodRenderBoard==='function' && document.getElementById('prodBoardHost')) prodRenderBoard();
 }
 function atAlarmFinish(taskId){ prodAlarmFinish(taskId); chronoFloatRenderBody(); }
 function atAlarmExtend(taskId){
@@ -15413,8 +15415,8 @@ function factPersoLigne(nbPerso, remiseEur){
   let out = `<tr><td class="desc">${desc}</td><td class="mt">${euro(brut)}</td></tr>`;
   if(rem>0){
     const pct = brut>0 ? Math.max(0, Math.min(100, money2(rem/brut*100))) : 0;
-    const sub = `<span class="ln-main">Remise personnalisation${pct>0?` (\u2212${pct}%)`:''}</span>`;
-    out += `<tr><td class="desc">${sub}</td><td class="mt">\u2212${euro(rem)}</td></tr>`;
+    const sub = `<span class="ln-main" style="color:#3f7d52">Remise personnalisation${pct>0?` (\u2212${pct}%)`:''}</span>`;
+    out += `<tr><td class="desc">${sub}</td><td class="mt" style="color:#3f7d52">\u2212${euro(rem)}</td></tr>`;
   }
   return out;
 }
@@ -38151,14 +38153,14 @@ function prodTaskEditForm(taskId){
   openModal(`<h3>Modifier le temps — ${esc(t.label)}</h3>
     <p class="note">${enCours?'Tâche <b>en cours</b> : ajuste sa durée déjà écoulée.':'Tâche <b>terminée</b> : corrige sa durée ou ses horaires.'}${pauseMin>0?` <br>Pauses déjà déduites : <b>${pauseMin} min</b> (conservées).`:''}</p>
     <div class="field"><label>Durée nette (minutes)</label>
-      <input type="number" min="0" step="1" id="pte_dur" value="${netMin}" inputmode="numeric"></div>
+      <input type="number" min="0" step="1" id="pte_dur" value="${netMin}" data-init="${netMin}" inputmode="numeric"></div>
     <details style="margin:6px 0">
       <summary style="cursor:pointer;color:var(--caramel,#AA7C39);font-weight:600">Ou saisir les horaires réels</summary>
       <div class="row2" style="margin-top:8px">
-        <div class="field"><label>Heure de début</label><input type="time" id="pte_start" value="${startHM}"></div>
-        <div class="field"><label>Heure de fin${enCours?' (laisser vide si en cours)':''}</label><input type="time" id="pte_end" value="${enCours?'':endHM}"></div>
+        <div class="field"><label>Heure de début</label><input type="time" id="pte_start" value="${startHM}" data-init="${startHM}"></div>
+        <div class="field"><label>Heure de fin${enCours?' (laisser vide si en cours)':''}</label><input type="time" id="pte_end" value="${enCours?'':endHM}" data-init="${enCours?'':endHM}"></div>
       </div>
-      <p class="note">Si tu renseignes les horaires, ils priment sur la durée ci-dessus. La durée nette = (fin − début) − pauses.</p>
+      <p class="note">Si tu modifies les horaires, ils priment sur la durée. Sinon, c'est la durée en minutes qui s'applique.</p>
     </details>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
@@ -38169,9 +38171,17 @@ function prodTaskEditSave(taskId){
   const s = prodSessActive(); if(!s){ toast('Aucune session active'); return; }
   const t = (s.tasks||[]).find(x=>x.id===taskId); if(!t){ toast('Tâche introuvable'); return; }
   const pauseMs = (+t.pausedAccum||0);
+  const startEl=document.getElementById('pte_start'), endEl=document.getElementById('pte_end'), durEl=document.getElementById('pte_dur');
   const startHM = (val('pte_start')||'').trim();
   const endHM = (val('pte_end')||'').trim();
   const durMin = +val('pte_dur');
+  // [FIX MODIF DURÉE] On détecte ce que l'utilisateur a RÉELLEMENT changé, en comparant chaque
+  // champ à sa valeur initiale (data-init). Sans ça, les horaires pré-remplis primaient toujours
+  // sur la durée en minutes → modifier seulement les minutes n'avait aucun effet.
+  const startChanged = startEl && startHM!==(startEl.dataset.init||'');
+  const endChanged   = endEl   && endHM  !==(endEl.dataset.init||'');
+  const durChanged   = durEl   && String(durMin)!==(durEl.dataset.init||'');
+  const horairesModifies = startChanged || endChanged;
 
   // Reconstruit un timestamp à la date de la tâche (on garde le jour de t.start) à partir de "HH:MM".
   const dayBase = new Date(t.start); dayBase.setSeconds(0,0);
@@ -38179,27 +38189,28 @@ function prodTaskEditSave(taskId){
     const m = /^(\d{1,2}):(\d{2})$/.exec(hm); if(!m) return null;
     const d = new Date(dayBase); d.setHours(+m[1], +m[2], 0, 0); return d.getTime();
   };
-
-  // MODE B prioritaire : horaires renseignés (au moins le début + une fin si fournie)
   const startTs = tsFromHM(startHM);
   const endTs = endHM ? tsFromHM(endHM) : null;
-  if(startTs!=null && endHM){
-    if(endTs==null){ toast('Heure de fin invalide'); return; }
-    if(endTs < startTs){ toast('La fin ne peut pas précéder le début'); return; }
-    const net = (endTs - startTs) - pauseMs;
-    if(net < 0){ toast('Durée négative : les pauses dépassent l\'intervalle'); return; }
-    t.start = startTs; t.end = endTs; t.pauseAt = null;
-    prodSessUpsert(s); closeModal(); prodRenderBoard&&prodRenderBoard();
-    toast('Temps mis à jour ✓'); return;
+
+  // MODE B : horaires — SEULEMENT si l'utilisateur les a réellement modifiés (et pas juste la durée).
+  if(horairesModifies && !(durChanged && !startChanged && !endChanged)){
+    if(startTs!=null && endHM){
+      if(endTs==null){ toast('Heure de fin invalide'); return; }
+      if(endTs < startTs){ toast('La fin ne peut pas précéder le début'); return; }
+      const net = (endTs - startTs) - pauseMs;
+      if(net < 0){ toast('Durée négative : les pauses dépassent l\'intervalle'); return; }
+      t.start = startTs; t.end = endTs; t.pauseAt = null;
+      prodSessUpsert(s); closeModal(); prodRenderBoard&&prodRenderBoard();
+      toast('Temps mis à jour ✓'); return;
+    }
+    // Cas : seulement le début modifié (tâche reste en cours), pas de fin
+    if(startTs!=null && !endHM && !t.end){
+      t.start = startTs; t.pauseAt = null;
+      prodSessUpsert(s); closeModal(); prodRenderBoard&&prodRenderBoard();
+      toast('Début mis à jour ✓'); return;
+    }
   }
-  // Cas : seulement le début modifié (tâche reste en cours), pas de fin
-  if(startTs!=null && !endHM && !t.end){
-    // on garde la tâche en cours, on cale start tel quel ; la durée se recalculera en live
-    t.start = startTs; t.pauseAt = null;
-    prodSessUpsert(s); closeModal(); prodRenderBoard&&prodRenderBoard();
-    toast('Début mis à jour ✓'); return;
-  }
-  // MODE A : durée nette en minutes
+  // MODE A : durée nette en minutes (défaut — s'applique dès que la durée est valide)
   if(!(durMin>=0) || isNaN(durMin)){ toast('Durée invalide'); return; }
   const durMs = Math.round(durMin*60000);
   if(t.end){
@@ -38207,8 +38218,6 @@ function prodTaskEditSave(taskId){
     t.end = t.start + durMs + pauseMs; t.pauseAt = null;
   } else {
     // en cours : on recale le début pour que la durée écoulée corresponde.
-    // Si la tâche est en pause, on fige d'abord la pause en cours dans pausedAccum
-    // pour que prodTaskNet ne la soustraie pas une seconde fois.
     if(prodTaskPaused(t)){
       t.pausedAccum = (+t.pausedAccum||0) + Math.max(0, Date.now()-(+t.pauseAt));
       t.pauseAt = null;
@@ -38219,13 +38228,68 @@ function prodTaskEditSave(taskId){
   prodSessUpsert(s); closeModal(); prodRenderBoard&&prodRenderBoard();
   toast('Temps mis à jour ✓');
 }
-// Supprime une tâche (annulation sans conserver).
+// Supprime une tâche mais la CONSERVE dans une corbeille de session (s.trash) pour restauration.
+// Propose un « Annuler » immédiat, et la tâche reste restaurable via la corbeille tant que la session vit.
 function prodTaskDelete(taskId){
   const s = prodSessActive(); if(!s) return;
+  const t = (s.tasks||[]).find(x=>x.id===taskId);
   s.tasks = (s.tasks||[]).filter(x=>x.id!==taskId);
+  if(t){
+    s.trash = s.trash||[];
+    s.trash.unshift(Object.assign({}, t, {_deletedAt: Date.now()}));
+    if(s.trash.length>50) s.trash = s.trash.slice(0,50);   // borne raisonnable
+  }
   prodSessUpsert(s);
   if(!prodAnyRunning()) prodStopTicking();
   prodRenderBoard&&prodRenderBoard();
+  if(t && typeof showUndoToast==='function'){
+    showUndoToast(`Tâche « ${atShort?atShort(t.label):t.label} » supprimée`, ()=>prodTaskRestore(t.id));
+  } else if(t){
+    toast('Tâche supprimée — restaurable depuis la corbeille');
+  }
+}
+// Restaure une tâche depuis la corbeille de session vers la liste active.
+function prodTaskRestore(taskId){
+  const s = prodSessActive(); if(!s) return;
+  const idx = (s.trash||[]).findIndex(x=>x.id===taskId);
+  if(idx<0){ toast('Tâche introuvable dans la corbeille'); return; }
+  const t = s.trash[idx];
+  delete t._deletedAt;
+  s.trash.splice(idx,1);
+  s.tasks = s.tasks||[]; s.tasks.push(t);
+  prodSessUpsert(s);
+  if(prodTaskRunning && prodTaskRunning(t)) prodStartTicking();
+  prodRenderBoard&&prodRenderBoard();
+  if(typeof closeModal==='function') closeModal();
+  toast('Tâche restaurée ✓');
+}
+// Vide définitivement la corbeille de session.
+function prodTrashPurge(){
+  const s = prodSessActive(); if(!s) return;
+  if(!(s.trash&&s.trash.length)) return;
+  if(!confirm('Vider définitivement la corbeille ? Les tâches supprimées ne pourront plus être restaurées.')) return;
+  s.trash = []; prodSessUpsert(s); prodRenderBoard&&prodRenderBoard();
+  toast('Corbeille vidée');
+}
+// Ouvre la corbeille (liste des tâches supprimées, restaurables).
+function prodTrashOpen(){
+  const s = prodSessActive(); if(!s){ toast('Aucune session active'); return; }
+  const items = (s.trash||[]);
+  if(!items.length){ openModal(`<h3>Corbeille</h3><p class="note">Aucune tâche supprimée dans cette session.</p><div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`); return; }
+  const fmtT = ms => { const d=new Date(ms); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+  const rows = items.map(t=>`<div class="prodb-done-row" style="align-items:center">
+      <span class="prodt-dot" style="background:${t.color||'#ccc'}"></span>
+      <span class="pd-label">${esc(t.label)}</span>
+      <span class="pd-dur" style="color:#9a8a82">${t.end?prodDurShort(prodTaskNet(t)):'en cours'} · suppr. ${fmtT(t._deletedAt||Date.now())}</span>
+      <button class="btn sm" style="margin-left:8px" onclick="prodTaskRestore('${t.id}')">↩ Restaurer</button>
+    </div>`).join('');
+  openModal(`<h3>Corbeille <span style="font-weight:400;color:#9a8a82">(${items.length})</span></h3>
+    <p class="note">Tâches supprimées de cette session. Tu peux les restaurer.</p>
+    <div style="max-height:50vh;overflow:auto">${rows}</div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="prodTrashPurge()">Vider la corbeille</button>
+      <button class="btn" onclick="closeModal()">Fermer</button>
+    </div>`);
 }
 
 // ---- Tick (rafraîchit les chronos en cours, 1 s) ----
@@ -39795,6 +39859,42 @@ async function prodRenderBoard(){
     ? `＋ Lancer une tâche <span style="font-weight:400;opacity:.85">(partagée entre les parfums cochés)</span>`
     : (_atParfum!=null ? `＋ Lancer une tâche <span style="font-weight:400;opacity:.85">(rattachée à ${esc(recipesById[_atParfum]||'')})</span>` : '＋ Lancer une tâche');
 
+  // ---- [SUGGESTION D'ENCHAÎNEMENT] même moteur que le flottant ----
+  const estMut = (_atOnglet==='mutualise');
+  const last = (typeof atLastLabel==='function') ? atLastLabel(_atParfum) : null;
+  let sug=[]; try{ sug = await prodSuggestNext(_atParfum, last, 1, {mutualise:estMut}); }catch(e){}
+  const nxt = sug && sug[0];
+  let nextHtml='';
+  if(nxt){
+    const why = estMut ? 'le temps sera partagé entre les parfums cochés' : (last ? 'suite habituelle' : 'tu commences souvent par là');
+    const mini = prodIsPassive(nxt)?'<span class="at-next-mini">minuteur</span>':'';
+    nextHtml = `<button class="at-next" onclick="atLaunch('${esc(nxt).replace(/'/g,"\\'")}')">
+      <span class="at-next-dot"></span><span>${esc(nxt)}${mini}</span><span class="at-next-why">${why}</span></button>`;
+  }
+  let listeHtml='';
+  if(_atPicker){
+    const groups={};
+    let recsActs=[];
+    if(estMut){ recsActs=_atMutSel.map(rid=>recipes.find(r=>+r.id===+rid)).filter(Boolean); }
+    else if(_atParfum!=null){ const r=recipes.find(r=>+r.id===+_atParfum); if(r) recsActs=[r]; }
+    const seen=new Set();
+    const pushTask=t=>{ const k=t.phase+'|'+t.label; if(!seen.has(k)){ seen.add(k); (groups[t.phase]=groups[t.phase]||{color:t.color,items:[]}).items.push(t.label); } };
+    if(recsActs.length){ recsActs.forEach(r=>prodAllTasks(r).forEach(pushTask)); } else { prodAllTasks().forEach(pushTask); }
+    listeHtml = prodSortPhases(Object.keys(groups)).map(phase=>{
+      const g=groups[phase];
+      return `<div class="at-grp"><div class="at-grp-phase" style="color:${g.color}">${esc(phase)}</div>
+        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${esc(l).replace(/'/g,"\\'")}')"><span class="at-d"></span>${esc(l)}${prodIsPassive(l)?'<span class="at-pp">minuteur</span>':''}</button>`).join('')}</div>`;
+    }).join('');
+  }
+  const suggBloc = `<div class="pb-sugg">
+    <div class="pb-sugg-head">Et maintenant ?</div>
+    ${nextHtml||'<p class="note" style="margin:2px 0">Lance une première tâche : les suggestions apparaîtront ensuite.</p>'}
+    <button class="btn ghost sm" style="margin-top:8px" onclick="atTogglePicker()">${_atPicker?'▲ Masquer la liste des tâches':'▼ Voir toutes les tâches'}</button>
+    ${listeHtml?`<div class="at-list" style="margin-top:8px">${listeHtml}</div>`:''}
+  </div>`;
+  const trashBtn = (s.trash&&s.trash.length)
+    ? `<button class="btn ghost sm" style="margin-top:10px" onclick="prodTrashOpen()">🗑 Corbeille (${s.trash.length})</button>` : '';
+
   host.innerHTML = `
     <div class="prodb-session">
       <div class="prodb-sess-head">
@@ -39806,7 +39906,9 @@ async function prodRenderBoard(){
     ${mutBoxHtml}
     <div class="prodb-running">${runCards}</div>
     <button class="btn prodb-addbtn" onclick="prodBoardLaunch()">${addLabel}</button>
-    ${doneList}`;
+    ${suggBloc}
+    ${doneList}
+    ${trashBtn}`;
 
   if((s.tasks||[]).some(prodTaskRunning)) prodStartTicking();
 }
