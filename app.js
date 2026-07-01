@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1105';
+const APP_VERSION = 'v1106';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -10053,15 +10053,22 @@ async function prodDuoApercu(){
   // Proportion en nombre de coques (cas courant : même format).
   const totCoq=coq1+coq2;
   const pct1 = totCoq>0 ? Math.round(coq1/totCoq*100) : 50;
-  // En-tête : comptage par parfum (les coques GF et standard ne s'additionnent pas en « nombre »,
-  // on les pose côte à côte ; la capacité réelle est exprimée plus bas en équivalent-coques std).
+  // On lit les recettes AVANT l'en-tête pour connaître le format (GF ou standard) de chaque parfum
+  // et afficher les vraies coques + l'équivalent std entre parenthèses pour les GF.
+  let r1=null, r2=null;
+  try{ [r1, r2] = await Promise.all([rid1?db.recipes.get(rid1):null, rid2?db.recipes.get(rid2):null]); }catch(e){}
+  const gf1=!!(r1&&r1.grandFormat), gf2=!!(r2&&r2.grandFormat);
+  // Affichage par parfum : « q mac. → C coques GF (E std éq.) » si GF, sinon « q mac. → C coques ».
+  const ligneParfum = (nom, q, coq, gf) => {
+    const eq = Math.round(coq * (gf?GF_COQUE_RATIO:1));
+    const detail = gf ? `${qty(coq)} coques GF <span style="color:#9a8a82">(${qty(eq)} std éq.)</span>` : `${qty(coq)} coques`;
+    return `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc(nom)}</span><span>${qty(q)} mac. → ${detail}</span></div>`;
+  };
   let html =
     `<div style="display:flex;justify-content:space-between;font-weight:600"><span>⚖️ Répartition</span><b>${pct1} % / ${100-pct1} %</b></div>`+
-    `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc(nom1)}</span><span>${qty(q1)} mac. → ${qty(coq1)} coques</span></div>`+
-    `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc(nom2)}</span><span>${qty(q2)} mac. → ${qty(coq2)} coques</span></div>`;
+    ligneParfum(nom1, q1, coq1, gf1)+
+    ligneParfum(nom2, q2, coq2, gf2);
   try{
-    const [r1, r2] = await Promise.all([rid1?db.recipes.get(rid1):null, rid2?db.recipes.get(rid2):null]);
-    const gf1=!!(r1&&r1.grandFormat), gf2=!!(r2&&r2.grandFormat);
     // Capacité meringue en ÉQUIVALENT-COQUES STANDARD (1 coque GF = GF_COQUE_RATIO coques std).
     const eq1 = coq1 * (gf1?GF_COQUE_RATIO:1);
     const eq2 = coq2 * (gf2?GF_COQUE_RATIO:1);
