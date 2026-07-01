@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1106';
+const APP_VERSION = 'v1107';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -9940,6 +9940,10 @@ async function prodForm(prefill){  const recipes = await db.recipes.toArray();
   }
   _prodReelTouched=false;
   const opts = sortByName(recipes,'produitNom').map(r=>`<option value="${r.id}" data-rend="${r.rendement}">${esc(r.produitNom)} (${r.rendement}/batch)</option>`).join('');
+  // La 1re option du menu est la recette triée par nom : les valeurs par défaut (rendement, code lot)
+  // doivent suivre CETTE recette sélectionnée, pas recipes[0] (ordre base) — sinon le rendement
+  // pré-rempli ne correspond pas à la recette affichée dans le menu.
+  const recSel = sortByName(recipes,'produitNom')[0] || recipes[0];
   // [ÉTAPE 2a] Composants du catalogue (ex : chantilly vanille-coco) productibles comme garniture séparée.
   const _composantsCat = await db.components.toArray().catch(()=>[]);
   const _compOpts = _composantsCat.map(c=>`<option value="${c.id}" data-rend="${c.rendement||1}">${esc(c.nom||'')} (${c.rendement||1}/batch)</option>`).join('');
@@ -9990,14 +9994,14 @@ async function prodForm(prefill){  const recipes = await db.recipes.toArray();
    </div>
    <div class="row2" id="f_qteRow">
      <div class="field"><label>Quantité théorique <span style="color:#9a8a82;font-weight:400" id="qteUnit">— en macarons (base matières)</span></label>
-       <input type="number" id="f_qte" value="${recipes[0].rendement}" min="1" oninput="prodSyncReelDefault();prodApercuGarniture()"></div>
+       <input type="number" id="f_qte" value="${recSel.rendement}" min="1" oninput="prodSyncReelDefault();prodApercuGarniture()"></div>
      <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}" onchange="prodRefreshLot()"></div>
    </div>
    <p class="note" id="coqueHint" style="display:none;margin:-4px 0 8px;color:#8a6d3b"></p>
    <div class="field"><label>Quantité réelle produite <span style="color:#9a8a82;font-weight:400">— stock produits finis (modifiable en fin de production)</span></label>
-     <input type="number" id="f_qtereel" value="${recipes[0].rendement}" min="0" oninput="_prodReelTouched=true;prodUpdateEcartHint()">
+     <input type="number" id="f_qtereel" value="${recSel.rendement}" min="0" oninput="_prodReelTouched=true;prodUpdateEcartHint()">
      <p class="note" id="ecartHint" style="margin-top:4px;display:none"></p></div>
-   <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoutera à la fin</span></label><input id="f_lot" value="${lotDateJJMMAA()}${flavorCode(recipes[0].produitNom)}" oninput="this.dataset.touched='1'"></div>
+   <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoutera à la fin</span></label><input id="f_lot" value="${lotDateJJMMAA()}${flavorCode(recSel.produitNom)}" oninput="this.dataset.touched='1'"></div>
    <p class="note" id="dlcHint">La production démarre au statut <b>« démarrée »</b>. Tu choisiras l'<b>emplacement de rangement</b> au moment de la <b>fin de production</b> (« ✓ Terminer »), et la DLC (<b>+7 j</b> frigo, <b>+4 mois</b> congélateur) ne courra qu'à ce moment-là.</p>
    <p class="note">Les <b>matières premières</b> sont déduites sur la base de la <b>quantité théorique</b> (DLC la plus proche d'abord). Le <b>stock de produits finis</b> est calé sur la <b>quantité réelle</b>. L'écart est historisé. Si le stock matières est insuffisant, <b>rien</b> n'est enregistré.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
