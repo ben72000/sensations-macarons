@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1103';
+const APP_VERSION = 'v1104';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -19860,6 +19860,15 @@ async function comptaFluxDetail(type){
       const m=money2(o.montant); if(!(m>0)) return; total+=m;
       lignes.push({date:o.date, nom:clName(o.clientId), montant:m, oid:o.id, sub:o.statut||''});
     });
+    // [FIX COHÉRENCE] Les marchés clôturés entrent AUSSI dans le CA facturé (computeAccounting les
+    // ajoute à factByMonth). Ils manquaient ici → le total de la carte (commandes + marchés) ne
+    // correspondait pas au détail (commandes seules). On les liste donc explicitement.
+    try{
+      const marketsF=await db.markets.toArray();
+      marketsF.forEach(k=>{ if(k.statut!=='clos' || !inRange(k.date)) return;
+        const net=(typeof marketNetCA==='function')?marketNetCA(k):0; if(net<=0) return; total+=net;
+        lignes.push({date:k.date, nom:'🛒 '+(k.nom||'Marché'), montant:net, oid:null, sub:'marché'}); });
+    }catch(e){}
   } else {
     // CA encaissé = chaque PAIEMENT dont la date est dans la période + marchés clôturés.
     orders.forEach(o=>{
