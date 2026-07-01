@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1102';
+const APP_VERSION = 'v1103';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -19695,7 +19695,11 @@ function comptaSetMonth(m){ _comptaMonth = m; renderCompta(); }
 // chaque ligne cliquable pour ouvrir la commande/charge correspondante.
 async function comptaDetail(type){
   const start = (_comptaPeriode && _comptaPeriode!=='tout') ? comptaPeriodeStart(_comptaPeriode) : null;
-  const inPeriode = d => !start || (d||'')>=start;
+  // [FIX PÉRIODE] On applique la borne de FIN autant que la borne de début. Sans elle,
+  // le détail listait tout ce qui suit la date de début (ex : période « mai » → juin, juillet…
+  // apparaissaient aussi), en contradiction avec le libellé et avec les totaux de computeAccounting.
+  const end = (_comptaPeriode && _comptaPeriode!=='tout') ? comptaPeriodeEnd(_comptaPeriode) : null;
+  const inPeriode = d => { const s=(d||''); if(start && s<start) return false; if(end && s>end) return false; return true; };
   const orders = (await db.orders.toArray()).filter(o=>inPeriode(o.date));
   const charges = (await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[])).filter(c=>inPeriode(c.date));
   const markets = (await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[])).filter(k=>inPeriode(k.date));
