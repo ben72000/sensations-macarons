@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1135';
+const APP_VERSION = 'v1134';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -1458,7 +1458,7 @@ function rdEncodeADN(ingredients){
 
 
 // ---- Sources : libellés + couleurs de badge ----
-const RD_SRC_LABEL = { moi:'Moi', chiara:'Chiara', bau:'Bau', lenotre:'Lenôtre', alice:'Alice', karina:'Karina', maddie:'Maddie', sab:'Sab', tfp:'TFP', matt:'Matt Adlard', autre:'Autre' };
+const RD_SRC_LABEL = { moi:'Moi', chiara:'Chiara', bau:'Bau', lenotre:'Lenôtre', alice:'Alice', karina:'Karina', maddie:'Maddie', sab:'Sab', tfp:'TFP', quinonero:'Quinonero', autre:'Autre' };
 
 // ---- Parsing d'un texte collé (best-effort) -> {titre, ingredients[], etapes[]} ----
 // Heuristique simple : lignes "qte unite nom" pour les ingrédients, lignes longues = étapes.

@@ -1,0 +1,242 @@
+[
+ {
+  "titre": "Quinonero — Ganache montée vanille & clou de girofle",
+  "source": "quinonero",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Quinonero — Ganache montée vanille & clou de girofle",
+    "role": "garniture",
+    "type": "ganache montée infusée",
+    "ingredients": [
+     {
+      "nom": "Crème liquide entière (chaude, infusion)",
+      "qte": 125,
+      "unite": "g"
+     },
+     {
+      "nom": "Gousse de vanille",
+      "qte": 0.5,
+      "unite": "unité"
+     },
+     {
+      "nom": "Clou de girofle",
+      "qte": 0.8,
+      "unite": "g"
+     },
+     {
+      "nom": "Masse gélatine",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Chocolat blanc Ivoire",
+      "qte": 75,
+      "unite": "g"
+     },
+     {
+      "nom": "Crème liquide entière (froide)",
+      "qte": 325,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Porter la crème (125 g) à courte ébullition avec la vanille grattée et les clous de girofle écrasés ; couvrir et infuser 30 min.",
+     "Chinoiser, réchauffer si besoin, puis dissoudre la masse gélatine dans l'infusion chaude.",
+     "Verser en plusieurs fois sur le chocolat blanc et émulsionner au centre.",
+     "Ajouter la crème froide (325 g) et lisser au mixeur plongeant sans incorporer d'air.",
+     "Filmer au contact et maturer au froid 12 h minimum avant de foisonner au bec d'oiseau."
+    ],
+    "note": "Masse gélatine ratio 1:6 (convention du carnet) : 10 g ≈ 1,4 g gélatine 200 bloom + 8,6 g d'eau. Clou de girofle 0,8 g ≈ 8-10 pièces. Conservation 48 h au frais avant foisonnage."
+   }
+  ]
+ },
+ {
+  "titre": "Quinonero — Confit de fraise",
+  "source": "quinonero",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Quinonero — Confit de fraise",
+    "role": "insert",
+    "type": "confit",
+    "ingredients": [
+     {
+      "nom": "Purée de fraise",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Jus de citron",
+      "qte": 14,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 10,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Masse gélatine",
+      "qte": 4,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Mélanger à sec le sucre et la pectine NH.",
+     "Chauffer la purée de fraise et le jus de citron vers 50 °C, verser le mélange sec en pluie au fouet.",
+     "Porter à ébullition franche pour activer la pectine.",
+     "Hors du feu, incorporer la masse gélatine puis chinoiser.",
+     "Après refroidissement, lisser au mixeur plongeant."
+    ],
+    "note": "Masse gélatine 4 g ≈ 0,6 g gélatine 200 bloom + 3,4 g d'eau (ratio 1:6). Conservation 48 h au frais ou plusieurs semaines congelé."
+   }
+  ]
+ },
+ {
+  "titre": "Quinonero — Insert brunoise de fraise",
+  "source": "quinonero",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Quinonero — Insert brunoise de fraise",
+    "role": "insert",
+    "type": "insert fruits frais",
+    "ingredients": [
+     {
+      "nom": "Confit de fraise (Quinonero)",
+      "qte": 100,
+      "unite": "g"
+     },
+     {
+      "nom": "Brunoise de fraises fraîches",
+      "qte": 250,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Tailler les fraises en brunoise régulière.",
+     "Enrober la brunoise avec le confit de fraise froid, sans écraser les fruits.",
+     "Filmer au contact et réserver au froid, ou couler en moule et congeler pour un insert démoulable."
+    ],
+    "note": "Ratio 1 part de confit pour 2,5 parts de fruits frais : le confit sert de liant. Fruits frais → conservation courte (48 h au frais)."
+   }
+  ]
+ },
+ {
+  "titre": "Quinonero — Caramel fraise",
+  "source": "quinonero",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Quinonero — Caramel fraise",
+    "role": "garniture-insert",
+    "type": "caramel de fruit",
+    "ingredients": [
+     {
+      "nom": "Sucre",
+      "qte": 180,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose (caramel)",
+      "qte": 60,
+      "unite": "g"
+     },
+     {
+      "nom": "Purée de fraise",
+      "qte": 200,
+      "unite": "g"
+     },
+     {
+      "nom": "Sirop de glucose (purée)",
+      "qte": 20,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Cuire le sucre et le glucose (60 g) à sec jusqu'à un caramel ambré (~180 °C).",
+     "En parallèle, chauffer la purée de fraise avec le second glucose (20 g).",
+     "Décuire le caramel avec la purée chaude en mélangeant bien.",
+     "Recuire l'ensemble à 108 °C, débarrasser, refroidir et stocker au frais."
+    ],
+    "note": "Caramel de fruit sans crème ni beurre : la purée remplace le laitier. Conservation 10 j au frais filmé au contact, plusieurs mois congelé."
+   }
+  ]
+ },
+ {
+  "titre": "Quinonero — Nappage fraise",
+  "source": "quinonero",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Quinonero — Nappage fraise",
+    "role": "base",
+    "type": "nappage",
+    "ingredients": [
+     {
+      "nom": "Jus de fraise",
+      "qte": 400,
+      "unite": "g"
+     },
+     {
+      "nom": "Jus de citron",
+      "qte": 4,
+      "unite": "g"
+     },
+     {
+      "nom": "Sucre",
+      "qte": 8,
+      "unite": "g"
+     },
+     {
+      "nom": "Pectine NH",
+      "qte": 10,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Chauffer le jus de fraise et le jus de citron vers 50 °C.",
+     "Ajouter en pluie le mélange sucre + pectine NH, porter à ébullition 30 s.",
+     "Refroidir filmé au contact ; utiliser à 28 °C après mixage sans bulles (trempage en 3 passes)."
+    ],
+    "note": "Nappage de trempage très peu sucré (pectine dominante). Conservation 10 j au frais, plusieurs mois congelé."
+   }
+  ]
+ },
+ {
+  "titre": "Quinonero — Enrobage chocolat blanc",
+  "source": "quinonero",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Quinonero — Enrobage chocolat blanc",
+    "role": "base",
+    "type": "enrobage",
+    "ingredients": [
+     {
+      "nom": "Chocolat blanc Ivoire",
+      "qte": 150,
+      "unite": "g"
+     },
+     {
+      "nom": "Beurre de cacao",
+      "qte": 150,
+      "unite": "g"
+     }
+    ],
+    "etapes": [
+     "Fondre le beurre de cacao vers 50 °C.",
+     "Verser sur le chocolat blanc et lisser au mixeur plongeant.",
+     "Réserver à température ambiante ; utiliser à 35 °C pour tremper des inserts congelés."
+    ],
+    "note": "Ratio 1:1 chocolat/beurre de cacao : coque fine et cassante pour trempage d'inserts (fige au contact du congelé). Conservation plusieurs mois à T° ambiante en boîte hermétique."
+   }
+  ]
+ }
+]
