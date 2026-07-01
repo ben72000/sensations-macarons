@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1107';
+const APP_VERSION = 'v1108';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -14250,8 +14250,8 @@ function _parfumsToObj(p){
 }
 function _lineToEdit(ln){
   const t=ln.type;
-  if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null};
-  if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), _configChoisie:!!ln._configChoisie};
+  if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null};
+  if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), _configChoisie:!!ln._configChoisie};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', parfums:_parfumsToObj(ln.parfums), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacNb>0?+ln.sacNb:0)};
@@ -14719,7 +14719,8 @@ function drawCoffretLine(ln,i){
     })()}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité par parfum)</label>
     <div class="flav-grid">${flavRows}${sansParfumRow}</div>
-    ${sansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${sansParfum} macaron${sansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>` : ''}
+    ${sansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${sansParfum} macaron${sansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>
+    ${cmdSpModeBlock(ln,i)}` : ''}
     <div class="sum-box" style="border:2px solid ${rempliCol};background:${totQ===cap?'#eef6ee':(totQ>cap?'#fdf2f1':'#fbf8f3')}">
       <span>${nbDiff} parfum(s)${sansParfum?` + ${sansParfum} sans parfum`:''}</span>
       <b style="color:${rempliCol};font-size:1.1rem">${rempliTxt}${totQ===cap?' ✓':''}</b></div>
@@ -14728,6 +14729,28 @@ function drawCoffretLine(ln,i){
   </div>`;
 }
 function setCoffretSansParfum(i,v){ const q=Math.max(0,+v||0); if(q>0) cmdLines[i].sansParfum=q; else delete cmdLines[i].sansParfum; drawLines(); }
+// [PARFUMS NON SPÉCIFIÉS — LIBELLÉ DOCUMENT] Quand une ligne a des macarons « sans parfum »,
+// on choisit comment ils apparaissent sur le devis/facture : « Assortiment » (nb de parfums
+// optionnel) OU « Parfum(s) à déterminer ». Modes exclusifs. spMode: 'assortiment' | 'adeterminer'.
+// N'affecte PAS la production (toujours sansParfum macarons à définir), seulement l'affichage.
+function cmdSpModeBlock(ln,i){
+  const mode = ln.spMode || 'assortiment';
+  const nb = +ln.spNbParfums||0;
+  const opt = (val,lbl)=>`<label style="display:inline-flex;align-items:center;gap:6px;margin-right:14px;cursor:pointer;font-size:.86rem;color:#6a5a52">
+    <input type="radio" name="spMode_${i}" value="${val}" ${mode===val?'checked':''} onchange="setSpMode(${i},'${val}')"> ${lbl}</label>`;
+  let nbField='';
+  if(mode==='assortiment'){
+    nbField = `<div class="field" style="margin:6px 0 0"><label style="font-weight:400;color:#7a6a60">Nombre de parfums de l'assortiment <span style="color:#9a8a82">— facultatif ; 1 = « 1 parfum » (pas un assortiment)</span></label>
+      <input type="number" min="0" step="1" value="${nb>0?nb:''}" placeholder="ex : 4" oninput="setSpNbParfums(${i},this.value)" style="max-width:140px"></div>`;
+  }
+  return `<div style="margin:4px 0 2px;padding:8px 10px;background:#faf7f1;border:1px solid var(--hair);border-radius:10px">
+    <div style="font-size:.78rem;color:#7a6a62;margin-bottom:4px">Affichage sur le devis / la facture :</div>
+    ${opt('assortiment','Assortiment')}${opt('adeterminer','Parfum(s) à déterminer')}
+    ${nbField}
+  </div>`;
+}
+function setSpMode(i,v){ if(!cmdLines[i]) return; cmdLines[i].spMode = (v==='adeterminer')?'adeterminer':'assortiment'; if(v==='adeterminer') delete cmdLines[i].spNbParfums; drawLines(); }
+function setSpNbParfums(i,v){ if(!cmdLines[i]) return; const n=Math.max(0,Math.round(+v||0)); if(n>0) cmdLines[i].spNbParfums=n; else delete cmdLines[i].spNbParfums; }
 function setCoffretTaille(i,v){ cmdLines[i].taille=+v;
   cmdLines[i].prixUnitaireApplique=null; // taille changée → re-tarifer au prix courant du catalogue
   // purge les parfums au-delà de la nouvelle taille
@@ -15233,8 +15256,8 @@ function setLineRemiseEuro(i,v){
 function cmdLinesToStored(){
   return (cmdLines||[]).map(ln=>{
     const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
-    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, sansParfum:(+ln.sansParfum||0)||undefined, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', remisePct:rp, parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacMatId>0?Math.max(0,Math.round(+ln.sacNb||0)):0), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
@@ -35725,7 +35748,15 @@ async function factSaveEmetteurAndBack(orderId){
 function factLineDesc(ln){
   const parfums = (ln.parfums||[]).filter(p=>+p.qte>0).map(p=>`${p.nom} ×${p.qte}`).join(', ');
   const items = (ln.items||[]).filter(p=>+p.qte>0).map(p=>`${p.nom} ×${p.qte}`).join(', ');
-  if(ln.type==='coffret') return `Coffret ${ln.taille} macarons${parfums?' — '+parfums:''}`;
+  // Mention texte des macarons « sans parfum » selon spMode (voir spLibelle HTML).
+  const spTxt = (()=>{
+    const nb=+ln.sansParfum||0; if(nb<=0) return '';
+    if((ln.spMode||'assortiment')==='adeterminer') return `parfum(s) à déterminer ×${nb}`;
+    const n=+ln.spNbParfums||0;
+    return (n===1?`1 parfum ×${nb}`:(n>1?`assortiment ${n} parfums ×${nb}`:`assortiment ×${nb}`));
+  })();
+  const joinP = base => { const parts=[parfums, spTxt].filter(Boolean).join(', '); return parts?base+' — '+parts:base; };
+  if(ln.type==='coffret') return joinP(`Coffret ${ln.taille} macarons`);
 
   if(ln.type==='grand') return `Macarons grand format${items?' — '+items:''}`;
   if(ln.type==='vrac') return `Macarons${parfums?' — '+parfums:''}`;
@@ -35743,15 +35774,30 @@ function factLineDesc(ln){
 function factLineDescHtml(ln){
   const parfums = (ln.parfums||[]).filter(p=>+p.qte>0);
   const items = (ln.items||[]).filter(p=>+p.qte>0);
+  // [PARFUMS NON SPÉCIFIÉS] Libellé document pour les macarons « sans parfum » selon spMode.
+  // Assortiment : « assortiment N parfums » (ou « assortiment » si N absent ; « 1 parfum » si N=1,
+  // car 1 parfum n'est pas un assortiment). À déterminer : « parfum(s) à déterminer ».
+  const spLibelle = (l)=>{
+    const nb = +l.sansParfum||0; if(nb<=0) return '';
+    const mode = l.spMode || 'assortiment';
+    let txt;
+    if(mode==='adeterminer'){
+      txt = 'parfum(s) à déterminer';
+    } else {
+      const n = +l.spNbParfums||0;
+      txt = n===1 ? '1 parfum' : (n>1 ? `assortiment ${n} parfums` : 'assortiment');
+    }
+    return `<span class="ln-sub">${esc(txt)} ×${nb}</span>`;
+  };
   if(ln.type==='evenement'){
     const tete = `Prestation événement : ${ln.evQte||0} macarons`;
     const lignesParfums = parfums.map(p=>`<span class="ln-sub">${esc(p.nom)} ×${+p.qte}</span>`).join('');
-    return `<span class="ln-main">${esc(tete)}</span>${lignesParfums}`;
+    return `<span class="ln-main">${esc(tete)}</span>${lignesParfums}${spLibelle(ln)}`;
   }
   if(ln.type==='coffret'){
     const tete = `Coffret ${ln.taille} macarons`;
     const lignesParfums = parfums.map(p=>`<span class="ln-sub">${esc(p.nom)} ×${+p.qte}</span>`).join('');
-    return `<span class="ln-main">${esc(tete)}</span>${lignesParfums}`;
+    return `<span class="ln-main">${esc(tete)}</span>${lignesParfums}${spLibelle(ln)}`;
   }
   // Autres types : on garde la description texte existante (échappée).
   return esc(factLineDesc(ln));
@@ -35765,6 +35811,13 @@ function factLineRows(ln, brut){
   // brut=true : affiche le montant AVANT remise de ligne (utilisé par le devis, qui montre
   // le prix brut par ligne puis applique la remise une seule fois sur le total).
   const montantLn = brut ? lineTotalBrut(ln) : lineTotalStored(ln);
+  // [REMISE DE LIGNE] Sous-ligne discrète « remise −X € » quand une remise de ligne s'applique.
+  // Affichée UNIQUEMENT en mode net (brut=false) : en mode brut, la remise est déjà agrégée
+  // dans le total « Réductions accordées » en bas, l'afficher par ligne la compterait deux fois.
+  const _remLn = (!brut && typeof lineRemiseEuro==='function') ? money2(lineRemiseEuro(ln)) : 0;
+  const remiseSub = _remLn>0
+    ? `<tr class="ln-remise"><td class="desc"><span class="ln-sub" style="color:#3f7d52">remise de ligne \u2212${euro(_remLn)}</span></td><td class="mt" style="color:#3f7d52">\u2212${euro(_remLn)}</td></tr>`
+    : '';
   if(ln.type==='evenement' && (+ln.equip||0)>0){
     const nbPyr = +ln.equip||0;
     const partPyr = pyraTotalLigne(ln);                        // part pyramides (location ou vente)
@@ -35785,9 +35838,11 @@ function factLineRows(ln, brut){
                 `<span class="ln-loc">à retourner dans un délai de 48h après l'événement</span>`;
     }
     const rowPyr = `<tr><td class="desc">${descPyr}</td><td class="mt">${euro(partPyrAff)}</td></tr>`;
-    return rowMaca + rowPyr;
+    return rowMaca + rowPyr + remiseSub;
   }
-  return `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(montantLn)}</td></tr>`;
+  // Si remise de ligne affichée (mode net) : ligne principale au BRUT, puis sous-ligne « remise −X € ».
+  const mtPrincipal = _remLn>0 ? lineTotalBrut(ln) : montantLn;
+  return `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(mtPrincipal)}</td></tr>${remiseSub}`;
 }
 // Bloc « Coordonnées bancaires » pour le pied de page des documents (devis + facture).
 // Renvoie '' si l'émetteur n'a pas renseigné d'IBAN, sinon un bloc HTML échappé multi-lignes.
@@ -35853,14 +35908,15 @@ async function genererDevisDoc(docId){
   const persoMt = persoMontant(d.persoMacarons, d.persoRemiseEur);   // montant NET de la personnalisation
   const gpct = Math.max(0, Math.min(100, +d.remiseGlobale||0));
   // Total = montant stocké du devis si dispo (déjà net, perso incluse, remise appliquée).
-  // Sous-total BRUT = lignes en brut + personnalisation. La remise s'applique UNE fois sur ce brut.
-  const totalBrut = money2(lignes.reduce((s,ln)=>s+lineTotalBrut(ln),0) + persoMt);
+  // Sous-total = lignes NETTES (remises de ligne déjà déduites, affichées par ligne) + perso.
+  // La remise GLOBALE (gpct) s'applique une fois sur ce sous-total, séparément.
+  const totalBrut = money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0) + persoMt);
   const total = (d.montant!=null) ? +d.montant : money2(totalBrut - money2(totalBrut*gpct/100));
   const reductions = money2(Math.max(0, totalBrut - total));
   // Pourcentage de remise à afficher : le % global saisi si présent, sinon le % effectif.
   const reducPct = gpct>0 ? gpct : (totalBrut>0 ? Math.round(reductions/totalBrut*1000)/10 : 0);
 
-  const rows = lignes.map(ln=>factLineRows(ln, true)).join('');   // true = prix BRUT par ligne
+  const rows = lignes.map(ln=>factLineRows(ln, false)).join('');   // false = prix NET par ligne (remise de ligne montrée sous la ligne)
   const section = `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -36262,17 +36318,18 @@ async function genererFactureMultiple(ids){
     const persoMt = persoMontant(o.persoMacarons, o.persoRemiseEur);            // montant NET personnalisation
     const gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
     const frais = +o.fraisLivraison||0;
-    // Sous-total BRUT = lignes brutes + personnalisation. La remise s'applique une fois sur ce brut.
-    const brutCmd = money2(lignes.reduce((s,ln)=>s+lineTotalBrut(ln),0) + persoMt);
+    // Sous-total = lignes NETTES (remises de ligne déjà déduites et affichées par ligne) + perso.
+    // La remise GLOBALE s'applique une fois sur ce sous-total.
+    const brutCmd = money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0) + persoMt);
     // total commande = montant stocké (déjà net, perso + remise incluses, livraison en sus) si dispo.
     const totalCmd = (o.montant!=null) ? +o.montant : money2(brutCmd - money2(brutCmd*gpct/100) + frais);
-    // Réduction = brut − (total − frais). Le % affiché : global saisi, sinon effectif.
+    // Réduction = sous-total net − (total − frais) = remise GLOBALE seule. Le % affiché : global saisi, sinon effectif.
     const reducCmd = money2(Math.max(0, brutCmd - money2(totalCmd - frais)));
     const reducPct = gpct>0 ? gpct : (brutCmd>0 ? Math.round(reducCmd/brutCmd*1000)/10 : 0);
     grandTotal += totalCmd;
     grandBrut += brutCmd;
     grandNetHorsLiv += money2(totalCmd - frais);
-    const rows = lignes.map(ln=>factLineRows(ln, true)).join('');   // true = prix BRUT par ligne
+    const rows = lignes.map(ln=>factLineRows(ln, false)).join('');   // false = prix NET par ligne (remise de ligne montrée sous la ligne)
     return `
       <div class="cmd-section">
         <div class="cmd-head">
