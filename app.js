@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1121';
+const APP_VERSION = 'v1122';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -6678,11 +6678,12 @@ async function docOpen(id){
           <input type="date" id="docFactDate" value="${d.date||new Date().toISOString().slice(0,10)}" max="${new Date().toISOString().slice(0,10)}" onchange="docSetFactDate(${d.id},this.value)"></div>
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
           <button class="btn ghost" onclick="docApercu(${d.id})">👁️ Aperçu complet</button>
+          <button class="btn ghost" onclick="docEnvoyerMail(${d.id})">✉️ Envoyer par mail</button>
           <button class="btn gold" onclick="docValiderFacture(${d.id})">🔒 Valider définitivement</button>
         </div>
       `:`
         <div class="banner" style="background:#f0ecf3;border-color:#cdbcd6;margin-top:10px">🔒 <div><b>Facture validée</b> — inaltérable. Ni modification ni suppression possibles (obligation légale).${d.dateValidation?` Validée le ${fmtDate(d.dateValidation)}.`:''}</div></div>
-        <div style="margin-top:8px"><button class="btn ghost" onclick="docApercu(${d.id})">👁️ Voir / imprimer la facture</button></div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" onclick="docApercu(${d.id})">👁️ Voir / imprimer la facture</button><button class="btn gold" onclick="docEnvoyerMail(${d.id})">✉️ Envoyer par mail</button></div>
       `}
     `:''}
     ${d.type==='devis'?`<div style="margin-top:10px"><button class="btn gold" style="width:100%" onclick="genererDevisDoc(${d.id})">👁️ Visualiser le devis <span style="font-weight:400;opacity:.85">· imprimer / envoyer</span></button></div>`:''}
@@ -6826,9 +6827,32 @@ async function docDelete(id){
 // Aperçu intégral de la facture (popup type PDF) à partir du HTML mémorisé.
 async function docApercu(id){
   const d=await db.documents.get(id); if(!d) return;
-  if(d.html){ openPrintView(d.html, {title:`Facture ${d.numero||d.refInterne||''}`}); }
+  const libelle = `${d.type==='devis'?'Devis':'Facture'} ${d.numero||d.refInterne||''}`.trim();
+  const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
+  if(d.html){
+    // On prépare le mail (objet + message + signature) pour que l'aperçu propose l'envoi.
+    if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html, libelle, client);
+    openPrintView(d.html, {title:libelle, extraButtons:(typeof _docMailBtns==='function'?_docMailBtns():'')});
+  }
   else if(d.orderIds&&d.orderIds.length){ genererFactureMultiple(d.orderIds); }
   else { toast('Aperçu indisponible'); }
+}
+// [RACCOURCI MAIL] Envoie directement le document (facture/devis) par mail avec PDF joint,
+// objet = n° du document, message soigné + signature. Utilisable depuis la fiche document.
+async function docEnvoyerMail(id){
+  const d=await db.documents.get(id); if(!d){ toast('Document introuvable'); return; }
+  if(!d.html){
+    // Pas d'HTML mémorisé (vieux document) : on régénère l'aperçu, qui préparera le mail.
+    if(d.orderIds&&d.orderIds.length){ return genererFactureMultiple(d.orderIds); }
+    toast('Document indisponible pour l\'envoi'); return;
+  }
+  const libelle = `${d.type==='devis'?'Devis':'Facture'} ${d.numero||d.refInterne||''}`.trim();
+  const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html, libelle, client);
+  if(!(client&&client.email)){
+    toast('⚠️ Ce client n\'a pas d\'e-mail — le PDF va s\'ouvrir, choisis le destinataire à la main.');
+  }
+  if(typeof envoyerDocPdfMail==='function') await envoyerDocPdfMail();
 }
 // VALIDATION définitive d'un brouillon de facture : avertissement, contrôle de date,
 // numéro séquentiel strict, puis verrouillage (inaltérable).
@@ -36284,15 +36308,33 @@ async function envoyerDocPdfMail(){
 // [v1081] Mémorise le document courant pour l'envoi PDF, avec un objet = libellé (n° facture/devis).
 function _prepDocPdfMail(html, libelle, client){
   const nomClient = client ? [client.prenom, client.nom].filter(Boolean).join(' ') : '';
+  const estFacture = /facture/i.test(libelle);
+  const e = (typeof factGetEmetteur==='function') ? factGetEmetteur() : {};
+  // Signature à partir des coordonnées de facturation (exploitant, enseigne, tél, e-mail).
+  const signat = [
+    'Bien cordialement,',
+    (e.exploitant||'').trim(),
+    (e.nom||'Sensations Macarons').trim(),
+    (e.tel?('Tél. '+e.tel):'' ).trim(),
+    (e.email||'').trim()
+  ].filter(Boolean);
   const corps = [
     `Bonjour${nomClient ? ' '+nomClient : ''},`, '',
-    `Veuillez trouver ci-joint ${/facture/i.test(libelle)?'votre facture':'votre devis'} : ${libelle}.`,
-    '', 'Bien cordialement.'
+    estFacture
+      ? `Veuillez trouver ci-joint votre facture ${libelle.replace(/^Facture\s*/i,'')}.`.replace(/\s+\./,'.')
+      : `Veuillez trouver ci-joint votre devis ${libelle.replace(/^Devis\s*/i,'')}.`.replace(/\s+\./,'.'),
+    '',
+    estFacture
+      ? `Je vous remercie de votre confiance et reste à votre disposition pour toute question.`
+      : `Ce devis est valable un mois. N'hésitez pas à me contacter pour toute question ou pour le valider.`,
+    '',
+    ...signat
   ].join('\n');
+  const objet = estFacture ? libelle : libelle;
   window._lastDocHtml = html;
   window._lastDocData = null;   // [v1084] pas de données structurées ici → repli HTML (facture)
-  window._lastDocMeta = { fileName:libelle, objet:libelle, corps,
-    mailto:`mailto:${client&&client.email?encodeURIComponent(client.email):''}?subject=${encodeURIComponent(libelle)}&body=${encodeURIComponent(corps)}` };
+  window._lastDocMeta = { fileName:libelle, objet, corps,
+    mailto:`mailto:${client&&client.email?encodeURIComponent(client.email):''}?subject=${encodeURIComponent(objet)}&body=${encodeURIComponent(corps)}` };
 }
 
 // Boutons de la barre d'aperçu : envoi PDF (objet maîtrisé) + mail seul (repli).
