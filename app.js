@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1124';
+const APP_VERSION = 'v1125';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -6841,18 +6841,24 @@ async function docApercu(id){
 // objet = n° du document, message soigné + signature. Utilisable depuis la fiche document.
 async function docEnvoyerMail(id){
   const d=await db.documents.get(id); if(!d){ toast('Document introuvable'); return; }
-  if(!d.html){
-    // Pas d'HTML mémorisé (vieux document) : on régénère l'aperçu, qui préparera le mail.
-    if(d.orderIds&&d.orderIds.length){ return genererFactureMultiple(d.orderIds); }
-    toast('Document indisponible pour l\'envoi'); return;
-  }
   const libelle = `${d.type==='devis'?'Devis':'Facture'} ${d.numero||d.refInterne||''}`.trim();
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
-  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html, libelle, client);
-  if(!(client&&client.email)){
-    toast('⚠️ Ce client n\'a pas d\'e-mail — le PDF va s\'ouvrir, choisis le destinataire à la main.');
+  // Prépare l'objet + le message + la signature (renseigne window._lastDocMeta.mailto).
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html||'', libelle, client);
+  const meta = window._lastDocMeta||{};
+  // On ouvre directement l'appli mail (destinataire + objet + message + signature déjà remplis).
+  // La génération PDF automatique n'est pas fiable sur iOS/Safari (canvas « tainted » par le
+  // foreignObject → SecurityError), donc Benjamin joint le PDF lui-même via « Voir / imprimer ».
+  if(meta.mailto){
+    if(!(client&&client.email)){
+      toast('Mail ouvert — ajoute le destinataire (ce client n\'a pas d\'e-mail enregistré).');
+    } else {
+      toast('Mail ouvert ✎ pense à joindre le PDF via « Voir / imprimer ».');
+    }
+    window.location.href = meta.mailto;
+    return;
   }
-  if(typeof envoyerDocPdfMail==='function') await envoyerDocPdfMail();
+  toast('Impossible de préparer le mail pour ce document.');
 }
 // VALIDATION définitive d'un brouillon de facture : avertissement, contrôle de date,
 // numéro séquentiel strict, puis verrouillage (inaltérable).
@@ -36136,9 +36142,8 @@ async function genererDevisDoc(docId){
   window._lastDocHtml = devisHtml;
   window._lastDocData = docData;   // [v1084] données pour le PDF canvas
   window._lastDocMeta = { fileName:`Devis ${d.numero||''}`, objet, corps, mailto };
-  const btnPdfMail = `<button class="pv-btn" onclick="envoyerDocPdfMail()">✉️ Envoyer par mail (PDF)</button>`;
-  const btnMailto  = `<a class="pv-btn" href="${mailto}" title="Mail sans pièce jointe (corps pré-rempli)">✏️ Mail seul</a>`;
-  extraBtns = btnPdfMail + btnMailto;
+  const btnMailto  = `<a class="pv-btn" href="${mailto}" title="Ouvre l'appli mail avec le message pré-rempli">✉️ Envoyer par mail</a>`;
+  extraBtns = btnMailto;
 
   openPrintView(devisHtml, { title:`Devis ${d.numero||''}`, extraButtons: extraBtns });
 }
@@ -36189,9 +36194,11 @@ function _prepDocPdfMail(html, libelle, client){
 // Boutons de la barre d'aperçu : envoi PDF (objet maîtrisé) + mail seul (repli).
 function _docMailBtns(){
   const m = window._lastDocMeta||{};
-  const btnPdf = `<button class="pv-btn" onclick="envoyerDocPdfMail()">✉️ Envoyer par mail (PDF)</button>`;
-  const btnMail = m.mailto ? `<a class="pv-btn" href="${m.mailto}" title="Mail sans pièce jointe">✏️ Mail seul</a>` : '';
-  return btnPdf + btnMail;
+  // Envoi PDF automatique retiré : non fiable sur iOS/Safari (canvas tainted → SecurityError).
+  // On propose l'ouverture directe du mail (message + signature) ; le PDF se joint via le bouton
+  // d'impression natif « Enregistrer en PDF » déjà présent dans cette barre d'aperçu.
+  const btnMail = m.mailto ? `<a class="pv-btn" href="${m.mailto}" title="Ouvre l'appli mail avec le message pré-rempli">✉️ Envoyer par mail</a>` : '';
+  return btnMail;
 }
 
 // Génère et imprime la facture d'une commande (→ « Enregistrer en PDF » sur iOS).
