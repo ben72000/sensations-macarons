@@ -1,0 +1,426 @@
+[
+ {
+  "titre": "Matt — Ganache montée vanille mascarpone",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Ganache montée vanille mascarpone",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {"nom": "Crème entière (chaude)", "qte": 200, "unite": "g"},
+     {"nom": "Crème entière froide", "qte": 85, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "unité"},
+     {"nom": "Gélatine poudre 220-250 blooms", "qte": 3, "unite": "g"},
+     {"nom": "Chocolat blanc", "qte": 70, "unite": "g"},
+     {"nom": "Mascarpone", "qte": 70, "unite": "g"}
+    ],
+    "etapes": [
+     "Hydrater la gélatine dans 18 g d'eau froide, laisser gonfler 5 min.",
+     "Chauffer la crème (1) avec la vanille grattée ; hors feu, dissoudre la masse gélatine.",
+     "Verser la crème chaude sur le chocolat blanc et le mascarpone dans un pichet haut, attendre 2 min, mixer au plongeant.",
+     "Ajouter la crème froide, mixer à nouveau jusqu'à lisse.",
+     "Filmer au contact, 6 h au frais minimum (idéalement une nuit).",
+     "Monter en pics moyens/fermes et utiliser aussitôt."
+    ],
+    "note": "Gélatine 3 g poids sec hydratée 1:6 (18 g d'eau) ou 1 feuille essorée. Le mascarpone renforce la tenue au pochage. Se conserve 2-3 jours au frais avant montage."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Ganache montée chocolat noir",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Ganache montée chocolat noir",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {"nom": "Crème entière (chaude)", "qte": 300, "unite": "g"},
+     {"nom": "Crème entière froide", "qte": 200, "unite": "g"},
+     {"nom": "Gélatine poudre 220-250 blooms", "qte": 3, "unite": "g"},
+     {"nom": "Chocolat noir 60-70%", "qte": 120, "unite": "g"}
+    ],
+    "etapes": [
+     "Hydrater la gélatine dans 18 g d'eau froide, 5 min.",
+     "Chauffer la crème (1) ; hors feu, dissoudre la masse gélatine.",
+     "Verser sur le chocolat haché dans un pichet haut, 2 min, mixer.",
+     "Ajouter la crème froide, mixer jusqu'à lisse.",
+     "Filmer au contact, 6 h au frais minimum.",
+     "Monter en pics moyens/fermes et utiliser aussitôt."
+    ],
+    "note": "Astuce du chef : si la crème est trop ferme le lendemain (cacao élevé), la détendre 1-2 h à température ambiante et la pocher directement sans la refouetter. Variante « Ganache 101 » (nappage de cake) : crème 400 g, chocolat 70% 100 g, sucre ou miel 5 g, gélatine 2,5 g (+15 g d'eau) — proportions quasi identiques."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Ganache montée café (infusion grains)",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Ganache montée café (infusion grains)",
+    "role": "garniture",
+    "type": "ganache montée infusée",
+    "ingredients": [
+     {"nom": "Crème entière (infusion)", "qte": 200, "unite": "g"},
+     {"nom": "Crème entière (ajout)", "qte": 120, "unite": "g"},
+     {"nom": "Grains de café entiers", "qte": 35, "unite": "g"},
+     {"nom": "Gélatine poudre 220-250 blooms", "qte": 3, "unite": "g"},
+     {"nom": "Chocolat blanc", "qte": 110, "unite": "g"}
+    ],
+    "etapes": [
+     "Torréfier les grains de café 3 min à 160 °C.",
+     "Réunir grains et crème (1) en casserole, filmer hermétiquement le dessus ; chauffer jusqu'à ce que le film gonfle, couper le feu, infuser 30 min à couvert.",
+     "Hydrater la gélatine dans 18 g d'eau froide.",
+     "Retirer le film, ajouter la crème (2) froide, reporter à léger frémissement, dissoudre la gélatine.",
+     "Mixer 10-20 s pour concasser les grains, puis chinoiser sur le chocolat blanc, attendre 2 min, mixer.",
+     "Filmer au contact, 6 h au frais minimum, monter en pics moyens/fermes."
+    ],
+    "note": "Infusion à chaud sous film : le film gonflé signale la température sans évaporation d'arômes. Technique transposable à d'autres infusions (thé, épices). Alternative du chef sans grains : 1 c. à café de café soluble (~2 g)."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Ganache montée aux fruits",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Ganache montée aux fruits",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {"nom": "Gélatine poudre 200 blooms", "qte": 4, "unite": "g"},
+     {"nom": "Purée de fruits", "qte": 125, "unite": "g"},
+     {"nom": "Chocolat blanc (fondu)", "qte": 145, "unite": "g"},
+     {"nom": "Crème entière", "qte": 530, "unite": "g"}
+    ],
+    "etapes": [
+     "Hydrater la gélatine dans 24 g d'eau, 20 min au réfrigérateur.",
+     "Chauffer la crème, hors feu dissoudre la masse gélatine.",
+     "Verser sur le chocolat blanc fondu, mélanger en ganache.",
+     "Laisser redescendre à 40 °C, ajouter la purée de fruits, mixer.",
+     "Filmer au contact, une nuit au frais.",
+     "Monter le lendemain."
+    ],
+    "note": "Recette fournie par le chef en réponse aux lecteurs (les ganaches vanille/choco/café ne supportent pas l'ajout direct de purée). Purée incorporée à 40 °C seulement, après émulsion. Deux versions données quasi identiques (124/144 et 125/145 g) → encodé 125/145. Parfum au choix selon la purée."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Ganache montée mascarpone",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Ganache montée mascarpone",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {"nom": "Gélatine poudre", "qte": 3, "unite": "g"},
+     {"nom": "Crème entière", "qte": 300, "unite": "g"},
+     {"nom": "Chocolat blanc", "qte": 75, "unite": "g"},
+     {"nom": "Mascarpone", "qte": 100, "unite": "g"},
+     {"nom": "Pâte de vanille", "qte": 2.5, "unite": "g"}
+    ],
+    "etapes": [
+     "Hydrater la gélatine dans 18 g d'eau, 5 min.",
+     "Réunir chocolat blanc, mascarpone et vanille dans un pichet haut.",
+     "Chauffer la crème à léger frémissement, hors feu dissoudre la gélatine.",
+     "Verser la crème chaude sur le mélange, attendre 2 min, mixer au plongeant.",
+     "Filmer au contact, 6 h au frais minimum (idéalement une nuit).",
+     "Monter en pics moyens/fermes sans excès."
+    ],
+    "note": "½ c. à café de pâte de vanille ≈ 2,5 g. Version de la tarte praliné noisette — plus riche en mascarpone (100 g pour 300 g de crème) que la version vanille de base, tenue de pochage supérieure (douille St-Honoré)."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Praliné noisette vanille",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Praliné noisette vanille",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     {"nom": "Noisettes torréfiées", "qte": 250, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 165, "unite": "g"},
+     {"nom": "Eau", "qte": 40, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "unité"}
+    ],
+    "etapes": [
+     "Torréfier les noisettes émondées à 175 °C, 20-25 min jusqu'à coloration dorée. Refroidir légèrement.",
+     "Cuire l'eau et le sucre à 116 °C, jeter les noisettes (et la vanille grattée) dans le sirop.",
+     "Poursuivre la cuisson en remuant constamment : le sucre masse et sable, puis refond en caramel profond enrobant les fruits.",
+     "Débarrasser aussitôt sur tapis silicone, parsemer de fleur de sel, refroidir 30 min.",
+     "Briser et mixer au robot puissant plusieurs minutes jusqu'à pâte très lisse et fluide."
+    ],
+    "note": "Fleur de sel : une pincée au refroidissement, non quantifiée. Vanille optionnelle. Sucre à 66 % des noisettes. Fiche d'origine : 400 g de noisettes brutes torréfiées dont 150 g réservés en poudre pour la pâte et la crème de la tarte — seuls les 250 g du praliné sont encodés."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Croustillant praliné feuilletine",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Croustillant praliné feuilletine",
+    "role": "garniture",
+    "type": "croustillant",
+    "ingredients": [
+     {"nom": "Praliné noisette", "qte": 140, "unite": "g"},
+     {"nom": "Chocolat au lait (fondu, tiède)", "qte": 40, "unite": "g"},
+     {"nom": "Feuilletine", "qte": 70, "unite": "g"}
+    ],
+    "etapes": [
+     "Réunir tous les ingrédients, mélanger en pâte épaisse.",
+     "Étaler en couche lisse et régulière sur le support."
+    ],
+    "note": "Fleur de sel en flocons : une pincée, non quantifiée. Le chocolat au lait fondu fige le croustillant au froid — plus de tenue que le 2:1 praliné/feuilletine de Chiara."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Pailleté feuilletine maison",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Pailleté feuilletine maison",
+    "role": "garniture",
+    "type": "croustillant",
+    "ingredients": [
+     {"nom": "Beurre doux mou", "qte": 50, "unite": "g"},
+     {"nom": "Sucre glace", "qte": 50, "unite": "g"},
+     {"nom": "Blancs d'œufs", "qte": 50, "unite": "g"},
+     {"nom": "Farine T55", "qte": 50, "unite": "g"}
+    ],
+    "etapes": [
+     "Crémer le beurre mou et le sucre glace tamisé 1 min jusqu'à lisse.",
+     "Ajouter les blancs, mélanger 30 s (l'appareil peut paraître tranché).",
+     "Ajouter la farine, battre 30 s en pâte lisse sans grumeaux de beurre.",
+     "Étaler le plus finement possible sur tapis silicone (en 2 fournées).",
+     "Cuire à 175 °C ~10 min jusqu'à doré uniforme, refroidir 5 min, concasser en paillettes."
+    ],
+    "note": "Appareil à tuile 1:1:1:1 concassé = équivalent maison de la feuillantine du commerce. Utile en dépannage ou pour maîtriser l'épaisseur des paillettes. Composant croustillant, pas une structure."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Crème au beurre américaine",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Crème au beurre américaine",
+    "role": "garniture",
+    "type": "crème au beurre",
+    "ingredients": [
+     {"nom": "Beurre doux mou", "qte": 200, "unite": "g"},
+     {"nom": "Sucre glace", "qte": 400, "unite": "g"},
+     {"nom": "Lait", "qte": 40, "unite": "g"}
+    ],
+    "etapes": [
+     "Battre le beurre 3 min au robot jusqu'à pâle et aéré.",
+     "Ajouter la moitié du sucre glace, battre 3 min.",
+     "Ajouter le reste du sucre et le lait, battre à vitesse moyenne 5-10 min jusqu'à lisse.",
+     "Détendre avec un peu de lait supplémentaire ou tiédir légèrement pour assouplir au pochage."
+    ],
+    "note": "2-3 c. à soupe de lait → encodé 40 g (30-45 g selon texture voulue). Vanille et sel : QS. La plus rapide des trois crèmes au beurre, aussi la plus sucrée (2:1 sucre/beurre) — jugée trop sucrée par le chef lui-même, mais très stable."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Crème au beurre française",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Crème au beurre française",
+    "role": "garniture",
+    "type": "crème au beurre",
+    "ingredients": [
+     {"nom": "Jaunes d'œufs", "qte": 115, "unite": "g"},
+     {"nom": "Eau", "qte": 60, "unite": "g"},
+     {"nom": "Sucre", "qte": 225, "unite": "g"},
+     {"nom": "Beurre doux", "qte": 450, "unite": "g"}
+    ],
+    "etapes": [
+     "Fouetter les jaunes au robot à vitesse moyenne.",
+     "En parallèle, cuire l'eau et le sucre à 121 °C.",
+     "Verser le sirop en filet sur les jaunes en fouettant (pâte à bombe), fouetter 7 min jusqu'à refroidissement de la cuve.",
+     "Incorporer le beurre morceau par morceau à vitesse moyenne.",
+     "Passer à la feuille, vitesse basse 2 min pour lisser."
+    ],
+    "note": "Vanille et sel : QS. Pâte à bombe → la plus riche et la plus soyeuse des trois, mais fragile à la chaleur (déconseillée par le chef pour un service au chaud). Base intéressante à parfumer (praliné, café, alcools)."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Crème au beurre meringue suisse",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Crème au beurre meringue suisse",
+    "role": "garniture",
+    "type": "crème au beurre",
+    "ingredients": [
+     {"nom": "Blancs d'œufs", "qte": 100, "unite": "g"},
+     {"nom": "Sucre", "qte": 200, "unite": "g"},
+     {"nom": "Beurre doux mou", "qte": 300, "unite": "g"}
+    ],
+    "etapes": [
+     "Chauffer blancs et sucre au bain-marie en fouettant jusqu'à 65 °C.",
+     "Transférer au robot, fouetter 7 min à vitesse moyenne jusqu'à cuve complètement froide (meringue suisse ferme).",
+     "Incorporer le beurre morceau par morceau — un tranchage temporaire est normal et se résorbe.",
+     "Fouetter 2-3 min jusqu'à texture lisse.",
+     "Finir à la feuille, vitesse basse 3 min pour chasser les bulles."
+    ],
+    "note": "Vanille et sel : QS. Ratio classique 1:2:3 blancs/sucre/beurre, confirmé par le chef. Sa préférée : légère, très lisse au pochage. À servir à température ambiante pour que les arômes s'expriment ; stable ~12 h à T° ambiante selon le chef."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Crémeux chocolat blanc",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Crémeux chocolat blanc",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Lait entier", "qte": 250, "unite": "g"},
+     {"nom": "Crème entière", "qte": 250, "unite": "g"},
+     {"nom": "Gélatine poudre (platine)", "qte": 4, "unite": "g"},
+     {"nom": "Jaunes d'œufs", "qte": 100, "unite": "g"},
+     {"nom": "Sucre", "qte": 45, "unite": "g"},
+     {"nom": "Chocolat blanc", "qte": 360, "unite": "g"}
+    ],
+    "etapes": [
+     "Chauffer lait et crème jusqu'à fumant ; hydrater la gélatine dans 24 g d'eau.",
+     "Blanchir jaunes et sucre 1 min, verser le liquide chaud en filet en fouettant.",
+     "Reporter en casserole et cuire à la nappe entre 80 et 85 °C.",
+     "Chinoiser sur le chocolat blanc et la masse gélatine, mixer au plongeant.",
+     "Filmer au contact, une nuit au frais (6 h minimum).",
+     "Fouetter à la main en pics moyens avant utilisation."
+    ],
+    "note": "Gélatine 4 g poids sec + 24 g d'eau (1:6). Le chocolat blanc étant plus mou que le noir, la gélatine stabilise — reste plus souple qu'un crémeux noir mais pochable. Très sucré : le chef le recommande en contraste d'un élément amer."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Caramel au babeurre",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Caramel au babeurre",
+    "role": "garniture",
+    "type": "caramel",
+    "ingredients": [
+     {"nom": "Lait entier", "qte": 45, "unite": "g"},
+     {"nom": "Crème entière", "qte": 130, "unite": "g"},
+     {"nom": "Babeurre", "qte": 45, "unite": "g"},
+     {"nom": "Glucose (dans les laitages)", "qte": 40, "unite": "g"},
+     {"nom": "Glucose (dans le caramel)", "qte": 90, "unite": "g"},
+     {"nom": "Sucre", "qte": 80, "unite": "g"},
+     {"nom": "Beurre doux", "qte": 60, "unite": "g"}
+    ],
+    "etapes": [
+     "Chauffer lait, crème, babeurre et glucose (1) sans jamais bouillir.",
+     "En parallèle, cuire sucre et glucose (2) en remuant de temps en temps jusqu'à doré profond.",
+     "Décuire en versant lentement le mélange laitier chaud, fouetter, ajouter le beurre et cuire 1 min.",
+     "Débarrasser, saler, mixer au plongeant pour émulsionner.",
+     "1-2 h au frais en remuant de temps en temps pour épaissir."
+    ],
+    "note": "Sel : une pincée, non quantifiée. Caramel fluide et acidulé — le babeurre apporte le lactique qui équilibre le sucre (technique de Bedros Kabranian rapportée par le chef). Forte part de glucose (130 g pour 80 g de sucre) = anti-cristallisation, reste souple à T° ambiante. Babeurre remplaçable par crème aigre. Piste macaron : profil caramel-lacté original vs caramel beurre salé classique."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Ganache sucre brun",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Ganache sucre brun",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {"nom": "Chocolat noir", "qte": 300, "unite": "g"},
+     {"nom": "Beurre doux", "qte": 40, "unite": "g"},
+     {"nom": "Sucre brun clair (cassonade)", "qte": 50, "unite": "g"},
+     {"nom": "Crème entière", "qte": 300, "unite": "g"},
+     {"nom": "Crème aigre", "qte": 110, "unite": "g"}
+    ],
+    "etapes": [
+     "Fondre le chocolat au bain-marie, réserver.",
+     "Chauffer crème, beurre, sucre brun et sel jusqu'à fumant.",
+     "Verser lentement sur le chocolat fondu en mélangeant par petits cercles (un aspect tranché est normal).",
+     "Ajouter la crème aigre, mixer au plongeant jusqu'à émulsion lisse.",
+     "Filmer au contact, 2-3 h à température ambiante jusqu'à consistance de crème au beurre. Utiliser avant durcissement complet."
+    ],
+    "note": "Sel en flocons : une pincée, non quantifiée. Crème aigre = pointe d'acidité qui coupe la richesse. Se retravaille au léger réchauffage (sèche-cheveux/spatule tiède selon le chef). Texture fourrage qui se tient sans être ferme."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Ganache beurre (glaçage)",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Ganache beurre (glaçage)",
+    "role": "garniture",
+    "type": "glaçage",
+    "ingredients": [
+     {"nom": "Chocolat noir 70%", "qte": 100, "unite": "g"},
+     {"nom": "Beurre doux", "qte": 60, "unite": "g"}
+    ],
+    "etapes": [
+     "Fondre ensemble chocolat et beurre au bain-marie.",
+     "Refroidir à 35 °C précisément.",
+     "Couler aussitôt sur le support bien froid et étaler rapidement à la spatule."
+    ],
+    "note": "Deux ingrédients : le beurre remplace la crème → brillance et cassant fondant. 35 °C = point de coulée sur support froid (effet « drip »)."
+   }
+  ]
+ },
+ {
+  "titre": "Matt — Crémeux vanille monté",
+  "source": "matt",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Matt — Crémeux vanille monté",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Gélatine poudre 250 blooms", "qte": 5, "unite": "g"},
+     {"nom": "Crème entière", "qte": 400, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "unité"},
+     {"nom": "Jaunes d'œufs", "qte": 115, "unite": "g"},
+     {"nom": "Sucre", "qte": 60, "unite": "g"}
+    ],
+    "etapes": [
+     "Hydrater la gélatine dans 30 g d'eau froide, 5-10 min.",
+     "Blanchir jaunes et sucre 30 s dès l'ajout du sucre (éviter que le sucre « brûle » les jaunes en grains).",
+     "Chauffer la crème avec la vanille grattée jusqu'à fumant, verser en filet sur les jaunes en fouettant.",
+     "Reporter sur feu moyen-doux et cuire à 80-82 °C en fouettant constamment.",
+     "Chinoiser aussitôt, incorporer la masse gélatine au fouet.",
+     "Filmer au contact, 6 h au frais minimum (idéalement une nuit).",
+     "Foisonner 1-2 min au fouet avant usage : l'aspect granuleux initial se lisse en fouettant."
+    ],
+    "note": "Sel fin : une pincée, non quantifiée. Anglaise gélifiée puis foisonnée — entre crème et custard, pochable, tient à température grâce à la gélatine. Conversion blooms du chef : en 200 blooms, ×1,27 → 6,5 g + 39 g d'eau ; règle générale eau = 6× le poids de gélatine."
+   }
+  ]
+ }
+]

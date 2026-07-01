@@ -1,0 +1,450 @@
+[
+ {
+  "titre": "Chiara — Gel mangue passion",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Gel mangue passion",
+    "role": "garniture-insert",
+    "type": "gel",
+    "ingredients": [
+     {"nom": "Purée de fruit de la passion", "qte": 75, "unite": "g"},
+     {"nom": "Purée de mangue", "qte": 75, "unite": "g"},
+     {"nom": "Miel", "qte": 5, "unite": "g"},
+     {"nom": "Sucre", "qte": 5, "unite": "g"},
+     {"nom": "Pectine", "qte": 6, "unite": "g"},
+     {"nom": "Pulpe de fruit de la passion frais (jus + pépins)", "qte": 65, "unite": "g"}
+    ],
+    "etapes": [
+     "Tiédir les purées avec le miel à 40 °C dans une casserole.",
+     "Mélanger intimement la pectine et le sucre, verser en pluie sur les purées tièdes en fouettant.",
+     "Porter à ébullition sans cesser de fouetter, maintenir 1 min à petits bouillons.",
+     "Débarrasser, filmer au contact, 1 h au frais jusqu'à prise de la gelée.",
+     "Mixer la gelée prise, ajouter le jus et les pépins des fruits de la passion frais, mélanger.",
+     "Mettre en poche sans douille. Congelable en empreintes pour inserts."
+    ],
+    "note": "Fiche : 2 fruits de la passion frais ≈ 60–70 g → encodé 65 g. La pulpe fraîche est ajoutée après gélification, hors cuisson."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Gel coco citron vert gingembre",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Gel coco citron vert gingembre",
+    "role": "garniture-insert",
+    "type": "gel",
+    "ingredients": [
+     {"nom": "Purée de coco", "qte": 150, "unite": "g"},
+     {"nom": "Jus de citron vert", "qte": 15, "unite": "g"},
+     {"nom": "Zeste de citron vert", "qte": 2, "unite": "g"},
+     {"nom": "Gingembre râpé", "qte": 2, "unite": "g"}
+    ],
+    "etapes": [
+     "Râper et hacher finement le zeste du citron vert.",
+     "Mélanger tous les ingrédients au fouet dans un cul de poule : l'acidité du citron vert fait coaguler les protéines de la coco et crée un gel instantanément, sans cuisson ni gélifiant.",
+     "Mettre en poche sans douille et utiliser directement."
+    ],
+    "note": "Fiche : jus 10–20 g selon acidité → encodé 15 g ; zeste d'un citron vert entier ≈ 2 g ; gingembre 2–3 g, facultatif. Prise à froid par acidification — technique originale, à tester en garniture macaron pour la fraîcheur."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Crème Chantache coco",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Crème Chantache coco",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {"nom": "Crème liquide entière 35% (chaude)", "qte": 100, "unite": "g"},
+     {"nom": "Sucre", "qte": 20, "unite": "g"},
+     {"nom": "Chocolat blanc Ivoire", "qte": 20, "unite": "g"},
+     {"nom": "Gélatine 200 blooms", "qte": 4, "unite": "g"},
+     {"nom": "Crème liquide entière (froide)", "qte": 200, "unite": "g"},
+     {"nom": "Purée de coco", "qte": 100, "unite": "g"},
+     {"nom": "Gingembre râpé", "qte": 2, "unite": "g"},
+     {"nom": "Malibu coco", "qte": 10, "unite": "g"}
+    ],
+    "etapes": [
+     "Déposer le chocolat blanc, la gélatine réhydratée et le gingembre dans un grand cul de poule.",
+     "Chauffer la crème (1) à frémissement, la verser en trois fois en émulsionnant à la maryse.",
+     "Ajouter la crème froide et la purée de coco en remuant, puis le malibu.",
+     "Mixer au mixeur plongeant pour parfaire l'émulsion.",
+     "Filmer au contact, réserver au frais 12 h minimum.",
+     "Monter au moment jusqu'à un bec d'oiseau très souple."
+    ],
+    "note": "Gélatine 4 g en poids sec (feuille ou poudre 200 blooms), à réhydrater. Gingembre et malibu facultatifs. « Chantache » = chantilly-ganache, signature Chiara. Conservation non montée : 48 h au frais filmée au contact."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Socle praliné coco croustillant",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Socle praliné coco croustillant",
+    "role": "garniture",
+    "type": "croustillant",
+    "ingredients": [
+     {"nom": "Noix de coco râpée", "qte": 100, "unite": "g"},
+     {"nom": "Amandes entières", "qte": 100, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 80, "unite": "g"},
+     {"nom": "Feuilletine", "qte": 80, "unite": "g"}
+    ],
+    "etapes": [
+     "Torréfier à 150 °C sur plaques séparées : coco 15 min jusqu'à coloration dorée, amandes 20–25 min. Refroidir.",
+     "Réaliser un caramel à sec en ajoutant le sucre par couches successives, jusqu'à couleur ambrée (~180 °C).",
+     "Couler aussitôt en plaque la plus fine possible sur papier cuisson, refroidir complètement, briser en morceaux.",
+     "Mixer fruits secs torréfiés et brisures de caramel par séquences de 1–2 min en cornant régulièrement, jusqu'à texture lisse et fluide.",
+     "Ajouter la feuilletine, mixer brièvement. Dresser en couche de 6 mm.",
+     "Congeler 6 h minimum si utilisé en socle d'entremets."
+    ],
+    "note": "Praliné coco-amandes 50/50, sucre à 28,6 % de la masse fruits secs. Conservation du praliné seul : plusieurs semaines à température ambiante, boîte hermétique à l'abri de la lumière."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Nappage neutre",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Nappage neutre",
+    "role": "base",
+    "type": "nappage",
+    "ingredients": [
+     {"nom": "Sucre", "qte": 36, "unite": "g"},
+     {"nom": "Pectine NH nappage", "qte": 4, "unite": "g"},
+     {"nom": "Eau", "qte": 100, "unite": "g"},
+     {"nom": "Sirop de glucose", "qte": 20, "unite": "g"},
+     {"nom": "Jus de citron", "qte": 4, "unite": "g"}
+    ],
+    "etapes": [
+     "Mélanger intimement le sucre et la pectine.",
+     "Porter l'eau et le glucose à ébullition.",
+     "Hors feu, ajouter le mélange sucre-pectine en pluie sans cesser de fouetter, puis le jus de citron.",
+     "Reporter à ébullition 10 secondes.",
+     "Débarrasser, filmer au contact, réserver au frais.",
+     "Réchauffer à 45 °C avant utilisation."
+    ],
+    "note": "Base technique multi-usage (nappage d'inserts congelés, entre aussi dans le gel chocolat)."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Gel griotte",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Gel griotte",
+    "role": "garniture-insert",
+    "type": "gel",
+    "ingredients": [
+     {"nom": "Griottes au sirop", "qte": 100, "unite": "g"},
+     {"nom": "Purée de fruits rouges", "qte": 120, "unite": "g"},
+     {"nom": "Kirsch", "qte": 10, "unite": "g"},
+     {"nom": "Griottes entières", "qte": 70, "unite": "g"},
+     {"nom": "Pectine NH", "qte": 4, "unite": "g"}
+    ],
+    "etapes": [
+     "Porter à petite ébullition tous les ingrédients sauf la pectine (préalablement mélangée à une pointe de sucre pour la disperser).",
+     "Ajouter le mélange pectine au liquide chaud, mixer et remuer rapidement.",
+     "Débarrasser et refroidir en froid positif.",
+     "Utiliser en boudin poché, parsemé de griottes entières."
+    ],
+    "note": "⚠️ La fiche originale mentionne un sucre à mélanger à la pectine sans le quantifier dans la liste d'ingrédients — probablement une petite quantité de dispersion (les griottes au sirop apportent déjà le sucre). Encodé sans sucre, fidèle à la liste."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Crémeux chocolat",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Crémeux chocolat",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Lait", "qte": 50, "unite": "g"},
+     {"nom": "Crème", "qte": 50, "unite": "g"},
+     {"nom": "Jaune d'œuf", "qte": 30, "unite": "g"},
+     {"nom": "Cassonade", "qte": 5, "unite": "g"},
+     {"nom": "Chocolat au lait", "qte": 40, "unite": "g"},
+     {"nom": "Chocolat noir", "qte": 10, "unite": "g"},
+     {"nom": "Gélatine", "qte": 1, "unite": "g"},
+     {"nom": "Beurre demi-sel", "qte": 20, "unite": "g"}
+    ],
+    "etapes": [
+     "Porter lait et crème à ébullition.",
+     "Réaliser une anglaise en ajoutant jaunes et cassonade, en remuant rapidement.",
+     "Verser sur les chocolats, la gélatine réhydratée et le beurre.",
+     "Mixer, filmer au contact et réserver."
+    ],
+    "note": "⚠️ La fiche originale porte « Gélatine 1G ? » — incertitude du chef elle-même. Encodé 1 g poids sec. Dominante chocolat au lait (80/20 lait/noir), beurre demi-sel pour la rondeur salée."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Gel chocolat",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Gel chocolat",
+    "role": "garniture",
+    "type": "gel",
+    "ingredients": [
+     {"nom": "Crème liquide", "qte": 150, "unite": "g"},
+     {"nom": "Nappage neutre", "qte": 60, "unite": "g"},
+     {"nom": "Miel", "qte": 7, "unite": "g"},
+     {"nom": "Chocolat noir", "qte": 75, "unite": "g"},
+     {"nom": "Cacao en poudre", "qte": 10, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 3, "unite": "g"}
+    ],
+    "etapes": [
+     "Chauffer la crème, le nappage neutre et le miel en casserole.",
+     "Verser la crème chaude sur le chocolat, le cacao et le sel.",
+     "Mixer en veillant à ne pas incorporer de bulles d'air.",
+     "Filmer au contact et réserver en froid positif.",
+     "Au montage, diviser en deux : une part gardée froide pour garnir, une part détendue pour glacer."
+    ],
+    "note": "Version canonique Saint-Honoré. Variante Forêt Noire : miel 5 g, chocolat noir 80 g, poudre de cacao 12 g, sans fleur de sel. Double usage garniture/glaçage."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Croustillant praliné grué",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Croustillant praliné grué",
+    "role": "garniture",
+    "type": "croustillant",
+    "ingredients": [
+     {"nom": "Praliné", "qte": 140, "unite": "g"},
+     {"nom": "Feuilletine", "qte": 70, "unite": "g"},
+     {"nom": "Grué de cacao", "qte": 20, "unite": "g"}
+    ],
+    "etapes": [
+     "Mélanger tous les ingrédients à la maryse.",
+     "Étaler en couche fine sur le fond du montage."
+    ],
+    "note": "Variante atelier sans grué : praliné 200 g + feuillantine 100 g (même ratio 2:1 praliné/feuilletine)."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Grué de cacao caramélisé",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Grué de cacao caramélisé",
+    "role": "garniture",
+    "type": "fruits secs caramélisés",
+    "ingredients": [
+     {"nom": "Sucre", "qte": 70, "unite": "g"},
+     {"nom": "Eau", "qte": 20, "unite": "g"},
+     {"nom": "Grué de cacao", "qte": 70, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 2, "unite": "g"},
+     {"nom": "Beurre demi-sel", "qte": 10, "unite": "g"}
+    ],
+    "etapes": [
+     "Réaliser un sirop avec l'eau et le sucre, porter à ébullition.",
+     "Ajouter le grué, le sel et la vanille.",
+     "Laisser sabler puis caraméliser le tout sur feu moyen.",
+     "Hors du feu, ajouter le beurre et mélanger.",
+     "Verser sur plaque et effriter une fois froid."
+    ],
+    "note": "Poudre de vanille torréfiée : QS sur la fiche, non quantifiée. Élément croquant de finition — intéressant en éclat dans une garniture macaron chocolat."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Caramel salé",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Caramel salé",
+    "role": "garniture",
+    "type": "caramel",
+    "ingredients": [
+     {"nom": "Sucre blanc", "qte": 140, "unite": "g"},
+     {"nom": "Beurre demi-sel", "qte": 100, "unite": "g"},
+     {"nom": "Crème entière 33% MG", "qte": 120, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 3, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 0.5, "unite": "unité"}
+    ],
+    "etapes": [
+     "Réaliser un caramel à sec bien lisse. Chauffer la crème en parallèle.",
+     "Ajouter progressivement la crème chaude au caramel, mélanger à la spatule une bonne minute.",
+     "Hors du feu, ajouter le beurre, la vanille et la fleur de sel, mélanger.",
+     "Mixer pour homogénéiser la préparation."
+    ],
+    "note": "Ratio beurre élevé (71 % du sucre) → caramel onctueux qui se tient, adapté en insert de garniture macaron."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Crémeux vanille",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Crémeux vanille",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Crème", "qte": 160, "unite": "g"},
+     {"nom": "Jaunes d'œufs", "qte": 30, "unite": "g"},
+     {"nom": "Sucre vergeoise", "qte": 20, "unite": "g"},
+     {"nom": "Beurre demi-sel", "qte": 30, "unite": "g"},
+     {"nom": "Gélatine", "qte": 2, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "unité"}
+    ],
+    "etapes": [
+     "Réaliser une crème anglaise avec la crème infusée vanille, les jaunes et la vergeoise.",
+     "Verser l'anglaise chaude sur le beurre et la gélatine réhydratée.",
+     "Mixer et refroidir avant utilisation."
+    ],
+    "note": "Gélatine 2 g poids sec. Vergeoise + beurre demi-sel = signature Chiara sur les crèmes vanille (notes caramélisées et salées)."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Praliné amandes",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Praliné amandes",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     {"nom": "Amandes entières", "qte": 400, "unite": "g"},
+     {"nom": "Sucre blanc", "qte": 180, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 3, "unite": "g"}
+    ],
+    "etapes": [
+     "Torréfier les amandes et les refroidir.",
+     "Réaliser un caramel et le refroidir.",
+     "Mixer le tout avec la fleur de sel jusqu'à texture lisse."
+    ],
+    "note": "Vanille torréfiée QS (non quantifiée sur la fiche). Annotation atelier Thermomix : 35 s vitesse 7 puis 1 min vitesse 6. Sucre à 45 % de la masse d'amandes — praliné peu sucré."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Crème pâtissière vanille",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Crème pâtissière vanille",
+    "role": "base",
+    "type": "crème pâtissière",
+    "ingredients": [
+     {"nom": "Lait entier", "qte": 200, "unite": "g"},
+     {"nom": "Jaune d'œuf", "qte": 40, "unite": "g"},
+     {"nom": "Sucre vergeoise", "qte": 30, "unite": "g"},
+     {"nom": "Maïzena", "qte": 18, "unite": "g"},
+     {"nom": "Gélatine feuille", "qte": 6, "unite": "g"},
+     {"nom": "Beurre demi-sel", "qte": 40, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 0.5, "unite": "unité"}
+    ],
+    "etapes": [
+     "Porter le lait et la vanille à petite ébullition.",
+     "Verser sur le mélange jaunes-sucre-maïzena, reporter sur le feu et fouetter vivement.",
+     "Pasteuriser en maintenant l'ébullition au moins 2 minutes.",
+     "Hors du feu, ajouter le beurre en morceaux et la gélatine préalablement hydratée à l'eau froide.",
+     "Mixer, refroidir en froid négatif. Conserver en froid positif, J+3."
+    ],
+    "note": "Version canonique (fiche Rose). Variantes : Forêt Noire → lait 250 g, cassonade, maïzena 20 g ; Saint-Honoré → jaune 50 g, maïzena 15 g, masse gélatine 48 g (convention TFP 1:7 → 6 g gélatine sèche + 42 g eau). Sert de base à la crème bonbon. Gélatinée et beurrée demi-sel : plus ferme et plus ronde qu'une pâtissière classique."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Chantache vanille",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Chantache vanille",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     {"nom": "Crème chaude 33% MG", "qte": 100, "unite": "g"},
+     {"nom": "Crème froide 33% MG", "qte": 300, "unite": "g"},
+     {"nom": "Sucre glace", "qte": 20, "unite": "g"},
+     {"nom": "Chocolat blanc", "qte": 20, "unite": "g"},
+     {"nom": "Gélatine feuille 200 blooms", "qte": 4, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 0.5, "unite": "unité"}
+    ],
+    "etapes": [
+     "Chauffer une partie de la crème.",
+     "Dans un grand cul de poule, déposer le chocolat blanc, le sucre glace, la vanille et la gélatine essorée.",
+     "Verser la crème chaude sur le tout et mixer.",
+     "Ajouter la crème froide, refroidir 12 h minimum.",
+     "Monter en texture « mousse à raser » (bec d'oiseau souple)."
+    ],
+    "note": "Gélatine 4 g poids sec (feuille 200 blooms). Les fiches atelier encodent la même quantité en « masse gélatine 32 g » (convention TFP 1:7 → 4 g sec + 28 g eau). Variante Forêt Noire/Saint-Honoré : 2 gousses de vanille. Très faible en chocolat (5 %) : c'est une chantilly gélifiée stabilisée plus qu'une ganache montée classique — texture de pochage."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Crème bonbon",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Crème bonbon",
+    "role": "garniture",
+    "type": "crème bonbon",
+    "ingredients": [
+     {"nom": "Crème pâtissière vanille", "qte": 390, "unite": "g"},
+     {"nom": "Chantache montée", "qte": 150, "unite": "g"}
+    ],
+    "etapes": [
+     "Lisser la crème pâtissière au mixeur ou robot chauffant.",
+     "Monter la chantache en chantilly dans une cuve bien froide.",
+     "Mélanger délicatement les deux masses."
+    ],
+    "note": "Signature Chiara : diplomate revisitée pâtissière + chantilly-ganache. Variantes : Saint-Honoré stracciatella → pâtissière 340 g + ganache vanille 140 g + chocolat noir fondu 70 g versé en filet sur la crème (il fige et fait des copeaux) ; Rose → pâtissière 390 g + chantache 120 g + praliné amandes 70 g lissé avec la pâtissière."
+   }
+  ]
+ },
+ {
+  "titre": "Chiara — Confiture de lait vanille",
+  "source": "chiara",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Chiara — Confiture de lait vanille",
+    "role": "garniture",
+    "type": "confiture de lait",
+    "ingredients": [
+     {"nom": "Lait concentré sucré", "qte": 100, "unite": "g"},
+     {"nom": "Lait concentré non sucré", "qte": 100, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "unité"}
+    ],
+    "etapes": [
+     "Cuire les laits concentrés 4 h à la cocotte ou immergés dans l'eau bouillante (boîtes fermées).",
+     "Verser dans un mixeur, ajouter la vanille et la xanthane avec parcimonie.",
+     "Mixer jusqu'à obtention d'une texture moins liquide."
+    ],
+    "note": "Xanthane QS (« gramme par gramme, avec parcimonie » sur la fiche), non quantifiée. Mélange 50/50 lait concentré sucré/non sucré → moins sucré qu'une confiture de lait classique tout sucré."
+   }
+  ]
+ }
+]
