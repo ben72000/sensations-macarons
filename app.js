@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1126';
+const APP_VERSION = 'v1128';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -6879,7 +6879,7 @@ async function docApercu(id){
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   if(d.html){
     // On prépare le mail (objet + message + signature) pour que l'aperçu propose l'envoi.
-    if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html, libelle, client);
+    if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html, libelle, client, d.montant, {acompteMention:d.acompteMention});
     openPrintView(d.html, {title:libelle, extraButtons:(typeof _docMailBtns==='function'?_docMailBtns():'')});
   }
   else if(d.orderIds&&d.orderIds.length){ genererFactureMultiple(d.orderIds); }
@@ -6892,7 +6892,7 @@ async function docEnvoyerMail(id){
   const libelle = `${d.type==='devis'?'Devis':'Facture'} ${d.numero||d.refInterne||''}`.trim();
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   // Prépare l'objet + le message + la signature (renseigne window._lastDocMeta.mailto).
-  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html||'', libelle, client);
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html||'', libelle, client, d.montant, {acompteMention:d.acompteMention});
   const meta = window._lastDocMeta||{};
   // On ouvre directement l'appli mail (destinataire + objet + message + signature déjà remplis).
   // La génération PDF automatique n'est pas fiable sur iOS/Safari (canvas « tainted » par le
@@ -13112,6 +13112,7 @@ async function clientForm(id){
      <div class="field"><label>Réf. client</label><input id="f_ref" value="${esc(c.ref)}" placeholder="ex : CLI-0042"></div>
    </div>
    <div class="field"><label>Adresse</label><input id="f_adr" value="${esc(c.adresse)}"></div>
+   <div class="field"><label>Formule de politesse <span style="color:#9a8a82;font-weight:400">— utilisée dans les messages devis/facture</span></label><select id="f_politesse"><option value="vous" ${c.politesse!=='tu'?'selected':''}>Vouvoiement</option><option value="tu" ${c.politesse==='tu'?'selected':''}>Tutoiement</option></select></div>
    <div class="field"><label>Notes</label><textarea id="f_notes" rows="2">${esc(c.notes)}</textarea></div>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="saveClient(${id||0})">Enregistrer</button>${id?`<button class="btn danger" onclick="confirmDelClient(${id})">🗑 Supprimer</button>`:''}</div>`);
 }
@@ -13138,7 +13139,7 @@ async function doDelClient(id){
   else toast('Client supprimé ✓');
 }
 async function saveClient(id){
-  const o={nom:val('f_nom'),prenom:val('f_prenom'),societe:val('f_societe'),type:val('f_type'),tel:val('f_tel'),email:val('f_email'),ref:val('f_ref'),adresse:val('f_adr'),notes:val('f_notes')};
+  const o={nom:val('f_nom'),prenom:val('f_prenom'),societe:val('f_societe'),type:val('f_type'),tel:val('f_tel'),email:val('f_email'),ref:val('f_ref'),adresse:val('f_adr'),politesse:(val('f_politesse')==='tu'?'tu':'vous'),notes:val('f_notes')};
   if(!o.nom){toast('Le nom est requis');return;}
   if(id) await db.clients.update(id,o); else await db.clients.add(withSync(o,'app'));
   closeModal(); renderClients(); toast('Client enregistré ✓');
@@ -36157,13 +36158,16 @@ async function genererDevisDoc(docId){
   const montantFmt = money2(total).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const acompteFmt = money2(total*0.75).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const signature = [e.exploitant, e.nom].filter(Boolean).join(' — ') || (e.nom||'Sensations Macarons');
+  const _tu = client && client.politesse === 'tu';
   const corps = [
     `Bonjour${nomClient ? ' '+nomClient : ''},`,
     '',
-    `Veuillez trouver ci-dessous notre devis n° ${d.numero||''} d'un montant de ${montantFmt} €.`,
-    ...(d.acompteMention!==false ? [`Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).`] : []),
+    `${_tu?'Tu trouveras':'Veuillez trouver'} ci-dessous ${_tu?'ton':'votre'} devis n° ${d.numero||''} d'un montant de ${montantFmt} €.`,
+    ...(d.acompteMention!==false ? [ _tu
+        ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant total).`
+        : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).` ] : []),
     '',
-    'Vous remerciant par avance.',
+    _tu ? 'En te remerciant par avance.' : 'Vous remerciant par avance.',
     '',
     'Bien cordialement,',
     signature
@@ -36216,31 +36220,46 @@ async function envoyerDocPdfMail(){
 }
 
 // [v1081] Mémorise le document courant pour l'envoi PDF, avec un objet = libellé (n° facture/devis).
-function _prepDocPdfMail(html, libelle, client){
+function _prepDocPdfMail(html, libelle, client, montant, opts){
+  opts = opts || {};
   const nomClient = client ? [client.prenom, client.nom].filter(Boolean).join(' ') : '';
   const estFacture = /facture/i.test(libelle);
   const e = (typeof factGetEmetteur==='function') ? factGetEmetteur() : {};
-  // Signature à partir des coordonnées de facturation (exploitant, enseigne, tél, e-mail).
-  const signat = [
-    'Bien cordialement,',
-    (e.exploitant||'').trim(),
-    (e.nom||'Sensations Macarons').trim(),
-    (e.tel?('Tél. '+e.tel):'' ).trim(),
-    (e.email||'').trim()
-  ].filter(Boolean);
+  // Tutoiement si le client le demande, vouvoiement par défaut.
+  const tu = client && client.politesse === 'tu';
+  // Mention d'acompte sur le devis : reprise du réglage de la commande (true par défaut).
+  const acompteMention = opts.acompteMention !== false;
+  // Numéro seul (sans le préfixe « Facture »/« Devis ») pour l'objet et le corps.
+  const numero = libelle.replace(/^(Facture|Devis)\s*/i,'').trim();
+  // Acompte formaté (75% du montant) pour le message devis, si disponible.
+  const acompteFmt = (montant!=null && !isNaN(montant))
+    ? Number(montant*0.75).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})
+    : '';
+  // Montant formaté « 1 234,56 » (comme le message du devis). Vide si non fourni.
+  const montantFmt = (montant!=null && !isNaN(montant))
+    ? Number(montant).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})
+    : '';
+  // Signature COURTE, identique au message du devis : « {exploitant} — {enseigne} ».
+  const signature = [e.exploitant, (e.nom||'Sensations Macarons')].filter(Boolean).join(' — ') || (e.nom||'Sensations Macarons');
+  const objet = `${estFacture?'Facture':'Devis'} ${numero} — ${e.nom||'Sensations Macarons'}`;
+  // Phrases conjuguées selon tutoiement/vouvoiement.
+  const phraseAcompte = tu
+    ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant total).`
+    : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).`;
   const corps = [
     `Bonjour${nomClient ? ' '+nomClient : ''},`, '',
     estFacture
-      ? `Veuillez trouver ci-joint votre facture ${libelle.replace(/^Facture\s*/i,'')}.`.replace(/\s+\./,'.')
-      : `Veuillez trouver ci-joint votre devis ${libelle.replace(/^Devis\s*/i,'')}.`.replace(/\s+\./,'.'),
+      // Message facture = calque du devis (montant, sans mention d'acompte).
+      ? `${tu?'Tu trouveras':'Veuillez trouver'} ci-dessous ${tu?'ta':'votre'} facture n° ${numero}${montantFmt?` d'un montant de ${montantFmt} €`:''}.`.replace(/\s+\./,'.')
+      : `${tu?'Tu trouveras':'Veuillez trouver'} ci-dessous ${tu?'ton':'votre'} devis n° ${numero}${montantFmt?` d'un montant de ${montantFmt} €`:''}.`.replace(/\s+\./,'.'),
+    // Devis : mention d'acompte seulement si la case n'a pas été décochée ET qu'on a le montant.
+    ...(!estFacture && acompteMention && acompteFmt ? [phraseAcompte] : []),
     '',
-    estFacture
-      ? `Je vous remercie de votre confiance et reste à votre disposition pour toute question.`
-      : `Ce devis est valable un mois. N'hésitez pas à me contacter pour toute question ou pour le valider.`,
+    tu ? 'En te remerciant par avance.' : 'Vous remerciant par avance.',
     '',
-    ...signat
+    'Bien cordialement,',
+    signature
   ].join('\n');
-  const objet = estFacture ? libelle : libelle;
   window._lastDocHtml = html;
   window._lastDocData = null;   // [v1084] pas de données structurées ici → repli HTML (facture)
   window._lastDocMeta = { fileName:libelle, objet, corps,
@@ -36626,7 +36645,7 @@ async function genererFactureMultiple(ids){
 
     if(existing && docEstDefinitif(existing)){
       if(view==="documents") renderDocuments();
-      _prepDocPdfMail(factureHtml, `Facture ${existing.numero}`, client);
+      _prepDocPdfMail(factureHtml, `Facture ${existing.numero}`, client, grandTotal);
       openPrintView(factureHtml, {title:`Facture ${existing.numero}`, extraButtons:_docMailBtns()});
       return;
     }
@@ -36648,7 +36667,7 @@ async function genererFactureMultiple(ids){
     if(view==="documents") renderDocuments();
     toast('Brouillon de facture créé — à vérifier puis valider');
   }catch(e){ console.error('genererFactureMultiple/enregistrement', e); toast('⚠️ Le brouillon n\'a pas pu être enregistré : '+(e&&e.message||'erreur')); }
-  _prepDocPdfMail(factureHtml, `Facture ${numFact}`, client);
+  _prepDocPdfMail(factureHtml, `Facture ${numFact}`, client, grandTotal);
   openPrintView(factureHtml, {title:`Facture (brouillon) ${numFact}`, extraButtons:_docMailBtns()});
 }
 function orderNumber(o){
