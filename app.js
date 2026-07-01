@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1099';
+const APP_VERSION = 'v1102';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -56,7 +56,18 @@ function fmtDateTime(iso){
 }
 function fmtDate(s){ if(!s) return ''; const d = new Date(s); return isNaN(d)?'':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}); }
 function daysTo(s){ if(!s) return null; return Math.ceil((new Date(s) - new Date(today())) / 86400000); }
-function monthKey(d){ return (d||'').slice(0,7); }   // 'YYYY-MM'
+function monthKey(d){
+  // Cas normal : chaîne 'YYYY-MM-DD' (input date) → slice direct, sûr et rapide.
+  const s = (d||'');
+  // Cas piège : date ISO AVEC heure ('YYYY-MM-DDTHH:MM:SSZ'). Un slice(0,7) prendrait le
+  // jour/mois EN UTC, ce qui décale d'un mois en fuseau positif (ex : '2026-05-31T22:00Z'
+  // = 1er juin en France mais slice → '2026-05'). On reparse alors en heure LOCALE.
+  if(s.length>10 && s.indexOf('T')!==-1){
+    const dt=new Date(s);
+    if(!isNaN(dt)) return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0');
+  }
+  return s.slice(0,7);
+}   // 'YYYY-MM'
 // Clé 'AAAA-MM' d'un objet Date en heure LOCALE. À utiliser au lieu de
 // date.toISOString().slice(0,7), qui décale d'un mois en fuseau positif (France UTC+1/+2) :
 // new Date(2026,5,1).toISOString() → "2026-05-31T22:00Z" → clé "2026-05" au lieu de "2026-06".
@@ -3032,7 +3043,7 @@ function chartLegendToggle(chartId, si){
     it.style.opacity = (next===null || s===next) ? '1' : '0.45';
   }); }
 }
-const ymKey = d => (d||'').slice(0,7);
+const ymKey = d => monthKey(d);   // délègue à monthKey (robuste aux dates ISO avec heure)
 // CA COMPTABLE par mois d'ENCAISSEMENT : on ventile chaque paiement réel sur le mois de sa date.
 // Un paiement en 2 fois (acompte mai + solde août) tombe sur mai ET août, chacun son montant.
 // Renvoie { parMois:{'AAAA-MM':montant}, enAttente:montant_non_encore_encaissé }.
@@ -23011,6 +23022,25 @@ async function marketDoClose(marketId, vendu){
   const tot=addMoney(esp,cb,au);
   if(tot<=0 && vendu>0){ if(!confirm('Aucun encaissement saisi alors que des ventes sont calculées. Clôturer quand même ?')) return; }
   const mk = await db.markets.get(marketId);
+  // [GARDE-FOU DATE] Le CA du marché est rattaché au mois de mk.date (date où il a eu lieu),
+  // PAS à la date de clôture. Si la date saisie tombe dans un autre mois que la clôture, c'est
+  // très souvent une fiche préparée à l'avance dont la date n'a pas été corrigée (ex : fiche
+  // créée fin mai pour un marché de juin → CA classé en mai). On alerte AVANT de figer.
+  // NB : on n'applique PAS ce garde-fou aux marchés « historiques » (mk.histo) : leur date
+  // passée est volontaire (saisie de données antérieures), un écart de mois y est normal.
+  if(mk && mk.date && !mk.histo){
+    const mkMois = monthKey(mk.date), aujMois = monthKey(today());
+    if(mkMois && aujMois && mkMois!==aujMois){
+      const ok = confirm(
+        'Attention : ce marché est daté du '+fmtDate(mk.date)+' ('+monthLabel(mkMois)+'), '+
+        'alors que tu le clôtures en '+monthLabel(aujMois)+'.\n\n'+
+        'Le chiffre d\'affaires sera comptabilisé sur '+monthLabel(mkMois)+' (mois de la date du marché).\n\n'+
+        'OK = clôturer quand même (la date est correcte).\n'+
+        'Annuler = corriger d\'abord la date du marché.'
+      );
+      if(!ok){ closeModal(); marketForm(marketId); toast('Corrige la date du marché puis clôture à nouveau'); return; }
+    }
+  }
   const updates = {ca:{especes:esp,cb:cb,autre:au}, statut:'clos', dateCloture:today()};
   // Décompte du STOCK RÉEL des emballages rattachés — SAUF en mode historique (correction de
   // données passées, sans impact stock, conformément au mode rouvert/historique).
