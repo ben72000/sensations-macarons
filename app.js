@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1131';
+const APP_VERSION = 'v1132';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7778,6 +7778,44 @@ async function renderProductions(){
       p.parentProdId?'partie':''].filter(Boolean).join(' '));
     return {p, _lettre:lettre, _prim:prim, _blob:blob, _digits:onlyDigits([p.lotProduction, p.id].filter(Boolean).join(' '))};
   });
+  // [DIAGNOSTIC TEMPORAIRE] Pourquoi un lot de meringue mutualisée n'apparaît-il pas dans la liste ?
+  // Pour chaque lot porteur d'un meringueBatchId, on note s'il est dans _prodnCache (donc affichable)
+  // et, sinon, la raison exacte de son exclusion (prodEstRangee).
+  try{
+    const _inCache = new Set(_prodnCache.map(r=>r.p.id));
+    const _merLots = prods.filter(p=>p.meringueBatchId);
+    const _raison = p=>{
+      if(p.rangee===true) return 'rangé (flag rangee)';
+      if(p.emplacement && isFreezer(p.emplacement)) return 'au congélateur ('+(empLettre?empLettre(p.emplacement):p.emplacement)+')';
+      if(window._prodLiesCmdPrete && window._prodLiesCmdPrete.has(+p.id)) return 'lié à une commande prête/livrée';
+      if(prodStatut(p)==='termine' && round3(+p.qteRestante||0)<=0) return 'épuisé (terminé, reste 0)';
+      return 'visible (dans la liste)';
+    };
+    const _rows = _merLots.map(p=>{
+      const gf = (window._prodRecGF?window._prodRecGF(p):false);
+      return {
+        nom: prodNom(p), lot: p.lotProduction||('#'+p.id), gf,
+        comp: (typeof prodComposant==='function')?prodComposant(p):'?',
+        statut: prodStatut(p), reste: round3(+p.qteRestante||0),
+        emp: p.emplacement?(empLettre?empLettre(p.emplacement):p.emplacement):'(aucun)',
+        inCache: _inCache.has(p.id), raison: _raison(p)
+      };
+    });
+    const _masques = _rows.filter(r=>!r.inCache);
+    if(_masques.length){
+      window._merDiagHtml = `<div class="panel" style="border:1.5px solid #e5b4ae;background:#fdf3f2">
+        <h2 style="color:#b3261e;margin:0 0 6px">🔎 Diagnostic — coques de meringue mutualisée masquées</h2>
+        <p class="note" style="margin:0 0 8px">Ces lots existent mais n'apparaissent pas dans la liste ci-dessous. Raison exacte pour chacun :</p>
+        ${_masques.map(r=>`<div style="font-size:.82rem;padding:6px 0;border-bottom:1px solid #f0dcda">
+          <b>${esc(r.nom)}</b>${r.gf?' 🍪 GF':''} · <span style="color:#7a6a62">${esc(r.comp)}</span> · lot ${esc(r.lot)}<br>
+          <span style="color:#9a8a82">statut ${esc(r.statut)} · reste ${qty(r.reste)} · emplacement ${esc(r.emp)}</span><br>
+          <span style="color:#b3261e">➜ ${esc(r.raison)}</span>
+        </div>`).join('')}
+      </div>`;
+    } else {
+      window._merDiagHtml = '';
+    }
+  }catch(_e){ window._merDiagHtml = ''; console.error('merDiag', _e); }
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Productions</h1><p id="prodCount">${prods.length} batch(s) fabriqué(s)${rendePct!=null?` · rendement réel global ${rendePct}%`:''}${ouvertes.length?` · ${ouvertes.length} en cours`:''}</p>
 </div>
@@ -7785,6 +7823,7 @@ async function renderProductions(){
      <button class="btn ghost" style="margin-left:6px" onclick="labelsBatchForm()" title="Générer un PDF de plusieurs étiquettes pour Labelife">📄 Étiquettes groupées</button>
      <button class="btn ghost" style="margin-left:6px" onclick="goView('stockparfums')" title="Voir tout mon stock : parfums et emplacements">📦 Tout mon stock</button>
      <button class="btn ghost" style="margin-left:6px" onclick="quickLossForm()">⚠ Casse / Perte</button></div>
+   ${window._merDiagHtml||''}
    ${kpi.count?`<div class="prod-kpi-mini">
      <span class="pkm-item">${kpiI('taux_perte')} <span class="pkm-lbl">Perte</span> <b style="color:${kpi.taux>=10?'#b3261e':(kpi.taux>=5?'#d98324':'#2e7d32')}">${kpi.taux}%</b> <span class="pkm-sub">${qty(kpi.totalPerdu)}/${qty(kpi.totalProduit)}</span></span>
      <span class="pkm-sep">·</span>
