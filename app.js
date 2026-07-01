@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1128';
+const APP_VERSION = 'v1129';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -13113,6 +13113,7 @@ async function clientForm(id){
    </div>
    <div class="field"><label>Adresse</label><input id="f_adr" value="${esc(c.adresse)}"></div>
    <div class="field"><label>Formule de politesse <span style="color:#9a8a82;font-weight:400">— utilisée dans les messages devis/facture</span></label><select id="f_politesse"><option value="vous" ${c.politesse!=='tu'?'selected':''}>Vouvoiement</option><option value="tu" ${c.politesse==='tu'?'selected':''}>Tutoiement</option></select></div>
+   <div class="field"><label>Prénom pour les courriels <span style="color:#9a8a82;font-weight:400">— appellation utilisée dans « Bonjour … » (laisser vide pour reprendre le prénom)</span></label><input id="f_prenomMail" value="${esc(c.prenomMail)}" placeholder="ex : Léo, Chef, ..."></div>
    <div class="field"><label>Notes</label><textarea id="f_notes" rows="2">${esc(c.notes)}</textarea></div>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="saveClient(${id||0})">Enregistrer</button>${id?`<button class="btn danger" onclick="confirmDelClient(${id})">🗑 Supprimer</button>`:''}</div>`);
 }
@@ -13139,7 +13140,7 @@ async function doDelClient(id){
   else toast('Client supprimé ✓');
 }
 async function saveClient(id){
-  const o={nom:val('f_nom'),prenom:val('f_prenom'),societe:val('f_societe'),type:val('f_type'),tel:val('f_tel'),email:val('f_email'),ref:val('f_ref'),adresse:val('f_adr'),politesse:(val('f_politesse')==='tu'?'tu':'vous'),notes:val('f_notes')};
+  const o={nom:val('f_nom'),prenom:val('f_prenom'),societe:val('f_societe'),type:val('f_type'),tel:val('f_tel'),email:val('f_email'),ref:val('f_ref'),adresse:val('f_adr'),politesse:(val('f_politesse')==='tu'?'tu':'vous'),prenomMail:(val('f_prenomMail')||'').trim(),notes:val('f_notes')};
   if(!o.nom){toast('Le nom est requis');return;}
   if(id) await db.clients.update(id,o); else await db.clients.add(withSync(o,'app'));
   closeModal(); renderClients(); toast('Client enregistré ✓');
@@ -36154,7 +36155,7 @@ async function genererDevisDoc(docId){
   let extraBtns = '';
   const emailCible = client && client.email ? client.email : '';
   const objet = `Devis ${d.numero||''} — ${e.nom||'Sensations Macarons'}`;
-  const nomClient = client ? [client.prenom, client.nom].filter(Boolean).join(' ') : '';
+  const nomClient = client ? ((client.prenomMail&&client.prenomMail.trim()) ? client.prenomMail.trim() : ((client.politesse==='tu') ? (client.prenom||client.nom||'') : [client.prenom, client.nom].filter(Boolean).join(' '))) : '';
   const montantFmt = money2(total).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const acompteFmt = money2(total*0.75).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const signature = [e.exploitant, e.nom].filter(Boolean).join(' — ') || (e.nom||'Sensations Macarons');
@@ -36222,7 +36223,7 @@ async function envoyerDocPdfMail(){
 // [v1081] Mémorise le document courant pour l'envoi PDF, avec un objet = libellé (n° facture/devis).
 function _prepDocPdfMail(html, libelle, client, montant, opts){
   opts = opts || {};
-  const nomClient = client ? [client.prenom, client.nom].filter(Boolean).join(' ') : '';
+  const nomClient = client ? ((client.prenomMail&&client.prenomMail.trim()) ? client.prenomMail.trim() : ((client.politesse==='tu') ? (client.prenom||client.nom||'') : [client.prenom, client.nom].filter(Boolean).join(' '))) : '';
   const estFacture = /facture/i.test(libelle);
   const e = (typeof factGetEmetteur==='function') ? factGetEmetteur() : {};
   // Tutoiement si le client le demande, vouvoiement par défaut.
