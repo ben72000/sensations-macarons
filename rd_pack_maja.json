@@ -1,0 +1,303 @@
+[
+ {
+  "titre": "Maja — Praliné pécan cacao",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Praliné pécan cacao (cœur coulant)",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     {"nom": "Noix de pécan torréfiées", "qte": 25, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 25, "unite": "g"}
+    ],
+    "etapes": [
+     "Fondre prudemment le sucre en caramel doré, hors du feu incorporer aussitôt les pécans.",
+     "Débarrasser sur papier cuisson, refroidir complètement.",
+     "Mixer par impulsions jusqu'à pâte lisse et fluide (praliné).",
+     "Incorporer le cacao et le sel.",
+     "Couler en petites empreintes demi-sphères (2,5 cm) et congeler 4 h minimum."
+    ],
+    "note": "Cacao en poudre et sel : QS, non quantifiés sur la fiche. Praliné 50/50 classique. Congelé en cœur, il redevient coulant à la décongélation — effet « cœur coulant » dans un montage (transposable en insert de garniture macaron)."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Mousse chocolat noir deux ingrédients",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Mousse chocolat noir deux ingrédients",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {"nom": "Chocolat noir 64% (Manjari)", "qte": 80, "unite": "g"},
+     {"nom": "Crème entière (à bouillir)", "qte": 50, "unite": "g"},
+     {"nom": "Crème entière (à monter)", "qte": 100, "unite": "g"}
+    ],
+    "etapes": [
+     "Fondre le chocolat au bain-marie, réserver hors du feu.",
+     "Porter la crème (1) à ébullition, la verser sur le chocolat en mélangeant par le centre à la maryse jusqu'à lisse et brillant.",
+     "Monter la crème (2) en pics souples seulement.",
+     "Incorporer délicatement la crème montée à la ganache.",
+     "Couler en cercles sur insert congelé et congeler 4 h minimum."
+    ],
+    "note": "Crème 150 ml → 150 g (densité ~1,0). Mousse minimaliste sans œufs ni gélatine : la cristallisation du chocolat assure la tenue. Pics souples impératifs pour rester coulable."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Mousse chocolat au lait deux ingrédients",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Mousse chocolat au lait deux ingrédients",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {"nom": "Chocolat au lait 40% (Jivara)", "qte": 200, "unite": "g"},
+     {"nom": "Crème entière (à bouillir)", "qte": 100, "unite": "g"},
+     {"nom": "Crème entière (à monter)", "qte": 200, "unite": "g"}
+    ],
+    "etapes": [
+     "Fondre le chocolat au bain-marie, réserver hors du feu.",
+     "Porter la crème (1) à ébullition, la verser sur le chocolat en mélangeant par le centre jusqu'à lisse et brillant.",
+     "Monter la crème (2) en pics souples seulement.",
+     "Incorporer délicatement la crème montée à la ganache.",
+     "Couler et congeler 4 h minimum."
+    ],
+    "note": "Crème 300 ml → 300 g. Ratio chocolat/crème plus élevé que la version noire (67 % vs 53 %) : le chocolat au lait, moins riche en cacao, doit compenser pour la tenue."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Mousse vanille ivoire",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Mousse vanille ivoire",
+    "role": "garniture",
+    "type": "mousse",
+    "ingredients": [
+     {"nom": "Gélatine feuille", "qte": 0.85, "unite": "g"},
+     {"nom": "Chocolat blanc 35% (Ivoire)", "qte": 100, "unite": "g"},
+     {"nom": "Crème entière (à bouillir)", "qte": 50, "unite": "g"},
+     {"nom": "Crème entière (à monter)", "qte": 100, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "unité"}
+    ],
+    "etapes": [
+     "Réhydrater la gélatine à l'eau froide. Fondre le chocolat au bain-marie.",
+     "Porter la crème (1) à ébullition avec la vanille grattée, hors du feu dissoudre la gélatine essorée.",
+     "Verser la crème vanillée sur le chocolat en mélangeant par le centre jusqu'à lisse et brillant.",
+     "Monter la crème (2) en pics souples, l'incorporer délicatement.",
+     "Couler en moule silicone et congeler 3 h minimum (idéalement une nuit)."
+    ],
+    "note": "½ feuille de gélatine or (1,7 g/feuille) → 0,85 g poids sec. Crème 150 ml → 150 g. Petite gousse « polynésienne » sur la fiche. Version blanche des mousses deux-ingrédients, gélatine nécessaire car l'ivoire ne structure pas assez seul."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Appareil cheesecake vanille (sans cuisson)",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Appareil cheesecake vanille (sans cuisson)",
+    "role": "garniture",
+    "type": "appareil cheesecake",
+    "ingredients": [
+     {"nom": "Cream cheese", "qte": 375, "unite": "g"},
+     {"nom": "Sucre glace", "qte": 115, "unite": "g"},
+     {"nom": "Crème entière", "qte": 225, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1.5, "unite": "unité"}
+    ],
+    "etapes": [
+     "Au robot, lisser le cream cheese avec le sucre glace et les graines de vanille.",
+     "Ajouter la crème progressivement et fouetter à vitesse moyenne jusqu'à texture épaisse, aérée, en pics fermes.",
+     "Dresser, lisser à la palette, une nuit au frais."
+    ],
+    "note": "Sans cuisson ni gélatine : la structure vient du foisonnement cream cheese + crème. Variante petit format (fiche framboise) : 125 g / 35 g / 75 g / ½ gousse — mêmes proportions au tiers (sucre légèrement réduit). Astuce fiche : fine couche de chocolat blanc fondu au pinceau sur le fond biscuité = barrière anti-humidité."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Compotée de framboise",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Compotée de framboise",
+    "role": "garniture-insert",
+    "type": "compotée",
+    "ingredients": [
+     {"nom": "Sucre", "qte": 15, "unite": "g"},
+     {"nom": "Pectine", "qte": 1, "unite": "g"},
+     {"nom": "Purée de framboise", "qte": 45, "unite": "g"},
+     {"nom": "Jus de citron", "qte": 5, "unite": "g"}
+    ],
+    "etapes": [
+     "Mélanger intimement le sucre et la pectine.",
+     "Chauffer la purée et le jus de citron à ~40 °C, incorporer le mélange sucre-pectine en fouettant.",
+     "Porter à ébullition et maintenir quelques minutes à petits bouillons.",
+     "Refroidir légèrement, couler en demi-sphères (2,5 cm), congeler 2 h minimum."
+    ],
+    "note": "Pectine à 1,5 % de la masse — insert acidulé qui se tient. Le citron active la pectine et relève la framboise. Transposable à d'autres fruits rouges selon la fiche."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Glaçage miroir marbré",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Glaçage miroir marbré",
+    "role": "garniture",
+    "type": "glaçage",
+    "ingredients": [
+     {"nom": "Gélatine feuille or", "qte": 10.2, "unite": "g"},
+     {"nom": "Chocolat blanc 35% (Ivoire)", "qte": 150, "unite": "g"},
+     {"nom": "Crème entière", "qte": 100, "unite": "g"},
+     {"nom": "Eau", "qte": 50, "unite": "g"},
+     {"nom": "Sucre", "qte": 150, "unite": "g"},
+     {"nom": "Sirop de glucose", "qte": 150, "unite": "g"}
+    ],
+    "etapes": [
+     "Réhydrater la gélatine à l'eau froide. Hacher finement le chocolat dans un pichet.",
+     "Porter crème, eau, sucre et glucose presque à ébullition, hors du feu dissoudre la gélatine essorée.",
+     "Verser sur le chocolat, mixer au plongeant en entrant l'appareil de biais pour éviter les bulles.",
+     "Filmer au contact, laisser redescendre à ~40 °C.",
+     "Diviser en deux, colorer chaque part (couleur + blanc), reverser en alternance dans le pichet (4-6 versements).",
+     "Couler à 35-40 °C en filet mobile sur l'entremets congelé posé sur un cercle ; laisser prendre, ébarber, décongeler au frais."
+    ],
+    "note": "6 feuilles or = 10,2 g (1,7 g/feuille), fidèle à la fiche. Crème 100 ml → 100 g, eau 50 ml → 50 g. La fiche substitue la crème au lait concentré du miroir classique (choix de goût du chef). Excédent récupérable et réutilisable. Marbrage non répétable = chaque pièce unique."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Ganache vanille-citron au babeurre",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Ganache vanille-citron au babeurre",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {"nom": "Chocolat blanc 35% (Ivoire)", "qte": 200, "unite": "g"},
+     {"nom": "Crème entière", "qte": 70, "unite": "g"},
+     {"nom": "Babeurre ou kéfir", "qte": 50, "unite": "g"},
+     {"nom": "Jus de citron", "qte": 15, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 0.5, "unite": "unité"}
+    ],
+    "etapes": [
+     "Fondre le chocolat au bain-marie, réserver hors du feu.",
+     "Porter la crème et les graines de vanille presque à ébullition, verser sur le chocolat en mélangeant par le centre jusqu'à lisse et brillant.",
+     "Incorporer le babeurre, puis le jus de citron en ajustant au goût. Mixer au plongeant.",
+     "En poche, 3 h au frais minimum.",
+     "Garnir les coques appariées ; maturation 24 h en boîte hermétique au réfrigérateur."
+    ],
+    "note": "Ganache macaron de la fiche « mariage » : le babeurre/kéfir apporte le lactique-acidulé, le citron ajusté au goût (15 g fidèle fiche). Crème 70 ml → 70 g, babeurre 50 ml → 50 g, jus 15 ml → 15 g. Même signature lactique que le caramel au babeurre de Matt — piste transverse à creuser."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Ganache caramel salé Dulcey",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Ganache caramel salé Dulcey",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {"nom": "Chocolat blond Dulcey 32%", "qte": 180, "unite": "g"},
+     {"nom": "Crème entière", "qte": 120, "unite": "g"}
+    ],
+    "etapes": [
+     "Fondre le chocolat au bain-marie, réserver hors du feu.",
+     "Porter la crème presque à ébullition, verser sur le chocolat en mélangeant par le centre jusqu'à lisse et brillant.",
+     "Saler au goût, mixer au plongeant.",
+     "En poche, 3 h au frais minimum.",
+     "Garnir les coques appariées ; maturation 24 h en boîte hermétique au réfrigérateur."
+    ],
+    "note": "Sel : une pincée au goût, non quantifiée. Le profil « caramel salé » vient entièrement du Dulcey (chocolat blond caramélisé), sans caramel à cuire — raccourci de production intéressant. Poudre d'or de la fiche = décor, omise. Ratio 3:2, ganache de garnissage ferme."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Ganache chocolat noisette Azélia",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Ganache chocolat noisette Azélia",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {"nom": "Chocolat lait-noisette Azélia 35%", "qte": 180, "unite": "g"},
+     {"nom": "Crème entière", "qte": 120, "unite": "g"}
+    ],
+    "etapes": [
+     "Fondre le chocolat au bain-marie, réserver hors du feu.",
+     "Porter la crème avec le sel presque à ébullition, verser sur le chocolat en mélangeant par le centre jusqu'à lisse et brillant.",
+     "Mixer au plongeant. En poche, 3 h au frais minimum.",
+     "Garnir en couronne, déposer un cœur de praliné noisette coulant au centre.",
+     "Maturation 24 h en boîte hermétique au réfrigérateur."
+    ],
+    "note": "Sel : une pincée, non quantifiée. Fiche « triple noisette » : coques noisette + ganache Azélia + cœur praliné coulant — l'architecture couronne/cœur est directement réutilisable dans tes garnitures. Ratio 3:2 identique à la Dulcey."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Praliné noisette coulant",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Praliné noisette coulant",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     {"nom": "Noisettes torréfiées", "qte": 35, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 35, "unite": "g"}
+    ],
+    "etapes": [
+     "Fondre prudemment le sucre en caramel doré, hors du feu incorporer aussitôt les noisettes.",
+     "Débarrasser sur papier cuisson, refroidir complètement.",
+     "Mixer par impulsions jusqu'à pâte lisse et fluide.",
+     "Saler au goût. Déposer en cœur au centre des ganaches."
+    ],
+    "note": "Sel : au goût, non quantifié. Praliné 50/50, volontairement fluide (« liquid ») pour le cœur coulant des macarons triple noisette."
+   }
+  ]
+ },
+ {
+  "titre": "Maja — Ganache vanille ivoire",
+  "source": "maja",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Maja — Ganache vanille ivoire",
+    "role": "garniture",
+    "type": "ganache",
+    "ingredients": [
+     {"nom": "Chocolat blanc 35% (Ivoire)", "qte": 300, "unite": "g"},
+     {"nom": "Crème entière", "qte": 150, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "unité"}
+    ],
+    "etapes": [
+     "Fondre le chocolat au bain-marie, réserver hors du feu.",
+     "Porter la crème et les graines de vanille presque à ébullition, verser sur le chocolat en mélangeant par le centre jusqu'à lisse et brillant.",
+     "Mixer au plongeant.",
+     "En poche, 3 h au frais minimum avant garnissage."
+    ],
+    "note": "Crème 150 ml → 150 g. Ratio 2:1 chocolat/crème = ganache ferme double emploi sur la fiche : socle lissé et garniture des mini-macarons de bordure."
+   }
+  ]
+ }
+]
