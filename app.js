@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1117';
+const APP_VERSION = 'v1118';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7151,7 +7151,10 @@ async function atParfumsDispo(){
 function _atTaskParfums(t){ return (Array.isArray(t.parfums)?t.parfums:[]).map(Number).filter(r=>Number.isFinite(r)); }
 function _atTaskEstMutualisee(t){ return _atTaskParfums(t).length>=2; }
 function _atTaskMatchOnglet(t){
-  if(_atOnglet==='mutualise') return _atTaskEstMutualisee(t);
+  // Onglet « Mutualisé » = vue d'ensemble : on y voit TOUT ce qui tourne en parallèle
+  // (la meringue commune ET les sous-lots coques de chaque parfum), pas seulement les tâches
+  // rattachées à 2+ parfums. C'est le tableau de bord de la fournée entière.
+  if(_atOnglet==='mutualise') return _atTaskParfums(t).length>=1 || _atTaskEstMutualisee(t);
   if(_atOnglet==null) return _atTaskParfums(t).length===0;   // pas d'onglet → tâches sans parfum
   return _atTaskParfums(t).includes(+_atOnglet);
 }
