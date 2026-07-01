@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1104';
+const APP_VERSION = 'v1105';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -6717,7 +6717,7 @@ async function docConvertToOrder(id){
     tempsLivraisonMin:d.tempsLivraisonMin||0, consoVehicule:(d.consoVehicule!=null?d.consoVehicule:null),
     fraisLivraison:d.fraisLivraison||0, sacMatId:d.sacMatId||0, sacNb:d.sacNb||0,
     lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0, remiseGlobaleEur:(d.remiseGlobaleEur!=null?+d.remiseGlobaleEur:null),
-    perso:!!(d.perso||+d.persoMacarons>0), persoMacarons:+d.persoMacarons||0, persoCouleurs:Array.isArray(d.persoCouleurs)?d.persoCouleurs:[], montant:d.montant||0,
+    perso:!!(d.perso||+d.persoMacarons>0), persoMacarons:+d.persoMacarons||0, persoCouleurs:Array.isArray(d.persoCouleurs)?d.persoCouleurs:[], persoRemiseEur:+d.persoRemiseEur||0, acompteMention:(d.acompteMention!==false), montant:d.montant||0,
     paiements:[{date:today, montant:money2(acompte), moyen:'Acompte'}],
     statut:'À préparer', notes:(d.notes||'')+`\n(Issu du devis ${d.numero})`,
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[],
@@ -6795,7 +6795,7 @@ async function cmdToDevisConfirm(id){
       tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
       fraisLivraison:o.fraisLivraison||0, sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
       lignes:o.lignes||[], remiseGlobale:o.remiseGlobale||0, remiseGlobaleEur:(o.remiseGlobaleEur!=null?+o.remiseGlobaleEur:null),
-      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[],
+      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false),
       montant:+o.montant||0, acompte:0, orderId:null,
       notes:(o.notes||'')+`\n(Repassé en devis depuis la commande ${orderNumber(o)})`
     };
@@ -14132,7 +14132,7 @@ async function cmdView(id){
     })()}
     ${o.lieuLivraison?`<div class="sum-box"><span>📍 Livraison</span><b>${esc(o.lieuLivraison)}</b></div>`:''}
     ${blocks||'<p class="note">Aucun produit.</p>'}
-    <div class="sum-box"><span>Personnalisation couleurs</span><b>${+o.persoMacarons>0?`${o.persoMacarons} macaron(s) · +${euro(money2(o.persoMacarons*0.25))}`:(o.perso?'Oui':'Non')}</b></div>
+    <div class="sum-box"><span>Personnalisation couleurs</span><b>${+o.persoMacarons>0?`${o.persoMacarons} macaron(s) · +${euro(money2(o.persoMacarons*0.25))}${+o.persoRemiseEur>0?` · remise −${euro(money2(+o.persoRemiseEur))}`:''}`:(o.perso?'Oui':'Non')}</b></div>
     ${+o.remiseGlobale>0?`<div class="sum-box"><span>Remise globale</span><b>−${o.remiseGlobale}%</b></div>`:''}
     <div class="sum-box"><span>Montant total${+o.remiseGlobale>0||lignes.some(l=>+l.remisePct>0)?' (TTC, remises incluses)':''}</span><b>${euro(o.montant)}</b></div>
     ${_docLiensHtml}
@@ -14279,7 +14279,7 @@ async function cmdForm(id, opts){
               distanceKm:dv.distanceKm||0, prixCarburant:dv.prixCarburant||0,
               tempsLivraisonMin:dv.tempsLivraisonMin||0, consoVehicule:(dv.consoVehicule!=null?dv.consoVehicule:null),
               fraisLivraison:dv.fraisLivraison||0, sacMatId:dv.sacMatId||0, sacNb:dv.sacNb||0,
-              perso:!!(dv.perso||+dv.persoMacarons>0), persoMacarons:+dv.persoMacarons||0, persoCouleurs:Array.isArray(dv.persoCouleurs)?dv.persoCouleurs:[],
+              perso:!!(dv.perso||+dv.persoMacarons>0), persoMacarons:+dv.persoMacarons||0, persoCouleurs:Array.isArray(dv.persoCouleurs)?dv.persoCouleurs:[], persoRemiseEur:+dv.persoRemiseEur||0, acompteMention:(dv.acompteMention!==false),
               statut:'À préparer', paiement:'En attente'}
             : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
   } else {
@@ -14309,6 +14309,9 @@ async function cmdForm(id, opts){
         _cmdRemiseGlobaleEur = money2(_base*_pct/100);
       }
     }
+    // [REMISE PERSO] Reprise de la remise perso stockée (euros fixes), plafonnée au supplément perso.
+    const _persoSupOpen = money2(((o&&o.persoMacarons)||0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+    _cmdPersoRemiseEur = money2(Math.max(0, Math.min(_persoSupOpen, +(o&&o.persoRemiseEur)||0)));
   }
   const preselect = opts.clientId || o.clientId || 0;
   // trier les clients par nom pour un défilement lisible même à plusieurs centaines
@@ -14389,6 +14392,12 @@ async function cmdForm(id, opts){
    <label class="switch-row"><input type="checkbox" id="f_perso" ${o.perso||+o.persoMacarons>0?'checked':''} onchange="cmdPersoToggle()"> Personnalisation des couleurs (+0,25 €/macaron)</label>
    <div class="field" id="f_persoWrap" style="${(o.perso||+o.persoMacarons>0)?'':'display:none'}"><label>Nombre de macarons personnalisés <span style="color:#9a8a82;font-weight:400">— pas forcément le total de la commande</span></label>
      <input type="number" min="0" step="1" id="f_persoNb" value="${o.persoMacarons||''}" placeholder="ex : 24" oninput="cmdRecalc()">
+     <div class="row2" style="margin-top:8px">
+       <div class="field" style="margin:0"><label style="font-weight:400;color:#7a6a60">Remise perso (€)</label>
+         <input type="number" min="0" step="0.01" id="f_persoRemEur" value="${+o.persoRemiseEur>0?money2(+o.persoRemiseEur):''}" placeholder="ex : 6" oninput="cmdPersoRemiseFromEuro()"></div>
+       <div class="field" style="margin:0"><label style="font-weight:400;color:#7a6a60">Remise perso (%)</label>
+         <input type="number" min="0" max="100" step="1" id="f_persoRemPct" placeholder="ex : 100 = offert" oninput="cmdPersoRemiseFromPct()"></div>
+     </div>
      <div style="margin-top:8px"><label style="font-weight:400;color:#7a6a60">Détail couleur \u2194 parfum <span style="color:#9a8a82">— apparaît dans un encadré sur le devis et la facture (facultatif)</span></label>
        <div id="f_persoCoulList">${cmdPersoCoulRows(o.persoCouleurs)}</div>
        <button type="button" class="btn ghost" style="margin-top:4px;padding:5px 12px;font-size:.8rem" onclick="cmdPersoCoulAdd()">+ Ajouter une couleur</button>
@@ -14401,6 +14410,8 @@ async function cmdForm(id, opts){
      <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="_cmdPriceManual=true;this.dataset.auto='0';cmdRecalc()"></div>
    </div>
    <div class="sum-box" id="priceBreak" style="display:none"></div>
+
+   <label class="switch-row" style="margin-top:10px"><input type="checkbox" id="f_acompteMention" ${o.acompteMention!==false?'checked':''}> Afficher la mention « acompte de 75 % requis » sur le devis <span style="color:#9a8a82;font-weight:400">— décoche pour la masquer sur cette commande</span></label>
 
    <div class="pay-ledger" style="margin-top:14px">
      <div style="margin-bottom:6px">
@@ -15342,19 +15353,29 @@ function factPersoBox(nbPerso, coul){
 }
 // Ligne de tableau « Personnalisation des couleurs » : n \u00d7 0,25 \u20ac = montant.
 // Renvoie '' si pas de macaron personnalisé. Sert au devis et aux factures.
-function factPersoLigne(nbPerso){
+function factPersoLigne(nbPerso, remiseEur){
   const n = Math.max(0, +nbPerso||0);
   if(n<=0) return '';
   const PU = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
+  const brut = money2(n*PU);
+  const rem = money2(Math.max(0, Math.min(brut, +remiseEur||0)));
   const desc = `<span class="ln-main">Personnalisation des couleurs</span>`
     + `<span class="ln-sub">${n} macaron${n>1?'s':''} \u00d7 ${euro(money2(PU))}</span>`;
-  return `<tr><td class="desc">${desc}</td><td class="mt">${euro(money2(n*PU))}</td></tr>`;
+  let out = `<tr><td class="desc">${desc}</td><td class="mt">${euro(brut)}</td></tr>`;
+  if(rem>0){
+    const pct = brut>0 ? Math.max(0, Math.min(100, money2(rem/brut*100))) : 0;
+    const sub = `<span class="ln-main">Remise personnalisation${pct>0?` (\u2212${pct}%)`:''}</span>`;
+    out += `<tr><td class="desc">${sub}</td><td class="mt">\u2212${euro(rem)}</td></tr>`;
+  }
+  return out;
 }
-// Montant brut de la personnalisation (entre dans le total imposable à la remise).
-function persoMontant(nbPerso){
+// Montant NET de la personnalisation (brut − remise perso). Entre dans le total imposable à la remise globale.
+function persoMontant(nbPerso, remiseEur){
   const n = Math.max(0, +nbPerso||0);
   const PU = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
-  return money2(n*PU);
+  const brut = money2(n*PU);
+  const rem = money2(Math.max(0, Math.min(brut, +remiseEur||0)));
+  return money2(brut - rem);
 }
 // [REMISE GLOBALE — RÉFÉRENCE EN EUROS FIXES]
 // La référence stockée est désormais un MONTANT € (remiseGlobaleEur), qui reste stable même
@@ -15376,6 +15397,32 @@ function _cmdSousTotalAvantGlobal(){
   const st = addMoney(...cmdLines.map(ln=>lineTotal(ln)));
   const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
   return money2(st + persoSup);
+}
+// [REMISE PERSO] Référence canonique en euros fixes (comme la remise globale), plafonnée au
+// supplément perso brut (nb macarons × 0,25 €). Le % n'est qu'une saisie alternative synchronisée.
+let _cmdPersoRemiseEur = 0;
+function _cmdPersoSupBrut(){
+  return money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+}
+function cmdPersoRemiseFromEuro(){
+  const el=document.getElementById('f_persoRemEur');
+  let e=money2(+(el&&el.value)||0); if(e<0)e=0;
+  const sup=_cmdPersoSupBrut(); if(e>sup) e=sup;
+  _cmdPersoRemiseEur=e;
+  const p= sup>0 ? Math.max(0,Math.min(100, money2(e/sup*100))) : 0;
+  const pctEl=document.getElementById('f_persoRemPct');
+  if(pctEl && document.activeElement!==pctEl){ pctEl.value = p>0?p:''; }
+  cmdRecalc();
+}
+function cmdPersoRemiseFromPct(){
+  const el=document.getElementById('f_persoRemPct');
+  let p=+(el&&el.value)||0; if(p<0)p=0; if(p>100)p=100;
+  const sup=_cmdPersoSupBrut();
+  const e=money2(sup*p/100);
+  _cmdPersoRemiseEur=e;
+  const eurEl=document.getElementById('f_persoRemEur');
+  if(eurEl && document.activeElement!==eurEl){ eurEl.value = e>0?e:''; }
+  cmdRecalc();
 }
 function cmdGlobalRemiseFromPct(v){
   let p=+v||0; if(p<0)p=0; if(p>100)p=100;
@@ -15401,8 +15448,17 @@ function cmdRecalc(){
   const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln))); // après remises de ligne
   const persoNb = cmdPersoCount();
   const persoSup = money2(persoNb*PERSO_PRIX_UNIT);
-  // La personnalisation entre dans la base imposable à la remise globale (au même titre que les lignes).
-  const baseAvantGlobal = addMoney(sousTotal, persoSup);
+  // [REMISE PERSO] remise en euros fixes plafonnée au supplément perso ; perso nette = sup − remise.
+  const persoRem = money2(Math.max(0, Math.min(persoSup, +_cmdPersoRemiseEur||0)));
+  const persoNet = money2(Math.max(0, persoSup - persoRem));
+  const persoPct = persoSup>0 ? Math.max(0, Math.min(100, money2(persoRem/persoSup*100))) : 0;
+  // synchro affichage des deux champs remise perso (sauf celui en cours de saisie)
+  const prEurEl=document.getElementById('f_persoRemEur');
+  if(prEurEl && document.activeElement!==prEurEl){ prEurEl.value = persoRem>0?persoRem:''; }
+  const prPctEl=document.getElementById('f_persoRemPct');
+  if(prPctEl && document.activeElement!==prPctEl){ prPctEl.value = persoPct>0?persoPct:''; }
+  // La personnalisation (NETTE de sa remise) entre dans la base imposable à la remise globale.
+  const baseAvantGlobal = addMoney(sousTotal, persoNet);
   // [REMISE GLOBALE EN EUROS FIXES] La référence est _cmdRemiseGlobaleEur (montant €), plafonnée à la base.
   // On ne la recalcule PAS depuis le % à chaque frappe : elle reste stable même si le sous-total change.
   let remiseGTot = money2(Math.max(0, Math.min(baseAvantGlobal, +_cmdRemiseGlobaleEur||0)));
@@ -15425,6 +15481,7 @@ function cmdRecalc(){
         `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
         (remiseLignes>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
         (persoNb>0?`<div style="display:flex;justify-content:space-between;color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×0,25 €)</span><b>+${euro(persoSup)}</b></div>`:'')+
+        (persoRem>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise perso couleurs${persoPct>0?` (−${persoPct}%)`:''}</span><b>−${euro(persoRem)}</b></div>`:'')+
         (remiseGTot>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseGTot)}</b></div>`:'')+
         `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(total)}</b></div>`;
     } else brk.style.display='none';
@@ -15577,7 +15634,9 @@ async function saveCmd(id){
   // [REMISE GLOBALE EN EUROS FIXES] La référence est le montant €, plafonné à la base imposable
   // (lignes après remises de ligne + personnalisation). Le % est DÉRIVÉ et stocké pour compat aval.
   const _sousTotalRG = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
-  const _persoRG = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+  const _persoSupRG = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+  const _persoRemRG = money2(Math.max(0, Math.min(_persoSupRG, +_cmdPersoRemiseEur||0)));
+  const _persoRG = money2(Math.max(0, _persoSupRG - _persoRemRG));   // perso NETTE de sa remise
   const _baseRG = money2(_sousTotalRG + _persoRG);
   const remiseGlobaleEur = money2(Math.max(0, Math.min(_baseRG, +_cmdRemiseGlobaleEur||0)));
   const remiseGlobale = _baseRG>0 ? Math.max(0, Math.min(100, money2(remiseGlobaleEur/_baseRG*100))) : 0;
@@ -15611,6 +15670,8 @@ async function saveCmd(id){
     perso:document.getElementById('f_perso').checked,
     persoMacarons: cmdPersoCount(),
     persoCouleurs: cmdPersoCoulCollect(),
+    persoRemiseEur: _persoRemRG,
+    acompteMention: !document.getElementById('f_acompteMention') || document.getElementById('f_acompteMention').checked,
     sacMatId: +val('f_sacMat')||0,                    // modèle de sac choisi (matière emballage usage:'sac'), 0 = aucun
     sacNb: Math.max(0, Math.round(+val('f_sacNb')||0)),// nombre de sacs saisi à la main
     montant,
@@ -15644,7 +15705,7 @@ async function saveCmd(id){
       // Sacs / emballages choisis sur la commande.
       sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
       // Personnalisation des couleurs : conservée pour l'encadré du devis/facture.
-      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[],
+      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false),
       notes:o.notes,
       acompte: 0,                           // acompte reçu (déclenche la conversion une fois > 0)
       validiteJours:30, expiration:exp.toISOString().slice(0,10),
@@ -35778,7 +35839,7 @@ async function genererDevisDoc(docId){
   }
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   const lignes = d.lignes || [];
-  const persoMt = persoMontant(d.persoMacarons);   // montant brut de la personnalisation
+  const persoMt = persoMontant(d.persoMacarons, d.persoRemiseEur);   // montant NET de la personnalisation
   const gpct = Math.max(0, Math.min(100, +d.remiseGlobale||0));
   // Total = montant stocké du devis si dispo (déjà net, perso incluse, remise appliquée).
   // Sous-total BRUT = lignes en brut + personnalisation. La remise s'applique UNE fois sur ce brut.
@@ -35799,7 +35860,7 @@ async function genererDevisDoc(docId){
         <table class="cmd-table">
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
-            ${factPersoLigne(d.persoMacarons)}
+            ${factPersoLigne(d.persoMacarons, d.persoRemiseEur)}
           </tbody>
         </table>
         ${factPersoBox(d.persoMacarons, d.persoCouleurs)}
@@ -35851,7 +35912,7 @@ async function genererDevisDoc(docId){
          ${reductions>0?`<div class="lg brut"><span>Total avant réductions</span><span>${euro(totalBrut)}</span></div><div class="lg reduc"><span>Réductions accordées${reducPct>0?` (−${reducPct}%)`:''}</span><span>\u2212${euro(reductions)}</span></div>`:''}
          <div class="lg total"><span>Total du devis</span><span>${euro(total)}</span></div>
        </div>
-       <div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider votre devis.</div>
+       ${d.acompteMention!==false?`<div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider votre devis.</div>`:''}
        <div class="bas-final">
          ${factRibAvisCol(e)}
          <div class="legal-bloc">
@@ -35877,7 +35938,7 @@ async function genererDevisDoc(docId){
     `Bonjour${nomClient ? ' '+nomClient : ''},`,
     '',
     `Veuillez trouver ci-dessous notre devis n° ${d.numero||''} d'un montant de ${montantFmt} €.`,
-    `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).`,
+    ...(d.acompteMention!==false ? [`Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).`] : []),
     '',
     'Vous remerciant par avance.',
     '',
@@ -35905,7 +35966,7 @@ async function genererDevisDoc(docId){
     lignes: docLignes,
     sousTotal: totalBrut, remisePct: reducPct, remise: reductions, total: total,
     mentions:[
-      `Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider ce devis.`,
+      ...(d.acompteMention!==false ? [`Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider ce devis.`] : []),
       'TVA non applicable, article 293 B du Code général des impôts.',
       `Devis valable ${d.validiteJours||30} jours à compter de la date d'émission. Bon pour accord — date et signature :`
     ],
@@ -36187,7 +36248,7 @@ async function genererFactureMultiple(ids){
   // Construit une section par commande
   const sections = orders.map(o=>{
     const lignes = orderToLines(o);
-    const persoMt = persoMontant(o.persoMacarons);            // montant brut personnalisation
+    const persoMt = persoMontant(o.persoMacarons, o.persoRemiseEur);            // montant NET personnalisation
     const gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
     const frais = +o.fraisLivraison||0;
     // Sous-total BRUT = lignes brutes + personnalisation. La remise s'applique une fois sur ce brut.
@@ -36211,7 +36272,7 @@ async function genererFactureMultiple(ids){
         <table class="cmd-table">
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
-            ${factPersoLigne(o.persoMacarons)}
+            ${factPersoLigne(o.persoMacarons, o.persoRemiseEur)}
             ${reducCmd>0?`<tr class="sub"><td>Total avant réductions</td><td class="mt">${euro(brutCmd)}</td></tr><tr class="rem"><td>Réductions accordées${reducPct>0?` (−${reducPct}%)`:''}</td><td class="mt">−${euro(reducCmd)}</td></tr>`:''}
             ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
             <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
