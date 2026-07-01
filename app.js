@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1130';
+const APP_VERSION = 'v1131';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -8251,15 +8251,17 @@ function _prodbatFilterInner(q){
   const groups=[]; const idx={};
   capped.forEach(r=>{
     const p=r.p;
-    let key, label;
+    let key, label, grpGF=false;
     const nom = p.libre ? (p.produitLibre||'') : recName(p);
     if(prodComposant(p)==='ganache' && estMutualisee(p, nom)){
       key=GANACHE_KEY; label='Ganaches montées (mutualisables)';
     } else {
-      key = p.libre ? ('libre:'+(p.produitLibre||p.id)) : ('parfum:'+flavorCodeFor(nom, (window._prodRecGF?window._prodRecGF(p):false)));
+      const _gf = (window._prodRecGF?window._prodRecGF(p):false);
+      key = p.libre ? ('libre:'+(p.produitLibre||p.id)) : ('parfum:'+flavorCodeFor(nom, _gf));
       label = nom || '(sans nom)';
+      grpGF = _gf;
     }
-    if(idx[key]==null){ idx[key]=groups.length; groups.push({key, name:label, libre:!!p.libre, rows:[]}); }
+    if(idx[key]==null){ idx[key]=groups.length; groups.push({key, name:label, libre:!!p.libre, gf:grpGF, rows:[]}); }
     groups[idx[key]].rows.push(r);
   });
   // la ganache montée en dernier (groupe transverse)
@@ -8290,7 +8292,7 @@ function _prodbatFilterInner(q){
     // chevron replié par défaut ; le détail (les cartes) est masqué jusqu'au clic
     html+=`<div class="prod-sec-head" onclick="prodGroupToggle('${gid}')" style="cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none;border-left:6px solid ${_grpCol};padding-left:8px">
       <span id="${gid}_chev" style="transition:transform .15s;display:inline-block">▸</span>
-      ${_grpDot}<span style="font-weight:700">${esc(g.name)}</span>${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}${_resume}</span></div>
+      ${_grpDot}<span style="font-weight:700">${esc(g.name)}</span>${g.gf?' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.6rem;vertical-align:middle">🍪 grand format</span>':''}${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}${_resume}</span></div>
     <div id="${gid}" class="prod-grp-body" style="display:none">${g.rows.map(_prodbatRow).join('')}</div>`;
   });
   body.innerHTML = html +
