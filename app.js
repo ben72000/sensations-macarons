@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1125';
+const APP_VERSION = 'v1126';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -2211,8 +2211,7 @@ function saveSettings(s){ localStorage.setItem('sm_settings', JSON.stringify(s))
 
 // enregistrés (qui priment sinon sur les nouveaux défauts). Ne s'exécute qu'UNE fois : à ta
 // prochaine réception, tu modifieras les prix dans Paramètres et ils ne seront plus écrasés.
-function migratePackaging202511(){
-  try{
+function migratePackaging202511(){  try{
     if(localStorage.getItem('sm_pkg_migr_20251128_v2')==='done') return;
     const raw=JSON.parse(localStorage.getItem('sm_settings')||'{}');
     const cur=raw.packaging||{};
@@ -2942,6 +2941,52 @@ function prodVendable(p){ const c=prodComposant(p); return c==='complet' || c===
 // Heure d'ancrage de la DLC frigo : le moment où la prod est passée « terminée »
 // (ou, pour les anciennes prods, l'horodatage de production).
 function prodDlcAnchor(p){ return (p && (p.prodTermineTs || (prodStatut(p)==='termine' ? p.prodTimestamp : ''))) || ''; }
+// [RÈGLE ABSOLUE] DLC effective d'un lot de production.
+// Si le lot est PHYSIQUEMENT au congélateur, sa DLC = date de fabrication + 4 mois, et cette
+// règle PRIME sur tout (y compris une DLC manuelle ou une DLC frigo figée obsolète). La
+// congélation fige la dégradation : la date de fab est l'ancre, pas la date d'entrée congélo.
+// Pour un lot au frigo (ou hors congélo), on garde la DLC stockée (dlcProduit).
+// Retourne une date ISO 'YYYY-MM-DD' ou '' si indéterminable.
+function prodDlcEffective(p){
+  if(!p) return '';
+  // Un lot « démarré » (pas encore terminé) n'a pas de DLC figée.
+  if(prodStatut(p)!=='termine') return p.dlcProduit || '';
+  // Ancre de fabrication (fin de prod), pour compléter un historique manquant.
+  const fabIso = prodDlcAnchor(p) || p.prodTimestamp || (p.date?p.date+'T00:00':'');
+  // On reconstruit l'historique des emplacements. computeDlcFromHistory applique déjà la
+  // règle complète : le frigo consomme 7 j, la congélation MET CE BUDGET EN PAUSE et impose
+  // 4 mois, et le budget frigo restant reprend après décongélation. On lui délègue donc tout.
+  let hist = Array.isArray(p.histEmplacement) ? p.histEmplacement.slice() : [];
+  // Si l'historique est vide/incomplet mais qu'on connaît l'emplacement courant, on le complète
+  // avec un segment unique ancré sur la fabrication (cas des anciens lots sans historique).
+  if(!hist.length && p.emplacement){
+    hist = [{ lieu:p.emplacement, ts: fabIso || new Date().toISOString() }];
+  }
+  if(hist.length){
+    const d = computeDlcFromHistory(hist, new Date().toISOString());
+    if(d) return d;
+  }
+  return p.dlcProduit || '';
+}
+// [MIGRATION] Corrige la DLC stockée des lots DÉJÀ au congélateur dont la valeur est obsolète
+// (ex. DLC frigo figée avant congélation → affichée « dépassée »). Aligne dlcProduit sur la
+// DLC effective (règle congélation : budget frigo en pause + 4 mois). Idempotent.
+async function migrateDlcCongelateur(){
+  try{
+    const prods = await db.productions.toArray();
+    let n=0;
+    for(const p of prods){
+      if(prodStatut(p)!=='termine') continue;
+      if(!isFreezer(p.emplacement)) continue;
+      const cible = prodDlcEffective(p);
+      if(cible && cible!==(p.dlcProduit||'')){
+        await db.productions.update(p.id, { dlcProduit:cible });
+        n++;
+      }
+    }
+    if(n) console.log('migrateDlcCongelateur: '+n+' lot(s) corrigé(s)');
+  }catch(e){ console.error('migrateDlcCongelateur', e); }
+}
 // Heures écoulées depuis le démarrage d'une prod « démarrée ».
 function prodOpenHours(p){
   const start = p && (p.prodDebutTs || p.prodTimestamp);
@@ -3987,7 +4032,8 @@ async function dlcActions(prodId){
   if(!p){ toast('Lot introuvable'); return; }
   const recipes = await db.recipes.toArray().catch(()=>[]);
   const nom = (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : '?';
-  const j = (typeof daysTo==='function') ? daysTo(p.dlcProduit) : null;
+  const dlcEff = (typeof prodDlcEffective==='function') ? prodDlcEffective(p) : p.dlcProduit;
+  const j = (typeof daysTo==='function') ? daysTo(dlcEff) : null;
   const etat = (j!=null && j<=0) ? '<b style="color:#b3261e">DLC dépassée</b>' : (j!=null?`DLC dans ${j} j`:'DLC');
   const dispo = round3(+p.qteRestante||0);
   openModal(`<h3>${esc(nom)}</h3>
@@ -4075,12 +4121,14 @@ async function renderDash(){
   // Frigo : alerte à ≤2 jours. Congélateur : alerte à ≤14 jours. Expiré = priorité.
   const prodDlcAlert=[];
   productions.forEach(p=>{
-    if(round3(+p.qteRestante)<=0 || !p.dlcProduit) return;
-    const j=daysTo(p.dlcProduit); if(j===null) return;
+    if(round3(+p.qteRestante)<=0) return;
+    const dlcEff = prodDlcEffective(p);   // DLC réelle (congélateur → budget frigo en pause + 4 mois)
+    if(!dlcEff) return;
+    const j=daysTo(dlcEff); if(j===null) return;
     const seuil = isFreezer(p.emplacement) ? 14 : 2;
     if(j<=seuil){
       prodDlcAlert.push({id:p.id, nom:prodNomComplet(p, recipes), lot:p.lotProduction||('#'+p.id),
-        dlc:p.dlcProduit, j, emplacement:p.emplacement||'', qte:round3(+p.qteRestante)});
+        dlc:dlcEff, j, emplacement:p.emplacement||'', qte:round3(+p.qteRestante)});
     }
   });
   prodDlcAlert.sort((a,b)=>a.j-b.j);
@@ -9250,10 +9298,18 @@ async function doMoveEmplacement(id, dest, opts){
   const nouveauLot = lotAvecEmplacement(p.lotProduction, dest);
   const patch={ emplacement:dest, emplacementMaj:nowIso, histEmplacement:hist, lotProduction:nouveauLot };
   if(isFreezer(dest)) patch.venuDuCongelateur=true; // a séjourné au congélo
-  // DLC : recalculée en mode auto ; reste vide tant que la prod est « démarrée »
+  // DLC : recalculée en mode auto ; reste vide tant que la prod est « démarrée ».
   if(p.dlcAuto!==false){
     patch.dlcAuto=true;
     patch.dlcProduit = prodStatut(p)==='termine' ? computeDlcFromHistory(hist, nowIso) : '';
+  }
+  // [RÈGLE ABSOLUE] Mise au congélateur → DLC recalculée selon l'historique (entrée congélo
+  // + 4 mois, avec le budget frigo déjà consommé mis en pause et réservé pour après
+  // décongélation). Prime même sur une DLC manuelle (dlcAuto===false), pour que la page
+  // d'accueil et l'étiquette ne montrent plus « DLC dépassée » sur un lot congelé.
+  if(isFreezer(dest) && prodStatut(p)==='termine'){
+    const dlcCongel = prodDlcEffective({...p, emplacement:dest, histEmplacement:hist});
+    if(dlcCongel) patch.dlcProduit = dlcCongel;
   }
   await db.productions.update(id, patch);
   if(!silent){
@@ -12457,7 +12513,7 @@ async function traceProd(prodId){
   const _reste = round3(+prod.qteRestante||0);
   const stockBlock = (_reste>0)
     ? `<div class="trace-step" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-         <span>📍 En stock (non utilisé) · <b>${qty(_reste)}</b> pièce(s) · ${empTagHtml(prod.emplacement)}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:''}</span>
+         <span>📍 En stock (non utilisé) · <b>${qty(_reste)}</b> pièce(s) · ${empTagHtml(prod.emplacement)}${(function(){const d=(typeof prodDlcEffective==='function')?prodDlcEffective(prod):prod.dlcProduit;return d?` · DLC ${fmtDate(d)}`:'';})()}</span>
          <span class="tag" style="flex:none">disponible</span></div>`
     : '';
   const _deb=prod.prodDebutTs||prod.prodTimestamp||''; const _fin=prod.prodTermineTs||'';
@@ -12465,7 +12521,7 @@ async function traceProd(prodId){
   openModal(`${_traceArianeHTML()}<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(_prodNom)}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
     <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prodComposant(prod)!=='complet'?` · <span class="tag" style="background:${prodComposant(prod)==='assemble'?'#3f7d52':prodComposant(prod)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff">${prodComposant(prod)==='coques'?'🟤 Coques':prodComposant(prod)==='ganache'?'🍫 Ganache':prodComposant(prod)==='degustation'?'🥄 Dégustation (offert)':'✓ Assemblé'}</span>`:''}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
-    <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${_dur?` · <b>durée ${_dur}</b>`:''}${prod.dlcProduit?` · DLC ${fmtDate(prod.dlcProduit)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'')}</span><br>
+    <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${_dur?` · <b>durée ${_dur}</b>`:''}${(function(){const d=(typeof prodDlcEffective==='function')?prodDlcEffective(prod):prod.dlcProduit;return d?` · DLC ${fmtDate(d)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'');})()}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
     ${(prod.histEmplacement&&prod.histEmplacement.length>1)?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span style="font-weight:600">Parcours de conservation</span>${prod.histEmplacement.map(h=>`<span style="font-size:.8rem;color:#6b5a52">${empIcon(h.lieu)} ${esc(empNom(h.lieu))} (${empLettre(h.lieu)}) — ${fmtDateTime(h.ts)}${h.motif?` · ${esc(h.motif)}`:''}</span>`).join('')}</div>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
@@ -32581,7 +32637,7 @@ async function buildLabelData(prodId){
     composant: _comp,
     nbPieces: _nbPieces,
     lot: p.lotProduction||'—',
-    dlc: p.dlcProduit ? fmtDate(p.dlcProduit) : '—',
+    dlc: (function(){ const d=(typeof prodDlcEffective==='function')?prodDlcEffective(p):p.dlcProduit; return d ? fmtDate(d) : '—'; })(),
     // Fabrication = heure de FIN de production (prodTermineTs).
     // Repli : ancien horodatage de fin, sinon date saisie. Heure au format 00:00.
     fab: (p.prodTermineTs || (prodStatut(p)==='termine' ? p.prodTimestamp : '')) ? fmtDateTime(p.prodTermineTs || p.prodTimestamp) : fmtDate(p.date),
@@ -49664,6 +49720,7 @@ function startClock(){
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
+    try{ await migrateDlcCongelateur(); }catch(e){ console.error('migrateDlcCongelateur',e); }
     try{ const r=await rdSeedSiVide();
       let nIdees=0,nTests=0; try{nIdees=await db.rdIdees.count();}catch(_){}; try{nTests=await db.rdTests.count();}catch(_){}
       diagPublish('rd_seed','R&D · module', {...r, idees:nIdees, tests:nTests});
