@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1118';
+const APP_VERSION = 'v1121';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7662,13 +7662,6 @@ async function renderProductions(){
   const sugg = assemblySuggestions(prods, recName);
   const degustSugg = degustationSuggestions(prods, recName);  // coques cassées déclassées + surplus ganache → dégustation
   const orphans = orphanComponents(prods, recName);  // composants seuls (coques sans ganache, ou l'inverse)
-  // Anciens lots coques non convertis (quantité ≈ rendement au lieu de ×2) à signaler
-  const _recById={}; recipes.forEach(r=>_recById[r.id]=r);
-  const coquesSuspectsN = prods.filter(p=>{
-    if(prodComposant(p)!=='coques' || p._coquesConverti) return false;
-    const rec=_recById[p.recipeId]; const rend=+(rec&&rec.rendement)||0; if(rend<=0) return false;
-    const ratio=(+p.qteTheorique||0)/rend; return ratio>0.7 && ratio<1.4;
-  }).length;
   // index de recherche : lot, parfum/recette, date (plusieurs formats), emplacement (nom + LETTRE), statut
   // Familles de lots : on compte les membres par base (lot mère sans suffixe).
   // Une famille colorée = au moins 2 membres (donc un découpage a eu lieu).
@@ -7824,7 +7817,6 @@ async function renderProductions(){
    <div id="prodVueStock" style="display:none"></div>
    <div id="prodVueAttente">
    <div class="panel">
-     ${coquesSuspectsN>0?`<div class="banner" style="background:#fff8ec;border-color:#e8cfa0;margin-bottom:8px">🔧 <div><b>${coquesSuspectsN} ancien(s) lot(s) de coques</b> à corriger (quantité non doublée). <span class="act" onclick="reviewCoquesMigration(false)">Vérifier et corriger →</span></div></div>`:''}
      <input class="search" id="prodbatSearch" style="width:100%;margin-bottom:6px" placeholder="N° lot, parfum, date, emplacement (F/B/C/A)…" value="${esc(prodnSearch)}" oninput="prodbatFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
      <div class="prod-emp-chips" style="margin-bottom:12px">
        ${EMPLACEMENTS.map(e=>`<button onclick="prodbatSearchEmp('${e.lettre}')" title="${esc(e.nom)}">${e.icon} ${e.lettre}</button>`).join('')}
@@ -10971,66 +10963,6 @@ async function prodAdjustForm(id){
    À la place : on détecte les lots SUSPECTS (quantité ≈ rendement, pas ×2)
    et on laisse l'utilisateur cocher ceux à doubler. Sûr et réversible.
    ============================================================ */
-async function detectCoquesSuspects(){
-  const [prods, recipes] = await Promise.all([db.productions.toArray(), db.recipes.toArray()]);
-  const recById = {}; recipes.forEach(r=>recById[r.id]=r);
-  const out=[];
-  prods.forEach(p=>{
-    if(prodComposant(p)!=='coques') return;
-    const rec=recById[p.recipeId]; if(!rec) return;
-    const rend=+rec.rendement||0; if(rend<=0) return;
-    const qTh=+p.qteTheorique||0;
-    // Lot déjà converti si qté ≈ un multiple pair du rendement (≥ rendement×2).
-    // Suspect si qté est proche du rendement SIMPLE (pas doublé) -> ancien lot.
-    // tolérance 15 % pour absorber casse/écarts.
-    const ratio = qTh/rend;
-    const suspect = ratio>0.7 && ratio<1.4;   // ~1× rendement => non doublé
-    if(suspect && !p._coquesConverti){
-      out.push({id:p.id, lot:p.lotProduction||('#'+p.id), parfum:rec.produitNom||('#'+p.recipeId),
-        rend, qTh, qRe:+p.qteReelle||qTh, propose: qTh*2, propRe:(+p.qteReelle||qTh)*2,
-        date:p.date||''});
-    }
-  });
-  return out;
-}
-async function reviewCoquesMigration(silentIfNone){
-  const susp = await detectCoquesSuspects();
-  if(!susp.length){
-    if(!silentIfNone) toast('Aucun ancien lot de coques à corriger ✓');
-    return;
-  }
-  const rows = susp.map(s=>`<label class="pay-opt" style="display:flex;align-items:flex-start;gap:9px;padding:10px;border:1px solid #e7dcc9;border-radius:10px;margin-top:7px;cursor:pointer">
-    <input type="checkbox" class="coqMigChk" data-id="${s.id}" data-prop="${s.propose}" data-propre="${s.propRe}" checked style="margin-top:3px">
-    <div style="flex:1">
-      <div><b>${esc(s.parfum)}</b> <span style="color:#9a8a82;font-size:.74rem">lot ${esc(s.lot)}${s.date?' · '+fmtDate(s.date):''}</span></div>
-      <div style="font-size:.82rem;margin-top:2px">actuel : <b>${qty(s.qTh)} coques</b> → corrigé : <b style="color:#2e7d32">${qty(s.propose)} coques</b> <span style="color:#9a8a82">(= ${qty(s.rend)} macarons)</span></div>
-    </div></label>`).join('');
-  openModal(`<h3>🔧 Corriger les anciens lots de coques</h3>
-    <div class="banner" style="background:#fff8ec;border-color:#e8cfa0"><div>${susp.length} lot(s) de coques semblent dater d'avant la conversion automatique (1 macaron = 2 coques). Leur quantité paraît <b>non doublée</b>. Coche ceux à corriger — <b>vérifie chacun</b> avant de valider, surtout si tu as fait des demi-batchs.</div></div>
-    <div style="max-height:42vh;overflow:auto;margin-top:6px">${rows}</div>
-    <p class="note" style="margin-top:8px">La correction double les coques (théorique + réel) ; les matières et la ganache ne changent pas. Réversible via « ✎ Réel » sur chaque lot.</p>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
-      <button class="btn gold" onclick="applyCoquesMigration()">Corriger les lots cochés</button></div>`);
-}
-async function applyCoquesMigration(){
-  const chks=[...document.querySelectorAll('.coqMigChk:checked')];
-  if(!chks.length){ closeModal(); toast('Aucun lot sélectionné.'); return; }
-  let n=0;
-  for(const c of chks){
-    const id=+c.dataset.id, prop=+c.dataset.prop, propRe=+c.dataset.propre;
-    const p=await db.productions.get(id); if(!p) continue;
-    const dejaSorti=(+p.qteProduite||0)-(+p.qteRestante||0);
-    const newRestant=Math.max(0, propRe - dejaSorti);
-    await db.productions.update(id, {
-      qteTheorique:prop, qteReelle:propRe, qteProduite:propRe,
-      qteRestante:newRestant, _coquesConverti:true,
-      ecart: propRe - prop
-    });
-    n++;
-  }
-  closeModal(); renderProductions();
-  toast(`${n} lot(s) de coques corrigé(s) ✓`);
-}
 function prodAdjHint(th, dejaSorti){
   const v=+(document.getElementById('f_newreel')?.value);
   const hint=document.getElementById('adjHint'); if(!hint) return;
@@ -13835,8 +13767,21 @@ function cmdClearSelection(){ _cmdSel.clear(); const h=document.getElementById('
 function cmdUpdateSelBar(){
   const bar=document.getElementById('cmdSelBar'), cnt=document.getElementById('cmdSelCount');
   if(!bar) return;
-  if(_cmdSel.size>0){ bar.style.display='flex'; if(cnt) cnt.textContent=`${_cmdSel.size} sélectionnée(s)`; }
-  else { bar.style.display='none'; }
+  const body=document.getElementById('cmdBody');
+  if(_cmdSel.size>0){
+    bar.style.display='flex'; if(cnt) cnt.textContent=`${_cmdSel.size} sélectionnée(s)`;
+    // Le bandeau est en position:fixed au-dessus de la liste ; on réserve dessous un espace égal
+    // à sa hauteur réelle (+ marge) pour que la dernière ligne reste toujours atteignable/cochable.
+    if(body){
+      requestAnimationFrame(()=>{
+        const h = bar.offsetHeight || 120;
+        body.style.paddingBottom = (h + 28) + 'px';
+      });
+    }
+  } else {
+    bar.style.display='none';
+    if(body) body.style.paddingBottom='';
+  }
 }
 let _cmdClNameMap={};
 function _cmdClName(id){ return _cmdClNameMap[id]||'—'; }
@@ -36709,6 +36654,22 @@ async function genererFactureMultiple(ids){
   try{
     const orderIds = orders.map(o=>o.id);
 
+    // Recherche d'un document facture DÉJÀ associé exactement à ce lot de commandes :
+    //  - s'il est définitif → on le rouvre (pas de doublon possible) ;
+    //  - s'il est encore brouillon → on le met à jour au lieu d'en empiler un second ;
+    //  - sinon → on crée un nouveau brouillon.
+    // NB : cette variable n'était pas définie auparavant, ce qui levait une ReferenceError
+    // avalée par le catch → aucun brouillon n'était enregistré.
+    let existing = null;
+    try{
+      const wanted = [...orderIds].sort((a,b)=>a-b).join(',');
+      const facts = await db.documents.where('type').equals('facture').toArray();
+      existing = facts.find(f=>{
+        const oids = (f.orderIds||(f.orderId?[f.orderId]:[])).slice().sort((a,b)=>a-b).join(',');
+        return oids===wanted;
+      }) || null;
+    }catch(_e){ existing = null; }
+
     if(existing && docEstDefinitif(existing)){
       if(view==="documents") renderDocuments();
       _prepDocPdfMail(factureHtml, `Facture ${existing.numero}`, client);
@@ -36732,7 +36693,7 @@ async function genererFactureMultiple(ids){
     else { await db.documents.add(docFact); }
     if(view==="documents") renderDocuments();
     toast('Brouillon de facture créé — à vérifier puis valider');
-  }catch(e){}
+  }catch(e){ console.error('genererFactureMultiple/enregistrement', e); toast('⚠️ Le brouillon n\'a pas pu être enregistré : '+(e&&e.message||'erreur')); }
   _prepDocPdfMail(factureHtml, `Facture ${numFact}`, client);
   openPrintView(factureHtml, {title:`Facture (brouillon) ${numFact}`, extraButtons:_docMailBtns()});
 }
