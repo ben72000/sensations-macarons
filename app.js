@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1113';
+const APP_VERSION = 'v1114';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -16659,6 +16659,59 @@ async function computeSeuilsFiscaux(year){
     microGlobal: jauge('Régime micro · global', caTotal, SEUILS_FISCAUX_2026.microGlobal, 'micro_global', projTotal)
   };
 }
+// [PILOTAGE CA] Cockpit de pilotage : objectif mensuel, projection expliquée, leviers simulables
+// (valeurs unitaires tirées des vraies données), et suggestions chiffrées. Réutilise le CA cumulé
+// du moteur des seuils fiscaux (même source, donc toujours cohérent et auto-adaptatif).
+async function computePilotageCA(year){
+  year = year || new Date().getFullYear();
+  const R = await computeSeuilsFiscaux(year);      // fournit cumulTotal, parMois, projTotal, moisEcoules…
+  const now = new Date();
+  const isCurrentYear = (year === now.getFullYear());
+  const moisEcoules = R.moisEcoules;               // nb de mois écoulés avec activité potentielle
+  const moisRestants = Math.max(0, 12 - moisEcoules);
+  const caCumul = R.caTotal;                        // CA encaissé cumulé de l'année
+  const rythmeMensuel = moisEcoules>0 ? money2(caCumul/moisEcoules) : 0;   // €/mois moyen réel
+  const projFin = R.projTotal;                     // projection fin d'année au rythme actuel
+
+  // --- Valeurs unitaires réelles des leviers (moyennes observées), avec repli raisonnable ---
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const markets = await db.markets.toArray().catch(()=>[]);
+  const yStr = String(year);
+  const inYear = d => (d||'').slice(0,4)===yStr;
+
+  // marché moyen : CA net moyen d'un marché clos de l'année (repli : moyenne tous marchés clos)
+  const mkClos = markets.filter(m=>m.statut==='clos');
+  const mkClosYear = mkClos.filter(m=>inYear(m.date));
+  const avgOf = (arr,f)=> arr.length? money2(arr.reduce((s,x)=>s+f(x),0)/arr.length):0;
+  const marcheMoyen = mkClosYear.length? avgOf(mkClosYear, m=>marketNetCA(m))
+                     : (mkClos.length? avgOf(mkClos, m=>marketNetCA(m)) : 250);
+
+  // commande moyenne (hors marché) : montant moyen d'une commande de l'année (repli global)
+  const ordVal = o => +o.montant||0;
+  const ordYear = orders.filter(o=>!o.histo && inYear(o.date) && ordVal(o)>0);
+  const ordAll  = orders.filter(o=>!o.histo && ordVal(o)>0);
+  const coffretMoyen = ordYear.length? avgOf(ordYear, ordVal) : (ordAll.length? avgOf(ordAll, ordVal) : 35);
+
+  // animation / prestation moyenne : montant moyen des lignes prestation observées (repli 150)
+  let presTot=0, presN=0;
+  orders.forEach(o=>{ if(o.histo) return; (o.lignes||[]).forEach(l=>{ if(l.type==='prestation'){ const v=+l.montantHT||0; if(v>0){ presTot+=v; presN++; } } }); });
+  const animationMoyenne = presN? money2(presTot/presN) : 150;
+
+  // --- Mois creux (mois avec le CA le plus faible, sur les mois écoulés avec activité) ---
+  const moisAvecCA = R.parMois.map((m,i)=>({ym:m.ym, ca:money2(m.goods+m.service), idx:i}))
+                              .filter(m=> isCurrentYear ? m.idx < moisEcoules : true);
+  const moisCreux = moisAvecCA.filter(m=>m.ca>0).sort((a,b)=>a.ca-b.ca)[0] || null;
+  const moisFort  = moisAvecCA.slice().sort((a,b)=>b.ca-a.ca)[0] || null;
+
+  return {
+    R, year, isCurrentYear, moisEcoules, moisRestants,
+    caCumul, rythmeMensuel, projFin,
+    leviers: { marcheMoyen, coffretMoyen, animationMoyenne },
+    moisCreux, moisFort,
+    // compteurs pour les suggestions
+    nbMarchesClosYear: mkClosYear.length, nbCmdYear: ordYear.length
+  };
+}
 // Construit le texte du bilan mensuel (export .txt).
 function buildBilanText(B){
   const L=[];
@@ -19800,6 +19853,49 @@ function chargeNature(categorie){ return CHARGE_INVEST_CATS.includes(categorie) 
 let _comptaMonth = null;
 let _comptaTrajVue = 'global';   // [TRAJECTOIRE] vue du graphe de CA dans la compta : global | vente | service
 function comptaSetTrajVue(v){ _comptaTrajVue = (v==='vente'||v==='service') ? v : 'global'; renderCompta(); }
+// [PILOTAGE] Ligne de curseur d'un levier (marchés/coffrets/animations). Recalcule en direct.
+function pilotSliderRow(key, label, unitVal, suffix){
+  return `<div style="margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;font-size:.84rem;margin-bottom:2px">
+      <span>${label} <span style="color:#9a8a82">(${euro(unitVal)}${suffix||''})</span></span>
+      <b id="pilot_${key}_lbl" style="color:#7a3b52">0</b>
+    </div>
+    <input type="range" min="0" max="12" step="1" value="0" id="pilot_${key}" oninput="pilotRecalc()" style="width:100%">
+  </div>`;
+}
+// Recalcule la projection simulée à partir des curseurs (100% côté client, instantané).
+function pilotRecalc(){
+  const box=document.getElementById('pilotSimBox'); if(!box) return;
+  const base=+box.dataset.projbase||0;
+  const moisRest=+box.dataset.moisrestants||0;
+  const mkVal=+box.dataset.mkval||0, cofVal=+box.dataset.cofval||0, aniVal=+box.dataset.anival||0;
+  const gv=id=>{ const el=document.getElementById(id); return el?(+el.value||0):0; };
+  const nMk=gv('pilot_marches'), nCof=gv('pilot_coffrets'), nAni=gv('pilot_animations');
+  ['marches','coffrets','animations'].forEach(k=>{ const l=document.getElementById('pilot_'+k+'_lbl'); if(l) l.textContent='+'+gv('pilot_'+k)+'/mois'; });
+  // chaque "+N/mois" s'applique sur les mois restants
+  const ajout = (nMk*mkVal + nCof*cofVal + nAni*aniVal) * moisRest;
+  const simu = Math.round((base+ajout)*100)/100;
+  const rEl=document.getElementById('pilotSimResult'); if(rEl) rEl.textContent=euro(simu);
+  const dEl=document.getElementById('pilotSimDelta');
+  if(dEl){ if(ajout>0){ dEl.style.color='#3f7d52'; dEl.textContent='+'+euro(Math.round(ajout*100)/100)+' vs rythme actuel'; } else { dEl.innerHTML='&nbsp;'; } }
+}
+// Scénarios pré-faits : positionne les curseurs puis recalcule.
+function pilotScenario(kind){
+  const set=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v; };
+  if(kind==='prudent'){ set('pilot_marches',1); set('pilot_coffrets',1); set('pilot_animations',0); }
+  else if(kind==='realiste'){ set('pilot_marches',2); set('pilot_coffrets',3); set('pilot_animations',1); }
+  else if(kind==='ambitieux'){ set('pilot_marches',4); set('pilot_coffrets',6); set('pilot_animations',2); }
+  else { set('pilot_marches',0); set('pilot_coffrets',0); set('pilot_animations',0); }
+  pilotRecalc();
+}
+// Enregistre l'objectif de CA mensuel et rafraîchit.
+function pilotSaveObjectif(){
+  const el=document.getElementById('pilotObjInput'); if(!el) return;
+  const v=Math.max(0, +el.value||0);
+  const s=getSettings(); s.objectifCAMensuel=v; saveSettings(s);
+  toast(v>0?`Objectif fixé à ${euro(v)}/mois ✓`:'Objectif retiré');
+  renderCompta();
+}
 // Granularité du graphique « manque à gagner livraison » : 'jour' | 'semaine' | 'mois'.
 let _gapGran = 'mois';
 function comptaSetMonth(m){ _comptaMonth = m; renderCompta(); }
@@ -20483,23 +20579,113 @@ async function renderCompta(){
   let trajBloc='';
   if(_trajR){
     const vueBtn=(v,lbl)=>`<button class="btn ${_comptaTrajVue===v?'gold':'ghost'} sm" onclick="comptaSetTrajVue('${v}')">${lbl}</button>`;
-    const vueSel = _comptaTrajVue==='vente'?{proj:_trajR.projGoods, cur:_trajR.goods, seuilTva:_trajR.S.tvaVenteBase, seuilMicro:_trajR.S.microVente}
-                 : _comptaTrajVue==='service'?{proj:_trajR.projService, cur:_trajR.service, seuilTva:_trajR.S.tvaServiceBase, seuilMicro:_trajR.S.microService}
-                 : {proj:_trajR.projTotal, cur:_trajR.caTotal, seuilTva:_trajR.S.tvaVenteBase, seuilMicro:_trajR.S.microGlobal};
-    const projPctTva = vueSel.seuilTva>0?Math.round(vueSel.proj/vueSel.seuilTva*100):0;
-    const projCol = vueSel.proj>=vueSel.seuilMicro?'#b3261e':(vueSel.proj>=vueSel.seuilTva?'#d98b3a':'#3f7d52');
-    const projPhrase = _trajR.moisEcoules>0
-      ? `Au rythme actuel, fin ${_trajR.year} tu serais à <b style="color:${projCol}">${euro(vueSel.proj)}</b>${vueSel.seuilTva>0?` — soit ${projPctTva}% du seuil TVA` : ''}.`
-      : `Pas encore assez de données ${_trajR.year} pour projeter.`;
+    let P=null; try{ P=await computePilotageCA(_trajYear); }catch(e){ P=null; }
+    const setg = getSettings();
+    const objMensuel = money2(+setg.objectifCAMensuel||0);
+
+    // ---- Bloc 1 : Objectif mensuel ----
+    let objBloc='';
+    if(P){
+      const moisCourantKey = monthKey(today());
+      const bilanMois = (P.R.parMois.find(m=>m.ym===moisCourantKey)) || {goods:0,service:0};
+      const caMois = money2((bilanMois.goods||0)+(bilanMois.service||0));
+      const pctObj = objMensuel>0 ? Math.round(caMois/objMensuel*100) : 0;
+      const ecart = money2(caMois-objMensuel);
+      const objCol = objMensuel<=0 ? '#9a8a82' : (caMois>=objMensuel ? '#3f7d52' : (pctObj>=70?'#d98b3a':'#b3261e'));
+      const objMsg = objMensuel<=0
+        ? `Fixe un objectif de CA mensuel pour piloter ton rythme.`
+        : (caMois>=objMensuel
+            ? `🎉 Objectif atteint ce mois (+${euro(ecart)}) ! Continue sur cette lancée.`
+            : `Il te manque <b>${euro(Math.abs(ecart))}</b> pour ton objectif de ${monthLabel(moisCourantKey)}.`);
+      objBloc = `<div style="background:#fbf8f3;border:1px solid var(--hair,#eee3d5);border-radius:14px;padding:14px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="font-weight:700">🎯 Objectif mensuel</div>
+          <div class="flex" style="gap:6px;align-items:center">
+            <input type="number" min="0" step="50" id="pilotObjInput" value="${objMensuel>0?objMensuel:''}" placeholder="ex : 2000" style="max-width:120px;padding:6px 8px;font-size:.95rem">
+            <span style="color:#9a8a82">€/mois</span>
+            <button class="btn gold sm" onclick="pilotSaveObjectif()">OK</button>
+          </div>
+        </div>
+        ${objMensuel>0?`<div style="height:14px;border-radius:7px;overflow:hidden;background:#efe6da;margin:10px 0 6px">
+          <div style="height:100%;width:${Math.min(100,pctObj)}%;background:${objCol};transition:width .3s"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:.84rem"><span><b style="color:${objCol}">${euro(caMois)}</b> ce mois</span><span style="color:#9a8a82">${pctObj}% de ${euro(objMensuel)}</span></div>`:''}
+        <p class="note" style="margin:8px 0 0;color:${objCol}">${objMsg}</p>
+      </div>`;
+    }
+
+    // ---- Bloc 2 : Projection expliquée ----
+    let projExplic='';
+    if(P && P.moisEcoules>0){
+      projExplic = `<div style="background:#f4f0ff;border:1px solid #e0d6f0;border-radius:14px;padding:14px;margin-bottom:12px">
+        <div style="font-weight:700;margin-bottom:6px">🔮 D'où vient la projection ?</div>
+        <div style="font-size:.88rem;color:#5a4a52;line-height:1.6">
+          Tu as encaissé <b>${euro(P.caCumul)}</b> en <b>${P.moisEcoules} mois</b>,<br>
+          soit un rythme de <b>${euro(P.rythmeMensuel)}/mois</b>.<br>
+          En le maintenant sur les <b>${P.moisRestants} mois</b> restants,<br>
+          tu finirais ${P.year} autour de <b style="color:#7a3b52;font-size:1.05rem">${euro(P.projFin)}</b>.
+        </div>
+        <p class="note" style="margin:8px 0 0;font-size:.74rem">C'est une simple extrapolation de ton rythme moyen, pas une prédiction : les leviers ci-dessous te montrent comment l'infléchir.</p>
+      </div>`;
+    }
+
+    // ---- Bloc 3 : Simulateur interactif (curseurs + scénarios) ----
+    let simBloc='';
+    if(P){
+      const L=P.leviers;
+      simBloc = `<div style="background:#fbf8f3;border:1px solid var(--hair,#eee3d5);border-radius:14px;padding:14px;margin-bottom:12px"
+        data-mkval="${L.marcheMoyen}" data-cofval="${L.coffretMoyen}" data-anival="${L.animationMoyenne}"
+        data-projbase="${P.projFin}" data-moisrestants="${P.moisRestants}" id="pilotSimBox">
+        <div style="font-weight:700;margin-bottom:2px">🎮 Et si… (simulateur)</div>
+        <p class="note" style="margin:0 0 10px">Ajoute de l'activité par mois et vois l'effet sur ta fin d'année. Valeurs tirées de tes moyennes réelles.</p>
+        <div class="flex" style="gap:6px;margin-bottom:10px;flex-wrap:wrap">
+          <button class="btn ghost sm" onclick="pilotScenario('prudent')">Prudent</button>
+          <button class="btn ghost sm" onclick="pilotScenario('realiste')">Réaliste</button>
+          <button class="btn ghost sm" onclick="pilotScenario('ambitieux')">Ambitieux</button>
+          <button class="btn ghost sm" onclick="pilotScenario('reset')">↺ Reset</button>
+        </div>
+        ${pilotSliderRow('marches','🛒 Marchés en +', L.marcheMoyen, '/mois')}
+        ${pilotSliderRow('coffrets','🎁 Commandes en +', L.coffretMoyen, '/mois')}
+        ${pilotSliderRow('animations','✨ Animations en +', L.animationMoyenne, '/mois')}
+        <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--hair,#e0d0bb);text-align:center">
+          <div style="font-size:.78rem;color:#9a8a82">Projection simulée fin ${P.year}</div>
+          <div id="pilotSimResult" style="font-size:1.5rem;font-weight:800;font-family:'Bellota',Georgia,serif;color:#7a3b52">${euro(P.projFin)}</div>
+          <div id="pilotSimDelta" style="font-size:.82rem;color:#3f7d52">&nbsp;</div>
+        </div>
+      </div>`;
+    }
+
+    // ---- Bloc 4 : Suggestions chiffrées ----
+    let suggBloc='';
+    if(P){
+      const sugg=[];
+      const L=P.leviers;
+      sugg.push(`Ton panier moyen est de <b>${euro(L.coffretMoyen)}</b>. Proposer un coffret plus garni ou un parfum premium le fait monter — +2 € par commande sur ${P.nbCmdYear||10} commandes = <b>${euro(2*(P.nbCmdYear||10))}</b>/an.`);
+      if(L.marcheMoyen>0) sugg.push(`Un marché te rapporte en moyenne <b>${euro(L.marcheMoyen)}</b>. Un marché de plus par mois d'ici fin d'année ≈ <b>${euro(money2(L.marcheMoyen*P.moisRestants))}</b>.`);
+      if(P.moisCreux) sugg.push(`Ton mois le plus creux est <b>${monthLabel(P.moisCreux.ym)}</b> (${euro(P.moisCreux.ca)}). Une opération ciblée (précommandes, offre saisonnière) y aurait le plus d'impact.`);
+      sugg.push(`Les <b>animations/prestations</b> (~${euro(L.animationMoyenne)} l'unité) sont à très forte marge : peu de coût matière. En caler une par mois ajoute ~<b>${euro(money2(L.animationMoyenne*P.moisRestants))}</b> d'ici fin d'année.`);
+      if(A.creances>0 || (typeof A.totalFacture!=='undefined' && A.totalFacture>A.totalEncaisse)){
+        const creance = money2((A.totalFacture||0)-(A.totalEncaisse||0));
+        if(creance>0) sugg.push(`<b>${euro(creance)}</b> sont facturés mais pas encore encaissés. Relancer ces soldes améliore directement ta trésorerie.`);
+      }
+      suggBloc = `<div style="background:#f0f7f2;border:1px solid #cfe6d6;border-radius:14px;padding:14px">
+        <div style="font-weight:700;margin-bottom:8px">💡 Pistes pour augmenter ton CA</div>
+        ${sugg.map(s=>`<div style="display:flex;gap:8px;margin-bottom:8px;font-size:.86rem;color:#3a4a40"><span style="color:#3f7d52">▸</span><div>${s}</div></div>`).join('')}
+        <p class="note" style="font-size:.72rem;margin:2px 0 0">Basé sur tes données réelles (commandes, marchés, prestations). Se met à jour au fil de tes saisies.</p>
+      </div>`;
+    }
+
     trajBloc = `<div class="panel">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-        <div style="font-weight:700">📈 Trajectoire de CA ${_trajR.year} <span class="note" style="font-weight:400">— réel + projection fin d'année</span></div>
+        <div style="font-weight:700">📈 Pilotage & trajectoire de CA ${_trajR.year}</div>
         <div class="flex" style="gap:6px">${vueBtn('global','Global')}${vueBtn('vente','Vente')}${vueBtn('service','Service')}</div>
       </div>
       ${_svgTrajectoire(_trajR, _comptaTrajVue)}
-      <p class="note" style="margin:8px 2px 0">${projPhrase}</p>
-      <p class="note" style="font-size:.74rem;color:#9a8a82;margin:4px 2px 0">La courbe pleine = ton CA cumulé mois par mois ; la pointillée = la projection au rythme actuel. Les lignes horizontales sont tes seuils (TVA, régime micro). Tout se met à jour automatiquement dès que tu ajoutes une commande, un paiement ou un marché.</p>
-      <div style="text-align:right;margin-top:6px"><button class="btn ghost sm" onclick="goView('optimisation')">Détail des seuils ›</button></div>
+      <p class="note" style="font-size:.74rem;color:#9a8a82;margin:6px 2px 12px">Courbe pleine = CA cumulé réel ; pointillée = projection au rythme actuel ; lignes horizontales = seuils (TVA, micro). Mise à jour automatique à chaque commande, paiement ou marché.</p>
+      ${objBloc}
+      ${projExplic}
+      ${simBloc}
+      ${suggBloc}
     </div>`;
   }
 
