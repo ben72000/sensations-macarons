@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1129';
+const APP_VERSION = 'v1130';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -15106,7 +15106,7 @@ function drawVracLine(ln,i){
     <span style="width:22px;height:22px;border-radius:50%;background:repeating-linear-gradient(45deg,#cbb,#cbb 3px,#ddd 3px,#ddd 6px);flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);${spOn?'outline:2px solid #8a7a62;outline-offset:1px':''}"></span>
     <span style="flex:1;font-size:1rem;color:${spOn?'var(--bordeaux)':'#6a5a52'};font-weight:${spOn?'600':'400'}">Sans parfum déterminé <span style="font-size:.72rem;color:#9a8a82;font-weight:400">— à définir plus tard</span></span>
     ${spOn
-      ? `<input type="number" min="1" step="1" onclick="event.stopPropagation()" value="${sansParfum}" oninput="setVracSansParfum(${i},this.value)" style="max-width:90px;font-size:1rem;padding:4px 8px" placeholder="nb">`
+      ? `<input type="number" min="1" step="1" onclick="event.stopPropagation()" value="${sansParfum}" oninput="setVracSansParfumLive(${i},this.value)" onchange="setVracSansParfum(${i},this.value)" style="max-width:90px;font-size:1rem;padding:4px 8px" placeholder="nb">`
       : `<span style="color:#9a8a82;font-size:.9rem">+ ajouter</span>`}
   </div>`;
   const proSel = `<div class="seg" style="display:flex;gap:6px;margin:6px 0">
@@ -15134,6 +15134,10 @@ function setVracMode(i, mode){
 }
 function setVracParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 function setVracSansParfum(i,v){ if(!cmdLines[i]) return; const q=Math.max(0,Math.round(+v||0)); if(q>0) cmdLines[i].sansParfum=q; else delete cmdLines[i].sansParfum; drawLines(); }
+// Variante « live » pendant la frappe : met à jour la donnée et les totaux SANS redessiner
+// la ligne (sinon le champ est recréé à chaque touche et le focus saute). Le redraw complet
+// (qui fait apparaître le bloc assortiment/à déterminer) est déclenché au blur via onchange.
+function setVracSansParfumLive(i,v){ if(!cmdLines[i]) return; const q=Math.max(0,Math.round(+v||0)); if(q>0) cmdLines[i].sansParfum=q; else delete cmdLines[i].sansParfum; if(typeof cmdRecalc==='function') cmdRecalc(); }
 
 function drawDonLine(ln,i){
   if(!ln.parfums) ln.parfums={}; if(!ln.items) ln.items={};
@@ -15164,7 +15168,7 @@ function drawDonLine(ln,i){
   const sacBloc = cmdSacsCache.length ? `<label style="font-size:.78rem;color:#7a6a62;display:block;margin-top:8px">🛍️ Sac offert avec le don</label>
     <div class="row2" style="align-items:end">
       <div class="field" style="margin:0"><select onchange="setDonSacMat(${i},this.value)"><option value="">— aucun —</option>${sacOpts}</select></div>
-      <div class="field" style="margin:0"><input type="number" min="0" step="1" value="${ln.sacNb!=null&&+ln.sacNb>0?esc(ln.sacNb):''}" placeholder="nb" oninput="setDonSacNb(${i},this.value)"></div>
+      <div class="field" style="margin:0"><input type="number" min="0" step="1" value="${ln.sacNb!=null&&+ln.sacNb>0?esc(ln.sacNb):''}" placeholder="nb" oninput="setDonSacNbLive(${i},this.value)" onchange="setDonSacNb(${i},this.value)"></div>
     </div>
     ${(+ln.sacMatId>0&&+ln.sacNb>0)?`<div class="sum-box" style="font-size:.82rem"><span>Coût sac (${qty(ln.sacNb)}×)</span><b>${euro(money2(sacCout*(+ln.sacNb||0)))}</b></div>`:''}` : '';
   return `<div class="cmd-line">
@@ -15183,6 +15187,8 @@ function setDonEmbMode(i,v){ cmdLines[i].donEmbMode = v; if(v==='sans') cmdLines
 function setDonEmbMat(i,v){ cmdLines[i].embMatId = v?+v:null; drawLines(); }
 function setDonSacMat(i,v){ cmdLines[i].sacMatId = v?+v:null; if(!v){ cmdLines[i].sacNb=0; } else if(!(+cmdLines[i].sacNb>0)){ cmdLines[i].sacNb=1; } drawLines(); }
 function setDonSacNb(i,v){ cmdLines[i].sacNb = Math.max(0, Math.round(+v||0)); drawLines(); }
+// Variante live (voir setVracSansParfumLive) : pas de redraw pendant la frappe.
+function setDonSacNbLive(i,v){ if(!cmdLines[i]) return; cmdLines[i].sacNb = Math.max(0, Math.round(+v||0)); if(typeof cmdRecalc==='function') cmdRecalc(); }
 function drawPrestationLine(ln,i){
   if(ln.remiseType==null) ln.remiseType='pct';
   const base=money2(+ln.montantHT||0);
