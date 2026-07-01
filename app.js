@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1112';
+const APP_VERSION = 'v1113';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -19798,6 +19798,8 @@ const CHARGE_INVEST_CATS = ['Marketing','Formation','Équipement','Stand / march
 // Renvoie 'invest' | 'recurrent' pour une catégorie de charge donnée.
 function chargeNature(categorie){ return CHARGE_INVEST_CATS.includes(categorie) ? 'invest' : 'recurrent'; }
 let _comptaMonth = null;
+let _comptaTrajVue = 'global';   // [TRAJECTOIRE] vue du graphe de CA dans la compta : global | vente | service
+function comptaSetTrajVue(v){ _comptaTrajVue = (v==='vente'||v==='service') ? v : 'global'; renderCompta(); }
 // Granularité du graphique « manque à gagner livraison » : 'jour' | 'semaine' | 'mois'.
 let _gapGran = 'mois';
 function comptaSetMonth(m){ _comptaMonth = m; renderCompta(); }
@@ -20445,6 +20447,12 @@ async function renderCompta(){
     ytdGoods+=bm.goods; ytdService+=bm.service; ytdCotis+=bm.cotisTotal;
   }
   ytdGoods=money2(ytdGoods); ytdService=money2(ytdService); ytdCotis=money2(ytdCotis);
+  // [TRAJECTOIRE CA] Réutilise le moteur des seuils fiscaux pour tracer la trajectoire prévisionnelle
+  // directement dans la compta (courbe réelle + projection fin d'année + lignes de seuil).
+  const _trajYear = +(_comptaMonth||'').slice(0,4) || new Date().getFullYear();
+  if(!_comptaTrajVue) _comptaTrajVue='global';
+  let _trajR=null; try{ _trajR = await computeSeuilsFiscaux(_trajYear); }catch(e){ _trajR=null; }
+
   const moisOpts = moisDispo.map(m=>`<option value="${m}" ${m===_comptaMonth?'selected':''}>${esc(monthLabel(m))}</option>`).join('');
 
   // graphe CA encaissé vs charges par mois (lineChart attend des séries de points {x,y})
@@ -20470,6 +20478,30 @@ async function renderCompta(){
     .map(([m,v])=>`<div class="sum-box lnk" onclick="comptaGo('commandes')"><span>${esc(m)}</span><b>${euro(v)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(v,A.totalEncaisse)}%)</span></b>${NAV_GO}</div>`).join('');
   const catRows = Object.entries(A.chargeByCat).sort((a,b)=>b[1]-a[1])
     .map(([c,v])=>`<div class="sum-box lnk" onclick="comptaGo('charges')"><span>${esc(c)}</span><b>${euro(v)}</b>${NAV_GO}</div>`).join('');
+
+  // Bloc trajectoire prévisionnelle (graphe SVG + sélecteur de vue + repères de projection).
+  let trajBloc='';
+  if(_trajR){
+    const vueBtn=(v,lbl)=>`<button class="btn ${_comptaTrajVue===v?'gold':'ghost'} sm" onclick="comptaSetTrajVue('${v}')">${lbl}</button>`;
+    const vueSel = _comptaTrajVue==='vente'?{proj:_trajR.projGoods, cur:_trajR.goods, seuilTva:_trajR.S.tvaVenteBase, seuilMicro:_trajR.S.microVente}
+                 : _comptaTrajVue==='service'?{proj:_trajR.projService, cur:_trajR.service, seuilTva:_trajR.S.tvaServiceBase, seuilMicro:_trajR.S.microService}
+                 : {proj:_trajR.projTotal, cur:_trajR.caTotal, seuilTva:_trajR.S.tvaVenteBase, seuilMicro:_trajR.S.microGlobal};
+    const projPctTva = vueSel.seuilTva>0?Math.round(vueSel.proj/vueSel.seuilTva*100):0;
+    const projCol = vueSel.proj>=vueSel.seuilMicro?'#b3261e':(vueSel.proj>=vueSel.seuilTva?'#d98b3a':'#3f7d52');
+    const projPhrase = _trajR.moisEcoules>0
+      ? `Au rythme actuel, fin ${_trajR.year} tu serais à <b style="color:${projCol}">${euro(vueSel.proj)}</b>${vueSel.seuilTva>0?` — soit ${projPctTva}% du seuil TVA` : ''}.`
+      : `Pas encore assez de données ${_trajR.year} pour projeter.`;
+    trajBloc = `<div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="font-weight:700">📈 Trajectoire de CA ${_trajR.year} <span class="note" style="font-weight:400">— réel + projection fin d'année</span></div>
+        <div class="flex" style="gap:6px">${vueBtn('global','Global')}${vueBtn('vente','Vente')}${vueBtn('service','Service')}</div>
+      </div>
+      ${_svgTrajectoire(_trajR, _comptaTrajVue)}
+      <p class="note" style="margin:8px 2px 0">${projPhrase}</p>
+      <p class="note" style="font-size:.74rem;color:#9a8a82;margin:4px 2px 0">La courbe pleine = ton CA cumulé mois par mois ; la pointillée = la projection au rythme actuel. Les lignes horizontales sont tes seuils (TVA, régime micro). Tout se met à jour automatiquement dès que tu ajoutes une commande, un paiement ou un marché.</p>
+      <div style="text-align:right;margin-top:6px"><button class="btn ghost sm" onclick="goView('optimisation')">Détail des seuils ›</button></div>
+    </div>`;
+  }
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Comptabilité</h1><p>${esc(monthLabel(_comptaMonth))} · CA comptabilisé à l'encaissement réel</p></div>
@@ -20504,6 +20536,7 @@ async function renderCompta(){
        <div style="font-size:1.2rem;color:var(--caramel,#AA7C39)">›</div>
      </div>
    </div>
+   ${trajBloc}
    <div class="kpi-grid">
      <div class="kpi lnk" onclick="comptaDetail('facture')"><span>CA facturé</span><b>${euro(A.totalFacture)}</b><small class="kpi-note">toutes commandes, payées ou non</small>${NAV_GO}</div>
      <div class="kpi lnk" onclick="comptaDetail('encaisse')"><span>CA encaissé</span><b>${euro(A.totalEncaisse)}</b><small class="kpi-note">argent réellement reçu · base URSSAF</small>${NAV_GO}</div>
