@@ -1,7 +1,12 @@
 {
  "packs": [
   "alice",
-  "bau"
+  "bau",
+  "lenotre",
+  "karina",
+  "maddie",
+  "sab",
+  "tfp"
  ],
- "version": 2
+ "version": 7
 }

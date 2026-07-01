@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1091';
+const APP_VERSION = 'v1099';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -1447,7 +1447,7 @@ function rdEncodeADN(ingredients){
 
 
 // ---- Sources : libellés + couleurs de badge ----
-const RD_SRC_LABEL = { moi:'Moi', chiara:'Chiara', bau:'Bau', lenotre:'Lenôtre', alice:'Alice', autre:'Autre' };
+const RD_SRC_LABEL = { moi:'Moi', chiara:'Chiara', bau:'Bau', lenotre:'Lenôtre', alice:'Alice', karina:'Karina', maddie:'Maddie', sab:'Sab', tfp:'TFP', autre:'Autre' };
 
 // ---- Parsing d'un texte collé (best-effort) -> {titre, ingredients[], etapes[]} ----
 // Heuristique simple : lignes "qte unite nom" pour les ingrédients, lignes longues = étapes.
@@ -6705,7 +6705,7 @@ async function docConvertToOrder(id){
     distanceKm:d.distanceKm||0, prixCarburant:d.prixCarburant||0,
     tempsLivraisonMin:d.tempsLivraisonMin||0, consoVehicule:(d.consoVehicule!=null?d.consoVehicule:null),
     fraisLivraison:d.fraisLivraison||0, sacMatId:d.sacMatId||0, sacNb:d.sacNb||0,
-    lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0,
+    lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0, remiseGlobaleEur:(d.remiseGlobaleEur!=null?+d.remiseGlobaleEur:null),
     perso:!!(d.perso||+d.persoMacarons>0), persoMacarons:+d.persoMacarons||0, persoCouleurs:Array.isArray(d.persoCouleurs)?d.persoCouleurs:[], montant:d.montant||0,
     paiements:[{date:today, montant:money2(acompte), moyen:'Acompte'}],
     statut:'À préparer', notes:(d.notes||'')+`\n(Issu du devis ${d.numero})`,
@@ -6783,7 +6783,7 @@ async function cmdToDevisConfirm(id){
       distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
       tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
       fraisLivraison:o.fraisLivraison||0, sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
-      lignes:o.lignes||[], remiseGlobale:o.remiseGlobale||0,
+      lignes:o.lignes||[], remiseGlobale:o.remiseGlobale||0, remiseGlobaleEur:(o.remiseGlobaleEur!=null?+o.remiseGlobaleEur:null),
       perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[],
       montant:+o.montant||0, acompte:0, orderId:null,
       notes:(o.notes||'')+`\n(Repassé en devis depuis la commande ${orderNumber(o)})`
@@ -9359,6 +9359,24 @@ async function prodDoSplit(){
   closeModal(); renderProductions();
   toast(`${parts.length} partie(s) créée(s) · ${parts.map(x=>`${qty(x.qte)} en ${empLettre(x.dest)}`).join(', ')}`);
 }
+// [v1092] CRÉMEUX COULÉS EN MOULE → CONGÉLATEUR DIRECT (demande Benjamin).
+// Certains crémeux sont coulés en moule puis vont DIRECTEMENT au congélateur : le frigo n'a aucun
+// sens pour eux. On les reconnaît par leur nom (normalisé : sans accent, insensible à la casse et à
+// l'ordre des mots), pour ne proposer QUE le congélateur à la fin de leur production.
+// Trois produits visés aujourd'hui :
+//   1) crémeux mangue passion   2) crémeux myrtille framboise   3) crémeux chocolat (macaron choco GF)
+// Pour en ajouter un, compléter ce tableau (chaque entrée = liste de mots qui doivent TOUS figurer).
+const _CREMEUX_CONGEL_DIRECT = [
+  ['mangue','passion'],
+  ['myrtille','framboise'],
+  ['cremeux','chocolat'],
+];
+function _estCremeuxCongelDirect(nom){
+  const n = normTxt(nom||'');
+  if(!n) return false;
+  return _CREMEUX_CONGEL_DIRECT.some(mots => mots.every(m => n.includes(m)));
+}
+
 // STATUT : passe une production de « démarré » à « terminé ».
 // C'est CE moment qui déclenche la DLC (7 j au frigo, 4 mois au congélateur).
 // Règle : on NE PEUT PAS revenir en arrière (terminé → démarré interdit).
@@ -9367,6 +9385,9 @@ async function prodSetTermine(id){
   if(prodStatut(p)==='termine'){ toast('Production déjà terminée — retour en arrière impossible'); return; }
   const comp=prodComposant(p);
   const decongele=aDejaDecongele(p);
+  // [v1092] Crémeux coulé en moule → congélateur direct : on ne proposera QUE le congélateur.
+  const _nomProd = prodNomComplet(p, window._allRecipesCache||null);
+  const forceCongel = _estCremeuxCongelDirect(_nomProd);
   // Emplacements proposés selon le composant (centralisés dans un tableau lisible) :
   //  - coques  : ambiant ou congélateur (jamais frigo)
   //  - ganache : frigo uniquement
@@ -9378,18 +9399,22 @@ async function prodSetTermine(id){
     if(comp==='coques') ok = freezer;            // congélateur (les coques ambiantes → option dédiée ci-dessous)
     else if(comp==='ganache') ok = (e.type==='frigo');
     if(comp==='ganache' && e.type!=='frigo') ok=false;
+    if(forceCongel && !freezer) ok=false;        // [v1092] crémeux congélation directe : frigo exclu
     if(decongele && freezer) ok=false;           // recongélation interdite
     if(ok) choices.push({key:e.key, lettre:e.lettre, icon:e.icon, nom:e.nom, freezer});
   });
-  if(comp==='coques'){ choices.push({key:'ambiant', lettre:'T°', icon:'🌡️', nom:'Température ambiante', freezer:false}); }
-  const rows=choices.map(c=>`<label class="opt-row">
-     <input type="radio" name="f_destEnd" value="${c.key}">
+  if(comp==='coques' && !forceCongel){ choices.push({key:'ambiant', lettre:'T°', icon:'🌡️', nom:'Température ambiante', freezer:false}); }
+  // [v1092] En congélation directe, on pré-coche le 1er congélateur (gain de temps, 1 seul choix logique).
+  const _idxPreselect = forceCongel ? choices.findIndex(c=>c.freezer) : -1;
+  const rows=choices.map((c,ci)=>`<label class="opt-row">
+     <input type="radio" name="f_destEnd" value="${c.key}"${ci===_idxPreselect?' checked':''}>
      <b class="opt-emp" style="background:${c.freezer?'#3b6ea5':(c.key==='ambiant'?'#caa23b':'#6aa3a0')}">${c.lettre}</b>
      <span class="opt-main"><b>${c.icon} ${esc(c.nom)}</b><br><span class="opt-sub">${c.freezer?'+4 mois':(c.key==='ambiant'?'sans DLC frigo (coques sèches)':'+7 j')}</span></span></label>`).join('');
   openModal(`<h3>✓ Terminer la production</h3>
     <p style="margin-bottom:8px"><b>${esc(p.libre ? (p.produitLibre||'(sans nom)') : ((p.recipeId!=null ? (await db.recipes.get(p.recipeId)) : null)?.produitNom||'?'))}</b> · lot <b>${esc(p.lotProduction||'—')}</b>${comp!=='complet'?` · <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.66rem">${comp==='coques'?'coques':comp==='ganache'?'ganache':comp}</span>`:''}</p>
     <div class="field"><label>Emplacement de rangement *</label>
       <div class="opt-table" id="prodDestEnd">${rows||'<p class="note">Aucun emplacement disponible (recongélation interdite).</p>'}</div></div>
+    ${forceCongel?'<p class="note" style="color:#1f6feb">❄️ Crémeux coulé en moule : direction <b>congélateur</b> (le frigo n\'est pas proposé pour ce produit).</p>':''}
     ${decongele?'<p class="note" style="color:#b3261e">⚠️ Déjà décongelé : le congélateur est désactivé (recongélation interdite).</p>':''}
     <p class="note">La <b>DLC démarre maintenant</b> selon l'emplacement choisi. La lettre s'ajoute au n° de lot.</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
@@ -9403,6 +9428,10 @@ async function prodTermineConfirm(id){
   // garde-fous de cohérence
   if(comp==='coques' && dest==='frigo'){ toast('Les coques ne vont pas au frigo.'); return; }
   if(comp==='ganache' && dest!=='frigo'){ toast('La ganache va uniquement au frigo.'); return; }
+  // [v1092] crémeux coulé en moule : congélateur obligatoire (cohérence avec la proposition).
+  if(_estCremeuxCongelDirect(prodNomComplet(p, window._allRecipesCache||null)) && !isFreezer(dest)){
+    toast('Ce crémeux va directement au congélateur.'); return;
+  }
   if(isFreezer(dest) && aDejaDecongele(p)){ toast('Recongélation interdite.'); return; }
   const nowIso=new Date().toISOString();
   // ajoute la lettre d'emplacement au lot (base + éventuel suffixe composant déjà présent)
@@ -14161,6 +14190,7 @@ function lineTotalBrut(ln){
 }
 let cmdLines = [];      // lignes de produits de la commande en cours
 let _cmdPriceManual = false;  // true seulement si l'utilisateur a tapé un prix à la main (sinon prix auto)
+let _cmdRemiseGlobaleEur = 0; // [REMISE GLOBALE] référence en euros fixes de la commande en cours d'édition
 let cmdProductsCache = [];
 let cmdEmballagesCache = [];   // emballages disponibles (matières 'emballage') pour le choix par coffret
 let cmdSacsCache = [];         // modèles de sacs (emballage usage:'sac') proposables sur la commande
@@ -14233,7 +14263,7 @@ async function cmdForm(id, opts){
   let o;
   if(_cmdDevisMode && _cmdDevisId){
     const dv = await db.documents.get(_cmdDevisId);
-    o = dv ? {clientId:dv.clientId, date:dv.date, lignes:dv.lignes||[], remiseGlobale:dv.remiseGlobale||0,
+    o = dv ? {clientId:dv.clientId, date:dv.date, lignes:dv.lignes||[], remiseGlobale:dv.remiseGlobale||0, remiseGlobaleEur:(dv.remiseGlobaleEur!=null?+dv.remiseGlobaleEur:null),
               heureLivraison:dv.heureLivraison||'', lieuLivraison:dv.lieuLivraison||'', dateEvenement:dv.dateEvenement||'', notes:dv.notes||'',
               distanceKm:dv.distanceKm||0, prixCarburant:dv.prixCarburant||0,
               tempsLivraisonMin:dv.tempsLivraisonMin||0, consoVehicule:(dv.consoVehicule!=null?dv.consoVehicule:null),
@@ -14247,6 +14277,28 @@ async function cmdForm(id, opts){
   // Préserver les lignes en cours si on rouvre après ajout d'un client
   if(opts.keepLines && Array.isArray(cmdLines)){ /* cmdLines déjà en mémoire, on le garde */ }
   else { cmdLines = orderToEditLines(o); }   // forme objet, parfums conservés
+  // [REMISE GLOBALE] Référence en euros. Si l'enregistrement porte déjà un montant € fixe, on le reprend.
+  // Sinon (ancien format % uniquement), on le convertit UNE fois en euros à partir de la base courante,
+  // ce qui fige le montant et évite qu'un « −30 % » ne se réapplique sur un sous-total différent.
+  if(!opts.keepLines){
+    if(o && o.remiseGlobaleEur!=null && +o.remiseGlobaleEur>0){
+      _cmdRemiseGlobaleEur = money2(+o.remiseGlobaleEur);
+    } else {
+      const _st = addMoney(...cmdLines.map(ln=>lineTotal(ln)));
+      const _perso = money2(((o&&o.persoMacarons)||0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+      const _base = money2(_st + _perso);
+      const _pct = Math.max(0, Math.min(100, +(o&&o.remiseGlobale)||0));
+      // [RÉTROCOMPAT REMISE €] Ancienne commande/devis sans remiseGlobaleEur : on privilégie
+      // la remise € RÉELLE déduite du montant stocké (déjà net) plutôt que base×%, car le %
+      // a pu être figé sur un ancien sous-total. On ne reconstruit base×% qu'en dernier recours.
+      if(o && o.montant!=null && +o.montant>=0 && _base>0){
+        const _rEff = money2(Math.max(0, Math.min(_base, _base - money2(+o.montant))));
+        _cmdRemiseGlobaleEur = _rEff;
+      } else {
+        _cmdRemiseGlobaleEur = money2(_base*_pct/100);
+      }
+    }
+  }
   const preselect = opts.clientId || o.clientId || 0;
   // trier les clients par nom pour un défilement lisible même à plusieurs centaines
   cmdClientsCache.sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
@@ -14333,7 +14385,7 @@ async function cmdForm(id, opts){
    <div class="row2">
      <div class="row2" style="align-items:end">
        <div class="field" style="margin:0"><label>Remise globale (€)</label><input type="number" min="0" step="0.01" id="f_remisegEur" placeholder="0" oninput="cmdGlobalRemiseFromEuro(this.value)"></div>
-       <div class="field" style="margin:0"><label>Remise globale (%)</label><input type="number" min="0" max="100" step="1" id="f_remiseg" value="${o.remiseGlobale||''}" placeholder="0" oninput="cmdGlobalRemiseFromPct(this.value)"></div>
+       <div class="field" style="margin:0"><label>Remise globale (%) <span style="color:#9a8a82;font-weight:400">— indicatif</span></label><input type="number" min="0" max="100" step="1" id="f_remiseg" placeholder="0" oninput="cmdGlobalRemiseFromPct(this.value)"></div>
      </div>
      <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="_cmdPriceManual=true;this.dataset.auto='0';cmdRecalc()"></div>
    </div>
@@ -15293,40 +15345,63 @@ function persoMontant(nbPerso){
   const PU = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
   return money2(n*PU);
 }
-// Remise globale — synchronisation €/%. La référence stockée reste le % (champ f_remiseg),
-// appliqué au sous-total (après remises de ligne), pour rester compatible avec saveCmd et l'aval.
+// [REMISE GLOBALE — RÉFÉRENCE EN EUROS FIXES]
+// La référence stockée est désormais un MONTANT € (remiseGlobaleEur), qui reste stable même
+// si le sous-total change (un « −210 € » reste −210 €, il ne se retransforme pas en « 100 % »
+// de ce qu'il reste). Le champ % est un confort de saisie : il DÉRIVE l'euro, sans être figé.
+// Rétrocompat : les anciennes commandes/devis n'ont que remiseGlobale (%). La helper ci-dessous
+// résout la remise € effective à partir de l'un ou l'autre, en plafonnant à la base imposable.
+function globalRemiseEuro(o, base){
+  base = money2(+base||0);
+  if(o && o.remiseGlobaleEur!=null && +o.remiseGlobaleEur>0){
+    return Math.min(base, money2(+o.remiseGlobaleEur));   // euros fixes prioritaires
+  }
+  const pct = Math.max(0, Math.min(100, +(o&&o.remiseGlobale)||0));
+  return money2(base*pct/100);                            // ancien mode % (héritage)
+}
 function _cmdSousTotalAvantGlobal(){
-  return addMoney(...cmdLines.map(ln=>lineTotal(ln)));
+  // base imposable à la remise globale = lignes (après remises de ligne) + personnalisation,
+  // cohérente avec cmdRecalc/saveCmd.
+  const st = addMoney(...cmdLines.map(ln=>lineTotal(ln)));
+  const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+  return money2(st + persoSup);
 }
 function cmdGlobalRemiseFromPct(v){
   let p=+v||0; if(p<0)p=0; if(p>100)p=100;
   const st=_cmdSousTotalAvantGlobal();
+  const e=money2(st*p/100);
   const eurEl=document.getElementById('f_remisegEur');
-  if(eurEl && document.activeElement!==eurEl){ const e=money2(st*p/100); eurEl.value=e>0?e:''; }
+  if(eurEl && document.activeElement!==eurEl){ eurEl.value=e>0?e:''; }
+  // la référence canonique est l'euro : on la mémorise dès la saisie en %
+  _cmdRemiseGlobaleEur = e;
   cmdRecalc();
 }
 function cmdGlobalRemiseFromEuro(v){
   let e=money2(+v||0); if(e<0)e=0;
   const st=_cmdSousTotalAvantGlobal();
   if(e>st) e=st;
+  _cmdRemiseGlobaleEur = e;                               // référence canonique = euros fixes
   const p = st>0 ? Math.max(0,Math.min(100, money2(e/st*100))) : 0;
   const pctEl=document.getElementById('f_remiseg');
-  if(pctEl){ pctEl.value = p>0?p:''; }   // met à jour la référence canonique
+  if(pctEl && document.activeElement!==pctEl){ pctEl.value = p>0?p:''; }   // % dérivé, affichage seulement
   cmdRecalc();
 }
 function cmdRecalc(){
   const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln))); // après remises de ligne
-  const gpct = Math.max(0, Math.min(100, +(document.getElementById('f_remiseg')?.value)||0));
-  const remiseG = money2(sousTotal*gpct/100);
-  // garde le champ € global cohérent avec le % quand le sous-total évolue (sauf saisie en cours)
-  const gEurEl=document.getElementById('f_remisegEur');
-  if(gEurEl && document.activeElement!==gEurEl){ gEurEl.value = remiseG>0?remiseG:''; }
   const persoNb = cmdPersoCount();
   const persoSup = money2(persoNb*PERSO_PRIX_UNIT);
-  // La personnalisation entre dans la base imposable à la remise globale (au même titre
-  // que les lignes) : on l'ajoute au sous-total AVANT d'appliquer le %, puis on remise le tout.
+  // La personnalisation entre dans la base imposable à la remise globale (au même titre que les lignes).
   const baseAvantGlobal = addMoney(sousTotal, persoSup);
-  const remiseGTot = money2(baseAvantGlobal*gpct/100);
+  // [REMISE GLOBALE EN EUROS FIXES] La référence est _cmdRemiseGlobaleEur (montant €), plafonnée à la base.
+  // On ne la recalcule PAS depuis le % à chaque frappe : elle reste stable même si le sous-total change.
+  let remiseGTot = money2(Math.max(0, Math.min(baseAvantGlobal, +_cmdRemiseGlobaleEur||0)));
+  // % dérivé (affichage/synchro du champ %), jamais figé.
+  const gpct = baseAvantGlobal>0 ? Math.max(0, Math.min(100, money2(remiseGTot/baseAvantGlobal*100))) : 0;
+  // garde les deux champs cohérents avec la référence € (sauf celui en cours de saisie)
+  const gEurEl=document.getElementById('f_remisegEur');
+  if(gEurEl && document.activeElement!==gEurEl){ gEurEl.value = remiseGTot>0?remiseGTot:''; }
+  const gPctEl=document.getElementById('f_remiseg');
+  if(gPctEl && document.activeElement!==gPctEl){ gPctEl.value = gpct>0?gpct:''; }
   const total = Math.max(0, subMoney(baseAvantGlobal, remiseGTot));
   const mt=document.getElementById('f_mt');
   if(mt && mt.dataset.auto==='1'){ mt.value = total?total.toFixed(2):''; }
@@ -15339,7 +15414,7 @@ function cmdRecalc(){
         `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
         (remiseLignes>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
         (persoNb>0?`<div style="display:flex;justify-content:space-between;color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×0,25 €)</span><b>+${euro(persoSup)}</b></div>`:'')+
-        (gpct>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseGTot)}</b></div>`:'')+
+        (remiseGTot>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseGTot)}</b></div>`:'')+
         `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(total)}</b></div>`;
     } else brk.style.display='none';
   }
@@ -15488,7 +15563,13 @@ async function saveCmd(id){
   }
   // normaliser les lignes (parfums/items en tableaux pour stockage propre), remise de ligne conservée
   const lignes = cmdLinesToStored();
-  const remiseGlobale = Math.max(0, Math.min(100, +val('f_remiseg')||0));
+  // [REMISE GLOBALE EN EUROS FIXES] La référence est le montant €, plafonné à la base imposable
+  // (lignes après remises de ligne + personnalisation). Le % est DÉRIVÉ et stocké pour compat aval.
+  const _sousTotalRG = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
+  const _persoRG = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
+  const _baseRG = money2(_sousTotalRG + _persoRG);
+  const remiseGlobaleEur = money2(Math.max(0, Math.min(_baseRG, +_cmdRemiseGlobaleEur||0)));
+  const remiseGlobale = _baseRG>0 ? Math.max(0, Math.min(100, money2(remiseGlobaleEur/_baseRG*100))) : 0;
   // Registre de paiements : chaque encaissement exige montant>0 + date + mode. AUCUNE date auto-générée.
   // On considère "entamé" tout encaissement où au moins un champ a été touché.
   const touched = (cmdPayments||[]).filter(p=> (+p.montant)>0 || p.date || p.moyen);
@@ -15498,29 +15579,15 @@ async function saveCmd(id){
     if(!p.moyen){ toast('Chaque encaissement doit avoir un mode de paiement'); return; }
   }
   const paiements = touched.map(p=>({ date:p.date, montant:money2(+p.montant||0), moyen:p.moyen }));
-  // Montant : on lit le champ « Prix total » (modifiable). MAIS s'il est vide ou à 0
-  // alors que la commande a des lignes valides, on le RECALCULE depuis les lignes
-  // (sous-total − remise globale + persos), pour ne jamais enregistrer une commande à 0 €
-  // par accident (cas où l'auto-calcul du champ a été désactivé puis laissé vide).
-  // Montant : si le prix est en mode AUTO (l'utilisateur n'a pas tapé de prix à la main),
-  // on le RECALCULE systématiquement depuis les lignes — c'est ce qui garantit qu'une
-  // modification des produits met le total à jour. Si l'utilisateur a saisi un prix manuel
-  // (_cmdPriceManual), on respecte la valeur du champ. Filet final : jamais 0 € par accident.
+  // Montant : on lit le champ « Prix total » (modifiable). Si mode AUTO (pas de prix manuel),
+  // on RECALCULE depuis les lignes en appliquant la remise globale EN EUROS FIXES (base − remise €).
+  // Si prix manuel (_cmdPriceManual), on respecte la valeur du champ. Filet final : jamais 0 € par accident.
   let montant = money2(+val('f_mt')||0);
   if(!_cmdPriceManual){
-    const sousTotal = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
-    const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
-    // La perso entre dans la base imposable à la remise globale (cohérent avec cmdRecalc).
-    const baseAvantGlobal = money2(sousTotal + persoSup);
-    const remiseG = money2(baseAvantGlobal*remiseGlobale/100);
-    montant = Math.max(0, money2(baseAvantGlobal - remiseG));
+    montant = Math.max(0, money2(_baseRG - remiseGlobaleEur));
   }
   if(montant<=0){
-    const sousTotal = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
-    const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*(typeof PERSO_PRIX_UNIT!=='undefined'?PERSO_PRIX_UNIT:0));
-    const baseAvantGlobal = money2(sousTotal + persoSup);
-    const remiseG = money2(baseAvantGlobal*remiseGlobale/100);
-    const recalc = Math.max(0, money2(baseAvantGlobal - remiseG));
+    const recalc = Math.max(0, money2(_baseRG - remiseGlobaleEur));
     if(recalc>0) montant = recalc;
   }
   const o={
@@ -15529,7 +15596,7 @@ async function saveCmd(id){
     distanceKm: +val('f_distKm')||0, prixCarburant: +val('f_carbu')||0, tempsLivraisonMin: +val('f_tempsLiv')||0,
     fraisLivraison: (function(){ const mt=document.getElementById('f_mt'); return mt&&mt.dataset.fraisLivraison? +mt.dataset.fraisLivraison : 0; })(),
     consoVehicule: val('f_conso')!==''?(+val('f_conso')||0):null,
-    lignes, remiseGlobale,
+    lignes, remiseGlobale, remiseGlobaleEur,
     perso:document.getElementById('f_perso').checked,
     persoMacarons: cmdPersoCount(),
     persoCouleurs: cmdPersoCoulCollect(),
@@ -15557,7 +15624,7 @@ async function saveCmd(id){
       clientId:o.clientId, date:o.date||today.toISOString().slice(0,10),
       montant:o.montant,
       lignes:o.lignes,                      // lignes détaillées (coffrets, pyramides, parfums…)
-      remiseGlobale:o.remiseGlobale,
+      remiseGlobale:o.remiseGlobale, remiseGlobaleEur:o.remiseGlobaleEur,
       heureLivraison:o.heureLivraison, lieuLivraison:o.lieuLivraison, dateEvenement:o.dateEvenement||'',
       // Livraison (transport) : conservés pour les retrouver à la réouverture et au calcul de coût.
       distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
@@ -35546,7 +35613,7 @@ function factLineDesc(ln){
   if(ln.type==='coffret') return `Coffret ${ln.taille} macarons${parfums?' — '+parfums:''}`;
 
   if(ln.type==='grand') return `Macarons grand format${items?' — '+items:''}`;
-  if(ln.type==='vrac') return `Macarons (vrac)${parfums?' — '+parfums:''}`;
+  if(ln.type==='vrac') return `Macarons${parfums?' — '+parfums:''}`;
   if(ln.type==='don') return `Don (offert)${(parfums||items)?' — '+(parfums||items):''}`;
   if(ln.type==='prestation'){
     if(ln.isLivraison) return ln.libelle || 'Frais de livraison';   // livraison : libellé direct, sans préfixe
@@ -35867,10 +35934,10 @@ async function _genererFactureSimple_DEPRECATED(orderId){
   const rowsHtml = lignes.map(ln=>factLineRows(ln)).join('');
   // Sous-total (somme des lignes) et remise globale éventuelle
   const sousTotal = lignes.reduce((s,ln)=>s+lineTotalStored(ln),0);
-  const gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
-  const remiseG = Math.round(sousTotal*gpct)/100*100/100;
-  const remiseGEuro = Math.round(sousTotal*gpct/100*100)/100;
-  const totalFinal = (+o.montant!=null) ? +o.montant : (sousTotal - remiseGEuro);
+  // [REMISE €] Remise globale résolue en euros fixes (helper), plafonnée au sous-total.
+  // Le total reste le montant stocké s'il existe ; la remise affichée en dérive pour rester cohérente.
+  const remiseGEuro = globalRemiseEuro(o, sousTotal);
+  const totalFinal = (+o.montant!=null) ? +o.montant : money2(sousTotal - remiseGEuro);
   // Acomptes / paiements déjà reçus
   const paye = (o.paiements||[]).reduce((s,p)=>s+(+p.montant||0),0);
   const reste = Math.max(0, Math.round((totalFinal - paye)*100)/100);

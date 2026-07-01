@@ -1,0 +1,486 @@
+[
+ {
+  "titre": "Maddie — Hot Cocoa (chocolat chaud)",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache chocolat chaud (cacao)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Crème liquide", "qte": 180, "unite": "g" },
+     { "nom": "Cacao en poudre", "qte": 65, "unite": "g" },
+     { "nom": "Sucre", "qte": 25, "unite": "g" },
+     { "nom": "Glucose (corn syrup)", "qte": 25, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 30, "unite": "g" },
+     { "nom": "Cannelle", "qte": 0.3, "unite": "g" },
+     { "nom": "Sel", "qte": 1.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Chauffer crème + sucre + glucose + cannelle + sel à frémissement.",
+     "Tamiser le cacao dans un bol ; verser la crème chaude dessus, fouetter.",
+     "Transvaser en récipient étroit, émulsionner le beurre au mixeur plongeant jusqu'à texture soyeuse.",
+     "Couler filmé au contact, refroidir complètement à T° ambiante."
+    ],
+    "note": "Cannelle 1/8 c.à.c ≈ 0,3 g ; sel 1/4 c.à.c ≈ 1,5 g. Garniture en anneau autour du marshmallow. Conservation 1 sem. frigo / plusieurs sem. congélateur (refondre + ré-émulsionner)."
+   },
+   {
+    "nom": "Garniture marshmallow vanille",
+    "role": "insert",
+    "type": "marshmallow",
+    "ingredients": [
+     { "nom": "Gélatine (feuille)", "qte": 5, "unite": "g" },
+     { "nom": "Sucre", "qte": 120, "unite": "g" },
+     { "nom": "Eau", "qte": 40, "unite": "g" },
+     { "nom": "Glucose (corn syrup)", "qte": 90, "unite": "g" },
+     { "nom": "Pâte de vanille", "qte": 5, "unite": "g" }
+    ],
+    "etapes": [
+     "Réhydrater la gélatine en eau glacée, essorer.",
+     "Cuire eau + glucose + sucre à 110 °C.",
+     "Hors feu, incorporer la gélatine au fouet jusqu'à dissolution.",
+     "Monter au batteur jusqu'à masse légère et mousseuse (redescend à ~40 °C), ajouter la vanille, finir de monter (32-36 °C).",
+     "Pocher immédiatement au cœur des macarons, dans l'anneau de ganache."
+    ],
+    "note": "Gélatine en poids = feuille sèche (Maddie, pas de règle 1/6). Vanille « to taste » → ~5 g nominal. Marshmallow plus souple qu'un classique."
+   }
+  ]
+ },
+ {
+  "titre": "Maddie — Caramel Apple Cider (cidre pommé)",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache caramel-pomme (cidre réduit)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Cidre de pomme réduit", "qte": 80, "unite": "g" },
+     { "nom": "Crème liquide", "qte": 20, "unite": "g" },
+     { "nom": "Chocolat blanc", "qte": 105, "unite": "g" },
+     { "nom": "Chocolat Gold (caramélisé)", "qte": 105, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 20, "unite": "g" },
+     { "nom": "Cannelle", "qte": 1.5, "unite": "g" },
+     { "nom": "Sel", "qte": 1.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Réduire ~200 g de cidre de moitié+ jusqu'à texture sirupeuse ; prélever 80 g.",
+     "Mélanger cidre réduit + crème + cannelle, porter à frémissement.",
+     "Faire fondre partiellement les deux chocolats, verser le liquide chaud dessus, attendre 30-60 s.",
+     "Mélanger puis émulsionner au mixeur, ajouter le beurre, ré-émulsionner.",
+     "Ajuster les épices au goût, couler filmé au contact, refroidir 1 h T° ambiante puis frigo."
+    ],
+    "note": "Cannelle 1/4 c.à.c ≈ 1,5 g ; sel 1/4 c.à.c ≈ 1,5 g. Poché en anneau autour de la compote. Gold remplaçable par blanc/blond (perte note caramel)."
+   },
+   {
+    "nom": "Compote de cidre de pomme",
+    "role": "insert",
+    "type": "compote",
+    "ingredients": [
+     { "nom": "Pomme", "qte": 150, "unite": "g" },
+     { "nom": "Cidre de pomme", "qte": 65, "unite": "g" },
+     { "nom": "Sucre roux", "qte": 50, "unite": "g" },
+     { "nom": "Cannelle", "qte": 1.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Tailler la pomme en très petits dés.",
+     "Réunir pomme + cidre + sucre roux + cannelle en casserole, feu moyen.",
+     "Cuire en remuant jusqu'à dissolution du sucre et ébullition, puis feu doux jusqu'à évaporation quasi totale du liquide et pommes translucides.",
+     "Refroidir en récipient hermétique avant de pocher au cœur de l'anneau de ganache."
+    ],
+    "note": "Cannelle 1/4 c.à.c ≈ 1,5 g. Insert essentiel : la ganache seule a peu de goût de pomme."
+   }
+  ]
+ },
+ {
+  "titre": "Maddie — Mulled Wine (vin chaud)",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Vin chaud réduit (préparation)",
+    "role": "base",
+    "type": "infusion réduite",
+    "ingredients": [
+     { "nom": "Porto ou vin rouge", "qte": 100, "unite": "g" },
+     { "nom": "Liqueur d'orange", "qte": 10, "unite": "g" },
+     { "nom": "Anis étoilé", "qte": 1, "unite": "unité" },
+     { "nom": "Bâton de cannelle", "qte": 1, "unite": "unité" },
+     { "nom": "Miel", "qte": 20, "unite": "g" },
+     { "nom": "Clous de girofle", "qte": 4, "unite": "unité" },
+     { "nom": "Gingembre frais", "qte": 5, "unite": "g" }
+    ],
+    "etapes": [
+     "Réunir tous les ingrédients en casserole.",
+     "Porter à pleine ébullition puis réduire et laisser frémir 15-20 min (épaississement léger).",
+     "Filtrer les épices, mesurer la quantité requise pour la ganache."
+    ],
+    "note": "Gingembre 1 c.à.c ≈ 5 g. Porto recommandé pour la pâtisserie. Sert d'aromate à la ganache mulled wine."
+   },
+   {
+    "nom": "Ganache vin chaud (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Crème liquide", "qte": 120, "unite": "g" },
+     { "nom": "Vin chaud réduit", "qte": 65, "unite": "g" },
+     { "nom": "Chocolat noir 70%", "qte": 190, "unite": "g" },
+     { "nom": "Chocolat au lait 35%", "qte": 30, "unite": "g" },
+     { "nom": "Miel", "qte": 15, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 30, "unite": "g" },
+     { "nom": "Sel", "qte": 0.75, "unite": "g" }
+    ],
+    "etapes": [
+     "Faire fondre partiellement les deux chocolats.",
+     "Porter crème + vin chaud réduit + miel à frémissement, verser sur les chocolats, attendre 30-60 s.",
+     "Mélanger puis émulsionner au mixeur en incorporant beurre et sel jusqu'à homogénéité.",
+     "Couler filmé au contact, refroidir complètement à T° ambiante (2-6 h)."
+    ],
+    "note": "Sel 1/8 c.à.c ≈ 0,75 g. Viser 185 g de liquide total (vin+crème) si on ajuste le ratio. Vin remplaçable par jus de raisin/cranberry/cerise concentré (sans alcool)."
+   }
+  ]
+ },
+ {
+  "titre": "Maddie — Spiced Butter Rum (rhum épicé)",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache rhum épicé (style crème pâtissière, chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache crème pâtissière",
+    "ingredients": [
+     { "nom": "Crème liquide #1", "qte": 110, "unite": "g" },
+     { "nom": "Sucre roux", "qte": 40, "unite": "g" },
+     { "nom": "Cannelle", "qte": 1.5, "unite": "g" },
+     { "nom": "Muscade", "qte": 0.3, "unite": "g" },
+     { "nom": "Pâte de vanille", "qte": 3, "unite": "g" },
+     { "nom": "Arôme rhum", "qte": 0.5, "unite": "g" },
+     { "nom": "Crème liquide #2", "qte": 60, "unite": "g" },
+     { "nom": "Maïzena", "qte": 16, "unite": "g" },
+     { "nom": "Chocolat blanc", "qte": 100, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 60, "unite": "g" },
+     { "nom": "Rhum", "qte": 10, "unite": "g" }
+    ],
+    "etapes": [
+     "Réunir crème #1 + sucre roux + cannelle + muscade + vanille + arôme rhum en casserole.",
+     "Mélanger crème #2 + maïzena à part. Faire fondre partiellement le chocolat blanc.",
+     "Porter la crème #1 à frémissement, tempérer dans le mélange maïzena, reverser et cuire jusqu'à épaississement type crème pâtissière.",
+     "Verser sur le chocolat, attendre 1 min, mélanger. Laisser tiédir 15-20 min (sinon la ganache tranche).",
+     "Émulsionner au mixeur, incorporer le beurre petit à petit, puis le rhum en fin. Couler filmé au contact, refroidir T° ambiante puis frigo."
+    ],
+    "note": "Cannelle 1/4 c.à.c ≈ 1,5 g ; muscade 1/8 c.à.c ≈ 0,3 g ; arôme rhum 5 gouttes ≈ 0,5 g ; vanille « to taste » ≈ 3 g. Beurre ajouté tiède impératif."
+   }
+  ]
+ },
+ {
+  "titre": "Maddie — Cranberry Moscow Mule (canneberge-gingembre)",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache canneberge-gingembre (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Purée de canneberge", "qte": 50, "unite": "g" },
+     { "nom": "Crème liquide", "qte": 20, "unite": "g" },
+     { "nom": "Gingembre frais", "qte": 5, "unite": "g" },
+     { "nom": "Romarin", "qte": 0.5, "unite": "unité" },
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Vodka", "qte": 15, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 20, "unite": "g" }
+    ],
+    "etapes": [
+     "Préparer la purée de canneberge (mixer canneberges fraîches/surgelées + peu d'eau ; non filtrée pour plus de texture).",
+     "Chauffer la crème à frémissement, infuser le romarin 8 min, filtrer.",
+     "Réunir crème infusée + purée de canneberge + gingembre, porter à frémissement.",
+     "Faire fondre partiellement le chocolat blanc, verser le liquide chaud dessus, attendre 30-60 s.",
+     "Mélanger, émulsionner au mixeur, ajouter le beurre puis la vodka. Couler filmé au contact, refroidir 1 h T° ambiante puis frigo."
+    ],
+    "note": "Gingembre 1 c.à.c ≈ 5 g ; romarin 1/2 brin. Poché en anneau autour de la compote. Vodka remplaçable par crème/purée canneberge."
+   },
+   {
+    "nom": "Compote canneberge-gingembre",
+    "role": "insert",
+    "type": "compote",
+    "ingredients": [
+     { "nom": "Canneberges", "qte": 200, "unite": "g" },
+     { "nom": "Sucre", "qte": 40, "unite": "g" },
+     { "nom": "Sucre roux", "qte": 40, "unite": "g" },
+     { "nom": "Jus d'orange", "qte": 30, "unite": "g" },
+     { "nom": "Vodka", "qte": 40, "unite": "g" },
+     { "nom": "Gingembre frais", "qte": 5, "unite": "g" }
+    ],
+    "etapes": [
+     "Réunir canneberges + sucres + jus d'orange + vodka + gingembre en casserole.",
+     "Mélanger pour bien répartir sucres et gingembre.",
+     "Porter à ébullition puis frémir 10-15 min : les canneberges éclatent, les sucres caramélisent, le liquide s'évapore.",
+     "Quand la compote est épaisse et peu liquide, refroidir au frais avant de pocher au cœur."
+    ],
+    "note": "Gingembre 1 c.à.c ≈ 5 g. Vodka remplaçable par jus orange/citron vert/canneberge."
+   }
+  ]
+ },
+ {
+  "titre": "Maddie — Dirty Chai (chai-espresso)",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Confiture de lait au chai (chai milk jam)",
+    "role": "insert",
+    "type": "confiture de lait",
+    "ingredients": [
+     { "nom": "Lait entier", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide", "qte": 150, "unite": "g" },
+     { "nom": "Sucre roux", "qte": 30, "unite": "g" },
+     { "nom": "Sucre", "qte": 30, "unite": "g" },
+     { "nom": "Thé chai", "qte": 8, "unite": "g" }
+    ],
+    "etapes": [
+     "Chauffer lait + crème à frémissement, infuser le chai 5-8 min, filtrer.",
+     "Reporter le lait chai en casserole avec les sucres.",
+     "Porter à ébullition puis frémir en remuant 12-30 min jusqu'à consistance caramel/crème épaisse.",
+     "Filmer au contact, refroidir au frais avant de pocher."
+    ],
+    "note": "Chai 1-2 c.à.s ≈ 8 g. Insert au cœur de l'anneau de buttercream."
+   },
+   {
+    "nom": "Buttercream dirty chai (crème anglaise au beurre)",
+    "role": "garniture",
+    "type": "buttercream",
+    "ingredients": [
+     { "nom": "Sucre", "qte": 30, "unite": "g" },
+     { "nom": "Sucre roux", "qte": 30, "unite": "g" },
+     { "nom": "Jaunes d'œuf", "qte": 50, "unite": "g" },
+     { "nom": "Maïzena", "qte": 8, "unite": "g" },
+     { "nom": "Espresso", "qte": 30, "unite": "g" },
+     { "nom": "Crème liquide", "qte": 90, "unite": "g" },
+     { "nom": "Thé chai", "qte": 4, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 150, "unite": "g" }
+    ],
+    "etapes": [
+     "Chauffer la crème à frémissement, infuser le chai 5-8 min, filtrer.",
+     "Réunir crème chai + espresso + sucre roux en casserole. Mélanger jaunes + maïzena + sucre à part.",
+     "Porter le liquide à frémissement, tempérer dans les jaunes, reverser, cuire en fouettant jusqu'à épaississement.",
+     "Filmer au contact, refroidir sous 35 °C (idéal usage 22-30 °C).",
+     "Monter le beurre pommade au fouet, incorporer la crème refroidie en 2-3 fois.",
+     "Finir au fouet quelques min puis à la feuille 10-20 min à vitesse lente. Pocher en anneau, garnir de chai milk jam au cœur."
+    ],
+    "note": "Chai 1 c.à.s ≈ 4 g. Buttercream type crème anglaise (jaunes). Espresso = note « dirty »."
+   }
+  ]
+ },
+ {
+  "titre": "Maddie — Spiced Mixed Nuts (noix épicées)",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Pâte de noix épicées",
+    "role": "insert",
+    "type": "praliné/pâte de fruits secs",
+    "ingredients": [
+     { "nom": "Noix de cajou", "qte": 45, "unite": "g" },
+     { "nom": "Noix de pécan", "qte": 45, "unite": "g" },
+     { "nom": "Amandes", "qte": 45, "unite": "g" },
+     { "nom": "Noisettes", "qte": 45, "unite": "g" },
+     { "nom": "Huile de pépins de raisin", "qte": 15, "unite": "g" },
+     { "nom": "Sucre roux", "qte": 40, "unite": "g" },
+     { "nom": "Cannelle", "qte": 3, "unite": "g" },
+     { "nom": "Gingembre moulu", "qte": 1.5, "unite": "g" },
+     { "nom": "Muscade", "qte": 0.3, "unite": "g" },
+     { "nom": "Cumin", "qte": 0.3, "unite": "g" },
+     { "nom": "Cayenne", "qte": 0.3, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger les noix puis huile, sucre et épices pour bien enrober.",
+     "Torréfier 30 min à 150 °C (300 °F) jusqu'à coloration dorée et arômes développés.",
+     "Refroidir complètement.",
+     "Mixer au robot 2-10 min jusqu'à pâte lisse (ajouter un peu d'huile si besoin)."
+    ],
+    "note": "Cannelle 1/2 c.à.c ≈ 3 g ; gingembre 1/4 ≈ 1,5 g ; muscade/cumin/cayenne 1/8 ≈ 0,3 g chacun. Border sucré-salé. Conservation quelques sem. T° ambiante / 1 mois frigo."
+   },
+   {
+    "nom": "Buttercream épicé (crème pâtissière au beurre)",
+    "role": "garniture",
+    "type": "buttercream",
+    "ingredients": [
+     { "nom": "Sucre roux", "qte": 50, "unite": "g" },
+     { "nom": "Farine T55", "qte": 20, "unite": "g" },
+     { "nom": "Lait entier", "qte": 80, "unite": "g" },
+     { "nom": "Crème liquide", "qte": 80, "unite": "g" },
+     { "nom": "Cannelle", "qte": 3, "unite": "g" },
+     { "nom": "Gingembre moulu", "qte": 3, "unite": "g" },
+     { "nom": "Cumin", "qte": 0.4, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 115, "unite": "g" }
+    ],
+    "etapes": [
+     "Torréfier farine + épices 2 min à feu moyen en fouettant (assainit la farine, révèle les épices).",
+     "Ajouter le sucre roux, mélanger, puis crème + lait, fouetter.",
+     "Cuire à feu moyen jusqu'à ébullition et épaississement type crème pâtissière. Filmer au contact.",
+     "Refroidir sous 35 °C (idéal 22-30 °C).",
+     "Monter le beurre, incorporer la crème en 2-3 fois, fouetter quelques min puis feuille 10-20 min lent.",
+     "Pocher en anneau, garnir de pâte de noix épicées au cœur."
+    ],
+    "note": "Cannelle/gingembre 1/2 c.à.c ≈ 3 g ; cumin 1/16-1/8 ≈ 0,4 g. Buttercream type crème pâtissière (farine, sans œuf)."
+   }
+  ]
+ },
+ {
+  "titre": "Maddie — Raspberry Elderflower (framboise-sureau)",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Compote framboise-sureau (gélifiée)",
+    "role": "insert",
+    "type": "compote gélifiée",
+    "ingredients": [
+     { "nom": "Framboises surgelées", "qte": 200, "unite": "g" },
+     { "nom": "Gin", "qte": 30, "unite": "g" },
+     { "nom": "Liqueur de sureau", "qte": 30, "unite": "g" },
+     { "nom": "Sucre", "qte": 60, "unite": "g" },
+     { "nom": "Gélatine (feuille)", "qte": 3, "unite": "g" }
+    ],
+    "etapes": [
+     "Réhydrater la gélatine en eau glacée, essorer.",
+     "Réunir framboises + gin + liqueur de sureau + sucre, feu moyen.",
+     "Porter à ébullition puis frémir 5-10 min (du liquide peut rester, la gélatine gélifiera).",
+     "Hors feu, incorporer la gélatine. Mixer puis filtrer les pépins si gel souhaité.",
+     "Filmer au contact, prendre au frais avant de pocher au cœur de l'anneau de buttercream."
+    ],
+    "note": "Gélatine en poids = feuille sèche (Maddie). Gin/sureau remplaçables par purée framboise/sureau (sans alcool)."
+   },
+   {
+    "nom": "Buttercream citron-sureau (crème anglaise au beurre)",
+    "role": "garniture",
+    "type": "buttercream",
+    "ingredients": [
+     { "nom": "Sucre", "qte": 80, "unite": "g" },
+     { "nom": "Jaunes d'œuf", "qte": 50, "unite": "g" },
+     { "nom": "Maïzena", "qte": 8, "unite": "g" },
+     { "nom": "Gin", "qte": 30, "unite": "g" },
+     { "nom": "Liqueur de sureau", "qte": 30, "unite": "g" },
+     { "nom": "Crème liquide", "qte": 60, "unite": "g" },
+     { "nom": "Baies de genièvre", "qte": 8, "unite": "unité" },
+     { "nom": "Zeste de citron (1 citron)", "qte": 6, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 150, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger jaunes + moitié du sucre + maïzena.",
+     "Porter crème + reste de sucre + baies de genièvre + gin + liqueur de sureau à frémissement.",
+     "Tempérer dans les jaunes, reverser, cuire en fouettant jusqu'à épaississement.",
+     "Filtrer le genièvre, ajouter le zeste de citron hors feu et émulsionner au mixeur (préserve l'arôme).",
+     "Filmer au contact, refroidir sous 35 °C. Monter le beurre, incorporer la crème en 2-3 fois.",
+     "Finir au fouet puis feuille 10-20 min lent. Pocher en anneau, garnir de compote framboise au cœur."
+    ],
+    "note": "Zeste 1 citron ≈ 6 g ; genièvre 8 baies. Buttercream type crème anglaise (jaunes). Citron ajouté hors feu pour garder l'éclat."
+   }
+  ]
+ },
+ {
+  "titre": "Maddie — Caramel Old Fashioned (bourbon-caramel)",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Caramel à l'orange (insert)",
+    "role": "insert",
+    "type": "caramel",
+    "ingredients": [
+     { "nom": "Sucre", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide", "qte": 120, "unite": "g" },
+     { "nom": "Beurre", "qte": 120, "unite": "g" },
+     { "nom": "Sel", "qte": 3, "unite": "g" },
+     { "nom": "Zeste de demi-orange", "qte": 3, "unite": "g" },
+     { "nom": "Bitters (Angostura)", "qte": 1, "unite": "g" }
+    ],
+    "etapes": [
+     "Porter la crème à frémissement, garder au chaud.",
+     "Réaliser un caramel à sec en ajoutant le sucre progressivement jusqu'à ambre foncé.",
+     "Hors feu, décuire avec la crème chaude en 3 fois, remettre sur le feu, bouillir 1-2 min.",
+     "Tiédir 10-15 min, ajouter beurre + sel, émulsionner au mixeur, puis bitters + zeste d'orange.",
+     "Filmer au contact, refroidir complètement (idéal la veille) avant de pocher au cœur du buttercream."
+    ],
+    "note": "Sel 3 g ; zeste 1/2 orange ≈ 3 g ; bitters 10 gouttes ≈ 1 g. Insert caramel."
+   },
+   {
+    "nom": "Buttercream caramel-bourbon (crème pâtissière au beurre)",
+    "role": "garniture",
+    "type": "buttercream",
+    "ingredients": [
+     { "nom": "Farine T55", "qte": 20, "unite": "g" },
+     { "nom": "Sucre", "qte": 80, "unite": "g" },
+     { "nom": "Jus d'orange concentré", "qte": 30, "unite": "g" },
+     { "nom": "Crème liquide", "qte": 60, "unite": "g" },
+     { "nom": "Jus de cerise (ou sirop)", "qte": 20, "unite": "g" },
+     { "nom": "Bourbon", "qte": 15, "unite": "g" },
+     { "nom": "Bitters (Angostura)", "qte": 1, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 115, "unite": "g" }
+    ],
+    "etapes": [
+     "Porter jus d'orange + crème + jus de cerise à frémissement, garder au chaud.",
+     "Réaliser un caramel à sec (sucre par tiers) jusqu'à ambre foncé.",
+     "Décuire avec le liquide chaud en 3 fois, remettre sur le feu, ajouter la farine, fouetter.",
+     "Cuire jusqu'à épaississement type crème pâtissière, hors feu ajouter bitters + bourbon, émulsionner.",
+     "Refroidir sous 35 °C. Monter le beurre, incorporer la crème en plusieurs fois.",
+     "Finir au fouet puis feuille ~10 min. Pocher en anneau, garnir de caramel orange au cœur (option fleur de sel)."
+    ],
+    "note": "Bitters 10 gouttes ≈ 1 g. Jus de cerise = sirop de cerises au marasquin possible. Bourbon remplaçable par crème/orange/cerise."
+   }
+  ]
+ },
+ {
+  "titre": "Maddie — Espresso Martini",
+  "source": "maddie",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Confiture de lait au café (coffee milk jam)",
+    "role": "insert",
+    "type": "confiture de lait",
+    "ingredients": [
+     { "nom": "Crème liquide", "qte": 100, "unite": "g" },
+     { "nom": "Espresso ou café fort", "qte": 50, "unite": "g" },
+     { "nom": "Kahlúa (liqueur de café)", "qte": 50, "unite": "g" },
+     { "nom": "Vodka", "qte": 50, "unite": "g" },
+     { "nom": "Lait entier", "qte": 50, "unite": "g" },
+     { "nom": "Sucre", "qte": 80, "unite": "g" }
+    ],
+    "etapes": [
+     "Réunir crème + espresso + Kahlúa + vodka + lait + sucre en casserole.",
+     "Porter à ébullition puis frémir en remuant (l'alcool ralentit la réduction, c'est normal).",
+     "Après 35-45 min, la masse passe de l'aspect latte à crème pâtissière caramel (épaisse, plus foncée).",
+     "Filmer au contact, refroidir complètement au frais avant de pocher au cœur."
+    ],
+    "note": "Réduction longue à cause de l'alcool. Insert au cœur de l'anneau de buttercream."
+   },
+   {
+    "nom": "Buttercream espresso martini (crème pâtissière au beurre)",
+    "role": "garniture",
+    "type": "buttercream",
+    "ingredients": [
+     { "nom": "Sucre roux", "qte": 60, "unite": "g" },
+     { "nom": "Farine T55", "qte": 20, "unite": "g" },
+     { "nom": "Espresso", "qte": 30, "unite": "g" },
+     { "nom": "Kahlúa (liqueur de café)", "qte": 40, "unite": "g" },
+     { "nom": "Crème liquide", "qte": 90, "unite": "g" },
+     { "nom": "Pâte de vanille", "qte": 3, "unite": "g" },
+     { "nom": "Beurre doux (T° ambiante)", "qte": 115, "unite": "g" }
+    ],
+    "etapes": [
+     "Torréfier la farine 2 min à feu moyen en fouettant, ajouter le sucre roux.",
+     "Verser Kahlúa + crème + espresso + vanille, mélanger.",
+     "Cuire en fouettant jusqu'à épaississement type crème pâtissière (brun riche), émulsionner au mixeur.",
+     "Refroidir sous 35 °C. Monter le beurre, incorporer la crème en 2-3 fois.",
+     "Finir au fouet puis feuille 10-20 min lent. Pocher en anneau, garnir de coffee milk jam au cœur."
+    ],
+    "note": "Vanille « to taste » ≈ 3 g. Buttercream type crème pâtissière (farine, sans œuf). Vodka du milk jam remplaçable par café/crème."
+   }
+  ]
+ }
+]

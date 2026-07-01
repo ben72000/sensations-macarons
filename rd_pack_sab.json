@@ -1,0 +1,538 @@
+[
+ {
+  "titre": "Sab — Ganache montée chocolat blanc",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — chocolat blanc (base)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 190, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au bain-marie ou micro-ondes basse température.",
+     "Chauffer la crème à chauffer jusqu'aux premiers frémissements.",
+     "Verser la crème chaude en 3 fois sur le chocolat fondu, émulsionner à la maryse (pas de fouet, pas d'air).",
+     "Ajouter la crème froide, lisser.",
+     "Filmer au contact, prendre au frais ≥ 3 h (idéal une nuit).",
+     "Bol + fouet au congélateur 5 min, puis monter au batteur vitesse croissante jusqu'à doublement/triplement du volume."
+    ],
+    "note": "Crème en g (≈ 1 g/ml). Base cake filling. Conservation : non montée 5 j frigo / 2 mois congel ; montée à utiliser sous 3 j."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée chocolat au lait",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — chocolat au lait (base)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat au lait", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 120, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 200, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au lait (attention à ne pas surchauffer/brûler).",
+     "Chauffer la crème à chauffer jusqu'aux premiers frémissements.",
+     "Verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide, lisser.",
+     "Filmer au contact, prendre au frais ≥ 3 h (idéal une nuit).",
+     "Monter au batteur (ustensiles très froids) jusqu'à doublement/triplement du volume."
+    ],
+    "note": "Crème en g (≈ 1 g/ml). Fonte du lait délicate. Base cake filling."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée chocolat noir",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — chocolat noir (base)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat noir", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 300, "unite": "g" },
+     { "nom": "Miel", "qte": 10, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat noir (attention à ne pas surchauffer/brûler).",
+     "Chauffer la crème à chauffer avec le miel jusqu'aux premiers frémissements.",
+     "Verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide, lisser.",
+     "Filmer au contact, prendre au frais ≥ 3 h (idéal une nuit).",
+     "Monter au batteur (ustensiles très froids) jusqu'à doublement/triplement du volume."
+    ],
+    "note": "Crème en g (≈ 1 g/ml). Miel optionnel (10 g). Base cake filling."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée vanille",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — vanille (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée infusée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 190, "unite": "g" },
+     { "nom": "Pâte de vanille (ou 1 gousse)", "qte": 15, "unite": "g" }
+    ],
+    "etapes": [
+     "Porter la crème à chauffer avec la vanille à ébullition, retirer et infuser 30 min à 1 h.",
+     "Fondre le chocolat blanc.",
+     "Reporter la crème vanillée aux premiers frémissements, verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide, lisser. Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids) jusqu'à doublement/triplement."
+    ],
+    "note": "Vanille 1 c.à.s pâte ≈ 15 g, ou 1 gousse. Extrait vanille optionnel."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée mangue",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — mangue (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Purée de mangue", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 80, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 110, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger la purée de mangue à la crème à chauffer.",
+     "Fondre le chocolat blanc.",
+     "Chauffer le mélange crème-mangue aux premiers frémissements, verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide, mixer au plongeant (obligatoire pour lisser la purée).",
+     "Filmer au contact, prendre au frais une nuit.",
+     "Monter au batteur (ustensiles très froids) — cette ganache monte un peu plus longtemps."
+    ],
+    "note": "Crème en g (≈ 1 g/ml). Extrait mangue optionnel 1/8 c.à.c. Repos plus long au frais (*)."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée fruit de la passion",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — passion (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Purée de fruit de la passion", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 60, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 110, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger la purée de passion à la crème à chauffer.",
+     "Fondre le chocolat blanc.",
+     "Chauffer le mélange crème-passion aux premiers frémissements, verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide, mixer au plongeant (obligatoire).",
+     "Filmer au contact, prendre au frais une nuit.",
+     "Monter au batteur (ustensiles très froids) — monte un peu plus longtemps."
+    ],
+    "note": "Crème en g (≈ 1 g/ml). Extrait passion optionnel 1/4 c.à.c. Repos plus long (*)."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée goyave",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — goyave (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Purée de goyave", "qte": 120, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 80, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 90, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger la purée de goyave à la crème à chauffer.",
+     "Fondre le chocolat blanc.",
+     "Chauffer le mélange crème-goyave aux premiers frémissements, verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide, mixer au plongeant (obligatoire).",
+     "Filmer au contact, prendre au frais une nuit.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Crème en g (≈ 1 g/ml). Extrait goyave optionnel 1/4 c.à.c. Repos plus long (*)."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée citron",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — citron (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée infusée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 190, "unite": "g" },
+     { "nom": "Jus de citron", "qte": 30, "unite": "g" },
+     { "nom": "Zeste de citron (2 citrons jaunes ou 3 limes)", "qte": 12, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger crème à chauffer + jus + zeste, porter à ébullition, retirer et infuser 30 min à 1 h.",
+     "Fondre le chocolat blanc.",
+     "Reporter la crème citronnée aux premiers frémissements, verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide, mixer au plongeant.",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Zeste 2 citrons ≈ 12 g. Émulsion/extrait citron optionnel 1/4 c.à.c."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée fraise",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — fraise (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 190, "unite": "g" },
+     { "nom": "Fraises lyophilisées", "qte": 50, "unite": "g" }
+    ],
+    "etapes": [
+     "Mixer les fraises lyophilisées en poudre fine.",
+     "Fondre le chocolat blanc. Chauffer la crème à chauffer aux premiers frémissements.",
+     "Verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide + poudre de fraise, mixer au plongeant.",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Fraises lyophilisées en poudre dans la masse. Extrait fraise optionnel 1/8 c.à.c."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée framboise",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — framboise (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 190, "unite": "g" },
+     { "nom": "Framboises lyophilisées", "qte": 50, "unite": "g" }
+    ],
+    "etapes": [
+     "Mixer les framboises lyophilisées en poudre fine.",
+     "Fondre le chocolat blanc. Chauffer la crème à chauffer aux premiers frémissements.",
+     "Verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide + poudre de framboise, mixer au plongeant.",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Framboises lyophilisées en poudre dans la masse. Extrait framboise optionnel 1/8 c.à.c."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée coco",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — coco (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 120, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 190, "unite": "g" },
+     { "nom": "Crème de coco", "qte": 70, "unite": "g" },
+     { "nom": "Coco râpée", "qte": 60, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat blanc. Chauffer la crème à chauffer aux premiers frémissements.",
+     "Verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter crème froide + crème de coco + coco râpée, lisser (mixer au plongeant si besoin).",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Crème en g (≈ 1 g/ml). Extrait coco optionnel 1/8 c.à.c."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée pumpkin spice",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — pumpkin spice (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée infusée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 190, "unite": "g" },
+     { "nom": "Purée de potiron", "qte": 70, "unite": "g" },
+     { "nom": "Mélange épices pumpkin spice", "qte": 5, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger les épices pumpkin spice à la crème à chauffer.",
+     "Fondre le chocolat blanc.",
+     "Chauffer le mélange crème-épices aux premiers frémissements, verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide + purée de potiron, lisser (mixer au plongeant si besoin).",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Épices 1 c.à.c ≈ 5 g (ou 1/2 cannelle + 1/4 muscade + 1/4 quatre-épices)."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée pistache",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — pistache (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Pâte de pistache", "qte": 80, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 120, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 260, "unite": "g" },
+     { "nom": "Extrait d'amande amère", "qte": 0.6, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat blanc, incorporer la pâte de pistache à la maryse.",
+     "Chauffer la crème à chauffer aux premiers frémissements, verser en 3 fois sur le chocolat-pistache, émulsionner à la maryse.",
+     "Ajouter crème froide + extrait d'amande amère, lisser (mixer au plongeant si besoin).",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Amande amère 1/8 c.à.c ≈ 0,6 g, exhausteur de la pistache. Colorant vert optionnel."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée caramel",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — caramel salé (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Sauce caramel salé", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 80, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 190, "unite": "g" },
+     { "nom": "Sel", "qte": 1.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat blanc, incorporer la sauce caramel (pas trop liquide) à la maryse.",
+     "Chauffer la crème à chauffer aux premiers frémissements, verser en 3 fois sur le chocolat-caramel, émulsionner à la maryse.",
+     "Ajouter crème froide + sel, lisser (mixer au plongeant si besoin).",
+     "Filmer au contact, prendre au frais une nuit.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Sel 1/4 c.à.c ≈ 1,5 g. Vanille optionnelle 1/4 c.à.c. Caramel ferme sinon ganache trop molle. Repos plus long (*)."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée Lotus Biscoff",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — Lotus Biscoff (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Pâte Lotus Biscoff (spéculoos)", "qte": 90, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 230, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat blanc, incorporer la pâte Lotus Biscoff à la maryse.",
+     "Chauffer la crème à chauffer aux premiers frémissements, verser en 3 fois sur le chocolat-Biscoff, émulsionner à la maryse.",
+     "Ajouter la crème froide, lisser (mixer au plongeant si besoin).",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Crème en g (≈ 1 g/ml)."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée beurre de cacahuète",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — beurre de cacahuète (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Beurre de cacahuète crémeux (stable)", "qte": 90, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 130, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 270, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat blanc, incorporer le beurre de cacahuète à la maryse.",
+     "Chauffer la crème à chauffer aux premiers frémissements, verser en 3 fois sur le chocolat-cacahuète, émulsionner à la maryse.",
+     "Ajouter la crème froide, lisser (mixer au plongeant si besoin).",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Crème en g (≈ 1 g/ml). Beurre de cacahuète stable (shelf-stable)."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée praliné",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — praliné (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Pâte de praliné", "qte": 80, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 120, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 260, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat blanc, incorporer le praliné à la maryse.",
+     "Chauffer la crème à chauffer aux premiers frémissements, verser en 3 fois sur le chocolat-praliné, émulsionner à la maryse.",
+     "Ajouter la crème froide, lisser (mixer au plongeant si besoin).",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Crème en g (≈ 1 g/ml). Praliné au choix."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée pâte d'amande (spread)",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — pâte d'amande/spread (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Pâte/spread d'amande", "qte": 80, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 120, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 260, "unite": "g" },
+     { "nom": "Extrait d'amande amère", "qte": 1.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat blanc, incorporer le spread d'amande à la maryse.",
+     "Chauffer la crème à chauffer aux premiers frémissements, verser en 3 fois sur le chocolat-amande, émulsionner à la maryse.",
+     "Ajouter crème froide + extrait d'amande amère, lisser (mixer au plongeant si besoin).",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Amande amère 1/4 c.à.c ≈ 1,5 g."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée matcha",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — matcha (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée infusée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 200, "unite": "g" },
+     { "nom": "Poudre de matcha", "qte": 6.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fouetter la poudre de matcha dans la crème à chauffer.",
+     "Fondre le chocolat blanc.",
+     "Chauffer la crème-matcha aux premiers frémissements, verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide, lisser (mixer au plongeant).",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Matcha 6-7 g selon intensité (≈ 6,5 g). Crème en g (≈ 1 g/ml)."
+   }
+  ]
+ },
+ {
+  "titre": "Sab — Ganache montée café",
+  "source": "sab",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Ganache montée Sab — café (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache montée infusée",
+    "ingredients": [
+     { "nom": "Chocolat blanc", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide à chauffer", "qte": 100, "unite": "g" },
+     { "nom": "Crème liquide froide", "qte": 190, "unite": "g" },
+     { "nom": "Café soluble en poudre", "qte": 8.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger le café soluble à la crème à chauffer.",
+     "Fondre le chocolat blanc.",
+     "Chauffer la crème-café aux premiers frémissements, verser en 3 fois sur le chocolat, émulsionner à la maryse.",
+     "Ajouter la crème froide, lisser (mixer au plongeant si besoin).",
+     "Filmer au contact, prendre au frais ≥ 3 h.",
+     "Monter au batteur (ustensiles très froids)."
+    ],
+    "note": "Café soluble 7-10 g selon intensité (≈ 8,5 g). Crème en g (≈ 1 g/ml)."
+   }
+  ]
+ }
+]

@@ -1,0 +1,809 @@
+[
+ {
+  "titre": "TFP — Praliné noisette",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Praliné noisette",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     { "nom": "Sucre blanc", "qte": 130, "unite": "g" },
+     { "nom": "Eau", "qte": 60, "unite": "g" },
+     { "nom": "Noisettes", "qte": 300, "unite": "g" },
+     { "nom": "Fleur de sel", "qte": 1, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser la veille. Cuire l'eau et le sucre à 118 °C, jeter les noisettes dans le sirop.",
+     "Réduire le feu et remuer jusqu'à ce que le sucre masse et cristallise autour des fruits.",
+     "Continuer jusqu'à refonte puis caramélisation ambrée, débarrasser sur papier cuisson, refroidir.",
+     "Mixer avec la fleur de sel par séquences de 1-2 min, racler, jusqu'à texture lisse et fluide."
+    ],
+    "note": "Réserver quelques noisettes pour décor si besoin. Base commune aux 4 pralinés."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Praliné amande",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Praliné amande",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     { "nom": "Sucre blanc", "qte": 130, "unite": "g" },
+     { "nom": "Eau", "qte": 60, "unite": "g" },
+     { "nom": "Amandes", "qte": 300, "unite": "g" },
+     { "nom": "Fleur de sel", "qte": 1, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser la veille. Cuire l'eau et le sucre à 118 °C, jeter les amandes dans le sirop.",
+     "Réduire le feu et remuer jusqu'à ce que le sucre masse puis refonde et caramélise (ambré).",
+     "Débarrasser sur papier cuisson, refroidir.",
+     "Mixer avec la fleur de sel par séquences de 1-2 min jusqu'à texture lisse et fluide."
+    ],
+    "note": "Variante du praliné noisette (amandes à la place)."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Praliné cacahuète",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Praliné cacahuète",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     { "nom": "Sucre blanc", "qte": 130, "unite": "g" },
+     { "nom": "Eau", "qte": 60, "unite": "g" },
+     { "nom": "Cacahuètes", "qte": 300, "unite": "g" },
+     { "nom": "Fleur de sel", "qte": 1, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser la veille. Cuire l'eau et le sucre à 118 °C, jeter les cacahuètes dans le sirop.",
+     "Réduire le feu et remuer jusqu'à ce que le sucre masse puis refonde et caramélise (ambré).",
+     "Débarrasser sur papier cuisson, refroidir.",
+     "Mixer avec la fleur de sel par séquences de 1-2 min jusqu'à texture lisse et fluide."
+    ],
+    "note": "Variante du praliné noisette (cacahuètes). Réserver quelques cacahuètes pour décor."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Praliné noix",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Praliné noix",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     { "nom": "Sucre blanc", "qte": 130, "unite": "g" },
+     { "nom": "Eau", "qte": 60, "unite": "g" },
+     { "nom": "Noix", "qte": 300, "unite": "g" },
+     { "nom": "Fleur de sel", "qte": 1, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser la veille. Cuire l'eau et le sucre à 118 °C, jeter les noix dans le sirop.",
+     "Réduire le feu et remuer jusqu'à ce que le sucre masse puis refonde et caramélise (ambré).",
+     "Débarrasser sur papier cuisson, refroidir.",
+     "Mixer avec la fleur de sel par séquences de 1-2 min jusqu'à texture lisse et fluide."
+    ],
+    "note": "Variante du praliné noisette (noix)."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Praliné amande-café",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Praliné amande-café",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     { "nom": "Sucre blanc", "qte": 130, "unite": "g" },
+     { "nom": "Eau", "qte": 60, "unite": "g" },
+     { "nom": "Amandes", "qte": 300, "unite": "g" },
+     { "nom": "Grains de café", "qte": 24, "unite": "g" },
+     { "nom": "Fleur de sel", "qte": 1, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser la veille. Cuire l'eau et le sucre à 118 °C, jeter les amandes dans le sirop.",
+     "Réduire le feu et remuer jusqu'à ce que le sucre masse puis refonde et caramélise (ambré).",
+     "Débarrasser sur papier cuisson, refroidir.",
+     "Mixer avec la fleur de sel et les grains de café par séquences de 1-2 min jusqu'à lisse et fluide."
+    ],
+    "note": "Variante amande + 24 g de café. Utilisé dans le crémeux praliné café intense (Caffè Verde)."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Caramel onctueux vanille",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Caramel onctueux vanille",
+    "role": "insert",
+    "type": "caramel",
+    "ingredients": [
+     { "nom": "Crème liquide entière 30%", "qte": 210, "unite": "g" },
+     { "nom": "Lait entier", "qte": 55, "unite": "g" },
+     { "nom": "Sirop de glucose (1)", "qte": 110, "unite": "g" },
+     { "nom": "Gousse de vanille", "qte": 1, "unite": "unité" },
+     { "nom": "Sucre", "qte": 100, "unite": "g" },
+     { "nom": "Sirop de glucose (2)", "qte": 110, "unite": "g" },
+     { "nom": "Fleur de sel", "qte": 1, "unite": "g" },
+     { "nom": "Beurre doux", "qte": 70, "unite": "g" }
+    ],
+    "etapes": [
+     "Porter à ébullition crème + lait + glucose (1) + grains de vanille.",
+     "À part, caraméliser le sucre avec le glucose (2) jusqu'à 185 °C (ambré).",
+     "Décuire hors feu avec les liquides chauds, petit à petit en remuant. Recuire à 110 °C.",
+     "Débarrasser, ajouter beurre + fleur de sel, parfaire au mixeur plongeant. Réserver au frais."
+    ],
+    "note": "Base commune. Sans gélatine."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Caramel onctueux cacahuète",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Caramel onctueux cacahuète",
+    "role": "insert",
+    "type": "caramel",
+    "ingredients": [
+     { "nom": "Crème infusée cacahuète (récupérée)", "qte": 155, "unite": "g" },
+     { "nom": "Lait entier", "qte": 55, "unite": "g" },
+     { "nom": "Sirop de glucose (1)", "qte": 110, "unite": "g" },
+     { "nom": "Sucre", "qte": 100, "unite": "g" },
+     { "nom": "Sirop de glucose (2)", "qte": 110, "unite": "g" },
+     { "nom": "Fleur de sel", "qte": 1, "unite": "g" },
+     { "nom": "Beurre doux", "qte": 70, "unite": "g" }
+    ],
+    "etapes": [
+     "Infuser 100 g de cacahuètes grillées non salées dans 300 g de crème chaude, mixer, filtrer, récupérer 155 g.",
+     "Porter à ébullition crème cacahuète + lait + glucose (1).",
+     "Caraméliser le sucre avec le glucose (2) jusqu'à 185 °C, décuire hors feu avec les liquides chauds, recuire à 110 °C.",
+     "Débarrasser, ajouter beurre + fleur de sel, parfaire au mixeur. Réserver au frais."
+    ],
+    "note": "Variante : la crème vanille est remplacée par une crème infusée cacahuète (155 g). Sans vanille."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Caramel onctueux noisette",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Caramel onctueux noisette",
+    "role": "insert",
+    "type": "caramel",
+    "ingredients": [
+     { "nom": "Crème infusée noisette (récupérée)", "qte": 155, "unite": "g" },
+     { "nom": "Lait entier", "qte": 55, "unite": "g" },
+     { "nom": "Sirop de glucose (1)", "qte": 110, "unite": "g" },
+     { "nom": "Sucre", "qte": 100, "unite": "g" },
+     { "nom": "Sirop de glucose (2)", "qte": 110, "unite": "g" },
+     { "nom": "Fleur de sel", "qte": 1, "unite": "g" },
+     { "nom": "Beurre doux", "qte": 70, "unite": "g" }
+    ],
+    "etapes": [
+     "Infuser 100 g de noisettes dans 300 g de crème chaude, mixer, filtrer, récupérer 155 g.",
+     "Porter à ébullition crème noisette + lait + glucose (1).",
+     "Caraméliser le sucre avec le glucose (2) jusqu'à 185 °C, décuire hors feu, recuire à 110 °C.",
+     "Débarrasser, ajouter beurre + fleur de sel, parfaire au mixeur. Réserver au frais."
+    ],
+    "note": "Variante crème infusée noisette (155 g). Sans vanille."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache montée vanille",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache montée vanille (empois fécule)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Lait entier (1)", "qte": 210, "unite": "g" },
+     { "nom": "Gousse de vanille", "qte": 0.5, "unite": "unité" },
+     { "nom": "Lait entier (2)", "qte": 30, "unite": "g" },
+     { "nom": "Fécule de pomme de terre", "qte": 7, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 18, "unite": "g" },
+     { "nom": "Chocolat blanc Ivoire", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide entière 35%", "qte": 120, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser 2 jours avant. Bouillir le lait (1), infuser la gousse fendue 3 à 12 h à couvert.",
+     "Mélanger lait (2) froid + fécule. Verser le lait vanillé réchauffé et filtré dessus, recuire jusqu'à ébullition/épaississement (empois).",
+     "Hors feu, ajouter la masse gélatine. Verser sur le chocolat partiellement fondu, émulsionner à la maryse puis au mixeur.",
+     "Ajouter la crème froide en une fois, mixer. Filmer au contact, réserver au froid min. 12 h.",
+     "Au moment : foisonner au fouet (bec d'oiseau souple)."
+    ],
+    "note": "Technique signature TFP : empois de fécule. Masse gélatine ratio 1:7 (1 g gélatine + 7 g eau → 18 g masse ≈ 2,25 g gélatine)."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache montée anis vert",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache montée anis vert (empois fécule)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Lait entier (1)", "qte": 210, "unite": "g" },
+     { "nom": "Graines d'anis vert", "qte": 3, "unite": "g" },
+     { "nom": "Lait entier (2)", "qte": 30, "unite": "g" },
+     { "nom": "Fécule de pomme de terre", "qte": 7, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 18, "unite": "g" },
+     { "nom": "Chocolat blanc Ivoire", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide entière 35%", "qte": 120, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser 2 jours avant. Bouillir le lait (1), infuser les graines d'anis 3 à 12 h à couvert.",
+     "Mélanger lait (2) froid + fécule. Verser le lait anisé réchauffé et filtré dessus, recuire jusqu'à empois.",
+     "Hors feu, ajouter la masse gélatine. Verser sur le chocolat partiellement fondu, émulsionner maryse puis mixeur.",
+     "Ajouter la crème froide en une fois, mixer. Filmer au contact, min. 12 h au froid.",
+     "Au moment : foisonner au fouet."
+    ],
+    "note": "Variante de la ganache montée vanille (anis vert à la place). Masse gélatine ratio 1:7."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache montée fleur d'oranger",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache montée fleur d'oranger (empois fécule)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Lait entier (1)", "qte": 210, "unite": "g" },
+     { "nom": "Lait entier (2)", "qte": 30, "unite": "g" },
+     { "nom": "Fécule de pomme de terre", "qte": 7, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 18, "unite": "g" },
+     { "nom": "Chocolat blanc Ivoire", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide entière 35%", "qte": 120, "unite": "g" },
+     { "nom": "Eau de fleur d'oranger", "qte": 10, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser 2 jours avant. Bouillir le lait (1).",
+     "Mélanger lait (2) froid + fécule. Verser le lait chaud dessus, recuire jusqu'à empois. Hors feu, masse gélatine.",
+     "Verser sur le chocolat partiellement fondu, émulsionner maryse puis mixeur.",
+     "Ajouter la crème froide + fleur d'oranger en une fois, mixer. Filmer au contact, min. 12 h au froid.",
+     "Au moment : foisonner au fouet."
+    ],
+    "note": "Variante sans vanille + 10 g fleur d'oranger dans la crème. Masse gélatine ratio 1:7. Utilisée dans Fleur de Tunis."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache montée pralinée",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache montée pralinée noisette (Ivoire)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Crème liquide entière (1)", "qte": 80, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 18.5, "unite": "g" },
+     { "nom": "Chocolat blanc Ivoire", "qte": 54, "unite": "g" },
+     { "nom": "Praliné noisette", "qte": 66, "unite": "g" },
+     { "nom": "Crème liquide entière (2)", "qte": 150, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser la veille. Fondre le chocolat. Chauffer la crème (1), hors feu ajouter la masse gélatine.",
+     "Verser la crème en 3 fois sur le chocolat fondu et le praliné, émulsionner à la maryse entre chaque ajout.",
+     "Parfaire au mixeur. Ajouter la crème froide (2) en une fois, mixer.",
+     "Filmer au contact, min. 12 h au froid. Au moment : foisonner au fouet."
+    ],
+    "note": "Masse gélatine ratio 1:7 (18,5 g ≈ 2,3 g gélatine). Utilisée dans Noisette Intense."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache montée noix",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache montée noix (Ivoire, praliné noix)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Crème liquide entière (1)", "qte": 80, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 18.5, "unite": "g" },
+     { "nom": "Chocolat blanc Ivoire", "qte": 54, "unite": "g" },
+     { "nom": "Praliné noix", "qte": 66, "unite": "g" },
+     { "nom": "Crème liquide entière (2)", "qte": 150, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser la veille. Fondre le chocolat. Chauffer la crème (1), hors feu ajouter la masse gélatine.",
+     "Verser la crème en 3 fois sur le chocolat fondu et le praliné noix, émulsionner à la maryse.",
+     "Parfaire au mixeur. Ajouter la crème froide (2) en une fois, mixer.",
+     "Filmer au contact, min. 12 h au froid. Au moment : foisonner au fouet."
+    ],
+    "note": "Variante praliné noix. Masse gélatine ratio 1:7. Utilisée dans La Traverse."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache montée chocolat au lait",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache montée chocolat au lait Jivara (empois fécule)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Lait entier (1)", "qte": 250, "unite": "g" },
+     { "nom": "Lait entier (2)", "qte": 20, "unite": "g" },
+     { "nom": "Fécule de pomme de terre", "qte": 8, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 12, "unite": "g" },
+     { "nom": "Chocolat au lait Jivara 40%", "qte": 170, "unite": "g" },
+     { "nom": "Crème liquide entière 30%", "qte": 100, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser la veille. Fondre le chocolat. Mélanger lait (2) + fécule.",
+     "Bouillir le lait (1), verser sur le mélange fécule, recuire jusqu'à empois. Ajouter la masse gélatine.",
+     "Verser l'empois en 3 fois sur le chocolat fondu, émulsionner à la maryse puis au mixeur.",
+     "Ajouter la crème froide en une fois, mixer. Filmer au contact, min. 12 h au froid.",
+     "Au moment : foisonner au fouet."
+    ],
+    "note": "Masse gélatine ratio 1:7. Utilisée dans Emoi Cacahuète."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache montée chocolat noir",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache montée chocolat noir Millot (empois fécule)",
+    "role": "garniture",
+    "type": "ganache montée",
+    "ingredients": [
+     { "nom": "Lait entier (1)", "qte": 235, "unite": "g" },
+     { "nom": "Lait entier (2)", "qte": 30, "unite": "g" },
+     { "nom": "Fécule de pomme de terre", "qte": 8.5, "unite": "g" },
+     { "nom": "Chocolat noir Millot 74%", "qte": 175, "unite": "g" },
+     { "nom": "Crème liquide entière", "qte": 100, "unite": "g" }
+    ],
+    "etapes": [
+     "À réaliser la veille. Fondre le chocolat. Mélanger lait (2) + fécule.",
+     "Bouillir le lait (1), verser sur le mélange fécule, recuire jusqu'à empois.",
+     "Verser l'empois en 3 fois sur le chocolat fondu, émulsionner maryse puis mixeur.",
+     "Ajouter la crème froide en une fois, mixer. Filmer au contact, min. 12 h au froid.",
+     "Au moment : foisonner au fouet."
+    ],
+    "note": "Sans gélatine (le noir 74% structure seul). Utilisée dans Chocolat Intense."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache tendre chocolat lacté caramélisé",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache tendre chocolat lacté caramélisé (Caramelia)",
+    "role": "garniture",
+    "type": "ganache tendre",
+    "ingredients": [
+     { "nom": "Crème liquide entière 30%", "qte": 90, "unite": "g" },
+     { "nom": "Sirop de glucose", "qte": 15, "unite": "g" },
+     { "nom": "Chocolat Caramelia 36%", "qte": 145, "unite": "g" },
+     { "nom": "Beurre doux", "qte": 10, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Chauffer crème + glucose jusqu'à frémissement.",
+     "Verser la crème sur le chocolat en 3 fois, émulsionner entre chaque ajout.",
+     "Ajouter le beurre en morceaux, parfaire au mixeur sans incorporer d'air.",
+     "Réserver en poche, utiliser aussitôt (couler 15-20 g par pièce, laisser cristalliser)."
+    ],
+    "note": "Ganache tendre à couler. Utilisée dans Emoi Cacahuète."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache tendre chocolat au lait Azélia",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache tendre chocolat au lait Azélia",
+    "role": "garniture",
+    "type": "ganache tendre",
+    "ingredients": [
+     { "nom": "Crème liquide entière 30%", "qte": 90, "unite": "g" },
+     { "nom": "Sirop de glucose", "qte": 15, "unite": "g" },
+     { "nom": "Chocolat Azélia 35%", "qte": 145, "unite": "g" },
+     { "nom": "Beurre doux", "qte": 10, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Chauffer crème + glucose jusqu'à frémissement.",
+     "Verser la crème sur le chocolat en 3 fois, émulsionner entre chaque ajout.",
+     "Ajouter le beurre, parfaire au mixeur sans incorporer d'air.",
+     "Réserver en poche, utiliser aussitôt."
+    ],
+    "note": "Variante Azélia (noisette-lait). Utilisée dans Noisette Intense."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Ganache tendre chocolat noir Millot",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Ganache tendre chocolat noir Millot",
+    "role": "garniture",
+    "type": "ganache tendre",
+    "ingredients": [
+     { "nom": "Crème liquide entière", "qte": 150, "unite": "g" },
+     { "nom": "Chocolat noir Millot 74%", "qte": 125, "unite": "g" },
+     { "nom": "Beurre doux", "qte": 5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat. Chauffer la crème jusqu'à frémissement.",
+     "Verser la crème sur le chocolat en 3 fois, émulsionner entre chaque ajout.",
+     "Ajouter le beurre, parfaire au mixeur sans incorporer d'air.",
+     "Réserver en poche, utiliser aussitôt."
+    ],
+    "note": "Sans glucose. Utilisée dans Chocolat Intense."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Crémeux praliné intense cacahuète",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Crémeux praliné intense cacahuète",
+    "role": "insert",
+    "type": "crémeux",
+    "ingredients": [
+     { "nom": "Lait entier", "qte": 75, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 7, "unite": "g" },
+     { "nom": "Praliné cacahuète", "qte": 100, "unite": "g" }
+    ],
+    "etapes": [
+     "À préparer la veille. Chauffer le lait à 70 °C, ajouter la masse gélatine.",
+     "Verser le lait en 3 fois sur le praliné, émulsionner à la maryse entre chaque ajout.",
+     "Filmer au contact, réserver au froid min. 12 h.",
+     "Au moment : détendre au fouet à main avant de pocher."
+    ],
+    "note": "Masse gélatine ratio 1:7 (7 g ≈ 0,875 g gélatine). Utilisé dans Emoi Cacahuète."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Crémeux praliné intense noisette",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Crémeux praliné intense noisette",
+    "role": "insert",
+    "type": "crémeux",
+    "ingredients": [
+     { "nom": "Lait entier", "qte": 75, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 7, "unite": "g" },
+     { "nom": "Praliné noisette", "qte": 100, "unite": "g" }
+    ],
+    "etapes": [
+     "À préparer la veille. Chauffer le lait à 70 °C, ajouter la masse gélatine.",
+     "Verser le lait en 3 fois sur le praliné, émulsionner à la maryse entre chaque ajout.",
+     "Filmer au contact, réserver au froid min. 12 h.",
+     "Au moment : détendre au fouet."
+    ],
+    "note": "Variante praliné noisette. Masse gélatine ratio 1:7. Utilisé dans Noisette Intense."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Crémeux praliné café intense",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Crémeux praliné café intense",
+    "role": "insert",
+    "type": "crémeux",
+    "ingredients": [
+     { "nom": "Lait entier", "qte": 75, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 7, "unite": "g" },
+     { "nom": "Praliné amande-café", "qte": 100, "unite": "g" }
+    ],
+    "etapes": [
+     "À préparer la veille. Chauffer le lait à 70 °C, ajouter la masse gélatine.",
+     "Verser le lait en 3 fois sur le praliné amande-café, émulsionner à la maryse.",
+     "Filmer au contact, réserver au froid min. 12 h.",
+     "Au moment : détendre au fouet."
+    ],
+    "note": "Variante praliné amande-café. Masse gélatine ratio 1:7. Utilisé dans Caffè Verde."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Crémeux café raisonné",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Crémeux café (recette raisonnée)",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     { "nom": "Lait", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide entière", "qte": 80, "unite": "g" },
+     { "nom": "Gélatine en poudre", "qte": 2.2, "unite": "g" },
+     { "nom": "Kuzu", "qte": 5, "unite": "g" },
+     { "nom": "Sucre", "qte": 20, "unite": "g" },
+     { "nom": "Pectine X58 (ou 325NH95)", "qte": 0.8, "unite": "g" },
+     { "nom": "Pâte de café", "qte": 12, "unite": "g" },
+     { "nom": "Blancs d'œuf", "qte": 40, "unite": "g" },
+     { "nom": "Chocolat blanc Ivoire", "qte": 150, "unite": "g" }
+    ],
+    "etapes": [
+     "Bouillir crème + lait, ajouter gélatine sèche + kuzu, mixer, infuser 15 min à couvert.",
+     "Verser en pluie sucre + pectine en fouettant, rebouillir.",
+     "Hors feu, verser sur les blancs, ajouter le café. Cuire sans cesser de remuer jusqu'à 84 °C.",
+     "Verser sur le chocolat partiellement fondu, émulsionner maryse puis mixeur.",
+     "Filmer au contact, réserver au frais 2 h."
+    ],
+    "note": "Gélatine en poudre sèche (2,2 g), PAS de masse gélatine ici. Kuzu + pectine = texturants. Utilisé dans Caffè Verde."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Crémeux miel",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Crémeux miel (anglaise)",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     { "nom": "Crème liquide entière", "qte": 100, "unite": "g" },
+     { "nom": "Miel d'acacia", "qte": 25, "unite": "g" },
+     { "nom": "Miel de châtaignier", "qte": 70, "unite": "g" },
+     { "nom": "Jaunes d'œuf", "qte": 35, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 16, "unite": "g" }
+    ],
+    "etapes": [
+     "Porter la crème à ébullition. À part, cuire les miels à 150 °C.",
+     "Décuire le miel avec la crème chaude. Verser sur les jaunes.",
+     "Recuire comme une crème anglaise jusqu'à la nappe. Hors feu, ajouter la masse gélatine.",
+     "Filmer au contact, réserver au frais."
+    ],
+    "note": "Masse gélatine ratio 1:7 (16 g ≈ 2 g gélatine). Utilisé dans La Traverse."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Crémeux citron vert & huile d'olive",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Crémeux citron vert & huile d'olive",
+    "role": "garniture",
+    "type": "crémeux",
+    "ingredients": [
+     { "nom": "Jus de citron vert", "qte": 85, "unite": "g" },
+     { "nom": "Sucre", "qte": 10, "unite": "g" },
+     { "nom": "Œuf entier", "qte": 100, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 1, "unite": "g" },
+     { "nom": "Beurre doux", "qte": 55, "unite": "g" },
+     { "nom": "Huile d'olive", "qte": 50, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger jus + sucre + œufs en casserole, chauffer jusqu'au premier bouillon.",
+     "Débarrasser, ajouter la masse gélatine et le beurre.",
+     "Ajouter l'huile d'olive, parfaire au mixeur plongeant.",
+     "Filmer au contact, réserver au frais."
+    ],
+    "note": "Masse gélatine ratio 1:7 (dose minime). Utilisé dans Fleur de Tunis."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Namelaka vanille",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Namelaka vanille (Ivoire)",
+    "role": "garniture",
+    "type": "namelaka",
+    "ingredients": [
+     { "nom": "Lait entier", "qte": 50, "unite": "g" },
+     { "nom": "Gousse de vanille", "qte": 0.5, "unite": "unité" },
+     { "nom": "Masse gélatine", "qte": 8, "unite": "g" },
+     { "nom": "Chocolat blanc Ivoire", "qte": 85, "unite": "g" },
+     { "nom": "Crème liquide entière", "qte": 100, "unite": "g" }
+    ],
+    "etapes": [
+     "À préparer la veille. Bouillir le lait avec la gousse grattée. Hors feu, ajouter la masse gélatine.",
+     "Verser le lait chaud filtré en 3 fois sur le chocolat partiellement fondu, émulsionner maryse puis mixeur.",
+     "Ajouter la crème froide en une fois, mixer.",
+     "Filmer au contact, cristalliser au froid min. 12 h."
+    ],
+    "note": "Masse gélatine ratio 1:7 (8 g ≈ 1 g gélatine). Utilisée dans Vanille Intense."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Confit de myrtilles",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Confit de myrtilles",
+    "role": "insert",
+    "type": "confit",
+    "ingredients": [
+     { "nom": "Purée de myrtilles", "qte": 250, "unite": "g" },
+     { "nom": "Sirop de glucose", "qte": 20, "unite": "g" },
+     { "nom": "Sucre", "qte": 15, "unite": "g" },
+     { "nom": "Pectine NH nappage", "qte": 5, "unite": "g" },
+     { "nom": "Jus de citron jaune", "qte": 5, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 30, "unite": "g" }
+    ],
+    "etapes": [
+     "Tiédir la purée de myrtilles (avec le glucose). Ajouter le sucre mélangé à la pectine, porter à ébullition.",
+     "Hors feu, ajouter le citron et la masse gélatine, bien mélanger.",
+     "Filmer au contact, réserver au frais."
+    ],
+    "note": "Masse gélatine ratio 1:7 (30 g ≈ 3,75 g gélatine). Utilisé dans La Traverse."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Confit de citron jaune",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Confit de citron jaune",
+    "role": "insert",
+    "type": "confit",
+    "ingredients": [
+     { "nom": "Jus de citron jaune", "qte": 100, "unite": "g" },
+     { "nom": "Sucre", "qte": 40, "unite": "g" },
+     { "nom": "Pectine NH nappage", "qte": 5, "unite": "g" }
+    ],
+    "etapes": [
+     "Tiédir le jus de citron avec la moitié du sucre.",
+     "Verser en pluie l'autre moitié du sucre mélangée à la pectine, en fouettant.",
+     "Porter à ébullition. Filmer au contact, réserver au frais."
+    ],
+    "note": "Sans gélatine (pectine seule). Utilisé dans Fleur de Tunis."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Gel vanille (agar)",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Gel vanille (agar-agar)",
+    "role": "insert",
+    "type": "gel",
+    "ingredients": [
+     { "nom": "Eau de source", "qte": 250, "unite": "g" },
+     { "nom": "Sucre", "qte": 50, "unite": "g" },
+     { "nom": "Poudre de vanille", "qte": 6, "unite": "g" },
+     { "nom": "Agar-agar", "qte": 2, "unite": "g" }
+    ],
+    "etapes": [
+     "Bouillir l'eau avec le sucre et la poudre de vanille. Ajouter l'agar-agar.",
+     "Rebouillir 3 minutes. Filtrer, réserver au frais 2 h.",
+     "Mixer avant emploi pour obtenir un gel lisse."
+    ],
+    "note": "Gel à l'agar (sans gélatine). Utilisé dans Vanille Intense."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Gelée d'espresso",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Gelée d'espresso",
+    "role": "insert",
+    "type": "gelée",
+    "ingredients": [
+     { "nom": "Espresso", "qte": 45, "unite": "g" },
+     { "nom": "Sucre", "qte": 2, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 12, "unite": "g" }
+    ],
+    "etapes": [
+     "Chauffer l'espresso avec le sucre. Hors feu, ajouter la masse gélatine.",
+     "Couler sur 7 mm d'épaisseur, prendre au frais 4 h.",
+     "Détailler en cubes de 7 × 7 mm."
+    ],
+    "note": "Masse gélatine ratio 1:7 (12 g ≈ 1,5 g gélatine). Utilisée en cubes dans Caffè Verde."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Sirop gélifié à l'anis",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Sirop gélifié à l'anis vert",
+    "role": "insert",
+    "type": "sirop gélifié",
+    "ingredients": [
+     { "nom": "Eau de source (1)", "qte": 25, "unite": "g" },
+     { "nom": "Sucre", "qte": 10, "unite": "g" },
+     { "nom": "Graines d'anis vert", "qte": 3, "unite": "g" },
+     { "nom": "Masse gélatine", "qte": 1.25, "unite": "g" },
+     { "nom": "Eau de source (2)", "qte": 40, "unite": "g" }
+    ],
+    "etapes": [
+     "Bouillir l'eau (1) avec le sucre et les graines, infuser à couvert 15 min hors feu.",
+     "Réchauffer à 70 °C, hors feu ajouter la masse gélatine.",
+     "Ajouter l'eau (2). S'utilise tiède (imbibage)."
+    ],
+    "note": "Masse gélatine ratio 1:7 (dose minime). Imbibage dans Caffè Verde."
+   }
+  ]
+ },
+ {
+  "titre": "TFP — Sauce chocolat",
+  "source": "tfp",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "TFP — Sauce chocolat",
+    "role": "insert",
+    "type": "sauce",
+    "ingredients": [
+     { "nom": "Lait entier", "qte": 45, "unite": "g" },
+     { "nom": "Crème liquide entière", "qte": 45, "unite": "g" },
+     { "nom": "Poudre de cacao amer", "qte": 3, "unite": "g" },
+     { "nom": "Chocolat noir Millot 74%", "qte": 50, "unite": "g" },
+     { "nom": "Sirop de glucose", "qte": 55, "unite": "g" }
+    ],
+    "etapes": [
+     "Bouillir glucose + lait + crème. Hors feu, ajouter le cacao au fouet.",
+     "Verser sur le chocolat fondu en 3 fois, émulsionner entre chaque ajout.",
+     "Parfaire au mixeur. Filmer au contact, réserver au frais."
+    ],
+    "note": "Coulée dans les puits. Utilisée dans Chocolat Intense."
+   }
+  ]
+ }
+]

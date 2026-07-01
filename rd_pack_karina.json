@@ -1,0 +1,832 @@
+[
+ {
+  "titre": "Karina — Ganache dulce de leche",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache dulce de leche (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 60, "unite": "g" },
+     { "nom": "Dulce de leche", "qte": 60, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 10, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter crème + dulce de leche + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse en pressant.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur plongeant jusqu'à texture soyeuse.",
+     "Filmer au contact, laisser prendre 8 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 8 h T° ambiante. Sel = pincée (~0,5 g)."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache mojito fraise",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache mojito fraise (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 200, "unite": "g" },
+     { "nom": "Purée de fraise", "qte": 50, "unite": "g" },
+     { "nom": "Jus de citron vert", "qte": 30, "unite": "g" },
+     { "nom": "Menthe fraîche", "qte": 5, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 10, "unite": "g" },
+     { "nom": "Rhum blanc", "qte": 5, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter purée de fraise + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 2 fois, puis ajouter jus de citron vert et rhum, mélanger à la maryse.",
+     "Transvaser, ajouter menthe et sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 8 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 8 h. Menthe ajoutée en fin (arôme frais non infusé)."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache key lime pie",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache key lime pie (chocolat blanc & cream cheese)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 200, "unite": "g" },
+     { "nom": "Jus de citron vert (key lime)", "qte": 110, "unite": "g" },
+     { "nom": "Biscuits María", "qte": 8, "unite": "unité" },
+     { "nom": "Cream cheese", "qte": 25, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Pâte de vanille", "qte": 10, "unite": "g" },
+     { "nom": "Zeste de citron vert", "qte": 3, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter jus de citron vert + vanille + biscuits María + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le cream cheese en 3 fois, mélanger à la maryse en pressant.",
+     "Transvaser, ajouter zeste de citron vert et sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 8 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. 8 biscuits María apportent corps et goût « croûte de tarte »."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache fromage de chèvre",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache fromage de chèvre (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 150, "unite": "g" },
+     { "nom": "Fromage de chèvre", "qte": 40, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 100, "unite": "g" },
+     { "nom": "Pâte de vanille (ou 1 gousse)", "qte": 15, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter crème + vanille + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le fromage de chèvre en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 8 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Chèvre = note lactée acidulée."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache goyave & vanille",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache goyave & vanille (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 200, "unite": "g" },
+     { "nom": "Purée de goyave", "qte": 100, "unite": "g" },
+     { "nom": "Gousse de vanille", "qte": 1, "unite": "unité" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter purée de goyave + grains de vanille + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse en pressant.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 8 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 8 h."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache chai latte",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache chai latte (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 115, "unite": "g" },
+     { "nom": "Sachets de thé chai", "qte": 2, "unite": "unité" },
+     { "nom": "Pâte de vanille", "qte": 10, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 15, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Bouillir la crème avec le thé chai, infuser au moins 1 h, filtrer.",
+     "Reporter le liquide à chaud avec sucre inverti et vanille jusqu'à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur. Filmer au contact, prendre 8 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. Infusion chai 1 h, retiré avant émulsion."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache fraise-coco",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache fraise-coco (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 200, "unite": "g" },
+     { "nom": "Lait de coco", "qte": 60, "unite": "g" },
+     { "nom": "Coco râpée torréfiée", "qte": 50, "unite": "g" },
+     { "nom": "Purée de fraise", "qte": 50, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 15, "unite": "g" },
+     { "nom": "Pâte de vanille", "qte": 5, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Bouillir lait de coco + coco torréfiée, infuser au moins 1 h, filtrer.",
+     "Reporter le liquide à chaud avec purée de fraise, vanille et sucre inverti jusqu'à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur. Filmer au contact, prendre 8 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. Coco torréfiée infusée puis retirée."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache cookies & cream",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache cookies & cream (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 110, "unite": "g" },
+     { "nom": "Biscuits Oreo (sans crème)", "qte": 70, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter crème + biscuits Oreo + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse en pressant.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 8 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Biscuits Oreo sans la crème blanche."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache cheesecake",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache cheesecake (chocolat blanc & cream cheese)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 150, "unite": "g" },
+     { "nom": "Cream cheese", "qte": 50, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 100, "unite": "g" },
+     { "nom": "Gousse de vanille", "qte": 1, "unite": "unité" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter crème + grains de vanille + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le cream cheese en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 8 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache horchata",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache horchata (chocolat blanc)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Chocolat blanc 28-32%", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 150, "unite": "g" },
+     { "nom": "Lait", "qte": 100, "unite": "g" },
+     { "nom": "Riz blanc", "qte": 100, "unite": "g" },
+     { "nom": "Bâton de cannelle", "qte": 1, "unite": "unité" },
+     { "nom": "Lait concentré sucré", "qte": 35, "unite": "g" },
+     { "nom": "Extrait de vanille", "qte": 20, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Mélanger crème, lait, riz et cannelle. Laisser tremper 8 h au frais, puis mixer lisse.",
+     "Filtrer au chinois fin, incorporer lait concentré et vanille.",
+     "Porter 105 g de ce mélange + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat fondu en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur. Filmer au contact, prendre 8 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. Base horchata = trempage 8 h + 105 g utilisés."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache café & Baileys",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache café & Baileys (chocolat au lait)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 80, "unite": "g" },
+     { "nom": "Grains de café", "qte": 25, "unite": "g" },
+     { "nom": "Baileys", "qte": 55, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 15, "unite": "g" },
+     { "nom": "Pâte de vanille", "qte": 5, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Bouillir crème + grains de café, infuser au moins 1 h, filtrer.",
+     "Reporter le liquide à chaud avec sucre inverti et vanille jusqu'à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 2 fois, puis ajouter le Baileys, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur. Filmer au contact, prendre 6 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 6 h. Café infusé puis retiré."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache pâte de spéculoos",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache pâte de spéculoos (chocolat au lait)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 150, "unite": "g" },
+     { "nom": "Pâte de spéculoos", "qte": 60, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 110, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 10, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter crème + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et la pâte de spéculoos en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 6 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 6 h."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache passion & caramel",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache passion & caramel (chocolat au lait)",
+    "role": "garniture",
+    "type": "ganache émulsionnée caramel",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 200, "unite": "g" },
+     { "nom": "Purée de fruit de la passion", "qte": 80, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sucre (caramel sec)", "qte": 60, "unite": "g" },
+     { "nom": "Beurre", "qte": 10, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Réaliser un caramel à sec avec le sucre, ajouter le beurre, décuire avec la purée de passion, ajouter le sucre inverti, frémissement puis couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 6 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Caramel à sec décuit à la passion."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache bananes Foster",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache bananes Foster (chocolat au lait)",
+    "role": "garniture",
+    "type": "ganache émulsionnée caramel",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 200, "unite": "g" },
+     { "nom": "Sucre (caramel sec)", "qte": 50, "unite": "g" },
+     { "nom": "Banane en rondelles", "qte": 1, "unite": "unité" },
+     { "nom": "Crème liquide 36%", "qte": 100, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Rhum brun", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Caramel à sec, ajouter les rondelles de banane et caraméliser 1 min, décuire à la crème, mixer en sauce fine.",
+     "Peser 120 g de cette sauce, mélanger avec le sucre inverti.",
+     "Verser le chaud sur le chocolat en 3 fois, puis ajouter le rhum, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur. Filmer au contact, prendre 6 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. 120 g de sauce banane caramélisée utilisés."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache noisette",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache noisette (chocolat au lait & praliné)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 160, "unite": "g" },
+     { "nom": "Praliné noisette", "qte": 40, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 80, "unite": "g" },
+     { "nom": "Frangelico", "qte": 25, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter crème + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le praliné noisette en 2 fois, puis ajouter le Frangelico, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 6 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 6 h."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache mangue (lait)",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache mangue (chocolat au lait)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 200, "unite": "g" },
+     { "nom": "Purée de mangue", "qte": 100, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter purée de mangue + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse en pressant.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 6 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 6 h."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache café (lait)",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache café (chocolat au lait)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 100, "unite": "g" },
+     { "nom": "Café soluble", "qte": 8, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter crème + café soluble + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse en pressant.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 6 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 6 h. Café soluble (pas d'infusion)."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache beurre de cacahuète",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache beurre de cacahuète (chocolat au lait)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 150, "unite": "g" },
+     { "nom": "Beurre de cacahuète", "qte": 50, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 125, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter crème + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le beurre de cacahuète en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 6 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 6 h."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache framboise (lait)",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache framboise (chocolat au lait)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 200, "unite": "g" },
+     { "nom": "Purée de framboise", "qte": 100, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter purée de framboise + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse en pressant.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 6 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 6 h."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache thé Darjeeling",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache thé Darjeeling (chocolat au lait)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Chocolat au lait 35-45%", "qte": 200, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 115, "unite": "g" },
+     { "nom": "Sachets de thé Darjeeling", "qte": 2, "unite": "unité" },
+     { "nom": "Sucre inverti", "qte": 20, "unite": "g" },
+     { "nom": "Sel", "qte": 0.5, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Bouillir la crème avec le thé Darjeeling, infuser au moins 1 h, filtrer.",
+     "Reporter le liquide à chaud avec le sucre inverti jusqu'à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter le sel, émulsionner au mixeur. Filmer au contact, prendre 6 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. Infusion Darjeeling 1 h, retirée."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache menthe",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache menthe (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 165, "unite": "g" },
+     { "nom": "Menthe fraîche", "qte": 25, "unite": "g" },
+     { "nom": "Beurre", "qte": 45, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 35, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Bouillir la crème avec la menthe, infuser au moins 1 h, filtrer.",
+     "Reporter le liquide à chaud avec le sucre inverti jusqu'à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le beurre en 3 fois, mélanger à la maryse.",
+     "Transvaser, émulsionner au mixeur. Filmer au contact, prendre 5 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Menthe infusée 1 h, retirée. Sans sel."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache gingembre",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache gingembre (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 160, "unite": "g" },
+     { "nom": "Gingembre frais en tranches", "qte": 30, "unite": "g" },
+     { "nom": "Beurre", "qte": 45, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 35, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Bouillir la crème avec le gingembre, infuser au moins 1 h, filtrer.",
+     "Reporter le liquide à chaud avec le sucre inverti jusqu'à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le beurre en 3 fois, mélanger à la maryse.",
+     "Transvaser, émulsionner au mixeur. Filmer au contact, prendre 5 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Gingembre infusé 1 h, retiré. Sans sel."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache fraise (noir)",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache fraise (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 150, "unite": "g" },
+     { "nom": "Purée de fraise", "qte": 170, "unite": "g" },
+     { "nom": "Fraises lyophilisées", "qte": 30, "unite": "g" },
+     { "nom": "Beurre", "qte": 45, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 35, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter purée de fraise + fraises lyophilisées + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le beurre en 3 fois, mélanger à la maryse.",
+     "Transvaser, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 5 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Sans sel."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache cerise",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache cerise (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 150, "unite": "g" },
+     { "nom": "Purée de cerise", "qte": 140, "unite": "g" },
+     { "nom": "Beurre", "qte": 35, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 45, "unite": "g" },
+     { "nom": "Kirsch", "qte": 20, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter purée de cerise + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le beurre en 2 fois, puis ajouter le Kirsch, mélanger à la maryse.",
+     "Transvaser, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 5 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Sans sel."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache amande",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache amande (chocolat noir & praliné)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 100, "unite": "g" },
+     { "nom": "Praliné amande", "qte": 50, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 155, "unite": "g" },
+     { "nom": "Beurre", "qte": 20, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 45, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter crème + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat, le praliné amande et le beurre en 3 fois, mélanger à la maryse.",
+     "Transvaser, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 5 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Sans sel."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache mangue & passion",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache mangue & passion (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 150, "unite": "g" },
+     { "nom": "Purée de mangue", "qte": 100, "unite": "g" },
+     { "nom": "Purée de fruit de la passion", "qte": 50, "unite": "g" },
+     { "nom": "Beurre", "qte": 45, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 35, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter purée de mangue + purée de passion + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le beurre en 2 fois, mélanger à la maryse.",
+     "Transvaser, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 5 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Sans sel."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache banane (noir)",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache banane (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 150, "unite": "g" },
+     { "nom": "Purée de banane", "qte": 100, "unite": "g" },
+     { "nom": "Liqueur de banane", "qte": 40, "unite": "g" },
+     { "nom": "Beurre", "qte": 45, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 35, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Porter purée de banane + sucre inverti à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le beurre en 2 fois, puis ajouter la liqueur de banane, mélanger à la maryse.",
+     "Transvaser, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 5 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Sans sel."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache thé Earl Grey",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache thé Earl Grey (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 165, "unite": "g" },
+     { "nom": "Sachets de thé Earl Grey", "qte": 2, "unite": "unité" },
+     { "nom": "Beurre", "qte": 45, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 35, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Bouillir la crème avec le thé Earl Grey, infuser au moins 1 h, filtrer.",
+     "Reporter le liquide à chaud avec le sucre inverti jusqu'à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le beurre en 3 fois, mélanger à la maryse.",
+     "Transvaser, émulsionner au mixeur. Filmer au contact, prendre 5 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Earl Grey infusé 1 h, retiré. Sans sel."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache cannelle",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache cannelle (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée infusée",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 150, "unite": "g" },
+     { "nom": "Crème liquide 36%", "qte": 160, "unite": "g" },
+     { "nom": "Cannelle en poudre", "qte": 3, "unite": "g" },
+     { "nom": "Bâton de cannelle", "qte": 1, "unite": "unité" },
+     { "nom": "Beurre", "qte": 45, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 35, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Bouillir la crème avec cannelle en poudre et bâton de cannelle, infuser au moins 1 h, filtrer.",
+     "Reporter le liquide à chaud avec le sucre inverti jusqu'à frémissement, couper le feu.",
+     "Verser le chaud sur le chocolat et le beurre en 3 fois, mélanger à la maryse.",
+     "Transvaser, émulsionner au mixeur. Filmer au contact, prendre 5 h T° ambiante."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Cannelle infusée 1 h. Sans sel."
+   }
+  ]
+ },
+ {
+  "titre": "Karina — Ganache caramel beurre salé",
+  "source": "karina",
+  "format": "macaron",
+  "preps": [
+   {
+    "nom": "Ganache caramel beurre salé (chocolat noir)",
+    "role": "garniture",
+    "type": "ganache émulsionnée caramel",
+    "ingredients": [
+     { "nom": "Chocolat noir 55-65%", "qte": 150, "unite": "g" },
+     { "nom": "Sucre (caramel sec)", "qte": 50, "unite": "g" },
+     { "nom": "Beurre", "qte": 35, "unite": "g" },
+     { "nom": "Crème liquide 36% (T° ambiante)", "qte": 110, "unite": "g" },
+     { "nom": "Sucre inverti", "qte": 25, "unite": "g" },
+     { "nom": "Fleur de sel", "qte": 1, "unite": "g" }
+    ],
+    "etapes": [
+     "Fondre le chocolat au micro-ondes.",
+     "Caramel à sec avec le sucre, ajouter le beurre, décuire avec la crème, ajouter le sucre inverti, frémissement puis couper le feu.",
+     "Verser le chaud sur le chocolat en 3 fois, mélanger à la maryse.",
+     "Transvaser, ajouter la fleur de sel, émulsionner au mixeur.",
+     "Filmer au contact, laisser prendre 5 h à température ambiante (18-22 °C)."
+    ],
+    "note": "Rendement 30-40 macarons. Repos 5 h. Crème à T° ambiante avant décuisson."
+   }
+  ]
+ }
+]

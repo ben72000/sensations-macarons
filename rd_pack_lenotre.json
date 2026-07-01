@@ -1,0 +1,850 @@
+[
+  {
+    "titre": "Lenôtre — Mousse au chocolat amer & praliné",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Mousse au chocolat amer praliné",
+        "role": "garniture",
+        "type": "mousse",
+        "ingredients": [
+          {
+            "nom": "Chocolat mi-amer",
+            "qte": 175,
+            "unite": "g"
+          },
+          {
+            "nom": "Couverture 70% cacao",
+            "qte": 75,
+            "unite": "g"
+          },
+          {
+            "nom": "Praliné",
+            "qte": 60,
+            "unite": "g"
+          },
+          {
+            "nom": "Meringue italienne",
+            "qte": 60,
+            "unite": "g"
+          },
+          {
+            "nom": "Crème fouettée",
+            "qte": 500,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Fondre les chocolats à 50 °C. Ajouter le praliné.",
+          "Détendre avec un peu de crème fouettée, puis ajouter le reste de crème et la meringue italienne délicatement."
+        ],
+        "note": "Garniture d'un petit four chocolat. Transposable en macaron."
+      },
+      {
+        "nom": "Meringue italienne",
+        "role": "base",
+        "type": "meringue",
+        "ingredients": [
+          {
+            "nom": "Eau",
+            "qte": 350,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre (cuisson)",
+            "qte": 1300,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre (serrage)",
+            "qte": 300,
+            "unite": "g"
+          },
+          {
+            "nom": "Blanc d'oeuf frais",
+            "qte": 800,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Cuire l'eau et les 1300 g de sucre à 120/124 °C.",
+          "À 116 °C, serrer les blancs avec les 300 g de sucre. Verser le sucre cuit sur les blancs montés fermes. Refroidir en vitesse lente."
+        ],
+        "note": "Base classique pour mousses et crémeux."
+      }
+    ]
+  },
+  {
+    "titre": "Lenôtre — Mousseline coco",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Mousseline coco",
+        "role": "garniture",
+        "type": "crémeux",
+        "ingredients": [
+          {
+            "nom": "Lait",
+            "qte": 25,
+            "unite": "g"
+          },
+          {
+            "nom": "Pulpe de coco",
+            "qte": 125,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre",
+            "qte": 38,
+            "unite": "g"
+          },
+          {
+            "nom": "Jaune d'oeuf",
+            "qte": 100,
+            "unite": "g"
+          },
+          {
+            "nom": "Poudre à flan",
+            "qte": 5,
+            "unite": "g"
+          },
+          {
+            "nom": "Rhum blanc",
+            "qte": 25,
+            "unite": "g"
+          },
+          {
+            "nom": "Masse gélatine",
+            "qte": 12,
+            "unite": "g"
+          },
+          {
+            "nom": "Beurre",
+            "qte": 40,
+            "unite": "g"
+          },
+          {
+            "nom": "Crème fleurette",
+            "qte": 400,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Mélanger le lait et la pulpe de coco. Monter au fouet les jaunes avec le sucre et la poudre à flan.",
+          "Verser 1/3 du lait bouillant sur les jaunes, rebouillir le tout. Ajouter la masse gélatine et le beurre.",
+          "Refroidir à 30 °C, ajouter le rhum blanc. Refroidir à 20 °C, incorporer la crème fleurette. Mouler, surgeler."
+        ],
+        "note": "Masse gélatine 12 g = 2 g poudre + 10 g eau (Lenôtre hydrate à 5x). Crémeux coco transposable en macaron."
+      }
+    ]
+  },
+  {
+    "titre": "Lenôtre — Gianduja framboise",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Gianduja framboise",
+        "role": "garniture",
+        "type": "gianduja",
+        "ingredients": [
+          {
+            "nom": "Gianduja",
+            "qte": 500,
+            "unite": "g"
+          },
+          {
+            "nom": "Huile",
+            "qte": 50,
+            "unite": "g"
+          },
+          {
+            "nom": "Alcool de framboise",
+            "qte": 100,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Mélanger l'huile avec le gianduja à point.",
+          "Ajouter 1 dl (~100 g) d'alcool de framboise. Pocher en caissettes à la douille cordon."
+        ],
+        "note": "Source : « 1 dl » d'alcool de framboise (noté ~100 g). Égoutter des framboises à l'alcool en cœur. Gianduja parfumé transposable en macaron."
+      }
+    ]
+  },
+  {
+    "titre": "Lenôtre — Mousse exotique épicée",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Mélange de pulpes exotiques",
+        "role": "base",
+        "type": "pulpe",
+        "ingredients": [
+          {
+            "nom": "Pulpe fruit de la passion",
+            "qte": 100,
+            "unite": "g"
+          },
+          {
+            "nom": "Pulpe orange sanguine",
+            "qte": 100,
+            "unite": "g"
+          },
+          {
+            "nom": "Pulpe mangue",
+            "qte": 50,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Mélanger les pulpes. Donne 250 g utilisés dans la mousse."
+        ],
+        "note": "Base de la mousse exotique épicée."
+      },
+      {
+        "nom": "Mousse exotique épicée",
+        "role": "garniture",
+        "type": "mousse",
+        "ingredients": [
+          {
+            "nom": "Pulpes mélangées (passion, orange sanguine, mangue)",
+            "qte": 250,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre",
+            "qte": 50,
+            "unite": "g"
+          },
+          {
+            "nom": "Masse gélatine",
+            "qte": 24,
+            "unite": "g"
+          },
+          {
+            "nom": "Crème fleurette montée",
+            "qte": 250,
+            "unite": "g"
+          },
+          {
+            "nom": "Poivre de maniguette",
+            "qte": 1,
+            "unite": "g"
+          },
+          {
+            "nom": "Clou de girofle",
+            "qte": 1,
+            "unite": "pièce"
+          },
+          {
+            "nom": "Bâton de cannelle",
+            "qte": 1,
+            "unite": "pièce"
+          },
+          {
+            "nom": "Gousse de vanille",
+            "qte": 1,
+            "unite": "pièce"
+          }
+        ],
+        "etapes": [
+          "Mélanger les pulpes. Bouillir avec le sucre, le poivre de maniguette, le clou de girofle, le bâton de cannelle et la gousse de vanille grattée.",
+          "Passer au chinois, ajouter la masse gélatine. Refroidir à 20 °C.",
+          "Incorporer la crème fleurette montée. Mouler, surgeler."
+        ],
+        "note": "Masse gélatine 24 g = 4 g poudre + 20 g eau (Lenôtre hydrate à 5x). Mousse fruitée épicée, transposable en macaron."
+      }
+    ]
+  },
+  {
+    "titre": "Lenôtre — Mousse pêche de vigne",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Mousse pêche de vigne",
+        "role": "garniture",
+        "type": "mousse",
+        "ingredients": [
+          {
+            "nom": "Pulpe de pêches de vigne",
+            "qte": 125,
+            "unite": "g"
+          },
+          {
+            "nom": "Eau",
+            "qte": 30,
+            "unite": "g"
+          },
+          {
+            "nom": "Masse gélatine",
+            "qte": 42,
+            "unite": "g"
+          },
+          {
+            "nom": "Crème fleurette",
+            "qte": 250,
+            "unite": "g"
+          },
+          {
+            "nom": "Meringue italienne",
+            "qte": 100,
+            "unite": "g"
+          },
+          {
+            "nom": "Marie Brizard",
+            "qte": 10,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Bouillir la pulpe de pêche de vigne avec l'eau. Ajouter la masse gélatine dans la pulpe bouillante.",
+          "Refroidir à 30 °C, ajouter la Marie Brizard. Refroidir à 20 °C.",
+          "Incorporer la crème fleurette et la meringue italienne, puis les cubes de pêches macérées égouttées. Mouler, surgeler."
+        ],
+        "note": "Masse gélatine 42 g = 7 g poudre + 35 g eau (Lenôtre hydrate à 5x). Mousse fruitée transposable en macaron."
+      },
+      {
+        "nom": "Pêches macérées",
+        "role": "garniture",
+        "type": "fruits macérés",
+        "ingredients": [
+          {
+            "nom": "Sirop de pêches blanches",
+            "qte": 50,
+            "unite": "g"
+          },
+          {
+            "nom": "Sirop de pêches jaunes",
+            "qte": 50,
+            "unite": "g"
+          },
+          {
+            "nom": "Cointreau",
+            "qte": 10,
+            "unite": "g"
+          },
+          {
+            "nom": "Eau minérale",
+            "qte": 10,
+            "unite": "g"
+          },
+          {
+            "nom": "Extrait de pêche",
+            "qte": 1,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Mélanger les sirops, le Cointreau, l'eau et l'extrait. Y macérer des cubes de pêches 12 heures. Égoutter avant usage."
+        ],
+        "note": "Insert en cubes pour la mousse pêche de vigne."
+      }
+    ]
+  },
+  {
+    "titre": "Lenôtre — Mousse pomme-noix & garnitures",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Pâte à bombe",
+        "role": "base",
+        "type": "pâte à bombe",
+        "ingredients": [
+          {
+            "nom": "Sirop à 60%",
+            "qte": 1000,
+            "unite": "g"
+          },
+          {
+            "nom": "Jaune d'oeuf",
+            "qte": 500,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Faire bouillir le sirop, verser sur les jaunes. Passer au chinois. Cuire au micro-ondes jusqu'à 90 °C (ou pocher au bain-marie ~30 min). Monter jusqu'à refroidissement."
+        ],
+        "note": "Base pour mousses (ici mousse pomme-noix)."
+      },
+      {
+        "nom": "Mousse pomme-noix",
+        "role": "garniture",
+        "type": "mousse",
+        "ingredients": [
+          {
+            "nom": "Sucre",
+            "qte": 150,
+            "unite": "g"
+          },
+          {
+            "nom": "Cidre",
+            "qte": 70,
+            "unite": "g"
+          },
+          {
+            "nom": "Masse gélatine",
+            "qte": 30,
+            "unite": "g"
+          },
+          {
+            "nom": "Pâte à bombe",
+            "qte": 120,
+            "unite": "g"
+          },
+          {
+            "nom": "Compote de pomme",
+            "qte": 100,
+            "unite": "g"
+          },
+          {
+            "nom": "Crème fouettée",
+            "qte": 250,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Faire fondre le sucre à sec. Décuire avec le cidre et la compote de pomme.",
+          "Ajouter la masse gélatine. Refroidir à 20 °C.",
+          "Mélanger la pâte à bombe et la crème fouettée."
+        ],
+        "note": "Masse gélatine 30 g = 5 g poudre + 25 g eau (Lenôtre hydrate à 5x). Mousse pomme caramélisée-cidre, transposable en macaron."
+      },
+      {
+        "nom": "Noix sablées",
+        "role": "garniture",
+        "type": "fruits secs caramélisés",
+        "ingredients": [
+          {
+            "nom": "Noix",
+            "qte": 200,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre",
+            "qte": 65,
+            "unite": "g"
+          },
+          {
+            "nom": "Eau",
+            "qte": 30,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Cuire l'eau et le sucre à 118 °C. Ajouter les noix. Éteindre le feu et remuer jusqu'à complète cristallisation (sablage)."
+        ],
+        "note": "Éclats croquants pour insert/décor."
+      },
+      {
+        "nom": "Pommes au beurre",
+        "role": "garniture",
+        "type": "fruits poêlés",
+        "ingredients": [
+          {
+            "nom": "Pomme en cubes",
+            "qte": 200,
+            "unite": "g"
+          },
+          {
+            "nom": "Beurre",
+            "qte": 25,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre",
+            "qte": 25,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Faire fondre le beurre. Saisir les pommes avec le sucre de manière à les caraméliser."
+        ],
+        "note": "Insert fruité poêlé."
+      }
+    ]
+  },
+  {
+    "titre": "Lenôtre — Bavarois pistache & mousse fraise",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Bavarois pistache",
+        "role": "garniture",
+        "type": "bavarois",
+        "ingredients": [
+          {
+            "nom": "Lait",
+            "qte": 250,
+            "unite": "g"
+          },
+          {
+            "nom": "Jaune d'oeuf",
+            "qte": 90,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre",
+            "qte": 80,
+            "unite": "g"
+          },
+          {
+            "nom": "Pâte de pistaches",
+            "qte": 40,
+            "unite": "g"
+          },
+          {
+            "nom": "Masse gélatine",
+            "qte": 36,
+            "unite": "g"
+          },
+          {
+            "nom": "Kirsch",
+            "qte": 12,
+            "unite": "g"
+          },
+          {
+            "nom": "Crème fouettée",
+            "qte": 250,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Bouillir le lait et la pâte de pistache. Verser sur les jaunes fouettés avec le sucre. Recuire à 85 °C.",
+          "Ajouter la masse gélatine. Refroidir à 30 °C, ajouter le kirsch.",
+          "Refroidir à 20 °C, incorporer la crème fouettée."
+        ],
+        "note": "Masse gélatine 36 g = 6 g poudre + 30 g eau (Lenôtre hydrate à 5x). Crème pistache, transposable en macaron."
+      },
+      {
+        "nom": "Mousse fraise",
+        "role": "garniture",
+        "type": "mousse",
+        "ingredients": [
+          {
+            "nom": "Pulpe de fraises (à chauffer)",
+            "qte": 65,
+            "unite": "g"
+          },
+          {
+            "nom": "Masse gélatine",
+            "qte": 36,
+            "unite": "g"
+          },
+          {
+            "nom": "Pulpe de fraises (à froid)",
+            "qte": 120,
+            "unite": "g"
+          },
+          {
+            "nom": "Meringue italienne",
+            "qte": 120,
+            "unite": "g"
+          },
+          {
+            "nom": "Crème fouettée",
+            "qte": 256,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Bouillir les 65 g de pulpe de fraises. Ajouter la masse gélatine. Refroidir avec les 120 g de pulpe froide.",
+          "À 20 °C, mélanger la meringue italienne et la crème fouettée."
+        ],
+        "note": "Masse gélatine 36 g = 6 g poudre + 30 g eau (Lenôtre hydrate à 5x). Mousse fraise transposable en macaron."
+      }
+    ]
+  },
+  {
+    "titre": "Lenôtre — Praliné pailleté & crème au beurre pralinée",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Praliné pailleté",
+        "role": "garniture",
+        "type": "croustillant",
+        "ingredients": [
+          {
+            "nom": "Pailleté feuillantine",
+            "qte": 150,
+            "unite": "g"
+          },
+          {
+            "nom": "Praliné amandes",
+            "qte": 350,
+            "unite": "g"
+          },
+          {
+            "nom": "Beurre frais",
+            "qte": 75,
+            "unite": "g"
+          },
+          {
+            "nom": "Couverture lait",
+            "qte": 55,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Fondre le beurre, mélanger à la couverture lait. Ajouter le praliné puis le pailleté."
+        ],
+        "note": "Insert croustillant praliné, transposable en macaron (fine couche)."
+      },
+      {
+        "nom": "Crème au beurre",
+        "role": "base",
+        "type": "crème au beurre",
+        "ingredients": [
+          {
+            "nom": "Lait",
+            "qte": 600,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre (anglaise)",
+            "qte": 250,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre semoule",
+            "qte": 250,
+            "unite": "g"
+          },
+          {
+            "nom": "Gousse de vanille",
+            "qte": 1,
+            "unite": "pièce"
+          },
+          {
+            "nom": "Jaune d'oeuf",
+            "qte": 500,
+            "unite": "g"
+          },
+          {
+            "nom": "Beurre",
+            "qte": 2000,
+            "unite": "g"
+          },
+          {
+            "nom": "Meringue italienne",
+            "qte": 500,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Bouillir le lait avec le premier sucre et la gousse de vanille grattée. Verser sur les jaunes fouettés avec le sucre. Cuire en anglaise (bouillir 15 s en remuant).",
+          "Foisonner au batteur jusqu'à 28 °C. Ajouter le beurre pommade, puis la meringue italienne."
+        ],
+        "note": "Base crème au beurre, à parfumer."
+      },
+      {
+        "nom": "Crème au beurre pralinée",
+        "role": "garniture",
+        "type": "crème au beurre",
+        "ingredients": [
+          {
+            "nom": "Crème au beurre",
+            "qte": 800,
+            "unite": "g"
+          },
+          {
+            "nom": "Praliné noisette",
+            "qte": 200,
+            "unite": "g"
+          },
+          {
+            "nom": "Craquelin (nougatine broyée)",
+            "qte": 100,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Ramollir la crème au beurre. Mélanger au praliné noisette. Ajouter le craquelin (nougatine broyée)."
+        ],
+        "note": "Garniture praliné croustillante, transposable en macaron."
+      },
+      {
+        "nom": "Romia (nougatine amandes)",
+        "role": "garniture",
+        "type": "nougatine",
+        "ingredients": [
+          {
+            "nom": "Glucose",
+            "qte": 125,
+            "unite": "g"
+          },
+          {
+            "nom": "Amandes hachées",
+            "qte": 125,
+            "unite": "g"
+          },
+          {
+            "nom": "Sucre semoule",
+            "qte": 125,
+            "unite": "g"
+          },
+          {
+            "nom": "Beurre",
+            "qte": 125,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Fondre le beurre avec le glucose et le sucre. Ajouter les amandes. Arrêter au premier bouillon, étaler, cuire 180 °C four ventilé. Détailler tiède."
+        ],
+        "note": "Éclats de nougatine pour relief croquant."
+      }
+    ]
+  },
+  {
+    "titre": "Lenôtre — Ganache amère",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Ganache amère",
+        "role": "garniture",
+        "type": "ganache",
+        "ingredients": [
+          {
+            "nom": "Chocolat ganache",
+            "qte": 1000,
+            "unite": "g"
+          },
+          {
+            "nom": "Trimoline (sucre inverti)",
+            "qte": 50,
+            "unite": "g"
+          },
+          {
+            "nom": "Pâte de cacao",
+            "qte": 100,
+            "unite": "g"
+          },
+          {
+            "nom": "Crème liquide",
+            "qte": 1000,
+            "unite": "g"
+          },
+          {
+            "nom": "Gousse de vanille",
+            "qte": 1,
+            "unite": "pièce"
+          },
+          {
+            "nom": "Beurre",
+            "qte": 200,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Bouillir la crème avec la Trimoline et la vanille. Verser sur le chocolat ganache et la pâte de cacao. Fondre le tout.",
+          "Incorporer le beurre. Verser dans un récipient, ne pas émulsionner."
+        ],
+        "note": "Source : « 1 litre de crème » (noté 1000 g, densité ~1). Ganache amère intense, transposable en macaron."
+      }
+    ]
+  },
+  {
+    "titre": "Lenôtre — Garnitures pistache, orange, framboise",
+    "source": "lenotre",
+    "format": "préparations",
+    "preps": [
+      {
+        "nom": "Garniture pistache",
+        "role": "garniture",
+        "type": "crème pâte d'amande",
+        "ingredients": [
+          {
+            "nom": "Pâte d'amande",
+            "qte": 1000,
+            "unite": "g"
+          },
+          {
+            "nom": "Pâte de pistaches",
+            "qte": 100,
+            "unite": "g"
+          },
+          {
+            "nom": "Beurre",
+            "qte": 200,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Détendre la pâte d'amande avec la pâte de pistaches et le beurre jusqu'à consistance lisse."
+        ],
+        "note": "Garniture pistache transposable en macaron."
+      },
+      {
+        "nom": "Garniture orange",
+        "role": "garniture",
+        "type": "crème au beurre",
+        "ingredients": [
+          {
+            "nom": "Crème au beurre",
+            "qte": 1000,
+            "unite": "g"
+          },
+          {
+            "nom": "Écorce d'orange",
+            "qte": 200,
+            "unite": "g"
+          },
+          {
+            "nom": "Pâte d'amandes",
+            "qte": 200,
+            "unite": "g"
+          },
+          {
+            "nom": "Liqueur Grand Marnier ou Cointreau",
+            "qte": 0,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Mélanger la crème au beurre avec l'écorce d'orange, la pâte d'amandes et la liqueur (Grand Marnier ou Cointreau)."
+        ],
+        "note": "Source sans quantité de liqueur (à doser au goût). Garniture orange transposable en macaron."
+      },
+      {
+        "nom": "Garniture framboise",
+        "role": "garniture",
+        "type": "crème au beurre",
+        "ingredients": [
+          {
+            "nom": "Crème au beurre",
+            "qte": 500,
+            "unite": "g"
+          },
+          {
+            "nom": "Pâte d'amandes",
+            "qte": 300,
+            "unite": "g"
+          },
+          {
+            "nom": "Framboise pépins (purée non passée)",
+            "qte": 100,
+            "unite": "g"
+          },
+          {
+            "nom": "Liqueur de framboise",
+            "qte": 90,
+            "unite": "g"
+          }
+        ],
+        "etapes": [
+          "Mélanger la crème au beurre avec la pâte d'amandes, la purée de framboise non passée et la liqueur de framboise."
+        ],
+        "note": "Garniture framboise transposable en macaron."
+      }
+    ]
+  }
+]
