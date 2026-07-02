@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1139';
+const APP_VERSION = 'v1140';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -1458,35 +1458,228 @@ function rdEncodeADN(ingredients){
 
 
 /* ============================================================================
-   rd_generateur.js (V1) — GÉNÉRATEUR DE RECETTES PAR ADN
-   Mode Commande · type « ganache montée » · curseurs de sources · garde-fous
-   appris du corpus réel · raisonnement visible. Réutilise rdEncodeADN / RD_RULES
-   d'app.js (ne les redéfinit pas). Zéro interpolation ligne à ligne.
+   rd_generateur.js (V2) — GÉNÉRATEUR DE RECETTES PAR ADN — MULTI-TYPES
+   7 types générables : ganache montée · ganache · crémeux · confit · caramel ·
+   praliné · croustillant. Squelettes d'incarnation + trames d'étapes par type,
+   plages apprises PAR TYPE, solveur commun, raisonnement visible.
+   L'ADN « obtenu » se calcule depuis les splits du squelette (cohérence solveur).
    ============================================================================ */
 /* RDGEN:PURE:BEGIN */
 const RDGEN_RAPPORTS = ['grasLiquide','sucreMasse','structLiquide','aromeMasse'];
 const RDGEN_RAP_LABEL = { grasLiquide:'Gras / Liquide (texture)', sucreMasse:'Sucre / Masse (conservation)',
   structLiquide:'Structurant / Liquide (tenue)', aromeMasse:'Arôme / Masse (intensité)' };
 
+// ---- helpers communs -------------------------------------------------------
+function rdGenChocolat(parfum){
+  const pf=(parfum||'').toLowerCase();
+  if(/noir/.test(pf)) return {nom:'Chocolat noir (couverture)', split:{gras:.45,sucre:.35,arome:.20}};
+  if(/lait|dulcey|blond|caram/.test(pf)) return {nom:'Chocolat au lait (couverture)', split:{gras:.35,sucre:.45,arome:.20}};
+  return {nom:'Chocolat blanc (Ivoire)', split:{gras:.38,sucre:.50,arome:.12}};
+}
+function rdGenPorteurAuto(parfum){
+  const p=(parfum||'').toLowerCase();
+  if(/chocolat|dulcey|gianduja/.test(p)) return 'chocolat';
+  if(/pralin|noisette|pistache|amande|cacahu|s[ée]same|\bnoix\b|p[ée]can/.test(p)) return 'pate';
+  if(/vanille/.test(p)) return 'vanille';
+  if(/th[ée]\b|caf[ée]|cannelle|tonka|girofle|anis|safran|lavande|verveine|menthe|romarin|earl|jasmin|matcha|[ée]pice|poivre|gingembre|fleur\s+d|camomille|r[ée]glisse/.test(p)) return 'infusion';
+  return 'puree';
+}
+function rdGenPorteurIng(porteur, parfum, M){
+  if(porteur==='puree')    return {id:'arome', nom:'Purée de '+parfum, split:{liquide:.7,arome:.25,sucre:.05}, cap:.45*M};
+  if(porteur==='pate')     return {id:'arome', nom:'Pâte de '+parfum, split:{gras:.5,arome:.45,sucre:.05}, cap:.25*M};
+  if(porteur==='infusion') return {id:'arome', nom:parfum+' (infusion, chinoisée)', split:{arome:1}, cap:.012*M};
+  if(porteur==='vanille')  return {id:'arome', nom:'Gousse de vanille (grattée, infusée)', split:{arome:1}, cap:.01*M};
+  return null; // 'chocolat' ou 'aucun'
+}
+const RDGEN_ET_COMMUN = {
+  emulsion:(cible)=>'Verser en trois fois sur '+cible+' et émulsionner au centre à la maryse.',
+  mixer:()=>'Lisser au mixeur plongeant sans incorporer d\'air.',
+};
+
+// ---- TABLE DES TYPES GÉNÉRABLES --------------------------------------------
+// Chaque type : re (corpus), porteurs autorisés, porteurAuto, squelette, étapes.
+const RDGEN_TYPES = {
+ 'ganache montée': {
+  label:'Ganache montée', re:/^ganache mont/i,
+  porteurs:['puree','pate','infusion','vanille','chocolat'],
+  porteurAuto:rdGenPorteurAuto, cremeSplit:true,
+  squelette(parfum,porteur,M){
+    const choc=rdGenChocolat(parfum);
+    const sk=[
+      {id:'creme', nom:'Crème liquide entière', split:{gras:.35,liquide:.65}, cap:M},
+      {id:'choc',  nom:choc.nom, split:choc.split, cap:M},
+      {id:'gel',   nom:'Masse gélatine', split:{structurant:1/6, liquide:5/6}, cap:.04*M},
+      {id:'gluc',  nom:'Sirop de glucose', split:{sucre:1}, cap:.15*M}];
+    const a=rdGenPorteurIng(porteur,parfum,M); if(a) sk.push(a);
+    return sk;
+  },
+  etapes(parfum,porteur,q,x){
+    const et=[];
+    if(porteur==='infusion') et.push('Porter la crème chaude ('+x.chaud+' g) à courte ébullition avec '+parfum+(q('gluc')?' et le glucose':'')+', couvrir, infuser 20 à 30 min, chinoiser puis repeser (compléter en crème si besoin).');
+    else if(porteur==='vanille') et.push('Porter la crème chaude ('+x.chaud+' g) à courte ébullition avec la gousse grattée'+(q('gluc')?' et le glucose':'')+', couvrir, infuser 30 min, chinoiser.');
+    else if(porteur==='puree') et.push('Chauffer la crème ('+x.chaud+' g) avec la purée'+(q('gluc')?' et le glucose':'')+' sans dépasser le frémissement.');
+    else et.push('Chauffer la crème ('+x.chaud+' g)'+(q('gluc')?' avec le glucose':'')+'.');
+    if(q('gel')) et.push('Hors du feu, dissoudre la masse gélatine ('+q('gel')+' g) dans le liquide chaud.');
+    et.push(RDGEN_ET_COMMUN.emulsion(x.cibleEmulsion));
+    et.push('Ajouter la crème froide ('+x.froid+' g) et lisser au mixeur plongeant sans incorporer d\'air.');
+    et.push('Filmer au contact et maturer 12 h minimum au réfrigérateur.');
+    et.push('Foisonner au batteur jusqu\'au bec d\'oiseau souple, juste avant le pochage.');
+    return et;
+  }},
+ 'ganache': {
+  label:'Ganache', re:/^ganache(?!\s*mont)(?!\s*crème)/i,
+  porteurs:['puree','pate','infusion','vanille','chocolat'],
+  porteurAuto:rdGenPorteurAuto, cremeSplit:false,
+  squelette(parfum,porteur,M){
+    const choc=rdGenChocolat(parfum);
+    const sk=[
+      {id:'creme', nom:'Crème liquide entière', split:{gras:.35,liquide:.65}, cap:M},
+      {id:'choc',  nom:choc.nom, split:choc.split, cap:M},
+      {id:'inv',   nom:'Sucre inverti', split:{sucre:1}, cap:.08*M},
+      {id:'gluc',  nom:'Sirop de glucose', split:{sucre:1}, cap:.10*M},
+      {id:'beurre',nom:'Beurre', split:{gras:1}, cap:.15*M}];
+    const a=rdGenPorteurIng(porteur,parfum,M); if(a) sk.push(a);
+    return sk;
+  },
+  etapes(parfum,porteur,q,x){
+    const sucres=(q('inv')||q('gluc'))?' avec les sucres (inverti/glucose)':'';
+    const et=[];
+    if(porteur==='infusion') et.push('Porter la crème à ébullition'+sucres+' avec '+parfum+', couvrir, infuser 20 min, chinoiser et repeser.');
+    else if(porteur==='vanille') et.push('Porter la crème à ébullition'+sucres+' avec la gousse grattée, infuser 30 min, chinoiser.');
+    else if(porteur==='puree') et.push('Chauffer la crème et la purée'+sucres+' jusqu\'au frémissement.');
+    else et.push('Porter la crème'+sucres+' au frémissement.');
+    et.push(RDGEN_ET_COMMUN.emulsion(x.cibleEmulsion));
+    if(q('beurre')) et.push('À 35-40 °C, incorporer le beurre en morceaux et '+RDGEN_ET_COMMUN.mixer().toLowerCase());
+    else et.push(RDGEN_ET_COMMUN.mixer());
+    et.push('Couler aussitôt ou laisser cristalliser filmé au contact (12 h à 16-18 °C pour un cadrage).');
+    return et;
+  }},
+ 'crémeux': {
+  label:'Crémeux', re:/^crémeux/i,
+  porteurs:['puree','pate','infusion','vanille','chocolat'],
+  porteurAuto:rdGenPorteurAuto, cremeSplit:false,
+  squelette(parfum,porteur,M){
+    const choc=rdGenChocolat(parfum);
+    const sk=[
+      {id:'lait',  nom:'Lait entier', split:{liquide:.96,gras:.04}, cap:M},
+      {id:'creme', nom:'Crème liquide entière', split:{gras:.35,liquide:.65}, cap:M},
+      {id:'jaunes',nom:'Jaunes d\'œufs', split:{liquide:.5,gras:.5}, cap:.20*M},
+      {id:'sucre', nom:'Sucre semoule', split:{sucre:1}, cap:.15*M},
+      {id:'choc',  nom:choc.nom, split:choc.split, cap:.60*M},
+      {id:'gel',   nom:'Masse gélatine', split:{structurant:1/6, liquide:5/6}, cap:.03*M}];
+    const a=rdGenPorteurIng(porteur,parfum,M); if(a) sk.push(a);
+    return sk;
+  },
+  etapes(parfum,porteur,q,x){
+    const et=[];
+    if(porteur==='infusion'||porteur==='vanille') et.push('Chauffer le lait et la crème avec '+(porteur==='vanille'?'la gousse grattée':parfum)+', infuser 20 min à couvert, chinoiser et repeser.');
+    else et.push('Chauffer le lait et la crème'+(porteur==='puree'?' avec la purée':'')+'.');
+    et.push('Blanchir les jaunes avec le sucre ; détendre avec un peu de liquide chaud puis tout réunir.');
+    et.push('Cuire à la nappe (83-85 °C) en remuant sans cesse — la crème doit napper la spatule.');
+    if(q('gel')) et.push('Hors du feu, incorporer la masse gélatine ('+q('gel')+' g).');
+    et.push(RDGEN_ET_COMMUN.emulsion(x.cibleEmulsion));
+    et.push(RDGEN_ET_COMMUN.mixer());
+    et.push('Filmer au contact et réserver au réfrigérateur 4 h minimum avant utilisation.');
+    return et;
+  }},
+ 'confit': {
+  label:'Confit', re:/^confit/i,
+  porteurs:['puree'], porteurAuto:()=> 'puree', cremeSplit:false,
+  squelette(parfum,porteur,M){
+    return [
+      {id:'arome', nom:'Purée de '+parfum, split:{liquide:.7,arome:.25,sucre:.05}, cap:M},
+      {id:'sucre', nom:'Sucre semoule', split:{sucre:1}, cap:.20*M},
+      {id:'gluc',  nom:'Sirop de glucose', split:{sucre:1}, cap:.10*M},
+      {id:'pect',  nom:'Pectine NH', split:{structurant:1}, cap:.025*M},
+      {id:'citron',nom:'Jus de citron', split:{liquide:.8,arome:.2}, cap:.06*M},
+      {id:'gel',   nom:'Masse gélatine', split:{structurant:1/6, liquide:5/6}, cap:.03*M}];
+  },
+  etapes(parfum,porteur,q,x){
+    const et=['Mélanger à sec le sucre et la pectine NH.',
+      'Chauffer la purée de '+parfum+(q('citron')?' et le jus de citron':'')+(q('gluc')?' avec le glucose':'')+' vers 50 °C.',
+      'Verser le mélange sec en pluie au fouet, puis porter à ébullition franche 1 à 2 min (activation de la pectine).'];
+    if(q('gel')) et.push('Hors du feu, incorporer la masse gélatine ('+q('gel')+' g).');
+    et.push('Chinoiser si besoin, refroidir filmé au contact puis lisser au mixeur plongeant à froid.');
+    return et;
+  }},
+ 'caramel': {
+  label:'Caramel', re:/^caramel/i,
+  porteurs:['puree','vanille','aucun'],
+  porteurAuto:(p)=>{const s=(p||'').toLowerCase(); if(/vanille/.test(s))return 'vanille'; if(/beurre sal|nature|fleur de sel|^caramel/.test(s))return 'aucun'; return 'puree';},
+  cremeSplit:false,
+  squelette(parfum,porteur,M){
+    const sk=[
+      {id:'sucre', nom:'Sucre semoule', split:{sucre:1}, cap:.45*M},
+      {id:'gluc',  nom:'Sirop de glucose', split:{sucre:1}, cap:.20*M},
+      {id:'creme', nom:'Crème liquide entière', split:{gras:.35,liquide:.65}, cap:M},
+      {id:'beurre',nom:'Beurre demi-sel', split:{gras:1}, cap:.25*M},
+      {id:'sel',   nom:'Fleur de sel', split:{arome:1}, cap:.006*M}];
+    const a=rdGenPorteurIng(porteur,parfum,M); if(a && porteur==='puree'){a.cap=.40*M; sk.push(a);}
+    else if(a) sk.push(a);
+    return sk;
+  },
+  etapes(parfum,porteur,q,x){
+    const et=['Cuire le sucre'+(q('gluc')?' et le glucose':'')+' à sec, par ajouts successifs, jusqu\'à un caramel ambré (175-185 °C).'];
+    if(porteur==='puree') et.push('En parallèle, chauffer la crème avec la purée de '+parfum+' ; décuire le caramel avec ce mélange chaud, en plusieurs fois.');
+    else if(porteur==='vanille') et.push('En parallèle, chauffer la crème avec la gousse grattée (infusion 20 min) ; décuire le caramel avec la crème chaude chinoisée.');
+    else et.push('Décuire le caramel avec la crème chaude, versée en plusieurs fois.');
+    et.push('Recuire l\'ensemble à 105-108 °C.');
+    et.push('Hors du feu, à 50 °C maximum, incorporer le beurre'+(q('sel')?' et la fleur de sel':'')+' puis '+RDGEN_ET_COMMUN.mixer().toLowerCase());
+    et.push('Débarrasser, filmer au contact et réserver au frais.');
+    return et;
+  }},
+ 'praliné': {
+  label:'Praliné', re:/^pralin/i,
+  porteurs:['pate'], porteurAuto:()=> 'pate', cremeSplit:false,
+  squelette(parfum,porteur,M){
+    return [
+      {id:'fac',   nom:parfum.charAt(0).toUpperCase()+parfum.slice(1)+' (entières, torréfiées)', split:{gras:.55,arome:.45}, cap:M},
+      {id:'sucre', nom:'Sucre semoule', split:{sucre:1}, cap:.45*M},
+      {id:'eau',   nom:'Eau (cuisson du sucre)', split:{liquide:1}, cap:.08*M},
+      {id:'sel',   nom:'Fleur de sel', split:{arome:1}, cap:.006*M}];
+  },
+  etapes(parfum,porteur,q,x){
+    return ['Torréfier les '+parfum+' à 150-160 °C pendant 12 à 15 min ; garder tièdes.',
+      'Cuire le sucre'+(q('eau')?' et l\'eau':'')+' jusqu\'à un caramel ambré.',
+      'Verser les fruits torréfiés dans le caramel, enrober, puis débarrasser sur tapis siliconé et laisser refroidir complètement.',
+      'Concasser puis broyer au robot par impulsions, en raclant les bords, jusqu\'à une pâte fluide'+(q('sel')?' ; ajouter la fleur de sel en fin de broyage':'')+'.',
+      'Stocker en boîte hermétique ; remuer avant emploi (l\'huile remonte).'];
+  }},
+ 'croustillant': {
+  label:'Croustillant', re:/^croustillant/i,
+  porteurs:['pate'], porteurAuto:()=> 'pate', cremeSplit:false,
+  squelette(parfum,porteur,M){
+    const choc=rdGenChocolat(parfum);
+    return [
+      {id:'pate',  nom:'Pâte de '+parfum+' (ou praliné)', split:{gras:.5,arome:.45,sucre:.05}, cap:.60*M},
+      {id:'choc',  nom:choc.nom, split:choc.split, cap:.50*M},
+      {id:'feuil', nom:'Feuilletine (crêpes dentelle)', split:{structurant:.55,sucre:.30,gras:.15}, cap:.40*M},
+      {id:'beurre',nom:'Beurre', split:{gras:1}, cap:.10*M},
+      {id:'sel',   nom:'Fleur de sel', split:{arome:1}, cap:.006*M}];
+  },
+  etapes(parfum,porteur,q,x){
+    return ['Fondre le chocolat'+(q('beurre')?' avec le beurre':'')+' à 40-45 °C.',
+      'Incorporer la pâte de '+parfum+' et lisser.',
+      'Ajouter la feuilletine'+(q('sel')?' et la fleur de sel':'')+' en mélangeant délicatement pour préserver le croustillant.',
+      'Étaler entre deux feuilles guitare à 3-4 mm et bloquer au froid avant détaillage.'];
+  }},
+};
+
+// ---- corpus / pondération / cible / plages (inchangés V1, paramétrés) ------
 function rdGenCorpus(preps, refsById, typeRe){
   return (preps||[]).filter(p=>typeRe.test(p.type||'')).map(p=>({
     nom:p.nom, source:((refsById[p.refId]||{}).source)||p.source||'autre',
     adn:rdEncodeADN(p.ingredients||[]), ingredients:p.ingredients||[]
   })).filter(c=>c.adn.attribuee>0);
 }
-
 function rdGenPoids(corpus, curseurs){
   const bySrc={}; corpus.forEach(c=>{ (bySrc[c.source] ||= []).push(c); });
   const poids={}; let tot=0;
   for(const s of Object.keys(bySrc)){ const w=(curseurs && s in curseurs)?(+curseurs[s]||0):50; poids[s]=w; tot+=w; }
   if(tot<=0) return null;
-  return {
-    wPrep:c=>(poids[c.source]/tot)/bySrc[c.source].length,
-    parSource:Object.keys(bySrc).map(s=>({source:s, n:bySrc[s].length, part:+(100*poids[s]/tot).toFixed(1)}))
-      .sort((a,b)=>b.part-a.part)
-  };
+  return { wPrep:c=>(poids[c.source]/tot)/bySrc[c.source].length,
+    parSource:Object.keys(bySrc).map(s=>({source:s, n:bySrc[s].length, part:+(100*poids[s]/tot).toFixed(1)})).sort((a,b)=>b.part-a.part) };
 }
-
 function rdGenCible(corpus, P){
   const profil={gras:0,liquide:0,sucre:0,arome:0,structurant:0};
   corpus.forEach(c=>{ const w=P.wPrep(c); RD_FAMILLES.forEach(f=>profil[f]+=w*(c.adn.profil[f]||0)); });
@@ -1494,7 +1687,6 @@ function rdGenCible(corpus, P){
   RD_FAMILLES.forEach(f=>profil[f]=+(100*profil[f]/s).toFixed(1));
   return profil;
 }
-
 function rdGenPlages(corpus){
   const plages={};
   RDGEN_RAPPORTS.forEach(k=>{
@@ -1503,13 +1695,11 @@ function rdGenPlages(corpus){
   });
   return plages;
 }
-
 function rdGenRapportsDeProfil(p){
   const safe=(a,b)=>b>0?+(a/b).toFixed(3):0;
   return { grasLiquide:safe(p.gras,p.liquide), sucreMasse:+((p.sucre||0)/100).toFixed(3),
            structLiquide:safe(p.structurant,p.liquide), aromeMasse:+((p.arome||0)/100).toFixed(3) };
 }
-
 function rdGenGardeFous(profil, plages){
   const p={...profil}; const signaux=[];
   const fix=(k,num,den)=>{
@@ -1531,33 +1721,7 @@ function rdGenGardeFous(profil, plages){
   return {profil:p, signaux};
 }
 
-function rdGenPorteurAuto(parfum){
-  const p=(parfum||'').toLowerCase();
-  if(/chocolat|dulcey|gianduja/.test(p)) return 'chocolat';
-  if(/pralin|noisette|pistache|amande|cacahu|s[ée]same|\bnoix\b|p[ée]can/.test(p)) return 'pate';
-  if(/vanille/.test(p)) return 'vanille';
-  if(/th[ée]\b|caf[ée]|cannelle|tonka|girofle|anis|safran|lavande|verveine|menthe|romarin|earl|jasmin|matcha|[ée]pice|poivre|gingembre|fleur\s+d|camomille|r[ée]glisse/.test(p)) return 'infusion';
-  return 'puree';
-}
-
-function rdGenSquelette(parfum, porteur, M){
-  const pf=(parfum||'').toLowerCase();
-  let choc={nom:'Chocolat blanc (Ivoire)', split:{gras:.38,sucre:.50,arome:.12}};
-  if(/noir/.test(pf)) choc={nom:'Chocolat noir (couverture)', split:{gras:.45,sucre:.35,arome:.20}};
-  else if(/lait|dulcey|blond|caram/.test(pf)) choc={nom:'Chocolat au lait (couverture)', split:{gras:.35,sucre:.45,arome:.20}};
-  const sk=[
-    {id:'creme', nom:'Crème liquide entière', split:{gras:.35,liquide:.65}, cap:M},
-    {id:'choc',  nom:choc.nom, split:choc.split, cap:M},
-    {id:'gel',   nom:'Masse gélatine', split:{structurant:1/6, liquide:5/6}, cap:.04*M},
-    {id:'gluc',  nom:'Sirop de glucose', split:{sucre:1}, cap:.15*M}
-  ];
-  if(porteur==='puree')        sk.push({id:'arome', nom:'Purée de '+parfum, split:{liquide:.7,arome:.25,sucre:.05}, cap:.45*M});
-  else if(porteur==='pate')    sk.push({id:'arome', nom:'Pâte de '+parfum, split:{gras:.5,arome:.45,sucre:.05}, cap:.25*M});
-  else if(porteur==='infusion')sk.push({id:'arome', nom:parfum+' (infusion, chinoisée)', split:{arome:1}, cap:.012*M});
-  else if(porteur==='vanille') sk.push({id:'arome', nom:'Gousse de vanille (grattée, infusée)', split:{arome:1}, cap:.01*M});
-  return sk;
-}
-
+// ---- solveur : moindres carrés à coordonnées, obtenu depuis les SPLITS -----
 function rdGenSolve(sk, profil, M){
   const T={}; RD_FAMILLES.forEach(f=>T[f]=M*(profil[f]||0)/100);
   const x=sk.map(()=>0);
@@ -1570,11 +1734,18 @@ function rdGenSolve(sk, profil, M){
     }
   }
   const tot=x.reduce((a,b)=>a+b,0)||1; const k=M/tot;
-  const pesees=sk.map((g,i)=>({id:g.id, nom:g.nom, qte:Math.round(x[i]*k)})).filter(g=>g.qte>0);
-  const obtenu=rdEncodeADN(pesees.map(g=>({nom:g.nom, qte:g.qte, unite:'g'})));
+  const pesees=sk.map((g,i)=>({id:g.id, nom:g.nom, qte:Math.round(x[i]*k), split:g.split})).filter(g=>g.qte>0);
+  // obtenu par construction (splits du squelette — pas de re-classification par nom)
+  const grammes={gras:0,liquide:0,sucre:0,arome:0,structurant:0};
+  pesees.forEach(p=>{ RD_FAMILLES.forEach(f=>grammes[f]+=p.qte*(p.split[f]||0)); });
+  const attribuee=RD_FAMILLES.reduce((a,f)=>a+grammes[f],0)||1;
+  const oProfil={}; RD_FAMILLES.forEach(f=>oProfil[f]=+(100*grammes[f]/attribuee).toFixed(1));
+  const safe=(a,b)=>b>0?+(a/b).toFixed(3):0;
+  const obtenu={ profil:oProfil, rapports:{
+    grasLiquide:safe(grammes.gras,grammes.liquide), sucreMasse:safe(grammes.sucre,attribuee),
+    structLiquide:safe(grammes.structurant,grammes.liquide), aromeMasse:safe(grammes.arome,attribuee) } };
   return {pesees, obtenu};
 }
-
 function rdGenCremeSplit(corpus, P){
   let acc=0, wtot=0;
   corpus.forEach(c=>{
@@ -1588,39 +1759,35 @@ function rdGenCremeSplit(corpus, P){
   return wtot>0 ? acc/wtot : 1/3;
 }
 
-function rdGenEtapes(parfum, porteur, pesees, fracChaud){
-  const q=id=>{const e=pesees.find(x=>x.id===id); return e?e.qte:0;};
-  const creme=q('creme'); const chaud=Math.round(creme*fracChaud); const froid=creme-chaud;
-  const et=[];
-  if(porteur==='infusion') et.push('Porter la crème chaude ('+chaud+' g) à courte ébullition avec '+parfum+(q('gluc')?' et le glucose':'')+', couvrir, infuser 20 à 30 min, chinoiser puis repeser (compléter en crème si besoin).');
-  else if(porteur==='vanille') et.push('Porter la crème chaude ('+chaud+' g) à courte ébullition avec la gousse grattée'+(q('gluc')?' et le glucose':'')+', couvrir, infuser 30 min, chinoiser.');
-  else if(porteur==='puree') et.push('Chauffer la crème ('+chaud+' g) avec la purée'+(q('gluc')?' et le glucose':'')+' sans dépasser le frémissement.');
-  else et.push('Chauffer la crème ('+chaud+' g)'+(q('gluc')?' avec le glucose':'')+'.');
-  if(q('gel')) et.push('Hors du feu, dissoudre la masse gélatine ('+q('gel')+' g) dans le liquide chaud.');
-  const cible=['choc'].concat(porteur==='pate'?['arome']:[]).map(id=>pesees.find(x=>x.id===id)).filter(Boolean).map(x=>x.nom.toLowerCase()).join(' + ');
-  et.push('Verser en trois fois sur '+cible+' et émulsionner au centre à la maryse.');
-  et.push('Ajouter la crème froide ('+froid+' g) et lisser au mixeur plongeant sans incorporer d\'air.');
-  et.push('Filmer au contact et maturer 12 h minimum au réfrigérateur.');
-  et.push('Foisonner au batteur jusqu\'au bec d\'oiseau souple, juste avant le pochage.');
-  return {etapes:et, chaud, froid};
-}
-
+// ---- point d'entrée du moteur ----------------------------------------------
 function rdGenRecette(opts){
+  const T=RDGEN_TYPES[opts.typeId||'ganache montée'];
+  if(!T) return {erreur:'Type inconnu : '+opts.typeId};
   const {corpus, curseurs, parfum, masse}=opts;
-  if(!corpus || !corpus.length) return {erreur:'Corpus vide : la bibliothèque ne contient aucune préparation de ce type.'};
+  if(!corpus || !corpus.length) return {erreur:'Corpus vide : la bibliothèque ne contient aucune préparation de type « '+T.label+' ».'};
   const P=rdGenPoids(corpus, curseurs);
   if(!P) return {erreur:'Aucune source active : remonte au moins un curseur.'};
-  const porteur=opts.porteur||rdGenPorteurAuto(parfum);
+  let porteur=opts.porteur||T.porteurAuto(parfum);
+  if(!T.porteurs.includes(porteur)) porteur=T.porteurs[0];
   const M=Math.max(100, +masse||500);
   const cibleBrut=rdGenCible(corpus, P);
   const plages=rdGenPlages(corpus);
   const gf=rdGenGardeFous(cibleBrut, plages);
-  const sk=rdGenSquelette(parfum, porteur, M);
+  const sk=T.squelette(parfum, porteur, M);
   const {pesees, obtenu}=rdGenSolve(sk, gf.profil, M);
-  const et=rdGenEtapes(parfum, porteur, pesees, rdGenCremeSplit(corpus, P));
-  return { parfum, porteur, masse:M, cible:gf.profil, cibleBrut, signaux:gf.signaux, plages,
-           pesees, obtenu, etapes:et.etapes, cremeChaude:et.chaud, cremeFroide:et.froid,
-           parSource:P.parSource, n:corpus.length };
+  const q=id=>{const e=pesees.find(p=>p.id===id); return e?e.qte:0;};
+  // extras d'étapes : split chaud/froid (ganache montée) + cible d'émulsion
+  const x={chaud:0, froid:0, cibleEmulsion:''};
+  if(T.cremeSplit && q('creme')){
+    const frac=rdGenCremeSplit(corpus,P);
+    x.chaud=Math.round(q('creme')*frac); x.froid=q('creme')-x.chaud;
+  }
+  x.cibleEmulsion=['choc'].concat(porteur==='pate'?['arome']:[])
+    .map(id=>pesees.find(p=>p.id===id)).filter(Boolean).map(p=>p.nom.toLowerCase()).join(' + ')||'la masse chaude';
+  const etapes=T.etapes(parfum, porteur, q, x);
+  return { typeId:opts.typeId||'ganache montée', typeLabel:T.label, parfum, porteur, masse:M,
+           cible:gf.profil, cibleBrut, signaux:gf.signaux, plages, pesees, obtenu, etapes,
+           cremeChaude:x.chaud, cremeFroide:x.froid, parSource:P.parSource, n:corpus.length };
 }
 /* RDGEN:PURE:END */
 
@@ -1630,15 +1797,25 @@ async function renderRDGen(){
   let preps=[], refs=[];
   try{ preps=await db.rdPreps.toArray(); refs=await db.rdRefs.toArray(); }catch(e){}
   const refsById={}; refs.forEach(r=>refsById[r.id]=r);
-  const corpus=rdGenCorpus(preps, refsById, /^ganache mont/i);
-  window._rdgCorpus=corpus;
+  // corpus par type
+  window._rdgCorpusAll={};
+  const counts={};
+  for(const tid of Object.keys(RDGEN_TYPES)){
+    const c=rdGenCorpus(preps, refsById, RDGEN_TYPES[tid].re);
+    window._rdgCorpusAll[tid]=c; counts[tid]=c.length;
+  }
+  if(!window._rdgType || !RDGEN_TYPES[window._rdgType]) window._rdgType='ganache montée';
+  const tid=window._rdgType, T=RDGEN_TYPES[tid], corpus=window._rdgCorpusAll[tid];
   const srcs=[...new Set(corpus.map(c=>c.source))].sort();
   window._rdgCur = window._rdgCur||{}; srcs.forEach(s=>{ if(!(s in window._rdgCur)) window._rdgCur[s]=50; });
+  const chips=Object.keys(RDGEN_TYPES).map(t=>
+    `<span class="rd-chip ${t===tid?'on':''}" onclick="window._rdgType='${t}';renderRDGen()">${RDGEN_TYPES[t].label} <em style="font-size:.65rem;opacity:.7">${counts[t]}</em></span>`).join(' ');
   const sliders=srcs.map(s=>`
     <div class="rdg-src"><span class="rdg-src-nom">${esc(RD_SRC_LABEL[s]||s)} <em>(${corpus.filter(c=>c.source===s).length})</em></span>
     <input type="range" min="0" max="100" value="${window._rdgCur[s]}" class="rd-range" oninput="window._rdgCur['${s}']=+this.value">
     </div>`).join('');
-  const inStyle="width:100%;padding:9px 11px;border:1px solid #e3d8ce;border-radius:9px;background:#fff;font-size:.9rem;box-sizing:border-box";
+  const PORTEUR_LBL={puree:'Purée de fruit', pate:'Pâte de fruit à coque / praliné', infusion:'Infusion (épice, thé, café…)', vanille:'Gousse de vanille', chocolat:'Chocolat seul', aucun:'Nature (sans porteur)'};
+  const porteurOpts=['auto'].concat(T.porteurs).map(p=>`<option value="${p}">${p==='auto'?'Automatique (selon le parfum)':PORTEUR_LBL[p]}</option>`).join('');
   main.innerHTML=`
   <style>
   .rdg-lbl{font-size:.72rem;font-weight:700;color:#52252F;margin:12px 0 4px;text-transform:uppercase;letter-spacing:.04em}
@@ -1652,35 +1829,31 @@ async function renderRDGen(){
   .rdg-et{margin:4px 0 0 18px;padding:0;font-size:.84rem}.rdg-et li{margin:5px 0}
   .rdg-warn{background:#fff8ec;border:1px solid #e8cfa0;border-radius:8px;padding:8px 10px;font-size:.78rem;margin:8px 0}
   .rdg-raison{margin:10px 0;font-size:.78rem;color:#5a4a42}.rdg-raison summary{cursor:pointer;font-weight:700;color:#52252F}
-  .rdg-adn{margin:10px 0}.rdg-in{${inStyle}}
+  .rdg-adn{margin:10px 0}
+  .rdg-in{width:100%;padding:9px 11px;border:1px solid #e3d8ce;border-radius:9px;background:#fff;font-size:.9rem;box-sizing:border-box}
+  .rdg-types{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
   </style>
   <div class="rd-wrap">
     <div class="rd-head"><h2 class="rd-title">🧬 Générateur de recettes</h2>
       <p class="rd-sub">Compose une recette neuve à partir de l'ADN des chefs de ta bibliothèque</p></div>
     <div class="rd-hint">Le moteur moyenne les <b>ADN</b> (5 familles + rapports-clés) des préparations du type,
       pondérés par tes curseurs — jamais les grammes ligne à ligne — puis traduit cet ADN cible en pesées réelles,
-      sous garde-fous appris du corpus.</div>
-    ${corpus.length? `
+      sous garde-fous appris du corpus <b>de ce type</b>.</div>
     <div class="panel">
       <div class="rdg-lbl">Type de préparation</div>
-      <div class="rd-chips"><span class="rd-chip on">Ganache montée</span> <span style="color:#9a8a82;font-size:.72rem">· d'autres types suivront (V2)</span></div>
+      <div class="rd-chips rdg-types">${chips}</div>
+      ${corpus.length? `
       <div class="rdg-lbl">Parfum</div>
-      <input id="rdg_parfum" class="rdg-in" placeholder="ex. framboise, pistache, thé earl grey…" value="${esc(window._rdgParfum||'')}">
+      <input id="rdg_parfum" class="rdg-in" placeholder="ex. framboise, noisette, thé earl grey…" value="${esc(window._rdgParfum||'')}">
       <div class="rdg-lbl">Porteur d'arôme</div>
-      <select id="rdg_porteur" class="rdg-in">
-        <option value="auto">Automatique (selon le parfum)</option>
-        <option value="puree">Purée de fruit</option>
-        <option value="pate">Pâte de fruit à coque / praliné</option>
-        <option value="infusion">Infusion (épice, thé, café…)</option>
-        <option value="vanille">Gousse de vanille</option>
-        <option value="chocolat">Chocolat seul</option>
-      </select>
+      <select id="rdg_porteur" class="rdg-in">${porteurOpts}</select>
       <div class="rdg-lbl">Masse à produire</div>
       <input id="rdg_masse" class="rdg-in" type="number" value="${window._rdgMasse||500}" min="100" step="50">
       <div class="rdg-lbl">Influence des chefs</div>
       ${sliders}
-      <button class="rd-go" onclick="rdGenLancer()">🧬 Composer la recette</button>
-    </div>` : `<div class="rd-empty"><span class="ic">📚</span>Aucune ganache montée dans la bibliothèque.<br>Importe les packs R&D depuis la Bibliothèque, puis reviens ici.</div>`}
+      <button class="rd-go" onclick="rdGenLancer()">🧬 Composer la recette</button>`
+      : `<div class="rd-empty" style="margin-top:8px"><span class="ic">📚</span>Aucune préparation de type « ${T.label} » dans la bibliothèque.</div>`}
+    </div>
     <div id="rdg-out"></div>
     <p class="rd-foot"><span class="rd-link" onclick="goView('rd')">← Atelier R&D</span> · <span class="rd-link" onclick="goView('rdrefs')">📚 Bibliothèque</span></p>
   </div>`;
@@ -1691,7 +1864,8 @@ function rdGenLancer(){
   if(!parfum){ toast('Indique un parfum.'); return; }
   window._rdgParfum=parfum; window._rdgMasse=+val('rdg_masse')||500;
   const pSel=val('rdg_porteur');
-  const R=rdGenRecette({ corpus:window._rdgCorpus, curseurs:window._rdgCur, parfum,
+  const tid=window._rdgType||'ganache montée';
+  const R=rdGenRecette({ typeId:tid, corpus:window._rdgCorpusAll[tid], curseurs:window._rdgCur, parfum,
     porteur:(pSel && pSel!=='auto')?pSel:null, masse:window._rdgMasse });
   window._rdgLast=R;
   const out=document.getElementById('rdg-out'); if(!out) return;
@@ -1704,21 +1878,21 @@ function rdGenLancer(){
       <b>${o}%</b> <em>cible ${c}%</em></div>`;
   }).join('');
   const ing=R.pesees.map(p=>{
-    if(p.id==='creme') return `<li>Crème liquide entière : <b>${R.cremeChaude} g</b> (chaude) + <b>${R.cremeFroide} g</b> (froide)</li>`;
+    if(p.id==='creme' && R.cremeChaude) return `<li>Crème liquide entière : <b>${R.cremeChaude} g</b> (chaude) + <b>${R.cremeFroide} g</b> (froide)</li>`;
     return `<li>${esc(p.nom)} : <b>${p.qte} g</b></li>`;
   }).join('');
   const gel=R.pesees.find(p=>p.id==='gel');
   const notes=[gel?`Masse gélatine ${gel.qte} g ≈ ${(gel.qte/7).toFixed(1)} g de gélatine 200 bloom + ${(gel.qte*6/7).toFixed(1)} g d'eau (1:6).`:'',
-    'DLC garniture : ≤ 6 jours (règle atelier).'].filter(Boolean);
+    /ganache|crémeux/.test(R.typeId)?'DLC garniture : ≤ 6 jours (règle atelier).':''].filter(Boolean);
   const signaux=R.signaux.length
     ? `<div class="rdg-warn">⚠️ Garde-fous : ${R.signaux.map(s=>`${RDGEN_RAP_LABEL[s.rapport]} ramené de ${s.avant} à ${s.borne}`).join(' · ')}</div>` : '';
   const raison=`<details class="rdg-raison"><summary>🔍 Raisonnement du moteur</summary>
-    <p>Corpus : <b>${R.n} ganaches montées</b>. Influence effective : ${R.parSource.map(s=>`${esc(RD_SRC_LABEL[s.source]||s.source)} ${s.part}% (${s.n})`).join(' · ')}.</p>
-    <p>Plages apprises du corpus : ${RDGEN_RAPPORTS.map(k=>R.plages[k]?`${RDGEN_RAP_LABEL[k]} ${R.plages[k].min}–${R.plages[k].max}`:'').filter(Boolean).join(' · ')}.</p>
+    <p>Corpus « ${esc(R.typeLabel)} » : <b>${R.n} préparations</b>. Influence effective : ${R.parSource.map(s=>`${esc(RD_SRC_LABEL[s.source]||s.source)} ${s.part}% (${s.n})`).join(' · ')}.</p>
+    <p>Plages apprises de ce type : ${RDGEN_RAPPORTS.map(k=>R.plages[k]?`${RDGEN_RAP_LABEL[k]} ${R.plages[k].min}–${R.plages[k].max}`:'').filter(Boolean).join(' · ')}.</p>
     <p>Rapports obtenus : ${RDGEN_RAPPORTS.map(k=>`${RDGEN_RAP_LABEL[k]} <b>${R.obtenu.rapports[k]}</b>`).join(' · ')}.</p>
     <p>Le porteur d'arôme est plafonné à des doses de bon sens ; l'écart cible/obtenu restant est affiché, jamais masqué.</p></details>`;
   out.innerHTML=`<div class="panel">
-    <h3 style="margin:0 0 4px">Ganache montée ${esc(R.parfum)} <span style="font-weight:400;color:#9a8a82;font-size:.78rem">· ${R.masse} g</span></h3>
+    <h3 style="margin:0 0 4px">${esc(R.typeLabel)} ${esc(R.parfum)} <span style="font-weight:400;color:#9a8a82;font-size:.78rem">· ${R.masse} g</span></h3>
     ${signaux}
     <div class="rdg-adn">${barres}</div>
     <div class="rdg-lbl">Ingrédients</div><ul class="rdg-ing">${ing}</ul>
@@ -1731,19 +1905,20 @@ function rdGenLancer(){
 
 async function rdGenGarder(){
   const R=window._rdgLast; if(!R || R.erreur){ toast('Rien à enregistrer.'); return; }
-  const titre='Génération — ganache montée '+R.parfum;
+  const titre='Génération — '+R.typeLabel.toLowerCase()+' '+R.parfum;
   const refId=await db.rdRefs.add({ titre, source:'moi', format:'génération',
-    date:new Date().toISOString(), note:'Générée par le moteur ADN (générateur V1).' });
-  const ingredients=R.pesees.flatMap(p=> p.id==='creme'
+    date:new Date().toISOString(), note:'Générée par le moteur ADN (générateur V2).' });
+  const ingredients=R.pesees.flatMap(p=> (p.id==='creme' && R.cremeChaude)
     ? [{nom:'Crème liquide entière (chaude)', qte:R.cremeChaude, unite:'g'},
        {nom:'Crème liquide entière (froide)', qte:R.cremeFroide, unite:'g'}]
     : [{nom:p.nom, qte:p.qte, unite:'g'}]);
-  await db.rdPreps.add({ refId, nom:titre, role:'garniture', type:'ganache montée',
-    ingredients, etapes:R.etapes, adn:null, cuisson:'', conservation:'≤ 6 jours (règle atelier)',
+  await db.rdPreps.add({ refId, nom:titre, role:'garniture', type:R.typeId,
+    ingredients, etapes:R.etapes, adn:null, cuisson:'',
+    conservation:/ganache|crémeux/.test(R.typeId)?'≤ 6 jours (règle atelier)':'',
     note:'Influences : '+R.parSource.map(s=>(RD_SRC_LABEL[s.source]||s.source)+' '+s.part+'%').join(', ')+'.' });
   toast('Recette gardée dans la bibliothèque ✓');
 }
-/* ==================== fin rd_generateur.js (V1) ==================== */
+/* ==================== fin rd_generateur.js (V2) ==================== */
 
 
 // ---- Sources : libellés + couleurs de badge ----
