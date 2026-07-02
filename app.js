@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1140';
+const APP_VERSION = 'v1141';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -33425,6 +33425,14 @@ function verifyBackup(dump){
     const orphelins=dump.orders.filter(o=>o.clientId && !ids.has(o.clientId)).length;
     if(orphelins>0) raisons.push(`${orphelins} commande(s) référencent un client absent.`);
   }
+  // clés primaires en doublon DANS le fichier : feraient avorter bulkAdd (ConstraintError)
+  // et donc tout l'import — on le dit AVANT d'essayer, table par table.
+  TABLES.forEach(t=>{
+    const rows=dump[t]; if(!Array.isArray(rows)||!rows.length) return;
+    const vus=new Set(); const doublons=new Set();
+    rows.forEach(r=>{ const id=r&&r.id; if(id==null) return; (vus.has(id)?doublons:vus).add(id); });
+    if(doublons.size) raisons.push(`${doublons.size} identifiant(s) en doublon dans « ${t} » (ex : ${[...doublons].slice(0,3).join(', ')}) — l'import échouerait sur cette table.`);
+  });
   // somme de contrôle (si présente)
   let checksumOk=true;
   if(dump._checksum){
@@ -33618,6 +33626,15 @@ async function inspectData(e){
     `(Inspection seule — RIEN n'a été importé ni modifié.)`);
   e.target.value='';
 }
+// ---- Rapport d'erreur d'import LISIBLE : nom + détail réels, publiés en rubrique technique.
+// Fini le « Erreur pendant l'import » aveugle : le moteur dit CE qui a cassé et OÙ.
+function _importErrRapport(contexte, fichier, err){
+  const nom=(err&&err.name)||'Erreur';
+  const msg=(err&&err.message)?String(err.message):String(err||'inconnue');
+  try{ if(typeof diagPublish==='function') diagPublish('import', 'Import/fusion de sauvegarde',
+    { quand:new Date().toISOString(), contexte, fichier, erreur:nom+' — '+msg, stack:(err&&err.stack)||'' }); }catch(_){}
+  return nom+' — '+msg;
+}
 async function importData(e){
   const f=e.target.files[0]; if(!f)return;
   let obj;
@@ -33633,10 +33650,20 @@ async function importData(e){
     e.target.value=''; return;
   }
   try{
-    await snapshotBackup('avant-import'); // filet de sécurité avant écrasement
+    // Filet de sécurité AVANT écrasement — son échec a désormais son PROPRE message
+    // (cause fréquente : stockage saturé), il ne se déguise plus en « erreur pendant l'import ».
+    try{ await snapshotBackup('avant-import'); }
+    catch(se){
+      const m=_importErrRapport('instantané avant-import', f.name, se);
+      if(!confirm(`⚠️ Impossible de prendre la sauvegarde de sécurité avant import :\n${m}\n\n(Cause fréquente : stockage iPhone saturé — libère de l'espace ou purge d'anciens instantanés dans Sauvegarde & sécurité.)\n\nContinuer l'import SANS filet de sécurité ?`)){ e.target.value=''; return; }
+    }
     await applyDump(obj);
     render(); toast('Données importées ✓');
-  }catch(err){ console.error('import',err); toast('Erreur pendant l\'import'); }
+  }catch(err){
+    console.error('import',err);
+    const m=_importErrRapport('applyDump (écriture des tables)', f.name, err);
+    alert(`Erreur pendant l'import :\n${m}\n\nRien n'a été perdu : la transaction est annulée en bloc (tout-ou-rien).\nDétail publié dans la rubrique technique (🔧 Diagnostic).`);
+  }
   e.target.value='';
 }
 
@@ -33658,11 +33685,19 @@ async function importDataMerge(e){
     e.target.value=''; return;
   }
   try{
-    await snapshotBackup('avant-fusion');
+    try{ await snapshotBackup('avant-fusion'); }
+    catch(se){
+      const m=_importErrRapport('instantané avant-fusion', f.name, se);
+      if(!confirm(`⚠️ Impossible de prendre la sauvegarde de sécurité avant fusion :\n${m}\n\nContinuer la fusion SANS filet de sécurité ?`)){ e.target.value=''; return; }
+    }
     const added=await mergeDump(obj);
     const tot=Object.values(added).reduce((s,n)=>s+n,0);
     render(); toast(`Fusion réussie : ${tot} enregistrement(s) ajouté(s) ✓`);
-  }catch(err){ console.error('merge',err); toast('Erreur pendant la fusion'); }
+  }catch(err){
+    console.error('merge',err);
+    const m=_importErrRapport('mergeDump (fusion)', f.name, err);
+    alert(`Erreur pendant la fusion :\n${m}\n\nRien n'a été perdu : la transaction est annulée en bloc (tout-ou-rien).`);
+  }
   e.target.value='';
 }
 // Enregistre un instantané JSON complet + checksum dans la table backups, puis purge les plus anciens.
