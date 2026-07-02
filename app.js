@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1145';
+const APP_VERSION = 'v1147';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -36167,6 +36167,96 @@ async function prelevAnnulerMatiere(prodId, materialId, rendre){
   return {annulees, renduTotal};
 }
 
+// --- RÉAFFECTATION RÉTROACTIVE (correction HACCP « vérité terrain ») -----------
+// Rebranche les consommations d'un batch depuis le lot X (fantôme) vers le lot Y
+// (même matière), en réécrivant le snapshot HACCP. Blocage si Y insuffisant.
+// Retourne un PLAN (dry-run) si opts.simuler, sinon exécute dans une transaction.
+async function prelevReaffecter(prodId, materialId, lotFromId, lotToIds, opts){
+  opts = opts || {};
+  // lotToIds : liste ORDONNÉE de lots destination (même matière). Répartition gloutonne :
+  // chaque lot absorbe min(reste, qteRestante) dans l'ordre, jusqu'à couvrir le total.
+  const toIds = Array.isArray(lotToIds) ? lotToIds.map(Number) : [Number(lotToIds)];
+  const from = await db.materialLots.get(lotFromId).catch(()=>null);
+  if(!from) return {ok:false, raison:'Lot source introuvable.'};
+  if(+from.materialId!==+materialId) return {ok:false, raison:'Le lot source n\'appartient pas à cette matière.'};
+  if(toIds.some(id=>+id===+lotFromId)) return {ok:false, raison:'Un lot destination est identique au lot source.'};
+  if(new Set(toIds).size!==toIds.length) return {ok:false, raison:'Un même lot destination est renseigné deux fois.'};
+
+  const tos = [];
+  for(const id of toIds){
+    const l = await db.materialLots.get(id).catch(()=>null);
+    if(!l) return {ok:false, raison:'Lot destination introuvable (#'+id+').'};
+    if(+l.materialId!==+materialId) return {ok:false, raison:'Tous les lots doivent être de la même matière.'};
+    tos.push(l);
+  }
+
+  // Lignes de conso de CE batch sur le lot X, encore actives.
+  const conso = (await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]))
+    .filter(c=>+c.materialLotId===+lotFromId && !c.annuleeInventaire);
+  const total = round3(conso.reduce((s,c)=>s+(+c.qteConsommee||0),0));
+  if(!(total>0)) return {ok:false, raison:'Aucune consommation de ce lot à réaffecter pour ce batch.'};
+
+  // Allocation gloutonne : combien chaque lot destination fournit.
+  let reste = total;
+  const alloc = [];   // {lot, prend}
+  for(const l of tos){
+    if(reste<=1e-9) break;
+    const prend = round3(Math.min(reste, +l.qteRestante||0));
+    if(prend>0){ alloc.push({lot:l, prend}); reste = subQty(reste, prend); }
+  }
+  const couvert = round3(total - reste);
+  const nom = l => l.lotFournisseur||('lot #'+l.id);
+  const plan = {ok:true, total, couvert, reste, nbLignes:conso.length,
+    fromNom: nom(from),
+    repartition: alloc.map(a=>({lotId:a.lot.id, nom:nom(a.lot), prend:a.prend})) };
+
+  // GARDE-FOU : couverture incomplète → on ne bloque pas sèchement, on RENVOIE l'état
+  // pour que l'UI propose « ajouter un lot ou annuler ».
+  if(reste > 1e-9){
+    return {ok:false, incomplet:true, total, couvert, reste, repartition:plan.repartition,
+      raison:`Lot impossible à consommer car dépasse la quantité de matière à redistribuer : ${qty(couvert)} couverts sur ${qty(total)}, il reste ${qty(reste)} à affecter.`};
+  }
+  if(opts.simuler) return plan;
+
+  await db.transaction('rw', db.materialLots, db.prodConsumption, async()=>{
+    const nowIso = new Date().toISOString();
+    // X ré-abondé du total (le stock fantôme remonte → à régulariser via inventaire ensuite).
+    await db.materialLots.update(from.id, {qteRestante: round3((+from.qteRestante||0)+total)});
+    // File des allocations à consommer par les lignes (dans l'ordre).
+    const file = alloc.map(a=>({lot:a.lot, reste:a.prend}));
+    for(const l of tos) await db.materialLots.update(l.id, {qteRestante: subQty(l.qteRestante,
+      (alloc.find(a=>+a.lot.id===+l.id)||{prend:0}).prend)});
+    // Pour chaque ligne de conso : la découper entre les lots destination selon la file.
+    let fi = 0;
+    for(const c of conso){
+      let q = round3(+c.qteConsommee||0);
+      let premier = true;
+      while(q > 1e-9 && fi < file.length){
+        const slot = file[fi];
+        const part = round3(Math.min(q, slot.reste));
+        const snap = {
+          materialLotId: slot.lot.id, snapMaterialId: materialId,
+          snapLotFournisseur: slot.lot.lotFournisseur||'', snapSupplierId: slot.lot.supplierId||0,
+          snapDlc: slot.lot.dlc||'', snapDlcOuverture: slot.lot.dlcOuverture||'',
+          reaffecteTs: nowIso, reaffecteDe: from.id, reaffecteDeNom: plan.fromNom
+        };
+        if(premier){
+          // la ligne existante est REBRANCHÉE sur le 1er lot (avec sa part)
+          await db.prodConsumption.update(c.id, Object.assign({qteConsommee: part}, snap));
+          premier = false;
+        } else {
+          // le reste de la ligne devient une NOUVELLE ligne (split HACCP) sur le lot suivant
+          await db.prodConsumption.add(Object.assign(
+            {productionId: prodId, qteConsommee: part, reaffecteSplit:true}, snap));
+        }
+        q = subQty(q, part); slot.reste = subQty(slot.reste, part);
+        if(slot.reste<=1e-9) fi++;
+      }
+    }
+  });
+  return {ok:true, execute:true, total, nbLignes:conso.length, fromNom:plan.fromNom,
+          repartition:plan.repartition, nbLotsDest:alloc.length};
+}
 /* PRELEV:PURE:END */
 
 // ---- UI : ouverte depuis le pop d'un lot (prodV2) --------------------------
@@ -36198,6 +36288,7 @@ async function prelevForm(prodId){
         <button class="btn ghost sm" onclick="prelevActionQuantite(${prodId},${l.materialId})">✎ Quantité</button>
         <button class="btn ghost sm" onclick="prelevActionLot(${prodId},${l.materialId})">🔀 Changer de lot</button>
         <button class="btn gold sm" onclick="prelevActionRemplacer(${prodId},${l.materialId})">⇄ Remplacer</button>
+        <button class="btn ghost sm" onclick="prelevActionReaffecter(${prodId},${l.materialId})" title="Corriger rétroactivement le lot réellement consommé (HACCP)">⇄ Réaffecter le lot</button>
       </div>
       <div id="prlv-panel-${l.materialId}"></div>
     </div>`;
@@ -36310,6 +36401,101 @@ async function prelevActionRemplacer(prodId, materialId){
     const opts2 = await _prelevLotsOptions(yid, null);
     sel.innerHTML = `<option value="">FIFO — le plus ancien d'abord (recommandé)</option>${opts2}`;
   };
+}
+async function prelevActionReaffecter(prodId, materialId){
+  const consoLots = new Set((window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).lots
+    ? Object.keys((window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).lots).map(Number) : []);
+  const lots = (await db.materialLots.where('materialId').equals(+materialId).toArray().catch(()=>[]));
+  const u = _prelevMat(materialId).unite||'g';
+  const srcOpts = [...consoLots].map(id=>{ const l=lots.find(x=>+x.id===id);
+    return `<option value="${id}">${esc(l?l.lotFournisseur||('lot #'+id):('lot #'+id))}</option>`; }).join('');
+  const dst = lots.filter(l=>!consoLots.has(+l.id));
+  if(!dst.length){ _prelevPanel(materialId, `<p class="note bad">Aucun autre lot de cette matière. Crée le bon lot d'abord (Réception).</p>`); return; }
+  // état multi-lots par matière (liste ordonnée d'ids destination)
+  window._prelevReaff = window._prelevReaff || {};
+  window._prelevReaff[materialId] = { from: [...consoLots][0]||0, to: [] };
+  _prelevPanel(materialId, `
+    <div class="prlv-warn">Correction rétroactive de traçabilité : rebranche ce que ce batch a « consommé » du mauvais lot vers le(s) vrai(s). Le snapshot HACCP est réécrit ; le stock du mauvais lot remonte (à régulariser ensuite en inventaire).</div>
+    <div class="prlv-lbl">Lot enregistré à tort (source)</div>
+    <select id="prlv_rfrom_${materialId}" class="in" onchange="prelevReaffRefresh(${prodId},${materialId})" style="width:100%;padding:8px 10px;border:1px solid var(--hair,#e7ddd2);border-radius:9px">${srcOpts}</select>
+    <div id="prlv_rbody_${materialId}"></div>`);
+  prelevReaffRefresh(prodId, materialId);
+}
+
+// Recalcule couverture + rendu de la liste des lots destination + actions contextuelles.
+async function prelevReaffRefresh(prodId, materialId){
+  const st = (window._prelevReaff||{})[materialId]; if(!st) return;
+  st.from = +val('prlv_rfrom_'+materialId)||st.from;
+  const u = _prelevMat(materialId).unite||'g';
+  // simulation moteur : total à couvrir + répartition + reste
+  const sim = await prelevReaffecter(prodId, materialId, st.from, st.to, {simuler:true});
+  // total (même si incomplet, le moteur le renvoie)
+  const total = (sim.total!=null) ? sim.total : 0;
+  const couvert = (sim.couvert!=null) ? sim.couvert : (sim.ok?sim.total:0);
+  const reste = (sim.reste!=null) ? sim.reste : 0;
+  const rep = sim.repartition||[];
+  const lots = (await db.materialLots.where('materialId').equals(+materialId).toArray().catch(()=>[]));
+  const nomLot = id => { const l=lots.find(x=>+x.id===+id); return l?(l.lotFournisseur||('lot #'+id)):('lot #'+id); };
+  const dispoLot = id => { const l=lots.find(x=>+x.id===+id); return l?round3(+l.qteRestante||0):0; };
+  const chips = st.to.map((id,i)=>{
+    const part = (rep.find(r=>+r.lotId===+id)||{}).prend||0;
+    return `<div class="prlv-sum"><span>${esc(nomLot(id))} <em style="color:#9a8a82">(dispo ${qty(dispoLot(id))} ${esc(u)})</em></span>
+      <b>−${qty(part)} ${esc(u)}</b> <span class="prlv-x" onclick="prelevReaffDel(${prodId},${materialId},${i})" style="cursor:pointer;color:#b3261e;margin-left:6px">✕</span></div>`;
+  }).join('');
+  const complet = reste<=1e-9 && total>0;
+  const consoLots = new Set((window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).lots
+    ? Object.keys((window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).lots).map(Number) : []);
+  const restants = lots.filter(l=>!consoLots.has(+l.id) && +l.id!==+st.from && !st.to.includes(+l.id) && (+l.qteRestante||0)>0);
+  const addOpts = restants.map(l=>`<option value="${l.id}">${esc(l.lotFournisseur||('lot #'+l.id))} · ${qty(l.qteRestante)} ${esc(u)}${l.dlc?' · DLC '+fmtDate(l.dlc):''}</option>`).join('');
+  const body = document.getElementById('prlv_rbody_'+materialId); if(!body) return;
+  body.innerHTML = `
+    <div class="prlv-lbl">Vrai(s) lot(s) réellement utilisé(s)</div>
+    ${chips||'<p class="note" style="margin:2px 0">Aucun lot ajouté pour l\'instant.</p>'}
+    <div class="prlv-sum" style="border-top:2px solid var(--hair,#e7ddd2);font-weight:700">
+      <span>Couvert ${qty(couvert)} / ${qty(total)} ${esc(u)}</span>
+      <b style="color:${complet?'#3f7d52':'#b3261e'}">${complet?'✓ complet':'reste '+qty(reste)+' '+u}</b></div>
+    ${!complet ? `<div class="prlv-warn" style="background:#fdecea;border-color:#f0b7ae;color:#7a2a20">Lot impossible à consommer car dépasse la quantité de matière à redistribuer : renseigne un lot supplémentaire ou annule.</div>` : ''}
+    ${addOpts ? `<div class="prlv-lbl">Ajouter un lot existant</div>
+      <div style="display:flex;gap:6px">
+        <select id="prlv_radd_${materialId}" class="in" style="flex:1;padding:8px 10px;border:1px solid var(--hair,#e7ddd2);border-radius:9px">${addOpts}</select>
+        <button class="btn ghost sm" onclick="prelevReaffAdd(${prodId},${materialId})">➕ Ajouter</button>
+      </div>` : `<p class="note">Plus aucun autre lot existant de cette matière.</p>`}
+    <button class="btn ghost sm" style="margin-top:6px" onclick="prelevReaffNouveauLot(${prodId},${materialId})">➕ Créer / réceptionner un lot</button>
+    <div class="prlv-acts" style="margin-top:8px">
+      <button class="btn ghost sm" onclick="_prelevPanel(${materialId},'');delete (window._prelevReaff||{})[${materialId}]">Annuler</button>
+      <button class="btn gold sm" ${complet?'':'disabled style="opacity:.45"'} onclick="prelevReaffValider(${prodId},${materialId})">⇄ Réaffecter</button>
+    </div>`;
+}
+function prelevReaffAdd(prodId, materialId){
+  const st=(window._prelevReaff||{})[materialId]; if(!st) return;
+  const id=+val('prlv_radd_'+materialId)||0; if(!id){ toast('Choisis un lot'); return; }
+  if(!st.to.includes(id)) st.to.push(id);
+  prelevReaffRefresh(prodId, materialId);
+}
+function prelevReaffDel(prodId, materialId, idx){
+  const st=(window._prelevReaff||{})[materialId]; if(!st) return;
+  st.to.splice(idx,1); prelevReaffRefresh(prodId, materialId);
+}
+// Créer/réceptionner un lot puis l'ajouter à la répartition : on réutilise le formulaire
+// de réception existant (lotForm) en lui passant la matière ; au retour, on rafraîchit.
+function prelevReaffNouveauLot(prodId, materialId){
+  window._prelevReaffPending = {prodId, materialId};
+  if(typeof lotForm==='function'){ closeModal(); lotForm(null, materialId); }
+  else toast('Réception de lot indisponible');
+}
+async function prelevReaffValider(prodId, materialId){
+  const st=(window._prelevReaff||{})[materialId]; if(!st) return;
+  const sim = await prelevReaffecter(prodId, materialId, st.from, st.to, {simuler:true});
+  if(!sim.ok){ toast(sim.raison||'Répartition incomplète'); return; }
+  const lots = (await db.materialLots.where('materialId').equals(+materialId).toArray().catch(()=>[]));
+  const nomLot = id => { const l=lots.find(x=>+x.id===+id); return l?(l.lotFournisseur||('lot #'+id)):('lot #'+id); };
+  const detail = sim.repartition.map(r=>`• ${nomLot(r.lotId)} : ${qty(r.prend)}`).join('\n');
+  if(!confirm(`Réaffecter ${qty(sim.total)} depuis « ${nomLot(st.from)} » ?\n\n${detail}\n\n• Snapshot HACCP réécrit par lot\n• Le stock du lot source remonte de ${qty(sim.total)} (à régulariser en inventaire)`)) return;
+  try{ await snapshotBackup('avant-reaffectation'); }catch(e){}
+  const res = await prelevReaffecter(prodId, materialId, st.from, st.to, {});
+  closeModal(); delete (window._prelevReaff||{})[materialId];
+  toast(res.ok ? `Réaffecté ✓ ${qty(res.total)} sur ${res.nbLotsDest} lot(s)` : (res.raison||'Échec'));
+  if(typeof renderProductionsV2==='function' && view==='productionsv2') renderProductionsV2();
 }
 async function prelevRemplacerGo(prodId, materialId){
   const yId = +val('prlv_y_'+materialId)||0;
