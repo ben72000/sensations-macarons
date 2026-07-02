@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1141';
+const APP_VERSION = 'v1143';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3624,6 +3624,15 @@ function showUndoToast(label, restoreFn, ms){
   _undoTimer=setTimeout(()=>{ hideUndo(); }, ms||6000);
 }
 function hideUndo(){ const t=document.getElementById('toast'); if(t){ t.classList.remove('show','with-action'); } _undoFn=null; clearTimeout(_undoTimer); }
+// Toast avec un bouton d'action nommé (route vers un écran, etc.). Réutilise le style
+// « with-action » de l'undo. actionCall = code JS inline exécuté au clic (ex : goView).
+function toastAction(label, actionLabel, actionCall, ms){
+  const t=document.getElementById('toast'); if(!t){ return; }
+  t.innerHTML=`<span class="toast-msg">${esc(label)}</span><button type="button" class="toast-undo" onclick="hideUndo();${actionCall}">${esc(actionLabel)}</button>`;
+  t.classList.add('show','with-action');
+  clearTimeout(tt); clearTimeout(_undoTimer);
+  _undoTimer=setTimeout(()=>{ const el=document.getElementById('toast'); if(el) el.classList.remove('show','with-action'); }, ms||6000);
+}
 async function runUndo(){
   const fn=_undoFn; _undoFn=null; clearTimeout(_undoTimer);
   const t=document.getElementById('toast'); if(t) t.classList.remove('show','with-action');
@@ -8098,6 +8107,7 @@ async function prodV2OpenPop(id){
         <div class="pv2-acts">
           <div class="pv2-act" onclick="prodV2ClosePop();shareLabelPDF(${id})">📄 Étiquette PDF (Labelife)</div><div class="pv2-act" onclick="prodV2ClosePop();shareLabelImage(${id})">🖼 Étiquette image</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prodEditTimes(${id})">✏️ Quantité</div>
+          <div class="pv2-act" onclick="prodV2ClosePop();prelevForm(${id})">✎ Prélèvements (matières)</div>
           <div class="pv2-act" onclick="prodV2ClosePop();declareLossForm(${id})">⚠️ Casse</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prodV2Deplacer(${id})">📍 Déplacer</div>
           ${p.rangee ? `<div class="pv2-act full" onclick="prodV2ClosePop();prodRetourProduction(${id}, ${JSON.stringify(nom).replace(/"/g,'&quot;')})">↩ Remettre à ranger</div>` : ''}
@@ -36079,6 +36089,236 @@ async function consoFixGo(prodId, materialId){
   }
   if(view==='sauvegardes' && typeof renderBackups==='function') renderBackups();
 }
+
+// =============================================================================
+//  PRÉLÈVEMENTS D'UN BATCH — corriger la quantité / changer de lot / remplacer
+//  la matière. Réutilise consoFixApply (prélèvement FIFO + lot imposé) et le
+//  vocabulaire d'écart d'inventaire (inventaireConfirm / adjust_stock).
+//  Contrat métier (validé Benjamin) : lors d'un REMPLACEMENT, l'app DEMANDE
+//  toujours si l'ancienne matière SORT du stock (régul d'inventaire négative)
+//  ou REVIENT sur son lot d'origine.
+// =============================================================================
+/* PRELEV:PURE:BEGIN */
+// Consommations réelles d'un batch, regroupées par matière (depuis prodConsumption).
+async function prelevListe(prodId){
+  const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  const parMat = {};
+  for(const c of conso){
+    if(c.annuleeInventaire) continue;              // ligne déjà neutralisée : ignorée
+    let matId = c.snapMaterialId;
+    if(matId==null && c.materialLotId!=null){
+      const lot = await db.materialLots.get(c.materialLotId).catch(()=>null);
+      matId = lot ? lot.materialId : null;
+    }
+    if(matId==null) continue;
+    (parMat[matId] ||= {materialId:+matId, qte:0, lots:{}});
+    parMat[matId].qte = round3(parMat[matId].qte + (+c.qteConsommee||0));
+    if(c.materialLotId!=null){
+      (parMat[matId].lots[c.materialLotId] ||= 0);
+      parMat[matId].lots[c.materialLotId] = round3(parMat[matId].lots[c.materialLotId] + (+c.qteConsommee||0));
+    }
+  }
+  return Object.values(parMat);
+}
+
+// Neutralise (sans supprimer) les lignes de conso d'une matière pour ce batch, et
+// selon `rendre` : soit REND la quantité sur les lots d'origine (rendre=true),
+// soit la laisse sortie = régularisation d'inventaire négative (rendre=false).
+// Retourne {annulees, renduTotal}.
+async function prelevAnnulerMatiere(prodId, materialId, rendre){
+  let annulees = 0, renduTotal = 0;
+  const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  const nowIso = new Date().toISOString();
+  for(const c of conso){
+    if(c.annuleeInventaire) continue;
+    let matId = c.snapMaterialId;
+    if(matId==null && c.materialLotId!=null){
+      const lot = await db.materialLots.get(c.materialLotId).catch(()=>null);
+      matId = lot ? lot.materialId : null;
+    }
+    if(+matId!==+materialId) continue;
+    const pris = round3(+c.qteConsommee||0);
+    if(rendre && c.materialLotId!=null && pris>0){
+      const lot = await db.materialLots.get(c.materialLotId).catch(()=>null);
+      if(lot){ await db.materialLots.update(lot.id, {qteRestante: round3((+lot.qteRestante||0)+pris)}); renduTotal = round3(renduTotal+pris); }
+    }
+    // marqueur : ligne neutralisée (jamais effacée). motif tracé.
+    await db.prodConsumption.update(c.id, {annuleeInventaire:true, annuleeTs:nowIso,
+      annuleeMotif: rendre ? 'retour-lot-origine' : 'sortie-regul-inventaire'});
+    annulees++;
+  }
+  return {annulees, renduTotal};
+}
+
+/* PRELEV:PURE:END */
+
+// ---- UI : ouverte depuis le pop d'un lot (prodV2) --------------------------
+async function prelevForm(prodId){
+  const p = await db.productions.get(prodId).catch(()=>null);
+  if(!p){ toast('Lot introuvable'); return; }
+  if(!p.recipeId){ toast('Ce lot n\'est pas rattaché à une recette'); return; }
+  const liste = await prelevListe(prodId);
+  const mats = await db.materials.toArray().catch(()=>[]);
+  const matById = {}; mats.forEach(m=>matById[+m.id]=m);
+  const nomLot = p.lotProduction || ('#'+p.id);
+
+  if(!liste.length){
+    openModal(`<h3>✎ Prélèvements — lot ${esc(nomLot)}</h3>
+      <p class="note">Aucune consommation de matière enregistrée pour ce lot.</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const cards = liste.map(l=>{
+    const m = matById[l.materialId]; const u = (m&&m.unite)||'g';
+    const lotIds = Object.keys(l.lots);
+    const chip = lotIds.length===1
+      ? `<span class="prlv-chip" id="prlv-lotname-${l.materialId}">lot #${lotIds[0]}</span>`
+      : `<span class="prlv-chip">${lotIds.length} lots</span>`;
+    return `<div class="prlv-card">
+      <div class="prlv-line"><span class="prlv-nom">${esc(m?m.nom:('#'+l.materialId))}</span><b>${qty(l.qte)} ${esc(u)}</b></div>
+      ${chip}
+      <div class="prlv-acts">
+        <button class="btn ghost sm" onclick="prelevActionQuantite(${prodId},${l.materialId})">✎ Quantité</button>
+        <button class="btn ghost sm" onclick="prelevActionLot(${prodId},${l.materialId})">🔀 Changer de lot</button>
+        <button class="btn gold sm" onclick="prelevActionRemplacer(${prodId},${l.materialId})">⇄ Remplacer</button>
+      </div>
+      <div id="prlv-panel-${l.materialId}"></div>
+    </div>`;
+  }).join('');
+  window._prelevCtx = {prodId, liste, matById, nomLot};
+  openModal(`<h3>✎ Prélèvements — lot ${esc(nomLot)}</h3>
+    <style>
+    .prlv-card{background:#fff;border:1px solid var(--hair,#e7ddd2);border-radius:12px;padding:11px 12px;margin-bottom:9px}
+    .prlv-line{display:flex;justify-content:space-between;align-items:center}
+    .prlv-nom{font-weight:700;color:var(--bordeaux,#52252F);font-size:.95rem}
+    .prlv-chip{display:inline-block;background:var(--creme-2,#F5F0E8);border-radius:20px;padding:2px 9px;font-size:.72rem;color:#6a5a52;margin-top:4px}
+    .prlv-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+    .btn.sm{padding:6px 10px;font-size:.77rem}
+    .prlv-panel{background:var(--creme-2,#F5F0E8);border-radius:10px;padding:10px;margin-top:9px}
+    .prlv-lbl{font-size:.7rem;font-weight:700;color:var(--bordeaux,#52252F);text-transform:uppercase;letter-spacing:.03em;margin:8px 0 3px}
+    .prlv-sum{display:flex;justify-content:space-between;padding:4px 0;font-size:.82rem;border-bottom:1px solid var(--hair,#e7ddd2)}
+    .prlv-warn{background:#fff8ec;border:1px solid #e8cfa0;border-radius:8px;padding:7px 9px;font-size:.75rem;margin-top:7px;color:#7a5a1f}
+    </style>
+    <p class="note" style="margin-bottom:10px">Corrige ce que ce lot a réellement prélevé. Chaque correction est atomique et tracée ; une sauvegarde est prise avant.</p>
+    ${cards}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+function _prelevPanel(materialId, html){
+  const el = document.getElementById('prlv-panel-'+materialId);
+  if(el) el.innerHTML = html ? `<div class="prlv-panel">${html}</div>` : '';
+}
+function _prelevMat(materialId){ return (window._prelevCtx.matById||{})[+materialId]||{}; }
+
+async function _prelevLotsOptions(materialId, exclureLotId){
+  const u = _prelevMat(materialId).unite || 'g';
+  const lots = (await db.materialLots.where('materialId').equals(+materialId).and(l=>+l.qteRestante>0).toArray().catch(()=>[])).sort(lotFifoCompare);
+  return lots.filter(l=>+l.id!==+exclureLotId).map(l=>`<option value="${l.id}">${esc(l.lotFournisseur||('lot #'+l.id))} · ${qty(l.qteRestante)} ${esc(u)}${l.dlc?' · DLC '+fmtDate(l.dlc):''}</option>`).join('');
+}
+
+// ── Action 1 : corriger la QUANTITÉ (même matière, FIFO ou lot en place) ──
+async function prelevActionQuantite(prodId, materialId){
+  const cur = (window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).qte||0;
+  const u = _prelevMat(materialId).unite || 'g';
+  _prelevPanel(materialId, `
+    <div class="prlv-lbl">Nouvelle quantité réellement prélevée (${esc(u)})</div>
+    <input type="number" id="prlv_q_${materialId}" class="in" min="0" step="0.1" value="${cur}" style="width:100%;padding:8px 10px;border:1px solid var(--hair,#e7ddd2);border-radius:9px">
+    <p class="note" style="margin-top:6px">Si tu baisses la quantité, l'excédent revient sur les lots d'origine ; si tu l'augmentes, le complément est prélevé en FIFO.</p>
+    <div class="prlv-acts"><button class="btn ghost sm" onclick="_prelevPanel(${materialId},'')">Annuler</button>
+      <button class="btn gold sm" onclick="prelevQuantiteGo(${prodId},${materialId})">✓ Valider</button></div>`);
+}
+async function prelevQuantiteGo(prodId, materialId){
+  const nouvelle = round3(+val('prlv_q_'+materialId)||0);
+  const cur = (window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).qte||0;
+  if(nouvelle===cur){ toast('Quantité inchangée'); return; }
+  try{ await snapshotBackup('avant-prelevement'); }catch(e){}
+  // on repart propre : on rend tout à l'origine, puis on reprélève la nouvelle quantité en FIFO
+  await db.transaction('rw', db.productions, db.materialLots, db.prodConsumption, async()=>{
+    await prelevAnnulerMatiere(prodId, materialId, true);   // rendre à l'origine
+  });
+  const res = await consoFixApply(prodId, materialId, nouvelle, null); // FIFO
+  closeModal(); toast(res.manque>0?`Ajusté · ${qty(res.manque)} manquant(s) (stock épuisé)`:'Quantité corrigée ✓');
+  if(typeof renderProductionsV2==='function' && view==='productionsv2') renderProductionsV2();
+}
+
+// ── Action 2 : changer de LOT (même matière, même quantité) ──
+async function prelevActionLot(prodId, materialId){
+  const opts = await _prelevLotsOptions(materialId, null);
+  if(!opts){ _prelevPanel(materialId, `<p class="note bad">Aucun autre lot disponible pour cette matière.</p>`); return; }
+  const cur = (window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).qte||0;
+  const u = _prelevMat(materialId).unite||'g';
+  _prelevPanel(materialId, `
+    <div class="prlv-lbl">Déplacer le prélèvement (${qty(cur)} ${esc(u)}) vers</div>
+    <select id="prlv_lot_${materialId}" class="in" style="width:100%;padding:8px 10px;border:1px solid var(--hair,#e7ddd2);border-radius:9px">${opts}</select>
+    <div class="prlv-sum" style="margin-top:8px"><span>↩ Rendu aux lots d'origine</span><b class="good" style="color:#3f7d52">+${qty(cur)} ${esc(u)}</b></div>
+    <div class="prlv-sum"><span>↘ Prélevé sur le lot choisi</span><b>−${qty(cur)} ${esc(u)}</b></div>
+    <div class="prlv-acts"><button class="btn ghost sm" onclick="_prelevPanel(${materialId},'')">Annuler</button>
+      <button class="btn gold sm" onclick="prelevLotGo(${prodId},${materialId})">✓ Valider</button></div>`);
+}
+async function prelevLotGo(prodId, materialId){
+  const lotId = +val('prlv_lot_'+materialId)||0;
+  const cur = (window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).qte||0;
+  if(!lotId||!(cur>0)){ toast('Lot ou quantité invalide'); return; }
+  try{ await snapshotBackup('avant-prelevement'); }catch(e){}
+  await db.transaction('rw', db.productions, db.materialLots, db.prodConsumption, async()=>{
+    await prelevAnnulerMatiere(prodId, materialId, true);  // rendre à l'origine
+  });
+  const res = await consoFixApply(prodId, materialId, cur, lotId);  // imposer le lot choisi
+  closeModal(); toast(res.manque>0?`Déplacé · ${qty(res.manque)} manquant(s)`:'Lot changé ✓');
+  if(typeof renderProductionsV2==='function' && view==='productionsv2') renderProductionsV2();
+}
+
+// ── Action 3 : REMPLACER la matière (X → Y), avec la question inventaire ──
+async function prelevActionRemplacer(prodId, materialId){
+  const mats = (await db.materials.toArray().catch(()=>[])).filter(m=>+m.id!==+materialId).sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
+  const cur = (window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).qte||0;
+  const uX = _prelevMat(materialId).unite||'g';
+  const opts = mats.map(m=>`<option value="${m.id}">${esc(m.nom)}${m.unite&&m.unite!==uX?` (${esc(m.unite)})`:''}</option>`).join('');
+  _prelevPanel(materialId, `
+    <div class="prlv-lbl">Remplacer par</div>
+    <select id="prlv_y_${materialId}" class="in" style="width:100%;padding:8px 10px;border:1px solid var(--hair,#e7ddd2);border-radius:9px"><option value="">— choisir —</option>${opts}</select>
+    <div class="prlv-lbl">Quantité à prélever (${esc(uX)})</div>
+    <input type="number" id="prlv_yq_${materialId}" class="in" min="0" step="0.1" value="${cur}" style="width:100%;padding:8px 10px;border:1px solid var(--hair,#e7ddd2);border-radius:9px">
+    <div class="prlv-lbl">Prise sur le stock (nouvelle matière)</div>
+    <select id="prlv_ylot_${materialId}" class="in" style="width:100%;padding:8px 10px;border:1px solid var(--hair,#e7ddd2);border-radius:9px"><option value="">FIFO — le plus ancien d'abord (recommandé)</option></select>
+    <div class="prlv-warn">À la validation, l'app te demandera si l'ancienne matière (${esc(_prelevMat(materialId).nom||'')}) <b>sort du stock</b> (régularisation d'inventaire) ou <b>revient sur son lot d'origine</b>.</div>
+    <div class="prlv-acts"><button class="btn ghost sm" onclick="_prelevPanel(${materialId},'')">Annuler</button>
+      <button class="btn gold sm" onclick="prelevRemplacerGo(${prodId},${materialId})">⇄ Valider le remplacement</button></div>`);
+  // peupler les lots de Y quand on choisit Y
+  const sy = document.getElementById('prlv_y_'+materialId);
+  if(sy) sy.onchange = async ()=>{
+    const yid = +sy.value||0; const sel = document.getElementById('prlv_ylot_'+materialId);
+    if(!sel) return;
+    if(!yid){ sel.innerHTML = `<option value="">FIFO — le plus ancien d'abord (recommandé)</option>`; return; }
+    const opts2 = await _prelevLotsOptions(yid, null);
+    sel.innerHTML = `<option value="">FIFO — le plus ancien d'abord (recommandé)</option>${opts2}`;
+  };
+}
+async function prelevRemplacerGo(prodId, materialId){
+  const yId = +val('prlv_y_'+materialId)||0;
+  const qte = round3(+val('prlv_yq_'+materialId)||0);
+  const yLot = +val('prlv_ylot_'+materialId)||0;
+  if(!yId){ toast('Choisis la matière de remplacement'); return; }
+  if(!(qte>0)){ toast('Quantité invalide'); return; }
+  const mX = _prelevMat(materialId);
+  // QUESTION SYSTÉMATIQUE (contrat métier) : sortir l'ancienne ou la rendre ?
+  const sortir = confirm(`Remplacement de « ${mX.nom||''} ».\n\nL'ancienne matière prélevée doit-elle SORTIR du stock en régularisation d'inventaire ?\n\n• OK = elle sort du stock (le stock affiché était erroné)\n• Annuler = elle revient sur son lot d'origine`);
+  try{ await snapshotBackup('avant-prelevement'); }catch(e){}
+  // 1) neutraliser la conso de X.
+  //    - rendre=false (SORTIR) : on NE rend PAS → le stock reste décrémenté par la conso
+  //      initiale, ce qui EST la sortie en régularisation (pas de second retrait, sinon
+  //      on décompterait deux fois). La ligne est marquée 'sortie-regul-inventaire'.
+  //    - rendre=true (REVENIR) : la quantité remonte sur le lot d'origine.
+  await db.transaction('rw', db.productions, db.materialLots, db.prodConsumption, async()=>{
+    await prelevAnnulerMatiere(prodId, materialId, /*rendre=*/!sortir);
+  });
+  // 3) prélever Y (FIFO ou lot imposé)
+  const res = await consoFixApply(prodId, yId, qte, yLot||null);
+  closeModal();
+  toast(res.manque>0 ? `Remplacé · ${qty(res.manque)} manquant(s) sur la nouvelle matière` : (sortir?'Remplacé · ancienne matière sortie en régul ✓':'Remplacé · ancienne matière rendue au stock ✓'));
+  if(typeof renderProductionsV2==='function' && view==='productionsv2') renderProductionsV2();
+}
+// =============================================================================
 // =============================================================================
 
 async function renderBackups(){
@@ -40658,7 +40898,10 @@ async function prodRenderBoard(){
     <div class="prodb-session">
       <div class="prodb-sess-head">
         <div><span class="prodb-live-dot"></span> Session en cours <span class="prodb-sess-time">démarrée à ${startedTxt}</span></div>
-        <button class="btn ghost sm" onclick="prodConfirmEndSession()">⏹ Clôturer</button>
+        <div style="display:flex;gap:6px">
+          <button class="btn ghost sm" onclick="goView('controletemps')" title="Corriger les heures et durées des séances">✎ Temps</button>
+          <button class="btn ghost sm" onclick="prodConfirmEndSession()">⏹ Clôturer</button>
+        </div>
       </div>
     </div>
     ${tabsHtml}
@@ -40821,7 +41064,9 @@ function prodConfirmEndSession(){
   if(!confirm(msg)) return;
   prodSessionEnd();
   prodRenderBoard();
-  toast('Session clôturée ✓');
+  // La correction des temps existe (écran « Contrôle des temps ») mais n'était atteignable
+  // que par le menu. On offre le lien DIRECT juste après la clôture, quand on en a besoin.
+  toastAction('Session clôturée ✓', '✎ Corriger les temps', "goView('controletemps')");
   // Apprentissage des temps : on ne le propose que pour les catégories ayant du temps NON encore
   // appris. Si la session a été rouverte pour ajouter du garnissage, on apprendra ce nouveau temps
   // sans recompter les catégories déjà comptabilisées (ex : coques).
