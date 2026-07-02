@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1147';
+const APP_VERSION = 'v1148';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -8108,6 +8108,7 @@ async function prodV2OpenPop(id){
           <div class="pv2-act" onclick="prodV2ClosePop();shareLabelPDF(${id})">📄 Étiquette PDF (Labelife)</div><div class="pv2-act" onclick="prodV2ClosePop();shareLabelImage(${id})">🖼 Étiquette image</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prodEditTimes(${id})">✏️ Quantité</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prelevForm(${id})">✎ Prélèvements (matières)</div>
+          ${prodEstAnnulable(p) ? `<div class="pv2-act full" style="color:#b04a3e" onclick="prodV2ClosePop();prodAnnulerLancement(${id})">⎌ Annuler ce lancement (erreur de saisie)</div>` : ''}
           <div class="pv2-act" onclick="prodV2ClosePop();declareLossForm(${id})">⚠️ Casse</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prodV2Deplacer(${id})">📍 Déplacer</div>
           ${p.rangee ? `<div class="pv2-act full" onclick="prodV2ClosePop();prodRetourProduction(${id}, ${JSON.stringify(nom).replace(/"/g,'&quot;')})">↩ Remettre à ranger</div>` : ''}
@@ -11862,6 +11863,104 @@ async function lossKPIs(){
   const taux = totalProduit>0 ? Math.round(totalPerdu/totalProduit*1000)/10 : 0;
   return {totalProduit:round3(totalProduit), totalPerdu:round3(totalPerdu), valeurPerdue:money2(valeurPerdue), taux, count:losses.length};
 }
+// =============================================================================
+//  ANNULATION D'ERREUR DE SAISIE (« ⎌ Annuler ce lancement »)
+//  Défait TOUTE la cascade d'un batch lancé par erreur (< 30 min), sans
+//  interrogatoire : recrédit stock + suppression conso + détachement commande
+//  + nettoyage du chrono d'atelier + suppression prod. Atomique, réversible.
+// =============================================================================
+const PROD_ANNUL_FENETRE_MS = 30*60*1000;   // 30 minutes
+
+// Un batch est-il annulable « à chaud » ? (créé il y a moins de 30 min)
+function prodEstAnnulable(prod){
+  if(!prod) return false;
+  const ts = +prod.prodTimestamp || +prod.prodDebutTs || 0;
+  if(!ts) return false;
+  return (Date.now() - ts) <= PROD_ANNUL_FENETRE_MS;
+}
+
+// Retire (et rend restaurable) la tâche de chrono liée à un batch. Retourne le snapshot
+// de la tâche retirée pour permettre l'undo. Ne touche à rien si pas de lien.
+function _prodChronoDetach(atelierTaskId){
+  if(atelierTaskId==null) return null;
+  const sessions = prodSessLoad();
+  for(const s of sessions){
+    const t = (s.tasks||[]).find(x=>String(x.id)===String(atelierTaskId));
+    if(t){
+      const snap = { sessionId:s.id, task:{...t} };
+      s.tasks = (s.tasks||[]).filter(x=>String(x.id)!==String(atelierTaskId));
+      prodSessUpsert(s);
+      return snap;
+    }
+  }
+  return null;
+}
+function _prodChronoRestore(snap){
+  if(!snap) return;
+  const sessions = prodSessLoad();
+  const s = sessions.find(x=>x.id===snap.sessionId);
+  if(s){ s.tasks = s.tasks||[]; if(!s.tasks.some(x=>String(x.id)===String(snap.task.id))) s.tasks.push(snap.task); prodSessUpsert(s); }
+}
+
+async function prodAnnulerLancement(id){
+  const prod = await db.productions.get(id).catch(()=>null);
+  if(!prod){ toast('Batch introuvable'); return; }
+  if(!prodEstAnnulable(prod)){
+    toast('Ce batch n\'est plus annulable « à chaud » (plus de 30 min). Utilise 🗑 Supprimer.');
+    return;
+  }
+  const recap = [];
+  const conso = await db.prodConsumption.where('productionId').equals(id).toArray().catch(()=>[]);
+  const liens = await db.orderItems.where('productionId').equals(id).toArray().catch(()=>[]);
+  if(conso.length) recap.push(`${conso.length} ligne(s) de matière recréditée(s)`);
+  if(liens.length) recap.push(`${liens.length} rattachement(s) commande détaché(s)`);
+  if(prod.atelierTaskId!=null) recap.push('chrono d\'atelier retiré');
+  const nom = prod.lotProduction || ('#'+id);
+  if(!confirm(`⎌ Annuler le lancement du batch « ${nom} » ?\n\nCette action défait tout ce que le lancement a déclenché :\n• ${recap.join('\n• ')||'suppression du batch'}\n\nTes stocks reviennent à l'état d'avant. Réversible immédiatement (bouton Annuler).`)) return;
+
+  try{ await snapshotBackup('avant-annulation-lancement'); }catch(e){}
+
+  // Snapshot complet pour l'undo
+  const snap = { prod:{...prod}, conso:conso.map(c=>({...c})), liens:liens.map(l=>({...l})), chrono:null };
+
+  await db.transaction('rw', db.productions, db.prodConsumption, db.materialLots, db.orderItems, async()=>{
+    // 1. recrédit systématique des lots matière
+    for(const c of conso){
+      const lot = await db.materialLots.get(c.materialLotId);
+      if(lot){ await db.materialLots.update(lot.id, { qteRestante: addQty(lot.qteRestante, c.qteConsommee) }); }
+    }
+    // 2. suppression des lignes de consommation
+    await db.prodConsumption.where('productionId').equals(id).delete();
+    // 3. détachement des orderItems auto-reliés (lien d'erreur = sans valeur)
+    for(const l of liens){ await db.orderItems.update(l.id, { productionId: null }); }
+    // 4. suppression de la production
+    await db.productions.delete(id);
+  });
+  // 5. nettoyage du chrono (hors transaction Dexie : la session vit en localStorage)
+  snap.chrono = _prodChronoDetach(prod.atelierTaskId);
+
+  logDeletion('production', id, 'Annulation lancement (erreur de saisie)', '', nom);
+  closeModal();
+  if(typeof renderProductionsV2==='function' && view==='productionsv2') renderProductionsV2();
+  else if(typeof renderProductions==='function') renderProductions();
+
+  // 6. UNDO complet : restaure tout dans l'ordre inverse
+  showUndoToast('Lancement annulé · stock recrédité', async ()=>{
+    await db.transaction('rw', db.productions, db.prodConsumption, db.materialLots, db.orderItems, async()=>{
+      if(snap.prod) await db.productions.put(snap.prod);
+      for(const c of snap.conso){ await db.prodConsumption.put(c); }
+      // réannule le recrédit matières
+      for(const c of snap.conso){ const lot = await db.materialLots.get(c.materialLotId);
+        if(lot){ await db.materialLots.update(lot.id, { qteRestante: subQty(lot.qteRestante, c.qteConsommee) }); } }
+      // rerelie les commandes
+      for(const l of snap.liens){ await db.orderItems.update(l.id, { productionId: id }); }
+    });
+    _prodChronoRestore(snap.chrono);
+    if(typeof renderProductionsV2==='function' && view==='productionsv2') renderProductionsV2();
+    else if(typeof renderProductions==='function') renderProductions();
+  });
+}
+
 async function delProd(id){
   // Garde-fou : production liée à une commande ?
   const liens = await db.orderItems.where('productionId').equals(id).toArray();
