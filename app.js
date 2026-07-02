@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1143';
+const APP_VERSION = 'v1144';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -33710,6 +33710,21 @@ async function importDataMerge(e){
   }
   e.target.value='';
 }
+// Suppression en masse SÛRE, indépendante de la version de Dexie.
+// Certaines builds de Dexie n'exposent pas Table.bulkDelete() → on dégrade proprement.
+async function bulkDeleteSafe(table, ids){
+  const list = (ids||[]).filter(v=>v!=null);
+  if(!list.length) return 0;
+  try{
+    if(table && typeof table.bulkDelete==='function'){ await table.bulkDelete(list); return list.length; }
+    if(table && table.where){ await table.where(':id').anyOf(list).delete(); return list.length; }
+  }catch(e){ /* on tente le repli unitaire ci-dessous */ }
+  let n=0;
+  if(table && typeof table.delete==='function'){
+    for(const id of list){ try{ await table.delete(id); n++; }catch(_){} }
+  }
+  return n;
+}
 // Enregistre un instantané JSON complet + checksum dans la table backups, puis purge les plus anciens.
 async function snapshotBackup(type){
   const dump=await buildDump();
@@ -33718,12 +33733,14 @@ async function snapshotBackup(type){
     checksum:dump._checksum, count:dumpRecordCount(dump), size:payload.length, payload };
   const id=await db.backups.add(rec);
   // purge : ne conserver que les MAX_BACKUPS plus récents
-  const all=await db.backups.orderBy('date').reverse().toArray();
-  if(all.length>MAX_BACKUPS){
-    const surplus=all.slice(MAX_BACKUPS).map(b=>b.id);
-    await db.backups.bulkDelete(surplus);
-  }
-  return id;
+  try{
+    const all=await db.backups.orderBy('date').reverse().toArray();
+    if(all.length>MAX_BACKUPS){
+      const surplus=all.slice(MAX_BACKUPS).map(b=>b.id);
+      await bulkDeleteSafe(db.backups, surplus);
+    }
+  }catch(ePurge){ console.warn('snapshotBackup purge (non bloquant)', ePurge); }
+  return id;   // l'instantané est déjà écrit : la sauvegarde a réussi même si la purge échoue
 }
 // Sauvegarde automatique quotidienne (au démarrage, une fois par jour).
 async function autoDailyBackup(){
@@ -38105,7 +38122,7 @@ async function prodSessPersistDexie(arr){
     await db.transaction('rw', db.prodSessions, async()=>{
       const existing = await db.prodSessions.toArray();
       const toDelete = existing.filter(s=>!ids.has(s.id)).map(s=>s.id);
-      if(toDelete.length) await db.prodSessions.bulkDelete(toDelete);
+      if(toDelete.length) await bulkDeleteSafe(db.prodSessions, toDelete);
       if(data.length) await db.prodSessions.bulkPut(data);
     });
     // Vérification : relire le nombre d'enregistrements pour confirmer l'écriture réelle.
