@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1148';
+const APP_VERSION = 'v1150';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -13063,10 +13063,12 @@ async function traceProd(prodId){
     }
     const mat = await db.materials.get(lot.materialId).catch(()=>null);
     const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId).catch(()=>null) : null;
-    lines.push(`<div class="trace-step" style="border-left:3px solid #5b8aa6;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px" onclick="traceGo('lot',${lot.id})">
-      <div><b>${esc(mat?mat.nom:'?')}</b><br>
+    const _matId = lot.materialId;
+    lines.push(`<div class="trace-step" style="border-left:3px solid #5b8aa6;display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div style="cursor:pointer;flex:1" onclick="traceGo('lot',${lot.id})"><b>${esc(mat?mat.nom:'?')}</b><br>
       <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(lot.lotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(lot.dlc)||'—'}</span></div>
-      <span style="color:var(--caramel,#AA7C39);font-weight:700;flex:none">→</span></div>`);
+      <button class="btn ghost sm" style="flex:none" title="Réaffecter ce batch vers un autre lot de cette matière (HACCP)" onclick="event.stopPropagation();closeModal();prelevOpenReaffect(${prodId},${_matId})">🔀 Lot</button>
+      <span style="color:var(--caramel,#AA7C39);font-weight:700;flex:none;cursor:pointer" onclick="traceGo('lot',${lot.id})">→</span></div>`);
   }
   // commandes liées
   const oi = await db.orderItems.where('productionId').equals(prodId).toArray().catch(()=>[]);
@@ -36357,6 +36359,25 @@ async function prelevReaffecter(prodId, materialId, lotFromId, lotToIds, opts){
           repartition:plan.repartition, nbLotsDest:alloc.length};
 }
 /* PRELEV:PURE:END */
+
+// Raccourci depuis la traçabilité : ouvre l'écran Prélèvements sur un batch et déclenche
+// immédiatement la réaffectation de lot pour UNE matière précise. On réutilise prelevForm
+// (qui peuple _prelevCtx) puis on ouvre le panneau Réaffecter de cette matière — aucune
+// duplication du moteur (prelevReaffecter, testé) ni du contexte.
+async function prelevOpenReaffect(prodId, materialId){
+  await prelevForm(prodId);
+  // prelevForm a rendu la modale + _prelevCtx ; on déclenche l'action ciblée.
+  if(window._prelevCtx && +window._prelevCtx.prodId===+prodId
+     && (window._prelevCtx.liste||[]).some(x=>+x.materialId===+materialId)){
+    try{ await prelevActionReaffecter(prodId, materialId); }
+    catch(e){ console.error('prelevOpenReaffect', e); }
+    // amener le panneau de cette matière à l'écran
+    const el = document.getElementById('prlv-panel-'+materialId);
+    if(el && el.scrollIntoView) try{ el.scrollIntoView({block:'center'}); }catch(_){}
+  } else {
+    toast('Cette matière n\'a pas de consommation modifiable sur ce lot');
+  }
+}
 
 // ---- UI : ouverte depuis le pop d'un lot (prodV2) --------------------------
 async function prelevForm(prodId){
