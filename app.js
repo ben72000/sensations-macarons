@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1137';
+const APP_VERSION = 'v1139';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -1328,7 +1328,7 @@ async function renderRD(){
 
     <div id="rd-props"></div>
 
-    <p class="rd-foot">${nIng} ingrédients dans ta palette · <span class="rd-link" onclick="goView('rdidees')">💡 Mes idées</span> · <span class="rd-link" onclick="goView('rdjournal')">🧪 Journal</span> · <span class="rd-link" onclick="goView('rdrefs')">📚 Bibliothèque</span></p>
+    <p class="rd-foot">${nIng} ingrédients dans ta palette · <span class="rd-link" onclick="goView('rdidees')">💡 Mes idées</span> · <span class="rd-link" onclick="goView('rdjournal')">🧪 Journal</span> · <span class="rd-link" onclick="goView('rdrefs')">📚 Bibliothèque</span> · <span class="rd-link" onclick="goView('rdgen')">🧬 Recette</span></p>
   </div>`;
 
   rdRenderProps();
@@ -1457,8 +1457,297 @@ function rdEncodeADN(ingredients){
 
 
 
+/* ============================================================================
+   rd_generateur.js (V1) — GÉNÉRATEUR DE RECETTES PAR ADN
+   Mode Commande · type « ganache montée » · curseurs de sources · garde-fous
+   appris du corpus réel · raisonnement visible. Réutilise rdEncodeADN / RD_RULES
+   d'app.js (ne les redéfinit pas). Zéro interpolation ligne à ligne.
+   ============================================================================ */
+/* RDGEN:PURE:BEGIN */
+const RDGEN_RAPPORTS = ['grasLiquide','sucreMasse','structLiquide','aromeMasse'];
+const RDGEN_RAP_LABEL = { grasLiquide:'Gras / Liquide (texture)', sucreMasse:'Sucre / Masse (conservation)',
+  structLiquide:'Structurant / Liquide (tenue)', aromeMasse:'Arôme / Masse (intensité)' };
+
+function rdGenCorpus(preps, refsById, typeRe){
+  return (preps||[]).filter(p=>typeRe.test(p.type||'')).map(p=>({
+    nom:p.nom, source:((refsById[p.refId]||{}).source)||p.source||'autre',
+    adn:rdEncodeADN(p.ingredients||[]), ingredients:p.ingredients||[]
+  })).filter(c=>c.adn.attribuee>0);
+}
+
+function rdGenPoids(corpus, curseurs){
+  const bySrc={}; corpus.forEach(c=>{ (bySrc[c.source] ||= []).push(c); });
+  const poids={}; let tot=0;
+  for(const s of Object.keys(bySrc)){ const w=(curseurs && s in curseurs)?(+curseurs[s]||0):50; poids[s]=w; tot+=w; }
+  if(tot<=0) return null;
+  return {
+    wPrep:c=>(poids[c.source]/tot)/bySrc[c.source].length,
+    parSource:Object.keys(bySrc).map(s=>({source:s, n:bySrc[s].length, part:+(100*poids[s]/tot).toFixed(1)}))
+      .sort((a,b)=>b.part-a.part)
+  };
+}
+
+function rdGenCible(corpus, P){
+  const profil={gras:0,liquide:0,sucre:0,arome:0,structurant:0};
+  corpus.forEach(c=>{ const w=P.wPrep(c); RD_FAMILLES.forEach(f=>profil[f]+=w*(c.adn.profil[f]||0)); });
+  const s=RD_FAMILLES.reduce((a,f)=>a+profil[f],0)||1;
+  RD_FAMILLES.forEach(f=>profil[f]=+(100*profil[f]/s).toFixed(1));
+  return profil;
+}
+
+function rdGenPlages(corpus){
+  const plages={};
+  RDGEN_RAPPORTS.forEach(k=>{
+    const v=corpus.map(c=>c.adn.rapports[k]).filter(x=>isFinite(x)&&x>=0);
+    if(v.length) plages[k]={min:+Math.min(...v).toFixed(3), max:+Math.max(...v).toFixed(3)};
+  });
+  return plages;
+}
+
+function rdGenRapportsDeProfil(p){
+  const safe=(a,b)=>b>0?+(a/b).toFixed(3):0;
+  return { grasLiquide:safe(p.gras,p.liquide), sucreMasse:+((p.sucre||0)/100).toFixed(3),
+           structLiquide:safe(p.structurant,p.liquide), aromeMasse:+((p.arome||0)/100).toFixed(3) };
+}
+
+function rdGenGardeFous(profil, plages){
+  const p={...profil}; const signaux=[];
+  const fix=(k,num,den)=>{
+    const b=plages[k]; if(!b) return;
+    const r=rdGenRapportsDeProfil(p)[k];
+    if(r<b.min-1e-9 || r>b.max+1e-9){
+      const cible=Math.min(b.max,Math.max(b.min,r));
+      const denV=(den==='masse')?100:p[den];
+      const delta=cible*denV-p[num];
+      const autres=RD_FAMILLES.filter(f=>f!==num).sort((a,b2)=>p[b2]-p[a]);
+      p[num]=+(p[num]+delta).toFixed(1); p[autres[0]]=+(p[autres[0]]-delta).toFixed(1);
+      signaux.push({rapport:k, avant:r, borne:+cible.toFixed(3)});
+    }
+  };
+  fix('structLiquide','structurant','liquide'); fix('grasLiquide','gras','liquide');
+  fix('sucreMasse','sucre','masse'); fix('aromeMasse','arome','masse');
+  const s=RD_FAMILLES.reduce((a,f)=>a+Math.max(0,p[f]),0)||1;
+  RD_FAMILLES.forEach(f=>p[f]=+(100*Math.max(0,p[f])/s).toFixed(1));
+  return {profil:p, signaux};
+}
+
+function rdGenPorteurAuto(parfum){
+  const p=(parfum||'').toLowerCase();
+  if(/chocolat|dulcey|gianduja/.test(p)) return 'chocolat';
+  if(/pralin|noisette|pistache|amande|cacahu|s[ée]same|\bnoix\b|p[ée]can/.test(p)) return 'pate';
+  if(/vanille/.test(p)) return 'vanille';
+  if(/th[ée]\b|caf[ée]|cannelle|tonka|girofle|anis|safran|lavande|verveine|menthe|romarin|earl|jasmin|matcha|[ée]pice|poivre|gingembre|fleur\s+d|camomille|r[ée]glisse/.test(p)) return 'infusion';
+  return 'puree';
+}
+
+function rdGenSquelette(parfum, porteur, M){
+  const pf=(parfum||'').toLowerCase();
+  let choc={nom:'Chocolat blanc (Ivoire)', split:{gras:.38,sucre:.50,arome:.12}};
+  if(/noir/.test(pf)) choc={nom:'Chocolat noir (couverture)', split:{gras:.45,sucre:.35,arome:.20}};
+  else if(/lait|dulcey|blond|caram/.test(pf)) choc={nom:'Chocolat au lait (couverture)', split:{gras:.35,sucre:.45,arome:.20}};
+  const sk=[
+    {id:'creme', nom:'Crème liquide entière', split:{gras:.35,liquide:.65}, cap:M},
+    {id:'choc',  nom:choc.nom, split:choc.split, cap:M},
+    {id:'gel',   nom:'Masse gélatine', split:{structurant:1/6, liquide:5/6}, cap:.04*M},
+    {id:'gluc',  nom:'Sirop de glucose', split:{sucre:1}, cap:.15*M}
+  ];
+  if(porteur==='puree')        sk.push({id:'arome', nom:'Purée de '+parfum, split:{liquide:.7,arome:.25,sucre:.05}, cap:.45*M});
+  else if(porteur==='pate')    sk.push({id:'arome', nom:'Pâte de '+parfum, split:{gras:.5,arome:.45,sucre:.05}, cap:.25*M});
+  else if(porteur==='infusion')sk.push({id:'arome', nom:parfum+' (infusion, chinoisée)', split:{arome:1}, cap:.012*M});
+  else if(porteur==='vanille') sk.push({id:'arome', nom:'Gousse de vanille (grattée, infusée)', split:{arome:1}, cap:.01*M});
+  return sk;
+}
+
+function rdGenSolve(sk, profil, M){
+  const T={}; RD_FAMILLES.forEach(f=>T[f]=M*(profil[f]||0)/100);
+  const x=sk.map(()=>0);
+  const dot=(a,b)=>RD_FAMILLES.reduce((s,f)=>s+(a[f]||0)*(b[f]||0),0);
+  for(let it=0; it<300; it++){
+    for(let i=0;i<sk.length;i++){
+      const R={}; RD_FAMILLES.forEach(f=>{ let s=T[f]; sk.forEach((g,j)=>{ if(j!==i) s-=x[j]*(g.split[f]||0); }); R[f]=s; });
+      const num=dot(sk[i].split,R), den=dot(sk[i].split,sk[i].split)||1;
+      x[i]=Math.min(sk[i].cap, Math.max(0, num/den));
+    }
+  }
+  const tot=x.reduce((a,b)=>a+b,0)||1; const k=M/tot;
+  const pesees=sk.map((g,i)=>({id:g.id, nom:g.nom, qte:Math.round(x[i]*k)})).filter(g=>g.qte>0);
+  const obtenu=rdEncodeADN(pesees.map(g=>({nom:g.nom, qte:g.qte, unite:'g'})));
+  return {pesees, obtenu};
+}
+
+function rdGenCremeSplit(corpus, P){
+  let acc=0, wtot=0;
+  corpus.forEach(c=>{
+    let hot=0, cold=0;
+    (c.ingredients||[]).forEach(i=>{
+      if(/cr[èe]me/i.test(i.nom||'')){ const g=rdToGrams(i.qte,i.unite);
+        if(/froid/i.test(i.nom)) cold+=g; else hot+=g; }
+    });
+    if(hot>0&&cold>0){ const w=P.wPrep(c); acc+=w*(hot/(hot+cold)); wtot+=w; }
+  });
+  return wtot>0 ? acc/wtot : 1/3;
+}
+
+function rdGenEtapes(parfum, porteur, pesees, fracChaud){
+  const q=id=>{const e=pesees.find(x=>x.id===id); return e?e.qte:0;};
+  const creme=q('creme'); const chaud=Math.round(creme*fracChaud); const froid=creme-chaud;
+  const et=[];
+  if(porteur==='infusion') et.push('Porter la crème chaude ('+chaud+' g) à courte ébullition avec '+parfum+(q('gluc')?' et le glucose':'')+', couvrir, infuser 20 à 30 min, chinoiser puis repeser (compléter en crème si besoin).');
+  else if(porteur==='vanille') et.push('Porter la crème chaude ('+chaud+' g) à courte ébullition avec la gousse grattée'+(q('gluc')?' et le glucose':'')+', couvrir, infuser 30 min, chinoiser.');
+  else if(porteur==='puree') et.push('Chauffer la crème ('+chaud+' g) avec la purée'+(q('gluc')?' et le glucose':'')+' sans dépasser le frémissement.');
+  else et.push('Chauffer la crème ('+chaud+' g)'+(q('gluc')?' avec le glucose':'')+'.');
+  if(q('gel')) et.push('Hors du feu, dissoudre la masse gélatine ('+q('gel')+' g) dans le liquide chaud.');
+  const cible=['choc'].concat(porteur==='pate'?['arome']:[]).map(id=>pesees.find(x=>x.id===id)).filter(Boolean).map(x=>x.nom.toLowerCase()).join(' + ');
+  et.push('Verser en trois fois sur '+cible+' et émulsionner au centre à la maryse.');
+  et.push('Ajouter la crème froide ('+froid+' g) et lisser au mixeur plongeant sans incorporer d\'air.');
+  et.push('Filmer au contact et maturer 12 h minimum au réfrigérateur.');
+  et.push('Foisonner au batteur jusqu\'au bec d\'oiseau souple, juste avant le pochage.');
+  return {etapes:et, chaud, froid};
+}
+
+function rdGenRecette(opts){
+  const {corpus, curseurs, parfum, masse}=opts;
+  if(!corpus || !corpus.length) return {erreur:'Corpus vide : la bibliothèque ne contient aucune préparation de ce type.'};
+  const P=rdGenPoids(corpus, curseurs);
+  if(!P) return {erreur:'Aucune source active : remonte au moins un curseur.'};
+  const porteur=opts.porteur||rdGenPorteurAuto(parfum);
+  const M=Math.max(100, +masse||500);
+  const cibleBrut=rdGenCible(corpus, P);
+  const plages=rdGenPlages(corpus);
+  const gf=rdGenGardeFous(cibleBrut, plages);
+  const sk=rdGenSquelette(parfum, porteur, M);
+  const {pesees, obtenu}=rdGenSolve(sk, gf.profil, M);
+  const et=rdGenEtapes(parfum, porteur, pesees, rdGenCremeSplit(corpus, P));
+  return { parfum, porteur, masse:M, cible:gf.profil, cibleBrut, signaux:gf.signaux, plages,
+           pesees, obtenu, etapes:et.etapes, cremeChaude:et.chaud, cremeFroide:et.froid,
+           parSource:P.parSource, n:corpus.length };
+}
+/* RDGEN:PURE:END */
+
+// ---- UI du générateur (route 'rdgen') --------------------------------------
+async function renderRDGen(){
+  const main=document.getElementById('main'); if(!main) return;
+  let preps=[], refs=[];
+  try{ preps=await db.rdPreps.toArray(); refs=await db.rdRefs.toArray(); }catch(e){}
+  const refsById={}; refs.forEach(r=>refsById[r.id]=r);
+  const corpus=rdGenCorpus(preps, refsById, /^ganache mont/i);
+  window._rdgCorpus=corpus;
+  const srcs=[...new Set(corpus.map(c=>c.source))].sort();
+  window._rdgCur = window._rdgCur||{}; srcs.forEach(s=>{ if(!(s in window._rdgCur)) window._rdgCur[s]=50; });
+  const sliders=srcs.map(s=>`
+    <div class="rdg-src"><span class="rdg-src-nom">${esc(RD_SRC_LABEL[s]||s)} <em>(${corpus.filter(c=>c.source===s).length})</em></span>
+    <input type="range" min="0" max="100" value="${window._rdgCur[s]}" class="rd-range" oninput="window._rdgCur['${s}']=+this.value">
+    </div>`).join('');
+  const inStyle="width:100%;padding:9px 11px;border:1px solid #e3d8ce;border-radius:9px;background:#fff;font-size:.9rem;box-sizing:border-box";
+  main.innerHTML=`
+  <style>
+  .rdg-lbl{font-size:.72rem;font-weight:700;color:#52252F;margin:12px 0 4px;text-transform:uppercase;letter-spacing:.04em}
+  .rdg-src{display:flex;align-items:center;gap:8px;margin:2px 0}
+  .rdg-src-nom{min-width:120px;font-size:.8rem}.rdg-src-nom em{color:#9a8a82;font-style:normal;font-size:.7rem}
+  .rdg-fam{display:flex;align-items:center;gap:6px;font-size:.74rem;margin:3px 0}
+  .rdg-bar{flex:1;height:10px;background:#f1eae2;border-radius:5px;position:relative;overflow:hidden}
+  .rdg-bar div{position:absolute;left:0;top:0;bottom:0;border-radius:5px}
+  .rdg-fam em{color:#9a8a82;font-style:normal;font-size:.68rem}
+  .rdg-ing{margin:4px 0 0 18px;padding:0;font-size:.86rem}.rdg-ing li{margin:3px 0}
+  .rdg-et{margin:4px 0 0 18px;padding:0;font-size:.84rem}.rdg-et li{margin:5px 0}
+  .rdg-warn{background:#fff8ec;border:1px solid #e8cfa0;border-radius:8px;padding:8px 10px;font-size:.78rem;margin:8px 0}
+  .rdg-raison{margin:10px 0;font-size:.78rem;color:#5a4a42}.rdg-raison summary{cursor:pointer;font-weight:700;color:#52252F}
+  .rdg-adn{margin:10px 0}.rdg-in{${inStyle}}
+  </style>
+  <div class="rd-wrap">
+    <div class="rd-head"><h2 class="rd-title">🧬 Générateur de recettes</h2>
+      <p class="rd-sub">Compose une recette neuve à partir de l'ADN des chefs de ta bibliothèque</p></div>
+    <div class="rd-hint">Le moteur moyenne les <b>ADN</b> (5 familles + rapports-clés) des préparations du type,
+      pondérés par tes curseurs — jamais les grammes ligne à ligne — puis traduit cet ADN cible en pesées réelles,
+      sous garde-fous appris du corpus.</div>
+    ${corpus.length? `
+    <div class="panel">
+      <div class="rdg-lbl">Type de préparation</div>
+      <div class="rd-chips"><span class="rd-chip on">Ganache montée</span> <span style="color:#9a8a82;font-size:.72rem">· d'autres types suivront (V2)</span></div>
+      <div class="rdg-lbl">Parfum</div>
+      <input id="rdg_parfum" class="rdg-in" placeholder="ex. framboise, pistache, thé earl grey…" value="${esc(window._rdgParfum||'')}">
+      <div class="rdg-lbl">Porteur d'arôme</div>
+      <select id="rdg_porteur" class="rdg-in">
+        <option value="auto">Automatique (selon le parfum)</option>
+        <option value="puree">Purée de fruit</option>
+        <option value="pate">Pâte de fruit à coque / praliné</option>
+        <option value="infusion">Infusion (épice, thé, café…)</option>
+        <option value="vanille">Gousse de vanille</option>
+        <option value="chocolat">Chocolat seul</option>
+      </select>
+      <div class="rdg-lbl">Masse à produire</div>
+      <input id="rdg_masse" class="rdg-in" type="number" value="${window._rdgMasse||500}" min="100" step="50">
+      <div class="rdg-lbl">Influence des chefs</div>
+      ${sliders}
+      <button class="rd-go" onclick="rdGenLancer()">🧬 Composer la recette</button>
+    </div>` : `<div class="rd-empty"><span class="ic">📚</span>Aucune ganache montée dans la bibliothèque.<br>Importe les packs R&D depuis la Bibliothèque, puis reviens ici.</div>`}
+    <div id="rdg-out"></div>
+    <p class="rd-foot"><span class="rd-link" onclick="goView('rd')">← Atelier R&D</span> · <span class="rd-link" onclick="goView('rdrefs')">📚 Bibliothèque</span></p>
+  </div>`;
+}
+
+function rdGenLancer(){
+  const parfum=val('rdg_parfum');
+  if(!parfum){ toast('Indique un parfum.'); return; }
+  window._rdgParfum=parfum; window._rdgMasse=+val('rdg_masse')||500;
+  const pSel=val('rdg_porteur');
+  const R=rdGenRecette({ corpus:window._rdgCorpus, curseurs:window._rdgCur, parfum,
+    porteur:(pSel && pSel!=='auto')?pSel:null, masse:window._rdgMasse });
+  window._rdgLast=R;
+  const out=document.getElementById('rdg-out'); if(!out) return;
+  if(R.erreur){ out.innerHTML=`<div class="rd-empty">${esc(R.erreur)}</div>`; return; }
+  const barres=RD_FAMILLES.map(f=>{
+    const c=R.cible[f]||0, o=R.obtenu.profil[f]||0;
+    return `<div class="rdg-fam"><span style="color:${RD_FAM_COLOR[f]}">●</span> ${RD_FAM_LABEL[f]}
+      <div class="rdg-bar"><div style="width:${Math.min(100,c)}%;background:${RD_FAM_COLOR[f]};opacity:.35"></div>
+      <div style="width:${Math.min(100,o)}%;background:${RD_FAM_COLOR[f]}"></div></div>
+      <b>${o}%</b> <em>cible ${c}%</em></div>`;
+  }).join('');
+  const ing=R.pesees.map(p=>{
+    if(p.id==='creme') return `<li>Crème liquide entière : <b>${R.cremeChaude} g</b> (chaude) + <b>${R.cremeFroide} g</b> (froide)</li>`;
+    return `<li>${esc(p.nom)} : <b>${p.qte} g</b></li>`;
+  }).join('');
+  const gel=R.pesees.find(p=>p.id==='gel');
+  const notes=[gel?`Masse gélatine ${gel.qte} g ≈ ${(gel.qte/7).toFixed(1)} g de gélatine 200 bloom + ${(gel.qte*6/7).toFixed(1)} g d'eau (1:6).`:'',
+    'DLC garniture : ≤ 6 jours (règle atelier).'].filter(Boolean);
+  const signaux=R.signaux.length
+    ? `<div class="rdg-warn">⚠️ Garde-fous : ${R.signaux.map(s=>`${RDGEN_RAP_LABEL[s.rapport]} ramené de ${s.avant} à ${s.borne}`).join(' · ')}</div>` : '';
+  const raison=`<details class="rdg-raison"><summary>🔍 Raisonnement du moteur</summary>
+    <p>Corpus : <b>${R.n} ganaches montées</b>. Influence effective : ${R.parSource.map(s=>`${esc(RD_SRC_LABEL[s.source]||s.source)} ${s.part}% (${s.n})`).join(' · ')}.</p>
+    <p>Plages apprises du corpus : ${RDGEN_RAPPORTS.map(k=>R.plages[k]?`${RDGEN_RAP_LABEL[k]} ${R.plages[k].min}–${R.plages[k].max}`:'').filter(Boolean).join(' · ')}.</p>
+    <p>Rapports obtenus : ${RDGEN_RAPPORTS.map(k=>`${RDGEN_RAP_LABEL[k]} <b>${R.obtenu.rapports[k]}</b>`).join(' · ')}.</p>
+    <p>Le porteur d'arôme est plafonné à des doses de bon sens ; l'écart cible/obtenu restant est affiché, jamais masqué.</p></details>`;
+  out.innerHTML=`<div class="panel">
+    <h3 style="margin:0 0 4px">Ganache montée ${esc(R.parfum)} <span style="font-weight:400;color:#9a8a82;font-size:.78rem">· ${R.masse} g</span></h3>
+    ${signaux}
+    <div class="rdg-adn">${barres}</div>
+    <div class="rdg-lbl">Ingrédients</div><ul class="rdg-ing">${ing}</ul>
+    <div class="rdg-lbl">Procédé</div><ol class="rdg-et">${R.etapes.map(e=>`<li>${esc(e)}</li>`).join('')}</ol>
+    ${notes.map(n=>`<p class="note" style="font-size:.76rem;color:#7a6a62">${esc(n)}</p>`).join('')}
+    ${raison}
+    <button class="rd-go" style="margin-top:8px" onclick="rdGenGarder()">📥 Garder dans la bibliothèque</button>
+  </div>`;
+}
+
+async function rdGenGarder(){
+  const R=window._rdgLast; if(!R || R.erreur){ toast('Rien à enregistrer.'); return; }
+  const titre='Génération — ganache montée '+R.parfum;
+  const refId=await db.rdRefs.add({ titre, source:'moi', format:'génération',
+    date:new Date().toISOString(), note:'Générée par le moteur ADN (générateur V1).' });
+  const ingredients=R.pesees.flatMap(p=> p.id==='creme'
+    ? [{nom:'Crème liquide entière (chaude)', qte:R.cremeChaude, unite:'g'},
+       {nom:'Crème liquide entière (froide)', qte:R.cremeFroide, unite:'g'}]
+    : [{nom:p.nom, qte:p.qte, unite:'g'}]);
+  await db.rdPreps.add({ refId, nom:titre, role:'garniture', type:'ganache montée',
+    ingredients, etapes:R.etapes, adn:null, cuisson:'', conservation:'≤ 6 jours (règle atelier)',
+    note:'Influences : '+R.parSource.map(s=>(RD_SRC_LABEL[s.source]||s.source)+' '+s.part+'%').join(', ')+'.' });
+  toast('Recette gardée dans la bibliothèque ✓');
+}
+/* ==================== fin rd_generateur.js (V1) ==================== */
+
+
 // ---- Sources : libellés + couleurs de badge ----
-const RD_SRC_LABEL = { moi:'Moi', chiara:'Chiara', bau:'Bau', lenotre:'Lenôtre', alice:'Alice', karina:'Karina', maddie:'Maddie', sab:'Sab', tfp:'TFP', matt:'Matt Adlard', maja:'Maja Vase', herme:'Pierre Hermé', autre:'Autre' };
+const RD_SRC_LABEL = { moi:'Moi', chiara:'Chiara', bau:'Bau', lenotre:'Lenôtre', alice:'Alice', karina:'Karina', maddie:'Maddie', sab:'Sab', tfp:'TFP', quinonero:'Quinonero', matt:'Matt Adlard', maja:'Maja Vase', herme:'Pierre Hermé', autre:'Autre' };
 
 // ---- Parsing d'un texte collé (best-effort) -> {titre, ingredients[], etapes[]} ----
 // Heuristique simple : lignes "qte unite nom" pour les ingrédients, lignes longues = étapes.
@@ -3234,6 +3523,7 @@ const VIEWS = {
   // remettre `accueil:renderAccueil,` ci-dessous. Rien d'autre à toucher.
   accueil:renderDash,
   rd:renderRD,
+  rdgen:renderRDGen,
   rdidees:renderRDIdees,
   rdjournal:renderRDJournal,
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
