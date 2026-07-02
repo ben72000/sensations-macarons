@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1150';
+const APP_VERSION = 'v1151';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -13049,7 +13049,12 @@ async function traceProd(prodId){
   const recipe = prod.recipeId!=null ? await db.recipes.get(prod.recipeId).catch(()=>null) : null;
   const _prodNom = recipe ? recipe.produitNom : (prod.libre ? (prod.produitLibre||'(libre)') : '(recette non enregistrée)');
   _tracePush('prod', prodId, _prodNom);
-  const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  const consoAll = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  // Lignes ACTIVES (vraies consommations) vs NEUTRALISÉES (remplacées / réaffectées) :
+  // ces dernières ne sont PAS de vraies consos, on ne les compte pas et on ne met pas
+  // de bouton dessus — on les résume en note historique, pour expliquer ce qui s'est passé.
+  const conso = consoAll.filter(c=>!c.annuleeInventaire);
+  const consoHisto = consoAll.filter(c=>c.annuleeInventaire);
   const lines=[];
   for(const c of conso){
     const lot = c.materialLotId!=null ? await db.materialLots.get(c.materialLotId).catch(()=>null) : null;
@@ -13069,6 +13074,24 @@ async function traceProd(prodId){
       <span style="font-size:.8rem;color:#9a8a82">Lot fourn. ${esc(lot.lotFournisseur||'—')} · ${esc(sup?sup.nom:'fournisseur non précisé')} · DLC ${fmtDate(lot.dlc)||'—'}</span></div>
       <button class="btn ghost sm" style="flex:none" title="Réaffecter ce batch vers un autre lot de cette matière (HACCP)" onclick="event.stopPropagation();closeModal();prelevOpenReaffect(${prodId},${_matId})">🔀 Lot</button>
       <span style="color:var(--caramel,#AA7C39);font-weight:700;flex:none;cursor:pointer" onclick="traceGo('lot',${lot.id})">→</span></div>`);
+  }
+  // Note historique : anciennes affectations neutralisées (remplacées ou réaffectées).
+  let histoBlock = '';
+  if(consoHisto.length){
+    const items = [];
+    for(const c of consoHisto){
+      const mat = c.snapMaterialId ? await db.materials.get(c.snapMaterialId).catch(()=>null) : null;
+      const nomMat = mat ? mat.nom : (c.snapLotFournisseur ? 'Matière' : '?');
+      const quand = c.annuleeTs ? fmtDate(c.annuleeTs) : (c.reaffecteTs ? fmtDate(c.reaffecteTs) : '');
+      const motif = c.annuleeMotif==='retour-lot-origine' ? 'remplacée (rendue au stock)'
+                  : c.annuleeMotif==='sortie-regul-inventaire' ? 'remplacée (régularisation d\'inventaire)'
+                  : c.reaffecteDe ? 'réaffectée vers un autre lot'
+                  : 'neutralisée';
+      items.push(`<div class="trace-step" style="border-left:3px solid #d8ccbe;opacity:.75">
+        <span style="font-size:.82rem;color:#8a7a70"><s>${esc(nomMat)} · ${qty(c.qteConsommee)} · lot fourn. ${esc(c.snapLotFournisseur||'—')}</s></span><br>
+        <span style="font-size:.72rem;color:#a8988e">⤷ ${esc(motif)}${quand?` · ${quand}`:''} — cette ligne ne compte pas dans le prélèvement réel</span></div>`);
+    }
+    histoBlock = `<h3 style="font-size:1rem;margin:18px 0 8px">🕓 Historique des corrections de lot</h3>${items.join('')}`;
   }
   // commandes liées
   const oi = await db.orderItems.where('productionId').equals(prodId).toArray().catch(()=>[]);
@@ -13107,6 +13130,7 @@ async function traceProd(prodId){
     ${(prod.histEmplacement&&prod.histEmplacement.length>1)?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span style="font-weight:600">Parcours de conservation</span>${prod.histEmplacement.map(h=>`<span style="font-size:.8rem;color:#6b5a52">${empIcon(h.lieu)} ${esc(empNom(h.lieu))} (${empLettre(h.lieu)}) — ${fmtDateTime(h.ts)}${h.motif?` · ${esc(h.motif)}`:''}</span>`).join('')}</div>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
     ${lines.length?lines.join(''):(prodComposant(prod)==='assemble'?'<p class="note">Macaron assemblé : matières tracées via les sous-lots ci-dessous.</p>':'<p class="note">Aucune consommation enregistrée.</p>')}
+    ${histoBlock}
     ${(prod.assembleFrom&&prod.assembleFrom.length)?`<h3 style="font-size:1rem;margin:18px 0 8px">🔗 ${prod.degOrigine==='casse-garni'?'Issu de pièces cassées mais garnies':'Assemblé à partir de'}${prodComposant(prod)==='degustation'?' <span class="tag" style="background:#caa23b;color:#fff;font-size:.66rem">dégustation</span>':''}</h3>${prod.assembleFrom.map(s=>`<div class="trace-step"${s.id!=null?` style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px" onclick="traceGo('prod',${s.id})"`:''}><div>${s.composant==='coques'?'🟤 Coques':s.composant==='ganache'?'🍫 Ganache':'💔 Cassé garni'}${s.parfum?` <b>${esc(s.parfum)}</b>`:''} · lot <b>${esc(s.lot||('#'+s.id))}</b> · ${qty(s.qte)} pièce(s)</div>${s.id!=null?`<span style="color:var(--caramel,#AA7C39);font-weight:700;flex:none">→</span>`:''}</div>`).join('')}`:''}
     ${lossBlock}
     <h3 style="font-size:1rem;margin:18px 0 8px">➡ Devenir de ce lot</h3>
@@ -36375,7 +36399,13 @@ async function prelevOpenReaffect(prodId, materialId){
     const el = document.getElementById('prlv-panel-'+materialId);
     if(el && el.scrollIntoView) try{ el.scrollIntoView({block:'center'}); }catch(_){}
   } else {
-    toast('Cette matière n\'a pas de consommation modifiable sur ce lot');
+    // La matière est visible en traçabilité mais absente des prélèvements ACTIFS :
+    // sa consommation a déjà été remplacée ou réaffectée (ligne neutralisée).
+    closeModal();
+    openModal(`<h3>Rien à réaffecter ici</h3>
+      <p class="note" style="margin:10px 0">La consommation de cette matière sur ce lot a déjà été <b>remplacée ou réaffectée</b> précédemment : il n'y a plus de prélèvement actif à corriger.</p>
+      <p class="note" style="margin:10px 0">L'ancienne affectation reste visible en traçabilité, dans « 🕓 Historique des corrections de lot », pour garder la trace de ce qui s'est passé.</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal();traceProd(${prodId})">← Retour traçabilité</button></div>`);
   }
 }
 
