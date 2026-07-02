@@ -1,0 +1,524 @@
+[
+ {
+  "titre": "Michalak Masterbook — Les chantilly",
+  "source": "michalak",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Michalak — Chantilly amande",
+    "role": "aérien",
+    "type": "chantilly",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 250, "unite": "g"},
+     {"nom": "Pâte d'amande 70%", "qte": 50, "unite": "g"},
+     {"nom": "Mascarpone", "qte": 50, "unite": "g"},
+     {"nom": "Extrait d'amande amère", "qte": 1, "unite": "g"}
+    ],
+    "etapes": [
+     "Chauffer la crème avec la pâte d'amande pour la détendre.",
+     "Ajouter mascarpone et amande amère, mixer brièvement au plongeant.",
+     "Filmer au contact, une nuit au froid, puis monter au fouet."
+    ],
+    "note": "Chantilly enrichie sans chocolat : la pâte d'amande 70% apporte gras + arôme, le mascarpone la tenue."
+   },
+   {
+    "nom": "Michalak — Chantilly Ivoire vanille",
+    "role": "aérien",
+    "type": "chantilly",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 250, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "pièce"},
+     {"nom": "Chocolat blanc 35%", "qte": 50, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir la crème avec la vanille grattée (option : 1/4 fève tonka), infuser.",
+     "Verser chaud au chinois sur le chocolat haché, mixer au plongeant.",
+     "Filmer au contact, une nuit au froid, monter au fouet."
+    ],
+    "note": "Construction ganache montée très faiblement chocolatée (20% choc/crème) que Michalak classe en chantilly. Fève tonka facultative non quantifiée."
+   },
+   {
+    "nom": "Michalak — Chantilly Ivoire citron",
+    "role": "aérien",
+    "type": "chantilly",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 250, "unite": "g"},
+     {"nom": "Chocolat blanc 35%", "qte": 75, "unite": "g"},
+     {"nom": "Zeste de citron jaune", "qte": 2, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir la crème ; verser sur chocolat haché + zeste, mixer.",
+     "Filmer au contact, une nuit au froid, monter au fouet."
+    ],
+    "note": "Zeste « de 1 citron » sur la fiche : estimé 2 g pour l'ADN. Ratio chocolat relevé (30%) vs vanille."
+   },
+   {
+    "nom": "Michalak — Chantilly Ivoire thé jasmin",
+    "role": "aérien",
+    "type": "chantilly",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 350, "unite": "g"},
+     {"nom": "Thé au jasmin", "qte": 15, "unite": "g"},
+     {"nom": "Chocolat blanc 35%", "qte": 45, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir la crème, infuser le thé 3 min à couvert hors du feu.",
+     "Chinoiser sur le chocolat haché, mixer.",
+     "Filmer au contact, une nuit au froid, monter au fouet."
+    ],
+    "note": "Dosage d'infusion très soutenu : 4,3% de thé sur la crème (vs ~1,2% en plafond générateur) — infusion courte (3 min) en contrepartie."
+   },
+   {
+    "nom": "Michalak — Chantilly Ivoire pistache",
+    "role": "aérien",
+    "type": "chantilly",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 250, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 1, "unite": "g"},
+     {"nom": "Chocolat blanc 35%", "qte": 75, "unite": "g"},
+     {"nom": "Pâte de pistache", "qte": 20, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir la crème avec la fleur de sel.",
+     "Verser sur chocolat haché + pâte de pistache, mixer.",
+     "Filmer au contact, une nuit au froid, monter au fouet."
+    ],
+    "note": "Double porteur d'arôme : chocolat blanc + pâte de pistache (8% de la crème)."
+   },
+   {
+    "nom": "Michalak — Chantilly marron",
+    "role": "aérien",
+    "type": "chantilly",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 150, "unite": "g"},
+     {"nom": "Pâte de marron", "qte": 90, "unite": "g"},
+     {"nom": "Crème de marron", "qte": 45, "unite": "g"},
+     {"nom": "Purée de marron", "qte": 30, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir la crème.",
+     "La verser sur le trio pâte + crème + purée de marron, mixer au plongeant.",
+     "Filmer au contact, une nuit au froid, monter."
+    ],
+    "note": "Recette attribuée à Philippe Rigollot dans le livre. Le marron (52% de la masse) est à la fois porteur d'arôme, de sucre et de texture."
+   }
+  ]
+ },
+ {
+  "titre": "Michalak Masterbook — Les confits",
+  "source": "michalak",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Michalak — Confit citron",
+    "role": "insert",
+    "type": "confit",
+    "ingredients": [
+     {"nom": "Zestes de citron non traité", "qte": 30, "unite": "g"},
+     {"nom": "Jus de citron jaune", "qte": 150, "unite": "g"},
+     {"nom": "Eau", "qte": 100, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 100, "unite": "g"}
+    ],
+    "etapes": [
+     "Blanchir trois fois les zestes (levés à l'économe) à l'eau bouillante.",
+     "Cuire les zestes à feu doux dans le sirop jus + eau + sucre jusqu'à translucidité.",
+     "Mixer au plongeant, refroidir filmé au contact, une nuit au froid."
+    ],
+    "note": "Recette attribuée à Philippe Conticini. « Zestes de 2 citrons » : estimé 30 g. Confit de zestes SANS pectine — la tenue vient de la réduction et des pectines naturelles du zeste."
+   },
+   {
+    "nom": "Michalak — Confit orange",
+    "role": "insert",
+    "type": "confit",
+    "ingredients": [
+     {"nom": "Zestes d'orange", "qte": 20, "unite": "g"},
+     {"nom": "Jus d'orange", "qte": 55, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 35, "unite": "g"}
+    ],
+    "etapes": [
+     "Blanchir trois fois les zestes.",
+     "Cuire à feu doux dans jus + sucre jusqu'à translucidité, mixer, refroidir filmé."
+    ],
+    "note": "Déclinaison du confit citron Conticini. « Zestes de 1 orange » : estimé 20 g. Sans pectine."
+   },
+   {
+    "nom": "Michalak — Confit dulcey",
+    "role": "insert",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     {"nom": "Lait concentré non sucré", "qte": 50, "unite": "g"},
+     {"nom": "Sirop de glucose", "qte": 10, "unite": "g"},
+     {"nom": "Chocolat blond Dulcey 32%", "qte": 85, "unite": "g"},
+     {"nom": "Beurre", "qte": 10, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 2, "unite": "g"}
+    ],
+    "etapes": [
+     "Chauffer lait concentré + glucose.",
+     "Verser bouillant sur le chocolat haché.",
+     "Émulsionner au fouet avec beurre et sel, refroidir."
+    ],
+    "note": "Classé « confit » par Michalak (recette École Valrhona) mais constructionnellement une ganache émulsionnée au lait concentré — typée ainsi pour ne pas fausser le corpus confit (fruit + pectine) du générateur."
+   },
+   {
+    "nom": "Michalak — Confit framboise",
+    "role": "insert",
+    "type": "confit",
+    "ingredients": [
+     {"nom": "Purée de framboise", "qte": 200, "unite": "g"},
+     {"nom": "Sirop de glucose", "qte": 20, "unite": "g"},
+     {"nom": "Pectine NH", "qte": 2, "unite": "g"}
+    ],
+    "etapes": [
+     "Réunir purée, glucose et pectine à froid, bien mélanger.",
+     "Porter à ébullition, mixer, refroidir filmé au contact."
+    ],
+    "note": "Modèle canonique du confit générateur : pectine NH à 0,9% de la masse, glucose 9%."
+   },
+   {
+    "nom": "Michalak — Confit abricot",
+    "role": "insert",
+    "type": "confit",
+    "ingredients": [
+     {"nom": "Purée d'abricot", "qte": 200, "unite": "g"},
+     {"nom": "Sirop de glucose", "qte": 20, "unite": "g"},
+     {"nom": "Pectine NH", "qte": 2, "unite": "g"}
+    ],
+    "etapes": [
+     "Mélanger purée, glucose et pectine, porter à ébullition, mixer, refroidir filmé."
+    ],
+    "note": "Déclinaison du confit framboise, mêmes proportions."
+   },
+   {
+    "nom": "Michalak — Confit fraise",
+    "role": "insert",
+    "type": "confit",
+    "ingredients": [
+     {"nom": "Purée de fraise", "qte": 200, "unite": "g"},
+     {"nom": "Sirop de glucose", "qte": 20, "unite": "g"},
+     {"nom": "Pectine NH", "qte": 2, "unite": "g"}
+    ],
+    "etapes": [
+     "Mélanger purée, glucose et pectine, porter à ébullition, mixer, refroidir filmé."
+    ],
+    "note": "Déclinaison du confit framboise, mêmes proportions."
+   },
+   {
+    "nom": "Michalak — Confit fraise avec morceaux",
+    "role": "insert",
+    "type": "confit",
+    "ingredients": [
+     {"nom": "Fraises fraîches", "qte": 100, "unite": "g"},
+     {"nom": "Purée de fraise", "qte": 200, "unite": "g"},
+     {"nom": "Sirop de glucose", "qte": 20, "unite": "g"},
+     {"nom": "Pectine NH", "qte": 2, "unite": "g"}
+    ],
+    "etapes": [
+     "Cuire le confit (purée + glucose + pectine portés à ébullition).",
+     "Après refroidissement, lier les cubes de fraise fraîche dans le confit, réserver filmé."
+    ],
+    "note": "Variante texturée : les morceaux crus sont ajoutés APRÈS cuisson — le confit sert de liant."
+   },
+   {
+    "nom": "Michalak — Confit praliné",
+    "role": "insert",
+    "type": "praliné",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 85, "unite": "g"},
+     {"nom": "Gélatine en feuille", "qte": 2, "unite": "g"},
+     {"nom": "Praliné noisette", "qte": 130, "unite": "g"}
+    ],
+    "etapes": [
+     "Hydrater la gélatine ; bouillir 50 g de crème et y dissoudre la gélatine essorée.",
+     "Verser sur le praliné, détendre avec le reste de crème froide, mixer, réserver au froid."
+    ],
+    "note": "Classé « confit » par Michalak (recette École Valrhona) : praliné coulant gélifié (60% praliné). Typé praliné pour la cohérence du corpus. Gélatine feuille sèche — convention Michalak, pas de masse 1:6."
+   }
+  ]
+ },
+ {
+  "titre": "Michalak Masterbook — Les compotées",
+  "source": "michalak",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Michalak — Compotée pruneau framboise banyuls",
+    "role": "insert",
+    "type": "compotée",
+    "ingredients": [
+     {"nom": "Pomme golden", "qte": 60, "unite": "g"},
+     {"nom": "Pruneaux dénoyautés", "qte": 60, "unite": "g"},
+     {"nom": "Banyuls (vin doux)", "qte": 60, "unite": "g"},
+     {"nom": "Framboises", "qte": 80, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir le banyuls, y plonger pruneaux, framboises et pomme en morceaux.",
+     "Compoter 20 min à feu doux puis mixer au plongeant."
+    ],
+    "note": "Compotée au vin doux, sans sucre ajouté ni pectine — la pomme et les pruneaux structurent."
+   },
+   {
+    "nom": "Michalak — Compotée pomme poire vanille",
+    "role": "insert",
+    "type": "compotée",
+    "ingredients": [
+     {"nom": "Pommes reine des reinettes", "qte": 325, "unite": "g"},
+     {"nom": "Poires conférence", "qte": 150, "unite": "g"},
+     {"nom": "Eau", "qte": 30, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 85, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "pièce"}
+    ],
+    "etapes": [
+     "Cuire eau + sucre + vanille grattée à 113°C.",
+     "Ajouter pommes et poires en morceaux, compoter 20 min à l'étouffée.",
+     "Retirer la vanille, mixer au plongeant."
+    ],
+    "note": "Sirop mené à 113°C avant l'ajout des fruits : concentration sucre maîtrisée."
+   },
+   {
+    "nom": "Michalak — Compotée fruits rouges",
+    "role": "insert",
+    "type": "compotée",
+    "ingredients": [
+     {"nom": "Purée de fraise", "qte": 200, "unite": "g"},
+     {"nom": "Purée de framboise", "qte": 125, "unite": "g"},
+     {"nom": "Purée de myrtille", "qte": 50, "unite": "g"},
+     {"nom": "Purée de cassis", "qte": 80, "unite": "g"}
+    ],
+    "etapes": [
+     "Chauffer les quatre purées ensemble jusqu'à réduction de moitié."
+    ],
+    "note": "Compotée par pure réduction (−50% de masse) : ni sucre ajouté, ni gélifiant. Profil final concentré ×2."
+   },
+   {
+    "nom": "Michalak — Compotée fraise ou framboise",
+    "role": "insert",
+    "type": "compotée",
+    "ingredients": [
+     {"nom": "Fraises fraîches", "qte": 250, "unite": "g"},
+     {"nom": "Purée de fraise", "qte": 75, "unite": "g"},
+     {"nom": "Zeste de citron vert", "qte": 2, "unite": "g"},
+     {"nom": "Jus de citron vert", "qte": 10, "unite": "g"}
+    ],
+    "etapes": [
+     "Couper les fruits en morceaux, enrober de purée.",
+     "Assaisonner de zeste et jus de citron vert, mélanger délicatement."
+    ],
+    "note": "Compotée CRUE (sans cuisson) — fruits frais liés à la purée. Version framboise identique en substituant fruit et purée. Zeste « de 1 citron vert » estimé 2 g."
+   },
+   {
+    "nom": "Michalak — Compotée fruits exotiques",
+    "role": "insert",
+    "type": "compotée",
+    "ingredients": [
+     {"nom": "Mangue fraîche", "qte": 200, "unite": "g"},
+     {"nom": "Pulpe de fruit de la Passion", "qte": 20, "unite": "g"},
+     {"nom": "Purée de mangue", "qte": 70, "unite": "g"},
+     {"nom": "Zeste de citron vert", "qte": 2, "unite": "g"}
+    ],
+    "etapes": [
+     "Couper le fruit principal en morceaux, ajouter purée de mangue et pulpe de Passion.",
+     "Assaisonner de zeste de citron vert, mélanger délicatement."
+    ],
+    "note": "Compotée crue. Fiche à fruits en pièces (« 1 mangue ou 1 ananas ou 2 bananes, 1 fruit de la Passion ») : mangue estimée 200 g de chair, Passion 20 g de pulpe, pour un ADN exploitable."
+   }
+  ]
+ },
+ {
+  "titre": "Michalak Masterbook — Les crèmes onctueuses",
+  "source": "michalak",
+  "format": "préparations",
+  "preps": [
+   {
+    "nom": "Michalak — Crème onctueuse café",
+    "role": "fondant",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Grains de café torréfiés", "qte": 20, "unite": "g"},
+     {"nom": "Gélatine en feuille", "qte": 2, "unite": "g"},
+     {"nom": "Crème liquide 35%", "qte": 70, "unite": "g"},
+     {"nom": "Lait entier", "qte": 60, "unite": "g"},
+     {"nom": "Jaune d'œuf", "qte": 20, "unite": "g"},
+     {"nom": "Sucre cassonade", "qte": 35, "unite": "g"},
+     {"nom": "Café soluble", "qte": 3, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 1, "unite": "g"},
+     {"nom": "Chocolat au lait 33%", "qte": 60, "unite": "g"},
+     {"nom": "Beurre", "qte": 40, "unite": "g"}
+    ],
+    "etapes": [
+     "Torréfier les grains 10 min à 170°C, concasser ; infuser 10 min dans crème + lait bouillis avec le café soluble et le sel.",
+     "Chinoiser, recompléter à 130 g de liquide, cuire à l'anglaise sur jaune blanchi à la cassonade (83°C).",
+     "Incorporer gélatine essorée et chocolat ; à 40°C, monter au beurre au mixeur plongeant. Une nuit au froid."
+    ],
+    "note": "Double café (grains torréfiés infusés + soluble). Anglaise 83°C + gélatine + beurre : crémeux canonique."
+   },
+   {
+    "nom": "Michalak — Crème onctueuse caramel",
+    "role": "fondant",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Sucre semoule", "qte": 50, "unite": "g"},
+     {"nom": "Gélatine en feuille", "qte": 1, "unite": "g"},
+     {"nom": "Lait entier", "qte": 140, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "pièce"},
+     {"nom": "Jaune d'œuf", "qte": 20, "unite": "g"},
+     {"nom": "Maïzena", "qte": 10, "unite": "g"},
+     {"nom": "Sel", "qte": 1, "unite": "g"},
+     {"nom": "Beurre", "qte": 80, "unite": "g"}
+    ],
+    "etapes": [
+     "Caramel à sec avec le sucre ; décuire au lait vanillé bouillant versé petit à petit.",
+     "Cuire façon pâtissière sur jaune + Maïzena (2 min d'ébullition).",
+     "Gélatine essorée hors du feu ; à 40°C, monter au beurre (36% de la base) au plongeant. Une nuit au froid."
+    ],
+    "note": "Hybride pâtissière/crémeux : liaison amidon + gélatine, très gros beurrage final."
+   },
+   {
+    "nom": "Michalak — Crème onctueuse chocolat",
+    "role": "fondant",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 85, "unite": "g"},
+     {"nom": "Lait entier", "qte": 85, "unite": "g"},
+     {"nom": "Jaunes d'œufs", "qte": 30, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 25, "unite": "g"},
+     {"nom": "Chocolat noir 66%", "qte": 55, "unite": "g"},
+     {"nom": "Chocolat noir 70%", "qte": 55, "unite": "g"}
+    ],
+    "etapes": [
+     "Anglaise crème + lait sur jaunes blanchis au sucre, menée à 85°C.",
+     "Verser chaud sur les chocolats hachés, fouetter puis mixer au plongeant. Une nuit au froid."
+    ],
+    "note": "Crémeux chocolat SANS gélatine ni beurre : la tenue vient des 110 g de chocolat noir (39% de la masse). Le livre propose en variante 110 g d'un seul chocolat 70%."
+   },
+   {
+    "nom": "Michalak — Crème onctueuse gianduja",
+    "role": "fondant",
+    "type": "ganache émulsionnée",
+    "ingredients": [
+     {"nom": "Chocolat noir 66%", "qte": 55, "unite": "g"},
+     {"nom": "Gianduja 32%", "qte": 95, "unite": "g"},
+     {"nom": "Crème liquide 35%", "qte": 160, "unite": "g"},
+     {"nom": "Miel", "qte": 15, "unite": "g"},
+     {"nom": "Beurre", "qte": 15, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 1, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir crème + miel, verser sur chocolat et gianduja hachés.",
+     "Fouetter, mixer ; à 40°C monter au beurre au plongeant, saler. Une nuit au froid."
+    ],
+    "note": "Classée « crème onctueuse » par Michalak mais SANS œufs ni cuisson anglaise : ganache émulsionnée au miel — typée ainsi pour la pureté du corpus crémeux."
+   },
+   {
+    "nom": "Michalak — Crème onctueuse Dulcey",
+    "role": "fondant",
+    "type": "namelaka",
+    "ingredients": [
+     {"nom": "Chocolat blond Dulcey 32%", "qte": 145, "unite": "g"},
+     {"nom": "Gélatine en feuille", "qte": 2, "unite": "g"},
+     {"nom": "Lait entier", "qte": 40, "unite": "g"},
+     {"nom": "Crème liquide 35%", "qte": 160, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 1, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir lait + crème + sel, dissoudre la gélatine essorée hors du feu.",
+     "Verser sur le chocolat haché, fouetter puis mixer. Une nuit au froid filmé."
+    ],
+    "note": "Construction namelaka (lait + gélatine + chocolat + crème, sans œufs) — typée namelaka plutôt que crémeux pour la justesse du corpus. 42% de chocolat."
+   },
+   {
+    "nom": "Michalak — Crème onctueuse vanille",
+    "role": "fondant",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 180, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "pièce"},
+     {"nom": "Sucre cassonade", "qte": 20, "unite": "g"},
+     {"nom": "Pectine X58", "qte": 1, "unite": "g"},
+     {"nom": "Jaunes d'œufs", "qte": 40, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 1, "unite": "g"}
+    ],
+    "etapes": [
+     "Infuser vanille (et 1/2 tonka en option) dans la crème bouillie, une nuit.",
+     "Chinoiser, chauffer ; à 50°C incorporer sucre + pectine mélangés, porter à ébullition.",
+     "Hors du feu, ajouter jaunes et sel, mixer 2 min sans interruption. Une nuit au froid."
+    ],
+    "note": "Crémeux à la pectine X58 (thermoréversible, prise laitière) : les jaunes sont ajoutés HORS cuisson — c'est l'ébullition pectine qui structure, pas l'anglaise. Infusion longue une nuit."
+   },
+   {
+    "nom": "Michalak — Crème onctueuse pistache",
+    "role": "fondant",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Crème liquide 35%", "qte": 240, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 30, "unite": "g"},
+     {"nom": "Pectine X58", "qte": 1, "unite": "g"},
+     {"nom": "Jaunes d'œufs", "qte": 50, "unite": "g"},
+     {"nom": "Pâte de pistache", "qte": 17, "unite": "g"}
+    ],
+    "etapes": [
+     "Chauffer crème + pâte de pistache ; à 50°C incorporer sucre + pectine, porter à ébullition.",
+     "Hors du feu, ajouter jaunes (et fleur de sel), mixer 2 min. Une nuit au froid."
+    ],
+    "note": "Même construction pectine X58 que la version vanille. Fleur de sel citée dans la méthode mais non quantifiée sur la fiche."
+   },
+   {
+    "nom": "Michalak — Crème onctueuse yuzu",
+    "role": "fondant",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Jus de yuzu", "qte": 45, "unite": "g"},
+     {"nom": "Gélatine en feuille", "qte": 2, "unite": "g"},
+     {"nom": "Jus de citron jaune", "qte": 20, "unite": "g"},
+     {"nom": "Lait", "qte": 25, "unite": "g"},
+     {"nom": "Zeste de citron", "qte": 10, "unite": "g"},
+     {"nom": "Œufs entiers", "qte": 75, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 45, "unite": "g"},
+     {"nom": "Beurre de cacao", "qte": 15, "unite": "g"},
+     {"nom": "Fleur de sel", "qte": 1, "unite": "g"},
+     {"nom": "Beurre", "qte": 100, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir jus de yuzu + citron + lait + zeste.",
+     "Cuire à ébullition sur œufs blanchis au sucre ; hors du feu gélatine, beurre de cacao, sel.",
+     "À 40°C, monter au beurre (30% de la masse) au plongeant. Une nuit au froid."
+    ],
+    "note": "Architecture crémeux-citron (type lemon curd amélioré) : œufs entiers, double gélification gélatine + beurre de cacao, beurrage massif."
+   },
+   {
+    "nom": "Michalak — Crème onctueuse fruit de la Passion",
+    "role": "fondant",
+    "type": "crémeux",
+    "ingredients": [
+     {"nom": "Purée de fruit de la Passion", "qte": 80, "unite": "g"},
+     {"nom": "Gélatine en feuille", "qte": 1, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 50, "unite": "g"},
+     {"nom": "Œufs entiers", "qte": 100, "unite": "g"},
+     {"nom": "Beurre", "qte": 65, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir la purée ; cuire à ébullition sur œufs + sucre mélangés, sans cesser de remuer.",
+     "Gélatine essorée hors du feu ; à 40°C monter au beurre au plongeant. Une nuit au froid."
+    ],
+    "note": "Déclinaison du crémeux yuzu, simplifiée : purée en porteur unique, 22% de beurre."
+   },
+   {
+    "nom": "Michalak — Crème pâtissière",
+    "role": "base",
+    "type": "crème pâtissière",
+    "ingredients": [
+     {"nom": "Lait entier", "qte": 210, "unite": "g"},
+     {"nom": "Gousse de vanille", "qte": 1, "unite": "pièce"},
+     {"nom": "Jaunes d'œufs", "qte": 50, "unite": "g"},
+     {"nom": "Sucre semoule", "qte": 35, "unite": "g"},
+     {"nom": "Poudre à crème", "qte": 20, "unite": "g"},
+     {"nom": "Beurre", "qte": 20, "unite": "g"}
+    ],
+    "etapes": [
+     "Bouillir le lait vanillé ; détendre le mélange jaunes + sucre + poudre à crème avec 1/3 du lait.",
+     "Reverser et cuire 2 min à ébullition en remuant ; beurrer hors du feu, mixer. Une nuit au froid filmé."
+    ],
+    "note": "Pâtissière de référence du livre, ratio classique : 24% jaunes/lait, amidon 9,5%."
+   }
+  ]
+ }
+]

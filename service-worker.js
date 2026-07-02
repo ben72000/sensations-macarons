@@ -1,4 +1,4 @@
-const CACHE = 'sm-iphone-v186';
+const CACHE = 'sm-iphone-v187';
 const ASSETS = [
   './',
   './index.html',
@@ -18,6 +18,7 @@ const ASSETS = [
   './rd_pack_matt.json',
   './rd_pack_maja.json',
   './rd_pack_herme.json',
+  './rd_pack_michalak.json',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png',
