@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1152';
+const APP_VERSION = 'v1153';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -5224,7 +5224,7 @@ async function renderMaterials(){
   const recipes = await db.recipes.toArray();
   const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'—';
   const matCatById = id => (mats.find(m=>m.id===id)||{}).categorie||'denree';
-  const conso = await db.prodConsumption.toArray();
+  const conso = (await db.prodConsumption.toArray()).filter(c=>!c.annuleeInventaire); // neutralisées exclues (déjà rendues/réaffectées)
   // Historique des emballages prélevés par commande (table v17, peut être absente sur vieux schéma).
   let pkgConso = [];
   try{ pkgConso = await db.packagingConsumption.toArray(); }catch(e){ pkgConso = []; }
@@ -6094,7 +6094,7 @@ async function saveLotConfirm(){
 }
 async function delLot(id){
   // S1 : un lot consommé par une production ne peut pas être supprimé (traçabilité HACCP)
-  const conso = await db.prodConsumption.where('materialLotId').equals(id).toArray();
+  const conso = (await db.prodConsumption.where('materialLotId').equals(id).toArray()).filter(c=>!c.annuleeInventaire); // seules les consos ACTIVES bloquent (une ligne réaffectée ailleurs n'attache plus ce lot)
   if(conso.length){
     const prods = await db.productions.toArray();
     const lots = prods.filter(p=>conso.some(c=>c.productionId===p.id)).map(p=>p.lotProduction||('batch '+p.id));
@@ -8038,7 +8038,7 @@ function chronoFloatStart(){
 
 // Construit l'arborescence ascendante : lot → matières consommées → fournisseurs.
 async function prodTracaAscendante(prodId, nomLot){
-  const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  const conso = (await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[])).filter(c=>!c.annuleeInventaire);
   let html = `<div class="node lvl1">🧁 ${esc(nomLot)}</div>`;
   if(!conso.length){
     html += `<div class="node lvl2" style="color:#9a8a82">Aucune matière première tracée pour ce lot</div>`;
@@ -8198,7 +8198,7 @@ async function renderProductions(){
   const _matById = {}; _allMats.forEach(m=>_matById[m.id]=m);
   const _matNameP = id => (_matById[id]||{}).nom || '(matière supprimée)';
   const _matUnitP = id => (_matById[id]||{}).unite || '';
-  const _consoAll = await db.prodConsumption.toArray();
+  const _consoAll = (await db.prodConsumption.toArray()).filter(c=>!c.annuleeInventaire); // affichage : consommations réelles uniquement
   const _consoByProd = new Map();
   _consoAll.forEach(c=>{
     const mid = c.snapMaterialId!=null ? c.snapMaterialId : (c.materialId!=null?c.materialId:null);
@@ -11911,8 +11911,11 @@ async function prodAnnulerLancement(id){
   }
   const recap = [];
   const conso = await db.prodConsumption.where('productionId').equals(id).toArray().catch(()=>[]);
+  // Mouvements de stock sur les lignes ACTIVES seulement : une ligne neutralisée
+  // (annuleeInventaire) a déjà été rendue ou réaffectée — la recréditer serait un double crédit.
+  const consoActives = conso.filter(c=>!c.annuleeInventaire);
   const liens = await db.orderItems.where('productionId').equals(id).toArray().catch(()=>[]);
-  if(conso.length) recap.push(`${conso.length} ligne(s) de matière recréditée(s)`);
+  if(consoActives.length) recap.push(`${consoActives.length} ligne(s) de matière recréditée(s)`);
   if(liens.length) recap.push(`${liens.length} rattachement(s) commande détaché(s)`);
   if(prod.atelierTaskId!=null) recap.push('chrono d\'atelier retiré');
   const nom = prod.lotProduction || ('#'+id);
@@ -11924,8 +11927,8 @@ async function prodAnnulerLancement(id){
   const snap = { prod:{...prod}, conso:conso.map(c=>({...c})), liens:liens.map(l=>({...l})), chrono:null };
 
   await db.transaction('rw', db.productions, db.prodConsumption, db.materialLots, db.orderItems, async()=>{
-    // 1. recrédit systématique des lots matière
-    for(const c of conso){
+    // 1. recrédit systématique des lots matière (actives seulement)
+    for(const c of consoActives){
       const lot = await db.materialLots.get(c.materialLotId);
       if(lot){ await db.materialLots.update(lot.id, { qteRestante: addQty(lot.qteRestante, c.qteConsommee) }); }
     }
@@ -11949,8 +11952,8 @@ async function prodAnnulerLancement(id){
     await db.transaction('rw', db.productions, db.prodConsumption, db.materialLots, db.orderItems, async()=>{
       if(snap.prod) await db.productions.put(snap.prod);
       for(const c of snap.conso){ await db.prodConsumption.put(c); }
-      // réannule le recrédit matières
-      for(const c of snap.conso){ const lot = await db.materialLots.get(c.materialLotId);
+      // réannule le recrédit matières (actives seulement, symétrie stricte)
+      for(const c of snap.conso.filter(x=>!x.annuleeInventaire)){ const lot = await db.materialLots.get(c.materialLotId);
         if(lot){ await db.materialLots.update(lot.id, { qteRestante: subQty(lot.qteRestante, c.qteConsommee) }); } }
       // rerelie les commandes
       for(const l of snap.liens){ await db.orderItems.update(l.id, { productionId: id }); }
@@ -12008,6 +12011,7 @@ async function doDelProd(id, mode){
   await db.transaction('rw',db.productions,db.prodConsumption,db.materialLots,db.losses,async()=>{
     if(mode==='recrediter'){
       for(const c of conso){
+        if(c.annuleeInventaire) continue; // déjà rendue/réaffectée : ne jamais recréditer deux fois
         const lot = await db.materialLots.get(c.materialLotId);
         if(lot){ await db.materialLots.update(lot.id, { qteRestante: addQty(lot.qteRestante, c.qteConsommee) }); }
       }
@@ -12036,7 +12040,7 @@ async function doDelProd(id, mode){
       for(const c of snap.conso){ await db.prodConsumption.put(c); }
       // annule le recrédit matières effectué
       if(snap.mode==='recrediter'){
-        for(const c of snap.conso){ const lot=await db.materialLots.get(c.materialLotId);
+        for(const c of snap.conso.filter(x=>!x.annuleeInventaire)){ const lot=await db.materialLots.get(c.materialLotId);
           if(lot){ await db.materialLots.update(lot.id, {qteRestante: subQty(lot.qteRestante, c.qteConsommee)}); } }
       }
       // retire la perte créée par la suppression
@@ -12209,7 +12213,7 @@ async function renderCostAudit(){
 async function renderCosts(){
   const [lots, mats, recipes, recipeItems, productions, conso, orders] = await Promise.all([
     db.materialLots.toArray(), db.materials.toArray(), db.recipes.toArray(),
-    db.recipeItems.toArray(), db.productions.toArray(), db.prodConsumption.toArray(), db.orders.toArray()
+    db.recipeItems.toArray(), db.productions.toArray(), db.prodConsumption.toArray().then(a=>a.filter(c=>!c.annuleeInventaire)), db.orders.toArray()
   ]);
   const matName = id => (mats.find(m=>m.id===id)||{}).nom||'—';
   const matUnit = id => (mats.find(m=>m.id===id)||{}).unite||'';
@@ -12490,7 +12494,7 @@ async function traceLot(lotId){
   const mat = await db.materials.get(lot.materialId);
   const sup = lot.supplierId ? await db.suppliers.get(lot.supplierId) : null;
   _tracePush('lot', lotId, mat?mat.nom:'Lot matiere');
-  const conso = await db.prodConsumption.where('materialLotId').equals(lotId).toArray();
+  const conso = (await db.prodConsumption.where('materialLotId').equals(lotId).toArray()).filter(c=>!c.annuleeInventaire);
   const orders = await db.orders.toArray();
   const clients = await db.clients.toArray();
   const recipes = await db.recipes.toArray();
@@ -12800,7 +12804,7 @@ async function flashAlert(lotNum){
   lotNum=(lotNum||'').trim();
   if(!lotNum){ toast('Aucun lot indiqué'); return; }
   const [lots, conso, prods, oitems, orders, clients, recipes, mats, sups] = await Promise.all([
-    db.materialLots.toArray(), db.prodConsumption.toArray(), db.productions.toArray(),
+    db.materialLots.toArray(), db.prodConsumption.toArray().then(a=>a.filter(c=>!c.annuleeInventaire)), db.productions.toArray(),
     db.orderItems.toArray(), db.orders.toArray(), db.clients.toArray(),
     db.recipes.toArray(), db.materials.toArray(), db.suppliers.toArray()
   ]);
@@ -12865,7 +12869,7 @@ async function flashAlert(lotNum){
 // Export texte du rapport d'alerte (réutilise l'agrégation), pour communication/retrait.
 async function exportFlashAlert(lotNum){
   const [lots, conso, prods, oitems, orders, clients, recipes, mats] = await Promise.all([
-    db.materialLots.toArray(), db.prodConsumption.toArray(), db.productions.toArray(),
+    db.materialLots.toArray(), db.prodConsumption.toArray().then(a=>a.filter(c=>!c.annuleeInventaire)), db.productions.toArray(),
     db.orderItems.toArray(), db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(), db.materials.toArray()
   ]);
   const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'—';
@@ -13154,7 +13158,7 @@ async function traceOrder(orderId){
     const prod = it.productionId!=null ? await db.productions.get(it.productionId).catch(()=>null) : null;
     if(!prod){ blocks.push(`<div class="trace-step">Production supprimée</div>`); continue; }
     const recipe = prod.recipeId!=null ? await db.recipes.get(prod.recipeId).catch(()=>null) : null;
-    const conso = await db.prodConsumption.where('productionId').equals(prod.id).toArray().catch(()=>[]);
+    const conso = (await db.prodConsumption.where('productionId').equals(prod.id).toArray().catch(()=>[])).filter(c=>!c.annuleeInventaire);
     const sub=[];
     for(const c of conso){
       const lot = c.materialLotId!=null ? await db.materialLots.get(c.materialLotId).catch(()=>null) : null;
@@ -36063,7 +36067,7 @@ async function consoFixBesoin(prodId, materialId){
 
 // Quantité DÉJÀ consommée de cette matière par ce lot (pour ne pas double-compter).
 async function consoFixDejaConsomme(prodId, materialId){
-  const conso = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
+  const conso = (await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[])).filter(c=>!c.annuleeInventaire);
   let total = 0;
   for(const c of conso){
     let matId = c.snapMaterialId;
@@ -36792,7 +36796,7 @@ function csvDownload(name, rows){
 async function exportTraceProd(prodId){
   const prod=await db.productions.get(prodId);
   const recipe=await db.recipes.get(prod.recipeId);
-  const conso=await db.prodConsumption.where('productionId').equals(prodId).toArray();
+  const conso=(await db.prodConsumption.where('productionId').equals(prodId).toArray()).filter(c=>!c.annuleeInventaire);
   const rows=[['Produit','Lot production','Date','Matière','Lot fournisseur','Fournisseur','DLC']];
   for(const c of conso){
     const lot=await db.materialLots.get(c.materialLotId); if(!lot)continue;
@@ -36810,7 +36814,7 @@ async function exportTraceOrder(orderId){
   for(const it of items){
     const prod=await db.productions.get(it.productionId); if(!prod)continue;
     const recipe=await db.recipes.get(prod.recipeId);
-    const conso=await db.prodConsumption.where('productionId').equals(prod.id).toArray();
+    const conso=(await db.prodConsumption.where('productionId').equals(prod.id).toArray()).filter(c=>!c.annuleeInventaire);
     if(!conso.length) rows.push([client?client.nom:'',order.date,recipe?recipe.produitNom:'',prod.lotProduction,it.qte,'','','','']);
     for(const c of conso){
       const lot=await db.materialLots.get(c.materialLotId); if(!lot)continue;
