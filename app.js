@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1144';
+const APP_VERSION = 'v1145';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -37543,11 +37543,23 @@ async function cmdMailSelection(){
   }
   datas.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const sign = factGetSignature();
-  // Aperçu + champ signature avant ouverture du mail
+  // Politesse par défaut = réglage de la fiche client (vouvoiement si absent).
+  const tuDefaut = cl.politesse === 'tu';
+  // Appellation par défaut : prénom seul en tutoiement, nom complet en vouvoiement.
   openModal(`<h3>✉️ E-mail au client</h3>
     <p class="note">Destinataire : <b>${esc(cl.email)}</b> · ${datas.length} commande(s)</p>
+    <div class="field"><label>Formule de politesse</label>
+      <select id="mailPol" onchange="cmdMailSyncAppel()">
+        <option value="vous" ${!tuDefaut?'selected':''}>Vouvoiement</option>
+        <option value="tu" ${tuDefaut?'selected':''}>Tutoiement</option>
+      </select></div>
+    <div class="field"><label>Appellation dans le message</label>
+      <select id="mailAppel">
+        <option value="prenom" ${tuDefaut?'selected':''}>Prénom seul${cl.prenom?` (${esc(cl.prenom)})`:''}</option>
+        <option value="complet" ${!tuDefaut?'selected':''}>Nom complet${[cl.prenom,cl.nom].filter(Boolean).length?` (${esc([cl.prenom,cl.nom].filter(Boolean).join(' '))})`:''}</option>
+      </select></div>
     <div class="field"><label>Signature (ton nom)</label><input id="mailSign" value="${esc(sign)}" placeholder="ex : Benjamin"></div>
-    <p class="note">Objet : « Livraison du jour ». Le détail des commandes sélectionnées sera inclus en texte brut.</p>
+    <p class="note">Objet : « Livraison du jour ». Le choix de politesse sera mémorisé sur la fiche client.</p>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="cmdMailOpen(${cl.id})">Ouvrir ma boîte mail</button>
@@ -37556,14 +37568,29 @@ async function cmdMailSelection(){
   _mailDraft = {cl, datas};
 }
 let _mailDraft=null;
-function cmdMailOpen(clientId){
+// Synchronise l'appellation par défaut avec la politesse choisie, tant que l'utilisateur
+// n'a pas modifié l'appellation lui-même (heuristique douce : on aligne toujours au changement).
+function cmdMailSyncAppel(){
+  const pol=document.getElementById('mailPol'), app=document.getElementById('mailAppel');
+  if(!pol||!app) return;
+  app.value = (pol.value==='tu') ? 'prenom' : 'complet';
+}
+async function cmdMailOpen(clientId){
   if(!_mailDraft){ closeModal(); return; }
   const {cl, datas}=_mailDraft;
   const sign=(val('mailSign')||'').trim(); factSaveSignature(sign);
-  // Salutation : Bonjour [Prénom] [Nom si présent]
-  const nomComplet=[cl.prenom, cl.nom].filter(Boolean).join(' ') || cl.nom || '';
-  const salut = `Bonjour ${nomComplet}`.trim();
-  // Détail des commandes en texte brut
+  const tu = (val('mailPol')||'vous') === 'tu';
+  const appel = (val('mailAppel')||'prenom');
+  // Persiste le choix de politesse sur la fiche client (mémorisation demandée).
+  const polChoisie = tu ? 'tu' : 'vous';
+  if(cl.politesse !== polChoisie){ try{ await db.clients.update(cl.id, {politesse:polChoisie}); }catch(e){} }
+  // Appellation : prénom seul OU nom complet.
+  const prenom = cl.prenom || '';
+  const nomComplet = [cl.prenom, cl.nom].filter(Boolean).join(' ') || cl.nom || '';
+  const appellation = (appel==='prenom' && prenom) ? prenom : nomComplet;
+  const salut = `Bonjour ${appellation}`.trim();
+  const nb = datas.length;
+  // Détail des commandes en texte brut (inchangé).
   const blocs = datas.map(d=>{
     const L=[];
     L.push(`Commande n°${d.numero} — ${d.dateFmt}`);
@@ -37574,11 +37601,14 @@ function cmdMailOpen(clientId){
     L.push(`  Total : ${euro(d.montant)}`);
     return L.join('\n');
   }).join('\n\n');
-  const corps = `${salut},\n\nVoici le détail de votre commande :\n\n${blocs}\n\nMerci et à bientôt.\n${sign||''}\n— Sensations Macarons`;
+  // Phrase d'intro conjuguée + accord singulier/pluriel selon le nombre de commandes.
+  const intro = tu
+    ? (nb>1 ? 'Voici le détail de tes commandes :' : 'Voici le détail de ta commande :')
+    : (nb>1 ? 'Voici le détail de vos commandes :' : 'Voici le détail de votre commande :');
+  const corps = `${salut},\n\n${intro}\n\n${blocs}\n\nMerci et à bientôt.\n${sign||''}\n— Sensations Macarons`;
   const objet = 'Livraison du jour';
   const mailto = `mailto:${encodeURIComponent(cl.email)}?subject=${encodeURIComponent(objet)}&body=${encodeURIComponent(corps)}`;
   closeModal();
-  // Ouvre la boîte mail
   window.location.href = mailto;
   _mailDraft=null;
 }
