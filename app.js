@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1158';
+const APP_VERSION = 'v1159';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -14032,6 +14032,60 @@ function statusTag(st){
 //    comme les autres (ils apparaissent déjà dans la fenêtre « Lier des batchs »).
 //  - Si la couverture est incomplète → on OUVRE « Lier des batchs » pour compléter.
 // Retourne true si la livraison est autorisée (couverture complète), false sinon.
+/* RDTRACE:PURE:BEGIN */
+// [TRAÇABILITÉ LIVRAISON] Imputation PURE des lots liés aux besoins par parfum.
+// Corrige deux défauts historiques qui faisaient croire à une PERTE des liaisons :
+//  1. les lots LIBRES (reprise/découverte) comptaient pour zéro (nom lu uniquement via la
+//     recette, jamais via produitLibre) → blocage « 0/xx » partout alors que tout était lié ;
+//  2. l'imputation gloutonne envoyait TOUT un lot sur le premier parfum qui matchait par
+//     inclusion (« Chocolat » absorbait le lot « Chocolat framboise ») → faux manques.
+// Désormais : nom du lot = produitLibre si libre, sinon nom de recette (aligné sur le scan
+// et prodNomComplet) ; répartition en DEUX PASSES (correspondance exacte d'abord, inclusion
+// ensuite) avec PLAFOND au besoin restant. Fonction pure (zéro DB/DOM) → testable en Node.
+function _traceImputeLots(needs, links, prodsById, recById){
+  const recName = id => (recById[id]||{}).produitNom||'';
+  const prodNom = p => p.libre ? (p.produitLibre||'') : recName(p.recipeId);
+  const flavorsNeeded = Object.keys(needs).filter(f=>needs[f]>0);
+  const gfOk = (needKey, p) => isGFKey(needKey) === !!(recById[p.recipeId] && recById[p.recipeId].grandFormat);
+  const matchExact = (k,p) => gfOk(k,p) && normTxt(gfBase(k))===normTxt(prodNom(p));
+  const matchLarge = (k,p) => gfOk(k,p) && pickFlavorMatch(gfBase(k), prodNom(p));
+  const couvert={}; flavorsNeeded.forEach(f=>couvert[f]=0);
+  const restes=[]; const recap=[];
+  for(const lk of links){
+    const p = prodsById[lk.productionId];
+    if(!p) continue;
+    restes.push({qte:round3(+lk.qte||0), p});
+    recap.push({nom:prodNom(p)||'(sans nom)', lot:p.lotProduction||('#'+p.id), qte:round3(+lk.qte||0)});
+  }
+  for(const match of [matchExact, matchLarge]){
+    for(const r of restes){
+      for(const f of flavorsNeeded){
+        if(r.qte<=0) break;
+        const m = round3(needs[f]-couvert[f]);
+        if(m<=0 || !match(f, r.p)) continue;
+        const take = Math.min(r.qte, m);
+        couvert[f] = round3(couvert[f]+take);
+        r.qte = round3(r.qte-take);
+      }
+    }
+  }
+  const nonImpute = round3(restes.reduce((s2,r)=>s2+r.qte,0));
+  const manques = flavorsNeeded
+    .filter(f => round3(couvert[f]) + 1e-9 < round3(needs[f]))
+    .map(f => ({flavor:f, manque:round3(needs[f]-couvert[f]), besoin:round3(needs[f]), lie:round3(couvert[f])}));
+  return {couvert, manques, recap, nonImpute};
+}
+// Récapitulatif HTML des lots déjà liés : affiché dans les modals de blocage pour que
+// l'utilisateur voie que RIEN n'est perdu (et ne refasse pas la liaison = double décompte).
+function _traceRecapHtml(recap){
+  if(!recap || !recap.length) return '';
+  return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px;margin-top:10px">
+    <span style="font-size:.74rem;color:#7a6a62;text-transform:uppercase;font-weight:600">Lots déjà liés — rien n'est perdu</span>
+    ${recap.map(r=>`<div style="display:flex;justify-content:space-between;font-size:.84rem"><span>${esc(r.nom)} <span style="color:#9a8a82">· ${esc(r.lot)}</span></span><b>× ${qty(r.qte)}</b></div>`).join('')}
+    <p class="note" style="margin:4px 0 0">⚠ Ces lots restent réservés à cette commande : ne les relie PAS une seconde fois, complète uniquement ce qui manque.</p>
+  </div>`;
+}
+/* RDTRACE:PURE:END */
 async function ensureOrderDecremented(orderId){
   const o = await db.orders.get(orderId);
   if(!o) return false;
@@ -14063,8 +14117,15 @@ async function ensureOrderDecremented(orderId){
     const links0 = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
     const lieTotal = links0.reduce((s,e)=>s+(+e.qte||0),0);
     if(round3(lieTotal) + 1e-9 >= round3(totMac)) return true;   // couverture globale suffisante
+    // Récapitulatif transparent des lots déjà liés (évite de croire que tout est perdu).
+    const _rec0 = await db.recipes.toArray().catch(()=>[]);
+    const _recById0 = {}; _rec0.forEach(r=>{ _recById0[r.id]=r; });
+    const _prodsById0 = {};
+    for(const lk of links0){ if(!(lk.productionId in _prodsById0)) _prodsById0[lk.productionId] = await db.productions.get(lk.productionId).catch(()=>null); }
+    const _recap0 = _traceImputeLots({}, links0, _prodsById0, _recById0).recap;
     openModal(`<h3 style="color:#b3261e">⛔ Traçabilité incomplète</h3>
       <p style="margin-top:8px">Cette commande contient <b>${qty(totMac)} macaron(s)</b> mais seulement <b>${qty(lieTotal)}</b> sont reliés à des lots.</p>
+      ${_traceRecapHtml(_recap0)}
       <p class="note">Relie des batchs pour couvrir toute la commande (les lots de reprise sont sélectionnables ici).</p>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeModal()">Annuler</button>
@@ -14075,39 +14136,27 @@ async function ensureOrderDecremented(orderId){
 
   const recipes = await db.recipes.toArray();
   const recById = {}; recipes.forEach(r=>{ recById[r.id]=r; });
-  const recName = id => (recById[id]||{}).produitNom||'';
-
-  // Impute chaque lot lié au besoin de parfum correspondant (même règle que le picking :
-  // parfum qui correspond ET même type petit/grand format).
-  const matchNeed = (needKey, prod) => {
-    const wantGF = isGFKey(needKey);
-    const isGF = !!(recById[prod.recipeId] && recById[prod.recipeId].grandFormat);
-    if(wantGF !== isGF) return false;
-    return pickFlavorMatch(gfBase(needKey), recName(prod.recipeId));
-  };
 
   const links = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
-  const couvert = {}; flavorsNeeded.forEach(f=>couvert[f]=0);
+  const prodsById = {};
   for(const lk of links){
-    const prod = await db.productions.get(lk.productionId).catch(()=>null);
-    if(!prod) continue;
-    // on impute au premier parfum-besoin qui correspond
-    const f = flavorsNeeded.find(k=>matchNeed(k, prod));
-    if(f) couvert[f] = round3(couvert[f] + (+lk.qte||0));
+    if(!(lk.productionId in prodsById)) prodsById[lk.productionId] = await db.productions.get(lk.productionId).catch(()=>null);
   }
-
-  // Manques = parfums dont la couverture liée n'atteint pas le besoin.
-  const dispName = k => isGFKey(k) ? (gfBase(k)+' (grand format)') : k;
-  const manques = flavorsNeeded
-    .filter(f => round3(couvert[f]) + 1e-9 < round3(needs[f]))
-    .map(f => ({flavor:dispName(f), manque:round3(needs[f]-couvert[f]), besoin:round3(needs[f]), lie:round3(couvert[f])}));
+  // Imputation par la fonction PURE (lots libres reconnus, répartition exacte puis inclusive,
+  // plafond au besoin). Voir _traceImputeLots pour le détail des corrections.
+  const {manques, recap, nonImpute} = _traceImputeLots(needs, links, prodsById, recById);
 
   if(manques.length){
-    // Couverture incomplète → on ouvre directement « Lier des batchs » pour compléter.
-    const detail = manques.map(m=>`${esc(m.flavor)} : ${qty(m.lie)}/${qty(m.besoin)} (manque ${qty(m.manque)})`).join('<br>');
+    const dispName = k => isGFKey(k) ? (gfBase(k)+' (grand format)') : k;
+    const detail = manques.map(m=>`${esc(dispName(m.flavor))} : ${qty(m.lie)}/${qty(m.besoin)} (manque ${qty(m.manque)})`).join('<br>');
+    const avertNonImpute = nonImpute>0
+      ? `<p class="note" style="color:#b08a3a">ℹ️ ${qty(nonImpute)} macaron(s) déjà lié(s) n'ont pas pu être rattachés à un parfum de la commande (nom différent) — vérifie que les parfums saisis correspondent bien aux lots.</p>`
+      : '';
     openModal(`<h3 style="color:#b3261e">⛔ Traçabilité incomplète</h3>
       <p style="margin-top:8px">Avant de livrer, chaque parfum doit avoir ses lots reliés (la somme doit couvrir la quantité commandée) :</p>
       <p style="margin:8px 0;color:#b3261e;line-height:1.5">${detail}</p>
+      ${avertNonImpute}
+      ${_traceRecapHtml(recap)}
       <p class="note">Les lots de reprise (migration) sont sélectionnables ici comme les autres.</p>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeModal()">Annuler</button>
