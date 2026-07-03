@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1161';
+const APP_VERSION = 'v1162';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7049,10 +7049,10 @@ async function renderDocuments(){
   for(const f of docs){
     if(f.type==='facture' && (f.statut==='emise' || f.statut==='payee')){
       const oids=f.orderIds||(f.orderId?[f.orderId]:[]);
-      let encaisse=0, total=0, nbVivantes=0;
+      let encaisse=0, total=0, nbVivantes=0, lastD='', lastM='';
       for(const oid of oids){
         const o=await db.orders.get(oid).catch(()=>null);
-        if(o){ nbVivantes++; total+=(+o.montant||0); encaisse+=(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0); }
+        if(o){ nbVivantes++; total+=(+o.montant||0); (o.paiements||[]).forEach(p=>{ encaisse+=(+p.montant||0); if(p.date && p.date>=lastD){ lastD=p.date; lastM=p.moyen||''; } }); }
       }
       // [v1157] Garde-fou : commandes liées SUPPRIMÉES (purge d'historique) → la facture est
       // le dernier témoin de l'encaissement. On ne resynchronise RIEN (ni statut, ni règlement),
@@ -7063,17 +7063,10 @@ async function renderDocuments(){
       const cible = payee ? 'payee' : 'emise';
       const patch = {};
       if(cible!==f.statut) patch.statut = cible;
-      if(encaisse!==money2(+f.totalPaye||0)){
-        patch.totalPaye = encaisse;
-        if(f.html){
-          const reste = Math.max(0, money2((+f.montant||0) - encaisse));
-          patch.html = f.html.replace(
-            /<div class="lg"><span>Déjà réglé<\/span><span>[\s\S]*?<\/div><div class="lg"><span><b>Reste à payer<\/b><\/span><span><b>[\s\S]*?<\/div>/,
-            encaisse>0
-              ? `<div class="lg"><span>Déjà réglé</span><span>−${euro(encaisse)}</span></div><div class="lg"><span><b>Reste à payer</b></span><span><b>${euro(reste)}</b></span></div>`
-              : ''
-          );
-        }
+      if(encaisse!==money2(+f.totalPaye||0)) patch.totalPaye = encaisse;
+      if(f.html){
+        const newHtml = _factPatchRegl(f.html, (+f.montant||0), encaisse, lastD, lastM);
+        if(newHtml!==f.html) patch.html = newHtml;
       }
       if(Object.keys(patch).length){
         await db.documents.update(f.id, patch);
@@ -7559,6 +7552,13 @@ async function docMarkPaidConfirm(id, fromList){
   const r2 = await _factReglement(await db.documents.get(id));
   const nouveauStatut = (r2.total>0 && r2.reste<=0.009) ? 'payee' : 'emise';
   if(nouveauStatut!==d.statut && d.statut!=='brouillon'){ await db.documents.update(id, {statut:nouveauStatut}); }
+  // Réécrit le HTML légal mémorisé : lignes de règlement à jour + mention « FACTURE ACQUITTÉE »
+  // (reste 0 €) si soldée. Seul le suivi de règlement change, jamais le contenu légal figé.
+  const dNow = await db.documents.get(id);
+  if(dNow && dNow.html){
+    const patched = _factPatchRegl(dNow.html, r2.total, r2.paye, date, moyen);
+    if(patched!==dNow.html) await db.documents.update(id, {html:patched});
+  }
   if(typeof markUnsaved==='function') markUnsaved();
   closeModal();
   toast(r2.reste<=0.009 ? `Facture réglée ✓ (${euro(mt)} le ${fmtDate(date)})` : `Encaissement enregistré ✓ (reste ${euro(r2.reste)})`);
@@ -16418,7 +16418,7 @@ function factPersoBox(nbPerso, coul){
 }
 // Ligne de tableau « Personnalisation des couleurs » : n \u00d7 0,25 \u20ac = montant.
 // Renvoie '' si pas de macaron personnalisé. Sert au devis et aux factures.
-function factPersoLigne(nbPerso, remiseEur){
+function factPersoLigne(nbPerso, remiseEur, hideRemise){
   const n = Math.max(0, +nbPerso||0);
   if(n<=0) return '';
   const PU = (typeof PERSO_PRIX_UNIT!=='undefined') ? PERSO_PRIX_UNIT : 0.25;
@@ -16427,7 +16427,7 @@ function factPersoLigne(nbPerso, remiseEur){
   const desc = `<span class="ln-main">Personnalisation des couleurs</span>`
     + `<span class="ln-sub">${n} macaron${n>1?'s':''} \u00d7 ${euro(money2(PU))}</span>`;
   let out = `<tr><td class="desc">${desc}</td><td class="mt">${euro(brut)}</td></tr>`;
-  if(rem>0){
+  if(rem>0 && !hideRemise){
     const pct = brut>0 ? Math.max(0, Math.min(100, money2(rem/brut*100))) : 0;
     const sub = `<span class="ln-main" style="color:#3f7d52">Remise personnalisation${pct>0?` (\u2212${pct}%)`:''}</span>`;
     out += `<tr><td class="desc">${sub}</td><td class="mt" style="color:#3f7d52">\u2212${euro(rem)}</td></tr>`;
@@ -37755,6 +37755,7 @@ const FACT_STYLE = `   <style>
      .grand { margin-top:4mm; width:100%; }
      .grand .lg { display:flex; justify-content:space-between; padding:1mm 0; font-size:13px; }
      .grand .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:19px; color:#490F25; }
+     .acquit { margin-top:3mm; padding:2.5mm 4mm; background:#eaf6ea; border:1.4px solid #3f7d52; border-radius:2mm; color:#245a34; font-weight:700; font-size:12.5px; text-align:center; letter-spacing:.02em; }
      .tva { margin-top:5mm; font-size:11.5px; color:#6a5a52; font-style:italic; }
      .acompte-mention { margin-top:4mm; padding:2.5mm 4mm; background:#fbeede; border:1.2px solid #d98324; border-radius:2mm; color:#9a4a10; font-weight:600; font-size:12px; text-align:center; }
      .bas-doc { display:flex; justify-content:space-between; align-items:flex-start; gap:8mm; margin-top:5mm; }
@@ -37937,6 +37938,29 @@ function docRabaisTotal(lignes, persoNb, totalNetHorsLivraison){
   const rabais = money2(Math.max(0, brutAbsolu - money2(+totalNetHorsLivraison||0)));
   const pct = brutAbsolu>0 ? Math.round(rabais/brutAbsolu*1000)/10 : 0;
   return { brutAbsolu, rabais, pct };
+}
+// Bloc « règlement » d'une facture : lignes « Déjà réglé / Reste à payer » + mention ACQUITTÉE
+// (montant restant 0) quand la facture est intégralement soldée. Sert au rendu ET aux réécritures.
+function _factReglSlotHtml(total, paye, date, moyen){
+  const t=money2(+total||0), p=money2(+paye||0), reste=Math.max(0, money2(t-p));
+  let html = p>0 ? `<div class="lg"><span>Déjà réglé</span><span>\u2212${euro(p)}</span></div><div class="lg"><span><b>Reste à payer</b></span><span><b>${euro(reste)}</b></span></div>` : '';
+  if(t>0 && p>0 && reste<=0.009){
+    html += `<div class="acquit">\u2714 FACTURE ACQUITTÉE \u2014 Réglée${date?` le ${fmtDate(date)}`:''}${moyen?` par ${esc(moyen)}`:''}. Reste à payer : ${euro(0)}.</div>`;
+  }
+  return html;
+}
+// Réécrit le bloc règlement dans un HTML de facture déjà mémorisé (idempotent). Gère le format
+// récent (marqueurs <!--REGL-->) et l'ancien (insertion juste après « Total à payer »).
+function _factPatchRegl(html, total, paye, date, moyen){
+  if(!html) return html;
+  const slot = _factReglSlotHtml(total, paye, date, moyen);
+  if(html.indexOf('<!--REGL-->')!==-1){
+    return html.replace(/<!--REGL-->[\s\S]*?<!--\/REGL-->/, `<!--REGL-->${slot}<!--/REGL-->`);
+  }
+  let h = html.replace(/<div class="lg"><span>Déjà réglé<\/span>[\s\S]*?<div class="lg"><span><b>Reste à payer<\/b><\/span><span><b>[\s\S]*?<\/div>/, '');
+  h = h.replace(/<div class="acquit">[\s\S]*?<\/div>/g, '');
+  h = h.replace(/(<div class="lg total"><span>Total à payer<\/span><span>[\s\S]*?<\/div>)/, `$1<!--REGL-->${slot}<!--/REGL-->`);
+  return h;
 }
 function factLineRows(ln, brut){
   // brut=true : affiche le montant AVANT remise de ligne (utilisé par le devis, qui montre
@@ -38480,7 +38504,7 @@ async function genererFactureMultiple(ids){
   let client = null;
   if(clientIds.length===1 && clientIds[0]){ client = await db.clients.get(clientIds[0]); }
 
-  let grandTotal = 0, grandBrut = 0, grandNetHorsLiv = 0;
+  let grandTotal = 0, grandBrut = 0, grandNetHorsLiv = 0, grandBrutAbsolu = 0, grandRabais = 0, grandFrais = 0;
   // Construit une section par commande
   const sections = orders.map(o=>{
     const lignes = orderToLines(o);
@@ -38498,7 +38522,9 @@ async function genererFactureMultiple(ids){
     grandTotal += totalCmd;
     grandBrut += brutCmd;
     grandNetHorsLiv += money2(totalCmd - frais);
-    const rows = lignes.map(ln=>factLineRows(ln, false)).join('');   // false = prix NET par ligne (remise de ligne montrée sous la ligne)
+    const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais));   // rabais TOTAL (ligne+perso+global)
+    grandBrutAbsolu += R.brutAbsolu; grandRabais += R.rabais; grandFrais += frais;
+    const rows = lignes.map(ln=>factLineRows(ln, true)).join('');   // true = prix BRUT par ligne ; les réductions sont récapitulées sous le total (plus clair)
     return `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -38509,11 +38535,10 @@ async function genererFactureMultiple(ids){
         <table class="cmd-table">
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
-            ${factPersoLigne(o.persoMacarons, o.persoRemiseEur)}
-            ${reducCmd>0?`<tr class="sub"><td>Total avant réductions</td><td class="mt">${euro(brutCmd)}</td></tr><tr class="rem"><td>Réductions accordées${reducPct>0?` (−${reducPct}%)`:''}</td><td class="mt">−${euro(reducCmd)}</td></tr>`:''}
+            ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true)}
+            ${R.rabais>0?`<tr class="sub"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="rem" style="color:#3f7d52"><td>Réduction${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
             ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
             <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
-            ${(()=>{ const R=docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd-frais)); return R.rabais>0?`<tr class="rem" style="color:#3f7d52"><td>Rabais total consenti${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">\u2212${euro(R.rabais)}</td></tr>`:''; })()}
           </tbody>
         </table>
         ${factPersoBox(o.persoMacarons, o.persoCouleurs)}
@@ -38524,6 +38549,8 @@ async function genererFactureMultiple(ids){
   // Acomptes cumulés
   const totalPaye = orders.reduce((s,o)=>s+(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0),0);
   const reste = Math.max(0, Math.round((grandTotal-totalPaye)*100)/100);
+  let _lastPayDate='', _lastPayMoyen='';
+  orders.forEach(o=>(o.paiements||[]).forEach(p=>{ if(p.date && p.date>=_lastPayDate){ _lastPayDate=p.date; _lastPayMoyen=p.moyen||''; } }));
 
   const clientBloc = client
     ? `${esc([client.civilite,client.prenom,client.nom].filter(Boolean).join(' ')||client.nom||'')}${client.societe?'<br>'+esc(client.societe):''}${client.adresse?'<br>'+esc(client.adresse):''}${client.tel?'<br>Tél : '+esc(client.tel):''}${client.email?'<br>'+esc(client.email):''}`
@@ -38580,9 +38607,10 @@ async function genererFactureMultiple(ids){
        <div class="meta-rule"></div>
        ${sections}
        <div class="grand">
-         ${money2(grandBrut-grandNetHorsLiv)>0?(()=>{const r=money2(grandBrut-grandNetHorsLiv);const p=grandBrut>0?Math.round(r/grandBrut*1000)/10:0;return `<div class="lg brut"><span>Total avant réductions</span><span>${euro(grandBrut)}</span></div><div class="lg reduc"><span>Réductions accordées${p>0?` (−${p}%)`:''}</span><span>\u2212${euro(r)}</span></div>`;})():''}
+         ${grandRabais>0?(()=>{const p=grandBrutAbsolu>0?Math.round(grandRabais/grandBrutAbsolu*1000)/10:0;return `<div class="lg brut"><span>Total avant réductions</span><span>${euro(grandBrutAbsolu)}</span></div><div class="lg reduc"><span>Réduction${p>0?` (−${p}%)`:''}</span><span>\u2212${euro(grandRabais)}</span></div>`;})():''}
+         ${grandFrais>0?`<div class="lg"><span>Frais de livraison</span><span>${euro(grandFrais)}</span></div>`:''}
          <div class="lg total"><span>Total à payer</span><span>${euro(grandTotal)}</span></div>
-         ${totalPaye>0?`<div class="lg"><span>Déjà réglé</span><span>−${euro(totalPaye)}</span></div><div class="lg"><span><b>Reste à payer</b></span><span><b>${euro(reste)}</b></span></div>`:''}
+         <!--REGL-->${_factReglSlotHtml(grandTotal, totalPaye, _lastPayDate, _lastPayMoyen)}<!--/REGL-->
        </div>
        <div class="bas-final">
          ${factRibAvisCol(e)}
