@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1172';
+const APP_VERSION = 'v1174';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3954,6 +3954,7 @@ function navTo(b){
 // Navigation centralisée : change la vue ET empile une entrée d'historique (bouton Retour iOS).
 function goView(v, opts){
   opts=opts||{};
+  if(typeof _palOpen!=='undefined' && _palOpen && typeof palClose==='function') palClose();  // toute navigation ferme la palette
   // Filet de sécurité HACCP : si on quitte l'écran Températures avec des valeurs
   // saisies mais non validées, on prévient (évite la perte silencieuse de relevés).
   if(typeof pmsGuardUnsaved==='function' && view==='pms' && v!=='pms'){
@@ -3982,6 +3983,7 @@ function goView(v, opts){
   }
   _navDir='forward';
   view=v; setActiveView(view); render();
+  if(typeof _palSync==='function') _palSync();
   if(typeof assistantRetourSync==='function'){ try{ assistantRetourSync(); }catch(e){} }
   if(typeof navUsageTrack==='function') navUsageTrack(v);   // traçage usage (favoris/récents/stats)
   if(_histReady && !_popping && !opts.replace){
@@ -17318,7 +17320,6 @@ async function cmdLink(orderId){
     <div class="field" style="margin-top:12px">
       <label>Ajouter un batch — cherche un parfum, prélève le plus ancien</label>
       <input type="text" id="f_search" placeholder="${hasNeeds?'Filtrer un parfum (ex. chocolat)…':'Rechercher un parfum (ex. chocolat)…'}" oninput="_cmdLinkRenderList()" autocomplete="off">
-      <div class="note" style="font-size:.66rem;color:#b0678a;margin-top:3px">DIAG · attendus:${Object.keys(needs).length} · restants:${Object.keys(remainingNeeds).length} · dispo:${dispoRaw.length} · suggérés:${Object.keys(suggByProd).length}</div>
     </div>
     <div id="f_list" class="lnk-list"></div>`
     :'<p class="note">Aucun batch disponible à ajouter. Lance une production d\'abord.</p>'}
@@ -27194,7 +27195,8 @@ function renderAssistant(){
 // [CHAT — D1] Auto-agrandissement de l'input (1 à ~5 lignes), pour un ressenti de chat.
 function aiAutoGrow(ta){ if(!ta) return; ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }
 // Lance une suggestion rapide : remplit l'input et envoie.
-function aiQuick(s){ const ta=document.getElementById('aiInput'); if(ta){ ta.value=s; } aiRun(); }
+var _aiOutThread='aiThread', _aiInField='aiInput', _palOpen=false;
+function aiQuick(s){ const ta=document.getElementById(_aiInField); if(ta){ ta.value=s; } aiRun(); }
 // Repart sur un fil vierge (non persistant : on vide simplement l'affichage).
 function aiClearThread(){ window._assistantThreadSave=null; const t=document.getElementById('aiThread'); if(t){ t.innerHTML=''; } aiClarifyPending=null; aiPending=null; window._aiCurrentIntent=null; window._aiCurrentParams=null; renderAssistant(); }
 
@@ -29659,7 +29661,7 @@ function aiShortcuts(intent, params, resultShortcuts){
 // (bulle alignée à droite, fond caramel clair) et « copilote » (bulle à gauche, fond crème). Le fil
 // vit le temps de la visite (non persistant). aiPush ajoute une bulle et fait défiler vers le bas.
 function aiPush(role, html){
-  const thread = document.getElementById('aiThread');
+  const thread = document.getElementById(_aiOutThread);
   if(!thread) return;
   const mine = (role==='me');
   const wrap = document.createElement('div');
@@ -29674,6 +29676,7 @@ function aiPush(role, html){
   thread.appendChild(wrap);
   // défilement doux vers le dernier message.
   requestAnimationFrame(()=>{ thread.scrollTop = thread.scrollHeight; const m=document.getElementById('main'); if(m) window.scrollTo(0, document.body.scrollHeight); });
+  return wrap;
 }
 // [SORTIE — BRIQUE 1] Composants de rendu réutilisables pour des réponses lisibles et hiérarchisées.
 // Un seul vocabulaire visuel partagé par toutes les réponses, au lieu de reconstruire du HTML au cas par cas.
@@ -29736,14 +29739,31 @@ function aiSuite(props){
   };
   return `<div class="ai-suite">${props.map(btn).join('')}</div>`;
 }
+// [ASSISTANT — indicateur « en train d'écrire »] Bulle temporaire affichée dès l'envoi du message,
+// retirée automatiquement au tout début d'aiSay (point de sortie UNIQUE de toutes les réponses) →
+// aucun chemin de aiRun n'a besoin d'être modifié. Idempotent, sans état persistant.
+var _aiTypingEl = null;
+function _aiTypingShow(){
+  try{
+    if(!document.getElementById(_aiOutThread)) return;
+    _aiTypingHide();   // jamais deux indicateurs à la fois
+    const el = aiPush('bot', '<span class="typing-dots" aria-label="réponse en cours">● ● ●</span>');
+    if(el){ el.classList.add('ai-typing-wrap'); _aiTypingEl = el; }
+  }catch(_){}
+}
+function _aiTypingHide(){
+  try{ document.querySelectorAll('.ai-typing-wrap').forEach(e=>e.remove()); }catch(_){}
+  _aiTypingEl = null;
+}
 function aiSay(html, resultShortcuts){
+  if(typeof _aiTypingHide==='function') _aiTypingHide();   // retire l'indicateur « en train d'écrire »
   // [COCKPIT] Raccourcis = ceux spécifiques au RÉSULTAT (passés par la réponse, les plus pertinents)
   // PUIS ceux génériques de l'intention courante. Les premiers priment et évitent les doublons.
   const scResult = (Array.isArray(resultShortcuts) && resultShortcuts.length)
     ? aiRenderShortcutBtns(resultShortcuts) : '';
   const sc = (typeof aiShortcuts==='function') ? aiShortcuts(window._aiCurrentIntent, window._aiCurrentParams, resultShortcuts) : '';
   // [CHAT — D1] Si le fil existe, on pousse une bulle copilote ; sinon repli sur l'ancien rendu (#aiOut).
-  if(document.getElementById('aiThread')){ aiPush('bot', `${html}${sc}`); return; }
+  if(document.getElementById(_aiOutThread)){ aiPush('bot', `${html}${sc}`); return; }
   const out=document.getElementById('aiOut'); if(out){ out.innerHTML = `<div class="panel">${html}${sc}</div>`; }
 }
 // Rend une liste de raccourcis « bruts » {label, view|action|openFn+id|ask} en boutons.
@@ -29963,14 +29983,50 @@ function aiTryRelance(rawTxt, ctx){
   return { intent:lastIntent, params, _relance:true };
 }
 // ============================================================================================
+/* ============================================================================
+   [PALETTE DE COMMANDE — increment 1] Surface universelle : pastille flottante +
+   bottom sheet, posée PAR-DESSUS n'importe quelle vue (la vue n'est jamais quittée).
+   Elle NE duplique PAS l'assistant : elle REDIRIGE la sortie du pipeline existant
+   (aiRun → parseIntent → _aiDispatch → aiSay/aiPush) vers son propre fil #palThread,
+   via _aiOutThread / _aiInField. Les réponses sont donc rendues par le VRAI code de
+   l'assistant → strictement identiques à l'onglet (mêmes bulles, mêmes puces).
+   ============================================================================ */
+var _palDragY = 0;
+function palOpen(){
+  _palOpen = true; _aiOutThread = 'palThread'; _aiInField = 'palInput';
+  var bd=document.getElementById('palBackdrop'), sh=document.getElementById('palSheet');
+  if(bd) bd.classList.add('open'); if(sh) sh.classList.add('open');
+  _palSync();
+  setTimeout(function(){ var i=document.getElementById('palInput'); if(i) i.focus(); }, 280);
+}
+function palClose(){
+  _palOpen = false; _aiOutThread = 'aiThread'; _aiInField = 'aiInput';
+  var bd=document.getElementById('palBackdrop'), sh=document.getElementById('palSheet');
+  if(sh){ sh.style.transform=''; sh.classList.remove('open'); }
+  if(bd) bd.classList.remove('open');
+  var i=document.getElementById('palInput'); if(i) i.blur();
+  _palSync();
+}
+// Visibilité de la pastille : masquée quand la palette est ouverte ou sur l'onglet
+// Assistant (redondant). Le cas « modale ouverte » est géré en CSS (body:has(#overlay.show)).
+function _palSync(){
+  var f=document.getElementById('palFab'); if(!f) return;
+  var onAssistant = (typeof view!=='undefined' && view==='assistant');
+  f.style.display = (_palOpen || onAssistant) ? 'none' : 'inline-flex';
+}
+// Glisser la poignée vers le bas pour fermer (au-delà de 80 px).
+function palDragStart(e){ _palDragY = e.touches[0].clientY; var sh=document.getElementById('palSheet'); if(sh) sh.style.transition='none'; }
+function palDragMove(e){ var sh=document.getElementById('palSheet'); if(!sh) return; var dy=Math.max(0, e.touches[0].clientY-_palDragY); sh.style.transform='translateY('+dy+'px)'; }
+function palDragEnd(e){ var sh=document.getElementById('palSheet'); if(!sh) return; sh.style.transition=''; var dy=e.changedTouches[0].clientY-_palDragY; sh.style.transform=''; if(dy>80) palClose(); }
 async function aiRun(){
   if(_aiRunning) return;            // évite les envois multiples (taps rapides)
-  const ta=document.getElementById('aiInput');
+  const ta=document.getElementById(_aiInField);
   const txt=(ta?.value||'').trim();
   if(!txt){ return; }
   _aiRunning=true;
   // [CHAT — D1] On affiche d'abord le message de l'utilisateur dans le fil, puis on vide l'input.
-  if(document.getElementById('aiThread')){ aiPush('me', esc(txt)); if(ta){ ta.value=''; } }
+  if(document.getElementById(_aiOutThread)){ aiPush('me', esc(txt)); if(ta){ ta.value=''; } }
+  _aiTypingShow();   // indicateur immédiat « en train d'écrire »
   try{
     const flavors=FLAVORS;
     const clients=await db.clients.toArray();
@@ -30068,6 +30124,7 @@ async function aiRun(){
   } catch(e){
     aiSay(`<p>Une erreur est survenue : ${esc(e.message||'inconnue')}.</p><p class="note">Réessaie ou reformule ta demande.</p>`);
   } finally {
+    _aiTypingHide();   // filet : jamais d'indicateur orphelin, quel que soit le chemin de sortie
     _aiRunning=false;
   }
 }
