@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1169';
+const APP_VERSION = 'v1170';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -17237,9 +17237,22 @@ async function cmdLink(orderId){
 
   // Besoins par parfum, puis besoins RESTANTS (déjà affecté déduit, par parfum).
   const needs = orderFlavorNeeds(ord||{});
-  const prodFlavorKey = p => { const r=recById[p.recipeId]; const base=r?r.produitNom:'?'; return (r && r.grandFormat)? base+GF_MARK : base; };
+  // Crédit du « déjà lié » PAR PARFUM DE LA COMMANDE. Le nom d'un lot peut différer légèrement
+  // de celui saisi sur la commande (« Praliné noisette » vs « Praliné noisettes ») : on impute
+  // donc chaque lot au parfum de la commande qui CORRESPOND — même matching flou que l'affectation
+  // (pickFlavorMatch + même statut grand format) — plutôt qu'une égalité stricte de chaîne, qui
+  // laissait le parfum non crédité (pas de vert + re-suggestion à tort d'un besoin déjà couvert).
+  const _needKeys = Object.keys(needs);
   const linkedByFlavor = {};
-  existing.forEach(e=>{ const p=prods.find(x=>x.id===e.productionId); if(p){ const k=prodFlavorKey(p); linkedByFlavor[k]=(linkedByFlavor[k]||0)+(+e.qte||0); } });
+  existing.forEach(e=>{
+    const p = prods.find(x=>x.id===e.productionId); if(!p) return;
+    const r = recById[p.recipeId];
+    const prodNom = r ? r.produitNom : (p.produitNom||'');
+    const prodGF = !!(r && r.grandFormat);
+    let key = _needKeys.find(k => isGFKey(k)===prodGF && pickFlavorMatch(gfBase(k), prodNom));
+    if(!key) key = prodGF ? prodNom+GF_MARK : prodNom;   // repli : conserve l'info sans correspondance
+    linkedByFlavor[key] = round3((linkedByFlavor[key]||0) + (+e.qte||0));
+  });
   const remainingNeeds = {};
   Object.keys(needs).forEach(k=>{ const r=round3((needs[k]||0)-(linkedByFlavor[k]||0)); if(r>0) remainingNeeds[k]=r; });
   const hasNeeds = Object.keys(needs).length>0;
