@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1153';
+const APP_VERSION = 'v1157';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7039,18 +7039,46 @@ async function renderDocuments(){
   const main=document.getElementById('main'); if(!main) return;
   let docs = await db.documents.orderBy('date').reverse().toArray().catch(()=>[]);
   // Resynchronise le statut de PAIEMENT des factures validées selon l'encaissement réel
-  // des commandes liées (emise ↔ payee). Le numéro, le montant et le contenu restent gravés.
+  // des commandes liées (emise ↔ payee). Le numéro, le montant HT/TTC, la date et les
+  // mentions légales restent gravés — seul le SUIVI DE RÈGLEMENT (accessoire, pas le
+  // contenu légal de la facture) est resynchronisé, exactement comme déjà fait ici pour
+  // le statut. [v1157] Corrige l'incohérence : l'ancien code recalculait l'encaissé réel
+  // pour décider du statut puis le jetait, laissant totalPaye (donc le HTML imprimé,
+  // « déjà réglé / reste à payer ») figé sur un paiement fantôme. On persiste maintenant
+  // ce même chiffre recalculé dans totalPaye + on rafraîchit les lignes du HTML mémorisé.
   for(const f of docs){
     if(f.type==='facture' && (f.statut==='emise' || f.statut==='payee')){
       const oids=f.orderIds||(f.orderId?[f.orderId]:[]);
-      let encaisse=0, total=0;
+      let encaisse=0, total=0, nbVivantes=0;
       for(const oid of oids){
         const o=await db.orders.get(oid).catch(()=>null);
-        if(o){ total+=(+o.montant||0); encaisse+=(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0); }
+        if(o){ nbVivantes++; total+=(+o.montant||0); encaisse+=(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0); }
       }
+      // [v1157] Garde-fou : commandes liées SUPPRIMÉES (purge d'historique) → la facture est
+      // le dernier témoin de l'encaissement. On ne resynchronise RIEN (ni statut, ni règlement),
+      // sinon une facture payée redeviendrait « émise » avec un règlement effacé.
+      if(!nbVivantes) continue;
+      encaisse = money2(encaisse);
       const payee = total>0 && encaisse>=total-0.01;
       const cible = payee ? 'payee' : 'emise';
-      if(cible!==f.statut){ await db.documents.update(f.id, {statut:cible}); f.statut=cible; }
+      const patch = {};
+      if(cible!==f.statut) patch.statut = cible;
+      if(encaisse!==money2(+f.totalPaye||0)){
+        patch.totalPaye = encaisse;
+        if(f.html){
+          const reste = Math.max(0, money2((+f.montant||0) - encaisse));
+          patch.html = f.html.replace(
+            /<div class="lg"><span>Déjà réglé<\/span><span>[\s\S]*?<\/div><div class="lg"><span><b>Reste à payer<\/b><\/span><span><b>[\s\S]*?<\/div>/,
+            encaisse>0
+              ? `<div class="lg"><span>Déjà réglé</span><span>−${euro(encaisse)}</span></div><div class="lg"><span><b>Reste à payer</b></span><span><b>${euro(reste)}</b></span></div>`
+              : ''
+          );
+        }
+      }
+      if(Object.keys(patch).length){
+        await db.documents.update(f.id, patch);
+        Object.assign(f, patch);
+      }
     }
   }
   const clients = await db.clients.toArray().catch(()=>[]);
@@ -7102,6 +7130,7 @@ async function renderDocuments(){
 
    <div style="display:flex;gap:8px;margin-bottom:14px">
      <button class="btn gold" onclick="docNewDevis()">+ Nouveau devis</button>
+     <button class="btn ghost" onclick="docAuditPaiementsFantomesUI()" title="Vérifie la cohérence du suivi de règlement des factures validées">🔍 Audit règlements</button>
    </div>
    ${(()=>{
      const nbDef=factures.filter(f=>docEstDefinitif(f)).length;
@@ -7152,7 +7181,7 @@ async function docOpen(id){
   const clName=(clients.find(c=>c.id===d.clientId)||{}).nom||'—';
   const nbLignes=(d.lignes||[]).length;
   const acompte=+d.acompte||0;
-  const peutConvertir = d.type==='devis' && d.statut==='en_attente' && acompte>0;
+  const peutConvertir = d.type==='devis' && d.statut==='en_attente';  // [v1157] acompte non bloquant : tu décides quand basculer
   // --- Construction de la chaîne de liens devis → commande → facture ---
   const allDocs = await db.documents.toArray().catch(()=>[]);
   const liens = [];
@@ -7187,13 +7216,12 @@ async function docOpen(id){
     ${d.type==='devis'?`<div class="sum-box"><span>Valable jusqu'au</span><b>${fmtDate(d.expiration)}</b></div>`:''}
     ${liensHtml}
     ${(d.type==='devis'&&d.statut==='en_attente')?`
-      <div class="field" style="margin-top:10px"><label>Acompte reçu (€) — requis pour convertir</label>
+      <div class="field" style="margin-top:10px"><label>Acompte reçu (€) — facultatif</label>
         <input type="number" min="0" step="0.01" id="docAcompte" value="${acompte>0?acompte:''}" placeholder="ex : 100" oninput="docSetAcompte(${d.id},this.value)"></div>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-        <button class="btn gold" id="docConvertBtn" ${peutConvertir?'':'disabled style="opacity:.5"'} onclick="docConvertToOrder(${d.id})">→ Convertir en commande</button>
+        <button class="btn gold" id="docConvertBtn" onclick="docConvertToOrder(${d.id})">→ Convertir en commande</button>
         <button class="btn ghost" onclick="cmdForm(null,{devis:true,devisId:${d.id}});">Modifier</button>
       </div>
-      ${!peutConvertir?`<p class="note" style="margin:6px 0 0;color:#b08a3a">Saisis un acompte pour débloquer la conversion.</p>`:''}
     `:''}
     ${(d.type==='devis'&&d.orderId)?`<p class="note" style="margin-top:8px;color:#3f7d52">✓ Converti en commande.</p>`:''}
     ${d.type==='facture'?`
@@ -7232,8 +7260,7 @@ async function docSetAcompte(id, v){
 // Conversion devis → commande : crée une vraie commande à partir des lignes du devis.
 async function docConvertToOrder(id){
   const d=await db.documents.get(id); if(!d) return;
-  const acompte=+d.acompte||0;
-  if(!(acompte>0)){ toast('Un acompte est requis pour convertir'); return; }
+  const acompte=+d.acompte||0;  // [v1157] plus aucun blocage : acompte optionnel, conversion toujours possible
   const today=new Date().toISOString().slice(0,10);
   const o={
     clientId:d.clientId, date:d.date||today,
@@ -7244,7 +7271,7 @@ async function docConvertToOrder(id){
     fraisLivraison:d.fraisLivraison||0, sacMatId:d.sacMatId||0, sacNb:d.sacNb||0,
     lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0, remiseGlobaleEur:(d.remiseGlobaleEur!=null?+d.remiseGlobaleEur:null),
     perso:!!(d.perso||+d.persoMacarons>0), persoMacarons:+d.persoMacarons||0, persoCouleurs:Array.isArray(d.persoCouleurs)?d.persoCouleurs:[], persoRemiseEur:+d.persoRemiseEur||0, acompteMention:(d.acompteMention!==false), montant:d.montant||0,
-    paiements:[{date:today, montant:money2(acompte), moyen:'Acompte'}],
+    paiements: acompte>0 ? [{date:today, montant:money2(acompte), moyen:'Acompte'}] : [],   // [v1157] pas d'acompte → pas de ligne fantôme à 0 €
     statut:'À préparer', notes:(d.notes||'')+`\n(Issu du devis ${d.numero})`,
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[],
     issuDevis:d.numero
@@ -7387,9 +7414,38 @@ async function docEnvoyerMail(id){
 }
 // VALIDATION définitive d'un brouillon de facture : avertissement, contrôle de date,
 // numéro séquentiel strict, puis verrouillage (inaltérable).
+// [v1157] Recalcule le total déjà payé EN DIRECT depuis les commandes liées, pour ne
+// jamais figer un paiement fantôme (ex : acompte supprimé après génération du brouillon).
+async function docTotalPayeLive(d){
+  const ids = Array.isArray(d.orderIds) && d.orderIds.length ? d.orderIds : (d.orderId ? [d.orderId] : []);
+  let total = 0;
+  for(const oid of ids){
+    const o = await db.orders.get(oid).catch(()=>null);
+    if(o) total += (o.paiements||[]).reduce((s,p)=>s+(+p.montant||0),0);
+  }
+  return money2(total);
+}
 async function docValiderFacture(id){
   const d=await db.documents.get(id); if(!d||d.type!=='facture') return;
   if(docEstDefinitif(d)){ toast('Facture déjà validée'); return; }
+  // Le brouillon n'est pas encore verrouillé : c'est le dernier moment sûr pour corriger
+  // un paiement fantôme (payé supprimé/modifié côté commande depuis la génération du brouillon).
+  const totalPayeLive = await docTotalPayeLive(d);
+  if(money2(totalPayeLive) !== money2(+d.totalPaye||0)){
+    d.totalPaye = totalPayeLive;
+    // Rafraîchit aussi les lignes « Déjà réglé / Reste à payer » dans le HTML mémorisé,
+    // pour que le texte imprimé/envoyé reste cohérent avec le montant recalculé.
+    const resteLive = Math.max(0, money2(+d.montant - totalPayeLive));
+    if(d.html){
+      d.html = d.html.replace(
+        /<div class="lg"><span>Déjà réglé<\/span><span>[\s\S]*?<\/div><div class="lg"><span><b>Reste à payer<\/b><\/span><span><b>[\s\S]*?<\/div>/,
+        totalPayeLive>0
+          ? `<div class="lg"><span>Déjà réglé</span><span>−${euro(totalPayeLive)}</span></div><div class="lg"><span><b>Reste à payer</b></span><span><b>${euro(resteLive)}</b></span></div>`
+          : ''
+      );
+    }
+    await db.documents.update(id, {totalPaye:d.totalPaye, html:d.html});
+  }
   // Contrôle de date : jamais dans le futur ; alerte si dans le passé.
   const auj=new Date().toISOString().slice(0,10);
   const dateFact=d.date||auj;
@@ -7412,6 +7468,53 @@ async function docValiderFacture(id){
   await db.documents.update(id, { numero, statut, date:dateFact, dateValidation:auj, lockedAt:Date.now(), html });
   closeModal(); toast('Facture '+numero+' validée et verrouillée 🔒');
   if(view==='documents') renderDocuments();
+}
+// [v1157] AUDIT RÉTROACTIF — lecture seule. Compare, pour chaque facture DÉJÀ VALIDÉE
+// (donc légalement inaltérable), son totalPaye figé au moment de la validation au total
+// RÉEL actuel des commandes liées. N'écrit jamais rien : une facture validée porte un
+// numéro légal séquentiel, la corriger silencieusement romprait l'inaltérabilité que
+// l'app garantit elle-même à l'utilisateur. Sert uniquement à lister les écarts pour
+// que Benjamin décide de la marche à suivre (ex : avoir/note de correction).
+async function docAuditPaiementsFantomes(){
+  const docs = await db.documents.where('type').equals('facture').toArray().catch(()=>[]);
+  const ecarts = [];
+  for(const d of docs){
+    if(!docEstDefinitif(d)) continue;               // seules les factures VERROUILLÉES sont concernées
+    const ids = Array.isArray(d.orderIds) && d.orderIds.length ? d.orderIds : (d.orderId ? [d.orderId] : []);
+    let nbVivantes = 0;
+    for(const oid of ids){ if(await db.orders.get(oid).catch(()=>null)) nbVivantes++; }
+    const live = await docTotalPayeLive(d);
+    const fige = money2(+d.totalPaye||0);
+    if(nbVivantes && live !== fige){
+      ecarts.push({
+        id:d.id, numero:d.numero||d.refInterne||('#'+d.id), date:d.date||'',
+        totalPayeFige:fige, totalPayeLive:live, ecart:money2(fige-live),
+        montant:money2(+d.montant||0), reparable:true
+      });
+    } else if(!nbVivantes && ids.length){
+      // commandes purgées : écart invérifiable, la facture reste le témoin — signalé, jamais touché
+      ecarts.push({ id:d.id, numero:d.numero||d.refInterne||('#'+d.id), date:d.date||'',
+        totalPayeFige:fige, totalPayeLive:null, ecart:null, montant:money2(+d.montant||0), reparable:false });
+    }
+  }
+  return ecarts;
+}
+// UI : rapport d'audit, purement informatif (aucun bouton de correction directe sur
+// une facture verrouillée — l'inaltérabilité légale est respectée).
+async function docAuditPaiementsFantomesUI(){
+  const ecarts = await docAuditPaiementsFantomes();
+  if(!ecarts.length){
+    openModal(`<h3>🔍 Audit paiements fantômes</h3><p class="note" style="margin-top:8px">Aucun écart détecté : le total payé de chaque facture validée correspond au total réel des commandes liées.</p><div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const rep = ecarts.filter(e=>e.reparable), fig = ecarts.filter(e=>!e.reparable);
+  const rows = rep.map(e=>`<div class="sum-box"><span>${esc(e.numero)} · ${fmtDate(e.date)}</span><b style="color:#b3261e">figé ${euro(e.totalPayeFige)} → réel ${euro(e.totalPayeLive)}</b></div>`).join('')
+    + fig.map(e=>`<div class="sum-box"><span>${esc(e.numero)} · ${fmtDate(e.date)}</span><b style="color:#9a8a82">réglé ${euro(e.totalPayeFige)} · commandes purgées (figé)</b></div>`).join('');
+  openModal(`<h3>🔍 Audit règlements de factures</h3>
+    ${rep.length?`<p class="note" style="margin:8px 0">${rep.length} facture(s) au suivi de règlement désynchronisé — <b>résorbé automatiquement</b> à chaque ouverture de l'écran Documents (le numéro, le montant et le contenu légal ne bougent jamais ; seul le suivi « déjà réglé / reste à payer » est réaligné sur l'encaissement réel).</p>`:''}
+    ${fig.length?`<p class="note" style="margin:8px 0">${fig.length} facture(s) dont les commandes ont été supprimées : leur règlement mémorisé fait foi et n'est <b>jamais</b> retouché.</p>`:''}
+    ${rows}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 // Déplie/replie l'encart « productions en cours » (accès direct aux recettes + raccourci atelier).
 function prodEnCoursToggle(){
@@ -8037,13 +8140,10 @@ function chronoFloatStart(){
 // doMoveEmplacement, delProd, buildLabelData) — on ne réinvente rien.
 
 // Construit l'arborescence ascendante : lot → matières consommées → fournisseurs.
-async function prodTracaAscendante(prodId, nomLot){
+// Rend le bloc HTML d'UNE production (matières directes qu'elle a consommées).
+async function _prodTracaBlocDirect(prodId){
   const conso = (await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[])).filter(c=>!c.annuleeInventaire);
-  let html = `<div class="node lvl1">🧁 ${esc(nomLot)}</div>`;
-  if(!conso.length){
-    html += `<div class="node lvl2" style="color:#9a8a82">Aucune matière première tracée pour ce lot</div>`;
-    return html;
-  }
+  let html='';
   for(const c of conso){
     let matNom='Matière', lotF='—', supNom='', dlc='', archive=false;
     const lot = c.materialLotId!=null ? await db.materialLots.get(c.materialLotId).catch(()=>null) : null;
@@ -8061,6 +8161,37 @@ async function prodTracaAscendante(prodId, nomLot){
     if(supNom || dlc){
       html += `<div class="node lvl3 mp">→ ${esc(supNom||'fournisseur non précisé')}${dlc?' · DLC '+esc(dlc):''}</div>`;
     }
+  }
+  return html;
+}
+async function prodTracaAscendante(prodId, nomLot, _depth){
+  const depth = _depth||0;
+  let html = depth===0 ? `<div class="node lvl1">🧁 ${esc(nomLot)}</div>` : '';
+  // 1) matières consommées DIRECTEMENT par ce lot (coques/ganache/crémeux/complet non-assemblé)
+  let direct = await _prodTracaBlocDirect(prodId);
+  html += direct;
+  // 2) s'il s'agit d'un ASSEMBLAGE (macaron complet = coques + ganache, ou casse-garni), la matière
+  //    première ne vit pas ici : on remonte à travers assembleFrom jusqu'aux lots composants.
+  const p = await db.productions.get(prodId).catch(()=>null);
+  const composants = (p && Array.isArray(p.assembleFrom)) ? p.assembleFrom : [];
+  let sousHtml = '';
+  if(composants.length && depth<3){   // garde-fou anti-boucle : 3 niveaux max, largement suffisant
+    for(const s of composants){
+      if(s.id==null) continue;   // composant archivé/sans lien : rien à remonter
+      const compLabel = s.composant==='coques'?'🟤 Coques':s.composant==='ganache'?'🍫 Ganache':(s.parfum||'Composant');
+      const blocFille = await _prodTracaBlocDirect(s.id);
+      // récursion défensive (un composant lui-même assemblé à partir d'autre chose, cas rare)
+      const filleProd = await db.productions.get(s.id).catch(()=>null);
+      const filleAssemble = (filleProd && Array.isArray(filleProd.assembleFrom) && filleProd.assembleFrom.length)
+        ? await prodTracaAscendante(s.id, '', depth+1) : '';
+      if(blocFille || filleAssemble){
+        sousHtml += `<div class="node lvl2" style="font-weight:700">${compLabel}${s.parfum?' '+esc(s.parfum):''} — lot ${esc(s.lot||('#'+s.id))}</div>${blocFille}${filleAssemble}`;
+      }
+    }
+  }
+  html += sousHtml;
+  if(depth===0 && !direct && !sousHtml){
+    html += `<div class="node lvl2" style="color:#9a8a82">Aucune matière première tracée pour ce lot</div>`;
   }
   return html;
 }
@@ -8105,7 +8236,7 @@ async function prodV2OpenPop(id){
       <div class="pv2-pop-body">
         <div class="pv2-pop-sec">Raccourcis</div>
         <div class="pv2-acts">
-          <div class="pv2-act" onclick="prodV2ClosePop();shareLabelPDF(${id})">📄 Étiquette PDF (Labelife)</div><div class="pv2-act" onclick="prodV2ClosePop();shareLabelImage(${id})">🖼 Étiquette image</div>
+          <div class="pv2-act" onclick="prodV2ClosePop();prodEtiquetteBoites(${id})">🏷 Étiquettes (boîtes)</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prodEditTimes(${id})">✏️ Quantité</div>
           <div class="pv2-act" onclick="prodV2ClosePop();prelevForm(${id})">✎ Prélèvements (matières)</div>
           ${prodEstAnnulable(p) ? `<div class="pv2-act full" style="color:#b04a3e" onclick="prodV2ClosePop();prodAnnulerLancement(${id})">⎌ Annuler ce lancement (erreur de saisie)</div>` : ''}
@@ -25743,6 +25874,25 @@ function parseIntent(texte, ctx){
     return {intent:'query_rupture', params:{}, critical:false, label:'Détecter les risques de rupture'};
   }
 
+  // ---- [ASSIST-PLUS] nouveaux intents (texte t déjà normalisé sans accents) ----
+  { let m;
+    if(/\b(raconte|resume|recap(itule)?|bilan)\b.{0,24}\bsemaine\b/.test(t) || /\bma semaine\b/.test(t))
+      return {intent:'query_bilan_semaine', params:{}, critical:false, label:'Bilan de la semaine'};
+    if((m=t.match(/\bet si je (vends|vendais|passe|passais|mets|mettais)\b(.{0,60}?)\ba\s*(\d+(?:[.,]\d{1,2})?)\s*(?:euros?|eur|e)?\b/)))
+      return {intent:'query_etsi_prix', params:{hint:(m[2]||'').replace(/\b(la|le|les|mes|mon|ma|des|du)\b/g,' ').trim(), prix:parseFloat(m[3].replace(',','.'))}, critical:false, label:'Et si (prix)'};
+    if((m=t.match(/\bet si je (vends|vendais)\s+(\d+)\s*(?:macarons?|pieces?|pcs?)?\s*(?:de plus|en plus|de mieux)\b/)))
+      return {intent:'query_etsi_volume', params:{n:+m[2]}, critical:false, label:'Et si (volume)'};
+    if((m=t.match(/\b(?:note|declare|enregistre)\s+(?:une |la )?perte de\s+(\d+)\s*(?:macarons?|pieces?|pcs?)?\s*(?:de |d')?(.{0,40})/)))
+      return {intent:'action_perte', params:{n:+m[1], hint:(m[2]||'').trim()}, critical:true, label:'Déclarer une perte'};
+    if((m=t.match(/\bajoutes?\s+(.{2,60}?)\s+(?:aux courses|a la liste de courses|a mes courses|dans (?:les|mes) courses)\b/)))
+      return {intent:'action_courses_add', params:{texte:m[1].trim()}, critical:false, label:'Ajouter aux courses'};
+    if((m=t.match(/\b(?:retire|enleve|supprime)\s+(.{2,60}?)\s+(?:des courses|de la liste de courses|de mes courses)\b/)))
+      return {intent:'action_courses_remove', params:{texte:m[1].trim()}, critical:false, label:'Retirer des courses'};
+    if(/\b(ma )?liste perso\b|\bmes (ajouts|articles) (courses|perso)\b/.test(t))
+      return {intent:'action_courses_list', params:{}, critical:false, label:'Liste perso'};
+    if((m=t.match(/\bmarque (?:la )?commande (?:de |d')(.{2,40}?)\s*(?:comme )?livree\b/)) || (m=t.match(/\bcommande (?:de |d')(.{2,40}?) est livree\b/)))
+      return {intent:'action_livrer', params:{client:m[1].trim()}, critical:false, label:'Marquer livrée'};
+  }
   return {intent:'unknown', params:{}, critical:false};
 }
 // extrait un nom propre candidat après "pour"
@@ -26146,6 +26296,325 @@ function aiHelp(txt){
     ${autres?`<p class="note" style="margin-top:10px">Sujets liés :</p><div style="display:flex;flex-wrap:wrap">${autres}</div>`:''}`);
 }
 
+/* ============================================================
+   ASSIST-PLUS:BEGIN — enrichissement du copilote (vagues A/B/C/D)
+   A: personnalisation (habitudes + fallback intelligent)
+   B: bilan de semaine narratif + sparklines
+   C: simulateur « et si ? » (prix / volume)
+   D: actions étendues (perte, courses perso, livraison)
+   Tout est auto-porté ; aucune table Dexie nouvelle (localStorage seulement).
+   ============================================================ */
+/* ASSISTPLUS:PURE:BEGIN */
+// ---- A1. Journal d'usage (localStorage) → habitudes personnalisées ----
+const AI_USAGE_KEY='sm_aiUsage';
+const AI_USAGE_SKIP=new Set(['unknown','greeting','thanks','help','about']);
+function aiUsageLoad(){ try{ return JSON.parse(localStorage.getItem(AI_USAGE_KEY)||'{}')||{}; }catch(_){ return {}; } }
+function aiUsageLog(intent, ask){
+  if(!intent || AI_USAGE_SKIP.has(intent)) return;
+  try{
+    const u=aiUsageLoad(); const e=u[intent]||{n:0,last:0,ask:''};
+    e.n=(+e.n||0)+1; e.last=Date.now();
+    const a=String(ask||'').trim(); if(a && a.length<=90) e.ask=a;
+    u[intent]=e;
+    const keys=Object.keys(u);
+    if(keys.length>40){ keys.sort((x,y)=>(u[x].last||0)-(u[y].last||0)); delete u[keys[0]]; }
+    localStorage.setItem(AI_USAGE_KEY, JSON.stringify(u));
+  }catch(_){}
+}
+// Boosts contextuels : le matin → ordonnancement/commandes ; ven/sam → marché.
+const AI_BOOST_MATIN=new Set(['query_ordo','query_production_needs','query_orders','query_dlc_matieres']);
+const AI_BOOST_MARCHE=new Set(['query_prochain_marche','query_market_advice','query_bilan_marche']);
+function aiUsageTop(n, now){
+  const u=aiUsageLoad(); const d=now!=null?new Date(now):new Date();
+  const h=d.getHours(), jour=d.getDay(); // 5=ven 6=sam
+  return Object.keys(u).filter(k=>u[k]&&u[k].ask).map(k=>{
+    const e=u[k]; const jours=Math.max(0,(d.getTime()-(+e.last||0))/86400000);
+    let s=(+e.n||0)*Math.pow(0.5, jours/14);
+    if(h>=5&&h<=11&&AI_BOOST_MATIN.has(k)) s*=1.6;
+    if((jour===5||jour===6)&&AI_BOOST_MARCHE.has(k)) s*=1.6;
+    return {intent:k, ask:e.ask, score:s};
+  }).sort((a,b)=>b.score-a.score).slice(0, n||4);
+}
+// ---- A2. Fallback intelligent : catalogue de questions + rapprochement flou ----
+const AI_CATALOG=[
+ {ask:"quel est mon seuil de rentabilité ?", k:"seuil point mort rentable couvrir charges combien vendre"},
+ {ask:"mon revenu horaire", k:"revenu horaire heure heures remuneration salaire paye gagne gagner rapporte combien"},
+ {ask:"ma liste de courses", k:"courses acheter racheter liste manque provision"},
+ {ask:"qu'est-ce qui risque la rupture ?", k:"rupture manque manquer manque epuise stock bas alerte racheter urgence bientot va falloir"},
+ {ask:"mon stock de macarons", k:"stock finis macarons pieces disponible reste combien"},
+ {ask:"les DLC qui arrivent à échéance", k:"dlc peremption expire date limite perimer frais"},
+ {ask:"mes commandes de la semaine", k:"commandes semaine carnet a venir livrer preparer"},
+ {ask:"les commandes en retard", k:"retard retards en souffrance depassees oubliees"},
+ {ask:"qui me doit de l'argent ?", k:"paiement paiements dus impaye doit argent solde encaisser"},
+ {ask:"mes meilleurs clients", k:"top clients meilleurs fideles gros acheteurs"},
+ {ask:"mon top parfums", k:"top parfum meilleures ventes prefere populaire classement"},
+ {ask:"le coût de revient de la framboise", k:"cout revient prix coute fabrication revient piece"},
+ {ask:"mon prix de vente moyen", k:"prix vente moyen tarif vendu"},
+ {ask:"mon prochain marché", k:"marche prochain samedi etal stand"},
+ {ask:"le bilan du dernier marché", k:"bilan marche vendu invendus retour ecoulement"},
+ {ask:"où j'en suis avec l'URSSAF ?", k:"urssaf cotisations declarations trimestre micro"},
+ {ask:"mon net dans la poche", k:"net poche reste gagne vraiment benefice reel impots"},
+ {ask:"mes charges du mois", k:"charges fixes frais depenses mensuelles"},
+ {ask:"raconte-moi ma semaine", k:"bilan semaine resume recap raconte hebdo"},
+ {ask:"et si je vends 100 macarons de plus ?", k:"et si simulation volume plus vendre projection"},
+ {ask:"est-ce que je peux honorer mes commandes ?", k:"faisabilite honorer capable tenir produire commandes verdict"},
+ {ask:"mon gaspillage", k:"gaspillage pertes casse jete perdu dechets"},
+ {ask:"la valeur de mon stock", k:"valeur stock immobilise vaut combien euros"},
+ {ask:"mon panier moyen", k:"panier moyen ticket commande moyenne"},
+ {ask:"combien de temps pour produire ?", k:"temps production duree atelier combien heures"},
+ {ask:"que me conseilles-tu ?", k:"conseil strategie recommandation piste progresser idee"}
+];
+const AI_STOPWORDS=new Set(['les','des','mes','mon','ma','est','que','qui','quoi','pour','avec','dans','une','ce','cette','sont','ont','je','tu','il','on','nous','vous','pas','plus','tout','faire','ete','etre','moi','toi','aux','sur','par','the']);
+function aiTokens(t){ return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>=3 && !AI_STOPWORDS.has(w)); }
+function aiSuggestProches(texte){
+  const toks=aiTokens(texte); if(!toks.length) return null;
+  const scored=AI_CATALOG.map(c=>{
+    const kt=new Set(aiTokens(c.k+' '+c.ask)); let s=0;
+    toks.forEach(w=>{ if(kt.has(w)) s+=2; else { for(const k of kt){ if(k.startsWith(w)||w.startsWith(k)){ s+=1; break; } } } });
+    return {c,s};
+  }).filter(x=>x.s>=2).sort((a,b)=>b.s-a.s).slice(0,3);
+  return scored.length?scored.map(x=>x.c):null;
+}
+// ---- B2. Sparkline SVG minimaliste (vanilla, aucune dépendance) ----
+function aiSpark(values, opts){
+  const v=(values||[]).map(x=>+x||0); if(v.length<2) return '';
+  opts=opts||{}; const w=opts.w||150, h=opts.h||34, pad=3;
+  const mn=Math.min.apply(null,v), mx=Math.max.apply(null,v), sp=(mx-mn)||1;
+  const pts=v.map((x,i)=>`${(pad+i*(w-2*pad)/(v.length-1)).toFixed(1)},${(h-pad-((x-mn)/sp)*(h-2*pad)).toFixed(1)}`).join(' ');
+  const last=v[v.length-1], prev=v[v.length-2];
+  const col=opts.color||(last>=prev?'#3f7d52':'#b04a3e');
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle" role="img" aria-label="tendance">`
+    +`<polyline fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${pts}"/>`
+    +`<circle cx="${pts.split(' ').pop().split(',')[0]}" cy="${pts.split(' ').pop().split(',')[1]}" r="2.6" fill="${col}"/></svg>`;
+}
+// ---- Semaines (lundi→dimanche) ----
+function aiSemaineRange(offset){
+  const d=new Date(); d.setHours(0,0,0,0);
+  const dow=(d.getDay()+6)%7;                 // 0=lundi
+  const lundi=new Date(d); lundi.setDate(d.getDate()-dow+7*(offset||0));
+  const dim=new Date(lundi); dim.setDate(lundi.getDate()+6);
+  const iso=x=>`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+  return {start:iso(lundi), end:iso(dim)};
+}
+// ---- D2. Courses perso (localStorage, hors calcul de besoin) ----
+const AI_COURSES_KEY='sm_coursesExtra';
+function aiCoursesExtra(){ try{ return JSON.parse(localStorage.getItem(AI_COURSES_KEY)||'[]')||[]; }catch(_){ return []; } }
+function aiCoursesSave(l){ try{ localStorage.setItem(AI_COURSES_KEY, JSON.stringify(l.slice(0,60))); }catch(_){} }
+// « 2 kg de sucre » / « 500 g farine » / « du papier sulfurisé » → {qte, unite, nom}
+function aiParseArticle(txt){
+  const t=String(txt||'').trim().replace(/^(du |de la |des |de l')/i,'');
+  const m=t.match(/^(\d+[.,]?\d*)\s*(kg|g|l|cl|ml|pcs?|pieces?|boites?|sachets?)?\s*(?:de |d')?(.{2,60})$/i);
+  if(m) return {qte:parseFloat(m[1].replace(',','.')), unite:(m[2]||'').toLowerCase(), nom:m[3].trim()};
+  return {qte:null, unite:'', nom:t};
+}
+/* ASSISTPLUS:PURE:END */
+
+// ---- A1. Rendu des habitudes sur l'accueil du copilote ----
+function aiHabitsHTML(){
+  try{
+    const top=aiUsageTop(4);
+    if(!top.length) return '';
+    const chips=top.map(t=>`<button class="ai-suite-btn" onclick="aiQuick(${JSON.stringify(t.ask)})">⭐ ${esc(t.ask)}</button>`).join('');
+    return `<div style="margin-top:10px"><div class="prlv-lbl" style="margin:0 0 5px">Tes habitudes</div><div class="ai-suite" style="flex-wrap:wrap">${chips}</div></div>`;
+  }catch(_){ return ''; }
+}
+// ---- A2. Réponse « tu voulais peut-être… » ----
+function aiRepondreSuggestions(texte){
+  const sug=aiSuggestProches(texte); if(!sug) return false;
+  const chips=sug.map(c=>`<button class="ai-suite-btn" onclick="aiQuick(${JSON.stringify(c.ask)})">${esc(c.ask)}</button>`).join('');
+  aiSay(`<p style="margin:0 0 6px">Je n'ai pas saisi exactement — tu voulais peut-être :</p><div class="ai-suite" style="flex-wrap:wrap">${chips}</div><p class="note" style="margin-top:8px">Sinon reformule avec d'autres mots, je m'adapte.</p>`);
+  return true;
+}
+
+// ---- B1. Bilan narratif de la semaine ----
+async function aiQueryBilanSemaine(){
+  const S0=aiSemaineRange(0), S1=aiSemaineRange(-1);
+  let R0=null, R1=null;
+  try{ R0=await revenuHoraireCalcul({start:S0.start, end:S0.end}); }catch(e){}
+  try{ R1=await revenuHoraireCalcul({start:S1.start, end:S1.end}); }catch(e){}
+  const ca0=R0?+R0.caEncaisse||0:0, ca1=R1?+R1.caEncaisse||0:0;
+  const marge0=R0?money2(ca0-(+R0.coutMatieres||0)):0;
+  const dCA=ca1>0?Math.round(100*(ca0-ca1)/ca1):null;
+  // pièces + top parfum via commandes livrées de la semaine (productions → recette)
+  let pieces=0, topNom='', topQ=0;
+  try{
+    const [orders, items, prods, recipes]=await Promise.all([db.orders.toArray(), db.orderItems.toArray(), db.productions.toArray(), db.recipes.toArray()]);
+    const dans=o=>o.date>=S0.start&&o.date<=S0.end;
+    const ok=new Set(orders.filter(o=>dans(o)&&['Livrée','Terminée'].includes((typeof normStatus==='function')?normStatus(o.statut):o.statut)).map(o=>o.id));
+    const par={};
+    items.filter(it=>ok.has(it.orderId)).forEach(it=>{
+      pieces+=+it.qte||0;
+      const p=prods.find(x=>x.id===it.productionId); const r=p?recipes.find(x=>x.id===p.recipeId):null;
+      if(r){ par[r.produitNom]=(par[r.produitNom]||0)+(+it.qte||0); }
+    });
+    Object.keys(par).forEach(k=>{ if(par[k]>topQ){ topQ=par[k]; topNom=k; } });
+  }catch(e){}
+  // temps d'atelier de la semaine (tâches avec début ET fin)
+  let minutes=0;
+  try{
+    const t0=new Date(S0.start+'T00:00').getTime(), t1=new Date(S0.end+'T23:59').getTime();
+    (prodSessLoad()||[]).forEach(s=>(s.tasks||[]).forEach(t=>{
+      const a=+t.start||0, b=+t.end||+t.stop||0;
+      if(a>=t0&&a<=t1&&b>a) minutes+=(b-a)/60000;
+    }));
+  }catch(e){}
+  // pertes de la semaine
+  let nbPertes=0, coutPertes=0;
+  try{ (await db.losses.toArray()).filter(l=>l.date>=S0.start&&l.date<=S0.end).forEach(l=>{ nbPertes+=+l.qte||0; coutPertes+=+l.coutTotal||0; }); }catch(e){}
+  // sparkline CA commandes sur 8 semaines
+  let spark='';
+  try{
+    const orders=await db.orders.toArray();
+    const serie=[];
+    for(let i=-7;i<=0;i++){ const w=aiSemaineRange(i);
+      serie.push(orders.filter(o=>o.date>=w.start&&o.date<=w.end&&['Livrée','Terminée'].includes((typeof normStatus==='function')?normStatus(o.statut):o.statut)).reduce((s,o)=>s+(+o.montant||0),0)); }
+    spark=aiSpark(serie,{w:170});
+  }catch(e){}
+  const tone=dCA==null?'':dCA>=0?'ok':'warn';
+  const synth = ca0<=0 && pieces<=0
+    ? `Semaine calme côté encaissements pour l'instant — rien d'encaissé du ${fmtDate(S0.start)} au ${fmtDate(S0.end)}.`
+    : `CA encaissé <b>${euro(ca0)}</b>${dCA!=null?` (${dCA>=0?'+':''}${dCA}% vs S-1)`:''} · marge matière <b>${euro(marge0)}</b>${pieces?` · <b>${qty(pieces)}</b> pièces livrées`:''}${topNom?` · star : <b>${esc(topNom)}</b> (${qty(topQ)})`:''}.`;
+  return aiSay(`${aiHero(euro(ca0), 'Ta semaine', {sub:`${fmtDate(S0.start)} → ${fmtDate(S0.end)}${spark?' · 8 sem. ':''}${spark}`, color:'var(--bordeaux)'})}
+    ${aiSynth(synth,{icon:'📖', tone})}
+    ${aiDetails(`
+      <div class="sum-box"><span>CA semaine précédente</span><b>${euro(ca1)}</b></div>
+      ${minutes>0?`<div class="sum-box"><span>Temps d'atelier</span><b>${Math.round(minutes/6)/10} h</b></div>`:''}
+      ${nbPertes>0?`<div class="sum-box"><span>Pertes déclarées</span><b>${qty(nbPertes)} pc · ${euro(coutPertes)}</b></div>`:''}
+      <p class="note" style="margin-top:6px">CA/marge : encaissements réels (commandes + marchés). Courbe : commandes livrées par semaine.</p>`,'Détail de la semaine')}
+    ${aiSuite([{label:'🎯 Mon seuil du mois', ask:'quel est mon seuil de rentabilité ?'},{label:'📊 Compta', view:'compta'}])}`);
+}
+
+// ---- C. Simulateur « et si ? » ----
+async function _aiSeuilBase(){
+  let R=null; try{ R=await revenuHoraireCalcul(30); }catch(e){}
+  const charges=R?+R.chargesFixes||0:0;
+  // Prix de vente moyen sur les VRAIES ventes (commandes + marchés clos), pas des tableaux vides.
+  let prix=2;
+  try{
+    if(typeof computeAvgSellPrice==='function'){
+      const [orders, markets]=await Promise.all([db.orders.toArray().catch(()=>[]), (db.markets?db.markets.toArray().catch(()=>[]):Promise.resolve([]))]);
+      const r=computeAvgSellPrice({orders, markets, settings:getSettings()});
+      prix=(r&&+r.prix>0)?+r.prix:2;
+    }
+  }catch(_){}
+  const ca=R?+R.caEncaisse||0:0, coutMat=R?+R.coutMatieres||0:0;
+  const ratio=ca>0?coutMat/ca:0.25;
+  const margeUnit=Math.max(0.01, prix*(1-ratio));
+  return {charges, prix, ratio, margeUnit, seuil:margeUnit>0?Math.ceil(charges/margeUnit):null};
+}
+async function aiQueryEtSiPrix(params){
+  const prixNv=+(params&&params.prix)||0;
+  if(!(prixNv>0)) return aiSay(`<p>Donne-moi le prix à tester, par ex. « et si je vends la framboise à 2,20 ? »</p>`);
+  const hint=String((params&&params.hint)||'').trim();
+  const [recipes, recipeItems, lots]=await Promise.all([db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()]);
+  const nt=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const rec=recipes.find(r=>hint&&nt(r.produitNom).includes(nt(hint).trim())) ||
+            recipes.find(r=>nt(hint).includes(nt(r.produitNom)));
+  if(!rec) return aiSay(`<p>Je n'ai pas reconnu le parfum${hint?` « ${esc(hint)} »`:''}. Reformule avec le nom exact de la recette (ex. « et si je vends la Framboise à 2,20 ? »).</p>`);
+  let cr=null; try{ cr=coutRevientRecette(rec, recipeItems, lots); }catch(e){}
+  if(!cr) return aiSay(`<p>Impossible de chiffrer le coût de ${esc(rec.produitNom)} pour le moment.</p>`);
+  const coutUnit=money2((+cr.coutMatUnit||0)+(+cr.coutConsoUnit||0)+(+cr.coutMODUnit||0));
+  const marge=money2(prixNv-coutUnit);
+  const taux=prixNv>0?Math.round(100*marge/prixNv):0;
+  const tone=marge>0.4?'ok':marge>0?'':'warn';
+  return aiSay(`${aiHero(euro(marge)+'<span style="font-size:1rem">/pc</span>', `${esc(rec.produitNom)} à ${euro(prixNv)}`, {color:marge>=0?'#3f7d52':'#b3261e'})}
+    ${aiSynth(marge>0?`À ${euro(prixNv)}, chaque ${esc(rec.produitNom)} te laisse <b>${euro(marge)}</b> (${taux}% de marge) après coût de revient de ${euro(coutUnit)}.`:`⛔ À ${euro(prixNv)} tu vends SOUS ton coût de revient (${euro(coutUnit)}) : tu perds ${euro(-marge)} par pièce.`,{icon:'🧮', tone})}
+    ${aiDetails(`
+      <div class="sum-box"><span>Coût de revient / pièce</span><b>${euro(coutUnit)}</b></div>
+      <div class="sum-box"><span>· matières</span><b>${euro(cr.coutMatUnit||0)}</b></div>
+      ${(+cr.coutMODUnit||0)>0?`<div class="sum-box"><span>· main-d'œuvre</span><b>${euro(cr.coutMODUnit)}</b></div>`:''}
+      ${(+cr.coutConsoUnit||0)>0?`<div class="sum-box"><span>· consommables</span><b>${euro(cr.coutConsoUnit)}</b></div>`:''}
+      <p class="note" style="margin-top:6px">Simulation instantanée — rien n'est modifié dans tes prix.</p>`,'Détail du calcul')}
+    ${aiSuite([{label:'📊 Fiche du parfum', view:'compta'},{label:'🎯 Impact sur le seuil', ask:'quel est mon seuil de rentabilité ?'}])}`);
+}
+async function aiQueryEtSiVolume(params){
+  const n=Math.round(+(params&&params.n)||0);
+  if(!(n>0)) return aiSay(`<p>Dis-moi le volume à tester, par ex. « et si je vends 300 macarons de plus ? »</p>`);
+  const B=await _aiSeuilBase();
+  const caPlus=money2(n*B.prix), margePlus=money2(n*B.margeUnit);
+  return aiSay(`${aiHero('+'+euro(margePlus), `${qty(n)} macarons de plus`, {sub:`soit +${euro(caPlus)} de CA`, color:'#3f7d52'})}
+    ${aiSynth(`${qty(n)} pièces de plus ce mois ≈ <b>+${euro(margePlus)}</b> de marge (à ${euro(B.prix)} de prix moyen et ${Math.round(B.ratio*100)}% de coût matière).${B.seuil?` Ton seuil est à ${qty(B.seuil)} pièces : ce volume t'en rapproche d'autant.`:''}`,{icon:'📈'})}
+    ${aiSuite([{label:'🎯 Mon seuil', ask:'quel est mon seuil de rentabilité ?'},{label:'📖 Ma semaine', ask:'raconte-moi ma semaine'}])}`);
+}
+
+// ---- D1. Déclarer une perte en langage naturel (confirmation + undo) ----
+async function aiActionPerte(params){
+  const n=Math.round(+(params&&params.n)||0);
+  const hint=String((params&&params.hint)||'').trim();
+  if(!(n>0)) return aiSay(`<p>Précise la quantité, ex. « note une perte de 6 framboise ».</p>`);
+  const [prods, recipes, recipeItems, lots, mats]=await Promise.all([db.productions.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray().catch(()=>[])]);
+  const nt=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const cands=prods.filter(p=>round3(+p.qteRestante||0)>=n).map(p=>({p, r:recipes.find(x=>x.id===p.recipeId)}))
+    .filter(x=>x.r && (!hint || nt(x.r.produitNom).includes(nt(hint)) || nt(hint).includes(nt(x.r.produitNom))))
+    .sort((a,b)=>(b.p.prodTimestamp||0)-(a.p.prodTimestamp||0));
+  if(!cands.length) return aiSay(`<p>Aucun lot${hint?` de « ${esc(hint)} »`:''} avec au moins ${qty(n)} pièce(s) en stock. Vérifie le stock ou passe par l'écran Productions.</p>`);
+  const {p, r}=cands[0];
+  if(!confirm(`Déclarer une perte de ${n} pièce(s) sur « ${r.produitNom} » (lot ${p.lotProduction||('#'+p.id)}, stock ${qty(p.qteRestante)}) ?`)) return aiSay(`<p class="note">Perte annulée — rien n'a été enregistré.</p>`);
+  let coutUnit=0; try{ const cr=coutRevientRecette(r, recipeItems, lots); coutUnit=lossUnitCost(prodComposant(p), cr, mats); }catch(e){}
+  const loss={productionId:p.id, recipeId:r.id, lotProduction:p.lotProduction||'', date:today(),
+    motif:'Perte déclarée (copilote)', note:'', qte:round3(n), coutUnit:money2(coutUnit), coutTotal:money2(coutUnit*n)};
+  const avant=round3(+p.qteRestante||0);
+  let lossId=null;
+  await db.transaction('rw', db.losses, db.productions, async()=>{
+    lossId=await db.losses.add(loss);
+    await db.productions.update(p.id, {qteRestante: subQty(avant, n)});
+  });
+  aiSay(`${aiHero('−'+qty(n), `Perte — ${esc(r.produitNom)}`, {sub:`lot ${esc(p.lotProduction||('#'+p.id))} · ${euro(loss.coutTotal)}`, color:'#b04a3e'})}
+    ${aiSynth(`Perte enregistrée : le stock du lot passe de ${qty(avant)} à <b>${qty(subQty(avant,n))}</b>.`,{icon:'📝'})}`,
+    [{label:'📦 Voir le lot', openFn:'traceProd', id:p.id}]);
+  showUndoToast(`Perte de ${qty(n)} enregistrée`, async ()=>{
+    await db.transaction('rw', db.losses, db.productions, async()=>{
+      if(lossId!=null) await db.losses.delete(lossId);
+      await db.productions.update(p.id, {qteRestante: avant});
+    });
+    toast('Perte annulée · stock restauré');
+  });
+}
+// ---- D2. Courses perso ----
+function aiActionCoursesAdd(params){
+  const art=aiParseArticle((params&&params.texte)||'');
+  if(!art.nom) return aiSay(`<p>Précise l'article, ex. « ajoute 2 kg de sucre aux courses ».</p>`);
+  const l=aiCoursesExtra(); l.unshift({nom:art.nom, qte:art.qte, unite:art.unite, ts:Date.now()});
+  aiCoursesSave(l);
+  return aiSay(`${aiSynth(`Ajouté à ta liste perso : <b>${art.qte?qty(art.qte)+' '+esc(art.unite||'')+' de ':''}${esc(art.nom)}</b>.`,{icon:'🛒', tone:'ok'})}
+    ${aiDetails(l.slice(0,10).map(x=>`<div class="sum-box"><span>${esc(x.nom)}</span><b>${x.qte?qty(x.qte)+' '+esc(x.unite||''):'—'}</b></div>`).join(''),`Ta liste perso (${l.length})`)}
+    ${aiSuite([{label:'🛒 Courses calculées', ask:'ma liste de courses'},{label:'🗑 Retirer un article', ask:'retire '+art.nom+' des courses'}])}`);
+}
+function aiActionCoursesRemove(params){
+  const cible=aiParseArticle((params&&params.texte)||'').nom;
+  const nt=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const l=aiCoursesExtra();
+  const i=l.findIndex(x=>nt(x.nom).includes(nt(cible))||nt(cible).includes(nt(x.nom)));
+  if(i<0) return aiSay(`<p>« ${esc(cible)} » n'est pas dans ta liste perso.</p>`);
+  const [ret]=l.splice(i,1); aiCoursesSave(l);
+  return aiSay(`${aiSynth(`Retiré : <b>${esc(ret.nom)}</b>. ${l.length?`Reste ${l.length} article(s) perso.`:'Ta liste perso est vide.'}`,{icon:'🛒'})}`);
+}
+function aiActionCoursesList(){
+  const l=aiCoursesExtra();
+  if(!l.length) return aiSay(`${aiSynth('Ta liste perso est vide. Ajoute avec « ajoute 2 kg de sucre aux courses ».',{icon:'🛒'})}`);
+  return aiSay(`${aiHero(String(l.length), 'Articles perso', {color:'var(--caramel,#AA7C39)'})}
+    ${l.map(x=>`<div class="sum-box"><span>${esc(x.nom)}</span><b>${x.qte?qty(x.qte)+' '+esc(x.unite||''):'—'}</b></div>`).join('')}
+    <p class="note" style="margin-top:6px">Liste manuelle, en plus des courses calculées depuis tes besoins.</p>
+    ${aiSuite([{label:'🛒 Courses calculées', ask:'ma liste de courses'}])}`);
+}
+// ---- D3. Marquer une commande livrée (bouton = flux canonique setOrderStatus) ----
+async function aiActionLivrer(params){
+  const nomCl=String((params&&params.client)||'').trim();
+  if(!nomCl) return aiSay(`<p>Précise le client, ex. « marque la commande de Mélanie livrée ».</p>`);
+  const nt=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const [orders, clients]=await Promise.all([db.orders.toArray(), db.clients.toArray()]);
+  const cl=clients.find(c=>nt(c.prenom||'').includes(nt(nomCl))||nt(c.nom||'').includes(nt(nomCl))||nt(nomCl).includes(nt(c.prenom||'x‡')));
+  if(!cl) return aiSay(`<p>Client « ${esc(nomCl)} » introuvable.</p>`);
+  const enCours=orders.filter(o=>o.clientId===cl.id && !['Livrée','Terminée'].includes((typeof normStatus==='function')?normStatus(o.statut):o.statut))
+    .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  if(!enCours.length) return aiSay(`<p>Aucune commande en cours pour ${esc(cl.prenom||cl.nom)} — tout est déjà livré.</p>`);
+  const o=enCours[0];
+  return aiSay(`${aiHero(euro(o.montant||0), `Commande ${esc(o.numero||('#'+o.id))}`, {sub:`${esc([cl.prenom,cl.nom].filter(Boolean).join(' '))} · retrait ${fmtDate(o.date)}`, color:'var(--bordeaux)'})}
+    ${aiSynth(`Je te la montre avant d'agir : confirmer la livraison décrémente le stock des lots affectés (contrôle habituel inclus).`,{icon:'📦'})}`,
+    [{label:'✓ Marquer livrée', action:`setOrderStatus(${o.id},'Livrée')`},{label:'👁 Ouvrir la commande', openFn:'cmdView', id:o.id}]);
+}
+/* ASSIST-PLUS:END */
+
 function renderAssistant(){
   _aiPhotoPreview=null;   // aucune pièce jointe ne persiste entre deux visites
   document.getElementById('main').innerHTML=`
@@ -26179,7 +26648,7 @@ function renderAssistant(){
     return;
   }
   // Message d'accueil discret dans le fil (épuré, pas de briefing proactif).
-  aiPush('bot', `<p style="margin:0">Bonjour 👋 Je suis ton copilote de pilotage. Demande-moi un conseil, un stock, une recette, tes commandes… <span class="note">Je fonctionne hors-ligne ; toute action critique te demande validation.</span></p>`);
+  aiPush('bot', `<p style="margin:0">Bonjour 👋 Je suis ton copilote de pilotage. Demande-moi un conseil, un stock, une recette, tes commandes… <span class="note">Je fonctionne hors-ligne ; toute action critique te demande validation.</span></p>${(typeof aiHabitsHTML==='function')?aiHabitsHTML():''}`);
 }
 // [CHAT — D1] Auto-agrandissement de l'input (1 à ~5 lignes), pour un ressenti de chat.
 function aiAutoGrow(ta){ if(!ta) return; ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }
@@ -29064,6 +29533,11 @@ async function aiRun(){
 // [DISPATCH — extrait d'aiRun, étape C1] Route une intention résolue vers sa fonction. Extrait pour être
 // réutilisable après une clarification (on relance l'intention d'origine sans repasser par parseIntent).
 async function _aiDispatch(r, txt, _ctx){
+  // [ASSIST-PLUS] journal d'usage (habitudes) + fallback intelligent sur incompréhension.
+  try{ if(r && r.intent) aiUsageLog(r.intent, txt); }catch(_){}
+  if(r && r.intent==='unknown'){
+    try{ if(aiRepondreSuggestions(txt)) return; }catch(_){}
+  }
     switch(r.intent){
       case 'query_advice': return aiQueryAdvice();
       case 'query_retards': return aiQueryRetards();
@@ -29094,6 +29568,14 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_renta_livraison': return aiQueryRentaLivraison(r.params);
       case 'query_revenu_horaire': return aiQueryRevenuHoraire();
       case 'query_seuil_rentabilite': return aiQuerySeuilRentabilite();
+      case 'query_bilan_semaine': return aiQueryBilanSemaine();
+      case 'query_etsi_prix': return aiQueryEtSiPrix(r.params);
+      case 'query_etsi_volume': return aiQueryEtSiVolume(r.params);
+      case 'action_perte': return aiActionPerte(r.params);
+      case 'action_courses_add': return aiActionCoursesAdd(r.params);
+      case 'action_courses_remove': return aiActionCoursesRemove(r.params);
+      case 'action_courses_list': return aiActionCoursesList();
+      case 'action_livrer': return aiActionLivrer(r.params);
       case 'query_strategie': return aiQueryStrategie();
       case 'query_rd': return aiQueryRD();
       case 'query_fournisseur': return aiQueryFournisseur(r.params);
@@ -32779,6 +33261,94 @@ function _dataURLtoBytes(dataURL){
   return bytes;
 }
 
+
+// ---- UI : définir les boîtes (quantités + destination) avant impression ----
+async function prodEtiquetteBoites(prodId){
+  const p = await db.productions.get(prodId).catch(()=>null);
+  if(!p){ toast('Lot introuvable'); return; }
+  const dispo = round3(+p.qteRestante||0);
+  if(dispo<=0){ toast('Ce lot n\'a plus de stock à étiqueter'); return; }
+  window._etiqDraft = {prodId, dispo, rows:[{qte:dispo, destination:p.emplacement||'frigo'}]};
+  _etiqRenderForm();
+}
+function _etiqOptionsEmp(sel){
+  return EMPLACEMENTS.map(e=>`<option value="${e.key}" ${e.key===sel?'selected':''}>${e.icon} ${esc(e.nom)}</option>`).join('');
+}
+function _etiqRenderForm(){
+  const d = window._etiqDraft; if(!d) return;
+  const total = round3(d.rows.reduce((s,r)=>s+(+r.qte||0),0));
+  const reste = round3(d.dispo-total);
+  const rows = d.rows.map((r,i)=>`
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <input type="number" min="0" step="1" value="${r.qte}" style="width:70px;padding:8px;border:1px solid var(--hair,#e7ddd2);border-radius:9px" onchange="_etiqSetQte(${i},this.value)">
+      <select style="flex:1;padding:8px;border:1px solid var(--hair,#e7ddd2);border-radius:9px" onchange="_etiqSetDest(${i},this.value)">${_etiqOptionsEmp(r.destination)}</select>
+      ${d.rows.length>1?`<button class="btn ghost sm" onclick="_etiqDelRow(${i})">✕</button>`:''}
+    </div>`).join('');
+  const complet = Math.abs(reste)<1e-9 && total>0;
+  openModal(`<h3>🏷 Étiquettes — boîte(s)</h3>
+    <p class="note" style="margin-bottom:10px">Stock disponible : <b>${qty(d.dispo)}</b> pièce(s). Répartis en boîtes ; chaque boîte peut aller vers une destination différente (la DLC suit sa vraie destination).</p>
+    ${rows}
+    <button class="btn ghost sm" onclick="_etiqAddRow()">➕ Ajouter une boîte</button>
+    <div class="prlv-sum" style="margin-top:10px;border-top:2px solid var(--hair,#e7ddd2);font-weight:700">
+      <span>Réparti ${qty(total)} / ${qty(d.dispo)}</span>
+      <b style="color:${complet||reste>0?'#3f7d52':'#b3261e'}">${complet?'✓ complet':reste>0?'reste '+qty(reste)+' (non étiqueté)':'⛔ dépasse le stock'}</b></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" ${reste<0?'disabled style="opacity:.45"':''} onclick="_etiqValiderGo()">🏷 Étiqueter</button>
+    </div>`);
+}
+function _etiqSetQte(i,v){ const d=window._etiqDraft; if(d&&d.rows[i]){ d.rows[i].qte=round3(+v||0); _etiqRenderForm(); } }
+function _etiqSetDest(i,v){ const d=window._etiqDraft; if(d&&d.rows[i]){ d.rows[i].destination=v; } }
+function _etiqAddRow(){ const d=window._etiqDraft; if(!d) return; const reste=round3(d.dispo-d.rows.reduce((s,r)=>s+(+r.qte||0),0));
+  d.rows.push({qte:Math.max(0,reste), destination:d.rows[d.rows.length-1].destination}); _etiqRenderForm(); }
+function _etiqDelRow(i){ const d=window._etiqDraft; if(!d||d.rows.length<=1) return; d.rows.splice(i,1); _etiqRenderForm(); }
+
+async function _etiqValiderGo(){
+  const d = window._etiqDraft; if(!d) return;
+  const sim = await prodPreparerBoites(d.prodId, d.rows, {simuler:true});
+  if(!sim.ok){ toast(sim.raison||'Répartition invalide'); return; }
+  try{ await snapshotBackup('avant-etiquette-boites'); }catch(e){}
+  const res = await prodPreparerBoites(d.prodId, d.rows, {});
+  closeModal(); window._etiqDraft=null;
+  if(!res.ok){ toast(res.raison||'Échec'); return; }
+  if(res.simple){
+    // cas simple : rien créé, on imprime le lot tel quel comme avant.
+    toast('Prêt à imprimer');
+    _etiqResultats(res.boxes);
+    return;
+  }
+  if(typeof renderProductionsV2==='function' && view==='productionsv2') renderProductionsV2();
+  showUndoToast(`${res.boxes.length} boîte(s) créée(s)`, async ()=>{
+    await db.transaction('rw', db.productions, async()=>{
+      for(const b of res.boxes){ await db.productions.delete(b.id); }
+      const src=await db.productions.get(d.prodId);
+      await db.productions.update(d.prodId, {qteRestante: round3((+src.qteRestante||0)+res.boxes.reduce((s,b)=>s+b.qte,0))});
+    });
+    toast('Boîtes annulées · stock restauré');
+    if(typeof renderProductionsV2==='function' && view==='productionsv2') renderProductionsV2();
+  });
+  _etiqResultats(res.boxes);
+}
+// Écran de résultats : une ligne par boîte, avec ses boutons d'impression PROPRES
+// (réutilise shareLabelPDF/shareLabelImage tels quels — chaque id lit sa propre DLC).
+async function _etiqResultats(boxes){
+  const rows=[];
+  for(const b of boxes){
+    const pb = await db.productions.get(b.id).catch(()=>null);
+    const e = pb ? empInfo(pb.emplacement) : null;
+    const dlc = pb ? (typeof prodDlcEffective==='function'?prodDlcEffective(pb):pb.dlcProduit) : '';
+    rows.push(`<div class="prlv-card">
+      <div class="prlv-line"><span class="prlv-nom">${e?e.icon+' '+esc(e.nom):''}</span><b>${qty(b.qte)} pc</b></div>
+      <span class="prlv-chip">DLC ${dlc?fmtDate(dlc):'—'}</span>
+      <div class="prlv-acts">
+        <button class="btn ghost sm" onclick="shareLabelPDF(${b.id})">📄 PDF</button>
+        <button class="btn ghost sm" onclick="shareLabelImage(${b.id})">🖼 Image</button>
+      </div></div>`);
+  }
+  openModal(`<h3>🏷 Étiquettes prêtes</h3>${_prelevCss()}${rows.join('')}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
 async function shareLabelPDF(prodId){
   try{
     const d = await buildLabelData(prodId);
@@ -33231,6 +33801,78 @@ async function shareOrderRecapImage(orderId){
     toast('Image enregistrée — ouvre-la dans l\'app Phomemo');
   }catch(e){ console.error('shareOrderRecapImage',e); toast('Erreur lors de la génération du récap'); }
 }
+/* ============================================================
+   ÉTIQUETTES MULTI-BOÎTES — scinde un lot en N sous-productions,
+   chacune déplacée réellement vers sa destination (frigo/congélo),
+   réutilisant doMoveEmplacement pour hériter de toutes les règles
+   de sécurité + le calcul DLC existants. Zéro logique dupliquée.
+   ============================================================ */
+/* ETIQ:PURE:BEGIN */
+// Valide une répartition en boîtes avant toute écriture.
+function _etiqValiderBoites(p, boites){
+  const list=(boites||[]).map(b=>({qte:round3(+b.qte||0), destination:b.destination}))
+    .filter(b=>b.qte>0 && b.destination);
+  if(!list.length) return {ok:false, raison:'Ajoute au moins une boîte avec une quantité.'};
+  for(const b of list){ if(!EMP_BY_KEY[b.destination]) return {ok:false, raison:'Destination invalide.'}; }
+  const total = round3(list.reduce((s,b)=>s+b.qte,0));
+  const dispo = round3(+p.qteRestante||0);
+  if(total > dispo + 1e-9) return {ok:false, raison:`Le total des boîtes (${qty(total)}) dépasse le stock disponible (${qty(dispo)}).`};
+  return {ok:true, list, total, dispo, reste:round3(dispo-total)};
+}
+/* ETIQ:PURE:END */
+
+// Scinde le lot `prodId` en boîtes réelles. `boites` = [{qte, destination}].
+// simuler:true → validation seule (dry-run), aucune écriture.
+async function prodPreparerBoites(prodId, boites, opts){
+  opts = opts || {};
+  const p = await db.productions.get(prodId).catch(()=>null);
+  if(!p) return {ok:false, raison:'Lot introuvable.'};
+  const v = _etiqValiderBoites(p, boites);
+  if(!v.ok) return v;
+  // CAS SIMPLE (le plus fréquent) : une seule boîte, tout le stock, même destination que
+  // l'emplacement actuel → RIEN à scinder. On garde le comportement historique (impression
+  // directe du lot existant), zéro production créée.
+  if(v.list.length===1 && v.list[0].destination===p.emplacement && Math.abs(v.reste)<1e-9){
+    if(opts.simuler) return {ok:true, simple:true, boxes:[{id:prodId, qte:v.list[0].qte, destination:p.emplacement}]};
+    return {ok:true, simple:true, execute:true, boxes:[{id:prodId, qte:v.list[0].qte, destination:p.emplacement}]};
+  }
+  if(opts.simuler) return {ok:true, simple:false, boxes:v.list, reste:v.reste, total:v.total, dispo:v.dispo};
+
+  const created=[];
+  await db.transaction('rw', db.productions, async()=>{
+    const src = await db.productions.get(prodId);
+    const baseLot = lotBaseSansSuffixe(src.lotProduction||'');
+    let n=0;
+    for(const b of v.list){
+      n++;
+      const lotInitial = lotAvecEmplacement(baseLot+'-B'+n, src.emplacement);
+      const childId = await db.productions.add({
+        recipeId: src.recipeId, produitLibre: src.produitLibre, libre: src.libre||false,
+        composant: src.composant||'complet', degOrigine: src.degOrigine, degDeclasse: src.degDeclasse||false,
+        assembleFrom: Array.isArray(src.assembleFrom) ? JSON.parse(JSON.stringify(src.assembleFrom)) : [],
+        lotBase: baseLot, lotProduction: lotInitial, date: src.date,
+        qteTheorique: b.qte, qteReelle: b.qte, qteProduite: b.qte, qteRestante: b.qte, ecart: 0,
+        prodStatut: src.prodStatut, prodDebutTs: src.prodDebutTs, prodTermineTs: src.prodTermineTs,
+        prodTimestamp: src.prodTimestamp,                      // ancre de fabrication INCHANGÉE (clé pour la DLC)
+        emplacement: src.emplacement, emplacementMaj: src.emplacementMaj,
+        histEmplacement: Array.isArray(src.histEmplacement) ? JSON.parse(JSON.stringify(src.histEmplacement)) : [],
+        venuDuCongelateur: src.venuDuCongelateur||false,
+        dlcAuto: src.dlcAuto, dlcProduit: src.dlcProduit,
+        maturation: src.maturation,
+        etiquetteDe: prodId                                    // traçabilité de la scission
+      });
+      created.push({id:childId, qte:b.qte, destination:b.destination});
+      await db.productions.update(prodId, {qteRestante: subQty((await db.productions.get(prodId)).qteRestante, b.qte)});
+      // Déplacement RÉEL vers la destination choisie : réutilise TOUTES les règles existantes
+      // (anti-recongélation, retour <1h, DLC recalculée, renommage du lot). Silencieux (pas de toast/modal).
+      if(b.destination !== src.emplacement){
+        await doMoveEmplacement(childId, b.destination, {silent:true, confirmedFrigo:true});
+      }
+    }
+  });
+  return {ok:true, simple:false, execute:true, boxes:created};
+}
+
 async function buildLabelData(prodId){
   const p = await db.productions.get(prodId);
   if(!p) return null;
