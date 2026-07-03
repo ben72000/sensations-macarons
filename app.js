@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1164';
+const APP_VERSION = 'v1165';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -37800,7 +37800,9 @@ const FACT_STYLE = `   <style>
      .ln-sub { display:block; padding-left:5mm; font-size:11px; color:#7a6a60; }
      .ln-loc { display:block; margin-top:1mm; font-size:11px; color:#8a5a2a; font-style:italic; }
      .cmd-table tr.sub td, .cmd-table tr.rem td, .cmd-table tr.liv td { color:#6a5a52; font-size:12px; border-bottom:none; padding-top:1mm; padding-bottom:1mm; }
-     .cmd-table tr.cmd-total td { font-weight:600; color:#490F25; border-top:1px solid #e0d5c5; border-bottom:none; padding-top:1.2mm; padding-bottom:1.2mm; }
+     .cmd-table tr.tc-brut td { color:#490F25; font-weight:700; font-size:12.5px; border-bottom:none; padding-top:1mm; padding-bottom:1mm; }
+     .cmd-table tr.tc-remise td { color:#2e7d32; font-weight:700; font-size:12.5px; border-bottom:none; padding-top:1mm; padding-bottom:1mm; }
+     .cmd-table tr.cmd-total td { font-weight:700; color:#490F25; border-top:1px solid #e0d5c5; border-bottom:none; padding-top:1.4mm; padding-bottom:1.4mm; font-size:14.5px; }
      .grand { margin-top:4mm; width:100%; }
      .grand .lg { display:flex; justify-content:space-between; padding:1mm 0; font-size:13px; }
      .grand .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:19px; color:#490F25; }
@@ -37848,7 +37850,7 @@ const FACT_STYLE = `   <style>
      .bas-final .avis-bloc .avis-sub { font-size:9px; margin-top:0.5mm; }
      .bas-keep { break-inside:avoid; page-break-inside:avoid; }
      .grand .lg.brut { color:#6a5a52; font-size:12.5px; }
-     .grand .lg.reduc { color:#9a4a10; font-weight:600; font-size:12.5px; }
+     .grand .lg.reduc { color:#2e7d32; font-weight:700; font-size:12.5px; }
      .pied { margin-top:7mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
      .barre { text-align:center; padding:10px; background:#490F25; }
@@ -38432,7 +38434,7 @@ async function _genererFactureSimple_DEPRECATED(orderId){
      .bas-final .avis-bloc .avis-sub { font-size:9px; margin-top:0.5mm; }
      .bas-keep { break-inside:avoid; page-break-inside:avoid; }
      .grand .lg.brut { color:#6a5a52; font-size:12.5px; }
-     .grand .lg.reduc { color:#9a4a10; font-weight:600; font-size:12.5px; }
+     .grand .lg.reduc { color:#2e7d32; font-weight:700; font-size:12.5px; }
      .pied { margin-top:7mm; padding-top:4mm; border-top:1px solid #e0d5c5; font-size:10.5px; color:#9a8a82; text-align:center; line-height:1.6; }
      @media print { .noprint{display:none;} body{-webkit-print-color-adjust:exact; print-color-adjust:exact;} }
      .barre { text-align:center; padding:10px; background:#490F25; }
@@ -38589,7 +38591,7 @@ async function genererFactureMultiple(ids){
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
             ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true)}
-            ${R.rabais>0?`<tr class="sub"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="rem" style="color:#3f7d52"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
+            ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
             ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
             <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
           </tbody>
