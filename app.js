@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1170';
+const APP_VERSION = 'v1172';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -14698,6 +14698,11 @@ async function renderCmd(){
   // n° de lot des batchs liés, par commande (pour permettre la recherche par lot)
   const allProdsForLots = await db.productions.toArray();
   const prodLotById = {}; allProdsForLots.forEach(p=>{ prodLotById[p.id]=p.lotProduction||''; });
+  // [PRODUISIBILITÉ — crédit des liaisons] recettes + index productions pour imputer les lots liés
+  // à un parfum de la demande (matching flou), afin de raisonner sur la demande NETTE.
+  const _recipesCmd = await db.recipes.toArray();
+  const _recByIdCmd = {}; _recipesCmd.forEach(r=>{ _recByIdCmd[r.id]=r; });
+  const _prodByIdCmd = {}; allProdsForLots.forEach(p=>{ _prodByIdCmd[p.id]=p; });
   const lotsByOrder={}; allItems.forEach(it=>{ const lot=prodLotById[it.productionId]; if(lot){ (lotsByOrder[it.orderId] ||= []).push(lot); } });
   const lineLabel = ln => {
     if(ln.type==='evenement') return `Événement ${ln.evQte||0} mac. +${ln.equip||0} pyr.`;
@@ -14731,7 +14736,8 @@ async function renderCmd(){
       resume, prodTxt, o.notes, o.reglement, o.paiement, 'cmd'+o.id, '#'+o.id, refCmd, fmtDate(o.date),
       facetTxt, (lotsByOrder[o.id]||[]).join(' ')].filter(Boolean).join(' '));
     const digits = onlyDigits([o.id, refCmd, cl.tel, o.montant].filter(v=>v!=null&&v!=='').join(' '));
-    const produisibilite = (typeof _orderProduisibilite==='function') ? _orderProduisibilite(o, _mobMapCmd) : null;
+    const _linksCmd = (itemsByOrder[o.id]||[]).map(it=>{ const p=_prodByIdCmd[it.productionId]; const r=p?_recByIdCmd[p.recipeId]:null; return { nom: r?r.produitNom:((p&&p.produitNom)||''), qte:+it.qte||0 }; }).filter(l=>l.nom);
+    const produisibilite = (typeof _orderProduisibilite==='function') ? _orderProduisibilite(o, _mobMapCmd, _linksCmd) : null;
     return {o, resume, nbLies:(itemsByOrder[o.id]||[]).length, _prim:prim, _blob:blob, _digits:digits, _facets, produisibilite};
   });
   document.getElementById('main').innerHTML=`
@@ -14828,15 +14834,28 @@ function _cmdRenderTagBar(){
 //   • 'produire' : au moins un parfum manque même en comptant le mobilisable → il faut produire.
 // IMPORTANT : indication sur le stock TOTAL (pas de réservation entre commandes) — comme le plan.
 // Renvoie { statut, manqueTotal } ou null si commande livrée / sans demande.
-function _orderProduisibilite(o, mobMap){
+function _orderProduisibilite(o, mobMap, linkList){
   if(!o || (typeof normStatus==='function' && normStatus(o.statut)==='Livrée')) return null;
   const dem = (typeof _orderParfumDemand==='function') ? _orderParfumDemand(o) : {};
   const noms = Object.keys(dem);
   if(!noms.length) return null;
+  // [A — crédit des liaisons] Chaque lot DÉJÀ LIÉ est imputé à un parfum de la demande (matching
+  // flou, comme l'affectation), et on raisonne sur la demande NETTE. Pas de double comptage : lier
+  // a déjà décrémenté le stock, donc « demande nette vs stock actuel » est cohérent.
+  const linkedByFlavor = {};
+  (linkList||[]).forEach(l=>{
+    if(!l || (+l.qte||0)<=0) return;
+    const key = (typeof pickFlavorMatch==='function') ? noms.find(n=>pickFlavorMatch(n, l.nom)) : null;
+    if(key) linkedByFlavor[key] = (linkedByFlavor[key]||0) + (+l.qte||0);
+  });
+  const net = {}; let netTotal = 0;
+  noms.forEach(n=>{ const v = Math.max(0, (+dem[n]||0) - (linkedByFlavor[n]||0)); net[n]=v; netTotal += v; });
+  // [B — commande couverte] Toute la demande est couverte par des lots liés → plus rien à faire.
+  if(netTotal <= 0) return { statut:'lie', manqueTotal:0 };
   const _k = nom => (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
   let besoinAssemblage = false, manqueTotal = 0;
   noms.forEach(nom=>{
-    const besoin = +dem[nom]||0; if(besoin<=0) return;
+    const besoin = net[nom]||0; if(besoin<=0) return;                 // demande NETTE (liaisons déduites)
     const b = mobMap[_k(nom)] || null;
     const finis = b ? (+b.finis||0) : 0;
     const assemblable = b ? (+b.assemblable||0) : 0;
@@ -14880,7 +14899,9 @@ function _cmdRow(row, grp){
   // Indication sur le stock total (pas de réservation entre commandes).
   const prod = row.produisibilite;
   const prodBadge = prod
-    ? (prod.statut==='stock'
+    ? (prod.statut==='lie'
+        ? '<span class="tag ok" title="Commande entièrement liée à des lots — couverture assurée, rien à produire">✓ couverte</span>'
+      : prod.statut==='stock'
         ? '<span class="tag ok" title="Tous les parfums sont disponibles en macarons finis (stock total, sans réservation entre commandes)">📦 en stock</span>'
       : prod.statut==='montable'
         ? '<span class="tag" style="background:#3b6ea5;color:#fff" title="Couvrable en assemblant les coques + ganache déjà en stock">🔧 à monter</span>'
@@ -25231,12 +25252,27 @@ async function renderEvents(){
    Aucune dépendance réseau. Reconnaissance par motifs FR.
    ctx = {flavors:[...], clients:[{id,nom,tel}], materials:[{id,nom}]}
    ============================================================ */
-function aiNormalize(s){
+// [PERF] aiNormalize MÉMOÏSÉ : fonction PURE (même chaîne → même sortie), appelée en boucle partout
+// (aiFindFlavor jusqu'à 3× par parfum, levenshtein, aiFindClient, parseIntent…). Le cache est
+// déterministe — la normalisation d'une chaîne ne dépend JAMAIS de l'état de l'app, donc aucune
+// invalidation n'est requise — et borné pour les sessions longues. Sortie strictement identique.
+function _aiNormalizeRaw(s){
   return (s||'').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // enlève accents
     .replace(/[\u2018\u2019\u02BC\u2032]/g,"'")       // apostrophes typographiques → '
     .replace(/[-\u2010\u2011\u2012\u2013\u2014]/g,' ') // tirets/traits d'union → espace (qu'est-ce → qu'est ce)
     .replace(/\s+/g,' ').trim();
+}
+var _aiNormCache;
+function aiNormalize(s){
+  if(typeof s!=='string') return _aiNormalizeRaw(s);   // comportement identique pour les non-chaînes
+  if(!_aiNormCache) _aiNormCache = new Map();
+  var hit = _aiNormCache.get(s);
+  if(hit!==undefined) return hit;
+  var out = _aiNormalizeRaw(s);
+  if(_aiNormCache.size > 5000) _aiNormCache.clear();    // borne mémoire (session longue)
+  _aiNormCache.set(s, out);
+  return out;
 }
 // Distance de Levenshtein (nb de modifications), sur noms normalisés.
 function levenshtein(a, b){
@@ -25639,7 +25675,7 @@ const AI_LEX = {
   aide:      "aide|aidez|help|au secours|j'?ai besoin d'?aide|comment (faire|on fait|ca marche|ca fonctionne)|tu peux m'?aider|peux tu m'?aider|guide moi|montre moi comment|explique moi|j'?y comprends rien|je suis perdu|je m'?y perds",
 };
 function aiLexFrag(){ var fams=Array.prototype.slice.call(arguments); return '(' + fams.map(function(f){return AI_LEX[f]||f;}).join('|') + ')'; }
-function aiLexTest(t){ var fams=Array.prototype.slice.call(arguments,1); try{ return new RegExp('(^|[^a-z])'+aiLexFrag.apply(null,fams)).test(t); }catch(_){ return false; } }
+function aiLexTest(t){ var fams=Array.prototype.slice.call(arguments,1); try{ var _s='(^|[^a-z])'+aiLexFrag.apply(null,fams); if(!aiLexTest._c)aiLexTest._c={}; var _re=aiLexTest._c[_s]||(aiLexTest._c[_s]=new RegExp(_s)); return _re.test(t); }catch(_){ return false; } }
 
 function parseIntent(texte, ctx){
   ctx=ctx||{}; const flavors=ctx.flavors||[]; const clients=ctx.clients||[]; const materials=ctx.materials||[];
