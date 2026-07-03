@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1159';
+const APP_VERSION = 'v1161';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7118,6 +7118,7 @@ async function renderDocuments(){
         <span style="color:#9a8a82">${fmtDate(d.date)}</span>
         <b style="color:var(--bordeaux)">${euro(d.montant||0)}</b>
       </div>
+      ${d.type==='facture' && d.statut==='emise' ? `<div style="margin-top:8px"><button class="btn gold sm" style="width:100%" onclick="event.stopPropagation();docMarkPaid(${d.id},1)">💳 Marquer payée</button></div>` : ''}
     </div>`;
   // Bloc repliable (chevron) pour les documents archivés.
   const archiveBloc=items=> items.length?`
@@ -7208,6 +7209,8 @@ async function docOpen(id){
          <span style="font-size:.74rem;color:#7a6a62;text-transform:uppercase;font-weight:600">Documents liés</span>
          ${liens.map(l=>`<button class="btn ghost sm" style="justify-content:flex-start" onclick="${l.fn}">🔗 ${esc(l.label)} →</button>`).join('')}
        </div>` : '';
+  // Règlement en direct (pour la facture validée : bouton « Marquer payée » ou récap réglée).
+  const _reglInfo = (d.type==='facture' && d.statut!=='brouillon') ? await _factReglement(d) : {reste:0,paye:0,total:0,lastDate:'',lastMoyen:''};
   openModal(`<h3>${esc(d.numero||'')} <span class="tag" style="background:${docStatutColor(d)};color:#fff">${docStatutLabel(d)}</span></h3>
     <div class="sum-box"><span>Client</span><b>${esc(clName)}</b></div>
     <div class="sum-box"><span>Montant total</span><b>${euro(d.montant||0)}</b></div>
@@ -7236,6 +7239,10 @@ async function docOpen(id){
         </div>
       `:`
         <div class="banner" style="background:#f0ecf3;border-color:#cdbcd6;margin-top:10px">🔒 <div><b>Facture validée</b> — inaltérable. Ni modification ni suppression possibles (obligation légale).${d.dateValidation?` Validée le ${fmtDate(d.dateValidation)}.`:''}</div></div>
+        ${_reglInfo.reste<=0.009
+          ? `<div class="sum-box" style="border:1px solid #cde8cd;background:#eef6ee;margin-top:8px"><span>💳 Réglée${_reglInfo.lastDate?` le ${fmtDate(_reglInfo.lastDate)}`:''}${_reglInfo.lastMoyen?` · ${esc(_reglInfo.lastMoyen)}`:''}</span><b style="color:#2e7d32">${euro(_reglInfo.paye)}</b></div>`
+          : `<div class="sum-box" style="margin-top:8px"><span><b>Reste à encaisser</b></span><b style="color:#b3261e">${euro(_reglInfo.reste)}</b></div>
+             <button class="btn gold" style="width:100%;margin-top:6px" onclick="docMarkPaid(${d.id})">💳 Marquer payée <span style="font-weight:400;opacity:.85">· date + moyen</span></button>`}
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" onclick="docApercu(${d.id})">👁️ Voir / imprimer la facture</button><button class="btn gold" onclick="docEnvoyerMail(${d.id})">✉️ Envoyer par mail</button></div>
       `}
     `:''}
@@ -7467,6 +7474,94 @@ async function docValiderFacture(id){
   }
   await db.documents.update(id, { numero, statut, date:dateFact, dateValidation:auj, lockedAt:Date.now(), html });
   closeModal(); toast('Facture '+numero+' validée et verrouillée 🔒');
+  if(view==='documents') renderDocuments();
+}
+
+// ============================================================
+//  RÈGLEMENT RAPIDE D'UNE FACTURE (date + moyen de paiement)
+//  Principe : le « payé » d'une facture dérive des encaissements des COMMANDES liées
+//  (source de vérité unique, compta en trésorerie). Marquer une facture payée enregistre
+//  donc un vrai encaissement sur la/les commande(s) — date + mode réels, jamais auto-générés
+//  — puis le statut de la facture se resynchronise en « payee ». Aucune écriture ne touche
+//  le HTML légal ni le totalPaye figé d'une facture validée (inaltérabilité respectée).
+// ============================================================
+// État de règlement d'une facture, calculé en direct depuis les commandes liées.
+async function _factReglement(d){
+  const oids = (Array.isArray(d.orderIds)&&d.orderIds.length) ? d.orderIds : (d.orderId?[d.orderId]:[]);
+  let total=0, paye=0, lastDate='', lastMoyen='';
+  for(const oid of oids){
+    const o = await db.orders.get(oid).catch(()=>null); if(!o) continue;
+    total += (+o.montant||0);
+    (o.paiements||[]).forEach(p=>{ paye += (+p.montant||0); if(p.date && p.date>=lastDate){ lastDate=p.date; lastMoyen=p.moyen||''; } });
+  }
+  // Facture sans commande liée (cas rare) : on se rabat sur le montant figé du document.
+  if(!oids.length){ total = +d.montant||0; paye = (d.paiements||[]).reduce((s,p)=>s+(+p.montant||0),0); const last=(d.paiements||[]).slice(-1)[0]; if(last){ lastDate=last.date||''; lastMoyen=last.moyen||''; } }
+  return { oids, total:money2(total), paye:money2(paye), reste:Math.max(0,money2(total-paye)), lastDate, lastMoyen };
+}
+// Ouvre le mini-formulaire de règlement (montant pré-rempli au solde, date + mode obligatoires).
+async function docMarkPaid(id, fromList){
+  const d = await db.documents.get(id);
+  if(!d || d.type!=='facture'){ toast('Facture introuvable'); return; }
+  if(d.statut==='brouillon'){ toast('Valide d\'abord la facture, puis marque-la payée'); return; }
+  const r = await _factReglement(d);
+  if(r.reste<=0.009){ toast('Facture déjà réglée ✓'); if(view==='documents') renderDocuments(); return; }
+  openModal(`<h3>💳 Marquer la facture payée</h3>
+    <p style="margin:2px 0 4px"><b>${esc(d.numero||'Facture')}</b></p>
+    <div class="sum-box"><span>Total facture</span><b>${euro(r.total)}</b></div>
+    ${r.paye>0?`<div class="sum-box"><span>Déjà encaissé</span><b>${euro(r.paye)}</b></div>`:''}
+    <div class="sum-box"><span><b>Reste à encaisser</b></span><b style="color:#b3261e">${euro(r.reste)}</b></div>
+    <p class="note" style="margin-top:6px">Renseigne la date réelle du règlement et le mode. L'encaissement est enregistré sur la commande liée (il alimente ton chiffre d'affaires).</p>
+    <div class="field"><label>Montant encaissé (€)</label><input type="number" step="0.01" min="0" id="docPay_mt" value="${r.reste}"></div>
+    <div class="field"><label>Date de règlement</label><input type="date" id="docPay_date" value="" max="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="field"><label>Mode de paiement</label>
+      <select id="docPay_moyen"><option value="">— mode —</option>${PAY_METHODS.map(m=>`<option>${m}</option>`).join('')}</select></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="docMarkPaidConfirm(${id},${fromList?1:0})">Enregistrer l'encaissement</button>
+    </div>`);
+}
+// Enregistre l'encaissement : réparti FIFO sur les commandes liées (solde le plus ancien d'abord),
+// puis resynchronise le statut de la facture. Mêmes garde-fous que les autres encaissements.
+async function docMarkPaidConfirm(id, fromList){
+  const mt = money2(+(document.getElementById('docPay_mt')?.value)||0);
+  const date = document.getElementById('docPay_date')?.value||'';
+  const moyen = document.getElementById('docPay_moyen')?.value||'';
+  if(mt<=0){ toast('Montant requis'); return; }
+  if(!date){ toast('Date de règlement obligatoire'); return; }
+  if(!moyen){ toast('Mode de paiement obligatoire'); return; }
+  const auj=new Date().toISOString().slice(0,10);
+  if(date>auj){ toast('⛔ Date dans le futur interdite'); return; }
+  const d = await db.documents.get(id); if(!d){ toast('Facture introuvable'); return; }
+  const r = await _factReglement(d);
+  let aRepartir = Math.min(mt, r.reste>0?r.reste:mt);
+  if(r.oids.length){
+    // Répartition FIFO : on solde d'abord la commande la plus ancienne (par date, puis id).
+    const ords=[];
+    for(const oid of r.oids){ const o=await db.orders.get(oid).catch(()=>null); if(o) ords.push(o); }
+    ords.sort((a,b)=>(a.date||'').localeCompare(b.date||'') || (a.id-b.id));
+    for(const o of ords){
+      if(aRepartir<=0.009) break;
+      const solde = orderBalance(o);
+      if(solde<=0.009) continue;
+      const part = money2(Math.min(solde, aRepartir));
+      o.paiements = (o.paiements||[]).concat([{date, montant:part, moyen}]);
+      syncPaymentFields(o);
+      await db.orders.update(o.id, {paiements:o.paiements, paiement:o.paiement, statutPaiement:o.statutPaiement,
+        soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement});
+      aRepartir = money2(aRepartir - part);
+    }
+  } else {
+    // Facture sans commande liée : on stocke le règlement sur le document lui-même.
+    const paiements=(d.paiements||[]).concat([{date, montant:mt, moyen}]);
+    await db.documents.update(id, {paiements});
+  }
+  // Resynchronise le statut de la facture d'après le nouvel encaissement réel.
+  const r2 = await _factReglement(await db.documents.get(id));
+  const nouveauStatut = (r2.total>0 && r2.reste<=0.009) ? 'payee' : 'emise';
+  if(nouveauStatut!==d.statut && d.statut!=='brouillon'){ await db.documents.update(id, {statut:nouveauStatut}); }
+  if(typeof markUnsaved==='function') markUnsaved();
+  closeModal();
+  toast(r2.reste<=0.009 ? `Facture réglée ✓ (${euro(mt)} le ${fmtDate(date)})` : `Encaissement enregistré ✓ (reste ${euro(r2.reste)})`);
   if(view==='documents') renderDocuments();
 }
 // [v1157] AUDIT RÉTROACTIF — lecture seule. Compare, pour chaque facture DÉJÀ VALIDÉE
@@ -8998,6 +9093,20 @@ function orderFlavorNeeds(o){
     }
   });
   return needs;
+}
+// Nombre TOTAL de macarons d'une commande, indépendamment du détail des parfums
+// (coffret → taille, événement → evQte, vrac/don → parfums+sansParfum, grand → items).
+// Sert de filet pour lier/scanner les commandes « saveurs à définir » (sans parfum détaillé).
+function orderTotalMacarons(o){
+  let n=0;
+  orderToLines(o).forEach(ln=>{
+    if(ln.type==='coffret') n += +ln.taille||0;
+    else if(ln.type==='evenement') n += +ln.evQte||0;
+    else if(ln.type==='vrac') n += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
+    else if(ln.type==='don'){ n += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); }
+    else if(ln.type==='grand') n += (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
+  });
+  return round3(n);
 }
 // Emballages d'une commande (coffrets par taille + pyramides + grands formats).
 function orderPackaging(o){
@@ -14085,6 +14194,25 @@ function _traceRecapHtml(recap){
     <p class="note" style="margin:4px 0 0">⚠ Ces lots restent réservés à cette commande : ne les relie PAS une seconde fois, complète uniquement ce qui manque.</p>
   </div>`;
 }
+// [DIAG TRAÇABILITÉ] Encart de diagnostic VISIBLE (temporaire) : montre l'état brut en base
+// pour cette commande — nombre de liaisons trouvées pour cet orderId, leur somme, et le nombre
+// TOTAL de liaisons dans la base (pour détecter d'éventuelles liaisons mal rattachées).
+// But : rendre la vérité observable sur l'appareil de l'utilisateur (au lieu de deviner).
+async function _traceDiag(orderId, links){
+  try{
+    const nLoc = (links||[]).length;
+    const sLoc = round3((links||[]).reduce((s,e)=>s+(+e.qte||0),0));
+    const allItems = await db.orderItems.toArray().catch(()=>[]);
+    const nAll = allItems.length;
+    const autres = allItems.filter(it=>+it.orderId!==+orderId).length;
+    return `<div style="margin-top:10px;padding:8px 10px;border:1px dashed #b08a3a;border-radius:10px;background:#fbf5ea;font-size:.72rem;color:#7a6a52;line-height:1.5">
+      <b>🔎 Diagnostic (temporaire)</b><br>
+      commande n° <b>${orderId}</b> · liaisons trouvées : <b>${nLoc}</b> (somme ${qty(sLoc)})<br>
+      total liaisons en base : <b>${nAll}</b> · rattachées à d'autres commandes : <b>${autres}</b><br>
+      <span style="color:#9a8576">Si ce nombre est 0 alors qu'un batch a bien été lié, envoie cette capture à ton dev.</span>
+    </div>`;
+  }catch(e){ return ''; }
+}
 /* RDTRACE:PURE:END */
 async function ensureOrderDecremented(orderId){
   const o = await db.orders.get(orderId);
@@ -14123,9 +14251,11 @@ async function ensureOrderDecremented(orderId){
     const _prodsById0 = {};
     for(const lk of links0){ if(!(lk.productionId in _prodsById0)) _prodsById0[lk.productionId] = await db.productions.get(lk.productionId).catch(()=>null); }
     const _recap0 = _traceImputeLots({}, links0, _prodsById0, _recById0).recap;
+    const _diagG = await _traceDiag(orderId, links0);
     openModal(`<h3 style="color:#b3261e">⛔ Traçabilité incomplète</h3>
       <p style="margin-top:8px">Cette commande contient <b>${qty(totMac)} macaron(s)</b> mais seulement <b>${qty(lieTotal)}</b> sont reliés à des lots.</p>
       ${_traceRecapHtml(_recap0)}
+      ${_diagG}
       <p class="note">Relie des batchs pour couvrir toute la commande (les lots de reprise sont sélectionnables ici).</p>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeModal()">Annuler</button>
@@ -14157,6 +14287,7 @@ async function ensureOrderDecremented(orderId){
       <p style="margin:8px 0;color:#b3261e;line-height:1.5">${detail}</p>
       ${avertNonImpute}
       ${_traceRecapHtml(recap)}
+      ${await _traceDiag(orderId, links)}
       <p class="note">Les lots de reprise (migration) sont sélectionnables ici comme les autres.</p>
       <div class="modal-actions">
         <button class="btn ghost" onclick="closeModal()">Annuler</button>
@@ -32853,13 +32984,24 @@ async function pickScanAffectLot(code){
   const nom = p.libre?(p.produitLibre||''):recName2(p.recipeId);
   const k = aiNormalize(nom);
   const needs = orderFlavorNeeds(o);
-  const attendu = Object.keys(needs).reduce((s,n)=>(aiNormalize(n)===k?s+needs[n]:s),0);
-  if(attendu<=0){ toast(`⚠ « ${nom} » n'est pas demandé par cette commande.`); await pickScanRender(); return; }
   const items = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
-  let dejaParfum = 0;
-  items.forEach(it=>{ const pp=prods.find(x=>x.id===it.productionId); if(pp){ const kn=aiNormalize(pp.libre?(pp.produitLibre||''):recName2(pp.recipeId)); if(kn===k) dejaParfum+=(+it.qte||0); } });
-  const reste = Math.max(0, attendu - dejaParfum);
-  if(reste<=0){ toast(`« ${nom} » déjà complet.`); await pickScanRender(); return; }
+  let reste;
+  if(Object.keys(needs).length===0){
+    // COMMANDE « SAVEURS À DÉFINIR » : aucun parfum détaillé sur les lignes. On ne peut pas
+    // contrôler par parfum → on lie par QUANTITÉ GLOBALE (n'importe quel lot vendable compte),
+    // exactement comme « Lier des batchs ». Sans ça le scan refusait tout (bug historique).
+    const totMac = orderTotalMacarons(o);
+    const dejaTotal = items.reduce((s,it)=>s+(+it.qte||0),0);
+    reste = Math.max(0, round3(totMac - dejaTotal));
+    if(reste<=0){ toast(totMac>0?`Commande déjà complète (${qty(dejaTotal)}/${qty(totMac)}).`:`⚠ Cette commande n'attend aucun macaron.`); await pickScanRender(); return; }
+  } else {
+    const attendu = Object.keys(needs).reduce((s,n)=>(aiNormalize(n)===k?s+needs[n]:s),0);
+    if(attendu<=0){ toast(`⚠ « ${nom} » n'est pas demandé par cette commande.`); await pickScanRender(); return; }
+    let dejaParfum = 0;
+    items.forEach(it=>{ const pp=prods.find(x=>x.id===it.productionId); if(pp){ const kn=aiNormalize(pp.libre?(pp.produitLibre||''):recName2(pp.recipeId)); if(kn===k) dejaParfum+=(+it.qte||0); } });
+    reste = Math.max(0, attendu - dejaParfum);
+    if(reste<=0){ toast(`« ${nom} » déjà complet.`); await pickScanRender(); return; }
+  }
   const take = Math.min(reste, round3(+p.qteRestante||0));
   try{
     let _mvScan=null;
