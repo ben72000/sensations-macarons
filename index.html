@@ -904,7 +904,7 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .pill.ok{background:#eaf5ec;color:#2e7d32}
 .pill.manque{background:#fdecea;color:#b3261e}
 /* [PALETTE DE COMMANDE] pastille + bottom sheet — habillage aux variables de l'app */
-.pal-fab{position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:40;display:inline-flex;align-items:center;gap:8px;padding:12px 17px;border:none;cursor:pointer;color:#fff;font-size:.92rem;font-weight:600;background:var(--grad-bordeaux);border-radius:28px;box-shadow:0 8px 20px rgba(42,19,32,.32),inset 0 0 0 1.5px rgba(170,124,57,.5)}
+.pal-fab{position:fixed;left:16px;bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:44;display:inline-flex;align-items:center;gap:8px;padding:12px 17px;border:none;cursor:pointer;color:#fff;font-size:.92rem;font-weight:600;background:var(--grad-bordeaux);border-radius:28px;box-shadow:0 8px 20px rgba(42,19,32,.32),inset 0 0 0 1.5px rgba(170,124,57,.5)}
 .pal-fab:active{transform:scale(.96)}
 body:has(#overlay.show) #palFab{display:none!important}
 .pal-backdrop{position:fixed;inset:0;z-index:50;background:rgba(28,12,20,.42);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:opacity .28s ease}
