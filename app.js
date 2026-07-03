@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1165';
+const APP_VERSION = 'v1166';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -17025,19 +17025,118 @@ async function delCmd(id){
   try{ await db.packagingConsumption.where('orderId').equals(id).delete(); }catch(e){}
   renderCmd(); toast(totBatch?`Commande supprimée — ${totBatch} macaron(s) recrédité(s) ✓`:'Commande supprimée ✓');
 }
+// ============================================================
+//  LIER DES BATCHS À LA COMMANDE — recherche + filtre + suggestion FIFO
+//  Réutilise le moteur d'affectation existant (allocateBatches) : la suggestion
+//  « à prélever en premier » (le plus ancien) et son emplacement sont EXACTEMENT
+//  ce que ferait l'écran Picking. Aucune logique FIFO dupliquée.
+//    - Filtre par défaut : parfums de la commande (orderFlavorNeeds). Aucun parfum
+//      renseigné (« saveurs à définir ») → tout le stock fini.
+//    - Recherche (champ texte) : porte sur TOUT le stock, accents ignorés (normTxt).
+//    - Tri FIFO : reprises d'abord, puis DLC croissante (id en départage) — le même
+//      ordre que allocateBatches, pour que la suggestion colle au tri affiché.
+//    - Quantité pré-remplie = besoin restant du parfum (déjà affecté déduit), plafonné
+//      au lot ; ajustable avant de valider.
+// ============================================================
+let _cmdLinkState = null;
+const _LNK_CSS = `
+.lnk-list{ max-height:46vh; overflow-y:auto; margin-top:4px; -webkit-overflow-scrolling:touch; }
+.lnk-sec{ font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; color:#9a8a82; margin:9px 2px 4px; }
+.lnk-row{ display:flex; align-items:center; gap:8px; padding:8px 6px; border-bottom:1px solid #f0e8da; }
+.lnk-row.sugg{ background:#fbf6ee; border-left:3px solid #AA7C39; padding-left:6px; border-radius:2px; }
+.lnk-main{ flex:1; min-width:0; }
+.lnk-top{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.lnk-top b{ color:#490F25; }
+.lnk-old{ font-size:.64rem; background:#AA7C39; color:#fff; border-radius:6px; padding:1px 6px; white-space:nowrap; }
+.lnk-meta{ font-size:.74rem; color:#7a6a60; margin-top:1px; }
+.lnk-loc{ font-size:.74rem; color:#8a5a2a; margin-top:1px; }
+.lnk-act{ display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+.lnk-q{ width:54px; padding:6px; text-align:center; border:1px solid #d8c8b8; border-radius:6px; font-size:.85rem; }
+.lnk-btn{ padding:6px 12px; font-size:.82rem; }
+.lnk-details{ margin-top:6px; }
+.lnk-details summary{ cursor:pointer; font-size:.78rem; color:#8a5a2a; padding:6px 2px; list-style:none; }
+.lnk-details summary::-webkit-details-marker{ display:none; }
+.lnk-details summary::before{ content:'▸ '; }
+.lnk-details[open] summary::before{ content:'▾ '; }
+`;
+// Reconstruit la liste (#f_list) selon la recherche courante + le filtre par défaut.
+function _cmdLinkRenderList(){
+  const st = _cmdLinkState; if(!st) return;
+  const box = document.getElementById('f_list'); if(!box) return;
+  const el = document.getElementById('f_search');
+  const q = normTxt((el && el.value) || '');
+  const rowHtml = r => `
+    <div class="lnk-row${r.sugg>0?' sugg':''}">
+      <div class="lnk-main">
+        <div class="lnk-top"><b>${esc(r.flavor)}</b>${r.sugg>0?'<span class="lnk-old">⭐ le + ancien</span>':''}</div>
+        <div class="lnk-meta">lot ${esc(r.lot)} · reste ${qty(r.reste)}</div>
+        <div class="lnk-loc">${r.empIcon||'📍'} ${esc(r.empLettre)} ${esc(r.empNom)}${r.jDlc!=null?` · DLC ${r.jDlc<=0?'<b style="color:#b3261e">expirée</b>':r.jDlc+' j'}`:''}</div>
+      </div>
+      <div class="lnk-act">
+        <input type="number" id="lq_${r.prodId}" class="lnk-q" value="${r.sugg>0?r.sugg:''}" placeholder="${qty(r.reste)}" min="0" max="${r.reste}" inputmode="numeric">
+        <button class="btn gold lnk-btn" onclick="_cmdLinkDo(${st.orderId},${r.prodId})">Lier</button>
+      </div>
+    </div>`;
+  let html = '';
+  if(q){
+    // Recherche active : liste à plat de TOUT le stock correspondant, FIFO.
+    const rows = st.rows.filter(r => normTxt(r.flavor).includes(q));
+    html = rows.length ? rows.map(rowHtml).join('') : '<p class="note" style="padding:8px 4px">Aucun parfum ne correspond à « '+esc(q)+' ».</p>';
+  } else if(st.hasNeeds){
+    // Vue par défaut avec parfums attendus : section « commande » + « autres » repliés.
+    const need = st.rows.filter(r => r.inNeeds);
+    const autres = st.rows.filter(r => !r.inNeeds);
+    html = `<div class="lnk-sec">Parfums de la commande</div>` +
+      (need.length ? need.map(rowHtml).join('') : '<p class="note" style="padding:8px 4px">Aucun batch en stock pour les parfums de la commande.</p>');
+    if(autres.length){
+      html += `<details class="lnk-details"><summary>Autres batchs en stock (${autres.length})</summary>${autres.map(rowHtml).join('')}</details>`;
+    }
+  } else {
+    // Commande sans parfums renseignés : tout le stock, à plat, FIFO.
+    html = st.rows.length ? st.rows.map(rowHtml).join('') : '<p class="note" style="padding:8px 4px">Aucun batch fini en stock.</p>';
+  }
+  box.innerHTML = html;
+}
+// Lie un batch précis avec la quantité saisie sur sa ligne, puis rouvre la modale
+// (mêmes garde-fous transactionnels que l'ancien saveLink : contrôle stock DANS la
+// transaction, journal de stock hors transaction).
+async function _cmdLinkDo(orderId, prodId){
+  const q = +val('lq_'+prodId);
+  if(!q || q<=0){ toast('Quantité invalide'); return; }
+  let _mvLink = null;
+  try{
+    await db.transaction('rw', db.orderItems, db.productions, async()=>{
+      const prod = await db.productions.get(prodId);
+      if(!prod) throw new Error('Batch introuvable');
+      if(round3(q) > round3(+prod.qteRestante)) throw new Error('Quantité > stock du batch');
+      await db.orderItems.add({ orderId, productionId:prodId, qte:round3(q) });
+      await db.productions.update(prodId, { qteRestante: subQty(prod.qteRestante, q) });
+      _mvLink = { parfumNom: prodNomComplet(prod), composant:'macaron', sens:-1, qte:round3(q),
+        type:'livraison', productionId:prodId, orderId, note:'liaison manuelle' };
+    });
+  }catch(err){ toast(err.message || 'Erreur de liaison'); return; }
+  if(_mvLink) await logStockMove(_mvLink);
+  renderCmd(); toast('Batch lié à la commande ✓'); cmdLink(orderId);
+}
 // Lier une commande à des batchs (décrémente le stock de produits finis)
 async function cmdLink(orderId){
   const prods = await db.productions.toArray();
   const recipes = await db.recipes.toArray();
-  const recName = id => (recipes.find(r=>r.id===id)||{}).produitNom||'?';
+  window._allRecipesCache = recipes; // garde le fallback de prodNomComplet à jour
+  const recById = {}; recipes.forEach(r=>{ recById[r.id]=r; });
+  const recName = id => (recById[id]||{}).produitNom || '?';
   // Ne proposer QUE des produits finis (macarons entiers) : vendables (complet/assemblé) et
   // dégustation/dons. On exclut les sous-lots coques, ganache et crémeux, qui ne se livrent pas
-  // en l'état et n'encombrent que le menu déroulant.
+  // en l'état.
   const estProduitFini = p => { const c=prodComposant(p); return c==='complet' || c==='assemble' || c==='degustation'; };
-  const dispo = sortProdsRecent(prods.filter(p=>+p.qteRestante>0 && estProduitFini(p)));
+  const dispoRaw = prods.filter(p=>round3(+p.qteRestante)>0 && estProduitFini(p));
+  // Tri FIFO d'affichage : reprises d'abord, puis DLC croissante, id en départage.
+  // Cohérent avec l'ordre utilisé par allocateBatches (dlcProduit croissante).
+  const fifoKey = p => (p.repriseStock?'0':'1') + (p.dlcProduit || '9999-12-31');
+  dispoRaw.sort((a,b)=> fifoKey(a).localeCompare(fifoKey(b)) || ((+a.id||0)-(+b.id||0)));
   const existing = await db.orderItems.where('orderId').equals(orderId).toArray();
-  // total de macarons de la commande (coffrets + événement + dons ; les grands formats sont à part)
   const ord = await db.orders.get(orderId);
+  // total de macarons de la commande (coffrets + événement + dons ; grands formats à part)
   const lignes = orderToLines(ord||{});
   let totMac=0, totDon=0;
   lignes.forEach(ln=>{
@@ -17046,6 +17145,41 @@ async function cmdLink(orderId){
     else if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); totMac+=n; totDon+=n; }
   });
   const dejaLie = existing.reduce((s,e)=>s+(+e.qte||0),0);
+
+  // Besoins par parfum, puis besoins RESTANTS (déjà affecté déduit, par parfum).
+  const needs = orderFlavorNeeds(ord||{});
+  const prodFlavorKey = p => { const r=recById[p.recipeId]; const base=r?r.produitNom:'?'; return (r && r.grandFormat)? base+GF_MARK : base; };
+  const linkedByFlavor = {};
+  existing.forEach(e=>{ const p=prods.find(x=>x.id===e.productionId); if(p){ const k=prodFlavorKey(p); linkedByFlavor[k]=(linkedByFlavor[k]||0)+(+e.qte||0); } });
+  const remainingNeeds = {};
+  Object.keys(needs).forEach(k=>{ const r=round3((needs[k]||0)-(linkedByFlavor[k]||0)); if(r>0) remainingNeeds[k]=r; });
+  const hasNeeds = Object.keys(needs).length>0;
+
+  // Suggestion FIFO via le moteur d'affectation existant → quantité suggérée par batch.
+  const alloc = allocateBatches(remainingNeeds, prods, recipes);
+  const suggByProd = {};
+  (alloc.plan||[]).forEach(pk=>{ suggByProd[pk.prodId] = round3((suggByProd[pk.prodId]||0) + (+pk.qte||0)); });
+
+  // Bases de parfums attendus (sans marqueur GF), pour classer « commande » vs « autres ».
+  const neededBases = [...new Set(Object.keys(needs).map(k=>gfBase(k)))];
+  const _today = today();
+  const jDlcOf = d => { if(!d) return null; const dd = new Date(/T/.test(d)?d:(d+'T00:00')); if(isNaN(dd)) return null; return Math.round((dd - new Date(_today+'T00:00'))/86400000); };
+
+  const rows = dispoRaw.map(p=>{
+    const flavor = recName(p.recipeId);
+    const emp = p.emplacement||'';
+    const ei = empInfo(emp);
+    return {
+      prodId: p.id, flavor, lot: p.lotProduction || ('#'+p.id), reste: round3(+p.qteRestante),
+      emp, empIcon: ei.icon, empLettre: ei.lettre, empNom: ei.nom, freezer: isFreezer(emp),
+      dlc: p.dlcProduit||'', jDlc: jDlcOf(p.dlcProduit||''),
+      sugg: round3(suggByProd[p.id]||0),
+      inNeeds: neededBases.length ? neededBases.some(b=> pickFlavorMatch(b, flavor)) : false
+    };
+  });
+
+  _cmdLinkState = { orderId, rows, hasNeeds };
+
   openModal(`<h3>Lier des batchs à la commande</h3>
     <div class="sum-box"><span>Macarons de la commande${totDon?` (dont ${totDon} offert${totDon>1?'s':''})`:''}</span><b>${totMac||'—'}</b></div>
     ${totMac?`<div class="sum-box"><span>Déjà affecté depuis le stock</span><b>${dejaLie} / ${totMac}</b></div>`:''}
@@ -17054,13 +17188,17 @@ async function cmdLink(orderId){
         return `<div class="sum-box"><span>${p?esc(recName(p.recipeId)):'?'} — ${p?esc(p.lotProduction||''):'(supprimé)'} × ${e.qte}</span>
           <span class="act del" onclick="unlinkBatch(${e.id},${orderId})">Détacher</span></div>`;}).join('')}
       </div>`:''}
-    ${dispo.length?`
-    <div class="field"><label>Ajouter un batch (produit fini disponible)</label>
-      <select id="f_prod">${dispo.map(p=>`<option value="${p.id}">${esc(recName(p.recipeId))} — ${esc(p.lotProduction||'')} (reste ${qty(p.qteRestante)})</option>`).join('')}</select></div>
-    <div class="field"><label>Quantité à affecter</label><input type="number" id="f_q" value="1"></div>`
+    ${dispoRaw.length?`
+    <div class="field" style="margin-top:12px">
+      <label>Ajouter un batch — cherche un parfum, prélève le plus ancien</label>
+      <input type="text" id="f_search" placeholder="${hasNeeds?'Filtrer un parfum (ex. chocolat)…':'Rechercher un parfum (ex. chocolat)…'}" oninput="_cmdLinkRenderList()" autocomplete="off">
+      <div class="note" style="font-size:.66rem;color:#b0678a;margin-top:3px">DIAG · attendus:${Object.keys(needs).length} · restants:${Object.keys(remainingNeeds).length} · dispo:${dispoRaw.length} · suggérés:${Object.keys(suggByProd).length}</div>
+    </div>
+    <div id="f_list" class="lnk-list"></div>`
     :'<p class="note">Aucun batch disponible à ajouter. Lance une production d\'abord.</p>'}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
-    ${dispo.length?`<button class="btn gold" onclick="saveLink(${orderId})">Lier</button>`:''}</div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>
+    <style>${_LNK_CSS}</style>`);
+  if(dispoRaw.length) _cmdLinkRenderList();
 }
 async function unlinkBatch(itemId, orderId){
   const item = await db.orderItems.get(itemId);
