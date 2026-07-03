@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1166';
+const APP_VERSION = 'v1169';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -9244,11 +9244,74 @@ async function renderPicking(){
   if(_pickMode==='commandes') await pickRenderOrders();
   else await pickRenderMarket();
 }
-function pickSetMode(m){ _pickMode=m; _pickConsolidated=false; renderPicking(); }
-function pickSetDate(v){ _pickDate=v; if(_pickMode==='commandes') pickRenderOrders(); else pickRenderMarket(); }
+function pickSetMode(m){ _pickMode=m; _pickConsolidated=false; _pickFilterText=''; _pickFilterZone=''; renderPicking(); }
+function pickSetDate(v){ _pickDate=v; _pickFilterZone=''; if(_pickMode==='commandes') pickRenderOrders(); else pickRenderMarket(); }
 function pickToggleConsolidated(){ _pickConsolidated=!_pickConsolidated; pickRenderOrders(); }
 
+// [PASTILLES PARFUMS] Composant UNIQUE de rappel du contenu d'une commande, identique partout :
+// carte commande (référence), modale de liaison, picking, contrôle de traçabilité. Rend des
+// pastilles « .pill » (le joli visuel de la fiche commande). Un seul point de vérité visuel.
+//   items : [{ nom, qte?, suffix?, state? }]   state : '' | 'ok' (vert) | 'manque' (rouge)
+function flavorPills(items){
+  if(!items || !items.length) return '';
+  return `<div class="pill-list">${items.map(it=>{
+    let txt = esc(it.nom);
+    if(it.qte!=null) txt += ' × ' + it.qte;
+    if(it.suffix) txt += ' ' + it.suffix;
+    return `<span class="pill${it.state?(' '+it.state):''}">${txt}</span>`;
+  }).join('')}</div>`;
+}
+
 // ---------- MODE COMMANDES ----------
+// ============================================================
+//  [FILTRE PICKING] Couche recherche + puces de zone qui COIFFE les vues existantes
+//  (par commande + consolidé) sans rien retirer : le QR, la checklist, la maturation
+//  et l'affectation FIFO par emplacement (allocateBatches) restent inchangés. Le filtre
+//  ne fait que MASQUER/AFFICHER des lignes déjà calculées.
+//    - _pickFilterText : recherche parfum, accents ignorés (normTxt).
+//    - _pickFilterZone : focus sur un emplacement ('' = toutes zones).
+//  Sans filtre actif, la sortie est STRICTEMENT identique à l'existant.
+// ============================================================
+let _pickFilterText = '';
+let _pickFilterZone = '';
+let _pickCache = null;
+function _pickFilterActive(){ return !!((_pickFilterText||'').trim() || _pickFilterZone); }
+function _pickMatch(flavor, emp){
+  if(_pickFilterZone && emp!==_pickFilterZone) return false;
+  const q = normTxt(_pickFilterText||'');
+  if(q && !normTxt(flavor||'').includes(q)) return false;
+  return true;
+}
+function pickSetFilterText(v){ _pickFilterText = v; pickRenderList(); }
+function pickSetFilterZone(z){
+  _pickFilterZone = z;
+  // maj des puces actives SANS reconstruire le champ de recherche (préserve le focus/caret)
+  const chips = document.querySelectorAll('.pk-chip');
+  chips.forEach(c=>{ c.classList.toggle('active', (c.getAttribute('data-z')||'')===z); });
+  pickRenderList();
+}
+const _PICK_FILTER_CSS = `
+.pick-filter{ margin:8px 0 10px; }
+.pick-search{ width:100%; box-sizing:border-box; padding:9px 12px; border:1px solid #d8c8b8; border-radius:9px; font-size:.9rem; background:#fff; }
+.pick-filter-chips{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+.pk-chip{ padding:6px 11px; border-radius:16px; border:1px solid #d8c8b8; background:#fff; color:#7a5a3a; font-size:.8rem; cursor:pointer; white-space:nowrap; }
+.pk-chip.active{ background:#52252F; border-color:#52252F; color:#fff; }
+.pick-parfums{ display:flex; flex-wrap:wrap; gap:5px; margin:8px 0 4px; }
+.pk-parfum{ background:#faf3ea; border:1px solid #ecdcc8; border-radius:8px; padding:3px 8px; font-size:.78rem; color:#6a4a2a; }
+.pk-parfum b{ color:#490F25; }
+`;
+// [FILTRE PICKING] re-render de la SEULE liste (préserve le focus du champ de recherche).
+function pickRenderList(){
+  const box=document.getElementById('pickList'); if(!box || !_pickCache) return;
+  const { orders, prods, recipes, clName, alloc } = _pickCache;
+  if(!orders.length){ box.innerHTML=`<div class="empty">Aucune commande à préparer pour le ${fmtDate(_pickDate)}.</div>`; return; }
+  let html = _pickConsolidated
+    ? pickConsolidatedHtml(alloc, orders)
+    : orders.map(o=>pickOrderCard(o, clName(o.clientId), prods, recipes)).join('');
+  if(_pickFilterActive() && !html.trim()) html = `<div class="empty">Aucun résultat pour « ${esc(_pickFilterText)||'ce filtre'} ».</div>`;
+  box.innerHTML = html;
+}
+
 async function pickRenderOrders(){
   const body=document.getElementById('pickBody'); if(!body) return;
   const allOrders = await db.orders.toArray();
@@ -9262,6 +9325,16 @@ async function pickRenderOrders(){
   const allNeeds={};
   orders.forEach(o=>{ const n=orderFlavorNeeds(o); Object.keys(n).forEach(f=>allNeeds[f]=(allNeeds[f]||0)+n[f]); });
   const alloc = allocateBatches(allNeeds, prods, recipes);
+  // [FILTRE PICKING] on mémorise le contexte calculé pour re-rendre la liste sans re-interroger
+  // Dexie ni ré-allouer à chaque frappe (préserve le focus de saisie).
+  _pickCache = { orders, prods, recipes, clName, alloc };
+
+  // Puces de zone : uniquement les emplacements réellement présents aujourd'hui.
+  const zones = alloc.byZone.map(z=>({emp:z.emp, lettre:z.lettre, nom:z.nom, icon:z.icon}));
+  const chipsHtml = zones.length>1 ? `<div class="pick-filter-chips">
+     <button class="pk-chip${_pickFilterZone===''?' active':''}" data-z="" onclick="pickSetFilterZone('')">Tout</button>
+     ${zones.map(z=>`<button class="pk-chip${_pickFilterZone===z.emp?' active':''}" data-z="${esc(z.emp)}" onclick="pickSetFilterZone('${esc(z.emp).replace(/'/g,"\\'")}')">${z.icon} ${esc(z.nom)}</button>`).join('')}
+   </div>` : '';
 
   body.innerHTML=`
    <div class="pick-date">
@@ -9269,9 +9342,13 @@ async function pickRenderOrders(){
      <input type="date" value="${_pickDate}" onchange="pickSetDate(this.value)">
      <button class="btn ${_pickConsolidated?'':'ghost'}" onclick="pickToggleConsolidated()">${_pickConsolidated?'📋 Par commande':'📦 Tout sortir (par zone)'}</button>
    </div>
-   ${!orders.length?`<div class="empty">Aucune commande à préparer pour le ${fmtDate(_pickDate)}.</div>`:
-     _pickConsolidated ? pickConsolidatedHtml(alloc, orders) : orders.map(o=>pickOrderCard(o, clName(o.clientId), prods, recipes)).join('')
-   }`;
+   ${orders.length?`<div class="pick-filter">
+     <input type="text" id="pickSearch" class="pick-search" placeholder="🔎 Filtrer un parfum (ex. chocolat)…" value="${esc(_pickFilterText)}" oninput="pickSetFilterText(this.value)" autocomplete="off">
+     ${chipsHtml}
+   </div>`:''}
+   <div id="pickList"></div>
+   <style>${_PICK_FILTER_CSS}</style>`;
+  pickRenderList();
 }
 
 // Vue « Tout sortir » : un parcours par ZONE (emplacements polyvalents en premier).
@@ -9294,7 +9371,9 @@ function pickDetailLine(pk){
 function pickConsolidatedHtml(alloc, orders){
   if(!alloc.byZone.length && !alloc.shortages.length) return '<div class="empty">Rien à préparer (aucun macaron demandé).</div>';
   const zones = alloc.byZone.map(z=>{
-    const lines = z.picks.map(pk=>{
+    const picks = z.picks.filter(pk=>_pickMatch(pk.flavor, z.emp));
+    if(!picks.length) return '';
+    const lines = picks.map(pk=>{
       const key='z:'+z.emp+':'+pk.prodId+':'+pk.flavor;
       const done=_pickConsDone.has(key);
       return `<div class="pick-row${done?' done':''}" onclick="pickToggleCons('${key.replace(/'/g,"\\'")}')">
@@ -9307,7 +9386,8 @@ function pickConsolidatedHtml(alloc, orders){
     return `<div class="panel"><h2>${z.icon} ${esc(z.nom)} <span class="tag" style="background:${empInfo(z.emp).type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff">${z.lettre}</span></h2>
       <p class="note" style="margin-bottom:10px">Sors tous ces bacs en une fois depuis cet emplacement.</p>${lines}</div>`;
   }).join('');
-  const short = alloc.shortages.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>Stock insuffisant :</b> ${alloc.shortages.map(s=>`${esc(s.flavor)} (manque ${qty(s.manque)})`).join(' · ')}. Lance une production.</div></div>`:'';
+  const _shShown = _pickFilterZone ? [] : alloc.shortages.filter(s=>{ const _q=normTxt(_pickFilterText||''); return !_q || normTxt(s.flavor).includes(_q); });
+  const short = _shShown.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>Stock insuffisant :</b> ${_shShown.map(s=>`${esc(s.flavor)} (manque ${qty(s.manque)})`).join(' · ')}. Lance une production.</div></div>`:'';
   // emballages consolidés
   const pack={}; let pyr=0; const bigs={};
   orders.forEach(o=>{ const pk=orderPackaging(o);
@@ -9325,7 +9405,7 @@ function pickConsolidatedHtml(alloc, orders){
       <div class="pick-main"><div class="pick-name">${esc(r.label)}</div><div class="pick-sub">emballage</div></div>
       <div class="pick-qty">${r.qte}</div></div>`;
   }).join('')}</div>`:'';
-  return short + zones + packHtml;
+  return short + zones + (_pickFilterActive()? '' : packHtml);
 }
 
 // Carte d'une commande : checklist tactile, AVEC l'affectation batch+zone proposée.
@@ -9354,8 +9434,11 @@ function pickOrderCard(o, nom, prods, recipes){
   const ready=normStatus(o.statut)==='Terminée' || o._pickDone===true;
   const hasShort=alloc.shortages.length>0;
   // regroupe visuellement par zone : on insère un mini en-tête quand la zone change
+  const _fa=_pickFilterActive();
+  const visRows = _fa ? rows.filter(r=> r.kind==='mac' && _pickMatch(r.label, r.emp)) : rows;
+  if(_fa && !visRows.length) return '';
   let lastZone=null;
-  const rowsHtml=rows.map(r=>{
+  const rowsHtml=visRows.map(r=>{
     let header='';
     if(r.kind==='mac' && r.emp!==lastZone){
       lastZone=r.emp;
@@ -9376,6 +9459,7 @@ function pickOrderCard(o, nom, prods, recipes){
       <span class="tag ${ready?'done':'todo'}">${ready?'✓ Prête':doneLines+'/'+totalLines}</span>
     </div>
     <div class="pick-progress"><span style="width:${pct}%"></span></div>
+    ${flavorPills(Object.keys(needs).map(k=>({nom:isGFKey(k)?gfBase(k)+' (grand format)':k,qte:round3(needs[k])})))}
     ${hasShort?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-bottom:10px">⛔ <div>Stock insuffisant : ${alloc.shortages.map(s=>`${esc(s.flavor)} (manque ${qty(s.manque)})`).join(' · ')}</div></div>`:''}
     ${rowsHtml||'<p class="note">Aucun macaron/emballage à préparer.</p>'}
     <button class="pick-big-btn ${(allDone||ready)&&!hasShort?'ready':'wait'}" style="margin-top:12px" onclick="pickMarkReady(${o.id})">
@@ -14333,7 +14417,7 @@ async function ensureOrderDecremented(orderId){
       : '';
     openModal(`<h3 style="color:#b3261e">⛔ Traçabilité incomplète</h3>
       <p style="margin-top:8px">Avant de livrer, chaque parfum doit avoir ses lots reliés (la somme doit couvrir la quantité commandée) :</p>
-      <p style="margin:8px 0;color:#b3261e;line-height:1.5">${detail}</p>
+      ${flavorPills(manques.map(m=>({nom:dispName(m.flavor),suffix:qty(m.lie)+'/'+qty(m.besoin)+' (manque '+qty(m.manque)+')',state:'manque'})))}
       ${avertNonImpute}
       ${_traceRecapHtml(recap)}
       ${await _traceDiag(orderId, links)}
@@ -17058,6 +17142,11 @@ const _LNK_CSS = `
 .lnk-details summary::-webkit-details-marker{ display:none; }
 .lnk-details summary::before{ content:'▸ '; }
 .lnk-details[open] summary::before{ content:'▾ '; }
+.cpf-list{ display:flex; flex-direction:column; gap:2px; }
+.cpf-row{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; padding:3px 2px; border-bottom:1px dotted #eaded0; }
+.cpf-nom{ color:#490F25; font-weight:600; font-size:.86rem; }
+.cpf-q{ color:#7a5a3a; font-size:.86rem; white-space:nowrap; }
+.cpf-q small{ color:#8a7a70; font-weight:400; }
 `;
 // Reconstruit la liste (#f_list) selon la recherche courante + le filtre par défaut.
 function _cmdLinkRenderList(){
@@ -17183,6 +17272,9 @@ async function cmdLink(orderId){
   openModal(`<h3>Lier des batchs à la commande</h3>
     <div class="sum-box"><span>Macarons de la commande${totDon?` (dont ${totDon} offert${totDon>1?'s':''})`:''}</span><b>${totMac||'—'}</b></div>
     ${totMac?`<div class="sum-box"><span>Déjà affecté depuis le stock</span><b>${dejaLie} / ${totMac}</b></div>`:''}
+    ${hasNeeds?`<div class="field" style="margin-top:10px"><label>Parfums de la commande</label>
+      ${flavorPills(Object.keys(needs).map(k=>{const ord=round3(needs[k]||0),aff=round3(linkedByFlavor[k]||0),rst=round3(Math.max(0,ord-aff));let st='',sfx=null;if(aff>0&&rst<=0){st='ok';sfx='✓';}else if(aff>0){sfx='· reste '+rst;}return {nom:isGFKey(k)?gfBase(k)+' (grand format)':k,qte:ord,state:st,suffix:sfx};}))}
+    </div>`:`<p class="note" style="margin-top:8px">Commande sans parfums d\u00e9taill\u00e9s (\u00ab saveurs \u00e0 d\u00e9finir \u00bb).</p>`}
     ${existing.length?`<div class="field" style="margin-top:10px"><label>Batchs déjà liés</label>
       ${existing.map(e=>{const p=prods.find(x=>x.id===e.productionId);
         return `<div class="sum-box"><span>${p?esc(recName(p.recipeId)):'?'} — ${p?esc(p.lotProduction||''):'(supprimé)'} × ${e.qte}</span>
