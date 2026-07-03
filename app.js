@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1162';
+const APP_VERSION = 'v1164';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7237,6 +7237,7 @@ async function docOpen(id){
           : `<div class="sum-box" style="margin-top:8px"><span><b>Reste à encaisser</b></span><b style="color:#b3261e">${euro(_reglInfo.reste)}</b></div>
              <button class="btn gold" style="width:100%;margin-top:6px" onclick="docMarkPaid(${d.id})">💳 Marquer payée <span style="font-weight:400;opacity:.85">· date + moyen</span></button>`}
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" onclick="docApercu(${d.id})">👁️ Voir / imprimer la facture</button><button class="btn gold" onclick="docEnvoyerMail(${d.id})">✉️ Envoyer par mail</button></div>
+        <p class="note" style="margin-top:6px;font-size:.78rem">Ancienne présentation des totaux ? <a href="#" onclick="docRegenFactureFigee(${d.id});return false;" style="color:#AA7C39;font-weight:600">↻ Régénérer la présentation</a> — montants inchangés, version d'origine archivée.</p>
       `}
     `:''}
     ${d.type==='devis'?`<div style="margin-top:10px"><button class="btn gold" style="width:100%" onclick="genererDevisDoc(${d.id})">👁️ Visualiser le devis <span style="font-weight:400;opacity:.85">· imprimer / envoyer</span></button></div>`:''}
@@ -7379,6 +7380,13 @@ async function docDelete(id){
 // Aperçu intégral de la facture (popup type PDF) à partir du HTML mémorisé.
 async function docApercu(id){
   const d=await db.documents.get(id); if(!d) return;
+  // Un BROUILLON de facture n'est pas figé légalement : on le RÉGÉNÈRE depuis ses commandes
+  // pour refléter la mise en page et les données à jour (le HTML mémorisé peut dater d'une
+  // version antérieure). genererFactureMultiple met à jour le brouillon en place (pas de doublon)
+  // puis ouvre l'aperçu. Une facture VALIDÉE, elle, conserve son HTML légal figé (duplicata fidèle).
+  if(d.type==='facture' && d.statut==='brouillon' && Array.isArray(d.orderIds) && d.orderIds.length){
+    return genererFactureMultiple(d.orderIds);
+  }
   const libelle = `${d.type==='devis'?'Devis':'Facture'} ${d.numero||d.refInterne||''}`.trim();
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   if(d.html){
@@ -7388,6 +7396,47 @@ async function docApercu(id){
   }
   else if(d.orderIds&&d.orderIds.length){ genererFactureMultiple(d.orderIds); }
   else { toast('Aperçu indisponible'); }
+}
+
+// [RÉGÉNÉRATION CONTRÔLÉE D'UNE FACTURE VALIDÉE]
+// Une facture validée est légalement inaltérable dans sa SUBSTANCE (numéro, date, montant,
+// remises, mentions). Cette action ne régénère QUE la PRÉSENTATION des totaux (mise en page),
+// avec trois garde-fous stricts :
+//   1. le numéro et la date d'émission FIGÉS sont réinjectés à l'identique ;
+//   2. le total recalculé doit égaler le montant figé AU CENTIME près, sinon on ANNULE tout
+//      (protège contre toute dérive de données depuis la validation) ;
+//   3. le HTML d'origine est conservé une fois pour toutes (htmlOriginal) → trace d'audit,
+//      et un horodatage htmlRefreshedAt est posé. Rien n'est silencieux : confirmation requise.
+async function docRegenFactureFigee(id){
+  const d = await db.documents.get(id);
+  if(!d || d.type!=='facture'){ toast('Facture introuvable'); return; }
+  if(!docEstDefinitif(d)){ toast('Cette facture est un brouillon : son aperçu se régénère déjà tout seul.'); return; }
+  const oids = d.orderIds || (d.orderId?[d.orderId]:[]);
+  if(!oids.length){ toast('Aucune commande liée : régénération impossible.'); return; }
+  if(!confirm('Régénérer la PRÉSENTATION de cette facture ?\n\n• Les MONTANTS restent identiques (obligation légale) — seule la mise en page des totaux est modernisée.\n• Le numéro et la date d\'émission sont conservés.\n• La version d\'origine est archivée (audit).\n\nÀ n\'utiliser que si tu le juges approprié (ex. facture non encore transmise). Continuer ?')) return;
+  _factRegenCtx = { numero: d.numero, date: d.date, html:null, total:null };
+  try{
+    await genererFactureMultiple(oids);
+  }catch(e){
+    console.error('docRegenFactureFigee', e); _factRegenCtx=null;
+    toast('⚠️ Régénération impossible : '+(e&&e.message||'erreur')); return;
+  }
+  const ctx = _factRegenCtx; _factRegenCtx = null;
+  if(!ctx || !ctx.html){ toast('Régénération impossible'); return; }
+  // GARDE-FOU MONTANT : au centime près, sinon on ne touche à RIEN (la facture reste figée).
+  if(money2(ctx.total) !== money2(+d.montant||0)){
+    toast('⛔ Annulé : le total recalculé ('+euro(ctx.total)+') diffère du montant figé ('+euro(d.montant)+'). La facture n\'est pas modifiée.');
+    return;
+  }
+  const patch = { html: ctx.html, htmlRefreshedAt: Date.now() };
+  if(!d.htmlOriginal) patch.htmlOriginal = d.html;   // archive l'original UNE fois (trace d'audit)
+  await db.documents.update(id, patch);
+  if(typeof markUnsaved==='function') markUnsaved();
+  toast('Présentation régénérée ✓ — montants inchangés');
+  const libelle = `Facture ${d.numero||''}`.trim();
+  const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(ctx.html, libelle, client, d.montant, {acompteMention:d.acompteMention});
+  openPrintView(ctx.html, {title:libelle, extraButtons:(typeof _docMailBtns==='function'?_docMailBtns():'')});
 }
 // [RACCOURCI MAIL] Envoie directement le document (facture/devis) par mail avec PDF joint,
 // objet = n° du document, message soigné + signature. Utilisable depuis la fiche document.
@@ -38484,6 +38533,10 @@ function factMentionMediateur(e){
 // Facture regroupant PLUSIEURS commandes (sélection multiple).
 // Chaque commande apparaît avec : sa référence, sa date, le détail de ses lignes,
 // ses remises éventuelles et ses frais de livraison s'il y en a. Puis un total général.
+// [RÉGÉNÉRATION FACTURE FIGÉE] Contexte optionnel : quand il est posé, genererFactureMultiple
+// NE stocke PAS de brouillon et N'affiche RIEN — il renvoie le HTML construit (avec le numéro et
+// la date FIGÉS fournis) dans ce contexte, pour une réécriture contrôlée de présentation seulement.
+let _factRegenCtx = null;
 async function genererFactureMultiple(ids){
   ids = (ids||[]).filter(Boolean);
   if(!ids.length){ toast('Sélectionne au moins une commande'); return; }
@@ -38536,7 +38589,7 @@ async function genererFactureMultiple(ids){
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
             ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true)}
-            ${R.rabais>0?`<tr class="sub"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="rem" style="color:#3f7d52"><td>Réduction${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
+            ${R.rabais>0?`<tr class="sub"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="rem" style="color:#3f7d52"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
             ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
             <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
           </tbody>
@@ -38569,7 +38622,7 @@ async function genererFactureMultiple(ids){
   // Sur le BROUILLON, on n'affiche pas un numéro légal (il n'est attribué qu'à la validation).
   // On montre le prochain numéro PRÉVU, clairement marqué « (brouillon) » pour éviter toute
   // confusion avec un numéro définitif.
-  const numFact = `${peekFactureNumero()} (brouillon)`;
+  const numFact = _factRegenCtx ? _factRegenCtx.numero : `${peekFactureNumero()} (brouillon)`;
 
   const factureHtml = `<!doctype html><html lang="fr"><head><meta charset="utf-8">
    <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -38599,7 +38652,7 @@ async function genererFactureMultiple(ids){
          <div class="bloc" style="text-align:right">
            <div class="lbl">Détails</div>
            Facture n° : <b><span id="factNumero">${esc(numFact)}</span></b><br>
-           Date d'émission : <span id="factDate">${fmtDate(today())}</span><br>
+           Date d'émission : <span id="factDate">${fmtDate(_factRegenCtx ? _factRegenCtx.date : today())}</span><br>
            ${_dateLivUnique ? `Date de livraison : ${fmtDate(_dateLivUnique)}<br>` : ''}
            ${orders.length>1 ? orders.length+' commande(s) regroupée(s)' : ''}
          </div>
@@ -38607,7 +38660,7 @@ async function genererFactureMultiple(ids){
        <div class="meta-rule"></div>
        ${sections}
        <div class="grand">
-         ${grandRabais>0?(()=>{const p=grandBrutAbsolu>0?Math.round(grandRabais/grandBrutAbsolu*1000)/10:0;return `<div class="lg brut"><span>Total avant réductions</span><span>${euro(grandBrutAbsolu)}</span></div><div class="lg reduc"><span>Réduction${p>0?` (−${p}%)`:''}</span><span>\u2212${euro(grandRabais)}</span></div>`;})():''}
+         ${grandRabais>0?(()=>{const p=grandBrutAbsolu>0?Math.round(grandRabais/grandBrutAbsolu*1000)/10:0;return `<div class="lg brut"><span>Total avant réductions</span><span>${euro(grandBrutAbsolu)}</span></div><div class="lg reduc"><span>Total des remises${p>0?` (−${p}%)`:''}</span><span>\u2212${euro(grandRabais)}</span></div>`;})():''}
          ${grandFrais>0?`<div class="lg"><span>Frais de livraison</span><span>${euro(grandFrais)}</span></div>`:''}
          <div class="lg total"><span>Total à payer</span><span>${euro(grandTotal)}</span></div>
          <!--REGL-->${_factReglSlotHtml(grandTotal, totalPaye, _lastPayDate, _lastPayMoyen)}<!--/REGL-->
@@ -38625,6 +38678,9 @@ async function genererFactureMultiple(ids){
      </div>
    </div>
    </body></html>`;
+  // Mode RÉGÉNÉRATION d'une facture figée : on renvoie le HTML + le total recalculé, sans
+  // rien stocker ni afficher. Le contrôle des montants et l'écriture auditée se font en aval.
+  if(_factRegenCtx){ _factRegenCtx.html = factureHtml; _factRegenCtx.total = money2(grandTotal); return; }
   // === Enregistrement au REGISTRE comme BROUILLON (sans numéro légal) ===
   // Le numéro définitif et le verrouillage n'interviennent qu'à la VALIDATION.
   try{
