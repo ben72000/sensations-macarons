@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1180';
+const APP_VERSION = 'v1182';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -15891,6 +15891,7 @@ function drawCoffretLine(ln,i){
     })()}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité par parfum)</label>
     <div class="flav-grid">${flavRows}${sansParfumRow}</div>
+    <div style="margin:6px 0 2px"><button class="btn ghost sm" onclick="proposerCompositionLigne(${i})" style="font-size:.82rem">💡 Proposer une composition selon mes stocks</button></div>
     ${sansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${sansParfum} macaron${sansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>
     ${cmdSpModeBlock(ln,i)}` : ''}
     <div class="sum-box" style="border:2px solid ${rempliCol};background:${totQ===cap?'#eef6ee':(totQ>cap?'#fdf2f1':'#fbf8f3')}">
@@ -15931,10 +15932,16 @@ function setCoffretParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cm
 function setCoffretEmbMode(i,v){ cmdLines[i].embMode=v; if(v!=='autre') cmdLines[i].embMatId=null; drawLines(); }
 function setCoffretEmbMat(i,v){ cmdLines[i].embMatId = v?+v:null; drawLines(); }
 
-// [SUGGESTION PARFUMS — UI] Propose une répartition pour les macarons « sans parfum » d'une ligne
-// coffret. Appelle la collecte (stock dormant + au plus rentable), affiche une modale de validation.
+// [SUGGESTION PARFUMS — UI] Point d'entrée historique conservé pour compatibilité. Depuis v1182,
+// il REDIRIGE vers le moteur unifié (proposerCompositionLigne → genererCompositionsCoffret), qui
+// intègre stock + surplus mutualisable + relance faisable avec toutes les dépendances temporelles.
+// L'ancien corps (moteur A : stock dormant + catalogue au plus rentable, SANS dépendances de temps)
+// est déprécié et sera retiré une fois le moteur B validé en conditions réelles.
 async function suggererParfumsLigne(i){
   const ln = cmdLines[i]; if(!ln) return;
+  // Redirection vers le moteur unifié.
+  if(typeof proposerCompositionLigne==='function'){ return proposerCompositionLigne(i); }
+  // — repli historique (moteur A) ci-dessous, atteint seulement si B indisponible —
   const sansParfum = +ln.sansParfum||0;
   if(sansParfum<=0) return;
   const taille = +ln.taille||25;
@@ -15995,6 +16002,140 @@ function appliquerSuggestionParfums(i, payload){
   closeModal();
   drawLines();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPOSITIONS ALTERNATIVES DE COFFRET — UI (modale)
+// Déclenchée par le bouton « 💡 Proposer une composition » d'une ligne coffret,
+// et proposable automatiquement quand le verdict de faisabilité est 🔴/🟡.
+// S'appuie sur le moteur pur genererCompositionsCoffret (3 sources classées).
+// Réutilise la mécanique éprouvée de suggererParfumsLigne (openModal → Appliquer).
+// ═══════════════════════════════════════════════════════════════════════════
+let _compoModeCourant = 'flexible';   // mémorise le dernier mode choisi (strict/flexible)
+
+async function proposerCompositionLigne(i, mode){
+  const ln = cmdLines[i]; if(!ln || ln.type!=='coffret') return;
+  if(mode) _compoModeCourant = (mode==='strict'?'strict':'flexible');
+  const taille = +ln.taille||6;
+  const dateLiv = (typeof val==='function' ? (val('f_date')||'') : '') || '';
+  const heureLiv = (typeof val==='function' ? (val('f_heure')||'') : '') || '';
+  // Parfums souhaités = ceux déjà saisis sur la ligne (base du mode STRICT).
+  const parfumsSouhaites = Object.keys(ln.parfums||{})
+    .filter(k=>(+ln.parfums[k]||0)>0)
+    .map(k=>({nom:k, qte:+ln.parfums[k]}));
+
+  openModal(`<h3>💡 Compositions alternatives</h3>
+    <div style="padding:14px;text-align:center;color:#9a8576">⏳ Analyse du stock, des batchs à venir et de la production faisable…</div>`);
+
+  try{
+    const res = await genererCompositionsCoffret(taille, dateLiv, heureLiv, {mode:_compoModeCourant, parfumsSouhaites});
+    _renderCompositionsModale(i, res, taille, dateLiv);
+  }catch(e){
+    console.error('proposerCompositionLigne', e);
+    openModal(`<h3>💡 Compositions alternatives</h3>
+      <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Erreur pendant l'analyse des compositions.</div></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+  }
+}
+
+// Rendu de la modale à partir du résultat du moteur. Séparé pour pouvoir re-render au switch de mode
+// sans relancer une analyse (le moteur est rapide, mais on garde la logique claire).
+function _renderCompositionsModale(i, res, taille, dateLiv){
+  const props = (res && res.propositions) || [];
+  const fallback = (res && res.fallback) || [];
+  const mode = (res && res.meta && res.meta.mode) || _compoModeCourant;
+
+  // Toggle Strict / Flexible.
+  const toggle = `<div style="display:inline-flex;border:1px solid var(--hair);border-radius:999px;overflow:hidden;font-size:.8rem">
+    ${['flexible','strict'].map(m=>`<span onclick="proposerCompositionLigne(${i},'${m}')"
+      style="padding:5px 13px;cursor:pointer;${mode===m?'background:var(--bordeaux,#52252F);color:#fff;font-weight:600':'color:#7a6a62'}">
+      ${m==='flexible'?'Flexible':'Strict'}</span>`).join('')}
+  </div>`;
+
+  // Rendu d'une proposition : titre selon le coût, ventilation par source, bouton Appliquer.
+  const carteProp = (p, rang) => {
+    const v = p.ventilation;
+    // Libellé de niveau selon la source la plus coûteuse mobilisée.
+    const niveau = p.cout===0 ? {ico:'✅', txt:'Le plus simple — 100 % disponible maintenant', col:'#3f7d52'}
+                 : p.cout===1 ? {ico:'♻️', txt:'Disponible via tes batchs déjà prévus', col:'#c97a2a'}
+                 : {ico:'🔧', txt:'Complet avec une relance de production', col:'#8a6d3b'};
+    // Ventilation lisible : « 6 en stock · 3 mutualisés · 3 à produire ».
+    const bouts = [];
+    if(v.stock>0)     bouts.push(`<b>${v.stock}</b> en stock`);
+    if(v.mutualise>0) bouts.push(`<b>${v.mutualise}</b> mutualisé${v.mutualise>1?'s':''} (batch déjà prévu)`);
+    if(v.relance>0)   bouts.push(`<b>${v.relance}</b> à produire (faisable pour ta date)`);
+    const ventil = bouts.join(' · ');
+    // Détail des parfums, chaque parfum annoté par sa provenance dominante.
+    const detailParfums = p.lignes.map(l=>{
+      const src = l.relance>0 ? '🏭' : l.mutualise>0 ? '♻️' : '📦';
+      return `<span style="display:inline-block;background:#f7f2ea;border:1px solid var(--hair);border-radius:8px;padding:2px 8px;margin:2px 3px 0 0;font-size:.84rem;text-transform:capitalize">${src} ${esc(l.nom)} ×${l.qte}</span>`;
+    }).join('');
+    const etat = p.complet
+      ? `<span style="color:#3f7d52;font-weight:600">Coffret ${p.taille} complet</span>`
+      : `<span style="color:#c97a2a;font-weight:600">${p.total}/${p.taille} — il manque ${p.manque}</span>`;
+    const payload = encodeURIComponent(JSON.stringify({taille:p.taille, lignes:p.lignes}));
+    return `<div style="border:1px solid var(--hair);border-radius:12px;padding:11px 13px;margin:9px 0;background:#fff">
+      <div style="font-size:.8rem;font-weight:700;color:${niveau.col};margin-bottom:4px">${niveau.ico} ${niveau.txt}</div>
+      <div style="margin-bottom:6px">${etat}</div>
+      <div style="margin-bottom:6px">${detailParfums}</div>
+      ${ventil?`<div style="font-size:.8rem;color:#7a6a62;margin-bottom:8px">↳ ${ventil}</div>`:''}
+      <button class="btn ${p.complet?'gold':'ghost'} sm" onclick="appliquerCompositionCoffret(${i},'${payload}')">
+        ${p.complet?'Utiliser cette composition':'Utiliser (coffret partiel)'}</button>
+    </div>`;
+  };
+
+  let corps='';
+  if(!props.length){
+    corps = `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a">📋 <div>Aucune composition possible pour ce format à cette date${mode==='strict'?' (essaie le mode Flexible)':''}.</div></div>`;
+  } else {
+    corps = props.slice(0,4).map((p,n)=>carteProp(p,n)).join('');
+  }
+
+  // Fallback taille : proposer une taille plus petite qui débloque un coffret complet.
+  let fbHtml='';
+  if(fallback.length){
+    fbHtml = fallback.map(f=>{
+      const p = f.propositions[0]; if(!p) return '';
+      const payload = encodeURIComponent(JSON.stringify({taille:f.taille, lignes:p.lignes, changeTaille:true}));
+      const noms = p.lignes.map(l=>`${l.nom} ×${l.qte}`).join(', ');
+      return `<div style="border:1px dashed #cbb89a;border-radius:12px;padding:10px 12px;margin:9px 0;background:#faf7f1">
+        <div style="font-size:.8rem;font-weight:700;color:#8a6d3b;margin-bottom:4px">↓ Si tu réduis la taille</div>
+        <div style="font-size:.86rem;margin-bottom:6px"><b>Coffret ${f.taille}</b> complet : <span style="text-transform:capitalize">${esc(noms)}</span></div>
+        <button class="btn ghost sm" onclick="appliquerCompositionCoffret(${i},'${payload}')">Passer au coffret ${f.taille}</button>
+      </div>`;
+    }).join('');
+  }
+
+  const dateTxt = dateLiv ? ((typeof fmtDate==='function')?fmtDate(dateLiv):dateLiv) : 'la date choisie';
+  openModal(`<h3>💡 Compositions alternatives</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+      <p class="note" style="margin:0">Coffret <b>${taille}</b> pour le <b>${esc(dateTxt)}</b> — du plus simple au plus engageant.</p>
+      ${toggle}
+    </div>
+    ${corps}
+    ${fbHtml}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+// Applique une composition à la ligne coffret : REMPLACE les parfums de la ligne (et la taille si
+// le fallback l'a changée). On remplace plutôt qu'on cumule : la compo proposée EST le coffret voulu.
+function appliquerCompositionCoffret(i, payload){
+  const ln = cmdLines[i]; if(!ln || ln.type!=='coffret'){ closeModal(); return; }
+  let data; try{ data = JSON.parse(decodeURIComponent(payload)); }catch(e){ data=null; }
+  if(!data || !Array.isArray(data.lignes)){ closeModal(); return; }
+  // Changement de taille (fallback) : on adopte la nouvelle taille et on re-tarife.
+  if(data.changeTaille && +data.taille){ ln.taille = +data.taille; ln.prixUnitaireApplique = null; }
+  // Remplacement des parfums.
+  ln.parfums = {};
+  data.lignes.forEach(l=>{ const q=Math.max(0,+l.qte||0); if(l.nom && q>0) ln.parfums[l.nom]=(+ln.parfums[l.nom]||0)+q; });
+  // Le total attribué couvre-t-il la taille ? Le reste devient « sans parfum » (à définir plus tard).
+  const total = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
+  const reste = Math.max(0, (+ln.taille||0) - total);
+  if(reste>0) ln.sansParfum = reste; else delete ln.sansParfum;
+  closeModal();
+  drawLines();
+  if(typeof cmdFeasibilityRecalc==='function') cmdFeasibilityRecalc();
+}
+
 
 
 function drawEventLine(ln,i){
@@ -16757,9 +16898,18 @@ function cmdFeasibilityRecalc(){
       detail=`<div class="feas-meta"><span>🏭 ${r.nbBatchs} batch(s) · ${r.nbMeringues} meringue(s)</span>
         <span>⏱ ${fmtH(r.besoinMin)} requis / ${fmtH(r.dispoMin)} dispo</span></div>`;
     }
+    // [ALTERNATIVES] Sur un verdict tendu (🟡) ou infaisable (🔴), si la commande contient un coffret,
+    // on propose un accès direct au générateur de compositions alternatives (stock/mutualisé/relance).
+    let altLink='';
+    if((r.statut==='tendu'||r.statut==='ko')){
+      const idxCoffret = (cmdLines||[]).findIndex(ln=>ln && ln.type==='coffret');
+      if(idxCoffret>=0){
+        altLink=`<div style="margin-top:8px"><button class="btn ghost sm" style="font-size:.82rem" onclick="proposerCompositionLigne(${idxCoffret})">💡 Voir des compositions alternatives</button></div>`;
+      }
+    }
     box.style.display='block';
     box.style.background=bg; box.style.borderColor=col;
-    box.innerHTML=`<div class="feas-msg" style="color:${col}">${r.msg}</div>${detail}`;
+    box.innerHTML=`<div class="feas-msg" style="color:${col}">${r.msg}</div>${detail}${altLink}`;
   }, 250);
 }
 
@@ -43705,6 +43855,11 @@ function detecterCommandesADeterminer(commandes, maintenant){
 //   dateLiv : date de livraison de la commande (pour calculer le stock NON réservé aux commandes
 //             de la fenêtre). Optionnel : si absente, on prend le stock mobilisable brut.
 // Renvoie le même objet que suggererParfumsPur, enrichi de { stockLibre, catalogue } pour debug.
+// ⚠️ DÉPRÉCIÉ (v1182) — MOTEUR A. Remplacé par le moteur unifié genererCompositionsCoffret (moteur B),
+// qui intègre en plus le surplus mutualisable des batchs planifiés et TOUTES les dépendances
+// temporelles (repos ganache, prise crémeux, congélation, dates de dispo réelles des composants).
+// Plus aucun appelant actif ; conservé uniquement en repli historique le temps de valider B en réel.
+// À SUPPRIMER (avec suggererParfumsPur et appliquerSuggestionParfums) après validation iPhone.
 async function suggererParfumsCommande(quantite, taille, parfumsPresents, dateLiv, opts){
   opts = opts || {};
   // 1) Stock mobilisable brut par parfum (clé = nom normalisé via stockMoveKey).
@@ -45172,47 +45327,89 @@ function _prodAlerteParfums(){
 }
 
 // Ouvre la suggestion pour une commande au moment de la production (données fraîches du jour),
-// puis fige les parfums validés EN BASE. Réutilise le moteur de collecte + la modale.
+// puis fige les parfums validés EN BASE.
+// [UNIFICATION v1182] On appelle désormais LE MÊME moteur que les compositions alternatives
+// (genererCompositionsCoffret → collecte stock + surplus mutualisable + relance faisable, avec
+// TOUTES les dépendances temporelles : repos ganache, prise crémeux, congélation, dates de dispo
+// réelles des composants). Recalcul 100 % dynamique à chaque clic : le résultat reflète l'état réel
+// du terrain à l'instant présent (aucune génération figée, aucune réservation — simple simulation).
+// Fonctionne à l'identique pour les macarons standard ET les grands formats (typeFiltre).
 async function suggererParfumsProd(orderId){
-  openModal(`<h3>🎯 Suggestion de parfums</h3><div style="padding:14px;text-align:center;color:#9a8576">⏳ Analyse du stock et des coûts du jour…</div>`);
+  openModal(`<h3>🎯 Suggestion de parfums</h3><div style="padding:14px;text-align:center;color:#9a8576">⏳ Analyse en temps réel — stock, batchs planifiés, faisabilité du jour…</div>`);
   try{
     const o = await db.orders.get(orderId);
     if(!o){ closeModal(); return; }
     const sp = _sansParfumTotalDe(o);
     if(sp.total<=0){ closeModal(); toast && toast('Plus de macaron à déterminer'); if(typeof renderAgendaProduction==='function') renderAgendaProduction(); return; }
-    const parfumsPresents = _parfumsQtesDe(o).map(p=>p.nom).filter(n=>n!=='À définir');
     const dateLiv = (o.dateEvenement || o.date || '').slice(0,10);
-    const res = await suggererParfumsCommande(sp.total, sp.taille, parfumsPresents, dateLiv, {paliers:true, parfumsAutorises:(typeof FLAVORS!=='undefined'?FLAVORS:null)});
-    if(!res || !res.ok || !res.repartition.length){
+    const heureLiv = o.heureLivraison || '';
+    // Univers de la commande : grand format ou coffret standard ? On lit le type des lignes qui
+    // portent du sansParfum (le figeage ne concerne que les lignes coffret aujourd'hui).
+    const typeFiltre = _sansParfumTypeUnivers(o);
+    // Le moteur B compose EXACTEMENT sp.total macarons (la "taille" ici = le nb à déterminer).
+    const res = await genererCompositionsCoffret(sp.total, dateLiv, heureLiv, { mode:'flexible', typeFiltre });
+    const props = (res && res.propositions) || [];
+    if(!props.length){
       openModal(`<h3>🎯 Suggestion de parfums</h3>
-        <div class="banner" style="background:#fdf8e9;border-color:#e8d09a">📋 <div>${esc((res&&res.note)||'Aucune suggestion possible (ni stock dormant, ni recette disponible).')}</div></div>
+        <div class="banner" style="background:#fdf8e9;border-color:#e8d09a">📋 <div>Aucune composition possible pour l'instant (ni stock, ni batch prévu, ni relance faisable pour cette date).</div></div>
         <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
       return;
     }
-    const stockRows = res.repartition.filter(r=>r.source==='stock');
-    const prodRows  = res.repartition.filter(r=>r.source==='production');
-    const bloc = (titre, rows, col, ico) => rows.length ? `
-      <div style="margin-top:8px">
-        <div style="font-size:.78rem;font-weight:700;color:${col};margin-bottom:3px">${ico} ${titre}</div>
-        ${rows.map(r=>`<div style="display:flex;justify-content:space-between;font-size:.86rem;padding:2px 0">
-          <span style="text-transform:capitalize">${esc(r.nom)}</span><b>${r.qte} mac</b></div>`).join('')}
-      </div>` : '';
-    const payload = encodeURIComponent(JSON.stringify(res.repartition));
-    openModal(`<h3>🎯 Suggestion de parfums</h3>
-      <p class="note" style="margin-bottom:6px">Pour les <b>${sp.total}</b> macaron${sp.total>1?'s':''} sans parfum (plafond ${res.plafond} parfums). Une fois validé, c'est <b>figé</b> dans la commande.</p>
-      ${bloc('Puisé dans ton stock dormant', stockRows, '#3f7d52', '📦')}
-      ${bloc('À produire (au plus rentable)', prodRows, '#c97a2a', '🏭')}
-      ${res.reste>0?`<p class="note" style="color:var(--red);margin-top:6px">${esc(res.note)}</p>`:''}
-      <div class="modal-actions">
-        <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Annuler</button>
-        <button class="btn gold" onclick="figerParfumsProd(${orderId},'${payload}')">Valider &amp; figer</button>
-      </div>`);
+    _renderSuggestionProdModale(orderId, res, sp, typeFiltre, dateLiv);
   }catch(e){
     console.error('suggererParfumsProd', e);
     openModal(`<h3>🎯 Suggestion de parfums</h3>
       <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Erreur pendant l'analyse.</div></div>
       <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
   }
+}
+
+// Détermine l'univers (grand format vs standard) des macarons SANS PARFUM d'une commande, pour
+// filtrer le moteur. Règle : dès qu'une ligne coffret sans-parfum correspond à des recettes grand
+// format, on bascule en 'grand'. Par défaut 'standard' (cas courant du coffret de macarons classiques).
+// Aujourd'hui le sansParfum vit sur les lignes coffret → standard ; on garde le hook pour l'évolution GF.
+function _sansParfumTypeUnivers(o){
+  // Repli simple et sûr : les macarons "sans parfum" des coffrets sont des macarons standard.
+  // (Les grands formats se commandent par item nommé, pas via sansParfum de coffret.)
+  return 'standard';
+}
+
+// Rendu de la modale de suggestion au démarrage prod : meilleure proposition (moins coûteuse) mise en
+// avant, ventilation par source, puis figeage. On propose aussi la 2e option (avec relance) si elle
+// complète mieux. Le figeage n'écrit que les parfums (aucune réservation de stock ici).
+function _renderSuggestionProdModale(orderId, res, sp, typeFiltre, dateLiv){
+  const props = (res.propositions||[]).slice(0,2);
+  const carte = (p, principal) => {
+    const v = p.ventilation;
+    const niveau = p.cout===0 ? {ico:'✅', txt:'100 % disponible maintenant', col:'#3f7d52'}
+                 : p.cout===1 ? {ico:'♻️', txt:'Via tes batchs déjà prévus', col:'#c97a2a'}
+                 : {ico:'🔧', txt:'Complet avec une relance de production', col:'#8a6d3b'};
+    const bouts=[];
+    if(v.stock>0)     bouts.push(`<b>${v.stock}</b> en stock`);
+    if(v.mutualise>0) bouts.push(`<b>${v.mutualise}</b> mutualisé${v.mutualise>1?'s':''}`);
+    if(v.relance>0)   bouts.push(`<b>${v.relance}</b> à produire`);
+    const detail = p.lignes.map(l=>{
+      const src = l.relance>0 ? '🏭' : l.mutualise>0 ? '♻️' : '📦';
+      return `<span style="display:inline-block;background:#f7f2ea;border:1px solid var(--hair);border-radius:8px;padding:2px 8px;margin:2px 3px 0 0;font-size:.84rem;text-transform:capitalize">${src} ${esc(l.nom)} ×${l.qte}</span>`;
+    }).join('');
+    // Le figeage attend [{nom,qte}] : on mappe la compo.
+    const payload = encodeURIComponent(JSON.stringify(p.lignes.map(l=>({nom:l.nom, qte:l.qte}))));
+    const etat = p.complet ? `<span style="color:#3f7d52;font-weight:600">Couvre les ${sp.total} macaron${sp.total>1?'s':''}</span>`
+                           : `<span style="color:#c97a2a;font-weight:600">${p.total}/${sp.total} — il manque ${p.manque}</span>`;
+    return `<div style="border:1px solid ${principal?'#d8b45a':'var(--hair)'};border-radius:12px;padding:11px 13px;margin:9px 0;background:#fff">
+      <div style="font-size:.8rem;font-weight:700;color:${niveau.col};margin-bottom:4px">${niveau.ico} ${niveau.txt}</div>
+      <div style="margin-bottom:6px">${etat}</div>
+      <div style="margin-bottom:6px">${detail}</div>
+      ${bouts.length?`<div style="font-size:.8rem;color:#7a6a62;margin-bottom:8px">↳ ${bouts.join(' · ')}</div>`:''}
+      <button class="btn ${principal?'gold':'ghost'} sm" onclick="figerParfumsProd(${orderId},'${payload}')">Valider &amp; figer${principal?'':' cette variante'}</button>
+    </div>`;
+  };
+  const dateTxt = dateLiv ? ((typeof fmtDate==='function')?fmtDate(dateLiv):dateLiv) : "aujourd'hui";
+  openModal(`<h3>🎯 Suggestion de parfums</h3>
+    <p class="note" style="margin-bottom:6px">Pour les <b>${sp.total}</b> macaron${sp.total>1?'s':''} à déterminer — recalculé à l'instant selon ton stock, tes batchs prévus et la faisabilité pour le <b>${esc(dateTxt)}</b>. Une fois validé, c'est <b>figé</b> dans la commande.</p>
+    ${props.map((p,n)=>carte(p, n===0)).join('')}
+    <p class="note" style="font-size:.72rem;color:#9a8a82;margin-top:4px">Aucun stock n'est réservé maintenant : la réservation se fait au picking ou au passage en « Prête ».</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button></div>`);
 }
 
 // Fige les parfums validés DANS la commande (base) : ajoute aux lignes coffret et consomme le
@@ -46796,6 +46993,300 @@ async function stockMobilisableParParfum(){
 function stockMoveKey(nom){
   return (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase().trim();
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GÉNÉRATEUR DE COMPOSITIONS DE COFFRETS  (v1)
+   ───────────────────────────────────────────────────────────────────────────
+   Quand un coffret est infaisable (parfum indispo ou hors fenêtre), on propose
+   des compositions alternatives PUISÉES DANS 3 SOURCES classées du moins coûteux
+   au plus coûteux :
+     1) STOCK immédiat        → stockMobilisableParParfum (finis + assemblables)
+     2) SURPLUS mutualisable  → buildMutualisationSemaine (batchs déjà prévus dont
+                                 le montage tombe ≤ date de retrait ; surplus =
+                                 batchs×60 − demande déjà engagée)
+     3) RELANCE faisable      → produire exprès un parfum, SI le repos ganache
+                                 tient dans la fenêtre (retroplanningDepuisParfums
+                                 en mode dur, cohérent avec le verdict de faisabilité)
+   Chaque proposition est ANNOTÉE par ventilation (« 10 en stock, 5 mutualisés,
+   3 à produire »). Deux modes de format : STRICT (respecte les parfums demandés)
+   ou FLEXIBLE (remplit au mieux avec le plus disponible).
+   ─── Cœur PUR (aucun DOM, aucune écriture base) : testable en Node. ───
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+// Construit, PAR PARFUM, la disponibilité issue des 3 sources, chacune avec sa date
+// de disponibilité et son "coût" (0=stock, 1=mutualisé, 2=relance). Fonction ASYNC car
+// elle lit stock + mutualisation en base ; sépare clairement la collecte (I/O) du calcul pur.
+//   dateLiv : 'YYYY-MM-DD' date de retrait cible
+//   heureLiv: 'HH:MM' (pour le test de relance faisable)
+// Renvoie { parfums:{ [nomCanon]:{ nom, stock, mutualise, relanceOk, sources:[...] } }, meta }.
+async function _collecterDisponibilites(dateLiv, heureLiv, opts){
+  opts = opts || {};
+  const norm = n => (typeof aiNormalize==='function') ? aiNormalize(n||'') : String(n||'').toLowerCase().trim();
+  const TB  = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  // [FILTRE TYPE — grand format vs coffret standard] On ne mélange pas les univers : quand on résout
+  // un GRAND FORMAT, on ne propose que des parfums de recette grandFormat (et inversement pour les
+  // coffrets standard). typeFiltre : 'grand' | 'standard' | null (tout). La distinction vient TOUJOURS
+  // de la recette (rec.grandFormat), jamais du nom (peu fiable) — même règle que le reste de l'app.
+  const typeFiltre = opts.typeFiltre || null;   // null = pas de filtre
+  const recettesAll = (typeof window!=='undefined' && window._allRecipesCache)
+    ? window._allRecipesCache
+    : (typeof db!=='undefined' && db.recipes ? await db.recipes.toArray().catch(()=>[]) : []);
+  const recByNom = {};
+  recettesAll.forEach(r=>{ if(r.produitNom) recByNom[norm(r.produitNom)] = r; });
+  // Un parfum est-il compatible avec le type demandé ? Inconnu (pas de recette) → accepté par défaut
+  // (on ne bloque pas un stock réel sous prétexte qu'on n'a pas retrouvé la fiche).
+  const compatType = (nom) => {
+    if(!typeFiltre) return true;
+    const r = recByNom[norm(nom)];
+    if(!r) return true;                       // recette inconnue → ne pas exclure
+    const estGF = !!r.grandFormat;
+    return typeFiltre==='grand' ? estGF : !estGF;
+  };
+  const acc = {};   // nomCanon → { nom, stock, mutualise, relanceOk, sources:[] }
+  const ensure = (nom) => {
+    const k = norm(nom);
+    return (acc[k] ||= { nom, stock:0, mutualise:0, relanceOk:false, sources:[] });
+  };
+
+  // ── SOURCE 1 : STOCK immédiat ────────────────────────────────────────────
+  let mob = {};
+  try{ mob = await stockMobilisableParParfum(); }catch(_){ mob = {}; }
+  Object.values(mob).forEach(b=>{
+    if(!compatType(b.nom)) return;   // stock d'un autre univers (GF vs standard) → ignoré
+    const dispo = Math.floor(Math.max(0, +b.mobilisable||0));
+    if(dispo>0){ const e=ensure(b.nom); e.stock += dispo; }
+  });
+
+  // ── SOURCE 2 : SURPLUS mutualisable ──────────────────────────────────────
+  // Un batch déjà prévu pour d'autres commandes produit 60 (ou multiple) mais la
+  // demande engagée est < capacité → le RESTE est mobilisable pour ce client, à
+  // condition que le montage tombe AU PLUS TARD le jour de la livraison (jour même OK).
+  try{
+    const mut = await buildMutualisationSemaine(60);
+    (mut.semaines||[]).forEach(sem=>{
+      (sem.parfums||[]).forEach(p=>{
+        if(!p.nom || p.nom==='À définir') return;
+        if(!compatType(p.nom)) return;   // surplus d'un autre univers → ignoré
+        const surplus = Math.max(0, (p.batchs||Math.ceil(p.qte/TB))*TB - p.qte);
+        if(surplus<=0) return;
+        // Timing : le montage de CE parfum doit être ≤ date de retrait du client.
+        // On prend le montage le plus précoce parmi les commandes du parfum (le plus permissif).
+        let montageMin = null;
+        (p.commandes||[]).forEach(c=>{ if(c.montage && (!montageMin || c.montage<montageMin)) montageMin=c.montage; });
+        const montageOk = montageMin ? (montageMin <= dateLiv) : (sem.montageRef ? sem.montageRef<=dateLiv : false);
+        if(!montageOk) return;
+        const e = ensure(p.nom);
+        e.mutualise += surplus;
+        e.sources.push({ type:'mutualise', qte:surplus, montage:montageMin||sem.montageRef, semaine:sem.label });
+      });
+    });
+  }catch(_){}
+
+  // ── SOURCE 3 : RELANCE faisable ──────────────────────────────────────────
+  // Pour CHAQUE recette existante, est-il possible de lancer un batch dédié qui
+  // respecte le repos ganache pour cette date ? On réutilise le rétroplanning DUR
+  // (même règle que le verdict de faisabilité). relanceOk = la séquence tient.
+  try{
+    const recettes = recettesAll;
+    const maintenant = new Date();
+    recettes.forEach(r=>{
+      if(r.actif===false) return;
+      const nom = r.produitNom; if(!nom) return;
+      // Filtre univers : pour un grand format on ne relance que des recettes grandFormat, etc.
+      if(typeFiltre){ const estGF=!!r.grandFormat; if(typeFiltre==='grand' ? !estGF : estGF) return; }
+      if(typeof retroplanningDepuisParfums!=='function'){ ensure(nom).relanceOk=true; return; }
+      let ok=false;
+      try{
+        const rp = retroplanningDepuisParfums(dateLiv, heureLiv, [nom], recettes, {ignorerMaturation:true});
+        if(rp && !rp.error && Array.isArray(rp.jalons)){
+          const pt = rp.jalons.filter(j=>j.type==='travail').sort((a,b)=>a.date-b.date)[0];
+          ok = !(pt && pt.date < maintenant);
+        } else if(rp && rp.error){ ok=false; }
+      }catch(_){ ok=false; }
+      const e = ensure(nom);
+      e.relanceOk = e.relanceOk || ok;
+    });
+  }catch(_){}
+
+  return { parfums: acc, meta:{ dateLiv, heureLiv, batch:TB } };
+}
+
+// [COMPOSITION — cœur PUR] À partir des disponibilités déjà collectées (dispoParfums),
+// génère des propositions de coffrets de la taille demandée. Pas d'I/O ici : 100% déterministe,
+// donc testable en Node.
+//   dispoParfums : { nomCanon:{ nom, stock, mutualise, relanceOk } }  (issu de _collecterDisponibilites)
+//   taille       : 6 | 8 | 16 | 25
+//   opts.mode    : 'strict' | 'flexible'
+//   opts.parfumsSouhaites : [{nom, qte}] format demandé (requis en strict, indicatif en flexible)
+//   opts.maxParfums : cap de variété par coffret (défaut : selon taille)
+// Renvoie [{ taille, complet, lignes:[{nom, qte, stock, mutualise, relance}],
+//            total, ventilation:{stock, mutualise, relance}, cout, resume }]
+//   trié du MOINS coûteux (100% stock) au PLUS coûteux (avec relance).
+function _composerCoffrets(dispoParfums, taille, opts){
+  opts = opts || {};
+  const mode = opts.mode==='flexible' ? 'flexible' : 'strict';
+  const norm = n => (typeof aiNormalize==='function') ? aiNormalize(n||'') : String(n||'').toLowerCase().trim();
+  const list = Object.values(dispoParfums||{});
+  // Retrouve un parfum de `list` par nom (helper pour la répartition flexible).
+  const clone_lookup = (arr, nom) => arr.find(x=>norm(x.nom)===norm(nom)) || null;
+
+  // Alloue `besoin` unités d'un parfum en tirant d'abord du stock, puis du mutualisé, puis
+  // de la relance (illimitée si relanceOk). Renvoie {stock, mutualise, relance, manque}.
+  const allouer = (p, besoin) => {
+    let reste = besoin, s=0, m=0, r=0;
+    const fromStock = Math.min(reste, p.stock||0); s+=fromStock; reste-=fromStock;
+    const fromMut   = Math.min(reste, p.mutualise||0); m+=fromMut; reste-=fromMut;
+    if(reste>0 && p.relanceOk){ r+=reste; reste=0; }
+    return { stock:s, mutualise:m, relance:r, manque:reste };
+  };
+
+  // Construit UNE proposition en respectant une liste ordonnée de (parfum, quotas) cible.
+  // consomme un clone des dispos pour ne pas réutiliser deux fois le même stock.
+  const buildFrom = (cibles, autoriserRelance) => {
+    const clone = {}; list.forEach(p=>{ clone[norm(p.nom)] = { nom:p.nom, stock:p.stock||0, mutualise:p.mutualise||0, relanceOk:!!p.relanceOk }; });
+    const lignes=[]; let total=0, vS=0, vM=0, vR=0, manqueTotal=0;
+    for(const c of cibles){
+      const k=norm(c.nom); const p=clone[k]; if(!p) { manqueTotal+=c.qte; continue; }
+      const besoin = c.qte;
+      const a = allouer(p, autoriserRelance ? besoin : Math.min(besoin, (p.stock||0)+(p.mutualise||0)));
+      const pris = a.stock+a.mutualise+a.relance;
+      if(pris>0){
+        lignes.push({ nom:p.nom, qte:pris, stock:a.stock, mutualise:a.mutualise, relance:a.relance });
+        total+=pris; vS+=a.stock; vM+=a.mutualise; vR+=a.relance;
+        p.stock-=a.stock; p.mutualise-=a.mutualise;   // consommé
+      }
+      manqueTotal += a.manque;
+    }
+    return { lignes, total, vS, vM, vR, manqueTotal };
+  };
+
+  // Détermine les cibles selon le mode.
+  let ciblesBase;
+  if(mode==='strict' && Array.isArray(opts.parfumsSouhaites) && opts.parfumsSouhaites.length){
+    ciblesBase = opts.parfumsSouhaites.map(x=>({nom:x.nom, qte:+x.qte||0})).filter(x=>x.qte>0);
+  } else {
+    // Flexible : coffret ASSORTI. On privilégie la VARIÉTÉ — aucun parfum ne monopolise le coffret.
+    // Méthode : viser un nombre de parfums cible, plafonner la part de chacun à ceil(taille/nbVisé),
+    // puis remplir en TOURS DE TABLE (round-robin) les parfums les plus disponibles, en respectant
+    // la dispo réelle (stock+mutualisé) ; le reliquat éventuel est comblé par des parfums relançables.
+    const cap = opts.maxParfums || (taille<=6?3 : taille<=8?4 : taille<=16?6 : 8);
+    // Parfums candidats triés par disponibilité décroissante (stock+mutualisé), relançables ensuite.
+    const tri = list.slice().sort((a,b)=>
+      ((b.stock||0)+(b.mutualise||0)) - ((a.stock||0)+(a.mutualise||0))
+      || (b.relanceOk?1:0)-(a.relanceOk?1:0)
+    );
+    if(!tri.length) return [];
+    // Nombre de parfums visé : autant que possible dans la limite `cap`, sans descendre sous ~taille/cap.
+    const nbVise = Math.min(cap, Math.max(2, Math.min(tri.length, taille)));
+    const plafondParParfum = Math.max(1, Math.ceil(taille / nbVise));
+    // On retient les nbVise premiers candidats (les plus dispo) + une réserve relançable pour combler.
+    const retenus = tri.slice(0, nbVise);
+    const quotas = new Map();   // nomCanon → qte allouée
+    retenus.forEach(p=>quotas.set(norm(p.nom), 0));
+    let reste = taille;
+    // Round-robin : à chaque tour, +1 à chaque parfum qui a encore du dispo ET n'a pas atteint son plafond.
+    let progres = true;
+    while(reste>0 && progres){
+      progres = false;
+      for(const p of retenus){
+        if(reste<=0) break;
+        const k=norm(p.nom); const q=quotas.get(k);
+        const dispoReelle=(p.stock||0)+(p.mutualise||0);
+        if(q<plafondParParfum && q<dispoReelle){ quotas.set(k, q+1); reste--; progres=true; }
+      }
+    }
+    // Reliquat : compléter via relance (parfums retenus relançables d'abord, puis nouveaux relançables),
+    // en respectant le plafond de variété pour ne pas retomber sur un quasi mono-parfum.
+    if(reste>0){
+      // a) gonfler les parfums retenus relançables jusqu'au plafond
+      for(const p of retenus){
+        if(reste<=0) break;
+        if(!p.relanceOk) continue;
+        const k=norm(p.nom); const q=quotas.get(k);
+        const marge=plafondParParfum-q;
+        if(marge>0){ const add=Math.min(marge,reste); quotas.set(k,q+add); reste-=add; }
+      }
+      // b) ajouter de nouveaux parfums relançables (hors retenus) tant qu'il reste de la place
+      if(reste>0){
+        for(const p of tri){
+          if(reste<=0 || quotas.size>=cap) break;
+          const k=norm(p.nom);
+          if(quotas.has(k) || !p.relanceOk) continue;
+          const add=Math.min(plafondParParfum,reste); quotas.set(k,add); reste-=add;
+        }
+      }
+      // c) DERNIER RECOURS : si le coffret reste incomplet alors qu'il existe encore du DISPO RÉEL
+      //    (stock/mutualisé) non utilisé, on relâche le plafond de variété — mieux vaut un coffret
+      //    complet un peu moins assorti que rien. La variété reste préférée (étapes a/b passent avant).
+      if(reste>0){
+        for(const p of tri){
+          if(reste<=0) break;
+          const k=norm(p.nom); const q=quotas.get(k)||0;
+          const dispoReelle=(p.stock||0)+(p.mutualise||0);
+          const marge=dispoReelle-q;
+          if(marge>0){ if(!quotas.has(k) && quotas.size>=cap) continue; const add=Math.min(marge,reste); quotas.set(k,q+add); reste-=add; }
+        }
+      }
+    }
+    ciblesBase = retenus.concat(tri.filter(p=>!retenus.includes(p)))
+      .filter(p=>quotas.get(norm(p.nom))>0)
+      .map(p=>({nom:p.nom, qte:quotas.get(norm(p.nom))}));
+  }
+
+  const props = [];
+  const pushProp = (res, coutRang) => {
+    if(res.total<=0) return;
+    const complet = res.total>=taille && res.manqueTotal<=0;
+    const cout = res.vR>0 ? 2 : res.vM>0 ? 1 : 0;
+    props.push({
+      taille, complet, total:res.total, lignes:res.lignes,
+      ventilation:{ stock:res.vS, mutualise:res.vM, relance:res.vR },
+      cout: Math.max(cout, coutRang||0),
+      manque: Math.max(0, taille - res.total)
+    });
+  };
+
+  // 1) Proposition SANS relance (stock + mutualisé seulement) : la moins coûteuse.
+  pushProp(buildFrom(ciblesBase, false), 0);
+  // 2) Proposition AVEC relance autorisée (comble le manque via production dédiée).
+  pushProp(buildFrom(ciblesBase, true), 0);
+
+  // Dédoublonne (une compo identique peut sortir deux fois) + trie par coût puis complétude.
+  const seen = new Set();
+  const uniq = props.filter(p=>{
+    const sig = p.total+'|'+p.lignes.map(l=>norm(l.nom)+':'+l.qte+':'+l.stock+':'+l.mutualise+':'+l.relance).sort().join(',');
+    if(seen.has(sig)) return false; seen.add(sig); return true;
+  });
+  uniq.sort((a,b)=> a.cout-b.cout || (b.complet?1:0)-(a.complet?1:0) || b.total-a.total );
+  return uniq;
+}
+
+// [ORCHESTRATEUR] Point d'entrée unique : collecte les dispos puis génère les propositions
+// pour la taille demandée, avec fallback vers une taille plus petite si aucune compo complète.
+//   opts.mode : 'strict'|'flexible' · opts.parfumsSouhaites : [{nom,qte}]
+// Renvoie { propositions:[...], fallback:[{taille, propositions}], meta }.
+async function genererCompositionsCoffret(taille, dateLiv, heureLiv, opts){
+  opts = opts || {};
+  taille = +taille || 6;
+  // Le filtre d'univers (grand format vs coffret standard) descend jusqu'à la collecte : on ne
+  // propose jamais un parfum du mauvais type. opts.typeFiltre : 'grand' | 'standard' | undefined.
+  const { parfums, meta } = await _collecterDisponibilites(dateLiv, heureLiv, { typeFiltre: opts.typeFiltre||null });
+  const propositions = _composerCoffrets(parfums, taille, opts);
+
+  // Fallback taille : si aucune proposition COMPLÈTE pour la taille demandée, on tente les
+  // formats standards plus PETITS (25→16→8→6) et on retient le premier qui donne un coffret complet.
+  let fallback = [];
+  const aUnComplet = propositions.some(p=>p.complet);
+  if(!aUnComplet){
+    const tailles = (typeof BOX_SIZES!=='undefined' ? BOX_SIZES : [6,8,16,25]).filter(t=>t<taille).sort((a,b)=>b-a);
+    for(const t of tailles){
+      const ps = _composerCoffrets(parfums, t, opts);
+      if(ps.some(p=>p.complet)){ fallback.push({ taille:t, propositions:ps.filter(p=>p.complet).slice(0,2) }); break; }
+    }
+  }
+  return { propositions, fallback, meta:{ ...meta, taille, mode: opts.mode||'strict', typeFiltre: opts.typeFiltre||null } };
+}
+
 
 
 
