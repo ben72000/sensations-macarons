@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1205';
+const APP_VERSION = 'v1206';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -15939,10 +15939,9 @@ async function cmdForm(id, opts){
   drawPayments();
   drawLines();
   cmdRecalc();
-  // Si la commande comporte déjà des infos de livraison, ouvrir le bloc pour ne rien masquer.
-  if(o.lieuLivraison || o.heureLivraison || o.distanceKm!=null || o.tempsLivraisonMin!=null){
-    toggleLivBlock();
-  }
+  // [v1206] Le bloc livraison reste REPLIÉ par défaut, même si la commande a déjà des infos de
+  // livraison. L'utilisateur l'ouvre au clic s'il veut les voir/modifier ; les valeurs restent
+  // actives (l'encart de résultat livraison s'affiche quand même). Demande : moins de bruit visuel.
 }
 // Registre de paiements en cours d'édition (copie de travail, écrit en base au save)
 let cmdPayments=[];
@@ -16373,6 +16372,37 @@ async function proposerCompositionLigne(i, mode, parfumsEnPlus){
   }
 }
 
+// [v1206] RENTABILITÉ D'UNE COMPOSITION PROPOSÉE.
+// À prix de coffret égal, deux compositions n'ont pas le même coût de revient (parfums plus ou
+// moins coûteux / longs à produire). On calcule ici, avec le MÊME moteur central que la fiche
+// commande (computeOrderMargins) et les MÊMES caches synchrones (_cmdMarginCache), le coût de
+// revient et la marge de la composition — pour éclairer le choix. Aucun chargement Dexie : la
+// modale s'ouvre depuis le formulaire commande, où ces caches sont déjà remplis.
+// Retourne null si le calcul n'est pas fiable (caches absents), pour ne rien afficher de faux.
+function _compoRentabilite(taille, lignesCompo){
+  try{
+    const c = (typeof _cmdMarginCache!=='undefined') ? _cmdMarginCache : null;
+    if(!c || !Array.isArray(c.recipes)) return null;
+    // Mapping nom → libellé catalogue, IDENTIQUE à appliquerCompositionCoffret (cohérence coût).
+    const _kf = x => (typeof aiNormalize==='function') ? aiNormalize(x) : String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+    const _flavByKey = {}; (typeof FLAVORS!=='undefined'?FLAVORS:[]).forEach(f=>{ _flavByKey[_kf(f)] = f; });
+    const parfums = {};
+    (lignesCompo||[]).forEach(l=>{
+      const q=Math.max(0,+l.qte||0); if(!l.nom||q<=0) return;
+      const canon = _flavByKey[_kf(l.nom)] || l.nom;
+      parfums[canon] = (+parfums[canon]||0) + q;
+    });
+    // Ligne coffret draft : emballage Standard (défaut), même structure que la vraie ligne.
+    const lnDraft = { type:'coffret', taille:+taille||0, parfums, embMode:'standard' };
+    const prix = (typeof coffretUnitPrice==='function') ? coffretUnitPrice(lnDraft) : 0;
+    const o = { lignes:[lnDraft], montant:prix };
+    const m = computeOrderMargins(o, c.recipes||[], c.recipeItems||[], c.lots||[]);
+    const coutRevient = money2(m.coutMat + m.coutEmb);
+    return { coutRevient, prix:m.ca, margeNette:m.margeNette, tauxNet:m.tauxNet,
+             nonResolus:m.piecesNonResolues||0 };
+  }catch(e){ console.error('_compoRentabilite', e); return null; }
+}
+
 // Rendu de la modale à partir du résultat du moteur. Séparé pour pouvoir re-render au switch de mode
 // sans relancer une analyse (le moteur est rapide, mais on garde la logique claire).
 function _renderCompositionsModale(i, res, taille, dateLiv){
@@ -16422,11 +16452,25 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
       ? `<span style="color:#3f7d52;font-weight:600">Coffret ${p.taille} complet</span>`
       : `<span style="color:#c97a2a;font-weight:600">${p.total}/${p.taille} — il manque ${p.manque}</span>`;
     const payload = encodeURIComponent(JSON.stringify({taille:p.taille, lignes:p.lignes}));
+    // [v1206] Rentabilité de CETTE composition (même moteur que la fiche commande). À prix de coffret
+    // égal, une composition de parfums coûteux/longs rapporte moins — ce bandeau aide à choisir.
+    let rentaBloc = '';
+    const _r = (typeof _compoRentabilite==='function') ? _compoRentabilite(p.taille, p.lignes) : null;
+    if(_r){
+      const _ps = (typeof profitScale==='function') ? profitScale(_r.tauxNet) : {col:'#7a6a62', label:''};
+      const _dot = _r.tauxNet>=30 ? '🟢' : (_r.tauxNet>=15 ? '🟡' : '🔴');
+      rentaBloc = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:#faf7f1;border:1px solid #ece0cf;border-radius:9px;padding:6px 10px;margin:2px 0 8px;font-size:.82rem">
+        <span style="color:#8a7a72">Revient <b style="color:var(--bordeaux,#52252F)">${euro(_r.coutRevient)}</b></span>
+        <span style="color:#cbb9ac">·</span>
+        <span style="color:#8a7a72">Marge <b style="color:${_ps.col}">${euro(_r.margeNette)}</b> <span style="color:${_ps.col}">(${_dot} ${_r.tauxNet}%)</span></span>
+      </div>`;
+    }
     return `<div style="border:1px solid var(--hair);border-radius:12px;padding:11px 13px;margin:9px 0;background:#fff">
       <div style="font-size:.8rem;font-weight:700;color:${niveau.col};margin-bottom:4px">${niveau.ico} ${niveau.txt}</div>
       <div style="margin-bottom:6px">${etat}</div>
       <div style="margin-bottom:6px">${detailParfums}</div>
       ${ventil?`<div style="font-size:.8rem;color:#7a6a62;margin-bottom:8px">↳ ${ventil}</div>`:''}
+      ${rentaBloc}
       <button class="btn ${p.complet?'gold':'ghost'} sm" onclick="appliquerCompositionCoffret(${i},'${payload}')">
         ${p.complet?'Utiliser cette composition':'Utiliser (coffret partiel)'}</button>
     </div>`;
