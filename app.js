@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1191';
+const APP_VERSION = 'v1192';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -16082,7 +16082,8 @@ async function proposerCompositionLigne(i, mode, parfumsEnPlus){
       .filter(([n,q])=>(+q||0)>0).map(([n,q])=>({nom:n, qte:+q}));
     const seed = +_compoSeed[i]||0;
     const res = await genererCompositionsCoffret(taille, dateLiv, heureLiv,
-      {mode:_compoModeCourant, parfumsSouhaites, parfumsEnPlus: _compoModeCourant==='strict' ? _compoParfumsEnPlus : 0, imposes, seed});
+      {mode:_compoModeCourant, parfumsSouhaites, parfumsEnPlus: _compoModeCourant==='strict' ? _compoParfumsEnPlus : 0, imposes, seed,
+       typeFiltre:'standard'});   // [v1192] un COFFRET n'accueille QUE des macarons standard : jamais de grands formats.
     _renderCompositionsModale(i, res, taille, dateLiv);
   }catch(e){
     console.error('proposerCompositionLigne', e);
@@ -47295,11 +47296,13 @@ async function _collecterDisponibilites(dateLiv, heureLiv, opts){
   const recByNom = {};
   recettesAll.forEach(r=>{ if(r.produitNom) recByNom[norm(r.produitNom)] = r; });
   // Un parfum est-il compatible avec le type demandé ? Inconnu (pas de recette) → accepté par défaut
-  // (on ne bloque pas un stock réel sous prétexte qu'on n'a pas retrouvé la fiche).
+  // (on ne bloque pas un stock réel sous prétexte qu'on n'a pas retrouvé la fiche), MAIS on trace ces
+  // cas : un parfum accepté sans recette pourrait être un grand format non catégorisé. [v1192]
+  const _ambigus = [];
   const compatType = (nom) => {
     if(!typeFiltre) return true;
     const r = recByNom[norm(nom)];
-    if(!r) return true;                       // recette inconnue → ne pas exclure
+    if(!r){ _ambigus.push(nom); return true; }   // recette inconnue → ne pas exclure, mais signaler
     const estGF = !!r.grandFormat;
     return typeFiltre==='grand' ? estGF : !estGF;
   };
@@ -47371,7 +47374,21 @@ async function _collecterDisponibilites(dateLiv, heureLiv, opts){
     });
   }catch(_){}
 
-  return { parfums: acc, meta:{ dateLiv, heureLiv, batch:TB } };
+  // [v1192 — DIAG SÉPARATION UNIVERS] Transparence sur le filtre standard/grand format : combien de
+  // parfums retenus, et lesquels ont été acceptés SANS recette (potentiels grands formats non catégorisés).
+  try{
+    if(typeFiltre && typeof diagPublish==='function'){
+      const retenus = Object.values(acc).map(p=>p.nom);
+      diagPublish('compoUnivers', '🧩 Génération — séparation des univers', {
+        'Univers demandé': typeFiltre==='grand' ? 'Grands formats' : 'Coffret standard',
+        'Parfums retenus': retenus.length ? retenus : 'aucun',
+        'Acceptés sans recette (à vérifier)': _ambigus.length ? [...new Set(_ambigus)] : 'aucun — tous catégorisés',
+        'Règle': 'Un coffret standard exclut TOUT parfum dont la recette est grandFormat ; un grand format exclut tout parfum standard. La catégorie vient de la case grandFormat de la recette.'
+      });
+    }
+  }catch(_){}
+
+  return { parfums: acc, meta:{ dateLiv, heureLiv, batch:TB, typeFiltre, ambigus:[...new Set(_ambigus)] } };
 }
 
 // [COMPOSITION — cœur PUR] À partir des disponibilités déjà collectées (dispoParfums),
