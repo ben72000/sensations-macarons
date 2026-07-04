@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1175';
+const APP_VERSION = 'v1176';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -29994,6 +29994,7 @@ function aiTryRelance(rawTxt, ctx){
 var _palDragY = 0;
 function palOpen(){
   _palOpen = true; _aiOutThread = 'palThread'; _aiInField = 'palInput';
+  document.body.classList.add('pal-lock');
   var bd=document.getElementById('palBackdrop'), sh=document.getElementById('palSheet');
   if(bd) bd.classList.add('open'); if(sh) sh.classList.add('open');
   _palSync();
@@ -30001,6 +30002,7 @@ function palOpen(){
 }
 function palClose(){
   _palOpen = false; _aiOutThread = 'aiThread'; _aiInField = 'aiInput';
+  document.body.classList.remove('pal-lock');
   var bd=document.getElementById('palBackdrop'), sh=document.getElementById('palSheet');
   if(sh){ sh.style.transform=''; sh.classList.remove('open'); }
   if(bd) bd.classList.remove('open');
@@ -30016,7 +30018,7 @@ function _palSync(){
 }
 // Glisser la poignée vers le bas pour fermer (au-delà de 80 px).
 function palDragStart(e){ _palDragY = e.touches[0].clientY; var sh=document.getElementById('palSheet'); if(sh) sh.style.transition='none'; }
-function palDragMove(e){ var sh=document.getElementById('palSheet'); if(!sh) return; var dy=Math.max(0, e.touches[0].clientY-_palDragY); sh.style.transform='translateY('+dy+'px)'; }
+function palDragMove(e){ var sh=document.getElementById('palSheet'); if(!sh||!e.touches[0]) return; if(e.cancelable) e.preventDefault(); var dy=Math.max(0, e.touches[0].clientY-_palDragY); sh.style.transform='translateY('+dy+'px)'; }
 function palDragEnd(e){ var sh=document.getElementById('palSheet'); if(!sh) return; sh.style.transition=''; var dy=e.changedTouches[0].clientY-_palDragY; sh.style.transform=''; if(dy>80) palClose(); }
 async function aiRun(){
   if(_aiRunning) return;            // évite les envois multiples (taps rapides)

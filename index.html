@@ -907,11 +907,15 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .pal-fab{position:fixed;left:16px;bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:44;display:inline-flex;align-items:center;gap:8px;padding:12px 17px;border:none;cursor:pointer;color:#fff;font-size:.92rem;font-weight:600;background:var(--grad-bordeaux);border-radius:28px;box-shadow:0 8px 20px rgba(42,19,32,.32),inset 0 0 0 1.5px rgba(170,124,57,.5)}
 .pal-fab:active{transform:scale(.96)}
 body:has(#overlay.show) #palFab{display:none!important}
-.pal-backdrop{position:fixed;inset:0;z-index:50;background:rgba(28,12,20,.42);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:opacity .28s ease}
+.pal-backdrop{position:fixed;inset:0;z-index:50;touch-action:none;background:rgba(28,12,20,.42);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:opacity .28s ease}
 .pal-backdrop.open{opacity:1;pointer-events:auto}
 .pal-sheet{position:fixed;left:0;right:0;bottom:0;z-index:60;max-width:520px;margin:0 auto;background:var(--creme-2);border-radius:22px 22px 0 0;box-shadow:0 -10px 40px rgba(42,19,32,.28);transform:translateY(103%);transition:transform .34s cubic-bezier(.22,1,.36,1);display:flex;flex-direction:column;max-height:86vh;padding-bottom:calc(10px + env(safe-area-inset-bottom));will-change:transform}
 .pal-sheet.open{transform:translateY(0)}
-.pal-grab{width:40px;height:5px;border-radius:3px;background:rgba(170,124,57,.4);margin:9px auto 4px;flex:0 0 auto;cursor:pointer}
+.pal-head{position:relative;padding:11px 0 4px;touch-action:none;-webkit-user-select:none;user-select:none;cursor:grab;flex:0 0 auto}
+.pal-grab{width:46px;height:6px;border-radius:3px;background:rgba(170,124,57,.55);margin:0 auto;pointer-events:none}
+.pal-x{position:absolute;top:3px;right:10px;width:34px;height:34px;border-radius:50%;border:none;background:rgba(82,37,47,.08);color:var(--bordeaux);font-size:1.05rem;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.pal-x:active{background:rgba(82,37,47,.16)}
+body.pal-lock{overflow:hidden}
 .pal-searchwrap{position:sticky;top:0;z-index:2;padding:4px 14px 10px;background:var(--creme-2)}
 .pal-search{display:flex;align-items:center;gap:10px;background:#fff;border:1.5px solid var(--hair);border-radius:14px;padding:11px 13px}
 .pal-search:focus-within{border-color:var(--gold);box-shadow:0 0 0 3px rgba(170,124,57,.14)}
@@ -1963,7 +1967,10 @@ body:has(#overlay.show) #palFab{display:none!important}
 <button id="palFab" class="pal-fab" onclick="palOpen()" aria-label="Ouvrir la palette de commande">🔍 Demander</button>
 <div id="palBackdrop" class="pal-backdrop" onclick="palClose()"></div>
 <div id="palSheet" class="pal-sheet" role="dialog" aria-label="Palette de commande" aria-modal="true">
-  <div class="pal-grab" onclick="palClose()" ontouchstart="palDragStart(event)" ontouchmove="palDragMove(event)" ontouchend="palDragEnd(event)"></div>
+  <div class="pal-head" ontouchstart="palDragStart(event)" ontouchmove="palDragMove(event)" ontouchend="palDragEnd(event)">
+    <div class="pal-grab"></div>
+    <button class="pal-x" onclick="palClose()" aria-label="Fermer la palette">✕</button>
+  </div>
   <div class="pal-searchwrap">
     <div class="pal-search">
       <span class="pal-mag">🔍</span>
