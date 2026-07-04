@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1189';
+const APP_VERSION = 'v1191';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -16050,9 +16050,17 @@ function appliquerSuggestionParfums(i, payload){
 // ═══════════════════════════════════════════════════════════════════════════
 let _compoModeCourant = 'flexible';   // mémorise le dernier mode choisi (strict/flexible)
 let _compoParfumsEnPlus = 0;          // mode STRICT : nb de parfums choisis EN PLUS de la règle (chacun +3 €)
+// [v1191] Parfums VALIDÉS (verrouillés) par ligne : { [i]: { nomParfum: qte } }. Conservés d'une
+// suggestion à l'autre : « Nouvelle suggestion » recompose UNIQUEMENT les parfums non validés.
+let _compoValides = {};
+// [v1191] Compteur d'itérations par ligne → fait varier les propositions à chaque « Nouvelle suggestion »
+// (rotation des candidats de même facilité, sans jamais dégrader la priorité stock).
+let _compoSeed = {};
 
 async function proposerCompositionLigne(i, mode, parfumsEnPlus){
   const ln = cmdLines[i]; if(!ln || ln.type!=='coffret') return;
+  // [v1191] Changer de mode remet la variation à zéro (on repart sur la proposition la plus simple).
+  if(mode && mode!==_compoModeCourant){ _compoSeed[i] = 0; }
   if(mode) _compoModeCourant = (mode==='strict'?'strict':'flexible');
   // Le nb de parfums en plus n'a de sens qu'en STRICT ; on le réinitialise en basculant sur Flexible.
   if(mode==='flexible') _compoParfumsEnPlus = 0;
@@ -16069,8 +16077,12 @@ async function proposerCompositionLigne(i, mode, parfumsEnPlus){
     <div style="padding:14px;text-align:center;color:#9a8576">⏳ Analyse du stock, des batchs à venir et de la production faisable…</div>`);
 
   try{
+    // [v1191] Parfums VALIDÉS pour cette ligne → imposés au moteur ; seed → variation « nouvelle suggestion ».
+    const imposes = Object.entries(_compoValides[i]||{})
+      .filter(([n,q])=>(+q||0)>0).map(([n,q])=>({nom:n, qte:+q}));
+    const seed = +_compoSeed[i]||0;
     const res = await genererCompositionsCoffret(taille, dateLiv, heureLiv,
-      {mode:_compoModeCourant, parfumsSouhaites, parfumsEnPlus: _compoModeCourant==='strict' ? _compoParfumsEnPlus : 0});
+      {mode:_compoModeCourant, parfumsSouhaites, parfumsEnPlus: _compoModeCourant==='strict' ? _compoParfumsEnPlus : 0, imposes, seed});
     _renderCompositionsModale(i, res, taille, dateLiv);
   }catch(e){
     console.error('proposerCompositionLigne', e);
@@ -16107,10 +16119,23 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
     if(v.mutualise>0) bouts.push(`<b>${v.mutualise}</b> mutualisé${v.mutualise>1?'s':''} (batch déjà prévu)`);
     if(v.relance>0)   bouts.push(`<b>${v.relance}</b> à produire (faisable pour ta date)`);
     const ventil = bouts.join(' · ');
-    // Détail des parfums, chaque parfum annoté par sa provenance dominante.
+    // [v1191] Détail des parfums : chaque parfum reçoit un SYMBOLE clair de facilité + un bouton « valider ».
+    //   🟢 en stock (rien à faire) · ♻️ mutualisé (batch déjà prévu) · 🔺 à produire (course en cuisine).
+    // Le symbole reflète la source DOMINANTE de la ligne (relance > mutualisé > stock).
     const detailParfums = p.lignes.map(l=>{
-      const src = l.relance>0 ? '🏭' : l.mutualise>0 ? '♻️' : '📦';
-      return `<span style="display:inline-block;background:#f7f2ea;border:1px solid var(--hair);border-radius:8px;padding:2px 8px;margin:2px 3px 0 0;font-size:.84rem;text-transform:capitalize">${src} ${esc(l.nom)} ×${l.qte}</span>`;
+      const estRelance = l.relance>0;
+      const estMut = !estRelance && l.mutualise>0;
+      const sym = estRelance ? '🔺' : estMut ? '♻️' : '🟢';
+      const symTitle = estRelance ? 'À produire (repos ganache à prévoir)' : estMut ? 'Disponible via un batch déjà prévu' : 'En stock — disponible immédiatement';
+      const bg = estRelance ? '#fdf6ec' : estMut ? '#fbf3ea' : '#eef6ee';
+      const bd = estRelance ? '#e8cfa3' : estMut ? '#e3c8a8' : '#bcd9c6';
+      const dejaValide = !!((_compoValides[i]||{})[l.nom]);
+      const encNom = encodeURIComponent(l.nom);
+      const valBtn = dejaValide
+        ? `<span title="Parfum validé — conservé à la prochaine suggestion" style="color:#3f7d52;font-weight:700;font-size:.8rem">✓ validé</span>`
+        : `<span onclick="compoValiderParfum(${i},'${encNom}',${l.qte})" title="Valider ce parfum : il sera conservé quand tu régénères" style="cursor:pointer;color:var(--bordeaux,#52252F);font-size:.72rem;font-weight:600;border:1px solid var(--hair);border-radius:6px;padding:1px 6px;margin-left:4px">＋ valider</span>`;
+      return `<span style="display:inline-flex;align-items:center;background:${bg};border:1px solid ${bd};border-radius:8px;padding:2px 6px 2px 8px;margin:2px 3px 0 0;font-size:.84rem">
+        <span title="${symTitle}" style="margin-right:4px">${sym}</span><span style="text-transform:capitalize">${esc(l.nom)} ×${l.qte}</span>${valBtn}</span>`;
     }).join('');
     const etat = p.complet
       ? `<span style="color:#3f7d52;font-weight:600">Coffret ${p.taille} complet</span>`
@@ -16126,9 +16151,29 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
     </div>`;
   };
 
+  // [v1191] Bandeau des parfums VALIDÉS (verrouillés) : rappel visuel + retrait individuel.
+  const valides = Object.entries(_compoValides[i]||{}).filter(([n,q])=>(+q||0)>0);
+  let validesBloc = '';
+  if(valides.length){
+    const puces = valides.map(([n,q])=>{
+      const enc = encodeURIComponent(n);
+      return `<span style="display:inline-flex;align-items:center;background:#eef6ee;border:1px solid #bcd9c6;border-radius:8px;padding:2px 4px 2px 8px;margin:2px 3px 0 0;font-size:.84rem">
+        <span style="color:#3f7d52;margin-right:3px">✓</span><span style="text-transform:capitalize">${esc(n)} ×${q}</span>
+        <span onclick="compoDevaliderParfum(${i},'${enc}')" title="Retirer ce parfum des validés" style="cursor:pointer;color:#b3261e;font-weight:700;margin-left:6px;padding:0 3px">✕</span></span>`;
+    }).join('');
+    validesBloc = `<div style="background:#f3f8f3;border:1px solid #cfe6d5;border-radius:11px;padding:8px 10px;margin:2px 0 8px">
+      <div style="font-size:.78rem;color:#3f7d52;font-weight:600;margin-bottom:4px">🔒 Parfums validés — conservés à chaque nouvelle suggestion</div>
+      <div>${puces}</div>
+    </div>`;
+  }
+  // [v1191] Bouton « Nouvelle suggestion » : incrémente le seed → recompose en gardant les validés,
+  // et propose d'autres parfums pour le reste. Légende des symboles pour lecture en un coup d'œil.
+  const legende = `<div style="font-size:.72rem;color:#8a7a6e;margin:2px 0 6px">🟢 en stock · ♻️ batch déjà prévu · 🔺 à produire</div>`;
+  const nouvelleSuggBtn = `<button class="btn ghost sm" onclick="compoNouvelleSuggestion(${i})" style="font-size:.82rem">🎲 Nouvelle suggestion</button>`;
+
   let corps='';
   if(!props.length){
-    corps = `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a">📋 <div>Aucune composition possible pour ce format à cette date${mode==='strict'?' (essaie le mode Flexible)':''}.</div></div>`;
+    corps = `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a">📋 <div>Aucune composition possible pour ce format à cette date${mode==='strict'?' (essaie le mode Flexible)':''}${valides.length?' avec les parfums validés (essaie d\'en retirer)':''}.</div></div>`;
   } else {
     corps = props.slice(0,4).map((p,n)=>carteProp(p,n)).join('');
   }
@@ -16184,10 +16229,36 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
       <p class="note" style="margin:0">Coffret <b>${taille}</b> pour le <b>${esc(dateTxt)}</b> — du plus simple au plus engageant.</p>
       ${toggle}
     </div>
+    ${legende}
+    ${validesBloc}
     ${strictExtraBloc}
     ${corps}
     ${fbHtml}
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+      ${nouvelleSuggBtn}
+      <span class="note" style="margin:0;font-size:.74rem;color:#9a8a82">Valide les parfums qui te plaisent, puis relance : seuls les autres changent.</span>
+    </div>
     <div class="modal-actions"><button class="btn ghost" onclick="fermerCompositionModale()">Fermer</button></div>`);
+}
+
+// [v1191] Valide (verrouille) un parfum : conservé tel quel aux prochaines suggestions.
+function compoValiderParfum(i, encNom, qte){
+  let nom; try{ nom=decodeURIComponent(encNom); }catch(_){ nom=encNom; }
+  if(!nom) return;
+  _compoValides[i] = _compoValides[i] || {};
+  _compoValides[i][nom] = Math.max(1, Math.round(+qte||1));
+  proposerCompositionLigne(i);   // re-render : le parfum passe en « validé »
+}
+// [v1191] Retire un parfum des validés.
+function compoDevaliderParfum(i, encNom){
+  let nom; try{ nom=decodeURIComponent(encNom); }catch(_){ nom=encNom; }
+  if(_compoValides[i]){ delete _compoValides[i][nom]; }
+  proposerCompositionLigne(i);
+}
+// [v1191] Nouvelle suggestion : incrémente le seed → recompose en gardant les validés, varie le reste.
+function compoNouvelleSuggestion(i){
+  _compoSeed[i] = (+_compoSeed[i]||0) + 1;
+  proposerCompositionLigne(i);
 }
 
 // Applique une composition à la ligne coffret : REMPLACE les parfums de la ligne (et la taille si
@@ -16222,13 +16293,20 @@ function appliquerCompositionCoffret(i, payload){
   // contenu. Un simple closeModal() fermerait donc le formulaire ET perdrait les lignes non enregistrées.
   // On ROUVRE le formulaire en préservant cmdLines (keepLines) — comme le fait quickClient — pour que
   // le choix reste visible et que l'utilisateur puisse continuer puis Enregistrer normalement.
+  // [v1191] La composition est appliquée : on repart d'un état propre pour cette ligne (validés + seed).
+  delete _compoValides[i]; delete _compoSeed[i];
   cmdForm(_cmdEditingId||0, {keepLines:true});
 }
 
 // [FIX modale] Fermeture de la modale de composition SANS perdre la commande : le formulaire est une
 // modale que la composition a écrasée. « Fermer » doit donc ROUVRIR le formulaire (lignes préservées),
 // pas simplement vider la modale (ce qui ferait disparaître la commande en cours d'édition).
-function fermerCompositionModale(){ cmdForm(_cmdEditingId||0, {keepLines:true}); }
+function fermerCompositionModale(){
+  // [v1191] On sort de l'assistant compo : on oublie les validés/seed temporaires de cette session.
+  if(typeof _cmdEditingId!=='undefined'){ /* rien de spécifique à retenir */ }
+  _compoValides = {}; _compoSeed = {};
+  cmdForm(_cmdEditingId||0, {keepLines:true});
+}
 
 function drawEventLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
@@ -46698,7 +46776,7 @@ function _agendaPlanOpSection(plan){
       window._planMontageReg[montKey] = { parfum:g.parfum, qte:(+_qMont)||0 };
       return `<div class="sum-box" style="flex-direction:column;align-items:stretch;cursor:pointer" onclick="planLancerMontageByKey('${montKey}')" title="Assembler ce parfum (coques + garniture déjà produites)">
       <div style="display:flex;align-items:center;width:100%">
-        <div style="flex:1;display:flex;align-items:center;flex-wrap:wrap">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qteProduite||g.qte} mac</span>${g.aMarche?` <span style="background:#c97a2a;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="Contient une estimation marché (compo apprise sur l'historique)">⛺ estimé</span>`:''}${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="${g.qte} commandés + ${g.surplusStock} pour le stock">📦 dont ${g.surplusStock} stock</span>`:''} <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span>${(g.stock>0)?`<div style="font-size:.7rem;color:#9a8576;width:100%;margin-top:1px">commandé <b>${g.qte}</b> · 📦 en stock <b style="color:#3f7d52">${g.stock}</b> · à produire <b>${g.besoinNet}</b></div>`:''}</span></div>
+        <div style="flex:1;display:flex;align-items:center;flex-wrap:wrap">${dot(g.parfum)}<span><b style="text-transform:capitalize">${esc(g.parfum)}</b> · <span style="color:#3f7d52">${g.qteProduite||g.qte} mac</span>${g.aMarche?` <span style="background:#c97a2a;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="Contient une estimation marché (compo apprise sur l'historique)">⛺ estimé</span>`:''}${(g.surplusStock>0)?` <span style="background:#7a5cab;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="${g.qte} commandés + ${g.surplusStock} pour le stock">📦 dont ${g.surplusStock} stock</span>`:''} <span style="color:#9a8576;font-size:.72rem">(${g.parBatchMin}/batch)</span>${(()=>{ const _lq=(typeof lignesParParfum==='object'&&lignesParParfum)?lignesParParfum[g.parfum]:null; const _am=_lq?(+_lq.couvertAssemblable||+_lq.aMonter||0):0; return _am>0?` <span style="background:#c98b4b;color:#fff;font-size:.56rem;font-weight:600;padding:1px 6px;border-radius:7px" title="${_am} macaron(s) quasi-finis : coques + ganache déjà en stock, il reste seulement à les monter. Ce n'est PAS du stock fini.">🔧 dont ${_am} à monter</span>`:''; })()}${(g.stock>0)?`<div style="font-size:.7rem;color:#9a8576;width:100%;margin-top:1px">commandé <b>${g.qte}</b> · 📦 en stock <b style="color:#3f7d52">${g.stock}</b> · à produire <b>${g.besoinNet}</b></div>`:''}</span></div>
         <div style="display:flex;align-items:center;gap:5px"><span style="color:#3f7d52;font-size:.68rem;font-weight:600">▶ monter</span>${
           g.rienAMonter
             ? `<b style="color:#3f7d52">✓ déjà en stock</b>`
@@ -47358,28 +47436,63 @@ function _composerCoffrets(dispoParfums, taille, opts){
     : (taille<=6?3 : taille<=8?4 : taille<=16?4 : 5);
   const parfumsEnPlus = Math.max(0, +(opts.parfumsEnPlus||0));
 
-  // Candidats triés par disponibilité décroissante (stock+mutualisé), relançables ensuite.
-  const tri = list.slice().sort((a,b)=>
-    ((b.stock||0)+(b.mutualise||0)) - ((a.stock||0)+(a.mutualise||0))
-    || (b.relanceOk?1:0)-(a.relanceOk?1:0)
-  );
-  if(!tri.length){ ciblesBase = []; }
+  // [v1191 — PARFUMS VALIDÉS] Parfums verrouillés par l'utilisateur (bouton « valider ») : ils DOIVENT
+  // figurer dans chaque proposition avec leur quantité, et sont retirés du budget que le round-robin doit
+  // remplir. On borne leur quantité au dispo réel (stock+mutualisé) ou illimité si relançable, et à la taille.
+  const imposesRaw = Array.isArray(opts.imposes) ? opts.imposes : [];
+  const imposes = [];
+  let placeImposes = 0;
+  const imposeNoms = new Set();
+  imposesRaw.forEach(im=>{
+    if(!im || !im.nom) return;
+    const k = norm(im.nom);
+    if(imposeNoms.has(k)) return;
+    const src = clone_lookup(list, im.nom);
+    let q = Math.max(1, Math.round(+im.qte||1));
+    q = Math.min(q, Math.max(0, taille - placeImposes));   // ne dépasse pas la taille
+    if(q<=0) return;
+    imposeNoms.add(k);
+    imposes.push({nom: src?src.nom:im.nom, qte:q});
+    placeImposes += q;
+  });
+  // La taille RESTANTE à composer par le round-robin (après les validés).
+  const tailleReste = Math.max(0, taille - placeImposes);
+
+  // Candidats triés par FACILITÉ décroissante : stock PUR d'abord (le plus simple, rien à faire),
+  // puis surplus mutualisé (batch déjà prévu), puis relançable (à produire). [v1191] On sépare
+  // explicitement le stock pur du mutualisé pour « démarrer par le stock » avant de courir en cuisine.
+  // opts.seed : entier qui fait tourner l'ordre entre candidats de MÊME facilité → « nouvelle suggestion »
+  // propose d'autres parfums sans jamais dégrader la priorité (stock reste devant relance).
+  const _seed = Math.max(0, +(opts.seed||0));
+  const _rot = arr => { if(!_seed || arr.length<2) return arr; const k=_seed%arr.length; return arr.slice(k).concat(arr.slice(0,k)); };
+  const tri = _rot(list.slice().sort((a,b)=>
+    ((b.stock||0)) - ((a.stock||0))                              // 1) stock pur d'abord
+    || ((b.mutualise||0)) - ((a.mutualise||0))                   // 2) puis mutualisé
+    || (b.relanceOk?1:0)-(a.relanceOk?1:0)                       // 3) puis relançable
+    || norm(a.nom).localeCompare(norm(b.nom))                    // ordre stable
+  ));
+  // [v1191] Les parfums VALIDÉS sont retirés des candidats du round-robin (déjà placés d'office).
+  const triLibre = tri.filter(p=>!imposeNoms.has(norm(p.nom)));
+  if(!triLibre.length && !imposes.length){ ciblesBase = []; }
+  else if(!triLibre.length){ ciblesBase = imposes.slice(); }
   else {
     let nbVise, cap;
+    // Nombre de parfums encore à choisir = cible réglementaire MOINS les validés déjà comptés.
+    const nbImposes = imposes.length;
     if(mode==='strict'){
-      // Nombre de parfums EXACT = règle + extras (borné par la taille et par le nb de candidats).
-      nbVise = Math.min(tri.length, taille, limiteReglementaire + parfumsEnPlus);
-      nbVise = Math.max(1, nbVise);
+      // Nombre de parfums EXACT = règle + extras, moins les validés, borné par la place restante.
+      nbVise = Math.min(triLibre.length, tailleReste, Math.max(0, (limiteReglementaire + parfumsEnPlus) - nbImposes));
+      nbVise = Math.max(tailleReste>0?1:0, nbVise);
       cap = nbVise;                        // strict : on ne dépasse jamais le nombre visé
     } else {
-      cap = opts.maxParfums || (taille<=6?3 : taille<=8?4 : taille<=16?6 : 8);
-      nbVise = Math.min(cap, Math.max(2, Math.min(tri.length, taille)));
+      cap = Math.max(0, (opts.maxParfums || (taille<=6?3 : taille<=8?4 : taille<=16?6 : 8)) - nbImposes);
+      nbVise = Math.min(cap, Math.max(tailleReste>0?1:0, Math.min(triLibre.length, tailleReste)));
     }
-    const plafondParParfum = Math.max(1, Math.ceil(taille / nbVise));
-    const retenus = tri.slice(0, nbVise);
+    const plafondParParfum = Math.max(1, Math.ceil(taille / Math.max(1, nbVise + nbImposes)));
+    const retenus = triLibre.slice(0, nbVise);
     const quotas = new Map();
     retenus.forEach(p=>quotas.set(norm(p.nom), 0));
-    let reste = taille;
+    let reste = tailleReste;
     // Round-robin : +1 à chaque parfum ayant encore du dispo et sous son plafond.
     let progres = true;
     while(reste>0 && progres){
@@ -47401,19 +47514,17 @@ function _composerCoffrets(dispoParfums, taille, opts){
         if(marge>0){ const add=Math.min(marge,reste); quotas.set(k,q+add); reste-=add; }
       }
       // Ajout de nouveaux parfums relançables (hors retenus) — SANS jamais dépasser `cap`.
-      // En strict, cap = nbVise, donc on ne franchit PAS le nombre réglementaire (+extras).
       if(reste>0){
-        for(const p of tri){
+        for(const p of triLibre){
           if(reste<=0 || quotas.size>=cap) break;
           const k=norm(p.nom);
           if(quotas.has(k) || !p.relanceOk) continue;
           const add=Math.min(plafondParParfum,reste); quotas.set(k,add); reste-=add;
         }
       }
-      // Dernier recours : relâcher le plafond PAR PARFUM sur du dispo réel restant, sans ajouter de
-      // NOUVEAU parfum au-delà de `cap` (en strict, on gonfle les parfums déjà retenus uniquement).
+      // Dernier recours : relâcher le plafond PAR PARFUM sur du dispo réel restant, sans nouveau parfum > cap.
       if(reste>0){
-        for(const p of tri){
+        for(const p of triLibre){
           if(reste<=0) break;
           const k=norm(p.nom); const q=quotas.get(k)||0;
           const dispoReelle=(p.stock||0)+(p.mutualise||0);
@@ -47422,9 +47533,12 @@ function _composerCoffrets(dispoParfums, taille, opts){
         }
       }
     }
-    ciblesBase = retenus.concat(tri.filter(p=>!retenus.includes(p)))
-      .filter(p=>quotas.get(norm(p.nom))>0)
-      .map(p=>({nom:p.nom, qte:quotas.get(norm(p.nom))}));
+    // [v1191] Cibles finales = VALIDÉS d'abord (priorité de consommation du stock), puis le round-robin.
+    ciblesBase = imposes.concat(
+      retenus.concat(triLibre.filter(p=>!retenus.includes(p)))
+        .filter(p=>quotas.get(norm(p.nom))>0)
+        .map(p=>({nom:p.nom, qte:quotas.get(norm(p.nom))}))
+    );
   }
 
 
@@ -47466,7 +47580,7 @@ async function genererCompositionsCoffret(taille, dateLiv, heureLiv, opts){
   // Le filtre d'univers (grand format vs coffret standard) descend jusqu'à la collecte : on ne
   // propose jamais un parfum du mauvais type. opts.typeFiltre : 'grand' | 'standard' | undefined.
   const { parfums, meta } = await _collecterDisponibilites(dateLiv, heureLiv, { typeFiltre: opts.typeFiltre||null });
-  const propositions = _composerCoffrets(parfums, taille, opts);
+  const propositions = _composerCoffrets(parfums, taille, { ...opts, imposes: opts.imposes||[], seed: opts.seed||0 });
 
   // Fallback taille : si aucune proposition COMPLÈTE pour la taille demandée, on tente les
   // formats standards plus PETITS (25→16→8→6) et on retient le premier qui donne un coffret complet.
@@ -49860,15 +49974,31 @@ function mrpFindRecipe(recipes, parfum){
 // MÊME modèle que le plan de travail détaillé : montage fixe+variable (_montageMinutes), ganache UNE
 // fois par parfum. Source : mesuré fiable (tEtape) > recette > défaut. Utilisé par generateProductionOrder
 // ET _planFromNeeds pour que le dépli de faisabilité ne contredise plus le plan détaillé.
+// [v1190] Per-batch de MONTAGE d'un parfum selon le modèle unifié (mesuré fiable > recette > défaut).
+// Isolé pour être partagé par _dureesLignePlan (production) ET le montage du quasi-fini (assemblable),
+// afin que les deux temps de montage suivent EXACTEMENT le même modèle. Renvoie {perBatch, src}.
+function _montagePerBatchModel(parfum, rec, times, tEtape){
+  const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
+  const k = (typeof aiNormalize==='function') ? aiNormalize(parfum||'') : String(parfum||'').toLowerCase().trim();
+  const mesM = tEtape && tEtape.montage && tEtape.montage[k];
+  if(mesM && mesM.fiable && mesM.nbMac>0) return { perBatch: mesM.minTotal/mesM.nbMac*TB, src:'mesuré' };
+  if(rec && rec.tempsMontageMin!=null && +rec.tempsMontageMin>0) return { perBatch:+rec.tempsMontageMin, src:'recette' };
+  return { perBatch: times.montage.estimatedTime, src:'défaut' };
+}
+// [v1190] Temps de montage SEUL pour un nombre de macarons donné (quasi-fini : ni coques ni ganache).
+// Même modèle per-batch que la production, via _montageMinutes (fixe+variable).
+function _montageMinutesParfum(parfum, qte, rec, times, tEtape){
+  const q = Math.max(0, Math.round(+qte||0)); if(q<=0) return 0;
+  const { perBatch, src } = _montagePerBatchModel(parfum, rec, times, tEtape);
+  return (typeof _montageMinutes==='function')
+    ? _montageMinutes(q, perBatch, src)
+    : Math.ceil(q/((typeof TAILLE_BATCH_MACARONS!=='undefined')?TAILLE_BATCH_MACARONS:60))*times.montage.estimatedTime;
+}
 function _dureesLignePlan(parfum, besoinNet, nbBatchs, rec, times, tEtape){
   const TB = (typeof TAILLE_BATCH_MACARONS!=='undefined') ? TAILLE_BATCH_MACARONS : 60;
   const k = (typeof aiNormalize==='function') ? aiNormalize(parfum||'') : String(parfum||'').toLowerCase().trim();
-  // Montage : fixe+variable, source mesuré > recette > défaut.
-  let perBatch, src;
-  const mesM = tEtape && tEtape.montage && tEtape.montage[k];
-  if(mesM && mesM.fiable && mesM.nbMac>0){ perBatch = mesM.minTotal/mesM.nbMac*TB; src='mesuré'; }
-  else if(rec && rec.tempsMontageMin!=null && +rec.tempsMontageMin>0){ perBatch = +rec.tempsMontageMin; src='recette'; }
-  else { perBatch = times.montage.estimatedTime; src='défaut'; }
+  // Montage : fixe+variable, source mesuré > recette > défaut (via helper partagé avec le quasi-fini).
+  const { perBatch, src } = _montagePerBatchModel(parfum, rec, times, tEtape);
   const tMontage = (typeof _montageMinutes==='function')
     ? _montageMinutes(besoinNet, perBatch, src)
     : nbBatchs*times.montage.estimatedTime;
@@ -49953,6 +50083,16 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
     orders = all.filter(o=> o.date && o.date>=startDate && o.date<=_endPool);
   }
   const {stock, recipes} = await mrpCurrentStockByParfum();
+  // [v1190 — QUASI-FINI] En plus du stock FINI (stock[parfum]), on charge la disponibilité ENRICHIE
+  // (source unique) pour connaître l'ASSEMBLABLE par parfum (coques + ganache déjà prêtes, reste à
+  // MONTER). On mobilise cet assemblable pour couvrir le besoin — MAIS on le garde STRICTEMENT distinct
+  // du fini : un « quasi-fini » n'est pas un fini, il demande encore le montage et doit être signalé.
+  let _dispoSrc = {};
+  try{ _dispoSrc = await parfumDispoSource(); }catch(_){ _dispoSrc = {}; }
+  const _assemblableDe = parfum => {
+    const k = (typeof stockMoveKey==='function') ? stockMoveKey(parfum) : (typeof aiNormalize==='function'?aiNormalize(parfum):String(parfum||'').toLowerCase().trim());
+    const b = _dispoSrc[k]; return b ? Math.max(0, +b.assemblable||0) : 0;
+  };
   const times = getMrpTimes();
   // [UNIFICATION MODÈLE DE TEMPS] Temps mesurés par parfum (mesuré fiable > recette > défaut), pour
   // que tMontage/tGanache des lignes suivent le MÊME modèle que le plan de travail détaillé
@@ -50015,28 +50155,77 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   const lignes=[]; const warnings=[];
   for(const parfum in brut){
     const besoinBrut=brut[parfum];
-    const enStockPhys=stock[parfum]||0;
-    // [POOL] Besoin = demande agrégée sur l'horizon − stock physique BRUT (aucune réservation).
-    const enStock=enStockPhys;
+    const enStockPhys=stock[parfum]||0;                         // FINI (macarons prêts)
+    // [v1190 — QUASI-FINI] On couvre le besoin d'abord par le FINI, puis par l'ASSEMBLABLE (coques+ganache
+    // prêtes → il ne reste QUE le montage), puis par une production complète pour le reste.
+    //   couvertFini        : servi par des macarons finis (0 travail)
+    //   couvertAssemblable : servi par du quasi-fini (montage SEUL, ni coques ni ganache à refaire)
+    //   besoinNet          : à produire de zéro (coques + ganache + montage)
+    const assemblableDispo = _assemblableDe(parfum);
+    const couvertFini = Math.min(besoinBrut, enStockPhys);
+    const resteApresFini = Math.max(0, besoinBrut - couvertFini);
+    const couvertAssemblable = Math.min(resteApresFini, assemblableDispo);
+    const besoinNet = Math.max(0, resteApresFini - couvertAssemblable);
+    // [POOL] enStock reste la couverture SANS production (fini + assemblable), pour la traçabilité.
+    const enStock = couvertFini + couvertAssemblable;
     const reserve=0;
-    const besoinNet=Math.max(0, besoinBrut-enStock);
-    if(besoinNet<=0) continue;
-    const nbBatchs=Math.ceil(besoinNet/TAILLE_BATCH_MACARONS);
+    // Une ligne existe si on doit PRODUIRE (besoinNet>0) OU s'il reste juste à MONTER (couvertAssemblable>0).
+    if(besoinNet<=0 && couvertAssemblable<=0) continue;
+    const nbBatchs=Math.ceil(besoinNet/TAILLE_BATCH_MACARONS);   // batchs = production de zéro uniquement
     const rec=mrpFindRecipe(recipes, parfum);
     if(!rec) warnings.push(parfum);
     const poidsUnit = rec && rec.poidsGarnitureUnit!=null ? +rec.poidsGarnitureUnit : 0;
     const garnitureG = Math.round(nbBatchs*TAILLE_BATCH_MACARONS*poidsUnit);
-    // [UNIFICATION] Durées via le helper commun (même modèle que le plan détaillé).
-    const { tMontage, tGanache } = _dureesLignePlan(parfum, besoinNet, nbBatchs, rec, times, _tEtape);
+    // [UNIFICATION] Durées de PRODUCTION via le helper commun (sur besoinNet : ce qu'on fait de zéro).
+    const { tMontage: tMontageProd, tGanache: tGanacheProd } = _dureesLignePlan(parfum, besoinNet, nbBatchs, rec, times, _tEtape);
+    // [v1190] La GANACHE n'est comptée QUE s'il y a une production de zéro (besoinNet>0). Pour un parfum
+    // 100% quasi-fini, la ganache est déjà en stock → 0 temps de ganache (sinon on la compterait deux fois).
+    const tGanache = besoinNet>0 ? tGanacheProd : 0;
+    // [v1190] Montage SUPPLÉMENTAIRE pour le quasi-fini : il faut monter couvertAssemblable macarons,
+    // mais SANS coques ni ganache (déjà en stock). Même modèle per-batch que la production.
+    let tMontageAssemblable = 0;
+    if(couvertAssemblable>0){
+      try{
+        if(typeof _montageMinutesParfum==='function'){
+          tMontageAssemblable = _montageMinutesParfum(parfum, couvertAssemblable, rec, times, _tEtape);
+        } else {
+          const perBatch = (rec && +rec.tempsMontageMin>0) ? +rec.tempsMontageMin : times.montage.estimatedTime;
+          tMontageAssemblable = (typeof _montageMinutes==='function')
+            ? _montageMinutes(couvertAssemblable, perBatch, 'défaut')
+            : Math.ceil(couvertAssemblable/TAILLE_BATCH_MACARONS)*times.montage.estimatedTime;
+        }
+      }catch(_){ tMontageAssemblable = 0; }
+    }
+    const tMontage = tMontageProd + tMontageAssemblable;   // total montage = production + quasi-fini
     // Délai de repos ganache avant montage (réglage recette, défaut 12 h ; 0 = exception)
     const ganacheDelaiH = (rec && rec.ganacheDelaiH!=null) ? +rec.ganacheDelaiH : 12;
     const coquesCongelObl = !!(rec && rec.coquesCongelObligatoire);
     lignes.push({parfum, recipeId:rec?rec.id:null, besoinBrut, enStock, enStockPhys, reserve, besoinNet, nbBatchs,
+      // [v1190] quantités DISTINCTES pour l'affichage : ne jamais confondre fini et quasi-fini.
+      couvertFini, couvertAssemblable, aMonter: couvertAssemblable,
+      tMontageProd, tMontageAssemblable,
       coques:nbBatchs*COQUES_PAR_BATCH, garnitureG, poidsUnit, tMontage, tGanache,
       ganacheDelaiH, coquesCongelObl,
       garnitureManque: !rec || poidsUnit<=0});
   }
-  lignes.sort((a,b)=>b.besoinNet-a.besoinNet);
+  lignes.sort((a,b)=>(b.besoinNet+b.couvertAssemblable)-(a.besoinNet+a.couvertAssemblable));
+
+  // [v1190 — DIAG QUASI-FINI] Transparence : par parfum, ventile la couverture du besoin en
+  // fini (prêt) / quasi-fini (à monter) / à produire (de zéro). Preuve visible qu'on mobilise
+  // bien l'assemblable SANS le confondre avec du fini. À désactiver une fois validé sur iPhone.
+  try{
+    if(typeof diagPublish==='function' && lignes.some(l=>l.couvertAssemblable>0)){
+      const detail = lignes.filter(l=>l.couvertFini>0||l.couvertAssemblable>0||l.besoinNet>0).map(l=>
+        `${l.parfum} : demandé ${l.besoinBrut} → 📦 ${l.couvertFini} fini · 🔧 ${l.couvertAssemblable} à monter (quasi-fini) · 🏭 ${l.besoinNet} à produire`
+        + (l.tMontageAssemblable>0?` [+${l.tMontageAssemblable} min montage quasi-fini]`:''));
+      diagPublish('quasiFiniPlan', '🔧 Plan — quasi-fini mobilisé (à monter, distinct du fini)', {
+        'Fenêtre': startDate+' → '+endDate,
+        'Règle': 'Besoin couvert d\'abord par le FINI (prêt), puis par le QUASI-FINI (coques+ganache prêtes → montage seul), puis production de zéro.',
+        'Par parfum': detail.length ? detail : 'aucun quasi-fini mobilisé',
+        'Rappel': 'Un quasi-fini n\'est JAMAIS compté comme fini : il reste le temps de montage, signalé séparément.'
+      });
+    }
+  }catch(_){}
 
   // 3) REMPLISSAGE DES MERINGUES (capacité 120 macarons) — mutualisation seulement
   //    pour combler une meringue, jamais imposée. Un parfum ≥120 prend des meringues pleines.
@@ -50307,6 +50496,9 @@ function schedulePersonalPlan(daySpecs, plan, opts){
     // ici (elle serait périmée avant le montage de S+1 : DLC ganache ≤ 6 j). La ganache sera refaite
     // fraîche en S+1. skipMontage = parfums reportés hors de cette semaine.
     if(skipMontage.has(l.parfum)) return;
+    // [v1190] Pas de tâche ganache pour un parfum 100% quasi-fini (ganache déjà en stock) : elle serait
+    // de durée 0 et créerait une dépendance vers une ganache qui n'existe pas à produire.
+    if((+l.besoinNet||0)<=0) return;
     active.push({
     id:'ganache:'+l.parfum, phase:2, label:`Ganache ${l.parfum}`,
     dur:l.tGanache, type:'ganache',
@@ -50318,14 +50510,24 @@ function schedulePersonalPlan(daySpecs, plan, opts){
     // [REPORT MANUEL — voie 1] Même garde pour le montage : le parfum reporté ne se monte pas cette
     // semaine (il part en S+1 avec sa ganache fraîche). Seules ses coques sont produites ici, congelées.
     if(skipMontage.has(l.parfum)) return;
+    // [v1190] Quantité totale à monter = production de zéro (besoinNet) + quasi-fini (couvertAssemblable).
+    const _qMonter = (+l.besoinNet||0) + (+l.couvertAssemblable||0);
+    if(_qMonter<=0) return;
+    // Le montage attend la ganache fraîche UNIQUEMENT s'il y a une production de zéro (sinon la ganache
+    // est déjà en stock : aucune dépendance, aucun repos à attendre pour la part quasi-fini).
+    const _aProduire = (+l.besoinNet||0)>0;
+    const _qfNote = (+l.couvertAssemblable||0)>0
+      ? ` Dont ${l.couvertAssemblable} quasi-fini(s) (coques + ganache déjà en stock, montage seul).`
+      : '';
     active.push({
     id:'montage:'+l.parfum, phase:3, label:`Montage ${l.parfum}`,
     dur:l.tMontage, type:'montage',
-    besoinNet: +l.besoinNet||0,
-    after: (l.ganacheDelaiH>0 ? 'ganache:'+l.parfum : null),
-    ganacheDelaiMin: (l.ganacheDelaiH>0 ? Math.round(l.ganacheDelaiH*60) : 0),  // repos requis avant montage
-    coquesCongelObl: !!l.coquesCongelObl,                                        // congélation imposée par la recette
-    note:`Garnissage de ${l.besoinNet} macarons. Nécessite coques cuites + ganache prête${l.ganacheDelaiH>0?` (reposée ${l.ganacheDelaiH} h)`:''}.${l.coquesCongelObl?' ❄️ Coques congelées obligatoires pour cette recette.':''} Lance la maturation de ${PROC.maturationH} h juste après.`
+    besoinNet: _qMonter,
+    couvertAssemblable: (+l.couvertAssemblable||0),
+    after: (_aProduire && l.ganacheDelaiH>0 ? 'ganache:'+l.parfum : null),
+    ganacheDelaiMin: (_aProduire && l.ganacheDelaiH>0 ? Math.round(l.ganacheDelaiH*60) : 0),
+    coquesCongelObl: !!l.coquesCongelObl,
+    note:`Garnissage de ${_qMonter} macarons.${_qfNote} Nécessite coques cuites + ganache prête${(_aProduire && l.ganacheDelaiH>0)?` (reposée ${l.ganacheDelaiH} h)`:''}.${l.coquesCongelObl?' ❄️ Coques congelées obligatoires pour cette recette.':''} Lance la maturation de ${PROC.maturationH} h juste après.`
     });
   });
   // [REPORT MANUEL — voie 1] Reports INJECTÉS : parfums reportés depuis une semaine SOURCE. En voie 1,
