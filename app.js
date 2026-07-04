@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1198';
+const APP_VERSION = 'v1199';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -12520,6 +12520,53 @@ function prixCourant(materialId, lots, mats){
 function coutRecette(recipeId, items, lots){
   return items.filter(it=>it.recipeId===recipeId)
     .reduce((s,it)=>s + it.qteParBatch * prixCourant(it.materialId, lots), 0);
+}
+
+// [AUDIT-2026-07 · A8] COÛT MATIÈRE D'UNE QUANTITÉ, AU PRIX RÉEL DES LOTS CONSOMMÉS (FIFO).
+// Simule la consommation de `qteNative` unités d'une matière dans l'ORDRE FIFO RÉEL (lotFifoCompare :
+// reprise puis DLC la plus proche puis réception la plus ancienne) — EXACTEMENT comme
+// decrementLotsByMaterial le fait au stock. Chaque tranche consommée est valorisée au prix de SON lot.
+// C'est le « coût réel terrain » : un vieux lot moins cher fait réellement baisser le coût de production.
+//   mode 'restant' (défaut) : puise dans qteRestante (ce qui est réellement en stock aujourd'hui).
+//   mode 'initial'          : puise dans qteInitiale (utile pour un coût théorique plein stock).
+// Renvoie {cout, couvert, manque, puUnitMoyen, tranches:[{lotId,pris,pu}]}. Repli sur prixCourant pour
+// la part NON couverte par des lots chiffrés (manque), afin de ne jamais renvoyer un coût nul trompeur.
+function coutMatiereFifoReel(materialId, qteNative, lots, mode){
+  const q0 = round3(+qteNative||0);
+  if(q0<=0) return {cout:0, couvert:0, manque:0, puUnitMoyen:0, tranches:[]};
+  const useInit = (mode==='initial');
+  const dispoDe = l => round3(useInit ? (+l.qteInitiale||0) : (+l.qteRestante||0));
+  const ls = (lots||[])
+    .filter(l=>+l.materialId===+materialId && lotPU(l)>0 && dispoDe(l)>0)
+    .sort(lotFifoCompare);
+  let reste = q0, cout = 0, couvert = 0; const tranches=[];
+  for(const l of ls){
+    if(reste<=0) break;
+    const dispo = dispoDe(l);
+    const pris = Math.min(dispo, reste);
+    if(pris>0){
+      const pu = lotPU(l);
+      cout = money2(cout + pris*pu);
+      couvert = round3(couvert + pris);
+      reste = round3(reste - pris);
+      tranches.push({lotId:l.id, pris:round3(pris), pu:money2(pu)});
+    }
+  }
+  // Part non couverte (pas assez de lots chiffrés en stock) → valorisée au prix courant (repli honnête).
+  let manque = round3(Math.max(0, reste));
+  if(manque>0){
+    const puCourant = prixCourant(materialId, lots);
+    cout = money2(cout + manque*puCourant);
+    tranches.push({lotId:null, pris:manque, pu:money2(puCourant), repli:true});
+  }
+  const puUnitMoyen = q0>0 ? money2(cout/q0) : 0;
+  return {cout:money2(cout), couvert, manque, puUnitMoyen, tranches};
+}
+// Coût matière d'une recette (par batch) au FIFO réel : somme, ingrédient par ingrédient, du coût
+// des lots consommés dans l'ordre réel. C'est l'équivalent « coût réel » de coutRecette.
+function coutRecetteFifoReel(recipeId, items, lots, mode){
+  return money2(items.filter(it=>it.recipeId===recipeId)
+    .reduce((s,it)=>money2(s + coutMatiereFifoReel(it.materialId, +it.qteParBatch||0, lots, mode).cout), 0));
 }
 
 
@@ -37654,6 +37701,71 @@ async function scanValorisationLots(){
   zone.innerHTML = head + list;
 }
 
+// [AUDIT-2026-07 · A8] DIAGNOSTIC du COÛT DE REVIENT par recette selon 3 méthodes (lecture seule).
+// Pour chaque recette, calcule le coût matière d'UN batch avec :
+//   • dernierPrix = coutRecette (prix du lot le plus récent — méthode actuelle)
+//   • moyennePond = même recette valorisée à la moyenne pondérée de chaque matière
+//   • fifoReel    = coutRecetteFifoReel (prix réel des lots consommés en FIFO — le « coût réel terrain »)
+// Sert à MESURER l'écart avant de trancher Option A (figer) vs Option B (FIFO instantané). N'écrit rien.
+function diagCoutRevientMethodes(recipes, recipeItems, lots, mats){
+  // moyenne pondérée d'une matière (sur qteInitiale des lots chiffrés)
+  const puMoyenMat = (materialId)=>{
+    let ct=0, qt=0;
+    (lots||[]).forEach(l=>{ if(+l.materialId!==+materialId) return; const q=+l.qteInitiale||0, pu=lotPU(l); if(q>0&&pu>0){ ct+=pu*q; qt+=q; } });
+    return qt>0 ? ct/qt : prixCourant(materialId, lots, mats);
+  };
+  const rows=[];
+  (recipes||[]).forEach(r=>{
+    const items = (recipeItems||[]).filter(it=>it.recipeId===r.id);
+    if(!items.length) return;
+    const dernier = money2(items.reduce((s,it)=>s + (+it.qteParBatch||0)*prixCourant(it.materialId, lots, mats), 0));
+    const moyenne = money2(items.reduce((s,it)=>s + (+it.qteParBatch||0)*puMoyenMat(it.materialId), 0));
+    const fifo    = coutRecetteFifoReel(r.id, recipeItems, lots, 'restant');
+    const vals=[dernier, moyenne, fifo].filter(v=>v>0);
+    if(!vals.length) return;
+    const ecart = money2(Math.max(dernier,moyenne,fifo) - Math.min(dernier,moyenne,fifo));
+    const base = Math.min(dernier,moyenne,fifo);
+    const ecartPct = base>0 ? Math.round(ecart/base*1000)/10 : 0;
+    // n'affiche que les recettes où au moins 2 méthodes divergent réellement
+    if(ecart < 0.01) return;
+    rows.push({ recipeId:r.id, nom:r.produitNom||('recette #'+r.id), rendement:+r.rendement||0,
+      dernier, moyenne, fifo, ecart, ecartPct });
+  });
+  rows.sort((a,b)=>b.ecartPct-a.ecartPct);
+  return rows;
+}
+let _diagCoutMethRows = [];
+async function scanCoutRevientMethodes(){
+  const zone=document.getElementById('coutMethZone');
+  if(zone) zone.innerHTML='<p class="note">Analyse en cours…</p>';
+  let rows=[];
+  try{
+    const [recipes, recipeItems, lots, mats] = await Promise.all([
+      db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.materials.toArray()
+    ]);
+    rows = diagCoutRevientMethodes(recipes, recipeItems, lots, mats);
+  }catch(e){ console.error('scanCoutMeth', e); }
+  _diagCoutMethRows = rows;
+  if(!zone) return;
+  if(!rows.length){
+    zone.innerHTML='<div class="banner" style="background:#eef6ee;border-color:#bcd9c2">✅ <div>Aucun écart : tes recettes coûtent le même prix quelle que soit la méthode (matières à lot unique ou prix stables).</div></div>';
+    return;
+  }
+  const fmt=v=>euro(v);
+  // synthèse : écart moyen dernier→FIFO (l'enjeu du passage au coût réel)
+  let sommeDernier=0, sommeFifo=0; rows.forEach(r=>{ sommeDernier=money2(sommeDernier+r.dernier); sommeFifo=money2(sommeFifo+r.fifo); });
+  const deltaGlobal = money2(sommeFifo - sommeDernier);
+  const head=`<div class="banner" style="background:#eef3f8;border-color:#a0b8d0;margin-bottom:8px">📊 <div><b>${rows.length} recette(s)</b> ont un coût qui dépend de la méthode de valorisation. <b>Lecture seule.</b><br>
+    <span style="font-size:.8rem;color:#5a6a7a">• <b>Dernier prix</b> : lot le plus récent (méthode actuelle) · <b>Moyenne</b> : moyenne pondérée · <b>FIFO réel</b> : prix réel des lots consommés (le « coût réel terrain »)</span><br>
+    <b>Bilan dernier prix → FIFO réel :</b> <span style="color:${deltaGlobal<0?'#3f7d52':'#b3261e'}">${deltaGlobal>0?'+':''}${fmt(deltaGlobal)}</span> sur l'ensemble des batchs
+    <span style="color:#5a6a7a">${deltaGlobal<0?'(le coût réel est plus BAS — tes vieux lots moins chers)':'(le coût réel est plus HAUT que le dernier prix affiché)'}</span></div></div>`;
+  const list=rows.map(r=>`<div class="sum-box" style="align-items:flex-start">
+      <span style="flex:1">${esc(r.nom)} <span style="color:#9a8a82;font-size:.78rem">batch ${r.rendement||'?'} pc</span><br>
+        <span style="font-size:.8rem">dernier <b>${fmt(r.dernier)}</b> · moyenne <b>${fmt(r.moyenne)}</b> · FIFO réel <b style="color:#2e6b3f">${fmt(r.fifo)}</b></span></span>
+      <b style="color:${r.ecartPct>=15?'#b3261e':(r.ecartPct>=6?'#d98324':'#3f7d52')}">Δ ${fmt(r.ecart)}<br><span style="font-size:.74rem;font-weight:400">${r.ecartPct}%</span></b></div>`).join('');
+  zone.innerHTML = head + list;
+}
+
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
@@ -37696,6 +37808,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">📊 Valorisation des lots — comparer les méthodes</h2>
       <p class="note">Quand une matière a <b>plusieurs lots à des prix différents</b>, son coût dépend de la <b>méthode de valorisation</b>. Aujourd'hui les <b>matières</b> utilisent le <b>dernier prix reçu</b> et les <b>emballages</b> la <b>moyenne pondérée</b> — deux méthodes différentes. Cet outil montre, pour chacune de tes matières concernées, ce que donnerait chaque méthode (dernier prix / moyenne / FIFO) et l'écart. <b>Lecture seule</b> : rien n'est modifié. Sert à décider, chiffres en main, s'il faut unifier.</p>
       <div id="valoLotsZone"><button class="btn gold sm" onclick="scanValorisationLots()">Comparer les méthodes de valorisation</button></div>
+    </div>
+    <div class="panel" style="background:#f0f4fa;margin-bottom:12px">
+      <h2 style="font-size:1rem">🧮 Coût de revient réel — comparer les méthodes par recette</h2>
+      <p class="note">Le <b>vrai</b> coût d'une production, c'est le prix des <b>lots réellement consommés</b> : tes stocks partent en FIFO (les plus anciens d'abord), donc un lot rentré il y a 6 mois moins cher a <b>réellement</b> coûté moins cher. Cet outil compare, recette par recette, le coût d'un batch selon la méthode actuelle (<b>dernier prix</b>), la <b>moyenne pondérée</b> et le <b>FIFO réel</b> (coût terrain). <b>Lecture seule.</b> Sert à mesurer l'écart avant de décider si on bascule tout le calcul sur le coût réel.</p>
+      <div id="coutMethZone"><button class="btn gold sm" onclick="scanCoutRevientMethodes()">Comparer le coût de revient réel</button></div>
     </div>
     <div class="panel" style="background:#f0f4fa;margin-bottom:12px">
       <h2 style="font-size:1rem">✅ Contrôle de cohérence du CA</h2>
