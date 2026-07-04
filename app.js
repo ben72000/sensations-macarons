@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1192';
+const APP_VERSION = 'v1193';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -16483,6 +16483,15 @@ function drawBigLine(ln,i){
     const q=ln.items[f]||0;
     return flavorPickRow(f, q, `setBigItem(${i},${fi},VAL)`, 50);
   }).join('');
+  // [v1193] Grands formats présents dans ln.items mais HORS BIG_FORMATS (ex. recette GF ajoutée après
+  // coup, ou proposée par la génération) : on les rend quand même, avec un setter par NOM (supprimable),
+  // pour qu'aucune pièce comptée ne reste invisible — même robustesse que la grille coffret.
+  const _kf = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase().trim();
+  const horsCat = Object.keys(ln.items||{}).filter(nom => (+ln.items[nom]||0)>0 && !BIG_FORMATS.some(f=>_kf(f)===_kf(nom)));
+  const extraRows = horsCat.map(nom => {
+    const enc = encodeURIComponent(nom);
+    return flavorPickRow(nom, +ln.items[nom]||0, `setBigItemNom(${i},'${enc}',VAL)`, 50);
+  }).join('');
   const tot=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Grand format</span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
@@ -16491,7 +16500,8 @@ function drawBigLine(ln,i){
       <option value="pro" ${ln.tarif==='pro'?'selected':''}>Pro — ${euro(bigPrice('pro'))}/pièce</option>
     </select></div>
     <label style="font-size:.78rem;color:#7a6a62">Produits (quantité)</label>
-    <div class="flav-grid">${bigRows}</div>
+    <div style="margin:6px 0"><button class="btn gold sm" onclick="proposerGrandFormatLigne(${i})" style="font-size:.84rem;width:100%">💡 Proposer selon mes stocks (grands formats)</button></div>
+    <div class="flav-grid">${bigRows}${extraRows}</div>
     ${(()=>{
       const mode = ln.embMode || 'reutilisable';   // défaut GF : pas de boîte facturée
       const embOpts = cmdEmballagesCache.map(m=>`<option value="${m.id}" ${(+ln.embMatId===+m.id)?'selected':''}>${esc(m.nom)}${m.capacite?` (${m.capacite} mac.)`:''}</option>`).join('');
@@ -16511,8 +16521,122 @@ function drawBigLine(ln,i){
 }
 function setBigTarif(i,v){ cmdLines[i].tarif=v; drawLines(); }
 function setBigItem(i,fi,v){ const f=BIG_FORMATS[fi]; const q=+v||0; if(q>0)cmdLines[i].items[f]=q; else delete cmdLines[i].items[f]; drawLines(); }
+// [v1193] Setter PAR NOM pour un grand format hors BIG_FORMATS (proposé par la génération ou recette
+// ajoutée après coup) : permet de modifier ET de retirer (q=0 → delete), comme setCoffretParfumNom.
+function setBigItemNom(i, encNom, v){
+  if(!cmdLines[i] || !cmdLines[i].items) return;
+  let nom; try{ nom = decodeURIComponent(encNom); }catch(_){ nom = encNom; }
+  const q=+v||0;
+  if(q>0) cmdLines[i].items[nom]=q; else delete cmdLines[i].items[nom];
+  drawLines();
+}
 function setBigEmbMode(i,v){ cmdLines[i].embMode=v; if(v!=='autre') cmdLines[i].embMatId=null; drawLines(); }
 function setBigEmbMat(i,v){ cmdLines[i].embMatId = v?+v:null; drawLines(); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [v1193] PROPOSITION GRAND FORMAT — indépendante du coffret standard.
+// Un grand format se commande À LA PIÈCE (pas un assortiment en boîte de taille N).
+// On ne réutilise donc PAS le moteur coffret (round-robin/taille) : on liste simplement
+// les grands formats DISPONIBLES, avec la même sémantique de facilité que le coffret :
+//   🟢 en stock · ♻️ batch déjà prévu · 🔺 à produire (relance faisable pour la date).
+// Source = _collecterDisponibilites(..., {typeFiltre:'grand'}) : STRICTEMENT les GF, jamais
+// un parfum standard. Ajout direct à ln.items (format objet { nom: qte }, comme setBigItem).
+// ═══════════════════════════════════════════════════════════════════════════
+async function proposerGrandFormatLigne(i){
+  const ln = cmdLines[i]; if(!ln || ln.type!=='grand') return;
+  const dateLiv = (typeof val==='function' ? (val('f_date')||'') : '') || '';
+  const heureLiv = (typeof val==='function' ? (val('f_heure')||'') : '') || '';
+  openModal(`<h3>💡 Grands formats selon tes stocks</h3>
+    <div style="padding:14px;text-align:center;color:#9a8576">⏳ Analyse du stock, des batchs à venir et de la production faisable…</div>`);
+  try{
+    // Uniquement l'univers GRAND FORMAT — le filtre exclut tout parfum standard (case grandFormat).
+    const { parfums } = await _collecterDisponibilites(dateLiv, heureLiv, { typeFiltre:'grand' });
+    _renderGrandFormatModale(i, parfums, dateLiv);
+  }catch(e){
+    console.error('proposerGrandFormatLigne', e);
+    openModal(`<h3>💡 Grands formats selon tes stocks</h3>
+      <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Erreur pendant l'analyse des grands formats.</div></div>
+      <div class="modal-actions"><button class="btn ghost" onclick="fermerGrandFormatModale()">Fermer</button></div>`);
+  }
+}
+
+function _renderGrandFormatModale(i, parfums, dateLiv){
+  const ln = cmdLines[i] || {items:{}};
+  const norm = n => (typeof aiNormalize==='function') ? aiNormalize(n||'') : String(n||'').toLowerCase().trim();
+  // Liste des GF disponibles, triés par FACILITÉ (stock pur → mutualisé → relance seule).
+  const list = Object.values(parfums||{}).map(p=>({
+    nom: p.nom,
+    stock: Math.floor(Math.max(0, +p.stock||0)),
+    mutualise: Math.floor(Math.max(0, +p.mutualise||0)),
+    relanceOk: !!p.relanceOk
+  })).sort((a,b)=>
+    (b.stock - a.stock) || (b.mutualise - a.mutualise) || ((b.relanceOk?1:0)-(a.relanceOk?1:0))
+    || norm(a.nom).localeCompare(norm(b.nom))
+  );
+
+  const legende = `<div style="font-size:.72rem;color:#8a7a6e;margin:2px 0 8px">🟢 en stock · ♻️ batch déjà prévu · 🔺 à produire</div>`;
+  const dateTxt = dateLiv ? ((typeof fmtDate==='function')?fmtDate(dateLiv):dateLiv) : 'la date choisie';
+
+  let corps;
+  if(!list.length){
+    corps = `<div class="banner" style="background:#fdf8e9;border-color:#e8d09a">📋 <div>Aucun grand format disponible ni relançable pour le ${esc(dateTxt)}.</div></div>`;
+  } else {
+    corps = list.map(p=>{
+      // Symbole de facilité selon la meilleure source dispo (stock > mutualisé > relance).
+      const dispoImmediat = p.stock + p.mutualise;
+      const estRelanceSeule = dispoImmediat<=0 && p.relanceOk;
+      const estMut = p.stock<=0 && p.mutualise>0;
+      const sym = estRelanceSeule ? '🔺' : estMut ? '♻️' : (p.stock>0 ? '🟢' : '🔺');
+      const bg = estRelanceSeule ? '#fdf6ec' : estMut ? '#fbf3ea' : (p.stock>0 ? '#eef6ee' : '#fdf6ec');
+      const bd = estRelanceSeule ? '#e8cfa3' : estMut ? '#e3c8a8' : (p.stock>0 ? '#bcd9c6' : '#e8cfa3');
+      // Ventilation lisible de la dispo.
+      const bouts = [];
+      if(p.stock>0)     bouts.push(`<b>${p.stock}</b> en stock`);
+      if(p.mutualise>0) bouts.push(`<b>${p.mutualise}</b> mutualisé${p.mutualise>1?'s':''}`);
+      if(dispoImmediat<=0 && p.relanceOk) bouts.push(`à produire (faisable)`);
+      const ventil = bouts.join(' · ') || '—';
+      const dejaCmd = +((ln.items||{})[p.nom]||0);
+      const enc = encodeURIComponent(p.nom);
+      return `<div style="display:flex;align-items:center;gap:10px;background:${bg};border:1px solid ${bd};border-radius:10px;padding:8px 10px;margin:5px 0">
+        <span title="${p.stock>0?'En stock':estMut?'Batch déjà prévu':'À produire'}" style="font-size:1rem">${sym}</span>
+        <div style="flex:1;min-width:0">
+          <div style="text-transform:capitalize;font-weight:600;color:var(--bordeaux,#52252F)">${esc(p.nom)}</div>
+          <div style="font-size:.74rem;color:#7a6a62">${ventil}</div>
+        </div>
+        ${dejaCmd>0?`<span style="font-size:.78rem;color:#3f7d52;font-weight:600">${dejaCmd} ajouté${dejaCmd>1?'s':''}</span>`:''}
+        <button class="btn ghost sm" onclick="gfAjouterItem(${i},'${enc}',1)" style="padding:4px 10px;font-size:1rem;line-height:1" title="Ajouter une pièce">＋</button>
+      </div>`;
+    }).join('');
+  }
+
+  openModal(`<h3>💡 Grands formats selon tes stocks</h3>
+    <p class="note" style="margin:0 0 4px">Pour le <b>${esc(dateTxt)}</b> — à la pièce, du plus simple au plus engageant.</p>
+    ${legende}
+    ${corps}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="fermerGrandFormatModale()">Fermer</button>
+      <button class="btn gold" onclick="fermerGrandFormatModale()">Terminé</button>
+    </div>`);
+}
+
+// Ajoute `n` pièce(s) d'un grand format à la ligne (format objet ln.items[nom], comme setBigItem),
+// puis re-render la modale pour refléter la quantité ajoutée (compteur « ajouté »).
+function gfAjouterItem(i, encNom, n){
+  const ln = cmdLines[i]; if(!ln || ln.type!=='grand') return;
+  let nom; try{ nom = decodeURIComponent(encNom); }catch(_){ nom = encNom; }
+  if(!nom) return;
+  // [v1193] La grille de la ligne GF (drawBigLine) itère sur BIG_FORMATS : on adopte le libellé exact
+  // de BIG_FORMATS quand il correspond (casse/accents près), pour que la pièce ajoutée s'affiche bien
+  // sur sa ligne native. Sinon on garde le nom d'origine (au pire il reste comptabilisé dans le total).
+  const _kf = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+  const canon = (typeof BIG_FORMATS!=='undefined' ? BIG_FORMATS.find(f=>_kf(f)===_kf(nom)) : null) || nom;
+  ln.items = ln.items || {};
+  ln.items[canon] = (+ln.items[canon]||0) + Math.max(1, Math.round(+n||1));
+  proposerGrandFormatLigne(i);
+}
+
+// Fermeture : réaffiche le formulaire de commande en préservant les lignes (comme la modale coffret).
+function fermerGrandFormatModale(){ cmdForm(_cmdEditingId||0, {keepLines:true}); }
 
 // Ligne VRAC PRO : macarons standards en boîte réutilisable (non facturée), au tarif pro/macaron.
 function drawVracLine(ln,i){
