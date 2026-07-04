@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1186';
+const APP_VERSION = 'v1188';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3668,8 +3668,6 @@ function openPrintView(htmlDoc, opts){
   doc.open(); doc.write(htmlDoc); doc.close();
   // [v1186] Nom de fichier PDF = numéro du document. À l'enregistrement PDF (iOS/Safari),
   // le nom proposé vient du document.title de la PAGE HÔTE, pas du <title> de l'iframe.
-  // On force donc temporairement le titre hôte sur opts.title (ex. « Facture 202607-28 »),
-  // restauré à la fermeture. Les appelants passent déjà le bon libellé.
   if(opts.title){
     try{ if(_pvPrevTitle===null){ _pvPrevTitle = document.title; } document.title = opts.title; }catch(e){}
   }
@@ -15868,6 +15866,19 @@ function drawCoffretLine(ln,i){
     const maxq = ln.taille||25;
     return flavorPickRow(f, q, `setCoffretParfum(${i},${fi},VAL)`, maxq);
   }).join('');
+  // [v1188 — FIX parfum fantôme] La génération de compo écrit dans ln.parfums des noms issus des RECETTES
+  // / preps R&D (ex. « Macaron caramel »), qui ne sont pas toujours dans FLAVORS. La grille n'itérant que
+  // sur FLAVORS, ces parfums devenaient INVISIBLES mais restaient comptés dans totQ → un « 1/6 » fantôme
+  // impossible à décocher. On rend donc une ligne pour TOUT parfum présent dans ln.parfums hors FLAVORS,
+  // avec un setter PAR NOM (supprimable). L'affichage redevient fidèle à la donnée réelle.
+  const horsCatalogue = Object.keys(ln.parfums).filter(nom => (+ln.parfums[nom]||0) > 0 && !FLAVORS.includes(nom));
+  const extraRows = horsCatalogue.map(nom => {
+    const q = +ln.parfums[nom]||0;
+    const maxq = ln.taille||25;
+    // setter par nom (encodage pour survivre à l'interpolation onclick)
+    const enc = encodeURIComponent(nom);
+    return flavorPickRow(nom, q, `setCoffretParfumNom(${i},'${enc}',VAL)`, maxq);
+  }).join('');
   const nbDiff = Object.values(ln.parfums).filter(q=>q>0).length;
   const sansParfum = +ln.sansParfum||0;
   const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0) + sansParfum;
@@ -15908,7 +15919,7 @@ function drawCoffretLine(ln,i){
     })()}
     <div style="margin:8px 0 6px"><button class="btn gold sm" onclick="proposerCompositionLigne(${i})" style="font-size:.84rem;width:100%">💡 Proposer une composition selon mes stocks</button></div>
     <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité par parfum)</label>
-    <div class="flav-grid">${flavRows}${sansParfumRow}</div>
+    <div class="flav-grid">${flavRows}${extraRows}${sansParfumRow}</div>
     ${sansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${sansParfum} macaron${sansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>
     ${cmdSpModeBlock(ln,i)}` : ''}
     <div class="sum-box" style="border:2px solid ${rempliCol};background:${totQ===cap?'#eef6ee':(totQ>cap?'#fdf2f1':'#fbf8f3')}">
@@ -15946,6 +15957,16 @@ function setCoffretTaille(i,v){ cmdLines[i].taille=+v;
   // purge les parfums au-delà de la nouvelle taille
   const max=+v; Object.keys(cmdLines[i].parfums).forEach(k=>{ if(cmdLines[i].parfums[k]>max) cmdLines[i].parfums[k]=max; }); drawLines(); }
 function setCoffretParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
+// [v1188] Setter PAR NOM : pour les parfums hors FLAVORS (issus d'une génération : noms de recettes/preps).
+// Même logique que setCoffretParfum mais indexé par nom exact, ce qui permet de les modifier ET de les
+// retirer (q=0 → delete), corrigeant le « parfum fantôme » non supprimable.
+function setCoffretParfumNom(i, encNom, v){
+  if(!cmdLines[i] || !cmdLines[i].parfums) return;
+  let nom; try{ nom = decodeURIComponent(encNom); }catch(_){ nom = encNom; }
+  const q=+v||0;
+  if(q>0) cmdLines[i].parfums[nom]=q; else delete cmdLines[i].parfums[nom];
+  drawLines();
+}
 function setCoffretEmbMode(i,v){ cmdLines[i].embMode=v; if(v!=='autre') cmdLines[i].embMatId=null; drawLines(); }
 function setCoffretEmbMat(i,v){ cmdLines[i].embMatId = v?+v:null; drawLines(); }
 
@@ -16182,7 +16203,17 @@ function appliquerCompositionCoffret(i, payload){
   if(data.changeTaille && +data.taille){ ln.taille = +data.taille; ln.prixUnitaireApplique = null; }
   // Remplacement des parfums.
   ln.parfums = {};
-  data.lignes.forEach(l=>{ const q=Math.max(0,+l.qte||0); if(l.nom && q>0) ln.parfums[l.nom]=(+ln.parfums[l.nom]||0)+q; });
+  // [v1188] Le générateur renvoie des noms de RECETTES / preps R&D. Quand un nom correspond (à la casse,
+  // aux accents et aux espaces près) à un parfum du catalogue FLAVORS, on adopte le libellé FLAVORS : la
+  // grille l'affiche alors sur sa ligne native (pas en « hors catalogue ») et on évite les doublons. Sinon
+  // on garde le nom tel quel — il reste affiché et supprimable via la ligne hors-catalogue (fix fantôme).
+  const _kf = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+  const _flavByKey = {}; FLAVORS.forEach(f=>{ _flavByKey[_kf(f)] = f; });
+  data.lignes.forEach(l=>{
+    const q=Math.max(0,+l.qte||0); if(!l.nom || q<=0) return;
+    const canon = _flavByKey[_kf(l.nom)] || l.nom;   // libellé catalogue si match, sinon nom d'origine
+    ln.parfums[canon]=(+ln.parfums[canon]||0)+q;
+  });
   // Le total attribué couvre-t-il la taille ? Le reste devient « sans parfum » (à définir plus tard).
   const total = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
   const reste = Math.max(0, (+ln.taille||0) - total);
@@ -44157,12 +44188,29 @@ function availableMinutesUntil(deadlineDateStr, deadlineHM, conf){
 async function productionMinutesForNeeds(needs, opts){
   opts=opts||{};
   const ignoreStock = opts.ignoreStock===true;
-  const {stock, recipes} = await mrpCurrentStockByParfum();
+  // [v1186 — SOURCE DE STOCK UNIFIÉE] On aligne la notion de disponibilité sur CELLE du générateur de
+  // compo et du rétroplanning : le stock MOBILISABLE (fini + assemblable = coques + ganache déjà en
+  // stock, reste juste à monter), et non le fini seul (mrpCurrentStockByParfum). Sans ça, un parfum
+  // dont la ganache existe déjà était compté « à produire » dans les minutes/batchs alors que le
+  // générateur, lui, le considérait dispo → chiffres divergents entre les deux visions. La clé du
+  // mobilisable est normalisée (stockMoveKey/aiNormalize) : on compare donc via cette même clé.
   const times = getMrpTimes();
+  let mobParClef = null, recipes = [];
+  try{
+    const mob = await stockMobilisableParParfum();
+    mobParClef = {};
+    const kOf = n => (typeof stockMoveKey==='function') ? stockMoveKey(n) : (typeof aiNormalize==='function'?aiNormalize(n):String(n||'').toLowerCase().trim());
+    Object.values(mob||{}).forEach(b=>{ mobParClef[kOf(b.nom)] = +b.mobilisable||0; });
+  }catch(_){ mobParClef = null; }
+  // Repli si le mobilisable est illisible : ancien stock fini-seul (mieux que rien, cohérent avant v1186).
+  let stockFini = null;
+  if(mobParClef===null){ try{ const r = await mrpCurrentStockByParfum(); stockFini = r.stock||{}; recipes = r.recipes||[]; }catch(_){ stockFini = {}; } }
+  const kOf = n => (typeof stockMoveKey==='function') ? stockMoveKey(n) : (typeof aiNormalize==='function'?aiNormalize(n):String(n||'').toLowerCase().trim());
   let nbBatchsTotal=0, tGanache=0, tMontage=0; const manqueParfums=[];
   for(const parfum in needs){
     const besoin=+needs[parfum]||0; if(besoin<=0) continue;
-    const enStock = ignoreStock ? 0 : (stock[parfum]||0);
+    const enStock = ignoreStock ? 0
+      : (mobParClef!==null ? (+(mobParClef[kOf(parfum)]||0)) : (+(stockFini[parfum]||0)));
     const net=Math.max(0, besoin-enStock);
     if(net<=0) continue;
     const nb=Math.ceil(net/TAILLE_BATCH_MACARONS);
@@ -44206,8 +44254,37 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
   // Multi-parfums : retroplanningDepuisParfums retient la contrainte la PLUS forte (parfum le plus exigeant).
   let seqBlocage=null;     // 🔴 blocage DUR (repos ganache/crémeux) : {premierJalon, retardMs, rp}
   let seqMaturation=null;  // 🟡 maturation non respectée mais production faisable : {manqueMs, rp}
+  let parfumsAProduire=[]; // [v1186] parfums net-de-stock > 0 : la SEULE base légitime du rétroplanning
+  const _detailStock=[];   // [v1186 diag] décision par parfum (besoin/dispo/net) — publié en fin de fonction
   try{
-    const parfumsNoms = Object.keys(needs||{}).filter(n=>n && n!=='À définir' && (+needs[n]>0));
+    // [v1186 — FIX incohérence compo/faisabilité] Le rétroplanning DUR (repos ganache, congélation
+    // crémeux) ne doit porter QUE sur les parfums réellement À PRODUIRE. Un parfum déjà couvert par le
+    // stock de PRODUIT FINI (prodVendable : complet/assemblé — donc ganache faite ET montée) n'impose
+    // AUCUNE séquence de repos : sa ganache n'est pas à relancer. Sans ce filtre, la compo générée
+    // depuis les stocks (parfums qu'on a déjà) déclenchait quand même un blocage « ganache aurait dû
+    // démarrer hier » — d'où l'incohérence « compo appliquée OK mais bandeau 🔴 impossible ».
+    // On déduit le stock parfum par parfum ; ne restent dans le rétroplanning que les net > 0.
+    const parfumsNomsBruts = Object.keys(needs||{}).filter(n=>n && n!=='À définir' && (+needs[n]>0));
+    let parfumsNoms = parfumsNomsBruts;
+    try{
+      // [v1186] On aligne la notion de disponibilité sur CELLE du générateur de compo
+      // (stockMobilisableParParfum) : fini + ASSEMBLABLE (coques + ganache déjà en stock,
+      // reste juste à monter). Un parfum dont la ganache existe déjà n'impose aucun repos :
+      // l'exclure du rétroplanning est donc correct. La clé est aiNormalize (stockMoveKey),
+      // il faut comparer avec la MÊME normalisation côté needs.
+      const mob = await stockMobilisableParParfum();
+      const kOf = n => (typeof stockMoveKey==='function') ? stockMoveKey(n) : (typeof aiNormalize==='function'?aiNormalize(n):String(n||'').toLowerCase().trim());
+      const dispoParClef = {};
+      Object.values(mob||{}).forEach(b=>{ dispoParClef[kOf(b.nom)] = +b.mobilisable||0; });
+      parfumsNoms = parfumsNomsBruts.filter(n=>{
+        const besoin=+needs[n]||0; const dispo=+(dispoParClef[kOf(n)]||0);
+        const net = Math.max(0, besoin-dispo);
+        // [v1186 diag] trace la décision par parfum (transparence : même stock que le générateur)
+        _detailStock.push({parfum:n, besoin, dispoMobilisable:dispo, netAProduire:net, dansRetroplanning: net>0});
+        return net > 0;   // ne garder que ce qu'il reste RÉELLEMENT à fabriquer
+      });
+    }catch(_){ /* si le stock est illisible, on retombe sur la liste brute (prudent) */ }
+    parfumsAProduire = parfumsNoms;   // exposé au reste de la fonction (boucle « date au plus tôt »)
     if(parfumsNoms.length && typeof retroplanningDepuisParfums==='function'){
       const recettes = (typeof window!=='undefined' && window._allRecipesCache) ? window._allRecipesCache
                         : (typeof db!=='undefined' && db.recipes ? await db.recipes.toArray().catch(()=>[]) : []);
@@ -44237,6 +44314,25 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
   // Contribution propre de cette commande (temps de prod net du stock) + batchs, pour le détail.
   let prodThis={minutes:0,nbBatchsTotal:0,nbMeringues:0};
   try{ prodThis = await productionMinutesForNeeds(needs); }catch(_){}
+
+  // [v1186 — TRANSPARENCE anti-divergence] Publie, pour CETTE commande, la décision stock par parfum :
+  // besoin, dispo MOBILISABLE (fini + assemblable = EXACTEMENT la notion du générateur de compo), net à
+  // produire, et si le parfum est entré dans le rétroplanning de repos ganache. But : pouvoir vérifier en
+  // réel que le générateur et la faisabilité voient le MÊME stock. À désactiver une fois validé sur iPhone.
+  try{
+    if(typeof diagPublish==='function'){
+      const lignes = _detailStock.map(d=>`${d.parfum} : besoin ${d.besoin} · dispo ${d.dispoMobilisable} · à produire ${d.netAProduire}${d.dansRetroplanning?' · ⏱ repos ganache pris en compte':' · ✅ couvert par le stock (aucun repos)'}`);
+      diagPublish('faisabiliteStockParfum', '🍬 Faisabilité — stock vu par parfum (= vision générateur)', {
+        'Livraison': (typeof fmtDate==='function'?fmtDate(deadlineDateStr):deadlineDateStr)+(deadlineHM?(' '+deadlineHM):''),
+        'Source stock': 'stockMobilisableParParfum (fini + assemblable) — IDENTIQUE au générateur de compo',
+        'Décision par parfum': lignes.length ? lignes : 'aucun parfum',
+        'Parfums entrés au rétroplanning': parfumsAProduire.length ? parfumsAProduire.join(', ') : 'aucun (tout est couvert par le stock)',
+        'Batchs à produire': (prodThis&&prodThis.nbBatchsTotal)||0,
+        'Minutes de production': (prodThis&&prodThis.minutes)||0,
+        'Lecture': 'Si un parfum est « couvert par le stock » ici, le générateur le propose SANS relance et la faisabilité ne doit PAS exiger de repos ganache pour lui. Les deux visions partagent cette même source.'
+      });
+    }
+  }catch(_){}
 
   // Repli : moteur de fenêtre indisponible → ancien calcul isolé (mieux que rien).
   if(!ctx){
@@ -44296,7 +44392,8 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
   // la 1re date PRODUCTIBLE, pas la 1re date parfaitement mûrie (la maturation ne bloque jamais).
   let earliest=null;
   if(statut==='ko'){
-    const parfumsNomsE = Object.keys(needs||{}).filter(n=>n && n!=='À définir' && (+needs[n]>0));
+    // [v1186] même base que le rétroplanning principal : uniquement les parfums réellement à produire.
+    const parfumsNomsE = parfumsAProduire;
     const recettesE = (typeof window!=='undefined' && window._allRecipesCache) ? window._allRecipesCache : [];
     const d0=new Date(deadlineDateStr+'T00:00:00');
     for(let k=1;k<=10;k++){
