@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1176';
+const APP_VERSION = 'v1177';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -13809,7 +13809,12 @@ async function gsContactCard(id){
       <span style="color:#AA7C39;font-size:1.05rem">›</span>
     </a>`;
   let corps = '';
-  if(c.tel)   corps += ligne('📞', 'Appeler', privacyModeEnabled()? nameP(c.tel)   : c.tel,   'tel:'+String(c.tel).replace(/[\s.\-()]/g,''));
+  if(c.tel){
+    const _telN = String(c.tel).replace(/[\s.\-()]/g,'');
+    const _telA = privacyModeEnabled()? nameP(c.tel) : c.tel;
+    corps += ligne('📞', 'Appeler', _telA, 'tel:'+_telN);
+    corps += ligne('💬', 'Envoyer un SMS', _telA, 'sms:'+_telN);
+  }
   if(c.email) corps += ligne('✉️', 'Écrire',  privacyModeEnabled()? nameP(c.email) : c.email, 'mailto:'+encodeURIComponent(c.email));
   if(!corps) corps = `<p class="note" style="margin-top:10px">Aucun téléphone ni e-mail enregistré pour ce contact — vous pouvez les ajouter depuis la fiche complète ci-dessous.</p>`;
   openModal(`
