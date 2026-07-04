@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1188';
+const APP_VERSION = 'v1189';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -44188,29 +44188,17 @@ function availableMinutesUntil(deadlineDateStr, deadlineHM, conf){
 async function productionMinutesForNeeds(needs, opts){
   opts=opts||{};
   const ignoreStock = opts.ignoreStock===true;
-  // [v1186 — SOURCE DE STOCK UNIFIÉE] On aligne la notion de disponibilité sur CELLE du générateur de
-  // compo et du rétroplanning : le stock MOBILISABLE (fini + assemblable = coques + ganache déjà en
-  // stock, reste juste à monter), et non le fini seul (mrpCurrentStockByParfum). Sans ça, un parfum
-  // dont la ganache existe déjà était compté « à produire » dans les minutes/batchs alors que le
-  // générateur, lui, le considérait dispo → chiffres divergents entre les deux visions. La clé du
-  // mobilisable est normalisée (stockMoveKey/aiNormalize) : on compare donc via cette même clé.
+  // [v1189 — SOURCE UNIQUE] La disponibilité par parfum vient de parfumDispoMap() (mobilisable = fini +
+  // assemblable). Plus aucune notion de stock recalculée localement : cette fonction, le générateur, la
+  // faisabilité et l'ordre du jour lisent TOUS la même source. La lecture par nom passe par parfumDispoDe
+  // (normalisation centralisée).
   const times = getMrpTimes();
-  let mobParClef = null, recipes = [];
-  try{
-    const mob = await stockMobilisableParParfum();
-    mobParClef = {};
-    const kOf = n => (typeof stockMoveKey==='function') ? stockMoveKey(n) : (typeof aiNormalize==='function'?aiNormalize(n):String(n||'').toLowerCase().trim());
-    Object.values(mob||{}).forEach(b=>{ mobParClef[kOf(b.nom)] = +b.mobilisable||0; });
-  }catch(_){ mobParClef = null; }
-  // Repli si le mobilisable est illisible : ancien stock fini-seul (mieux que rien, cohérent avant v1186).
-  let stockFini = null;
-  if(mobParClef===null){ try{ const r = await mrpCurrentStockByParfum(); stockFini = r.stock||{}; recipes = r.recipes||[]; }catch(_){ stockFini = {}; } }
-  const kOf = n => (typeof stockMoveKey==='function') ? stockMoveKey(n) : (typeof aiNormalize==='function'?aiNormalize(n):String(n||'').toLowerCase().trim());
+  let dispoMap = {};
+  try{ dispoMap = await parfumDispoMap(); }catch(_){ dispoMap = {}; }
   let nbBatchsTotal=0, tGanache=0, tMontage=0; const manqueParfums=[];
   for(const parfum in needs){
     const besoin=+needs[parfum]||0; if(besoin<=0) continue;
-    const enStock = ignoreStock ? 0
-      : (mobParClef!==null ? (+(mobParClef[kOf(parfum)]||0)) : (+(stockFini[parfum]||0)));
+    const enStock = ignoreStock ? 0 : parfumDispoDe(dispoMap, parfum);
     const net=Math.max(0, besoin-enStock);
     if(net<=0) continue;
     const nb=Math.ceil(net/TAILLE_BATCH_MACARONS);
@@ -44267,19 +44255,15 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
     const parfumsNomsBruts = Object.keys(needs||{}).filter(n=>n && n!=='À définir' && (+needs[n]>0));
     let parfumsNoms = parfumsNomsBruts;
     try{
-      // [v1186] On aligne la notion de disponibilité sur CELLE du générateur de compo
-      // (stockMobilisableParParfum) : fini + ASSEMBLABLE (coques + ganache déjà en stock,
-      // reste juste à monter). Un parfum dont la ganache existe déjà n'impose aucun repos :
-      // l'exclure du rétroplanning est donc correct. La clé est aiNormalize (stockMoveKey),
-      // il faut comparer avec la MÊME normalisation côté needs.
-      const mob = await stockMobilisableParParfum();
-      const kOf = n => (typeof stockMoveKey==='function') ? stockMoveKey(n) : (typeof aiNormalize==='function'?aiNormalize(n):String(n||'').toLowerCase().trim());
-      const dispoParClef = {};
-      Object.values(mob||{}).forEach(b=>{ dispoParClef[kOf(b.nom)] = +b.mobilisable||0; });
+      // [v1189 — SOURCE UNIQUE] Disponibilité mobilisable via parfumDispoMap() : EXACTEMENT la même
+      // source que le générateur de compo et le calcul des minutes. Un parfum dont la ganache existe
+      // déjà (assemblable) est couvert → exclu du rétroplanning de repos ganache. Lecture par nom via
+      // parfumDispoDe (normalisation centralisée).
+      const dispoMap = await parfumDispoMap();
       parfumsNoms = parfumsNomsBruts.filter(n=>{
-        const besoin=+needs[n]||0; const dispo=+(dispoParClef[kOf(n)]||0);
+        const besoin=+needs[n]||0; const dispo=parfumDispoDe(dispoMap, n);
         const net = Math.max(0, besoin-dispo);
-        // [v1186 diag] trace la décision par parfum (transparence : même stock que le générateur)
+        // trace la décision par parfum (transparence : même stock que le générateur)
         _detailStock.push({parfum:n, besoin, dispoMobilisable:dispo, netAProduire:net, dansRetroplanning: net>0});
         return net > 0;   // ne garder que ce qu'il reste RÉELLEMENT à fabriquer
       });
@@ -47097,25 +47081,34 @@ function tempsCoquesFournee(nbCoques, coquesChablonnees){
 //   coques:[{parfums, repartition, macarons, dureeMin, partielle}],
 //   montage:[{parfum, qte, dureeMin, parBatchMin, source, commandes}],
 //   totalGanacheMin, totalCoquesMin, totalMontageMin, totalMin, totalMacarons }], horizonJours }.
-// [STOCK MOBILISABLE] État du stock par parfum, mobilisable pour couvrir une commande.
-// Source de vérité = table db.productions (comme renderStockParfums). Pour chaque parfum :
-//   - finis     : macarons finis vendables en stock (qteRestante des prod. complètes/assemblées)
-//   - coquesMac : coques nues en stock converties en MACARONS (÷ COQUES_PAR_MACARON)
-//   - ganacheMac: ganache en stock, déjà exprimée en macarons
-//   - assemblable = min(coquesMac, ganacheMac)  (il faut les DEUX pour monter un macaron)
-//   - mobilisable = finis + assemblable
-// Renvoie une map { nomNorm: { nom, finis, coquesMac, ganacheMac, assemblable, mobilisable } }.
-async function stockMobilisableParParfum(){
+// ═══════════════════════════════════════════════════════════════════════════
+// [v1189 — SOURCE UNIQUE DE DISPONIBILITÉ DES PARFUMS]
+// -----------------------------------------------------------------------------
+// UNE SEULE implémentation calcule « combien puis-je mobiliser du parfum X ». Tous
+// les modules qui répondent à cette question (générateur de compositions, contrôle
+// de faisabilité, ordre du jour / plans de production, besoins unifiés, plan marchés)
+// consomment cette fonction — JAMAIS un recalcul local. Objectif : une modification de
+// la règle métier de disponibilité ne se fait qu'ICI, et ne peut plus diverger.
+//
+// Notion métier portée ici = DISPONIBILITÉ MOBILISABLE pour couvrir un besoin :
+//   finis (produits vendables) + assemblable (min(coques, ganache), car il faut les DEUX).
+// Elle NE couvre volontairement PAS :
+//   • le stock physique BRUT / fini-seul à fin de DIAGNOSTIC d'observation
+//     (_diagReservationsStock) — notion différente, ne doit rien mobiliser ;
+//   • la décomposition analytique fini vs ganache de l'arbitrage réassort
+//     (recoReassort) — qui a besoin de distinguer explicitement les deux.
+// Ces deux-là sont documentés sur place comme hors périmètre, pas comme un oubli.
+//
+// Structure par parfum (indexée par CLÉ NORMALISÉE stockMoveKey/aiNormalize) :
+//   { nom, finis, coquesMac, ganacheMac, assemblable, mobilisable }
+// -----------------------------------------------------------------------------
+async function parfumDispoSource(){
   const out = {};
   let prodsAll, recipes;
   try{
     prodsAll = (await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0);
     recipes = await db.recipes.toArray();
   }catch(e){ return out; }
-  // [CLÉ UNIQUE] On réutilise stockMoveKey (= aiNormalize) pour que le regroupement du stock
-  // mobilisable soit STRICTEMENT identique à celui du journal des mouvements (stockMoves).
-  // Avant : normTxt (sans gestion des espaces multiples ni des apostrophes typographiques),
-  // ce qui pouvait diverger du journal sur des parfums comme « Café  noisette ».
   const key = nom => stockMoveKey(nom);
   const ensure = nom => {
     const k = key(nom);
@@ -47143,6 +47136,38 @@ async function stockMobilisableParParfum(){
     b.mobilisable = addQty(b.finis, b.assemblable);
   });
   return out;
+}
+
+// [API DE CONSOMMATION — à utiliser partout] Map { cléNorm : mobilisable(nombre) }.
+// C'est la forme demandée par la plupart des appelants (« combien dispo pour ce parfum »).
+// Passe par parfumDispoSource : aucune relecture de logique ailleurs.
+async function parfumDispoMap(){
+  const src = await parfumDispoSource();
+  const map = {};
+  Object.keys(src).forEach(k=>{ map[k] = +src[k].mobilisable||0; });
+  return map;
+}
+// [API DE CONSOMMATION] Lecture robuste par NOM (normalise comme la source), depuis une map
+// déjà chargée via parfumDispoMap(). Évite que chaque appelant réinvente la normalisation.
+function parfumDispoDe(map, nom){
+  if(!map) return 0;
+  const k = (typeof stockMoveKey==='function') ? stockMoveKey(nom)
+          : (typeof aiNormalize==='function' ? aiNormalize(nom) : String(nom||'').toLowerCase().trim());
+  return +map[k]||0;
+}
+
+// [STOCK MOBILISABLE] État du stock par parfum, mobilisable pour couvrir une commande.
+// [v1189] DÉLÈGUE désormais à la source unique parfumDispoSource — plus aucune logique ici.
+// Conservé comme façade nommée pour ses appelants historiques (structure identique).
+// Source de vérité = table db.productions. Pour chaque parfum :
+//   - finis     : macarons finis vendables en stock (qteRestante des prod. complètes/assemblées)
+//   - coquesMac : coques nues en stock converties en MACARONS (÷ COQUES_PAR_MACARON)
+//   - ganacheMac: ganache en stock, déjà exprimée en macarons
+//   - assemblable = min(coquesMac, ganacheMac)  (il faut les DEUX pour monter un macaron)
+//   - mobilisable = finis + assemblable
+// Renvoie une map { nomNorm: { nom, finis, coquesMac, ganacheMac, assemblable, mobilisable } }.
+async function stockMobilisableParParfum(){
+  return await parfumDispoSource();
 }
 
 // [JOURNAL DE STOCK] Normalisation de la clé parfum. On réutilise aiNormalize (la norme
@@ -47207,8 +47232,10 @@ async function _collecterDisponibilites(dateLiv, heureLiv, opts){
   };
 
   // ── SOURCE 1 : STOCK immédiat ────────────────────────────────────────────
+  // [v1189 — SOURCE UNIQUE] Disponibilité mobilisable via parfumDispoSource (structure enrichie :
+  // finis/coquesMac/ganacheMac/assemblable/mobilisable). Même source que faisabilité et ordre du jour.
   let mob = {};
-  try{ mob = await stockMobilisableParParfum(); }catch(_){ mob = {}; }
+  try{ mob = await parfumDispoSource(); }catch(_){ mob = {}; }
   Object.values(mob).forEach(b=>{
     if(!compatType(b.nom)) return;   // stock d'un autre univers (GF vs standard) → ignoré
     const dispo = Math.floor(Math.max(0, +b.mobilisable||0));
@@ -49806,12 +49833,20 @@ function getMrpTimes(){
 }
 function saveMrpTimes(t){ localStorage.setItem(MRP_TIME_KEY, JSON.stringify(t)); }
 
-// Stock fini courant par parfum (réutilise la convention de computeForecast).
+// [v1189 — VUE DÉRIVÉE DE LA SOURCE UNIQUE] Stock FINI courant par parfum. Ne recalcule plus rien :
+// projette le champ `finis` de parfumDispoSource (le calcul canonique). Ainsi il n'existe qu'UNE seule
+// implémentation du décompte des productions ; cette fonction n'en expose qu'une facette (fini seul),
+// tandis que stockMobilisableParParfum en expose une autre (mobilisable). Comportement identique à
+// l'ancienne version : `stock` indexé par nom de produit, valeur = qté finie vendable. `recipes` fourni
+// pour les appelants qui en ont besoin (mrpFindRecipe, etc.).
 async function mrpCurrentStockByParfum(){
-  const [recipes, prods] = await Promise.all([db.recipes.toArray(), db.productions.toArray()]);
-  const stock={};
-  prods.forEach(p=>{ if(!prodVendable(p)) return; const r=recipes.find(x=>x.id===p.recipeId); const nom=r?r.produitNom:('#'+p.recipeId);
-    stock[nom]=(stock[nom]||0)+(+p.qteRestante||0); });
+  let recipes = [];
+  try{ recipes = await db.recipes.toArray(); }catch(_){ recipes = []; }
+  const stock = {};
+  try{
+    const src = await parfumDispoSource();
+    Object.values(src).forEach(b=>{ if((+b.finis||0)!==0) stock[b.nom] = (stock[b.nom]||0) + (+b.finis||0); });
+  }catch(_){ /* base illisible → stock vide, comme l'ancienne version en cas d'erreur */ }
   return {stock, recipes};
 }
 // Associe un parfum de commande (ex "Caramel") à une recette (ex "Macaron caramel").
