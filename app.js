@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1193';
+const APP_VERSION = 'v1195';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -31,8 +31,12 @@ const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleur
 
 // --- Arrondis stricts (évitent la dérive des flottants : 0.1+0.2, FIFO répétés) ---
 // money2 : arrondi au centime. round3 : quantités de stock (3 décimales).
-const money2 = n => Math.round(((+n)||0)*100)/100;
-const round3 = n => Math.round(((+n)||0)*1000)/1000;
+// [AUDIT-2026-07 · A19] Garde isFinite : money2(Infinity) renvoyait Infinity (Math.round(Infinity)
+// = Infinity) et polluait toutes les sommes en cascade ; round3 idem. Le repli sur 0 pour une entrée
+// non-finie est cohérent avec le (+n||0) préexistant. Aucun changement sur les valeurs finies :
+// money2(0.005)=0.01, money2(null)=0, money2('12,5' déjà converti)=… restent identiques.
+const money2 = n => { const v=+n; return isFinite(v) ? Math.round(v*100)/100 : 0; };
+const round3 = n => { const v=+n; return isFinite(v) ? Math.round(v*1000)/1000 : 0; };
 
 // --- Opérations financières / stocks sûres (toujours ré-arrondies) ---
 const addMoney = (...xs) => money2(xs.reduce((s,x)=>s+((+x)||0),0));
@@ -42,7 +46,17 @@ const addQty = (...xs) => round3(xs.reduce((s,x)=>s+((+x)||0),0));
 const subQty = (a,b) => round3(((+a)||0)-((+b)||0));
 
 // --- Dates / heures ---
-const today = () => new Date().toISOString().slice(0,10);
+// [AUDIT-2026-07 · A1] Date du jour en heure LOCALE. AVANT : new Date().toISOString().slice(0,10)
+// renvoyait la date UTC → en fuseau positif (France UTC+1/+2), entre minuit et 1h–2h locales,
+// toISOString() bascule sur la veille (ex. 00h30 le 1er juillet à Paris = 22h30 le 30 juin UTC),
+// et monthKey(today()) désignait alors le mois PRÉCÉDENT. Tous les KPI mensuels (accueil, dashboard,
+// compta, net en poche, seuils, jours restants…) étaient faux pendant ce créneau. Le pattern local
+// getFullYear/getMonth/getDate (déjà utilisé par ymOf) supprime le décalage. Aucune régression :
+// les dates sont stockées en 'YYYY-MM-DD' string et today() ne sert qu'à des comparaisons de string.
+const today = () => {
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+};
 function fmtTime(iso){
   if(!iso) return '';
   const d=new Date(iso); if(isNaN(d)) return '';
@@ -967,7 +981,7 @@ function rdOuvrirForm(idee){
     ideeId: idee?idee.id:null,
     a: idee?idee.a:'', b: idee?idee.b:'',
     note: 0, essai:'', marche:'', rate:'',
-    date: new Date().toISOString().slice(0,10)
+    date: today()  // [A1] date locale
   };
   renderRDJournal();
   setTimeout(()=>{ const el=document.getElementById('rd-form'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }, 60);
@@ -1069,7 +1083,7 @@ async function renderRDJournal(){
   // si on arrive depuis « Tester » une idée, ouvrir le formulaire pré-rempli
   if(window._rdTestPourIdee && !window._rdForm){
     const id=window._rdTestPourIdee;
-    window._rdForm = { ideeId:id.id, a:id.a, b:id.b, note:0, essai:'', marche:'', rate:'', date:new Date().toISOString().slice(0,10) };
+    window._rdForm = { ideeId:id.id, a:id.a, b:id.b, note:0, essai:'', marche:'', rate:'', date:today() };
     window._rdTestPourIdee=null;
   }
 
@@ -1247,7 +1261,7 @@ async function rdEnregistrerIdee(d, statut){
   }
   const obj={ a:d.a, b:d.b, type:d.type||'pxp', origine:d.origine||window._rdMoteur,
     originalite:d.originalite, gourmandise:d.gourmandise, statut:statut||'a_tester',
-    note:'', date:new Date().toISOString().slice(0,10) };
+    note:'', date:today() };
   const id=await db.rdIdees.add(obj); obj.id=id; return obj;
 }
 
@@ -3570,11 +3584,22 @@ const ymKey = d => monthKey(d);   // délègue à monthKey (robuste aux dates IS
 function paiementsDe(o){
   if(!o) return [];
   if(Array.isArray(o.paiements) && o.paiements.length){
+    // [AUDIT-2026-07 · A10] Le moyen hérité o.reglement n'est appliqué à un paiement sans moyen
+    // propre QUE si la commande n'a qu'UN seul paiement. Sinon (acompte + solde de moyens
+    // différents), hériter le même o.reglement pour tous faussait le rapport par mode de paiement :
+    // on affiche « — » (indéterminé) plutôt qu'un moyen inventé.
+    const _unSeul = o.paiements.filter(p=>p && (+p.montant)).length===1;
     return o.paiements
       .filter(p=>p && (+p.montant))
-      .map(p=>({date:(p.date||o.date||''), montant:money2(+p.montant||0), moyen:(p.moyen||o.reglement||'—')}));
+      .map(p=>({date:(p.date||o.date||''), montant:money2(+p.montant||0), moyen:(p.moyen || (_unSeul ? (o.reglement||'—') : '—'))}));
   }
   if(o.paiement==='Payé'){
+    // [AUDIT-2026-07 · A7] Commande legacy « Payé » sans registre de paiements : on l'impute à
+    // datePaiement, sinon à o.date (date de commande) — ce qui peut être faux si l'encaissement a
+    // eu lieu plus tard. Warning console pour repérer ces cas (migration à faire : dater les paiements).
+    if(!o.datePaiement && typeof console!=='undefined' && console.warn){
+      console.warn('[paiementsDe] Commande legacy #'+(o.id!=null?o.id:'?')+' — « Payé » sans registre ni datePaiement, imputée à o.date='+(o.date||'?'));
+    }
     return [{date:(o.datePaiement||o.date||''), montant:money2(+o.montant||0), moyen:(o.reglement||'—')}];
   }
   return [];
@@ -4562,7 +4587,11 @@ async function renderDash(){
     ]);
     const _An = analyzeFlavorProfitability({recipes, recipeItems:_ri, lots:_lots, mats:materials, orders, markets, marketMoves:_mm, productions, settings:_st});
     if(_An && _An.totals && _An.totals.pieces>0){
-      margeNetteParMacaron = money2(_An.totals.margeNette / _An.totals.pieces);
+      // [AUDIT-2026-07 · A3] AVANT : margeNette / pieces (AVANT dons), alors que le libellé disait
+      // « après coûts & charges ». Un don est un coût réel : la marge nette « vraie » est APRÈS dons.
+      // On utilise margeApresDons (déjà calculé), avec repli sur margeNette pour rétro-compat.
+      const _baseMarge = (_An.totals.margeApresDons!=null) ? _An.totals.margeApresDons : _An.totals.margeNette;
+      margeNetteParMacaron = money2(_baseMarge / _An.totals.pieces);
     }
     if(_An && _An.totals){
       coutDons = _An.totals.coutDons||0;
@@ -4659,7 +4688,7 @@ async function renderDash(){
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> <span style="font-size:.76rem;color:#9a8a82">— touche un lot pour intervenir</span><br>${prodDlcAlert.slice(0,6).map(a=>`<span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="dlcActions(${a.id})">${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})</span>`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
      <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} encaissement(s) · voir le détail ›</div></div>
-     <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts & charges ›':'pas encore de ventes ›'}</div></div>
+     <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts, charges & dons ›':'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#7a4b82" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
      <div class="card clickable accent" style="--card-accent:${low.length>0?'#b3261e':'#3f7d52'}" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock ${kpiI('alertes_stock')}</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
@@ -4838,7 +4867,7 @@ async function _accueilPeuplerCartes(){
     if(box && kpis){
       box.innerHTML = `
         <div class="acc-kpi" onclick="caMonthDetail()"><span class="acc-kpi-corner">€</span><div class="acc-kpi-lbl">CA ${esc(kpis.moisLbl)}</div><div class="acc-kpi-val">${kpis.privacy?'•••':euro(kpis.caMois)}</div><div class="acc-kpi-sub">${kpis.nbEnc} encaissement(s) ›</div></div>
-        <div class="acc-kpi" onclick="goView('rentabilite')"><span class="acc-kpi-corner">📈</span><div class="acc-kpi-lbl">Marge nette / macaron</div><div class="acc-kpi-val">${kpis.privacy?'•••':(kpis.marge!=null?euro(kpis.marge):'—')}</div><div class="acc-kpi-sub">${kpis.marge!=null?'après coûts ›':'pas encore de ventes ›'}</div></div>
+        <div class="acc-kpi" onclick="goView('rentabilite')"><span class="acc-kpi-corner">📈</span><div class="acc-kpi-lbl">Marge nette / macaron</div><div class="acc-kpi-val">${kpis.privacy?'•••':(kpis.marge!=null?euro(kpis.marge):'—')}</div><div class="acc-kpi-sub">${kpis.marge!=null?'après coûts, charges & dons ›':'pas encore de ventes ›'}</div></div>
         <div class="acc-kpi" onclick="goView('rentabilite')"><span class="acc-kpi-corner">🎁</span><div class="acc-kpi-lbl">Coût des dons</div><div class="acc-kpi-val">${kpis.privacy?'•••':(kpis.coutDons!=null?euro(kpis.coutDons):'—')}</div><div class="acc-kpi-sub">${(kpis.coutDons!=null&&kpis.piecesDon>0)?`${qty(kpis.piecesDon)} offert(s) ›`:'aucun don ›'}</div></div>
         <div class="acc-kpi" onclick="goView('stockparfums')"><span class="acc-kpi-corner">🍬</span><div class="acc-kpi-lbl">Macarons en stock</div><div class="acc-kpi-val">${qtyP(kpis.stock)}</div><div class="acc-kpi-sub">par parfum ›</div></div>`;
     }
@@ -4874,7 +4903,8 @@ async function _accueilKpis(){
     // marge nette / dons
     const _An = (typeof analyzeFlavorProfitability==='function') ? analyzeFlavorProfitability({recipes, recipeItems:ri, lots, mats:materials, orders, markets, marketMoves:mm, productions, settings:(typeof getSettings==='function'?getSettings():{})}) : null;
     if(_An && _An.totals){
-      if(_An.totals.pieces>0) out.marge = money2(_An.totals.margeNette / _An.totals.pieces);
+      // [AUDIT-2026-07 · A3] margeApresDons (repli margeNette) — cohérent avec le KPI accueil.
+      if(_An.totals.pieces>0){ const _bm=(_An.totals.margeApresDons!=null)?_An.totals.margeApresDons:_An.totals.margeNette; out.marge = money2(_bm / _An.totals.pieces); }
       out.coutDons = _An.totals.coutDons||0; out.piecesDon = _An.totals.piecesDon||0;
     }
     // stock de macarons vendables
@@ -4955,7 +4985,7 @@ function _accueilBuildCards(brain, presse){
     // 1re tâche lançable, cf. _planConsumeFocus). Parfum prioritaire = 1re ligne du plan (champ RÉEL
     // brain.plan, vérifié). Date = aujourd'hui (la semaine en cours porte ce qu'on peut démarrer).
     const _avProchainParfum = (brain && Array.isArray(brain.plan) && brain.plan[0]) ? brain.plan[0].parfum : null;
-    const _avAuj = new Date().toISOString().slice(0,10);
+    const _avAuj = today();
     const _avOnclick = (dispo!=null && dispo>=60)
       ? `planFocusTache('${_avAuj}', ${_avProchainParfum?`'${String(_avProchainParfum).replace(/'/g,"\\'")}'`:'null'}, 'avance')`
       : `goView('agendaprod')`;   // pas de marge aujourd'hui → ouverture simple, pas de focus trompeur
@@ -7065,7 +7095,7 @@ async function renderDocuments(){
       let encaisse=0, total=0, nbVivantes=0, lastD='', lastM='';
       for(const oid of oids){
         const o=await db.orders.get(oid).catch(()=>null);
-        if(o){ nbVivantes++; total+=(+o.montant||0); (o.paiements||[]).forEach(p=>{ encaisse+=(+p.montant||0); if(p.date && p.date>=lastD){ lastD=p.date; lastM=p.moyen||''; } }); }
+        if(o){ nbVivantes++; total+=(+o.montant||0); paiementsDe(o).forEach(p=>{ encaisse+=(+p.montant||0); if(p.date && p.date>=lastD){ lastD=p.date; lastM=p.moyen||''; } }); } // [v1194] paiementsDe : capte le legacy « Payé »
       }
       // [v1157] Garde-fou : commandes liées SUPPRIMÉES (purge d'historique) → la facture est
       // le dernier témoin de l'encaissement. On ne resynchronise RIEN (ni statut, ni règlement),
@@ -7180,7 +7210,7 @@ async function docOpen(id){
   if(d.type==='facture' && (d.statut==='emise'||d.statut==='payee')){
     const oids=d.orderIds||(d.orderId?[d.orderId]:[]);
     let enc=0,tot=0;
-    for(const oid of oids){ const o=await db.orders.get(oid).catch(()=>null); if(o){ tot+=(+o.montant||0); enc+=(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0); } }
+    for(const oid of oids){ const o=await db.orders.get(oid).catch(()=>null); if(o){ tot+=(+o.montant||0); enc+=paiementsDe(o).reduce((a,p)=>a+(+p.montant||0),0); } } // [v1194] paiementsDe : legacy inclus
     const cible=(tot>0&&enc>=tot-0.01)?'payee':'emise';
     if(cible!==d.statut){ await db.documents.update(id,{statut:cible}); d=await db.documents.get(id); }
   }
@@ -7237,7 +7267,7 @@ async function docOpen(id){
       ${d.statut==='brouillon'?`
         <div class="banner" style="background:#fdf8ec;border-color:#e8d4a0;margin-top:10px">📝 <div><b>Brouillon</b> — cette facture n'a pas encore de numéro légal. Vérifie-la, puis valide-la définitivement.</div></div>
         <div class="field" style="margin-top:8px"><label>Date de la facture</label>
-          <input type="date" id="docFactDate" value="${d.date||new Date().toISOString().slice(0,10)}" max="${new Date().toISOString().slice(0,10)}" onchange="docSetFactDate(${d.id},this.value)"></div>
+          <input type="date" id="docFactDate" value="${d.date||today()}" max="${today()}" onchange="docSetFactDate(${d.id},this.value)"></div>
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
           <button class="btn ghost" onclick="docApercu(${d.id})">👁️ Aperçu complet</button>
           <button class="btn ghost" onclick="docEnvoyerMail(${d.id})">✉️ Envoyer par mail</button>
@@ -7261,7 +7291,7 @@ async function docOpen(id){
 }
 // Modifie la date d'un brouillon de facture (refusée si dans le futur).
 async function docSetFactDate(id, v){
-  const auj=new Date().toISOString().slice(0,10);
+  const auj=today();
   if(v>auj){ toast('⛔ Date dans le futur interdite'); const el=document.getElementById('docFactDate'); if(el) el.value=auj; await db.documents.update(id,{date:auj}); return; }
   await db.documents.update(id,{date:v});
 }
@@ -7275,7 +7305,7 @@ async function docSetAcompte(id, v){
 async function docConvertToOrder(id){
   const d=await db.documents.get(id); if(!d) return;
   const acompte=+d.acompte||0;  // [v1157] plus aucun blocage : acompte optionnel, conversion toujours possible
-  const today=new Date().toISOString().slice(0,10);
+  const today=today();
   const o={
     clientId:d.clientId, date:d.date||today,
     heureLivraison:d.heureLivraison||'', lieuLivraison:d.lieuLivraison||'', dateEvenement:d.dateEvenement||'',
@@ -7353,7 +7383,7 @@ async function cmdToDevisConfirm(id){
     const totBatch = itemsLies.reduce((s,it)=>s+(+it.qte||0),0);
     if(totBatch>0 || o.pkgDecremented===true){ toast('Batch ou emballage lié — conversion annulée'); closeModal(); return; }
     const numero=await nextDocNumero('devis');
-    const today=new Date().toISOString().slice(0,10);
+    const today=today();
     const doc={
       type:'devis', statut:'en_attente', numero,
       clientId:o.clientId||0, date:o.date||today,
@@ -7483,7 +7513,7 @@ async function docTotalPayeLive(d){
   let total = 0;
   for(const oid of ids){
     const o = await db.orders.get(oid).catch(()=>null);
-    if(o) total += (o.paiements||[]).reduce((s,p)=>s+(+p.montant||0),0);
+    if(o) total += paiementsDe(o).reduce((s,p)=>s+(+p.montant||0),0); // [v1194] paiementsDe : legacy inclus
   }
   return money2(total);
 }
@@ -7509,7 +7539,7 @@ async function docValiderFacture(id){
     await db.documents.update(id, {totalPaye:d.totalPaye, html:d.html});
   }
   // Contrôle de date : jamais dans le futur ; alerte si dans le passé.
-  const auj=new Date().toISOString().slice(0,10);
+  const auj=today();
   const dateFact=d.date||auj;
   if(dateFact>auj){ toast('⛔ Date de facture dans le futur interdite. Corrige la date.'); return; }
   if(dateFact<auj){
@@ -7547,7 +7577,7 @@ async function _factReglement(d){
   for(const oid of oids){
     const o = await db.orders.get(oid).catch(()=>null); if(!o) continue;
     total += (+o.montant||0);
-    (o.paiements||[]).forEach(p=>{ paye += (+p.montant||0); if(p.date && p.date>=lastDate){ lastDate=p.date; lastMoyen=p.moyen||''; } });
+    paiementsDe(o).forEach(p=>{ paye += (+p.montant||0); if(p.date && p.date>=lastDate){ lastDate=p.date; lastMoyen=p.moyen||''; } }); // [v1194] paiementsDe : legacy inclus
   }
   // Facture sans commande liée (cas rare) : on se rabat sur le montant figé du document.
   if(!oids.length){ total = +d.montant||0; paye = (d.paiements||[]).reduce((s,p)=>s+(+p.montant||0),0); const last=(d.paiements||[]).slice(-1)[0]; if(last){ lastDate=last.date||''; lastMoyen=last.moyen||''; } }
@@ -7567,7 +7597,7 @@ async function docMarkPaid(id, fromList){
     <div class="sum-box"><span><b>Reste à encaisser</b></span><b style="color:#b3261e">${euro(r.reste)}</b></div>
     <p class="note" style="margin-top:6px">Renseigne la date réelle du règlement et le mode. L'encaissement est enregistré sur la commande liée (il alimente ton chiffre d'affaires).</p>
     <div class="field"><label>Montant encaissé (€)</label><input type="number" step="0.01" min="0" id="docPay_mt" value="${r.reste}"></div>
-    <div class="field"><label>Date de règlement</label><input type="date" id="docPay_date" value="" max="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="field"><label>Date de règlement</label><input type="date" id="docPay_date" value="" max="${today()}"></div>
     <div class="field"><label>Mode de paiement</label>
       <select id="docPay_moyen"><option value="">— mode —</option>${PAY_METHODS.map(m=>`<option>${m}</option>`).join('')}</select></div>
     <div class="modal-actions">
@@ -7584,7 +7614,7 @@ async function docMarkPaidConfirm(id, fromList){
   if(mt<=0){ toast('Montant requis'); return; }
   if(!date){ toast('Date de règlement obligatoire'); return; }
   if(!moyen){ toast('Mode de paiement obligatoire'); return; }
-  const auj=new Date().toISOString().slice(0,10);
+  const auj=today();
   if(date>auj){ toast('⛔ Date dans le futur interdite'); return; }
   const d = await db.documents.get(id); if(!d){ toast('Facture introuvable'); return; }
   const r = await _factReglement(d);
@@ -17054,6 +17084,31 @@ function globalRemiseEuro(o, base){
   const pct = Math.max(0, Math.min(100, +(o&&o.remiseGlobale)||0));
   return money2(base*pct/100);                            // ancien mode % (héritage)
 }
+// [v1194] SOURCE UNIQUE du total d'une commande, TOUJOURS dérivée des lignes stockées.
+// Reproduit à l'identique la formule de saveCmd (base = Σ lignes après remises de ligne
+// + personnalisation nette, puis remise globale résolue via globalRemiseEuro). Sert de
+// vérité de référence pour détecter les o.montant figés qui auraient divergé (édition par
+// un chemin autre que saveCmd : migration, réaffectation, correction HACCP…).
+// NB : une commande à PRIX MANUEL (o.prixManuel) peut légitimement s'écarter de ce recalcul
+// — c'est un ajustement assumé, PAS une anomalie. Les appelants qui diagnostiquent doivent
+// exclure o.prixManuel. Cette fonction NE modifie jamais la commande : lecture seule.
+function orderMontantRecalcule(o){
+  if(!o) return 0;
+  const lignes = Array.isArray(o.lignes) ? o.lignes : [];
+  const sousTotal  = money2(lignes.reduce((a,ln)=>a+lineTotalStored(ln),0));
+  const persoSup   = money2((+o.persoMacarons||0)*PERSO_PRIX_UNIT);
+  const persoRem   = money2(Math.max(0, Math.min(persoSup, +o.persoRemiseEur||0)));
+  const persoNette = money2(Math.max(0, persoSup - persoRem));
+  const base       = money2(sousTotal + persoNette);
+  const remiseG    = globalRemiseEuro(o, base);
+  return Math.max(0, money2(base - remiseG));
+}
+// Écart signé entre le montant stocké et le recalcul. >0 : stocké TROP HAUT ; <0 : trop bas.
+// null si la commande est à prix manuel (écart légitime, non diagnosticable).
+function orderMontantEcart(o){
+  if(!o || o.prixManuel) return null;
+  return money2(((+o.montant)||0) - orderMontantRecalcule(o));
+}
 function _cmdSousTotalAvantGlobal(){
   // base imposable à la remise globale = lignes (après remises de ligne) + personnalisation,
   // cohérente avec cmdRecalc/saveCmd.
@@ -17884,7 +17939,7 @@ function comptaPeriodeDatesLabel(k){
     if(!start && !_comptaDateFin) return 'dates non saisies';
     return `du ${start?f(start):'début'} au ${_comptaDateFin?f(_comptaDateFin):"aujourd'hui"}`;
   }
-  const todayStr=new Date().toISOString().slice(0,10);
+  const todayStr=today();
   if(!start) return 'toutes les données';
   return `du ${f(start)} au ${f(todayStr)}`;
 }
@@ -18024,8 +18079,13 @@ async function computeAccounting(opts){
     if(lignes.some(l=>l.type==='histo')){ migCount++; migCA=money2(migCA+(+o.montant||0)); }
   });
   // Valeur des pertes / casse déclarées (coût de revient des pièces jetées) — imputée au résultat.
+  // [AUDIT-2026-07 · A25] AVANT : lossesAll non filtré → le résultat du mois M incluait les pertes
+  // de TOUT l'historique (ex. pertes de migration 2024 déduites d'un résultat de juin 2026). On filtre
+  // désormais par _inRange, comme les charges/marchés/paiements (comptabilité d'engagement : perte
+  // rattachée à sa date). En mode « tout » (pas de période), comportement inchangé.
   const lossesAll = await db.losses.toArray().catch(()=>[]);
-  const totalPertes = money2(lossesAll.reduce((s,l)=>s+(+l.coutTotal||0),0));
+  const losses = (_periodeStart||_periodeEnd) ? lossesAll.filter(l=> _inRange(l.date)) : lossesAll;
+  const totalPertes = money2(losses.reduce((s,l)=>s+(+l.coutTotal||0),0));
   return {
     serie, encByMethod, chargeByCat,
     totalEncaisse, totalFacture, totalCharges, totalCoutMatieres:totalCout,
@@ -18057,10 +18117,11 @@ async function computeMonthlyBilan(ym){
     lignes.forEach(ln=>{ if(ln.type==='prestation') svc=money2(svc+lineTotalStored(ln)); });
     const partSvc = total>0 ? Math.min(1, svc/total) : 0;   // proportion service de la commande
     // encaissements du mois pour cette commande
-    const pays=(o.paiements&&o.paiements.length)?o.paiements
-      :(o.paiement==='Payé'&&o.datePaiement?[{date:o.datePaiement,montant:total}]:[]);
+    // [v1194] Source unique paiementsDe : capte le legacy « Payé » même sans datePaiement (daté sur
+    // o.date), IDENTIQUE au dashboard et à computeAccounting. L'ancien repli le ratait → le bilan
+    // mensuel (goods/service, base URSSAF) pouvait diverger du CA encaissé affiché ailleurs.
     let encMois=0;
-    pays.forEach(p=>{ if(monthKey(p.date)===ym) encMois=money2(encMois+money2(p.montant)); });
+    paiementsDe(o).forEach(p=>{ if(monthKey(p.date)===ym) encMois=money2(encMois+money2(p.montant)); });
     if(encMois<=0) return;
     const sPart=money2(encMois*partSvc), gPart=money2(encMois-encMois*partSvc);
     if(gPart>0){ goods=money2(goods+gPart); }
@@ -18130,9 +18191,10 @@ async function computePrevisionRevenu(ymCible){
     const dLiv = o.dateLivraison || o.date || '';
     if(monthKey(dLiv)!==cible) return;
     const total=money2(+o.montant||0); if(total<=0) return;
-    const dejaEnc=(o.paiements&&o.paiements.length)
-      ? o.paiements.reduce((s,p)=>money2(s+money2(+p.montant||0)),0)
-      : ((o.paiement==='Payé'||o.reglement)&&o.datePaiement?total:0);
+    // [v1194] Déjà encaissé = orderPaid(o), source unique (registre + repli legacy « Payé »).
+    // Remplace un 3e repli hybride divergent ((paiement||reglement)&&datePaiement) par la définition
+    // canonique, alignée sur orderBalance / le dashboard / la compta.
+    const dejaEnc=orderPaid(o);
     const reste=money2(Math.max(0, total-dejaEnc));
     if(reste>0){ carnet=money2(carnet+reste); nbCmd++; }
   });
@@ -18304,8 +18366,9 @@ async function _listeMoisAvecActivite(){
   const set=new Set();
   const orders=await db.orders.toArray();
   orders.forEach(o=>{
-    const pays=(o.paiements&&o.paiements.length)?o.paiements:(o.paiement==='Payé'&&o.datePaiement?[{date:o.datePaiement}]:[]);
-    pays.forEach(p=>{ if(p&&p.date) set.add(monthKey(p.date)); });
+    // [v1194] paiementsDe : mêmes dates d'encaissement que la compta → aucun mois d'activité oublié
+    // (l'ancien repli ratait le legacy « Payé » sans datePaiement, pouvant masquer un mois entier).
+    paiementsDe(o).forEach(p=>{ if(p&&p.date) set.add(monthKey(p.date)); });
   });
   const markets=await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
   markets.forEach(mk=>{ if(mk.statut==='clos'&&mk.date) set.add(monthKey(mk.date)); });
@@ -20185,10 +20248,20 @@ function buildFlavorSales(orders, markets, marketMoves, recipes, productions, se
   const recByNorm = {};
   recipes.forEach(r=>{ recByNorm[aiNormalize(r.produitNom)] = r; });
   const matchRecipe = nom=>{
+    // [AUDIT-2026-07 · A15] AVANT : repli sur préfixe de 5 caractères qui prenait la PREMIÈRE recette
+    // trouvée (non déterministe) → « Vanille » pouvait matcher « Vanille de Madagascar » et attribuer
+    // le CA au mauvais parfum. Nouveau : (1) égalité stricte normalisée ; (2) repli préfixe SEULEMENT
+    // si un unique candidat ; (3) sinon null + warning (on n'invente pas un rattachement).
+    if(!nom) return null;
     const k=aiNormalize(nom);
-    if(recByNorm[k]) return recByNorm[k];
-    const hit = recipes.find(r=>{ const rn=aiNormalize(r.produitNom); return rn && (rn.startsWith(k.slice(0,5)) || k.startsWith(rn.slice(0,5))); });
-    return hit||null;
+    if(recByNorm[k]) return recByNorm[k];                       // 1) égalité stricte
+    const prefix=k.slice(0,5);
+    const hits=recipes.filter(r=>{ const rn=aiNormalize(r.produitNom||''); return rn && (rn.startsWith(prefix) || k.startsWith(rn.slice(0,5))); });
+    if(hits.length===1) return hits[0];                         // 2) repli si UNIQUE candidat
+    if(hits.length>1 && typeof console!=='undefined' && console.warn){
+      console.warn('[matchRecipe] Parfum ambigu « '+nom+' » → '+hits.length+' recettes candidates : '+hits.map(h=>h.produitNom).join(', ')+' — non rattaché.');
+    }
+    return null;                                                 // 3) ambigu ou introuvable
   };
   // pour retrouver le parfum d'un mouvement marché sans champ "parfum" (sortie par lot)
   const recName = rid=>(recipes.find(r=>r.id===rid)||{}).produitNom||'';
@@ -34533,7 +34606,7 @@ async function buildLabelsPDF(items){
   if(!jpegList.length){ toast('Rien à générer'); return; }
   const pdfBytes = _buildMultiImagePDF(jpegList, 105, 55, pxW, pxH);
   const blob = new Blob([pdfBytes], {type:'application/pdf'});
-  const fileName = 'etiquettes-'+jpegList.length+'-'+(new Date().toISOString().slice(0,10))+'.pdf';
+  const fileName = 'etiquettes-'+jpegList.length+'-'+(today())+'.pdf';
   const file = new File([blob], fileName, {type:'application/pdf'});
   if(navigator.canShare && navigator.canShare({files:[file]})){
     try{ await navigator.share({ files:[file], title:'Étiquettes ('+jpegList.length+')' }); return; }
@@ -34558,7 +34631,7 @@ async function labelsBatchForm(){
   if(!lots.length){ toast('Aucun lot à étiqueter'); return; }
 
   const recName = id => { const r=recipes.find(x=>+x.id===+id); return r?r.produitNom:''; };
-  const today = new Date().toISOString().slice(0,10);
+  const todayStr = today();  // [A1] réutilise la globale today() (désormais locale)
   const lotDay = p => ((p.prodTermineTs||p.date||'')+'').slice(0,10);
 
   // Rendu d'une ligne lot (commun à toutes les sections).
@@ -34599,10 +34672,10 @@ async function labelsBatchForm(){
   };
 
   // 1) Lots du jour (toutes familles confondues), dépliés.
-  const dujour = lots.filter(p=>lotDay(p)===today);
+  const dujour = lots.filter(p=>lotDay(p)===todayStr);
   // 2) Par famille — on EXCLUT les lots du jour (déjà dans la section Aujourd'hui) pour éviter
   //    des identifiants dupliqués et une double sélection du même lot.
-  const reste = lots.filter(p=>lotDay(p)!==today);
+  const reste = lots.filter(p=>lotDay(p)!==todayStr);
   const coques = reste.filter(p=>familyOf(p)==='coques');
   const ganache = reste.filter(p=>familyOf(p)==='ganache');
   const finis  = reste.filter(p=>familyOf(p)==='finis');
@@ -35934,6 +36007,54 @@ async function applyZeroAmountFix(){
   _zeroFixList=[];
   scanZeroAmountOrders();   // rafraîchit (devrait afficher « aucune à réparer »)
 }
+// [v1194] DIAGNOSTIC : montants figés divergents. Compare o.montant au recalcul canonique depuis
+// les lignes (orderMontantRecalcule) et liste les écarts. LECTURE SEULE : ne modifie AUCUNE commande.
+// Exclut les commandes à prix manuel (écart légitime) et les commandes à 0 € (traitées par l'outil
+// dédié au-dessus). Publie aussi un résumé dans le registre technique pour la traçabilité.
+let _montantFixList=[];
+async function scanMontantDivergences(){
+  const zone=document.getElementById('fixMontantZone');
+  if(zone) zone.innerHTML='<p class="note">Analyse en cours…</p>';
+  let touched=[]; let nbManuel=0, nbOk=0;
+  try{
+    const orders=await db.orders.toArray();
+    orders.forEach(o=>{
+      if(o.histo) return;                                   // reprises d'historique : montant porté à la main
+      const stored=money2(+o.montant||0);
+      if(stored<=0) return;                                 // les 0 € sont traités par l'outil dédié
+      if(o.prixManuel){ nbManuel++; return; }               // écart assumé, non diagnosticable
+      const recalc=orderMontantRecalcule(o);
+      const ecart=money2(stored-recalc);
+      if(Math.abs(ecart)<=0.01){ nbOk++; return; }          // concordant (tolérance 1 centime)
+      touched.push({id:o.id, date:o.date, stored, recalc, ecart});
+    });
+  }catch(e){ console.error('scanMontantDiv',e); }
+  touched.sort((a,b)=>Math.abs(b.ecart)-Math.abs(a.ecart));
+  _montantFixList=touched;
+  const sommeEcart=money2(touched.reduce((s,t)=>s+t.ecart,0));
+  try{ diagPublish('montantDiverge', '⚖️ Montants figés vs recalcul', {
+    'Commandes divergentes':touched.length, 'Écart net total (stocké − recalcul)':euro(sommeEcart),
+    'Prix manuel (ignorées)':nbManuel, 'Concordantes':nbOk }); }catch(_){}
+  if(!zone) return;
+  if(!touched.length){
+    zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcd9c2">✅ <div>Tous les montants concordent avec le recalcul depuis les lignes (${nbOk} commande(s) vérifiée(s)${nbManuel?`, ${nbManuel} à prix manuel ignorée(s)`:''}).</div></div>`;
+    return;
+  }
+  zone.innerHTML=`<div class="banner" style="background:#fdf6ec;border-color:#e8cfa0;margin-bottom:8px">⚠ <div><b>${touched.length} commande(s)</b> dont le montant stocké diffère du recalcul depuis les lignes. Écart net cumulé : <b>${euro(sommeEcart)}</b>.<br><span style="font-size:.82rem;color:#9a8a82">Vérifie chaque commande avant de corriger : un écart peut venir d'une remise ou d'un ajustement légitime non marqué « prix manuel ».</span></div></div>
+    ${touched.map(t=>`<div class="sum-box"><span>${fmtDate(t.date)} <span style="color:#9a8a82">#${t.id}</span><br><span style="font-size:.8rem;color:#9a8a82">stocké ${euro(t.stored)} · recalcul ${euro(t.recalc)}</span></span><b style="color:${t.ecart>0?'#b3261e':'#d98324'}">${t.ecart>0?'+':''}${euro(t.ecart)}</b></div>`).join('')}
+    <div style="margin-top:10px"><button class="btn gold" onclick="applyMontantFix()">Aligner ces ${touched.length} montant(s) sur le recalcul</button></div>
+    <p class="note" style="margin-top:6px">Cette action met à jour <b>o.montant</b> = recalcul depuis les lignes. Les chiffres du dashboard/compta bougeront en conséquence. À n'utiliser qu'après vérification.</p>`;
+}
+async function applyMontantFix(){
+  if(!_montantFixList.length) return;
+  let n=0;
+  try{
+    for(const t of _montantFixList){ await db.orders.update(t.id, {montant:t.recalc}); n++; }
+  }catch(e){ console.error('applyMontantFix',e); }
+  toast(n+' montant(s) aligné(s) ✓');
+  _montantFixList=[];
+  scanMontantDivergences();   // rafraîchit
+}
 // Diagnostic : reproduit EXACTEMENT le calcul du CA mensuel de l'accueil, commande par commande.
 // Affiche date brute + montant brut + inclusion, pour repérer une commande mal datée ou mal typée.
 // Diagnostic du BILAN encaissé du mois : reproduit computeMonthlyBilan commande par commande,
@@ -36509,11 +36630,10 @@ async function diagBilanMois(){
     orders.forEach(o=>{
       const total=money2(+o.montant||0); if(total<=0) return;
       const dateMois = monthKey(o.date)===ym;   // commande datée du mois ?
-      // encaissé ce mois (même logique que computeMonthlyBilan)
-      const pays=(o.paiements&&o.paiements.length)?o.paiements
-        :(o.paiement==='Payé'&&o.datePaiement?[{date:o.datePaiement,montant:total}]:[]);
-      let encMois=0; pays.forEach(p=>{ if(monthKey(p.date)===ym) encMois=money2(encMois+money2(p.montant)); });
-      // une commande "Payé" SANS datePaiement ni registre : invisible pour l'encaissé (cas à signaler)
+      // encaissé ce mois — MÊME source que computeMonthlyBilan : paiementsDe (registre + repli legacy).
+      let encMois=0; paiementsDe(o).forEach(p=>{ if(monthKey(p.date)===ym) encMois=money2(encMois+money2(p.montant)); });
+      // [v1194] Commande legacy « Payé » sans registre NI datePaiement : désormais comptée (datée par
+      // défaut sur o.date via paiementsDe), mais la date d'encaissement reste imprécise → à préciser.
       const payeSansDate = (o.paiement==='Payé') && !(o.paiements&&o.paiements.length) && !o.datePaiement;
       if(dateMois){ totFacture=money2(totFacture+total); }
       if(encMois>0){ totEncaisse=money2(totEncaisse+encMois); }
@@ -36527,7 +36647,7 @@ async function diagBilanMois(){
   if(!zone) return;
   const fmtRow = r => `<div class="sum-box" style="align-items:flex-start">
       <span style="flex:1">${esc(String(r.date||''))} <span style="color:#9a8a82">#${r.id} ${esc(r.statut||'')} · ${esc(r.paiement||'—')}</span>
-        ${r.payeSansDate?'<br><span style="color:#b3261e;font-size:.76rem">⚠ « Payé » sans date de paiement → invisible dans l\'encaissé</span>':''}
+        ${r.payeSansDate?'<br><span style="color:#d98324;font-size:.76rem">⚠ « Payé » sans date → encaissement daté par défaut sur la date de commande (à préciser)</span>':''}
         ${!r.dateMois&&r.encMois>0?'<br><span style="color:#d98324;font-size:.76rem">↳ commande d\'un autre mois, mais encaissée ce mois-ci</span>':''}</span>
       <span style="text-align:right">facturé <b>${euro(r.total)}</b><br><span style="font-size:.82rem;color:#3f7d52">encaissé ${euro(r.encMois)}</span></span></div>`;
   zone.innerHTML=`
@@ -37181,6 +37301,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">💶 Commandes à 0 €</h2>
       <p class="note">Recherche les commandes dont le <b>prix total est à 0 €</b> alors qu'elles contiennent des macarons (montant non consolidé à l'enregistrement). L'outil recalcule le vrai montant depuis les lignes.</p>
       <div id="fixZeroZone"><button class="btn gold sm" onclick="scanZeroAmountOrders()">Rechercher les commandes à 0 €</button></div>
+    </div>
+    <div class="panel" style="background:#fbf7f0;margin-bottom:12px">
+      <h2 style="font-size:1rem">⚖️ Montants figés vs recalcul</h2>
+      <p class="note">Le total d'une commande est <b>figé</b> à l'enregistrement. S'il a été modifié ensuite par un autre chemin (migration, réaffectation de parfums, correction), il peut <b>ne plus correspondre</b> à la somme de ses lignes. Cet outil <b>compare</b> le montant stocké au recalcul depuis les lignes et liste les écarts. Les commandes à <b>prix manuel</b> (écart assumé) sont ignorées. <b>Lecture seule</b> tant que tu ne cliques pas sur « Aligner ».</p>
+      <div id="fixMontantZone"><button class="btn gold sm" onclick="scanMontantDivergences()">Vérifier les montants</button></div>
     </div>
     <div class="panel" style="background:#f0f4fa;margin-bottom:12px">
       <h2 style="font-size:1rem">✅ Contrôle de cohérence du CA</h2>
@@ -39157,7 +39282,7 @@ async function _genererFactureSimple_DEPRECATED(orderId){
   const remiseGEuro = globalRemiseEuro(o, sousTotal);
   const totalFinal = (+o.montant!=null) ? +o.montant : money2(sousTotal - remiseGEuro);
   // Acomptes / paiements déjà reçus
-  const paye = (o.paiements||[]).reduce((s,p)=>s+(+p.montant||0),0);
+  const paye = paiementsDe(o).reduce((s,p)=>s+(+p.montant||0),0); // [v1194] paiementsDe : legacy inclus
   const reste = Math.max(0, Math.round((totalFinal - paye)*100)/100);
 
   const clientBloc = client
@@ -39405,10 +39530,10 @@ async function genererFactureMultiple(ids){
   }).join('');
 
   // Acomptes cumulés
-  const totalPaye = orders.reduce((s,o)=>s+(o.paiements||[]).reduce((a,p)=>a+(+p.montant||0),0),0);
+  const totalPaye = orders.reduce((s,o)=>s+paiementsDe(o).reduce((a,p)=>a+(+p.montant||0),0),0); // [v1194] paiementsDe : legacy inclus
   const reste = Math.max(0, Math.round((grandTotal-totalPaye)*100)/100);
   let _lastPayDate='', _lastPayMoyen='';
-  orders.forEach(o=>(o.paiements||[]).forEach(p=>{ if(p.date && p.date>=_lastPayDate){ _lastPayDate=p.date; _lastPayMoyen=p.moyen||''; } }));
+  orders.forEach(o=>paiementsDe(o).forEach(p=>{ if(p.date && p.date>=_lastPayDate){ _lastPayDate=p.date; _lastPayMoyen=p.moyen||''; } })); // [v1194] paiementsDe : legacy inclus
 
   const clientBloc = client
     ? `${esc([client.civilite,client.prenom,client.nom].filter(Boolean).join(' ')||client.nom||'')}${client.societe?'<br>'+esc(client.societe):''}${client.adresse?'<br>'+esc(client.adresse):''}${client.tel?'<br>Tél : '+esc(client.tel):''}${client.email?'<br>'+esc(client.email):''}`
@@ -39518,7 +39643,7 @@ async function genererFactureMultiple(ids){
       numero:null,                       // pas de numéro légal tant que brouillon
       refInterne:numFact,                // référence interne lisible (basée sur la commande)
       clientId:(client&&client.id)||orders[0].clientId||0,
-      date:new Date().toISOString().slice(0,10),
+      date:today(),
       montant:money2(grandTotal),
       totalPaye:money2(totalPaye),
       orderIds, orderId:orderIds[0]||null,
@@ -42133,7 +42258,7 @@ async function revenuHoraireData(arg){
     untilStr = arg.end   || '9999-12-31';     // pas de borne haute → jusqu'à aujourd'hui/futur
     // durée de la fenêtre demandée, en jours (sert aux calculs de couverture/charges)
     const d0 = new Date((arg.start||'1970-01-01')+'T00:00:00');
-    const d1 = new Date((arg.end||new Date().toISOString().slice(0,10))+'T00:00:00');
+    const d1 = new Date((arg.end||today())+'T00:00:00');
     jours = Math.max(1, Math.round((d1 - d0)/86400000) + 1);
   } else {
     jours = +arg || REVH_DEFAULT_DAYS;
@@ -42178,13 +42303,12 @@ async function revenuHoraireData(arg){
   let caCommandes = 0;
   const detailCommandes = [];   // [v1077] {label, montant} par commande encaissée sur la fenêtre
   orders.forEach(o=>{
-    const regs = Array.isArray(o.paiements)?o.paiements:[];
+    // [v1194] Source unique d'encaissement : paiementsDe(o) (registre + repli legacy daté),
+    // IDENTIQUE au dashboard (caDuMois) et à la compta (computeAccounting). L'ancien repli
+    // « regs sinon o.datePaiement » divergeait : il ratait une commande legacy « Payé » sans
+    // datePaiement (comptée ailleurs) et comptait à tort une commande datée mais non payée.
     let encO = 0;
-    if(regs.length){
-      regs.forEach(p=>{ if(inWin(p.date)) encO += (+p.montant||0); });
-    } else if(o.datePaiement && inWin(o.datePaiement)){
-      encO += (+o.montant||0);
-    }
+    paiementsDe(o).forEach(p=>{ if(inWin(p.date)) encO += (+p.montant||0); });
     if(encO>0){ caCommandes += encO; detailCommandes.push({ label:_cliNom(o.clientId)+(o.dateLivraison?' · '+o.dateLivraison.slice(0,10):''), montant:money2(encO) }); }
   });
   detailCommandes.sort((a,b)=>b.montant-a.montant);
@@ -42231,14 +42355,14 @@ async function revenuHoraireData(arg){
   // mensuelles : on ne peut pas multiplier un coût mensuel par la fenêtre théorique (« Tout » = 99999 j
   // = 3333 mois !). On borne au temps réellement écoulé entre la 1re donnée de la fenêtre et la FIN
   // de la fenêtre (aujourd'hui par défaut, ou la date de fin si une période perso passée est demandée).
-  const _aujStr = new Date().toISOString().slice(0,10);
+  const _aujStr = today();
   const _finStr = (untilStr && untilStr < '9999-12-31') ? (untilStr < _aujStr ? untilStr : _aujStr) : _aujStr;
   const _auj = new Date(_finStr+'T00:00:00');
   const _dates = [];
   orders.forEach(o=>{
-    const regs = Array.isArray(o.paiements)?o.paiements:[];
-    if(regs.length){ regs.forEach(p=>{ const ds=(p.date||'').slice(0,10); if(inWin(ds)) _dates.push(ds); }); }
-    else if(o.datePaiement){ const ds=o.datePaiement.slice(0,10); if(inWin(ds)) _dates.push(ds); }
+    // [v1194] Mêmes dates de paiement que le CA ci-dessus (source unique paiementsDe), pour que
+    // la durée d'activité soit bornée exactement par les encaissements réellement comptés.
+    paiementsDe(o).forEach(p=>{ const ds=(p.date||'').slice(0,10); if(inWin(ds)) _dates.push(ds); });
   });
   closIn.forEach(mk=>{ const ds=mkDateFin(mk).slice(0,10); if(ds) _dates.push(ds); });
   chargesIn.forEach(c=>{ const ds=(c.date||'').slice(0,10); if(ds) _dates.push(ds); });
