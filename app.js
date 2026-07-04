@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1206';
+const APP_VERSION = 'v1207';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -16386,15 +16386,20 @@ function _compoRentabilite(taille, lignesCompo){
     // Mapping nom → libellé catalogue, IDENTIQUE à appliquerCompositionCoffret (cohérence coût).
     const _kf = x => (typeof aiNormalize==='function') ? aiNormalize(x) : String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
     const _flavByKey = {}; (typeof FLAVORS!=='undefined'?FLAVORS:[]).forEach(f=>{ _flavByKey[_kf(f)] = f; });
-    const parfums = {};
+    // computeOrderMargins/_coutReelParfums attendent parfums sous forme de TABLEAU [{nom, qte}]
+    // (il fait .forEach). On agrège d'abord par nom canonique, puis on émet le tableau.
+    const agg = {};
     (lignesCompo||[]).forEach(l=>{
       const q=Math.max(0,+l.qte||0); if(!l.nom||q<=0) return;
       const canon = _flavByKey[_kf(l.nom)] || l.nom;
-      parfums[canon] = (+parfums[canon]||0) + q;
+      agg[canon] = (+agg[canon]||0) + q;
     });
-    // Ligne coffret draft : emballage Standard (défaut), même structure que la vraie ligne.
-    const lnDraft = { type:'coffret', taille:+taille||0, parfums, embMode:'standard' };
+    const parfums = Object.entries(agg).map(([nom,qte])=>({nom, qte}));
+    // Ligne coffret draft au format attendu par le moteur (parfums = tableau).
+    const lnDraft = { type:'coffret', taille:+taille||0, parfums };
     const prix = (typeof coffretUnitPrice==='function') ? coffretUnitPrice(lnDraft) : 0;
+    // prixUnitaireApplique : évite que lineTotalStored/coffretUnitPrice reparte sur un autre tarif.
+    lnDraft.prixUnitaireApplique = prix;
     const o = { lignes:[lnDraft], montant:prix };
     const m = computeOrderMargins(o, c.recipes||[], c.recipeItems||[], c.lots||[]);
     const coutRevient = money2(m.coutMat + m.coutEmb);
