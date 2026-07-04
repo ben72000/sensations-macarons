@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1201';
+const APP_VERSION = 'v1204';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -375,6 +375,12 @@ db.version(22).stores({
 db.version(23).stores({
   rdRefs:  '++id, source, format, date',
   rdPreps: '++id, refId, role, type'
+});
+// [AUDIT-2026-07 · N2] v24 : journal des corrections de montant (alignements via applyMontantFix).
+// Trace chaque correction (commande, ancien montant, nouveau, date) pour l'auditabilité — permet de
+// savoir ce qui a été modifié en masse et quand. Purement additif : n'altère aucune table existante.
+db.version(24).stores({
+  fixJournal: '++id, orderId, date'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -2797,6 +2803,15 @@ async function refreshMatsCache(){
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){ console.error('refreshMatsCache',e); }
   try{ window._allRecipesCache = await db.recipes.toArray(); }catch(e){ console.error('refreshRecipesCache',e); }
 }
+// [AUDIT-2026-07 · A22/A23] POINT DE SYNCHRONISATION unique après TOUTE mutation de matière.
+// Une matière (surtout emballage) impacte DEUX caches : _allMatsCache (coût emballage direct) ET le
+// ratio d'estimation emballage des commandes (embRatioRefCommandes lit realPackagingCostMap(mats)).
+// Les rafraîchir ensemble ici évite d'en oublier un — à appeler après add/update/delete de db.materials.
+// Refresh explicite (pas de hook Dexie) : prévisible, hors transaction, sans risque de deadlock.
+async function syncAfterMaterialChange(){
+  await refreshMatsCache();
+  try{ await refreshEmbEstRatio(); }catch(e){ console.error('syncAfterMaterialChange embRatio',e); }
+}
 function standardCoffretMatId(taille, materials){
   const mats = materials||window._allMatsCache||[];
   const cap=+taille;
@@ -2859,7 +2874,7 @@ async function createBoitesBlanches(){
       await db.materials.add({nom:b.nom, unite:'unité', categorie:'emballage', capacite:b.capacite, seuil:0, prixDefaut:b.prixDefaut});
       nb++;
     }
-    if(nb>0) toast(`${nb} boîte(s) créée(s) ✓${dejaLa.length?' ('+dejaLa.length+' existait déjà)':''}`);
+    if(nb>0){ await syncAfterMaterialChange(); toast(`${nb} boîte(s) créée(s) ✓${dejaLa.length?' ('+dejaLa.length+' existait déjà)':''}`); }
     else toast('Ces boîtes existent déjà — rien à créer');
     if(typeof settingsForm==='function') settingsForm();   // rouvre les paramètres à jour
   }catch(e){ console.error('createBoitesBlanches',e); toast('Erreur lors de la création'); }
@@ -2874,6 +2889,7 @@ async function seedEmballages(){
     await db.materials.add({nom:`Coffret ${cap} macarons`, unite:'unité', categorie:'emballage',
       capacite:+cap, seuil:0, prixDefaut:prixDef});
   }
+  await syncAfterMaterialChange();   // [A22/A23] les nouvelles matières emballage impactent cache + ratio
 }
 // Comparateur FIFO des lots de matière/emballage.
 // RÈGLE : un lot de REPRISE (stock de départ migration, repriseStock:true) est TOUJOURS
@@ -4543,7 +4559,7 @@ async function caDuMois(mk){
   const clients = await db.clients.toArray().catch(()=>[]);
   const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
   const lignesCmd = []; let totalCmd = 0;
-  orders.filter(o=>!o.histo).forEach(o=>{
+  orders.filter(o=>!estReprise(o)).forEach(o=>{
     paiementsDe(o).forEach(p=>{
       if(ymKey(p.date||o.date||'')!==mk) return;
       const m=+p.montant||0; if(!m) return;
@@ -4756,7 +4772,7 @@ async function renderDash(){
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> <span style="font-size:.76rem;color:#9a8a82">— touche un lot pour intervenir</span><br>${prodDlcAlert.slice(0,6).map(a=>`<span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="dlcActions(${a.id})">${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})</span>`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
-     <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} encaissement(s) · voir le détail ›</div></div>
+     <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} rentrée(s) d'argent · voir le détail ›</div></div>
      <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts, charges & dons ›':'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      ${(nbLivraisons>0)?`<div class="card clickable accent" style="--card-accent:${livBeneficeNet>=0?'#3f7d52':'#b3261e'}" onclick="goView('rentabilite')" title="Impact des livraisons sur la marge"><div class="corner">🚚</div><div class="lbl">Impact livraisons</div><div class="val">${privacyModeEnabled()?'•••':`${livBeneficeNet>=0?'+':''}${euro(livBeneficeNet)}`}</div><div class="sub">${nbLivraisons} tournée(s) · coût ${euro(coutLivraisonBrut)} ›</div></div>`:''}
@@ -4939,7 +4955,7 @@ async function _accueilPeuplerCartes(){
     const box = document.getElementById('accKpis');
     if(box && kpis){
       box.innerHTML = `
-        <div class="acc-kpi" onclick="caMonthDetail()"><span class="acc-kpi-corner">€</span><div class="acc-kpi-lbl">CA ${esc(kpis.moisLbl)}</div><div class="acc-kpi-val">${kpis.privacy?'•••':euro(kpis.caMois)}</div><div class="acc-kpi-sub">${kpis.nbEnc} encaissement(s) ›</div></div>
+        <div class="acc-kpi" onclick="caMonthDetail()"><span class="acc-kpi-corner">€</span><div class="acc-kpi-lbl">CA ${esc(kpis.moisLbl)}</div><div class="acc-kpi-val">${kpis.privacy?'•••':euro(kpis.caMois)}</div><div class="acc-kpi-sub">${kpis.nbEnc} rentrée(s) d'argent ›</div></div>
         <div class="acc-kpi" onclick="goView('rentabilite')"><span class="acc-kpi-corner">📈</span><div class="acc-kpi-lbl">Marge nette / macaron</div><div class="acc-kpi-val">${kpis.privacy?'•••':(kpis.marge!=null?euro(kpis.marge):'—')}</div><div class="acc-kpi-sub">${kpis.marge!=null?'après coûts, charges & dons ›':'pas encore de ventes ›'}</div></div>
         <div class="acc-kpi" onclick="goView('rentabilite')"><span class="acc-kpi-corner">🎁</span><div class="acc-kpi-lbl">Coût des dons</div><div class="acc-kpi-val">${kpis.privacy?'•••':(kpis.coutDons!=null?euro(kpis.coutDons):'—')}</div><div class="acc-kpi-sub">${(kpis.coutDons!=null&&kpis.piecesDon>0)?`${qty(kpis.piecesDon)} offert(s) ›`:'aucun don ›'}</div></div>
         <div class="acc-kpi" onclick="goView('stockparfums')"><span class="acc-kpi-corner">🍬</span><div class="acc-kpi-lbl">Macarons en stock</div><div class="acc-kpi-val">${qtyP(kpis.stock)}</div><div class="acc-kpi-sub">par parfum ›</div></div>`;
@@ -5999,7 +6015,7 @@ async function saveMat(id){
   } else {
     await db.materials.add(o);
   }
-  closeModal(); await refreshMatsCache(); renderMaterials(); toast('Matière enregistrée ✓');
+  closeModal(); await syncAfterMaterialChange(); renderMaterials(); toast('Matière enregistrée ✓');
 }
 async function delMat(id){
   const mat = await db.materials.get(id);
@@ -6033,7 +6049,7 @@ async function doDelMat(id){
     await db.materials.delete(id);
   });
   closeModal();
-  await refreshMatsCache();
+  await syncAfterMaterialChange();
   renderMaterials();
   toast('Matière supprimée');
 }
@@ -15386,8 +15402,8 @@ async function cmdView(id){
         `<div class="sum-box"><span>Facturé au client</span><b>${euro(_m.fraisLivFactures)}</b></div>`+
         `<div class="sum-box"><span>Bénéfice net livraison</span><b style="color:${_m.livBenefice<0?'#b3261e':'#2e7d32'}">${_m.livBenefice>=0?'+':''}${euro(_m.livBenefice)}</b></div>`
       ):'')+
-      `<div class="sum-box"><span>Marge nette sans livraison</span><b>${euro(_m.margeNette)} (${_m.tauxNet}%)</b></div>`+
-      `<div class="sum-box"><span>Marge nette après livraison</span><b style="color:${_m.margeNetteApresLiv<0?'#b3261e':(_baisse>0?'#d98324':'#2e7d32')}">${euro(_m.margeNetteApresLiv)} (${_m.tauxNetApresLiv}%)</b></div>`+
+      `<div class="sum-box" title="Marge avant de déduire la tournée. Sert de point de comparaison — ce n'est pas ton gain réel si tu livres."><span>Marge nette <b>hors</b> livraison <span style="color:#9a8a82;font-weight:400">(référence)</span></span><b style="color:#8a7a72">${euro(_m.margeNette)} (${_m.tauxNet}%)</b></div>`+
+      `<div class="sum-box" title="Marge réelle une fois la tournée payée (carburant + temps). C'est CE chiffre qui dit si la commande est rentable, livraison incluse."><span>✅ Marge nette <b>après</b> livraison <span style="color:#9a8a82;font-weight:400">(à retenir)</span></span><b style="color:${_m.margeNetteApresLiv<0?'#b3261e':(_baisse>0?'#d98324':'#2e7d32')}">${euro(_m.margeNetteApresLiv)} (${_m.tauxNetApresLiv}%)</b></div>`+
       (_baisse>0?`<div class="sum-box" style="font-size:.82rem;color:#b3261e"><span>Impact sur le taux de marge</span><b>−${_baisse.toFixed(1)} pt</b></div>`:'')+
       (function(){
         const s=getSettings();
@@ -15644,6 +15660,15 @@ let cmdClientsCache = [];
 // Convertit une ancienne commande mono-type en lignes (rétro-compat).
 // Renvoie les lignes SOUS FORME DE STOCKAGE : parfums/items en TABLEAU [{nom,qte}].
 // (Forme attendue par les lecteurs : liste commandes, analytics, besoins matières, détail.)
+// [AUDIT-2026-07 · A4] DÉFINITION UNIQUE d'une REPRISE d'historique (commande de migration).
+// Deux marqueurs possibles : commande-niveau (o.histo===true) OU une ligne de type 'histo'.
+// Centralisé ici pour que le Dashboard (caDuMois) et la Compta (computeAccounting) partagent
+// EXACTEMENT la même règle d'exclusion — sinon les deux écrans redivergent.
+function estReprise(o){
+  if(!o) return false;
+  if(o.histo===true) return true;
+  try{ return orderToLines(o).some(l=>l && l.type==='histo'); }catch(e){ return false; }
+}
 function orderToLines(o){
   if(Array.isArray(o.lignes) && o.lignes.length) return JSON.parse(JSON.stringify(o.lignes));
   // ancien format : un seul type
@@ -17495,8 +17520,8 @@ function cmdDeliveryRecalc(){
     `<div style="display:flex;justify-content:space-between"><span>🚚 Coût livraison (A/R ${liv.distAR} km${liv.minutes?` · ${liv.minutes} min`:''})</span><b>${euro(liv.total)}</b></div>`+
     `<div style="display:flex;justify-content:space-between;color:#8a7a72;font-size:.82rem"><span>dont carburant / temps</span><span>${euro(liv.coutCarburant)} · ${euro(liv.coutTemps)}</span></div>`+
     `<div style="display:flex;justify-content:space-between;color:#8a7a72;font-size:.78rem"><span>conso retenue</span><span>${liv.conso} L/100${(o.consoVehicule&&o.consoVehicule!=defConso)?' (réelle)':' (défaut)'}</span></div>`+
-    `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span>Marge nette <b>sans</b> livraison</span><b>${euro(m.margeNette)} (${m.tauxNet}%)</b></div>`+
-    `<div style="display:flex;justify-content:space-between"><span>Marge nette <b>après</b> livraison</span><b style="color:${m.margeNetteApresLiv<0?'#b3261e':(baisse>0?'#d98324':'#2e7d32')}">${euro(m.margeNetteApresLiv)} (${m.tauxNetApresLiv}%)</b></div>`+
+    `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px" title="Marge avant la tournée — point de comparaison, pas le gain réel si tu livres."><span>Marge nette <b>hors</b> livraison <span style="color:#9a8a82">(référence)</span></span><b style="color:#8a7a72">${euro(m.margeNette)} (${m.tauxNet}%)</b></div>`+
+    `<div style="display:flex;justify-content:space-between" title="Marge réelle une fois la tournée payée. C'est le chiffre à retenir pour juger la rentabilité."><span>✅ Marge nette <b>après</b> livraison <span style="color:#9a8a82">(à retenir)</span></span><b style="color:${m.margeNetteApresLiv<0?'#b3261e':(baisse>0?'#d98324':'#2e7d32')}">${euro(m.margeNetteApresLiv)} (${m.tauxNetApresLiv}%)</b></div>`+
     (baisse>0?`<div style="display:flex;justify-content:space-between;color:#b3261e;font-size:.82rem"><span>Impact sur le taux de marge</span><b>−${baisse.toFixed(1)} pt</b></div>`:'')+
     (function(){
       // Trois paliers de prix de livraison, du plus généreux au plus protecteur.
@@ -18172,7 +18197,12 @@ async function computeAccounting(opts){
     if(_inRange(o.date)) return true;                       // date de commande dans la plage
     return _orderPayDates(o).some(d=>_inRange(d));          // ou un paiement dans la plage
   };
-  const orders = (_periodeStart||_periodeEnd) ? allOrders.filter(_orderInRange) : allOrders;
+  // [AUDIT-2026-07 · A4] Une REPRISE d'historique (migration) ne compte PAS dans le CA encaissé ni les
+  // cotisations : c'est un CA passé, déjà déclaré à l'époque — le réintégrer serait une double
+  // déclaration URSSAF. Le Dashboard (caDuMois) les exclut déjà ; on aligne la Compta via le MÊME
+  // prédicat partagé estReprise (couvre o.histo ET une ligne type 'histo').
+  const ordersInRange = (_periodeStart||_periodeEnd) ? allOrders.filter(_orderInRange) : allOrders;
+  const orders = ordersInRange.filter(o=>!estReprise(o));   // CA/cotisations : reprises exclues
   const allCharges = await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
   const charges = (_periodeStart||_periodeEnd) ? allCharges.filter(c=> _inRange(c.date)) : allCharges;
   const recipes = await db.recipes.toArray();
@@ -18281,10 +18311,11 @@ async function computeAccounting(opts){
   const totalCout=money2(serie.reduce((s,x)=>s+x.coutMatieres,0));
   // Part des commandes migrées (reprise) : leur coût matières est estimé grossièrement
   // (pas de détail produit), donc la marge est moins fiable. On le signale.
+  // [A4] Reprises EXCLUES du CA de la période : on les compte ici pour transparence (migCA = CA mis de
+  // côté). Calculé sur ordersInRange (avant exclusion), avec le même prédicat que le filtre ci-dessus.
   let migCount=0, migCA=0;
-  orders.forEach(o=>{
-    const lignes = orderToLines(o);
-    if(lignes.some(l=>l.type==='histo')){ migCount++; migCA=money2(migCA+(+o.montant||0)); }
+  ordersInRange.forEach(o=>{
+    if(estReprise(o)){ migCount++; migCA=money2(migCA+(+o.montant||0)); }
   });
   // Valeur des pertes / casse déclarées (coût de revient des pièces jetées) — imputée au résultat.
   // [AUDIT-2026-07 · A25] AVANT : lossesAll non filtré → le résultat du mois M incluait les pertes
@@ -19093,13 +19124,19 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
   let embEstimSource = null;   // renseigné dès qu'une estimation histo est appliquée
   // Additionne le coût de revient réel des parfums d'une liste [{nom, qte}] ; alimente aussi le
   // comparatif « moyenne » et le compteur de non-résolus. Retourne le coût réel (parfums résolus).
-  const _coutReelParfums = (arr)=>{
+  const _coutReelParfums = (arr, opts)=>{
+    // [AUDIT-2026-07 · A14] opts.don=true : un DON dont le parfum n'est pas rattaché à une recette est
+    // valorisé au coût MOYEN (avgUnit) plutôt que compté à part — un macaron offert coûte de la matière
+    // même sans recette reliée. Aligne la fiche commande sur analyzeFlavorProfitability (dashboard).
+    // Pour une VENTE (opts absent), on garde le signalement A2 : parfum inconnu → piecesNonResolues.
+    const modeDon = !!(opts && opts.don);
     let c = 0;
     (arr||[]).forEach(pp=>{
       const q = +pp.qte||0; if(q<=0) return;
       coutMatMoyenne = money2(coutMatMoyenne + q*avgUnit);
       const u = _resolver.unitPourParfum(pp.nom);
       if(u.resolved){ c = money2(c + q*u.unit); coutMOD = money2(coutMOD + q*(+u.unitMOD||0)); }
+      else if(modeDon){ c = money2(c + q*avgUnit); coutMOD = money2(coutMOD + q*avgMOD); }   // don non résolu → moyenne
       else { piecesNonResolues += q; if(pp.nom && parfumsNonResolus.indexOf(pp.nom)<0) parfumsNonResolus.push(pp.nom); }
     });
     return c;
@@ -19166,7 +19203,8 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
     else if(ln.type==='don'){
       pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
       // [A2] coût réel des parfums offerts (le don EST un coût de revient réel).
-      coutMat=money2(coutMat + _coutReelParfums(ln.parfums));
+      // [A14] don:true → parfum non rattaché valorisé à la moyenne (aligné dashboard), pas compté à part.
+      coutMat=money2(coutMat + _coutReelParfums(ln.parfums, {don:true}));
     }
     else if(ln.type==='histo'){
       // Commande de reprise (migration) : pas de détail produit fin.
@@ -20602,9 +20640,19 @@ function lossUnitCost(comp, coutObj, mats){
   const matCoqueUnit = +vent.coqueUnit||0;              // matière coque, PAR MACARON
   const matGarnUnit  = +vent.garnitureUnit||0;          // matière garniture, PAR MACARON
   const matTotUnit   = matCoqueUnit + matGarnUnit;
+  // [AUDIT-2026-07 · A16] GARDE-FOU : si aucune matière n'est classifiée (matTotUnit=0), on ne peut PAS
+  // ventiler coque/garniture de façon fiable — l'ancien code mettait partCoque=1 et imputait 100% du
+  // coût conso/MO à la coque (faux pour une ganache). On retombe sur le coût COMPLET (honnête) et on
+  // le signale en console pour diagnostic, plutôt que de produire un coût de perte faussé en silence.
+  if(matTotUnit===0){
+    if(typeof console!=='undefined' && console.warn){
+      console.warn('[lossUnitCost] recette '+(coutObj.recipeId!=null?coutObj.recipeId:'?')+' ('+(coutObj.nom||'—')+') sans matière classifiée → coût complet imputé au composant « '+comp+' » (ventilation impossible).');
+    }
+    return complet;
+  }
   // Part de conso + MO à imputer, au prorata du poids matière du composant.
   const consoMODUnit = (+coutObj.coutConsoUnit||0) + (+coutObj.coutMODUnit||0); // par macaron
-  const partCoque = matTotUnit>0 ? matCoqueUnit/matTotUnit : 1;  // si pas de garniture connue → tout à la coque
+  const partCoque = matTotUnit>0 ? matCoqueUnit/matTotUnit : 1;  // (matTotUnit>0 garanti ici)
 
   if(comp==='coques'){
     // Coût d'un MACARON-équivalent de coques (2 coques) = matière coque + part conso/MO coque.
@@ -22333,7 +22381,7 @@ function comptaFlowSchema(A){
     ${box('= Résultat', res, res>=0?'ton bénéfice net 🎉':'déficit à surveiller', res>=0?'#3f7d52':'#b3261e', res>=0?'#eef6ef':'#fbeeec')}
 
     <p class="note" style="margin-top:12px">💡 <b>En clair :</b> tu as facturé <b>${e(fact)}</b>. ${creances>0?`Il te reste <b>${e(creances)}</b> à encaisser. `:''}Sur les <b>${e(enc)}</b> déjà reçus, la fabrication t'a coûté <b>${e(mat)}</b> et tes charges <b>${e(charges)}</b> — il te reste donc <b style="color:${res>=0?'#3f7d52':'#b3261e'}">${e(res)}</b>.</p>
-    ${(A.migCount>0)?`<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:8px">⚠️ <div><b>Marge approximative :</b> ${A.migCount} commande(s) de reprise (${e(A.migCA)}) n'ont pas de détail produit. Leur coût matières est <b>estimé</b> au coût moyen d'un macaron — le résultat réel peut différer. Pour une marge précise, saisis ces ventes en commande détaillée.</div></div>`:''}
+    ${(A.migCount>0)?`<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:8px">ℹ️ <div><b>${A.migCount} reprise(s) d'historique non comptée(s)</b> ici (${e(A.migCA)}). Ce sont des ventes d'avant l'app, déjà déclarées à l'époque : elles sont <b>exclues du CA encaissé et des cotisations</b> pour éviter une double déclaration, comme sur l'accueil. Elles restent visibles dans tes statistiques et tendances.</div></div>`:''}
   </div>`;
 }
 // Détail cliquable d'un flux comptable (facturé / encaissé) sur la PÉRIODE active.
@@ -22823,10 +22871,14 @@ async function renderCompta(){
   // cumul de l'année en cours (cotisations URSSAF year-to-date)
   const yearOf = (_comptaMonth||'').slice(0,4);
   let ytdGoods=0, ytdService=0, ytdCotis=0;
-  for(const m of moisDispo.filter(x=>x.slice(0,4)===yearOf)){
-    const bm = (m===_comptaMonth) ? B : await computeMonthlyBilan(m);
-    ytdGoods+=bm.goods; ytdService+=bm.service; ytdCotis+=bm.cotisTotal;
-  }
+  // [AUDIT-2026-07 · A12] Parallélisation : au lieu de 12 awaits séquentiels (freeze 800-1500 ms à
+  // l'ouverture sur iPhone), on calcule tous les mois de l'année EN PARALLÈLE via Promise.all. Le mois
+  // courant réutilise B déjà calculé (pas de recalcul). Résultat identique, latence divisée.
+  const _ymYtd = moisDispo.filter(x=>x.slice(0,4)===yearOf);
+  const _bilansYtd = await Promise.all(
+    _ymYtd.map(m => (m===_comptaMonth) ? Promise.resolve(B) : computeMonthlyBilan(m))
+  );
+  _bilansYtd.forEach(bm=>{ ytdGoods+=bm.goods; ytdService+=bm.service; ytdCotis+=bm.cotisTotal; });
   ytdGoods=money2(ytdGoods); ytdService=money2(ytdService); ytdCotis=money2(ytdCotis);
   // [TRAJECTOIRE CA] Réutilise le moteur des seuils fiscaux pour tracer la trajectoire prévisionnelle
   // directement dans la compta (courbe réelle + projection fin d'année + lignes de seuil).
@@ -35730,7 +35782,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs','documents','components','packagingConsumption'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs','documents','components','packagingConsumption','fixJournal'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -35898,6 +35950,12 @@ async function applyDump(dump){
       localStorage.setItem(PROD_SESS_KEY, JSON.stringify(ps));
     }
   }catch(e){ console.error('restore prodSess cache', e); }
+  // [AUDIT-2026-07 · A22/A23] Après une restauration, les caches dérivés (matières + ratio emballage
+  // commandes + ratio emballage marchés) sont périmés → on les reconstruit explicitement, sinon les
+  // coûts emballage et estimations resteraient faux jusqu'au prochain refresh manuel.
+  try{ await syncAfterMaterialChange(); }catch(e){ console.error('restore sync mats', e); }
+  try{ await refreshEmbEstRatioMarches(); }catch(e){ console.error('restore sync marches', e); }
+  try{ if(typeof refreshMoCtx==='function') await refreshMoCtx(); }catch(e){ console.error('restore sync moCtx', e); }
 }
 
 // ---- EXPORT MANUEL (fichier .json téléchargé) ----
@@ -36485,16 +36543,34 @@ async function scanMontantDivergences(){
   }
   zone.innerHTML=`<div class="banner" style="background:#fdf6ec;border-color:#e8cfa0;margin-bottom:8px">⚠ <div><b>${touched.length} commande(s)</b> dont le montant stocké diffère du recalcul depuis les lignes. Écart net cumulé : <b>${euro(sommeEcart)}</b>.<br><span style="font-size:.82rem;color:#9a8a82">Vérifie chaque commande avant de corriger : un écart peut venir d'une remise ou d'un ajustement légitime non marqué « prix manuel ».</span></div></div>
     ${touched.map(t=>`<div class="sum-box"><span>${fmtDate(t.date)} <span style="color:#9a8a82">#${t.id}</span><br><span style="font-size:.8rem;color:#9a8a82">stocké ${euro(t.stored)} · recalcul ${euro(t.recalc)}</span></span><b style="color:${t.ecart>0?'#b3261e':'#d98324'}">${t.ecart>0?'+':''}${euro(t.ecart)}</b></div>`).join('')}
-    <div style="margin-top:10px"><button class="btn gold" onclick="applyMontantFix()">Aligner ces ${touched.length} montant(s) sur le recalcul</button></div>
-    <p class="note" style="margin-top:6px">Cette action met à jour <b>o.montant</b> = recalcul depuis les lignes. Les chiffres du dashboard/compta bougeront en conséquence. À n'utiliser qu'après vérification.</p>`;
+    <div style="margin-top:10px">
+      <label class="sum-box" style="cursor:pointer;background:#fdf6ec"><input type="checkbox" id="confirmMontantFix" style="margin-right:8px"> <span style="font-size:.85rem">Je confirme avoir vérifié ces ${touched.length} commande(s) et vouloir aligner leur montant sur le recalcul.</span></label>
+      <button class="btn gold" style="margin-top:8px" onclick="applyMontantFix()">Aligner ces ${touched.length} montant(s) sur le recalcul</button>
+    </div>
+    <p class="note" style="margin-top:6px">Cette action met à jour <b>o.montant</b> = recalcul depuis les lignes, et journalise chaque correction (traçabilité). Les chiffres du dashboard/compta bougeront en conséquence. À n'utiliser qu'après vérification.</p>`;
 }
 async function applyMontantFix(){
   if(!_montantFixList.length) return;
+  // [N2] Garde-fou : exige la confirmation explicite (case cochée) avant toute correction en masse.
+  const chk=document.getElementById('confirmMontantFix');
+  if(!chk || !chk.checked){ toast('Coche la confirmation avant d\'aligner les montants.'); return; }
   let n=0;
   try{
-    for(const t of _montantFixList){ await db.orders.update(t.id, {montant:t.recalc}); n++; }
+    const nowIso = new Date().toISOString();
+    for(const t of _montantFixList){
+      await db.orders.update(t.id, {montant:t.recalc});
+      // [N2] Journalise la correction (auditabilité : qui/quoi/quand, réversible manuellement).
+      try{
+        await db.fixJournal.add({
+          orderId: t.id, date: nowIso,
+          ancienMontant: money2(t.stored), nouveauMontant: money2(t.recalc),
+          ecart: money2(t.ecart), source: 'applyMontantFix'
+        });
+      }catch(eJ){ console.error('fixJournal add', eJ); }   // le journal ne doit jamais bloquer la correction
+      n++;
+    }
   }catch(e){ console.error('applyMontantFix',e); }
-  toast(n+' montant(s) aligné(s) ✓');
+  toast(n+' montant(s) aligné(s) et journalisé(s) ✓');
   _montantFixList=[];
   scanMontantDivergences();   // rafraîchit
 }
@@ -36735,7 +36811,7 @@ async function convertirDenreeKgVersGConfirm(matId){
         await db.materialLots.update(l.id, {qteInitiale:qiN, qteRestante:qrN, prixUnitaire:puN});
       }
     });
-    await refreshMatsCache();
+    await syncAfterMaterialChange();
     closeModal();
     diagInspectionKg();
     // Annulation rapide
@@ -36745,7 +36821,7 @@ async function convertirDenreeKgVersGConfirm(matId){
           await db.materials.update(matId, {unite:snap.unite});
           for(const s of snap.lots){ await db.materialLots.update(s.id, {qteInitiale:s.qteInitiale, qteRestante:s.qteRestante, prixUnitaire:s.prixUnitaire}); }
         });
-        await refreshMatsCache(); diagInspectionKg();
+        await syncAfterMaterialChange(); diagInspectionKg();
       });
     } else {
       toast(`${mat.nom} convertie en grammes ✓`);
