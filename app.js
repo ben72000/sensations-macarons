@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1182';
+const APP_VERSION = 'v1185';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -15382,6 +15382,7 @@ function lineTotalBrut(ln){
   return lineTotalStored(clone);
 }
 let cmdLines = [];      // lignes de produits de la commande en cours
+let _cmdEditingId = 0;  // id de la commande actuellement éditée dans le formulaire (0 = nouvelle)
 let _cmdPriceManual = false;  // true seulement si l'utilisateur a tapé un prix à la main (sinon prix auto)
 let _cmdRemiseGlobaleEur = 0; // [REMISE GLOBALE] référence en euros fixes de la commande en cours d'édition
 let cmdProductsCache = [];
@@ -15436,6 +15437,9 @@ let _cmdDevisMode = false;   // le formulaire de commande est-il en train de cr�
 let _cmdDevisId = null;      // id du devis édité (registre documents)
 async function cmdForm(id, opts){
   opts = opts || {};
+  _cmdEditingId = id || 0;               // id de la commande en cours d'édition (0 = nouvelle) — sert aux
+                                         // modales intermédiaires (composition, client rapide) pour rouvrir
+                                         // le formulaire sans le détruire (keepLines).
   _cmdDevisMode = !!opts.devis;          // true = on crée/édite un DEVIS (enregistré dans documents)
   _cmdDevisId = opts.devisId || null;    // id du devis en cours d'édition (sinon nouveau)
   _privacySuspend=1; // saisie de commande toujours en clair, même en mode discret
@@ -15889,9 +15893,9 @@ function drawCoffretLine(ln,i){
         </select>${!cmdEmballagesCache.length?'<p class="note" style="color:var(--red)">Aucun emballage créé. Ajoute-en dans Stock → Matières (catégorie emballage).</p>':''}`:''}
       </div>`;
     })()}
+    <div style="margin:8px 0 6px"><button class="btn gold sm" onclick="proposerCompositionLigne(${i})" style="font-size:.84rem;width:100%">💡 Proposer une composition selon mes stocks</button></div>
     <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité par parfum)</label>
     <div class="flav-grid">${flavRows}${sansParfumRow}</div>
-    <div style="margin:6px 0 2px"><button class="btn ghost sm" onclick="proposerCompositionLigne(${i})" style="font-size:.82rem">💡 Proposer une composition selon mes stocks</button></div>
     ${sansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${sansParfum} macaron${sansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>
     ${cmdSpModeBlock(ln,i)}` : ''}
     <div class="sum-box" style="border:2px solid ${rempliCol};background:${totQ===cap?'#eef6ee':(totQ>cap?'#fdf2f1':'#fbf8f3')}">
@@ -16011,10 +16015,14 @@ function appliquerSuggestionParfums(i, payload){
 // Réutilise la mécanique éprouvée de suggererParfumsLigne (openModal → Appliquer).
 // ═══════════════════════════════════════════════════════════════════════════
 let _compoModeCourant = 'flexible';   // mémorise le dernier mode choisi (strict/flexible)
+let _compoParfumsEnPlus = 0;          // mode STRICT : nb de parfums choisis EN PLUS de la règle (chacun +3 €)
 
-async function proposerCompositionLigne(i, mode){
+async function proposerCompositionLigne(i, mode, parfumsEnPlus){
   const ln = cmdLines[i]; if(!ln || ln.type!=='coffret') return;
   if(mode) _compoModeCourant = (mode==='strict'?'strict':'flexible');
+  // Le nb de parfums en plus n'a de sens qu'en STRICT ; on le réinitialise en basculant sur Flexible.
+  if(mode==='flexible') _compoParfumsEnPlus = 0;
+  if(parfumsEnPlus!=null) _compoParfumsEnPlus = Math.max(0, +parfumsEnPlus||0);
   const taille = +ln.taille||6;
   const dateLiv = (typeof val==='function' ? (val('f_date')||'') : '') || '';
   const heureLiv = (typeof val==='function' ? (val('f_heure')||'') : '') || '';
@@ -16027,13 +16035,14 @@ async function proposerCompositionLigne(i, mode){
     <div style="padding:14px;text-align:center;color:#9a8576">⏳ Analyse du stock, des batchs à venir et de la production faisable…</div>`);
 
   try{
-    const res = await genererCompositionsCoffret(taille, dateLiv, heureLiv, {mode:_compoModeCourant, parfumsSouhaites});
+    const res = await genererCompositionsCoffret(taille, dateLiv, heureLiv,
+      {mode:_compoModeCourant, parfumsSouhaites, parfumsEnPlus: _compoModeCourant==='strict' ? _compoParfumsEnPlus : 0});
     _renderCompositionsModale(i, res, taille, dateLiv);
   }catch(e){
     console.error('proposerCompositionLigne', e);
     openModal(`<h3>💡 Compositions alternatives</h3>
       <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div>Erreur pendant l'analyse des compositions.</div></div>
-      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+      <div class="modal-actions"><button class="btn ghost" onclick="fermerCompositionModale()">Fermer</button></div>`);
   }
 }
 
@@ -16105,23 +16114,57 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
     }).join('');
   }
 
+  // [PARFUMS EN +] Bloc visible UNIQUEMENT en mode strict : rappelle la règle (nb de parfums inclus
+  // pour la taille) et permet d'ajouter volontairement des parfums supplémentaires, chacun facturé
+  // FLAVOR_SURCHARGE (3 €). Le surcoût affiché reprend la tarification réelle de la ligne coffret.
+  let strictExtraBloc = '';
+  if(mode==='strict'){
+    const limite = (res && res.meta && res.meta.limiteReglementaire!=null)
+      ? res.meta.limiteReglementaire
+      : ((typeof BOX_FLAVOR_LIMIT!=='undefined' && BOX_FLAVOR_LIMIT[taille]!=null) ? BOX_FLAVOR_LIMIT[taille] : null);
+    const extra = (res && res.meta && res.meta.parfumsEnPlus) ? +res.meta.parfumsEnPlus : 0;
+    const surco = (typeof FLAVOR_SURCHARGE!=='undefined' ? FLAVOR_SURCHARGE : 3);
+    const maxExtra = Math.max(0, (taille - (limite||0)));   // pas plus de parfums que de macarons
+    const surcoutTxt = extra>0
+      ? `<span style="color:var(--caramel,#AA7C39);font-weight:600">+${(typeof euro==='function')?euro(extra*surco):(extra*surco)+' €'}</span> (${extra}×${surco} €)`
+      : `<span style="color:#9a8a82">aucun supplément</span>`;
+    const btn = (delta, lbl, dis) => `<button class="btn ghost sm" ${dis?'disabled style="opacity:.4"':''}
+      onclick="proposerCompositionLigne(${i},'strict',${Math.max(0,Math.min(maxExtra, extra+delta))})"
+      style="min-width:34px;padding:4px 9px;font-size:1rem;line-height:1">${lbl}</button>`;
+    strictExtraBloc = `<div style="background:#faf7f1;border:1px solid var(--hair);border-radius:11px;padding:9px 11px;margin:2px 0 8px">
+      <div style="font-size:.8rem;color:#6a5a52;margin-bottom:5px">
+        Ce format inclut <b>${limite!=null?limite:'—'} parfum${(limite||0)>1?'s':''}</b>. Tu peux en ajouter (chacun <b>+${surco} €</b>).
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        ${btn(-1,'−', extra<=0)}
+        <span style="font-size:.9rem;min-width:90px;text-align:center">Parfums en + : <b>${extra}</b></span>
+        ${btn(1,'+', extra>=maxExtra)}
+        <span style="margin-left:auto;font-size:.82rem">${surcoutTxt}</span>
+      </div>
+    </div>`;
+  }
+
   const dateTxt = dateLiv ? ((typeof fmtDate==='function')?fmtDate(dateLiv):dateLiv) : 'la date choisie';
   openModal(`<h3>💡 Compositions alternatives</h3>
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
       <p class="note" style="margin:0">Coffret <b>${taille}</b> pour le <b>${esc(dateTxt)}</b> — du plus simple au plus engageant.</p>
       ${toggle}
     </div>
+    ${strictExtraBloc}
     ${corps}
     ${fbHtml}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="fermerCompositionModale()">Fermer</button></div>`);
 }
 
 // Applique une composition à la ligne coffret : REMPLACE les parfums de la ligne (et la taille si
 // le fallback l'a changée). On remplace plutôt qu'on cumule : la compo proposée EST le coffret voulu.
 function appliquerCompositionCoffret(i, payload){
-  const ln = cmdLines[i]; if(!ln || ln.type!=='coffret'){ closeModal(); return; }
+  // En cas de sortie précoce (ligne invalide, payload cassé), on ROUVRE le formulaire plutôt que de
+  // le fermer : sinon la commande en cours d'édition serait perdue (le formulaire est une modale).
+  const _reopen = () => cmdForm(_cmdEditingId||0, {keepLines:true});
+  const ln = cmdLines[i]; if(!ln || ln.type!=='coffret'){ _reopen(); return; }
   let data; try{ data = JSON.parse(decodeURIComponent(payload)); }catch(e){ data=null; }
-  if(!data || !Array.isArray(data.lignes)){ closeModal(); return; }
+  if(!data || !Array.isArray(data.lignes)){ _reopen(); return; }
   // Changement de taille (fallback) : on adopte la nouvelle taille et on re-tarife.
   if(data.changeTaille && +data.taille){ ln.taille = +data.taille; ln.prixUnitaireApplique = null; }
   // Remplacement des parfums.
@@ -16131,12 +16174,17 @@ function appliquerCompositionCoffret(i, payload){
   const total = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
   const reste = Math.max(0, (+ln.taille||0) - total);
   if(reste>0) ln.sansParfum = reste; else delete ln.sansParfum;
-  closeModal();
-  drawLines();
-  if(typeof cmdFeasibilityRecalc==='function') cmdFeasibilityRecalc();
+  // [FIX modale] Le formulaire de commande EST une modale ; la modale de composition a écrasé son
+  // contenu. Un simple closeModal() fermerait donc le formulaire ET perdrait les lignes non enregistrées.
+  // On ROUVRE le formulaire en préservant cmdLines (keepLines) — comme le fait quickClient — pour que
+  // le choix reste visible et que l'utilisateur puisse continuer puis Enregistrer normalement.
+  cmdForm(_cmdEditingId||0, {keepLines:true});
 }
 
-
+// [FIX modale] Fermeture de la modale de composition SANS perdre la commande : le formulaire est une
+// modale que la composition a écrasée. « Fermer » doit donc ROUVRIR le formulaire (lignes préservées),
+// pas simplement vider la modale (ce qui ferait disparaître la commande en cours d'édition).
+function fermerCompositionModale(){ cmdForm(_cmdEditingId||0, {keepLines:true}); }
 
 function drawEventLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
@@ -47160,31 +47208,42 @@ function _composerCoffrets(dispoParfums, taille, opts){
     return { lignes, total, vS, vM, vR, manqueTotal };
   };
 
-  // Détermine les cibles selon le mode.
   let ciblesBase;
-  if(mode==='strict' && Array.isArray(opts.parfumsSouhaites) && opts.parfumsSouhaites.length){
-    ciblesBase = opts.parfumsSouhaites.map(x=>({nom:x.nom, qte:+x.qte||0})).filter(x=>x.qte>0);
-  } else {
-    // Flexible : coffret ASSORTI. On privilégie la VARIÉTÉ — aucun parfum ne monopolise le coffret.
-    // Méthode : viser un nombre de parfums cible, plafonner la part de chacun à ceil(taille/nbVisé),
-    // puis remplir en TOURS DE TABLE (round-robin) les parfums les plus disponibles, en respectant
-    // la dispo réelle (stock+mutualisé) ; le reliquat éventuel est comblé par des parfums relançables.
-    const cap = opts.maxParfums || (taille<=6?3 : taille<=8?4 : taille<=16?6 : 8);
-    // Parfums candidats triés par disponibilité décroissante (stock+mutualisé), relançables ensuite.
-    const tri = list.slice().sort((a,b)=>
-      ((b.stock||0)+(b.mutualise||0)) - ((a.stock||0)+(a.mutualise||0))
-      || (b.relanceOk?1:0)-(a.relanceOk?1:0)
-    );
-    if(!tri.length) return [];
-    // Nombre de parfums visé : autant que possible dans la limite `cap`, sans descendre sous ~taille/cap.
-    const nbVise = Math.min(cap, Math.max(2, Math.min(tri.length, taille)));
+  // Détermine les cibles selon le mode.
+  // Les DEUX modes utilisent la MÊME mécanique round-robin (aucune duplication) : seul le NOMBRE de
+  // parfums visé change.
+  //   • STRICT  : on respecte la règle métier BOX_FLAVOR_LIMIT[taille] (6→3, 8→4, 16→4, 25→5), plus
+  //     d'éventuels « parfums en + » choisis volontairement (opts.parfumsEnPlus) — chacun facturé
+  //     FLAVOR_SURCHARGE (3 €) par la tarification existante de la ligne coffret.
+  //   • FLEXIBLE: le moteur choisit librement le nombre de parfums pour MAXIMISER la faisabilité.
+  const limiteReglementaire = (typeof BOX_FLAVOR_LIMIT!=='undefined' && BOX_FLAVOR_LIMIT[taille]!=null)
+    ? BOX_FLAVOR_LIMIT[taille]
+    : (taille<=6?3 : taille<=8?4 : taille<=16?4 : 5);
+  const parfumsEnPlus = Math.max(0, +(opts.parfumsEnPlus||0));
+
+  // Candidats triés par disponibilité décroissante (stock+mutualisé), relançables ensuite.
+  const tri = list.slice().sort((a,b)=>
+    ((b.stock||0)+(b.mutualise||0)) - ((a.stock||0)+(a.mutualise||0))
+    || (b.relanceOk?1:0)-(a.relanceOk?1:0)
+  );
+  if(!tri.length){ ciblesBase = []; }
+  else {
+    let nbVise, cap;
+    if(mode==='strict'){
+      // Nombre de parfums EXACT = règle + extras (borné par la taille et par le nb de candidats).
+      nbVise = Math.min(tri.length, taille, limiteReglementaire + parfumsEnPlus);
+      nbVise = Math.max(1, nbVise);
+      cap = nbVise;                        // strict : on ne dépasse jamais le nombre visé
+    } else {
+      cap = opts.maxParfums || (taille<=6?3 : taille<=8?4 : taille<=16?6 : 8);
+      nbVise = Math.min(cap, Math.max(2, Math.min(tri.length, taille)));
+    }
     const plafondParParfum = Math.max(1, Math.ceil(taille / nbVise));
-    // On retient les nbVise premiers candidats (les plus dispo) + une réserve relançable pour combler.
     const retenus = tri.slice(0, nbVise);
-    const quotas = new Map();   // nomCanon → qte allouée
+    const quotas = new Map();
     retenus.forEach(p=>quotas.set(norm(p.nom), 0));
     let reste = taille;
-    // Round-robin : à chaque tour, +1 à chaque parfum qui a encore du dispo ET n'a pas atteint son plafond.
+    // Round-robin : +1 à chaque parfum ayant encore du dispo et sous son plafond.
     let progres = true;
     while(reste>0 && progres){
       progres = false;
@@ -47195,10 +47254,8 @@ function _composerCoffrets(dispoParfums, taille, opts){
         if(q<plafondParParfum && q<dispoReelle){ quotas.set(k, q+1); reste--; progres=true; }
       }
     }
-    // Reliquat : compléter via relance (parfums retenus relançables d'abord, puis nouveaux relançables),
-    // en respectant le plafond de variété pour ne pas retomber sur un quasi mono-parfum.
+    // Reliquat via relance (parfums retenus relançables d'abord).
     if(reste>0){
-      // a) gonfler les parfums retenus relançables jusqu'au plafond
       for(const p of retenus){
         if(reste<=0) break;
         if(!p.relanceOk) continue;
@@ -47206,7 +47263,8 @@ function _composerCoffrets(dispoParfums, taille, opts){
         const marge=plafondParParfum-q;
         if(marge>0){ const add=Math.min(marge,reste); quotas.set(k,q+add); reste-=add; }
       }
-      // b) ajouter de nouveaux parfums relançables (hors retenus) tant qu'il reste de la place
+      // Ajout de nouveaux parfums relançables (hors retenus) — SANS jamais dépasser `cap`.
+      // En strict, cap = nbVise, donc on ne franchit PAS le nombre réglementaire (+extras).
       if(reste>0){
         for(const p of tri){
           if(reste<=0 || quotas.size>=cap) break;
@@ -47215,9 +47273,8 @@ function _composerCoffrets(dispoParfums, taille, opts){
           const add=Math.min(plafondParParfum,reste); quotas.set(k,add); reste-=add;
         }
       }
-      // c) DERNIER RECOURS : si le coffret reste incomplet alors qu'il existe encore du DISPO RÉEL
-      //    (stock/mutualisé) non utilisé, on relâche le plafond de variété — mieux vaut un coffret
-      //    complet un peu moins assorti que rien. La variété reste préférée (étapes a/b passent avant).
+      // Dernier recours : relâcher le plafond PAR PARFUM sur du dispo réel restant, sans ajouter de
+      // NOUVEAU parfum au-delà de `cap` (en strict, on gonfle les parfums déjà retenus uniquement).
       if(reste>0){
         for(const p of tri){
           if(reste<=0) break;
@@ -47232,6 +47289,7 @@ function _composerCoffrets(dispoParfums, taille, opts){
       .filter(p=>quotas.get(norm(p.nom))>0)
       .map(p=>({nom:p.nom, qte:quotas.get(norm(p.nom))}));
   }
+
 
   const props = [];
   const pushProp = (res, coutRang) => {
@@ -47284,7 +47342,7 @@ async function genererCompositionsCoffret(taille, dateLiv, heureLiv, opts){
       if(ps.some(p=>p.complet)){ fallback.push({ taille:t, propositions:ps.filter(p=>p.complet).slice(0,2) }); break; }
     }
   }
-  return { propositions, fallback, meta:{ ...meta, taille, mode: opts.mode||'strict', typeFiltre: opts.typeFiltre||null } };
+  return { propositions, fallback, meta:{ ...meta, taille, mode: opts.mode||'strict', typeFiltre: opts.typeFiltre||null, parfumsEnPlus: opts.parfumsEnPlus||0, limiteReglementaire: (typeof BOX_FLAVOR_LIMIT!=='undefined' && BOX_FLAVOR_LIMIT[taille]!=null)?BOX_FLAVOR_LIMIT[taille]:null } };
 }
 
 
