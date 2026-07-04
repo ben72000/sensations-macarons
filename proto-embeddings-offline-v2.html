@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Proto v2 — embeddings offline (faisabilité)</title>
+<style>
+  :root{--bordeaux:#52252F;--gold:#AA7C39;--creme:#faf6f0;--hair:#e9ddcd;--ink:#2b1a1f;--muted:#8a7a72;--ok:#2e7d32;--bad:#b3261e;--warn:#b0678a;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--creme);color:var(--ink);padding:14px;-webkit-font-smoothing:antialiased;line-height:1.4}
+  h1{font-family:Georgia,serif;color:var(--bordeaux);font-size:1.3rem;margin:2px 0}
+  .sub{color:var(--muted);font-size:.82rem;margin-bottom:12px}
+  .card{background:#fff;border:1px solid var(--hair);border-radius:14px;padding:13px 14px;margin-bottom:12px;box-shadow:0 2px 8px rgba(73,15,37,.04)}
+  label{display:block;font-size:.75rem;font-weight:600;color:var(--bordeaux);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.03em}
+  select,textarea,button{font-family:inherit;font-size:.95rem}
+  select{width:100%;padding:10px;border:1px solid var(--hair);border-radius:10px;background:#fff;color:var(--ink)}
+  textarea{width:100%;border:1px solid var(--hair);border-radius:10px;padding:10px;resize:vertical;min-height:120px;color:var(--ink);background:#fdfbf7}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{border:none;border-radius:12px;padding:12px 16px;font-weight:700;cursor:pointer;color:#fff;background:var(--bordeaux)}
+  .btn.gold{background:var(--gold)} .btn.ghost{background:#fff;color:var(--bordeaux);border:1px solid var(--hair)}
+  .btn:disabled{opacity:.5}
+  .status{font-size:.85rem;margin-top:8px;padding:9px 11px;border-radius:10px;background:#f3ece0;color:#6a5a52;white-space:pre-wrap}
+  .bar{height:8px;background:#eee2d2;border-radius:4px;overflow:hidden;margin-top:6px}
+  .bar>i{display:block;height:100%;width:0;background:var(--gold);transition:width .2s}
+  table{width:100%;border-collapse:collapse;font-size:.86rem;margin-top:4px}
+  th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--hair);vertical-align:top}
+  th{font-size:.68rem;text-transform:uppercase;color:var(--muted);letter-spacing:.04em}
+  .score{font-variant-numeric:tabular-nums;font-weight:700}
+  .hi{color:var(--ok)} .lo{color:var(--bad)} .mid{color:var(--warn)}
+  .q{color:var(--bordeaux);font-weight:600}
+  .metric{display:inline-block;background:#f3ece0;border-radius:20px;padding:4px 11px;font-size:.8rem;margin:3px 6px 0 0;font-variant-numeric:tabular-nums}
+  .caps{display:flex;flex-wrap:wrap;gap:6px}
+  .cap{background:#f7f1e7;border:1px solid var(--hair);border-radius:9px;padding:6px 10px;font-size:.78rem}
+  .cap b{color:var(--bordeaux)}
+  .warnbox{background:#fdf3f2;border:1px solid #e5b4ae;color:#8a3a30;border-radius:10px;padding:10px 12px;font-size:.82rem;margin-bottom:12px}
+</style>
+</head>
+<body>
+  <h1>Proto v2 — compréhension offline</h1>
+  <div class="sub">Test de faisabilité sur ton <b>vrai iPhone</b>. Isolé, ne touche pas à l'app. Tout tourne en local, aucun texte ne sort.</div>
+
+  <div class="warnbox">⚠️ <b>Le crash est le signal.</b> Safari iOS ne donne pas la RAM. Si la page se recharge pendant le chargement → trop lourd. 1<sup>er</sup> chargement en Wi-Fi. Le modèle est forcé en <b>q8 (int8)</b> pour tenir en mémoire.</div>
+
+  <div class="card">
+    <label>Capacités de ton appareil</label>
+    <div class="caps" id="caps">Détection…</div>
+  </div>
+
+  <div class="card">
+    <label>Modèle</label>
+    <select id="model">
+      <option value="Xenova/multilingual-e5-small|e5">multilingual-e5-small — FR correct (le vrai test) ⚠️</option>
+      <option value="Xenova/paraphrase-multilingual-MiniLM-L12-v2|plain">paraphrase-multilingual-MiniLM-L12-v2 — FR bon, un peu +lourd</option>
+      <option value="Xenova/all-MiniLM-L6-v2|plain">all-MiniLM-L6-v2 — léger, FR passable (repli safe)</option>
+    </select>
+    <label>Moteur</label>
+    <select id="device">
+      <option value="wasm">WASM / CPU — recommandé iOS</option>
+      <option value="webgpu">WebGPU — iOS 26+, à comparer</option>
+    </select>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="load">1 · Charger (q8)</button>
+      <button class="btn gold" id="run" disabled>2 · Tester</button>
+      <button class="btn ghost" id="stress" disabled>3 · Stress 20×</button>
+      <button class="btn ghost" id="export" disabled>⬇︎ Export JSON</button>
+    </div>
+    <div class="bar"><i id="prog"></i></div>
+    <div class="status" id="status">Prêt. « Charger » télécharge le modèle (~30-120 Mo au 1er coup). Recharge la page ensuite et re-charge pour mesurer le temps « à chaud ».</div>
+    <div id="metrics" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <label>Intentions de référence (label = phrase canonique)</label>
+    <textarea id="intents">query_stock = combien de chocolat en stock
+query_retards = quelles commandes sont en retard
+query_dlc = quels produits sont bientôt périmés
+query_rupture = qu'est-ce qui est en rupture de stock
+query_advice = par quoi je commence aujourd'hui
+query_revenue = quel est mon chiffre d'affaires du mois
+query_recipe = donne-moi la recette de la ganache pistache
+create_order = enregistre une commande pour madame Dupont
+action_lancer_prod = lance une production de 60 macarons chocolat
+adjust_stock = corrige le stock de vanille à 40
+query_seuils = quels sont mes seuils d'alerte</textarea>
+    <label>Phrases à tester — mets TES formulations (les 4 dernières = anti-misfire, doivent sortir ROUGE)</label>
+    <textarea id="phrases">il m'en reste combien de chocolat ?
+j'ai quoi qui traîne en retard ?
+y a-t-il des trucs bientôt à jeter ?
+qu'est-ce qui me manque là ?
+je fais quoi en premier ce matin ?
+combien j'ai gagné ce mois-ci ?
+rappelle-moi comment on monte la ganache pistache
+note une commande pour Sophie, 20 macarons
+faut que je lance du chocolat, genre 60
+mets la vanille à 40 dans le stock
+tu connais la météo demain ?
+bonjour, comment ça va ?
+peux-tu m'aider à rédiger un mail à mon comptable ?
+résume-moi ce pdf s'il te plaît</textarea>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none">
+    <label>Résultats</label>
+    <div id="results"></div>
+    <div class="sub" style="margin-top:10px"><span class="hi">≥0.80</span> fiable · <span class="mid">0.70-0.80</span> zone grise (→clarifier) · <span class="lo">&lt;0.70</span> ne pas dispatcher. Marge = écart top1−top2 (>0.10 = franc). Les 4 anti-misfire doivent être &lt;0.70.</div>
+  </div>
+
+  <div class="card" id="stressCard" style="display:none">
+    <label>Stress test — throttling</label>
+    <div id="stressOut"></div>
+  </div>
+
+<script type="module">
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0';
+env.allowLocalModels = false;
+const $ = id => document.getElementById(id);
+let extractor=null, curKind='plain', report={};
+
+function setStatus(t){ $('status').textContent=t; }
+function setProg(p){ $('prog').style.width=Math.round(p*100)+'%'; }
+const parseLines = t => t.split('\n').map(l=>l.trim()).filter(Boolean);
+const parseIntents = t => parseLines(t).map(l=>{const i=l.indexOf('=');return i<0?null:{label:l.slice(0,i).trim(),text:l.slice(i+1).trim()};}).filter(Boolean);
+const withPrefix = (kind,texts,isQ)=> kind==='e5'? texts.map(t=>(isQ?'query: ':'passage: ')+t):texts;
+async function embed(texts,isQ){ const out=await extractor(withPrefix(curKind,texts,isQ),{pooling:'mean',normalize:true}); return out.tolist(); }
+const dot=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;};
+const med=a=>{const s=[...a].sort((x,y)=>x-y);return s[Math.floor(s.length/2)];};
+
+// ---- Détection capacités (avant tout) ----
+(async ()=>{
+  let gpu=false; try{ gpu = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }catch(e){}
+  const caps={ webgpu:gpu, wasm:typeof WebAssembly!=='undefined', cores:navigator.hardwareConcurrency||'?',
+    ram:(navigator.deviceMemory?navigator.deviceMemory+' Go':'inconnu (Safari)'), net:(navigator.connection&&navigator.connection.effectiveType)||'?',
+    ua:navigator.userAgent };
+  report.caps=caps;
+  $('caps').innerHTML =
+    '<span class="cap">WebGPU <b>'+(gpu?'oui':'non')+'</b></span>'+
+    '<span class="cap">WASM <b>'+(caps.wasm?'oui':'non')+'</b></span>'+
+    '<span class="cap">Cœurs <b>'+caps.cores+'</b></span>'+
+    '<span class="cap">RAM <b>'+caps.ram+'</b></span>'+
+    '<span class="cap">Réseau <b>'+caps.net+'</b></span>';
+})();
+
+$('load').addEventListener('click', async ()=>{
+  const [model,kind]=$('model').value.split('|'); const device=$('device').value;
+  $('load').disabled=true; setProg(0);
+  setStatus('Chargement '+model+' · '+device+' · dtype q8…\n(1er coup = téléchargement, patiente)');
+  const t0=performance.now();
+  try{
+    extractor=await pipeline('feature-extraction',model,{ device, dtype:'q8',
+      progress_callback:p=>{ if(p&&p.progress!=null){ setProg(p.progress/100); if(p.file) setStatus('Téléchargement '+(p.file||'')+' — '+Math.round(p.progress)+'%'); } } });
+    curKind=kind; const dt=+((performance.now()-t0)/1000).toFixed(1); setProg(1);
+    report.model=model; report.device=device; report.dtype='q8'; report.loadSeconds=dt;
+    setStatus('✅ Chargé sans crash en '+dt+' s.\nAstuce « à chaud » : recharge la page et re-touche Charger → le temps doit chuter (cache).');
+    $('metrics').innerHTML='<span class="metric">⏱️ '+dt+' s</span><span class="metric">🧠 '+device+' · q8</span>';
+    $('run').disabled=false; $('stress').disabled=false;
+  }catch(e){ setStatus('❌ Échec : '+(e&&e.message||e)+'\nSi la page a planté → trop lourd (essaie all-MiniLM).'); report.loadError=String(e&&e.message||e); }
+  finally{ $('load').disabled=false; }
+});
+
+$('run').addEventListener('click', async ()=>{
+  const intents=parseIntents($('intents').value), phrases=parseLines($('phrases').value);
+  if(!intents.length||!phrases.length){ setStatus('Ajoute intentions + phrases.'); return; }
+  $('run').disabled=true; setStatus('Calcul…');
+  try{
+    const iv=await embed(intents.map(i=>i.text),false);
+    const t0=performance.now(); const pv=await embed(phrases,true); const per=Math.round((performance.now()-t0)/phrases.length);
+    let rows=''; const res=[];
+    phrases.forEach((ph,pi)=>{ let best=-1,bi=0,second=-1;
+      iv.forEach((v,ii)=>{const s=dot(pv[pi],v); if(s>best){second=best;best=s;bi=ii;} else if(s>second)second=s;});
+      const cls=best>=0.80?'hi':(best>=0.70?'mid':'lo'); const marge=+(best-second).toFixed(2);
+      rows+='<tr><td class="q">'+ph+'</td><td>'+intents[bi].label+'</td><td class="score '+cls+'">'+best.toFixed(2)+'</td><td style="color:var(--muted)">'+marge.toFixed(2)+'</td></tr>';
+      res.push({phrase:ph,matched:intents[bi].label,score:+best.toFixed(3),margin:marge}); });
+    $('results').innerHTML='<table><thead><tr><th>Phrase</th><th>Intention</th><th>Score</th><th>Marge</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    $('resultsCard').style.display='block'; $('metrics').innerHTML+='<span class="metric">⚡ '+per+' ms/req</span><span class="metric">📐 '+iv[0].length+' dim</span>';
+    report.dim=iv[0].length; report.perQueryMs=per; report.results=res;
+    $('export').disabled=false; setStatus('✅ Test OK. Vérifie : intentions justes ? les 4 anti-misfire bien en rouge ?');
+  }catch(e){ setStatus('❌ '+(e&&e.message||e)); } finally{ $('run').disabled=false; }
+});
+
+$('stress').addEventListener('click', async ()=>{
+  const phrases=parseLines($('phrases').value); if(!phrases.length) return;
+  $('stress').disabled=true; setStatus('Stress test 20 requêtes…');
+  try{ const times=[];
+    for(let i=0;i<20;i++){ const t0=performance.now(); await embed([phrases[i%phrases.length]],true); times.push(+(performance.now()-t0).toFixed(1)); setProg((i+1)/20); }
+    const mn=Math.min(...times), mx=Math.max(...times), p50=med(times), ratio=+(times[19]/times[0]).toFixed(2);
+    const deg = ratio>2 ? '<span class="lo"><b>⚠️ dégradation ×'+ratio+'</b> (throttling probable)</span>' : '<span class="hi">stable (×'+ratio+')</span>';
+    $('stressOut').innerHTML='<div class="caps"><span class="cap">min <b>'+mn+' ms</b></span><span class="cap">médiane <b>'+p50+' ms</b></span><span class="cap">max <b>'+mx+' ms</b></span><span class="cap">#1→#20 '+deg+'</span></div>';
+    $('stressCard').style.display='block'; report.stress={times,min:mn,max:mx,p50,ratio};
+    $('export').disabled=false; setStatus('✅ Stress terminé. Si #20 ≫ #1 → inutilisable en cuisine longue durée.');
+  }catch(e){ setStatus('❌ '+(e&&e.message||e)); } finally{ $('stress').disabled=false; }
+});
+
+$('export').addEventListener('click', ()=>{
+  report.ts=new Date().toISOString();
+  const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='proto-results.json'; a.click();
+  setStatus('📤 JSON exporté. Envoie-le moi, je l\'analyse avec toi.');
+});
+</script>
+</body>
+</html>
