@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1196';
+const APP_VERSION = 'v1198';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -4583,6 +4583,7 @@ async function renderDash(){
   // Calcul protégé : en cas d'erreur ou d'absence de ventes, on n'affiche rien plutôt que de fausser.
   let margeNetteParMacaron = null;
   let coutDons = null, margeApresDons = null, piecesDon = 0;
+  let livBeneficeNet = null, coutLivraisonBrut = 0, nbLivraisons = 0, margeApresLivraison = null;   // [A5]
   try {
     const [_ri, _lots, _mm, _st] = await Promise.all([
       db.recipeItems.toArray().catch(()=>[]),
@@ -4602,6 +4603,11 @@ async function renderDash(){
       coutDons = _An.totals.coutDons||0;
       margeApresDons = _An.totals.margeApresDons;
       piecesDon = _An.totals.piecesDon||0;
+      // [A5] impact livraison agrégé (coût brut des tournées + bénéfice net après facturation client)
+      livBeneficeNet = (_An.totals.livBeneficeNet!=null) ? _An.totals.livBeneficeNet : null;
+      coutLivraisonBrut = _An.totals.coutLivraisonBrut||0;
+      nbLivraisons = _An.totals.nbLivraisons||0;
+      margeApresLivraison = (_An.totals.margeApresLivraison!=null) ? _An.totals.margeApresLivraison : null;
     }
   } catch(e){ console.error('margeNetteParMacaron', e); }
   // Relevé de température du jour fait ou non (rappel HACCP discret).
@@ -4695,6 +4701,7 @@ async function renderDash(){
      <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} encaissement(s) · voir le détail ›</div></div>
      <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts, charges & dons ›':'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
+     ${(nbLivraisons>0)?`<div class="card clickable accent" style="--card-accent:${livBeneficeNet>=0?'#3f7d52':'#b3261e'}" onclick="goView('rentabilite')" title="Impact des livraisons sur la marge"><div class="corner">🚚</div><div class="lbl">Impact livraisons</div><div class="val">${privacyModeEnabled()?'•••':`${livBeneficeNet>=0?'+':''}${euro(livBeneficeNet)}`}</div><div class="sub">${nbLivraisons} tournée(s) · coût ${euro(coutLivraisonBrut)} ›</div></div>`:''}
      <div class="card clickable accent" style="--card-accent:#7a4b82" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
      <div class="card clickable accent" style="--card-accent:${low.length>0?'#b3261e':'#3f7d52'}" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock ${kpiI('alertes_stock')}</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
    </div>
@@ -18197,6 +18204,12 @@ async function computeMonthlyBilan(ym){
   const orders = await db.orders.toArray();
   const markets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
   let goods=0, service=0;            // encaissé du mois, ventilé
+  // [AUDIT-2026-07 · A11] Traçabilité de l'HYPOTHÈSE de ventilation. Une commande de reprise (histo)
+  // sans détail de lignes prestation est imputée à 100 % MARCHANDISE (goods) — hypothèse statistiquement
+  // correcte pour un pâtissier, MAIS c'est une hypothèse : si l'histo contenait du service, la base URSSAF
+  // dérive. On CUMULE ici la part de goods issue de ces histo (goodsHypo) pour l'afficher au bilan.
+  // Aucun impact sur le calcul des cotisations : purement informatif.
+  let goodsHypo=0, nbHypo=0;
   const detailGoods=[], detailService=[];
   // Pour chaque commande, on connaît la part service vs marchandise (lignes prestation = service).
   orders.forEach(o=>{
@@ -18215,6 +18228,8 @@ async function computeMonthlyBilan(ym){
     const sPart=money2(encMois*partSvc), gPart=money2(encMois-encMois*partSvc);
     if(gPart>0){ goods=money2(goods+gPart); }
     if(sPart>0){ service=money2(service+sPart); }
+    // [A11] histo SANS aucune ligne détaillée → sa ventilation (100 % goods) est une hypothèse : on la trace.
+    if(o.histo && lignes.length===0 && gPart>0){ goodsHypo=money2(goodsHypo+gPart); nbHypo++; }
     const cl=o.histoLabel||'';
     if(gPart>0) detailGoods.push({label:(o.histo?'[reprise] ':'')+(cl||('commande #'+o.id)), montant:gPart});
     if(sPart>0) detailService.push({label:(cl||('prestation #'+o.id)), montant:sPart});
@@ -18236,7 +18251,8 @@ async function computeMonthlyBilan(ym){
   const cotisService=money2(service*tauxService/100);
   const cotisTotal=money2(cotisGoods+cotisService);
   return {ym, goods, service, caTotal, tauxGoods, tauxService, cotisGoods, cotisService, cotisTotal,
-    detailGoods, detailService};
+    detailGoods, detailService,
+    goodsHypo, nbHypo};   // [A11] part de goods issue d'histo non ventilées (transparence URSSAF, hors calcul)
 }
 
 // ============================================================
@@ -20721,6 +20737,31 @@ function analyzeFlavorProfitability(data){
   // marge nette une fois le coût des dons déduit (impact réel de la générosité/promo)
   totals.margeApresDons = money2(totals.margeNette - totals.coutDons);
 
+  // [AUDIT-2026-07 · A5] IMPACT LIVRAISON au niveau global. Jusqu'ici margeNetteApresLiv n'existait
+  // qu'à la fiche commande, jamais agrégé → le dashboard ignorait le poids des tournées. On additionne :
+  //   coutLivraisonBrut  = Σ coût réel des tournées (carburant + temps) des commandes livrées ;
+  //   fraisLivFactures   = Σ ce qui a été facturé au client pour la livraison ;
+  //   livBeneficeNet     = fraisLivFactures − coutLivraisonBrut (impact NET : >0 la livraison rapporte).
+  // margeApresLivraison = margeApresDons + livBeneficeNet (le bénéfice net s'ajoute : s'il est négatif,
+  // il ronge la marge ; s'il est positif, la livraison facturée l'améliore).
+  try{
+    let coutLivraisonBrut=0, fraisLivFactures=0, nbLivr=0;
+    (orders||[]).forEach(o=>{
+      if(o.histo) return;                              // reprises : pas de données de livraison
+      const liv = computeDeliveryCost(o);
+      const fact = Math.max(0, +o.fraisLivraison||0);
+      if(!liv.actif && fact<=0) return;                // ni tournée saisie ni frais facturés → rien
+      coutLivraisonBrut = money2(coutLivraisonBrut + (liv.actif ? liv.total : 0));
+      fraisLivFactures  = money2(fraisLivFactures + fact);
+      if(liv.actif || fact>0) nbLivr++;
+    });
+    totals.coutLivraisonBrut = coutLivraisonBrut;
+    totals.fraisLivFactures  = fraisLivFactures;
+    totals.livBeneficeNet    = money2(fraisLivFactures - coutLivraisonBrut);
+    totals.nbLivraisons      = nbLivr;
+    totals.margeApresLivraison = money2(totals.margeApresDons + totals.livBeneficeNet);
+  }catch(e){ console.error('aggLivraison', e); }
+
   return {rows, unmatched, totals, costByRecipe};
 }
 
@@ -22864,6 +22905,7 @@ async function renderCompta(){
      <div class="banner" style="background:#f0f4fa;border-color:#c4d2e6;margin-bottom:10px">📅 <div>Tous les chiffres ci-dessous concernent <b>${esc(monthLabel(_comptaMonth))}</b> (du 1ᵉʳ au dernier jour du mois).</div></div>
      <div class="sum-box lnk" onclick="comptaGo('commandes')"><span>CA encaissé · ${esc(monthLabel(_comptaMonth))}</span><b>${euro(B.caTotal)}</b>${NAV_GO}</div>
      <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b>${NAV_GO}</div>
+     ${(+B.goodsHypo>0)?`<div class="note" style="margin:2px 0 6px;font-size:.76rem;color:#b07a4a;background:#fdf6ec;border:1px solid #ece0cc;border-radius:8px;padding:6px 9px">ℹ️ Dont <b>${euro(B.goodsHypo)}</b> issu(s) de ${B.nbHypo} reprise(s) sans détail, comptés en marchandise <b>par hypothèse</b>. Si l'une était une prestation de service, la cotisation réelle diffère (service ${B.tauxService}% vs marchandise ${B.tauxGoods}%).</div>`:''}
      <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b>${NAV_GO}</div>
      <h3 style="font-size:.95rem;margin:14px 0 6px">Cotisations URSSAF estimées</h3>
      <div class="sum-box"><span>Marchandise · ${B.tauxGoods}%</span><b>${euro(B.cotisGoods)}</b></div>
@@ -23969,6 +24011,7 @@ function _margeLeviersHtml(A, recs){
         <span><b>= Marge nette / macaron</b></span><b style="color:${margeNette>=0?'#2e6b3f':'#b3261e'};font-size:1.02rem">${euro(margeNette)}</b></div>
     </div>
     ${donsParPiece>0?`<p class="note" style="margin-top:8px">🎁 Les dons coûtent en moyenne <b>${euro(donsParPiece)}</b> par macaron vendu (marge après dons : <b>${euro(par(t.margeApresDons))}</b>/macaron).</p>`:''}
+    ${(t.nbLivraisons>0)?`<p class="note" style="margin-top:4px">🚚 Livraisons (${t.nbLivraisons}) : coût des tournées <b style="color:#b3261e">${euro(t.coutLivraisonBrut)}</b>${t.fraisLivFactures>0?` · facturé aux clients <b>${euro(t.fraisLivFactures)}</b>`:''} → impact net sur la marge <b style="color:${t.livBeneficeNet>=0?'#2e6b3f':'#b3261e'}">${t.livBeneficeNet>=0?'+':''}${euro(t.livBeneficeNet)}</b>. Marge après dons & livraison : <b>${euro(t.margeApresLivraison)}</b>.</p>`:''}
     ${t.ecartTheo!=null && Math.abs(t.ecartTheo)>=0.5?`<p class="note" style="margin-top:4px">${t.ecartTheo<0?'📉':'📈'} Écart prix encaissé vs attendu : <b style="color:${t.ecartTheo<0?'#b3261e':'#2e6b3f'}">${t.ecartTheo>0?'+':''}${euro(t.ecartTheo)}</b> au total (remises, arrondis, prix manuels).</p>`:''}
     ${recHtml?`<div style="margin-top:10px"><div style="font-weight:600;font-size:.86rem;color:#52252F;margin-bottom:2px">Pistes prioritaires</div>${recHtml}</div>`:''}
     <button class="btn ghost sm" style="margin-top:10px;width:100%" onclick="goView('rentaparfum')">🎯 Voir le détail par parfum & toutes les recommandations ›</button>
@@ -25203,9 +25246,22 @@ async function marketDetail(id){
         if(bd.hasData){ caTheo=bd.caTheo; lbl=`CA théorique (${bd.coffrets} coffret(s), prix moy. ${euro(bd.prixMoyen)})`; }
         else { const pu=+s.prixVenteUnitaire||0; caTheo=money2(T.vendu*pu); lbl=`CA théorique (${qty(T.vendu)} × ${euro(pu)})`; }
         const ecart=money2(T.caTotal-caTheo);
+        // [AUDIT-2026-07 · A17] Seuil RELATIF : significatif si |écart| > 5 % du CA théorique OU > 20 €
+        // (un écart de 2 € sur 50 € est plus parlant qu'1 € sur 800 €). En-deçà → considéré normal (✓).
+        const pctEcart = caTheo>0 ? Math.abs(ecart)/caTheo*100 : 0;
+        const significatif = Math.abs(ecart)>20 || (caTheo>0 && pctEcart>5);
+        const col = !significatif ? '#3f7d52' : (ecart<0 ? 'var(--red,#b3261e)' : '#d98324');
+        // Message d'aide : oriente sur la cause probable selon le sens de l'écart.
+        let aide='';
+        if(significatif && bd.hasData){
+          aide = ecart<0
+            ? `<div class="note" style="margin:2px 0 0;color:#b3261e">La caisse est <b>inférieure</b> au théorique de <b>${euro(Math.abs(ecart))}</b> (${pctEcart.toFixed(0)} %). Causes possibles : remise/geste commercial non tracé, erreur de rendu de monnaie, ou un comptage de boîtes surestimé.</div>`
+            : `<div class="note" style="margin:2px 0 0;color:#d98324">La caisse <b>dépasse</b> le théorique de <b>${euro(ecart)}</b> (${pctEcart.toFixed(0)} %). Causes possibles : ventes à un tarif supérieur à ta grille, pourboires encaissés, ou un comptage de boîtes sous-estimé.</div>`;
+        }
         return `<div class="sum-box"><span>${lbl}</span><b>${euro(caTheo)}</b></div>
-        <div class="sum-box"><span>Écart encaissé − théorique</span><b style="color:${Math.abs(ecart)<0.01?'#3f7d52':(ecart<0?'var(--red,#b3261e)':'#d98324')}">${ecart>0?'+':''}${euro(ecart)}${Math.abs(ecart)>=0.5?' ⚠':' ✓'}</b></div>
-        ${!bd.hasData?'<div class="note" style="margin:2px 0 0">Renseignez le comptage d\'emballages (capacités) pour un CA théorique reconstitué par format.</div>':''}`; })()}
+        <div class="sum-box"><span>Écart caisse − théorique</span><b style="color:${col}">${ecart>0?'+':''}${euro(ecart)}${significatif?` ⚠ ${pctEcart.toFixed(0)}%`:' ✓'}</b></div>
+        ${aide}
+        ${!bd.hasData?'<div class="note" style="margin:2px 0 0">Renseignez le comptage d\'emballages (capacités) pour un CA théorique reconstitué par format — l\'écart de caisse sera alors précis.</div>':''}`; })()}
       ${T.fondCaisse>0?`<div class="sum-box"><span>Fond de caisse (déduit)</span><b>−${euro(T.fondCaisse)}</b></div>
       <div class="sum-box" style="color:#9a8a82"><span>Espèces comptées (fond inclus)</span><b>${euro(T.caEspecesBrut)}</b></div>`:''}
       <div class="sum-box"><span>Espèces / CB / Autre</span><b>${euro(T.caEspeces)} / ${euro(T.caCB)} / ${euro(T.caAutre)}</b></div>
@@ -37531,6 +37587,73 @@ async function traceDons(){
     ${rows}`;
 }
 
+// [AUDIT-2026-07 · A8] DIAGNOSTIC de valorisation des lots (lecture seule, ne change AUCUN coût).
+// Pour chaque matière ayant plusieurs lots chiffrés à prix différents, compare les 3 méthodes :
+//   • dernierPrix  = prix du lot le plus RÉCENT (méthode actuelle des matières premières, prixCourant)
+//   • moyennePond  = Σ(pu×qté) / Σqté sur qteInitiale (méthode actuelle des emballages, realPackagingCostMap)
+//   • fifo         = prix du plus ANCIEN lot ayant encore du stock (qteRestante>0) — vrai FIFO
+// Sert à MESURER l'écart avant de décider d'une méthode unique. N'écrit rien.
+function diagValorisationLots(mats, lots){
+  const byMat = new Map();   // materialId -> [lots chiffrés]
+  (lots||[]).forEach(l=>{
+    const pu = lotPU(l); if(!(pu>0)) return;              // exclut lots non chiffrés / inventaire
+    if((+l.qteInitiale||0)<=0) return;
+    if(!byMat.has(l.materialId)) byMat.set(l.materialId, []);
+    byMat.get(l.materialId).push(l);
+  });
+  const matById = id => (mats||[]).find(m=>+m.id===+id);
+  const rows = [];
+  for(const [mid, ls] of byMat){
+    if(ls.length < 2) continue;                          // une seule ligne de prix → aucune divergence
+    const prix = ls.map(lotPU);
+    const puMin = Math.min(...prix), puMax = Math.max(...prix);
+    if(puMax - puMin < 1e-9) continue;                    // tous au même prix → rien à signaler
+    // dernier prix : lot le plus récent (dateReception décroissante)
+    const parRecent = ls.slice().sort((a,b)=>(b.dateReception||'').localeCompare(a.dateReception||''));
+    const dernierPrix = lotPU(parRecent[0]);
+    // moyenne pondérée sur qteInitiale
+    let ct=0, qt=0; ls.forEach(l=>{ const q=+l.qteInitiale||0; ct+=lotPU(l)*q; qt+=q; });
+    const moyennePond = qt>0 ? money2(ct/qt) : 0;
+    // vrai FIFO : plus ancien lot ayant ENCORE du stock ; à défaut, plus ancien tout court
+    const parAncien = ls.slice().sort((a,b)=>(a.dateReception||'').localeCompare(b.dateReception||''));
+    const avecStock = parAncien.filter(l=>round3(+l.qteRestante||0)>0);
+    const fifo = lotPU((avecStock[0] || parAncien[0]));
+    const m = matById(mid);
+    const vals = [dernierPrix, moyennePond, fifo];
+    const ecart = money2(Math.max(...vals) - Math.min(...vals));
+    const ecartPct = Math.min(...vals)>0 ? Math.round(ecart/Math.min(...vals)*1000)/10 : 0;
+    rows.push({
+      materialId:mid, nom:(m&&m.nom)||('#'+mid), unite:(m&&m.unite)||'', categorie:(m&&m.categorie)||'',
+      nbLots:ls.length, dernierPrix:money2(dernierPrix), moyennePond, fifo:money2(fifo), ecart, ecartPct
+    });
+  }
+  rows.sort((a,b)=>b.ecart-a.ecart);
+  return rows;
+}
+let _diagValoRows = [];
+async function scanValorisationLots(){
+  const zone=document.getElementById('valoLotsZone');
+  if(zone) zone.innerHTML='<p class="note">Analyse en cours…</p>';
+  let rows=[];
+  try{
+    const [mats, lots] = await Promise.all([db.materials.toArray(), db.materialLots.toArray()]);
+    rows = diagValorisationLots(mats, lots);
+  }catch(e){ console.error('scanValoLots', e); }
+  _diagValoRows = rows;
+  if(!zone) return;
+  if(!rows.length){
+    zone.innerHTML='<div class="banner" style="background:#eef6ee;border-color:#bcd9c2">✅ <div>Aucune divergence : chaque matière a un prix de lot homogène. Les trois méthodes de valorisation donneraient le même coût.</div></div>';
+    return;
+  }
+  const fmt = v => euro(v);
+  const head = `<div class="banner" style="background:#eef3f8;border-color:#a0b8d0;margin-bottom:8px">📊 <div><b>${rows.length} matière(s)</b> ont des lots à prix différents. Voici ce que donnerait chaque méthode de valorisation. <b>Lecture seule</b> — rien n'est modifié.<br><span style="font-size:.8rem;color:#5a6a7a">• <b>Dernier prix</b> : lot le plus récent (méthode actuelle des matières) · <b>Moyenne</b> : moyenne pondérée (méthode actuelle des emballages) · <b>FIFO</b> : plus ancien lot en stock</span></div></div>`;
+  const list = rows.map(r=>`<div class="sum-box" style="align-items:flex-start">
+      <span style="flex:1">${esc(r.nom)} <span style="color:#9a8a82;font-size:.78rem">${r.nbLots} lots · ${r.categorie==='emballage'?'emballage':'matière'}</span><br>
+        <span style="font-size:.8rem">dernier <b>${fmt(r.dernierPrix)}</b> · moyenne <b>${fmt(r.moyennePond)}</b> · FIFO <b>${fmt(r.fifo)}</b></span></span>
+      <b style="color:${r.ecartPct>=20?'#b3261e':(r.ecartPct>=8?'#d98324':'#3f7d52')}">Δ ${fmt(r.ecart)}<br><span style="font-size:.74rem;font-weight:400">${r.ecartPct}%</span></b></div>`).join('');
+  zone.innerHTML = head + list;
+}
+
 async function renderIntegrity(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML=`<div class="topbar"><div><h1>Vérification des données</h1><p>Contrôle d'intégrité — lecture seule</p></div></div>
@@ -37568,6 +37691,11 @@ async function renderIntegrity(){
       <h2 style="font-size:1rem">⚖️ Montants figés vs recalcul</h2>
       <p class="note">Le total d'une commande est <b>figé</b> à l'enregistrement. S'il a été modifié ensuite par un autre chemin (migration, réaffectation de parfums, correction), il peut <b>ne plus correspondre</b> à la somme de ses lignes. Cet outil <b>compare</b> le montant stocké au recalcul depuis les lignes et liste les écarts. Les commandes à <b>prix manuel</b> (écart assumé) sont ignorées. <b>Lecture seule</b> tant que tu ne cliques pas sur « Aligner ».</p>
       <div id="fixMontantZone"><button class="btn gold sm" onclick="scanMontantDivergences()">Vérifier les montants</button></div>
+    </div>
+    <div class="panel" style="background:#f0f4fa;margin-bottom:12px">
+      <h2 style="font-size:1rem">📊 Valorisation des lots — comparer les méthodes</h2>
+      <p class="note">Quand une matière a <b>plusieurs lots à des prix différents</b>, son coût dépend de la <b>méthode de valorisation</b>. Aujourd'hui les <b>matières</b> utilisent le <b>dernier prix reçu</b> et les <b>emballages</b> la <b>moyenne pondérée</b> — deux méthodes différentes. Cet outil montre, pour chacune de tes matières concernées, ce que donnerait chaque méthode (dernier prix / moyenne / FIFO) et l'écart. <b>Lecture seule</b> : rien n'est modifié. Sert à décider, chiffres en main, s'il faut unifier.</p>
+      <div id="valoLotsZone"><button class="btn gold sm" onclick="scanValorisationLots()">Comparer les méthodes de valorisation</button></div>
     </div>
     <div class="panel" style="background:#f0f4fa;margin-bottom:12px">
       <h2 style="font-size:1rem">✅ Contrôle de cohérence du CA</h2>
