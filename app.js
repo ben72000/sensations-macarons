@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1178';
+const APP_VERSION = 'v1180';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -15513,6 +15513,7 @@ async function cmdForm(id, opts){
      <button class="btn ghost sm" style="margin-top:6px" onclick="quickClient(${id||0})">+ Nouveau client</button>
    </div>
    <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}" oninput="cmdFeasibilityRecalc()"></div>
+   <div class="field"><label>Heure de livraison <span style="color:#9a8a82;font-weight:400">— pour vérifier les délais (repos ganache, maturation)</span></label><input type="time" id="f_heure" value="${esc(o.heureLivraison||'')}" oninput="cmdSyncHeure(this.value);cmdFeasibilityRecalc()"></div>
    <div id="feasibility" class="feasibility" style="display:none"></div>
 
    <label style="font-size:.82rem;color:#7a6a62;font-weight:500;display:block;margin-bottom:6px">Produits de la commande</label>
@@ -15550,7 +15551,7 @@ async function cmdForm(id, opts){
      </button>
      <div class="collapse-body" id="livBody" style="display:none">
        <div class="field"><label>Date de l'événement <span style="color:#9a8a82;font-weight:400">— si différente de la date du devis</span></label><input type="date" id="f_dateEvenement" value="${esc(o.dateEvenement||'')}"></div>
-       <div class="field"><label>Heure de livraison</label><input type="time" id="f_heure" value="${esc(o.heureLivraison||'')}" oninput="cmdFeasibilityRecalc()"></div>
+       <div class="field"><label>Heure de livraison <span style="color:#9a8a82;font-weight:400">— aussi accessible en haut du formulaire</span></label><input type="time" id="f_heureBas" value="${esc(o.heureLivraison||'')}" oninput="cmdSyncHeure(this.value,true);cmdFeasibilityRecalc()"></div>
        <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— tapez pour rechercher (clients, lieux habituels)</span></label>
          <div class="ac-wrap">
            <input class="search" id="f_lieu" autocomplete="off" autocapitalize="words" placeholder="Tapez une adresse, un nom de client ou un lieu…" value="${esc(o.lieuLivraison||'')}"
@@ -16715,6 +16716,15 @@ function cmdRecalc(){
   if(typeof cmdUpdatePaySummary==='function') cmdUpdatePaySummary();
   if(typeof cmdDeliveryRecalc==='function') cmdDeliveryRecalc();
   if(typeof cmdFeasibilityRecalc==='function') cmdFeasibilityRecalc();
+}
+
+// Synchronise les deux champs "heure de livraison" (le champ canonique du haut #f_heure et
+// son miroir #f_heureBas dans la section Livraison repliée). fromBas=true quand la saisie vient
+// du bas → on écrit en haut, et inversement. Évite toute divergence entre les deux vues.
+function cmdSyncHeure(v, fromBas){
+  const haut=document.getElementById('f_heure'), bas=document.getElementById('f_heureBas');
+  if(fromBas){ if(haut && haut.value!==v) haut.value=v; }
+  else { if(bas && bas.value!==v) bas.value=v; }
 }
 
 // Verdict instantané de faisabilité de la commande en cours d'édition.
@@ -43967,6 +43977,46 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
   // C'est ce qui empêche le « OK au doigt mouillé » qui ignorait les autres échéances.
   let ctx=null;
   try{ ctx = await _faisabiliteFenetre(debut, deadlineDateStr, conf, needs); }catch(e){ console.error('assessFeas.ctx',e); }
+  // ─────────────────────────────────────────────────────────────────────────────
+  // [SÉQUENCE PHYSIQUE — délais incompressibles] Avoir assez de MINUTES d'atelier ne
+  // suffit pas : certaines étapes ne se compressent pas dans le temps. Mais toutes les contraintes
+  // n'ont pas le même statut :
+  //   • DURES (techniques) : repos ganache, congélation crémeux → non négociables. Ganache lancée
+  //     trop tard = ratée. Si le 1er travail du rétroplanning DUR tombe dans le passé → 🔴 impossible.
+  //   • QUALITÉ (maturation) : un macaron non mûri reste vendable, juste moins abouti aromatiquement.
+  //     Livrer sans maturation complète est un CHOIX légitime de Benjamin → jamais 🔴, au pire 🟡.
+  // On calcule donc DEUX rétroplannings : "dur" (opts.ignorerMaturation) pour le blocage réel, et
+  // "complet" (avec maturation) pour signaler une maturation qui ne pourra pas être respectée.
+  // Multi-parfums : retroplanningDepuisParfums retient la contrainte la PLUS forte (parfum le plus exigeant).
+  let seqBlocage=null;     // 🔴 blocage DUR (repos ganache/crémeux) : {premierJalon, retardMs, rp}
+  let seqMaturation=null;  // 🟡 maturation non respectée mais production faisable : {manqueMs, rp}
+  try{
+    const parfumsNoms = Object.keys(needs||{}).filter(n=>n && n!=='À définir' && (+needs[n]>0));
+    if(parfumsNoms.length && typeof retroplanningDepuisParfums==='function'){
+      const recettes = (typeof window!=='undefined' && window._allRecipesCache) ? window._allRecipesCache
+                        : (typeof db!=='undefined' && db.recipes ? await db.recipes.toArray().catch(()=>[]) : []);
+      const maintenant = new Date();
+      const premierTravailDe = rp => (rp && !rp.error && Array.isArray(rp.jalons))
+        ? rp.jalons.filter(j=>j.type==='travail').sort((a,b)=>a.date-b.date)[0] : null;
+
+      // 1) Rétroplanning DUR (maturation neutralisée) → seul juge du 🔴.
+      const rpDur = retroplanningDepuisParfums(deadlineDateStr, deadlineHM, parfumsNoms, recettes, {ignorerMaturation:true});
+      const ptDur = premierTravailDe(rpDur);
+      if(ptDur && ptDur.date < maintenant){
+        seqBlocage = {premierJalon: ptDur, retardMs: maintenant - ptDur.date, rp: rpDur};
+      } else {
+        // 2) Pas de blocage dur → la production tient. Reste à voir si la MATURATION est respectée.
+        //    On calcule le rétroplanning COMPLET : si son 1er travail est dans le passé alors que le
+        //    dur ne l'était pas, c'est la maturation qui déborde → 🟡 (faisable, non optimisé).
+        const rpFull = retroplanningDepuisParfums(deadlineDateStr, deadlineHM, parfumsNoms, recettes);
+        const ptFull = premierTravailDe(rpFull);
+        if(ptFull && ptFull.date < maintenant && rpFull.maturationH>0){
+          seqMaturation = {manqueMs: maintenant - ptFull.date, rp: rpFull, maturationH: rpFull.maturationH};
+        }
+      }
+    }
+  }catch(e){ console.error('assessFeas.seq',e); }
+
 
   // Contribution propre de cette commande (temps de prod net du stock) + batchs, pour le détail.
   let prodThis={minutes:0,nbBatchsTotal:0,nbMeringues:0};
@@ -43974,6 +44024,14 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
 
   // Repli : moteur de fenêtre indisponible → ancien calcul isolé (mieux que rien).
   if(!ctx){
+    // La séquence physique prime même en repli : une ganache lancée trop tard reste infaisable.
+    if(seqBlocage){
+      const jal=seqBlocage.premierJalon;
+      const etape=(jal.label||'préparation').replace(/\s*\(.*\)$/,'').toLowerCase();
+      const quand=jal.date.toLocaleString('fr-FR',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+      return {statut:'ko', stockSuffit:false, seqBlocage:true,
+        msg:`⛔ Impossible pour le ${(typeof fmtDate==='function')?fmtDate(deadlineDateStr):deadlineDateStr}${deadlineHM?' à '+deadlineHM:''} : la ${etape} aurait dû démarrer avant maintenant pour respecter les temps de repos.`};
+    }
     const dispoIso = availableMinutesUntil(deadlineDateStr, deadlineHM);
     const bmin = prodThis.minutes||0;
     if(bmin<=0) return {statut:'ok', stockSuffit:true, besoinMin:0, dispoMin:dispoIso, msg:'✅ Stock suffisant : aucune production nécessaire.'};
@@ -44002,35 +44060,75 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
   }
 
   let statut;
-  if(ctx.depassement) statut='ko';
+  if(seqBlocage) statut='ko';                 // blocage technique dur (repos ganache/crémeux) → prime sur tout
+  else if(ctx.depassement) statut='ko';
   else if(ctx.chargePct>80) statut='tendu';
   else statut='ok';
+  // Maturation non respectée : jamais bloquant, mais dégrade 🟢 en 🟡 (faisable, pas optimisé).
+  if(!seqBlocage && seqMaturation && statut==='ok') statut='tendu';
 
-  // [DATE AU PLUS TÔT] Si infaisable, on cherche la 1re date de livraison (jusqu'à +10 j) où ça passe.
+  // Formatage d'un délai en langage courant (« 5 h », « 1 j 3 h ») pour expliquer le retard de séquence.
+  const fmtDelai = ms=>{
+    const h=Math.round(ms/3600000);
+    if(h<24) return h<=1?'moins d\u2019une heure':(h+' h');
+    const j=Math.floor(h/24), r=h%24;
+    return j+' j'+(r?(' '+r+' h'):'');
+  };
+
+  // [DATE AU PLUS TÔT] Si infaisable (blocage dur OU charge), on cherche la 1re date de livraison
+  // (jusqu'à +10 j) où ça passe. Critère séquence = rétroplanning DUR (maturation ignorée) : on cherche
+  // la 1re date PRODUCTIBLE, pas la 1re date parfaitement mûrie (la maturation ne bloque jamais).
   let earliest=null;
   if(statut==='ko'){
+    const parfumsNomsE = Object.keys(needs||{}).filter(n=>n && n!=='À définir' && (+needs[n]>0));
+    const recettesE = (typeof window!=='undefined' && window._allRecipesCache) ? window._allRecipesCache : [];
     const d0=new Date(deadlineDateStr+'T00:00:00');
     for(let k=1;k<=10;k++){
       d0.setDate(d0.getDate()+1);
       const ds=d0.getFullYear()+'-'+String(d0.getMonth()+1).padStart(2,'0')+'-'+String(d0.getDate()).padStart(2,'0');
       let f; try{ f=await _faisabiliteFenetre(debut, ds, conf, needs); }catch(_){ f=null; }
-      if(f && f.tempsDispo>0 && !f.depassement){ earliest=ds; break; }
+      const chargeOk = f && f.tempsDispo>0 && !f.depassement;
+      let seqOk=true;
+      if(parfumsNomsE.length && typeof retroplanningDepuisParfums==='function'){
+        try{
+          const rpE=retroplanningDepuisParfums(ds, deadlineHM, parfumsNomsE, recettesE, {ignorerMaturation:true});
+          if(rpE && !rpE.error && Array.isArray(rpE.jalons)){
+            const pt=rpE.jalons.filter(j=>j.type==='travail').sort((a,b)=>a.date-b.date)[0];
+            seqOk = !(pt && pt.date < new Date());
+          }
+        }catch(_){}
+      }
+      if(chargeOk && seqOk){ earliest=ds; break; }
     }
   }
 
   const ajout = surcout>0 ? ` Cette commande ≈ +${fmtH(surcout)}.` : '';
+  const earlyTxt = earliest ? ` ✅ Au plus tôt réalisable : ${(typeof fmtDate==='function')?fmtDate(earliest):earliest}.` : '';
+  // Note maturation à accoler quand la prod est faisable mais la maturation incomplète.
+  const matTxt = seqMaturation
+    ? ` ⏳ Maturation optimale de ${seqMaturation.maturationH} h non tenue (manque ${fmtDelai(seqMaturation.manqueMs)}) : les macarons seront bons mais pas à leur apogée aromatique.`
+    : '';
   let msg;
-  if(statut==='ok')
-    msg=`✅ Réalisable pour le ${dateFr} : ${fmtH(besoinTot)} à produire d'ici là sur ${fmtH(dispo)} dispo (${ctx.chargePct}%).${ajout}`;
-  else if(statut==='tendu')
-    msg=`⚠ Tendu pour le ${dateFr} : ${fmtH(besoinTot)} / ${fmtH(dispo)} dispo (${ctx.chargePct}%), marge faible.${ajout}`;
-  else{
-    const early = earliest ? ` ✅ Au plus tôt réalisable : ${(typeof fmtDate==='function')?fmtDate(earliest):earliest}.` : '';
-    msg=`⛔ Infaisable pour le ${dateFr} : ${fmtH(besoinTot)} à produire d'ici là pour ${fmtH(dispo)} dispo — il manque ${fmtH(ctx.debordementMin)} (autres commandes déjà prévues comprises).${early}`;
+  if(seqBlocage){
+    // Blocage technique dur : on nomme l'étape bloquante (ganache, crémeux) et le retard.
+    const jal = seqBlocage.premierJalon;
+    const etape = (jal.label||'préparation').replace(/\s*\(.*\)$/,'').toLowerCase();
+    const quand = jal.date.toLocaleString('fr-FR',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+    msg=`⛔ Impossible pour le ${dateFr}${deadlineHM?' à '+deadlineHM:''} : la ${etape} aurait dû commencer le ${quand} (il y a ${fmtDelai(seqBlocage.retardMs)}). Le repos avant montage ne peut pas être raccourci.${earlyTxt}`;
   }
+  else if(statut==='ok')
+    msg=`✅ Réalisable pour le ${dateFr} : ${fmtH(besoinTot)} à produire d'ici là sur ${fmtH(dispo)} dispo (${ctx.chargePct}%).${ajout}`;
+  else if(statut==='tendu' && seqMaturation && !ctx.depassement && ctx.chargePct<=80)
+    // 🟡 dû UNIQUEMENT à la maturation (la charge, elle, passe) : message centré qualité.
+    msg=`🟡 Faisable pour le ${dateFr} mais pas optimisé :${matTxt}${ajout}`;
+  else if(statut==='tendu')
+    msg=`⚠ Tendu pour le ${dateFr} : ${fmtH(besoinTot)} / ${fmtH(dispo)} dispo (${ctx.chargePct}%), marge faible.${ajout}${matTxt}`;
+  else
+    msg=`⛔ Infaisable pour le ${dateFr} : ${fmtH(besoinTot)} à produire d'ici là pour ${fmtH(dispo)} dispo — il manque ${fmtH(ctx.debordementMin)} (autres commandes déjà prévues comprises).${earlyTxt}`;
 
   return {statut, stockSuffit:false, besoinMin:besoinTot, dispoMin:dispo, surcoutMin:surcout,
-    chargePct:ctx.chargePct, earliest, nbBatchs:prodThis.nbBatchsTotal, nbMeringues:prodThis.nbMeringues, msg};
+    chargePct:ctx.chargePct, earliest, seqBlocage:!!seqBlocage, seqMaturation:!!seqMaturation,
+    nbBatchs:prodThis.nbBatchsTotal, nbMeringues:prodThis.nbMeringues, msg};
 }
 
 /* ============================================================
@@ -44050,7 +44148,8 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
 //   parfumsNoms   : [string] noms de parfums concernés (pour retrouver les recettes → contraintes)
 //   recipes       : db.recipes (déjà chargé)
 // Renvoie le MÊME format que l'ancien retroplanningCommande.
-function retroplanningDepuisParfums(dateLiv, hmRaw, parfumsNoms, recipes){
+function retroplanningDepuisParfums(dateLiv, hmRaw, parfumsNoms, recipes, opts){
+  opts = opts || {};
   recipes = recipes || window._allRecipesCache || [];
   const recByNom = {};
   recipes.forEach(r=>{ recByNom[aiNormalize ? aiNormalize(r.produitNom) : (r.produitNom||'').toLowerCase()] = r; });
@@ -44113,7 +44212,11 @@ function retroplanningDepuisParfums(dateLiv, hmRaw, parfumsNoms, recipes){
   // Jour J = pas de congélation/avance, donc pas de décongélation à prévoir.
   const decongelH = (gfCongele && !jourJ) ? (typeof PROC!=='undefined' ? (PROC.decongelFrigoH||2) : 2) : 0;
   // Jour J : pas de maturation longue ni d'avance (tout le jour même).
-  const maturationH = jourJ ? 0 : ((maturationParfumMaxH!=null) ? maturationParfumMaxH : DEFAUT_MATURATION_H);
+  // [MATURATION NON BLOQUANTE] La maturation est une contrainte de QUALITÉ (arômes), pas une contrainte
+  // technique dure comme le repos ganache. Un macaron non mûri reste vendable. Le verdict de faisabilité
+  // demande donc un rétroplanning "dur" (opts.ignorerMaturation) où la maturation vaut 0 : ça isole les
+  // vrais blocages (repos ganache, congélation crémeux) des simples pertes d'optimum aromatique.
+  const maturationH = (jourJ || opts.ignorerMaturation) ? 0 : ((maturationParfumMaxH!=null) ? maturationParfumMaxH : DEFAUT_MATURATION_H);
 
   // 3) Remontée à rebours.
   const jalons = [];
