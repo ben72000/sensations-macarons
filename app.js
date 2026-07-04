@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1185';
+const APP_VERSION = 'v1186';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3647,8 +3647,10 @@ function openModal(html){ if(!modal||!overlay){ modal=modal||document.getElement
 //  dans une COUCHE intégrée à l'app (pas une fenêtre séparée).
 //  → toujours un bouton « Fermer » : plus de blocage après impression.
 // ============================================================
+let _pvPrevTitle=null, _pvWantTitle='';  // [v1186] sauvegarde/restauration du document.title hôte pour le nom du PDF
 function openPrintView(htmlDoc, opts){
   opts = opts || {};
+  _pvWantTitle = opts.title||'';
   closePrintView(); // sécurité : pas de doublon
   const wrap = document.createElement('div');
   wrap.id = 'printView';
@@ -3664,6 +3666,13 @@ function openPrintView(htmlDoc, opts){
   const frame = document.getElementById('pvFrame');
   const doc = frame.contentWindow.document;
   doc.open(); doc.write(htmlDoc); doc.close();
+  // [v1186] Nom de fichier PDF = numéro du document. À l'enregistrement PDF (iOS/Safari),
+  // le nom proposé vient du document.title de la PAGE HÔTE, pas du <title> de l'iframe.
+  // On force donc temporairement le titre hôte sur opts.title (ex. « Facture 202607-28 »),
+  // restauré à la fermeture. Les appelants passent déjà le bon libellé.
+  if(opts.title){
+    try{ if(_pvPrevTitle===null){ _pvPrevTitle = document.title; } document.title = opts.title; }catch(e){}
+  }
   // entrée d'historique pour que le bouton « retour » ferme la vue au lieu de quitter l'app
   if(_histReady){ try{ history.pushState({kind:'printview', view:view}, '', '#print'); }catch(e){} }
   document.body.style.overflow='hidden';
@@ -3671,6 +3680,8 @@ function openPrintView(htmlDoc, opts){
 function printPrintView(){
   const frame = document.getElementById('pvFrame');
   if(!frame){ return; }
+  // [v1186] réappliquer le titre hôte juste avant l'impression (iOS le relit au print()).
+  try{ if(_pvPrevTitle!==null && _pvWantTitle){ document.title = _pvWantTitle; } }catch(e){}
   try{ frame.contentWindow.focus(); frame.contentWindow.print(); }
   catch(e){ try{ window.print(); }catch(_){} }
 }
@@ -3678,6 +3689,8 @@ function closePrintView(opts){
   const wrap = document.getElementById('printView');
   if(wrap){ wrap.remove(); }
   document.body.style.overflow='';
+  // [v1186] restaurer le titre hôte mémorisé à l'ouverture de l'aperçu.
+  try{ if(_pvPrevTitle!==null){ document.title = _pvPrevTitle; _pvPrevTitle=null; _pvWantTitle=''; } }catch(e){}
   opts=opts||{};
   if(_histReady && !_popping && !opts.fromPop && history.state && history.state.kind==='printview'){
     try{ history.back(); }catch(e){}
