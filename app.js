@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1200';
+const APP_VERSION = 'v1201';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -3105,7 +3105,7 @@ const KPI_HELP = {
   'ca_annee':      { t:'CA cette année', d:"Chiffre d'affaires facturé depuis le 1er janvier de l'année en cours. Utile pour suivre ta progression annuelle." },
   'ca_encaisse':   { t:'CA encaissé', d:"L'argent réellement reçu (règlements enregistrés), à la date du paiement. Différent du CA facturé : une commande facturée mais pas encore payée n'apparaît pas ici." },
   'ca_facture':    { t:'CA facturé', d:"Le total de tes commandes à leur date, qu'elles soient payées ou non. C'est la référence pour ton plafond de micro-entreprise." },
-  'macarons_stock':{ t:'Macarons en stock', d:"Le nombre de macarons finis (assemblés et prêts à vendre) actuellement disponibles, tous parfums confondus." },
+  'macarons_stock':{ t:'Macarons en stock', d:"Ton potentiel total de macarons : ceux déjà FINIS (assemblés, prêts à vendre) plus ceux que tu peux encore ASSEMBLER avec tes composants en stock. L'à-assembler compte, par parfum et sans mélange, le minimum entre les coques (2 = 1 macaron) et les doses de ganache disponibles — 5 coques + 10 doses ne font que 2 macarons. Les grands formats (GF) sont comptés à part. Les composants sont pris où qu'ils soient (frigo ou congélateur)." },
   'alertes_stock': { t:'Alertes stock', d:"Le nombre de matières premières passées sous leur seuil de réapprovisionnement. Ce sont celles à racheter bientôt pour ne pas tomber en rupture." },
   'taux_perte':    { t:'Taux de perte', d:"La part de ta production qui a été perdue (casse, ratés) par rapport au total produit. Sous 5 % c'est bon, au-dessus de 10 % ça mérite attention.\n\nCalcul : pièces perdues ÷ pièces produites." },
   'valeur_perdue': { t:'Valeur perdue (casse)', d:"Le coût de revient total de ce que tu as déclaré en perte. Ce montant est réimputé sur le coût de tes macarons vendables, car la casse doit être absorbée par ce qui se vend." },
@@ -3424,6 +3424,62 @@ function prodEstRangee(p){
 }
 // Un lot est-il un PRODUIT FINI vendable ? (exclut les sous-lots coques/ganache non assemblés)
 function prodVendable(p){ const c=prodComposant(p); return c==='complet' || c==='assemble'; }
+// [KPI STOCK] POTENTIEL DE MACARONS EN STOCK = déjà FINIS + ce qu'on peut encore ASSEMBLER.
+//   • finis        : productions vendables (complet/assemble), qteRestante.
+//   • à assembler  : pour CHAQUE parfum (recipeId), min(coques÷2, doses de ganache). Jamais de
+//                    mélange de parfums (un assemblage vendable = même parfum). La contrainte du
+//                    minimum est stricte : 5 coques + 10 doses → 2 macarons (limité par les coques) ;
+//                    10 coques + 3 doses → 3 macarons (limité par la ganache).
+//   • séparation CLASSIQUE / GRAND FORMAT via recipe.grandFormat (jamais le nom).
+//   • composants comptés PARTOUT (frigo + congélateur) : un composant congelé reste assemblable.
+// Fonction PURE : ni DOM ni Dexie. `recipesById` = map {recipeId -> recipe} pour lire grandFormat.
+// Exclut : sous-lots en cours (statut ≠ terminé), coques déclassées (dégustation), ganache catalogue
+// mutualisée (chantache : appelée directe à l'assemblage GF, pas une ganache à marier ici).
+function computeStockPotentiel(prods, recipesById){
+  const rById = recipesById || {};
+  const isGF = p => { const r = (p && p.recipeId!=null) ? rById[p.recipeId] : null; return !!(r && r.grandFormat); };
+  const fini = p => (p && (p.prodStatut||'termine')==='termine');
+  const qr = p => round3(+p.qteRestante||0);
+  // 1) FINIS vendables, séparés classique / GF
+  let finisClassique=0, finisGF=0;
+  (prods||[]).forEach(p=>{
+    if(!prodVendable(p)) return;
+    const q = qr(p); if(q<=0) return;
+    if(isGF(p)) finisGF = round3(finisGF+q); else finisClassique = round3(finisClassique+q);
+  });
+  // 2) À ASSEMBLER : agrège coques et ganache PAR parfum (recipeId), puis min(coques÷2, ganache).
+  //    On agrège d'abord tous les sous-lots d'un même parfum (peu importe l'emplacement).
+  const parParfum = {};   // recipeId -> {coques, ganache, gf}
+  (prods||[]).forEach(p=>{
+    if(!fini(p)) return;
+    const q = qr(p); if(q<=0) return;
+    const comp = prodComposant(p);
+    const rid = (p.recipeId!=null) ? p.recipeId : ('libre_'+(p.produitLibre||p.id));
+    if(comp==='coques'){
+      if(p.degDeclasse) return;                       // coques déclassées en dégustation : pas vendables
+      (parParfum[rid] || (parParfum[rid]={coques:0, ganache:0, gf:isGF(p)})).coques += q;
+    } else if(comp==='ganache'){
+      if(p.composantCatalogue===true) return;         // chantache mutualisée : exclue de l'assemblage binaire
+      (parParfum[rid] || (parParfum[rid]={coques:0, ganache:0, gf:isGF(p)})).ganache += q;
+    }
+  });
+  let assemblableClassique=0, assemblableGF=0;
+  Object.keys(parParfum).forEach(rid=>{
+    const b = parParfum[rid];
+    const macDepuisCoques = Math.floor(round3(b.coques)/COQUES_PAR_MACARON);   // 2 coques = 1 macaron
+    const macDepuisGanache = Math.floor(round3(b.ganache));                     // 1 dose = 1 macaron
+    const assemblable = Math.max(0, Math.min(macDepuisCoques, macDepuisGanache));
+    if(assemblable<=0) return;
+    if(b.gf) assemblableGF += assemblable; else assemblableClassique += assemblable;
+  });
+  const finis = round3(finisClassique + finisGF);
+  const assemblable = round3(assemblableClassique + assemblableGF);
+  return {
+    total: round3(finis + assemblable),
+    finis, finisClassique:round3(finisClassique), finisGF:round3(finisGF),
+    assemblable, assemblableClassique:round3(assemblableClassique), assemblableGF:round3(assemblableGF)
+  };
+}
 // Heure d'ancrage de la DLC frigo : le moment où la prod est passée « terminée »
 // (ou, pour les anciennes prods, l'horodatage de production).
 function prodDlcAnchor(p){ return (p && (p.prodTermineTs || (prodStatut(p)==='termine' ? p.prodTimestamp : ''))) || ''; }
@@ -4645,7 +4701,9 @@ async function renderDash(){
   }
   // Stock de macarons FINIS VENDABLES uniquement : on exclut les sous-lots intermédiaires
   // (ganache, coques non assemblées) via prodVendable(), comme la vue « Stock par parfum ».
-  const finis = productions.filter(prodVendable).reduce((s,p)=>s+(+p.qteRestante||0),0);
+  // [KPI STOCK] Potentiel complet : finis + à assembler (min coques÷2 / ganache par parfum), séparé GF.
+  const _recById = {}; (recipes||[]).forEach(r=>{ _recById[r.id]=r; });
+  const stockPot = computeStockPotentiel(productions, _recById);
 
   // Alertes DLC produits finis (suivi en sourdine) : seuil adapté à l'emplacement.
   // Frigo : alerte à ≤2 jours. Congélateur : alerte à ≤14 jours. Expiré = priorité.
@@ -4702,7 +4760,10 @@ async function renderDash(){
      <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts, charges & dons ›':'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      ${(nbLivraisons>0)?`<div class="card clickable accent" style="--card-accent:${livBeneficeNet>=0?'#3f7d52':'#b3261e'}" onclick="goView('rentabilite')" title="Impact des livraisons sur la marge"><div class="corner">🚚</div><div class="lbl">Impact livraisons</div><div class="val">${privacyModeEnabled()?'•••':`${livBeneficeNet>=0?'+':''}${euro(livBeneficeNet)}`}</div><div class="sub">${nbLivraisons} tournée(s) · coût ${euro(coutLivraisonBrut)} ›</div></div>`:''}
-     <div class="card clickable accent" style="--card-accent:#7a4b82" onclick="goView('stockparfums')" title="Voir le stock par parfum"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(finis)}</div><div class="sub">par parfum ›</div></div>
+     <div class="card clickable accent" style="--card-accent:#7a4b82" onclick="goView('stockparfums')" title="Finis + potentiel à assembler (min coques/ganache par parfum)"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(stockPot.total)}</div><div class="sub" style="line-height:1.5">
+       <div>✅ Finis : <b>${qtyP(stockPot.finisClassique)}</b>${stockPot.finisGF>0?` <span style="color:#8a6d3b">· ${qtyP(stockPot.finisGF)} GF</span>`:''}</div>
+       <div>🧩 À assembler : <b>${qtyP(stockPot.assemblableClassique)}</b>${stockPot.assemblableGF>0?` <span style="color:#8a6d3b">· ${qtyP(stockPot.assemblableGF)} GF</span>`:''}</div>
+     </div></div>
      <div class="card clickable accent" style="--card-accent:${low.length>0?'#b3261e':'#3f7d52'}" onclick="goView('matieres')" title="Voir les matières à réapprovisionner"><div class="corner">⬛</div><div class="lbl">Alertes stock ${kpiI('alertes_stock')}</div><div class="val">${low.length}</div><div class="sub">matière(s) sous seuil ›</div></div>
    </div>
    <details style="margin:2px 0 10px">
@@ -20152,6 +20213,11 @@ function marketTotals(market, moves, avgUnitMat){
   // le coût matière est déjà supporté) — on rattache au vendu pour une marge sur ventes réelles.
   const unit = +avgUnitMat||0;
   const coutMat = money2(vendu*unit);
+  // [AUDIT-2026-07 · pertes marché] COÛT MATIÈRE DES INVENDUS JETÉS (type 'perte' uniquement, pas les
+  // retours — récupérés — ni les dons — tracés ailleurs). INFORMATIF : n'entre PAS dans coutMat ni
+  // margeBrute (la marge reste sur le vendu). Sert à voir, au cas par cas, ce qu'une casse a vraiment
+  // coûté sur ce marché, sans fausser rétroactivement les marges déjà lues ailleurs.
+  const coutInvendusJetes = money2(round3(perte)*unit);
   const pkg = marketPackagingCost(market);
   // Coût emballage : réel si comptage de boîtes ; sinon ESTIMÉ au ratio €/macaron des marchés
   // de référence (garde-fou : ratio null si trop peu de marchés comptés → reste 0).
@@ -20178,7 +20244,8 @@ function marketTotals(market, moves, avgUnitMat){
     pctCB: caTotal>0?Math.round(caCB/caTotal*100):0, pctEspeces: caTotal>0?Math.round(caEspeces/caTotal*100):0,
     tauxInvendus, tauxPerte,
     caParHeure: (market.heures>0)?money2(caTotal/market.heures):0,
-    coutMat, coutEmb, coutEmbEstime, coutStand, deplacement, coutMarche, pkgUsed:pkg.used, margeBrute, tauxBrut, chargesSociales, margeNette, tauxNet};
+    coutMat, coutEmb, coutEmbEstime, coutStand, deplacement, coutMarche, pkgUsed:pkg.used, margeBrute, tauxBrut, chargesSociales, margeNette, tauxNet,
+    coutInvendusJetes};
 }
 // Coût matière moyen par macaron (helper réutilisable, nécessite recipes+items+lots).
 // ÉTAPE 1 — Mesure du gaspillage : agrège les RETOURS de marché ÉCARTÉS (destination 'ecarte',
@@ -25324,6 +25391,7 @@ async function marketDetail(id){
       <div class="sum-box"><span>Espèces / CB / Autre</span><b>${euro(T.caEspeces)} / ${euro(T.caCB)} / ${euro(T.caAutre)}</b></div>
       <div class="sum-box"><span>Répartition</span><b>CB ${T.pctCB}% · Espèces ${T.pctEspeces}%</b></div>
       <div class="sum-box"><span>Taux d'invendus / pertes</span><b>${T.tauxInvendus}% / ${T.tauxPerte}%</b></div>
+      ${(+T.coutInvendusJetes>0)?`<div class="note" style="margin:2px 0 4px;font-size:.78rem;color:#8a7a72;background:#f7f3ee;border:1px solid #ece3d6;border-radius:8px;padding:6px 9px">ℹ️ Coût matière des <b>${qty(T.perte)} macaron(s) jeté(s)</b> : <b>${euro(T.coutInvendusJetes)}</b>. <span style="color:#9a8a82">Non déduit de la marge ci-dessus (calculée sur le vendu). À toi de juger : casse sèche ou récupérée ?</span></div>`:''}
       ${mk.heures>0?`<div class="sum-box"><span>CA / heure</span><b>${euro(T.caParHeure)}</b></div>`:''}
       <h3 style="font-size:.95rem;margin:12px 0 6px">Rentabilité</h3>
       <div class="sum-box"><span>Coût matières (${qty(T.vendu)} vendus)</span><b>−${euro(T.coutMat)}</b></div>
