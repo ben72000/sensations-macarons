@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1204';
+const APP_VERSION = 'v1205';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -2561,6 +2561,7 @@ function acPickBook(bookIndex){
   const body=document.getElementById('livBody');
   if(body && body.style.display==='none' && typeof toggleLivBlock==='function') toggleLivBlock();
   if(typeof cmdDeliveryRecalc==='function') cmdDeliveryRecalc();
+  if(typeof cmdRentabiliteRecalc==='function') cmdRentabiliteRecalc();
   toast(`Distance et temps pré-remplis pour « ${a.libelle} »`);
 }
 // Ferme la liste si on clique ailleurs.
@@ -15725,12 +15726,15 @@ async function cmdForm(id, opts){
   // Modèles de SACS (emballage usage:'sac') proposables sur la commande (quantité saisie à la main).
   cmdSacsCache = (await db.materials.toArray()).filter(m=>m.categorie==='emballage' && m.usage==='sac').sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
   cmdEmbLotsCache = await db.materialLots.toArray().catch(()=>[]);   // lots pour calculer le coût unitaire emballage (dons)
-  // caches pour le calcul de marge en direct (impact livraison)
+  // caches pour le calcul de marge en direct (impact livraison + rentabilité)
   _cmdMarginCache = {
     recipes: await db.recipes.toArray(),
     recipeItems: await db.recipeItems.toArray(),
     lots: await db.materialLots.toArray()
   };
+  // Contexte main-d'œuvre mesurée (temps réel par parfum × taux horaire) rafraîchi ici pour
+  // que la part MO du coût de revient soit à jour dès le premier affichage du bloc rentabilité.
+  try{ if(typeof refreshMoCtx==='function') await refreshMoCtx(); }catch(e){ console.error('cmdForm moCtx', e); }
   let o;
   if(_cmdDevisMode && _cmdDevisId){
     const dv = await db.documents.get(_cmdDevisId);
@@ -15871,6 +15875,19 @@ async function cmdForm(id, opts){
      <div class="field"><label>Prix total (€) <span style="color:#9a8a82;font-weight:400">— auto, modifiable</span></label><input type="number" step="0.01" id="f_mt" value="${o.montant||''}" oninput="_cmdPriceManual=true;this.dataset.auto='0';cmdRecalc()"></div>
    </div>
    <div class="sum-box" id="priceBreak" style="display:none"></div>
+
+   <!-- RENTABILITÉ EN DIRECT : coût de revient réel + marge, recalculé à chaque frappe.
+        En-tête cliquable (verdict + revient + marge toujours visibles) ; détail au tap. -->
+   <div class="sum-box" id="cmdRentaBox" style="display:none;flex-direction:column;align-items:stretch;gap:6px;margin-top:8px">
+     <div id="cmdRentaHead" onclick="cmdRentaToggle()" style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer">
+       <span style="display:inline-flex;align-items:center;gap:6px;font-weight:600;color:var(--bordeaux)">
+         <span id="cmdRentaChev" style="display:inline-block;transition:transform .15s;color:#b39a86">▶</span>
+         Rentabilité
+       </span>
+       <span id="cmdRentaSum" style="font-size:.9rem;text-align:right"></span>
+     </div>
+     <div id="cmdRentaBody" style="display:none;font-size:.9rem"></div>
+   </div>
 
    <label class="switch-row" style="margin-top:10px"><input type="checkbox" id="f_acompteMention" ${o.acompteMention!==false?'checked':''}> Afficher la mention « acompte de 75 % requis » sur le devis <span style="color:#9a8a82;font-weight:400">— décoche pour la masquer sur cette commande</span></label>
 
@@ -17439,6 +17456,7 @@ function cmdRecalc(){
   }
   if(typeof cmdUpdatePaySummary==='function') cmdUpdatePaySummary();
   if(typeof cmdDeliveryRecalc==='function') cmdDeliveryRecalc();
+  if(typeof cmdRentabiliteRecalc==='function') cmdRentabiliteRecalc();
   if(typeof cmdFeasibilityRecalc==='function') cmdFeasibilityRecalc();
 }
 
@@ -17546,6 +17564,117 @@ function cmdDeliveryRecalc(){
           ${palier('Coût réel + charges', zeroPerte, 'zéro perte après cotisations', 'var(--bordeaux)')}
         </div>`;
     })();
+}
+
+// ============================================================================
+// RENTABILITÉ EN DIRECT (Commande / Devis) — bloc repliable sous le prix.
+// Réutilise EXACTEMENT le même moteur que le bloc livraison (computeOrderMargins)
+// et le même cache synchrone (_cmdMarginCache) → source unique de vérité, aucun
+// chargement Dexie à la frappe, aucune divergence possible entre les modules.
+// L'en-tête (toujours visible) porte le VERDICT 🟢/🟡/🔴 + coût de revient + marge
+// nette. Le corps déplié détaille matière / emballage / main-d'œuvre. Fermé par
+// défaut. Branché sur cmdRecalc → recalcul instantané à chaque modification.
+// ----------------------------------------------------------------------------
+// Bascule l'ouverture du bloc (chevron + corps). Ne touche JAMAIS au résumé de
+// valeurs (réécrit à chaque frappe par cmdRentabiliteRecalc) : uniquement la
+// structure cliquable, pour ne pas entrer en conflit avec le recalcul temps réel.
+function cmdRentaToggle(){
+  const body = document.getElementById('cmdRentaBody');
+  const chev = document.getElementById('cmdRentaChev');
+  if(!body) return;
+  const open = body.style.display==='none' || !body.style.display;
+  body.style.display = open ? 'block' : 'none';
+  if(chev) chev.style.transform = open ? 'rotate(90deg)' : 'rotate(0deg)';
+}
+
+// Recalcule et affiche la rentabilité de la commande en cours de saisie.
+// Draft reconstruit depuis l'état vivant du formulaire (mêmes lignes que la
+// livraison + prix/remise/sacs pour un CA net exact). Robuste aux états
+// transitoires (formulaire vide, ligne sans parfum) : try/catch + moteur qui
+// encaisse un draft incomplet (coût 0). Aucun chiffre « tombé du ciel » : chaque
+// poste vient d'un calcul du moteur central, montré dans le décomposé.
+function cmdRentabiliteRecalc(){
+  const box  = document.getElementById('cmdRentaBox');
+  const head = document.getElementById('cmdRentaSum');   // résumé de valeurs (en-tête, hors zone cliquable)
+  const body = document.getElementById('cmdRentaBody');
+  if(!box || !head) return;
+  try{
+    const lignes = cmdLinesToStored();
+    // Rien de vendable saisi → on masque le bloc (pas de rentabilité à afficher).
+    if(!lignes || !lignes.length){ box.style.display='none'; return; }
+    box.style.display='block';
+
+    // Prix de vente en cours : le champ « Prix total » (auto ou manuel). Sert de CA
+    // de référence au moteur (réconciliation o.montant, cf. computeOrderMargins).
+    const montant = money2(+val('f_mt')||0);
+    const o = {
+      lignes,
+      montant,
+      remiseGlobale:    Math.max(0,Math.min(100,+(document.getElementById('f_remiseg')?.value)||0)),
+      remiseGlobaleEur: Math.max(0, +_cmdRemiseGlobaleEur||0),
+      // livraison : mêmes saisies que le bloc livraison (impacte la marge après tournée,
+      // pas le coût de revient produit — on n'affiche ici que la marge nette AVANT livraison).
+      distanceKm:      +val('f_distKm')||0,
+      prixCarburant:   +val('f_carbu')||0,
+      tempsLivraisonMin:+val('f_tempsLiv')||0,
+      consoVehicule:   val('f_conso')!==''?(+val('f_conso')||0):null,
+      fraisLivraison:  (function(){ const mt=document.getElementById('f_mt'); return mt&&mt.dataset.fraisLivraison? +mt.dataset.fraisLivraison : 0; })(),
+      sacMatId:        +val('f_sacMat')||0,
+      sacNb:           Math.max(0, Math.round(+val('f_sacNb')||0)),
+      perso:           !!document.getElementById('f_perso')?.checked,
+      persoMacarons:   (typeof cmdPersoCount==='function'?cmdPersoCount():0)
+    };
+
+    const c = _cmdMarginCache||{};
+    const m = computeOrderMargins(o, c.recipes||[], c.recipeItems||[], c.lots||[]);
+
+    const coutRevient = money2(m.coutMat + m.coutEmb);   // coût complet : matière+conso+MO (coutMat) + emballage
+    const coutMO      = +m.coutMOD||0;                    // part main-d'œuvre isolée (incluse dans coutMat)
+    const coutMatiere = money2(m.coutMat - coutMO);       // matière + consommables (hors MO)
+    const ps          = profitScale(m.tauxNet);           // verdict 🟢/🟡/🔴 sur la marge nette
+
+    // -- EN-TÊTE (toujours visible) : verdict + coût de revient + marge nette --
+    const dot = m.tauxNet>=30 ? '🟢' : (m.tauxNet>=15 ? '🟡' : '🔴');
+    head.innerHTML =
+      `<span style="display:inline-flex;align-items:center;gap:6px">`+
+        `<span>${dot}</span>`+
+        `<span style="color:#8a7a72">Revient</span> <b>${euro(coutRevient)}</b>`+
+        `<span style="color:#cbb9ac">·</span>`+
+        `<span style="color:#8a7a72">Marge</span> <b style="color:${ps.col}">${euro(m.margeNette)}</b>`+
+        `<span style="color:${ps.col};font-size:.82rem">(${m.tauxNet}%)</span>`+
+      `</span>`;
+
+    // -- CORPS (au tap) : décomposé complet, un seul fil de lecture --
+    if(body){
+      const row = (label, val, opts)=>{
+        opts = opts||{};
+        return `<div style="display:flex;justify-content:space-between;${opts.top?'border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px;':''}${opts.small?'font-size:.82rem;color:#8a7a72;':''}">`+
+               `<span>${label}</span><b style="${opts.col?`color:${opts.col}`:''}">${val}</b></div>`;
+      };
+      let html = '';
+      html += row('Matière + consommables', euro(coutMatiere));
+      if(coutMO>0) html += row("Main-d'œuvre (temps réel × taux horaire)", euro(coutMO));
+      else         html += row("Main-d'œuvre", '<span style="color:#a89a90;font-weight:400">non mesurée</span>', {small:true});
+      html += row('Emballage'+(m.coutEmbEstime>0?' <span style="color:#a89a90;font-weight:400;font-size:.78rem">(dont estimé)</span>':''), euro(m.coutEmb));
+      html += row('Coût de revient total', euro(coutRevient), {top:true, col:'var(--bordeaux)'});
+      html += row('Prix de vente (net de remises)', euro(m.ca), {top:true});
+      html += row('Marge brute', `${euro(m.margeBrute)} (${m.tauxBrut}%)`, {small:true});
+      html += row('Charges sociales', '−'+euro(m.chargesSociales), {small:true});
+      html += row(`${dot} Marge nette`, `${euro(m.margeNette)} (${m.tauxNet}%)`, {top:true, col:ps.col});
+      html += `<div style="margin-top:5px;font-size:.78rem;color:${ps.col}">${ps.label}</div>`;
+      // Signal visible : parfums sans recette rattachée → coût partiellement au coût moyen.
+      if(m.piecesNonResolues>0){
+        html += `<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #e0d5c5;font-size:.78rem;color:#b3261e">`+
+                `⚠️ ${m.piecesNonResolues} macaron(s) sans recette rattachée — coût estimé à la moyenne`+
+                (m.parfumsNonResolus&&m.parfumsNonResolus.length?` (${m.parfumsNonResolus.map(esc).join(', ')})`:'')+
+                `. À corriger dans les recettes pour un coût exact.</div>`;
+      }
+      body.innerHTML = html;
+    }
+  }catch(e){
+    console.error('cmdRentabiliteRecalc', e);
+    if(box) box.style.display='none';
+  }
 }
 // Ajoute le supplément livraison suggéré au prix total de la commande (champ manuel).
 // La livraison facturée est ajoutée comme une LIGNE DE PRESTATION « Frais de livraison ».
