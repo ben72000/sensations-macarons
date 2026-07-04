@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1177';
+const APP_VERSION = 'v1178';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -16720,7 +16720,7 @@ function cmdRecalc(){
 // Verdict instantané de faisabilité de la commande en cours d'édition.
 // Combine la demande par parfum (lignes), le stock actuel, la date/heure de
 // livraison et le temps réellement disponible (planning bi-hebdomadaire).
-let _feasTimer=null;
+let _feasTimer=null, _feasRun=0;
 function cmdFeasibilityRecalc(){
   const box=document.getElementById('feasibility'); if(!box) return;
   const date=document.getElementById('f_date')?.value;
@@ -16730,10 +16730,15 @@ function cmdFeasibilityRecalc(){
   try{ const o={lignes: cmdLinesToStored()}; needs=_orderParfumDemand(o); }catch(e){ needs={}; }
   const totalDemande=Object.values(needs).reduce((s,x)=>s+(+x||0),0);
   if(!date || totalDemande<=0){ box.style.display='none'; return; }
-  // léger debounce (le calcul lit le stock en base)
+  // feedback immédiat pendant le calcul contextuel (lit stock + planning en base)
+  box.style.display='block'; box.style.background='#f6f2ea'; box.style.borderColor='#e0d5c5';
+  box.innerHTML='<div class="feas-msg" style="color:#8a7a72">⏳ Analyse de la faisabilité…</div>';
+  // debounce + garde anti-résultat périmé (un recalcul plus récent invalide l'ancien)
+  const myRun = ++_feasRun;
   if(_feasTimer) clearTimeout(_feasTimer);
   _feasTimer=setTimeout(async()=>{
-    let r; try{ r=await assessOrderFeasibility(needs, date, heure); }catch(e){ box.style.display='none'; return; }
+    let r; try{ r=await assessOrderFeasibility(needs, date, heure); }catch(e){ if(myRun===_feasRun) box.style.display='none'; return; }
+    if(myRun!==_feasRun) return;   // périmé : un recalcul plus récent a démarré
     const col = r.statut==='ok' ? 'var(--green,#3f7d52)' : r.statut==='tendu' ? 'var(--caramel,#AA7C39)' : 'var(--red,#b3261e)';
     const bg  = r.statut==='ok' ? '#eef6ee' : r.statut==='tendu' ? '#fbf4e9' : '#fdf3f2';
     let detail='';
@@ -43948,30 +43953,84 @@ async function productionMinutesForNeeds(needs, opts){
 // VERDICT DE FAISABILITÉ d'une commande (date + heure + parfums demandés).
 // Compare stock + temps disponible d'ici la livraison au temps de production requis.
 async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
+  const fmtH = m=>{ m=Math.round(+m||0); const h=Math.floor(m/60), mm=m%60; return `${h?h+'h':''}${h?String(mm).padStart(2,'0'):mm+' min'}`; };
   if(!deadlineDateStr) return {statut:'inconnu', msg:'Renseigne une date de livraison.'};
-  const prod = await productionMinutesForNeeds(needs);          // net du stock actuel
-  const dispo = availableMinutesUntil(deadlineDateStr, deadlineHM);
-  const besoinMin = prod.minutes;
-  // déjà couvert par le stock : rien à produire
-  if(besoinMin<=0){
-    return {statut:'ok', stockSuffit:true, besoinMin:0, dispoMin:dispo,
-      msg:'✅ Stock suffisant : aucune production nécessaire.', prod, dispo};
+  const totalDem = Object.values(needs||{}).reduce((s,x)=>s+(+x||0),0);
+  if(totalDem<=0) return {statut:'inconnu', msg:'Ajoute des parfums pour évaluer la faisabilité.'};
+  const debut = (typeof today==='function') ? today().slice(0,10) : new Date().toISOString().slice(0,10);
+  if(deadlineDateStr < debut) return {statut:'ko', msg:'⛔ Date de livraison déjà passée.'};
+  const conf = (typeof getAvailability==='function') ? getAvailability() : null;
+
+  // [CONTEXTE RÉEL] On juge la commande DANS son environnement, pas isolée : le moteur de fenêtre agrège
+  // TOUTES les commandes non livrées + marchés de [aujourd'hui → livraison], DÉDUIT le stock physique (ce
+  // qui est déjà fait), puis ajoute CETTE commande (besoin additionnel fictif — rien n'est écrit en base).
+  // C'est ce qui empêche le « OK au doigt mouillé » qui ignorait les autres échéances.
+  let ctx=null;
+  try{ ctx = await _faisabiliteFenetre(debut, deadlineDateStr, conf, needs); }catch(e){ console.error('assessFeas.ctx',e); }
+
+  // Contribution propre de cette commande (temps de prod net du stock) + batchs, pour le détail.
+  let prodThis={minutes:0,nbBatchsTotal:0,nbMeringues:0};
+  try{ prodThis = await productionMinutesForNeeds(needs); }catch(_){}
+
+  // Repli : moteur de fenêtre indisponible → ancien calcul isolé (mieux que rien).
+  if(!ctx){
+    const dispoIso = availableMinutesUntil(deadlineDateStr, deadlineHM);
+    const bmin = prodThis.minutes||0;
+    if(bmin<=0) return {statut:'ok', stockSuffit:true, besoinMin:0, dispoMin:dispoIso, msg:'✅ Stock suffisant : aucune production nécessaire.'};
+    const marge=dispoIso-bmin, statut = dispoIso<=0?'inconnu' : marge<0?'ko' : (bmin/dispoIso>0.8?'tendu':'ok');
+    return {statut, stockSuffit:false, besoinMin:bmin, dispoMin:dispoIso,
+      nbBatchs:prodThis.nbBatchsTotal, nbMeringues:prodThis.nbMeringues,
+      msg: statut==='inconnu' ? 'Renseigne tes disponibilités pour trancher.' :
+           statut==='ko' ? `⛔ ${fmtH(bmin)} à produire pour ${fmtH(dispoIso)} dispo — il manque ${fmtH(-marge)}.` :
+           statut==='tendu' ? `⚠ Tendu : ${fmtH(bmin)} sur ${fmtH(dispoIso)} dispo.` :
+           `✅ Réalisable : ${fmtH(bmin)} à produire, ${fmtH(dispoIso)} dispo.`};
   }
-  const marge = dispo - besoinMin;
-  const ratio = dispo>0 ? besoinMin/dispo : Infinity;
-  let statut, msg;
-  const fmtH = m=>{ const h=Math.floor(m/60), mm=Math.round(m%60); return `${h?h+'h':''}${h?String(mm).padStart(2,'0'):mm+' min'}`; };
+
+  const dispo = ctx.tempsDispo||0;
+  const besoinTot = ctx.tempsTotal||0;                 // TOUT ce qu'il faut produire d'ici la livraison
+  const surcout = Math.max(0, prodThis.minutes||0);    // ≈ ce que cette commande ajoute
+  const dateFr = (typeof fmtDate==='function') ? fmtDate(deadlineDateStr) : deadlineDateStr;
+
   if(dispo<=0){
-    statut='ko'; msg='⛔ Aucune plage de travail disponible avant la livraison.';
-  } else if(marge<0){
-    statut='ko'; msg=`⛔ Production estimée ${fmtH(besoinMin)} pour seulement ${fmtH(dispo)} dispo : il manque ~${fmtH(-marge)}.`;
-  } else if(ratio>0.8){
-    statut='tendu'; msg=`⚠ Tenable mais serré : ${fmtH(besoinMin)} à produire sur ${fmtH(dispo)} dispo (marge ~${fmtH(marge)}).`;
-  } else {
-    statut='ok'; msg=`✅ Réalisable : ${fmtH(besoinMin)} à produire, ${fmtH(dispo)} disponibles d'ici la livraison.`;
+    return {statut:'inconnu', stockSuffit:false, besoinMin:besoinTot, dispoMin:0,
+      nbBatchs:prodThis.nbBatchsTotal, nbMeringues:prodThis.nbMeringues,
+      msg:`Renseigne tes disponibilités pour trancher (charge totale d'ici le ${dateFr} : ${fmtH(besoinTot)}).`};
   }
-  return {statut, stockSuffit:false, besoinMin, dispoMin:dispo, marge, ratio, msg, prod, dispo,
-    nbMeringues:prod.nbMeringues, nbBatchs:prod.nbBatchsTotal};
+  if(besoinTot<=0){
+    return {statut:'ok', stockSuffit:true, besoinMin:0, dispoMin:dispo,
+      msg:`✅ Réalisable pour le ${dateFr} : le stock couvre déjà tout, rien à produire.`};
+  }
+
+  let statut;
+  if(ctx.depassement) statut='ko';
+  else if(ctx.chargePct>80) statut='tendu';
+  else statut='ok';
+
+  // [DATE AU PLUS TÔT] Si infaisable, on cherche la 1re date de livraison (jusqu'à +10 j) où ça passe.
+  let earliest=null;
+  if(statut==='ko'){
+    const d0=new Date(deadlineDateStr+'T00:00:00');
+    for(let k=1;k<=10;k++){
+      d0.setDate(d0.getDate()+1);
+      const ds=d0.getFullYear()+'-'+String(d0.getMonth()+1).padStart(2,'0')+'-'+String(d0.getDate()).padStart(2,'0');
+      let f; try{ f=await _faisabiliteFenetre(debut, ds, conf, needs); }catch(_){ f=null; }
+      if(f && f.tempsDispo>0 && !f.depassement){ earliest=ds; break; }
+    }
+  }
+
+  const ajout = surcout>0 ? ` Cette commande ≈ +${fmtH(surcout)}.` : '';
+  let msg;
+  if(statut==='ok')
+    msg=`✅ Réalisable pour le ${dateFr} : ${fmtH(besoinTot)} à produire d'ici là sur ${fmtH(dispo)} dispo (${ctx.chargePct}%).${ajout}`;
+  else if(statut==='tendu')
+    msg=`⚠ Tendu pour le ${dateFr} : ${fmtH(besoinTot)} / ${fmtH(dispo)} dispo (${ctx.chargePct}%), marge faible.${ajout}`;
+  else{
+    const early = earliest ? ` ✅ Au plus tôt réalisable : ${(typeof fmtDate==='function')?fmtDate(earliest):earliest}.` : '';
+    msg=`⛔ Infaisable pour le ${dateFr} : ${fmtH(besoinTot)} à produire d'ici là pour ${fmtH(dispo)} dispo — il manque ${fmtH(ctx.debordementMin)} (autres commandes déjà prévues comprises).${early}`;
+  }
+
+  return {statut, stockSuffit:false, besoinMin:besoinTot, dispoMin:dispo, surcoutMin:surcout,
+    chargePct:ctx.chargePct, earliest, nbBatchs:prodThis.nbBatchsTotal, nbMeringues:prodThis.nbMeringues, msg};
 }
 
 /* ============================================================
