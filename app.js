@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1195';
+const APP_VERSION = 'v1196';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -2625,6 +2625,10 @@ const SETTINGS_DEFAULTS = {
   irAbattementMin: 305,      // abattement minimum légal (€) appliqué sur l'année
   packaging: { 6:1.26, 8:2.18, 16:1.90, 25:2.32 }, // € emballage/consommable par coffret (tarifs réels reçus le 28/11/2025)
   packagingDate: '2025-11-28', // date de réception de référence de ces tarifs (mise à jour à chaque nouvelle réception)
+  // [AUDIT-2026-07 · A6/A18] Taille de coffret de RÉFÉRENCE pour estimer l'emballage des commandes de
+  // reprise (histo, sans détail de coffret). Sert à choisir le bon ratio €/macaron par taille (ou, à
+  // défaut d'historique, le tarif paramétré packaging[taille]/taille). Défaut 16 (best-seller courant).
+  embHistoTailleRef: 16,
   // Main-d'œuvre (optionnelle) : prise en compte dans le coût de revient si activée.
   laborEnabled: false,   // active/désactive l'ajout du coût de main-d'œuvre
   laborRate: 12.0,       // coût horaire main-d'œuvre (€/h) chargé
@@ -2673,6 +2677,7 @@ function getSettings(){
       prixGrandFormatPro: s.prixGrandFormatPro!=null?+s.prixGrandFormatPro:SETTINGS_DEFAULTS.prixGrandFormatPro,
       packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
       packagingDate: s.packagingDate || SETTINGS_DEFAULTS.packagingDate,
+      embHistoTailleRef: (s.embHistoTailleRef!=null && +s.embHistoTailleRef>0) ? +s.embHistoTailleRef : SETTINGS_DEFAULTS.embHistoTailleRef,
       packTypes: Array.isArray(s.packTypes) ? s.packTypes : JSON.parse(JSON.stringify(SETTINGS_DEFAULTS.packTypes)),
       consommables: Array.isArray(s.consommables) ? s.consommables : [],
       addressBook: Array.isArray(s.addressBook) ? s.addressBook : [],
@@ -14561,6 +14566,30 @@ function applyAutoPay(o){
 }
 
 // Action « Solder » : ouvre un encaissement du solde, SANS date auto — l'utilisateur saisit date + mode.
+// [AUDIT-2026-07 · A2-opt] Bascule l'affichage de la rentabilité entre « avec MO » et « sans MO ».
+// Pur DOM : lit les valeurs pré-calculées (data-*) posées par cmdView, sans recalcul ni persistance.
+// Le calcul sous-jacent reste TOUJOURS au coût complet (cohérence entre écrans) ; ceci n'est qu'une VUE.
+function toggleMargeMO(id){
+  const blk=document.getElementById('margeMOBlock_'+id);
+  const btn=document.getElementById('moToggleBtn_'+id);
+  if(!blk||!btn) return;
+  const avecMO = btn.getAttribute('data-mo')==='1';   // état courant : true = on affiche AVEC MO
+  const next = !avecMO;                                 // on bascule
+  const g=(k)=>blk.getAttribute(k);
+  const euroFmt=(typeof euro==='function')?euro:(v=>((+v||0).toFixed(2))+' €');
+  const cm  = next ? g('data-cmavec') : g('data-cmsans');
+  const mb  = next ? g('data-mbavec') : g('data-mbsans');
+  const txb = next ? g('data-txbavec'): g('data-txbsans');
+  const mn  = next ? g('data-mnavec') : g('data-mnsans');
+  const txn = next ? g('data-txnavec'): g('data-txnsans');
+  const vCoutmat=blk.querySelector('.v-coutmat'); if(vCoutmat) vCoutmat.textContent=euroFmt(cm);
+  const vMb=blk.querySelector('.v-mb'); if(vMb) vMb.textContent=euroFmt(mb)+' ('+txb+'%)';
+  const vMn=blk.querySelector('.v-mn'); if(vMn){ vMn.textContent=euroFmt(mn)+' ('+txn+'%)'; vMn.style.color=(+mn<0?'#b3261e':'#2e7d32'); }
+  const lbl=blk.querySelector('.mo-lbl'); if(lbl) lbl.textContent = next ? '(par parfum, avec MO)' : '(par parfum, hors MO)';
+  const moOnly=blk.querySelector('.mo-only'); if(moOnly) moOnly.style.display = next ? '' : 'none';
+  btn.setAttribute('data-mo', next?'1':'0');
+  btn.textContent = next ? 'Voir sans main-d\'œuvre' : 'Voir avec main-d\'œuvre';
+}
 async function markPaid(id, fromModal){
   const o=await db.orders.get(id); if(!o) return;
   if(orderPayStatus(o)==='Payé'){ toast('Déjà soldée'); return; }
@@ -15373,10 +15402,70 @@ async function cmdView(id){
       try{
         const _mg = computeOrderMargins(o, _embRecipes, _embItems, _embLots, _embMats);
         if(_mg && +_mg.coutEmbEstime>0){
-          return `<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:10px">📦 <div><b>Emballage estimé :</b> cette commande de reprise n'a pas de détail d'emballage. Son coût (<b>${euro(_mg.coutEmbEstime)}</b>) est <b>estimé</b> d'après la moyenne de tes commandes détaillées (${_embEstRefInfo.n} réf.). Le coût réel peut différer.</div></div>`;
+          // [A6/A18] Message adapté à la MÉTHODE réellement utilisée pour l'estimation emballage.
+          const _src=_mg.embEstimSource, _tRef=_mg.embHistoTaille||16;
+          const _nT=(_embEstRefInfo.nParTaille&&_embEstRefInfo.nParTaille[_tRef])||0;
+          const _methode = _src==='ratio-taille'
+              ? `d'après le coût moyen réel de tes coffrets ${_tRef} (${_nT} réf.)`
+              : _src==='ratio-global'
+              ? `d'après la moyenne de tes commandes détaillées (${_embEstRefInfo.n} réf.)`
+              : `d'après le tarif d'emballage paramétré pour un coffret ${_tRef} (pas encore assez d'historique pour un ratio mesuré)`;
+          return `<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:10px">📦 <div><b>Emballage estimé :</b> cette commande de reprise n'a pas de détail d'emballage. Son coût (<b>${euro(_mg.coutEmbEstime)}</b>) est <b>estimé</b> ${_methode}. Le coût réel peut différer.</div></div>`;
         }
       }catch(e){}
       return '';
+    })()}
+    ${(function(){
+      // [AUDIT-2026-07 · A2] Bloc RENTABILITÉ de la commande : marge au coût de revient RÉEL par
+      // parfum (matière+conso+MO), + comparaison avec l'ancien calcul « coût moyen », + signalement
+      // des parfums non rattachés à une recette (coût moyen assumé, à corriger).
+      try{
+        const _mg = computeOrderMargins(o, _embRecipes, _embItems, _embLots, _embMats);
+        if(!_mg) return '';
+        const _ecart = money2((_mg.coutMatMoyenne||0) - (_mg.coutMat||0));  // moyenne − réel
+        const _hasNonRes = (+_mg.piecesNonResolues>0);
+        const _cmp = (Math.abs(_ecart)>=0.01)
+          ? `<div class="sum-box" style="font-size:.8rem;color:#8a7a72"><span>↳ au coût <b>moyen</b> (ancien calcul)</span><span>${euro(_mg.coutMatMoyenne)} <span style="color:${_ecart>0?'#2e7d32':'#b3261e'}">(${_ecart>0?'−':'+'}${euro(Math.abs(_ecart))})</span></span></div>`
+          : `<div class="sum-box" style="font-size:.8rem;color:#8a7a72"><span>↳ identique au coût moyen</span><span>${euro(_mg.coutMatMoyenne)}</span></div>`;
+        const _alerte = _hasNonRes
+          ? `<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:8px">⚠ <div><b>${qty(_mg.piecesNonResolues)} macaron(s)</b> sans recette identifiée${(_mg.parfumsNonResolus&&_mg.parfumsNonResolus.length)?` (${esc(_mg.parfumsNonResolus.join(', '))})`:''} → leur coût est <b>estimé à la moyenne</b>. Vérifie l'orthographe du parfum ou crée la recette pour une marge exacte.</div></div>`
+          : '';
+        // [A2-opt] Toggle « avec / sans main-d'œuvre ». Le CALCUL reste au coût complet (source unique,
+        // cohérente avec les autres écrans) ; le mode « sans MO » est une VUE dérivée : on retire la part
+        // MO (coutMOD) du coût et on la réintègre à la marge. Les charges sociales (% du CA) ne bougent pas.
+        const _mo = money2(+_mg.coutMOD||0);
+        const _coutSansMO = money2((_mg.coutMat||0) - _mo);
+        const _embTot = money2((_mg.coutEmb||0)+(_mg.coutSac||0));
+        const _mbAvec = _mg.margeBrute, _mnAvec = _mg.margeNette;
+        const _mbSans = money2(_mbAvec + _mo), _mnSans = money2(_mnAvec + _mo);
+        const _txAvecB=_mg.tauxBrut, _txAvecN=_mg.tauxNet;
+        const _txSansB = _mg.ca>0 ? Math.round(_mbSans/_mg.ca*1000)/10 : 0;
+        const _txSansN = _mg.ca>0 ? Math.round(_mnSans/_mg.ca*1000)/10 : 0;
+        const _col = v => v<0?'#b3261e':'#2e7d32';
+        const _moLigne = _mo>0
+          ? `<div class="sum-box mo-only" style="font-size:.8rem;color:#8a7a72"><span>↳ dont main-d'œuvre</span><span>${euro(_mo)}</span></div>`
+          : '';
+        // bouton bascule (uniquement si la MO est non nulle — sinon les deux vues sont identiques)
+        const _toggle = _mo>0
+          ? `<div style="margin:8px 0 2px"><button class="btn ghost sm" id="moToggleBtn_${id}" data-mo="1" onclick="toggleMargeMO(${id})">Voir sans main-d'œuvre</button></div>`
+          : '';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 8px">
+            <h3 style="font-size:1rem;margin:0">📊 Rentabilité</h3>${_toggle}</div>
+          <div class="marge-mo-block" id="margeMOBlock_${id}"
+               data-cmavec="${_mg.coutMat}" data-cmsans="${_coutSansMO}" data-mo="${_mo}"
+               data-mbavec="${_mbAvec}" data-mbsans="${_mbSans}" data-txbavec="${_txAvecB}" data-txbsans="${_txSansB}"
+               data-mnavec="${_mnAvec}" data-mnsans="${_mnSans}" data-txnavec="${_txAvecN}" data-txnsans="${_txSansN}">
+          <div class="sum-box"><span>Chiffre d'affaires</span><b>${euro(_mg.ca)}</b></div>
+          <div class="sum-box"><span>Coût de revient <span class="mo-lbl">(par parfum, avec MO)</span></span><b class="v-coutmat">${euro(_mg.coutMat)}</b></div>
+          ${_moLigne}
+          ${_cmp}
+          <div class="sum-box"><span>Coût emballage</span><b>${euro(_embTot)}</b></div>
+          <div class="sum-box"><span>Marge brute</span><b class="v-mb">${euro(_mbAvec)} (${_txAvecB}%)</b></div>
+          <div class="sum-box"><span>Charges sociales</span><b>−${euro(_mg.chargesSociales)}</b></div>
+          <div class="sum-box"><span><b>Marge nette</b></span><b class="v-mn" style="color:${_col(_mnAvec)}">${euro(_mnAvec)} (${_txAvecN}%)</b></div>
+          </div>
+          ${_alerte}`;
+      }catch(e){ return ''; }
     })()}
     ${_livBlock}
     <h3 style="font-size:1rem;margin:16px 0 8px">Statut de la commande</h3>
@@ -18778,7 +18867,20 @@ async function deliveryGapData(gran){
 const EMB_EST_MIN_REF = 5;
 // Cache module du ratio €/macaron d'emballage de référence (commandes). null = pas assez de données.
 let _embEstRatioCommandes = null;
+let _embEstRatioParTaille = {};   // [A18] ratio €/macaron par taille de coffret {6:…,8:…,16:…,25:…}
 let _embEstRefInfo = {n:0};   // info pour le signalement (nb de références utilisées)
+// [AUDIT-2026-07 · A2] Cache module du CONTEXTE MAIN-D'ŒUVRE mesurée ({mesureParRec, mesureGlobal}).
+// Alimenté par refreshMoCtx() (async, lit l'atelier), lu en REPLI par computeOrderMargins quand
+// l'appelant ne passe pas moCtx → garantit que TOUS les écrans utilisent la même MO, tout en gardant
+// computeOrderMargins synchrone. Reste {null,null} si MO mesurée désactivée (coût matière+conso, ou
+// MO manuelle via settings). Même esprit que _embEstRatioCommandes : rafraîchi aux points d'entrée.
+let _moCtxCache = { mesureParRec:null, mesureGlobal:null };
+async function refreshMoCtx(){
+  try{
+    const s = (typeof getSettings==='function') ? getSettings() : {};
+    _moCtxCache = await _chargeMesuresMO(s);
+  }catch(e){ console.error('refreshMoCtx', e); _moCtxCache={mesureParRec:null, mesureGlobal:null}; }
+}
 // Recalcule le ratio depuis toutes les commandes + données matières/lots. À appeler au démarrage
 // et après toute modif de commandes/lots significative.
 async function refreshEmbEstRatio(){
@@ -18788,31 +18890,47 @@ async function refreshEmbEstRatio(){
       db.materialLots.toArray(), db.materials.toArray()
     ]);
     const r = embRatioRefCommandes(orders, recipes, recipeItems, lots, materials);
-    _embEstRatioCommandes = r.ratio;       // null si < EMB_EST_MIN_REF
-    _embEstRefInfo = {n:r.n};
-  }catch(e){ console.error('refreshEmbEstRatio', e); _embEstRatioCommandes=null; }
+    _embEstRatioCommandes = r.ratio;       // null si < EMB_EST_MIN_REF (ratio global, rétro-compat)
+    _embEstRatioParTaille = r.ratios || {};  // [A18] ratio par taille
+    _embEstRefInfo = {n:r.n, nParTaille:r.nParTaille||{}};
+  }catch(e){ console.error('refreshEmbEstRatio', e); _embEstRatioCommandes=null; _embEstRatioParTaille={}; }
 }
 function embRatioRefCommandes(orders, recipes, recipeItems, lots, materials){
   const _mats = materials||window._allMatsCache||[];
   const realMap = realPackagingCostMap(_mats, lots||[]);
-  const ratios=[];
+  // [AUDIT-2026-07 · A18] Ratio €/macaron PAR TAILLE de coffret (au lieu d'un ratio global qui écrasait
+  // la dégressivité : un coffret 25 a un emballage/pièce plus faible qu'un coffret 6). On agrège, par
+  // taille, le coût emballage réel et le nombre de pièces sur toutes les commandes de référence
+  // (non-histo), puis ratio[taille] = Σcoût / Σpièces. Le ratio GLOBAL est conservé (rétro-compat).
+  const parTaille = {};   // taille -> {emb, pieces}
+  const ratiosGlob = [];  // €/macaron par commande (pour le ratio global historique)
   (orders||[]).forEach(o=>{
     const lignes = orderToLines(o);
     if(lignes.some(l=>l.type==='histo')) return;     // pas une référence : c'est une migrée
     let embTot=0, pieces=0;
     lignes.forEach(ln=>{
       if(ln.type==='coffret'){
-        embTot+=coffretEmbInfo(ln, _mats, lots||[], realMap).cout;
-        pieces+=+ln.taille||0;
+        const c = coffretEmbInfo(ln, _mats, lots||[], realMap).cout;
+        const t = +ln.taille||0;
+        embTot += c; pieces += t;
+        if(t>0 && c>0){ (parTaille[t] || (parTaille[t]={emb:0,pieces:0})); parTaille[t].emb += c; parTaille[t].pieces += t; }
       }
     });
-    if(pieces>0 && embTot>0) ratios.push(embTot/pieces);   // €/macaron de cette commande
+    if(pieces>0 && embTot>0) ratiosGlob.push(embTot/pieces);
   });
-  if(ratios.length < EMB_EST_MIN_REF) return {ratio:null, n:ratios.length};
-  const moy = ratios.reduce((a,x)=>a+x,0)/ratios.length;   // moyenne SIMPLE
-  return {ratio:money2(moy), n:ratios.length};
+  // Ratio par taille (n'expose que les tailles ayant au moins 1 réf). Chaque taille est indépendante.
+  const ratios = {}; const nParTaille = {};
+  Object.keys(parTaille).forEach(t=>{
+    const d=parTaille[t];
+    if(d.pieces>0 && d.emb>0){ ratios[t] = money2(d.emb/d.pieces); nParTaille[t] = Math.round(d.pieces/(+t||1)); }
+  });
+  // Ratio global (rétro-compat) : null si moins de EMB_EST_MIN_REF commandes de référence.
+  const ratioGlobal = (ratiosGlob.length >= EMB_EST_MIN_REF)
+    ? money2(ratiosGlob.reduce((a,x)=>a+x,0)/ratiosGlob.length)
+    : null;
+  return { ratio: ratioGlobal, ratios, nParTaille, n: ratiosGlob.length };
 }
-function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRatio){
+function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRatio, moCtx){
   // Si le ratio d'estimation emballage n'est pas fourni explicitement, on lit le cache global
   // (calculé au démarrage). Reste null si la base de référence est insuffisante (garde-fou).
   if(embEstRatio===undefined) embEstRatio = (typeof _embEstRatioCommandes!=='undefined' ? _embEstRatioCommandes : null);
@@ -18820,9 +18938,44 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
   const lignes = orderToLines(o);
   // carte des coûts emballage réels par capacité (repli tarif paramétré si indispo)
   const realPkg = realPackagingCostMap(materials||window._allMatsCache||[], lots||[]);
-  // coût unitaire matière moyen (toutes recettes)
-  const perRecipeUnit = recipes.map(r=>{ const cb=coutRecette(r.id, recipeItems, lots); return r.rendement>0?cb/r.rendement:0; }).filter(x=>x>0);
-  const avgUnit = perRecipeUnit.length ? perRecipeUnit.reduce((a,x)=>a+x,0)/perRecipeUnit.length : 0;
+
+  // [AUDIT-2026-07 · A2] COÛT DE REVIENT PAR PARFUM (coût complet : matière + conso + main-d'œuvre),
+  // via la brique commune partagée avec le dashboard → les deux moteurs de marge convergent.
+  // moCtx = { mesureParRec, mesureGlobal } pré-chargé par l'appelant (via _chargeMesuresMO) pour rester
+  // synchrone ; absent → coût matières+conso (+ MO manuelle si activée). AUCUN repli silencieux sur la
+  // moyenne : un parfum non rattaché est COMPTÉ À PART (piecesNonResolues) et remonté pour affichage.
+  // Contexte MO : priorité au moCtx passé explicitement, sinon repli sur le cache module _moCtxCache
+  // (rafraîchi par refreshMoCtx aux points d'entrée) → cohérence MO sur tous les écrans sans async ici.
+  const _mo = moCtx || (typeof _moCtxCache!=='undefined' ? _moCtxCache : null) || {};
+  const _resolver = buildCoutRevientResolver({
+    recipes, recipeItems, lots, settings:s,
+    mesureParRec: _mo.mesureParRec || null,
+    mesureGlobal: (_mo.mesureGlobal!=null) ? _mo.mesureGlobal : null
+  });
+  const avgUnit = _resolver.avgUnit;                 // conservé pour COMPARAISON (jamais comme repli caché)
+  const avgMOD = _resolver.avgMOD||0;                // part MO moyenne (cas assumés : événement/histo/sans-parfum)
+  let coutMatMoyenne = 0;                             // ancien calcul (pieces × avgUnit) — pour l'écran comparatif
+  let coutMOD = 0;                                    // [A2-opt] part MAIN-D'ŒUVRE incluse dans coutMat (pour toggle avec/sans MO)
+  let piecesNonResolues = 0;                          // pièces dont le parfum n'a pas de recette (signal visible)
+  const parfumsNonResolus = [];                       // noms distincts non rattachés
+  // [AUDIT-2026-07 · A6/A18] Estimation emballage des reprises histo : taille de référence + source
+  // ('ratio-taille' / 'ratio-global' / 'tarif'). Sert au badge de la fiche pour tracer la méthode.
+  const _embHistoTaille = (+s.embHistoTailleRef>0) ? +s.embHistoTailleRef : 16;
+  const _ratiosTaille = (typeof _embEstRatioParTaille!=='undefined' && _embEstRatioParTaille) ? _embEstRatioParTaille : {};
+  let embEstimSource = null;   // renseigné dès qu'une estimation histo est appliquée
+  // Additionne le coût de revient réel des parfums d'une liste [{nom, qte}] ; alimente aussi le
+  // comparatif « moyenne » et le compteur de non-résolus. Retourne le coût réel (parfums résolus).
+  const _coutReelParfums = (arr)=>{
+    let c = 0;
+    (arr||[]).forEach(pp=>{
+      const q = +pp.qte||0; if(q<=0) return;
+      coutMatMoyenne = money2(coutMatMoyenne + q*avgUnit);
+      const u = _resolver.unitPourParfum(pp.nom);
+      if(u.resolved){ c = money2(c + q*u.unit); coutMOD = money2(coutMOD + q*(+u.unitMOD||0)); }
+      else { piecesNonResolues += q; if(pp.nom && parfumsNonResolus.indexOf(pp.nom)<0) parfumsNonResolus.push(pp.nom); }
+    });
+    return c;
+  };
 
   let caGoods=0, caService=0;        // répartition du CA par régime social
   let coutMat=0, coutEmb=0;          // coûts matières / emballages
@@ -18835,7 +18988,9 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
       const maca = money2((+ln.evQte||0)*eventUnitPrice(ln));
       const pyraMontant = pyraTotalLigne(ln);
       caGoods=money2(caGoods+maca);
-      coutMat=money2(coutMat+(+ln.evQte||0)*avgUnit);
+      // [A2] Événement : les macarons ne portent pas de parfum détaillé sur la ligne → coût moyen
+      // ASSUMÉ (pas un repli caché : par nature il n'y a pas de parfum à résoudre ici).
+      { const _q=(+ln.evQte||0); coutMat=money2(coutMat+_q*avgUnit); coutMatMoyenne=money2(coutMatMoyenne+_q*avgUnit); coutMOD=money2(coutMOD+_q*avgMOD); }
       if(pyraEstVente(ln)){
         // [v1079] pyramide VENDUE → marchandise cédée (caGoods) + son coût d'achat en coût de revient.
         caGoods=money2(caGoods+pyraMontant);
@@ -18855,6 +19010,8 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
       pieces=+ln.taille||0;
       // Coût d'emballage selon le choix fait sur la ligne (Standard / Réutilisable / Autre).
       coutEmb=money2(coutEmb+coffretEmbInfo(ln, materials||window._allMatsCache||[], lots||[], realPkg).cout);
+      // [A2] coût de revient RÉEL des parfums du coffret (matière+conso+MO par parfum).
+      coutMat=money2(coutMat + _coutReelParfums(ln.parfums));
     }
     else if(ln.type==='grand'){
       pieces=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
@@ -18866,23 +19023,53 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
       // Consommable par pièce de grand format (ex : rond or), systématique × nb de pièces.
       const suppGF = (typeof consoGrandFormatSupplement==='function') ? consoGrandFormatSupplement() : 0;
       if(suppGF>0 && pieces>0) coutEmb=money2(coutEmb + pieces*suppGF);
-      // 'reutilisable' → 0 € pour la boîte (rien à ajouter)
+      // [A2] coût réel des parfums du grand format (portés par ln.items).
+      coutMat=money2(coutMat + _coutReelParfums(ln.items));
     }
-    else if(ln.type==='vrac') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0) + (+ln.sansParfum||0);  // boîte réutilisable : pas de coût emballage
-    else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    else if(ln.type==='vrac'){
+      const _parf=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+      const _sansP=(+ln.sansParfum||0);
+      pieces=_parf+_sansP;                                    // boîte réutilisable : pas de coût emballage
+      // [A2] parfums résolus au coût réel ; les pièces « sans parfum » n'ont pas de recette →
+      // coût moyen ASSUMÉ (documenté : c'est un choix explicite du vendeur, pas un parfum à résoudre).
+      coutMat=money2(coutMat + _coutReelParfums(ln.parfums));
+      if(_sansP>0){ coutMat=money2(coutMat + _sansP*avgUnit); coutMatMoyenne=money2(coutMatMoyenne + _sansP*avgUnit); coutMOD=money2(coutMOD + _sansP*avgMOD); }
+    }
+    else if(ln.type==='don'){
+      pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+      // [A2] coût réel des parfums offerts (le don EST un coût de revient réel).
+      coutMat=money2(coutMat + _coutReelParfums(ln.parfums));
+    }
     else if(ln.type==='histo'){
       // Commande de reprise (migration) : pas de détail produit fin.
       // CA = montant commande (ci-dessus) ; coût matières estimé via nb de macarons × coût moyen.
       pieces=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
-      // Emballage : aucune donnée d'emballage sur une migrée → on l'ESTIME au ratio €/macaron
-      // de référence (commandes détaillées), s'il est fourni et fiable (garde-fou côté appelant).
-      if(embEstRatio!=null && embEstRatio>0 && pieces>0){
-        const estEmb=money2(pieces*embEstRatio);
-        coutEmb=money2(coutEmb+estEmb);
-        coutEmbEstime=money2(coutEmbEstime+estEmb);
+      // [A2] Une reprise n'a pas de parfum fiable → coût moyen ASSUMÉ (pas un repli caché : il n'y a
+      // structurellement pas de recette à rattacher sur une commande migrée sans détail).
+      coutMat=money2(coutMat + pieces*avgUnit); coutMatMoyenne=money2(coutMatMoyenne + pieces*avgUnit); coutMOD=money2(coutMOD + pieces*avgMOD);
+      // Emballage estimé (migrée sans détail de coffret). [A6/A18] Priorité :
+      //   1) ratio €/macaron de la TAILLE DE RÉFÉRENCE (embHistoTailleRef) appris des vraies commandes ;
+      //   2) sinon ratio GLOBAL (rétro-compat, si fourni) ;
+      //   3) sinon TARIF PARAMÉTRÉ packaging[tailleRef]/tailleRef → JAMAIS 0 (résout la marge surestimée).
+      if(pieces>0){
+        let ratioPiece=null, src=null;
+        if(_ratiosTaille && _ratiosTaille[_embHistoTaille]>0){ ratioPiece=_ratiosTaille[_embHistoTaille]; src='ratio-taille'; }
+        else if(embEstRatio!=null && embEstRatio>0){ ratioPiece=embEstRatio; src='ratio-global'; }
+        else {
+          // repli tarif paramétré : coût d'un coffret de la taille de réf ÷ sa capacité
+          const tarifCoffret = (typeof packagingCost==='function') ? packagingCost(_embHistoTaille) : 0;
+          // Ratio non arrondi ici : l'arrondi au centime se fait sur le total (pieces×ratio),
+          // pour éviter d'amplifier l'erreur d'arrondi par le nombre de pièces.
+          if(tarifCoffret>0 && _embHistoTaille>0){ ratioPiece=tarifCoffret/_embHistoTaille; src='tarif'; }
+        }
+        if(ratioPiece!=null && ratioPiece>0){
+          const estEmb=money2(pieces*ratioPiece);
+          coutEmb=money2(coutEmb+estEmb);
+          coutEmbEstime=money2(coutEmbEstime+estEmb);
+          if(!embEstimSource) embEstimSource=src;
+        }
       }
     }
-    coutMat=money2(coutMat+pieces*avgUnit);
   });
 
   // SAC de la commande (modèle + nombre) : coût réel sur ses lots × quantité, imputé à l'emballage.
@@ -18968,7 +19155,16 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
     coutMat, coutEmb, coutEmbEstime, coutSac, margeBrute, tauxBrut,
     chargesSociales, margeNette, tauxNet,
     livraison: liv, margeNetteApresLiv, tauxNetApresLiv, suggLivraison,
-    fraisLivFactures: livFactures, livBenefice, deltaAjustGoods};
+    fraisLivFactures: livFactures, livBenefice, deltaAjustGoods,
+    // [AUDIT-2026-07 · A2] coutMat ci-dessus = coût de revient RÉEL par parfum (matière+conso+MO).
+    // Champs additionnels pour l'affichage comparatif et le signal de non-résolution :
+    coutMatMoyenne,                 // ancien calcul (pieces × moyenne toutes recettes) — pour comparer
+    coutMOD,                        // [A2-opt] part MAIN-D'ŒUVRE incluse dans coutMat → toggle « sans MO »
+    coutParfumComplet: true,        // marque : coutMat inclut désormais la MO (coût complet)
+    embEstimSource,                 // [A6/A18] méthode d'estimation emballage histo : 'ratio-taille'|'ratio-global'|'tarif'|null
+    embHistoTaille: _embHistoTaille,// taille de référence utilisée pour l'estimation
+    piecesNonResolues,              // nb de pièces dont le parfum n'a pas de recette (coût moyen assumé)
+    parfumsNonResolus};             // noms distincts non rattachés (à corriger dans les recettes)
 }
 // Échelle de rentabilité d'après le taux de marge nette.
 function profitScale(tauxNet){
@@ -20097,6 +20293,64 @@ function _optMesureRecette(recipe, settings, mesureParRec, mesureGlobal){
     if(e && e.fiable && e.minParMac>0) minPourCetteRec = e.minParMac;   // temps réel propre du parfum
   }
   return (minPourCetteRec!=null && minPourCetteRec>0) ? {minParMacaronMesure:minPourCetteRec} : undefined;
+}
+
+// [AUDIT-2026-07 · A2] BRIQUE COMMUNE — résolveur de coût de revient COMPLET par parfum.
+// Objectif : une SEULE définition du coût unitaire d'un parfum, partagée par la marge PAR-COMMANDE
+// (computeOrderMargins) et la marge PAR-PARFUM (analyzeFlavorProfitability), pour qu'elles convergent.
+// Le coût renvoyé est le coutRevientUnit COMPLET (matière + conso + main-d'œuvre), identique à celui
+// du dashboard — car construit avec la même règle MO (via _optMesureRecette + costByRecipe précalculé).
+//
+// ctx attendu : { recipes, recipeItems, lots, settings, mesureParRec, mesureGlobal }
+//   - mesureParRec / mesureGlobal : sortie de _chargeMesuresMO(settings) (pré-chargé UNE fois par
+//     l'appelant, pour rester synchrone). Si absents → coût matières+conso, MO éventuellement manuelle.
+//
+// Retour : { unitPourParfum(nom), costByRecipe, avgUnit }
+//   unitPourParfum(nom) → { unit, resolved, recipeId }
+//     • resolved=true  : parfum rattaché à une recette → unit = son coutRevientUnit réel
+//     • resolved=false : AUCUN repli silencieux (décision Benjamin) → unit=null, à signaler par l'appelant.
+//   avgUnit : moyenne des coûts complets (conservée pour COMPARAISON à l'écran, jamais comme repli caché).
+function buildCoutRevientResolver(ctx){
+  ctx = ctx || {};
+  const recipes     = ctx.recipes || [];
+  const recipeItems = ctx.recipeItems || [];
+  const lots        = ctx.lots || [];
+  const s           = ctx.settings || (typeof getSettings==='function'?getSettings():{});
+  const mesureParRec= ctx.mesureParRec || null;
+  const mesureGlobal= (ctx.mesureGlobal!=null) ? ctx.mesureGlobal : null;
+  // Coût complet par recette, calculé UNE fois (avec la MO selon la même règle que le dashboard).
+  const costByRecipe = {};
+  recipes.forEach(r=>{
+    const opt = (typeof _optMesureRecette==='function') ? _optMesureRecette(r, s, mesureParRec, mesureGlobal) : undefined;
+    costByRecipe[r.id] = coutRevientRecette(r, recipeItems, lots, s, opt);
+  });
+  // Index de résolution parfum → recette : égalité stricte normalisée, puis préfixe SI unique
+  // (mêmes garde-fous que le matcher durci A15 — pas de rattachement arbitraire).
+  const recByNorm = {};
+  recipes.forEach(r=>{ recByNorm[aiNormalize(r.produitNom||'')] = r; });
+  const resolveRecipe = nom=>{
+    if(!nom) return null;
+    const k = aiNormalize(nom);
+    if(recByNorm[k]) return recByNorm[k];
+    const prefix = k.slice(0,5);
+    const hits = recipes.filter(r=>{ const rn=aiNormalize(r.produitNom||''); return rn && (rn.startsWith(prefix) || k.startsWith(rn.slice(0,5))); });
+    return hits.length===1 ? hits[0] : null;   // ambigu/introuvable → null (signal)
+  };
+  const unitsArr = Object.values(costByRecipe).map(c=>c && c.coutRevientUnit).filter(x=>x>0);
+  const avgUnit = unitsArr.length ? money2(unitsArr.reduce((a,x)=>a+x,0)/unitsArr.length) : 0;
+  const unitPourParfum = nom=>{
+    const r = resolveRecipe(nom);
+    if(r && costByRecipe[r.id]){
+      const c = costByRecipe[r.id];
+      // unitMOD = part MAIN-D'ŒUVRE du coût unitaire (pour l'affichage « avec/sans MO » côté fiche).
+      return { unit: c.coutRevientUnit, unitMOD: (+c.coutMODUnit||0), resolved:true, recipeId:r.id };
+    }
+    return { unit:null, unitMOD:0, resolved:false, recipeId:null };
+  };
+  // Part MO moyenne (pour les cas assumés à la moyenne : événement, histo, sans-parfum).
+  const modArr = Object.values(costByRecipe).map(c=>c && +c.coutMODUnit||0).filter(x=>x>0);
+  const avgMOD = modArr.length ? money2(modArr.reduce((a,x)=>a+x,0)/modArr.length) : 0;
+  return { unitPourParfum, costByRecipe, avgUnit, avgMOD };
 }
 
 // [COÛT + MAIN D'ŒUVRE — préchargement] Charge en une fois les mesures d'atelier nécessaires au helper
@@ -24554,6 +24808,13 @@ async function settingsForm(){
             : `<div style="font-size:.72rem;color:#b07a4a;margin-top:3px">⚠ aucun lot chiffré — c'est le tarif saisi qui est utilisé</div>`}
         </div>`; }).join('')}
     </div>
+    <div class="field" style="margin-top:8px">
+      <label>Taille de coffret de référence <span style="color:#9a8a82;font-weight:400">— pour estimer l'emballage des commandes de reprise</span></label>
+      <select id="set_embHistoTaille">
+        ${BOX_SIZES.map(t=>`<option value="${t}" ${(+s.embHistoTailleRef===+t)?'selected':''}>Coffret ${t}</option>`).join('')}
+      </select>
+      <div style="font-size:.72rem;color:#9a8a82;margin-top:3px">Les commandes migrées n'ont pas le détail de leurs coffrets. Leur coût d'emballage est estimé d'après cette taille (ratio réel de tes coffrets ${s.embHistoTailleRef} si disponible, sinon le tarif ci-dessus). Choisis ta taille la plus vendue.</div>
+    </div>
     ${(()=>{
       // Autres emballages à capacité (ex : boîtes blanches) qui ne sont pas des coffrets standards.
       // Affichés ici pour une vue d'ensemble ; leur coût vient de leurs lots ou de leur prix de
@@ -24636,6 +24897,7 @@ function saveSettingsForm(){
   // Si un tarif d'emballage change, on horodate la nouvelle grille à aujourd'hui (date de réception).
   const oldPack=JSON.stringify(s.packaging||{});
   s.packaging={}; BOX_SIZES.forEach(t=>{ s.packaging[t]=money2(+val('set_pk_'+t)||0); });
+  { const _et=+val('set_embHistoTaille')||0; if(_et>0) s.embHistoTailleRef=_et; }   // [A6/A18] taille de réf pour l'estimation emballage des reprises
   if(JSON.stringify(s.packaging)!==oldPack) s.packagingDate=today();
   // types d'emballage (on lit toutes les lignes, on garde celles avec un nom, sans doublon)
   const n=+val('set_pt_n')||0; const pts=[]; const seenSave=new Set();
@@ -53529,6 +53791,7 @@ function startClock(){
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
   try{ await refreshEmbEstRatio(); }catch(e){ console.error('embEstRatio',e); }
   try{ await refreshEmbEstRatioMarches(); }catch(e){ console.error('embEstRatioMarches',e); }
+  try{ await refreshMoCtx(); }catch(e){ console.error('moCtx',e); }   // [A2] contexte main-d'œuvre mesurée pour la marge par-parfum
   // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
   try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
   try{ await requestPersistentStorage(); }catch(e){ console.error('persist',e); }
