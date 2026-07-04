@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1199';
+const APP_VERSION = 'v1200';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -12518,8 +12518,8 @@ function prixCourant(materialId, lots, mats){
 }
 // Coût matière théorique d'une recette (par batch) selon prix courants
 function coutRecette(recipeId, items, lots){
-  return items.filter(it=>it.recipeId===recipeId)
-    .reduce((s,it)=>s + it.qteParBatch * prixCourant(it.materialId, lots), 0);
+  // [A8 · Option B] Coût matière réel (FIFO au prix des lots consommés), cohérent avec coutRevientRecette.
+  return coutRecetteFifoReel(recipeId, items, lots, 'restant');
 }
 
 // [AUDIT-2026-07 · A8] COÛT MATIÈRE D'UNE QUANTITÉ, AU PRIX RÉEL DES LOTS CONSOMMÉS (FIFO).
@@ -12593,8 +12593,11 @@ function auditRecipeCosts(recipes, recipeItems, mats, lots){
         lignes.push({nom:'(matière supprimée)', q, unite:'?', pu:0, cout:0, manquante:true});
         continue;
       }
-      const pu = prixCourant(it.materialId, lots, mats);   // prix réel du lot, à défaut prix indicatif
-      const cout = q * pu;
+      // [A8 · Option B] Coût réel FIFO (prix des lots consommés), cohérent avec coutRevientRecette.
+      // pu = prix unitaire MOYEN pondéré de la conso (0 si aucun prix → déclenche l'alerte sans_prix).
+      const _fr = coutMatiereFifoReel(it.materialId, q, lots, 'restant');
+      const pu = _fr.puUnitMoyen;
+      const cout = _fr.cout;
       coutBatch += cout;
       const estEmb = (mat.categorie==='emballage');
       const unite = mat.unite || (estEmb?'unité':'kg');
@@ -12677,6 +12680,7 @@ async function renderCostAudit(){
 
   document.getElementById('main').innerHTML = `
    <div class="topbar"><div><h1>Audit des coûts</h1><p>Vérifie que tes coûts de revient sont justes</p></div></div>
+   <div class="banner" style="background:#eef3f8;border-color:#a0b8d0"><div>🧮 <b>Méthode de coût : réel (FIFO).</b> Le coût matière est calculé au <b>prix réel des lots consommés</b> — tes stocks partent du plus ancien au plus récent, donc un lot rentré moins cher se reflète dans un coût de production plus bas. En cas de rupture d'un lot chiffré, le dernier prix connu prend le relais pour la part manquante.</div></div>
    ${totalAlertes>0
      ? `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⚠ <b>${totalAlertes} anomalie(s)</b> détectée(s) qui faussent tes coûts de revient. Corrige-les pour fiabiliser ta rentabilité (et ton étude imprimante).</div></div>`
      : `<div class="banner" style="background:#eef6ee;border-color:#bcd9c2"><div>✅ Aucune anomalie majeure : tes coûts de revient semblent fiables.</div></div>`}
@@ -20433,10 +20437,16 @@ function coutRevientRecette(recipe, recipeItems, lots, settings, opts){
   const items = recipeItems.filter(it=>it.recipeId===recipe.id);
   let coutMatBatch=0, coutCoqueBatch=0, coutGarnitureBatch=0;
   const detail = items.map(it=>{
-    const pu = prixCourant(it.materialId, lots);
-    const c = (+it.qteParBatch||0) * pu;
+    // [AUDIT-2026-07 · A8 · Option B] COÛT RÉEL : au lieu du dernier prix (prixCourant), on valorise
+    // la quantité de l'ingrédient au prix RÉEL des lots consommés en FIFO (mode 'restant' = lots
+    // réellement en stock ; repli sur prixCourant pour la part non couverte → jamais de coût nul).
+    // pu conservé = prix unitaire MOYEN pondéré de la conso (pour l'affichage du détail).
+    const fr = coutMatiereFifoReel(it.materialId, +it.qteParBatch||0, lots, 'restant');
+    const c = fr.cout;
+    const pu = fr.puUnitMoyen;
     coutMatBatch += c;
-    return {materialId:it.materialId, qteParBatch:+it.qteParBatch||0, pu, cout:c};
+    return {materialId:it.materialId, qteParBatch:+it.qteParBatch||0, pu, cout:c,
+      fifoCouvert:fr.couvert, fifoManque:fr.manque};   // traçabilité de la couverture réelle
   });
   const rendement = +recipe.rendement||1;
   const pertePct = Math.max(0, Math.min(90, +recipe.pertePct||0));
