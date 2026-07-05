@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1213';
+const APP_VERSION = 'v1214';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -6956,6 +6956,18 @@ function pyraOptimise(plateaux, voulu){
   return {possible:true, propose:palier.total, etages:palier.etages, exact:palier.total===voulu};
 }
 
+// [v1214] Libellé d'un palier, TOUJOURS explicite sur le nombre d'étages (le mot « complète »
+// seul masquait cette info, d'où la confusion). Pour un présentoir à étages (sécable), on affiche
+// « N étage(s) » et on précise « pyramide entière » quand tous les plateaux sont utilisés. Pour un
+// bloc plat (non sécable, 1 niveau), parler d'étages n'a pas de sens → on n'ajoute rien.
+function _pyraEtagesLbl(etages, nbPlateaux, secable, chacune){
+  if(!secable) return '';                                  // bloc plat : le nom du modèle suffit
+  const s = etages>1 ? 's' : '';
+  const suffixe = chacune ? ' chacune' : '';
+  const entiere = (etages===nbPlateaux) ? ', pyramide entière' : '';
+  return ' ('+etages+' étage'+s+suffixe+entiere+')';
+}
+
 // Optimiseur MULTI-OPTIONS : pour un objectif, propose plusieurs configurations
 // (1 pyramide unique, ou N pyramides identiques), toujours au-dessus de l'objectif,
 // dans la marge donnée (+10% par défaut). Pyramides multipliées : min 3 plateaux chacune.
@@ -6973,7 +6985,7 @@ function pyraOptions(voulu, marge, nbPyramides){
     // (a) 1 pyramide unique : meilleur palier >= voulu
     const palier=cfgs.find(c=>c.total>=voulu);
     if(palier && palier.total<=plafond)
-      opts.push({total:palier.total, n:1, modele:m.nom, desc:'1× '+m.nom+(palier.etages<m.plateaux.length?' ('+palier.etages+' étages)':' (complète)')});
+      opts.push({total:palier.total, n:1, modele:m.nom, desc:'1× '+m.nom+_pyraEtagesLbl(palier.etages, m.plateaux.length, secable)});
     // (b) N pyramides identiques
     cfgs.forEach(c=>{
       for(let n=2;n<=8;n++){
@@ -6981,7 +6993,7 @@ function pyraOptions(voulu, marge, nbPyramides){
         if(!secable && c.total!==full.total) continue;     // bloc non sécable : seulement complet
         const t=c.total*n;
         if(t>=voulu && t<=plafond)
-          opts.push({total:t, n, modele:m.nom, desc:n+'× '+m.nom+(c.etages<m.plateaux.length?' ('+c.etages+' étages chacune)':' (complètes)')});
+          opts.push({total:t, n, modele:m.nom, desc:n+'× '+m.nom+_pyraEtagesLbl(c.etages, m.plateaux.length, secable, true)});
       }
     });
   });

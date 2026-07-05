@@ -1,5 +1,5 @@
 // [v1210] redéploiement forcé 2026-07-05 — bump CACHE pour purger l'ancien cache et republier.
-const CACHE = 'sm-iphone-v248';
+const CACHE = 'sm-iphone-v249';
 const ASSETS = [
   './',
   './index.html',
