@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1210';
+const APP_VERSION = 'v1211';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -11076,7 +11076,7 @@ async function prodForm(prefill){  const recipes = await db.recipes.toArray();
      <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}" onchange="prodRefreshLot()"></div>
    </div>
    <p class="note" id="coqueHint" style="display:none;margin:-4px 0 8px;color:#8a6d3b"></p>
-   <div class="field"><label>Quantité réelle produite <span style="color:#9a8a82;font-weight:400">— stock produits finis (modifiable en fin de production)</span></label>
+   <div class="field" id="f_qtereelWrap"><label>Quantité réelle produite <span style="color:#9a8a82;font-weight:400">— stock produits finis (modifiable en fin de production)</span></label>
      <input type="number" id="f_qtereel" value="${recSel.rendement}" min="0" oninput="_prodReelTouched=true;prodUpdateEcartHint()">
      <p class="note" id="ecartHint" style="margin-top:4px;display:none"></p></div>
    <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoutera à la fin</span></label><input id="f_lot" value="${lotDateJJMMAA()}${flavorCode(recSel.produitNom)}" oninput="this.dataset.touched='1'"></div>
@@ -11115,6 +11115,10 @@ function prodModeSwitch(mode){
   // (en duo, chaque parfum a son propre sélecteur et sa propre quantité).
   if(recField) recField.style.display = (mode==='garniture'||mode==='duo')?'none':'block';
   const qteRow=document.getElementById('f_qteRow'); if(qteRow) qteRow.style.display = mode==='duo'?'none':'flex';
+  // [FIX duo] En multi-parfums, la « quantité réelle produite » globale n'a pas de sens (chaque parfum
+  // a sa quantité propre, gérée au « Terminer ») et n'est PAS enregistrée par saveProd en mode duo.
+  // On masque donc ce bloc en duo pour ne pas afficher un écart trompeur calculé sur f_qte (masqué).
+  const qteReelWrap=document.getElementById('f_qtereelWrap'); if(qteReelWrap) qteReelWrap.style.display = mode==='duo'?'none':'block';
   // Affiche/masque et remplit l'aperçu des ingrédients de la garniture.
   if(mode==='garniture'){ prodSyncTheorique(); prodApercuGarniture(); prodRefreshLot(); }
   else { const z=document.getElementById('f_garnitureApercu'); if(z){ z.style.display='none'; z.innerHTML=''; } prodRefreshLot(); }
@@ -11253,6 +11257,9 @@ function prodDuoQteChange(){
   const totMac=q1+q2+q3;
   const totCoques=totMac*COQUES_PAR_MACARON;
   if(e.t) e.t.value=totCoques;
+  // [FIX duo] f_qte (quantité théorique, masquée en duo) reste calée sur le total réel des parfums.
+  // Sans ça, elle gardait le rendement de la recette initiale → écart et préremplissage faussés.
+  const qteEl=document.getElementById('f_qte'); if(qteEl){ qteEl.value=totMac; }
   const pct1 = (q1+q2)>0 ? (q1/(q1+q2)*100) : 50;   // % relatif P1 vs P2
   if(e.sl) e.sl.value=Math.round(pct1);
   _duoSetLabel(pct1);
