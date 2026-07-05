@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1211';
+const APP_VERSION = 'v1213';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -6908,12 +6908,35 @@ const PYRA_BOXES = [
 // Modèles de pyramides. Plateaux listés du SOMMET vers la BASE.
 // Prérempli avec l'exemple type ; modifiable par l'utilisateur (persisté en localStorage).
 function pyraModels(){
-  try{ const j=JSON.parse(localStorage.getItem('sm_pyraModels')||'null'); if(Array.isArray(j)&&j.length) return j; }catch(e){}
+  try{ const j=JSON.parse(localStorage.getItem('sm_pyraModels')||'null'); if(Array.isArray(j)&&j.length) return _pyraMigrate(j); }catch(e){}
   return [
-    { nom:'Pyramide transparente', plateaux:[5,10,14,18,22,26,30,34,37,41], secable:true },
-    { nom:'Bloc 35',               plateaux:[35],                            secable:false },
-    { nom:'Matfer noire (estim.)', plateaux:[6,11,16,20,24,28,32,35,38],     secable:true }
+    // [v1213] Plateaux RÉELS de la pyramide transparente 6 plateaux (mesurés sur photos + terrain) :
+    // sommet 4, puis +3 par plateau → cumul 4,11,21,34,50,69. 69 macarons = pyramide pleine (6 étages).
+    // Les anciennes valeurs [5,10,14,18,22,26,30,34,37,41] étaient une estimation à 10 plateaux surdimensionnée.
+    { nom:'Pyramide transparente', plateaux:[4,7,10,13,16,19], secable:true },
+    { nom:'Bloc 35',               plateaux:[35],              secable:false },
+    { nom:'Matfer noire (estim.)', plateaux:[6,11,16,20,24,28,32,35,38], secable:true }
   ];
+}
+// [v1213] Migration one-shot : si un localStorage existant contient encore l'ANCIENNE Pyramide
+// transparente surdimensionnée (sommet 5, 10 plateaux), on la recale sur les plateaux réels.
+// On ne touche qu'à ce modèle précis et on ne réécrit le storage que si une correction a lieu
+// (préserve les modèles perso de l'utilisateur et évite les écritures inutiles).
+function _pyraMigrate(list){
+  try{
+    let changed=false;
+    const ANCIEN=[5,10,14,18,22,26,30,34,37,41];
+    list.forEach(m=>{
+      if(m && /pyramide transparente/i.test(m.nom||'')
+         && Array.isArray(m.plateaux)
+         && m.plateaux.length===ANCIEN.length
+         && m.plateaux.every((v,i)=>+v===ANCIEN[i])){
+        m.plateaux=[4,7,10,13,16,19]; changed=true;
+      }
+    });
+    if(changed){ try{ localStorage.setItem('sm_pyraModels', JSON.stringify(list)); }catch(e){} }
+  }catch(e){}
+  return list;
 }
 function pyraSaveModels(list){ localStorage.setItem('sm_pyraModels', JSON.stringify(list)); }
 
@@ -8309,6 +8332,10 @@ function atLaunch(label){
   _atPicker=false;
   if(typeof chronoFloatRenderBody==='function') chronoFloatRenderBody();
   if(typeof prodRenderBoard==='function' && document.getElementById('prodBoardHost')) prodRenderBoard();
+  // [v1212] Étape de pesée → affiche la fiche de grammages filtrée (meringue / tant pour tant),
+  // adaptée à l'onglet actif. Le chrono a déjà démarré ci-dessus ; la fiche s'ouvre par-dessus.
+  const _pk = (typeof _atPeseeKind==='function') ? _atPeseeKind(label) : null;
+  if(_pk && typeof atFichePesee==='function'){ atFichePesee(_pk); }
 }
 function atShowDurPrompt(label){
   const def = prodPassiveDefaultMin(label)||10;
@@ -11673,6 +11700,103 @@ async function ficheMeringueProduction(parts, meringueBatchId){
     <p class="note" style="margin-top:10px">La production est <b>démarrée</b> (2 sous-lots de coques reliés). Tu choisiras l'emplacement à la fin (✓ Terminer).</p>
     <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
 }
+// [v1212] FICHE DE PESÉE CONTEXTUELLE (atelier chrono).
+// Au tap sur une étape de pesée, affiche les grammages FILTRÉS selon la nature de l'étape,
+// adaptés à l'onglet actif : onglet « Mutualisé » = tous les parfums cochés (_atMutSel) ;
+// onglet d'un parfum = ce parfum seul. Réutilise le même moteur de pesée que la fiche de
+// production (items coque × facteur qté/rendement) — aucune duplication de calcul.
+//   kind = 'meringue' → base meringue commune (tout sauf le tant pour tant), cumulée
+//   kind = 'tpt'      → tant pour tant (poudre d'amande + sucre glace), PAR parfum
+async function atFichePesee(kind){
+  try{
+    const rids = (typeof _atParfumsPourLancement==='function') ? _atParfumsPourLancement() : [];
+    if(!rids || !rids.length){ return; }   // pas de parfum ciblé (onglet indéfini) → rien à peser
+    const mats = await db.materials.toArray().catch(()=>[]);
+    const prods = await db.productions.toArray().catch(()=>[]);
+    const matName = id => (mats.find(m=>m.id===id)||{}).nom || '(matière ?)';
+    const dispOf = id => { const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
+      return (u==='kg') ? {u:'g', f:1000} : {u:m.unite||'', f:1}; };
+    // Quantité de macarons EN COURS pour un parfum : batch coques démarré s'il existe, sinon
+    // rendement de la recette (fiche de référence pour 1 batch standard).
+    const qtePourRecette = (rid, rend) => {
+      const b = prods.find(pp => +pp.recipeId===+rid
+        && (pp.prodStatut||'termine')==='demarre'
+        && (pp.composant==='coques' || pp.composant==='complet' || !pp.composant));
+      const q = b ? (+b.qteTheorique||0) : 0;
+      return q>0 ? q : (rend>0?rend:1);
+    };
+    // Ingrédients « coque » d'une recette (repli sur non étiquetés si aucune étiquette).
+    const coqueItems = arr => { const tagged=arr.filter(it=>it.partie==='coque'); return tagged.length?tagged:arr.filter(it=>!it.partie); };
+
+    const aggCommun = {};      // base meringue cumulée : materialId -> {q,u}
+    const parParfum = [];      // [{nom, q, lignes:[{id,q,u}]}] pour le tant pour tant
+    for(const rid of rids){
+      const rec = await db.recipes.get(rid).catch(()=>null);
+      if(!rec) continue;
+      const its = await db.recipeItems.where('recipeId').equals(rid).toArray().catch(()=>[]);
+      const rend = +(rec.rendement)||1;
+      const q = qtePourRecette(rid, rend);
+      const f = rend>0 ? q/rend : 0;
+      const lignesTpt = [];
+      coqueItems(its).forEach(it=>{
+        const d = dispOf(it.materialId);
+        const val = round3((+it.qteParBatch||0)*d.f*f);
+        if(_isTantPourTant(matName(it.materialId))){
+          lignesTpt.push({id:it.materialId, q:val, u:d.u});
+        } else {
+          if(!aggCommun[it.materialId]) aggCommun[it.materialId]={q:0,u:d.u};
+          aggCommun[it.materialId].q = round3(aggCommun[it.materialId].q + val);
+        }
+      });
+      parParfum.push({ nom:(rec.produitNom||rec.nom||'Parfum'), q, lignes:lignesTpt });
+    }
+    const totMac = parParfum.reduce((a,p)=>a+(+p.q||0),0);
+    const multi = parParfum.length>=2;
+    const titreParfums = parParfum.map(p=>esc(p.nom)).join(' + ');
+
+    let corps='';
+    if(kind==='meringue'){
+      const ids = Object.keys(aggCommun);
+      const rows = ids.length
+        ? ids.map(id=>`<tr><td>${esc(matName(+id))}</td><td style="text-align:right"><b>${qty(aggCommun[id].q)}</b> ${esc(aggCommun[id].u)}</td></tr>`).join('')
+        : '<tr><td colspan="2" class="note">Aucun ingrédient meringue étiqueté.</td></tr>';
+      corps = `<div class="panel" style="background:#fdf9ef;border:1px solid #ecdfc4;margin-bottom:6px">
+          <div style="font-weight:700;color:#8a6d3b;margin-bottom:4px">🥣 Base meringue${multi?' (commune, cumulée)':''}</div>
+          <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>
+        </div>`;
+    } else { // 'tpt'
+      corps = parParfum.map(pf=>{
+        const rows = pf.lignes.length
+          ? pf.lignes.map(l=>`<tr><td>${esc(matName(+l.id))}</td><td style="text-align:right"><b>${qty(l.q)}</b> ${esc(l.u)}</td></tr>`).join('')
+          : '<tr><td colspan="2" class="note">Pas de tant pour tant étiqueté pour ce parfum.</td></tr>';
+        return `<p style="margin:8px 0 4px"><b>${esc(pf.nom)}</b> · ${qty(pf.q)} macaron(s)</p>
+          <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>`;
+      }).join('');
+    }
+
+    const titre = kind==='meringue' ? '🥣 Pesée — meringue' : '🎨 Pesée — tant pour tant';
+    const sousTitre = multi
+      ? `<b>${titreParfums}</b> · 🥣 ${qty(totMac*COQUES_PAR_MACARON)} coques`
+      : `<b>${titreParfums||'Parfum'}</b> · ${qty(totMac)} macaron(s)`;
+    const note = kind==='meringue'
+      ? (multi ? 'Meringue commune : pèse une seule fois cette base pour tous les parfums cochés.' : 'Base meringue de ce parfum.')
+      : (multi ? 'Le tant pour tant se pèse SÉPARÉMENT par parfum (coloration / ajouts propres).' : 'Poudre d’amande + sucre glace de ce parfum.');
+    openModal(`<h3>${titre}</h3>
+      <p style="margin-bottom:4px">${sousTitre}</p>
+      <p class="note" style="margin-bottom:10px">${note}</p>
+      ${corps}
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">↩ Revenir à l’atelier</button></div>`);
+  }catch(e){ console.error('atFichePesee', e); }
+}
+
+// Mappe un libellé d'étape vers la nature de pesée à afficher (null si l'étape n'est pas une pesée).
+function _atPeseeKind(label){
+  const n = (typeof aiNormalize==='function') ? aiNormalize(label) : String(label||'').toLowerCase();
+  if(/tant pour tant/.test(n)) return 'tpt';
+  if(/pesee des ingredients meringue|pesee.*meringue|ingredients meringue/.test(n)) return 'meringue';
+  return null;
+}
+
 // [POINT F] Fiche de production pour un COMPOSANT catalogue (chantache…), même présentation
 // que ficheRecetteProduction mais lue depuis les ingrédients du composant (componentId).
 async function ficheComposantProduction(componentId, nbDoses, lot){
