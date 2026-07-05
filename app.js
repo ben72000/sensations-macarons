@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1207';
+const APP_VERSION = 'v1208';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -32060,6 +32060,9 @@ async function _ordreProductionDuJour(){
   }catch(e){ console.error('ordreJour',e); return ''; }
 }
 async function aiQueryAdvice(){
+  // [v1208 FIX] La réponse doit aller dans le THREAD ACTIF (_aiOutThread) : écran Assistant OU palette.
+  // Auparavant on écrivait en dur dans #aiOut, qui n'existe QUE sur l'écran Assistant → en mode palette
+  // la réponse tombait dans le vide (getElementById('aiOut') === null), d'où « aucune réponse ».
   const out=document.getElementById('aiOut');
   if(out) out.innerHTML=`<div class="panel"><p class="note">Analyse de ta situation…</p></div>`;
   try{
@@ -32091,15 +32094,14 @@ async function aiQueryAdvice(){
         }
       }
     }catch(_){}
-    if(out){
-      // [v1061] On accole les raccourcis « Aller plus loin » de query_advice (aiQueryAdvice écrit
-      // directement dans #aiOut sans passer par aiSay, d'où l'absence de raccourcis auparavant).
-      const sc = (typeof aiShortcuts==='function') ? aiShortcuts('query_advice', window._aiCurrentParams) : '';
-      out.innerHTML = (html || ordre || verdictHtml)
-        ? `<div style="margin-top:4px">${verdictHtml}${ordre}${html}<p class="note" style="margin-top:8px">💬 Tu peux aussi me demander : « qu'est-ce qui est en retard ? », « le stock de chocolat », « les commandes de demain »…</p>${sc}</div>`
-        : `<div class="panel"><p>Rien d'urgent à signaler pour le moment. Tu peux avancer sereinement.</p>${sc}</div>`;
-    }
-  }catch(e){ console.error('aiQueryAdvice',e); if(out) out.innerHTML=`<div class="panel"><p>Je n'ai pas pu générer le conseil. Réessaie.</p></div>`; }
+    // [v1208] Sortie unifiée via aiSay → écrit dans le thread actif (palette ou écran) et retire
+    // l'indicateur « en train d'écrire ». Le message transitoire dans #aiOut (si présent) est nettoyé.
+    if(out) out.innerHTML='';
+    const corps = (html || ordre || verdictHtml)
+      ? `<div style="margin-top:2px">${verdictHtml}${ordre}${html}<p class="note" style="margin-top:8px">💬 Tu peux aussi me demander : « qu'est-ce qui est en retard ? », « le stock de chocolat », « les commandes de demain »…</p></div>`
+      : `<p>Rien d'urgent à signaler pour le moment. Tu peux avancer sereinement.</p>`;
+    aiSay(corps);
+  }catch(e){ console.error('aiQueryAdvice',e); aiSay(`<p>Je n'ai pas pu générer le conseil. Réessaie.</p>`); }
 }
 
 // EN RETARD : retards de lancement de production (le cerveau).
