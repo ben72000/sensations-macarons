@@ -1,5 +1,5 @@
-// [v1219] bump CACHE — nouveau module Composer un contenu.
-const CACHE = 'sm-iphone-v254';
+// [v1220] bump CACHE — Studio Com (planning éditorial) + branchement compositeur.
+const CACHE = 'sm-iphone-v255';
 const ASSETS = [
   './',
   './index.html',

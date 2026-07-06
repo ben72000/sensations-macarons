@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1219';
-const APP_MAJ = 'Nouveau : Composer un contenu \u00b7 base \u00e9ditoriale de 180 accroches + 82 textes avec filtrage en cascade (objet \u2192 cible \u2192 accroche \u2192 texte) pour g\u00e9n\u00e9rer une communication percutante, vente et coaching, B2B et B2C';
+const APP_VERSION = 'v1220';
+const APP_MAJ = 'Studio Com : planning \u00e9ditorial des publications (id\u00e9e \u2192 \u00e0 r\u00e9diger \u2192 pr\u00eat \u2192 programm\u00e9 \u2192 publi\u00e9), filtrable par offre et canal. Le bouton \u00ab Au planning \u00bb du Compositeur y envoie directement tes contenus.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -385,6 +385,12 @@ db.version(24).stores({
 // v25 : la ventilation par mode d'encaissement ne nécessite AUCUNE nouvelle table
 // (elle lit orders + markets existants). Bloc vide pour réserver la numérotation.
 db.version(25).stores({});
+// v26 : STUDIO COM — planning éditorial des publications réseaux sociaux.
+//   canal:'instagram'|'stories'|'reels'|'facebook' · type · statut(idee|a_rediger|pret|programme|publie)
+//   offre:'vente'|'coaching'|'b2b' · dateProg(ISO) · sourceData(trace données app)
+db.version(26).stores({
+  posts: '++id, statut, canal, offre, dateProg, createdAt'
+});
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
 // Sur iPhone, si l'app installée ET Safari ont la base ouverte en même temps, une montée de
@@ -3832,7 +3838,8 @@ const VIEWS = {
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
   tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
   ventilation:renderVentilation,
-  compositeur:renderCompositeur
+  compositeur:renderCompositeur,
+  studiocom:renderStudioCom
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -14024,6 +14031,7 @@ const _NAV_PAGES = [
   {v:'compta',       t:'Comptabilité',              k:'comptabilite compta ca chiffre affaires resultat charges urssaf encaissement'},
   {v:'ventilation',  t:'Encaissements par mode',    k:'encaissement mode paiement virement carte especes cheque paypal ventilation filtre repartition moyen reglement'},
   {v:'compositeur',  t:'Composer un contenu',       k:'composer contenu marketing communication reseaux sociaux post accroche texte instagram vente coaching redaction publication editorial'},
+  {v:'studiocom',    t:'Studio Com (planning)',      k:'studio com planning editorial calendrier publication post reseaux sociaux instagram facebook programmer marketing communication'},
   {v:'netpoche',     t:'Net dans la poche',          k:'net poche revenu reel impot tranche imposition urssaf cotisation combien reste gagne vraiment apres deduction fil rouge'},
   {v:'chargesventil',t:'Charges ventilées',          k:'charges ventilation investissement recurrent structurel marketing formation equipement stand diminuer allege croisiere depenses'},
   {v:'optimisation', t:'Optimisation fiscale',        k:'optimisation fiscale seuil seuils tva franchise micro entreprise regime reel bascule plafond plafonds limite vente service prestation marchandise depassement surveillance alerte'},
@@ -23533,6 +23541,173 @@ async function renderCompta(){
   })();
  } catch(err){ renderViewError('compta', err); }
 }
+
+/* ===== MODULE STUDIO COM — PLANNING (v1220) ===== */
+
+/* ============================================================================
+ *  MODULE « STUDIO COM » — Planning éditorial (v1220)
+ *  Sensations Macarons · Pilotage PWA
+ *  Planning des publications réseaux sociaux : idée → à rédiger → prêt →
+ *  programmé → publié. Reçoit les contenus du Compositeur (bouton « Au planning »).
+ *  Adapté au style réel de l'app (topbar, panel, sum-box, field).
+ * ==========================================================================*/
+
+/* La table Dexie `posts` est déclarée via db.version(26) — voir ANCRAGE schéma. */
+
+const SC_STATUTS = {
+  idee:      { label:'💡 Idée',       color:'#9a8576', ordre:0 },
+  a_rediger: { label:'✍️ À rédiger',  color:'#d98324', ordre:1 },
+  pret:      { label:'✅ Prêt',        color:'#3f7d52', ordre:2 },
+  programme: { label:'🗓️ Programmé',  color:'#3a6ea5', ordre:3 },
+  publie:    { label:'📣 Publié',      color:'#7a7a7a', ordre:4 },
+};
+const SC_CANAUX = {
+  instagram:{ label:'Instagram', icon:'📸' },
+  stories:  { label:'Stories',   icon:'⏱️' },
+  reels:    { label:'Reels',     icon:'🎬' },
+  facebook: { label:'Facebook',  icon:'👍' },
+};
+const SC_OFFRES = {
+  vente:   { label:'Vente B2C', color:'#AA7C39' },
+  coaching:{ label:'Coaching',  color:'#52252F' },
+  b2b:     { label:'B2B / Événementiel', color:'#490F25' },
+};
+
+function scNowIso(){ return new Date().toISOString(); }
+
+/* ── CRUD posts ─────────────────────────────────────────────────────────── */
+async function scAjouterPost(p){
+  const post = Object.assign({
+    canal:'instagram', type:'post', statut:'idee', offre:'vente',
+    titre:'', texte:'', hashtags:'', dateProg:'', sourceData:null, createdAt:scNowIso(),
+  }, p||{});
+  try{ return await db.posts.add(post); }
+  catch(e){ console.error('scAjouterPost', e); if(typeof toast==='function') toast('Erreur à l\'enregistrement'); return null; }
+}
+async function scMajPost(id, patch){ try{ await db.posts.update(id, patch); }catch(e){ console.error('scMajPost',e); } }
+async function scSupprimerPost(id){ try{ await db.posts.delete(id); }catch(e){ console.error('scSupprimerPost',e); } }
+
+/* ── Vue planning ───────────────────────────────────────────────────────── */
+let _scFiltreOffre = null;   // null = toutes
+let _scFiltreCanal = null;
+
+function scSetFiltreOffre(o){ _scFiltreOffre = (o===_scFiltreOffre)?null:(o||null); renderStudioCom(); }
+function scSetFiltreCanal(c){ _scFiltreCanal = (c===_scFiltreCanal)?null:(c||null); renderStudioCom(); }
+
+async function renderStudioCom(){
+  const main = document.getElementById('main'); if(!main) return;
+  let posts = await db.posts.toArray().catch(()=>[]);
+  if(_scFiltreOffre) posts = posts.filter(p=>p.offre===_scFiltreOffre);
+  if(_scFiltreCanal) posts = posts.filter(p=>p.canal===_scFiltreCanal);
+  posts.sort((a,b)=>(a.dateProg||'~').localeCompare(b.dateProg||'~') || (b.createdAt||'').localeCompare(a.createdAt||''));
+
+  const seg = (val, cur, onclick, label) =>
+    `<button class="btn ${cur===val?'gold':'ghost'} sm" style="margin:2px" onclick="${onclick}">${label}</button>`;
+
+  const carte = (p)=>{
+    const st = SC_STATUTS[p.statut]||SC_STATUTS.idee;
+    const ca = SC_CANAUX[p.canal]||SC_CANAUX.instagram;
+    const of = SC_OFFRES[p.offre]||SC_OFFRES.vente;
+    return `<div class="sum-box lnk" style="flex-direction:column;align-items:stretch;gap:4px;border-left:4px solid ${of.color}" onclick="scOuvrirPost(${p.id})">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <b>${ca.icon} ${esc(p.titre||'(sans titre)')}</b>
+        <span class="tag" style="background:${st.color};color:#fff">${st.label}</span>
+      </div>
+      <div class="note" style="font-size:.72rem">${p.dateProg?('🗓️ '+esc(fmtDate(p.dateProg))+' · '):''}${of.label}</div>
+      ${p.texte?`<div style="font-size:.8rem;opacity:.82;white-space:pre-line">${esc(p.texte.slice(0,110))}${p.texte.length>110?'…':''}</div>`:''}
+    </div>`;
+  };
+
+  const parStatut = s => posts.filter(p=>p.statut===s);
+  const section = s => { const arr=parStatut(s); if(!arr.length) return '';
+    return `<div class="panel"><h2 style="color:${SC_STATUTS[s].color}">${SC_STATUTS[s].label} <span class="tag">${arr.length}</span></h2>${arr.map(carte).join('')}</div>`; };
+
+  const filtreOffre = Object.entries(SC_OFFRES).map(([k,v])=>seg(k,_scFiltreOffre,`scSetFiltreOffre('${k}')`,v.label)).join('');
+  const filtreCanal = Object.entries(SC_CANAUX).map(([k,v])=>seg(k,_scFiltreCanal,`scSetFiltreCanal('${k}')`,v.icon+' '+v.label)).join('');
+
+  main.innerHTML =
+    `<div class="topbar"><div><h1>📣 Studio Com</h1><p>Planning éditorial de tes publications</p></div>
+       <button class="btn gold" onclick="scNouveauPost()">+ Publication</button></div>
+
+     <div class="panel">
+       <div style="margin-bottom:4px"><b style="font-size:.8rem;color:#9a8a82">Offre</b></div>
+       <div>${seg(null,_scFiltreOffre,"scSetFiltreOffre(null)",'Toutes')}${filtreOffre}</div>
+       <div style="margin:8px 0 4px"><b style="font-size:.8rem;color:#9a8a82">Canal</b></div>
+       <div>${seg(null,_scFiltreCanal,"scSetFiltreCanal(null)",'Tous')}${filtreCanal}</div>
+     </div>
+
+     <div class="banner" style="background:#f6efe4;border-color:#e0d3bf"><div>Compose tes contenus dans <b>Composer un contenu</b>, puis envoie-les ici avec « Au planning ». Fais-les avancer : idée → à rédiger → prêt → programmé → publié.</div></div>
+
+     ${posts.length
+       ? (section('idee')+section('a_rediger')+section('pret')+section('programme')+section('publie'))
+       : '<div class="panel"><div class="empty">Aucune publication.<br>Crée-en une, ou passe par « Composer un contenu ».<br><br><button class="btn ghost sm" onclick="goView(\'compositeur\')">🧩 Composer un contenu</button></div></div>'}`;
+}
+
+/* ── Détail / édition d'un post ─────────────────────────────────────────── */
+async function scOuvrirPost(id){
+  const p = await db.posts.get(id); if(!p){ toast('Publication introuvable'); return; }
+  const stOpts = Object.entries(SC_STATUTS).map(([k,v])=>`<option value="${k}" ${p.statut===k?'selected':''}>${v.label}</option>`).join('');
+  const caOpts = Object.entries(SC_CANAUX).map(([k,v])=>`<option value="${k}" ${p.canal===k?'selected':''}>${v.label}</option>`).join('');
+  const ofOpts = Object.entries(SC_OFFRES).map(([k,v])=>`<option value="${k}" ${p.offre===k?'selected':''}>${v.label}</option>`).join('');
+  const copyTxt = (p.texte||'')+(p.hashtags?('\n\n'+p.hashtags):'');
+  openModal(
+    `<h3>✏️ Publication</h3>
+     <div class="field"><label>Titre</label><input id="scE_titre" value="${esc(p.titre||'')}"></div>
+     <div class="field"><label>Texte</label><textarea id="scE_texte" rows="6">${esc(p.texte||'')}</textarea></div>
+     <div class="field"><label>Hashtags</label><input id="scE_hashtags" value="${esc(p.hashtags||'')}"></div>
+     <div class="field"><label>Canal</label><select id="scE_canal">${caOpts}</select></div>
+     <div class="field"><label>Offre</label><select id="scE_offre">${ofOpts}</select></div>
+     <div class="field"><label>Statut</label><select id="scE_statut">${stOpts}</select></div>
+     <div class="field"><label>Date de publication prévue</label><input type="date" id="scE_dateProg" value="${esc((p.dateProg||'').slice(0,10))}"></div>
+     <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+       <button class="btn danger" onclick="scSupprimerPostUI(${id})">🗑️ Supprimer</button>
+       <button class="btn ghost" onclick="scCopier(this)" data-copy="${esc(copyTxt)}">📋 Copier</button>
+       <button class="btn gold" onclick="scSauverPost(${id})">💾 Enregistrer</button>
+     </div>`);
+}
+async function scSauverPost(id){
+  await scMajPost(id, {
+    titre:document.getElementById('scE_titre')?.value||'',
+    texte:document.getElementById('scE_texte')?.value||'',
+    hashtags:document.getElementById('scE_hashtags')?.value||'',
+    canal:document.getElementById('scE_canal')?.value||'instagram',
+    offre:document.getElementById('scE_offre')?.value||'vente',
+    statut:document.getElementById('scE_statut')?.value||'idee',
+    dateProg:document.getElementById('scE_dateProg')?.value||'',
+  });
+  closeModal(); toast('✅ Enregistré'); renderStudioCom();
+}
+function scSupprimerPostUI(id){
+  openModal(`<h3>Supprimer cette publication ?</h3>
+    <p class="note">Cette action est définitive.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="scOuvrirPost(${id})">Annuler</button>
+      <button class="btn danger" onclick="scSupprimerPostConfirm(${id})">Supprimer</button>
+    </div>`);
+}
+async function scSupprimerPostConfirm(id){ await scSupprimerPost(id); closeModal(); toast('Supprimé'); renderStudioCom(); }
+
+async function scNouveauPost(){
+  const id = await scAjouterPost({ statut:'idee', titre:'' });
+  if(id) scOuvrirPost(id);
+}
+
+/* ── Copie presse-papier (robuste PWA iOS) — partagée avec le compositeur ── */
+function scCopier(btn){
+  const txt = (btn && btn.getAttribute) ? (btn.getAttribute('data-copy')||'') : '';
+  const done = ()=>{ if(typeof toast==='function') toast('📋 Copié'); };
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done).catch(()=>scCopierFallback(txt,done)); }
+    else scCopierFallback(txt, done);
+  }catch(e){ scCopierFallback(txt, done); }
+}
+function scCopierFallback(txt, done){
+  try{ const ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done&&done(); }
+  catch(e){ if(typeof toast==='function') toast('Copie impossible — sélectionne le texte'); }
+}
+
+/* ===== FIN MODULE STUDIO COM ===== */
 
 /* ===== MODULE COMPOSITEUR DE CONTENU (v1219) ===== */
 /* ============================================================================
