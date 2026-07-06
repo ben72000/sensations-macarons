@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1214';
+const APP_VERSION = 'v1215';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -6975,34 +6975,70 @@ function pyraOptions(voulu, marge, nbPyramides){
   marge = (marge==null)?0.10:marge;
   if(!(voulu>0)) return {voulu:0, plafond:0, opts:[]};
   const plafond=Math.ceil(voulu*(1+marge));
+  // [v1215] Plancher : on accepte aussi une config LÉGÈREMENT sous la demande (jusqu'à -6 % ou -6
+  // macarons, le plus permissif des deux), car un présentoir équilibré à -5 vaut souvent mieux qu'un
+  // montage déséquilibré à +10. Ces options « un peu justes » sont signalées à l'affichage (manque N).
+  const plancher=Math.min(voulu-6, Math.floor(voulu*0.94));
   const models=pyraModels();
   const opts=[];
-  models.forEach(m=>{
-    const cfgs=pyraConfigs(m.plateaux);
-    if(!cfgs.length) return;
+  // Pré-calcul des configs par modèle (réutilisé pour combinaisons).
+  const perModel = models.map(m=>({ m, cfgs:pyraConfigs(m.plateaux), secable:(m.secable!==false) }))
+                         .filter(x=>x.cfgs.length);
+  perModel.forEach(({m,cfgs,secable})=>{
     const full=cfgs[cfgs.length-1];
-    const secable=(m.secable!==false);
     // (a) 1 pyramide unique : meilleur palier >= voulu
     const palier=cfgs.find(c=>c.total>=voulu);
     if(palier && palier.total<=plafond)
-      opts.push({total:palier.total, n:1, modele:m.nom, desc:'1× '+m.nom+_pyraEtagesLbl(palier.etages, m.plateaux.length, secable)});
-    // (b) N pyramides identiques
+      opts.push({total:palier.total, n:1, modele:m.nom, kind:'single', equilibre:true, manque:0, desc:'1× '+m.nom+_pyraEtagesLbl(palier.etages, m.plateaux.length, secable)});
+    // (b) N pyramides identiques (équilibrées : même modèle, même nombre d'étages)
     cfgs.forEach(c=>{
       for(let n=2;n<=8;n++){
         if(secable && c.etages<3) continue;               // partielle trop plate (<3 plateaux)
         if(!secable && c.total!==full.total) continue;     // bloc non sécable : seulement complet
         const t=c.total*n;
-        if(t>=voulu && t<=plafond)
-          opts.push({total:t, n, modele:m.nom, desc:n+'× '+m.nom+_pyraEtagesLbl(c.etages, m.plateaux.length, secable, true)});
+        if(t>=plancher && t<=plafond)
+          opts.push({total:t, n, modele:m.nom, kind:'multi', equilibre:true, manque:Math.max(0,voulu-t), desc:n+'× '+m.nom+_pyraEtagesLbl(c.etages, m.plateaux.length, secable, true)});
       }
     });
   });
-  const seen=new Set();
-  let uniq=opts.filter(o=>{ if(seen.has(o.desc))return false; seen.add(o.desc); return true; });
+  // (c) COMBINAISON de 2 présentoirs de modèles/hauteurs différents (non équilibrée mais utile
+  //     quand aucun montage identique ne tombe juste). On borne les étages « présentables » : pour
+  //     un présentoir sécable on exige >=3 étages (sinon trop plat) ; un bloc plat est accepté tel quel.
+  const presentable = (cfg, sec) => sec ? cfg.etages>=3 : true;
+  for(let a=0;a<perModel.length;a++){
+    for(let b=a;b<perModel.length;b++){
+      const A=perModel[a], B=perModel[b];
+      A.cfgs.forEach(ca=>{
+        if(!presentable(ca,A.secable)) return;
+        B.cfgs.forEach(cb=>{
+          if(!presentable(cb,B.secable)) return;
+          // éviter le doublon avec (b) : si même modèle ET mêmes étages, c'est déjà une config équilibrée.
+          if(a===b && ca.etages===cb.etages) return;
+          const t=ca.total+cb.total;
+          if(t<plancher || t>plafond) return;
+          // clé d'unicité indépendante de l'ordre des deux présentoirs.
+          const partA = A.m.nom+'|'+ca.etages, partB = B.m.nom+'|'+cb.etages;
+          const key = [partA,partB].sort().join(' + ');
+          const dA = '1× '+A.m.nom+_pyraEtagesLbl(ca.etages, A.m.plateaux.length, A.secable);
+          const dB = '1× '+B.m.nom+_pyraEtagesLbl(cb.etages, B.m.plateaux.length, B.secable);
+          opts.push({total:t, n:2, modele:A.m.nom+'+'+B.m.nom, kind:'combo', equilibre:false, manque:Math.max(0,voulu-t),
+                     comboKey:key, desc:dA+' + '+dB});
+        });
+      });
+    }
+  }
+  // Dédup : (b)/(a) par desc ; (c) par comboKey (indépendant de l'ordre).
+  const seenDesc=new Set(), seenCombo=new Set();
+  let uniq=opts.filter(o=>{
+    if(o.kind==='combo'){ if(seenCombo.has(o.comboKey))return false; seenCombo.add(o.comboKey); return true; }
+    if(seenDesc.has(o.desc))return false; seenDesc.add(o.desc); return true;
+  });
   // Filtre par nombre de pyramides : le champ = N → configs de 1 JUSQU'À N pyramides (0 = tout).
   if(nbPyramides>0) uniq=uniq.filter(o=>o.n<=nbPyramides);
-  uniq.sort((a,b)=>a.total-b.total || a.n-b.n);
-  return {voulu, plafond, opts:uniq, nbPyramides:nbPyramides||0};
+  // Tri : écart absolu à la demande (le plus juste d'abord, en dessous comme au dessus),
+  // puis moins de présentoirs, puis équilibré avant combo.
+  uniq.sort((a,b)=>Math.abs(a.total-voulu)-Math.abs(b.total-voulu) || a.n-b.n || (a.equilibre===b.equilibre?0:(a.equilibre?-1:1)));
+  return {voulu, plafond, plancher, opts:uniq, nbPyramides:nbPyramides||0};
 }
 function pyraBoxes(nbMacarons){
   const grande=PYRA_BOXES[0].cap, petite=PYRA_BOXES[1].cap;
@@ -16867,12 +16903,20 @@ function eventPyraOptsHtml(i, demande, choisi, nbPyr, nChoisi){
     const estChoisie = (o)=> o.total===choisi && (nRetenu>0 ? o.n===nRetenu : true);
     // si plusieurs options matchent encore (nRetenu non décisif), on n'en marque qu'UNE (la 1re).
     let dejaMarque = false;
-    corps = multiOpt.opts.map(o=>{
+    corps = multiOpt.opts.map((o,idx)=>{
       const sel = estChoisie(o) && !dejaMarque;
       if(sel) dejaMarque = true;
+      // Badge de nature : équilibré (présentoirs identiques) vs combiné (2 modèles/hauteurs).
+      const badge = o.kind==='combo'
+        ? '<span class="tag" style="background:#e7dcc6;color:#7a5c20;font-size:.58rem">combiné</span>'
+        : (o.n>=2 ? '<span class="tag" style="background:#dfe9df;color:#3f6d4a;font-size:.58rem">équilibré</span>' : '');
+      // Signal si la config est un peu SOUS la demande.
+      const sousDemande = (o.manque>0)
+        ? `<span style="color:#b08a3a;font-size:.72rem"> · manque ${o.manque}</span>`
+        : '';
       return `
       <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;margin-bottom:4px;background:${sel?'#eef6ef':'#fff'};border:1px solid ${sel?'#3f7d52':'var(--hair)'}">
-        <span style="flex:1;font-size:.86rem"><b style="color:var(--bordeaux)">${o.total}</b> <span style="color:#6a5a52">— ${esc(o.desc)}</span></span>
+        <span style="flex:1;font-size:.86rem"><b style="color:var(--bordeaux)">${o.total}</b> ${badge} <span style="color:#6a5a52">— ${esc(o.desc)}</span>${sousDemande}</span>
         ${sel?'<span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">choisi</span>':`<button class="btn ghost sm" onclick="pickEventConfig(${i},${o.total},${o.n})">Choisir</button>`}
       </div>`;
     }).join('');
@@ -16920,11 +16964,22 @@ function setEventEquip(i,v){
   cmdLines[i].evFiltrePyr = n;
   // Si aucune config n'a encore été retenue, on aligne le retenu sur le filtre (compat. prix/emballage).
   if(!cmdLines[i]._configChoisie){ cmdLines[i].equip = n; }
-  if(n!==prev){
-    const box=document.getElementById('pyraOpts_'+i);
-    const demande=(cmdLines[i].evDemande!=null?+cmdLines[i].evDemande:+cmdLines[i].evQte||0);
-    if(box) box.innerHTML=eventPyraOptsHtml(i, demande, +cmdLines[i].evQte||0, n, +cmdLines[i].equip||0);
+  else if(n>0){
+    // [v1215 FIX] Une config était choisie ET l'utilisateur change le nombre de pyramides : son intention
+    // est « je veux maintenant ce nombre de présentoirs ». On RE-SÉLECTIONNE en direct la meilleure config
+    // à exactement n pyramides, ce qui met à jour evQte (donc le compteur « X / utile ») en temps réel.
+    // Sans ça, evQte restait figé sur l'ancien choix → compteur périmé → blocage au save (somme>evQte).
+    const demandeRef=(cmdLines[i].evDemande!=null?+cmdLines[i].evDemande:+cmdLines[i].evQte||0);
+    const res=pyraOptions(demandeRef, undefined, n);
+    // meilleure config à EXACTEMENT n présentoirs (sinon la plus proche que le filtre laisse passer).
+    const exact=res.opts.filter(o=>o.n===n);
+    const pick=(exact.length?exact:res.opts)[0];
+    if(pick){ cmdLines[i].evQte=+pick.total||0; cmdLines[i].equip=pick.n; }
+    else { cmdLines[i].equip=n; }   // aucune config à n pyramides : on garde le nombre demandé, evQte inchangé
   }
+  // On redessine TOUTE la ligne (pas seulement la liste d'options) pour que le compteur « X / utile »,
+  // le prix et la répartition parfums reflètent immédiatement le nouveau evQte.
+  drawLines();
   cmdRecalc();
 }
 function setEventParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
