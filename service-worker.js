@@ -1,5 +1,5 @@
-// [v1220] bump CACHE — Studio Com (planning éditorial) + branchement compositeur.
-const CACHE = 'sm-iphone-v255';
+// [v1221] bump CACHE — Créateur de visuel (carrousel Canvas 1080²/4:5/9:16) branché au Compositeur.
+const CACHE = 'sm-iphone-v256';
 const ASSETS = [
   './',
   './index.html',

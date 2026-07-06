@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1220';
-const APP_MAJ = 'Studio Com : planning \u00e9ditorial des publications (id\u00e9e \u2192 \u00e0 r\u00e9diger \u2192 pr\u00eat \u2192 programm\u00e9 \u2192 publi\u00e9), filtrable par offre et canal. Le bouton \u00ab Au planning \u00bb du Compositeur y envoie directement tes contenus.';
+const APP_VERSION = 'v1221';
+const APP_MAJ = 'Cr\u00e9ateur de visuel : compose tes slides Instagram \u00e0 ta charte (carr\u00e9 1080\u00b2, portrait 4:5, story 9:16) avec 3 gabarits \u2014 photo plein cadre, photo+bandeau, ou fond charte uni. Texte repris du Compositeur ou saisi libre, photos import\u00e9es depuis l\'iPhone, polices Outfit/Bellota, export PNG pr\u00eat \u00e0 publier.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -3839,6 +3839,7 @@ const VIEWS = {
   tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
   ventilation:renderVentilation,
   compositeur:renderCompositeur,
+  carrousel:renderCarrousel,
   studiocom:renderStudioCom
 };
 let _navLast=0;
@@ -14031,6 +14032,7 @@ const _NAV_PAGES = [
   {v:'compta',       t:'Comptabilité',              k:'comptabilite compta ca chiffre affaires resultat charges urssaf encaissement'},
   {v:'ventilation',  t:'Encaissements par mode',    k:'encaissement mode paiement virement carte especes cheque paypal ventilation filtre repartition moyen reglement'},
   {v:'compositeur',  t:'Composer un contenu',       k:'composer contenu marketing communication reseaux sociaux post accroche texte instagram vente coaching redaction publication editorial'},
+  {v:'carrousel',    t:'Créer le visuel (carrousel)', k:'carrousel carousel visuel image slide png instagram story reel photo gabarit charte compositeur creer publication post format canvas export'},
   {v:'studiocom',    t:'Studio Com (planning)',      k:'studio com planning editorial calendrier publication post reseaux sociaux instagram facebook programmer marketing communication'},
   {v:'netpoche',     t:'Net dans la poche',          k:'net poche revenu reel impot tranche imposition urssaf cotisation combien reste gagne vraiment apres deduction fil rouge'},
   {v:'chargesventil',t:'Charges ventilées',          k:'charges ventilation investissement recurrent structurel marketing formation equipement stand diminuer allege croisiere depenses'},
@@ -24125,7 +24127,8 @@ async function renderCompositeur(){
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
               <button class="btn ghost" style="flex:1" onclick="compoCopier(this)" data-copy="${esc(resultat)}">📋 Copier</button>
               <button class="btn gold" style="flex:1" onclick="compoEnregistrer()">💾 Au planning</button>
-            </div>`
+            </div>
+            <button class="btn ghost" style="width:100%;margin-top:6px" onclick="cvDepuisCompositeur()">🎨 Créer le visuel (carrousel)</button>`
          : '<p class="note">Choisis une accroche et/ou un texte ci-dessus pour composer ton contenu.</p>'}
      </div>`;
 
@@ -24155,6 +24158,404 @@ async function compoEnregistrer(){
 }
 
 /* ===== FIN MODULE COMPOSITEUR ===== */
+
+/* ===== MODULE CARROUSEL VISUEL (v1221) ===== */
+/* ============================================================================
+ *  COMPOSITEUR VISUEL — génère des slides Instagram (PNG) 100% dans l'app.
+ *  - 3 formats au choix par slide : carré 1080×1080, portrait 1080×1350,
+ *    story/reel 1080×1920.
+ *  - 3 gabarits : photo plein cadre + bandeau, photo haut / texte charte bas,
+ *    fond charte uni (sans photo).
+ *  - Texte : repris du Compositeur (accroche/texte choisis) OU saisi libre.
+ *  - Photos importées depuis l'iPhone (input file), gardées en mémoire.
+ *  - Rendu Canvas natif, polices de marque (Outfit + Bellota déjà embarquées
+ *    dans index.html) chargées via document.fonts.ready AVANT chaque dessin.
+ *  - Export PNG par slide (partage / téléchargement iOS).
+ *
+ *  ⚠️ Points iOS Safari gérés :
+ *   • On attend document.fonts.ready pour éviter le rendu en police de repli.
+ *   • Export en toBlob (mémoire) plutôt que toDataURL géant quand possible.
+ *   • Aperçu à l'échelle CSS, dessin réel à pleine résolution (retina-safe).
+ * ==========================================================================*/
+
+// Palette charte (miroir des variables CSS, utilisables dans Canvas).
+const CV_COL = {
+  bordeaux:'#52252F', bordeaux3:'#3d1a22', creme:'#E8DDCD',
+  creme2:'#F5F0E8', caramel:'#AA7C39', caramel2:'#c6974f', blanc:'#ffffff'
+};
+
+// Formats disponibles (w×h en pixels réels d'export).
+const CV_FORMATS = {
+  carre:   { w:1080, h:1080, label:'Carré 1080²',    emoji:'⬛' },
+  portrait:{ w:1080, h:1350, label:'Portrait 4:5',    emoji:'▮'  },
+  story:   { w:1080, h:1920, label:'Story / Reel 9:16', emoji:'▯' },
+};
+
+// Gabarits de mise en page.
+const CV_GABARITS = {
+  pleincadre: { label:'Photo plein cadre + bandeau', emoji:'🖼️', needPhoto:true },
+  hautbas:    { label:'Photo haut · texte charte bas', emoji:'🔲', needPhoto:true },
+  uni:        { label:'Fond charte uni (sans photo)', emoji:'🎨', needPhoto:false },
+};
+
+// État courant du compositeur visuel.
+const _cv = {
+  format:'carre',
+  gabarit:'pleincadre',
+  source:'compo',            // 'compo' = depuis le Compositeur · 'libre' = saisi main
+  titre:'',                  // texte principal (accroche)
+  corps:'',                  // texte secondaire (optionnel, gabarit hautbas/uni)
+  photo:null,                // objet Image chargé, ou null
+  photoName:'',
+  photoY:0.5,                // cadrage vertical de la photo (0=haut,1=bas)
+  logo:true,                 // filigrane logo/nom en bas
+};
+
+// ── Ouverture depuis le Compositeur (reprend accroche/texte sélectionnés) ──
+function cvDepuisCompositeur(){
+  const a = (typeof _compo!=='undefined' && _compo.accrocheId)
+    ? SC_ACCROCHES.find(x=>x.id===_compo.accrocheId) : null;
+  const t = (typeof _compo!=='undefined' && _compo.texteId)
+    ? SC_TEXTES.find(x=>x.id===_compo.texteId) : null;
+  _cv.source = 'compo';
+  _cv.titre  = a ? a.texte : (t ? t.texte.split('.')[0] : '');
+  _cv.corps  = t ? t.texte : '';
+  goView('carrousel');
+}
+
+function cvSetFormat(f){ _cv.format=f; cvDrawPreview(); cvSyncControls(); }
+function cvSetGabarit(g){
+  _cv.gabarit=g;
+  // Si le gabarit exige une photo et qu'il n'y en a pas, on prévient à l'aperçu.
+  cvDrawPreview(); cvSyncControls();
+}
+function cvSetSource(s){ _cv.source=s; renderCarrousel(); }
+function cvSetTitre(v){ _cv.titre=v; cvDrawPreview(); }
+function cvSetCorps(v){ _cv.corps=v; cvDrawPreview(); }
+function cvSetPhotoY(v){ _cv.photoY=parseFloat(v); cvDrawPreview(); }
+function cvToggleLogo(){ _cv.logo=!_cv.logo; cvDrawPreview(); cvSyncControls(); }
+
+// ── Import d'une photo depuis l'appareil ──
+function cvChargerPhoto(input){
+  const file = input && input.files && input.files[0];
+  if(!file){ return; }
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = ()=>{
+    _cv.photo = img; _cv.photoName = file.name || 'photo';
+    // Bascule auto sur un gabarit avec photo si on était sur "uni".
+    if(_cv.gabarit==='uni') _cv.gabarit='pleincadre';
+    cvDrawPreview(); cvSyncControls();
+    // On révoque l'URL après chargement (l'Image garde ses pixels décodés).
+    setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(e){} }, 3000);
+  };
+  img.onerror = ()=>{ toast('Image illisible — réessaie'); try{ URL.revokeObjectURL(url); }catch(e){} };
+  img.src = url;
+}
+function cvRetirerPhoto(){
+  _cv.photo=null; _cv.photoName='';
+  if(CV_GABARITS[_cv.gabarit] && CV_GABARITS[_cv.gabarit].needPhoto) _cv.gabarit='uni';
+  cvDrawPreview(); cvSyncControls();
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  DESSIN — cœur du module. Dessine _cv dans un canvas donné à pleine résolution.
+ *  Retourne une Promise (résolue quand polices prêtes + rendu fait).
+ * ────────────────────────────────────────────────────────────────────────── */
+function cvDraw(canvas){
+  const fmt = CV_FORMATS[_cv.format] || CV_FORMATS.carre;
+  canvas.width = fmt.w; canvas.height = fmt.h;
+  const ctx = canvas.getContext('2d');
+  const W = fmt.w, H = fmt.h;
+
+  // Attendre les polices AVANT de dessiner (sinon repli sur iOS au 1er rendu).
+  const ready = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+  return ready.then(()=>{
+    ctx.clearRect(0,0,W,H);
+    const g = _cv.gabarit;
+
+    if(g==='uni'){
+      cvDrawFondUni(ctx,W,H);
+      cvDrawTexteBloc(ctx,W,H, {yStart:H*0.30, wMax:W*0.82, centre:true, surFonce:true});
+    } else if(g==='hautbas'){
+      // Photo sur les ~62% du haut, bandeau charte en bas avec le texte.
+      const hPhoto = Math.round(H*0.62);
+      if(_cv.photo){ cvDrawPhotoCover(ctx, 0,0,W,hPhoto, _cv.photo, _cv.photoY); }
+      else { cvDrawPlaceholderPhoto(ctx,0,0,W,hPhoto); }
+      // Bandeau bas.
+      ctx.fillStyle = CV_COL.bordeaux;
+      ctx.fillRect(0,hPhoto,W,H-hPhoto);
+      // Liseré caramel fin en haut du bandeau.
+      ctx.fillStyle = CV_COL.caramel; ctx.fillRect(0,hPhoto,W,Math.round(H*0.006));
+      cvDrawTexteBloc(ctx,W,H, {yStart:hPhoto+(H-hPhoto)*0.16, wMax:W*0.84, centre:true, surFonce:true, zone:[hPhoto,H]});
+    } else {
+      // pleincadre : photo plein cadre + voile dégradé + bandeau texte bas.
+      if(_cv.photo){ cvDrawPhotoCover(ctx,0,0,W,H,_cv.photo,_cv.photoY); }
+      else { cvDrawPlaceholderPhoto(ctx,0,0,W,H); }
+      // Voile dégradé bas pour lisibilité du texte.
+      const grad = ctx.createLinearGradient(0,H*0.45,0,H);
+      grad.addColorStop(0,'rgba(61,26,34,0)');
+      grad.addColorStop(0.55,'rgba(61,26,34,0.55)');
+      grad.addColorStop(1,'rgba(61,26,34,0.92)');
+      ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+      cvDrawTexteBloc(ctx,W,H, {yStart:H*0.66, wMax:W*0.86, centre:false, surFonce:true, zone:[H*0.5,H]});
+    }
+
+    // Filigrane logo/nom de marque.
+    if(_cv.logo) cvDrawSignature(ctx,W,H, _cv.gabarit);
+  });
+}
+
+// Fond charte uni : dégradé bordeaux profond + motif discret.
+function cvDrawFondUni(ctx,W,H){
+  const grad = ctx.createLinearGradient(0,0,W,H);
+  grad.addColorStop(0,CV_COL.bordeaux);
+  grad.addColorStop(1,CV_COL.bordeaux3);
+  ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+  // Cadre crème fin en retrait.
+  const m = Math.round(W*0.055);
+  ctx.strokeStyle='rgba(232,221,205,0.35)'; ctx.lineWidth=Math.max(2,W*0.0025);
+  ctx.strokeRect(m,m,W-2*m,H-2*m);
+  // Petit accent caramel en haut.
+  ctx.fillStyle=CV_COL.caramel;
+  const dotY=H*0.16; ctx.beginPath(); ctx.arc(W/2,dotY,W*0.012,0,Math.PI*2); ctx.fill();
+}
+
+// Dessine une photo en "cover" dans un rectangle, cadrage vertical selon fy.
+function cvDrawPhotoCover(ctx,x,y,w,h,img,fy){
+  const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
+  if(!iw||!ih){ return; }
+  const scale = Math.max(w/iw, h/ih);
+  const dw=iw*scale, dh=ih*scale;
+  const dx = x + (w-dw)/2;
+  const dy = y + (h-dh)*(fy==null?0.5:fy);
+  ctx.save(); ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
+  ctx.drawImage(img, dx, dy, dw, dh);
+  ctx.restore();
+}
+
+// Zone "photo" vide (aucune image importée) : placeholder charte + consigne.
+function cvDrawPlaceholderPhoto(ctx,x,y,w,h){
+  const grad=ctx.createLinearGradient(x,y,x,y+h);
+  grad.addColorStop(0,CV_COL.creme2); grad.addColorStop(1,CV_COL.creme);
+  ctx.fillStyle=grad; ctx.fillRect(x,y,w,h);
+  ctx.fillStyle='rgba(82,37,47,0.35)';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.font='500 '+Math.round(w*0.045)+"px 'Outfit', sans-serif";
+  ctx.fillText('📷  Importe une photo', x+w/2, y+h/2);
+}
+
+// Bloc de texte (titre + corps) avec wrapping. opts.surFonce => texte clair.
+function cvDrawTexteBloc(ctx,W,H,opts){
+  opts=opts||{};
+  const centre = !!opts.centre;
+  const surFonce = !!opts.surFonce;
+  const wMax = opts.wMax || W*0.84;
+  const x = centre ? W/2 : W*0.08;
+  let y = opts.yStart || H*0.6;
+  ctx.textAlign = centre ? 'center' : 'left';
+  ctx.textBaseline = 'top';
+
+  const colTitre = surFonce ? CV_COL.creme : CV_COL.bordeaux;
+  const colCorps = surFonce ? 'rgba(232,221,205,0.92)' : CV_COL.bordeaux;
+
+  // Titre — Bellota, gras, grande taille adaptée au format.
+  const titre = (_cv.titre||'').trim();
+  if(titre){
+    const tSize = Math.round(W * (_cv.format==='story'?0.062:0.070));
+    ctx.font = "700 "+tSize+"px 'Bellota', Georgia, serif";
+    ctx.fillStyle = colTitre;
+    y = cvWrapText(ctx, titre, x, y, wMax, tSize*1.16, centre);
+  }
+
+  // Corps — Outfit, seulement si présent ET gabarit qui le porte.
+  const corps = (_cv.corps||'').trim();
+  const porteCorps = (_cv.gabarit==='uni' || _cv.gabarit==='hautbas');
+  if(corps && porteCorps){
+    y += H*0.02;
+    const cSize = Math.round(W * (_cv.format==='story'?0.034:0.038));
+    ctx.font = "400 "+cSize+"px 'Outfit', sans-serif";
+    ctx.fillStyle = colCorps;
+    // On limite le corps pour ne pas déborder (les textes longs sont tronqués proprement).
+    const zoneBas = (opts.zone ? opts.zone[1] : H) - H*0.10;
+    cvWrapText(ctx, corps, x, y, wMax, cSize*1.34, centre, zoneBas);
+  }
+}
+
+// Wrapping mot-à-mot. Retourne le y après la dernière ligne. yLimit optionnel (troncature + …).
+function cvWrapText(ctx, text, x, y, maxW, lineH, centre, yLimit){
+  const words = String(text).split(/\s+/);
+  let line='';
+  for(let i=0;i<words.length;i++){
+    const test = line ? line+' '+words[i] : words[i];
+    if(ctx.measureText(test).width > maxW && line){
+      if(yLimit && y+lineH>yLimit){ ctx.fillText(line.replace(/\s+\S*$/,'')+'…', x, y); return y+lineH; }
+      ctx.fillText(line, x, y); line=words[i]; y+=lineH;
+    } else { line=test; }
+  }
+  if(line){
+    if(yLimit && y+lineH>yLimit){ ctx.fillText(line+'…', x, y); return y+lineH; }
+    ctx.fillText(line, x, y); y+=lineH;
+  }
+  return y;
+}
+
+// Signature de marque (nom + slogan) discrète.
+function cvDrawSignature(ctx,W,H,gabarit){
+  const surCreme = false; // toujours en bas, sur zone foncée ou photo assombrie
+  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  const y = H - Math.round(H*0.045);
+  ctx.fillStyle = (gabarit==='uni'||gabarit==='hautbas') ? 'rgba(232,221,205,0.85)' : 'rgba(255,255,255,0.9)';
+  ctx.font = "700 "+Math.round(W*0.030)+"px 'Bellota', serif";
+  ctx.fillText('Sensations Macarons', W/2, y);
+  ctx.fillStyle = (gabarit==='uni'||gabarit==='hautbas') ? 'rgba(198,151,79,0.95)' : 'rgba(232,221,205,0.9)';
+  ctx.font = "400 "+Math.round(W*0.019)+"px 'Outfit', sans-serif";
+  ctx.fillText('moins de sucre, plus de sensation', W/2, y+Math.round(W*0.028));
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  APERÇU + EXPORT
+ * ────────────────────────────────────────────────────────────────────────── */
+function cvDrawPreview(){
+  const cvs = document.getElementById('cvCanvas');
+  if(!cvs) return;
+  cvDraw(cvs).then(()=>{ /* rendu prêt */ });
+}
+
+// Réaligne l'état visuel des boutons/segments sans tout re-render (évite de perdre le focus champ).
+function cvSyncControls(){
+  document.querySelectorAll('[data-cvfmt]').forEach(b=>{
+    b.className = 'btn '+(b.getAttribute('data-cvfmt')===_cv.format?'gold':'ghost')+' sm';
+  });
+  document.querySelectorAll('[data-cvgab]').forEach(b=>{
+    b.className = 'btn '+(b.getAttribute('data-cvgab')===_cv.gabarit?'gold':'ghost')+' sm';
+  });
+  const lg=document.getElementById('cvLogoBtn');
+  if(lg) lg.className='btn '+(_cv.logo?'gold':'ghost')+' sm';
+  const pn=document.getElementById('cvPhotoNom');
+  if(pn) pn.textContent = _cv.photo ? ('🖼️ '+_cv.photoName) : 'Aucune photo importée';
+  const yr=document.getElementById('cvPhotoYRow');
+  if(yr) yr.style.display = (_cv.photo && _cv.gabarit!=='uni') ? 'block' : 'none';
+}
+
+// Export PNG de la slide courante (téléchargement + tentative de partage iOS).
+async function cvExporter(){
+  const fmt = CV_FORMATS[_cv.format] || CV_FORMATS.carre;
+  const cvs = document.createElement('canvas');
+  await cvDraw(cvs);   // dessin pleine résolution hors écran
+  const nom = 'sensations_'+_cv.format+'_'+Date.now()+'.png';
+
+  const finish = (blob)=>{
+    // 1) Partage natif iOS si dispo (permet "Enregistrer l'image").
+    try{
+      if(navigator.canShare && blob){
+        const file = new File([blob], nom, {type:'image/png'});
+        if(navigator.canShare({files:[file]})){
+          navigator.share({files:[file], title:'Sensations Macarons'})
+            .then(()=>toast('📤 Partagé'))
+            .catch(()=>cvTelecharger(blob,nom));
+          return;
+        }
+      }
+    }catch(e){}
+    // 2) Fallback téléchargement classique.
+    cvTelecharger(blob, nom);
+  };
+
+  if(cvs.toBlob){ cvs.toBlob(b=>finish(b),'image/png'); }
+  else {
+    // Très vieux Safari : dataURL.
+    const url=cvs.toDataURL('image/png'); const a=document.createElement('a');
+    a.href=url; a.download=nom; document.body.appendChild(a); a.click(); a.remove();
+    toast('💾 Image exportée');
+  }
+}
+function cvTelecharger(blob, nom){
+  if(!blob){ toast('Export impossible'); return; }
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=nom;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){} }, 4000);
+  toast('💾 Image exportée');
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  RENDU DE LA VUE
+ * ────────────────────────────────────────────────────────────────────────── */
+async function renderCarrousel(){
+  const main = document.getElementById('main'); if(!main) return;
+
+  const segFmt = Object.entries(CV_FORMATS).map(([k,f])=>
+    `<button data-cvfmt="${k}" class="btn ${_cv.format===k?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetFormat('${k}')">${f.emoji} ${f.label}</button>`
+  ).join('');
+
+  const segGab = Object.entries(CV_GABARITS).map(([k,g])=>
+    `<button data-cvgab="${k}" class="btn ${_cv.gabarit===k?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetGabarit('${k}')">${g.emoji} ${g.label}</button>`
+  ).join('');
+
+  const segSrc = ['compo','libre'].map(s=>
+    `<button class="btn ${_cv.source===s?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetSource('${s}')">${s==='compo'?'🧩 Depuis le Compositeur':'✍️ Texte libre'}</button>`
+  ).join('');
+
+  // Bloc source de texte : champs éditables (pré-remplis si compo).
+  const blocTexte = _cv.source==='libre'
+    ? `<label class="note" style="display:block;margin-top:8px">Titre / accroche</label>
+       <input id="cvTitre" value="${esc(_cv.titre)}" oninput="cvSetTitre(this.value)" placeholder="Ton accroche courte" style="width:100%">
+       <label class="note" style="display:block;margin-top:8px">Texte secondaire (optionnel — gabarits « bas » et « uni »)</label>
+       <textarea id="cvCorps" oninput="cvSetCorps(this.value)" placeholder="Quelques lignes…" style="width:100%;min-height:70px;resize:vertical">${esc(_cv.corps)}</textarea>`
+    : `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px">
+         <div><b>Titre repris :</b><br>${_cv.titre?esc(_cv.titre):'<span class="note">— rien de sélectionné dans le Compositeur —</span>'}</div>
+         ${_cv.corps?`<div class="note" style="border-top:1px solid var(--creme);padding-top:6px"><b>Texte :</b> ${esc(_cv.corps.slice(0,140))}${_cv.corps.length>140?'…':''}</div>`:''}
+       </div>
+       <p class="note">Tu peux basculer en « Texte libre » pour tout modifier à la main.</p>`;
+
+  main.innerHTML =
+    `<div class="topbar"><div><h1>🎨 Créer le visuel</h1><p>Compose tes slides Instagram à ta charte — export PNG</p></div></div>
+
+     <div class="panel">
+       <h2>1 · Format</h2>
+       <div>${segFmt}</div>
+       <h2 style="margin-top:12px">2 · Gabarit</h2>
+       <div>${segGab}</div>
+     </div>
+
+     <div class="panel">
+       <h2>3 · Photo</h2>
+       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+         <label class="btn ghost sm" style="margin:2px">📷 Importer une photo
+           <input type="file" accept="image/*" onchange="cvChargerPhoto(this)" style="display:none">
+         </label>
+         <button class="btn ghost sm" style="margin:2px" onclick="cvRetirerPhoto()">🗑️ Retirer</button>
+         <span id="cvPhotoNom" class="note">${_cv.photo?('🖼️ '+esc(_cv.photoName)):'Aucune photo importée'}</span>
+       </div>
+       <div id="cvPhotoYRow" style="display:${(_cv.photo&&_cv.gabarit!=='uni')?'block':'none'};margin-top:10px">
+         <label class="note">Cadrage vertical</label>
+         <input type="range" min="0" max="1" step="0.02" value="${_cv.photoY}" oninput="cvSetPhotoY(this.value)" style="width:100%">
+       </div>
+     </div>
+
+     <div class="panel">
+       <h2>4 · Texte</h2>
+       <div>${segSrc}</div>
+       ${blocTexte}
+     </div>
+
+     <div class="panel" style="border:2px solid var(--bordeaux)">
+       <h2>Aperçu</h2>
+       <div style="display:flex;justify-content:center;background:repeating-conic-gradient(#eee 0% 25%,#f7f7f7 0% 50%) 50%/22px 22px;border-radius:12px;padding:10px">
+         <canvas id="cvCanvas" style="max-width:100%;max-height:52vh;border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.18)"></canvas>
+       </div>
+       <button class="btn gold" style="width:100%;margin-top:12px" onclick="cvExporter()">⬇️ Exporter en PNG</button>
+       <button id="cvLogoBtn" class="btn ${_cv.logo?'gold':'ghost'} sm" style="width:100%;margin-top:8px" onclick="cvToggleLogo()">🏷️ Signature de marque : ${_cv.logo?'affichée':'masquée'}</button>
+       <p class="note">Astuce iPhone : « Exporter » ouvre le partage iOS — choisis « Enregistrer l'image » pour l'ajouter à ta pellicule, prête à publier.</p>
+     </div>`;
+
+  // Premier dessin après insertion dans le DOM.
+  requestAnimationFrame(()=>{ cvDrawPreview(); cvSyncControls(); });
+}
+
+/* ===== FIN MODULE CARROUSEL VISUEL ===== */
+
 
 /* ===== MODULE VENTILATION PAR MODE D'ENCAISSEMENT (v1218) ===== */
 /* ============================================================================
