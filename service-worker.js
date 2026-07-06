@@ -1,5 +1,5 @@
-// [v1230] bump CACHE — Carrousels narratifs 6–10 slides (trames + connecteurs).
-const CACHE = 'sm-iphone-v265';
+// [v1233] bump CACHE — Vrais logos (5 déclinaisons) sur les carrousels + choix auto par luminosité.
+const CACHE = 'sm-iphone-v268';
 const ASSETS = [
   './',
   './index.html',

@@ -899,6 +899,29 @@ input:not([type]), select, textarea{ font-size:16px !important; }
 .step-head:first-of-type{margin-top:8px}
 .step-num{flex:none;width:30px;height:30px;border-radius:50%;background:var(--caramel,#AA7C39);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:1rem;box-shadow:var(--sh-1)}
 .step-head b{font-size:.98rem;color:#4a3a2a}
+/* ── Assistant guidé (wizard) : parcours par étapes ── */
+.wiz-prog{display:flex;align-items:center;gap:6px;margin:4px 0 14px}
+.wiz-dot{flex:1;height:6px;border-radius:3px;background:#e7ddd0;transition:.25s}
+.wiz-dot.done{background:var(--caramel,#AA7C39)}
+.wiz-dot.on{background:linear-gradient(90deg,var(--caramel,#AA7C39),var(--bordeaux,#52252F))}
+.wiz-steplabel{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px}
+.wiz-steplabel .wiz-count{font-size:.72rem;color:#a8988c;font-weight:600;letter-spacing:.03em}
+.wiz-steplabel h2{margin:0;font-size:1.12rem;color:var(--bordeaux,#52252F)}
+.wiz-card{background:#fff;border:1px solid var(--hair,#ece3d6);border-radius:16px;padding:16px;box-shadow:var(--sh-1);animation:wizIn .22s ease}
+@keyframes wizIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.wiz-hint{font-size:.78rem;color:#8a7a6e;line-height:1.5;margin:2px 0 12px}
+.wiz-nav{display:flex;gap:8px;margin-top:16px}
+.wiz-nav .btn{flex:1}
+.wiz-preview{position:sticky;bottom:0;z-index:20;margin:12px -4px -4px;padding:10px;background:linear-gradient(#fbf8f3ee,#fbf8f3);border-top:1px solid var(--hair,#ece3d6);backdrop-filter:blur(4px)}
+.wiz-preview-title{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:#a8988c;font-weight:700;margin-bottom:6px}
+.wiz-chip{display:inline-flex;align-items:center;gap:4px;background:#f6efe4;border:1px solid #e8dcc0;border-radius:999px;padding:3px 10px;font-size:.74rem;color:#6a5240;margin:2px 3px 2px 0}
+.wiz-choice{display:flex;flex-wrap:wrap;gap:7px}
+.wiz-opt{appearance:none;-webkit-appearance:none;border:1.5px solid var(--hair,#ece3d6);background:#fff;color:var(--bordeaux,#52252F);font-family:inherit;font-weight:600;font-size:.86rem;cursor:pointer;border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:7px;transition:.15s;-webkit-tap-highlight-color:transparent}
+.wiz-opt .wiz-opt-ico{font-size:1.1rem}
+.wiz-opt.on{background:linear-gradient(135deg,var(--bordeaux,#52252F),var(--bordeaux-3,#3d1a22));color:var(--creme,#E8DDCD);border-color:transparent;box-shadow:0 4px 12px rgba(82,37,47,.25)}
+.wiz-opt:active{transform:scale(.97)}
+.wiz-opt.block{width:100%;flex-direction:column;align-items:flex-start;gap:3px}
+.wiz-opt.block .wiz-opt-sub{font-size:.72rem;font-weight:500;opacity:.8}
 .gauge{display:flex;align-items:center;gap:6px;margin-top:2px}
 .gauge-bar{flex:1;height:14px;border-radius:7px;overflow:hidden;display:flex;background:#efe9e1;border:1px solid #e2d8cc}
 .gauge-pct{font-size:.72rem;color:#7a6a60;font-weight:600;min-width:32px;text-align:right}
