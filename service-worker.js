@@ -1,5 +1,5 @@
-// [v1218] bump CACHE pour purger l'ancien cache et republier (module Encaissements par mode).
-const CACHE = 'sm-iphone-v253';
+// [v1219] bump CACHE — nouveau module Composer un contenu.
+const CACHE = 'sm-iphone-v254';
 const ASSETS = [
   './',
   './index.html',

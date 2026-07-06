@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1218';
-const APP_MAJ = 'Nouvelle rubrique Comptabilit\u00e9 \u00b7 Encaissements par mode : ventilation et filtre du CA encaiss\u00e9 par moyen de paiement (virement, carte, esp\u00e8ces, ch\u00e8que, PayPal), crois\u00e9 par mois, avec d\u00e9tail et export CSV';
+const APP_VERSION = 'v1219';
+const APP_MAJ = 'Nouveau : Composer un contenu \u00b7 base \u00e9ditoriale de 180 accroches + 82 textes avec filtrage en cascade (objet \u2192 cible \u2192 accroche \u2192 texte) pour g\u00e9n\u00e9rer une communication percutante, vente et coaching, B2B et B2C';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -3831,7 +3831,8 @@ const VIEWS = {
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
   tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
-  ventilation:renderVentilation
+  ventilation:renderVentilation,
+  compositeur:renderCompositeur
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -14022,6 +14023,7 @@ const _NAV_PAGES = [
   {v:'stats',        t:'Statistiques',              k:'statistique stat graphique analyse chiffre'},
   {v:'compta',       t:'Comptabilité',              k:'comptabilite compta ca chiffre affaires resultat charges urssaf encaissement'},
   {v:'ventilation',  t:'Encaissements par mode',    k:'encaissement mode paiement virement carte especes cheque paypal ventilation filtre repartition moyen reglement'},
+  {v:'compositeur',  t:'Composer un contenu',       k:'composer contenu marketing communication reseaux sociaux post accroche texte instagram vente coaching redaction publication editorial'},
   {v:'netpoche',     t:'Net dans la poche',          k:'net poche revenu reel impot tranche imposition urssaf cotisation combien reste gagne vraiment apres deduction fil rouge'},
   {v:'chargesventil',t:'Charges ventilées',          k:'charges ventilation investissement recurrent structurel marketing formation equipement stand diminuer allege croisiere depenses'},
   {v:'optimisation', t:'Optimisation fiscale',        k:'optimisation fiscale seuil seuils tva franchise micro entreprise regime reel bascule plafond plafonds limite vente service prestation marchandise depassement surveillance alerte'},
@@ -23531,6 +23533,453 @@ async function renderCompta(){
   })();
  } catch(err){ renderViewError('compta', err); }
 }
+
+/* ===== MODULE COMPOSITEUR DE CONTENU (v1219) ===== */
+/* ============================================================================
+ *  BASE DE CONTENU ÉDITORIAL — Sensations Macarons
+ *  180 accroches + 82 textes, taggés pour filtrage en cascade.
+ *  objet: vente|coaching|both · cible: b2c|b2b|both · axe · kw (mots-clés)
+ * ==========================================================================*/
+
+const SC_ACCROCHES = [
+  {id:"a001", objet:"vente", cible:"b2c", axe:"douleur", texte:"Encore une boîte de chocolats… vraiment ?", kw:"cadeau invité chocolat banal soirée apporter"},
+  {id:"a002", objet:"vente", cible:"b2c", axe:"douleur", texte:"Demain tu es invité, et tu n'as toujours aucune idée.", kw:"cadeau invité dernière minute idée soirée apporter"},
+  {id:"a003", objet:"vente", cible:"b2c", axe:"douleur", texte:"La bouteille de vin, tout le monde l'apporte déjà.", kw:"cadeau vin banal invité soirée différent"},
+  {id:"a004", objet:"vente", cible:"b2c", axe:"douleur", texte:"Arriver les mains vides ? Hors de question. Arriver banal ? Encore pire.", kw:"cadeau invité banal soirée apporter marquer"},
+  {id:"a005", objet:"vente", cible:"b2c", axe:"douleur", texte:"Ce cadeau de dernière minute qui finit en bon d'achat impersonnel.", kw:"cadeau dernière minute impersonnel bon achat froid"},
+  {id:"a006", objet:"vente", cible:"b2c", axe:"douleur", texte:"Tu veux marquer le coup, pas juste cocher la case « cadeau ».", kw:"cadeau marquer attention pensé soirée"},
+  {id:"a007", objet:"vente", cible:"b2c", axe:"douleur", texte:"Tu reçois ce week-end et le dessert te stresse déjà.", kw:"recevoir dessert stress week-end maison invités"},
+  {id:"a008", objet:"vente", cible:"b2c", axe:"douleur", texte:"Un dessert maison raté devant tes invités, le cauchemar.", kw:"dessert maison raté invités recevoir stress"},
+  {id:"a009", objet:"vente", cible:"b2c", axe:"douleur", texte:"Trois heures en cuisine pour un dessert vite oublié ?", kw:"dessert cuisine temps recevoir effort oublié"},
+  {id:"a010", objet:"vente", cible:"b2c", axe:"objection", texte:"« Je n'aime pas les macarons, c'est trop sucré. »", kw:"objection trop sucré aime pas préjugé moins sucre"},
+  {id:"a011", objet:"vente", cible:"b2c", axe:"objection", texte:"« 2,75€ un macaron, c'est cher, non ? »", kw:"objection prix cher coût valeur justifier"},
+  {id:"a012", objet:"vente", cible:"b2c", axe:"objection", texte:"Trop sucré, les macarons ? Pas les miens.", kw:"objection trop sucré moins sucre différent"},
+  {id:"a013", objet:"vente", cible:"b2c", axe:"objection", texte:"« Ça se garde combien de temps ? » — bonne question.", kw:"objection conservation fraîcheur garde durée rassurer"},
+  {id:"a014", objet:"vente", cible:"b2c", axe:"objection", texte:"Cher, un macaron artisanal ? Regardons ce qu'il y a derrière.", kw:"objection prix cher artisanal valeur ingrédients"},
+  {id:"a015", objet:"vente", cible:"b2c", axe:"desir", texte:"Se faire plaisir, sans le coup de barre du trop-sucré.", kw:"plaisir se faire plaisir moins sucre léger envie"},
+  {id:"a016", objet:"vente", cible:"b2c", axe:"desir", texte:"Ton petit rendez-vous avec toi-même.", kw:"plaisir rituel soi pause café parenthèse"},
+  {id:"a017", objet:"vente", cible:"b2c", axe:"desir", texte:"Un café, un macaron, et le meilleur moment de la journée.", kw:"plaisir café rituel pause moment douceur"},
+  {id:"a018", objet:"vente", cible:"b2c", axe:"desir", texte:"Pas besoin d'occasion pour se régaler.", kw:"plaisir sans occasion se régaler envie spontané"},
+  {id:"a019", objet:"vente", cible:"b2c", axe:"desir", texte:"La douceur qui ne plombe pas ton après-midi.", kw:"plaisir léger moins sucre douceur après-midi"},
+  {id:"a020", objet:"vente", cible:"b2c", axe:"desir", texte:"Fondre pour une coque, sans culpabiliser.", kw:"plaisir fondre culpabilité léger moins sucre gourmandise"},
+  {id:"a021", objet:"vente", cible:"b2c", axe:"situation", texte:"Ce week-end, viens me voir sur le marché 📍", kw:"marché événement week-end stand venir rencontre"},
+  {id:"a022", objet:"vente", cible:"b2c", axe:"situation", texte:"Save the date, les gourmands !", kw:"marché événement date save annonce venir"},
+  {id:"a023", objet:"vente", cible:"b2c", axe:"situation", texte:"Rendez-vous gourmand en approche 🍬", kw:"marché événement rendez-vous annonce venir"},
+  {id:"a024", objet:"vente", cible:"b2c", axe:"situation", texte:"Nouveauté de saison à la carte ✨", kw:"nouveauté parfum saison lancement carte"},
+  {id:"a025", objet:"vente", cible:"b2c", axe:"situation", texte:"Il est arrivé… le petit nouveau qui va vous surprendre.", kw:"nouveauté parfum lancement surprise arrivée"},
+  {id:"a026", objet:"vente", cible:"b2c", axe:"situation", texte:"Dernière fournée ! Premier arrivé, premier servi.", kw:"stock destockage anti-gaspi urgence dernière fournée"},
+  {id:"a027", objet:"vente", cible:"b2c", axe:"situation", texte:"⏳ Quelques boîtes encore dispo pour ce week-end.", kw:"stock disponible week-end réserver urgence limité"},
+  {id:"a028", objet:"vente", cible:"b2c", axe:"situation", texte:"Le dessert dont tout le monde parlera à table.", kw:"recevoir dessert impressionner invités pièce maîtresse"},
+  {id:"a029", objet:"vente", cible:"b2c", axe:"transformation", texte:"« Personne n'a cru que ça venait d'une petite maison. »", kw:"preuve témoignage qualité effet waouh artisanal"},
+  {id:"a030", objet:"vente", cible:"b2c", axe:"transformation", texte:"Ce qu'il y a VRAIMENT dans une de mes coques.", kw:"preuve ingrédients qualité transparence composition"},
+  {id:"a031", objet:"vente", cible:"b2c", axe:"transformation", texte:"Vanille de Madagascar, Valrhona, noisette du Piémont. Rien d'autre.", kw:"preuve ingrédients premium vanille valrhona noisette qualité"},
+  {id:"a032", objet:"vente", cible:"b2c", axe:"transformation", texte:"La qualité, ça ne se raconte pas. Ça se goûte.", kw:"preuve qualité goût déguster différence"},
+  {id:"a033", objet:"vente", cible:"b2c", axe:"transformation", texte:"Ceux qui « n'aiment pas les macarons » repartent avec une boîte.", kw:"preuve objection convertir goût surprise qualité"},
+  {id:"a034", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Faits main, ici, à Le Mans. Pas ailleurs.", kw:"valeurs local fait-main le mans artisanal proximité"},
+  {id:"a035", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Ce geste, le macaronnage, c'est TOUT le secret.", kw:"valeurs coulisses macaronnage savoir-faire geste artisanal"},
+  {id:"a036", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Du Covid à ma marque : mon histoire en une coque.", kw:"valeurs histoire parcours covid autodidacte marque"},
+  {id:"a037", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Acheter chez moi, c'est soutenir un vrai savoir-faire.", kw:"valeurs local soutien artisanat savoir-faire proximité"},
+  {id:"a038", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Chaque coque est faite main. Aucune chaîne, aucune usine.", kw:"valeurs fait-main artisanal industriel différence qualité"},
+  {id:"a039", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Moins de sucre, plus de sensation. Ce n'est pas qu'un slogan.", kw:"valeurs signature moins sucre philosophie marque"},
+  {id:"a040", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Dans les coulisses de l'atelier, ce matin 👩‍🍳", kw:"valeurs coulisses atelier quotidien authenticité lien"},
+  {id:"a041", objet:"vente", cible:"b2b", axe:"situation", texte:"Le détail gourmand dont vos invités parleront encore.", kw:"mariage invités convives dessert souvenir événement"},
+  {id:"a042", objet:"vente", cible:"b2b", axe:"situation", texte:"Et si vous osiez autre chose que la pièce montée ?", kw:"mariage pièce montée alternative original dessert"},
+  {id:"a043", objet:"vente", cible:"b2b", axe:"situation", texte:"Votre mariage mérite un dessert qui vous ressemble.", kw:"mariage personnalisé dessert signature unique"},
+  {id:"a044", objet:"vente", cible:"b2b", axe:"situation", texte:"Une pyramide de macarons au centre de la fête 🥂", kw:"mariage pyramide pièce dessert visuel réception"},
+  {id:"a045", objet:"vente", cible:"b2b", axe:"desir", texte:"Un cadeau client qui ne finit PAS au fond d'un tiroir.", kw:"cadeau client entreprise corporate goodie attention mémorable"},
+  {id:"a046", objet:"vente", cible:"b2b", axe:"desir", texte:"Vos clients méritent mieux qu'un énième goodie floqué.", kw:"cadeau client goodie corporate premium attention"},
+  {id:"a047", objet:"vente", cible:"b2b", axe:"desir", texte:"Marquez vos clients avec une attention qui se déguste.", kw:"cadeau client attention premium déguster fidélisation"},
+  {id:"a048", objet:"vente", cible:"b2b", axe:"transformation", texte:"Vos macarons. Vos couleurs. Votre logo.", kw:"personnalisation logo couleurs marque branding sur-mesure"},
+  {id:"a049", objet:"vente", cible:"b2b", axe:"transformation", texte:"Votre identité de marque, en version gourmande.", kw:"personnalisation branding marque identité logo image"},
+  {id:"a050", objet:"vente", cible:"b2b", axe:"transformation", texte:"Logo imprimé sur chaque coque. Effet garanti.", kw:"personnalisation logo impression coque branding événement"},
+  {id:"a051", objet:"vente", cible:"b2b", axe:"douleur", texte:"Un prestataire qui vous lâche, c'est votre réputation en jeu.", kw:"prestataire fiabilité réputation risque événementiel professionnel"},
+  {id:"a052", objet:"vente", cible:"b2b", axe:"douleur", texte:"Le dessert de mariage, ce poste de budget qui dérape.", kw:"mariage budget dessert coût maîtrise prix"},
+  {id:"a053", objet:"vente", cible:"b2b", axe:"douleur", texte:"Livraison en retard, specs non respectées : c'est vous qu'on blâme.", kw:"prestataire fiabilité retard qualité événementiel risque"},
+  {id:"a054", objet:"vente", cible:"b2b", axe:"objection", texte:"« Un artisan, c'est bien, mais pour nos volumes ? »", kw:"objection artisan volume quantité capacité fiabilité"},
+  {id:"a055", objet:"vente", cible:"b2b", axe:"objection", texte:"Artisanal ne veut pas dire improvisé.", kw:"objection artisanal fiabilité organisation professionnel sérieux"},
+  {id:"a056", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Du local premium, ça raconte quelque chose de votre marque.", kw:"valeurs local premium image marque rse événementiel"},
+  {id:"a057", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Industriel ou fait-main : vos invités sentent la différence.", kw:"valeurs fait-main industriel différence qualité événement"},
+  {id:"a058", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Associez votre marque à du vrai, du local, du soigné.", kw:"valeurs local marque image premium authenticité"},
+  {id:"a059", objet:"vente", cible:"b2b", axe:"situation", texte:"Séminaire, inauguration, lancement : marquez l'instant.", kw:"séminaire entreprise inauguration événement corporate professionnel"},
+  {id:"a060", objet:"vente", cible:"b2b", axe:"situation", texte:"Une pause gourmande qui valorise votre événement pro.", kw:"entreprise pause événement séminaire corporate premium"},
+  {id:"a061", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tes collerettes craquellent ou penchent d'un côté ?", kw:"collerette craquelée penchée ratée technique problème four"},
+  {id:"a062", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Pas de collerette du tout, encore une fois ?", kw:"collerette absente ratée technique macaronnage problème"},
+  {id:"a063", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Recette suivie à la lettre, et pourtant : c'est raté.", kw:"recette ratée échec frustration technique suivi problème"},
+  {id:"a064", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Ton four fait n'importe quoi avec tes macarons ?", kw:"four capricieux cuisson température maîtrise problème"},
+  {id:"a065", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Un coup ça brûle, un coup c'est cru. Ton four te rend fou.", kw:"four cuisson température brûlé cru problème maîtrise"},
+  {id:"a066", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tu jettes des fournées entières à cause de la cuisson ?", kw:"four cuisson raté gaspillage fournée température problème"},
+  {id:"a067", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Belle coque dehors… vide dedans. Rageant.", kw:"coque creuse vide cuisson meringue problème technique"},
+  {id:"a068", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tes coques craquent, collent ou creusent ?", kw:"coque craque colle creuse problème technique macaronnage"},
+  {id:"a069", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Des coques bosselées au lieu de lisses et brillantes ?", kw:"coque bosselée lisse macaronnage problème technique surface"},
+  {id:"a070", objet:"coaching", cible:"b2c", axe:"objection", texte:"Tu as vu 100 tutos et tu rates encore ?", kw:"objection youtube tuto vidéo échec générique sur-mesure"},
+  {id:"a071", objet:"coaching", cible:"b2c", axe:"objection", texte:"« Sans matériel de pro, c'est peine perdue. » Faux.", kw:"objection matériel pro équipement four ménager débuter"},
+  {id:"a072", objet:"coaching", cible:"b2c", axe:"objection", texte:"Une vidéo ne voit pas TA pâte, TON four, TON geste.", kw:"objection tuto vidéo générique personnalisé diagnostic sur-mesure"},
+  {id:"a073", objet:"coaching", cible:"b2c", axe:"objection", texte:"« Je n'ai pas la main pour ça. » Ça n'existe pas.", kw:"objection don talent inné technique apprentissage méthode"},
+  {id:"a074", objet:"coaching", cible:"b2c", axe:"desir", texte:"Imagine sortir une plaque parfaite. Toutes identiques.", kw:"désir réussite plaque parfaite fierté régularité"},
+  {id:"a075", objet:"coaching", cible:"b2c", axe:"desir", texte:"Offrir TES macarons, faits de tes mains.", kw:"désir offrir fierté fait-maison réussite cadeau"},
+  {id:"a076", objet:"coaching", cible:"b2c", axe:"desir", texte:"La fierté de dire « c'est moi qui les ai faits ».", kw:"désir fierté fait-maison réussite offrir accomplissement"},
+  {id:"a077", objet:"coaching", cible:"b2c", axe:"desir", texte:"Des coques lisses, brillantes, à photographier.", kw:"désir réussite coque lisse brillante esthétique fierté"},
+  {id:"a078", objet:"coaching", cible:"b2c", axe:"desir", texte:"Et si apprendre les macarons devenait un vrai moment ?", kw:"désir atelier plaisir convivial apprentissage moment"},
+  {id:"a079", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Elle ratait tout. Trois séances plus tard, elle régale.", kw:"transformation avant après progrès réussite témoignage"},
+  {id:"a080", objet:"coaching", cible:"b2c", axe:"transformation", texte:"La différence entre rater et réussir ? 2-3 réglages.", kw:"transformation réglage détail progrès réussite méthode"},
+  {id:"a081", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Le macaron n'est pas réservé aux surdoués.", kw:"transformation accessible technique apprentissage méthode démocratiser"},
+  {id:"a082", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"J'ai appris seule, dans ma cuisine, pendant le Covid.", kw:"valeurs parcours autodidacte covid légitimité histoire"},
+  {id:"a083", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Je sais où ça coince, parce que je suis passée par là.", kw:"valeurs empathie parcours autodidacte légitimité vécu"},
+  {id:"a084", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Le macaron, ça s'apprend. Je te transmets le vrai chemin.", kw:"valeurs transmission apprentissage méthode accompagnement"},
+  {id:"a085", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Des dizaines d'échecs, puis le CAP. Je te fais gagner du temps.", kw:"valeurs cap parcours échec expérience raccourci légitimité"},
+  {id:"a086", objet:"coaching", cible:"b2b", axe:"situation", texte:"Tu veux passer du loisir à la vente ?", kw:"reconversion vente professionnel lancer projet loisir business"},
+  {id:"a087", objet:"coaching", cible:"b2b", axe:"douleur", texte:"Réussir chez toi, c'est une chose. Produire régulier, c'en est une autre.", kw:"production régularité professionnel volume vente lancer problème"},
+  {id:"a088", objet:"coaching", cible:"b2b", axe:"situation", texte:"Structurer ta production pour te lancer sereinement.", kw:"production organisation professionnel lancer structurer business"},
+  {id:"a089", objet:"coaching", cible:"b2b", axe:"objection", texte:"Vendre tes macarons : la technique ne suffit pas.", kw:"vente professionnel technique organisation business lancer"},
+  {id:"a090", objet:"coaching", cible:"b2b", axe:"desir", texte:"Faire de ta passion macaron un vrai revenu.", kw:"reconversion revenu passion professionnel business vente"},
+  {id:"a091", objet:"both", cible:"both", axe:"valeurs", texte:"Moins de sucre, plus de sensation.", kw:"signature slogan marque moins sucre philosophie"},
+  {id:"a092", objet:"vente", cible:"both", axe:"desir", texte:"La gourmandise sans l'écœurement.", kw:"plaisir moins sucre léger gourmandise équilibre"},
+  {id:"a093", objet:"vente", cible:"both", axe:"transformation", texte:"Goûtez la différence. Vous ne reviendrez pas en arrière.", kw:"preuve différence goût qualité déguster fidélité"},
+  {id:"a094", objet:"coaching", cible:"both", axe:"desir", texte:"De la coque ratée à la coque de pro.", kw:"transformation progrès coque réussite pro apprentissage"},
+  {id:"a095", objet:"vente", cible:"both", axe:"valeurs", texte:"L'artisanat, ça se sent dans chaque bouchée.", kw:"valeurs artisanat qualité fait-main goût authenticité"},
+  {id:"a096", objet:"vente", cible:"b2c", axe:"desir", texte:"Cette petite bouchée qui transforme un mardi ordinaire.", kw:"plaisir quotidien douceur moment mardi ordinaire"},
+  {id:"a097", objet:"vente", cible:"b2c", axe:"desir", texte:"Le luxe accessible d'un vrai bon macaron.", kw:"plaisir luxe accessible qualité gourmandise premium"},
+  {id:"a098", objet:"vente", cible:"b2c", axe:"douleur", texte:"Marre des desserts industriels sans âme ?", kw:"douleur industriel sans âme dessert qualité artisanal"},
+  {id:"a099", objet:"vente", cible:"b2c", axe:"douleur", texte:"Un anniversaire à marquer et zéro idée gourmande ?", kw:"anniversaire cadeau idée gourmand marquer occasion"},
+  {id:"a100", objet:"vente", cible:"b2c", axe:"situation", texte:"Fête des mères, Pâques, Noël : anticipe la douceur.", kw:"fête occasion saison noël pâques cadeau anticiper"},
+  {id:"a101", objet:"vente", cible:"b2c", axe:"situation", texte:"Commande passée aujourd'hui = douceur assurée ce week-end.", kw:"commande week-end anticiper disponible réserver délai"},
+  {id:"a102", objet:"vente", cible:"b2c", axe:"transformation", texte:"Le silence à table quand la boîte s'ouvre. Ça, c'est la qualité.", kw:"preuve effet silence qualité déguster réaction invités"},
+  {id:"a103", objet:"vente", cible:"b2c", axe:"objection", texte:"« C'est fragile, un macaron ? » Bien conservé, pas de souci.", kw:"objection fragile conservation transport rassurer"},
+  {id:"a104", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Ingrédients premium, prix juste, aucun compromis.", kw:"valeurs premium prix juste qualité ingrédients transparence"},
+  {id:"a105", objet:"vente", cible:"b2c", axe:"desir", texte:"Se réconforter avec un carré de douceur bien à soi.", kw:"plaisir réconfort douceur soi moment émotion"},
+  {id:"a106", objet:"vente", cible:"b2c", axe:"situation", texte:"Un brunch entre amis ? La boîte qui fait l'unanimité.", kw:"brunch amis partage occasion convivial dessert"},
+  {id:"a107", objet:"vente", cible:"b2c", axe:"douleur", texte:"Offrir la même chose que l'an dernier ? Ose autre chose.", kw:"cadeau répétition original différent oser occasion"},
+  {id:"a108", objet:"vente", cible:"b2c", axe:"transformation", texte:"Une bouchée, et le préjugé « trop sucré » s'effondre.", kw:"preuve objection trop sucré convertir goût différence"},
+  {id:"a109", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Vanille de Madagascar, citron bio : je choisis le meilleur.", kw:"valeurs ingrédients premium vanille citron bio qualité"},
+  {id:"a110", objet:"vente", cible:"b2c", axe:"desir", texte:"Le plaisir simple d'une douceur qu'on savoure lentement.", kw:"plaisir simple savourer lentement douceur moment"},
+  {id:"a111", objet:"vente", cible:"b2c", axe:"situation", texte:"Nouveau parfum dispo — et il ne restera pas longtemps.", kw:"nouveauté parfum limité urgence lancement disponible"},
+  {id:"a112", objet:"vente", cible:"b2c", axe:"douleur", texte:"Tu hésites encore au rayon pâtisserie du supermarché ?", kw:"douleur supermarché hésiter qualité industriel alternative"},
+  {id:"a113", objet:"vente", cible:"b2c", axe:"transformation", texte:"Mes clients reviennent. C'est le meilleur des avis.", kw:"preuve fidélité client revenir témoignage qualité"},
+  {id:"a114", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Chaque parfum a une histoire, un ingrédient qu'on choisit avec soin.", kw:"valeurs parfum histoire ingrédient soin qualité artisanal"},
+  {id:"a115", objet:"vente", cible:"b2c", axe:"desir", texte:"Faire durer le plaisir, une coque à la fois.", kw:"plaisir durer savourer gourmandise moment douceur"},
+  {id:"a116", objet:"vente", cible:"b2b", axe:"desir", texte:"Offrez à vos convives un dessert qui devient un souvenir.", kw:"mariage événement convives souvenir dessert mémorable"},
+  {id:"a117", objet:"vente", cible:"b2b", axe:"transformation", texte:"Vos couleurs de marque, jusque dans le dessert.", kw:"personnalisation couleurs marque branding cohérence image"},
+  {id:"a118", objet:"vente", cible:"b2b", axe:"situation", texte:"Coffrets brandés pour vos clients VIP.", kw:"cadeau client vip coffret brandé personnalisé premium"},
+  {id:"a119", objet:"vente", cible:"b2b", axe:"objection", texte:"Devis rapide, engagements clairs, zéro mauvaise surprise.", kw:"objection fiabilité devis délai professionnel confiance"},
+  {id:"a120", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Un partenaire artisan local, pas un simple fournisseur.", kw:"valeurs partenaire artisan local relation professionnel"},
+  {id:"a121", objet:"vente", cible:"b2b", axe:"situation", texte:"Baby shower, EVJF, anniversaire d'entreprise : on personnalise tout.", kw:"événement personnalisation baby shower evjf entreprise occasion"},
+  {id:"a122", objet:"vente", cible:"b2b", axe:"douleur", texte:"Un buffet oubliable, c'est une occasion gâchée.", kw:"événement buffet oubliable qualité mémorable dessert"},
+  {id:"a123", objet:"vente", cible:"b2b", axe:"transformation", texte:"Un dessert à votre image renforce votre marque à chaque bouchée.", kw:"personnalisation marque image branding renforcer événement"},
+  {id:"a124", objet:"vente", cible:"b2b", axe:"desir", texte:"L'attention premium qui fidélise vos meilleurs clients.", kw:"cadeau client fidélisation premium attention corporate"},
+  {id:"a125", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Choisir local et premium, c'est aussi soigner votre image RSE.", kw:"valeurs local rse image premium responsable marque"},
+  {id:"a126", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Le macaronnage, ce moment où tout bascule (dans le mauvais sens) ?", kw:"macaronnage technique geste problème étape clé"},
+  {id:"a127", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tes macarons collent au papier cuisson ?", kw:"coque colle papier cuisson problème technique décoller"},
+  {id:"a128", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Meringue ratée = tout le reste qui s'effondre.", kw:"meringue ratée technique base problème coque"},
+  {id:"a129", objet:"coaching", cible:"b2c", axe:"objection", texte:"Trop compliqué, le macaron ? C'est surtout mal expliqué.", kw:"objection compliqué difficile méthode explication accessible"},
+  {id:"a130", objet:"coaching", cible:"b2c", axe:"desir", texte:"Enfin comprendre POURQUOI ça marche (ou pas).", kw:"désir comprendre méthode technique maîtrise savoir"},
+  {id:"a131", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Passer de « je croise les doigts » à « je maîtrise ».", kw:"transformation maîtrise contrôle progrès confiance méthode"},
+  {id:"a132", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Je t'apprends à dompter TON four, pas un four théorique.", kw:"valeurs four personnalisé sur-mesure pratique concret"},
+  {id:"a133", objet:"coaching", cible:"b2c", axe:"desir", texte:"Le plaisir de progresser à chaque fournée.", kw:"désir progrès apprentissage plaisir amélioration"},
+  {id:"a134", objet:"coaching", cible:"b2c", axe:"objection", texte:"« J'ai déjà tout essayé. » On va trouver ce qui coince.", kw:"objection tout essayé diagnostic problème solution méthode"},
+  {id:"a135", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Tes proches vont te réclamer tes macarons.", kw:"transformation réussite proches demande fierté cadeau"},
+  {id:"a136", objet:"coaching", cible:"b2c", axe:"situation", texte:"Un atelier, quelques rires, et des macarons réussis.", kw:"atelier convivial plaisir apprentissage moment groupe"},
+  {id:"a137", objet:"coaching", cible:"b2b", axe:"objection", texte:"Produire régulier et aux normes : c'est là que beaucoup calent.", kw:"production régularité normes professionnel problème lancer"},
+  {id:"a138", objet:"coaching", cible:"b2b", axe:"desir", texte:"Transformer un savoir-faire en activité qui tourne.", kw:"reconversion activité business professionnel revenu savoir-faire"},
+  {id:"a139", objet:"coaching", cible:"b2b", axe:"valeurs", texte:"Je transmets aussi ce que l'école ne dit pas : le terrain.", kw:"valeurs terrain expérience pratique professionnel transmission"},
+  {id:"a140", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Fatiguée de jeter tes ratés à la poubelle ?", kw:"douleur gaspillage raté échec frustration jeter"},
+  {id:"a141", objet:"vente", cible:"b2c", axe:"desir", texte:"Craquer pour du bon, du vrai, du fait-main.", kw:"plaisir vrai fait-main qualité gourmandise craquer"},
+  {id:"a142", objet:"vente", cible:"b2c", axe:"situation", texte:"La Saint-Valentin approche. Faites fondre (pour de vrai).", kw:"saint-valentin occasion cadeau amour romantique fondre"},
+  {id:"a143", objet:"vente", cible:"b2c", axe:"situation", texte:"Weekend gourmand : réserve ta boîte avant vendredi.", kw:"week-end réserver commande délai disponible urgence"},
+  {id:"a144", objet:"vente", cible:"b2c", axe:"transformation", texte:"On me demande souvent mon « secret ». C'est la qualité, tout simplement.", kw:"preuve secret qualité ingrédients simplicité savoir-faire"},
+  {id:"a145", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Un atelier à taille humaine, chaque coque comptée.", kw:"valeurs artisanal taille humaine soin fait-main"},
+  {id:"a146", objet:"vente", cible:"b2b", axe:"situation", texte:"Votre prochain événement mérite une signature gourmande.", kw:"événement signature gourmand professionnel personnalisé mémorable"},
+  {id:"a147", objet:"vente", cible:"b2b", axe:"transformation", texte:"Ce que vos invités retiennent : le détail qui sort du lot.", kw:"événement détail mémorable qualité invités différence"},
+  {id:"a148", objet:"coaching", cible:"b2c", axe:"desir", texte:"Ta première plaque parfaite est plus proche que tu crois.", kw:"désir réussite plaque proche encouragement apprentissage"},
+  {id:"a149", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Combien de fournées ratées avant d'abandonner ?", kw:"douleur raté fournée découragement abandonner frustration"},
+  {id:"a150", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Le déclic technique qui change tout, en une séance.", kw:"transformation déclic technique séance progrès rapide"},
+  {id:"a151", objet:"vente", cible:"b2c", axe:"desir", texte:"Douceur du dimanche, sans le sucre qui assomme.", kw:"plaisir dimanche douceur moins sucre léger moment"},
+  {id:"a152", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Le fait-main a des imperfections. C'est ce qui fait son charme.", kw:"valeurs fait-main imperfection charme artisanal authenticité"},
+  {id:"a153", objet:"vente", cible:"b2c", axe:"situation", texte:"Édition limitée de saison : à saisir maintenant.", kw:"nouveauté édition limitée saison urgence disponible parfum"},
+  {id:"a154", objet:"vente", cible:"b2c", axe:"objection", texte:"Le vrai luxe, c'est de savoir exactement ce qu'on mange.", kw:"objection prix valeur transparence ingrédients qualité luxe"},
+  {id:"a155", objet:"vente", cible:"b2b", axe:"desir", texte:"Faites de votre pause café pro un vrai moment de standing.", kw:"entreprise pause café professionnel premium standing événement"},
+  {id:"a156", objet:"vente", cible:"b2b", axe:"douleur", texte:"Le générique dilue votre image. Le sur-mesure la renforce.", kw:"personnalisation image marque générique sur-mesure branding"},
+  {id:"a157", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Pas de blabla théorique : du concret, testé dans MA cuisine.", kw:"valeurs concret pratique testé expérience terrain"},
+  {id:"a158", objet:"coaching", cible:"b2c", axe:"desir", texte:"Réussir tes macarons, ce n'est pas un rêve : c'est une méthode.", kw:"désir réussite méthode accessible apprentissage confiance"},
+  {id:"a159", objet:"coaching", cible:"b2b", axe:"situation", texte:"Du CAP à ta boutique : je t'accompagne sur le chemin.", kw:"reconversion cap boutique professionnel accompagnement projet"},
+  {id:"a160", objet:"vente", cible:"b2c", axe:"transformation", texte:"« Je n'en avais jamais mangé d'aussi bons. » Mon retour préféré.", kw:"preuve témoignage meilleur qualité client retour"},
+  {id:"a161", objet:"vente", cible:"b2c", axe:"douleur", texte:"Combien de cadeaux banals as-tu offerts cette année ?", kw:"cadeau banal question différent original marquer"},
+  {id:"a162", objet:"coaching", cible:"b2c", axe:"douleur", texte:"9 fois sur 10, c'est le macaronnage ou le four.", kw:"collerette four macaronnage cause diagnostic technique chiffre"},
+  {id:"a163", objet:"vente", cible:"b2c", axe:"desir", texte:"2 jours de travail dans une seule bouchée.", kw:"preuve travail temps qualité artisanal effort valeur"},
+  {id:"a164", objet:"vente", cible:"b2b", axe:"transformation", texte:"1 logo, 1000 sourires : vos macarons personnalisés.", kw:"personnalisation logo événement impact mémorable branding"},
+  {id:"a165", objet:"coaching", cible:"b2c", axe:"transformation", texte:"3 séances pour passer du désespoir à la maîtrise.", kw:"transformation séance progrès maîtrise rapide méthode"},
+  {id:"a166", objet:"vente", cible:"b2c", axe:"valeurs", texte:"0 arôme artificiel. 0 conservateur. 100% vrai.", kw:"valeurs naturel arôme conservateur qualité transparence"},
+  {id:"a167", objet:"vente", cible:"b2c", axe:"situation", texte:"Plus que quelques boîtes pour ce week-end !", kw:"stock disponible urgence week-end limité réserver"},
+  {id:"a168", objet:"coaching", cible:"b2c", axe:"objection", texte:"100 vidéos regardées, 0 macaron réussi ?", kw:"objection vidéo tuto échec générique diagnostic chiffre"},
+  {id:"a169", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Tout a commencé par des dizaines de ratés, confinée chez moi.", kw:"valeurs histoire parcours covid autodidacte début émotionnel"},
+  {id:"a170", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Je me souviens de ma première collerette réussie. Et de ce déclic.", kw:"valeurs histoire collerette réussite déclic parcours émotionnel"},
+  {id:"a171", objet:"vente", cible:"b2c", axe:"desir", texte:"Certains plaisirs valent qu'on les attende.", kw:"plaisir attente commande qualité gourmandise anticipation"},
+  {id:"a172", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Derrière chaque commande pro, un savoir-faire local et humain.", kw:"valeurs local humain savoir-faire professionnel authenticité"},
+  {id:"a173", objet:"coaching", cible:"b2c", axe:"desir", texte:"Le jour où tes macarons feront « waouh », tu te souviendras d'avoir osé.", kw:"désir réussite fierté oser encouragement transformation"},
+  {id:"a174", objet:"vente", cible:"b2c", axe:"situation", texte:"Un imprévu gourmand ? J'ai ce qu'il te faut, vite.", kw:"situation imprévu urgence disponible rapide cadeau"},
+  {id:"a175", objet:"vente", cible:"b2c", axe:"transformation", texte:"Le genre de boîte qu'on n'ose pas jeter tellement elle est belle.", kw:"cadeau coffret beau qualité présentation emballage soigné"},
+  {id:"a176", objet:"vente", cible:"b2b", axe:"objection", texte:"Vos volumes ? On les cadre ensemble, en amont, sans stress.", kw:"objection volume quantité cadrer professionnel organisation fiabilité"},
+  {id:"a177", objet:"coaching", cible:"b2c", axe:"situation", texte:"Envie d'un cadeau d'expérience ? Offre un atelier macarons.", kw:"atelier cadeau expérience offrir occasion coaching"},
+  {id:"a178", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Le goût du vrai, sans compromis sur le sucre.", kw:"valeurs vrai qualité moins sucre signature authenticité"},
+  {id:"a179", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Ce n'est pas de la chance. C'est reproductible. C'est de la méthode.", kw:"transformation méthode reproductible technique maîtrise fiable"},
+  {id:"a180", objet:"vente", cible:"b2c", axe:"desir", texte:"Offre-toi la parenthèse que tu mérites.", kw:"plaisir parenthèse soi mériter douceur moment"},
+];
+
+const SC_TEXTES = [
+  {id:"t001", objet:"vente", cible:"b2c", axe:"douleur", texte:"Ce soir tu es invité, et tu tournes en rond au supermarché. La bouteille ? Déjà vue. Les chocolats ? Tout le monde en apporte. Arrive plutôt avec un écrin de macarons faits main, moins sucrés — et regarde les visages s'illuminer.", cta:"Commande ton écrin pour le week-end 📩", kw:"cadeau invité soirée chocolat banal apporter écrin"},
+  {id:"t002", objet:"vente", cible:"b2c", axe:"douleur", texte:"Le cadeau de dernière minute finit trop souvent en bon d'achat impersonnel. Efficace, mais froid. Un écrin de macarons commandé à temps, c'est personnel, gourmand, et ça dit simplement « j'ai pensé à toi ».", cta:"Anticipe — commande maintenant 📩", kw:"cadeau dernière minute impersonnel personnel attention pensé"},
+  {id:"t003", objet:"vente", cible:"b2c", axe:"situation", texte:"Tu reçois et tu veux marquer le coup, sans passer trois heures en cuisine. Une tour de macarons au centre de la table, et ton dîner passe de « sympa » à « inoubliable ». Zéro stress, effet garanti.", cta:"Réserve ta pièce maîtresse 🗓️", kw:"recevoir dessert invités table impressionner stress pièce"},
+  {id:"t004", objet:"vente", cible:"b2c", axe:"desir", texte:"Pas besoin d'une grande occasion. Parfois, le meilleur moment de la semaine, c'est un café et un macaron, juste pour soi. Un plaisir simple, vrai, sans l'excès de sucre qui plombe l'après-midi.", cta:"Offre-toi ta parenthèse 🤍", kw:"plaisir soi café rituel pause moment léger moins sucre"},
+  {id:"t005", objet:"vente", cible:"b2c", axe:"objection", texte:"« Trop sucré », je l'entends souvent. Et c'est vrai — pour la plupart. Le sucre sert à masquer des ingrédients moyens et à tenir en rayon des semaines. Mes macarons sont pensés réduits en sucre, faits pour être mangés frais. Ceux qui « n'aiment pas » repartent souvent avec une boîte.", cta:"Laisse-toi surprendre 📩", kw:"objection trop sucré préjugé moins sucre frais ingrédients"},
+  {id:"t005b", objet:"vente", cible:"b2c", axe:"objection", texte:"2,75€ un macaron, cher ? Regardons ce qu'il y a derrière : des ingrédients premium, deux jours de travail entre les coques, la maturation et le garnissage, et zéro raccourci industriel. Tu ne paies pas un petit gâteau. Tu paies un savoir-faire.", cta:"Juge sur pièce — commande 📩", kw:"objection prix cher valeur ingrédients travail savoir-faire"},
+  {id:"t006", objet:"vente", cible:"b2c", axe:"transformation", texte:"Vanille de Madagascar, chocolat Valrhona et Barry, noisette du Piémont, citron bio. Pas d'arôme, pas de poudre magique. La qualité ne se raconte pas, elle se goûte — et une fois goûtée, on ne revient pas en arrière.", cta:"Commande et compare 🤍", kw:"preuve ingrédients premium vanille valrhona noisette qualité"},
+  {id:"t007", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Chaque coque est macaronnée, pochée et garnie à la main dans mon atelier, ici à Le Mans. Pas de chaîne, pas d'usine à des milliers de kilomètres. Acheter chez moi, c'est soutenir un savoir-faire artisanal et local — et le goûter dans chaque bouchée.", cta:"Soutiens l'artisanat, régale-toi 📍", kw:"valeurs local fait-main le mans artisanal savoir-faire soutien"},
+  {id:"t008", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Confinée pendant le Covid, j'ai raté des dizaines de fournées. Puis j'ai passé mon CAP. Aujourd'hui, Sensations Macarons existe. Chaque macaron que tu goûtes porte ce chemin : de la passion têtue à un vrai métier.", cta:"Fais partie de l'histoire 🤍", kw:"valeurs histoire parcours covid autodidacte cap métier"},
+  {id:"t009", objet:"vente", cible:"b2c", axe:"situation", texte:"Je serai présente sur le prochain marché — l'occasion de goûter, de repartir avec ta boîte, et de discuter parfums avec moi. Rien ne remplace la dégustation sur place : viens choisir les papilles grandes ouvertes.", cta:"Note la date et passe me dire bonjour 👋", kw:"marché événement stand dégustation venir rencontre parfum"},
+  {id:"t010", objet:"vente", cible:"b2c", axe:"situation", texte:"Un nouveau parfum vient de rejoindre la collection. Je travaille avec les saisons : des parfums qui arrivent, d'autres qui repartent. Frais, de circonstance, jamais figés. Le goûter maintenant, c'est saisir l'instant.", cta:"Découvre la nouveauté 📩", kw:"nouveauté parfum saison lancement collection frais limité"},
+  {id:"t011", objet:"vente", cible:"b2c", axe:"situation", texte:"Dernière fournée du week-end ! Il reste quelques macarons à écouler, toujours dans la même qualité. Premier arrivé, premier servi — un petit plaisir à saisir avant qu'il ne parte.", cta:"Réserve vite en DM 📩", kw:"stock destockage anti-gaspi urgence dernière fournée disponible"},
+  {id:"t012", objet:"vente", cible:"b2c", axe:"desir", texte:"Le macaron industriel, c'est souvent une bombe de sucre qui masque le goût. Ici, c'est l'inverse : on sent la vanille, la noisette, le vrai. Moins de sucre, plus de sensation — le plaisir revient au premier plan, pas l'écœurement.", cta:"Goûte la différence — commande en ligne 🤍", kw:"plaisir moins sucre goût vrai industriel différence léger"},
+  {id:"t013", objet:"vente", cible:"b2c", axe:"transformation", texte:"Le retour qui revient le plus après un dîner : les invités pensent à une grande maison parisienne. La qualité artisanale locale n'a rien à envier — elle a même quelque chose en plus : l'âme.", cta:"Fais l'effet waouh à ta table 🤍", kw:"preuve témoignage qualité waouh artisanal invités âme"},
+  {id:"t014", objet:"vente", cible:"b2c", axe:"objection", texte:"« Ça se garde combien de temps ? » Bonne question — et la réponse dit tout. Un macaron pensé sans excès de sucre et sans conservateurs se déguste frais, dans les jours qui suivent. C'est justement parce qu'ils ne sont pas bourrés de sucre qu'ils sont meilleurs.", cta:"Commande frais, savoure vite 🤍", kw:"objection conservation fraîcheur garde moins sucre conservateur"},
+  {id:"t015", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Le macaronnage, c'est le geste qui fait tout : mélanger juste ce qu'il faut, ni trop ni trop peu. Trop, la pâte coule ; pas assez, elle craque. Derrière chaque coque lisse, il y a ce geste répété des centaines de fois. L'artisanat, c'est ça.", cta:"Découvre les coulisses 👀", kw:"valeurs coulisses macaronnage geste savoir-faire artisanal technique"},
+  {id:"t016", objet:"vente", cible:"b2c", axe:"desir", texte:"Un anniversaire, un remerciement, une envie soudaine : il y a mille raisons de s'offrir ou d'offrir un peu de douceur. Et une seule promesse à chaque fois — du fait-main, généreux, et pensé moins sucré.", cta:"Compose ta boîte 🤍", kw:"occasion cadeau anniversaire offrir douceur fait-main plaisir"},
+  {id:"t017", objet:"vente", cible:"b2c", axe:"douleur", texte:"Offrir la même chose que l'an dernier, c'est facile mais sans surprise. Cette fois, ose un écrin de macarons personnalisés : parfums au choix, présentation soignée, et cette petite touche qui montre que tu as vraiment pensé à la personne.", cta:"Ose l'écrin personnalisé ✨", kw:"cadeau original différent personnalisé attention surprise oser"},
+  {id:"t018", objet:"vente", cible:"b2c", axe:"transformation", texte:"On me demande souvent mon « secret ». Il n'y en a pas vraiment : juste des ingrédients premium, du temps, et aucun raccourci. La différence, elle est là — dans ce qu'on met, et surtout dans ce qu'on ne met pas.", cta:"Goûte le secret 🤍", kw:"preuve secret ingrédients qualité temps simplicité différence"},
+  {id:"t019", objet:"vente", cible:"b2b", axe:"situation", texte:"Le jour J, tout est parfait — sauf peut-être ce dessert standard que personne ne retient. Vos convives méritent mieux qu'un buffet oubliable. Pyramides de macarons personnalisés à vos couleurs, parfums choisis avec vous : une signature gourmande qui marque les esprits.", cta:"Réservez votre dégustation mariage 🥂", kw:"mariage convives dessert personnalisé pyramide couleurs signature"},
+  {id:"t020", objet:"vente", cible:"b2b", axe:"desir", texte:"Le énième goodie floqué finit oublié en cinq minutes. Vous voulez marquer vos clients, pas encombrer leur bureau. Des coffrets de macarons brandés à votre logo : une attention premium, consommée avec plaisir, associée durablement à votre marque.", cta:"Marquez vos clients — demandez un devis 🥂", kw:"cadeau client goodie corporate coffret logo premium fidélisation"},
+  {id:"t021", objet:"vente", cible:"b2b", axe:"transformation", texte:"Un dessert générique dilue votre image ; un dessert à vos couleurs la renforce, à chaque bouchée. Logo imprimé sur les coques, teintes accordées à votre charte, coffrets sur mesure : votre identité, en version gourmande.", cta:"Personnalisez votre commande pro ✨", kw:"personnalisation logo couleurs charte branding image marque"},
+  {id:"t022", objet:"vente", cible:"b2b", axe:"douleur", texte:"Dans l'événementiel, un fournisseur qui livre en retard ou hors specs, c'est vous qu'on blâme devant le client. Artisan local, engagements clairs, devis rapide et respect des délais : je deviens un partenaire fiable, pas un risque de plus.", cta:"Sécurisez votre prestation gourmande 📩", kw:"prestataire fiabilité retard délai partenaire événementiel risque"},
+  {id:"t023", objet:"vente", cible:"b2b", axe:"objection", texte:"« Un artisan pour nos volumes ? » Question légitime. Vous avez besoin de fiabilité sur la quantité, pas seulement de qualité sur trois pièces. Je cadre les volumes en amont, avec un délai de commande clair et une production planifiée. Artisanal ne veut pas dire improvisé.", cta:"Parlons volumes et délais 📩", kw:"objection volume quantité fiabilité délai production organisation"},
+  {id:"t024", objet:"vente", cible:"b2b", axe:"situation", texte:"La pièce montée traditionnelle, tout le monde l'a vue mille fois. Vous voulez que VOTRE dessert vous ressemble. Une tour de macarons aux parfums et couleurs choisis avec vous : élégante, moderne, et déclinable à l'infini.", cta:"Composons votre dessert signature 🥂", kw:"mariage pièce montée alternative original personnalisé signature"},
+  {id:"t025", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Choisir un artisan local plutôt qu'un fournisseur industriel, ce n'est pas qu'une question de goût : c'est un message sur vos valeurs. Ingrédients premium, savoir-faire local, positionnement moins sucré — une prestation alignée avec une image soignée et responsable.", cta:"Associez votre marque à du vrai 🤍", kw:"valeurs local premium rse image responsable marque artisanal"},
+  {id:"t026", objet:"vente", cible:"b2b", axe:"douleur", texte:"Entre le prestataire hors de prix et l'option cheap qui déçoit, trouver le juste équilibre pour le dessert relève du casse-tête. Je propose des formats clairs et adaptables à votre budget, sans sacrifier la qualité ni l'effet visuel.", cta:"Recevez un devis transparent 📩", kw:"mariage budget prix équilibre devis format qualité"},
+  {id:"t027", objet:"vente", cible:"b2b", axe:"transformation", texte:"Le macaron industriel est calibré, uniforme… et fade. Le fait-main a des micro-imperfections qui font le charme, et un goût qui, lui, ne s'oublie pas. C'est exactement ce que retiendront vos convives.", cta:"Offrez du vrai à votre événement 🥂", kw:"preuve fait-main industriel différence goût charme événement"},
+  {id:"t028", objet:"vente", cible:"b2b", axe:"situation", texte:"Séminaire, inauguration, lancement produit, anniversaire d'entreprise : chaque événement pro est une occasion de marquer les esprits. Une pause gourmande personnalisée valorise votre image bien plus qu'un buffet standard.", cta:"Parlons de votre événement 📩", kw:"entreprise séminaire inauguration événement corporate pause premium"},
+  {id:"t029", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tu as suivi la recette à la lettre, et pourtant : coques fissurées, collerettes de travers, ou pas de collerette du tout. Frustrant à pleurer. 9 fois sur 10, c'est le macaronnage ou le four — deux choses qu'on règle vite ensemble, une fois qu'on sait quoi regarder.", cta:"On répare ça — réserve ta séance 🎯", kw:"collerette fissure ratée macaronnage four diagnostic frustration"},
+  {id:"t030", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Un coup ça brûle, un coup c'est cru, un coup ça craque. Tu ne sais jamais à quoi t'attendre et tu jettes des fournées entières. Chaleur tournante, position de plaque, thermomètre : je t'apprends à dompter TON four, pas un four théorique.", cta:"Maîtrise ton four enfin — DM 📩", kw:"four cuisson brûlé cru température plaque thermomètre maîtrise"},
+  {id:"t031", objet:"coaching", cible:"b2c", axe:"douleur", texte:"La coque est lisse, brillante, parfaite. Tu croques : c'est creux. Tout ce travail pour une coquille vide. Le vide vient presque toujours d'une meringue ou d'une cuisson mal réglée. C'est technique, mais ça s'explique en une séance.", cta:"Comble le vide — coaching ciblé 🎯", kw:"coque creuse vide meringue cuisson technique séance"},
+  {id:"t032", objet:"coaching", cible:"b2c", axe:"objection", texte:"Tu as vu 100 tutos et tu rates encore ? Normal : une vidéo ne voit pas TA pâte, TON four, TON geste. Elle donne une recette générique, pas un diagnostic. En coaching, je regarde ce que TOI tu fais, en direct, et je corrige le détail qui bloque.", cta:"Passe du tuto au sur-mesure 📩", kw:"objection tuto vidéo générique diagnostic personnalisé sur-mesure"},
+  {id:"t033", objet:"coaching", cible:"b2c", axe:"objection", texte:"« Sans matériel de pro, c'est peine perdue. » Faux. On réussit de très belles coques avec un four ménager et une poche basique. Le matériel aide, il ne fait pas le macaron. Je t'apprends à tirer le meilleur de ce que tu as déjà.", cta:"Commence avec ta cuisine actuelle 🎯", kw:"objection matériel pro four ménager équipement débuter geste"},
+  {id:"t034", objet:"coaching", cible:"b2c", axe:"desir", texte:"Imagine sortir une plaque parfaite : des coques lisses, brillantes, avec une collerette nette et régulière. Le genre de plaque qu'on photographie avant de la montrer à tout le monde. Ce n'est pas de la chance, c'est de la méthode — et ça devient reproductible.", cta:"Réussis ta première plaque parfaite 🤍", kw:"désir réussite plaque coque lisse collerette méthode reproductible"},
+  {id:"t035", objet:"coaching", cible:"b2c", axe:"desir", texte:"Il y a une fierté particulière à tendre une boîte en disant « c'est moi qui les ai faits » — et à voir la surprise en face. Cette fierté est à portée. Quelques séances pour maîtriser les gestes, et tu offres tes propres créations.", cta:"Deviens la personne qui régale 🤍", kw:"désir fierté offrir fait-maison réussite création accomplissement"},
+  {id:"t036", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Beaucoup arrivent découragés, au bord d'abandonner. La différence entre rater et réussir tient souvent à 2-3 réglages, pas à un don. Le macaron n'est pas réservé aux surdoués : c'est une technique, et une technique, ça s'apprend.", cta:"Écris ta propre transformation 🎯", kw:"transformation découragé réglage don technique apprentissage progrès"},
+  {id:"t037", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Pas d'école prestigieuse au départ : des dizaines d'échecs, de la ténacité, puis le CAP en poche. Je sais exactement où ça coince, parce que je suis passée par là. Je ne t'enseigne pas une théorie descendante — je te transmets le chemin réel, avec ses pièges.", cta:"Apprends avec quelqu'un qui a galéré aussi 🤍", kw:"valeurs parcours autodidacte cap échec empathie vécu transmission"},
+  {id:"t038", objet:"coaching", cible:"b2c", axe:"desir", texte:"Un atelier, ce n'est pas qu'une leçon technique. C'est un moment où on met les mains dans la pâte, on rit des ratés, on repart fier. Entre l'apprentissage concret et le plaisir partagé, il laisse un souvenir autant qu'un savoir-faire.", cta:"Réserve ta place à l'atelier 🎯", kw:"atelier convivial plaisir partagé apprentissage moment souvenir"},
+  {id:"t039", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Le vrai déclic, c'est le jour où tu comprends POURQUOI ça marche. À partir de là, tu ne suis plus une recette au hasard : tu ajustes, tu corriges, tu maîtrises. C'est cette compréhension que je te transmets, pas juste des étapes.", cta:"Passe de « je croise les doigts » à « je maîtrise » 🎯", kw:"transformation déclic comprendre méthode maîtrise ajuster technique"},
+  {id:"t040", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Combien de fournées ratées avant de vouloir tout laisser tomber ? Je connais ce découragement. La bonne nouvelle : les erreurs les plus fréquentes sont aussi les plus faciles à corriger, une fois qu'on te montre quoi regarder.", cta:"Ne baisse pas les bras — réserve 🎯", kw:"douleur raté fournée découragement abandonner erreur corriger"},
+  {id:"t041", objet:"coaching", cible:"b2b", axe:"situation", texte:"Réussir chez toi, c'est une chose. Produire régulier, calibré, rentable et aux normes, c'en est une autre — et c'est là que beaucoup calent. Au-delà de la technique, je t'accompagne sur la régularité, l'organisation et les bases pour te lancer sereinement.", cta:"Structure ton projet — parlons-en 📩", kw:"reconversion production régularité normes organisation lancer business"},
+  {id:"t042", objet:"coaching", cible:"b2b", axe:"desir", texte:"Faire de ta passion un vrai revenu, c'est possible — mais ça demande plus que de belles coques. Il faut de la constance, une organisation solide et une vraie stratégie de vente. Je t'aide à transformer ton savoir-faire en activité qui tourne.", cta:"Transforme ta passion en activité 📩", kw:"reconversion revenu passion business vente organisation activité"},
+  {id:"t043", objet:"coaching", cible:"b2b", axe:"valeurs", texte:"Je transmets aussi ce que l'école ne dit pas : le terrain. Les galères d'un vrai lancement, la gestion du stress d'une grosse commande, l'organisation d'un labo maison. Un accompagnement concret, par quelqu'un qui l'a vécu.", cta:"Apprends du terrain, pas que de la théorie 📩", kw:"reconversion terrain expérience pratique lancement organisation vécu"},
+  {id:"t044", objet:"vente", cible:"b2c", axe:"desir", texte:"Ton petit rituel de la semaine t'attend. Un café, une coque, et cinq minutes rien qu'à toi. Moins de sucre, plus de sensation.", cta:"Commande ta parenthèse 🤍", kw:"plaisir rituel café soi pause court story léger"},
+  {id:"t045", objet:"vente", cible:"b2c", axe:"situation", texte:"Nouvelle fournée du jour ✨ Fraîche, faite ce matin, en quantité limitée. Réserve la tienne avant qu'elle ne parte.", cta:"Réserve en DM 📩", kw:"nouveauté fournée jour frais limité story urgence"},
+  {id:"t046", objet:"vente", cible:"b2c", axe:"situation", texte:"📍 On se retrouve ce week-end sur le marché. Viens goûter, choisir, repartir avec ta boîte. J'ai hâte de te voir !", cta:"Passe me dire bonjour 👋", kw:"marché week-end venir story événement rencontre court"},
+  {id:"t047", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Fait main, ce matin, à Le Mans. Chaque coque comptée, chaque garniture dosée. C'est ça, l'artisanat.", cta:"Découvre l'atelier 👀", kw:"valeurs fait-main local atelier story artisanal court"},
+  {id:"t048", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Collerette de travers ? Avant de désespérer, vérifie ton macaronnage et la température de ton four. Deux réglages qui changent tout. Besoin d'un œil expert ?", cta:"Réserve ta séance 🎯", kw:"collerette macaronnage four réglage story court conseil"},
+  {id:"t049", objet:"coaching", cible:"b2c", axe:"desir", texte:"Ta première plaque parfaite est plus proche que tu ne crois. Souvent, il ne manque qu'un déclic. On le trouve ensemble ?", cta:"On trouve ton déclic 🎯", kw:"désir réussite plaque déclic encouragement story court"},
+  {id:"t050", objet:"vente", cible:"b2b", axe:"desir", texte:"Un cadeau client qui se déguste et qu'on n'oublie pas. Coffrets brandés à votre logo, sur mesure. Devis rapide.", cta:"Demandez votre devis 📩", kw:"cadeau client coffret logo devis court b2b premium"},
+  {id:"t051", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Je me souviens de ma toute première collerette réussie. Après des semaines de coques ratées, plates ou fissurées, ce petit pied dentelé est enfin apparu. J'ai crié de joie, seule dans ma cuisine. C'est ce jour-là que Sensations Macarons a vraiment commencé — dans la persévérance, pas dans le talent. Aujourd'hui, chaque boîte porte cette histoire.", cta:"Goûte l'histoire, une coque à la fois 🤍", kw:"valeurs histoire collerette parcours persévérance émotionnel storytelling"},
+  {id:"t052", objet:"vente", cible:"b2c", axe:"transformation", texte:"« Je n'aime pas les macarons. » C'est ce qu'une cliente m'a dit avant de goûter, presque désolée. Je lui ai tendu un macaron citron, sans insister. Deux minutes plus tard, elle repartait avec une boîte de douze. Ce n'est pas moi qui l'ai convaincue — c'est le goût. Le vrai, celui qu'on ne masque pas sous le sucre.", cta:"Laisse le goût te convaincre 📩", kw:"preuve témoignage objection convertir citron goût histoire client"},
+  {id:"t053", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Elle est arrivée en visio, découragée, prête à abandonner après des mois d'échecs. On a regardé ensemble sa pâte, son four, son geste. En une séance, on a identifié deux erreurs invisibles pour elle. La semaine suivante, elle m'envoyait la photo de sa première plaque parfaite. Ce message, c'est ma plus belle récompense.", cta:"Écris ton propre déclic 🎯", kw:"transformation témoignage visio découragé séance erreur réussite histoire"},
+  {id:"t054", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Pourquoi moins de sucre ? Parce qu'un bon macaron n'a rien à cacher. Le sucre à outrance sert souvent à masquer des ingrédients ordinaires. En réduisant le sucre, j'oblige chaque ingrédient à être excellent : la vanille doit être vraie, le chocolat noble, la noisette généreuse. C'est plus exigeant, mais c'est là qu'est la sensation.", cta:"Sens la différence 🤍", kw:"valeurs moins sucre philosophie ingrédients qualité exigence signature"},
+  {id:"t055", objet:"vente", cible:"b2c", axe:"situation", texte:"La Saint-Valentin approche. Cette année, oublie le bouquet qui fane en trois jours. Un écrin de macarons aux parfums choisis, présenté avec soin, ça dure le temps d'un vrai moment partagé — et ça se savoure à deux.", cta:"Commande ton écrin Saint-Valentin 💛", kw:"saint-valentin occasion amour cadeau romantique écrin partagé"},
+  {id:"t056", objet:"vente", cible:"b2c", axe:"situation", texte:"Fête des mères : elle mérite mieux qu'un cadeau de dernière minute. Un coffret de macarons faits main, aux couleurs douces, avec un petit mot. Le genre d'attention qui touche vraiment, parce qu'elle est pensée et gourmande.", cta:"Compose son coffret 🤍", kw:"fête des mères occasion cadeau coffret attention maman"},
+  {id:"t057", objet:"vente", cible:"b2c", axe:"situation", texte:"Les fêtes de fin d'année arrivent vite. Entre les repas et les cadeaux, pense à la douceur qui met tout le monde d'accord. Coffrets festifs, parfums de saison, commande à anticiper pour être livré à temps.", cta:"Anticipe tes coffrets de fêtes 🎄", kw:"noël fêtes fin année occasion coffret saison anticiper"},
+  {id:"t058", objet:"vente", cible:"b2b", axe:"situation", texte:"Vos vœux d'entreprise en version gourmande : offrez à vos clients et partenaires un coffret de macarons brandé, plutôt qu'une carte de plus. Une attention premium qui démarre l'année sous le signe de la qualité et de l'élégance.", cta:"Préparez vos vœux gourmands 🥂", kw:"entreprise vœux nouvel an cadeau client coffret brandé premium"},
+  {id:"t059", objet:"vente", cible:"b2c", axe:"transformation", texte:"Savais-tu qu'un vrai macaron demande deux jours ? Coques la veille, maturation au frais, garnissage le lendemain. Cette maturation, c'est elle qui fond la coque et la garniture en une seule bouchée harmonieuse. L'industriel saute cette étape. Pas moi.", cta:"Goûte la maturation 🤍", kw:"preuve technique maturation deux jours qualité expert éducatif"},
+  {id:"t060", objet:"coaching", cible:"b2c", axe:"transformation", texte:"La collerette, ce petit pied dentelé, n'est pas qu'esthétique : c'est le signe que ta coque a bien croûté et bien cuit. Pas de collerette, ou une collerette qui déborde ? Le problème est presque toujours dans le croûtage ou la chaleur. Deux réglages, et tout change.", cta:"Maîtrise ta collerette 🎯", kw:"collerette croûtage cuisson technique expert éducatif diagnostic"},
+  {id:"t061", objet:"vente", cible:"b2c", axe:"desir", texte:"Allez, on se le dit : tu mérites une petite douceur. Pas une occasion, pas une excuse — juste l'envie. Et tant qu'à faire, autant que ce soit du vrai, du bon, du fait-main. Moins de sucre, plus de plaisir.", cta:"Fais-toi plaisir 🤍", kw:"plaisir complice se faire plaisir envie douceur direct léger"},
+  {id:"t062", objet:"vente", cible:"b2c", axe:"douleur", texte:"Soyons honnêtes : la boîte de chocolats du supermarché, personne ne s'en souvient le lendemain. Un écrin de macarons faits main, si. Pour ta prochaine invitation, fais partie de ceux dont on parle après.", cta:"Marque le coup 📩", kw:"cadeau invité chocolat banal mémorable complice direct soirée"},
+  {id:"t063", objet:"vente", cible:"b2b", axe:"transformation", texte:"Parlons image. Chaque point de contact avec vos clients raconte quelque chose de vous. Un dessert générique dit « on a rempli une case ». Un macaron à vos couleurs, soigné, moins sucré, dit « on soigne le détail ». Lequel vous ressemble ?", cta:"Soignez le détail — devis 📩", kw:"personnalisation image marque détail branding professionnel direct"},
+  {id:"t064", objet:"coaching", cible:"b2c", axe:"objection", texte:"« J'ai déjà tout essayé. » Je l'entends souvent, et je comprends la lassitude. Mais « tout essayer » au hasard, ce n'est pas la même chose que corriger la bonne variable. En regardant ta technique en direct, on isole ce qui coince vraiment — souvent un seul détail.", cta:"On isole ce qui coince 🎯", kw:"objection tout essayé diagnostic variable détail méthode direct"},
+  {id:"t065", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Je ne te vendrai jamais une méthode miracle. Le macaron demande de la rigueur, et je serai honnête sur ce qui bloque. Mais je te promets une chose : tu comprendras enfin le POURQUOI de chaque geste. Et ça, ça change tout, pour toujours.", cta:"Comprends enfin le pourquoi 🎯", kw:"valeurs honnêteté rigueur méthode comprendre transmission direct"},
+  {id:"t066", objet:"coaching", cible:"b2c", axe:"desir", texte:"Offrir un atelier macarons, c'est offrir bien plus qu'un cours : c'est une expérience, un souvenir, et une compétence qui reste. Pour un anniversaire, un cadeau original ou juste pour se faire plaisir à plusieurs.", cta:"Offre une expérience 🎯", kw:"atelier cadeau expérience offrir souvenir occasion original"},
+  {id:"t067", objet:"vente", cible:"b2c", axe:"situation", texte:"Un brunch entre amis ce week-end ? Pose une boîte de macarons au milieu de la table et regarde-la se vider. Couleurs qui claquent, parfums variés, et cette qualité qui fait qu'on en reprend « juste un dernier ».", cta:"Prépare ton brunch 🤍", kw:"brunch amis week-end partage convivial dessert table"},
+  {id:"t068", objet:"vente", cible:"b2c", axe:"objection", texte:"« C'est fragile à transporter ? » Un peu, comme tout ce qui est délicat et fait main. Mais bien emballés, mes macarons voyagent très bien jusqu'à toi, et se conservent quelques jours au frais. Le plaisir sans la casse.", cta:"Commande en confiance 📩", kw:"objection fragile transport conservation emballage rassurer"},
+  {id:"t069", objet:"vente", cible:"b2c", axe:"desir", texte:"Il y a des petits plaisirs qui valent qu'on les attende. Commander un écrin de macarons faits main, c'est accepter un léger délai — celui de la fraîcheur et du travail bien fait. Et croquer dedans, c'est comprendre pourquoi.", cta:"Le bon plaisir vaut l'attente 🤍", kw:"plaisir attente délai fraîcheur qualité anticipation savourer"},
+  {id:"t070", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Un petit atelier, c'est aussi une limite assumée : je ne produis pas à l'infini, je produis bien. Chaque commande est préparée avec attention, jamais à la chaîne. C'est le luxe discret de l'artisanat à taille humaine.", cta:"Choisis l'artisanat 🤍", kw:"valeurs artisanal taille humaine soin limité qualité fait-main"},
+  {id:"t071", objet:"vente", cible:"b2b", axe:"situation", texte:"Baby shower, EVJF, inauguration de boutique : ces moments méritent un dessert à la hauteur de l'émotion. Macarons personnalisés aux couleurs du thème, formats adaptés au nombre d'invités, et cette touche artisanale qui fait la différence.", cta:"Personnalisons votre événement 🥂", kw:"événement baby shower evjf inauguration personnalisé thème couleurs"},
+  {id:"t072", objet:"vente", cible:"b2b", axe:"objection", texte:"Vous hésitez à confier un événement important à un artisan ? C'est normal, l'enjeu est réel. C'est pour ça que je cadre tout en amont : dégustation préalable, devis clair, délais engagés, volumes validés. Pas d'improvisation, que de la fiabilité.", cta:"Sécurisons votre projet 📩", kw:"objection confiance artisan enjeu cadrer dégustation devis fiabilité"},
+  {id:"t072b", objet:"vente", cible:"b2b", axe:"desir", texte:"Vos meilleurs clients méritent une attention à la hauteur de la relation. Un coffret de macarons brandé, remis à un moment clé, marque bien plus qu'une remise commerciale. C'est l'émotion qui fidélise, pas la ristourne.", cta:"Fidélisez avec émotion 🥂", kw:"cadeau client fidélisation émotion relation premium coffret vip"},
+  {id:"t073", objet:"vente", cible:"b2c", axe:"transformation", texte:"Mes clients reviennent. Pas parce que je les relance, mais parce qu'une fois qu'on a goûté du vrai, l'industriel n'a plus la même saveur. C'est le meilleur des avis : la fidélité de ceux qui savent.", cta:"Rejoins ceux qui savent 🤍", kw:"preuve fidélité client revenir qualité industriel avis"},
+  {id:"t074", objet:"vente", cible:"b2c", axe:"desir", texte:"Certains jours, on a juste besoin d'une petite bulle de douceur. Pas de calories culpabilisantes, pas d'excès : juste une coque bien faite, un parfum qu'on aime, et une minute pour soi. C'est simple, et c'est précieux.", cta:"Offre-toi ta bulle 🤍", kw:"plaisir douceur réconfort soi moment bulle léger émotion"},
+  {id:"t075", objet:"coaching", cible:"b2c", axe:"desir", texte:"Le jour où tes macarons feront « waouh » autour de toi, tu te souviendras d'avoir osé te lancer. Ce n'est pas réservé aux pros ni aux surdoués — juste à ceux qui apprennent les bons gestes. Et ces gestes, je te les transmets.", cta:"Ose te lancer 🎯", kw:"désir réussite fierté oser transformation encouragement geste"},
+  {id:"t076", objet:"vente", cible:"b2c", axe:"valeurs", texte:"0 arôme artificiel, 0 conservateur, 100% vrai. Ce n'est pas un argument marketing, c'est ma façon de travailler. Ce que tu ne trouveras pas dans mes macarons compte autant que ce que tu y trouveras.", cta:"Goûte le vrai 🤍", kw:"valeurs naturel arôme conservateur transparence qualité authentique"},
+  {id:"t077", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Derrière chaque commande professionnelle, il y a un savoir-faire local et une personne, pas une usine. Travailler avec moi, c'est un échange direct, réactif et humain — de la première discussion à la livraison de vos macarons personnalisés.", cta:"Travaillons ensemble 📩", kw:"valeurs local humain savoir-faire professionnel relation direct"},
+  {id:"t078", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tes macarons collent au papier cuisson et se déchirent quand tu les décolles ? C'est rageant, surtout après une belle cuisson. Le souci vient souvent de la cuisson elle-même ou du support. Un ajustement simple, et tes coques se décollent toutes seules.", cta:"Fini les coques déchirées 🎯", kw:"coque colle papier cuisson décoller déchirer support ajustement"},
+  {id:"t079", objet:"vente", cible:"b2c", axe:"situation", texte:"Édition limitée de saison ✨ Ce parfum ne reste jamais longtemps à la carte — il suit les fruits du moment. Si tu le vois, c'est le moment de le goûter, car il repartira avec la saison.", cta:"Saisis l'édition limitée 📩", kw:"nouveauté édition limitée saison parfum urgence fruit disponible"},
+  {id:"t080", objet:"vente", cible:"b2c", axe:"transformation", texte:"« Personne n'a cru que ça venait d'une petite maison du Mans. » C'est le genre de phrase qui me fait plaisir après un événement. La qualité artisanale locale n'a rien à envier aux grandes maisons — elle a même quelque chose en plus : une âme, et une histoire.", cta:"Découvre la petite maison 🤍", kw:"preuve témoignage qualité local le mans artisanal âme histoire"},
+];
+
+/* ============================================================================
+ *  MOTEUR DE FILTRAGE EN CASCADE + INTERFACE 4 BARRES
+ *  (Objet → Cible → mots-clés Accroche → mots-clés Texte)
+ * ==========================================================================*/
+
+function scNorm(s){ return (s==null?'':String(s)).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+function scMatchObjetCible(item, objet, cible){
+  const o_ok = !objet || item.objet===objet || item.objet==='both';
+  const c_ok = !cible || item.cible===cible || item.cible==='both';
+  return o_ok && c_ok;
+}
+function scFiltrerAccroches(objet, cible, motsCles){
+  const kw = scNorm(motsCles||'').split(/\s+/).filter(Boolean);
+  return SC_ACCROCHES.filter(a=>{
+    if(!scMatchObjetCible(a, objet, cible)) return false;
+    if(!kw.length) return true;
+    const hay = scNorm(a.texte+' '+a.kw+' '+a.axe);
+    return kw.every(w=>hay.includes(w));
+  });
+}
+function scFiltrerTextes(objet, cible, motsCles){
+  const kw = scNorm(motsCles||'').split(/\s+/).filter(Boolean);
+  return SC_TEXTES.filter(t=>{
+    if(!scMatchObjetCible(t, objet, cible)) return false;
+    if(!kw.length) return true;
+    const hay = scNorm(t.texte+' '+t.kw+' '+t.axe+' '+t.cta);
+    return kw.every(w=>hay.includes(w));
+  });
+}
+
+// ── Copie presse-papier autonome (robuste PWA iOS) ──
+// Utilise scCopier si le module Studio Com est présent, sinon fallback intégré.
+function compoCopier(btn){
+  if(typeof scCopier==='function'){ return scCopier(btn); }
+  const txt = btn && btn.getAttribute ? (btn.getAttribute('data-copy')||'') : '';
+  const done = ()=>{ if(typeof toast==='function') toast('📋 Copié'); };
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(done).catch(()=>compoCopierFallback(txt,done));
+    } else compoCopierFallback(txt, done);
+  }catch(e){ compoCopierFallback(txt, done); }
+}
+function compoCopierFallback(txt, done){
+  try{ const ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done&&done(); }
+  catch(e){ if(typeof toast==='function') toast('Copie impossible — sélectionne le texte'); }
+}
+
+// ── État de la composition en cours ──
+const _compo = { objet:'vente', cible:'b2c', kwAccroche:'', kwTexte:'', accrocheId:null, texteId:null };
+
+const AXE_EMOJI = { douleur:'😣', desir:'✨', situation:'📍', objection:'🛡️', transformation:'🔁', valeurs:'💛' };
+
+function compoSetObjet(o){ _compo.objet=o; _compo.accrocheId=null; _compo.texteId=null; renderCompositeur(); }
+function compoSetCible(c){ _compo.cible=c; _compo.accrocheId=null; _compo.texteId=null; renderCompositeur(); }
+function compoSearchAccroche(v){ _compo.kwAccroche=v; compoRefreshAccroches(); }
+function compoSearchTexte(v){ _compo.kwTexte=v; compoRefreshTexte(); }
+function compoPickAccroche(id){ _compo.accrocheId=id; renderCompositeur(); }
+function compoPickTexte(id){ _compo.texteId=id; renderCompositeur(); }
+
+// Rafraîchit uniquement la liste des accroches (barre 3) sans tout redessiner
+function compoRefreshAccroches(){
+  const box = document.getElementById('compoAccrochesList'); if(!box) return;
+  box.innerHTML = compoAccrochesHtml();
+}
+function compoRefreshTexte(){
+  const box = document.getElementById('compoTextesList'); if(!box) return;
+  box.innerHTML = compoTextesHtml();
+}
+
+function compoAccrochesHtml(){
+  const list = scFiltrerAccroches(_compo.objet, _compo.cible, _compo.kwAccroche);
+  if(!list.length) return '<p class="note">Aucune accroche pour ces mots-clés. Essaie un terme plus large.</p>';
+  return list.slice(0,40).map(a=>{
+    const sel = _compo.accrocheId===a.id;
+    return `<div class="sum-box lnk" style="${sel?'background:#f6efe4;border-left:4px solid #52252F':''}" onclick="compoPickAccroche('${a.id}')">
+      <span>${AXE_EMOJI[a.axe]||''} ${esc(a.texte)}</span>${sel?'<b>✓</b>':''}</div>`;
+  }).join('') + (list.length>40?`<p class="note">… et ${list.length-40} autres. Affine avec un mot-clé.</p>`:'');
+}
+function compoTextesHtml(){
+  const list = scFiltrerTextes(_compo.objet, _compo.cible, _compo.kwTexte);
+  if(!list.length) return '<p class="note">Aucun texte pour ces mots-clés. Essaie un terme plus large.</p>';
+  return list.slice(0,30).map(t=>{
+    const sel = _compo.texteId===t.id;
+    return `<div class="sum-box lnk" style="flex-direction:column;align-items:stretch;gap:4px;${sel?'background:#f6efe4;border-left:4px solid #52252F':''}" onclick="compoPickTexte('${t.id}')">
+      <div style="display:flex;justify-content:space-between"><span style="flex:1">${AXE_EMOJI[t.axe]||''} ${esc(t.texte.slice(0,90))}${t.texte.length>90?'…':''}</span>${sel?'<b>✓</b>':''}</div>
+      <div class="note" style="font-size:.72rem">CTA : ${esc(t.cta)}</div></div>`;
+  }).join('') + (list.length>30?`<p class="note">… et ${list.length-30} autres. Affine avec un mot-clé.</p>`:'');
+}
+
+// Assemble accroche + texte choisis en un post final
+function compoResultat(){
+  const a = _compo.accrocheId ? SC_ACCROCHES.find(x=>x.id===_compo.accrocheId) : null;
+  const t = _compo.texteId ? SC_TEXTES.find(x=>x.id===_compo.texteId) : null;
+  if(!a && !t) return null;
+  const parts = [];
+  if(a) parts.push(a.texte);
+  if(t){ parts.push(t.texte); if(t.cta) parts.push(t.cta); }
+  return parts.join('\n\n');
+}
+
+async function renderCompositeur(){
+  const main = document.getElementById('main'); if(!main) return;
+  const seg = (val, cur, onclick, label) =>
+    `<button class="btn ${cur===val?'gold':'ghost'} sm" style="margin:2px" onclick="${onclick}">${label}</button>`;
+
+  const resultat = compoResultat();
+  const nbA = scFiltrerAccroches(_compo.objet, _compo.cible, _compo.kwAccroche).length;
+  const nbT = scFiltrerTextes(_compo.objet, _compo.cible, _compo.kwTexte).length;
+
+  main.innerHTML =
+    `<div class="topbar"><div><h1>🧩 Composer un contenu</h1><p>Filtre en cascade : objet → cible → accroche → texte</p></div></div>
+
+     <div class="panel">
+       <h2>1 · Objet</h2>
+       <div>${seg('vente',_compo.objet,"compoSetObjet('vente')",'🛒 Vente')}${seg('coaching',_compo.objet,"compoSetObjet('coaching')",'🎯 Coaching')}</div>
+       <h2 style="margin-top:10px">2 · Cible</h2>
+       <div>${seg('b2c',_compo.cible,"compoSetCible('b2c')",'👤 B2C (particuliers)')}${seg('b2b',_compo.cible,"compoSetCible('b2b')",'🏢 B2B (pros/événementiel)')}</div>
+     </div>
+
+     <div class="panel">
+       <h2>3 · Accroche <span class="tag">${nbA}</span></h2>
+       <input id="compoKwAccroche" placeholder="Mots-clés (ex : cadeau, four, mariage…)" value="${esc(_compo.kwAccroche)}"
+              oninput="compoSearchAccroche(this.value)" style="width:100%;margin-bottom:6px">
+       <div id="compoAccrochesList" style="max-height:260px;overflow-y:auto">${compoAccrochesHtml()}</div>
+     </div>
+
+     <div class="panel">
+       <h2>4 · Texte <span class="tag">${nbT}</span></h2>
+       <input id="compoKwTexte" placeholder="Mots-clés (ex : local, personnalisé, collerette…)" value="${esc(_compo.kwTexte)}"
+              oninput="compoSearchTexte(this.value)" style="width:100%;margin-bottom:6px">
+       <div id="compoTextesList" style="max-height:300px;overflow-y:auto">${compoTextesHtml()}</div>
+     </div>
+
+     <div class="panel" style="border:2px solid #52252F">
+       <h2>✅ Ton contenu</h2>
+       ${resultat
+         ? `<div style="white-space:pre-line;padding:8px 0">${esc(resultat)}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+              <button class="btn ghost" style="flex:1" onclick="compoCopier(this)" data-copy="${esc(resultat)}">📋 Copier</button>
+              <button class="btn gold" style="flex:1" onclick="compoEnregistrer()">💾 Au planning</button>
+            </div>`
+         : '<p class="note">Choisis une accroche et/ou un texte ci-dessus pour composer ton contenu.</p>'}
+     </div>`;
+
+  // Restaure le focus/caret dans les champs de recherche après re-render
+  requestAnimationFrame(()=>{
+    const fa=document.getElementById('compoKwAccroche'); const ft=document.getElementById('compoKwTexte');
+    if(fa && _compo._focus==='a'){ fa.focus(); fa.setSelectionRange(fa.value.length,fa.value.length); }
+    if(ft && _compo._focus==='t'){ ft.focus(); ft.setSelectionRange(ft.value.length,ft.value.length); }
+  });
+}
+
+async function compoEnregistrer(){
+  const resultat = compoResultat(); if(!resultat) return;
+  if(typeof scAjouterPost==='function'){
+    await scAjouterPost({
+      titre: resultat.split('\n')[0].slice(0,60),
+      texte: resultat,
+      canal:'instagram', offre:(_compo.objet==='coaching'?'coaching':(_compo.cible==='b2b'?'b2b':'vente')),
+      statut:'pret',
+    });
+    toast('✅ Ajouté au planning (statut : Prêt)');
+    if(typeof _scTab!=='undefined'){ _scTab='calendrier'; }
+    view='studiocom'; render();
+  } else {
+    toast('Contenu prêt — copie-le');
+  }
+}
+
+/* ===== FIN MODULE COMPOSITEUR ===== */
 
 /* ===== MODULE VENTILATION PAR MODE D'ENCAISSEMENT (v1218) ===== */
 /* ============================================================================
