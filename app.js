@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1216';
+const APP_VERSION = 'v1217';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -7459,16 +7459,17 @@ async function docSetFactDate(id, v){
 async function docSetAcompte(id, v){
   const a=money2(+v||0);
   await db.documents.update(id, {acompte:a});
-  const btn=document.getElementById('docConvertBtn');
-  if(btn){ if(a>0){ btn.disabled=false; btn.style.opacity='1'; } else { btn.disabled=true; btn.style.opacity='.5'; } }
+  // [v1217] Acompte FACULTATIF : la conversion en commande est toujours possible, avec ou sans acompte.
+  // On ne désactive plus le bouton (l'ancienne logique le grisait dès que le champ était vide, ce qui
+  // rendait impossible la validation d'un devis sans acompte malgré l'intention « facultatif »).
 }
 // Conversion devis → commande : crée une vraie commande à partir des lignes du devis.
 async function docConvertToOrder(id){
   const d=await db.documents.get(id); if(!d) return;
   const acompte=+d.acompte||0;  // [v1157] plus aucun blocage : acompte optionnel, conversion toujours possible
-  const today=today();
+  const auj=today();            // [v1217] évite le shadowing « const today=today() » qui plantait la conversion
   const o={
-    clientId:d.clientId, date:d.date||today,
+    clientId:d.clientId, date:d.date||auj,
     heureLivraison:d.heureLivraison||'', lieuLivraison:d.lieuLivraison||'', dateEvenement:d.dateEvenement||'',
     // Livraison (transport) + sacs : repris du devis pour ne pas les ressaisir.
     distanceKm:d.distanceKm||0, prixCarburant:d.prixCarburant||0,
@@ -7476,7 +7477,7 @@ async function docConvertToOrder(id){
     fraisLivraison:d.fraisLivraison||0, sacMatId:d.sacMatId||0, sacNb:d.sacNb||0,
     lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0, remiseGlobaleEur:(d.remiseGlobaleEur!=null?+d.remiseGlobaleEur:null),
     perso:!!(d.perso||+d.persoMacarons>0), persoMacarons:+d.persoMacarons||0, persoCouleurs:Array.isArray(d.persoCouleurs)?d.persoCouleurs:[], persoRemiseEur:+d.persoRemiseEur||0, acompteMention:(d.acompteMention!==false), montant:d.montant||0,
-    paiements: acompte>0 ? [{date:today, montant:money2(acompte), moyen:'Acompte'}] : [],   // [v1157] pas d'acompte → pas de ligne fantôme à 0 €
+    paiements: acompte>0 ? [{date:auj, montant:money2(acompte), moyen:'Acompte'}] : [],   // [v1157] pas d'acompte → pas de ligne fantôme à 0 €
     statut:'À préparer', notes:(d.notes||'')+`\n(Issu du devis ${d.numero})`,
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[],
     issuDevis:d.numero
