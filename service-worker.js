@@ -1,5 +1,5 @@
-// [v1210] redéploiement forcé 2026-07-05 — bump CACHE pour purger l'ancien cache et republier.
-const CACHE = 'sm-iphone-v252';
+// [v1218] bump CACHE pour purger l'ancien cache et republier (module Encaissements par mode).
+const CACHE = 'sm-iphone-v253';
 const ASSETS = [
   './',
   './index.html',

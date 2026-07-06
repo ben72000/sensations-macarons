@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1217';
-const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
+const APP_VERSION = 'v1218';
+const APP_MAJ = 'Nouvelle rubrique Comptabilit\u00e9 \u00b7 Encaissements par mode : ventilation et filtre du CA encaiss\u00e9 par moyen de paiement (virement, carte, esp\u00e8ces, ch\u00e8que, PayPal), crois\u00e9 par mois, avec d\u00e9tail et export CSV';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -382,6 +382,9 @@ db.version(23).stores({
 db.version(24).stores({
   fixJournal: '++id, orderId, date'
 });
+// v25 : la ventilation par mode d'encaissement ne nécessite AUCUNE nouvelle table
+// (elle lit orders + markets existants). Bloc vide pour réserver la numérotation.
+db.version(25).stores({});
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
 // Sur iPhone, si l'app installée ET Safari ont la base ouverte en même temps, une montée de
@@ -3827,7 +3830,8 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
+  ventilation:renderVentilation
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -14017,6 +14021,7 @@ const _NAV_PAGES = [
   {v:'revenuhoraire',t:'Mon revenu horaire',        k:'revenu horaire taux heure remuneration salaire'},
   {v:'stats',        t:'Statistiques',              k:'statistique stat graphique analyse chiffre'},
   {v:'compta',       t:'Comptabilité',              k:'comptabilite compta ca chiffre affaires resultat charges urssaf encaissement'},
+  {v:'ventilation',  t:'Encaissements par mode',    k:'encaissement mode paiement virement carte especes cheque paypal ventilation filtre repartition moyen reglement'},
   {v:'netpoche',     t:'Net dans la poche',          k:'net poche revenu reel impot tranche imposition urssaf cotisation combien reste gagne vraiment apres deduction fil rouge'},
   {v:'chargesventil',t:'Charges ventilées',          k:'charges ventilation investissement recurrent structurel marketing formation equipement stand diminuer allege croisiere depenses'},
   {v:'optimisation', t:'Optimisation fiscale',        k:'optimisation fiscale seuil seuils tva franchise micro entreprise regime reel bascule plafond plafonds limite vente service prestation marchandise depassement surveillance alerte'},
@@ -23494,7 +23499,8 @@ async function renderCompta(){
    </div>
 
    <div class="panel"><h2>Encaissements par mode de paiement</h2>
-     ${methodRows||'<p class="note">Aucun encaissement.</p>'}</div>
+     ${methodRows||'<p class="note">Aucun encaissement.</p>'}
+     <button class="btn ghost" style="width:100%;margin-top:8px" onclick="goView('ventilation')">💳 Détailler / filtrer par mode (croisé par mois, export CSV) →</button></div>
 
    <div class="panel"><h2>Charges par catégorie <span class="tag warn">${A.nbCharges}</span></h2>
      ${catRows||'<p class="note">Aucune charge. Ajoutez vos dépenses (matières, emballages, loyer…) pour suivre votre résultat réel.</p>'}
@@ -23525,6 +23531,165 @@ async function renderCompta(){
   })();
  } catch(err){ renderViewError('compta', err); }
 }
+
+/* ===== MODULE VENTILATION PAR MODE D'ENCAISSEMENT (v1218) ===== */
+/* ============================================================================
+ *  MODULE « VENTILATION PAR MODE D'ENCAISSEMENT » — v1218
+ *  Sensations Macarons · Pilotage PWA — rubrique Comptabilité
+ *  Ventile/filtre le CA encaissé par mode (Virement/Carte/Espèces/Chèque/PayPal),
+ *  croisé par mois, avec détail cliquable et export CSV.
+ *  Réutilise les règles EXACTES de computeAccounting → zéro divergence.
+ * ==========================================================================*/
+
+const VENTIL_ACCENT = '#52252F';
+const VENTIL_COLORS = {
+  'Virement':'#3a6ea5', 'Carte':'#AA7C39', 'Espèces':'#3f7d52',
+  'Chèque':'#7a5c8e', 'PayPal':'#2a9d9d', 'Autre (marché)':'#9a8576', '—':'#b0a396',
+};
+function ventilColor(m){ return VENTIL_COLORS[m] || VENTIL_ACCENT; }
+
+// Logique pure (testée : 13/13). Retourne modes, croisé mode×mois, détail, total.
+function ventilationEncaissements(orders, markets, opts){
+  opts = opts || {};
+  const start = opts.periodeStart || null, end = opts.periodeEnd || null;
+  const filtreMode = opts.mode || null;
+  const inRange = d => { if(!d) return false; if(start && d<start) return false; if(end && d>end) return false; return true; };
+  const modes = {}, parModeEtMois = {}, detail = {}, moisSet = new Set();
+  const add = (mode, ym, montant, src, ref, date) => {
+    if(filtreMode && mode !== filtreMode) return;
+    modes[mode] = money2((modes[mode]||0) + montant);
+    parModeEtMois[mode] = parModeEtMois[mode] || {};
+    parModeEtMois[mode][ym] = money2((parModeEtMois[mode][ym]||0) + montant);
+    moisSet.add(ym);
+    (detail[mode] = detail[mode] || []).push({ date, montant, source:src, ref });
+  };
+  (orders||[]).forEach(o => {
+    if(o.histo) return;
+    paiementsDe(o).forEach(p => {
+      if((start||end) && !inRange(p.date)) return;
+      const ym = monthKey(p.date); if(!ym) return;
+      add(p.moyen || '—', ym, money2(p.montant), 'commande', o.id, p.date);
+    });
+  });
+  (markets||[]).forEach(mk => {
+    if(mk.statut !== 'clos') return;
+    if((start||end) && !inRange(mk.date)) return;
+    const ym = monthKey(mk.date); if(!ym) return;
+    const ca = mk.ca || {}; const fond = money2(+mk.fondCaisse||0);
+    const esp = money2(Math.max(0, (+ca.especes||0) - fond)), cb = money2(ca.cb||0), au = money2(ca.autre||0);
+    if(esp>0) add('Espèces', ym, esp, 'marché', mk.id, mk.date);
+    if(cb>0)  add('Carte', ym, cb, 'marché', mk.id, mk.date);
+    if(au>0)  add('Autre (marché)', ym, au, 'marché', mk.id, mk.date);
+  });
+  const total = money2(Object.values(modes).reduce((s,v)=>s+v, 0));
+  return { modes, parModeEtMois, mois:[...moisSet].sort(), detail, total };
+}
+
+let _ventilMode = null;
+function ventilSetMode(m){ _ventilMode = (m === _ventilMode) ? null : (m || null); renderVentilation(); }
+
+async function renderVentilation(){
+  const main = document.getElementById('main'); if(!main) return;
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const markets = await db.markets.toArray().catch(()=>[]);
+
+  const periode = (typeof _comptaPeriode !== 'undefined') ? _comptaPeriode : null;
+  const usePeriode = periode && periode !== 'tout' && typeof comptaPeriodeStart === 'function';
+  const baseOpts = usePeriode ? { periodeStart:comptaPeriodeStart(periode), periodeEnd:comptaPeriodeEnd(periode) } : {};
+
+  const global = ventilationEncaissements(orders, markets, baseOpts);
+  const V = _ventilMode ? ventilationEncaissements(orders, markets, Object.assign({}, baseOpts, {mode:_ventilMode})) : global;
+
+  const pct = (v,d)=> d>0 ? Math.round(v/d*100) : 0;
+  const modesTries = Object.entries(global.modes).sort((a,b)=>b[1]-a[1]);
+
+  const chip = (label, actif, onclick) =>
+    `<button class="btn ${actif?'gold':'ghost'} sm" style="margin:2px" onclick="${onclick}">${esc(label)}</button>`;
+  const filtres =
+    chip('Tous', !_ventilMode, "ventilSetMode(null)") +
+    modesTries.map(([mode])=>chip(mode, _ventilMode===mode, `ventilSetMode('${mode.replace(/'/g,"\\'")}')`)).join('');
+
+  const cartes = modesTries.map(([mode,val])=>{
+    const actif = _ventilMode===mode;
+    return `<div class="sum-box lnk" style="border-left:4px solid ${ventilColor(mode)};${actif?'background:#f6efe4':''}"
+                 onclick="ventilSetMode('${mode.replace(/'/g,"\\'")}')">
+       <span>${esc(mode)}</span>
+       <b>${euro(val)} <span style="color:#9a8a82;font-weight:400">(${pct(val, global.total)}%)</span></b></div>`;
+  }).join('');
+
+  let tableau = '';
+  if(V.mois.length){
+    const modesAffiches = _ventilMode ? [_ventilMode] : modesTries.map(([mode])=>mode);
+    const entete = `<tr><th style="text-align:left">Mode</th>${V.mois.map(ym=>`<th>${esc(monthLabel(ym))}</th>`).join('')}<th>Total</th></tr>`;
+    const lignes = modesAffiches.map(mode=>{
+      const parMois = V.parModeEtMois[mode] || {};
+      const tot = Object.values(parMois).reduce((s,x)=>s+x,0);
+      if(tot<=0) return '';
+      const cells = V.mois.map(ym=>`<td style="text-align:right">${parMois[ym]?euro(parMois[ym]):'<span style="color:#cbb9ab">–</span>'}</td>`).join('');
+      return `<tr><td style="border-left:3px solid ${ventilColor(mode)};padding-left:6px">${esc(mode)}</td>${cells}<td style="text-align:right;font-weight:600">${euro(money2(tot))}</td></tr>`;
+    }).join('');
+    const totMois = V.mois.map(ym=>{
+      const t = Object.keys(V.parModeEtMois).reduce((s,mode)=>s+((V.parModeEtMois[mode]||{})[ym]||0),0);
+      return `<td style="text-align:right;font-weight:700">${euro(money2(t))}</td>`;
+    }).join('');
+    tableau = `<div class="table-wrap"><table>
+      <thead>${entete}</thead><tbody>${lignes}
+      <tr style="border-top:2px solid ${VENTIL_ACCENT}"><td style="font-weight:700">Total</td>${totMois}<td style="text-align:right;font-weight:700">${euro(V.total)}</td></tr>
+      </tbody></table></div>`;
+  }
+
+  let detailBloc = '';
+  if(_ventilMode && V.detail[_ventilMode]){
+    const lignes = V.detail[_ventilMode].slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''))
+      .map(d=>`<div class="sum-box"><span>${esc(fmtDate(d.date))} · ${d.source==='marché'?'⛺ Marché':'🧾 Commande'} #${esc(String(d.ref))}</span><b>${euro(d.montant)}</b></div>`).join('');
+    detailBloc = `<h3 style="margin-top:14px;color:${ventilColor(_ventilMode)}">Détail — ${esc(_ventilMode)} (${V.detail[_ventilMode].length} encaissement(s))</h3>${lignes}`;
+  }
+
+  main.innerHTML =
+    `<div class="topbar"><div><h1>💳 Encaissements par mode</h1><p>Ventile et filtre ton CA encaissé par moyen de paiement${usePeriode?` · période « ${esc(periode)} »`:" · tout l'historique"}</p></div></div>
+     <div class="banner" style="background:#f6efe4;border-color:#e0d3bf"><div>Ces chiffres reprennent EXACTEMENT les règles de ta comptabilité (encaissement réel, marchés clôturés espèces nettes du fond de caisse). Le total ci-dessous doit être égal au « Total encaissé » de la compta sur la même période.</div></div>
+     <div style="margin:8px 0">${filtres}</div>
+     <div class="sum-box" style="background:#f6efe4"><span><b>Total encaissé${_ventilMode?` (${esc(_ventilMode)})`:''}</b></span><b>${euro(V.total)}</b></div>
+     ${_ventilMode?'':cartes}
+     ${tableau || '<div class="panel"><p class="note">Aucun encaissement sur la période.</p></div>'}
+     ${detailBloc}
+     <button class="btn ghost" style="width:100%;margin-top:12px" onclick="ventilExportCSV()">⬇️ Exporter en CSV</button>`;
+}
+
+async function ventilExportCSV(){
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const markets = await db.markets.toArray().catch(()=>[]);
+  const periode = (typeof _comptaPeriode !== 'undefined') ? _comptaPeriode : null;
+  const usePeriode = periode && periode !== 'tout' && typeof comptaPeriodeStart === 'function';
+  const opts = usePeriode ? { periodeStart:comptaPeriodeStart(periode), periodeEnd:comptaPeriodeEnd(periode) } : {};
+  const V = ventilationEncaissements(orders, markets, opts);
+  if(!V.mois.length){ toast('Rien à exporter'); return; }
+  const sep = ';';
+  const head = ['Mode', ...V.mois.map(ym=>monthLabel(ym)), 'Total'].join(sep);
+  const modesTries = Object.keys(V.modes).sort((a,b)=>V.modes[b]-V.modes[a]);
+  const rows = modesTries.map(mode=>{
+    const pm = V.parModeEtMois[mode]||{};
+    const tot = Object.values(pm).reduce((s,x)=>s+x,0);
+    return [mode, ...V.mois.map(ym=>(pm[ym]||0).toFixed(2).replace('.',',')), money2(tot).toFixed(2).replace('.',',')].join(sep);
+  });
+  const totLine = ['Total', ...V.mois.map(ym=>{
+    const t = modesTries.reduce((s,mode)=>s+((V.parModeEtMois[mode]||{})[ym]||0),0);
+    return money2(t).toFixed(2).replace('.',',');
+  }), money2(V.total).toFixed(2).replace('.',',')].join(sep);
+  const csv = '\uFEFF' + [head, ...rows, totLine].join('\n');
+  try{
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `encaissements-par-mode${usePeriode?'-'+periode:''}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    toast('📄 CSV exporté');
+  }catch(e){ toast('Export impossible sur ce navigateur'); }
+}
+
+/* ===== FIN MODULE VENTILATION ===== */
+
 // Change la granularité du graphique manque à gagner et redessine juste cette zone.
 function gapSetGran(g){
   _gapGran = g;
