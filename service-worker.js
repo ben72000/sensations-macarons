@@ -1,5 +1,5 @@
-// [v1229] bump CACHE — Anti-répétition vidéo + 2e vague de réécriture des textes faibles.
-const CACHE = 'sm-iphone-v264';
+// [v1230] bump CACHE — Carrousels narratifs 6–10 slides (trames + connecteurs).
+const CACHE = 'sm-iphone-v265';
 const ASSETS = [
   './',
   './index.html',

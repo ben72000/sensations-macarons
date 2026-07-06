@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1229';
-const APP_MAJ = 'Deux finitions du moteur de contenu. Anti-r\u00e9p\u00e9tition c\u00f4t\u00e9 vid\u00e9o : une structure narrative d\u00e9j\u00e0 programm\u00e9e ou publi\u00e9e est signal\u00e9e \u00ab d\u00e9j\u00e0 utilis\u00e9e \u00bb et r\u00e9trograd\u00e9e dans les recommandations, pour varier les angles (sans jamais \u00eatre bloqu\u00e9e). Et passage qualit\u00e9 des textes : 22 formulations les plus plates ont \u00e9t\u00e9 r\u00e9\u00e9crites (projection, \u00e9motion, b\u00e9n\u00e9fice client) \u2014 il ne reste quasiment plus aucun texte faible dans la biblioth\u00e8que.';
+const APP_VERSION = 'v1230';
+const APP_MAJ = 'Carrousels narratifs. Depuis le Compositeur, le carrousel ne se contente plus de d\u00e9couper accroche/texte/CTA en 3 slides : il d\u00e9roule un vrai raisonnement sur 6 \u00e0 10 slides (accroche \u2192 tension \u2192 d\u00e9veloppement \u2192 preuve \u2192 bascule \u2192 r\u00e9solution \u2192 CTA). Tu choisis le nombre de slides (plus il y en a, plus le propos se d\u00e9veloppe) et la trame narrative \u2014 propos\u00e9e automatiquement selon l\'axe du texte (probl\u00e8me/solution, avant/apr\u00e8s, on l\u00e8ve le doute, petite histoire, on explique, envie & projection) et modifiable d\'un geste. Un bouton \u00ab R\u00e9g\u00e9n\u00e9rer le d\u00e9roul\u00e9 \u00bb reconstruit le tout, et chaque slide reste ajustable \u00e0 la main.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -24885,7 +24885,7 @@ async function renderCompositeur(){
               <button class="btn ghost" style="flex:1" onclick="compoCopier(this)" data-copy="${esc(resultat)}">📋 Copier</button>
               <button class="btn gold" style="flex:1" onclick="compoEnregistrer()">💾 Au planning</button>
             </div>
-            <button class="btn ghost" style="width:100%;margin-top:6px" onclick="cvDepuisCompositeur()">🎨 Créer le visuel (carrousel)</button>
+            <button class="btn ghost" style="width:100%;margin-top:6px" onclick="cvDepuisCompositeur()">🎨 Créer le carrousel narratif (6–10 slides)</button>
             <button class="btn ghost" style="width:100%;margin-top:6px" onclick="commSwitch('video')">🎬 En faire un scénario vidéo</button>`
          : '<p class="note">Choisis une accroche et/ou un texte ci-dessus pour composer ton contenu.</p>'}
      </div>`;
@@ -24918,6 +24918,182 @@ async function compoEnregistrer(){
 }
 
 /* ===== FIN MODULE COMPOSITEUR ===== */
+
+/* ===== MOTEUR NARRATIF DE CARROUSEL (v1230) ================================
+ *  Transforme une sélection (accroche + texte + CTA) en un carrousel qui
+ *  DÉROULE un raisonnement, de 6 à 10 slides, au lieu d'un simple découpage
+ *  accroche/texte/CTA. Le nombre de slides choisi dilate ou condense le propos.
+ *
+ *  Principe : une TRAME = suite de rôles narratifs. Chaque rôle sait produire
+ *  une slide {titre, corps, gabarit} à partir :
+ *    - de l'accroche / du texte / du CTA sélectionnés,
+ *    - de connecteurs narratifs pré-écrits (par rôle),
+ *    - des phrases du texte, réparties là où la trame a besoin de matière.
+ *  Aucune rédaction libre : on agence des blocs, mais selon une dramaturgie.
+ * ==========================================================================*/
+
+// Découpe un texte en phrases exploitables (nettoie les espaces, garde la ponctuation).
+function _narrPhrases(txt){
+  if(!txt) return [];
+  return String(txt)
+    .replace(/\s+/g,' ')
+    .split(/(?<=[.!?…])\s+/)
+    .map(p=>p.trim())
+    .filter(p=>p.length>1);
+}
+
+// Connecteurs narratifs par rôle : ouvrent la slide et enchaînent le propos.
+// (Courts, à la voix de la marque — jamais mielleux.)
+const NARR_CONNECT = {
+  tension:   ['Le vrai souci ?', 'Sauf que…', 'Le problème, c\'est ça :', 'On connaît tous ce moment :'],
+  develop:   ['Concrètement :', 'Dans les faits :', 'Voilà ce qui se passe :', 'Et là, tout se joue :'],
+  preuve:    ['La preuve :', 'Ce n\'est pas un discours :', 'Pourquoi j\'en suis sûre :', 'Ce qu\'on constate :'],
+  bascule:   ['Alors on change d\'approche.', 'C\'est là que ça bascule.', 'Et si on faisait autrement ?', 'La bonne nouvelle :'],
+  resolution:['Résultat :', 'Au final :', 'Ce que tu obtiens :', 'Et voilà :'],
+};
+function _narrPick(role, seed){
+  const arr = NARR_CONNECT[role]; if(!arr||!arr.length) return '';
+  return arr[Math.abs(seed|0) % arr.length];
+}
+
+// Trames narratives. Chaque trame = { id, label, emoji, axes:[...], roles:[...] }
+// où `roles` est la séquence CANONIQUE (min). Le moteur étire la partie centrale
+// (develop/preuve) pour atteindre le nombre de slides demandé.
+const NARR_TRAMES = [
+  {
+    id:'probleme_solution', label:'Problème → Solution', emoji:'🩹',
+    axes:['douleur','objection','situation'],
+    roles:['accroche','tension','develop','bascule','preuve','resolution','cta'],
+  },
+  {
+    id:'avant_apres', label:'Avant → Après', emoji:'🔄',
+    axes:['transformation','desir','douleur'],
+    roles:['accroche','tension','develop','bascule','resolution','preuve','cta'],
+  },
+  {
+    id:'objection', label:'On lève le doute', emoji:'🛡️',
+    axes:['objection','valeurs'],
+    roles:['accroche','tension','preuve','develop','bascule','resolution','cta'],
+  },
+  {
+    id:'histoire', label:'Petite histoire', emoji:'📖',
+    axes:['valeurs','transformation','situation'],
+    roles:['accroche','develop','tension','bascule','preuve','resolution','cta'],
+  },
+  {
+    id:'valeur_educative', label:'On explique (valeur)', emoji:'💡',
+    axes:['situation','valeurs','desir'],
+    roles:['accroche','develop','develop','preuve','resolution','cta'],
+  },
+  {
+    id:'desir_projection', label:'Envie & projection', emoji:'✨',
+    axes:['desir','situation','transformation'],
+    roles:['accroche','develop','preuve','resolution','bascule','cta'],
+  },
+];
+
+// Choisit la trame par défaut selon l'axe du texte (ou de l'accroche).
+function narrTramePourAxe(axe){
+  if(axe){
+    const hit = NARR_TRAMES.find(tr=>tr.axes.includes(axe));
+    if(hit) return hit;
+  }
+  return NARR_TRAMES[0];
+}
+
+// Étire (ou réduit) la séquence de rôles pour atteindre `n` slides.
+// On garde toujours accroche en 1er et cta en dernier. On répartit le reste
+// en dupliquant les rôles "extensibles" (develop, preuve) au centre.
+function narrRolesPourN(trame, n){
+  const base = trame.roles.slice();
+  const first = base[0];                 // 'accroche'
+  const last  = base[base.length-1];     // 'cta'
+  let middle  = base.slice(1, base.length-1);
+  const need  = n - 2;                    // places au centre
+
+  if(need <= 0) return [first, last];
+
+  if(middle.length === need){
+    // rien à faire
+  } else if(middle.length > need){
+    // Trop de rôles : on garde les plus structurants dans l'ordre, on coupe le surplus.
+    const priorite = ['tension','bascule','resolution','preuve','develop'];
+    // On retire d'abord les rôles les moins prioritaires (fin de liste priorite).
+    while(middle.length > need){
+      let removed = false;
+      for(let p=priorite.length-1; p>=0 && !removed; p--){
+        const idx = middle.lastIndexOf(priorite[p]);
+        if(idx>=0){ middle.splice(idx,1); removed=true; }
+      }
+      if(!removed) middle.pop();
+    }
+  } else {
+    // Pas assez : on insère des rôles extensibles au centre (develop puis preuve, en alternance).
+    const extensibles = ['develop','preuve'];
+    let k=0;
+    while(middle.length < need){
+      const role = extensibles[k % extensibles.length];
+      // insertion vers le milieu pour garder tension au début et resolution vers la fin
+      const insAt = Math.min(middle.length, Math.max(1, Math.floor(middle.length/2)+1));
+      middle.splice(insAt, 0, role);
+      k++;
+    }
+  }
+  return [first, ...middle, last];
+}
+
+// Construit les slides à partir d'une trame, d'un nombre n, et de la sélection.
+function narrConstruireSlides(trame, n, sel){
+  const { accroche, texte, cta } = sel;
+  const roles = narrRolesPourN(trame, n);
+  const phrases = _narrPhrases(texte);
+  // Slides de contenu (tout sauf accroche/cta).
+  const contentIdx = roles.map((r,i)=>({r,i})).filter(x=>x.r!=='accroche' && x.r!=='cta');
+  const nContent = contentIdx.length || 1;
+
+  // Répartition des phrases : on veille à ce que CHAQUE slide de contenu reçoive
+  // au moins une phrase tant qu'il en reste (round-robin), pour éviter les slides
+  // « connecteur seul ». S'il y a moins de phrases que de slides, les dernières
+  // slides de contenu se replient sur un rôle plus court (uni + connecteur).
+  const buckets = Array.from({length:nContent}, ()=>[]);
+  if(phrases.length >= nContent){
+    // assez de matière : distribution équilibrée, séquentielle (garde l'ordre du récit)
+    const per = Math.floor(phrases.length / nContent);
+    let extra = phrases.length - per*nContent;
+    let p = 0;
+    for(let b=0;b<nContent;b++){
+      let take = per + (extra>0?1:0); if(extra>0) extra--;
+      buckets[b] = phrases.slice(p, p+take); p+=take;
+    }
+  } else {
+    // peu de matière : une phrase par slide dans l'ordre, le reste des slides
+    // deviendra "connecteur seul" (structurant, court).
+    phrases.forEach((ph,idx)=>{ buckets[idx].push(ph); });
+  }
+
+  let ci = 0;
+  return roles.map((role, i)=>{
+    if(role==='accroche'){
+      return cvNewSlide({ source:'compo', gabarit:'pleincadre',
+        titre: accroche || (phrases[0]||'').slice(0,80) || 'À composer' });
+    }
+    if(role==='cta'){
+      return cvNewSlide({ source:'compo', gabarit:'uni', titre: cta || 'À toi de jouer 📩' });
+    }
+    const part = (buckets[ci]||[]).join(' ');
+    ci++;
+    const connect = _narrPick(role, i*7 + (part.length||1));
+    if(part){
+      return cvNewSlide({ source:'compo', gabarit:'hautbas',
+        titre: connect || (part.split(/[.!?…]/)[0]||'').slice(0,60),
+        corps: part });
+    }
+    // Slide structurante sans phrase dédiée : connecteur en plein-cadre (jamais vide).
+    return cvNewSlide({ source:'compo', gabarit:'uni', titre: connect || '…' });
+  });
+}
+
+/* ===== FIN MOTEUR NARRATIF ===== */
 
 /* ===== MODULE CARROUSEL VISUEL (v1223 — multi-slides) ===== */
 /* ============================================================================
@@ -24962,6 +25138,9 @@ const _cv = {
   logo:true,               // signature de marque (partagée sur toutes les slides)
   planTargetTitre:'',      // titre proposé pour la publication au planning
   linkedPostId:null,       // si non-null : post existant auquel rattacher les visuels
+  narrN:7,                 // nombre de slides visé pour la génération narrative (6–10)
+  narrTrameId:null,        // trame narrative choisie (null = auto selon l'axe)
+  narrLastSel:null,        // dernière sélection (accroche/texte/cta) pour re-générer
 };
 
 // Accesseur de la slide active (jamais null : on garantit au moins une slide).
@@ -24980,6 +25159,7 @@ async function cvDepuisPost(id){
   const p = await db.posts.get(id);
   if(!p){ toast('Publication introuvable'); return; }
   if(typeof closeModal==='function') closeModal();
+  _cv.narrLastSel = null;   // carrousel issu d'un post : pas de régénérateur narratif
   const txt = (p.texte||'').trim();
   let blocs = txt.split(/\n\s*\n/).map(b=>b.trim()).filter(Boolean);
   if(!blocs.length) blocs = [ (p.titre||'').trim() || 'À composer' ];
@@ -25008,17 +25188,48 @@ function cvDepuisCompositeur(){
   const cChoisi = (typeof _compo!=='undefined' && _compo.ctaId) ? SC_CTA.find(x=>x.id===_compo.ctaId) : null;
   const ctaFinal = cChoisi ? cChoisi.texte : (t && t.cta ? t.cta : '');
 
-  // Proposition intelligente : jusqu'à 3 slides (accroche · texte · CTA),
-  // pour matérialiser d'emblée la logique de carrousel. L'utilisateur ajuste ensuite.
-  const slides = [];
-  if(a){ slides.push(cvNewSlide({ source:'compo', gabarit:'pleincadre', titre:a.texte })); }
-  if(t){ slides.push(cvNewSlide({ source:'compo', gabarit:'hautbas', titre:(a?'':t.texte.split('.')[0]), corps:t.texte })); }
-  if(ctaFinal){ slides.push(cvNewSlide({ source:'compo', gabarit:'uni', titre:ctaFinal })); }
-  if(!slides.length) slides.push(cvNewSlide());
+  // On mémorise la sélection + l'axe, pour générer un carrousel NARRATIF
+  // (6–10 slides déroulant un raisonnement) et pouvoir le régénérer si l'on
+  // change le nombre de slides ou la trame.
+  const axe = (t && t.axe) || (a && a.axe) || null;
+  _cv.narrLastSel = {
+    accroche: a ? a.texte : '',
+    texte:    t ? t.texte : '',
+    cta:      ctaFinal,
+    axe,
+  };
+  // Trame par défaut = auto selon l'axe (l'utilisateur peut en changer ensuite).
+  if(!_cv.narrTrameId){ _cv.narrTrameId = narrTramePourAxe(axe).id; }
 
-  _cv.slides = slides; _cv.active = 0;
+  cvGenererNarratif();  // construit les slides
   _cv.planTargetTitre = a ? a.texte.slice(0,60) : (t?t.texte.slice(0,60):'');
   commSwitch('carrousel');
+}
+
+// (Re)génère les slides narratives depuis la dernière sélection, le nombre de
+// slides (_cv.narrN) et la trame (_cv.narrTrameId, ou auto selon l'axe).
+function cvGenererNarratif(){
+  const sel = _cv.narrLastSel;
+  if(!sel){ toast('Compose d\'abord un contenu'); return; }
+  const trame = (NARR_TRAMES.find(x=>x.id===_cv.narrTrameId)) || narrTramePourAxe(sel.axe);
+  _cv.narrTrameId = trame.id;
+  const n = Math.max(6, Math.min(10, _cv.narrN||7));
+  _cv.narrN = n;
+  const slides = narrConstruireSlides(trame, n, sel);
+  _cv.slides = slides.length ? slides : [cvNewSlide()];
+  _cv.active = 0;
+}
+
+// Contrôles UI : changer le nombre de slides / la trame → régénère + re-rend.
+function cvSetNarrN(n){
+  _cv.narrN = Math.max(6, Math.min(10, parseInt(n,10)||7));
+  if(_cv.narrLastSel) cvGenererNarratif();
+  renderCarrousel();
+}
+function cvSetNarrTrame(id){
+  _cv.narrTrameId = id;
+  if(_cv.narrLastSel) cvGenererNarratif();
+  renderCarrousel();
 }
 
 /* ── Réglages de la slide active ── */
@@ -25312,17 +25523,35 @@ async function renderCarrousel(){
 
   // Bande de slides (vignettes cliquables).
   const strip = _cv.slides.map((sl,i)=>{
-    const on=i===_cv.active;
-    return `<div style="flex:0 0 auto;text-align:center;margin-right:8px">
-      <div onclick="cvGoSlide(${i})" style="border:3px solid ${on?'var(--bordeaux)':'transparent'};border-radius:10px;padding:2px;cursor:pointer;background:#fff">
-        <canvas data-cvthumb="${i}" style="width:64px;height:64px;object-fit:cover;border-radius:7px;display:block"></canvas>
-      </div>
-      <span class="note" style="font-size:.66rem">${i+1}</span>
-    </div>`;
   }).join('');
+
+  // Panneau NARRATION : visible seulement si le carrousel vient d'une sélection
+  // du Compositeur. Permet de choisir le nombre de slides (6–10) et la trame,
+  // puis de régénérer un déroulé narratif.
+  let blocNarration = '';
+  if(_cv.narrLastSel){
+    const nCur = Math.max(6, Math.min(10, _cv.narrN||7));
+    const nBtns = [6,7,8,9,10].map(nn=>
+      `<button class="btn ${nCur===nn?'gold':'ghost'} sm" style="margin:2px;min-width:38px" onclick="cvSetNarrN(${nn})">${nn}</button>`).join('');
+    const trameCur = _cv.narrTrameId || narrTramePourAxe(_cv.narrLastSel.axe).id;
+    const trameBtns = NARR_TRAMES.map(tr=>
+      `<button class="btn ${trameCur===tr.id?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetNarrTrame('${tr.id}')">${tr.emoji} ${tr.label}</button>`).join('');
+    blocNarration =
+      `<div class="panel">
+         <h2>📚 Narration</h2>
+         <p class="note" style="margin-top:2px">Le carrousel déroule un raisonnement. Plus tu mets de slides, plus le propos se développe.</p>
+         <label class="note" style="display:block;margin-top:8px;font-weight:600">Nombre de slides</label>
+         <div>${nBtns}</div>
+         <label class="note" style="display:block;margin-top:10px;font-weight:600">Trame narrative</label>
+         <div>${trameBtns}</div>
+         <button class="btn ghost sm" style="width:100%;margin-top:10px" onclick="cvGenererNarratif();renderCarrousel()">🔄 Régénérer le déroulé</button>
+         <p class="note" style="margin-top:6px">Tu peux ensuite ajuster chaque slide à la main (bascule « Texte libre »).</p>
+       </div>`;
+  }
 
   main.innerHTML =
     `<div class="topbar"><div><h1>🎠 Créer le carrousel</h1><p>Plusieurs slides à ta charte — export PNG & envoi au planning</p></div></div>
+     ${blocNarration}
 
      <div class="panel">
        <h2>Slides <span class="tag">${_cv.slides.length}</span></h2>
