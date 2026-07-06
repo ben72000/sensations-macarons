@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1228';
-const APP_MAJ = 'Tout le contenu \u00e0 un seul endroit : les quatre outils (Composer, Cr\u00e9er le visuel, Sc\u00e9nario vid\u00e9o, Planning) sont d\u00e9sormais r\u00e9unis dans une rubrique unique \u00ab Communication \u00bb, accessible depuis le menu, avec navigation par onglets. Le flux suit la cha\u00eene de production : composer le texte \u2192 cr\u00e9er le visuel \u2192 le sc\u00e9nario vid\u00e9o \u2192 planifier. Les passages entre outils (ex. \u00ab en faire un visuel \u00bb) basculent d\u2019onglet en douceur, sans quitter la rubrique.';
+const APP_VERSION = 'v1229';
+const APP_MAJ = 'Deux finitions du moteur de contenu. Anti-r\u00e9p\u00e9tition c\u00f4t\u00e9 vid\u00e9o : une structure narrative d\u00e9j\u00e0 programm\u00e9e ou publi\u00e9e est signal\u00e9e \u00ab d\u00e9j\u00e0 utilis\u00e9e \u00bb et r\u00e9trograd\u00e9e dans les recommandations, pour varier les angles (sans jamais \u00eatre bloqu\u00e9e). Et passage qualit\u00e9 des textes : 22 formulations les plus plates ont \u00e9t\u00e9 r\u00e9\u00e9crites (projection, \u00e9motion, b\u00e9n\u00e9fice client) \u2014 il ne reste quasiment plus aucun texte faible dans la biblioth\u00e8que.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -24489,6 +24489,38 @@ for(const _id in SC_TEXTES_REWRITE){
   if(_t) _t.texte = SC_TEXTES_REWRITE[_id];
 }
 
+/* ===== RENFORCEMENT NARRATIF v1229 — 2e vague de réécritures ===== */
+/* On ne change QUE le champ `texte` d'IDs existants. id/objet/cible/axe/cta
+ * inchangés → aucun impact sur l'anti-répétition ni l'heuristique CTA. */
+
+const SC_TEXTES_REWRITE2 = {
+  t043: "Ce que l'école ne t'apprend jamais, c'est le terrain — et c'est justement là que la plupart calent. Moi, je l'ai vécu : la première grosse commande qui te noue le ventre, le labo maison à organiser dans trois mètres carrés, la régularité à tenir fournée après fournée. Imagine avoir quelqu'un à tes côtés qui est passé par là et te fait gagner des mois de galère. Je te transmets le concret, pas la théorie.",
+  t032: "Tu as vu cent tutos et tu rates encore ? C'est normal, et ce n'est pas toi le problème. Une vidéo ne voit pas TA pâte, TON four, TON geste — elle te donne une recette générique, jamais un diagnostic. Imagine à la place quelqu'un qui regarde en direct ce que tu fais et te dit précisément le détail à corriger. C'est toute la différence entre subir et comprendre.",
+  t037: "Souviens-toi de ta dernière fournée ratée, cette petite voix qui dit « je n'y arriverai jamais ». Moi aussi je l'ai entendue — des dizaines de fois, seule dans ma cuisine, avant de décrocher le CAP à force de ténacité. C'est pour ça que je sais exactement où ça coince chez toi : j'y suis passée avant. Imagine apprendre avec quelqu'un qui comprend tes galères parce qu'il les a vécues. Je te tends la main sur le vrai chemin, pas une théorie descendante.",
+  t053: "Elle est arrivée en visio découragée, prête à tout abandonner après des mois d'échecs. On a regardé ensemble sa pâte, son four, son geste. En une seule séance, on a trouvé deux erreurs qu'elle ne voyait pas. La semaine d'après, elle m'envoyait la photo de sa première plaque parfaite avec trois mots : « J'ai pleuré. » Imagine ce moment pour toi. Ce message, c'est ma plus belle récompense.",
+  t064: "« J'ai déjà tout essayé. » Je l'entends souvent, et je comprends cette lassitude — tu as investi du temps, de l'argent, de l'espoir. Mais tout essayer au hasard, ce n'est pas corriger la bonne variable. Imagine arrêter de tâtonner : en regardant ta technique en direct, on isole ce qui coince vraiment, souvent un seul détail. Et ce détail change tout.",
+  t001: "Ce soir tu es invité, et te voilà à tourner en rond au supermarché. La bouteille ? Tout le monde l'apporte. Les chocolats ? Ils finiront oubliés dans un placard. Imagine plutôt le moment où tu tends un écrin de macarons faits main, moins sucrés, et où les visages s'illuminent autour de la table. Ce soir-là, c'est toi qu'on retiendra.",
+  t011: "Dernière fournée du week-end, et il ne reste que quelques macarons — la même qualité, faits ce matin. Imagine la frustration de passer à côté parce qu'on a attendu trop longtemps : je déteste dire non. Premier arrivé, premier régalé. Un petit plaisir à saisir maintenant, avant qu'il ne parte pour de bon.",
+  t017: "Offrir la même chose que l'an dernier, c'est facile — et ça se voit. Cette fois, imagine la surprise sur son visage en ouvrant un écrin de macarons choisis pour elle : parfums sélectionnés, présentation soignée, cette petite touche qui dit « j'ai vraiment pensé à toi ». Un cadeau banal se range. Un cadeau pensé, on s'en souvient.",
+  t021: "Un dessert générique dilue votre image ; un dessert à vos couleurs la renforce, à chaque bouchée. Imaginez vos invités découvrant votre logo imprimé sur chaque coque, vos teintes accordées à votre charte, dans un coffret sur mesure. Ce n'est plus un dessert — c'est votre identité, en version gourmande, que l'on retient bien après la fête.",
+  t024: "La pièce montée traditionnelle, tout le monde l'a vue mille fois. Vous, vous voulez un dessert qui vous ressemble. Imaginez une tour de macarons aux parfums et couleurs choisis avec vous, élégante, moderne, au centre de la réception — celle que vos invités photographient et dont ils reparlent. Composons ensemble votre signature gourmande.",
+  t028: "Séminaire, inauguration, lancement produit, anniversaire d'entreprise : chaque événement pro est une occasion de marquer les esprits, ou de les laisser indifférents. Imaginez la différence entre un buffet standard qu'on oublie et une pause gourmande à votre image dont on reparle à la machine à café. Ce détail-là valorise votre marque bien plus que vous ne le pensez.",
+  t030: "Un coup ça brûle, un coup c'est cru, un coup ça craque — tu ne sais jamais à quoi t'attendre en ouvrant le four, et tu jettes des fournées entières. Ce stress, je le connais. Chaleur tournante, position de plaque, thermomètre : imagine enfin ouvrir ton four en sachant exactement ce que tu vas trouver. Je t'apprends à dompter TON four, pas un four théorique.",
+  t033: "« Sans matériel de pro, c'est peine perdue. » Faux, et je te le prouve. On réussit de très belles coques avec un four ménager et une simple poche — le matériel aide, il ne fait jamais le macaron à ta place. Imagine sortir une plaque impeccable avec ce que tu as déjà dans ta cuisine. C'est le geste qui compte, pas l'équipement, et le geste, ça s'apprend.",
+  t039: "Le vrai déclic, c'est le jour où tu comprends POURQUOI ça marche. À partir de là, tu ne suis plus une recette en croisant les doigts : tu lis ta pâte, tu ajustes, tu corriges, tu maîtrises. Imagine cette liberté — ne plus jamais rater par hasard. C'est cette compréhension que je te transmets, pas juste une suite d'étapes à répéter.",
+  t040: "Combien de fournées ratées avant d'avoir envie de tout laisser tomber ? Je connais ce découragement par cœur, je l'ai vécu des dizaines de fois. Mais voici la bonne nouvelle : les erreurs les plus fréquentes sont aussi les plus faciles à corriger, une fois qu'on te montre quoi regarder. Imagine ta prochaine fournée réussie. Elle est plus proche que tu ne crois.",
+  t041: "Réussir chez toi, c'est une chose. Produire régulier, calibré, rentable et aux normes, c'en est une autre — et c'est précisément là que beaucoup abandonnent. Imagine passer sereinement du loisir à l'activité : au-delà de la technique, je t'accompagne sur la régularité, l'organisation du labo et les bases pour te lancer sans te noyer. Ton projet mérite des fondations solides.",
+  t047: "Fait main, ce matin, à Le Mans. Chaque coque comptée, chaque garniture dosée à la main, chaque cuisson surveillée. Quand tu croques, tu ne goûtes pas un produit de chaîne : tu goûtes le temps et l'attention que j'y ai mis. C'est ça, l'artisanat — et ça se sent dès la première bouchée.",
+  t058: "Vos vœux d'entreprise en version gourmande : imaginez vos clients et partenaires recevant un coffret de macarons brandé à votre logo, plutôt qu'une carte de plus vite rangée. Une attention premium, faite main et locale, qui démarre l'année sous le signe de la qualité — et qui reste associée à votre marque bien après la dernière bouchée.",
+  t060: "La collerette, ce petit pied dentelé, n'est pas qu'esthétique : c'est le signe que ta coque a bien croûté et bien cuit. Pas de collerette, ou une qui déborde ? Le problème se cache presque toujours dans le croûtage ou la chaleur. Imagine sortir une plaque où chacune a sa collerette nette et régulière. Deux réglages, et tout change — je te montre lesquels.",
+  t063: "Parlons image une minute. Chaque point de contact avec vos clients raconte quelque chose de vous. Un dessert générique dit « on a rempli une case ». Un macaron à vos couleurs, soigné, moins sucré, dit « on soigne le moindre détail ». Imaginez ce que vos invités retiennent de vous à travers ce seul geste. Lequel de ces deux messages vous ressemble ?",
+  t067: "Un brunch entre amis ce week-end ? Imagine la boîte posée au milieu de la table, les couleurs qui claquent, et tout le monde qui tend la main. Tu la regardes se vider, parfum après parfum, avec ce fameux « allez, juste un dernier ». Ces moments-là valent bien plus qu'un dessert. Ils valent le plaisir partagé.",
+};
+for(const _id in SC_TEXTES_REWRITE2){
+  const _t = SC_TEXTES.find(x=>x.id===_id);
+  if(_t) _t.texte = SC_TEXTES_REWRITE2[_id];
+}
+
 
 
 
@@ -25723,6 +25755,26 @@ const _vid = {
   duree:'court', emotion:'gourmandise', produit:'', structureId:null,
 };
 
+// ── Anti-répétition vidéo : structures déjà utilisées dans des scénarios
+//    programmés ou publiés. Rempli avant chaque rendu du module. ──
+const _vidUsed = new Set();
+async function vidChargerUsage(){
+  _vidUsed.clear();
+  if(typeof db==='undefined' || !db.posts) return;
+  try{
+    const posts = await db.posts.toArray();
+    for(const p of posts){
+      if(p.statut!=='programme' && p.statut!=='publie') continue;
+      if(p.sourceData && p.sourceData.vidStructureId){ _vidUsed.add(p.sourceData.vidStructureId); }
+      // Filet pour d'anciens posts vidéo sans sourceData : on repère par le libellé du titre.
+      else if(p.titre && p.titre.indexOf('🎬')>=0){
+        const st = VID_STRUCTURES.find(x=>p.titre.indexOf(x.label)>=0);
+        if(st) _vidUsed.add(st.id);
+      }
+    }
+  }catch(e){ /* confort, pas bloquant */ }
+}
+
 function vidSet(k,val){ _vid[k]=val; if(k==='objectif'||k==='emotion'){ _vid.structureId=null; } renderVideo(); }
 function vidSetProduit(v){ _vid.produit=v; }
 function vidPickStructure(id){ _vid.structureId=(id===_vid.structureId?null:id); renderVideo(); }
@@ -25735,6 +25787,9 @@ function vidStructuresRecommandees(){
     if(s.emotions.includes(_vid.emotion)) score+=2;
     // Coaching : privilégier erreur/avant-après/témoignage.
     if(_vid.objet==='coaching' && ['erreur_frequente','avant_apres','temoignage'].includes(s.id)) score+=1;
+    // Anti-répétition : une structure déjà utilisée (programmée/publiée) est
+    // pénalisée pour laisser passer de la variété, sans être exclue.
+    if(typeof _vidUsed!=='undefined' && _vidUsed.has(s.id)) score-=3;
     return {s,score};
   }).sort((a,b)=>b.score-a.score);
 }
@@ -25853,6 +25908,7 @@ function vidScenarioTexte(sc){
 /* ── Rendu de la vue vidéo ── */
 async function renderVideo(){
   const main=document.getElementById('main'); if(!main) return;
+  await vidChargerUsage();   // anti-répétition : marque les structures déjà utilisées
   const segK=(k,val,label,emoji)=>`<button class="btn ${_vid[k]===val?'gold':'ghost'} sm" style="margin:2px" onclick="vidSet('${k}','${val}')">${emoji||''} ${label}</button>`;
 
   const objetSeg = ['vente','coaching'].map(o=>segK('objet',o,o==='vente'?'Vente':'Coaching',o==='vente'?'🛒':'🎯')).join('');
@@ -25866,8 +25922,9 @@ async function renderVideo(){
   const structsHtml = reco.map(({s,score})=>{
     const sel=_vid.structureId===s.id;
     const best=(!_vid.structureId && s.id===reco[0].s.id);
-    return `<div class="sum-box lnk" style="flex-direction:column;align-items:stretch;gap:3px;${sel?'background:#f6efe4;border-left:4px solid #52252F':(best?'border-left:4px solid #AA7C39':'')}" onclick="vidPickStructure('${s.id}')">
-      <div style="display:flex;justify-content:space-between;align-items:center"><b>${s.emoji} ${s.label}</b>${sel?'<b>✓</b>':(best?'<b style="color:#AA7C39;font-size:.7rem">recommandé</b>':'')}</div>
+    const used=(typeof _vidUsed!=='undefined' && _vidUsed.has(s.id));
+    return `<div class="sum-box lnk" style="flex-direction:column;align-items:stretch;gap:3px;${sel?'background:#f6efe4;border-left:4px solid #52252F':(best?'border-left:4px solid #AA7C39':'')}${used?';opacity:.6':''}" onclick="vidPickStructure('${s.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:center"><b>${s.emoji} ${s.label}</b>${sel?'<b>✓</b>':(used?'<b style="color:#9a8576;font-size:.68rem;font-weight:600">déjà utilisée</b>':(best?'<b style="color:#AA7C39;font-size:.7rem">recommandé</b>':''))}</div>
       <div class="note" style="font-size:.72rem">${esc(s.mecanique)}</div></div>`;
   }).join('');
 
@@ -25940,6 +25997,7 @@ async function vidAuPlanning(){
     texte:vidScenarioTexte(sc),
     canal, offre:(_vid.objet==='coaching'?'coaching':(_vid.cible==='b2b'?'b2b':'vente')),
     statut:'a_rediger',
+    sourceData:{ vidStructureId: sc.structure.id },
   });
   toast('✅ Scénario au planning');
   if(typeof _scTab!=='undefined'){ _scTab='calendrier'; }

@@ -1,5 +1,5 @@
-// [v1228] bump CACHE — Rubrique unique « Communication » à onglets (Composer/Visuel/Vidéo/Planning).
-const CACHE = 'sm-iphone-v263';
+// [v1229] bump CACHE — Anti-répétition vidéo + 2e vague de réécriture des textes faibles.
+const CACHE = 'sm-iphone-v264';
 const ASSETS = [
   './',
   './index.html',
