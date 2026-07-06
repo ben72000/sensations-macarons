@@ -555,6 +555,16 @@ h1,h2,h3,.serif{font-family:'Bellota','Georgia','Times New Roman',serif;letter-s
 .nav button.active::before{content:'';position:absolute;left:-16px;top:50%;transform:translateY(-50%);width:4px;height:60%;border-radius:0 4px 4px 0;background:var(--caramel-2)}
 .nav .ico{font-size:1.05rem;width:20px;text-align:center}
 .nav .sep{font-size:.6rem;letter-spacing:.2em;text-transform:uppercase;color:rgba(232,221,205,.42);padding:14px 14px 4px;font-weight:600}
+/* Barre d'onglets de la rubrique Communication (collante en haut du contenu) */
+.comm-tabbar{position:sticky;top:0;z-index:30;display:flex;gap:6px;background:var(--paper,#fbf8f3);
+  padding:10px 4px 8px;margin:-4px -4px 12px;overflow-x:auto;border-bottom:1px solid var(--hair,#ece3d6);-webkit-overflow-scrolling:touch}
+.comm-tab{flex:1 0 auto;min-width:78px;appearance:none;-webkit-appearance:none;border:1.5px solid var(--hair,#ece3d6);
+  background:#fff;color:var(--bordeaux,#52252F);font-family:inherit;font-weight:600;font-size:.82rem;cursor:pointer;
+  border-radius:12px;padding:9px 12px;display:flex;flex-direction:column;align-items:center;gap:3px;line-height:1;
+  transition:.15s;-webkit-tap-highlight-color:transparent}
+.comm-tab .comm-tab-ico{font-size:1.15rem}
+.comm-tab.on{background:linear-gradient(135deg,var(--bordeaux,#52252F),var(--bordeaux-3,#3d1a22));color:var(--creme,#E8DDCD);border-color:transparent;box-shadow:0 4px 14px rgba(82,37,47,.28)}
+.comm-tab:active{transform:scale(.97)}
 /* MENU SIMPLIFIÉ : section « Avancé » repliée par défaut (barre latérale + feuille iPhone) */
 .nav-adv{display:none}
 .nav-adv.open{display:block}
@@ -1827,6 +1837,8 @@ body.pal-lock{overflow:hidden}
       <button data-v="commandes"><span class="ico">✎</span><span>Commandes</span></button>
       <button data-v="documents"><span class="ico">🧾</span><span>Devis &amp; Factures</span></button>
       <button data-v="cal"><span class="ico">▦</span><span>Calendrier</span></button>
+      <div class="sep">Communication</div>
+      <button data-v="communication"><span class="ico">📣</span><span>Communication</span></button>
       <div class="sep">Production</div>
       <button data-v="fournisseurs"><span class="ico">⚑</span><span>Fournisseurs</span></button>
       <button data-v="matieres"><span class="ico">⬛</span><span>Matières & lots</span></button>
@@ -1907,6 +1919,7 @@ body.pal-lock{overflow:hidden}
         <button data-v="commandes"><span class="ico">✎</span>Commandes</button>
         <button data-v="documents"><span class="ico">🧾</span>Devis &amp; Factures</button>
         <button data-v="cal"><span class="ico">▦</span>Calendrier</button>
+        <button data-v="communication"><span class="ico">📣</span>Communication</button>
         <button data-v="fournisseurs"><span class="ico">⚑</span>Fournisseurs</button>
         <button data-v="matieres"><span class="ico">⬛</span>Matières & lots</button>
         <button data-v="recettes"><span class="ico">❀</span>Recettes (BOM)</button>

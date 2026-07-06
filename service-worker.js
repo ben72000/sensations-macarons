@@ -1,5 +1,5 @@
-// [v1222] bump CACHE — Compositeur enrichi (+contenu) + module CTA filtrable (choix + suggestion).
-const CACHE = 'sm-iphone-v257';
+// [v1228] bump CACHE — Rubrique unique « Communication » à onglets (Composer/Visuel/Vidéo/Planning).
+const CACHE = 'sm-iphone-v263';
 const ASSETS = [
   './',
   './index.html',

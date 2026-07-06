@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1222';
-const APP_MAJ = 'Compositeur enrichi : +20 accroches et +10 textes, et surtout une 5e brique \u00ab Appel \u00e0 l\'action \u00bb \u2014 banque de 41 CTA filtrables par type (commander, r\u00e9server, DM, devis, atelier, march\u00e9, d\u00e9couvrir, engagement, lien bio), avec choix manuel ET suggestion auto selon le texte choisi. Le CTA retenu alimente le post et le visuel.';
+const APP_VERSION = 'v1228';
+const APP_MAJ = 'Tout le contenu \u00e0 un seul endroit : les quatre outils (Composer, Cr\u00e9er le visuel, Sc\u00e9nario vid\u00e9o, Planning) sont d\u00e9sormais r\u00e9unis dans une rubrique unique \u00ab Communication \u00bb, accessible depuis le menu, avec navigation par onglets. Le flux suit la cha\u00eene de production : composer le texte \u2192 cr\u00e9er le visuel \u2192 le sc\u00e9nario vid\u00e9o \u2192 planifier. Les passages entre outils (ex. \u00ab en faire un visuel \u00bb) basculent d\u2019onglet en douceur, sans quitter la rubrique.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -3840,7 +3840,9 @@ const VIEWS = {
   ventilation:renderVentilation,
   compositeur:renderCompositeur,
   carrousel:renderCarrousel,
-  studiocom:renderStudioCom
+  video:renderVideo,
+  studiocom:renderStudioCom,
+  communication:renderCommunication
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
@@ -14031,9 +14033,7 @@ const _NAV_PAGES = [
   {v:'stats',        t:'Statistiques',              k:'statistique stat graphique analyse chiffre'},
   {v:'compta',       t:'Comptabilité',              k:'comptabilite compta ca chiffre affaires resultat charges urssaf encaissement'},
   {v:'ventilation',  t:'Encaissements par mode',    k:'encaissement mode paiement virement carte especes cheque paypal ventilation filtre repartition moyen reglement'},
-  {v:'compositeur',  t:'Composer un contenu',       k:'composer contenu marketing communication reseaux sociaux post accroche texte instagram vente coaching redaction publication editorial'},
-  {v:'carrousel',    t:'Créer le visuel (carrousel)', k:'carrousel carousel visuel image slide png instagram story reel photo gabarit charte compositeur creer publication post format canvas export'},
-  {v:'studiocom',    t:'Studio Com (planning)',      k:'studio com planning editorial calendrier publication post reseaux sociaux instagram facebook programmer marketing communication'},
+  {v:'communication',t:'Communication (contenu & marketing)', k:'communication marketing contenu compositeur composer redaction accroche cta texte carrousel visuel image slide png canvas video scenario reel tiktok shorts story storyboard tournage studio com planning editorial calendrier reseaux sociaux instagram facebook post hashtag persuasion storytelling publication programmer'},
   {v:'netpoche',     t:'Net dans la poche',          k:'net poche revenu reel impot tranche imposition urssaf cotisation combien reste gagne vraiment apres deduction fil rouge'},
   {v:'chargesventil',t:'Charges ventilées',          k:'charges ventilation investissement recurrent structurel marketing formation equipement stand diminuer allege croisiere depenses'},
   {v:'optimisation', t:'Optimisation fiscale',        k:'optimisation fiscale seuil seuils tva franchise micro entreprise regime reel bascule plafond plafonds limite vente service prestation marchandise depassement surveillance alerte'},
@@ -23544,6 +23544,79 @@ async function renderCompta(){
  } catch(err){ renderViewError('compta', err); }
 }
 
+/* ===== MODULE COMMUNICATION — CONTENEUR À ONGLETS (v1228) ===== */
+/* ============================================================================
+ *  Regroupe les 4 outils de contenu sous une seule rubrique « Communication »,
+ *  navigable par onglets. Chaque onglet délègue au module existant (intact) :
+ *    Composer → renderCompositeur
+ *    Visuel   → renderCarrousel
+ *    Vidéo    → renderVideo
+ *    Planning → renderStudioCom
+ *  Le conteneur laisse le module remplir #main, puis insère une barre d'onglets
+ *  collante au-dessus. Zéro modification de la logique interne des modules.
+ * ==========================================================================*/
+
+const COMM_TABS = [
+  { k:'compositeur', label:'Composer', emoji:'🧩', render:()=>renderCompositeur() },
+  { k:'carrousel',   label:'Visuel',   emoji:'🎨', render:()=>renderCarrousel()   },
+  { k:'video',       label:'Vidéo',    emoji:'🎬', render:()=>renderVideo()       },
+  { k:'studiocom',   label:'Planning', emoji:'📣', render:()=>renderStudioCom()   },
+];
+
+// Onglet actif mémorisé entre les visites (défaut : Composer, début du flux).
+let _commTab = 'compositeur';
+
+// Change d'onglet et re-rend le conteneur.
+function commGoTab(k){
+  if(!COMM_TABS.some(t=>t.k===k)) return;
+  _commTab = k;
+  renderCommunication();
+}
+
+// Navigation "intelligente" utilisée par les boutons inter-modules :
+// si on est dans la rubrique Communication, on bascule l'onglet (fluide) ;
+// sinon, on ouvre la vue en plein écran comme avant (rétro-compatible).
+function commSwitch(tabKey){
+  if(view==='communication'){ _commTab=tabKey; renderCommunication(); }
+  else { goView(tabKey); }
+}
+// Atterrissage sur le planning après un enregistrement, en respectant le conteneur.
+function commGotoPlanning(){
+  if(view==='communication'){ _commTab='studiocom'; renderCommunication(); }
+  else { view='studiocom'; render(); }
+}
+
+// Construit la barre d'onglets (collante en haut du contenu).
+function commTabBarHtml(){
+  const btns = COMM_TABS.map(t=>{
+    const on = _commTab===t.k;
+    return `<button class="comm-tab${on?' on':''}" onclick="commGoTab('${t.k}')">
+      <span class="comm-tab-ico">${t.emoji}</span><span>${t.label}</span></button>`;
+  }).join('');
+  return `<div class="comm-tabbar" id="commTabBar">${btns}</div>`;
+}
+
+// Rend le conteneur : délègue au module actif, puis coiffe d'une barre d'onglets.
+async function renderCommunication(){
+  const main = document.getElementById('main'); if(!main) return;
+  const tab = COMM_TABS.find(t=>t.k===_commTab) || COMM_TABS[0];
+  await tab.render();
+  commEnsureTabBar();
+}
+
+// (Ré)insère la barre d'onglets en tête de #main si elle a disparu.
+// Appelée après le rendu du conteneur ET à la fin de chaque module (qui
+// réécrit #main et efface donc la barre). Ne fait rien hors rubrique.
+function commEnsureTabBar(){
+  if(typeof view==='undefined' || view!=='communication') return;
+  const main=document.getElementById('main'); if(!main) return;
+  const existing=document.getElementById('commTabBar');
+  if(existing) existing.remove();
+  main.insertAdjacentHTML('afterbegin', commTabBarHtml());
+}
+
+/* ===== FIN MODULE COMMUNICATION ===== */
+
 /* ===== MODULE STUDIO COM — PLANNING (v1220) ===== */
 
 /* ============================================================================
@@ -23615,7 +23688,8 @@ async function renderStudioCom(){
         <b>${ca.icon} ${esc(p.titre||'(sans titre)')}</b>
         <span class="tag" style="background:${st.color};color:#fff">${st.label}</span>
       </div>
-      <div class="note" style="font-size:.72rem">${p.dateProg?('🗓️ '+esc(fmtDate(p.dateProg))+' · '):''}${of.label}</div>
+      <div class="note" style="font-size:.72rem">${p.dateProg?('🗓️ '+esc(fmtDate(p.dateProg))+' · '):''}${of.label}${(p.visuels&&p.visuels.length)?(' · 🖼️ '+p.visuels.length):''}</div>
+      ${(p.visuels&&p.visuels.length)?`<div style="display:flex;gap:4px;overflow-x:auto;padding:2px 0">${p.visuels.slice(0,6).map(u=>`<img src="${u}" style="width:46px;height:46px;object-fit:cover;border-radius:6px;flex:0 0 auto">`).join('')}</div>`:''}
       ${p.texte?`<div style="font-size:.8rem;opacity:.82;white-space:pre-line">${esc(p.texte.slice(0,110))}${p.texte.length>110?'…':''}</div>`:''}
     </div>`;
   };
@@ -23642,7 +23716,8 @@ async function renderStudioCom(){
 
      ${posts.length
        ? (section('idee')+section('a_rediger')+section('pret')+section('programme')+section('publie'))
-       : '<div class="panel"><div class="empty">Aucune publication.<br>Crée-en une, ou passe par « Composer un contenu ».<br><br><button class="btn ghost sm" onclick="goView(\'compositeur\')">🧩 Composer un contenu</button></div></div>'}`;
+       : '<div class="panel"><div class="empty">Aucune publication.<br>Crée-en une, ou passe par « Composer un contenu ».<br><br><button class="btn ghost sm" onclick="commSwitch(\'compositeur\')">🧩 Composer un contenu</button></div></div>'}`;
+  commEnsureTabBar();
 }
 
 /* ── Détail / édition d'un post ─────────────────────────────────────────── */
@@ -23652,11 +23727,23 @@ async function scOuvrirPost(id){
   const caOpts = Object.entries(SC_CANAUX).map(([k,v])=>`<option value="${k}" ${p.canal===k?'selected':''}>${v.label}</option>`).join('');
   const ofOpts = Object.entries(SC_OFFRES).map(([k,v])=>`<option value="${k}" ${p.offre===k?'selected':''}>${v.label}</option>`).join('');
   const copyTxt = (p.texte||'')+(p.hashtags?('\n\n'+p.hashtags):'');
+  const visuelsHtml = (p.visuels&&p.visuels.length)
+    ? `<div class="field"><label>Visuels attachés (${p.visuels.length})</label>
+         <div style="display:flex;gap:6px;overflow-x:auto;padding:4px 0">
+           ${p.visuels.map((u,idx)=>`<div style="flex:0 0 auto;text-align:center">
+             <img src="${u}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;display:block">
+             <button class="btn danger sm" style="margin-top:3px;padding:2px 8px" onclick="scRetirerVisuel(${id},${idx})">✕</button>
+           </div>`).join('')}
+         </div>
+         <button class="btn ghost sm" style="margin-top:4px" onclick="scTelechargerVisuels(${id})">⬇️ Télécharger les visuels</button>
+       </div>`
+    : '';
   openModal(
     `<h3>✏️ Publication</h3>
      <div class="field"><label>Titre</label><input id="scE_titre" value="${esc(p.titre||'')}"></div>
      <div class="field"><label>Texte</label><textarea id="scE_texte" rows="6">${esc(p.texte||'')}</textarea></div>
      <div class="field"><label>Hashtags</label><input id="scE_hashtags" value="${esc(p.hashtags||'')}"></div>
+     ${visuelsHtml}
      <div class="field"><label>Canal</label><select id="scE_canal">${caOpts}</select></div>
      <div class="field"><label>Offre</label><select id="scE_offre">${ofOpts}</select></div>
      <div class="field"><label>Statut</label><select id="scE_statut">${stOpts}</select></div>
@@ -23664,6 +23751,7 @@ async function scOuvrirPost(id){
      <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
        <button class="btn danger" onclick="scSupprimerPostUI(${id})">🗑️ Supprimer</button>
        <button class="btn ghost" onclick="scCopier(this)" data-copy="${esc(copyTxt)}">📋 Copier</button>
+       <button class="btn ghost" onclick="cvDepuisPost(${id})">🎨 Créer le visuel</button>
        <button class="btn gold" onclick="scSauverPost(${id})">💾 Enregistrer</button>
      </div>`);
 }
@@ -23688,6 +23776,31 @@ function scSupprimerPostUI(id){
     </div>`);
 }
 async function scSupprimerPostConfirm(id){ await scSupprimerPost(id); closeModal(); toast('Supprimé'); renderStudioCom(); }
+
+// ── Visuels attachés à une publication ──
+async function scRetirerVisuel(id, idx){
+  const p=await db.posts.get(id); if(!p||!p.visuels) return;
+  p.visuels.splice(idx,1);
+  await scMajPost(id,{visuels:p.visuels});
+  toast('Visuel retiré'); scOuvrirPost(id);
+}
+async function scTelechargerVisuels(id){
+  const p=await db.posts.get(id); if(!p||!p.visuels||!p.visuels.length){ toast('Aucun visuel'); return; }
+  toast('⏳ Téléchargement…');
+  for(let i=0;i<p.visuels.length;i++){
+    try{
+      const blob = (typeof _cvDataURLtoBlob==='function') ? _cvDataURLtoBlob(p.visuels[i]) : null;
+      if(blob){
+        const url=URL.createObjectURL(blob); const a=document.createElement('a');
+        a.href=url; a.download='sensations_'+(p.titre||'post').replace(/[^\w]+/g,'_').slice(0,24)+'_'+String(i+1).padStart(2,'0')+'.png';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){} },4000);
+      }
+    }catch(e){}
+    await new Promise(r=>setTimeout(r,350));
+  }
+  toast('✅ '+p.visuels.length+' visuels');
+}
 
 async function scNouveauPost(){
   const id = await scAjouterPost({ statut:'idee', titre:'' });
@@ -24030,6 +24143,355 @@ const SC_TEXTES_PLUS = [
 SC_ACCROCHES.push(...SC_ACCROCHES_PLUS);
 SC_TEXTES.push(...SC_TEXTES_PLUS);
 
+/* ===== ÉTAPE 1 — RENFORCEMENT NARRATIF (v1224) ===== */
+/* Textes premium construits explicitement sur les 8 principes de persuasion
+ * (identification, bénéfice, émotion/projection, réduction d'objection,
+ * crédibilité, storytelling même court, client au centre, envie sans forcing).
+ * Même format que SC_TEXTES : le filtre en cascade les prend automatiquement. */
+
+const SC_TEXTES_STORY = [
+  {id:"t091", objet:"vente", cible:"b2c", axe:"transformation", texte:"Ferme les yeux une seconde. Tu tends la boîte, quelqu'un l'ouvre, et il y a ce silence — celui où personne ne parle parce que tout le monde goûte. Ce silence-là, tu ne l'obtiens pas avec un dessert du supermarché. Tu l'obtiens avec quelque chose de vrai, pensé pour surprendre dès la première bouchée.", cta:"Provoque ce silence 🤍", kw:"projection silence invites qualite effet emotion identification"},
+  {id:"t092", objet:"vente", cible:"b2c", axe:"desir", texte:"Il est 16h. La journée a été longue, tout le monde veut quelque chose de toi. Et là, tu t'accordes exactement une minute : un café, une coque, et le monde peut attendre. Pas de culpabilité, pas d'excès de sucre — juste ta parenthèse, celle que tu mérites vraiment.", cta:"Offre-toi cette minute 🤍", kw:"projection pause soi 16h journee moment identification emotion léger"},
+  {id:"t093", objet:"vente", cible:"b2c", axe:"objection", texte:"Je sais ce que tu penses : « encore un macaron hors de prix ». Alors soyons honnêtes deux minutes. Ce que tu paies, ce n'est pas un petit gâteau : c'est deux jours de travail, des ingrédients que je choisis un par un, et zéro raccourci industriel. Goûte, compare, et tu comprendras où part chaque centime.", cta:"Juge sur pièce 📩", kw:"objection prix cher valeur honnete transparence credibilite travail"},
+  {id:"t094", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Le premier macaron que j'ai réussi, je l'ai regardé cinq minutes avant d'oser le manger. Après des dizaines d'échecs seule dans ma cuisine, cette petite collerette dentelée valait tout l'or du monde. Aujourd'hui, chaque boîte que je prépare porte encore ce jour-là. Tu ne goûtes pas juste un macaron — tu goûtes une histoire.", cta:"Goûte l'histoire 🤍", kw:"storytelling histoire collerette parcours emotion authenticite covid"},
+  {id:"t095", objet:"vente", cible:"b2c", axe:"douleur", texte:"Tu connais ce moment de panique : l'invitation est ce soir, et tu n'as toujours rien. La bouteille, tout le monde l'apporte. Les chocolats, ils finiront au fond d'un placard. Et si, pour une fois, tu étais celui dont on se souvient — celui qui a apporté LA boîte dont on reparle le lendemain ?", cta:"Sois celui qu'on retient 📩", kw:"douleur cadeau invite panique identification memorable projection soirée"},
+  {id:"t096", objet:"vente", cible:"b2b", axe:"transformation", texte:"Imaginez la scène : vos invités quittent la réception, et dans la voiture, la première chose dont ils parlent, ce n'est pas le lieu ni le traiteur — c'est ce dessert à vos couleurs qu'ils n'avaient jamais vu ailleurs. Voilà ce qu'un détail bien choisi fait pour votre image : il transforme un événement en souvenir.", cta:"Créez ce souvenir 🥂", kw:"projection mariage evenement souvenir image personnalise benefice b2b"},
+  {id:"t097", objet:"vente", cible:"b2b", axe:"desir", texte:"Vos meilleurs clients reçoivent des cadeaux toute l'année. La plupart finissent oubliés. Mais celui qu'on déguste, qu'on partage au bureau, qui porte votre logo sur chaque coque — celui-là, on s'en souvient. Ce n'est pas une dépense marketing : c'est une émotion associée à votre marque, qui travaille longtemps après.", cta:"Marquez durablement 🥂", kw:"cadeau client benefice emotion memorable marque fidelisation projection b2b"},
+  {id:"t098", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Souviens-toi de ta dernière fournée ratée. La déception en ouvrant le four, les coques fissurées, l'envie de tout laisser tomber. Maintenant imagine l'inverse : tu ouvres le four, et elles sont là — lisses, brillantes, une collerette nette sur chacune. Cette image n'est pas un rêve. C'est juste deux ou trois réglages plus loin.", cta:"Rends ça réel 🎯", kw:"projection coaching rate reussite collerette identification emotion transformation"},
+  {id:"t099", objet:"coaching", cible:"b2c", axe:"objection", texte:"« Je n'ai pas la main pour ça. » Je l'entends à chaque fois, et à chaque fois c'est faux. La main, ça n'existe pas — il y a juste des gestes qu'on connaît ou qu'on ignore. Moi non plus je ne les avais pas au début. Je les ai appris, un par un, dans la galère. Et c'est exactement ce que je te transmets.", cta:"La main, ça s'apprend 🎯", kw:"objection don talent inne coaching credibilite empathie identification methode"},
+  {id:"t100", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Je ne te vendrai jamais une méthode miracle. Faire de beaux macarons, ça demande de la rigueur, et je serai honnête avec toi sur ce qui bloque. Mais je te promets une chose : le jour où tu comprendras POURQUOI ça marche, tu ne rateras plus jamais par hasard. Ce déclic, c'est ce que je te donne.", cta:"Trouve ton déclic 🎯", kw:"valeurs honnete credibilite methode comprendre coaching authenticite promesse"},
+  {id:"t101", objet:"vente", cible:"b2c", axe:"situation", texte:"Ce matin, l'atelier sentait la vanille de Madagascar et le beurre noisette. J'ai poché, enfourné, guetté la collerette. Cette fournée-là est encore tiède, et elle ne durera pas la journée. Si tu la veux, c'est maintenant — parce que le frais, ça ne se garde pas, ça se savoure vite.", cta:"Réserve la fournée du jour 📩", kw:"situation fournee jour frais coulisses sensoriel urgence projection matin"},
+  {id:"t102", objet:"vente", cible:"b2c", axe:"desir", texte:"Il y a deux façons de manger un macaron. Le mordre vite, distrait, entre deux tâches. Ou le laisser fondre lentement, sentir la coque céder puis la garniture arriver, et s'accorder trois secondes de vrai plaisir. Les miens sont faits pour la deuxième. Moins de sucre, plus de sensation — pour que chaque bouchée compte.", cta:"Savoure vraiment 🤍", kw:"desir sensoriel savourer lenteur plaisir moins sucre projection identification"},
+  {id:"t103", objet:"vente", cible:"b2c", axe:"transformation", texte:"« Je n'aime pas les macarons. » Une cliente m'a dit ça, presque désolée, avant de goûter par politesse. Je lui ai tendu un citron, sans insister. Deux minutes après, elle repartait avec une boîte de douze. Ce n'est pas moi qui l'ai convaincue — c'est le goût. Le vrai, celui qu'on ne noie pas sous le sucre.", cta:"Laisse le goût parler 📩", kw:"objection convertir temoignage citron histoire client preuve credibilite storytelling"},
+  {id:"t104", objet:"vente", cible:"b2b", axe:"objection", texte:"Confier le dessert de votre grand jour à un artisan, ça peut faire peur — l'enjeu est réel, je le sais. C'est justement pour ça que je cadre tout en amont : dégustation avant de décider, devis clair, quantités validées, délais engagés par écrit. Vous ne prenez pas un risque. Vous prenez un partenaire qui a autant à cœur que vous que ce soit parfait.", cta:"Sécurisons votre jour J 📩", kw:"objection confiance artisan risque credibilite devis fiabilite b2b rassurer"},
+  {id:"t105", objet:"coaching", cible:"b2c", axe:"desir", texte:"Le jour où tu tendras une boîte de TES macarons en disant « c'est moi qui les ai faits », tu verras cette petite lueur dans les yeux d'en face. Cette fierté-là, elle ne s'achète pas. Elle se construit, geste après geste. Et le chemin est bien plus court que tu ne l'imagines.", cta:"Vis cette fierté 🎯", kw:"desir coaching fierte projection offrir fait-maison emotion identification reussite"},
+];
+
+// ── Les 8 principes de persuasion (pour la couche d'analyse narrative) ──
+const PERSUASION_PRINCIPES = [
+  {k:'identification', label:'Identification (« c\'est moi »)', emoji:'🪞', test:t=>/\b(tu|toi|t'|te|ton|ta|tes|vous|votre|vos)\b/i.test(t) || /(tout le monde|on a tous|qui n'a jamais|connais ce moment|ça t'est déjà)/i.test(t)},
+  {k:'emotion',       label:'Émotion / projection',            emoji:'💗', test:t=>/(imagine|imaginez|souvien|ferme les yeux|ce moment|ce silence|le silence|fier|fiert|émo|rêv|panique|décept|lueur|savour|réconfort|craquer|fondre|touch|coeur|cœur|joie|sourire|plaisir|parenthèse|bulle|ralenti)/i.test(t)},
+  {k:'benefice',      label:'Bénéfice (pas caractéristique)',   emoji:'🎁', test:t=>/(plaisir|sensation|souvenir|fier|mérit|change|transform|se souvien|inoubliable|parenthèse|effet|marqu|impressionn|surprend|retien|repart|tranquille|serein|rassur|gagn|économi|sans stress|sans culpab)/i.test(t)},
+  {k:'objection',     label:'Réduction d\'objection',           emoji:'🛡️', test:t=>/(trop sucré|«|»|cher|prix|coûte|coute|fragile|conserv|je sais ce que tu|honnête|honnete|soyons|peur|risque|n'?ai pas la main|combien de temps|se garde|budget|volume|hésit|inquiè|inquie|pas besoin de|faux)/i.test(t)},
+  {k:'credibilite',   label:'Crédibilité / authenticité',       emoji:'✅', test:t=>/(madagascar|valrhona|barry|piémont|piemont|\bcap\b|covid|fait main|fait-main|à le mans|au mans|deux jours|2 jours|ingrédient|ingredient|zéro raccourci|zero raccourci|un par un|noisette|vanille|citron bio|artisan|macaronn|maturation|beurre noisette|sans conservateur|sans arôme|sans arome|100%|savoir-faire)/i.test(t)},
+  {k:'histoire',      label:'Storytelling (raconte)',           emoji:'📖', test:t=>/(un jour|le premier|la première fois|souvien|une cliente|un client|ce matin|au début|j'ai raté|tout a commencé|elle m'a dit|il m'a dit|imagine la scène|projette-toi|repense|repas|il y a|je me souviens|la scène)/i.test(t)},
+  {k:'client',        label:'Centré client (pas produit)',      emoji:'🫵', test:t=>{const you=(t.match(/\b(tu|toi|t'|te|ton|ta|tes|vous|votre|vos)\b/gi)||[]).length; const moi=(t.match(/\b(je|j'|mon|ma|mes)\b/gi)||[]).length; return you>0 && you>=moi-1;}},
+  {k:'envie',         label:'Envie sans forcing',               emoji:'🧲', test:t=>/(goûte|goute|savour|offre-toi|offrez|imagine|découvre|decouvre|essai|laisse|réserv|reserv|command|compose|craqu|choisis|viens|fais-toi|profite|régale|regale)/i.test(t) && !/(achète maintenant|dépêche-toi|vite vite|dernier jour absolu|clique ici tout de suite)/i.test(t)},
+];
+
+// Analyse un texte : renvoie {score, principes:[{...,ok}]}.
+function compoAnalysePersuasion(txt){
+  const t = txt||'';
+  const principes = PERSUASION_PRINCIPES.map(p=>({ k:p.k, label:p.label, emoji:p.emoji, ok:!!p.test(t) }));
+  const score = principes.filter(p=>p.ok).length;
+  return { score, total:principes.length, principes };
+}
+
+// Conseils d'amélioration selon les principes manquants.
+function compoConseilsPersuasion(analyse){
+  const manque = analyse.principes.filter(p=>!p.ok);
+  if(!manque.length) return ['Ton contenu coche les 8 leviers de persuasion. 👌'];
+  const conseils = {
+    identification:'Ajoute un « tu/vous » direct pour que le lecteur se reconnaisse.',
+    emotion:'Ancre une image ou un moment (« imagine… », « souviens-toi… ») pour créer la projection.',
+    benefice:'Traduis une caractéristique en bénéfice ressenti (ce que la personne gagne, pas ce que le produit est).',
+    objection:'Devance l\'objection du lecteur et désamorce-la avec honnêteté.',
+    credibilite:'Glisse une preuve concrète (ingrédient, parcours, chiffre) pour crédibiliser.',
+    histoire:'Raconte une micro-scène (un client, un matin, un déclic) même en une phrase.',
+    client:'Rééquilibre vers le lecteur : parle plus de lui que de toi/du produit.',
+    envie:'Termine sur une invitation douce plutôt qu\'une injonction (« goûte », « offre-toi »).',
+  };
+  return manque.map(p=>`${p.emoji} ${conseils[p.k]||p.label}`);
+}
+SC_TEXTES.push(...SC_TEXTES_STORY);
+
+/* ===== LOT QUALITÉ v1225 — accroches + textes + CTA ===== */
+/* Nouveaux territoires : occasions calendaires, moments de consommation,
+ * saisonnalité, parfums, objections fines, B2B événementiel, coaching.
+ * Même schéma (objet/cible/axe/kw) → filtre en cascade automatique. */
+
+const SC_ACCROCHES_LOT = [
+  // — Occasions calendaires B2C —
+  {id:"a201", objet:"vente", cible:"b2c", axe:"situation", texte:"La galette, c'est bien. Mais qui pense aux gourmands qui n'aiment pas la frangipane ?", kw:"epiphanie galette janvier alternative occasion nouvelle annee"},
+  {id:"a202", objet:"vente", cible:"b2c", axe:"situation", texte:"Chandeleur : et si on changeait des crêpes cette année ?", kw:"chandeleur fevrier crepe alternative occasion gourmand"},
+  {id:"a203", objet:"vente", cible:"b2c", axe:"situation", texte:"Pâques approche : le chocolat, oui, mais joliment.", kw:"paques avril chocolat printemps occasion coffret"},
+  {id:"a204", objet:"vente", cible:"b2c", axe:"situation", texte:"Fête des pères : pour une fois, un cadeau qui se déguste.", kw:"fete peres juin cadeau papa occasion gourmand"},
+  {id:"a205", objet:"vente", cible:"b2c", axe:"situation", texte:"La rentrée mérite une petite douceur pour adoucir le retour.", kw:"rentree septembre reconfort douceur occasion moment"},
+  {id:"a206", objet:"vente", cible:"b2c", axe:"situation", texte:"Halloween sans le mauvais goût industriel, c'est possible.", kw:"halloween octobre bonbon alternative qualite occasion enfant"},
+  {id:"a207", objet:"vente", cible:"b2c", axe:"situation", texte:"Le Beaujolais est arrivé… et son accord gourmand aussi.", kw:"beaujolais novembre accord vin occasion soiree automne"},
+  {id:"a208", objet:"vente", cible:"b2c", axe:"situation", texte:"Ton calendrier de l'Avent d'adulte, il ressemble à quoi ?", kw:"avent decembre noel calendrier occasion adulte gourmand"},
+  {id:"a209", objet:"vente", cible:"b2c", axe:"situation", texte:"Le réveillon se prépare maintenant, pas le 24 à 18h.", kw:"noel reveillon decembre anticiper commande occasion fetes"},
+  {id:"a210", objet:"vente", cible:"b2c", axe:"situation", texte:"Nouvel An : finis l'année sur une note qui claque.", kw:"nouvel an decembre reveillon occasion fetes gourmand"},
+  // — Moments de consommation —
+  {id:"a211", objet:"vente", cible:"b2c", axe:"desir", texte:"Le café du dimanche matin a trouvé son complice.", kw:"dimanche matin cafe moment rituel douceur consommation"},
+  {id:"a212", objet:"vente", cible:"b2c", axe:"desir", texte:"La pause de 16h, celle qui te sauve l'après-midi.", kw:"pause 16h apres-midi travail moment reconfort consommation"},
+  {id:"a213", objet:"vente", cible:"b2c", axe:"desir", texte:"Le goûter des grands, il a le droit d'être beau.", kw:"gouter adulte moment douceur consommation apres-midi"},
+  {id:"a214", objet:"vente", cible:"b2c", axe:"desir", texte:"Le petit plaisir d'après le dîner, sans culpabiliser.", kw:"soir diner dessert moment leger moins sucre consommation"},
+  {id:"a215", objet:"vente", cible:"b2c", axe:"desir", texte:"Netflix, plaid, et une coque qui fond. Programme parfait.", kw:"soir cocooning canape moment plaisir consommation detente"},
+  // — Parfums / nouveautés —
+  {id:"a216", objet:"vente", cible:"b2c", axe:"situation", texte:"Citron-basilic : l'accord qui surprend et qu'on redemande.", kw:"parfum citron basilic nouveaute surprise accord original"},
+  {id:"a217", objet:"vente", cible:"b2c", axe:"situation", texte:"Le parfum de saison est là, et il ne restera pas longtemps.", kw:"parfum saison edition limitee urgence nouveaute disponible"},
+  {id:"a218", objet:"vente", cible:"b2c", axe:"situation", texte:"Vanille-noisette : le classique qui met tout le monde d'accord.", kw:"parfum vanille noisette classique valeur sur unanimite"},
+  {id:"a219", objet:"vente", cible:"b2c", axe:"desir", texte:"Framboise du moment : l'acidulé qui réveille les papilles.", kw:"parfum framboise fruit acidule saison nouveaute desir"},
+  {id:"a220", objet:"vente", cible:"b2c", axe:"transformation", texte:"Un parfum inattendu qui va bousculer tes habitudes.", kw:"parfum original surprise nouveaute audace decouverte transformation"},
+  // — Objections fines —
+  {id:"a221", objet:"vente", cible:"b2c", axe:"objection", texte:"« C'est joli, mais ça doit être écœurant. » Pas ici.", kw:"objection ecoeurant sucre apparence moins sucre prejuge"},
+  {id:"a222", objet:"vente", cible:"b2c", axe:"objection", texte:"« Je préfère salé. » On en reparle après le premier essai ?", kw:"objection sale sucre prejuge convertir essayer gout"},
+  {id:"a223", objet:"vente", cible:"b2c", axe:"objection", texte:"« Ça fait cher pour si petit. » La taille n'est pas le sujet.", kw:"objection prix taille petit valeur qualite densité"},
+  {id:"a224", objet:"vente", cible:"b2c", axe:"objection", texte:"« Je surveille ma ligne. » Justement, moins de sucre.", kw:"objection ligne diet sucre leger equilibre moins sucre"},
+  {id:"a225", objet:"vente", cible:"b2c", axe:"objection", texte:"« Les macarons du commerce m'ont déçu. » Les miens ne sont pas ceux-là.", kw:"objection commerce industriel decu difference artisanal qualite"},
+  // — Anti-gaspi / stock —
+  {id:"a226", objet:"vente", cible:"b2c", axe:"situation", texte:"Fin de journée au marché : les derniers partent à prix doux.", kw:"marche fin journee destockage anti-gaspi prix urgence"},
+  {id:"a227", objet:"vente", cible:"b2c", axe:"situation", texte:"Trois boîtes en trop aujourd'hui. Premier arrivé, premier régalé.", kw:"stock surplus disponible urgence anti-gaspi premier"},
+  // — Fidélité / communauté —
+  {id:"a228", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Tu fais partie des habitués ? Cette fournée est un peu pour toi.", kw:"fidelite habitue communaute reconnaissance client lien"},
+  {id:"a229", objet:"vente", cible:"b2c", axe:"transformation", texte:"Ils étaient sceptiques. Ils sont devenus mes meilleurs ambassadeurs.", kw:"preuve fidelite sceptique ambassadeur bouche a oreille client"},
+  {id:"a230", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Chaque commande me fait vraiment plaisir. Ce n'est pas une formule.", kw:"valeurs gratitude authentique client artisan proximite lien"},
+  // — B2C émotion / self-care —
+  {id:"a231", objet:"vente", cible:"b2c", axe:"desir", texte:"Prendre soin de soi commence parfois par une simple coque.", kw:"self-care soi douceur bien-etre moment emotion plaisir"},
+  {id:"a232", objet:"vente", cible:"b2c", axe:"desir", texte:"Tu donnes beaucoup aux autres. Garde-t'en un peu.", kw:"self-care soi meriter don plaisir emotion parenthese"},
+  {id:"a233", objet:"vente", cible:"b2c", axe:"desir", texte:"Une mauvaise journée ne résiste pas longtemps à une bonne coque.", kw:"reconfort mauvaise journee emotion douceur moment plaisir"},
+  // — B2B événementiel élargi —
+  {id:"a234", objet:"vente", cible:"b2b", axe:"situation", texte:"Baby shower : la douceur qui accompagne l'attente.", kw:"baby shower evenement personnalise occasion b2b naissance"},
+  {id:"a235", objet:"vente", cible:"b2b", axe:"situation", texte:"EVJF : la touche gourmande qui rend la journée inoubliable.", kw:"evjf enterrement vie jeune fille evenement occasion b2b"},
+  {id:"a236", objet:"vente", cible:"b2b", axe:"situation", texte:"Inauguration de boutique : marquez l'ouverture avec goût.", kw:"inauguration boutique ouverture evenement professionnel b2b"},
+  {id:"a237", objet:"vente", cible:"b2b", axe:"situation", texte:"Baptême, communion : un dessert à la hauteur de l'émotion.", kw:"bapteme communion evenement familial occasion b2b ceremonie"},
+  {id:"a238", objet:"vente", cible:"b2b", axe:"desir", texte:"Vos coffrets de fin d'année, mémorables plutôt qu'oubliés.", kw:"fin annee coffret client entreprise voeux b2b premium"},
+  {id:"a239", objet:"vente", cible:"b2b", axe:"transformation", texte:"Le même budget dessert, un tout autre effet sur vos invités.", kw:"budget dessert effet invites valeur b2b evenement difference"},
+  {id:"a240", objet:"vente", cible:"b2b", axe:"objection", texte:"« On a peu de temps pour organiser. » Je simplifie tout.", kw:"objection temps organisation simplicite b2b prestataire delai"},
+  {id:"a241", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Un partenaire local qui répond, pas un service client à l'étranger.", kw:"valeurs local reactif humain b2b relation proximite partenaire"},
+  {id:"a242", objet:"vente", cible:"b2b", axe:"desir", texte:"Séminaire réussi : on retient la pause autant que le contenu.", kw:"seminaire pause entreprise memorable b2b corporate evenement"},
+  {id:"a243", objet:"vente", cible:"b2b", axe:"transformation", texte:"Vos couleurs, votre logo, jusque dans l'assiette. Effet garanti.", kw:"personnalisation logo couleur assiette branding b2b effet"},
+  // — Coaching élargi —
+  {id:"a244", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tes coques s'étalent en flaque au lieu de rester rondes ?", kw:"coque etale flaque macaronnage technique probleme coaching"},
+  {id:"a245", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tu passes plus de temps à nettoyer qu'à réussir ?", kw:"coaching frustration temps nettoyage rate decouragement"},
+  {id:"a246", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Le jour J, tes macarons te lâchent devant tout le monde ?", kw:"coaching stress evenement rate pression fiabilite technique"},
+  {id:"a247", objet:"coaching", cible:"b2c", axe:"objection", texte:"« Je n'ai pas le temps pour un cours. » Une séance ciblée suffit.", kw:"objection temps cours seance ciblee coaching efficace rapide"},
+  {id:"a248", objet:"coaching", cible:"b2c", axe:"objection", texte:"« Ça coûte cher, un coaching. » Combien te coûtent tes ratés ?", kw:"objection prix coaching cout rate gaspillage valeur retour"},
+  {id:"a249", objet:"coaching", cible:"b2c", axe:"desir", texte:"Imagine ne plus jamais stresser en ouvrant ton four.", kw:"coaching desir serenite four confiance maitrise projection"},
+  {id:"a250", objet:"coaching", cible:"b2c", axe:"transformation", texte:"De « je n'y arriverai jamais » à « je recommence ce week-end ».", kw:"coaching transformation confiance progres motivation reussite"},
+  {id:"a251", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Je ne juge pas tes ratés. Je les ai tous faits avant toi.", kw:"coaching empathie rate jugement parcours legitimite bienveillance"},
+  {id:"a252", objet:"coaching", cible:"b2c", axe:"situation", texte:"Un atelier entre amies, des rires et des macarons réussis.", kw:"atelier amies groupe convivial coaching moment plaisir"},
+  {id:"a253", objet:"coaching", cible:"b2b", axe:"desir", texte:"Et si ta passion devenait ta prochaine reconversion ?", kw:"reconversion passion projet professionnel coaching b2b lancer"},
+  // — Preuve / qualité —
+  {id:"a254", objet:"vente", cible:"b2c", axe:"transformation", texte:"Regarde de près : voilà ce qu'il y a dans une coque honnête.", kw:"preuve transparence ingredient qualite gros plan honnete"},
+  {id:"a255", objet:"vente", cible:"b2c", axe:"transformation", texte:"Deux jours de travail, cinq secondes de plaisir. Ça vaut le coup.", kw:"preuve travail temps plaisir valeur effort qualite"},
+  {id:"a256", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Le beurre noisette, je le fais moi-même. Comme tout le reste.", kw:"valeurs fait-main beurre noisette artisanal detail savoir-faire"},
+  {id:"a257", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Pas de poudre magique. Juste du temps et de bons produits.", kw:"valeurs naturel ingredient simplicite qualite transparence"},
+  // — Signature / marque —
+  {id:"a258", objet:"vente", cible:"both", axe:"valeurs", texte:"Moins de sucre, plus de sensation. Trois ans que j'y crois.", kw:"signature slogan philosophie marque moins sucre conviction"},
+  {id:"a259", objet:"vente", cible:"both", axe:"transformation", texte:"On ne revient pas en arrière après un vrai bon macaron.", kw:"transformation preuve difference fidelite qualite point de non retour"},
+  {id:"a260", objet:"vente", cible:"b2c", axe:"desir", texte:"La gourmandise intelligente : tout le plaisir, moins l'excès.", kw:"desir gourmandise intelligente moins sucre equilibre plaisir signature"},
+  // — Saisons —
+  {id:"a261", objet:"vente", cible:"b2c", axe:"situation", texte:"Le printemps arrive dans les parfums avant d'arriver dehors.", kw:"printemps saison parfum fruit frais nouveaute occasion"},
+  {id:"a262", objet:"vente", cible:"b2c", axe:"situation", texte:"L'été, c'est la saison des fruits et des coques légères.", kw:"ete saison fruit leger frais parfum occasion"},
+  {id:"a263", objet:"vente", cible:"b2c", axe:"situation", texte:"L'automne a le goût de la noisette et du réconfort.", kw:"automne saison noisette reconfort chaud parfum occasion"},
+  {id:"a264", objet:"vente", cible:"b2c", axe:"situation", texte:"L'hiver appelle les parfums qui réchauffent le cœur.", kw:"hiver saison chaud epice reconfort parfum occasion"},
+  // — Cadeaux occasions perso —
+  {id:"a265", objet:"vente", cible:"b2c", axe:"situation", texte:"Un merci qui se mange marque plus qu'un merci qui se dit.", kw:"remerciement cadeau merci attention occasion gourmand"},
+  {id:"a266", objet:"vente", cible:"b2c", axe:"situation", texte:"Pendaison de crémaillère : arrive avec ce qu'on retiendra.", kw:"cremaillere invitation cadeau occasion memorable soiree"},
+  {id:"a267", objet:"vente", cible:"b2c", axe:"situation", texte:"Anniversaire d'un gourmand : joue la carte de la surprise.", kw:"anniversaire cadeau gourmand surprise occasion personnalise"},
+  {id:"a268", objet:"vente", cible:"b2c", axe:"situation", texte:"Un départ, un pot, une bonne nouvelle : ça se fête en coques.", kw:"pot depart nouvelle celebration occasion bureau partage"},
+  // — Urgence douce / dispo —
+  {id:"a269", objet:"vente", cible:"b2c", axe:"situation", texte:"Commande avant jeudi soir, savoure dès le week-end.", kw:"delai commande jeudi week-end anticiper disponible urgence"},
+  {id:"a270", objet:"vente", cible:"b2c", axe:"situation", texte:"Les créneaux du week-end se remplissent vite.", kw:"creneau week-end disponibilite reserver urgence limite"},
+  // — Objection conservation / praticité —
+  {id:"a271", objet:"vente", cible:"b2c", axe:"objection", texte:"« Ça tient combien de temps ? » Le temps de les savourer, pas plus.", kw:"objection conservation duree frais moins sucre savourer"},
+  {id:"a272", objet:"vente", cible:"b2c", axe:"objection", texte:"« Je ne serai pas là à la livraison. » On s'arrange toujours.", kw:"objection livraison retrait flexibilite arrangement pratique"},
+  // — B2C aspirationnel —
+  {id:"a273", objet:"vente", cible:"b2c", axe:"desir", texte:"Le luxe discret d'un plaisir qu'on s'offre sans occasion.", kw:"luxe discret plaisir soi sans occasion desir premium"},
+  {id:"a274", objet:"vente", cible:"b2c", axe:"transformation", texte:"Offrir mes macarons, c'est offrir un petit morceau d'exception.", kw:"cadeau offrir exception qualite premium transformation image"},
+  {id:"a275", objet:"vente", cible:"b2c", axe:"desir", texte:"Certains plaisirs ne se justifient pas. Ils se savourent.", kw:"plaisir sans justification savourer desir spontane emotion"},
+  // — Coaching résultats concrets —
+  {id:"a276", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Une collerette régulière, ce n'est pas de la chance. C'est un réglage.", kw:"coaching collerette regularite methode reglage technique fiable"},
+  {id:"a277", objet:"coaching", cible:"b2c", axe:"desir", texte:"Le plaisir de photographier TA plaque parfaite, enfin.", kw:"coaching reussite plaque photo fierte esthetique desir"},
+  {id:"a278", objet:"coaching", cible:"b2c", axe:"objection", texte:"Tu n'as pas raté. Tu n'as juste pas encore le bon repère.", kw:"objection rate repere technique reframe encouragement coaching"},
+  // — Divers vente —
+  {id:"a279", objet:"vente", cible:"b2c", axe:"douleur", texte:"En avoir marre des desserts qui promettent et déçoivent.", kw:"douleur dessert decevoir promesse qualite frustration"},
+  {id:"a280", objet:"vente", cible:"b2c", axe:"transformation", texte:"Le genre de boîte qu'on prend en photo avant d'y toucher.", kw:"preuve coffret beau presentation esthetique photo qualite"},
+  // — B2B fidélisation / RSE —
+  {id:"a281", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Choisir local et artisanal, c'est aussi une décision d'image.", kw:"valeurs local artisanal rse image marque b2b responsable"},
+  {id:"a282", objet:"vente", cible:"b2b", axe:"desir", texte:"Un cadeau qui raconte vos valeurs mieux qu'un discours.", kw:"cadeau valeurs image marque b2b storytelling premium"},
+  {id:"a283", objet:"vente", cible:"b2b", axe:"objection", texte:"« Et si la qualité n'était pas au rendez-vous ? » Goûtez avant.", kw:"objection qualite risque degustation b2b rassurer preuve"},
+  // — Moments consommation supplémentaires —
+  {id:"a284", objet:"vente", cible:"b2c", axe:"desir", texte:"Le brunch du week-end n'attend plus que ta touche gourmande.", kw:"brunch week-end partage moment convivial consommation"},
+  {id:"a285", objet:"vente", cible:"b2c", axe:"desir", texte:"Un thé entre copines, et la boîte qui lance les confidences.", kw:"the copines partage moment convivial consommation douceur"},
+  // — Éducatif produit —
+  {id:"a286", objet:"vente", cible:"b2c", axe:"transformation", texte:"Sais-tu pourquoi un vrai macaron demande deux jours ?", kw:"educatif maturation deux jours technique qualite pedagogie"},
+  {id:"a287", objet:"vente", cible:"b2c", axe:"transformation", texte:"La maturation, ce secret qui fond coque et garniture ensemble.", kw:"educatif maturation technique qualite secret harmonie"},
+  // — Émotion / lien —
+  {id:"a288", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Derrière chaque boîte, quelqu'un qui y a mis du cœur. Vraiment.", kw:"valeurs coeur artisan authentique emotion humain lien"},
+  {id:"a289", objet:"vente", cible:"b2c", axe:"desir", texte:"Il y a des douceurs qu'on partage, et d'autres qu'on garde secrètes.", kw:"desir partage secret plaisir soi gourmandise emotion"},
+  {id:"a290", objet:"vente", cible:"both", axe:"transformation", texte:"La différence entre bon et inoubliable tient dans les détails.", kw:"transformation difference detail qualite excellence inoubliable"},
+  // — Dernières accroches variées —
+  {id:"a291", objet:"vente", cible:"b2c", axe:"situation", texte:"Marché de Noël : viens repartir les bras chargés de douceurs.", kw:"marche noel decembre stand occasion fetes venir"},
+  {id:"a292", objet:"vente", cible:"b2c", axe:"desir", texte:"Le dessert qui transforme un repas ordinaire en petit événement.", kw:"desir dessert repas ordinaire evenement moment transformation"},
+  {id:"a293", objet:"coaching", cible:"b2c", axe:"desir", texte:"Le déclic technique qui change tout, parfois en une heure.", kw:"coaching declic technique rapide progres transformation seance"},
+  {id:"a294", objet:"vente", cible:"b2b", axe:"situation", texte:"Salon professionnel : votre stand mérite une pause qui se remarque.", kw:"salon professionnel stand pause b2b evenement remarque"},
+  {id:"a295", objet:"vente", cible:"b2c", axe:"objection", texte:"« Trop beau pour être bon » : le préjugé le plus vite démenti.", kw:"objection beau bon prejuge qualite gout dementi preuve"},
+  {id:"a296", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Je préfère faire moins, mais faire bien. Toujours.", kw:"valeurs qualite quantite artisanal exigence choix fait-main"},
+  {id:"a297", objet:"vente", cible:"b2c", axe:"desir", texte:"Ce petit bonheur simple qui tient dans le creux de la main.", kw:"desir bonheur simple plaisir moment douceur emotion"},
+  {id:"a298", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Tes proches vont finir par te réclamer tes macarons.", kw:"coaching reussite proches demande fierte transformation"},
+  {id:"a299", objet:"vente", cible:"b2c", axe:"situation", texte:"Saint-Valentin : fais fondre, pour de vrai cette fois.", kw:"saint valentin fevrier amour cadeau romantique occasion"},
+  {id:"a300", objet:"vente", cible:"both", axe:"valeurs", texte:"Trois ans, des milliers de coques, une seule exigence : le vrai.", kw:"valeurs parcours experience exigence qualite marque bilan"},
+  // — 50 accroches supplémentaires (angles variés) —
+  {id:"a301", objet:"vente", cible:"b2c", axe:"douleur", texte:"Le supermarché à 18h, personne n'a envie de ça.", kw:"douleur supermarche corvee courses alternative dernier moment"},
+  {id:"a302", objet:"vente", cible:"b2c", axe:"desir", texte:"S'offrir douze petites raisons de sourire cette semaine.", kw:"desir plaisir boite douze sourire semaine moment"},
+  {id:"a303", objet:"vente", cible:"b2c", axe:"transformation", texte:"Le silence à table quand la boîte s'ouvre : ça, c'est un avis.", kw:"preuve silence reaction invites qualite effet degustation"},
+  {id:"a304", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Chaque parfum a son histoire, son ingrédient choisi avec soin.", kw:"valeurs parfum histoire ingredient soin qualite artisanal"},
+  {id:"a305", objet:"vente", cible:"b2c", axe:"objection", texte:"« J'en ai déjà mangé des bofs. » Pas encore les bons.", kw:"objection deja gouté decu difference qualite convertir"},
+  {id:"a306", objet:"vente", cible:"b2b", axe:"desir", texte:"L'attention premium qui fidélise sans en avoir l'air.", kw:"cadeau client fidelisation premium subtil b2b attention"},
+  {id:"a307", objet:"vente", cible:"b2b", axe:"transformation", texte:"Un logo sur une coque, mille sourires dans la salle.", kw:"personnalisation logo coque evenement impact b2b sourire"},
+  {id:"a308", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Encore une fournée à la poubelle ? Ça peut s'arrêter là.", kw:"coaching rate poubelle gaspillage frustration solution"},
+  {id:"a309", objet:"coaching", cible:"b2c", axe:"objection", texte:"Cent vidéos vues, zéro réussite ? Le problème n'est pas toi.", kw:"objection video tuto echec generique diagnostic coaching"},
+  {id:"a310", objet:"vente", cible:"b2c", axe:"situation", texte:"Il pleut. C'est exactement le temps d'une commande gourmande.", kw:"pluie meteo cocooning moment reconfort commande consommation"},
+  {id:"a311", objet:"vente", cible:"b2c", axe:"desir", texte:"Certains matins méritent mieux qu'une biscotte.", kw:"matin petit dejeuner plaisir alternative douceur moment"},
+  {id:"a312", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Fait ce matin, mangé cette semaine. Le frais, c'est non négociable.", kw:"valeurs frais quotidien qualite fait-main non negociable"},
+  {id:"a313", objet:"vente", cible:"b2c", axe:"transformation", texte:"« Où tu as acheté ça ? » La question que tu vas entendre.", kw:"preuve question reaction qualite invites effet bouche a oreille"},
+  {id:"a314", objet:"vente", cible:"b2b", axe:"situation", texte:"Team building gourmand : soudez vos équipes autour du bon.", kw:"team building entreprise equipe evenement b2b convivial"},
+  {id:"a315", objet:"vente", cible:"b2b", axe:"objection", texte:"« On a un budget serré. » Parlons formats, pas renoncement.", kw:"objection budget serre format solution b2b flexibilite"},
+  {id:"a316", objet:"coaching", cible:"b2c", axe:"desir", texte:"Le week-end où tu réussiras enfin, tu t'en souviendras.", kw:"coaching reussite week-end projection fierte encouragement"},
+  {id:"a317", objet:"vente", cible:"b2c", axe:"desir", texte:"Une bouchée, et le mardi ressemble un peu au dimanche.", kw:"desir quotidien mardi plaisir douceur moment consommation"},
+  {id:"a318", objet:"vente", cible:"b2c", axe:"objection", texte:"« C'est un achat plaisir, pas raisonnable. » Justement.", kw:"objection plaisir raisonnable achat justification desir permission"},
+  {id:"a319", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Zéro conservateur. Ça veut dire frais, donc meilleur.", kw:"valeurs conservateur frais naturel qualite transparence"},
+  {id:"a320", objet:"vente", cible:"both", axe:"transformation", texte:"Goûter, c'est comprendre. Et après, on ne triche plus.", kw:"transformation gout comprendre difference fidelite preuve"},
+  {id:"a321", objet:"vente", cible:"b2c", axe:"situation", texte:"Cette semaine, un nouveau parfum débarque à la carte.", kw:"nouveaute parfum semaine lancement carte disponible"},
+  {id:"a322", objet:"vente", cible:"b2c", axe:"desir", texte:"Le plaisir se mérite ? Non. Il se choisit.", kw:"desir plaisir permission choix soi spontane emotion"},
+  {id:"a323", objet:"vente", cible:"b2c", axe:"douleur", texte:"Le cadeau générique, celui qu'on offre sans y penser vraiment.", kw:"douleur cadeau generique impersonnel attention difference"},
+  {id:"a324", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Je ne t'apprends pas une recette. Je t'apprends à ne plus rater.", kw:"coaching methode autonomie comprendre transmission valeurs"},
+  {id:"a325", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Derrière votre commande, une personne joignable, pas un formulaire.", kw:"valeurs humain reactif relation b2b proximite service"},
+  {id:"a326", objet:"vente", cible:"b2c", axe:"transformation", texte:"Un cadeau qu'on n'ose pas jeter tellement la boîte est belle.", kw:"preuve coffret beau presentation emballage qualite garder"},
+  {id:"a327", objet:"vente", cible:"b2c", axe:"desir", texte:"Le petit rituel gourmand qui structure ta semaine.", kw:"desir rituel semaine habitude plaisir moment consommation"},
+  {id:"a328", objet:"vente", cible:"b2c", axe:"situation", texte:"Un imprévu ? J'ai souvent ce qu'il te faut, et vite.", kw:"situation imprevu urgence disponible rapide depannage"},
+  {id:"a329", objet:"vente", cible:"b2c", axe:"objection", texte:"« Je ne sais pas quels parfums choisir. » On t'aide, c'est le plaisir.", kw:"objection choix parfum indecision accompagnement conseil"},
+  {id:"a330", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Le fait-main a des imperfections. C'est là qu'est le charme.", kw:"valeurs fait-main imperfection charme artisanal authenticite"},
+  {id:"a331", objet:"vente", cible:"b2c", axe:"desir", texte:"Douze coques, douze petites promesses de plaisir.", kw:"desir boite douze plaisir promesse gourmandise assortiment"},
+  {id:"a332", objet:"coaching", cible:"b2c", axe:"situation", texte:"Offrir un atelier, c'est offrir un souvenir qui reste.", kw:"atelier cadeau experience souvenir offrir coaching occasion"},
+  {id:"a333", objet:"vente", cible:"b2b", axe:"desir", texte:"Vos clients VIP méritent mieux qu'une carte de vœux.", kw:"cadeau client vip voeux coffret b2b premium fidelisation"},
+  {id:"a334", objet:"vente", cible:"b2c", axe:"transformation", texte:"Ceux qui « n'aiment pas » repartent souvent avec une boîte.", kw:"preuve objection convertir surprise gout qualite"},
+  {id:"a335", objet:"vente", cible:"b2c", axe:"situation", texte:"La fournée du matin est en ligne. Elle part vite.", kw:"situation fournee matin disponible urgence frais limite"},
+  {id:"a336", objet:"vente", cible:"b2c", axe:"desir", texte:"Se faire plaisir sans le pic de sucre qui plombe.", kw:"desir plaisir moins sucre leger equilibre sensation"},
+  {id:"a337", objet:"coaching", cible:"b2c", axe:"douleur", texte:"La recette parfaite existe. Le geste, c'est autre chose.", kw:"coaching recette geste technique difference macaronnage"},
+  {id:"a338", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Ici, on connaît le nom de ses clients. Pas leur numéro.", kw:"valeurs proximite humain relation client artisan local"},
+  {id:"a339", objet:"vente", cible:"b2b", axe:"transformation", texte:"Le détail gourmand dont vos invités parleront encore lundi.", kw:"preuve evenement detail memorable invites qualite b2b"},
+  {id:"a340", objet:"vente", cible:"b2c", axe:"desir", texte:"Le bonheur, parfois, c'est juste une coque et un peu de temps.", kw:"desir bonheur simple moment plaisir douceur emotion"},
+  {id:"a341", objet:"vente", cible:"b2c", axe:"objection", texte:"« C'est un peu cher. » Le vrai luxe, c'est de savoir ce qu'on mange.", kw:"objection prix luxe transparence qualite valeur ingredient"},
+  {id:"a342", objet:"vente", cible:"b2c", axe:"situation", texte:"Un anniversaire oublié ? Je te sauve la mise, joliment.", kw:"situation anniversaire oubli urgence depannage cadeau rapide"},
+  {id:"a343", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Passer de la panique à la maîtrise, séance après séance.", kw:"coaching transformation panique maitrise progres confiance"},
+  {id:"a344", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Vanille de Madagascar, citron bio : je choisis, tu savoures.", kw:"valeurs ingredient premium vanille citron bio qualite"},
+  {id:"a345", objet:"vente", cible:"both", axe:"desir", texte:"La gourmandise sans l'écœurement. C'est toute la promesse.", kw:"desir gourmandise moins sucre equilibre signature promesse"},
+  {id:"a346", objet:"vente", cible:"b2c", axe:"transformation", texte:"« On dirait une grande maison. » Non : une petite, du Mans.", kw:"preuve qualite local le mans artisanal fierte comparaison"},
+  {id:"a347", objet:"vente", cible:"b2c", axe:"situation", texte:"Le froid s'installe : place aux parfums qui réconfortent.", kw:"hiver froid saison parfum reconfort chaud occasion"},
+  {id:"a348", objet:"coaching", cible:"b2c", axe:"desir", texte:"Et si, cette fois, c'était la bonne fournée ?", kw:"coaching desir reussite fournee espoir encouragement projection"},
+  {id:"a349", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Le luxe accessible d'un vrai bon macaron, sans chichi.", kw:"valeurs luxe accessible qualite simplicite premium gourmandise"},
+  {id:"a350", objet:"vente", cible:"both", axe:"transformation", texte:"Une bouchée, et le préjugé « trop sucré » s'effondre.", kw:"transformation objection trop sucre convertir gout preuve"},
+];
+
+const SC_TEXTES_LOT = [
+  {id:"t106", objet:"vente", cible:"b2c", axe:"situation", texte:"On est en janvier, tout le monde a sa galette. Mais toi, tu connais ce moment gênant : quelqu'un autour de la table n'aime pas la frangipane et fait semblant. Cette année, pose aussi une boîte de macarons à côté. Personne ne fera plus semblant, et tu passeras pour celui qui pense à tout.", cta:"Commande ta boîte de janvier 📩", kw:"epiphanie galette janvier alternative occasion invites projection"},
+  {id:"t107", objet:"vente", cible:"b2c", axe:"situation", texte:"La Saint-Valentin arrive, et tu hésites entre le bouquet qui fanera dans trois jours et le énième dîner. Et si tu offrais autre chose : un écrin de macarons aux parfums choisis, présenté avec soin, qui se savoure à deux, lentement. Un cadeau qui dure le temps d'un vrai moment partagé.", cta:"Commande ton écrin Saint-Valentin 💛", kw:"saint valentin amour cadeau romantique ecrin projection partage"},
+  {id:"t108", objet:"vente", cible:"b2c", axe:"desir", texte:"Il est 16h, la fatigue tombe, et tu sens que si tu ne fais rien pour toi maintenant, la journée va finir en pilote automatique. Alors tu t'accordes exactement ça : un café, une coque qui fond, cinq minutes où le monde attend. Pas un excès — une respiration. C'est fou ce qu'une petite douceur bien faite peut réparer.", cta:"Offre-toi ta pause de 16h 🤍", kw:"pause 16h fatigue soi moment respiration projection identification"},
+  {id:"t109", objet:"vente", cible:"b2c", axe:"objection", texte:"« C'est joli, mais ça doit être écœurant. » Je l'entends souvent, et je comprends : la plupart des macarons du commerce sont des bombes de sucre. Les miens sont pensés à l'inverse. En réduisant le sucre, j'oblige la vanille, le chocolat, la noisette à être vraiment bons. Résultat : tu sens le parfum, pas l'écœurement. Goûte, et ce préjugé tombe.", cta:"Laisse-toi surprendre 📩", kw:"objection ecoeurant sucre prejuge moins sucre credibilite convertir"},
+  {id:"t109b", objet:"vente", cible:"b2c", axe:"objection", texte:"« Je surveille ma ligne, je vais craquer. » Justement, parlons-en. Un macaron pensé réduit en sucre, dégusté en pleine conscience, ça n'a rien à voir avec grignoter un paquet entier de biscuits industriels. Tu prends une vraie douceur, tu la savoures, et tu es rassasié par le plaisir, pas par la quantité. C'est ça, la gourmandise intelligente.", cta:"Savoure sans culpabiliser 🤍", kw:"objection ligne diet sucre moins sucre equilibre plaisir conscience"},
+  {id:"t110", objet:"vente", cible:"b2c", axe:"transformation", texte:"Une cliente m'a dit un jour, presque désolée : « Je n'aime pas les macarons. » Je lui ai tendu un citron-basilic, sans un mot, sans insister. Elle a croqué. Il y a eu ce petit silence, puis : « Attends… c'est pas du tout ce que je pensais. » Elle est repartie avec une boîte de douze. Ce n'est jamais moi qui convaincs. C'est le goût.", cta:"Laisse le goût parler 📩", kw:"objection convertir temoignage citron histoire client storytelling preuve"},
+  {id:"t111", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Ce matin, l'atelier sentait la vanille de Madagascar et le beurre noisette que je fais moi-même. J'ai poché une à une, guetté la collerette à travers la vitre du four, croisé les doigts comme à chaque fournée. Celle-ci est encore tiède. Elle ne passera pas la journée, parce que le frais ne se stocke pas, il se savoure vite. Si tu la veux, c'est maintenant.", cta:"Réserve la fournée du jour 📩", kw:"coulisses fournee matin frais sensoriel urgence storytelling authenticite"},
+  {id:"t112", objet:"vente", cible:"b2c", axe:"desir", texte:"Il pleut, tu es sous le plaid, une série tourne. Il ne manque qu'une chose à ce tableau : quelque chose de bon à faire fondre lentement, sans culpabilité. Pas un paquet ouvert distraitement — une vraie coque, un parfum que tu aimes, un plaisir choisi. Ces soirs-là existent pour ça. Autant les faire bien.", cta:"Compose ta soirée cocooning 🤍", kw:"soir cocooning pluie plaid moment plaisir projection consommation"},
+  {id:"t113", objet:"vente", cible:"b2c", axe:"situation", texte:"Les fêtes arrivent plus vite qu'on ne croit. Chaque année, la même histoire : on s'y prend au dernier moment, et les bonnes adresses sont déjà complètes. Cette fois, prends de l'avance. Réserve tes coffrets festifs maintenant, choisis les parfums tranquillement, et savoure la seule chose qui compte le jour J : être présent, pas débordé.", cta:"Anticipe tes coffrets de fêtes 🎄", kw:"noel fetes anticiper coffret saison projection organisation urgence"},
+  {id:"t114", objet:"vente", cible:"b2c", axe:"transformation", texte:"Tu sais ce qui me touche le plus après un événement ? Le message qui arrive le lendemain : « Tout le monde a demandé où on avait acheté ça. » Ce n'est pas de la vantardise, c'est la preuve que la qualité se remarque, même sans étiquette. Un bon macaron n'a pas besoin d'un grand nom. Il a juste besoin d'être vraiment bon.", cta:"Fais parler ta table 🤍", kw:"preuve reaction qualite bouche a oreille temoignage effet projection"},
+  {id:"t115", objet:"vente", cible:"b2b", axe:"transformation", texte:"Imaginez vos invités après la réception. Dans la voiture, sur le trajet retour, la première chose dont ils parlent, ce n'est ni le lieu ni le menu classique — c'est ce dessert à vos couleurs qu'ils n'avaient vu nulle part ailleurs. Un détail bien choisi ne coûte pas plus cher qu'un dessert standard. Mais il transforme un événement correct en souvenir marquant.", cta:"Créez ce souvenir 🥂", kw:"mariage evenement souvenir personnalise image projection benefice b2b"},
+  {id:"t116", objet:"vente", cible:"b2b", axe:"desir", texte:"Vos meilleurs clients croulent sous les cadeaux d'entreprise. Stylos, mugs, goodies floqués : la plupart finissent dans un tiroir, oubliés en cinq minutes. Un coffret de macarons brandé à votre logo, partagé au bureau et dégusté avec plaisir, fait exactement l'inverse. Il crée un moment, et ce moment reste associé à votre marque bien après la dernière bouchée.", cta:"Demandez votre devis coffrets 🥂", kw:"cadeau client goodie coffret logo memorable fidelisation projection b2b"},
+  {id:"t117", objet:"vente", cible:"b2b", axe:"objection", texte:"Confier le dessert de votre grand jour à un artisan, ça peut légitimement inquiéter : l'enjeu est réel, et une défaillance se voit devant tous vos invités. C'est exactement pour ça que je cadre tout en amont : dégustation avant de décider, devis clair, quantités validées, délais engagés par écrit. Vous ne prenez pas un risque. Vous prenez un partenaire aussi investi que vous dans la réussite.", cta:"Sécurisons votre jour J 📩", kw:"objection artisan risque credibilite devis fiabilite b2b rassurer mariage"},
+  {id:"t118", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Repense à ta dernière fournée ratée. La déception en ouvrant le four, les coques fissurées ou plates, cette petite voix qui dit « je n'y arriverai jamais ». Maintenant imagine la scène inverse : tu ouvres le four et elles sont là, lisses, brillantes, une collerette nette sur chacune. Tu photographies avant même d'y toucher. Cette image n'est pas un rêve inaccessible. Elle est à deux ou trois réglages de toi.", cta:"Rends cette image réelle 🎯", kw:"coaching rate reussite projection collerette identification transformation four"},
+  {id:"t119", objet:"coaching", cible:"b2c", axe:"objection", texte:"« Je n'ai pas la main pour la pâtisserie. » Je l'entends à chaque première séance, et à chaque fois c'est faux. La main, ça n'existe pas : il y a juste des gestes qu'on connaît ou qu'on ignore, des repères qu'on a ou qu'on n'a pas encore. Moi non plus, je ne les avais pas au début — je les ai appris dans la galère, fournée après fournée. Et c'est précisément ce chemin-là que je te fais gagner.", cta:"La main, ça s'apprend 🎯", kw:"objection don talent inne coaching empathie credibilite methode identification"},
+  {id:"t120", objet:"coaching", cible:"b2c", axe:"objection", texte:"« Un coaching, ça coûte cher. » Retournons la question : combien te coûtent tes ratés ? Les blancs d'œufs, la poudre d'amande, l'électricité du four, et surtout le temps et le moral. Une séance ciblée, c'est justement ce qui arrête l'hémorragie : on identifie les deux ou trois erreurs qui te font tout jeter, et tu arrêtes de gaspiller. Le vrai coût, c'est de continuer à rater seul.", cta:"Arrête de gaspiller 🎯", kw:"objection prix coaching cout rate gaspillage valeur retour investissement"},
+  {id:"t121", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Je ne te vendrai jamais une méthode miracle, et je ne te jugerai jamais sur tes ratés — je les ai tous faits avant toi, souvent plusieurs fois. Faire de beaux macarons demande de la rigueur, je serai honnête là-dessus. Mais je te promets une chose : le jour où tu comprendras POURQUOI ça marche, tu ne rateras plus jamais par hasard. Ce déclic, cette autonomie, c'est ce que je te transmets.", cta:"Trouve ton déclic 🎯", kw:"valeurs honnete credibilite methode comprendre autonomie coaching bienveillance"},
+  {id:"t122", objet:"coaching", cible:"b2c", axe:"desir", texte:"Projette-toi une seconde : le jour où tu tendras une boîte de TES macarons en disant « c'est moi qui les ai faits », et où tu verras cette lueur de surprise et d'admiration dans les yeux d'en face. Cette fierté-là ne s'achète pas, elle se construit, geste après geste. Et le chemin pour y arriver est bien plus court que tu ne l'imagines aujourd'hui.", cta:"Vis cette fierté 🎯", kw:"coaching desir fierte projection offrir fait-maison emotion reussite identification"},
+  {id:"t123", objet:"vente", cible:"b2c", axe:"situation", texte:"Un nouveau parfum vient d'arriver à la carte, et comme toujours, il suit la saison : il arrivera, il repartira, il ne s'installera pas. C'est le principe même de travailler avec les fruits du moment. Si tu le vois aujourd'hui, c'est le bon moment pour le goûter — parce que dans quelques semaines, il aura laissé sa place au suivant.", cta:"Découvre la nouveauté 📩", kw:"nouveaute parfum saison edition limitee urgence fruit disponible"},
+  {id:"t124", objet:"vente", cible:"b2c", axe:"desir", texte:"Il y a deux façons de manger un macaron. Le premier, tu le mords vite, distrait, entre deux mails. Le second, tu le laisses fondre : tu sens la coque céder, la garniture arriver, le parfum se déployer. Trois secondes de vrai plaisir. Les miens sont faits pour cette deuxième façon — moins de sucre pour que chaque note compte, plus de sensation pour que ça vaille la peine de ralentir.", cta:"Prends le temps de savourer 🤍", kw:"desir sensoriel savourer lenteur plaisir moins sucre projection consommation"},
+  {id:"t125", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Le premier macaron que j'ai vraiment réussi, je l'ai regardé cinq bonnes minutes avant d'oser le manger. Après des semaines d'échecs seule dans ma cuisine pendant le confinement, cette petite collerette dentelée valait tout l'or du monde. J'ai crié de joie, seule. C'est ce jour-là que Sensations Macarons a commencé — dans la persévérance, pas dans le talent. Chaque boîte porte encore ce jour.", cta:"Goûte l'histoire, une coque à la fois 🤍", kw:"storytelling histoire collerette parcours covid persévérance emotion authenticite"},
+  {id:"t126", objet:"vente", cible:"b2b", axe:"situation", texte:"Votre séminaire est calé, le programme est dense, tout est prêt — sauf peut-être ce moment de pause que personne ne retiendra. Pourtant, c'est souvent là qu'on crée du lien. Une pause gourmande soignée, à votre image, transforme un simple café en instant de standing qui valorise votre événement. On se souvient d'un séminaire autant par ses pauses que par ses slides.", cta:"Parlons de votre événement 📩", kw:"seminaire pause entreprise corporate memorable b2b evenement standing"},
+  {id:"t127", objet:"vente", cible:"b2c", axe:"transformation", texte:"On me demande souvent mon « secret ». La vérité, c'est qu'il n'y en a pas vraiment de caché : des ingrédients premium choisis un par un, du temps qu'on ne compresse pas, et zéro raccourci industriel. La différence est là — dans ce que je mets, et surtout dans ce que je refuse de mettre. Pas d'arôme, pas de conservateur, pas de poudre magique. Juste du vrai.", cta:"Goûte le secret 🤍", kw:"preuve secret ingredient qualite transparence credibilite naturel difference"},
+  {id:"t128", objet:"vente", cible:"b2c", axe:"douleur", texte:"Tu connais ce moment de flottement : l'invitation est ce soir, tu es devant le rayon du supermarché, et rien ne t'inspire. La bouteille, tout le monde l'apporte. Les chocolats, ils finiront oubliés. Et si, pour une fois, tu étais celui dont on parle le lendemain — celui qui a apporté la boîte que personne n'oublie ? Ça change tout, et ça ne demande qu'un peu d'anticipation.", cta:"Sois celui qu'on retient 📩", kw:"douleur cadeau invite soiree panique memorable projection identification anticipation"},
+  {id:"t129", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Dans mon petit atelier, je ne cours pas après le volume. Je compte mes coques une à une, je dose chaque garniture, je surveille chaque cuisson. Ce n'est pas rentable au sens industriel du terme, et tant mieux : c'est la seule façon de faire quelque chose de vraiment bon. Quand tu ouvres une de mes boîtes, tu ne reçois pas un produit de chaîne. Tu reçois du temps et de l'attention.", cta:"Choisis le fait-main 🤍", kw:"valeurs artisanal taille humaine soin volume qualite fait-main attention"},
+  {id:"t130", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tu suis la recette au gramme près, et pourtant tes coques s'étalent en flaques molles au lieu de rester bien rondes. Frustrant, surtout après tout ce soin. Le problème est presque toujours le même : un macaronnage poussé trop loin, une pâte trop liquide. C'est un repère visuel précis qui manque, pas ta patience. Une fois que tu le vois, tu ne le rates plus.", cta:"Corrige ton macaronnage 🎯", kw:"coaching coque etale flaque macaronnage repere technique diagnostic solution"},
+  {id:"t131", objet:"vente", cible:"b2c", axe:"situation", texte:"Le froid s'installe, les jours raccourcissent, et l'envie de réconfort revient. C'est la saison des parfums qui réchauffent : noisette torréfiée, vanille intense, notes épicées. Des coques pensées pour les soirs où l'on se pose, où l'on ralentit, où une douceur bien faite vaut mieux qu'un grand dessert. L'hiver a ses plaisirs. Autant les choisir bons.", cta:"Découvre les parfums d'hiver 🤍", kw:"hiver saison parfum reconfort chaud epice noisette projection consommation"},
+  {id:"t132", objet:"vente", cible:"b2b", axe:"desir", texte:"Un baby shower, un EVJF, une inauguration : ces moments-là sont chargés d'émotion, et le dessert devrait l'être aussi. Des macarons personnalisés aux couleurs du thème, dans un format adapté au nombre d'invités, avec cette touche artisanale qui fait qu'on les remarque : voilà ce qui transforme une jolie fête en fête dont on se souvient. Vos invités méritent ce petit supplément d'attention.", cta:"Personnalisons votre événement 🥂", kw:"baby shower evjf inauguration evenement personnalise theme emotion b2b"},
+  {id:"t133", objet:"vente", cible:"b2c", axe:"desir", texte:"Tu passes tes journées à donner : au travail, à ta famille, aux autres. Et souvent, à la fin, il ne reste plus grand-chose pour toi. Alors voilà une permission : garde-toi une petite douceur. Pas pour une occasion, pas pour te justifier — juste parce que prendre soin de soi commence parfois par un geste tout simple. Une coque, un thé, et cinq minutes rien qu'à toi.", cta:"Garde-t'en un peu 🤍", kw:"self-care soi don meriter plaisir moment permission emotion projection"},
+  {id:"t134", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Elle est arrivée en visio découragée, prête à abandonner après des mois d'échecs. On a regardé ensemble sa pâte, son four, son geste. En une seule séance, on a identifié deux erreurs qu'elle ne voyait pas. La semaine suivante, elle m'envoyait la photo de sa première plaque parfaite, avec un simple mot : « J'ai pleuré. » Ce message-là, c'est toute ma récompense.", cta:"Écris ton propre déclic 🎯", kw:"coaching temoignage visio découragé séance erreur reussite histoire emotion"},
+  {id:"t135", objet:"vente", cible:"b2c", axe:"transformation", texte:"Sais-tu qu'un vrai macaron demande deux jours ? Les coques la veille, une nuit de maturation au frais, le garnissage le lendemain. Cette maturation, c'est elle qui fond doucement la coque et la garniture en une seule bouchée harmonieuse. L'industriel saute cette étape, forcément — elle coûte du temps. Moi, je ne la saute jamais. C'est là que se joue toute la différence en bouche.", cta:"Goûte la différence 🤍", kw:"educatif maturation deux jours technique qualite pedagogie difference credibilite"},
+];
+
+const SC_CTA_LOT = [
+  // commander
+  {id:"c042", objet:"vente", cible:"b2c", type:"commander", texte:"Commande ta boîte du jour 📩", kw:"commander jour frais boite"},
+  {id:"c043", objet:"vente", cible:"b2c", type:"commander", texte:"Compose ton assortiment 🤍", kw:"composer assortiment personnaliser choix"},
+  {id:"c044", objet:"vente", cible:"b2c", type:"commander", texte:"Ta boîte t'attend — commande 📩", kw:"commander boite attente simple"},
+  // reserver
+  {id:"c045", objet:"vente", cible:"b2c", type:"reserver", texte:"Réserve ton créneau du week-end 🗓️", kw:"reserver creneau week-end disponible"},
+  {id:"c046", objet:"vente", cible:"b2c", type:"reserver", texte:"Bloque ta fournée avant rupture ⏳", kw:"reserver fournee rupture urgence bloquer"},
+  {id:"c047", objet:"vente", cible:"b2c", type:"reserver", texte:"Réserve ton coffret de fêtes 🎄", kw:"reserver coffret fetes noel anticiper saison"},
+  // dm
+  {id:"c048", objet:"vente", cible:"b2c", type:"dm", texte:"Un DM et on choisit ensemble tes parfums 📩", kw:"dm message parfum choix accompagnement conseil"},
+  {id:"c049", objet:"vente", cible:"b2c", type:"dm", texte:"Écris-moi, je te guide 🤍", kw:"dm message guide conseil aide contact"},
+  // marche
+  {id:"c050", objet:"vente", cible:"b2c", type:"marche", texte:"Retrouve-moi au marché ce week-end 📍", kw:"marche week-end venir stand rencontre"},
+  {id:"c051", objet:"vente", cible:"b2c", type:"marche", texte:"Save the date — rendez-vous gourmand 📍", kw:"marche date evenement venir annonce"},
+  // decouvrir
+  {id:"c052", objet:"vente", cible:"b2c", type:"decouvrir", texte:"Découvre le parfum de saison ✨", kw:"decouvrir parfum saison nouveaute"},
+  {id:"c053", objet:"vente", cible:"b2c", type:"decouvrir", texte:"Goûte, tu ne reviendras pas en arrière 🤍", kw:"decouvrir gouter difference fidelite qualite"},
+  {id:"c054", objet:"vente", cible:"b2c", type:"decouvrir", texte:"Laisse-toi tenter par la nouveauté 😋", kw:"decouvrir nouveaute tentation parfum desir"},
+  // profil / engagement
+  {id:"c055", objet:"vente", cible:"b2c", type:"profil", texte:"Enregistre pour ta prochaine envie 🔖", kw:"enregistrer sauvegarder profil envie"},
+  {id:"c056", objet:"vente", cible:"b2c", type:"profil", texte:"Tag la personne à qui offrir ça 🤍", kw:"tag partager offrir ami profil engagement"},
+  {id:"c057", objet:"vente", cible:"b2c", type:"profil", texte:"Suis-moi pour ne rater aucune fournée 🔔", kw:"suivre abonner fournee actualite profil"},
+  // saisonnier / occasion
+  {id:"c058", objet:"vente", cible:"b2c", type:"commander", texte:"Commande ton écrin Saint-Valentin 💛", kw:"commander saint valentin ecrin occasion amour"},
+  {id:"c059", objet:"vente", cible:"b2c", type:"commander", texte:"Prépare Pâques autrement 🐣", kw:"commander paques occasion printemps chocolat"},
+  {id:"c060", objet:"vente", cible:"b2c", type:"reserver", texte:"Réserve pour la fête des mères 🤍", kw:"reserver fete meres occasion cadeau maman"},
+  // B2B devis
+  {id:"c061", objet:"vente", cible:"b2b", type:"devis", texte:"Recevez un devis clair sous 48 h 📩", kw:"devis clair delai professionnel rapide"},
+  {id:"c062", objet:"vente", cible:"b2b", type:"devis", texte:"Cadrons vos volumes ensemble 📩", kw:"devis volume cadrer professionnel quantite"},
+  {id:"c063", objet:"vente", cible:"b2b", type:"devis", texte:"Demandez votre devis événement 🥂", kw:"devis evenement professionnel mariage seminaire"},
+  // B2B reserver
+  {id:"c064", objet:"vente", cible:"b2b", type:"reserver", texte:"Réservez votre dégustation pro 🥂", kw:"reserver degustation professionnel evenement rendez-vous"},
+  {id:"c065", objet:"vente", cible:"b2b", type:"reserver", texte:"Bloquons la date de votre événement 🗓️", kw:"reserver date evenement professionnel bloquer"},
+  // B2B decouvrir / perso
+  {id:"c066", objet:"vente", cible:"b2b", type:"decouvrir", texte:"Personnalisons à vos couleurs ✨", kw:"personnaliser couleur logo branding professionnel"},
+  {id:"c067", objet:"vente", cible:"b2b", type:"dm", texte:"Un message, et on construit votre projet 📩", kw:"contact dm projet professionnel collaboration"},
+  // coaching
+  {id:"c068", objet:"coaching", cible:"b2c", type:"reserver", texte:"Réserve ta séance ciblée 🎯", kw:"reserver seance ciblee coaching rendez-vous"},
+  {id:"c069", objet:"coaching", cible:"b2c", type:"dm", texte:"Dis-moi ce qui coince en DM 📩", kw:"dm message probleme diagnostic coaching aide"},
+  {id:"c070", objet:"coaching", cible:"b2c", type:"atelier", texte:"Offre un atelier en cadeau 🎁", kw:"atelier cadeau offrir experience occasion"},
+  {id:"c071", objet:"coaching", cible:"b2c", type:"decouvrir", texte:"Comprends enfin le pourquoi 🎯", kw:"decouvrir comprendre methode technique coaching maitrise"},
+];
+SC_ACCROCHES.push(...SC_ACCROCHES_LOT);
+SC_TEXTES.push(...SC_TEXTES_LOT);
+
+/* ===== RENFORCEMENT NARRATIF v1226 — réécriture des textes faibles ===== */
+/* On ne change QUE le champ `texte` de certains IDs existants (id/objet/cible/
+ * axe/cta inchangés). Objectif : monter le score de persuasion des textes les
+ * plus plats, sans casser IDs (anti-répétition) ni CTA (heuristique). */
+
+const SC_TEXTES_REWRITE = {
+  t010: "Un nouveau parfum vient d'arriver, et comme toujours il suit la saison — il passera, puis laissera sa place. Imagine la première bouchée : ce goût que tu ne retrouveras nulle part dans quelques semaines. Je travaille avec les fruits du moment, jamais figée, toujours fraîche. Le goûter maintenant, c'est saisir un instant qui ne reviendra pas à l'identique.",
+  t031: "La coque est lisse, brillante, parfaite. Tu croques, plein d'espoir… et c'est creux. Tout ce travail pour une coquille vide, cette déception, tu la connais. Je la connais aussi. Le vide vient presque toujours d'une meringue fragile ou d'une cuisson mal réglée — deux choses techniques, mais qui s'expliquent et se corrigent en une seule séance. Imagine ta prochaine fournée, pleine, dense, réussie.",
+  t045: "Il est 7h, l'atelier sent encore le four. Cette fournée, je l'ai faite ce matin, à la main, en quantité limitée — parce que le frais ne se stocke pas, il se savoure vite. Imagine-la posée sur ta table ce week-end, à peine sortie de sa boîte. Si tu la veux, c'est maintenant : quand elle est partie, elle est partie.",
+  t049: "Repense à ta dernière plaque ratée, cette envie de tout laisser tomber. Maintenant imagine l'inverse : des coques lisses, une collerette nette, TA plaque parfaite que tu photographies avant d'y toucher. Elle est plus proche que tu ne crois — souvent, il ne manque qu'un seul déclic. On le trouve ensemble ?",
+  t050: "Vos meilleurs clients croulent sous les goodies oubliés en cinq minutes. Imaginez l'inverse : un coffret de macarons à votre logo, partagé au bureau, dont on reparle le lendemain. Ce n'est pas une dépense de plus — c'est une émotion associée à votre marque, qui travaille longtemps après la dernière bouchée. Fait main, à Le Mans, personnalisé à vos couleurs.",
+  t066: "Offrir un atelier macarons, ce n'est pas offrir un cours. C'est offrir un moment : les mains dans la pâte, les rires devant les premiers ratés, la fierté de repartir avec ses propres coques et un savoir-faire qui reste. Pour un anniversaire, un cadeau qui sort de l'ordinaire, ou juste se faire plaisir à plusieurs. Un souvenir, bien plus qu'un présent.",
+  t070: "Dans mon petit atelier, je ne cours pas après le volume. Je compte mes coques une à une, je dose chaque garniture, je surveille chaque cuisson. Ce n'est pas rentable au sens industriel, et tant mieux : c'est la seule façon de faire quelque chose de vraiment bon. Quand tu ouvres une de mes boîtes, tu ne reçois pas un produit de chaîne — tu reçois du temps, de l'attention, et le luxe discret du fait-main.",
+  t073: "Mes clients reviennent. Pas parce que je les relance, mais parce qu'une fois qu'on a goûté du vrai — la vanille de Madagascar, le beurre noisette fait maison, la coque juste croustillante — l'industriel n'a plus jamais la même saveur. Imagine ne plus pouvoir revenir en arrière parce que tu sais, désormais, ce qu'est un bon macaron. C'est le meilleur des avis : la fidélité de ceux qui savent.",
+  t078: "Tes macarons collent au papier et se déchirent quand tu les décolles — rageant, surtout après une belle cuisson qui promettait tout. Je suis passée par là, des dizaines de fois. Le souci vient presque toujours de la cuisson ou du support, pas de toi. Un ajustement simple, et imagine tes coques qui se décollent toutes seules, intactes, prêtes à garnir. Ça change une fournée entière.",
+};
+// Applique les réécritures : ne touche QUE le champ texte des IDs ciblés.
+for(const _id in SC_TEXTES_REWRITE){
+  const _t = SC_TEXTES.find(x=>x.id===_id);
+  if(_t) _t.texte = SC_TEXTES_REWRITE[_id];
+}
+
+
+
+
 /* ============================================================================
  *  MOTEUR DE FILTRAGE EN CASCADE + INTERFACE 4 BARRES
  *  (Objet → Cible → mots-clés Accroche → mots-clés Texte)
@@ -24128,6 +24590,7 @@ const SC_CTA = [
   {id:"c040", objet:"both", cible:"both", type:"lien", texte:"Tout est en bio 🔗", kw:"lien bio profil site commander universel"},
   {id:"c041", objet:"both", cible:"both", type:"lien", texte:"Lien en bio pour commander ou réserver 🔗", kw:"lien bio commander reserver universel profil"},
 ];
+SC_CTA.push(...SC_CTA_LOT);
 
 // Libellés + emojis des types d'action (pour les filtres CTA).
 const CTA_TYPES = {
@@ -24200,6 +24663,32 @@ function compoCopierFallback(txt, done){
 // ── État de la composition en cours ──
 const _compo = { objet:'vente', cible:'b2c', kwAccroche:'', kwTexte:'', accrocheId:null, texteId:null, ctaId:null, ctaType:null, kwCta:'' };
 
+// ── Anti-répétition : IDs d'accroches/textes déjà utilisés dans des posts
+//    programmés ou publiés. Rempli avant chaque rendu du Compositeur. ──
+const _compoUsed = { accroches:new Set(), textes:new Set(), ctas:new Set() };
+async function compoChargerUsage(){
+  _compoUsed.accroches.clear(); _compoUsed.textes.clear(); _compoUsed.ctas.clear();
+  if(typeof db==='undefined' || !db.posts) return;
+  try{
+    const posts = await db.posts.toArray();
+    for(const p of posts){
+      // On ne compte que ce qui est engagé : programmé ou publié.
+      if(p.statut!=='programme' && p.statut!=='publie') continue;
+      const sd = p.sourceData;
+      if(sd){
+        if(sd.accrocheId) _compoUsed.accroches.add(sd.accrocheId);
+        if(sd.texteId) _compoUsed.textes.add(sd.texteId);
+        if(sd.ctaId) _compoUsed.ctas.add(sd.ctaId);
+      }
+      // Filet : si pas de sourceData (posts anciens), on repère par texte exact.
+      else if(p.texte){
+        const first = p.texte.split('\n')[0].trim();
+        const acc = SC_ACCROCHES.find(a=>a.texte===first); if(acc) _compoUsed.accroches.add(acc.id);
+      }
+    }
+  }catch(e){ /* silencieux : l'anti-répétition est un confort, pas un bloquant */ }
+}
+
 const AXE_EMOJI = { douleur:'😣', desir:'✨', situation:'📍', objection:'🛡️', transformation:'🔁', valeurs:'💛' };
 
 function compoSetObjet(o){ _compo.objet=o; _compo.accrocheId=null; _compo.texteId=null; _compo.ctaId=null; renderCompositeur(); }
@@ -24242,21 +24731,26 @@ function compoRefreshTexte(){
 }
 
 function compoAccrochesHtml(){
-  const list = scFiltrerAccroches(_compo.objet, _compo.cible, _compo.kwAccroche);
+  let list = scFiltrerAccroches(_compo.objet, _compo.cible, _compo.kwAccroche);
   if(!list.length) return '<p class="note">Aucune accroche pour ces mots-clés. Essaie un terme plus large.</p>';
+  // On repousse en bas de liste ce qui a déjà été publié/programmé (sans le cacher).
+  list = list.slice().sort((a,b)=> (_compoUsed.accroches.has(a.id)?1:0) - (_compoUsed.accroches.has(b.id)?1:0));
   return list.slice(0,40).map(a=>{
     const sel = _compo.accrocheId===a.id;
-    return `<div class="sum-box lnk" style="${sel?'background:#f6efe4;border-left:4px solid #52252F':''}" onclick="compoPickAccroche('${a.id}')">
-      <span>${AXE_EMOJI[a.axe]||''} ${esc(a.texte)}</span>${sel?'<b>✓</b>':''}</div>`;
+    const used = _compoUsed.accroches.has(a.id);
+    return `<div class="sum-box lnk" style="${sel?'background:#f6efe4;border-left:4px solid #52252F':''}${used?';opacity:.62':''}" onclick="compoPickAccroche('${a.id}')">
+      <span>${AXE_EMOJI[a.axe]||''} ${esc(a.texte)}${used?' <b style="color:#9a8576;font-size:.68rem;font-weight:600">· déjà publié</b>':''}</span>${sel?'<b>✓</b>':''}</div>`;
   }).join('') + (list.length>40?`<p class="note">… et ${list.length-40} autres. Affine avec un mot-clé.</p>`:'');
 }
 function compoTextesHtml(){
-  const list = scFiltrerTextes(_compo.objet, _compo.cible, _compo.kwTexte);
+  let list = scFiltrerTextes(_compo.objet, _compo.cible, _compo.kwTexte);
   if(!list.length) return '<p class="note">Aucun texte pour ces mots-clés. Essaie un terme plus large.</p>';
+  list = list.slice().sort((a,b)=> (_compoUsed.textes.has(a.id)?1:0) - (_compoUsed.textes.has(b.id)?1:0));
   return list.slice(0,30).map(t=>{
     const sel = _compo.texteId===t.id;
-    return `<div class="sum-box lnk" style="flex-direction:column;align-items:stretch;gap:4px;${sel?'background:#f6efe4;border-left:4px solid #52252F':''}" onclick="compoPickTexte('${t.id}')">
-      <div style="display:flex;justify-content:space-between"><span style="flex:1">${AXE_EMOJI[t.axe]||''} ${esc(t.texte.slice(0,90))}${t.texte.length>90?'…':''}</span>${sel?'<b>✓</b>':''}</div>
+    const used = _compoUsed.textes.has(t.id);
+    return `<div class="sum-box lnk" style="flex-direction:column;align-items:stretch;gap:4px;${sel?'background:#f6efe4;border-left:4px solid #52252F':''}${used?';opacity:.62':''}" onclick="compoPickTexte('${t.id}')">
+      <div style="display:flex;justify-content:space-between"><span style="flex:1">${AXE_EMOJI[t.axe]||''} ${esc(t.texte.slice(0,90))}${t.texte.length>90?'…':''}${used?' <b style="color:#9a8576;font-size:.68rem;font-weight:600">· déjà publié</b>':''}</span>${sel?'<b>✓</b>':''}</div>
       <div class="note" style="font-size:.72rem">CTA : ${esc(t.cta)}</div></div>`;
   }).join('') + (list.length>30?`<p class="note">… et ${list.length-30} autres. Affine avec un mot-clé.</p>`:'');
 }
@@ -24293,6 +24787,7 @@ function compoResultat(){
 
 async function renderCompositeur(){
   const main = document.getElementById('main'); if(!main) return;
+  await compoChargerUsage();   // anti-répétition : marque le déjà-publié
   const seg = (val, cur, onclick, label) =>
     `<button class="btn ${cur===val?'gold':'ghost'} sm" style="margin:2px" onclick="${onclick}">${label}</button>`;
 
@@ -24347,11 +24842,19 @@ async function renderCompositeur(){
        <h2>✅ Ton contenu</h2>
        ${resultat
          ? `<div style="white-space:pre-line;padding:8px 0">${esc(resultat)}</div>
+            ${(()=>{ const an=compoAnalysePersuasion(resultat); const cons=compoConseilsPersuasion(an);
+               const jauge=an.principes.map(p=>`<span title="${esc(p.label)}" style="opacity:${p.ok?1:0.28};font-size:1rem">${p.emoji}</span>`).join(' ');
+               return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px">
+                 <div style="display:flex;justify-content:space-between;align-items:center"><b>Force de persuasion</b><span class="tag" style="background:${an.score>=6?'#3f7d52':(an.score>=4?'#AA7C39':'#b0552f')};color:#fff">${an.score}/8</span></div>
+                 <div>${jauge}</div>
+                 ${cons.length?`<div class="note" style="line-height:1.5">${cons.map(c=>esc(c)).join('<br>')}</div>`:''}
+               </div>`; })()}
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
               <button class="btn ghost" style="flex:1" onclick="compoCopier(this)" data-copy="${esc(resultat)}">📋 Copier</button>
               <button class="btn gold" style="flex:1" onclick="compoEnregistrer()">💾 Au planning</button>
             </div>
-            <button class="btn ghost" style="width:100%;margin-top:6px" onclick="cvDepuisCompositeur()">🎨 Créer le visuel (carrousel)</button>`
+            <button class="btn ghost" style="width:100%;margin-top:6px" onclick="cvDepuisCompositeur()">🎨 Créer le visuel (carrousel)</button>
+            <button class="btn ghost" style="width:100%;margin-top:6px" onclick="commSwitch('video')">🎬 En faire un scénario vidéo</button>`
          : '<p class="note">Choisis une accroche et/ou un texte ci-dessus pour composer ton contenu.</p>'}
      </div>`;
 
@@ -24361,6 +24864,7 @@ async function renderCompositeur(){
     if(fa && _compo._focus==='a'){ fa.focus(); fa.setSelectionRange(fa.value.length,fa.value.length); }
     if(ft && _compo._focus==='t'){ ft.focus(); ft.setSelectionRange(ft.value.length,ft.value.length); }
   });
+  commEnsureTabBar();
 }
 
 async function compoEnregistrer(){
@@ -24371,10 +24875,11 @@ async function compoEnregistrer(){
       texte: resultat,
       canal:'instagram', offre:(_compo.objet==='coaching'?'coaching':(_compo.cible==='b2b'?'b2b':'vente')),
       statut:'pret',
+      sourceData:{ accrocheId:_compo.accrocheId, texteId:_compo.texteId, ctaId:_compo.ctaId },
     });
     toast('✅ Ajouté au planning (statut : Prêt)');
     if(typeof _scTab!=='undefined'){ _scTab='calendrier'; }
-    view='studiocom'; render();
+    commGotoPlanning();
   } else {
     toast('Contenu prêt — copie-le');
   }
@@ -24382,327 +24887,370 @@ async function compoEnregistrer(){
 
 /* ===== FIN MODULE COMPOSITEUR ===== */
 
-/* ===== MODULE CARROUSEL VISUEL (v1221) ===== */
+/* ===== MODULE CARROUSEL VISUEL (v1223 — multi-slides) ===== */
 /* ============================================================================
- *  COMPOSITEUR VISUEL — génère des slides Instagram (PNG) 100% dans l'app.
- *  - 3 formats au choix par slide : carré 1080×1080, portrait 1080×1350,
- *    story/reel 1080×1920.
- *  - 3 gabarits : photo plein cadre + bandeau, photo haut / texte charte bas,
- *    fond charte uni (sans photo).
- *  - Texte : repris du Compositeur (accroche/texte choisis) OU saisi libre.
- *  - Photos importées depuis l'iPhone (input file), gardées en mémoire.
- *  - Rendu Canvas natif, polices de marque (Outfit + Bellota déjà embarquées
- *    dans index.html) chargées via document.fonts.ready AVANT chaque dessin.
- *  - Export PNG par slide (partage / téléchargement iOS).
- *
- *  ⚠️ Points iOS Safari gérés :
- *   • On attend document.fonts.ready pour éviter le rendu en police de repli.
- *   • Export en toBlob (mémoire) plutôt que toDataURL géant quand possible.
- *   • Aperçu à l'échelle CSS, dessin réel à pleine résolution (retina-safe).
+ *  COMPOSITEUR VISUEL — génère des CARROUSELS Instagram (plusieurs slides).
+ *  - Pile de slides réordonnables (accroche → développement → CTA).
+ *  - 3 formats par slide : carré 1080², portrait 4:5, story 9:16.
+ *  - 3 gabarits : photo plein cadre + bandeau, photo haut/texte bas, fond uni.
+ *  - Texte repris du Compositeur OU saisi libre, par slide.
+ *  - Photos importées depuis l'iPhone (par slide), gardées en mémoire.
+ *  - Rendu Canvas natif, polices de marque via document.fonts.ready.
+ *  - Export PNG slide par slide OU tout le carrousel d'un coup.
+ *  - « Au planning » attache les PNG à une publication du Studio Com.
  * ==========================================================================*/
 
-// Palette charte (miroir des variables CSS, utilisables dans Canvas).
 const CV_COL = {
   bordeaux:'#52252F', bordeaux3:'#3d1a22', creme:'#E8DDCD',
   creme2:'#F5F0E8', caramel:'#AA7C39', caramel2:'#c6974f', blanc:'#ffffff'
 };
-
-// Formats disponibles (w×h en pixels réels d'export).
 const CV_FORMATS = {
-  carre:   { w:1080, h:1080, label:'Carré 1080²',    emoji:'⬛' },
-  portrait:{ w:1080, h:1350, label:'Portrait 4:5',    emoji:'▮'  },
-  story:   { w:1080, h:1920, label:'Story / Reel 9:16', emoji:'▯' },
+  carre:   { w:1080, h:1080, label:'Carré 1080²',      emoji:'⬛' },
+  portrait:{ w:1080, h:1350, label:'Portrait 4:5',     emoji:'▮'  },
+  story:   { w:1080, h:1920, label:'Story / Reel 9:16',emoji:'▯' },
 };
-
-// Gabarits de mise en page.
 const CV_GABARITS = {
   pleincadre: { label:'Photo plein cadre + bandeau', emoji:'🖼️', needPhoto:true },
   hautbas:    { label:'Photo haut · texte charte bas', emoji:'🔲', needPhoto:true },
   uni:        { label:'Fond charte uni (sans photo)', emoji:'🎨', needPhoto:false },
 };
 
-// État courant du compositeur visuel.
+// Fabrique une slide vierge.
+function cvNewSlide(patch){
+  return Object.assign({
+    format:'carre', gabarit:'pleincadre', source:'compo',
+    titre:'', corps:'', photo:null, photoName:'', photoY:0.5,
+  }, patch||{});
+}
+
+// État global du carrousel : pile de slides + index actif + réglages partagés.
 const _cv = {
-  format:'carre',
-  gabarit:'pleincadre',
-  source:'compo',            // 'compo' = depuis le Compositeur · 'libre' = saisi main
-  titre:'',                  // texte principal (accroche)
-  corps:'',                  // texte secondaire (optionnel, gabarit hautbas/uni)
-  photo:null,                // objet Image chargé, ou null
-  photoName:'',
-  photoY:0.5,                // cadrage vertical de la photo (0=haut,1=bas)
-  logo:true,                 // filigrane logo/nom en bas
+  slides:[ cvNewSlide() ],
+  active:0,
+  logo:true,               // signature de marque (partagée sur toutes les slides)
+  planTargetTitre:'',      // titre proposé pour la publication au planning
+  linkedPostId:null,       // si non-null : post existant auquel rattacher les visuels
 };
 
-// ── Ouverture depuis le Compositeur (reprend accroche/texte sélectionnés) ──
+// Accesseur de la slide active (jamais null : on garantit au moins une slide).
+function cvS(){
+  if(!_cv.slides.length) _cv.slides=[cvNewSlide()];
+  if(_cv.active<0) _cv.active=0;
+  if(_cv.active>=_cv.slides.length) _cv.active=_cv.slides.length-1;
+  return _cv.slides[_cv.active];
+}
+
+// ── Ouverture depuis une publication du planning (Studio Com) ──
+// Boucle planning → visuel : on pré-remplit un carrousel à partir du post,
+// et on mémorise l'id pour rattacher les visuels générés à CE post.
+async function cvDepuisPost(id){
+  if(typeof db==='undefined' || !db.posts){ toast('Planning indisponible'); return; }
+  const p = await db.posts.get(id);
+  if(!p){ toast('Publication introuvable'); return; }
+  if(typeof closeModal==='function') closeModal();
+  const txt = (p.texte||'').trim();
+  let blocs = txt.split(/\n\s*\n/).map(b=>b.trim()).filter(Boolean);
+  if(!blocs.length) blocs = [ (p.titre||'').trim() || 'À composer' ];
+  const slides = [];
+  const titre1 = (p.titre||'').trim() || blocs[0];
+  slides.push(cvNewSlide({ source:'compo', gabarit:'pleincadre', titre:titre1 }));
+  blocs.forEach((b,i)=>{
+    if(i===0 && b===titre1) return;
+    const estCta = (i===blocs.length-1) && b.length<=70 && /(📩|🥂|🎯|🤍|🔗|🗓️|commande|réserve|devis|dm|découvre|offre)/i.test(b);
+    slides.push(cvNewSlide({ source:'compo', gabarit:estCta?'uni':'hautbas', titre:estCta?b:(b.split('.')[0].slice(0,60)), corps:estCta?'':b }));
+  });
+  if(!slides.length) slides.push(cvNewSlide());
+  _cv.slides = slides; _cv.active = 0;
+  _cv.planTargetTitre = (p.titre||'').slice(0,60) || titre1.slice(0,60);
+  _cv.linkedPostId = id;
+  commSwitch('carrousel');
+}
+
+// ── Ouverture depuis le Compositeur : crée un carrousel à partir de la sélection ──
 function cvDepuisCompositeur(){
+  _cv.linkedPostId = null;   // création libre : pas de post rattaché
   const a = (typeof _compo!=='undefined' && _compo.accrocheId)
     ? SC_ACCROCHES.find(x=>x.id===_compo.accrocheId) : null;
   const t = (typeof _compo!=='undefined' && _compo.texteId)
     ? SC_TEXTES.find(x=>x.id===_compo.texteId) : null;
-  _cv.source = 'compo';
-  _cv.titre  = a ? a.texte : (t ? t.texte.split('.')[0] : '');
-  // Corps = texte + CTA retenu (choisi explicitement, sinon celui du texte).
   const cChoisi = (typeof _compo!=='undefined' && _compo.ctaId) ? SC_CTA.find(x=>x.id===_compo.ctaId) : null;
   const ctaFinal = cChoisi ? cChoisi.texte : (t && t.cta ? t.cta : '');
-  _cv.corps  = t ? (t.texte + (ctaFinal ? '\n\n'+ctaFinal : '')) : (ctaFinal||'');
-  goView('carrousel');
+
+  // Proposition intelligente : jusqu'à 3 slides (accroche · texte · CTA),
+  // pour matérialiser d'emblée la logique de carrousel. L'utilisateur ajuste ensuite.
+  const slides = [];
+  if(a){ slides.push(cvNewSlide({ source:'compo', gabarit:'pleincadre', titre:a.texte })); }
+  if(t){ slides.push(cvNewSlide({ source:'compo', gabarit:'hautbas', titre:(a?'':t.texte.split('.')[0]), corps:t.texte })); }
+  if(ctaFinal){ slides.push(cvNewSlide({ source:'compo', gabarit:'uni', titre:ctaFinal })); }
+  if(!slides.length) slides.push(cvNewSlide());
+
+  _cv.slides = slides; _cv.active = 0;
+  _cv.planTargetTitre = a ? a.texte.slice(0,60) : (t?t.texte.slice(0,60):'');
+  commSwitch('carrousel');
 }
 
-function cvSetFormat(f){ _cv.format=f; cvDrawPreview(); cvSyncControls(); }
-function cvSetGabarit(g){
-  _cv.gabarit=g;
-  // Si le gabarit exige une photo et qu'il n'y en a pas, on prévient à l'aperçu.
-  cvDrawPreview(); cvSyncControls();
-}
-function cvSetSource(s){ _cv.source=s; renderCarrousel(); }
-function cvSetTitre(v){ _cv.titre=v; cvDrawPreview(); }
-function cvSetCorps(v){ _cv.corps=v; cvDrawPreview(); }
-function cvSetPhotoY(v){ _cv.photoY=parseFloat(v); cvDrawPreview(); }
+/* ── Réglages de la slide active ── */
+function cvSetFormat(f){ cvS().format=f; cvDrawPreview(); cvSyncControls(); cvRefreshStrip(); }
+function cvSetGabarit(g){ cvS().gabarit=g; cvDrawPreview(); cvSyncControls(); }
+function cvSetSource(s){ cvS().source=s; renderCarrousel(); }
+function cvSetTitre(v){ cvS().titre=v; cvDrawPreview(); }
+function cvSetCorps(v){ cvS().corps=v; cvDrawPreview(); }
+function cvSetPhotoY(v){ cvS().photoY=parseFloat(v); cvDrawPreview(); }
 function cvToggleLogo(){ _cv.logo=!_cv.logo; cvDrawPreview(); cvSyncControls(); }
 
-// ── Import d'une photo depuis l'appareil ──
+/* ── Gestion de la pile de slides ── */
+function cvGoSlide(i){ _cv.active=i; renderCarrousel(); }
+function cvAddSlide(){ _cv.slides.push(cvNewSlide({ format:cvS().format })); _cv.active=_cv.slides.length-1; renderCarrousel(); }
+function cvDupSlide(){
+  const s=cvS(); const copy=Object.assign({}, s); // photo (Image) partagée par référence : OK en lecture
+  _cv.slides.splice(_cv.active+1,0,copy); _cv.active++; renderCarrousel();
+}
+function cvDelSlide(){
+  if(_cv.slides.length<=1){ toast('Il faut au moins une slide'); return; }
+  _cv.slides.splice(_cv.active,1);
+  if(_cv.active>=_cv.slides.length) _cv.active=_cv.slides.length-1;
+  renderCarrousel();
+}
+function cvMoveSlide(dir){
+  const i=_cv.active, j=i+dir;
+  if(j<0||j>=_cv.slides.length) return;
+  const tmp=_cv.slides[i]; _cv.slides[i]=_cv.slides[j]; _cv.slides[j]=tmp;
+  _cv.active=j; renderCarrousel();
+}
+
+// ── Import photo (pour la slide active) ──
 function cvChargerPhoto(input){
-  const file = input && input.files && input.files[0];
-  if(!file){ return; }
+  const file = input && input.files && input.files[0]; if(!file){ return; }
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = ()=>{
-    _cv.photo = img; _cv.photoName = file.name || 'photo';
-    // Bascule auto sur un gabarit avec photo si on était sur "uni".
-    if(_cv.gabarit==='uni') _cv.gabarit='pleincadre';
-    cvDrawPreview(); cvSyncControls();
-    // On révoque l'URL après chargement (l'Image garde ses pixels décodés).
+    const s=cvS(); s.photo=img; s.photoName=file.name||'photo';
+    if(s.gabarit==='uni') s.gabarit='pleincadre';
+    cvDrawPreview(); cvSyncControls(); cvRefreshStrip();
     setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(e){} }, 3000);
   };
   img.onerror = ()=>{ toast('Image illisible — réessaie'); try{ URL.revokeObjectURL(url); }catch(e){} };
   img.src = url;
 }
 function cvRetirerPhoto(){
-  _cv.photo=null; _cv.photoName='';
-  if(CV_GABARITS[_cv.gabarit] && CV_GABARITS[_cv.gabarit].needPhoto) _cv.gabarit='uni';
-  cvDrawPreview(); cvSyncControls();
+  const s=cvS(); s.photo=null; s.photoName='';
+  if(CV_GABARITS[s.gabarit] && CV_GABARITS[s.gabarit].needPhoto) s.gabarit='uni';
+  cvDrawPreview(); cvSyncControls(); cvRefreshStrip();
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- *  DESSIN — cœur du module. Dessine _cv dans un canvas donné à pleine résolution.
- *  Retourne une Promise (résolue quand polices prêtes + rendu fait).
+ *  DESSIN — dessine une slide donnée dans un canvas, à pleine résolution.
  * ────────────────────────────────────────────────────────────────────────── */
-function cvDraw(canvas){
-  const fmt = CV_FORMATS[_cv.format] || CV_FORMATS.carre;
+function cvDrawSlide(canvas, s){
+  s = s || cvS();
+  const fmt = CV_FORMATS[s.format] || CV_FORMATS.carre;
   canvas.width = fmt.w; canvas.height = fmt.h;
   const ctx = canvas.getContext('2d');
   const W = fmt.w, H = fmt.h;
-
-  // Attendre les polices AVANT de dessiner (sinon repli sur iOS au 1er rendu).
   const ready = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
   return ready.then(()=>{
     ctx.clearRect(0,0,W,H);
-    const g = _cv.gabarit;
-
+    const g = s.gabarit;
     if(g==='uni'){
       cvDrawFondUni(ctx,W,H);
-      cvDrawTexteBloc(ctx,W,H, {yStart:H*0.30, wMax:W*0.82, centre:true, surFonce:true});
+      cvDrawTexteBloc(ctx,W,H,s, {yStart:H*0.30, wMax:W*0.82, centre:true, surFonce:true});
     } else if(g==='hautbas'){
-      // Photo sur les ~62% du haut, bandeau charte en bas avec le texte.
       const hPhoto = Math.round(H*0.62);
-      if(_cv.photo){ cvDrawPhotoCover(ctx, 0,0,W,hPhoto, _cv.photo, _cv.photoY); }
+      if(s.photo){ cvDrawPhotoCover(ctx,0,0,W,hPhoto,s.photo,s.photoY); }
       else { cvDrawPlaceholderPhoto(ctx,0,0,W,hPhoto); }
-      // Bandeau bas.
-      ctx.fillStyle = CV_COL.bordeaux;
-      ctx.fillRect(0,hPhoto,W,H-hPhoto);
-      // Liseré caramel fin en haut du bandeau.
+      ctx.fillStyle = CV_COL.bordeaux; ctx.fillRect(0,hPhoto,W,H-hPhoto);
       ctx.fillStyle = CV_COL.caramel; ctx.fillRect(0,hPhoto,W,Math.round(H*0.006));
-      cvDrawTexteBloc(ctx,W,H, {yStart:hPhoto+(H-hPhoto)*0.16, wMax:W*0.84, centre:true, surFonce:true, zone:[hPhoto,H]});
+      cvDrawTexteBloc(ctx,W,H,s, {yStart:hPhoto+(H-hPhoto)*0.16, wMax:W*0.84, centre:true, surFonce:true, zone:[hPhoto,H]});
     } else {
-      // pleincadre : photo plein cadre + voile dégradé + bandeau texte bas.
-      if(_cv.photo){ cvDrawPhotoCover(ctx,0,0,W,H,_cv.photo,_cv.photoY); }
+      if(s.photo){ cvDrawPhotoCover(ctx,0,0,W,H,s.photo,s.photoY); }
       else { cvDrawPlaceholderPhoto(ctx,0,0,W,H); }
-      // Voile dégradé bas pour lisibilité du texte.
       const grad = ctx.createLinearGradient(0,H*0.45,0,H);
       grad.addColorStop(0,'rgba(61,26,34,0)');
       grad.addColorStop(0.55,'rgba(61,26,34,0.55)');
       grad.addColorStop(1,'rgba(61,26,34,0.92)');
       ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
-      cvDrawTexteBloc(ctx,W,H, {yStart:H*0.66, wMax:W*0.86, centre:false, surFonce:true, zone:[H*0.5,H]});
+      cvDrawTexteBloc(ctx,W,H,s, {yStart:H*0.66, wMax:W*0.86, centre:false, surFonce:true, zone:[H*0.5,H]});
     }
-
-    // Filigrane logo/nom de marque.
-    if(_cv.logo) cvDrawSignature(ctx,W,H, _cv.gabarit);
+    if(_cv.logo) cvDrawSignature(ctx,W,H,s.gabarit);
   });
 }
 
-// Fond charte uni : dégradé bordeaux profond + motif discret.
 function cvDrawFondUni(ctx,W,H){
   const grad = ctx.createLinearGradient(0,0,W,H);
-  grad.addColorStop(0,CV_COL.bordeaux);
-  grad.addColorStop(1,CV_COL.bordeaux3);
+  grad.addColorStop(0,CV_COL.bordeaux); grad.addColorStop(1,CV_COL.bordeaux3);
   ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
-  // Cadre crème fin en retrait.
   const m = Math.round(W*0.055);
   ctx.strokeStyle='rgba(232,221,205,0.35)'; ctx.lineWidth=Math.max(2,W*0.0025);
   ctx.strokeRect(m,m,W-2*m,H-2*m);
-  // Petit accent caramel en haut.
   ctx.fillStyle=CV_COL.caramel;
   const dotY=H*0.16; ctx.beginPath(); ctx.arc(W/2,dotY,W*0.012,0,Math.PI*2); ctx.fill();
 }
-
-// Dessine une photo en "cover" dans un rectangle, cadrage vertical selon fy.
 function cvDrawPhotoCover(ctx,x,y,w,h,img,fy){
-  const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
-  if(!iw||!ih){ return; }
-  const scale = Math.max(w/iw, h/ih);
-  const dw=iw*scale, dh=ih*scale;
-  const dx = x + (w-dw)/2;
-  const dy = y + (h-dh)*(fy==null?0.5:fy);
+  const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height; if(!iw||!ih) return;
+  const scale = Math.max(w/iw, h/ih); const dw=iw*scale, dh=ih*scale;
+  const dx=x+(w-dw)/2, dy=y+(h-dh)*(fy==null?0.5:fy);
   ctx.save(); ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
-  ctx.drawImage(img, dx, dy, dw, dh);
-  ctx.restore();
+  ctx.drawImage(img,dx,dy,dw,dh); ctx.restore();
 }
-
-// Zone "photo" vide (aucune image importée) : placeholder charte + consigne.
 function cvDrawPlaceholderPhoto(ctx,x,y,w,h){
   const grad=ctx.createLinearGradient(x,y,x,y+h);
   grad.addColorStop(0,CV_COL.creme2); grad.addColorStop(1,CV_COL.creme);
   ctx.fillStyle=grad; ctx.fillRect(x,y,w,h);
-  ctx.fillStyle='rgba(82,37,47,0.35)';
-  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='rgba(82,37,47,0.35)'; ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.font='500 '+Math.round(w*0.045)+"px 'Outfit', sans-serif";
   ctx.fillText('📷  Importe une photo', x+w/2, y+h/2);
 }
-
-// Bloc de texte (titre + corps) avec wrapping. opts.surFonce => texte clair.
-function cvDrawTexteBloc(ctx,W,H,opts){
-  opts=opts||{};
-  const centre = !!opts.centre;
-  const surFonce = !!opts.surFonce;
-  const wMax = opts.wMax || W*0.84;
-  const x = centre ? W/2 : W*0.08;
-  let y = opts.yStart || H*0.6;
-  ctx.textAlign = centre ? 'center' : 'left';
-  ctx.textBaseline = 'top';
-
+function cvDrawTexteBloc(ctx,W,H,s,opts){
+  opts=opts||{}; const centre=!!opts.centre, surFonce=!!opts.surFonce;
+  const wMax=opts.wMax||W*0.84; const x=centre?W/2:W*0.08;
+  let y=opts.yStart||H*0.6;
+  ctx.textAlign=centre?'center':'left'; ctx.textBaseline='top';
   const colTitre = surFonce ? CV_COL.creme : CV_COL.bordeaux;
   const colCorps = surFonce ? 'rgba(232,221,205,0.92)' : CV_COL.bordeaux;
-
-  // Titre — Bellota, gras, grande taille adaptée au format.
-  const titre = (_cv.titre||'').trim();
+  const titre=(s.titre||'').trim();
   if(titre){
-    const tSize = Math.round(W * (_cv.format==='story'?0.062:0.070));
-    ctx.font = "700 "+tSize+"px 'Bellota', Georgia, serif";
-    ctx.fillStyle = colTitre;
-    y = cvWrapText(ctx, titre, x, y, wMax, tSize*1.16, centre);
+    const tSize=Math.round(W*(s.format==='story'?0.062:0.070));
+    ctx.font="700 "+tSize+"px 'Bellota', Georgia, serif"; ctx.fillStyle=colTitre;
+    y=cvWrapText(ctx,titre,x,y,wMax,tSize*1.16,centre);
   }
-
-  // Corps — Outfit, seulement si présent ET gabarit qui le porte.
-  const corps = (_cv.corps||'').trim();
-  const porteCorps = (_cv.gabarit==='uni' || _cv.gabarit==='hautbas');
+  const corps=(s.corps||'').trim();
+  const porteCorps=(s.gabarit==='uni'||s.gabarit==='hautbas');
   if(corps && porteCorps){
-    y += H*0.02;
-    const cSize = Math.round(W * (_cv.format==='story'?0.034:0.038));
-    ctx.font = "400 "+cSize+"px 'Outfit', sans-serif";
-    ctx.fillStyle = colCorps;
-    // On limite le corps pour ne pas déborder (les textes longs sont tronqués proprement).
-    const zoneBas = (opts.zone ? opts.zone[1] : H) - H*0.10;
-    cvWrapText(ctx, corps, x, y, wMax, cSize*1.34, centre, zoneBas);
+    y+=H*0.02;
+    const cSize=Math.round(W*(s.format==='story'?0.034:0.038));
+    ctx.font="400 "+cSize+"px 'Outfit', sans-serif"; ctx.fillStyle=colCorps;
+    const zoneBas=(opts.zone?opts.zone[1]:H)-H*0.10;
+    cvWrapText(ctx,corps,x,y,wMax,cSize*1.34,centre,zoneBas);
   }
 }
-
-// Wrapping mot-à-mot. Retourne le y après la dernière ligne. yLimit optionnel (troncature + …).
-function cvWrapText(ctx, text, x, y, maxW, lineH, centre, yLimit){
-  const words = String(text).split(/\s+/);
-  let line='';
+function cvWrapText(ctx,text,x,y,maxW,lineH,centre,yLimit){
+  const words=String(text).split(/\s+/); let line='';
   for(let i=0;i<words.length;i++){
-    const test = line ? line+' '+words[i] : words[i];
-    if(ctx.measureText(test).width > maxW && line){
-      if(yLimit && y+lineH>yLimit){ ctx.fillText(line.replace(/\s+\S*$/,'')+'…', x, y); return y+lineH; }
-      ctx.fillText(line, x, y); line=words[i]; y+=lineH;
+    const test=line?line+' '+words[i]:words[i];
+    if(ctx.measureText(test).width>maxW && line){
+      if(yLimit && y+lineH>yLimit){ ctx.fillText(line.replace(/\s+\S*$/,'')+'…',x,y); return y+lineH; }
+      ctx.fillText(line,x,y); line=words[i]; y+=lineH;
     } else { line=test; }
   }
   if(line){
-    if(yLimit && y+lineH>yLimit){ ctx.fillText(line+'…', x, y); return y+lineH; }
-    ctx.fillText(line, x, y); y+=lineH;
+    if(yLimit && y+lineH>yLimit){ ctx.fillText(line+'…',x,y); return y+lineH; }
+    ctx.fillText(line,x,y); y+=lineH;
   }
   return y;
 }
-
-// Signature de marque (nom + slogan) discrète.
 function cvDrawSignature(ctx,W,H,gabarit){
-  const surCreme = false; // toujours en bas, sur zone foncée ou photo assombrie
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-  const y = H - Math.round(H*0.045);
-  ctx.fillStyle = (gabarit==='uni'||gabarit==='hautbas') ? 'rgba(232,221,205,0.85)' : 'rgba(255,255,255,0.9)';
-  ctx.font = "700 "+Math.round(W*0.030)+"px 'Bellota', serif";
-  ctx.fillText('Sensations Macarons', W/2, y);
-  ctx.fillStyle = (gabarit==='uni'||gabarit==='hautbas') ? 'rgba(198,151,79,0.95)' : 'rgba(232,221,205,0.9)';
-  ctx.font = "400 "+Math.round(W*0.019)+"px 'Outfit', sans-serif";
-  ctx.fillText('moins de sucre, plus de sensation', W/2, y+Math.round(W*0.028));
+  const y=H-Math.round(H*0.045);
+  ctx.fillStyle=(gabarit==='uni'||gabarit==='hautbas')?'rgba(232,221,205,0.85)':'rgba(255,255,255,0.9)';
+  ctx.font="700 "+Math.round(W*0.030)+"px 'Bellota', serif";
+  ctx.fillText('Sensations Macarons',W/2,y);
+  ctx.fillStyle=(gabarit==='uni'||gabarit==='hautbas')?'rgba(198,151,79,0.95)':'rgba(232,221,205,0.9)';
+  ctx.font="400 "+Math.round(W*0.019)+"px 'Outfit', sans-serif";
+  ctx.fillText('moins de sucre, plus de sensation',W/2,y+Math.round(W*0.028));
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
- *  APERÇU + EXPORT
- * ────────────────────────────────────────────────────────────────────────── */
+/* ── Aperçu + bande de slides ── */
 function cvDrawPreview(){
-  const cvs = document.getElementById('cvCanvas');
-  if(!cvs) return;
-  cvDraw(cvs).then(()=>{ /* rendu prêt */ });
+  const cvs=document.getElementById('cvCanvas'); if(!cvs) return;
+  cvDrawSlide(cvs, cvS()).then(()=>{});
 }
-
-// Réaligne l'état visuel des boutons/segments sans tout re-render (évite de perdre le focus champ).
 function cvSyncControls(){
-  document.querySelectorAll('[data-cvfmt]').forEach(b=>{
-    b.className = 'btn '+(b.getAttribute('data-cvfmt')===_cv.format?'gold':'ghost')+' sm';
+  const s=cvS();
+  document.querySelectorAll('[data-cvfmt]').forEach(b=>{ b.className='btn '+(b.getAttribute('data-cvfmt')===s.format?'gold':'ghost')+' sm'; });
+  document.querySelectorAll('[data-cvgab]').forEach(b=>{ b.className='btn '+(b.getAttribute('data-cvgab')===s.gabarit?'gold':'ghost')+' sm'; });
+  const lg=document.getElementById('cvLogoBtn'); if(lg) lg.className='btn '+(_cv.logo?'gold':'ghost')+' sm';
+  const pn=document.getElementById('cvPhotoNom'); if(pn) pn.textContent = s.photo?('🖼️ '+s.photoName):'Aucune photo importée';
+  const yr=document.getElementById('cvPhotoYRow'); if(yr) yr.style.display=(s.photo && s.gabarit!=='uni')?'block':'none';
+}
+// Redessine les vignettes de la bande de slides.
+function cvRefreshStrip(){
+  document.querySelectorAll('canvas[data-cvthumb]').forEach(c=>{
+    const i=+c.getAttribute('data-cvthumb'); const s=_cv.slides[i]; if(s) cvDrawSlide(c,s);
   });
-  document.querySelectorAll('[data-cvgab]').forEach(b=>{
-    b.className = 'btn '+(b.getAttribute('data-cvgab')===_cv.gabarit?'gold':'ghost')+' sm';
-  });
-  const lg=document.getElementById('cvLogoBtn');
-  if(lg) lg.className='btn '+(_cv.logo?'gold':'ghost')+' sm';
-  const pn=document.getElementById('cvPhotoNom');
-  if(pn) pn.textContent = _cv.photo ? ('🖼️ '+_cv.photoName) : 'Aucune photo importée';
-  const yr=document.getElementById('cvPhotoYRow');
-  if(yr) yr.style.display = (_cv.photo && _cv.gabarit!=='uni') ? 'block' : 'none';
 }
 
-// Export PNG de la slide courante (téléchargement + tentative de partage iOS).
-async function cvExporter(){
-  const fmt = CV_FORMATS[_cv.format] || CV_FORMATS.carre;
-  const cvs = document.createElement('canvas');
-  await cvDraw(cvs);   // dessin pleine résolution hors écran
-  const nom = 'sensations_'+_cv.format+'_'+Date.now()+'.png';
-
-  const finish = (blob)=>{
-    // 1) Partage natif iOS si dispo (permet "Enregistrer l'image").
-    try{
-      if(navigator.canShare && blob){
-        const file = new File([blob], nom, {type:'image/png'});
-        if(navigator.canShare({files:[file]})){
-          navigator.share({files:[file], title:'Sensations Macarons'})
-            .then(()=>toast('📤 Partagé'))
-            .catch(()=>cvTelecharger(blob,nom));
-          return;
-        }
-      }
-    }catch(e){}
-    // 2) Fallback téléchargement classique.
-    cvTelecharger(blob, nom);
-  };
-
-  if(cvs.toBlob){ cvs.toBlob(b=>finish(b),'image/png'); }
-  else {
-    // Très vieux Safari : dataURL.
-    const url=cvs.toDataURL('image/png'); const a=document.createElement('a');
-    a.href=url; a.download=nom; document.body.appendChild(a); a.click(); a.remove();
-    toast('💾 Image exportée');
-  }
+/* ── Export ── */
+// Dessine une slide hors-écran et renvoie un blob PNG (Promise).
+function cvSlideToBlob(s){
+  return new Promise(async (resolve)=>{
+    const cvs=document.createElement('canvas');
+    await cvDrawSlide(cvs,s);
+    if(cvs.toBlob) cvs.toBlob(b=>resolve(b),'image/png');
+    else { try{ const u=cvs.toDataURL('image/png'); resolve(_cvDataURLtoBlob(u)); }catch(e){ resolve(null); } }
+  });
 }
-function cvTelecharger(blob, nom){
+function _cvDataURLtoBlob(dataURL){
+  const parts=dataURL.split(','); const mime=(parts[0].match(/:(.*?);/)||[])[1]||'image/png';
+  const bin=atob(parts[1]); const arr=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  return new Blob([arr],{type:mime});
+}
+function cvTelecharger(blob,nom){
   if(!blob){ toast('Export impossible'); return; }
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=nom;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){} }, 4000);
-  toast('💾 Image exportée');
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=nom; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){} },4000);
+}
+// Export de la slide active (partage iOS si dispo).
+async function cvExporter(){
+  const s=cvS(); const blob=await cvSlideToBlob(s);
+  const nom='sensations_'+s.format+'_s'+(_cv.active+1)+'_'+Date.now()+'.png';
+  try{
+    if(navigator.canShare && blob){
+      const file=new File([blob],nom,{type:'image/png'});
+      if(navigator.canShare({files:[file]})){
+        navigator.share({files:[file],title:'Sensations Macarons'}).then(()=>toast('📤 Partagé')).catch(()=>{cvTelecharger(blob,nom);toast('💾 Exportée');});
+        return;
+      }
+    }
+  }catch(e){}
+  cvTelecharger(blob,nom); toast('💾 Slide exportée');
+}
+// Export de TOUT le carrousel (séquentiel, pour ne pas saturer iOS).
+async function cvExporterTout(){
+  toast('⏳ Export du carrousel…');
+  for(let i=0;i<_cv.slides.length;i++){
+    const s=_cv.slides[i]; const blob=await cvSlideToBlob(s);
+    cvTelecharger(blob,'sensations_carrousel_'+String(i+1).padStart(2,'0')+'_'+Date.now()+'.png');
+    await new Promise(r=>setTimeout(r,350)); // respiration entre téléchargements iOS
+  }
+  toast('✅ '+_cv.slides.length+' slides exportées');
+}
+
+/* ── Attacher au planning (Studio Com) ── */
+async function cvAuPlanning(){
+  if(typeof scAjouterPost!=='function'){ toast('Planning indisponible'); return; }
+  toast('⏳ Préparation des visuels…');
+  const dataURLs=[];
+  for(const s of _cv.slides){
+    const blob=await cvSlideToBlob(s);
+    if(blob){ const u=await _cvBlobToDataURL(blob); if(u) dataURLs.push(u); }
+  }
+  const titre = (_cv.planTargetTitre || (cvS().titre||'').slice(0,60) || 'Carrousel').trim();
+  const texte = _cv.slides.map((s,i)=>`— Slide ${i+1} —\n${(s.titre||'').trim()}${s.corps?('\n'+s.corps.trim()):''}`).join('\n\n');
+  // Cas 1 : le carrousel vient d'un post existant → on lui RATTACHE les visuels
+  // (on ne crée pas de doublon). Boucle planning → visuel → planning bouclée.
+  if(_cv.linkedPostId && typeof db!=='undefined' && db.posts){
+    try{
+      const p=await db.posts.get(_cv.linkedPostId);
+      if(p){
+        const visuels=(p.visuels||[]).concat(dataURLs);
+        await db.posts.update(_cv.linkedPostId, {visuels});
+        toast('✅ '+dataURLs.length+' visuels rattachés à la publication');
+        if(typeof _scTab!=='undefined'){ _scTab='calendrier'; }
+        commGotoPlanning(); return;
+      }
+    }catch(e){ /* si échec, on retombe sur la création ci-dessous */ }
+  }
+  // Cas 2 : création libre → nouveau post avec les visuels.
+  const id=await scAjouterPost({
+    titre, texte, canal:'instagram', offre:'vente', statut:'pret', visuels:dataURLs,
+  });
+  if(id){ toast('✅ Carrousel au planning ('+dataURLs.length+' slides)'); if(typeof _scTab!=='undefined'){ _scTab='calendrier'; } commGotoPlanning(); }
+  else toast('Erreur à l\'enregistrement');
+}
+function _cvBlobToDataURL(blob){
+  return new Promise(res=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=()=>res(null); fr.readAsDataURL(blob); });
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -24710,77 +25258,696 @@ function cvTelecharger(blob, nom){
  * ────────────────────────────────────────────────────────────────────────── */
 async function renderCarrousel(){
   const main = document.getElementById('main'); if(!main) return;
+  const s = cvS();
 
   const segFmt = Object.entries(CV_FORMATS).map(([k,f])=>
-    `<button data-cvfmt="${k}" class="btn ${_cv.format===k?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetFormat('${k}')">${f.emoji} ${f.label}</button>`
-  ).join('');
-
+    `<button data-cvfmt="${k}" class="btn ${s.format===k?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetFormat('${k}')">${f.emoji} ${f.label}</button>`).join('');
   const segGab = Object.entries(CV_GABARITS).map(([k,g])=>
-    `<button data-cvgab="${k}" class="btn ${_cv.gabarit===k?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetGabarit('${k}')">${g.emoji} ${g.label}</button>`
-  ).join('');
+    `<button data-cvgab="${k}" class="btn ${s.gabarit===k?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetGabarit('${k}')">${g.emoji} ${g.label}</button>`).join('');
+  const segSrc = ['compo','libre'].map(x=>
+    `<button class="btn ${s.source===x?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetSource('${x}')">${x==='compo'?'🧩 Depuis le Compositeur':'✍️ Texte libre'}</button>`).join('');
 
-  const segSrc = ['compo','libre'].map(s=>
-    `<button class="btn ${_cv.source===s?'gold':'ghost'} sm" style="margin:2px" onclick="cvSetSource('${s}')">${s==='compo'?'🧩 Depuis le Compositeur':'✍️ Texte libre'}</button>`
-  ).join('');
-
-  // Bloc source de texte : champs éditables (pré-remplis si compo).
-  const blocTexte = _cv.source==='libre'
+  const blocTexte = s.source==='libre'
     ? `<label class="note" style="display:block;margin-top:8px">Titre / accroche</label>
-       <input id="cvTitre" value="${esc(_cv.titre)}" oninput="cvSetTitre(this.value)" placeholder="Ton accroche courte" style="width:100%">
-       <label class="note" style="display:block;margin-top:8px">Texte secondaire (optionnel — gabarits « bas » et « uni »)</label>
-       <textarea id="cvCorps" oninput="cvSetCorps(this.value)" placeholder="Quelques lignes…" style="width:100%;min-height:70px;resize:vertical">${esc(_cv.corps)}</textarea>`
+       <input id="cvTitre" value="${esc(s.titre)}" oninput="cvSetTitre(this.value)" placeholder="Ton accroche courte" style="width:100%">
+       <label class="note" style="display:block;margin-top:8px">Texte secondaire (gabarits « bas » et « uni »)</label>
+       <textarea id="cvCorps" oninput="cvSetCorps(this.value)" placeholder="Quelques lignes…" style="width:100%;min-height:70px;resize:vertical">${esc(s.corps)}</textarea>`
     : `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px">
-         <div><b>Titre repris :</b><br>${_cv.titre?esc(_cv.titre):'<span class="note">— rien de sélectionné dans le Compositeur —</span>'}</div>
-         ${_cv.corps?`<div class="note" style="border-top:1px solid var(--creme);padding-top:6px"><b>Texte :</b> ${esc(_cv.corps.slice(0,140))}${_cv.corps.length>140?'…':''}</div>`:''}
+         <div><b>Titre :</b><br>${s.titre?esc(s.titre):'<span class="note">— vide —</span>'}</div>
+         ${s.corps?`<div class="note" style="border-top:1px solid var(--creme);padding-top:6px"><b>Texte :</b> ${esc(s.corps.slice(0,140))}${s.corps.length>140?'…':''}</div>`:''}
        </div>
-       <p class="note">Tu peux basculer en « Texte libre » pour tout modifier à la main.</p>`;
+       <p class="note">Bascule en « Texte libre » pour éditer cette slide à la main.</p>`;
+
+  // Bande de slides (vignettes cliquables).
+  const strip = _cv.slides.map((sl,i)=>{
+    const on=i===_cv.active;
+    return `<div style="flex:0 0 auto;text-align:center;margin-right:8px">
+      <div onclick="cvGoSlide(${i})" style="border:3px solid ${on?'var(--bordeaux)':'transparent'};border-radius:10px;padding:2px;cursor:pointer;background:#fff">
+        <canvas data-cvthumb="${i}" style="width:64px;height:64px;object-fit:cover;border-radius:7px;display:block"></canvas>
+      </div>
+      <span class="note" style="font-size:.66rem">${i+1}</span>
+    </div>`;
+  }).join('');
 
   main.innerHTML =
-    `<div class="topbar"><div><h1>🎨 Créer le visuel</h1><p>Compose tes slides Instagram à ta charte — export PNG</p></div></div>
+    `<div class="topbar"><div><h1>🎠 Créer le carrousel</h1><p>Plusieurs slides à ta charte — export PNG & envoi au planning</p></div></div>
 
      <div class="panel">
-       <h2>1 · Format</h2>
-       <div>${segFmt}</div>
-       <h2 style="margin-top:12px">2 · Gabarit</h2>
-       <div>${segGab}</div>
+       <h2>Slides <span class="tag">${_cv.slides.length}</span></h2>
+       <div style="display:flex;overflow-x:auto;padding:6px 2px 2px;align-items:flex-start">${strip}
+         <div style="flex:0 0 auto;align-self:center">
+           <button class="btn ghost sm" onclick="cvAddSlide()" style="height:64px;width:56px">＋</button>
+         </div>
+       </div>
+       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+         <button class="btn ghost sm" onclick="cvMoveSlide(-1)">◀︎ Déplacer</button>
+         <button class="btn ghost sm" onclick="cvMoveSlide(1)">Déplacer ▶︎</button>
+         <button class="btn ghost sm" onclick="cvDupSlide()">⧉ Dupliquer</button>
+         <button class="btn danger sm" onclick="cvDelSlide()">🗑️ Supprimer</button>
+       </div>
+       <p class="note">Slide ${_cv.active+1} / ${_cv.slides.length} — les réglages ci-dessous s'appliquent à cette slide.</p>
+     </div>
+
+     <div class="panel">
+       <h2>1 · Format</h2><div>${segFmt}</div>
+       <h2 style="margin-top:12px">2 · Gabarit</h2><div>${segGab}</div>
      </div>
 
      <div class="panel">
        <h2>3 · Photo</h2>
        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-         <label class="btn ghost sm" style="margin:2px">📷 Importer une photo
+         <label class="btn ghost sm" style="margin:2px">📷 Importer
            <input type="file" accept="image/*" onchange="cvChargerPhoto(this)" style="display:none">
          </label>
          <button class="btn ghost sm" style="margin:2px" onclick="cvRetirerPhoto()">🗑️ Retirer</button>
-         <span id="cvPhotoNom" class="note">${_cv.photo?('🖼️ '+esc(_cv.photoName)):'Aucune photo importée'}</span>
+         <span id="cvPhotoNom" class="note">${s.photo?('🖼️ '+esc(s.photoName)):'Aucune photo importée'}</span>
        </div>
-       <div id="cvPhotoYRow" style="display:${(_cv.photo&&_cv.gabarit!=='uni')?'block':'none'};margin-top:10px">
+       <div id="cvPhotoYRow" style="display:${(s.photo&&s.gabarit!=='uni')?'block':'none'};margin-top:10px">
          <label class="note">Cadrage vertical</label>
-         <input type="range" min="0" max="1" step="0.02" value="${_cv.photoY}" oninput="cvSetPhotoY(this.value)" style="width:100%">
+         <input type="range" min="0" max="1" step="0.02" value="${s.photoY}" oninput="cvSetPhotoY(this.value)" style="width:100%">
        </div>
      </div>
 
      <div class="panel">
-       <h2>4 · Texte</h2>
-       <div>${segSrc}</div>
-       ${blocTexte}
+       <h2>4 · Texte</h2><div>${segSrc}</div>${blocTexte}
      </div>
 
      <div class="panel" style="border:2px solid var(--bordeaux)">
-       <h2>Aperçu</h2>
+       <h2>Aperçu — slide ${_cv.active+1}</h2>
        <div style="display:flex;justify-content:center;background:repeating-conic-gradient(#eee 0% 25%,#f7f7f7 0% 50%) 50%/22px 22px;border-radius:12px;padding:10px">
-         <canvas id="cvCanvas" style="max-width:100%;max-height:52vh;border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.18)"></canvas>
+         <canvas id="cvCanvas" style="max-width:100%;max-height:48vh;border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.18)"></canvas>
        </div>
-       <button class="btn gold" style="width:100%;margin-top:12px" onclick="cvExporter()">⬇️ Exporter en PNG</button>
-       <button id="cvLogoBtn" class="btn ${_cv.logo?'gold':'ghost'} sm" style="width:100%;margin-top:8px" onclick="cvToggleLogo()">🏷️ Signature de marque : ${_cv.logo?'affichée':'masquée'}</button>
-       <p class="note">Astuce iPhone : « Exporter » ouvre le partage iOS — choisis « Enregistrer l'image » pour l'ajouter à ta pellicule, prête à publier.</p>
+       <button id="cvLogoBtn" class="btn ${_cv.logo?'gold':'ghost'} sm" style="width:100%;margin-top:10px" onclick="cvToggleLogo()">🏷️ Signature de marque : ${_cv.logo?'affichée':'masquée'}</button>
+       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+         <button class="btn ghost" style="flex:1" onclick="cvExporter()">⬇️ Cette slide</button>
+         <button class="btn gold" style="flex:1" onclick="cvExporterTout()">⬇️ Tout le carrousel</button>
+       </div>
+       <button class="btn ghost" style="width:100%;margin-top:8px" onclick="cvAuPlanning()">${_cv.linkedPostId?'🔗 Rattacher les visuels à la publication':'🗓️ Envoyer au planning (avec visuels)'}</button>
+       <p class="note">Astuce iPhone : l'export ouvre le partage iOS — « Enregistrer l'image » ajoute à ta pellicule.</p>
      </div>`;
 
-  // Premier dessin après insertion dans le DOM.
-  requestAnimationFrame(()=>{ cvDrawPreview(); cvSyncControls(); });
+  requestAnimationFrame(()=>{ cvDrawPreview(); cvSyncControls(); cvRefreshStrip(); });
+  commEnsureTabBar();
 }
 
 /* ===== FIN MODULE CARROUSEL VISUEL ===== */
+
+/* ===== MODULE SCÉNARIOS VIDÉO (v1224) ===== */
+/* ============================================================================
+ *  MOTEUR DE SCÉNARIOS VIDÉO — Sensations Macarons
+ *  100% offline, sans IA distante : bibliothèque de STRUCTURES NARRATIVES
+ *  expertes (squelettes paramétrés) + moteur d'assemblage qui injecte les
+ *  variables de l'utilisateur (produit, cible, objectif, durée, réseau,
+ *  émotion) pour produire un scénario complet, découpé plan par plan,
+ *  directement tournable au smartphone.
+ *
+ *  Ce n'est pas une génération "au hasard" : chaque structure encode une
+ *  mécanique de persuasion éprouvée. Le moteur choisit/assemble, l'utilisateur
+ *  ajuste. Résultat : fiable, à la charte, jamais hors-marque.
+ * ==========================================================================*/
+
+// ── Dimensions de choix (réutilisent la logique objet/cible du Compositeur) ──
+const VID_OBJECTIFS = {
+  vente:      {label:'Vendre',        emoji:'🛒'},
+  notoriete:  {label:'Notoriété',     emoji:'📣'},
+  lancement:  {label:'Lancement',     emoji:'🚀'},
+  fidelisation:{label:'Fidéliser',    emoji:'🤍'},
+  education:  {label:'Éduquer',       emoji:'🎓'},
+  coaching:   {label:'Coaching',      emoji:'🎯'},
+};
+const VID_RESEAUX = {
+  reels:   {label:'Reels / TikTok', ratio:'9:16', emoji:'🎬', rythme:'rapide'},
+  story:   {label:'Story',          ratio:'9:16', emoji:'⏱️', rythme:'direct'},
+  shorts:  {label:'YT Shorts',      ratio:'9:16', emoji:'▶️', rythme:'rapide'},
+  facebook:{label:'Facebook',       ratio:'1:1 / 9:16', emoji:'👍', rythme:'posé'},
+};
+const VID_DUREES = {
+  court:  {label:'Court 15-30 s', sec:22, plans:[3,5]},
+  moyen:  {label:'Moyen 30-60 s', sec:45, plans:[5,8]},
+};
+const VID_EMOTIONS = {
+  gourmandise:{label:'Gourmandise', emoji:'😋'},
+  nostalgie:  {label:'Nostalgie',   emoji:'🥹'},
+  fierte:     {label:'Fierté',      emoji:'✨'},
+  surprise:   {label:'Surprise',    emoji:'😮'},
+  confiance:  {label:'Confiance',   emoji:'🤝'},
+  desir:      {label:'Désir',       emoji:'💛'},
+  humour:     {label:'Humour',      emoji:'😄'},
+};
+
+// ── BIBLIOTHÈQUE DE STRUCTURES NARRATIVES ──
+// Chaque structure = { id, label, emoji, mecanique, objectifs[], emotions[],
+//   concept(v), message(v), hook(v), beats:[{role, dureeRel, ...}], cta(v) }
+// v = contexte {produit, cibleLabel, objectif, emotion, reseau, duree, ...}
+// Les fonctions renvoient du texte injecté avec les variables : c'est là
+// qu'est l'"adaptation intelligente".
+
+const VID_PRODUIT_DEFAUT = "tes macarons";
+
+function _vidCap(s){ return s ? s.charAt(0).toUpperCase()+s.slice(1) : s; }
+
+const VID_STRUCTURES = [
+  {
+    id:"probleme_solution", label:"Problème → Solution", emoji:"🔧",
+    mecanique:"On nomme une douleur précise du client, on fait monter la gêne, puis le produit apparaît comme la résolution évidente.",
+    objectifs:["vente","lancement","coaching"], emotions:["confiance","desir","surprise"],
+    concept:v=>`Ouvrir sur un problème que ${v.cibleLabel} vit vraiment, puis révéler ${v.produit} comme la solution simple.`,
+    message:v=>`Ce qui te bloquait a une solution — et elle est plus simple que tu crois.`,
+    hook:v=>`« Si toi aussi ${v.douleur}… regarde ça. »`,
+    beats:[
+      {role:"HOOK / problème", part:0.18, cadrage:"Gros plan visage", cam:"Fixe, légère amorce", visu:"Regard caméra, expression agacée/lassée", texteEcran:v=>`Le vrai problème : ${v.douleur}`, voix:v=>`On a tous vécu ça : ${v.douleur}.`, son:"Silence puis note tendue", intention:"Faire dire « c'est moi »"},
+      {role:"Montée", part:0.22, cadrage:"Plan serré mains", cam:"Panoramique lent", visu:"Tentative qui échoue / hésitation", texteEcran:v=>`…et ça n'allait jamais.`, voix:v=>`Tu essaies, tu forces, rien n'y fait.`, son:"Tension qui monte", intention:"Amplifier la gêne"},
+      {role:"Bascule / solution", part:0.30, cadrage:"Plan produit", cam:"Travelling avant vers ${v.produit}", visu:v=>`Apparition de ${v.produit}, lumière chaude`, texteEcran:v=>`La solution : ${v.produit}`, voix:v=>`Et si la réponse tenait dans ${v.produit} ?`, son:"Résolution musicale, chime doux", intention:"Soulagement, révélation"},
+      {role:"Preuve / bénéfice", part:0.18, cadrage:"Très gros plan texture", cam:"Fixe macro", visu:"Détail qui prouve la qualité (croquant, garniture)", texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Musique posée", intention:"Crédibiliser"},
+      {role:"CTA", part:0.12, cadrage:"Plan large charte", cam:"Fixe", visu:"Logo + slogan sur fond charte", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature sonore", intention:"Déclencher l'action"},
+    ],
+  },
+  {
+    id:"avant_apres", label:"Avant / Après", emoji:"↔️",
+    mecanique:"Contraste net entre une situation frustrante (avant) et le résultat désirable (après). Fort en coaching et en preuve.",
+    objectifs:["coaching","vente","lancement"], emotions:["fierte","surprise","confiance"],
+    concept:v=>`Montrer l'écart spectaculaire entre l'avant (raté/banal) et l'après (réussi/premium) grâce à ${v.produit}.`,
+    message:v=>`Le changement est possible, et il est visible.`,
+    hook:v=>`« Avant / après — regarde la différence. »`,
+    beats:[
+      {role:"HOOK avant", part:0.20, cadrage:"Gros plan résultat raté", cam:"Fixe", visu:"Le « avant » peu flatteur, éclairage froid", texteEcran:v=>`AVANT`, voix:v=>`Voilà le point de départ.`, son:"Note grave", intention:"Poser le contraste"},
+      {role:"Transition", part:0.15, cadrage:"Plan serré geste", cam:"Whip pan (fouetté)", visu:"Geste-clé qui fait tout basculer", texteEcran:v=>`Le déclic`, voix:v=>`Il suffit d'un détail.`, son:"Whoosh de transition", intention:"Créer la surprise"},
+      {role:"Après", part:0.30, cadrage:"Plan produit valorisant", cam:"Orbite douce", visu:v=>`L'« après » : ${v.produit} sublimé, lumière chaude`, texteEcran:v=>`APRÈS`, voix:v=>v.benefice, son:"Musique lumineuse", intention:"Faire désirer"},
+      {role:"Preuve émotion", part:0.20, cadrage:"Gros plan réaction", cam:"Fixe", visu:"Sourire, fierté, réaction sincère", texteEcran:v=>`${v.emotionLabel} ✨`, voix:v=>`Et ça, ça change tout.`, son:"Chaleur musicale", intention:"Projection positive"},
+      {role:"CTA", part:0.15, cadrage:"Plan large charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Passer à l'action"},
+    ],
+  },
+  {
+    id:"coulisses", label:"Immersion coulisses", emoji:"🎥",
+    mecanique:"On ouvre les portes de l'atelier. L'authenticité du fait-main crée confiance et attachement à la marque.",
+    objectifs:["notoriete","fidelisation","vente"], emotions:["confiance","fierte","gourmandise"],
+    concept:v=>`Plonger le spectateur dans l'atelier : le vrai geste artisanal derrière ${v.produit}.`,
+    message:v=>`Derrière chaque coque, un savoir-faire réel et local.`,
+    hook:v=>`« Voilà ce qui se passe vraiment dans mon atelier. »`,
+    beats:[
+      {role:"HOOK immersion", part:0.16, cadrage:"Plan serré mains farine/poche", cam:"POV / caméra à la main", visu:"Ambiance atelier, matin, lumière naturelle", texteEcran:v=>`Dans les coulisses…`, voix:v=>`Bienvenue dans mon atelier.`, son:"Sons réels (fouet, four)", intention:"Intimité, vérité"},
+      {role:"Geste-clé", part:0.28, cadrage:"Très gros plan macaronnage", cam:"Macro fixe", visu:"Le geste précis, la texture qui se forme", texteEcran:v=>`Le macaronnage, tout le secret`, voix:v=>`Ce geste, répété des centaines de fois.`, son:"Musique douce en fond", intention:"Valoriser l'expertise"},
+      {role:"Détail premium", part:0.22, cadrage:"Gros plan ingrédient", cam:"Travelling latéral", visu:"Ingrédient noble (vanille, Valrhona…)", texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Chaleur sonore", intention:"Crédibilité premium"},
+      {role:"Résultat", part:0.20, cadrage:"Plan produit fini", cam:"Orbite lente", visu:v=>`${_vidCap(v.produit)} aligné(s), prêt(s)`, texteEcran:v=>`Fait main, ici, à Le Mans`, voix:v=>`Voilà le résultat.`, son:"Musique qui s'ouvre", intention:"Fierté locale"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Inviter"},
+    ],
+  },
+  {
+    id:"temoignage", label:"Témoignage / histoire client", emoji:"💬",
+    mecanique:"Une cliente raconte sa transformation. La preuve sociale et l'identification lèvent les objections en douceur.",
+    objectifs:["vente","coaching","fidelisation"], emotions:["confiance","nostalgie","fierte"],
+    concept:v=>`Faire porter le message par une cliente : son avant, sa surprise, son après avec ${v.produit}.`,
+    message:v=>`Ceux qui ont essayé ne reviennent pas en arrière.`,
+    hook:v=>`« Je n'y croyais pas… jusqu'à ce que j'essaie. »`,
+    beats:[
+      {role:"HOOK objection", part:0.20, cadrage:"Gros plan client qui parle", cam:"Fixe interview", visu:"Personne sincère, cadre intime", texteEcran:v=>`« ${v.objection} »`, voix:v=>`Au début, ${v.objection.toLowerCase()}`, son:"Ambiance feutrée", intention:"Refléter l'objection du spectateur"},
+      {role:"Essai", part:0.22, cadrage:"Plan serré dégustation", cam:"Fixe", visu:"Le moment où elle goûte / découvre", texteEcran:v=>`Puis j'ai essayé…`, voix:v=>`Et puis j'ai goûté.`, son:"Suspension musicale", intention:"Créer l'attente"},
+      {role:"Révélation", part:0.26, cadrage:"Gros plan réaction", cam:"Léger zoom", visu:"Surprise sincère, yeux qui s'ouvrent", texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Résolution chaleureuse", intention:"Preuve émotionnelle"},
+      {role:"Recommandation", part:0.18, cadrage:"Plan poitrine", cam:"Fixe", visu:"Elle recommande, boîte en main", texteEcran:v=>`« Franchement, essaie. »`, voix:v=>`Aujourd'hui, je ne prends que ça.`, son:"Musique confiante", intention:"Transférer la confiance"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Convertir"},
+    ],
+  },
+  {
+    id:"erreur_frequente", label:"L'erreur fréquente", emoji:"⚠️",
+    mecanique:"On révèle une erreur que la cible commet sans le savoir. Très fort en coaching : crée autorité et curiosité.",
+    objectifs:["coaching","education","notoriete"], emotions:["surprise","confiance"],
+    concept:v=>`Pointer l'erreur n°1 que fait ${v.cibleLabel}, puis donner la correction — en positionnant la marque comme experte.`,
+    message:v=>`Ce n'est pas ta faute : on t'a mal expliqué.`,
+    hook:v=>`« L'erreur que 9 personnes sur 10 font… »`,
+    beats:[
+      {role:"HOOK erreur", part:0.20, cadrage:"Gros plan visage/objet", cam:"Fixe", visu:"Doigt qui pointe l'erreur, geste stop", texteEcran:v=>`L'erreur n°1`, voix:v=>`Voici l'erreur que presque tout le monde fait.`, son:"Note d'alerte douce", intention:"Curiosité + identification"},
+      {role:"Démonstration", part:0.26, cadrage:"Plan serré geste", cam:"Macro", visu:"On montre l'erreur en action", texteEcran:v=>`Ce qu'il ne faut pas faire`, voix:v=>`Regarde ce qui se passe quand on la fait.`, son:"Tension légère", intention:"Rendre concret"},
+      {role:"Correction", part:0.28, cadrage:"Très gros plan bon geste", cam:"Macro fixe", visu:"Le bon geste, clair et net", texteEcran:v=>`La bonne façon`, voix:v=>`Voilà comment on corrige.`, son:"Résolution", intention:"Apporter la solution"},
+      {role:"Bénéfice", part:0.16, cadrage:"Plan résultat", cam:"Orbite", visu:"Résultat réussi", texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Musique positive", intention:"Récompense"},
+      {role:"CTA", part:0.10, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Coaching / suivre"},
+    ],
+  },
+  {
+    id:"rarete_urgence", label:"Rareté / édition limitée", emoji:"⏳",
+    mecanique:"On active la peur de manquer (FOMO) autour d'une offre limitée. Idéal pour un lancement ou une fournée du jour.",
+    objectifs:["vente","lancement"], emotions:["desir","surprise","gourmandise"],
+    concept:v=>`Créer l'urgence autour de ${v.produit} : quantité/temps limité, il faut agir maintenant.`,
+    message:v=>`C'est maintenant ou ce sera trop tard.`,
+    hook:v=>`« Attention, il n'en reste presque plus. »`,
+    beats:[
+      {role:"HOOK rareté", part:0.18, cadrage:"Gros plan produit qui s'épuise", cam:"Fixe", visu:"Peu de pièces restantes, main qui en prend", texteEcran:v=>`Édition limitée`, voix:v=>`Il ne reste que quelques pièces.`, son:"Tic-tac / battement", intention:"Créer le FOMO"},
+      {role:"Désir", part:0.30, cadrage:"Très gros plan gourmand", cam:"Macro lente", visu:v=>`${_vidCap(v.produit)} sous leur meilleur jour`, texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Musique gourmande", intention:"Attiser l'envie"},
+      {role:"Contexte moment", part:0.22, cadrage:"Plan lifestyle", cam:"Fixe", visu:v=>`Mise en situation : ${v.moment}`, texteEcran:v=>_vidCap(v.moment), voix:v=>`Parfait pour ${v.moment}.`, son:"Ambiance chaleureuse", intention:"Projection d'usage"},
+      {role:"Urgence", part:0.16, cadrage:"Plan charte + compte", cam:"Fixe", visu:"Mention « avant rupture »", texteEcran:v=>`Avant qu'il n'y en ait plus`, voix:v=>`Ne passe pas à côté.`, son:"Montée", intention:"Pousser à l'action"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Convertir vite"},
+    ],
+  },
+  {
+    id:"asmr_gourmandise", label:"ASMR / démonstration gourmande", emoji:"😋",
+    mecanique:"Pur sensoriel : gros plans, sons de croquant, lumière chaude. On vend l'expérience de dégustation.",
+    objectifs:["vente","notoriete","lancement"], emotions:["gourmandise","desir"],
+    concept:v=>`Faire saliver : ${v.produit} en macro, le croquant, la garniture, sans discours — l'image parle.`,
+    message:v=>`Le plaisir se voit et s'entend.`,
+    hook:v=>`Gros plan croquant dès la première seconde (son ASMR).`,
+    beats:[
+      {role:"HOOK sensoriel", part:0.20, cadrage:"Très gros plan croquant", cam:"Macro fixe", visu:"Coque qui se brise, miettes", texteEcran:v=>``, voix:v=>``, son:"ASMR croquant net", intention:"Capter par le son/texture"},
+      {role:"Garniture", part:0.26, cadrage:"Macro coupe", cam:"Travelling avant", visu:"Cœur coulant / garniture révélée", texteEcran:v=>v.benefice, voix:v=>``, son:"ASMR + musique douce", intention:"Faire désirer"},
+      {role:"Dégustation", part:0.24, cadrage:"Gros plan bouche/main", cam:"Fixe", visu:"Bouchée, réaction de plaisir", texteEcran:v=>`${v.emotionLabel}`, voix:v=>``, son:"Soupir de plaisir léger", intention:"Projection sensorielle"},
+      {role:"Collection", part:0.16, cadrage:"Plan large parfums", cam:"Orbite", visu:"Gamme de couleurs alignée", texteEcran:v=>`Moins de sucre, plus de sensation`, voix:v=>``, son:"Musique qui s'ouvre", intention:"Élargir le désir"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Passer commande"},
+    ],
+  },
+  {
+    id:"histoire_marque", label:"Histoire de marque (storytelling)", emoji:"📖",
+    mecanique:"Le récit fondateur : du Covid au CAP. L'émotion et l'authenticité créent un lien durable et différencient.",
+    objectifs:["notoriete","fidelisation","coaching"], emotions:["nostalgie","fierte","confiance"],
+    concept:v=>`Raconter le parcours : des ratés confinés à la marque d'aujourd'hui, ${v.produit} comme aboutissement.`,
+    message:v=>`Derrière la marque, une histoire vraie de persévérance.`,
+    hook:v=>`« Tout a commencé par des dizaines de ratés, seule dans ma cuisine. »`,
+    beats:[
+      {role:"HOOK origine", part:0.20, cadrage:"Plan d'archive / évocation", cam:"Fixe nostalgique", visu:"Cuisine simple, ambiance intime", texteEcran:v=>`2020. Confinée.`, voix:v=>`Tout a commencé pendant le Covid.`, son:"Piano doux", intention:"Émotion, authenticité"},
+      {role:"Épreuve", part:0.24, cadrage:"Plan serré ratés", cam:"Panoramique", visu:"Coques ratées, persévérance", texteEcran:v=>`Des dizaines d'échecs.`, voix:v=>`J'ai raté, encore et encore.`, son:"Montée émotionnelle", intention:"Créer l'attachement"},
+      {role:"Déclic / CAP", part:0.24, cadrage:"Gros plan réussite", cam:"Zoom lent", visu:"Première collerette réussie, fierté", texteEcran:v=>`Puis le déclic. Le CAP.`, voix:v=>`Et un jour, ça a marché.`, son:"Résolution lumineuse", intention:"Point de bascule"},
+      {role:"Aujourd'hui", part:0.18, cadrage:"Plan produit fier", cam:"Orbite", visu:v=>`${_vidCap(v.produit)} d'aujourd'hui`, texteEcran:v=>`Aujourd'hui, Sensations Macarons`, voix:v=>`Chaque coque porte ce chemin.`, son:"Musique pleine", intention:"Fierté partagée"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Rejoindre l'histoire"},
+    ],
+  },
+];
+
+/* ===== LOT QUALITÉ v1225 — 12 nouvelles structures vidéo ===== */
+/* Chacune = une mécanique de persuasion distincte, au format VID_STRUCTURES. */
+
+const VID_STRUCTURES_LOT = [
+  {
+    id:"demo_produit", label:"Démonstration produit", emoji:"🔍",
+    mecanique:"On montre le produit sous toutes ses coutures : fabrication, texture, résultat. La preuve par l'image.",
+    objectifs:["vente","lancement","notoriete"], emotions:["confiance","gourmandise","desir"],
+    concept:v=>`Montrer concrètement ce qui rend ${v.produit} différent, du geste au résultat.`,
+    message:v=>`La qualité, ça se démontre, pas ça se raconte.`,
+    hook:v=>`« Regarde ce qui se passe quand on ne triche pas. »`,
+    beats:[
+      {role:"HOOK démonstration", part:0.18, cadrage:"Gros plan produit", cam:"Fixe", visu:v=>`${_vidCap(v.produit)} présenté net`, texteEcran:v=>`La démo`, voix:v=>`Voici ce qui fait la différence.`, son:"Note claire", intention:"Promettre une preuve"},
+      {role:"Fabrication", part:0.26, cadrage:"Plan serré geste", cam:"Macro", visu:"Étape clé de fabrication", texteEcran:v=>`Fait main, ici`, voix:v=>`Chaque étape compte.`, son:"Sons réels d'atelier", intention:"Crédibiliser"},
+      {role:"Texture", part:0.24, cadrage:"Très gros plan coupe", cam:"Macro fixe", visu:"Coque + garniture en coupe", texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"ASMR léger", intention:"Faire désirer"},
+      {role:"Résultat", part:0.18, cadrage:"Plan large gamme", cam:"Orbite", visu:"Résultat final valorisé", texteEcran:v=>`Le résultat`, voix:v=>`Voilà pourquoi ça change tout.`, son:"Musique qui s'ouvre", intention:"Convaincre"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Convertir"},
+    ],
+  },
+  {
+    id:"comparaison", label:"Comparaison (nous / les autres)", emoji:"⚖️",
+    mecanique:"On oppose l'artisanal au générique, sans dénigrer, pour faire ressortir la valeur par contraste.",
+    objectifs:["vente","notoriete","lancement"], emotions:["confiance","surprise"],
+    concept:v=>`Comparer honnêtement ${v.produit} au dessert standard, pour rendre la différence évidente.`,
+    message:v=>`À toi de voir ce que tu veux vraiment dans ton assiette.`,
+    hook:v=>`« D'un côté l'industriel, de l'autre… ça. »`,
+    beats:[
+      {role:"HOOK contraste", part:0.20, cadrage:"Split visuel", cam:"Fixe", visu:"Industriel vs fait-main côte à côte", texteEcran:v=>`L'un ou l'autre ?`, voix:v=>`Deux desserts. Une seule différence qui compte.`, son:"Note duale", intention:"Poser le choix"},
+      {role:"Le standard", part:0.20, cadrage:"Gros plan produit banal", cam:"Fixe froid", visu:"Le générique, éclairage neutre", texteEcran:v=>`Le standard`, voix:v=>`Calibré, uniforme… et fade.`, son:"Ambiance plate", intention:"Dévaloriser sans agresser"},
+      {role:"Le vrai", part:0.28, cadrage:"Gros plan produit valorisé", cam:"Orbite chaude", visu:v=>`${_vidCap(v.produit)} sous belle lumière`, texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Musique chaleureuse", intention:"Faire pencher la balance"},
+      {role:"Le choix", part:0.18, cadrage:"Plan réaction", cam:"Fixe", visu:"Sourire, choix fait", texteEcran:v=>`Le choix est vite fait`, voix:v=>`Une fois qu'on a goûté le vrai…`, son:"Résolution", intention:"Confirmer la préférence"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Passer à l'acte"},
+    ],
+  },
+  {
+    id:"defi", label:"Le défi", emoji:"🎯",
+    mecanique:"On lance un défi (goûter à l'aveugle, convertir un sceptique). Le format engage et crée de la curiosité.",
+    objectifs:["notoriete","vente","lancement"], emotions:["surprise","humour","confiance"],
+    concept:v=>`Un défi filmé : faire changer d'avis quelqu'un qui « n'aime pas les macarons » avec ${v.produit}.`,
+    message:v=>`Le meilleur argument, c'est une bouchée.`,
+    hook:v=>`« Défi : lui faire dire oui alors qu'elle dit non. »`,
+    beats:[
+      {role:"HOOK défi", part:0.18, cadrage:"Plan poitrine sceptique", cam:"Fixe", visu:"Personne qui affiche son scepticisme", texteEcran:v=>`Le défi du jour`, voix:v=>`« Moi, les macarons ? Non merci. »`, son:"Note joueuse", intention:"Créer la tension du défi"},
+      {role:"L'épreuve", part:0.22, cadrage:"Gros plan dégustation", cam:"Fixe", visu:"Elle goûte, méfiante", texteEcran:v=>`Elle teste…`, voix:v=>`On tente quand même.`, son:"Suspense léger", intention:"Attente"},
+      {role:"Le retournement", part:0.28, cadrage:"Gros plan réaction", cam:"Zoom", visu:"Surprise sincère, sourire", texteEcran:v=>`Le verdict`, voix:v=>`« Ah… ok, là je comprends. »`, son:"Résolution joyeuse", intention:"Preuve par la surprise"},
+      {role:"Bénéfice", part:0.18, cadrage:"Plan produit", cam:"Orbite", visu:v=>v.benefice, texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Musique positive", intention:"Ancrer la valeur"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Inviter à tester"},
+    ],
+  },
+  {
+    id:"suspense", label:"Suspense / révélation", emoji:"🎭",
+    mecanique:"On retient l'information jusqu'au dernier plan. La curiosité maintient l'attention jusqu'au bout.",
+    objectifs:["notoriete","lancement","vente"], emotions:["surprise","desir"],
+    concept:v=>`Créer le mystère autour de ${v.produit} et ne révéler qu'à la fin ce qui le rend spécial.`,
+    message:v=>`Ce que tu vas voir vaut les quelques secondes d'attente.`,
+    hook:v=>`« Attends la fin, tu vas comprendre. »`,
+    beats:[
+      {role:"HOOK mystère", part:0.20, cadrage:"Plan flou/partiel", cam:"Lent", visu:"On devine sans voir clairement", texteEcran:v=>`Attends…`, voix:v=>`Il se passe quelque chose ici.`, son:"Nappe mystérieuse", intention:"Créer la curiosité"},
+      {role:"Indices", part:0.24, cadrage:"Gros plans détails", cam:"Coupe rythmée", visu:"Fragments : mains, ingrédients, geste", texteEcran:v=>`Encore un peu…`, voix:v=>`Presque.`, son:"Tension progressive", intention:"Retenir l'attention"},
+      {role:"Montée", part:0.20, cadrage:"Plan serré", cam:"Zoom lent", visu:"Le moment approche", texteEcran:v=>`Prêt ?`, voix:v=>`Voilà.`, son:"Montée", intention:"Amener au sommet"},
+      {role:"Révélation", part:0.24, cadrage:"Plan produit plein", cam:"Reveal net", visu:v=>`${_vidCap(v.produit)} révélé en pleine lumière`, texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Résolution éclatante", intention:"Récompenser l'attente"},
+      {role:"CTA", part:0.12, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Convertir"},
+    ],
+  },
+  {
+    id:"routine", label:"Routine / journée type", emoji:"🌅",
+    mecanique:"On suit une journée de l'atelier. L'authenticité du quotidien crée proximité et confiance.",
+    objectifs:["notoriete","fidelisation"], emotions:["confiance","nostalgie","fierte"],
+    concept:v=>`Suivre une journée type : du levé au premier client, comment naissent ${v.produit}.`,
+    message:v=>`Derrière chaque boîte, une vraie journée de travail passionné.`,
+    hook:v=>`« 6h du matin. La journée commence comme ça. »`,
+    beats:[
+      {role:"HOOK aube", part:0.18, cadrage:"Plan large atelier", cam:"Fixe", visu:"Atelier au petit matin, lumière naissante", texteEcran:v=>`6h — on commence`, voix:v=>`Ma journée démarre tôt.`, son:"Ambiance calme, café", intention:"Intimité"},
+      {role:"Le travail", part:0.28, cadrage:"Plans serrés gestes", cam:"Enchaînés", visu:"Pesée, macaronnage, pochage", texteEcran:v=>`Chaque geste compte`, voix:v=>`Rien n'est laissé au hasard.`, son:"Sons réels rythmés", intention:"Valoriser le travail"},
+      {role:"La sortie du four", part:0.22, cadrage:"Gros plan four", cam:"Fixe", visu:"Coques qui sortent, collerette", texteEcran:v=>v.benefice, voix:v=>`Le moment que je préfère.`, son:"Musique douce", intention:"Émotion du métier"},
+      {role:"Le client", part:0.18, cadrage:"Plan échange", cam:"Fixe", visu:"Remise de la boîte, sourire", texteEcran:v=>`Et ça, ça vaut tout`, voix:v=>`Voir un sourire, c'est ma paie.`, son:"Musique chaleureuse", intention:"Boucler sur le lien"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Inviter"},
+    ],
+  },
+  {
+    id:"liste_astuces", label:"Liste / astuces (valeur)", emoji:"📝",
+    mecanique:"On donne de la valeur gratuite (3 astuces). L'autorité et la générosité créent confiance et abonnement.",
+    objectifs:["education","coaching","notoriete"], emotions:["confiance","surprise"],
+    concept:v=>`Donner 3 conseils concrets utiles à ${v.cibleLabel}, en se positionnant comme expert.`,
+    message:v=>`Voici de la vraie valeur, gratuitement.`,
+    hook:v=>`« 3 erreurs que presque tout le monde fait. »`,
+    beats:[
+      {role:"HOOK promesse", part:0.16, cadrage:"Gros plan visage", cam:"Fixe", visu:"Regard caméra, doigts qui comptent", texteEcran:v=>`3 astuces`, voix:v=>`Trois choses à savoir absolument.`, son:"Note dynamique", intention:"Promettre de la valeur"},
+      {role:"Astuce 1", part:0.22, cadrage:"Plan serré démonstration", cam:"Macro", visu:"1re astuce en action", texteEcran:v=>`1.`, voix:v=>`La première : le détail qu'on néglige tous.`, son:"Rythme", intention:"Apporter du concret"},
+      {role:"Astuce 2", part:0.22, cadrage:"Plan serré démonstration", cam:"Macro", visu:"2e astuce en action", texteEcran:v=>`2.`, voix:v=>`La deuxième change tout de suite le résultat.`, son:"Rythme", intention:"Maintenir l'intérêt"},
+      {role:"Astuce 3", part:0.22, cadrage:"Plan serré démonstration", cam:"Macro", visu:"3e astuce en action", texteEcran:v=>`3.`, voix:v=>`Et la troisième, personne ne la connaît.`, son:"Rythme + résolution", intention:"Finir en force"},
+      {role:"CTA valeur", part:0.18, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Suivre pour plus"},
+    ],
+  },
+  {
+    id:"emotion_pure", label:"Émotion pure", emoji:"💗",
+    mecanique:"On mise tout sur le ressenti : musique, ralenti, regard. On touche avant de convaincre.",
+    objectifs:["notoriete","fidelisation","vente"], emotions:["nostalgie","fierte","desir"],
+    concept:v=>`Un film court tout en émotion autour de ${v.produit} : peu de mots, beaucoup de ressenti.`,
+    message:v=>`Certaines choses se ressentent avant de se dire.`,
+    hook:v=>`Ralenti + musique douce dès la première image.`,
+    beats:[
+      {role:"HOOK émotion", part:0.20, cadrage:"Gros plan ralenti", cam:"Slow motion", visu:"Geste ou regard, lumière chaude", texteEcran:v=>``, voix:v=>``, son:"Piano / cordes douces", intention:"Toucher immédiatement"},
+      {role:"Le moment", part:0.26, cadrage:"Plans intimes", cam:"Doux", visu:"Partage, dégustation, sourire sincère", texteEcran:v=>v.emotionLabel, voix:v=>``, son:"Musique qui monte", intention:"Créer l'attachement"},
+      {role:"Le sens", part:0.24, cadrage:"Plan produit tendre", cam:"Orbite lente", visu:v=>`${_vidCap(v.produit)} au cœur du moment`, texteEcran:v=>v.benefice, voix:v=>``, son:"Apogée émotionnel", intention:"Donner du sens"},
+      {role:"Signature", part:0.16, cadrage:"Plan charte", cam:"Fixe", visu:"Slogan qui s'écrit", texteEcran:v=>`Moins de sucre, plus de sensation`, voix:v=>``, son:"Résolution", intention:"Marquer la marque"},
+      {role:"CTA doux", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Inviter sans forcer"},
+    ],
+  },
+  {
+    id:"humour", label:"Humour / décalé", emoji:"😄",
+    mecanique:"On dédramatise avec un ton léger. L'humour rend la marque sympathique et très partageable.",
+    objectifs:["notoriete","vente"], emotions:["humour","surprise"],
+    concept:v=>`Une saynète drôle et légère autour d'une situation vraie liée à ${v.produit}.`,
+    message:v=>`On peut être sérieux sur la qualité sans se prendre au sérieux.`,
+    hook:v=>`Une situation exagérée et drôle dès la 1re seconde.`,
+    beats:[
+      {role:"HOOK comique", part:0.20, cadrage:"Plan situation", cam:"Fixe", visu:"Mise en scène exagérée, drôle", texteEcran:v=>`POV :`, voix:v=>`Quand tu dis « je prends juste un macaron »…`, son:"Musique fun", intention:"Faire sourire"},
+      {role:"Escalade", part:0.26, cadrage:"Plans coupés rapides", cam:"Dynamique", visu:"La situation dégénère (avec humour)", texteEcran:v=>`…30 secondes plus tard`, voix:v=>`Spoiler : tu en prends six.`, son:"Rythme comique", intention:"Amuser"},
+      {role:"Punchline produit", part:0.24, cadrage:"Gros plan gourmand", cam:"Fixe", visu:v=>`${_vidCap(v.produit)} irrésistible`, texteEcran:v=>v.benefice, voix:v=>`Franchement, c'est pas ta faute.`, son:"Résolution fun", intention:"Lier humour et envie"},
+      {role:"Clin d'œil", part:0.16, cadrage:"Plan visage", cam:"Fixe", visu:"Clin d'œil caméra", texteEcran:v=>`Assume 😏`, voix:v=>`Assume, c'est bon.`, son:"Note joyeuse", intention:"Complicité"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Convertir en souriant"},
+    ],
+  },
+  {
+    id:"saison", label:"Saisonnalité", emoji:"🍂",
+    mecanique:"On surfe sur la saison/le moment de l'année. La pertinence temporelle booste l'engagement.",
+    objectifs:["vente","lancement"], emotions:["desir","nostalgie","gourmandise"],
+    concept:v=>`Ancrer ${v.produit} dans la saison en cours pour créer l'envie du moment.`,
+    message:v=>`Chaque saison a son goût. Voici celui du moment.`,
+    hook:v=>`« La saison change, les parfums aussi. »`,
+    beats:[
+      {role:"HOOK saison", part:0.18, cadrage:"Plan d'ambiance saison", cam:"Fixe", visu:"Décor de saison (feuilles, lumière…)", texteEcran:v=>`C'est la saison`, voix:v=>`La saison a un goût bien précis.`, son:"Ambiance saisonnière", intention:"Ancrer dans le moment"},
+      {role:"Le parfum du moment", part:0.28, cadrage:"Gros plan produit", cam:"Orbite", visu:v=>`${_vidCap(v.produit)} de saison`, texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Musique chaleureuse", intention:"Faire désirer"},
+      {role:"Contexte d'usage", part:0.22, cadrage:"Plan lifestyle", cam:"Fixe", visu:v=>`Mise en situation : ${v.moment}`, texteEcran:v=>_vidCap(v.moment), voix:v=>`Parfait pour ${v.moment}.`, son:"Ambiance", intention:"Projection"},
+      {role:"Éphémère", part:0.18, cadrage:"Plan charte", cam:"Fixe", visu:"Mention édition de saison", texteEcran:v=>`Le temps de la saison`, voix:v=>`Il ne restera pas longtemps.`, son:"Montée douce", intention:"Créer l'urgence douce"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Saisir maintenant"},
+    ],
+  },
+  {
+    id:"question_reponse", label:"Question → réponse", emoji:"❓",
+    mecanique:"On pose la question que se pose le client et on y répond. Capte ceux qui hésitent encore.",
+    objectifs:["vente","education","fidelisation"], emotions:["confiance","surprise"],
+    concept:v=>`Répondre en vidéo à LA question que ${v.cibleLabel} se pose sur ${v.produit}.`,
+    message:v=>`Ta question a une réponse claire. La voici.`,
+    hook:v=>`« On me demande souvent : ${v.objection} »`,
+    beats:[
+      {role:"HOOK question", part:0.20, cadrage:"Gros plan visage", cam:"Fixe", visu:"Regard caméra, question posée", texteEcran:v=>`« ${v.objection} »`, voix:v=>`On me pose souvent cette question.`, son:"Note d'ouverture", intention:"Refléter le doute du spectateur"},
+      {role:"La réponse", part:0.30, cadrage:"Plan démonstratif", cam:"Macro", visu:"Preuve concrète qui répond", texteEcran:v=>`La réponse`, voix:v=>`Voilà la vérité, sans détour.`, son:"Musique posée", intention:"Rassurer avec honnêteté"},
+      {role:"La preuve", part:0.20, cadrage:"Gros plan produit", cam:"Fixe", visu:v=>v.benefice, texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Résolution", intention:"Crédibiliser"},
+      {role:"Réassurance", part:0.16, cadrage:"Plan visage", cam:"Fixe", visu:"Sourire de confiance", texteEcran:v=>`Voilà, tu sais tout`, voix:v=>`Maintenant tu peux décider en confiance.`, son:"Chaleur", intention:"Lever la dernière objection"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Convertir"},
+    ],
+  },
+  {
+    id:"unboxing", label:"Unboxing / déballage", emoji:"📦",
+    mecanique:"On filme l'ouverture d'une boîte comme une expérience. L'anticipation et le beau créent le désir.",
+    objectifs:["vente","lancement","notoriete"], emotions:["desir","surprise","gourmandise"],
+    concept:v=>`Filmer l'ouverture d'un coffret de ${v.produit} comme un moment d'anticipation et de plaisir.`,
+    message:v=>`Le plaisir commence avant même la première bouchée.`,
+    hook:v=>`Gros plan sur la boîte fermée, mains qui s'approchent.`,
+    beats:[
+      {role:"HOOK boîte", part:0.18, cadrage:"Gros plan coffret fermé", cam:"Fixe", visu:"Boîte soignée, mains prêtes à ouvrir", texteEcran:v=>`On ouvre ?`, voix:v=>`Ce moment, juste avant d'ouvrir.`, son:"Anticipation musicale", intention:"Créer l'attente"},
+      {role:"L'ouverture", part:0.26, cadrage:"Plan serré ouverture", cam:"Lent", visu:"Le couvercle se soulève, révélation", texteEcran:v=>`…`, voix:v=>``, son:"Petit chime de révélation", intention:"Récompenser"},
+      {role:"La découverte", part:0.24, cadrage:"Vue plongeante coffret", cam:"Léger travelling", visu:v=>`${_vidCap(v.produit)} alignés, couleurs`, texteEcran:v=>v.benefice, voix:v=>`${_vidCap(v.benefice)}.`, son:"Musique gourmande", intention:"Faire désirer"},
+      {role:"La bouchée", part:0.18, cadrage:"Gros plan dégustation", cam:"Fixe", visu:"Première bouchée, plaisir", texteEcran:v=>v.emotionLabel, voix:v=>``, son:"Soupir de plaisir", intention:"Projection sensorielle"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Passer commande"},
+    ],
+  },
+  {
+    id:"coulisses_echec", label:"Vérité / envers du décor", emoji:"🎬",
+    mecanique:"On montre les ratés, l'envers du décor. La vulnérabilité crée une authenticité rare et attachante.",
+    objectifs:["notoriete","fidelisation","coaching"], emotions:["nostalgie","confiance","humour"],
+    concept:v=>`Montrer l'envers du décor : les ratés, les fournées jetées, la réalité derrière ${v.produit}.`,
+    message:v=>`La perfection qu'on voit cache beaucoup d'essais qu'on ne voit pas.`,
+    hook:v=>`« Ce que je ne montre jamais sur Instagram… »`,
+    beats:[
+      {role:"HOOK vérité", part:0.20, cadrage:"Plan serré ratés", cam:"Caméra à la main", visu:"Coques ratées, fissurées, réalité brute", texteEcran:v=>`L'envers du décor`, voix:v=>`Voilà ce qu'on ne montre jamais.`, son:"Ton intime", intention:"Surprendre par l'honnêteté"},
+      {role:"La réalité", part:0.24, cadrage:"Plan large atelier", cam:"POV", visu:"Le vrai désordre du travail", texteEcran:v=>`La vraie vie d'atelier`, voix:v=>`Des ratés, il y en a encore.`, son:"Ambiance vraie", intention:"Créer la proximité"},
+      {role:"La persévérance", part:0.24, cadrage:"Plan serré geste", cam:"Fixe", visu:"On recommence, sérieux", texteEcran:v=>`On recommence`, voix:v=>`Mais on ne lâche rien.`, son:"Montée", intention:"Valoriser l'engagement"},
+      {role:"La réussite", part:0.18, cadrage:"Gros plan réussite", cam:"Orbite", visu:v=>`${_vidCap(v.produit)} enfin parfaits`, texteEcran:v=>v.benefice, voix:v=>`Et quand c'est bon, c'est vraiment bon.`, son:"Résolution lumineuse", intention:"Récompenser"},
+      {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Rejoindre l'aventure"},
+    ],
+  },
+];
+VID_STRUCTURES.push(...VID_STRUCTURES_LOT);
+
+
+// ── État du module vidéo ──
+const _vid = {
+  objet:'vente', cible:'b2c', objectif:'vente', reseau:'reels',
+  duree:'court', emotion:'gourmandise', produit:'', structureId:null,
+};
+
+function vidSet(k,val){ _vid[k]=val; if(k==='objectif'||k==='emotion'){ _vid.structureId=null; } renderVideo(); }
+function vidSetProduit(v){ _vid.produit=v; }
+function vidPickStructure(id){ _vid.structureId=(id===_vid.structureId?null:id); renderVideo(); }
+
+// Recommandation : structures triées par pertinence (match objectif + émotion).
+function vidStructuresRecommandees(){
+  return VID_STRUCTURES.map(s=>{
+    let score=0;
+    if(s.objectifs.includes(_vid.objectif)) score+=2;
+    if(s.emotions.includes(_vid.emotion)) score+=2;
+    // Coaching : privilégier erreur/avant-après/témoignage.
+    if(_vid.objet==='coaching' && ['erreur_frequente','avant_apres','temoignage'].includes(s.id)) score+=1;
+    return {s,score};
+  }).sort((a,b)=>b.score-a.score);
+}
+
+// Contexte d'injection : dérive des variables lisibles à partir des choix.
+function vidContexte(){
+  const cibleLabel = _vid.cible==='b2b' ? 'les pros et organisateurs' : (_vid.objet==='coaching' ? 'ceux qui ratent leurs macarons' : 'les gourmands');
+  const produit = (_vid.produit||'').trim() || VID_PRODUIT_DEFAUT;
+  const emo = VID_EMOTIONS[_vid.emotion]||{label:''};
+  // Bénéfice/émotion/objection/moment dérivés de l'objet + émotion (banque courte).
+  const benefBy = {
+    vente:'Moins de sucre, plus de sensation — le vrai goût à chaque bouchée',
+    coaching:'Enfin des coques lisses, brillantes, réussies à tous les coups',
+    notoriete:'Un savoir-faire artisanal, fait main ici à Le Mans',
+    lancement:'Un nouveau parfum de saison, à savourer maintenant',
+    fidelisation:'La qualité qui donne envie de revenir',
+    education:'Comprendre enfin le pourquoi de chaque geste',
+  };
+  const objBy = _vid.objet==='coaching' ? "Je n'ai pas la main pour ça" : "Je n'aime pas les macarons, c'est trop sucré";
+  const douBy = _vid.objet==='coaching' ? "tes collerettes craquellent ou penchent" : "tu ne sais jamais quel dessert apporter";
+  const momBy = {
+    gourmandise:'une pause café rien qu\'à toi', nostalgie:'un souvenir à partager',
+    fierte:'offrir ce que tu as fait toi-même', surprise:'surprendre tes invités',
+    confiance:'un cadeau qui ne déçoit jamais', desir:'te faire vraiment plaisir',
+    humour:'un moment léger entre amis',
+  };
+  return {
+    produit, cibleLabel,
+    objectif:_vid.objectif, emotion:_vid.emotion, emotionLabel:emo.label,
+    reseau:_vid.reseau, duree:_vid.duree,
+    benefice: benefBy[_vid.objectif]||benefBy.vente,
+    objection: objBy, douleur: douBy, moment: momBy[_vid.emotion]||'un bon moment',
+    cta: _vid.objet==='coaching' ? 'Réserve ta séance — lien en bio 🎯' : 'Commande — lien en bio 📩',
+  };
+}
+
+// Résout une valeur de beat qui peut être une fonction(v) ou une string (avec ${v.x}).
+function _vidResolve(val, v){
+  if(typeof val==='function'){ try{ return val(v)||''; }catch(e){ return ''; } }
+  if(typeof val==='string' && val.indexOf('${')>=0){
+    return val.replace(/\$\{v\.(\w+)\}/g, (m,k)=> (v[k]!=null?v[k]:''));
+  }
+  return val||'';
+}
+
+// Assemble le scénario complet à partir de la structure choisie.
+function vidGenererScenario(){
+  const st = _vid.structureId ? VID_STRUCTURES.find(x=>x.id===_vid.structureId) : vidStructuresRecommandees()[0].s;
+  if(!st) return null;
+  const v = vidContexte();
+  const dur = VID_DUREES[_vid.duree]||VID_DUREES.court;
+  const totalSec = dur.sec;
+  // Durées de plans proportionnelles à part[], normalisées sur totalSec.
+  const somme = st.beats.reduce((a,b)=>a+b.part,0);
+  let acc=0;
+  const plans = st.beats.map((b,i)=>{
+    const secBrut = totalSec*(b.part/somme);
+    const debut = acc; acc+=secBrut;
+    return {
+      n:i+1,
+      role:b.role,
+      debut:debut, fin:acc, duree:secBrut,
+      cadrage:_vidResolve(b.cadrage,v),
+      cam:_vidResolve(b.cam,v),
+      visu:_vidResolve(b.visu,v),
+      texteEcran:_vidResolve(b.texteEcran,v),
+      voix:_vidResolve(b.voix,v),
+      son:_vidResolve(b.son,v),
+      intention:_vidResolve(b.intention,v),
+    };
+  });
+  return {
+    structure:st, v,
+    concept:_vidResolve(st.concept,v),
+    message:_vidResolve(st.message,v),
+    hook:_vidResolve(st.hook,v),
+    objectifLabel:(VID_OBJECTIFS[_vid.objectif]||{}).label||'',
+    emotionLabel:v.emotionLabel,
+    reseauLabel:(VID_RESEAUX[_vid.reseau]||{}).label||'',
+    ratio:(VID_RESEAUX[_vid.reseau]||{}).ratio||'9:16',
+    dureeLabel:dur.label, totalSec,
+    plans,
+    cta:v.cta,
+  };
+}
+
+// Formatte le scénario en texte copiable / storyboard.
+function vidScenarioTexte(sc){
+  if(!sc) return '';
+  const L=[];
+  L.push(`🎬 SCÉNARIO — ${sc.structure.label}`);
+  L.push(`Réseau : ${sc.reseauLabel} (${sc.ratio}) · Durée : ${sc.dureeLabel} (~${Math.round(sc.totalSec)}s)`);
+  L.push('');
+  L.push(`• Concept : ${sc.concept}`);
+  L.push(`• Message principal : ${sc.message}`);
+  L.push(`• Objectif : ${sc.objectifLabel} · Émotion dominante : ${sc.emotionLabel}`);
+  L.push(`• Hook (0-3s) : ${sc.hook}`);
+  L.push('');
+  L.push('— DÉCOUPAGE PLAN PAR PLAN —');
+  sc.plans.forEach(p=>{
+    L.push('');
+    L.push(`PLAN ${p.n} · ${p.role} · ${p.debut.toFixed(1)}→${p.fin.toFixed(1)}s (${p.duree.toFixed(1)}s)`);
+    L.push(`  Cadrage : ${p.cadrage}`);
+    L.push(`  Caméra : ${p.cam}`);
+    if(p.visu) L.push(`  Image : ${p.visu}`);
+    if(p.texteEcran) L.push(`  Texte à l'écran : « ${p.texteEcran} »`);
+    if(p.voix) L.push(`  Voix / dialogue : « ${p.voix} »`);
+    if(p.son) L.push(`  Son : ${p.son}`);
+    L.push(`  Intention : ${p.intention}`);
+  });
+  L.push('');
+  L.push(`👉 CTA final : ${sc.cta}`);
+  return L.join('\n');
+}
+
+/* ── Rendu de la vue vidéo ── */
+async function renderVideo(){
+  const main=document.getElementById('main'); if(!main) return;
+  const segK=(k,val,label,emoji)=>`<button class="btn ${_vid[k]===val?'gold':'ghost'} sm" style="margin:2px" onclick="vidSet('${k}','${val}')">${emoji||''} ${label}</button>`;
+
+  const objetSeg = ['vente','coaching'].map(o=>segK('objet',o,o==='vente'?'Vente':'Coaching',o==='vente'?'🛒':'🎯')).join('');
+  const cibleSeg = ['b2c','b2b'].map(c=>segK('cible',c,c==='b2c'?'B2C':'B2B',c==='b2c'?'👤':'🏢')).join('');
+  const objectifSeg = Object.entries(VID_OBJECTIFS).map(([k,o])=>segK('objectif',k,o.label,o.emoji)).join('');
+  const reseauSeg = Object.entries(VID_RESEAUX).map(([k,r])=>segK('reseau',k,r.label,r.emoji)).join('');
+  const dureeSeg = Object.entries(VID_DUREES).map(([k,d])=>segK('duree',k,d.label)).join('');
+  const emotionSeg = Object.entries(VID_EMOTIONS).map(([k,e])=>segK('emotion',k,e.label,e.emoji)).join('');
+
+  const reco = vidStructuresRecommandees();
+  const structsHtml = reco.map(({s,score})=>{
+    const sel=_vid.structureId===s.id;
+    const best=(!_vid.structureId && s.id===reco[0].s.id);
+    return `<div class="sum-box lnk" style="flex-direction:column;align-items:stretch;gap:3px;${sel?'background:#f6efe4;border-left:4px solid #52252F':(best?'border-left:4px solid #AA7C39':'')}" onclick="vidPickStructure('${s.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:center"><b>${s.emoji} ${s.label}</b>${sel?'<b>✓</b>':(best?'<b style="color:#AA7C39;font-size:.7rem">recommandé</b>':'')}</div>
+      <div class="note" style="font-size:.72rem">${esc(s.mecanique)}</div></div>`;
+  }).join('');
+
+  const sc = vidGenererScenario();
+  const scTexte = vidScenarioTexte(sc);
+  const planHtml = sc ? sc.plans.map(p=>`
+     <div class="sum-box" style="flex-direction:column;align-items:stretch;gap:2px">
+       <div style="display:flex;justify-content:space-between"><b>Plan ${p.n} · ${esc(p.role)}</b><span class="note">${p.debut.toFixed(1)}→${p.fin.toFixed(1)}s</span></div>
+       <div class="note" style="font-size:.74rem;line-height:1.5">
+         🎥 <b>Cadrage</b> ${esc(p.cadrage)} · <b>Caméra</b> ${esc(p.cam)}<br>
+         ${p.visu?`🖼️ ${esc(p.visu)}<br>`:''}
+         ${p.texteEcran?`🔤 <b>À l'écran :</b> « ${esc(p.texteEcran)} »<br>`:''}
+         ${p.voix?`🎙️ <b>Voix :</b> « ${esc(p.voix)} »<br>`:''}
+         ${p.son?`🔊 ${esc(p.son)}<br>`:''}
+         💡 <i>${esc(p.intention)}</i>
+       </div>
+     </div>`).join('') : '';
+
+  main.innerHTML=
+    `<div class="topbar"><div><h1>🎬 Scénario vidéo</h1><p>Du filtre au storyboard tournable — 100% à ta charte</p></div></div>
+
+     <div class="panel">
+       <h2>1 · Objet & cible</h2>
+       <div>${objetSeg}${cibleSeg}</div>
+       <h2 style="margin-top:10px">2 · Objectif marketing</h2>
+       <div>${objectifSeg}</div>
+       <h2 style="margin-top:10px">3 · Réseau</h2>
+       <div>${reseauSeg}</div>
+       <h2 style="margin-top:10px">4 · Durée</h2>
+       <div>${dureeSeg}</div>
+       <h2 style="margin-top:10px">5 · Émotion dominante</h2>
+       <div>${emotionSeg}</div>
+       <h2 style="margin-top:10px">6 · Produit mis en avant <span class="note">(optionnel)</span></h2>
+       <input id="vidProduit" value="${esc(_vid.produit)}" oninput="vidSetProduit(this.value)" onchange="renderVideo()" placeholder="ex : macaron citron-basilic, coffret découverte…" style="width:100%">
+     </div>
+
+     <div class="panel">
+       <h2>7 · Structure narrative <span class="tag">${VID_STRUCTURES.length}</span></h2>
+       <p class="note">Le liseré caramel = structure recommandée pour tes choix. Tu peux en imposer une autre.</p>
+       ${structsHtml}
+     </div>
+
+     <div class="panel" style="border:2px solid var(--bordeaux)">
+       <h2>🎞️ Scénario — ${sc?esc(sc.structure.label):''}</h2>
+       ${sc?`<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px">
+         <div class="note"><b>Réseau</b> ${esc(sc.reseauLabel)} (${sc.ratio}) · <b>Durée</b> ~${Math.round(sc.totalSec)}s · <b>Objectif</b> ${esc(sc.objectifLabel)} · <b>Émotion</b> ${esc(sc.emotionLabel)}</div>
+         <div><b>Concept :</b> ${esc(sc.concept)}</div>
+         <div><b>Message :</b> ${esc(sc.message)}</div>
+         <div><b>Hook (0-3s) :</b> ${esc(sc.hook)}</div>
+       </div>
+       <h3 style="margin:12px 0 4px;color:var(--bordeaux)">Découpage plan par plan</h3>
+       ${planHtml}
+       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px">
+         <button class="btn ghost" style="flex:1" onclick="vidCopier(this)" data-copy="${esc(scTexte)}">📋 Copier le scénario</button>
+         <button class="btn gold" style="flex:1" onclick="vidAuPlanning()">🗓️ Au planning</button>
+       </div>`
+       :'<p class="note">Choisis tes critères pour générer un scénario.</p>'}
+     </div>`;
+  commEnsureTabBar();
+}
+
+function vidCopier(btn){ if(typeof scCopier==='function') return scCopier(btn); const t=btn&&btn.getAttribute?btn.getAttribute('data-copy'):''; try{navigator.clipboard&&navigator.clipboard.writeText(t).then(()=>toast('📋 Copié'));}catch(e){toast('Copie manuelle');} }
+
+async function vidAuPlanning(){
+  const sc=vidGenererScenario(); if(!sc){ toast('Rien à enregistrer'); return; }
+  if(typeof scAjouterPost!=='function'){ toast('Planning indisponible'); return; }
+  const canal = (_vid.reseau==='story')?'stories':'reels';
+  await scAjouterPost({
+    titre:'🎬 '+sc.structure.label+' — '+sc.reseauLabel,
+    texte:vidScenarioTexte(sc),
+    canal, offre:(_vid.objet==='coaching'?'coaching':(_vid.cible==='b2b'?'b2b':'vente')),
+    statut:'a_rediger',
+  });
+  toast('✅ Scénario au planning');
+  if(typeof _scTab!=='undefined'){ _scTab='calendrier'; }
+  commGotoPlanning();
+}
+
+/* ===== FIN MODULE SCÉNARIOS VIDÉO ===== */
+
 
 
 /* ===== MODULE VENTILATION PAR MODE D'ENCAISSEMENT (v1218) ===== */
