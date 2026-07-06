@@ -1,5 +1,5 @@
 // [v1234] bump CACHE — Choix logo fiabilisé (contraste WCAG) + slogans officiels intégrés.
-const CACHE = 'sm-iphone-v275';
+const CACHE = 'sm-iphone-v276';
 const ASSETS = [
   './',
   './index.html',

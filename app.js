@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1236';
-const APP_MAJ = '\u00c9diteur plein \u00e9cran (type Canva) pour tes slides. Touchez l\u2019aper\u00e7u \u2192 la slide s\u2019ouvre en grand. Touchez un texte pour le s\u00e9lectionner, glissez-le au doigt pour le placer o\u00f9 vous voulez, double-tapez pour ouvrir le clavier et corriger les mots. Une barre appara\u00eet alors en bas : taille (A\u2212/A+), couleur (5 teintes de la charte) et alignement. Titre et corps sont ind\u00e9pendants. Vos placements sont conserv\u00e9s, m\u00eame apr\u00e8s \u00ab R\u00e9g\u00e9n\u00e9rer le d\u00e9roul\u00e9 \u00bb. Sans retouche, les slides s\u2019affichent exactement comme avant (placement auto). Bouton \u00ab Termin\u00e9 \u00bb pour revenir. Slogan par slide, choix logo Auto/WCAG et 100% hors-ligne conserv\u00e9s. Textes toujours en Bellota + Outfit exclusivement.';
+const APP_VERSION = 'v1240';
+const APP_MAJ = 'Glisser-d\u00e9poser des vignettes pour r\u00e9organiser les slides au doigt. Appui long (~\u00bcs) sur une vignette : elle se soul\u00e8ve (petit retour vibrant), puis glissez-la o\u00f9 vous voulez dans la bande, les autres se d\u00e9calent. Rel\u00e2chez pour valider. Un simple tap garde son r\u00f4le (s\u00e9lectionner la slide) et le d\u00e9filement horizontal de la bande reste libre. Les fl\u00e8ches ◀ ▶ restent disponibles sous la vignette active pour un ajustement pr\u00e9cis. Textes toujours en Bellota + Outfit exclusivement.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -390,6 +390,11 @@ db.version(25).stores({});
 //   offre:'vente'|'coaching'|'b2b' · dateProg(ISO) · sourceData(trace données app)
 db.version(26).stores({
   posts: '++id, statut, canal, offre, dateProg, createdAt'
+});
+// v27 — Bibliothèque de blocs de texte réutilisables (accroche / corps / cta),
+// pour composer un carrousel plus vite (enregistrer un texte, le réinsérer plus tard).
+db.version(27).stores({
+  blocs: '++id, type, createdAt'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -24919,6 +24924,7 @@ async function renderCompositeur(){
               <button class="btn gold" style="flex:1" onclick="compoEnregistrer()">💾 Au planning</button>
             </div>
             <button class="btn ghost" style="width:100%;margin-top:6px" onclick="cvDepuisCompositeur()">🎨 Créer le carrousel narratif (6–10 slides)</button>
+            <button class="btn ghost" style="width:100%;margin-top:6px" onclick="cvPostSimple()">🖼️ Créer un post à visuel unique</button>
             <button class="btn ghost" style="width:100%;margin-top:6px" onclick="commSwitch('video')">🎬 En faire un scénario vidéo</button>`
          : '<p class="note">Choisis une accroche et/ou un texte ci-dessus pour composer ton contenu.</p>'}
      </div>`;
@@ -25283,7 +25289,7 @@ const CV_GABARITS = {
 function cvNewSlide(patch){
   return Object.assign({
     format:'carre', gabarit:'pleincadre', source:'compo',
-    titre:'', corps:'', photo:null, photoName:'', photoY:0.5,
+    titre:'', corps:'', cta:'', photo:null, photoName:'', photoY:0.5,
     slogan:'defaut',  // 'defaut' (slogan pluriel), un index de SM_SLOGANS, ou 'aucun'
     edits:null,       // null = placement auto ; sinon { titre:{x,y,size,color,align}, corps:{...} } en fractions de W/H
   }, patch||{});
@@ -25368,6 +25374,26 @@ function cvDepuisCompositeur(){
   commSwitch('carrousel');
 }
 
+// ── Post à VISUEL UNIQUE : une seule slide, pas de génération narrative ──
+function cvPostSimple(){
+  _cv.linkedPostId = null;
+  _cv.narrLastSel = null;   // pas de régénérateur : c'est un visuel libre
+  const a = (typeof _compo!=='undefined' && _compo.accrocheId) ? SC_ACCROCHES.find(x=>x.id===_compo.accrocheId) : null;
+  const t = (typeof _compo!=='undefined' && _compo.texteId) ? SC_TEXTES.find(x=>x.id===_compo.texteId) : null;
+  const cChoisi = (typeof _compo!=='undefined' && _compo.ctaId) ? SC_CTA.find(x=>x.id===_compo.ctaId) : null;
+  const ctaFinal = cChoisi ? cChoisi.texte : (t && t.cta ? t.cta : '');
+  _cv.slides = [ cvNewSlide({
+    source:'libre', gabarit:'pleincadre',
+    titre: a? a.texte : (t? t.texte.split('.')[0].slice(0,60) : ''),
+    corps: t? t.texte : '',
+    cta: ctaFinal,
+  }) ];
+  _cv.active = 0;
+  _cv.planTargetTitre = a ? a.texte.slice(0,60) : (t?t.texte.slice(0,60):'');
+  _cv.wizStep = 2;   // droit à l'étape édition texte + style
+  commSwitch('carrousel');
+}
+
 // (Re)génère les slides narratives depuis la dernière sélection, le nombre de
 // slides (_cv.narrN) et la trame (_cv.narrTrameId, ou auto selon l'axe).
 function cvGenererNarratif(){
@@ -25404,6 +25430,50 @@ function cvSetGabarit(g){ cvS().gabarit=g; cvDrawPreview(); cvSyncControls(); }
 function cvSetSource(s){ cvS().source=s; renderCarrousel(); }
 function cvSetTitre(v){ cvS().titre=v; cvDrawPreview(); }
 function cvSetCorps(v){ cvS().corps=v; cvDrawPreview(); }
+function cvSetCta(v){ cvS().cta=v; cvDrawPreview(); }
+
+/* ── Bibliothèque de blocs de texte réutilisables (accroche / corps / cta) ── */
+const CV_BLOC_TYPES = { accroche:'Accroche', corps:'Texte', cta:'CTA' };
+// Enregistre le contenu d'un champ de la slide active comme bloc réutilisable.
+async function cvBlocEnregistrer(type){
+  const s=cvS();
+  const texte=((type==='accroche'?s.titre:type==='corps'?s.corps:s.cta)||'').trim();
+  if(!texte){ toast('Rien à enregistrer dans ce champ'); return; }
+  try{
+    await db.blocs.add({ type, texte, createdAt:Date.now() });
+    toast('✅ '+(CV_BLOC_TYPES[type]||'Bloc')+' enregistré');
+    renderCarrousel();
+  }catch(e){ toast('Enregistrement impossible'); }
+}
+// Insère un bloc enregistré dans le champ correspondant de la slide active.
+async function cvBlocInserer(id){
+  try{
+    const b=await db.blocs.get(id); if(!b) return;
+    const s=cvS();
+    if(b.type==='accroche') s.titre=b.texte;
+    else if(b.type==='corps') s.corps=b.texte;
+    else s.cta=b.texte;
+    renderCarrousel();
+  }catch(e){ toast('Insertion impossible'); }
+}
+async function cvBlocSupprimer(id){
+  try{ await db.blocs.delete(id); renderCarrousel(); }catch(e){}
+}
+// Rendu HTML de la bibliothèque, filtrée par type (pour l'étape texte du wizard).
+async function cvBlocsHTML(type){
+  let items=[];
+  try{ items=await db.blocs.where('type').equals(type).reverse().sortBy('createdAt'); }catch(e){}
+  if(!items.length) return '';
+  const chips=items.slice(0,12).map(b=>{
+    const court=esc(b.texte.length>42?b.texte.slice(0,42)+'…':b.texte);
+    return `<div style="display:flex;align-items:center;gap:4px;background:#faf6ee;border:1px solid #e8dcc0;border-radius:8px;padding:4px 6px;max-width:100%">
+        <button onclick="cvBlocInserer(${b.id})" style="border:none;background:none;color:var(--bordeaux);font-size:.72rem;text-align:left;flex:1;min-width:0;cursor:pointer">${court}</button>
+        <button onclick="cvBlocSupprimer(${b.id})" style="border:none;background:none;color:#c08;opacity:.5;font-size:.8rem;cursor:pointer">×</button>
+      </div>`;
+  }).join('');
+  return `<div style="margin-top:6px"><div class="note" style="font-size:.68rem;margin-bottom:4px">📚 Réutiliser (${CV_BLOC_TYPES[type]}) :</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px">${chips}</div></div>`;
+}
 function cvSetPhotoY(v){ cvS().photoY=parseFloat(v); cvDrawPreview(); }
 function cvToggleLogo(){ _cv.logo=!_cv.logo; cvDrawPreview(); cvSyncControls(); }
 // Choix de la déclinaison du logo : 'auto' (par luminosité) ou une clé forcée.
@@ -25414,8 +25484,27 @@ function cvSetSlogan(v){ cvS().slogan=v; renderCarrousel(); }
 /* ── Gestion de la pile de slides ── */
 function cvGoSlide(i){ _cv.active=i; renderCarrousel(); }
 function cvAddSlide(){ _cv.slides.push(cvNewSlide({ format:cvS().format })); _cv.active=_cv.slides.length-1; renderCarrousel(); }
+// Crée une slide CTA dédiée (gabarit uni) à partir du CTA de la slide active.
+function cvAddCtaSlide(){
+  const src=cvS();
+  const texte=(src.cta||'').trim() || 'À toi de jouer 📩';
+  _cv.slides.push(cvNewSlide({ format:src.format, gabarit:'uni', source:'libre', titre:texte }));
+  _cv.active=_cv.slides.length-1;
+  toast('Slide CTA ajoutée');
+  renderCarrousel();
+}
+// Clone une slide en profondeur pour les champs modifiables indépendamment.
+// La photo (objet Image) reste partagée par référence (lecture seule au rendu) — voulu.
+function cvCloneSlide(s){
+  const copy=Object.assign({}, s);
+  if(s.edits){
+    copy.edits={};
+    for(const k in s.edits) copy.edits[k]=Object.assign({}, s.edits[k]);
+  }
+  return copy;
+}
 function cvDupSlide(){
-  const s=cvS(); const copy=Object.assign({}, s); // photo (Image) partagée par référence : OK en lecture
+  const copy=cvCloneSlide(cvS());
   _cv.slides.splice(_cv.active+1,0,copy); _cv.active++; renderCarrousel();
 }
 function cvDelSlide(){
@@ -25429,6 +25518,15 @@ function cvMoveSlide(dir){
   if(j<0||j>=_cv.slides.length) return;
   const tmp=_cv.slides[i]; _cv.slides[i]=_cv.slides[j]; _cv.slides[j]=tmp;
   _cv.active=j; renderCarrousel();
+}
+// Déplace la slide d'index `from` à la position `to` (glisser-déposer des vignettes).
+// silent=true : réordonne les données sans re-render (utilisé pendant le drag continu).
+function cvReorderSlide(from,to,silent){
+  if(from===to || from<0 || to<0 || from>=_cv.slides.length || to>=_cv.slides.length) return;
+  const [moved]=_cv.slides.splice(from,1);
+  _cv.slides.splice(to,0,moved);
+  _cv.active=to;
+  if(!silent) renderCarrousel();
 }
 
 // ── Import photo (pour la slide active) ──
@@ -25485,7 +25583,7 @@ function cvDrawSlide(canvas, s){
       ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
       boxes = cvDrawTexteBloc(ctx,W,H,s, {yStart:H*0.66, yMin:H*0.34, ancrerBas:true, wMax:W*0.86, centre:false, surFonce:true, zone:[H*0.5,H]});
     }
-    if(_cv.logo) cvDrawSignature(ctx,W,H,s.gabarit,s);
+    if(_cv.logo){ const sb=cvDrawSignature(ctx,W,H,s.gabarit,s); if(sb) Object.assign(boxes,sb); }
     canvas._cvBoxes = boxes||{};  // mémorisé pour l'éditeur (hit-test)
     return boxes;
   });
@@ -25532,10 +25630,12 @@ function cvColorVal(key){ const c=CV_TEXT_COLORS.find(c=>c.key===key); return c?
 function cvDrawUnBloc(ctx,W,H,texte,role,auto,ov){
   texte=(texte||'').trim(); if(!texte) return null;
   const isTitre = role==='titre';
+  const isCta = role==='cta';
   const align = ov&&ov.align ? ov.align : (auto.centre?'center':'left');
   const sizeF = ov&&ov.size!=null ? ov.size : auto.sizeF;
   const size  = Math.round(W*sizeF);
   const font  = isTitre ? "700 "+size+"px 'Bellota', Georgia, serif"
+              : isCta   ? "600 "+size+"px 'Outfit', sans-serif"
                         : "400 "+size+"px 'Outfit', sans-serif";
   ctx.font=font;
   const color = ov&&ov.color ? cvColorVal(ov.color) : auto.color;
@@ -25605,6 +25705,17 @@ function cvDrawTexteBloc(ctx,W,H,s,opts){
       { centre, sizeF:(s.format==='story'?0.034:0.038), color:colCorps, wMax, y:yCorps, limiteBas },
       ed.corps);
   }
+
+  // — CTA — (accent caramel ; affiché s'il existe, ou toujours en édition)
+  const cta=(s.cta||'').trim();
+  if(cta && (ed.cta || porteCorpsAuto || enEdition)){
+    const ref = boxes.corps || boxes.titre;
+    let yCta = (ref? ref.y+ref.h : yTitre) + H*0.03;
+    const colCta = surFonce ? CV_COL.caramel2 : CV_COL.caramel;
+    boxes.cta = cvDrawUnBloc(ctx,W,H,cta,'cta',
+      { centre, sizeF:(s.format==='story'?0.032:0.036), color:colCta, wMax, y:yCta, limiteBas },
+      ed.cta);
+  }
   return boxes;
 }
 function cvWrapText(ctx,text,x,y,maxW,lineH,centre,yLimit,mesure){
@@ -25629,28 +25740,41 @@ function cvWrapText(ctx,text,x,y,maxW,lineH,centre,yLimit,mesure){
 function cvDrawSignature(ctx,W,H,gabarit,s){
   s = s || (typeof cvS==='function' ? cvS() : {});
   smPreloadLogos();
-  const cle = cvChoisirLogo(ctx, W, H);
+  const ed = s.edits||{};
+  const boxes={};
+  // Déclinaison : override manuel (ed.logo.variant) sinon choix auto.
+  const cle = (ed.logo&&ed.logo.variant) ? ed.logo.variant : cvChoisirLogo(ctx, W, H);
   const img = _smLogoImgs[cle];
+  const slg = cvSloganTexte(s);
   if(img && img.complete && img.naturalWidth>0){
-    const slg = cvSloganTexte(s);
-    // Largeur cible du logo : ~42% de la largeur de la slide, centré en bas.
-    const lw = Math.round(W*0.42);
+    // Largeur : override (ed.logo.size, fraction de W) sinon 42%.
+    const lwF = (ed.logo&&ed.logo.size!=null) ? ed.logo.size : 0.42;
+    const lw = Math.round(W*lwF);
     const lh = Math.round(lw * (img.naturalHeight/img.naturalWidth));
-    const lx = Math.round((W-lw)/2);
-    // Si un slogan est présent, on remonte légèrement le logo pour loger l'accroche dessous.
+    // Position : override (ed.logo.x/y = centre du logo) sinon centré en bas.
     const margeBas = slg ? H*0.058 : H*0.035;
-    const ly = Math.round(H - lh - margeBas);
-    ctx.save();
-    ctx.globalAlpha = 0.96;
-    ctx.drawImage(img, lx, ly, lw, lh);
-    ctx.restore();
+    let cx, ly;
+    if(ed.logo && ed.logo.x!=null){ cx=ed.logo.x*W; ly=ed.logo.y*H - lh/2; }
+    else { cx=W/2; ly=Math.round(H - lh - margeBas); }
+    const lx = Math.round(cx - lw/2);
+    ctx.save(); ctx.globalAlpha=0.96; ctx.drawImage(img, lx, ly, lw, lh); ctx.restore();
+    boxes.logo={ x:lx, y:ly, w:lw, h:lh, role:'logo' };
     if(slg){
+      // Slogan : override (ed.slogan.x/y) sinon sous le logo.
+      const sSizeF=(ed.slogan&&ed.slogan.size!=null)?ed.slogan.size:0.019;
+      const sSize=Math.round(W*sSizeF);
+      const sCol=(ed.slogan&&ed.slogan.color)?cvColorVal(ed.slogan.color)
+                 :((gabarit==='uni'||gabarit==='hautbas')?'rgba(198,151,79,0.95)':'rgba(232,221,205,0.92)');
+      let sx,sy;
+      if(ed.slogan && ed.slogan.x!=null){ sx=ed.slogan.x*W; sy=ed.slogan.y*H; }
+      else { sx=W/2; sy=Math.round(ly+lh+H*0.028); }
       ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-      ctx.fillStyle=(gabarit==='uni'||gabarit==='hautbas')?'rgba(198,151,79,0.95)':'rgba(232,221,205,0.92)';
-      ctx.font="400 "+Math.round(W*0.019)+"px 'Outfit', sans-serif";
-      ctx.fillText(slg, W/2, Math.round(ly+lh+H*0.028));
+      ctx.fillStyle=sCol; ctx.font="400 "+sSize+"px 'Outfit', sans-serif";
+      ctx.fillText(slg, sx, sy);
+      const sw=ctx.measureText(slg).width;
+      boxes.slogan={ x:sx-sw/2, y:sy-sSize, w:sw, h:sSize*1.3, role:'slogan' };
     }
-    return;
+    return boxes;
   }
   // — Repli texte (police de marque uniquement) —
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
@@ -25658,12 +25782,13 @@ function cvDrawSignature(ctx,W,H,gabarit,s){
   ctx.fillStyle=(gabarit==='uni'||gabarit==='hautbas')?'rgba(232,221,205,0.85)':'rgba(255,255,255,0.9)';
   ctx.font="700 "+Math.round(W*0.030)+"px 'Bellota', serif";
   ctx.fillText('Sensations Macarons',W/2,y);
-  const slg = cvSloganTexte(s);
-  if(slg){
+  const slg2 = cvSloganTexte(s);
+  if(slg2){
     ctx.fillStyle=(gabarit==='uni'||gabarit==='hautbas')?'rgba(198,151,79,0.95)':'rgba(232,221,205,0.9)';
     ctx.font="400 "+Math.round(W*0.019)+"px 'Outfit', sans-serif";
-    ctx.fillText(slg,W/2,y+Math.round(W*0.028));
+    ctx.fillText(slg2,W/2,y+Math.round(W*0.028));
   }
+  return boxes;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -25680,12 +25805,22 @@ function cvEnsureEdit(role){
     const cvs=document.getElementById('edCanvas');
     const box = cvs && cvs._cvBoxes ? cvs._cvBoxes[role] : null;
     const W=_ed.W||1080, H=_ed.H||1080;
-    // Point de départ = position actuelle auto, convertie en fractions.
-    const sizeF = role==='titre' ? (s.format==='story'?0.062:0.070) : (s.format==='story'?0.034:0.038);
-    s.edits[role] = box
-      ? { x:(box.align==='center'?(box.x+box.w/2):box.x)/W, y:box.y/H, size:sizeF, color:null, align:box.align||'center' }
-      : { x:0.5, y:role==='titre'?0.62:0.78, size:sizeF, color:null, align:'center' };
-    if(s.edits[role].color==null) s.edits[role].color = (role==='titre')?'creme':'creme';
+    if(role==='logo'){
+      s.edits.logo = box
+        ? { x:(box.x+box.w/2)/W, y:(box.y+box.h/2)/H, size:box.w/W, variant:null }
+        : { x:0.5, y:0.9, size:0.42, variant:null };
+    } else if(role==='slogan'){
+      s.edits.slogan = box
+        ? { x:(box.x+box.w/2)/W, y:(box.y+box.h)/H, size:0.019, color:null }
+        : { x:0.5, y:0.95, size:0.019, color:null };
+    } else {
+      const sizeF = role==='titre' ? (s.format==='story'?0.062:0.070)
+                  : role==='cta'   ? (s.format==='story'?0.032:0.036)
+                  : (s.format==='story'?0.034:0.038);
+      s.edits[role] = box
+        ? { x:(box.align==='center'?(box.x+box.w/2):box.x)/W, y:box.y/H, size:sizeF, color:'creme', align:box.align||'center' }
+        : { x:0.5, y:role==='titre'?0.62:(role==='cta'?0.86:0.78), size:sizeF, color:'creme', align:'center' };
+    }
   }
   return s.edits[role];
 }
@@ -25698,21 +25833,23 @@ function cvOpenEditor(){
   if(!ov){ ov=document.createElement('div'); ov.id='edOverlay'; document.body.appendChild(ov); }
   ov.style.cssText='position:fixed;inset:0;z-index:10000;background:#2a1218;display:flex;flex-direction:column;touch-action:none';
   ov.innerHTML=`
-    <div style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;color:#E8DDCD;font-family:system-ui">
-      <span style="font-size:.82rem;opacity:.75">Touchez un texte · glissez pour placer · double-tap pour écrire</span>
-      <button onclick="cvCloseEditor()" style="background:#AA7C39;color:#fff;border:none;border-radius:20px;padding:8px 18px;font-weight:700;font-size:.9rem">Terminé</button>
+    <div style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;color:#E8DDCD;font-family:system-ui">
+      <span style="font-size:.72rem;opacity:.72;line-height:1.2;flex:1">Touchez un élément · glissez pour placer · double-tap texte pour écrire</span>
+      <button onclick="cvEdImportPhoto()" style="background:#3a2028;color:#E8DDCD;border:none;border-radius:20px;padding:8px 14px;font-size:.82rem;flex:0 0 auto">🖼️ Photo</button>
+      <button onclick="cvCloseEditor()" style="background:#AA7C39;color:#fff;border:none;border-radius:20px;padding:8px 18px;font-weight:700;font-size:.9rem;flex:0 0 auto">Terminé</button>
     </div>
     <div id="edStage" style="flex:1 1 auto;display:flex;align-items:center;justify-content:center;padding:8px;min-height:0">
       <canvas id="edCanvas" style="max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5)"></canvas>
     </div>
     <div id="edBar" style="flex:0 0 auto;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:#1e0d12;display:none"></div>
-    <input id="edHidden" style="position:absolute;left:-9999px;opacity:0" />`;
+    <input id="edHidden" style="position:absolute;left:-9999px;opacity:0" />
+    <input id="edFile" type="file" accept="image/*" style="display:none" />`;
   const cvs=document.getElementById('edCanvas');
   cvs.addEventListener('pointerdown', cvEdPointerDown);
   cvs.addEventListener('pointermove', cvEdPointerMove);
   cvs.addEventListener('pointerup',   cvEdPointerUp);
   const inp=document.getElementById('edHidden');
-  inp.addEventListener('input', ()=>{ if(_ed.sel){ cvS()[_ed.sel]=inp.value; cvEdRedraw(); } });
+  inp.addEventListener('input', ()=>{ if(_ed.sel==='titre'||_ed.sel==='corps'||_ed.sel==='cta'){ cvS()[_ed.sel]=inp.value; cvEdRedraw(); } });
   inp.addEventListener('blur', ()=>{ cvEdRedraw(); });
   cvEdRedraw();
 }
@@ -25720,6 +25857,20 @@ function cvCloseEditor(){
   _ed.open=false; _ed.sel=null;
   const ov=document.getElementById('edOverlay'); if(ov) ov.remove();
   renderCarrousel();  // répercute les edits sur l'aperçu + la bande + l'export
+}
+// Import photo depuis l'éditeur : déclenche le sélecteur et redessine sur place.
+function cvEdImportPhoto(){
+  const f=document.getElementById('edFile'); if(!f) return;
+  f.onchange=()=>{
+    const file=f.files&&f.files[0]; if(!file) return;
+    const url=URL.createObjectURL(file); const img=new Image();
+    img.onload=()=>{ const s=cvS(); s.photo=img; s.photoName=file.name||'photo';
+      if(s.gabarit==='uni') s.gabarit='pleincadre';
+      cvEdRedraw(); setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){} },3000); };
+    img.onerror=()=>{ toast('Image illisible — réessaie'); };
+    img.src=url;
+  };
+  f.click();
 }
 
 // Redessine la slide dans l'éditeur, + cadre de sélection éventuel.
@@ -25749,7 +25900,8 @@ function cvEdPt(e){
 function cvEdHit(p){
   const cvs=document.getElementById('edCanvas'); const b=cvs._cvBoxes||{};
   const pad=cvs.width*0.02;
-  for(const role of ['titre','corps']){
+  // Ordre : textes d'abord (au-dessus), puis slogan, puis logo.
+  for(const role of ['titre','corps','cta','slogan','logo']){
     const x=b[role]; if(!x) continue;
     if(p.x>=x.x-pad && p.x<=x.x+x.w+pad && p.y>=x.y-pad && p.y<=x.y+x.h+pad) return role;
   }
@@ -25759,8 +25911,8 @@ function cvEdPointerDown(e){
   e.preventDefault();
   const p=cvEdPt(e); const hit=cvEdHit(p);
   const now=Date.now();
-  // Double-tap sur le bloc sélectionné → clavier
-  if(hit && hit===_ed.sel && now-_ed.lastTap<320){ cvEdEditText(); _ed.lastTap=0; return; }
+  // Double-tap sur un bloc TEXTE sélectionné → clavier (logo/slogan exclus)
+  if(hit && hit===_ed.sel && (hit==='titre'||hit==='corps'||hit==='cta') && now-_ed.lastTap<320){ cvEdEditText(); _ed.lastTap=0; return; }
   _ed.lastTap=now;
   if(hit){
     _ed.sel=hit;
@@ -25783,7 +25935,7 @@ function cvEdPointerMove(e){
 function cvEdPointerUp(e){ _ed.drag=null; }
 
 function cvEdEditText(){
-  if(!_ed.sel) return;
+  if(!_ed.sel || (_ed.sel!=='titre' && _ed.sel!=='corps' && _ed.sel!=='cta')) return;
   const inp=document.getElementById('edHidden');
   inp.value = cvS()[_ed.sel]||'';
   inp.focus();
@@ -25793,31 +25945,61 @@ function cvEdEditText(){
 function cvEdSet(prop,val){
   if(!_ed.sel) return;
   const ov=cvEnsureEdit(_ed.sel);
-  if(prop==='size'){ ov.size=Math.min(0.14, Math.max(0.02, (ov.size||0.05)+val)); }
-  else ov[prop]=val;
+  if(prop==='size'){
+    const mn = _ed.sel==='logo'?0.15:0.012, mx = _ed.sel==='logo'?0.85:0.16;
+    ov.size=Math.min(mx, Math.max(mn, (ov.size||0.05)+val));
+  } else ov[prop]=val;
   cvEdRedraw();
 }
+function cvEdSetSlogan(v){ cvS().slogan=v; cvEdRedraw(); }
 
 // Barre d'outils basse : n'apparaît que si un bloc est sélectionné.
 function cvEdSyncBar(){
   const bar=document.getElementById('edBar'); if(!bar) return;
   if(!_ed.sel){ bar.style.display='none'; return; }
-  const ov=cvS().edits?cvS().edits[_ed.sel]:null;
-  const curCol=ov&&ov.color?ov.color:'creme';
-  const curAl=ov&&ov.align?ov.align:'center';
-  const swatch=CV_TEXT_COLORS.map(c=>
-    `<button onclick="cvEdSet('color','${c.key}')" style="width:30px;height:30px;border-radius:50%;border:${curCol===c.key?'3px solid #fff':'2px solid rgba(255,255,255,.25)'};background:${c.val};flex:0 0 auto"></button>`
-  ).join('');
-  const alignBtn=(k,lbl)=>`<button onclick="cvEdSet('align','${k}')" style="flex:1;padding:8px;border:none;border-radius:8px;background:${curAl===k?'#AA7C39':'#3a2028'};color:#fff;font-size:1rem">${lbl}</button>`;
+  const s=cvS(); const ov=s.edits?s.edits[_ed.sel]:null;
   bar.style.display='block';
-  bar.innerHTML=`
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-      <span style="color:#E8DDCD;font-size:.72rem;width:52px">${_ed.sel==='titre'?'Titre':'Corps'}</span>
-      <button onclick="cvEdSet('size',-0.006)" style="width:40px;height:36px;border:none;border-radius:8px;background:#3a2028;color:#fff;font-size:1.2rem">A−</button>
-      <button onclick="cvEdSet('size',0.006)" style="width:40px;height:36px;border:none;border-radius:8px;background:#3a2028;color:#fff;font-size:1.2rem">A+</button>
-      <div style="display:flex;gap:5px;flex:1">${alignBtn('left','⬅')}${alignBtn('center','↔')}${alignBtn('right','➡')}</div>
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">${swatch}</div>`;
+  const label = {titre:'Titre',corps:'Corps',cta:'CTA',logo:'Logo',slogan:'Slogan'}[_ed.sel]||'';
+  const btnSize = (lbl,delta)=>`<button onclick="cvEdSet('size',${delta})" style="width:44px;height:38px;border:none;border-radius:9px;background:#3a2028;color:#fff;font-size:1.15rem">${lbl}</button>`;
+  let rows='';
+
+  if(_ed.sel==='logo'){
+    // Déclinaisons de couleur du logo.
+    const cur=(ov&&ov.variant)||'auto';
+    const variants=[['auto','✨'],['aubergine','🟣'],['noir','⚫'],['blanc','⚪'],['creme','🤍'],['sauge','🌿']];
+    const chips=variants.map(([k,e])=>
+      `<button onclick="cvEdSet('variant','${k==='auto'?'':k}')" style="flex:1;min-width:0;padding:8px 4px;border:none;border-radius:9px;background:${(cur===k||(k==='auto'&&!ov.variant))?'#AA7C39':'#3a2028'};color:#fff;font-size:.8rem">${e}</button>`
+    ).join('');
+    rows=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="color:#E8DDCD;font-size:.72rem;width:52px">Taille</span>
+        ${btnSize('−',-0.03)}${btnSize('+',0.03)}</div>
+      <div style="display:flex;gap:5px">${chips}</div>`;
+
+  } else if(_ed.sel==='slogan'){
+    const curCol=ov&&ov.color?ov.color:'auto';
+    const swatch=CV_TEXT_COLORS.map(c=>
+      `<button onclick="cvEdSet('color','${c.key}')" style="width:30px;height:30px;border-radius:50%;border:${curCol===c.key?'3px solid #fff':'2px solid rgba(255,255,255,.25)'};background:${c.val}"></button>`).join('');
+    const slBtn=(v,lbl)=>`<button onclick="cvEdSetSlogan('${v}')" style="flex:1;padding:7px 4px;border:none;border-radius:8px;background:${(s.slogan||'defaut')===v?'#AA7C39':'#3a2028'};color:#fff;font-size:.66rem">${lbl}</button>`;
+    rows=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="color:#E8DDCD;font-size:.72rem;width:52px">Taille</span>
+        ${btnSize('A−',-0.004)}${btnSize('A+',0.004)}
+        <div style="display:flex;gap:6px;flex:1;justify-content:flex-end">${swatch}</div></div>
+      <div style="display:flex;gap:5px">${slBtn('defaut','moins de sucre…')}${slBtn('1','offrez-vous…')}${slBtn('aucun','Aucun')}</div>`;
+
+  } else {
+    // Titre / corps
+    const curCol=ov&&ov.color?ov.color:'creme';
+    const curAl=ov&&ov.align?ov.align:'center';
+    const swatch=CV_TEXT_COLORS.map(c=>
+      `<button onclick="cvEdSet('color','${c.key}')" style="width:30px;height:30px;border-radius:50%;border:${curCol===c.key?'3px solid #fff':'2px solid rgba(255,255,255,.25)'};background:${c.val}"></button>`).join('');
+    const alignBtn=(k,lbl)=>`<button onclick="cvEdSet('align','${k}')" style="flex:1;padding:8px;border:none;border-radius:8px;background:${curAl===k?'#AA7C39':'#3a2028'};color:#fff;font-size:1rem">${lbl}</button>`;
+    rows=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        ${btnSize('A−',-0.006)}${btnSize('A+',0.006)}
+        <div style="display:flex;gap:5px;flex:1">${alignBtn('left','⬅')}${alignBtn('center','↔')}${alignBtn('right','➡')}</div>
+        <button onclick="cvEdEditText()" style="padding:8px 12px;border:none;border-radius:8px;background:#AA7C39;color:#fff;font-size:.8rem">✎ Écrire</button></div>
+      <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">${swatch}</div>`;
+  }
+  bar.innerHTML=`<div style="color:#E8DDCD;font-size:.7rem;margin-bottom:8px;opacity:.7">${label}</div>${rows}`;
 }
 
 /* ── Aperçu + bande de slides ── */
@@ -25838,6 +26020,84 @@ function cvRefreshStrip(){
   document.querySelectorAll('canvas[data-cvthumb]').forEach(c=>{
     const i=+c.getAttribute('data-cvthumb'); const s=_cv.slides[i]; if(s) cvDrawSlide(c,s);
   });
+}
+
+/* ── Glisser-déposer des vignettes (réordonner au doigt) ──
+   Appui long (~250 ms) sur une vignette = mode déplacement (elle se soulève),
+   puis on glisse pour la repositionner. Tap court = sélection (onclick natif).
+   Le scroll horizontal reste libre tant que l'appui long n'a pas déclenché. */
+const _stripDrag = { idx:-1, active:false, timer:null, startX:0, startY:0, el:null, justDragged:false };
+function cvStripDragInit(){
+  const strip=document.getElementById('cvStrip'); if(!strip || strip._dragBound) return;
+  strip._dragBound=true;
+  strip.addEventListener('pointerdown', cvStripPointerDown);
+  strip.addEventListener('pointermove', cvStripPointerMove);
+  strip.addEventListener('pointerup', cvStripPointerUp);
+  strip.addEventListener('pointercancel', cvStripPointerUp);
+  // Bloque le clic de sélection déclenché juste après un glisser-déposer.
+  strip.addEventListener('click', (e)=>{
+    if(_stripDrag.justDragged){ e.stopPropagation(); e.preventDefault(); _stripDrag.justDragged=false; }
+  }, true);
+}
+function _stripItemFromEvent(e){
+  let n=e.target;
+  while(n && n!==document && !(n.getAttribute && n.getAttribute('data-slide-idx')!=null)) n=n.parentNode;
+  return (n && n.getAttribute) ? n : null;
+}
+function cvStripPointerDown(e){
+  const item=_stripItemFromEvent(e); if(!item) return;
+  const idx=+item.getAttribute('data-slide-idx');
+  _stripDrag.startX=e.clientX; _stripDrag.startY=e.clientY;
+  _stripDrag.idx=idx; _stripDrag.el=item; _stripDrag.active=false;
+  clearTimeout(_stripDrag.timer);
+  // Appui long → bascule en mode déplacement.
+  _stripDrag.timer=setTimeout(()=>{
+    _stripDrag.active=true;
+    if(navigator.vibrate) try{ navigator.vibrate(15); }catch(_){}
+    if(_stripDrag.el){ _stripDrag.el.style.transform='scale(1.12)'; _stripDrag.el.style.opacity='0.85';
+      _stripDrag.el.style.transition='transform .1s'; _stripDrag.el.style.zIndex='5'; }
+    cvGoSlide(_stripDrag.idx);
+  }, 250);
+}
+function cvStripPointerMove(e){
+  if(_stripDrag.idx<0) return;
+  const dx=Math.abs(e.clientX-_stripDrag.startX), dy=Math.abs(e.clientY-_stripDrag.startY);
+  if(!_stripDrag.active){
+    if(dx>8 || dy>8){ clearTimeout(_stripDrag.timer); _stripDrag.idx=-1; }
+    return;
+  }
+  e.preventDefault();
+  const strip=document.getElementById('cvStrip'); if(!strip) return;
+  // Vignette actuellement sous le doigt.
+  const el=document.elementFromPoint(e.clientX,e.clientY);
+  let n=el; while(n && n!==strip && !(n.getAttribute && n.getAttribute('data-slide-idx')!=null)) n=n.parentNode;
+  if(!n || !n.getAttribute || n.getAttribute('data-slide-idx')==null) return;
+  const over=+n.getAttribute('data-slide-idx');
+  if(over===_stripDrag.idx) return;
+  // Réordonne les DONNÉES en silencieux (pas de re-render, le geste continue).
+  cvReorderSlide(_stripDrag.idx, over, true);
+  // Déplace physiquement le noeud DOM de la vignette tirée vers sa nouvelle place.
+  const dragged=_stripDrag.el;
+  if(dragged && n!==dragged){
+    if(over>_stripDrag.idx) n.after(dragged); else n.before(dragged);
+  }
+  // Met à jour les index data + numéros affichés sans tout reconstruire.
+  Array.from(strip.querySelectorAll('[data-slide-idx]')).forEach((it,pos)=>{
+    it.setAttribute('data-slide-idx',pos);
+    const num=it.querySelector('span.note'); if(num) num.textContent=(pos+1);
+    const cvsThumb=it.querySelector('canvas[data-cvthumb]'); if(cvsThumb) cvsThumb.setAttribute('data-cvthumb',pos);
+  });
+  _stripDrag.idx=over;
+}
+function cvStripPointerUp(e){
+  clearTimeout(_stripDrag.timer);
+  if(_stripDrag.el){ _stripDrag.el.style.transform=''; _stripDrag.el.style.opacity=''; _stripDrag.el.style.zIndex=''; }
+  const wasActive=_stripDrag.active;
+  _stripDrag.idx=-1; _stripDrag.active=false; _stripDrag.el=null;
+  if(wasActive){
+    _stripDrag.justDragged=true; setTimeout(()=>{ _stripDrag.justDragged=false; }, 350);
+    renderCarrousel();  // resynchronise vignettes, numéros et actions proprement
+  }
 }
 
 /* ── Export ── */
@@ -25945,17 +26205,27 @@ async function renderCarrousel(){
   const step = Math.max(0, Math.min(CV_WIZ.length-1, _cv.wizStep||0));
   _cv.wizStep = step;
 
-  // Bande de vignettes (sélection de la slide active) — commune à plusieurs étapes.
+  // Bande de vignettes : sélection + actions directes sur la slide active
+  // (déplacer ◀▶, dupliquer, supprimer) — réorganisation là où on regarde.
+  const nSlides=_cv.slides.length;
   const strip = _cv.slides.map((sl,i)=>{
     const on=i===_cv.active;
-    return `<div style="flex:0 0 auto;text-align:center;margin-right:8px">
-      <div onclick="cvGoSlide(${i})" style="border:3px solid ${on?'var(--bordeaux)':'transparent'};border-radius:10px;padding:2px;cursor:pointer;background:#fff">
-        <canvas data-cvthumb="${i}" style="width:56px;height:56px;object-fit:cover;border-radius:7px;display:block"></canvas>
+    const actions = on ? `
+      <div style="display:flex;gap:3px;justify-content:center;margin-top:3px">
+        <button onclick="event.stopPropagation();cvMoveSlide(-1)" ${i===0?'disabled':''} style="border:none;background:${i===0?'#eee':'#f0e6d6'};color:var(--bordeaux);border-radius:6px;width:22px;height:22px;font-size:.7rem;${i===0?'opacity:.4':''}">◀</button>
+        <button onclick="event.stopPropagation();cvDupSlide()" style="border:none;background:#f0e6d6;color:var(--bordeaux);border-radius:6px;width:22px;height:22px;font-size:.7rem">⧉</button>
+        <button onclick="event.stopPropagation();cvDelSlide()" ${nSlides<=1?'disabled':''} style="border:none;background:${nSlides<=1?'#eee':'#f7dcdc'};color:#a33;border-radius:6px;width:22px;height:22px;font-size:.7rem;${nSlides<=1?'opacity:.4':''}">🗑</button>
+        <button onclick="event.stopPropagation();cvMoveSlide(1)" ${i===nSlides-1?'disabled':''} style="border:none;background:${i===nSlides-1?'#eee':'#f0e6d6'};color:var(--bordeaux);border-radius:6px;width:22px;height:22px;font-size:.7rem;${i===nSlides-1?'opacity:.4':''}">▶</button>
+      </div>` : '';
+    return `<div data-slide-idx="${i}" style="flex:0 0 auto;text-align:center;margin-right:8px">
+      <div onclick="cvGoSlide(${i})" style="border:3px solid ${on?'var(--bordeaux)':'transparent'};border-radius:10px;padding:2px;cursor:grab;background:#fff;touch-action:pan-x">
+        <canvas data-cvthumb="${i}" style="width:56px;height:56px;object-fit:cover;border-radius:7px;display:block;pointer-events:none"></canvas>
       </div>
       <span class="note" style="font-size:.64rem">${i+1}</span>
+      ${actions}
     </div>`;
   }).join('');
-  const stripBloc = `<div style="display:flex;overflow-x:auto;padding:6px 2px 2px;align-items:flex-start">${strip}
+  const stripBloc = `<div id="cvStrip" style="display:flex;overflow-x:auto;padding:6px 2px 2px;align-items:flex-start">${strip}
       <div style="flex:0 0 auto;align-self:center">
         <button class="btn ghost sm" onclick="cvAddSlide()" style="height:56px;width:50px">＋</button>
       </div></div>`;
@@ -25987,12 +26257,7 @@ async function renderCarrousel(){
     } else {
       body = `<p class="wiz-hint">Ce carrousel part d'un texte libre. Ajuste tes slides une à une, ou reviens au Compositeur pour générer un déroulé narratif complet.</p>
         ${stripBloc}
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-          <button class="btn ghost sm" onclick="cvMoveSlide(-1)">◀︎ Déplacer</button>
-          <button class="btn ghost sm" onclick="cvMoveSlide(1)">Déplacer ▶︎</button>
-          <button class="btn ghost sm" onclick="cvDupSlide()">⧉ Dupliquer</button>
-          <button class="btn danger sm" onclick="cvDelSlide()">🗑️ Supprimer</button>
-        </div>`;
+        <p class="note" style="font-size:.7rem;margin-top:4px">Astuce : touchez une vignette, puis ◀ ⧉ 🗑 ▶ juste dessous pour la déplacer, dupliquer ou supprimer.</p>`;
     }
   } else if(step===1){
     // Étape 2 — Photos : sélection de la slide + upload + CONSEILS.
@@ -26021,22 +26286,34 @@ async function renderCarrousel(){
         </div>
       </div>`;
   } else if(step===2){
-    // Étape 3 — Style : format + gabarit (s'appliquent à la slide active).
+    // Étape 3 — Style : format + gabarit + édition texte (titre / corps / CTA).
     const segFmt = Object.entries(CV_FORMATS).map(([k,f])=>
       `<button class="wiz-opt ${s.format===k?'on':''}" onclick="cvSetFormat('${k}');renderCarrousel()"><span class="wiz-opt-ico">${f.emoji}</span>${f.label}</button>`).join('');
     const segGab = Object.entries(CV_GABARITS).map(([k,g])=>
       `<button class="wiz-opt ${s.gabarit===k?'on':''}" onclick="cvSetGabarit('${k}');renderCarrousel()"><span class="wiz-opt-ico">${g.emoji}</span>${g.label}</button>`).join('');
-    const blocTexte = s.source==='libre'
-      ? `<label class="note" style="display:block;margin-top:8px;font-weight:600">Titre / accroche</label>
-         <input id="cvTitre" value="${esc(s.titre)}" oninput="cvSetTitre(this.value)" placeholder="Ton accroche courte" style="width:100%">
-         <label class="note" style="display:block;margin-top:8px;font-weight:600">Texte secondaire</label>
-         <textarea id="cvCorps" oninput="cvSetCorps(this.value)" placeholder="Quelques lignes…" style="width:100%;min-height:64px;resize:vertical">${esc(s.corps)}</textarea>`
-      : `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px;margin-top:8px">
-           <div><b>Titre :</b><br>${s.titre?esc(s.titre):'<span class="note">— vide —</span>'}</div>
-           ${s.corps?`<div class="note" style="border-top:1px solid var(--creme);padding-top:6px"><b>Texte :</b> ${esc(s.corps.slice(0,140))}${s.corps.length>140?'…':''}</div>`:''}
-         </div>
-         <button class="btn ghost sm" style="width:100%;margin-top:6px" onclick="cvSetSource('libre')">✍️ Éditer cette slide à la main</button>`;
-    body = `<p class="wiz-hint">Choisis la mise en forme de la slide sélectionnée. Le format vaut pour tout le carrousel ; le gabarit, slide par slide.</p>
+    // Bibliothèques (async) chargées en parallèle.
+    const [libAcc, libCorps, libCta] = await Promise.all([
+      cvBlocsHTML('accroche'), cvBlocsHTML('corps'), cvBlocsHTML('cta')
+    ]);
+    const saveBtn=(type)=>`<button class="btn ghost sm" style="flex:0 0 auto;padding:4px 10px" onclick="cvBlocEnregistrer('${type}')">💾</button>`;
+    const blocTexte = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
+        <label class="note" style="font-weight:600">Titre / accroche</label>${saveBtn('accroche')}
+      </div>
+      <input id="cvTitre" value="${esc(s.titre)}" oninput="cvSetTitre(this.value)" placeholder="Ton accroche courte" style="width:100%">
+      ${libAcc}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
+        <label class="note" style="font-weight:600">Texte</label>${saveBtn('corps')}
+      </div>
+      <textarea id="cvCorps" oninput="cvSetCorps(this.value)" placeholder="Quelques lignes…" style="width:100%;min-height:64px;resize:vertical">${esc(s.corps)}</textarea>
+      ${libCorps}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
+        <label class="note" style="font-weight:600">CTA (appel à l'action)</label>${saveBtn('cta')}
+      </div>
+      <input id="cvCta" value="${esc(s.cta||'')}" oninput="cvSetCta(this.value)" placeholder="Ex. Commandez dès maintenant 📩" style="width:100%">
+      ${libCta}
+      <button class="btn ghost sm" style="width:100%;margin-top:8px" onclick="cvAddCtaSlide()">➕ En faire une slide CTA dédiée</button>`;
+    body = `<p class="wiz-hint">Rédige et enregistre tes textes (💾 pour réutiliser plus tard). Le format vaut pour tout le carrousel ; le gabarit, slide par slide.</p>
       ${stripBloc}
       <label class="note" style="font-weight:600;display:block;margin-top:8px">Format</label>
       <div class="wiz-choice" style="margin:6px 0 12px">${segFmt}</div>
@@ -26047,12 +26324,7 @@ async function renderCarrousel(){
     // Étape 4 — Aperçu & export.
     body = `<p class="wiz-hint">Ton carrousel est prêt. Vérifie le rendu, ajuste la signature, puis exporte ou envoie au planning.</p>
       ${stripBloc}
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-        <button class="btn ghost sm" onclick="cvMoveSlide(-1)">◀︎ Déplacer</button>
-        <button class="btn ghost sm" onclick="cvMoveSlide(1)">Déplacer ▶︎</button>
-        <button class="btn ghost sm" onclick="cvDupSlide()">⧉ Dupliquer</button>
-        <button class="btn danger sm" onclick="cvDelSlide()">🗑️ Supprimer</button>
-      </div>
+      <p class="note" style="font-size:.7rem;margin-top:4px">Touchez une vignette, puis ◀ ⧉ 🗑 ▶ juste dessous pour réorganiser.</p>
       <button id="cvLogoBtn" class="btn ${_cv.logo?'gold':'ghost'} sm" style="width:100%;margin-top:12px" onclick="cvToggleLogo()">🏷️ Logo de marque : ${_cv.logo?'affiché':'masqué'}</button>
       ${_cv.logo?`
       <div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px;margin-top:8px;background:#faf6ee;border:1px solid #e8dcc0">
@@ -26098,7 +26370,7 @@ async function renderCarrousel(){
      </div>
      ${apercu}`;
 
-  requestAnimationFrame(()=>{ cvDrawPreview(); cvSyncControls(); cvRefreshStrip(); });
+  requestAnimationFrame(()=>{ cvDrawPreview(); cvSyncControls(); cvRefreshStrip(); cvStripDragInit(); });
   commEnsureTabBar();
 }
 
