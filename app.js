@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1240';
-const APP_MAJ = 'Glisser-d\u00e9poser des vignettes pour r\u00e9organiser les slides au doigt. Appui long (~\u00bcs) sur une vignette : elle se soul\u00e8ve (petit retour vibrant), puis glissez-la o\u00f9 vous voulez dans la bande, les autres se d\u00e9calent. Rel\u00e2chez pour valider. Un simple tap garde son r\u00f4le (s\u00e9lectionner la slide) et le d\u00e9filement horizontal de la bande reste libre. Les fl\u00e8ches ◀ ▶ restent disponibles sous la vignette active pour un ajustement pr\u00e9cis. Textes toujours en Bellota + Outfit exclusivement.';
+const APP_VERSION = 'v1242';
+const APP_MAJ = 'Fonds derri\u00e8re le texte pour le faire ressortir. Dans l\u2019\u00e9diteur, s\u00e9lectionnez un bloc texte (titre, corps ou CTA) : sous les r\u00e9glages appara\u00eet \u00ab Fond derri\u00e8re le texte \u00bb avec 3 formes \u2014 Bandeau (pleine largeur), Cadre (rectangle arrondi), Pastille (coins tr\u00e8s arrondis). Choisissez la couleur (charte) et r\u00e9glez l\u2019OPACIT\u00c9 au curseur (10\u2013100%). Le fond suit le bloc quand vous le d\u00e9placez et \u00e9pouse sa taille ; l\u00e9g\u00e8re ombre douce pour un rendu pos\u00e9 \u00e0 la main. Fonctionne aussi en s\u00e9lection group\u00e9e. Textes toujours en Bellota + Outfit exclusivement.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -25499,7 +25499,10 @@ function cvCloneSlide(s){
   const copy=Object.assign({}, s);
   if(s.edits){
     copy.edits={};
-    for(const k in s.edits) copy.edits[k]=Object.assign({}, s.edits[k]);
+    for(const k in s.edits){
+      copy.edits[k]=Object.assign({}, s.edits[k]);
+      if(s.edits[k] && s.edits[k].bg) copy.edits[k].bg=Object.assign({}, s.edits[k].bg);
+    }
   }
   return copy;
 }
@@ -25639,7 +25642,6 @@ function cvDrawUnBloc(ctx,W,H,texte,role,auto,ov){
                         : "400 "+size+"px 'Outfit', sans-serif";
   ctx.font=font;
   const color = ov&&ov.color ? cvColorVal(ov.color) : auto.color;
-  ctx.fillStyle=color;
   const lineH = size*(isTitre?1.16:1.34);
   const wMax  = auto.wMax;
   // Position d'ancrage
@@ -25647,14 +25649,52 @@ function cvDrawUnBloc(ctx,W,H,texte,role,auto,ov){
   if(ov){ ax = ov.x*W; ay = ov.y*H; }
   else  { ax = align==='center'? W/2 : (align==='right'? W-W*0.08 : W*0.08); ay = auto.y; }
   ctx.textAlign=align; ctx.textBaseline='top';
-  // Mesure (nb lignes) pour la boîte
+  // Mesure (nb lignes + largeur) AVANT dessin, pour caler le fond.
   const nLignes = Math.max(1, Math.round(cvWrapText(ctx,texte,ax,0,wMax,lineH,align==='center',null,true)/lineH));
-  const yLimit = ov ? null : auto.limiteBas;
-  cvWrapText(ctx,texte,ax,ay,wMax,lineH,align==='center',yLimit);
-  // Boîte englobante approximative
   const bw = Math.min(wMax, cvMaxLineWidth(ctx,texte,wMax));
   const bx = align==='center'? ax-bw/2 : (align==='right'? ax-bw : ax);
-  return { x:bx, y:ay, w:bw, h:nLignes*lineH, role, align, size, color };
+  const bh = nLignes*lineH;
+
+  // — FOND derrière le texte (optionnel, réglable en forme/couleur/opacité) —
+  if(ov && ov.bg && ov.bg.shape){ cvDrawBlocFond(ctx,W,H,ov.bg,bx,ay,bw,bh); }
+
+  // — TEXTE par-dessus —
+  ctx.fillStyle=color;
+  const yLimit = ov ? null : auto.limiteBas;
+  cvWrapText(ctx,texte,ax,ay,wMax,lineH,align==='center',yLimit);
+  return { x:bx, y:ay, w:bw, h:bh, role, align, size, color };
+}
+// Dessine un fond adouci derrière un bloc. shape: 'bandeau' | 'rect' | 'pastille'.
+function cvDrawBlocFond(ctx,W,H,bg,bx,by,bw,bh){
+  const op = (bg.opacity!=null? bg.opacity : 0.6);
+  const col = cvColorVal(bg.color||'bordeaux');
+  const padX = W*0.028, padY = H*0.018;
+  let x, y, w, h, r;
+  if(bg.shape==='bandeau'){
+    x=0; w=W; y=by-padY; h=bh+padY*2; r=0;
+  } else if(bg.shape==='pastille'){
+    x=bx-padX*1.4; w=bw+padX*2.8; y=by-padY*1.3; h=bh+padY*2.6; r=h/2;
+  } else { // rect
+    x=bx-padX; w=bw+padX*2; y=by-padY; h=bh+padY*2; r=Math.min(W,H)*0.02;
+  }
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, op));
+  ctx.fillStyle = col;
+  // Ombre douce pour un rendu "posé à la main" moins plat.
+  ctx.shadowColor='rgba(0,0,0,0.18)'; ctx.shadowBlur=W*0.02; ctx.shadowOffsetY=H*0.004;
+  cvRoundRect(ctx,x,y,w,h,r); ctx.fill();
+  ctx.restore();
+}
+// Rectangle à coins arrondis (helper canvas).
+function cvRoundRect(ctx,x,y,w,h,r){
+  r=Math.max(0,Math.min(r,Math.min(w,h)/2));
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
 }
 // Largeur réelle du plus long segment wrappé (pour la boîte de sélection).
 function cvMaxLineWidth(ctx,text,maxW){
@@ -25796,7 +25836,11 @@ function cvDrawSignature(ctx,W,H,gabarit,s){
    Tap bloc = sélection · glisse = déplace · double-tap = clavier ·
    barre basse (taille / couleur / alignement) visible uniquement sur sélection.
    ══════════════════════════════════════════════════════════════════════════ */
-const _ed = { open:false, sel:null, drag:null, lastTap:0, W:0, H:0 };
+const _ed = { open:false, sel:null, multi:[], groupMode:false, drag:null, lastTap:0, W:0, H:0 };
+// Rôles actuellement sélectionnés (1 en simple, plusieurs en groupe).
+function cvEdSelection(){ return _ed.multi.length ? _ed.multi.slice() : (_ed.sel?[_ed.sel]:[]); }
+function cvEdIsSelected(role){ return _ed.multi.length ? _ed.multi.indexOf(role)>=0 : _ed.sel===role; }
+function cvEdIsLocked(role){ const e=cvS().edits; return !!(e && e[role] && e[role].locked); }
 
 // Prépare l'objet edits[role] (copie l'auto en override modifiable la 1re fois).
 function cvEnsureEdit(role){
@@ -25828,7 +25872,7 @@ function cvEnsureEdit(role){
 function cvOpenEditor(){
   const s=cvS();
   const fmt = CV_FORMATS[s.format]||CV_FORMATS.carre;
-  _ed.open=true; _ed.sel=null; _ed.W=fmt.w; _ed.H=fmt.h;
+  _ed.open=true; _ed.sel=null; _ed.multi=[]; _ed.groupMode=false; _ed.W=fmt.w; _ed.H=fmt.h;
   let ov=document.getElementById('edOverlay');
   if(!ov){ ov=document.createElement('div'); ov.id='edOverlay'; document.body.appendChild(ov); }
   ov.style.cssText='position:fixed;inset:0;z-index:10000;background:#2a1218;display:flex;flex-direction:column;touch-action:none';
@@ -25854,7 +25898,7 @@ function cvOpenEditor(){
   cvEdRedraw();
 }
 function cvCloseEditor(){
-  _ed.open=false; _ed.sel=null;
+  _ed.open=false; _ed.sel=null; _ed.multi=[]; _ed.groupMode=false;
   const ov=document.getElementById('edOverlay'); if(ov) ov.remove();
   renderCarrousel();  // répercute les edits sur l'aperçu + la bande + l'export
 }
@@ -25877,17 +25921,26 @@ function cvEdImportPhoto(){
 function cvEdRedraw(){
   const cvs=document.getElementById('edCanvas'); if(!cvs) return;
   cvDrawSlide(cvs, cvS()).then(()=>{
-    if(_ed.sel){
-      const box = cvs._cvBoxes[_ed.sel];
-      if(box){
-        const ctx=cvs.getContext('2d');
+    const sel=cvEdSelection();
+    if(sel.length){
+      const ctx=cvs.getContext('2d');
+      const pad=cvs.width*0.012;
+      sel.forEach(role=>{
+        const box=cvs._cvBoxes[role]; if(!box) return;
+        const locked=cvEdIsLocked(role);
         ctx.save();
-        ctx.strokeStyle='rgba(198,151,79,0.95)'; ctx.lineWidth=Math.max(2,cvs.width*0.004);
-        ctx.setLineDash([cvs.width*0.02, cvs.width*0.012]);
-        const pad=cvs.width*0.012;
+        ctx.strokeStyle = locked ? 'rgba(200,60,60,0.9)' : 'rgba(198,151,79,0.95)';
+        ctx.lineWidth=Math.max(2,cvs.width*0.004);
+        ctx.setLineDash(locked ? [] : [cvs.width*0.02, cvs.width*0.012]);
         ctx.strokeRect(box.x-pad, box.y-pad, box.w+pad*2, box.h+pad*2);
+        if(locked){
+          // Petit cadenas en coin du bloc verrouillé.
+          ctx.setLineDash([]); ctx.font=Math.round(cvs.width*0.03)+"px system-ui";
+          ctx.fillStyle='rgba(200,60,60,0.95)'; ctx.textAlign='left'; ctx.textBaseline='top';
+          ctx.fillText('🔒', box.x-pad, box.y-pad-cvs.width*0.035);
+        }
         ctx.restore();
-      }
+      });
     }
     cvEdSyncBar();
   });
@@ -25911,13 +25964,32 @@ function cvEdPointerDown(e){
   e.preventDefault();
   const p=cvEdPt(e); const hit=cvEdHit(p);
   const now=Date.now();
+  // Mode GROUPE : taper un bloc l'ajoute/retire de la sélection (pas de drag immédiat).
+  if(_ed.groupMode){
+    if(hit){
+      const i=_ed.multi.indexOf(hit);
+      if(i>=0) _ed.multi.splice(i,1); else _ed.multi.push(hit);
+    }
+    cvEdRedraw();
+    return;
+  }
   // Double-tap sur un bloc TEXTE sélectionné → clavier (logo/slogan exclus)
-  if(hit && hit===_ed.sel && (hit==='titre'||hit==='corps'||hit==='cta') && now-_ed.lastTap<320){ cvEdEditText(); _ed.lastTap=0; return; }
+  if(hit && hit===_ed.sel && !_ed.multi.length && (hit==='titre'||hit==='corps'||hit==='cta') && now-_ed.lastTap<320){ cvEdEditText(); _ed.lastTap=0; return; }
   _ed.lastTap=now;
   if(hit){
-    _ed.sel=hit;
-    const ov=cvEnsureEdit(hit);
-    _ed.drag={ role:hit, startX:p.x, startY:p.y, ox:ov.x, oy:ov.y };
+    // Cas 1 : le bloc tapé fait partie d'un GROUPE déjà formé → on glisse tout le groupe.
+    if(_ed.multi.length && _ed.multi.indexOf(hit)>=0){
+      const bases={}; _ed.multi.forEach(r=>{ const ov=cvEnsureEdit(r); bases[r]={x:ov.x,y:ov.y}; });
+      _ed.drag={ group:true, roles:_ed.multi.slice(), bases, startX:p.x, startY:p.y };
+    } else {
+      // Cas 2 : sélection simple d'un bloc.
+      _ed.sel=hit; _ed.multi=[];
+      if(cvEdIsLocked(hit)){ _ed.drag=null; }
+      else {
+        const ov=cvEnsureEdit(hit);
+        _ed.drag={ role:hit, group:false, roles:[hit], bases:{[hit]:{x:ov.x,y:ov.y}}, startX:p.x, startY:p.y };
+      }
+    }
   } else {
     _ed.sel=null; _ed.drag=null;
   }
@@ -25927,9 +25999,14 @@ function cvEdPointerMove(e){
   if(!_ed.drag) return;
   e.preventDefault();
   const p=cvEdPt(e); const cvs=document.getElementById('edCanvas');
-  const ov=cvS().edits[_ed.drag.role];
-  ov.x = Math.min(0.98, Math.max(0.02, _ed.drag.ox + (p.x-_ed.drag.startX)/cvs.width));
-  ov.y = Math.min(0.95, Math.max(0.02, _ed.drag.oy + (p.y-_ed.drag.startY)/cvs.height));
+  const dxF=(p.x-_ed.drag.startX)/cvs.width, dyF=(p.y-_ed.drag.startY)/cvs.height;
+  (_ed.drag.roles||[]).forEach(r=>{
+    if(cvEdIsLocked(r)) return;            // un bloc verrouillé ne bouge pas
+    const base=_ed.drag.bases[r]; if(!base) return;
+    const ov=cvS().edits[r];
+    ov.x=Math.min(0.98, Math.max(0.02, base.x+dxF));
+    ov.y=Math.min(0.95, Math.max(0.02, base.y+dyF));
+  });
   cvEdRedraw();
 }
 function cvEdPointerUp(e){ _ed.drag=null; }
@@ -25941,53 +26018,119 @@ function cvEdEditText(){
   inp.focus();
 }
 
-// Applique un réglage au bloc sélectionné.
+// Applique un réglage au(x) bloc(s) sélectionné(s).
 function cvEdSet(prop,val){
-  if(!_ed.sel) return;
-  const ov=cvEnsureEdit(_ed.sel);
-  if(prop==='size'){
-    const mn = _ed.sel==='logo'?0.15:0.012, mx = _ed.sel==='logo'?0.85:0.16;
-    ov.size=Math.min(mx, Math.max(mn, (ov.size||0.05)+val));
-  } else ov[prop]=val;
+  const sel=cvEdSelection(); if(!sel.length) return;
+  sel.forEach(role=>{
+    const ov=cvEnsureEdit(role);
+    if(prop==='size'){
+      const mn = role==='logo'?0.15:0.012, mx = role==='logo'?0.85:0.16;
+      ov.size=Math.min(mx, Math.max(mn, (ov.size||0.05)+val));
+    } else ov[prop]=val;
+  });
   cvEdRedraw();
 }
 function cvEdSetSlogan(v){ cvS().slogan=v; cvEdRedraw(); }
+// Réglages du FOND derrière le(s) bloc(s) texte sélectionné(s).
+function cvEdSetBgShape(shape){
+  const sel=cvEdSelection().filter(r=>r==='titre'||r==='corps'||r==='cta'); if(!sel.length) return;
+  sel.forEach(role=>{
+    const ov=cvEnsureEdit(role);
+    if(shape==='aucun'){ ov.bg=null; }
+    else { ov.bg = Object.assign({ color:'bordeaux', opacity:0.6 }, ov.bg||{}, { shape }); }
+  });
+  cvEdRedraw();
+}
+function cvEdSetBgColor(color){
+  const sel=cvEdSelection().filter(r=>r==='titre'||r==='corps'||r==='cta'); if(!sel.length) return;
+  sel.forEach(role=>{ const ov=cvEnsureEdit(role); if(ov.bg) ov.bg.color=color; });
+  cvEdRedraw();
+}
+function cvEdSetBgOpacity(v){
+  const op=parseFloat(v);
+  const sel=cvEdSelection().filter(r=>r==='titre'||r==='corps'||r==='cta'); if(!sel.length) return;
+  sel.forEach(role=>{ const ov=cvEnsureEdit(role); if(ov.bg) ov.bg.opacity=op; });
+  cvEdRedraw();
+}
+// Active/désactive le mode groupe (taper des blocs pour les cumuler).
+function cvEdToggleGroup(){
+  if(_ed.groupMode){
+    _ed.groupMode=false;
+    if(_ed.multi.length===1){ _ed.sel=_ed.multi[0]; _ed.multi=[]; }  // 1 seul → retour simple
+  } else {
+    _ed.groupMode=true;
+    _ed.multi = _ed.sel ? [_ed.sel] : [];   // amorce avec la sélection courante
+  }
+  cvEdRedraw();
+}
+// Verrouille / déverrouille tous les blocs sélectionnés.
+function cvEdToggleLock(){
+  const sel=cvEdSelection(); if(!sel.length) return;
+  const tousVerrouilles = sel.every(r=>cvEdIsLocked(r));
+  sel.forEach(r=>{ const ov=cvEnsureEdit(r); ov.locked=!tousVerrouilles; });
+  cvEdRedraw();
+}
+function cvEdClearSelection(){ _ed.multi=[]; _ed.sel=null; _ed.groupMode=false; cvEdRedraw(); }
 
-// Barre d'outils basse : n'apparaît que si un bloc est sélectionné.
+// Barre d'outils basse : simple, multiple, ou masquée.
 function cvEdSyncBar(){
   const bar=document.getElementById('edBar'); if(!bar) return;
-  if(!_ed.sel){ bar.style.display='none'; return; }
-  const s=cvS(); const ov=s.edits?s.edits[_ed.sel]:null;
+  const sel=cvEdSelection();
+  const s=cvS();
   bar.style.display='block';
-  const label = {titre:'Titre',corps:'Corps',cta:'CTA',logo:'Logo',slogan:'Slogan'}[_ed.sel]||'';
   const btnSize = (lbl,delta)=>`<button onclick="cvEdSet('size',${delta})" style="width:44px;height:38px;border:none;border-radius:9px;background:#3a2028;color:#fff;font-size:1.15rem">${lbl}</button>`;
-  let rows='';
+  // Barre d'actions groupe (toujours visible en haut de la barre).
+  const someLocked = sel.some(r=>cvEdIsLocked(r));
+  const lockLbl = sel.length && sel.every(r=>cvEdIsLocked(r)) ? '🔓 Déverrouiller' : '🔒 Verrouiller';
+  const groupRow = `<div style="display:flex;gap:6px;margin-bottom:10px">
+      <button onclick="cvEdToggleGroup()" style="flex:1;padding:8px;border:none;border-radius:8px;background:${_ed.groupMode?'#AA7C39':'#3a2028'};color:#fff;font-size:.76rem">⧉ ${_ed.groupMode?'Grouper : ON':'Grouper'}</button>
+      ${sel.length?`<button onclick="cvEdToggleLock()" style="flex:1;padding:8px;border:none;border-radius:8px;background:${someLocked?'#c33':'#3a2028'};color:#fff;font-size:.76rem">${lockLbl}</button>`:''}
+      ${sel.length?`<button onclick="cvEdClearSelection()" style="padding:8px 12px;border:none;border-radius:8px;background:#3a2028;color:#fff;font-size:.76rem">✕</button>`:''}
+    </div>`;
 
-  if(_ed.sel==='logo'){
-    // Déclinaisons de couleur du logo.
+  // Mode groupe / multi-sélection : réglages communs (couleur + taille), pas d'alignement fin.
+  if(_ed.groupMode || _ed.multi.length>1){
+    const n=_ed.multi.length;
+    let inner;
+    if(!n){
+      inner=`<p style="color:#E8DDCD;font-size:.74rem;opacity:.8;margin:0">Touchez les blocs à regrouper…</p>`;
+    } else {
+      const swatch=CV_TEXT_COLORS.map(c=>
+        `<button onclick="cvEdSet('color','${c.key}')" style="width:30px;height:30px;border-radius:50%;border:2px solid rgba(255,255,255,.25);background:${c.val}"></button>`).join('');
+      inner=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="color:#E8DDCD;font-size:.72rem">Taille</span>${btnSize('A−',-0.006)}${btnSize('A+',0.006)}
+          <span style="color:#E8DDCD;font-size:.7rem;opacity:.7;margin-left:auto">${n} bloc${n>1?'s':''}</span></div>
+        <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">${swatch}</div>`;
+    }
+    bar.innerHTML=groupRow+`<div style="color:#E8DDCD;font-size:.7rem;margin-bottom:8px;opacity:.7">Sélection groupée</div>`+inner;
+    return;
+  }
+
+  if(!sel.length){ bar.innerHTML=groupRow; return; }
+
+  // Sélection simple : réglages complets du bloc.
+  const role=sel[0]; const ov=s.edits?s.edits[role]:null;
+  const label = {titre:'Titre',corps:'Corps',cta:'CTA',logo:'Logo',slogan:'Slogan'}[role]||'';
+  const locked=cvEdIsLocked(role);
+  let rows='';
+  if(role==='logo'){
     const cur=(ov&&ov.variant)||'auto';
     const variants=[['auto','✨'],['aubergine','🟣'],['noir','⚫'],['blanc','⚪'],['creme','🤍'],['sauge','🌿']];
     const chips=variants.map(([k,e])=>
-      `<button onclick="cvEdSet('variant','${k==='auto'?'':k}')" style="flex:1;min-width:0;padding:8px 4px;border:none;border-radius:9px;background:${(cur===k||(k==='auto'&&!ov.variant))?'#AA7C39':'#3a2028'};color:#fff;font-size:.8rem">${e}</button>`
-    ).join('');
+      `<button onclick="cvEdSet('variant','${k==='auto'?'':k}')" style="flex:1;min-width:0;padding:8px 4px;border:none;border-radius:9px;background:${(cur===k||(k==='auto'&&!(ov&&ov.variant)))?'#AA7C39':'#3a2028'};color:#fff;font-size:.8rem">${e}</button>`).join('');
     rows=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <span style="color:#E8DDCD;font-size:.72rem;width:52px">Taille</span>
-        ${btnSize('−',-0.03)}${btnSize('+',0.03)}</div>
+        <span style="color:#E8DDCD;font-size:.72rem;width:52px">Taille</span>${btnSize('−',-0.03)}${btnSize('+',0.03)}</div>
       <div style="display:flex;gap:5px">${chips}</div>`;
-
-  } else if(_ed.sel==='slogan'){
+  } else if(role==='slogan'){
     const curCol=ov&&ov.color?ov.color:'auto';
     const swatch=CV_TEXT_COLORS.map(c=>
       `<button onclick="cvEdSet('color','${c.key}')" style="width:30px;height:30px;border-radius:50%;border:${curCol===c.key?'3px solid #fff':'2px solid rgba(255,255,255,.25)'};background:${c.val}"></button>`).join('');
     const slBtn=(v,lbl)=>`<button onclick="cvEdSetSlogan('${v}')" style="flex:1;padding:7px 4px;border:none;border-radius:8px;background:${(s.slogan||'defaut')===v?'#AA7C39':'#3a2028'};color:#fff;font-size:.66rem">${lbl}</button>`;
     rows=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="color:#E8DDCD;font-size:.72rem;width:52px">Taille</span>
-        ${btnSize('A−',-0.004)}${btnSize('A+',0.004)}
+        <span style="color:#E8DDCD;font-size:.72rem;width:52px">Taille</span>${btnSize('A−',-0.004)}${btnSize('A+',0.004)}
         <div style="display:flex;gap:6px;flex:1;justify-content:flex-end">${swatch}</div></div>
       <div style="display:flex;gap:5px">${slBtn('defaut','moins de sucre…')}${slBtn('1','offrez-vous…')}${slBtn('aucun','Aucun')}</div>`;
-
   } else {
-    // Titre / corps
     const curCol=ov&&ov.color?ov.color:'creme';
     const curAl=ov&&ov.align?ov.align:'center';
     const swatch=CV_TEXT_COLORS.map(c=>
@@ -25997,9 +26140,34 @@ function cvEdSyncBar(){
         ${btnSize('A−',-0.006)}${btnSize('A+',0.006)}
         <div style="display:flex;gap:5px;flex:1">${alignBtn('left','⬅')}${alignBtn('center','↔')}${alignBtn('right','➡')}</div>
         <button onclick="cvEdEditText()" style="padding:8px 12px;border:none;border-radius:8px;background:#AA7C39;color:#fff;font-size:.8rem">✎ Écrire</button></div>
-      <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">${swatch}</div>`;
+      <div style="display:flex;align-items:center;gap:8px;justify-content:space-between;margin-bottom:10px">${swatch}</div>
+      ${cvEdBgControls(ov)}`;
   }
-  bar.innerHTML=`<div style="color:#E8DDCD;font-size:.7rem;margin-bottom:8px;opacity:.7">${label}</div>${rows}`;
+  bar.innerHTML=groupRow+`<div style="color:#E8DDCD;font-size:.7rem;margin-bottom:8px;opacity:.7">${label}${locked?' · 🔒 verrouillé':''}</div>${rows}`;
+}
+// Contrôles du fond derrière le texte : forme, couleur, opacité.
+function cvEdBgControls(ov){
+  const bg=ov&&ov.bg?ov.bg:null;
+  const shape=bg?bg.shape:'aucun';
+  const shapeBtn=(k,lbl)=>`<button onclick="cvEdSetBgShape('${k}')" style="flex:1;padding:7px 4px;border:none;border-radius:8px;background:${shape===k?'#AA7C39':'#3a2028'};color:#fff;font-size:.68rem">${lbl}</button>`;
+  let extra='';
+  if(bg){
+    const curCol=bg.color||'bordeaux';
+    const swatch=CV_TEXT_COLORS.map(c=>
+      `<button onclick="cvEdSetBgColor('${c.key}')" style="width:26px;height:26px;border-radius:50%;border:${curCol===c.key?'3px solid #fff':'2px solid rgba(255,255,255,.25)'};background:${c.val}"></button>`).join('');
+    const op=bg.opacity!=null?bg.opacity:0.6;
+    extra=`<div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+        <span style="color:#E8DDCD;font-size:.66rem;width:52px">Fond</span>
+        <div style="display:flex;gap:5px;flex:1">${swatch}</div></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+        <span style="color:#E8DDCD;font-size:.66rem;width:52px">Opacité</span>
+        <input type="range" min="0.1" max="1" step="0.05" value="${op}" oninput="cvEdSetBgOpacity(this.value)" style="flex:1">
+        <span style="color:#E8DDCD;font-size:.66rem;width:32px;text-align:right">${Math.round(op*100)}%</span></div>`;
+  }
+  return `<div style="border-top:1px solid rgba(232,221,205,.12);padding-top:8px">
+      <div style="color:#E8DDCD;font-size:.64rem;opacity:.6;margin-bottom:5px">Fond derrière le texte</div>
+      <div style="display:flex;gap:5px">${shapeBtn('aucun','Aucun')}${shapeBtn('bandeau','▬ Bandeau')}${shapeBtn('rect','▭ Cadre')}${shapeBtn('pastille','⬭ Pastille')}</div>
+      ${extra}</div>`;
 }
 
 /* ── Aperçu + bande de slides ── */
