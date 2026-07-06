@@ -1,5 +1,5 @@
-// [v1234] bump CACHE — Choix logo fiabilisé (contraste WCAG) + slogans officiels intégrés.
-const CACHE = 'sm-iphone-v280';
+// [v1247] bump CACHE — Mention retour 48h accessoire + chèque de caution 80€ sur locations + agenda auto commandes à venir.
+const CACHE = 'sm-iphone-v283';
 const ASSETS = [
   './',
   './index.html',

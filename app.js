@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1244';
-const APP_MAJ = 'Correction d\u2019un bug sur la pes\u00e9e du tant pour tant en meringue mutualis\u00e9e. Quand une fourn\u00e9e commune \u00e9tait lanc\u00e9e sur 2 parfums (ex. 240 coques r\u00e9parties), la fiche de pes\u00e9e affichait les quantit\u00e9s au DOUBLE (meringue commune et tant pour tant), car le nombre de coques \u00e9tait recompt\u00e9 en macarons. Les grammages sont d\u00e9sormais justes : chaque parfum re\u00e7oit sa part r\u00e9elle et le total affiche le bon nombre de coques. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
+const APP_VERSION = 'v1247';
+const APP_MAJ = 'Nouveau garde-fou en meringue mutualis\u00e9e : quand une fourn\u00e9e est partag\u00e9e entre plusieurs parfums, l\u2019app emp\u00eache d\u00e9sormais d\u2019arr\u00eater par m\u00e9garde le chrono d\u2019un seul parfum en d\u00e9but de production (phases meringue, macaronnage, manipulation des coques). Un message de confirmation s\u2019affiche, rappelant que les autres parfums de la m\u00eame meringue sont encore en cours. Une fois la cuisson lanc\u00e9e (les parfums ne partagent plus rien), ou si un seul parfum reste actif, l\u2019arr\u00eat redevient direct. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -2629,6 +2629,33 @@ function pyraPrixUnit(ln){ return pyraEstVente(ln) ? money2(+ln.pyraPrixVente||0
 function pyraTotalLigne(ln){ return money2((+(ln&&ln.equip)||0) * pyraPrixUnit(ln)); }
 // Coût d'achat total des pyramides VENDUES (0 en location).
 function pyraCoutLigne(ln){ return pyraEstVente(ln) ? money2((+(ln&&ln.equip)||0) * (+ln.pyraCoutAchat||0)) : 0; }
+// [v1246] ACCESSOIRE DÉCORATIF (ruban + déco LOVE au sommet) : option de LOCATION proposée
+//  uniquement quand une pyramide est présente. Facturée PAR PYRAMIDE, en prestation de service,
+//  sur une ligne de facture séparée « Accessoire décoratif ».
+const ACCESS_DECO_PRICE = 17;   // location accessoire décoratif (ruban + déco LOVE) par pyramide
+function accessoireDecoActif(ln){ return !!(ln && ln.accessoireDeco) && (+(ln&&ln.equip)||0)>0; }
+// Montant TOTAL de l'accessoire sur la ligne (nb pyramides × prix unitaire), 0 si inactif.
+function accessoireDecoTotal(ln){ return accessoireDecoActif(ln) ? money2((+(ln&&ln.equip)||0) * ACCESS_DECO_PRICE) : 0; }
+// [v1247] CAUTION : un chèque de caution est demandé dès qu'une LOCATION figure sur la commande
+//  (pyramide louée OU accessoire décoratif). Montant fixe par commande, NON encaissé (rendu après
+//  retour du matériel) → n'affecte JAMAIS le total à payer. Simple mention sur la facture/devis.
+const CAUTION_CHEQUE = 80;      // montant du chèque de caution (fixe, par commande)
+// Une ligne comporte-t-elle une location (pyramide louée ou accessoire) ?
+function ligneALocation(ln){
+  if(!ln || ln.type!=='evenement') return false;
+  const nbPyr = +ln.equip||0;
+  const pyraLouee = nbPyr>0 && !pyraEstVente(ln);   // pyramide en location (pas vendue)
+  return pyraLouee || accessoireDecoActif(ln);
+}
+// La commande (tableau de lignes) comporte-t-elle au moins une location ?
+function cmdALocation(lignes){ return Array.isArray(lignes) && lignes.some(ligneALocation); }
+// Ligne <tr> « chèque de caution » à insérer dans la facture/devis quand il y a une location.
+function cautionRowHtml(lignes){
+  if(!cmdALocation(lignes)) return '';
+  return `<tr><td class="desc"><span class="ln-main">Chèque de caution</span>`+
+         `<span class="ln-loc">${euro(CAUTION_CHEQUE)} à remettre le jour de votre livraison — non encaissé, restitué après retour du matériel</span></td>`+
+         `<td class="mt" style="color:#8a7a72">pour mémoire</td></tr>`;
+}
 
 /* ============================================================
    PARAMÈTRES DE GESTION (réglables, persistés en localStorage)
@@ -8300,7 +8327,7 @@ async function atRenderBody(){
         <div class="at-now-txt"><div class="at-now-name">${esc(atShort(t.label))}</div>
           <div class="at-now-sub">${t.passive?'minuteur':'en cours'}</div></div>
         <span class="at-now-chrono" data-prodchrono="${t.id}">${atFmt(el)}</span>
-        <button class="at-now-stop" onclick="prodTaskStop('${t.id}');chronoFloatRenderBody()">⏹</button></div>`;
+        <button class="at-now-stop" onclick="prodTaskStopGuard('${t.id}')">⏹</button></div>`;
     }
   });
   autres.forEach(t=>{
@@ -15652,6 +15679,7 @@ async function cmdView(id){
       return `<div class="cmd-line"><div class="line-type">Événement</div>
         <div class="sum-box"><span>Macarons</span><b>${ln.evQte||0} × ${euro(eventUnitPrice(ln))}</b></div>
         <div class="sum-box"><span>Pyramides / présentoirs ${pyraEstVente(ln)?'<span style="color:var(--gold,#AA7C39);font-size:.74rem">(vendues)</span>':'<span style="color:#9a8a82;font-size:.74rem">(location)</span>'}</span><b>${ln.equip||0} × ${euro(pyraPrixUnit(ln))}</b></div>
+        ${accessoireDecoActif(ln)?`<div class="sum-box"><span>🎀 Accessoire décoratif <span style="color:#9a8a82;font-size:.74rem">(location)</span></span><b>${ln.equip||0} × ${euro(ACCESS_DECO_PRICE)}</b></div>`:''}
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:''}
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
@@ -15731,6 +15759,7 @@ async function cmdView(id){
     })()}
     ${o.lieuLivraison?`<div class="sum-box"><span>📍 Livraison</span><b>${esc(o.lieuLivraison)}</b></div>`:''}
     ${blocks||'<p class="note">Aucun produit.</p>'}
+    ${cmdALocation(lignes)?`<div class="sum-box" style="margin-top:8px;background:#faf7f2;color:#8a7a72;font-size:.82rem"><span>🔖 Chèque de caution <span style="font-size:.74rem">(location)</span></span><b>${euro(CAUTION_CHEQUE)} — le jour de la livraison</b></div>`:''}
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${+o.persoMacarons>0?`${o.persoMacarons} macaron(s) · +${euro(money2(o.persoMacarons*0.25))}${+o.persoRemiseEur>0?` · remise −${euro(money2(+o.persoRemiseEur))}`:''}`:(o.perso?'Oui':'Non')}</b></div>
     ${+o.remiseGlobale>0?`<div class="sum-box"><span>Remise globale</span><b>−${o.remiseGlobale}%</b></div>`:''}
     <div class="sum-box"><span>Montant total${+o.remiseGlobale>0||lignes.some(l=>+l.remisePct>0)?' (TTC, remises incluses)':''}</span><b>${euro(o.montant)}</b></div>
@@ -15835,7 +15864,7 @@ function lineTotalStored(ln){
     const limit=BOX_FLAVOR_LIMIT[ln.taille]||0;
     base = money2(pu + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE);
   }
-  else if(ln.type==='evenement') base = money2((ln.evQte||0)*eventUnitPrice(ln) + pyraTotalLigne(ln));
+  else if(ln.type==='evenement') base = money2((ln.evQte||0)*eventUnitPrice(ln) + pyraTotalLigne(ln) + accessoireDecoTotal(ln));
   else if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
   else if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln); const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0); base = money2(tot*pu); }
   else if(ln.type==='don') return 0; // toujours gratuit, pas de remise à appliquer
@@ -15890,7 +15919,7 @@ function orderToLines(o){
   // ancien format : un seul type
   if(o.type==='evenement'){
     const parfums=[]; (o.parfums||[]).forEach(p=>{if(p.qte>0)parfums.push({nom:p.nom,qte:p.qte});});
-    return [{type:'evenement', evQte:o.evQte||EVENT_MIN, equip:o.equip||0, parfums, sansParfum:(+o.sansParfum||0), pyraVendue:!!o.pyraVendue, pyraPrixVente:(o.pyraPrixVente!=null?+o.pyraPrixVente:null), pyraCoutAchat:(o.pyraCoutAchat!=null?+o.pyraCoutAchat:null)}];
+    return [{type:'evenement', evQte:o.evQte||EVENT_MIN, equip:o.equip||0, parfums, sansParfum:(+o.sansParfum||0), pyraVendue:!!o.pyraVendue, pyraPrixVente:(o.pyraPrixVente!=null?+o.pyraPrixVente:null), pyraCoutAchat:(o.pyraCoutAchat!=null?+o.pyraCoutAchat:null), accessoireDeco:!!o.accessoireDeco}];
   }
   if(o.type==='grand'){
     const items=[]; (o.bigItems||[]).forEach(p=>{if(p.qte>0)items.push({nom:p.nom,qte:p.qte});});
@@ -15913,7 +15942,7 @@ function _parfumsToObj(p){
 function _lineToEdit(ln){
   const t=ln.type;
   if(t==='coffret') return {type:'coffret', taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null};
-  if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), _configChoisie:!!ln._configChoisie};
+  if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:!!ln.accessoireDeco, _configChoisie:!!ln._configChoisie};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacNb>0?+ln.sacNb:0)};
@@ -16120,7 +16149,7 @@ async function cmdForm(id, opts){
 
    <div class="field" style="margin-top:14px"><label>Notes</label><textarea id="f_notes" rows="2" placeholder="Allergies, livraison, demande spéciale…">${esc(o.notes||'')}</textarea></div>
 
-   <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_cal" style="width:auto" ${id?'':'checked'}> Ajouter au calendrier</label>
+   <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_cal" style="width:auto" ${(!id || ((o.dateEvenement||o.date||'') > today())) ? 'checked' : ''}> Ajouter au calendrier <span style="color:#9a8a82;font-weight:400">${((o.dateEvenement||o.date||'') > today()) ? '— commande à venir, notée par défaut' : ''}</span></label>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
   // initialise le registre de paiements en mémoire (copie de travail)
   // Initialise le registre d'édition. Pour une ancienne commande « Payé » sans registre,
@@ -16880,7 +16909,7 @@ function drawEventLine(ln,i){
   // --- Logique pyramide intégrée ---
   const hasPyra=(+ln.equip||0)>0;                 // une pyramide est présente
   const prixMac = hasPyra ? PYRA_PRICE : EVENT_PRICE;   // 1,60€ conditionné à la pyramide
-  const totalLigne = (+ln.evQte||0)*prixMac + pyraTotalLigne(ln);
+  const totalLigne = (+ln.evQte||0)*prixMac + pyraTotalLigne(ln) + accessoireDecoTotal(ln);
 
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Événement <span class="line-sub">${hasPyra?`${euro(PYRA_PRICE)}/macaron (pyramide)`:`${euro(EVENT_PRICE)}/macaron`} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
@@ -16902,6 +16931,20 @@ function drawEventLine(ln,i){
       <p class="note" style="margin:4px 2px 0;font-size:.72rem">Vendue, la pyramide compte comme <b>marchandise</b> (et non comme prestation de service) — ${(+ln.equip||0)} × ${euro(+ln.pyraPrixVente||0)} = <b>${euro(pyraTotalLigne(ln))}</b>.</p>`
       :`<p class="note" style="margin:6px 2px 0;font-size:.72rem">Louée, la pyramide est une <b>prestation de service</b>, à retourner après l'événement.</p>`}
     </div>`:''}
+    ${(+ln.equip||0)>0?(()=>{
+      // [v1246] Option accessoire décoratif (ruban + déco LOVE au sommet), en LOCATION, par pyramide.
+      const on = accessoireDecoActif(ln);
+      const nb = +ln.equip||0;
+      const tot = accessoireDecoTotal(ln);
+      return `<div onclick="setAccessoireDeco(${i},${on?'false':'true'})" style="display:flex;align-items:center;gap:10px;cursor:pointer;background:${on?'#f6eef1':'#faf7f2'};border:1px solid ${on?'var(--bordeaux,#52252F)':'var(--hair)'};border-radius:11px;padding:10px 12px;margin:4px 0">
+        <span style="width:22px;height:22px;flex:0 0 auto;border-radius:6px;border:2px solid ${on?'var(--bordeaux,#52252F)':'#c9bcb2'};background:${on?'var(--bordeaux,#52252F)':'#fff'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700">${on?'✓':''}</span>
+        <span style="flex:1">
+          <span style="display:block;font-size:.92rem;color:${on?'var(--bordeaux,#52252F)':'#6a5a52'};font-weight:${on?'600':'500'}">🎀 Accessoire décoratif <span style="font-weight:400;color:#9a8a82;font-size:.74rem">— ruban + déco LOVE (location)</span></span>
+          <span style="display:block;font-size:.72rem;color:#9a8a82;margin-top:2px">${euro(ACCESS_DECO_PRICE)} / pyramide${on&&nb>1?` · ${nb} × ${euro(ACCESS_DECO_PRICE)} = ${euro(tot)}`:''}</span>
+        </span>
+        ${on?`<b style="color:var(--bordeaux,#52252F);font-size:.95rem">${euro(tot)}</b>`:`<span style="color:#9a8a82;font-size:.9rem">+ ajouter</span>`}
+      </div>`;
+    })():''}
     <label style="font-size:.78rem;color:#7a6a62">Parfums (optionnel)</label>
     <div class="flav-grid">${flavRows}${evSansParfumRow}</div>
     ${evSansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${evSansParfum} macaron${evSansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>` : ''}
@@ -17039,6 +17082,12 @@ function setPyraPrix(i, v){
 }
 function setPyraCout(i, v){
   cmdLines[i].pyraCoutAchat = Math.max(0, +String(v).replace(',', '.')||0);
+  cmdRecalc();
+}
+// [v1246] Accessoire décoratif (ruban + déco LOVE) : bascule on/off. Location par pyramide.
+function setAccessoireDeco(i, on){
+  cmdLines[i].accessoireDeco = !!on;
+  drawLines();   // redessine la ligne (case + total) et met à jour le récap
   cmdRecalc();
 }
 
@@ -17363,7 +17412,7 @@ function lineTotalBase(ln){
     const over = Math.max(0, nbDiff-limit);
     return money2(base + over*FLAVOR_SURCHARGE);
   }
-  if(ln.type==='evenement') return addMoney(mulMoney(ln.evQte||0,eventUnitPrice(ln)), pyraTotalLigne(ln));
+  if(ln.type==='evenement') return addMoney(addMoney(mulMoney(ln.evQte||0,eventUnitPrice(ln)), pyraTotalLigne(ln)), accessoireDecoTotal(ln));
   if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln); const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return mulMoney(tot,pu); }
   if(ln.type==='don') return 0;
@@ -17451,7 +17500,7 @@ function cmdLinesToStored(){
   return (cmdLines||[]).map(ln=>{
     const rp = Math.max(0,Math.min(100,+ln.remisePct||0));
     if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, prixUnitaireApplique: coffretUnitPrice(ln), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
-    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:(ln.accessoireDeco?true:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', remisePct:rp, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacMatId>0?Math.max(0,Math.round(+ln.sacNb||0)):0), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
@@ -18137,7 +18186,7 @@ async function saveCmd(id){
   const cb=document.getElementById('f_cal');
   if(cb&&cb.checked){
     const cl = o.clientId ? await db.clients.get(o.clientId) : null;
-    await db.events.add({date:o.date,titre:'Cmd '+(cl?cl.nom:'')+` (${lignes.length} produit${lignes.length>1?'s':''})`,type:'cmd',refId:oid});
+    await db.events.add({date:(o.dateEvenement||o.date),titre:'Cmd '+(cl?cl.nom:'')+` (${lignes.length} produit${lignes.length>1?'s':''})`,type:'cmd',refId:oid});
   }
   closeModal(); renderCmd(); toast('Commande enregistrée ✓');
   // Vérification prévisionnelle immédiate : la commande crée-t-elle un risque sous 8 jours ?
@@ -19590,6 +19639,8 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
         // pyramide LOUÉE → prestation de service.
         caService=money2(caService+pyraMontant);
       }
+      // [v1246] Accessoire décoratif (ruban + déco LOVE) → location = prestation de service.
+      if(accessoireDecoActif(ln)){ caService=money2(caService+accessoireDecoTotal(ln)); }
       return;
     }
     // coffret / grand / don / histo : marchandise
@@ -27797,7 +27848,7 @@ function diagFlavorCAGap(orders, markets, marketMoves){
         valMac += money2(lineTotalStored(ln));
         lineParfumsOf(ln).forEach(p=>totalPiecesMac+=+p.qte);
       }
-      if(ln.type==='evenement'){ cat.pyramides += pyraTotalLigne(ln); }
+      if(ln.type==='evenement'){ cat.pyramides += pyraTotalLigne(ln) + accessoireDecoTotal(ln); }
     });
     if(totalPiecesMac<=0){ cat.sansParfum += montant; nb.sansParfum++; return; }
     // Répartition du montant réel entre macarons (→ parfums) et prestation (→ à part).
@@ -43890,11 +43941,14 @@ function factLineRows(ln, brut){
   if(ln.type==='evenement' && (+ln.equip||0)>0){
     const nbPyr = +ln.equip||0;
     const partPyr = pyraTotalLigne(ln);                        // part pyramides (location ou vente)
-    // En cas de remise de ligne (montantLn < brut), la part pyramide doit suivre la même proportion
-    // pour garantir l'égalité des deux <tr> avec le sous-total. On recalcule au prorata si besoin.
+    const partAcc = accessoireDecoTotal(ln);                   // [v1246] part accessoire décoratif (location)
+    // En cas de remise de ligne (montantLn < brut), les parts pyramide et accessoire doivent suivre la
+    // même proportion pour garantir l'égalité des <tr> avec le sous-total. On recalcule au prorata si besoin.
     const brutLn = lineTotalBrut(ln);
-    const partPyrAff = (brutLn>0 && montantLn!==brutLn) ? money2(montantLn * (partPyr/brutLn)) : partPyr;
-    const partMaca = money2(montantLn - partPyrAff);           // reste = part macarons (garantit l'égalité)
+    const prorata = (brutLn>0 && montantLn!==brutLn) ? (montantLn/brutLn) : 1;
+    const partPyrAff = money2(partPyr*prorata);
+    const partAccAff = money2(partAcc*prorata);
+    const partMaca = money2(montantLn - partPyrAff - partAccAff);  // reste = part macarons (garantit l'égalité)
     const rowMaca = `<tr><td class="desc">${factLineDescHtml(ln)}</td><td class="mt">${euro(partMaca)}</td></tr>`;
     let descPyr;
     if(pyraEstVente(ln)){
@@ -43907,7 +43961,15 @@ function factLineRows(ln, brut){
                 `<span class="ln-loc">à retourner dans un délai de 48h après l'événement</span>`;
     }
     const rowPyr = `<tr><td class="desc">${descPyr}</td><td class="mt">${euro(partPyrAff)}</td></tr>`;
-    return rowMaca + rowPyr + remiseSub;
+    // [v1246] Ligne SÉPARÉE « Accessoire décoratif » (ruban + déco LOVE), uniquement si l'option est active.
+    let rowAcc = '';
+    if(accessoireDecoActif(ln)){
+      const descAcc = `<span class="ln-main">Prestation de service — accessoire décoratif</span>`+
+                      `<span class="ln-sub">ruban + déco LOVE · ${nbPyr} pyramide${nbPyr>1?'s':''} × ${euro(ACCESS_DECO_PRICE)}</span>`+
+                      `<span class="ln-loc">à retourner dans les 48h après votre événement</span>`;
+      rowAcc = `<tr><td class="desc">${descAcc}</td><td class="mt">${euro(partAccAff)}</td></tr>`;
+    }
+    return rowMaca + rowPyr + rowAcc + remiseSub;
   }
   // Si remise de ligne affichée (mode net) : ligne principale au BRUT, puis sous-ligne « remise −X € ».
   const mtPrincipal = _remLn>0 ? lineTotalBrut(ln) : montantLn;
@@ -43985,7 +44047,7 @@ async function genererDevisDoc(docId){
   // Pourcentage de remise à afficher : le % global saisi si présent, sinon le % effectif.
   const reducPct = gpct>0 ? gpct : (totalBrut>0 ? Math.round(reductions/totalBrut*1000)/10 : 0);
 
-  const rows = lignes.map(ln=>factLineRows(ln, false)).join('');   // false = prix NET par ligne (remise de ligne montrée sous la ligne)
+  const rows = lignes.map(ln=>factLineRows(ln, false)).join('') + cautionRowHtml(lignes);   // false = prix NET par ligne (remise de ligne montrée sous la ligne)
   const section = `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -44209,7 +44271,7 @@ async function _genererFactureSimple_DEPRECATED(orderId){
   const lignes = orderToLines(o);
   const numFact = orderNumber(o);
   // Lignes détaillées avec montant
-  const rowsHtml = lignes.map(ln=>factLineRows(ln)).join('');
+  const rowsHtml = lignes.map(ln=>factLineRows(ln)).join('') + cautionRowHtml(lignes);
   // Sous-total (somme des lignes) et remise globale éventuelle
   const sousTotal = lignes.reduce((s,ln)=>s+lineTotalStored(ln),0);
   // [REMISE €] Remise globale résolue en euros fixes (helper), plafonnée au sous-total.
@@ -44442,7 +44504,7 @@ async function genererFactureMultiple(ids){
     grandNetHorsLiv += money2(totalCmd - frais);
     const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais));   // rabais TOTAL (ligne+perso+global)
     grandBrutAbsolu += R.brutAbsolu; grandRabais += R.rabais; grandFrais += frais;
-    const rows = lignes.map(ln=>factLineRows(ln, true)).join('');   // true = prix BRUT par ligne ; les réductions sont récapitulées sous le total (plus clair)
+    const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes);   // true = prix BRUT par ligne ; les réductions sont récapitulées sous le total (plus clair)
     return `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -44607,7 +44669,7 @@ async function collectOrderExport(orderId){
   const produits = lignes.map(ln=>{
     if(ln.type==='coffret') return {label:`Coffret ${ln.taille} macarons`, remisePct:+ln.remisePct||0,
       parfums:(ln.parfums||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte}))};
-    if(ln.type==='evenement') return {label:`Événement : ${ln.evQte||0} macarons + ${ln.equip||0} présentoir(s)`, remisePct:+ln.remisePct||0,
+    if(ln.type==='evenement') return {label:`Événement : ${ln.evQte||0} macarons + ${ln.equip||0} présentoir(s)${accessoireDecoActif(ln)?' + accessoire décoratif':''}`, remisePct:+ln.remisePct||0,
       parfums:(ln.parfums||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte}))};
     if(ln.type==='grand') return {label:`Grand format (${ln.tarif||'particulier'})`, remisePct:+ln.remisePct||0,
       parfums:(ln.items||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte}))};
@@ -44824,7 +44886,7 @@ async function buildOrderText(orderId){
     } else if(ln.type==='evenement'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       const _rem=Math.max(0,Math.min(100,+ln.remisePct||0));
-      L.push('  - Événement : '+(ln.evQte||0)+' macarons + '+(ln.equip||0)+' présentoir(s)'+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
+      L.push('  - Événement : '+(ln.evQte||0)+' macarons + '+(ln.equip||0)+' présentoir(s)'+(accessoireDecoActif(ln)?' + accessoire décoratif (ruban + déco LOVE)':'')+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
       parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
     } else if(ln.type==='grand'){
       const items=(ln.items||[]).filter(p=>p.qte>0);
@@ -46317,6 +46379,112 @@ function prodTaskStop(taskId){
   prodSessUpsert(s);
   if(!prodAnyRunning()) prodStopTicking();
   prodRenderBoard&&prodRenderBoard();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [MERINGUE MUTUALISÉE] Garde-fou contre l'arrêt accidentel d'UN seul parfum en
+// tout début de production. Tant qu'on travaille la meringue commune (phases amont
+// partagées), terminer le chrono d'un seul parfum n'a pas de sens — c'est presque
+// toujours une fausse manip. On intercepte donc l'arrêt et on demande confirmation.
+//
+// « Suspect » = les 3 conditions réunies :
+//   1) la tâche ne porte qu'UN parfum (arrêt ciblé d'un parfum) ;
+//   2) ce parfum appartient à une meringue mutualisée ENCORE ACTIVE : plusieurs
+//      batchs « coques » démarrés partagent le même meringueBatchId, et au moins un
+//      AUTRE parfum de cette fournée est encore en cours (batch non terminé) ;
+//   3) on est dans une phase AMONT partagée (avant que la cuisson n'individualise
+//      les parfums) : Préparation / Meringue / Macaronnage / Manipulation coques.
+// ─────────────────────────────────────────────────────────────────────────────
+const _PHASES_AMONT_MUTUALISEE = ['Préparation','Meringue','Macaronnage','Finition / Manipulation coques'];
+
+// Renvoie le meringueBatchId ACTIF (fournée partagée par 2+ parfums, batchs coques
+// non terminés) auquel appartient `recipeId`, avec la liste des parfums encore en
+// cours — ou null si ce parfum n'est pas sur une meringue mutualisée active.
+async function _prodMeringueMutualiseeActive(recipeId){
+  try{
+    if(recipeId==null) return null;
+    const prods = await db.productions.toArray().catch(()=>[]);
+    // On ne garde que les batchs coques encore « démarrés » reliés à une fournée commune.
+    const coquesActifs = prods.filter(p =>
+      p.meringueBatchId &&
+      (p.composant==='coques') &&
+      (p.prodStatut||'termine')==='demarre');
+    if(!coquesActifs.length) return null;
+    // Groupe par fournée de meringue.
+    const parFournee = {};
+    coquesActifs.forEach(p=>{ (parFournee[p.meringueBatchId] ||= []).push(p); });
+    // Cherche la fournée qui contient notre parfum ET au moins un autre parfum distinct.
+    for(const mbId of Object.keys(parFournee)){
+      const lots = parFournee[mbId];
+      const rids = [...new Set(lots.map(l=>+l.recipeId))];
+      if(rids.includes(+recipeId) && rids.length>=2){
+        return { meringueBatchId: mbId, parfums: rids, autres: rids.filter(r=>r!==+recipeId) };
+      }
+    }
+    return null;
+  }catch(e){ console.error('_prodMeringueMutualiseeActive', e); return null; }
+}
+
+// Décide si l'arrêt de la tâche `t` doit être bloqué (confirmation) plutôt que sec.
+// Async car on lit les productions. Renvoie {suspect:bool, info?}.
+async function _prodArretSuspectMutualise(t){
+  try{
+    if(!t || t.end) return { suspect:false };
+    const parfs = (typeof _atTaskParfums==='function') ? _atTaskParfums(t) : (Array.isArray(t.parfums)?t.parfums.map(Number):[]);
+    // (1) uniquement les tâches ciblant UN seul parfum (l'arrêt global du mutualisé n'est pas visé).
+    if(parfs.length!==1) return { suspect:false };
+    // (3) phase amont partagée seulement.
+    if(!_PHASES_AMONT_MUTUALISEE.includes(t.phase)) return { suspect:false };
+    // (2) meringue mutualisée active incluant ce parfum + un autre encore en cours.
+    const mut = await _prodMeringueMutualiseeActive(parfs[0]);
+    if(!mut) return { suspect:false };
+    return { suspect:true, info:mut };
+  }catch(e){ console.error('_prodArretSuspectMutualise', e); return { suspect:false }; }
+}
+
+// Point d'entrée appelé par le bouton ⏹ de l'onglet mutualisé (et du tableau blanc).
+// Si l'arrêt est suspect → modale de confirmation ; sinon → arrêt direct.
+async function prodTaskStopGuard(taskId){
+  try{
+    const s = prodSessActive(); if(!s){ return; }
+    const t = (s.tasks||[]).find(x=>String(x.id)===String(taskId));
+    if(!t || t.end){ return; }
+    const verdict = await _prodArretSuspectMutualise(t);
+    if(!verdict.suspect){
+      prodTaskStop(taskId);
+      if(typeof chronoFloatRenderBody==='function') chronoFloatRenderBody();
+      return;
+    }
+    // Récupère les noms des autres parfums de la fournée pour un message clair.
+    let autresNoms = [];
+    try{
+      const recs = await Promise.all((verdict.info.autres||[]).map(r=>db.recipes.get(r).catch(()=>null)));
+      autresNoms = recs.filter(Boolean).map(r=>r.produitNom||r.nom).filter(Boolean);
+    }catch(e){}
+    const etape = (typeof atShort==='function') ? atShort(t.label) : (t.label||'cette étape');
+    const listeAutres = autresNoms.length
+      ? `Les autres parfums de la même meringue (<b>${autresNoms.map(esc).join(', ')}</b>) sont encore en cours.`
+      : `Un autre parfum de la même meringue est encore en cours.`;
+    openModal(`<h3>⚠ Meringue partagée</h3>
+      <p style="margin-bottom:6px">Tu es sur le point d'arrêter le chrono de <b>${esc(etape)}</b> pour <b>un seul parfum</b>, alors que la <b>meringue est commune</b> à cette fournée.</p>
+      <p class="note" style="margin-bottom:10px">${listeAutres} À ce stade (avant la cuisson), le travail est partagé : arrêter un seul parfum est presque toujours une fausse manip.</p>
+      <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+        <button class="btn gold" onclick="closeModal()">↩ Ne rien arrêter</button>
+        <button class="btn ghost" onclick="prodTaskStopConfirme('${String(t.id).replace(/'/g,"\\'")}')">⏹ Arrêter quand même ce parfum</button>
+      </div>`);
+  }catch(e){
+    console.error('prodTaskStopGuard', e);
+    // En cas de pépin, on ne bloque pas l'utilisateur : arrêt normal.
+    prodTaskStop(taskId);
+    if(typeof chronoFloatRenderBody==='function') chronoFloatRenderBody();
+  }
+}
+
+// Confirmé depuis la modale : on arrête réellement, puis on rafraîchit l'atelier.
+function prodTaskStopConfirme(taskId){
+  closeModal();
+  prodTaskStop(taskId);
+  if(typeof chronoFloatRenderBody==='function') chronoFloatRenderBody();
 }
 // [FIN DE BATCH] Appelé quand un batch passe en « terminé ». Si une tâche d'atelier lui est
 // rattachée (atelierTaskId) et tourne encore, on demande : la FERMER (fin du travail sur cette
