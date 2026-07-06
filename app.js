@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1247';
+const APP_VERSION = 'v1253';
 const APP_MAJ = 'Nouveau garde-fou en meringue mutualis\u00e9e : quand une fourn\u00e9e est partag\u00e9e entre plusieurs parfums, l\u2019app emp\u00eache d\u00e9sormais d\u2019arr\u00eater par m\u00e9garde le chrono d\u2019un seul parfum en d\u00e9but de production (phases meringue, macaronnage, manipulation des coques). Un message de confirmation s\u2019affiche, rappelant que les autres parfums de la m\u00eame meringue sont encore en cours. Une fois la cuisson lanc\u00e9e (les parfums ne partagent plus rien), ou si un seul parfum reste actif, l\u2019arr\u00eat redevient direct. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
 
 
@@ -3094,6 +3094,100 @@ const COQUES_PAR_MACARON = 2;
 // Ratio matière d'une coque grand format vs une coque standard (1 coque GF = 3,5 coques std).
 // S'applique UNIQUEMENT aux coques ; les garnitures d'un GF sont propres à chaque recette.
 const GF_COQUE_RATIO = 3.5;
+
+// ============================================================================
+// [v1249] MUTUALISATION DES COQUES PAR COULEUR
+// La saisie et le stockage restent PAR PARFUM (« coques vanille », « coques praliné »…).
+// Par-dessus, chaque recette porte une empreinte-couleur (1 ou 2 couleurs) qui permet de
+// RAPPROCHER les coques compatibles à l'assemblage et dans le calcul du potentiel.
+// Rien n'est tracé au grain près : la mutualisation est une PROPOSITION, jamais automatique.
+// La taille (standard vs grand format) suit le flag grandFormat de la recette : une couleur
+// standard et la même couleur en GF sont deux réserves DISTINCTES, non interchangeables.
+// ----------------------------------------------------------------------------
+// Palette officielle (clé stable → libellé lisible + pastille indicative).
+const COQUE_COULEURS = {
+  blanc:              { label:'Blanc',                    hex:'#f4efe7' },
+  marron_fonce:       { label:'Marron foncé',             hex:'#4a2f22' },
+  marron_clair:       { label:'Marron clair',             hex:'#a97c50' },
+  marron_inter:       { label:'Marron intermédiaire',     hex:'#7a5236' },
+  marron_inter_cafe:  { label:'Marron intermédiaire café', hex:'#6b4a30' },
+  rouge:              { label:'Rouge',                    hex:'#c0392b' },
+  rouge_bourgogne:    { label:'Rouge bourgogne',          hex:'#7b1e2b' },
+  vert_pastel:        { label:'Vert pastel',              hex:'#b7d3a8' },
+  vert_pistache:      { label:'Vert pistache',            hex:'#9fbf5a' },
+  bleu_ciel:          { label:'Bleu ciel',               hex:'#a8d0e6' },
+  orange:             { label:'Orange',                   hex:'#e08a3c' },
+  jaune_pale:         { label:'Jaune pâle',              hex:'#f2e6a8' },
+  jaune:              { label:'Jaune',                     hex:'#f2d64b' },
+  violet:             { label:'Violet',                   hex:'#8e6fb0' }
+};
+function coqueCouleurLabel(k){ return (COQUE_COULEURS[k]&&COQUE_COULEURS[k].label) || (k||''); }
+function coqueCouleurHex(k){ return (COQUE_COULEURS[k]&&COQUE_COULEURS[k].hex) || '#ccc'; }
+function coqueCouleurPastille(k){ return `<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${coqueCouleurHex(k)};border:1px solid rgba(0,0,0,.18);vertical-align:middle;margin-right:4px"></span>`; }
+
+// Mapping par défaut des 19 parfums → [couleur1, couleur2]. Sert au PRÉ-REMPLISSAGE des recettes
+// existantes (par correspondance de nom normalisé), non destructif. Modifiable ensuite par recette.
+// La taille GF n'est PAS encodée ici : elle vient du flag grandFormat de la recette.
+const COQUE_COULEURS_DEFAUT = [
+  { motifs:['chocolat au lait','choco au lait','chocolat lait'], couleurs:['marron_fonce','marron_fonce'] },
+  { motifs:['nocciolata'],                                        couleurs:['marron_fonce','marron_fonce'] },
+  { motifs:['chocolat noir','valrhona'],                          couleurs:['rouge_bourgogne','rouge_bourgogne'] },
+  { motifs:['chocolat gf','chocolat grand format'],               couleurs:['marron_fonce','marron_fonce'] },
+  { motifs:['praline','praliné','praline noisette'],              couleurs:['marron_fonce','blanc'] },
+  { motifs:['chocolat passion'],                                  couleurs:['marron_fonce','orange'] },
+  { motifs:['framboise'],                                         couleurs:['rouge','rouge'] },
+  { motifs:['caramel'],                                           couleurs:['marron_clair','marron_clair'] },
+  { motifs:['cannelle noisette','cannelle'],                      couleurs:['marron_inter','marron_inter'] },
+  { motifs:['cafe','café'],                                       couleurs:['marron_inter_cafe','marron_inter_cafe'] },
+  { motifs:['coco citron vert','coco citron'],                    couleurs:['vert_pastel','vert_pastel'] },
+  { motifs:['pistache'],                                          couleurs:['vert_pistache','vert_pistache'] },
+  { motifs:['rafaello','raffaello','coco facon','coco façon'],    couleurs:['bleu_ciel','bleu_ciel'] },
+  { motifs:['citron cremeux','citron crémeux','citron'],          couleurs:['jaune','jaune'] },
+  { motifs:['popcorn','pop corn'],                                couleurs:['jaune_pale','jaune_pale'] },
+  { motifs:['myrtille framboise','myrtille'],                     couleurs:['violet','violet'] },
+  { motifs:['mangue passion','mangue'],                           couleurs:['orange','orange'] },
+  { motifs:['madeleine','madeline'],                              couleurs:['jaune_pale','jaune_pale'] },
+  { motifs:['vanille'],                                           couleurs:['blanc','blanc'] }
+];
+// Renvoie les couleurs par défaut pour un nom de recette (ou null si aucune correspondance).
+// On teste les motifs les plus spécifiques d'abord (l'ordre du tableau ci-dessus le garantit :
+// « chocolat au lait » avant un éventuel « chocolat » nu, etc.).
+function coqueCouleursDefautPour(nom){
+  const n = (typeof aiNormalize==='function') ? aiNormalize(nom||'') : String(nom||'').toLowerCase();
+  for(const e of COQUE_COULEURS_DEFAUT){
+    for(const m of e.motifs){
+      const mn = (typeof aiNormalize==='function') ? aiNormalize(m) : m.toLowerCase();
+      if(mn && n.indexOf(mn)>=0) return e.couleurs.slice();
+    }
+  }
+  return null;
+}
+// Empreinte-couleur d'une recette : [c1,c2] normalisées, ou [] si non renseignée.
+function recCoqueColors(rec){
+  if(!rec) return [];
+  const c = rec.coqueColors;
+  if(Array.isArray(c) && c.length) return c.filter(x=>x && COQUE_COULEURS[x]);
+  return [];
+}
+// Empreinte-couleur + taille d'un lot de coques, via sa recette. { colors:[...], gf:bool } ou null.
+function coqueColorProfile(prod, recById){
+  if(!prod) return null;
+  const rec = recById ? recById[+prod.recipeId] : null;
+  const colors = recCoqueColors(rec);
+  if(!colors.length) return null;
+  return { colors, gf: !!(rec && rec.grandFormat) };
+}
+// Deux lots de coques sont-ils MUTUALISABLES pour une couleur donnée ? (même couleur présente
+// dans les deux empreintes ET même taille). Utilisé pour proposer un dépannage à l'assemblage.
+function coquesMutualisables(profilCible, profilSource, couleurVoulue){
+  if(!profilCible || !profilSource) return false;
+  if(!!profilCible.gf !== !!profilSource.gf) return false;                 // std ≠ GF, jamais interchangeables
+  if(couleurVoulue) return profilSource.colors.indexOf(couleurVoulue)>=0;  // la source porte-t-elle CETTE couleur ?
+  // sans couleur précisée : au moins une couleur commune
+  return profilCible.colors.some(c=>profilSource.colors.indexOf(c)>=0);
+}
+// ============================================================================
+
 // Prix grand format selon le tarif, en tenant compte du réglage pro évolutif.
 function bigPrice(tarif){
   if(tarif==='pro'){ const s=getSettings(); return (s.prixGrandFormatPro!=null)?+s.prixGrandFormatPro:BIG_PRICE.pro; }
@@ -3505,30 +3599,87 @@ function computeStockPotentiel(prods, recipesById){
     const q = qr(p); if(q<=0) return;
     if(isGF(p)) finisGF = round3(finisGF+q); else finisClassique = round3(finisClassique+q);
   });
-  // 2) À ASSEMBLER : agrège coques et ganache PAR parfum (recipeId), puis min(coques÷2, ganache).
-  //    On agrège d'abord tous les sous-lots d'un même parfum (peu importe l'emplacement).
-  const parParfum = {};   // recipeId -> {coques, ganache, gf}
+  // 2) À ASSEMBLER — [v1249] MUTUALISATION PAR COULEUR.
+  //    La ganache reste PAR parfum (elle définit le goût). Les coques, elles, sont regroupées en
+  //    RÉSERVES DE COULEUR (couleur + taille), partagées entre parfums de même couleur. On évite le
+  //    double-comptage d'une couleur partagée en allouant les coques de façon gloutonne, chaque parfum
+  //    étant de toute façon plafonné par sa ganache.
+  //    Repli : un parfum sans empreinte-couleur garde l'ancien calcul (coques propres ÷ 2).
+  const ganacheParParfum = {};   // rid -> doses de ganache (macarons garnissables)
+  const coquesParParfumBrut = {}; // rid -> coques du parfum (fallback sans couleur)
+  const poolCouleur = {};        // "gf|couleur" -> total de coques de cette couleur+taille
+  const gfDeRid = {};            // rid -> bool
   (prods||[]).forEach(p=>{
     if(!fini(p)) return;
     const q = qr(p); if(q<=0) return;
     const comp = prodComposant(p);
     const rid = (p.recipeId!=null) ? p.recipeId : ('libre_'+(p.produitLibre||p.id));
+    const rec = (p.recipeId!=null) ? rById[p.recipeId] : null;
+    const gf = !!(rec && rec.grandFormat);
     if(comp==='coques'){
-      if(p.degDeclasse) return;                       // coques déclassées en dégustation : pas vendables
-      (parParfum[rid] || (parParfum[rid]={coques:0, ganache:0, gf:isGF(p)})).coques += q;
+      if(p.degDeclasse) return;
+      gfDeRid[rid] = gf;
+      coquesParParfumBrut[rid] = round3((coquesParParfumBrut[rid]||0) + q);
+      const colors = recCoqueColors(rec);
+      if(colors.length){
+        // Une coque d'un lot bicolore compte pour SA propre couleur ; un lot « praliné » de N paires
+        // = N coques de chaque couleur. Ici q = nb de coques du lot (2 par macaron), qu'on ventile :
+        // pour un lot bicolore, la moitié va à chaque couleur ; pour un monochrome, tout à la couleur.
+        if(colors.length===1){
+          const k = (gf?'1|':'0|')+colors[0];
+          poolCouleur[k] = round3((poolCouleur[k]||0) + q);
+        } else {
+          const half = round3(q/2);
+          const k0=(gf?'1|':'0|')+colors[0], k1=(gf?'1|':'0|')+colors[1];
+          poolCouleur[k0] = round3((poolCouleur[k0]||0) + half);
+          poolCouleur[k1] = round3((poolCouleur[k1]||0) + half);
+        }
+      }
     } else if(comp==='ganache'){
-      if(p.composantCatalogue===true) return;         // chantache mutualisée : exclue de l'assemblage binaire
-      (parParfum[rid] || (parParfum[rid]={coques:0, ganache:0, gf:isGF(p)})).ganache += q;
+      if(p.composantCatalogue===true) return;
+      gfDeRid[rid] = gf;
+      ganacheParParfum[rid] = round3((ganacheParParfum[rid]||0) + q);
     }
   });
+  // Allocation : pour chaque parfum, on veut min(ganache, coques disponibles selon SES couleurs).
+  // Pour un bicolore, il faut 1 coque de chaque couleur par macaron → limité par la couleur la plus rare.
+  // On traite les parfums par ganache croissante (les plus contraints d'abord) pour un partage stable,
+  // et on décrémente les réserves de couleur au fur et à mesure (pas de double-comptage).
+  const _poolRestant = Object.assign({}, poolCouleur);
   let assemblableClassique=0, assemblableGF=0;
-  Object.keys(parParfum).forEach(rid=>{
-    const b = parParfum[rid];
-    const macDepuisCoques = Math.floor(round3(b.coques)/COQUES_PAR_MACARON);   // 2 coques = 1 macaron
-    const macDepuisGanache = Math.floor(round3(b.ganache));                     // 1 dose = 1 macaron
-    const assemblable = Math.max(0, Math.min(macDepuisCoques, macDepuisGanache));
-    if(assemblable<=0) return;
-    if(b.gf) assemblableGF += assemblable; else assemblableClassique += assemblable;
+  const _rids = Object.keys(ganacheParParfum).sort((a,b)=>ganacheParParfum[a]-ganacheParParfum[b]);
+  // Parfums qui ont de la ganache mais pas d'empreinte couleur : repli sur leurs coques propres.
+  const _ridsSansCouleur = [];
+  _rids.forEach(rid=>{
+    const rec = rById[rid];
+    const colors = recCoqueColors(rec);
+    const gf = !!gfDeRid[rid];
+    const macGanache = Math.floor(round3(ganacheParParfum[rid]||0));
+    if(macGanache<=0) return;
+    if(!colors.length){ _ridsSansCouleur.push(rid); return; }   // repli plus bas
+    let capCoques;
+    if(colors.length===1){
+      const k=(gf?'1|':'0|')+colors[0];
+      capCoques = Math.floor(round3(_poolRestant[k]||0)/COQUES_PAR_MACARON);
+    } else {
+      const k0=(gf?'1|':'0|')+colors[0], k1=(gf?'1|':'0|')+colors[1];
+      capCoques = Math.min(Math.floor(round3(_poolRestant[k0]||0)), Math.floor(round3(_poolRestant[k1]||0)));
+    }
+    const asm = Math.max(0, Math.min(macGanache, capCoques));
+    if(asm<=0) return;
+    // décrémente les réserves de couleur consommées
+    if(colors.length===1){ const k=(gf?'1|':'0|')+colors[0]; _poolRestant[k]=round3((_poolRestant[k]||0) - asm*COQUES_PAR_MACARON); }
+    else { const k0=(gf?'1|':'0|')+colors[0], k1=(gf?'1|':'0|')+colors[1]; _poolRestant[k0]=round3((_poolRestant[k0]||0)-asm); _poolRestant[k1]=round3((_poolRestant[k1]||0)-asm); }
+    if(gf) assemblableGF += asm; else assemblableClassique += asm;
+  });
+  // Repli (parfums sans couleur) : ancien calcul strict min(coques propres ÷ 2, ganache).
+  _ridsSansCouleur.forEach(rid=>{
+    const gf=!!gfDeRid[rid];
+    const macDepuisCoques = Math.floor(round3(coquesParParfumBrut[rid]||0)/COQUES_PAR_MACARON);
+    const macDepuisGanache = Math.floor(round3(ganacheParParfum[rid]||0));
+    const asm = Math.max(0, Math.min(macDepuisCoques, macDepuisGanache));
+    if(asm<=0) return;
+    if(gf) assemblableGF += asm; else assemblableClassique += asm;
   });
   const finis = round3(finisClassique + finisGF);
   const assemblable = round3(assemblableClassique + assemblableGF);
@@ -3571,8 +3722,22 @@ function prodDlcEffective(p){
 // [MIGRATION] Corrige la DLC stockée des lots DÉJÀ au congélateur dont la valeur est obsolète
 // (ex. DLC frigo figée avant congélation → affichée « dépassée »). Aligne dlcProduit sur la
 // DLC effective (règle congélation : budget frigo en pause + 4 mois). Idempotent.
-async function migrateDlcCongelateur(){
-  try{
+// [v1249] Pré-remplissage NON DESTRUCTIF de l'empreinte-couleur des recettes existantes.
+// Pour chaque recette sans coqueColors renseignées, on applique le mapping par défaut si le nom
+// correspond. On n'écrase jamais une couleur déjà saisie à la main.
+async function migrateCoqueColors(){
+  let recs=[]; try{ recs=await db.recipes.toArray(); }catch(_){ return; }
+  let n=0;
+  for(const r of recs){
+    if(Array.isArray(r.coqueColors) && r.coqueColors.length) continue;   // déjà renseignée → on respecte
+    const def = coqueCouleursDefautPour(r.produitNom||'');
+    if(def && def.length){
+      try{ await db.recipes.update(r.id, {coqueColors:def}); n++; }catch(_){}
+    }
+  }
+  if(n>0){ try{ if(typeof diagPublish==='function') diagPublish('coque_colors','Coques · couleurs', {prefill:n}); }catch(_){}}
+}
+async function migrateDlcCongelateur(){  try{
     const prods = await db.productions.toArray();
     let n=0;
     for(const p of prods){
@@ -4816,7 +4981,7 @@ async function renderDash(){
    ${!releveFait?`<div class="banner">🌡 <div><b>Relevé de température non fait aujourd'hui.</b> Pense à le saisir et à <b>valider</b>. <span class="act" onclick="goView('pms')">Faire le relevé →</span></div></div>`:''}
    ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
    ${(_gaspReady && _gaspReady.ready && !_gaspDismissed())?`<div class="banner" style="background:#eef6ef;border-color:#bcd9c4">✅ <div><b>Aide aux quantités activable</b> — tu as ${_gaspReady.nbVentiles} marchés avec invendus bien renseignés. L'app peut maintenant te conseiller combien produire par parfum pour limiter le gaspillage. <span class="act" onclick="gaspillagePopup()">Voir le gaspillage →</span> · <span class="act" onclick="_gaspDismiss()">Plus tard</span></div></div>`:''}
-   ${prodSugg.length?`<div class="banner" style="background:#f4faf5;border-color:#cfe3d4">🔗 <div><b>${prodSugg.length} assemblage(s) à finaliser</b> — des coques et ganaches en stock peuvent être réunies (${prodSugg.slice(0,3).map(s=>esc(s.coqRec)+' '+qty(s.assemblable)+' mac.').join(' · ')}${prodSugg.length>3?' …':''}). <span class="act" onclick="goView('productions')">Assembler →</span></div></div>`:''}
+   ${prodSugg.length?`<div class="banner" style="background:#f4faf5;border-color:#cfe3d4">🔗 <div><b>${prodSugg.length} assemblage(s) possible(s)</b> — coques et ganaches en stock peuvent être réunies (${prodSugg.slice(0,3).map(s=>esc(s.ganRec)+' '+qty(s.assemblable)+' mac.'+(s.mutualise?' 🎨':'')).join(' · ')}${prodSugg.length>3?' …':''}). <span class="act" onclick="goView('productions')">Assembler →</span></div></div>`:''}
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> <span style="font-size:.76rem;color:#9a8a82">— touche un lot pour intervenir</span><br>${prodDlcAlert.slice(0,6).map(a=>`<span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="dlcActions(${a.id})">${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})</span>`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
@@ -6381,7 +6546,7 @@ async function renderRecipes(){
           <span class="ing-mult" id="mult_${r.id}_${idx}"><b>${qty(shown)}</b> ${esc(d.u)}</span>
         </div>
       </div>`; }).join('');
-    blocks.push(`<div class="panel rec-card" data-search="${esc(_searchTxt)}"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}${r.coquesCongelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ coques congelées</span> ':''}${(r.ganacheDelaiH!=null&&+r.ganacheDelaiH>0)?`<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">⏱ ganache ${r.ganacheDelaiH}h</span> `:''}${(r.maturationH!=null)?`<span class="tag" style="background:#5b8a72;color:#fff;font-size:.62rem">🧊 matur. ${r.maturationH}h</span> `:''}${r.congelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ congel. obligatoire</span> ':''}${r.jourJUniquement?'<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">📅 jour J</span> ':''}${(r.heuresMaxSortie!=null&&+r.heuresMaxSortie>0)?`<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">⏳ ${r.heuresMaxSortie}h max</span> `:''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
+    blocks.push(`<div class="panel rec-card" data-search="${esc(_searchTxt)}"><h2>${esc(r.produitNom)} ${r.grandFormat?'<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">🍪 grand format</span> ':''}${(function(){const cc=recCoqueColors(r);return cc.length?`<span class="tag" style="background:#fff;border:1px solid #e5d8c8;color:#7a6a60;font-size:.62rem">${cc.map(k=>coqueCouleurPastille(k)).join('')}${cc.map(k=>coqueCouleurLabel(k)).join(' + ')}</span> `:'';})()}${r.coquesCongelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ coques congelées</span> ':''}${(r.ganacheDelaiH!=null&&+r.ganacheDelaiH>0)?`<span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">⏱ ganache ${r.ganacheDelaiH}h</span> `:''}${(r.maturationH!=null)?`<span class="tag" style="background:#5b8a72;color:#fff;font-size:.62rem">🧊 matur. ${r.maturationH}h</span> `:''}${r.congelObligatoire?'<span class="tag" style="background:#3b6ea5;color:#fff;font-size:.62rem">❄️ congel. obligatoire</span> ':''}${r.jourJUniquement?'<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">📅 jour J</span> ':''}${(r.heuresMaxSortie!=null&&+r.heuresMaxSortie>0)?`<span class="tag" style="background:#a5453b;color:#fff;font-size:.62rem">⏳ ${r.heuresMaxSortie}h max</span> `:''}<span style="font-weight:400;font-size:.85rem;color:#9a8a82">— rendement ${r.rendement} / batch</span>
       <span><span class="act" onclick="recForm(${r.id})">Modifier</span><span class="act del" onclick="delRec(${r.id})">Suppr.</span></span></h2>
       ${(()=>{ const rr=_rowByRec[r.id]; if(!rr) return ''; const c=rr.cost;
         return `<div class="sum-box" style="margin:0 0 8px"><span>Coût de revient ${euro(c.coutRevientUnit)}/pc ${kpiI('cout_revient_rec')}${rr.prixVenteMoyen!=null?` · vente moy. ${euro(rr.prixVenteMoyen)} · marge ${rr.margeUnit!=null?euro(rr.margeUnit):'—'}`:''}</span>
@@ -6474,6 +6639,22 @@ async function recForm(id, prefill){
      <div class="field"><label>Rendement (nb par batch)</label><input type="number" id="f_rend" value="${r.rendement||60}"></div>
    </div>
    <label class="switch-row"><input type="checkbox" id="f_gf" ${r.grandFormat?'checked':''} onchange="document.getElementById('gfCompZone').style.display=this.checked?'block':'none'"> 🍪 Recette <b>grand format</b> (macaron à l'unité — stock séparé des petits)</label>
+   ${(function(){
+     // [v1249] Couleur des coques : 1 ou 2 couleurs (bicolore = praliné, chocolat passion…).
+     // Sert au rapprochement des coques compatibles (assemblage + potentiel). La taille suit le flag GF.
+     const _cc = recCoqueColors(r);
+     const _def = _cc.length ? _cc : (coqueCouleursDefautPour(r.produitNom||'')||[]);
+     const c1 = _def[0]||'', c2 = _def[1]||_def[0]||'';
+     const optsFor = (sel)=> Object.keys(COQUE_COULEURS).map(k=>`<option value="${k}"${k===sel?' selected':''}>${COQUE_COULEURS[k].label}</option>`).join('');
+     return `<div class="panel" style="background:#faf6ee;margin:8px 0">
+       <label style="font-size:.82rem;font-weight:600;color:#7a6a60">🎨 Couleur des coques <span style="font-weight:400;color:#9a8a82">— pour mutualiser les coques compatibles (même couleur + même taille)</span></label>
+       <div class="row2" style="margin-top:6px">
+         <div class="field"><label>Coque 1</label><select id="f_coqueC1"><option value="">—</option>${optsFor(c1)}</select></div>
+         <div class="field"><label>Coque 2</label><select id="f_coqueC2"><option value="">—</option>${optsFor(c2)}</select></div>
+       </div>
+       <p class="note" style="margin-top:2px">Deux couleurs différentes pour un macaron bicolore (ex. praliné = marron foncé + blanc). Deux fois la même couleur sinon.</p>
+     </div>`;
+   })()}
    <div id="gfCompZone" style="display:${r.grandFormat?'block':'none'}">
      <div class="panel" style="background:#faf6ee;margin:8px 0">
        <h3 style="font-size:.92rem;margin:0 0 6px">🍪 Composants du grand format</h3>
@@ -6717,6 +6898,12 @@ async function saveRec(id){
   const o={produitNom:val('f_nom'),rendement:rend,
     grandFormat: !!document.getElementById('f_gf')?.checked,
     gfCoquesParPiece: Math.max(1, Math.round(+val('f_gfCoques')||2)),
+    coqueColors: (function(){
+      // [v1249] Empreinte-couleur : on garde 1 ou 2 couleurs valides, dans l'ordre saisi.
+      const a=(val('f_coqueC1')||'').trim(), b=(val('f_coqueC2')||'').trim();
+      const out=[]; if(a && COQUE_COULEURS[a]) out.push(a); if(b && COQUE_COULEURS[b]) out.push(b);
+      return out;
+    })(),
     componentRefs: Array.from(document.querySelectorAll('.cmpRef'))
         .filter(cb=>cb.checked)
         .map(cb=>{ const cid=+cb.getAttribute('data-cid');
@@ -6790,24 +6977,144 @@ function assemblySuggestions(prods, recName){
   // [POINT G] Une production EN COURS (statut 'demarre') ne doit pas apparaître dans les
   // suggestions d'assemblage : on ne peut assembler qu'à partir de sous-lots TERMINÉS.
   const _fini = p => (p.prodStatut||'termine')==='termine';
+  // [v1250] Index recettes pour connaître les couleurs exigées par chaque parfum.
+  const _recList = window._allRecipesCache || [];
+  const _recById = {}; _recList.forEach(r=>_recById[+r.id]=r);
+  const _recColors = rid => recCoqueColors(_recById[+rid]);
+  const _recGF = rid => !!(_recById[+rid] && _recById[+rid].grandFormat);
+
+  // COQUES saines en stock, réparties en RÉSERVES DE COULEUR (couleur + taille). Chaque lot garde
+  // son identité (pour le libellé et le bouton), mais on pioche par couleur.
+  //   poolByColor["0|blanc"] = [{p, reste(coques)}...] trié FIFO par DLC.
+  const coqueLots = prods.filter(p=>prodComposant(p)==='coques' && _fini(p) && !p.degDeclasse && round3(+p.qteRestante)>0);
+  const poolByColor = {};
+  coqueLots.forEach(p=>{
+    const colors = _recColors(p.recipeId);
+    if(!colors.length) return;                         // couleur inconnue → pas de mutualisation hasardeuse
+    const gf = _recGF(p.recipeId);
+    const units = round3(+p.qteRestante);              // nb de COQUES physiques
+    // Un lot bicolore contient autant de coques de chaque couleur (moitié/moitié) ; un monochrome, tout.
+    if(colors.length===1){
+      const k=(gf?'1|':'0|')+colors[0];
+      (poolByColor[k]||(poolByColor[k]=[])).push({p, reste:units});
+    } else {
+      const half=round3(units/2);
+      const k0=(gf?'1|':'0|')+colors[0], k1=(gf?'1|':'0|')+colors[1];
+      (poolByColor[k0]||(poolByColor[k0]=[])).push({p, reste:half});
+      (poolByColor[k1]||(poolByColor[k1]=[])).push({p, reste:half});
+    }
+  });
+  // Tri FIFO (DLC croissante) à l'intérieur de chaque réserve de couleur.
+  Object.keys(poolByColor).forEach(k=> poolByColor[k].sort((a,b)=> (a.p.dlcProduit||'9999').localeCompare(b.p.dlcProduit||'9999')));
+
+  // GANACHES en stock = les PARFUMS qu'on peut monter (chantache exclue). Pilote la suggestion.
+  let ganaches = prods.filter(p=>prodComposant(p)==='ganache' && _fini(p) && p.composantCatalogue!==true && round3(+p.qteRestante)>0)
+    .map(p=>({p, mac: round3(+p.qteRestante)}));
+  if(!ganaches.length || !Object.keys(poolByColor).length) return [];
+  // On traite les parfums les plus contraints d'abord (ganache la plus faible) pour un partage stable.
+  ganaches.sort((a,b)=> a.mac - b.mac);
+
+  // Prélève de quoi monter `nMacVoulu` macarons dans une réserve de couleur, sachant qu'un macaron
+  // consomme `coquesParMac` coques de CETTE couleur (2 si la couleur apparaît deux fois dans la recette,
+  // 1 si elle n'y figure qu'une fois — cas bicolore). Décrémente le pool. Renvoie le nb réellement
+  // montable et les lots sources touchés.
+  function prelever(colorKey, nMacVoulu, coquesParMac){
+    const arr = poolByColor[colorKey]; if(!arr || !arr.length || coquesParMac<=0) return {dispoMac:0, sources:[]};
+    let restantMac = nMacVoulu, sources=[];
+    for(const slot of arr){
+      if(restantMac<=0) break;
+      const macSlot = Math.floor(round3(slot.reste)/coquesParMac);
+      if(macSlot<=0) continue;
+      const pris = Math.min(macSlot, restantMac);
+      sources.push({p:slot.p, mac:pris});
+      slot.reste = round3(slot.reste - pris*coquesParMac);
+      restantMac -= pris;
+    }
+    return {dispoMac: nMacVoulu-restantMac, sources};
+  }
+  // Capacité d'une couleur EN MACARONS, pour un besoin de `coquesParMac` coques par macaron (sans consommer).
+  function capaciteCouleur(colorKey, coquesParMac){
+    const arr = poolByColor[colorKey]; if(!arr || coquesParMac<=0) return 0;
+    return arr.reduce((s,slot)=> s + Math.floor(round3(slot.reste)/coquesParMac), 0);
+  }
+
+  const out=[];
+  for(const g of ganaches){
+    const rid = g.p.recipeId;
+    const colors = _recColors(rid);
+    if(!colors.length) continue;                       // parfum sans couleur définie → pas de suggestion couleur
+    const gf = _recGF(rid);
+    const macGanache = Math.floor(round3(g.mac));
+    if(macGanache<=0) continue;
+
+    let assemblable, sourcesC1=[], sourcesC2=[];
+    // Nb de coques de CHAQUE couleur par macaron = multiplicité de la couleur dans la recette.
+    // Monochrome ['blanc','blanc'] → blanc ×2. Bicolore ['marron_fonce','blanc'] → chacune ×1.
+    if(colors.length===1 || colors[0]===colors[1]){
+      const k=(gf?'1|':'0|')+colors[0];
+      const parMac = 2;                                 // même couleur deux fois → 2 coques/macaron
+      const capC = capaciteCouleur(k, parMac);
+      assemblable = Math.min(macGanache, capC);
+      if(assemblable<=0) continue;
+      sourcesC1 = prelever(k, assemblable, parMac).sources;
+    } else {
+      const k0=(gf?'1|':'0|')+colors[0], k1=(gf?'1|':'0|')+colors[1];
+      assemblable = Math.min(macGanache, capaciteCouleur(k0,1), capaciteCouleur(k1,1));
+      if(assemblable<=0) continue;
+      sourcesC1 = prelever(k0, assemblable, 1).sources;
+      sourcesC2 = prelever(k1, assemblable, 1).sources;
+    }
+    if(assemblable<=0) continue;
+
+    // Le lot de coques « de départ » (pour le bouton Assembler) : de préférence un lot du MÊME parfum,
+    // sinon le premier lot source (mutualisé). On détecte si des coques viennent d'un autre parfum.
+    const toutesSources = sourcesC1.concat(sourcesC2);
+    const memeParfumSrc = toutesSources.find(s=> s.p.recipeId===rid);
+    const coqDepart = memeParfumSrc ? memeParfumSrc.p : (toutesSources[0] && toutesSources[0].p);
+    if(!coqDepart) continue;
+    const mutualise = toutesSources.some(s=> s.p.recipeId!==rid);
+    // Libellé des couleurs empruntées (pour l'affichage).
+    const couleursTxt = colors.map(c=>coqueCouleurLabel(c)).join(' + ');
+    // Détail des lots sources (parfums d'origine des coques), dédoublonné.
+    const srcNoms = [];
+    toutesSources.forEach(s=>{ const n=prodNomComplet(s.p); if(n && srcNoms.indexOf(n)<0) srcNoms.push(n); });
+
+    out.push({
+      coqId: coqDepart.id, ganId: g.p.id,
+      coqRec: prodNomComplet(coqDepart), ganRec: prodNomComplet(g.p),
+      coqLot: coqDepart.lotProduction||('#'+coqDepart.id), ganLot: g.p.lotProduction||('#'+g.p.id),
+      coqMac: assemblable, ganMac: g.mac, assemblable,
+      coqUnits: assemblable*COQUES_PAR_MACARON*colors.length/COQUES_PAR_MACARON, // coques totales mobilisées (info)
+      coquesNeeded: assemblable*COQUES_PAR_MACARON,      // coques par couleur consommées (2/mac pour mono, 1+1 pour bi)
+      coquesReste: 0,
+      ganacheReste: round3(g.mac - assemblable),
+      sameBase: false,
+      sameRec: !mutualise,                               // "parfum différent" s'affiche si mutualisé
+      // [v1250] champs enrichis couleur
+      mutualise, couleursTxt, colorsCount:colors.length,
+      sourcesNoms: srcNoms
+    });
+  }
+  // Priorité : non-mutualisés d'abord (assemblage direct), puis par volume.
+  out.sort((a,b)=> (a.mutualise-b.mutualise) || (b.assemblable-a.assemblable));
+  return out;
+}
+function _assemblySuggestionsOLD_unused(prods, recName){
+  recName = recName || (id=>String(id));
+  const _fini = p => (p.prodStatut||'termine')==='termine';
   const coques = prods.filter(p=>prodComposant(p)==='coques' && _fini(p) && !p.degDeclasse && round3(+p.qteRestante)>0)
     .map(p=>({p, mac: Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON)}))
     .filter(x=>x.mac>0);
-  // [CHANTACHE] Exclue des suggestions binaires coques+ganache : c'est un composant mutualisé
-  // appelé directement à l'assemblage d'un grand format, pas une ganache à marier ici.
   let ganaches = prods.filter(p=>prodComposant(p)==='ganache' && _fini(p) && p.composantCatalogue!==true && round3(+p.qteRestante)>0)
     .map(p=>({p, mac: round3(+p.qteRestante), used:0}));
   if(!coques.length || !ganaches.length) return [];
   const out=[];
   for(const c of coques){
-    // RÈGLE : un assemblage VENDABLE n'associe QUE le même parfum (ou le même lot de base).
-    // Marier deux parfums différents ne donne pas un macaron vendable cohérent — ce cas est
-    // réservé à la dégustation (voir degustationSuggestions). On EXCLUT donc les parfums différents.
     const score = g => {
       const dispo = g.mac - g.used; if(dispo<=0) return -1;
       const memeBase = !!(c.p.lotBase && g.p.lotBase && c.p.lotBase===g.p.lotBase);
       const memeParfum = c.p.recipeId===g.p.recipeId;
-      if(!memeBase && !memeParfum) return -1;   // parfum différent → pas d'assemblage vendable
+      if(!memeBase && !memeParfum) return -1;
       let s=0;
       if(memeBase) s+=100;
       if(memeParfum) s+=10;
@@ -6825,17 +7132,17 @@ function assemblySuggestions(prods, recName){
       coqRec: prodNomComplet(c.p), ganRec: prodNomComplet(best.p),
       coqLot: c.p.lotProduction||('#'+c.p.id), ganLot: best.p.lotProduction||('#'+best.p.id),
       coqMac: c.mac, ganMac: best.mac, assemblable,
-      coqUnits: round3(+c.p.qteRestante),               // nb de COQUES physiques réelles en stock
-      coquesNeeded: assemblable*COQUES_PAR_MACARON,      // coques réellement consommées par l'assemblage
-      coquesReste: round3(round3(+c.p.qteRestante) - assemblable*COQUES_PAR_MACARON), // coques qui resteront (casse/impair)
-      ganacheReste: round3((best.mac) - assemblable),    // ganaches qui resteront
+      coqUnits: round3(+c.p.qteRestante),
+      coquesNeeded: assemblable*COQUES_PAR_MACARON,
+      coquesReste: round3(round3(+c.p.qteRestante) - assemblable*COQUES_PAR_MACARON),
+      ganacheReste: round3((best.mac) - assemblable),
       sameBase: !!(c.p.lotBase && best.p.lotBase && c.p.lotBase===best.p.lotBase),
       sameRec: c.p.recipeId===best.p.recipeId
     });
   }
-  // les rapprochements "même lot / même parfum" d'abord
   out.sort((a,b)=> (b.sameBase-a.sameBase) || (b.sameRec-a.sameRec) || (b.assemblable-a.assemblable));
   return out;
+
 }
 // SUGGESTIONS DÉGUSTATION : sauver des COQUES CASSÉES DÉCLASSÉES (degDeclasse:true) en les
 // assemblant avec un SURPLUS de ganache. Comme le résultat est OFFERT (non vendable), la
@@ -6864,11 +7171,22 @@ function degustationSuggestions(prods, recName){
     });
   }catch(e){}
   const out=[];
+  // [v1250] Priorité couleur en dégustation : même parfum > couleur compatible > n'importe quoi (autorisé
+  // car offert). On lit les couleurs via le cache recettes.
+  const _recListDeg = window._allRecipesCache || [];
+  const _recByIdDeg = {}; _recListDeg.forEach(r=>_recByIdDeg[+r.id]=r);
+  const _colorsDeg = rid => recCoqueColors(_recByIdDeg[+rid]);
+  const _gfDeg = rid => !!(_recByIdDeg[+rid] && _recByIdDeg[+rid].grandFormat);
   for(const c of coquesDeg){
-    // n'importe quelle ganache en surplus ; on privilégie tout de même le même parfum si dispo
+    // n'importe quelle ganache en surplus ; on privilégie même parfum, puis couleur compatible.
+    const cCols = _colorsDeg(c.p.recipeId); const cGF = _gfDeg(c.p.recipeId);
     const score = g => {
       const dispo = round3(g.mac - g.used); if(dispo<=0) return -1;
-      return (c.p.recipeId===g.p.recipeId) ? 10 : 1;
+      if(c.p.recipeId===g.p.recipeId) return 100;                 // même parfum : idéal
+      const gCols = _colorsDeg(g.p.recipeId); const gGF = _gfDeg(g.p.recipeId);
+      // couleur compatible = même taille ET au moins une couleur commune
+      if(cCols.length && gCols.length && (cGF===gGF) && cCols.some(col=>gCols.indexOf(col)>=0)) return 10;
+      return 1;                                                    // dernier recours (offert → toléré)
     };
     let best=null, bestS=-1;
     for(const g of ganaches){ const sc=score(g); if(sc>bestS){ bestS=sc; best=g; } }
@@ -8861,12 +9179,12 @@ async function renderProductions(){
      <p class="note" style="margin-bottom:8px">Coques et ganaches réellement <b>en stock</b> (quantités réelles, casse déduite) pouvant être assemblées. Vérifie le parfum avant de valider.</p>
      ${sugg.map(s=>`<div class="sugg-row">
         <div class="sugg-main">
-          <div><b>🟤 ${esc(s.coqRec)}</b> <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.64rem">${qty(s.coqUnits)} coques (= ${qty(s.coqMac)} mac.)</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.coqLot)}</span></div>
-          <div style="margin-top:2px"><b>🍫 ${esc(s.ganRec)}</b> <span class="tag" style="background:#5a3a2a;color:#fff;font-size:.64rem">${qty(s.ganMac)} doses dispo</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.ganLot)}</span></div>
-          <div style="margin-top:3px;font-size:.8rem;color:#2e7d32">➜ assemblage : <b>${qty(s.coquesNeeded)} coques + ${qty(s.assemblable)} ganaches → ${qty(s.assemblable)} macaron(s)</b>${s.sameBase?' · <span class="tag ok" style="font-size:.62rem">même lot</span>':''}${s.sameRec?'':' · <span class="tag warn" style="font-size:.62rem">parfum différent</span>'}</div>
-          ${(s.coquesReste>0||s.ganacheReste>0)?`<div style="margin-top:2px;font-size:.74rem;color:#9a8a82">↳ resterait : ${s.coquesReste>0?`<b>${qty(s.coquesReste)} coque(s)</b>`:''}${s.coquesReste>0&&s.ganacheReste>0?' · ':''}${s.ganacheReste>0?`<b>${qty(s.ganacheReste)} ganache(s)</b>`:''} (casse / écart réel)</div>`:''}
+          <div><b>🍫 ${esc(s.ganRec)}</b> <span class="tag" style="background:#5a3a2a;color:#fff;font-size:.64rem">${qty(s.ganMac)} doses dispo</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.ganLot)}</span></div>
+          <div style="margin-top:2px"><b>🟤 Coques ${esc(s.couleursTxt||'')}</b>${s.mutualise?` <span class="tag warn" style="font-size:.62rem">🎨 coques empruntées</span>`:` <span class="tag ok" style="font-size:.62rem">même parfum</span>`}${(s.mutualise&&s.sourcesNoms&&s.sourcesNoms.length)?` <span style="color:#9a8a82;font-size:.72rem">via ${esc(s.sourcesNoms.join(', '))}</span>`:''}</div>
+          <div style="margin-top:3px;font-size:.8rem;color:#2e7d32">➜ assemblage : <b>${qty(s.assemblable)} ${esc(s.ganRec)}</b> ${s.colorsCount>1?`(${qty(s.assemblable)} coques de chaque couleur)`:`(${qty(s.coquesNeeded)} coques)`} + ${qty(s.assemblable)} ganaches → <b>${qty(s.assemblable)} macaron(s)</b></div>
+          ${s.ganacheReste>0?`<div style="margin-top:2px;font-size:.74rem;color:#9a8a82">↳ resterait <b>${qty(s.ganacheReste)} ganache(s)</b></div>`:''}
         </div>
-        <button class="btn gold sm" onclick="prodAssembleForm(${s.coqId})" title="Assembler ces composants">🔗 Assembler</button>
+        <button class="btn gold sm" onclick="prodAssembleForm(${s.ganId})" title="Assembler ces composants">🔗 Assembler</button>
       </div>`).join('')}
      </div>
    </div>`:''}
@@ -10813,11 +11131,28 @@ async function prodAssembleForm(id, opts){
   const mode3 = !!(_rec && _rec.grandFormat && _refs.length);
 
   const want = comp==='coques' ? 'ganache' : 'coques';
+  // [v1249] Index recettes pour le rapprochement couleur des coques.
+  const _recAll = await db.recipes.toArray().catch(()=>[]);
+  const _recById = {}; _recAll.forEach(rr=>_recById[+rr.id]=rr);
+  // Empreinte-couleur de la recette CIBLE (celle du macaron qu'on monte). Le parfum monté est
+  // toujours celui de la recette du sous-lot de départ (coques ou ganache partagent le recipeId).
+  const _profilCible = coqueColorProfile({recipeId:p.recipeId}, _recById);
   // Sélecteur de la GARNITURE (ganache OU crémeux) à associer. En mode 3 parties, on EXCLUT
   // les composants catalogue (chantache) de ce menu — ils ont leur propre sélecteur.
   let cands=all.filter(x=>prodComposant(x)===want && round3(+x.qteRestante)>0
                           && (x.prodStatut||'termine')==='termine'
                           && (!mode3 || x.composantCatalogue!==true));
+  // [v1249] MUTUALISATION PAR COULEUR — quand on cherche des COQUES : on garde, en plus des coques
+  // du parfum monté, celles d'AUTRES parfums de MÊME couleur + MÊME taille (proposition de dépannage).
+  // Les coques d'une couleur incompatible sont retirées (elles ne pourraient pas servir ce macaron).
+  if(want==='coques' && _profilCible && _profilCible.colors.length){
+    cands = cands.filter(x=>{
+      if(x.recipeId===p.recipeId) return true;                    // même parfum : toujours proposé
+      const ps = coqueColorProfile(x, _recById);
+      if(!ps) return false;                                       // couleur inconnue → pas de rapprochement hasardeux
+      return coquesMutualisables(_profilCible, ps, null);         // au moins une couleur commune + même taille
+    });
+  }
   cands.sort((a,b)=>{
     const sa=(a.lotBase&&a.lotBase===p.lotBase)?0:1, sb=(b.lotBase&&b.lotBase===p.lotBase)?0:1;
     if(sa!==sb) return sa-sb;
@@ -10828,7 +11163,15 @@ async function prodAssembleForm(id, opts){
   if(!cands.length){ toast(`Aucun sous-lot ${want==='ganache'?'garniture (ganache/crémeux)':'coques'} disponible pour assembler.`); return; }
   const optsCand = cands.map(c=>{
     const same = c.recipeId===p.recipeId;
-    const tag = c.lotBase===p.lotBase ? ' · même lot' : (same?'':' · ⚠ parfum différent');
+    // [v1249] Pour une coque d'un AUTRE parfum, on affiche la couleur mutualisée plutôt qu'un simple ⚠.
+    let tag;
+    if(c.lotBase===p.lotBase){ tag=' · même lot'; }
+    else if(same){ tag=''; }
+    else if(want==='coques'){
+      const ps=coqueColorProfile(c, _recById);
+      const commune = (ps && _profilCible) ? _profilCible.colors.find(col=>ps.colors.indexOf(col)>=0) : null;
+      tag = commune ? ` · 🎨 ${coqueCouleurLabel(commune)} (coques compatibles)` : ' · ⚠ parfum différent';
+    } else { tag=' · ⚠ parfum différent'; }
     const capMac = want==='coques' ? Math.floor(round3(+c.qteRestante)/COQUES_PAR_MACARON) : round3(+c.qteRestante);
     const unite = want==='coques' ? `${qty(c.qteRestante)} coques (≈ ${capMac} mac.)` : `${qty(c.qteRestante)} mac.`;
     const typeLbl = (c.garnitureType==='cremeux') ? ' [crémeux]' : (want==='ganache'?' [ganache]':'');
@@ -10846,7 +11189,10 @@ async function prodAssembleForm(id, opts){
                                    && (x.prodStatut||'termine')==='termine' && round3(+x.qteRestante)>0)
                       .sort((a,b)=> (a.dlcProduit||'9999').localeCompare(b.dlcProduit||'9999') || (a.date||'').localeCompare(b.date||''));
       if(!lots.length){
+        // [v1248] Aucun lot dispo : on pose tout de même un marqueur (select vide, désactivé) pour que
+        // la sauvegarde DÉTECTE le composant requis manquant et BLOQUE — au lieu d'assembler sans lui.
         compSelectorsHtml += `<div class="field"><label>🍫 ${esc(nomC)} (dose)</label>
+          <select class="f_asmComp" data-cid="${cid}" data-nolot="1" disabled style="display:none"></select>
           <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae"><div>⛔ Aucun lot de « ${esc(nomC)} » terminé en stock. Produis-en et termine la production avant d'assembler ce grand format.</div></div></div>`;
       } else {
         const optsC = lots.map(l=>`<option value="${l.id}">${esc(l.lotProduction||('#'+l.id))} · ${qty(l.qteRestante)} dose(s) · DLC ${l.dlcProduit?fmtDate(l.dlcProduit):'—'}</option>`).join('');
@@ -10997,6 +11343,7 @@ async function prodAssembleSave(thisId){
       await db.productions.update(ganache.id, {qteRestante: subQty(ganache.qteRestante, qteAsm)});
       // [ÉTAPE 3] décrémente les composants supplémentaires (chantache) choisis explicitement
       const _assembleFromComp = [];
+      const _compStockMoves = [];   // [v1248] mouvements de stock pour CHAQUE prélèvement de chantache
       for(const cc of _compConsos){
         for(const pv of cc.prelevs){
           const lp = await db.productions.get(pv.prodId);
@@ -11006,6 +11353,10 @@ async function prodAssembleSave(thisId){
             if(!_destCongelo && lp.dlcProduit && (!dlc || lp.dlcProduit<dlc)) dlc=lp.dlcProduit;
           }
           _assembleFromComp.push({id:pv.prodId, lot:pv.lot, composant:'garniture-sup', componentId:cc.componentId, qte:pv.qte, parfum:cc.nom});
+          // [v1248] journalise la SORTIE de chantache (auparavant omise → le journal de stock
+          // ne reflétait pas la consommation, alors que le stock réel, lui, était bien décompté).
+          _compStockMoves.push({ parfumNom:cc.nom, composant:'chantache', sens:-1, qte:pv.qte,
+                                 type:'assemblage', productionId:pv.prodId, componentId:cc.componentId });
         }
       }
       // crée la production assemblée : 'assemble' (vendable) ou 'degustation' (offert, non vendable)
@@ -11031,6 +11382,7 @@ async function prodAssembleSave(thisId){
             composant:'coques', sens:-1, qte:coquesUtilisees, type:'assemblage', productionId:coques.id },
           { parfumNom:(window._prodRecName?window._prodRecName(ganache.recipeId):(_rec?_rec.produitNom:'')),
             composant:'ganache', sens:-1, qte:qteAsm, type:'assemblage', productionId:ganache.id },
+          ..._compStockMoves,
           { parfumNom:(_rec?_rec.produitNom:''), composant:'macaron', sens:+1, qte:qteAsm,
             type:'assemblage', note: deg?'dégustation':'' }
         ]};
@@ -20329,7 +20681,7 @@ const STOCKMOVE_TYPES = {
 };
 function stockMoveTypeMeta(t){ return STOCKMOVE_TYPES[t] || {lbl:(t||'?'), emoji:'•'}; }
 // Libellés des composants.
-const STOCKMOVE_COMPOSANTS = { macaron:'Macaron', coques:'Coques', ganache:'Ganache' };
+const STOCKMOVE_COMPOSANTS = { macaron:'Macaron', coques:'Coques', ganache:'Ganache', chantache:'Chantache' };
 // État des filtres (persistant en mémoire de session ; pas de localStorage requis).
 let _histStockFiltres = { periode:'30', type:'tous', composant:'tous', parfum:'tous', q:'' };
 function setHistStockFiltre(champ, valeur){ _histStockFiltres[champ]=valeur; renderHistoStock(); }
@@ -20387,7 +20739,7 @@ async function renderHistoStock(){
     .map(([v,l])=>pill('periode',v,l,F.periode===v)).join('');
   const filtresType = [['tous','Tous',''],...Object.keys(STOCKMOVE_TYPES).map(t=>[t,STOCKMOVE_TYPES[t].lbl,STOCKMOVE_TYPES[t].emoji])]
     .map(([v,l,e])=>pill('type',v,(e?e+' ':'')+l,F.type===v)).join('');
-  const filtresComp = [['tous','Tous'],['macaron','Macaron'],['coques','Coques'],['ganache','Ganache']]
+  const filtresComp = [['tous','Tous'],['macaron','Macaron'],['coques','Coques'],['ganache','Ganache'],['chantache','Chantache']]
     .map(([v,l])=>pill('composant',v,l,F.composant===v)).join('');
   const filtreParfumSelect = `<select onchange="setHistStockFiltre('parfum', this.value)" style="padding:7px 10px;border-radius:10px;border:1px solid var(--hair);font-size:.85rem;max-width:100%">
       <option value="tous" ${F.parfum==='tous'?'selected':''}>Tous les parfums</option>
@@ -30438,6 +30790,8 @@ async function renderAnalyse(){
    PRÉVISIONNEL STOCKS / COMMANDES — écran d'anticipation
    ============================================================ */
 async function renderForecast(){
+  // [v1253] Cache recettes à jour : le panneau « coques par couleur » lit les couleurs des recettes.
+  try{ if(typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(_){}
   const f = await computeForecast({horizon:8});
   const dateBadge = (d,dans)=>{
     if(d==null) return '—';
@@ -30515,6 +30869,39 @@ async function renderForecast(){
     return `<div class="panel"><h2>${esc(l.parfum)} <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— stock ${qty(l.stock)}, réservé ${qty(l.reserved)}</span></h2>${ech}</div>`;
   }).join('');
 
+  // [v1253] PRÉVISIONNEL DES COQUES PAR COULEUR — convertit le « net à produire » par parfum
+  // (manqueApresMob) en besoins de coques PAR COULEUR, pour anticiper les fournées à pocher.
+  // Vue parallèle : n'affecte pas le prévisionnel par parfum ci-dessus.
+  let coquesCouleurPanel = '';
+  try{
+    const recList = window._allRecipesCache || [];
+    const recByNom = {}; recList.forEach(r=>recByNom[aiNormalize(r.produitNom)]=r);
+    const aProduire = f.lignes
+      .filter(l => (+l.manqueApresMob||0) > 0)
+      .map(l => ({ nom:l.parfum, qte:+l.manqueApresMob||0 }));
+    if(aProduire.length && typeof ordoBesoinsCouleur==='function'){
+      const items = ordoBesoinsCouleur(aProduire, recByNom);
+      const sansCouleur = aProduire.filter(b=>!recCoqueColors(recByNom[aiNormalize(b.nom)]).length).map(b=>b.nom);
+      if(items.length){
+        const std = items.filter(i=>!i.gf).sort((a,b)=>b.coques-a.coques);
+        const gf  = items.filter(i=> i.gf).sort((a,b)=>b.coques-a.coques);
+        const totCoques = items.reduce((s,i)=>s+i.coques,0);
+        const rowC = i=>`<div class="sum-box" style="align-items:flex-start">
+          <div style="flex:1"><b>${coqueCouleurPastille(i.couleur)}${esc(i.nom)}</b> · <b style="color:var(--caramel,#AA7C39)">${qty(i.coques)}</b> coque${i.coques>1?'s':''} <span style="color:#9a8576;font-size:.74rem">(≈ ${qty(Math.ceil(i.coques/COQUES_PAR_MACARON))} éq-mac)</span>
+            <div style="font-size:.74rem;color:#9a8576;margin-top:1px">↳ ${Object.keys(i.parfums).map(nm=>esc(nm)+' ('+qty(i.parfums[nm])+'c)').join(', ')}</div>
+          </div></div>`;
+        coquesCouleurPanel = `<details style="margin-top:16px">
+          <summary style="cursor:pointer;font-weight:600;color:#6a4b82;font-size:.95rem;padding:6px 0">🎨 Coques à produire par couleur <span style="font-weight:400;color:#9a8576;font-size:.82rem">· ${qty(totCoques)} coques au total (aperçu parallèle)</span></summary>
+          <div class="panel" style="margin-top:10px">
+            <p class="note" style="margin-bottom:8px">Besoin de coques déduit du « net à produire » par parfum, regroupé par couleur. Une couleur sert ensuite tous ses parfums (mutualisation).</p>
+            ${std.map(rowC).join('')}
+            ${gf.length?`<p class="note" style="margin:10px 0 4px"><b>Grands formats</b> (réserve séparée) :</p>${gf.map(rowC).join('')}`:''}
+            ${sansCouleur.length?`<p class="note" style="margin-top:8px;color:#b0791f">⚠ Sans couleur définie : ${sansCouleur.map(esc).join(', ')} — renseigne-la dans la fiche recette.</p>`:''}
+          </div></details>`;
+      }
+    }
+  }catch(e){ console.error('prev coques couleur',e); }
+
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Prévisionnel stocks</h1><p>Anticipation des ruptures · données du ${fmtDate(f.todayStr)}</p></div>
      <button class="btn ghost sm" onclick="renderForecast()">↻ Réévaluer</button></div>
@@ -30525,7 +30912,8 @@ async function renderForecast(){
      <p class="note">« Réservé » = macarons engagés par les commandes à venir non livrées. « Prévisionnel » = stock fini actuel − réservé (le stock fini ne compte QUE les macarons finis, pas les coques/ganache). « Montable » = macarons assemblables tout de suite depuis les coques + ganache déjà en stock. Une rupture sous ${f.horizon} jours déclenche une alerte, SAUF si le montable la couvre (état « à monter »). Sur chaque alerte, une pastille indique si tu as encore le TEMPS de produire : 🔴 en retard (il fallait déjà commencer), 🟠 à lancer maintenant, 🟢 encore le temps — avec la date limite pour démarrer. Une pastille 🔀 supplémentaire signale une SURCHARGE : la production de cette commande en chevauche d'autres sur tes créneaux (risque d'embouteillage même si tu t'y mets à temps). Enfin, une pastille 🧱 signale qu'une MATIÈRE PREMIÈRE manque pour cette production : même en t'y mettant à temps, il faut d'abord réapprovisionner (le détail des matières en rupture est affiché sous la carte).</p>`
      :`<div class="empty">Aucune donnée. Lancez des productions et créez des commandes pour activer le prévisionnel.</div>`}
    </div>
-   ${detailRupture?`<h2 style="font-family:'Bellota',serif;color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}`;
+   ${detailRupture?`<h2 style="font-family:'Bellota',serif;color:var(--bordeaux);margin:20px 0 4px;font-size:1.2rem">Échéances en rupture</h2>${detailRupture}`:''}
+   ${coquesCouleurPanel}`;
   // [COCKPIT — étape 3, niveau A] Si l'assistant nous a envoyés ici avec un focus parfum
   // (« comment se vend la pistache »), scrolle sur sa carte et la surligne brièvement.
   if(typeof _consumeViewFocus==='function') _consumeViewFocus('previsionnel');
@@ -31146,6 +31534,15 @@ function parseIntent(texte, ctx){
   if(/\b(perim|perime|perimer|va perim|vont perim|bientot perim|dlc|date limite|va se perdre|vont se perdre|se perdre|se perd|gaspill|a ecouler|ecouler|je dois ecouler|a vendre vite|expire|expiration|perimes|bientot perimes|sont perimes|presque perimes|craint niveau date|va tourner|vont tourner|fin de vie|en fin de vie)\b/.test(t)
      && !/matiere|matieres|ingredient|ingredients|lot|lots/.test(t)){
     return {intent:'query_dlc_finis', params:{}, critical:false, label:'Ce qui approche de sa DLC'};
+  }
+  // [v1250] ASSEMBLAGES POSSIBLES : « qu'est-ce que je peux assembler », « assemblages possibles »,
+  // « quels macarons je peux monter », « rapprochements coques ganache ».
+  if((/(^|[^a-z])(assembl|rapprochement|reunir coques)/.test(t)
+      || (/\bmonter\b/.test(t) && /\bmacarons?\b/.test(t))
+      || (/\bcoques?\b/.test(t) && /\bganache/.test(t)))
+     && /\b(peux|possible|possibles|quels?|quoi|assembl|monter|dispo|disponible|maintenant|aujourd)/.test(t)
+     && !/\b(comment|c'?est quoi|explique)\b/.test(t)){
+    return {intent:'query_assemblages', params:{}, critical:false, label:'Assemblages possibles'};
   }
   // FAISABILITÉ TEMPS : "est-ce que je tiens", "j'ai le temps", "ça rentre dans mon planning"
   if(/\b(je tiens|tiens je|le temps de|assez de temps|ai je le temps|ca rentre|ca tient|tient ca|dans (mon|le) temps|dans (mon|le) planning|delais? tenable|tenir (mes|les) delais|surcharge|surcharg|j'?ai le temps|ai je le temps|est ce que j'?ai le temps|jouable|c'?est jouable|est ce jouable|est ce gerable|gerable|dans les temps|dans les clous|ca passe|est ce que ca passe|ma semaine tient|est ce que ma semaine tient|semaine tient)\b/.test(t)
@@ -32727,6 +33124,69 @@ async function composantsStockByParfum(){
 // ============================================================================
 const ORDO = { STD_CAP:120, STD_MAXP:3, GF_CAP:24, GF_MAXP:2, COMPLEMENT_MIN:40 };
 
+// [v1251] ---- VUE COULEUR DU RÉTROPLANNING (en parallèle, sans toucher au moteur parfum) ----
+// Convertit des besoins PAR PARFUM [{nom, qte}] en besoins EN COQUES PAR COULEUR, en tenant compte
+// des recettes : un parfum monochrome (ex. chocolat = marron foncé ×2) demande 2 coques de sa couleur
+// par macaron ; un bicolore (ex. praliné = marron foncé + blanc) demande 1 coque de chaque couleur.
+// Renvoie [{nom:'Marron foncé (std)', couleur, gf, qte(coques), parfums:{parfum:coques}}].
+function ordoBesoinsCouleur(besoinsParfum, recByNom){
+  recByNom = recByNom || {};
+  const parCouleur = {};   // clé "gf|couleur" -> {couleur, gf, coques, parfums:{}}
+  (besoinsParfum||[]).forEach(b=>{
+    const q = +b.qte||0; if(q<=0) return;
+    const rec = recByNom[aiNormalize(b.nom)];
+    const colors = recCoqueColors(rec);
+    if(!colors.length) return;                    // parfum sans couleur définie → pas dans la vue couleur
+    const gf = !!(rec && rec.grandFormat);
+    // Comptabilise les coques par couleur : une couleur qui apparaît 2× dans la recette → 2 coques/macaron.
+    const mult = {};
+    colors.forEach(c=>{ mult[c] = (mult[c]||0) + 1; });
+    Object.keys(mult).forEach(c=>{
+      const coques = q * mult[c];                 // nb de coques de CETTE couleur pour q macarons
+      const k = (gf?'1|':'0|')+c;
+      const slot = parCouleur[k] || (parCouleur[k] = {couleur:c, gf, coques:0, parfums:{}});
+      slot.coques += coques;
+      slot.parfums[b.nom] = (slot.parfums[b.nom]||0) + coques;
+    });
+  });
+  // On planifie les fournées en ÉQUIVALENT-MACARONS (comme le moteur parfum : cap = macarons).
+  // 1 macaron standard = 2 coques ; on convertit donc les coques en « équivalent-macarons » pour
+  // réutiliser ordoPackFull tel quel (capacité 120 = 120 macarons = 240 coques std).
+  const items = Object.keys(parCouleur).map(k=>{
+    const s = parCouleur[k];
+    return {
+      nom: coqueCouleurLabel(s.couleur)+(s.gf?' (GF)':''),
+      couleur: s.couleur, gf: s.gf,
+      coques: round3(s.coques),
+      qte: Math.ceil(round3(s.coques)/COQUES_PAR_MACARON),   // équivalent-macarons pour le packing
+      parfums: s.parfums
+    };
+  });
+  return items;
+}
+// Construit le plan de fournées PAR COULEUR : standard et GF séparés, chacun packé sous sa capacité.
+// Réutilise ordoPackFull/ordoPackAll (mécanique de capacité éprouvée). maxP = max 3 couleurs / fournée.
+function ordoPlanCouleur(besoinsParfum, recByNom){
+  const items = ordoBesoinsCouleur(besoinsParfum, recByNom);
+  const std = items.filter(i=>!i.gf);
+  const gf  = items.filter(i=> i.gf);
+  const packStd = ordoPackFull(std, ORDO.STD_CAP, ORDO.STD_MAXP);
+  const compStd = ordoComplement(packStd.restes, ORDO.STD_CAP, ORDO.STD_MAXP, ORDO.COMPLEMENT_MIN);
+  const packGF  = ordoPackAll(gf, ORDO.GF_CAP, ORDO.GF_MAXP);
+  // Ré-attache la couleur/parfums à chaque part (ordoPackFull ne connaît que nom+qte).
+  const metaByNom = {}; items.forEach(i=>metaByNom[i.nom]=i);
+  const enrich = m => { m.parts.forEach(p=>{ const meta=metaByNom[p.nom]; if(meta){ p.couleur=meta.couleur; p.gf=meta.gf; p.parfums=meta.parfums; } }); return m; };
+  (packStd.meringues||[]).forEach(enrich);
+  if(compStd.meringue) compStd.meringue.forEach(enrich);
+  (packGF||[]).forEach(enrich);
+  return {
+    items,
+    standard:{ meringuesPleines:packStd.meringues, complement:compStd.meringue, restes:compStd.restes },
+    grandFormat:{ meringues:packGF }
+  };
+}
+
+
 // Remplit des meringues PLEINES (capacité atteinte) pour minimiser leur nombre ; renvoie les restes.
 function ordoPackFull(besoins, cap, maxP){
   let items=besoins.filter(b=>b.qte>0).map(b=>({nom:b.nom,reste:b.qte}));
@@ -33112,6 +33572,46 @@ function ordoRenderPlan(containerId){
 
   html+=`<div style="margin-top:12px"><button class="btn ghost sm" onclick="ordoAjuster()">✏️ Ajuster les quantités</button></div>`;
   html+='</div>';
+
+  // [v1251] VUE COULEUR (parallèle) — regroupe les besoins par couleur de coque et propose des fournées
+  // de meringue où une même fournée peut contenir plusieurs couleurs (sous la capacité max).
+  try{
+    const recByNom = _ordoState.recByNom || {};
+    const planC = ordoPlanCouleur([...(_ordoState.std||[]), ...(_ordoState.gf||[])], recByNom);
+    const sansCouleur = ((_ordoState.std||[]).concat(_ordoState.gf||[]))
+      .filter(b=>+b.qte>0 && !recCoqueColors(recByNom[aiNormalize(b.nom)]).length)
+      .map(b=>b.nom);
+    if(planC.items.length){
+      const merHTML=(m,label,col)=>`<div class="sum-box" style="border-left:3px solid ${col};margin:4px 0">
+        <span style="flex:1"><b>${label}</b> <span style="color:#9a8a82">${m.utilise}/${m.cap} (équiv. macarons)</span><br>
+        <span style="font-size:.85rem">${m.parts.map(p=>`${p.couleur?coqueCouleurPastille(p.couleur):''}${esc(p.nom)} <b>${p.qte}</b>`).join(' &nbsp;·&nbsp; ')}</span>
+        ${m.parts.map(p=>{
+          if(!p.parfums) return '';
+          const det=Object.keys(p.parfums).map(nm=>`${esc(nm)} (${qty(p.parfums[nm])} coques)`).join(', ');
+          return `<br><span style="font-size:.72rem;color:#9a8a82">↳ ${esc(p.nom)} → ${det}</span>`;
+        }).join('')}
+        ${m.libre>0?`<br><span style="font-size:.74rem;color:#9a8a82">reste ${m.libre} place(s)</span>`:''}</span></div>`;
+      let cHtml=`<div class="panel enc-collapsible" id="enc-ordocouleur" style="border:1.5px solid #d8c9e6;background:#f9f6fc;margin-top:12px">
+        <div class="enc-head" onclick="encToggle('enc-ordocouleur')"><h2 style="color:#6a4b82;margin:0">🎨 Vue par couleur de coques <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— fournées mutualisées (aperçu, n'affecte pas le plan ci-dessus)</span></h2><span class="enc-chev">▸</span></div>
+        <div class="enc-body" style="display:none">
+        <p class="note" style="margin-bottom:8px">Une meringue peut regrouper jusqu'à ${ORDO.STD_MAXP} couleurs sous la capacité de ${ORDO.STD_CAP}. Les coques d'une couleur servent ensuite tous les parfums de cette couleur.</p>`;
+      (planC.standard.meringuesPleines||[]).forEach((m,i)=> cHtml+=merHTML(m, `Fournée couleur #${i+1}`, '#8e6fb0'));
+      if(planC.standard.complement) planC.standard.complement.forEach((m,i)=> cHtml+=merHTML(m, `Fournée complément`, '#b79fd0'));
+      if(planC.standard.restes && planC.standard.restes.length){
+        cHtml+=`<div class="sum-box" style="background:#fff"><span style="flex:1;font-size:.8rem;color:#9a8a82">Restes à décider : ${planC.standard.restes.map(r=>esc(r.nom)+' '+r.qte).join(' · ')}</span></div>`;
+      }
+      if(planC.grandFormat.meringues && planC.grandFormat.meringues.length){
+        cHtml+=`<p class="note" style="margin:10px 0 4px"><b>Grands formats</b> (réserve séparée) :</p>`;
+        planC.grandFormat.meringues.forEach((m,i)=> cHtml+=merHTML(m, `Fournée GF #${i+1}`, '#8a6d3b'));
+      }
+      if(sansCouleur.length){
+        cHtml+=`<p class="note" style="margin-top:8px;color:#b0791f">⚠ Sans couleur définie (non pris en compte ici) : ${sansCouleur.map(esc).join(', ')} — renseigne leur couleur dans la fiche recette.</p>`;
+      }
+      cHtml+='</div></div>';
+      html+=cHtml;
+    }
+  }catch(e){ console.error('ordo vue couleur',e); }
+
   box.innerHTML=html;
 }
 
@@ -33120,6 +33620,8 @@ async function ordoLancer(mode){
   const box=document.getElementById('ordoZone'); if(box) box.innerHTML='<div class="panel"><p class="note">Calcul du plan optimisé…</p></div>';
   const needs=await ordoBuildNeeds(mode, 14);
   _ordoState={mode, std:needs.std, gf:needs.gf, coquesInfo:needs.coquesInfo||{}, provenance:needs.provenance||{}, antigaspi:needs.antigaspi||[], garnitureStock:needs.garnitureStock||{}, composantsGF:needs.composantsGF||[]};
+  // [v1251] Index recettes par nom normalisé pour la VUE COULEUR (parallèle, ne modifie pas le plan parfum).
+  try{ const _recs=await db.recipes.toArray(); const _m={}; _recs.forEach(r=>_m[aiNormalize(r.produitNom)]=r); _ordoState.recByNom=_m; }catch(e){ _ordoState.recByNom={}; }
   // Vérification des matières premières nécessaires à CE plan (réutilise mrpCheckMatieres).
   try{ _ordoState.matCheck = await ordoCheckMatieres(needs); }catch(e){ console.error('ordo matières',e); _ordoState.matCheck=null; }
   // Estimation du TEMPS de production (temps appris PAR PARFUM si fiable, sinon moyenne globale)
@@ -35499,6 +36001,7 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_retards': return aiQueryRetards();
       case 'query_dlc_finis': return aiQueryDlcFinis();
       case 'query_faisabilite': return aiQueryFaisabilite();
+      case 'query_assemblages': return aiQueryAssemblages();
       case 'query_ordo': return aiQueryOrdo();
       case 'query_stock': return aiQueryStock(r.params);
       case 'query_locate': return aiQueryLocate(r.params);
@@ -36321,6 +36824,45 @@ async function aiQueryFaisabilite(){
     aiSay(`<p>⚠️ <b>C'est tendu.</b> Il manque environ <b>${fmtHM(b.tempsManquantMin)}</b> sur l'horizon de 14 jours.${fiable}</p>
       <p class="note">Demande-moi « conseille-moi » pour voir comment t'organiser (quoi décaler, créneau à ajouter).</p>`);
   }
+}
+
+// [v1250] ASSEMBLAGES POSSIBLES : liste les macarons montables maintenant (coques + ganache en stock),
+// couleur respectée. Signale ceux qui nécessitent d'emprunter des coques à un autre parfum (mutualisé).
+async function aiQueryAssemblages(){
+  const out=document.getElementById('aiOut');
+  if(out) out.innerHTML=`<div class="panel"><p class="note">Recherche des assemblages possibles…</p></div>`;
+  try{
+    // Le cache recettes doit être à jour (couleurs). On le rafraîchit au besoin.
+    try{ if(!window._allRecipesCache && typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(_){}
+    const prods = await db.productions.toArray();
+    const recName = window._prodRecName || (id=>'#'+id);
+    const sugg = (typeof assemblySuggestions==='function') ? assemblySuggestions(prods, recName) : [];
+    if(out) out.innerHTML='';
+    if(!sugg.length){
+      return aiSay(`${aiHero('0','Assemblage possible',{color:'var(--vert,#3f7d52)'})}
+        ${aiSynth("Rien à assembler pour l'instant : il te manque soit des coques de la bonne couleur, soit la ganache correspondante.",{tone:'ok',icon:'🔗'})}
+        ${aiSuite([{label:'🏭 Voir la production',view:'productions'},{label:'📦 Stock par parfum',view:'stockparfums'}])}`);
+    }
+    const totMac = sugg.reduce((s,x)=>s+(+x.assemblable||0),0);
+    const nMut = sugg.filter(x=>x.mutualise).length;
+    const rows = sugg.slice(0,12).map(s=>{
+      const tag = s.mutualise
+        ? ` <span class="tag" style="background:#caa23b;color:#fff;font-size:.62rem">🎨 coques empruntées</span>`
+        : ` <span class="tag" style="background:#3f7d52;color:#fff;font-size:.62rem">direct</span>`;
+      const via = (s.mutualise && s.sourcesNoms && s.sourcesNoms.length) ? ` <span style="color:#9a8a82;font-size:.72rem">via ${esc(s.sourcesNoms.join(', '))}</span>` : '';
+      return `<div class="sum-box" style="border-left:3px solid ${s.mutualise?'#caa23b':'#3f7d52'}">
+        <span style="flex:1"><b>${qty(s.assemblable)} ${esc(s.ganRec)}</b>${tag}<br>
+        <span style="color:#7a6a60;font-size:.78rem">coques ${esc(s.couleursTxt||'')}${via}</span></span>
+        <button class="btn gold sm" style="padding:2px 8px;font-size:.72rem" onclick="assistantMarquerRetour();prodAssembleForm(${s.ganId})">🔗 Assembler</button></div>`;
+    }).join('');
+    const synth = nMut>0
+      ? `Tu peux monter <b>${totMac}</b> macaron(s). ${nMut} suggestion(s) utilisent des <b>coques empruntées</b> à un autre parfum de même couleur.`
+      : `Tu peux monter <b>${totMac}</b> macaron(s) directement, sans emprunter de coques.`;
+    aiSay(`${aiHero(`${totMac} <span style="font-size:1rem;font-weight:600">macaron${totMac>1?'s':''}</span>`,'Assemblages possibles',{color:'var(--caramel,#AA7C39)'})}
+      ${aiSynth(synth,{icon:'🔗'})}
+      ${aiDetails(rows, `Voir les ${sugg.length} assemblage${sugg.length>1?'s':''}`)}
+      ${aiSuite([{label:'🏭 Ouvrir la production',view:'productions'}])}`);
+  }catch(e){ console.error('aiQueryAssemblages',e); if(out) out.innerHTML=''; aiSay(`<p>Je n'ai pas pu lister les assemblages. Réessaie.</p>`); }
 }
 
 // ORGANISER LES FOURNÉES : lance l'ordonnanceur de meringues et restitue le plan dans le dialogue.
@@ -51182,6 +51724,8 @@ async function _buildPlanOpAutonome(mut){
 }
 async function renderAgendaProduction(){
   const main = document.getElementById('main');
+  // [v1252] Cache recettes à jour : la section « fournées par couleur » lit les couleurs des recettes.
+  try{ if(typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(_){}
   main.innerHTML = `<div class="topbar"><div><h1>Production</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
     <p class="note">⏳ Calcul du rétroplanning de chaque commande…</p>`;
 
@@ -51211,6 +51755,7 @@ async function renderAgendaProduction(){
     ${_optimBatchToggle()}
     ${_agendaPlanOpSection(planOp)}
     ${_agendaMutualSection(mut)}
+    ${_agendaCouleurSection(mut)}
     ${_agendaParfumsSection(ppj)}
     ${_agendaCommandesSection(cr)}`;
   // [SAUT CONTEXTUEL] Si on est arrivé ici via planFocusTache, positionne le plan sur la bonne semaine.
@@ -52181,8 +52726,45 @@ function _agendaPlanOpSection(plan){
 
 // [MUTUALISATION HEBDO] Panneau de synthèse par semaine : besoins cumulés par parfum (coques+montage
 // mutualisés sur la semaine), délai de ganache, et plan de congélation/décongélation du surplus.
-function _agendaMutualSection(mut){
+// [v1252] SECTION MUTUALISATION PAR COULEUR — regroupe, par semaine, les besoins de coques par
+// couleur et propose des fournées de meringue (une fournée peut mêler plusieurs couleurs sous la
+// capacité max). Vue PARALLÈLE : n'affecte pas le plan par parfum au-dessus.
+function _agendaCouleurSection(mut){
   if(!mut || !mut.semaines || !mut.semaines.length) return '';
+  const recList = window._allRecipesCache || [];
+  const recByNom = {}; recList.forEach(r=>recByNom[aiNormalize(r.produitNom)]=r);
+  const semainesHtml = mut.semaines.map(s=>{
+    const besoins = (s.parfums||[]).map(p=>({nom:p.nom, qte:+p.qte||0})).filter(b=>b.qte>0);
+    if(!besoins.length) return '';
+    let planC; try{ planC = ordoPlanCouleur(besoins, recByNom); }catch(_){ return ''; }
+    if(!planC.items.length) return '';
+    const merHTML = (m,label,col)=>`<div class="sum-box" style="border-left:3px solid ${col};margin:4px 0;align-items:flex-start">
+      <div style="flex:1"><b>${label}</b> <span style="color:#9a8576;font-size:.76rem">${m.utilise}/${m.cap} éq-mac</span>
+        <div style="font-size:.84rem;margin-top:2px">${m.parts.map(p=>`${p.couleur?coqueCouleurPastille(p.couleur):''}${esc(p.nom)} <b>${p.qte}</b>`).join(' &nbsp;·&nbsp; ')}</div>
+        ${m.parts.map(p=>{ if(!p.parfums) return ''; const det=Object.keys(p.parfums).map(nm=>`${esc(nm)} (${qty(p.parfums[nm])}c)`).join(', '); return `<div style="font-size:.72rem;color:#9a8576;margin-top:1px">↳ ${esc(p.nom)} → ${det}</div>`; }).join('')}
+      </div></div>`;
+    let inner='';
+    (planC.standard.meringuesPleines||[]).forEach((m,i)=> inner+=merHTML(m,`Fournée couleur #${i+1}`,'#8e6fb0'));
+    if(planC.standard.complement) planC.standard.complement.forEach(m=> inner+=merHTML(m,'Fournée complément','#b79fd0'));
+    if(planC.standard.restes && planC.standard.restes.length){
+      inner+=`<div class="sum-box" style="background:#fff"><span style="flex:1;font-size:.78rem;color:#9a8576">Restes : ${planC.standard.restes.map(r=>esc(r.nom)+' '+r.qte).join(' · ')}</span></div>`;
+    }
+    if(planC.grandFormat.meringues && planC.grandFormat.meringues.length){
+      inner+=`<div style="font-size:.78rem;color:#8a6d3b;margin:6px 0 2px"><b>Grands formats</b> (réserve séparée)</div>`;
+      planC.grandFormat.meringues.forEach((m,i)=> inner+=merHTML(m,`Fournée GF #${i+1}`,'#8a6d3b'));
+    }
+    return `<div class="panel" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #e8dccd;padding-bottom:6px;margin-bottom:8px">
+        <h3 style="margin:0">${esc(s.label)}</h3><span style="font-size:.78rem;color:#9a8576">par couleur</span></div>
+      ${inner}</div>`;
+  }).filter(Boolean).join('');
+  if(!semainesHtml) return '';
+  return `<details style="margin-bottom:16px">
+    <summary style="cursor:pointer;font-weight:600;color:#6a4b82;font-size:.95rem;padding:6px 0">🎨 Fournées de meringue par couleur <span style="font-weight:400;color:#9a8576;font-size:.82rem">· mutualisation des coques (aperçu parallèle)</span></summary>
+    <div style="margin-top:10px"><p class="note" style="margin-bottom:8px">Une meringue peut mêler jusqu'à ${ORDO.STD_MAXP} couleurs sous ${ORDO.STD_CAP} éq-macarons. Les coques d'une couleur alimentent ensuite tous les parfums de cette couleur.</p>${semainesHtml}</div>
+  </details>`;
+}
+function _agendaMutualSection(mut){  if(!mut || !mut.semaines || !mut.semaines.length) return '';
   const semaines = mut.semaines.map(s=>{
     const lignes = s.parfums.map(p=>{
       const mutual = p.nbCommandes>=2;
@@ -58605,6 +59187,7 @@ function startClock(){
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
     try{ await migrateDlcCongelateur(); }catch(e){ console.error('migrateDlcCongelateur',e); }
+    try{ await migrateCoqueColors(); }catch(e){ console.error('migrateCoqueColors',e); }
     try{ const r=await rdSeedSiVide();
       let nIdees=0,nTests=0; try{nIdees=await db.rdIdees.count();}catch(_){}; try{nTests=await db.rdTests.count();}catch(_){}
       diagPublish('rd_seed','R&D · module', {...r, idees:nIdees, tests:nTests});

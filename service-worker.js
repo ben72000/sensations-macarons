@@ -1,5 +1,5 @@
-// [v1247] bump CACHE — Mention retour 48h accessoire + chèque de caution 80€ sur locations + agenda auto commandes à venir.
-const CACHE = 'sm-iphone-v283';
+// [v1253] bump CACHE — Etape 3 : previsionnel des coques par couleur dans Previsionnel stocks (vue parallele). Chantier amont couleur complet.
+const CACHE = 'sm-iphone-v289';
 const ASSETS = [
   './',
   './index.html',
