@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1233';
-const APP_MAJ = 'Ton vrai logo sur les carrousels. Les 5 d\u00e9clinaisons officielles (aubergine, noir, blanc, cr\u00e8me, vert sauge) sont d\u00e9sormais int\u00e9gr\u00e9es et pos\u00e9es sur tes visuels \u00e0 la place de l\'ancienne signature en texte. En mode Auto (par d\u00e9faut), l\'app analyse la luminosit\u00e9 r\u00e9elle du bas de la slide et choisit la version la plus lisible : logo clair sur photo sombre, logo fonc\u00e9 sur photo claire. Tu peux aussi imposer une d\u00e9clinaison pr\u00e9cise depuis l\'\u00e9tape Aper\u00e7u. Les textes restent en Bellota + Outfit exclusivement. 100% hors-ligne : les logos sont embarqu\u00e9s dans l\'app.';
+const APP_VERSION = 'v1235';
+const APP_MAJ = 'Slogan par slide + correction du chevauchement texte/logo. Chaque slide du carrousel a d\u00e9sormais son propre s\u00e9lecteur de slogan : \u00ab moins de sucre, plus de sensations \u00bb (d\u00e9faut), \u00ab offrez-vous le raffinement \u00bb, ou Aucun. Le slogan choisi appara\u00eet sous la signature (sous le vrai logo PNG comme dans le repli texte). Correction du bug des slides sans photo : le corps de texte chevauchait la signature \u2014 il r\u00e9serve maintenant la bande basse et se coupe proprement au-dessus du logo. Choix logo Auto/contraste WCAG, 5 d\u00e9clinaisons, forçage manuel et 100% hors-ligne conserv\u00e9s. Textes toujours en Bellota + Outfit exclusivement.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -25143,6 +25143,46 @@ const SM_LOGOS = {
 const SM_LOGOS_CLAIRS = ['blanc','creme','sauge'];
 const SM_LOGOS_FONCES = ['aubergine','noir'];
 
+// Luminance relative WCAG (0=noir, 1=blanc) de chaque teinte de logo, calculée
+// depuis les valeurs officielles de la charte. Sert à vérifier le CONTRASTE réel
+// entre la zone de fond et le logo candidat, pour garantir la lisibilité même
+// sur les mi-teintes (beige, caramel…) où une simple moyenne peut tromper.
+const SM_LOGO_LUM = {
+  blanc:     1.000,   // #FFFFFF
+  creme:     0.740,   // #E8DDCD
+  sauge:     0.660,   // #C6D6C4
+  cafeaulait:0.410,   // #C1A27C (référence, non utilisé comme logo)
+  caramel:   0.230,   // #AA7C39
+  aubergine: 0.028,   // #490F25
+  noir:      0.000,   // #000000
+};
+// Ratio de contraste WCAG entre deux luminances relatives (1:1 à 21:1).
+function smContraste(l1, l2){
+  const hi = Math.max(l1, l2), lo = Math.min(l1, l2);
+  return (hi + 0.05) / (lo + 0.05);
+}
+// Slogans officiels de la marque (à utiliser tels quels, sans variante).
+const SM_SLOGANS = [
+  'moins de sucre, plus de sensations',
+  'offrez-vous le raffinement',
+];
+const SM_SLOGAN_DEFAUT = SM_SLOGANS[0];
+
+// Résout le texte de slogan à afficher pour une slide donnée.
+// s.slogan : 'defaut' (→ pluriel officiel), 'aucun' (→ rien), ou un index de SM_SLOGANS.
+function cvSloganTexte(s){
+  const v = (s && s.slogan!=null) ? s.slogan : 'defaut';
+  if(v==='aucun') return '';
+  if(v==='defaut') return SM_SLOGAN_DEFAUT;
+  const i = parseInt(v,10);
+  return (i>=0 && i<SM_SLOGANS.length) ? SM_SLOGANS[i] : SM_SLOGAN_DEFAUT;
+}
+
+// Logo clair par défaut sur fond sombre (identité de marque : crème chaleureux).
+const SM_LOGO_CLAIR_DEFAUT = 'creme';
+// Seuil de contraste minimal accepté (WCAG ~3:1 pour un grand élément graphique).
+const SM_CONTRASTE_MIN = 3.0;
+
 /* ── Préchargement des logos (une seule fois) + choix automatique ────────────
  * Choix "auto" : on mesure la luminosité MOYENNE de la zone où le logo se pose
  * (bande basse de la slide). Fond sombre → logo clair ; fond clair → logo foncé.
@@ -25180,6 +25220,15 @@ function smZoneLuminance(ctx, x, y, w, h){
 
 // Renvoie la clé de logo à utiliser pour cette slide/zone.
 // _cv.logoVariant : 'auto' (défaut) ou une clé de SM_LOGOS (forçage).
+//
+// Stratégie "auto" (la plus fiable) :
+//   1. On mesure la luminance perçue MOYENNE de la zone de pose du logo.
+//   2. Fond sombre → logo clair (crème par défaut) ; fond clair → logo foncé
+//      (aubergine, l'identité de marque).
+//   3. On VÉRIFIE le contraste WCAG réel entre la zone et ce logo. S'il passe
+//      sous le seuil (~3:1) — typiquement sur les mi-teintes beige/caramel où
+//      une moyenne simple trompe — on bascule vers le repli à contraste maximal
+//      (blanc sur fond sombre, noir sur fond clair) pour garantir la lisibilité.
 function cvChoisirLogo(ctx, W, H){
   const forced = (typeof _cv!=='undefined') ? _cv.logoVariant : 'auto';
   if(forced && forced!=='auto' && SM_LOGOS[forced]) return forced;
@@ -25187,10 +25236,18 @@ function cvChoisirLogo(ctx, W, H){
   const zy = Math.round(H*0.86), zh = Math.round(H*0.12);
   const zx = Math.round(W*0.20), zw = Math.round(W*0.60);
   const lum = smZoneLuminance(ctx, zx, zy, zw, zh);
-  // Fond sombre (lum faible) → logo CLAIR ; fond clair → logo FONCÉ.
-  // Seuil 0.5 avec préférence de marque : aubergine sur clair, crème sur sombre.
-  if(lum < 0.5) return 'creme';          // logo clair sur fond sombre
-  return 'aubergine';                     // logo foncé sur fond clair
+  // 1+2. Choix initial selon la clarté du fond (identité de marque priorisée).
+  const fondSombre = lum < 0.5;
+  let cle = fondSombre ? SM_LOGO_CLAIR_DEFAUT : 'aubergine';
+  // 3. Contraste réel du candidat vs le fond ; repli si insuffisant.
+  if(smContraste(lum, SM_LOGO_LUM[cle]) < SM_CONTRASTE_MIN){
+    // Sur les mi-teintes, ni le blanc ni le noir ne sont évidents : on choisit
+    // l'extrême qui MAXIMISE réellement le contraste, pas celui dicté par le
+    // simple seuil de clarté (blanc contre un gris moyen peut être pire que noir).
+    cle = smContraste(lum, SM_LOGO_LUM.noir) >= smContraste(lum, SM_LOGO_LUM.blanc)
+        ? 'noir' : 'blanc';
+  }
+  return cle;
 }
 
 
@@ -25227,6 +25284,7 @@ function cvNewSlide(patch){
   return Object.assign({
     format:'carre', gabarit:'pleincadre', source:'compo',
     titre:'', corps:'', photo:null, photoName:'', photoY:0.5,
+    slogan:'defaut',  // 'defaut' (slogan pluriel), un index de SM_SLOGANS, ou 'aucun'
   }, patch||{});
 }
 
@@ -25345,6 +25403,8 @@ function cvSetPhotoY(v){ cvS().photoY=parseFloat(v); cvDrawPreview(); }
 function cvToggleLogo(){ _cv.logo=!_cv.logo; cvDrawPreview(); cvSyncControls(); }
 // Choix de la déclinaison du logo : 'auto' (par luminosité) ou une clé forcée.
 function cvSetLogoVariant(v){ _cv.logoVariant=v; if(!_cv.logo) _cv.logo=true; renderCarrousel(); }
+// Choix du slogan de la slide active : 'defaut', 'aucun', ou un index de SM_SLOGANS.
+function cvSetSlogan(v){ cvS().slogan=v; renderCarrousel(); }
 
 /* ── Gestion de la pile de slides ── */
 function cvGoSlide(i){ _cv.active=i; renderCarrousel(); }
@@ -25419,7 +25479,7 @@ function cvDrawSlide(canvas, s){
       ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
       cvDrawTexteBloc(ctx,W,H,s, {yStart:H*0.66, wMax:W*0.86, centre:false, surFonce:true, zone:[H*0.5,H]});
     }
-    if(_cv.logo) cvDrawSignature(ctx,W,H,s.gabarit);
+    if(_cv.logo) cvDrawSignature(ctx,W,H,s.gabarit,s);
   });
 }
 
@@ -25467,7 +25527,10 @@ function cvDrawTexteBloc(ctx,W,H,s,opts){
     y+=H*0.02;
     const cSize=Math.round(W*(s.format==='story'?0.034:0.038));
     ctx.font="400 "+cSize+"px 'Outfit', sans-serif"; ctx.fillStyle=colCorps;
-    const zoneBas=(opts.zone?opts.zone[1]:H)-H*0.10;
+    // Réserve basse : si la signature logo est affichée, le corps ne doit pas
+    // descendre sous la bande occupée par le logo + slogan (évite le chevauchement).
+    const reserveSign = (typeof _cv!=='undefined' && _cv.logo) ? H*0.22 : H*0.06;
+    const zoneBas=(opts.zone?opts.zone[1]:H)-reserveSign;
     cvWrapText(ctx,corps,x,y,wMax,cSize*1.34,centre,zoneBas);
   }
 }
@@ -25490,20 +25553,30 @@ function cvWrapText(ctx,text,x,y,maxW,lineH,centre,yLimit){
 // automatiquement selon la luminosité du fond (ou forcée via _cv.logoVariant).
 // Repli : si les logos ne sont pas encore chargés, on trace la signature texte
 // (Bellota + Outfit) pour ne jamais laisser la slide sans marque.
-function cvDrawSignature(ctx,W,H,gabarit){
+function cvDrawSignature(ctx,W,H,gabarit,s){
+  s = s || (typeof cvS==='function' ? cvS() : {});
   smPreloadLogos();
   const cle = cvChoisirLogo(ctx, W, H);
   const img = _smLogoImgs[cle];
   if(img && img.complete && img.naturalWidth>0){
+    const slg = cvSloganTexte(s);
     // Largeur cible du logo : ~42% de la largeur de la slide, centré en bas.
     const lw = Math.round(W*0.42);
     const lh = Math.round(lw * (img.naturalHeight/img.naturalWidth));
     const lx = Math.round((W-lw)/2);
-    const ly = Math.round(H - lh - H*0.035);
+    // Si un slogan est présent, on remonte légèrement le logo pour loger l'accroche dessous.
+    const margeBas = slg ? H*0.058 : H*0.035;
+    const ly = Math.round(H - lh - margeBas);
     ctx.save();
     ctx.globalAlpha = 0.96;
     ctx.drawImage(img, lx, ly, lw, lh);
     ctx.restore();
+    if(slg){
+      ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+      ctx.fillStyle=(gabarit==='uni'||gabarit==='hautbas')?'rgba(198,151,79,0.95)':'rgba(232,221,205,0.92)';
+      ctx.font="400 "+Math.round(W*0.019)+"px 'Outfit', sans-serif";
+      ctx.fillText(slg, W/2, Math.round(ly+lh+H*0.028));
+    }
     return;
   }
   // — Repli texte (police de marque uniquement) —
@@ -25512,9 +25585,12 @@ function cvDrawSignature(ctx,W,H,gabarit){
   ctx.fillStyle=(gabarit==='uni'||gabarit==='hautbas')?'rgba(232,221,205,0.85)':'rgba(255,255,255,0.9)';
   ctx.font="700 "+Math.round(W*0.030)+"px 'Bellota', serif";
   ctx.fillText('Sensations Macarons',W/2,y);
-  ctx.fillStyle=(gabarit==='uni'||gabarit==='hautbas')?'rgba(198,151,79,0.95)':'rgba(232,221,205,0.9)';
-  ctx.font="400 "+Math.round(W*0.019)+"px 'Outfit', sans-serif";
-  ctx.fillText('moins de sucre, plus de sensation',W/2,y+Math.round(W*0.028));
+  const slg = cvSloganTexte(s);
+  if(slg){
+    ctx.fillStyle=(gabarit==='uni'||gabarit==='hautbas')?'rgba(198,151,79,0.95)':'rgba(232,221,205,0.9)';
+    ctx.font="400 "+Math.round(W*0.019)+"px 'Outfit', sans-serif";
+    ctx.fillText(slg,W/2,y+Math.round(W*0.028));
+  }
 }
 
 /* ── Aperçu + bande de slides ── */
@@ -25764,6 +25840,15 @@ async function renderCarrousel(){
           <button class="wiz-opt ${_cv.logoVariant==='sauge'?'on':''}" onclick="cvSetLogoVariant('sauge')">🌿 Vert sauge</button>
         </div>
       </div>`:''}
+      <div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px;margin-top:8px;background:#faf6ee;border:1px solid #e8dcc0">
+        <b style="color:var(--bordeaux);font-size:.8rem">Slogan de cette slide</b>
+        <p class="note" style="font-size:.7rem;margin:0">Choisis l'accroche affichée sous la signature, slide par slide.</p>
+        <div class="wiz-choice">
+          <button class="wiz-opt ${(cvS().slogan||'defaut')==='defaut'?'on':''}" onclick="cvSetSlogan('defaut')">✨ ${SM_SLOGANS[0]}</button>
+          <button class="wiz-opt ${cvS().slogan==='1'?'on':''}" onclick="cvSetSlogan('1')">💎 ${SM_SLOGANS[1]}</button>
+          <button class="wiz-opt ${cvS().slogan==='aucun'?'on':''}" onclick="cvSetSlogan('aucun')">🚫 Aucun</button>
+        </div>
+      </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
         <button class="btn ghost" style="flex:1" onclick="cvExporter()">⬇️ Cette slide</button>
         <button class="btn gold" style="flex:1" onclick="cvExporterTout()">⬇️ Tout le carrousel</button>
@@ -25948,7 +26033,7 @@ const VID_STRUCTURES = [
       {role:"HOOK sensoriel", part:0.20, cadrage:"Très gros plan croquant", cam:"Macro fixe", visu:"Coque qui se brise, miettes", texteEcran:v=>``, voix:v=>``, son:"ASMR croquant net", intention:"Capter par le son/texture"},
       {role:"Garniture", part:0.26, cadrage:"Macro coupe", cam:"Travelling avant", visu:"Cœur coulant / garniture révélée", texteEcran:v=>v.benefice, voix:v=>``, son:"ASMR + musique douce", intention:"Faire désirer"},
       {role:"Dégustation", part:0.24, cadrage:"Gros plan bouche/main", cam:"Fixe", visu:"Bouchée, réaction de plaisir", texteEcran:v=>`${v.emotionLabel}`, voix:v=>``, son:"Soupir de plaisir léger", intention:"Projection sensorielle"},
-      {role:"Collection", part:0.16, cadrage:"Plan large parfums", cam:"Orbite", visu:"Gamme de couleurs alignée", texteEcran:v=>`Moins de sucre, plus de sensation`, voix:v=>``, son:"Musique qui s'ouvre", intention:"Élargir le désir"},
+      {role:"Collection", part:0.16, cadrage:"Plan large parfums", cam:"Orbite", visu:"Gamme de couleurs alignée", texteEcran:v=>`Moins de sucre, plus de sensations`, voix:v=>``, son:"Musique qui s'ouvre", intention:"Élargir le désir"},
       {role:"CTA", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Passer commande"},
     ],
   },
@@ -26074,7 +26159,7 @@ const VID_STRUCTURES_LOT = [
       {role:"HOOK émotion", part:0.20, cadrage:"Gros plan ralenti", cam:"Slow motion", visu:"Geste ou regard, lumière chaude", texteEcran:v=>``, voix:v=>``, son:"Piano / cordes douces", intention:"Toucher immédiatement"},
       {role:"Le moment", part:0.26, cadrage:"Plans intimes", cam:"Doux", visu:"Partage, dégustation, sourire sincère", texteEcran:v=>v.emotionLabel, voix:v=>``, son:"Musique qui monte", intention:"Créer l'attachement"},
       {role:"Le sens", part:0.24, cadrage:"Plan produit tendre", cam:"Orbite lente", visu:v=>`${_vidCap(v.produit)} au cœur du moment`, texteEcran:v=>v.benefice, voix:v=>``, son:"Apogée émotionnel", intention:"Donner du sens"},
-      {role:"Signature", part:0.16, cadrage:"Plan charte", cam:"Fixe", visu:"Slogan qui s'écrit", texteEcran:v=>`Moins de sucre, plus de sensation`, voix:v=>``, son:"Résolution", intention:"Marquer la marque"},
+      {role:"Signature", part:0.16, cadrage:"Plan charte", cam:"Fixe", visu:"Slogan qui s'écrit", texteEcran:v=>`Moins de sucre, plus de sensations`, voix:v=>``, son:"Résolution", intention:"Marquer la marque"},
       {role:"CTA doux", part:0.14, cadrage:"Plan charte", cam:"Fixe", visu:"Logo + slogan", texteEcran:v=>v.cta, voix:v=>v.cta, son:"Signature", intention:"Inviter sans forcer"},
     ],
   },

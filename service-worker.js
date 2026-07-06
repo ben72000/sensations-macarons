@@ -1,5 +1,5 @@
-// [v1233] bump CACHE — Vrais logos (5 déclinaisons) sur les carrousels + choix auto par luminosité.
-const CACHE = 'sm-iphone-v268';
+// [v1234] bump CACHE — Choix logo fiabilisé (contraste WCAG) + slogans officiels intégrés.
+const CACHE = 'sm-iphone-v270';
 const ASSETS = [
   './',
   './index.html',
