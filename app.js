@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1235';
-const APP_MAJ = 'Slogan par slide + correction du chevauchement texte/logo. Chaque slide du carrousel a d\u00e9sormais son propre s\u00e9lecteur de slogan : \u00ab moins de sucre, plus de sensations \u00bb (d\u00e9faut), \u00ab offrez-vous le raffinement \u00bb, ou Aucun. Le slogan choisi appara\u00eet sous la signature (sous le vrai logo PNG comme dans le repli texte). Correction du bug des slides sans photo : le corps de texte chevauchait la signature \u2014 il r\u00e9serve maintenant la bande basse et se coupe proprement au-dessus du logo. Choix logo Auto/contraste WCAG, 5 d\u00e9clinaisons, forçage manuel et 100% hors-ligne conserv\u00e9s. Textes toujours en Bellota + Outfit exclusivement.';
+const APP_VERSION = 'v1236';
+const APP_MAJ = '\u00c9diteur plein \u00e9cran (type Canva) pour tes slides. Touchez l\u2019aper\u00e7u \u2192 la slide s\u2019ouvre en grand. Touchez un texte pour le s\u00e9lectionner, glissez-le au doigt pour le placer o\u00f9 vous voulez, double-tapez pour ouvrir le clavier et corriger les mots. Une barre appara\u00eet alors en bas : taille (A\u2212/A+), couleur (5 teintes de la charte) et alignement. Titre et corps sont ind\u00e9pendants. Vos placements sont conserv\u00e9s, m\u00eame apr\u00e8s \u00ab R\u00e9g\u00e9n\u00e9rer le d\u00e9roul\u00e9 \u00bb. Sans retouche, les slides s\u2019affichent exactement comme avant (placement auto). Bouton \u00ab Termin\u00e9 \u00bb pour revenir. Slogan par slide, choix logo Auto/WCAG et 100% hors-ligne conserv\u00e9s. Textes toujours en Bellota + Outfit exclusivement.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -25285,6 +25285,7 @@ function cvNewSlide(patch){
     format:'carre', gabarit:'pleincadre', source:'compo',
     titre:'', corps:'', photo:null, photoName:'', photoY:0.5,
     slogan:'defaut',  // 'defaut' (slogan pluriel), un index de SM_SLOGANS, ou 'aucun'
+    edits:null,       // null = placement auto ; sinon { titre:{x,y,size,color,align}, corps:{...} } en fractions de W/H
   }, patch||{});
 }
 
@@ -25372,11 +25373,15 @@ function cvDepuisCompositeur(){
 function cvGenererNarratif(){
   const sel = _cv.narrLastSel;
   if(!sel){ toast('Compose d\'abord un contenu'); return; }
+  // Sauvegarde des retouches manuelles (par index de slide) pour les réappliquer
+  // après reconstruction — l'utilisateur ne perd pas ses placements.
+  const editsSauv = (_cv.slides||[]).map(s=>s.edits||null);
   const trame = (NARR_TRAMES.find(x=>x.id===_cv.narrTrameId)) || narrTramePourAxe(sel.axe);
   _cv.narrTrameId = trame.id;
   const n = Math.max(6, Math.min(10, _cv.narrN||7));
   _cv.narrN = n;
   const slides = narrConstruireSlides(trame, n, sel);
+  slides.forEach((s,i)=>{ if(editsSauv[i]) s.edits=editsSauv[i]; });
   _cv.slides = slides.length ? slides : [cvNewSlide()];
   _cv.active = 0;
 }
@@ -25459,16 +25464,17 @@ function cvDrawSlide(canvas, s){
   return ready.then(()=>{
     ctx.clearRect(0,0,W,H);
     const g = s.gabarit;
+    let boxes = {};
     if(g==='uni'){
       cvDrawFondUni(ctx,W,H);
-      cvDrawTexteBloc(ctx,W,H,s, {yStart:H*0.30, wMax:W*0.82, centre:true, surFonce:true});
+      boxes = cvDrawTexteBloc(ctx,W,H,s, {yStart:H*0.30, wMax:W*0.82, centre:true, surFonce:true});
     } else if(g==='hautbas'){
       const hPhoto = Math.round(H*0.62);
       if(s.photo){ cvDrawPhotoCover(ctx,0,0,W,hPhoto,s.photo,s.photoY); }
       else { cvDrawPlaceholderPhoto(ctx,0,0,W,hPhoto); }
       ctx.fillStyle = CV_COL.bordeaux; ctx.fillRect(0,hPhoto,W,H-hPhoto);
       ctx.fillStyle = CV_COL.caramel; ctx.fillRect(0,hPhoto,W,Math.round(H*0.006));
-      cvDrawTexteBloc(ctx,W,H,s, {yStart:hPhoto+(H-hPhoto)*0.16, wMax:W*0.84, centre:true, surFonce:true, zone:[hPhoto,H]});
+      boxes = cvDrawTexteBloc(ctx,W,H,s, {yStart:hPhoto+(H-hPhoto)*0.16, wMax:W*0.84, centre:true, surFonce:true, zone:[hPhoto,H]});
     } else {
       if(s.photo){ cvDrawPhotoCover(ctx,0,0,W,H,s.photo,s.photoY); }
       else { cvDrawPlaceholderPhoto(ctx,0,0,W,H); }
@@ -25477,9 +25483,11 @@ function cvDrawSlide(canvas, s){
       grad.addColorStop(0.55,'rgba(61,26,34,0.55)');
       grad.addColorStop(1,'rgba(61,26,34,0.92)');
       ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
-      cvDrawTexteBloc(ctx,W,H,s, {yStart:H*0.66, wMax:W*0.86, centre:false, surFonce:true, zone:[H*0.5,H]});
+      boxes = cvDrawTexteBloc(ctx,W,H,s, {yStart:H*0.66, yMin:H*0.34, ancrerBas:true, wMax:W*0.86, centre:false, surFonce:true, zone:[H*0.5,H]});
     }
     if(_cv.logo) cvDrawSignature(ctx,W,H,s.gabarit,s);
+    canvas._cvBoxes = boxes||{};  // mémorisé pour l'éditeur (hit-test)
+    return boxes;
   });
 }
 
@@ -25508,44 +25516,109 @@ function cvDrawPlaceholderPhoto(ctx,x,y,w,h){
   ctx.font='500 '+Math.round(w*0.045)+"px 'Outfit', sans-serif";
   ctx.fillText('📷  Importe une photo', x+w/2, y+h/2);
 }
+// Palette de couleurs de texte disponibles dans l'éditeur (charte uniquement).
+const CV_TEXT_COLORS = [
+  { key:'creme',    val:'#E8DDCD' },
+  { key:'blanc',    val:'#FFFFFF' },
+  { key:'caramel',  val:'#AA7C39' },
+  { key:'bordeaux', val:'#52252F' },
+  { key:'aubergine',val:'#490F25' },
+];
+function cvColorVal(key){ const c=CV_TEXT_COLORS.find(c=>c.key===key); return c?c.val:key; }
+
+// Dessine un bloc de texte (titre ou corps) et RENVOIE sa boîte englobante
+// {x,y,w,h} en pixels — utile pour l'éditeur (hit-test, cadre de sélection).
+// ov = override manuel {x,y,size,color,align} en fractions, ou null pour l'auto.
+function cvDrawUnBloc(ctx,W,H,texte,role,auto,ov){
+  texte=(texte||'').trim(); if(!texte) return null;
+  const isTitre = role==='titre';
+  const align = ov&&ov.align ? ov.align : (auto.centre?'center':'left');
+  const sizeF = ov&&ov.size!=null ? ov.size : auto.sizeF;
+  const size  = Math.round(W*sizeF);
+  const font  = isTitre ? "700 "+size+"px 'Bellota', Georgia, serif"
+                        : "400 "+size+"px 'Outfit', sans-serif";
+  ctx.font=font;
+  const color = ov&&ov.color ? cvColorVal(ov.color) : auto.color;
+  ctx.fillStyle=color;
+  const lineH = size*(isTitre?1.16:1.34);
+  const wMax  = auto.wMax;
+  // Position d'ancrage
+  let ax, ay;
+  if(ov){ ax = ov.x*W; ay = ov.y*H; }
+  else  { ax = align==='center'? W/2 : (align==='right'? W-W*0.08 : W*0.08); ay = auto.y; }
+  ctx.textAlign=align; ctx.textBaseline='top';
+  // Mesure (nb lignes) pour la boîte
+  const nLignes = Math.max(1, Math.round(cvWrapText(ctx,texte,ax,0,wMax,lineH,align==='center',null,true)/lineH));
+  const yLimit = ov ? null : auto.limiteBas;
+  cvWrapText(ctx,texte,ax,ay,wMax,lineH,align==='center',yLimit);
+  // Boîte englobante approximative
+  const bw = Math.min(wMax, cvMaxLineWidth(ctx,texte,wMax));
+  const bx = align==='center'? ax-bw/2 : (align==='right'? ax-bw : ax);
+  return { x:bx, y:ay, w:bw, h:nLignes*lineH, role, align, size, color };
+}
+// Largeur réelle du plus long segment wrappé (pour la boîte de sélection).
+function cvMaxLineWidth(ctx,text,maxW){
+  const words=String(text).split(/\s+/); let line='',best=0;
+  for(const w of words){
+    const test=line?line+' '+w:w;
+    if(ctx.measureText(test).width>maxW && line){ best=Math.max(best,ctx.measureText(line).width); line=w; }
+    else line=test;
+  }
+  if(line) best=Math.max(best,ctx.measureText(line).width);
+  return best;
+}
+
 function cvDrawTexteBloc(ctx,W,H,s,opts){
   opts=opts||{}; const centre=!!opts.centre, surFonce=!!opts.surFonce;
-  const wMax=opts.wMax||W*0.84; const x=centre?W/2:W*0.08;
-  let y=opts.yStart||H*0.6;
-  ctx.textAlign=centre?'center':'left'; ctx.textBaseline='top';
+  const wMax=opts.wMax||W*0.84;
   const colTitre = surFonce ? CV_COL.creme : CV_COL.bordeaux;
   const colCorps = surFonce ? 'rgba(232,221,205,0.92)' : CV_COL.bordeaux;
+  const reserveSign = (typeof _cv!=='undefined' && _cv.logo) ? H*0.22 : H*0.06;
+  const limiteBas = (opts.zone?opts.zone[1]:H)-reserveSign;
+  const ed = s.edits||{};
+  const boxes = {};
+
+  // — TITRE —
+  let yTitre = opts.yStart||H*0.6;
   const titre=(s.titre||'').trim();
+  if(titre && !ed.titre){
+    const tSize=(s.format==='story'?0.062:0.070);
+    if(opts.ancrerBas){
+      ctx.font="700 "+Math.round(W*tSize)+"px 'Bellota', Georgia, serif";
+      const hTitre=cvWrapText(ctx,titre,0,0,wMax,Math.round(W*tSize)*1.16,centre,null,true);
+      yTitre=Math.max(opts.yMin||H*0.30, limiteBas - hTitre - H*0.02);
+    }
+  }
   if(titre){
-    const tSize=Math.round(W*(s.format==='story'?0.062:0.070));
-    ctx.font="700 "+tSize+"px 'Bellota', Georgia, serif"; ctx.fillStyle=colTitre;
-    y=cvWrapText(ctx,titre,x,y,wMax,tSize*1.16,centre);
+    boxes.titre = cvDrawUnBloc(ctx,W,H,titre,'titre',
+      { centre, sizeF:(s.format==='story'?0.062:0.070), color:colTitre, wMax, y:yTitre, limiteBas },
+      ed.titre);
   }
+
+  // — CORPS — (auto : uni/hautbas seulement ; édité : autorisé partout)
   const corps=(s.corps||'').trim();
-  const porteCorps=(s.gabarit==='uni'||s.gabarit==='hautbas');
-  if(corps && porteCorps){
-    y+=H*0.02;
-    const cSize=Math.round(W*(s.format==='story'?0.034:0.038));
-    ctx.font="400 "+cSize+"px 'Outfit', sans-serif"; ctx.fillStyle=colCorps;
-    // Réserve basse : si la signature logo est affichée, le corps ne doit pas
-    // descendre sous la bande occupée par le logo + slogan (évite le chevauchement).
-    const reserveSign = (typeof _cv!=='undefined' && _cv.logo) ? H*0.22 : H*0.06;
-    const zoneBas=(opts.zone?opts.zone[1]:H)-reserveSign;
-    cvWrapText(ctx,corps,x,y,wMax,cSize*1.34,centre,zoneBas);
+  const porteCorpsAuto=(s.gabarit==='uni'||s.gabarit==='hautbas');
+  const enEdition=(typeof _ed!=='undefined' && _ed.open);
+  if(corps && (ed.corps || porteCorpsAuto || enEdition)){
+    let yCorps = (boxes.titre? boxes.titre.y+boxes.titre.h : yTitre) + H*0.02;
+    boxes.corps = cvDrawUnBloc(ctx,W,H,corps,'corps',
+      { centre, sizeF:(s.format==='story'?0.034:0.038), color:colCorps, wMax, y:yCorps, limiteBas },
+      ed.corps);
   }
+  return boxes;
 }
-function cvWrapText(ctx,text,x,y,maxW,lineH,centre,yLimit){
+function cvWrapText(ctx,text,x,y,maxW,lineH,centre,yLimit,mesure){
   const words=String(text).split(/\s+/); let line='';
   for(let i=0;i<words.length;i++){
     const test=line?line+' '+words[i]:words[i];
     if(ctx.measureText(test).width>maxW && line){
-      if(yLimit && y+lineH>yLimit){ ctx.fillText(line.replace(/\s+\S*$/,'')+'…',x,y); return y+lineH; }
-      ctx.fillText(line,x,y); line=words[i]; y+=lineH;
+      if(yLimit && y+lineH>yLimit){ if(!mesure) ctx.fillText(line.replace(/\s+\S*$/,'')+'…',x,y); return y+lineH; }
+      if(!mesure) ctx.fillText(line,x,y); line=words[i]; y+=lineH;
     } else { line=test; }
   }
   if(line){
-    if(yLimit && y+lineH>yLimit){ ctx.fillText(line+'…',x,y); return y+lineH; }
-    ctx.fillText(line,x,y); y+=lineH;
+    if(yLimit && y+lineH>yLimit){ if(!mesure) ctx.fillText(line+'…',x,y); return y+lineH; }
+    if(!mesure) ctx.fillText(line,x,y); y+=lineH;
   }
   return y;
 }
@@ -25591,6 +25664,160 @@ function cvDrawSignature(ctx,W,H,gabarit,s){
     ctx.font="400 "+Math.round(W*0.019)+"px 'Outfit', sans-serif";
     ctx.fillText(slg,W/2,y+Math.round(W*0.028));
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ÉDITEUR PLEIN ÉCRAN (type Canva, minimal)
+   Tap bloc = sélection · glisse = déplace · double-tap = clavier ·
+   barre basse (taille / couleur / alignement) visible uniquement sur sélection.
+   ══════════════════════════════════════════════════════════════════════════ */
+const _ed = { open:false, sel:null, drag:null, lastTap:0, W:0, H:0 };
+
+// Prépare l'objet edits[role] (copie l'auto en override modifiable la 1re fois).
+function cvEnsureEdit(role){
+  const s=cvS(); if(!s.edits) s.edits={};
+  if(!s.edits[role]){
+    const cvs=document.getElementById('edCanvas');
+    const box = cvs && cvs._cvBoxes ? cvs._cvBoxes[role] : null;
+    const W=_ed.W||1080, H=_ed.H||1080;
+    // Point de départ = position actuelle auto, convertie en fractions.
+    const sizeF = role==='titre' ? (s.format==='story'?0.062:0.070) : (s.format==='story'?0.034:0.038);
+    s.edits[role] = box
+      ? { x:(box.align==='center'?(box.x+box.w/2):box.x)/W, y:box.y/H, size:sizeF, color:null, align:box.align||'center' }
+      : { x:0.5, y:role==='titre'?0.62:0.78, size:sizeF, color:null, align:'center' };
+    if(s.edits[role].color==null) s.edits[role].color = (role==='titre')?'creme':'creme';
+  }
+  return s.edits[role];
+}
+
+function cvOpenEditor(){
+  const s=cvS();
+  const fmt = CV_FORMATS[s.format]||CV_FORMATS.carre;
+  _ed.open=true; _ed.sel=null; _ed.W=fmt.w; _ed.H=fmt.h;
+  let ov=document.getElementById('edOverlay');
+  if(!ov){ ov=document.createElement('div'); ov.id='edOverlay'; document.body.appendChild(ov); }
+  ov.style.cssText='position:fixed;inset:0;z-index:10000;background:#2a1218;display:flex;flex-direction:column;touch-action:none';
+  ov.innerHTML=`
+    <div style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;color:#E8DDCD;font-family:system-ui">
+      <span style="font-size:.82rem;opacity:.75">Touchez un texte · glissez pour placer · double-tap pour écrire</span>
+      <button onclick="cvCloseEditor()" style="background:#AA7C39;color:#fff;border:none;border-radius:20px;padding:8px 18px;font-weight:700;font-size:.9rem">Terminé</button>
+    </div>
+    <div id="edStage" style="flex:1 1 auto;display:flex;align-items:center;justify-content:center;padding:8px;min-height:0">
+      <canvas id="edCanvas" style="max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5)"></canvas>
+    </div>
+    <div id="edBar" style="flex:0 0 auto;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:#1e0d12;display:none"></div>
+    <input id="edHidden" style="position:absolute;left:-9999px;opacity:0" />`;
+  const cvs=document.getElementById('edCanvas');
+  cvs.addEventListener('pointerdown', cvEdPointerDown);
+  cvs.addEventListener('pointermove', cvEdPointerMove);
+  cvs.addEventListener('pointerup',   cvEdPointerUp);
+  const inp=document.getElementById('edHidden');
+  inp.addEventListener('input', ()=>{ if(_ed.sel){ cvS()[_ed.sel]=inp.value; cvEdRedraw(); } });
+  inp.addEventListener('blur', ()=>{ cvEdRedraw(); });
+  cvEdRedraw();
+}
+function cvCloseEditor(){
+  _ed.open=false; _ed.sel=null;
+  const ov=document.getElementById('edOverlay'); if(ov) ov.remove();
+  renderCarrousel();  // répercute les edits sur l'aperçu + la bande + l'export
+}
+
+// Redessine la slide dans l'éditeur, + cadre de sélection éventuel.
+function cvEdRedraw(){
+  const cvs=document.getElementById('edCanvas'); if(!cvs) return;
+  cvDrawSlide(cvs, cvS()).then(()=>{
+    if(_ed.sel){
+      const box = cvs._cvBoxes[_ed.sel];
+      if(box){
+        const ctx=cvs.getContext('2d');
+        ctx.save();
+        ctx.strokeStyle='rgba(198,151,79,0.95)'; ctx.lineWidth=Math.max(2,cvs.width*0.004);
+        ctx.setLineDash([cvs.width*0.02, cvs.width*0.012]);
+        const pad=cvs.width*0.012;
+        ctx.strokeRect(box.x-pad, box.y-pad, box.w+pad*2, box.h+pad*2);
+        ctx.restore();
+      }
+    }
+    cvEdSyncBar();
+  });
+}
+// Convertit un point écran → coordonnées canvas (pixels de la slide).
+function cvEdPt(e){
+  const cvs=document.getElementById('edCanvas'); const r=cvs.getBoundingClientRect();
+  return { x:(e.clientX-r.left)*(cvs.width/r.width), y:(e.clientY-r.top)*(cvs.height/r.height) };
+}
+function cvEdHit(p){
+  const cvs=document.getElementById('edCanvas'); const b=cvs._cvBoxes||{};
+  const pad=cvs.width*0.02;
+  for(const role of ['titre','corps']){
+    const x=b[role]; if(!x) continue;
+    if(p.x>=x.x-pad && p.x<=x.x+x.w+pad && p.y>=x.y-pad && p.y<=x.y+x.h+pad) return role;
+  }
+  return null;
+}
+function cvEdPointerDown(e){
+  e.preventDefault();
+  const p=cvEdPt(e); const hit=cvEdHit(p);
+  const now=Date.now();
+  // Double-tap sur le bloc sélectionné → clavier
+  if(hit && hit===_ed.sel && now-_ed.lastTap<320){ cvEdEditText(); _ed.lastTap=0; return; }
+  _ed.lastTap=now;
+  if(hit){
+    _ed.sel=hit;
+    const ov=cvEnsureEdit(hit);
+    _ed.drag={ role:hit, startX:p.x, startY:p.y, ox:ov.x, oy:ov.y };
+  } else {
+    _ed.sel=null; _ed.drag=null;
+  }
+  cvEdRedraw();
+}
+function cvEdPointerMove(e){
+  if(!_ed.drag) return;
+  e.preventDefault();
+  const p=cvEdPt(e); const cvs=document.getElementById('edCanvas');
+  const ov=cvS().edits[_ed.drag.role];
+  ov.x = Math.min(0.98, Math.max(0.02, _ed.drag.ox + (p.x-_ed.drag.startX)/cvs.width));
+  ov.y = Math.min(0.95, Math.max(0.02, _ed.drag.oy + (p.y-_ed.drag.startY)/cvs.height));
+  cvEdRedraw();
+}
+function cvEdPointerUp(e){ _ed.drag=null; }
+
+function cvEdEditText(){
+  if(!_ed.sel) return;
+  const inp=document.getElementById('edHidden');
+  inp.value = cvS()[_ed.sel]||'';
+  inp.focus();
+}
+
+// Applique un réglage au bloc sélectionné.
+function cvEdSet(prop,val){
+  if(!_ed.sel) return;
+  const ov=cvEnsureEdit(_ed.sel);
+  if(prop==='size'){ ov.size=Math.min(0.14, Math.max(0.02, (ov.size||0.05)+val)); }
+  else ov[prop]=val;
+  cvEdRedraw();
+}
+
+// Barre d'outils basse : n'apparaît que si un bloc est sélectionné.
+function cvEdSyncBar(){
+  const bar=document.getElementById('edBar'); if(!bar) return;
+  if(!_ed.sel){ bar.style.display='none'; return; }
+  const ov=cvS().edits?cvS().edits[_ed.sel]:null;
+  const curCol=ov&&ov.color?ov.color:'creme';
+  const curAl=ov&&ov.align?ov.align:'center';
+  const swatch=CV_TEXT_COLORS.map(c=>
+    `<button onclick="cvEdSet('color','${c.key}')" style="width:30px;height:30px;border-radius:50%;border:${curCol===c.key?'3px solid #fff':'2px solid rgba(255,255,255,.25)'};background:${c.val};flex:0 0 auto"></button>`
+  ).join('');
+  const alignBtn=(k,lbl)=>`<button onclick="cvEdSet('align','${k}')" style="flex:1;padding:8px;border:none;border-radius:8px;background:${curAl===k?'#AA7C39':'#3a2028'};color:#fff;font-size:1rem">${lbl}</button>`;
+  bar.style.display='block';
+  bar.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <span style="color:#E8DDCD;font-size:.72rem;width:52px">${_ed.sel==='titre'?'Titre':'Corps'}</span>
+      <button onclick="cvEdSet('size',-0.006)" style="width:40px;height:36px;border:none;border-radius:8px;background:#3a2028;color:#fff;font-size:1.2rem">A−</button>
+      <button onclick="cvEdSet('size',0.006)" style="width:40px;height:36px;border:none;border-radius:8px;background:#3a2028;color:#fff;font-size:1.2rem">A+</button>
+      <div style="display:flex;gap:5px;flex:1">${alignBtn('left','⬅')}${alignBtn('center','↔')}${alignBtn('right','➡')}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">${swatch}</div>`;
 }
 
 /* ── Aperçu + bande de slides ── */
@@ -25733,11 +25960,11 @@ async function renderCarrousel(){
         <button class="btn ghost sm" onclick="cvAddSlide()" style="height:56px;width:50px">＋</button>
       </div></div>`;
 
-  // Aperçu compact (sticky) : la slide active, toujours visible.
+  // Aperçu compact (sticky) : la slide active, toujours visible. Tap → éditeur plein écran.
   const apercu = `<div class="wiz-preview">
-      <div class="wiz-preview-title">Aperçu — slide ${_cv.active+1}/${_cv.slides.length}</div>
+      <div class="wiz-preview-title">Aperçu — slide ${_cv.active+1}/${_cv.slides.length} · <span style="color:var(--caramel)">touchez pour éditer ✎</span></div>
       <div style="display:flex;justify-content:center;background:repeating-conic-gradient(#eee 0% 25%,#f7f7f7 0% 50%) 50%/16px 16px;border-radius:10px;padding:6px">
-        <canvas id="cvCanvas" style="max-width:100%;max-height:26vh;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.16)"></canvas>
+        <canvas id="cvCanvas" onclick="cvOpenEditor()" style="max-width:100%;max-height:26vh;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.16);cursor:pointer"></canvas>
       </div>
     </div>`;
 
