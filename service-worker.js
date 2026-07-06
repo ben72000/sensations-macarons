@@ -1,5 +1,5 @@
-// [v1253] bump CACHE — Etape 3 : previsionnel des coques par couleur dans Previsionnel stocks (vue parallele). Chantier amont couleur complet.
-const CACHE = 'sm-iphone-v289';
+// [v1254] bump CACHE — Renommage des menus : Production/Productions deviennent Planning / Fabrication (fin de l ambiguite).
+const CACHE = 'sm-iphone-v290';
 const ASSETS = [
   './',
   './index.html',
