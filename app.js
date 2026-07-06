@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1221';
-const APP_MAJ = 'Cr\u00e9ateur de visuel : compose tes slides Instagram \u00e0 ta charte (carr\u00e9 1080\u00b2, portrait 4:5, story 9:16) avec 3 gabarits \u2014 photo plein cadre, photo+bandeau, ou fond charte uni. Texte repris du Compositeur ou saisi libre, photos import\u00e9es depuis l\'iPhone, polices Outfit/Bellota, export PNG pr\u00eat \u00e0 publier.';
+const APP_VERSION = 'v1222';
+const APP_MAJ = 'Compositeur enrichi : +20 accroches et +10 textes, et surtout une 5e brique \u00ab Appel \u00e0 l\'action \u00bb \u2014 banque de 41 CTA filtrables par type (commander, r\u00e9server, DM, devis, atelier, march\u00e9, d\u00e9couvrir, engagement, lien bio), avec choix manuel ET suggestion auto selon le texte choisi. Le CTA retenu alimente le post et le visuel.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -23986,6 +23986,50 @@ const SC_TEXTES = [
   {id:"t080", objet:"vente", cible:"b2c", axe:"transformation", texte:"« Personne n'a cru que ça venait d'une petite maison du Mans. » C'est le genre de phrase qui me fait plaisir après un événement. La qualité artisanale locale n'a rien à envier aux grandes maisons — elle a même quelque chose en plus : une âme, et une histoire.", cta:"Découvre la petite maison 🤍", kw:"preuve témoignage qualité local le mans artisanal âme histoire"},
 ];
 
+/* ===== CONTENU SUPPLÉMENTAIRE — accroches + textes (v1222) ===== */
+/* Ajouts taggés au même format que SC_ACCROCHES / SC_TEXTES : le filtre en
+ * cascade existant (objet → cible → axe → kw) les prend automatiquement.
+ * On les concatène aux banques après leur déclaration. */
+
+const SC_ACCROCHES_PLUS = [
+  {id:"a181", objet:"vente", cible:"b2c", axe:"desir", texte:"Le carré de douceur qui sauve une fin de journée.", kw:"plaisir douceur soir reconfort fin journee moment"},
+  {id:"a182", objet:"vente", cible:"b2c", axe:"situation", texte:"Ce dimanche, offre-toi la boîte plutôt que la corvée.", kw:"dimanche plaisir boite facilite recevoir sans stress"},
+  {id:"a183", objet:"vente", cible:"b2c", axe:"objection", texte:"« Trop beau pour être bon ? » Goûte, puis on en reparle.", kw:"objection beau bon apparence gout preuve degustation"},
+  {id:"a184", objet:"vente", cible:"b2c", axe:"transformation", texte:"La photo ne rend pas justice au premier croquant.", kw:"preuve croquant texture qualite gout photo"},
+  {id:"a185", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Je compte mes coques, pas mes heures.", kw:"valeurs artisanal soin temps fait-main passion"},
+  {id:"a186", objet:"vente", cible:"b2c", axe:"douleur", texte:"Un cadeau gourmand qui déçoit, ça se voit tout de suite.", kw:"cadeau decevoir gourmand qualite offrir rater"},
+  {id:"a187", objet:"vente", cible:"b2c", axe:"desir", texte:"Le luxe, c'est un instant simple bien choisi.", kw:"plaisir luxe simple instant choisir douceur"},
+  {id:"a188", objet:"vente", cible:"b2c", axe:"situation", texte:"Nouvelle fournée en cours… l'atelier sent bon ce matin.", kw:"coulisses fournee atelier matin nouveaute frais"},
+  {id:"a189", objet:"vente", cible:"b2b", axe:"desir", texte:"Le cadeau client dont on se souvient à la réunion suivante.", kw:"cadeau client memorable entreprise corporate reunion premium"},
+  {id:"a190", objet:"vente", cible:"b2b", axe:"objection", texte:"Un devis clair vaut mieux qu'une belle promesse.", kw:"objection devis clair fiabilite promesse professionnel confiance"},
+  {id:"a191", objet:"vente", cible:"b2b", axe:"valeurs", texte:"Votre événement, mon exigence : mêmes standards.", kw:"valeurs exigence evenement professionnel qualite standard"},
+  {id:"a192", objet:"vente", cible:"b2b", axe:"situation", texte:"Séminaire en vue ? Pensez la pause avant le programme.", kw:"seminaire pause entreprise evenement anticiper corporate"},
+  {id:"a193", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tu doses au hasard et tu croises les doigts ?", kw:"dosage hasard technique incertitude macaronnage probleme"},
+  {id:"a194", objet:"coaching", cible:"b2c", axe:"desir", texte:"Et si la prochaine fournée était la bonne ?", kw:"desir reussite fournee prochaine encouragement espoir"},
+  {id:"a195", objet:"coaching", cible:"b2c", axe:"objection", texte:"Pas besoin d'un labo pro. Besoin du bon geste.", kw:"objection materiel labo geste technique accessible debuter"},
+  {id:"a196", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Le hasard ne fait pas de belles collerettes. La méthode, si.", kw:"transformation methode collerette hasard technique fiable"},
+  {id:"a197", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Je t'explique aussi les ratés — surtout les ratés.", kw:"valeurs rate erreur pedagogie transmission honnete apprentissage"},
+  {id:"a198", objet:"coaching", cible:"b2c", axe:"situation", texte:"Une séance en visio, ta cuisine, mon œil.", kw:"visio seance coaching cuisine distance diagnostic"},
+  {id:"a199", objet:"vente", cible:"both", axe:"valeurs", texte:"Le vrai goût ne se cache pas derrière le sucre.", kw:"valeurs gout moins sucre qualite signature transparence"},
+  {id:"a200", objet:"vente", cible:"b2c", axe:"situation", texte:"Rupture évitée : commande passée, boîte assurée.", kw:"situation rupture commander anticiper disponible reserver"},
+];
+
+const SC_TEXTES_PLUS = [
+  {id:"t081", objet:"vente", cible:"b2c", axe:"desir", texte:"Il y a ces fins de journée où l'on n'a besoin de rien de spectaculaire — juste d'un carré de douceur, d'un thé, et de cinq minutes au calme. Un macaron moins sucré, où l'on sent vraiment le parfum, transforme cette petite pause en vrai moment à soi.", cta:"Offre-toi ta pause 🤍", kw:"plaisir soir pause douceur soi reconfort moment moins sucre"},
+  {id:"t082", objet:"vente", cible:"b2c", axe:"transformation", texte:"Le premier croquant, puis le fondant de la garniture : c'est là que tout se joue. Une coque bien cuite ne s'effrite pas, elle cède juste ce qu'il faut. La photo ne rend jamais justice à cette sensation — il faut croquer pour comprendre.", cta:"Commande et croque 🤍", kw:"preuve croquant texture fondant qualite gout sensation"},
+  {id:"t083", objet:"vente", cible:"b2c", axe:"situation", texte:"Recevoir ne devrait pas rimer avec stress. Ce dimanche, laisse tomber la corvée pâtisserie : une belle boîte de macarons posée à table fait autant d'effet, sans la vaisselle ni l'angoisse du dessert raté. Tu profites de tes invités, pour de vrai.", cta:"Réserve ta boîte du dimanche 🗓️", kw:"recevoir dimanche stress boite facilite invites dessert"},
+  {id:"t084", objet:"vente", cible:"b2c", axe:"valeurs", texte:"Dans un petit atelier, on ne court pas après le volume. Je compte mes coques une à une, je dose chaque garniture, je surveille chaque cuisson. Ce n'est pas rentable au sens industriel — c'est juste la seule façon de faire quelque chose de bon. Mes heures ne comptent pas ; la qualité, si.", cta:"Choisis le fait-main 🤍", kw:"valeurs artisanal soin temps volume qualite fait-main passion"},
+  {id:"t085", objet:"vente", cible:"b2b", axe:"desir", texte:"Le bon cadeau client, ce n'est pas le plus cher : c'est celui dont on se souvient. Un coffret de macarons brandé, partagé au bureau, crée un moment — et ce moment reste associé à votre marque bien après la dernière bouchée. C'est ça, une attention qui travaille pour vous.", cta:"Demandez votre devis coffrets 🥂", kw:"cadeau client memorable coffret brande marque entreprise fidelisation"},
+  {id:"t086", objet:"vente", cible:"b2b", axe:"objection", texte:"Une promesse commerciale, c'est facile. Un devis clair, daté, avec des volumes et des délais engagés, c'est autre chose — et c'est ce dont vous avez besoin quand votre événement est en jeu. Je préfère cadrer précisément en amont plutôt que de vous vendre du rêve. Ça évite les mauvaises surprises le jour J.", cta:"Recevez un devis engageant 📩", kw:"objection devis clair delai volume fiabilite professionnel evenement"},
+  {id:"t087", objet:"coaching", cible:"b2c", axe:"douleur", texte:"Tu suis la recette, mais au moment du macaronnage tu doses « à peu près », en croisant les doigts. Trop mélangé, la pâte s'étale ; pas assez, elle craque. Ce geste, ce n'est pas de la magie : c'est un repère visuel précis qu'on apprend en une séance, et qu'on ne perd plus ensuite.", cta:"Apprends le bon geste 🎯", kw:"macaronnage dosage geste repere technique seance probleme hasard"},
+  {id:"t088", objet:"coaching", cible:"b2c", axe:"transformation", texte:"Beaucoup pensent qu'une belle collerette, c'est une question de chance ou de bon four. En réalité, c'est une chaîne de causes maîtrisables : le macaronnage, le croûtage, la chaleur. Quand tu comprends chaque maillon, la réussite arrête d'être aléatoire. Elle devient reproductible, fournée après fournée.", cta:"Rends ta réussite reproductible 🎯", kw:"transformation collerette methode croutage cuisson reproductible technique"},
+  {id:"t089", objet:"coaching", cible:"b2c", axe:"valeurs", texte:"Ce que j'aime transmettre, ce ne sont pas que les gestes qui marchent — ce sont surtout les ratés, et pourquoi ils arrivent. Parce que le jour où tu rates seule chez toi, c'est ça qui te sauve : savoir lire ta pâte, ta coque, ta cuisson, et corriger. Je te donne cette autonomie, pas juste une recette de plus.", cta:"Gagne en autonomie 🎯", kw:"valeurs rate erreur autonomie lecture correction transmission methode"},
+  {id:"t090", objet:"vente", cible:"b2c", axe:"situation", texte:"⏳ Il ne reste que quelques boîtes sur cette fournée. Ceux qui attendent le dernier moment repartent parfois les mains vides — et je déteste dire non. Un message maintenant, et ta boîte est mise de côté, fraîche, pour le week-end.", cta:"Réserve avant rupture 📩", kw:"situation rupture stock urgence reserver week-end disponible fournee"},
+];
+
+SC_ACCROCHES.push(...SC_ACCROCHES_PLUS);
+SC_TEXTES.push(...SC_TEXTES_PLUS);
+
 /* ============================================================================
  *  MOTEUR DE FILTRAGE EN CASCADE + INTERFACE 4 BARRES
  *  (Objet → Cible → mots-clés Accroche → mots-clés Texte)
@@ -24016,6 +24060,125 @@ function scFiltrerTextes(objet, cible, motsCles){
   });
 }
 
+/* ===== ENRICHISSEMENT COMPOSITEUR + MODULE CTA (v1222) ===== */
+/* ============================================================================
+ *  1) BANQUE DE CTA AUTONOME, filtrable en cascade (objet · cible · type · kw).
+ *     type = nature de l'action : commander, reserver, dm, devis, atelier,
+ *            marche, decouvrir, profil (suivre/partager), lien.
+ *  2) Le CTA devient une brique indépendante : choix manuel dans une banque
+ *     filtrée + suggestion auto à partir du texte sélectionné.
+ * ==========================================================================*/
+
+const SC_CTA = [
+  // ── VENTE · B2C · commander ──
+  {id:"c001", objet:"vente", cible:"b2c", type:"commander", texte:"Commande ton écrin en ligne 📩", kw:"commander ecrin ligne boite achat"},
+  {id:"c002", objet:"vente", cible:"b2c", type:"commander", texte:"Compose ta boîte maintenant 🤍", kw:"composer boite personnaliser commander"},
+  {id:"c003", objet:"vente", cible:"b2c", type:"commander", texte:"Craque, commande, savoure 🤍", kw:"commander plaisir craquer envie"},
+  {id:"c004", objet:"vente", cible:"b2c", type:"commander", texte:"Passe commande avant vendredi 📩", kw:"commander delai vendredi week-end anticiper"},
+  // ── VENTE · B2C · reserver ──
+  {id:"c005", objet:"vente", cible:"b2c", type:"reserver", texte:"Réserve ta boîte pour le week-end 🗓️", kw:"reserver week-end boite disponible"},
+  {id:"c006", objet:"vente", cible:"b2c", type:"reserver", texte:"Réserve vite en DM 📩", kw:"reserver dm urgence limite rapide"},
+  {id:"c007", objet:"vente", cible:"b2c", type:"reserver", texte:"Bloque ta commande avant rupture ⏳", kw:"reserver rupture stock urgence limite bloquer"},
+  // ── VENTE · B2C · dm / message ──
+  {id:"c008", objet:"vente", cible:"b2c", type:"dm", texte:"Écris-moi en DM pour commander 📩", kw:"dm message ecrire commander contact"},
+  {id:"c009", objet:"vente", cible:"b2c", type:"dm", texte:"Un DM et je m'occupe du reste 🤍", kw:"dm message simple contact commander"},
+  // ── VENTE · B2C · marche / rencontre ──
+  {id:"c010", objet:"vente", cible:"b2c", type:"marche", texte:"Passe me voir sur le marché 👋", kw:"marche stand venir rencontre evenement"},
+  {id:"c011", objet:"vente", cible:"b2c", type:"marche", texte:"Note la date et viens goûter 📍", kw:"marche date venir degustation evenement"},
+  // ── VENTE · B2C · decouvrir / nouveauté ──
+  {id:"c012", objet:"vente", cible:"b2c", type:"decouvrir", texte:"Découvre la nouveauté du moment ✨", kw:"decouvrir nouveaute parfum saison lancement"},
+  {id:"c013", objet:"vente", cible:"b2c", type:"decouvrir", texte:"Goûte la différence, tu verras 🤍", kw:"decouvrir gouter difference qualite essayer"},
+  {id:"c014", objet:"vente", cible:"b2c", type:"decouvrir", texte:"Saisis l'édition limitée avant qu'elle parte 📩", kw:"decouvrir edition limitee urgence saison parfum"},
+  // ── VENTE · B2C · profil (soft) ──
+  {id:"c015", objet:"vente", cible:"b2c", type:"profil", texte:"Enregistre ce post pour ta prochaine envie 🔖", kw:"enregistrer sauvegarder post profil soft engagement"},
+  {id:"c016", objet:"vente", cible:"b2c", type:"profil", texte:"Suis-moi pour ne rien rater des fournées 🔔", kw:"suivre abonner profil fournee actualite"},
+  {id:"c017", objet:"vente", cible:"b2c", type:"profil", texte:"Partage à qui mérite une douceur 🤍", kw:"partager tag ami offrir profil engagement"},
+  // ── VENTE · B2B · devis ──
+  {id:"c018", objet:"vente", cible:"b2b", type:"devis", texte:"Demandez votre devis rapide 📩", kw:"devis demande rapide professionnel commander"},
+  {id:"c019", objet:"vente", cible:"b2b", type:"devis", texte:"Recevez un devis transparent sous 48 h 📩", kw:"devis transparent delai professionnel budget"},
+  {id:"c020", objet:"vente", cible:"b2b", type:"devis", texte:"Parlons volumes et délais 📩", kw:"devis volume delai cadrer professionnel evenement"},
+  // ── VENTE · B2B · reserver / événement ──
+  {id:"c021", objet:"vente", cible:"b2b", type:"reserver", texte:"Réservez votre dégustation mariage 🥂", kw:"reserver degustation mariage evenement rendez-vous"},
+  {id:"c022", objet:"vente", cible:"b2b", type:"reserver", texte:"Composons votre dessert signature 🥂", kw:"reserver dessert signature personnalise mariage evenement"},
+  {id:"c023", objet:"vente", cible:"b2b", type:"reserver", texte:"Réservez vos coffrets clients VIP 🥂", kw:"reserver coffret client vip cadeau entreprise"},
+  // ── VENTE · B2B · decouvrir / personnaliser ──
+  {id:"c024", objet:"vente", cible:"b2b", type:"decouvrir", texte:"Personnalisez votre commande pro ✨", kw:"personnaliser logo couleur commande professionnel branding"},
+  {id:"c025", objet:"vente", cible:"b2b", type:"decouvrir", texte:"Associez votre marque à du vrai 🤍", kw:"marque image branding local premium professionnel"},
+  // ── VENTE · B2B · dm / contact ──
+  {id:"c026", objet:"vente", cible:"b2b", type:"dm", texte:"Contactez-moi pour votre événement 📩", kw:"contact dm evenement professionnel message"},
+  {id:"c027", objet:"vente", cible:"b2b", type:"dm", texte:"Travaillons ensemble — un message suffit 📩", kw:"contact dm collaboration professionnel message partenaire"},
+  // ── COACHING · reserver séance ──
+  {id:"c028", objet:"coaching", cible:"b2c", type:"reserver", texte:"Réserve ta séance de coaching 🎯", kw:"reserver seance coaching rendez-vous accompagnement"},
+  {id:"c029", objet:"coaching", cible:"b2c", type:"reserver", texte:"Bloque ton créneau — places limitées 🎯", kw:"reserver creneau place limite coaching seance"},
+  {id:"c030", objet:"coaching", cible:"b2c", type:"reserver", texte:"On répare ça ensemble — réserve 🎯", kw:"reserver coaching probleme diagnostic seance aide"},
+  // ── COACHING · atelier ──
+  {id:"c031", objet:"coaching", cible:"b2c", type:"atelier", texte:"Réserve ta place à l'atelier 🎯", kw:"atelier place reserver groupe apprentissage"},
+  {id:"c032", objet:"coaching", cible:"b2c", type:"atelier", texte:"Offre un atelier macarons en cadeau 🎁", kw:"atelier cadeau offrir experience occasion"},
+  // ── COACHING · dm / diagnostic ──
+  {id:"c033", objet:"coaching", cible:"b2c", type:"dm", texte:"Dis-moi ce qui coince en DM 📩", kw:"dm message probleme diagnostic coaching aide"},
+  {id:"c034", objet:"coaching", cible:"b2c", type:"dm", texte:"Un message, et on trouve ton déclic 🎯", kw:"dm message declic coaching diagnostic aide"},
+  // ── COACHING · decouvrir / méthode ──
+  {id:"c035", objet:"coaching", cible:"b2c", type:"decouvrir", texte:"Passe du tuto au sur-mesure 📩", kw:"decouvrir methode sur-mesure coaching personnalise"},
+  {id:"c036", objet:"coaching", cible:"b2c", type:"decouvrir", texte:"Comprends enfin le pourquoi de chaque geste 🎯", kw:"decouvrir comprendre methode technique coaching maitrise"},
+  // ── COACHING · B2B (reconversion) ──
+  {id:"c037", objet:"coaching", cible:"b2b", type:"dm", texte:"Structurons ton projet — parlons-en 📩", kw:"projet reconversion professionnel structurer contact message"},
+  {id:"c038", objet:"coaching", cible:"b2b", type:"reserver", texte:"Réserve un point pour te lancer 📩", kw:"reserver point projet reconversion lancer professionnel"},
+  // ── UNIVERSEL (both) ──
+  {id:"c039", objet:"both", cible:"both", type:"profil", texte:"Enregistre & partage si ça te parle 🤍", kw:"enregistrer partager engagement profil universel"},
+  {id:"c040", objet:"both", cible:"both", type:"lien", texte:"Tout est en bio 🔗", kw:"lien bio profil site commander universel"},
+  {id:"c041", objet:"both", cible:"both", type:"lien", texte:"Lien en bio pour commander ou réserver 🔗", kw:"lien bio commander reserver universel profil"},
+];
+
+// Libellés + emojis des types d'action (pour les filtres CTA).
+const CTA_TYPES = {
+  commander:  {label:"Commander", emoji:"🛒"},
+  reserver:   {label:"Réserver",  emoji:"🗓️"},
+  dm:         {label:"DM / message", emoji:"📩"},
+  devis:      {label:"Devis",     emoji:"🧾"},
+  atelier:    {label:"Atelier",   emoji:"🎓"},
+  marche:     {label:"Marché",    emoji:"📍"},
+  decouvrir:  {label:"Découvrir", emoji:"✨"},
+  profil:     {label:"Engagement",emoji:"🔖"},
+  lien:       {label:"Lien bio",  emoji:"🔗"},
+};
+
+// Filtrage des CTA — même logique de cascade que accroches/textes, + filtre type.
+function scFiltrerCTA(objet, cible, type, motsCles){
+  const kw = scNorm(motsCles||'').split(/\s+/).filter(Boolean);
+  return SC_CTA.filter(c=>{
+    if(!scMatchObjetCible(c, objet, cible)) return false;
+    if(type && c.type!==type) return false;
+    if(!kw.length) return true;
+    const hay = scNorm(c.texte+' '+c.kw+' '+c.type);
+    return kw.every(w=>hay.includes(w));
+  });
+}
+
+// Suggestion auto : à partir du texte sélectionné, on retrouve un CTA de la banque
+// proche de son CTA embarqué (par similarité de type/mots), sinon on renvoie le
+// CTA brut du texte comme suggestion "maison".
+function scSuggererCTA(){
+  const t = _compo.texteId ? SC_TEXTES.find(x=>x.id===_compo.texteId) : null;
+  if(!t || !t.cta) return null;
+  // Heuristique de type à partir du CTA du texte.
+  const raw = scNorm(t.cta);
+  let typeGuess = null;
+  if(/devis/.test(raw)) typeGuess='devis';
+  else if(/reserv|bloque|degustation|creneau|place/.test(raw)) typeGuess='reserver';
+  else if(/command|compose|ecrin|craque/.test(raw)) typeGuess='commander';
+  else if(/dm|message|ecris|contact/.test(raw)) typeGuess='dm';
+  else if(/atelier/.test(raw)) typeGuess='atelier';
+  else if(/marche|viens|passe me/.test(raw)) typeGuess='marche';
+  else if(/decouvre|goute|saisis|edition/.test(raw)) typeGuess='decouvrir';
+  else if(/bio|lien/.test(raw)) typeGuess='lien';
+  // On propose d'abord un CTA de la banque du même objet/cible/type.
+  const pool = scFiltrerCTA(_compo.objet, _compo.cible, typeGuess, '');
+  const banque = pool[0] || null;
+  return { typeGuess, ctaTexte: t.cta, banqueId: banque?banque.id:null };
+}
+
+/* ===== FIN ENRICHISSEMENT + MODULE CTA ===== */
+
 // ── Copie presse-papier autonome (robuste PWA iOS) ──
 // Utilise scCopier si le module Studio Com est présent, sinon fallback intégré.
 function compoCopier(btn){
@@ -24035,16 +24198,38 @@ function compoCopierFallback(txt, done){
 }
 
 // ── État de la composition en cours ──
-const _compo = { objet:'vente', cible:'b2c', kwAccroche:'', kwTexte:'', accrocheId:null, texteId:null };
+const _compo = { objet:'vente', cible:'b2c', kwAccroche:'', kwTexte:'', accrocheId:null, texteId:null, ctaId:null, ctaType:null, kwCta:'' };
 
 const AXE_EMOJI = { douleur:'😣', desir:'✨', situation:'📍', objection:'🛡️', transformation:'🔁', valeurs:'💛' };
 
-function compoSetObjet(o){ _compo.objet=o; _compo.accrocheId=null; _compo.texteId=null; renderCompositeur(); }
-function compoSetCible(c){ _compo.cible=c; _compo.accrocheId=null; _compo.texteId=null; renderCompositeur(); }
+function compoSetObjet(o){ _compo.objet=o; _compo.accrocheId=null; _compo.texteId=null; _compo.ctaId=null; renderCompositeur(); }
+function compoSetCible(c){ _compo.cible=c; _compo.accrocheId=null; _compo.texteId=null; _compo.ctaId=null; renderCompositeur(); }
 function compoSearchAccroche(v){ _compo.kwAccroche=v; compoRefreshAccroches(); }
 function compoSearchTexte(v){ _compo.kwTexte=v; compoRefreshTexte(); }
 function compoPickAccroche(id){ _compo.accrocheId=id; renderCompositeur(); }
-function compoPickTexte(id){ _compo.texteId=id; renderCompositeur(); }
+function compoPickTexte(id){
+  _compo.texteId=id;
+  // Suggestion auto de CTA à partir du texte choisi (si l'utilisateur n'a rien fixé).
+  if(!_compo.ctaId){
+    const sug = (typeof scSuggererCTA==='function') ? scSuggererCTA() : null;
+    if(sug && sug.banqueId) _compo.ctaId = sug.banqueId;
+  }
+  renderCompositeur();
+}
+// ── CTA (5e brique) ──
+function compoSetCtaType(t){ _compo.ctaType = (t===_compo.ctaType?null:(t||null)); compoRefreshCta(); }
+function compoSearchCta(v){ _compo.kwCta=v; compoRefreshCta(); }
+function compoPickCta(id){ _compo.ctaId = (id===_compo.ctaId?null:id); renderCompositeur(); }
+function compoCtaAuto(){
+  const sug = (typeof scSuggererCTA==='function') ? scSuggererCTA() : null;
+  if(sug && sug.banqueId){ _compo.ctaId=sug.banqueId; toast('✨ CTA suggéré appliqué'); }
+  else toast('Choisis d\'abord un texte pour la suggestion');
+  renderCompositeur();
+}
+function compoRefreshCta(){
+  const box=document.getElementById('compoCtaList'); if(!box) return;
+  box.innerHTML = compoCtaHtml();
+}
 
 // Rafraîchit uniquement la liste des accroches (barre 3) sans tout redessiner
 function compoRefreshAccroches(){
@@ -24076,14 +24261,33 @@ function compoTextesHtml(){
   }).join('') + (list.length>30?`<p class="note">… et ${list.length-30} autres. Affine avec un mot-clé.</p>`:'');
 }
 
+// Liste filtrée des CTA (5e brique). Marque le CTA choisi et signale la suggestion auto.
+function compoCtaHtml(){
+  const list = scFiltrerCTA(_compo.objet, _compo.cible, _compo.ctaType, _compo.kwCta);
+  const sug = (typeof scSuggererCTA==='function') ? scSuggererCTA() : null;
+  const sugId = sug ? sug.banqueId : null;
+  if(!list.length) return '<p class="note">Aucun CTA pour ce filtre. Élargis le type ou les mots-clés.</p>';
+  return list.slice(0,40).map(c=>{
+    const sel = _compo.ctaId===c.id;
+    const isSug = (sugId===c.id && !sel);
+    const ty = CTA_TYPES[c.type] || {emoji:'',label:c.type};
+    return `<div class="sum-box lnk" style="${sel?'background:#f6efe4;border-left:4px solid #52252F':(isSug?'border-left:4px solid #AA7C39':'')}" onclick="compoPickCta('${c.id}')">
+      <span>${ty.emoji} ${esc(c.texte)}</span>${sel?'<b>✓</b>':(isSug?'<b style="color:#AA7C39;font-size:.72rem">suggéré</b>':'')}</div>`;
+  }).join('') + (list.length>40?`<p class="note">… et ${list.length-40} autres. Affine avec un mot-clé.</p>`:'');
+}
+
 // Assemble accroche + texte choisis en un post final
 function compoResultat(){
   const a = _compo.accrocheId ? SC_ACCROCHES.find(x=>x.id===_compo.accrocheId) : null;
   const t = _compo.texteId ? SC_TEXTES.find(x=>x.id===_compo.texteId) : null;
-  if(!a && !t) return null;
+  const cChoisi = _compo.ctaId ? SC_CTA.find(x=>x.id===_compo.ctaId) : null;
+  if(!a && !t && !cChoisi) return null;
   const parts = [];
   if(a) parts.push(a.texte);
-  if(t){ parts.push(t.texte); if(t.cta) parts.push(t.cta); }
+  if(t) parts.push(t.texte);
+  // CTA final : le CTA explicitement choisi prime ; sinon celui embarqué dans le texte.
+  const ctaFinal = cChoisi ? cChoisi.texte : (t && t.cta ? t.cta : null);
+  if(ctaFinal) parts.push(ctaFinal);
   return parts.join('\n\n');
 }
 
@@ -24095,9 +24299,16 @@ async function renderCompositeur(){
   const resultat = compoResultat();
   const nbA = scFiltrerAccroches(_compo.objet, _compo.cible, _compo.kwAccroche).length;
   const nbT = scFiltrerTextes(_compo.objet, _compo.cible, _compo.kwTexte).length;
+  const nbCta = scFiltrerCTA(_compo.objet, _compo.cible, _compo.ctaType, _compo.kwCta).length;
+  // Segments de type d'action présents pour l'objet/cible courants.
+  const typesDispo = [...new Set(SC_CTA.filter(c=>scMatchObjetCible(c,_compo.objet,_compo.cible)).map(c=>c.type))];
+  const segCtaTypes = typesDispo.map(ty=>{
+    const meta = CTA_TYPES[ty]||{emoji:'',label:ty}; const on=_compo.ctaType===ty;
+    return `<button class="btn ${on?'gold':'ghost'} sm" style="margin:2px" onclick="compoSetCtaType('${ty}')">${meta.emoji} ${meta.label}</button>`;
+  }).join('');
 
   main.innerHTML =
-    `<div class="topbar"><div><h1>🧩 Composer un contenu</h1><p>Filtre en cascade : objet → cible → accroche → texte</p></div></div>
+    `<div class="topbar"><div><h1>🧩 Composer un contenu</h1><p>Filtre en cascade : objet → cible → accroche → texte → CTA</p></div></div>
 
      <div class="panel">
        <h2>1 · Objet</h2>
@@ -24118,6 +24329,18 @@ async function renderCompositeur(){
        <input id="compoKwTexte" placeholder="Mots-clés (ex : local, personnalisé, collerette…)" value="${esc(_compo.kwTexte)}"
               oninput="compoSearchTexte(this.value)" style="width:100%;margin-bottom:6px">
        <div id="compoTextesList" style="max-height:300px;overflow-y:auto">${compoTextesHtml()}</div>
+     </div>
+
+     <div class="panel">
+       <h2>5 · Appel à l'action <span class="tag">${nbCta}</span></h2>
+       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-bottom:6px">
+         ${segCtaTypes}
+         <button class="btn ghost sm" style="margin:2px" onclick="compoCtaAuto()">✨ Suggérer</button>
+       </div>
+       <input id="compoKwCta" placeholder="Mots-clés (ex : devis, réserver, DM, atelier…)" value="${esc(_compo.kwCta)}"
+              oninput="compoSearchCta(this.value)" style="width:100%;margin-bottom:6px">
+       <div id="compoCtaList" style="max-height:240px;overflow-y:auto">${compoCtaHtml()}</div>
+       <p class="note">Le CTA choisi remplace celui du texte. Sans choix, on garde le CTA d'origine du texte.</p>
      </div>
 
      <div class="panel" style="border:2px solid #52252F">
@@ -24219,7 +24442,10 @@ function cvDepuisCompositeur(){
     ? SC_TEXTES.find(x=>x.id===_compo.texteId) : null;
   _cv.source = 'compo';
   _cv.titre  = a ? a.texte : (t ? t.texte.split('.')[0] : '');
-  _cv.corps  = t ? t.texte : '';
+  // Corps = texte + CTA retenu (choisi explicitement, sinon celui du texte).
+  const cChoisi = (typeof _compo!=='undefined' && _compo.ctaId) ? SC_CTA.find(x=>x.id===_compo.ctaId) : null;
+  const ctaFinal = cChoisi ? cChoisi.texte : (t && t.cta ? t.cta : '');
+  _cv.corps  = t ? (t.texte + (ctaFinal ? '\n\n'+ctaFinal : '')) : (ctaFinal||'');
   goView('carrousel');
 }
 
