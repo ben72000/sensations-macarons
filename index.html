@@ -846,8 +846,14 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .field input,.field select,.field textarea{width:100%;padding:11px 13px;border:1.5px solid #e7dccb;
   border-radius:var(--r-sm);font-family:'Outfit',system-ui,sans-serif;font-size:16px;background:#fff;color:var(--ink);transition:.15s}
 .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--caramel);box-shadow:0 0 0 3px rgba(170,124,57,.14)}
-.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+/* [v1216] ANTI-ZOOM iOS : Safari zoome automatiquement (et décale la page) au focus de tout champ
+   de saisie dont la police fait moins de 16px. On force donc 16px sur TOUS les inputs texte/nombre,
+   selects et textareas — quelle que soit la classe. Le pinch-zoom manuel reste possible (on ne
+   touche pas au viewport), donc l'accessibilité est préservée. C'est le correctif standard de ce bug. */
+input[type="text"], input[type="number"], input[type="tel"], input[type="email"],
+input[type="search"], input[type="date"], input[type="time"], input[type="url"],
+input:not([type]), select, textarea{ font-size:16px !important; }
+
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px;flex-wrap:wrap}
 .bar-wrap{display:flex;align-items:flex-end;gap:14px;height:180px;padding-top:10px}
 .bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;justify-content:flex-end}

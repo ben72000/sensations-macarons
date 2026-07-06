@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1215';
+const APP_VERSION = 'v1216';
 const APP_MAJ = 'QR avis Google aux couleurs Sensations \u00b7 pastilles couleurs adoucies \u00b7 RIB et avis c\u00f4te \u00e0 c\u00f4te sur devis/factures';
 
 
@@ -15829,6 +15829,10 @@ function lineTotalBrut(ln){
 let cmdLines = [];      // lignes de produits de la commande en cours
 let _cmdEditingId = 0;  // id de la commande actuellement éditée dans le formulaire (0 = nouvelle)
 let _cmdPriceManual = false;  // true seulement si l'utilisateur a tapé un prix à la main (sinon prix auto)
+// [v1216] true UNIQUEMENT pendant l'ouverture/chargement d'une commande : dans ce cas drawLines() ne
+// doit PAS rebasculer le prix en auto (on respecte le prix manuel enregistré). Toute autre invocation
+// de drawLines() = le contenu des lignes a changé → on repasse en auto pour recalculer le total.
+let _cmdOpening = false;
 let _cmdRemiseGlobaleEur = 0; // [REMISE GLOBALE] référence en euros fixes de la commande en cours d'édition
 let cmdProductsCache = [];
 let cmdEmballagesCache = [];   // emballages disponibles (matières 'emballage') pour le choix par coffret
@@ -16116,8 +16120,10 @@ async function cmdForm(id, opts){
   }
   if(mt) mt.dataset.auto = _cmdPriceManual ? '0' : '1';
   drawPayments();
+  _cmdOpening = true;   // [v1216] on charge la commande : ni drawLines ni cmdRecalc ne doivent écraser le prix manuel
   drawLines();
   cmdRecalc();
+  _cmdOpening = false;
   // [v1206] Le bloc livraison reste REPLIÉ par défaut, même si la commande a déjà des infos de
   // livraison. L'utilisateur l'ouvre au clic s'il veut les voir/modifier ; les valeurs restent
   // actives (l'encart de résultat livraison s'affiche quand même). Demande : moins de bruit visuel.
@@ -17660,6 +17666,18 @@ function cmdGlobalRemiseFromEuro(v){
   cmdRecalc();
 }
 function cmdRecalc(){
+  // [v1216 FIX temps réel] cmdRecalc() est LE point de convergence : il est appelé après chaque
+  // modification (via drawLines ou directement par les setXxx montant/remise/quantité). Hors ouverture
+  // de commande (_cmdOpening) et hors saisie directe dans le champ prix (f_mt actif), toute invocation
+  // signifie « le contenu a changé » → on rebascule le prix en AUTO pour que le total suive en direct.
+  // Un prix tapé à la main reste respecté tant que l'utilisateur est dans f_mt ; il ne se re-fige plus
+  // définitivement après coup, ce qui était la cause du total qui ne bougeait plus.
+  if(!_cmdOpening){
+    const _mt0=document.getElementById('f_mt');
+    if(_mt0 && document.activeElement!==_mt0 && _mt0.dataset.auto!=='1'){
+      _mt0.dataset.auto='1'; _cmdPriceManual=false;
+    }
+  }
   const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln))); // après remises de ligne
   const persoNb = cmdPersoCount();
   const persoSup = money2(persoNb*PERSO_PRIX_UNIT);
