@@ -5,9 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1260';
-// [DIAG] Build de diagnostic du saut de page : mouchard actif. À retirer une fois la cause trouvée.
-try{ window._DIAG_SAUT = true; }catch(_){}
+const APP_VERSION = 'v1261';
 const APP_MAJ = 'Nouveau garde-fou en meringue mutualis\u00e9e : quand une fourn\u00e9e est partag\u00e9e entre plusieurs parfums, l\u2019app emp\u00eache d\u00e9sormais d\u2019arr\u00eater par m\u00e9garde le chrono d\u2019un seul parfum en d\u00e9but de production (phases meringue, macaronnage, manipulation des coques). Un message de confirmation s\u2019affiche, rappelant que les autres parfums de la m\u00eame meringue sont encore en cours. Une fois la cuisson lanc\u00e9e (les parfums ne partagent plus rien), ou si un seul parfum reste actif, l\u2019arr\u00eat redevient direct. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
 
 
@@ -4676,70 +4674,26 @@ document.addEventListener('scroll', (e)=>{
   }
 }, {passive:true, capture:true});
 
-// [DIAG v1260] Mouchard temporaire du « saut de page ». Activé par window._DIAG_SAUT=true.
-// À chaque ouverture de vue, échantillonne pendant ~1,6 s : hauteur du document, hauteur du
-// viewport (visualViewport inclus — crucial en PWA plein écran iOS), position de défilement et
-// position du bandeau. Affiche tout changement dans un panneau fixe, pour voir CE qui saute et QUAND.
-let _diagTimer=null, _diagT0=0, _diagLast=null, _diagLog=[];
-function _diagSnap(){
-  const de=document.documentElement, b=document.body;
-  const vv=window.visualViewport;
-  const top=document.querySelector('.topbar');
-  const tr = top ? Math.round(top.getBoundingClientRect().top) : null;
-  return {
-    t: Math.round(performance.now()-_diagT0),
-    docH: Math.max(de.scrollHeight, b.scrollHeight),
-    winH: Math.round(window.innerHeight),
-    vvH: vv? Math.round(vv.height) : null,
-    vvOff: vv? Math.round(vv.offsetTop) : null,
-    scrollY: Math.round(window.scrollY||de.scrollTop||0),
-    topbarTop: tr
-  };
-}
-function _diagSautStart(v){
-  _diagT0=performance.now(); _diagLast=null; _diagLog=[];
-  if(_diagTimer) clearInterval(_diagTimer);
-  const sample=()=>{
-    const s=_diagSnap();
-    if(!_diagLast ||
-       s.docH!==_diagLast.docH || s.winH!==_diagLast.winH || s.vvH!==_diagLast.vvH ||
-       s.vvOff!==_diagLast.vvOff || s.scrollY!==_diagLast.scrollY || s.topbarTop!==_diagLast.topbarTop){
-      _diagLog.push(s); _diagLast=s;
-    }
-  };
-  sample();
-  let n=0;
-  _diagTimer=setInterval(()=>{ sample(); if(++n>32){ clearInterval(_diagTimer); _diagRender(v); } }, 50); // 32×50ms ≈ 1,6s
-  // rendu partiel immédiat après le 1er lot de frames
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{ sample(); _diagRender(v); }));
-}
-function _diagRender(v){
-  let host=document.getElementById('diagSautPanel');
-  if(!host){
-    host=document.createElement('div'); host.id='diagSautPanel';
-    host.style.cssText='position:fixed;left:6px;right:6px;bottom:6px;z-index:99999;background:#1c1216;color:#ffe;'
-      +'font:11px/1.35 ui-monospace,Menlo,monospace;padding:8px 10px;border:1px solid #caa23b;border-radius:10px;'
-      +'max-height:42vh;overflow:auto;box-shadow:0 6px 24px rgba(0,0,0,.5)';
-    document.body.appendChild(host);
-  }
-  const rows=_diagLog.map(s=>
-    `t+${String(s.t).padStart(4)}ms  docH=${s.docH}  win=${s.winH}  vv=${s.vvH}/${s.vvOff}  scrollY=${s.scrollY}  bandeau=${s.topbarTop}`
-  ).join('<br>');
-  // Résumé : amplitude des variations
-  const docs=_diagLog.map(s=>s.docH), ys=_diagLog.map(s=>s.scrollY), bts=_diagLog.map(s=>s.topbarTop).filter(x=>x!=null);
-  const amp=(a)=>a.length?Math.max(...a)-Math.min(...a):0;
-  host.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <b style="color:#caa23b">DIAG saut · vue « ${v} » · ${_diagLog.length} changement(s)</b>
-      <button onclick="document.getElementById('diagSautPanel').remove()" style="background:#caa23b;color:#1c1216;border:none;border-radius:6px;padding:2px 8px;font-weight:700">Fermer</button>
-    </div>
-    <div style="color:#9fd;margin-bottom:4px">Amplitude : docH ${amp(docs)}px · scrollY ${amp(ys)}px · bandeau ${amp(bts)}px</div>
-    ${rows}`;
-}
+// [DIAG] retiré en v1261 — cause identifiée : basculement de hauteur de #main entre l'ancienne et la
+// nouvelle vue. Corrigé ci-dessous en figeant la hauteur pendant la navigation.
 
 function render(){
   const fn = VIEWS[view] || renderDash;
   const main=document.getElementById('main');
-  if(window._DIAG_SAUT){ try{ _diagSautStart(view); }catch(_){}}
+  // [v1261] ANTI-SAUT — cause réelle (confirmée par instrumentation) : au changement de vue, l'ANCIENNE
+  // hauteur de #main persiste pendant que la nouvelle vue se calcule (18–135 ms), puis la page bascule
+  // brutalement vers la hauteur finale — d'où le « saut d'un bloc », d'autant plus grand que l'écart de
+  // hauteur entre les deux vues est important (Planning = pire cas). Parade : on ANCRE la hauteur de #main
+  // à un plein écran le temps du rendu, puis on la relâche une fois le contenu posé. La page part donc
+  // d'une hauteur stable et grandit une seule fois, sans va-et-vient.
+  try{
+    if(main){
+      const vh = Math.round((window.visualViewport && window.visualViewport.height) || window.innerHeight || 0);
+      if(vh){ main.style.minHeight = vh + 'px'; }
+      window.scrollTo(0,0);
+    }
+  }catch(_){}
+  const _releaseHeight = ()=>{ try{ if(main){ main.style.minHeight=''; } }catch(_){} };
   // [v1258] Anti-saut de navigation : on remet le défilement en haut AVANT de rendre la nouvelle vue.
   // Sans ça, les vues lourdes (Planning surtout) rendent d'abord un court placeholder « ⏳ calcul… »
   // — la page raccourcit, le navigateur remonte le scroll — puis le contenu final la rallonge, d'où
@@ -4756,15 +4710,20 @@ function render(){
     main.classList.remove('view-in','view-in-fwd','view-in-back');
     void main.offsetWidth;
     main.classList.add('view-in', _navDir==='back' ? 'view-in-back' : 'view-in-fwd');
-  } };
+  }
+    // [v1261] Relâche la hauteur ancrée UNE FOIS le contenu peint (double rAF pour laisser le layout
+    // se stabiliser). La page est déjà à sa hauteur finale : aucun basculement visible.
+    requestAnimationFrame(()=>requestAnimationFrame(_releaseHeight));
+  };
   try {
     const r = fn();
     if (r && typeof r.then === 'function') {
-      r.then(playIn).catch(err => renderViewError(view, err));
+      r.then(playIn).catch(err => { _releaseHeight(); renderViewError(view, err); });
     } else {
       playIn();
     }
   } catch (err) {
+    _releaseHeight();
     renderViewError(view, err);
   }
   // la mascotte reflète l'état courant : on la réévalue à chaque navigation

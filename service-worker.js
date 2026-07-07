@@ -1,5 +1,5 @@
-// [v1260] BUILD DIAGNOSTIC — mouchard du saut de page actif (panneau en bas d ecran). Temporaire.
-const CACHE = 'sm-iphone-v296';
+// [v1261] bump CACHE — VRAI fix du saut : hauteur de #main ancree pendant la navigation (fin du basculement ancienne->nouvelle hauteur). Mouchard retire.
+const CACHE = 'sm-iphone-v297';
 const ASSETS = [
   './',
   './index.html',
