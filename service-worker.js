@@ -1,5 +1,5 @@
-// [v1254] bump CACHE — Renommage des menus : Production/Productions deviennent Planning / Fabrication (fin de l ambiguite).
-const CACHE = 'sm-iphone-v290';
+// [v1256] bump CACHE — Communication : correction de 23 textes marketing (fautes de conjugaison suite a un tu->vous rate).
+const CACHE = 'sm-iphone-v292';
 const ASSETS = [
   './',
   './index.html',
