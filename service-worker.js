@@ -1,5 +1,5 @@
-// [v1261] bump CACHE — VRAI fix du saut : hauteur de #main ancree pendant la navigation (fin du basculement ancienne->nouvelle hauteur). Mouchard retire.
-const CACHE = 'sm-iphone-v297';
+// [v1262] BUILD DIAGNOSTIC 2 — identifie l element qui se redimensionne apres affichage (panneau vert en bas). Temporaire.
+const CACHE = 'sm-iphone-v298';
 const ASSETS = [
   './',
   './index.html',
