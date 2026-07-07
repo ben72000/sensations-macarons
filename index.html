@@ -10,16 +10,19 @@
 <meta name="apple-mobile-web-app-title" content="Sensations">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preload" href="Outfit-Regular.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="Outfit-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="BellotaText-Bold.ttf" as="font" type="font/ttf" crossorigin>
 <style>
 /* Polices hébergées en local (plus de dépendance Google Fonts, plus de reflow au chargement) */
 @font-face{font-family:'Outfit';font-style:normal;font-weight:300;font-display:swap;src:url('Outfit-Light.ttf') format('truetype')}
-@font-face{font-family:'Outfit';font-style:normal;font-weight:400;font-display:swap;src:url('Outfit-Regular.ttf') format('truetype')}
-@font-face{font-family:'Outfit';font-style:normal;font-weight:500;font-display:swap;src:url('Outfit-Medium.ttf') format('truetype')}
-@font-face{font-family:'Outfit';font-style:normal;font-weight:600;font-display:swap;src:url('Outfit-SemiBold.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:400;font-display:optional;src:url('Outfit-Regular.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:500;font-display:optional;src:url('Outfit-Medium.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:600;font-display:optional;src:url('Outfit-SemiBold.ttf') format('truetype')}
 @font-face{font-family:'Outfit';font-style:normal;font-weight:700;font-display:swap;src:url('Outfit-Bold.ttf') format('truetype')}
 /* Bellota : titres et accents (remplace l'ancienne Fraunces) */
-@font-face{font-family:'Bellota';font-style:normal;font-weight:400;font-display:swap;src:url('BellotaText-Regular.ttf') format('truetype')}
-@font-face{font-family:'Bellota';font-style:normal;font-weight:700;font-display:swap;src:url('BellotaText-Bold.ttf') format('truetype')}
+@font-face{font-family:'Bellota';font-style:normal;font-weight:400;font-display:optional;src:url('BellotaText-Regular.ttf') format('truetype')}
+@font-face{font-family:'Bellota';font-style:normal;font-weight:700;font-display:optional;src:url('BellotaText-Bold.ttf') format('truetype')}
 
 /* ===================== R&D « Imaginer » ===================== */
 .rd-wrap{padding:4px 2px 30px;max-width:520px;margin:0 auto}

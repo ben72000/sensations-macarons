@@ -1,5 +1,5 @@
-// [v1258] bump CACHE — Vrai fix du saut de navigation : remise du defilement en haut avant rendu + hauteur maintenue pendant le calcul du Planning.
-const CACHE = 'sm-iphone-v294';
+// [v1259] bump CACHE — Fix saut a l ouverture des vues : reflow au swap de police elimine (preload + font-display:optional sur les poids du bandeau). MAJ index.html.
+const CACHE = 'sm-iphone-v295';
 const ASSETS = [
   './',
   './index.html',

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1258';
+const APP_VERSION = 'v1259';
 const APP_MAJ = 'Nouveau garde-fou en meringue mutualis\u00e9e : quand une fourn\u00e9e est partag\u00e9e entre plusieurs parfums, l\u2019app emp\u00eache d\u00e9sormais d\u2019arr\u00eater par m\u00e9garde le chrono d\u2019un seul parfum en d\u00e9but de production (phases meringue, macaronnage, manipulation des coques). Un message de confirmation s\u2019affiche, rappelant que les autres parfums de la m\u00eame meringue sont encore en cours. Une fois la cuisson lanc\u00e9e (les parfums ne partagent plus rien), ou si un seul parfum reste actif, l\u2019arr\u00eat redevient direct. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
 
 
