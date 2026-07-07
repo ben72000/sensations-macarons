@@ -1,5 +1,6 @@
+// [v1271] Assemblage : le bouton « Assembler » ne démarre plus de session/chrono d'atelier (l'assemblage physique est fait en amont, temps déjà compté). Il matérialise seulement l'action (décrément composants + création lot).
 // [v1270] Section Impot sur le revenu dans la Comptabilite : abattement micro (71%/50%) + taux marginal (30% par defaut) -> impot estime et net reel apres URSSAF+impot. Taux reglable dans Parametres.
-const CACHE = 'sm-iphone-v306';
+const CACHE = 'sm-iphone-v307';
 const ASSETS = [
   './',
   './index.html',

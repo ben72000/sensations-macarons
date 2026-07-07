@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1270';
+const APP_VERSION = 'v1271';
 const APP_MAJ = 'Nouvelle section \u00ab Imp\u00f4t sur le revenu \u00bb dans la Comptabilit\u00e9. Elle estime, chaque mois, ton imp\u00f4t r\u00e9el en appliquant l\u2019abattement micro-entreprise (71 % sur la vente, 50 % sur les prestations de service) puis ton taux marginal d\u2019imposition, pour afficher ton b\u00e9n\u00e9fice imposable, l\u2019imp\u00f4t estim\u00e9 et surtout le net r\u00e9el qu\u2019il te reste apr\u00e8s URSSAF et imp\u00f4t. Ton taux marginal est pr\u00e9-r\u00e9gl\u00e9 \u00e0 30 % (modifiable dans les Param\u00e8tres). Estimation indicative, \u00e0 affiner avec ta d\u00e9claration ou ton comptable.';
 
 
@@ -11424,14 +11424,14 @@ async function prodAssembleSave(thisId){
     toast(res.deg
       ? `🥄 Dégustation assemblée ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm} (non vendable)${_compTxt}`
       : `Assemblé ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm}${res.dlc?` · DLC ${fmtDate(res.dlc)}`:''}${_compTxt}`);
-    // [ASSEMBLAGE D'UN BATCH] Crée une tâche d'ATELIER « Assemblage — [parfum] » liée à la recette,
-    // chronométrée comme les autres. Couvre le cas « assemblage d'un batch produit un autre jour » :
-    // le temps d'assemblage est ainsi attribué à la bonne recette (répartition fine). Une seule
-    // tâche par assemblage ; tu l'arrêteras depuis l'écran Atelier quand tu auras fini.
-    if(!res.deg && res.recipeId!=null){
-      try{ prodTaskStartForBatch({recipeId:res.recipeId, composant:'assemble', lotBase:res.lotAsm||'', parfumNom:res.parfumNom||''}); }
-      catch(e){ console.error('atelier assemblage', e); }
-    }
+    // [ASSEMBLAGE D'UN BATCH — CHRONO DÉSACTIVÉ v1271]
+    // Auparavant, le bouton « Assembler » démarrait automatiquement une tâche d'atelier
+    // chronométrée (prodTaskStartForBatch) → une session s'ouvrait et le temps se mettait
+    // à courir. Or l'assemblage est réalisé PHYSIQUEMENT en amont, et ce temps est déjà
+    // compté ailleurs. « Assembler » ne fait donc plus que MATÉRIALISER une action déjà
+    // faite (décrément des composants + création du lot, déjà exécutés ci-dessus). On ne
+    // démarre plus aucun chrono ici. Pour rétablir l'ancien comportement, il suffirait de
+    // rappeler prodTaskStartForBatch({recipeId:res.recipeId, composant:'assemble', ...}).
     // [ÉTIQUETTE IMMÉDIATE] Pour un vrai assemblage (pas dégustation), proposer d'imprimer l'étiquette
     // avec la quantité assemblée, et demander le dispatch en boîtes si la quantité dépasse une boîte.
     if(!res.deg && res.asmId!=null){
