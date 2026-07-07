@@ -1,5 +1,5 @@
-// [v1256] bump CACHE — Communication : correction de 23 textes marketing (fautes de conjugaison suite a un tu->vous rate).
-const CACHE = 'sm-iphone-v292';
+// [v1257] bump CACHE — Fix tremblement/saut de page en navigation : animations d entree neutralisees (scale/translate retires). MAJ index.html incluse.
+const CACHE = 'sm-iphone-v293';
 const ASSETS = [
   './',
   './index.html',

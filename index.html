@@ -586,20 +586,21 @@ h1,h2,h3,.serif{font-family:'Bellota','Georgia','Times New Roman',serif;letter-s
 .side-foot .foot-help{display:block;margin-bottom:8px}
 .side-foot .foot-btn{width:100%;margin-top:6px}
 .main{margin-left:236px;flex:1;min-width:0;max-width:calc(100% - 236px);padding:32px 40px 60px;overflow-x:hidden}
-@keyframes viewIn{ from{opacity:0} to{opacity:1} }
-.main.view-in{ animation:viewIn .22s ease }
-/* Effet de PROFONDEUR (cascade) : la rubrique qui s'ouvre se pose par-dessus,
-   celle qui revient remonte du dessous. Illusion d'empilement, une seule vue active. */
+@keyframes viewIn{ from{opacity:1} to{opacity:1} }
+.main.view-in{ animation:none }
+/* [v1257] Animations de navigation désactivées (transition instantanée) : le scale/translate
+   faisait « trembler » la hauteur des longues pages (Commandes, Planning, Fabrication) pendant
+   le rendu async. On conserve les classes (posées par le JS) mais sans effet géométrique. */
 @keyframes viewInFwd{
-  from{ opacity:0; transform:translateY(14px) scale(.97); box-shadow:0 -8px 24px rgba(80,50,30,.10) }
-  to{ opacity:1; transform:translateY(0) scale(1); box-shadow:none }
+  from{ opacity:1; transform:none }
+  to{ opacity:1; transform:none }
 }
 @keyframes viewInBack{
-  from{ opacity:0; transform:scale(1.03) }
-  to{ opacity:1; transform:scale(1) }
+  from{ opacity:1; transform:none }
+  to{ opacity:1; transform:none }
 }
-.main.view-in-fwd{ animation:viewInFwd .26s cubic-bezier(.32,.72,.32,1) }
-.main.view-in-back{ animation:viewInBack .24s ease }
+.main.view-in-fwd{ animation:none }
+.main.view-in-back{ animation:none }
 @media (prefers-reduced-motion: reduce){ .main.view-in, .main.view-in-fwd, .main.view-in-back{ animation:none } }
 .topbar{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px;flex-wrap:wrap;gap:12px;
   padding-bottom:18px;border-bottom:1px solid var(--hair)}
