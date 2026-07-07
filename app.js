@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1267';
-const APP_MAJ = 'Nouveau garde-fou en meringue mutualis\u00e9e : quand une fourn\u00e9e est partag\u00e9e entre plusieurs parfums, l\u2019app emp\u00eache d\u00e9sormais d\u2019arr\u00eater par m\u00e9garde le chrono d\u2019un seul parfum en d\u00e9but de production (phases meringue, macaronnage, manipulation des coques). Un message de confirmation s\u2019affiche, rappelant que les autres parfums de la m\u00eame meringue sont encore en cours. Une fois la cuisson lanc\u00e9e (les parfums ne partagent plus rien), ou si un seul parfum reste actif, l\u2019arr\u00eat redevient direct. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
+const APP_VERSION = 'v1270';
+const APP_MAJ = 'Nouvelle section \u00ab Imp\u00f4t sur le revenu \u00bb dans la Comptabilit\u00e9. Elle estime, chaque mois, ton imp\u00f4t r\u00e9el en appliquant l\u2019abattement micro-entreprise (71 % sur la vente, 50 % sur les prestations de service) puis ton taux marginal d\u2019imposition, pour afficher ton b\u00e9n\u00e9fice imposable, l\u2019imp\u00f4t estim\u00e9 et surtout le net r\u00e9el qu\u2019il te reste apr\u00e8s URSSAF et imp\u00f4t. Ton taux marginal est pr\u00e9-r\u00e9gl\u00e9 \u00e0 30 % (modifiable dans les Param\u00e8tres). Estimation indicative, \u00e0 affiner avec ta d\u00e9claration ou ton comptable.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -400,6 +400,14 @@ db.version(26).stores({
 db.version(27).stores({
   blocs: '++id, type, createdAt'
 });
+// v28 — Date d'événement distincte de la date de livraison.
+// Le champ `dateEvenement` existant reste la DATE DE LIVRAISON (ancre de toute la production :
+// rétroplanning, prévisionnel, mutualisation — inchangé). On ajoute un champ documentaire
+// `dateEvtReel` = date réelle de consommation de la prestation (mariage, réception…),
+// affiché uniquement sur devis/facture et seulement s'il diffère de la livraison.
+// Champ NON indexé (jamais requêté) → aucune modification d'index nécessaire ; ce bump
+// ne sert que de marqueur de schéma propre. Migration purement additive, aucune perte.
+db.version(28).stores({});
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
 // Sur iPhone, si l'app installée ET Safari ont la base ouverte en même temps, une montée de
@@ -2671,7 +2679,7 @@ const SETTINGS_DEFAULTS = {
   socialGoods: 12.3,     // % charges sociales sur vente de marchandise (produit fini)
   socialService: 25.6,   // % charges sociales sur prestation de service
   // [v1067] Impôt sur le revenu — micro-entreprise au barème progressif (taux marginal saisi).
-  irTrancheMarginale: 0,     // % de la tranche d'imposition du foyer (0, 11, 30, 41, 45). 0 = non imposable.
+  irTrancheMarginale: 30,    // % de la tranche d'imposition du foyer (0, 11, 30, 41, 45). 0 = non imposable.
   irAbattementGoods: 71,     // % d'abattement forfaitaire sur la vente de marchandise (BIC)
   irAbattementService: 50,   // % d'abattement forfaitaire sur la prestation de service (BIC services / BNC : 34%)
   irAbattementMin: 305,      // abattement minimum légal (€) appliqué sur l'année
@@ -2761,6 +2769,21 @@ function migratePackaging202511(){  try{
     }
     localStorage.setItem('sm_pkg_migr_20251128_v2','done');
   }catch(e){ console.error('migratePackaging', e); }
+}
+// Migration unique : renseigne le taux marginal d'imposition à 30 % lorsqu'il n'a jamais été
+// réglé (settings inexistant, ou irTrancheMarginale absente/0). Objectif : afficher d'emblée une
+// estimation d'impôt réaliste dans la Comptabilité. Ne s'exécute qu'UNE fois : si tu changes
+// ensuite ce taux (y compris à 0) dans Paramètres, ton choix est définitif et n'est plus écrasé.
+function migrateIRTranche2026(){ try{
+    if(localStorage.getItem('sm_ir_tranche_init_2026')==='done') return;
+    const raw=JSON.parse(localStorage.getItem('sm_settings')||'{}');
+    // « Jamais réglé » = clé absente OU valeur 0 (défaut historique « non imposable »).
+    if(raw.irTrancheMarginale==null || +raw.irTrancheMarginale===0){
+      raw.irTrancheMarginale = 30;
+      localStorage.setItem('sm_settings', JSON.stringify(raw));
+    }
+    localStorage.setItem('sm_ir_tranche_init_2026','done');
+  }catch(e){ console.error('migrateIRTranche2026', e); }
 }
 // Applique les tarifs d'emballage du 28/11/2025, sous contrôle de l'utilisateur (bouton Paramètres).
 // Écrit directement dans les réglages (fiable, indépendant de la migration automatique).
@@ -7840,7 +7863,7 @@ async function docConvertToOrder(id){
   const auj=today();            // [v1217] évite le shadowing « const today=today() » qui plantait la conversion
   const o={
     clientId:d.clientId, date:d.date||auj,
-    heureLivraison:d.heureLivraison||'', lieuLivraison:d.lieuLivraison||'', dateEvenement:d.dateEvenement||'',
+    heureLivraison:d.heureLivraison||'', lieuLivraison:d.lieuLivraison||'', dateEvenement:d.dateEvenement||'', dateEvtReel:d.dateEvtReel||'',
     // Livraison (transport) + sacs : repris du devis pour ne pas les ressaisir.
     distanceKm:d.distanceKm||0, prixCarburant:d.prixCarburant||0,
     tempsLivraisonMin:d.tempsLivraisonMin||0, consoVehicule:(d.consoVehicule!=null?d.consoVehicule:null),
@@ -7919,7 +7942,7 @@ async function cmdToDevisConfirm(id){
     const doc={
       type:'devis', statut:'en_attente', numero,
       clientId:o.clientId||0, date:o.date||today,
-      heureLivraison:o.heureLivraison||'', lieuLivraison:o.lieuLivraison||'', dateEvenement:o.dateEvenement||'',
+      heureLivraison:o.heureLivraison||'', lieuLivraison:o.lieuLivraison||'', dateEvenement:o.dateEvenement||'', dateEvtReel:o.dateEvtReel||'',
       distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
       tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
       fraisLivraison:o.fraisLivraison||0, sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
@@ -16340,7 +16363,7 @@ async function cmdForm(id, opts){
   if(_cmdDevisMode && _cmdDevisId){
     const dv = await db.documents.get(_cmdDevisId);
     o = dv ? {clientId:dv.clientId, date:dv.date, lignes:dv.lignes||[], remiseGlobale:dv.remiseGlobale||0, remiseGlobaleEur:(dv.remiseGlobaleEur!=null?+dv.remiseGlobaleEur:null),
-              heureLivraison:dv.heureLivraison||'', lieuLivraison:dv.lieuLivraison||'', dateEvenement:dv.dateEvenement||'', notes:dv.notes||'',
+              heureLivraison:dv.heureLivraison||'', lieuLivraison:dv.lieuLivraison||'', dateEvenement:dv.dateEvenement||'', dateEvtReel:dv.dateEvtReel||'', notes:dv.notes||'',
               distanceKm:dv.distanceKm||0, prixCarburant:dv.prixCarburant||0,
               tempsLivraisonMin:dv.tempsLivraisonMin||0, consoVehicule:(dv.consoVehicule!=null?dv.consoVehicule:null),
               fraisLivraison:dv.fraisLivraison||0, sacMatId:dv.sacMatId||0, sacNb:dv.sacNb||0,
@@ -16433,7 +16456,8 @@ async function cmdForm(id, opts){
        <span class="collapse-arrow" id="livArrow">▸</span>
      </button>
      <div class="collapse-body" id="livBody" style="display:none">
-       <div class="field"><label>Date de l'événement <span style="color:#9a8a82;font-weight:400">— si différente de la date du devis</span></label><input type="date" id="f_dateEvenement" value="${esc(o.dateEvenement||'')}"></div>
+       <div class="field"><label>Date de livraison <span style="color:#9a8a82;font-weight:400">— la date qui pilote la fabrication (à noter toujours)</span></label><input type="date" id="f_dateEvenement" value="${esc(o.dateEvenement||'')}"></div>
+       <div class="field"><label>Date de l'événement <span style="color:#9a8a82;font-weight:400">— facultatif · jour de la prestation (mariage, réception…), si différent de la livraison</span></label><input type="date" id="f_dateEvtReel" value="${esc(o.dateEvtReel||'')}"></div>
        <div class="field"><label>Heure de livraison <span style="color:#9a8a82;font-weight:400">— aussi accessible en haut du formulaire</span></label><input type="time" id="f_heureBas" value="${esc(o.heureLivraison||'')}" oninput="cmdSyncHeure(this.value,true);cmdFeasibilityRecalc()"></div>
        <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— tapez pour rechercher (clients, lieux habituels)</span></label>
          <div class="ac-wrap">
@@ -18468,7 +18492,7 @@ async function saveCmd(id){
   }
   const o={
     clientId:+val('f_cl')||0, date:val('f_date'),
-    heureLivraison: val('f_heure')||'', lieuLivraison: val('f_lieu')||'', dateEvenement: val('f_dateEvenement')||'',
+    heureLivraison: val('f_heure')||'', lieuLivraison: val('f_lieu')||'', dateEvenement: val('f_dateEvenement')||'', dateEvtReel: val('f_dateEvtReel')||'',
     distanceKm: +val('f_distKm')||0, prixCarburant: +val('f_carbu')||0, tempsLivraisonMin: +val('f_tempsLiv')||0,
     fraisLivraison: (function(){ const mt=document.getElementById('f_mt'); return mt&&mt.dataset.fraisLivraison? +mt.dataset.fraisLivraison : 0; })(),
     consoVehicule: val('f_conso')!==''?(+val('f_conso')||0):null,
@@ -18496,14 +18520,41 @@ async function saveCmd(id){
   // === MODE DEVIS : on enregistre dans le registre 'documents', pas dans les commandes ===
   if(_cmdDevisMode){
     const numero = _cmdDevisId ? (await db.documents.get(_cmdDevisId)||{}).numero : await nextDocNumero('devis');
-    const today=new Date(); const exp=new Date(today); exp.setDate(exp.getDate()+30);
+    // [v1269] Validité du devis pilotée par la deadline réelle de la prestation (date de LIVRAISON = o.dateEvenement).
+    // Règle : si la livraison est à moins d'UN MOIS calendaire de l'émission, le devis n'est valable
+    // que jusqu'à 10 jours AVANT la livraison (au lieu des 30 jours habituels). Au-delà d'un mois pile,
+    // on garde la validité normale de 30 jours. Option A : la date de validité ne descend jamais avant
+    // la date d'émission — un devis créé à moins de 10 j de la livraison reste valable au moins le jour même.
+    const _emis = new Date();
+    let exp = new Date(_emis); exp.setDate(exp.getDate()+30);   // défaut : 30 jours
+    const _livStr = (o.dateEvenement||'').slice(0,10);
+    if(_livStr){
+      // Comparaison en JOURS PLEINS (on ignore l'heure) : livraison et seuil ramenés à minuit local.
+      const _p = _livStr.split('-');
+      const _livJour = new Date(+_p[0], +_p[1]-1, +_p[2]);                 // livraison à 00:00 local
+      const _emisJour = new Date(_emis.getFullYear(), _emis.getMonth(), _emis.getDate());
+      // Seuil « moins d'un mois » : même quantième un mois plus tard, à minuit.
+      // À 1 mois PILE, _livJour === _seuil → NON strictement inférieur → validité normale (30 j) conservée.
+      const _seuil = new Date(_emisJour.getFullYear(), _emisJour.getMonth()+1, _emisJour.getDate());
+      if(_livJour < _seuil){
+        // Validité = livraison − 10 jours, jamais avant l'émission (plafond bas = jour d'émission). [option A]
+        const _dixAvant = new Date(_livJour); _dixAvant.setDate(_dixAvant.getDate()-10);
+        exp = (_dixAvant < _emisJour) ? _emisJour : _dixAvant;
+      }
+    }
+    // Jours de validité effectifs (émission → expiration), pour que le texte du devis reste exact.
+    const _msJour = 24*3600*1000;
+    const _emisJour2 = new Date(_emis.getFullYear(), _emis.getMonth(), _emis.getDate());
+    const _expJour = new Date(exp.getFullYear(), exp.getMonth(), exp.getDate());
+    const _validiteJours = Math.max(0, Math.round((_expJour - _emisJour2)/_msJour));
+    const today=_emis;
     const docObj = {
       type:'devis', statut:'en_attente', numero,
       clientId:o.clientId, date:o.date||ymdLocal(today), // [A12]
       montant:o.montant,
       lignes:o.lignes,                      // lignes détaillées (coffrets, pyramides, parfums…)
       remiseGlobale:o.remiseGlobale, remiseGlobaleEur:o.remiseGlobaleEur,
-      heureLivraison:o.heureLivraison, lieuLivraison:o.lieuLivraison, dateEvenement:o.dateEvenement||'',
+      heureLivraison:o.heureLivraison, lieuLivraison:o.lieuLivraison, dateEvenement:o.dateEvenement||'', dateEvtReel:o.dateEvtReel||'',
       // Livraison (transport) : conservés pour les retrouver à la réouverture et au calcul de coût.
       distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
       tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
@@ -18514,7 +18565,7 @@ async function saveCmd(id){
       perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false),
       notes:o.notes,
       acompte: 0,                           // acompte reçu (déclenche la conversion une fois > 0)
-      validiteJours:30, expiration:ymdLocal(exp), // [A12]
+      validiteJours:_validiteJours, expiration:ymdLocal(exp), // [v1269] validité pilotée par la deadline de livraison
       orderId:null, createdAt:Date.now()
     };
     if(_cmdDevisId){ await db.documents.update(_cmdDevisId, docObj); }
@@ -23925,6 +23976,15 @@ async function renderCompta(){
      <p class="note">Estimation sur les <b>encaissements du mois</b> (base de déclaration micro-entreprise). Les taux sont réglables dans ⚙ Paramètres. À vérifier auprès de l'URSSAF / votre comptable.</p>
    </div>
 
+   <div class="panel" style="border:1.5px solid #d9c3cc;background:#fbf5f7">
+     <h2>🏛️ Impôt sur le revenu</h2>
+     <div class="banner" style="background:#f4f0ff;border-color:#e0d6f0;margin-bottom:10px">📅 <div>Estimation pour <b>${esc(monthLabel(_comptaMonth))}</b>, selon ton taux marginal d'imposition et l'abattement micro-entreprise (marchandise ${getSettings().irAbattementGoods}% · service ${getSettings().irAbattementService}%).</div></div>
+     <div id="comptaIRBody">
+       <div class="sum-box"><span>Chargement de l'estimation…</span><b>—</b></div>
+     </div>
+     <p class="note" id="comptaIRNote">L'impôt réel dépend de l'ensemble des revenus de ton foyer et du barème annuel. Cette estimation applique ton taux marginal (${(+getSettings().irTrancheMarginale||0)} %) à ton bénéfice imposable après abattement. À affiner avec ta déclaration ou ton comptable.</p>
+   </div>
+
    ${A.serie.length?`<div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none"':''}><h2>CA encaissé, charges & résultat par mois</h2>${chart}</div>`:''}
 
    <div class="panel"><h2>Détail mensuel (facturé vs encaissé)</h2>
@@ -23961,7 +24021,25 @@ async function renderCompta(){
       const v=document.getElementById('cnpVal'), sub=document.getElementById('cnpSub');
       if(v) v.textContent=euro(RN.netPoche);
       if(sub) sub.textContent=`${RN.tauxNet}% du CA · après URSSAF, impôt${RN.chargesReelles>0?' et charges':''} — touche pour le détail`;
-    }catch(e){ const v=document.getElementById('cnpVal'); if(v) v.textContent='—'; }
+      // [v1270] Section « Impôt sur le revenu » de la compta : détail de la base imposable après
+      // abattement (marchandise/service) et de l'impôt estimé au taux marginal du foyer.
+      const irBody=document.getElementById('comptaIRBody');
+      if(irBody){
+        if(!RN.tranche || RN.tranche<=0){
+          irBody.innerHTML =
+            `<div class="sum-box" style="background:#fbf5f7"><span>CA imposable après abattement</span><b>${euro(RN.baseImposable)}</b></div>`+
+            `<div class="banner" style="background:#fff6ec;border-color:#ece0cc;margin-top:8px">⚙️ <div>Aucun taux d'imposition n'est réglé (0 %). Renseigne ta tranche marginale (ex. 30 %) dans <b>⚙ Paramètres</b> pour estimer ton impôt sur le revenu.</div></div>`;
+        } else {
+          const pctIR = RN.caTotal>0 ? Math.round(RN.impotRevenu/RN.caTotal*100) : 0;
+          irBody.innerHTML =
+            `<div class="sum-box"><span>🛍️ Base marchandise (après ${RN.abG}% d'abattement)</span><b>${euro(RN.baseGoods)}</b></div>`+
+            `<div class="sum-box"><span>🧑‍🍳 Base service (après ${RN.abS}% d'abattement)</span><b>${euro(RN.baseService)}</b></div>`+
+            `<div class="sum-box" style="border-top:2px solid #e0d5c5;margin-top:4px;padding-top:8px"><span><b>Bénéfice imposable</b></span><b style="color:var(--bordeaux)">${euro(RN.baseImposable)}</b></div>`+
+            `<div class="sum-box" style="background:#fbf5f7"><span><b>Impôt estimé · taux marginal ${RN.tranche}%</b></span><b style="color:#7a3b52;font-size:1.05rem">${euro(RN.impotRevenu)} <span style="color:#9a8a82;font-weight:400;font-size:.82rem">(${pctIR}% du CA)</span></b></div>`+
+            `<div class="sum-box" style="background:#f4faf5;border-top:2px solid #cfe4d4;margin-top:6px;padding-top:8px"><span><b>💰 Net réel dans ta poche</b> <span style="color:#9a8a82;font-weight:400">— après URSSAF + impôt${RN.chargesReelles>0?' + charges':''}</span></span><b style="color:#3f7d52;font-size:1.1rem">${euro(RN.netPoche)}</b></div>`;
+        }
+      }
+    }catch(e){ const v=document.getElementById('cnpVal'); if(v) v.textContent='—'; const irB=document.getElementById('comptaIRBody'); if(irB) irB.innerHTML='<div class="sum-box"><span>Estimation indisponible</span><b>—</b></div>'; }
   })();
  } catch(err){ renderViewError('compta', err); }
 }
@@ -44572,6 +44650,17 @@ function factRibAvisCol(e){
 // Génère le HTML d'un devis (registre documents, type:'devis') avec le même rendu
 // élégant que la facture, puis l'ouvre dans la couche d'impression avec un bouton
 // « Envoyer par mail » (mailto pré-rempli vers le client).
+// [v1268] Badge « date de l'événement » pour devis/facture.
+// `dateEvenement` = date de LIVRAISON (pilote la fabrication). `dateEvtReel` = jour réel de la
+// prestation (mariage, réception…). On n'affiche l'événement que s'il est renseigné ET différent
+// de la livraison — cas typique d'une livraison la veille. Les deux dates sont comparées sur
+// leur partie AAAA-MM-JJ pour ignorer une éventuelle composante horaire.
+function cmdEventBadge(o){
+  const liv = (o.dateEvenement||'').slice(0,10);
+  const evt = (o.dateEvtReel||'').slice(0,10);
+  if(!evt || evt===liv) return '';
+  return `<span class="cmd-event">📅 Événement : ${fmtDate(evt)}</span>`;
+}
 async function genererDevisDoc(docId){
   const d = await db.documents.get(docId);
   if(!d || d.type!=='devis'){ toast('Devis introuvable'); return; }
@@ -44598,7 +44687,7 @@ async function genererDevisDoc(docId){
   const section = `
       <div class="cmd-section">
         <div class="cmd-head">
-          <span class="cmd-ref">Devis ${esc(d.numero||'')}${d.dateEvenement?`<span class="cmd-event">📅 Événement : ${fmtDate(d.dateEvenement)}</span>`:''}</span>
+          <span class="cmd-ref">Devis ${esc(d.numero||'')}${cmdEventBadge(d)}</span>
           <span class="cmd-date">${fmtDate(d.date)||''}</span>
         </div>
         <div class="cmd-body">
@@ -44707,8 +44796,10 @@ async function genererDevisDoc(docId){
     : ['Client de passage'];
   const docLignes = lignes.map(ln=>({ desc:factLineDesc(ln), montant:lineTotalBrut(ln) }));
   if(persoMt>0) docLignes.push({ desc:'Personnalisation', montant:persoMt });
+  const _evtBadgeTxt = (function(){ const liv=(d.dateEvenement||'').slice(0,10), ev=(d.dateEvtReel||'').slice(0,10); return (ev && ev!==liv) ? fmtDate(ev) : ''; })();
   const docData = {
     titre:'DEVIS', ref:`${d.numero||''}`, date:fmtDate(d.date)||'',
+    ...(_evtBadgeTxt?{evenement:_evtBadgeTxt}:{}),
     validite: d.expiration?fmtDate(d.expiration):(d.validiteJours?`${d.validiteJours} j après émission`:''),
     emetteur:{ nom:e.nom||'Sensations Macarons', lignes:emetteurLignes },
     client: clientLignes,
@@ -45055,7 +45146,7 @@ async function genererFactureMultiple(ids){
     return `
       <div class="cmd-section">
         <div class="cmd-head">
-          <span class="cmd-ref">Commande ${esc(orderNumber(o))}${o.dateEvenement?`<span class="cmd-event">📅 Événement : ${fmtDate(o.dateEvenement)}</span>`:''}</span>
+          <span class="cmd-ref">Commande ${esc(orderNumber(o))}${cmdEventBadge(o)}</span>
           <span class="cmd-date">${fmtDate(o.date)||''}</span>
         </div>
         <div class="cmd-body">
@@ -59186,6 +59277,7 @@ function startClock(){
   // On enveloppe toute la préparation ; quoi qu'il arrive, render() est appelé.
   try{
     migratePackaging202511();   // inscrit les tarifs emballage 28/11/2025 (une seule fois)
+    migrateIRTranche2026();     // règle le taux marginal d'imposition à 30 % s'il n'a jamais été fixé (une seule fois)
     try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
     try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }

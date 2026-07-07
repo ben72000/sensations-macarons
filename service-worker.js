@@ -1,5 +1,5 @@
-// [v1267] AUDIT GENERAL — 6 boutons morts repares, derive 1ct base URSSAF, DLC minuit-2h (UTC), 6 CTA fautifs, saut de page (3 reservations mesurees). Details dans le rapport.
-const CACHE = 'sm-iphone-v303';
+// [v1270] Section Impot sur le revenu dans la Comptabilite : abattement micro (71%/50%) + taux marginal (30% par defaut) -> impot estime et net reel apres URSSAF+impot. Taux reglable dans Parametres.
+const CACHE = 'sm-iphone-v306';
 const ASSETS = [
   './',
   './index.html',
