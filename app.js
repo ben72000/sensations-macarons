@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1271';
-const APP_MAJ = 'Nouvelle section \u00ab Imp\u00f4t sur le revenu \u00bb dans la Comptabilit\u00e9. Elle estime, chaque mois, ton imp\u00f4t r\u00e9el en appliquant l\u2019abattement micro-entreprise (71 % sur la vente, 50 % sur les prestations de service) puis ton taux marginal d\u2019imposition, pour afficher ton b\u00e9n\u00e9fice imposable, l\u2019imp\u00f4t estim\u00e9 et surtout le net r\u00e9el qu\u2019il te reste apr\u00e8s URSSAF et imp\u00f4t. Ton taux marginal est pr\u00e9-r\u00e9gl\u00e9 \u00e0 30 % (modifiable dans les Param\u00e8tres). Estimation indicative, \u00e0 affiner avec ta d\u00e9claration ou ton comptable.';
+const APP_VERSION = 'v1274';
+const APP_MAJ = 'Nouvel espace \u00ab CGV \u00bb : les Conditions G\u00e9n\u00e9rales de Vente et de Prestation (version 3, conformes \u00e0 l\u2019audit juridique) sont int\u00e9gr\u00e9es \u00e0 l\u2019app. Le texte des 16 articles + l\u2019annexe (formulaire de r\u00e9tractation) est fig\u00e9 ; tu renseignes uniquement tes champs (identit\u00e9, SIRET, adresse, contact, m\u00e9diateur). La diffusion \u2014 page affichable ou export PDF \u2014 reste bloqu\u00e9e tant qu\u2019un champ obligatoire manque.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -2744,7 +2744,9 @@ function getSettings(){
       prodCustomTasks: Array.isArray(s.prodCustomTasks) ? s.prodCustomTasks : [],
       // Cible de ventilation marché par parfum : [{parfum, pct}]. Vide par défaut.
       marketMix: Array.isArray(s.marketMix) ? s.marketMix : [],
-      exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT
+      exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT,
+      // [v1274] Champs légaux des CGV (identité, contact, médiateur). Objet libre, conservé tel quel.
+      legal: (s.legal && typeof s.legal==='object') ? s.legal : {}
     };
   }catch(e){ return JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)); }
 }
@@ -4048,6 +4050,356 @@ let view='accueil';
 // Sens de la dernière navigation, pour l'animation de profondeur (cascade) :
 // 'forward' = on ouvre une rubrique (glisse par-dessus) ; 'back' = retour (redescend/révèle).
 let _navDir='forward';
+/* ============================================================
+   MODULE CGV — Conditions Générales de Vente et de Prestation (Version 3)
+   [v1274] Texte légal FIGÉ (16 articles + annexe formulaire de rétractation).
+   Seuls les champs variables {{...}} sont renseignés par l'utilisateur, via un
+   formulaire dont les valeurs sont persistées dans getSettings().legal (localStorage,
+   sauvegardé par BACKUP_LS_KEYS puisque stocké sous sm_settings).
+   Diffusion : (1) Page CGV affichable, (2) Export PDF via openPrintView (impression
+   → « Enregistrer en PDF » iOS). Aucune table Dexie ajoutée. 100% additif.
+   ============================================================ */
+
+// Valeurs par défaut des champs légaux. Le médiateur MCP est pré-rempli (convention
+// signée d'après l'utilisateur), la case d'adhésion est donc pré-cochée.
+const LEGAL_DEFAULTS = {
+  nomPrenom: '',
+  siret: '',
+  adresse: '',
+  email: '',
+  telephone: '',
+  mediateurNom: 'MCP Médiation — Médiation de la Consommation & Patrimoine',
+  mediateurAdresse: '12 square Desnouettes, 75015 Paris',
+  mediateurUrl: 'www.mcpmediation.org',
+  conventionMcpSignee: true
+};
+
+// Lecture normalisée des champs légaux (repli sur défauts). Ne modifie pas getSettings ;
+// on lit le brut pour ne pas dépendre de la whitelist si un champ est absent.
+function getLegal(){
+  let raw={};
+  try{ raw=(JSON.parse(localStorage.getItem('sm_settings')||'{}').legal)||{}; }catch(e){ raw={}; }
+  const o=Object.assign({}, LEGAL_DEFAULTS, raw);
+  o.conventionMcpSignee = (raw.conventionMcpSignee!=null) ? !!raw.conventionMcpSignee : LEGAL_DEFAULTS.conventionMcpSignee;
+  return o;
+}
+function saveLegal(patch){
+  let raw={};
+  try{ raw=JSON.parse(localStorage.getItem('sm_settings')||'{}'); }catch(e){ raw={}; }
+  raw.legal=Object.assign({}, getLegal(), patch);
+  localStorage.setItem('sm_settings', JSON.stringify(raw));
+}
+
+// Champs OBLIGATOIRES pour la diffusion (le médiateur est déjà pré-rempli mais reste requis).
+const LEGAL_REQUIRED = [
+  {key:'nomPrenom',       label:'Nom et prénom (exploitant)'},
+  {key:'siret',           label:'Numéro SIRET'},
+  {key:'adresse',         label:'Adresse complète du siège'},
+  {key:'email',           label:'Email de contact'},
+  {key:'telephone',       label:'Téléphone de contact'},
+  {key:'mediateurNom',    label:'Nom du médiateur'},
+  {key:'mediateurAdresse',label:'Adresse du médiateur'},
+  {key:'mediateurUrl',    label:'Site du médiateur'}
+];
+function legalMissing(){
+  const L=getLegal();
+  return LEGAL_REQUIRED.filter(f=>!((L[f.key]||'').toString().trim())).map(f=>f.label);
+}
+
+// ---- TEXTE FIGÉ des CGV V3 (les {{...}} sont remplacés par les champs saisis) ----
+// Chaque article est un objet {t:titre, h:HTML}. Le HTML n'utilise que du texte + <b>/<i>/<br>.
+function cgvArticles(){
+  return [
+    {t:'Préambule', h:
+      `Les présentes Conditions Générales de Vente et de Prestation (ci-après les « CGV ») régissent l’ensemble des relations contractuelles entre :<br><br>`+
+      `Madame/Monsieur <b>{{nomPrenom}}</b>, exerçant en micro-entreprise sous l’enseigne « Sensations Macarons », dont le siège est situé <b>{{adresse}}</b>, immatriculée sous le numéro SIRET <b>{{siret}}</b>, non assujettie à la TVA en application de l’article 293 B du Code général des impôts (ci-après le « Prestataire » ou « le Vendeur »),<br><br>`+
+      `et toute personne physique ou morale passant commande (ci-après le « Client »).<br><br>`+
+      `Contact : <b>{{email}}</b> — <b>{{telephone}}</b>.`},
+
+    {t:'Article 1 — Objet et champ d’application', h:
+      `Les présentes CGV ont pour objet de définir les conditions dans lesquelles le Prestataire fournit au Client ses produits et services, à savoir : la vente de macarons et produits de pâtisserie, sur les marchés, en ligne ou sur commande ; les prestations événementielles (mariages, réceptions, séminaires, événements professionnels), incluant fourniture de macarons, présentoirs et accessoires ; les ateliers et prestations de coaching à la fabrication de macarons, en présentiel ou à distance.<br><br>`+
+      `Toute commande implique l’adhésion sans réserve du Client aux présentes CGV, qui prévalent sur tout autre document, sauf dérogation formelle et écrite acceptée par le Prestataire. Le fait que le Prestataire ne se prévale pas à un moment donné de l’une des présentes clauses ne saurait valoir renonciation à s’en prévaloir ultérieurement.<br><br>`+
+      `Le présent contrat est rédigé en langue française ; seule cette version fait foi.<br><br>`+
+      `<i>Clients particuliers (B2C) et professionnels (B2B).</i> Certaines clauses distinguent le Client consommateur (particulier agissant à des fins non professionnelles, « B2C ») du Client professionnel (« B2B »). Les mentions spécifiques sont signalées explicitement. À défaut de précision, la clause s’applique à tous les Clients.`},
+
+    {t:'Article 2 — Devis, commande et formation du contrat', h:
+      `<b>2.1 Devis.</b> Toute prestation événementielle ou sur mesure fait l’objet d’un devis gratuit et personnalisé, établi sur la base des informations communiquées par le Client. Le devis précise la nature des produits et prestations, les quantités, le prix, ainsi que la date de livraison. Le devis mentionne sa date limite de validité : lorsque la date de livraison est éloignée de plus d’un mois de la date d’émission, le devis est valable trente (30) jours ; lorsque la livraison intervient à moins d’un mois de l’émission, la validité est ramenée à dix (10) jours avant la date d’exécution.<br><br>`+
+      `<b>2.2 Formation du contrat.</b> La commande est ferme et définitive à réception, par le Prestataire, du devis daté, signé et revêtu de la mention « bon pour accord », accompagné du versement de l’acompte prévu à l’article 4. À défaut, le Prestataire n’est tenu à aucune obligation de réservation de la date ni des marchandises.<br><br>`+
+      `<b>2.3 Modification de commande.</b> Toute demande de modification (quantités, parfums, présentoirs) doit être communiquée par écrit. Les modifications ne sont garanties que si elles parviennent au Prestataire au plus tard quinze (15) jours avant la date d’exécution. Passé ce délai, le Prestataire s’efforcera d’y répondre sans obligation, et toute modification pourra donner lieu à un réajustement tarifaire.`},
+
+    {t:'Article 3 — Prix', h:
+      `Les prix sont indiqués en euros, toutes taxes comprises. Conformément à l’article 293 B du Code général des impôts, la TVA n’est pas applicable ; les prix s’entendent net de taxe.<br><br>`+
+      `Les prix des macarons et prestations sont ceux en vigueur au jour de la commande, tels que figurant sur le devis accepté. Les éventuels frais de livraison sont indiqués séparément sur le devis. Toute prestation non prévue au devis fait l’objet d’un devis complémentaire.`},
+
+    {t:'Article 4 — Modalités de paiement', h:
+      `<b>4.1 Moyens de paiement acceptés.</b> Les paiements sont acceptés par espèces (dans la limite des plafonds légaux en vigueur, sous réserve des exceptions légales applicables), virement bancaire, carte bancaire et PayPal.<br><br>`+
+      `<b>4.2 Prestations événementielles et commandes sur mesure.</b> Un acompte de soixante-quinze pour cent (75 %) du montant total est exigible à la commande, pour valider la réservation de la date. Le solde est payable au plus tard le jour de la livraison ou du retrait.<br><br>`+
+      `<b>4.3 Ventes directes et ateliers.</b> Les ventes sur les marchés et en boutique éphémère sont payables comptant. Les ateliers et coachings sont réglés selon les modalités précisées lors de la réservation, un acompte pouvant être demandé.<br><br>`+
+      `<b>4.4 Retard de paiement.</b><br>`+
+      `<i>Client professionnel (B2B).</i> En cas de retard de paiement, et après mise en demeure adressée par lettre recommandée avec avis de réception restée infructueuse pendant huit (8) jours, des pénalités égales à trois (3) fois le taux d’intérêt légal sont exigibles de plein droit sur les sommes facturées, ainsi qu’une indemnité forfaitaire de recouvrement de 40 € (articles L.441-10 et D.441-5 du Code de commerce). Ces pénalités courent à compter de l’échéance figurant sur la facture.<br>`+
+      `<i>Client particulier (B2C).</i> En cas de défaut de paiement du solde à l’échéance, et après mise en demeure restée sans effet, le Prestataire pourra suspendre la prestation. L’acompte versé reste acquis au Prestataire dans les conditions de l’article 5.`},
+
+    {t:'Article 5 — Annulation et absence', h:
+      `<b>5.1 Annulation par le Client — prestations événementielles.</b> En cas d’annulation par le Client, quel qu’en soit le motif et la date, l’acompte de 75 % versé reste intégralement acquis au Prestataire, à titre de dédommagement des frais d’organisation, de réservation et d’approvisionnement engagés. Aucune restitution ne pourra être exigée. Si l’annulation intervient après paiement intégral, le Prestataire conserve l’acompte de 75 % et restitue le surplus éventuel, déduction faite des frais déjà engagés et des denrées déjà produites ou commandées.<br>`+
+      `Conformément à l’article 1231-5 du Code civil, le juge peut, même d’office, modérer ou augmenter le montant ainsi convenu s’il est manifestement excessif ou dérisoire par rapport au préjudice effectivement subi.<br><br>`+
+      `<b>5.2 Annulation ou absence — ateliers et coaching.</b> En cas d’empêchement, le Client peut demander le report gratuit de son atelier, à une seule reprise, à condition d’en informer le Prestataire par écrit au moins sept (7) jours avant la date prévue. Passé ce délai, ou en cas d’absence non signalée, la prestation est due et l’acompte éventuellement versé reste acquis au Prestataire.<br><br>`+
+      `<b>5.3 Annulation par le Prestataire.</b> En cas d’impossibilité d’exécuter la prestation du fait du Prestataire (hors force majeure), le Client se verra restituer l’intégralité des sommes versées, sans que cette restitution puisse donner lieu à des dommages et intérêts.`},
+
+    {t:'Article 6 — Livraison, retrait et réception', h:
+      `<b>6.1 Modalités.</b> La remise des commandes s’effectue, au choix convenu au devis, soit par livraison assurée par le Prestataire, soit par retrait par le Client au lieu indiqué. Les frais de livraison, lorsqu’ils s’appliquent, sont chiffrés au devis en fonction de la distance.<br><br>`+
+      `<b>6.2 Délais.</b> Les dates de livraison sont convenues au devis. Le Prestataire s’engage à respecter la date d’exécution ; il pourra, en accord avec le Client, prévoir une livraison la veille de l’événement pour des raisons logistiques. Un léger décalage horaire ne saurait engager la responsabilité du Prestataire ni ouvrir droit à annulation ou indemnité.<br><br>`+
+      `<b>6.3 Réception.</b> Il appartient au Client de vérifier l’état et la conformité des produits au moment de la livraison ou du retrait. Toute réserve doit être formulée immédiatement. La responsabilité du Prestataire ne saurait être engagée pour toute détérioration survenant après la remise, notamment en cas de mauvaise conservation.`},
+
+    {t:'Article 7 — Mise à disposition de matériel', h:
+      `Lorsque la prestation inclut la mise à disposition de matériel (pyramides, présentoirs, supports et accessoires décoratifs), celui-ci demeure la propriété exclusive du Prestataire et est confié au Client à titre de prêt pour la durée de l’événement. Le Client est responsable du matériel pendant toute la durée du prêt, y compris du fait de ses invités ou prestataires.<br><br>`+
+      `<b>7.1 Client professionnel (B2B) — chèque de caution.</b> Pour le Client professionnel, un chèque de caution, d’un montant correspondant à la valeur de remplacement du matériel confié, est remis au moment de la mise à disposition. Ce chèque n’est pas encaissé et est restitué au Client après retour du matériel en bon état.<br><br>`+
+      `<b>7.2 Client particulier (B2C) — sans caution ni dépôt de garantie.</b> Pour le Client consommateur, aucun chèque de caution, dépôt de garantie ou somme d’argent n’est exigé au titre de la mise à disposition du matériel. Le Client reconnaît, par la signature du devis, avoir reçu le matériel en bon état et s’engage sur l’honneur à en assurer la garde et à le restituer dans les conditions du présent article. En cas de casse, détérioration, perte ou non-restitution, le matériel est facturé au prix de remplacement dans les conditions de l’article 7.4.<br><br>`+
+      `<b>7.3 Restitution.</b> Le matériel doit être restitué dans un délai de quarante-huit (48) heures suivant l’événement, dans l’état où il a été confié.<br><br>`+
+      `<b>7.4 Casse, perte ou non-restitution.</b> En cas de casse, détérioration, perte ou non-restitution dans le délai imparti, le matériel est facturé au Client à son prix de remplacement. Pour le Client professionnel, le chèque de caution pourra être encaissé à ce titre, à hauteur des sommes dues ; tout complément reste exigible, tout surplus est restitué. Pour le Client consommateur, le prix de remplacement fait l’objet d’une facturation distincte, payable dans les conditions de droit commun.`},
+
+    {t:'Article 8 — Conservation, denrées et allergènes', h:
+      `<b>Conservation des produits.</b> Les macarons sont des denrées fraîches, à consommer dans un délai de six (6) jours après la livraison. Ils doivent être conservés au frais et ne doivent pas être congelés. Sortir les macarons du réfrigérateur quelques minutes avant dégustation.<br><br>`+
+      `<b>Information sur les allergènes.</b> Les produits sont fabriqués de manière artisanale. Conformément au règlement (UE) n° 1169/2011, la liste exhaustive des allergènes présents dans nos produits est systématiquement mise à disposition et communiquée au Client : par un affichage clair et lisible sur les points de vente et marchés, sur la fiche de chaque produit pour les ventes en ligne, et par une mention portée sur le devis pour les commandes et prestations. Nos produits pouvant contenir ou être en contact avec des fruits à coque, du lait, des œufs, du gluten et d’autres allergènes, le Client est invité à en prendre connaissance, à informer le Prestataire de toute allergie ou intolérance, et à en avertir les convives.`},
+
+    {t:'Article 9 — Propriété intellectuelle, savoir-faire et droit à l’image', h:
+      `L’ensemble des créations, recettes, formulations, supports de cours, fiches techniques, méthodes et tours de main transmis par le Prestataire, notamment dans le cadre des ateliers et coachings, demeure la propriété intellectuelle exclusive du Prestataire. Ils sont protégés, pour la durée légale de protection, au titre du savoir-faire et, le cas échéant, du droit d’auteur.<br><br>`+
+      `<b>Usage strictement personnel.</b> Les supports et contenus sont fournis pour un usage strictement personnel. Sauf autorisation écrite et préalable, il est interdit de reproduire, copier, diffuser, publier, filmer ou enregistrer les ateliers, ainsi que d’exploiter, commercialiser ou transmettre à des tiers les recettes, techniques et supports transmis.<br><br>`+
+      `<i>Client professionnel (B2B).</i> Le Client professionnel s’interdit en particulier d’utiliser le savoir-faire, les recettes ou les méthodes du Prestataire à des fins de formation, de production ou de commercialisation, pour son propre compte ou celui d’un tiers. Toute reproduction ou exploitation non autorisée engage sa responsabilité et pourra donner lieu à des poursuites.<br><br>`+
+      `La marque « Sensations Macarons », son logo et ses éléments visuels sont la propriété du Prestataire et ne peuvent être utilisés sans son accord écrit.<br><br>`+
+      `<b>Droit à l’image.</b> Le Client est informé que des photographies ou vidéos peuvent être prises lors des ateliers et prestations événementielles. Sauf opposition écrite adressée au Prestataire, le Client autorise leur utilisation à des fins de communication (site internet, réseaux sociaux, supports promotionnels). Cette autorisation peut être retirée à tout moment, pour l’avenir, par simple demande écrite. S’agissant de tiers (invités, convives), il appartient au Client d’en recueillir l’accord ou d’en informer le Prestataire.`},
+
+    {t:'Article 10 — Droit de rétractation', h:
+      `<b>Denrées alimentaires et produits sur mesure.</b> Conformément à l’article L.221-28 du Code de la consommation, le droit de rétractation ne s’applique pas aux biens périssables (denrées alimentaires) ni aux biens confectionnés sur mesure ou personnalisés. Les commandes de macarons et les prestations événementielles ne peuvent donc faire l’objet d’une rétractation.<br><br>`+
+      `<b>Ateliers à distance — Client particulier (B2C).</b> Pour les ateliers ou coachings souscrits à distance par un Client consommateur, celui-ci dispose d’un délai de quatorze (14) jours pour exercer son droit de rétractation, sans motiver sa décision, sauf s’il a expressément demandé que la prestation débute avant la fin de ce délai et qu’elle a été pleinement exécutée. La demande s’effectue par écrit auprès du Prestataire ou au moyen du formulaire type figurant en annexe.`},
+
+    {t:'Article 11 — Garanties légales', h:
+      `<i>Client particulier (B2C).</i> Indépendamment des présentes conditions, le Client consommateur bénéficie des garanties légales prévues par le Code de la consommation et le Code civil : la garantie légale de conformité (articles L.217-3 et suivants du Code de la consommation), qui permet d’obtenir la mise en conformité d’un bien non conforme au contrat ; la garantie des vices cachés (articles 1641 et suivants du Code civil), qui permet, en cas de défaut caché rendant le bien impropre à sa destination, d’obtenir la résolution de la vente ou une réduction du prix.<br><br>`+
+      `Compte tenu de la nature périssable et immédiatement consommable des denrées, toute réclamation relative à un défaut de conformité apparent doit être formulée au moment de la livraison ou du retrait (article 6.3). Le Client est invité à conserver une preuve d’achat. Ces garanties s’appliquent sans préjudice du droit de rétractation lorsqu’il est applicable (article 10).`},
+
+    {t:'Article 12 — Responsabilité, assurance et force majeure', h:
+      `<b>12.1 Vente de produits — obligation de conformité.</b> Au titre de la vente de ses produits, le Prestataire est tenu d’une obligation de résultat quant à la conformité des biens livrés au contrat, dans les conditions des garanties légales visées à l’article 11. Sa responsabilité ne saurait toutefois être engagée pour les dommages résultant d’une mauvaise conservation des produits par le Client, d’une consommation au-delà du délai indiqué à l’article 8, ou d’un usage non conforme.<br><br>`+
+      `<b>12.2 Prestations de services — obligation de moyens.</b> Au titre des prestations événementielles, ateliers et coachings, le Prestataire est tenu d’une obligation de moyens : il s’engage à mettre en œuvre tout le soin et la diligence nécessaires à la bonne exécution de la prestation, sans garantir un résultat déterminé indépendant de sa maîtrise. Sa responsabilité ne saurait être engagée en cas de mauvaise utilisation ou d’usage non conforme des supports, matériels ou conseils fournis.<br><br>`+
+      `<b>12.3 Assurance.</b> Le Prestataire déclare être titulaire d’une assurance responsabilité civile professionnelle couvrant les conséquences pécuniaires de la responsabilité qu’il peut encourir dans le cadre de son activité. Justificatif peut être communiqué au Client sur simple demande.<br><br>`+
+      `<b>12.4 Force majeure.</b> Le Prestataire ne pourra être tenu responsable de l’inexécution ou du retard de ses obligations en cas de force majeure, telle que définie à l’article 1218 du Code civil et par la jurisprudence (intempéries majeures, accident, maladie, panne d’équipement, rupture d’approvisionnement indépendante de sa volonté). Il en informera le Client dans les meilleurs délais et proposera, dans la mesure du possible, un report ou une solution alternative. À défaut, les sommes versées correspondant à la prestation non exécutée seront restituées.`},
+
+    {t:'Article 13 — Protection des données personnelles (RGPD)', h:
+      `Les données personnelles collectées (nom, coordonnées, informations de commande) sont nécessaires au traitement des commandes et à la relation client. Elles sont traitées par le Prestataire, responsable de traitement, conformément au Règlement (UE) 2016/679 (RGPD) et à la loi « Informatique et Libertés ».<br><br>`+
+      `Ces données sont conservées pour la durée nécessaire à la gestion de la relation commerciale et aux obligations légales (notamment comptables), puis archivées ou supprimées. Elles ne sont ni cédées ni vendues à des tiers.<br><br>`+
+      `Le Client dispose d’un droit d’accès, de rectification, d’effacement, de limitation, d’opposition et de portabilité de ses données, qu’il peut exercer en écrivant à <b>{{email}}</b>. Il peut également introduire une réclamation auprès de la CNIL (www.cnil.fr).<br><br>`+
+      `<b>Démarchage téléphonique (Bloctel).</b> Le numéro de téléphone communiqué est utilisé uniquement pour la gestion des commandes et la relation client. Conformément à l’article L.223-2 du Code de la consommation, le Client consommateur est informé de son droit de s’inscrire gratuitement sur la liste d’opposition au démarchage téléphonique « Bloctel » (www.bloctel.gouv.fr).`},
+
+    {t:'Article 14 — Dispositions spécifiques à la vente en ligne', h:
+      `Les présentes dispositions s’appliquent en complément des articles précédents aux commandes passées à distance via le site internet du Prestataire. En cas de contradiction, elles prévalent pour ce seul canal. Le contrat est conclu en langue française ; seule cette version fait foi.<br><br>`+
+      `<b>14.1 Processus de commande.</b> La commande en ligne suppose que le Client sélectionne ses produits, les ajoute à son panier, puis vérifie le détail de sa commande (produits, quantités, prix unitaires et total) avant de la valider. Les frais de livraison éventuels sont affichés avant la validation finale et figurent dans le récapitulatif présenté au Client. Le Client peut corriger les éventuelles erreurs avant de confirmer (premier clic) ; la commande n’est définitive qu’après un second clic de validation, valant confirmation expresse. Conformément à l’article L.221-14 du Code de la consommation, le bouton de validation finale porte la mention « commande avec obligation de paiement » (ou une formule équivalente sans ambiguïté).<br><br>`+
+      `<b>14.2 Acceptation dématérialisée des CGV.</b> Pour les commandes en ligne, l’acceptation des présentes CGV s’effectue par voie électronique, par le fait de cocher une case dédiée avant la validation. Cette acceptation dématérialisée remplace, pour ce canal, la signature manuscrite du devis prévue à l’article 2.2.<br><br>`+
+      `<b>14.3 Confirmation et archivage.</b> Le Prestataire confirme la commande par un accusé de réception électronique récapitulant son contenu. Le contrat est archivé conformément à la réglementation et peut être communiqué au Client sur demande.<br><br>`+
+      `<b>14.4 Rétractation en ligne.</b> Le droit de rétractation de l’article 10 s’applique dans les mêmes conditions : exclu pour les denrées alimentaires périssables et les produits sur mesure, ouvert quatorze (14) jours pour les ateliers à distance souscrits par un consommateur. Pour l’exercer, le Client notifie sa décision par une déclaration écrite dénuée d’ambiguïté, notamment au moyen du formulaire type figurant en annexe. En cas de rétractation valablement exercée, le Prestataire rembourse l’intégralité des sommes versées au plus tard dans les quatorze (14) jours suivant la date à laquelle il est informé de la décision, par le même moyen de paiement, sauf accord contraire. Les ateliers à distance étant des prestations immatérielles, aucun bien n’a à être retourné : aucuns frais de retour ne sont dus par le Client.<br><br>`+
+      `<b>14.5 Cookies.</b> Le site du Prestataire est susceptible d’utiliser des cookies ou traceurs. Les finalités, le consentement et les modalités de gestion des cookies sont décrits dans la politique de cookies accessible sur le site, conformément aux recommandations de la CNIL.`},
+
+    {t:'Article 15 — Réclamation, médiation et litiges', h:
+      `Toute réclamation doit être adressée au Prestataire par écrit à <b>{{email}}</b> ou <b>{{adresse}}</b>, dans les meilleurs délais suivant la prestation. Le Prestataire s’engage à y répondre avec diligence afin de rechercher une solution amiable.<br><br>`+
+      `<b>Médiation de la consommation — Client particulier (B2C).</b> Conformément aux articles L.612-1 et suivants du Code de la consommation, le Client consommateur a le droit de recourir gratuitement à un médiateur de la consommation en vue de la résolution amiable d’un litige, à condition d’avoir préalablement adressé une réclamation écrite au Prestataire restée sans réponse satisfaisante sous deux (2) mois.<br><br>`+
+      `Médiateur désigné : <b>{{mediateurNom}}</b>, {{mediateurAdresse}} — <b>{{mediateurUrl}}</b>. Le Client peut également recourir à la plateforme européenne de règlement en ligne des litiges (RLL) : ec.europa.eu/consumers/odr.<br><br>`+
+      `<b>15.1 Droit applicable et juridiction compétente.</b> Les présentes CGV sont soumises au droit français. À défaut de résolution amiable, tout litige relève des tribunaux compétents. Pour le Client professionnel, compétence est attribuée aux tribunaux du ressort du siège du Prestataire. Pour le Client consommateur, les règles légales de compétence territoriale s’appliquent.`},
+
+    {t:'Article 16 — Acceptation du Client', h:
+      `Le Client reconnaît avoir pris connaissance des présentes CGV et les avoir acceptées sans réserve avant la passation de sa commande. La signature du devis et/ou le versement de l’acompte emportent acceptation pleine et entière des présentes conditions.<br><br>`+
+      `Fait à ______________________, le ______ / ______ / __________<br><br>`+
+      `Le Client — mention « Lu et approuvé, bon pour accord » :`}
+  ];
+}
+
+// Annexe formulaire de rétractation (texte figé).
+function cgvAnnexe(){
+  return `<b>Annexe — Formulaire type de rétractation</b><br>`+
+    `<i>(Conformément à l’annexe de l’article R.221-1 du Code de la consommation. À compléter et renvoyer uniquement si le Client consommateur souhaite se rétracter d’un atelier ou coaching souscrit à distance, dans le délai de quatorze (14) jours ; sans objet pour les denrées alimentaires périssables et les produits sur mesure, exclus du droit de rétractation.)</i><br><br>`+
+    `À l’attention de <b>Sensations Macarons</b> — {{nomPrenom}}, {{adresse}}, {{email}} :<br><br>`+
+    `Je vous notifie par la présente ma rétractation du contrat portant sur la prestation ci-dessous :<br><br>`+
+    `— Prestation commandée (atelier / coaching à distance) : ______________________________<br><br>`+
+    `— Commandée le (date) : ______ / ______ / __________<br><br>`+
+    `— Nom du (des) consommateur(s) : ______________________________<br><br>`+
+    `— Adresse du (des) consommateur(s) : ______________________________<br><br>`+
+    `— Date : ______ / ______ / __________<br><br>`+
+    `— Signature du (des) consommateur(s) (uniquement en cas de notification sur papier) :`;
+}
+
+// Remplace les {{champs}} par les valeurs saisies. Un champ vide devient un
+// surlignage « [À COMPLÉTER] » visible, pour ne jamais diffuser un trou silencieux.
+function cgvFill(html, forPrint){
+  const L=getLegal();
+  return html.replace(/\{\{(\w+)\}\}/g, (m, k)=>{
+    const v=(L[k]!=null?String(L[k]):'').trim();
+    if(v) return esc(v);
+    return forPrint ? '__________' : '<span style="background:#ffe1e1;color:#b3261e;padding:0 4px;border-radius:4px">[À COMPLÉTER]</span>';
+  });
+}
+
+// Document HTML autonome pour l'aperçu imprimable / export PDF (charte SM).
+function cgvPrintDoc(){
+  const arts=cgvArticles().map(a=>{
+    const isPre=a.t==='Préambule';
+    return (isPre?'':`<h2>${esc(a.t)}</h2>`)+`<div class="p">${cgvFill(a.h, true)}</div>`;
+  }).join('');
+  const annexe=`<div class="annexe"><div class="p">${cgvFill(cgvAnnexe(), true)}</div></div>`;
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<title>CGV Sensations Macarons — Version 3</title>
+<style>
+  @page{margin:16mm 15mm}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,Helvetica,Arial,sans-serif;color:#2b2320;font-size:11px;line-height:1.5;margin:0}
+  .head{text-align:center;margin-bottom:14px}
+  .brand{font-size:22px;font-weight:700;color:#52252F;letter-spacing:.5px}
+  .slogan{font-size:11px;font-style:italic;color:#AA7C39;margin-top:2px}
+  .doct{font-size:13px;font-weight:700;color:#490F25;margin-top:8px}
+  .sub{font-size:10px;font-style:italic;color:#6B5B4A;margin-top:2px}
+  h2{font-size:12px;color:#52252F;border-bottom:1px solid #C1A27C;padding-bottom:3px;margin:16px 0 6px}
+  .p{text-align:justify;margin-bottom:4px}
+  .annexe{margin-top:14px;border:1px solid #C1A27C;background:#FBF8F3;border-radius:8px;padding:12px}
+  .foot{margin-top:16px;border-top:1px solid #C1A27C;padding-top:8px;font-size:8.5px;font-style:italic;color:#6B5B4A;text-align:justify}
+</style></head><body>
+  <div class="head">
+    <div class="brand">SENSATIONS MACARONS</div>
+    <div class="slogan">moins de sucre, plus de sensations</div>
+    <div class="doct">Conditions Générales de Vente et de Prestation</div>
+    <div class="sub">En vigueur au 1ᵉʳ janvier 2026 — Version 3</div>
+  </div>
+  ${arts}
+  ${annexe}
+  <div class="foot">Ce document reprend les usages du secteur et les principales mentions légales françaises applicables. La désignation du médiateur n’est opposable que si le Prestataire a effectivement conclu une convention d’adhésion avec l’organisme mentionné. Pour une prestation à fort enjeu ou un contrat professionnel important, une relecture par un professionnel du droit est recommandée.</div>
+</body></html>`;
+}
+
+// Ouvre l'aperçu imprimable (→ « Enregistrer en PDF » depuis iOS).
+function cgvExportPDF(){
+  const miss=legalMissing();
+  if(miss.length){
+    openModal(`<h3>Champs obligatoires manquants</h3>
+      <p class="note">Avant de diffuser les CGV, complète : </p>
+      <ul style="margin:8px 0 0 18px;color:#b3261e;font-size:.86rem">${miss.map(m=>`<li>${esc(m)}</li>`).join('')}</ul>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal();goView('cgv')">Compléter</button></div>`);
+    return;
+  }
+  openPrintView(cgvPrintDoc(), {title:'CGV Sensations Macarons — V3'});
+}
+
+// Page CGV affichable en plein écran (lecture, sans impression).
+function cgvOpenPage(){
+  const arts=cgvArticles().map(a=>{
+    const isPre=a.t==='Préambule';
+    return (isPre?'':`<h2 style="font-size:1.02rem;color:var(--bordeaux);border-bottom:1px solid var(--caramel);padding-bottom:4px;margin:18px 0 7px">${esc(a.t)}</h2>`)+
+      `<div style="text-align:justify;font-size:.9rem;line-height:1.55;color:#2b2320">${cgvFill(a.h, false)}</div>`;
+  }).join('');
+  const annexe=`<div style="margin-top:16px;border:1px solid var(--caramel);background:#FBF8F3;border-radius:12px;padding:14px;font-size:.9rem;line-height:1.55">${cgvFill(cgvAnnexe(), false)}</div>`;
+  const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CGV Sensations Macarons</title>
+<style>body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:0;background:#f6f1e7;color:#2b2320}
+  :root{--bordeaux:#52252F;--caramel:#AA7C39}
+  .wrap{max-width:720px;margin:0 auto;padding:20px 18px 60px}
+  .brand{text-align:center;font-size:1.5rem;font-weight:700;color:var(--bordeaux)}
+  .slogan{text-align:center;font-style:italic;color:var(--caramel);margin:2px 0 2px}
+  .doct{text-align:center;font-weight:700;color:#490F25;margin-top:8px}
+  .sub{text-align:center;font-style:italic;color:#6B5B4A;font-size:.82rem;margin-bottom:6px}
+  h2:first-of-type{margin-top:8px}
+</style></head><body><div class="wrap">
+  <div class="brand">SENSATIONS MACARONS</div>
+  <div class="slogan">moins de sucre, plus de sensations</div>
+  <div class="doct">Conditions Générales de Vente et de Prestation</div>
+  <div class="sub">En vigueur au 1ᵉʳ janvier 2026 — Version 3</div>
+  ${arts}${annexe}
+</div></body></html>`;
+  const w=window.open('', '_blank');
+  if(w){ w.document.open(); w.document.write(html); w.document.close(); }
+  else { toast('Autorise l\'ouverture d\'onglets pour afficher la page'); }
+}
+
+// Enregistre le formulaire de saisie des champs légaux.
+function cgvSaveForm(){
+  saveLegal({
+    nomPrenom: val('cgv_nom'),
+    siret: val('cgv_siret'),
+    adresse: val('cgv_adr'),
+    email: val('cgv_email'),
+    telephone: val('cgv_tel'),
+    mediateurNom: val('cgv_medNom'),
+    mediateurAdresse: val('cgv_medAdr'),
+    mediateurUrl: val('cgv_medUrl'),
+    conventionMcpSignee: !!(document.getElementById('cgv_mcp') && document.getElementById('cgv_mcp').checked)
+  });
+  toast('Champs enregistrés ✓');
+  renderCGV();
+}
+
+// Vue principale CGV : statut de complétude + formulaire + diffusion + aperçu.
+async function renderCGV(){
+  const main=document.getElementById('main'); if(!main) return;
+  const L=getLegal();
+  const miss=legalMissing();
+  const ok=miss.length===0;
+  const champ=(id,lab,ph,v,type)=>`
+    <label style="display:block;margin-bottom:10px">
+      <span style="display:block;font-size:.8rem;color:var(--bordeaux);font-weight:600;margin-bottom:3px">${esc(lab)}</span>
+      <input id="${id}" type="${type||'text'}" value="${esc(v||'')}" placeholder="${esc(ph||'')}"
+        style="width:100%;padding:10px 12px;border:1.5px solid var(--hair);border-radius:11px;font-size:.92rem;background:#fff">
+    </label>`;
+
+  main.innerHTML=`
+   <div class="topbar"><div><h1>CGV</h1><p>Conditions Générales de Vente et de Prestation · Version 3</p></div></div>
+
+   <div class="panel" style="background:${ok?'#eef6ef':'#f6f1e7'};border:1px solid ${ok?'#bcd9c4':'#e3d4b5'}">
+     <div style="font-size:.92rem;line-height:1.5">
+       ${ok
+         ? '✅ <b>Tous les champs obligatoires sont renseignés.</b> Les CGV sont prêtes à être diffusées (page affichable ou export PDF).'
+         : `📝 <b>${miss.length} champ(s) à compléter</b> avant diffusion : <span style="color:#b3261e">${miss.map(esc).join(' · ')}</span>`}
+     </div>
+   </div>
+
+   <div class="panel">
+     <h2>🧾 Diffusion</h2>
+     <div style="display:flex;gap:9px;flex-wrap:wrap">
+       <button class="btn ghost" onclick="cgvOpenPage()">🌐 Page CGV (affichable)</button>
+       <button class="btn gold" onclick="cgvExportPDF()">📄 Export PDF</button>
+     </div>
+     <p class="note" style="margin-top:10px">La « Page CGV » s'ouvre dans un onglet (à publier / partager). L'« Export PDF » ouvre l'aperçu : utilise le partage iOS puis « Enregistrer en PDF » ou « Imprimer ». La diffusion est bloquée tant qu'un champ obligatoire manque.</p>
+   </div>
+
+   <div class="panel">
+     <h2>✍️ Renseigner les champs</h2>
+     <p class="note" style="margin-bottom:14px">Le texte des 16 articles est figé (conforme à l'audit juridique). Seuls les champs ci-dessous sont insérés dans le document, à la place des mentions entre crochets.</p>
+
+     <div style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--caramel);font-weight:700;margin:2px 0 8px">Identité de l'exploitant</div>
+     ${champ('cgv_nom','Nom et prénom','Ex. Dupont Marie',L.nomPrenom)}
+     ${champ('cgv_siret','Numéro SIRET','14 chiffres',L.siret)}
+     ${champ('cgv_adr','Adresse complète du siège','N°, rue, code postal, ville',L.adresse)}
+     ${champ('cgv_email','Email de contact','contact@…',L.email,'email')}
+     ${champ('cgv_tel','Téléphone de contact','06 …',L.telephone,'tel')}
+
+     <div style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--caramel);font-weight:700;margin:16px 0 8px">Médiateur de la consommation</div>
+     ${champ('cgv_medNom','Nom du médiateur','',L.mediateurNom)}
+     ${champ('cgv_medAdr','Adresse du médiateur','',L.mediateurAdresse)}
+     ${champ('cgv_medUrl','Site du médiateur','',L.mediateurUrl)}
+     <label style="display:flex;align-items:flex-start;gap:9px;margin:6px 2px 4px;cursor:pointer">
+       <input id="cgv_mcp" type="checkbox" ${L.conventionMcpSignee?'checked':''} style="margin-top:3px;width:18px;height:18px">
+       <span style="font-size:.84rem;color:#6a5a52;line-height:1.4">Convention d'adhésion avec le médiateur <b>signée et en vigueur</b> (condition d'opposabilité de la clause de médiation).</span>
+     </label>
+
+     <button class="btn gold" style="width:100%;margin-top:14px" onclick="cgvSaveForm()">💾 Enregistrer</button>
+   </div>
+
+   <div class="panel">
+     <h2>👁️ Aperçu</h2>
+     <div style="max-height:52vh;overflow:auto;border:1px solid var(--hair);border-radius:12px;padding:14px;background:#fff">
+       ${cgvArticles().map(a=>{
+         const isPre=a.t==='Préambule';
+         return (isPre?'':`<div style="font-weight:700;color:var(--bordeaux);border-bottom:1px solid var(--caramel);padding-bottom:3px;margin:14px 0 6px;font-size:.92rem">${esc(a.t)}</div>`)+
+           `<div style="text-align:justify;font-size:.84rem;line-height:1.5;color:#2b2320">${cgvFill(a.h,false)}</div>`;
+       }).join('')}
+       <div style="margin-top:14px;border:1px solid var(--caramel);background:#FBF8F3;border-radius:10px;padding:12px;font-size:.84rem;line-height:1.5">${cgvFill(cgvAnnexe(),false)}</div>
+     </div>
+   </div>
+  `;
+}
+
+
 const VIEWS = {
   // [LE FIL — EN STAND-BY] Accueil temporairement routé vers le dashboard historique (renderDash).
   // renderAccueil (« Le Fil ») reste intégralement dans le code, dormant. Pour le REBRANCHER :
@@ -4066,7 +4418,8 @@ const VIEWS = {
   carrousel:renderCarrousel,
   video:renderVideo,
   studiocom:renderStudioCom,
-  communication:renderCommunication
+  communication:renderCommunication,
+  cgv:renderCGV
 };
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser

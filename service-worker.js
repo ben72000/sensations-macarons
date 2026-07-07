@@ -1,8 +1,9 @@
+// [v1274] Espace CGV : les Conditions Générales de Vente et de Prestation (version 3, conformes à l'audit juridique) sont intégrées comme une nouvelle rubrique du menu. Le texte des 16 articles + l'annexe (formulaire de rétractation) est figé ; seuls les champs variables (identité, SIRET, adresse, contact, médiateur MCP pré-rempli) sont renseignés via un formulaire, persistés dans sm_settings.legal (donc inclus dans les sauvegardes). Diffusion en Page CGV affichable + Export PDF (impression → Enregistrer en PDF), bloquée tant qu'un champ obligatoire manque. Aucune table Dexie ajoutée, aucune fonctionnalité retirée.
 // [v1273] Commandes : les commandes des SEMAINES FUTURES sont désormais compilées dans un encart « À venir » (déplié par défaut, une ligne par commande comme « À encaisser »), groupé par semaine (de la plus proche à la plus lointaine, dates croissantes). Seules les commandes de la SEMAINE COURANTE (+ retards non livrés) restent en cartes complètes dépliées → lisibilité accrue. Bascule automatique : dès que la semaine d'une commande arrive, elle repasse en carte complète. Aucune logique de statut/paiement/produisibilité modifiée.
 // [v1272] Temps de production : le tableau « Par parfum / recette » (qui débordait à droite sur iPhone) est remplacé par un rendu en CARTES. Une carte par parfum : nom + nb de batches en tête, puis Réel / Actif / Moy./batch en grille 3 colonnes. Aucune donnée ni logique changée (garde-fou actif>réel + ⚠ conservés). Tableaux « Par jour » et « Détail par batch » inchangés.
 // [v1271] Assemblage : le bouton « Assembler » ne démarre plus de session/chrono d'atelier (l'assemblage physique est fait en amont, temps déjà compté). Il matérialise seulement l'action (décrément composants + création lot).
 // [v1270] Section Impot sur le revenu dans la Comptabilite : abattement micro (71%/50%) + taux marginal (30% par defaut) -> impot estime et net reel apres URSSAF+impot. Taux reglable dans Parametres.
-const CACHE = 'sm-iphone-v309';
+const CACHE = 'sm-iphone-v310';
 const ASSETS = [
   './',
   './index.html',
