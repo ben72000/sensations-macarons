@@ -1,5 +1,5 @@
-// [v1262] BUILD DIAGNOSTIC 2 — identifie l element qui se redimensionne apres affichage (panneau vert en bas). Temporaire.
-const CACHE = 'sm-iphone-v298';
+// [v1263] Fix du saut confirme par instrumentation : hauteur reservee pour les blocs asynchrones (graphique Comptabilite, bloc production Accueil) qui gonflaient apres coup et poussaient le contenu.
+const CACHE = 'sm-iphone-v299';
 const ASSETS = [
   './',
   './index.html',
