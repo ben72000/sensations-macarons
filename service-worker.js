@@ -1,5 +1,5 @@
-// [v1257] bump CACHE — Fix tremblement/saut de page en navigation : animations d entree neutralisees (scale/translate retires). MAJ index.html incluse.
-const CACHE = 'sm-iphone-v293';
+// [v1258] bump CACHE — Vrai fix du saut de navigation : remise du defilement en haut avant rendu + hauteur maintenue pendant le calcul du Planning.
+const CACHE = 'sm-iphone-v294';
 const ASSETS = [
   './',
   './index.html',

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1257';
+const APP_VERSION = 'v1258';
 const APP_MAJ = 'Nouveau garde-fou en meringue mutualis\u00e9e : quand une fourn\u00e9e est partag\u00e9e entre plusieurs parfums, l\u2019app emp\u00eache d\u00e9sormais d\u2019arr\u00eater par m\u00e9garde le chrono d\u2019un seul parfum en d\u00e9but de production (phases meringue, macaronnage, manipulation des coques). Un message de confirmation s\u2019affiche, rappelant que les autres parfums de la m\u00eame meringue sont encore en cours. Une fois la cuisson lanc\u00e9e (les parfums ne partagent plus rien), ou si un seul parfum reste actif, l\u2019arr\u00eat redevient direct. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
 
 
@@ -4677,6 +4677,15 @@ document.addEventListener('scroll', (e)=>{
 function render(){
   const fn = VIEWS[view] || renderDash;
   const main=document.getElementById('main');
+  // [v1258] Anti-saut de navigation : on remet le défilement en haut AVANT de rendre la nouvelle vue.
+  // Sans ça, les vues lourdes (Planning surtout) rendent d'abord un court placeholder « ⏳ calcul… »
+  // — la page raccourcit, le navigateur remonte le scroll — puis le contenu final la rallonge, d'où
+  // un saut visible proportionnel au temps de calcul. Repartir de 0 supprime ce saut.
+  try{
+    window.scrollTo(0,0);
+    if(main){ main.scrollTop=0; }
+    const _sc=document.scrollingElement||document.documentElement; if(_sc) _sc.scrollTop=0;
+  }catch(_){}
   // Joue l'animation de transition APRÈS que le contenu est prêt (les vues sont async).
   // Sinon l'animation se joue sur l'ANCIEN contenu pendant le calcul de la nouvelle vue,
   // ce qui donne un effet de double affichage / rechargement (visible sur Recettes & Dashboard).
@@ -51727,7 +51736,7 @@ async function renderAgendaProduction(){
   // [v1252] Cache recettes à jour : la section « fournées par couleur » lit les couleurs des recettes.
   try{ if(typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(_){}
   main.innerHTML = `<div class="topbar"><div><h1>Planning</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
-    <p class="note">⏳ Calcul du rétroplanning de chaque commande…</p>`;
+    <div style="min-height:100vh"><p class="note">⏳ Calcul du rétroplanning de chaque commande…</p></div>`;
 
   // Besoins cumulés par parfum et par jour (fondation mutualisation) — affichés en tête.
   let ppj=null;
