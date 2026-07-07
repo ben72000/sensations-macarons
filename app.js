@@ -5,7 +5,9 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1263';
+const APP_VERSION = 'v1264';
+// [DIAG3] Build diagnostic élargi : traque les blocs async lents/profonds sur Commandes/Comptabilité/Devis. Temporaire.
+try{ window._DIAG3 = true; }catch(_){}
 const APP_MAJ = 'Nouveau garde-fou en meringue mutualis\u00e9e : quand une fourn\u00e9e est partag\u00e9e entre plusieurs parfums, l\u2019app emp\u00eache d\u00e9sormais d\u2019arr\u00eater par m\u00e9garde le chrono d\u2019un seul parfum en d\u00e9but de production (phases meringue, macaronnage, manipulation des coques). Un message de confirmation s\u2019affiche, rappelant que les autres parfums de la m\u00eame meringue sont encore en cours. Une fois la cuisson lanc\u00e9e (les parfums ne partagent plus rien), ou si un seul parfum reste actif, l\u2019arr\u00eat redevient direct. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
 
 
@@ -4677,6 +4679,58 @@ document.addEventListener('scroll', (e)=>{
 // [DIAG] retiré en v1261 — cause identifiée : basculement de hauteur de #main entre l'ancienne et la
 // nouvelle vue. Corrigé ci-dessous en figeant la hauteur pendant la navigation.
 
+// [DIAG3 v1264] Mouchard élargi : observe TOUTE la profondeur du DOM de la vue (pas seulement 2 niveaux)
+// pendant 3 s, pour capter aussi les blocs asynchrones lents ou profonds (Commandes, Devis, Comptabilité).
+// Activé par window._DIAG3=true.
+let _diag3RO=null, _diag3T0=0, _diag3Log=[], _diag3Base=new WeakMap(), _diag3Timer=null;
+function _diag3Ident(el){
+  const tag=el.tagName?el.tagName.toLowerCase():'?';
+  const id=el.id?('#'+el.id):'';
+  let cls=''; try{ cls=(el.className&&typeof el.className==='string')?('.'+el.className.trim().split(/\s+/).slice(0,2).join('.')):''; }catch(_){}
+  let txt=''; try{ txt=(el.textContent||'').trim().replace(/\s+/g,' ').slice(0,30); }catch(_){}
+  return `${tag}${id}${cls}${txt?' «'+txt+'»':''}`;
+}
+function _diag3Start(v, main){
+  _diag3T0=performance.now(); _diag3Log=[]; _diag3Base=new WeakMap();
+  if(_diag3RO){ try{_diag3RO.disconnect();}catch(_){} }
+  if(_diag3Timer){ clearTimeout(_diag3Timer); }
+  // TOUS les éléments-blocs de la vue (div/section/details/ul), toute profondeur.
+  const all=main.querySelectorAll('div,section,details,ul,table');
+  _diag3RO=new ResizeObserver(entries=>{
+    const t=Math.round(performance.now()-_diag3T0);
+    for(const e of entries){
+      const el=e.target; const h=Math.round(e.contentRect.height);
+      const prev=_diag3Base.get(el);
+      if(prev==null){ _diag3Base.set(el,h); continue; }
+      if(Math.abs(h-prev)>=12){                       // seuil un peu plus haut pour éviter le bruit
+        _diag3Log.push({t, id:_diag3Ident(el), from:prev, to:h, d:h-prev});
+        _diag3Base.set(el,h);
+      }
+    }
+  });
+  all.forEach(el=>{ try{ _diag3RO.observe(el); }catch(_){} });
+  _diag3Timer=setTimeout(()=>{ try{_diag3RO.disconnect();}catch(_){} _diag3Render(v); }, 3000);
+}
+function _diag3Render(v){
+  let host=document.getElementById('diag3Panel');
+  if(!host){
+    host=document.createElement('div'); host.id='diag3Panel';
+    host.style.cssText='position:fixed;left:6px;right:6px;bottom:6px;z-index:99999;background:#101a12;color:#eaffea;'
+      +'font:11px/1.4 ui-monospace,Menlo,monospace;padding:8px 10px;border:1px solid #4caf72;border-radius:10px;'
+      +'max-height:50vh;overflow:auto;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+    document.body.appendChild(host);
+  }
+  // On ne garde que les GROS pousseurs (le coupable = celui qui bouge le plus), triés.
+  const sorted=_diag3Log.slice().sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+  const rows = sorted.length
+    ? sorted.slice(0,12).map(r=>`t+${String(r.t).padStart(4)}ms · <b style="color:${r.d>0?'#8fd':'#f99'}">${r.d>0?'+':''}${r.d}px</b> · ${r.id.replace(/</g,'&lt;')}`).join('<br>')
+    : '<i>Aucun changement (&gt;12px) détecté en 3 s.</i>';
+  host.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <b style="color:#7ee2a0">DIAG3 · « ${v} » · ${_diag3Log.length} chgt</b>
+      <button onclick="document.getElementById('diag3Panel').remove()" style="background:#4caf72;color:#08140a;border:none;border-radius:6px;padding:2px 8px;font-weight:700">Fermer</button>
+    </div>${rows}`;
+}
+
 function render(){
   const fn = VIEWS[view] || renderDash;
   const main=document.getElementById('main');
@@ -4714,6 +4768,7 @@ function render(){
     // [v1261] Relâche la hauteur ancrée UNE FOIS le contenu peint (double rAF pour laisser le layout
     // se stabiliser). La page est déjà à sa hauteur finale : aucun basculement visible.
     requestAnimationFrame(()=>requestAnimationFrame(_releaseHeight));
+    if(window._DIAG3){ try{ _diag3Start(view, main); }catch(_){} }
   };
   try {
     const r = fn();

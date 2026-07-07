@@ -1,5 +1,5 @@
-// [v1263] Fix du saut confirme par instrumentation : hauteur reservee pour les blocs asynchrones (graphique Comptabilite, bloc production Accueil) qui gonflaient apres coup et poussaient le contenu.
-const CACHE = 'sm-iphone-v299';
+// [v1264] BUILD DIAGNOSTIC 3 — traque elargie (DOM profond, 3s) des blocs qui poussent sur Commandes/Comptabilite/Devis.
+const CACHE = 'sm-iphone-v300';
 const ASSETS = [
   './',
   './index.html',
