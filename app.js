@@ -54384,7 +54384,7 @@ async function renderTempsProduction(){
   const nbMesure = batches.filter(p=>_batchDureeReelleMs(p)>0).length;
   const ratio = reelTotal>0 ? Math.round(actifTotal/reelTotal*100) : 0;
 
-  const lignesParfum = Object.values(parParfum)
+  const cartesParfum = Object.values(parParfum)
     .sort((a,b)=>b.reel-a.reel)
     .map(e=>{
       const moy = e.nbMesure>0 ? e.reel/e.nbMesure : 0;
@@ -54392,12 +54392,28 @@ async function renderTempsProduction(){
       // Si c'est le cas (chrono oublié résiduel), on plafonne l'affichage et on le signale.
       const actifPlafonne = (e.reel>0 && e.actif>e.reel);
       const actifAff = actifPlafonne ? e.reel : e.actif;
-      return `<tr><td style="font-weight:600;color:var(--bordeaux)">${esc(e.nom)}</td>
-        <td style="text-align:right">${e.nb}</td>
-        <td style="text-align:right;color:var(--bordeaux);font-weight:600">${fmtDureeMs(e.reel)}</td>
-        <td style="text-align:right;color:var(--gold);font-weight:600">${fmtDureeMs(actifAff)}${actifPlafonne?' <span title="Temps actif plafonné à la durée réelle (chrono probablement oublié)" style="color:#b04a3e;cursor:help">⚠</span>':''}</td>
-        <td style="text-align:right">${fmtDureeMs(moy)}</td></tr>`;
-    }).join('') || `<tr><td colspan="5" class="note" style="padding:10px">Aucune production sur la période.</td></tr>`;
+      const actifNul = actifAff<=0;
+      return `<div class="tp-card${actifPlafonne?' warn':''}">
+        <div class="tp-head">
+          <div class="tp-flavour">${esc(e.nom)}</div>
+          <div class="tp-qty"><b>${e.nb}</b><span>batch${e.nb>1?'es':''}</span></div>
+        </div>
+        <div class="tp-grid">
+          <div class="tp-metric">
+            <div class="tp-lbl">Réel</div>
+            <div class="tp-val">${fmtDureeMs(e.reel)}</div>
+          </div>
+          <div class="tp-metric actif${actifPlafonne?' over':''}">
+            <div class="tp-lbl">Actif</div>
+            <div class="tp-val${actifNul?' na':''}">${actifNul?'—':fmtDureeMs(actifAff)}${actifPlafonne?'<span class="tp-warn" title="Temps actif plafonné à la durée réelle (chrono probablement oublié)">⚠</span>':''}</div>
+          </div>
+          <div class="tp-metric">
+            <div class="tp-lbl">Moy./batch</div>
+            <div class="tp-val">${fmtDureeMs(moy)}</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('') || `<p class="note" style="padding:10px">Aucune production sur la période.</p>`;
 
   const lignesJour = Object.keys(parJour).sort().reverse()
     .map(j=>{
@@ -54444,14 +54460,11 @@ async function renderTempsProduction(){
 
    <div class="panel">
      <h2>Par parfum / recette</h2>
-     <table style="width:100%;border-collapse:collapse;font-size:.88rem">
-       <tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Parfum</th>
-       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Batches</th>
-       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Réel</th>
-       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Actif</th>
-       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Moy./batch</th></tr>
-       ${lignesParfum}
-     </table>
+     <div style="display:flex;gap:14px;font-size:.72rem;margin:2px 0 12px;color:#6a5a52">
+       <span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:#52252F;margin-right:4px;vertical-align:middle"></span>Réel</span>
+       <span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:#AA7C39;margin-right:4px;vertical-align:middle"></span>Actif (chrono)</span>
+     </div>
+     <div class="tp-cards">${cartesParfum}</div>
    </div>
 
    <div class="panel">
