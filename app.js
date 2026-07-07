@@ -15893,9 +15893,23 @@ function cmdFilter(q){  cmdSearch=q||'';
     else terminees.push(r);   // soldée OU montant à 0 € → terminées (archivées)
   });
   let html='';
-  // 1) EN COURS — cartes complètes (avec séparateurs de mois si pas de recherche)
-  let lastMonth=null;
+  // 1) EN COURS — on distingue la SEMAINE COURANTE (+ retards) des SEMAINES À VENIR.
+  //    • Semaine courante ou passée non livrée → carte complète, dépliée (opérationnel du moment).
+  //    • Semaines futures → encart « À venir » (déplié par défaut, une ligne par commande),
+  //      d'où chaque commande BASCULE automatiquement en carte dès que sa semaine arrive.
+  //    Le regroupement semaine/futur n'a de sens que hors recherche/tags (tri par pertinence sinon).
+  const _wkNow = (typeof _isoWeekKey==='function') ? _isoWeekKey(today()) : null;
+  const courant=[], aVenir=[];
   enCours.forEach(r=>{
+    const d=r.o.date||'';
+    const wk = (grouper && d && _wkNow) ? _isoWeekKey(d) : null;
+    // « À venir » = date renseignée ET semaine strictement postérieure à la semaine courante.
+    if(wk && wk>_wkNow) aVenir.push(r); else courant.push(r);
+  });
+
+  // 1a) SEMAINE COURANTE (+ retards) — cartes complètes, séparateurs de mois conservés.
+  let lastMonth=null;
+  courant.forEach(r=>{
     let newMonth=false;
     if(grouper){
       const mk=(r.o.date||'').slice(0,7);
@@ -15903,7 +15917,40 @@ function cmdFilter(q){  cmdSearch=q||'';
     }
     html += _cmdRow(r, {newMonth, newWeek:false});
   });
-  if(!enCours.length){ html += `<div class="empty" style="padding:14px">Aucune commande en cours.</div>`; }
+  if(!courant.length && !aVenir.length){ html += `<div class="empty" style="padding:14px">Aucune commande en cours.</div>`; }
+  else if(!courant.length){ html += `<div class="empty" style="padding:14px">Aucune commande cette semaine — voir « À venir » ci-dessous.</div>`; }
+
+  // 1b) À VENIR — encart déplié par défaut, une ligne par commande (comme « À encaisser »),
+  //     regroupé par semaine (de la plus proche à la plus lointaine), dates croissantes dedans.
+  if(aVenir.length){
+    // Regroupe par clé de semaine ISO.
+    const parSem={};
+    aVenir.forEach(r=>{ const wk=_isoWeekKey(r.o.date)||'?'; (parSem[wk] ||= []).push(r); });
+    const semaines=Object.keys(parSem).sort();   // ISO 'AAAA-Www' se trie chronologiquement en string
+    const _libSemaine=(wk)=>{
+      // Reconstitue le lundi de la semaine à partir d'une date membre, pour l'afficher.
+      const ref=parSem[wk][0].o.date;
+      const d=new Date(ref); if(isNaN(d)) return 'Semaine '+((wk.split('-W')[1])||'');
+      const day=(d.getDay()+6)%7; const lundi=new Date(d); lundi.setDate(d.getDate()-day);
+      const dim=new Date(lundi); dim.setDate(lundi.getDate()+6);
+      const f=x=>x.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
+      const num=(wk.split('-W')[1])||'';
+      return `Semaine ${num} · ${f(lundi)} → ${f(dim)}`;
+    };
+    const corps=semaines.map(wk=>{
+      const lot=parSem[wk].slice().sort((a,b)=>(a.o.date||'').localeCompare(b.o.date||''));  // dates croissantes
+      const ca=lot.reduce((s,r)=>s+(+r.o.montant||0),0);
+      const enTete=`<div style="padding:8px 12px;background:var(--creme-2);border-bottom:1px solid var(--hair);font-size:.76rem;font-weight:600;color:#6a5a52;display:flex;justify-content:space-between;gap:8px">
+        <span>${esc(_libSemaine(wk))}</span><span style="font-weight:500;color:#9a8a82">${lot.length} · ${euro(ca)}</span></div>`;
+      return enTete + lot.map(r=>_cmdRowMini(r,{distinctif:false})).join('');
+    }).join('');
+    const totAV=aVenir.reduce((s,r)=>s+(+r.o.montant||0),0);
+    html += `<details open style="margin:12px 0 4px;border:1px solid #c9d6e8;border-radius:12px;overflow:hidden;background:#f7fafd">
+      <summary style="cursor:pointer;padding:11px 13px;font-weight:700;color:#3b6ea5;background:#eaf1f9">
+        📅 À venir <span style="font-weight:500">(${aVenir.length}) · ${euro(totAV)}</span></summary>
+      <div>${corps}</div>
+    </details>`;
+  }
   // 2) À ENCAISSER — section distincte, dépliée par défaut (à ne pas oublier)
   if(aEncaisser.length){
     const totReste=aEncaisser.reduce((s,r)=>s+((typeof orderBalance==='function')?orderBalance(r.o):0),0);
