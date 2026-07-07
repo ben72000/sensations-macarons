@@ -1,5 +1,5 @@
-// [v1264] BUILD DIAGNOSTIC 3 — traque elargie (DOM profond, 3s) des blocs qui poussent sur Commandes/Comptabilite/Devis.
-const CACHE = 'sm-iphone-v300';
+// [v1265] Fix saut Commandes/Comptabilite/Devis : ancre de hauteur relachee seulement quand le contenu est stabilise (3 frames) + hauteurs reservees (comptaNetPoche). Mouchard retire.
+const CACHE = 'sm-iphone-v301';
 const ASSETS = [
   './',
   './index.html',
