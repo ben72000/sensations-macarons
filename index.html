@@ -10,19 +10,16 @@
 <meta name="apple-mobile-web-app-title" content="Sensations">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="preload" href="Outfit-Regular.ttf" as="font" type="font/ttf" crossorigin>
-<link rel="preload" href="Outfit-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
-<link rel="preload" href="BellotaText-Bold.ttf" as="font" type="font/ttf" crossorigin>
 <style>
 /* Polices hébergées en local (plus de dépendance Google Fonts, plus de reflow au chargement) */
 @font-face{font-family:'Outfit';font-style:normal;font-weight:300;font-display:swap;src:url('Outfit-Light.ttf') format('truetype')}
-@font-face{font-family:'Outfit';font-style:normal;font-weight:400;font-display:optional;src:url('Outfit-Regular.ttf') format('truetype')}
-@font-face{font-family:'Outfit';font-style:normal;font-weight:500;font-display:optional;src:url('Outfit-Medium.ttf') format('truetype')}
-@font-face{font-family:'Outfit';font-style:normal;font-weight:600;font-display:optional;src:url('Outfit-SemiBold.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:400;font-display:swap;src:url('Outfit-Regular.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:500;font-display:swap;src:url('Outfit-Medium.ttf') format('truetype')}
+@font-face{font-family:'Outfit';font-style:normal;font-weight:600;font-display:swap;src:url('Outfit-SemiBold.ttf') format('truetype')}
 @font-face{font-family:'Outfit';font-style:normal;font-weight:700;font-display:swap;src:url('Outfit-Bold.ttf') format('truetype')}
 /* Bellota : titres et accents (remplace l'ancienne Fraunces) */
-@font-face{font-family:'Bellota';font-style:normal;font-weight:400;font-display:optional;src:url('BellotaText-Regular.ttf') format('truetype')}
-@font-face{font-family:'Bellota';font-style:normal;font-weight:700;font-display:optional;src:url('BellotaText-Bold.ttf') format('truetype')}
+@font-face{font-family:'Bellota';font-style:normal;font-weight:400;font-display:swap;src:url('BellotaText-Regular.ttf') format('truetype')}
+@font-face{font-family:'Bellota';font-style:normal;font-weight:700;font-display:swap;src:url('BellotaText-Bold.ttf') format('truetype')}
 
 /* ===================== R&D « Imaginer » ===================== */
 .rd-wrap{padding:4px 2px 30px;max-width:520px;margin:0 auto}
@@ -589,21 +586,20 @@ h1,h2,h3,.serif{font-family:'Bellota','Georgia','Times New Roman',serif;letter-s
 .side-foot .foot-help{display:block;margin-bottom:8px}
 .side-foot .foot-btn{width:100%;margin-top:6px}
 .main{margin-left:236px;flex:1;min-width:0;max-width:calc(100% - 236px);padding:32px 40px 60px;overflow-x:hidden}
-@keyframes viewIn{ from{opacity:1} to{opacity:1} }
-.main.view-in{ animation:none }
-/* [v1257] Animations de navigation désactivées (transition instantanée) : le scale/translate
-   faisait « trembler » la hauteur des longues pages (Commandes, Planning, Fabrication) pendant
-   le rendu async. On conserve les classes (posées par le JS) mais sans effet géométrique. */
+@keyframes viewIn{ from{opacity:0} to{opacity:1} }
+.main.view-in{ animation:viewIn .22s ease }
+/* Effet de PROFONDEUR (cascade) : la rubrique qui s'ouvre se pose par-dessus,
+   celle qui revient remonte du dessous. Illusion d'empilement, une seule vue active. */
 @keyframes viewInFwd{
-  from{ opacity:1; transform:none }
-  to{ opacity:1; transform:none }
+  from{ opacity:0; transform:translateY(14px) scale(.97); box-shadow:0 -8px 24px rgba(80,50,30,.10) }
+  to{ opacity:1; transform:translateY(0) scale(1); box-shadow:none }
 }
 @keyframes viewInBack{
-  from{ opacity:1; transform:none }
-  to{ opacity:1; transform:none }
+  from{ opacity:0; transform:scale(1.03) }
+  to{ opacity:1; transform:scale(1) }
 }
-.main.view-in-fwd{ animation:none }
-.main.view-in-back{ animation:none }
+.main.view-in-fwd{ animation:viewInFwd .26s cubic-bezier(.32,.72,.32,1) }
+.main.view-in-back{ animation:viewInBack .24s ease }
 @media (prefers-reduced-motion: reduce){ .main.view-in, .main.view-in-fwd, .main.view-in-back{ animation:none } }
 .topbar{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px;flex-wrap:wrap;gap:12px;
   padding-bottom:18px;border-bottom:1px solid var(--hair)}

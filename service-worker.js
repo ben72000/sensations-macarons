@@ -1,5 +1,5 @@
-// [v1265] Fix saut Commandes/Comptabilite/Devis : ancre de hauteur relachee seulement quand le contenu est stabilise (3 frames) + hauteurs reservees (comptaNetPoche). Mouchard retire.
-const CACHE = 'sm-iphone-v301';
+// [v1266] Retrait complet des correctifs anti-saut (ancre de hauteur, scroll, min-height, polices, animations) qui CREAIENT le saut (grand vide en haut des pages longues). Retour au comportement d origine.
+const CACHE = 'sm-iphone-v302';
 const ASSETS = [
   './',
   './index.html',

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1265';
+const APP_VERSION = 'v1266';
 const APP_MAJ = 'Nouveau garde-fou en meringue mutualis\u00e9e : quand une fourn\u00e9e est partag\u00e9e entre plusieurs parfums, l\u2019app emp\u00eache d\u00e9sormais d\u2019arr\u00eater par m\u00e9garde le chrono d\u2019un seul parfum en d\u00e9but de production (phases meringue, macaronnage, manipulation des coques). Un message de confirmation s\u2019affiche, rappelant que les autres parfums de la m\u00eame meringue sont encore en cours. Une fois la cuisson lanc\u00e9e (les parfums ne partagent plus rien), ou si un seul parfum reste actif, l\u2019arr\u00eat redevient direct. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
 
 
@@ -4674,51 +4674,10 @@ document.addEventListener('scroll', (e)=>{
   }
 }, {passive:true, capture:true});
 
-// [DIAG] retiré en v1261 — cause identifiée : basculement de hauteur de #main entre l'ancienne et la
-// nouvelle vue. Corrigé ci-dessous en figeant la hauteur pendant la navigation.
 
 function render(){
   const fn = VIEWS[view] || renderDash;
   const main=document.getElementById('main');
-  // [v1261] ANTI-SAUT — cause réelle (confirmée par instrumentation) : au changement de vue, l'ANCIENNE
-  // hauteur de #main persiste pendant que la nouvelle vue se calcule (18–135 ms), puis la page bascule
-  // brutalement vers la hauteur finale — d'où le « saut d'un bloc », d'autant plus grand que l'écart de
-  // hauteur entre les deux vues est important (Planning = pire cas). Parade : on ANCRE la hauteur de #main
-  // à un plein écran le temps du rendu, puis on la relâche une fois le contenu posé. La page part donc
-  // d'une hauteur stable et grandit une seule fois, sans va-et-vient.
-  try{
-    if(main){
-      const vh = Math.round((window.visualViewport && window.visualViewport.height) || window.innerHeight || 0);
-      if(vh){ main.style.minHeight = vh + 'px'; }
-      window.scrollTo(0,0);
-    }
-  }catch(_){}
-  const _releaseHeight = ()=>{ try{ if(main){ main.style.minHeight=''; } }catch(_){} };
-  // [v1265] Relâche la hauteur ancrée seulement quand le contenu s'est STABILISÉ : on attend que la
-  // hauteur du document ne bouge plus pendant 3 frames consécutives (ou 2,5 s de sécurité). Ainsi
-  // l'ancre tient pendant les remplissages asynchrones tardifs (liste Commandes, sous-blocs Compta,
-  // Devis…) : leur croissance se fait sous l'ancre, hors écran, sans reflux visible.
-  const _releaseWhenStable = ()=>{
-    let stable=0, last=-1, frames=0;
-    const de=document.documentElement;
-    const tick=()=>{
-      const h=Math.max(de.scrollHeight, document.body.scrollHeight);
-      if(h===last){ if(++stable>=3){ _releaseHeight(); return; } }
-      else { stable=0; last=h; }
-      if(++frames>150){ _releaseHeight(); return; }   // sécurité ~2,5 s
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  };
-  // [v1258] Anti-saut de navigation : on remet le défilement en haut AVANT de rendre la nouvelle vue.
-  // Sans ça, les vues lourdes (Planning surtout) rendent d'abord un court placeholder « ⏳ calcul… »
-  // — la page raccourcit, le navigateur remonte le scroll — puis le contenu final la rallonge, d'où
-  // un saut visible proportionnel au temps de calcul. Repartir de 0 supprime ce saut.
-  try{
-    window.scrollTo(0,0);
-    if(main){ main.scrollTop=0; }
-    const _sc=document.scrollingElement||document.documentElement; if(_sc) _sc.scrollTop=0;
-  }catch(_){}
   // Joue l'animation de transition APRÈS que le contenu est prêt (les vues sont async).
   // Sinon l'animation se joue sur l'ANCIEN contenu pendant le calcul de la nouvelle vue,
   // ce qui donne un effet de double affichage / rechargement (visible sur Recettes & Dashboard).
@@ -4726,19 +4685,15 @@ function render(){
     main.classList.remove('view-in','view-in-fwd','view-in-back');
     void main.offsetWidth;
     main.classList.add('view-in', _navDir==='back' ? 'view-in-back' : 'view-in-fwd');
-  }
-    // [v1265] Relâche la hauteur ancrée quand le contenu s'est stabilisé (voir _releaseWhenStable).
-    _releaseWhenStable();
-  };
+  } };
   try {
     const r = fn();
     if (r && typeof r.then === 'function') {
-      r.then(playIn).catch(err => { _releaseHeight(); renderViewError(view, err); });
+      r.then(playIn).catch(err => renderViewError(view, err));
     } else {
       playIn();
     }
   } catch (err) {
-    _releaseHeight();
     renderViewError(view, err);
   }
   // la mascotte reflète l'état courant : on la réévalue à chaque navigation
@@ -5049,7 +5004,7 @@ async function renderDash(){
      <p class="note" style="margin:-4px 0 8px">Touche une barre pour voir le détail des encaissements du mois.</p>
      <div class="bar-wrap">${data.map(d=>`<div class="bar-col" onclick="caMonthDetail('${d.k}')" style="cursor:pointer" title="Voir le détail de ${esc(d.l)}"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
    </div>
-   <div id="dashProduction" style="min-height:264px"></div>
+   <div id="dashProduction"></div>
    <div class="dash-2col">
      <div class="panel"><h2>⚠ Matières à réapprovisionner</h2>
        ${low.length?`<div style="display:flex;flex-direction:column;gap:7px">${low.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fdf3ef;border:1px solid #f0cfc9;border-left:3px solid #b3261e;border-radius:11px">
@@ -23912,7 +23867,7 @@ async function renderCompta(){
    </div>
 
    ${comptaFlowSchema(A)}
-   <div id="comptaNetPoche" class="panel lnk" onclick="netPocheSetMonth('${_comptaMonth}')" style="cursor:pointer;background:linear-gradient(135deg,#52252F,#2a1320);color:#fff;border:none;min-height:96px">
+   <div id="comptaNetPoche" class="panel lnk" onclick="netPocheSetMonth('${_comptaMonth}')" style="cursor:pointer;background:linear-gradient(135deg,#52252F,#2a1320);color:#fff;border:none">
      <div style="display:flex;justify-content:space-between;align-items:center">
        <div><div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:#e8c9a0">💰 Net dans ta poche · ${esc(monthLabel(_comptaMonth))}</div>
          <div id="cnpVal" style="font-size:1.7rem;font-weight:800;font-family:'Bellota',Georgia,serif;margin-top:2px">…</div>
@@ -23989,7 +23944,7 @@ async function renderCompta(){
        <button class="btn sm ${_gapGran==='semaine'?'gold':'ghost'}" onclick="gapSetGran('semaine')">Semaine</button>
        <button class="btn sm ${_gapGran==='mois'?'gold':'ghost'}" onclick="gapSetGran('mois')">Mois</button>
      </div>
-     <div id="gapChartZone" style="min-height:437px"><div class="empty">Chargement…</div></div>
+     <div id="gapChartZone"><div class="empty">Chargement…</div></div>
    </div>
 
    <p class="note" style="margin-top:10px">Le coût matières est une estimation moyenne (coût recette ÷ rendement) pour donner une marge indicative. Pour la comptabilité officielle, appuyez-vous sur vos charges saisies et l'export.</p>`;
