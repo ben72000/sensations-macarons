@@ -1,5 +1,5 @@
-// [v1259] bump CACHE — Fix saut a l ouverture des vues : reflow au swap de police elimine (preload + font-display:optional sur les poids du bandeau). MAJ index.html.
-const CACHE = 'sm-iphone-v295';
+// [v1260] BUILD DIAGNOSTIC — mouchard du saut de page actif (panneau en bas d ecran). Temporaire.
+const CACHE = 'sm-iphone-v296';
 const ASSETS = [
   './',
   './index.html',
