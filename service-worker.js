@@ -1,5 +1,5 @@
-// [v1266] Retrait complet des correctifs anti-saut (ancre de hauteur, scroll, min-height, polices, animations) qui CREAIENT le saut (grand vide en haut des pages longues). Retour au comportement d origine.
-const CACHE = 'sm-iphone-v302';
+// [v1267] AUDIT GENERAL — 6 boutons morts repares, derive 1ct base URSSAF, DLC minuit-2h (UTC), 6 CTA fautifs, saut de page (3 reservations mesurees). Details dans le rapport.
+const CACHE = 'sm-iphone-v303';
 const ASSETS = [
   './',
   './index.html',

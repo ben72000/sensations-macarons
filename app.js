@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1266';
+const APP_VERSION = 'v1267';
 const APP_MAJ = 'Nouveau garde-fou en meringue mutualis\u00e9e : quand une fourn\u00e9e est partag\u00e9e entre plusieurs parfums, l\u2019app emp\u00eache d\u00e9sormais d\u2019arr\u00eater par m\u00e9garde le chrono d\u2019un seul parfum en d\u00e9but de production (phases meringue, macaronnage, manipulation des coques). Un message de confirmation s\u2019affiche, rappelant que les autres parfums de la m\u00eame meringue sont encore en cours. Une fois la cuisson lanc\u00e9e (les parfums ne partagent plus rien), ou si un seul parfum reste actif, l\u2019arr\u00eat redevient direct. Aucune autre fonctionnalit\u00e9 n\u2019est modifi\u00e9e.';
 
 
@@ -86,6 +86,10 @@ function monthKey(d){
 // date.toISOString().slice(0,7), qui décale d'un mois en fuseau positif (France UTC+1/+2) :
 // new Date(2026,5,1).toISOString() → "2026-05-31T22:00Z" → clé "2026-05" au lieu de "2026-06".
 function ymOf(d){ if(!(d instanceof Date)||isNaN(d)) return ''; return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+// [AUDIT-2026-07 · A12] Date locale 'YYYY-MM-DD' d'un objet Date. Remplace toISOString().slice(0,10)
+// pour les DATES MÉTIER (DLC, échéances) : toISOString rend l'UTC, donc entre 00h et 02h (heure FR)
+// la date basculait sur la VEILLE — même famille que le bug A1 corrigé sur today().
+function ymdLocal(d){ if(!(d instanceof Date)||isNaN(d)) return ''; return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 // Libellé lisible d'un mois 'YYYY-MM' → « juin 2026 ».
 function monthLabel(k){
   if(!k) return '—';
@@ -3292,7 +3296,7 @@ function computeDlc(emplacement, baseIso){
   const d = baseIso ? new Date(baseIso) : new Date();
   if(isFreezer(emplacement)){ d.setMonth(d.getMonth()+4); }
   else { d.setDate(d.getDate()+7); } // frigo (et défaut prudent)
-  return d.toISOString().slice(0,10);
+  return ymdLocal(d); // [A12] locale, pas UTC
 }
 // ---- EMPLACEMENTS DE STOCKAGE ----
 // 1 frigo + 3 congélateurs, chacun identifié par une LETTRE qui s'ajoute au n° de lot
@@ -3509,7 +3513,7 @@ function computeDlcFromHistory(hist, refIso){
   if(isFreezer(last.lieu)){
     // DLC = entrée au congélo + 4 mois (le budget frigo restant est gelé jusqu'à la décongélation)
     const d=new Date(lastStart); d.setMonth(d.getMonth()+CONGELO_MONTHS);
-    return d.toISOString().slice(0,10);
+    return ymdLocal(d); // [A12]
   }
   // segment courant = frigo : budget restant = 7j - temps frigo déjà consommé (segments précédents)
   // + temps déjà écoulé dans le segment frigo courant (entre lastStart et ref)
@@ -3517,7 +3521,7 @@ function computeDlcFromHistory(hist, refIso){
   const totalFrigoConsumed = frigoConsumedMs + currentFrigoElapsed;
   const resteMs = Math.max(0, FRIGO_DAYS*MS_DAY - totalFrigoConsumed);
   const dlc=new Date(ref.getTime()+resteMs);
-  return dlc.toISOString().slice(0,10);
+  return ymdLocal(dlc); // [A12]
 }
 // Horodatage lisible "le JJ/MM/AAAA à HHhMM" à partir d'un ISO.
 // Heure seule au format 00:00 (ex : 10:02). Renvoie '' si non valide.
@@ -5004,7 +5008,7 @@ async function renderDash(){
      <p class="note" style="margin:-4px 0 8px">Touche une barre pour voir le détail des encaissements du mois.</p>
      <div class="bar-wrap">${data.map(d=>`<div class="bar-col" onclick="caMonthDetail('${d.k}')" style="cursor:pointer" title="Voir le détail de ${esc(d.l)}"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
    </div>
-   <div id="dashProduction"></div>
+   <div id="dashProduction" style="min-height:264px"></div><!-- [A13] hauteur mesurée réservée : ce bloc async poussait la page de +264px -->
    <div class="dash-2col">
      <div class="panel"><h2>⚠ Matières à réapprovisionner</h2>
        ${low.length?`<div style="display:flex;flex-direction:column;gap:7px">${low.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fdf3ef;border:1px solid #f0cfc9;border-left:3px solid #b3261e;border-radius:11px">
@@ -12486,7 +12490,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
             let ouvertLe = lot.ouvertLe;
             if(!ouvertLe){ ouvertLe = nowIso; patch.ouvertLe = nowIso;
               const d = new Date(nowIso); d.setDate(d.getDate()+nbJoursOuv);
-              patch.dlcOuverture = d.toISOString().slice(0,10);
+              patch.dlcOuverture = ymdLocal(d); // [A12]
             }
             const dOuv = lot.dlcOuverture || patch.dlcOuverture;
             if(dOuv && (!dlcOuvertureMin || dOuv<dlcOuvertureMin)) dlcOuvertureMin = dOuv;
@@ -12568,7 +12572,7 @@ async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, 
           if(peri){
             if(!lot.ouvertLe){ patch.ouvertLe = nowIso;
               const d = new Date(nowIso); d.setDate(d.getDate()+nbJoursOuv);
-              patch.dlcOuverture = d.toISOString().slice(0,10);
+              patch.dlcOuverture = ymdLocal(d); // [A12]
             }
             const dOuv = lot.dlcOuverture || patch.dlcOuverture;
             if(dOuv && (!dlcOuvertureMin || dOuv<dlcOuvertureMin)) dlcOuvertureMin = dOuv;
@@ -18495,7 +18499,7 @@ async function saveCmd(id){
     const today=new Date(); const exp=new Date(today); exp.setDate(exp.getDate()+30);
     const docObj = {
       type:'devis', statut:'en_attente', numero,
-      clientId:o.clientId, date:o.date||today.toISOString().slice(0,10),
+      clientId:o.clientId, date:o.date||ymdLocal(today), // [A12]
       montant:o.montant,
       lignes:o.lignes,                      // lignes détaillées (coffrets, pyramides, parfums…)
       remiseGlobale:o.remiseGlobale, remiseGlobaleEur:o.remiseGlobaleEur,
@@ -18510,7 +18514,7 @@ async function saveCmd(id){
       perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false),
       notes:o.notes,
       acompte: 0,                           // acompte reçu (déclenche la conversion une fois > 0)
-      validiteJours:30, expiration:exp.toISOString().slice(0,10),
+      validiteJours:30, expiration:ymdLocal(exp), // [A12]
       orderId:null, createdAt:Date.now()
     };
     if(_cmdDevisId){ await db.documents.update(_cmdDevisId, docObj); }
@@ -19196,7 +19200,7 @@ async function computeMonthlyBilan(ym){
     let encMois=0;
     paiementsDe(o).forEach(p=>{ if(monthKey(p.date)===ym) encMois=money2(encMois+money2(p.montant)); });
     if(encMois<=0) return;
-    const sPart=money2(encMois*partSvc), gPart=money2(encMois-encMois*partSvc);
+    const sPart=money2(encMois*partSvc), gPart=money2(encMois-sPart);
     if(gPart>0){ goods=money2(goods+gPart); }
     if(sPart>0){ service=money2(service+sPart); }
     // [A11] histo SANS aucune ligne détaillée → sa ventilation (100 % goods) est une hypothèse : on la trace.
@@ -23867,7 +23871,7 @@ async function renderCompta(){
    </div>
 
    ${comptaFlowSchema(A)}
-   <div id="comptaNetPoche" class="panel lnk" onclick="netPocheSetMonth('${_comptaMonth}')" style="cursor:pointer;background:linear-gradient(135deg,#52252F,#2a1320);color:#fff;border:none">
+   <div id="comptaNetPoche" class="panel lnk" onclick="netPocheSetMonth('${_comptaMonth}')" style="cursor:pointer;background:linear-gradient(135deg,#52252F,#2a1320);color:#fff;border:none;min-height:96px">
      <div style="display:flex;justify-content:space-between;align-items:center">
        <div><div style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:#e8c9a0">💰 Net dans ta poche · ${esc(monthLabel(_comptaMonth))}</div>
          <div id="cnpVal" style="font-size:1.7rem;font-weight:800;font-family:'Bellota',Georgia,serif;margin-top:2px">…</div>
@@ -23944,7 +23948,7 @@ async function renderCompta(){
        <button class="btn sm ${_gapGran==='semaine'?'gold':'ghost'}" onclick="gapSetGran('semaine')">Semaine</button>
        <button class="btn sm ${_gapGran==='mois'?'gold':'ghost'}" onclick="gapSetGran('mois')">Mois</button>
      </div>
-     <div id="gapChartZone"><div class="empty">Chargement…</div></div>
+     <div id="gapChartZone" style="min-height:437px"><div class="empty">Chargement…</div></div><!-- [A13] +336px mesurés -->
    </div>
 
    <p class="note" style="margin-top:10px">Le coût matières est une estimation moyenne (coût recette ÷ rendement) pour donner une marge indicative. Pour la comptabilité officielle, appuyez-vous sur vos charges saisies et l'export.</p>`;
@@ -24487,7 +24491,7 @@ const SC_TEXTES = [
   {id:"t018", objet:"vente", cible:"b2c", axe:"transformation", texte:"On me demande souvent mon « secret ». Il n'y en a pas vraiment : juste des ingrédients premium, du temps, et aucun raccourci. La différence, elle est là — dans ce qu'on met, et surtout dans ce qu'on ne met pas.", cta:"Goûtez le secret 🤍", kw:"preuve secret ingrédients qualité temps simplicité différence"},
   {id:"t019", objet:"vente", cible:"b2b", axe:"situation", texte:"Le jour J, tout est parfait — sauf peut-être ce dessert standard que personne ne retient. Vos convives méritent mieux qu'un buffet oubliable. Pyramides de macarons personnalisés à vos couleurs, parfums choisis avec vous : une signature gourmande qui marque les esprits.", cta:"Réservez votre dégustation mariage 🥂", kw:"mariage convives dessert personnalisé pyramide couleurs signature"},
   {id:"t020", objet:"vente", cible:"b2b", axe:"desir", texte:"Le énième goodie floqué finit oublié en cinq minutes. Vous voulez marquer vos clients, pas encombrer leur bureau. Des coffrets de macarons brandés à votre logo : une attention premium, consommée avec plaisir, associée durablement à votre marque.", cta:"Marquez vos clients — demandez un devis 🥂", kw:"cadeau client goodie corporate coffret logo premium fidélisation"},
-  {id:"t021", objet:"vente", cible:"b2b", axe:"transformation", texte:"Un dessert générique dilue votre image ; un dessert à vos couleurs la renforce, à chaque bouchée. Logo imprimé sur les coques, teintes accordées à votre charte, coffrets sur mesure : votre identité, en version gourmande.", cta:"Personnalisez votre commandez pro ✨", kw:"personnalisation logo couleurs charte branding image marque"},
+  {id:"t021", objet:"vente", cible:"b2b", axe:"transformation", texte:"Un dessert générique dilue votre image ; un dessert à vos couleurs la renforce, à chaque bouchée. Logo imprimé sur les coques, teintes accordées à votre charte, coffrets sur mesure : votre identité, en version gourmande.", cta:"Personnalisez votre commande pro ✨", kw:"personnalisation logo couleurs charte branding image marque"},
   {id:"t022", objet:"vente", cible:"b2b", axe:"douleur", texte:"Dans l'événementiel, un fournisseur qui livre en retard ou hors specs, c'est vous qu'on blâme devant le client. Artisan local, engagements clairs, devis rapide et respect des délais : je deviens un partenaire fiable, pas un risque de plus.", cta:"Sécurisez votre prestation gourmande 📩", kw:"prestataire fiabilité retard délai partenaire événementiel risque"},
   {id:"t023", objet:"vente", cible:"b2b", axe:"objection", texte:"« Un artisan pour nos volumes ? » Question légitime. Vous avez besoin de fiabilité sur la quantité, pas seulement de qualité sur trois pièces. Je cadre les volumes en amont, avec un délai de commandez clair et une production planifiée. Artisanal ne veut pas dire improvisé.", cta:"Parlons volumes et délais 📩", kw:"objection volume quantité fiabilité délai production organisation"},
   {id:"t024", objet:"vente", cible:"b2b", axe:"situation", texte:"La pièce montée traditionnelle, tout le monde l'a vue mille fois. Vous voulez que VOTRE dessert vous ressemble. Une tour de macarons aux parfums et couleurs choisissez avec vous : élégante, moderne, et déclinable à l'infini.", cta:"Composons votre dessert signature 🥂", kw:"mariage pièce montée alternative original personnalisé signature"},
@@ -24879,11 +24883,11 @@ const SC_CTA_LOT = [
   {id:"c044", objet:"vente", cible:"b2c", type:"commander", texte:"Votre boîte vous attend — commandez 📩", kw:"commander boite attente simple"},
   // reserver
   {id:"c045", objet:"vente", cible:"b2c", type:"reserver", texte:"Réservez votre créneau du week-end 🗓️", kw:"reserver creneau week-end disponible"},
-  {id:"c046", objet:"vente", cible:"b2c", type:"reserver", texte:"Bloque votre fournée avant rupture ⏳", kw:"reserver fournee rupture urgence bloquer"},
+  {id:"c046", objet:"vente", cible:"b2c", type:"reserver", texte:"Bloquez votre fournée avant rupture ⏳", kw:"reserver fournee rupture urgence bloquer"},
   {id:"c047", objet:"vente", cible:"b2c", type:"reserver", texte:"Réservez votre coffret de fêtes 🎄", kw:"reserver coffret fetes noel anticiper saison"},
   // dm
   {id:"c048", objet:"vente", cible:"b2c", type:"dm", texte:"Un DM et on choisit ensemble vos parfums 📩", kw:"dm message parfum choix accompagnement conseil"},
-  {id:"c049", objet:"vente", cible:"b2c", type:"dm", texte:"Écris-moi, je vous guide 🤍", kw:"dm message guide conseil aide contact"},
+  {id:"c049", objet:"vente", cible:"b2c", type:"dm", texte:"Écrivez-moi, je vous guide 🤍", kw:"dm message guide conseil aide contact"},
   // marche
   {id:"c050", objet:"vente", cible:"b2c", type:"marche", texte:"Retrouve-moi au marché ce week-end 📍", kw:"marche week-end venir stand rencontre"},
   {id:"c051", objet:"vente", cible:"b2c", type:"marche", texte:"Save the date — rendez-vous gourmand 📍", kw:"marche date evenement venir annonce"},
@@ -25023,9 +25027,9 @@ const SC_CTA = [
   // ── VENTE · B2C · reserver ──
   {id:"c005", objet:"vente", cible:"b2c", type:"reserver", texte:"Réservez votre boîte pour le week-end 🗓️", kw:"reserver week-end boite disponible"},
   {id:"c006", objet:"vente", cible:"b2c", type:"reserver", texte:"Réservez vite en DM 📩", kw:"reserver dm urgence limite rapide"},
-  {id:"c007", objet:"vente", cible:"b2c", type:"reserver", texte:"Bloque votre commandez avant rupture ⏳", kw:"reserver rupture stock urgence limite bloquer"},
+  {id:"c007", objet:"vente", cible:"b2c", type:"reserver", texte:"Bloquez votre commande avant rupture ⏳", kw:"reserver rupture stock urgence limite bloquer"},
   // ── VENTE · B2C · dm / message ──
-  {id:"c008", objet:"vente", cible:"b2c", type:"dm", texte:"Écris-moi en DM pour commander 📩", kw:"dm message ecrire commander contact"},
+  {id:"c008", objet:"vente", cible:"b2c", type:"dm", texte:"Écrivez-moi en DM pour commander 📩", kw:"dm message ecrire commander contact"},
   {id:"c009", objet:"vente", cible:"b2c", type:"dm", texte:"Un DM et je m'occupe du reste 🤍", kw:"dm message simple contact commander"},
   // ── VENTE · B2C · marche / rencontre ──
   {id:"c010", objet:"vente", cible:"b2c", type:"marche", texte:"Passez me voir sur le marché 👋", kw:"marche stand venir rencontre evenement"},
@@ -25047,14 +25051,14 @@ const SC_CTA = [
   {id:"c022", objet:"vente", cible:"b2b", type:"reserver", texte:"Composons votre dessert signature 🥂", kw:"reserver dessert signature personnalise mariage evenement"},
   {id:"c023", objet:"vente", cible:"b2b", type:"reserver", texte:"Réservez vos coffrets clients VIP 🥂", kw:"reserver coffret client vip cadeau entreprise"},
   // ── VENTE · B2B · decouvrir / personnaliser ──
-  {id:"c024", objet:"vente", cible:"b2b", type:"decouvrir", texte:"Personnalisez votre commandez pro ✨", kw:"personnaliser logo couleur commandez professionnel branding"},
+  {id:"c024", objet:"vente", cible:"b2b", type:"decouvrir", texte:"Personnalisez votre commande pro ✨", kw:"personnaliser logo couleur commandez professionnel branding"},
   {id:"c025", objet:"vente", cible:"b2b", type:"decouvrir", texte:"Associez votre marque à du vrai 🤍", kw:"marque image branding local premium professionnel"},
   // ── VENTE · B2B · dm / contact ──
   {id:"c026", objet:"vente", cible:"b2b", type:"dm", texte:"Contactez-moi pour votre événement 📩", kw:"contact dm evenement professionnel message"},
   {id:"c027", objet:"vente", cible:"b2b", type:"dm", texte:"Travaillons ensemble — un message suffit 📩", kw:"contact dm collaboration professionnel message partenaire"},
   // ── COACHING · reserver séance ──
   {id:"c028", objet:"coaching", cible:"b2c", type:"reserver", texte:"Réservez votre séance de coaching 🎯", kw:"reserver seance coaching rendez-vous accompagnement"},
-  {id:"c029", objet:"coaching", cible:"b2c", type:"reserver", texte:"Bloque votre créneau — places limitées 🎯", kw:"reserver creneau place limite coaching seance"},
+  {id:"c029", objet:"coaching", cible:"b2c", type:"reserver", texte:"Bloquez votre créneau — places limitées 🎯", kw:"reserver creneau place limite coaching seance"},
   {id:"c030", objet:"coaching", cible:"b2c", type:"reserver", texte:"On répare ça ensemble — réservez 🎯", kw:"reserver coaching probleme diagnostic seance aide"},
   // ── COACHING · atelier ──
   {id:"c031", objet:"coaching", cible:"b2c", type:"atelier", texte:"Réservez votre place à l'atelier 🎯", kw:"atelier place reserver groupe apprentissage"},
@@ -28347,7 +28351,7 @@ async function renderParfums(){
         <th style="padding:4px 5px">Produit</th><th style="padding:4px 5px;text-align:right">Vendus</th><th style="padding:4px 5px;text-align:right">CA</th><th style="padding:4px 5px;text-align:right">Marge</th></tr></thead>
       <tbody>
         ${bf.list.map(b=>`<tr style="border-top:1px solid var(--hair)">
-          <td style="padding:6px 5px"><b>${esc(b.nom)}</b>${b.coutUnit==null?`<br><button class="btn ghost" style="font-size:.7rem;padding:2px 8px;margin-top:3px" onclick="recForm(null,{nom:${JSON.stringify(b.nom)},grandFormat:true})">+ créer la recette</button>`:''}</td>
+          <td style="padding:6px 5px"><b>${esc(b.nom)}</b>${b.coutUnit==null?`<br><button class="btn ghost" style="font-size:.7rem;padding:2px 8px;margin-top:3px" onclick="recForm(null,{nom:${JSON.stringify(b.nom).replace(/"/g,'&quot;')},grandFormat:true})">+ créer la recette</button>`:''}</td>
           <td style="padding:6px 5px;text-align:right">${b.qte}</td>
           <td style="padding:6px 5px;text-align:right">${euro(b.ca)}</td>
           <td style="padding:6px 5px;text-align:right">${b.marge!=null?`<b style="color:#3f7d52">${euro(b.marge)}</b>${b.tauxMarge!=null?`<br><span style="font-size:.72rem;color:#9a8a82">${b.tauxMarge}%</span>`:''}`:'<span style="color:#c9bfb5">—</span>'}</td></tr>`).join('')}
@@ -28452,7 +28456,7 @@ async function renderParfums(){
   const unmatchedBlock=A.unmatched.length?`<div class="panel"><h2>Parfums vendus sans recette <span class="tag warn">${A.unmatched.length}</span></h2>
      <p class="note">Ces parfums apparaissent dans les ventes mais n'ont pas de recette correspondante — impossible de calculer leur coût/marge. <b>Touche un parfum pour créer sa recette</b> (le nom est pré-rempli) :</p>
      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
-       ${A.unmatched.map(u=>`<button class="btn ghost sm" onclick="recForm(null,{nom:${JSON.stringify(u.nom)}})">+ ${esc(u.nom)} <span style="color:#9a8a82">(${qty(u.piecesVendues+u.piecesDon)} pc)</span></button>`).join('')}
+       ${A.unmatched.map(u=>`<button class="btn ghost sm" onclick="recForm(null,{nom:${JSON.stringify(u.nom).replace(/"/g,'&quot;')}})">+ ${esc(u.nom)} <span style="color:#9a8a82">(${qty(u.piecesVendues+u.piecesDon)} pc)</span></button>`).join('')}
      </div>
      <button class="btn ghost sm" style="margin-top:10px" onclick="fixFlavorTypos()">🔤 Corriger les doublons d'orthographe</button>
      <p class="note" style="margin-top:4px;font-size:.78rem;color:#9a8a82">Certains de ces noms sont peut-être de simples fautes de frappe (ex : Raffaello vs Rafaello). Ce bouton les uniformise sur tes parfums officiels.</p></div>`:'';
@@ -32576,7 +32580,7 @@ function aiHelp(txt){
   const n=aiNormalize(txt);
   // demande générique → sommaire des sujets
   if(n==='aide'||n==='help'||n==='?'||/\b(sommaire|sujets|liste|que peux-?tu|que sais-?tu|fonctionnalit)\b/.test(n)){
-    const lis=APP_KB.map(e=>`<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="document.getElementById('aiInput').value=${JSON.stringify('Comment fonctionne : '+e.titre)};aiRun()">${esc(e.titre)}</button>`).join('');
+    const lis=APP_KB.map(e=>`<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="document.getElementById('aiInput').value=${JSON.stringify('Comment fonctionne : '+e.titre).replace(/"/g,'&quot;')};aiRun()">${esc(e.titre)}</button>`).join('');
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">🤖 Aide — que veux-tu savoir ?</h3>
       <p class="note">Voici les sujets que je connais (version ${APP_VERSION}). Touche un sujet ou pose ta question :</p>
       <div style="display:flex;flex-wrap:wrap">${lis}</div>`);
@@ -32587,7 +32591,7 @@ function aiHelp(txt){
       <p class="note">Tape <b>aide</b> pour voir tous les sujets, ou reformule (ex. « comment fonctionne le picking ? »).</p>`);
   }
   const main=hits[0];
-  const autres=hits.slice(1,4).map(e=>`<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="document.getElementById('aiInput').value=${JSON.stringify('Comment fonctionne : '+e.titre)};aiRun()">${esc(e.titre)}</button>`).join('');
+  const autres=hits.slice(1,4).map(e=>`<button class="btn ghost sm" style="margin:3px 3px 0 0" onclick="document.getElementById('aiInput').value=${JSON.stringify('Comment fonctionne : '+e.titre).replace(/"/g,'&quot;')};aiRun()">${esc(e.titre)}</button>`).join('');
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">${esc(main.titre)}</h3>${main.r}
     ${autres?`<p class="note" style="margin-top:10px">Sujets liés :</p><div style="display:flex;flex-wrap:wrap">${autres}</div>`:''}`);
 }
@@ -36965,7 +36969,7 @@ async function aiQueryLocate(params){
       .sort((a,b)=>stockByRec[b.id]-stockByRec[a.id]);
     if(!dispo.length) return aiSay(`<p>Aucun macaron fini en stock actuellement.</p>`);
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Quel parfum localiser ?</h3>
-      <div style="display:flex;flex-wrap:wrap;gap:6px">${dispo.map(r=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify('où sont mes macarons '+r.produitNom)};aiRun()">${esc(r.produitNom)} <span style="color:#9a8a82">(${qty(stockByRec[r.id])})</span></button>`).join('')}</div>`);
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${dispo.map(r=>`<button class="btn ghost sm" onclick="document.getElementById('aiInput').value=${JSON.stringify('où sont mes macarons '+r.produitNom).replace(/"/g,'&quot;')};aiRun()">${esc(r.produitNom)} <span style="color:#9a8a82">(${qty(stockByRec[r.id])})</span></button>`).join('')}</div>`);
   }
   // recettes correspondant au parfum (inclusion normalisée)
   const fn=aiNormalize(params.flavor);
@@ -55751,7 +55755,7 @@ function availExceptionsForm(){
 
     <h4 style="margin:16px 0 6px;color:var(--bordeaux)">Mes exceptions</h4>
     ${rows}
-    <div class="modal-actions"><button class="btn ghost" onclick="availForm()">← Retour au planning</button>
+    <div class="modal-actions"><button class="btn ghost" onclick="availEditor()">← Retour au planning</button>
       <button class="btn" onclick="closeModal()">Fermer</button></div>`);
   availExceptionEtatChange();
 }
