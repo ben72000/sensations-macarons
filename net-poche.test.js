@@ -29,6 +29,7 @@ function buildModule(fakeDb){
   const today         = null;
   const paiementsDe   = extractFunction('paiementsDe');
   const orderToLines  = extractFunction('orderToLines');
+  const estReprise    = extractFunction('estReprise');
   const lineTotalStored = extractFunction('lineTotalStored');
   const computeMonthlyBilan = extractFunction('computeMonthlyBilan');
   const _moisDeLannee = extractFunction('_moisDeLannee');
@@ -52,6 +53,7 @@ function buildModule(fakeDb){
     ${monthKey}
     ${paiementsDe}
     ${orderToLines}
+    ${estReprise}
     ${lineTotalStored}
     ${computeMonthlyBilan}
     ${_moisDeLannee}

@@ -28,6 +28,7 @@ function buildModule(fakeDb){
   const monthKey     = extractFunction('monthKey');
   const paiementsDe  = extractFunction('paiementsDe');
   const orderToLines = extractFunction('orderToLines');
+  const estReprise   = extractFunction('estReprise');
   const lineTotalStored = extractFunction('lineTotalStored');
   const computeMonthlyBilan = extractFunction('computeMonthlyBilan');
 
@@ -41,6 +42,7 @@ function buildModule(fakeDb){
     ${monthKey}
     ${paiementsDe}
     ${orderToLines}
+    ${estReprise}
     ${lineTotalStored}
     ${computeMonthlyBilan}
     computeMonthlyBilan;
@@ -151,16 +153,34 @@ eq(r6.service, 0, 'CAS6 · marché : aucun service');
 eq(r6.cotisGoods, money2Ref(250*TAUX_GOODS/100), 'CAS6 · cotis marchandise sur le marché');
 
 // ============================================================================
-//  CAS 7 — Reprise (histo) sans lignes : 100 % marchandise + traçée en hypothèse [A11]
+//  CAS 7 — Reprise d'historique (migration) : JAMAIS dans la base URSSAF [A11-fix]
+//  CA d'avant l'app, déjà déclaré à l'époque. La recompter = double déclaration.
+//  On teste les DEUX marqueurs couverts par estReprise : o.histo ET ligne type 'histo'.
 // ============================================================================
 const db7 = makeDb({ markets: [], orders: [
-  { id:7, date:'2026-05-01', montant:400, histo:true,
-    paiements:[ {date:'2026-05-02', montant:400, moyen:'Virement'} ] }
+  { id:71, date:'2026-05-01', montant:400, histo:true,
+    paiements:[ {date:'2026-05-02', montant:400, moyen:'Virement'} ] },
+  { id:72, date:'2026-05-03', montant:300,
+    lignes:[ {type:'histo', montant:300} ],
+    paiements:[ {date:'2026-05-03', montant:300, moyen:'Espèces'} ] }
 ]});
 const r7 = await (buildModule(db7))('2026-05');
-eq(r7.goods, 400, 'CAS7 · histo sans lignes → 100 % marchandise');
-eq(r7.goodsHypo, 400, 'CAS7 · part goods issue d\'hypothèse = 400 (traçée) [A11]');
-eq(r7.nbHypo, 1, 'CAS7 · 1 commande ventilée par hypothèse');
+eq(r7.goods, 0, 'CAS7 · reprise (o.histo + ligne histo) exclue de la marchandise');
+eq(r7.service, 0, 'CAS7 · reprise exclue du service');
+eq(r7.caTotal, 0, 'CAS7 · reprise n\'entre pas dans le CA URSSAF');
+eq(r7.cotisTotal, 0, 'CAS7 · aucune cotisation sur une reprise');
+
+// CAS 7bis — une vraie vente au fil de l'eau LE MÊME MOIS reste bien comptée
+const db7b = makeDb({ markets: [], orders: [
+  { id:73, date:'2026-05-01', montant:400, histo:true,
+    paiements:[ {date:'2026-05-02', montant:400, moyen:'Virement'} ] },
+  { id:74, date:'2026-05-04', montant:200,
+    lignes:[ {type:'coffret', taille:16, parfums:[{nom:'A',qte:16}]} ],
+    paiements:[ {date:'2026-05-04', montant:200, moyen:'Carte'} ] }
+]});
+const r7b = await (buildModule(db7b))('2026-05');
+eq(r7b.goods, 200, 'CAS7bis · seule la vente au fil de l\'eau compte (reprise ignorée)');
+eq(r7b.cotisGoods, money2Ref(200*TAUX_GOODS/100), 'CAS7bis · cotis calculée sur 200, pas 600');
 
 // ============================================================================
 //  CAS 8 — Mois sans activité → tout à zéro

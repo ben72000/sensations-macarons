@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1277';
+const APP_VERSION = 'v1278';
 const APP_MAJ = 'Correction du saut de page sur l\u2019accueil : la carte \u00ab \u00c0 produire \u00bb est d\u00e9sormais calcul\u00e9e AVANT l\u2019affichage et ins\u00e9r\u00e9e directement, au lieu d\u2019appara\u00eetre apr\u00e8s coup et de pousser le reste de la page vers le bas. Plus de r\u00e9servation de hauteur devin\u00e9e, plus de sursaut au chargement. Aucun autre \u00e9cran modifi\u00e9 ; les 282 tests de non-r\u00e9gression restent tous verts.';
 
 
@@ -19033,16 +19033,15 @@ async function computeMonthlyBilan(ym){
   const s=getSettings();
   const orders = await db.orders.toArray();
   const markets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
-  let goods=0, service=0;            // encaissé du mois, ventilé
-  // [AUDIT-2026-07 · A11] Traçabilité de l'HYPOTHÈSE de ventilation. Une commande de reprise (histo)
-  // sans détail de lignes prestation est imputée à 100 % MARCHANDISE (goods) — hypothèse statistiquement
-  // correcte pour un pâtissier, MAIS c'est une hypothèse : si l'histo contenait du service, la base URSSAF
-  // dérive. On CUMULE ici la part de goods issue de ces histo (goodsHypo) pour l'afficher au bilan.
-  // Aucun impact sur le calcul des cotisations : purement informatif.
-  let goodsHypo=0, nbHypo=0;
+  let goods=0, service=0;            // encaissé du mois, ventilé (reprises exclues, cf. A11-fix)
   const detailGoods=[], detailService=[];
   // Pour chaque commande, on connaît la part service vs marchandise (lignes prestation = service).
   orders.forEach(o=>{
+    // [AUDIT-2026-07 · A11-fix] Une REPRISE d'historique (migration) = CA d'avant l'app, déjà déclaré à
+    // l'époque. On ne le recompte JAMAIS dans la base URSSAF, sinon double déclaration. Même prédicat
+    // partagé estReprise que computeAccounting (couvre o.histo ET ligne type 'histo') → les deux écrans
+    // calculent l'URSSAF sur la MÊME base : uniquement le CA saisi au fil de l'eau.
+    if(estReprise(o)) return;
     const total=money2(+o.montant||0); if(total<=0) return;
     const lignes=orderToLines(o);
     let svc=0;
@@ -19058,10 +19057,8 @@ async function computeMonthlyBilan(ym){
     const sPart=money2(encMois*partSvc), gPart=money2(encMois-sPart);
     if(gPart>0){ goods=money2(goods+gPart); }
     if(sPart>0){ service=money2(service+sPart); }
-    // [A11] histo SANS aucune ligne détaillée → sa ventilation (100 % goods) est une hypothèse : on la trace.
-    if(o.histo && lignes.length===0 && gPart>0){ goodsHypo=money2(goodsHypo+gPart); nbHypo++; }
     const cl=o.histoLabel||'';
-    if(gPart>0) detailGoods.push({label:(o.histo?'[reprise] ':'')+(cl||('commande #'+o.id)), montant:gPart});
+    if(gPart>0) detailGoods.push({label:(cl||('commande #'+o.id)), montant:gPart});
     if(sPart>0) detailService.push({label:(cl||('prestation #'+o.id)), montant:sPart});
   });
   // Marchés clôturés du mois = vente de marchandise.
@@ -19081,8 +19078,7 @@ async function computeMonthlyBilan(ym){
   const cotisService=money2(service*tauxService/100);
   const cotisTotal=money2(cotisGoods+cotisService);
   return {ym, goods, service, caTotal, tauxGoods, tauxService, cotisGoods, cotisService, cotisTotal,
-    detailGoods, detailService,
-    goodsHypo, nbHypo};   // [A11] part de goods issue d'histo non ventilées (transparence URSSAF, hors calcul)
+    detailGoods, detailService};
 }
 
 // ============================================================
@@ -23741,7 +23737,6 @@ async function renderCompta(){
      <div class="banner" style="background:#f0f4fa;border-color:#c4d2e6;margin-bottom:10px">📅 <div>Tous les chiffres ci-dessous concernent <b>${esc(monthLabel(_comptaMonth))}</b> (du 1ᵉʳ au dernier jour du mois).</div></div>
      <div class="sum-box lnk" onclick="comptaGo('commandes')"><span>CA encaissé · ${esc(monthLabel(_comptaMonth))}</span><b>${euro(B.caTotal)}</b>${NAV_GO}</div>
      <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b>${NAV_GO}</div>
-     ${(+B.goodsHypo>0)?`<div class="note" style="margin:2px 0 6px;font-size:.76rem;color:#b07a4a;background:#fdf6ec;border:1px solid #ece0cc;border-radius:8px;padding:6px 9px">ℹ️ Dont <b>${euro(B.goodsHypo)}</b> issu(s) de ${B.nbHypo} reprise(s) sans détail, comptés en marchandise <b>par hypothèse</b>. Si l'une était une prestation de service, la cotisation réelle diffère (service ${B.tauxService}% vs marchandise ${B.tauxGoods}%).</div>`:''}
      <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b>${NAV_GO}</div>
      <h3 style="font-size:.95rem;margin:14px 0 6px">Cotisations URSSAF estimées</h3>
      <div class="sum-box"><span>Marchandise · ${B.tauxGoods}%</span><b>${euro(B.cotisGoods)}</b></div>
