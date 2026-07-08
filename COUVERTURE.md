@@ -10,6 +10,29 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-08 — Première passe SWEEPER : suppression du code mort « Le Fil »
+
+**Nature** : nettoyage, pas ajout de test. Première modification applicative depuis la
+mise en place du filet (v1274 → **v1275**).
+
+**Retiré** :
+- `renderAccueil` + 8 helpers `_accueil*` + variable `_accueilSlide` (~282 lignes de JS) ;
+- les styles CSS `.acc-*` associés (~35 lignes d'index.html).
+
+**Pourquoi c'était sûr** : le module « Le Fil » (écran d'accueil expérimental) était
+entièrement dormant — débranché du routeur (`accueil → renderDash`, inchangé), appelé
+nulle part, sans aucune dépendance externe (vérifié : seules références = un commentaire).
+
+**Garde-fous appliqués** : bornes de coupe vérifiées à la ligne près ; `node --check` OK ;
+zéro référence résiduelle (`acc-*`, `_accueil*`, `renderAccueil`) ; balises `<style>`
+équilibrées ; **suite de tests (282 assertions) verte avant ET après** ; diff confirmé
+chirurgical (uniquement Le Fil + bump de version).
+
+**Rôle du filet ici** : garantir qu'aucun calcul métier n'a bougé pendant la coupe. Il a
+joué son rôle — c'est exactement ce pour quoi on l'a bâti avant de nettoyer.
+
+---
+
 ## 2026-07-08 — Vague 11 : impôt sur le revenu & net en poche
 
 **Ajouté** (`net-poche.test.js`, 23 assertions) :
