@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1278';
+const APP_VERSION = 'v1279';
 const APP_MAJ = 'Correction du saut de page sur l\u2019accueil : la carte \u00ab \u00c0 produire \u00bb est d\u00e9sormais calcul\u00e9e AVANT l\u2019affichage et ins\u00e9r\u00e9e directement, au lieu d\u2019appara\u00eetre apr\u00e8s coup et de pousser le reste de la page vers le bas. Plus de r\u00e9servation de hauteur devin\u00e9e, plus de sursaut au chargement. Aucun autre \u00e9cran modifi\u00e9 ; les 282 tests de non-r\u00e9gression restent tous verts.';
 
 
@@ -5230,7 +5230,11 @@ async function renderDash(){
   });
   _nbEncMois += closedMk.filter(k=>mkInMonth(k.date)).length;
   const nbMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).length;
-  const caTotal = money2(orders.reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
+  // [A11-display] CA cumulé depuis le début : on sépare le fil de l'eau (hors reprises, base fiscale)
+  // des reprises d'historique, pour afficher les deux clairement sans mélanger.
+  const _caFilEau = money2(orders.filter(o=>!estReprise(o)).reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
+  const _caReprises = money2(orders.filter(o=>estReprise(o)).reduce((s,c)=>s+(+c.montant||0),0));
+  const caTotal = money2(_caFilEau + _caReprises);   // activité globale (rétro-compat : marketCAPopup lit caTotal)
 
   // alertes stock & DLC
   let low=[], dlcAlert=[];
@@ -5315,7 +5319,8 @@ async function renderDash(){
    </div>
    <details style="margin:2px 0 10px">
      <summary style="cursor:pointer;color:#9a8a82;font-size:.78rem;list-style:none;display:inline-flex;align-items:center;gap:4px">▾ CA total depuis le début</summary>
-     <div style="font-size:.82rem;color:#7a6a60;padding:4px 2px 0">${privacyModeEnabled()?'•••':euro(caTotal)} <span style="color:#9a8a82">cumul de toutes les ventes</span></div>
+     <div style="font-size:.82rem;color:#7a6a60;padding:4px 2px 0">${privacyModeEnabled()?'•••':euro(caTotal)} <span style="color:#9a8a82">activité globale cumulée</span></div>
+     ${(!privacyModeEnabled()&&_caReprises>0)?`<div style="font-size:.76rem;color:#9a8a82;padding:2px 2px 0">dont ${euro(_caFilEau)} au fil de l'app <span style="color:#b8a8c8">·</span> ${euro(_caReprises)} en reprises d'historique <span style="color:#b8a8c8">(hors URSSAF, déjà déclaré)</span></div>`:''}
    </details>
    <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
      <p class="note" style="margin:-4px 0 8px">Touche une barre pour voir le détail des encaissements du mois.</p>
@@ -19020,6 +19025,8 @@ async function computeAccounting(opts){
     resultat: money2(totalEncaisse-totalCharges-totalCout-totalPertes),
     creances,
     migCount, migCA,
+    // [A11-display] CA activité globale = CA fiscal (hors reprises) + reprises (déjà déclarées ailleurs).
+    caActiviteTotale: money2(totalFacture + migCA),
     nbCharges: charges.length
   };
 }
@@ -19035,13 +19042,23 @@ async function computeMonthlyBilan(ym){
   const markets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
   let goods=0, service=0;            // encaissé du mois, ventilé (reprises exclues, cf. A11-fix)
   const detailGoods=[], detailService=[];
+  // [A11-display] On CUMULE aussi le montant encaissé du mois issu des REPRISES d'historique,
+  // pour l'afficher séparément (hors URSSAF, déjà déclaré). N'entre JAMAIS dans goods/service/cotis.
+  let reprisesEnc=0, reprisesCount=0; const detailReprises=[];
   // Pour chaque commande, on connaît la part service vs marchandise (lignes prestation = service).
   orders.forEach(o=>{
     // [AUDIT-2026-07 · A11-fix] Une REPRISE d'historique (migration) = CA d'avant l'app, déjà déclaré à
     // l'époque. On ne le recompte JAMAIS dans la base URSSAF, sinon double déclaration. Même prédicat
     // partagé estReprise que computeAccounting (couvre o.histo ET ligne type 'histo') → les deux écrans
     // calculent l'URSSAF sur la MÊME base : uniquement le CA saisi au fil de l'eau.
-    if(estReprise(o)) return;
+    if(estReprise(o)){
+      // Reprise : hors URSSAF, mais on trace son encaissement du mois pour l'afficher séparément.
+      let encR=0;
+      paiementsDe(o).forEach(p=>{ if(monthKey(p.date)===ym) encR=money2(encR+money2(p.montant)); });
+      if(encR>0){ reprisesEnc=money2(reprisesEnc+encR); reprisesCount++;
+        detailReprises.push({label:(o.histoLabel||('reprise #'+o.id)), montant:encR}); }
+      return;
+    }
     const total=money2(+o.montant||0); if(total<=0) return;
     const lignes=orderToLines(o);
     let svc=0;
@@ -19078,7 +19095,10 @@ async function computeMonthlyBilan(ym){
   const cotisService=money2(service*tauxService/100);
   const cotisTotal=money2(cotisGoods+cotisService);
   return {ym, goods, service, caTotal, tauxGoods, tauxService, cotisGoods, cotisService, cotisTotal,
-    detailGoods, detailService};
+    detailGoods, detailService,
+    // [A11-display] Reprises du mois (hors URSSAF) + CA activité globale (fil de l'eau + reprises).
+    reprisesEnc, reprisesCount, detailReprises,
+    caActiviteTotale: money2(caTotal + reprisesEnc)};
 }
 
 // ============================================================
@@ -19508,6 +19528,10 @@ function buildBilanText(B){
   L.push('========================================');
   L.push('');
   L.push('CHIFFRE D\'AFFAIRES ENCAISSÉ : '+euro(B.caTotal));
+  if(+B.reprisesEnc>0){
+    L.push('  (+ reprises hors URSSAF : '+euro(B.reprisesEnc)+' — déjà déclaré indépendamment)');
+    L.push('  = ACTIVITÉ GLOBALE DU MOIS : '+euro(B.caActiviteTotale));
+  }
   L.push('');
   L.push('VENTILATION');
   L.push('  • Vente de marchandise : '+euro(B.goods));
@@ -19527,6 +19551,12 @@ function buildBilanText(B){
   if(B.detailService.length){
     L.push('DÉTAIL PRESTATIONS');
     B.detailService.forEach(d=>L.push('  - '+d.label+' : '+euro(d.montant)));
+    L.push('');
+  }
+  if(B.detailReprises && B.detailReprises.length){
+    L.push('REPRISES D\'HISTORIQUE (HORS URSSAF — déjà déclaré indépendamment)');
+    B.detailReprises.forEach(d=>L.push('  - '+d.label+' : '+euro(d.montant)));
+    L.push('  Sous-total reprises : '+euro(B.reprisesEnc));
     L.push('');
   }
   L.push('========================================');
@@ -23020,6 +23050,10 @@ function comptaFlowSchema(A){
 
     <!-- Étage 1 : le CA facturé se sépare en encaissé + créances -->
     ${box('CA facturé', fact, 'tout ce que tu as vendu', '#c9a227', '#fdf8e9', 'comptaFluxDetail(&#39;facture&#39;)')}
+    ${(+A.migCA>0)?`<div class="note" style="margin:6px 0 0;font-size:.76rem;color:#7a6a62;background:#f3eefa;border:1px solid #ddd0ee;border-radius:9px;padding:7px 10px;display:flex;justify-content:space-between;gap:8px;align-items:center">
+      <span>↩︎ dont <b>reprises d'historique</b> : ${A.migCount} commande(s) migrée(s) <span style="color:#9a8a82">— hors URSSAF, déjà déclaré indépendamment</span></span>
+      <b style="white-space:nowrap;color:#6a4a8a">${e(A.migCA)}</b></div>
+    <div class="sum-box" style="margin:6px 0 0;background:#faf7fc;border:1px solid #e6dcf2"><span style="color:#6a5a62">📊 CA activité globale <span style="color:#9a8a82;font-size:.72rem">(fil de l'eau + reprises)</span></span><b style="color:#52252f">${e(A.caActiviteTotale)}</b></div>`:''}
     <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#9a8a82;font-size:.72rem;padding:5px 0">
       <span>▼ se partage en deux ▼</span></div>
     <div style="display:flex;gap:10px;align-items:stretch">
@@ -23051,13 +23085,22 @@ async function comptaFluxDetail(type){
   const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
   const periodeLbl = _comptaPeriode==='tout' ? 'toutes périodes' : comptaPeriodeDatesLabel(_comptaPeriode);
   let lignes=[]; let total=0;
+  // [A11-display] Reprises collectées à part (hors total officiel), pour affichage séparé.
+  let reprisesLignes=[]; let reprisesTotal=0;
 
   if(type==='facture'){
-    // CA facturé = montant des commandes dont la DATE est dans la période.
-    // (Aligné EXACTEMENT sur computeAccounting : pas de filtre histo, sinon divergence avec le total.)
-    orders.filter(o=>inRange(o.date)).forEach(o=>{
+    // CA facturé = montant des commandes dont la DATE est dans la période, REPRISES EXCLUES.
+    // [A11-fix] Aligné EXACTEMENT sur computeAccounting, qui exclut les reprises d'historique
+    // (orders.filter(!estReprise)). Sans ce filtre, le détail comptait les reprises que la carte
+    // de synthèse (totalFacture) n'inclut plus → divergence (détail > synthèse du montant des reprises).
+    orders.filter(o=>!estReprise(o) && inRange(o.date)).forEach(o=>{
       const m=money2(o.montant); if(!(m>0)) return; total+=m;
       lignes.push({date:o.date, nom:clName(o.clientId), montant:m, oid:o.id, sub:o.statut||''});
+    });
+    // Reprises (hors total) : facturé = montant de la commande migrée, à sa date.
+    orders.filter(o=>estReprise(o) && inRange(o.date)).forEach(o=>{
+      const m=money2(o.montant); if(!(m>0)) return; reprisesTotal+=m;
+      reprisesLignes.push({date:o.date, nom:(o.histoLabel||clName(o.clientId)), montant:m, oid:o.id, sub:'reprise'});
     });
     // [FIX COHÉRENCE] Les marchés clôturés entrent AUSSI dans le CA facturé (computeAccounting les
     // ajoute à factByMonth). Ils manquaient ici → le total de la carte (commandes + marchés) ne
@@ -23070,9 +23113,16 @@ async function comptaFluxDetail(type){
     }catch(e){}
   } else {
     // CA encaissé = chaque PAIEMENT dont la date est dans la période + marchés clôturés.
-    orders.forEach(o=>{
+    // [A11-fix] Reprises exclues, comme computeAccounting (totalEncaisse) : une reprise d'historique
+    // ne compte ni au facturé ni à l'encaissé (CA passé déjà déclaré).
+    orders.filter(o=>!estReprise(o)).forEach(o=>{
       paiementsDe(o).forEach(p=>{ if(!inRange(p.date||o.date)) return; const m=+p.montant||0; if(!m) return; total+=m;
         lignes.push({date:p.date||o.date, nom:clName(o.clientId), montant:m, oid:o.id, sub:p.moyen||''}); });
+    });
+    // Reprises (hors total) : encaissements des commandes migrées, à la date de paiement.
+    orders.filter(o=>estReprise(o)).forEach(o=>{
+      paiementsDe(o).forEach(p=>{ if(!inRange(p.date||o.date)) return; const m=+p.montant||0; if(!m) return; reprisesTotal+=m;
+        reprisesLignes.push({date:p.date||o.date, nom:(o.histoLabel||clName(o.clientId)), montant:m, oid:o.id, sub:'reprise'}); });
     });
     try{
       const markets=await db.markets.toArray();
@@ -23082,16 +23132,31 @@ async function comptaFluxDetail(type){
     }catch(e){}
   }
   lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  reprisesLignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  reprisesTotal=money2(reprisesTotal);
   const titre = type==='facture' ? 'CA facturé' : 'CA encaissé';
   const rows = lignes.length ? lignes.map(l=>
     `<div class="sum-box"${l.oid?` style="cursor:pointer" onclick="closeModal();cmdView(${l.oid})"`:''}>
        <span>${fmtDate(l.date)} · ${esc(l.nom)}${l.sub?` <span style="color:#9a8a82;font-size:.72rem">· ${esc(l.sub)}</span>`:''}</span>
        <b>${euro(l.montant)}${l.oid?' ›':''}</b></div>`).join('')
     : '<p class="note">Aucun mouvement sur cette période.</p>';
+  // [A11-display] Section reprises (hors URSSAF) + CA activité globale.
+  const reprisesRows = reprisesLignes.map(l=>
+    `<div class="sum-box"${l.oid?` style="cursor:pointer" onclick="closeModal();cmdView(${l.oid})"`:''}>
+       <span>${fmtDate(l.date)} · ${esc(l.nom)} <span style="color:#9a8a82;font-size:.72rem">· reprise</span></span>
+       <b style="color:#6a4a8a">${euro(l.montant)}${l.oid?' ›':''}</b></div>`).join('');
+  const reprisesBloc = reprisesTotal>0 ? `
+    <div style="margin-top:14px;padding-top:10px;border-top:1px dashed #ddd0ee">
+      <p class="note" style="margin:0 0 6px;color:#6a4a8a"><b>↩︎ Reprises d'historique</b> — ${reprisesLignes.length} mouvement(s). <span style="color:#9a8a82">Hors URSSAF : ce CA a été déclaré indépendamment au moment de son activité réelle. Affiché ici pour mémoire, jamais recompté dans tes cotisations.</span></p>
+      ${reprisesRows}
+      <div class="sum-box" style="background:#faf7fc;border:1px solid #e6dcf2"><span>Sous-total reprises</span><b style="color:#6a4a8a">${euro(reprisesTotal)}</b></div>
+      <div class="sum-box" style="border-top:2px solid #6a4a8a;margin-top:8px"><span><b>📊 ${esc(titre.toLowerCase())} — activité globale</b> <span style="color:#9a8a82;font-size:.72rem">(officiel + reprises)</span></span><b style="color:#52252f">${euro(money2(total+reprisesTotal))}</b></div>
+    </div>` : '';
   openModal(`<h3>${titre} — détail</h3>
     <p class="note">Période : <b>${esc(periodeLbl)}</b>. ${type==='facture'?'Commandes facturées (par date de commande).':'Encaissements réels (par date de paiement) + marchés.'} Touche une ligne pour ouvrir la commande.</p>
     ${rows}
-    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total ${esc(titre.toLowerCase())}</b></span><b style="color:var(--bordeaux)">${euro(money2(total))}</b></div>
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total ${esc(titre.toLowerCase())}</b> <span style="color:#9a8a82;font-size:.72rem">(base fiscale, hors reprises)</span></span><b style="color:var(--bordeaux)">${euro(money2(total))}</b></div>
+    ${reprisesBloc}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 // ============================================================
@@ -23541,6 +23606,12 @@ async function renderCompta(){
   const _trajYear = +(_comptaMonth||'').slice(0,4) || new Date().getFullYear();
   if(!_comptaTrajVue) _comptaTrajVue='global';
   let _trajR=null; try{ _trajR = await computeSeuilsFiscaux(_trajYear); }catch(e){ _trajR=null; }
+  // [A13-fix] Manque à gagner : pré-calcul AVANT le paint pour injecter le graphe SYNCHRONEMENT
+  // dans #gapChartZone (comme A14 pour dashProduction). Supprime le remplissage différé et le
+  // min-height réservé (437px magique) qui provoquaient le saut de page / le trou blanc.
+  let _gapHTML;
+  try{ _gapHTML = buildGapChartHTML(await deliveryGapData(_gapGran)); }
+  catch(e){ console.error('gap (pré-calcul)', e); _gapHTML='<div class="empty">Erreur lors du calcul du manque à gagner.</div>'; }
 
   const moisOpts = moisDispo.map(m=>`<option value="${m}" ${m===_comptaMonth?'selected':''}>${esc(monthLabel(m))}</option>`).join('');
 
@@ -23736,6 +23807,10 @@ async function renderCompta(){
      </div>
      <div class="banner" style="background:#f0f4fa;border-color:#c4d2e6;margin-bottom:10px">📅 <div>Tous les chiffres ci-dessous concernent <b>${esc(monthLabel(_comptaMonth))}</b> (du 1ᵉʳ au dernier jour du mois).</div></div>
      <div class="sum-box lnk" onclick="comptaGo('commandes')"><span>CA encaissé · ${esc(monthLabel(_comptaMonth))}</span><b>${euro(B.caTotal)}</b>${NAV_GO}</div>
+     ${(+B.reprisesEnc>0)?`<div class="note" style="margin:2px 0 6px;font-size:.76rem;color:#7a6a62;background:#f3eefa;border:1px solid #ddd0ee;border-radius:9px;padding:7px 10px;display:flex;justify-content:space-between;gap:8px;align-items:center">
+       <span>↩︎ dont <b>reprises</b> : ${B.reprisesCount} <span style="color:#9a8a82">— hors URSSAF, déjà déclaré</span></span>
+       <b style="white-space:nowrap;color:#6a4a8a">${euro(B.reprisesEnc)}</b></div>
+     <div class="sum-box" style="background:#faf7fc;border:1px solid #e6dcf2"><span style="color:#6a5a62">📊 Activité globale du mois</span><b style="color:#52252f">${euro(B.caActiviteTotale)}</b></div>`:''}
      <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b>${NAV_GO}</div>
      <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b>${NAV_GO}</div>
      <h3 style="font-size:.95rem;margin:14px 0 6px">Cotisations URSSAF estimées</h3>
@@ -23778,12 +23853,12 @@ async function renderCompta(){
        <button class="btn sm ${_gapGran==='semaine'?'gold':'ghost'}" onclick="gapSetGran('semaine')">Semaine</button>
        <button class="btn sm ${_gapGran==='mois'?'gold':'ghost'}" onclick="gapSetGran('mois')">Mois</button>
      </div>
-     <div id="gapChartZone" style="min-height:437px"><div class="empty">Chargement…</div></div><!-- [A13] +336px mesurés -->
+     <div id="gapChartZone">${_gapHTML}</div><!-- [A13-fix] rempli au premier paint (données pré-calculées) : plus de min-height réservé ni de saut -->
    </div>
 
    <p class="note" style="margin-top:10px">Le coût matières est une estimation moyenne (coût recette ÷ rendement) pour donner une marge indicative. Pour la comptabilité officielle, appuyez-vous sur vos charges saisies et l'export.</p>`;
-  // Rendu asynchrone du graphique manque à gagner (après injection du conteneur).
-  gapRenderChart();
+  // [A13-fix] Plus d'appel différé : #gapChartZone est déjà rempli dans le paint ci-dessus (pré-calcul).
+  // gapRenderChart() reste utilisé uniquement au changement de granularité (gapSetGran).
   // [v1067] Remplissage différé du bloc « Net dans la poche » (calcul async sur le mois affiché).
   (async()=>{
     try{
@@ -27668,25 +27743,21 @@ function gapSetGran(g){
   gapRenderChart();
 }
 // Construit le graphique double courbe + l'encart de synthèse dans #gapChartZone.
-async function gapRenderChart(){
-  const zone=document.getElementById('gapChartZone');
-  if(!zone) return;
-  try{
-    const data = await deliveryGapData(_gapGran);
-    if(!data.keys.length){
-      zone.innerHTML='<div class="empty">Aucune livraison renseignée pour le moment. Renseignez la distance/temps de livraison sur vos commandes pour suivre le manque à gagner.</div>';
-      return;
-    }
-    const granLabel = _gapGran==='jour'?'jour':(_gapGran==='semaine'?'semaine':'mois');
-    const xfmt = x => {
-      if(_gapGran==='mois') return monthLabel ? monthLabel(x) : x;
-      if(_gapGran==='semaine') return x.replace('-S',' · S');
-      return x.slice(8)+'/'+x.slice(5,7);   // JJ/MM
-    };
-    const chart = lineChart(data.series, {zero:true, xlabel:xfmt, fmt:v=>Math.round(v)+'€'});
-    const s = data.synth;
-    // Encart de synthèse — clair et lisible, recalculé selon la granularité affichée.
-    const encart = `
+// [A13-fix] Le rendu HTML est isolé dans buildGapChartHTML (pur, synchrone) pour permettre
+// une injection SYNCHRONE dans renderCompta (données pré-calculées avant le paint) — même
+// stratégie que buildDashProductionHTML/A14. Fini le remplissage différé et le min-height magique.
+function buildGapChartHTML(data){
+  if(!data || !data.keys.length){
+    return '<div class="empty">Aucune livraison renseignée pour le moment. Renseignez la distance/temps de livraison sur vos commandes pour suivre le manque à gagner.</div>';
+  }
+  const xfmt = x => {
+    if(_gapGran==='mois') return monthLabel ? monthLabel(x) : x;
+    if(_gapGran==='semaine') return x.replace('-S',' · S');
+    return x.slice(8)+'/'+x.slice(5,7);   // JJ/MM
+  };
+  const chart = lineChart(data.series, {zero:true, xlabel:xfmt, fmt:v=>Math.round(v)+'€'});
+  const s = data.synth;
+  const encart = `
       <div class="panel" style="margin-top:14px;background:#fbf7f0;border-color:#ecdfc9">
         <div class="flex" style="justify-content:space-between;flex-wrap:wrap;gap:14px">
           <div style="min-width:120px">
@@ -27709,7 +27780,16 @@ async function gapRenderChart(){
           ${s.manque>0 ? 'Facturer vos livraisons rapprocherait la courbe dorée (CA réel) de la verte (potentiel).' : 'Bravo : aucune livraison non facturée sur cette vue.'}
         </p>
       </div>`;
-    zone.innerHTML = chart + encart;
+  return chart + encart;
+}
+// Remplit #gapChartZone de façon asynchrone. Utilisé au CHANGEMENT de granularité (gapSetGran),
+// où un recalcul post-paint est inévitable ; le premier rendu, lui, passe par l'injection synchrone.
+async function gapRenderChart(){
+  const zone=document.getElementById('gapChartZone');
+  if(!zone) return;
+  try{
+    const data = await deliveryGapData(_gapGran);
+    zone.innerHTML = buildGapChartHTML(data);
   }catch(e){
     console.error('gapRenderChart', e);
     zone.innerHTML='<div class="empty">Erreur lors du calcul du manque à gagner.</div>';
