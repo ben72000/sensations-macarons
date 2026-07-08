@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1279';
+const APP_VERSION = 'v1280';
 const APP_MAJ = 'Correction du saut de page sur l\u2019accueil : la carte \u00ab \u00c0 produire \u00bb est d\u00e9sormais calcul\u00e9e AVANT l\u2019affichage et ins\u00e9r\u00e9e directement, au lieu d\u2019appara\u00eetre apr\u00e8s coup et de pousser le reste de la page vers le bas. Plus de r\u00e9servation de hauteur devin\u00e9e, plus de sursaut au chargement. Aucun autre \u00e9cran modifi\u00e9 ; les 282 tests de non-r\u00e9gression restent tous verts.';
 
 
@@ -408,6 +408,15 @@ db.version(27).stores({
 // Champ NON indexé (jamais requêté) → aucune modification d'index nécessaire ; ce bump
 // ne sert que de marqueur de schéma propre. Migration purement additive, aucune perte.
 db.version(28).stores({});
+// v29 — [BATCH PICKING] Lot de préparation groupée avec QR codes. Regroupe des commandes
+// sélectionnées manuellement (cases à cocher de l'écran Commandes) pour une session de picking
+// consolidée. Persisté pour la traçabilité ascendante (rappel produit) et pour rouvrir/réimprimer
+// un lot. Champs libres non indexés : nom, orderIds[], closedAt, alertes[]. Le lien fin
+// commande↔lot est porté par orderItems.batchId (champ libre, cf. commentaire orderItems),
+// pas ici — un batch peut partager une commande avec d'autres batches. Migration additive.
+db.version(29).stores({
+  batches: '++id, statut, createdAt'
+});
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
 // Sur iPhone, si l'app installée ET Safari ont la base ouverte en même temps, une montée de
@@ -39011,6 +39020,87 @@ function pickGroupAllocate(qteDispo, lignes){
   return {affectations, reliquat:round3(reste)};
 }
 
+/* ============================================================================
+   [BATCH PICKING] Préparation groupée par lot avec QR codes.
+   Regroupe des commandes choisies (cases à cocher écran Commandes) → session de
+   picking consolidée : scan QR global → scan boîtes (prélèvement) → scan commandes
+   (répartition). Réutilise allocateBatches (FIFO/zones), openScanner, logStockMove,
+   subQty, lossUnitCost. Voir specs de conception (chantier picking).
+   ============================================================================ */
+
+// État en mémoire de la session de picking en cours (jamais persisté : la persistance
+// se fait dans orderItems/stockMoves au fil des scans). Réinitialisé à chaque ouverture.
+let _pickBatchId = null;
+let _pickBatchPool = {};        // { parfum: qté prélevée non encore répartie }
+let _pickBatchPoolSrc = {};     // { parfum: [ {productionId, qte}, ... ] } sources FIFO d'usage
+let _pickBatchCtx = null;       // { batch, needs, alloc, prods, recipes } snapshot du render courant
+
+// Résout le nom de parfum d'un lot de production (recette ou libre), pour le matching.
+function pickBatchProdFlavor(p, recipes){
+  if(!p) return '';
+  if(p.libre) return p.produitLibre||'';
+  const r=(recipes||[]).find(x=>+x.id===+p.recipeId);
+  return r ? (r.produitNom||'') : '';
+}
+
+// Agrège les besoins en parfums de TOUTES les commandes d'un batch (somme de orderFlavorNeeds).
+async function pickBatchNeeds(batch){
+  const needs={};
+  for(const oid of (batch.orderIds||[])){
+    const o = await db.orders.get(oid).catch(()=>null);
+    if(!o) continue;   // commande supprimée depuis la création du lot : ignorée proprement
+    const n = orderFlavorNeeds(o);
+    Object.keys(n).forEach(f=>{ needs[f]=round3((needs[f]||0)+n[f]); });
+  }
+  return needs;
+}
+
+// Somme ce qui a DÉJÀ été prélevé/réparti sur ce batch (orderItems.batchId == batchId),
+// agrégé par nom de parfum résolu.
+async function pickBatchDejaReparti(batchId, prods, recipes){
+  const items = (await db.orderItems.toArray().catch(()=>[])).filter(it=>+it.batchId===+batchId);
+  const parProd = {};
+  items.forEach(it=>{ parProd[it.productionId]=round3((parProd[it.productionId]||0)+(+it.qte||0)); });
+  const parParfum = {};
+  Object.keys(parProd).forEach(pid=>{
+    const p = prods.find(x=>+x.id===+pid); if(!p) return;
+    const f = pickBatchProdFlavor(p, recipes);
+    parParfum[f] = round3((parParfum[f]||0)+parProd[pid]);
+  });
+  return parParfum;
+}
+
+// Crée un batch depuis une sélection de commandes (Set/array d'IDs). Retourne l'id créé.
+async function pickBatchCreate(orderIds, nom){
+  const ids = [...new Set((orderIds||[]).map(Number).filter(Boolean))];
+  if(!ids.length) throw new Error('Aucune commande sélectionnée');
+  const batch = {
+    nom: (nom||('Lot du '+fmtDate(today()))).trim(),
+    statut: 'ouvert',
+    orderIds: ids,
+    createdAt: new Date().toISOString(),
+    closedAt: null,
+    alertes: []
+  };
+  const id = await db.batches.add(batch);
+  if(typeof markUnsaved==='function') markUnsaved();
+  return id;
+}
+
+// URL du QR global (même moule que orderUrl/traceUrl existants).
+function batchUrl(batchId){
+  const base = location.href.split('#')[0];
+  return base + '#batch=' + encodeURIComponent(batchId);
+}
+
+// Déclare un manque persistant (non bloquant) sur un batch.
+async function pickBatchDeclareShortage(batch, parfum, manque){
+  const al = Array.isArray(batch.alertes)?batch.alertes.slice():[];
+  al.push({flavor:parfum, manque:round3(manque), date:today(), resolu:false});
+  batch.alertes = al;
+  await db.batches.update(batch.id, {alertes:al});
+}
+
 /* ============================================================
    PICKING PAR SCAN (cas B) : on scanne une commande, elle devient la cible ;
    chaque lot scanné s'affecte automatiquement à cette commande, la checklist
@@ -40466,7 +40556,7 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs','documents','components','packagingConsumption','fixJournal'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs','documents','components','packagingConsumption','fixJournal','batches'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 

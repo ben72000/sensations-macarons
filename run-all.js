@@ -21,7 +21,8 @@ const SUITES = [
   'assembly-decrement.test.js', // vague 8 : décrément transactionnel 3 composants (chantache)
   'avg-sell-price.test.js',     // vague 9 : computeAvgSellPrice (prix de vente moyen)
   'market-costs.test.js',       // vague 10 : coûts marché (marketTotals + computeDeliveryCost)
-  'net-poche.test.js'           // vague 11 : computeNetPoche (IR + net en poche)
+  'net-poche.test.js',          // vague 11 : computeNetPoche (IR + net en poche)
+  'batch-picking.test.js'       // vague 12 : batch picking (agrégation besoins lot, résolution parfum)
 ];
 
 let allOk = true;
