@@ -33,7 +33,14 @@ const SUITES = [
   'pilotage-ca.test.js',         // vague 20 : computePilotageCA (leviers, panier moyen hors événement)
   'pilotage-strategic.test.js',  // vague 21 : computeStrategic (panier, marges, clients actifs)
   'prevision-revenu.test.js',    // vague 22 : computePrevisionRevenu (tendance + carnet)
-  'rd-pont-creatif.test.js'      // vague 23 : rdSuggestMaterial (Pont Créatif R&D→Production)
+  'rd-pont-creatif.test.js',     // vague 23 : rdSuggestMaterial (Pont Créatif R&D→Production)
+  'order-margins.test.js',       // vague 24 : computeOrderMargins (marge par commande)
+  'dlc-anti-recongel.test.js',   // vague 25 : computeDlcFromHistory (DLC anti-recongélation, sanitaire)
+  'compute-stats.test.js',       // vague 26 : computeStats (agrégation ventes globale/client)
+  'sales-velocity.test.js',      // vague 27 : computeSalesVelocity (vélocité, rupture de stock)
+  'forecast.test.js',            // vague 28 : computeForecast (projection réservations datées)
+  'market-selection.test.js',    // vague 29 : computeMarketSelection (score composite, classement)
+  'market-channel.test.js'       // vague 30 : computeMarketChannelAnalysis (taux d'écoulement)
 ];
 
 let allOk = true;
