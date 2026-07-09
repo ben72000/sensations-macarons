@@ -40,7 +40,9 @@ const SUITES = [
   'sales-velocity.test.js',      // vague 27 : computeSalesVelocity (vélocité, rupture de stock)
   'forecast.test.js',            // vague 28 : computeForecast (projection réservations datées)
   'market-selection.test.js',    // vague 29 : computeMarketSelection (score composite, classement)
-  'market-channel.test.js'       // vague 30 : computeMarketChannelAnalysis (taux d'écoulement)
+  'market-channel.test.js',      // vague 30 : computeMarketChannelAnalysis (taux d'écoulement)
+  'material-needs.test.js',      // vague 31 : computeMaterialNeeds (besoins matières production)
+  'gaspillage.test.js'           // vague 32 : computeGaspillage (coût du gaspillage marché)
 ];
 
 let allOk = true;

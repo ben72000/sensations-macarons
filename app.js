@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1291';
+const APP_VERSION = 'v1292';
 const APP_MAJ = 'Correction du saut de page sur l\u2019accueil : la carte \u00ab \u00c0 produire \u00bb est d\u00e9sormais calcul\u00e9e AVANT l\u2019affichage et ins\u00e9r\u00e9e directement, au lieu d\u2019appara\u00eetre apr\u00e8s coup et de pousser le reste de la page vers le bas. Plus de r\u00e9servation de hauteur devin\u00e9e, plus de sursaut au chargement. Aucun autre \u00e9cran modifi\u00e9 ; les 282 tests de non-r\u00e9gression restent tous verts.';
 
 
