@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1285';
+const APP_VERSION = 'v1286';
 const APP_MAJ = 'Correction du saut de page sur l\u2019accueil : la carte \u00ab \u00c0 produire \u00bb est d\u00e9sormais calcul\u00e9e AVANT l\u2019affichage et ins\u00e9r\u00e9e directement, au lieu d\u2019appara\u00eetre apr\u00e8s coup et de pousser le reste de la page vers le bas. Plus de r\u00e9servation de hauteur devin\u00e9e, plus de sursaut au chargement. Aucun autre \u00e9cran modifi\u00e9 ; les 282 tests de non-r\u00e9gression restent tous verts.';
 
 
@@ -53601,7 +53601,9 @@ function _diagReorganisation(S, plan, datesLiv, wk){
 function _planSemaineRenderHTML(S, plan, datesLiv, wk){
   if(!S) return '';
   const JOURS = ['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
-  const minToHM = mm => String(Math.floor(mm/60)).padStart(2,'0')+':'+String(mm%60).padStart(2,'0');
+  // [fix affichage] même précaution que _minToHM (planificateur perso) : arrondir avant
+  // floor/modulo pour éviter un artefact flottant du type "08:54.10000000000002".
+  const minToHM = mm => { mm=Math.round(+mm||0); return String(Math.floor(mm/60)).padStart(2,'0')+':'+String(mm%60).padStart(2,'0'); };
   const byDay = {}; (S.events||[]).forEach(e=>{ (byDay[e.date] ||= []).push(e); });
   const dayBlocks = Object.keys(byDay).sort().map(date=>{
     const d = new Date(date+'T00:00');
@@ -57581,8 +57583,13 @@ function schedulePersonalPlan(daySpecs, plan, opts){
   });
 
   // 3) Diagnostic chiffré + insights argumentés (le « chef » explique ses choix).
-  const totalActive = active.reduce((s,t)=>s+t.dur,0);
-  const totalAvail = _totalAvail(blocks);
+  // [fix affichage] totalActive/totalAvail sont des SOMMES DE MINUTES issues de calculs en
+  // chaîne (conversions h↔min, divisions de créneaux) : l'arithmétique flottante JS peut
+  // laisser des résidus (ex. 4.300000000000068 au lieu de 4). Une fraction de minute n'a de
+  // toute façon aucun sens métier ici → on arrondit à la minute entière AVANT tout affichage
+  // ou modulo, pour ne jamais exposer ces artefacts à l'écran (ex. "8h4.3000…" ou "43h55.69…").
+  const totalActive = Math.round(active.reduce((s,t)=>s+t.dur,0));
+  const totalAvail = Math.round(_totalAvail(blocks));
   const placed = events.length;
   const lastEvent = events[events.length-1];
   // estimation de fin (avec maturation) → prêt à vendre
@@ -57600,7 +57607,8 @@ function schedulePersonalPlan(daySpecs, plan, opts){
   if(partielles) insights.push(`💡 ${partielles} meringue(s) ne sont pas pleines. Si une échéance approche, tu peux soit les lancer telles quelles, soit attendre une commande qui complète la capacité pour ne pas gâcher de blancs.`);
   const coquesTot = (plan.meringues||[]).reduce((s,m)=>s+(m.macarons||0)*2,0);
   const cuisTot = cuissonCascade(coquesTot,'standard');
-  insights.push(`🔥 Cuisson : ${cuisTot.nbPlaques} plaque(s) de 39 coques, enfournées en cascade (2ᵉ plaque +${PROC.relancePlaqueMin} min, 3ᵉ à la sortie de la 1ʳᵉ…). Temps four estimé ~${Math.floor(cuisTot.makespanMin/60)?Math.floor(cuisTot.makespanMin/60)+'h':''}${cuisTot.makespanMin%60} min, en parallèle des ganaches/montages.`);
+  const makespanMin = Math.round(cuisTot.makespanMin);   // défense en profondeur (même précaution que totalActive/totalAvail)
+  insights.push(`🔥 Cuisson : ${cuisTot.nbPlaques} plaque(s) de 39 coques, enfournées en cascade (2ᵉ plaque +${PROC.relancePlaqueMin} min, 3ᵉ à la sortie de la 1ʳᵉ…). Temps four estimé ~${Math.floor(makespanMin/60)?Math.floor(makespanMin/60)+'h':''}${makespanMin%60} min, en parallèle des ganaches/montages.`);
   if(readyInfo) insights.push(`📦 Avec ${PROC.maturationH} h de maturation après le dernier montage, le lot complet est prêt à la vente le ${readyInfo.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'})} vers ${String(readyInfo.getHours()).padStart(2,'0')}h${String(readyInfo.getMinutes()).padStart(2,'0')}.`);
   // Insight délai ganache : matérialise la contrainte de repos avant montage par recette.
   {
@@ -58029,7 +58037,10 @@ async function _planFromNeeds(needs){
     tempsDisponible:0, depassement:false, chargePct:0, warnings, nbParfums:lignes.length};
 }
 const _JOURS_FR=['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
-function _minToHM(m){ return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); }
+// [fix affichage] m peut porter une imprécision flottante (calculs en chaîne de durées) ;
+// une fraction de minute n'a aucun sens pour un horaire → on arrondit AVANT floor/modulo,
+// sinon un horaire comme "08:54.10000000000002" s'affiche au lieu de "08:54".
+function _minToHM(m){ m=Math.round(+m||0); return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); }
 function persoRenderResult(){
   if(!_persoPlan) return;
   const S=_persoPlan;
