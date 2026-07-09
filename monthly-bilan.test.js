@@ -51,8 +51,13 @@ function buildModule(fakeDb){
 }
 
 function makeDb(tables){
+  const ordersArr = tables.orders || [];
   const wrap = (arr) => ({ toArray: async () => (arr || []).slice() });
-  return { orders: wrap(tables.orders), markets: wrap(tables.markets) };
+  const documents = tables.documents || [];
+  return {
+    orders: { toArray: async()=>ordersArr.slice(), get: async(id)=>ordersArr.find(o=>+o.id===+id)||null },
+    markets: wrap(tables.markets),
+    documents: { where: (field) => ({ equals: (val) => ({ toArray: async () => documents.filter(d=>d[field]===val) }) }) } };
 }
 
 let pass = 0, fail = 0; const failures = [];
@@ -189,6 +194,66 @@ const r8 = await (buildModule(makeDb({ orders:[], markets:[] })))('2026-05');
 eq(r8.goods, 0, 'CAS8 · aucun ordre : marchandise = 0');
 eq(r8.service, 0, 'CAS8 · service = 0');
 eq(r8.cotisTotal, 0, 'CAS8 · cotisations = 0');
+
+// ============================================================================
+//  CAS 9 — [v1283] JOURNAL D'AVOIRS : déduction de la base URSSAF, ventilée
+//  selon la nature (marchandise/service) de la commande d'ORIGINE, imputée
+//  au mois d'ÉMISSION de l'avoir (pas celui de la commande).
+// ============================================================================
+// CAS9a — Avoir sur une commande 100% marchandise (coffret)
+const db9a = makeDb({
+  orders:[ { id:90, date:'2026-05-01', montant:200,
+    lignes:[ {type:'coffret', taille:16, parfums:[{nom:'A',qte:16}]} ],
+    paiements:[ {date:'2026-05-01', montant:200, moyen:'Carte'} ] } ],
+  markets:[],
+  documents:[ { type:'avoir', statut:'emis', orderId:90, montant:50, date:'2026-05-10', numero:'AV-202605-1' } ]
+});
+const r9a = await (buildModule(db9a))('2026-05');
+eq(r9a.goods, 150, 'CAS9a · marchandise 200 - avoir 50 (100% marchandise) = 150');
+eq(r9a.service, 0, 'CAS9a · aucune part service');
+eq(r9a.avoirsDeduits, 50, 'CAS9a · avoirsDeduits = 50');
+eq(r9a.cotisGoods, money2Ref(150*TAUX_GOODS/100), 'CAS9a · cotisation marchandise recalculée sur 150, pas 200');
+
+// CAS9b — Avoir sur une commande 100% prestation (coaching)
+const db9b = makeDb({
+  orders:[ { id:91, date:'2026-05-01', montant:300,
+    lignes:[ {type:'prestation', montantHT:300} ],
+    paiements:[ {date:'2026-05-01', montant:300, moyen:'Virement'} ] } ],
+  markets:[],
+  documents:[ { type:'avoir', statut:'emis', orderId:91, montant:100, date:'2026-05-15', numero:'AV-202605-2' } ]
+});
+const r9b = await (buildModule(db9b))('2026-05');
+eq(r9b.service, 200, 'CAS9b · service 300 - avoir 100 (100% service) = 200');
+eq(r9b.goods, 0, 'CAS9b · aucune part marchandise');
+eq(r9b.cotisService, money2Ref(200*TAUX_SERVICE/100), 'CAS9b · cotisation service recalculée sur 200, pas 300');
+
+// CAS9c — Avoir émis un AUTRE mois que la commande d'origine : imputé au mois d'ÉMISSION
+const db9c = makeDb({
+  orders:[ { id:92, date:'2026-04-01', montant:150,
+    lignes:[ {type:'coffret', taille:8, parfums:[{nom:'B',qte:8}]} ],
+    paiements:[ {date:'2026-04-01', montant:150, moyen:'Carte'} ] } ],
+  markets:[],
+  documents:[ { type:'avoir', statut:'emis', orderId:92, montant:60, date:'2026-05-05', numero:'AV-202605-3' } ]
+});
+const r9c_avril = await (buildModule(db9c))('2026-04');
+const r9c_mai = await (buildModule(db9c))('2026-05');
+eq(r9c_avril.goods, 150, 'CAS9c · avril (mois de la commande) INCHANGÉ : avoir pas encore émis');
+eq(r9c_mai.goods, -60, "CAS9c · mai (mois d'emission de l'avoir) : deduction pure, -60");
+eq(r9c_mai.avoirsDeduits, 60, 'CAS9c · avoirsDeduits sur mai = 60');
+
+// CAS9d — Statut 'enregistre' (pas de facture liée) déduit aussi ; un avoir NON émis/enregistré ne compte pas
+const db9d = makeDb({
+  orders:[ { id:93, date:'2026-05-01', montant:100,
+    lignes:[ {type:'coffret', taille:6, parfums:[{nom:'C',qte:6}]} ],
+    paiements:[ {date:'2026-05-01', montant:100, moyen:'Espèces'} ] } ],
+  markets:[],
+  documents:[
+    { type:'avoir', statut:'enregistre', orderId:93, montant:20, date:'2026-05-08' },
+    { type:'avoir', statut:'brouillon', orderId:93, montant:999, date:'2026-05-08' }   // ignoré : pas émis/enregistré
+  ]
+});
+const r9d = await (buildModule(db9d))('2026-05');
+eq(r9d.goods, 80, 'CAS9d · statut enregistre déduit (100-20=80), brouillon ignoré (pas 999 de trop)');
 
 // --- Rapport ----------------------------------------------------------------
 console.log('\n=== TESTS DE CARACTÉRISATION — Vague 4 : computeMonthlyBilan ===\n');

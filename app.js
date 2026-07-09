@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1282';
+const APP_VERSION = 'v1285';
 const APP_MAJ = 'Correction du saut de page sur l\u2019accueil : la carte \u00ab \u00c0 produire \u00bb est d\u00e9sormais calcul\u00e9e AVANT l\u2019affichage et ins\u00e9r\u00e9e directement, au lieu d\u2019appara\u00eetre apr\u00e8s coup et de pousser le reste de la page vers le bas. Plus de r\u00e9servation de hauteur devin\u00e9e, plus de sursaut au chargement. Aucun autre \u00e9cran modifi\u00e9 ; les 282 tests de non-r\u00e9gression restent tous verts.';
 
 
@@ -2746,6 +2746,10 @@ function getSettings(){
       // Cible de ventilation marché par parfum : [{parfum, pct}]. Vide par défaut.
       marketMix: Array.isArray(s.marketMix) ? s.marketMix : [],
       exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT,
+      // [v1283] Trésorerie prospective : solde bancaire saisi à la main, mis à jour périodiquement.
+      // Pas de valeur par défaut pertinente (0€ serait une vraie saisie) → null tant que non renseigné.
+      soldeBancaire: (s.soldeBancaire!=null && s.soldeBancaire!=='') ? +s.soldeBancaire : null,
+      soldeBancaireDate: s.soldeBancaireDate || null,
       // [v1274] Champs légaux des CGV (identité, contact, médiateur). Objet libre, conservé tel quel.
       legal: (s.legal && typeof s.legal==='object') ? s.legal : {}
     };
@@ -4371,7 +4375,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, tresorerie:renderTresorerie, scenarios:renderScenarios, avoirs:renderAvoirs, panierMoyen:renderPanierMoyen, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
   ventilation:renderVentilation,
   compositeur:renderCompositeur,
   carrousel:renderCarrousel,
@@ -7553,6 +7557,88 @@ function _factSeqGet(){
   return Number.isFinite(raw) ? raw : 23;   // 23 → la prochaine sera 24
 }
 function _factSeqSet(n){ localStorage.setItem(FACT_SEQ_KEY, String(n)); }
+
+// [v1283 · JOURNAL D'AVOIRS] Même principe légal que les factures (séquence continue, jamais
+// réutilisée) mais compteur SÉPARÉ — un avoir n'est jamais numéroté dans la suite des factures.
+// Format AV-AAAAMM-N. Démarre à 0 (pas de contrainte de reprise, contrairement aux factures).
+const AVOIR_SEQ_KEY = 'sm_avoirSeq';
+function _avoirSeqGet(){
+  const raw = parseInt(localStorage.getItem(AVOIR_SEQ_KEY), 10);
+  return Number.isFinite(raw) ? raw : 0;
+}
+function _avoirSeqSet(n){ localStorage.setItem(AVOIR_SEQ_KEY, String(n)); }
+function docEstAvoirDefinitif(d){ return d && d.type==='avoir' && d.statut==='emis'; }
+async function nextAvoirNumeroDefinitif(){
+  const d=new Date();
+  const prefix='AV-'+d.getFullYear()+String(d.getMonth()+1).padStart(2,'0');
+  let seq=_avoirSeqGet();
+  try{
+    const avoirsDef=(await db.documents.where('type').equals('avoir').toArray().catch(()=>[]))
+      .filter(a=>docEstAvoirDefinitif(a) && a.numero);
+    avoirsDef.forEach(a=>{ const m=(a.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>seq) seq=n; } });
+  }catch(e){}
+  const next=seq+1;
+  _avoirSeqSet(next);
+  return `${prefix}-${next}`;
+}
+// Aperçu du PROCHAIN numéro d'avoir SANS l'attribuer.
+function peekAvoirNumero(){
+  const d=new Date();
+  const prefix='AV-'+d.getFullYear()+String(d.getMonth()+1).padStart(2,'0');
+  return `${prefix}-${_avoirSeqGet()+1}`;
+}
+// [v1283 · JOURNAL D'AVOIRS] Formulaire de création d'un avoir (remboursement total ou partiel).
+// Détecte si une facture DÉFINITIVE est liée à la commande : si oui, l'avoir reçoit sa propre
+// numérotation légale séquentielle (jamais mélangée à celle des factures). Ne modifie JAMAIS
+// o.paiements[] (traçabilité intacte) : l'avoir est une pièce comptable séparée, en déduction.
+async function avoirForm(orderId){
+  const o = await db.orders.get(orderId); if(!o){ toast('Commande introuvable'); return; }
+  const dejaEncaisse = orderPaid(o);
+  if(dejaEncaisse<=0){ toast('Rien n\'a été encaissé sur cette commande'); return; }
+  const docs = await db.documents.toArray().catch(()=>[]);
+  const facture = docs.find(x=>x.type==='facture' && Array.isArray(x.orderIds) && x.orderIds.includes(orderId) && docEstDefinitif(x));
+  // Déjà remboursé sur cette commande (avoirs émis existants) : borne le nouveau montant possible.
+  const avoirsExistants = docs.filter(x=>x.type==='avoir' && x.orderId===orderId && x.statut==='emis');
+  const dejaRembourse = money2(avoirsExistants.reduce((s,a)=>s+(+a.montant||0),0));
+  const maxRemboursable = money2(Math.max(0, dejaEncaisse - dejaRembourse));
+  if(maxRemboursable<=0){ toast('Cette commande a déjà été intégralement remboursée'); return; }
+  window._avoirCtx = { orderId, facture: facture?facture.id:null, maxRemboursable };
+  openModal(`<h3>↩︎ Créer un avoir</h3>
+    <p class="note">Encaissé sur cette commande : <b>${euro(dejaEncaisse)}</b>${dejaRembourse>0?` (dont ${euro(dejaRembourse)} déjà remboursé)`:''}. Montant remboursable restant : <b>${euro(maxRemboursable)}</b>.
+    ${facture?`<br>Facture définitive liée : <b>${esc(facture.numero||'—')}</b> → l'avoir portera son propre numéro légal (${esc(peekAvoirNumero())}).`:'<br>Aucune facture définitive liée — l\'avoir est enregistré comme remboursement simple.'}</p>
+    <div class="field"><label>Montant à rembourser (€)</label>
+      <input type="number" step="0.01" min="0" max="${maxRemboursable}" id="avoirMt" value="${maxRemboursable}"></div>
+    <div class="field"><label>Motif</label>
+      <select id="avoirMotif"><option>Annulation commande</option><option>Produit non conforme / casse</option><option>Erreur de facturation</option><option>Geste commercial</option><option>Autre</option></select></div>
+    <div class="field"><label>Note (facultatif)</label><input id="avoirNote" placeholder="précision libre"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="avoirConfirm()">Émettre l'avoir</button></div>`);
+}
+async function avoirConfirm(){
+  const ctx = window._avoirCtx; if(!ctx) return;
+  const mt = money2(+((document.getElementById('avoirMt')||{}).value)||0);
+  if(mt<=0 || mt>ctx.maxRemboursable+0.009){ toast('Montant invalide (max '+euro(ctx.maxRemboursable)+')'); return; }
+  const motif = (document.getElementById('avoirMotif')||{}).value||'Autre';
+  const note = ((document.getElementById('avoirNote')||{}).value||'').trim();
+  const o = await db.orders.get(ctx.orderId); if(!o){ toast('Commande introuvable'); return; }
+  let numero = null;
+  if(ctx.facture){
+    // Facture définitive liée → numérotation légale OBLIGATOIRE, attribuée une seule fois ici.
+    numero = await nextAvoirNumeroDefinitif();
+  }
+  const doc = {
+    type:'avoir', statut: ctx.facture?'emis':'enregistre',
+    orderId: ctx.orderId, factureId: ctx.facture||null,
+    numero, montant: mt, motif, note,
+    date: today(), clientId: o.clientId||null
+  };
+  await db.documents.add(doc);
+  if(typeof markUnsaved==='function') markUnsaved();
+  closeModal();
+  toast(`✓ Avoir ${numero?numero+' ':''}émis (${euro(mt)})`);
+  if(view==='documents') renderDocuments();
+  else cmdView(ctx.orderId);
+}
 // Aperçu du PROCHAIN numéro SANS l'attribuer (pour affichage avant validation).
 function peekFactureNumero(){
   const d=new Date();
@@ -7681,7 +7767,9 @@ async function renderDocuments(){
   const devisActifs = devis.filter(d=>!devisArchive(d));
   const devisArchives = devis.filter(d=>devisArchive(d));
 
-  const docCard=d=>`<div onclick="docOpen(${d.id})" style="cursor:pointer;background:#fff;border:1px solid var(--hair);border-left:4px solid ${docStatutColor(d)};border-radius:13px;padding:12px 14px;box-shadow:var(--sh-1);margin-bottom:9px">
+  const docCard=d=>`<div style="cursor:pointer;background:#fff;border:1px solid var(--hair);border-left:4px solid ${docStatutColor(d)};border-radius:13px;padding:12px 14px;box-shadow:var(--sh-1);margin-bottom:9px;display:flex;gap:8px;align-items:flex-start">
+      ${(d.type==='devis' && d.statut==='en_attente')?`<input type="checkbox" class="doc-check" ${_docSel.has(d.id)?'checked':''} onclick="event.stopPropagation()" onchange="docToggleOne(${d.id},this.checked)" style="margin-top:14px;width:18px;height:18px;flex:none">`:''}
+      <div style="flex:1" onclick="docOpen(${d.id})">
       <div style="display:flex;align-items:center;gap:9px;margin-bottom:5px">
         <b style="flex:1;color:var(--bordeaux)">${esc(d.numero||d.refInterne||'Brouillon')}</b>
         <span class="tag" style="background:${docStatutColor(d)};color:#fff;font-size:.66rem">${docStatutLabel(d)}</span>
@@ -7692,6 +7780,7 @@ async function renderDocuments(){
         <b style="color:var(--bordeaux)">${euro(d.montant||0)}</b>
       </div>
       ${d.type==='facture' && d.statut==='emise' ? `<div style="margin-top:8px"><button class="btn gold sm" style="width:100%" onclick="event.stopPropagation();docMarkPaid(${d.id},1)">💳 Marquer payée</button></div>` : ''}
+      </div>
     </div>`;
   // Bloc repliable (chevron) pour les documents archivés.
   const archiveBloc=items=> items.length?`
@@ -7702,9 +7791,17 @@ async function renderDocuments(){
   main.innerHTML=`
    <div class="topbar"><div><h1>Devis & Factures</h1><p>Tes documents commerciaux · devis → commande → facture</p></div></div>
 
-   <div style="display:flex;gap:8px;margin-bottom:14px">
+   <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
      <button class="btn gold" onclick="docNewDevis()">+ Nouveau devis</button>
+     <button class="btn ghost" onclick="devisGroupeStart()" title="Récapituler plusieurs devis et/ou commandes dans un seul document">📋 Devis groupé</button>
      <button class="btn ghost" onclick="docAuditPaiementsFantomesUI()" title="Vérifie la cohérence du suivi de règlement des factures validées">🔍 Audit règlements</button>
+   </div>
+   <div id="docSelBar" class="sel-bar" style="display:none">
+     <span id="docSelCount">0 sélectionné(s)</span>
+     <div class="flex" style="gap:6px">
+       <button class="btn ghost sm" onclick="docClearSelection()">Tout décocher</button>
+       <button class="btn gold sm" onclick="devisGroupeStart([..._docSel])">📋 Grouper la sélection</button>
+     </div>
    </div>
    ${(()=>{
      const nbDef=factures.filter(f=>docEstDefinitif(f)).length;
@@ -15643,6 +15740,17 @@ async function setOrderStatusInline(id, statut){
 // ---- Solder une commande depuis la liste (encaisse le solde, daté du jour) ----
 // ---- Sélection multiple ----
 let _cmdSel = new Set();
+// [v1284] Sélection multiple sur l'écran Documents, scopée aux DEVIS (pas les factures — un
+// devis groupé n'a de sens qu'à partir de devis, pas de factures déjà émises/verrouillées).
+let _docSel = new Set();
+function docToggleOne(id, on){ if(on) _docSel.add(id); else _docSel.delete(id); docUpdateSelBar(); }
+function docClearSelection(){ _docSel.clear(); if(view==='documents') renderDocuments(); }
+function docUpdateSelBar(){
+  const bar=document.getElementById('docSelBar'); if(!bar) return;
+  const n=_docSel.size;
+  bar.style.display = n>0 ? 'flex' : 'none';
+  const c=document.getElementById('docSelCount'); if(c) c.textContent = n+' sélectionné(s)';
+}
 function cmdToggleOne(id, on){ if(on) _cmdSel.add(id); else _cmdSel.delete(id); cmdUpdateSelBar(); }
 function cmdSelectAllVisible(){ cmdToggleAllVisible(true); }
 function cmdToggleAllVisible(on){
@@ -16045,6 +16153,7 @@ async function cmdView(id){
        return `<div class="sum-box"><span>Encaissé</span><b>${euro(enc)}</b></div>
          <div class="sum-box"><span><b>Solde restant dû</b> <span class="tag" style="background:${col};color:#fff">${st}</span></span><b style="color:${solde>0?'var(--red,#b3261e)':'#3f7d52'}">${euro(solde)}</b></div>`;})()}
     ${orderPayStatus(o)!=='Payé'?`<button class="btn gold sm" style="margin-top:6px" onclick="markPaid(${id},true)">✓ Solder (${euro(orderBalance(o))})</button>`:''}
+    ${orderPaid(o)>0?`<button class="btn ghost sm" style="margin-top:6px" onclick="avoirForm(${id})" title="Rembourser tout ou partie de cette commande">↩︎ Créer un avoir</button>`:''}
     ${(function(){
       try{
         const _mg = computeOrderMargins(o, _embRecipes, _embItems, _embLots, _embMats);
@@ -18972,6 +19081,22 @@ async function computeAccounting(opts){
     if(au>0) encByMethod['Autre (marché)']=money2((encByMethod['Autre (marché)']||0)+au);
   });
 
+  // 1c) [v1283 · JOURNAL D'AVOIRS] Remboursements émis : DÉDUITS du CA encaissé ET facturé, au
+  // mois d'ÉMISSION de l'avoir (règle comptable standard — pas rétroactif sur le mois de la
+  // commande d'origine, qui reste un fait historique inchangé). Sans cette déduction, un CA
+  // remboursé resterait compté dans la base URSSAF → cotisations sur-estimées (cf. audit externe).
+  // Ne modifie JAMAIS o.paiements[] : l'avoir est une écriture symétrique séparée.
+  let totalAvoirs=0;
+  const allAvoirs = await (db.documents?db.documents.where('type').equals('avoir').toArray():Promise.resolve([])).catch(()=>[]);
+  const avoirsEmis = allAvoirs.filter(a=>a.statut==='emis' || a.statut==='enregistre');
+  avoirsEmis.forEach(a=>{
+    if((_periodeStart||_periodeEnd) && !_inRange(a.date)) return;
+    const m=monthKey(a.date); const v=money2(+a.montant||0); if(!m || v<=0) return;
+    encByMonth[m]=money2((encByMonth[m]||0)-v);
+    factByMonth[m]=money2((factByMonth[m]||0)-v);
+    totalEncaisse=money2(totalEncaisse-v); totalFacture=money2(totalFacture-v); totalAvoirs=money2(totalAvoirs+v);
+  });
+
   // 2) CHARGES par mois (date de la charge) + par catégorie
   const chargeByMonth={}, chargeByCat={};
   let totalCharges=0;
@@ -19050,11 +19175,236 @@ async function computeAccounting(opts){
     resultat: money2(totalEncaisse-totalCharges-totalCout-totalPertes),
     creances,
     migCount, migCA,
+    // [v1283 · JOURNAL D'AVOIRS] Total des remboursements émis sur la période (déjà déduit
+    // ci-dessus de totalEncaisse/totalFacture) — exposé pour affichage transparent.
+    totalAvoirs, nbAvoirs: avoirsEmis.length,
     // [A11-display] CA activité globale = CA fiscal (hors reprises) + reprises (déjà déclarées ailleurs).
     caActiviteTotale: money2(totalFacture + migCA),
     nbCharges: charges.length
   };
 }
+
+// ============================================================
+//  [v1283] TRÉSORERIE PROSPECTIVE — solde saisi + projection J+30/60/90.
+//  Solde bancaire saisi à la main (getSettings().soldeBancaire, mis à jour périodiquement),
+//  projeté à l'aide de :
+//    + créances clients (commandes non soldées), datées par dateLivraison (proxy : le solde
+//      d'une commande devient généralement exigible à la livraison/l'événement) ou o.date à
+//      défaut. Reprises exclues (estReprise) — même règle que partout ailleurs : un CA passé
+//      déjà réglé n'est pas une créance future.
+//    − charges déjà engagées et non payées (aucune notion de "payée" sur une charge dans le
+//      modèle actuel → toute charge future datée compte comme sortie, cf. limite documentée).
+//    − charges récurrentes actives (modèles), projetées sur leurs prochaines échéances
+//      (jourMois) non encore matérialisées dans db.charges.
+//  Ne modifie AUCUN calcul existant (Compta, URSSAF) — moteur additif en lecture seule.
+// ============================================================
+async function computeTresorerie(){
+  const s = getSettings();
+  const solde = s.soldeBancaire;
+  const soldeDate = s.soldeBancaireDate;
+  const today0 = today();
+  const jAujourdhui = new Date(today0+'T00:00:00');
+
+  const allOrders = await db.orders.toArray().catch(()=>[]);
+  const clientsAll = await db.clients.toArray().catch(()=>[]);
+  const _cliNom = id => { const c=clientsAll.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'Client'; };
+  const orders = allOrders.filter(o=>!estReprise(o));
+  // [v1283 · JOURNAL D'AVOIRS] Un avoir émis sur une commande PAS ENCORE soldée réduit d'autant
+  // la créance restante (ex. annulation partielle avant paiement complet). orderBalance() seul
+  // ne le sait pas (il ne lit que o.paiements[], jamais modifié par un avoir) → on soustrait ici
+  // les avoirs déjà émis par commande, sans jamais toucher au registre de paiements lui-même.
+  const allAvoirsT = await (db.documents?db.documents.where('type').equals('avoir').toArray():Promise.resolve([])).catch(()=>[]);
+  const avoirsParCommande = {};
+  allAvoirsT.forEach(a=>{
+    if(a.statut!=='emis' && a.statut!=='enregistre') return;
+    if(!a.orderId) return;
+    avoirsParCommande[a.orderId] = money2((avoirsParCommande[a.orderId]||0) + (+a.montant||0));
+  });
+  // Créances : solde restant dû par commande, datées par dateLivraison (proxy d'exigibilité).
+  const creances = [];
+  orders.forEach(o=>{
+    const balBrut = orderBalance(o);
+    const bal = money2(Math.max(0, balBrut - (avoirsParCommande[o.id]||0)));
+    if(bal<=0) return;
+    const d = o.dateLivraison || o.date || today0;
+    creances.push({ label: (o.clientId ? _cliNom(o.clientId) : (o.histoLabel||('Commande #'+o.id))), date:d, montant:bal, orderId:o.id });
+  });
+
+  // Charges à venir : ponctuelles déjà saisies avec une date future, + prochaines échéances
+  // des modèles récurrents actifs (non encore matérialisées).
+  const allCharges = await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
+  const chargesFutures = allCharges.filter(c=>(c.date||'')>today0)
+    .map(c=>({label:c.libelle||c.categorie||'Charge', date:c.date, montant:money2(+c.montant||0)}));
+
+  const models = getRecurringCharges().filter(m=>m.actif!==false && +m.montant>0);
+  const chargesRecurrentesFutures = [];
+  models.forEach(m=>{
+    const jour = Math.min(28, Math.max(1, +m.jourMois||1));
+    // Prochaines échéances sur les 3 prochains mois (largement suffisant pour un horizon 90j).
+    const base = new Date(jAujourdhui.getFullYear(), jAujourdhui.getMonth(), jour);
+    for(let i=0;i<4;i++){
+      const d = new Date(base.getFullYear(), base.getMonth()+i, jour);
+      const ymd = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      if(ymd<=today0) continue;   // déjà passée ou déjà matérialisée en charge ponctuelle
+      chargesRecurrentesFutures.push({label:m.libelle||'Charge récurrente', date:ymd, montant:money2(+m.montant||0)});
+    }
+  });
+
+  const jalons = [30,60,90].map(nbJours=>{
+    const limite = new Date(jAujourdhui); limite.setDate(limite.getDate()+nbJours);
+    const limiteStr = limite.getFullYear()+'-'+String(limite.getMonth()+1).padStart(2,'0')+'-'+String(limite.getDate()).padStart(2,'0');
+    const dansPeriode = (d)=> d>today0 ? d<=limiteStr : true;   // créances déjà en retard comptent quand même (à venir "dès que possible")
+    const detailCreances = creances.filter(c=>dansPeriode(c.date));
+    const detailChargesP = chargesFutures.filter(c=>c.date<=limiteStr);
+    const detailChargesR = chargesRecurrentesFutures.filter(c=>c.date<=limiteStr);
+    const totCreances = money2(detailCreances.reduce((s,c)=>s+c.montant,0));
+    const totCharges = money2(detailChargesP.reduce((s,c)=>s+c.montant,0) + detailChargesR.reduce((s,c)=>s+c.montant,0));
+    const solveur = (solde!=null) ? money2(solde + totCreances - totCharges) : null;
+    return { nbJours, limite:limiteStr, totCreances, totCharges, solveur,
+      detail:{creances:detailCreances, chargesPonctuelles:detailChargesP, chargesRecurrentes:detailChargesR} };
+  });
+
+  return { solde, soldeDate, today:today0, jalons, totalCreances: money2(creances.reduce((s,c)=>s+c.montant,0)) };
+}
+// Enregistre/actualise le solde bancaire saisi à la main.
+function saveSoldeBancaire(montant){
+  const s = getSettings();
+  s.soldeBancaire = money2(+montant||0);
+  s.soldeBancaireDate = today();
+  saveSettings(s);
+}
+
+// ============================================================
+//  [v1283] MODULE SCÉNARIOS — impact d'un changement de PRIX sur CA/marge/runway.
+//  Base : totals.{ca, pieces, margeNette} d'analyzeFlavorProfitability sur une période
+//  choisie (donc AUCUN nouveau calcul de coût — on réutilise le moteur de marge existant,
+//  seule source de vérité). Deux modes de volume :
+//    'constant' : le nombre de pièces vendues ne change pas (effet prix pur, cas le plus
+//                 simple à lire — "si j'avais vendu pareil à ce nouveau prix").
+//    'ajuste'   : Ben saisit lui-même l'estimation d'impact volume (ex. +5% prix → -10% volume),
+//                 car aucune élasticité mesurée n'existe dans les données de l'app.
+//  Le résultat ne modifie AUCUNE donnée réelle : c'est une simulation pure, en mémoire.
+// ============================================================
+async function computeScenarioPrix(opts){
+  opts = opts||{};
+  const periodeStart = opts.periodeStart||null, periodeEnd = opts.periodeEnd||null;
+  const pctPrix = +opts.pctPrix||0;         // ex. +5 = hausse de 5%, -10 = baisse de 10%
+  const pctVolume = opts.mode==='ajuste' ? (+opts.pctVolume||0) : 0;   // 0 en mode 'constant'
+
+  const [orders, markets, marketMoves, recipes, recipeItems, lots, mats, productions] = await Promise.all([
+    db.orders.toArray().catch(()=>[]),
+    (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]),
+    (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]),
+    db.recipes.toArray().catch(()=>[]),
+    db.recipeItems.toArray().catch(()=>[]),
+    db.materialLots.toArray().catch(()=>[]),
+    db.materials.toArray().catch(()=>[]),
+    db.productions.toArray().catch(()=>[])
+  ]);
+  const inRange = (d)=>{ if(!d) return false; if(periodeStart && d<periodeStart) return false; if(periodeEnd && d>periodeEnd) return false; return true; };
+  const ordersP = orders.filter(o=>!estReprise(o) && inRange(o.date));
+  const marketsP = markets.filter(k=>inRange(k.date));
+  const settings = getSettings();
+
+  const An = analyzeFlavorProfitability({recipes, recipeItems, lots, mats, orders:ordersP, markets:marketsP, marketMoves, productions, settings});
+  const T = (An && An.totals) ? An.totals : {ca:0, pieces:0, margeNette:0};
+  const piecesBase = T.pieces||0;
+  const caBase = T.ca||0;
+  const margeBase = (T.margeApresDons!=null?T.margeApresDons:T.margeNette)||0;
+  if(piecesBase<=0){
+    return { ok:false, raison:'Aucune vente sur la période choisie — impossible de simuler.' };
+  }
+  const prixMoyenBase = money2(caBase / piecesBase);
+  const coutMoyenParPiece = money2((caBase - margeBase) / piecesBase);   // déduit du moteur de marge existant
+
+  // Simulation : nouveau prix moyen, nouveau volume (selon mode), marge recalculée.
+  const prixMoyenSim = money2(prixMoyenBase * (1 + pctPrix/100));
+  const piecesSim = round3(piecesBase * (1 + pctVolume/100));
+  const caSim = money2(prixMoyenSim * piecesSim);
+  // Le coût matière/production par pièce est supposé stable (hypothèse standard à volume
+  // raisonnable) ; seules les charges sociales varient avec le CA (même taux que la réalité,
+  // approximé via le taux marchandise — cohérent avec le fait qu'un macaron standard = vente).
+  const margeSimAvantCharges = money2(caSim - coutMoyenParPiece*piecesSim);
+  const chargesSocialesSim = money2(caSim * (+settings.socialGoods||0)/100);
+  const margeSim = money2(margeSimAvantCharges - chargesSocialesSim);
+  const chargesSocialesBase = money2(caBase * (+settings.socialGoods||0)/100);
+  const margeBaseApresCharges = money2(margeBase - chargesSocialesBase);
+
+  // Nombre de mois couverts par la période choisie, pour ramener à un rythme mensuel.
+  const nbJours = (periodeStart && periodeEnd) ? Math.max(1, Math.round((new Date(periodeEnd)-new Date(periodeStart))/86400000)+1) : 30;
+  const moisEquiv = Math.max(0.1, nbJours/30.44);
+  const deltaCaMois = money2((caSim-caBase)/moisEquiv);
+  const deltaMargeMois = money2((margeSim-margeBaseApresCharges)/moisEquiv);
+  const deltaCaAn = money2(deltaCaMois*12);
+  const deltaMargeAn = money2(deltaMargeMois*12);
+
+  // Impact runway : injecte le delta de marge mensuelle comme charge récurrente VIRTUELLE
+  // (positive = charge en moins / recette en plus) dans une projection de trésorerie parallèle,
+  // sans jamais rien écrire en base (simulation pure).
+  let runwayImpact = null;
+  try{
+    const Rbase = await computeTresorerie();
+    if(Rbase.solde!=null){
+      const s2 = Object.assign({}, settings, { soldeBancaire: Rbase.solde, soldeBancaireDate: Rbase.soldeDate });
+      const modelsVirtuel = getRecurringCharges().slice();
+      if(deltaMargeMois!==0){
+        // Charge (positive ou négative) au 15 du mois, montant = -delta (une hausse de marge = moins de "charge").
+        const jourVirtuel = new Date(); jourVirtuel.setDate(15);
+        modelsVirtuel.push({ id:'scenario-virtuel', libelle:'Impact scénario prix', montant:-deltaMargeMois, jourMois:15, actif:true });
+      }
+      const RsimJalons = await _computeTresorerieAvec(s2, modelsVirtuel);
+      const j30base = Rbase.jalons.find(j=>j.nbJours===30), j30sim = RsimJalons.find(j=>j.nbJours===30);
+      runwayImpact = { avant: j30base?j30base.solveur:null, apres: j30sim?j30sim.solveur:null };
+    }
+  }catch(e){ console.error('runwayImpact scenario', e); runwayImpact=null; }
+
+  return {
+    ok:true, piecesBase, prixMoyenBase, coutMoyenParPiece, caBase, margeBaseApresCharges,
+    prixMoyenSim, piecesSim, caSim, margeSim,
+    deltaCa: money2(caSim-caBase), deltaMarge: money2(margeSim-margeBaseApresCharges),
+    deltaCaMois, deltaMargeMois, deltaCaAn, deltaMargeAn, moisEquiv, runwayImpact
+  };
+}
+// Variante paramétrable de computeTresorerie (settings + modèles récurrents injectés),
+// utilisée UNIQUEMENT pour la simulation d'impact runway d'un scénario (jamais pour l'écran réel).
+async function _computeTresorerieAvec(settingsOverride, recurringOverride){
+  const s = settingsOverride;
+  const solde = s.soldeBancaire;
+  const today0 = today();
+  const jAujourdhui = new Date(today0+'T00:00:00');
+  const allOrders = await db.orders.toArray().catch(()=>[]);
+  const orders = allOrders.filter(o=>!estReprise(o));
+  const creances = [];
+  orders.forEach(o=>{
+    const bal = orderBalance(o); if(bal<=0) return;
+    const d = o.dateLivraison || o.date || today0;
+    creances.push({date:d, montant:bal});
+  });
+  const allCharges = await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]);
+  const chargesFutures = allCharges.filter(c=>(c.date||'')>today0).map(c=>({date:c.date, montant:money2(+c.montant||0)}));
+  const models = (recurringOverride||[]).filter(m=>m.actif!==false && +m.montant!==0);
+  const chargesRecurrentesFutures = [];
+  models.forEach(m=>{
+    const jour = Math.min(28, Math.max(1, +m.jourMois||1));
+    const base = new Date(jAujourdhui.getFullYear(), jAujourdhui.getMonth(), jour);
+    for(let i=0;i<4;i++){
+      const d = new Date(base.getFullYear(), base.getMonth()+i, jour);
+      const ymd = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      if(ymd<=today0) continue;
+      chargesRecurrentesFutures.push({date:ymd, montant:money2(+m.montant||0)});
+    }
+  });
+  return [30,60,90].map(nbJours=>{
+    const limite = new Date(jAujourdhui); limite.setDate(limite.getDate()+nbJours);
+    const limiteStr = limite.getFullYear()+'-'+String(limite.getMonth()+1).padStart(2,'0')+'-'+String(limite.getDate()).padStart(2,'0');
+    const dansPeriode = (d)=> d>today0 ? d<=limiteStr : true;
+    const totCreances = money2(creances.filter(c=>dansPeriode(c.date)).reduce((s2,c)=>s2+c.montant,0));
+    const totCharges = money2(chargesFutures.filter(c=>c.date<=limiteStr).reduce((s2,c)=>s2+c.montant,0) + chargesRecurrentesFutures.filter(c=>c.date<=limiteStr).reduce((s2,c)=>s2+c.montant,0));
+    const solveur = (solde!=null) ? money2(solde + totCreances - totCharges) : null;
+    return { nbJours, solveur };
+  });
+}
+
 // ============================================================
 //  BILAN MENSUEL — ventilation marchandise / prestation de service
 //  sur les ENCAISSEMENTS du mois (base trésorerie = base déclaration
@@ -19113,6 +19463,29 @@ async function computeMonthlyBilan(ym){
     goods=money2(goods+tot);
     detailGoods.push({label:'Marché : '+(mk.nom||mk.lieu||'—'), montant:tot});
   });
+
+  // [v1283 · JOURNAL D'AVOIRS] Avoirs émis CE MOIS : déduits de la base URSSAF (goods/service),
+  // ventilés selon la nature de la commande d'ORIGINE (même logique marchandise/service que pour
+  // un encaissement normal). Sans cette déduction, un remboursement laisserait une cotisation
+  // due sur un CA qui n'existe plus (risque identifié : sur-cotisation après un avoir).
+  let avoirsDeduits=0;
+  const allAvoirsBilan = await (db.documents?db.documents.where('type').equals('avoir').toArray():Promise.resolve([])).catch(()=>[]);
+  for(const a of allAvoirsBilan){
+    if((a.statut!=='emis' && a.statut!=='enregistre') || monthKey(a.date)!==ym) continue;
+    const v = money2(+a.montant||0); if(v<=0) continue;
+    const oOrig = a.orderId ? await db.orders.get(a.orderId).catch(()=>null) : null;
+    let partSvcOrig = 0;
+    if(oOrig && !estReprise(oOrig)){
+      const totOrig = money2(+oOrig.montant||0);
+      let svcOrig=0; orderToLines(oOrig).forEach(ln=>{ if(ln.type==='prestation') svcOrig=money2(svcOrig+lineTotalStored(ln)); });
+      partSvcOrig = totOrig>0 ? Math.min(1, svcOrig/totOrig) : 0;
+    }
+    const sDed=money2(v*partSvcOrig), gDed=money2(v-sDed);
+    if(gDed>0){ goods=money2(goods-gDed); detailGoods.push({label:'Avoir'+(a.numero?' '+a.numero:'')+' (déduction)', montant:-gDed}); }
+    if(sDed>0){ service=money2(service-sDed); detailService.push({label:'Avoir'+(a.numero?' '+a.numero:'')+' (déduction)', montant:-sDed}); }
+    avoirsDeduits=money2(avoirsDeduits+v);
+  }
+
   const caTotal=money2(goods+service);
   // Cotisations URSSAF micro-entreprise : taux distincts marchandise / service.
   const tauxGoods=+s.socialGoods||0, tauxService=+s.socialService||0;
@@ -19121,6 +19494,8 @@ async function computeMonthlyBilan(ym){
   const cotisTotal=money2(cotisGoods+cotisService);
   return {ym, goods, service, caTotal, tauxGoods, tauxService, cotisGoods, cotisService, cotisTotal,
     detailGoods, detailService,
+    // [v1283 · JOURNAL D'AVOIRS] Total des avoirs déduits ce mois (déjà retiré de goods/service ci-dessus).
+    avoirsDeduits,
     // [A11-display] Reprises du mois (hors URSSAF) + CA activité globale (fil de l'eau + reprises).
     reprisesEnc, reprisesCount, detailReprises,
     caActiviteTotale: money2(caTotal + reprisesEnc)};
@@ -19429,7 +19804,15 @@ async function computeNetPoche(periode){
 //  Calcule la position, la distance au seuil, et une projection de fin d'année au rythme actuel.
 //  NB : pas de conseil — uniquement des repères factuels. Les coachings = service, les macarons = vente.
 // ============================================================
+// [v1284] Seuils fiscaux — valeurs LÉGALES figées pour une année de référence donnée (2026).
+// anneeValidite documente jusqu'à quelle année ces montants sont réputés exacts. Ces seuils
+// évoluent chaque année (revalorisation) : à date, l'app n'a AUCUN moyen de connaître les
+// nouveaux montants (pas de connexion), donc computeSeuilsFiscaux compare l'année demandée à
+// anneeValidite et ajoute un flag `perimes` si on la dépasse — pour afficher un avertissement
+// explicite plutôt que d'utiliser silencieusement des seuils obsolètes. Mettre à jour à la fois
+// les montants ET anneeValidite dès que les seuils N+1 sont publiés (fin d'année/début d'année).
 const SEUILS_FISCAUX_2026 = {
+  anneeValidite: 2026,
   tvaVenteBase:85000, tvaVenteMajore:93500,
   tvaServiceBase:37500, tvaServiceMajore:41250,
   microVente:203100, microService:83600, microGlobal:203100
@@ -19482,6 +19865,10 @@ async function computeSeuilsFiscaux(year){
     projGoods, projService, projTotal,
     parMois, cumulGoods, cumulService, cumulTotal,
     S: SEUILS_FISCAUX_2026,
+    // [v1284] Seuils potentiellement obsolètes si l'année demandée dépasse anneeValidite —
+    // l'app conserve les derniers seuils connus (mieux qu'une absence de repère), mais le signale.
+    seuilsAnneeValidite: SEUILS_FISCAUX_2026.anneeValidite,
+    seuilsPerimes: year > SEUILS_FISCAUX_2026.anneeValidite,
     // Jauges TVA (les plus proches/sensibles)
     tvaVente: jauge('TVA · vente (macarons)', goods, SEUILS_FISCAUX_2026.tvaVenteBase, 'tva_vente', projGoods),
     tvaService: jauge('TVA · service (coachings)', service, SEUILS_FISCAUX_2026.tvaServiceBase, 'tva_service', projService),
@@ -19518,10 +19905,15 @@ async function computePilotageCA(year){
   const marcheMoyen = mkClosYear.length? avgOf(mkClosYear, m=>marketNetCA(m))
                      : (mkClos.length? avgOf(mkClos, m=>marketNetCA(m)) : 250);
 
-  // commande moyenne (hors marché) : montant moyen d'une commande de l'année (repli global)
+  // commande moyenne (hors marché, HORS ÉVÉNEMENT) : montant moyen d'une commande "courante" de
+  // l'année. [v1284-fix] Une commande événement (mariage, réception...) peut peser plusieurs
+  // centaines d'euros et gonfle artificiellement la moyenne si elle est mélangée aux coffrets
+  // classiques — même précaution déjà appliquée ailleurs dans l'app (panierMoyenHorsEvent, module
+  // CRM client) via orderIsEvent, désormais reprise ici pour que le "panier moyen" affiché en
+  // Pilotage représente vraiment une commande courante, pas un mélange coffret+mariage.
   const ordVal = o => +o.montant||0;
-  const ordYear = orders.filter(o=>!o.histo && inYear(o.date) && ordVal(o)>0);
-  const ordAll  = orders.filter(o=>!o.histo && ordVal(o)>0);
+  const ordYear = orders.filter(o=>!o.histo && !orderIsEvent(o) && inYear(o.date) && ordVal(o)>0);
+  const ordAll  = orders.filter(o=>!o.histo && !orderIsEvent(o) && ordVal(o)>0);
   const coffretMoyen = ordYear.length? avgOf(ordYear, ordVal) : (ordAll.length? avgOf(ordAll, ordVal) : 35);
 
   // animation / prestation moyenne : montant moyen des lignes prestation observées (repli 150)
@@ -19599,10 +19991,73 @@ async function exportBilanMois(ym){
   const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
   openModal(`<h3>Bilan ${monthLabel(ym)}</h3>
-    <p class="note">${copied?'Copié dans le presse-papier ✓.':'Fichier .txt téléchargé.'} </p>
+    <p class="note">${copied?'Copié dans le presse-papier ✓.':'Fichier .txt téléchargé.'} <span class="act" onclick="closeModal();exportBilanMoisPDF('${ym}')">📄 Version PDF (présentable au comptable) ›</span></p>
     <textarea rows="16" style="width:100%;font-family:monospace;font-size:.76rem;white-space:pre">${esc(txt)}</textarea>
     <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button>
       <button class="btn" onclick="(function(){const t=this.closest('.modal').querySelector('textarea');t.select();try{document.execCommand('copy');}catch(e){} toast('Copié ✓');}).call(this)">⧉ Copier</button></div>`);
+}
+// [v1284] Export PDF du bilan mensuel — mise en page imprimable avec hiérarchie typographique
+// (contrairement au .txt brut). Même pattern que les bons de préparation/étiquettes déjà dans
+// l'app : page HTML dédiée + window.print() → « Enregistrer en PDF » (natif iPhone/Mac, aucune
+// librairie PDF embarquée nécessaire).
+async function exportBilanMoisPDF(ym){
+  const B=await computeMonthlyBilan(ym);
+  const s=getSettings();
+  const legal=s.legal||{};
+  const ligne=(label,val,opts)=>`<tr class="${(opts&&opts.cls)||''}"><td>${esc(label)}</td><td style="text-align:right">${val}</td></tr>`;
+  const detailBlock=(titre,items)=> items&&items.length ? `
+    <h3>${esc(titre)}</h3>
+    <table>${items.map(d=>ligne(d.label, euro(d.montant))).join('')}</table>` : '';
+  const win = window.open('', '_blank', 'width=700,height=900');
+  if(!win){ toast('Autorise les fenêtres pour générer le PDF'); return; }
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Bilan ${esc(monthLabel(ym))}</title>
+    <style>
+      @page{size:A4;margin:16mm}
+      *{box-sizing:border-box;font-family:Georgia,'Bellota Text',serif;color:#2a1a1f}
+      body{font-family:Arial,Helvetica,sans-serif}
+      .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #52252F;padding-bottom:10px;margin-bottom:16px}
+      h1{font-size:19pt;margin:0 0 4px;color:#52252F}
+      .meta{font-size:10pt;color:#555}
+      h2{font-size:13pt;margin:18px 0 6px;color:#52252F;border-bottom:1px solid #e0d5c5;padding-bottom:3px}
+      h3{font-size:10.5pt;margin:12px 0 4px;color:#7a5a3a}
+      table{width:100%;border-collapse:collapse;font-size:10.5pt;margin-bottom:4px}
+      td{padding:4px 2px;border-bottom:1px solid #eee}
+      .total td{font-weight:700;border-top:2px solid #52252F;border-bottom:none;padding-top:6px}
+      .highlight td{font-weight:700;color:#52252F;font-size:12pt}
+      .note{font-size:9pt;color:#888;margin-top:16px}
+      .footer{margin-top:24px;font-size:8.5pt;color:#999;border-top:1px solid #eee;padding-top:8px}
+    </style></head><body>
+    <div class="head">
+      <div><h1>Bilan mensuel</h1><div class="meta">${esc(monthLabel(ym))} · édité le ${fmtDate(today())}</div></div>
+      <div style="text-align:right;font-size:9pt;color:#555">
+        <b>${esc(legal.raisonSociale||'Sensations Macarons')}</b><br>
+        ${legal.siret?'SIRET '+esc(legal.siret)+'<br>':''}
+        ${legal.adresse?esc(legal.adresse):'Le Mans'}
+      </div>
+    </div>
+    <h2>Chiffre d'affaires encaissé</h2>
+    <table>
+      ${ligne('Vente de marchandise', euro(B.goods))}
+      ${ligne('Prestation de service', euro(B.service))}
+      ${ligne('Total encaissé', euro(B.caTotal), {cls:'total'})}
+    </table>
+    ${(+B.reprisesEnc>0)?`<p class="note">+ ${euro(B.reprisesEnc)} de reprises d'historique (hors URSSAF, déjà déclarées indépendamment) — activité globale du mois : <b>${euro(B.caActiviteTotale)}</b>.</p>`:''}
+    ${(+B.avoirsDeduits>0)?`<p class="note">Dont ${euro(B.avoirsDeduits)} déjà déduits au titre d'avoir(s) émis ce mois.</p>`:''}
+    <h2>Cotisations URSSAF (estimation)</h2>
+    <table>
+      ${ligne('Marchandise : '+euro(B.goods)+' × '+B.tauxGoods+'%', euro(B.cotisGoods))}
+      ${ligne('Service : '+euro(B.service)+' × '+B.tauxService+'%', euro(B.cotisService))}
+      ${ligne('À payer (estimé)', euro(B.cotisTotal), {cls:'highlight'})}
+    </table>
+    ${detailBlock('Détail marchandise', B.detailGoods)}
+    ${detailBlock('Détail prestations', B.detailService)}
+    ${detailBlock("Reprises d'historique (hors URSSAF)", B.detailReprises)}
+    <div class="footer">
+      Base : encaissements du mois (trésorerie). Estimation indicative établie par l'application interne de gestion — à vérifier auprès de l'URSSAF ou d'un expert-comptable avant toute déclaration.
+    </div>
+    <script>window.onload=function(){setTimeout(function(){window.print();},300);};window.onafterprint=function(){window.close();};<\/script>
+    </body></html>`);
+  win.document.close();
 }
 
 // Export comptable CSV : synthèse mensuelle (CA encaissé, marchandise, service, cotisations, charges, résultat).
@@ -23097,6 +23552,7 @@ function comptaFlowSchema(A){
 
     <p class="note" style="margin-top:12px">💡 <b>En clair :</b> tu as facturé <b>${e(fact)}</b>. ${creances>0?`Il te reste <b>${e(creances)}</b> à encaisser. `:''}Sur les <b>${e(enc)}</b> déjà reçus, la fabrication t'a coûté <b>${e(mat)}</b> et tes charges <b>${e(charges)}</b> — il te reste donc <b style="color:${res>=0?'#3f7d52':'#b3261e'}">${e(res)}</b>.</p>
     ${(A.migCount>0)?`<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:8px">ℹ️ <div><b>${A.migCount} reprise(s) d'historique non comptée(s)</b> ici (${e(A.migCA)}). Ce sont des ventes d'avant l'app, déjà déclarées à l'époque : elles sont <b>exclues du CA encaissé et des cotisations</b> pour éviter une double déclaration, comme sur l'accueil. Elles restent visibles dans tes statistiques et tendances.</div></div>`:''}
+    ${(A.totalAvoirs>0)?`<div class="banner lnk" onclick="goView('avoirs')" style="background:#faf7fc;border-color:#e0d0f0;margin-top:8px;cursor:pointer">↩︎ <div><b>${A.nbAvoirs} avoir(s) émis</b> sur cette période (${e(A.totalAvoirs)}) — déjà déduits du CA encaissé et des cotisations ci-dessus. <span style="color:#6a4a8a">Voir le journal des avoirs ›</span></div></div>`:''}
   </div>`;
 }
 // Détail cliquable d'un flux comptable (facturé / encaissé) sur la PÉRIODE active.
@@ -23326,6 +23782,237 @@ function chargesVentilSetType(type){
 }
 function chargesVentilSetMonth(ym){ _chargesVentilState=_chargesVentilState||{}; _chargesVentilState.ym=ym; _chargesVentilState.type='mois'; renderChargesVentil(); }
 function chargesVentilSetYear(y){ _chargesVentilState=_chargesVentilState||{}; _chargesVentilState.year=+y; _chargesVentilState.type='annee'; renderChargesVentil(); }
+// ============================================================
+//  [v1283] TRÉSORERIE PROSPECTIVE — écran de pilotage du solde bancaire.
+// ============================================================
+async function renderTresorerie(){
+  const main=document.getElementById('main'); if(!main) return;
+  const R = await computeTresorerie();
+  const soldeConnu = R.solde!=null;
+  const ageJours = R.soldeDate ? Math.floor((new Date(R.today+'T00:00:00') - new Date(R.soldeDate+'T00:00:00'))/86400000) : null;
+  const ageTxt = ageJours==null ? '' : (ageJours===0 ? "aujourd'hui" : (ageJours===1 ? 'il y a 1 jour' : `il y a ${ageJours} jours`));
+  const ageColor = ageJours==null ? '#9a8a82' : (ageJours>14 ? '#b3261e' : (ageJours>7 ? '#AA7C39' : '#3f7d52'));
+
+  const jalonCard = (j)=>{
+    const neg = j.solveur!=null && j.solveur<0;
+    const detailId = 'tresoDetail'+j.nbJours;
+    const detailRows = (label, arr, sign)=> arr.length ? `
+      <p class="note" style="margin:8px 0 2px"><b>${esc(label)}</b></p>
+      ${arr.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(x=>`
+        <div class="sum-box" style="padding:6px 9px"><span>${fmtDate(x.date)} · ${esc(x.label)}</span><b style="color:${sign>0?'#3f7d52':'#b3261e'}">${sign>0?'+':'-'}${euro(x.montant)}</b></div>`).join('')}` : '';
+    return `<div class="panel" style="margin-bottom:10px">
+      <div class="flex" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">Dans ${j.nbJours} jours <span style="font-size:.72rem;color:#9a8a82;font-weight:400">(${fmtDate(j.limite)})</span></h2>
+        <b style="font-size:1.3rem;color:${!soldeConnu?'#9a8a82':(neg?'#b3261e':'#3f7d52')}">${soldeConnu?euro(j.solveur):'—'}</b>
+      </div>
+      <div class="flex" style="gap:14px;margin-top:6px;font-size:.82rem;color:#7a6a60">
+        <span>+ ${euro(j.totCreances)} à encaisser</span>
+        <span>− ${euro(j.totCharges)} de charges</span>
+      </div>
+      ${neg?'<p class="note" style="color:#b3261e;margin:6px 0 0">⚠️ Solde projeté négatif à cette échéance.</p>':''}
+      <div style="margin-top:8px"><span class="act" onclick="document.getElementById('${detailId}').style.display=document.getElementById('${detailId}').style.display==='none'?'block':'none'">Voir le détail ›</span></div>
+      <div id="${detailId}" style="display:none">
+        ${detailRows('À encaisser', j.detail.creances, 1)}
+        ${detailRows('Charges ponctuelles', j.detail.chargesPonctuelles, -1)}
+        ${detailRows('Charges récurrentes', j.detail.chargesRecurrentes, -1)}
+        ${(!j.detail.creances.length && !j.detail.chargesPonctuelles.length && !j.detail.chargesRecurrentes.length)?'<p class="note">Rien à cette échéance.</p>':''}
+      </div>
+    </div>`;
+  };
+
+  main.innerHTML = `
+   <div class="topbar"><div><h1>💰 Trésorerie</h1><p>Solde bancaire + projection à 30/60/90 jours</p></div></div>
+   <div class="panel" style="margin-bottom:12px">
+     <div class="flex" style="justify-content:space-between;align-items:center">
+       <div>
+         <div style="font-size:.78rem;color:#9a8a82;text-transform:uppercase;letter-spacing:.04em">Solde bancaire actuel</div>
+         <div style="font-size:1.7rem;font-weight:800;font-family:'Bellota',Georgia,serif">${soldeConnu?euro(R.solde):'Non renseigné'}</div>
+         ${soldeConnu?`<div style="font-size:.76rem;color:${ageColor}">mis à jour ${ageTxt}</div>`:''}
+       </div>
+       <button class="btn gold" onclick="tresoUpdateSolde()">✏️ Mettre à jour</button>
+     </div>
+     ${!soldeConnu?'<p class="note" style="margin-top:8px">Renseigne ton solde bancaire actuel pour activer la projection.</p>':''}
+     ${(soldeConnu && ageJours>14)?'<p class="note" style="margin-top:8px;color:#b3261e">⚠️ Solde non mis à jour depuis plus de 2 semaines — la projection peut être imprécise.</p>':''}
+   </div>
+   ${R.jalons.map(jalonCard).join('')}
+   <p class="note">Les créances sont datées par la date de livraison (ou la date de commande à défaut). Les charges récurrentes actives sont projetées sur leurs prochaines échéances. Estimation indicative — vérifie ton relevé bancaire réel.</p>`;
+}
+function tresoUpdateSolde(){
+  const s = getSettings();
+  openModal(`<h3>💰 Mettre à jour le solde</h3>
+    <p class="note">Solde bancaire actuel (celui de ton compte pro, tel qu'affiché aujourd'hui).</p>
+    <div class="field"><label>Solde (€)</label>
+      <input type="number" step="0.01" id="tresoSolde" value="${s.soldeBancaire!=null?s.soldeBancaire:''}" style="width:100%;font-size:1.2rem" autofocus></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="tresoSaveSolde()">Enregistrer</button></div>`);
+}
+function tresoSaveSolde(){
+  const v = (document.getElementById('tresoSolde')||{}).value;
+  if(v==='' || isNaN(+v)){ toast('Montant invalide'); return; }
+  saveSoldeBancaire(+v);
+  closeModal(); toast('✓ Solde mis à jour');
+  if(typeof renderTresorerie==='function') renderTresorerie();
+}
+
+// ============================================================
+//  [v1283] MODULE SCÉNARIOS — écran de simulation d'impact prix.
+// ============================================================
+let _scenarioState = null;
+async function renderScenarios(){
+  const main=document.getElementById('main'); if(!main) return;
+  if(!_scenarioState){
+    const moisDispo = await _listeMoisAvecActivite();
+    const ymDefaut = moisDispo.length ? moisDispo[moisDispo.length-1] : monthKey(today());
+    _scenarioState = { ym: ymDefaut, pctPrix:5, mode:'constant', pctVolume:0, result:null };
+  }
+  const st = _scenarioState;
+  const moisDispo = await _listeMoisAvecActivite();
+  const moisOpts = (moisDispo.length?moisDispo:[monthKey(today())]).slice().reverse()
+    .map(m=>`<option value="${m}" ${m===st.ym?'selected':''}>${esc(monthLabel(m))}</option>`).join('');
+
+  main.innerHTML = `
+   <div class="topbar"><div><h1>🎛️ Scénarios</h1><p>Simule l'impact d'un changement de prix — aucune donnée réelle n'est modifiée</p></div></div>
+   <div class="panel" style="margin-bottom:12px">
+     <div class="field"><label>Période de référence (rythme actuel)</label>
+       <select id="scenYm" onchange="scenarioSetYm(this.value)">${moisOpts}</select></div>
+     <div class="field"><label>Variation de prix</label>
+       <div class="flex" style="align-items:center;gap:10px">
+         <input type="range" min="-30" max="30" step="1" value="${st.pctPrix}" id="scenPctPrix" oninput="scenarioSetPctPrix(this.value)" style="flex:1">
+         <b id="scenPctPrixLbl" style="min-width:52px;text-align:right;color:${st.pctPrix>=0?'#3f7d52':'#b3261e'}">${st.pctPrix>=0?'+':''}${st.pctPrix}%</b>
+       </div></div>
+     <div class="field"><label>Effet sur le volume de vente</label>
+       <div class="flex" style="gap:8px">
+         <button class="btn sm ${st.mode==='constant'?'gold':'ghost'}" onclick="scenarioSetMode('constant')">Volume constant</button>
+         <button class="btn sm ${st.mode==='ajuste'?'gold':'ghost'}" onclick="scenarioSetMode('ajuste')">J'estime l'impact</button>
+       </div>
+       ${st.mode==='ajuste'?`<div class="flex" style="align-items:center;gap:10px;margin-top:8px">
+         <input type="range" min="-50" max="50" step="1" value="${st.pctVolume}" id="scenPctVolume" oninput="scenarioSetPctVolume(this.value)" style="flex:1">
+         <b id="scenPctVolumeLbl" style="min-width:52px;text-align:right;color:${st.pctVolume>=0?'#3f7d52':'#b3261e'}">${st.pctVolume>=0?'+':''}${st.pctVolume}%</b>
+       </div>`:''}</div>
+     <button class="btn gold" style="width:100%;margin-top:6px" onclick="scenarioRun()">Simuler</button>
+   </div>
+   <div id="scenResult">${st.result?scenarioResultHtml(st.result):''}</div>`;
+}
+function scenarioSetYm(v){ _scenarioState.ym=v; }
+function scenarioSetPctPrix(v){ _scenarioState.pctPrix=+v; const l=document.getElementById('scenPctPrixLbl'); if(l){ l.textContent=(v>=0?'+':'')+v+'%'; l.style.color=v>=0?'#3f7d52':'#b3261e'; } }
+function scenarioSetPctVolume(v){ _scenarioState.pctVolume=+v; const l=document.getElementById('scenPctVolumeLbl'); if(l){ l.textContent=(v>=0?'+':'')+v+'%'; l.style.color=v>=0?'#3f7d52':'#b3261e'; } }
+function scenarioSetMode(m){ _scenarioState.mode=m; renderScenarios(); }
+async function scenarioRun(){
+  const st=_scenarioState;
+  const periodeStart = st.ym+'-01';
+  const d=new Date(+st.ym.slice(0,4), +st.ym.slice(5,7), 0);   // dernier jour du mois
+  const periodeEnd = st.ym+'-'+String(d.getDate()).padStart(2,'0');
+  const r = await computeScenarioPrix({ periodeStart, periodeEnd, pctPrix:st.pctPrix, mode:st.mode, pctVolume:st.pctVolume });
+  st.result = r;
+  const box = document.getElementById('scenResult'); if(box) box.innerHTML = scenarioResultHtml(r);
+}
+function scenarioResultHtml(r){
+  if(!r.ok) return `<div class="panel"><p class="note">${esc(r.raison||'Simulation impossible sur cette période.')}</p></div>`;
+  const deltaColor = r.deltaMarge>=0 ? '#3f7d52' : '#b3261e';
+  const runwayHtml = r.runwayImpact && r.runwayImpact.avant!=null ? `
+    <div class="panel">
+      <h2 style="margin-top:0">💰 Impact sur la trésorerie (J+30)</h2>
+      <div class="flex" style="justify-content:space-between"><span>Sans ce scénario</span><b>${euro(r.runwayImpact.avant)}</b></div>
+      <div class="flex" style="justify-content:space-between"><span>Avec ce scénario</span><b style="color:${deltaColor}">${euro(r.runwayImpact.apres)}</b></div>
+    </div>` : '<p class="note">Renseigne ton solde bancaire (écran Trésorerie) pour voir l\'impact sur ton runway.</p>';
+  return `
+   <div class="panel">
+     <h2 style="margin-top:0">Situation actuelle (référence)</h2>
+     <div class="flex" style="justify-content:space-between"><span>Prix moyen</span><b>${euro(r.prixMoyenBase)}/pièce</b></div>
+     <div class="flex" style="justify-content:space-between"><span>Volume</span><b>${qty(r.piecesBase)} pièces</b></div>
+     <div class="flex" style="justify-content:space-between"><span>Marge nette (après charges sociales)</span><b>${euro(r.margeBaseApresCharges)}</b></div>
+   </div>
+   <div class="panel">
+     <h2 style="margin-top:0">Avec ce scénario</h2>
+     <div class="flex" style="justify-content:space-between"><span>Nouveau prix moyen</span><b>${euro(r.prixMoyenSim)}/pièce</b></div>
+     <div class="flex" style="justify-content:space-between"><span>Volume simulé</span><b>${qty(r.piecesSim)} pièces</b></div>
+     <div class="flex" style="justify-content:space-between"><span>Marge nette simulée</span><b style="color:${deltaColor}">${euro(r.margeSim)}</b></div>
+     <div class="flex" style="justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #e0d5c5">
+       <span><b>Écart de marge</b></span><b style="color:${deltaColor}">${r.deltaMarge>=0?'+':''}${euro(r.deltaMarge)}</b></div>
+   </div>
+   <div class="panel">
+     <h2 style="margin-top:0">Extrapolation</h2>
+     <div class="flex" style="justify-content:space-between"><span>Par mois (au même rythme)</span><b style="color:${deltaColor}">${r.deltaMargeMois>=0?'+':''}${euro(r.deltaMargeMois)}</b></div>
+     <div class="flex" style="justify-content:space-between"><span>Sur 12 mois</span><b style="color:${deltaColor}">${r.deltaMargeAn>=0?'+':''}${euro(r.deltaMargeAn)}</b></div>
+   </div>
+   ${runwayHtml}
+   <p class="note">Simulation indicative : coût matière/production supposé stable par pièce à volume raisonnable. En mode « volume constant », le seul effet mesuré est celui du prix — aucune élasticité n'est appliquée automatiquement.</p>`;
+}
+
+// ============================================================
+//  [v1283] JOURNAL DES AVOIRS — consultation des remboursements émis.
+// ============================================================
+async function renderAvoirs(){
+  const main=document.getElementById('main'); if(!main) return;
+  const docs = await db.documents.where('type').equals('avoir').toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const _cliNom = id => { const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'Client'; };
+  const avoirs = docs.filter(a=>a.statut==='emis' || a.statut==='enregistre').sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const total = money2(avoirs.reduce((s,a)=>s+(+a.montant||0),0));
+
+  const rows = avoirs.map(a=>`
+    <div class="sum-box lnk" style="align-items:center" onclick="cmdView(${a.orderId})">
+      <div style="flex:1">
+        <b>${a.numero?esc(a.numero):'Remboursement simple'}</b>
+        ${a.numero?'<span class="tag ok" style="font-size:.6rem;margin-left:4px">légal</span>':'<span class="tag" style="font-size:.6rem;margin-left:4px">sans facture</span>'}
+        <br><span style="font-size:.78rem;color:#7a6a60">${fmtDate(a.date)} · ${esc(a.clientId?_cliNom(a.clientId):'—')} · ${esc(a.motif||'—')}${a.note?' · '+esc(a.note):''}</span>
+      </div>
+      <b style="color:#6a4a8a">${euro(a.montant)}</b></div>`).join('');
+
+  main.innerHTML = `
+   <div class="topbar"><div><h1>↩︎ Journal des avoirs</h1><p>${avoirs.length} avoir(s) émis · total ${euro(total)}</p></div></div>
+   <p class="note">Chaque avoir est déduit automatiquement du CA encaissé, du CA facturé et des cotisations URSSAF du mois de son <b>émission</b> (pas celui de la commande d'origine). Les avoirs liés à une facture définitive portent leur propre numéro légal, jamais mélangé à la séquence des factures.</p>
+   ${rows||'<div class="empty">Aucun avoir émis pour le moment. Un avoir se crée depuis la fiche d\'une commande déjà encaissée (bouton « ↩︎ Créer un avoir »).</div>'}`;
+}
+
+// ============================================================
+//  [v1284] PANIER MOYEN VENTILÉ — onglets par type, détail cliquable.
+//  Corrige le biais du "panier moyen" global qui mélangeait coffrets et événements
+//  (une commande à 400€ peut faire grimper une moyenne censée représenter le courant).
+// ============================================================
+let _panierMoyenState = null;
+async function renderPanierMoyen(){
+  const main=document.getElementById('main'); if(!main) return;
+  if(!_panierMoyenState) _panierMoyenState = { kind:'tous', periode:'tout' };
+  const st = _panierMoyenState;
+  const periodeStart = st.periode==='tout' ? null : comptaPeriodeStart(st.periode);
+  const periodeEnd = st.periode==='tout' ? null : comptaPeriodeEnd(st.periode);
+
+  const counts = await panierMoyenTypeCounts({periodeStart, periodeEnd});
+  const R = await computePanierMoyenVentile(st.kind, {periodeStart, periodeEnd});
+
+  const tabs = [{k:'tous', lbl:'Tous', n:counts.total}]
+    .concat(Object.keys(PANIER_TYPE_LABELS).filter(k=>k!=='autre').map(k=>({k, lbl:PANIER_TYPE_LABELS[k], n:counts.counts[k]||0})));
+  const tabsHtml = tabs.map(t=>`<button class="btn sm ${st.kind===t.k?'gold':'ghost'}" onclick="panierMoyenSetKind('${t.k}')" style="white-space:nowrap">${esc(t.lbl)} <span style="opacity:.7">(${t.n})</span></button>`).join('');
+
+  const periodeOpts = ['tout','annee','mois','30j'].map(p=>`<option value="${p}" ${st.periode===p?'selected':''}>${p==='tout'?'Toute période':p==='annee'?'Cette année':p==='mois'?'30 derniers jours glissants':'30 derniers jours'}</option>`).join('');
+
+  const rows = R.lignes.map(l=>`
+    <div class="sum-box lnk" onclick="cmdView(${l.orderId})">
+      <span>${fmtDate(l.date)} · ${esc(l.client)}</span>
+      <b>${euro(l.montant)} ›</b></div>`).join('');
+
+  main.innerHTML = `
+   <div class="topbar"><div><h1>🛍️ Panier moyen</h1><p>Ventilé par type de commande, avec le détail réel derrière chaque chiffre</p></div></div>
+   <div class="field" style="margin-bottom:10px"><label>Période</label>
+     <select onchange="panierMoyenSetPeriode(this.value)">${periodeOpts}</select></div>
+   <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:10px">${tabsHtml}</div>
+   <div class="panel">
+     <h2 style="margin-top:0">${esc(st.kind==='tous'?'Toutes commandes':PANIER_TYPE_LABELS[st.kind])}</h2>
+     ${R.nb>0?`
+     <div class="flex" style="justify-content:space-between"><span>Panier moyen</span><b style="font-size:1.4rem;color:#52252F">${euro(R.moyenne)}</b></div>
+     <div class="flex" style="justify-content:space-between;margin-top:4px;font-size:.82rem;color:#7a6a60">
+       <span>${R.nb} commande(s)</span><span>de ${euro(R.min)} à ${euro(R.max)}</span></div>
+     <div class="flex" style="justify-content:space-between;margin-top:2px;font-size:.82rem;color:#7a6a60">
+       <span>Total sur la sélection</span><span>${euro(R.total)}</span></div>`
+     :'<p class="note">Aucune commande de ce type sur la période.</p>'}
+   </div>
+   ${R.nb>0?`<div class="panel"><h2 style="margin-top:0">Détail — touche une ligne pour ouvrir la commande</h2>${rows}</div>`:''}
+   <p class="note">Le panier « Tous » mélange tous les types de commande (coffrets, événements, grand format…) — un panier moyen élevé peut simplement venir de quelques grosses commandes événementielles. Choisis un onglet pour voir un chiffre représentatif d'un type précis.</p>`;
+}
+function panierMoyenSetKind(k){ _panierMoyenState.kind=k; renderPanierMoyen(); }
+function panierMoyenSetPeriode(p){ _panierMoyenState.periode=p; renderPanierMoyen(); }
+
 async function renderChargesVentil(){
   const main=document.getElementById('main'); if(!main) return;
   if(!_chargesVentilState) _chargesVentilState={ type:'mois', ym:monthKey(today()), year:new Date().getFullYear() };
@@ -23597,6 +24284,7 @@ async function renderOptimisation(){
       <select onchange="optimSetYear(this.value)" style="width:100%;font-size:1rem;padding:10px;border:1.5px solid #e0d5c5;border-radius:10px">${anneeOpts}</select></div>
     ${hero}
     <div style="height:12px"></div>
+    ${R.seuilsPerimes?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-bottom:10px">⚠️ <div><b>Seuils fiscaux non vérifiés pour ${R.year}.</b> Ces montants sont ceux connus pour ${R.seuilsAnneeValidite} (dernière mise à jour de l'app) et n'ont pas été confirmés pour ${R.year} — les seuils sont généralement revalorisés chaque année. Vérifie les montants en vigueur (urssaf.fr ou ton comptable) avant de t'y fier pour une décision.</div></div>`:''}
     ${blocGraph}
     ${intro}
     ${blocTVA}
@@ -23749,7 +24437,7 @@ async function renderCompta(){
     if(P){
       const sugg=[];
       const L=P.leviers;
-      sugg.push(`Ton panier moyen est de <b>${euro(L.coffretMoyen)}</b>. Proposer un coffret plus garni ou un parfum premium le fait monter — +2 € par commande sur ${P.nbCmdYear||10} commandes = <b>${euro(2*(P.nbCmdYear||10))}</b>/an.`);
+      sugg.push(`Ton panier moyen (hors événements) est de <b>${euro(L.coffretMoyen)}</b>. Proposer un coffret plus garni ou un parfum premium le fait monter — +2 € par commande sur ${P.nbCmdYear||10} commandes = <b>${euro(2*(P.nbCmdYear||10))}</b>/an. <span class="act" onclick="goView('panierMoyen')">Voir le détail par type ›</span>`);
       if(L.marcheMoyen>0) sugg.push(`Un marché te rapporte en moyenne <b>${euro(L.marcheMoyen)}</b>. Un marché de plus par mois d'ici fin d'année ≈ <b>${euro(money2(L.marcheMoyen*P.moisRestants))}</b>.`);
       if(P.moisCreux) sugg.push(`Ton mois le plus creux est <b>${monthLabel(P.moisCreux.ym)}</b> (${euro(P.moisCreux.ca)}). Une opération ciblée (précommandes, offre saisonnière) y aurait le plus d'impact.`);
       sugg.push(`Les <b>animations/prestations</b> (~${euro(L.animationMoyenne)} l'unité) sont à très forte marge : peu de coût matière. En caler une par mois ajoute ~<b>${euro(money2(L.animationMoyenne*P.moisRestants))}</b> d'ici fin d'année.`);
@@ -23780,7 +24468,7 @@ async function renderCompta(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Comptabilité</h1><p>${esc(monthLabel(_comptaMonth))} · CA comptabilisé à l'encaissement réel</p></div>
-     <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️':'🙈'}</button><button class="btn ghost sm" onclick="recurringChargesForm()" title="Paiements mensuels récurrents (énergie, loyer, assurance…)">🔁 Récurrentes</button><button class="btn gold" onclick="chargeForm()">＋ Charge</button></div></div>
+     <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️':'🙈'}</button><button class="btn ghost sm" onclick="goView('tresorerie')" title="Solde bancaire + projection 30/60/90 jours">💰 Trésorerie</button><button class="btn ghost sm" onclick="goView('scenarios')" title="Simuler l'impact d'un changement de prix">🎛️ Scénarios</button><button class="btn ghost sm" onclick="goView('avoirs')" title="Journal des remboursements émis">↩︎ Avoirs</button><button class="btn ghost sm" onclick="goView('panierMoyen')" title="Panier moyen ventilé par type de commande">🛍️ Panier moyen</button><button class="btn ghost sm" onclick="recurringChargesForm()" title="Paiements mensuels récurrents (énergie, loyer, assurance…)">🔁 Récurrentes</button><button class="btn gold" onclick="chargeForm()">＋ Charge</button></div></div>
    <div class="banner">📒 <div>Deux lectures du chiffre d'affaires : le <b>CA facturé</b> (total des commandes, à leur date) et le <b>CA encaissé</b> (règlements reçus, à leur date réelle). Une commande « en attente de paiement » est facturée mais n'entre pas dans le CA encaissé. Le CA des <b>marchés clôturés</b> est inclus (à leur date de clôture).${A.totalMarches>0?` Dont marchés : <b>${euro(A.totalMarches)}</b>.`:''}</div></div>
    <div class="flex" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
      <button class="btn" onclick="view='rentabilite';setActiveView&&setActiveView('rentabilite');renderProfit()">📈 Analyse de rentabilité</button>
@@ -30858,6 +31546,57 @@ async function renderForecast(){
    ÉVÉNEMENTS & ACOMPTES — suivi dédié des commandes événementielles
    ============================================================ */
 function orderIsEvent(o){ return orderToLines(o).some(ln=>ln.type==='evenement'); }
+// [v1284] Type DOMINANT d'une commande : la ligne dont le montant réel (lineTotalStored) est le
+// plus élevé détermine la catégorie. La grande majorité des commandes n'ont qu'un seul type de
+// ligne ; en cas de mélange (rare), c'est la part la plus importante en € qui l'emporte — cohérent
+// avec l'usage (une commande "coffret + petit don" reste une commande coffret).
+const PANIER_TYPE_LABELS = {
+  coffret:'🎁 Coffrets', evenement:'💍 Événements', grand:'🍰 Grand format',
+  vrac:'🧺 Vrac', don:'🎀 Dons', prestation:'🎓 Prestations / coaching', autre:'Autre'
+};
+function orderDominantType(o){
+  const lignes = orderToLines(o);
+  if(!lignes.length) return 'autre';
+  let best=null, bestVal=-1;
+  lignes.forEach(ln=>{
+    const v = (typeof lineTotalStored==='function') ? lineTotalStored(ln) : 0;
+    if(v>bestVal){ bestVal=v; best=ln.type; }
+  });
+  return (best && PANIER_TYPE_LABELS[best]) ? best : 'autre';
+}
+// Moyenne + liste des commandes d'un type donné ('tous' = toutes commandes hors reprises).
+async function computePanierMoyenVentile(kind, opts){
+  opts = opts||{};
+  const periodeStart = opts.periodeStart||null, periodeEnd = opts.periodeEnd||null;
+  const inRange = (d)=>{ if(!d) return true; if(periodeStart && d<periodeStart) return false; if(periodeEnd && d>periodeEnd) return false; return true; };
+  const allOrders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const _cliNom = id => { const c=clients.find(x=>+x.id===+id); return c?(c.nom||c.prenom||'Client'):'Client'; };
+  let orders = allOrders.filter(o=>!estReprise(o) && (+o.montant||0)>0 && inRange(o.date));
+  if(kind && kind!=='tous') orders = orders.filter(o=>orderDominantType(o)===kind);
+  const lignes = orders.map(o=>({
+    orderId:o.id, date:o.date, montant:money2(+o.montant||0),
+    client: o.clientId ? _cliNom(o.clientId) : (o.histoLabel||('Commande #'+o.id)),
+    type: orderDominantType(o)
+  })).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const total = money2(lignes.reduce((s,l)=>s+l.montant,0));
+  const moyenne = lignes.length ? money2(total/lignes.length) : 0;
+  const min = lignes.length ? Math.min(...lignes.map(l=>l.montant)) : 0;
+  const max = lignes.length ? Math.max(...lignes.map(l=>l.montant)) : 0;
+  return { kind, moyenne, total, nb:lignes.length, min, max, lignes };
+}
+// Répartition du nombre de commandes par type dominant, pour les onglets (compteurs).
+async function panierMoyenTypeCounts(opts){
+  opts = opts||{};
+  const periodeStart = opts.periodeStart||null, periodeEnd = opts.periodeEnd||null;
+  const inRange = (d)=>{ if(!d) return true; if(periodeStart && d<periodeStart) return false; if(periodeEnd && d>periodeEnd) return false; return true; };
+  const allOrders = await db.orders.toArray().catch(()=>[]);
+  const orders = allOrders.filter(o=>!estReprise(o) && (+o.montant||0)>0 && inRange(o.date));
+  const counts = {};
+  orders.forEach(o=>{ const t=orderDominantType(o); counts[t]=(counts[t]||0)+1; });
+  return { total: orders.length, counts };
+}
+
 async function renderEvents(){
   const orders = await db.orders.toArray();
   const clients = await db.clients.toArray();
@@ -45289,6 +46028,187 @@ function factMentionMediateur(e){
 // NE stocke PAS de brouillon et N'affiche RIEN — il renvoie le HTML construit (avec le numéro et
 // la date FIGÉS fournis) dans ce contexte, pour une réécriture contrôlée de présentation seulement.
 let _factRegenCtx = null;
+// ============================================================
+//  [v1284] DEVIS GROUPÉ — récapitule plusieurs devis et/ou commandes existantes dans un
+//  seul document non engageant (section détaillée par source, total groupé). Pendant naturel
+//  de genererFactureMultiple (facture groupée), en amont du cycle devis→commande→facture.
+// ============================================================
+let _devisGroupeCtx = null;
+async function devisGroupeStart(devisIds){
+  _devisGroupeCtx = { devisIds: (devisIds||[]).filter(Boolean), orderIds: [] };
+  await devisGroupeRender();
+}
+async function devisGroupeRender(){
+  const ctx = _devisGroupeCtx; if(!ctx) return;
+  const devisAll = (await db.documents.where('type').equals('devis').toArray().catch(()=>[]))
+    .filter(d=>d.statut==='en_attente');
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+
+  const devisRows = devisAll.map(d=>`
+    <label class="sum-box" style="cursor:pointer;align-items:center">
+      <input type="checkbox" ${ctx.devisIds.includes(d.id)?'checked':''} onchange="devisGroupeToggleDevis(${d.id},this.checked)" style="width:18px;height:18px;margin-right:8px">
+      <span style="flex:1">${esc(d.numero||'Brouillon')} · ${esc(clName(d.clientId))}</span>
+      <b>${euro(d.montant||0)}</b></label>`).join('');
+
+  const ordersSel = [];
+  for(const oid of ctx.orderIds){ const o=await db.orders.get(oid).catch(()=>null); if(o) ordersSel.push(o); }
+  const ordersRows = ordersSel.map(o=>`
+    <div class="sum-box" style="align-items:center">
+      <span style="flex:1">${esc(orderNumber(o))} · ${esc(clName(o.clientId))}</span>
+      <b>${euro(o.montant||0)}</b>
+      <span class="act del" style="margin-left:8px" onclick="devisGroupeRemoveOrder(${o.id})">✕</span></div>`).join('');
+
+  const total = money2(devisAll.filter(d=>ctx.devisIds.includes(d.id)).reduce((s,d)=>s+(+d.montant||0),0)
+    + ordersSel.reduce((s,o)=>s+(+o.montant||0),0));
+  const nb = ctx.devisIds.length + ordersSel.length;
+
+  openModal(`<h3>📋 Devis groupé</h3>
+    <p class="note">Sélectionne les devis et/ou commandes à récapituler dans un seul document non engageant. Chaque source garde son détail ; un total groupé s'affiche à la fin.</p>
+    ${devisAll.length?`<p class="note" style="margin:8px 0 4px"><b>Devis existants</b></p>${devisRows}`:''}
+    <p class="note" style="margin:10px 0 4px"><b>Commandes existantes</b> <span class="act" onclick="devisGroupeAddOrderPrompt()">+ ajouter ›</span></p>
+    ${ordersRows||'<p class="note" style="color:#9a8a82">Aucune commande ajoutée.</p>'}
+    <div class="sum-box" style="margin-top:10px;border-top:2px solid var(--bordeaux)"><span><b>${nb} élément(s) — total groupé</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" ${nb<1?'disabled':''} onclick="devisGroupeGenerate()">Générer le devis groupé</button></div>`);
+}
+function devisGroupeToggleDevis(id, on){
+  const ctx=_devisGroupeCtx; if(!ctx) return;
+  if(on){ if(!ctx.devisIds.includes(id)) ctx.devisIds.push(id); } else { ctx.devisIds=ctx.devisIds.filter(x=>x!==id); }
+  devisGroupeRender();
+}
+function devisGroupeRemoveOrder(id){
+  const ctx=_devisGroupeCtx; if(!ctx) return;
+  ctx.orderIds = ctx.orderIds.filter(x=>x!==id);
+  devisGroupeRender();
+}
+async function devisGroupeAddOrderPrompt(){
+  const ctx=_devisGroupeCtx; if(!ctx) return;
+  const orders = (await db.orders.toArray().catch(()=>[])).filter(o=>!estReprise(o) && !ctx.orderIds.includes(o.id));
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  orders.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const rows = orders.slice(0,60).map(o=>`
+    <div class="sum-box lnk" onclick="devisGroupeAddOrder(${o.id})">
+      <span>${esc(orderNumber(o))} · ${esc(clName(o.clientId))} · ${fmtDate(o.date)}</span>
+      <b>${euro(o.montant||0)}</b></div>`).join('');
+  openModal(`<h3>Ajouter une commande</h3>
+    ${rows||'<p class="note">Aucune commande disponible.</p>'}
+    <div class="modal-actions"><button class="btn ghost" onclick="devisGroupeRender()">‹ Retour</button></div>`);
+}
+function devisGroupeAddOrder(orderId){
+  const ctx=_devisGroupeCtx; if(!ctx) return;
+  if(!ctx.orderIds.includes(orderId)) ctx.orderIds.push(orderId);
+  devisGroupeRender();
+}
+async function devisGroupeGenerate(){
+  const ctx=_devisGroupeCtx; if(!ctx) return;
+  const e = factGetEmetteur();
+  if(!e.nom || !e.siret || !e.adresse){ toast('Renseigne d\'abord tes coordonnées de facturation'); factEmetteurForm(0); return; }
+
+  const devisSel = []; for(const id of ctx.devisIds){ const d=await db.documents.get(id).catch(()=>null); if(d) devisSel.push(d); }
+  const ordersSel = []; for(const id of ctx.orderIds){ const o=await db.orders.get(id).catch(()=>null); if(o) ordersSel.push(o); }
+  if(!devisSel.length && !ordersSel.length){ toast('Aucun élément sélectionné'); return; }
+
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clientIds = [...new Set([...devisSel.map(d=>d.clientId||0), ...ordersSel.map(o=>o.clientId||0)])];
+  const client = (clientIds.length===1 && clientIds[0]) ? clients.find(c=>c.id===clientIds[0]) : null;
+
+  let grandTotal = 0;
+  // Sections DEVIS (prix NET par ligne — même présentation qu'un devis individuel)
+  const sectionsDevis = devisSel.map(d=>{
+    const lignes = d.lignes||[];
+    const total = (d.montant!=null) ? +d.montant : money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0));
+    grandTotal += total;
+    const rows = lignes.map(ln=>factLineRows(ln, false)).join('') + cautionRowHtml(lignes);
+    return `<div class="cmd-section">
+      <div class="cmd-head"><span class="cmd-ref">Devis ${esc(d.numero||'brouillon')}${cmdEventBadge(d)}</span><span class="cmd-date">${fmtDate(d.date)||''}</span></div>
+      <div class="cmd-body"><table class="cmd-table"><tbody>
+        ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
+        ${factPersoLigne(d.persoMacarons, d.persoRemiseEur)}
+        <tr class="cmd-total"><td>Total devis ${esc(d.numero||'')}</td><td class="mt">${euro(total)}</td></tr>
+      </tbody></table>${factPersoBox(d.persoMacarons, d.persoCouleurs)}</div></div>`;
+  }).join('');
+  // Sections COMMANDES (même présentation que la facture groupée, prix BRUT + réductions récapitulées)
+  const sectionsOrders = ordersSel.map(o=>{
+    const lignes = orderToLines(o);
+    const persoMt = persoMontant(o.persoMacarons, o.persoRemiseEur);
+    const gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
+    const frais = +o.fraisLivraison||0;
+    const brutCmd = money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0) + persoMt);
+    const totalCmd = (o.montant!=null) ? +o.montant : money2(brutCmd - money2(brutCmd*gpct/100) + frais);
+    grandTotal += totalCmd;
+    const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais));
+    const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes);
+    return `<div class="cmd-section">
+      <div class="cmd-head"><span class="cmd-ref">Commande ${esc(orderNumber(o))}${cmdEventBadge(o)}</span><span class="cmd-date">${fmtDate(o.date)||''}</span></div>
+      <div class="cmd-body"><table class="cmd-table"><tbody>
+        ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
+        ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true)}
+        ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
+        ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
+        <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
+      </tbody></table>${factPersoBox(o.persoMacarons, o.persoCouleurs)}</div></div>`;
+  }).join('');
+
+  const clientBloc = client
+    ? `${esc([client.civilite,client.prenom,client.nom].filter(Boolean).join(' ')||client.nom||'')}${client.societe?'<br>'+esc(client.societe):''}${client.adresse?'<br>'+esc(client.adresse):''}${client.tel?'<br>Tél : '+esc(client.tel):''}${client.email?'<br>'+esc(client.email):''}`
+    : (clientIds.length>1 ? 'Clients multiples' : 'Client de passage');
+
+  // Numéro : un devis groupé n'entre PAS dans la séquence légale des factures (document non
+  // engageant, pas de contrainte de continuité numérique) — référence interne horodatée.
+  const refInterne = 'DEVIS-GRP-'+today().replace(/-/g,'')+'-'+Date.now().toString().slice(-4);
+  const nbElements = devisSel.length + ordersSel.length;
+
+  const devisGroupeHtml = `<!doctype html><html lang="fr"><head><meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+   <meta name="format-detection" content="telephone=no, date=no, email=no, address=no">
+   <title>Devis groupé</title>
+   ${FACT_STYLE}</head><body>
+   <div class="barre noprint"><button onclick="window.print()">🖨 Imprimer / Enregistrer en PDF</button></div>
+   <div class="page">
+     <div class="entete">
+       <img class="logo" src="${FACT_LOGO}" alt="logo">
+       <div class="em">
+         ${[e.exploitant?esc(e.exploitant):'', e.adresse?esc(e.adresse):'', e.cpville?esc(e.cpville):'', e.tel?'Tél. '+esc(e.tel):'', e.email?esc(e.email):'', e.siret?'SIRET '+esc(e.siret):'']
+           .filter(Boolean).map(l=>`<div class="em-l">${l}</div>`).join('')}
+       </div>
+     </div>
+     <div class="corps">
+       <div class="ftitre">Devis groupé</div>
+       <div class="ftitre-rule"></div>
+       <div class="meta">
+         <div class="bloc"><div class="lbl">Destinataire</div>${clientBloc}</div>
+         <div class="bloc" style="text-align:right">
+           <div class="lbl">Détails</div>
+           Référence : <b>${esc(refInterne)}</b><br>
+           Date d'émission : ${fmtDate(today())}<br>
+           ${nbElements} élément(s) regroupé(s)
+         </div>
+       </div>
+       <div class="meta-rule"></div>
+       ${sectionsDevis}${sectionsOrders}
+       <div class="grand">
+         <div class="lg total"><span>Total groupé (indicatif)</span><span>${euro(grandTotal)}</span></div>
+       </div>
+       <div class="bas-final">
+         ${factRibAvisCol(e)}
+         <div class="legal-bloc">
+           <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
+           <p class="note" style="margin-top:8px;font-size:.76rem;color:#8a7a70">Document récapitulatif non engageant, sans valeur de facture. Chaque élément conserve son statut propre (devis en attente ou commande en cours) jusqu'à conversion/facturation individuelle.</p>
+         </div>
+       </div>
+     </div>
+   </div></body></html>`;
+
+  const win = window.open('', '_blank');
+  if(!win){ toast('Autorise les fenêtres pour générer le document'); return; }
+  win.document.write(devisGroupeHtml); win.document.close();
+  closeModal();
+  _docSel.clear(); docUpdateSelBar();
+  toast('✓ Devis groupé généré');
+}
+
 async function genererFactureMultiple(ids){
   ids = (ids||[]).filter(Boolean);
   if(!ids.length){ toast('Sélectionne au moins une commande'); return; }

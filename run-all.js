@@ -22,7 +22,10 @@ const SUITES = [
   'avg-sell-price.test.js',     // vague 9 : computeAvgSellPrice (prix de vente moyen)
   'market-costs.test.js',       // vague 10 : coûts marché (marketTotals + computeDeliveryCost)
   'net-poche.test.js',          // vague 11 : computeNetPoche (IR + net en poche)
-  'batch-picking.test.js'       // vague 12 : batch picking (agrégation besoins lot, résolution parfum)
+  'batch-picking.test.js',      // vague 12 : batch picking (agrégation besoins lot, résolution parfum)
+  'tresorerie.test.js',         // vague 13 : computeTresorerie (projection J+30/60/90)
+  'scenario-prix.test.js',      // vague 14 : computeScenarioPrix (module scénarios prix)
+  'panier-moyen.test.js'        // vague 15 : ventilation panier moyen par type dominant
 ];
 
 let allOk = true;
