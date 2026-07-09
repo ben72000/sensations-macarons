@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1280';
+const APP_VERSION = 'v1282';
 const APP_MAJ = 'Correction du saut de page sur l\u2019accueil : la carte \u00ab \u00c0 produire \u00bb est d\u00e9sormais calcul\u00e9e AVANT l\u2019affichage et ins\u00e9r\u00e9e directement, au lieu d\u2019appara\u00eetre apr\u00e8s coup et de pousser le reste de la page vers le bas. Plus de r\u00e9servation de hauteur devin\u00e9e, plus de sursaut au chargement. Aucun autre \u00e9cran modifi\u00e9 ; les 282 tests de non-r\u00e9gression restent tous verts.';
 
 
@@ -8441,6 +8441,7 @@ async function renderProductionsV2(){
     <div class="pv2-zones">
       <button class="pv2-zone on">⏳ En attente <span class="z-n">${nbLots}</span></button>
       <button class="pv2-zone" onclick="goView('stockparfums')">📦 Stock par parfum</button>
+      <button class="pv2-zone" onclick="stockScanBox()">📷 Scanner une boîte</button>
     </div>
     ${encartsHtml}
     ${corps}
@@ -9759,9 +9760,11 @@ async function renderPicking(){
    <div class="pick-tabs">
      <button class="${_pickMode==='commandes'?'active':''}" onclick="pickSetMode('commandes')">📋 Commandes</button>
      <button class="${_pickMode==='marche'?'active':''}" onclick="pickSetMode('marche')">⛺ Départ marché</button>
+     <button class="${_pickMode==='lots'?'active':''}" onclick="pickSetMode('lots')">📦 Lots</button>
    </div>
    <div id="pickBody"></div>`;
   if(_pickMode==='commandes') await pickRenderOrders();
+  else if(_pickMode==='lots') await pickRenderBatches();
   else await pickRenderMarket();
 }
 function pickSetMode(m){ _pickMode=m; _pickConsolidated=false; _pickFilterText=''; _pickFilterZone=''; renderPicking(); }
@@ -10909,32 +10912,17 @@ async function prodTermineConfirm(id){
 // grande boîte disponible, on demande d'abord la répartition en boîtes → une étiquette par boîte.
 
 // Plus grande capacité de boîte connue (matières catégorie emballage). 0 si aucune.
-async function asmMaxBoxCapacity(){
-  try{
-    const mats = await db.materials.toArray();
-    const caps = mats.filter(m=>m.categorie==='emballage' && +m.capacite>0).map(m=>+m.capacite);
-    return caps.length ? Math.max(...caps) : 0;
-  }catch(e){ return 0; }
-}
-// Toutes les capacités disponibles, triées décroissant (pour proposer une répartition).
-async function asmBoxCapacities(){
-  try{
-    const mats = await db.materials.toArray();
-    const caps = [...new Set(mats.filter(m=>m.categorie==='emballage' && +m.capacite>0).map(m=>+m.capacite))];
-    return caps.sort((a,b)=>b-a);
-  }catch(e){ return []; }
-}
+// [v1282] Les helpers de capacité fixe (asmMaxBoxCapacity / asmBoxCapacities) ont été retirés :
+// la répartition en boîtes est désormais entièrement LIBRE (saisie par boîte), sans capacité
+// prédéfinie. Le champ `capacite` des emballages n'est plus utilisé pour la répartition.
 
 // Point d'entrée : appelé après un assemblage réussi (non dégustation).
+// [v1282] Plus de capacité fixe : on propose une répartition LIBRE en boîtes. Par défaut une
+// seule boîte contenant tout le lot ; Ben ajoute des boîtes et saisit la quantité de chacune
+// selon la taille réelle des macarons du batch.
 async function asmAfterAssemble(prodId, qteAsm){
   if(prodId==null) return;
-  const maxCap = await asmMaxBoxCapacity();
-  // Dispatch demandé seulement si la quantité dépasse une taille de boîte.
-  if(maxCap>0 && qteAsm>maxCap){
-    await asmDispatchPrompt(prodId, qteAsm, maxCap);
-  } else {
-    asmLabelPrompt(prodId, qteAsm, null);
-  }
+  await asmDispatchPrompt(prodId, qteAsm);
 }
 
 // Proposition simple d'étiquette (1 boîte) : « Imprimer l'étiquette ? » PDF / Image.
@@ -10960,57 +10948,84 @@ async function asmLabelGo(prodId, nbPieces, kind){
   }
 }
 
-// Si la quantité dépasse une boîte : demander la répartition, puis une étiquette par boîte.
-async function asmDispatchPrompt(prodId, qteTotal, maxCap){
-  const caps = await asmBoxCapacities();
-  // Proposition par défaut : remplir des boîtes de la plus grande capacité.
-  const nbBoites = Math.ceil(qteTotal / maxCap);
-  const capsOpts = caps.map(c=>`<option value="${c}" ${c===maxCap?'selected':''}>Boîte de ${c}</option>`).join('');
-  window._asmDispatch = { prodId, qteTotal };
+// Répartition LIBRE en boîtes : une quantité par boîte, saisie à la main, total libre
+// (borné par le lot). Plus aucune capacité fixe imposée — la taille réelle des macarons
+// variant d'un batch à l'autre, seul Ben sait combien tient dans chaque contenant.
+async function asmDispatchPrompt(prodId, qteTotal){
+  // État : liste des quantités par boîte. Défaut = 1 boîte contenant tout le lot.
+  window._asmDispatch = { prodId, qteTotal, boites:[round3(qteTotal)] };
   openModal(`<h3>📦 Répartition en boîtes</h3>
-    <p class="note">Ce lot de <b>${qty(qteTotal)} macarons</b> dépasse une boîte (max ${maxCap}). Indique comment tu le répartis : on imprimera <b>une étiquette par boîte</b>, avec la bonne quantité.</p>
-    <div class="field"><label>Taille de boîte</label><select id="asmCap" onchange="asmDispatchRecalc()">${capsOpts}</select></div>
-    <div class="field"><label>Nombre de boîtes pleines</label><input type="number" id="asmNb" min="1" value="${nbBoites}" oninput="asmDispatchRecalc()"></div>
+    <p class="note">Lot de <b>${qty(qteTotal)} macarons</b>. Indique combien tu mets dans chaque boîte (libre — adapte à la taille réelle des macarons). On imprime <b>une étiquette par boîte</b>, avec sa quantité.</p>
+    <div id="asmBoxList"></div>
+    <button class="btn ghost sm" style="margin:8px 0" onclick="asmDispatchAddBox()">+ Ajouter une boîte</button>
     <div id="asmDispatchInfo" class="sum-box" style="display:block"></div>
     <div class="modal-actions" style="flex-wrap:wrap;gap:8px">
       <button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Plus tard</button>
       <button class="btn gold" onclick="asmDispatchGo('pdf')">📄 PDF (toutes)</button>
       <button class="btn gold" onclick="asmDispatchGo('image')">🖼 Images</button>
     </div>`);
+  asmDispatchRenderBoxes();
+}
+// (Ré)affiche la liste des champs « quantité par boîte ».
+function asmDispatchRenderBoxes(){
+  const d = window._asmDispatch||{}; const boites = d.boites||[];
+  const box = document.getElementById('asmBoxList'); if(!box) return;
+  box.innerHTML = boites.map((q,i)=>`
+    <div class="field" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <label style="flex:none;width:70px;margin:0">Boîte ${i+1}</label>
+      <input type="number" min="0" value="${q}" style="flex:1" oninput="asmDispatchSetBox(${i}, this.value)">
+      ${boites.length>1?`<button class="btn ghost sm" style="flex:none" onclick="asmDispatchRemoveBox(${i})">✕</button>`:''}
+    </div>`).join('');
   asmDispatchRecalc();
 }
-// Recalcule la répartition (boîtes pleines + reste) et l'affiche.
+function asmDispatchAddBox(){
+  const d = window._asmDispatch||{}; if(!d.boites) d.boites=[];
+  // Nouvelle boîte pré-remplie avec le reste non encore réparti (ou 0).
+  const total = d.qteTotal||0;
+  const dejaRep = d.boites.reduce((s,q)=>s+(+q||0),0);
+  const reste = round3(Math.max(0, total - dejaRep));
+  d.boites.push(reste);
+  asmDispatchRenderBoxes();
+}
+function asmDispatchRemoveBox(i){
+  const d = window._asmDispatch||{}; if(!d.boites) return;
+  d.boites.splice(i,1);
+  if(!d.boites.length) d.boites=[0];
+  asmDispatchRenderBoxes();
+}
+function asmDispatchSetBox(i, v){
+  const d = window._asmDispatch||{}; if(!d.boites) return;
+  d.boites[i] = round3(Math.max(0, +v||0));
+  asmDispatchRecalc();   // recalc seul (ne pas re-render : préserve le focus du champ)
+}
+// Recalcule le total réparti vs le lot, et affiche l'état (OK / reste / dépassement).
 function asmDispatchRecalc(){
-  const d = window._asmDispatch||{}; const total = d.qteTotal||0;
-  const cap = parseInt(val('asmCap'))||0;
-  const nb = parseInt(val('asmNb'))||0;
+  const d = window._asmDispatch||{}; const total = round3(d.qteTotal||0);
+  const boites = (d.boites||[]).map(q=>round3(+q||0));
   const info = document.getElementById('asmDispatchInfo'); if(!info) return;
-  if(cap<=0 || nb<=0){ info.innerHTML='<span>Renseigne la taille et le nombre.</span>'; return; }
-  const dansBoites = cap*nb;
-  const reste = total - dansBoites;
-  let txt = `<span>${nb} boîte(s) de ${cap} = <b>${qty(Math.min(dansBoites,total))}</b></span>`;
-  if(reste>0) txt += `<br><span style="color:#AA7C39">+ 1 boîte avec le reste : <b>${qty(reste)}</b></span>`;
-  else if(reste<0) txt += `<br><span style="color:#b3261e">Dépasse le lot de ${qty(-reste)} — ajuste</span>`;
+  const somme = round3(boites.reduce((s,q)=>s+q,0));
+  const reste = round3(total - somme);
+  let txt = `<span>${boites.length} boîte(s) · total réparti : <b>${qty(somme)}</b> / ${qty(total)} du lot</span>`;
+  if(reste>0) txt += `<br><span style="color:#AA7C39">Reste ${qty(reste)} macaron(s) non mis en boîte — ajoute une boîte ou augmente une quantité.</span>`;
+  else if(reste<0) txt += `<br><span style="color:#b3261e">Dépasse le lot de ${qty(-reste)} — réduis une quantité.</span>`;
+  else txt += `<br><span style="color:#2e7d32">✓ Tout le lot est réparti.</span>`;
   info.innerHTML = txt;
 }
-// Construit la liste des étiquettes (une par boîte) et génère le PDF / les images.
+// Construit une étiquette par boîte (regroupe les boîtes de même quantité en copies) et imprime.
 async function asmDispatchGo(kind){
-  const d = window._asmDispatch||{}; const total = d.qteTotal||0; const prodId = d.prodId;
-  const cap = parseInt(val('asmCap'))||0; const nb = parseInt(val('asmNb'))||0;
-  if(cap<=0 || nb<=0){ toast('Renseigne la répartition'); return; }
-  const dansBoites = cap*nb;
-  if(dansBoites>total){ toast('La répartition dépasse le lot'); return; }
-  const reste = total - dansBoites;
-  // items : nb boîtes pleines (cap pièces) + éventuellement 1 boîte avec le reste
-  const items = [];
-  if(nb>0) items.push({prodId, copies:nb, nbPieces:cap});
-  if(reste>0) items.push({prodId, copies:1, nbPieces:reste});
+  const d = window._asmDispatch||{}; const total = round3(d.qteTotal||0); const prodId = d.prodId;
+  const boites = (d.boites||[]).map(q=>round3(+q||0)).filter(q=>q>0);
+  if(!boites.length){ toast('Renseigne au moins une boîte'); return; }
+  const somme = round3(boites.reduce((s,q)=>s+q,0));
+  if(somme>total){ toast('La répartition dépasse le lot — réduis une quantité'); return; }
+  // Regroupe les quantités identiques : {16:2, 8:1} → 2 étiquettes de 16 + 1 de 8.
+  const parQte = {};
+  boites.forEach(q=>{ parQte[q]=(parQte[q]||0)+1; });
+  const items = Object.keys(parQte).map(q=>({prodId, copies:parQte[q], nbPieces:+q}));
   closeModal();
   if(kind==='pdf'){
     if(typeof buildLabelsPDF==='function') await buildLabelsPDF(items);
   } else {
-    // images : on partage chaque étiquette distincte (cap, puis reste). Le moteur image gère 1 lot ;
-    // pour le dispatch, le PDF est le plus pratique. En image, on envoie au moins l'étiquette « cap ».
     if(typeof shareLabelImage==='function'){
       toast('Astuce : le PDF regroupe toutes les boîtes en un envoi');
       await shareLabelImage(prodId);
@@ -15452,6 +15467,7 @@ async function renderCmd(){
          <button class="btn ghost sm" onclick="cmdSelectAllVisible()">Tout cocher</button>
          <button class="btn ghost sm" onclick="cmdClearSelection()">Tout décocher</button>
          <button class="btn gold sm" onclick="genererFactureMultiple([..._cmdSel])">🧾 Facturer la sélection</button>
+         <button class="btn gold sm" onclick="pickBatchCreateFromSelection()">📦 Créer un lot de picking</button>
          <button class="btn ghost sm" onclick="cmdMailSelection()">✉️ Mail au client</button>
          <button class="btn ghost sm" onclick="cmdExportSelection()">⬇ Exporter (TXT)</button>
        </div>
@@ -23834,7 +23850,14 @@ async function renderCompta(){
      <h2>🏛️ Impôt sur le revenu</h2>
      <div class="banner" style="background:#f4f0ff;border-color:#e0d6f0;margin-bottom:10px">📅 <div>Estimation pour <b>${esc(monthLabel(_comptaMonth))}</b>, selon ton taux marginal d'imposition et l'abattement micro-entreprise (marchandise ${getSettings().irAbattementGoods}% · service ${getSettings().irAbattementService}%).</div></div>
      <div id="comptaIRBody">
-       <div class="sum-box"><span>Chargement de l'estimation…</span><b>—</b></div>
+       <!-- [A-uijump] Squelette 5 lignes = hauteur du contenu final (base march. + base serv. +
+            bénéfice + impôt + net poche), pour réserver la place et éviter que le remplissage
+            async ne pousse la note et le reste de l'écran vers le bas (même correctif que gapChartZone). -->
+       <div class="sum-box" style="opacity:.5"><span>Chargement de l'estimation…</span><b>—</b></div>
+       <div class="sum-box" style="opacity:.35"><span>&nbsp;</span><b>&nbsp;</b></div>
+       <div class="sum-box" style="opacity:.35;border-top:2px solid #e0d5c5;margin-top:4px;padding-top:8px"><span>&nbsp;</span><b>&nbsp;</b></div>
+       <div class="sum-box" style="opacity:.35;background:#fbf5f7"><span>&nbsp;</span><b>&nbsp;</b></div>
+       <div class="sum-box" style="opacity:.35;background:#f4faf5;border-top:2px solid #cfe4d4;margin-top:6px;padding-top:8px"><span>&nbsp;</span><b>&nbsp;</b></div>
      </div>
      <p class="note" id="comptaIRNote">L'impôt réel dépend de l'ensemble des revenus de ton foyer et du barème annuel. Cette estimation applique ton taux marginal (${(+getSettings().irTrancheMarginale||0)} %) à ton bénéfice imposable après abattement. À affiner avec ta déclaration ou ton comptable.</p>
    </div>
@@ -39101,6 +39124,523 @@ async function pickBatchDeclareShortage(batch, parfum, manque){
   await db.batches.update(batch.id, {alertes:al});
 }
 
+// Depuis la sélection multiple de l'écran Commandes : nomme puis crée le lot.
+async function pickBatchCreateFromSelection(){
+  const ids = [...(_cmdSel||[])];
+  if(!ids.length){ toast('Aucune commande sélectionnée'); return; }
+  const defNom = 'Lot du '+fmtDate(today());
+  openModal(`<h3>📦 Nouveau lot de picking</h3>
+    <p class="note">${ids.length} commande(s) sélectionnée(s). Donne un nom à ce lot (tu pourras le rouvrir et l'imprimer).</p>
+    <div class="field"><label>Nom du lot</label>
+      <input id="batchNom" value="${esc(defNom)}" autocomplete="off" style="width:100%"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="pickBatchCreateConfirm()">Créer le lot</button>
+    </div>`);
+  window._batchCreateIds = ids;
+}
+async function pickBatchCreateConfirm(){
+  const ids = window._batchCreateIds||[];
+  const nom = (document.getElementById('batchNom')||{}).value || '';
+  try{
+    const id = await pickBatchCreate(ids, nom);
+    closeModal();
+    if(typeof cmdClearSelection==='function') cmdClearSelection();
+    toast('✓ Lot créé');
+    // Propose d'ouvrir directement le picking du lot
+    openModal(`<h3>📦 Lot créé</h3>
+      <p class="note">Le lot « ${esc((nom||'').trim()||('Lot du '+fmtDate(today())))} » regroupe ${ids.length} commande(s).</p>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal()">Plus tard</button>
+        <button class="btn gold" onclick="closeModal();pickBatchOpen(${id})">Préparer maintenant</button>
+      </div>`);
+  }catch(e){ toast(e.message||'Erreur à la création du lot'); }
+}
+
+// ── SCAN D'UNE BOÎTE DE MACARONS FINIS : ajustement de stock au fil de l'eau ──
+// Indépendant du picking. Deux gestes au choix : SORTIE (j'en enlève N) ou INVENTAIRE
+// (il en reste N). Tout écart qualifié par un motif. Mapping (validé) :
+//   casse    → move type:'perte'       + db.losses (valorisé)   sens -1
+//   don      → move type:'don'         (non valorisé)           sens -1
+//   degust   → move type:'degustation' (non valorisé)           sens -1
+//   correction → move type:'ajustement' (non valorisé)          sens ±1 selon écart
+const STOCK_ADJ_MOTIFS = [
+  {k:'perte',       lbl:'Casse / perte (jeté)',   moveType:'perte',       valorise:true},
+  {k:'don',         lbl:'Don (offert)',            moveType:'don',         valorise:false},
+  {k:'degustation', lbl:'Dégustation (goût)',      moveType:'degustation', valorise:false},
+  {k:'correction',  lbl:'Correction d\'erreur',    moveType:'ajustement',  valorise:false}
+];
+
+function stockScanBox(){
+  if(typeof openScanner!=='function'){ toast('Scanner indisponible'); return; }
+  openScanner(async (code)=>{
+    const lot = _extractLot(code);
+    const prods = await db.productions.toArray().catch(()=>[]);
+    const recipes = await db.recipes.toArray().catch(()=>[]);
+    const p = prods.find(x=>normTxt(x.lotProduction||'')===normTxt(lot));
+    if(!p){ toast('Lot '+lot+' introuvable'); return; }
+    window._stockAdjRecipes = recipes;
+    stockAdjChoose(p.id);
+  });
+}
+
+async function stockAdjChoose(prodId){
+  const p = await db.productions.get(prodId); if(!p){ toast('Lot introuvable'); return; }
+  const recipes = window._stockAdjRecipes || await db.recipes.toArray().catch(()=>[]);
+  const nom = pickBatchProdFlavor(p, recipes) || '(sans nom)';
+  const reste = round3(+p.qteRestante||0);
+  const comp = (typeof prodComposant==='function')?prodComposant(p):'complet';
+  const u = comp==='coques' ? 'coques' : 'macarons';
+  openModal(`<h3>📦 ${esc(nom)}</h3>
+    <p class="note">Lot <b>${esc(p.lotProduction||'—')}</b>${p.dlcProduit?` · DLC ${fmtDate(p.dlcProduit)}`:''}${p.emplacement?` · ${esc(p.emplacement)}`:''}</p>
+    <div class="sum-box"><span>Stock actuel</span><b>${qty(reste)} ${u}</b></div>
+    <p class="note" style="margin-top:10px">Que veux-tu faire ?</p>
+    <div class="modal-actions" style="flex-direction:column;gap:8px">
+      <button class="btn gold" style="width:100%" onclick="stockAdjSortie(${prodId})">➖ Sortir une quantité (j'en enlève)</button>
+      <button class="btn gold" style="width:100%" onclick="stockAdjInventaire(${prodId})">🔢 Corriger l'inventaire (il en reste…)</button>
+      <button class="btn ghost" style="width:100%" onclick="closeModal()">Annuler</button>
+    </div>`);
+}
+
+// Rend les boutons radio de motif (réutilisé sortie + inventaire).
+function stockAdjMotifsHtml(){
+  return STOCK_ADJ_MOTIFS.map((m,i)=>`<label class="sum-box" style="cursor:pointer;align-items:center">
+    <input type="radio" name="stockAdjMotif" value="${m.k}" ${i===0?'checked':''} style="width:20px;height:20px;margin-right:8px">
+    <span style="flex:1">${esc(m.lbl)}</span></label>`).join('');
+}
+function stockAdjSelectedMotif(){
+  const el = document.querySelector('input[name="stockAdjMotif"]:checked');
+  const k = el ? el.value : 'perte';
+  return STOCK_ADJ_MOTIFS.find(m=>m.k===k) || STOCK_ADJ_MOTIFS[0];
+}
+
+async function stockAdjSortie(prodId){
+  const p = await db.productions.get(prodId); if(!p) return;
+  const reste = round3(+p.qteRestante||0);
+  const comp = (typeof prodComposant==='function')?prodComposant(p):'complet';
+  const u = comp==='coques' ? 'coques' : 'macarons';
+  openModal(`<h3>➖ Sortir du stock</h3>
+    <p class="note">Stock actuel : <b>${qty(reste)} ${u}</b></p>
+    <div class="field"><label>Quantité à sortir</label>
+      <input type="number" id="stockAdjQte" min="0" max="${reste}" value="0" style="width:100%;font-size:1.1rem"></div>
+    <p class="note" style="margin:10px 0 4px">Motif :</p>
+    ${stockAdjMotifsHtml()}
+    <div class="field" style="margin-top:8px"><label>Note (facultatif)</label>
+      <input id="stockAdjNote" placeholder="ex : chute au démoulage" style="width:100%"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="stockAdjSortieConfirm(${prodId})">Valider la sortie</button></div>`);
+}
+async function stockAdjSortieConfirm(prodId){
+  const q = round3(+((document.getElementById('stockAdjQte')||{}).value)||0);
+  if(q<=0){ toast('Quantité nulle'); return; }
+  const motif = stockAdjSelectedMotif();
+  const note = ((document.getElementById('stockAdjNote')||{}).value||'').trim();
+  await stockAdjApply(prodId, -q, motif, note);
+  closeModal();
+}
+
+async function stockAdjInventaire(prodId){
+  const p = await db.productions.get(prodId); if(!p) return;
+  const reste = round3(+p.qteRestante||0);
+  const comp = (typeof prodComposant==='function')?prodComposant(p):'complet';
+  const u = comp==='coques' ? 'coques' : 'macarons';
+  openModal(`<h3>🔢 Corriger l'inventaire</h3>
+    <p class="note">Stock théorique actuel : <b>${qty(reste)} ${u}</b>. Saisis la quantité réellement comptée.</p>
+    <div class="field"><label>Quantité réelle comptée</label>
+      <input type="number" id="stockAdjReel" min="0" value="${reste}" style="width:100%;font-size:1.1rem" oninput="stockAdjInvHint(${reste})"></div>
+    <p class="note" id="stockAdjInvHint" style="margin:2px 0 8px"></p>
+    <div id="stockAdjInvMotifs" style="display:none">
+      <p class="note" style="margin:10px 0 4px">Motif de l'écart :</p>
+      ${stockAdjMotifsHtml()}
+      <div class="field" style="margin-top:8px"><label>Note (facultatif)</label>
+        <input id="stockAdjNote" placeholder="ex : recomptage after marché" style="width:100%"></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="stockAdjInventaireConfirm(${prodId}, ${reste})">Enregistrer</button></div>`);
+  stockAdjInvHint(reste);
+}
+function stockAdjInvHint(reste){
+  const reel = round3(+((document.getElementById('stockAdjReel')||{}).value)||0);
+  const ecart = round3(reel - reste);
+  const hint = document.getElementById('stockAdjInvHint');
+  const motifs = document.getElementById('stockAdjInvMotifs');
+  if(!hint) return;
+  if(ecart===0){ hint.textContent='Aucun écart.'; if(motifs) motifs.style.display='none'; }
+  else if(ecart<0){ hint.innerHTML=`Écart : <b style="color:#b3261e">${qty(ecart)}</b> (sortie de ${qty(-ecart)}).`; if(motifs) motifs.style.display='block'; }
+  else { hint.innerHTML=`Écart : <b style="color:#2e7d32">+${qty(ecart)}</b> (ajout au stock).`; if(motifs) motifs.style.display='block'; }
+}
+async function stockAdjInventaireConfirm(prodId, reste){
+  const reel = round3(+((document.getElementById('stockAdjReel')||{}).value)||0);
+  const ecart = round3(reel - reste);
+  if(ecart===0){ toast('Aucun écart à enregistrer'); closeModal(); return; }
+  const note = ((document.getElementById('stockAdjNote')||{}).value||'').trim();
+  // Un ajout (écart positif) est toujours une correction ; une baisse suit le motif choisi.
+  const motif = ecart>0 ? STOCK_ADJ_MOTIFS.find(m=>m.k==='correction') : stockAdjSelectedMotif();
+  await stockAdjApply(prodId, ecart, motif, note);
+  closeModal();
+}
+
+// Cœur transactionnel : applique un delta (±) au stock d'un lot fini, journalise le move
+// selon le motif, et valorise en perte SEULEMENT si motif.valorise (casse).
+async function stockAdjApply(prodId, delta, motif, note){
+  const d = round3(delta);
+  if(d===0) return;
+  const recipes = window._stockAdjRecipes || await db.recipes.toArray().catch(()=>[]);
+  try{
+    let prodSnap=null;
+    await db.transaction('rw', db.productions, async()=>{
+      const p = await db.productions.get(prodId); if(!p) return;
+      prodSnap = p;
+      const nouv = round3(Math.max(0, (+p.qteRestante||0) + d));   // jamais négatif
+      await db.productions.update(prodId, {qteRestante: nouv});
+    });
+    if(!prodSnap) { toast('Lot introuvable'); return; }
+    const parfum = pickBatchProdFlavor(prodSnap, recipes);
+    if(typeof logStockMove==='function'){
+      await logStockMove({ parfumNom:parfum, composant:'macaron',
+        sens: d<0?-1:1, qte: Math.abs(d), type: motif.moveType,
+        productionId: prodId, orderId:null,
+        note: (note?note+' · ':'')+'scan boîte ('+motif.lbl+')' });
+    }
+    // Valorisation en perte : casse uniquement, et seulement pour une sortie (d<0).
+    if(motif.valorise && d<0){
+      let coutUnit=0;
+      try{
+        const rec = recipes.find(r=>+r.id===+prodSnap.recipeId);
+        if(rec){ const [ri,lots,mats]=await Promise.all([db.recipeItems.toArray(),db.materialLots.toArray(),db.materials.toArray().catch(()=>[])]);
+          const cr=coutRevientRecette(rec,ri,lots); coutUnit=lossUnitCost(prodComposant(prodSnap),cr,mats); }
+      }catch(e){ coutUnit=0; }
+      await db.losses.add({ productionId:prodId, recipeId:prodSnap.recipeId, date:today(),
+        motif:'Casse (scan boîte)', qte:Math.abs(d), enProduction:false,
+        coutUnit:money2(coutUnit), coutTotal:money2(coutUnit*Math.abs(d)),
+        note: note||'' }).catch(e=>console.error('loss scan',e));
+    }
+    if(typeof markUnsaved==='function') markUnsaved();
+    toast(`✓ Stock mis à jour (${d>0?'+':''}${qty(d)})`);
+    if(typeof renderProductions==='function') renderProductions();
+  }catch(err){ toast(err.message||'Erreur à la mise à jour du stock'); }
+}
+
+// ── LISTE DES LOTS (onglet « Lots » du picking) ──────────────────────────────
+async function pickRenderBatches(){
+  const body = document.getElementById('pickBody'); if(!body) return;
+  try{ if(!window._pickClientsCache) window._pickClientsCache = await db.clients.toArray(); }catch(e){}
+  const batches = (await db.batches.toArray().catch(()=>[])).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const actifs = batches.filter(b=>b.statut!=='clos');
+  const clos = batches.filter(b=>b.statut==='clos');
+  const card = (b)=>{
+    const nbAl = (b.alertes||[]).filter(a=>!a.resolu).length;
+    const stTag = b.statut==='clos' ? '<span class="tag done" style="font-size:.6rem">clos</span>'
+      : (b.statut==='en_cours' ? '<span class="tag ok" style="font-size:.6rem">en cours</span>' : '<span class="tag" style="font-size:.6rem">ouvert</span>');
+    return `<div class="sum-box lnk" onclick="pickBatchOpen(${b.id})" style="align-items:center">
+      <div style="flex:1"><b>${esc(b.nom||'Lot')}</b> ${stTag}<br>
+        <span style="font-size:.78rem;color:#7a6a60">${(b.orderIds||[]).length} commande(s) · créé le ${fmtDate((b.createdAt||'').slice(0,10))}${nbAl?` · <span style="color:#b3261e">${nbAl} manque(s)</span>`:''}</span></div>
+      <span class="nav-go">›</span></div>`;
+  };
+  body.innerHTML = `
+   <p class="note" style="margin-bottom:12px">Les lots regroupent des commandes choisies pour une préparation groupée. Crée un lot depuis l'écran Commandes (sélection multiple → « 📦 Créer un lot de picking »).</p>
+   ${actifs.length?`<div class="panel"><h2>Lots en cours</h2>${actifs.map(card).join('')}</div>`:'<div class="empty">Aucun lot en cours. Crée-en un depuis l\'écran Commandes.</div>'}
+   ${clos.length?`<div class="panel"><h2>Lots clôturés <span style="font-size:.72rem;color:#9a8a82;font-weight:400">(traçabilité)</span></h2>${clos.slice(0,20).map(card).join('')}</div>`:''}`;
+}
+
+// ── OUVERTURE + RENDU DE L'ÉCRAN DE PICKING D'UN LOT ─────────────────────────
+async function pickBatchOpen(batchId){
+  const batch = await db.batches.get(+batchId).catch(()=>null);
+  if(!batch){ toast('Lot introuvable sur cet appareil'); return; }
+  try{ if(!window._pickClientsCache) window._pickClientsCache = await db.clients.toArray(); }catch(e){ window._pickClientsCache=[]; }
+  _pickBatchId = batch.id;
+  _pickBatchPool = {}; _pickBatchPoolSrc = {};
+  await pickBatchRender();
+}
+
+async function pickBatchRender(){
+  const batch = await db.batches.get(+_pickBatchId).catch(()=>null);
+  if(!batch) return;
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const needs = await pickBatchNeeds(batch);
+  const deja = await pickBatchDejaReparti(batch.id, prods, recipes);
+  const alloc = allocateBatches(needs, prods, recipes);
+  _pickBatchCtx = { batch, needs, alloc, prods, recipes, deja };
+
+  const parfums = Object.keys(needs).filter(f=>needs[f]>0).sort((a,b)=>a.localeCompare(b));
+  const rows = parfums.map(f=>{
+    const attendu = round3(needs[f]);
+    const fait = round3(deja[f]||0);
+    const enPool = round3(_pickBatchPool[f]||0);   // prélevé, pas encore réparti
+    const complet = fait>=attendu;
+    const col = complet ? '#2e7d32' : (fait>0||enPool>0 ? '#b08a3a' : '#b3261e');
+    const etat = complet ? '✅ complet'
+      : (enPool>0 ? `🟡 ${qty(enPool)} en attente de répartition`
+      : (fait>0 ? `🟡 partiel ${qty(fait)}/${qty(attendu)}` : `⬜ à prélever`));
+    // Bouton d'action selon l'étape : prélever (scan boîte) OU répartir (scan commande)
+    const action = complet ? ''
+      : (enPool>0
+          ? `<button class="btn gold sm" onclick="pickBatchScanOrder('${esc(f).replace(/'/g,"\\'")}')">📷 Répartir sur commande</button>`
+          : `<button class="btn gold sm" onclick="pickBatchScanStock('${esc(f).replace(/'/g,"\\'")}')">📷 Scanner une boîte</button>`);
+    return `<div class="sum-box" style="border-left:3px solid ${col};align-items:center">
+      <div style="flex:1"><b>${esc(f)}</b><br><span style="font-size:.78rem;color:#7a6a60">${etat} · besoin ${qty(attendu)}</span></div>
+      ${action}</div>`;
+  }).join('');
+
+  const alertes = (batch.alertes||[]).filter(a=>!a.resolu);
+  const alerteHtml = alertes.length
+    ? `<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-bottom:10px">⛔ <div><b>Manque(s) non résolu(s) :</b> ${alertes.map(a=>`${esc(a.flavor)} (${qty(a.manque)})`).join(' · ')}. Rattrapable via une production ou une migration de produit fini.</div></div>`
+    : '';
+  const shortHtml = alloc.shortages && alloc.shortages.length
+    ? `<div class="banner" style="background:#fff7ed;border-color:#f0c98a;margin-bottom:10px">⚠️ <div>Stock théorique insuffisant : ${alloc.shortages.map(s=>`${esc(s.flavor)} (manque ${qty(s.manque)})`).join(' · ')}. Tu peux prélever un autre parfum en repli lors du scan.</div></div>`
+    : '';
+
+  document.getElementById('main').innerHTML = `
+   <div class="topbar"><div><h1>📦 ${esc(batch.nom||'Lot')}</h1><p>${batch.orderIds.length} commande(s) · statut ${esc(batch.statut)}</p></div>
+     <div style="display:flex;gap:6px;flex-wrap:wrap">
+       <button class="btn ghost" onclick="pickBatchPrintGlobal(${batch.id})">🖨 QR global</button>
+       <button class="btn ghost" onclick="pickBatchClose(${batch.id})">✓ Clôturer</button>
+     </div></div>
+   ${alerteHtml}${shortHtml}
+   <div class="panel">
+     <p class="note" style="margin-top:0">Scanne le QR global d'un lot pour l'ouvrir, ou prélève parfum par parfum : scanne une boîte (prélèvement), puis répartis sur les commandes en les scannant.</p>
+     ${rows||'<div class="empty">Aucun parfum à préparer dans ce lot.</div>'}
+   </div>`;
+}
+
+// ── SCAN D'UNE BOÎTE (prélèvement) ───────────────────────────────────────────
+async function pickBatchScanStock(parfumCible){
+  if(typeof openScanner!=='function'){ toast('Scanner indisponible'); return; }
+  const ctx = _pickBatchCtx; if(!ctx) return;
+  openScanner(async (code)=>{
+    const lot = _extractLot(code);
+    const prods = await db.productions.toArray().catch(()=>[]);
+    const recipes = await db.recipes.toArray().catch(()=>[]);
+    const p = prods.find(x=>normTxt(x.lotProduction||'')===normTxt(lot));
+    if(!p){ toast('Lot '+lot+' introuvable'); return; }
+    const parfumDuLot = pickBatchProdFlavor(p, recipes);
+
+    if(pickFlavorMatch(parfumDuLot, parfumCible)){
+      // Cas A : bon parfum. Confirmation de quantité réelle (jamais de décrément silencieux).
+      const deja = await pickBatchDejaReparti(ctx.batch.id, prods, recipes);
+      const enPool = round3(_pickBatchPool[parfumCible]||0);
+      const besoinRestant = round3((ctx.needs[parfumCible]||0) - (deja[parfumCible]||0) - enPool);
+      const theorique = round3(Math.min(Math.max(0,besoinRestant), +p.qteRestante||0));
+      pickBatchAskQty({
+        titre:`Lot ${esc(p.lotProduction)} — ${esc(parfumDuLot)}`,
+        sousTitre:`Stock du lot : ${qty(round3(+p.qteRestante||0))} · besoin restant : ${qty(Math.max(0,besoinRestant))}`,
+        defaut:theorique, max:round3(+p.qteRestante||0),
+        onOk:(q)=>pickBatchDoPrelevement(p, parfumCible, q, theorique, false)
+      });
+    } else {
+      // Cas B : autre parfum → confirmation explicite, quantité libre (repli de dernière minute).
+      pickBatchAskQty({
+        titre:`⚠️ Ce lot est « ${esc(parfumDuLot)} », pas « ${esc(parfumCible)} »`,
+        sousTitre:`Prélèvement hors-plan (repli). Stock du lot : ${qty(round3(+p.qteRestante||0))}. Quantité à prélever ?`,
+        defaut:0, max:round3(+p.qteRestante||0),
+        onOk:(q)=>pickBatchDoPrelevement(p, parfumDuLot, q, q, true)
+      });
+    }
+  });
+}
+
+// Modale générique de saisie de quantité (réutilisée cas A et cas B).
+function pickBatchAskQty(opts){
+  openModal(`<h3>${opts.titre}</h3>
+    <p class="note">${opts.sousTitre||''}</p>
+    <div class="field"><label>Quantité réellement prélevée</label>
+      <input id="batchQty" type="number" min="0" ${opts.max!=null?`max="${opts.max}"`:''} value="${opts.defaut}" style="width:100%;font-size:1.1rem"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="pickBatchQtyConfirm()">Valider le prélèvement</button>
+    </div>`);
+  window._batchQtyCb = opts.onOk;
+}
+function pickBatchQtyConfirm(){
+  const v = round3(+((document.getElementById('batchQty')||{}).value)||0);
+  const cb = window._batchQtyCb;
+  closeModal();
+  if(v>0 && typeof cb==='function') cb(v);
+  else if(v<=0) toast('Quantité nulle : rien prélevé');
+}
+
+// Décrément réel du lot scanné + journal + gestion écart/pool/suggestion.
+async function pickBatchDoPrelevement(prod, parfumPool, qteConfirmee, qteTheorique, horsPlan){
+  const ctx = _pickBatchCtx; if(!ctx) return;
+  const q = round3(Math.min(qteConfirmee, +prod.qteRestante||0));
+  if(q<=0){ toast('Stock insuffisant sur ce lot'); return; }
+  const recipes = ctx.recipes;
+  const moves=[]; const lossToAdd=[];
+  try{
+    await db.transaction('rw', db.productions, async()=>{
+      const fresh = await db.productions.get(prod.id);
+      if(!fresh) return;
+      await db.productions.update(prod.id, {qteRestante: subQty(fresh.qteRestante, q)});
+      moves.push({ parfumNom:parfumPool, composant:'macaron', sens:-1, qte:q, type:'picking',
+        productionId:prod.id, orderId:null, batchId:ctx.batch.id,
+        note: horsPlan?'prélèvement hors-plan, confirmé manuellement':'' });
+    });
+    for(const m of moves){ if(typeof logStockMove==='function') await logStockMove(m); }
+
+    // Écart théorique/confirmé (cas A uniquement) → perte tracée, non silencieuse.
+    if(!horsPlan && qteConfirmee < qteTheorique){
+      const ecart = round3(qteTheorique - qteConfirmee);
+      let coutUnit = 0;
+      try{
+        const rec = recipes.find(r=>+r.id===+prod.recipeId);
+        if(rec){ const [ri,lots,mats]=await Promise.all([db.recipeItems.toArray(),db.materialLots.toArray(),db.materials.toArray().catch(()=>[])]);
+          const cr=coutRevientRecette(rec,ri,lots); coutUnit=lossUnitCost(prodComposant(prod),cr,mats); }
+      }catch(e){ coutUnit=0; }
+      await db.losses.add({ productionId:prod.id, recipeId:prod.recipeId, date:today(),
+        motif:'Écart au picking', qte:ecart, enProduction:false,
+        coutUnit:money2(coutUnit), coutTotal:money2(coutUnit*ecart),
+        note:`Batch #${ctx.batch.id} — déclaré lors du prélèvement` }).catch(e=>console.error('loss picking',e));
+    }
+
+    // Alimente le pool en attente de répartition
+    _pickBatchPool[parfumPool] = round3((_pickBatchPool[parfumPool]||0)+q);
+    (_pickBatchPoolSrc[parfumPool] = _pickBatchPoolSrc[parfumPool]||[]).push({productionId:prod.id, qte:q});
+    if(typeof markUnsaved==='function') markUnsaved();
+
+    // Besoin encore couvert ? Sinon suggère le prochain lot (sans agir).
+    const deja = await pickBatchDejaReparti(ctx.batch.id, await db.productions.toArray(), recipes);
+    const besoinRestant = round3((ctx.needs[parfumPool]||0) - (deja[parfumPool]||0) - (_pickBatchPool[parfumPool]||0));
+    if(besoinRestant>0 && !horsPlan){
+      const suivant = (ctx.alloc.plan||[]).find(pk=>pickFlavorMatch(pk.flavor, parfumPool) && +pk.prodId!==+prod.id);
+      if(suivant){
+        toast(`Prélevé ${qty(q)}. Encore ${qty(besoinRestant)} — prochain lot : ${suivant.lot||'?'} (zone ${suivant.emp||'?'})`);
+      } else {
+        await pickBatchDeclareShortage(ctx.batch, parfumPool, besoinRestant);
+        toast(`Prélevé ${qty(q)}. Manque ${qty(besoinRestant)} ${parfumPool} — alerte posée (rattrapable).`);
+      }
+    } else {
+      toast(`✓ Prélevé ${qty(q)} ${parfumPool}. Tu peux répartir sur les commandes.`);
+    }
+    await pickBatchRender();
+  }catch(err){ toast(err.message||'Erreur au prélèvement'); }
+}
+
+// ── SCAN D'UNE COMMANDE (répartition) ────────────────────────────────────────
+async function pickBatchScanOrder(parfumCible){
+  if(typeof openScanner!=='function'){ toast('Scanner indisponible'); return; }
+  const ctx = _pickBatchCtx; if(!ctx) return;
+  openScanner(async (code)=>{
+    // Le QR commande encode #order=<id> ; on extrait l'id de façon robuste.
+    let raw = (code||'').trim(); const mo = raw.match(/#order=(.+)$/); if(mo) raw = decodeURIComponent(mo[1]);
+    const orderId = +raw;
+    const o = orderId ? await db.orders.get(orderId).catch(()=>null) : null;
+    if(!o){ toast('Commande introuvable'); return; }
+    if(!ctx.batch.orderIds.map(Number).includes(orderId)){ toast('Cette commande n\'appartient pas à ce lot'); return; }
+
+    const needsO = orderFlavorNeeds(o);
+    const besoinCmd = round3(needsO[parfumCible]||0);
+    if(besoinCmd<=0){ toast(`Cette commande n'a pas de ${parfumCible}`); return; }
+
+    // Déjà attribué à CETTE commande pour CE parfum sur CE batch
+    const items = (await db.orderItems.toArray().catch(()=>[]))
+      .filter(it=>+it.batchId===+ctx.batch.id && +it.orderId===orderId);
+    const prods = await db.productions.toArray().catch(()=>[]);
+    const recipes = await db.recipes.toArray().catch(()=>[]);
+    let dejaCmd = 0;
+    items.forEach(it=>{ const p=prods.find(x=>+x.id===+it.productionId); if(p && pickFlavorMatch(pickBatchProdFlavor(p,recipes),parfumCible)) dejaCmd=round3(dejaCmd+(+it.qte||0)); });
+    const resteCmd = round3(besoinCmd - dejaCmd);
+    if(resteCmd<=0){ toast(`${clName2(o)} a déjà tout son ${parfumCible}`); return; }
+
+    const dispo = round3(_pickBatchPool[parfumCible]||0);
+    if(dispo<=0){ toast(`Rien en attente pour ${parfumCible} — scanne d'abord une boîte`); return; }
+
+    let aAttribuer = round3(Math.min(resteCmd, dispo));
+    // Puise dans les sources FIFO d'usage (ordre de scan des boîtes)
+    const src = _pickBatchPoolSrc[parfumCible]||[];
+    try{
+      while(aAttribuer>0 && src.length){
+        const s = src[0];
+        const take = round3(Math.min(aAttribuer, s.qte));
+        await db.orderItems.add({orderId, productionId:s.productionId, qte:take, batchId:ctx.batch.id});
+        s.qte = round3(s.qte - take); aAttribuer = round3(aAttribuer - take);
+        _pickBatchPool[parfumCible] = round3((_pickBatchPool[parfumCible]||0) - take);
+        if(s.qte<=0) src.shift();
+      }
+      if(typeof markUnsaved==='function') markUnsaved();
+      toast(`✓ ${parfumCible} attribué à ${clName2(o)}`);
+      // Commande entièrement servie sur tous ses parfums ? → statut Terminée
+      if(await pickBatchOrderComplete(o)){ await db.orders.update(orderId, {statut:'Terminée'}); }
+      await pickBatchRender();
+    }catch(err){ toast(err.message||'Erreur à la répartition'); }
+  });
+}
+
+// Nom client court pour les toasts (repli sur histoLabel).
+function clName2(o){
+  try{ const c = (window._pickClientsCache||[]).find(x=>+x.id===+o.clientId);
+    if(c) return c.nom||c.prenom||'Client'; }catch(e){}
+  return o.histoLabel||('#'+o.id);
+}
+
+// Une commande est-elle entièrement servie (tous parfums, tous batches confondus) ?
+async function pickBatchOrderComplete(o){
+  const needs = orderFlavorNeeds(o);
+  const items = (await db.orderItems.toArray().catch(()=>[])).filter(it=>+it.orderId===+o.id);
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const fait = {};
+  items.forEach(it=>{ const p=prods.find(x=>+x.id===+it.productionId); if(!p) return;
+    const f=pickBatchProdFlavor(p,recipes); fait[f]=round3((fait[f]||0)+(+it.qte||0)); });
+  return Object.keys(needs).every(f=>{
+    const attendu=round3(needs[f]);
+    const got=Object.keys(fait).filter(k=>pickFlavorMatch(k,f)).reduce((s,k)=>s+fait[k],0);
+    return round3(got)>=attendu;
+  });
+}
+
+// ── CLÔTURE ──────────────────────────────────────────────────────────────────
+async function pickBatchClose(batchId){
+  const batch = await db.batches.get(+batchId).catch(()=>null);
+  if(!batch) return;
+  const ouvertes = (batch.alertes||[]).filter(a=>!a.resolu);
+  const doClose = async()=>{
+    await db.batches.update(batch.id, {statut:'clos', closedAt:today()});
+    if(typeof markUnsaved==='function') markUnsaved();
+    closeModal(); toast('Lot clôturé'); if(typeof goView==='function') goView('picking');
+  };
+  if(ouvertes.length){
+    openModal(`<h3>Clôturer le lot ?</h3>
+      <p class="note">${ouvertes.length} alerte(s) de manque non résolue(s). Le lot sera clôturé mais les alertes restent consultables pour rattrapage.</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="_pickBatchDoClose()">Clôturer quand même</button></div>`);
+    window._pickBatchDoClose = doClose;
+  } else {
+    await doClose();
+  }
+}
+function _pickBatchDoClose(){ if(typeof window._pickBatchDoClose==='function') window._pickBatchDoClose(); }
+
+// ── IMPRESSION DU QR GLOBAL ──────────────────────────────────────────────────
+async function pickBatchPrintGlobal(batchId){
+  const batch = await db.batches.get(+batchId).catch(()=>null);
+  if(!batch){ toast('Lot introuvable'); return; }
+  const needs = await pickBatchNeeds(batch);
+  const tmp = document.createElement('canvas');
+  try{ QR.render(tmp, batchUrl(batch.id), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
+  const qrImg = tmp.toDataURL('image/png');
+  const lignes = Object.keys(needs).sort((a,b)=>a.localeCompare(b))
+    .map(f=>`<tr><td>${esc(f)}</td><td style="text-align:right">☐ ${qty(needs[f])}</td></tr>`).join('');
+  const win = window.open('', '_blank', 'width=600,height=800');
+  if(!win){ toast('Autorise les fenêtres pour imprimer'); return; }
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>QR global — ${esc(batch.nom||'Lot')}</title>
+    <style>@page{size:A4;margin:14mm}*{box-sizing:border-box;font-family:Arial,Helvetica,sans-serif;color:#000}
+    .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:14px}
+    h1{font-size:20pt;margin:0 0 4px}.meta{font-size:11pt;color:#333}
+    .qr{width:34mm;height:34mm}.qr img{width:34mm;height:34mm;image-rendering:pixelated}
+    table{width:100%;border-collapse:collapse;margin-top:8px}td{padding:7px 6px;border-bottom:1px solid #ccc;font-size:13pt}
+    .foot{margin-top:18px;font-size:9pt;color:#777}</style></head><body>
+    <div class="head"><div><h1>📦 ${esc(batch.nom||'Lot')}</h1>
+      <div class="meta">${batch.orderIds.length} commande(s) · créé le ${fmtDate((batch.createdAt||'').slice(0,10))}</div>
+      <div class="meta">Scanne ce QR pour lancer le picking consolidé du lot.</div></div>
+      <div class="qr"><img src="${qrImg}" alt="QR global"></div></div>
+    <table><thead><tr><th style="text-align:left">Parfum</th><th style="text-align:right">Besoin total</th></tr></thead>
+    <tbody>${lignes||'<tr><td colspan=2>Aucun parfum</td></tr>'}</tbody></table>
+    <div class="foot">Sensations Macarons — bon de picking de lot</div>
+    <script>window.onload=function(){window.print();}<\/script></body></html>`);
+  win.document.close();
+}
+
 /* ============================================================
    PICKING PAR SCAN (cas B) : on scanne une commande, elle devient la cible ;
    chaque lot scanné s'affecte automatiquement à cette commande, la checklist
@@ -40538,6 +41078,17 @@ async function printOrderLabels(orderId, mode){
 // Ouvrir une fiche traçabilité à partir de l'ancre #trace=<lot> (QR scanné)
 async function handleTraceAnchor(){
   const h = location.hash || '';
+  // Lot de picking scanné (QR global) → ouvre l'écran de picking du lot.
+  const mb = h.match(/#batch=(.+)$/);
+  if(mb){
+    const bid = +decodeURIComponent(mb[1]);
+    history.replaceState(null,'',location.pathname);
+    if(bid && typeof pickBatchOpen==='function'){
+      try{ window._pickClientsCache = await db.clients.toArray(); }catch(e){ window._pickClientsCache=[]; }
+      await pickBatchOpen(bid); return true;
+    }
+    return false;
+  }
   // Commande scannée → picking par scan.
   const mo = h.match(/#order=(.+)$/);
   if(mo){
