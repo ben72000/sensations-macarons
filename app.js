@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1286';
+const APP_VERSION = 'v1288';
 const APP_MAJ = 'Correction du saut de page sur l\u2019accueil : la carte \u00ab \u00c0 produire \u00bb est d\u00e9sormais calcul\u00e9e AVANT l\u2019affichage et ins\u00e9r\u00e9e directement, au lieu d\u2019appara\u00eetre apr\u00e8s coup et de pousser le reste de la page vers le bas. Plus de r\u00e9servation de hauteur devin\u00e9e, plus de sursaut au chargement. Aucun autre \u00e9cran modifi\u00e9 ; les 282 tests de non-r\u00e9gression restent tous verts.';
 
 
@@ -2153,7 +2153,150 @@ async function rdRefsRenderDiag(main){
       <div class="rdr-chint">Chip <b>en pointillé</b> = classé auto, à confirmer. Chocolat = gras+sucre, masse gélatine = structurant+liquide (1:5) — décomposés à l'encodage.</div>
     </div>
     ${etapes}
+    ${p.role==='garniture'?`<button class="rdr-import" style="margin-top:10px;width:100%" onclick="rdTransfertOuvrir(${p.id})">🚀 Transférer en Production</button>`:''}
   `, 'diag');
+}
+
+// ============================================================
+//  [v1287] LE PONT CRÉATIF — Transférer une préparation R&D (garniture) en recette
+//  de production réelle (db.recipes + db.recipeItems), avec mapping VALIDÉ par
+//  l'utilisateur (jamais automatique et silencieux — une mauvaise correspondance
+//  ferait consommer la mauvaise matière en atelier). Crée toujours une NOUVELLE
+//  fiche recette, jamais de mise à jour d'une recette existante.
+// ============================================================
+// Suggestion de correspondance texte ingrédient R&D → matière du stock. Inclusion mutuelle
+// de mots normalisés (plus robuste qu'un simple "includes" sur des noms qui peuvent différer
+// dans l'ordre des mots, ex. "Crème liquide entière" vs "Crème entière liquide 35%").
+function rdSuggestMaterial(nomIngredient, materials){
+  const n = normTxt(nomIngredient);
+  const wordsIng = n.split(/[^a-z0-9]+/).filter(w=>w.length>=3);
+  if(!wordsIng.length) return null;
+  let best=null, bestScore=0;
+  materials.forEach(m=>{
+    const nm = normTxt(m.nom||'');
+    if(!nm) return;
+    if(nm===n) { best=m; bestScore=999; return; }   // égalité stricte : gagne toujours
+    const wordsMat = nm.split(/[^a-z0-9]+/).filter(w=>w.length>=3);
+    let score=0;
+    wordsIng.forEach(w=>{ if(wordsMat.includes(w)) score++; });
+    if(nm.includes(n) || n.includes(nm)) score+=1;   // bonus inclusion directe
+    if(score>bestScore){ bestScore=score; best=m; }
+  });
+  return bestScore>0 ? best : null;
+}
+
+let _rdTransferCtx = null;
+async function rdTransfertOuvrir(prepId){
+  const p = await db.rdPreps.get(prepId).catch(()=>null);
+  if(!p){ toast('Préparation introuvable'); return; }
+  const par = p.refId ? await db.rdRefs.get(p.refId).catch(()=>null) : null;
+  const materials = await db.materials.toArray().catch(()=>[]);
+  const ingredients = (p.ingredients||[]).map((ing,idx)=>{
+    const sugg = rdSuggestMaterial(ing.nom, materials);
+    return { idx, nom:ing.nom, qte:+ing.qte||0, unite:ing.unite||'g', materialId: sugg?sugg.id:null };
+  });
+  const nomParfumDefaut = (par && par.titre ? par.titre : (p.nom||'')).replace(/^génération\s*—\s*/i,'').trim();
+  const masseTotale = round3((p.ingredients||[]).reduce((s,i)=>s+(+i.qte||0), 0));
+  _rdTransferCtx = { prepId, refId:p.refId, nomParfum: nomParfumDefaut, ingredients, etapes:p.etapes||[], materials, masseTotale, poidsGarnitureUnit: 7 };
+  await rdTransfertRender();
+}
+
+async function rdTransfertRender(){
+  const ctx = _rdTransferCtx; if(!ctx) return;
+  const main=document.getElementById('main'); if(!main) return;
+  const matOpts = (mid) => `<option value="">— choisir une matière —</option>` +
+    ctx.materials.map(m=>`<option value="${m.id}" ${+mid===+m.id?'selected':''}>${esc(m.nom)}${m.categorie?' ('+esc(m.categorie)+')':''}</option>`).join('');
+  const rows = ctx.ingredients.map(ing=>{
+    const resolved = ing.materialId!=null;
+    return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:4px;border-left:3px solid ${resolved?'#3f7d52':'#b3261e'}">
+      <div class="flex" style="justify-content:space-between">
+        <span><b>${esc(ing.nom)}</b> <span style="color:#9a8a82;font-size:.78rem">${ing.qte} ${esc(ing.unite)}</span></span>
+        ${resolved?'<span style="color:#3f7d52;font-size:.78rem">✓ associé</span>':'<span style="color:#b3261e;font-size:.78rem">⚠ à choisir</span>'}
+      </div>
+      <select onchange="rdTransfertSetMat(${ing.idx}, this.value)" style="width:100%">${matOpts(ing.materialId)}</select>
+    </div>`;
+  }).join('');
+  const nbNonResolus = ctx.ingredients.filter(i=>i.materialId==null).length;
+  const rendementCalcule = ctx.poidsGarnitureUnit>0 ? Math.max(1, Math.round(ctx.masseTotale/ctx.poidsGarnitureUnit)) : 0;
+  main.innerHTML = `
+   <div class="topbar"><div><h1>🚀 Transférer en Production</h1><p>Associe chaque ingrédient à une fiche matière du stock avant de créer la recette</p></div></div>
+   <div class="panel" style="margin-bottom:10px">
+     <div class="field"><label>Nom du parfum (fiche recette)</label>
+       <input id="rdTransfertNom" value="${esc(ctx.nomParfum)}" style="width:100%"></div>
+     <div class="field"><label>Poids de garniture par macaron (g) <span style="color:#9a8a82;font-weight:400">— pour calculer le rendement du batch</span></label>
+       <input type="number" step="0.1" min="0.1" id="rdTransfertPoidsUnit" value="${ctx.poidsGarnitureUnit}" oninput="rdTransfertSetPoidsUnit(this.value)" style="width:100%"></div>
+     <div class="sum-box" style="margin-top:6px"><span>Masse totale du lot généré</span><b>${ctx.masseTotale} g</b></div>
+     <div class="sum-box"><span>Rendement calculé</span><b>${rendementCalcule>0?rendementCalcule+' macarons/batch':'—'}</b></div>
+     <p class="note" style="margin-top:6px">Le générateur R&amp;D raisonne en masse totale, pas en nombre de pièces — ce poids sert à convertir le lot en rendement exploitable pour la production. Ajustable ici, et modifiable ensuite dans la fiche recette.</p>
+   </div>
+   <div class="panel">
+     <h2 style="margin-top:0">Ingrédients — associe chaque ligne à une matière réelle</h2>
+     ${rows}
+     ${nbNonResolus>0?`<p class="note" style="color:#b3261e;margin-top:8px">⚠ ${nbNonResolus} ingrédient(s) sans matière associée — choisis-les avant de continuer, ou crée d'abord la fiche matière manquante dans Matières premières.</p>`:'<p class="note" style="color:#3f7d52;margin-top:8px">✓ Tous les ingrédients sont associés.</p>'}
+   </div>
+   <div class="panel">
+     <p class="note" style="margin-top:0">Seront aussi créés automatiquement : les <b>allergènes théoriques</b> (dictionnaire INCO, à partir du nom du parfum) et l'ajout à la liste des <b>productions activables</b>. Rien n'est décrémenté ni modifié dans le stock — seule une nouvelle fiche recette est créée.</p>
+     <button class="btn gold" style="width:100%" ${(nbNonResolus>0||rendementCalcule<=0)?'disabled':''} onclick="rdTransfertConfirmer()">Créer la fiche recette de production</button>
+     <button class="btn ghost" style="width:100%;margin-top:8px" onclick="_rdTransferCtx=null;rdRefsTab('diag')">Annuler</button>
+   </div>`;
+}
+function rdTransfertSetPoidsUnit(v){
+  const ctx=_rdTransferCtx; if(!ctx) return;
+  ctx.poidsGarnitureUnit = Math.max(0, +v||0);
+  rdTransfertRender();
+}
+function rdTransfertSetMat(idx, materialId){
+  const ctx=_rdTransferCtx; if(!ctx) return;
+  const ing = ctx.ingredients.find(i=>i.idx===idx); if(!ing) return;
+  ing.materialId = materialId ? +materialId : null;
+  // Pas de re-render complet (préserve le focus/scroll) : on met juste à jour la bordure/statut
+  // de la ligne concernée en reconstruisant seulement l'écran au prochain vrai changement d'état.
+  rdTransfertRender();
+}
+async function rdTransfertConfirmer(){
+  const ctx=_rdTransferCtx; if(!ctx) return;
+  if(ctx.ingredients.some(i=>i.materialId==null)){ toast('Associe tous les ingrédients avant de continuer'); return; }
+  const nom = (document.getElementById('rdTransfertNom')||{}).value.trim();
+  if(!nom){ toast('Nom du parfum requis'); return; }
+  const poidsUnit = Math.max(0, +((document.getElementById('rdTransfertPoidsUnit')||{}).value)||0);
+  const rendement = poidsUnit>0 ? Math.max(1, Math.round(ctx.masseTotale/poidsUnit)) : 0;
+  if(rendement<=0){ toast('Renseigne un poids de garniture par macaron valide'); return; }
+  // Conversion grammes → unité de base de la matière (kg si la matière est en kg, comme le
+  // formulaire de recette standard, cf. bomDisplay/saveRec). Une matière déjà en g/unité/pièce
+  // reste telle quelle : la quantité R&D (toujours en g dans p.ingredients) s'applique directement.
+  // Les qteParBatch correspondent au BATCH ENTIER généré (masseTotale), cohérent avec `rendement`
+  // = nombre de pièces que CE batch produit (calculé via poidsUnit ci-dessus).
+  const bomItems = ctx.ingredients.map(ing=>{
+    const mat = ctx.materials.find(m=>m.id===ing.materialId);
+    const isKg = mat && mat.categorie!=='emballage' && mat.unite==='kg';
+    const qteParBatch = isKg ? round3((+ing.qte||0)/1000) : round3(+ing.qte||0);
+    return { materialId: ing.materialId, qteParBatch, partie:'ganache', etiquette:'' };
+  });
+  // Allergènes théoriques via le dictionnaire INCO existant (allergenesPourNom), jamais d'écrasement
+  // puisqu'il s'agit toujours d'une NOUVELLE fiche — rien à préserver.
+  const allergenes = allergenesPourNom(nom) || [];
+  const recipeObj = {
+    produitNom: nom,
+    rendement,
+    poidsGarnitureUnit: poidsUnit,
+    allergenes,
+    instructions: (ctx.etapes||[]).join('\n'),
+    _origineRD: true, _rdRefId: ctx.refId||null, _rdPrepId: ctx.prepId||null   // traçabilité du pont créatif
+  };
+  let newId=null;
+  try{
+    await db.transaction('rw', db.recipes, db.recipeItems, async()=>{
+      newId = await db.recipes.add(recipeObj);
+      for(const b of bomItems) await db.recipeItems.add({recipeId:newId, materialId:b.materialId, qteParBatch:b.qteParBatch, partie:b.partie, etiquette:b.etiquette});
+    });
+  }catch(e){ console.error('rdTransfertConfirmer', e); toast('Erreur lors de la création de la recette'); return; }
+  if(typeof markUnsaved==='function') markUnsaved();
+  _rdTransferCtx=null;
+  toast('✓ Recette de production créée — disponible dans le catalogue');
+  openModal(`<h3>🚀 Transfert réussi</h3>
+    <p class="note">« ${esc(nom)} » est maintenant une recette de production, activable pour la fabrication.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal();rdRefsTab('biblio')">Retour R&amp;D</button>
+      <button class="btn gold" onclick="closeModal();recForm(${newId})">Ouvrir la fiche recette ›</button></div>`);
 }
 
 async function rdRefsRenderDepot(main){
@@ -22241,16 +22384,27 @@ async function computeStrategic(){
   const tauxNet = caPaye>0?Math.round(margeNette/caPaye*1000)/10:0;
 
   // Panier moyen + nb commandes + clients actifs (90 j)
-  const nbCmd = paid.length;
-  const panier = nbCmd>0 ? money2(caPaye/nbCmd) : 0;
+  // [v1286-fix] Même correctif que computePilotageCA ([v1284-fix]) : une commande ÉVÉNEMENT
+  // (mariage, réception...) pèse souvent plusieurs centaines d'euros et gonfle artificiellement
+  // le panier moyen si elle est mélangée aux coffrets classiques. Le panier affiché ici doit
+  // représenter une commande COURANTE, pas un mélange coffret+mariage — cohérent avec la
+  // correction déjà faite côté Pilotage. On ne touche PAS à margeBrute/margeNette/caPaye
+  // (agrégats globaux, qui doivent rester complets, événements compris) : seul le panier moyen
+  // et son détail sont recalculés sur un sous-ensemble hors événement.
+  const paidHorsEvent = paid.filter(o=>!orderIsEvent(o));
+  const nbCmd = paidHorsEvent.length;
+  const caPayeHorsEvent = money2(paidHorsEvent.reduce((s,o)=>s+computeOrderMargins(o,recipes,recipeItems,lots).ca, 0));
+  const panier = nbCmd>0 ? money2(caPayeHorsEvent/nbCmd) : 0;
   const since=new Date(now-90*86400000).toISOString().slice(0,10);
   const activeIds = new Set(paid.filter(o=>o.date&&o.date>=since && o.clientId).map(o=>o.clientId));
   const activeClients = activeIds.size;
   const totalClients = clients.length;
 
-  // Détail du panier moyen : chaque commande payée avec son montant (CA marge) et son écart à la moyenne.
+  // Détail du panier moyen : chaque commande payée HORS ÉVÉNEMENT (cohérent avec panier/nbCmd
+  // ci-dessus — sinon le détail listerait des commandes que la moyenne affichée n'a pas comptées,
+  // avec un écart calculé contre une moyenne dont elles sont exclues : trompeur).
   const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
-  const panierDetail = paid.map(o=>{
+  const panierDetail = paidHorsEvent.map(o=>{
     const m=computeOrderMargins(o,recipes,recipeItems,lots);
     return {id:o.id, date:o.date||'', client:clName(o.clientId), montant:m.ca,
             ecart: money2(m.ca-panier), dessus: m.ca>=panier};
@@ -22267,7 +22421,10 @@ async function computeStrategic(){
     caMonth, caPrevMonth, evoMonth, caYear, caPrevYear, evoYear,
     margeBrute, margeNette, tauxBrut, tauxNet,
     coutMat:sumCoutMat, coutEmb:sumCoutEmb, chargesSociales:sumCharges, caPaye,
-    panier, nbCmd, activeClients, totalClients,
+    // [v1286-fix] nbCmd = commandes HORS ÉVÉNEMENT (dénominateur du panier moyen, cf. ci-dessus).
+    // nbCmdTotal = TOUTES les commandes payées (événements inclus) — dénominateur cohérent pour
+    // tout ce qui porte sur caPaye/margeBrute/margeNette, qui eux restent globaux.
+    panier, nbCmd, nbCmdTotal: paid.length, activeClients, totalClients,
     panierDetail, activeList,
     caEncaisse:A.totalEncaisse, caFacture:A.totalFacture, creances:A.creances,
     serie:A.serie,
@@ -28658,7 +28815,7 @@ let _pilotageS = null;
 function pilotMargeBrute(){
   const S=_pilotageS; if(!S) return;
   openModal(`<h3>📊 Marge brute — comment c'est calculé</h3>
-    <p class="note" style="margin-bottom:10px">Sur l'ensemble de tes <b>${S.nbCmd} commande(s) payée(s)</b>. La marge brute, c'est ce qui reste du chiffre d'affaires une fois retirés les coûts directs de fabrication (matières + emballages), <b>avant</b> les charges sociales.</p>
+    <p class="note" style="margin-bottom:10px">Sur l'ensemble de tes <b>${S.nbCmdTotal} commande(s) payée(s)</b>. La marge brute, c'est ce qui reste du chiffre d'affaires une fois retirés les coûts directs de fabrication (matières + emballages), <b>avant</b> les charges sociales.</p>
     <div class="sum-box"><span>Chiffre d'affaires encaissé</span><b>${euro(S.caPaye)}</b></div>
     <div class="sum-box"><span>− Coût des matières</span><b style="color:var(--red,#b3261e)">−${euro(S.coutMat)}</b></div>
     <div class="sum-box"><span>− Coût des emballages</span><b style="color:var(--red,#b3261e)">−${euro(S.coutEmb)}</b></div>
