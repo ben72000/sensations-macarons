@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1293';
-const APP_MAJ = 'Trois correctifs. 1) Formulaire persona (\u00ab Occasions d\u2019achat \u00bb / \u00ab Parfums qu\u2019il aime \u00bb) : les cases \u00e0 cocher h\u00e9ritaient d\u2019une largeur 100% pr\u00e9vue pour les champs texte, ce qui les \u00e9tirait et d\u00e9calait le texte \u2014 corrig\u00e9. 2) Suite de tests : l\u2019extracteur partag\u00e9 (tests/_extract.js) rescannait tout app.js \u00e0 chaque appel sans cache ; devenu tr\u00e8s volumineux, le fichier faisait d\u00e9passer les d\u00e9lais \u00e0 certains tests (ex. marges par commande), donnant l\u2019impression d\u2019un blocage \u00e0 la livraison \u2014 corrig\u00e9 par m\u00e9mo\u00efsation (suite compl\u00e8te : 64 s au lieu de 4+ min, 598 assertions vertes). 3) Robustesse du Planning production : la boucle de r\u00e9troplanning par commande (accueil + \u00e9cran Planning) tournait commande par commande ; elle est maintenant parall\u00e9lis\u00e9e avec un garde-fou de temps par commande et un plafond global, pour qu\u2019un historique volumineux ne puisse plus geler l\u2019affichage.';
+const APP_VERSION = 'v1294';
+const APP_MAJ = 'Correction du crash « Planning renvoie \u00e0 l\u2019accueil ». Cause r\u00e9elle : l\u2019\u00e9cran affichait d\u2019abord un \u00e9tat \u00ab calcul en cours \u00bb minimal, puis remplacait D\u2019UN COUP tout le haut de l\u2019\u00e9cran par le contenu final \u2014 bouton Actualiser, bandeau \u00ab \u2190 Retour au fil \u00bb (visible quand on arrive depuis une suggestion du copilote) et le reste. Un tap qui arrivait pendant ce remaniement pouvait retomber sur \u00ab \u2190 Retour au fil \u00bb et renvoyer \u00e0 l\u2019accueil \u2014 exactement le \u00ab saut de page puis retour \u00e0 l\u2019accueil \u00bb d\u00e9crit. Le titre, le bandeau et le bouton Actualiser sont d\u00e9sormais affich\u00e9s IMM\u00c9DIATEMENT et restent des \u00e9l\u00e9ments DOM stables ; seul le corps ci-dessous est rempli une fois le calcul termin\u00e9, sans plus rien faire appara\u00eetre en haut de l\u2019\u00e9cran. En parall\u00e8le : la boucle de r\u00e9troplanning (accueil + Planning) est parall\u00e9lis\u00e9e avec garde-fous de temps (8 s/commande, 60 s au global, 4 s pour la carte accueil) pour qu\u2019un historique volumineux ne puisse plus geler l\u2019affichage ; le formulaire persona (cases \u00e0 cocher \u00ab Occasions d\u2019achat \u00bb / \u00ab Parfums qu\u2019il aime \u00bb) ne s\u2019\u00e9tire plus ; et l\u2019extracteur de tests (tests/_extract.js) est d\u00e9sormais mis en cache \u2014 suite compl\u00e8te : 62 s au lieu de 4+ min, 598 assertions vertes.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -52964,8 +52964,18 @@ async function renderAgendaProduction(){
   const main = document.getElementById('main');
   // [v1252] Cache recettes à jour : la section « fournées par couleur » lit les couleurs des recettes.
   try{ if(typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(_){}
-  main.innerHTML = `<div class="topbar"><div><h1>Planning</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div></div>
-    <div style="min-height:100vh"><p class="note">⏳ Calcul du rétroplanning de chaque commande…</p></div>`;
+  // [FIX v1293 — SAUT DE PAGE] AVANT : le premier affichage (état « calcul en cours ») ne contenait
+  // qu'un titre minimal, puis le second affichage (résultat) ajoutait D'UN COUP la bannière « ← Retour
+  // au fil », le bouton Actualiser et tout le contenu — un empilement de nouveaux éléments cliquables
+  // tout en haut de l'écran, pile là où le doigt vient de taper pour ouvrir Planning. Un tap qui arrive
+  // pendant/juste après ce remaniement pouvait retomber sur « ← Retour au fil » et renvoyer à l'accueil,
+  // donnant l'impression d'un crash. On affiche maintenant la MÊME ossature (titre + bannière + bouton
+  // Actualiser) dès le premier paint, immuable ; seul le corps ci-dessous (#prodBody) est remplacé une
+  // fois le calcul terminé — plus aucun élément cliquable n'apparaît par surprise en haut de l'écran.
+  main.innerHTML = `<div class="topbar"><div><h1>Planning</h1><p>Toutes tes commandes, planifiées par jour selon tes plages A/B</p></div>
+      <button class="btn ghost" onclick="prodActualiser()" title="Synchroniser l'écran avec l'heure réelle">🔄 Actualiser</button></div>
+    ${_filRetourBanner()}
+    <div id="prodBody"><p class="note" style="margin-top:14px">⏳ Calcul du rétroplanning de chaque commande…</p></div>`;
 
   // Besoins cumulés par parfum et par jour (fondation mutualisation) — affichés en tête.
   let ppj=null;
@@ -52988,10 +52998,14 @@ async function renderAgendaProduction(){
   try{ cr = await buildCommandesRetro(45, mut); }catch(e){ console.error('commandesRetro',e); }
 
   const nbCmd = cr && cr.commandes ? cr.commandes.length : 0;
-  main.innerHTML = `<div class="topbar"><div><h1>Planning</h1><p>${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours</p></div>
-      <button class="btn ghost" onclick="prodActualiser()" title="Synchroniser l'écran avec l'heure réelle">🔄 Actualiser</button></div>
-    ${_filRetourBanner()}
-    ${_prodBarreVivante()}
+  // [FIX v1293] On ne touche plus qu'au corps (#prodBody, retrouvé via le DOM courant — l'utilisateur
+  // a pu naviguer entre-temps, d'où la vérification) : le titre, la bannière et le bouton Actualiser
+  // restent exactement les mêmes éléments DOM du début à la fin, sans réapparition ni déplacement.
+  const _topP = main.querySelector ? main.querySelector('.topbar p') : null;
+  if(_topP) _topP.textContent = `${nbCmd} commande(s) à produire · ${cr?cr.horizonJours:45} prochains jours`;
+  const _body = document.getElementById('prodBody');
+  if(_body){
+    _body.innerHTML = `${_prodBarreVivante()}
     ${_prodRaccourciPlanning()}
     ${_prodAlerteParfums()}
     <p class="note" style="margin-bottom:14px">Touche le nom d'une commande pour déplier toutes ses étapes (coques, ganache, repos, montage, maturation, livraison), puis une étape pour son rétroplanning détaillé.</p>
@@ -53001,6 +53015,7 @@ async function renderAgendaProduction(){
     ${_agendaCouleurSection(mut)}
     ${_agendaParfumsSection(ppj)}
     ${_agendaCommandesSection(cr)}`;
+  }
   // [SAUT CONTEXTUEL] Si on est arrivé ici via planFocusTache, positionne le plan sur la bonne semaine.
   if(typeof _planConsumeFocus==='function') _planConsumeFocus();
 }
