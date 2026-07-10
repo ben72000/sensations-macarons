@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1294';
-const APP_MAJ = 'Correction du crash « Planning renvoie \u00e0 l\u2019accueil ». Cause r\u00e9elle : l\u2019\u00e9cran affichait d\u2019abord un \u00e9tat \u00ab calcul en cours \u00bb minimal, puis remplacait D\u2019UN COUP tout le haut de l\u2019\u00e9cran par le contenu final \u2014 bouton Actualiser, bandeau \u00ab \u2190 Retour au fil \u00bb (visible quand on arrive depuis une suggestion du copilote) et le reste. Un tap qui arrivait pendant ce remaniement pouvait retomber sur \u00ab \u2190 Retour au fil \u00bb et renvoyer \u00e0 l\u2019accueil \u2014 exactement le \u00ab saut de page puis retour \u00e0 l\u2019accueil \u00bb d\u00e9crit. Le titre, le bandeau et le bouton Actualiser sont d\u00e9sormais affich\u00e9s IMM\u00c9DIATEMENT et restent des \u00e9l\u00e9ments DOM stables ; seul le corps ci-dessous est rempli une fois le calcul termin\u00e9, sans plus rien faire appara\u00eetre en haut de l\u2019\u00e9cran. En parall\u00e8le : la boucle de r\u00e9troplanning (accueil + Planning) est parall\u00e9lis\u00e9e avec garde-fous de temps (8 s/commande, 60 s au global, 4 s pour la carte accueil) pour qu\u2019un historique volumineux ne puisse plus geler l\u2019affichage ; le formulaire persona (cases \u00e0 cocher \u00ab Occasions d\u2019achat \u00bb / \u00ab Parfums qu\u2019il aime \u00bb) ne s\u2019\u00e9tire plus ; et l\u2019extracteur de tests (tests/_extract.js) est d\u00e9sormais mis en cache \u2014 suite compl\u00e8te : 62 s au lieu de 4+ min, 598 assertions vertes.';
+const APP_VERSION = 'v1295';
+const APP_MAJ = 'Cause r\u00e9elle trouv\u00e9e et corrig\u00e9e pour le crash « Planning renvoie \u00e0 l\u2019accueil ». Le marqueur \u00ab \u2190 Retour au fil \u00bb (pos\u00e9 quand on suit un lien du copilote vers Planning) ne s\u2019effa\u00e7ait JAMAIS en repartant vers un autre \u00e9cran par le menu \u2014 seul un retour \u00e0 l\u2019accueil ou un clic sur le bouton le consommait. Un lien du copilote suivi une fois dans la session laissait donc le marqueur actif ind\u00e9finiment : toute visite ULT\u00c9RIEURE de Planning par le menu (sans rapport avec le copilote) r\u00e9affichait \u00e0 tort le bouton \u00ab \u2190 Retour au fil \u00bb en haut de l\u2019\u00e9cran, exposant \u00e0 un retour accidentel \u00e0 l\u2019accueil. Le marqueur est d\u00e9sormais born\u00e9 \u00e0 UN SEUL \u00e9cran (m\u00eame m\u00e9canique que \u00ab \u2190 Retour au copilote \u00bb, d\u00e9j\u00e0 correcte) : il s\u2019efface automatiquement d\u00e8s qu\u2019on quitte Planning vers autre chose. Corrig\u00e9 en parall\u00e8le : un doublon d\u2019\u00e9couteurs sur le menu lat\u00e9ral iPad/desktop qui d\u00e9clenchait chaque clic de navigation deux fois. Les correctifs pr\u00e9c\u00e9dents restent en place (ossature Planning stable sans saut de page, boucle de r\u00e9troplanning parall\u00e9lis\u00e9e avec garde-fous, cases \u00e0 cocher persona, extracteur de tests mis en cache). Suite compl\u00e8te : 61 s, 598 assertions vertes.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -4778,6 +4778,7 @@ function goView(v, opts){
   view=v; setActiveView(view); render();
   if(typeof _palSync==='function') _palSync();
   if(typeof assistantRetourSync==='function'){ try{ assistantRetourSync(); }catch(e){} }
+  if(typeof filRetourSync==='function'){ try{ filRetourSync(); }catch(e){} }
   if(typeof navUsageTrack==='function') navUsageTrack(v);   // traçage usage (favoris/récents/stats)
   if(_histReady && !_popping && !opts.replace){
     try{ history.pushState({view:v, kind:'view'}, '', '#'+v); }catch(e){}
@@ -5046,8 +5047,13 @@ function radialInit(){
   window.addEventListener('touchcancel', endH);
 }
 
-// Sidebar (iPad / desktop) — écoute directe + délégation
-document.querySelectorAll('#nav button').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
+// Sidebar (iPad / desktop) — délégation uniquement.
+// [FIX v1294] AVANT : une écoute DIRECTE par bouton (posée une fois au boot) COEXISTAIT avec la
+// délégation ci-dessous → chaque clic déclenchait navTo() DEUX FOIS (une fois par écouteur). Pour la
+// plupart des écrans le second appel était neutralisé par le anti-rebond de navTo() (< 120 ms, même
+// vue), mais ce n'est vrai qu'une fois que `view` a déjà basculé sur la cible par le 1er appel — un
+// double déclenchement reste un comportement fragile et inutile. La délégation seule suffit (et couvre
+// aussi les boutons ajoutés dynamiquement, ex. la section « Avancé »).
 const navEl=document.getElementById('nav');
 if(navEl) navEl.addEventListener('click', e => { const b=e.target.closest('button'); if(b) navTo(b); });
 
@@ -5212,7 +5218,11 @@ function initHistoryNav(){
       //    (ne jamais retomber sur l'accueil après une saisie/fermeture de modal).
       const st=e.state;
       const v=(st && st.view) ? st.view : view;
-      if(VIEWS[v]){ _navDir='back'; view=v; setActiveView(view); render(); }
+      if(VIEWS[v]){
+        _navDir='back'; view=v; setActiveView(view); render();
+        if(typeof assistantRetourSync==='function'){ try{ assistantRetourSync(); }catch(e){} }
+        if(typeof filRetourSync==='function'){ try{ filRetourSync(); }catch(e){} }
+      }
     } finally { _popping=false; }
   });
 }
@@ -52794,11 +52804,22 @@ function prodActualiser(){
 }
 
 // [RETOUR AU FIL] Marqueur d'origine : posé quand un saut PART de l'accueil (« Le Fil »). Tant qu'il
-// est présent, les écrans atteints depuis le fil affichent un bouton « ← Retour au fil ». Consommé
-// au clic du bouton (ou quand on revient à l'accueil). Aucune incidence sur la navigation par le menu :
-// si le marqueur est absent, rien ne s'affiche et le comportement reste celui d'avant.
-function filMarquerOrigine(){ window._filRetour = { ts: Date.now() }; }
-function filRetourActif(){ return !!(window._filRetour); }
+// est présent ET qu'on est resté sur l'écran cible, l'écran atteint depuis le fil affiche un bouton
+// « ← Retour au fil ». Consommé au clic du bouton, en revenant à l'accueil, OU (voir filRetourSync,
+// même mécanique que assistantRetourSync ci-dessous) dès qu'on repart vers un AUTRE écran par le menu.
+// [FIX v1294] AVANT : le marqueur n'expirait QUE sur retour à l'accueil, jamais sur navigation vers un
+// écran tiers. Un lien du copilote suivi une fois dans la session laissait le marqueur actif ; toute
+// visite ULTÉRIEURE de l'écran cible par le menu (sans lien avec le copilote) réaffichait alors à tort
+// le bouton « ← Retour au fil » en haut de l'écran, pile là où le doigt vient de taper pour y entrer —
+// exposant à un retour accidentel à l'accueil qui pouvait ressembler à un crash.
+function filMarquerOrigine(cible){ window._filRetour = { ts: Date.now(), cible: cible||'agendaprod' }; }
+function filRetourActif(){ const m=window._filRetour; return !!(m && view===m.cible); }
+// Appelée à chaque navigation (comme assistantRetourSync) : si on n'est plus sur l'écran cible du
+// marqueur, celui-ci est obsolète et oublié — il ne doit jamais survivre à un détour par le menu.
+function filRetourSync(){
+  const m = window._filRetour;
+  if(m && view!==m.cible) window._filRetour = null;
+}
 
 // ============================================================
 //  RETOUR AU COPILOTE — bouton flottant après un raccourci de l'assistant
