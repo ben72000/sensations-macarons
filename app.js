@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1296';
-const APP_MAJ = 'VRAIE cause du crash « une rubrique du menu renvoie \u00e0 l\u2019accueil » enfin identifi\u00e9e et corrig\u00e9e (rien \u00e0 voir avec le copilote \u2014 c\u2019est l\u2019historique de navigation). Ouvrir le menu empile une entr\u00e9e d\u2019historique \u00ab #menu \u00bb. En tapant une rubrique, l\u2019app empilait \u00ab #<vue> \u00bb PAR-DESSUS \u00ab #menu \u00bb, puis fermait la feuille SANS retirer cette entr\u00e9e : \u00ab #menu \u00bb restait coinc\u00e9 dans la pile, juste sous la vue affich\u00e9e. Au moindre geste \u00ab retour \u00bb (ou rejeu d\u2019historique en PWA iOS), on retombait sur \u00ab #menu \u00bb \u2014 qui ne fait que fermer une feuille d\u00e9j\u00e0 ferm\u00e9e \u2014 puis sur \u00ab #dash \u00bb = l\u2019accueil. D\u2019o\u00f9 l\u2019impression que la rubrique \u00e9tait un simple raccourci vers l\u2019accueil. Correctif : quand l\u2019entr\u00e9e d\u2019historique courante est le menu, la navigation la REMPLACE au lieu d\u2019en empiler une nouvelle (couvre le tap dans la feuille ET les raccourcis \u00ab fermer le menu puis aller \u00e0 \u00bb de la recherche globale). La pile reste propre : [accueil, vue]. V\u00e9rifi\u00e9 en reproduisant la pile d\u2019historique exacte avant/apr\u00e8s. Tous les correctifs pr\u00e9c\u00e9dents restent en place. Suite compl\u00e8te : 60 s, 598 assertions vertes.';
+const APP_VERSION = 'v1297';
+const APP_MAJ = 'VRAI correctif : le bouton de menu « Plan de production » (\u00e9cran MRP, ic\u00f4ne 🏭) renvoyait \u00e0 l\u2019accueil. Cause exacte : ce bouton porte data-v="mrp", mais « mrp » n\u2019avait jamais \u00e9t\u00e9 enregistr\u00e9 dans la table de routage des vues (VIEWS). Quand une vue est inconnue, l\u2019app retombe sur le tableau de bord \u2014 d\u2019o\u00f9 le retour \u00e0 l\u2019accueil. De plus, le rendu de cet \u00e9cran (renderProductionPlan) \u00e9crivait dans un conteneur qui n\u2019existait que dans le copilote et abandonnait s\u2019il \u00e9tait absent : il n\u2019avait jamais \u00e9t\u00e9 branch\u00e9 comme page autonome. Correctif : « mrp » est d\u00e9sormais rout\u00e9 vers un vrai \u00e9cran (renderMrp) qui monte le conteneur dans la page puis appelle le moteur de plan existant. V\u00e9rifi\u00e9 en ex\u00e9cution avant/apr\u00e8s : avant, le tap affichait le dashboard ; apr\u00e8s, il affiche bien le Plan de production. Contr\u00f4le crois\u00e9 de TOUS les boutons du menu : « Plan de production » \u00e9tait le seul \u00e9cran orphelin, aucun autre bouton n\u2019est concern\u00e9. Correctifs pr\u00e9c\u00e9dents conserv\u00e9s (historique du menu propre, Planning stable, boucle de r\u00e9troplanning parall\u00e9lis\u00e9e, cases persona, extracteur de tests en cache). Suite compl\u00e8te : 61 s, 598 assertions vertes.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -4518,6 +4518,7 @@ const VIEWS = {
   dash:renderDash, clients:renderClientsHub, commandes:renderCmd, produits:renderProducts, cal:renderCal,
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
+  mrp:renderMrp,
   tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, tresorerie:renderTresorerie, scenarios:renderScenarios, avoirs:renderAvoirs, panierMoyen:renderPanierMoyen, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
   ventilation:renderVentilation,
   compositeur:renderCompositeur,
@@ -35738,6 +35739,21 @@ function voixDetailOrganisation(b){
     <div style="font-weight:700;color:#d98324;margin-bottom:4px">⏱ Comment t'organiser (il manque ${fmtHM(manque)})</div>
     ${lignes.map(l=>`<div style="margin:3px 0">• ${l}</div>`).join('')}
   </div>`;
+}
+// [FIX v1297 — « Plan de production » renvoyait à l'accueil]
+// Le bouton de menu « Plan de production » porte data-v="mrp", mais 'mrp' n'avait JAMAIS été
+// enregistré dans la table VIEWS. Résultat : render() faisait `VIEWS['mrp'] || renderDash` et
+// retombait donc sur le tableau de bord (l'accueil) — exactement le symptôme rapporté. Par ailleurs
+// le vrai rendu de cet écran, renderProductionPlan(), écrit dans un conteneur #mrpConseil (ou #aiOut)
+// et RETURN aussitôt si aucun n'existe : il n'a jamais été con\u00e7u comme une vue autonome montée dans
+// #main. Ce wrapper corrige les deux points : il installe le conteneur dans #main PUIS délègue au
+// moteur existant, sans rien dupliquer de sa logique.
+async function renderMrp(){
+  const main=document.getElementById('main'); if(!main) return;
+  main.innerHTML = `<div class="topbar"><div><h1>Plan de production</h1><p>Ce que l'assistant te conseille de produire, calé dans ton temps disponible</p></div></div>
+    <div id="mrpConseil"><div class="panel"><p class="note">⏳ Calcul du plan…</p></div></div>`;
+  try{ await renderProductionPlan(); }
+  catch(e){ console.error('renderMrp', e); const b=document.getElementById('mrpConseil'); if(b) b.innerHTML='<div class="panel"><p class="note">Erreur de calcul du plan de production.</p></div>'; }
 }
 async function renderProductionPlan(){
   const box=document.getElementById('mrpConseil') || document.getElementById('aiOut'); if(!box) return;
