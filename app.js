@@ -5,8 +5,50 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1297';
-const APP_MAJ = 'VRAI correctif : le bouton de menu « Plan de production » (\u00e9cran MRP, ic\u00f4ne 🏭) renvoyait \u00e0 l\u2019accueil. Cause exacte : ce bouton porte data-v="mrp", mais « mrp » n\u2019avait jamais \u00e9t\u00e9 enregistr\u00e9 dans la table de routage des vues (VIEWS). Quand une vue est inconnue, l\u2019app retombe sur le tableau de bord \u2014 d\u2019o\u00f9 le retour \u00e0 l\u2019accueil. De plus, le rendu de cet \u00e9cran (renderProductionPlan) \u00e9crivait dans un conteneur qui n\u2019existait que dans le copilote et abandonnait s\u2019il \u00e9tait absent : il n\u2019avait jamais \u00e9t\u00e9 branch\u00e9 comme page autonome. Correctif : « mrp » est d\u00e9sormais rout\u00e9 vers un vrai \u00e9cran (renderMrp) qui monte le conteneur dans la page puis appelle le moteur de plan existant. V\u00e9rifi\u00e9 en ex\u00e9cution avant/apr\u00e8s : avant, le tap affichait le dashboard ; apr\u00e8s, il affiche bien le Plan de production. Contr\u00f4le crois\u00e9 de TOUS les boutons du menu : « Plan de production » \u00e9tait le seul \u00e9cran orphelin, aucun autre bouton n\u2019est concern\u00e9. Correctifs pr\u00e9c\u00e9dents conserv\u00e9s (historique du menu propre, Planning stable, boucle de r\u00e9troplanning parall\u00e9lis\u00e9e, cases persona, extracteur de tests en cache). Suite compl\u00e8te : 61 s, 598 assertions vertes.';
+const APP_VERSION = 'v1300';
+const APP_MAJ = 'Ergonomie de navigation (ta priorit\u00e9 n\u00b01 : recherche accessible en un geste). Nouveau : APPUI LONG sur le bouton « Menu » (barre du bas) ouvre le menu avec le curseur d\u00e9j\u00e0 dans la barre de recherche, clavier pr\u00eat \u2014 tu tapes le nom de l\u2019\u00e9cran et tu y sautes, sans geste suppl\u00e9mentaire. Le TAP SIMPLE reste inchang\u00e9 : menu complet avec la vue d\u2019ensemble, sans clavier (tu gardes les deux fa\u00e7ons de naviguer). Une petite loupe sur le bouton Menu et une astuce affich\u00e9e une seule fois rendent le geste d\u00e9couvrable ; l\u00e9ger retour haptique \u00e0 l\u2019appui long. Aucune autre partie de l\u2019app modifi\u00e9e. Suite compl\u00e8te : 598 assertions vertes. (Rappel outils dev : smErrors() pour le journal d\u2019erreurs, smDebug(true) pour le mode diagnostic.)';
+
+// ============================================================
+//  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
+// ============================================================
+// [v1298] Historiquement, ~272 blocs `catch(){}` VIDES parsemaient le code : une opération pouvait
+// échouer sans laisser la moindre trace, rendant les bugs silencieux très difficiles à diagnostiquer
+// (le crash « Planning renvoie à l'accueil » et le bouton MRP débranché étaient de cette famille).
+// swallow() remplace ces catch muets par un point TRAÇABLE, tout en restant DISCRET en usage normal :
+//   • silencieux par défaut (aucun bruit dans la console pour l'utilisateur) ;
+//   • journalise dans un anneau mémoire (les 100 dernières erreurs) consultable via smErrors() ;
+//   • n'affiche dans la console QUE si le mode debug est activé (localStorage 'sm_debug'='1',
+//     ou window._smDebug=true) — utile quand TU chasses un bug ;
+//   • ne jette JAMAIS lui-même (un helper de sécurité ne doit pas devenir une source d'erreur).
+// Le paramètre `ctx` est une étiquette libre (ex. 'renderMrp', 'seed recipes') qui situe l'erreur.
+const _SM_ERR_RING = [];
+const _SM_ERR_RING_MAX = 100;
+function smDebugOn(){
+  try{ return !!(window._smDebug) || (typeof localStorage!=='undefined' && localStorage.getItem('sm_debug')==='1'); }
+  catch(_){ return false; }
+}
+function swallow(e, ctx){
+  try{
+    const entry = { t: Date.now(), ctx: ctx||'', msg: (e && (e.message||e.name)) ? (e.message||e.name) : String(e) };
+    _SM_ERR_RING.push(entry);
+    if(_SM_ERR_RING.length > _SM_ERR_RING_MAX) _SM_ERR_RING.shift();
+    if(smDebugOn()) console.warn('[swallow]' + (ctx?(' '+ctx):'') + ':', e);
+  }catch(_){ /* un helper de log ne doit jamais casser l'appelant */ }
+}
+// Consulte les dernières erreurs avalées (console) : smErrors() ou smErrors('plan') pour filtrer.
+function smErrors(filtre){
+  try{
+    const list = filtre ? _SM_ERR_RING.filter(x=>String(x.ctx).includes(filtre)) : _SM_ERR_RING.slice();
+    console.table(list.map(x=>({ heure:new Date(x.t).toLocaleTimeString(), contexte:x.ctx, erreur:x.msg })));
+    return list.length + ' erreur(s) enregistrée(s)' + (filtre?(' pour « '+filtre+' »'):'');
+  }catch(_){ return '0'; }
+}
+// Active/désactive le mode debug (persistant) : smDebug(true) pour voir les erreurs en direct.
+function smDebug(on){
+  try{ if(on){ localStorage.setItem('sm_debug','1'); window._smDebug=true; } else { localStorage.removeItem('sm_debug'); window._smDebug=false; } }catch(_){}
+  return 'Mode debug ' + (on?'ACTIVÉ':'désactivé');
+}
+try{ if(typeof window!=='undefined'){ window.swallow=swallow; window.smErrors=smErrors; window.smDebug=smDebug; } }catch(_){}
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -168,7 +210,7 @@ function collapseToggle(id, btn){
 // [SYNCHRO] Identifiant universel unique, pour préparer la jonction avec un futur site e-commerce.
 // crypto.randomUUID est dispo sur Safari iOS 15.4+ ; repli manuel sinon.
 function genUuid(){
-  try{ if(self.crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){}
+  try{ if(self.crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){swallow(e,'genUuid')}
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c=>{
     const r=Math.random()*16|0, v=c==='x'?r:(r&0x3|0x8); return v.toString(16);
   });
@@ -425,7 +467,7 @@ db.version(29).stores({
 // (ce qui pouvait empêcher l'app de démarrer). Dexie ouvre la base automatiquement à la 1re requête.
 try{
   db.on('blocked', () => {
-    try{ localStorage.setItem('sm_dbBlocked','1'); }catch(e){}
+    try{ localStorage.setItem('sm_dbBlocked','1'); }catch(e){swallow(e,'migrateAddUuids')}
     console.error('Dexie blocked: une autre instance bloque la mise à jour de la base.');
   });
 }catch(e){ console.error('db.on blocked', e); }
@@ -934,7 +976,7 @@ async function rdChangeStatut(id, statut){
 async function rdCarnetSupprimer(id){
   if(!confirm('Supprimer cette idée et ses tests ?')) return;
   await db.rdIdees.delete(id);
-  try{ const ts=await db.rdTests.where('ideeId').equals(id).toArray(); for(const t of ts) await db.rdTests.delete(t.id); }catch(e){}
+  try{ const ts=await db.rdTests.where('ideeId').equals(id).toArray(); for(const t of ts) await db.rdTests.delete(t.id); }catch(e){swallow(e,'rdCarnetSupprimer')}
   toast('Supprimé');
   renderRDIdees();
 }
@@ -1103,7 +1145,7 @@ async function rdSupprimerTest(id){
       const tests=await db.rdTests.where('ideeId').equals(t.ideeId).toArray();
       const moy=tests.length?tests.reduce((s,x)=>s+(+x.note||0),0)/tests.length:null;
       await db.rdIdees.update(t.ideeId, {noteMoy: moy!=null?Math.round(moy*10)/10:null});
-    }catch(e){}
+    }catch(e){swallow(e,'rdSupprimerTest')}
   }
   toast('Test supprimé');
   renderRDJournal();
@@ -1195,7 +1237,7 @@ function rdCurLabel(){
 async function rdGenererMaintenant(){
   const ingredients = await db.rdIngredients.toArray().catch(()=>[]);
   if(!ingredients.length){ window._rdProps=[]; rdRenderProps(); return; }
-  let recipes=[]; try{ recipes = await db.recipes.toArray(); }catch(e){}
+  let recipes=[]; try{ recipes = await db.recipes.toArray(); }catch(e){swallow(e,'rdGenererMaintenant')}
   // exclure les idées déjà testées/abandonnées (clé a||b normalisée)
   let dejaVus=[];
   try{
@@ -1203,7 +1245,7 @@ async function rdGenererMaintenant(){
     const _n=(s)=>(s||'').toLowerCase();
     dejaVus = idees.filter(i=>i.statut==='abandonnee'||i.statut==='adoptee')
                    .map(i=>[_n(i.a),_n(i.b)].sort().join('||'));
-  }catch(e){}
+  }catch(e){swallow(e,'rdGenererMaintenant')}
 
   const opts = { curseur:+window._rdCur, registre:window._rdRegistre, n:3, dejaVus };
   let props=[];
@@ -1315,7 +1357,7 @@ async function renderRD(){
   // bandeau "peu de recettes" pour le moteur style
   let styleHint='';
   if(m==='style'){
-    let nRec=0; try{ nRec=await db.recipes.count(); }catch(e){}
+    let nRec=0; try{ nRec=await db.recipes.count(); }catch(e){swallow(e,'renderRD')}
     if(nRec<3) styleHint = `<div class="rd-hint">Encore peu de recettes : je m'inspire de ce que j'ai, ça s'affinera à mesure que tu en ajoutes.</div>`;
   }
 
@@ -1842,7 +1884,7 @@ function rdGenRecette(opts){
 async function renderRDGen(){
   const main=document.getElementById('main'); if(!main) return;
   let preps=[], refs=[];
-  try{ preps=await db.rdPreps.toArray(); refs=await db.rdRefs.toArray(); }catch(e){}
+  try{ preps=await db.rdPreps.toArray(); refs=await db.rdRefs.toArray(); }catch(e){swallow(e,'renderRDGen')}
   const refsById={}; refs.forEach(r=>refsById[r.id]=r);
   // corpus par type
   window._rdgCorpusAll={};
@@ -2028,8 +2070,8 @@ function rdRefsTab(t){
 
 async function rdRefsRenderBiblio(main){
   let refs=[], preps=[];
-  try{ refs = await db.rdRefs.toArray(); }catch(e){}
-  try{ preps = await db.rdPreps.toArray(); }catch(e){}
+  try{ refs = await db.rdRefs.toArray(); }catch(e){swallow(e,'rdRefsRenderBiblio')}
+  try{ preps = await db.rdPreps.toArray(); }catch(e){swallow(e,'rdRefsRenderBiblio')}
 
   let body='';
   if(!refs.length){
@@ -2088,7 +2130,7 @@ async function rdRefsRenderDiag(main){
     return;
   }
   const adn = rdEncodeADN(p.ingredients||[]);
-  let par=null; try{ par = await db.rdRefs.get(p.refId); }catch(e){}
+  let par=null; try{ par = await db.rdRefs.get(p.refId); }catch(e){swallow(e,'rdRefsRenderDiag')}
 
   const fams = RD_FAMILLES.map(f=>{
     const pct = adn.profil[f]||0;
@@ -3875,10 +3917,10 @@ async function migrateCoqueColors(){
     if(Array.isArray(r.coqueColors) && r.coqueColors.length) continue;   // déjà renseignée → on respecte
     const def = coqueCouleursDefautPour(r.produitNom||'');
     if(def && def.length){
-      try{ await db.recipes.update(r.id, {coqueColors:def}); n++; }catch(_){}
+      try{ await db.recipes.update(r.id, {coqueColors:def}); n++; }catch(e){swallow(e,'migrateCoqueColors')}
     }
   }
-  if(n>0){ try{ if(typeof diagPublish==='function') diagPublish('coque_colors','Coques · couleurs', {prefill:n}); }catch(_){}}
+  if(n>0){ try{ if(typeof diagPublish==='function') diagPublish('coque_colors','Coques · couleurs', {prefill:n}); }catch(e){swallow(e,'migrateCoqueColors')}}
 }
 async function migrateDlcCongelateur(){  try{
     const prods = await db.productions.toArray();
@@ -4087,7 +4129,7 @@ async function runUndo(){
 let overlay=document.getElementById('overlay'), modal=document.getElementById('modal');
 if(!overlay||!modal){ document.addEventListener('DOMContentLoaded', function(){ overlay=overlay||document.getElementById('overlay'); modal=modal||document.getElementById('modal'); if(overlay){ overlay.addEventListener('click', function(e){ if(e.target===overlay) closeModal(); }); } }); }
 function openModal(html){ if(!modal||!overlay){ modal=modal||document.getElementById('modal'); overlay=overlay||document.getElementById('overlay'); if(!modal||!overlay) return; } modal.innerHTML=html; overlay.classList.add('show');
-  if(_histReady && !_popping){ try{ history.pushState({kind:'modal', view:view}, '', '#modal'); }catch(e){} } }
+  if(_histReady && !_popping){ try{ history.pushState({kind:'modal', view:view}, '', '#modal'); }catch(e){swallow(e,'openModal')} } }
 // ============================================================
 //  AFFICHAGE D'UN DOCUMENT IMPRIMABLE (facture, étiquettes, liste…)
 //  dans une COUCHE intégrée à l'app (pas une fenêtre séparée).
@@ -4115,40 +4157,40 @@ function openPrintView(htmlDoc, opts){
   // [v1186] Nom de fichier PDF = numéro du document. À l'enregistrement PDF (iOS/Safari),
   // le nom proposé vient du document.title de la PAGE HÔTE, pas du <title> de l'iframe.
   if(opts.title){
-    try{ if(_pvPrevTitle===null){ _pvPrevTitle = document.title; } document.title = opts.title; }catch(e){}
+    try{ if(_pvPrevTitle===null){ _pvPrevTitle = document.title; } document.title = opts.title; }catch(e){swallow(e,'openPrintView')}
   }
   // entrée d'historique pour que le bouton « retour » ferme la vue au lieu de quitter l'app
-  if(_histReady){ try{ history.pushState({kind:'printview', view:view}, '', '#print'); }catch(e){} }
+  if(_histReady){ try{ history.pushState({kind:'printview', view:view}, '', '#print'); }catch(e){swallow(e,'openPrintView')} }
   document.body.style.overflow='hidden';
 }
 function printPrintView(){
   const frame = document.getElementById('pvFrame');
   if(!frame){ return; }
   // [v1186] réappliquer le titre hôte juste avant l'impression (iOS le relit au print()).
-  try{ if(_pvPrevTitle!==null && _pvWantTitle){ document.title = _pvWantTitle; } }catch(e){}
+  try{ if(_pvPrevTitle!==null && _pvWantTitle){ document.title = _pvWantTitle; } }catch(e){swallow(e,'printPrintView')}
   try{ frame.contentWindow.focus(); frame.contentWindow.print(); }
-  catch(e){ try{ window.print(); }catch(_){} }
+  catch(e){ try{ window.print(); }catch(e){swallow(e,'printPrintView')} }
 }
 function closePrintView(opts){
   const wrap = document.getElementById('printView');
   if(wrap){ wrap.remove(); }
   document.body.style.overflow='';
   // [v1186] restaurer le titre hôte mémorisé à l'ouverture de l'aperçu.
-  try{ if(_pvPrevTitle!==null){ document.title = _pvPrevTitle; _pvPrevTitle=null; _pvWantTitle=''; } }catch(e){}
+  try{ if(_pvPrevTitle!==null){ document.title = _pvPrevTitle; _pvPrevTitle=null; _pvWantTitle=''; } }catch(e){swallow(e,'closePrintView')}
   opts=opts||{};
   if(_histReady && !_popping && !opts.fromPop && history.state && history.state.kind==='printview'){
-    try{ history.back(); }catch(e){}
+    try{ history.back(); }catch(e){swallow(e,'closePrintView')}
   }
 }
 function closeModal(opts){
   if(overlay) overlay.classList.remove('show'); if(modal) modal.innerHTML='';
   _privacySuspend=0; // fin d'une éventuelle suspension du masquage (saisie/détail commande)
   // sécurité : couper toute caméra de scan encore active
-  if(typeof stopScanStream==='function'){ try{ stopScanStream(); }catch(e){} }
+  if(typeof stopScanStream==='function'){ try{ stopScanStream(); }catch(e){swallow(e,'closeModal')} }
   // si fermeture déclenchée par l'utilisateur (pas par un retour navigateur), consommer l'entrée d'historique
   opts=opts||{};
   if(_histReady && !_popping && !opts.fromPop && history.state && history.state.kind==='modal'){
-    try{ history.back(); }catch(e){}
+    try{ history.back(); }catch(e){swallow(e,'closeModal')}
   }
 }
 if(overlay){ overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(); }); }
@@ -4528,6 +4570,34 @@ const VIEWS = {
   communication:renderCommunication,
   cgv:renderCGV
 };
+
+// [v1298] GARDE-FOU DE ROUTAGE — filet contre les boutons de menu « orphelins ».
+// Le bug « Plan de production renvoie à l'accueil » venait d'un bouton (data-v="mrp") sans entrée
+// correspondante dans VIEWS : render() faisait alors `VIEWS[view] || renderDash` et retombait
+// silencieusement sur l'accueil. Cette vérification, lancée une fois au démarrage, compare tous les
+// data-v présents dans le DOM (barre d'onglets, sidebar, feuille menu) aux clés de VIEWS et SIGNALE
+// tout écran non câblé — au lieu de le laisser se manifester des jours plus tard comme un « crash ».
+// Non bloquant : purement diagnostique (journalisé via swallow + console si des orphelins existent).
+function auditRoutage(){
+  try{
+    const boutons = document.querySelectorAll('[data-v]');
+    const manquants = new Set();
+    boutons.forEach(b=>{
+      const v = b.dataset && b.dataset.v;
+      if(v && !VIEWS[v]) manquants.add(v);
+    });
+    if(manquants.size){
+      const liste = Array.from(manquants).join(', ');
+      // Toujours tracé (consultable via smErrors('routage')) ; visible en console pour le développeur.
+      swallow(new Error('Écran(s) de menu sans vue dans VIEWS : '+liste), 'auditRoutage');
+      console.warn('[auditRoutage] Bouton(s) de menu non câblé(s) à une vue : '+liste+
+        ' — ces écrans renverraient à l\'accueil. À corriger dans VIEWS.');
+      return manquants;
+    }
+    return null;
+  }catch(e){ swallow(e,'auditRoutage'); return null; }
+}
+try{ if(typeof window!=='undefined') window.auditRoutage=auditRoutage; }catch(_){}
 let _navLast=0;
 let _popping=false;        // vrai quand on traite un retour (popstate) pour éviter de re-pousser
 let _histReady=false;
@@ -4549,7 +4619,7 @@ function navUsageLoad(){
        return {counts:o.counts||{}, last:o.last||{}, recents:Array.isArray(o.recents)?o.recents:[]}; }
   catch(e){ return {counts:{}, last:{}, recents:[]}; }
 }
-function navUsageSave(u){ try{ localStorage.setItem(NAV_USAGE_KEY, JSON.stringify(u)); }catch(e){} }
+function navUsageSave(u){ try{ localStorage.setItem(NAV_USAGE_KEY, JSON.stringify(u)); }catch(e){swallow(e,'navUsageSave')} }
 
 // Appelé à chaque changement de vue (depuis goView). Incrémente le compteur,
 // note la date, et met à jour la liste des récents (dédupliquée, plafonnée).
@@ -4565,7 +4635,7 @@ function navUsageTrack(v){
 // Liste des récents (hors vue courante), pour l'accès rapide.
 // --- Favoris (épinglés manuellement par l'utilisateur) ---
 function navFavLoad(){ try{ const a=JSON.parse(localStorage.getItem(NAV_FAV_KEY)||'[]'); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
-function navFavSave(a){ try{ localStorage.setItem(NAV_FAV_KEY, JSON.stringify(a)); }catch(e){} }
+function navFavSave(a){ try{ localStorage.setItem(NAV_FAV_KEY, JSON.stringify(a)); }catch(e){swallow(e,'navFavSave')} }
 function navFavToggle(v){
   const a=navFavLoad();
   const i=a.indexOf(v);
@@ -4783,15 +4853,15 @@ function goView(v, opts){
         thread: _th ? _th.innerHTML : null,
         out: _ou ? _ou.innerHTML : null
       };
-    }catch(e){}
+    }catch(e){swallow(e,'goView')}
   } else if(window._assistantRetour && window._assistantRetour.attente && v!=='assistant'){
     window._assistantRetour.cible = v; window._assistantRetour.attente = false;
   }
   _navDir='forward';
   view=v; setActiveView(view); render();
   if(typeof _palSync==='function') _palSync();
-  if(typeof assistantRetourSync==='function'){ try{ assistantRetourSync(); }catch(e){} }
-  if(typeof filRetourSync==='function'){ try{ filRetourSync(); }catch(e){} }
+  if(typeof assistantRetourSync==='function'){ try{ assistantRetourSync(); }catch(e){swallow(e,'goView')} }
+  if(typeof filRetourSync==='function'){ try{ filRetourSync(); }catch(e){swallow(e,'goView')} }
   if(typeof navUsageTrack==='function') navUsageTrack(v);   // traçage usage (favoris/récents/stats)
   if(_histReady && !_popping){
     // [FIX v1296] opts.replace : on REMPLACE l'entrée courante (ex. '#menu' laissé par openSheet)
@@ -4804,11 +4874,11 @@ function goView(v, opts){
     // d'appeler goView : sans ce garde-fou, l'entrée '#menu' resterait coincée sous la vue et un
     // 'popstate' ultérieur renverrait à l'accueil (le bug rapporté depuis le menu).
     let _curIsSheet=false;
-    try{ _curIsSheet = !!(history.state && history.state.kind==='sheet'); }catch(_){}
+    try{ _curIsSheet = !!(history.state && history.state.kind==='sheet'); }catch(e){swallow(e,'goView')}
     try{
       if(opts.replace || _curIsSheet){ history.replaceState({view:v, kind:'view'}, '', '#'+v); }
       else                           { history.pushState({view:v, kind:'view'}, '', '#'+v); }
-    }catch(e){}
+    }catch(e){swallow(e,'goView')}
   }
 }
 // Renvoie true s'il existe une température MODIFIÉE et non encore validée dans l'écran courant.
@@ -4842,13 +4912,34 @@ function pmsGuardUnsaved(){
   }
   return ok;
 }
-function openSheet(){
+function openSheet(opts){
+  opts = opts || {};
   const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
     navAdvEnsureVisible();
     if(typeof navRenderFavoris==='function') navRenderFavoris();
     if(typeof navApplyStars==='function') navApplyStars();
     const pb=document.getElementById('sheetPrivacyBtn'); if(pb) pb.textContent = privacyModeEnabled()?'👁️ Afficher les données':'🙈 Mode discret';
-    if(_histReady && !_popping){ try{ history.pushState({kind:'sheet', view:view}, '', '#menu'); }catch(e){} } }
+    if(_histReady && !_popping){ try{ history.pushState({kind:'sheet', view:view}, '', '#menu'); }catch(e){swallow(e,'openSheet')} }
+    // [v1300] Découvrabilité (une seule fois) : signale le raccourci « appui long = recherche directe ».
+    if(!opts.focusSearch){
+      try{
+        if(localStorage.getItem('sm_hintMenuSearch')!=='1'){
+          localStorage.setItem('sm_hintMenuSearch','1');
+          if(typeof toast==='function') setTimeout(()=>{ try{ toast('Astuce : appui long sur « Menu » pour ouvrir la recherche directement 🔎'); }catch(_){}; }, 400);
+        }
+      }catch(e){ swallow(e,'openSheet hint'); }
+    }
+    // [v1300] Ouverture « recherche directe » (appui long sur Menu) : le champ de recherche du menu
+    // re\u00e7oit le focus imm\u00e9diatement, clavier pr\u00eat, pour sauter \u00e0 un \u00e9cran sans le moindre geste
+    // suppl\u00e9mentaire. Le tap SIMPLE garde le comportement classique (vue d'ensemble, sans clavier),
+    // pour ne pas g\u00eaner quand on veut juste parcourir le menu. On a donc les deux, chacun son geste.
+    if(opts.focusSearch){
+      try{
+        const inp=document.getElementById('globalSearchM');
+        if(inp){ inp.value=''; setTimeout(()=>{ try{ inp.focus(); }catch(e){swallow(e,'openSheet focus');} }, 60); }
+      }catch(e){ swallow(e,'openSheet focusSearch'); }
+    }
+  }
 }
 function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); }
 
@@ -5086,7 +5177,24 @@ if(navEl) navEl.addEventListener('click', e => { const b=e.target.closest('butto
 
 // Tabbar (iPhone)
 document.querySelectorAll('#tabbar button[data-v]').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
-const menuBtn=document.getElementById('menuBtn'); if(menuBtn) menuBtn.addEventListener('click', openSheet);
+const menuBtn=document.getElementById('menuBtn');
+if(menuBtn){
+  // [v1300] Tap simple : menu classique (vue d'ensemble). Appui long : ouverture directe dans la
+  // recherche (clavier prêt) pour sauter à un écran en un geste. Détection par timer au touch/mouse.
+  let _menuLongTimer=null, _menuLong=false;
+  const _menuPressStart=()=>{ _menuLong=false; clearTimeout(_menuLongTimer); _menuLongTimer=setTimeout(()=>{ _menuLong=true; try{ if(navigator.vibrate) navigator.vibrate(8); }catch(_){}; openSheet({focusSearch:true}); }, 380); };
+  const _menuPressEnd=(e)=>{ clearTimeout(_menuLongTimer); if(_menuLong){ if(e&&e.preventDefault) e.preventDefault(); _menuLong=false; return; } openSheet(); };
+  const _menuPressCancel=()=>{ clearTimeout(_menuLongTimer); _menuLong=false; };
+  menuBtn.addEventListener('touchstart', _menuPressStart, {passive:true});
+  menuBtn.addEventListener('touchend', _menuPressEnd);
+  menuBtn.addEventListener('touchcancel', _menuPressCancel);
+  // Souris (iPad avec trackpad / desktop) : clic simple = menu. Appui maintenu = recherche.
+  menuBtn.addEventListener('mousedown', _menuPressStart);
+  menuBtn.addEventListener('mouseup', _menuPressEnd);
+  menuBtn.addEventListener('mouseleave', _menuPressCancel);
+  // Repli clavier / accessibilité : un vrai « click » synthétique (sans touch préalable) ouvre le menu.
+  menuBtn.addEventListener('click', (e)=>{ if(e.detail===0) openSheet(); });
+}
 
 // Feuille menu (iPhone)
 document.querySelectorAll('#sheetGrid button[data-v]').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
@@ -5137,14 +5245,14 @@ function navAdvApply(open){
 function navAdvToggle(){
   const open = !document.getElementById('sheetAdv')?.classList.contains('open');
   navAdvApply(open);
-  try{ localStorage.setItem('sm_nav_adv', open?'1':'0'); }catch(e){}
+  try{ localStorage.setItem('sm_nav_adv', open?'1':'0'); }catch(e){swallow(e,'navAdvToggle')}
 }
 function navAdvEnsureVisible(){
   // si la vue active vit dans la section Avancé, on déplie pour que son bouton soit visible
   const adv=document.getElementById('sheetAdv');
   if(adv && adv.querySelector(`button[data-v="${view}"]`)) navAdvApply(true);
 }
-(function(){ try{ if(localStorage.getItem('sm_nav_adv')==='1') navAdvApply(true); }catch(e){} })();
+(function(){ try{ if(localStorage.getItem('sm_nav_adv')==='1') navAdvApply(true); }catch(e){swallow(e,'navAdvEnsureVisible')} })();
 
 // FLUIDITÉ DE NAVIGATION : sur mobile, dès que l'utilisateur fait défiler la PAGE DE FOND,
 // on retire le focus du champ actif (clavier qui se referme) pour ne plus avoir à
@@ -5201,13 +5309,13 @@ function render(){
 }
 // Affiche une erreur de rendu dans le conteneur principal au lieu de laisser un écran vide.
 function renderViewError(v, err){
-  try{ console.error('Erreur de rendu vue', v, err); }catch(_){}
+  try{ console.error('Erreur de rendu vue', v, err); }catch(e){swallow(e,'renderViewError')}
   let main=document.getElementById('main');
   if(!main){ try{ main=document.querySelector('.main')||document.body; }catch(_){ return; } }
   if(!main) return;
   let msg='erreur inconnue';
-  try{ msg = (err&&err.message) ? err.message : String(err); }catch(_){}
-  let stack=''; try{ if(err&&err.stack){ stack = String(err.stack).split('\n').slice(0,3).join(' | '); } }catch(_){}
+  try{ msg = (err&&err.message) ? err.message : String(err); }catch(e){swallow(e,'renderViewError')}
+  let stack=''; try{ if(err&&err.stack){ stack = String(err.stack).split('\n').slice(0,3).join(' | '); } }catch(e){swallow(e,'renderViewError')}
   const safe = (x)=>{ try{ return (typeof esc==='function')? esc(x) : String(x).replace(/[<>&]/g,''); }catch(_){ return ''; } };
   try{
     main.innerHTML = `<div class="topbar"><div><h1>Affichage indisponible</h1><p>Vue « ${safe(v)} »</p></div></div>
@@ -5216,7 +5324,7 @@ function renderViewError(v, err){
         ${stack?`<br><span style="color:#b8a99f;font-size:.66rem">${safe(stack)}</span>`:''}<br><br>
         <button class="btn ghost sm" onclick="render()">Réessayer</button></div></div>`;
   }catch(_){
-    try{ main.textContent = 'Affichage indisponible : ' + msg; }catch(__){}
+    try{ main.textContent = 'Affichage indisponible : ' + msg; }catch(e){swallow(e,'renderViewError')}
   }
 }
 
@@ -5228,7 +5336,7 @@ function renderViewError(v, err){
    ============================================================ */
 function initHistoryNav(){
   // état racine = tableau de bord
-  try{ history.replaceState({view:view, kind:'view'}, '', '#'+view); }catch(e){}
+  try{ history.replaceState({view:view, kind:'view'}, '', '#'+view); }catch(e){swallow(e,'initHistoryNav')}
   _histReady=true;
   window.addEventListener('popstate', (e)=>{
     _popping=true;
@@ -5247,8 +5355,8 @@ function initHistoryNav(){
       const v=(st && st.view) ? st.view : view;
       if(VIEWS[v]){
         _navDir='back'; view=v; setActiveView(view); render();
-        if(typeof assistantRetourSync==='function'){ try{ assistantRetourSync(); }catch(e){} }
-        if(typeof filRetourSync==='function'){ try{ filRetourSync(); }catch(e){} }
+        if(typeof assistantRetourSync==='function'){ try{ assistantRetourSync(); }catch(e){swallow(e,'initHistoryNav')} }
+        if(typeof filRetourSync==='function'){ try{ filRetourSync(); }catch(e){swallow(e,'initHistoryNav')} }
       }
     } finally { _popping=false; }
   });
@@ -5294,7 +5402,7 @@ async function caDuMois(mk){
       const net = (typeof marketNetCA==='function') ? marketNetCA(k) : 0;
       if(net>0){ totalMk+=net; lignesMk.push({date:k.date, nom:k.nom||'Marché', montant:net}); }
     });
-  }catch(e){}
+  }catch(e){swallow(e,'caDuMois')}
   return { total: money2(totalCmd+totalMk), totalCmd: money2(totalCmd), totalMk: money2(totalMk), lignesCmd, lignesMk };
 }
 
@@ -5368,7 +5476,7 @@ async function renderDash(){
   ]);
   const recName = rid => (recipes.find(r=>r.id===rid)||{}).produitNom||'Produit';
   // Jauge gaspillage : alerte quand l'étape 2 (aide aux quantités) devient activable.
-  let _gaspReady=null; try{ _gaspReady=await gaspillageDataReadiness(); }catch(e){}
+  let _gaspReady=null; try{ _gaspReady=await gaspillageDataReadiness(); }catch(e){swallow(e,'renderDash')}
   // Marge nette moyenne par macaron (s'appuie sur l'analyse de rentabilité : coûts + charges sociales).
   // Calcul protégé : en cas d'erreur ou d'absence de ventes, on n'affiche rien plutôt que de fausser.
   let margeNetteParMacaron = null;
@@ -5405,7 +5513,7 @@ async function renderDash(){
   const releveFait = tLogsToday.length>0;
   // CA des marchés clôturés (pour les compteurs annexes _nbEncMois / caTotal).
   let _marketsForCA = markets;
-  try { const _mk = await db.markets.toArray(); if(Array.isArray(_mk)) _marketsForCA = _mk; } catch(e){}
+  try { const _mk = await db.markets.toArray(); if(Array.isArray(_mk)) _marketsForCA = _mk; } catch(e){swallow(e,'renderDash')}
   const closedMk = (_marketsForCA||[]).filter(k=>k.statut==='clos').map(k=>{
     const ca=k.ca||{}; return {date:(k.date||''), montant:marketNetCA(k)};
   }).filter(k=>k.montant>0);
@@ -5769,7 +5877,7 @@ async function renderMaterials(){
       matSearch = String(f.val);
       window._viewFocus = null;
     }
-  }catch(_){}
+  }catch(e){swallow(e,'renderMaterials')}
   // Tri alphabétique STRICT par nom, insensible à la casse et aux accents,
   // indépendant de l'ordre de saisie (l'index IndexedDB trie mal les accents/majuscules).
   const mats = (await db.materials.toArray())
@@ -6349,7 +6457,7 @@ function _printShop(){
     <div class="foot">Fournisseurs et prix issus de l'historique d'achat · à vérifier au moment de la commande.</div>
     </body></html>`);
   win.document.close();
-  setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 600);
+  setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){swallow(e,'_printShop')} }, 600);
 }
 let lotSearch='';
 function lotFilter(q){
@@ -7368,7 +7476,7 @@ function degustationSuggestions(prods, recName){
       const g = ganaches.find(x=>x.p.id===v.ganId);
       if(g) g.used = round3(g.used + (v.assemblable||0));
     });
-  }catch(e){}
+  }catch(e){swallow(e,'degustationSuggestions')}
   const out=[];
   // [v1250] Priorité couleur en dégustation : même parfum > couleur compatible > n'importe quoi (autorisé
   // car offert). On lit les couleurs via le cache recettes.
@@ -7472,7 +7580,7 @@ const PYRA_BOXES = [
 // Modèles de pyramides. Plateaux listés du SOMMET vers la BASE.
 // Prérempli avec l'exemple type ; modifiable par l'utilisateur (persisté en localStorage).
 function pyraModels(){
-  try{ const j=JSON.parse(localStorage.getItem('sm_pyraModels')||'null'); if(Array.isArray(j)&&j.length) return _pyraMigrate(j); }catch(e){}
+  try{ const j=JSON.parse(localStorage.getItem('sm_pyraModels')||'null'); if(Array.isArray(j)&&j.length) return _pyraMigrate(j); }catch(e){swallow(e,'pyraModels')}
   return [
     // [v1213] Plateaux RÉELS de la pyramide transparente 6 plateaux (mesurés sur photos + terrain) :
     // sommet 4, puis +3 par plateau → cumul 4,11,21,34,50,69. 69 macarons = pyramide pleine (6 étages).
@@ -7498,8 +7606,8 @@ function _pyraMigrate(list){
         m.plateaux=[4,7,10,13,16,19]; changed=true;
       }
     });
-    if(changed){ try{ localStorage.setItem('sm_pyraModels', JSON.stringify(list)); }catch(e){} }
-  }catch(e){}
+    if(changed){ try{ localStorage.setItem('sm_pyraModels', JSON.stringify(list)); }catch(e){swallow(e,'_pyraMigrate')} }
+  }catch(e){swallow(e,'_pyraMigrate')}
   return list;
 }
 function pyraSaveModels(list){ localStorage.setItem('sm_pyraModels', JSON.stringify(list)); }
@@ -7760,7 +7868,7 @@ async function nextAvoirNumeroDefinitif(){
     const avoirsDef=(await db.documents.where('type').equals('avoir').toArray().catch(()=>[]))
       .filter(a=>docEstAvoirDefinitif(a) && a.numero);
     avoirsDef.forEach(a=>{ const m=(a.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>seq) seq=n; } });
-  }catch(e){}
+  }catch(e){swallow(e,'nextAvoirNumeroDefinitif')}
   const next=seq+1;
   _avoirSeqSet(next);
   return `${prefix}-${next}`;
@@ -7841,7 +7949,7 @@ async function nextFactureNumeroDefinitif(){
     const factsDef=(await db.documents.where('type').equals('facture').toArray().catch(()=>[]))
       .filter(f=>docEstDefinitif(f) && f.numero);
     factsDef.forEach(f=>{ const m=(f.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>seq) seq=n; } });
-  }catch(e){}
+  }catch(e){swallow(e,'nextFactureNumeroDefinitif')}
   const next=seq+1;
   _factSeqSet(next);   // persiste AVANT de renvoyer : le numéro est consommé, définitivement
   return `${prefix}-${next}`;
@@ -8799,7 +8907,7 @@ async function atParfumsDispo(){
       if(seen.has(+p.recipeId)) return;
       seen.add(+p.recipeId); out.push({recipeId:+p.recipeId, nom:nameOf(p.recipeId)});
     });
-  }catch(e){}
+  }catch(e){swallow(e,'atParfumsDispo')}
   // 2) parfums déjà rattachés dans la session (au cas où la prod est déjà terminée)
   const s = prodSessActive();
   if(s){ (s.tasks||[]).forEach(t=>{ (t.parfums||[]).forEach(rid=>{
@@ -8954,7 +9062,7 @@ async function atRenderBody(){
   const estMut = (_atOnglet==='mutualise');
   const last = atLastLabel(_atParfum);
   let sug = [];
-  try{ sug = await prodSuggestNext(_atParfum, last, 1, {mutualise:estMut, contexteFamille:(last?prodTaskFamille(last):null)}); }catch(e){}
+  try{ sug = await prodSuggestNext(_atParfum, last, 1, {mutualise:estMut, contexteFamille:(last?prodTaskFamille(last):null)}); }catch(e){swallow(e,'atRenderBody')}
   const nxt = sug && sug[0];
   let nextHtml='';
   if(nxt){
@@ -9118,9 +9226,9 @@ function chronoFloatRefresh(){ chronoFloatBulle(); }
 function chronoFloatTick(){
   // Vérifie d'abord si une alarme de tâche semi-passive vient d'échoir.
   if(typeof prodCheckAlarms==='function'){
-    let rang=false; try{ rang=prodCheckAlarms(); }catch(e){}
+    let rang=false; try{ rang=prodCheckAlarms(); }catch(e){swallow(e,'chronoFloatTick')}
     if(rang){
-      try{ if(typeof prodAlarmBeep==='function') prodAlarmBeep(); }catch(e){}
+      try{ if(typeof prodAlarmBeep==='function') prodAlarmBeep(); }catch(e){swallow(e,'chronoFloatTick')}
       // re-render pour afficher l'état « sonne » (Terminer / Prolonger)
       if(typeof atRenderBody==='function' && document.getElementById('cfBody')){ atRenderBody(); return; }
     }
@@ -9307,7 +9415,7 @@ async function renderProductions(){
       prodnSearch = String(f.val);
       window._viewFocus = null;   // consommé une seule fois
     }
-  }catch(_){}
+  }catch(e){swallow(e,'renderProductions')}
   const prods = await db.productions.orderBy('date').reverse().toArray();
   const recipes = await db.recipes.toArray();
   window._allRecipesCache = recipes;   // cache global pour prodNomComplet (appelants sans recipes en portée)
@@ -9438,7 +9546,7 @@ async function renderProductions(){
        const totCoques = g.lots.reduce((a,p)=>a+(+p.qteRestante||0),0);
        const tousTermines = g.lots.every(p=>prodStatut(p)==='termine');
        const statutTxt = tousTermines ? '✓ terminée' : '▶ en cours';
-       const dateTxt = (()=>{ const t=Math.max(...g.lots.map(p=>Date.parse(p.prodDebutTs||p.prodTimestamp||0)||0)); return t?fmtDate(new Date(t).toISOString().slice(0,10)):''; })();
+       const dateTxt = (()=>{ const t=Math.max(...g.lots.map(p=>Date.parse(p.prodDebutTs||p.prodTimestamp||0)||0)); return t?fmtDate(ymdLocal(new Date(t))):''; })();
        const gid = 'mer_'+String(g.mid).replace(/[^A-Za-z0-9]/g,'');
        return `<div class="panel" style="background:#fff;border:1px solid #d8e6dc;padding:0;overflow:hidden;margin-bottom:8px">
          <div onclick="prodMeringueToggle('${gid}')" style="display:flex;align-items:center;gap:8px;padding:12px 14px;cursor:pointer">
@@ -10917,7 +11025,7 @@ async function doMoveEmplacement(id, dest, opts){
         const ok = confirm(`⚠️ « ${rec.produitNom} » est en congélateur obligatoire (ganache sensible).${hMax}\n\nMettre ce lot au frigo va consommer sa DLC et peut dégrader le produit. Continuer quand même ?`);
         if(!ok){ return false; }
       }
-    }catch(err){}
+    }catch(err){swallow(err,'doMoveEmplacement')}
   }
   const hist=(p.histEmplacement||[]).concat([{lieu:dest, ts:nowIso, motif:'transfert'}]);
   const nouveauLot = lotAvecEmplacement(p.lotProduction, dest);
@@ -11177,7 +11285,7 @@ async function prodTermineConfirm(id){
     const _qteMv = round3(+p.qteRestante||0);
     await logStockMove({ parfumNom: prodNomComplet(p), composant:_compMv, sens:+1, qte:_qteMv,
       type:'production', productionId:id });
-  }catch(_){}
+  }catch(e){swallow(e,'prodTermineConfirm')}
   closeModal(); renderProductions();
   // [TEMPS PAR RECETTE] Si une tâche d'atelier est rattachée à ce batch, demander à l'arrêter ou la poursuivre.
   try{
@@ -11660,10 +11768,10 @@ async function prodRefreshLot(){
   if(mode==='garniture'){
     // [LOT GARNITURE] Le code parfum vient du COMPOSANT (ex. « Chantache… » → CHA), pas de la recette.
     try{ const cid=+(document.getElementById('f_garnitureSel')||{}).value||0;
-      const c=cid?await db.components.get(cid):null; nom=c?(c.nom||''):''; }catch(e){}
+      const c=cid?await db.components.get(cid):null; nom=c?(c.nom||''):''; }catch(e){swallow(e,'prodRefreshLot')}
   } else {
     if(!sel) return;
-    try{ const rid=+sel.value; const r=await db.recipes.get(rid); nom=r?r.produitNom:''; _isGF=!!(r&&r.grandFormat); }catch(e){}
+    try{ const rid=+sel.value; const r=await db.recipes.get(rid); nom=r?r.produitNom:''; _isGF=!!(r&&r.grandFormat); }catch(e){swallow(e,'prodRefreshLot')}
   }
   const dateStr=(dateEl&&dateEl.value)||today();
   // Lots déjà produits ce jour pour ce parfum (même code) → pour calculer le rang.
@@ -11677,7 +11785,7 @@ async function prodRefreshLot(){
       const base=p.lotBase||lotBaseSansSuffixe(p.lotProduction||'');
       return base && (base===racine || new RegExp('^'+racine+'\\d+$').test(base));
     });
-  }catch(e){}
+  }catch(e){swallow(e,'prodRefreshLot')}
   lotEl.value=buildLotBase(nom, dateStr, memeJourMemeParfum, _isGF);
 }
 async function prodForm(prefill){  const recipes = await db.recipes.toArray();
@@ -11825,7 +11933,7 @@ async function prodDuoApercu(){
   const pct1 = totCoq>0 ? Math.round(coq1/totCoq*100) : 50;
   // On lit les recettes AVANT l'en-tête pour connaître le format (GF ou standard) de chaque parfum.
   let r1=null, r2=null, r3=null;
-  try{ [r1, r2, r3] = await Promise.all([rid1?db.recipes.get(rid1):null, rid2?db.recipes.get(rid2):null, (p3actif?db.recipes.get(rid3):null)]); }catch(e){}
+  try{ [r1, r2, r3] = await Promise.all([rid1?db.recipes.get(rid1):null, rid2?db.recipes.get(rid2):null, (p3actif?db.recipes.get(rid3):null)]); }catch(e){swallow(e,'prodDuoApercu')}
   const gf1=!!(r1&&r1.grandFormat), gf2=!!(r2&&r2.grandFormat), gf3=!!(r3&&r3.grandFormat);
   const ligneParfum = (nom, q, coq, gf) => {
     const eq = Math.round(coq * (gf?GF_COQUE_RATIO:1));
@@ -12522,7 +12630,7 @@ async function prodLibreRefreshLot(){
     const racine=lotDateJJMMAA(dateStr)+flavorCode(nom);
     const prods=await db.productions.toArray();
     memeJour=prods.filter(p=>{ const base=p.lotBase||lotBaseSansSuffixe(p.lotProduction||''); return base && (base===racine || new RegExp('^'+racine+'\\d+$').test(base)); });
-  }catch(e){}
+  }catch(e){swallow(e,'prodLibreRefreshLot')}
   lotEl.value=buildLotBase(nom, dateStr, memeJour);
 }
 async function saveProdLibre(){
@@ -12708,7 +12816,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
       // Mémorise la contrainte de DLC d'ouverture sur la production (sert au plafonnement + ordonnancement).
       if(dlcOuvertureMin){ await db.productions.update(prodId, {dlcContrainteOuverture: dlcOuvertureMin}); }
       // [SYNCHRO ATELIER] démarrer le chrono de ce batch (tâche « Production » rattachée au parfum).
-      try{ await prodEnsureBatchChrono(prodId, recipeId, (meta&&meta.composant)||'complet'); }catch(e){}
+      try{ await prodEnsureBatchChrono(prodId, recipeId, (meta&&meta.composant)||'complet'); }catch(e){swallow(e,'enregistrerProduction')}
       return prodId;
     });
 }
@@ -12787,7 +12895,7 @@ async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, 
       }
       if(dlcOuvertureMin){ await db.productions.update(prodId, {dlcContrainteOuverture: dlcOuvertureMin}); }
       // [SYNCHRO ATELIER] démarrer le chrono de ce batch composant (rattaché à sa recette).
-      try{ await prodEnsureBatchChrono(prodId, (meta&&meta.recipeId)!=null?meta.recipeId:null, (meta&&meta.composant)||'ganache'); }catch(e){}
+      try{ await prodEnsureBatchChrono(prodId, (meta&&meta.recipeId)!=null?meta.recipeId:null, (meta&&meta.composant)||'ganache'); }catch(e){swallow(e,'produireComposant')}
       return prodId;
     });
 }
@@ -13221,7 +13329,7 @@ async function prodAnnulerLancement(id){
   const nom = prod.lotProduction || ('#'+id);
   if(!confirm(`⎌ Annuler le lancement du batch « ${nom} » ?\n\nCette action défait tout ce que le lancement a déclenché :\n• ${recap.join('\n• ')||'suppression du batch'}\n\nTes stocks reviennent à l'état d'avant. Réversible immédiatement (bouton Annuler).`)) return;
 
-  try{ await snapshotBackup('avant-annulation-lancement'); }catch(e){}
+  try{ await snapshotBackup('avant-annulation-lancement'); }catch(e){swallow(e,'prodAnnulerLancement')}
 
   // Snapshot complet pour l'undo
   const snap = { prod:{...prod}, conso:conso.map(c=>({...c})), liens:liens.map(l=>({...l})), chrono:null };
@@ -13965,7 +14073,7 @@ function stopScanStream(){
   if(_scanRAF){ cancelAnimationFrame(_scanRAF); _scanRAF=null; }
   if(_scanStream){ _scanStream.getTracks().forEach(t=>t.stop()); _scanStream=null; }
   _scanDetector=null;
-  if(_h5qr){ try{ _h5qr.stop().then(()=>{ try{_h5qr.clear();}catch(e){} _h5qr=null; }).catch(()=>{ _h5qr=null; }); }catch(e){ _h5qr=null; } }
+  if(_h5qr){ try{ _h5qr.stop().then(()=>{ try{_h5qr.clear();}catch(e){swallow(e,'stopScanStream')} _h5qr=null; }).catch(()=>{ _h5qr=null; }); }catch(e){ _h5qr=null; } }
 }
 
 function closeScanner(){ stopScanStream(); window._scanCb=null; closeModal(); }
@@ -14906,7 +15014,7 @@ async function renderClientsHub(){
       clientSearch = String(f.val);
       window._viewFocus = null;
     }
-  }catch(_){}
+  }catch(e){swallow(e,'renderClientsHub')}
   const tab = _clientsHubTab||'clients';
   // Appelle la sous-vue d'origine (remplit #main comme avant).
   if(tab==='prospects') await renderProspects();
@@ -15661,7 +15769,7 @@ async function renderCmd(){
       cmdJourFiltre = String(f.val);
       window._viewFocus = null;
     }
-  }catch(_){}
+  }catch(e){swallow(e,'renderCmd')}
   // Les commandes "historiques" (reprise/migration) ne s'affichent pas ici :
   // elles comptent dans le CA mais ne sont pas opérationnelles.
   const orders = (await db.orders.toArray()).filter(o=>!o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
@@ -16352,7 +16460,7 @@ async function cmdView(id){
               : `d'après le tarif d'emballage paramétré pour un coffret ${_tRef} (pas encore assez d'historique pour un ratio mesuré)`;
           return `<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin-top:10px">📦 <div><b>Emballage estimé :</b> cette commande de reprise n'a pas de détail d'emballage. Son coût (<b>${euro(_mg.coutEmbEstime)}</b>) est <b>estimé</b> ${_methode}. Le coût réel peut différer.</div></div>`;
         }
-      }catch(e){}
+      }catch(e){swallow(e,'cmdView')}
       return '';
     })()}
     ${(function(){
@@ -18863,7 +18971,7 @@ async function cmdDeleteConfirm(id){
   // [JOURNAL STOCK] recrédite le stock fini des batchs liés (commande supprimée).
   for(const mv of _mvRestock){ await logStockMove(mv); }
   logDeletion('commande', id, reason, note, o?`${fmtDate(o.date)} · ${euro(o.montant)}`:'');
-  try{ await db.packagingConsumption.where('orderId').equals(id).delete(); }catch(e){}
+  try{ await db.packagingConsumption.where('orderId').equals(id).delete(); }catch(e){swallow(e,'cmdDeleteConfirm')}
   closeModal(); renderCmd();
   // annulation rapide : restaure la commande, ses liens, son événement, et ré-décrémente le stock
   showUndoToast(totBatch?`Commande supprimée — ${totBatch} recrédité(s)`:'Commande supprimée', async ()=>{
@@ -18893,7 +19001,7 @@ function logDeletion(type, id, reason, note, label){
     const arr=JSON.parse(localStorage.getItem(key)||'[]');
     arr.unshift({type, id, reason, note:note||'', label:label||'', ts:new Date().toISOString()});
     localStorage.setItem(key, JSON.stringify(arr.slice(0,300)));
-  }catch(e){}
+  }catch(e){swallow(e,'logDeletion')}
 }
 // ============================================================
 //  LIER DES BATCHS À LA COMMANDE — recherche + filtre + suggestion FIFO
@@ -19165,10 +19273,10 @@ function comptaPeriodeStart(k){
   const now=new Date();
   const d=new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if(k==='annee') return `${now.getFullYear()}-01-01`;
-  if(k==='6mois'){ const x=new Date(d); x.setMonth(x.getMonth()-6); return x.toISOString().slice(0,10); }
-  if(k==='90j'){ const x=new Date(d); x.setDate(x.getDate()-90); return x.toISOString().slice(0,10); }
-  if(k==='mois'){ const x=new Date(d); x.setMonth(x.getMonth()-1); return x.toISOString().slice(0,10); }
-  if(k==='semaine'){ const x=new Date(d); x.setDate(x.getDate()-7); return x.toISOString().slice(0,10); }
+  if(k==='6mois'){ const x=new Date(d); x.setMonth(x.getMonth()-6); return ymdLocal(x); }
+  if(k==='90j'){ const x=new Date(d); x.setDate(x.getDate()-90); return ymdLocal(x); }
+  if(k==='mois'){ const x=new Date(d); x.setMonth(x.getMonth()-1); return ymdLocal(x); }
+  if(k==='semaine'){ const x=new Date(d); x.setDate(x.getDate()-7); return ymdLocal(x); }
   return null; // tout
 }
 // Date de fin d'une période ('perso' = date saisie, sinon aujourd'hui implicite donc null).
@@ -19862,7 +19970,7 @@ async function computeSuggestionParfums(saison){
   const fams = SAISON_FAMILLES[saison] || SAISON_FAMILLES.automne;
   // Base aromatique : DB enrichie si dispo, sinon seed.
   let base=[];
-  try{ base = await db.rdIngredients.toArray(); }catch(e){}
+  try{ base = await db.rdIngredients.toArray(); }catch(e){swallow(e,'computeSuggestionParfums')}
   if(!base || !base.length) base = (typeof RD_SEED_INGREDIENTS!=='undefined') ? RD_SEED_INGREDIENTS : [];
   // On ne propose que des parfums « sucrés » plausibles en macaron, PAS déjà au catalogue.
   const candidats = base.filter(x=> x && x.registre==='sucre' && fams[x.famille] && +x.auCatalogue!==1);
@@ -20171,14 +20279,14 @@ async function exportBilanMois(ym){
   const txt=buildBilanText(B);
   const name='bilan-'+ym+'.txt';
   let copied=false;
-  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(txt); copied=true; } }catch(e){}
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(txt); copied=true; } }catch(e){swallow(e,'exportBilanMois')}
   const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
   openModal(`<h3>Bilan ${monthLabel(ym)}</h3>
     <p class="note">${copied?'Copié dans le presse-papier ✓.':'Fichier .txt téléchargé.'} <span class="act" onclick="closeModal();exportBilanMoisPDF('${ym}')">📄 Version PDF (présentable au comptable) ›</span></p>
     <textarea rows="16" style="width:100%;font-family:monospace;font-size:.76rem;white-space:pre">${esc(txt)}</textarea>
     <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button>
-      <button class="btn" onclick="(function(){const t=this.closest('.modal').querySelector('textarea');t.select();try{document.execCommand('copy');}catch(e){} toast('Copié ✓');}).call(this)">⧉ Copier</button></div>`);
+      <button class="btn" onclick="(function(){const t=this.closest('.modal').querySelector('textarea');t.select();try{document.execCommand('copy');}catch(e){swallow(e,'exportBilanMois')} toast('Copié ✓');}).call(this)">⧉ Copier</button></div>`);
 }
 // [v1284] Export PDF du bilan mensuel — mise en page imprimable avec hiérarchie typographique
 // (contrairement au .txt brut). Même pattern que les bons de préparation/étiquettes déjà dans
@@ -21728,7 +21836,7 @@ async function diagGrandsFormats(){
       const vendus = sa ? round3(sa.piecesVendues||0) : 0;
       // coût de revient calculable ?
       let coutOk=false, coutUnit=null;
-      if(rec){ try{ const c=coutRevientRecette(rec, recipeItems, lots, s, {}); coutUnit=c&&c.coutRevientUnit; coutOk=coutUnit>0; }catch(e){} }
+      if(rec){ try{ const c=coutRevientRecette(rec, recipeItems, lots, s, {}); coutUnit=c&&c.coutRevientUnit; coutOk=coutUnit>0; }catch(e){swallow(e,'diagGrandsFormats')} }
       const ok = v => v?'<span style="color:#3f7d52">✓</span>':'<span style="color:#b3261e">✗</span>';
       const pbs=[];
       if(!aRecette) pbs.push('pas de recette');
@@ -21888,8 +21996,8 @@ async function _chargeMesuresMO(settings){
   const s = settings || (typeof getSettings==='function'?getSettings():{});
   const out = { mesureParRec:null, mesureGlobal:null };
   if(!(s.laborEnabled && s.laborSource==='mesure')) return out;
-  try{ const tl = await prodTempsLissePerMacaron(90); if(tl && tl.fiable) out.mesureGlobal = tl.minParMacaron; }catch(_){}
-  try{ out.mesureParRec = await prodTempsParParfum(90); }catch(_){}
+  try{ const tl = await prodTempsLissePerMacaron(90); if(tl && tl.fiable) out.mesureGlobal = tl.minParMacaron; }catch(e){swallow(e,'_chargeMesuresMO')}
+  try{ out.mesureParRec = await prodTempsParParfum(90); }catch(e){swallow(e,'_chargeMesuresMO')}
   return out;
 }
 
@@ -22436,7 +22544,7 @@ async function computeStrategic(){
   const nbCmd = paidHorsEvent.length;
   const caPayeHorsEvent = money2(paidHorsEvent.reduce((s,o)=>s+computeOrderMargins(o,recipes,recipeItems,lots).ca, 0));
   const panier = nbCmd>0 ? money2(caPayeHorsEvent/nbCmd) : 0;
-  const since=new Date(now-90*86400000).toISOString().slice(0,10);
+  const since=ymdLocal(new Date(now-90*86400000));
   const activeIds = new Set(paid.filter(o=>o.date&&o.date>=since && o.clientId).map(o=>o.clientId));
   const activeClients = activeIds.size;
   const totalClients = clients.length;
@@ -22707,7 +22815,7 @@ function analyzeTrends(orders, opts){
   const baisses=rows.filter(x=>x.delta<0).sort((a,b)=>a.pct-b.pct);
   const stables=rows.filter(x=>x.delta===0);
   return {hausses,baisses,stables,windowDays,
-    periode:{recentStart:recentStart.toISOString().slice(0,10), now:now.toISOString().slice(0,10)}};
+    periode:{recentStart:ymdLocal(recentStart), now:ymdLocal(now)}};
 }
 
 // Compare deux parfums (ou produits) similaires sur tout l'historique payé
@@ -22929,7 +23037,7 @@ async function computeForecast(opts){
     // seule fois sur l'horizon, puis on rattache à chaque commande le nb de chevauchements.
     try{
       const _todayStr = todayStr;
-      const _finHorizon = (()=>{ const d=new Date(_todayStr); d.setDate(d.getDate()+Math.max(14, horizon)); return d.toISOString().slice(0,10); })();
+      const _finHorizon = (()=>{ const d=new Date(_todayStr); d.setDate(d.getDate()+Math.max(14, horizon)); return ymdLocal(d); })();
       const cf = await retroConflicts(_todayStr, _finHorizon);
       if(cf && Array.isArray(cf.conflits) && cf.conflits.length){
         // orderId -> { minutes cumulées, set des commandes en conflit avec elle }
@@ -23182,7 +23290,7 @@ async function computeSalesVelocity(opts){
   // 2) Historique des ventes par parfum et par mois (commandes payées uniquement)
   const todayD = new Date(today());
   const startWindow = new Date(todayD); startWindow.setMonth(startWindow.getMonth()-lookbackMonths);
-  const startStr = startWindow.toISOString().slice(0,10);
+  const startStr = ymdLocal(startWindow);
   const soldByParfum = {};       // parfum -> total pièces vendues sur la fenêtre
   let firstSaleDate = null;
   orders.forEach(o=>{
@@ -23206,7 +23314,7 @@ async function computeSalesVelocity(opts){
     const perMonth = round3(perDay*30);
     const joursRestants = perDay>0 ? Math.floor(stock/perDay) : null; // null = aucune vente récente
     let dateRupture=null;
-    if(joursRestants!=null){ const d=new Date(todayD); d.setDate(d.getDate()+joursRestants); dateRupture=d.toISOString().slice(0,10); }
+    if(joursRestants!=null){ const d=new Date(todayD); d.setDate(d.getDate()+joursRestants); dateRupture=ymdLocal(d); }
     const alerte = joursRestants!=null && joursRestants<=horizon;
     return {parfum:nom, stock, vendu, perDay:round3(perDay), perMonth, joursRestants, dateRupture, alerte};
   }).filter(l=>l.stock>0 || l.vendu>0)
@@ -23228,7 +23336,7 @@ async function computeMarketSelection(opts){
   opts = opts || {};
   const recipes = await db.recipes.toArray().catch(()=>[]);
   let velo = {lignes:[], hasData:false};
-  try{ velo = await computeSalesVelocity({months:opts.months||3, horizonDays:14}); }catch(e){}
+  try{ velo = await computeSalesVelocity({months:opts.months||3, horizonDays:14}); }catch(e){swallow(e,'computeMarketSelection')}
   let profByNom = {};
   try{
     const _recipeItems = await db.recipeItems.toArray();
@@ -23242,7 +23350,7 @@ async function computeMarketSelection(opts){
     const A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats:_mats,
       orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, settings:_settings});
     (A.lignes||A||[]).forEach(l=>{ if(l && l.parfum) profByNom[l.parfum]=l; });
-  }catch(e){}
+  }catch(e){swallow(e,'computeMarketSelection')}
   const veloByNom = {}; (velo.lignes||[]).forEach(l=>{ veloByNom[l.parfum]=l; });
   const allNoms = new Set([...Object.keys(veloByNom), ...Object.keys(profByNom), ...recipes.map(r=>r.produitNom)]);
   const lignes = [];
@@ -23472,7 +23580,7 @@ async function renderStats(){
   const R = computeStats(orders, clients, orderToLines);
   // Bilan financier mensuel : réutilise le moteur comptable (CA encaissé, charges, résultat)
   // pour éviter toute logique parallèle — la compta reste la source de vérité.
-  let bilan=[]; try{ const A=await computeAccounting(); bilan=(A.serie||[]).slice().sort((a,b)=>(b.mois||'').localeCompare(a.mois||'')); }catch(e){}
+  let bilan=[]; try{ const A=await computeAccounting(); bilan=(A.serie||[]).slice().sort((a,b)=>(b.mois||'').localeCompare(a.mois||'')); }catch(e){swallow(e,'renderStats')}
   const G = R.global;
   const moisKeys = Object.keys(G.parMois).sort();
   const fmtMois = k => { const [y,m]=k.split('-'); return ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'][(+m||1)-1]+' '+(y||'').slice(2); };
@@ -23633,7 +23741,7 @@ async function comptaDetail(type){
   } else if(type==='matieres'){
     titre='Coût matières + emballage — détail par commande';
     let _rec=[], _items=[], _lots=[], _mats=[];
-    try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); _mats=await db.materials.toArray(); }catch(e){}
+    try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); _mats=await db.materials.toArray(); }catch(e){swallow(e,'comptaDetail')}
     // Encart : explique le ratio €/macaron utilisé pour estimer l'emballage des données migrées.
     const rC = (typeof _embEstRatioCommandes!=='undefined') ? _embEstRatioCommandes : null;
     const nC = (typeof _embEstRefInfo!=='undefined' && _embEstRefInfo) ? _embEstRefInfo.n : 0;
@@ -23646,7 +23754,7 @@ async function comptaDetail(type){
     </div></div>`;
     orders.forEach(o=>{
       let cm=0, ce=0, cest=0;
-      try{ const mg=computeOrderMargins(o, _rec, _items, _lots, _mats); cm=money2(mg.coutMat||0); ce=money2(mg.coutEmb||0); cest=money2(mg.coutEmbEstime||0); }catch(e){}
+      try{ const mg=computeOrderMargins(o, _rec, _items, _lots, _mats); cm=money2(mg.coutMat||0); ce=money2(mg.coutEmb||0); cest=money2(mg.coutEmbEstime||0); }catch(e){swallow(e,'comptaDetail')}
       const tot=money2(cm+ce);
       const embLbl = ce>0 ? (' + emb. '+euro(ce)+(cest>0?' <span style="color:#d98324">(estimé)</span>':'')) : '';
       if(tot>0){ lignes.push({h:`<div class="sum-box lnk" onclick="closeModal();cmdForm(${o.id})"><span>${esc(fmtDate(o.date))} <span style="color:#9a8a82">#${o.id} · matières ${euro(cm)}${embLbl}</span></span><b>${euro(tot)} ${NAV_GO}</b></div>`, v:tot}); }
@@ -23654,13 +23762,13 @@ async function comptaDetail(type){
   } else if(type==='resultat'){
     // Le résultat est un calcul, pas une liste : on montre sa décomposition.
     let _rec=[], _items=[], _lots=[];
-    try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); }catch(e){}
+    try{ _rec=await db.recipes.toArray(); _items=await db.recipeItems.toArray(); _lots=await db.materialLots.toArray(); }catch(e){swallow(e,'comptaDetail')}
     let enc=0; orders.forEach(o=>{
       const pays=paiementsDe(o);
       pays.forEach(p=>{ if(inPeriode(p.date)) enc=money2(enc+money2(p.montant)); });
     });
     markets.filter(k=>k.statut==='clos').forEach(k=>{ enc=money2(enc+((typeof marketNetCA==='function')?money2(marketNetCA(k)):0)); });
-    let cm=0; orders.forEach(o=>{ try{ cm=money2(cm+money2(computeOrderMargins(o,_rec,_items,_lots).coutMat||0)); }catch(e){} });
+    let cm=0; orders.forEach(o=>{ try{ cm=money2(cm+money2(computeOrderMargins(o,_rec,_items,_lots).coutMat||0)); }catch(e){swallow(e,'comptaDetail')} });
     let ch=0; charges.forEach(c=>{ ch=money2(ch+money2(+c.montant||0)); });
     const res=money2(enc-cm-ch);
     openModal(`<h3>Résultat (encaissé) — comment il se calcule</h3>
@@ -23789,7 +23897,7 @@ async function comptaFluxDetail(type){
       marketsF.forEach(k=>{ if(k.statut!=='clos' || !inRange(k.date)) return;
         const net=(typeof marketNetCA==='function')?marketNetCA(k):0; if(net<=0) return; total+=net;
         lignes.push({date:k.date, nom:'🛒 '+(k.nom||'Marché'), montant:net, oid:null, sub:'marché'}); });
-    }catch(e){}
+    }catch(e){swallow(e,'comptaFluxDetail')}
   } else {
     // CA encaissé = chaque PAIEMENT dont la date est dans la période + marchés clôturés.
     // [A11-fix] Reprises exclues, comme computeAccounting (totalEncaisse) : une reprise d'historique
@@ -23808,7 +23916,7 @@ async function comptaFluxDetail(type){
       markets.forEach(k=>{ if(k.statut!=='clos' || !inRange(k.date)) return;
         const net=(typeof marketNetCA==='function')?marketNetCA(k):0; if(net<=0) return; total+=net;
         lignes.push({date:k.date, nom:'🛒 '+(k.nom||'Marché'), montant:net, oid:null, sub:'marché'}); });
-    }catch(e){}
+    }catch(e){swallow(e,'comptaFluxDetail')}
   }
   lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   reprisesLignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
@@ -25090,9 +25198,9 @@ async function scTelechargerVisuels(id){
         const url=URL.createObjectURL(blob); const a=document.createElement('a');
         a.href=url; a.download='sensations_'+(p.titre||'post').replace(/[^\w]+/g,'_').slice(0,24)+'_'+String(i+1).padStart(2,'0')+'.png';
         document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){} },4000);
+        setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){swallow(e,'scTelechargerVisuels')} },4000);
       }
-    }catch(e){}
+    }catch(e){swallow(e,'scTelechargerVisuels')}
     await new Promise(r=>setTimeout(r,350));
   }
   toast('✅ '+p.visuels.length+' visuels');
@@ -26714,12 +26822,12 @@ async function cvBlocInserer(id){
   }catch(e){ toast('Insertion impossible'); }
 }
 async function cvBlocSupprimer(id){
-  try{ await db.blocs.delete(id); renderCarrousel(); }catch(e){}
+  try{ await db.blocs.delete(id); renderCarrousel(); }catch(e){swallow(e,'cvBlocSupprimer')}
 }
 // Rendu HTML de la bibliothèque, filtrée par type (pour l'étape texte du wizard).
 async function cvBlocsHTML(type){
   let items=[];
-  try{ items=await db.blocs.where('type').equals(type).reverse().sortBy('createdAt'); }catch(e){}
+  try{ items=await db.blocs.where('type').equals(type).reverse().sortBy('createdAt'); }catch(e){swallow(e,'cvBlocsHTML')}
   if(!items.length) return '';
   const chips=items.slice(0,12).map(b=>{
     const court=esc(b.texte.length>42?b.texte.slice(0,42)+'…':b.texte);
@@ -26798,9 +26906,9 @@ function cvChargerPhoto(input){
     const s=cvS(); s.photo=img; s.photoName=file.name||'photo';
     if(s.gabarit==='uni') s.gabarit='pleincadre';
     cvDrawPreview(); cvSyncControls(); cvRefreshStrip();
-    setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(e){} }, 3000);
+    setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(e){swallow(e,'cvChargerPhoto')} }, 3000);
   };
-  img.onerror = ()=>{ toast('Image illisible — réessaie'); try{ URL.revokeObjectURL(url); }catch(e){} };
+  img.onerror = ()=>{ toast('Image illisible — réessaie'); try{ URL.revokeObjectURL(url); }catch(e){swallow(e,'cvChargerPhoto')} };
   img.src = url;
 }
 function cvRetirerPhoto(){
@@ -27166,7 +27274,7 @@ function cvEdImportPhoto(){
     const url=URL.createObjectURL(file); const img=new Image();
     img.onload=()=>{ const s=cvS(); s.photo=img; s.photoName=file.name||'photo';
       if(s.gabarit==='uni') s.gabarit='pleincadre';
-      cvEdRedraw(); setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){} },3000); };
+      cvEdRedraw(); setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){swallow(e,'cvEdImportPhoto')} },3000); };
     img.onerror=()=>{ toast('Image illisible — réessaie'); };
     img.src=url;
   };
@@ -27477,7 +27585,7 @@ function cvStripPointerDown(e){
   // Appui long → bascule en mode déplacement.
   _stripDrag.timer=setTimeout(()=>{
     _stripDrag.active=true;
-    if(navigator.vibrate) try{ navigator.vibrate(15); }catch(_){}
+    if(navigator.vibrate) try{ navigator.vibrate(15); }catch(e){swallow(e,'cvStripPointerDown')}
     if(_stripDrag.el){ _stripDrag.el.style.transform='scale(1.12)'; _stripDrag.el.style.opacity='0.85';
       _stripDrag.el.style.transition='transform .1s'; _stripDrag.el.style.zIndex='5'; }
     cvGoSlide(_stripDrag.idx);
@@ -27544,7 +27652,7 @@ function cvTelecharger(blob,nom){
   if(!blob){ toast('Export impossible'); return; }
   const url=URL.createObjectURL(blob); const a=document.createElement('a');
   a.href=url; a.download=nom; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){} },4000);
+  setTimeout(()=>{ try{URL.revokeObjectURL(url);}catch(e){swallow(e,'cvTelecharger')} },4000);
 }
 // Export de la slide active (partage iOS si dispo).
 async function cvExporter(){
@@ -27558,7 +27666,7 @@ async function cvExporter(){
         return;
       }
     }
-  }catch(e){}
+  }catch(e){swallow(e,'cvExporter')}
   cvTelecharger(blob,nom); toast('💾 Slide exportée');
 }
 // Export de TOUT le carrousel (séquentiel, pour ne pas saturer iOS).
@@ -29908,7 +30016,7 @@ async function prospectAdvance(id){
 async function prospectLogForm(id){
   const p=await db.prospects.get(id); if(!p) return;
   const histo=(p.histo||[]).slice().reverse();
-  const histoHtml = histo.length ? histo.map(h=>`<div style="font-size:.78rem;padding:5px 0;border-top:1px solid #f0e9e2"><span style="color:#9a8a82">${fmtDate(new Date(h.ts).toISOString().slice(0,10))}</span> · ${esc(h.action)}</div>`).join('') : '<p class="note">Aucune action notée pour l\'instant.</p>';
+  const histoHtml = histo.length ? histo.map(h=>`<div style="font-size:.78rem;padding:5px 0;border-top:1px solid #f0e9e2"><span style="color:#9a8a82">${fmtDate(ymdLocal(new Date(h.ts)))}</span> · ${esc(h.action)}</div>`).join('') : '<p class="note">Aucune action notée pour l\'instant.</p>';
   openModal(`<h3>📝 Action — ${esc(p.nom)}</h3>
     <div class="field"><label>Qu'as-tu fait ?</label>
       <select id="pr_act_type">
@@ -30662,7 +30770,7 @@ function marketMargePopup(){ _marketPopup({titre:'⛺ Marge nette par marché', 
 function marketInvendusPopup(){ _marketPopup({titre:'⛺ Taux d\'invendus par marché', note:'Part des macarons embarqués non vendus (retour + don + perte). Ici 🟢 = peu d\'invendus (mieux), 🔴 = beaucoup (à corriger : moins produire ou mieux vendre).', val:T=>T.tauxInvendus, fmt:v=>v+'%', lowerIsBetter:true, asc:true}); }
 // ÉTAPE 1 — Modale du gaspillage chiffré (retours jetés × coût complet).
 function _gaspDismissed(){ try{ return localStorage.getItem('sm_gasp_ready_dismiss')==='1'; }catch(e){ return false; } }
-function _gaspDismiss(){ try{ localStorage.setItem('sm_gasp_ready_dismiss','1'); }catch(e){} if(typeof renderDash==='function' && view==='dash') renderDash(); toast('Rappel masqué — tu retrouveras le gaspillage dans l\'écran Marchés'); }
+function _gaspDismiss(){ try{ localStorage.setItem('sm_gasp_ready_dismiss','1'); }catch(e){swallow(e,'_gaspDismiss')} if(typeof renderDash==='function' && view==='dash') renderDash(); toast('Rappel masqué — tu retrouveras le gaspillage dans l\'écran Marchés'); }
 let _gaspPeriode = 'tout';
 async function gaspillagePopup(){
   const start = _gaspPeriode==='tout' ? null : comptaPeriodeStart(_gaspPeriode);
@@ -31612,7 +31720,7 @@ async function renderAnalyse(){
    ============================================================ */
 async function renderForecast(){
   // [v1253] Cache recettes à jour : le panneau « coques par couleur » lit les couleurs des recettes.
-  try{ if(typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(_){}
+  try{ if(typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(e){swallow(e,'renderForecast')}
   const f = await computeForecast({horizon:8});
   const dateBadge = (d,dans)=>{
     if(d==null) return '—';
@@ -31995,7 +32103,7 @@ function aiParseNumber(txt){
 function aiParseDate(txt, base){
   const d = base ? new Date(base) : new Date();
   const jours={dimanche:0,lundi:1,mardi:2,mercredi:3,jeudi:4,vendredi:5,samedi:6};
-  if(/\baujourd'?hui\b/.test(txt)){ return d.toISOString().slice(0,10); }
+  if(/\baujourd'?hui\b/.test(txt)){ return ymdLocal(d); }
   // [V936] Échéances relatives « dans/d'ici/sous N jour(s)/semaine(s)/mois ». On accepte le nombre en
   // chiffres OU en lettres (un, deux, une…). Testé AVANT « demain » et les jours de semaine.
   {
@@ -32011,24 +32119,24 @@ function aiParseDate(txt, base){
         if(/^jour/.test(unite)) d.setDate(d.getDate()+n);
         else if(/^(semaine|sem)/.test(unite)) d.setDate(d.getDate()+n*7);
         else if(/^mois/.test(unite)) d.setDate(d.getDate()+n*30);
-        return d.toISOString().slice(0,10);
+        return ymdLocal(d);
       }
     }
     // « la semaine prochaine » / « semaine pro » → +7 ; « le mois prochain » → +30
-    if(/\b(la )?semaine prochaine\b|\bsemaine pro\b/.test(txt)){ d.setDate(d.getDate()+7); return d.toISOString().slice(0,10); }
-    if(/\b(le )?mois prochain\b/.test(txt)){ d.setDate(d.getDate()+30); return d.toISOString().slice(0,10); }
-    if(/\bce week ?end\b|\bce weekend\b/.test(txt)){ const target=6; let delta=(target-d.getDay()+7)%7; d.setDate(d.getDate()+delta); return d.toISOString().slice(0,10); }
+    if(/\b(la )?semaine prochaine\b|\bsemaine pro\b/.test(txt)){ d.setDate(d.getDate()+7); return ymdLocal(d); }
+    if(/\b(le )?mois prochain\b/.test(txt)){ d.setDate(d.getDate()+30); return ymdLocal(d); }
+    if(/\bce week ?end\b|\bce weekend\b/.test(txt)){ const target=6; let delta=(target-d.getDay()+7)%7; d.setDate(d.getDate()+delta); return ymdLocal(d); }
   }
   // « après-demain » DOIT être testé AVANT « demain » : sinon /\bdemain\b/ matche
   // l'intérieur de « apres-demain » (le tiret/espace est une frontière de mot) et on
   // se tromperait d'un jour. On tolère le tiret ou l'espace entre « apres » et « demain ».
-  if(/\bapres[-\s]demain\b/.test(txt)){ d.setDate(d.getDate()+2); return d.toISOString().slice(0,10); }
-  if(/\bdemain\b/.test(txt)){ d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); }
+  if(/\bapres[-\s]demain\b/.test(txt)){ d.setDate(d.getDate()+2); return ymdLocal(d); }
+  if(/\bdemain\b/.test(txt)){ d.setDate(d.getDate()+1); return ymdLocal(d); }
   for(const j in jours){
     if(new RegExp('\\b'+j+'\\b').test(txt)){
       // prochain jour de semaine correspondant
       const target=jours[j]; let delta=(target - d.getDay() + 7) % 7; if(delta===0) delta=7;
-      d.setDate(d.getDate()+delta); return d.toISOString().slice(0,10);
+      d.setDate(d.getDate()+delta); return ymdLocal(d);
     }
   }
   // date explicite jj/mm ou jj/mm/aaaa
@@ -32220,7 +32328,7 @@ function aiCorrigeFautes(tNorm){
 // « ces 3 derniers mois », « ce mois », « cette année », « cette semaine ». null = tout l'historique.
 function _aiParsePeriode(t){
   const now = new Date();
-  const iso = d => d.toISOString().slice(0,10);
+  const iso = d => ymdLocal(d);
   let m = t.match(/\b(\d+)\s*(mois|semaine|semaines|jour|jours|an|ans|annee|annees)\b/);
   if(m){
     const n = +m[1]; const u = m[2]; const d = new Date(now);
@@ -33224,7 +33332,7 @@ async function calculateSerenityScore(opts){
   const perPieceMin = (()=>{ const arr=recipes.map(r=>{ const rend=+r.rendement>0?+r.rendement:60; return (Math.max(0,+r.minParBatch||0))/rend; }).filter(x=>x>0); return arr.length?arr.reduce((a,x)=>a+x,0)/arr.length:0; })();
   // commandes validées des N prochains jours (non livrées)
   const todayStr = today();
-  const horizonDate = (()=>{ const d=new Date(todayStr); d.setDate(d.getDate()+horizon); return d.toISOString().slice(0,10); })();
+  const horizonDate = (()=>{ const d=new Date(todayStr); d.setDate(d.getDate()+horizon); return ymdLocal(d); })();
   // commandes validées des N prochains jours, NON livrées ET NON terminées :
   // une commande « Terminée » (prête, déjà produite) ne pèse plus sur la sérénité.
   const fenetre = orders.filter(o=> o.date && o.date>=todayStr && o.date<=horizonDate
@@ -33486,7 +33594,7 @@ function aiUsageLog(intent, ask){
     const keys=Object.keys(u);
     if(keys.length>40){ keys.sort((x,y)=>(u[x].last||0)-(u[y].last||0)); delete u[keys[0]]; }
     localStorage.setItem(AI_USAGE_KEY, JSON.stringify(u));
-  }catch(_){}
+  }catch(e){swallow(e,'aiUsageLog')}
 }
 // Boosts contextuels : le matin → ordonnancement/commandes ; ven/sam → marché.
 const AI_BOOST_MATIN=new Set(['query_ordo','query_production_needs','query_orders','query_dlc_matieres']);
@@ -33566,7 +33674,7 @@ function aiSemaineRange(offset){
 // ---- D2. Courses perso (localStorage, hors calcul de besoin) ----
 const AI_COURSES_KEY='sm_coursesExtra';
 function aiCoursesExtra(){ try{ return JSON.parse(localStorage.getItem(AI_COURSES_KEY)||'[]')||[]; }catch(_){ return []; } }
-function aiCoursesSave(l){ try{ localStorage.setItem(AI_COURSES_KEY, JSON.stringify(l.slice(0,60))); }catch(_){} }
+function aiCoursesSave(l){ try{ localStorage.setItem(AI_COURSES_KEY, JSON.stringify(l.slice(0,60))); }catch(e){swallow(e,'aiCoursesSave')} }
 // « 2 kg de sucre » / « 500 g farine » / « du papier sulfurisé » → {qte, unite, nom}
 function aiParseArticle(txt){
   const t=String(txt||'').trim().replace(/^(du |de la |des |de l')/i,'');
@@ -33597,8 +33705,8 @@ function aiRepondreSuggestions(texte){
 async function aiQueryBilanSemaine(){
   const S0=aiSemaineRange(0), S1=aiSemaineRange(-1);
   let R0=null, R1=null;
-  try{ R0=await revenuHoraireCalcul({start:S0.start, end:S0.end}); }catch(e){}
-  try{ R1=await revenuHoraireCalcul({start:S1.start, end:S1.end}); }catch(e){}
+  try{ R0=await revenuHoraireCalcul({start:S0.start, end:S0.end}); }catch(e){swallow(e,'aiQueryBilanSemaine')}
+  try{ R1=await revenuHoraireCalcul({start:S1.start, end:S1.end}); }catch(e){swallow(e,'aiQueryBilanSemaine')}
   const ca0=R0?+R0.caEncaisse||0:0, ca1=R1?+R1.caEncaisse||0:0;
   const marge0=R0?money2(ca0-(+R0.coutMatieres||0)):0;
   const dCA=ca1>0?Math.round(100*(ca0-ca1)/ca1):null;
@@ -33615,7 +33723,7 @@ async function aiQueryBilanSemaine(){
       if(r){ par[r.produitNom]=(par[r.produitNom]||0)+(+it.qte||0); }
     });
     Object.keys(par).forEach(k=>{ if(par[k]>topQ){ topQ=par[k]; topNom=k; } });
-  }catch(e){}
+  }catch(e){swallow(e,'aiQueryBilanSemaine')}
   // temps d'atelier de la semaine (tâches avec début ET fin)
   let minutes=0;
   try{
@@ -33624,10 +33732,10 @@ async function aiQueryBilanSemaine(){
       const a=+t.start||0, b=+t.end||+t.stop||0;
       if(a>=t0&&a<=t1&&b>a) minutes+=(b-a)/60000;
     }));
-  }catch(e){}
+  }catch(e){swallow(e,'aiQueryBilanSemaine')}
   // pertes de la semaine
   let nbPertes=0, coutPertes=0;
-  try{ (await db.losses.toArray()).filter(l=>l.date>=S0.start&&l.date<=S0.end).forEach(l=>{ nbPertes+=+l.qte||0; coutPertes+=+l.coutTotal||0; }); }catch(e){}
+  try{ (await db.losses.toArray()).filter(l=>l.date>=S0.start&&l.date<=S0.end).forEach(l=>{ nbPertes+=+l.qte||0; coutPertes+=+l.coutTotal||0; }); }catch(e){swallow(e,'aiQueryBilanSemaine')}
   // sparkline CA commandes sur 8 semaines
   let spark='';
   try{
@@ -33636,7 +33744,7 @@ async function aiQueryBilanSemaine(){
     for(let i=-7;i<=0;i++){ const w=aiSemaineRange(i);
       serie.push(orders.filter(o=>o.date>=w.start&&o.date<=w.end&&['Livrée','Terminée'].includes((typeof normStatus==='function')?normStatus(o.statut):o.statut)).reduce((s,o)=>s+(+o.montant||0),0)); }
     spark=aiSpark(serie,{w:170});
-  }catch(e){}
+  }catch(e){swallow(e,'aiQueryBilanSemaine')}
   const tone=dCA==null?'':dCA>=0?'ok':'warn';
   const synth = ca0<=0 && pieces<=0
     ? `Semaine calme côté encaissements pour l'instant — rien d'encaissé du ${fmtDate(S0.start)} au ${fmtDate(S0.end)}.`
@@ -33653,7 +33761,7 @@ async function aiQueryBilanSemaine(){
 
 // ---- C. Simulateur « et si ? » ----
 async function _aiSeuilBase(){
-  let R=null; try{ R=await revenuHoraireCalcul(30); }catch(e){}
+  let R=null; try{ R=await revenuHoraireCalcul(30); }catch(e){swallow(e,'_aiSeuilBase')}
   const charges=R?+R.chargesFixes||0:0;
   // Prix de vente moyen sur les VRAIES ventes (commandes + marchés clos), pas des tableaux vides.
   let prix=2;
@@ -33663,7 +33771,7 @@ async function _aiSeuilBase(){
       const r=computeAvgSellPrice({orders, markets, settings:getSettings()});
       prix=(r&&+r.prix>0)?+r.prix:2;
     }
-  }catch(_){}
+  }catch(e){swallow(e,'_aiSeuilBase')}
   const ca=R?+R.caEncaisse||0:0, coutMat=R?+R.coutMatieres||0:0;
   const ratio=ca>0?coutMat/ca:0.25;
   const margeUnit=Math.max(0.01, prix*(1-ratio));
@@ -33678,7 +33786,7 @@ async function aiQueryEtSiPrix(params){
   const rec=recipes.find(r=>hint&&nt(r.produitNom).includes(nt(hint).trim())) ||
             recipes.find(r=>nt(hint).includes(nt(r.produitNom)));
   if(!rec) return aiSay(`<p>Je n'ai pas reconnu le parfum${hint?` « ${esc(hint)} »`:''}. Reformule avec le nom exact de la recette (ex. « et si je vends la Framboise à 2,20 ? »).</p>`);
-  let cr=null; try{ cr=coutRevientRecette(rec, recipeItems, lots); }catch(e){}
+  let cr=null; try{ cr=coutRevientRecette(rec, recipeItems, lots); }catch(e){swallow(e,'aiQueryEtSiPrix')}
   if(!cr) return aiSay(`<p>Impossible de chiffrer le coût de ${esc(rec.produitNom)} pour le moment.</p>`);
   const coutUnit=money2((+cr.coutMatUnit||0)+(+cr.coutConsoUnit||0)+(+cr.coutMODUnit||0));
   const marge=money2(prixNv-coutUnit);
@@ -33717,7 +33825,7 @@ async function aiActionPerte(params){
   if(!cands.length) return aiSay(`<p>Aucun lot${hint?` de « ${esc(hint)} »`:''} avec au moins ${qty(n)} pièce(s) en stock. Vérifie le stock ou passe par l'écran Productions.</p>`);
   const {p, r}=cands[0];
   if(!confirm(`Déclarer une perte de ${n} pièce(s) sur « ${r.produitNom} » (lot ${p.lotProduction||('#'+p.id)}, stock ${qty(p.qteRestante)}) ?`)) return aiSay(`<p class="note">Perte annulée — rien n'a été enregistré.</p>`);
-  let coutUnit=0; try{ const cr=coutRevientRecette(r, recipeItems, lots); coutUnit=lossUnitCost(prodComposant(p), cr, mats); }catch(e){}
+  let coutUnit=0; try{ const cr=coutRevientRecette(r, recipeItems, lots); coutUnit=lossUnitCost(prodComposant(p), cr, mats); }catch(e){swallow(e,'aiActionPerte')}
   const loss={productionId:p.id, recipeId:r.id, lotProduction:p.lotProduction||'', date:today(),
     motif:'Perte déclarée (copilote)', note:'', qte:round3(n), coutUnit:money2(coutUnit), coutTotal:money2(coutUnit*n)};
   const avant=round3(+p.qteRestante||0);
@@ -33910,10 +34018,10 @@ const PLAN_PRIO_DEFAULT = ['commande','rupture','antigaspi','reassort'];
 const PLAN_PRIO_LABEL = {commande:'Commandes fermes', rupture:'Ruptures imminentes', antigaspi:'Anti-gaspi (DLC matières)', reassort:'Réassort de confort'};
 function planPrioOrder(){
   try{ const a=JSON.parse(localStorage.getItem(PLAN_PRIO_KEY)||'null');
-    if(Array.isArray(a) && a.length===4 && PLAN_PRIO_DEFAULT.every(k=>a.includes(k))) return a; }catch(e){}
+    if(Array.isArray(a) && a.length===4 && PLAN_PRIO_DEFAULT.every(k=>a.includes(k))) return a; }catch(e){swallow(e,'planPrioOrder')}
   return [...PLAN_PRIO_DEFAULT];
 }
-function planPrioSave(arr){ try{ localStorage.setItem(PLAN_PRIO_KEY, JSON.stringify(arr)); }catch(e){} }
+function planPrioSave(arr){ try{ localStorage.setItem(PLAN_PRIO_KEY, JSON.stringify(arr)); }catch(e){swallow(e,'planPrioSave')} }
 
 // Coques en stock par parfum, en NOMBRE DE COQUES (pas en macarons).
 // 1 macaron = 2 coques. Le plan déduira ces coques du besoin de coques (besoin macarons × 2).
@@ -34482,7 +34590,7 @@ async function ordoLancer(mode){
 // si fiable, sinon moyenne lissée), et le compare à la dispo cumulée sur l'horizon (14 j).
 async function ordoEstimeTemps(needs){
   let minParMac=null, lisseFiable=false, tppMap={};
-  try{ const tl=await prodTempsLissePerMacaron(90); minParMac=(tl&&tl.minParMacaron)?tl.minParMacaron:null; lisseFiable=!!(tl&&tl.fiable); }catch(e){}
+  try{ const tl=await prodTempsLissePerMacaron(90); minParMac=(tl&&tl.minParMacaron)?tl.minParMacaron:null; lisseFiable=!!(tl&&tl.fiable); }catch(e){swallow(e,'ordoEstimeTemps')}
   try{ tppMap=(typeof prodTempsParParfum==='function')?await prodTempsParParfumParNom(90):{}; }catch(e){ tppMap={}; }
   if(minParMac==null && !Object.keys(tppMap).length) return null;   // aucune donnée de temps
   const minParMacDe = parfum=>{
@@ -34506,9 +34614,9 @@ async function ordoEstimeTemps(needs){
     planningRenseigne=!!(conf&&(hasSlot(conf.weekA)||hasSlot(conf.weekB)));
     if(typeof availableMinutesUntil==='function'){
       const fin=new Date(); fin.setDate(fin.getDate()+14);
-      dispoMin=availableMinutesUntil(fin.toISOString().slice(0,10),'23:59',conf);
+      dispoMin=availableMinutesUntil(ymdLocal(fin),'23:59',conf);
     }
-  }catch(e){}
+  }catch(e){swallow(e,'ordoEstimeTemps')}
   return {
     totMac, totMin:Math.round(totMin),
     minParMacMoyen: totMac>0 ? Math.round(totMin/totMac*10)/10 : null,
@@ -34986,7 +35094,7 @@ async function commandesEnRetard(opts){
   const horizon = opts.horizon || 21;   // on regarde un peu plus loin que 14 j pour anticiper
   const now = new Date();
   const startStr = today();
-  const endStr = (()=>{ const d=new Date(startStr); d.setDate(d.getDate()+horizon); return d.toISOString().slice(0,10); })();
+  const endStr = (()=>{ const d=new Date(startStr); d.setDate(d.getDate()+horizon); return ymdLocal(d); })();
 
   const [orders, recipes, clients] = await Promise.all([
     db.orders.toArray().catch(()=>[]),
@@ -35007,7 +35115,7 @@ async function commandesEnRetard(opts){
 
     // Rétroplanning de la commande.
     let rp = null;
-    try{ rp = (typeof retroplanningCommande==='function') ? retroplanningCommande(o, recipes) : null; }catch(e){}
+    try{ rp = (typeof retroplanningCommande==='function') ? retroplanningCommande(o, recipes) : null; }catch(e){swallow(e,'commandesEnRetard')}
     if(!rp || rp.error || !Array.isArray(rp.jalons)) return;
 
     // Jalons de TRAVAIL dont la date de lancement est déjà passée.
@@ -35116,7 +35224,7 @@ async function atelierBrain(opts){
   opts = opts || {};
   const horizon = opts.horizon || 14;
   const startStr = today();
-  const endStr = (()=>{ const d=new Date(startStr); d.setDate(d.getDate()+horizon); return d.toISOString().slice(0,10); })();
+  const endStr = (()=>{ const d=new Date(startStr); d.setDate(d.getDate()+horizon); return ymdLocal(d); })();
 
   // --- 1) PLAN : que faut-il produire sous 14 j ? (commandes, réassort, rupture, anti-gaspi)
   let planItems = [];
@@ -35303,7 +35411,7 @@ async function atelierBrain(opts){
   // On agrège ensuite les pièces par parfum sur l'ensemble des marchés.
   const mkMixMode = ['croise','mienne','histo'].includes(opts.marketMixMode) ? opts.marketMixMode : 'croise';
   let marketCible = [];
-  try{ const st=(typeof getSettings==='function')?getSettings():{}; marketCible = Array.isArray(st.marketMix)?st.marketMix:[]; }catch(e){}
+  try{ const st=(typeof getSettings==='function')?getSettings():{}; marketCible = Array.isArray(st.marketMix)?st.marketMix:[]; }catch(e){swallow(e,'atelierBrain')}
   const marketHisto = (mkForecast && Array.isArray(mkForecast.repartition)) ? mkForecast.repartition : [];
 
   // Net à produire par marché = sa part du net total, au prorata de son volume.
@@ -35324,7 +35432,7 @@ async function atelierBrain(opts){
       if(totMix>0) lignesM = m.mkMix.map(x=>({ parfum:x.parfum, pieces: Math.round(netM*(+x.mac||0)/totMix) }));
     } else {
       // Pas d'ajustement : cible globale croisée appliquée au net de ce marché.
-      try{ const v=marketVentilation(marketCible, marketHisto, netM, {mode:mkMixMode}); lignesM=v.lignes||[]; }catch(e){}
+      try{ const v=marketVentilation(marketCible, marketHisto, netM, {mode:mkMixMode}); lignesM=v.lignes||[]; }catch(e){swallow(e,'atelierBrain')}
     }
     lignesM.forEach(l=>{
       const k=(typeof aiNormalize==='function')?aiNormalize(l.parfum):(l.parfum||'').toLowerCase();
@@ -35625,7 +35733,7 @@ async function voixGenererDetails(){
   if(b.aDesRetards && Array.isArray(b.retardsLancement) && b.retardsLancement.length){
     const details=[];
     for(const r of b.retardsLancement.slice(0,5)){
-      try{ const d = await voixDetailRetard(r.orderId); if(d) details.push(d); }catch(e){}
+      try{ const d = await voixDetailRetard(r.orderId); if(d) details.push(d); }catch(e){swallow(e,'voixGenererDetails')}
     }
     if(details.length){
       blocs.push(`<div style="margin-bottom:6px"><div style="font-weight:700;color:#b3261e;margin-bottom:2px">Pourquoi ces étapes sont en retard</div>${details.join('')}</div>`);
@@ -35680,7 +35788,7 @@ async function voixDetailRetard(orderId){
   try{
     const all = (typeof commandesEnRetard==='function') ? await commandesEnRetard({horizon:21}) : [];
     retard = all.find(r=>r.orderId===orderId) || null;
-  }catch(e){}
+  }catch(e){swallow(e,'voixDetailRetard')}
   if(!retard || !retard.plusUrgent) return '';
 
   const pu = retard.plusUrgent;
@@ -35765,7 +35873,7 @@ async function renderProductionPlan(){
   const estMin = qte => (minParMac!=null && qte) ? Math.round(qte*minParMac) : null;
   // Coques déjà en stock par parfum (en macarons assemblables) : déduites du besoin de coques.
   let _coquesStock = {};
-  try{ _coquesStock = await coquesStockByParfum(); }catch(e){}
+  try{ _coquesStock = await coquesStockByParfum(); }catch(e){swallow(e,'renderProductionPlan')}
 
   // Temps disponible AUJOURD'HUI, lu depuis ton planning (disponibilité bi-hebdomadaire).
   let dispoPlanning = null;
@@ -35928,7 +36036,7 @@ async function marketMixForm(){
     db.recipes.toArray().catch(()=>[]),
     Promise.resolve((typeof getSettings==='function')?getSettings():{})
   ]);
-  let fc=null; try{ fc=(typeof marketForecast==='function')?await marketForecast():null; }catch(e){}
+  let fc=null; try{ fc=(typeof marketForecast==='function')?await marketForecast():null; }catch(e){swallow(e,'marketMixForm')}
   const histo = (fc && Array.isArray(fc.repartition)) ? fc.repartition : [];
   const histoPct = {};
   histo.forEach(h=>{ histoPct[aiNormalize(h.parfum)] = h.pct; });
@@ -36025,7 +36133,7 @@ function marketMixVolRefChange(){
 
 // Recharge les champs avec l'historique, converti EN MACARONS sur le volume de référence.
 async function marketMixUseHisto(){
-  let fc=null; try{ fc=await marketForecast(); }catch(e){}
+  let fc=null; try{ fc=await marketForecast(); }catch(e){swallow(e,'marketMixUseHisto')}
   const histo=(fc&&Array.isArray(fc.repartition))?fc.repartition:[];
   const hp={}; histo.forEach(h=>hp[aiNormalize(h.parfum)]=h.pct);
   const volRef=window._mixVolRef||200;
@@ -36068,7 +36176,7 @@ async function marketAdjustForm(id){
     db.recipes.toArray().catch(()=>[]),
     Promise.resolve((typeof getSettings==='function')?getSettings():{})
   ]);
-  let fc=null; try{ fc=(typeof marketForecast==='function')?await marketForecast():null; }catch(e){}
+  let fc=null; try{ fc=(typeof marketForecast==='function')?await marketForecast():null; }catch(e){swallow(e,'marketAdjustForm')}
   const histo = (fc && Array.isArray(fc.repartition)) ? fc.repartition : [];
   const cible = Array.isArray(st.marketMix) ? st.marketMix : [];
 
@@ -36081,7 +36189,7 @@ async function marketAdjustForm(id){
 
   // Ventilation de DÉPART = cible × historique appliquée au volume (ce que le cerveau propose).
   let ventil = {lignes:[]};
-  try{ ventil = marketVentilation(cible, histo, volume, {mode:'croise'}); }catch(e){}
+  try{ ventil = marketVentilation(cible, histo, volume, {mode:'croise'}); }catch(e){swallow(e,'marketAdjustForm')}
   const ventilByParfum = {};
   (ventil.lignes||[]).forEach(l=>{ ventilByParfum[aiNormalize(l.parfum)] = l.pieces; });
 
@@ -36200,8 +36308,8 @@ function aiActNouvelleMatiere(){ if(typeof matForm==='function') matForm(); }
 function aiActNouvelleRecette(){ if(typeof recForm==='function') recForm(); }
 function aiActLancerSession(){
   // va à l'atelier puis démarre une session de chrono (si pas déjà en cours)
-  try{ goView('atelier'); }catch(e){}
-  setTimeout(()=>{ try{ if(typeof prodSessActive==='function' && !prodSessActive() && typeof prodSessionStart==='function'){ prodSessionStart(); } if(typeof prodRenderBoard==='function') prodRenderBoard(); }catch(e){} }, 120);
+  try{ goView('atelier'); }catch(e){swallow(e,'aiActLancerSession')}
+  setTimeout(()=>{ try{ if(typeof prodSessActive==='function' && !prodSessActive() && typeof prodSessionStart==='function'){ prodSessionStart(); } if(typeof prodRenderBoard==='function') prodRenderBoard(); }catch(e){swallow(e,'aiActLancerSession')} }, 120);
 }
 
 const INTENT_SHORTCUTS = {
@@ -36316,7 +36424,7 @@ function aiShortcuts(intent, params, resultShortcuts){
     // [v1061] Pour un focus « jour », on AFFICHE la date au format lisible (29 juin) plutôt que l'ISO brut.
     let focusValAffiche = focusVal;
     if(sc.focusType==='jour' && focusVal && /^\d{4}-\d{2}-\d{2}$/.test(focusVal) && typeof fmtDate==='function'){
-      try{ focusValAffiche = fmtDate(focusVal); }catch(_){}
+      try{ focusValAffiche = fmtDate(focusVal); }catch(e){swallow(e,'aiShortcuts')}
     }
     const label = ((openId!=null || (sc.focusType && focusVal)) && sc.labelWithFocus)
       ? sc.labelWithFocus.replace('{val}', focusValAffiche||'') : sc.label;
@@ -36417,10 +36525,10 @@ function _aiTypingShow(){
     _aiTypingHide();   // jamais deux indicateurs à la fois
     const el = aiPush('bot', '<span class="typing-dots" aria-label="réponse en cours">● ● ●</span>');
     if(el){ el.classList.add('ai-typing-wrap'); _aiTypingEl = el; }
-  }catch(_){}
+  }catch(e){swallow(e,'_aiTypingShow')}
 }
 function _aiTypingHide(){
-  try{ document.querySelectorAll('.ai-typing-wrap').forEach(e=>e.remove()); }catch(_){}
+  try{ document.querySelectorAll('.ai-typing-wrap').forEach(e=>e.remove()); }catch(e){swallow(e,'_aiTypingHide')}
   _aiTypingEl = null;
 }
 function aiSay(html, resultShortcuts){
@@ -36793,9 +36901,9 @@ async function aiRun(){
 // réutilisable après une clarification (on relance l'intention d'origine sans repasser par parseIntent).
 async function _aiDispatch(r, txt, _ctx){
   // [ASSIST-PLUS] journal d'usage (habitudes) + fallback intelligent sur incompréhension.
-  try{ if(r && r.intent) aiUsageLog(r.intent, txt); }catch(_){}
+  try{ if(r && r.intent) aiUsageLog(r.intent, txt); }catch(e){swallow(e,'_aiDispatch')}
   if(r && r.intent==='unknown'){
-    try{ if(aiRepondreSuggestions(txt)) return; }catch(_){}
+    try{ if(aiRepondreSuggestions(txt)) return; }catch(e){swallow(e,'_aiDispatch')}
   }
     switch(r.intent){
       case 'query_advice': return aiQueryAdvice();
@@ -37078,7 +37186,7 @@ async function _arbitrageReassort(planOp, wk){
           });
         }
       }
-    }catch(_){}
+    }catch(e){swallow(e,'_arbitrageReassort')}
     const candidatsBruts = Object.values(parMap).filter(p=> (p.arrondi+p.velocite) > 0);
     if(!candidatsBruts.length){ diagPublish('arbitrage','♟️ Arbitrage réassort',{etat:'Aucun réassort à arbitrer cette semaine (ni arrondi ni vélocité)'}); return {candidats:[], proteges:[]}; }
     // Ganaches déjà prêtes → parfums PROTÉGÉS (on ne les réduit pas).
@@ -37119,7 +37227,7 @@ async function _arbitrageReassort(planOp, wk){
           penibUnit = +((c&&c.coutSpecUnit))||0;        // € de main d'œuvre des opérations spéciales (proxy pénibilité)
           const pv = +rec.prixVenteUnitaire || +settings.prixVenteUnitaire || 0;
           margeUnit = Math.max(0, pv - ((c&&c.coutRevientUnit)||0));
-        }catch(_){}
+        }catch(e){swallow(e,'_arbitrageReassort')}
       }
       // ── MANQUE À GAGNER PONDÉRÉ PAR NATURE (le juste milieu) ──
       // Arrondi = opportunisme : manque à gagner = marge d'opportunité seule (faible) → sacrifiable.
@@ -37253,7 +37361,7 @@ async function _diagReservationsStock(debutStr, finStr){
     const normP = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase();
     // Horizon de concurrence = les H jours QUI SUIVENT la fenêtre (depuis finStr, comme le helper du moteur).
     const dConc = new Date(finStr+'T00:00:00'); dConc.setDate(dConc.getDate()+HORIZON_CONCURRENCE);
-    const concStr = dConc.toISOString().slice(0,10);
+    const concStr = ymdLocal(dConc);
     // Besoin DANS la fenêtre [debut, fin] et réservations des commandes (fin, concurrence] hors fenêtre.
     const besoinFenetre = {};      // commandes livrables dans [debut, fin]
     const reserveProche = {};      // commandes livrables dans (fin, concurrence] — déjà promises mais hors fenêtre
@@ -37317,7 +37425,7 @@ async function _verdictSemaine(wk){
     if(!f) return null;
     // [DIAG RÉSERVATIONS] Observation : le stock compté « disponible » est-il en réalité réservé par des
     // commandes proches hors fenêtre ? Ne modifie pas le verdict, publie juste la preuve en rubrique technique.
-    try{ if(f.debut && f.fin) await _diagReservationsStock(f.debut, f.fin); }catch(_){}
+    try{ if(f.debut && f.fin) await _diagReservationsStock(f.debut, f.fin); }catch(e){swallow(e,'_verdictSemaine')}
     const charge = +f.chargePct || 0;
     let zone, emoji, titre, discours, couleur;
     if(charge <= VERDICT_SEUILS.confortable){
@@ -37534,15 +37642,15 @@ async function aiQueryAdvice(){
             const planOp = await _buildPlanOpAutonome(mut);
             arb = await _arbitrageReassort(planOp, _wkNow);
           }
-        }catch(_){}
+        }catch(e){swallow(e,'aiQueryAdvice')}
         if(v && v.html){
           let reco = '';
-          try{ if(arb && v.zone!=='confortable') reco = _recommandationReassort(v, arb) || ''; }catch(_){}
+          try{ if(arb && v.zone!=='confortable') reco = _recommandationReassort(v, arb) || ''; }catch(e){swallow(e,'aiQueryAdvice')}
           // On injecte la reco À L'INTÉRIEUR de la carte verdict (juste avant sa fermeture </div> finale).
           verdictHtml = reco ? v.html.replace(/<\/div>\s*$/, reco+'</div>') : v.html;
         }
       }
-    }catch(_){}
+    }catch(e){swallow(e,'aiQueryAdvice')}
     // [v1208] Sortie unifiée via aiSay → écrit dans le thread actif (palette ou écran) et retire
     // l'indicateur « en train d'écrire ». Le message transitoire dans #aiOut (si présent) est nettoyé.
     if(out) out.innerHTML='';
@@ -37634,7 +37742,7 @@ async function aiQueryAssemblages(){
   if(out) out.innerHTML=`<div class="panel"><p class="note">Recherche des assemblages possibles…</p></div>`;
   try{
     // Le cache recettes doit être à jour (couleurs). On le rafraîchit au besoin.
-    try{ if(!window._allRecipesCache && typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(_){}
+    try{ if(!window._allRecipesCache && typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(e){swallow(e,'aiQueryAssemblages')}
     const prods = await db.productions.toArray();
     const recName = window._prodRecName || (id=>'#'+id);
     const sugg = (typeof assemblySuggestions==='function') ? assemblySuggestions(prods, recName) : [];
@@ -37848,7 +37956,7 @@ async function aiQueryOrders(params){
       lbl="de cette semaine";
     }
     if(debut && fin){
-      const iso=x=>x.toISOString().slice(0,10);
+      const iso=x=>ymdLocal(x);
       const dDeb=iso(debut), dFin=iso(fin);
       orders=orders.filter(o=>o.date && o.date>=dDeb && o.date<=dFin);
       titrePeriode=' '+lbl;
@@ -37973,7 +38081,7 @@ async function aiQueryCourses(){
     const stock={}; lots.forEach(l=>{ stock[l.materialId]=(stock[l.materialId]||0)+(+l.qteRestante||0); });
     sousSeuil=materials.filter(m=>+m.seuil>0 && (stock[m.id]||0)<=+m.seuil)
       .map(m=>({nom:m.nom, dispo:stock[m.id]||0, seuil:+m.seuil, unite:m.unite||''}));
-  }catch(e){}
+  }catch(e){swallow(e,'aiQueryCourses')}
 
   if(!lignes.length){
     // Rien d'indispensable pour les commandes — mais on EXPLIQUE, et on relie aux seuils de confort.
@@ -38412,8 +38520,8 @@ async function _aiTempsProdDetail(nMac, parfum){
   const nbMeringues = Math.max(1, Math.ceil(n/MM));
   // Recette du parfum (pour des durées spécifiques mesurées/saisies si dispo).
   let rec=null;
-  try{ const recipes=await db.recipes.toArray(); rec=(typeof mrpFindRecipe==='function')?mrpFindRecipe(recipes,parfum):null; }catch(_){}
-  let tEtape=null; try{ tEtape=await prodTempsParEtapeParParfum(90); }catch(_){}
+  try{ const recipes=await db.recipes.toArray(); rec=(typeof mrpFindRecipe==='function')?mrpFindRecipe(recipes,parfum):null; }catch(e){swallow(e,'_aiTempsProdDetail')}
+  let tEtape=null; try{ tEtape=await prodTempsParEtapeParParfum(90); }catch(e){swallow(e,'_aiTempsProdDetail')}
   // Montage + ganache via le modèle officiel.
   let tMontage, tGanache;
   try{ const d=_dureesLignePlan(parfum, n, nbBatchs, rec, times, tEtape); tMontage=d.tMontage; tGanache=d.tGanache; }
@@ -38771,7 +38879,7 @@ async function aiQueryClient(params){
     const siens = orders.filter(o=> +o.clientId === +c.id);
     nbCmd = siens.length;
     dernier = siens.map(o=>o.date).filter(Boolean).sort().slice(-1)[0] || null;
-  }catch(_){}
+  }catch(e){swallow(e,'aiQueryClient')}
   const contact = [c.tel, c.email, c.societe].filter(Boolean).map(x=>esc(x)).join(' · ');
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">${esc(c.nom)} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${esc(c.type||'Particulier')})</span></h3>
     ${contact?`<div class="sum-box"><span>Contact</span><b style="font-weight:500">${contact}</b></div>`:''}
@@ -38785,8 +38893,8 @@ async function aiQueryClient(params){
 // (_orderRefDate, normStatus, daysTo) pour rester cohérent. Réponse ciblée : la commande la plus proche.
 // [V944] CHARGES DU MOIS. Source : computeAccounting (charges de la période courante).
 async function aiQueryCharges(){
-  let A=null; try{ A=await computeAccounting(); }catch(e){}
-  let charges=[]; try{ charges=await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]); }catch(e){}
+  let A=null; try{ A=await computeAccounting(); }catch(e){swallow(e,'aiQueryCharges')}
+  let charges=[]; try{ charges=await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]); }catch(e){swallow(e,'aiQueryCharges')}
   const mk=monthKey(today());
   const duMois=charges.filter(c=>c.date && monthKey(c.date)===mk);
   const total=duMois.reduce((s,c)=>s+(+c.montant||0),0);
@@ -38805,7 +38913,7 @@ async function aiQueryCharges(){
 
 // [V944] COUVERTURE DE STOCK (autonomie globale). Source : analyzeStockCoverage.
 async function aiQueryCouvertureStock(){
-  let C=null; try{ const orders=await db.orders.toArray(); C=await analyzeStockCoverage(orders); }catch(e){}
+  let C=null; try{ const orders=await db.orders.toArray(); C=await analyzeStockCoverage(orders); }catch(e){swallow(e,'aiQueryCouvertureStock')}
   if(!C) return aiSay(`${aiHero('—', 'Couverture de stock')}${aiSynth('Calcul indisponible pour le moment.', {icon:'⏳'})}`);
   const recipes=C.recipes||[]; const fini=C.finiByRecipe||{}; const demande=C.demande60j||{};
   // Pour chaque recette : stock fini vs demande 60j → ratio de couverture.
@@ -38842,7 +38950,7 @@ async function aiQueryRentaLivraison(params){
     if(!avecLiv.length) return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Rentabilité d'une livraison</h3>${aiSynth('Aucune commande avec livraison chiffrée (distance/temps).',{icon:'🚗'})}`);
     // Coût moyen + part dans le CA moyen.
     let totCout=0, totCA=0, n=0;
-    avecLiv.forEach(o=>{ try{ const d=computeDeliveryCost(o); if(d.actif){ totCout+=d.total; totCA+=(+o.montant||0); n++; } }catch(_){} });
+    avecLiv.forEach(o=>{ try{ const d=computeDeliveryCost(o); if(d.actif){ totCout+=d.total; totCA+=(+o.montant||0); n++; } }catch(e){swallow(e,'aiQueryRentaLivraison')} });
     const moyCout=n?totCout/n:0; const part=totCA>0?Math.round(totCout/totCA*100):null;
     const subMoy = `sur ${n} livraison${n>1?'s':''}` + (part!=null?` · ${part}% du CA livré`:'');
     const colMoy = (part!=null&&part>15)?'#b3261e':'var(--bordeaux)';
@@ -38868,7 +38976,7 @@ async function aiQueryRentaLivraison(params){
 
 // [V944] REVENU HORAIRE. Source : revenuHoraireCalcul.
 async function aiQueryRevenuHoraire(){
-  let R=null; try{ R=await revenuHoraireCalcul(90); }catch(e){}
+  let R=null; try{ R=await revenuHoraireCalcul(90); }catch(e){swallow(e,'aiQueryRevenuHoraire')}
   if(!R || R.heures==null || R.heures<=0){
     return aiSay(`${aiHero('—', 'Mon revenu horaire')}${aiSynth('Pas encore assez d\'heures pointées. Utilise la pointeuse pendant tes sessions : le calcul se construira tout seul.',{icon:'⏳'})}`);
   }
@@ -38891,7 +38999,7 @@ async function aiQueryRevenuHoraire(){
 
 // [V944] SEUIL DE RENTABILITÉ / POINT MORT. Source : revenuHoraireCalcul (chargesFixes + cotisations).
 async function aiQuerySeuilRentabilite(){
-  let R=null; try{ R=await revenuHoraireCalcul(30); }catch(e){}
+  let R=null; try{ R=await revenuHoraireCalcul(30); }catch(e){swallow(e,'aiQuerySeuilRentabilite')}
   if(!R) return aiSay(`${aiHero('—', 'Seuil de rentabilité')}${aiSynth('Calcul indisponible pour le moment.', {icon:'⏳'})}`);
   const charges=+R.chargesFixes||0;
   // Marge unitaire moyenne par macaron : prix de vente moyen − coût matière moyen.
@@ -38917,8 +39025,8 @@ async function aiQuerySeuilRentabilite(){
 // [R&D] Réponse de l'assistant : présente l'atelier et propose de l'ouvrir.
 async function aiQueryRD(){
   let nIdees=0, nIng=0;
-  try{ nIdees=await db.rdIdees.count(); }catch(e){}
-  try{ nIng=await db.rdIngredients.count(); }catch(e){}
+  try{ nIdees=await db.rdIdees.count(); }catch(e){swallow(e,'aiQueryRD')}
+  try{ nIng=await db.rdIngredients.count(); }catch(e){swallow(e,'aiQueryRD')}
   const sousTitre = nIdees>0 ? `${nIdees} idée${nIdees>1?'s':''} déjà dans ton carnet` : `${nIng} ingrédients dans ta palette`;
   aiSay(`${aiHero('✨', 'Atelier R&D', {color:'var(--caramel)', sub:sousTitre})}
     ${aiSynth("Trois façons d'inventer : <b>Toi</b> (dans ta patte), <b>Inconnu</b> (les accords purs), <b>Ensemble</b> (les deux qui convergent). Garde, teste, et les idées prometteuses remontent toutes seules.", {icon:'🧪'})}
@@ -38926,7 +39034,7 @@ async function aiQueryRD(){
 }
 
 async function aiQueryStrategie(){
-  let S=null; try{ S=await computeStrategic(); }catch(e){}
+  let S=null; try{ S=await computeStrategic(); }catch(e){swallow(e,'aiQueryStrategie')}
   const reco=(S&&S.reco)?S.reco:[];
   if(!reco.length) return aiSay(`${aiHero('—', 'Recommandations stratégiques')}${aiSynth('Pas encore assez de recul. Continue à enregistrer commandes et marchés.',{icon:'🧭'})}`);
   const ico={oppo:'🚀', action:'⚡', avant:'📈', revoir:'🔍'};
@@ -38988,7 +39096,7 @@ async function aiQueryFournisseur(params){
 async function aiQueryProfilClient(params){
   params=params||{};
   if(!params.client) return aiSay(`<p>De quel client veux-tu le profil ?</p>`);
-  let D=null; try{ D=await getClientDashboardData(params.client.id); }catch(e){}
+  let D=null; try{ D=await getClientDashboardData(params.client.id); }catch(e){swallow(e,'aiQueryProfilClient')}
   if(!D) return aiSay(`${aiHero('—', `Profil — ${esc(params.client.nom||'')}`)}${aiSynth('Données indisponibles pour ce client.', {icon:'📭'})}`);
   const badgeTxt = D.badge ? ` · ${esc(D.badge.label)}` : '';
   return aiSay(`${aiHero(`${D.nbCommandes} <span style="font-size:1rem;font-weight:600">commande${D.nbCommandes>1?'s':''}</span>`, `${esc(params.client.nom||'')}${badgeTxt}`, {color:'var(--caramel)', sub: D.caTotal?`${euro(D.caTotal)} au total`:''})}
@@ -39002,7 +39110,7 @@ async function aiQueryProfilClient(params){
 
 // [V943] PRÉVISION DE VENTES (ce qui va partir) — réutilise computeSalesVelocity (vélocité = demande).
 async function aiQueryPrevision(){
-  let V=null; try{ V=await computeSalesVelocity({months:3, horizonDays:14}); }catch(e){}
+  let V=null; try{ V=await computeSalesVelocity({months:3, horizonDays:14}); }catch(e){swallow(e,'aiQueryPrevision')}
   const lignes=(V&&V.lignes)?V.lignes.filter(l=>l.perDay>0).sort((a,b)=>b.perDay-a.perDay):[];
   if(!lignes.length) return aiSay(`${aiHero('—', 'Prévision de ventes')}${aiSynth('Pas encore assez d\'historique de ventes pour prévoir la demande.',{icon:'📈'})}`);
   const top=lignes.slice(0,6);
@@ -39016,7 +39124,7 @@ async function aiQueryPrevision(){
 // [V943] COFFRETS / BOÎTES EN STOCK. Source : catalogue produits (coffrets) + stock éventuel.
 async function aiQueryStockBoites(params){
   params=params||{};
-  let produits=[]; try{ produits=await db.products.toArray(); }catch(e){}
+  let produits=[]; try{ produits=await db.products.toArray(); }catch(e){swallow(e,'aiQueryStockBoites')}
   // On cherche les coffrets/boîtes avec un stock renseigné.
   const boites = produits.filter(p=>/(coffret|boite|boîte)/i.test((p.type||'')+(p.nom||'')) );
   const avecStock = boites.filter(b=>(+b.stock||0)>0 || (+b.qteStock||0)>0);
@@ -39043,7 +39151,7 @@ async function aiQueryStockBoites(params){
 async function aiQueryPanierMoyen(params){
   params=params||{};
   if(params.client){
-    let D=null; try{ D=await getClientDashboardData(params.client.id); }catch(e){}
+    let D=null; try{ D=await getClientDashboardData(params.client.id); }catch(e){swallow(e,'aiQueryPanierMoyen')}
     if(!D || !D.nbCommandes) return aiSay(`${aiHero('—', `Panier moyen — ${esc(params.client.nom||'')}`)}${aiSynth('Aucune commande pour ce client pour l\'instant.', {icon:'📭'})}`);
     return aiSay(`${aiHero(euro(D.panierMoyen), `Panier moyen — ${esc(params.client.nom||'')}`, {sub:`sur ${D.nbCommandes} commande${D.nbCommandes>1?'s':''}`})}
       ${aiSynth(`Montant moyen d'une commande de ${esc(params.client.nom||'ce client')}.`, {icon:'🧺'})}
@@ -39103,7 +39211,7 @@ async function aiQueryProchaineLivraison(){
   const col = dans!=null && dans<=1 ? '#b3261e' : dans!=null && dans<=3 ? '#caa23b' : 'var(--bordeaux)';
   const heure = p.o.heureLivraison ? ` à ${esc(p.o.heureLivraison)}` : '';
   const lieu  = p.o.lieuLivraison ? `${esc(p.o.lieuLivraison)}` : '';
-  let contenu=''; try{ const ls=orderToLines(p.o); contenu = ls.length ? ls.map(lineLabel).join(' + ') : ''; }catch(_){}
+  let contenu=''; try{ const ls=orderToLines(p.o); contenu = ls.length ? ls.map(lineLabel).join(' + ') : ''; }catch(e){swallow(e,'aiQueryProchaineLivraison')}
   // Combien d'autres livraisons suivent, pour le contexte.
   const autres = futures.length-1;
   return aiSay(`    ${aiHero(quand?quand.charAt(0).toUpperCase()+quand.slice(1):fmtDate(p.ref), `${esc(clName(p.o.clientId))}`, {color:col, sub:`${fmtDate(p.ref)}${heure}${lieu?` · ${lieu}`:''}`})}
@@ -39133,7 +39241,7 @@ async function aiQueryDelivery(params){
                   : `dans ${dans} j`);
     const heure = o.heureLivraison ? ` à ${esc(o.heureLivraison)}` : '';
     const lieu = o.lieuLivraison ? ` · ${esc(o.lieuLivraison)}` : '';
-    let contenu=''; try{ const ls=orderToLines(o); contenu = ls.length ? ls.map(lineLabel).join(' + ') : ''; }catch(_){}
+    let contenu=''; try{ const ls=orderToLines(o); contenu = ls.length ? ls.map(lineLabel).join(' + ') : ''; }catch(e){swallow(e,'aiQueryDelivery')}
     return `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:2px">
       <div style="display:flex;justify-content:space-between"><span><b>${fmtDate(ref)}</b>${heure}${lieu}</span><span>${quand}</span></div>
       ${contenu?`<div style="font-size:.8rem;color:#6a5a52">${esc(contenu)}</div>`:''}</div>`;
@@ -39167,7 +39275,7 @@ async function aiQueryMarketAdvice(params){
     return aiSay(`<p class="note">Aucun marché à venir n'est programmé${params&&params.date?` pour le ${fmtDate(params.date)}`:''}. Crée un marché dans l'onglet Marchés pour obtenir un conseil de préparation.</p>`);
   }
   // Moteurs (sources uniques, déjà éprouvés).
-  let fc=null; try{ fc = await marketForecast(); }catch(e){}
+  let fc=null; try{ fc = await marketForecast(); }catch(e){swallow(e,'aiQueryMarketAdvice')}
   const settings = (typeof getSettings==='function') ? getSettings() : {};
   const cible = Array.isArray(settings.marketMix) ? settings.marketMix : [];
   const histo = (fc && Array.isArray(fc.repartition)) ? fc.repartition : [];
@@ -39397,7 +39505,7 @@ async function aiQueryConseilOuvert(params){
         repere=`Tu as ${clos.length} marché${clos.length>1?'s':''} clos, pour ${euro(ca)} de CA cumulé (moyenne ${euro(money2(ca/clos.length))}/marché).`;
       }
     }
-  }catch(e){}
+  }catch(e){swallow(e,'aiQueryConseilOuvert')}
 
   // Cadres pour/contre par thème.
   const CADRES={
@@ -39549,7 +39657,7 @@ async function aiQueryRupture(){
   const sousSeuil=materials.filter(m=>+m.seuil>0 && (stock[m.id]||0)<=+m.seuil)
     .map(m=>({nom:m.nom, dispo:stock[m.id]||0, seuil:+m.seuil, unite:m.unite||''}));
   // ruptures prévisionnelles produits finis (sous 8 jours)
-  let prev=[]; try{ prev=await forecastAlerts(); }catch(e){}
+  let prev=[]; try{ prev=await forecastAlerts(); }catch(e){swallow(e,'aiQueryRupture')}
   const recipes=await db.recipes.toArray().catch(()=>[]);
   const recByNom={}; recipes.forEach(r=>{ recByNom[aiNormalize(r.produitNom)]=r; });
   if(!risques.length && !sousSeuil.length && !prev.length)
@@ -40276,7 +40384,7 @@ async function stockAdjApply(prodId, delta, motif, note){
 // ── LISTE DES LOTS (onglet « Lots » du picking) ──────────────────────────────
 async function pickRenderBatches(){
   const body = document.getElementById('pickBody'); if(!body) return;
-  try{ if(!window._pickClientsCache) window._pickClientsCache = await db.clients.toArray(); }catch(e){}
+  try{ if(!window._pickClientsCache) window._pickClientsCache = await db.clients.toArray(); }catch(e){swallow(e,'pickRenderBatches')}
   const batches = (await db.batches.toArray().catch(()=>[])).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
   const actifs = batches.filter(b=>b.statut!=='clos');
   const clos = batches.filter(b=>b.statut==='clos');
@@ -40521,7 +40629,7 @@ async function pickBatchScanOrder(parfumCible){
 // Nom client court pour les toasts (repli sur histoLabel).
 function clName2(o){
   try{ const c = (window._pickClientsCache||[]).find(x=>+x.id===+o.clientId);
-    if(c) return c.nom||c.prenom||'Client'; }catch(e){}
+    if(c) return c.nom||c.prenom||'Client'; }catch(e){swallow(e,'clName2')}
   return o.histoLabel||('#'+o.id);
 }
 
@@ -40569,7 +40677,7 @@ async function pickBatchPrintGlobal(batchId){
   if(!batch){ toast('Lot introuvable'); return; }
   const needs = await pickBatchNeeds(batch);
   const tmp = document.createElement('canvas');
-  try{ QR.render(tmp, batchUrl(batch.id), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
+  try{ QR.render(tmp, batchUrl(batch.id), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){swallow(e,'pickBatchPrintGlobal')}
   const qrImg = tmp.toDataURL('image/png');
   const lignes = Object.keys(needs).sort((a,b)=>a.localeCompare(b))
     .map(f=>`<tr><td>${esc(f)}</td><td style="text-align:right">☐ ${qty(needs[f])}</td></tr>`).join('');
@@ -40839,7 +40947,7 @@ async function printOrderPrepSheet(orderId){
   const liv = o.dateEvenement?fmtDate(o.dateEvenement):(o.date?fmtDate(o.date):'—');
   // Génère le QR de la commande.
   const tmp = document.createElement('canvas');
-  try{ QR.render(tmp, orderUrl(orderId), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
+  try{ QR.render(tmp, orderUrl(orderId), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){swallow(e,'printOrderPrepSheet')}
   const qrImg = tmp.toDataURL('image/png');
   const lignes = Object.keys(needs).map(nom=>`<tr><td>${esc(nom)}</td><td style="text-align:right">☐ ${qty(needs[nom])}</td></tr>`).join('');
   const win = window.open('', '_blank', 'width=600,height=800');
@@ -41217,7 +41325,7 @@ async function _etiqValiderGo(){
   const d = window._etiqDraft; if(!d) return;
   const sim = await prodPreparerBoites(d.prodId, d.rows, {simuler:true});
   if(!sim.ok){ toast(sim.raison||'Répartition invalide'); return; }
-  try{ await snapshotBackup('avant-etiquette-boites'); }catch(e){}
+  try{ await snapshotBackup('avant-etiquette-boites'); }catch(e){swallow(e,'_etiqValiderGo')}
   const res = await prodPreparerBoites(d.prodId, d.rows, {});
   closeModal(); window._etiqDraft=null;
   if(!res.ok){ toast(res.raison||'Échec'); return; }
@@ -41788,7 +41896,7 @@ async function buildLabelData(prodId){
   if(!p) return null;
   const rec = p.recipeId!=null ? await db.recipes.get(p.recipeId) : null;
   const tmp = document.createElement('canvas');
-  try{ QR.render(tmp, traceUrl(p.lotProduction||''), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){}
+  try{ QR.render(tmp, traceUrl(p.lotProduction||''), {scale:6, dark:'#000000', light:'#ffffff'}); }catch(e){swallow(e,'buildLabelData')}
   // Nom AFFICHÉ = vrai stade du batch (un composant n'est pas le produit fini) :
   //  coques → « Coques <parfum> » · ganache/crémeux → « Ganache/Crémeux <parfum> »
   //  complet/assemblé → nom du produit fini.
@@ -42067,8 +42175,8 @@ const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont p
 // Incrémenté à chaque ajout/modif/suppression de données importantes ; remis à 0 après une vraie
 // sauvegarde iCloud/export. Une alerte accueil insiste tant qu'il est > 0.
 function unsavedCount(){ try{ return parseInt(localStorage.getItem('sm_unsaved')||'0',10)||0; }catch(e){ return 0; } }
-function markUnsaved(){ try{ localStorage.setItem('sm_unsaved', String(unsavedCount()+1)); }catch(e){} }
-function clearUnsaved(){ try{ localStorage.setItem('sm_unsaved','0'); }catch(e){} }
+function markUnsaved(){ try{ localStorage.setItem('sm_unsaved', String(unsavedCount()+1)); }catch(e){swallow(e,'markUnsaved')} }
+function clearUnsaved(){ try{ localStorage.setItem('sm_unsaved','0'); }catch(e){swallow(e,'clearUnsaved')} }
 
 // ---- Construction d'un instantané structuré ----
 async function buildDump(){
@@ -42082,7 +42190,7 @@ async function buildDump(){
     if(Array.isArray(cacheSess) && cacheSess.length > (dump.prodSessions||[]).length){
       dump.prodSessions = cacheSess;
     }
-  }catch(e){}
+  }catch(e){swallow(e,'buildDump')}
   dump._localStorage = collectLocalSettings(); // réglages hors IndexedDB (emballages, charges, préférences…)
   dump._checksum = backupChecksum(dump);        // checksum calculé sur les TABLES uniquement
   return dump;
@@ -42204,7 +42312,7 @@ async function applyDump(dump){
   // ancienne/partielle ne doit jamais détruire des sessions absentes du fichier.
   let sessAvant = [];
   try{ sessAvant = JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]'); if(!Array.isArray(sessAvant)) sessAvant=[]; }catch(e){ sessAvant=[]; }
-  try{ const enBase = await db.prodSessions.toArray(); if(enBase.length>sessAvant.length) sessAvant = enBase; }catch(e){}
+  try{ const enBase = await db.prodSessions.toArray(); if(enBase.length>sessAvant.length) sessAvant = enBase; }catch(e){swallow(e,'applyDump')}
   const dumpAUneSession = Array.isArray(dump.prodSessions) && dump.prodSessions.length>0;
 
   await db.transaction('rw',...TABLES.map(t=>db.table(t)),async()=>{
@@ -42221,7 +42329,7 @@ async function applyDump(dump){
   try{
     if(!dumpAUneSession && sessAvant.length){
       localStorage.setItem(PROD_SESS_KEY, JSON.stringify(sessAvant));
-      try{ await db.prodSessions.bulkPut(sessAvant); }catch(e){}
+      try{ await db.prodSessions.bulkPut(sessAvant); }catch(e){swallow(e,'applyDump')}
     } else {
       const ps=await db.prodSessions.toArray();
       localStorage.setItem(PROD_SESS_KEY, JSON.stringify(ps));
@@ -42280,7 +42388,7 @@ async function shareBackupToICloud(opts){
         localStorage.setItem('sm_lastExport', today());
         localStorage.removeItem('sm_exportSnooze');
         clearUnsaved();
-        try{ await snapshotBackup('icloud'); }catch(e){}
+        try{ await snapshotBackup('icloud'); }catch(e){swallow(e,'shareBackupToICloud')}
         toast('Sauvegarde envoyée — enregistre-la dans iCloud Drive ✓');
         if(typeof renderBackups==='function' && view==='backups') renderBackups();
         return true;
@@ -42293,7 +42401,7 @@ async function shareBackupToICloud(opts){
     localStorage.setItem('sm_lastExport', today());
     localStorage.removeItem('sm_exportSnooze');
     clearUnsaved();
-    try{ await snapshotBackup('icloud'); }catch(e){}
+    try{ await snapshotBackup('icloud'); }catch(e){swallow(e,'shareBackupToICloud')}
     toast('Partage direct indisponible : fichier téléchargé. Range-le dans iCloud Drive.');
     return true;
   }catch(e){
@@ -42340,7 +42448,7 @@ function _importErrRapport(contexte, fichier, err){
   const nom=(err&&err.name)||'Erreur';
   const msg=(err&&err.message)?String(err.message):String(err||'inconnue');
   try{ if(typeof diagPublish==='function') diagPublish('import', 'Import/fusion de sauvegarde',
-    { quand:new Date().toISOString(), contexte, fichier, erreur:nom+' — '+msg, stack:(err&&err.stack)||'' }); }catch(_){}
+    { quand:new Date().toISOString(), contexte, fichier, erreur:nom+' — '+msg, stack:(err&&err.stack)||'' }); }catch(e){swallow(e,'_importErrRapport')}
   return nom+' — '+msg;
 }
 async function importData(e){
@@ -42419,7 +42527,7 @@ async function bulkDeleteSafe(table, ids){
   }catch(e){ /* on tente le repli unitaire ci-dessous */ }
   let n=0;
   if(table && typeof table.delete==='function'){
-    for(const id of list){ try{ await table.delete(id); n++; }catch(_){} }
+    for(const id of list){ try{ await table.delete(id); n++; }catch(e){swallow(e,'bulkDeleteSafe')} }
   }
   return n;
 }
@@ -42758,7 +42866,7 @@ async function scanZeroAmountOrders(){
       const lignes=(o.lignes||[]);
       if(!lignes.length) return;
       let recalc=0;
-      try{ recalc=lignes.reduce((a,ln)=>a+(typeof lineTotalStored==='function'?lineTotalStored(ln):0),0); }catch(e){}
+      try{ recalc=lignes.reduce((a,ln)=>a+(typeof lineTotalStored==='function'?lineTotalStored(ln):0),0); }catch(e){swallow(e,'scanZeroAmountOrders')}
       recalc=money2(recalc);
       if(recalc>0) touched.push({id:o.id, date:o.date, recalc});
     });
@@ -42812,7 +42920,7 @@ async function scanMontantDivergences(){
   const sommeEcart=money2(touched.reduce((s,t)=>s+t.ecart,0));
   try{ diagPublish('montantDiverge', '⚖️ Montants figés vs recalcul', {
     'Commandes divergentes':touched.length, 'Écart net total (stocké − recalcul)':euro(sommeEcart),
-    'Prix manuel (ignorées)':nbManuel, 'Concordantes':nbOk }); }catch(_){}
+    'Prix manuel (ignorées)':nbManuel, 'Concordantes':nbOk }); }catch(e){swallow(e,'scanMontantDivergences')}
   if(!zone) return;
   if(!touched.length){
     zone.innerHTML=`<div class="banner" style="background:#eef6ee;border-color:#bcd9c2">✅ <div>Tous les montants concordent avec le recalcul depuis les lignes (${nbOk} commande(s) vérifiée(s)${nbManuel?`, ${nbManuel} à prix manuel ignorée(s)`:''}).</div></div>`;
@@ -42939,7 +43047,7 @@ async function diagComptageTables(){
     const ligneBase=`<div class="sum-box" style="background:#eef5f0"><span><b>Base actuelle</b></span><b>${base.orders||0} commandes</b></div>
       <div style="font-size:.72rem;color:#9a8a82;padding:2px 8px">${tablesClefs.map(t=>`${t}: ${base[t]||0}`).join(' · ')}</div>`;
     const ligneSnaps = backups.slice(0,8).map(b=>{
-      let d=null; try{ d=JSON.parse(b.payload); }catch(e){}
+      let d=null; try{ d=JSON.parse(b.payload); }catch(e){swallow(e,'diagComptageTables')}
       const nbCmd = d&&Array.isArray(d.orders)?d.orders.length:'?';
       const dt=new Date(b.date).toLocaleString('fr-FR');
       const interesting = (typeof nbCmd==='number' && nbCmd>(base.orders||0));
@@ -43364,7 +43472,7 @@ async function diagEmballageLots(){
       try{
         if(estCoffretStd){ reelCmd = coffretEmbInfo({type:'coffret', taille:+m.capacite, embMode:'standard'}, mats, lots, realMap).cout; }
         else { reelCmd = coffretEmbInfo({type:'coffret', taille:+m.capacite, embMode:'autre', embMatId:m.id}, mats, lots, realMap).cout; }
-      }catch(e){}
+      }catch(e){swallow(e,'diagEmballageLots')}
       const ecart = (reelCmd!=null) && Math.abs(money2(reelCmd) - money2(reel)) > 0.005;
       const lotsTxt = sien.length ? sien.map(l=>`${qty(l.qteInitiale)}×${euro(lotPU(l))}`).join(', ') : '—';
       const flag = suspect||ecart;
@@ -43479,7 +43587,7 @@ async function diagCaMonth(){
       if(inMonth && net>0) totalMk=money2(totalMk+net);
       if(net>0) mkRows.push({nom:k.nom, dateRaw:k.date, net, inMonth, statut:k.statut});
     });
-  }catch(e){}
+  }catch(e){swallow(e,'diagCaMonth')}
   if(!zone) return;
   const moisCmd = rows.filter(r=>r.inMonth);
   const horsMois = rows.filter(r=>!r.inMonth);
@@ -43798,7 +43906,7 @@ async function recoverAllRecipes(){
   } else {
     toast(`✓ Restauré : ${okRec} recette(s), ${okItem} ingrédient(s)`);
   }
-  try{ await refreshMatsCache(); }catch(e){}
+  try{ await refreshMatsCache(); }catch(e){swallow(e,'recoverAllRecipes')}
   scanLostRecipes();
 }
 
@@ -43878,7 +43986,7 @@ async function relinkAllLots(){
   markUnsaved && markUnsaved();
   if(erreurs.length){ toast(`Reconnecté : ${ok}. ${erreurs.length} échec(s).`); }
   else { toast(`✓ ${ok} lot(s) reconnecté(s) à leur parfum`); }
-  try{ await refreshMatsCache(); }catch(e){}   // cache à jour → Stock par parfum reflète le nouveau lien
+  try{ await refreshMatsCache(); }catch(e){swallow(e,'relinkAllLots')}   // cache à jour → Stock par parfum reflète le nouveau lien
   scanOrphanLots();
 }
 
@@ -44764,7 +44872,7 @@ async function requestPersistentStorage(){
       localStorage.setItem('sm_persistStorage', granted?'1':'0');
       return granted;
     }
-  }catch(e){}
+  }catch(e){swallow(e,'requestPersistentStorage')}
   localStorage.setItem('sm_persistStorage', 'na');
   return null;
 }
@@ -44782,7 +44890,7 @@ window._diagRegistry = window._diagRegistry || {};
 function diagPublish(cle, label, data){
   try{
     window._diagRegistry[cle] = { label: label||cle, data: data, ts: Date.now() };
-  }catch(_){}
+  }catch(e){swallow(e,'diagPublish')}
 }
 function _diagRegistrySection(){
   const reg = window._diagRegistry || {};
@@ -44885,7 +44993,7 @@ async function consoFixApply(prodId, materialId, qte, lotImposeId){
         let ouvertLe = lot.ouvertLe;
         if(!ouvertLe){ patch.ouvertLe = nowIso;
           const d=new Date(nowIso); d.setDate(d.getDate()+nbJoursOuv);
-          patch.dlcOuverture = d.toISOString().slice(0,10);
+          patch.dlcOuverture = ymdLocal(d);
         }
         const dOuv = lot.dlcOuverture || patch.dlcOuverture;
         if(dOuv && (!dlcOuvertureMin || dOuv<dlcOuvertureMin)) dlcOuvertureMin = dOuv;
@@ -45176,7 +45284,7 @@ async function prelevOpenReaffect(prodId, materialId){
     catch(e){ console.error('prelevOpenReaffect', e); }
     // amener le panneau de cette matière à l'écran
     const el = document.getElementById('prlv-panel-'+materialId);
-    if(el && el.scrollIntoView) try{ el.scrollIntoView({block:'center'}); }catch(_){}
+    if(el && el.scrollIntoView) try{ el.scrollIntoView({block:'center'}); }catch(e){swallow(e,'prelevOpenReaffect')}
   } else {
     // La matière est visible en traçabilité mais absente des prélèvements ACTIFS :
     // sa consommation a déjà été remplacée ou réaffectée (ligne neutralisée).
@@ -45268,7 +45376,7 @@ async function prelevQuantiteGo(prodId, materialId){
   const nouvelle = round3(+val('prlv_q_'+materialId)||0);
   const cur = (window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).qte||0;
   if(nouvelle===cur){ toast('Quantité inchangée'); return; }
-  try{ await snapshotBackup('avant-prelevement'); }catch(e){}
+  try{ await snapshotBackup('avant-prelevement'); }catch(e){swallow(e,'prelevQuantiteGo')}
   // on repart propre : on rend tout à l'origine, puis on reprélève la nouvelle quantité en FIFO
   await db.transaction('rw', db.productions, db.materialLots, db.prodConsumption, async()=>{
     await prelevAnnulerMatiere(prodId, materialId, true);   // rendre à l'origine
@@ -45296,7 +45404,7 @@ async function prelevLotGo(prodId, materialId){
   const lotId = +val('prlv_lot_'+materialId)||0;
   const cur = (window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).qte||0;
   if(!lotId||!(cur>0)){ toast('Lot ou quantité invalide'); return; }
-  try{ await snapshotBackup('avant-prelevement'); }catch(e){}
+  try{ await snapshotBackup('avant-prelevement'); }catch(e){swallow(e,'prelevLotGo')}
   await db.transaction('rw', db.productions, db.materialLots, db.prodConsumption, async()=>{
     await prelevAnnulerMatiere(prodId, materialId, true);  // rendre à l'origine
   });
@@ -45420,7 +45528,7 @@ async function prelevReaffValider(prodId, materialId){
   const nomLot = id => { const l=lots.find(x=>+x.id===+id); return l?(l.lotFournisseur||('lot #'+id)):('lot #'+id); };
   const detail = sim.repartition.map(r=>`• ${nomLot(r.lotId)} : ${qty(r.prend)}`).join('\n');
   if(!confirm(`Réaffecter ${qty(sim.total)} depuis « ${nomLot(st.from)} » ?\n\n${detail}\n\n• Snapshot HACCP réécrit par lot\n• Le stock du lot source remonte de ${qty(sim.total)} (à régulariser en inventaire)`)) return;
-  try{ await snapshotBackup('avant-reaffectation'); }catch(e){}
+  try{ await snapshotBackup('avant-reaffectation'); }catch(e){swallow(e,'prelevReaffValider')}
   const res = await prelevReaffecter(prodId, materialId, st.from, st.to, {});
   closeModal(); delete (window._prelevReaff||{})[materialId];
   toast(res.ok ? `Réaffecté ✓ ${qty(res.total)} sur ${res.nbLotsDest} lot(s)` : (res.raison||'Échec'));
@@ -45435,7 +45543,7 @@ async function prelevRemplacerGo(prodId, materialId){
   const mX = _prelevMat(materialId);
   // QUESTION SYSTÉMATIQUE (contrat métier) : sortir l'ancienne ou la rendre ?
   const sortir = confirm(`Remplacement de « ${mX.nom||''} ».\n\nL'ancienne matière prélevée doit-elle SORTIR du stock en régularisation d'inventaire ?\n\n• OK = elle sort du stock (le stock affiché était erroné)\n• Annuler = elle revient sur son lot d'origine`);
-  try{ await snapshotBackup('avant-prelevement'); }catch(e){}
+  try{ await snapshotBackup('avant-prelevement'); }catch(e){swallow(e,'prelevRemplacerGo')}
   // 1) neutraliser la conso de X.
   //    - rendre=false (SORTIR) : on NE rend PAS → le stock reste décrémenté par la conso
   //      initiale, ce qui EST la sortie en régularisation (pas de second retrait, sinon
@@ -45545,8 +45653,8 @@ async function runConsistencyCheck(manual){
   let lastGood=null;
   try{
     const backups=await db.backups.orderBy('date').reverse().toArray();
-    for(const b of backups){ try{ const d=JSON.parse(b.payload); if(verifyBackup(d).ok){ lastGood=b; break; } }catch(e){} }
-  }catch(e){}
+    for(const b of backups){ try{ const d=JSON.parse(b.payload); if(verifyBackup(d).ok){ lastGood=b; break; } }catch(e){swallow(e,'runConsistencyCheck')} }
+  }catch(e){swallow(e,'runConsistencyCheck')}
   openModal(`<h3>⚠ Anomalies détectées dans les données</h3>
     <p class="note">Un contrôle de cohérence a relevé :</p>
     ${issues.map(i=>`<div class="sum-box"><span>•</span><b style="font-weight:500">${esc(i)}</b></div>`).join('')}
@@ -46692,7 +46800,7 @@ function formatOrderTXT(d){
 // Regroupe par client (toutes les commandes cochées doivent concerner le même client), récupère
 // l'e-mail via la fiche client, et ouvre la boîte mail (mailto) avec un corps personnalisé.
 function factGetSignature(){ try{ return localStorage.getItem('sm_mailSignature')||''; }catch(e){ return ''; } }
-function factSaveSignature(v){ try{ localStorage.setItem('sm_mailSignature', v||''); }catch(e){} }
+function factSaveSignature(v){ try{ localStorage.setItem('sm_mailSignature', v||''); }catch(e){swallow(e,'factSaveSignature')} }
 
 async function cmdMailSelection(){
   const ids=[..._cmdSel];
@@ -46758,7 +46866,7 @@ async function cmdMailOpen(clientId){
   const appel = (val('mailAppel')||'prenom');
   // Persiste le choix de politesse sur la fiche client (mémorisation demandée).
   const polChoisie = tu ? 'tu' : 'vous';
-  if(cl.politesse !== polChoisie){ try{ await db.clients.update(cl.id, {politesse:polChoisie}); }catch(e){} }
+  if(cl.politesse !== polChoisie){ try{ await db.clients.update(cl.id, {politesse:polChoisie}); }catch(e){swallow(e,'cmdMailOpen')} }
   // Appellation : prénom seul OU nom complet.
   const prenom = cl.prenom || '';
   const nomComplet = [cl.prenom, cl.nom].filter(Boolean).join(' ') || cl.nom || '';
@@ -46800,7 +46908,7 @@ async function cmdExportSelection(){
   const txt = header + SEP + datas.map(formatOrderTXT).join(SEP) + SEP + 'Sensations Macarons — Le Mans';
   const name = `commandes-selection-${today()}.txt`;
   let copied=false;
-  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(txt); copied=true; } }catch(e){}
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(txt); copied=true; } }catch(e){swallow(e,'cmdExportSelection')}
   const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
   openModal(`<h3>Export de ${datas.length} commande(s)</h3>
@@ -46808,7 +46916,7 @@ async function cmdExportSelection(){
     <textarea id="selTxt" rows="16" style="width:100%;font-family:monospace;font-size:.76rem;white-space:pre">${esc(txt)}</textarea>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Fermer</button>
-      <button class="btn" onclick="(function(){const t=document.getElementById('selTxt');t.select();try{document.execCommand('copy');}catch(e){} toast('Copié ✓');})()">⧉ Copier</button>
+      <button class="btn" onclick="(function(){const t=document.getElementById('selTxt');t.select();try{document.execCommand('copy');}catch(e){swallow(e,'cmdExportSelection')} toast('Copié ✓');})()">⧉ Copier</button>
     </div>
     <p class="note" style="margin-top:8px;color:#9a8a82">Exports PDF, Excel et envoi e-mail direct : prévus prochainement (même base de données structurée).</p>`);
 }
@@ -46915,7 +47023,7 @@ async function exportOrderText(orderId){
   const name = 'commande-'+slug+'-'+(o.date||'')+'.txt';
   // copie instantanée dans le presse-papier (usage email)
   let copied=false;
-  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(txt); copied=true; } }catch(e){}
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(txt); copied=true; } }catch(e){swallow(e,'exportOrderText')}
   // fichier .txt téléchargeable
   const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();
@@ -46924,7 +47032,7 @@ async function exportOrderText(orderId){
     <p class="note">${copied?'Copié dans le presse-papier ✓ — collez directement dans un email.':'Fichier .txt téléchargé. Vous pouvez aussi copier ci-dessous.'} </p>
     <textarea id="orderTxt" rows="14" style="width:100%;font-family:monospace;font-size:.78rem;white-space:pre">${esc(txt)}</textarea>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button>
-      <button class="btn" onclick="(function(){const t=document.getElementById('orderTxt');t.select();try{document.execCommand('copy');}catch(e){} toast('Copié ✓');})()">⧉ Copier</button></div>`);
+      <button class="btn" onclick="(function(){const t=document.getElementById('orderTxt');t.select();try{document.execCommand('copy');}catch(e){swallow(e,'exportOrderText')} toast('Copié ✓');})()">⧉ Copier</button></div>`);
 }
 
 /* ============================================================
@@ -46945,7 +47053,7 @@ async function seedIfEmpty(){
   ];
   const ids={};
   for(const m of mats) ids[m.nom]=await db.materials.add(m);
-  const inDays = n => { const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+  const inDays = n => { const d=new Date(); d.setDate(d.getDate()+n); return ymdLocal(d); };
   await db.materialLots.bulkAdd([
     {materialId:ids["Poudre d'amande"],supplierId:fourId,lotFournisseur:'NM-A-101',qteInitiale:8,qteRestante:8,prix:144,dateReception:today(),dlc:inDays(120)},
     {materialId:ids['Sucre glace'],supplierId:fourId,lotFournisseur:'NM-S-220',qteInitiale:12,qteRestante:12,prix:30,dateReception:today(),dlc:inDays(300)},
@@ -46998,7 +47106,7 @@ async function exportReminder(){
   const snooze = localStorage.getItem('sm_exportSnooze'); // date jusqu'à laquelle on ne redemande pas
   if(snooze){ const ds=daysTo(snooze); if(ds!==null && ds>=0) return; } // encore en sommeil
   // nombre d'enregistrements à risque (donne du poids au message)
-  let nb=0; try{ for(const t of ['orders','productions','clients','materialLots']){ nb+=await db.table(t).count(); } }catch(e){}
+  let nb=0; try{ for(const t of ['orders','productions','clients','materialLots']){ nb+=await db.table(t).count(); } }catch(e){swallow(e,'exportReminder')}
   let overdue=false, ageTxt='';
   if(!last){ overdue = nb>0; ageTxt='Aucun export hors de cet appareil pour le moment.'; }
   else {
@@ -47019,7 +47127,7 @@ async function exportReminder(){
 // Reporte le rappel de n jours.
 function exportSnooze(days){
   const d=new Date(); d.setDate(d.getDate()+(days||1));
-  localStorage.setItem('sm_exportSnooze', d.toISOString().slice(0,10));
+  localStorage.setItem('sm_exportSnooze', ymdLocal(d));
   closeModal();
   toast('Rappel reporté ✓');
 }
@@ -47038,7 +47146,7 @@ window.addEventListener('load', ()=>{
     b.textContent=APP_VERSION;
     b.style.cssText='position:fixed;right:6px;bottom:4px;z-index:9999;font-size:.62rem;color:#b8a99f;background:rgba(255,255,255,.6);padding:1px 6px;border-radius:8px;pointer-events:none;font-family:system-ui,sans-serif';
     document.body.appendChild(b);
-  }catch(e){}
+  }catch(e){swallow(e,'exportSnooze')}
 });
 let _swReg=null, _swReloading=false;
 function showUpdateBanner(worker){
@@ -47290,7 +47398,7 @@ function prodSessMarkDeleted(id){
   try{
     const ids=prodSessDeletedIds();
     if(!ids.includes(id)){ ids.push(id); localStorage.setItem(PROD_SESS_DELETED_KEY, JSON.stringify(ids)); }
-  }catch(e){}
+  }catch(e){swallow(e,'prodSessMarkDeleted')}
 }
 function prodSessLoad(){
   try{ const a=JSON.parse(localStorage.getItem(PROD_SESS_KEY)||'[]'); return Array.isArray(a)?a:[]; }
@@ -47333,8 +47441,8 @@ async function prodSessPersistDexie(arr){
   }catch(e){ console.error('prodSessPersistDexie', e); prodSessFlagDexieKo(e&&e.message||'erreur'); return false; }
 }
 // Mémorise qu'une persistance Dexie a échoué (affiché en alerte sur l'écran Atelier).
-function prodSessFlagDexieKo(motif){ try{ localStorage.setItem('sm_prodSessDexieKo', motif||'1'); }catch(e){} }
-function prodSessClearDexieKo(){ try{ localStorage.removeItem('sm_prodSessDexieKo'); }catch(e){} }
+function prodSessFlagDexieKo(motif){ try{ localStorage.setItem('sm_prodSessDexieKo', motif||'1'); }catch(e){swallow(e,'prodSessFlagDexieKo')} }
+function prodSessClearDexieKo(){ try{ localStorage.removeItem('sm_prodSessDexieKo'); }catch(e){swallow(e,'prodSessClearDexieKo')} }
 function prodSessDexieKo(){ try{ return localStorage.getItem('sm_prodSessDexieKo')||''; }catch(e){ return ''; } }
 // RÉPARATION : force la fermeture/réouverture de la base pour relancer la migration de schéma
 // (cas d'une base bloquée où prodSessions n'a pas été créée correctement). Préserve les sessions
@@ -47355,17 +47463,17 @@ async function reparerBaseSessions(){
   try{
     // 1) test direct sans rien fermer (la base est peut-être déjà bonne → faux positif du flag)
     if(await tableOK()){
-      if(sauvegarde.length){ try{ await db.prodSessions.bulkPut(sauvegarde); }catch(e){} }
+      if(sauvegarde.length){ try{ await db.prodSessions.bulkPut(sauvegarde); }catch(e){swallow(e,'reparerBaseSessions')} }
       prodSessClearDexieKo();
       toast('Base déjà fonctionnelle ✓ — alerte levée');
       if(typeof renderAtelier==='function') renderAtelier();
       return;
     }
     // 2) sinon, on tente une vraie réouverture pour relancer la migration
-    try{ db.close(); }catch(e){}
+    try{ db.close(); }catch(e){swallow(e,'reparerBaseSessions')}
     await db.open();
     if(await tableOK()){
-      if(sauvegarde.length){ try{ await db.prodSessions.bulkPut(sauvegarde); }catch(e){} }
+      if(sauvegarde.length){ try{ await db.prodSessions.bulkPut(sauvegarde); }catch(e){swallow(e,'reparerBaseSessions')} }
       prodSessClearDexieKo();
       toast('Base réparée ✓ — sessions préservées');
     } else {
@@ -47404,7 +47512,7 @@ async function prodSessHydrate(){
     fromDexie.forEach(s=>{
       if(deleted.has(s.id)){
         // session supprimée exprès mais encore présente en base → on la purge de Dexie pour de bon
-        try{ if(db.prodSessions && db.prodSessions.delete) db.prodSessions.delete(s.id).catch(()=>{}); }catch(e){}
+        try{ if(db.prodSessions && db.prodSessions.delete) db.prodSessions.delete(s.id).catch(()=>{}); }catch(e){swallow(e,'prodSessHydrate')}
         purged++;
         return;
       }
@@ -47414,7 +47522,7 @@ async function prodSessHydrate(){
     });
     if(restored>0 || refreshed>0){
       const merged = Array.from(byId.values());
-      try{ localStorage.setItem(PROD_SESS_KEY, JSON.stringify(merged)); }catch(e){}
+      try{ localStorage.setItem(PROD_SESS_KEY, JSON.stringify(merged)); }catch(e){swallow(e,'prodSessHydrate')}
       // on re-persiste la fusion pour réaligner la base sur la vérité fusionnée
       prodSessPersistDexie(merged);
       console.log('prodSessHydrate: '+restored+' restaurée(s), '+refreshed+' rafraîchie(s), '+purged+' purgée(s)');
@@ -47429,7 +47537,7 @@ function prodSessUpsert(sess){
   const a=prodSessLoad(); const i=a.findIndex(s=>s.id===sess.id);
   if(i>=0) a[i]=sess; else a.push(sess);
   prodSessSave(a);
-  try{ if(typeof prodTransInvalidate==='function') prodTransInvalidate(); }catch(e){}
+  try{ if(typeof prodTransInvalidate==='function') prodTransInvalidate(); }catch(e){swallow(e,'prodSessUpsert')}
 }
 function prodSessRemove(id){
   prodSessMarkDeleted(id);                                  // 1) marque comme supprimée définitivement
@@ -47439,7 +47547,7 @@ function prodSessRemove(id){
     if(db.prodSessions && typeof db.prodSessions.delete==='function'){
       db.prodSessions.delete(id).catch(()=>{});
     }
-  }catch(e){}
+  }catch(e){swallow(e,'prodSessRemove')}
 }
 
 // ===================== ATELIER — TÂCHES SEMI-PASSIVES & COUPURE INTELLIGENTE =====================
@@ -47470,13 +47578,13 @@ function prodIsPassive(label){
 function prodPassiveDefaultMin(label){
   if(PROD_PASSIVE_DEFAULTS[label]!=null) return PROD_PASSIVE_DEFAULTS[label];
   // réglage perso éventuel mémorisé
-  try{ const s=getSettings(); const m=(s.prodPassiveMin||{})[label]; if(m!=null) return +m; }catch(e){}
+  try{ const s=getSettings(); const m=(s.prodPassiveMin||{})[label]; if(m!=null) return +m; }catch(e){swallow(e,'prodPassiveDefaultMin')}
   if(prodIsPassive(label)) return 10; // valeur de repli raisonnable
   return null;
 }
 // Mémorise la durée choisie pour une tâche (devient le défaut la prochaine fois).
 function prodPassiveRememberMin(label, min){
-  try{ const s=getSettings(); s.prodPassiveMin=s.prodPassiveMin||{}; s.prodPassiveMin[label]=+min; saveSettings(s); }catch(e){}
+  try{ const s=getSettings(); s.prodPassiveMin=s.prodPassiveMin||{}; s.prodPassiveMin[label]=+min; saveSettings(s); }catch(e){swallow(e,'prodPassiveRememberMin')}
 }
 
 // Détermine quelles tâches actives en cours doivent être coupées quand on lance `label` pour `recipeId`.
@@ -47534,7 +47642,7 @@ function prodTaskStartSmart(label, opts){
   prodSessUpsert(s);
   prodStartTicking();
   // Rattachement auto SEULEMENT si aucun parfum n'a été fourni (ni recipeId ni parfums[]).
-  if(!parfums.length){ try{ prodTaskAutoRattach(t.id); }catch(e){} }
+  if(!parfums.length){ try{ prodTaskAutoRattach(t.id); }catch(e){swallow(e,'prodTaskStartSmart')} }
   return t;
 }
 
@@ -47598,8 +47706,8 @@ function prodAlarmBeep(){
       };
       beep(0); beep(0.45); beep(0.9);
     }
-  }catch(e){}
-  try{ if(navigator.vibrate) navigator.vibrate([200,120,200,120,300]); }catch(e){}
+  }catch(e){swallow(e,'prodAlarmBeep')}
+  try{ if(navigator.vibrate) navigator.vibrate([200,120,200,120,300]); }catch(e){swallow(e,'prodAlarmBeep')}
 }
 // =============================================================================
 
@@ -47625,7 +47733,7 @@ async function prodAllSessions(){
       const ids = new Set(sess.map(s=>s.id));
       cache.forEach(s=>{ if(!ids.has(s.id)) sess.push(s); });
     }
-  }catch(e){}
+  }catch(e){swallow(e,'prodAllSessions')}
   return sess;
 }
 
@@ -47891,7 +47999,7 @@ async function prodTaskRattachPicker(taskId, recsEnCours){
       const ts = Date.parse(p.prodDebutTs||p.prodTimestamp||p.date||'')||0;
       return ts>=limite;
     }).map(p=>+p.recipeId);
-  }catch(e){}
+  }catch(e){swallow(e,'prodTaskRattachPicker')}
   const recentsSet = new Set(recents);
   const enCoursSet = new Set(enCours.map(Number));
   const dejaSet = new Set((Array.isArray(t.parfums)?t.parfums:[]).map(x=>+x));
@@ -47983,9 +48091,9 @@ async function lancerBatchAvecFiche(opts){
     if(prodId!=null && taskId) await db.productions.update(prodId, {atelierTaskId:taskId});
   }catch(e){ console.error('lancerBatchAvecFiche chrono', e); }
   // 3) rafraîchit l'écran des productions
-  try{ if(typeof renderProductions==='function') renderProductions(); }catch(e){}
+  try{ if(typeof renderProductions==='function') renderProductions(); }catch(e){swallow(e,'lancerBatchAvecFiche')}
   // toast optionnel AVANT la popup (la popup est modale et masquerait un toast tardif)
-  if(opts.toastLabel){ try{ toast(opts.toastLabel); }catch(e){} }
+  if(opts.toastLabel){ try{ toast(opts.toastLabel); }catch(e){swallow(e,'lancerBatchAvecFiche')} }
   // 4) POPUP RECETTE garantie (grammages recalculés au batch)
   try{ await ficheRecetteProduction(recipeId, facteurQte, composant, lot); }catch(e){ console.error('lancerBatchAvecFiche fiche', e); }
   return prodId;
@@ -48393,7 +48501,7 @@ async function prodTaskStopGuard(taskId){
     try{
       const recs = await Promise.all((verdict.info.autres||[]).map(r=>db.recipes.get(r).catch(()=>null)));
       autresNoms = recs.filter(Boolean).map(r=>r.produitNom||r.nom).filter(Boolean);
-    }catch(e){}
+    }catch(e){swallow(e,'prodTaskStopGuard')}
     const etape = (typeof atShort==='function') ? atShort(t.label) : (t.label||'cette étape');
     const listeAutres = autresNoms.length
       ? `Les autres parfums de la même meringue (<b>${autresNoms.map(esc).join(', ')}</b>) sont encore en cours.`
@@ -48630,7 +48738,7 @@ const REVH_DEFAULT_DAYS = 90;
 async function prodTempsLissePerMacaron(jours){
   jours = +jours || REVH_DEFAULT_DAYS;
   const since = new Date(); since.setDate(since.getDate()-jours);
-  const sinceStr = since.toISOString().slice(0,10);
+  const sinceStr = ymdLocal(since);
 
   // 1) Temps d'atelier RÉEL (ms) sur la fenêtre : enveloppe « mur à mur » de chaque session
   // (début 1ère tâche → fin dernière), pour refléter le temps vraiment passé avec chevauchements.
@@ -48783,7 +48891,7 @@ function prodSessTempsParCategorieParRecette(s){
 async function prodTempsParEtapeParParfum(jours){
   jours = +jours || 90;
   const since = new Date(); since.setDate(since.getDate()-jours);
-  const sinceStr = since.toISOString().slice(0,10);
+  const sinceStr = ymdLocal(since);
   const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
   const recipes = await db.recipes.toArray().catch(()=>[]);
   const recName = rid => (recipes.find(r=>+r.id===+rid)||{}).produitNom || '';
@@ -49058,7 +49166,7 @@ function mrpTimesResetConfirm(){
       <button class="btn gold" onclick="mrpTimesResetDo()">↩︎ Réinitialiser</button></div>`);
 }
 function mrpTimesResetDo(){
-  try{ localStorage.removeItem(MRP_TIME_KEY); }catch(_){}
+  try{ localStorage.removeItem(MRP_TIME_KEY); }catch(e){swallow(e,'mrpTimesResetDo')}
   closeModal();
   toast('Temps de référence réinitialisés ✓');
   if(typeof prodRenderTempsParfum==='function' && typeof _atelierTab!=='undefined' && _atelierTab==='temps') prodRenderTempsParfum();
@@ -49067,7 +49175,7 @@ function mrpTimesResetDo(){
 async function prodTempsParParfum(jours){
   jours = +jours || 90;
   const since = new Date(); since.setDate(since.getDate()-jours);
-  const sinceStr = since.toISOString().slice(0,10);
+  const sinceStr = ymdLocal(since);
   const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
 
   // 1) Temps d'atelier réparti FINEMENT par recette (minute par minute + temps non distribué).
@@ -49299,7 +49407,7 @@ async function revenuHoraireData(arg){
   } else {
     jours = +arg || REVH_DEFAULT_DAYS;
     const since = new Date(); since.setDate(since.getDate()-jours);
-    sinceStr = since.toISOString().slice(0,10);
+    sinceStr = ymdLocal(since);
     untilStr = '9999-12-31';
   }
   // Helper : une date (YYYY-MM-DD) est-elle dans la fenêtre [sinceStr, untilStr] ?
@@ -49499,7 +49607,7 @@ async function revenuHoraireCalcul(arg){
           'À corriger': 'Vérifier le rendement (nb par batch) et les prix matière de ces recettes.'
         });
       }
-    }catch(_){}
+    }catch(e){swallow(e,'revenuHoraireCalcul')}
     // emballages : estimés via coût d'emballage moyen par macaron vendu (table packaging)
     // approche prudente : si non calculable finement, laissé à 0 (n'invente pas).
   }catch(e){ console.error('revh coûts ventes', e); }
@@ -49521,7 +49629,7 @@ async function revenuHoraireCalcul(arg){
         'Garde-fou': 'moisEquiv borné à la durée réelle écoulée (et non jours/30) pour ne pas multiplier le récurrent par une fenêtre théorique géante.'
       });
     }
-  }catch(_){}
+  }catch(e){swallow(e,'revenuHoraireCalcul')}
 
   // Cotisations sociales : socialGoods % du CA marchandise encaissé (approche micro-entrepreneur).
   const cotisations = money2(d.caEncaisse * (+s.socialGoods||0)/100);
@@ -49857,7 +49965,7 @@ function revhModePerso(){
   // pré-remplit avec une plage par défaut si vide : les 90 derniers jours.
   if(!_revhDateDebut && !_revhDateFin){
     const fin=new Date(); const deb=new Date(); deb.setDate(deb.getDate()-90);
-    _revhDateDebut=deb.toISOString().slice(0,10); _revhDateFin=fin.toISOString().slice(0,10);
+    _revhDateDebut=ymdLocal(deb); _revhDateFin=ymdLocal(fin);
   }
   renderRevenuHoraire();
 }
@@ -50163,7 +50271,7 @@ async function prodRenderBoard(){
   // ---- [SUGGESTION D'ENCHAÎNEMENT] même moteur que le flottant ----
   const estMut = (_atOnglet==='mutualise');
   const last = (typeof atLastLabel==='function') ? atLastLabel(_atParfum) : null;
-  let sug=[]; try{ sug = await prodSuggestNext(_atParfum, last, 1, {mutualise:estMut, contexteFamille:(last?prodTaskFamille(last):null)}); }catch(e){}
+  let sug=[]; try{ sug = await prodSuggestNext(_atParfum, last, 1, {mutualise:estMut, contexteFamille:(last?prodTaskFamille(last):null)}); }catch(e){swallow(e,'prodRenderBoard')}
   const nxt = sug && sug[0];
   let nextHtml='';
   if(nxt){
@@ -50473,7 +50581,7 @@ function ttWhiskToggle(ev, id){
 function ttBindDrag(el, storeKey, isWhisk){
   if(!el || el._dragBound) return; el._dragBound=true;
   try{ const p=JSON.parse(localStorage.getItem(storeKey)||'null');
-    if(p && p.left!=null){ el.style.left=p.left+'px'; el.style.top=p.top+'px'; el.style.right='auto'; el.style.bottom='auto'; } }catch(e){}
+    if(p && p.left!=null){ el.style.left=p.left+'px'; el.style.top=p.top+'px'; el.style.right='auto'; el.style.bottom='auto'; } }catch(e){swallow(e,'ttBindDrag')}
   let sx,sy,ox,oy,moved;
   const down=e=>{
     const t=e.touches?e.touches[0]:e; sx=t.clientX; sy=t.clientY; moved=false;
@@ -50494,7 +50602,7 @@ function ttBindDrag(el, storeKey, isWhisk){
     document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up);
     document.removeEventListener('touchmove',move); document.removeEventListener('touchend',up);
     if(moved){ el._dragged=true;
-      try{ localStorage.setItem(storeKey, JSON.stringify({left:parseInt(el.style.left), top:parseInt(el.style.top)})); }catch(e){} }
+      try{ localStorage.setItem(storeKey, JSON.stringify({left:parseInt(el.style.left), top:parseInt(el.style.top)})); }catch(e){swallow(e,'ttBindDrag')} }
   };
   el.addEventListener('mousedown',down); el.addEventListener('touchstart',down,{passive:true});
 }
@@ -50921,7 +51029,7 @@ function mascotInit(){
       localStorage.setItem('sm_mascot_home','v3-fixed');
     }
     localStorage.removeItem('sm_mascot_pos'); // ancrage CSS systématique
-  }catch(e){}
+  }catch(e){swallow(e,'mascotInit')}
   mascotSetupTap(host);
   mascotRefresh();
   // visible uniquement sur l'accueil au démarrage
@@ -51007,7 +51115,7 @@ let _mascotBubbleOpen=false;
 function mascotGoAssistant(){
   closeModal({fromPop:true});
   view='assistant'; if(typeof setActiveView==='function') setActiveView(view); render();
-  if(_histReady && !_popping){ try{ history.replaceState({view:'assistant', kind:'view'}, '', '#assistant'); }catch(e){} }
+  if(_histReady && !_popping){ try{ history.replaceState({view:'assistant', kind:'view'}, '', '#assistant'); }catch(e){swallow(e,'mascotGoAssistant')} }
 }
 async function mascotToggleBubble(){
   let mood='serein', punchline='Coucou ! 🍩';
@@ -51384,7 +51492,7 @@ const AVAIL_DEFAULTS = {
 };
 function getAvailability(){
   try{ const s=JSON.parse(localStorage.getItem(AVAIL_KEY)||'null');
-    if(s && s.weekA && s.weekB) return s; }catch(e){}
+    if(s && s.weekA && s.weekB) return s; }catch(e){swallow(e,'getAvailability')}
   return JSON.parse(JSON.stringify(AVAIL_DEFAULTS));
 }
 function saveAvailability(a){ localStorage.setItem(AVAIL_KEY, JSON.stringify(a)); }
@@ -51421,7 +51529,7 @@ function availWeekType(dateStr, conf){
 // Plages d'un jour donné (Date) selon le cycle.
 function availSlotsForDate(d, conf){
   conf=conf||getAvailability();
-  const dateStr = d.toISOString().slice(0,10);
+  const dateStr = ymdLocal(d);
   // [EXCEPTIONS] Priorité absolue : si une exception couvre cette date, elle remplace le cycle A/B.
   const exc = findAvailException(dateStr);
   if(exc){
@@ -51504,7 +51612,7 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
   if(!deadlineDateStr) return {statut:'inconnu', msg:'Renseigne une date de livraison.'};
   const totalDem = Object.values(needs||{}).reduce((s,x)=>s+(+x||0),0);
   if(totalDem<=0) return {statut:'inconnu', msg:'Ajoute des parfums pour évaluer la faisabilité.'};
-  const debut = (typeof today==='function') ? today().slice(0,10) : new Date().toISOString().slice(0,10);
+  const debut = (typeof today==='function') ? today().slice(0,10) : ymdLocal(new Date());
   if(deadlineDateStr < debut) return {statut:'ko', msg:'⛔ Date de livraison déjà passée.'};
   const conf = (typeof getAvailability==='function') ? getAvailability() : null;
 
@@ -51582,7 +51690,7 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
 
   // Contribution propre de cette commande (temps de prod net du stock) + batchs, pour le détail.
   let prodThis={minutes:0,nbBatchsTotal:0,nbMeringues:0};
-  try{ prodThis = await productionMinutesForNeeds(needs); }catch(_){}
+  try{ prodThis = await productionMinutesForNeeds(needs); }catch(e){swallow(e,'assessOrderFeasibility')}
 
   // [v1186 — TRANSPARENCE anti-divergence] Publie, pour CETTE commande, la décision stock par parfum :
   // besoin, dispo MOBILISABLE (fini + assemblable = EXACTEMENT la notion du générateur de compo), net à
@@ -51601,7 +51709,7 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
         'Lecture': 'Si un parfum est « couvert par le stock » ici, le générateur le propose SANS relance et la faisabilité ne doit PAS exiger de repos ganache pour lui. Les deux visions partagent cette même source.'
       });
     }
-  }catch(_){}
+  }catch(e){swallow(e,'assessOrderFeasibility')}
 
   // Repli : moteur de fenêtre indisponible → ancien calcul isolé (mieux que rien).
   if(!ctx){
@@ -51678,7 +51786,7 @@ async function assessOrderFeasibility(needs, deadlineDateStr, deadlineHM){
             const pt=rpE.jalons.filter(j=>j.type==='travail').sort((a,b)=>a.date-b.date)[0];
             seqOk = !(pt && pt.date < new Date());
           }
-        }catch(_){}
+        }catch(e){swallow(e,'assessOrderFeasibility')}
       }
       if(chargeOk && seqOk){ earliest=ds; break; }
     }
@@ -52283,7 +52391,7 @@ async function retroplanningCaleParfums(dateLiv, heureLiv, parfumsQtes, recipes)
   const facteurCadence = await _retroFacteurCadenceDe(parfumsQtes, recipes);
   // [GANACHE PAR PARFUM] durée ganache JUSTE = somme des temps par parfum distinct (pas 12 × nbBatchs).
   // Même source de temps que le plan (mesuré fiable > recette > défaut). Repli silencieux si indispo.
-  let tEtapeRetro=null; try{ tEtapeRetro = await prodTempsParEtapeParParfum(90); }catch(_){}
+  let tEtapeRetro=null; try{ tEtapeRetro = await prodTempsParEtapeParParfum(90); }catch(e){swallow(e,'retroplanningCaleParfums')}
   let ganacheTotalMin; try{ ganacheTotalMin = _retroGanacheTotalMinDe(parfumsQtes, recipes, tEtapeRetro, facteurCadence).totalMin; }catch(_){ ganacheTotalMin = undefined; }
   // [MONTAGE PAR PARFUM] durée montage JUSTE = somme par parfum de perBatch × ceil(qte/60). Repli silencieux.
   let montageTotalMin; try{ montageTotalMin = _retroMontageTotalMinDe(parfumsQtes, recipes, tEtapeRetro, facteurCadence).totalMin; }catch(_){ montageTotalMin = undefined; }
@@ -52491,7 +52599,7 @@ async function buildCommandesRetro(horizonJours, mut){
     if(dLiv0 < today0 || dLiv0 > horizon) continue;
 
     let cale=null;
-    try{ cale = await retroplanningCale(o.id); }catch(e){}
+    try{ cale = await retroplanningCale(o.id); }catch(e){swallow(e,'buildCommandesRetro')}
     if(!cale || !cale.ok || !Array.isArray(cale.jalonsCales)) continue;
 
     // Liste lisible des parfums de la commande.
@@ -52632,7 +52740,7 @@ function _prodTempsRestantAujourdhui(conf){
   try{
     restant = (typeof availMinutesOnDay==='function') ? availMinutesOnDay(now, fromMin, null, conf) : 0;
     totalJour = (typeof availMinutesOnDay==='function') ? availMinutesOnDay(now, null, null, conf) : 0;
-  }catch(_){}
+  }catch(e){swallow(e,'_prodTempsRestantAujourdhui')}
   // Heure de fin du dernier créneau du jour (pour « avant HH:MM »).
   let finJour = null;
   try{
@@ -52641,7 +52749,7 @@ function _prodTempsRestantAujourdhui(conf){
       const finMin = Math.max(...slots.map(([s,e])=>hmToMin(e)));
       finJour = String(Math.floor(finMin/60)).padStart(2,'0')+':'+String(finMin%60).padStart(2,'0');
     }
-  }catch(_){}
+  }catch(e){swallow(e,'_prodTempsRestantAujourdhui')}
   return { restant, totalJour, finJour, fromMin, enCreneau: restant>0 };
 }
 
@@ -52829,19 +52937,19 @@ async function figerParfumsProd(orderId, payload){
     });
     await db.orders.update(orderId, { lignes });
     closeModal();
-    try{ toast('Parfums figés dans la commande ✓'); }catch(_){}
+    try{ toast('Parfums figés dans la commande ✓'); }catch(e){swallow(e,'figerParfumsProd')}
     if(typeof renderAgendaProduction==='function') renderAgendaProduction();
   }catch(e){
     console.error('figerParfumsProd', e);
     closeModal();
-    try{ toast('Erreur lors de l\'enregistrement'); }catch(_){}
+    try{ toast('Erreur lors de l\'enregistrement'); }catch(e){swallow(e,'figerParfumsProd')}
   }
 }
 
 // Handler du bouton Actualiser : recalcule l'écran à l'instant présent (heure, temps restant,
 // verdicts de faisabilité, commandes/marchés à jour). Simple re-render de l'écran courant.
 function prodActualiser(){
-  try{ toast('Production synchronisée à l\'instant présent ✓'); }catch(_){}
+  try{ toast('Production synchronisée à l\'instant présent ✓'); }catch(e){swallow(e,'prodActualiser')}
   if(typeof renderAgendaProduction==='function') renderAgendaProduction();
 }
 
@@ -52935,8 +53043,8 @@ async function _buildPlanOpAutonome(mut){
   let planOp=null;
   try{
     const recipesPlan = await db.recipes.toArray().catch(()=>[]);
-    let tEtape=null; try{ tEtape = await prodTempsParEtapeParParfum(90); }catch(_){}
-    let stockMob={}; try{ stockMob = await stockMobilisableParParfum(); }catch(_){}
+    let tEtape=null; try{ tEtape = await prodTempsParEtapeParParfum(90); }catch(e){swallow(e,'_buildPlanOpAutonome')}
+    let stockMob={}; try{ stockMob = await stockMobilisableParParfum(); }catch(e){swallow(e,'_buildPlanOpAutonome')}
     const ganacheCaleParCmd = {};
     const montageCaleParCmd = {};
     try{
@@ -52981,7 +53089,7 @@ async function _buildPlanOpAutonome(mut){
               }
             }
           }
-        }catch(_){}
+        }catch(e){swallow(e,'_buildPlanOpAutonome')}
       }));
       window._prodAlertesParfums = detecterCommandesADeterminer(_alertesParfums);
       const _markets = await db.markets.toArray().catch(()=>[]);
@@ -52998,7 +53106,7 @@ async function _buildPlanOpAutonome(mut){
             const jm = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
             if(jm) montageCaleParCmd[key] = { debut:jm.debut, fin:jm.fin };
           }
-        }catch(_){}
+        }catch(e){swallow(e,'_buildPlanOpAutonome')}
       }));
     }catch(e){ console.error('preCollecteGanache', e); }
     planOp = buildPlanOperationnelSemaine(mut, recipesPlan, tEtape, stockMob, ganacheCaleParCmd, montageCaleParCmd);
@@ -53026,7 +53134,7 @@ async function _buildPlanOpAutonome(mut){
 async function renderAgendaProduction(){
   const main = document.getElementById('main');
   // [v1252] Cache recettes à jour : la section « fournées par couleur » lit les couleurs des recettes.
-  try{ if(typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(_){}
+  try{ if(typeof refreshRecipesCache==='function') await refreshRecipesCache(); }catch(e){swallow(e,'renderAgendaProduction')}
   // [FIX v1293 — SAUT DE PAGE] AVANT : le premier affichage (état « calcul en cours ») ne contenait
   // qu'un titre minimal, puis le second affichage (résultat) ajoutait D'UN COUP la bannière « ← Retour
   // au fil », le bouton Actualiser et tout le contenu — un empilement de nouveaux éléments cliquables
@@ -53327,7 +53435,7 @@ function _wkBornes(wk){
   const dow = (simple.getUTCDay()+6)%7;
   const lundi = new Date(simple); lundi.setUTCDate(simple.getUTCDate()-dow);
   const dim = new Date(lundi); dim.setUTCDate(lundi.getUTCDate()+6);
-  return { lundiStr: lundi.toISOString().slice(0,10), dimStr: dim.toISOString().slice(0,10) };
+  return { lundiStr: ymdLocal(lundi), dimStr: ymdLocal(dim) };
 }
 // Semaine ISO suivante. Robuste aux changements d'année : on reconstruit le lundi de la semaine
 // donnée, on ajoute 7 jours, et on recalcule la clé ISO via _isoWeekKey (source de vérité unique).
@@ -53339,7 +53447,7 @@ function _semaineSuivante(wk){
   const dow = (simple.getUTCDay()+6)%7;
   const lundi = new Date(simple); lundi.setUTCDate(simple.getUTCDate()-dow);
   lundi.setUTCDate(lundi.getUTCDate()+7);   // +1 semaine
-  const iso = lundi.toISOString().slice(0,10);
+  const iso = ymdLocal(lundi);
   return (typeof _isoWeekKey==='function') ? _isoWeekKey(iso) : null;
 }
 // Crée (ou remplace) un override de report du montage d'un parfum, de wkSource vers wkSource+1.
@@ -53434,8 +53542,8 @@ async function _planSemaineGenere(wk){
   const dow = (simple.getUTCDay()+6)%7;
   const lundi = new Date(simple); lundi.setUTCDate(simple.getUTCDate()-dow);
   const dim = new Date(lundi); dim.setUTCDate(lundi.getUTCDate()+6);
-  const lundiStr = lundi.toISOString().slice(0,10);
-  const dimStr = dim.toISOString().slice(0,10);
+  const lundiStr = ymdLocal(lundi);
+  const dimStr = ymdLocal(dim);
   const todayStr = today().slice(0,10);
   const debut = (lundiStr < todayStr) ? todayStr : lundiStr;
 
@@ -53455,7 +53563,7 @@ async function _planSemaineGenere(wk){
   const end = new Date(dimStr+'T00:00:00');
   let guard = 0;
   while(cur <= end && guard++ < 60){
-    const dateStr = cur.toISOString().slice(0,10);
+    const dateStr = ymdLocal(cur);
     const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
     const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b])=>b>a);
     if(slotsMin.length) daySpecs.push({ date:dateStr, slots:slotsMin });
@@ -53554,7 +53662,7 @@ async function _planSemaineGenere(wk){
 async function _planSemaineSchedule(wk, extraOpts){
   const b = _wkBornes(wk);
   if(!b) return null;
-  const todayStr = (typeof today==='function') ? today().slice(0,10) : new Date().toISOString().slice(0,10);
+  const todayStr = (typeof today==='function') ? today().slice(0,10) : ymdLocal(new Date());
   const debut = (b.lundiStr < todayStr) ? todayStr : b.lundiStr;
   let plan;
   try{ plan = await generateProductionOrder(debut, b.dimStr, 0); }catch(_){ return null; }
@@ -53564,7 +53672,7 @@ async function _planSemaineSchedule(wk, extraOpts){
   const cur = new Date(debut+'T00:00:00'); const end = new Date(b.dimStr+'T00:00:00');
   let guard=0;
   while(cur<=end && guard++<60){
-    const dateStr = cur.toISOString().slice(0,10);
+    const dateStr = ymdLocal(cur);
     const slots = (typeof availSlotsForDate==='function') ? availSlotsForDate(cur, conf) : [];
     const slotsMin = (slots||[]).map(([s,e])=>[hmToMin(s), hmToMin(e)]).filter(([a,b2])=>b2>a);
     if(slotsMin.length) daySpecs.push({ date:dateStr, slots:slotsMin });
@@ -53681,7 +53789,7 @@ function planSimReportMontage(wk, parfum){
   }
   // Planning re-simulé (sans le diagnostic récursif : on passe un wk vide pour éviter de re-greffer des boutons).
   let planningHTML = '';
-  try{ planningHTML = _planSemaineRenderHTML(Ssim, ctx.plan, ctx.datesLiv, null); }catch(_){}
+  try{ planningHTML = _planSemaineRenderHTML(Ssim, ctx.plan, ctx.datesLiv, null); }catch(e){swallow(e,'planSimReportMontage')}
   // [ÉTAPE 4] Bouton « Appliquer » : visible dès que le report aide (la semaine rentre, ou il gagne du
   // temps). L'application réelle passe par planAppliquerReport qui revérifie les garde-fous avant d'agir.
   const peutAider = Ssim.ok || gagne>0;
@@ -53728,7 +53836,7 @@ async function planAppliquerReport(wk, parfum){
     if(!rec){ showMsg(`<div style="font-size:.74rem;color:#a52a2a">Le report n'a pas pu être enregistré.</div>`); return; }
     if(typeof toast==='function') toast(`Report appliqué : montage ${parfum} → semaine suivante`);
     // Rafraîchit le plan pour refléter le report (la semaine source et la cible changent).
-    if(typeof renderAgendaProduction==='function'){ try{ await renderAgendaProduction(); }catch(_){} }
+    if(typeof renderAgendaProduction==='function'){ try{ await renderAgendaProduction(); }catch(e){swallow(e,'planAppliquerReport')} }
   }catch(e){ console.error('planAppliquerReport', e); showMsg(`<div style="font-size:.74rem;color:#a52a2a">Erreur lors de l'application du report.</div>`); }
 }
 
@@ -53741,7 +53849,7 @@ async function planAnnulerReport(wk, parfum){
     }
     const n = await planOverrideRemove(wk, parfum, 'montage');
     if(typeof toast==='function') toast(n>0 ? `Report annulé : ${parfum} revient dans la semaine` : 'Aucun report à annuler');
-    if(typeof renderAgendaProduction==='function'){ try{ await renderAgendaProduction(); }catch(_){} }
+    if(typeof renderAgendaProduction==='function'){ try{ await renderAgendaProduction(); }catch(e){swallow(e,'planAnnulerReport')} }
   }catch(e){ console.error('planAnnulerReport', e); if(typeof toast==='function') toast('Erreur lors de l\'annulation'); }
 }
 
@@ -53753,7 +53861,7 @@ function _diagReorganisation(S, plan, datesLiv, wk){
   const lignesParParfum = {};
   (plan.lignes||[]).forEach(l=>{ lignesParParfum[l.parfum] = l; });
   // Date de référence = aujourd'hui (pour calculer une marge en jours jusqu'à la livraison).
-  const todayStr = (typeof today==='function') ? today().slice(0,10) : new Date().toISOString().slice(0,10);
+  const todayStr = (typeof today==='function') ? today().slice(0,10) : ymdLocal(new Date());
   const joursEntre = (d1, d2) => {
     try{ return Math.round((new Date(d2+'T00:00') - new Date(d1+'T00:00')) / 86400000); }catch(_){ return null; }
   };
@@ -54229,9 +54337,9 @@ async function buildMutualisationSemaine(horizonJours){
       const cale = await retroplanningCale(o.id);
       if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
         const m = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
-        if(m){ montageKey = new Date(m.debut).toISOString().slice(0,10); montageISO = m.debut; }
+        if(m){ montageKey = ymdLocal(new Date(m.debut)); montageISO = m.debut; }
       }
-    }catch(e){}
+    }catch(e){swallow(e,'buildMutualisationSemaine')}
     if(!montageKey) montageKey = String(dLiv).slice(0,10);
 
     const dMontage = new Date(montageKey+'T12:00:00');
@@ -54265,7 +54373,7 @@ async function buildMutualisationSemaine(horizonJours){
         if(aCongeler){
           const hMax = rec && rec.heuresMaxSortie!=null && +rec.heuresMaxSortie>0 ? +rec.heuresMaxSortie : 24;
           const ds = new Date(dLiv0.getTime() - hMax*3600000);
-          sortir = ds.toISOString().slice(0,10);
+          sortir = ymdLocal(ds);
         }
         const slot = (slotWk.parfums[nom] ||= { qte:0, ganacheDelaiH:gDelai, commandes:[] });
         slot.qte += qte;
@@ -54283,7 +54391,7 @@ async function buildMutualisationSemaine(horizonJours){
       if(_sp>0){
         const nom='À définir';
         let sortir=null;
-        if(aCongeler){ const ds=new Date(dLiv0.getTime()-24*3600000); sortir=ds.toISOString().slice(0,10); }
+        if(aCongeler){ const ds=new Date(dLiv0.getTime()-24*3600000); sortir=ymdLocal(ds); }
         const slot = (slotWk.parfums[nom] ||= { qte:0, ganacheDelaiH:null, commandes:[] });
         slot.qte += _sp;
         slot.commandes.push({ orderId:o.id, client:cn, qte:_sp, montage:montageKey, livraison:String(dLiv).slice(0,10), aCongeler, sortir, aDefinir:true });
@@ -54318,9 +54426,9 @@ async function buildMutualisationSemaine(horizonJours){
         const cale = await retroplanningCaleParfums(pseudo.date, pseudo.heureLivraison, parfumsQtes, recipes);
         if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
           const m = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
-          if(m){ montageKey = new Date(m.debut).toISOString().slice(0,10); montageISO = m.debut; }
+          if(m){ montageKey = ymdLocal(new Date(m.debut)); montageISO = m.debut; }
         }
-      }catch(_){}
+      }catch(e){swallow(e,'buildMutualisationSemaine')}
       if(!montageKey) montageKey = pseudo.date;   // repli : date du marché
 
       const dMontage = new Date(montageKey+'T12:00:00');
@@ -54602,7 +54710,7 @@ async function _collecterDisponibilites(dateLiv, heureLiv, opts){
         e.sources.push({ type:'mutualise', qte:surplus, montage:montageMin||sem.montageRef, semaine:sem.label });
       });
     });
-  }catch(_){}
+  }catch(e){swallow(e,'_collecterDisponibilites')}
 
   // ── SOURCE 3 : RELANCE faisable ──────────────────────────────────────────
   // Pour CHAQUE recette existante, est-il possible de lancer un batch dédié qui
@@ -54628,7 +54736,7 @@ async function _collecterDisponibilites(dateLiv, heureLiv, opts){
       const e = ensure(nom);
       e.relanceOk = e.relanceOk || ok;
     });
-  }catch(_){}
+  }catch(e){swallow(e,'_collecterDisponibilites')}
 
   // [v1192 — DIAG SÉPARATION UNIVERS] Transparence sur le filtre standard/grand format : combien de
   // parfums retenus, et lesquels ont été acceptés SANS recette (potentiels grands formats non catégorisés).
@@ -54642,7 +54750,7 @@ async function _collecterDisponibilites(dateLiv, heureLiv, opts){
         'Règle': 'Un coffret standard exclut TOUT parfum dont la recette est grandFormat ; un grand format exclut tout parfum standard. La catégorie vient de la case grandFormat de la recette.'
       });
     }
-  }catch(_){}
+  }catch(e){swallow(e,'_collecterDisponibilites')}
 
   return { parfums: acc, meta:{ dateLiv, heureLiv, batch:TB, typeFiltre, ambigus:[...new Set(_ambigus)] } };
 }
@@ -55540,7 +55648,7 @@ async function renderTempsProduction(){
   const main = document.getElementById('main'); if(!main) return;
   const jours = _tempsProdPeriode==='tout' ? 100000 : (+_tempsProdPeriode||30);
   const since = new Date(); since.setDate(since.getDate()-jours);
-  const sinceStr = since.toISOString().slice(0,10);
+  const sinceStr = ymdLocal(since);
 
   const recipes = await db.recipes.toArray().catch(()=>[]);
   window._allRecipesCache = recipes;
@@ -55836,7 +55944,7 @@ async function reconstructStockHistoryPreview(){
       const _byComp = {};
       _pr.forEach(p=>{ const c=p.composant||'complet'; _byComp[c]=(_byComp[c]||0)+1; });
       _diagComp = Object.keys(_byComp).sort().map(c=>`${c}: ${_byComp[c]}`).join(' · ');
-    }catch(_){}
+    }catch(e){swallow(e,'reconstructStockHistoryPreview')}
     const plan = await _reconstructStockPlan();
     const pertes = plan.pertes||[];
     const asmS = plan.asmSorties||[];
@@ -55891,10 +55999,10 @@ async function reconstructStockHistoryRun(){
       const existants = await db.stockMoves.toArray().catch(()=>[]);
       for(const m of existants){
         if(m.reconstruit && m.sens>0 && m.type==='production' && m.productionId!=null && asmIds.has(+m.productionId)){
-          try{ await db.stockMoves.update(m.id, {type:'assemblage'}); }catch(_){}
+          try{ await db.stockMoves.update(m.id, {type:'assemblage'}); }catch(e){swallow(e,'reconstructStockHistoryRun')}
         }
       }
-    }catch(_){}
+    }catch(e){swallow(e,'reconstructStockHistoryRun')}
     const plan = await _reconstructStockPlan();
     let ok = 0;
     for(const e of plan.entrees){
@@ -55905,7 +56013,7 @@ async function reconstructStockHistoryRun(){
           productionId:e.productionId, reconstruit:true, note:'reconstruit (rattrapage)'
         });
         ok++;
-      }catch(_){}
+      }catch(e){swallow(e,'reconstructStockHistoryRun')}
     }
     for(const s of plan.sorties){
       try{
@@ -55915,7 +56023,7 @@ async function reconstructStockHistoryRun(){
           orderId:s.orderId, productionId:s.productionId, reconstruit:true, note:'reconstruit (rattrapage)'
         });
         ok++;
-      }catch(_){}
+      }catch(e){swallow(e,'reconstructStockHistoryRun')}
     }
     for(const pr of (plan.pertes||[])){
       try{
@@ -55926,7 +56034,7 @@ async function reconstructStockHistoryRun(){
           note:'reconstruit (rattrapage)'+(pr.note?(' · '+pr.note):'')
         });
         ok++;
-      }catch(_){}
+      }catch(e){swallow(e,'reconstructStockHistoryRun')}
     }
     for(const a of (plan.asmSorties||[])){
       try{
@@ -55937,7 +56045,7 @@ async function reconstructStockHistoryRun(){
           note:'reconstruit (rattrapage)'
         });
         ok++;
-      }catch(_){}
+      }catch(e){swallow(e,'reconstructStockHistoryRun')}
     }
     if(typeof markUnsaved==='function') markUnsaved();
     toast(`✓ ${ok} mouvement(s) reconstruit(s)`);
@@ -55954,7 +56062,7 @@ async function reconstructStockHistoryUndoRun(){
     const all = await db.stockMoves.toArray().catch(()=>[]);
     const recon = all.filter(m=>m.reconstruit);
     let n=0;
-    for(const m of recon){ try{ await db.stockMoves.delete(m.id); n++; }catch(_){} }
+    for(const m of recon){ try{ await db.stockMoves.delete(m.id); n++; }catch(e){swallow(e,'reconstructStockHistoryUndoRun')} }
     if(typeof markUnsaved==='function') markUnsaved();
     toast(`✓ ${n} mouvement(s) reconstruit(s) retiré(s)`);
     if(view==='histostock' && typeof renderHistoStock==='function') renderHistoStock();
@@ -55997,7 +56105,7 @@ async function logStockMove(m){
     return await db.stockMoves.add(rec);
   }catch(e){
     // Silencieux : la trace est secondaire, l'état réel (qteRestante) prime.
-    try{ console.warn('logStockMove ignoré:', e && e.message); }catch(_){}
+    try{ console.warn('logStockMove ignoré:', e && e.message); }catch(e){swallow(e,'logStockMove')}
     return null;
   }
 }
@@ -56010,7 +56118,7 @@ function getOptimBatch(){
   try{ return localStorage.getItem(OPTIM_BATCH_KEY)==='1'; }catch(e){ return false; }
 }
 function setOptimBatch(on){
-  try{ localStorage.setItem(OPTIM_BATCH_KEY, on?'1':'0'); }catch(e){}
+  try{ localStorage.setItem(OPTIM_BATCH_KEY, on?'1':'0'); }catch(e){swallow(e,'setOptimBatch')}
 }
 
 // [OPTIMISATION BATCH] Arrondit une quantité commandée au palier de production rationnel.
@@ -56106,7 +56214,7 @@ async function _chargeCreneauxFenetre(debutStr, finStr){
         'Créneaux (échantillon)': _detail.length ? _detail : 'aucun créneau dans la fenêtre'
       });
     }
-  }catch(_){}
+  }catch(e){swallow(e,'_chargeCreneauxFenetre')}
   return { tempsTotal, nbCreneaux, registreVide:false, parType };
 }
 // [FAISABILITÉ — fenêtre explicite] Charge vs disponibilité sur une fenêtre [debut, fin] quelconque.
@@ -56168,7 +56276,7 @@ async function _faisabiliteFenetre(debutStr, finStr, conf, besoinAdditionnel){
         'Lecture': 'La faisabilité juge la VRAIE production (créneaux moteur 2). Moteur 1 réservé à la simulation d\'ajout et au repli d\'urgence.'
       });
     }
-  }catch(_){}
+  }catch(e){swallow(e,'_faisabiliteFenetre')}
   return {
     debut:debutStr, fin:finStr,
     tempsTotal: charge,
@@ -56186,8 +56294,8 @@ async function _faisabiliteSemaine(wk, conf, besoinAdditionnel){
   const dow = (simple.getUTCDay()+6)%7;
   const lundi = new Date(simple); lundi.setUTCDate(simple.getUTCDate()-dow);
   const dim = new Date(lundi); dim.setUTCDate(lundi.getUTCDate()+6);
-  const lundiStr = lundi.toISOString().slice(0,10);
-  const dimStr = dim.toISOString().slice(0,10);
+  const lundiStr = ymdLocal(lundi);
+  const dimStr = ymdLocal(dim);
   // [DATE LOCALE — cohérence avec l'ordre du jour] today() repose sur toISOString() (UTC) et provoque un
   // off-by-one en France le soir (UTC+1/+2) : la fenêtre se décalait d'un jour vs l'ordre du jour (qui, lui,
   // utilise la date locale). On force la date LOCALE ici pour que verdict et ordre du jour voient le MÊME jour.
@@ -56203,7 +56311,7 @@ async function _faisabiliteSemaine(wk, conf, besoinAdditionnel){
   if(estSemaineCourante){
     debut = todayStr;
     const d7 = new Date(todayStr+'T00:00:00'); d7.setDate(d7.getDate()+6);
-    fin = d7.toISOString().slice(0,10);          // aujourd'hui + 6 = 7 jours glissants
+    fin = ymdLocal(d7);          // aujourd'hui + 6 = 7 jours glissants
   } else {
     debut = lundiStr; fin = dimStr;              // semaine future : ses propres bornes
   }
@@ -56277,7 +56385,7 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
           parfum:p.nom, cle:_k, demande:p.qte, stockTrouve:stockDispo, besoinNet,
           detail: _b ? `finis ${round3(_b.finis||0)} · assemblable ${round3(_b.assemblable||0)} · coques ${round3(_b.coquesMac||0)} · ganache ${round3(_b.ganacheMac||0)}` : 'AUCUNE entrée stockMob pour cette clé'
         });
-      }catch(_){}
+      }catch(e){swallow(e,'buildPlanOperationnelSemaine')}
       if(_optimOn){
         const ar = arrondirPalierProduction(besoinNet);
         prodInfo[p.nom] = { commande:p.qte, stock:stockDispo, besoinNet, produire:ar.produire, surplus:ar.surplus, paliers:ar.paliers };
@@ -56512,7 +56620,7 @@ function buildPlanOperationnelSemaine(mut, recipes, tEtape, stockMob, ganacheCal
           : 'aucun'
       });
     }
-  }catch(_){}
+  }catch(e){swallow(e,'buildPlanOperationnelSemaine')}
   return { semaines, horizonJours: mut.horizonJours||45 };
 }
 
@@ -56544,9 +56652,9 @@ async function buildParfumsParJour(horizonJours){
       const cale = await retroplanningCale(o.id);
       if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
         const montage = cale.jalonsCales.find(j=>j.cle==='montage' && j.debut);
-        if(montage) jourKey = new Date(montage.debut).toISOString().slice(0,10);
+        if(montage) jourKey = ymdLocal(new Date(montage.debut));
       }
-    }catch(e){}
+    }catch(e){swallow(e,'buildParfumsParJour')}
     if(!jourKey) jourKey = String(dLiv).slice(0,10);
 
     const d = new Date(jourKey+'T12:00:00');
@@ -57059,7 +57167,7 @@ function availExceptionAdd(){
 // Raccourcis rapides.
 function availExceptionQuick(kind){
   const list=getAvailExceptions();
-  const d=new Date(); const iso = x => x.toISOString().slice(0,10);
+  const d=new Date(); const iso = x => ymdLocal(x);
   if(kind==='ferme-today'){
     list.push({id:'exc'+Date.now(), start:iso(d), end:iso(d), etat:'ferme', slots:[]});
     toast('Aujourd\'hui fermé ✓');
@@ -57160,7 +57268,7 @@ function getMrpTimes(){
       if(floor>0 && est<floor){ est = d.estimatedTime; repare=true; }
       out[k]={ estimatedTime: est, totalRealTime: +v.totalRealTime||0, completions: +v.completions||0 };
     }
-    if(repare){ try{ localStorage.setItem(MRP_TIME_KEY, JSON.stringify(out)); }catch(_){} }
+    if(repare){ try{ localStorage.setItem(MRP_TIME_KEY, JSON.stringify(out)); }catch(e){swallow(e,'getMrpTimes')} }
     return out;
   }catch(e){ return JSON.parse(JSON.stringify(MRP_TIME_DEFAULTS)); }
 }
@@ -57268,7 +57376,7 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
   const _poolH = (+opts.poolHorizonJours>0) ? (+opts.poolHorizonJours) : 0;
   let _endPool = endDate;
   if(_poolH>0){
-    try{ const dP=new Date(endDate+'T00:00:00'); dP.setDate(dP.getDate()+_poolH); _endPool=dP.toISOString().slice(0,10); }
+    try{ const dP=new Date(endDate+'T00:00:00'); dP.setDate(dP.getDate()+_poolH); _endPool=ymdLocal(dP); }
     catch(_){ _endPool=endDate; }
   }
   // requête ciblée sur l'index date (bornée) plutôt qu'un scan global
@@ -57424,7 +57532,7 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
         'Rappel': 'Un quasi-fini n\'est JAMAIS compté comme fini : il reste le temps de montage, signalé séparément.'
       });
     }
-  }catch(_){}
+  }catch(e){swallow(e,'generateProductionOrder')}
 
   // 3) REMPLISSAGE DES MERINGUES (capacité 120 macarons) — mutualisation seulement
   //    pour combler une meringue, jamais imposée. Un parfum ≥120 prend des meringues pleines.
@@ -58217,16 +58325,16 @@ function _persoReadDays(){
 }
 function persoAddDay(){ _persoReadDays(); const last=_persoDays[_persoDays.length-1];
   const nd=new Date(last.date); nd.setDate(nd.getDate()+1);
-  _persoDays.push({date:nd.toISOString().slice(0,10), slotsTxt:''}); persoPlanForm(); }
+  _persoDays.push({date:ymdLocal(nd), slotsTxt:''}); persoPlanForm(); }
 function persoDelDay(i){ _persoReadDays(); _persoDays.splice(i,1); if(!_persoDays.length)_persoDays=_persoDefaultDays(); persoPlanForm(); }
 function persoPreset(kind){
   _persoReadDays();
   if(kind==='today3'){ _persoDays=[{date:today(), slotsTxt:_presetNextHours(3)}]; }
   else if(kind==='2days'){ const d0=today(); const d1=new Date(d0); d1.setDate(d1.getDate()+1);
-    _persoDays=[{date:d0, slotsTxt:_presetNextHours(4)},{date:d1.toISOString().slice(0,10), slotsTxt:'09:00-14:00'}]; }
+    _persoDays=[{date:d0, slotsTxt:_presetNextHours(4)},{date:ymdLocal(d1), slotsTxt:'09:00-14:00'}]; }
   else if(kind==='fromAvail'){
     const conf=getAvailability(); const out=[]; const cur=new Date(today());
-    for(let k=0;k<3;k++){ const slots=availSlotsForDate(cur,conf); if(slots.length) out.push({date:cur.toISOString().slice(0,10), slotsTxt:_slotsToText(slots)}); cur.setDate(cur.getDate()+1); }
+    for(let k=0;k<3;k++){ const slots=availSlotsForDate(cur,conf); if(slots.length) out.push({date:ymdLocal(cur), slotsTxt:_slotsToText(slots)}); cur.setDate(cur.getDate()+1); }
     _persoDays = out.length?out:_persoDefaultDays();
   }
   persoPlanForm();
@@ -58392,7 +58500,7 @@ function pmsPeriodStart(freq){
   const d=new Date(today());
   if(freq==='Hebdo'){ const day=(d.getDay()+6)%7; d.setDate(d.getDate()-day); }   // lundi de la semaine
   else if(freq==='Mensuel'){ d.setDate(1); }                                       // 1er du mois
-  return d.toISOString().slice(0,10);
+  return ymdLocal(d);
 }
 
 let _pmsTab = 'temp';        // 'temp' | 'nettoyage'
@@ -60248,7 +60356,7 @@ async function pmsExportDDPP(){
   ]);
   const eqById={}; eqs.forEach(e=>eqById[e.id]=e);
   const taskById={}; tasks.forEach(t=>taskById[t.id]=t);
-  const since=(()=>{ const d=new Date(today()); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10); })();
+  const since=(()=>{ const d=new Date(today()); d.setDate(d.getDate()-30); return ymdLocal(d); })();
   const L=[];
   L.push('SENSATIONS MACARONS — PLAN DE MAÎTRISE SANITAIRE (PMS / HACCP)');
   L.push('Registre des 30 derniers jours — édité le '+fmtDate(today()));
@@ -60326,7 +60434,7 @@ function startClock(){
     try{ await migrateDlcCongelateur(); }catch(e){ console.error('migrateDlcCongelateur',e); }
     try{ await migrateCoqueColors(); }catch(e){ console.error('migrateCoqueColors',e); }
     try{ const r=await rdSeedSiVide();
-      let nIdees=0,nTests=0; try{nIdees=await db.rdIdees.count();}catch(_){}; try{nTests=await db.rdTests.count();}catch(_){}
+      let nIdees=0,nTests=0; try{nIdees=await db.rdIdees.count();}catch(e){swallow(e,'startClock')}; try{nTests=await db.rdTests.count();}catch(e){swallow(e,'startClock')}
       diagPublish('rd_seed','R&D · module', {...r, idees:nIdees, tests:nTests});
     }catch(e){ console.error('rdSeed',e); }
     try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
@@ -60344,12 +60452,13 @@ function startClock(){
   try{ opened = await handleTraceAnchor().catch(()=>false); }catch(e){ console.error('traceAnchor',e); }
   try{ if(!opened) render(); }catch(e){ console.error('render',e); }
   initHistoryNav();
+  try{ auditRoutage(); }catch(e){ swallow(e,'boot auditRoutage'); }   // [v1298] filet anti-écran-orphelin
   ttInit();
   try{ mascotInit(); }catch(e){ console.error('mascotInit',e); }
   // Camembert radial retiré ; seul le geste de balayage vers le coin (retour menu) reste actif.
   try{ radialInit(); }catch(e){ console.error('radialInit',e); }
   startClock();
-  try{ window._allMatsCache = await db.materials.toArray(); }catch(e){}
+  try{ window._allMatsCache = await db.materials.toArray(); }catch(e){swallow(e,'startClock')}
   try{ await refreshEmbEstRatio(); }catch(e){ console.error('embEstRatio',e); }
   try{ await refreshEmbEstRatioMarches(); }catch(e){ console.error('embEstRatioMarches',e); }
   try{ await refreshMoCtx(); }catch(e){ console.error('moCtx',e); }   // [A2] contexte main-d'œuvre mesurée pour la marge par-parfum
@@ -60360,7 +60469,7 @@ function startClock(){
   try{ await pmsEndOfDayCheck(); }catch(e){ console.error('pmsEod',e); }
   // Rappel d'export en DERNIER (et seulement si aucune autre modale n'est ouverte),
   // pour qu'il ne soit pas masqué par un autre message de démarrage.
-  setTimeout(()=>{ try{ if(!document.getElementById('overlay')?.classList.contains('show')) exportReminder(); }catch(e){} }, 1200);
+  setTimeout(()=>{ try{ if(!document.getElementById('overlay')?.classList.contains('show')) exportReminder(); }catch(e){swallow(e,'startClock')} }, 1200);
   // Surveillance quotidienne : réévalue toutes les commandes futures vs stock actuel.
   setTimeout(()=>{ showForecastPopup({daily:true}); }, 600);
 })();
