@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1295';
-const APP_MAJ = 'Cause r\u00e9elle trouv\u00e9e et corrig\u00e9e pour le crash « Planning renvoie \u00e0 l\u2019accueil ». Le marqueur \u00ab \u2190 Retour au fil \u00bb (pos\u00e9 quand on suit un lien du copilote vers Planning) ne s\u2019effa\u00e7ait JAMAIS en repartant vers un autre \u00e9cran par le menu \u2014 seul un retour \u00e0 l\u2019accueil ou un clic sur le bouton le consommait. Un lien du copilote suivi une fois dans la session laissait donc le marqueur actif ind\u00e9finiment : toute visite ULT\u00c9RIEURE de Planning par le menu (sans rapport avec le copilote) r\u00e9affichait \u00e0 tort le bouton \u00ab \u2190 Retour au fil \u00bb en haut de l\u2019\u00e9cran, exposant \u00e0 un retour accidentel \u00e0 l\u2019accueil. Le marqueur est d\u00e9sormais born\u00e9 \u00e0 UN SEUL \u00e9cran (m\u00eame m\u00e9canique que \u00ab \u2190 Retour au copilote \u00bb, d\u00e9j\u00e0 correcte) : il s\u2019efface automatiquement d\u00e8s qu\u2019on quitte Planning vers autre chose. Corrig\u00e9 en parall\u00e8le : un doublon d\u2019\u00e9couteurs sur le menu lat\u00e9ral iPad/desktop qui d\u00e9clenchait chaque clic de navigation deux fois. Les correctifs pr\u00e9c\u00e9dents restent en place (ossature Planning stable sans saut de page, boucle de r\u00e9troplanning parall\u00e9lis\u00e9e avec garde-fous, cases \u00e0 cocher persona, extracteur de tests mis en cache). Suite compl\u00e8te : 61 s, 598 assertions vertes.';
+const APP_VERSION = 'v1296';
+const APP_MAJ = 'VRAIE cause du crash « une rubrique du menu renvoie \u00e0 l\u2019accueil » enfin identifi\u00e9e et corrig\u00e9e (rien \u00e0 voir avec le copilote \u2014 c\u2019est l\u2019historique de navigation). Ouvrir le menu empile une entr\u00e9e d\u2019historique \u00ab #menu \u00bb. En tapant une rubrique, l\u2019app empilait \u00ab #<vue> \u00bb PAR-DESSUS \u00ab #menu \u00bb, puis fermait la feuille SANS retirer cette entr\u00e9e : \u00ab #menu \u00bb restait coinc\u00e9 dans la pile, juste sous la vue affich\u00e9e. Au moindre geste \u00ab retour \u00bb (ou rejeu d\u2019historique en PWA iOS), on retombait sur \u00ab #menu \u00bb \u2014 qui ne fait que fermer une feuille d\u00e9j\u00e0 ferm\u00e9e \u2014 puis sur \u00ab #dash \u00bb = l\u2019accueil. D\u2019o\u00f9 l\u2019impression que la rubrique \u00e9tait un simple raccourci vers l\u2019accueil. Correctif : quand l\u2019entr\u00e9e d\u2019historique courante est le menu, la navigation la REMPLACE au lieu d\u2019en empiler une nouvelle (couvre le tap dans la feuille ET les raccourcis \u00ab fermer le menu puis aller \u00e0 \u00bb de la recherche globale). La pile reste propre : [accueil, vue]. V\u00e9rifi\u00e9 en reproduisant la pile d\u2019historique exacte avant/apr\u00e8s. Tous les correctifs pr\u00e9c\u00e9dents restent en place. Suite compl\u00e8te : 60 s, 598 assertions vertes.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -4741,7 +4741,19 @@ function setActiveView(v){
 function navTo(b){
   if(!b || !b.dataset || !b.dataset.v) return;
   const now=Date.now(); if(now-_navLast<120 && view===b.dataset.v && !document.getElementById('sheetOverlay').classList.contains('show')) return; _navLast=now;
-  goView(b.dataset.v);
+  // [FIX v1296 — CRASH « Planning renvoie à l'accueil » depuis le MENU]
+  // Séquence du bug : ouvrir le menu empile une entrée d'historique '#menu' (openSheet → pushState).
+  // Taper une rubrique appelait ensuite goView() qui empilait '#<vue>' PAR-DESSUS '#menu', puis
+  // closeSheet() se contentait de masquer visuellement la feuille SANS toucher à l'historique. Le
+  // '#menu' restait donc coincé dans la pile, JUSTE SOUS la vue affichée. Au moindre 'popstate'
+  // (geste retour, ou l'app qui rejoue l'historique en PWA iOS), on retombait sur '#menu' — dont le
+  // handler ne fait que « fermer la feuille » (déjà fermée) — puis, au pop suivant, sur '#dash' =
+  // l'accueil. D'où l'impression que la rubrique du menu était « un raccourci vers l'accueil ».
+  // Correctif : si la feuille est ouverte au moment du tap, on REMPLACE l'entrée '#menu' au lieu
+  // d'en empiler une nouvelle (goView(..., {replace:true}) → replaceState). La pile reste propre :
+  // [#dash, #<vue>], sans '#menu' fantôme. Aucun changement quand on navigue hors menu (sidebar).
+  const sheetOpen = !!document.getElementById('sheetOverlay')?.classList.contains('show');
+  goView(b.dataset.v, sheetOpen ? {replace:true} : undefined);
   closeSheet();
 }
 // Navigation centralisée : change la vue ET empile une entrée d'historique (bouton Retour iOS).
@@ -4780,8 +4792,22 @@ function goView(v, opts){
   if(typeof assistantRetourSync==='function'){ try{ assistantRetourSync(); }catch(e){} }
   if(typeof filRetourSync==='function'){ try{ filRetourSync(); }catch(e){} }
   if(typeof navUsageTrack==='function') navUsageTrack(v);   // traçage usage (favoris/récents/stats)
-  if(_histReady && !_popping && !opts.replace){
-    try{ history.pushState({view:v, kind:'view'}, '', '#'+v); }catch(e){}
+  if(_histReady && !_popping){
+    // [FIX v1296] opts.replace : on REMPLACE l'entrée courante (ex. '#menu' laissé par openSheet)
+    // au lieu d'en empiler une nouvelle. AVANT, la branche replace ne faisait RIEN → l'entrée
+    // courante gardait son ancien état ('#menu', kind:'sheet'), et la pile restait incohérente
+    // avec la vue réellement affichée. On écrit désormais explicitement l'état de la vue.
+    // Garde-fou supplémentaire : si l'état courant de l'historique est une entrée 'sheet' (le menu),
+    // on la REMPLACE quoi qu'il arrive — même si opts.replace n'a pas été passé. Cela couvre les
+    // raccourcis « closeSheet();goView(...) » (recherche globale…) qui ferment la feuille AVANT
+    // d'appeler goView : sans ce garde-fou, l'entrée '#menu' resterait coincée sous la vue et un
+    // 'popstate' ultérieur renverrait à l'accueil (le bug rapporté depuis le menu).
+    let _curIsSheet=false;
+    try{ _curIsSheet = !!(history.state && history.state.kind==='sheet'); }catch(_){}
+    try{
+      if(opts.replace || _curIsSheet){ history.replaceState({view:v, kind:'view'}, '', '#'+v); }
+      else                           { history.pushState({view:v, kind:'view'}, '', '#'+v); }
+    }catch(e){}
   }
 }
 // Renvoie true s'il existe une température MODIFIÉE et non encore validée dans l'écran courant.
