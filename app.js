@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1300';
-const APP_MAJ = 'Ergonomie de navigation (ta priorit\u00e9 n\u00b01 : recherche accessible en un geste). Nouveau : APPUI LONG sur le bouton « Menu » (barre du bas) ouvre le menu avec le curseur d\u00e9j\u00e0 dans la barre de recherche, clavier pr\u00eat \u2014 tu tapes le nom de l\u2019\u00e9cran et tu y sautes, sans geste suppl\u00e9mentaire. Le TAP SIMPLE reste inchang\u00e9 : menu complet avec la vue d\u2019ensemble, sans clavier (tu gardes les deux fa\u00e7ons de naviguer). Une petite loupe sur le bouton Menu et une astuce affich\u00e9e une seule fois rendent le geste d\u00e9couvrable ; l\u00e9ger retour haptique \u00e0 l\u2019appui long. Aucune autre partie de l\u2019app modifi\u00e9e. Suite compl\u00e8te : 598 assertions vertes. (Rappel outils dev : smErrors() pour le journal d\u2019erreurs, smDebug(true) pour le mode diagnostic.)';
+const APP_VERSION = 'v1303';
+const APP_MAJ = 'Ergonomie \u2014 premi\u00e8re fusion d\u2019\u00e9crans qui se ressemblaient trop. « Contr\u00f4le des temps » et « Temps de production » ne font plus qu\u2019UN seul \u00e9cran « Temps de production », avec deux onglets : « Vérifier les séances » (relire/corriger les chronos) et « Analyser les durées » (durées réelles agrégées). Un bouton de menu au lieu de deux. L\u2019Atelier (chronos, saisie en direct) reste un \u00e9cran s\u00e9par\u00e9, comme demand\u00e9. R\u00e9alis\u00e9 sans r\u00e9\u00e9crire la logique : le nouvel \u00e9cran d\u00e9l\u00e8gue aux deux rendus existants, et les anciens acc\u00e8s (liens internes, favoris \u00e9pingl\u00e9s, recherche) continuent de fonctionner en retombant automatiquement sur le bon onglet. V\u00e9rifi\u00e9 en ex\u00e9cution (onglets, bascule, compatibilit\u00e9 des anciens noms). Suite compl\u00e8te : 598 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -48,7 +48,29 @@ function smDebug(on){
   try{ if(on){ localStorage.setItem('sm_debug','1'); window._smDebug=true; } else { localStorage.removeItem('sm_debug'); window._smDebug=false; } }catch(_){}
   return 'Mode debug ' + (on?'ACTIVÉ':'désactivé');
 }
-try{ if(typeof window!=='undefined'){ window.swallow=swallow; window.smErrors=smErrors; window.smDebug=smDebug; } }catch(_){}
+// [v1302] Inspecteur des globales window._ actuellement peuplées (aide au diagnostic de fuites d'état).
+// Tape smGlobals() dans la console : liste chaque window._X non vide, avec son type et un aperçu.
+// Utile pour repérer un contexte de session « resté accroché » après coup (comme l'ancien _filRetour).
+function smGlobals(){
+  try{
+    const rows=[];
+    for(const k in window){
+      if(!k.startsWith('_')) continue;
+      let v; try{ v=window[k]; }catch(_){ continue; }
+      if(v===undefined || v===null || typeof v==='function') continue;
+      let apercu;
+      try{
+        if(typeof v==='object') apercu = Array.isArray(v) ? ('['+v.length+' élément(s)]') : ('{'+Object.keys(v).slice(0,6).join(', ')+'}');
+        else apercu = String(v).slice(0,60);
+      }catch(_){ apercu='?'; }
+      rows.push({ global:k, type:Array.isArray(v)?'array':typeof v, apercu });
+    }
+    rows.sort((a,b)=>a.global.localeCompare(b.global));
+    console.table(rows);
+    return rows.length+' globale(s) window._ peuplée(s)';
+  }catch(e){ swallow(e,'smGlobals'); return '0'; }
+}
+try{ if(typeof window!=='undefined'){ window.swallow=swallow; window.smErrors=smErrors; window.smDebug=smDebug; window.smGlobals=smGlobals; } }catch(_){}
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -1252,7 +1274,8 @@ async function rdGenererMaintenant(){
   try{
     if(window._rdMoteur==='style'){
       const r = rdGenereStyle(recipes, ingredients, opts);
-      window._rdProfil = r.profil;
+      // [v1302] Code mort neutralisé : window._rdProfil écrit ici, jamais relu.
+      // window._rdProfil = r.profil;
       props = r.idees;
     } else if(window._rdMoteur==='inconnu'){
       props = rdGenere(ingredients, {...opts, mode:window._rdMode});
@@ -4561,7 +4584,7 @@ const VIEWS = {
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
   mrp:renderMrp,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, tresorerie:renderTresorerie, scenarios:renderScenarios, avoirs:renderAvoirs, panierMoyen:renderPanierMoyen, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProduction, controletemps:renderControleTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, tresorerie:renderTresorerie, scenarios:renderScenarios, avoirs:renderAvoirs, panierMoyen:renderPanierMoyen, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProductionCompat, controletemps:renderControleTempsCompat, temps:renderTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
   ventilation:renderVentilation,
   compositeur:renderCompositeur,
   carrousel:renderCarrousel,
@@ -4912,33 +4935,13 @@ function pmsGuardUnsaved(){
   }
   return ok;
 }
-function openSheet(opts){
-  opts = opts || {};
+function openSheet(){
   const o=document.getElementById('sheetOverlay'); if(o){ o.classList.add('show'); setActiveView(view);
     navAdvEnsureVisible();
     if(typeof navRenderFavoris==='function') navRenderFavoris();
     if(typeof navApplyStars==='function') navApplyStars();
     const pb=document.getElementById('sheetPrivacyBtn'); if(pb) pb.textContent = privacyModeEnabled()?'👁️ Afficher les données':'🙈 Mode discret';
     if(_histReady && !_popping){ try{ history.pushState({kind:'sheet', view:view}, '', '#menu'); }catch(e){swallow(e,'openSheet')} }
-    // [v1300] Découvrabilité (une seule fois) : signale le raccourci « appui long = recherche directe ».
-    if(!opts.focusSearch){
-      try{
-        if(localStorage.getItem('sm_hintMenuSearch')!=='1'){
-          localStorage.setItem('sm_hintMenuSearch','1');
-          if(typeof toast==='function') setTimeout(()=>{ try{ toast('Astuce : appui long sur « Menu » pour ouvrir la recherche directement 🔎'); }catch(_){}; }, 400);
-        }
-      }catch(e){ swallow(e,'openSheet hint'); }
-    }
-    // [v1300] Ouverture « recherche directe » (appui long sur Menu) : le champ de recherche du menu
-    // re\u00e7oit le focus imm\u00e9diatement, clavier pr\u00eat, pour sauter \u00e0 un \u00e9cran sans le moindre geste
-    // suppl\u00e9mentaire. Le tap SIMPLE garde le comportement classique (vue d'ensemble, sans clavier),
-    // pour ne pas g\u00eaner quand on veut juste parcourir le menu. On a donc les deux, chacun son geste.
-    if(opts.focusSearch){
-      try{
-        const inp=document.getElementById('globalSearchM');
-        if(inp){ inp.value=''; setTimeout(()=>{ try{ inp.focus(); }catch(e){swallow(e,'openSheet focus');} }, 60); }
-      }catch(e){ swallow(e,'openSheet focusSearch'); }
-    }
   }
 }
 function closeSheet(){ const o=document.getElementById('sheetOverlay'); if(o) o.classList.remove('show'); }
@@ -5177,24 +5180,7 @@ if(navEl) navEl.addEventListener('click', e => { const b=e.target.closest('butto
 
 // Tabbar (iPhone)
 document.querySelectorAll('#tabbar button[data-v]').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
-const menuBtn=document.getElementById('menuBtn');
-if(menuBtn){
-  // [v1300] Tap simple : menu classique (vue d'ensemble). Appui long : ouverture directe dans la
-  // recherche (clavier prêt) pour sauter à un écran en un geste. Détection par timer au touch/mouse.
-  let _menuLongTimer=null, _menuLong=false;
-  const _menuPressStart=()=>{ _menuLong=false; clearTimeout(_menuLongTimer); _menuLongTimer=setTimeout(()=>{ _menuLong=true; try{ if(navigator.vibrate) navigator.vibrate(8); }catch(_){}; openSheet({focusSearch:true}); }, 380); };
-  const _menuPressEnd=(e)=>{ clearTimeout(_menuLongTimer); if(_menuLong){ if(e&&e.preventDefault) e.preventDefault(); _menuLong=false; return; } openSheet(); };
-  const _menuPressCancel=()=>{ clearTimeout(_menuLongTimer); _menuLong=false; };
-  menuBtn.addEventListener('touchstart', _menuPressStart, {passive:true});
-  menuBtn.addEventListener('touchend', _menuPressEnd);
-  menuBtn.addEventListener('touchcancel', _menuPressCancel);
-  // Souris (iPad avec trackpad / desktop) : clic simple = menu. Appui maintenu = recherche.
-  menuBtn.addEventListener('mousedown', _menuPressStart);
-  menuBtn.addEventListener('mouseup', _menuPressEnd);
-  menuBtn.addEventListener('mouseleave', _menuPressCancel);
-  // Repli clavier / accessibilité : un vrai « click » synthétique (sans touch préalable) ouvre le menu.
-  menuBtn.addEventListener('click', (e)=>{ if(e.detail===0) openSheet(); });
-}
+const menuBtn=document.getElementById('menuBtn'); if(menuBtn) menuBtn.addEventListener('click', openSheet);
 
 // Feuille menu (iPhone)
 document.querySelectorAll('#sheetGrid button[data-v]').forEach(btn=>{ btn.addEventListener('click', ()=>navTo(btn)); });
@@ -6984,7 +6970,9 @@ async function recForm(id, prefill){
   if(id){ r=await db.recipes.get(id); bomDraft=(await db.recipeItems.where('recipeId').equals(id).toArray()).map(it=>({materialId:it.materialId,qteParBatch:it.qteParBatch,partie:it.partie||'',etiquette:it.etiquette||''})); }
   else if(prefill){ if(prefill.nom) r.produitNom=prefill.nom; if(prefill.grandFormat) r.grandFormat=true; }
   window._matsCache=mats;
-  window._componentsCache=allComponents;
+  // [v1302] Code mort neutralisé : window._componentsCache était écrit ici mais relu nulle part.
+  // (Conservé en commentaire pour trace ; supprimable définitivement si confirmé inutile.)
+  // window._componentsCache=allComponents;
   openModal(`<h3>${id?'Modifier':'Nouvelle'} recette</h3>
    <div class="row2">
      <div class="field"><label>Nom du produit</label><input id="f_nom" value="${esc(r.produitNom)}" placeholder="Macaron vanille"></div>
@@ -9492,7 +9480,9 @@ async function renderProductions(){
       const tb = Math.max(...b.lots.map(p=>Date.parse(p.prodDebutTs||p.prodTimestamp||0)||0));
       return tb-ta;   // plus récentes d'abord
     });
-  window._prodMeringueList = _meringueList;   // exposé pour le toggle de chevron
+  // [v1302] Code mort neutralisé : window._prodMeringueList (le « toggle de chevron » mentionné
+  // ne la lit plus). Écrite ici, jamais relue ailleurs.
+  // window._prodMeringueList = _meringueList;
   _prodnCache = prods.filter(p=>!prodEstRangee(p)).map(p=>{
     const nom = prodNom(p);
     const e = empInfo(p.emplacement);
@@ -14726,8 +14716,7 @@ const _NAV_PAGES = [
   {v:'atelier',      t:'Atelier (chronos)',         k:'atelier chrono temps minutage mesure'},
   {v:'stockparfums', t:'Stock par parfum',          k:'stock parfum macaron disponible'},
   {v:'histostock',   t:'Historique du stock',        k:'historique mouvements stock entrees sorties journal flux'},
-  {v:'tempsproduction', t:'Temps de production',     k:'temps production duree chrono atelier suivi travail heures batch reel actif'},
-  {v:'controletemps', t:'Contrôle des temps',     k:'controle verification correction temps chrono tache parfum lot session erreur ouvert reassigner duree'},
+  {v:'temps', t:'Temps de production',     k:'temps production duree chrono atelier suivi travail heures batch reel actif controle verification correction tache parfum lot session erreur ouvert reassigner analyser'},
   {v:'couts',        t:'Coûts & prix',              k:'cout prix revient marge tarif'},
   {v:'sauvegardes',  t:'Sauvegarde & sécurité',     k:'sauvegarde backup securite export restauration'},
   {v:'produits',     t:'Offre / Coffrets',          k:'produit coffret offre catalogue boite assortiment'},
@@ -42725,7 +42714,7 @@ const GUIDE_THEMES = [
     { v:'histostock', t:'Historique du stock', ico:'🕑', resume:"Tous les mouvements de ton stock : entrées, sorties, par parfum.",
       detail:"Le journal complet de tes flux de stock. En haut, un résumé par parfum avec le bilan entrées (↑), sorties (↓) et le net sur la période. En dessous, le détail chronologique de chaque mouvement (production, assemblage, livraison, marché, perte, dégustation, recrédit), du plus récent au plus ancien. Tu peux filtrer par période (7, 30, 90 jours ou tout), par type de mouvement, par composant (macaron, coques, ganache), par parfum, et faire une recherche libre. C'est la mémoire de ton stock : ce qui rentre, ce qui sort, et pourquoi.",
       steps:["Choisis une période et un type de mouvement","Repère les parfums qui tournent (net négatif = forte sortie)","Touche un parfum dans le filtre pour isoler son historique"] },
-    { v:'tempsproduction', t:'Temps de production', ico:'⏱', resume:"Le temps que te prend chaque batch : durée réelle et temps actif.",
+    { v:'temps', t:'Temps de production', ico:'⏱', resume:"Le temps que te prend chaque batch : durée réelle et temps actif.",
       detail:"Le suivi de tes temps de fabrication, alimenté par les chronos d'atelier. En haut, le total sur la période : durée réelle (du début à la fin) et temps actif (travail effectif, pauses déduites). En dessous, le détail par parfum, par jour et par batch. Tu peux filtrer par période (7, 30, 90 jours ou tout). Un bouton « Chronos ouverts » détecte et ferme proprement les chronos jamais arrêtés qui fausseraient le suivi.",
       steps:["Choisis une période","Compare durée réelle et temps actif par parfum","Nettoie les chronos restés ouverts si besoin"] },
     { v:'fournisseurs', t:'Fournisseurs', ico:'⚑', resume:"Ton répertoire de fournisseurs.",
@@ -45516,7 +45505,8 @@ function prelevReaffDel(prodId, materialId, idx){
 // Créer/réceptionner un lot puis l'ajouter à la répartition : on réutilise le formulaire
 // de réception existant (lotForm) en lui passant la matière ; au retour, on rafraîchit.
 function prelevReaffNouveauLot(prodId, materialId){
-  window._prelevReaffPending = {prodId, materialId};
+  // [v1302] Code mort neutralisé : window._prelevReaffPending écrit ici, jamais relu.
+  // window._prelevReaffPending = {prodId, materialId};
   if(typeof lotForm==='function'){ closeModal(); lotForm(null, materialId); }
   else toast('Réception de lot indisponible');
 }
@@ -46241,8 +46231,10 @@ async function genererDevisDoc(docId){
     ],
     pied:`${e.nom||''}${e.siret?' · SIRET '+e.siret:''} · Micro-entreprise`
   };
-  window._lastDocHtml = devisHtml;
-  window._lastDocData = docData;   // [v1084] données pour le PDF canvas
+  // [v1302] Code mort neutralisé : _lastDocHtml / _lastDocData étaient prévues pour un « PDF canvas »
+  // ([v1084]) qui ne les lit plus (seule _lastDocMeta ci-dessous est vivante — utilisée par le mailto).
+  // window._lastDocHtml = devisHtml;
+  // window._lastDocData = docData;
   window._lastDocMeta = { fileName:`Devis ${d.numero||''}`, objet, corps, mailto };
   const btnMailto  = `<a class="pv-btn" href="${mailto}" title="Ouvre l'appli mail avec le message pré-rempli">✉️ Envoyer par mail</a>`;
   extraBtns = btnMailto;
@@ -46295,8 +46287,9 @@ function _prepDocPdfMail(html, libelle, client, montant, opts){
     'Bien cordialement,',
     signature
   ].join('\n');
-  window._lastDocHtml = html;
-  window._lastDocData = null;   // [v1084] pas de données structurées ici → repli HTML (facture)
+  // [v1302] Code mort neutralisé (voir plus haut) : seule _lastDocMeta est réellement lue.
+  // window._lastDocHtml = html;
+  // window._lastDocData = null;
   window._lastDocMeta = { fileName:libelle, objet, corps,
     mailto:`mailto:${client&&client.email?encodeURIComponent(client.email):''}?subject=${encodeURIComponent(objet)}&body=${encodeURIComponent(corps)}` };
 }
@@ -55056,8 +55049,38 @@ function _ctSanteSession(s){
 }
 
 // ---- VUE PRINCIPALE ----
-async function renderControleTemps(){
+// [v1303] FUSION « Temps de production » = 2 onglets dans un seul écran :
+//   • Vérifier  → l'ancien « Contrôle des temps » (renderControleTemps) : relire/corriger les sessions.
+//   • Analyser  → l'ancien « Temps de production » (renderTempsProduction) : durées agrégées.
+// L'Atelier (chronos, saisie en direct) reste un écran distinct — choix de Benjamin.
+// Principe zéro-régression : le conteneur monte une barre d'onglets + un sous-conteneur #tempsBody,
+// puis DÉLÈGUE aux deux fonctions existantes, INCHANGÉES dans leur logique. Ces deux fonctions écrivent
+// désormais dans #tempsBody s'il existe (sinon #main, pour tout appel direct/legacy) — voir leur 1re ligne.
+let _tempsTab = 'verifier';   // 'verifier' | 'analyser'
+function setTempsTab(t){ _tempsTab = (t==='analyser'?'analyser':'verifier'); renderTemps(); }
+async function renderTemps(){
   const main = document.getElementById('main'); if(!main) return;
+  const tab = _tempsTab;
+  main.innerHTML = `<div class="topbar"><div><h1>⏱️ Temps de production</h1><p>Vérifie tes séances chronométrées, puis analyse les durées réelles</p></div></div>
+    <div class="seg" style="display:flex;gap:6px;margin:4px 0 12px">
+      <button class="btn ${tab==='verifier'?'gold':'ghost'} sm" onclick="setTempsTab('verifier')">🔍 Vérifier les séances</button>
+      <button class="btn ${tab==='analyser'?'gold':'ghost'} sm" onclick="setTempsTab('analyser')">📊 Analyser les durées</button>
+    </div>
+    <div id="tempsBody"><p class="note">Chargement…</p></div>`;
+  try{
+    if(tab==='analyser'){ await renderTempsProduction(); }
+    else { await renderControleTemps(); }
+  }catch(e){ swallow(e,'renderTemps'); const b=document.getElementById('tempsBody'); if(b) b.innerHTML='<div class="panel"><p class="note">Affichage indisponible.</p></div>'; }
+}
+// [v1303] Compat : les anciens noms de vue (et les boutons internes qui y renvoient encore, ex.
+// « ✎ Temps », « ⏱ Temps de production → ») atterrissent sur l'écran fusionné, au bon onglet.
+async function renderControleTempsCompat(){ _tempsTab='verifier'; return renderTemps(); }
+async function renderTempsProductionCompat(){ _tempsTab='analyser'; return renderTemps(); }
+
+async function renderControleTemps(){
+  // [v1303] Écrit dans le sous-conteneur d'onglets #tempsBody si présent (écran fusionné « Temps »),
+  // sinon dans #main (appel direct/legacy) — aucun changement de comportement dans ce dernier cas.
+  const main = document.getElementById('tempsBody') || document.getElementById('main'); if(!main) return;
   const recipes = await db.recipes.toArray().catch(()=>[]);
   const recName = id => { const r = recipes.find(x=>+x.id===+id); return r?(r.produitNom||('recette #'+id)):('recette #'+id); };
   window._ctRecipes = recipes;  // pour le sélecteur de réassignation
@@ -55607,7 +55630,12 @@ function corrigerChronosOuvertsRun(){
     });
     if(typeof markUnsaved==='function') markUnsaved();
     toast(`✓ ${n} chrono(s) fermé(s) proprement`);
-    if(typeof view!=='undefined' && view==='tempsproduction' && typeof renderTempsProduction==='function') renderTempsProduction();
+    // [v1303] L'écran « Temps de production » vit désormais sous la vue fusionnée 'temps' (onglet
+    // Analyser) ; on rafraîchit via le conteneur d'onglets s'il est actif, sinon l'ancien direct.
+    if(typeof view!=='undefined'){
+      if(view==='temps' && typeof renderTemps==='function') renderTemps();
+      else if(view==='tempsproduction' && typeof renderTempsProduction==='function') renderTempsProduction();
+    }
   }catch(e){ toast('Erreur : '+(e&&e.message||e)); }
 }
 
@@ -55645,7 +55673,8 @@ function _batchDureeReelleMs(p){
 }
 
 async function renderTempsProduction(){
-  const main = document.getElementById('main'); if(!main) return;
+  // [v1303] Écrit dans #tempsBody si présent (écran fusionné « Temps »), sinon #main (legacy).
+  const main = document.getElementById('tempsBody') || document.getElementById('main'); if(!main) return;
   const jours = _tempsProdPeriode==='tout' ? 100000 : (+_tempsProdPeriode||30);
   const since = new Date(); since.setDate(since.getDate()-jours);
   const sinceStr = ymdLocal(since);
