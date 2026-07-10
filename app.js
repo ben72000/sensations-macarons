@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1303';
-const APP_MAJ = 'Ergonomie \u2014 premi\u00e8re fusion d\u2019\u00e9crans qui se ressemblaient trop. « Contr\u00f4le des temps » et « Temps de production » ne font plus qu\u2019UN seul \u00e9cran « Temps de production », avec deux onglets : « Vérifier les séances » (relire/corriger les chronos) et « Analyser les durées » (durées réelles agrégées). Un bouton de menu au lieu de deux. L\u2019Atelier (chronos, saisie en direct) reste un \u00e9cran s\u00e9par\u00e9, comme demand\u00e9. R\u00e9alis\u00e9 sans r\u00e9\u00e9crire la logique : le nouvel \u00e9cran d\u00e9l\u00e8gue aux deux rendus existants, et les anciens acc\u00e8s (liens internes, favoris \u00e9pingl\u00e9s, recherche) continuent de fonctionner en retombant automatiquement sur le bon onglet. V\u00e9rifi\u00e9 en ex\u00e9cution (onglets, bascule, compatibilit\u00e9 des anciens noms). Suite compl\u00e8te : 598 assertions vertes.';
+const APP_VERSION = 'v1304';
+const APP_MAJ = 'Nettoyage de l\u2019\u00e9cran fusionn\u00e9 « Temps de production » (suite v1303) : les deux onglets contenaient encore les en-t\u00eates de leurs anciens \u00e9crans autonomes, ce qui cr\u00e9ait des DOUBLONS visibles \u2014 un second titre « Contr\u00f4le des temps » sous le titre principal, et surtout un bouton « ⏱ Temps de production → » ET un bouton « 🔍 Contr\u00f4le des temps » qui menaient au m\u00eame endroit que les onglets. Ces titres et boutons redondants sont d\u00e9sormais masqu\u00e9s quand l\u2019\u00e9cran est affich\u00e9 dans le conteneur \u00e0 onglets ; les actions r\u00e9ellement utiles (🔧 Chronos ouverts, 📦 Historique) sont conserv\u00e9es. En acc\u00e8s direct (hors onglets), les \u00e9crans gardent leur bandeau complet. V\u00e9rifi\u00e9 en ex\u00e9cution. Suite compl\u00e8te : 598 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -55206,7 +55206,12 @@ async function renderControleTemps(){
   const active = sessions.find(s=>!s.end);
   const passees = sessions.filter(s=>s.end);
 
-  let html = `<div class="topbar"><div><h1>🔍 Contrôle des temps</h1>
+  // [v1304] Quand cet écran est affiché DANS le conteneur à onglets « Temps de production »
+  // (#tempsBody présent), son propre bandeau de titre est redondant avec celui du conteneur, et le
+  // bouton « ⏱ Temps de production → » fait doublon avec l'onglet « Analyser les durées ». On les
+  // masque donc dans ce cas. En appel autonome (legacy, sans conteneur), le bandeau complet est conservé.
+  const _dansOnglets = !!document.getElementById('tempsBody');
+  let html = _dansOnglets ? '' : `<div class="topbar"><div><h1>🔍 Contrôle des temps</h1>
     <p style="color:#8a776c;font-size:.86rem">Vérifie que chaque minute est rattachée au bon parfum. Corrige d'un geste si besoin.</p></div>
     <div class="flex"><button class="btn" onclick="goView('tempsproduction')">⏱ Temps de production →</button></div></div>`;
 
@@ -55797,10 +55802,18 @@ async function renderTempsProduction(){
       <td style="text-align:right;color:var(--bordeaux);font-weight:600">${fmtDureeMs(l.reel)}</td></tr>`).join('')
     || `<tr><td colspan="3" class="note" style="padding:10px">Aucun batch sur la période.</td></tr>`;
 
+  // [v1304] Dans le conteneur à onglets « Temps de production » (#tempsBody présent) : le titre
+  // « ⏱️ Temps de production » et le bouton « 🔍 Contrôle des temps » sont redondants avec le
+  // bandeau du conteneur et l'onglet « Vérifier les séances ». On ne garde ici que les actions
+  // propres à l'analyse (Chronos ouverts, Historique). En appel autonome, le bandeau complet reste.
+  const _dansOnglets = !!document.getElementById('tempsBody');
+  const _barreActions = `<div class="flex"><button class="btn ghost sm" onclick="corrigerChronosOuvertsPreview()" title="Détecter et fermer les chronos jamais arrêtés">🔧 Chronos ouverts</button><button class="btn" onclick="goView('histostock')">📦 Historique →</button></div>`;
   main.innerHTML = `
-   <div class="topbar"><div><h1>⏱️ Temps de production</h1>
+   ${_dansOnglets
+      ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${_barreActions}</div>`
+      : `<div class="topbar"><div><h1>⏱️ Temps de production</h1>
      <p>Temps réellement passé par production, parfum et période.</p></div>
-     <div class="flex"><button class="btn ghost sm" onclick="goView('controletemps')" title="Vérifier et corriger le temps de chaque séance">🔍 Contrôle des temps</button><button class="btn ghost sm" onclick="corrigerChronosOuvertsPreview()" title="Détecter et fermer les chronos jamais arrêtés">🔧 Chronos ouverts</button><button class="btn" onclick="goView('histostock')">📦 Historique →</button></div></div>
+     <div class="flex"><button class="btn ghost sm" onclick="goView('controletemps')" title="Vérifier et corriger le temps de chaque séance">🔍 Contrôle des temps</button><button class="btn ghost sm" onclick="corrigerChronosOuvertsPreview()" title="Détecter et fermer les chronos jamais arrêtés">🔧 Chronos ouverts</button><button class="btn" onclick="goView('histostock')">📦 Historique →</button></div></div>`}
 
    <div class="panel">
      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${periodes}</div>
