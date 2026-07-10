@@ -874,6 +874,10 @@ tr.prow-complet{border-left-color:#6aa3a0;background:#f3f8f8}
 .field input,.field select,.field textarea{width:100%;padding:11px 13px;border:1.5px solid #e7dccb;
   border-radius:var(--r-sm);font-family:'Outfit',system-ui,sans-serif;font-size:16px;background:#fff;color:var(--ink);transition:.15s}
 .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--caramel);box-shadow:0 0 0 3px rgba(170,124,57,.14)}
+/* [FIX v1293] Les cases à cocher listées dans un .field (ex : Occasions d'achat / Parfums
+   du persona) héritaient du width:100% ci-dessus, ce qui les étirait sur toute la largeur
+   de leur label inline-flex et décalait le texte (chevauchement visuel). */
+.field input[type=checkbox],.field input[type=radio]{width:auto;flex-shrink:0;padding:0}
 /* [v1216] ANTI-ZOOM iOS : Safari zoome automatiquement (et décale la page) au focus de tout champ
    de saisie dont la police fait moins de 16px. On force donc 16px sur TOUS les inputs texte/nombre,
    selects et textareas — quelle que soit la classe. Le pinch-zoom manuel reste possible (on ne

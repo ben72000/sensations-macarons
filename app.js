@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1292';
-const APP_MAJ = 'Correction du saut de page sur l\u2019accueil : la carte \u00ab \u00c0 produire \u00bb est d\u00e9sormais calcul\u00e9e AVANT l\u2019affichage et ins\u00e9r\u00e9e directement, au lieu d\u2019appara\u00eetre apr\u00e8s coup et de pousser le reste de la page vers le bas. Plus de r\u00e9servation de hauteur devin\u00e9e, plus de sursaut au chargement. Aucun autre \u00e9cran modifi\u00e9 ; les 282 tests de non-r\u00e9gression restent tous verts.';
+const APP_VERSION = 'v1293';
+const APP_MAJ = 'Trois correctifs. 1) Formulaire persona (\u00ab Occasions d\u2019achat \u00bb / \u00ab Parfums qu\u2019il aime \u00bb) : les cases \u00e0 cocher h\u00e9ritaient d\u2019une largeur 100% pr\u00e9vue pour les champs texte, ce qui les \u00e9tirait et d\u00e9calait le texte \u2014 corrig\u00e9. 2) Suite de tests : l\u2019extracteur partag\u00e9 (tests/_extract.js) rescannait tout app.js \u00e0 chaque appel sans cache ; devenu tr\u00e8s volumineux, le fichier faisait d\u00e9passer les d\u00e9lais \u00e0 certains tests (ex. marges par commande), donnant l\u2019impression d\u2019un blocage \u00e0 la livraison \u2014 corrig\u00e9 par m\u00e9mo\u00efsation (suite compl\u00e8te : 64 s au lieu de 4+ min, 598 assertions vertes). 3) Robustesse du Planning production : la boucle de r\u00e9troplanning par commande (accueil + \u00e9cran Planning) tournait commande par commande ; elle est maintenant parall\u00e9lis\u00e9e avec un garde-fou de temps par commande et un plafond global, pour qu\u2019un historique volumineux ne puisse plus geler l\u2019affichage.';
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -5437,8 +5437,12 @@ async function renderDash(){
 
   // [A14] Plan de production pré-calculé AVANT le paint : la carte « À produire » est injectée
   // dans le premier rendu (plus de remplissage différé de #dashProduction, donc plus de saut).
+  // [FIX v1293] Le calcul est désormais borné à 4 s : sur une base volumineuse (des mois d'historique),
+  // on préfère afficher l'accueil avec une carte vide plutôt que de geler tout le premier affichage —
+  // le risque introduit par le calcul « avant l'affichage » de la v1292. Repli sécurisé : liste vide,
+  // la carte affiche alors son état neutre au lieu de rester bloquée.
   let _dashProdPlan = [];
-  try{ _dashProdPlan = await buildProductionPlan(14) || []; }catch(e){ console.error('dashProduction (pré-calcul)', e); }
+  try{ _dashProdPlan = await _withTimeout(buildProductionPlan(14), 4000) || []; }catch(e){ console.error('dashProduction (pré-calcul)', e); }
   const _dashProdHTML = buildDashProductionHTML(_dashProdPlan);
 
   document.getElementById('main').innerHTML=`
@@ -52854,6 +52858,16 @@ function filRetourGo(){
 // par le Copilote (_ordreProductionDuJour), garantissant des horaires identiques sans aucune manip.
 // Effet de bord assumé : peuple window._prodAlertesParfums et window._planParfumCreneaux (via _agendaPlanOpSection
 // au rendu) — ici on remplit aussi _planParfumCreneaux directement pour que le Copilote soit autonome.
+// [FIX v1293] Petit garde-fou générique : borne la durée d'une promesse pour qu'une opération
+// anormalement lente (ou bloquée) sur une base IndexedDB volumineuse ne gèle jamais tout l'écran
+// Planning ni la carte « À produire » de l'accueil — elle échoue proprement (rejet) et le try/catch
+// appelant s'en sort comme pour n'importe quelle autre erreur déjà tolérée.
+function _withTimeout(p, ms){
+  return Promise.race([
+    p,
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout '+ms+'ms')), ms))
+  ]);
+}
 async function _buildPlanOpAutonome(mut){
   let planOp=null;
   try{
@@ -52878,9 +52892,17 @@ async function _buildPlanOpAutonome(mut){
       const _alertesParfums = [];
       const _clientsCache = await db.clients.toArray().catch(()=>[]);
       const _nomClient = cid => { const c=_clientsCache.find(x=>x.id===cid); return c ? [c.prenom,c.nom].filter(Boolean).join(' ') : ''; };
-      for(const oid of orderIds){
+      // [FIX v1293] AVANT : une commande à la fois (for..await séquentiel). Avec des mois d'historique,
+      // le nombre de commandes dans l'horizon peut être important, et chaque retroplanningCale() fait
+      // plusieurs allers-retours IndexedDB : en série, la somme des latences pouvait faire traîner —
+      // voire sembler bloquer — tout l'écran Planning (et la carte « À produire » de l'accueil, qui
+      // partage ce même moteur). On lance maintenant tout le lot EN PARALLÈLE (Promise.all), et un
+      // garde-fou de 8 s par commande empêche qu'UNE commande anormale (boucle lente, données
+      // corrompues) ne bloque indéfiniment tout le reste du plan — elle est simplement ignorée,
+      // comme n'importe quelle erreur déjà tolérée par le try/catch existant.
+      await Promise.all(Array.from(orderIds).map(async oid=>{
         try{
-          const cale = await retroplanningCale(oid);
+          const cale = await _withTimeout(retroplanningCale(oid), 8000);
           if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
             const jg = cale.jalonsCales.find(j=>(j.cle==='ganache'||j.cle==='cremeux') && j.debut);
             if(jg) ganacheCaleParCmd[oid] = { debut:jg.debut, fin:jg.fin };
@@ -52897,16 +52919,16 @@ async function _buildPlanOpAutonome(mut){
             }
           }
         }catch(_){}
-      }
+      }));
       window._prodAlertesParfums = detecterCommandesADeterminer(_alertesParfums);
       const _markets = await db.markets.toArray().catch(()=>[]);
-      for(const key of Object.keys(marketParfums)){
+      await Promise.all(Object.keys(marketParfums).map(async key=>{
         const mInfo = marketParfums[key];
         const mk = _markets.find(x=>('mk'+x.id)===key);
         const heure = mk ? _parseHeureMarche(mk.horaires, 8) : {h:8,m:0};
         const heureStr = String(heure.h).padStart(2,'0')+':'+String(heure.m).padStart(2,'0');
         try{
-          const cale = await retroplanningCaleParfums(mInfo.date, heureStr, mInfo.parfumsQtes, recipesPlan);
+          const cale = await _withTimeout(retroplanningCaleParfums(mInfo.date, heureStr, mInfo.parfumsQtes, recipesPlan), 8000);
           if(cale && cale.ok && Array.isArray(cale.jalonsCales)){
             const jg = cale.jalonsCales.find(j=>(j.cle==='ganache'||j.cle==='cremeux') && j.debut);
             if(jg) ganacheCaleParCmd[key] = { debut:jg.debut, fin:jg.fin };
@@ -52914,7 +52936,7 @@ async function _buildPlanOpAutonome(mut){
             if(jm) montageCaleParCmd[key] = { debut:jm.debut, fin:jm.fin };
           }
         }catch(_){}
-      }
+      }));
     }catch(e){ console.error('preCollecteGanache', e); }
     planOp = buildPlanOperationnelSemaine(mut, recipesPlan, tEtape, stockMob, ganacheCaleParCmd, montageCaleParCmd);
     if(planOp && Array.isArray(planOp.semaines)){
@@ -52953,7 +52975,12 @@ async function renderAgendaProduction(){
 
   // Plan opérationnel détaillé parfum par parfum (étape 1 du moteur). Temps : mesuré si fiable,
   // sinon recette, sinon défaut.
-  const planOp = await _buildPlanOpAutonome(mut);
+  // [FIX v1293] Garde-fou global (60 s) en plus des garde-fous par commande déjà posés dans
+  // _buildPlanOpAutonome : si malgré tout le calcul ne revient jamais, l'écran affiche un état
+  // dégradé au lieu de rester bloqué indéfiniment sur « Calcul du rétroplanning… ».
+  let planOp = null;
+  try{ planOp = await _withTimeout(_buildPlanOpAutonome(mut), 60000); }
+  catch(e){ console.error('planOp (timeout global)', e); }
 
   // Vue COMMANDES REPLIABLES : une carte par commande (client + chevron), dépliant l'enchaînement
   // complet de ses étapes calées. Remplace le déroulé jour-par-jour pour la lisibilité.
