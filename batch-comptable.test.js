@@ -86,6 +86,51 @@ const estBatch = buildModule();
      'COHÉRENCE MÉTIER · la moyenne d\'un batch dépasse la durée d\'une seule étape');
 }
 
+// ── LE 2e BUG (v1311) : ne compter QUE les batches réellement CHRONOMÉTRÉS ────
+{
+  // Le numérateur (temps actif) ne vient QUE des séances chronométrées. Si le dénominateur compte
+  // aussi les batches produits SANS chrono, on divise le temps de N batches par (N + M) batches :
+  // la moyenne s'effondre. C'est ce qui donnait « Coco Rafaello : 20 min/batch », soit MOINS que
+  // la seule cuisson des coques (21 min) — arithmétiquement impossible.
+  const chrono = new Set([1]);   // marque « mode chronométré » (déclenche le filtre)
+  const base = { prodStatut:'termine', prodTermineTs:OK_DATE, composant:'complet', recipeId:1 };
+
+  eq(estBatch({...base, atelierTaskId:'t1'}, SINCE, chrono), true,
+     'BUG v1311 VERROUILLÉ · un batch CHRONOMÉTRÉ (atelierTaskId présent) compte');
+  eq(estBatch({...base, atelierTaskId:null}, SINCE, chrono), false,
+     'BUG v1311 VERROUILLÉ · un batch produit SANS chrono ne compte PAS au dénominateur');
+  eq(estBatch({...base}, SINCE, chrono), false,
+     'BUG v1311 VERROUILLÉ · atelierTaskId absent → exclu du dénominateur');
+
+  // Sans ensemble fourni (appel legacy) → ancien comportement conservé, rien n'est cassé ailleurs.
+  eq(estBatch({...base, atelierTaskId:null}, SINCE), true,
+     'Rétro-compatibilité · sans le filtre chrono, le comportement d\'origine est conservé');
+}
+
+// ── DÉMONSTRATION : la moyenne redevient interprétable ────────────────────────
+{
+  const chrono = new Set([1]);
+  // Cas réel : 3 batches chronométrés, 7 produits sans chrono (10 au total).
+  const prods = [];
+  for(let i=0;i<3;i++) prods.push({ prodStatut:'termine', prodTermineTs:OK_DATE, composant:'complet', recipeId:1, atelierTaskId:'t'+i });
+  for(let i=0;i<7;i++) prods.push({ prodStatut:'termine', prodTermineTs:OK_DATE, composant:'complet', recipeId:1, atelierTaskId:null });
+
+  const avant = prods.filter(p=>estBatch(p, SINCE)).length;            // ancien : tout
+  const apres = prods.filter(p=>estBatch(p, SINCE, chrono)).length;    // nouveau : chronométrés
+  eq(avant, 10, 'AVANT · le dénominateur comptait les 10 batches (dont 7 jamais chronométrés)');
+  eq(apres, 3,  'APRÈS · le dénominateur ne compte que les 3 batches chronométrés');
+
+  const actifMs = 3 * 75 * 60000;   // 3 batches réellement mesurés à ~75 min chacun
+  const moyAvant = Math.round(actifMs / avant / 60000);
+  const moyApres = Math.round(actifMs / apres / 60000);
+  eq(moyAvant, 23, 'AVANT · moyenne écrasée à 23 min (sous la cuisson seule = impossible)');
+  eq(moyApres, 75, 'APRÈS · moyenne = 75 min, cohérente avec la somme des étapes');
+
+  const CUISSON_COQUES_MIN = 21;
+  eq(moyApres > CUISSON_COQUES_MIN, true,
+     'COHÉRENCE MÉTIER · la moyenne dépasse enfin la durée d\'une seule étape');
+}
+
 // ── statut / fenêtre : les autres conditions restent intactes ─────────────────
 {
   eq(estBatch({ prodStatut:'en_cours', prodTermineTs:'', composant:'complet' }, SINCE), false,

@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1310';
-const APP_MAJ = 'R\u00c9PARTITION AU PRORATA du temps mutualis\u00e9 (r\u00e8gle m\u00e9tier de Benjamin : « on ne peut pas faire 50/50 entre 300 pi\u00e8ces et 10 pi\u00e8ces sur la m\u00eame \u00e9tape »). Jusqu\u2019ici, une \u00e9tape partag\u00e9e (cuisson d\u2019une fourn\u00e9e mixte, meringue commune) \u00e9tait coup\u00e9e \u00c0 PARTS \u00c9GALES entre parfums, ce qui sous-attribuait le temps aux gros volumes et le sur-attribuait aux petits. D\u00e9sormais elle est r\u00e9partie au prorata des QUANTIT\u00c9S produites : sur une cuisson de 60 min partag\u00e9e entre 300 macarons framboise et 10 vanille, la framboise re\u00e7oit 58 min (97 %) et la vanille 2 min (3 %) \u2014 au lieu de 30/30. Pi\u00e8ge trait\u00e9 : les quantit\u00e9s ne sont pas dans la m\u00eame unit\u00e9 selon le composant (une production « coques » est stock\u00e9e en coques, ×2) \u2014 tout est donc ramen\u00e9 en MACARONS \u00c9QUIVALENTS avant comparaison. La vaisselle et la mise en place restent partag\u00e9es \u00e0 parts \u00e9gales (choix explicite : elles ne d\u00e9pendent pas du volume). Le mode de r\u00e9partition est affich\u00e9 dans le d\u00e9tail, et le repli \u00e0 parts \u00e9gales (si aucune quantit\u00e9 connue) est signal\u00e9 au lieu d\u2019\u00eatre masqu\u00e9. L\u2019apprentissage MRP et les calculs de co\u00fbts conservent leur comportement d\u2019origine. Suite : 641 → 647 assertions vertes.';
+const APP_VERSION = 'v1311';
+const APP_MAJ = 'DEUXI\u00c8ME BUG DE LA MOYENNE CORRIG\u00c9 \u2014 encore rep\u00e9r\u00e9 par Benjamin : « Coco Rafaello 20 min/batch, c\u2019est moins que la seule cuisson des coques (21 min) ». Il avait raison, et la cause \u00e9tait STRUCTURELLE. Le num\u00e9rateur (temps actif) ne provient QUE des s\u00e9ances chronom\u00e9tr\u00e9es, alors que le d\u00e9nominateur comptait TOUTES les productions termin\u00e9es \u2014 y compris celles faites SANS lancer de chrono (les donn\u00e9es affichaient d\u2019ailleurs « 7 batches mesur\u00e9s \u00b7 16 sans dur\u00e9e »). On divisait donc le temps de 7 batches par 23 : la moyenne s\u2019effondrait m\u00e9caniquement. D\u00e9sormais seuls les batches R\u00c9ELLEMENT CHRONOM\u00c9TR\u00c9S entrent au d\u00e9nominateur (preuve : le lien atelierTaskId pos\u00e9 au d\u00e9marrage du chrono) \u2014 num\u00e9rateur et d\u00e9nominateur portent enfin sur le M\u00caME p\u00e9rim\u00e8tre. Sur l\u2019exemple : 3 batches mesur\u00e9s \u00e0 75 min donnaient 23 min/batch (impossible) ; ils donnent maintenant 75 min. Les cartes indiquent « batches chronom\u00e9tr\u00e9s » et un bandeau signale honn\u00eatement combien de batches produits sans chrono sont exclus des moyennes. Verrouill\u00e9 par 9 nouvelles assertions. Suite : 647 \u2192 656 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -55801,14 +55801,49 @@ function _batchDureeReelleMs(p){
 // compter comme un batch gonflerait le dénominateur et écraserait la moyenne — c'était le bug qui
 // donnait « Framboise : 17 min/batch », soit moins que la seule cuisson des coques (impossible).
 // Même règle que le reste de l'app (cf. filtre historique : c!=='complet' && c!=='assemble' → exclu).
-function _estBatchComptable(p, sinceStr){
+// [v1311] BATCHES CHRONOMÉTRÉS — dénominateur des moyennes de temps.
+// BUG STRUCTUREL CORRIGÉ : le numérateur (temps actif) ne provient QUE des séances chronométrées,
+// alors que le dénominateur comptait TOUTES les productions terminées — y compris celles faites
+// SANS lancer de chrono (« 7 batches mesurés · 16 sans durée » dans les données de Benjamin).
+// On divisait donc le temps de 7 batches par 23 batches : la moyenne s'effondrait (Coco Rafaello
+// à 20 min, soit MOINS que la seule cuisson des coques — impossible).
+//
+// Règle : un batch n'entre au dénominateur QUE si sa recette a réellement été chronométrée
+// (présente dans une tâche d'une séance de la fenêtre). Ainsi numérateur et dénominateur portent
+// EXACTEMENT sur le même périmètre, et la moyenne redevient interprétable.
+// Renvoie l'ensemble des recipeId effectivement chronométrés sur la fenêtre.
+function _recettesChronometrees(sessions, sinceStr){
+  const out = new Set();
+  (sessions||[]).forEach(s=>{
+    if(sinceStr && (s.date||'').slice(0,10) < sinceStr) return;
+    (s.tasks||[]).forEach(t=>{
+      const net = (typeof prodTaskNet==='function') ? prodTaskNet(t) : 0;
+      if(!(net>0)) return;                       // une tâche à 0 n'a rien mesuré
+      (Array.isArray(t.parfums)?t.parfums:[]).forEach(r=>{
+        const n = +r; if(Number.isFinite(n) && n>0) out.add(n);
+      });
+    });
+  });
+  return out;
+}
+
+function _estBatchComptable(p, sinceStr, recettesChrono){
   if(!p) return false;
   const fini = (p.prodStatut==='termine') || (p.prodTermineTs && String(p.prodTermineTs).length>0) || (p.prodStatut==null);
   if(!fini) return false;
   const c = p.composant || 'complet';
   if(c!=='complet' && c!=='assemble') return false;   // exclut coques / ganache / chantache / dégustation
   const d = (p.prodTermineTs||p.prodTimestamp||p.date||'').slice(0,10);
-  return d >= sinceStr;
+  if(d < sinceStr) return false;
+  // [v1311] Le batch ne compte au dénominateur QUE s'il a réellement été CHRONOMÉTRÉ — sinon on
+  // diviserait un temps mesuré sur quelques batches par le nombre TOTAL de batches produits, ce qui
+  // écrase la moyenne (bug rapporté : Coco Rafaello à 20 min, sous la seule cuisson des coques).
+  // Preuve du chronométrage : le champ `atelierTaskId`, posé quand la production démarre avec un chrono.
+  // (Si aucun ensemble n'est fourni — appel legacy —, on conserve l'ancien comportement.)
+  if(recettesChrono instanceof Set){
+    return p.atelierTaskId != null;
+  }
+  return true;
 }
 
 // [v1310] POIDS DE PRODUCTION PAR RECETTE — base du PRORATA de répartition du temps mutualisé.
@@ -55884,7 +55919,12 @@ async function renderTempsProduction(){
   const actifTotal = Object.values(actifParRec).reduce((a,b)=>a+b,0);
 
   // ── Batches terminés sur la fenêtre (pour durée réelle + groupements) ──
-  const batches = prods.filter(p => _estBatchComptable(p, sinceStr));
+  // [v1311] Dénominateur = seulement les batches RÉELLEMENT CHRONOMÉTRÉS, pour porter sur le même
+  // périmètre que le temps actif (qui, lui, ne vient que des séances chronométrées).
+  const _recChrono = _recettesChronometrees(sessions, sinceStr);
+  const batches = prods.filter(p => _estBatchComptable(p, sinceStr, _recChrono));
+  // Batches produits mais NON chronométrés : utile pour dire honnêtement sur quoi porte la moyenne.
+  const _batchesNonChrono = prods.filter(p => _estBatchComptable(p, sinceStr) && p.atelierTaskId == null).length;
 
   // Agrégations (le temps mur à mur n'est plus affiché ; on ne garde que ce qui sert à l'actif).
   const parParfum = {};   // nomNorm -> {nom, reel, actif, nb}
@@ -55986,7 +56026,7 @@ async function renderTempsProduction(){
       return `<div class="tp-card">
         <div class="tp-head">
           <div class="tp-flavour">${esc(e.nom)}</div>
-          <div class="tp-qty"><b>${e.nb}</b><span>batch${e.nb>1?'es':''}</span></div>
+          <div class="tp-qty"><b>${e.nb}</b><span>batch${e.nb>1?'es':''} chronométré${e.nb>1?'s':''}</span></div>
         </div>
         <div class="tp-grid" style="grid-template-columns:1fr 1fr">
           <div class="tp-metric actif">
@@ -55995,7 +56035,7 @@ async function renderTempsProduction(){
           </div>
           <div class="tp-metric">
             <div class="tp-lbl">Moy. active/batch</div>
-            <div class="tp-val">${actifNul?'—':fmtDureeMs(moyActive)}</div>
+            <div class="tp-val">${(actifNul||e.nb<=0)?'—':fmtDureeMs(moyActive)}</div>
           </div>
         </div>
         ${decompoHTML}
@@ -56039,6 +56079,9 @@ async function renderTempsProduction(){
    <div class="panel">
      <h2>Par parfum / recette</h2>
      <p class="note" style="margin:2px 0 12px">Temps de travail effectif (chrono), repos et attente exclus.</p>
+     ${_batchesNonChrono>0?`<div class="note" style="margin:0 0 12px;padding:8px 10px;background:#fdf6e8;border-left:3px solid var(--caramel);border-radius:6px;font-size:.78rem">
+       ⚠️ <b>${_batchesNonChrono} batch${_batchesNonChrono>1?'es':''}</b> produit${_batchesNonChrono>1?'s':''} sans chrono sur cette période ${_batchesNonChrono>1?'sont exclus':'est exclu'} des moyennes : le temps mesuré ne porte que sur les batches réellement chronométrés. Les compter au dénominateur écraserait la moyenne.
+     </div>`:''}
      <div class="tp-cards">${cartesParfum}</div>
    </div>
 
