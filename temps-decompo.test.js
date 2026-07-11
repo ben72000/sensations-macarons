@@ -30,6 +30,8 @@ function buildModule(sessions, prods){
   const prodQteAffichee                 = extractFunction('prodQteAffichee');
   const poidsProductionParRecette       = extractFunction('_poidsProductionParRecette');
   const partsMutualisation              = extractFunction('_partsMutualisation');
+  const prodTaskMrpCategory             = extractFunction('prodTaskMrpCategory');
+  const etapePrincipale                 = extractFunction('_etapePrincipale');
   const prodSessTempsParRecette         = extractFunction('prodSessTempsParRecette');
   const tempsDecompoParParfum           = extractFunction('_tempsDecompoParParfum');
   const passiveDefaults                 = extractArrayLikeConst('PROD_PASSIVE_DEFAULTS');
@@ -44,6 +46,9 @@ function buildModule(sessions, prods){
     ${prodQteAffichee}
     ${poidsProductionParRecette}
     ${partsMutualisation}
+    const _ETAPES_ORDRE = ['Coques','Ganache','Assemblage','Support','Autre'];
+    ${prodTaskMrpCategory}
+    ${etapePrincipale}
     ${prodSessTempsParRecette}
     // Sessions injectées : prodSessLoad() est stubbée pour renvoyer le jeu de test.
     const __SESSIONS = ${JSON.stringify(sessions)};
@@ -273,6 +278,73 @@ function run(){
   const d = _tempsDecompoParParfum(new Set([1]), 3650, {});
   near(d.total, 90*M, 1000,
     'CAS5c · chevauchement partiel : temps mural = 90 min (et non 120 min additionnées)');
+}
+
+// ── CAS 5d : RÉPARTITION REPRÉSENTATIVE du chevauchement ─────────────────────
+{
+  // Règle métier (Benjamin) : quand des tâches se chevauchent, on n'additionne pas (le chevauchement
+  // est le GAIN de temps). Mais partager le temps mural À PARTS ÉGALES serait arbitraire : une tâche
+  // de 20 min pèserait autant qu'une de 60 min. On répartit AU PRORATA DE LA DURÉE PROPRE.
+  //
+  // Pochage 0→60 (60 min propres) ; Cuisson 20→40 (20 min propres, incluse dans le pochage).
+  // Temps mural = 60 min. Prorata des durées : pochage 60/(60+20)=75 %, cuisson 25 %… mais SEULEMENT
+  // sur la tranche partagée (20→40). Hors chevauchement, le pochage prend tout.
+  const s = seance([
+    tache('Pochage','Macaronnage', 0, 60, [1]),
+    tache('Cuisson des coques','Cuisson', 20, 20, [1]),
+  ], 1);
+  const { _tempsDecompoParParfum, prodSessTempsParRecette, prodSessLoad } = buildModule([s], []);
+  const d = _tempsDecompoParParfum(new Set([1]), 3650, {});
+
+  near(d.total, 60*M, 1000,
+    'CAS5d · temps MURAL = 60 min (les 20 min de cuisson tournent PENDANT le pochage)');
+  const totalCarte = prodSessTempsParRecette(prodSessLoad()[0], {})[1] || 0;
+  near(d.total, totalCarte, 1000, 'CAS5d · COHÉRENCE détail = total');
+
+  const coques = d.etapes.find(e=>e.etape==='Coques');
+  near(coques.ms, 60*M, 1000, 'CAS5d · tout retombe dans l\'étape Coques (pochage + cuisson)');
+
+  const poch = coques.taches.find(t=>t.label==='Pochage');
+  const cuis = coques.taches.find(t=>t.label==='Cuisson des coques');
+  eq(poch.ms > cuis.ms, true,
+     'CAS5d · RÉPARTITION REPRÉSENTATIVE : le pochage (60 min propres) pèse plus que la cuisson (20 min)');
+  eq(Math.round(poch.ms/60000) > 40, true,
+     'CAS5d · le pochage garde l\'essentiel du temps (et non 50/50)');
+}
+
+// ── CAS 5e : CONSOLIDATION dans les 3 ÉTAPES PRINCIPALES ─────────────────────
+{
+  // Règle métier : une production se structure en 3 étapes — COQUES, GANACHE, ASSEMBLAGE.
+  const s = seance([
+    tache('Pochage','Macaronnage', 0, 60, [1]),                                    // → Coques
+    tache('Cuisson des coques','Cuisson', 20, 20, [1]),                            // → Coques
+    tache('Émulsion','Préparation ganache', 60, 20, [1]),                          // → Ganache
+    tache('Assemblage des coques (finition macaron)','Garnissage', 80, 30, [1]),   // → Assemblage
+  ], 2);
+  const { _tempsDecompoParParfum } = buildModule([s], []);
+  const d = _tempsDecompoParParfum(new Set([1]), 3650, {});
+
+  const noms = d.etapes.map(e=>e.etape);
+  eq(noms.includes('Coques'), true,     'CAS5e · étape COQUES présente');
+  eq(noms.includes('Ganache'), true,    'CAS5e · étape GANACHE présente');
+  eq(noms.includes('Assemblage'), true, 'CAS5e · étape ASSEMBLAGE présente');
+
+  // ORDRE MÉTIER (fabrication), pas ordre par temps décroissant.
+  eq(noms.indexOf('Coques') < noms.indexOf('Ganache'), true,
+     'CAS5e · ordre de fabrication respecté : Coques avant Ganache');
+  eq(noms.indexOf('Ganache') < noms.indexOf('Assemblage'), true,
+     'CAS5e · ordre de fabrication respecté : Ganache avant Assemblage');
+
+  near(d.etapes.find(e=>e.etape==='Ganache').ms, 20*M, 1000, 'CAS5e · Ganache = 20 min');
+  near(d.etapes.find(e=>e.etape==='Assemblage').ms, 30*M, 1000, 'CAS5e · Assemblage = 30 min');
+
+  // PROPRIÉTÉ : la somme des étapes = le total (rien ne se perd, rien ne se duplique).
+  const somme = d.etapes.reduce((a,e)=>a+e.ms, 0);
+  near(somme, d.total, 1000, 'CAS5e · TRAÇABILITÉ : somme des 3 étapes === total chronométré');
+
+  // Les parts (%) doivent sommer à 100 %.
+  const sommeParts = d.etapes.reduce((a,e)=>a+e.part, 0);
+  near(sommeParts, 1, 0.01, 'CAS5e · les parts en % somment bien à 100 %');
 }
 
 // ── CAS 6 : COHÉRENCE avec le chiffre affiché sur la carte ────────────────────

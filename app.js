@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1315';
-const APP_MAJ = 'DEUX BUGS MAJEURS des analyses de temps, tous deux rep\u00e9r\u00e9s par Benjamin. (1) CHRONOS PARALL\u00c8LES : le d\u00e9tail AFFICHAIT LE DOUBLE du total (Framboise : d\u00e9tail 10 h 24 vs carte 5 h 07). Quand deux chronos tournent en m\u00eame temps (la cuisson tourne pendant que tu poches), le d\u00e9tail additionnait les deux dur\u00e9es alors que tu n\u2019as travaill\u00e9 qu\u2019une heure. Le d\u00e9tail compte d\u00e9sormais le TEMPS MURAL, comme le total : une heure avec 2 chronos = une heure, partag\u00e9e entre les t\u00e2ches concomitantes. Les pauses restent d\u00e9duites. (2) MOYENNES ABSURDES (Myrtille : 21 h 16 par batch !) : le temps actif inclut la fabrication des COQUES, souvent produites d\u2019avance en grande quantit\u00e9, alors que le d\u00e9nominateur ne comptait que les macarons ASSEMBL\u00c9S. 300 coques faites, 5 macarons assembl\u00e9s → temps \u00e9norme divis\u00e9 par 5. Le d\u00e9nominateur compte maintenant TOUT ce qui a \u00e9t\u00e9 produit, en macarons \u00e9quivalents (une fourn\u00e9e de coques \u00f7 2) \u2014 m\u00eame p\u00e9rim\u00e8tre que le num\u00e9rateur. (3) GRAND FORMAT : 1 batch = 48 coques = 24 macarons (et non 60) ; la carte affiche d\u00e9sormais la bonne taille de batch selon le format. Mes tests pr\u00e9c\u00e9dents n\u2019avaient PAS vu le bug des chronos parall\u00e8les (aucun cas ne se chevauchait) \u2014 c\u2019est d\u00e9sormais verrouill\u00e9. Suite : 690 → 695 assertions vertes.';
+const APP_VERSION = 'v1316';
+const APP_MAJ = 'Les temps sont d\u00e9sormais CONSOLID\u00c9S dans les 3 \u00c9TAPES PRINCIPALES d\u2019une production \u2014 confection des COQUES, confection de la GANACHE, ASSEMBLAGE en produits finis \u2014 dans l\u2019ordre de fabrication, avec la part de chacune (en %) et le d\u00e9tail des t\u00e2ches \u00e0 l\u2019int\u00e9rieur. Fini les 10 phases \u00e9parpill\u00e9es. R\u00c9PARTITION REPR\u00c9SENTATIVE des chevauchements : quand deux t\u00e2ches tournent en m\u00eame temps (la cuisson tourne pendant que tu poches), leurs dur\u00e9es ne s\u2019additionnent PAS \u2014 c\u2019est justement l\u00e0 que tu gagnes du temps. Le temps r\u00e9el est partag\u00e9 entre elles AU PRORATA DE LEUR DUR\u00c9E PROPRE, et non \u00e0 parts \u00e9gales : une t\u00e2che de 60 min ne peut pas peser autant qu\u2019une de 20 min. Exemple v\u00e9rifi\u00e9 : pochage de 60 min avec une cuisson de 20 min qui tourne dedans → 60 min de travail r\u00e9el (et non 80), dont 55 min au pochage et 5 min \u00e0 la cuisson. La somme des 3 \u00e9tapes retombe EXACTEMENT sur le total, et les parts somment \u00e0 100 % \u2014 tout est v\u00e9rifiable \u00e0 la main. Suite : 695 \u2192 709 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -48917,6 +48917,20 @@ function prodSessTempsParRecette(s, poids){
 // porte son nombre de mesures (nb) et son statut actif/passif (repos, cuisson…), pour tracer d'où vient
 // chaque minute. Renvoie { total, actif, passif, phases:[{phase, ms, actif, passif, nb,
 //   taches:[{label, ms, nb, passive}]}] } trié par temps décroissant.
+// [v1316] ÉTAPES PRINCIPALES (règle métier de Benjamin) : une production se structure en 3 étapes
+// réelles — confection des COQUES, confection de la GANACHE, et ASSEMBLAGE en produits finis. Tout le
+// reste (vaisselle, mise en place) est du support. On réutilise la classification déjà en place
+// (prodTaskMrpCategory) pour ne pas créer une 2e vérité qui divergerait.
+const _ETAPES_ORDRE = ['Coques', 'Ganache', 'Assemblage', 'Support', 'Autre'];
+function _etapePrincipale(task){
+  const cat = (typeof prodTaskMrpCategory==='function') ? prodTaskMrpCategory(task) : null;
+  if(cat==='coques')  return 'Coques';
+  if(cat==='ganache') return 'Ganache';
+  if(cat==='montage') return 'Assemblage';
+  if(cat==='vaisselle' || cat==='entretien') return 'Support';
+  return 'Autre';
+}
+
 function _tempsDecompoParParfum(recipeIds, jours, poids){
   // Accepte un id unique OU un ensemble/tableau d'ids (un parfum = parfois plusieurs recettes : GF + classique).
   const rids = new Set((recipeIds instanceof Set ? Array.from(recipeIds) : [].concat(recipeIds)).map(x=>+x).filter(Number.isFinite));
@@ -48926,6 +48940,8 @@ function _tempsDecompoParParfum(recipeIds, jours, poids){
 
   // phase -> { ms, actif, passif, nb, taches: { label -> { ms, nb, passive } } }
   const phases = {};
+  // [v1316] étape principale (Coques / Ganache / Assemblage / Support) -> { ms, actif, passif, taches }
+  const etapes = {};
   let total = 0, actif = 0, passif = 0;
   let reparti = 'prorata';   // devient 'egal' si au moins une tâche a dû basculer en repli
 
@@ -48983,26 +48999,40 @@ function _tempsDecompoParParfum(recipeIds, jours, poids){
         if(!recsTranche.has(rid)) return;
         const msRecette = dur * (parts[rid]||0);
         if(!(msRecette>0)) return;
-        // Les tâches de la tranche qui portent CETTE recette se partagent sa part, à parts égales
-        // (elles sont concomitantes : impossible de dire laquelle « mérite » plus de temps mural).
         const porteuses = actifs.filter(iv=>iv.recs.includes(rid));
         if(!porteuses.length) return;
-        const parTache = msRecette / porteuses.length;
+
+        // [v1316 — RÉPARTITION REPRÉSENTATIVE] Quand plusieurs tâches se chevauchent, le temps mural
+        // de la tranche est partagé (on n'additionne pas : le chevauchement est justement le gain de
+        // temps). Mais le partager À PARTS ÉGALES serait arbitraire : une tâche de 5 min pèserait
+        // autant qu'une de 60 min. On répartit donc AU PRORATA DE LA DURÉE PROPRE de chaque tâche —
+        // ce qui reflète la charge de travail réelle qu'elle représente.
+        const dureeProp = iv => Math.max(1, (typeof prodTaskNet==='function') ? prodTaskNet(iv.task) : (iv.en - iv.st));
+        const sommeDurees = porteuses.reduce((s,iv)=>s + dureeProp(iv), 0) || 1;
 
         porteuses.forEach(iv=>{
           const t = iv.task;
-          // [v1315] Les PAUSES doivent rester déduites. Le balayage mesure le temps mural brut de la
-          // tranche ; on lui applique le ratio net/brut de la tâche (prodTaskNet retire pausedAccum),
-          // sinon une tâche mise en pause gonflerait le détail.
+          const poidsTache = dureeProp(iv) / sommeDurees;
+          // Les pauses restent déduites : ratio net/brut de la tâche sur la tranche.
           const brut = Math.max(1, (iv.en - iv.st));
           const net  = (typeof prodTaskNet==='function') ? prodTaskNet(t) : brut;
           const ratio = Math.max(0, Math.min(1, net / brut));
-          const parTacheNet = parTache * ratio;
+          const parTacheNet = msRecette * poidsTache * ratio;
           if(!(parTacheNet>0)) return;
 
           const phase = t.phase || 'Autre';
           const label = t.label || 'Tâche';
           const passive = (typeof prodIsPassive==='function') ? prodIsPassive(label) : false;
+          // [v1316] ÉTAPE PRINCIPALE (règle métier Benjamin) : les 3 étapes qui structurent réellement
+          // une production — confection des COQUES, confection de la GANACHE, ASSEMBLAGE en produits
+          // finis. On réutilise la classification déjà existante (prodTaskMrpCategory).
+          const etape = _etapePrincipale(t);
+
+          const E = (etapes[etape] ||= { ms:0, actif:0, passif:0, taches:{} });
+          E.ms += parTacheNet;
+          if(passive) E.passif += parTacheNet; else E.actif += parTacheNet;
+          const ET = (E.taches[label] ||= { ms:0, passive, _ids:new Set() });
+          ET.ms += parTacheNet; ET._ids.add(t.id);
 
           const P = (phases[phase] ||= { ms:0, actif:0, passif:0, nb:0, taches:{} });
           P.ms += parTacheNet;
@@ -49037,6 +49067,11 @@ function _tempsDecompoParParfum(recipeIds, jours, poids){
           P.ms += part2; P.actif += part2;
           const L = (P.taches['Vaisselle, nettoyage, mise en place, pauses'] ||= { ms:0, nb:0, passive:false, _ids:new Set() });
           L.ms += part2; L._ids.add('commun-'+s.id);
+          // [v1316] Le commun de séance est du SUPPORT (ni coques, ni ganache, ni assemblage).
+          const E = (etapes['Support'] ||= { ms:0, actif:0, passif:0, taches:{} });
+          E.ms += part2; E.actif += part2;
+          const ET = (E.taches['Vaisselle, nettoyage, mise en place, pauses'] ||= { ms:0, passive:false, _ids:new Set() });
+          ET.ms += part2; ET._ids.add('commun-'+s.id);
           total += part2; actif += part2;
         }
       }
@@ -49053,7 +49088,21 @@ function _tempsDecompoParParfum(recipeIds, jours, poids){
     return { phase:nom, ms:P.ms, actif:P.actif, passif:P.passif, nb:nbPhase, taches };
   }).sort((a,b)=>b.ms-a.ms);
 
-  return { total, actif, passif, phases:phasesArr, reparti };
+  // [v1316] Étapes principales, dans l'ORDRE MÉTIER (Coques → Ganache → Assemblage → Support),
+  // et non par temps décroissant : c'est l'ordre dans lequel Benjamin fabrique.
+  const etapesArr = _ETAPES_ORDRE
+    .filter(nom => etapes[nom] && etapes[nom].ms > 0)
+    .map(nom => {
+      const E = etapes[nom];
+      const taches = Object.keys(E.taches).map(lbl=>{
+        const T = E.taches[lbl];
+        return { label:lbl, ms:T.ms, nb:(T._ids ? T._ids.size : 0), passive:T.passive };
+      }).sort((a,b)=>b.ms-a.ms);
+      return { etape:nom, ms:E.ms, actif:E.actif, passif:E.passif,
+               part: total>0 ? (E.ms/total) : 0, taches };
+    });
+
+  return { total, actif, passif, phases:phasesArr, etapes:etapesArr, reparti };
 }
 
 // [CROISEMENT PHASE × PARFUM] Pour une session, répartit le temps réel par CATÉGORIE D'ÉTAPE
@@ -56175,35 +56224,42 @@ async function renderTempsProduction(){
       let decompoHTML = '';
       const decompo = _tempsDecompoParParfum(e.recIds || new Set(), jours, _poidsProd);
       if(decompo.total>0){
-        const phasesHTML = decompo.phases.map(ph=>{
-          const tachesHTML = ph.taches.map(tk=>`
-            <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0 3px 14px;font-size:.8rem;color:#6a5a52">
-              <span>${tk.passive?'<span title="Temps passif : attente chronométrée, pas de la manipulation" style="opacity:.6">💤</span> ':''}${esc(tk.label)} <span style="color:#b0a196">· ${tk.nb} mesure${tk.nb>1?'s':''}</span></span>
+        // [v1316] Vue consolidée par ÉTAPE PRINCIPALE (Coques → Ganache → Assemblage → Support),
+        // dans l'ordre de fabrication. Chaque étape montre son temps, sa part du total, et les tâches
+        // qui la composent. C'est la structure réelle d'une production, au lieu de 10 phases éparses.
+        const etapesHTML = (decompo.etapes||[]).map(et=>{
+          const pct = Math.round((et.part||0)*100);
+          const tachesHTML = et.taches.map(tk=>`
+            <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0 3px 14px;font-size:.79rem;color:#6a5a52">
+              <span>${tk.passive?'<span title="Étape d\'attente (le four/batteur travaille)" style="opacity:.6">💤</span> ':''}${esc(tk.label)} <span style="color:#b0a196">· ${tk.nb} mesure${tk.nb>1?'s':''}</span></span>
               <span style="white-space:nowrap;font-weight:600${tk.passive?';color:#b0a196':''}">${fmtDureeMs(tk.ms)}</span>
             </div>`).join('');
-          return `<div style="margin-top:8px">
-            <div style="display:flex;justify-content:space-between;gap:8px;font-weight:700;font-size:.82rem;color:var(--bordeaux)">
-              <span>${esc(ph.phase)}${ph.passif>0?` <span style="font-weight:400;color:#b0a196;font-size:.74rem">(dont ${fmtDureeMs(ph.passif)} passif)</span>`:''}</span>
-              <span style="white-space:nowrap">${fmtDureeMs(ph.ms)}</span>
+          return `<div style="margin-top:10px">
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-weight:700;font-size:.88rem;color:var(--bordeaux)">
+              <span>${esc(et.etape)} <span style="font-weight:400;color:#b0a196;font-size:.74rem">${pct}% du temps${et.passif>0?` · dont ${fmtDureeMs(et.passif)} d'attente`:''}</span></span>
+              <span style="white-space:nowrap">${fmtDureeMs(et.ms)}</span>
+            </div>
+            <div style="height:4px;background:#eee3d4;border-radius:3px;margin:4px 0 2px">
+              <div style="height:100%;width:${pct}%;background:var(--caramel);border-radius:3px"></div>
             </div>
             ${tachesHTML}
           </div>`;
         }).join('');
         decompoHTML = `<details class="tp-decompo" style="margin-top:10px">
-          <summary style="cursor:pointer;font-size:.8rem;color:var(--caramel);font-weight:600">🔎 Détail du temps (phase → tâche)</summary>
+          <summary style="cursor:pointer;font-size:.8rem;color:var(--caramel);font-weight:600">🔎 Détail du temps (étape → tâche)</summary>
           <div style="margin-top:6px;padding-top:8px;border-top:1px dashed var(--hair)">
-            ${phasesHTML}
-            <div style="display:flex;justify-content:space-between;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--hair);font-size:.82rem">
+            ${etapesHTML}
+            <div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;padding-top:8px;border-top:1px solid var(--hair);font-size:.84rem">
               <span style="font-weight:700">Total chronométré</span>
               <span style="font-weight:700">${fmtDureeMs(decompo.total)}</span>
             </div>
             ${decompo.passif>0?`<div style="display:flex;justify-content:space-between;gap:8px;font-size:.78rem;color:#b0a196;margin-top:4px">
-              <span>💤 dont étapes marquées « attente »</span><span style="font-weight:600">${fmtDureeMs(decompo.passif)}</span></div>`:''}
+              <span>💤 dont étapes d'attente (four, batteur…)</span><span style="font-weight:600">${fmtDureeMs(decompo.passif)}</span></div>`:''}
             <div class="note" style="font-size:.7rem;margin-top:6px;color:#b0a196">
+              Quand des tâches se chevauchent, leurs durées ne s'additionnent PAS (c'est justement là que tu gagnes du temps) : le temps réel est partagé entre elles, au prorata de leur durée propre.
               ${decompo.reparti==='prorata'
-                ? 'Les étapes partagées (cuisson, meringue…) sont réparties <b>au prorata des quantités</b> produites. La vaisselle et la mise en place, elles, sont partagées à parts égales.'
-                : 'Étapes partagées réparties <b>à parts égales</b> (quantités indisponibles sur cette période).'}
-              ${decompo.passif>0?' La marque 💤 est indicative : certaines étapes sont semi-actives (ex. foisonnement).':''}
+                ? ' Les étapes partagées entre parfums sont réparties <b>au prorata des quantités</b> ; la vaisselle et la mise en place, à parts égales.'
+                : ' Étapes partagées réparties <b>à parts égales</b> (quantités indisponibles sur cette période).'}
             </div>
           </div>
         </details>`;
