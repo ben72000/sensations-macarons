@@ -1,0 +1,110 @@
+/* ============================================================================
+   TESTS DE CARACTÉRISATION — Vague 34 : _estBatchComptable (dénominateur des moyennes)
+   ----------------------------------------------------------------------------
+   VERROUILLE LE BUG DE LA « MOYENNE ÉCRASÉE ».
+
+   Contexte : « Moy. active/batch » = temps actif du parfum ÷ NOMBRE DE BATCHES.
+   Le filtre du dénominateur comptait TOUTE production terminée — y compris les simples
+   COMPOSANTS (fournée de coques, ganache seule, chantache, dégustation). Chaque composant
+   étant compté comme un batch à part entière, le dénominateur était gonflé et la moyenne
+   s'effondrait : « Framboise = 17 min/batch », soit MOINS que la seule cuisson des coques
+   (21 min) — arithmétiquement impossible, et signalé par Benjamin.
+
+   Règle figée ici : seul un macaron RÉELLEMENT PRODUIT compte comme un batch
+   (composant 'complet' ou 'assemble'). Tout le reste est exclu du dénominateur.
+   ============================================================================ */
+'use strict';
+const { extractFunction } = require('./_extract');
+
+function buildModule(){
+  const estBatchComptable = extractFunction('_estBatchComptable');
+  return new Function(`${estBatchComptable} return _estBatchComptable;`)();
+}
+
+const SINCE = '2026-07-01';
+const OK_DATE = '2026-07-07T10:00:00';
+
+let pass=0, fail=0; const failures=[];
+function eq(actual, expected, label){
+  const a=JSON.stringify(actual), e=JSON.stringify(expected);
+  if(a===e){ pass++; } else { fail++; failures.push(`  ✗ ${label}\n      attendu: ${e}\n      obtenu : ${a}`); }
+}
+
+function run(){
+const estBatch = buildModule();
+
+// ── LE CŒUR DU BUG : les composants ne sont PAS des batches ───────────────────
+{
+  const base = { prodStatut:'termine', prodTermineTs:OK_DATE };
+
+  eq(estBatch({...base, composant:'complet'},  SINCE), true,
+     'Un macaron COMPLET compte comme un batch');
+  eq(estBatch({...base, composant:'assemble'}, SINCE), true,
+     'Un macaron ASSEMBLÉ compte comme un batch');
+
+  // Ce sont ces 4 lignes qui empêchent le retour du bug.
+  eq(estBatch({...base, composant:'coques'},      SINCE), false,
+     'BUG VERROUILLÉ · une fournée de COQUES n\'est PAS un batch');
+  eq(estBatch({...base, composant:'ganache'},     SINCE), false,
+     'BUG VERROUILLÉ · une GANACHE seule n\'est PAS un batch');
+  eq(estBatch({...base, composant:'chantache'},   SINCE), false,
+     'BUG VERROUILLÉ · une CHANTACHE n\'est PAS un batch');
+  eq(estBatch({...base, composant:'degustation'}, SINCE), false,
+     'BUG VERROUILLÉ · une DÉGUSTATION n\'est PAS un batch');
+}
+
+// ── composant absent → traité comme 'complet' (rétro-compatibilité) ───────────
+{
+  eq(estBatch({ prodStatut:'termine', prodTermineTs:OK_DATE }, SINCE), true,
+     'Composant absent = ancien enregistrement → compté comme complet');
+  eq(estBatch({ prodStatut:'termine', prodTermineTs:OK_DATE, composant:null }, SINCE), true,
+     'Composant null → compté comme complet');
+}
+
+// ── DÉMONSTRATION ARITHMÉTIQUE : la moyenne redevient sensée ──────────────────
+{
+  // Cas réel de Benjamin : 2 macarons finis, mais aussi 2 fournées de coques et 2 ganaches.
+  const prods = [
+    { prodStatut:'termine', prodTermineTs:OK_DATE, composant:'complet' },
+    { prodStatut:'termine', prodTermineTs:OK_DATE, composant:'complet' },
+    { prodStatut:'termine', prodTermineTs:OK_DATE, composant:'coques'  },
+    { prodStatut:'termine', prodTermineTs:OK_DATE, composant:'coques'  },
+    { prodStatut:'termine', prodTermineTs:OK_DATE, composant:'ganache' },
+    { prodStatut:'termine', prodTermineTs:OK_DATE, composant:'ganache' },
+  ];
+  const nbBatches = prods.filter(p=>estBatch(p, SINCE)).length;
+  eq(nbBatches, 2, 'Dénominateur = 2 macarons produits (et non 6 « productions »)');
+
+  const actifMs = (2*3600 + 13*60) * 1000;          // 2 h 13 de temps actif chronométré
+  const moyMin  = Math.round(actifMs / nbBatches / 60000);
+  eq(moyMin, 67, 'Moyenne = 1 h 07/batch (et non 22 min) — supérieure à la cuisson seule (21 min)');
+
+  // La propriété métier que Benjamin a repérée : la moyenne d'un batch COMPLET ne peut pas
+  // être inférieure à la durée d'une seule de ses étapes.
+  const CUISSON_COQUES_MIN = 21;                     // cf. PROD_PASSIVE_DEFAULTS
+  eq(moyMin > CUISSON_COQUES_MIN, true,
+     'COHÉRENCE MÉTIER · la moyenne d\'un batch dépasse la durée d\'une seule étape');
+}
+
+// ── statut / fenêtre : les autres conditions restent intactes ─────────────────
+{
+  eq(estBatch({ prodStatut:'en_cours', prodTermineTs:'', composant:'complet' }, SINCE), false,
+     'Production NON terminée → exclue');
+  eq(estBatch({ prodStatut:'termine', prodTermineTs:'2026-06-01T10:00:00', composant:'complet' }, SINCE), false,
+     'Production hors fenêtre (avant SINCE) → exclue');
+  eq(estBatch(null, SINCE), false,
+     'Entrée nulle → exclue proprement (pas de crash)');
+}
+
+// ── résultat ──
+console.log('\n=== TESTS DE CARACTÉRISATION — Vague 34 : _estBatchComptable ===\n');
+if(fail===0){
+  console.log(`Résultat : ${pass} réussis, 0 échoués (${pass} assertions).`);
+  console.log('✓ Comportement figé conforme. Aucune régression détectée.\n');
+} else {
+  console.log(`Résultat : ${pass} réussis, ${fail} échoués.`);
+  console.log(failures.join('\n')+'\n');
+  process.exitCode = 1;
+}
+}
+run();

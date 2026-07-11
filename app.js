@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1307';
-const APP_MAJ = 'TRA\u00c7ABILIT\u00c9 : chaque carte parfum de l\u2019\u00e9cran « Analyser les dur\u00e9es » offre d\u00e9sormais un d\u00e9tail repliable « 🔎 D\u00e9tail du temps (phase → t\u00e2che) ». Tu vois d\u2019o\u00f9 vient CHAQUE minute : les phases (Pr\u00e9paration ganache, Meringue, Cuisson, Garnissage…), puis chaque t\u00e2che chronom\u00e9tr\u00e9e \u00e0 l\u2019int\u00e9rieur, avec son temps ET son nombre de mesures. Les t\u00e2ches d\u2019attente sont marqu\u00e9es 💤 (\u00e0 titre indicatif : certaines \u00e9tapes sont semi-actives, comme le foisonnement \u2014 \u00e0 affiner). Le temps commun de s\u00e9ance (vaisselle, nettoyage, mise en place, pauses) est expos\u00e9 explicitement au lieu d\u2019\u00eatre noy\u00e9 dans le total. R\u00e8gles respect\u00e9es : temps NET (pauses d\u00e9duites), t\u00e2che mutualis\u00e9e r\u00e9partie entre les parfums concern\u00e9s. V\u00c9RIFI\u00c9 : la somme du d\u00e9tail retombe EXACTEMENT sur le total affich\u00e9 (\u00e9cart 0) \u2014 un bug de coh\u00e9rence de 15 min a \u00e9t\u00e9 d\u00e9tect\u00e9 et corrig\u00e9 au passage. Suite compl\u00e8te : 598 assertions vertes.';
+const APP_VERSION = 'v1310';
+const APP_MAJ = 'R\u00c9PARTITION AU PRORATA du temps mutualis\u00e9 (r\u00e8gle m\u00e9tier de Benjamin : « on ne peut pas faire 50/50 entre 300 pi\u00e8ces et 10 pi\u00e8ces sur la m\u00eame \u00e9tape »). Jusqu\u2019ici, une \u00e9tape partag\u00e9e (cuisson d\u2019une fourn\u00e9e mixte, meringue commune) \u00e9tait coup\u00e9e \u00c0 PARTS \u00c9GALES entre parfums, ce qui sous-attribuait le temps aux gros volumes et le sur-attribuait aux petits. D\u00e9sormais elle est r\u00e9partie au prorata des QUANTIT\u00c9S produites : sur une cuisson de 60 min partag\u00e9e entre 300 macarons framboise et 10 vanille, la framboise re\u00e7oit 58 min (97 %) et la vanille 2 min (3 %) \u2014 au lieu de 30/30. Pi\u00e8ge trait\u00e9 : les quantit\u00e9s ne sont pas dans la m\u00eame unit\u00e9 selon le composant (une production « coques » est stock\u00e9e en coques, ×2) \u2014 tout est donc ramen\u00e9 en MACARONS \u00c9QUIVALENTS avant comparaison. La vaisselle et la mise en place restent partag\u00e9es \u00e0 parts \u00e9gales (choix explicite : elles ne d\u00e9pendent pas du volume). Le mode de r\u00e9partition est affich\u00e9 dans le d\u00e9tail, et le repli \u00e0 parts \u00e9gales (si aucune quantit\u00e9 connue) est signal\u00e9 au lieu d\u2019\u00eatre masqu\u00e9. L\u2019apprentissage MRP et les calculs de co\u00fbts conservent leur comportement d\u2019origine. Suite : 641 → 647 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -48774,7 +48774,7 @@ async function prodTempsLissePerMacaron(jours){
    Méthode : balayage par événements (sweep line) sur les intervalles [start,end] des tâches qui
    portent un recipeId. Entre deux instants-clés consécutifs, on partage la tranche entre les
    recettes actives sur cette tranche. */
-function prodSessTempsParRecette(s){
+function prodSessTempsParRecette(s, poids){
   const tasks = (s&&s.tasks)||[];
   // Intervalles des tâches portant au moins une recette. Une tâche peut porter plusieurs recettes
   // (meringue mutualisée) → toutes actives en même temps sur cet intervalle.
@@ -48806,13 +48806,25 @@ function prodSessTempsParRecette(s){
     const actives = new Set();
     intervals.forEach(iv=>{ if(iv.st<=a && iv.en>=b){ iv.recs.forEach(r=>actives.add(r)); } });
     if(actives.size===0) continue;   // tranche sans tâche-recette (ne devrait pas arriver ici)
-    const part = dur/actives.size;
-    actives.forEach(r=>{ result[r]+=part; });
+    // [v1310] Si des POIDS de production sont fournis, la tranche partagée est répartie AU PRORATA
+    // des quantités (règle métier : 300 pièces et 10 pièces sur la même étape ne peuvent pas être
+    // coupées 50/50). Sans poids, on conserve STRICTEMENT l'ancien comportement (parts égales) pour
+    // ne rien casser des autres appelants (apprentissage MRP, coûts, temps par jour…).
+    const arr = Array.from(actives);
+    if(poids){
+      const { parts } = _partsMutualisation(arr, poids);
+      arr.forEach(r=>{ result[r] += dur * (parts[r]||0); });
+    } else {
+      const part = dur/actives.size;
+      arr.forEach(r=>{ result[r]+=part; });
+    }
     distributed += dur;
   }
 
   // Temps NON distribué = temps réel de session (mur à mur) − temps déjà attribué aux tranches.
   // Couvre la vaisselle/nettoyage/pauses où aucune tâche-recette n'était active.
+  // [v1310] Ce temps COMMUN reste réparti à PARTS ÉGALES, même en mode prorata : c'est un choix
+  // explicite de Benjamin (la vaisselle n'est pas proportionnelle au volume d'un parfum donné).
   const reel = (typeof prodSessReelMs==='function') ? prodSessReelMs(s) : 0;
   const nonDistribue = Math.max(0, reel - distributed);
   if(nonDistribue>0 && allRecs.size>0){
@@ -48831,7 +48843,7 @@ function prodSessTempsParRecette(s){
 // porte son nombre de mesures (nb) et son statut actif/passif (repos, cuisson…), pour tracer d'où vient
 // chaque minute. Renvoie { total, actif, passif, phases:[{phase, ms, actif, passif, nb,
 //   taches:[{label, ms, nb, passive}]}] } trié par temps décroissant.
-function _tempsDecompoParParfum(recipeIds, jours){
+function _tempsDecompoParParfum(recipeIds, jours, poids){
   // Accepte un id unique OU un ensemble/tableau d'ids (un parfum = parfois plusieurs recettes : GF + classique).
   const rids = new Set((recipeIds instanceof Set ? Array.from(recipeIds) : [].concat(recipeIds)).map(x=>+x).filter(Number.isFinite));
   const since = new Date(); since.setDate(since.getDate() - (+jours||90));
@@ -48841,6 +48853,7 @@ function _tempsDecompoParParfum(recipeIds, jours){
   // phase -> { ms, actif, passif, nb, taches: { label -> { ms, nb, passive } } }
   const phases = {};
   let total = 0, actif = 0, passif = 0;
+  let reparti = 'prorata';   // devient 'egal' si au moins une tâche a dû basculer en repli
 
   sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
     (s.tasks||[]).forEach(t=>{
@@ -48848,8 +48861,22 @@ function _tempsDecompoParParfum(recipeIds, jours){
       if(!recs.some(r=>rids.has(r))) return;          // cette tâche ne concerne aucune recette de ce parfum
       const net = (typeof prodTaskNet==='function') ? prodTaskNet(t) : Math.max(0,(+t.end||Date.now())-(+t.start||0));
       if(!(net>0)) return;
-      // Répartition si tâche mutualisée : la part de CE parfum = net ÷ nb de parfums de la tâche.
-      const part = net / recs.length;
+
+      // [v1310] RÉPARTITION AU PRORATA DES QUANTITÉS (et non plus à parts égales).
+      // Règle métier : une même étape partagée entre 300 pièces et 10 pièces ne peut pas être
+      // coupée 50/50. La part de CE parfum = net × (sa quantité ÷ quantité totale de la tâche),
+      // quantités ramenées en macarons équivalents. Repli à parts égales si aucune quantité connue.
+      let part;
+      if(recs.length === 1){
+        part = net;                                   // tâche dédiée : tout le temps revient au parfum
+      } else {
+        const { parts, prorata } = _partsMutualisation(recs, poids);
+        if(!prorata) reparti = 'egal';
+        // Somme des parts des recettes de CE parfum (un parfum peut porter plusieurs recettes : GF + classique).
+        const monPoids = Array.from(rids).reduce((s,r)=>s + (parts[r]||0), 0);
+        part = net * monPoids;
+      }
+      if(!(part>0)) return;
       const phase = t.phase || 'Autre';
       const label = t.label || 'Tâche';
       const passive = (typeof prodIsPassive==='function') ? prodIsPassive(label) : false;
@@ -48916,7 +48943,7 @@ function _tempsDecompoParParfum(recipeIds, jours){
     return { phase:nom, ms:P.ms, actif:P.actif, passif:P.passif, nb:P.nb, taches };
   }).sort((a,b)=>b.ms-a.ms);
 
-  return { total, actif, passif, phases:phasesArr };
+  return { total, actif, passif, phases:phasesArr, reparti };
 }
 
 // [CROISEMENT PHASE × PARFUM] Pour une session, répartit le temps réel par CATÉGORIE D'ÉTAPE
@@ -55767,6 +55794,70 @@ function _batchDureeReelleMs(p){
   return f - d;
 }
 
+// [v1309] Filtre des productions comptées comme un BATCH pour les moyennes de temps.
+// Extrait en fonction pure pour être TESTABLE (et donc protégé contre toute régression).
+// Règle : ne compter que les macarons RÉELLEMENT PRODUITS (complet / assemblé). Une production
+// peut aussi être un simple COMPOSANT (fournée de coques, ganache, chantache, dégustation) : la
+// compter comme un batch gonflerait le dénominateur et écraserait la moyenne — c'était le bug qui
+// donnait « Framboise : 17 min/batch », soit moins que la seule cuisson des coques (impossible).
+// Même règle que le reste de l'app (cf. filtre historique : c!=='complet' && c!=='assemble' → exclu).
+function _estBatchComptable(p, sinceStr){
+  if(!p) return false;
+  const fini = (p.prodStatut==='termine') || (p.prodTermineTs && String(p.prodTermineTs).length>0) || (p.prodStatut==null);
+  if(!fini) return false;
+  const c = p.composant || 'complet';
+  if(c!=='complet' && c!=='assemble') return false;   // exclut coques / ganache / chantache / dégustation
+  const d = (p.prodTermineTs||p.prodTimestamp||p.date||'').slice(0,10);
+  return d >= sinceStr;
+}
+
+// [v1310] POIDS DE PRODUCTION PAR RECETTE — base du PRORATA de répartition du temps mutualisé.
+// Règle métier (Benjamin) : « on ne peut pas faire 50/50 entre 300 pièces et 10 pièces sur la même
+// étape ». Une tâche partagée (ex. cuisson d'une fournée mixte) doit donc être répartie AU PRORATA
+// des quantités, et non à parts égales.
+//
+// Difficulté résolue ici : les quantités ne sont PAS dans la même unité selon le composant —
+// une production 'coques' stocke ses pièces en COQUES (×2 macarons), une production 'complet' en
+// MACARONS. Les comparer brutalement ferait compter une fournée de coques pour le double.
+// On ramène donc tout à une base commune : le MACARON ÉQUIVALENT.
+//
+// Renvoie { recipeId: qteEnMacaronsEquivalents } pour les productions de la fenêtre.
+function _poidsProductionParRecette(prods, sinceStr){
+  const out = {};
+  (prods||[]).forEach(p=>{
+    if(!p || p.recipeId==null) return;
+    const d = (p.prodTermineTs||p.prodTimestamp||p.date||'').slice(0,10);
+    if(sinceStr && d < sinceStr) return;
+    const q = (typeof prodQteAffichee==='function') ? prodQteAffichee(p) : (+p.qteReelle||+p.qteTheorique||0);
+    if(!(q>0)) return;
+    const comp = p.composant || 'complet';
+    // Conversion en macarons équivalents : les coques sont stockées ×2.
+    const macEq = (comp==='coques') ? (q / COQUES_PAR_MACARON) : q;
+    if(!(macEq>0)) return;
+    const rid = +p.recipeId;
+    out[rid] = (out[rid]||0) + macEq;
+  });
+  return out;
+}
+
+// [v1310] Calcule les PARTS (poids relatifs, somme = 1) de chaque recette d'une tâche mutualisée.
+// - Si les quantités sont connues pour au moins une recette → prorata des quantités.
+// - Sinon (aucune quantité exploitable) → repli à parts égales, pour ne jamais perdre de temps
+//   ni produire NaN. Le repli est signalé par `prorata:false` afin de rester traçable.
+function _partsMutualisation(recIds, poids){
+  const ids = (recIds||[]).map(x=>+x).filter(x=>Number.isFinite(x)&&x>0);
+  const parts = {};
+  if(!ids.length) return { parts, prorata:false };
+  const total = ids.reduce((s,r)=>s + (+(poids||{})[r] || 0), 0);
+  if(total > 0){
+    ids.forEach(r=>{ parts[r] = (+(poids||{})[r] || 0) / total; });
+    return { parts, prorata:true };
+  }
+  // Aucune quantité connue → parts égales (repli honnête plutôt qu'un chiffre inventé).
+  ids.forEach(r=>{ parts[r] = 1/ids.length; });
+  return { parts, prorata:false };
+}
+
 async function renderTempsProduction(){
   // [v1303] Écrit dans #tempsBody si présent (écran fusionné « Temps »), sinon #main (legacy).
   const main = document.getElementById('tempsBody') || document.getElementById('main'); if(!main) return;
@@ -55779,21 +55870,21 @@ async function renderTempsProduction(){
   const prods = await db.productions.toArray().catch(()=>[]);
   const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
 
+  // [v1310] Poids de production par recette (macarons équivalents) — base du PRORATA de répartition
+  // du temps mutualisé. Calculé UNE fois ici, puis passé partout sur cet écran (total ET détail),
+  // pour que le chiffre affiché et sa décomposition suivent EXACTEMENT la même règle.
+  const _poidsProd = _poidsProductionParRecette(prods, sinceStr);
+
   // ── Temps ACTIF par recette (ms), via les sessions sur la fenêtre ──
   const actifParRec = {};
   sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
-    const parRec = (typeof prodSessTempsParRecette==='function') ? prodSessTempsParRecette(s) : {};
+    const parRec = (typeof prodSessTempsParRecette==='function') ? prodSessTempsParRecette(s, _poidsProd) : {};
     Object.keys(parRec).forEach(rid=>{ actifParRec[rid] = (actifParRec[rid]||0) + parRec[rid]; });
   });
   const actifTotal = Object.values(actifParRec).reduce((a,b)=>a+b,0);
 
   // ── Batches terminés sur la fenêtre (pour durée réelle + groupements) ──
-  const batches = prods.filter(p=>{
-    const fini = (p.prodStatut==='termine') || (p.prodTermineTs && String(p.prodTermineTs).length>0) || (p.prodStatut==null);
-    if(!fini) return false;
-    const d = (p.prodTermineTs||p.prodTimestamp||p.date||'').slice(0,10);
-    return d >= sinceStr;
-  });
+  const batches = prods.filter(p => _estBatchComptable(p, sinceStr));
 
   // Agrégations (le temps mur à mur n'est plus affiché ; on ne garde que ce qui sert à l'actif).
   const parParfum = {};   // nomNorm -> {nom, reel, actif, nb}
@@ -55831,7 +55922,7 @@ async function renderTempsProduction(){
   // Actif par jour : réparti via les sessions datées
   sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
     const jour = (s.date||'').slice(0,10); if(!jour) return;
-    const parRec = (typeof prodSessTempsParRecette==='function') ? prodSessTempsParRecette(s) : {};
+    const parRec = (typeof prodSessTempsParRecette==='function') ? prodSessTempsParRecette(s, _poidsProd) : {};
     const ms = Object.values(parRec).reduce((a,b)=>a+b,0);
     (parJour[jour] ||= {reel:0, actif:0, nb:0});
     parJour[jour].actif += ms;
@@ -55856,7 +55947,7 @@ async function renderTempsProduction(){
       // pour chaque ligne son temps, son nombre de mesures, et un marqueur si c'est du temps PASSIF
       // (cuisson, refroidissement, congélation… = attente chronométrée, pas de la manipulation).
       let decompoHTML = '';
-      const decompo = _tempsDecompoParParfum(e.recIds || new Set(), jours);
+      const decompo = _tempsDecompoParParfum(e.recIds || new Set(), jours, _poidsProd);
       if(decompo.total>0){
         const phasesHTML = decompo.phases.map(ph=>{
           const tachesHTML = ph.taches.map(tk=>`
@@ -55881,8 +55972,13 @@ async function renderTempsProduction(){
               <span style="font-weight:700">${fmtDureeMs(decompo.total)}</span>
             </div>
             ${decompo.passif>0?`<div style="display:flex;justify-content:space-between;gap:8px;font-size:.78rem;color:#b0a196;margin-top:4px">
-              <span>💤 dont étapes marquées « attente »</span><span style="font-weight:600">${fmtDureeMs(decompo.passif)}</span></div>
-              <div class="note" style="font-size:.7rem;margin-top:4px;color:#b0a196">La marque 💤 est indicative : certaines étapes sont semi-actives (ex. foisonnement — le batteur tourne mais tu surveilles). À affiner ensemble.</div>`:''}
+              <span>💤 dont étapes marquées « attente »</span><span style="font-weight:600">${fmtDureeMs(decompo.passif)}</span></div>`:''}
+            <div class="note" style="font-size:.7rem;margin-top:6px;color:#b0a196">
+              ${decompo.reparti==='prorata'
+                ? 'Les étapes partagées (cuisson, meringue…) sont réparties <b>au prorata des quantités</b> produites. La vaisselle et la mise en place, elles, sont partagées à parts égales.'
+                : 'Étapes partagées réparties <b>à parts égales</b> (quantités indisponibles sur cette période).'}
+              ${decompo.passif>0?' La marque 💤 est indicative : certaines étapes sont semi-actives (ex. foisonnement).':''}
+            </div>
           </div>
         </details>`;
       }

@@ -42,7 +42,9 @@ const SUITES = [
   'market-selection.test.js',    // vague 29 : computeMarketSelection (score composite, classement)
   'market-channel.test.js',      // vague 30 : computeMarketChannelAnalysis (taux d'écoulement)
   'material-needs.test.js',      // vague 31 : computeMaterialNeeds (besoins matières production)
-  'gaspillage.test.js'           // vague 32 : computeGaspillage (coût du gaspillage marché)
+  'gaspillage.test.js',          // vague 32 : computeGaspillage (coût du gaspillage marché)
+  'temps-decompo.test.js',       // vague 33 : _tempsDecompoParParfum (traçabilité du temps : le détail doit sommer au total)
+  'batch-comptable.test.js'      // vague 34 : _estBatchComptable (dénominateur des moyennes : les composants ne sont pas des batches)
 ];
 
 let allOk = true;
