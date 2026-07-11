@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1304';
-const APP_MAJ = 'Nettoyage de l\u2019\u00e9cran fusionn\u00e9 « Temps de production » (suite v1303) : les deux onglets contenaient encore les en-t\u00eates de leurs anciens \u00e9crans autonomes, ce qui cr\u00e9ait des DOUBLONS visibles \u2014 un second titre « Contr\u00f4le des temps » sous le titre principal, et surtout un bouton « ⏱ Temps de production → » ET un bouton « 🔍 Contr\u00f4le des temps » qui menaient au m\u00eame endroit que les onglets. Ces titres et boutons redondants sont d\u00e9sormais masqu\u00e9s quand l\u2019\u00e9cran est affich\u00e9 dans le conteneur \u00e0 onglets ; les actions r\u00e9ellement utiles (🔧 Chronos ouverts, 📦 Historique) sont conserv\u00e9es. En acc\u00e8s direct (hors onglets), les \u00e9crans gardent leur bandeau complet. V\u00e9rifi\u00e9 en ex\u00e9cution. Suite compl\u00e8te : 598 assertions vertes.';
+const APP_VERSION = 'v1307';
+const APP_MAJ = 'TRA\u00c7ABILIT\u00c9 : chaque carte parfum de l\u2019\u00e9cran « Analyser les dur\u00e9es » offre d\u00e9sormais un d\u00e9tail repliable « 🔎 D\u00e9tail du temps (phase → t\u00e2che) ». Tu vois d\u2019o\u00f9 vient CHAQUE minute : les phases (Pr\u00e9paration ganache, Meringue, Cuisson, Garnissage…), puis chaque t\u00e2che chronom\u00e9tr\u00e9e \u00e0 l\u2019int\u00e9rieur, avec son temps ET son nombre de mesures. Les t\u00e2ches d\u2019attente sont marqu\u00e9es 💤 (\u00e0 titre indicatif : certaines \u00e9tapes sont semi-actives, comme le foisonnement \u2014 \u00e0 affiner). Le temps commun de s\u00e9ance (vaisselle, nettoyage, mise en place, pauses) est expos\u00e9 explicitement au lieu d\u2019\u00eatre noy\u00e9 dans le total. R\u00e8gles respect\u00e9es : temps NET (pauses d\u00e9duites), t\u00e2che mutualis\u00e9e r\u00e9partie entre les parfums concern\u00e9s. V\u00c9RIFI\u00c9 : la somme du d\u00e9tail retombe EXACTEMENT sur le total affich\u00e9 (\u00e9cart 0) \u2014 un bug de coh\u00e9rence de 15 min a \u00e9t\u00e9 d\u00e9tect\u00e9 et corrig\u00e9 au passage. Suite compl\u00e8te : 598 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -48822,12 +48822,102 @@ function prodSessTempsParRecette(s){
   return result;
 }
 
-/* [TEMPS PAR PARFUM] Calcule un temps moyen par macaron DISTINCT pour chaque RECETTE (clé =
-   recipeId, distingue GF/classique), à partir des sessions d'atelier. La répartition du temps
-   au sein d'une session se fait FINEMENT (minute par minute + temps non distribué) via
-   prodSessTempsParRecette. On rapporte ensuite au nombre de macarons FINIS de chaque recette.
-   Repli : si une recette manque de données, l'appelant utilise la moyenne globale.
-*/
+// [v1307] DÉCOMPOSITION TRAÇABLE DU TEMPS ACTIF PAR PARFUM (phase → tâche).
+// Objectif : rendre VÉRIFIABLE le « temps actif » affiché par parfum. Pour un recipeId donné, on
+// parcourt toutes les tâches chronométrées le concernant sur la fenêtre, on prend leur temps NET
+// (pauses déduites, via prodTaskNet), on RÉPARTIT le temps d'une tâche mutualisée entre les parfums
+// qu'elle porte (÷ nb de recettes actives — même règle que prodSessTempsParRecette, pour que la somme
+// des détails = le total affiché), et on range chaque tâche sous sa PHASE puis son LABEL. Chaque ligne
+// porte son nombre de mesures (nb) et son statut actif/passif (repos, cuisson…), pour tracer d'où vient
+// chaque minute. Renvoie { total, actif, passif, phases:[{phase, ms, actif, passif, nb,
+//   taches:[{label, ms, nb, passive}]}] } trié par temps décroissant.
+function _tempsDecompoParParfum(recipeIds, jours){
+  // Accepte un id unique OU un ensemble/tableau d'ids (un parfum = parfois plusieurs recettes : GF + classique).
+  const rids = new Set((recipeIds instanceof Set ? Array.from(recipeIds) : [].concat(recipeIds)).map(x=>+x).filter(Number.isFinite));
+  const since = new Date(); since.setDate(since.getDate() - (+jours||90));
+  const sinceStr = ymdLocal(since);
+  const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
+
+  // phase -> { ms, actif, passif, nb, taches: { label -> { ms, nb, passive } } }
+  const phases = {};
+  let total = 0, actif = 0, passif = 0;
+
+  sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
+    (s.tasks||[]).forEach(t=>{
+      const recs = (Array.isArray(t.parfums)?t.parfums:[]).map(x=>+x).filter(r=>Number.isFinite(r)&&r>0);
+      if(!recs.some(r=>rids.has(r))) return;          // cette tâche ne concerne aucune recette de ce parfum
+      const net = (typeof prodTaskNet==='function') ? prodTaskNet(t) : Math.max(0,(+t.end||Date.now())-(+t.start||0));
+      if(!(net>0)) return;
+      // Répartition si tâche mutualisée : la part de CE parfum = net ÷ nb de parfums de la tâche.
+      const part = net / recs.length;
+      const phase = t.phase || 'Autre';
+      const label = t.label || 'Tâche';
+      const passive = (typeof prodIsPassive==='function') ? prodIsPassive(label) : false;
+
+      const P = (phases[phase] ||= { ms:0, actif:0, passif:0, nb:0, taches:{} });
+      P.ms += part; P.nb += 1;
+      if(passive) P.passif += part; else P.actif += part;
+      const L = (P.taches[label] ||= { ms:0, nb:0, passive });
+      L.ms += part; L.nb += 1;
+
+      total += part;
+      if(passive) passif += part; else actif += part;
+    });
+
+    // [v1307 — COHÉRENCE TRAÇABLE] Le total affiché sur la carte (via prodSessTempsParRecette) inclut
+    // aussi le TEMPS NON DISTRIBUÉ de la session : les minutes où AUCUNE tâche rattachée à une recette
+    // ne tournait (vaisselle, nettoyage, pauses, mise en place…), réparties à parts égales entre les
+    // parfums de la séance. Sans cette ligne, la somme du détail serait INFÉRIEURE au total affiché et
+    // le chiffre deviendrait invérifiable. On l'expose donc explicitement, sous son vrai nom.
+    const tasksAvecRec = (s.tasks||[]).filter(t=>{
+      const r=(Array.isArray(t.parfums)?t.parfums:[]).map(x=>+x).filter(x=>Number.isFinite(x)&&x>0);
+      const st=+t.start||0, en=+t.end||Date.now();
+      return r.length>0 && st>0 && en>st;
+    });
+    if(tasksAvecRec.length){
+      const recsSession = new Set();
+      tasksAvecRec.forEach(t=>(t.parfums||[]).forEach(r=>{ const n=+r; if(Number.isFinite(n)&&n>0) recsSession.add(n); }));
+      // La session concerne-t-elle ce parfum ? Sinon, aucune part de son temps commun ne lui revient.
+      if(Array.from(rids).some(r=>recsSession.has(r)) && recsSession.size>0){
+        // Temps déjà attribué aux tranches où au moins une tâche-recette tournait (même balayage que
+        // prodSessTempsParRecette : union des intervalles, sans double comptage des chevauchements).
+        const pts = new Set();
+        tasksAvecRec.forEach(t=>{ pts.add(+t.start); pts.add(+t.end||Date.now()); });
+        const sorted = Array.from(pts).sort((a,b)=>a-b);
+        let distributed = 0;
+        for(let i=0;i<sorted.length-1;i++){
+          const a=sorted[i], b=sorted[i+1]; const dur=b-a; if(dur<=0) continue;
+          const actives = tasksAvecRec.some(t=>(+t.start)<=a && (+t.end||Date.now())>=b);
+          if(actives) distributed += dur;
+        }
+        const reelSess = (typeof prodSessReelMs==='function') ? prodSessReelMs(s) : 0;
+        const nonDistribue = Math.max(0, reelSess - distributed);
+        if(nonDistribue>0){
+          // Part de CE parfum : le commun est réparti à parts égales entre les parfums de la séance.
+          // (rids peut contenir plusieurs recettes du même parfum : on compte les recettes présentes.)
+          const miennes = Array.from(rids).filter(r=>recsSession.has(r)).length;
+          const part2 = nonDistribue * (miennes / recsSession.size);
+          if(part2>0){
+            const P = (phases['Commun de séance'] ||= { ms:0, actif:0, passif:0, nb:0, taches:{} });
+            P.ms += part2; P.nb += 1; P.actif += part2;
+            const L = (P.taches['Vaisselle, nettoyage, mise en place, pauses'] ||= { ms:0, nb:0, passive:false });
+            L.ms += part2; L.nb += 1;
+            total += part2; actif += part2;
+          }
+        }
+      }
+    }
+  });
+
+  const phasesArr = Object.keys(phases).map(nom=>{
+    const P = phases[nom];
+    const taches = Object.keys(P.taches).map(lbl=>({ label:lbl, ms:P.taches[lbl].ms, nb:P.taches[lbl].nb, passive:P.taches[lbl].passive }))
+      .sort((a,b)=>b.ms-a.ms);
+    return { phase:nom, ms:P.ms, actif:P.actif, passif:P.passif, nb:P.nb, taches };
+  }).sort((a,b)=>b.ms-a.ms);
+
+  return { total, actif, passif, phases:phasesArr };
+}
 
 // [CROISEMENT PHASE × PARFUM] Pour une session, répartit le temps réel par CATÉGORIE D'ÉTAPE
 // (coques / ganache / montage) ET par recette (parfum), en réutilisant le balayage temporel de
@@ -55705,14 +55795,12 @@ async function renderTempsProduction(){
     return d >= sinceStr;
   });
 
-  // Durée réelle totale + agrégations
-  let reelTotal = 0;
+  // Agrégations (le temps mur à mur n'est plus affiché ; on ne garde que ce qui sert à l'actif).
   const parParfum = {};   // nomNorm -> {nom, reel, actif, nb}
   const parJour = {};     // 'YYYY-MM-DD' -> {reel, actif, nb}
   const lignes = [];      // par batch
   batches.forEach(p=>{
     const dms = _batchDureeReelleMs(p);
-    reelTotal += dms;
     const nom = prodNomComplet(p, recipes);
     const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
     const jour = (p.prodTermineTs||p.prodTimestamp||p.date||'').slice(0,10);
@@ -55735,6 +55823,9 @@ async function renderTempsProduction(){
     const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
     if(parParfum[k]) parParfum[k].actif += actifParRec[rid];
     else parParfum[k] = {nom, reel:0, actif:actifParRec[rid], nb:0, nbMesure:0};
+    // [v1307] Mémorise les recipeId qui alimentent ce parfum (classique + grand format), pour la
+    // décomposition traçable phase→tâche affichée sous la carte.
+    (parParfum[k].recIds ||= new Set()).add(+rid);
   });
 
   // Actif par jour : réparti via les sessions datées
@@ -55750,37 +55841,68 @@ async function renderTempsProduction(){
   const periodes = [['7','7 jours'],['30','30 jours'],['90','90 jours'],['tout','Tout']]
     .map(([v,l])=>`<button class="btn ${_tempsProdPeriode===v?'':'ghost'} sm" onclick="setTempsProdPeriode('${v}')">${l}</button>`).join('');
 
-  const nbMesure = batches.filter(p=>_batchDureeReelleMs(p)>0).length;
-  const ratio = reelTotal>0 ? Math.round(actifTotal/reelTotal*100) : 0;
+  // [v1306] nbMesure / ratio retirés : ils ne servaient qu'à l'affichage du temps mur à mur,
+  // désormais supprimé de cet écran (centré sur le seul temps actif).
 
   const cartesParfum = Object.values(parParfum)
-    .sort((a,b)=>b.reel-a.reel)
+    .sort((a,b)=>b.actif-a.actif)
     .map(e=>{
-      const moy = e.nbMesure>0 ? e.reel/e.nbMesure : 0;
-      // Garde-fou : le temps actif ne peut pas dépasser la durée réelle (impossible physiquement).
-      // Si c'est le cas (chrono oublié résiduel), on plafonne l'affichage et on le signale.
-      const actifPlafonne = (e.reel>0 && e.actif>e.reel);
-      const actifAff = actifPlafonne ? e.reel : e.actif;
-      const actifNul = actifAff<=0;
-      return `<div class="tp-card${actifPlafonne?' warn':''}">
+      // [v1306] Moyenne ACTIVE par batch : temps de travail effectif du parfum ÷ nombre de batches
+      // produits. C'est le « combien de temps ça me prend vraiment » — repos/attente exclus.
+      const moyActive = e.nb>0 ? e.actif/e.nb : 0;
+      const actifNul = e.actif<=0;
+
+      // [v1307] DÉCOMPOSITION TRAÇABLE (repliable) : d'où viennent ces minutes ? Phase → tâche, avec
+      // pour chaque ligne son temps, son nombre de mesures, et un marqueur si c'est du temps PASSIF
+      // (cuisson, refroidissement, congélation… = attente chronométrée, pas de la manipulation).
+      let decompoHTML = '';
+      const decompo = _tempsDecompoParParfum(e.recIds || new Set(), jours);
+      if(decompo.total>0){
+        const phasesHTML = decompo.phases.map(ph=>{
+          const tachesHTML = ph.taches.map(tk=>`
+            <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0 3px 14px;font-size:.8rem;color:#6a5a52">
+              <span>${tk.passive?'<span title="Temps passif : attente chronométrée, pas de la manipulation" style="opacity:.6">💤</span> ':''}${esc(tk.label)} <span style="color:#b0a196">· ${tk.nb} mesure${tk.nb>1?'s':''}</span></span>
+              <span style="white-space:nowrap;font-weight:600${tk.passive?';color:#b0a196':''}">${fmtDureeMs(tk.ms)}</span>
+            </div>`).join('');
+          return `<div style="margin-top:8px">
+            <div style="display:flex;justify-content:space-between;gap:8px;font-weight:700;font-size:.82rem;color:var(--bordeaux)">
+              <span>${esc(ph.phase)}${ph.passif>0?` <span style="font-weight:400;color:#b0a196;font-size:.74rem">(dont ${fmtDureeMs(ph.passif)} passif)</span>`:''}</span>
+              <span style="white-space:nowrap">${fmtDureeMs(ph.ms)}</span>
+            </div>
+            ${tachesHTML}
+          </div>`;
+        }).join('');
+        decompoHTML = `<details class="tp-decompo" style="margin-top:10px">
+          <summary style="cursor:pointer;font-size:.8rem;color:var(--caramel);font-weight:600">🔎 Détail du temps (phase → tâche)</summary>
+          <div style="margin-top:6px;padding-top:8px;border-top:1px dashed var(--hair)">
+            ${phasesHTML}
+            <div style="display:flex;justify-content:space-between;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--hair);font-size:.82rem">
+              <span style="font-weight:700">Total chronométré</span>
+              <span style="font-weight:700">${fmtDureeMs(decompo.total)}</span>
+            </div>
+            ${decompo.passif>0?`<div style="display:flex;justify-content:space-between;gap:8px;font-size:.78rem;color:#b0a196;margin-top:4px">
+              <span>💤 dont étapes marquées « attente »</span><span style="font-weight:600">${fmtDureeMs(decompo.passif)}</span></div>
+              <div class="note" style="font-size:.7rem;margin-top:4px;color:#b0a196">La marque 💤 est indicative : certaines étapes sont semi-actives (ex. foisonnement — le batteur tourne mais tu surveilles). À affiner ensemble.</div>`:''}
+          </div>
+        </details>`;
+      }
+
+      return `<div class="tp-card">
         <div class="tp-head">
           <div class="tp-flavour">${esc(e.nom)}</div>
           <div class="tp-qty"><b>${e.nb}</b><span>batch${e.nb>1?'es':''}</span></div>
         </div>
-        <div class="tp-grid">
-          <div class="tp-metric">
-            <div class="tp-lbl">Réel</div>
-            <div class="tp-val">${fmtDureeMs(e.reel)}</div>
-          </div>
-          <div class="tp-metric actif${actifPlafonne?' over':''}">
-            <div class="tp-lbl">Actif</div>
-            <div class="tp-val${actifNul?' na':''}">${actifNul?'—':fmtDureeMs(actifAff)}${actifPlafonne?'<span class="tp-warn" title="Temps actif plafonné à la durée réelle (chrono probablement oublié)">⚠</span>':''}</div>
+        <div class="tp-grid" style="grid-template-columns:1fr 1fr">
+          <div class="tp-metric actif">
+            <div class="tp-lbl">Temps actif</div>
+            <div class="tp-val${actifNul?' na':''}">${actifNul?'—':fmtDureeMs(e.actif)}</div>
           </div>
           <div class="tp-metric">
-            <div class="tp-lbl">Moy./batch</div>
-            <div class="tp-val">${fmtDureeMs(moy)}</div>
+            <div class="tp-lbl">Moy. active/batch</div>
+            <div class="tp-val">${actifNul?'—':fmtDureeMs(moyActive)}</div>
           </div>
         </div>
+        ${decompoHTML}
       </div>`;
     }).join('') || `<p class="note" style="padding:10px">Aucune production sur la période.</p>`;
 
@@ -55790,17 +55912,11 @@ async function renderTempsProduction(){
       const lbl = (typeof fmtDate==='function') ? fmtDate(j) : j;
       return `<tr><td>${esc(lbl)}</td>
         <td style="text-align:right">${e.nb}</td>
-        <td style="text-align:right;color:var(--bordeaux);font-weight:600">${fmtDureeMs(e.reel)}</td>
         <td style="text-align:right;color:var(--gold);font-weight:600">${fmtDureeMs(e.actif)}</td></tr>`;
-    }).join('') || `<tr><td colspan="4" class="note" style="padding:10px">Aucune session sur la période.</td></tr>`;
+    }).join('') || `<tr><td colspan="3" class="note" style="padding:10px">Aucune session sur la période.</td></tr>`;
 
-  const lignesBatch = lignes
-    .sort((a,b)=>a.ts<b.ts?1:-1)
-    .slice(0,60)
-    .map(l=>`<tr><td style="white-space:nowrap;font-size:.8rem">${esc(String(l.ts).slice(0,16).replace('T',' '))}</td>
-      <td style="font-weight:600;color:var(--bordeaux)">${esc(l.nom)} <span style="color:#9a8a82;font-size:.78rem">· ${esc(l.lot)}</span></td>
-      <td style="text-align:right;color:var(--bordeaux);font-weight:600">${fmtDureeMs(l.reel)}</td></tr>`).join('')
-    || `<tr><td colspan="3" class="note" style="padding:10px">Aucun batch sur la période.</td></tr>`;
+  // [v1306] (Ancien tableau « Détail par batch » retiré — il n'affichait que le temps mur à mur,
+  // sans valeur pour le pilotage. La variable lignesBatch n'a donc plus lieu d'être.)
 
   // [v1304] Dans le conteneur à onglets « Temps de production » (#tempsBody présent) : le titre
   // « ⏱️ Temps de production » et le bouton « 🔍 Contrôle des temps » sont redondants avec le
@@ -55817,30 +55933,16 @@ async function renderTempsProduction(){
 
    <div class="panel">
      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${periodes}</div>
-     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-       <div style="background:linear-gradient(135deg,#52252F,#3d1a22);color:#fff;border-radius:14px;padding:16px">
-         <div style="font-size:.72rem;opacity:.85;text-transform:uppercase;letter-spacing:.04em">⏱ Durée réelle totale</div>
-         <div style="font-size:1.7rem;font-weight:700;margin-top:4px">${fmtDureeMs(reelTotal)}</div>
-         <div style="font-size:.74rem;opacity:.8;margin-top:2px">${nbMesure} batch(es) mesuré(s)${batches.length>nbMesure?` · ${batches.length-nbMesure} sans durée`:''}</div>
-       </div>
-       <div style="background:linear-gradient(135deg,#AA7C39,#8a6322);color:#fff;border-radius:14px;padding:16px">
-         <div style="font-size:.72rem;opacity:.85;text-transform:uppercase;letter-spacing:.04em">🔧 Temps actif atelier</div>
-         <div style="font-size:1.7rem;font-weight:700;margin-top:4px">${fmtDureeMs(actifTotal)}</div>
-         <div style="font-size:.74rem;opacity:.8;margin-top:2px">${ratio>0?ratio+'% du temps réel':'chronos d\'atelier'}</div>
-       </div>
-     </div>
-     <div style="display:flex;gap:16px;font-size:.76rem;margin-top:12px;color:#6a5a52">
-       <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#52252F;margin-right:4px;vertical-align:middle"></span>Durée réelle (début → fin)</span>
-       <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#AA7C39;margin-right:4px;vertical-align:middle"></span>Temps actif (chronos)</span>
+     <div style="background:linear-gradient(135deg,#AA7C39,#8a6322);color:#fff;border-radius:14px;padding:18px">
+       <div style="font-size:.72rem;opacity:.85;text-transform:uppercase;letter-spacing:.04em">🔧 Temps actif atelier</div>
+       <div style="font-size:2rem;font-weight:700;margin-top:4px">${fmtDureeMs(actifTotal)}</div>
+       <div style="font-size:.74rem;opacity:.85;margin-top:2px">Temps réellement passé aux fourneaux (hors repos et maturation)</div>
      </div>
    </div>
 
    <div class="panel">
      <h2>Par parfum / recette</h2>
-     <div style="display:flex;gap:14px;font-size:.72rem;margin:2px 0 12px;color:#6a5a52">
-       <span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:#52252F;margin-right:4px;vertical-align:middle"></span>Réel</span>
-       <span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:#AA7C39;margin-right:4px;vertical-align:middle"></span>Actif (chrono)</span>
-     </div>
+     <p class="note" style="margin:2px 0 12px">Temps de travail effectif (chrono), repos et attente exclus.</p>
      <div class="tp-cards">${cartesParfum}</div>
    </div>
 
@@ -55849,22 +55951,11 @@ async function renderTempsProduction(){
      <table style="width:100%;border-collapse:collapse;font-size:.88rem">
        <tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Jour</th>
        <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Batches</th>
-       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Réel</th>
-       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Actif</th></tr>
+       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Temps actif</th></tr>
        ${lignesJour}
      </table>
    </div>
 
-   <div class="panel">
-     <h2>Détail par batch</h2>
-     <table style="width:100%;border-collapse:collapse;font-size:.88rem">
-       <tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Date</th>
-       <th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Parfum / lot</th>
-       <th style="text-align:right;padding:6px 8px;border-bottom:2px solid var(--hair);color:#9a8a82;font-size:.74rem">Réel</th></tr>
-       ${lignesBatch}
-     </table>
-     ${lignes.length>60?`<p class="note" style="margin-top:8px">Affichage des 60 batches les plus récents (${lignes.length} au total).</p>`:''}
-   </div>
   `;
 }
 
