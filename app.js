@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1319';
-const APP_MAJ = 'LE CO\u00dbT DE TON TEMPS dans tes marges \u2014 3 corrections qui touchent directement tes d\u00e9cisions de prix. (1) P\u00c9RIM\u00c8TRE : le temps mesur\u00e9 par macaron (qui alimente le co\u00fbt de main-d\u2019\u0153uvre de TOUTES les marges) comptait tout le travail d\u2019atelier \u2014 fabrication des COQUES incluse \u2014 mais ne divisait que par les macarons ASSEMBL\u00c9S. En semaine de pr\u00e9paration (coques faites d\u2019avance pour un \u00e9v\u00e9nement), ton temps \u00e9tait compt\u00e9 jusqu\u2019\u00e0 4\u00d7 TROP CHER (2,25 \u20ac au lieu de 0,56 \u20ac par macaron) \u2014 tes marges \u00e9taient donc massivement sous-estim\u00e9es. Corrig\u00e9 : on compte en macarons \u00e9quivalents (une fourn\u00e9e de coques \u00f7 2). (2) M\u00caME BUG sur le temps PAR PARFUM, qui faussait le classement de rentabilit\u00e9 par saveur : un parfum dont tu avais fait beaucoup de coques d\u2019avance paraissait anormalement co\u00fbteux. (3) AVERTISSEMENT DE LECTURE : par d\u00e9faut, l\u2019app N\u2019INCLUT PAS le co\u00fbt de ton temps dans les marges \u2014 un produit peut donc sembler rentable \u00e0 40 % et te faire perdre de l\u2019argent une fois tes heures compt\u00e9es. L\u2019\u00e9cran de rentabilit\u00e9 le dit d\u00e9sormais clairement, et signale aussi le cas o\u00f9 le co\u00fbt du temps repose sur une estimation alors que tes vraies mesures sont disponibles. Suite : 757 \u2192 772 assertions vertes.';
+const APP_VERSION = 'v1322';
+const APP_MAJ = 'L\u2019APP CACHAIT TES PERTES. Dans la fiche parfum, la marge \u00e9tait calcul\u00e9e avec Math.max(0, \u2026) : une marge N\u00c9GATIVE \u00e9tait \u00e9cras\u00e9e \u00e0 z\u00e9ro. Pire, un filtre faisait ensuite DISPARA\u00ceTRE le segment \u00ab Marge nette \u00bb de la barre et de la l\u00e9gende : un parfum vendu \u00e0 perte affichait une barre pleine de co\u00fbts, sans le moindre signal. On produisait \u00e0 perte sans le savoir. D\u00e9sormais la perte est CALCUL\u00c9E, AFFICH\u00c9E et SIGNAL\u00c9E : \u00ab Vendu \u00e0 perte : \u22120,21 \u20ac par macaron \u00bb, avec le prix d\u2019\u00e9quilibre exact et ce qu\u2019il manque. La barre mat\u00e9rialise le d\u00e9passement des co\u00fbts. Et dans le \u00ab mix de parfums optimal \u00bb, les parfums d\u00e9ficitaires \u2014 justement exclus des recommandations \u2014 sont maintenant LIST\u00c9S avec leur d\u00e9ficit, au lieu de dispara\u00eetre sans explication. L\u2019enjeu est r\u00e9el : un parfum co\u00fbteux (pistache, temps long) paraissait rentable \u00e0 +0,34 \u20ac tant que le co\u00fbt du temps n\u2019\u00e9tait pas compt\u00e9 ; il est en r\u00e9alit\u00e9 d\u00e9ficitaire \u00e0 \u22120,21 \u20ac. V\u00e9rifi\u00e9 \u00e9galement : les \u00e9v\u00e9nements (mariages) \u00e9taient d\u00e9j\u00e0 correctement chiffr\u00e9s (production + livraison) \u2014 rien \u00e0 corriger. Suite : 813 \u2192 834 assertions.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -20619,9 +20619,25 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
   let caGoods=0, caService=0;        // répartition du CA par régime social
   let coutMat=0, coutEmb=0;          // coûts matières / emballages
   let coutEmbEstime=0;               // part du coût emballage qui est ESTIMÉE (commandes migrées)
+  let coutTempsPresta=0;             // [v1321] coût des heures vendues en prestation (voir ci-dessous)
+  let heuresPresta=0;                // heures de prestation, pour calculer un vrai revenu horaire
   lignes.forEach(ln=>{
     const net = lineTotalStored(ln); // prix de vente net de remises de ligne
-    if(ln.type==='prestation'){ caService=money2(caService+net); return; } // service : pas de matière/emballage
+    if(ln.type==='prestation'){
+      caService=money2(caService+net);
+      // [FIX v1321 — LA PRESTATION VEND TON TEMPS] AVANT : une prestation n'avait AUCUN coût (ni
+      // matière, ni emballage, ni main-d'œuvre). Elle affichait donc ~90-100 % de marge et arrivait
+      // MÉCANIQUEMENT en tête de tous les classements de rentabilité — poussant à faire du coaching
+      // même quand ça paie moins de l'heure que fabriquer des macarons. Or un coaching, c'est
+      // littéralement VENDRE DES HEURES : ces heures ont un coût (ton temps), au même titre que la
+      // main-d'œuvre de production. On les chiffre donc, quand la main-d'œuvre est activée.
+      const h = +ln.dureeH || 0;
+      if(h>0){
+        heuresPresta += h;
+        if(s.laborEnabled) coutTempsPresta = money2(coutTempsPresta + h * (+s.laborRate||0));
+      }
+      return;
+    }
     if(ln.type==='evenement'){
       // l'événement mêle marchandise (macarons) et, pour la pyramide, SOIT location (service) SOIT vente (marchandise).
       const maca = money2((+ln.evQte||0)*eventUnitPrice(ln));
@@ -20755,7 +20771,7 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
   }
   // ===========================================================================
 
-  const margeBrute = money2(caNet - coutMat - coutEmb);
+  const margeBrute = money2(caNet - coutMat - coutEmb - coutTempsPresta);
   const tauxBrut = caNet>0 ? Math.round(margeBrute/caNet*1000)/10 : 0;
 
   const chargesSociales = money2(caGoodsN*s.socialGoods/100 + caServiceN*s.socialService/100);
@@ -20803,6 +20819,10 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
     coutMatMoyenne,                 // ancien calcul (pieces × moyenne toutes recettes) — pour comparer
     coutMOD,                        // [A2-opt] part MAIN-D'ŒUVRE incluse dans coutMat → toggle « sans MO »
     coutParfumComplet: true,        // marque : coutMat inclut désormais la MO (coût complet)
+    // [v1321] LA PRESTATION VEND DU TEMPS : le % de marge n'y veut rien dire (aucune matière).
+    // Le seul indicateur qui permet d'arbitrer « coaching ou fabrication ? », c'est le REVENU HORAIRE.
+    heuresPresta, coutTempsPresta,
+    revenuHorairePresta: heuresPresta>0 ? money2(caService/heuresPresta) : null,
     embEstimSource,                 // [A6/A18] méthode d'estimation emballage histo : 'ratio-taille'|'ratio-global'|'tarif'|null
     embHistoTaille: _embHistoTaille,// taille de référence utilisée pour l'estimation
     piecesNonResolues,              // nb de pièces dont le parfum n'a pas de recette (coût moyen assumé)
@@ -21730,12 +21750,29 @@ function marketTotals(market, moves, avgUnitMat){
   const chargesSociales = money2(caTotal*s.socialGoods/100);
   const margeNette = money2(margeBrute - chargesSociales);
   const tauxNet = caTotal>0?Math.round(margeNette/caTotal*1000)/10:0;
+
+  // [v1320] LE TEMPS PASSÉ SUR PLACE — la donnée qui manquait pour savoir si un marché VAUT le coup.
+  // Jusqu'ici, `market.heures` n'était utilisé QUE pour afficher un « CA par heure ». Il n'était jamais
+  // déduit de la marge : un marché de 8 h rapportant 200 € affichait « rentable » sans qu'on voie
+  // qu'il ne te paie que 25 €/h brut… et bien moins net. Or c'est LA question : quels marchés méritent
+  // ta journée ? On chiffre donc le temps (heures × taux horaire) et on en déduit la marge réelle.
+  // On AJOUTE des champs sans toucher à margeNette (consommée ailleurs) : aucune régression.
+  const heures = +market.heures || 0;
+  const coutTemps = (s.laborEnabled && heures>0) ? money2((heures) * (+s.laborRate||0)) : 0;
+  const margeApresTemps = money2(margeNette - coutTemps);
+  const tauxApresTemps = caTotal>0 ? Math.round(margeApresTemps/caTotal*1000)/10 : 0;
+  // Ce que le marché te paie RÉELLEMENT de l'heure (marge nette ÷ heures sur place).
+  // C'est le chiffre à comparer à ton taux horaire cible : en dessous, le marché te coûte du temps.
+  const revenuParHeure = heures>0 ? money2(margeNette/heures) : null;
+
   return {lines, embarque:round3(embarque), retour:round3(retour), don:round3(don), perte:round3(perte), vendu:round3(vendu),
     caEspeces, caCB, caAutre, caTotal, fondCaisse, caEspecesBrut,
     pctCB: caTotal>0?Math.round(caCB/caTotal*100):0, pctEspeces: caTotal>0?Math.round(caEspeces/caTotal*100):0,
     tauxInvendus, tauxPerte,
     caParHeure: (market.heures>0)?money2(caTotal/market.heures):0,
     coutMat, coutEmb, coutEmbEstime, coutStand, deplacement, coutMarche, pkgUsed:pkg.used, margeBrute, tauxBrut, chargesSociales, margeNette, tauxNet,
+    // [v1320] Rentabilité RAPPORTÉE À TON TEMPS.
+    heures, coutTemps, margeApresTemps, tauxApresTemps, revenuParHeure,
     coutInvendusJetes};
 }
 // Coût matière moyen par macaron (helper réutilisable, nécessite recipes+items+lots).
@@ -29616,7 +29653,16 @@ function parfumMargeBar(row, c){
   const mat = (c.coutMatUnit||0) + (c.coutConsoUnit||0); // matières + consommables
   const mo  = c.coutMODUnit||0;                           // main-d'œuvre
   const charges = row.chargesSoc!=null ? row.chargesSoc : 0; // charges sociales / pièce
-  const marge = Math.max(0, prix - mat - mo - charges);      // ce qu'il reste vraiment
+  // [FIX v1322 — LES PERTES ÉTAIENT CACHÉES] AVANT : `Math.max(0, prix - mat - mo - charges)`.
+  // Un parfum vendu À PERTE affichait une marge de 0 € au lieu de son déficit réel. Pire, le filtre
+  // `.filter(s=>s.v>0)` plus bas faisait alors DISPARAÎTRE le segment « Marge nette » de la barre ET
+  // de la légende : la barre se remplissait de coûts, sans le moindre signal de perte. C'est l'exact
+  // contraire de ce que doit faire un outil de pilotage — et le risque est réel maintenant que le
+  // coût de la main-d'œuvre est correctement compté (v1319) : des parfums peuvent basculer en déficit.
+  const margeReelle = money2(prix - mat - mo - charges);   // peut être NÉGATIVE : on l'assume
+  const enPerte = margeReelle < 0;
+  const coutTotal = money2(mat + mo + charges);
+  const marge = Math.max(0, margeReelle);
   const segs=[
     {lbl:'Matières', v:mat, col:'#b3261e'},
     {lbl:'Main-d\'œuvre', v:mo, col:'#d98324'},
@@ -29624,13 +29670,23 @@ function parfumMargeBar(row, c){
     {lbl:'Marge nette', v:marge, col:'#3f7d52'}
   ].filter(s=>s.v>0);
   const pct=v=> prix>0 ? Math.round(v/prix*100) : 0;
-  const barre2 = segs.map(s=>`<div style="width:${Math.max(2,s.v/prix*100)}%;background:${s.col}" title="${s.lbl} : ${euro(s.v)}"></div>`).join('');
+  // [v1322] En cas de perte, les coûts dépassent 100 % du prix. On rapporte donc les largeurs au
+  // COÛT TOTAL (et non au prix) pour que la barre reste lisible, et on matérialise le dépassement.
+  const base = enPerte ? coutTotal : prix;
+  const barre2 = segs.map(s=>`<div style="width:${Math.max(2,s.v/base*100)}%;background:${s.col}" title="${s.lbl} : ${euro(s.v)}"></div>`).join('')
+    + (enPerte ? `<div style="width:${Math.max(2, Math.abs(margeReelle)/base*100)}%;background:repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#8c1d17 4px,#8c1d17 8px)" title="Perte : ${euro(margeReelle)}"></div>` : '');
   const legende = segs.map(s=>`<span style="display:inline-flex;align-items:center;gap:4px;font-size:.72rem;color:#6a5a52">
-      <span style="width:10px;height:10px;border-radius:2px;background:${s.col};display:inline-block"></span>${s.lbl} ${euro(s.v)} <span style="color:#9a8a82">(${pct(s.v)}%)</span></span>`).join('');
-  return `<div style="background:#fcfaf6;border:1px solid var(--hair);border-radius:12px;padding:11px 13px;margin-bottom:12px">
+      <span style="width:10px;height:10px;border-radius:2px;background:${s.col};display:inline-block"></span>${s.lbl} ${euro(s.v)} <span style="color:#9a8a82">(${pct(s.v)}%)</span></span>`).join('')
+    + (enPerte ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:.72rem;color:#b3261e;font-weight:700">
+      <span style="width:10px;height:10px;border-radius:2px;background:#b3261e;display:inline-block"></span>Perte ${euro(margeReelle)} <span style="color:#9a8a82;font-weight:400">(${pct(Math.abs(margeReelle))}%)</span></span>` : '');
+  return `<div style="background:${enPerte?'#fdf5f4':'#fcfaf6'};border:1px solid ${enPerte?'#b3261e':'var(--hair)'};border-radius:12px;padding:11px 13px;margin-bottom:12px">
     <div style="font-size:.78rem;color:#7a6a62;margin-bottom:6px">Sur <b>${euro(prix)}</b> de prix de vente, voici où va chaque centime :</div>
     <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;background:#eee">${barre2}</div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">${legende}</div>
+    ${enPerte?`<div style="margin-top:10px;padding:9px 11px;background:#fdecea;border-left:3px solid #b3261e;border-radius:6px">
+      <div style="font-size:.84rem;font-weight:700;color:#b3261e">⚠️ Vendu à perte : ${euro(margeReelle)} par macaron</div>
+      <div style="font-size:.75rem;color:#6a5a52;margin-top:3px">Tes coûts (<b>${euro(coutTotal)}</b>) dépassent ton prix de vente (<b>${euro(prix)}</b>). Prix d'équilibre : <b>${euro(coutTotal)}</b> — soit <b>${euro(money2(coutTotal - prix))}</b> de plus qu'aujourd'hui.</div>
+    </div>`:''}
   </div>`;
 }
 async function parfumDetail(recipeId){
@@ -29774,6 +29830,10 @@ async function parfumMixOptim(){
     return {...r, q, margeAttendue:money2(q*r.margeUnit)};
   }).filter(m=>m.q>0);
   const margeTot=money2(mix.reduce((x,m)=>x+m.margeAttendue,0));
+  // [v1322] Les parfums VENDUS À PERTE sont (à juste titre) exclus du mix : on ne recommande pas
+  // de produire à perte. Mais ils disparaissaient SILENCIEUSEMENT — impossible de savoir pourquoi
+  // un parfum n'apparaît pas. On les liste désormais explicitement, avec leur déficit.
+  const deficitaires = scored.filter(r => r.margeUnit < 0).sort((a,b)=>a.margeUnit-b.margeUnit);
 
   openModal(`<h3>🎯 Mix de parfums optimal</h3>
     <p class="note">Répartition conseillée pour <b>${cible} pièces</b>, pondérée par la marge unitaire et la demande historique. Maximise le bénéfice attendu pour un volume donné.</p>
@@ -29783,6 +29843,11 @@ async function parfumMixOptim(){
         <td style="font-weight:600">${euro(m.margeAttendue)}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="sum-box" style="margin-top:8px"><span><b>Marge brute attendue (${cible} pc)</b></span><b style="color:#3f7d52">${euro(margeTot)}</b></div>
+    ${deficitaires.length?`<div style="margin-top:10px;padding:9px 11px;background:#fdecea;border-left:3px solid #b3261e;border-radius:6px">
+      <div style="font-size:.82rem;font-weight:700;color:#b3261e">⚠️ ${deficitaires.length} parfum${deficitaires.length>1?'s':''} exclu${deficitaires.length>1?'s':''} du mix : vendu${deficitaires.length>1?'s':''} à perte</div>
+      <div style="font-size:.75rem;color:#6a5a52;margin-top:4px">${deficitaires.map(r=>`<b>${esc(r.nom)}</b> ${euro(r.margeUnit)}/pc`).join(' · ')}</div>
+      <div style="font-size:.72rem;color:#9a8a82;margin-top:4px">Chaque pièce produite te fait perdre de l'argent. Augmente le prix, réduis le coût, ou arrête ${deficitaires.length>1?'ces parfums':'ce parfum'}.</div>
+    </div>`:''}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 
@@ -31125,6 +31190,11 @@ async function marketDetail(id){
       <div class="sum-box"><span>Taux d'invendus / pertes</span><b>${T.tauxInvendus}% / ${T.tauxPerte}%</b></div>
       ${(+T.coutInvendusJetes>0)?`<div class="note" style="margin:2px 0 4px;font-size:.78rem;color:#8a7a72;background:#f7f3ee;border:1px solid #ece3d6;border-radius:8px;padding:6px 9px">ℹ️ Coût matière des <b>${qty(T.perte)} macaron(s) jeté(s)</b> : <b>${euro(T.coutInvendusJetes)}</b>. <span style="color:#9a8a82">Non déduit de la marge ci-dessus (calculée sur le vendu). À toi de juger : casse sèche ou récupérée ?</span></div>`:''}
       ${mk.heures>0?`<div class="sum-box"><span>CA / heure</span><b>${euro(T.caParHeure)}</b></div>`:''}
+      ${mk.heures>0&&T.revenuParHeure!=null?`<div class="sum-box" style="background:${T.revenuParHeure>=(+getSettings().laborRate||0)?'#eaf5ec':'#fdecea'}">
+        <span>Ce que ce marché te paie de l'heure <span style="color:#9a8a82;font-size:.72rem">(marge nette ÷ ${mk.heures} h)</span></span>
+        <b style="color:${T.revenuParHeure>=(+getSettings().laborRate||0)?'#3f7d52':'var(--red,#b3261e)'}">${euro(T.revenuParHeure)}/h</b></div>`:''}
+      ${T.coutTemps>0?`<div class="sum-box"><span>dont coût de ton temps <span style="color:#9a8a82;font-size:.72rem">(${mk.heures} h × ${euro(+getSettings().laborRate||0)}/h)</span></span><b>−${euro(T.coutTemps)}</b></div>
+      <div class="sum-box"><span>Marge après ton temps</span><b style="color:${T.margeApresTemps>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(T.margeApresTemps)} (${T.tauxApresTemps}%)</b></div>`:''}
       <h3 style="font-size:.95rem;margin:12px 0 6px">Rentabilité</h3>
       <div class="sum-box"><span>Coût matières (${qty(T.vendu)} vendus)</span><b>−${euro(T.coutMat)}</b></div>
       <div class="sum-box"><span>Coût emballages ${T.coutEmbEstime>0?'<span style="color:#d98324">(estimé)</span>':`(delta ${qty(T.pkgUsed)} u.)`}</span><b>−${euro(T.coutEmb)}</b></div>
@@ -31549,9 +31619,12 @@ async function renderMarketStats(){
   const topParf=parfRank.slice(0,5).map(p=>`<div class="sum-box"><span>${esc(p.nom)}</span><b>${qty(p.v)}</b></div>`).join('');
   const lowParf=parfRank.slice(-3).reverse().map(p=>`<div class="sum-box"><span>${esc(p.nom)}</span><b>${qty(p.v)}</b></div>`).join('');
 
-  // meilleures journées (CA/heure si dispo, sinon CA)
-  const bestDays=data.slice().sort((a,b)=>(b.T.caParHeure||b.T.caTotal)-(a.T.caParHeure||a.T.caTotal)).slice(0,3)
-    .map(d=>`<div class="sum-box"><span>${esc(d.mk.nom)} ${d.mk.heures?`<span style="color:#9a8a82;font-size:.74rem">${d.mk.heures}h</span>`:''}</span><b>${d.mk.heures?euro(d.T.caParHeure)+'/h':euro(d.T.caTotal)}</b></div>`).join('');
+  // [v1320] meilleures journées : classées par ce que le marché te PAIE réellement de l'heure
+  // (marge nette ÷ heures), et non par le CA/heure. Un marché à gros chiffre peut te payer une
+  // misère une fois les matières, l'emballage, le stand et le déplacement déduits.
+  const _critere = t => (t.revenuParHeure!=null ? t.revenuParHeure : (t.margeNette||0));
+  const bestDays=data.slice().sort((a,b)=>_critere(b.T)-_critere(a.T)).slice(0,3)
+    .map(d=>`<div class="sum-box"><span>${esc(d.mk.nom)} ${d.mk.heures?`<span style="color:#9a8a82;font-size:.74rem">${d.mk.heures}h</span>`:''}</span><b>${d.T.revenuParHeure!=null?euro(d.T.revenuParHeure)+'/h <span style="color:#9a8a82;font-weight:400;font-size:.7rem">net</span>':euro(d.T.margeNette||0)}</b></div>`).join('');
 
   const totEmb=data.reduce((s,d)=>s+d.T.embarque,0), totInv=data.reduce((s,d)=>s+d.T.retour+d.T.don+d.T.perte,0);
   const tauxInvGlobal=totEmb>0?Math.round(totInv/totEmb*1000)/10:0;
