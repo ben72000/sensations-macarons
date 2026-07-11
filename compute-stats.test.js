@@ -11,9 +11,12 @@ const { extractFunction, extractConstLine } = require('./_extract');
 
 function buildModule(){
   const GF_COQUE_RATIO = extractConstLine('GF_COQUE_RATIO');
+  const basePeriodeComparable = extractFunction('_basePeriodeComparable');
   const computeStats = extractFunction('computeStats');
   const code = `
     ${GF_COQUE_RATIO}
+    const money2 = n => Math.round(n*100)/100;
+    ${basePeriodeComparable}
     ${computeStats}
     return computeStats;
   `;

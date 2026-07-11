@@ -46,7 +46,10 @@ const SUITES = [
   'temps-decompo.test.js',       // vague 33 : _tempsDecompoParParfum (traçabilité du temps : le détail doit sommer au total)
   'batch-comptable.test.js',     // vague 34 : _estBatchComptable (dénominateur des moyennes : les composants ne sont pas des batches)
   'temps-par-macaron.test.js',   // vague 35 : temps par macaron et par batch standard de 60 (l'ancienne moyenne divisait par le nb d'enregistrements)
-  'copilote-routage.test.js'     // vague 36 : diagnostic du routage du copilote (smWhy/smSkills, aucune compétence fantôme)
+  'copilote-routage.test.js',    // vague 36 : diagnostic du routage du copilote (smWhy/smSkills, aucune compétence fantôme)
+  'produits-rentabilite.test.js',// vague 37 : rentabilité par produit (marge réelle, pas chiffre d'affaires)
+  'comparaison-periode.test.js', // vague 38 : comparaisons mois/année à périmètre comparable (prorata du temps écoulé)
+  'cout-temps-marge.test.js'     // vague 39 : le coût du temps dans les marges (périmètre coques/macarons)
 ];
 
 let allOk = true;

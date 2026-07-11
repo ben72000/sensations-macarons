@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1316';
-const APP_MAJ = 'Les temps sont d\u00e9sormais CONSOLID\u00c9S dans les 3 \u00c9TAPES PRINCIPALES d\u2019une production \u2014 confection des COQUES, confection de la GANACHE, ASSEMBLAGE en produits finis \u2014 dans l\u2019ordre de fabrication, avec la part de chacune (en %) et le d\u00e9tail des t\u00e2ches \u00e0 l\u2019int\u00e9rieur. Fini les 10 phases \u00e9parpill\u00e9es. R\u00c9PARTITION REPR\u00c9SENTATIVE des chevauchements : quand deux t\u00e2ches tournent en m\u00eame temps (la cuisson tourne pendant que tu poches), leurs dur\u00e9es ne s\u2019additionnent PAS \u2014 c\u2019est justement l\u00e0 que tu gagnes du temps. Le temps r\u00e9el est partag\u00e9 entre elles AU PRORATA DE LEUR DUR\u00c9E PROPRE, et non \u00e0 parts \u00e9gales : une t\u00e2che de 60 min ne peut pas peser autant qu\u2019une de 20 min. Exemple v\u00e9rifi\u00e9 : pochage de 60 min avec une cuisson de 20 min qui tourne dedans → 60 min de travail r\u00e9el (et non 80), dont 55 min au pochage et 5 min \u00e0 la cuisson. La somme des 3 \u00e9tapes retombe EXACTEMENT sur le total, et les parts somment \u00e0 100 % \u2014 tout est v\u00e9rifiable \u00e0 la main. Suite : 695 \u2192 709 assertions vertes.';
+const APP_VERSION = 'v1319';
+const APP_MAJ = 'LE CO\u00dbT DE TON TEMPS dans tes marges \u2014 3 corrections qui touchent directement tes d\u00e9cisions de prix. (1) P\u00c9RIM\u00c8TRE : le temps mesur\u00e9 par macaron (qui alimente le co\u00fbt de main-d\u2019\u0153uvre de TOUTES les marges) comptait tout le travail d\u2019atelier \u2014 fabrication des COQUES incluse \u2014 mais ne divisait que par les macarons ASSEMBL\u00c9S. En semaine de pr\u00e9paration (coques faites d\u2019avance pour un \u00e9v\u00e9nement), ton temps \u00e9tait compt\u00e9 jusqu\u2019\u00e0 4\u00d7 TROP CHER (2,25 \u20ac au lieu de 0,56 \u20ac par macaron) \u2014 tes marges \u00e9taient donc massivement sous-estim\u00e9es. Corrig\u00e9 : on compte en macarons \u00e9quivalents (une fourn\u00e9e de coques \u00f7 2). (2) M\u00caME BUG sur le temps PAR PARFUM, qui faussait le classement de rentabilit\u00e9 par saveur : un parfum dont tu avais fait beaucoup de coques d\u2019avance paraissait anormalement co\u00fbteux. (3) AVERTISSEMENT DE LECTURE : par d\u00e9faut, l\u2019app N\u2019INCLUT PAS le co\u00fbt de ton temps dans les marges \u2014 un produit peut donc sembler rentable \u00e0 40 % et te faire perdre de l\u2019argent une fois tes heures compt\u00e9es. L\u2019\u00e9cran de rentabilit\u00e9 le dit d\u00e9sormais clairement, et signale aussi le cas o\u00f9 le co\u00fbt du temps repose sur une estimation alors que tes vraies mesures sont disponibles. Suite : 757 \u2192 772 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -22508,8 +22508,29 @@ async function computeStrategic(){
   const caByYear={}; A.serie.forEach(s=>{ const y=s.mois.slice(0,4); caByYear[y]=money2((caByYear[y]||0)+s.ca); });
   const caMonth=caByMonth[curM]||0, caPrevMonth=caByMonth[prevM]||0;
   const caYear=caByYear[curY]||0, caPrevYear=caByYear[prevY]||0;
-  const evoMonth = caPrevMonth>0 ? Math.round((caMonth-caPrevMonth)/caPrevMonth*1000)/10 : (caMonth>0?100:0);
-  const evoYear = caPrevYear>0 ? Math.round((caYear-caPrevYear)/caPrevYear*1000)/10 : (caYear>0?100:0);
+
+  // [FIX v1318 — COMPARAISON À PÉRIMÈTRE COMPARABLE] AVANT : on comparait le mois EN COURS (partiel,
+  // ex. 3 jours écoulés) au mois précédent COMPLET (30 jours). Le 3 du mois, l'app annonçait donc une
+  // chute de −90 % qui ne reflétait rien d'autre que le calendrier. Idem pour l'année.
+  // Règle (Benjamin) : la comparaison doit tenir compte de l'AVANCÉE dans la période. On ramène donc
+  // la période précédente AU PRORATA DU TEMPS ÉCOULÉ. Helper partagé = une seule source de vérité.
+  const _cmpMois = _basePeriodeComparable(caPrevMonth, now);
+  const caPrevMonthCompare = _cmpMois.base;
+  const joursEcoulesMois = _cmpMois.joursEcoules;
+  const joursMoisPrec = _cmpMois.joursTotal;
+  const ratioMois = _cmpMois.ratio;
+  const moisEnCours = _cmpMois.partiel;
+
+  // Année : même principe, au prorata des jours écoulés dans l'année.
+  const _estBissextile = a => (a%4===0 && a%100!==0) || a%400===0;
+  const _jourDeLAnnee = d => Math.floor((d - new Date(d.getFullYear(),0,0)) / 86400000);
+  const joursAnneePrec = _estBissextile(now.getFullYear()-1) ? 366 : 365;
+  const ratioAnnee = Math.min(1, _jourDeLAnnee(now) / joursAnneePrec);
+  const caPrevYearCompare = money2(caPrevYear * ratioAnnee);
+
+  // Évolutions calculées sur des périodes COMPARABLES.
+  const evoMonth = caPrevMonthCompare>0 ? Math.round((caMonth-caPrevMonthCompare)/caPrevMonthCompare*1000)/10 : (caMonth>0?100:0);
+  const evoYear  = caPrevYearCompare>0  ? Math.round((caYear-caPrevYearCompare)/caPrevYearCompare*1000)/10   : (caYear>0?100:0);
 
   // Marges globales (somme des marges par commande payée)
   let margeBrute=0, margeNette=0, caPaye=0;
@@ -22557,6 +22578,9 @@ async function computeStrategic(){
 
   return {
     caMonth, caPrevMonth, evoMonth, caYear, caPrevYear, evoYear,
+    // [v1318] Base de comparaison à périmètre comparable (traçabilité : on doit pouvoir vérifier
+    // sur quoi le pourcentage est calculé, et non le prendre pour argent comptant).
+    caPrevMonthCompare, caPrevYearCompare, joursEcoulesMois, joursMoisPrec, ratioMois, moisEnCours,
     margeBrute, margeNette, tauxBrut, tauxNet,
     coutMat:sumCoutMat, coutEmb:sumCoutEmb, chargesSociales:sumCharges, caPaye,
     // [v1286-fix] nbCmd = commandes HORS ÉVÉNEMENT (dénominateur du panier moyen, cf. ci-dessus).
@@ -22579,6 +22603,14 @@ function generateInsights(S){
   const prodAgg={}; // clé lisible -> {ca, brute, nette, n}
   paid.forEach(o=>{
     const m=computeOrderMargins(o,recipes,recipeItems,lots);
+    // [FIX v1317] La marge ÉTAIT calculée ici… puis jetée : seul le CA était accumulé. Le panneau
+    // « Produits les plus rentables » classait donc en réalité par CHIFFRE D'AFFAIRES, pas par
+    // rentabilité — et « Produits à revoir » listait simplement les plus petits CA (d'où un Don et
+    // une Prestation qui s'y retrouvaient absurdement). On accumule désormais la MARGE NETTE.
+    // Règle de répartition : la marge est calculée au niveau de la COMMANDE ; on l'attribue à chaque
+    // ligne au PRORATA de son CA dans la commande. Traçable et neutre (la somme des parts = la marge).
+    const caCmd = (m && +m.ca) || 0;
+    const margeCmd = (m && +m.margeNette) || 0;
     orderToLines(o).forEach(ln=>{
       if(ln.type==='histo') return;   // ligne de reprise : sert aux tendances parfums, pas au mix produit
       let key;
@@ -22588,10 +22620,19 @@ function generateInsights(S){
       else if(ln.type==='prestation') key='Prestation / Coaching';
       else key='Don';
       const lt=lineTotalStored(ln);
-      (prodAgg[key] ||= {ca:0,n:0}); prodAgg[key].ca=money2(prodAgg[key].ca+lt); prodAgg[key].n++;
+      const partMarge = caCmd>0 ? margeCmd * (lt / caCmd) : 0;
+      (prodAgg[key] ||= {ca:0,n:0,marge:0});
+      prodAgg[key].ca=money2(prodAgg[key].ca+lt);
+      prodAgg[key].marge=money2(prodAgg[key].marge+partMarge);
+      prodAgg[key].n++;
     });
   });
-  const produits=Object.entries(prodAgg).map(([k,v])=>({nom:k, ca:v.ca, n:v.n})).sort((a,b)=>b.ca-a.ca);
+  // [v1317] Chaque produit porte désormais sa marge nette (€) ET son taux de marge (%).
+  // Le classement se fait sur la MARGE, plus sur le chiffre d'affaires.
+  const produits=Object.entries(prodAgg)
+    .map(([k,v])=>({ nom:k, ca:v.ca, n:v.n, marge:v.marge,
+                     taux: v.ca>0 ? Math.round((v.marge/v.ca)*100) : 0 }))
+    .sort((a,b)=>b.marge-a.marge);
 
   // --- clients les plus rentables (marge nette) ---
   const byClient={};
@@ -22657,7 +22698,7 @@ function generateInsights(S){
   }
   // évolution CA
   if(S.evoMonth<0){
-    reco.push({type:'action', txt:`CA en baisse de ${Math.abs(S.evoMonth)}% vs le mois dernier. Action : relance clients dormants, opération commerciale, ou présence accrue (Instagram, événements).`});
+    reco.push({type:'action', txt:`CA en baisse de ${Math.abs(S.evoMonth)}%${S.moisEnCours?` par rapport à la même période du mois dernier (${S.joursEcoulesMois} premiers jours)`:' vs le mois dernier'}. Action : relance clients dormants, opération commerciale, ou présence accrue (Instagram, événements).`});
   } else if(S.evoMonth>0){
     reco.push({type:'action', txt:`CA en hausse de ${S.evoMonth}% vs le mois dernier. Maintenez la dynamique et sécurisez vos approvisionnements.`});
   }
@@ -29027,8 +29068,28 @@ async function renderPilotage(){
   const recoIcon={avant:'⭐',revoir:'🔧',marge:'📊',tarif:'🏷️',oppo:'💡',action:'🎯'};
   const recoCards = I.reco.map(r=>`<div class="sum-box" style="align-items:flex-start"><span>${recoIcon[r.type]||'•'}</span><span style="flex:1">${esc(r.txt)}</span></div>`).join('');
 
-  const topProd = I.produits.slice(0,5).map(p=>`<div class="sum-box"><span>${esc(p.nom)} <span style="color:#9a8a82;font-size:.74rem">(${p.n} ventes)</span></span><b>${euro(p.ca)}</b></div>`).join('');
-  const lowProd = I.produits.slice(-3).reverse().map(p=>`<div class="sum-box"><span>${esc(p.nom)}</span><b>${euro(p.ca)}</b></div>`).join('');
+  // [v1317] TOP = les 5 meilleures MARGES (€). On affiche marge, taux et CA : chaque chiffre est
+  // vérifiable, et on voit d'un coup d'œil si un gros CA cache une marge faible.
+  const _ligneProd = p => {
+    const sc = (typeof profitScale==='function') ? profitScale(p.taux) : {label:'',col:'#9a8a82'};
+    return `<div class="sum-box" style="display:block">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+        <span style="font-weight:600">${esc(p.nom)}</span>
+        <b style="color:${sc.col};white-space:nowrap">${euro(p.marge)}</b>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:.72rem;color:#9a8a82;margin-top:2px">
+        <span>${p.n} vente${p.n>1?'s':''} · CA ${euro(p.ca)}</span>
+        <span style="color:${sc.col};font-weight:600;white-space:nowrap">${p.taux}% de marge</span>
+      </div>
+    </div>`;
+  };
+  // On écarte les lignes qui ne sont pas des produits vendus (un Don n'a pas à être « optimisé »).
+  const _produitsVendus = I.produits.filter(p=>p.nom!=='Don' && p.ca>0);
+  const topProd = _produitsVendus.slice(0,5).map(_ligneProd).join('');
+  // [FIX v1317] « À revoir » listait les plus PETITS CA (d'où le Don et la Prestation…). Ce qui doit
+  // alerter, ce n'est pas un petit chiffre d'affaires, mais un TAUX DE MARGE faible : un produit qui
+  // rapporte peu par euro vendu. On classe donc par taux croissant.
+  const lowProd = _produitsVendus.slice().sort((a,b)=>a.taux-b.taux).slice(0,3).map(_ligneProd).join('');
   const topClients = I.clientsTop.slice(0,5).map(c=>`<div class="sum-box"><span>${esc(c.nom)} <span style="color:#9a8a82;font-size:.74rem">(${c.n} cmd)</span></span><b style="color:${c.nette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(c.nette)} <span style="color:#9a8a82;font-weight:400;font-size:.72rem">marge nette</span></b></div>`).join('');
   const topEvents = I.events.slice(0,5).map(e=>`<div class="sum-box"><span>${esc(e.nom)} <span style="color:#9a8a82;font-size:.74rem">${fmtDate(e.date)}</span></span><b style="color:${e.nette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(e.nette)} (${e.taux}%)</b></div>`).join('');
   const saison = I.saison.slice(0,3).map(s=>`<span class="pill">${s.nom} : ${euro(s.moy)}/mois</span>`).join(' ');
@@ -29038,7 +29099,9 @@ async function renderPilotage(){
      <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️':'🙈'}</button><button class="btn ghost sm" onclick="renderProfit()">Rentabilité détaillée →</button></div></div>
 
    <div class="kpi-grid">
-     <div class="kpi"><span>CA ce mois ${kpiI('ca_mois')}</span><b>${euro(S.caMonth)}</b><span>${evoBadge(S.evoMonth)} vs mois dernier</span></div>
+     <div class="kpi"><span>CA ce mois ${kpiI('ca_mois')}</span><b>${euro(S.caMonth)}</b><span>${evoBadge(S.evoMonth)} ${S.moisEnCours
+        ? `vs ${euro(S.caPrevMonthCompare)} (mois dernier au ${S.joursEcoulesMois}<sup>e</sup> jour)`
+        : 'vs mois dernier'}</span></div>
      <div class="kpi"><span>CA cette année ${kpiI('ca_annee')}</span><b>${euro(S.caYear)}</b><span>${evoBadge(S.evoYear)} vs an dernier</span></div>
      <div class="kpi lnk" onclick="pilotMargeBrute()"><span>Marge brute ${INFO_I}</span><b>${euro(S.margeBrute)}</b><span>${S.tauxBrut}% du CA</span></div>
      <div class="kpi lnk" onclick="pilotMargeNette()"><span>Marge nette ${INFO_I}</span><b style="color:${S.margeNette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(S.margeNette)}</b><span>${S.tauxNet}% du CA</span></div>
@@ -29052,8 +29115,32 @@ async function renderPilotage(){
      ${recoCards||'<p class="note">Pas encore assez de données pour des recommandations. Enregistrez des ventes payées.</p>'}</div>
 
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
-     <div class="panel"><h2>Produits les plus rentables</h2>${topProd||'<p class="note">—</p>'}</div>
-     <div class="panel"><h2>Produits à revoir</h2>${lowProd||'<p class="note">—</p>'}</div>
+     ${(() => {
+       // [v1319] AVERTISSEMENT DE LECTURE — le plus important de cet écran.
+       // Par défaut, laborEnabled=false : les marges affichées N'INCLUENT PAS le coût du temps de
+       // travail. Un produit peut donc sembler rentable à 40 % et te faire perdre de l'argent une
+       // fois tes heures comptées. L'app doit le dire, pas laisser croire que la marge est complète.
+       const _s = (typeof getSettings==='function') ? getSettings() : {};
+       if(!_s.laborEnabled){
+         return `<div class="panel" style="border-left:4px solid #b3261e;background:#fdecea">
+           <p style="margin:0;font-size:.84rem"><b>⚠️ Ces marges n'incluent PAS le coût de ton temps de travail.</b><br>
+           <span style="font-size:.78rem;color:#6a5a52">Un produit affiché « rentable » peut te faire perdre de l'argent une fois tes heures comptées. Active la main-d'œuvre dans <b>Réglages → Coût de revient</b> pour des marges réelles — tes temps sont déjà mesurés.</span></p>
+         </div>`;
+       }
+       if(_s.laborSource !== 'mesure'){
+         return `<div class="panel" style="border-left:4px solid var(--caramel);background:#fdf6e8">
+           <p style="margin:0;font-size:.84rem"><b>ℹ️ Le coût de ton temps est basé sur une estimation, pas sur tes mesures.</b><br>
+           <span style="font-size:.78rem;color:#6a5a52">Tu chronomètres pourtant tes productions. Passe la source de main-d'œuvre sur « temps mesuré » dans <b>Réglages → Coût de revient</b> pour des marges fondées sur ta réalité.</span></p>
+         </div>`;
+       }
+       return '';
+     })()}
+     <div class="panel"><h2>Produits les plus rentables</h2>
+       <p class="note" style="margin:-4px 0 10px;font-size:.72rem">Classés par <b>marge nette</b> réellement dégagée (et non par chiffre d'affaires).</p>
+       ${topProd||'<p class="note">—</p>'}</div>
+     <div class="panel"><h2>Produits à revoir</h2>
+       <p class="note" style="margin:-4px 0 10px;font-size:.72rem">Les <b>taux de marge les plus faibles</b> : ils rapportent peu par euro vendu.</p>
+       ${lowProd||'<p class="note">—</p>'}</div>
      <div class="panel"><h2>Clients les plus rentables</h2>${topClients||'<p class="note">—</p>'}</div>
      <div class="panel"><h2>Événements les plus rentables</h2>${topEvents||'<p class="note">Aucun événement.</p>'}</div>
    </div>
@@ -38444,6 +38531,26 @@ async function aiQueryProchainMarche(){
     ${futurs.length>1?`<p class="note" style="margin-top:6px">Puis : ${futurs.slice(1,4).map(x=>`${esc(x.nom||x.lieu||'marché')} (${fmtDate(x.date)})`).join(' · ')}</p>`:''}`);
 }
 
+// [v1318] COMPARAISON À PÉRIMÈTRE COMPARABLE — règle métier de Benjamin.
+// « Le 3 du mois, on ne compare pas le CA avec le mois complet précédent. »
+// Comparer une période EN COURS (partielle) à une période PASSÉE COMPLÈTE affiche mécaniquement une
+// chute qui ne reflète que le calendrier, pas la performance. On ramène donc la période précédente
+// au PRORATA DU TEMPS ÉCOULÉ dans la période en cours.
+// Renvoie { base, ratio, joursEcoules, joursTotal, partiel } — tout est exposé pour être vérifiable.
+function _basePeriodeComparable(caPrecedent, dateRef){
+  const now = dateRef || new Date();
+  const joursEcoules = now.getDate();
+  const joursMoisCourant = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  const prevD = new Date(now.getFullYear(), now.getMonth()-1, 1);
+  const joursMoisPrec = new Date(prevD.getFullYear(), prevD.getMonth()+1, 0).getDate();
+  const partiel = joursEcoules < joursMoisCourant;      // le mois n'est pas terminé
+  const ratio = partiel ? Math.min(1, joursEcoules / joursMoisPrec) : 1;
+  return {
+    base: money2((+caPrecedent||0) * ratio),
+    ratio, joursEcoules, joursTotal: joursMoisPrec, partiel
+  };
+}
+
 // [CHANTIER B] COMPARAISON DE DEUX MOIS (par défaut : ce mois vs mois dernier).
 async function aiQueryCompareMois(){
   const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
@@ -38452,14 +38559,20 @@ async function aiQueryCompareMois(){
   const d0=new Date(); const d1=new Date(); d1.setMonth(d1.getMonth()-1);
   const m0=cle(d0), m1=cle(d1);
   const M0=R.global.parMois[m0]||{ca:0,macaronsStd:0}, M1=R.global.parMois[m1]||{ca:0,macaronsStd:0};
-  const dCA=(M0.ca||0)-(M1.ca||0);
-  const pct = (M1.ca>0) ? Math.round(dCA/M1.ca*1000)/10 : null;
+  // [FIX v1318] On compare le mois en cours à la MÊME AVANCÉE du mois précédent, pas à son total.
+  const cmp = _basePeriodeComparable(M1.ca||0, d0);
+  const baseM1 = cmp.base;
+  const dCA=(M0.ca||0)-baseM1;
+  const pct = (baseM1>0) ? Math.round(dCA/baseM1*1000)/10 : null;
   const fleche = dCA>0?'▲':dCA<0?'▼':'=';
   const col = dCA>0?'#3f7d52':dCA<0?'var(--red,#b3261e)':'#9a8a82';
   const tendance = dCA>0?'en hausse':dCA<0?'en baisse':'stable';
   const heroEcart = `${fleche} ${euro(Math.abs(dCA))}${pct!=null?` <span style="font-size:1rem;font-weight:600">(${pct>0?'+':''}${pct}%)</span>`:''}`;
-  return aiSay(`${aiHero(heroEcart, 'Ce mois vs mois dernier', {color:col})}
-    ${aiSynth(`Ton chiffre d'affaires est <b>${tendance}</b> : ${euro(M0.ca||0)} ce mois contre ${euro(M1.ca||0)} le mois dernier.`, {icon: dCA>=0?'📈':'📉', tone: dCA<0?'warn':(dCA>0?'ok':'')})}
+  return aiSay(`${aiHero(heroEcart, cmp.partiel?`Ce mois (${cmp.joursEcoules} j) vs même période le mois dernier`:'Ce mois vs mois dernier', {color:col})}
+    ${aiSynth(cmp.partiel
+        ? `Ton chiffre d'affaires est <b>${tendance}</b> : ${euro(M0.ca||0)} en ${cmp.joursEcoules} jour${cmp.joursEcoules>1?'s':''}, contre ${euro(baseM1)} sur la même durée le mois dernier (qui a fait ${euro(M1.ca||0)} au total sur ${cmp.joursTotal} jours).`
+        : `Ton chiffre d'affaires est <b>${tendance}</b> : ${euro(M0.ca||0)} ce mois contre ${euro(M1.ca||0)} le mois dernier.`,
+      {icon: dCA>=0?'📈':'📉', tone: dCA<0?'warn':(dCA>0?'ok':'')})}
     ${aiDetails(`<div class="sum-box"><span>${m0} (ce mois)</span><b>${euro(M0.ca||0)} · ${qty(M0.macaronsStd||0)} mac.</b></div>
     <div class="sum-box"><span>${m1} (mois dernier)</span><b>${euro(M1.ca||0)} · ${qty(M1.macaronsStd||0)} mac.</b></div>`, 'Voir le détail des deux mois')}
     ${aiSuite([{label:'💰 Mon chiffre du mois', ask:'combien j\'ai gagné ce mois'}])}`);
@@ -48817,15 +48930,29 @@ async function prodTempsLissePerMacaron(jours){
   });
   const minAtelier = msAtelier/60000;
 
-  // 2) Macarons FINIS vendables produits sur la fenêtre : lots 'complet' + 'assemble'.
+  // 2) Macarons produits sur la fenêtre, en MACARONS ÉQUIVALENTS.
+  // [FIX v1319 — PÉRIMÈTRE] AVANT : on ne comptait que les lots FINIS ('complet'/'assemble'), alors
+  // que le numérateur (temps d'atelier) inclut TOUT le travail — dont la fabrication des COQUES,
+  // souvent produites d'avance. En phase de constitution de stock (croissance, gros événement à
+  // préparer), le temps montait sans que les macarons finis suivent : le coût de main-d'œuvre par
+  // macaron était SURÉVALUÉ, donc les marges SOUS-ESTIMÉES — et ce chiffre alimente TOUTES les marges
+  // de l'app (coutMODUnit), donc les décisions de prix.
+  // On aligne les périmètres : une fournée de coques compte pour ce qu'elle vaut réellement, soit
+  // ses coques ÷ 2 (un macaron = 2 coques). Même règle que l'écran d'analyse des temps.
   const prods = await db.productions.toArray().catch(()=>[]);
   const finis = prods.filter(p=>{
     const c = p.composant || 'complet';
-    if(c!=='complet' && c!=='assemble') return false;        // exclut coques/ganache/dégustation
+    if(c!=='complet' && c!=='assemble' && c!=='coques') return false;   // exclut ganache/chantache/dégustation
     const d = (p.date || (p.prodTimestamp||'').slice(0,10) || '');
     return String(d).slice(0,10) >= sinceStr;
   });
-  const nbMacarons = finis.reduce((a,p)=>a + (+p.qteReelle||+p.qteProduite||0), 0);
+  const nbMacarons = finis.reduce((a,p)=>{
+    const q = (+p.qteReelle||+p.qteProduite||0);
+    if(!(q>0)) return a;
+    const c = p.composant || 'complet';
+    // Conversion en macarons équivalents : les coques sont comptées en pièces (×2 par macaron).
+    return a + ((c==='coques') ? (q / COQUES_PAR_MACARON) : q);
+  }, 0);
 
   const minParMacaron = nbMacarons>0 ? (minAtelier/nbMacarons) : null;
   // Fiabilité : un minimum de temps ET de pièces pour que la moyenne ait du sens.
@@ -49459,11 +49586,19 @@ async function prodTempsParParfum(jours){
   const macParRec = {};
   prods.forEach(p=>{
     const c = p.composant || 'complet';
-    if(c!=='complet' && c!=='assemble') return;
+    // [FIX v1319 — PÉRIMÈTRE, même bug que prodTempsLissePerMacaron] Le numérateur (temps d'atelier
+    // rattaché à cette recette) inclut la fabrication des COQUES. Les exclure du dénominateur
+    // surévaluait le temps par macaron — et donc le coût de main-d'œuvre du parfum, faussant le
+    // CLASSEMENT DE RENTABILITÉ PAR PARFUM (un parfum dont on avait fait beaucoup de coques d'avance
+    // paraissait anormalement coûteux). On compte en MACARONS ÉQUIVALENTS (coques ÷ 2).
+    if(c!=='complet' && c!=='assemble' && c!=='coques') return;
     if(p.libre || p.recipeId==null) return;
     const d = (p.date || (p.prodTimestamp||'').slice(0,10) || '');
     if(String(d).slice(0,10) < sinceStr) return;
-    macParRec[p.recipeId] = (macParRec[p.recipeId]||0) + (+p.qteReelle||+p.qteProduite||0);
+    const q = (+p.qteReelle||+p.qteProduite||0);
+    if(!(q>0)) return;
+    const macEq = (c==='coques') ? (q / COQUES_PAR_MACARON) : q;
+    macParRec[p.recipeId] = (macParRec[p.recipeId]||0) + macEq;
   });
 
   // 3) Temps par macaron, par recette (quand on a temps ET pièces).

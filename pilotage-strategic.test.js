@@ -18,12 +18,16 @@ const { extractFunction, extractConstLine } = require('./_extract');
 function buildModule(accountingStub, marginsStub, fakeNow){
   const money2 = extractConstLine('money2');
   const ymOf = extractFunction('ymOf');
+  const ymdLocal = extractFunction('ymdLocal');
+  const basePeriodeComparable = extractFunction('_basePeriodeComparable');
   const orderToLines = extractFunction('orderToLines');
   const orderIsEvent = extractFunction('orderIsEvent');
   const computeStrategic = extractFunction('computeStrategic');
   const code = `
     ${money2}
     ${ymOf}
+    ${ymdLocal}
+    ${basePeriodeComparable}
     ${orderToLines}
     ${orderIsEvent}
     async function computeAccounting(){ return accountingStub(); }
