@@ -234,6 +234,47 @@ function run(){
   near(d.actif + d.passif, d.total, 1000, 'CAS5 · actif + passif === total');
 }
 
+// ── CAS 5b : CHRONOS PARALLÈLES — le temps mural n'est compté QU'UNE FOIS ─────
+{
+  // LE BUG QUE MES TESTS AVAIENT LAISSÉ PASSER (mes cas n'avaient aucun chevauchement).
+  // Benjamin lance plusieurs chronos EN MÊME TEMPS (la cuisson tourne pendant qu'il poche).
+  // AVANT : le détail ADDITIONNAIT les tâches → 2 chronos d'1 h en parallèle = 2 h affichées,
+  // alors que le total de la carte (temps mural) disait 1 h. Écart × 2 (Framboise : 10 h 24 vs 5 h 07).
+  // RÈGLE MÉTIER (Benjamin) : « 2 chronos en parallèle pendant 1 h = 1 h de travail. »
+  const s = seance([
+    tache('Pochage','Macaronnage', 0, 60, [1]),
+    tache('Cuisson des coques','Cuisson', 0, 60, [1]),   // EXACTEMENT en même temps
+  ], 1);
+  const { _tempsDecompoParParfum, prodSessTempsParRecette, prodSessLoad } = buildModule([s], []);
+
+  const d = _tempsDecompoParParfum(new Set([1]), 3650, {});
+  near(d.total, 60*M, 1000,
+    'CAS5b · CHRONOS PARALLÈLES : 2 tâches simultanées d\'1 h = 1 h de travail (temps MURAL, pas 2 h)');
+
+  const totalCarte = prodSessTempsParRecette(prodSessLoad()[0], {})[1] || 0;
+  near(d.total, totalCarte, 1000,
+    'CAS5b · COHÉRENCE : le détail somme au total MÊME avec des chronos parallèles');
+
+  // Le temps mural est réparti entre les deux tâches concomitantes (30 min chacune).
+  const poch = d.phases.find(p=>p.phase==='Macaronnage');
+  const cuis = d.phases.find(p=>p.phase==='Cuisson');
+  near(poch.ms, 30*M, 1000, 'CAS5b · l\'heure murale est partagée : 30 min au pochage');
+  near(cuis.ms, 30*M, 1000, 'CAS5b · l\'heure murale est partagée : 30 min à la cuisson');
+}
+
+// ── CAS 5c : chevauchement PARTIEL ────────────────────────────────────────────
+{
+  // Tâche A 0→60 min, tâche B 30→90 min. Temps mural = 90 min (et non 120).
+  const s = seance([
+    tache('Pochage','Macaronnage', 0, 60, [1]),
+    tache('Cuisson des coques','Cuisson', 30, 60, [1]),
+  ], 2);
+  const { _tempsDecompoParParfum } = buildModule([s], []);
+  const d = _tempsDecompoParParfum(new Set([1]), 3650, {});
+  near(d.total, 90*M, 1000,
+    'CAS5c · chevauchement partiel : temps mural = 90 min (et non 120 min additionnées)');
+}
+
 // ── CAS 6 : COHÉRENCE avec le chiffre affiché sur la carte ────────────────────
 {
   // C'est LE test qui protège l'exigence de vérifiabilité : le total de la décompo doit

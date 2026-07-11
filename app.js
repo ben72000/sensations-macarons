@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1314';
-const APP_MAJ = 'Outils de DIAGNOSTIC du copilote (aucun changement de comportement, purement tra\u00e7able). Le copilote enchaîne : question → normalisation → correction des fautes → d\u00e9tection d\u2019intention → appel de la bonne fonction. Cette chaîne \u00e9tait une boîte noire. Deux commandes la rendent lisible depuis la console : smWhy(\u00ab ta question \u00bb) montre CHAQUE \u00e9tape de la d\u00e9cision (texte normalis\u00e9, intention d\u00e9tect\u00e9e, fonction appel\u00e9e, param\u00e8tres extraits, et un avertissement si l\u2019intention n\u2019est pas reconnue) ; smSkills() liste les 85 comp\u00e9tences du copilote, smSkills(\u00ab stock \u00bb) filtre. La table intention→fonction n\u2019est PAS recopi\u00e9e \u00e0 la main : elle est D\u00c9RIV\u00c9E du code source lui-m\u00eame, donc toujours exacte. Un test v\u00e9rifie qu\u2019AUCUNE comp\u00e9tence fantôme n\u2019existe \u2014 c\u2019est-\u00e0-dire aucune intention pointant vers une fonction inexistante (le m\u00eame type de bug que le bouton \u00ab Plan de production \u00bb jamais c\u00e2bl\u00e9). Suite : 675 → 690 assertions.';
+const APP_VERSION = 'v1315';
+const APP_MAJ = 'DEUX BUGS MAJEURS des analyses de temps, tous deux rep\u00e9r\u00e9s par Benjamin. (1) CHRONOS PARALL\u00c8LES : le d\u00e9tail AFFICHAIT LE DOUBLE du total (Framboise : d\u00e9tail 10 h 24 vs carte 5 h 07). Quand deux chronos tournent en m\u00eame temps (la cuisson tourne pendant que tu poches), le d\u00e9tail additionnait les deux dur\u00e9es alors que tu n\u2019as travaill\u00e9 qu\u2019une heure. Le d\u00e9tail compte d\u00e9sormais le TEMPS MURAL, comme le total : une heure avec 2 chronos = une heure, partag\u00e9e entre les t\u00e2ches concomitantes. Les pauses restent d\u00e9duites. (2) MOYENNES ABSURDES (Myrtille : 21 h 16 par batch !) : le temps actif inclut la fabrication des COQUES, souvent produites d\u2019avance en grande quantit\u00e9, alors que le d\u00e9nominateur ne comptait que les macarons ASSEMBL\u00c9S. 300 coques faites, 5 macarons assembl\u00e9s → temps \u00e9norme divis\u00e9 par 5. Le d\u00e9nominateur compte maintenant TOUT ce qui a \u00e9t\u00e9 produit, en macarons \u00e9quivalents (une fourn\u00e9e de coques \u00f7 2) \u2014 m\u00eame p\u00e9rim\u00e8tre que le num\u00e9rateur. (3) GRAND FORMAT : 1 batch = 48 coques = 24 macarons (et non 60) ; la carte affiche d\u00e9sormais la bonne taille de batch selon le format. Mes tests pr\u00e9c\u00e9dents n\u2019avaient PAS vu le bug des chronos parall\u00e8les (aucun cas ne se chevauchait) \u2014 c\u2019est d\u00e9sormais verrouill\u00e9. Suite : 690 → 695 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -48930,81 +48930,114 @@ function _tempsDecompoParParfum(recipeIds, jours, poids){
   let reparti = 'prorata';   // devient 'egal' si au moins une tâche a dû basculer en repli
 
   sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
+    // [FIX v1315 — CHRONOS PARALLÈLES] AVANT : on additionnait le temps NET de chaque tâche. Quand
+    // deux chronos tournent EN MÊME TEMPS (ex. la cuisson tourne pendant que tu poches), leurs durées
+    // s'additionnaient — alors que tu n'as travaillé qu'une heure. Le détail affichait donc le DOUBLE
+    // du total de la carte (Framboise : détail 10 h 24 vs carte 5 h 07).
+    // Règle métier (Benjamin) : « 2 chronos en parallèle pendant 1 h = 1 h de travail » → TEMPS MURAL.
+    // On reprend donc EXACTEMENT le balayage par tranches de prodSessTempsParRecette : le temps d'une
+    // tranche est compté UNE fois, puis réparti entre les recettes actives (au prorata des quantités),
+    // et enfin ventilé sur les TÂCHES qui portent cette recette dans la tranche. Par construction, la
+    // somme du détail redevient égale au total affiché.
+    const intervals = [];
     (s.tasks||[]).forEach(t=>{
       const recs = (Array.isArray(t.parfums)?t.parfums:[]).map(x=>+x).filter(r=>Number.isFinite(r)&&r>0);
-      if(!recs.some(r=>rids.has(r))) return;          // cette tâche ne concerne aucune recette de ce parfum
-      const net = (typeof prodTaskNet==='function') ? prodTaskNet(t) : Math.max(0,(+t.end||Date.now())-(+t.start||0));
-      if(!(net>0)) return;
-
-      // [v1310] RÉPARTITION AU PRORATA DES QUANTITÉS (et non plus à parts égales).
-      // Règle métier : une même étape partagée entre 300 pièces et 10 pièces ne peut pas être
-      // coupée 50/50. La part de CE parfum = net × (sa quantité ÷ quantité totale de la tâche),
-      // quantités ramenées en macarons équivalents. Repli à parts égales si aucune quantité connue.
-      let part;
-      if(recs.length === 1){
-        part = net;                                   // tâche dédiée : tout le temps revient au parfum
-      } else {
-        const { parts, prorata } = _partsMutualisation(recs, poids);
-        if(!prorata) reparti = 'egal';
-        // Somme des parts des recettes de CE parfum (un parfum peut porter plusieurs recettes : GF + classique).
-        const monPoids = Array.from(rids).reduce((s,r)=>s + (parts[r]||0), 0);
-        part = net * monPoids;
-      }
-      if(!(part>0)) return;
-      const phase = t.phase || 'Autre';
-      const label = t.label || 'Tâche';
-      const passive = (typeof prodIsPassive==='function') ? prodIsPassive(label) : false;
-
-      const P = (phases[phase] ||= { ms:0, actif:0, passif:0, nb:0, taches:{} });
-      P.ms += part; P.nb += 1;
-      if(passive) P.passif += part; else P.actif += part;
-      const L = (P.taches[label] ||= { ms:0, nb:0, passive });
-      L.ms += part; L.nb += 1;
-
-      total += part;
-      if(passive) passif += part; else actif += part;
+      if(!recs.length) return;
+      const st = +t.start||0;
+      const en = +t.end || Date.now();
+      if(st<=0 || en<=st) return;
+      intervals.push({ st, en, recs, task:t });
     });
+    if(!intervals.length) return;
+
+    const pts = new Set();
+    intervals.forEach(iv=>{ pts.add(iv.st); pts.add(iv.en); });
+    const sorted = Array.from(pts).sort((a,b)=>a-b);
+
+    let distributed = 0;
+    for(let i=0;i<sorted.length-1;i++){
+      const a=sorted[i], b=sorted[i+1];
+      const dur=b-a; if(dur<=0) continue;
+      // Tâches réellement actives sur cette tranche (temps MURAL : la tranche ne vaut que `dur`).
+      const actifs = intervals.filter(iv=>iv.st<=a && iv.en>=b);
+      if(!actifs.length) continue;
+      distributed += dur;
+
+      // Recettes actives sur la tranche, et part de chacune (prorata des quantités produites).
+      const recsTranche = new Set();
+      actifs.forEach(iv=>iv.recs.forEach(r=>recsTranche.add(r)));
+      if(!recsTranche.size) continue;
+      const arr = Array.from(recsTranche);
+      let parts;
+      if(poids){
+        const res = _partsMutualisation(arr, poids);
+        parts = res.parts;
+        if(!res.prorata) reparti = 'egal';
+      } else {
+        parts = {}; arr.forEach(r=>{ parts[r] = 1/arr.length; });
+        reparti = 'egal';
+      }
+
+      // Pour CHAQUE recette de ce parfum : sa part de la tranche, ventilée sur les tâches qui la portent.
+      Array.from(rids).forEach(rid=>{
+        if(!recsTranche.has(rid)) return;
+        const msRecette = dur * (parts[rid]||0);
+        if(!(msRecette>0)) return;
+        // Les tâches de la tranche qui portent CETTE recette se partagent sa part, à parts égales
+        // (elles sont concomitantes : impossible de dire laquelle « mérite » plus de temps mural).
+        const porteuses = actifs.filter(iv=>iv.recs.includes(rid));
+        if(!porteuses.length) return;
+        const parTache = msRecette / porteuses.length;
+
+        porteuses.forEach(iv=>{
+          const t = iv.task;
+          // [v1315] Les PAUSES doivent rester déduites. Le balayage mesure le temps mural brut de la
+          // tranche ; on lui applique le ratio net/brut de la tâche (prodTaskNet retire pausedAccum),
+          // sinon une tâche mise en pause gonflerait le détail.
+          const brut = Math.max(1, (iv.en - iv.st));
+          const net  = (typeof prodTaskNet==='function') ? prodTaskNet(t) : brut;
+          const ratio = Math.max(0, Math.min(1, net / brut));
+          const parTacheNet = parTache * ratio;
+          if(!(parTacheNet>0)) return;
+
+          const phase = t.phase || 'Autre';
+          const label = t.label || 'Tâche';
+          const passive = (typeof prodIsPassive==='function') ? prodIsPassive(label) : false;
+
+          const P = (phases[phase] ||= { ms:0, actif:0, passif:0, nb:0, taches:{} });
+          P.ms += parTacheNet;
+          if(passive) P.passif += parTacheNet; else P.actif += parTacheNet;
+          const L = (P.taches[label] ||= { ms:0, nb:0, passive, _ids:new Set() });
+          L.ms += parTacheNet;
+          L._ids.add(t.id);                      // nb de MESURES = nb de tâches distinctes, pas de tranches
+          total += parTacheNet;
+          if(passive) passif += parTacheNet; else actif += parTacheNet;
+        });
+      });
+    }
 
     // [v1307 — COHÉRENCE TRAÇABLE] Le total affiché sur la carte (via prodSessTempsParRecette) inclut
     // aussi le TEMPS NON DISTRIBUÉ de la session : les minutes où AUCUNE tâche rattachée à une recette
     // ne tournait (vaisselle, nettoyage, pauses, mise en place…), réparties à parts égales entre les
     // parfums de la séance. Sans cette ligne, la somme du détail serait INFÉRIEURE au total affiché et
     // le chiffre deviendrait invérifiable. On l'expose donc explicitement, sous son vrai nom.
-    const tasksAvecRec = (s.tasks||[]).filter(t=>{
-      const r=(Array.isArray(t.parfums)?t.parfums:[]).map(x=>+x).filter(x=>Number.isFinite(x)&&x>0);
-      const st=+t.start||0, en=+t.end||Date.now();
-      return r.length>0 && st>0 && en>st;
-    });
-    if(tasksAvecRec.length){
-      const recsSession = new Set();
-      tasksAvecRec.forEach(t=>(t.parfums||[]).forEach(r=>{ const n=+r; if(Number.isFinite(n)&&n>0) recsSession.add(n); }));
-      // La session concerne-t-elle ce parfum ? Sinon, aucune part de son temps commun ne lui revient.
-      if(Array.from(rids).some(r=>recsSession.has(r)) && recsSession.size>0){
-        // Temps déjà attribué aux tranches où au moins une tâche-recette tournait (même balayage que
-        // prodSessTempsParRecette : union des intervalles, sans double comptage des chevauchements).
-        const pts = new Set();
-        tasksAvecRec.forEach(t=>{ pts.add(+t.start); pts.add(+t.end||Date.now()); });
-        const sorted = Array.from(pts).sort((a,b)=>a-b);
-        let distributed = 0;
-        for(let i=0;i<sorted.length-1;i++){
-          const a=sorted[i], b=sorted[i+1]; const dur=b-a; if(dur<=0) continue;
-          const actives = tasksAvecRec.some(t=>(+t.start)<=a && (+t.end||Date.now())>=b);
-          if(actives) distributed += dur;
-        }
-        const reelSess = (typeof prodSessReelMs==='function') ? prodSessReelMs(s) : 0;
-        const nonDistribue = Math.max(0, reelSess - distributed);
-        if(nonDistribue>0){
-          // Part de CE parfum : le commun est réparti à parts égales entre les parfums de la séance.
-          // (rids peut contenir plusieurs recettes du même parfum : on compte les recettes présentes.)
-          const miennes = Array.from(rids).filter(r=>recsSession.has(r)).length;
-          const part2 = nonDistribue * (miennes / recsSession.size);
-          if(part2>0){
-            const P = (phases['Commun de séance'] ||= { ms:0, actif:0, passif:0, nb:0, taches:{} });
-            P.ms += part2; P.nb += 1; P.actif += part2;
-            const L = (P.taches['Vaisselle, nettoyage, mise en place, pauses'] ||= { ms:0, nb:0, passive:false });
-            L.ms += part2; L.nb += 1;
-            total += part2; actif += part2;
-          }
+    const recsSession = new Set();
+    intervals.forEach(iv=>iv.recs.forEach(r=>recsSession.add(r)));
+    if(recsSession.size && Array.from(rids).some(r=>recsSession.has(r))){
+      // `distributed` vient du balayage ci-dessus : c'est le temps MURAL déjà attribué aux tranches.
+      const reelSess = (typeof prodSessReelMs==='function') ? prodSessReelMs(s) : 0;
+      const nonDistribue = Math.max(0, reelSess - distributed);
+      if(nonDistribue>0){
+        // Part de CE parfum : le commun (vaisselle, mise en place) est réparti à PARTS ÉGALES entre
+        // les parfums de la séance — choix explicite de Benjamin : il ne dépend pas du volume.
+        const miennes = Array.from(rids).filter(r=>recsSession.has(r)).length;
+        const part2 = nonDistribue * (miennes / recsSession.size);
+        if(part2>0){
+          const P = (phases['Commun de séance'] ||= { ms:0, actif:0, passif:0, nb:0, taches:{} });
+          P.ms += part2; P.actif += part2;
+          const L = (P.taches['Vaisselle, nettoyage, mise en place, pauses'] ||= { ms:0, nb:0, passive:false, _ids:new Set() });
+          L.ms += part2; L._ids.add('commun-'+s.id);
+          total += part2; actif += part2;
         }
       }
     }
@@ -49012,9 +49045,12 @@ function _tempsDecompoParParfum(recipeIds, jours, poids){
 
   const phasesArr = Object.keys(phases).map(nom=>{
     const P = phases[nom];
-    const taches = Object.keys(P.taches).map(lbl=>({ label:lbl, ms:P.taches[lbl].ms, nb:P.taches[lbl].nb, passive:P.taches[lbl].passive }))
-      .sort((a,b)=>b.ms-a.ms);
-    return { phase:nom, ms:P.ms, actif:P.actif, passif:P.passif, nb:P.nb, taches };
+    const taches = Object.keys(P.taches).map(lbl=>{
+      const T = P.taches[lbl];
+      return { label:lbl, ms:T.ms, nb:(T._ids ? T._ids.size : (T.nb||0)), passive:T.passive };
+    }).sort((a,b)=>b.ms-a.ms);
+    const nbPhase = taches.reduce((s,t)=>s+t.nb, 0);
+    return { phase:nom, ms:P.ms, actif:P.actif, passif:P.passif, nb:nbPhase, taches };
   }).sort((a,b)=>b.ms-a.ms);
 
   return { total, actif, passif, phases:phasesArr, reparti };
@@ -51359,6 +51395,13 @@ function mascotBubbleReset(){
 // on coule une meringue, on la divise pour 2 ordres de fabrication.
 // → l'étape coques/meringue est partagée ; ganache + montage restent par parfum.
 const TAILLE_BATCH_MACARONS = 60;        // macarons par "batch" unitaire (1 ordre de fabrication)
+// [v1315] GRAND FORMAT : l'usage diffère — 1 batch = 48 coques = 24 macarons (règle métier Benjamin).
+// Rapporter un temps GF à un batch de 60 le surestimerait de 2,5×.
+const TAILLE_BATCH_MACARONS_GF = 24;     // macarons par batch en grand format (48 coques)
+// Taille de batch applicable à une recette donnée (lit recipe.grandFormat — jamais le nom du parfum).
+function _tailleBatchPour(recipe){
+  return (recipe && recipe.grandFormat) ? TAILLE_BATCH_MACARONS_GF : TAILLE_BATCH_MACARONS;
+}
 const COQUES_PAR_BATCH = 120;            // coques par batch (2 coques/macaron)
 const BATCHS_PAR_MERINGUE = 2;           // capacité d'une meringue = 2 batchs = 120 macarons = 240 coques
 const MACARONS_PAR_MERINGUE = 120;       // capacité utile réelle d'une meringue (240 coques)
@@ -56088,6 +56131,39 @@ async function renderTempsProduction(){
   // [v1306] nbMesure / ratio retirés : ils ne servaient qu'à l'affichage du temps mur à mur,
   // désormais supprimé de cet écran (centré sur le seul temps actif).
 
+  // [FIX v1315 — MOYENNES ABSURDES (21 h/batch)] Le temps actif d'un parfum inclut la fabrication de
+  // ses COQUES (souvent produites d'avance, en grande quantité). Or le dénominateur ne comptait que les
+  // macarons ASSEMBLÉS dans la fenêtre. Résultat : 300 coques de myrtille fabriquées mais 5 macarons
+  // assemblés → un temps énorme divisé par 5 → « 21 h 16 par batch », absurde.
+  // On aligne les périmètres : le dénominateur compte TOUT ce qui a réellement été produit pour ce
+  // parfum, en MACARONS ÉQUIVALENTS (une fournée de coques ÷ 2), soit exactement la base déjà utilisée
+  // pour le prorata. Numérateur et dénominateur parlent enfin de la même chose.
+  const qteEquivParParfum = {};
+  prods.forEach(p=>{
+    if(!p || p.recipeId==null) return;
+    const comp = p.composant || 'complet';
+    if(comp!=='complet' && comp!=='assemble' && comp!=='coques') return;   // ganache/chantache : pas des macarons
+    // Même filtre chronométré que les batches (recette + jour présents dans une séance).
+    if(!_rapprochementKO){
+      const rid = +p.recipeId;
+      const jours = new Set();
+      [p.prodDebutTs, p.prodTimestamp, p.prodTermineTs, p.date].forEach(x=>{ const j=String(x||'').slice(0,10); if(j) jours.add(j); });
+      let vu = false;
+      for(const j of jours){ if(_clesChrono.has(rid+'|'+j)){ vu=true; break; } }
+      if(!vu) return;
+    }
+    const d = (p.prodTermineTs||p.prodTimestamp||p.date||'').slice(0,10);
+    if(d < sinceStr) return;
+    const q = (typeof prodQteAffichee==='function') ? (+prodQteAffichee(p)||0) : 0;
+    if(!(q>0)) return;
+    const macEq = (comp==='coques') ? (q / COQUES_PAR_MACARON) : q;
+    const r = recipes.find(x=>+x.id===+p.recipeId); if(!r) return;
+    const nom = r.produitNom||''; if(!nom) return;
+    const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
+    qteEquivParParfum[k] = (qteEquivParParfum[k]||0) + macEq;
+  });
+  Object.keys(parParfum).forEach(k=>{ parParfum[k].qte = qteEquivParParfum[k] || 0; });
+
   const cartesParfum = Object.values(parParfum)
     .sort((a,b)=>b.actif-a.actif)
     .map(e=>{
@@ -56142,13 +56218,18 @@ async function renderTempsProduction(){
       // production de 300 macarons pesait autant qu'une de 20, ce qui rendait le chiffre inutilisable.
       const qteTot = +e.qte || 0;
       const parMacaronMs = qteTot>0 ? e.actif/qteTot : 0;
-      const parBatch60Ms = parMacaronMs * TAILLE_BATCH_MACARONS;
+      // [v1315] La taille d'un batch dépend du FORMAT : 60 macarons en classique, 24 en grand format
+      // (48 coques). On lit recipe.grandFormat sur les recettes qui alimentent ce parfum.
+      const _recsDuParfum = Array.from(e.recIds || []).map(id=>recipes.find(r=>+r.id===+id)).filter(Boolean);
+      const _estGF = _recsDuParfum.length>0 && _recsDuParfum.every(r=>!!r.grandFormat);
+      const _tailleBatch = _estGF ? TAILLE_BATCH_MACARONS_GF : TAILLE_BATCH_MACARONS;
+      const parBatchMs = parMacaronMs * _tailleBatch;
       const sansQte = !(qteTot>0) || actifNul;
 
       return `<div class="tp-card">
         <div class="tp-head">
           <div class="tp-flavour">${esc(e.nom)}</div>
-          <div class="tp-qty"><b>${qteTot||e.nb}</b><span>${qteTot?('macaron'+(qteTot>1?'s':'')+' chronométré'+(qteTot>1?'s':'')):('batch'+(e.nb>1?'es':''))}</span></div>
+          <div class="tp-qty"><b>${qteTot?Math.round(qteTot):e.nb}</b><span>${qteTot?('macaron'+(qteTot>1?'s':'')+' équiv. produit'+(qteTot>1?'s':'')):('batch'+(e.nb>1?'es':''))}</span></div>
         </div>
         <div class="tp-grid" style="grid-template-columns:1fr 1fr 1fr">
           <div class="tp-metric actif">
@@ -56160,8 +56241,8 @@ async function renderTempsProduction(){
             <div class="tp-val">${sansQte?'—':_fmtMinSec(parMacaronMs)}</div>
           </div>
           <div class="tp-metric">
-            <div class="tp-lbl">Par batch (60)</div>
-            <div class="tp-val">${sansQte?'—':fmtDureeMs(parBatch60Ms)}</div>
+            <div class="tp-lbl">Par batch (${_tailleBatch})</div>
+            <div class="tp-val">${sansQte?'—':fmtDureeMs(parBatchMs)}</div>
           </div>
         </div>
         ${decompoHTML}
