@@ -44,7 +44,8 @@ const SUITES = [
   'material-needs.test.js',      // vague 31 : computeMaterialNeeds (besoins matières production)
   'gaspillage.test.js',          // vague 32 : computeGaspillage (coût du gaspillage marché)
   'temps-decompo.test.js',       // vague 33 : _tempsDecompoParParfum (traçabilité du temps : le détail doit sommer au total)
-  'batch-comptable.test.js'      // vague 34 : _estBatchComptable (dénominateur des moyennes : les composants ne sont pas des batches)
+  'batch-comptable.test.js',     // vague 34 : _estBatchComptable (dénominateur des moyennes : les composants ne sont pas des batches)
+  'temps-par-macaron.test.js'    // vague 35 : temps par macaron et par batch standard de 60 (l'ancienne moyenne divisait par le nb d'enregistrements)
 ];
 
 let allOk = true;

@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1312';
-const APP_MAJ = 'CORRECTIF URGENT de la v1311, qui affichait \u00ab 0 batch chronom\u00e9tr\u00e9 \u00bb PARTOUT et rendait l\u2019\u00e9cran inexploitable. Ma faute : pour rep\u00e9rer un batch chronom\u00e9tr\u00e9, je m\u2019\u00e9tais fi\u00e9 au champ atelierTaskId, qui n\u2019est pos\u00e9 que dans certains flux et reste vide dans l\u2019usage r\u00e9el \u2014 le d\u00e9nominateur tombait donc \u00e0 z\u00e9ro. Le rapprochement se fait d\u00e9sormais sur un lien qui existe VRAIMENT dans les donn\u00e9es : la RECETTE + le JOUR (un batch de framboise du 7 juillet est chronom\u00e9tr\u00e9 s\u2019il existe ce jour-l\u00e0 une s\u00e9ance avec une t\u00e2che framboise), avec tol\u00e9rance pour un batch commenc\u00e9 la veille et fini le lendemain. Le fond du probl\u00e8me reste corrig\u00e9 : seuls les batches r\u00e9ellement chronom\u00e9tr\u00e9s entrent au d\u00e9nominateur, sinon la moyenne s\u2019\u00e9crase (Coco Rafaello \u00e0 20 min, sous la seule cuisson des coques). GARDE-FOU ajout\u00e9 : si le rapprochement \u00e9choue, l\u2019app retombe sur le comptage complet et le SIGNALE par un bandeau, au lieu d\u2019afficher z\u00e9ro partout. Verrouill\u00e9 par un test de non-r\u00e9gression d\u00e9di\u00e9. Suite : 658 assertions vertes.';
+const APP_VERSION = 'v1313';
+const APP_MAJ = 'Le temps est enfin rapport\u00e9 \u00e0 une unit\u00e9 QUI A DU SENS. L\u2019ancienne \u00ab Moy. active/batch \u00bb divisait le temps par le NOMBRE D\u2019ENREGISTREMENTS de production : une production de 300 macarons et une de 20 comptaient toutes deux pour \u00ab 1 batch \u00bb. Le chiffre \u00e9tait donc ininterpr\u00e9table (\u00ab 27 min par batch \u00bb : un batch de quoi ?). D\u00e9sormais chaque carte parfum affiche DEUX mesures, toutes deux rapport\u00e9es \u00e0 la quantit\u00e9 R\u00c9ELLEMENT produite : \u00ab Par macaron \u00bb (unit\u00e9 stable et comparable \u2014 permet de chiffrer une commande : 200 macarons = 200 \u00d7 ce temps) et \u00ab Par batch (60) \u00bb (la m\u00eame valeur ramen\u00e9e \u00e0 l\u2019unit\u00e9 de travail r\u00e9elle, 1 batch = 60 macarons / 120 coques). La conversion est v\u00e9rifiable \u00e0 la main : par batch = par macaron \u00d7 60. La carte indique aussi le nombre de macarons chronom\u00e9tr\u00e9s sur lesquels porte le calcul. Sans quantit\u00e9 connue, l\u2019app affiche \u00ab \u2014 \u00bb au lieu d\u2019inventer un chiffre. Verrouill\u00e9 par la vague 35 (17 assertions). Suite : 658 \u2192 675 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -55906,6 +55906,16 @@ function _partsMutualisation(recIds, poids){
   return { parts, prorata:false };
 }
 
+// [v1313] Format court pour les très petites durées (temps par macaron) : « 1 min 12 s », « 48 s ».
+// fmtDureeMs arrondit à la minute et afficherait « 1 min » ou « 0 min », inexploitable à cette échelle.
+function _fmtMinSec(ms){
+  const s = Math.round((+ms||0)/1000);
+  if(s<=0) return '—';
+  const m = Math.floor(s/60), r = s%60;
+  if(m<=0) return r+' s';
+  return m+' min'+(r>0?(' '+r+' s'):'');
+}
+
 async function renderTempsProduction(){
   // [v1303] Écrit dans #tempsBody si présent (écran fusionné « Temps »), sinon #main (legacy).
   const main = document.getElementById('tempsBody') || document.getElementById('main'); if(!main) return;
@@ -55957,9 +55967,16 @@ async function renderTempsProduction(){
     const nom = prodNomComplet(p, recipes);
     const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
     const jour = (p.prodTermineTs||p.prodTimestamp||p.date||'').slice(0,10);
-    (parParfum[k] ||= {nom, reel:0, actif:0, nb:0, nbMesure:0});
+    // [v1313] On accumule aussi la QUANTITÉ réellement produite (en macarons). Le simple comptage
+    // d'enregistrements ne suffit pas : une production de 300 macarons et une de 20 comptaient
+    // toutes deux pour « 1 batch », ce qui rendait la moyenne ininterprétable (27 min par batch de
+    // quoi ? 20 macarons ? 300 ?). La quantité permet de dériver un temps PAR MACARON (comparable)
+    // et un temps par BATCH STANDARD de 60 macarons (l'unité de travail réelle de Benjamin).
+    const qte = (typeof prodQteAffichee==='function') ? (+prodQteAffichee(p)||0) : 0;
+    (parParfum[k] ||= {nom, reel:0, actif:0, nb:0, nbMesure:0, qte:0});
     parParfum[k].reel += dms;
     parParfum[k].nb += 1;
+    parParfum[k].qte += qte;
     if(dms>0) parParfum[k].nbMesure += 1;   // ne compter que les batches RÉELLEMENT mesurés
     (parJour[jour] ||= {reel:0, actif:0, nb:0});
     parJour[jour].reel += dms;
@@ -55975,7 +55992,7 @@ async function renderTempsProduction(){
     const nom = r.produitNom||''; if(!nom) return;
     const k = (typeof aiNormalize==='function') ? aiNormalize(nom) : nom.toLowerCase();
     if(parParfum[k]) parParfum[k].actif += actifParRec[rid];
-    else parParfum[k] = {nom, reel:0, actif:actifParRec[rid], nb:0, nbMesure:0};
+    else parParfum[k] = {nom, reel:0, actif:actifParRec[rid], nb:0, nbMesure:0, qte:0};
     // [v1307] Mémorise les recipeId qui alimentent ce parfum (classique + grand format), pour la
     // décomposition traçable phase→tâche affichée sous la carte.
     (parParfum[k].recIds ||= new Set()).add(+rid);
@@ -56000,9 +56017,6 @@ async function renderTempsProduction(){
   const cartesParfum = Object.values(parParfum)
     .sort((a,b)=>b.actif-a.actif)
     .map(e=>{
-      // [v1306] Moyenne ACTIVE par batch : temps de travail effectif du parfum ÷ nombre de batches
-      // produits. C'est le « combien de temps ça me prend vraiment » — repos/attente exclus.
-      const moyActive = e.nb>0 ? e.actif/e.nb : 0;
       const actifNul = e.actif<=0;
 
       // [v1307] DÉCOMPOSITION TRAÇABLE (repliable) : d'où viennent ces minutes ? Phase → tâche, avec
@@ -56045,19 +56059,35 @@ async function renderTempsProduction(){
         </details>`;
       }
 
+      // [v1313] DEUX moyennes, l'une comparable, l'autre parlante :
+      //  • par MACARON  = temps actif ÷ nombre de macarons réellement produits. Unité stable, permet
+      //    de chiffrer n'importe quelle commande (200 macarons → 200 × ce temps).
+      //  • par BATCH de 60 = la même valeur ramenée à l'unité de travail réelle (1 batch = 60 macarons,
+      //    120 coques — constante TAILLE_BATCH_MACARONS déjà utilisée par l'app).
+      // L'ancienne « moy./batch » divisait par le NOMBRE D'ENREGISTREMENTS de production : une
+      // production de 300 macarons pesait autant qu'une de 20, ce qui rendait le chiffre inutilisable.
+      const qteTot = +e.qte || 0;
+      const parMacaronMs = qteTot>0 ? e.actif/qteTot : 0;
+      const parBatch60Ms = parMacaronMs * TAILLE_BATCH_MACARONS;
+      const sansQte = !(qteTot>0) || actifNul;
+
       return `<div class="tp-card">
         <div class="tp-head">
           <div class="tp-flavour">${esc(e.nom)}</div>
-          <div class="tp-qty"><b>${e.nb}</b><span>batch${e.nb>1?'es':''}${_rapprochementKO?'':' chronométré'+(e.nb>1?'s':'')}</span></div>
+          <div class="tp-qty"><b>${qteTot||e.nb}</b><span>${qteTot?('macaron'+(qteTot>1?'s':'')+' chronométré'+(qteTot>1?'s':'')):('batch'+(e.nb>1?'es':''))}</span></div>
         </div>
-        <div class="tp-grid" style="grid-template-columns:1fr 1fr">
+        <div class="tp-grid" style="grid-template-columns:1fr 1fr 1fr">
           <div class="tp-metric actif">
             <div class="tp-lbl">Temps actif</div>
             <div class="tp-val${actifNul?' na':''}">${actifNul?'—':fmtDureeMs(e.actif)}</div>
           </div>
           <div class="tp-metric">
-            <div class="tp-lbl">Moy. active/batch</div>
-            <div class="tp-val">${(actifNul||e.nb<=0)?'—':fmtDureeMs(moyActive)}</div>
+            <div class="tp-lbl">Par macaron</div>
+            <div class="tp-val">${sansQte?'—':_fmtMinSec(parMacaronMs)}</div>
+          </div>
+          <div class="tp-metric">
+            <div class="tp-lbl">Par batch (60)</div>
+            <div class="tp-val">${sansQte?'—':fmtDureeMs(parBatch60Ms)}</div>
           </div>
         </div>
         ${decompoHTML}
