@@ -86,49 +86,68 @@ const estBatch = buildModule();
      'COHÉRENCE MÉTIER · la moyenne d\'un batch dépasse la durée d\'une seule étape');
 }
 
-// ── LE 2e BUG (v1311) : ne compter QUE les batches réellement CHRONOMÉTRÉS ────
+// ── LE 2e BUG (v1312) : ne compter QUE les batches réellement CHRONOMÉTRÉS ────
 {
   // Le numérateur (temps actif) ne vient QUE des séances chronométrées. Si le dénominateur compte
   // aussi les batches produits SANS chrono, on divise le temps de N batches par (N + M) batches :
   // la moyenne s'effondre. C'est ce qui donnait « Coco Rafaello : 20 min/batch », soit MOINS que
   // la seule cuisson des coques (21 min) — arithmétiquement impossible.
-  const chrono = new Set([1]);   // marque « mode chronométré » (déclenche le filtre)
-  const base = { prodStatut:'termine', prodTermineTs:OK_DATE, composant:'complet', recipeId:1 };
+  //
+  // Le rapprochement se fait sur RECETTE + JOUR (clé 'recipeId|YYYY-MM-DD').
+  // /!\ La v1311 s'appuyait sur le champ `atelierTaskId` : il est vide dans l'usage réel, et le
+  // dénominateur tombait à ZÉRO partout (écran cassé). Ces tests figent le bon lien.
+  const cles = new Set(['1|2026-07-07']);   // framboise (id 1) chronométrée le 7 juillet
+  const base = { prodStatut:'termine', composant:'complet', recipeId:1 };
 
-  eq(estBatch({...base, atelierTaskId:'t1'}, SINCE, chrono), true,
-     'BUG v1311 VERROUILLÉ · un batch CHRONOMÉTRÉ (atelierTaskId présent) compte');
-  eq(estBatch({...base, atelierTaskId:null}, SINCE, chrono), false,
-     'BUG v1311 VERROUILLÉ · un batch produit SANS chrono ne compte PAS au dénominateur');
-  eq(estBatch({...base}, SINCE, chrono), false,
-     'BUG v1311 VERROUILLÉ · atelierTaskId absent → exclu du dénominateur');
+  eq(estBatch({...base, prodTermineTs:'2026-07-07T18:00:00'}, SINCE, cles), true,
+     'BUG VERROUILLÉ · batch dont la recette a été chronométrée CE JOUR-LÀ → compte');
+  eq(estBatch({...base, prodTermineTs:'2026-07-09T18:00:00'}, SINCE, cles), false,
+     'BUG VERROUILLÉ · batch d\'un jour SANS chrono → ne compte pas');
+  eq(estBatch({...base, recipeId:2, prodTermineTs:'2026-07-07T18:00:00'}, SINCE, cles), false,
+     'BUG VERROUILLÉ · autre recette non chronométrée ce jour-là → ne compte pas');
 
-  // Sans ensemble fourni (appel legacy) → ancien comportement conservé, rien n'est cassé ailleurs.
-  eq(estBatch({...base, atelierTaskId:null}, SINCE), true,
+  // Batch démarré la veille, terminé le lendemain (repos de nuit) : le chrono est celui du jour de
+  // DÉBUT. Sans tolérance sur la date, un batch réellement chronométré serait exclu à tort.
+  eq(estBatch({...base, prodDebutTs:'2026-07-07T20:00:00', prodTermineTs:'2026-07-08T09:00:00'}, SINCE, cles), true,
+     'RÉGRESSION ÉVITÉE · batch commencé le jour du chrono et fini le lendemain → compte quand même');
+
+  // Rétro-compatibilité : sans ensemble fourni, comportement d'origine.
+  eq(estBatch({...base, prodTermineTs:'2026-07-09T18:00:00'}, SINCE), true,
      'Rétro-compatibilité · sans le filtre chrono, le comportement d\'origine est conservé');
 }
 
 // ── DÉMONSTRATION : la moyenne redevient interprétable ────────────────────────
 {
-  const chrono = new Set([1]);
-  // Cas réel : 3 batches chronométrés, 7 produits sans chrono (10 au total).
+  const cles = new Set(['1|2026-07-07']);
+  // 3 batches chronométrés le 7, 7 produits un autre jour sans chrono (10 au total).
   const prods = [];
-  for(let i=0;i<3;i++) prods.push({ prodStatut:'termine', prodTermineTs:OK_DATE, composant:'complet', recipeId:1, atelierTaskId:'t'+i });
-  for(let i=0;i<7;i++) prods.push({ prodStatut:'termine', prodTermineTs:OK_DATE, composant:'complet', recipeId:1, atelierTaskId:null });
+  for(let i=0;i<3;i++) prods.push({ prodStatut:'termine', prodTermineTs:'2026-07-07T18:00:00', composant:'complet', recipeId:1 });
+  for(let i=0;i<7;i++) prods.push({ prodStatut:'termine', prodTermineTs:'2026-07-09T18:00:00', composant:'complet', recipeId:1 });
 
-  const avant = prods.filter(p=>estBatch(p, SINCE)).length;            // ancien : tout
-  const apres = prods.filter(p=>estBatch(p, SINCE, chrono)).length;    // nouveau : chronométrés
+  const avant = prods.filter(p=>estBatch(p, SINCE)).length;
+  const apres = prods.filter(p=>estBatch(p, SINCE, cles)).length;
   eq(avant, 10, 'AVANT · le dénominateur comptait les 10 batches (dont 7 jamais chronométrés)');
   eq(apres, 3,  'APRÈS · le dénominateur ne compte que les 3 batches chronométrés');
 
   const actifMs = 3 * 75 * 60000;   // 3 batches réellement mesurés à ~75 min chacun
-  const moyAvant = Math.round(actifMs / avant / 60000);
-  const moyApres = Math.round(actifMs / apres / 60000);
-  eq(moyAvant, 23, 'AVANT · moyenne écrasée à 23 min (sous la cuisson seule = impossible)');
-  eq(moyApres, 75, 'APRÈS · moyenne = 75 min, cohérente avec la somme des étapes');
+  eq(Math.round(actifMs/avant/60000), 23, 'AVANT · moyenne écrasée à 23 min (sous la cuisson seule = impossible)');
+  eq(Math.round(actifMs/apres/60000), 75, 'APRÈS · moyenne = 75 min, cohérente avec la somme des étapes');
+  eq(Math.round(actifMs/apres/60000) > 21, true,
+     'COHÉRENCE MÉTIER · la moyenne dépasse enfin la durée d\'une seule étape (cuisson = 21 min)');
+}
 
-  const CUISSON_COQUES_MIN = 21;
-  eq(moyApres > CUISSON_COQUES_MIN, true,
-     'COHÉRENCE MÉTIER · la moyenne dépasse enfin la durée d\'une seule étape');
+// ── RÉGRESSION v1311 : le filtre ne doit JAMAIS tout exclure ──────────────────
+{
+  // Le bug que j'ai introduit : en se fiant à un champ absent des données réelles, le filtre
+  // excluait TOUS les batches → « 0 batch chronométré » partout, écran inexploitable.
+  // Ce test garantit qu'avec un rapprochement valide, il reste au moins un batch.
+  const cles = new Set(['1|2026-07-07']);
+  const prods = [
+    { prodStatut:'termine', prodTermineTs:'2026-07-07T18:00:00', composant:'complet', recipeId:1 },
+  ];
+  const gardes = prods.filter(p=>estBatch(p, SINCE, cles));
+  eq(gardes.length > 0, true,
+     'RÉGRESSION v1311 VERROUILLÉE · un batch chronométré n\'est jamais exclu par erreur');
 }
 
 // ── statut / fenêtre : les autres conditions restent intactes ─────────────────
