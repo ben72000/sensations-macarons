@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1313';
-const APP_MAJ = 'Le temps est enfin rapport\u00e9 \u00e0 une unit\u00e9 QUI A DU SENS. L\u2019ancienne \u00ab Moy. active/batch \u00bb divisait le temps par le NOMBRE D\u2019ENREGISTREMENTS de production : une production de 300 macarons et une de 20 comptaient toutes deux pour \u00ab 1 batch \u00bb. Le chiffre \u00e9tait donc ininterpr\u00e9table (\u00ab 27 min par batch \u00bb : un batch de quoi ?). D\u00e9sormais chaque carte parfum affiche DEUX mesures, toutes deux rapport\u00e9es \u00e0 la quantit\u00e9 R\u00c9ELLEMENT produite : \u00ab Par macaron \u00bb (unit\u00e9 stable et comparable \u2014 permet de chiffrer une commande : 200 macarons = 200 \u00d7 ce temps) et \u00ab Par batch (60) \u00bb (la m\u00eame valeur ramen\u00e9e \u00e0 l\u2019unit\u00e9 de travail r\u00e9elle, 1 batch = 60 macarons / 120 coques). La conversion est v\u00e9rifiable \u00e0 la main : par batch = par macaron \u00d7 60. La carte indique aussi le nombre de macarons chronom\u00e9tr\u00e9s sur lesquels porte le calcul. Sans quantit\u00e9 connue, l\u2019app affiche \u00ab \u2014 \u00bb au lieu d\u2019inventer un chiffre. Verrouill\u00e9 par la vague 35 (17 assertions). Suite : 658 \u2192 675 assertions vertes.';
+const APP_VERSION = 'v1314';
+const APP_MAJ = 'Outils de DIAGNOSTIC du copilote (aucun changement de comportement, purement tra\u00e7able). Le copilote enchaîne : question → normalisation → correction des fautes → d\u00e9tection d\u2019intention → appel de la bonne fonction. Cette chaîne \u00e9tait une boîte noire. Deux commandes la rendent lisible depuis la console : smWhy(\u00ab ta question \u00bb) montre CHAQUE \u00e9tape de la d\u00e9cision (texte normalis\u00e9, intention d\u00e9tect\u00e9e, fonction appel\u00e9e, param\u00e8tres extraits, et un avertissement si l\u2019intention n\u2019est pas reconnue) ; smSkills() liste les 85 comp\u00e9tences du copilote, smSkills(\u00ab stock \u00bb) filtre. La table intention→fonction n\u2019est PAS recopi\u00e9e \u00e0 la main : elle est D\u00c9RIV\u00c9E du code source lui-m\u00eame, donc toujours exacte. Un test v\u00e9rifie qu\u2019AUCUNE comp\u00e9tence fantôme n\u2019existe \u2014 c\u2019est-\u00e0-dire aucune intention pointant vers une fonction inexistante (le m\u00eame type de bug que le bouton \u00ab Plan de production \u00bb jamais c\u00e2bl\u00e9). Suite : 675 → 690 assertions.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -36888,6 +36888,80 @@ async function aiRun(){
 }
 // [DISPATCH — extrait d'aiRun, étape C1] Route une intention résolue vers sa fonction. Extrait pour être
 // réutilisable après une clarification (on relance l'intention d'origine sans repasser par parseIntent).
+// ============================================================
+//  [v1314] DIAGNOSTIC DU ROUTAGE DU COPILOTE — « pourquoi cette réponse ? »
+// ============================================================
+// Chaîne complète d'une question posée au copilote :
+//   texte brut → aiNormalize + aiCorrigeFautes → parseIntent → {intent, params} → _aiDispatch → aiQueryX()
+// Ces outils rendent cette chaîne TRAÇABLE, sans rien changer au comportement :
+//
+//   smWhy('combien de framboise en stock ?')  → montre chaque étape de la décision
+//   smSkills()                                → liste les ~90 intentions et la fonction appelée
+//   smSkills('stock')                         → filtre sur un mot-clé
+//
+// La table intention→fonction n'est PAS recopiée à la main (elle se désynchroniserait) : elle est
+// DÉRIVÉE du code source de _aiDispatch via Function.prototype.toString(). Elle est donc, par
+// construction, toujours exacte et à jour.
+function _smTableSkills(){
+  const table = {};
+  try{
+    const src = String(_aiDispatch);
+    // Motifs du switch : case 'intent': return maFonction(...);
+    const re = /case\s*'([^']+)'\s*:\s*return\s+([A-Za-z0-9_$]+)\s*\(/g;
+    let m;
+    while((m = re.exec(src)) !== null){ table[m[1]] = m[2]; }
+  }catch(e){ swallow(e,'_smTableSkills'); }
+  return table;
+}
+
+// Explique le routage d'une question : chaque étape, et la fonction finalement appelée.
+function smWhy(question){
+  try{
+    const brut = String(question||'');
+    const norm      = (typeof aiNormalize==='function') ? aiNormalize(brut) : brut;
+    const corrige   = (typeof aiCorrigeFautes==='function') ? aiCorrigeFautes(norm) : norm;
+    const r         = (typeof parseIntent==='function') ? parseIntent(brut, {}) : null;
+    const intent    = r ? r.intent : '(parseIntent indisponible)';
+    const table     = _smTableSkills();
+    const fn        = table[intent] || (intent==='unknown' ? '(aucune — repli sur les suggestions)' : '(non routée dans _aiDispatch)');
+
+    console.log('%c🔎 Pourquoi cette réponse ?', 'font-weight:bold');
+    console.table([
+      { étape:'1. Question posée',        valeur: brut },
+      { étape:'2. Texte normalisé',       valeur: norm },
+      { étape:'3. Fautes corrigées',      valeur: corrige },
+      { étape:'4. Intention détectée',    valeur: intent },
+      { étape:'5. Fonction appelée',      valeur: fn },
+      { étape:'6. Critique ?',            valeur: r && r.critical ? 'oui (demande confirmation)' : 'non' },
+    ]);
+    if(r && r.params && Object.keys(r.params).length){
+      console.log('Paramètres extraits de la question :');
+      console.table(r.params);
+    } else {
+      console.log('Aucun paramètre extrait de la question.');
+    }
+    if(intent==='unknown'){
+      console.warn('⚠️ Intention NON reconnue : aucune règle de parseIntent n\'a matché. Le copilote proposera des suggestions au lieu de répondre.');
+    }
+    return { question:brut, normalise:norm, corrige, intent, fonction:fn, params:(r&&r.params)||{}, critical:!!(r&&r.critical) };
+  }catch(e){ swallow(e,'smWhy'); console.error('smWhy a échoué :', e); return null; }
+}
+
+// Liste toutes les « compétences » du copilote : intention → fonction appelée.
+function smSkills(filtre){
+  try{
+    const table = _smTableSkills();
+    let cles = Object.keys(table).sort();
+    if(filtre){
+      const f = String(filtre).toLowerCase();
+      cles = cles.filter(k => k.toLowerCase().includes(f) || String(table[k]).toLowerCase().includes(f));
+    }
+    console.table(cles.map(k => ({ intention:k, fonction:table[k] })));
+    return cles.length + ' compétence(s)' + (filtre?(' pour « '+filtre+' »'):'') + ' sur ' + Object.keys(table).length + ' au total';
+  }catch(e){ swallow(e,'smSkills'); return '0'; }
+}
+try{ if(typeof window!=='undefined'){ window.smWhy=smWhy; window.smSkills=smSkills; } }catch(_){}
+
 async function _aiDispatch(r, txt, _ctx){
   // [ASSIST-PLUS] journal d'usage (habitudes) + fallback intelligent sur incompréhension.
   try{ if(r && r.intent) aiUsageLog(r.intent, txt); }catch(e){swallow(e,'_aiDispatch')}
