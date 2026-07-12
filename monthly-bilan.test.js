@@ -30,6 +30,11 @@ function buildModule(fakeDb){
   const orderToLines = extractFunction('orderToLines');
   const estReprise   = extractFunction('estReprise');
   const lineTotalStored = extractFunction('lineTotalStored');
+  // [v1325] La règle de ventilation service/marchandise a été EXTRAITE de computeMonthlyBilan en
+  // fonction pure partagée (partServiceCommande), pour que le revenu horaire cesse d'appliquer le
+  // taux marchandise aux prestations. Le comportement du bilan mensuel ne doit PAS bouger d'un
+  // centime : les 28 assertions ci-dessous en sont la preuve.
+  const partServiceCommande = extractFunction('partServiceCommande');
   const computeMonthlyBilan = extractFunction('computeMonthlyBilan');
 
   // getSettings stubbé : seuls socialGoods/socialService sont lus par computeMonthlyBilan.
@@ -44,6 +49,7 @@ function buildModule(fakeDb){
     ${orderToLines}
     ${estReprise}
     ${lineTotalStored}
+    ${partServiceCommande}
     ${computeMonthlyBilan}
     computeMonthlyBilan;
   `;

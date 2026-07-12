@@ -53,7 +53,10 @@ const SUITES = [
   'marche-temps.test.js',        // vague 40 : rentabilité des marchés rapportée au temps passé sur place
   'prestation-temps.test.js',    // vague 41 : la prestation vend du temps (coût des heures + revenu horaire)
   'pertes-visibles.test.js',     // vague 42 : les pertes ne doivent jamais être cachées (marge négative visible)
-  'point-mort.test.js'           // vague 43 : le point mort (combien vendre pour couvrir les charges fixes)
+  'point-mort.test.js',          // vague 43 : le point mort (combien vendre pour couvrir les charges fixes)
+  'point-mort-verite.test.js',   // vague 44 : le point mort disait la moitié de la vérité (URSSAF, impôt et heures hors-atelier oubliés)
+  'revenu-horaire.test.js',      // vague 45 : le revenu horaire mentait dans les deux sens (MO comptée 2×, taux unique, impôt absent)
+  'emballage-gratuit.test.js'    // vague 46 : l'emballage était gratuit (coutEmballages jamais calculé — prorata d'encaissement, mesuré vs estimé)
 ];
 
 let allOk = true;

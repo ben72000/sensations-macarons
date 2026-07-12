@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1323';
-const APP_MAJ = 'TON POINT MORT \u2014 la question la plus fondamentale d\u2019une activit\u00e9, et elle n\u2019existait nulle part. L\u2019app savait dire \u00ab ce parfum est rentable \u00e0 l\u2019unit\u00e9 \u00bb, mais jamais \u00ab COMBIEN dois-je vendre chaque mois pour ne pas perdre d\u2019argent ? \u00bb Or tes charges fixes (assurance, abonnements, \u00e9nergie, compta) tombent que le mois soit bon ou mauvais. L\u2019\u00e9cran de rentabilit\u00e9 affiche d\u00e9sormais, tout en haut : le nombre de macarons \u00e0 vendre CHAQUE MOIS pour couvrir tes charges fixes, le rythme quotidien correspondant, et le CA minimum. Exemple : 320 \u20ac de charges fixes \u00f7 0,38 \u20ac de marge par macaron = 843 macarons/mois, soit ~29 par jour \u2014 au-del\u00e0, chaque macaron est du b\u00e9n\u00e9fice net. Le calcul est d\u00e9pliable et v\u00e9rifiable \u00e0 la main. GARDE-FOU CRITIQUE : si ta marge unitaire est n\u00e9gative, l\u2019app refuse d\u2019afficher un chiffre et te dit qu\u2019AUCUN volume ne te rendra rentable \u2014 vendre plus ne ferait qu\u2019aggraver la perte, il faut d\u2019abord corriger le prix ou les co\u00fbts. C\u2019est le pi\u00e8ge classique \u00e9vit\u00e9. Deux enseignements chiffr\u00e9s au passage : gagner 12 centimes de marge par macaron, c\u2019est 203 macarons de moins \u00e0 vendre chaque mois ; et un simple abonnement \u00e0 30 \u20ac/mois te co\u00fbte 79 macarons suppl\u00e9mentaires \u00e0 vendre, tous les mois. Suite : 834 \u2192 859 assertions vertes.';
+const APP_VERSION = 'v1326';
+const APP_MAJ = 'L’EMBALLAGE ÉTAIT GRATUIT. Dans le calcul de ton revenu horaire, la variable « coût des emballages » était initialisée à 0… et n’était JAMAIS calculée. À l’endroit du calcul, il n’y avait qu’un commentaire : « approche prudente : si non calculable finement, laissé à 0 (n’invente pas) ». Sauf que METTRE 0 N’EST PAS S’ABSTENIR : c’est affirmer que l’emballage ne coûte rien. Chaque coffret, chaque ruban, chaque sachet que tu achètes sortait GRATUIT de ce calcul — et ton revenu horaire était surestimé d’autant. « N’invente pas » servait de justification à un chiffre inventé : zéro. Le plus frustrant, c’est que l’app SAIT chiffrer un emballage : elle le fait déjà par commande (hiérarchie FIFO réelle, avec ratio d’estimation pour les reprises sans détail) et par marché (stock d’emballages avant − après). Le revenu horaire ne le lui avait simplement jamais demandé. C’est fait. LA RÈGLE QUI COMPTE : l’emballage suit l’ENCAISSEMENT, exactement comme le CA. Le revenu horaire raisonne en trésorerie — une commande payée à moitié n’apporte que la moitié de son CA, elle ne doit donc apporter que la moitié de son carton. Lui opposer 100 % de l’emballage en face de 50 % de la recette fabriquerait une fausse perte. Un marché clos, lui, est encaissé le jour même : aucun prorata. HONNÊTETÉ DE LA SOURCE : l’écran distingue désormais ce qui est MESURÉ (FIFO commandes + stock marchés) de ce qui est ESTIMÉ (commandes de reprise sans détail d’emballage), avec le pourcentage exact et un marquage ligne par ligne — faire passer une estimation pour une mesure serait un mensonge de plus. L’audit de fiabilité s’en mêle aussi : si aucun coût d’emballage n’est détecté alors que tu emballes bien tes macarons, il te dit franchement que tes coffrets ne sont pas paramétrés et que ton revenu horaire est donc SURESTIMÉ. Ordre de grandeur : 80 € de carton sur une période de 20 h pointées, c’est 4 € de l’heure qui n’existaient pas. Suite : 961 → 1002 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -480,6 +480,14 @@ db.version(28).stores({});
 // pas ici — un batch peut partager une commande avec d'autres batches. Migration additive.
 db.version(29).stores({
   batches: '++id, statut, createdAt'
+});
+// v30 — [GASPILLAGE MATIÈRES PREMIÈRES] Jusqu'ici, supprimer un lot de matière première encore
+// garni (périmé, cassé) faisait disparaître sa valeur SANS AUCUNE TRACE — contrairement aux pertes
+// de production (`losses`) et au gaspillage marché (retours écartés), déjà chiffrés. `materialLosses`
+// journalise ces pertes de stock BRUT (avant toute transformation) : matière, quantité, coût figé au
+// prix réel du lot, motif. Migration additive, aucune table existante modifiée.
+db.version(30).stores({
+  materialLosses: '++id, materialId, lotId, date, motif'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -2740,6 +2748,10 @@ const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire
 const ORDER_STATUS = ['À préparer', 'Terminée', 'Livrée'];
 // Motifs de perte / casse sur stock fini (déclaration explicite)
 const LOSS_REASONS = ['Raté / casse', 'Invendable / DLC dépassée', 'Chute de production', 'Offert / dégustation', 'Autre'];
+// [v1324] Motifs de suppression d'un lot de MATIÈRE PREMIÈRE (stock brut, avant toute transformation).
+// Le premier motif est le SEUL qui n'enregistre AUCUNE perte financière (le lot n'a jamais existé
+// pour de bon : doublon, erreur de saisie). Tous les autres = perte réelle, chiffrée et tracée.
+const MATERIAL_LOSS_REASONS = ['Erreur de saisie / doublon (pas de perte réelle)', 'Périmé (DLC dépassée)', 'Casse / contamination', 'Invendable', 'Autre'];
 const PAY_STATUS = ['En attente', 'Payé'];
 const PAY_METHODS = ['Carte', 'Virement', 'Espèces', 'Chèque', 'PayPal'];
 
@@ -6787,8 +6799,65 @@ async function delLot(id){
       <div class="modal-actions"><button class="btn" onclick="closeModal()">Compris</button></div>`);
     return;
   }
-  if(!confirm('Supprimer ce lot ? (Aucune production ne l\'utilise.)'))return;
-  await db.materialLots.delete(id); renderMaterials(); toast('Lot supprimé');
+  const lot = await db.materialLots.get(id); if(!lot){ toast('Lot introuvable'); return; }
+  const dispo = round3(+lot.qteRestante||0);
+  if(dispo<=0){
+    // Rien à perdre : le lot est déjà vide, sa suppression est un pur ménage.
+    if(!confirm('Supprimer ce lot ? (Aucune production ne l\'utilise, stock déjà à 0.)'))return;
+    await db.materialLots.delete(id); renderMaterials(); toast('Lot supprimé');
+    return;
+  }
+  // [v1324] Stock restant non nul : on demande la RAISON avant de faire disparaître le lot — sinon
+  // sa valeur s'évapore sans laisser de trace (l'angle mort historique du gaspillage matières).
+  await declareMaterialLossForm(id, lot, dispo);
+}
+// [v1324] Demande la raison de la suppression d'un lot encore garni, et affiche par avance le
+// montant qui sera enregistré en perte si ce n'est pas une simple erreur de saisie.
+async function declareMaterialLossForm(lotId, lot, dispo){
+  const mat = await db.materials.get(lot.materialId).catch(()=>null);
+  const valeur = materialLossAmount(lot, dispo);
+  const uniteLbl = (mat && mat.unite) ? mat.unite : '';
+  const motifOpts = MATERIAL_LOSS_REASONS.map(m=>`<option>${esc(m)}</option>`).join('');
+  openModal(`<h3>Supprimer ce lot</h3>
+    <p style="margin-bottom:8px"><b>${esc(mat?mat.nom:'?')}</b>${lot.lot?` · lot <b>${esc(lot.lot)}</b>`:''}</p>
+    <div class="sum-box"><span>Stock restant de ce lot</span><b>${qty(dispo)} ${esc(uniteLbl)} · ${euro(valeur)}</b></div>
+    <div class="field"><label>Raison de la suppression</label><select id="f_mlMotif" onchange="_mlHintUpdate(${money2(valeur)})">${motifOpts}</select></div>
+    <p class="note" id="f_mlHint">${valeur>0?`Une raison autre que « erreur de saisie » enregistre ${euro(valeur)} en gaspillage matières premières (visible dans 🗑 Gaspillage chiffré).`:'Ce lot n\'a pas de prix connu : aucune perte financière ne sera chiffrée.'}</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn danger" onclick="confirmDelLot(${lotId})">Supprimer</button></div>`);
+}
+// Met à jour le message d'aide de la modale quand Ben change de raison (pas de perte si « erreur de saisie »).
+function _mlHintUpdate(valeur){
+  const sel = document.getElementById('f_mlMotif'); const hint = document.getElementById('f_mlHint');
+  if(!sel || !hint) return;
+  const estErreur = sel.value === MATERIAL_LOSS_REASONS[0];
+  hint.textContent = estErreur
+    ? 'Erreur de saisie : le lot est supprimé sans enregistrer de perte.'
+    : (valeur>0 ? `Cette raison enregistre ${euro(valeur)} en gaspillage matières premières (visible dans 🗑 Gaspillage chiffré).` : 'Ce lot n\'a pas de prix connu : aucune perte financière ne sera chiffrée.');
+}
+// [v1324] Suppression effective, après choix de la raison : enregistre la perte (sauf erreur de
+// saisie) puis supprime le lot. Le coût est figé au moment de la suppression (le lot n'existera
+// plus ensuite pour le recalculer).
+async function confirmDelLot(lotId){
+  const lot = await db.materialLots.get(lotId); if(!lot){ closeModal(); toast('Lot introuvable'); return; }
+  const motif = (document.getElementById('f_mlMotif')||{}).value || MATERIAL_LOSS_REASONS[0];
+  const dispo = round3(+lot.qteRestante||0);
+  const estErreurSaisie = motif === MATERIAL_LOSS_REASONS[0];
+  if(!estErreurSaisie && dispo>0){
+    const coutTotal = materialLossAmount(lot, dispo);
+    const mat = await db.materials.get(lot.materialId).catch(()=>null);
+    await db.materialLosses.add({
+      materialId: lot.materialId, materialNom: mat?mat.nom:'', lotId: lot.id, lotLabel: lot.lot||'',
+      date: today(), motif, qte: dispo, coutTotal
+    }).catch(e=>console.error('materialLoss', e));
+    await db.materialLots.delete(lotId);
+    closeModal(); renderMaterials();
+    toast(coutTotal>0 ? `Lot supprimé · ${euro(coutTotal)} en perte matière enregistrée` : 'Lot supprimé (sans valeur connue)');
+    return;
+  }
+  await db.materialLots.delete(lotId);
+  closeModal(); renderMaterials();
+  toast('Lot supprimé');
 }
 
 /* ============================================================
@@ -13463,6 +13532,15 @@ function lotPU(l){
   if(l.prixUnitaire!=null && !isNaN(l.prixUnitaire)) return +l.prixUnitaire;
   return (l.qteInitiale>0) ? (+l.prix||0)/l.qteInitiale : 0;
 }
+// [v1324] Montant à imputer en GASPILLAGE MATIÈRES PREMIÈRES quand un lot est jeté (périmé, cassé,
+// invendable) plutôt que supprimé pour une simple erreur de saisie : quantité restante × prix réel
+// du lot. Réutilise lotPU() à dessein — un lot de correction d'inventaire (POINT H) vaut donc
+// TOUJOURS 0 ici, ce qui est correct : une régularisation n'a jamais été payée, la jeter ne perd rien.
+function materialLossAmount(lot, qte){
+  const q = round3(+qte||0);
+  if(!lot || q<=0) return 0;
+  return money2(q * lotPU(lot));
+}
 // Prix unitaire "courant" d'une matière, exprimé dans l'UNITÉ NATIVE de la matière
 // (par gramme si la matière est en g, par kg si elle est en kg ; à l'unité pour un emballage).
 // Priorité : 1) dernier lot reçu avec un prix réel > 0 (FIFO par date).
@@ -19691,6 +19769,22 @@ async function _computeTresorerieAvec(settingsOverride, recurringOverride){
 //  sur les ENCAISSEMENTS du mois (base trésorerie = base déclaration
 //  micro-entreprise URSSAF) + prédiction des cotisations.
 // ============================================================
+// [v1325] LA PART « PRESTATION DE SERVICE » D'UNE COMMANDE (0..1).
+// Règle unique, désormais partagée par computeMonthlyBilan (base URSSAF) ET le revenu horaire.
+// Elle vivait auparavant enfouie dans computeMonthlyBilan, et nulle part ailleurs : le revenu
+// horaire, lui, appliquait le taux MARCHANDISE (12,3 %) à TOUT le CA — prestations comprises,
+// alors qu'elles cotisent à 25,6 %. Deux écrans, deux vérités, sur la même commande.
+// Pure : ne lit aucune base, dépend seulement de la commande.
+function partServiceCommande(o){
+  const total = money2(+((o&&o.montant)||0));
+  if(!(total > 0)) return 0;
+  let svc = 0;
+  (orderToLines(o) || []).forEach(ln => {
+    if(ln && ln.type === 'prestation') svc = money2(svc + lineTotalStored(ln));
+  });
+  return Math.min(1, svc / total);
+}
+
 async function computeMonthlyBilan(ym){
   // ym = 'YYYY-MM'. Sépare le CA encaissé du mois en marchandise vs service.
   const s=getSettings();
@@ -19716,10 +19810,11 @@ async function computeMonthlyBilan(ym){
       return;
     }
     const total=money2(+o.montant||0); if(total<=0) return;
-    const lignes=orderToLines(o);
-    let svc=0;
-    lignes.forEach(ln=>{ if(ln.type==='prestation') svc=money2(svc+lineTotalStored(ln)); });
-    const partSvc = total>0 ? Math.min(1, svc/total) : 0;   // proportion service de la commande
+    // [v1325] Règle de ventilation extraite en fonction PURE partagée (partServiceCommande).
+    // Elle était écrite ici, et NULLE PART ailleurs : le revenu horaire, lui, appliquait le taux
+    // marchandise à TOUT le CA, prestations comprises. Deux écrans, deux vérités. Une seule règle
+    // désormais — dupliquer la règle, c'est fabriquer la divergence de demain.
+    const partSvc = partServiceCommande(o);   // proportion service de la commande (0..1)
     // encaissements du mois pour cette commande
     // [v1194] Source unique paiementsDe : capte le legacy « Payé » même sans datePaiement (daté sur
     // o.date), IDENTIQUE au dashboard et à computeAccounting. L'ancien repli le ratait → le bilan
@@ -21834,6 +21929,31 @@ async function computeGaspillage(opts){
   return {lignes, totQte:round3(totQte),
     totMat:money2(totMat), totMod:money2(totMod), totDep:money2(totDep),
     totalEuro:money2(totMat+totMod+totDep)};
+}
+
+// [v1324] GASPILLAGE MATIÈRES PREMIÈRES : agrégation des lots jetés AVANT toute transformation
+// (périmés, cassés, invendables — déclarés via delLot/confirmDelLot). Distinct de computeGaspillage
+// ci-dessus, qui ne couvre que les invendus de marché DÉJÀ transformés en macarons. Ici la perte
+// survient en amont, sur la matière brute en stock — l'angle mort historique de l'app.
+async function computeGaspillageMatieres(opts){
+  opts = opts || {};
+  const startStr = opts.start || null;
+  const losses = await db.materialLosses.toArray().catch(()=>[]);
+  const en = losses.filter(l => !startStr || (l.date||'') >= startStr);
+  const byMat = {};
+  let total = 0;
+  en.forEach(l=>{
+    const nom = l.materialNom || '(matière ?)';
+    const b = byMat[nom] || (byMat[nom] = {materialNom:nom, qte:0, total:0, count:0});
+    b.qte += (+l.qte||0);
+    b.total += (+l.coutTotal||0);
+    b.count += 1;
+    total += (+l.coutTotal||0);
+  });
+  const lignes = Object.values(byMat)
+    .map(b=>({materialNom:b.materialNom, qte:round3(b.qte), total:money2(b.total), count:b.count}))
+    .sort((a,b)=>b.total-a.total);
+  return {lignes, total: money2(total), count: en.length};
 }
 
 // Diagnostic « état des grands formats » : pour chaque GF, indique s'il a une recette, du stock,
@@ -30539,6 +30659,164 @@ function chargesFixesMensuelles(){
   }catch(e){ swallow(e,'chargesFixesMensuelles'); return 0; }
 }
 
+// ============================================================================
+//  [v1324] LE POINT MORT DISAIT LA MOITIÉ DE LA VÉRITÉ — trois coûts oubliés.
+// ----------------------------------------------------------------------------
+//  Le point mort de v1323 divisait les charges fixes par `margeUnit`. Or, dans
+//  analyzeFlavorProfitability :
+//        margeUnit = prixVenteMoyen − coutRevientUnit
+//  et coutRevientUnit = matières + consommables + main-d'œuvre D'ATELIER. C'est tout.
+//  Le texte explicatif affirmait pourtant que les charges sociales étaient déduites :
+//  elles ne l'étaient PAS. Le point mort affiché était donc SOUS-ESTIMÉ, et sa
+//  justification était fausse — le pire des deux mondes pour un chiffre qu'on doit
+//  pouvoir refaire à la main.
+//
+//  TROIS COÛTS BIEN RÉELS manquaient à l'appel, tous payés par Benjamin, aucun compté :
+//
+//   1. LES CHARGES SOCIALES (URSSAF). Elles se prélèvent sur CHAQUE EURO ENCAISSÉ.
+//      C'est donc un coût VARIABLE, proportionnel aux ventes : sa place est dans la
+//      marge de contribution, pas ailleurs.
+//
+//   2. L'IMPÔT SUR LE REVENU. En micro-BIC, la base imposable est un pourcentage
+//      forfaitaire du CA (CA × (1 − abattement)), puis la tranche marginale s'applique.
+//      Résultat : l'IR aussi est PROPORTIONNEL AU CA. C'est un coût variable, et il
+//      sort du compte en banque comme les autres.
+//
+//   3. LES HEURES HORS-ATELIER. Le coût de revient ne paie que la main-d'œuvre de
+//      PRODUCTION. Mais l'administratif, les courses, les déplacements, la prospection
+//      et la préparation des marchés — que la pointeuse mesure fidèlement — ne sont
+//      payés NULLE PART : ni dans le coût de revient, ni dans les charges fixes. Ces
+//      heures sont, littéralement, du bénévolat. Ce sont pourtant des charges de
+//      structure aussi réelles qu'une assurance.
+//
+//  On ne remplace pas l'ancien chiffre par un nouveau tombé du ciel : on affiche une
+//  CASCADE, où chaque marche ajoute UN oubli et montre ce qu'il coûte en macarons. Le
+//  saut est ainsi entièrement attribuable, marche par marche (exigence de traçabilité).
+//  `computePointMort` (v1323) n'est PAS modifiée : elle reste le moteur, on lui donne
+//  simplement des entrées enfin honnêtes.
+// ============================================================================
+
+// BRIQUE 1 — la marge de contribution RÉELLE d'un macaron.
+// Ce qui reste vraiment pour éponger les charges fixes, une fois payés TOUS les coûts
+// qui suivent la vente (matière, temps d'atelier, URSSAF, impôt).
+function margeContributionUnitaire(prixVenteMoyen, coutRevientUnit, tauxSocialPct, abattementIrPct, trancheIrPct){
+  const px  = Math.max(0, +prixVenteMoyen || 0);
+  const cr  = Math.max(0, +coutRevientUnit || 0);
+  const tS  = Math.max(0, +tauxSocialPct || 0);
+  const ab  = Math.min(100, Math.max(0, +abattementIrPct || 0));
+  const tIR = Math.max(0, +trancheIrPct || 0);
+
+  const margeBrute     = money2(px - cr);                 // ce que v1323 utilisait (à tort, seul)
+  const coutSocialUnit = money2(px * tS / 100);           // URSSAF : % du CA → variable
+  const baseIrUnit     = money2(px * (1 - ab / 100));     // micro-BIC : base forfaitaire
+  const coutIrUnit     = money2(baseIrUnit * tIR / 100);  // IR : % de la base → variable aussi
+  const margeContribution = money2(margeBrute - coutSocialUnit - coutIrUnit);
+
+  return {
+    prixVenteMoyen: money2(px), coutRevientUnit: money2(cr), margeBrute,
+    tauxSocialPct: tS, coutSocialUnit,
+    abattementIrPct: ab, baseIrUnit, trancheIrPct: tIR, coutIrUnit,
+    margeContribution
+  };
+}
+
+// BRIQUE 2 — le coût mensuel du TEMPS HORS-ATELIER (pointeuse).
+// Pure : reçoit les sessions, ne lit aucune base. N'INVENTE RIEN — si rien n'est pointé,
+// elle le dit franchement plutôt que de rendre 0 € (0 € serait un mensonge : ces heures
+// existent, elles ne sont simplement pas mesurées).
+// Le taux retenu est celui SAISI sur la session ; à défaut, le taux horaire des réglages.
+function coutTempsHorsProdMensuel(sessions, tauxHoraireDefaut){
+  const tauxDef = Math.max(0, +tauxHoraireDefaut || 0);
+  const heuresDe = s => (+s.dureeHeures > 0) ? +s.dureeHeures : ((+s.dureeMin || 0) / 60);
+  const list = (sessions || []).filter(s => s && heuresDe(s) > 0);
+
+  if(!list.length){
+    return { fiable:false, heuresTotal:0, coutTotal:0, moisObserves:0, heuresParMois:0,
+             coutParMois:0, parActivite:[], nbSessions:0,
+             raison:'Aucun temps hors-atelier pointé. Ces heures existent pourtant (administratif, courses, déplacements, prospection) et ne sont payées nulle part : ton point mort réel est donc PLUS HAUT que celui affiché, d\'un montant qu\'on ne peut pas encore chiffrer.' };
+  }
+
+  // Fenêtre réellement observée : du premier au dernier jour pointé (minimum 1 mois, pour
+  // ne pas transformer 3 jours de pointage en un « coût mensuel » démesuré par extrapolation).
+  const dates = list.map(s => (s.date || '').slice(0, 10)).filter(Boolean).sort();
+  let moisObserves = 1;
+  if(dates.length){
+    const d0 = new Date(dates[0] + 'T00:00:00');
+    const d1 = new Date(dates[dates.length - 1] + 'T00:00:00');
+    const jours = Math.round((d1 - d0) / 86400000) + 1;
+    moisObserves = Math.max(1, Math.round(jours / 30 * 100) / 100);
+  }
+
+  let heuresTotal = 0, coutTotal = 0;
+  const parAct = {};
+  list.forEach(s => {
+    const h = heuresDe(s);
+    const taux = (+s.tauxHoraire > 0) ? +s.tauxHoraire : tauxDef;
+    const c = h * taux;
+    heuresTotal += h; coutTotal += c;
+    const k = s.activite || 'Non précisé';
+    (parAct[k] ||= { activite:k, heures:0, cout:0 });
+    parAct[k].heures += h; parAct[k].cout += c;
+  });
+
+  const parActivite = Object.values(parAct)
+    .map(a => ({ activite:a.activite, heures:round3(a.heures), cout:money2(a.cout) }))
+    .sort((a, b) => b.cout - a.cout);
+
+  return {
+    fiable:true, raison:null,
+    heuresTotal: round3(heuresTotal), coutTotal: money2(coutTotal),
+    moisObserves, nbSessions: list.length,
+    heuresParMois: round3(heuresTotal / moisObserves),
+    coutParMois: money2(coutTotal / moisObserves),
+    parActivite
+  };
+}
+
+// BRIQUE 3 — LA CASCADE. Quatre marches, du chiffre confortable au chiffre vrai.
+// Chaque marche ajoute UN oubli et montre ce qu'il coûte, pour que le saut final soit
+// entièrement attribuable (et donc vérifiable à la main).
+function computePointMortVerite(p){
+  p = p || {};
+  const fixes = Math.max(0, +p.chargesFixesMensuelles || 0);
+  const tempsHorsProd = Math.max(0, +p.coutTempsHorsProdMensuel || 0);
+  const M = margeContributionUnitaire(p.prixVenteMoyen, p.coutRevientUnit,
+                                      p.tauxSocialPct, p.abattementIrPct, p.trancheIrPct);
+  const px = M.prixVenteMoyen;
+
+  // Marche 1 — ce que l'app affichait (v1323) : charges fixes ÷ marge BRUTE.
+  const etape1 = computePointMort(fixes, M.margeBrute, px);
+  // Marche 2 — on déduit l'URSSAF de la marge (coût variable oublié).
+  const margeApresSocial = money2(M.margeBrute - M.coutSocialUnit);
+  const etape2 = computePointMort(fixes, margeApresSocial, px);
+  // Marche 3 — on déduit l'impôt sur le revenu (variable lui aussi).
+  const etape3 = computePointMort(fixes, M.margeContribution, px);
+  // Marche 4 — on paie enfin les heures hors-atelier (charge de structure oubliée).
+  const coutStructure = money2(fixes + tempsHorsProd);
+  const etape4 = computePointMort(coutStructure, M.margeContribution, px);
+
+  const ancien = etape1;   // le chiffre rassurant
+  const reel   = etape4;   // le chiffre vrai
+  const ecartMacarons = (reel.atteignable && ancien.atteignable
+                          && reel.macaronsParMois != null && ancien.macaronsParMois != null)
+    ? (reel.macaronsParMois - ancien.macaronsParMois) : null;
+
+  return {
+    marge: M,
+    chargesFixesMensuelles: money2(fixes),
+    coutTempsHorsProdMensuel: money2(tempsHorsProd),
+    coutStructureMensuel: coutStructure,
+    cascade: [
+      { cle:'brut',   label:'Charges fixes ÷ marge brute',                 marge:M.margeBrute,         charges:money2(fixes), pm:etape1, oubli:null },
+      { cle:'social', label:'… en payant les charges sociales URSSAF',     marge:margeApresSocial,     charges:money2(fixes), pm:etape2, oubli:M.coutSocialUnit },
+      { cle:'ir',     label:'… en payant l\'impôt sur le revenu',          marge:M.margeContribution,  charges:money2(fixes), pm:etape3, oubli:M.coutIrUnit },
+      { cle:'temps',  label:'… en payant tes heures hors-atelier',         marge:M.margeContribution,  charges:coutStructure, pm:etape4, oubli:money2(tempsHorsProd) }
+    ],
+    ancien, reel, ecartMacarons,
+    atteignable: reel.atteignable, raison: reel.raison
+  };
+}
+
 async function renderProfit(){
   const [orders, clients, recipes, recipeItems, lots, _mats, _markets, _mm, _prods] = await Promise.all([
     db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(),
@@ -30614,26 +30892,54 @@ async function renderProfit(){
     </div>`).join('')
     :'<p class="note">Aucune commande événementielle.</p>';
 
-  // [v1323] POINT MORT : combien vendre chaque mois pour ne PAS perdre d'argent.
-  // On prend la marge unitaire MOYENNE pondérée par les ventes (et non une moyenne simple, qui
-  // donnerait autant de poids à un parfum vendu 5 fois qu'à un vendu 500 fois).
+  // [v1324] POINT MORT — LA CASCADE. Le chiffre de v1323 oubliait l'URSSAF, l'impôt et tes
+  // heures hors-atelier. On ne le remplace pas en silence : on montre les quatre marches, du
+  // chiffre rassurant au chiffre vrai, pour que chaque euro d'écart soit attribuable.
+  // Moyennes PONDÉRÉES par les ventes (un parfum vendu 500 fois ne pèse pas comme un vendu 5 fois).
   let _pmHtml = '';
   try{
-    const _fx = chargesFixesMensuelles();
-    const _A2 = analyzeFlavorProfitability({recipes, recipeItems, lots, mats:_mats, orders, markets:_markets, marketMoves:_mm, productions:_prods, settings:getSettings()});
-    const _vendus = (_A2.rows||[]).filter(r=>r.piecesVendues>0 && r.margeUnit!=null);
+    const _s   = getSettings();
+    const _fx  = chargesFixesMensuelles();
+    const _ws  = await db.workSessions.toArray().catch(()=>[]);
+    const _tps = coutTempsHorsProdMensuel(_ws, _s.laborRate);
+
+    const _A2 = analyzeFlavorProfitability({recipes, recipeItems, lots, mats:_mats, orders, markets:_markets, marketMoves:_mm, productions:_prods, settings:_s});
+    const _vendus = (_A2.rows||[]).filter(r=>r.piecesVendues>0 && r.prixVenteMoyen!=null);
     const _totPieces = _vendus.reduce((s,r)=>s+r.piecesVendues, 0);
-    const _margeMoy = _totPieces>0
-      ? money2(_vendus.reduce((s,r)=>s + r.margeUnit*r.piecesVendues, 0) / _totPieces) : 0;
     const _prixMoy = _totPieces>0
       ? money2(_vendus.reduce((s,r)=>s + (r.prixVenteMoyen||0)*r.piecesVendues, 0) / _totPieces) : 0;
-    const pm = computePointMort(_fx, _margeMoy, _prixMoy);
+    const _coutMoy = _totPieces>0
+      ? money2(_vendus.reduce((s,r)=>s + ((r.cost&&r.cost.coutRevientUnit)||0)*r.piecesVendues, 0) / _totPieces) : 0;
 
-    if(_fx > 0 || !pm.atteignable){
+    const V = computePointMortVerite({
+      chargesFixesMensuelles: _fx,
+      coutTempsHorsProdMensuel: _tps.fiable ? _tps.coutParMois : 0,
+      prixVenteMoyen: _prixMoy,
+      coutRevientUnit: _coutMoy,
+      tauxSocialPct: _s.socialGoods,
+      abattementIrPct: _s.irAbattementGoods,
+      trancheIrPct: _s.irTrancheMarginale
+    });
+    const M = V.marge, pm = V.reel;
+
+    if(_totPieces > 0 && (_fx > 0 || _tps.coutParMois > 0 || !pm.atteignable)){
+      // Les marches de la cascade : chaque ligne dit ce qu'un oubli coûte, en macarons.
+      const _marches = V.cascade.map((m,i)=>{
+        const prev = i>0 ? V.cascade[i-1].pm : null;
+        const nb   = m.pm.atteignable ? m.pm.macaronsParMois : null;
+        const nbP  = (prev && prev.atteignable) ? prev.macaronsParMois : null;
+        const delta = (nb!=null && nbP!=null) ? (nb - nbP) : null;
+        return `<div style="display:flex;align-items:baseline;gap:8px;padding:7px 0;${i?'border-top:1px dashed var(--hair)':''}">
+          <span style="flex:1;font-size:.78rem;color:${i===0?'#9a8a82':'#6a5a52'}">${i===0?'':'<b style="color:var(--bordeaux)">＋</b> '}${esc(m.label)}${m.oubli!=null&&m.cle!=='temps'?` <span style="color:#9a8a82">(−${euro(m.oubli)}/macaron)</span>`:''}${m.cle==='temps'&&m.oubli>0?` <span style="color:#9a8a82">(+${euro(m.oubli)}/mois)</span>`:''}</span>
+          <b style="flex:none;font-size:.9rem;color:${nb==null?'#b3261e':(i===V.cascade.length-1?'var(--bordeaux)':'#6a5a52')}">${nb==null?'∞':nb+' mac.'}</b>
+          ${delta!=null&&delta!==0?`<span style="flex:none;font-size:.72rem;color:#b3261e;font-weight:700;min-width:44px;text-align:right">+${delta}</span>`:'<span style="flex:none;min-width:44px"></span>'}
+        </div>`;
+      }).join('');
+
       _pmHtml = `<div class="panel" style="border-left:4px solid ${pm.atteignable?'var(--caramel)':'#b3261e'}">
         <h2>🎯 Ton point mort</h2>
         ${pm.atteignable ? `
-          <p class="note" style="margin:-4px 0 10px">Le volume minimum à vendre chaque mois pour couvrir tes charges fixes. En dessous, tu perds de l'argent.</p>
+          <p class="note" style="margin:-4px 0 10px">Le volume minimum à vendre chaque mois pour ne rien perdre — <b>une fois TOUT payé</b> : matières, ton temps d'atelier, l'URSSAF, l'impôt, tes charges fixes et tes heures hors-atelier.</p>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
             <div class="sum-box" style="display:block;background:linear-gradient(135deg,#52252F,#3d1a22);color:#fff">
               <div style="font-size:.72rem;opacity:.85;text-transform:uppercase">À vendre par mois</div>
@@ -30641,29 +30947,50 @@ async function renderProfit(){
               <div style="font-size:.74rem;opacity:.8">soit ~${pm.macaronsParJour}/jour${pm.caMinimum!=null?` · ${euro(pm.caMinimum)} de CA`:''}</div>
             </div>
             <div class="sum-box" style="display:block">
-              <div style="font-size:.72rem;color:#9a8a82;text-transform:uppercase">Charges fixes</div>
-              <div style="font-size:1.7rem;font-weight:700">${euro(pm.chargesFixesMensuelles)}<span style="font-size:.8rem;font-weight:400">/mois</span></div>
-              <div style="font-size:.74rem;color:#9a8a82">assurance, abonnements, énergie…</div>
+              <div style="font-size:.72rem;color:#9a8a82;text-transform:uppercase">Coût de structure</div>
+              <div style="font-size:1.7rem;font-weight:700">${euro(V.coutStructureMensuel)}<span style="font-size:.8rem;font-weight:400">/mois</span></div>
+              <div style="font-size:.74rem;color:#9a8a82">${euro(V.chargesFixesMensuelles)} de charges fixes${V.coutTempsHorsProdMensuel>0?` + ${euro(V.coutTempsHorsProdMensuel)} de temps hors-atelier`:''}</div>
             </div>
           </div>
-          <details style="margin-top:4px">
-            <summary style="cursor:pointer;font-size:.8rem;color:var(--caramel);font-weight:600">🔎 D'où vient ce chiffre ?</summary>
-            <div style="margin-top:8px;font-size:.8rem;color:#6a5a52;line-height:1.6">
-              Chaque macaron vendu te rapporte <b>${euro(pm.margeUnitaire)}</b> de marge (prix de vente moyen ${euro(_prixMoy)} − matières, main-d'œuvre et charges sociales).<br>
-              Il faut donc <b>${euro(pm.chargesFixesMensuelles)} ÷ ${euro(pm.margeUnitaire)} = ${pm.macaronsParMois} macarons</b> pour éponger tes charges fixes.<br>
-              <span style="color:#9a8a82">Chaque macaron vendu AU-DELÀ de ${pm.macaronsParMois} est du bénéfice net.</span>
-            </div>
-          </details>
+          ${V.ecartMacarons>0?`<div style="padding:9px 12px;background:#fff6e5;border-radius:8px;margin-bottom:10px;font-size:.8rem;color:#6a5a52;line-height:1.5">
+            ⚠️ Jusqu'ici, l'app t'annonçait <b>${V.ancien.macaronsParMois} macarons</b> : elle oubliait l'URSSAF, l'impôt et tes heures hors-atelier.
+            Le vrai chiffre est <b>${V.ecartMacarons} macarons plus haut</b>. Voici, marche par marche, d'où vient l'écart.
+          </div>`:''}
         ` : `
-          <div style="padding:10px 12px;background:#fdecea;border-radius:8px">
+          <div style="padding:10px 12px;background:#fdecea;border-radius:8px;margin-bottom:10px">
             <div style="font-weight:700;color:#b3261e;font-size:.9rem">⚠️ Aucun volume ne peut te rendre rentable</div>
             <div style="font-size:.8rem;color:#6a5a52;margin-top:4px">${esc(pm.raison||'')}<br>
-            Vendre davantage ne ferait qu'aggraver la perte. Il faut d'abord <b>augmenter tes prix</b> ou <b>réduire tes coûts</b>.</div>
+            Une fois l'URSSAF, l'impôt et ton temps payés, chaque macaron vendu te coûte de l'argent : en vendre davantage ne ferait qu'<b>aggraver</b> la perte. Il faut d'abord <b>augmenter tes prix</b> ou <b>réduire tes coûts</b>.</div>
           </div>
         `}
+        <details ${pm.atteignable?'':'open'} style="margin-top:4px">
+          <summary style="cursor:pointer;font-size:.8rem;color:var(--caramel);font-weight:600">🔎 D'où vient ce chiffre ? — les 4 marches</summary>
+          <div style="margin-top:8px">
+            ${_marches}
+            <div style="margin-top:10px;padding-top:9px;border-top:1px solid var(--hair);font-size:.78rem;color:#6a5a52;line-height:1.65">
+              <b>Ce que devient un macaron vendu ${euro(M.prixVenteMoyen)} :</b><br>
+              − ${euro(M.coutRevientUnit)} de coût de revient <span style="color:#9a8a82">(matières + consommables + ton temps d'atelier)</span><br>
+              − ${euro(M.coutSocialUnit)} de charges sociales <span style="color:#9a8a82">(${M.tauxSocialPct}% du prix, URSSAF)</span><br>
+              − ${euro(M.coutIrUnit)} d'impôt sur le revenu <span style="color:#9a8a82">(base ${euro(M.baseIrUnit)} après abattement de ${M.abattementIrPct}%, × tranche ${M.trancheIrPct}%)</span><br>
+              <b style="color:${M.margeContribution>0?'#3f7d52':'#b3261e'}">= ${euro(M.margeContribution)} qui restent pour éponger tes charges fixes.</b><br>
+              <span style="color:#9a8a82">${pm.atteignable?`Soit ${euro(V.coutStructureMensuel)} ÷ ${euro(M.margeContribution)} = <b>${pm.macaronsParMois} macarons</b> par mois. Chaque macaron vendu au-delà est du bénéfice net — vraiment net, cette fois.`:'Aucune marche ne peut être franchie : la marge est épuisée avant même d\'atteindre tes charges fixes.'}</span>
+            </div>
+            ${_tps.fiable ? `
+              <div style="margin-top:10px;padding-top:9px;border-top:1px solid var(--hair);font-size:.78rem;color:#6a5a52;line-height:1.6">
+                <b>Tes heures hors-atelier</b> — ${_tps.heuresParMois} h/mois en moyenne (${_tps.heuresTotal} h pointées sur ${_tps.moisObserves} mois, ${_tps.nbSessions} session${_tps.nbSessions>1?'s':''}) :<br>
+                ${_tps.parActivite.map(a=>`<span style="color:#9a8a82">· ${esc(a.activite)} : ${a.heures} h → ${euro(a.cout)}</span>`).join('<br>')}
+                <br><span style="color:#9a8a82">Ces heures ne sont payées ni par le coût de revient (qui ne compte que l'atelier), ni par les charges fixes. Sans cette ligne, elles restent du bénévolat.</span>
+              </div>`
+            : `
+              <div style="margin-top:10px;padding:9px 12px;background:#fff6e5;border-radius:8px;font-size:.78rem;color:#6a5a52;line-height:1.5">
+                ⏱ <b>Ton temps hors-atelier n'est pas mesuré.</b> ${esc(_tps.raison||'')}<br>
+                <span style="color:#9a8a82">Utilise la pointeuse pour tes courses, ton administratif et tes déplacements : ce point mort deviendra alors complet.</span>
+              </div>`}
+          </div>
+        </details>
       </div>`;
     }
-  }catch(e){ swallow(e,'pointMort'); }
+  }catch(e){ swallow(e,'pointMortVerite'); }
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Analyse de rentabilité</h1><p>Marge brute & nette · classement par rentabilité</p></div>
@@ -39341,14 +39668,18 @@ async function aiQueryRevenuHoraire(){
   if(R.calculable===false){
     return aiSay(`${aiHero('—', 'Mon revenu horaire')}${aiSynth(`Je préfère ne pas avancer de chiffre : tes ${Math.round(R.heures)} h pointées ne couvrent pas la période de ton chiffre d'affaires (≈ ${(R.moisActivite||0).toFixed(1)} mois). Diviser des mois de marge par quelques heures donnerait un résultat trompeur.`,{icon:'⏸', tone:'warn'})}${aiSynth('Pour le débloquer : pointe ton temps régulièrement, ou demande-moi le revenu horaire « sur 30 jours ».',{icon:'💡'})}`);
   }
-  const apres=R.revHoraireApresCotis, avant=R.revHoraireAvantCotis;
-  const val = apres!=null ? apres : avant;
+  // [v1325] Le copilote annonçait « ce que tu peux te verser » avec le chiffre AVANT IMPÔT. Il
+  // promettait donc un revenu que Benjamin ne touche jamais. On annonce désormais le NET (URSSAF +
+  // impôt payés) — le seul comparable à un salaire — et on détaille les paliers en dessous.
+  const net=R.revHoraireNet, apres=R.revHoraireApresCotis, avant=R.revHoraireAvantCotis;
+  const val = net!=null ? net : (apres!=null ? apres : avant);
   const tone = val==null?'':val>=15?'ok':val>=10?'':'warn';
-  return aiSay(`${aiHero(val!=null?`${euro(val)}/h`:'—', 'Ce que tu peux te verser', {sub:`sur ${Math.round(R.heures)} h pointées (90 j)`, color: val==null?'var(--bordeaux)':val>=15?'#2e7d32':val>=10?'var(--bordeaux)':'#b3261e'})}
+  return aiSay(`${aiHero(val!=null?`${euro(val)}/h`:'—', 'Ce que tu te verses vraiment', {sub:`net d'URSSAF et d'impôt · sur ${Math.round(R.heures)} h pointées (90 j)`, color: val==null?'var(--bordeaux)':val>=15?'#2e7d32':val>=10?'var(--bordeaux)':'#b3261e'})}
     ${aiSynth(val!=null&&val>=15?'Un bon niveau, ton travail est correctement valorisé.':val!=null&&val>=10?'Correct, mais il y a de la marge pour mieux te rémunérer.':'Faible pour l\'instant — tes ventes ou tes prix ne couvrent pas encore bien ton temps.', {icon:'⏱️', tone: val!=null&&val>=15?'ok':val!=null&&val<10?'warn':''})}
     ${aiDetails(`
-      <div class="sum-box"><span>Avant cotisations</span><b>${avant!=null?euro(avant)+'/h':'—'}</b></div>
-      <div class="sum-box"><span>Après cotisations</span><b>${apres!=null?euro(apres)+'/h':'—'}</b></div>
+      <div class="sum-box"><span>Avant prélèvements</span><b>${avant!=null?euro(avant)+'/h':'—'}</b></div>
+      <div class="sum-box"><span>Après cotisations URSSAF</span><b>${apres!=null?euro(apres)+'/h':'—'}</b></div>
+      <div class="sum-box"><span><b>Après impôt — ce qu'il te reste</b></span><b>${net!=null?euro(net)+'/h':'—'}</b></div>
       <div class="sum-box"><span>Marge avant rému.</span><b>${euro(R.margeAvantRemu||0)}</b></div>
       <div class="sum-box"><span>Charges fixes</span><b>${euro(R.chargesFixes||0)}</b></div>`,'Détail du calcul')}
     ${aiSuite([{label:'📈 Comment gagner plus ?', ask:'comment je peux gagner plus'}])}`);
@@ -50030,6 +50361,11 @@ async function revenuHoraireData(arg){
   const clients = await db.clients.toArray().catch(()=>[]);
   const _cliNom = id => { const c=clients.find(x=>x.id===id); return c?(c.nom||c.prenom||'Client'):'Client'; };
   let caCommandes = 0;
+  // [v1325] VENTILATION marchandise / prestation, avec la MÊME règle que la base URSSAF
+  // (partServiceCommande). Le revenu horaire appliquait jusqu'ici le taux marchandise (12,3 %) à
+  // TOUT le CA, prestations comprises — alors qu'elles cotisent à 25,6 %. Il sous-estimait donc les
+  // cotisations, et surestimait d'autant ce qu'il te restait de l'heure.
+  let caGoods = 0, caService = 0;
   const detailCommandes = [];   // [v1077] {label, montant} par commande encaissée sur la fenêtre
   orders.forEach(o=>{
     // [v1194] Source unique d'encaissement : paiementsDe(o) (registre + repli legacy daté),
@@ -50038,7 +50374,14 @@ async function revenuHoraireData(arg){
     // datePaiement (comptée ailleurs) et comptait à tort une commande datée mais non payée.
     let encO = 0;
     paiementsDe(o).forEach(p=>{ if(inWin(p.date)) encO += (+p.montant||0); });
-    if(encO>0){ caCommandes += encO; detailCommandes.push({ label:_cliNom(o.clientId)+(o.dateLivraison?' · '+o.dateLivraison.slice(0,10):''), montant:money2(encO) }); }
+    if(encO>0){
+      caCommandes += encO;
+      // Prorata service/marchandise appliqué à l'ENCAISSÉ de la fenêtre (et non au montant total
+      // de la commande) — exactement comme computeMonthlyBilan le fait sur l'encaissé du mois.
+      const _svc = money2(encO * partServiceCommande(o));
+      caService += _svc; caGoods += money2(encO - _svc);
+      detailCommandes.push({ label:_cliNom(o.clientId)+(o.dateLivraison?' · '+o.dateLivraison.slice(0,10):''), montant:money2(encO) });
+    }
   });
   detailCommandes.sort((a,b)=>b.montant-a.montant);
   const markets = await db.markets.toArray().catch(()=>[]);
@@ -50054,6 +50397,10 @@ async function revenuHoraireData(arg){
     caMarches += m; detailMarches.push({ label:(mk.nom||'Marché')+(mkDateFin(mk)?' · '+mkDateFin(mk).slice(0,10):''), montant:m }); });
   detailMarches.sort((a,b)=>b.montant-a.montant);
   const caEncaisse = money2(caCommandes + caMarches);
+  // [v1325] Un marché, c'est de la vente de marchandise pure (aucune prestation de service).
+  // Même règle que computeMonthlyBilan.
+  caGoods = money2(caGoods + caMarches);
+  caService = money2(caService);
 
   // 3) CHARGES (réelles, datées) sur la fenêtre + charges récurrentes actives (référence mensuelle)
   const charges = await db.charges.toArray().catch(()=>[]);
@@ -50123,13 +50470,14 @@ async function revenuHoraireData(arg){
   const couverture = (joursActivite>0) ? Math.min(1, amplitudePointage/joursActivite) : 0;
 
   return {
-    jours, sinceStr,
+    jours, sinceStr, untilStr,   // [v1326] bornes de la fenêtre exposées : le coût d'emballage doit pouvoir filtrer sur la MÊME période que le CA
     heuresMesurees, hPointeuse:round3(hPointeuse), hAtelier:round3(hAtelier),
     nbSessionsPointeuse: wsIn.length, nbSessionsAtelier: psIn.length,
     nbJoursPointes, amplitudePointage, joursActivite:Math.round(joursActivite),
     couverture: Math.round(couverture*100)/100,   // [v1082] 0..1 : couverture temporelle des pointages
     pointageMinStr, pointageMaxStr,
     caEncaisse, caCommandes:money2(caCommandes), caMarches:money2(caMarches),
+    caGoods, caService,   // [v1325] ventilation URSSAF (règle partagée avec computeMonthlyBilan)
     totalCharges, chargesRecurMensuel, nbCharges: chargesIn.length,
     nbMarchesClos: closIn.length, tauxInvendusMoyen,
     moisActivite,   // [v1076] durée réelle d'activité (mois), pour étendre les charges récurrentes
@@ -50138,12 +50486,77 @@ async function revenuHoraireData(arg){
   };
 }
 
+// ============================================================================
+//  [v1326] L'EMBALLAGE ÉTAIT GRATUIT.
+// ----------------------------------------------------------------------------
+//  Dans revenuHoraireCalcul, `coutEmballages` était initialisé à 0… et n'était JAMAIS
+//  calculé. Le commentaire l'assumait à demi-mot (« approche prudente : si non calculable
+//  finement, laissé à 0 (n'invente pas) »). Sauf que ce n'était PAS prudent : mettre 0
+//  n'est pas s'abstenir, c'est affirmer que l'emballage ne coûte rien. Chaque coffret,
+//  chaque ruban, chaque sachet acheté par Benjamin sortait gratuit de ce calcul — et son
+//  revenu horaire s'en trouvait SURESTIMÉ.
+//
+//  Le plus frustrant : l'app SAIT chiffrer un emballage. Elle le fait déjà
+//    • par commande — computeOrderMargins.coutEmb (hiérarchie FIFO réelle, avec ratio
+//      d'estimation pour les commandes de reprise sans détail) ;
+//    • par marché  — marketTotals.coutEmb (réel : stock d'emballages avant − après).
+//  Le revenu horaire ne le lui a simplement jamais demandé.
+//
+//  RÈGLE CLÉ — l'emballage suit l'ENCAISSEMENT, comme le CA. Le revenu horaire raisonne en
+//  trésorerie (cash basis) : une commande encaissée à 50 % sur la fenêtre n'y apporte que
+//  50 % de son CA. Elle ne doit donc y apporter que 50 % de son emballage. Compter 100 % du
+//  carton en face de 50 % de la recette fabriquerait une fausse perte.
+//
+//  Pure : ne lit aucune base. On lui passe ce qui a été mesuré ailleurs.
+//    cmds    : [{ encaisse, montant, coutEmb, coutEmbEstime }]
+//    marches : [{ coutEmb, coutEmbEstime }]
+// ============================================================================
+function coutEmballagesFenetre(cmds, marches){
+  let reel = 0, estime = 0;
+  const detail = [];
+
+  (cmds || []).forEach(c => {
+    const enc = Math.max(0, +c.encaisse || 0);
+    const tot = Math.max(0, +c.montant || 0);
+    if(!(enc > 0) || !(tot > 0)) return;
+    // Part encaissée de la commande sur la fenêtre (bornée à 1 : un trop-perçu ou un
+    // arrondi ne doit pas faire compter 130 % du carton).
+    const part = Math.min(1, enc / tot);
+    const emb = money2((+c.coutEmb || 0) * part);
+    const est = money2((+c.coutEmbEstime || 0) * part);
+    if(emb <= 0) return;
+    reel = money2(reel + emb);
+    estime = money2(estime + est);
+    detail.push({ label: c.label || 'Commande', montant: emb, estime: est > 0 });
+  });
+
+  // Un marché clos est encaissé le jour même, en totalité : pas de prorata à appliquer.
+  (marches || []).forEach(m => {
+    const emb = money2(+m.coutEmb || 0);
+    if(emb <= 0) return;
+    reel = money2(reel + emb);
+    estime = money2(estime + money2(+m.coutEmbEstime || 0));
+    detail.push({ label: m.label || 'Marché', montant: emb, estime: (+m.coutEmbEstime || 0) > 0 });
+  });
+
+  detail.sort((a, b) => b.montant - a.montant);
+  return {
+    total: reel,
+    estime,                                   // part du total qui repose sur une ESTIMATION
+    mesure: money2(reel - estime),            // part réellement mesurée (FIFO / stock)
+    partEstimee: reel > 0 ? Math.round(estime / reel * 100) : 0,
+    detail
+  };
+}
+
 // BRIQUE 3 — REVENU HORAIRE GLOBAL RÉEL.
 // Ce que tu peux te payer de l'heure = marge avant rémunération ÷ temps total travaillé.
-//  • numérateur = CA encaissé − matières − emballages − charges fixes  (la main-d'œuvre N'est PAS
-//    déduite : c'est justement ce qu'on cherche à rémunérer).
+//  • numérateur = CA encaissé − matières et consommables − emballages − charges fixes.
+//    La main-d'œuvre n'est PAS déduite : c'est précisément ce qu'on cherche à chiffrer.
+//    [v1325] Cette promesse était FAUSSE jusqu'ici — voir le FIX du double comptage ci-dessous.
 //  • dénominateur = temps total = atelier (production) + pointeuse (hors-production).
-//  • on fournit AVANT et APRÈS cotisations sociales (~socialGoods % du CA marchandise).
+//  • trois paliers fournis : avant cotisations, après cotisations, puis APRÈS IMPÔT (revHoraireNet).
+//    Seul le dernier est comparable à un salaire net.
 async function revenuHoraireCalcul(arg){
   // [v1083] accepte un nombre de jours (compat) OU un objet {start,end} (période précise).
   const d = await revenuHoraireData((arg && typeof arg==='object') ? arg : (+arg || REVH_DEFAULT_DAYS));
@@ -50152,6 +50565,14 @@ async function revenuHoraireCalcul(arg){
   // Coût matières + emballages des VENTES de la période, via l'analyse de rentabilité par parfum
   // (coutVentes = pièces vendues × coût de revient matière unitaire ; déjà calculé ailleurs).
   let coutMatieres = 0, coutEmballages = 0;
+  // [v1325] On garde trace du coût de revient COMPLET et de sa part main-d'œuvre, pour rendre le
+  // numérateur entièrement traçable (« voici ce que j'ai déduit, et ce que je n'ai PAS déduit »).
+  let coutMOD = 0, coutVentesFenetre = 0;
+  // [v1326] Détail du coût d'emballage (total, part estimée, ligne à ligne).
+  let _emb = { total:0, estime:0, mesure:0, partEstimee:0, detail:[] };
+  // Même fenêtre EXACTEMENT que celle du CA (bornes remontées par revenuHoraireData) : un emballage
+  // compté sur une période et une recette sur une autre fabriquerait une marge fantaisiste.
+  const inWinEmb = ds => { ds=(ds||'').slice(0,10); return ds && ds>=(d.sinceStr||'0000-01-01') && ds<=(d.untilStr||'9999-12-31'); };
   let _anomaliesCout = [];   // [v1075] recettes au coût unitaire implausible, écartées du calcul
   try{
     const [recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions] = await Promise.all([
@@ -50166,6 +50587,15 @@ async function revenuHoraireCalcul(arg){
     // On ÉCARTE ces lignes du calcul, on les SIGNALE, et on dégrade la confiance — plutôt qu'un faux chiffre.
     const SEUIL_COUT_UNIT_PLAUSIBLE = 8;   // €/macaron — borne haute très généreuse (réel ~0,30–2 €)
     let coutVentesTotal = 0;
+    // [FIX v1325 — LE DOUBLE COMPTAGE DE TA MAIN-D'ŒUVRE] Le commentaire de cette fonction promet que
+    // « la main-d'œuvre N'est PAS déduite : c'est justement ce qu'on cherche à rémunérer ». C'était
+    // FAUX. `coutVentes` = piècesVendues × coutRevientUnit, et coutRevientUnit = matières +
+    // consommables + coutMODUnit (la main-d'œuvre D'ATELIER, dès que laborEnabled est actif).
+    // L'app soustrayait donc ta paie du numérateur… puis divisait par les heures qu'elle venait de
+    // te payer, et appelait le résultat « ce que tu peux te payer de l'heure ». Elle te retirait
+    // purement et simplement ton propre taux horaire.
+    // On accumule désormais la MOD à part, pour pouvoir la RENDRE au numérateur.
+    let coutMODTotal = 0;
     (A.rows||[]).forEach(r=>{
       const cu = (r.cost && +r.cost.coutRevientUnit) || 0;
       const cv = +r.coutVentes||0;
@@ -50175,13 +50605,22 @@ async function revenuHoraireCalcul(arg){
         return;   // écartée du total
       }
       coutVentesTotal += cv;
+      // Part main-d'œuvre des MÊMES pièces vendues (même périmètre, mêmes exclusions : sinon on
+      // rendrait une MOD relative à des lignes dont le coût a été écarté).
+      coutMODTotal += (+r.piecesVendues||0) * ((r.cost && +r.cost.coutMODUnit) || 0);
     });
     coutVentesTotal = money2(coutVentesTotal);
+    coutMODTotal = money2(coutMODTotal);
     const caTotalAnalyse = (A.totals && +A.totals.ca) || (A.rows||[]).reduce((a,r)=>a + (+r.ca||0), 0);
     // prorata : part du CA de la fenêtre sur le CA total analysé (évite de surcompter,
     // car l'analyse couvre toutes les périodes, pas seulement la fenêtre).
     const ratio = caTotalAnalyse>0 ? Math.min(1, d.caEncaisse/caTotalAnalyse) : 0;
-    coutMatieres = money2(coutVentesTotal * ratio);
+    coutVentesFenetre = money2(coutVentesTotal * ratio);   // coût de revient COMPLET (MOD incluse)
+    coutMOD = money2(coutMODTotal * ratio);                // dont main-d'œuvre d'atelier
+    // Le numérateur ne doit retenir QUE la matière et les consommables : la main-d'œuvre est
+    // précisément ce que le revenu horaire cherche à rémunérer. La déduire ici, puis diviser par
+    // ces mêmes heures, revenait à la compter deux fois.
+    coutMatieres = money2(coutVentesFenetre - coutMOD);
     // [v1075 — DIAG, lecture seule] Trace des recettes écartées pour le débogage (rubrique Technique).
     try{
       if(typeof diagPublish==='function' && _anomaliesCout.length){
@@ -50193,8 +50632,42 @@ async function revenuHoraireCalcul(arg){
         });
       }
     }catch(e){swallow(e,'revenuHoraireCalcul')}
-    // emballages : estimés via coût d'emballage moyen par macaron vendu (table packaging)
-    // approche prudente : si non calculable finement, laissé à 0 (n'invente pas).
+
+    // [FIX v1326 — L'EMBALLAGE ÉTAIT GRATUIT] AVANT, il n'y avait ici que ce commentaire :
+    //   « emballages : estimés via coût d'emballage moyen par macaron vendu (table packaging)
+    //     approche prudente : si non calculable finement, laissé à 0 (n'invente pas). »
+    // Mettre 0 n'est PAS s'abstenir : c'est affirmer que l'emballage est gratuit. Chaque coffret,
+    // ruban et sachet sortait donc gratuit du numérateur, et le revenu horaire était SURESTIMÉ.
+    // Or l'app sait parfaitement les chiffrer — elle le fait déjà par commande et par marché.
+    // On le lui demande enfin, en respectant la base TRÉSORERIE : l'emballage suit l'encaissement.
+    const _cmdsEmb = [];
+    orders.forEach(o=>{
+      let encO = 0;
+      paiementsDe(o).forEach(p=>{ if(inWinEmb(p.date)) encO += (+p.montant||0); });
+      if(!(encO>0)) return;
+      let m=null;
+      try{ m = computeOrderMargins(o, recipes, recipeItems, lots, mats); }
+      catch(e){ swallow(e,'revh emballage commande'); return; }
+      if(!m || !(+m.coutEmb>0)) return;
+      _cmdsEmb.push({ label:'Commande'+(o.id?' #'+o.id:''), encaisse:encO, montant:(+o.montant||0),
+                      coutEmb:+m.coutEmb||0, coutEmbEstime:+m.coutEmbEstime||0 });
+    });
+
+    const _marchesEmb = [];
+    const _mkDateFin = mk => (mk.date||mk.dateCloture||'');
+    const _avgUnit = (typeof avgMacaronCost==='function') ? avgMacaronCost(recipes, recipeItems, lots) : 0;
+    markets.filter(mk=>mk.statut==='clos' && inWinEmb(_mkDateFin(mk))).forEach(mk=>{
+      try{
+        const mvs = (marketMoves||[]).filter(mv=>mv.marketId===mk.id);
+        const T = marketTotals(mk, mvs, _avgUnit);
+        if(T && +T.coutEmb>0){
+          _marchesEmb.push({ label:(mk.nom||'Marché'), coutEmb:+T.coutEmb||0, coutEmbEstime:+T.coutEmbEstime||0 });
+        }
+      }catch(e){ swallow(e,'revh emballage marché'); }
+    });
+
+    _emb = coutEmballagesFenetre(_cmdsEmb, _marchesEmb);
+    coutEmballages = _emb.total;
   }catch(e){ console.error('revh coûts ventes', e); }
 
   // Charges fixes sur la fenêtre : récurrent mensuel × DURÉE RÉELLE D'ACTIVITÉ + charges ponctuelles datées.
@@ -50216,12 +50689,29 @@ async function revenuHoraireCalcul(arg){
     }
   }catch(e){swallow(e,'revenuHoraireCalcul')}
 
-  // Cotisations sociales : socialGoods % du CA marchandise encaissé (approche micro-entrepreneur).
-  const cotisations = money2(d.caEncaisse * (+s.socialGoods||0)/100);
+  // [FIX v1325 — LE TAUX UNIQUE] AVANT : `cotisations = caEncaisse × socialGoods`, c'est-à-dire le
+  // taux MARCHANDISE (12,3 %) appliqué à TOUT le CA — prestations comprises, alors qu'elles cotisent
+  // à 25,6 %. Les cotisations étaient donc sous-estimées, et ce qui « restait de l'heure »
+  // d'autant surestimé. On applique désormais les DEUX taux, sur la ventilation URSSAF réelle
+  // (même règle que computeMonthlyBilan : une seule vérité par commande).
+  const cotisGoods   = money2((+d.caGoods||0)   * (+s.socialGoods||0)/100);
+  const cotisService = money2((+d.caService||0) * (+s.socialService||0)/100);
+  const cotisations  = money2(cotisGoods + cotisService);
 
-  // Numérateur (marge avant rémunération), hors main-d'œuvre.
-  const margeAvantRemu = money2(d.caEncaisse - coutMatieres - coutEmballages - chargesFixes);
+  // [v1325] L'IMPÔT SUR LE REVENU était totalement absent — comme il l'était du point mort (v1324).
+  // En micro-BIC, la base imposable est un pourcentage forfaitaire du CA, puis la tranche marginale
+  // s'applique. C'est de l'argent qui sort du compte, exactement comme les cotisations : l'ignorer,
+  // c'est promettre un revenu horaire que tu ne toucheras jamais.
+  const baseIrGoods   = money2((+d.caGoods||0)   * (1 - (+s.irAbattementGoods||0)/100));
+  const baseIrService = money2((+d.caService||0) * (1 - (+s.irAbattementService||0)/100));
+  const baseImposable = money2(baseIrGoods + baseIrService);
+  const impotRevenu   = money2(baseImposable * (+s.irTrancheMarginale||0)/100);
+
+  // Numérateur — marge avant rémunération. La main-d'œuvre n'y est PLUS déduite (fix du double
+  // comptage) : c'est bien elle que le revenu horaire cherche à chiffrer.
+  const margeAvantRemu  = money2(d.caEncaisse - coutMatieres - coutEmballages - chargesFixes);
   const margeApresCotis = money2(margeAvantRemu - cotisations);
+  const margeApresImpot = money2(margeApresCotis - impotRevenu);
 
   const h = d.heuresMesurees;
   // [v1082] GARDE-FOU « PAS DE CHIFFRE ABSURDE ». Le revenu horaire ne se calcule QUE si le temps
@@ -50246,13 +50736,23 @@ async function revenuHoraireCalcul(arg){
 
   const revAvant = calculable ? money2(margeAvantRemu/h) : null;
   const revApres = calculable ? money2(margeApresCotis/h) : null;
+  // [v1325] LE CHIFFRE QUI COMPTE VRAIMENT : ce qu'il te reste de l'heure, une fois l'URSSAF ET
+  // l'impôt payés. C'est celui-là qu'il faut comparer au SMIC, pas les deux précédents.
+  const revNet = calculable ? money2(margeApresImpot/h) : null;
 
   return {
     ...d,
     coutMatieres, coutEmballages, chargesFixes, cotisations,
-    margeAvantRemu, margeApresCotis,
+    // [v1325] TRAÇABILITÉ : on expose ce qu'on a déduit ET ce qu'on a délibérément NON déduit.
+    coutVentesFenetre,   // coût de revient complet des ventes (matière + consommables + MOD)
+    coutMOD,             // … dont main-d'œuvre d'atelier : RENDUE au numérateur (fix du double comptage)
+    embDetail: _emb.detail, embEstime: _emb.estime, embMesure: _emb.mesure, embPartEstimee: _emb.partEstimee,   // [v1326]
+    cotisGoods, cotisService,
+    baseImposable, impotRevenu, trancheIr: (+s.irTrancheMarginale||0),
+    margeAvantRemu, margeApresCotis, margeApresImpot,
     revHoraireAvantCotis: revAvant,
     revHoraireApresCotis: revApres,
+    revHoraireNet: revNet,   // [v1325] net d'URSSAF ET d'impôt — le seul comparable au SMIC
     heures: h,
     calculable, raisonsAbstention,   // [v1082] le calcul s'abstient si les données ne le permettent pas
     anomaliesCout: _anomaliesCout   // [v1075] recettes écartées car coût unitaire implausible
@@ -50305,6 +50805,19 @@ function revenuHoraireAudit(d){
       detail:`${nbAnom} recette${nbAnom>1?'s':''} au coût anormalement élevé (${(d.anomaliesCout||[]).slice(0,3).map(a=>esc(a.nom)).join(', ')}${nbAnom>3?'…':''}) — probablement un rendement ou un prix matière mal saisi. ${nbAnom>1?'Elles ont':'Elle a'} été écartée${nbAnom>1?'s':''} du calcul pour ne pas le fausser.`
     });
   }
+  // f) [v1326] Fiabilité du coût d'emballage. Il valait 0 € jusqu'en v1325 (l'emballage était
+  // gratuit) ; maintenant qu'il est compté, il faut dire s'il est MESURÉ ou ESTIMÉ.
+  const _embTot = +d.coutEmballages || 0;
+  const _embPct = +d.embPartEstimee || 0;
+  checks.push({
+    cle:'emballage', label:'Coût des emballages',
+    niveau: _embTot<=0 ? 'ko' : (_embPct>50 ? 'warn' : 'ok'),
+    detail: _embTot<=0
+      ? 'Aucun coût d\'emballage détecté. Si tu emballes bien tes macarons, c\'est que tes coffrets ne sont pas paramétrés — ton revenu horaire est alors SURESTIMÉ.'
+      : (_embPct>0
+          ? `${euro(_embTot)} sur la période, dont ${_embPct}% estimé (commandes de reprise sans détail). ${_embPct>50?'La majorité repose sur une estimation : à prendre avec prudence.':'L\'essentiel est mesuré au réel.'}`
+          : `${euro(_embTot)} sur la période, entièrement mesuré au réel (FIFO commandes + stock marchés).`)
+  });
   const nbOk = checks.filter(c=>c.niveau==='ok').length;
   let confiance, confLabel;
   // [v1082] Si le temps mesuré ne couvre pas la période, le revenu horaire n'est PAS calculé.
@@ -50438,18 +50951,26 @@ async function renderRevenuHoraire(){
           <br>Un macaron coûte normalement quelques dizaines de centimes en matière. Un coût aussi élevé vient presque toujours d'un <b>rendement</b> mal saisi (ex. 1 au lieu de 60) ou d'un <b>prix matière</b> erroné. ${c.anomaliesCout.length>1?'Ces recettes ont':'Cette recette a'} été <b>écartée${c.anomaliesCout.length>1?'s':''} du calcul</b> pour ne pas le fausser — corrige-${c.anomaliesCout.length>1?'les':'la'} pour un revenu horaire juste.
           <div style="margin-top:8px"><button class="btn ghost sm" onclick="goView('recettes')">🧪 Vérifier mes recettes</button></div>
         </div></div>`:''}
-        ${c.calculable ? `<div class="row2">
+        ${c.calculable ? `<div class="row2" style="gap:8px">
           <div class="card" style="background:#eef5f0;border-color:#bcd9c6">
-            <div class="lbl">Avant cotisations</div>
+            <div class="lbl">Avant prélèvements</div>
             <div class="val" style="color:#2e7d32">${euroOrTiret(c.revHoraireAvantCotis)}/h</div>
             <div class="sub">marge ${euro(c.margeAvantRemu)} ÷ ${c.heures.toFixed(1)} h</div>
           </div>
           <div class="card" style="background:#fbf6ee;border-color:#e5d3b3">
-            <div class="lbl">Après cotisations (~${(+getSettings().socialGoods||0)}%)</div>
+            <div class="lbl">Après cotisations</div>
             <div class="val" style="color:#AA7C39">${euroOrTiret(c.revHoraireApresCotis)}/h</div>
-            <div class="sub">marge nette ${euro(c.margeApresCotis)} ÷ ${c.heures.toFixed(1)} h</div>
+            <div class="sub">− ${euro(c.cotisations)} d'URSSAF</div>
           </div>
-        </div>` : `<div class="card" style="background:#fbf6ee;border:2px solid #e5d3b3;text-align:left">
+        </div>
+        <div class="card" style="margin-top:8px;background:linear-gradient(135deg,#52252F,#3d1a22);border:none;color:#fff;text-align:left">
+          <div class="lbl" style="color:#fff;opacity:.85">✅ Ce qu'il te reste vraiment de l'heure — net d'URSSAF ET d'impôt</div>
+          <div class="val" style="color:#fff;font-size:1.9rem">${euroOrTiret(c.revHoraireNet)}/h</div>
+          <div class="sub" style="color:#fff;opacity:.8">marge ${euro(c.margeApresImpot)} ÷ ${c.heures.toFixed(1)} h · seul ce chiffre est comparable à un salaire net</div>
+        </div>
+        ${c.coutMOD>0?`<div style="margin-top:8px;padding:9px 12px;background:#fff6e5;border-radius:8px;font-size:.78rem;color:#6a5a52;line-height:1.55">
+          🔧 <b>Correction v1325.</b> L'app déduisait ta main-d'œuvre d'atelier (${euro(c.coutMOD)}) du numérateur… puis divisait par ces mêmes heures. Elle te retirait ton propre taux horaire et appelait ça « ce que tu peux te payer ». Cette main-d'œuvre est désormais <b>rendue</b> : c'est précisément ce que ce chiffre sert à mesurer.
+        </div>`:''}` : `<div class="card" style="background:#fbf6ee;border:2px solid #e5d3b3;text-align:left">
           <div style="font-size:1.05rem;font-weight:700;color:var(--bordeaux);margin-bottom:6px">⏸ Revenu horaire non calculable pour l'instant</div>
           <p class="note" style="margin:0 0 8px">Le revenu horaire = ta marge ÷ ton temps de travail. Pour qu'il ait du sens, le <b>temps pointé</b> doit couvrir la <b>période</b> du chiffre d'affaires. Ce n'est pas encore le cas ${c.raisonsAbstention&&c.raisonsAbstention.length?`(${c.raisonsAbstention.map(r=>esc(r)).join(' ; ')})`:''} :</p>
           <div class="sum-box" style="background:#fff"><span>Temps pointé</span><b>${c.heures.toFixed(1)} h sur ${c.nbJoursPointes||0} jour(s)</b></div>
@@ -50473,12 +50994,24 @@ async function renderRevenuHoraire(){
           sousTotal:'Total encaissé', vue:'compta', vueLabel:'Voir la comptabilité'
         })}
         ${revhLigneTracable({
-          libelle:'Matières des ventes', valeur:c.coutMatieres, neg:true,
-          formule:`coût des ingrédients consommés par les macarons vendus = pièces vendues × coût de revient matière de chaque parfum${(c.anomaliesCout&&c.anomaliesCout.length)?`. ⚠ ${c.anomaliesCout.length} recette(s) au coût aberrant ont été écartées (voir alerte plus haut).`:''}.`,
-          lignes:(c.anomaliesCout&&c.anomaliesCout.length)? c.anomaliesCout.map(a=>({label:'⚠ écarté : '+a.nom+' ('+euro(a.coutUnit)+'/pc)', montant:0})) : [],
+          libelle:'Matières et consommables des ventes', valeur:c.coutMatieres, neg:true,
+          formule:`coût des ingrédients et consommables des macarons vendus.${c.coutMOD>0?` <b>La main-d'œuvre d'atelier (${euro(c.coutMOD)}) en a été RETIRÉE</b> : elle fait partie du coût de revient (${euro(c.coutVentesFenetre)}), mais la déduire ici puis diviser par ces mêmes heures reviendrait à la compter deux fois — c'était le bug corrigé en v1325.`:''}${(c.anomaliesCout&&c.anomaliesCout.length)?` ⚠ ${c.anomaliesCout.length} recette(s) au coût aberrant ont été écartées (voir alerte plus haut).`:''}`,
+          lignes:[
+            ...(c.coutMOD>0?[
+              {label:'Coût de revient complet des ventes', montant:c.coutVentesFenetre},
+              {label:'− dont main-d\'œuvre d\'atelier (rendue)', montant:-c.coutMOD}
+            ]:[]),
+            ...((c.anomaliesCout&&c.anomaliesCout.length)? c.anomaliesCout.map(a=>({label:'⚠ écarté : '+a.nom+' ('+euro(a.coutUnit)+'/pc)', montant:0})) : [])
+          ],
+          sousTotal:c.coutMOD>0?'= Matières et consommables seuls':null,
           vue:'rentaparfum', vueLabel:'Voir la rentabilité par parfum'
         })}
-        ${c.coutEmballages>0?revhLigneTracable({libelle:'Emballages', valeur:c.coutEmballages, neg:true, formule:'coût des coffrets et emballages des ventes de la période.'}):''}
+        ${revhLigneTracable({
+          libelle:'Emballages', valeur:c.coutEmballages, neg:true,
+          formule:`coffrets, sachets, rubans des ventes de la période. <b>Jusqu'en v1325, cette ligne valait 0 €</b> — l'emballage était donc, littéralement, gratuit dans ce calcul, et ton revenu horaire surestimé d'autant. Il suit l'ENCAISSEMENT comme le CA : une commande payée à moitié n'apporte que la moitié de son carton.${(c.embPartEstimee||0)>0?` ⚠ ${c.embPartEstimee}% de ce montant est <b>estimé</b> (commandes de reprise sans détail d'emballage) — le reste est mesuré au réel.`:''}`,
+          lignes:(c.embDetail||[]).map(x=>({label:(x.estime?'≈ ':'📦 ')+x.label, montant:x.montant})),
+          sousTotal:'Total emballages', vue:'stock', vueLabel:'Voir mes emballages'
+        })}
         ${revhLigneTracable({
           libelle:'Charges fixes', valeur:c.chargesFixes, neg:true,
           formule:`tes charges récurrentes étalées sur ta durée réelle d'activité : ${euro(c.chargesRecurMensuel)}/mois × ${(c.moisActivite!=null?c.moisActivite:(c.jours/30)).toFixed(1)} mois${c.totalCharges>0?` + ${euro(c.totalCharges)} de charges ponctuelles datées`:''}.`,
@@ -50489,13 +51022,23 @@ async function renderRevenuHoraire(){
           sousTotal:'Total charges fixes', vue:'chargesventil', vueLabel:'Voir mes charges'
         })}
         ${revhLigneTracable({libelle:'= Marge avant rémunération', valeur:c.margeAvantRemu, accent:true, borderTop:true,
-          formule:`CA encaissé − matières − ${c.coutEmballages>0?'emballages − ':''}charges fixes. C'est ce qui reste pour te rémunérer, avant cotisations.`})}
+          formule:`CA encaissé − matières et consommables − emballages − charges fixes. La main-d'œuvre n'y est <b>pas</b> déduite : c'est précisément ce que le revenu horaire cherche à chiffrer.`})}
         ${revhLigneTracable({
-          libelle:'Cotisations sociales', valeur:c.cotisations, neg:true,
-          formule:`cotisations micro-entrepreneur estimées : ${(+getSettings().socialGoods||0)}% du CA marchandise encaissé.`,
+          libelle:'Cotisations sociales (URSSAF)', valeur:c.cotisations, neg:true,
+          formule:`chaque euro encaissé cotise, mais <b>pas au même taux</b> : la marchandise à ${(+getSettings().socialGoods||0)}%, la prestation de service à ${(+getSettings().socialService||0)}%. Jusqu'en v1324, l'app appliquait le taux marchandise à TOUT le CA — prestations comprises — et sous-estimait donc tes cotisations.`,
+          lignes:[
+            {label:'🧁 Marchandise : '+euro(c.caGoods||0)+' × '+(+getSettings().socialGoods||0)+'%', montant:c.cotisGoods||0},
+            ...((c.caService||0)>0?[{label:'🎓 Prestation : '+euro(c.caService||0)+' × '+(+getSettings().socialService||0)+'%', montant:c.cotisService||0}]:[])
+          ],
+          sousTotal:'Total cotisations', vue:'compta', vueLabel:'Voir la comptabilité'})}
+        ${revhLigneTracable({libelle:'= Marge après cotisations', valeur:c.margeApresCotis, accent:true,
+          formule:'marge avant rémunération − cotisations sociales. Ce n\'est pas encore ce que tu touches : l\'impôt n\'est pas payé.'})}
+        ${revhLigneTracable({
+          libelle:'Impôt sur le revenu', valeur:c.impotRevenu, neg:true,
+          formule:`en micro-BIC, l'impôt se calcule sur un pourcentage forfaitaire du CA, pas sur ta marge réelle : base imposable ${euro(c.baseImposable||0)} (CA après abattement) × ta tranche marginale de ${c.trancheIr||0}%. C'est de l'argent qui sort du compte, exactement comme les cotisations — l'app l'oubliait complètement jusqu'en v1324.`,
           vue:'compta', vueLabel:'Voir la comptabilité'})}
-        ${revhLigneTracable({libelle:'= Marge nette', valeur:c.margeApresCotis, accent:true,
-          formule:'marge avant rémunération − cotisations sociales. C\'est ta rémunération nette pour le temps travaillé.'})}
+        ${revhLigneTracable({libelle:'= Ce qu\'il te reste vraiment', valeur:c.margeApresImpot, accent:true, borderTop:true,
+          formule:'marge après cotisations − impôt. C\'est ta rémunération réelle pour le temps travaillé, tout payé. Divisée par tes heures, c\'est le seul chiffre comparable à un salaire net.'})}
         ${revhLigneTracable({
           libelle:'Temps total travaillé', valeurStr:c.heures.toFixed(1)+' h',
           formule:`tout le temps mesuré sur la période : ${c.hAtelier.toFixed(1)} h de production (atelier) + ${c.hPointeuse.toFixed(1)} h hors-production (pointeuse).`,

@@ -10,6 +10,241 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-12 — Vague 46 : L'EMBALLAGE ÉTAIT GRATUIT  (v1325 → **v1326**)
+
+**Nature** : comblement de l'angle mort déclaré en vague 45.
+
+**Le bug** : dans `revenuHoraireCalcul`, `coutEmballages` était initialisé à 0… et **jamais
+calculé**. À l'endroit du calcul, il n'y avait que ce commentaire :
+
+    // emballages : estimés via coût d'emballage moyen par macaron vendu (table packaging)
+    // approche prudente : si non calculable finement, laissé à 0 (n'invente pas).
+
+**Mettre 0 n'est pas s'abstenir.** C'est affirmer que l'emballage ne coûte rien. Chaque coffret,
+ruban et sachet sortait gratuit du numérateur → revenu horaire **surestimé**. « N'invente pas »
+servait de justification à un chiffre inventé : zéro.
+
+Le plus frustrant : l'app **sait** chiffrer un emballage — `computeOrderMargins.coutEmb` (FIFO
+réel + ratio d'estimation pour les reprises) et `marketTotals.coutEmb` (stock avant − après). Le
+revenu horaire ne le lui avait jamais demandé.
+
+**Ajouté** (`emballage-gratuit.test.js`, 41 assertions) :
+- `coutEmballagesFenetre` — pure (rien lu en base, tout passé en argument).
+- **RÈGLE CLÉ figée — l'emballage suit l'ENCAISSEMENT**, comme le CA. Le revenu horaire raisonne en
+  trésorerie : une commande payée à 50 % n'apporte que 50 % de son CA, donc 50 % de son carton.
+  Lui opposer 100 % de l'emballage fabriquerait une **fausse perte** (tests B1–B4, avec la preuve
+  par l'absurde : le prorata conserve le ratio emballage/CA).
+- Marché clos → **aucun prorata** (encaissé le jour même, règle B).
+- GARDE-FOU : part encaissée bornée à 1 — un trop-perçu ne fait jamais compter 130 % d'un carton.
+- **MESURÉ vs ESTIMÉ** : `mesure + estime = total` au centime, `partEstimee` en %, marquage ligne
+  par ligne. L'estimation suit le même prorata que le reste (sinon l'égalité casse — test D8–D11).
+  Faire passer une estimation pour une mesure serait un mensonge de plus.
+- Robustesse : entrées nulles, commandes non encaissées, montant 0, encaissement négatif → écartées
+  proprement, aucun NaN, aucune ligne parasite à 0 €.
+- **Signature du bug** (F7) : l'écart de revenu horaire vaut exactement le coût d'emballage rapporté
+  aux heures. 80 € de carton sur 20 h pointées = **4 €/h qui n'existaient pas**.
+
+**Comportement modifié** :
+- `revenuHoraireData` expose désormais `untilStr` (la borne haute de la fenêtre n'était pas
+  remontée) : l'emballage doit filtrer sur **exactement** la même période que le CA.
+- Écran « Mon revenu horaire » : la ligne Emballages était masquée tant qu'elle valait 0 — donc
+  **elle n'avait jamais été affichée**. Elle est maintenant toujours visible, dépliable, avec le
+  détail par commande/marché et le % estimé.
+- `revenuHoraireAudit` : nouveau contrôle « Coût des emballages ». Si aucun coût n'est détecté alors
+  que Benjamin emballe bien ses macarons, l'audit dit franchement que les coffrets ne sont pas
+  paramétrés et que le revenu horaire est donc **surestimé**.
+
+**Total couvert** : 961 → **1002 assertions**.
+
+**Angles morts connus (déclarés)** :
+- Le prorata matières (`ratio = caEncaisse / caTotalAnalyse`) reste une approximation : il suppose
+  un mix produit stable. L'emballage, lui, est désormais calculé **commande par commande** — les
+  deux postes du numérateur n'ont donc pas la même précision. À harmoniser un jour.
+- `revenuHoraireData` / `revenuHoraireAudit` (garde-fous `calculable`, `raisonsAbstention`,
+  couverture temporelle) restent testés **indirectement** seulement.
+
+---
+
+## 2026-07-12 — Vague 45 : LE REVENU HORAIRE MENTAIT DANS LES DEUX SENS  (v1324 → **v1325**)
+
+**Nature** : comblement de l'angle mort déclaré en vague 44 (`revenuHoraireCalcul` n'avait AUCUN
+test) — et, ce faisant, découverte de **trois bugs**. Deux se compensaient partiellement : c'est
+précisément pour cela que personne ne les avait vus. Un chiffre faux mais *plausible* ne déclenche
+aucune alerte. C'est la leçon centrale de cette vague.
+
+### Bug 1 — le double comptage de la main-d'œuvre (il SOUS-PAYAIT)
+L'en-tête de `revenuHoraireCalcul` promettait : « la main-d'œuvre N'est PAS déduite : c'est
+justement ce qu'on cherche à rémunérer ». **Faux.**
+
+    coutMatieres ← coutVentes = piècesVendues × coutRevientUnit
+    coutRevientUnit = matières + consommables + coutMODUnit   ← la MO d'atelier !
+
+L'app soustrayait la paie de Benjamin du numérateur, **puis divisait par les heures qu'elle venait
+de payer**. L'écart vaut *exactement* son taux horaire d'atelier — signature du bug (test B7).
+
+### Bug 2 — le taux de cotisation unique (il SUR-PAYAIT)
+`cotisations = caEncaisse × socialGoods` : taux **marchandise** (12,3 %) appliqué à **tout** le CA,
+prestations comprises — alors qu'elles cotisent à 25,6 %. Sur un mois 100 % ateliers, l'écart
+dépasse le **double** (test C8). La règle de ventilation existait pourtant… enfermée dans
+`computeMonthlyBilan`, et nulle part ailleurs.
+
+### Bug 3 — l'impôt absent (il SUR-PAYAIT)
+Aucune déduction d'IR. « Ce que tu peux te verser » était un montant **avant impôt** — un revenu
+jamais touché. Même oubli que le point mort (corrigé en v1324).
+
+**Refactor structurel** : la règle de ventilation service/marchandise est **extraite en fonction
+pure partagée** (`partServiceCommande`), utilisée par `computeMonthlyBilan` (base URSSAF) ET le
+revenu horaire. Une seule vérité par commande. Dupliquer la règle, c'est fabriquer la divergence de
+demain — le projet en a déjà corrigé une (CA détail vs synthèse).
+*Preuve de neutralité* : les 42 assertions de `monthly-bilan` et celles de `net-poche` restent
+vertes sans qu'aucune attente n'ait été modifiée. Le filet a d'ailleurs **immédiatement** signalé
+l'extraction (fonction absente du module de test) — exactement son rôle.
+
+**Ajouté** (`revenu-horaire.test.js`, 44 assertions) :
+- `partServiceCommande` — pure. 100 % marchandise / 100 % prestation / mixte au prorata, remise de
+  ligne appliquée avant le prorata, GARDE-FOU part bornée à 1 (remise globale > lignes), robustesse
+  (commande nulle, vide, montant 0 → jamais de NaN ni de division par zéro).
+- **Numérateur** — la MO est RENDUE ; traçabilité : matières + main-d'œuvre = coût de revient
+  complet, au centime. Cas `laborEnabled=false` : le fix est **neutre** (test B10).
+- **Prélèvements** — deux taux sur la ventilation réelle ; cas 100 % marchandise → identique à
+  l'ancien calcul (non-régression du cas courant, test C10) ; impôt à base forfaitaire micro-BIC ;
+  tranche 0 % → pas d'impôt mais cotisations toujours dues.
+- **MONOTONIE des 3 paliers** : avant prélèvements ≥ après cotisations ≥ net. Un palier qui
+  remonterait signalerait un prélèvement compté au mauvais signe (test D8).
+- **Section E — « les deux sens »** : rejoue l'ancien calcul complet (13,85 €/h) contre le vrai
+  (15,58 €/h). Les erreurs se compensaient à moins de 2 €/h, alors qu'**aucun** nombre intermédiaire
+  n'était juste (numérateur 400 au lieu de 600 ; cotisations 123 au lieu de 176,20).
+
+**Comportement modifié** :
+- Écran « Mon revenu horaire » : deux cartes → **trois paliers**, le net d'impôt mis en avant
+  (seul comparable à un salaire). Chaîne traçable : la main-d'œuvre rendue est explicitement
+  montrée, les cotisations sont ventilées aux deux taux, l'impôt apparaît.
+- Copilote (`aiQueryRevenuHoraire`) : annonçait « ce que tu peux te verser » avec le chiffre
+  **avant impôt** — il aurait désormais contredit l'écran. Recalé sur le **net**.
+
+**Total couvert** : 917 → **961 assertions**.
+
+**Angles morts connus (déclarés)** :
+- `coutEmballages` est **toujours à 0** dans le revenu horaire (« n'invente pas », depuis l'origine).
+  Le numérateur est donc encore *légèrement surestimé*. Angle mort assumé et désormais écrit.
+- `revenuHoraireData` / `revenuHoraireAudit` (garde-fous de couverture temporelle, `calculable`,
+  `raisonsAbstention`) restent non couverts : ils sont testés indirectement, pas directement.
+- Le prorata `ratio = caEncaisse / caTotalAnalyse` qui rapporte les coûts à la fenêtre reste une
+  approximation (il suppose un mix produit stable sur la période).
+
+---
+
+## 2026-07-12 — Vague 44 : LE POINT MORT DISAIT LA MOITIÉ DE LA VÉRITÉ  (v1323 → **v1324**)
+
+**Nature** : correction d'un BUG de calcul + comblement de deux angles morts. Suite directe de
+la vague 43.
+
+**Le bug** : le point mort de v1323 divisait les charges fixes par `margeUnit`. Or, dans
+`analyzeFlavorProfitability` :
+
+    margeUnit = prixVenteMoyen − coutRevientUnit
+    coutRevientUnit = matières + consommables + main-d'œuvre D'ATELIER
+
+Les **charges sociales n'y étaient donc PAS déduites** — alors que le texte de traçabilité
+affiché à l'écran affirmait explicitement qu'elles l'étaient. Chiffre **sous-estimé** ET
+justification **fausse** : le pire des deux mondes pour un nombre censé être refaisable à la main.
+
+**Les trois coûts oubliés** (tous payés par Benjamin, aucun compté) :
+1. **Charges sociales URSSAF** — prélevées sur *chaque euro encaissé* → coût VARIABLE, sa place
+   est dans la marge de contribution.
+2. **Impôt sur le revenu** — en micro-BIC, base = CA × (1 − abattement), × tranche marginale.
+   Donc **proportionnel au CA** → variable lui aussi.
+3. **Heures hors-atelier** — administratif, courses, déplacements, prospection, prépa marché.
+   Mesurées par la pointeuse (`workSessions`), payées **nulle part** : ni dans le coût de revient
+   (qui ne compte que l'atelier), ni dans les charges fixes. Littéralement du bénévolat.
+
+**Ajouté** (`point-mort-verite.test.js`, 58 assertions) :
+- `margeContributionUnitaire` — les trois déductions et leur **somme vérifiable** (coût + social
+  + impôt + marge = prix), bornes (taux négatif, abattement > 100 %), tranche 0 %.
+- `coutTempsHorsProdMensuel` — pure (sessions passées en argument). Heures/coût mensuels, taux de
+  la session prioritaire sur celui des réglages, ventilation par activité qui **somme au total**.
+  GARDE-FOU d'extrapolation : fenêtre plancher à 1 mois (2 jours pointés ne deviennent pas
+  150 h/mois). N'INVENTE JAMAIS : sans pointage → `fiable:false`, jamais 0 € (0 € serait un
+  mensonge : ces heures existent, elles ne sont pas mesurées).
+- `computePointMortVerite` — la **CASCADE** de 4 marches. MONOTONIE figée : ajouter un oubli ne
+  peut que faire MONTER le point mort (un oubli qui le ferait baisser serait un bug de signe).
+- **GARDE-FOU CRITIQUE ÉTENDU** (le cœur de la vague) : une marge **brute positive** peut devenir
+  une marge de **contribution négative** une fois l'URSSAF et l'impôt payés. v1323 affichait alors
+  un point mort *rassurant et faux* ; l'app refuse désormais d'afficher un volume. Test D1–D9.
+- **NON-RÉGRESSION du moteur** : `computePointMort` (v1323) n'est PAS modifiée. La marche 1 de la
+  cascade doit être *exactement* un appel direct au moteur — preuve qu'on n'a pas réécrit l'ancien
+  chiffre en douce (test E4). Ses 25 assertions de la vague 43 restent vertes.
+
+**Comportement modifié** :
+- Écran « Analyse de rentabilité » — le point mort n'affiche plus un chiffre unique, mais la
+  cascade des 4 marches, chacune attribuant son écart en macarons. L'ancien chiffre reste exposé
+  (on ne remplace jamais un chiffre en silence).
+
+**Exemple figé** (2 € le macaron, 1 € de coût, URSSAF 12,3 %, abattement 71 %, tranche 30 %,
+300 € de charges fixes, 120 € de temps hors-atelier) :
+`300 → 400 (URSSAF) → 518 (impôt) → 725 (heures hors-atelier)` — **425 macarons/mois** que l'app
+oubliait de demander.
+
+**Total couvert** : 859 → **917 assertions**.
+
+**Angles morts connus (déclarés)** :
+- `revenuHoraireCalcul` / `revenuHoraireData` / `revenuHoraireAudit` — non couverts. Chaîne
+  importante (revenu horaire réel + garde-fous de couverture temporelle), candidate naturelle
+  pour la vague 45.
+- Le point mort suppose un **mix produit constant** (moyennes pondérées par les ventes passées).
+  Un changement brutal de mix le déplace ; non modélisé.
+
+---
+
+## RATTRAPAGE DE JOURNAL — vagues 12 à 43
+
+**Dette de documentation constatée le 2026-07-12** : le journal s'était arrêté à la vague 11
+(282 assertions) alors que la suite comptait déjà 43 vagues / 859 assertions. Contraire au
+contrat de livraison (`README.md`), qui exige une ligne ici à chaque livraison touchant un calcul.
+
+Le détail de chaque vague est en tête de son fichier de test (bloc de commentaire : lacune comblée,
+règles figées). Récapitulatif :
+
+| Vague | Fichier | Objet |
+|---|---|---|
+| 12 | `batch-picking.test.js` | batch picking (agrégation besoins, résolution parfum) |
+| 13 | `tresorerie.test.js` | `computeTresorerie` (projection J+30/60/90) |
+| 14 | `scenario-prix.test.js` | `computeScenarioPrix` (module scénarios de prix) |
+| 15 | `panier-moyen.test.js` | ventilation du panier moyen par type dominant |
+| 16 | `fifo-materiel.test.js` | FIFO matières (décrément / restock) |
+| 17 | `allocate-batches.test.js` | `allocateBatches` (moteur picking FIFO/zone) |
+| 18 | `numerotation-legale.test.js` | numérotation légale factures/avoirs (art. 242 nonies A CGI) |
+| 19 | `seuils-fiscaux.test.js` | `computeSeuilsFiscaux` (jauges TVA/micro, projection) |
+| 20 | `pilotage-ca.test.js` | `computePilotageCA` (leviers stratégiques) |
+| 21 | `pilotage-strategic.test.js` | `computeStrategic` (panier, marges, clients actifs) |
+| 22 | `prevision-revenu.test.js` | `computePrevisionRevenu` (tendance + carnet) |
+| 23 | `rd-pont-creatif.test.js` | `rdSuggestMaterial` (Pont Créatif R&D → Production) |
+| 24 | `order-margins.test.js` | `computeOrderMargins` (marge par commande) |
+| 25 | `dlc-anti-recongel.test.js` | `computeDlcFromHistory` (DLC anti-recongélation, sanitaire) |
+| 26 | `compute-stats.test.js` | `computeStats` (agrégation ventes globale/client) |
+| 27 | `sales-velocity.test.js` | `computeSalesVelocity` (vélocité, rupture de stock) |
+| 28 | `forecast.test.js` | `computeForecast` (projection réservations datées) |
+| 29 | `market-selection.test.js` | `computeMarketSelection` (score composite, classement) |
+| 30 | `market-channel.test.js` | `computeMarketChannelAnalysis` (taux d'écoulement) |
+| 31 | `material-needs.test.js` | `computeMaterialNeeds` (besoins matières production) |
+| 32 | `gaspillage.test.js` | `computeGaspillage` (coût du gaspillage marché) |
+| 33 | `temps-decompo.test.js` | `_tempsDecompoParParfum` (le détail doit sommer au total) |
+| 34 | `batch-comptable.test.js` | `_estBatchComptable` (dénominateur : un composant n'est pas un batch) |
+| 35 | `temps-par-macaron.test.js` | temps par macaron / par batch standard de 60 |
+| 36 | `copilote-routage.test.js` | routage du copilote (aucune compétence fantôme) |
+| 37 | `produits-rentabilite.test.js` | rentabilité par produit (marge réelle, pas le CA) |
+| 38 | `comparaison-periode.test.js` | comparaisons à périmètre comparable (prorata du temps écoulé) |
+| 39 | `cout-temps-marge.test.js` | le coût du TEMPS dans les marges |
+| 40 | `marche-temps.test.js` | rentabilité des marchés rapportée au temps sur place |
+| 41 | `prestation-temps.test.js` | la prestation vend du TEMPS (coût des heures vendues) |
+| 42 | `pertes-visibles.test.js` | les pertes ne doivent jamais être cachées (marge négative visible) |
+| 43 | `point-mort.test.js` | le point mort (combien vendre pour couvrir les charges fixes) |
+
+**Leçon** : un journal en retard est un angle mort de second ordre — on ne sait plus ce qu'on ne
+teste pas. Le rattrapage vaut moins qu'une ligne écrite à temps.
+
+---
+
 ## 2026-07-08 — Première passe SWEEPER : suppression du code mort « Le Fil »
 
 **Nature** : nettoyage, pas ajout de test. Première modification applicative depuis la

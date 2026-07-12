@@ -31,6 +31,8 @@ function buildModule(fakeDb){
   const orderToLines  = extractFunction('orderToLines');
   const estReprise    = extractFunction('estReprise');
   const lineTotalStored = extractFunction('lineTotalStored');
+  // [v1325] Règle de ventilation service/marchandise extraite en fonction pure partagée.
+  const partServiceCommande = extractFunction('partServiceCommande');
   const computeMonthlyBilan = extractFunction('computeMonthlyBilan');
   const _moisDeLannee = extractFunction('_moisDeLannee');
   const _chargesPeriode = extractFunction('_chargesPeriode');
@@ -55,6 +57,7 @@ function buildModule(fakeDb){
     ${orderToLines}
     ${estReprise}
     ${lineTotalStored}
+    ${partServiceCommande}
     ${computeMonthlyBilan}
     ${_moisDeLannee}
     ${_chargesPeriode}
