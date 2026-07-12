@@ -10,6 +10,161 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-12 — Vague 48 : LE COPILOTE DEMANDE AU LIEU DE RÉPONDRE À CÔTÉ  (v1326 → **v1327**)
+
+**Nature** : correction du danger mesuré en vague 47 — les **15,7 % de détournements** (réponse
+confiante à la mauvaise question).
+
+### Ce qu'on n'a PAS fait, et pourquoi
+On n'a **pas** écrit de re-classeur qui devinerait « la bonne » intention à la place de
+`parseIntent`. Les signatures auraient été calées sur un corpus de 51 phrases *inventées* : on
+n'aurait fait que corriger un chiffre qu'on a soi-même fabriqué (**surapprentissage**), et déplacé
+les erreurs au lieu de les supprimer. C'est très exactement le reproche fait à l'idée du LLM
+embarqué — il aurait été absurde de le reproduire à la main.
+
+### Ce qu'on a fait
+On **détecte l'ambiguïté** et on **demande**. Convertir une réponse fausse et confiante en une
+question inoffensive, c'est déjà tout le gain — pour **0 Mo** et **100 % hors-ligne**.
+
+**Règle de déclenchement, délibérément CONSERVATRICE** :
+> on ne demande QUE si l'intention retenue ne porte **aucune signature propre** dans le texte,
+> **alors qu'**une intention rivale, elle, en porte une.
+
+Conséquence structurelle : une requête qui contient déjà la signature de sa propre compétence
+**n'est jamais dérangée**. C'est ce qui rend les faux positifs quasi impossibles — et c'est testé.
+
+**Ajouté / modifié** (`copilote-comprehension.test.js` : 4 → **8 assertions**) :
+- `AI_MARQUEURS` — table déclarative des signatures, écrite d'après **ce que chaque compétence
+  mesure** (le CA = ce qui entre ; le net en poche = ce qui reste ; le revenu horaire = rapporté au
+  temps ; le point mort = un volume minimum ; les charges = ce qui sort ; le coût de revient = un
+  produit), et non d'après les phrases qui échouaient.
+- `aiIntentAmbigu(t, intent)` — pure. Renvoie `{ambigu, rivaux}` et **jamais** une intention de
+  remplacement : on ne prétend pas savoir mieux que `parseIntent`, on constate qu'on ne peut pas
+  trancher.
+- `aiDemanderPrecision` — expose l'intention que `parseIntent` avait retenue **en premier**
+  (transparence), puis les rivales. Aucune n'est présentée comme « la bonne ».
+- `aiForcerIntent` — le choix de Benjamin court-circuite `parseIntent` (qui vient d'hésiter) :
+  aucune ré-analyse du texte, sinon on retomberait dans le même détournement.
+- Écarté du mécanisme : les **actions critiques** (créer une commande, lancer une prod), qui ont
+  déjà leur double confirmation, et `unknown`, qui a déjà son repli sur suggestions.
+
+**Résultat mesuré** : **8 détournements sur 8 rattrapés**, **0 faux positif** sur les 41 requêtes
+déjà comprises.
+
+### Le garde-fou contre nous-mêmes : le corpus de VALIDATION (holdout)
+8/8 avec 0 faux positif, c'est trop beau — et les signatures ont été écrites **en connaissant** les
+8 cas fautifs. Un corpus de **15 phrases jamais vues** lors de leur conception a donc été ajouté.
+Le chiffre qui compte n'est pas le taux de succès mais le nombre de **faux positifs** : un détecteur
+qui dérange des requêtes déjà bien comprises est nuisible, peu importe ses succès ailleurs.
+**Résultat : 15/15 comprises sans être dérangées, 0 faux positif.**
+
+Assertion figée : *si un faux positif apparaît, la désambiguïsation est devenue plus nuisible
+qu'utile et doit être retirée.*
+
+### Le journal des VRAIES requêtes
+`aiUsageLog` ne conservait qu'**une** requête par compétence (la dernière) : impossible de rejouer
+l'historique. Le banc de la vague 47 a donc dû se rabattre sur 51 phrases *plausibles* — honnêtes,
+mais **inventées**, donc discutables.
+Ajouté : `aiJournalAjoute` / `aiJournalCharge` (anneau borné à 200 entrées, rien ne quitte le
+téléphone) et `aiAuditJournal` (pure) + la compétence **« audit copilote »**, qui mesure sur les
+**vraies formulations de Benjamin** : compris directement / a dû faire préciser / pas compris.
+L'écran dit explicitement qu'« *a dû faire préciser* » n'est **pas** un échec : c'est une réponse
+fausse évitée.
+
+**Total couvert** : 1006 → **1010 assertions**.
+
+**Angles morts connus (déclarés)** :
+- `AI_MARQUEURS` ne couvre que **15 compétences** sur ~85 — celles du cluster financier/marché, où
+  le recouvrement est le plus dangereux. Les autres ne sont pas protégées.
+- La règle conservatrice a un **coût assumé** : une requête où l'intention retenue porte sa propre
+  signature *et* celle d'une rivale (« mes charges par macaron ») n'est pas détectée comme ambiguë.
+  Choix délibéré — zéro faux positif prime sur l'exhaustivité.
+- La mesure de référence reste celle d'un corpus **inventé**. Le journal la remplacera par une
+  mesure **observée** dès que Benjamin aura utilisé le copilote quelques jours. C'est cette
+  mesure-là qui devra trancher la question du LLM embarqué.
+
+---
+
+## 2026-07-12 — Vague 47 : LE CERVEAU DU COPILOTE ÉTAIT INTESTABLE  (outillage — app.js inchangé)
+
+**Origine** : Benjamin envisageait d'embarquer un LLM on-device (AI Edge Gallery / FunctionGemma)
+pour que le copilote comprenne mieux ses demandes. Avant de supposer, **mesurer**. Impossible :
+`parseIntent` — la fonction qui comprend le langage naturel — n'était pas extractible.
+
+### Le bug de fondation : `_extract.js` était aveugle aux littéraux de regex
+Le stripper de commentaires ET l'équilibreur d'accolades ne connaissaient que trois délimiteurs de
+chaîne (`"` `'` `` ` ``). Sur une ligne comme :
+
+    if(/\b(prod|fournee)\b.{0,18}\b(de|d')\b/.test(t))     ← parseIntent, ligne 33022
+
+l'apostrophe de « d' » ouvrait une **fausse chaîne** : tout le code jusqu'à l'apostrophe suivante
+était avalé, les accolades se déséquilibraient, l'extraction s'arrêtait beaucoup trop tôt.
+
+**Mesure** : `parseIntent` (769 lignes) était extraite… **sur 66 lignes**, en JS invalide.
+Le CERVEAU du copilote était donc **littéralement intestable**. Ce n'est pas un hasard si la
+vague 36 n'avait pu couvrir que `_aiDispatch` (l'aiguillage — un simple `switch`) et jamais la
+compréhension elle-même.
+
+L'échec était **bruyant** (SyntaxError), donc aucun test n'est passé au vert à tort — le filet n'a
+jamais menti. Mais **un angle mort qui se défend en refusant d'être testé reste un angle mort**.
+
+*Correctif* : détection des littéraux de regex (`regexPeutCommencerAt` + `finDeRegex`, scan arrière
+en O(1) — app.js fait 5,5 Mo), partagée par le stripper et l'équilibreur. Les classes `[...]` sont
+suivies, les quantificateurs `.{0,18}` ne sont plus comptés comme des accolades.
+*Preuve de neutralité* : les **1002 assertions** existantes restent vertes sans qu'aucune attente
+n'ait été modifiée. `parseIntent` s'extrait désormais sur 768 lignes, valide.
+
+### Le résultat de la mesure — et il contredit l'intuition
+Corpus de **51 formulations** réalistes sur 12 compétences (canonique + reformulations, familiarités,
+tournures orales) :
+
+| | | |
+|---|---|---|
+| ✅ **Comprises** | 41 / 51 | **80,4 %** |
+| ❌ **Non comprises** (« je n'ai pas compris ») | 2 / 51 | **3,9 %** |
+| ⚠️ **DÉTOURNÉES** (répond à côté, avec assurance) | 8 / 51 | **15,7 %** |
+
+**Formulation canonique : 12/12.** Le dispatcher n'est pas cassé.
+
+**LE CONSTAT CENTRAL** : le copilote ne « comprend pas mal » — il **tranche mal entre des
+compétences qui se recouvrent**. Les 8 détournements opposent tous des intentions
+**sémantiquement voisines** (revenu horaire vs CA, seuil vs rentabilité vs URSSAF, charges vs coût
+de revient, gaspillage vs stock, prochaine livraison vs commandes). Un garde-fou l'assert
+explicitement : **aucun égarement total**.
+
+Or `parseIntent` est une cascade de `if`-`return` : **le premier qui matche gagne**. Une compétence
+déclarée tôt vole donc les requêtes d'une compétence déclarée plus tard (« combien je jette » est
+capté par `query_stock` avant d'atteindre `query_gaspillage`).
+
+**Conséquence pour la décision LLM** : un modèle plus gros ne supprimerait pas ce recouvrement — il
+changerait seulement *lesquelles* il rate. Le problème est dans la **taxonomie des compétences** et
+dans le **premier-arrivé-premier-servi**, pas dans la puissance du parseur. Et le vrai danger n'est
+pas les 3,9 % de « je n'ai pas compris » (honnêtes, inoffensifs) : ce sont les **15,7 % de réponses
+confiantes à la mauvaise question** — Benjamin repart avec le bon écran… pour la mauvaise demande.
+
+**Ajouté** (`copilote-comprehension.test.js`, 4 assertions + rapport chiffré) :
+- CLIQUET : compréhension ≥ 41/51, détournements ≤ 8/51. Toute évolution du copilote qui dégraderait
+  l'un ou l'autre casse ici.
+- Les 12 canoniques doivent toujours passer (sinon une compétence est devenue **inaccessible**).
+- INVARIANT : tous les détournements restent entre compétences voisines.
+
+**Total couvert** : 1002 → **1006 assertions** (le banc produit surtout un *rapport*, pas des
+assertions en masse : sa valeur est le chiffre, pas le compte).
+
+**Piste recommandée (non implémentée — décision de Benjamin)** : remplacer le premier-arrivé-
+premier-servi par un **score de candidats**, et, en cas de quasi-égalité, **demander** (« tu veux
+dire ton revenu horaire, ou ton chiffre d'affaires ? ») au lieu de trancher en silence. Coût : 0 Mo,
+100 % hors-ligne, entièrement testable — et cela convertit 15,7 % de détournements dangereux en
+désambiguïsations inoffensives.
+
+**Angles morts connus (déclarés)** :
+- Le corpus (51 formulations, 12 compétences sur ~85) est un **échantillon**, pas un recensement.
+  Le taux réel sur l'ensemble des compétences peut différer.
+- Les formulations sont *plausibles*, pas *observées* : `aiUsageLog` enregistre les vraies requêtes
+  de Benjamin — les rejouer donnerait un chiffre bien plus solide que mes suppositions.
+
+---
+
 ## 2026-07-12 — Vague 46 : L'EMBALLAGE ÉTAIT GRATUIT  (v1325 → **v1326**)
 
 **Nature** : comblement de l'angle mort déclaré en vague 45.

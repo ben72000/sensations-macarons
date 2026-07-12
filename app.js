@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1326';
-const APP_MAJ = 'L’EMBALLAGE ÉTAIT GRATUIT. Dans le calcul de ton revenu horaire, la variable « coût des emballages » était initialisée à 0… et n’était JAMAIS calculée. À l’endroit du calcul, il n’y avait qu’un commentaire : « approche prudente : si non calculable finement, laissé à 0 (n’invente pas) ». Sauf que METTRE 0 N’EST PAS S’ABSTENIR : c’est affirmer que l’emballage ne coûte rien. Chaque coffret, chaque ruban, chaque sachet que tu achètes sortait GRATUIT de ce calcul — et ton revenu horaire était surestimé d’autant. « N’invente pas » servait de justification à un chiffre inventé : zéro. Le plus frustrant, c’est que l’app SAIT chiffrer un emballage : elle le fait déjà par commande (hiérarchie FIFO réelle, avec ratio d’estimation pour les reprises sans détail) et par marché (stock d’emballages avant − après). Le revenu horaire ne le lui avait simplement jamais demandé. C’est fait. LA RÈGLE QUI COMPTE : l’emballage suit l’ENCAISSEMENT, exactement comme le CA. Le revenu horaire raisonne en trésorerie — une commande payée à moitié n’apporte que la moitié de son CA, elle ne doit donc apporter que la moitié de son carton. Lui opposer 100 % de l’emballage en face de 50 % de la recette fabriquerait une fausse perte. Un marché clos, lui, est encaissé le jour même : aucun prorata. HONNÊTETÉ DE LA SOURCE : l’écran distingue désormais ce qui est MESURÉ (FIFO commandes + stock marchés) de ce qui est ESTIMÉ (commandes de reprise sans détail d’emballage), avec le pourcentage exact et un marquage ligne par ligne — faire passer une estimation pour une mesure serait un mensonge de plus. L’audit de fiabilité s’en mêle aussi : si aucun coût d’emballage n’est détecté alors que tu emballes bien tes macarons, il te dit franchement que tes coffrets ne sont pas paramétrés et que ton revenu horaire est donc SURESTIMÉ. Ordre de grandeur : 80 € de carton sur une période de 20 h pointées, c’est 4 € de l’heure qui n’existaient pas. Suite : 961 → 1002 assertions vertes.';
+const APP_VERSION = 'v1327';
+const APP_MAJ = 'TON COPILOTE RÉPONDAIT À CÔTÉ — AVEC ASSURANCE. Tu voulais savoir si un LLM embarqué valait le coup. Avant de supposer, j’ai mesuré. Premier obstacle, révélateur : impossible de tester parseIntent (la fonction qui te comprend). L’extracteur des tests était AVEUGLE AUX REGEX — l’apostrophe de « d’ » dans une expression ouvrait une fausse chaîne, et parseIntent (769 lignes) s’extrayait sur 66 lignes de code invalide. Le CERVEAU de ton copilote était littéralement INTESTABLE. Réparé (les 1002 assertions existantes sont restées vertes, preuve que rien n’a bougé). LA MESURE, sur 51 formulations : 80,4 % comprises, 3,9 % non comprises… et 15,7 % DÉTOURNÉES — une réponse confiante à la MAUVAISE question. Le 3,9 % est honnête et inoffensif. Le 15,7 % est le vrai danger : tu repars avec le bon écran pour la mauvaise demande. LE DIAGNOSTIC : ton copilote ne comprend pas mal, il TRANCHE MAL entre des compétences qui SE RECOUVRENT (revenu horaire ↔ CA, point mort ↔ rentabilité ↔ URSSAF, gaspillage ↔ stock…). Et parseIntent est une cascade où LE PREMIER QUI MATCHE GAGNE : « combien je jette » était capturé par le stock avant même d’atteindre le gaspillage. CONCLUSION SUR LE LLM : il ne réglerait pas ça. Le recouvrement est dans la TAXONOMIE de tes compétences, pas dans la puissance du parseur — un modèle plus gros changerait seulement LESQUELLES il rate. LA CORRECTION, pour 0 Mo et 100 % hors-ligne : quand c’est ambigu, le copilote DEMANDE au lieu de trancher en silence. Il te montre ce qu’il allait faire, propose les rivales, et te dit franchement qu’il ne peut pas choisir à ta place. Règle volontairement CONSERVATRICE : il ne demande QUE si l’intention retenue ne porte AUCUNE signature propre alors qu’une rivale en porte une — donc une requête déjà bien comprise n’est JAMAIS dérangée. Résultat mesuré : 8 détournements sur 8 rattrapés, ZÉRO faux positif. Et pour être honnête envers moi-même, j’ai validé sur un corpus que les signatures n’avaient jamais vu (anti-surapprentissage) : 15/15, aucun faux positif. ENFIN, L’AUDIT SUR TES VRAIES REQUÊTES. Mes 51 phrases étaient plausibles, pas observées — donc discutables. L’app note désormais tes questions (200 dernières, rien ne quitte ton téléphone) : demande-lui « audit copilote » après quelques jours, et elle te dira sur TES formulations combien de fois elle t’a compris, combien de fois elle a dû te faire préciser, et ce qu’elle n’a pas compris du tout. Suite : 1002 → 1010 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -34168,6 +34168,142 @@ function aiHelp(txt){
 const AI_USAGE_KEY='sm_aiUsage';
 const AI_USAGE_SKIP=new Set(['unknown','greeting','thanks','help','about']);
 function aiUsageLoad(){ try{ return JSON.parse(localStorage.getItem(AI_USAGE_KEY)||'{}')||{}; }catch(_){ return {}; } }
+// ============================================================================
+//  [v1327] LE COPILOTE RÉPONDAIT À CÔTÉ — AVEC ASSURANCE.
+// ----------------------------------------------------------------------------
+//  Mesure (vague 47, corpus de 51 formulations) : 80,4 % comprises, 3,9 % non comprises…
+//  et 15,7 % DÉTOURNÉES — c'est-à-dire une réponse confiante à la MAUVAISE question.
+//  Le 3,9 % est honnête et inoffensif (« je n'ai pas compris »). Le 15,7 % est le vrai
+//  danger : Benjamin repart avec le bon écran pour la mauvaise demande.
+//
+//  DIAGNOSTIC. Le copilote ne « comprend pas mal » : il TRANCHE MAL entre des compétences
+//  qui SE RECOUVRENT. Les détournements observés opposent tous des intentions voisines
+//  (revenu horaire ↔ CA, seuil ↔ rentabilité ↔ URSSAF, gaspillage ↔ stock…). Et parseIntent
+//  est une cascade de `if`-`return` : LE PREMIER QUI MATCHE GAGNE. Une compétence déclarée
+//  tôt vole donc les requêtes d'une compétence déclarée plus tard.
+//
+//  CE QU'ON NE FAIT PAS. On ne tente PAS de deviner « la bonne » intention à la place de
+//  parseIntent. Un re-classeur calé sur un corpus inventé ne ferait que corriger un chiffre
+//  qu'on a soi-même fabriqué (surapprentissage) — et il déplacerait les erreurs au lieu de
+//  les supprimer. C'est exactement le reproche qu'on fait à l'idée du LLM embarqué.
+//
+//  CE QU'ON FAIT. On DÉTECTE l'ambiguïté et on DEMANDE. Convertir une réponse fausse et
+//  confiante en une question inoffensive, c'est déjà tout le gain — et ça ne coûte ni un Mo,
+//  ni une connexion.
+//
+//  RÈGLE DE DÉCLENCHEMENT, délibérément CONSERVATRICE :
+//    on ne demande QUE si l'intention retenue ne porte AUCUNE signature propre dans le texte,
+//    ALORS QU'une intention rivale, elle, en porte une.
+//  Conséquence : une requête qui contient déjà la signature de sa propre compétence n'est
+//  JAMAIS dérangée. Les 80,4 % qui fonctionnent restent intacts — c'est vérifié par un test.
+// ============================================================================
+
+// Les SIGNATURES : ce qui distingue conceptuellement deux compétences voisines.
+// Écrites d'après ce que CHAQUE COMPÉTENCE MESURE, et non d'après les phrases qui la ratent
+// (sinon on ne ferait que réviser pour l'examen).
+//   • le CA, c'est ce qui ENTRE            • le net en poche, c'est ce qui RESTE
+//   • le revenu horaire, c'est rapporté au TEMPS
+//   • le point mort, c'est un VOLUME MINIMUM
+//   • les charges, c'est ce qui SORT chaque mois   • le coût de revient, c'est UN produit
+const AI_MARQUEURS = {
+  query_revenu_horaire:      "\\b(horaire|de l heure|par heure|smic|taux horaire)\\b",
+  query_revenue:             "\\b(chiffre d affaires|chiffre d affaire|encaisse|facture)\\b",
+  query_net_poche:           "\\b(poche|je touche|net en poche|reste vraiment)\\b",
+  query_seuil_rentabilite:   "\\b(point mort|seuil|couvrir|a partir de combien|pour ne pas perdre|minimum a vendre|rentre dans mes frais)\\b",
+  query_rentabilite:         "\\b(rentabilite|rentable|marge)\\b",
+  query_charges:             "\\b(charges|frais fixes|abonnement|assurance|par mois)\\b",
+  query_cout_revient:        "\\b(cout de revient|prix de revient|cout unitaire)\\b",
+  query_urssaf:              "\\b(urssaf|cotisation|cotise|cotisations)\\b",
+  query_gaspillage:          "\\b(jette|jeter|jetes|invendu|invendus|gaspill|poubelle)\\b",
+  query_stock:               "\\b(stock|il me reste|en stock|rupture)\\b",
+  query_bilan_marche:        "\\b(bilan|a donne|s est passe|rapporte|rapportent|ca donne quoi)\\b",
+  query_market_advice:       "\\b(quel marche|je devrais|vaut le coup|conseille|prochain marche)\\b",
+  query_prochaine_livraison: "\\b(quand)\\b.{0,30}\\b(livr)|\\b(livr).{0,30}\\b(quand)\\b",
+  query_orders:              "\\b(commande|commandes)\\b",
+  query_top_parfum:          "\\b(meilleur parfum|se vend le mieux|plus vendu|top parfum)\\b"
+};
+
+// Libellés lisibles, pour poser la question en français et non en noms de code.
+const AI_INTENT_LABELS = {
+  query_revenu_horaire:'Ton revenu horaire', query_revenue:'Ton chiffre d\'affaires',
+  query_net_poche:'Ton net en poche', query_seuil_rentabilite:'Ton point mort',
+  query_rentabilite:'Ta rentabilité', query_charges:'Tes charges',
+  query_cout_revient:'Ton coût de revient', query_urssaf:'Tes cotisations URSSAF',
+  query_gaspillage:'Ton gaspillage', query_stock:'Ton stock',
+  query_bilan_marche:'Ton bilan marché', query_market_advice:'Conseil marché',
+  query_prochaine_livraison:'Ta prochaine livraison', query_orders:'Tes commandes',
+  query_top_parfum:'Ton meilleur parfum'
+};
+
+// PURE. Le texte est déjà normalisé (aiNormalize + aiCorrigeFautes).
+// Renvoie {ambigu, rivaux[]} — et JAMAIS une intention de remplacement : on ne prétend pas
+// savoir mieux que parseIntent, on constate seulement qu'on ne peut pas trancher.
+function aiIntentAmbigu(t, intent){
+  const vide = { ambigu:false, rivaux:[], signaturePropre:false };
+  if(!t || !intent || !AI_MARQUEURS[intent]) return vide;
+
+  const porte = (i) => { try{ return new RegExp(AI_MARQUEURS[i]).test(t); }catch(e){ return false; } };
+
+  // L'intention retenue porte-t-elle sa propre signature ? Si oui → on ne dérange rien.
+  const signaturePropre = porte(intent);
+  if(signaturePropre) return { ambigu:false, rivaux:[], signaturePropre:true };
+
+  // Sinon : une rivale porte-t-elle la sienne ?
+  const rivaux = Object.keys(AI_MARQUEURS).filter(i => i !== intent && porte(i));
+  if(!rivaux.length) return vide;                       // aucun signal → on laisse répondre
+
+  return { ambigu:true, rivaux:rivaux.slice(0,3), signaturePropre:false };
+}
+
+// ---------------------------------------------------------------------------
+// [v1327] JOURNAL DES REQUÊTES RÉELLES.
+// aiUsageLog ne conserve qu'UNE requête par compétence (la dernière) : impossible de rejouer
+// l'historique pour mesurer la compréhension sur de VRAIES formulations. Le banc de la vague 47
+// a donc dû se rabattre sur 51 phrases *plausibles* — inventées par moi, donc discutables.
+// On capture désormais les vraies, pour que la mesure repose enfin sur l'usage et non sur une
+// supposition. Anneau borné à 200 entrées (aucune donnée ne quitte le téléphone).
+// ---------------------------------------------------------------------------
+const AI_JOURNAL_KEY = 'sm_aiJournal';
+const AI_JOURNAL_MAX = 200;
+
+function aiJournalAjoute(texte, intent, ambigu){
+  try{
+    const q = String(texte||'').trim();
+    if(!q || q.length > 120) return;
+    const j = aiJournalCharge();
+    j.push({ t:Date.now(), q, i:intent||'unknown', a:!!ambigu });
+    while(j.length > AI_JOURNAL_MAX) j.shift();
+    localStorage.setItem(AI_JOURNAL_KEY, JSON.stringify(j));
+  }catch(e){ swallow(e,'aiJournalAjoute'); }
+}
+function aiJournalCharge(){
+  try{ const r = JSON.parse(localStorage.getItem(AI_JOURNAL_KEY)||'[]'); return Array.isArray(r)?r:[]; }
+  catch(e){ return []; }
+}
+
+// PURE. Le compte-rendu du journal : c'est la MESURE, sur les vraies requêtes de Benjamin.
+// Les trois catégories sont celles du banc (vague 47), pour que les chiffres soient comparables.
+function aiAuditJournal(entrees){
+  const j = (entrees||[]).filter(e => e && e.q);
+  const total = j.length;
+  const nUnknown = j.filter(e => e.i === 'unknown').length;
+  const nAmbigu  = j.filter(e => e.a).length;                       // rattrapées : on a demandé
+  const nDirect  = total - nUnknown - nAmbigu;                      // répondues sans hésiter
+  const pct = n => total>0 ? Math.round(n/total*1000)/10 : 0;
+
+  // Les compétences les plus sollicitées, et celles qui déclenchent le plus d'ambiguïtés.
+  const parIntent = {};
+  j.forEach(e => { (parIntent[e.i] ||= {intent:e.i, n:0, amb:0}); parIntent[e.i].n++; if(e.a) parIntent[e.i].amb++; });
+  const top = Object.values(parIntent).sort((a,b)=>b.n-a.n).slice(0,8);
+
+  return {
+    total, nDirect, nUnknown, nAmbigu,
+    pctDirect:pct(nDirect), pctUnknown:pct(nUnknown), pctAmbigu:pct(nAmbigu),
+    top,
+    incomprises: j.filter(e => e.i === 'unknown').slice(-10).map(e => e.q)
+  };
+}
+
 function aiUsageLog(intent, ask){
   if(!intent || AI_USAGE_SKIP.has(intent)) return;
   try{
@@ -37560,6 +37696,31 @@ try{ if(typeof window!=='undefined'){ window.smWhy=smWhy; window.smSkills=smSkil
 async function _aiDispatch(r, txt, _ctx){
   // [ASSIST-PLUS] journal d'usage (habitudes) + fallback intelligent sur incompréhension.
   try{ if(r && r.intent) aiUsageLog(r.intent, txt); }catch(e){swallow(e,'_aiDispatch')}
+
+  // [v1327] AUDIT DU COPILOTE — « audit copilote », « est-ce que tu me comprends ».
+  // Placé ici et non dans parseIntent : inutile de toucher une cascade de 769 lignes pour ça.
+  try{
+    const _ta = aiNormalize(txt||'');
+    if(/\baudit (du )?copilote\b|\btu me comprends\b|\bcomprehension\b/.test(_ta)) return aiQueryAuditCopilote();
+  }catch(e){swallow(e,'_aiDispatch audit')}
+
+  // [v1327] AMBIGUÏTÉ ENTRE COMPÉTENCES VOISINES — on demande au lieu de répondre à côté.
+  // Volontairement écarté : les actions CRITIQUES (créer une commande, lancer une prod…), qui
+  // ont déjà leur propre double confirmation, et 'unknown', qui a déjà son repli sur suggestions.
+  let _ambigu = false;
+  try{
+    if(r && r.intent && r.intent!=='unknown' && !r.critical){
+      const _t = aiCorrigeFautes(aiNormalize(txt||''));
+      const _amb = aiIntentAmbigu(_t, r.intent);
+      if(_amb.ambigu){
+        _ambigu = true;
+        aiJournalAjoute(txt, r.intent, true);
+        return aiDemanderPrecision(r.intent, _amb.rivaux);
+      }
+    }
+  }catch(e){swallow(e,'_aiDispatch ambigu')}
+  try{ if(!_ambigu) aiJournalAjoute(txt, r && r.intent, false); }catch(e){swallow(e,'_aiDispatch journal')}
+
   if(r && r.intent==='unknown'){
     try{ if(aiRepondreSuggestions(txt)) return; }catch(e){swallow(e,'_aiDispatch')}
   }
@@ -39659,6 +39820,63 @@ async function aiQueryRentaLivraison(params){
 }
 
 // [V944] REVENU HORAIRE. Source : revenuHoraireCalcul.
+// [v1327] LA QUESTION plutôt que la réponse fausse.
+// On expose l'intention que parseIntent avait retenue EN PREMIER (transparence : Benjamin voit ce
+// que le copilote allait faire), puis les rivales. Aucune n'est présentée comme « la bonne » —
+// on ne prétend pas savoir : on constate qu'on ne peut pas trancher, et on le dit.
+function aiDemanderPrecision(intentRetenu, rivaux){
+  const lbl = i => AI_INTENT_LABELS[i] || i;
+  const choix = [intentRetenu, ...(rivaux||[])];
+  const btns = choix.map((i, k) => `<button class="ai-suite-btn${k===0?'':''}" onclick="aiForcerIntent('${i}')" style="margin:3px 4px 0 0">${esc(lbl(i))}</button>`).join('');
+  return aiSay(`${aiSynth('Ta demande peut vouloir dire plusieurs choses, et je préfère te le demander plutôt que de te répondre à côté sans le dire.', {icon:'🤔'})}
+    <div style="margin-top:8px;font-size:.85rem;color:#6a5a52">Tu veux dire&nbsp;:</div>
+    <div style="margin-top:6px">${btns}</div>
+    <div style="margin-top:8px;font-size:.72rem;color:#9a8a82">Ces indicateurs sont proches mais ne mesurent pas la même chose — te donner le mauvais serait pire que te poser la question.</div>`);
+}
+
+// Force une intention choisie par Benjamin : on court-circuite parseIntent (qui vient justement
+// d'hésiter) et on appelle directement la compétence. Aucune ré-analyse du texte : ce serait
+// retomber dans le même détournement.
+async function aiForcerIntent(intent){
+  try{
+    aiPush('user', AI_INTENT_LABELS[intent] || intent);
+    await _aiDispatch({ intent, params:{}, critical:false }, '', {});
+  }catch(e){ swallow(e,'aiForcerIntent'); }
+}
+
+// [v1327] L'AUDIT DU COPILOTE, sur TES vraies requêtes.
+// Le banc de la vague 47 mesurait 51 formulations *inventées* par l'assistant. Honnête, mais
+// discutable. Ceci mesure ce que TU tapes réellement — la seule mesure qui vaille.
+async function aiQueryAuditCopilote(){
+  const A = aiAuditJournal(aiJournalCharge());
+  if(A.total === 0){
+    return aiSay(`${aiSynth('Je n\'ai encore rien à me reprocher — parce que je n\'ai rien enregistré.', {icon:'📋'})}
+      <div style="font-size:.85rem;color:#6a5a52;line-height:1.6;margin-top:8px">
+        Je viens tout juste de commencer à noter tes questions (et seulement elles : rien ne quitte ton téléphone).
+        Reviens après une vingtaine d'échanges : je te dirai alors, <b>sur tes vraies formulations</b>, combien de fois
+        je t'ai compris, combien de fois j'ai dû te demander de préciser, et combien de fois je n'ai rien compris du tout.
+      </div>`);
+  }
+  const ligne = (l,v,c) => `<div class="sum-box"><span>${l}</span><b style="color:${c||'inherit'}">${v}</b></div>`;
+  return aiSay(`${aiHero(`${A.pctDirect} %`, 'Compris du premier coup', {sub:`sur tes ${A.total} dernières questions`, color: A.pctDirect>=80?'#2e7d32':A.pctDirect>=60?'var(--bordeaux)':'#b3261e'})}
+    ${aiSynth(A.pctUnknown>20
+        ? 'Je rate encore trop souvent. Regarde les questions ci-dessous que je n\'ai pas comprises : ce sont elles qu\'il faut m\'apprendre.'
+        : (A.pctAmbigu>15
+            ? 'Je te comprends bien, mais je te fais souvent préciser : tes compétences financières se ressemblent beaucoup.'
+            : 'Je te comprends correctement.'),
+      {icon:'🤖', tone: A.pctUnknown>20?'warn':(A.pctDirect>=80?'ok':'')})}
+    ${aiDetails(`
+      ${ligne('✅ Répondu directement', `${A.nDirect} (${A.pctDirect} %)`, '#2e7d32')}
+      ${ligne('🤔 J\'ai demandé de préciser', `${A.nAmbigu} (${A.pctAmbigu} %)`, 'var(--caramel)')}
+      ${ligne('❌ Pas compris du tout', `${A.nUnknown} (${A.pctUnknown} %)`, A.nUnknown?'#b3261e':'inherit')}
+      <div style="margin-top:8px;font-size:.75rem;color:#9a8a82;line-height:1.5">
+        « J'ai demandé de préciser » n'est <b>pas</b> un échec : c'est une réponse fausse évitée. Avant la v1327,
+        ces cas-là recevaient une réponse confiante… à la mauvaise question.
+      </div>`, 'Le détail')}
+    ${A.top.length?aiDetails(A.top.map(x=>ligne(AI_INTENT_LABELS[x.intent]||x.intent, `${x.n}×${x.amb?` · ${x.amb} hésitation${x.amb>1?'s':''}`:''}`)).join(''), 'Ce que tu me demandes le plus'):''}
+    ${A.incomprises.length?aiDetails(A.incomprises.map(q=>`<div style="font-size:.8rem;color:#6a5a52;padding:3px 0">« ${esc(q)} »</div>`).join(''), 'Ce que je n\'ai pas compris'):''}`);
+}
+
 async function aiQueryRevenuHoraire(){
   let R=null; try{ R=await revenuHoraireCalcul(90); }catch(e){swallow(e,'aiQueryRevenuHoraire')}
   if(!R || R.heures==null || R.heures<=0){
