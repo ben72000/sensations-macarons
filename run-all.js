@@ -52,7 +52,8 @@ const SUITES = [
   'cout-temps-marge.test.js',    // vague 39 : le coût du temps dans les marges (périmètre coques/macarons)
   'marche-temps.test.js',        // vague 40 : rentabilité des marchés rapportée au temps passé sur place
   'prestation-temps.test.js',    // vague 41 : la prestation vend du temps (coût des heures + revenu horaire)
-  'pertes-visibles.test.js'      // vague 42 : les pertes ne doivent jamais être cachées (marge négative visible)
+  'pertes-visibles.test.js',     // vague 42 : les pertes ne doivent jamais être cachées (marge négative visible)
+  'point-mort.test.js'           // vague 43 : le point mort (combien vendre pour couvrir les charges fixes)
 ];
 
 let allOk = true;

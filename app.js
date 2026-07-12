@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1322';
-const APP_MAJ = 'L\u2019APP CACHAIT TES PERTES. Dans la fiche parfum, la marge \u00e9tait calcul\u00e9e avec Math.max(0, \u2026) : une marge N\u00c9GATIVE \u00e9tait \u00e9cras\u00e9e \u00e0 z\u00e9ro. Pire, un filtre faisait ensuite DISPARA\u00ceTRE le segment \u00ab Marge nette \u00bb de la barre et de la l\u00e9gende : un parfum vendu \u00e0 perte affichait une barre pleine de co\u00fbts, sans le moindre signal. On produisait \u00e0 perte sans le savoir. D\u00e9sormais la perte est CALCUL\u00c9E, AFFICH\u00c9E et SIGNAL\u00c9E : \u00ab Vendu \u00e0 perte : \u22120,21 \u20ac par macaron \u00bb, avec le prix d\u2019\u00e9quilibre exact et ce qu\u2019il manque. La barre mat\u00e9rialise le d\u00e9passement des co\u00fbts. Et dans le \u00ab mix de parfums optimal \u00bb, les parfums d\u00e9ficitaires \u2014 justement exclus des recommandations \u2014 sont maintenant LIST\u00c9S avec leur d\u00e9ficit, au lieu de dispara\u00eetre sans explication. L\u2019enjeu est r\u00e9el : un parfum co\u00fbteux (pistache, temps long) paraissait rentable \u00e0 +0,34 \u20ac tant que le co\u00fbt du temps n\u2019\u00e9tait pas compt\u00e9 ; il est en r\u00e9alit\u00e9 d\u00e9ficitaire \u00e0 \u22120,21 \u20ac. V\u00e9rifi\u00e9 \u00e9galement : les \u00e9v\u00e9nements (mariages) \u00e9taient d\u00e9j\u00e0 correctement chiffr\u00e9s (production + livraison) \u2014 rien \u00e0 corriger. Suite : 813 \u2192 834 assertions.';
+const APP_VERSION = 'v1323';
+const APP_MAJ = 'TON POINT MORT \u2014 la question la plus fondamentale d\u2019une activit\u00e9, et elle n\u2019existait nulle part. L\u2019app savait dire \u00ab ce parfum est rentable \u00e0 l\u2019unit\u00e9 \u00bb, mais jamais \u00ab COMBIEN dois-je vendre chaque mois pour ne pas perdre d\u2019argent ? \u00bb Or tes charges fixes (assurance, abonnements, \u00e9nergie, compta) tombent que le mois soit bon ou mauvais. L\u2019\u00e9cran de rentabilit\u00e9 affiche d\u00e9sormais, tout en haut : le nombre de macarons \u00e0 vendre CHAQUE MOIS pour couvrir tes charges fixes, le rythme quotidien correspondant, et le CA minimum. Exemple : 320 \u20ac de charges fixes \u00f7 0,38 \u20ac de marge par macaron = 843 macarons/mois, soit ~29 par jour \u2014 au-del\u00e0, chaque macaron est du b\u00e9n\u00e9fice net. Le calcul est d\u00e9pliable et v\u00e9rifiable \u00e0 la main. GARDE-FOU CRITIQUE : si ta marge unitaire est n\u00e9gative, l\u2019app refuse d\u2019afficher un chiffre et te dit qu\u2019AUCUN volume ne te rendra rentable \u2014 vendre plus ne ferait qu\u2019aggraver la perte, il faut d\u2019abord corriger le prix ou les co\u00fbts. C\u2019est le pi\u00e8ge classique \u00e9vit\u00e9. Deux enseignements chiffr\u00e9s au passage : gagner 12 centimes de marge par macaron, c\u2019est 203 macarons de moins \u00e0 vendre chaque mois ; et un simple abonnement \u00e0 30 \u20ac/mois te co\u00fbte 79 macarons suppl\u00e9mentaires \u00e0 vendre, tous les mois. Suite : 834 \u2192 859 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -30483,6 +30483,62 @@ async function personaFromClient(clientId){
   personaForm(id);   // ouvre l'édition pour compléter/affiner
 }
 
+// [v1323] POINT MORT — la question la plus fondamentale d'une activité, et elle n'existait nulle part.
+// L'app savait dire « ce parfum est rentable à l'unité », mais jamais « combien dois-je vendre chaque
+// mois pour ne pas perdre d'argent ». Or Benjamin a des charges FIXES (assurance, abonnements, énergie,
+// matériel) qui tombent que le mois soit bon ou mauvais.
+//
+// Principe (comptabilité de base) :
+//     point mort (en macarons) = charges fixes mensuelles ÷ marge de contribution unitaire
+// où la marge de contribution = prix de vente − coûts VARIABLES (matières, consommables, main-d'œuvre,
+// charges sociales). C'est ce que chaque macaron vendu « rapporte » pour éponger les charges fixes.
+//
+// Renvoie tout ce qu'il faut pour VÉRIFIER le chiffre à la main (exigence de traçabilité) :
+//   { chargesFixesMensuelles, margeUnitaire, macaronsParMois, macaronsParJour, caMinimum, atteignable }
+function computePointMort(chargesFixesMensuelles, margeUnitaire, prixVenteMoyen){
+  const fixes = Math.max(0, +chargesFixesMensuelles || 0);
+  const marge = +margeUnitaire || 0;
+
+  // Marge de contribution nulle ou négative → aucun volume ne peut couvrir les charges fixes.
+  // Vendre PLUS aggraverait même la perte. Il faut d'abord corriger le prix ou les coûts.
+  if(!(marge > 0)){
+    return { chargesFixesMensuelles: fixes, margeUnitaire: marge,
+             macaronsParMois: null, macaronsParJour: null, caMinimum: null,
+             atteignable: false,
+             raison: marge < 0
+               ? 'Chaque macaron vendu te fait PERDRE de l\'argent : aucun volume ne couvrira tes charges fixes.'
+               : 'Marge unitaire nulle : impossible de couvrir la moindre charge fixe.' };
+  }
+  if(fixes === 0){
+    return { chargesFixesMensuelles: 0, margeUnitaire: marge,
+             macaronsParMois: 0, macaronsParJour: 0, caMinimum: 0,
+             atteignable: true, raison: 'Aucune charge fixe déclarée.' };
+  }
+
+  const macaronsParMois = Math.ceil(fixes / marge);
+  const px = +prixVenteMoyen || 0;
+  return {
+    chargesFixesMensuelles: money2(fixes),
+    margeUnitaire: money2(marge),
+    macaronsParMois,
+    macaronsParJour: Math.ceil(macaronsParMois / 30),
+    caMinimum: px > 0 ? money2(macaronsParMois * px) : null,
+    atteignable: true,
+    raison: null
+  };
+}
+
+// Total des charges FIXES mensuelles : somme des charges récurrentes actives.
+// (Une charge récurrente est, par définition, un engagement qui tombe chaque mois.)
+function chargesFixesMensuelles(){
+  try{
+    const models = (typeof getRecurringCharges==='function') ? getRecurringCharges() : [];
+    return money2(models
+      .filter(m => m && m.actif !== false && (+m.montant || 0) > 0)
+      .reduce((s, m) => s + (+m.montant || 0), 0));
+  }catch(e){ swallow(e,'chargesFixesMensuelles'); return 0; }
+}
+
 async function renderProfit(){
   const [orders, clients, recipes, recipeItems, lots, _mats, _markets, _mm, _prods] = await Promise.all([
     db.orders.toArray(), db.clients.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(),
@@ -30558,10 +30614,62 @@ async function renderProfit(){
     </div>`).join('')
     :'<p class="note">Aucune commande événementielle.</p>';
 
+  // [v1323] POINT MORT : combien vendre chaque mois pour ne PAS perdre d'argent.
+  // On prend la marge unitaire MOYENNE pondérée par les ventes (et non une moyenne simple, qui
+  // donnerait autant de poids à un parfum vendu 5 fois qu'à un vendu 500 fois).
+  let _pmHtml = '';
+  try{
+    const _fx = chargesFixesMensuelles();
+    const _A2 = analyzeFlavorProfitability({recipes, recipeItems, lots, mats:_mats, orders, markets:_markets, marketMoves:_mm, productions:_prods, settings:getSettings()});
+    const _vendus = (_A2.rows||[]).filter(r=>r.piecesVendues>0 && r.margeUnit!=null);
+    const _totPieces = _vendus.reduce((s,r)=>s+r.piecesVendues, 0);
+    const _margeMoy = _totPieces>0
+      ? money2(_vendus.reduce((s,r)=>s + r.margeUnit*r.piecesVendues, 0) / _totPieces) : 0;
+    const _prixMoy = _totPieces>0
+      ? money2(_vendus.reduce((s,r)=>s + (r.prixVenteMoyen||0)*r.piecesVendues, 0) / _totPieces) : 0;
+    const pm = computePointMort(_fx, _margeMoy, _prixMoy);
+
+    if(_fx > 0 || !pm.atteignable){
+      _pmHtml = `<div class="panel" style="border-left:4px solid ${pm.atteignable?'var(--caramel)':'#b3261e'}">
+        <h2>🎯 Ton point mort</h2>
+        ${pm.atteignable ? `
+          <p class="note" style="margin:-4px 0 10px">Le volume minimum à vendre chaque mois pour couvrir tes charges fixes. En dessous, tu perds de l'argent.</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            <div class="sum-box" style="display:block;background:linear-gradient(135deg,#52252F,#3d1a22);color:#fff">
+              <div style="font-size:.72rem;opacity:.85;text-transform:uppercase">À vendre par mois</div>
+              <div style="font-size:1.7rem;font-weight:700">${pm.macaronsParMois} macarons</div>
+              <div style="font-size:.74rem;opacity:.8">soit ~${pm.macaronsParJour}/jour${pm.caMinimum!=null?` · ${euro(pm.caMinimum)} de CA`:''}</div>
+            </div>
+            <div class="sum-box" style="display:block">
+              <div style="font-size:.72rem;color:#9a8a82;text-transform:uppercase">Charges fixes</div>
+              <div style="font-size:1.7rem;font-weight:700">${euro(pm.chargesFixesMensuelles)}<span style="font-size:.8rem;font-weight:400">/mois</span></div>
+              <div style="font-size:.74rem;color:#9a8a82">assurance, abonnements, énergie…</div>
+            </div>
+          </div>
+          <details style="margin-top:4px">
+            <summary style="cursor:pointer;font-size:.8rem;color:var(--caramel);font-weight:600">🔎 D'où vient ce chiffre ?</summary>
+            <div style="margin-top:8px;font-size:.8rem;color:#6a5a52;line-height:1.6">
+              Chaque macaron vendu te rapporte <b>${euro(pm.margeUnitaire)}</b> de marge (prix de vente moyen ${euro(_prixMoy)} − matières, main-d'œuvre et charges sociales).<br>
+              Il faut donc <b>${euro(pm.chargesFixesMensuelles)} ÷ ${euro(pm.margeUnitaire)} = ${pm.macaronsParMois} macarons</b> pour éponger tes charges fixes.<br>
+              <span style="color:#9a8a82">Chaque macaron vendu AU-DELÀ de ${pm.macaronsParMois} est du bénéfice net.</span>
+            </div>
+          </details>
+        ` : `
+          <div style="padding:10px 12px;background:#fdecea;border-radius:8px">
+            <div style="font-weight:700;color:#b3261e;font-size:.9rem">⚠️ Aucun volume ne peut te rendre rentable</div>
+            <div style="font-size:.8rem;color:#6a5a52;margin-top:4px">${esc(pm.raison||'')}<br>
+            Vendre davantage ne ferait qu'aggraver la perte. Il faut d'abord <b>augmenter tes prix</b> ou <b>réduire tes coûts</b>.</div>
+          </div>
+        `}
+      </div>`;
+    }
+  }catch(e){ swallow(e,'pointMort'); }
+
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Analyse de rentabilité</h1><p>Marge brute & nette · classement par rentabilité</p></div>
      <button class="btn ghost sm" onclick="settingsForm()">⚙ Paramètres</button></div>
    <div class="banner">📈 <div>Marge brute = prix de vente − matières − emballages. Marge nette = marge brute − charges sociales (${getSettings().socialGoods}% marchandise, ${getSettings().socialService}% prestation). L'échelle de rentabilité se base sur le taux de marge nette.</div></div>
+   ${_pmHtml}
    ${_leviersHtml}
    <div class="panel"><h2>Classement clients par rentabilité</h2>${clientTable}</div>
    <h2 style="font-family:'Bellota',serif;color:var(--bordeaux);margin:18px 0 4px;font-size:1.2rem">Rentabilité par événement</h2>
