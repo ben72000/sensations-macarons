@@ -10,6 +10,86 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-12 — Vague 50 : L'APOSTROPHE TUAIT LES BOUTONS  (v1328 → **v1329**)
+
+**Nature** : audit de l'angle mort déclaré en vague 49. Même faille (« les données ne sont pas du
+code »), **autre langage** : côté regex en v1328, côté **JavaScript des attributs inline** ici.
+
+### Le piège
+
+    onclick="maFonction('${nom}')"
+
+C'est l'**apostrophe** qui délimite la chaîne JS. Or :
+- `esc()` échappe `& < > "` … mais **pas** l'apostrophe (inoffensive en HTML, fatale en JS) ;
+- `encodeURIComponent()` **ne l'encode pas non plus** — idée reçue tenace :
+  `encodeURIComponent("Fleur d'oranger")` → `Fleur%20d'oranger` ← **elle survit**.
+
+En pâtisserie française, l'apostrophe est la **norme** : « Fleur d'oranger », « Crème d'amande »,
+« L'Épi d'Or ». Ce n'est pas un cas tordu, c'est le quotidien.
+
+**9 sites corrigés** : boutons « valider un parfum », « dévalider », « appliquer la suggestion »,
+« appliquer la composition du coffret », « valider & figer les parfums », ajout d'item grand format,
+reports de planning (×2), et un **nom de client/marché injecté brut en HTML** (ligne 45083).
+
+### Cinq variantes artisanales, dont deux fausses
+L'audit a trouvé **cinq** façons d'échapper l'apostrophe cohabitant dans le fichier :
+
+| # | Variante | Verdict |
+|---|---|---|
+| 1 | `esc(x).replace(/'/g,"\\'")` (×17) | marche, mais ignore l'antislash et le saut de ligne |
+| 2 | `String(x).replace(/'/g,"\\'")` | idem |
+| 3 | `x.replace(/\\/g,'\\\\').replace(/'/g,"\\'")` | **le seul complet** — un endroit sur cinq |
+| 4 | `String(x).replace(/'/g,'')` | **DESTRUCTIF** : supprimait l'apostrophe du nom |
+| 5 | `esc(x).replace(/'/g,'&#39;')` | **FAUX** : le navigateur **redécode** `&#39;` en apostrophe **avant** de compiler le JS de l'attribut → le bouton casse quand même |
+
+> Une protection qui ne protège rien est **pire** que pas de protection : elle rassure.
+
+*Corrigé* : un helper unique, `escJs()`. **L'ORDRE y est critique** — antislash **d'abord** (sinon
+on échappe ses propres échappements), puis apostrophe, puis sauts de ligne, puis `esc()` pour
+l'attribut. Les 22 échappements artisanaux ont été migrés ; il n'en reste **aucun**.
+
+### L'erreur que j'ai commise en chemin (figée dans les tests)
+Ma **première correction** remplaçait `encodeURIComponent` par `escJs`. **Elle était fausse** : la
+fonction réceptrice fait un `decodeURIComponent`, et retirer l'encodage de **transport** casse
+l'aller-retour — un parfum « Chocolat 70% » aurait levé une **URIError**.
+Il faut **les deux couches, dans cet ordre** : `escJs(encodeURIComponent(x))`.
+Bloc **D-bis** : teste l'aller-retour COMPLET (handler compilé comme le navigateur le fait,
+entités HTML décodées, puis `decodeURIComponent`) et prouve que **chaque couche seule est
+insuffisante** (Dbis5 : sans escJs → ne compile pas ; Dbis6 : sans encodeURIComponent → URIError).
+
+**Ajouté** (`apostrophe-boutons.test.js`, 40 assertions) :
+- **A** — la démonstration que `encodeURIComponent` et `esc()` ne protègent PAS.
+- **B** — `escJs` et son ordre critique (B4 : inverser antislash/apostrophe produit un échappement
+  silencieusement faux).
+- **C** — **la seule preuve qui vaille** : le handler est reconstruit *tel que le navigateur le
+  compile* (entités décodées) et **évalué**. 8 noms réels ; la fonction doit recevoir le nom EXACT,
+  non mutilé.
+- **D** — rejoue les anciennes variantes pour figer **pourquoi** elles étaient fausses.
+- **E1/E2** — garde-fous structurels.
+
+### Le garde-fou a d'abord été aveugle — et c'était prévu
+Première version d'E2 : scan **ligne par ligne**. Bug réintroduit volontairement → **il n'a rien
+vu**. La variable est affectée ligne 17433 et utilisée ligne 17436.
+C'était **exactement** l'angle mort déclaré en fin de vague 49 (« une construction en plusieurs
+étapes lui échapperait »). Il a mordu **dès la vague suivante**.
+E2 **suit désormais la donnée** à travers le fichier : variables affectées depuis `escJs(` → sûres ;
+depuis `encodeURIComponent(` nu → dangereuses ; aucune dangereuse ne doit atterrir dans un handler.
+Re-vérifié : le bug réintroduit est maintenant **attrapé avec les numéros de ligne exacts**.
+
+**Total couvert** : 1036 → **1076 assertions**.
+
+**Angles morts connus (déclarés)** :
+- E2 ne suit la donnée que sur **une affectation directe**. `const a = encodeURIComponent(x); const b = a;`
+  puis `'${b}'` lui échapperait encore.
+- L'audit a couvert les handlers **inline** (`onclick=`, `oninput=`…) et les injections HTML des
+  champs `.nom/.libelle/.parfum`. Les **notes libres** et **libellés de charges** injectés ailleurs
+  n'ont pas tous été revus.
+- `esc()` reste volontairement **sans** échappement d'apostrophe : c'est correct pour du contenu
+  HTML, et le corriger « par prudence » polluerait tout l'affichage (`&#39;` visible partout).
+  La séparation esc/escJs est le bon découpage — encore faut-il choisir le bon des deux.
+
+---
+
 ## 2026-07-12 — Vague 49 : UN NOM DE CLIENT TUAIT LE COPILOTE  (v1327 → **v1328**)
 
 **Nature** : BUG DE PRODUCTION, remonté par Benjamin (capture d'écran) — *« Invalid regular

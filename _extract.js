@@ -15,7 +15,66 @@ const path = require('path');
 const APP_PATH = path.join(__dirname, '..', 'app.js');
 const APP = fs.readFileSync(APP_PATH, 'utf8');
 
-// Retire commentaires (// … et /* … */) en préservant les chaînes.
+// Retire commentaires (// … et /* … */) en préservant les chaînes ET LES LITTÉRAUX DE REGEX.
+//
+// [FIX v1327 — L'EXTRACTEUR ÉTAIT AVEUGLE AUX REGEX] Cette fonction ne connaissait que trois
+// délimiteurs de chaîne (" ' `) et deux formes de commentaire. Elle ignorait totalement les
+// LITTÉRAUX DE REGEX. Conséquence, sur une ligne comme :
+//
+//     if(/\b(prod|fournee)\b.{0,18}\b(de|d')\b/.test(t))      ← parseIntent, ligne 33022
+//
+// l'apostrophe de « d' » était prise pour le début d'une chaîne : le stripper avalait alors tout
+// le code jusqu'à l'apostrophe suivante (parfois des dizaines de lignes plus bas), les accolades
+// se déséquilibraient, et l'extraction se terminait BEAUCOUP trop tôt.
+// Effet mesuré : `parseIntent` (769 lignes) était extraite… sur 66 lignes, et produisait du JS
+// invalide. Le CERVEAU du copilote — la fonction qui comprend le langage naturel — était donc
+// littéralement INTESTABLE. Ce n'est pas un hasard si la vague 36 n'avait pu tester que
+// `_aiDispatch` (l'aiguillage, un simple switch) et jamais la compréhension elle-même.
+//
+// L'échec était BRUYANT (SyntaxError au `new Function`), donc aucun test n'est passé au vert à
+// tort. Mais un angle mort qui se défend en refusant d'être testé reste un angle mort.
+//
+// On sait désormais distinguer un `/` qui OUVRE UNE REGEX d'un `/` de DIVISION : c'est le
+// dernier caractère significatif qui tranche (après `(`, `=`, `,`, `!`, `&&`, `return`… → regex ;
+// après `)`, `]`, un identifiant ou un chiffre → division).
+const REGEX_PRECEDERS = new Set(['(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '^', '~', '<', '>']);
+const REGEX_KEYWORDS  = ['return','typeof','instanceof','in','of','new','delete','void','throw','case','do','else','yield','await'];
+
+// Un `/` à l'index idx de `code` ouvre-t-il une regex, ou est-ce une division ?
+// Scan ARRIÈRE depuis idx (O(1) amorti) : app.js fait 5,5 Mo, on ne peut pas se permettre de
+// re-scanner un préfixe à chaque caractère.
+function regexPeutCommencerAt(code, idx){
+  let i = idx - 1;
+  while(i >= 0 && /\s/.test(code[i])) i--;
+  if(i < 0) return true;                               // tout début de source
+  const c = code[i];
+  if(REGEX_PRECEDERS.has(c)) return true;
+  if(/[A-Za-z_$]/.test(c)){                            // fin d'un mot : mot-clé, ou identifiant ?
+    let j = i;
+    while(j >= 0 && /[\w$]/.test(code[j])) j--;
+    return REGEX_KEYWORDS.includes(code.slice(j + 1, i + 1));
+  }
+  return false;                                        // après `)`, `]`, un chiffre… → division
+}
+
+// Avance jusqu'au `/` fermant d'un littéral de regex ouvert à l'index idx.
+// Renvoie l'index de ce `/` fermant (ou la fin de ligne, filet de sécurité).
+// Les classes [...] sont suivies : un `/` à l'intérieur ne ferme PAS la regex (ex. /[a-z/]/).
+function finDeRegex(code, idx){
+  let i = idx + 1, inClass = false, esc = false;
+  while(i < code.length){
+    const d = code[i];
+    if(esc){ esc = false; i++; continue; }
+    if(d === '\\'){ esc = true; i++; continue; }
+    if(d === '\n') return i - 1;                       // une regex ne franchit pas une ligne
+    if(d === '[') inClass = true;
+    else if(d === ']') inClass = false;
+    else if(d === '/' && !inClass) return i;           // fin du littéral
+    i++;
+  }
+  return code.length - 1;
+}
+
 function stripComments(code){
   let out = '', inStr = null, esc = false;
   for(let i = 0; i < code.length; i++){
@@ -28,8 +87,16 @@ function stripComments(code){
       continue;
     }
     if(c === '"' || c === "'" || c === '`'){ inStr = c; out += c; continue; }
+    // Les commentaires se testent AVANT la regex : `//` et `/*` ne sont jamais des regex.
     if(c === '/' && n === '/'){ while(i < code.length && code[i] !== '\n') i++; out += '\n'; continue; }
     if(c === '/' && n === '*'){ i += 2; while(i < code.length && !(code[i] === '*' && code[i+1] === '/')) i++; i++; continue; }
+    // LITTÉRAL DE REGEX — recopié tel quel, sans jamais interpréter les quotes qu'il contient.
+    if(c === '/' && regexPeutCommencerAt(code, i)){
+      const fin = finDeRegex(code, i);
+      out += code.slice(i, fin + 1);
+      i = fin;
+      continue;
+    }
     out += c;
   }
   return out;
@@ -67,6 +134,11 @@ function extractFunction(name){
       continue;
     }
     if(c === '"' || c === "'" || c === '`'){ inStr = c; continue; }
+    // [FIX v1327] L'équilibreur souffrait du MÊME aveuglement que le stripper : l'apostrophe d'une
+    // regex (`/\b(de|d')\b/`) ouvrait une fausse chaîne, et il sautait alors toutes les accolades
+    // jusqu'à l'apostrophe suivante → profondeur faussée → fonction tronquée. On saute désormais
+    // le littéral de regex en bloc : ni ses quotes, ni ses accolades (`.{0,18}`) ne sont comptées.
+    if(c === '/' && regexPeutCommencerAt(clean, j)){ j = finDeRegex(clean, j); continue; }
     if(c === '{') depth++;
     else if(c === '}'){ depth--; if(depth === 0){ const res = clean.slice(0, j+1); _fnCache.set(name, res); return res; } }
   }

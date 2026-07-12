@@ -58,7 +58,8 @@ const SUITES = [
   'revenu-horaire.test.js',      // vague 45 : le revenu horaire mentait dans les deux sens (MO comptée 2×, taux unique, impôt absent)
   'emballage-gratuit.test.js',   // vague 46 : l'emballage était gratuit (coutEmballages jamais calculé — prorata d'encaissement, mesuré vs estimé)
   'copilote-comprehension.test.js', // vague 47+48 : compréhension du copilote + désambiguïsation (cliquet anti-régression)
-  'donnees-pas-code.test.js'      // vague 49 : un nom de client tuait le copilote (regex non échappée) — LES DONNÉES NE SONT PAS DU CODE
+  'donnees-pas-code.test.js',     // vague 49 : un nom de client tuait le copilote (regex non échappée) — LES DONNÉES NE SONT PAS DU CODE
+  'apostrophe-boutons.test.js'    // vague 50 : l'apostrophe tuait les boutons (onclick + encodeURIComponent) — helper unique escJs
 ];
 
 let allOk = true;

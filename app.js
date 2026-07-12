@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1328';
-const APP_MAJ = 'UN NOM DE CLIENT TUAIT TON COPILOTE. Tu avais raison : ça ne datait pas d’hier, et ça n’avait rien à voir avec ta phrase. LA CAUSE : la recherche de client construisait ses expressions régulières À PARTIR DU NOM DE TES CLIENTS, sans les neutraliser. Un client nommé « Boulangerie Martin (Le Mans) » produisait la regex /\bmans)\b/ — parenthèse non fermée, erreur fatale. AMPLEUR : cette fonction est appelée depuis le cœur du copilote, donc TOUTES tes questions plantaient, pas seulement celles parlant d’un client. Même « bonjour » était condamné. Ton copilote était INTÉGRALEMENT MORT, depuis le jour où tu as créé ce client — et il te répondait « réessaie ou reformule ta demande », te laissant croire que le problème venait de TA façon d’écrire. Il suffisait d’UN nom contenant ( ) + * ? [ ] | pour tout condamner, en silence. LA CORRECTION : les noms sont désormais échappés. J’ai aussi sécurisé les deux autres endroits où une regex était bâtie sur tes données (codes de lot, noms d’emballage). LA LEÇON, et elle pique : la fonction d’échappement escapeRe() EXISTAIT DÉJÀ dans le fichier, et était utilisée ailleurs. Elle avait simplement été oubliée ici. Le danger n’est pas d’ignorer la règle : c’est de la connaître et de l’appliquer à 90 %. RÈGLE DÉSORMAIS FIGÉE : TES DONNÉES NE SONT PAS DU CODE. Un garde-fou scanne maintenant tout le fichier et INTERDIT LE MOTIF lui-même — toute nouvelle expression régulière construite sur un nom de client, un code de lot ou quoi que ce soit que tu as saisi, sans échappement, fera échouer les tests. Y compris celles qui ne sont pas encore écrites. Et j’ai vérifié que ce filet n’est pas décoratif : en réintroduisant volontairement le bug, 9 assertions se déclenchent. Suite : 1010 → 1036 assertions vertes.';
+const APP_VERSION = 'v1329';
+const APP_MAJ = 'L’APOSTROPHE TUAIT TES BOUTONS. Tu m’as demandé de poursuivre l’audit — voici ce qu’il a trouvé, et c’est du lourd. LE PIÈGE : un bouton s’écrit onclick=\"maFonction(\'${nom}\')\". C’est L’APOSTROPHE qui délimite la chaîne JS. Or la fonction d’échappement HTML de l’app n’échappe PAS l’apostrophe (inoffensive en HTML) — et encodeURIComponent NON PLUS : encodeURIComponent(\"Fleur d’oranger\") rend « Fleur%20d’oranger », l’apostrophe SURVIT. C’est une idée reçue tenace. RÉSULTAT : sur tout parfum ou client apostrophé — Fleur d’oranger, Crème d’amande, L’Épi d’Or — les boutons étaient MORTS. Et en pâtisserie française, l’apostrophe est la NORME, pas l’exception. 9 SITES CORRIGÉS : le bouton « valider un parfum », « dévalider », « appliquer la suggestion », « appliquer la composition du coffret », « valider & figer les parfums », l’ajout d’item grand format, et les reports de planning. L’AUDIT A RÉVÉLÉ CINQ VARIANTES ARTISANALES d’échappement dans le fichier, dont DEUX FAUSSES : l’une SUPPRIMAIT purement l’apostrophe du nom (donnée mutilée en silence), l’autre la remplaçait par &#39; — que le navigateur REDÉCODE en apostrophe avant de compiler le JS. Une protection qui ne protège rien est pire que pas de protection : elle rassure. Tout est désormais unifié derrière UN SEUL helper, escJs(), où l’ordre des échappements est critique (antislash D’ABORD, sinon on échappe ses propres échappements). J’AI MOI-MÊME FAIT L’ERREUR EN CHEMIN, et je te le dis franchement : ma première correction remplaçait encodeURIComponent par escJs. C’était FAUX — la fonction réceptrice fait un decodeURIComponent, et retirer l’encodage de transport aurait cassé l’aller-retour : un parfum « Chocolat 70% » aurait levé une erreur. Il faut LES DEUX COUCHES : le transport, PUIS la chaîne JS. Les tests évaluent maintenant le bouton complet — tel que le navigateur le compile, décodage compris. GARDE-FOU : un premier scan ligne par ligne N’A PAS VU le bug quand je l’ai réintroduit — la variable est affectée sur une ligne et utilisée sur une autre. C’était l’angle mort que j’avais déclaré à la v1328 ; il a mordu dès la version suivante. Le garde-fou SUIT DÉSORMAIS LA DONNÉE à travers le fichier, et il attrape le bug avec les numéros de ligne exacts. Suite : 1036 → 1076 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -163,6 +163,37 @@ function monthLabel(k){
 
 // --- Texte ---
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ============================================================================
+//  [v1329] escJs — UNE DONNÉE DANS UN onclick N'EST PAS DU CODE NON PLUS.
+// ----------------------------------------------------------------------------
+//  Suite directe de la vague 49 (« tes données ne sont pas du code », côté regex). Même faille,
+//  autre langage : ici c'est le JavaScript des attributs inline qui est cassé par les données.
+//
+//  Le piège : onclick="maFonction('${nom}')". C'est l'APOSTROPHE qui délimite la chaîne JS.
+//  Or `esc()` échappe & < > " … mais PAS l'apostrophe (elle est inoffensive en HTML).
+//  Et `encodeURIComponent()` ne l'encode pas non plus — c'est une idée reçue tenace :
+//        encodeURIComponent("Fleur d'oranger")  →  "Fleur%20d'oranger"   ← l'apostrophe SURVIT
+//  Un parfum « Fleur d'oranger », un client « L'Épi d'Or » : le bouton est mort.
+//  Et en français, l'apostrophe est PARTOUT.
+//
+//  Le code échappait déjà l'apostrophe à la main en 22 endroits — `escJs(x)` —
+//  et l'oubliait ailleurs. Encore une règle connue, appliquée à 90 %. Ces 22 variantes étaient de
+//  surcroît INCOMPLÈTES : elles ignoraient l'antislash et le saut de ligne.
+//
+//  L'ORDRE DES ÉCHAPPEMENTS EST CRITIQUE :
+//    1. l'antislash D'ABORD (sinon on échapperait nos propres échappements),
+//    2. l'apostrophe (c'est elle qui ferme la chaîne JS),
+//    3. les sauts de ligne (ils cassent l'attribut),
+//    4. puis seulement esc() pour l'attribut HTML.
+//  Inverser 1 et 2 produirait un échappement silencieusement faux.
+// ============================================================================
+const escJs = s => esc(
+  (s==null?'':String(s))
+    .replace(/\\/g, '\\\\')      // 1. antislash
+    .replace(/'/g, "\\'")        // 2. apostrophe — le vrai tueur
+    .replace(/[\r\n]+/g, ' ')    // 3. sauts de ligne
+);
 function normTxt(s){ return (s==null?'':String(s)).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 
 // --- Parfums : couleur de pastille (identiques à la boutique en ligne) ---
@@ -9125,7 +9156,7 @@ async function atRenderBody(){
   if(nxt){
     const why = estMut ? 'le temps sera partagé entre les parfums cochés' : (last ? 'suite habituelle' : 'tu commences souvent par là');
     const mini = prodIsPassive(nxt)?'<span class="at-next-mini">minuteur</span>':'';
-    nextHtml = `<button class="at-next" onclick="atLaunch('${esc(nxt).replace(/'/g,"\\'")}')">
+    nextHtml = `<button class="at-next" onclick="atLaunch('${escJs(nxt)}')">
       <span class="at-next-dot"></span><span>${esc(nxt)}${mini}</span><span class="at-next-why">${why}</span></button>`;
   }
 
@@ -9145,7 +9176,7 @@ async function atRenderBody(){
     listeHtml = prodSortPhases(Object.keys(groups)).map(phase=>{
       const g=groups[phase];
       return `<div class="at-grp"><div class="at-grp-phase" style="color:${g.color}">${esc(phase)}</div>
-        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${esc(l).replace(/'/g,"\\'")}')"><span class="at-d"></span>${esc(l)}${prodIsPassive(l)?'<span class="at-pp">minuteur</span>':''}</button>`).join('')}</div>`;
+        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${escJs(l)}')"><span class="at-d"></span>${esc(l)}${prodIsPassive(l)?'<span class="at-pp">minuteur</span>':''}</button>`).join('')}</div>`;
     }).join('');
   }
 
@@ -9217,7 +9248,7 @@ function atShowDurPrompt(label){
     <div class="at-dur-row"><input id="atDurMin" type="number" min="1" value="${def}"> minutes</div>
     <div class="at-dur-actions">
       <button class="at-dur-cancel" onclick="atDurCancel()">Annuler</button>
-      <button class="at-dur-go" onclick="atDurGo('${esc(label).replace(/'/g,"\\'")}')">Lancer</button>
+      <button class="at-dur-go" onclick="atDurGo('${escJs(label)}')">Lancer</button>
     </div>
     <div class="at-dur-hint">À la sonnerie, le chrono se met en pause : tu choisis de terminer ou de prolonger.</div>
   </div>`;
@@ -10304,7 +10335,7 @@ async function pickRenderOrders(){
   const zones = alloc.byZone.map(z=>({emp:z.emp, lettre:z.lettre, nom:z.nom, icon:z.icon}));
   const chipsHtml = zones.length>1 ? `<div class="pick-filter-chips">
      <button class="pk-chip${_pickFilterZone===''?' active':''}" data-z="" onclick="pickSetFilterZone('')">Tout</button>
-     ${zones.map(z=>`<button class="pk-chip${_pickFilterZone===z.emp?' active':''}" data-z="${esc(z.emp)}" onclick="pickSetFilterZone('${esc(z.emp).replace(/'/g,"\\'")}')">${z.icon} ${esc(z.nom)}</button>`).join('')}
+     ${zones.map(z=>`<button class="pk-chip${_pickFilterZone===z.emp?' active':''}" data-z="${esc(z.emp)}" onclick="pickSetFilterZone('${escJs(z.emp)}')">${z.icon} ${esc(z.nom)}</button>`).join('')}
    </div>` : '';
 
   body.innerHTML=`
@@ -10347,11 +10378,11 @@ function pickConsolidatedHtml(alloc, orders){
     const lines = picks.map(pk=>{
       const key='z:'+z.emp+':'+pk.prodId+':'+pk.flavor;
       const done=_pickConsDone.has(key);
-      return `<div class="pick-row${done?' done':''}" onclick="pickToggleCons('${key.replace(/'/g,"\\'")}')">
+      return `<div class="pick-row${done?' done':''}" onclick="pickToggleCons('${escJs(key)}')">
         <div class="pick-check">${done?'✓':''}</div>
         <div class="pick-main"><div class="pick-name">${esc(pk.flavor)}</div>
           <div class="pick-sub">lot ${esc(pk.lot||'—')}${pk.dlc?` · DLC ${fmtDate(pk.dlc)}`:''}</div>${pickDetailLine(pk)}</div>
-        <button class="pick-scan" onclick="event.stopPropagation();pickScanConfirm('${esc(pk.flavor).replace(/'/g,"\\'")}','${esc(pk.lot||'').replace(/'/g,"\\'")}')" title="Scanner ce bac">📷</button>
+        <button class="pick-scan" onclick="event.stopPropagation();pickScanConfirm('${escJs(pk.flavor)}','${escJs(pk.lot||'')}')" title="Scanner ce bac">📷</button>
         <div class="pick-qty">${pk.qte}</div></div>`;
     }).join('');
     return `<div class="panel"><h2>${z.icon} ${esc(z.nom)} <span class="tag" style="background:${empInfo(z.emp).type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff">${z.lettre}</span></h2>
@@ -10371,7 +10402,7 @@ function pickConsolidatedHtml(alloc, orders){
   ];
   const packHtml = packRows.length?`<div class="panel"><h2>📦 Emballages</h2>${packRows.map(r=>{
     const key='pack:'+r.label; const done=_pickConsDone.has(key);
-    return `<div class="pick-row${done?' done':''}" onclick="pickToggleCons('${key.replace(/'/g,"\\'")}')">
+    return `<div class="pick-row${done?' done':''}" onclick="pickToggleCons('${escJs(key)}')">
       <div class="pick-check">${done?'✓':''}</div>
       <div class="pick-main"><div class="pick-name">${esc(r.label)}</div><div class="pick-sub">emballage</div></div>
       <div class="pick-qty">${r.qte}</div></div>`;
@@ -10416,10 +10447,10 @@ function pickOrderCard(o, nom, prods, recipes){
       header=`<div class="pick-zone-head">${r.icon} ${esc(r.zoneNom)} <span class="tag" style="background:${empInfo(r.emp).type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff">${r.lettre}</span></div>`;
     }
     const done=!!state[r.key];
-    const scan = r.kind==='mac'?`<button class="pick-scan" onclick="event.stopPropagation();pickScanConfirm('${esc(r.label).replace(/'/g,"\\'")}','${esc(r.lot||'').replace(/'/g,"\\'")}')" title="Scanner ce bac">📷</button>`:'';
+    const scan = r.kind==='mac'?`<button class="pick-scan" onclick="event.stopPropagation();pickScanConfirm('${escJs(r.label)}','${escJs(r.lot||'')}')" title="Scanner ce bac">📷</button>`:'';
     const sub = r.kind==='mac'?`lot ${esc(r.lot||'—')}${r.dlc?` · DLC ${fmtDate(r.dlc)}`:''}`:r.sub;
     const detail = r.kind==='mac'?pickDetailLine(r):'';
-    return header+`<div class="pick-row${done?' done':''}" onclick="pickToggleLine(${o.id},'${r.key.replace(/'/g,"\\'")}')">
+    return header+`<div class="pick-row${done?' done':''}" onclick="pickToggleLine(${o.id},'${escJs(r.key)}')">
       <div class="pick-check">${done?'✓':''}</div>
       <div class="pick-main"><div class="pick-name">${esc(r.label)}</div><div class="pick-sub">${sub}</div>${detail}</div>
       ${scan}<div class="pick-qty">${r.qte}</div></div>`;
@@ -14389,7 +14420,7 @@ async function flashAlert(lotNum){
     ${impactedProds.length?`<h3 style="font-size:1rem;margin:14px 0 6px">Productions & ventes impactées</h3>${prodBlocks.join('')}`
       : (found?'<p class="note" style="margin-top:8px">Ce lot n\'a alimenté aucune production : aucun produit fini n\'est concerné.</p>':'')}
     <div class="modal-actions">
-      ${found?`<button class="btn gold" onclick="exportFlashAlert('${esc(lotNum).replace(/'/g,"\\'")}')">⬇ Exporter le rapport (TXT)</button>`:''}
+      ${found?`<button class="btn gold" onclick="exportFlashAlert('${escJs(lotNum)}')">⬇ Exporter le rapport (TXT)</button>`:''}
       <button class="btn ghost" onclick="closeModal()">Fermer</button>
     </div>`);
 }
@@ -15970,7 +16001,7 @@ function _cmdRenderTagBar(){
     });
     const pills=facets.map(([key,f])=>{
       const on=cmdTags.has(key);
-      return `<button type="button" class="cmd-tag${on?' on':''}" onclick="cmdToggleTag('${key.replace(/'/g,"\\'")}')">${esc(f.label)}</button>`;
+      return `<button type="button" class="cmd-tag${on?' on':''}" onclick="cmdToggleTag('${escJs(key)}')">${esc(f.label)}</button>`;
     }).join('');
     html += `<div class="cmd-tag-grp"><span class="cmd-tag-cat">${titre}</span>${pills}</div>`;
   });
@@ -17139,7 +17170,7 @@ function drawCoffretLine(ln,i){
     const q = +ln.parfums[nom]||0;
     const maxq = ln.taille||25;
     // setter par nom (encodage pour survivre à l'interpolation onclick)
-    const enc = encodeURIComponent(nom);
+    const enc = escJs(encodeURIComponent(nom));
     return flavorPickRow(nom, q, `setCoffretParfumNom(${i},'${enc}',VAL)`, maxq);
   }).join('');
   const nbDiff = Object.values(ln.parfums).filter(q=>q>0).length;
@@ -17266,7 +17297,7 @@ async function suggererParfumsLigne(i){
         ${rows.map(r=>`<div style="display:flex;justify-content:space-between;font-size:.86rem;padding:2px 0">
           <span style="text-transform:capitalize">${esc(r.nom)}</span><b>${r.qte} mac</b></div>`).join('')}
       </div>` : '';
-    const payload = encodeURIComponent(JSON.stringify(res.repartition));
+    const payload = escJs(encodeURIComponent(JSON.stringify(res.repartition)));
     openModal(`<h3>🎯 Suggestion de parfums</h3>
       <p class="note" style="margin-bottom:6px">Pour les <b>${sansParfum}</b> macaron${sansParfum>1?'s':''} sans parfum de ce coffret (plafond ${res.plafond} parfums).</p>
       ${bloc('Puisé dans ton stock dormant', stockRows, '#3f7d52', '📦')}
@@ -17430,7 +17461,15 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
       const bg = estRelance ? '#fdf6ec' : estMut ? '#fbf3ea' : '#eef6ee';
       const bd = estRelance ? '#e8cfa3' : estMut ? '#e3c8a8' : '#bcd9c6';
       const dejaValide = !!((_compoValides[i]||{})[l.nom]);
-      const encNom = encodeURIComponent(l.nom);
+      // [FIX v1329] LES DEUX COUCHES, ET DANS CET ORDRE.
+      // encodeURIComponent est l'encodage de TRANSPORT : la fonction réceptrice fait un
+      // decodeURIComponent. Le retirer casserait l'aller-retour (« Chocolat 70% » → URIError).
+      // Mais il N'ENCODE PAS L'APOSTROPHE :
+      //     encodeURIComponent("Fleur d'oranger") → "Fleur%20d'oranger"   ← elle survit !
+      // …et c'est elle qui ferme la chaîne JS du onclick. Le bouton « valider » était donc mort
+      // sur tout parfum apostrophé. En pâtisserie française, c'est la norme, pas l'exception.
+      // Il faut DONC les deux : transport (encodeURIComponent) PUIS chaîne JS (escJs).
+      const encNom = escJs(encodeURIComponent(l.nom));
       const valBtn = dejaValide
         ? `<span title="Parfum validé — conservé à la prochaine suggestion" style="color:#3f7d52;font-weight:700;font-size:.8rem">✓ validé</span>`
         : `<span onclick="compoValiderParfum(${i},'${encNom}',${l.qte})" title="Valider ce parfum : il sera conservé quand tu régénères" style="cursor:pointer;color:var(--bordeaux,#52252F);font-size:.72rem;font-weight:600;border:1px solid var(--hair);border-radius:6px;padding:1px 6px;margin-left:4px">＋ valider</span>`;
@@ -17440,7 +17479,7 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
     const etat = p.complet
       ? `<span style="color:#3f7d52;font-weight:600">Coffret ${p.taille} complet</span>`
       : `<span style="color:#c97a2a;font-weight:600">${p.total}/${p.taille} — il manque ${p.manque}</span>`;
-    const payload = encodeURIComponent(JSON.stringify({taille:p.taille, lignes:p.lignes}));
+    const payload = escJs(encodeURIComponent(JSON.stringify({taille:p.taille, lignes:p.lignes})));
     // [v1206] Rentabilité de CETTE composition (même moteur que la fiche commande). À prix de coffret
     // égal, une composition de parfums coûteux/longs rapporte moins — ce bandeau aide à choisir.
     let rentaBloc = '';
@@ -17470,7 +17509,7 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
   let validesBloc = '';
   if(valides.length){
     const puces = valides.map(([n,q])=>{
-      const enc = encodeURIComponent(n);
+      const enc = escJs(encodeURIComponent(n));
       return `<span style="display:inline-flex;align-items:center;background:#eef6ee;border:1px solid #bcd9c6;border-radius:8px;padding:2px 4px 2px 8px;margin:2px 3px 0 0;font-size:.84rem">
         <span style="color:#3f7d52;margin-right:3px">✓</span><span style="text-transform:capitalize">${esc(n)} ×${q}</span>
         <span onclick="compoDevaliderParfum(${i},'${enc}')" title="Retirer ce parfum des validés" style="cursor:pointer;color:#b3261e;font-weight:700;margin-left:6px;padding:0 3px">✕</span></span>`;
@@ -17497,7 +17536,7 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
   if(fallback.length){
     fbHtml = fallback.map(f=>{
       const p = f.propositions[0]; if(!p) return '';
-      const payload = encodeURIComponent(JSON.stringify({taille:f.taille, lignes:p.lignes, changeTaille:true}));
+      const payload = escJs(encodeURIComponent(JSON.stringify({taille:f.taille, lignes:p.lignes, changeTaille:true})));
       const noms = p.lignes.map(l=>`${l.nom} ×${l.qte}`).join(', ');
       return `<div style="border:1px dashed #cbb89a;border-radius:12px;padding:10px 12px;margin:9px 0;background:#faf7f1">
         <div style="font-size:.8rem;font-weight:700;color:#8a6d3b;margin-bottom:4px">↓ Si tu réduis la taille</div>
@@ -17841,7 +17880,7 @@ function drawBigLine(ln,i){
   const _kf = s => (typeof aiNormalize==='function') ? aiNormalize(s) : String(s||'').toLowerCase().trim();
   const horsCat = Object.keys(ln.items||{}).filter(nom => (+ln.items[nom]||0)>0 && !BIG_FORMATS.some(f=>_kf(f)===_kf(nom)));
   const extraRows = horsCat.map(nom => {
-    const enc = encodeURIComponent(nom);
+    const enc = escJs(encodeURIComponent(nom));
     return flavorPickRow(nom, +ln.items[nom]||0, `setBigItemNom(${i},'${enc}',VAL)`, 50);
   }).join('');
   const tot=Object.values(ln.items).reduce((s,q)=>s+(+q||0),0);
@@ -17948,7 +17987,7 @@ function _renderGrandFormatModale(i, parfums, dateLiv){
       if(dispoImmediat<=0 && p.relanceOk) bouts.push(`à produire (faisable)`);
       const ventil = bouts.join(' · ') || '—';
       const dejaCmd = +((ln.items||{})[p.nom]||0);
-      const enc = encodeURIComponent(p.nom);
+      const enc = escJs(encodeURIComponent(p.nom));
       return `<div style="display:flex;align-items:center;gap:10px;background:${bg};border:1px solid ${bd};border-radius:10px;padding:8px 10px;margin:5px 0">
         <span title="${p.stock>0?'En stock':estMut?'Batch déjà prévu':'À produire'}" style="font-size:1rem">${sym}</span>
         <div style="flex:1;min-width:0">
@@ -28862,12 +28901,12 @@ async function renderVentilation(){
     `<button class="btn ${actif?'gold':'ghost'} sm" style="margin:2px" onclick="${onclick}">${esc(label)}</button>`;
   const filtres =
     chip('Tous', !_ventilMode, "ventilSetMode(null)") +
-    modesTries.map(([mode])=>chip(mode, _ventilMode===mode, `ventilSetMode('${mode.replace(/'/g,"\\'")}')`)).join('');
+    modesTries.map(([mode])=>chip(mode, _ventilMode===mode, `ventilSetMode('${escJs(mode)}')`)).join('');
 
   const cartes = modesTries.map(([mode,val])=>{
     const actif = _ventilMode===mode;
     return `<div class="sum-box lnk" style="border-left:4px solid ${ventilColor(mode)};${actif?'background:#f6efe4':''}"
-                 onclick="ventilSetMode('${mode.replace(/'/g,"\\'")}')">
+                 onclick="ventilSetMode('${escJs(mode)}')">
        <span>${esc(mode)}</span>
        <b>${euro(val)} <span style="color:#9a8a82;font-weight:400">(${pct(val, global.total)}%)</span></b></div>`;
   }).join('');
@@ -41351,8 +41390,8 @@ async function pickBatchRender(){
     // Bouton d'action selon l'étape : prélever (scan boîte) OU répartir (scan commande)
     const action = complet ? ''
       : (enPool>0
-          ? `<button class="btn gold sm" onclick="pickBatchScanOrder('${esc(f).replace(/'/g,"\\'")}')">📷 Répartir sur commande</button>`
-          : `<button class="btn gold sm" onclick="pickBatchScanStock('${esc(f).replace(/'/g,"\\'")}')">📷 Scanner une boîte</button>`);
+          ? `<button class="btn gold sm" onclick="pickBatchScanOrder('${escJs(f)}')">📷 Répartir sur commande</button>`
+          : `<button class="btn gold sm" onclick="pickBatchScanStock('${escJs(f)}')">📷 Scanner une boîte</button>`);
     return `<div class="sum-box" style="border-left:3px solid ${col};align-items:center">
       <div style="flex:1"><b>${esc(f)}</b><br><span style="font-size:.78rem;color:#7a6a60">${etat} · besoin ${qty(attendu)}</span></div>
       ${action}</div>`;
@@ -45080,7 +45119,7 @@ async function traceDons(){
       ? '<span class="tag" style="background:#7a4b82;color:#fff;font-size:.62rem">commande</span>'
       : '<span class="tag" style="background:#AA7C39;color:#fff;font-size:.62rem">marché</span>';
     return `<div class="sum-box" style="cursor:pointer" onclick="${action}">
-      <span>${fmtDate(l.date)} · ${l.libelle} ${tag}<br><span style="color:#9a8a82;font-size:.78rem">${l.parfumsTxt}</span></span>
+      <span>${fmtDate(l.date)} · ${esc(l.libelle)} ${tag}<br><span style="color:#9a8a82;font-size:.78rem">${esc(l.parfumsTxt)}</span></span>
       <b>×${qty(l.qte)}</b></div>`;
   }).join('');
   if(zone) zone.innerHTML=`
@@ -45405,7 +45444,7 @@ function migParfumDraw(){
   box.innerHTML = uniq.map(f=>{
     const cur=migParfums.find(p=>p.nom===f);
     const on=!!cur;
-    const fe=esc(f).replace(/'/g,"\\'");
+    const fe=escJs(f);
     const col=(typeof flavorColor==='function')?flavorColor(f):'#ccc';
     return `<div onclick="migParfumToggle('${fe}',${on?'false':'true'})"
         style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:4px 0;cursor:pointer;
@@ -45441,7 +45480,7 @@ function migDonDraw(){
   box.innerHTML = liste.map(f=>{
     const cur=migDons.find(p=>p.nom===f);
     const on=!!cur;
-    const fe=esc(f).replace(/'/g,"\\'");
+    const fe=escJs(f);
     const isNS=(f===DON_NON_SPECIFIE);
     const col=isNS?'#cdbfb2':((typeof flavorColor==='function')?flavorColor(f):'#ccc');
     return `<div onclick="migDonToggle('${fe}',${on?'false':'true'})"
@@ -49430,7 +49469,7 @@ async function prodTaskStopGuard(taskId){
       <p class="note" style="margin-bottom:10px">${listeAutres} À ce stade (avant la cuisson), le travail est partagé : arrêter un seul parfum est presque toujours une fausse manip.</p>
       <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
         <button class="btn gold" onclick="closeModal()">↩ Ne rien arrêter</button>
-        <button class="btn ghost" onclick="prodTaskStopConfirme('${String(t.id).replace(/'/g,"\\'")}')">⏹ Arrêter quand même ce parfum</button>
+        <button class="btn ghost" onclick="prodTaskStopConfirme('${escJs(t.id)}')">⏹ Arrêter quand même ce parfum</button>
       </div>`);
   }catch(e){
     console.error('prodTaskStopGuard', e);
@@ -51632,7 +51671,7 @@ async function prodRenderBoard(){
   if(nxt){
     const why = estMut ? 'le temps sera partagé entre les parfums cochés' : (last ? 'suite habituelle' : 'tu commences souvent par là');
     const mini = prodIsPassive(nxt)?'<span class="at-next-mini">minuteur</span>':'';
-    nextHtml = `<button class="at-next" onclick="atLaunch('${esc(nxt).replace(/'/g,"\\'")}')">
+    nextHtml = `<button class="at-next" onclick="atLaunch('${escJs(nxt)}')">
       <span class="at-next-dot"></span><span>${esc(nxt)}${mini}</span><span class="at-next-why">${why}</span></button>`;
   }
   let listeHtml='';
@@ -51647,7 +51686,7 @@ async function prodRenderBoard(){
     listeHtml = prodSortPhases(Object.keys(groups)).map(phase=>{
       const g=groups[phase];
       return `<div class="at-grp"><div class="at-grp-phase" style="color:${g.color}">${esc(phase)}</div>
-        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${esc(l).replace(/'/g,"\\'")}')"><span class="at-d"></span>${esc(l)}${prodIsPassive(l)?'<span class="at-pp">minuteur</span>':''}</button>`).join('')}</div>`;
+        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${escJs(l)}')"><span class="at-d"></span>${esc(l)}${prodIsPassive(l)?'<span class="at-pp">minuteur</span>':''}</button>`).join('')}</div>`;
     }).join('');
   }
   const suggBloc = `<div class="pb-sugg">
@@ -54249,7 +54288,7 @@ function _renderSuggestionProdModale(orderId, res, sp, typeFiltre, dateLiv){
       return `<span style="display:inline-block;background:#f7f2ea;border:1px solid var(--hair);border-radius:8px;padding:2px 8px;margin:2px 3px 0 0;font-size:.84rem;text-transform:capitalize">${src} ${esc(l.nom)} ×${l.qte}</span>`;
     }).join('');
     // Le figeage attend [{nom,qte}] : on mappe la compo.
-    const payload = encodeURIComponent(JSON.stringify(p.lignes.map(l=>({nom:l.nom, qte:l.qte}))));
+    const payload = escJs(encodeURIComponent(JSON.stringify(p.lignes.map(l=>({nom:l.nom, qte:l.qte})))));
     const etat = p.complet ? `<span style="color:#3f7d52;font-weight:600">Couvre les ${sp.total} macaron${sp.total>1?'s':''}</span>`
                            : `<span style="color:#c97a2a;font-weight:600">${p.total}/${sp.total} — il manque ${p.manque}</span>`;
     return `<div style="border:1px solid ${principal?'#d8b45a':'var(--hair)'};border-radius:12px;padding:11px 13px;margin:9px 0;background:#fff">
@@ -54630,7 +54669,7 @@ function _faisabiliteBandeau(fa, wk){
   // JSON.stringify produisait des guillemets DOUBLES qui fermaient l'attribut → handler cassé, aucun
   // tap. On échappe apostrophe/antislash pour les semaines au libellé exotique. Même garde-fou que les
   // onclick du plan détaillé (clés plutôt que noms à apostrophe).
-  const wkJs = String(wk||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  const wkJs = escJs(wk||'');   // [v1329] helper unique (l'ordre antislash → apostrophe est critique)
   return `<div class="faiz-band" data-wk="${wkAttr}" onclick="planSemaineToggle('${wkJs}', this)"
       style="margin-top:8px;padding:8px 11px;border-radius:9px;font-size:.78rem;background:${bg};color:${col};cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none">
       <span style="flex:1">${verdict}</span>
@@ -54997,10 +55036,10 @@ async function _planSemaineGenere(wk){
   // [ÉTAPE 4] Bandeau des reports actifs concernant cette semaine : sortants (montage parti en S+1,
   // avec annulation) et entrants (montage reçu de S-1, coques congelées). Rendu en tête du dépli.
   let bandeauReports = '';
-  const _wkSafe = String(wk).replace(/'/g,'');
+  const _wkSafe = escJs(wk);   // [v1329] AVANT : l'apostrophe était SUPPRIMÉE du nom (donnée mutilée)
   if(_overridesWk.sortants && _overridesWk.sortants.length){
     bandeauReports += _overridesWk.sortants.map(o=>{
-      const pSafe = esc(o.parfum).replace(/'/g,'&#39;');
+      const pSafe = escJs(o.parfum);   // [v1329] AVANT : &#39; — le navigateur le REDÉCODE en apostrophe avant de compiler le JS. La « protection » ne protégeait rien.
       return `<div style="display:flex;align-items:center;gap:8px;background:#f3eef7;border:1px solid #d9c9e6;border-radius:8px;padding:6px 9px;font-size:.76rem;color:#5b3a78;margin-bottom:4px">
         <span style="flex:1">↩ <b>${esc(o.parfum)}</b> : montage reporté à la semaine suivante. Ici tu produis seulement ses coques (❄️ congelées).</span>
         <button class="btn ghost sm" onclick="planAnnulerReport('${_wkSafe}','${pSafe}')" title="Annuler ce report">✕ Annuler</button>
@@ -55155,8 +55194,8 @@ function planSimReportMontage(wk, parfum){
   // [ÉTAPE 4] Bouton « Appliquer » : visible dès que le report aide (la semaine rentre, ou il gagne du
   // temps). L'application réelle passe par planAppliquerReport qui revérifie les garde-fous avant d'agir.
   const peutAider = Ssim.ok || gagne>0;
-  const wkSafe = String(wk).replace(/'/g,'');
-  const pSafe = esc(parfum).replace(/'/g,'&#39;');
+  const wkSafe = escJs(wk);    // [v1329] AVANT : l'apostrophe était SUPPRIMÉE du nom (donnée mutilée)
+  const pSafe = escJs(parfum);     // [v1329] AVANT : &#39; — redécodé en apostrophe par le navigateur → le bouton cassait quand même.
   const btnAppliquer = peutAider
     ? `<button class="btn" onclick="planAppliquerReport('${wkSafe}','${pSafe}')" style="margin-top:6px;background:#256b2f;color:#fff;border:none">✓ Appliquer ce report</button>`
     : '';
@@ -55281,7 +55320,7 @@ function _diagReorganisation(S, plan, datesLiv, wk){
       const reportables = details.filter(d=>d.marge!=null && d.marge>=2);
       if(reportables.length){
         simBtns = `<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:5px">`
-          + reportables.map(d=>`<button class="btn ghost sm" onclick="planSimReportMontage('${String(wk).replace(/'/g,"")}','${esc(d.parfum).replace(/'/g,"&#39;")}')" title="Tester : reporter ce montage à plus tard">🔬 Et si je reporte ${esc(d.parfum)} ?</button>`).join('')
+          + reportables.map(d=>`<button class="btn ghost sm" onclick="planSimReportMontage('${escJs(wk)}','${escJs(d.parfum)}')" title="Tester : reporter ce montage à plus tard">🔬 Et si je reporte ${esc(d.parfum)} ?</button>`).join('')
           + `</div><div id="planSimResult-${String(wk).replace(/[^0-9A-Za-z\-]/g,'')}" style="margin-top:6px"></div>`;
       }
     }
@@ -61479,7 +61518,7 @@ function consoOfferCharge(item){
     <div class="field"><label>Type</label>
       <select id="cc_type"><option value="ponctuel">Achat ponctuel (ce mois)</option><option value="recurrent">Charge récurrente mensuelle</option></select></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Plus tard</button>
-      <button class="btn" onclick="consoAddCharge('${esc(item.nom).replace(/'/g,"\\'")}')">Enregistrer la charge</button></div>`);
+      <button class="btn" onclick="consoAddCharge('${escJs(item.nom)}')">Enregistrer la charge</button></div>`);
 }
 async function consoAddCharge(nom){
   const montant=Math.max(0,+val('cc_montant')||0);
