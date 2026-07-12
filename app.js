@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1327';
-const APP_MAJ = 'TON COPILOTE RÉPONDAIT À CÔTÉ — AVEC ASSURANCE. Tu voulais savoir si un LLM embarqué valait le coup. Avant de supposer, j’ai mesuré. Premier obstacle, révélateur : impossible de tester parseIntent (la fonction qui te comprend). L’extracteur des tests était AVEUGLE AUX REGEX — l’apostrophe de « d’ » dans une expression ouvrait une fausse chaîne, et parseIntent (769 lignes) s’extrayait sur 66 lignes de code invalide. Le CERVEAU de ton copilote était littéralement INTESTABLE. Réparé (les 1002 assertions existantes sont restées vertes, preuve que rien n’a bougé). LA MESURE, sur 51 formulations : 80,4 % comprises, 3,9 % non comprises… et 15,7 % DÉTOURNÉES — une réponse confiante à la MAUVAISE question. Le 3,9 % est honnête et inoffensif. Le 15,7 % est le vrai danger : tu repars avec le bon écran pour la mauvaise demande. LE DIAGNOSTIC : ton copilote ne comprend pas mal, il TRANCHE MAL entre des compétences qui SE RECOUVRENT (revenu horaire ↔ CA, point mort ↔ rentabilité ↔ URSSAF, gaspillage ↔ stock…). Et parseIntent est une cascade où LE PREMIER QUI MATCHE GAGNE : « combien je jette » était capturé par le stock avant même d’atteindre le gaspillage. CONCLUSION SUR LE LLM : il ne réglerait pas ça. Le recouvrement est dans la TAXONOMIE de tes compétences, pas dans la puissance du parseur — un modèle plus gros changerait seulement LESQUELLES il rate. LA CORRECTION, pour 0 Mo et 100 % hors-ligne : quand c’est ambigu, le copilote DEMANDE au lieu de trancher en silence. Il te montre ce qu’il allait faire, propose les rivales, et te dit franchement qu’il ne peut pas choisir à ta place. Règle volontairement CONSERVATRICE : il ne demande QUE si l’intention retenue ne porte AUCUNE signature propre alors qu’une rivale en porte une — donc une requête déjà bien comprise n’est JAMAIS dérangée. Résultat mesuré : 8 détournements sur 8 rattrapés, ZÉRO faux positif. Et pour être honnête envers moi-même, j’ai validé sur un corpus que les signatures n’avaient jamais vu (anti-surapprentissage) : 15/15, aucun faux positif. ENFIN, L’AUDIT SUR TES VRAIES REQUÊTES. Mes 51 phrases étaient plausibles, pas observées — donc discutables. L’app note désormais tes questions (200 dernières, rien ne quitte ton téléphone) : demande-lui « audit copilote » après quelques jours, et elle te dira sur TES formulations combien de fois elle t’a compris, combien de fois elle a dû te faire préciser, et ce qu’elle n’a pas compris du tout. Suite : 1002 → 1010 assertions vertes.';
+const APP_VERSION = 'v1328';
+const APP_MAJ = 'UN NOM DE CLIENT TUAIT TON COPILOTE. Tu avais raison : ça ne datait pas d’hier, et ça n’avait rien à voir avec ta phrase. LA CAUSE : la recherche de client construisait ses expressions régulières À PARTIR DU NOM DE TES CLIENTS, sans les neutraliser. Un client nommé « Boulangerie Martin (Le Mans) » produisait la regex /\bmans)\b/ — parenthèse non fermée, erreur fatale. AMPLEUR : cette fonction est appelée depuis le cœur du copilote, donc TOUTES tes questions plantaient, pas seulement celles parlant d’un client. Même « bonjour » était condamné. Ton copilote était INTÉGRALEMENT MORT, depuis le jour où tu as créé ce client — et il te répondait « réessaie ou reformule ta demande », te laissant croire que le problème venait de TA façon d’écrire. Il suffisait d’UN nom contenant ( ) + * ? [ ] | pour tout condamner, en silence. LA CORRECTION : les noms sont désormais échappés. J’ai aussi sécurisé les deux autres endroits où une regex était bâtie sur tes données (codes de lot, noms d’emballage). LA LEÇON, et elle pique : la fonction d’échappement escapeRe() EXISTAIT DÉJÀ dans le fichier, et était utilisée ailleurs. Elle avait simplement été oubliée ici. Le danger n’est pas d’ignorer la règle : c’est de la connaître et de l’appliquer à 90 %. RÈGLE DÉSORMAIS FIGÉE : TES DONNÉES NE SONT PAS DU CODE. Un garde-fou scanne maintenant tout le fichier et INTERDIT LE MOTIF lui-même — toute nouvelle expression régulière construite sur un nom de client, un code de lot ou quoi que ce soit que tu as saisi, sans échappement, fera échouer les tests. Y compris celles qui ne sont pas encore écrites. Et j’ai vérifié que ce filet n’est pas décoratif : en réintroduisant volontairement le bug, 9 assertions se déclenchent. Suite : 1010 → 1036 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -11842,7 +11842,7 @@ async function prodRefreshLot(){
     const prods=await db.productions.toArray();
     memeJourMemeParfum=prods.filter(p=>{
       const base=p.lotBase||lotBaseSansSuffixe(p.lotProduction||'');
-      return base && (base===racine || new RegExp('^'+racine+'\\d+$').test(base));
+      return base && (base===racine || new RegExp('^'+escapeRe(racine)+'\\d+$').test(base));   // [v1328] échappé : un code de lot est une donnée
     });
   }catch(e){swallow(e,'prodRefreshLot')}
   lotEl.value=buildLotBase(nom, dateStr, memeJourMemeParfum, _isGF);
@@ -12688,7 +12688,8 @@ async function prodLibreRefreshLot(){
   try{
     const racine=lotDateJJMMAA(dateStr)+flavorCode(nom);
     const prods=await db.productions.toArray();
-    memeJour=prods.filter(p=>{ const base=p.lotBase||lotBaseSansSuffixe(p.lotProduction||''); return base && (base===racine || new RegExp('^'+racine+'\\d+$').test(base)); });
+    // [v1328] escapeRe : un code de lot est une DONNÉE, jamais une expression régulière.
+    memeJour=prods.filter(p=>{ const base=p.lotBase||lotBaseSansSuffixe(p.lotProduction||''); return base && (base===racine || new RegExp('^'+escapeRe(racine)+'\\d+$').test(base)); });
   }catch(e){swallow(e,'prodLibreRefreshLot')}
   lotEl.value=buildLotBase(nom, dateStr, memeJour);
 }
@@ -31108,7 +31109,7 @@ async function pmcBuildAndFill(){
     // affiché en haut → on le masque ICI uniquement (aucune donnée touchée, comptage marché intact).
     // On épargne les emballages au nom spécifique (ex: "Boîte blch 10/16pcs") même si cap=16.
     const nomNorm=nom.toLowerCase().replace(/\s+/g,' ').trim();
-    const estGenerique = new RegExp('^(bo[iî]te|coffret)\\s*'+cap+'$').test(nomNorm);
+    const estGenerique = new RegExp('^(bo[iî]te|coffret)\\s*'+escapeRe(String(cap))+'$').test(nomNorm);   // [v1328] échappé
     if(stdCapsPmc.has(cap) && estGenerique) continue;
     const key=nom.toLowerCase()+'|'+cap+'|'+coutEmb;
     if(seenPmc.has(key)) continue;   // doublon entre types restants
@@ -32844,12 +32845,20 @@ function aiFindClient(txt, clients){
       const parts=cn.split(' ').filter(Boolean);
       const last=parts[parts.length-1];     // nom de famille
       const first=parts[0];                 // prénom
+      // [FIX v1328 — LE COPILOTE MOURAIT SUR UN NOM DE CLIENT] Ces deux regex étaient construites
+      // à partir du NOM DU CLIENT, sans échappement. Un client nommé « Boulangerie Martin (Le Mans) »
+      // produisait donc la regex /\bmans)\b/ — parenthèse non fermée → SyntaxError.
+      // Et comme aiFindClient est appelée depuis parseIntent, TOUTE requête plantait : le copilote
+      // était intégralement mort, pas seulement sur les questions parlant de clients. Il suffisait
+      // d'UN client au nom contenant ( ) + * ? [ ] | pour tout condamner, en silence, depuis le jour
+      // de sa création. escapeRe() existait pourtant déjà dans ce fichier — elle avait juste été
+      // oubliée ici.
       // match sur le nom de famille (priorité moyenne)
-      if(last && last.length>=3 && new RegExp('\\b'+last+'\\b').test(n)){
+      if(last && last.length>=3 && new RegExp('\\b'+escapeRe(last)+'\\b').test(n)){
         if(!best||best.score<last.length+50) best={client:c,score:last.length+50};
       }
       // match sur le prénom seul (priorité plus basse — on appelle souvent par le prénom)
-      else if(first && first.length>=3 && first!==last && new RegExp('\\b'+first+'\\b').test(n)){
+      else if(first && first.length>=3 && first!==last && new RegExp('\\b'+escapeRe(first)+'\\b').test(n)){
         if(!best) best={client:c,score:first.length};
       }
     }

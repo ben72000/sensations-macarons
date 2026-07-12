@@ -10,6 +10,71 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-12 — Vague 49 : UN NOM DE CLIENT TUAIT LE COPILOTE  (v1327 → **v1328**)
+
+**Nature** : BUG DE PRODUCTION, remonté par Benjamin (capture d'écran) — *« Invalid regular
+expression: unmatched parentheses »*, sur toutes ses questions. Il précisait : **« plus rien ne
+fonctionne, et ça date d'il y a un certain temps »**. Il avait raison sur les deux points.
+
+### La cause
+`aiFindClient` construisait ses expressions régulières **à partir du nom du client**, sans échapper :
+
+    new RegExp('\\b' + last + '\\b')          ← `last` = un mot du nom du client
+
+Un client nommé « Boulangerie Martin (Le Mans) » produisait donc `/\bmans)\b/` : parenthèse non
+fermée → SyntaxError.
+
+### L'ampleur
+`aiFindClient` est appelée **depuis `parseIntent`**. Donc **toutes** les requêtes plantaient — pas
+seulement celles parlant d'un client. Même « bonjour » était condamné. Le copilote était
+**intégralement mort**, depuis le jour de création de ce client. Et il affichait *« réessaie ou
+reformule ta demande »* : Benjamin pouvait croire que le problème venait de SA façon d'écrire.
+
+Il suffisait d'**un seul** nom contenant `( ) + * ? [ ] |` pour tout condamner, en silence.
+
+### La leçon
+`escapeRe()` **existait déjà** dans app.js (ligne 14756), et était **utilisée ailleurs**
+(`aiFindMaterial` scoring). Elle avait simplement été oubliée ici.
+**Le danger n'est pas d'ignorer la règle : c'est de la connaître et de l'appliquer à 90 %.**
+
+*Corrigé aussi, par le même audit* : les regex bâties sur les **codes de lot** (×2) et sur les
+**noms d'emballage** — mêmes données, même faille latente.
+
+**Ajouté** (`donnees-pas-code.test.js`, 26 assertions) :
+- **A** — la requête exacte de la capture d'écran ; puis « mes commandes », « mon stock », et même
+  « bonjour » : la démonstration que le bug n'avait **rien à voir avec la phrase tapée**.
+- **B** — les **12 métacaractères**, un par un (`( ) [ ] + % * ? | { } ^ $ \ .`). La parenthèse est
+  celle qui a mordu ; un nom de client est du texte libre, il peut contenir n'importe quoi.
+- **C** — la réparation n'a pas cassé la recherche : nom de famille, prénom, et le client parenthésé
+  est bien **trouvé** (pas seulement « non fatal »). Échapper ≠ neutraliser le sens.
+- **E1 — LE GARDE-FOU STRUCTUREL.** Ne teste pas un cas : **scanne app.js et interdit le MOTIF**.
+  Toute `new RegExp('…' + variable + '…')` qui ne passe pas par `escapeRe` fait échouer les tests —
+  **y compris celles qui ne sont pas encore écrites**. Seules les tables codées en dur dans app.js
+  (jours, allergènes, corrections orthographiques) sont exemptées.
+
+### Le filet a été mis à l'épreuve
+Un garde-fou qui passe peut passer **pour de mauvaises raisons**. Le bug a donc été **réintroduit
+volontairement** : **9 assertions se déclenchent**, dont E1. (Première tentative de vérification :
+mon propre script d'échappement Python n'avait rien remplacé — le test « passait » sans avoir été
+éprouvé. Un faux vert de vérification vaut zéro.)
+Les appels de test ont par ailleurs été **protégés** : un test qui *plante* est un signal, pas un
+diagnostic — on veut un rapport lisible même quand le bug est là.
+
+**RÈGLE FIGÉE : LES DONNÉES DE BENJAMIN NE SONT PAS DU CODE.**
+
+**Total couvert** : 1010 → **1036 assertions**.
+
+**Angles morts connus (déclarés)** :
+- `aiNormalize` **ne retire pas** la ponctuation : les parenthèses survivent à la normalisation.
+  On a choisi d'échapper à la construction de la regex (correction à la racine) plutôt que de
+  filtrer en amont, qui aurait changé le comportement d'autres fonctions.
+- Le garde-fou E1 est **syntaxique** : il détecte `new RegExp('…'+var)`. Une regex construite en
+  plusieurs étapes (`const p = '\\b'+nom; new RegExp(p)`) lui échapperait.
+- Les autres champs de texte libre (notes, libellés de charges) ne sont pas encore audités pour
+  d'autres usages dangereux (injection HTML dans `innerHTML`, par exemple).
+
+---
+
 ## 2026-07-12 — Vague 48 : LE COPILOTE DEMANDE AU LIEU DE RÉPONDRE À CÔTÉ  (v1326 → **v1327**)
 
 **Nature** : correction du danger mesuré en vague 47 — les **15,7 % de détournements** (réponse

@@ -22,7 +22,9 @@
 const { extractFunction, extractConstLine } = require('./_extract');
 
 function buildParseIntent(){
-  const noms = ['_aiNormalizeRaw','aiNormalize','aiCorrigeFautes','aiLexFrag','aiLexTest','aiFindFlavor','aiFindMaterial',
+  // [v1328] escapeRe : aiFindClient l'appelle désormais (les noms de clients sont des DONNÉES,
+  // pas des expressions régulières — cf. vague 49).
+  const noms = ['escapeRe','_aiNormalizeRaw','aiNormalize','aiCorrigeFautes','aiLexFrag','aiLexTest','aiFindFlavor','aiFindMaterial',
                 'aiFindClient','aiParseNumber','aiParseDate','aiExtractName','aiParseOrderItems',
                 '_aiParsePeriode','_saisonDepuisTexte','parseIntent','aiIntentAmbigu'];
   // Le LEXIQUE (AI_LEX) est un gros objet const : on le récupère tel quel depuis app.js, sans le
