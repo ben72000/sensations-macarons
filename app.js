@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1329';
-const APP_MAJ = 'L’APOSTROPHE TUAIT TES BOUTONS. Tu m’as demandé de poursuivre l’audit — voici ce qu’il a trouvé, et c’est du lourd. LE PIÈGE : un bouton s’écrit onclick=\"maFonction(\'${nom}\')\". C’est L’APOSTROPHE qui délimite la chaîne JS. Or la fonction d’échappement HTML de l’app n’échappe PAS l’apostrophe (inoffensive en HTML) — et encodeURIComponent NON PLUS : encodeURIComponent(\"Fleur d’oranger\") rend « Fleur%20d’oranger », l’apostrophe SURVIT. C’est une idée reçue tenace. RÉSULTAT : sur tout parfum ou client apostrophé — Fleur d’oranger, Crème d’amande, L’Épi d’Or — les boutons étaient MORTS. Et en pâtisserie française, l’apostrophe est la NORME, pas l’exception. 9 SITES CORRIGÉS : le bouton « valider un parfum », « dévalider », « appliquer la suggestion », « appliquer la composition du coffret », « valider & figer les parfums », l’ajout d’item grand format, et les reports de planning. L’AUDIT A RÉVÉLÉ CINQ VARIANTES ARTISANALES d’échappement dans le fichier, dont DEUX FAUSSES : l’une SUPPRIMAIT purement l’apostrophe du nom (donnée mutilée en silence), l’autre la remplaçait par &#39; — que le navigateur REDÉCODE en apostrophe avant de compiler le JS. Une protection qui ne protège rien est pire que pas de protection : elle rassure. Tout est désormais unifié derrière UN SEUL helper, escJs(), où l’ordre des échappements est critique (antislash D’ABORD, sinon on échappe ses propres échappements). J’AI MOI-MÊME FAIT L’ERREUR EN CHEMIN, et je te le dis franchement : ma première correction remplaçait encodeURIComponent par escJs. C’était FAUX — la fonction réceptrice fait un decodeURIComponent, et retirer l’encodage de transport aurait cassé l’aller-retour : un parfum « Chocolat 70% » aurait levé une erreur. Il faut LES DEUX COUCHES : le transport, PUIS la chaîne JS. Les tests évaluent maintenant le bouton complet — tel que le navigateur le compile, décodage compris. GARDE-FOU : un premier scan ligne par ligne N’A PAS VU le bug quand je l’ai réintroduit — la variable est affectée sur une ligne et utilisée sur une autre. C’était l’angle mort que j’avais déclaré à la v1328 ; il a mordu dès la version suivante. Le garde-fou SUIT DÉSORMAIS LA DONNÉE à travers le fichier, et il attrape le bug avec les numéros de ligne exacts. Suite : 1036 → 1076 assertions vertes.';
+const APP_VERSION = 'v1330';
+const APP_MAJ = 'TON COPILOTE NE SAVAIT PAS LIRE UN MOIS. Tu lui demandes « Et le ca de mai » — il t’affiche la vue GLOBALE (3 561,95 €, tout ton historique) au lieu du CA de mai (50 €). LA CAUSE : il ne connaissait que DEUX périodes, « ce mois » et « le mois dernier ». Un mois NOMMÉ — le repère le plus naturel qui soit — n’était tout simplement pas prévu : la période retombait à vide, et il basculait en vue globale. POURQUOI C’EST GRAVE : il ne te DISAIT pas qu’il n’avait pas compris. Il t’affichait un chiffre parfaitement juste… à une autre question. C’est la même famille que les « détournements » corrigés en v1327 — mais que la désambiguïsation ne pouvait PAS attraper : l’intention était BONNE (le CA), seul le paramètre se perdait en route. La leçon : un routage correct ne garantit pas une réponse correcte. LE PIÈGE DE L’ORDRE, et c’est lui le véritable correctif : « du mois de mai » contient « du mois ». La règle générique l’aurait donc capturé comme « ce mois-ci ». Le mois nommé est désormais testé EN PREMIER. LA RÈGLE D’ANNÉE : sans année explicite, un mois désigne sa dernière occurrence révolue ou en cours. En juillet 2026, « mai » = mai 2026 ; « août » = août 2025 (août 2026 n’a pas encore eu lieu, on ne l’invente pas). Et si tu précises l’année (« mars 2025 »), elle prime toujours. LES FAUX POSITIFS SONT TESTÉS UN PAR UN, car c’était le vrai danger : « ja-MAI-s », « MAI-son », « dé-MAR-rer », « surt-OUT » ne déclenchent aucun mois. Un mois détecté à tort détournerait une requête parfaitement claire vers une période fantaisiste. Les douze mois sont vérifiés un à un, accentués ou non. Enfin, quand un mois existe mais est VIDE, le copilote te le dit franchement (« le mois existe, il est simplement vide — ce n’est pas une erreur de ma part ») plutôt que de basculer en douce sur le total. Suite : 1076 → 1120 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -33034,6 +33034,50 @@ const AI_LEX = {
 function aiLexFrag(){ var fams=Array.prototype.slice.call(arguments); return '(' + fams.map(function(f){return AI_LEX[f]||f;}).join('|') + ')'; }
 function aiLexTest(t){ var fams=Array.prototype.slice.call(arguments,1); try{ var _s='(^|[^a-z])'+aiLexFrag.apply(null,fams); if(!aiLexTest._c)aiLexTest._c={}; var _re=aiLexTest._c[_s]||(aiLexTest._c[_s]=new RegExp(_s)); return _re.test(t); }catch(_){ return false; } }
 
+// ============================================================================
+//  [v1330] LE COPILOTE NE SAVAIT PAS LIRE UN MOIS.
+// ----------------------------------------------------------------------------
+//  « Et le ca de mai » renvoyait la vue GLOBALE (tout l'historique, 3 561,95 €) au lieu du
+//  CA de mai. Le copilote ne connaissait que deux périodes : « ce mois » et « le mois dernier ».
+//  Un mois NOMMÉ — le plus naturel des repères — n'était tout simplement pas prévu.
+//  Pire : il ne le DISAIT pas. Il répondait un chiffre juste… à une autre question. Encore une
+//  réponse confiante à côté (cf. vague 48), mais que la désambiguïsation ne pouvait pas voir :
+//  l'intention était BONNE (query_revenue), seul le PARAMÈTRE était perdu en route.
+//
+//  PIÈGE À ÉVITER : « du mois de mai » contient « du mois ». La règle générique le capterait
+//  donc comme « ce mois-ci ». Le mois NOMMÉ doit être testé EN PREMIER.
+//
+//  Sans année explicite, on prend la dernière occurrence RÉVOLUE OU EN COURS : demander « mai »
+//  en juillet 2026 parle de mai 2026 — pas de mai 2027, qui n'existe pas encore.
+// ============================================================================
+const AI_MOIS = { janvier:1, fevrier:2, mars:3, avril:4, mai:5, juin:6,
+                  juillet:7, aout:8, septembre:9, octobre:10, novembre:11, decembre:12 };
+
+// PURE. `t` est le texte déjà normalisé (accents retirés). `refDate` permet de figer « aujourd'hui »
+// dans les tests — sans elle, un test écrit en juillet casserait en septembre.
+function _aiMoisNomme(t, refDate){
+  if(!t) return null;
+  const now = refDate ? new Date(refDate) : new Date();
+  for(const nom in AI_MOIS){
+    // escapeRe : `nom` vient d'une table codée en dur, donc sans danger — mais on applique la règle
+    // de la vague 49 sans exception. Une règle qu'on applique « sauf quand c'est sûr » est une règle
+    // qu'on n'applique pas.
+    if(!new RegExp('\\b' + escapeRe(nom) + '\\b').test(t)) continue;
+    const m = AI_MOIS[nom];
+    // Année explicite ? « mai 2025 », « en mai 2025 ».
+    const my = t.match(new RegExp(escapeRe(nom) + '\\s+(20\\d{2})'));
+    let an;
+    if(my) an = +my[1];
+    else {
+      an = now.getFullYear();
+      if(m > now.getMonth() + 1) an--;   // ce mois n'est pas encore arrivé cette année → l'an dernier
+    }
+    const cle = an + '-' + String(m).padStart(2, '0');
+    return { cle, nom, mois:m, annee:an, explicite:!!my };
+  }
+  return null;
+}
+
 function parseIntent(texte, ctx){
   ctx=ctx||{}; const flavors=ctx.flavors||[]; const clients=ctx.clients||[]; const materials=ctx.materials||[];
   const raw=texte||''; const t=aiCorrigeFautes(aiNormalize(raw));
@@ -33668,9 +33712,14 @@ function parseIntent(texte, ctx){
      || /\bj'?ai fait combien\b|\bfait combien (ce|le|cette)\b|\bcombien j'?ai (fait|gagn|encaiss|vendu|rentre)\b|\bcombien (de )?macarons? (ai je |j'?ai )?vendu/.test(t)
      || /\b(mes recettes du mois|recettes du mois|mes recettes ce mois)\b/.test(t)
      || /\bcombien j'?ai rentre\b/.test(t)){
-    // Période : « ce mois » / « le mois dernier » → clé AAAA-MM ; sinon null (vue globale).
+    // Période : mois NOMMÉ (« mai », « en mars 2025 ») → clé AAAA-MM ; sinon « ce mois » /
+    // « le mois dernier » ; sinon null (vue globale).
     let periode=null;
-    if(/\b(mois (dernier|precedent|passe)|le mois d'?avant)\b/.test(t)) periode='moisDernier';
+    // [v1330] LE MOIS NOMMÉ D'ABORD — impératif : « du mois de mai » contient « du mois », et la
+    // règle générique ci-dessous le capterait comme « ce mois-ci ». L'ordre EST le correctif.
+    const _mn = _aiMoisNomme(t);
+    if(_mn) periode = _mn.cle;
+    else if(/\b(mois (dernier|precedent|passe)|le mois d'?avant)\b/.test(t)) periode='moisDernier';
     else if(/\b(ce mois|du mois|ce mois ci|mois en cours|courant)\b/.test(t)) periode='moisCourant';
     // Compte-t-on des macarons plutôt que des euros ?
     const enMacarons = /\bcombien (de )?macarons?\b/.test(t);
@@ -40516,12 +40565,15 @@ async function aiQueryRevenue(params){
   let cible=null, libelleMois='';
   if(params.periode==='moisCourant'){ const d=new Date(); cible=_cleMois(d); libelleMois='ce mois-ci'; }
   else if(params.periode==='moisDernier'){ const d=new Date(); d.setMonth(d.getMonth()-1); cible=_cleMois(d); libelleMois='le mois dernier'; }
+  // [v1330] MOIS NOMMÉ : « le CA de mai », « en mars 2025 ». La clé AAAA-MM arrive déjà résolue
+  // par _aiMoisNomme (pure, testée) — ici on ne fait que l'afficher.
+  else if(/^\d{4}-\d{2}$/.test(params.periode||'')){ cible=params.periode; libelleMois=monthLabel(cible); }
   // Si une période précise est demandée, on répond ciblé sur ce mois.
   if(cible){
     const M = R.global.parMois[cible];
     if(!M || (!M.ca && !M.macaronsStd)){
       return aiSay(`${aiHero(euro(0), `Chiffre d'affaires — ${libelleMois}`)}
-        ${aiSynth(`Aucune vente enregistrée pour ${cible}.`, {icon:'📭'})}`);
+        ${aiSynth(`Aucune vente enregistrée pour ${monthLabel(cible)}. Le mois existe, il est simplement vide — ce n'est pas une erreur de ma part.`, {icon:'📭'})}`);
     }
     if(params.enMacarons){
       return aiSay(`${aiHero(qty(M.macaronsStd), `Macarons vendus — ${libelleMois}`, {sub: M.nbGrandsFormats>0?`+ ${qty(M.nbGrandsFormats)} grand format${M.nbGrandsFormats>1?'s':''}`:''})}

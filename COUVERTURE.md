@@ -10,6 +10,74 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-12 — Vague 51 : LE COPILOTE NE SAVAIT PAS LIRE UN MOIS  (v1329 → **v1330**)
+
+**Nature** : BUG DE PRODUCTION, remonté par Benjamin (capture d'écran).
+« Quel est mon ca du mois » → **497,60 €**, juste. Puis « Et le ca de mai » → **vue GLOBALE**
+(3 561,95 €, tout l'historique) au lieu du CA de mai (**50,00 €**).
+
+### La cause
+`parseIntent` ne connaissait que **deux** périodes : `moisCourant` et `moisDernier`. Un mois
+**nommé** — le repère le plus naturel qui soit — n'était pas prévu. `periode` retombait à `null`,
+et `aiQueryRevenue` basculait alors en vue globale.
+
+### Pourquoi c'est grave
+Le copilote **ne disait pas** qu'il n'avait pas compris. Il affichait un chiffre **parfaitement
+juste… à une autre question**. Même famille que les « détournements » de la vague 48 — mais que la
+désambiguïsation **ne pouvait pas attraper** : l'intention était BONNE (`query_revenue`), seul le
+**paramètre** se perdait en route.
+
+> **Leçon : un routage correct ne garantit pas une réponse correcte.** La vague 48 protège le choix
+> de la compétence ; rien ne protégeait ses paramètres.
+
+### Le piège de l'ordre — c'est LUI le correctif
+« du mois de **mai** » contient « **du mois** ». La règle générique l'aurait donc capté comme
+« ce mois-ci ». **Le mois nommé est désormais testé EN PREMIER.** L'ordre n'est pas un détail de
+style : c'est le correctif.
+
+**Ajouté** (`mois-nomme.test.js`, 44 assertions) :
+- `_aiMoisNomme(t, refDate)` — **pure**. La date de référence est un paramètre : sans elle, un test
+  écrit en juillet casserait en septembre.
+- **A** — le bug exact de la capture : « Et le ca de mai » → `2026-05` (avant : `null`).
+- **B** — LE PIÈGE DE L'ORDRE : « du mois de mai » → mai ; mais « du mois » **seul** reste le mois
+  courant, et « le mois dernier » reste le mois dernier (aucune régression).
+- **C** — **RÈGLE D'ANNÉE FIGÉE** : sans année explicite, un mois désigne sa dernière occurrence
+  **révolue ou en cours**. En juillet 2026 : « mai » → 2026-05 ; « août » → **2025**-08 (août 2026
+  n'a pas eu lieu, on ne l'invente pas). Année explicite (« mars 2025 ») → elle prime toujours,
+  même dans le futur. C9 vérifie que la date de référence est réellement prise en compte (sinon le
+  test serait vide de sens).
+- **D — LES FAUX POSITIFS, le vrai danger.** Un mois détecté à tort détournerait une requête
+  parfaitement claire vers une période fantaisiste. « ja**MAI**s », « **MAI**son », « dé**MAR**rer »,
+  « surt**OUT** » : testés un par un. Les frontières de mot (`\b`) sont ce qui protège — le bloc le
+  **prouve** au lieu de l'espérer.
+- **E** — les **douze** mois, un par un, accentués ou non (le texte est normalisé : « août » →
+  « aout »). Un seul nom mal transcrit dans la table = un mois muet pour toujours.
+- **F** — format de sortie `AAAA-MM` avec `padStart` (janvier → `2026-01`, jamais `2026-1`, sinon la
+  clé ne matcherait jamais `R.global.parMois`).
+
+**Comportement modifié** :
+- Mois **vide** : le copilote le dit franchement (« le mois existe, il est simplement vide — ce n'est
+  pas une erreur de ma part ») au lieu de basculer en douce sur le total.
+- `_aiMoisNomme` applique `escapeRe` bien que `nom` vienne d'une table codée en dur : **une règle
+  qu'on applique « sauf quand c'est sûr » est une règle qu'on n'applique pas** (vague 49).
+
+**Effet de bord constaté** : deux harnais de test (`copilote-comprehension`, `donnees-pas-code`)
+n'extrayaient pas la nouvelle dépendance de `parseIntent` → ils ont **échoué immédiatement**. C'est
+le rôle du filet : une dépendance ajoutée sans mettre à jour les modules de test se voit tout de
+suite.
+
+**Total couvert** : 1076 → **1120 assertions**.
+
+**Angles morts connus (déclarés)** :
+- Seul `query_revenue` bénéficie du mois nommé. Les autres compétences à période (net en poche,
+  charges, gaspillage, bilan marché…) ne comprennent **toujours pas** « en mai ». C'est le même
+  bug, ailleurs — à généraliser.
+- Aucune plage : « de mars à juin », « le 1er trimestre », « l'an dernier » ne sont pas reconnus.
+- Si deux mois sont cités (« compare mars et juin »), seul le **premier trouvé dans l'ordre de la
+  table** est retenu — silencieusement. C'est une limite assumée, pas une intention.
+
+---
+
 ## 2026-07-12 — Vague 50 : L'APOSTROPHE TUAIT LES BOUTONS  (v1328 → **v1329**)
 
 **Nature** : audit de l'angle mort déclaré en vague 49. Même faille (« les données ne sont pas du
