@@ -10,6 +10,134 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-12 — Vague 53 : « PRÉSENT » N'EST PAS « PLAUSIBLE »  (v1331 → **v1332**)
+
+**Nature** : BUG DE PRODUCTION + bug de RÉDACTION, remontés par Benjamin :
+*« c'est marqué 78 macarons à vendre par mois minimum, puis plus bas le vrai chiffre est
+47 macarons plus haut. On n'y comprend rien. »*
+
+### 1. L'explication était incompréhensible — et c'est notre faute
+Le bandeau affichait : *« l'app t'annonçait **31 macarons**. Le vrai chiffre est **47 macarons plus
+haut**. »* Les nombres étaient **justes** (31 + 47 = 78, le chiffre affiché en haut), mais :
+- il fallait faire **l'addition de tête** ;
+- « le vrai chiffre est **47** … » se lit comme si 47 *était* le résultat.
+
+Trois nombres, dont un **écart** formulé comme un résultat. **Une explication qui exige un calcul
+mental a raté sa mission.** Réécrit : *« Avant, l'app t'annonçait 31. **La réalité, c'est 78** (soit
+47 de plus). »*
+
+### 2. Le vrai problème : le point mort est SOUS-ESTIMÉ
+Le coût de structure de Benjamin ne compte que **40,60 €/mois** de temps hors-atelier, soit
+**~3 h 20 par mois** — pour TOUT l'administratif, les courses, les déplacements, la prospection et
+la prépa marché **réunis**. Moins de 50 minutes par semaine : manifestement sous-pointé.
+
+Or `coutTempsHorsProdMensuel` déclarait `fiable:true` **dès qu'UNE SEULE session existait**. Le
+point mort se présentait donc comme « tout payé » en reposant sur presque rien.
+
+> **Un chiffre bâti sur une mesure dérisoire n'est pas FIABLE — il est juste PRÉSENT.**
+> Confondre les deux, c'est fabriquer exactement la fausse confiance que cette série traque.
+
+*Correctif* : `plausible` distingue désormais la **présence** de la **crédibilité**
+(`SEUIL_HEURES_HORS_ATELIER = 8 h/mois` — déjà 2 h/semaine pour tout le hors-atelier, un plancher
+généreux). En dessous : alerte explicite, « ton point mort réel est PLUS HAUT ».
+
+### 3. Le taux de sensibilité — l'inconnue devient exploitable
+Plutôt que de **subir** l'incertitude, on la **chiffre** :
+
+    macarons escamotés par heure NON pointée  =  taux horaire ÷ marge de contribution
+
+Chez Benjamin : 12 €/h ÷ 1,07 € ≈ **12 macarons par heure oubliée**. S'il passe réellement 15 h/mois
+au lieu des 3 h 20 pointées, son point mort tourne autour de **220**, pas 78.
+
+**Ce n'est pas un chiffre inventé : c'est un TAUX exact.** L'app donne le taux ; **l'estimation des
+heures n'appartient qu'à Benjamin**, et l'écran le dit explicitement.
+
+**Ajouté** (`point-mort-verite.test.js` : 58 → **72 assertions**) :
+- **F** — `plausible` : 20 h/mois → plausible ; **le cas réel de Benjamin (~3,4 h/mois) → fiable mais
+  PAS plausible**, avec alerte. Seuil figé comme frontière nette (8 h → plausible ; 7,9 h → alerte).
+  `fiable:false` sur zéro pointage reste intact (non-régression v1324).
+- **G** — `macaronsParHeureHorsAtelier` : 12 € ÷ 0,58 € = **21** (arrondi au supérieur). Sans taux
+  horaire → `null` (**on n'invente pas**). Marge de contribution **négative** → `null` aussi : une
+  division par un nombre négatif n'aurait aucun sens ici.
+
+**Total couvert** : 1158 → **1172 assertions**.
+
+**Angles morts connus (déclarés)** :
+- Le seuil de 8 h/mois est un **jugement**, pas une mesure. Il est volontairement bas (donc
+  conservateur : il n'alerte que sur les cas flagrants). Un artisan qui pointerait *réellement*
+  6 h/mois serait averti à tort.
+- La projection « si tu passes 15 h » utilise **15 h en dur** comme illustration. C'est un exemple,
+  pas une estimation de Benjamin — l'écran le précise, mais l'idéal serait de lui **demander** son
+  estimation plutôt que de la supposer.
+- Le taux de sensibilité suppose la **marge de contribution constante**. Vendre davantage à prix
+  et coûts inchangés : vrai. Changer le mix produit : faux.
+
+---
+
+## 2026-07-12 — Vague 52 : LE CA D'UN MOIS AVAIT DEUX VÉRITÉS  (v1330 → **v1331**)
+
+**Nature** : BUG DE PRODUCTION, remonté par Benjamin — *« le chiffre est totalement faux »*.
+« Mon chiffre d'affaires de mai » → **50,00 €** … et **0 macaron écoulé**. L'incohérence était
+visible à l'œil nu : 50 € pour zéro macaron.
+
+### Deux sources divergentes
+
+| | Source | Mois retenu | Montant compté |
+|---|---|---|---|
+| **A — la vérité comptable** (tableau de bord, compta) | `caEncaisseParMois()` | date du **PAIEMENT** | ce qui est **réellement encaissé** |
+| **B — ce que lisait le copilote** | `computeStats().global.parMois` | date de la **COMMANDE** | le **TOTAL** de la commande |
+
+Une commande passée en mai et payée en juillet comptait donc **intégralement en mai** — de
+l'argent pas encore rentré. Et le copilote annonçait « CA des commandes **payées** sur la
+période » : sa « période » était la date de commande. **Le libellé mentait.**
+
+### Le correctif
+**UNE SEULE VÉRITÉ : l'ENCAISSEMENT.** Celle de la compta, de l'URSSAF et du tableau de bord.
+*Deux écrans ne doivent jamais donner deux CA pour le même mois.* Même discipline qu'en v1325
+(`partServiceCommande`) : une règle, un seul endroit.
+La **liste mensuelle** de la vue globale utilisait la même règle fausse → corrigée aussi, sinon le
+total et le détail racontaient deux histoires **sur le même écran**.
+
+**LES MACARONS SUIVENT L'ENCAISSEMENT AU PRORATA** — même règle que l'emballage (v1326). Une
+commande encaissée à moitié en mai n'apporte que la moitié de ses macarons à mai. Sans cela, les
+euros seraient sur une base et les macarons sur une autre : **c'est exactement ce qui produisait
+« 50 € / 0 macaron »**.
+
+**Ajouté** (`ca-deux-verites.test.js`, 38 assertions) :
+- `macaronsDeCommande` — pure, le compte de macarons d'UNE commande.
+- `caMoisEncaisse` — pure : CA encaissé du mois, macarons au prorata, détail par commande,
+  **et l'ancien chiffre + l'écart** (on ne remplace jamais un nombre en silence — règle v1324).
+- **A** — le bug exact : commande de mai payée en juillet → 0 € en mai (ancien : 100 €), 100 € en
+  juillet (ancien : rien — le mois était vide **à tort**).
+- **B** — paiement en deux fois : acompte mai 50 € / solde juin 150 €. Le prorata des macarons
+  suit (10 puis 30 sur 40). **Traçabilité** : mai + juin = la commande entière, aucun euro ni
+  macaron perdu ou dupliqué.
+- **C** — le « X € / 0 macaron » **légitime** : une prestation vend du temps. Ce n'est pas un bug,
+  mais l'app doit l'**expliquer**, pas laisser Benjamin deviner. Le montant est isolé (`caPrestation`).
+- **D** — garde-fous : commande non payée, **trop-perçu borné à 1** (jamais 130 % des macarons),
+  reprises historiques exclues (**même règle** que `caEncaisseParMois`), robustesse.
+- **E — ANTI-DIVERGENCE, l'assertion capitale.** `macaronsDeCommande` **duplique** la lecture des
+  lignes de `computeStats`. Une duplication non prouvée, c'est la divergence de demain — *celle-là
+  même que cette vague corrige*. E1–E3 l'assertent **contre `computeStats`**, sur les mêmes
+  commandes : macarons standards, grands formats et total doivent coïncider à l'unité.
+- **F** — le copilote et `caEncaisseParMois` doivent annoncer **le même CA au centime**, mois par
+  mois. C'est le but de toute la vague.
+
+**Total couvert** : 1120 → **1158 assertions**.
+
+**Angles morts connus (déclarés)** :
+- `computeStats().global.parMois` reste sur la base « date de commande » et alimente encore les
+  **graphiques** (écrans stats, lignes 23083 et 23816). Ces courbes gardent donc l'ancienne base :
+  elles ne mentent pas *en soi* (c'est une vue « par commande »), mais elles **ne coïncident pas**
+  avec le CA du copilote. À trancher : soit les basculer, soit les intituler explicitement
+  « par date de commande ».
+- Le prorata des macarons **arrondit** à l'unité par commande (`Math.round`). Sur un paiement en
+  trois fois, la somme peut donc dévier d'un macaron du total de la commande. Assumé.
+- `caPrestation` détecte « un encaissement sans aucun macaron ». Une commande **mixte**
+  (coffret + atelier) n'est pas ventilée : ses euros de prestation ne sont pas isolés.
+
+---
+
 ## 2026-07-12 — Vague 51 : LE COPILOTE NE SAVAIT PAS LIRE UN MOIS  (v1329 → **v1330**)
 
 **Nature** : BUG DE PRODUCTION, remonté par Benjamin (capture d'écran).

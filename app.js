@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1330';
-const APP_MAJ = 'TON COPILOTE NE SAVAIT PAS LIRE UN MOIS. Tu lui demandes « Et le ca de mai » — il t’affiche la vue GLOBALE (3 561,95 €, tout ton historique) au lieu du CA de mai (50 €). LA CAUSE : il ne connaissait que DEUX périodes, « ce mois » et « le mois dernier ». Un mois NOMMÉ — le repère le plus naturel qui soit — n’était tout simplement pas prévu : la période retombait à vide, et il basculait en vue globale. POURQUOI C’EST GRAVE : il ne te DISAIT pas qu’il n’avait pas compris. Il t’affichait un chiffre parfaitement juste… à une autre question. C’est la même famille que les « détournements » corrigés en v1327 — mais que la désambiguïsation ne pouvait PAS attraper : l’intention était BONNE (le CA), seul le paramètre se perdait en route. La leçon : un routage correct ne garantit pas une réponse correcte. LE PIÈGE DE L’ORDRE, et c’est lui le véritable correctif : « du mois de mai » contient « du mois ». La règle générique l’aurait donc capturé comme « ce mois-ci ». Le mois nommé est désormais testé EN PREMIER. LA RÈGLE D’ANNÉE : sans année explicite, un mois désigne sa dernière occurrence révolue ou en cours. En juillet 2026, « mai » = mai 2026 ; « août » = août 2025 (août 2026 n’a pas encore eu lieu, on ne l’invente pas). Et si tu précises l’année (« mars 2025 »), elle prime toujours. LES FAUX POSITIFS SONT TESTÉS UN PAR UN, car c’était le vrai danger : « ja-MAI-s », « MAI-son », « dé-MAR-rer », « surt-OUT » ne déclenchent aucun mois. Un mois détecté à tort détournerait une requête parfaitement claire vers une période fantaisiste. Les douze mois sont vérifiés un à un, accentués ou non. Enfin, quand un mois existe mais est VIDE, le copilote te le dit franchement (« le mois existe, il est simplement vide — ce n’est pas une erreur de ma part ») plutôt que de basculer en douce sur le total. Suite : 1076 → 1120 assertions vertes.';
+const APP_VERSION = 'v1332';
+const APP_MAJ = 'TON POINT MORT ÉTAIT ILLISIBLE — ET SOUS-ESTIMÉ. Deux problèmes, et le second est le plus grave. (1) L’EXPLICATION ÉTAIT INCOMPRÉHENSIBLE, et c’est ma faute. J’affichais « 78 macarons » en haut, puis « l’app t’annonçait 31 macarons, le vrai chiffre est 47 macarons plus haut ». Les chiffres étaient justes (31 + 47 = 78) mais il fallait faire l’addition de tête, et « le vrai chiffre est 47 » se lit comme si 47 ÉTAIT le résultat. Une explication qui exige un calcul mental a raté sa mission. C’est réécrit : « Avant, l’app t’annonçait 31. La réalité, c’est 78 (soit 47 de plus). » (2) LE VRAI PROBLÈME : TON POINT MORT EST PROBABLEMENT BIEN PLUS HAUT QUE 78. Ton coût de structure ne compte que 40,60 € par mois de temps hors-atelier — soit environ 3 h 20 par mois. Pour TOUT ton administratif, tes courses, tes déplacements, ta prospection et ta prépa marché réunis, ça fait moins de 50 minutes par semaine. C’est manifestement sous-pointé. Or l’app déclarait ce calcul « fiable » dès qu’UNE SEULE session était pointée : elle te présentait un point mort « tout payé » qui reposait en réalité sur presque rien. UN CHIFFRE BÂTI SUR UNE MESURE DÉRISOIRE N’EST PAS FIABLE — IL EST JUSTE PRÉSENT. Confondre les deux, c’est fabriquer exactement la fausse confiance que cette série traque depuis le début. L’app distingue désormais « présent » de « plausible », et t’avertit franchement quand tu passes sous 8 h par mois. ET SURTOUT, ELLE TE DONNE LE TAUX QUI COMPTE : chaque heure hors-atelier que tu ne pointes pas escamote environ 12 macarons de ton point mort. Tu peux donc faire le calcul toi-même : si tu passes réellement 15 h par mois au lieu des 3 h 20 pointées, ton vrai point mort tourne autour de 220 macarons, pas 78. Je ne l’affiche pas comme un fait — je te donne le TAUX exact, l’estimation de tes heures n’appartient qu’à toi. C’est le contraire d’un chiffre inventé. Suite : 1158 → 1172 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -30760,6 +30760,12 @@ function margeContributionUnitaire(prixVenteMoyen, coutRevientUnit, tauxSocialPc
   };
 }
 
+// [v1332] En dessous de ce seuil, le temps hors-atelier pointé est jugé IMPLAUSIBLE — non pas faux,
+// mais trop maigre pour porter un point mort qui se prétend complet. 8 h/mois, c'est 2 h par semaine
+// pour l'administratif + les courses + les déplacements + la prospection + la prépa marché réunis :
+// un plancher déjà très généreux. En dessous, on avertit plutôt que de laisser croire.
+const SEUIL_HEURES_HORS_ATELIER = 8;
+
 // BRIQUE 2 — le coût mensuel du TEMPS HORS-ATELIER (pointeuse).
 // Pure : reçoit les sessions, ne lit aucune base. N'INVENTE RIEN — si rien n'est pointé,
 // elle le dit franchement plutôt que de rendre 0 € (0 € serait un mensonge : ces heures
@@ -30803,12 +30809,26 @@ function coutTempsHorsProdMensuel(sessions, tauxHoraireDefaut){
     .map(a => ({ activite:a.activite, heures:round3(a.heures), cout:money2(a.cout) }))
     .sort((a, b) => b.cout - a.cout);
 
+  const heuresParMois = round3(heuresTotal / moisObserves);
+
+  // [v1332] LA PLAUSIBILITÉ, pas seulement la présence.
+  // AVANT : `fiable:true` dès qu'UNE SEULE session était pointée. Le point mort se présentait
+  // alors comme « tout payé »… en reposant sur presque rien. Chez Benjamin : 3 h 20 par mois pour
+  // TOUT l'administratif, les courses, les déplacements, la prospection et la prépa marché.
+  // C'est moins de 50 minutes par semaine : manifestement sous-pointé.
+  // Or un chiffre bâti sur une mesure dérisoire n'est pas « fiable » — il est juste PRÉSENT.
+  // Confondre les deux, c'est fabriquer exactement la fausse confiance que cette série traque.
+  const plausible = heuresParMois >= SEUIL_HEURES_HORS_ATELIER;
+
   return {
     fiable:true, raison:null,
     heuresTotal: round3(heuresTotal), coutTotal: money2(coutTotal),
     moisObserves, nbSessions: list.length,
-    heuresParMois: round3(heuresTotal / moisObserves),
+    heuresParMois,
     coutParMois: money2(coutTotal / moisObserves),
+    plausible,
+    alerte: plausible ? null
+      : `Seulement ${heuresParMois} h par mois sont pointées hors atelier. Pour TOUT l'administratif, les courses, les déplacements, la prospection et la prépa marché, c'est très peu — ces heures existent, mais elles ne sont pas mesurées. Ton point mort réel est donc PLUS HAUT que celui affiché.`,
     parActivite
   };
 }
@@ -30837,6 +30857,17 @@ function computePointMortVerite(p){
 
   const ancien = etape1;   // le chiffre rassurant
   const reel   = etape4;   // le chiffre vrai
+
+  // [v1332] LE TAUX DE SENSIBILITÉ — l'inconnue devient exploitable.
+  // Le temps hors-atelier est le poste le plus sous-mesuré (Benjamin ne pointe pas ses courses).
+  // Plutôt que de subir cette incertitude, on la CHIFFRE : combien de macarons chaque heure NON
+  // POINTÉE ajoute-t-elle au point mort ? Réponse : taux horaire ÷ marge de contribution.
+  // À 12 €/h pour 1,07 € de marge, une heure oubliée = 12 macarons de point mort escamotés.
+  // Benjamin peut alors faire le calcul lui-même : « je passe plutôt 15 h/mois → +140 macarons ».
+  // C'est le contraire d'un chiffre inventé : c'est un TAUX exact, appliqué à SON estimation.
+  const tauxH = Math.max(0, +p.tauxHoraire || 0);
+  const macaronsParHeureHorsAtelier = (M.margeContribution > 0 && tauxH > 0)
+    ? Math.ceil(tauxH / M.margeContribution) : null;
   const ecartMacarons = (reel.atteignable && ancien.atteignable
                           && reel.macaronsParMois != null && ancien.macaronsParMois != null)
     ? (reel.macaronsParMois - ancien.macaronsParMois) : null;
@@ -30853,6 +30884,8 @@ function computePointMortVerite(p){
       { cle:'temps',  label:'… en payant tes heures hors-atelier',         marge:M.margeContribution,  charges:coutStructure, pm:etape4, oubli:money2(tempsHorsProd) }
     ],
     ancien, reel, ecartMacarons,
+    tauxHoraire: tauxH,
+    macaronsParHeureHorsAtelier,   // [v1332] ce qu'UNE heure non pointée coûte au point mort
     atteignable: reel.atteignable, raison: reel.raison
   };
 }
@@ -30956,6 +30989,7 @@ async function renderProfit(){
       coutTempsHorsProdMensuel: _tps.fiable ? _tps.coutParMois : 0,
       prixVenteMoyen: _prixMoy,
       coutRevientUnit: _coutMoy,
+      tauxHoraire: _s.laborRate,          // [v1332] pour chiffrer le coût d'une heure NON pointée
       tauxSocialPct: _s.socialGoods,
       abattementIrPct: _s.irAbattementGoods,
       trancheIrPct: _s.irTrancheMarginale
@@ -30992,9 +31026,15 @@ async function renderProfit(){
               <div style="font-size:.74rem;color:#9a8a82">${euro(V.chargesFixesMensuelles)} de charges fixes${V.coutTempsHorsProdMensuel>0?` + ${euro(V.coutTempsHorsProdMensuel)} de temps hors-atelier`:''}</div>
             </div>
           </div>
-          ${V.ecartMacarons>0?`<div style="padding:9px 12px;background:#fff6e5;border-radius:8px;margin-bottom:10px;font-size:.8rem;color:#6a5a52;line-height:1.5">
-            ⚠️ Jusqu'ici, l'app t'annonçait <b>${V.ancien.macaronsParMois} macarons</b> : elle oubliait l'URSSAF, l'impôt et tes heures hors-atelier.
-            Le vrai chiffre est <b>${V.ecartMacarons} macarons plus haut</b>. Voici, marche par marche, d'où vient l'écart.
+          ${V.ecartMacarons>0?`<div style="padding:9px 12px;background:#fff6e5;border-radius:8px;margin-bottom:10px;font-size:.8rem;color:#6a5a52;line-height:1.55">
+            ⚠️ <b>Avant</b>, l'app t'annonçait <b>${V.ancien.macaronsParMois} macarons</b> — elle oubliait l'URSSAF, l'impôt et tes heures hors-atelier.<br>
+            <b>La réalité, c'est ${pm.macaronsParMois}</b> <span style="color:#9a8a82">(soit ${V.ecartMacarons} de plus)</span>. Le détail ci-dessous montre d'où vient chaque marche.
+          </div>`:''}
+          ${(!_tps.plausible && _tps.fiable)?`<div style="padding:10px 12px;background:#fdecea;border-radius:8px;margin-bottom:10px;font-size:.8rem;color:#6a5a52;line-height:1.55">
+            <div style="font-weight:700;color:#b3261e">⏱ Attention : ce chiffre est probablement SOUS-ESTIMÉ.</div>
+            ${esc(_tps.alerte||'')}
+            ${V.macaronsParHeureHorsAtelier?`<br><br><b>Le taux qui compte :</b> chaque heure hors-atelier que tu ne pointes pas escamote environ <b>${V.macaronsParHeureHorsAtelier} macarons</b> de ton point mort.<br>
+            <span style="color:#9a8a82">Tu es à ${_tps.heuresParMois} h/mois pointées. Si tu en passes réellement 15, ton vrai point mort tourne plutôt autour de <b>${pm.macaronsParMois + Math.round((15 - _tps.heuresParMois) * V.macaronsParHeureHorsAtelier)} macarons</b>. Je ne l'affiche pas comme un fait : je te donne le taux, l'estimation des heures n'appartient qu'à toi.</span>`:''}
           </div>`:''}
         ` : `
           <div style="padding:10px 12px;background:#fdecea;border-radius:8px;margin-bottom:10px">
@@ -40555,6 +40595,114 @@ async function aiQueryConseilOuvert(params){
     <p class="note" style="margin-top:4px;font-size:.74rem;color:#9a8a82">Je te donne un cadre de réflexion à partir de bon sens artisanal et de tes chiffres — le choix final t'appartient, tu connais ton terrain mieux que moi.</p>`,
     [{label:'📊 Mes chiffres', view:'compta'}, {label:'📈 Rentabilité', view:'rentabilite'}]);
 }
+// ============================================================================
+//  [v1331] LE CA D'UN MOIS AVAIT DEUX VÉRITÉS — le copilote lisait la mauvaise.
+// ----------------------------------------------------------------------------
+//  Benjamin demande « mon chiffre d'affaires de mai » → 50,00 €… et « 0 macaron écoulé ».
+//  50 € pour zéro macaron : l'incohérence saute aux yeux, et le chiffre était faux.
+//
+//  DEUX SOURCES DIVERGENTES coexistaient :
+//
+//   A) LA VÉRITÉ COMPTABLE — caEncaisseParMois() — utilisée par le tableau de bord et la compta :
+//      • mois = la date du PAIEMENT      • montant = ce qui est RÉELLEMENT ENCAISSÉ
+//      Un acompte en mai + un solde en août tombent sur mai ET août, chacun son montant.
+//
+//   B) CE QUE LISAIT LE COPILOTE — computeStats().global.parMois :
+//      • mois = la date de la COMMANDE   • montant = le TOTAL de la commande
+//      Une commande passée en mai et payée en juillet comptait INTÉGRALEMENT en mai.
+//
+//  Et le copilote annonçait « CA des commandes PAYÉES sur la période » : le mot « période »
+//  désignait en réalité la date de commande, pas l'encaissement. Le libellé mentait.
+//
+//  UNE SEULE VÉRITÉ DÉSORMAIS : l'ENCAISSEMENT (règle A). C'est celle de la compta, celle de
+//  l'URSSAF, et celle du tableau de bord. Deux écrans ne doivent jamais donner deux CA.
+//  C'est la même discipline qu'en v1325 (partServiceCommande) : une règle, un seul endroit.
+//
+//  Les macarons suivent l'encaissement AU PRORATA — exactement comme l'emballage en v1326.
+//  Une commande encaissée à moitié en mai n'apporte que la moitié de ses macarons à mai.
+//  Sans cela, on remettrait un compteur (les macarons) sur une base et l'autre (les euros) sur
+//  une autre : c'est précisément ce qui produisait « 50 € et 0 macaron ».
+// ============================================================================
+
+// PURE. Le nombre de macarons d'UNE commande, par la même lecture des lignes que computeStats.
+// ⚠ Cette logique est DUPLIQUÉE depuis computeStats : un test l'assert explicitement contre elle
+// (la somme sur toutes les commandes payées doit être IDENTIQUE aux totaux de computeStats).
+// Dupliquer une règle sans preuve, c'est fabriquer la divergence de demain — celle-là même que
+// cette vague corrige.
+function macaronsDeCommande(o, toLines){
+  const r = { std:0, gf:0, total:0 };
+  const lignes = (typeof toLines === 'function' ? toLines(o) : orderToLines(o)) || [];
+  lignes.forEach(ln => {
+    if(!ln) return;
+    if(ln.type === 'coffret' || ln.type === 'evenement' || ln.type === 'histo'){
+      (ln.parfums || []).forEach(p => { const q = +p.qte || 0; if(q > 0) r.std += q; });
+    } else if(ln.type === 'grand'){
+      (ln.items || []).forEach(p => { const q = +p.qte || 0; if(q > 0) r.gf += q; });
+    } else if(ln.type === 'don'){
+      // Don : sortie de stock réelle (comptée en macarons) mais 0 € — donc aucun CA.
+      (ln.parfums || []).forEach(p => { const q = +p.qte || 0; if(q > 0) r.std += q; });
+      (ln.items || []).forEach(p => { const q = +p.qte || 0; if(q > 0) r.gf += q; });
+    }
+    // 'prestation' : vend du temps, aucun macaron. C'est LA raison possible d'un « X € / 0 macaron »
+    // parfaitement légitime — mais il faut alors le DIRE, pas laisser Benjamin deviner.
+  });
+  r.total = r.std + r.gf;
+  return r;
+}
+
+// PURE. Le CA RÉELLEMENT ENCAISSÉ sur un mois (clé AAAA-MM), avec sa traçabilité complète.
+// Renvoie aussi l'ANCIEN chiffre (base « date de commande × montant total ») afin de ne jamais
+// remplacer un nombre en silence — règle de la maison depuis v1324.
+function caMoisEncaisse(orders, ym, toLines){
+  const res = {
+    ym, ca:0, macaronsStd:0, macaronsGf:0, nbPaiements:0,
+    caPrestation:0,                    // part du CA qui ne vend AUCUN macaron
+    detail:[],                         // [{label, encaisse, part, macarons}]
+    ancienCa:0, ancienNbCommandes:0,   // ce qu'affichait l'app avant (base « date de commande »)
+    ecart:0
+  };
+  if(!ym) return res;
+
+  (orders || []).forEach(o => {
+    if(!o || o.histo) return;   // même exclusion que caEncaisseParMois (la compta ignore les reprises)
+
+    // --- La VÉRITÉ : ventilation des paiements réels sur leur mois d'encaissement.
+    let enc = 0, nbP = 0;
+    paiementsDe(o).forEach(p => {
+      const m = +p.montant || 0;
+      if(m && monthKey(p.date || o.date || '') === ym){ enc += m; nbP++; }
+    });
+
+    if(enc > 0){
+      const total = +o.montant || 0;
+      // Part encaissée CE MOIS-CI (bornée à 1 : un trop-perçu ne fait pas compter 130 % des macarons).
+      const part = total > 0 ? Math.min(1, enc / total) : 1;
+      const mac = macaronsDeCommande(o, toLines);
+      const std = Math.round(mac.std * part);
+      const gf  = Math.round(mac.gf  * part);
+      res.ca = money2(res.ca + enc);
+      res.nbPaiements += nbP;
+      res.macaronsStd += std;
+      res.macaronsGf  += gf;
+      if(mac.total === 0) res.caPrestation = money2(res.caPrestation + enc);   // encaissement sans macaron
+      res.detail.push({ label:(o.clientNom || 'Commande') + (o.id ? ' #' + o.id : ''),
+                        encaisse: money2(enc), part: Math.round(part * 100), macarons: std + gf });
+    }
+  });
+
+  // --- L'ANCIEN calcul, rejoué à l'identique (date de COMMANDE × montant TOTAL, commandes payées).
+  (orders || []).forEach(o => {
+    if(!o || o.paiement !== 'Payé') return;
+    if(((o.date || '').slice(0, 7)) !== ym) return;
+    res.ancienCa = money2(res.ancienCa + (+o.montant || 0));
+    res.ancienNbCommandes++;
+  });
+
+  res.ecart = money2(res.ca - res.ancienCa);
+  res.detail.sort((a, b) => b.encaisse - a.encaisse);
+  return res;
+}
+
 async function aiQueryRevenue(params){
   params = params || {};
   const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
@@ -40570,18 +40718,33 @@ async function aiQueryRevenue(params){
   else if(/^\d{4}-\d{2}$/.test(params.periode||'')){ cible=params.periode; libelleMois=monthLabel(cible); }
   // Si une période précise est demandée, on répond ciblé sur ce mois.
   if(cible){
-    const M = R.global.parMois[cible];
-    if(!M || (!M.ca && !M.macaronsStd)){
-      return aiSay(`${aiHero(euro(0), `Chiffre d'affaires — ${libelleMois}`)}
-        ${aiSynth(`Aucune vente enregistrée pour ${monthLabel(cible)}. Le mois existe, il est simplement vide — ce n'est pas une erreur de ma part.`, {icon:'📭'})}`);
+    // [FIX v1331] On lit désormais la VÉRITÉ COMPTABLE (encaissement), plus computeStats
+    // (qui datait sur la commande et comptait le montant total). Voir caMoisEncaisse.
+    const E = caMoisEncaisse(orders, cible, orderToLines);
+    if(E.ca > 0 || E.ancienCa > 0){
+      const _ecartTxt = (Math.abs(E.ecart) >= 0.01 && E.ancienCa > 0)
+        ? `<div style="margin-top:8px;padding:9px 12px;background:#fff6e5;border-radius:8px;font-size:.78rem;color:#6a5a52;line-height:1.55">
+             ⚠️ <b>Correction v1331.</b> Jusqu'ici je t'annonçais <b>${euro(E.ancienCa)}</b> : je datais tes ventes sur la
+             <b>date de commande</b> et je comptais le <b>montant total</b>, même si l'argent n'était pas encore rentré.
+             Je compte maintenant ce que tu as <b>réellement encaissé ce mois-là</b> — la même règle que ta compta et ton tableau de bord.
+           </div>` : '';
+      const _prestaTxt = (E.caPrestation > 0)
+        ? `<div style="margin-top:8px;font-size:.78rem;color:#6a5a52">💡 Dont <b>${euro(E.caPrestation)}</b> d'encaissements <b>sans macaron</b> (prestations, acomptes) — c'est normal, mais ça explique un CA avec peu ou pas de macarons.</div>` : '';
+
+      if(params.enMacarons){
+        return aiSay(`${aiHero(qty(E.macaronsStd), `Macarons vendus — ${libelleMois}`, {sub: E.macaronsGf>0?`+ ${qty(E.macaronsGf)} grand(s) format(s)`:''})}
+          ${aiSynth(`Soit ${euro(E.ca)} réellement encaissés sur la période.`, {icon:'🍬'})}`);
+      }
+      return aiSay(`${aiHero(euro(E.ca), `Chiffre d'affaires — ${libelleMois}`, {color:'var(--vert,#3f7d52)'})}
+        ${aiSynth(`${qty(E.macaronsStd)} macarons écoulés${E.macaronsGf>0?` (+ ${qty(E.macaronsGf)} grand format${E.macaronsGf>1?'s':''})`:''}, sur ${E.nbPaiements} encaissement${E.nbPaiements>1?'s':''}.`, {icon:'💰'})}
+        ${_ecartTxt}
+        ${_prestaTxt}
+        ${E.detail.length?aiDetails(E.detail.map(d=>`<div class="sum-box"><span>${esc(d.label)}${d.part<100?` <span style="color:#9a8a82">(${d.part}% encaissé)</span>`:''}</span><b>${euro(d.encaisse)}</b></div>`).join(''), 'Le détail des encaissements'):''}
+        ${aiCleLecture('CA <b>réellement encaissé</b> sur le mois — pas ce qu\'il te reste après charges.', {calcul:'Chaque paiement est daté sur le mois où l\'argent est rentré (et non sur la date de commande). Les macarons suivent le même prorata : une commande encaissée à moitié n\'apporte que la moitié de ses macarons.', voisins:[{label:'💰 Net dans la poche', ask:'mon net en poche'},{label:'💸 Ce qu\'on me doit', ask:'qui me doit de l\'argent'}]})}`);
     }
-    if(params.enMacarons){
-      return aiSay(`${aiHero(qty(M.macaronsStd), `Macarons vendus — ${libelleMois}`, {sub: M.nbGrandsFormats>0?`+ ${qty(M.nbGrandsFormats)} grand format${M.nbGrandsFormats>1?'s':''}`:''})}
-        ${aiSynth(`Soit ${euro(M.ca)} de chiffre d'affaires sur la période.`, {icon:'🍬'})}`);
-    }
-    return aiSay(`${aiHero(euro(M.ca), `Chiffre d'affaires — ${libelleMois}`, {color:'var(--vert,#3f7d52)'})}
-      ${aiSynth(`${qty(M.macaronsStd)} macarons écoulés${M.nbGrandsFormats>0?` (+ ${qty(M.nbGrandsFormats)} grand format${M.nbGrandsFormats>1?'s':''})`:''}, commandes payées.`, {icon:'💰'})}
-      ${aiCleLecture('CA des commandes <b>payées</b> sur la période — pas ce qu\'il te reste après charges.', {calcul:'On additionne le montant des commandes dont le paiement est marqué « Payé ». Les commandes non encore réglées ne sont pas comptées ici.', voisins:[{label:'💰 Net dans la poche', ask:'mon net dans la poche'},{label:'💸 Ce qu\'on me doit', ask:'qui me doit de l\'argent'}]})}`);
+    // Mois VIDE : on le dit franchement plutôt que de basculer en douce sur le total.
+    return aiSay(`${aiHero(euro(0), `Chiffre d'affaires — ${libelleMois}`)}
+      ${aiSynth(`Aucun encaissement pour ${monthLabel(cible)}. Le mois existe, il est simplement vide — ce n'est pas une erreur de ma part.`, {icon:'📭'})}`);
   }
   // Sinon : vue globale (comportement d'origine).
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
@@ -40590,7 +40753,13 @@ async function aiQueryRevenue(params){
     <div class="sum-box"><span>Macarons standards écoulés</span><b>${qty(R.global.macaronsStd)}</b></div>
     ${R.global.nbGrandsFormats>0?`<div class="sum-box"><span>Grands formats écoulés</span><b>${qty(R.global.nbGrandsFormats)}</b></div>
     <div class="sum-box" style="background:#eef5f0"><span>Volume de production <span style="color:#9a8a82;font-size:.75rem">(équiv. coques · 1 GF = ${GF_COQUE_RATIO})</span></span><b>${qty(Math.round(R.global.coquesEquiv))}</b></div>`:''}
-    ${mois.length?mois.map(m=>`<div class="sum-box"><span>${m}</span><b>${euro(R.global.parMois[m].ca)}</b></div>`).join(''):''}
+    ${(()=>{ // [FIX v1331] La liste mensuelle utilisait la MÊME règle fausse (date de commande × montant
+             // total). Elle affiche désormais l'ENCAISSEMENT RÉEL — sinon le total et le détail
+             // racontaient deux histoires différentes, sur le même écran.
+      const _enc = caEncaisseParMois(orders).parMois;
+      const _ms = Object.keys(_enc).sort();
+      return _ms.length ? _ms.map(m=>`<div class="sum-box"><span>${monthLabel(m)}</span><b>${euro(_enc[m])}</b></div>`).join('') : '';
+    })()}
     ${aiCleLecture('Total des commandes <b>payées</b>, toutes périodes — le chiffre d\'affaires brut, avant toute charge.', {voisins:[{label:'💰 Net dans la poche', ask:'mon net dans la poche'},{label:'💸 Ce qu\'on me doit', ask:'qui me doit de l\'argent'}]})}`);
 }
 
