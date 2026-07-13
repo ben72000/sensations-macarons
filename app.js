@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1337';
-const APP_MAJ = 'TU AS VU JUSTE, ET AVANT MOI. « Si seul le CA est entré, on retourne une vente de macarons à zéro même avec un CA » — exactement. Et en creusant, c’était encore pire que ça. LA VRAIE CAUSE : en v1336, j’ai parsé les mouvements de marché moi-même et INVENTÉ un type « embarque »… qui n’existe nulle part dans ta base. Le type réellement stocké s’appelle « sortie ». Les macarons de tes marchés valaient donc TOUJOURS zéro — avec ou sans mouvements saisis. Et mon test partageait la même erreur, donc il passait au vert : UN TEST QUI PARTAGE L’ERREUR DU CODE NE VAUT RIEN, il ne valide que sa propre cohérence. C’était précisément la duplication non prouvée que je m’étais interdite, et que j’avais moi-même déclarée en angle mort à la version précédente. LA CORRECTION : je ne relis plus les mouvements dans mon coin. Une SEULE fonction sait lire un mouvement de marché — celle qui sert déjà ton écran marché. Les deux chemins ne peuvent plus diverger. ET TON CAS PRÉCIS : quand tu saisis le sorti et le rentré, le delta donne la vente au macaron près. Quand tu ne saisis que la caisse, l’app ne dit plus « 0 macaron ». ZÉRO N’EST PAS UNE MESURE — C’EST UNE AFFIRMATION. Dire « 0 macaron » quand tu as encaissé 516 €, ce n’est pas « je ne sais pas », c’est « tu n’as rien vendu ». C’est le même mensonge que le « 50 € / 0 macaron » de la v1331, réapparu dans l’autre canal. DÉSORMAIS l’app te dit franchement : « ce total de macarons est INCOMPLET — 1 marché a encaissé 516 € sans que tu aies saisi les quantités. Je connais l’argent, pas les macarons. Saisis le sorti et le rentré : le delta donne la vente au macaron près. » La quantité inconnue vaut désormais « null » dans les données, surtout pas 0 — et l’incertitude REMONTE jusqu’au chiffre affiché, au lieu de se perdre en route. Ton CA, lui, reste juste : l’argent est connu, ce sont les macarons qui ne le sont pas. Suite : 1301 → 1323 assertions vertes.';
+const APP_VERSION = 'v1340';
+const APP_MAJ = 'LE MONTANT TOTAL *ET* LE RESTE DÛ, comme tu l’as demandé. Ton encart « À venir » n’affichait que le montant total (« 5 · 1 022,40 € »). Or une partie est souvent déjà encaissée en acompte : ce total ne te disait donc PAS ce qu’il te reste à percevoir — le seul chiffre qui compte pour ta trésorerie. Tu vois maintenant les trois : le TOTAL, ce qui est DÉJÀ ENCAISSÉ (avec le nombre d’acomptes), et le RESTE DÛ. Le reste apparaît aussi semaine par semaine, et dans l’en-tête replié. PREMIÈRE RÈGLE : les trois chiffres se recomposent — total = déjà encaissé + reste dû, AU CENTIME. Un encart où les nombres ne se recomposent pas t’oblige à vérifier à la calculette, et un chiffre qu’on doit vérifier est un chiffre auquel on ne fait plus confiance. DEUXIÈME RÈGLE, et c’est elle qui évite un mensonge discret : UN TROP-PERÇU NE PAIE PAS LA COMMANDE D’À CÔTÉ. Si un client verse 120 € pour une commande de 100 €, les 20 € en trop ne viennent PAS réduire ce qu’un autre client te doit. Une somme naïve (total moins encaissé) ferait exactement ça et SOUS-ESTIMERAIT ce que tu dois réclamer. L’app plafonne donc commande par commande, et t’affiche le trop-perçu À PART. J’ai aussi corrigé la symétrie sur « À encaisser » : elle affichait le reste dû sans jamais dire de quel montant total il provenait — impossible de savoir si 139 € de reste portaient sur 150 € ou sur 3 000 € de commandes. Elle affiche maintenant les deux. Et les deux sections passent par UNE SEULE fonction : deux calculs séparés finissent toujours par diverger. Enfin, s’il n’y a aucun acompte, l’affichage reste exactement comme avant — on n’ajoute pas de bruit là où il n’y a rien à dire. Suite : 1366 → 1397 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -16321,6 +16321,47 @@ function cmdSetJourFiltre(dateIso){
   cmdJourFiltre = dateIso || null;
   if(typeof cmdFilter==='function') cmdFilter(cmdSearch);
 }
+// ============================================================================
+//  [v1340] LE MONTANT TOTAL *ET* LE RESTE DÛ — demandé par Benjamin.
+// ----------------------------------------------------------------------------
+//  L'encart « À venir » n'affichait que le montant total (« 5 · 1 022,40 € »). Or une partie est
+//  souvent déjà encaissée en acompte : ce total ne dit donc PAS ce qu'il reste à percevoir, qui
+//  est pourtant le chiffre qui compte pour la trésorerie.
+//
+//  DEUX RÈGLES, et la seconde est celle qui évite un mensonge discret :
+//
+//   1. LES TROIS CHIFFRES SE RECOMPOSENT : total = déjà encaissé + reste dû, AU CENTIME.
+//      Un encart où les nombres ne se recomposent pas oblige Benjamin à vérifier à la calculette
+//      — et un chiffre qu'on doit vérifier est un chiffre auquel on ne fait plus confiance.
+//
+//   2. UN TROP-PERÇU NE PAIE PAS LA COMMANDE D'À CÔTÉ. Si un client a versé 120 € pour une
+//      commande de 100 €, les 20 € en trop ne viennent PAS réduire le reste dû d'un autre client.
+//      Sommer bêtement (Σ montant − Σ encaissé) ferait exactement ça, et sous-estimerait le reste
+//      à percevoir. On plafonne donc commande par commande, et on expose le trop-perçu À PART.
+// ============================================================================
+function cmdTotauxLot(rows){
+  const res = { total:0, encaisse:0, reste:0, tropPercu:0, nbAvecAcompte:0, nb:0 };
+  (rows || []).forEach(r => {
+    const o = (r && r.o) ? r.o : r;
+    if(!o) return;
+    const montant = Math.max(0, +o.montant || 0);
+    const paye = (typeof orderPaid === 'function') ? Math.max(0, orderPaid(o)) : 0;
+
+    // Ce qui s'applique RÉELLEMENT à cette commande (jamais plus que son montant).
+    const applique = Math.min(paye, montant);
+    const du = money2(montant - applique);          // ≥ 0 par construction
+    const trop = money2(Math.max(0, paye - montant));
+
+    res.nb++;
+    res.total    = money2(res.total + montant);
+    res.encaisse = money2(res.encaisse + applique);
+    res.reste    = money2(res.reste + du);
+    res.tropPercu = money2(res.tropPercu + trop);
+    if(applique > 0) res.nbAvecAcompte++;
+  });
+  return res;
+}
+
 function cmdFilter(q){  cmdSearch=q||'';
   if(!_cmdCache) return;
   const body=document.getElementById('cmdBody'); if(!body) return;
@@ -16408,24 +16449,41 @@ function cmdFilter(q){  cmdSearch=q||'';
     };
     const corps=semaines.map(wk=>{
       const lot=parSem[wk].slice().sort((a,b)=>(a.o.date||'').localeCompare(b.o.date||''));  // dates croissantes
-      const ca=lot.reduce((s,r)=>s+(+r.o.montant||0),0);
+      // [v1340] La semaine affiche le total ET, s'il y a eu des acomptes, ce qu'il RESTE à percevoir.
+      const T=cmdTotauxLot(lot);
+      const _resteSem = T.encaisse>0 ? ` · <b style="color:#b3261e">reste ${euro(T.reste)}</b>` : '';
       const enTete=`<div style="padding:8px 12px;background:var(--creme-2);border-bottom:1px solid var(--hair);font-size:.76rem;font-weight:600;color:#6a5a52;display:flex;justify-content:space-between;gap:8px">
-        <span>${esc(_libSemaine(wk))}</span><span style="font-weight:500;color:#9a8a82">${lot.length} · ${euro(ca)}</span></div>`;
+        <span>${esc(_libSemaine(wk))}</span><span style="font-weight:500;color:#9a8a82">${lot.length} · ${euro(T.total)}${_resteSem}</span></div>`;
       return enTete + lot.map(r=>_cmdRowMini(r,{distinctif:false})).join('');
     }).join('');
-    const totAV=aVenir.reduce((s,r)=>s+(+r.o.montant||0),0);
+    // [v1340] LE CHIFFRE QUI COMPTE POUR LA TRÉSORERIE : ce qu'il RESTE à percevoir.
+    // Le total seul ne le disait pas — une partie est souvent déjà encaissée en acompte.
+    const AV = cmdTotauxLot(aVenir);
+    const _bandeau = AV.encaisse > 0
+      ? `<div style="padding:9px 13px;background:#f0f5fa;border-bottom:1px solid #dbe6f2;font-size:.8rem;color:#4a5a6a;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
+           <span>Total <b>${euro(AV.total)}</b></span>
+           <span>− déjà encaissé <b style="color:#3f7d52">${euro(AV.encaisse)}</b> <span style="color:#9a8a82">(${AV.nbAvecAcompte} acompte${AV.nbAvecAcompte>1?'s':''})</span></span>
+           <span>= <b style="color:#b3261e">reste ${euro(AV.reste)}</b></span>
+         </div>
+         ${AV.tropPercu>0?`<div style="padding:7px 13px;background:#fff6e5;border-bottom:1px solid #e5d3b3;font-size:.75rem;color:#6a5a52">⚠️ ${euro(AV.tropPercu)} de trop-perçu sur ces commandes. Il n'est PAS déduit du reste dû : un trop-perçu ne paie pas la commande d'à côté.</div>`:''}`
+      : '';
     html += `<details open style="margin:12px 0 4px;border:1px solid #c9d6e8;border-radius:12px;overflow:hidden;background:#f7fafd">
       <summary style="cursor:pointer;padding:11px 13px;font-weight:700;color:#3b6ea5;background:#eaf1f9">
-        📅 À venir <span style="font-weight:500">(${aVenir.length}) · ${euro(totAV)}</span></summary>
+        📅 À venir <span style="font-weight:500">(${aVenir.length}) · ${euro(AV.total)}${AV.encaisse>0?` · <b style="color:#b3261e">reste ${euro(AV.reste)}</b>`:''}</span></summary>
+      ${_bandeau}
       <div>${corps}</div>
     </details>`;
   }
   // 2) À ENCAISSER — section distincte, dépliée par défaut (à ne pas oublier)
   if(aEncaisser.length){
-    const totReste=aEncaisser.reduce((s,r)=>s+((typeof orderBalance==='function')?orderBalance(r.o):0),0);
+    // [v1340] Même règle unique que « À venir » : cette section affichait le reste dû sans jamais
+    // dire de quel MONTANT TOTAL il provenait — impossible de savoir si 139 € de reste portaient
+    // sur 150 € ou sur 3 000 € de commandes. Une seule fonction calcule désormais les deux.
+    const AE = cmdTotauxLot(aEncaisser);
+    const totReste = AE.reste;
     html += `<details open style="margin:12px 0 4px;border:1px solid #f0c89a;border-radius:12px;overflow:hidden;background:#fffaf3">
       <summary style="cursor:pointer;padding:11px 13px;font-weight:700;color:#b5701a;background:#fdf0dd">
-        💰 À encaisser <span style="font-weight:500">(${aEncaisser.length}) · reste ${euro(totReste)}</span></summary>
+        💰 À encaisser <span style="font-weight:500">(${aEncaisser.length}) · ${euro(AE.total)} · <b>reste ${euro(AE.reste)}</b>${AE.encaisse>0?` <span style="color:#9a8a82">(${euro(AE.encaisse)} déjà encaissé)</span>`:''}</span></summary>
       <div>${aEncaisser.map(r=>_cmdRowMini(r,{distinctif:true})).join('')}</div>
     </details>`;
   }
@@ -41060,6 +41118,13 @@ function serieMensuelleEncaisse(orders, toLines, markets, moves){
   const encaisse = caEncaisseParMois(orders, markets).parMois;
   const mois = Object.keys(encaisse).sort();
   const parMois = {};
+  // [v1339] LES TOTAUX DÉCOULENT DES MOIS. Le « CA total » de la vue globale venait encore de
+  // computeStats (commandes seules, date de commande, montant total) — il s'affichait donc JUSTE
+  // AU-DESSUS d'une liste mensuelle bâtie sur l'encaissement. Le total et le détail se
+  // contredisaient SUR LE MÊME ÉCRAN. Un total qui n'est pas la somme de son détail n'est pas un
+  // total : c'est un troisième chiffre.
+  const totaux = { ca:0, macaronsStd:0, macaronsGf:0, macarons:0, nbPaiements:0,
+                   macaronsComplets:true, nbMarchesNonMesures:0, caMarcheNonMesure:0 };
   mois.forEach(ym => {
     const E = caMoisEncaisse(orders, ym, toLines, markets, moves);
     parMois[ym] = {
@@ -41067,10 +41132,20 @@ function serieMensuelleEncaisse(orders, toLines, markets, moves){
       macaronsStd: E.macaronsStd,
       macaronsGf: E.macaronsGf,
       macarons: E.macaronsStd + E.macaronsGf,
-      nbPaiements: E.nbPaiements
+      nbPaiements: E.nbPaiements,
+      macaronsComplets: E.macaronsComplets !== false
     };
+    totaux.ca = money2(totaux.ca + E.ca);
+    totaux.macaronsStd += E.macaronsStd;
+    totaux.macaronsGf  += E.macaronsGf;
+    totaux.nbPaiements += E.nbPaiements;
+    // L'incertitude s'AGRÈGE : si un seul mois est incomplet, le total l'est aussi.
+    if(E.macaronsComplets === false) totaux.macaronsComplets = false;
+    totaux.nbMarchesNonMesures += (+E.nbMarchesNonMesures || 0);
+    totaux.caMarcheNonMesure = money2(totaux.caMarcheNonMesure + (+E.caMarcheNonMesure || 0));
   });
-  return { mois, parMois };
+  totaux.macarons = totaux.macaronsStd + totaux.macaronsGf;
+  return { mois, parMois, totaux };
 }
 
 async function aiQueryRevenue(params){
@@ -41129,21 +41204,21 @@ async function aiQueryRevenue(params){
     return aiSay(`${aiHero(euro(0), `Chiffre d'affaires — ${libelleMois}`)}
       ${aiSynth(`Aucun encaissement pour ${monthLabel(cible)}. Le mois existe, il est simplement vide — ce n'est pas une erreur de ma part.`, {icon:'📭'})}`);
   }
-  // Sinon : vue globale (comportement d'origine).
+  // Sinon : vue globale. [v1339] Elle lit désormais LA MÊME série que la liste mensuelle : le total
+  // EST la somme du détail. Un total qui n'est pas la somme de son détail n'est pas un total —
+  // c'est un troisième chiffre, et il finit toujours par contredire les deux autres.
+  const _SEG = serieMensuelleEncaisse(orders, orderToLines, _mkts, _mvs);
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Chiffre d'affaires <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(commandes payées)</span></h3>
-    <div class="sum-box"><span>CA total</span><b>${euro(R.global.caTotal)}</b></div>
-    <div class="sum-box"><span>Commandes payées</span><b>${R.nbValides}</b></div>
-    <div class="sum-box"><span>Macarons standards écoulés</span><b>${qty(R.global.macaronsStd)}</b></div>
-    ${R.global.nbGrandsFormats>0?`<div class="sum-box"><span>Grands formats écoulés</span><b>${qty(R.global.nbGrandsFormats)}</b></div>
+    <div class="sum-box"><span>CA total encaissé</span><b>${euro(_SEG.totaux.ca)}</b></div>
+    <div class="sum-box"><span>Encaissements</span><b>${_SEG.totaux.nbPaiements}</b></div>
+    <div class="sum-box"><span>Macarons écoulés${_SEG.totaux.macaronsComplets?'':' <span style="color:#b3261e">(au moins)</span>'}</span><b>${qty(_SEG.totaux.macaronsStd)}</b></div>
+    ${_SEG.totaux.macaronsGf>0?`<div class="sum-box"><span>Grands formats écoulés</span><b>${qty(_SEG.totaux.macaronsGf)}</b></div>
     <div class="sum-box" style="background:#eef5f0"><span>Volume de production <span style="color:#9a8a82;font-size:.75rem">(équiv. coques · 1 GF = ${GF_COQUE_RATIO})</span></span><b>${qty(Math.round(R.global.coquesEquiv))}</b></div>`:''}
-    ${(()=>{ // [FIX v1331] La liste mensuelle utilisait la MÊME règle fausse (date de commande × montant
-             // total). Elle affiche désormais l'ENCAISSEMENT RÉEL — sinon le total et le détail
-             // racontaient deux histoires différentes, sur le même écran.
-      const _enc = caEncaisseParMois(orders, _mkts).parMois;
-      const _ms = Object.keys(_enc).sort();
-      return _ms.length ? _ms.map(m=>`<div class="sum-box"><span>${monthLabel(m)}</span><b>${euro(_enc[m])}</b></div>`).join('') : '';
-    })()}
-    ${aiCleLecture('Total des commandes <b>payées</b>, toutes périodes — le chiffre d\'affaires brut, avant toute charge.', {voisins:[{label:'💰 Net dans la poche', ask:'mon net dans la poche'},{label:'💸 Ce qu\'on me doit', ask:'qui me doit de l\'argent'}]})}`);
+    ${_SEG.totaux.nbMarchesNonMesures>0?`<div style="margin-top:8px;padding:9px 12px;background:#fdecea;border-radius:8px;font-size:.78rem;color:#6a5a52;line-height:1.5">
+      ⚠️ Le compte de macarons est <b>incomplet</b> : ${_SEG.totaux.nbMarchesNonMesures} marché${_SEG.totaux.nbMarchesNonMesures>1?'s ont':' a'} encaissé <b>${euro(_SEG.totaux.caMarcheNonMesure)}</b> sans quantités saisies. Je connais l'argent, pas les macarons.
+    </div>`:''}
+    ${_SEG.mois.map(m=>`<div class="sum-box"><span>${monthLabel(m)}</span><b>${euro(_SEG.parMois[m].ca)}</b></div>`).join('')}
+    ${aiCleLecture('Tout ce que tu as <b>réellement encaissé</b>, commandes ET marchés, toutes périodes — avant toute charge. <b>Le total est la somme exacte des mois ci-dessous.</b>', {voisins:[{label:'💰 Net dans la poche', ask:'mon net dans la poche'},{label:'💸 Ce qu\'on me doit', ask:'qui me doit de l\'argent'}]})}`);
 }
 
 // ---- ANALYSE AVANCÉE (assistant) ----
@@ -41944,12 +42019,27 @@ async function pickRenderBatches(){
   const body = document.getElementById('pickBody'); if(!body) return;
   try{ if(!window._pickClientsCache) window._pickClientsCache = await db.clients.toArray(); }catch(e){swallow(e,'pickRenderBatches')}
   const batches = (await db.batches.toArray().catch(()=>[])).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  // [v1339] RÉCONCILIATION. Un statut stocké qui n'est jamais revérifié finit par mentir — et un
+  // statut faux est PIRE qu'un statut absent, parce qu'on lui fait confiance. On le recale ici sur
+  // le fait vérifiable (des articles sont-ils affectés au lot ?). Idempotent : n'écrit que si ça a
+  // divergé (lot vidé à la main, import, ancien lot créé avant la v1339…).
+  const _pkItems = await db.orderItems.toArray().catch(()=>[]);
+  for(const b of batches){ await pickBatchSyncStatut(b, _pkItems); }
+
   const actifs = batches.filter(b=>b.statut!=='clos');
   const clos = batches.filter(b=>b.statut==='clos');
   const card = (b)=>{
     const nbAl = (b.alertes||[]).filter(a=>!a.resolu).length;
-    const stTag = b.statut==='clos' ? '<span class="tag done" style="font-size:.6rem">clos</span>'
-      : (b.statut==='en_cours' ? '<span class="tag ok" style="font-size:.6rem">en cours</span>' : '<span class="tag" style="font-size:.6rem">ouvert</span>');
+    // [v1339] « EN COURS » EST ENFIN UN VRAI ÉTAT. La v1338 avait supprimé cette branche parce que
+    // le statut n'était jamais écrit (une branche qui promet un état inexistant est un mensonge
+    // dans le code). Il est désormais ÉCRIT au premier prélèvement et RECALÉ à chaque affichage :
+    // la branche peut revenir, parce qu'elle dit maintenant la vérité.
+    const _prog = pickBatchProgres(b, _pkItems);
+    const stTag = b.statut==='clos'
+      ? '<span class="tag done" style="font-size:.6rem">clos</span>'
+      : (b.statut==='en_cours'
+          ? `<span class="tag ok" style="font-size:.6rem">en cours · ${qty(_prog.qte)} prélevés</span>`
+          : '<span class="tag" style="font-size:.6rem">ouvert</span>');
     return `<div class="sum-box lnk" onclick="pickBatchOpen(${b.id})" style="align-items:center">
       <div style="flex:1"><b>${esc(b.nom||'Lot')}</b> ${stTag}<br>
         <span style="font-size:.78rem;color:#7a6a60">${(b.orderIds||[]).length} commande(s) · créé le ${fmtDate((b.createdAt||'').slice(0,10))}${nbAl?` · <span style="color:#b3261e">${nbAl} manque(s)</span>`:''}</span></div>
@@ -42171,6 +42261,13 @@ async function pickBatchScanOrder(parfumCible){
         const s = src[0];
         const take = round3(Math.min(aAttribuer, s.qte));
         await db.orderItems.add({orderId, productionId:s.productionId, qte:take, batchId:ctx.batch.id});
+        // [v1339] Le lot passe « en cours » dès le PREMIER article prélevé. On écrit ici, à
+        // l'endroit exact où la réalité change — et nulle part ailleurs, pour n'avoir qu'UNE
+        // source d'écriture (deux écritures finissent toujours par diverger).
+        if(ctx.batch && ctx.batch.statut === 'ouvert'){
+          try{ await db.batches.update(ctx.batch.id, {statut:'en_cours'}); ctx.batch.statut='en_cours'; }
+          catch(e){ swallow(e,'pickBatchScanOrder statut'); }
+        }
         s.qte = round3(s.qte - take); aAttribuer = round3(aAttribuer - take);
         _pickBatchPool[parfumCible] = round3((_pickBatchPool[parfumCible]||0) - take);
         if(s.qte<=0) src.shift();
@@ -42208,6 +42305,56 @@ async function pickBatchOrderComplete(o){
 }
 
 // ── CLÔTURE ──────────────────────────────────────────────────────────────────
+// ============================================================================
+//  [v1339] L'ÉTAT « EN COURS » D'UN LOT — un vrai câblage.
+// ----------------------------------------------------------------------------
+//  La v1338 avait supprimé une branche morte : le statut 'en_cours' était TESTÉ mais jamais
+//  ÉCRIT. Le tag « en cours » ne s'était donc jamais affiché. Benjamin a tranché : il veut cet
+//  état, et il le veut STOCKÉ en base (explicite, interrogeable).
+//
+//  LE RISQUE D'UN STATUT STOCKÉ, et il faut le regarder en face : il peut MENTIR. Écrit une fois
+//  puis jamais remis à jour, il finit par contredire la réalité — précisément le mal que la v1338
+//  vient de soigner. Un statut FAUX est PIRE qu'un statut absent : on lui fait confiance.
+//
+//  D'OÙ LA RÉCONCILIATION. L'état ATTENDU est déductible d'un fait vérifiable : le lot a-t-il des
+//  articles affectés (`orderItems.batchId`) ? Le statut stocké est donc :
+//    • ÉCRIT dès que la réalité change (un article est affecté au lot) ;
+//    • RECALÉ automatiquement à chaque affichage, s'il a divergé.
+//  On garde le confort d'un statut stocké, sans la dette d'un statut qui ment.
+// ============================================================================
+
+// PURE. L'état ATTENDU d'un lot, déduit d'un fait vérifiable.
+//   'clos'     → une DÉCISION de Benjamin (elle ne se dé-décide pas toute seule)
+//   'en_cours' → un FAIT : au moins un article a été affecté à ce lot
+//   'ouvert'   → créé, rien n'a encore été prélevé
+// On ne devine que le FAIT ; on ne touche jamais aux décisions.
+function pickBatchStatutAttendu(batch, items){
+  if(!batch) return 'ouvert';
+  if(batch.statut === 'clos') return 'clos';
+  const n = (items || []).filter(it => it && it.batchId != null && +it.batchId === +batch.id).length;
+  return n > 0 ? 'en_cours' : 'ouvert';
+}
+
+// PURE. La progression réelle : ce qui a été affecté à ce lot.
+function pickBatchProgres(batch, items){
+  if(!batch) return { nbItems: 0, qte: 0 };
+  const mine = (items || []).filter(it => it && it.batchId != null && +it.batchId === +batch.id);
+  return { nbItems: mine.length, qte: round3(mine.reduce((a, it) => a + (+it.qte || 0), 0)) };
+}
+
+// Réconciliation : n'écrit QUE si le statut a divergé. Idempotente — donc appelable à chaque
+// rendu, sans coût ni effet de bord.
+async function pickBatchSyncStatut(batch, items){
+  try{
+    if(!batch || !batch.id) return batch;
+    const attendu = pickBatchStatutAttendu(batch, items);
+    if(attendu === batch.statut) return batch;
+    await db.batches.update(batch.id, { statut: attendu });
+    batch.statut = attendu;   // l'objet en mémoire suit, sinon l'écran montrerait l'ancien statut
+    return batch;
+  }catch(e){ swallow(e, 'pickBatchSyncStatut'); return batch; }
+}
+
 async function pickBatchClose(batchId){
   const batch = await db.batches.get(+batchId).catch(()=>null);
   if(!batch) return;

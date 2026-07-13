@@ -10,6 +10,195 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-13 — Vague 61 : LE TOTAL *ET* LE RESTE DÛ  (v1339 → **v1340**)
+
+**Demandé par Benjamin** :
+> « Dans ma liste de commandes à venir je veux avoir affiché clairement le montant total de
+> l'ensemble des commandes mais aussi le restant dû, car bien souvent il y a une partie payée à
+> l'avance. »
+
+L'encart « À venir » n'affichait que le **montant total** (« 5 · 1 022,40 € »). Or une partie est
+souvent déjà encaissée en acompte : ce total **ne dit pas** ce qu'il reste à percevoir — *le seul
+chiffre qui compte pour la trésorerie*.
+
+Symétriquement, « À encaisser » affichait le **reste dû** sans jamais dire **de quel montant total**
+il provenait : impossible de savoir si 139 € de reste portaient sur 150 € ou sur 3 000 € de
+commandes.
+
+### Les règles figées
+
+**A — Les trois chiffres se recomposent** : `total = déjà encaissé + reste dû`, **au centime**.
+> Un encart où les nombres ne se recomposent pas oblige Benjamin à vérifier à la calculette — et
+> **un chiffre qu'on doit vérifier est un chiffre auquel on ne fait plus confiance.**
+
+**B — UN TROP-PERÇU NE PAIE PAS LA COMMANDE D'À CÔTÉ.** *(le cœur de la vague)*
+Un client verse 120 € pour une commande de 100 € ; un autre doit 200 €. La somme **naïve**
+(Σ montant − Σ encaissé = 300 − 120) annoncerait **180 €** de reste : les 20 € en trop du premier
+viendraient **payer** le second. C'est faux, et ça **sous-estime** ce que Benjamin doit réclamer.
+*Correctif* : plafonnement **commande par commande** (`min(payé, montant)`), et le **trop-perçu est
+exposé à part**. Tests B1–B7, dont la preuve par l'absurde.
+
+**C — Une seule fonction** (`cmdTotauxLot`) pour les **trois** endroits : « À venir », les
+séparateurs de **semaine**, et « À encaisser ». *Deux calculs séparés finissent toujours par
+diverger* — leçon de toute cette série. F4/F5 vérifient que les sommes artisanales ont **disparu**.
+
+**Cas legacy** (D1/D2) : une commande marquée « Payé » **sans registre** de paiements compte pour son
+montant entier — sinon on réclamerait de l'argent **déjà perçu**.
+
+**Pas de bruit inutile** (C5) : le bandeau détaillé n'apparaît **que** s'il y a eu des acomptes.
+Sans acompte, l'affichage est **exactement** celui d'avant.
+
+**Ajouté** (`reste-du.test.js`, 31 assertions).
+
+**Total couvert** : 1366 → **1397 assertions**.
+
+**Angles morts connus (déclarés)** :
+- Les totaux portent sur les commandes **affichées** (après filtres, tags, recherche) et sur la
+  limite de **300 lignes** de la liste. Au-delà de 300 commandes dans une section, le total ne
+  refléterait que les 300 premières — **non signalé à l'écran**. Cas inatteignable aujourd'hui, mais
+  c'est précisément le genre de silence qui devient un mensonge en grandissant.
+- La section « semaine courante » (cartes complètes) n'a **pas** de total : seule « À venir » et
+  « À encaisser » en ont un.
+
+---
+
+## 2026-07-13 — Vague 60 : LE TOTAL EST LA SOMME DU DÉTAIL + L'ÉTAT « EN COURS »  (v1338 → **v1339**)
+
+Deux chantiers, tous deux demandés par Benjamin.
+
+### 1. Le « CA total » contredisait ses propres mois  *(angle mort déclaré depuis la vague 57)*
+La vue globale affichait `R.global.caTotal` — **computeStats** : commandes **seules**, date de
+**commande**, montant **total**. Juste **en dessous**, la liste mensuelle affichait la vérité
+comptable (encaissement, **marchés compris**).
+
+**Le total et le détail se contredisaient SUR LE MÊME ÉCRAN**, et rien ne permettait de savoir
+lequel croire.
+
+> **UN TOTAL QUI N'EST PAS LA SOMME DE SON DÉTAIL N'EST PAS UN TOTAL — c'est un TROISIÈME chiffre,
+> et il finit toujours par contredire les deux autres.**
+
+*Correctif* : `serieMensuelleEncaisse` expose désormais des `totaux` qui **découlent** des mois.
+Test **A1** : le total **EST** la somme des mois, **au centime**.
+**L'incertitude s'agrège** (B2–B5) : si un seul marché a encaissé sans quantités saisies, le total
+de macarons est déclaré **incomplet** — taire une incomplétude reviendrait à présenter un total
+partiel comme un total complet.
+*Garde-fou* : `R.global.caTotal` et `R.global.macaronsStd` ne sont plus affichés **nulle part**.
+
+### 2. L'état « en cours » d'un lot — un vrai câblage *(choix de Benjamin : STOCKÉ en base)*
+La vague 59 avait supprimé cette branche : le statut `'en_cours'` était **testé mais jamais écrit**.
+Benjamin a tranché : il veut cet état, et il le veut **stocké** (explicite, interrogeable).
+
+**Le risque, regardé en face** : un statut stocké **peut mentir**. Écrit une fois puis jamais
+revérifié, il finit par contredire la réalité — *précisément le mal que la vague 59 soignait*.
+> **UN STATUT FAUX EST PIRE QU'UN STATUT ABSENT : on lui fait confiance.**
+
+*D'où la RÉCONCILIATION*, ajoutée sans qu'il l'ait demandée :
+- **`'clos'` et `'ouvert'` sont des DÉCISIONS** ; **`'en_cours'` est un FAIT** (des articles sont
+  affectés au lot via `orderItems.batchId`).
+- **On ne devine que le fait, jamais les décisions** : un lot clos le reste, même vidé de ses
+  articles (D4/D5).
+- Le statut est **ÉCRIT** au premier prélèvement, et **RECALÉ** à chaque affichage s'il a divergé
+  (F1 : « en cours » sans article → il mentait ; F2 : les lots créés **avant** la v1339 se recalent
+  seuls). La réconciliation est **idempotente** : elle n'écrit que si ça a divergé.
+- **G3** : le statut n'est écrit qu'**à UN SEUL endroit** — *deux sources d'écriture finissent
+  toujours par diverger* (leçon de toute cette série).
+- Le tag affiche la **progression réelle** (« en cours · 20 prélevés »).
+
+**Ajouté** (`total-et-lots.test.js`, 34 assertions).
+
+**Total couvert** : 1332 → **1366 assertions**.
+
+**Angles morts connus (déclarés)** :
+- `computeStats().global` reste utilisé pour le **panier moyen**, le **top parfum** et le **volume de
+  production** (base « date de commande »). C'est la **bonne** base pour ces questions (comportement
+  d'achat, cf. vague 56) — mais rien ne l'**écrit à l'écran** : un lecteur pressé peut croire à une
+  incohérence avec le CA. À étiqueter.
+- La réconciliation des lots tourne à **chaque rendu** de l'écran picking et lit **tous** les
+  `orderItems`. Sans effet à cette échelle ; à surveiller si l'historique grossit.
+- Un lot **clos** puis rouvert manuellement (pas d'UI pour ça aujourd'hui) repasserait « en cours » :
+  non testé, car le cas n'existe pas encore.
+
+---
+
+## 2026-07-13 — Vague 59 : L'AUDIT DE VOCABULAIRE  (v1337 → **v1338**)
+
+**Nature** : solde de l'angle mort déclaré en vague 58 —
+*« le même bug de vocabulaire peut exister ailleurs : aucun audit systématique n'a été fait. »*
+
+### Le principe
+Une valeur qu'on **TESTE** mais qu'on n'**ÉCRIT** jamais est une **branche morte** : un `if` qui ne
+se déclenchera jamais, et **personne ne le saura**. C'est **mécaniquement détectable** — il suffit
+de comparer les deux ensembles.
+
+### Le résultat : une vraie branche morte
+`b.statut === 'en_cours'` sur les **lots de picking**. Ce statut n'est **jamais écrit** : un lot naît
+`'ouvert'` (l. 41720) et meurt `'clos'` (l. 42216). Le tag « en cours » **ne s'est jamais affiché**.
+L'intention existait ; le câblage n'a jamais suivi.
+
+*Code mort supprimé.* **Une branche qui promet un état inexistant est un mensonge dans le code** :
+elle laisse croire que la fonctionnalité existe, et elle **survit à toutes les relectures parce
+qu'elle a l'air juste**.
+*(Si un état « en cours » est souhaité, c'est une **fonctionnalité à câbler**, pas un bug à corriger.)*
+
+### Écrire cet audit a coûté TROIS essais — et c'est le plus instructif
+
+**1er essai — l'audit n'a PAS détecté le bug fondateur, réintroduit exprès.**
+Cause : le compteur d'occurrences incluait les **commentaires**, et le mot « embarque » apparaît
+désormais dans la prose qui *explique* le bug. La valeur ne paraissait donc plus fantôme.
+> **Un audit qui ne détecte pas le bug connu ne vaut RIEN.**
+
+**2e essai — j'ai écrit mon propre dépouilleur de commentaires.**
+Il supprimait des **blocs entiers** dès qu'un `/*` apparaissait **dans une chaîne**, effaçant les
+lignes mêmes qui écrivaient les valeurs → **fausses alertes** en série.
+Or un dépouilleur durci **existait déjà** (`stripComments`, vague 47).
+> **J'ai reproduit très exactement la maladie que cette série traque : la duplication non prouvée.**
+
+**3e essai (livré)** — on réutilise `stripComments`. **Une seule fonction sait dépouiller du JS.**
+
+### La règle, enfin juste
+Premières versions : je cherchais les écritures **littérales** (`champ: 'valeur'`). Deux échecs :
+- `statut: orderPayStatus(o)` — la valeur vient d'une **fonction** (`return 'Partiel'`) ;
+- `type` posé dans une **variable** puis versé dans l'objet.
+
+Un détecteur qui ne voit que les littéraux **crie au loup sur du code sain** — et une alerte
+injustifiée finit **toujours** par être ignorée, *y compris le jour où elle a raison*.
+
+**La bonne règle est la signature exacte du bug fondateur** :
+> une valeur **fantôme** est une valeur qui n'apparaît **nulle part ailleurs** que dans la comparaison.
+
+`'embarque'` n'existait que là. `'Partiel'`, `'rupture'`, `'reassort'` apparaissent ailleurs
+(returns, tables d'énumération, `<option>`) : ils sont bel et bien produits quelque part.
+**Résultat : la liste blanche est VIDE** — et c'est le meilleur des signes.
+
+### Les limites, déclarées
+L'audit raisonne par **nom de champ**, pas par **entité**. Le `.type` d'un client n'est pas celui
+d'un mouvement de marché. (Le `<select>` client n'a pas d'attribut `value` : c'est le **texte** de
+l'option qui est stocké — d'où `'Pro'` avec une majuscule, parfaitement correct.)
+C'est un **générateur de candidats**, pas un oracle : chaque trouvaille demande une vérification à
+la main.
+
+**Ajouté** (`vocabulaire.test.js`, 9 assertions) :
+- **A** — l'audit sait détecter le bug **connu** (assertion la plus importante : le 1er essai
+  échouait précisément ici).
+- **B** — le dépouilleur : le littéral `'embarque'` disparaît du code dépouillé, mais la **variable**
+  `embarque` de `marketTotals` reste légitime (un audit qui confond variable et donnée crie au loup).
+- **C — CLIQUET** : aucune comparaison contre une valeur inexistante. *Éprouvé* : bug réintroduit →
+  il mord, avec le **nom exact** de la valeur fantôme.
+- **D** — la liste blanche doit rester **courte et justifiée** : *une liste blanche non justifiée
+  n'est qu'une façon polie de faire taire l'audit.*
+
+**Total couvert** : 1323 → **1332 assertions**.
+
+**Angles morts connus (déclarés)** :
+- L'audit ne couvre que les champs **énumératifs** listés (`type`, `statut`, `paiement`…) et les
+  comparaisons `===`/`!==` **directes**. Un `switch(mv.type)` ou un `includes()` lui échappe.
+- Il ne détecte **pas l'inverse** : une valeur **écrite** mais jamais **testée** (donnée morte).
+- Le raisonnement par nom de champ produit des faux positifs entre entités — assumé, documenté.
+- `computeStats().global.ca` reste sur la base « commandes uniquement » : **non résolu depuis la
+  vague 57**.
+
+---
+
 ## 2026-07-13 — Vague 58 : ZÉRO N'EST PAS UNE MESURE  (v1336 → **v1337**)
 
 **Nature** : BUG signalé par **Benjamin**, et **il l'a vu avant nous** :

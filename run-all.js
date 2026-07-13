@@ -65,7 +65,10 @@ const SUITES = [
   'une-seule-verite.test.js',     // vague 54 : les graphiques contredisaient le copilote + le mois nommé n'est plus perdu en silence
   'mois-partout.test.js',         // vague 55 : charges, gaspillage et bilan marché savent enfin filtrer par mois (l'aveu n'est pas une destination)
   'depuis-nest-pas-en.test.js',   // vague 56 : « depuis » n'est pas « en » — la borne HAUTE manquait au parseur de période
-  'canal-oublie.test.js'          // vague 57 : le CA des MARCHÉS n'était compté nulle part + le fond de caisse comptait comme du CA
+  'canal-oublie.test.js',         // vague 57+58 : le CA des MARCHÉS + le fond de caisse + « zéro n'est pas une mesure »
+  'vocabulaire.test.js',          // vague 59 : audit de vocabulaire — aucune comparaison contre une valeur qui n'existe pas
+  'total-et-lots.test.js',        // vague 60 : le total EST la somme du détail + l'état « en cours » des lots (vrai câblage)
+  'reste-du.test.js'              // vague 61 : le total ET le reste dû (un trop-perçu ne paie pas la commande d'à côté)
 ];
 
 let allOk = true;
