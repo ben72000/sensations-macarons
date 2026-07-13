@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1348';
+const APP_VERSION = 'v1349';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -40215,16 +40215,28 @@ function paniersClients(orders, opts){
     if(o.clientId != null && clientsPro.has(o.clientId)){ rejets.pro++; return; }   // [v1346]
 
     const lignes = (typeof orderToLines === 'function') ? orderToLines(o) : (o.lignes || []);
-    // [v1348] LE TROU DU JOURNAL. Le total affiché par le v1347 ne tombait pas juste (85 rejets
-    // + 48 retenues = 133, pour 128 commandes vues — 5 commandes DISPARAISSAIENT sans motif).
-    // Cause : `orderToLines()` renvoie [] pour une commande sans format reconnu (ni `o.lignes`,
-    // ni type connu, ni taille). Une telle commande n'a AUCUNE ligne à parcourir : elle ne peut
-    // matcher NI un rejet, NI un panier retenu. Elle sortait de la boucle sans laisser de trace —
-    // exactement le trou que le journal v1347 était censé combler, resté dans son propre angle mort.
-    // La règle qu'il prétendait tenir ('tout ce qui est écarté doit être compté') ne l'était pas
-    // jusqu'au bout. On la ferme ici : zéro ligne exploitable est désormais un motif NOMMÉ.
+    // [v1348, CORRIGÉ EN v1349] Le journal ne tombait pas juste — mais dans l'AUTRE SENS que
+    // je l'avais cru : 133 rejets+retenues pour 128 vues, un SURPLUS de 5, pas un manque.
+    // Mon v1348 traitait le mauvais symptôme (les commandes sans format, qui EXISTENT mais
+    // n'étaient qu'un trou théorique — sansLigne valait 0 chez Ben).
+    //
+    // LA VRAIE CAUSE : `dons`, `monoParfum`, `assortimentPur` et `sansParfum` comptent des
+    // LIGNES, alors que `commandesVues` / `commandesRetenues` comptent des COMMANDES. Une
+    // commande à PLUSIEURS lignes qui tombe dans un motif à chaque ligne (ex. deux lignes à
+    // 0 €) incrémente `rejets.dons` deux fois — pour UNE seule commande vue. La somme des
+    // rejets peut donc dépasser le nombre de commandes qu'ils sont censés expliquer.
+    //
+    // LA LEÇON : j'ai eu le bon réflexe (ajouter une auto-vérification) mais je n'ai pas
+    // laissé le SIGNE de l'écart me guider vers la bonne cause — j'ai réparé le premier trou
+    // que j'ai vu, pas celui que l'écart désignait. Un déséquilibre en TROP et un déséquilibre
+    // en MOINS ne sont jamais la même maladie, même quand ils partagent une magnitude.
+    //
+    // LE CORRECTIF : chaque commande n'est comptée QU'UNE FOIS dans le journal, sur le PREMIER
+    // motif qui s'applique — jamais une fois par ligne. C'est la seule granularité cohérente
+    // avec `commandesVues`, qui compte des commandes depuis le début.
     if(!lignes || lignes.length === 0){ rejets.sansLigne++; return; }
     let _retenue = false;                                        // [v1347]
+    let _rejetCommande = null;                                   // [v1349] premier motif rencontré, UNE fois
     (lignes || []).forEach(ln => {
       if(!ln) return;
       // 'grand' range ses parfums dans `items` — même sens, autre clé (dette historique).
@@ -40233,7 +40245,14 @@ function paniersClients(orders, opts){
 
       // Un don (0 €) n'est pas un choix d'achat : le client n'a rien arbitré.
       const estDon = (+o.montant || 0) <= 0;
-      if(estDon){ rejets.dons++; return; }
+      // [v1349, corrigé] Le garde « une ligne déjà retenue suffit » ne doit couper QUE le
+      // classement en motif de rejet — jamais l'accumulation de `sansParfum`, qui est un
+      // TOTAL DE MACARONS sur TOUTES les lignes, indépendant du statut de la commande. Mon
+      // premier correctif avait placé le `return` trop tôt et faisait disparaître les
+      // macarons d'assortiment des lignes suivant une ligne déjà exploitable — un sous-
+      // comptage NEUF, introduit en réparant le survomptage. Deux compteurs, deux granularités,
+      // ne partagent jamais un seul `return`.
+      if(estDon){ if(!_retenue && !_rejetCommande) _rejetCommande = 'dons'; return; }
 
       // ────────────────────────────────────────────────────────────────────────
       // [v1344 — DÉCISION DE BEN, GRAVÉE] LES COMMANDES NON PAYÉES SONT COMPTÉES,
@@ -40256,11 +40275,18 @@ function paniersClients(orders, opts){
       // L'UNE L'AUTRE. Aligner par réflexe de cohérence, c'est détruire l'une au nom de l'autre.
       // ────────────────────────────────────────────────────────────────────────
 
+      // [v1349] `sansParfum` s'accumule INCONDITIONNELLEMENT, sur TOUTE ligne non-don — même
+      // une ligne d'une commande déjà « retenue » par une autre ligne. C'est un TOTAL DE
+      // MACARONS, pas un verdict par commande : il ne partage AUCUN garde avec `_retenue` /
+      // `_rejetCommande`, qui eux ne comptent la commande qu'UNE fois.
       const nSansParfum = +ln.sansParfum || 0;
       if(nSansParfum > 0) rejets.sansParfum += nSansParfum;      // COMPTÉ, mais jamais utilisé
 
-      if(choisis.length === 0){ rejets.assortimentPur++; return; } // 100 % composé par Ben
-      if(choisis.length === 1){ rejets.monoParfum++; return; }     // rien à associer
+      if(_retenue) return;   // [v1349] le VERDICT de la commande est déjà « retenue » : rien de plus à décider
+
+      if(choisis.length === 0){ if(!_rejetCommande) _rejetCommande = 'assortimentPur'; return; } // 100 % composé par Ben
+      if(choisis.length === 1){ if(!_rejetCommande) _rejetCommande = 'monoParfum'; return; }     // rien à associer
+      _rejetCommande = null;                                      // [v1349] une ligne exploitable efface tout rejet en attente
 
       _retenue = true;                                            // [v1347]
       paniers.push({
@@ -40273,7 +40299,11 @@ function paniersClients(orders, opts){
         nSansParfum
       });
     });
-    if(_retenue) rejets.commandesRetenues++;                     // [v1347]
+    // [v1349] Une commande est comptée UNE FOIS : soit retenue (au moins une ligne exploitable),
+    // soit sur le PREMIER motif de rejet rencontré parmi ses lignes. Jamais les deux, jamais
+    // plusieurs fois — c'est ce qui garantit que rejets + retenues == vues, TOUJOURS.
+    if(_retenue) rejets.commandesRetenues++;
+    else if(_rejetCommande) rejets[_rejetCommande]++;
   });
   return { paniers, rejets };
 }

@@ -1871,3 +1871,46 @@ ni expliquée.
 Ben a détecté ce trou en additionnant cinq nombres à la main. **C'est la bonne réaction** face à un
 journal qui prétend tout expliquer : le vérifier, pas le croire sur parole — exactement ce que le
 journal lui-même dit de faire avec le chiffre qu'il corrige. Le principe s'applique à lui aussi.
+
+---
+
+## v1349 — J'AI RÉPARÉ LE MAUVAIS TROU
+
+Le journal (v1348) affichait toujours `42+5+6+14+18=85`, `85+48=133`, pour **128** vues. Le motif
+`sansLigne` que je venais d'ajouter valait **0**. **Mon diagnostic de la v1348 était faux.**
+
+### L'erreur, nommée
+J'avais vu un écart de 5 et supposé un **manque** (des commandes invisibles au journal). J'ai ajouté
+un motif — réel, mais qui ne concernait aucune des commandes de Ben. **Le signe de l'écart était
+l'indice que j'ai ignoré** : `133 > 128`, c'est un **surplus**, pas un trou. Un surplus et un manque
+ne sont jamais la même famille de bug, même de même magnitude — j'ai réparé le premier défaut visible
+au lieu de celui que le signe désignait.
+
+> **LEÇON (v1349) : LE SIGNE D'UN ÉCART DÉSIGNE LA FAMILLE DE BUG. Un excès et un déficit ne se
+> soignent jamais par le même correctif — même quand ils partagent un nombre.**
+
+### La vraie cause
+`dons`, `monoParfum`, `assortimentPur` comptaient des **LIGNES**. `commandesVues` /
+`commandesRetenues` comptent des **COMMANDES**. Une commande à plusieurs lignes tombant deux fois
+dans le même motif de rejet (ex. deux lignes à 0 €) incrémentait ce motif **deux fois pour une seule
+commande vue** — d'où le surplus.
+
+**Correctif :** chaque commande n'est comptée **qu'une fois** dans le journal — retenue dès qu'une
+ligne est exploitable, sinon sur le **premier** motif de rejet rencontré parmi ses lignes.
+
+### La régression que j'ai moi-même introduite, et rattrapée avant livraison
+Mon premier jet du correctif ajoutait un garde `if(_retenue) return;` **trop tôt** dans la boucle —
+il coupait aussi l'accumulation de `rejets.sansParfum` (un **total de macarons**, pas un verdict de
+commande) pour toute ligne suivant une ligne déjà retenue. Un **sous-comptage neuf**, introduit en
+réparant le surplus. Testé et détecté **avant** livraison — pas par Ben cette fois, par le test écrit
+pour ce cas précis.
+
+> **RÈGLE : deux compteurs de granularités différentes (un verdict par commande, un total de pièces)
+> ne partagent JAMAIS le même `return`.**
+
+### Ce que Ben a fait, deux fois de suite
+Il a vérifié le journal à la main la première fois (v1347→v1348), puis a **relancé la question après
+correction** et constaté que le motif ajouté n'apparaissait toujours nulle part (v1348→v1349). C'est
+la seule façon dont ce bug pouvait être trouvé : **aucun test que j'avais écrit ne le couvrait**, parce
+que je ne l'avais pas encore identifié comme un bug distinct. Le garde-fou le plus fiable de cette
+série reste, et restera, Ben qui relit ce que l'app lui affiche.

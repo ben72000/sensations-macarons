@@ -121,48 +121,55 @@ T('l\'écart est intégralement expliqué (5 − 1 = 4 rejets)',
   ()=>R.rejets.pro+R.rejets.monoParfum+R.rejets.assortimentPur+R.rejets.dons,4);
 console.log('      → Ben peut désormais vérifier que le filtre est juste, au lieu de croire le chiffre sur parole.');
 
-console.log('\n── [v1348] LE TROU DU JOURNAL : le total ne tombait pas juste');
-// Ben a signalé (à l\'œil, en additionnant lui-même) : 42+5+6+14+18=85, 85+48=133 ≠ 128 vues.
-// 5 commandes VUES ne matchaient AUCUN motif de rejet ET n\'étaient PAS retenues. Cause :
-// orderToLines() renvoie [] pour une commande sans format reconnu — elle ne peut alors matcher
-// NI un rejet NI un panier : elle sort de la boucle sans laisser de trace.
-const fantome = {id:99, clientId:50, montant:20, type:'inconnu'};   // ni lignes, ni type reconnu, ni taille
-const R2 = paniersClients([fantome], {clients:[]});
-T('une commande SANS FORMAT RECONNU est désormais NOMMÉE (pas juste absente)',
-  ()=>R2.rejets.sansLigne, 1);
-T('… et le total retrouve son compte : 1 vue = 1 rejet sansLigne + 0 retenue',
-  ()=>R2.rejets.commandesVues, R2.rejets.sansLigne + R2.rejets.commandesRetenues);
+console.log('\n── [v1348→v1349] LE JOURNAL AVAIT DEUX BUGS, PAS UN — ET J\'AI D\'ABORD RÉPARÉ LE MAUVAIS');
+// Ben : « 42+5+6+14+18=85, +48=133, pour 128 vues ». J\'ai vu un écart de 5 et supposé un MANQUE
+// (des commandes invisibles). J\'ai ajouté `sansLigne` — un vrai motif, mais qui valait 0 chez Ben.
+// Le second signalement de Ben a montré que sansLigne restait à 0 : mon diagnostic était FAUX.
+// L\'écart était un SURPLUS, pas un manque : `dons`/`monoParfum`/`assortimentPur` comptaient des
+// LIGNES, alors que `commandesVues` compte des COMMANDES. Une commande à 2 lignes rejetées pour
+// le même motif incrémentait ce motif 2 fois pour 1 seule commande vue.
+// LEÇON : le SIGNE d\'un écart (trop vs pas assez) désigne la famille de bug. Je l\'ai ignoré et
+// j\'ai réparé le premier trou visible au lieu de celui que l\'écart désignait.
+T('un vrai "sans format" reste nommé (le premier motif n\'était pas faux, juste incomplet)',
+  ()=>paniersClients([{id:1,clientId:1,montant:20,type:'inconnu'}],{clients:[]}).rejets.sansLigne, 1);
 
-// RECONSTITUTION EXACTE DU CAS DE BEN. Son journal affichait : 42 pro + 5 mono + 6 assortiment
-// + 14 dons + 18 histo = 85 rejets, + 48 retenues = 133 — pour 128 commandes VUES. Écart de 5 :
-// c'est le nombre de commandes « sans format reconnu », invisibles avant le v1348.
-// Pour reconstituer EXACTEMENT 128 vues, les 5 fantômes ne s'ajoutent pas : ils étaient DÉJÀ
-// dans les 128 (silencieusement, ni comptés ni retenus). Donc 85 + 48 + 5(fantômes) = 138 était
-// FAUX dès le départ — la vraie identité est simplement : rejets + retenues + fantômes = vues.
-const ordersBen = [];
-let oid=1;
-for(let i=0;i<42;i++) ordersBen.push({id:oid++, clientId:1, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]}]});   // pro
-for(let i=0;i<5;i++)  ordersBen.push({id:oid++, clientId:2+i, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:4}]}]});                  // mono
-for(let i=0;i<6;i++)  ordersBen.push({id:oid++, clientId:10+i, montant:20, lignes:[{type:'coffret',parfums:[],sansParfum:6}]});                   // assortiment
-for(let i=0;i<14;i++) ordersBen.push({id:oid++, clientId:20+i, montant:0, lignes:[{type:'coffret',parfums:[{nom:'A',qte:1},{nom:'B',qte:1}]}]});  // dons
-for(let i=0;i<18;i++) ordersBen.push({id:oid++, clientId:40+i, histo:true, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:1},{nom:'B',qte:1}]}]}); // histo
-for(let i=0;i<5;i++)  ordersBen.push({id:oid++, clientId:60+i, montant:20, type:'inconnu'});                                                       // LE TROU (5 fantômes)
-for(let i=0;i<43;i++) ordersBen.push({id:oid++, clientId:70+i, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]}]}); // 43 retenues → total 42+5+6+14+18+5+43=133 NON
-// 42+5+6+14+18+5 = 90 rejets. Pour 128 vues au total, il faut 128-90 = 38 retenues (pas 48 :
-// le 48 affiché par l'app à Ben était lui-même faussé par le bug, puisque le total ne tombait pas
-// juste). On vérifie donc l'IDENTITÉ, pas un chiffre absolu que le bug a lui-même corrompu.
-ordersBen.length = 90;   // retire les 43 "retenues" ajoutées ci-dessus, on va en remettre le bon compte
-for(let i=0;i<38;i++) ordersBen.push({id:oid++, clientId:200+i, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]}]}); // 38 retenues → 90+38=128 ✓
+console.log('\n── [v1349] LE VRAI BUG : granularité mélangée (lignes vs commandes)');
+// UNE COMMANDE À 2 LIGNES À 0 € : avant v1349, `dons` était incrémenté 2 fois pour 1 commande vue.
+const deuxDons=[{id:1,clientId:1,montant:0,lignes:[
+  {type:'coffret',parfums:[{nom:'A',qte:1},{nom:'B',qte:1}]},
+  {type:'coffret',parfums:[{nom:'C',qte:1},{nom:'D',qte:1}]}]}];
+const Rd=paniersClients(deuxDons,{clients:[]});
+T('commande à 2 lignes-dons : UNE SEULE commande vue',()=>Rd.rejets.commandesVues,1);
+T('… et le motif "dons" compté UNE SEULE FOIS (pas 2)',()=>Rd.rejets.dons,1);
+T('… l\'identité tombe juste : 1 rejet + 0 retenue = 1 vue',
+  ()=>Rd.rejets.pro+Rd.rejets.monoParfum+Rd.rejets.assortimentPur+Rd.rejets.dons+Rd.rejets.histo+Rd.rejets.sansLigne+Rd.rejets.commandesRetenues,
+  1);
+
+console.log('\n── [v1349] LA RÉGRESSION QUE J\'AI MOI-MÊME INTRODUITE, ET RATTRAPÉE AVANT LIVRAISON');
+// Mon premier correctif de la granularité coupait AUSSI le comptage de `sansParfum` (un TOTAL DE
+// MACARONS, pas un verdict de commande) dès qu'une ligne précédente avait été retenue. Sous-
+// comptage NEUF, introduit en réparant le surplus. Deux compteurs, deux granularités : jamais
+// le même `return`.
+const mixte=[{id:1,clientId:1,montant:40,lignes:[
+  {type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]},         // exploitable → retenue
+  {type:'coffret',parfums:[],sansParfum:4}]}];                        // assortiment, APRÈS la ligne retenue
+const Rm=paniersClients(mixte,{clients:[]});
+T('la commande EST retenue (1re ligne exploitable)',()=>Rm.paniers.length,1);
+T('… ET les 4 macarons d\'assortiment de la 2e ligne sont TOUJOURS comptés',()=>Rm.rejets.sansParfum,4);
+console.log('      → sans ce découplage, ces 4 macarons auraient disparu du décompte, en silence.');
+
+console.log('\n── [v1349] AUTO-VÉRIFICATION : mord sur des cas plus riches (multi-lignes, mixtes)');
 const CLben=[{id:1,type:'pro'}];
-const RB=paniersClients(ordersBen,{clients:CLben});
-T('reconstitution du cas de Ben : 128 commandes vues',()=>RB.rejets.commandesVues,128);
-T('… dont 5 "sans format" désormais NOMMÉES (avant v1348 : invisibles)',()=>RB.rejets.sansLigne,5);
-T('… et l\'IDENTITÉ tombe juste : rejets + fantômes + retenues = vues, EXACTEMENT',
-  ()=>RB.rejets.pro+RB.rejets.monoParfum+RB.rejets.assortimentPur+RB.rejets.dons+RB.rejets.histo+RB.rejets.sansLigne+RB.rejets.commandesRetenues,
-  128);
-
-console.log('      → avant v1348, ces 5 commandes disparaissaient silencieusement du journal.');
-console.log('        Le journal censé garantir l\'exhaustivité avait lui-même un angle mort.');
+const richeSet=[
+  {id:1,clientId:1,montant:20,lignes:[{type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]}]},               // pro (client 1)
+  {id:2,clientId:2,montant:0,lignes:[{type:'coffret',parfums:[{nom:'A',qte:1}]},{type:'coffret',parfums:[{nom:'B',qte:1}]}]}, // 2 lignes, montant global 0€ → dons, compté 1×
+  {id:3,clientId:3,montant:20,lignes:[{type:'coffret',parfums:[{nom:'A',qte:4}]},{type:'coffret',parfums:[{nom:'B',qte:2},{nom:'C',qte:2}]}]}, // 1re mono, 2e exploitable → RETENUE
+];
+const Rr=paniersClients(richeSet,{clients:CLben});
+T('3 commandes vues',()=>Rr.rejets.commandesVues,3);
+T('la commande 3 (mono PUIS exploitable) est bien RETENUE',()=>Rr.rejets.commandesRetenues,1);
+const sommeR=Rr.rejets.pro+Rr.rejets.monoParfum+Rr.rejets.assortimentPur+Rr.rejets.dons+Rr.rejets.histo+Rr.rejets.sansLigne;
+T('identité : rejets + retenues = vues, sur un jeu multi-lignes réaliste',()=>sommeR+Rr.rejets.commandesRetenues,3);
 
 console.log('\n'+(ko?`❌ ${ko} ÉCHEC(S) — ${ok} ok`:`✅ ${ok}/${ok} — vague 64 verte`));
 process.exit(ko?1:0);
