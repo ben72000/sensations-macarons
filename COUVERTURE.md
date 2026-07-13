@@ -1816,3 +1816,24 @@ pro**, la paire est marquée `monoClient` et déclassée **malgré son lift écr
 Une fois le salon écarté : **Café + Coco citron vert (×4,2)**, **Nocciolata + Cannelle noisette
 (×2,88)**, **Nocciolata + Chocolat passion (×2,26)**. Nocciolata revient deux fois — un **pivot** de
 gamme. C'est une information exploitable ; les trois premières ne l'étaient pas.
+
+---
+
+## v1347 — « J'ai 110 commandes, le calcul se fait sur 63. Pourquoi ? »
+
+Question de Ben, et il avait raison de la poser : **43 % de ses données disparaissaient sans un mot.**
+
+L'app **comptait** déjà ses rejets (`rejets.pro`, `monoParfum`, `assortimentPur`, `dons`, `histo`) —
+elle ne les **montrait pas**. Ben ne pouvait pas savoir si le chiffre qu'il lisait reposait sur ses
+données ou sur un tiers d'entre elles.
+
+> **RÈGLE GRAVÉE (v1347) — UN FILTRE SILENCIEUX EST UN MENSONGE PAR OMISSION.**
+> Tout ce qui est écarté doit être **compté, nommé et montré**. Un moteur qui jette 43 % des données
+> sans dire lesquelles ni pourquoi demande une confiance qu'il n'a pas méritée.
+
+**Ajouté :** `commandesVues` / `commandesRetenues`, et un **journal des exclusions** affiché à l'écran,
+ligne par ligne. Le cas « aucun panier » est celui qui l'explique **le plus** — sans ça, Ben croirait
+que ses clients ne choisissent pas leurs parfums, alors que c'est peut-être **un filtre qui les mange**.
+
+Le message se termine par : *« Si ce total te surprend, dis-le-moi : c'est **le filtre** qu'il faut
+corriger, pas le chiffre. »*

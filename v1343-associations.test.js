@@ -101,5 +101,25 @@ const cv=coOccurrenceParfums(paniersClients(vraie,{clients:CL}).paniers,{minPani
 T('6 paniers chez 3 clients distincts → VRAIE tendance, retenue',()=>cv.rows[0].significatif,true);
 T('… avec ses 3 clients affichés',()=>cv.rows[0].nClients,3);
 
+console.log('\n── [v1347] LE JOURNAL DES EXCLUSIONS : « 110 commandes, 63 paniers. Pourquoi ? »');
+// Ben ne pouvait pas savoir si son chiffre reposait sur ses données ou sur un tiers d'entre elles.
+// L'app COMPTAIT ses rejets sans jamais les MONTRER. Un filtre silencieux est un mensonge par omission.
+const CLp=[{id:1,type:'pro'}];
+const mix=[
+  {id:1,clientId:1,montant:50,lignes:[{type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]}]},   // pro
+  {id:2,clientId:2,montant:20,lignes:[{type:'coffret',parfums:[{nom:'A',qte:6}]}]},                    // mono-parfum
+  {id:3,clientId:3,montant:20,lignes:[{type:'coffret',parfums:[],sansParfum:6}]},                      // assortiment pur
+  {id:4,clientId:4,montant:0,lignes:[{type:'coffret',parfums:[{nom:'A',qte:1},{nom:'B',qte:1}]}]},     // don
+  {id:5,clientId:5,montant:20,lignes:[{type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]}]},    // retenue
+];
+const R=paniersClients(mix,{clients:CLp});
+T('les COMMANDES VUES sont comptées (5)',()=>R.rejets.commandesVues,5);
+T('les COMMANDES RETENUES aussi (1)',()=>R.rejets.commandesRetenues,1);
+T('chaque motif de rejet est nommé et chiffré',
+  ()=>[R.rejets.pro,R.rejets.monoParfum,R.rejets.assortimentPur,R.rejets.dons],[1,1,1,1]);
+T('l\'écart est intégralement expliqué (5 − 1 = 4 rejets)',
+  ()=>R.rejets.pro+R.rejets.monoParfum+R.rejets.assortimentPur+R.rejets.dons,4);
+console.log('      → Ben peut désormais vérifier que le filtre est juste, au lieu de croire le chiffre sur parole.');
+
 console.log('\n'+(ko?`❌ ${ko} ÉCHEC(S) — ${ok} ok`:`✅ ${ok}/${ok} — vague 64 verte`));
 process.exit(ko?1:0);

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1346';
+const APP_VERSION = 'v1347';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -40179,7 +40179,16 @@ async function aiQueryRentabilite(params){
 function paniersClients(orders, opts){
   opts = opts || {};
   const paniers = [];
-  const rejets = { sansParfum:0, monoParfum:0, dons:0, histo:0, assortimentPur:0, pro:0 };
+  // [v1347] On compte aussi les COMMANDES VUES et RETENUES. Ben a 110 commandes et n'en voit
+  // que 63 arriver dans le calcul : l'app savait pourquoi (elle comptait déjà ses rejets) mais
+  // ne le DISAIT PAS. Un moteur qui écarte 43 % de tes données sans te dire lesquelles ni
+  // pourquoi te demande une confiance qu'il n'a pas méritée.
+  //
+  // RÈGLE GRAVÉE (v1347) : UN FILTRE SILENCIEUX EST UN MENSONGE PAR OMISSION.
+  // Tout ce qui est écarté doit être COMPTÉ, NOMMÉ et MONTRÉ — sinon l'utilisateur ne peut pas
+  // savoir si le chiffre qu'il lit repose sur ses données ou sur un dixième d'entre elles.
+  const rejets = { sansParfum:0, monoParfum:0, dons:0, histo:0, assortimentPur:0, pro:0,
+                   commandesVues:0, commandesRetenues:0 };
 
   // [v1346] EXCLURE LES CLIENTS PRO — et NON les « grands formats ».
   //
@@ -40201,10 +40210,12 @@ function paniersClients(orders, opts){
 
   (orders || []).forEach(o => {
     if(!o) return;
+    rejets.commandesVues++;                                      // [v1347]
     if(o.histo){ rejets.histo++; return; }                       // reprise : pas une vente observée ici
     if(o.clientId != null && clientsPro.has(o.clientId)){ rejets.pro++; return; }   // [v1346]
 
     const lignes = (typeof orderToLines === 'function') ? orderToLines(o) : (o.lignes || []);
+    let _retenue = false;                                        // [v1347]
     (lignes || []).forEach(ln => {
       if(!ln) return;
       // 'grand' range ses parfums dans `items` — même sens, autre clé (dette historique).
@@ -40242,6 +40253,7 @@ function paniersClients(orders, opts){
       if(choisis.length === 0){ rejets.assortimentPur++; return; } // 100 % composé par Ben
       if(choisis.length === 1){ rejets.monoParfum++; return; }     // rien à associer
 
+      _retenue = true;                                            // [v1347]
       paniers.push({
         orderId: o.id,
         date: o.date || '',
@@ -40252,6 +40264,7 @@ function paniersClients(orders, opts){
         nSansParfum
       });
     });
+    if(_retenue) rejets.commandesRetenues++;                     // [v1347]
   });
   return { paniers, rejets };
 }
@@ -40348,8 +40361,17 @@ async function aiQueryAssociations(params){
   // n'est pas un zéro. Ici, l'absence de paniers n'est pas « aucune affinité » : c'est
   // « je ne sais pas ». Le dire AVANT, pas en note de bas de page.
   if(paniers.length === 0){
+    // [v1347] Le cas « zéro panier » est CELUI où l'explication compte le plus. Répondre « je n'ai
+    // rien » sans dire ce qui a été jeté, c'est laisser Ben croire que ses clients ne choisissent
+    // pas — alors que c'est peut-être un FILTRE qui les mange.
+    const _z = [];
+    if(rejets.pro>0)            _z.push(`<b>${rejets.pro}</b> commande(s) d'un client pro`);
+    if(rejets.monoParfum>0)     _z.push(`<b>${rejets.monoParfum}</b> ligne(s) à un seul parfum`);
+    if(rejets.assortimentPur>0) _z.push(`<b>${rejets.assortimentPur}</b> ligne(s) en assortiment complet (tes choix)`);
+    if(rejets.dons>0)           _z.push(`<b>${rejets.dons}</b> ligne(s) à 0 €`);
+    if(rejets.histo>0)          _z.push(`<b>${rejets.histo}</b> reprise(s) d'historique`);
     return aiSay(`${aiHero('—', 'Associations de parfums')}
-      ${aiSynth(`Je n'ai <b>aucun panier exploitable</b>. Une association a besoin d'une commande où <b>le client</b> a choisi <b>au moins deux</b> parfums.${rejets.assortimentPur>0?` (${rejets.assortimentPur} commande(s) sont des assortiments que <b>tu</b> composes : ce sont tes choix, pas les leurs.)`:''}`, {icon:'📭'})}`);
+      ${aiSynth(`Je n'ai <b>aucun panier exploitable</b> sur tes <b>${rejets.commandesVues}</b> commandes. Une association a besoin d'une commande où <b>le client</b> a choisi <b>au moins deux</b> parfums.${_z.length?`<br><br>Ce qui a été écarté :<br>· ${_z.join('<br>· ')}`:''}`, {icon:'📭'})}`);
   }
 
   const { rows, nPaniers, minPaniers } = coOccurrenceParfums(paniers, { minPaniers: params.minPaniers });
@@ -40359,7 +40381,21 @@ async function aiQueryAssociations(params){
   // est le chiffre le PLUS important de l'écran — plus que n'importe quel pourcentage. Un
   // « 68 % » sur 4 paniers a l'air d'une loi et n'est qu'un hasard. Ben doit voir COMBIEN de
   // paniers soutiennent ce qu'il lit AVANT de lire quoi que ce soit.
-  const socle = `${aiSynth(`Calculé sur <b>${nPaniers} panier(s)</b> où tu as laissé le client choisir au moins deux parfums.${rejets.pro>0?` Les <b>${rejets.pro} commande(s) pro</b> sont <b>exclues</b> : un client qui recommande toujours la même chose fabrique des paires en béton qui ne disent rien des <b>goûts</b> — elles décrivent une <b>routine</b>.`:''}${rejets.sansParfum>0?` Les <b>${rejets.sansParfum} macarons d'assortiment</b> que <b>tu</b> composes sont <b>exclus</b> : ce sont tes choix, pas les leurs.`:''}`, {icon:'🧺'})}`;
+  // [v1347] LE JOURNAL DES EXCLUSIONS. Ben : « j'ai 110 commandes, le calcul se fait sur 63.
+  // Pourquoi ? » L'app COMPTAIT déjà ses rejets — elle ne les MONTRAIT pas. Un filtre silencieux
+  // est un mensonge par omission : Ben ne pouvait pas savoir si son chiffre reposait sur ses
+  // données ou sur un tiers d'entre elles. On détaille donc, ligne par ligne, ce qui n'entre pas.
+  const _ecart = Math.max(0, (rejets.commandesVues||0) - (rejets.commandesRetenues||0));
+  const _l = [];
+  if(rejets.pro>0)            _l.push(`<b>${rejets.pro}</b> commande(s) d'un <b>client pro</b> — sa routine n'est pas une tendance`);
+  if(rejets.monoParfum>0)     _l.push(`<b>${rejets.monoParfum}</b> ligne(s) à <b>un seul parfum</b> — il faut être deux pour s'associer`);
+  if(rejets.assortimentPur>0) _l.push(`<b>${rejets.assortimentPur}</b> ligne(s) en <b>assortiment complet</b> — c'est toi qui composes`);
+  if(rejets.dons>0)           _l.push(`<b>${rejets.dons}</b> ligne(s) à <b>0 €</b> — un don n'est pas un choix d'achat`);
+  if(rejets.histo>0)          _l.push(`<b>${rejets.histo}</b> <b>reprise(s) d'historique</b> — données d'avant l'app`);
+
+  const journal = _ecart>0 ? `${aiSynth(`<b>${rejets.commandesRetenues} de tes ${rejets.commandesVues} commandes</b> entrent dans ce calcul. Voici <b>précisément</b> pourquoi les autres n'y sont pas :<br>· ${_l.join('<br>· ')}<br><br>Si ce total te surprend, dis-le-moi : c'est <b>le filtre</b> qu'il faut corriger, pas le chiffre.`, {icon:'🔍'})}` : '';
+
+  const socle = `${aiSynth(`Calculé sur <b>${nPaniers} panier(s)</b> où <b>le client</b> a choisi au moins deux parfums lui-même.${rejets.sansParfum>0?` Les <b>${rejets.sansParfum} macarons d'assortiment</b> que <b>tu</b> composes en sont <b>exclus</b> : ce sont tes choix, pas les leurs.`:''}`, {icon:'🧺'})}${journal}`;
 
   if(!forts.length){
     return aiSay(`${aiHero(String(nPaniers), 'Paniers analysés')}${socle}
