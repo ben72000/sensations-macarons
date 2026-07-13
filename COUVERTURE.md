@@ -10,6 +10,57 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-13 — Vague 62 : LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER »  (v1340 → **v1341**)
+
+**Demandé par Benjamin** :
+> « Dans le cas d'un événement avec pyramide, visualiser dans le résumé de commande, sans avoir à
+> aller dans Modifier : le nombre de pyramides, le type, et le nombre d'étages. »
+
+### La difficulté, et il faut la dire
+**Le nombre d'étages n'est PAS stocké** sur la commande. Seuls le nombre de pyramides (`equip`) et
+le nombre de macarons (`evQte`) le sont. Les étages se **déduisent** des modèles de présentoirs :
+chaque modèle a ses plateaux, donc ses **paliers cumulés** (pour la pyramide transparente :
+`[4,7,10,13,16,19]` → 4, 11, 21, 34, 50, **69** = pyramide entière).
+
+### On ne devine pas — on déduit, et on dit ce qu'on sait
+| Situation | Comportement |
+|---|---|
+| **Un seul** modèle correspond | on l'affiche, avec ses étages et la mention « pyramide entière » |
+| **Plusieurs** correspondent | on les **liste tous** — trancher en silence reviendrait à décider à la place de Benjamin |
+| **Aucun** ne correspond | « montage sur mesure », **sans arrondir** au palier voisin |
+| Répartition **non entière** | on signale que les pyramides ne seront **pas identiques** |
+| **Bloc plat** (non sécable) | **aucun étage affiché** — le mot n'aurait aucun sens |
+
+### La règle figée
+> **UN NOMBRE D'ÉTAGES INVENTÉ SERAIT PIRE QU'UNE ABSENCE** — il enverrait Benjamin monter le
+> **mauvais présentoir le jour J, devant son client**.
+> Une donnée **manquante** coûte un aller-retour dans « Modifier ». Une donnée **fausse** coûte un
+> événement raté. **Le silence est le moindre mal ; le mensonge, jamais.**
+
+**Ajouté** (`pyramide-montage.test.js`, 40 assertions) :
+- **A** — le cas courant : 21 macarons → 3 étages ; 2 × 69 → pyramide **entière** (6 étages).
+- **C** — **l'ambiguïté**, là où on pourrait mentir : 34 macarons = 4 étages sur un modèle **et**
+  3 sur un autre. Les deux sont listés.
+- **D** — le **sur-mesure** : 40 macarons ne correspond à aucun palier. **D5** prouve la retenue :
+  les paliers 34 et 50 **existent** — arrondir aurait été **facile, et faux**.
+- **E** — 100 macarons sur 3 pyramides → 33,33 chacune, affiché **tel quel**, sans arrondi trompeur.
+- **G** — aucun modèle enregistré → **aucun étage inventé**, mais les macarons par pyramide restent
+  affichés (c'est un **fait**, lui).
+
+**Total couvert** : 1397 → **1437 assertions**.
+
+**Angles morts connus (déclarés)** :
+- **La cause racine reste** : le modèle et les étages choisis à la saisie ne sont **pas persistés**
+  sur la ligne. La déduction est un **contournement honnête**, pas un correctif. Les persister
+  rendrait l'affichage **certain** dans tous les cas — c'est le vrai chantier.
+- Les modèles vivent dans **localStorage** (`sm_pyraModels`), pas dans IndexedDB : ils ne suivent
+  pas une restauration de sauvegarde. Un modèle perdu rend tous les montages passés « sur mesure ».
+- La déduction suppose des pyramides **identiques** (même modèle, même hauteur). Une commande
+  montée avec deux modèles **différents** (le suggesteur sait le proposer, cas « combinaison »)
+  serait signalée « sur mesure » — c'est prudent, mais imprécis.
+
+---
+
 ## 2026-07-13 — Vague 61 : LE TOTAL *ET* LE RESTE DÛ  (v1339 → **v1340**)
 
 **Demandé par Benjamin** :
@@ -1522,3 +1573,114 @@ sur vagues 1 et 2.
 
 **Angles morts connus :** <liste, ou « aucun nouveau »>
 ```
+
+---
+
+## Vague 63 — v1342 : le mois ET la semaine
+`tests/v1342-periodes.test.js` — **19 tests, verts.** Fonctions extraites de `app.js`, jamais recopiées.
+
+### Ce que la vague livre
+- **Semaines ISO 8601** : « semaine 39 », « S40 », « la semaine dernière », « semaine 39 2025 ».
+- **La période devient un INTERVALLE** `{depuis, jusqu}`. Le mois n'en est qu'un cas particulier
+  (celui qui remplit `ym`). Les 8 compétences existantes sont **inchangées** sur un mois.
+- **Point mort hebdo** : charges fixes proratisées (convention de Ben), **affichée** à l'écran.
+- **Gel du coût matière** à l'encaissement (`coutMatFige`) — on éteint la dette pour l'avenir.
+
+### Les bugs que les tests empêchent de revenir (réintroduits, détectés, restaurés)
+| Bug | Pourquoi il serait passé inaperçu |
+|---|---|
+| Une semaine reçoit un `ym` | Elle serait lue comme un mois. Une S39 (22→28 sept) deviendrait « septembre entier ». |
+| Prorata « mois du lundi » | **70 € au lieu de 120 € — 42 % d'erreur**, sur un chiffre parfaitement plausible. |
+| S53 inexistante | Glisserait en silence sur la S1 de l'année suivante. Décalage invisible à l'œil, faux à 100 %. |
+| Année ISO = année civile | Le 1er janvier 2027 est en **S53-2026**. Un bug qui dort onze mois. |
+| `monthLabel()` sur un intervalle | Afficherait « [object Object] » — seulement quand la semaine est vide. |
+
+### Ce que la vague NE fait PAS, et pourquoi
+**La rentabilité passée continue de confesser — et ce n'est pas une lacune passagère.**
+`coutMatiereFifoReel()` filtre les lots sur `qteRestante > 0` : la quantité restante **aujourd'hui**.
+Un lot acheté en décembre 2025 et consommé depuis a `qteRestante = 0` — il est filtré, il a **disparu**.
+Reconstituer décembre donnerait un chiffre **troué**, affiché à côté de chiffres mesurés.
+
+> **RÈGLE GRAVÉE (v1342) — UN CHIFFRE RECONSTITUÉ À TROUS, AFFICHÉ À CÔTÉ D'UN CHIFFRE MESURÉ,
+> FINIT TOUJOURS PAR ÊTRE LU COMME MESURÉ.** C'est la v1337 (« zéro n'est pas une mesure »)
+> appliquée au temps. Mieux vaut un aveu daté qu'une rentabilité passée inventée.
+
+### Garde G1 — la capacité se juge par TYPE DE PÉRIODE, pas par intention
+`query_seuil_rentabilite` sait faire une **semaine** (prorata) mais **pas** un **mois passé**
+(fenêtre glissante de 90 j). Il est donc dans `AI_INTENTS_SEMAINE` **et** dans `AI_INTENTS_MOIS_ATTENDU`.
+Sans cette garde, « point mort de la semaine 39 » aurait **avoué son impuissance juste au-dessus du
+prorata qu'il venait de calculer correctement** : un aveu FAUX à côté d'un chiffre JUSTE. Plus
+destructeur qu'un bug — ça apprend à Ben à ne plus croire les aveux, alors que les aveux sont tout
+ce qui reste quand le chiffre manque.
+
+### Le motif, encore : la règle existait déjà, appliquée à 90 %
+`computeAccounting()` acceptait **déjà** `{periodeStart, periodeEnd}` et filtrait en cash basis.
+Le moteur borné **existait** — il n'était simplement pas branché sur le copilote. Comme `escapeRe()`
+en v1328, comme le strip-commentaires en v1339.
+*(Et en écrivant l'audit anti-`[object Object]`, j'ai d'abord compté les COMMENTAIRES — reproduisant
+exactement l'échec n°1 de la vague 59. La maladie que je traque, je l'attrape encore.)*
+
+### Angles morts déclarés
+- Les **plages** (« de mars à juin », « 1er trimestre ») ne sont toujours pas parsées — mais
+  l'intervalle `{depuis, jusqu}` est désormais le format natif : c'est du parsing, plus de l'architecture.
+- Le **gel du coût matière** ne vaut que pour les encaissements **à partir de maintenant**. Les
+  commandes déjà encaissées n'ont pas de `coutMatFige` et n'en auront jamais.
+- `query_revenu_horaire` et `query_rentabilite` ne savent toujours pas la **semaine** (fenêtre glissante).
+
+---
+
+## Vague 64 — v1343 : ce que les clients associent
+`tests/v1343-associations.test.js` — **13 tests, verts.** Fonctions extraites de `app.js`.
+
+### LA CORRECTION QUE JE DOIS À BEN
+Le document de cadrage annonçait un **« data gap »** : la composition des coffrets ne serait pas
+stockée. **Je l'ai répété à Ben sans vérifier. C'ÉTAIT FAUX.**
+- `o.lignes[].parfums` est **déjà** un tableau `[{nom, qte}]` — JSON structuré, par ligne.
+- `marketMoves.parfum` trace **déjà** chaque mouvement de marché.
+- `flavorRecommendations()` fait **déjà** la matrice BCG (médiane volume × médiane marge, 4 quadrants).
+
+**Rien n'était perdu. Rien ne l'a jamais été.** J'ai affirmé une règle sans la confronter au code —
+exactement le péché que ces 64 vagues traquent. Le document décrivait une app générique, pas celle de Ben.
+
+### LE VRAI PIÈGE (invisible, lui)
+`sansParfum` compte les macarons que **Ben** compose (mode assortiment), pas ceux que le client choisit.
+
+> **RÈGLE GRAVÉE (v1343) — UNE DONNÉE PRODUITE PAR BEN NE DOIT JAMAIS LUI REVENIR
+> DÉGUISÉE EN DONNÉE PRODUITE PAR SES CLIENTS.**
+> Sinon l'app lui confirme ses propres choix en les présentant comme des découvertes. C'est la v1341
+> (les pyramides) au carré : une boucle où le miroir se fait passer pour une fenêtre.
+
+### LE BUG QUE LE LIFT EMPÊCHE — chiffré par le test
+Caramel est dans **tous** les paniers. Café+Praliné et Caramel+Café pèsent **le même nombre de paniers (3)**.
+Sans le **lift**, ils sembleraient **identiques**.
+
+| Paire | Paniers | Lift | Vérité |
+|---|---|---|---|
+| Café + Praliné | 3 | **×2** | Ils s'**attirent** vraiment |
+| Caramel + Café | 3 | **×1** | **Indépendants** — le caramel est juste partout |
+
+Sans lui, Ben aurait « découvert » que son caramel se marie avec tout, et **changé sa gamme sur sa
+propre popularité**. C'est le piège classique du market basket — et le faux insight le plus coûteux.
+
+### Les autres exclusions, chacune justifiée
+| Exclu | Pourquoi |
+|---|---|
+| `sansParfum` | Choix de Ben, pas du client (sa consigne explicite) |
+| Mono-parfum | Une association exige **deux** parfums |
+| Dons (0 €) | Le client n'a rien arbitré |
+| Reprises `histo` | Données d'avant l'app |
+| **Les marchés** | `marketMoves` dit ce qui **sort du stock**, pas **qui a acheté quoi ensemble**. Les traiter en paniers dirait « tout ce qui s'est vendu ce jour-là va ensemble » : une association fabriquée par le **calendrier**. La v1336 a appris à ne pas **oublier** les marchés ; celle-ci apprend à ne pas les **faire parler** là où ils sont muets. |
+
+### Honnêteté statistique — en tête, pas en note de bas de page
+Avec ~9 mois d'historique, **l'effectif est le chiffre le plus important de l'écran**. Un « 68 % » sur
+4 paniers a l'air d'une loi et n'est qu'un hasard. Les paires sous le seuil sont **marquées**, jamais
+**supprimées** (cacher le faible, c'est nier son existence — v1337).
+
+### L'ordre EST le correctif (encore)
+La règle « associations » est placée **avant** « top parfum ». Sans ça, « quels parfums se vendent le
+plus **ensemble** » partait vers le **classement** : un chiffre juste, à une **autre question**.
+
+### Angles morts déclarés
+- **La saisonnalité reste hors de portée** : un seul Noël dans l'historique. Ça ne se code pas, ça s'attend.
+- La matrice volume × marge existe mais s'appuie sur les **lots d'aujourd'hui** (même limite temporelle qu'en v1342).
+- Les marchés ne contribuent pas aux associations (voir ci-dessus) — donc les paniers ne couvrent que les **commandes**.

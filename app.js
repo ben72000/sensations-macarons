@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1340';
-const APP_MAJ = 'LE MONTANT TOTAL *ET* LE RESTE DÛ, comme tu l’as demandé. Ton encart « À venir » n’affichait que le montant total (« 5 · 1 022,40 € »). Or une partie est souvent déjà encaissée en acompte : ce total ne te disait donc PAS ce qu’il te reste à percevoir — le seul chiffre qui compte pour ta trésorerie. Tu vois maintenant les trois : le TOTAL, ce qui est DÉJÀ ENCAISSÉ (avec le nombre d’acomptes), et le RESTE DÛ. Le reste apparaît aussi semaine par semaine, et dans l’en-tête replié. PREMIÈRE RÈGLE : les trois chiffres se recomposent — total = déjà encaissé + reste dû, AU CENTIME. Un encart où les nombres ne se recomposent pas t’oblige à vérifier à la calculette, et un chiffre qu’on doit vérifier est un chiffre auquel on ne fait plus confiance. DEUXIÈME RÈGLE, et c’est elle qui évite un mensonge discret : UN TROP-PERÇU NE PAIE PAS LA COMMANDE D’À CÔTÉ. Si un client verse 120 € pour une commande de 100 €, les 20 € en trop ne viennent PAS réduire ce qu’un autre client te doit. Une somme naïve (total moins encaissé) ferait exactement ça et SOUS-ESTIMERAIT ce que tu dois réclamer. L’app plafonne donc commande par commande, et t’affiche le trop-perçu À PART. J’ai aussi corrigé la symétrie sur « À encaisser » : elle affichait le reste dû sans jamais dire de quel montant total il provenait — impossible de savoir si 139 € de reste portaient sur 150 € ou sur 3 000 € de commandes. Elle affiche maintenant les deux. Et les deux sections passent par UNE SEULE fonction : deux calculs séparés finissent toujours par diverger. Enfin, s’il n’y a aucun acompte, l’affichage reste exactement comme avant — on n’ajoute pas de bruit là où il n’y a rien à dire. Suite : 1366 → 1397 assertions vertes.';
+const APP_VERSION = 'v1343';
+const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -4189,6 +4189,27 @@ function caMarcheEncaisse(mk){
 // au lieu de recalculer le delta dans notre coin. La vague 57 avait laissé cette duplication non
 // prouvée en angle mort déclaré : c'est exactement ainsi que naissent les divergences. Bonus :
 // marketTotals déduit déjà le fond de caisse, donc les deux chemins ne peuvent plus diverger.
+// [v1342] `ym` peut désormais être une CLÉ DE MOIS ('2025-09') **ou** un INTERVALLE
+// {depuis, jusqu} (une semaine, par ex.). Un seul prédicat d'appartenance, un seul moteur.
+// On ne DUPLIQUE pas la logique pour la semaine : la vague 59 a montré où mène une seconde
+// implémentation « juste pour ce cas-là » — elle diverge, toujours.
+// [v1342] Libellé d'une période, qu'elle soit une clé de mois ou un intervalle.
+// Écrit parce que `monthLabel(cible)` sur un objet affichait « [object Object] » — un bug
+// invisible tant qu'aucune semaine n'était vide. Un helper unique vaut mieux qu'un `typeof`
+// recopié à chaque appel : c'est la cinquième variante d'échappement de la v1329 qui parle.
+function _perLabel(p){
+  if(!p) return '';
+  if(typeof p === 'string') return monthLabel(p);
+  return p.label || (p.depuis + ' → ' + p.jusqu);
+}
+function _dansPeriode(dateStr, p){
+  if(!p) return false;
+  const d = dateStr || '';
+  if(typeof p === 'string') return monthKey(d) === p;      // cas historique : clé AAAA-MM
+  if(p.depuis && d < p.depuis) return false;
+  if(p.jusqu  && d > p.jusqu)  return false;
+  return !!d;
+}
 function caMarchesDuMois(markets, moves, ym){
   const res = {
     ca: 0, vendu: 0, nbMarches: 0, detail: [],
@@ -7772,6 +7793,76 @@ const PYRA_BOXES = [
 
 // Modèles de pyramides. Plateaux listés du SOMMET vers la BASE.
 // Prérempli avec l'exemple type ; modifiable par l'utilisateur (persisté en localStorage).
+// ============================================================================
+//  [v1341] LE MONTAGE PYRAMIDE, VISIBLE DANS LA VUE RAPIDE — demandé par Benjamin.
+// ----------------------------------------------------------------------------
+//  La vue rapide affichait le NOMBRE de pyramides et leur type (location / vente), mais rien sur
+//  le MONTAGE : impossible de savoir combien d'étages sans ouvrir « Modifier ».
+//
+//  UNE DIFFICULTÉ HONNÊTE : le nombre d'étages n'est PAS stocké sur la commande. Seuls le nombre
+//  de pyramides (`equip`) et le nombre de macarons (`evQte`) le sont. Les étages se DÉDUISENT des
+//  modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers).
+//
+//  ON NE DEVINE DONC PAS : ON DÉDUIT, ET ON DIT CE QU'ON SAIT.
+//    • un seul modèle correspond      → on l'affiche, avec ses étages ;
+//    • plusieurs correspondent         → on les liste TOUS (le montage est ambigu, et le taire
+//                                        reviendrait à choisir à la place de Benjamin) ;
+//    • aucun ne correspond             → on le dit (montage sur mesure), sans inventer d'étages ;
+//    • répartition non entière         → on le signale (les pyramides ne sont pas identiques).
+//  Un nombre d'étages inventé serait pire qu'une absence : il enverrait Benjamin monter le
+//  mauvais présentoir le jour J.
+// ============================================================================
+function pyraMontageResume(ln, models){
+  if(!ln || ln.type !== 'evenement') return null;
+  const nb = Math.max(0, +ln.equip || 0);
+  if(nb <= 0) return null;   // pas de pyramide sur cette ligne : rien à résumer
+
+  const macarons = Math.max(0, +ln.evQte || 0);
+  const res = {
+    nb,
+    vendue: (typeof pyraEstVente === 'function') ? pyraEstVente(ln) : !!ln.pyraVendue,
+    macarons,
+    parPyramide: null,      // macarons par pyramide (si la répartition est entière)
+    equilibre: false,       // les pyramides sont-elles toutes identiques ?
+    candidats: [],          // [{modele, etages, plateaux}] — les montages qui collent EXACTEMENT
+    certain: false,         // un seul candidat → on peut nommer le montage
+    raison: null
+  };
+
+  if(!(macarons > 0)){ res.raison = 'Aucun macaron sur cette ligne : le montage ne peut pas être déduit.'; return res; }
+
+  const par = macarons / nb;
+  if(!Number.isInteger(par)){
+    // Ex. 100 macarons sur 3 pyramides : elles ne peuvent PAS être identiques.
+    res.parPyramide = Math.round(par * 100) / 100;
+    res.raison = `${macarons} macarons sur ${nb} pyramides ne se répartissent pas en parts égales — le montage n'est pas équilibré.`;
+    return res;
+  }
+  res.parPyramide = par;
+  res.equilibre = true;
+
+  // Quels modèles atteignent EXACTEMENT ce nombre, et à combien d'étages ?
+  const list = (models && models.length) ? models : ((typeof pyraModels === 'function') ? pyraModels() : []);
+  (list || []).forEach(m => {
+    if(!m || !Array.isArray(m.plateaux) || !m.plateaux.length) return;
+    const cfgs = (typeof pyraConfigs === 'function') ? pyraConfigs(m.plateaux) : [];
+    cfgs.forEach(c => {
+      if(c.total === par){
+        res.candidats.push({ modele: m.nom || '?', etages: c.etages, plateaux: m.plateaux.length,
+                             complete: c.etages === m.plateaux.length, secable: (m.secable !== false) });
+      }
+    });
+  });
+
+  if(res.candidats.length === 1){ res.certain = true; }
+  else if(res.candidats.length > 1){
+    res.raison = 'Plusieurs modèles atteignent ce nombre : le montage exact n\'est pas déterminable depuis la commande.';
+  } else {
+    res.raison = `Aucun palier standard ne fait ${par} macarons — montage sur mesure.`;
+  }
+  return res;
+}
+
 function pyraModels(){
   try{ const j=JSON.parse(localStorage.getItem('sm_pyraModels')||'null'); if(Array.isArray(j)&&j.length) return _pyraMigrate(j); }catch(e){swallow(e,'pyraModels')}
   return [
@@ -8751,8 +8842,10 @@ async function docMarkPaidConfirm(id, fromList){
       const part = money2(Math.min(solde, aRepartir));
       o.paiements = (o.paiements||[]).concat([{date, montant:part, moyen}]);
       syncPaymentFields(o);
+      await figerCoutMatiere(o);   // [v1342] on fige le coût matière AVANT que les lots ne s'épuisent
       await db.orders.update(o.id, {paiements:o.paiements, paiement:o.paiement, statutPaiement:o.statutPaiement,
-        soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement});
+        soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement,
+        coutMatFige:o.coutMatFige, coutMatFigeLe:o.coutMatFigeLe});
       aRepartir = money2(aRepartir - part);
     }
   } else {
@@ -15756,6 +15849,37 @@ function orderPayStatus(o){
 }
 // Synchronise les champs hérités (paiement/datePaiement/reglement) à partir du registre,
 // pour rester cohérent avec tous les lecteurs existants (liste, export, stats, prévisionnel).
+// ════════════════════════════════════════════════════════════════════════════
+// [v1342] FIGER LE COÛT MATIÈRE À L'ENCAISSEMENT — on éteint la dette.
+//
+// LE CONSTAT : `estimateOrderMaterialCost()` est RECALCULÉ à chaque affichage, sur les lots
+// RESTANTS aujourd'hui (`coutMatiereFifoReel` filtre sur qteRestante > 0). Un lot acheté en
+// décembre et consommé depuis a qteRestante = 0 : il est filtré, il a DISPARU. Le coût matière
+// d'une vente passée n'est donc pas conservé — il est reconstruit, et de plus en plus faux à
+// mesure que les lots d'époque s'épuisent.
+//
+// On ne peut pas réparer hier. On peut arrêter de perdre demain : à chaque encaissement, on
+// ÉCRIT le coût matière estimé À CET INSTANT, avec les lots de cet instant. Dans quelques mois,
+// « ma marge de janvier » aura une vraie réponse — mesurée, pas reconstituée.
+//
+// TROIS PRÉCAUTIONS, chacune payée par un bug de cette série :
+//  • On n'écrase JAMAIS un `coutMatFige` existant (v1339 : un statut réécrit finit par mentir).
+//  • On horodate (`coutMatFigeLe`) : un chiffre sans date est un chiffre qu'on ne peut plus auditer.
+//  • En cas d'échec, on ne met PAS 0 — on laisse `undefined`. La v1326 a gravé que METTRE 0 N'EST
+//    PAS S'ABSTENIR : c'est affirmer que la matière était gratuite. `undefined` dit « je ne sais pas ».
+async function figerCoutMatiere(o){
+  try{
+    if(!o || o.coutMatFige != null) return o;              // déjà figé → on ne réécrit jamais
+    const [recipes, recipeItems, lots] = await Promise.all([
+      db.recipes.toArray(), db.recipeItems.toArray(), db.lots.toArray()
+    ]);
+    const c = estimateOrderMaterialCost(o, recipes, recipeItems, lots);
+    if(c == null || !isFinite(c)) return o;                // échec → on laisse VIDE, jamais 0
+    o.coutMatFige   = money2(c);
+    o.coutMatFigeLe = today();
+    return o;
+  }catch(e){ swallow(e,'figerCoutMatiere'); return o; }    // jamais bloquer un encaissement pour ça
+}
 function syncPaymentFields(o){
   o.paiements = (o.paiements||[]).filter(p=>p && (+p.montant)||p.moyen||p.date);
   const st=orderPayStatus(o);
@@ -15831,8 +15955,10 @@ async function confirmMarkPaid(id, fromModal){
   const o=await db.orders.get(id); if(!o) return;
   o.paiements=(o.paiements||[]).concat([{date, montant:mt, moyen}]);
   syncPaymentFields(o);
+  await figerCoutMatiere(o);   // [v1342] idem — UN SEUL point de gel, appelé aux DEUX écritures (règle C, v1340)
   await db.orders.update(id, {paiements:o.paiements, paiement:o.paiement, statutPaiement:o.statutPaiement,
-    soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement});
+    soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement,
+    coutMatFige:o.coutMatFige, coutMatFigeLe:o.coutMatFigeLe});
   closeModal();
   renderCmd();
   toast('Encaissement enregistré ✓ ('+euro(mt)+' le '+fmtDate(date)+')');
@@ -16615,6 +16741,24 @@ async function cmdView(id){
       return `<div class="cmd-line"><div class="line-type">Événement</div>
         <div class="sum-box"><span>Macarons</span><b>${ln.evQte||0} × ${euro(eventUnitPrice(ln))}</b></div>
         <div class="sum-box"><span>Pyramides / présentoirs ${pyraEstVente(ln)?'<span style="color:var(--gold,#AA7C39);font-size:.74rem">(vendues)</span>':'<span style="color:#9a8a82;font-size:.74rem">(location)</span>'}</span><b>${ln.equip||0} × ${euro(pyraPrixUnit(ln))}</b></div>
+        ${(()=>{ // [v1341] LE MONTAGE, sans avoir à ouvrir « Modifier ».
+          const MP = pyraMontageResume(ln);
+          if(!MP) return '';
+          const _t = MP.vendue ? 'vendue' : 'location';
+          if(MP.certain){
+            const c = MP.candidats[0];
+            const _et = c.secable ? `${c.etages} étage${c.etages>1?'s':''}${c.complete?' <span style="color:#9a8a82">(pyramide entière)</span>':''}` : 'bloc plat';
+            return `<div class="sum-box" style="background:#f7f4ef"><span>🔺 Montage <span style="color:#9a8a82;font-size:.8rem">${MP.nb} × ${esc(c.modele)} · ${_et} · ${_t}</span></span><b>${MP.parPyramide} mac./pyramide</b></div>`;
+          }
+          // On ne sait pas trancher : on le DIT, plutôt que d'inventer un nombre d'étages qui
+          // enverrait Benjamin monter le mauvais présentoir le jour J.
+          const _liste = MP.candidats.length
+            ? `<div style="font-size:.76rem;color:#6a5a52;margin-top:3px">Correspond à : ${MP.candidats.map(c=>`${esc(c.modele)} (${c.etages} ét.)`).join(' ou ')}</div>` : '';
+          return `<div class="sum-box" style="background:#fff6e5;flex-direction:column;align-items:stretch;gap:2px">
+            <div style="display:flex;justify-content:space-between"><span>🔺 Montage <span style="color:#9a8a82;font-size:.8rem">${MP.nb} pyramide${MP.nb>1?'s':''} · ${_t}</span></span><b>${MP.parPyramide!=null?MP.parPyramide+' mac./pyr.':'—'}</b></div>
+            <div style="font-size:.76rem;color:#8a6a2a">⚠️ ${esc(MP.raison||'')}</div>${_liste}
+          </div>`;
+        })()}
         ${accessoireDecoActif(ln)?`<div class="sum-box"><span>🎀 Accessoire décoratif <span style="color:#9a8a82;font-size:.74rem">(location)</span></span><b>${ln.equip||0} × ${euro(ACCESS_DECO_PRICE)}</b></div>`:''}
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:''}
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
@@ -20038,7 +20182,7 @@ async function computeMonthlyBilan(ym){
   // Marchés clôturés du mois = vente de marchandise.
   markets.forEach(mk=>{
     if(mk.statut!=='clos') return;
-    if(monthKey(mk.date)!==ym) return;
+    if(!_dansPeriode(mk.date, ym)) return;   // [v1342] mois OU semaine
     const ca=mk.ca||{}; const fond=money2(+mk.fondCaisse||0);
     const esp=money2(Math.max(0,(+ca.especes||0)-fond)), cb=money2(ca.cb||0), au=money2(ca.autre||0);
     const tot=money2(esp+cb+au); if(tot<=0) return;
@@ -33311,6 +33455,207 @@ function _aiMoisNomme(t, refDate){
   return null;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [v1342 — VAGUE 63] LE MOIS *ET* LA SEMAINE — et l'aveu qui dit POURQUOI
+// ════════════════════════════════════════════════════════════════════════════
+//  Ben demande : « mon CA de la semaine 39 », « mon point mort sur décembre 2025 ».
+//
+//  CE QUE CETTE VAGUE CHANGE
+//   1. Les SEMAINES ISO (« semaine 39 », « S40 », « la semaine dernière ») deviennent
+//      une période comme une autre. ISO 8601 (lundi→dimanche) : la norme FR.
+//   2. La période cesse d'être une CLÉ DE MOIS ('AAAA-MM') pour devenir un INTERVALLE
+//      {depuis, jusqu}. Le mois n'en est qu'un CAS PARTICULIER — celui où l'intervalle
+//      couvre un mois entier. C'est ce qui rendra les PLAGES (« de mars à juin »)
+//      quasi gratuites plus tard : angle mort déclaré depuis la v1335.
+//   3. Le point mort / seuil sur une SEMAINE proratise les charges fixes du mois
+//      (÷ jours du mois × 7) — convention de Ben, AFFICHÉE À L'ÉCRAN, jamais silencieuse.
+//
+//  CE QUE CETTE VAGUE NE FAIT PAS, ET POURQUOI (le cœur de la vague)
+//  La rentabilité PASSÉE (« ma marge de décembre 2025 ») continue de CONFESSER.
+//  Ce n'est pas de la paresse : c'est une IMPOSSIBILITÉ STRUCTURELLE, lisible dans le code.
+//  `coutMatiereFifoReel()` filtre les lots sur `qteRestante > 0` — la quantité restante
+//  AUJOURD'HUI. Un lot acheté en novembre 2025 et entièrement consommé depuis a
+//  qteRestante = 0 : il est FILTRÉ, il DISPARAÎT du calcul. Rejouer décembre 2025
+//  exigerait de reconstituer l'état des lots à cette date ; or le repli du même moteur
+//  (manque > 0 → prixCourant) prouve que le stock chiffré est parfois incomplet.
+//  Un rejeu bâti là-dessus produirait un chiffre RECONSTITUÉ À TROUS, affiché à côté de
+//  chiffres mesurés — et il finirait lu comme mesuré.
+//
+//  RÈGLE GRAVÉE (v1342) : UN CHIFFRE RECONSTITUÉ À TROUS, AFFICHÉ À CÔTÉ D'UN CHIFFRE
+//  MESURÉ, FINIT TOUJOURS PAR ÊTRE LU COMME MESURÉ. Mieux vaut un aveu daté qu'une
+//  rentabilité passée inventée. C'est la v1337 (« zéro n'est pas une mesure ») appliquée
+//  au temps.
+//
+//  MAIS ON ÉTEINT LA DETTE : le coût matière est désormais FIGÉ à l'encaissement
+//  (`coutMatFige`). Le passé restera inconnu ; l'avenir, lui, sera mesuré. On ne peut pas
+//  réparer hier, on peut arrêter de perdre demain.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ---------------------------------------------------------------------------
+// SEMAINE ISO 8601. Pures, testables, sans dépendance au fuseau (on reste en local,
+// comme ymdLocal() ailleurs dans l'app).
+// ---------------------------------------------------------------------------
+
+// Lundi de la semaine contenant `d`.
+function _isoLundi(d){
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const j = (x.getDay() + 6) % 7;          // 0 = lundi … 6 = dimanche
+  x.setDate(x.getDate() - j);
+  return x;
+}
+
+// Numéro de semaine ISO + année ISO. L'ANNÉE ISO N'EST PAS L'ANNÉE CIVILE :
+// le 1er janvier 2027 tombe en S53 de 2026. Confondre les deux, c'est se tromper
+// de semaine une fois par an — le genre de bug qui dort onze mois.
+function _isoSemaine(d){
+  const x = _isoLundi(d);
+  const jeudi = new Date(x); jeudi.setDate(jeudi.getDate() + 3);   // le jeudi décide de l'année ISO
+  const an = jeudi.getFullYear();
+  const j1 = new Date(an, 0, 1);
+  const lundi1 = _isoLundi(j1.getDay() === 4 || _isoLundi(j1).getFullYear() < an ? new Date(an, 0, 4) : j1);
+  const base = _isoLundi(new Date(an, 0, 4));                      // le 4 janvier est TOUJOURS en S1
+  const num = Math.round((x - base) / 604800000) + 1;
+  return { an, num };
+}
+
+// Bornes {depuis, jusqu} de la semaine ISO `num` de l'année `an`.
+function _isoBornesSemaine(an, num){
+  const base = _isoLundi(new Date(an, 0, 4));                      // lundi de la S1
+  const lundi = new Date(base); lundi.setDate(lundi.getDate() + (num - 1) * 7);
+  const dim = new Date(lundi); dim.setDate(dim.getDate() + 6);
+  return { lundi, dim };
+}
+
+// Nombre de semaines ISO d'une année (52 ou 53). Sert à REFUSER « semaine 53 » en 2026
+// (qui n'existe pas) plutôt qu'à retourner silencieusement une semaine de 2027.
+function _isoNbSemaines(an){
+  const d = new Date(an, 11, 28);                                  // le 28 décembre est TOUJOURS dans la dernière semaine
+  return _isoSemaine(d).num;
+}
+
+// ---------------------------------------------------------------------------
+// PARSEUR DE SEMAINE. « semaine 39 », « s39 », « la semaine 39 », « semaine 39 2025 »,
+// « la semaine dernière », « cette semaine ».
+// Renvoie null si aucune semaine n'est nommée — le parseur de mois reprend la main.
+// ---------------------------------------------------------------------------
+function _aiSemaineNommee(t, refDate){
+  if(!t) return null;
+  const now = refDate ? new Date(refDate) : new Date();
+
+  // « la semaine dernière » / « la semaine passée »
+  if(/\bsemaine (derniere|passee|precedente)\b/.test(t)){
+    const d = new Date(now); d.setDate(d.getDate() - 7);
+    const s = _isoSemaine(d);
+    return { an:s.an, num:s.num, explicite:false, rel:'derniere' };
+  }
+  // « cette semaine »
+  if(/\bcette semaine\b|\bsemaine en cours\b/.test(t)){
+    const s = _isoSemaine(now);
+    return { an:s.an, num:s.num, explicite:false, rel:'courante' };
+  }
+  // « semaine 39 », « s39 », « sem 39 » — avec année optionnelle « semaine 39 2025 ».
+  // \b devant s\d marche : « s39 » est un mot. On EXIGE le mot-frontière pour ne pas
+  // capter le « s39 » d'un identifiant quelconque.
+  const m = t.match(/\b(?:semaine|sem|s)\s*(\d{1,2})\b(?:\s+(20\d{2}))?/);
+  if(!m) return null;
+  const num = +m[1];
+  if(num < 1 || num > 53) return null;                             // hors bornes → pas une semaine
+
+  let an;
+  if(m[2]) an = +m[2];
+  else {
+    an = now.getFullYear();
+    const cur = _isoSemaine(now);
+    // Semaine pas encore arrivée cette année → c'est celle de l'an dernier.
+    // Même logique que _aiMoisNomme : Ben parle du passé bien plus souvent que du futur.
+    if(num > cur.num) an--;
+  }
+  // La semaine 53 n'existe pas toutes les années. On ne la remplace PAS en silence.
+  if(num > _isoNbSemaines(an)) return { an, num, invalide:true };
+  return { an, num, explicite:!!m[2] };
+}
+
+// ---------------------------------------------------------------------------
+// L'INTERVALLE — l'objet central de la vague.
+//   { depuis, jusqu, label, ym, kind }
+// `ym` n'est rempli QUE si l'intervalle couvre EXACTEMENT un mois entier. C'est la clé
+// de la rétro-compatibilité : les 8 compétences qui savent déjà faire (elles testent
+// /^\d{4}-\d{2}$/) continuent de fonctionner À L'IDENTIQUE sur un mois, et voient un
+// `ym` null sur une semaine — ce qui les fait basculer, sans une ligne de plus, sur le
+// chemin « je ne sais pas », au lieu de répondre un chiffre faux.
+//
+// C'est le contraire d'un placage : la compétence qui ne sait pas traiter une semaine ne
+// PEUT PAS l'ignorer par accident, parce que le paramètre qu'elle lit est vide.
+// ---------------------------------------------------------------------------
+function _aiIntervalleSemaine(sem){
+  const { lundi, dim } = _isoBornesSemaine(sem.an, sem.num);
+  return {
+    depuis: ymdLocal(lundi),
+    jusqu:  ymdLocal(dim),
+    ym:     null,                                   // une semaine N'EST PAS un mois — surtout à cheval
+    kind:   'semaine',
+    sem:    { an:sem.an, num:sem.num },
+    label:  `semaine ${sem.num} (${fmtDate(ymdLocal(lundi))} → ${fmtDate(ymdLocal(dim))})`
+  };
+}
+
+// ---------------------------------------------------------------------------
+// LE POINT D'ENTRÉE UNIQUE. Remplace _aiMoisNomme comme source de vérité de la période.
+// Ordre : SEMAINE d'abord, MOIS ensuite. Comme en v1330 (« du mois de mai » contient
+// « du mois »), l'ORDRE *EST* LE CORRECTIF : « semaine 39 » ne doit pas être lu comme
+// un simple nombre par une règle plus générique.
+// ---------------------------------------------------------------------------
+function _aiPeriodeCible(t, refDate){
+  if(!t) return null;
+  const sem = _aiSemaineNommee(t, refDate);
+  if(sem){
+    if(sem.invalide) return { invalide:true, kind:'semaine', sem };
+    return _aiIntervalleSemaine(sem);
+  }
+  const mn = (typeof _aiMoisNomme === 'function') ? _aiMoisNomme(t, refDate) : null;
+  if(mn){
+    const [y, m] = mn.cle.split('-').map(Number);
+    const dernier = new Date(y, m, 0);
+    return {
+      depuis: mn.cle + '-01',
+      jusqu:  ymdLocal(dernier),
+      ym:     mn.cle,                              // mois entier → les 8 compétences ne changent PAS
+      kind:   'mois',
+      label:  monthLabel(mn.cle)
+    };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// PRORATA DES CHARGES FIXES SUR UNE SEMAINE — convention de Ben (÷ jours du mois × 7).
+//
+// Une semaine peut chevaucher DEUX mois (S40-2025 = 29 sept → 5 oct). Les charges fixes
+// des deux mois n'ont aucune raison d'être égales. On proratise donc JOUR PAR JOUR, chaque
+// jour portant la charge quotidienne DE SON PROPRE MOIS. Prendre « le mois du lundi » serait
+// plus simple et FAUX une semaine sur quatre.
+//
+// Renvoie aussi le DÉTAIL, parce que ce prorata sera AFFICHÉ. Une convention appliquée en
+// silence est une convention qu'on finit par oublier — et un chiffre qu'on ne sait plus lire.
+// ---------------------------------------------------------------------------
+function _aiProrataChargesFixes(depuis, jusqu, chargesParMois){
+  const d0 = new Date(depuis + 'T00:00:00');
+  const d1 = new Date(jusqu  + 'T00:00:00');
+  let total = 0; const detail = {};
+  for(let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)){
+    const ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    const joursDuMois = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    const chargeMois = +(chargesParMois && chargesParMois[ym]) || 0;
+    const parJour = joursDuMois > 0 ? chargeMois / joursDuMois : 0;
+    total += parJour;
+    if(!detail[ym]) detail[ym] = { jours:0, joursDuMois, chargeMois, part:0 };
+    detail[ym].jours++;
+    detail[ym].part = money2(detail[ym].part + parJour);
+  }
+  return { total: money2(total), detail, moisChevauches: Object.keys(detail).length };
+}
+
+
 function parseIntent(texte, ctx){
   ctx=ctx||{}; const flavors=ctx.flavors||[]; const clients=ctx.clients||[]; const materials=ctx.materials||[];
   const raw=texte||''; const t=aiCorrigeFautes(aiNormalize(raw));
@@ -34015,6 +34360,16 @@ function parseIntent(texte, ctx){
   }
 
   // ---- ANALYSE AVANCÉE (consultations) ----
+  // [v1343] ASSOCIATIONS DE PARFUMS : « quels parfums vont ensemble », « souvent achetés ensemble ».
+  // PLACÉE AVANT le top parfum, et l'ORDRE *EST* LE CORRECTIF (comme en v1330 pour « du mois de mai ») :
+  // « quels parfums se vendent ensemble » contient « parfum » + « vend », que la règle du top parfum
+  // capterait, et Ben recevrait un CLASSEMENT là où il demandait des ASSOCIATIONS. Un chiffre juste,
+  // à une autre question — le bug canonique de cette série.
+  if(/(ensemble|associ|combinaison|combiner|duo|paire|se marient?|vont bien|s'?accordent|co ?occurrence|panier)/.test(t)
+     && /\b(parfum[s]?|macaron[s]?|saveur[s]?|gout[s]?|client[s]?)\b/.test(t)){
+    return {intent:'query_associations', params:{}, critical:false,
+      label:'Parfums souvent achetés ensemble'};
+  }
   // TOP PARFUM : « quel est le parfum le plus vendu », « mon meilleur parfum », « quel parfum se vend
   // le plus depuis 6 mois ». Placé AVANT les tendances : « parfum » + superlatif → classement, pas tendance.
   if((/\b(parfum[s]?|macaron[s]?|saveur[s]?)\b/.test(t) || /\b(numero un|numero 1|mon top) en vente/.test(t) || /en ventes?\b/.test(t) || /\b(qu'?est ce qui|ce qui) se vend le (mieux|plus)\b/.test(t) || /\bqui (se vend|cartonne) le (mieux|plus)\b/.test(t))
@@ -38056,6 +38411,43 @@ const AI_INTENTS_MOIS = new Set(['query_revenue', 'query_net_poche', 'query_urss
 //  • query_seuil_rentabilite et query_revenu_horaire : ce sont des calculs sur FENÊTRE GLISSANTE
 //    (90 jours, moyennes pondérées). Les « filtrer par mois » n'a pas de sens tel quel : il faudrait
 //    d'abord repenser leur période de référence. Ajouter un filtre par-dessus serait un placage.
+// ────────────────────────────────────────────────────────────────────────────
+// [v1342] LES COMPÉTENCES QUI SAVENT RAISONNER SUR UNE *SEMAINE*.
+//
+// Liste beaucoup plus COURTE que AI_INTENTS_MOIS, et ce n'est pas un oubli : c'est la
+// réalité du moteur. Une semaine ISO peut être à cheval sur deux mois (S40-2025 =
+// 29 sept → 5 oct). Or les compétences « mois » s'appuient sur computeMonthlyBilan(ym),
+// qui prend une CLÉ DE MOIS et ne sait rien faire d'autre. Leur passer une semaine
+// exigerait de leur donner un mois — donc de MENTIR sur la période.
+//
+// Celles listées ici savent, parce qu'elles peuvent passer par computeAccounting(), qui
+// accepte déjà {periodeStart, periodeEnd} et filtre en cash basis. Ce moteur borné
+// EXISTAIT DÉJÀ : il n'était simplement pas branché sur le copilote. Encore une règle
+// écrite à 90 % — le motif de toute cette série.
+const AI_INTENTS_SEMAINE = new Set(['query_revenue', 'query_charges', 'query_gaspillage',
+                                    'query_bilan_marche', 'query_top_parfum', 'query_panier_moyen',
+                                    'query_seuil_rentabilite']);   // [v1342] prorata des charges fixes
+
+// [v1342] LE CAS QUI N'ENTRE DANS AUCUNE CASE, et qu'il aurait été tentant de forcer :
+// `query_seuil_rentabilite` sait faire une SEMAINE (les charges fixes se proratisent : convention
+// explicite de Ben, affichée à l'écran) mais NE sait PAS faire un MOIS PASSÉ (sa marge unitaire
+// vient d'une fenêtre glissante de 90 jours, qu'on ne peut pas rembobiner).
+// Il est donc dans AI_INTENTS_SEMAINE **et** dans AI_INTENTS_MOIS_ATTENDU — et ce n'est pas une
+// incohérence : c'est la description exacte de ce qu'il sait faire. Une compétence n'est pas
+// « capable » ou « incapable » en bloc ; elle l'est PAR TYPE DE PÉRIODE. Forcer un booléen unique
+// aurait produit, au choix, un aveu de trop ou un mensonge — les deux sont des régressions.
+
+// [v1342] POURQUOI la compétence ne sait pas filtrer. Un aveu générique (« pas encore »)
+// laisse croire à une lacune passagère qu'une prochaine vague comblera. Deux des trois cas
+// le sont ; le troisième NON — et le confondre serait mentir par omission.
+function _aiRaisonAveu(intent, pc){
+  const P = esc(pc.label || '');
+  if(intent === 'query_rentabilite'){
+    return `Tu as précisé <b>${P}</b>. Je ne peux pas te donner une rentabilité <b>passée</b>, et ce n'est pas une lacune passagère : le coût matière n'est <b>figé nulle part</b>, il est recalculé à chaque affichage sur les lots <b>restants aujourd'hui</b>. Un lot acheté en décembre et consommé depuis a une quantité restante nulle : il a <b>disparu</b> du calcul. Reconstituer cette période me donnerait un chiffre <b>troué</b>, que tu lirais comme mesuré. Je préfère ne pas te le donner.<br><br>À partir de maintenant, je <b>fige</b> le coût matière à l'encaissement : dans quelques mois, cette question aura une vraie réponse.`;
+  }
+  return `Tu as précisé <b>${P}</b>, mais ce calcul repose sur une <b>fenêtre glissante</b> (90 jours, moyennes pondérées) — le filtrer par période demanderait d'abord de repenser sa période de référence. Le chiffre ci-dessous porte donc sur ma période habituelle, pas sur ${P}.`;
+}
+
 const AI_INTENTS_MOIS_ATTENDU = new Set([
   'query_rentabilite', 'query_seuil_rentabilite', 'query_revenu_horaire'
 ]);
@@ -38091,16 +38483,43 @@ async function _aiDispatch(r, txt, _ctx){
   // [v1333] LE MOIS NOMMÉ, POUR TOUTES LES COMPÉTENCES — et jamais jeté en silence.
   try{
     if(r && r.intent && r.intent !== 'unknown' && !r.critical){
-      const _mn = _aiMoisNomme(aiCorrigeFautes(aiNormalize(txt || '')));
-      if(_mn){
+      // [v1342] La période n'est plus une CLÉ DE MOIS : c'est un INTERVALLE. Le mois n'en est
+      // qu'un cas particulier (celui qui couvre un mois entier, et qui garde donc un `ym`).
+      const _pc = _aiPeriodeCible(aiCorrigeFautes(aiNormalize(txt || '')));
+      if(_pc){
         r.params = r.params || {};
-        if(AI_INTENTS_MOIS.has(r.intent)){
-          // La compétence sait faire : on lui passe le mois (sans écraser une période déjà résolue).
-          if(r.params.periode == null) r.params.periode = _mn.cle;
-        } else if(AI_INTENTS_MOIS_ATTENDU.has(r.intent)){
-          // La compétence NE sait PAS filtrer par mois. On le DIT, au lieu de répondre un chiffre
-          // juste à une autre question (c'était exactement le bug de la v1330).
-          aiSay(`${aiSynth(`Tu as précisé <b>${esc(monthLabel(_mn.cle))}</b>, mais je ne sais pas encore filtrer cette réponse par mois. Le chiffre ci-dessous porte donc sur ma période habituelle — j'aime mieux te le dire que de te laisser croire le contraire.`, {icon:'⚠️', tone:'warn'})}`);
+
+        // [v1342] Semaine qui N'EXISTE PAS (« semaine 53 » d'une année qui n'en a que 52).
+        // On REFUSE, on ne glisse pas en silence sur la S1 de l'année suivante. Un décalage
+        // d'une semaine sur un CA est invisible à l'œil et faux à 100 %.
+        if(_pc.invalide){
+          return aiSay(aiSynth(`La <b>semaine ${_pc.sem.num}</b> n'existe pas en ${_pc.sem.an} : cette année-là n'en compte que ${_isoNbSemaines(_pc.sem.an)}. Je préfère te le dire plutôt que de te répondre sur une autre semaine sans que tu le saches.`, {icon:'⚠️', tone:'warn'}));
+        }
+
+        if(r.params.periode == null && r.params.intervalle == null){
+          r.params.intervalle = _pc;                 // toujours disponible : bornes + libellé
+          if(_pc.ym) r.params.periode = _pc.ym;      // mois entier → contrat v1333 INCHANGÉ
+        }
+
+        // Une SEMAINE demandée à une compétence qui ne sait raisonner qu'en MOIS.
+        // Elle ne peut pas l'ignorer par accident : `periode` est vide (ym = null). Mais un
+        // paramètre jeté en silence reste le pire des deux mondes (v1333) — donc on le DIT.
+        if(_pc.kind === 'semaine' && !AI_INTENTS_SEMAINE.has(r.intent) && AI_INTENTS_MOIS.has(r.intent)){
+          aiSay(aiSynth(`Tu as précisé la <b>${esc(_pc.label)}</b>, mais cette réponse ne sait raisonner qu'au mois. Le chiffre ci-dessous ne porte donc PAS sur cette semaine — j'aime mieux te le dire que de te laisser croire le contraire.`, {icon:'⚠️', tone:'warn'}));
+        }
+        // [v1342 — GARDE G1] LA CAPACITÉ SE JUGE PAR *TYPE DE PÉRIODE*, PAS PAR INTENTION.
+        // Sans le `_pc.kind === 'mois'` ci-dessous, « point mort de la semaine 39 » aurait AVOUÉ son
+        // impuissance — juste au-dessus du prorata qu'il venait de calculer correctement. Un aveu FAUX
+        // à côté d'un chiffre JUSTE : plus destructeur qu'un simple bug, parce qu'il apprend à Ben à
+        // ne plus croire les aveux. Or les aveux sont tout ce qui reste quand le chiffre manque.
+        else if(_pc.kind === 'mois' && AI_INTENTS_MOIS_ATTENDU.has(r.intent)){
+          // [v1342] L'AVEU DIT DÉSORMAIS *POURQUOI* — et le « pourquoi » diffère selon la compétence.
+          // Un aveu générique (« je ne sais pas encore ») laisse croire que c'est une lacune passagère.
+          // Pour la rentabilité passée, c'est une IMPOSSIBILITÉ STRUCTURELLE : le coût matière est
+          // recalculé sur les lots RESTANTS aujourd'hui ; un lot de décembre entièrement consommé a
+          // qteRestante = 0, il est filtré, il a DISPARU. Reconstituer le passé donnerait un chiffre
+          // à trous, affiché à côté de chiffres mesurés — et il finirait lu comme mesuré (v1337).
+          aiSay(aiSynth(_aiRaisonAveu(r.intent, _pc), {icon:'⚠️', tone:'warn'}));
         }
       }
     }
@@ -38121,6 +38540,7 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_orders': return aiQueryOrders(r.params);
       case 'query_top_clients': return aiQueryTopClients(r.params);
       case 'query_top_parfum': return aiQueryTopParfum(r.params);
+      case 'query_associations': return aiQueryAssociations(r.params);   // [v1343]
       case 'query_recipe': return aiQueryRecipe(r.params);
       case 'query_ingredient_pour': return aiQueryIngredientPour(r.params);
       case 'query_temps_prod': return aiQueryTempsProd(r.params);
@@ -38139,7 +38559,7 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_couverture_stock': return aiQueryCouvertureStock();
       case 'query_renta_livraison': return aiQueryRentaLivraison(r.params);
       case 'query_revenu_horaire': return aiQueryRevenuHoraire();
-      case 'query_seuil_rentabilite': return aiQuerySeuilRentabilite();
+      case 'query_seuil_rentabilite': return aiQuerySeuilRentabilite(r.params);   // [v1342] reçoit l'intervalle
       case 'query_bilan_semaine': return aiQueryBilanSemaine();
       case 'query_etsi_prix': return aiQueryEtSiPrix(r.params);
       case 'query_etsi_volume': return aiQueryEtSiVolume(r.params);
@@ -39711,6 +40131,194 @@ async function aiQueryRentabilite(params){
 }
 // [COCKPIT] TOP PARFUM : « quel est le parfum le plus vendu (depuis 6 mois) ». Réutilise computeStats
 // (source unique) en filtrant les commandes sur la période demandée. Ne recalcule rien : filtre + trie.
+// ════════════════════════════════════════════════════════════════════════════
+//  [v1343 — VAGUE 64] CE QUE LES CLIENTS ASSOCIENT — et ce que Ben a composé
+//
+//  CE QUE J'AI CRU, ET QUI ÉTAIT FAUX
+//  Le document de cadrage annonçait un « data gap » : la composition des coffrets ne serait
+//  pas stockée. Je l'ai répété à Ben — sans vérifier. C'EST FAUX. `o.lignes[].parfums` est
+//  déjà un tableau [{nom, qte}], et `marketMoves.parfum` trace chaque mouvement de marché.
+//  RIEN N'EST PERDU, rien ne l'a jamais été. J'ai affirmé une règle sans la confronter au réel :
+//  exactement le péché que ces 63 vagues traquent. La correction est due, et elle est ici.
+//
+//  LE VRAI PIÈGE, LUI, EST INVISIBLE
+//  `sansParfum` compte les macarons que le client N'A PAS choisis — ceux que BEN compose
+//  (mode « assortiment »). Les compter comme des associations client transformerait les
+//  décisions de Ben en préférences de ses clients, puis les lui recommanderait comme des
+//  découvertes. Une boucle où l'app confirme à Ben ses propres choix en les déguisant en
+//  données. C'est la v1341 (les pyramides) au carré.
+//
+//  RÈGLE GRAVÉE (v1343) : UNE DONNÉE PRODUITE PAR BEN NE DOIT JAMAIS REVENIR VERS LUI
+//  DÉGUISÉE EN DONNÉE PRODUITE PAR SES CLIENTS.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ---------------------------------------------------------------------------
+// LES PANIERS. Un panier = une ligne de commande où le CLIENT a choisi ses parfums.
+// On EXCLUT : sansParfum (composé par Ben), les dons (0 €), les reprises d'historique
+// (o.histo — données d'avant l'app), et les lignes à un seul parfum (une association
+// a besoin de DEUX parfums : un coffret mono-parfum n'associe rien).
+//
+// LES MARCHÉS SONT EXCLUS, ET C'EST UN CHOIX, PAS UN OUBLI : `marketMoves` enregistre ce
+// qui SORT du stock, parfum par parfum — mais un marché entier forme UN SEUL mouvement par
+// parfum. On ne sait pas QUI a acheté quoi ENSEMBLE. Traiter un marché comme un panier
+// dirait « tous les parfums vendus ce jour-là vont ensemble » : une association fabriquée
+// par le calendrier, pas par un client. La v1336 a appris à ne pas OUBLIER les marchés ;
+// celle-ci apprend à ne pas les FAIRE PARLER là où ils sont muets.
+// ---------------------------------------------------------------------------
+function paniersClients(orders, opts){
+  opts = opts || {};
+  const paniers = [];
+  const rejets = { sansParfum:0, monoParfum:0, dons:0, histo:0, assortimentPur:0 };
+
+  (orders || []).forEach(o => {
+    if(!o) return;
+    if(o.histo){ rejets.histo++; return; }                       // reprise : pas une vente observée ici
+
+    const lignes = (typeof orderToLines === 'function') ? orderToLines(o) : (o.lignes || []);
+    (lignes || []).forEach(ln => {
+      if(!ln) return;
+      // 'grand' range ses parfums dans `items` — même sens, autre clé (dette historique).
+      const src = (ln.type === 'grand') ? (ln.items || []) : (ln.parfums || []);
+      const choisis = src.filter(p => p && p.nom && +p.qte > 0);
+
+      // Un don (0 €) n'est pas un choix d'achat : le client n'a rien arbitré.
+      const estDon = (+o.montant || 0) <= 0;
+      if(estDon){ rejets.dons++; return; }
+
+      const nSansParfum = +ln.sansParfum || 0;
+      if(nSansParfum > 0) rejets.sansParfum += nSansParfum;      // COMPTÉ, mais jamais utilisé
+
+      if(choisis.length === 0){ rejets.assortimentPur++; return; } // 100 % composé par Ben
+      if(choisis.length === 1){ rejets.monoParfum++; return; }     // rien à associer
+
+      paniers.push({
+        orderId: o.id,
+        date: o.date || '',
+        clientId: o.clientId || null,
+        parfums: choisis.map(p => ({ nom: p.nom, qte: +p.qte })),
+        // On garde la trace de ce qu'on a IGNORÉ dans ce panier. Un panier « 3 choisis +
+        // 5 assortiment » est un choix PARTIEL : le dire, c'est permettre de le pondérer.
+        nSansParfum
+      });
+    });
+  });
+  return { paniers, rejets };
+}
+
+// ---------------------------------------------------------------------------
+// LA CO-OCCURRENCE. Pour chaque PAIRE de parfums, combien de paniers les contiennent
+// tous les deux. On compte des PANIERS, jamais des PIÈCES : 10 caramel + 2 vanille dans
+// un coffret, c'est UNE association, pas dix. Compter les pièces ferait exploser le score
+// des parfums achetés en gros — et confondrait « souvent ensemble » avec « souvent beaucoup ».
+//
+// SEUIL DE SIGNIFICATIVITÉ. Avec ~9 mois d'historique, une paire vue 2 fois n'est pas une
+// tendance : c'est un hasard. On EXIGE `minPaniers` (défaut 5) et on DIT combien de paniers
+// soutiennent chaque chiffre. Un pourcentage sans son effectif est un mensonge poli :
+// « 100 % des acheteurs de X prennent Y » sur 2 paniers, c'est du bruit présenté comme une loi.
+// ---------------------------------------------------------------------------
+function coOccurrenceParfums(paniers, opts){
+  opts = opts || {};
+  const minPaniers = (opts.minPaniers != null) ? +opts.minPaniers : 5;
+
+  const nPaniers = (paniers || []).length;
+  const compte = {};        // nom -> nb de paniers le contenant
+  const paires = {};        // 'A||B' (trié) -> nb de paniers contenant les deux
+
+  (paniers || []).forEach(p => {
+    const noms = [...new Set(p.parfums.map(x => x.nom))].sort();   // dédoublonné : un panier compte 1
+    noms.forEach(n => { compte[n] = (compte[n] || 0) + 1; });
+    for(let i = 0; i < noms.length; i++){
+      for(let j = i + 1; j < noms.length; j++){
+        const k = noms[i] + '||' + noms[j];
+        paires[k] = (paires[k] || 0) + 1;
+      }
+    }
+  });
+
+  const rows = Object.keys(paires).map(k => {
+    const [a, b] = k.split('||');
+    const ab = paires[k];
+    const na = compte[a] || 0, nb = compte[b] || 0;
+
+    // Confiance CONDITIONNELLE, dans les DEUX SENS — elles ne sont PAS symétriques.
+    // « 80 % des acheteurs de Café prennent du Caramel » ne dit rien de la réciproque si
+    // le Caramel est acheté par tout le monde. Ne montrer qu'un sens, c'est laisser croire
+    // à un lien qui n'est peut-être qu'une popularité.
+    const confAB = na > 0 ? Math.round(ab / na * 1000) / 10 : null;   // P(B | A)
+    const confBA = nb > 0 ? Math.round(ab / nb * 1000) / 10 : null;   // P(A | B)
+
+    // LIFT — le seul chiffre qui distingue une VRAIE association d'une simple popularité.
+    // lift = P(A et B) / (P(A) × P(B)).  > 1 : ils s'attirent.  ≈ 1 : indépendants (le lien
+    // n'est qu'un effet de leur popularité respective).  < 1 : ils se repoussent.
+    // SANS le lift, le parfum le plus vendu apparaît en tête de TOUTES les paires — et on
+    // « découvre » qu'il se marie avec tout. C'est le piège classique du market basket, et
+    // c'est exactement le genre de faux insight sur lequel Ben changerait sa gamme.
+    const pA = nPaniers > 0 ? na / nPaniers : 0;
+    const pB = nPaniers > 0 ? nb / nPaniers : 0;
+    const pAB = nPaniers > 0 ? ab / nPaniers : 0;
+    const lift = (pA > 0 && pB > 0) ? Math.round(pAB / (pA * pB) * 100) / 100 : null;
+
+    return {
+      a, b, paniers: ab, nA: na, nB: nb, confAB, confBA, lift,
+      // Un chiffre sous le seuil n'est pas SUPPRIMÉ : il est MARQUÉ. Cacher les données
+      // faibles, c'est laisser croire qu'elles n'existent pas (v1337 : l'incertitude se propage).
+      significatif: ab >= minPaniers
+    };
+  });
+
+  rows.sort((x, y) => (y.lift || 0) - (x.lift || 0) || y.paniers - x.paniers);
+  return { rows, nPaniers, compte, minPaniers };
+}
+
+// ---------------------------------------------------------------------------
+// LA COMPÉTENCE COPILOTE. « quels parfums vont ensemble », « co-occurrence », « associations ».
+// ---------------------------------------------------------------------------
+async function aiQueryAssociations(params){
+  params = params || {};
+  const orders = await db.orders.toArray();
+  const { paniers, rejets } = paniersClients(orders);
+
+  // AVANT TOUT CHIFFRE : ai-je de quoi parler ? La v1337 a gravé que l'absence de mesure
+  // n'est pas un zéro. Ici, l'absence de paniers n'est pas « aucune affinité » : c'est
+  // « je ne sais pas ». Le dire AVANT, pas en note de bas de page.
+  if(paniers.length === 0){
+    return aiSay(`${aiHero('—', 'Associations de parfums')}
+      ${aiSynth(`Je n'ai <b>aucun panier exploitable</b>. Une association a besoin d'une commande où <b>le client</b> a choisi <b>au moins deux</b> parfums.${rejets.assortimentPur>0?` (${rejets.assortimentPur} commande(s) sont des assortiments que <b>tu</b> composes : ce sont tes choix, pas les leurs.)`:''}`, {icon:'📭'})}`);
+  }
+
+  const { rows, nPaniers, minPaniers } = coOccurrenceParfums(paniers, { minPaniers: params.minPaniers });
+  const forts = rows.filter(r => r.significatif && r.lift != null && r.lift > 1.2);
+
+  // L'HONNÊTETÉ STATISTIQUE EN TÊTE, PAS EN BAS DE PAGE. Avec ~9 mois d'historique, l'effectif
+  // est le chiffre le PLUS important de l'écran — plus que n'importe quel pourcentage. Un
+  // « 68 % » sur 4 paniers a l'air d'une loi et n'est qu'un hasard. Ben doit voir COMBIEN de
+  // paniers soutiennent ce qu'il lit AVANT de lire quoi que ce soit.
+  const socle = `${aiSynth(`Calculé sur <b>${nPaniers} panier(s)</b> où tu as laissé le client choisir au moins deux parfums.${rejets.sansParfum>0?` Les <b>${rejets.sansParfum} macarons d'assortiment</b> que <b>tu</b> composes sont <b>exclus</b> : ce sont tes choix, pas les leurs — les compter te renverrait tes propres décisions déguisées en préférences clients.`:''}`, {icon:'🧺'})}`;
+
+  if(!forts.length){
+    return aiSay(`${aiHero(String(nPaniers), 'Paniers analysés')}${socle}
+      ${aiSynth(`<b>Aucune association ne se détache</b> pour l'instant. Ce n'est pas « tes clients n'associent rien » : c'est que rien ne dépasse encore le seuil de ${minPaniers} paniers. Avec ${nPaniers} panier(s), une paire vue 2 ou 3 fois reste du <b>hasard</b>. Je préfère te le dire que de te vendre du bruit comme une tendance.`, {icon:'⏳'})}`);
+  }
+
+  const li = forts.slice(0, 6).map(r => {
+    // On affiche la confiance dans le SENS LE PLUS FORT, mais on donne toujours l'effectif :
+    // un pourcentage sans son dénominateur est un mensonge poli.
+    const sensAB = (r.confAB || 0) >= (r.confBA || 0);
+    const [x, y] = sensAB ? [r.a, r.b] : [r.b, r.a];
+    const conf = sensAB ? r.confAB : r.confBA;
+    const nX = sensAB ? r.nA : r.nB;
+    return `<div class="sum-box"><span><b>${esc(x)}</b> + <b>${esc(y)}</b><br>
+      <span style="font-size:.76rem;color:#9a8a82">${conf}% de ceux qui prennent ${esc(x)} prennent aussi ${esc(y)} — sur ${nX} panier(s)</span></span>
+      <b>×${r.lift}</b></div>`;
+  }).join('');
+
+  return aiSay(`${aiHero(String(forts.length), 'Association(s) qui se détachent', {sub:`sur ${nPaniers} paniers`, color:'var(--bordeaux)'})}
+    ${socle}
+    ${li}
+    ${aiSynth(`Le <b>×</b> est le <b>lift</b> : au-delà de 1, les deux parfums s'attirent <b>vraiment</b>. À 1, ils sont simplement <b>populaires chacun de leur côté</b> — sans lui, ton parfum le plus vendu apparaîtrait marié avec tout, et tu « découvrirais » sa propre popularité.`, {icon:'🎯'})}`);
+}
+
+
 async function aiQueryTopParfum(params){
   const periode = (params && params.periode) || {depuis:null, label:'sur tout ton historique'};
   let orders = await db.orders.toArray();
@@ -40347,10 +40955,30 @@ async function aiQueryRevenuHoraire(){
 }
 
 // [V944] SEUIL DE RENTABILITÉ / POINT MORT. Source : revenuHoraireCalcul (chargesFixes + cotisations).
-async function aiQuerySeuilRentabilite(){
+async function aiQuerySeuilRentabilite(params){
+  params = params || {};
   let R=null; try{ R=await revenuHoraireCalcul(30); }catch(e){swallow(e,'aiQuerySeuilRentabilite')}
   if(!R) return aiSay(`${aiHero('—', 'Seuil de rentabilité')}${aiSynth('Calcul indisponible pour le moment.', {icon:'⏳'})}`);
-  const charges=+R.chargesFixes||0;
+  let charges=+R.chargesFixes||0;
+
+  // [v1342] POINT MORT SUR UNE SEMAINE — charges fixes PRORATISÉES (convention de Ben).
+  // Les charges (URSSAF, IR, abonnements) sont MENSUELLES : un point mort hebdomadaire n'a de sens
+  // qu'avec une convention de proratisation. Elle est APPLIQUÉE ET AFFICHÉE — jamais silencieuse.
+  // Une convention qu'on n'écrit pas à l'écran devient, six mois plus tard, un chiffre qu'on ne sait
+  // plus lire (et qu'on finit par croire mesuré).
+  //
+  // Le prorata est calculé JOUR PAR JOUR : une semaine ISO peut chevaucher deux mois (S40-2025 =
+  // 29 sept → 5 oct), dont les charges n'ont aucune raison d'être égales. Prendre « le mois du lundi »
+  // serait plus simple et faux une semaine sur quatre (testé : 70 € au lieu de 120 €, soit 42 % d'écart).
+  let _prorataNote = '';
+  const _iv = params.intervalle;
+  if(_iv && _iv.kind === 'semaine'){
+    const _cpm = {};
+    try{ _cpm[_iv.depuis.slice(0,7)] = charges; _cpm[_iv.jusqu.slice(0,7)] = charges; }catch(e){swallow(e,'seuil prorata');}
+    const P = _aiProrataChargesFixes(_iv.depuis, _iv.jusqu, _cpm);
+    charges = P.total;
+    _prorataNote = `<p class="note" style="margin-top:8px">Charges <b>proratisées</b> sur la ${esc(_iv.label)} : ${euro(charges)}${P.moisChevauches>1?` (la semaine chevauche ${P.moisChevauches} mois — chaque jour porte la charge quotidienne de <b>son</b> mois)`:''}. Tes charges sont mensuelles : ce point mort hebdomadaire repose sur cette convention, pas sur une mesure.</p>`;
+  }
   // Marge unitaire moyenne par macaron : prix de vente moyen − coût matière moyen.
   const prix=(typeof computeAvgSellPrice==='function')?(computeAvgSellPrice({orders:[], markets:[], settings:getSettings()}).prix||2):2;
   // Estimation simple du coût matière unitaire via le ratio coûts/CA observé.
@@ -40359,9 +40987,10 @@ async function aiQuerySeuilRentabilite(){
   const margeUnit = Math.max(0.01, prix*(1-ratioMat));
   const seuilPieces = margeUnit>0 ? Math.ceil(charges/margeUnit) : null;
   const heroSeuil = seuilPieces!=null?`${qty(seuilPieces)} macarons`:'—';
-  const subSeuil = `charges du mois ${euro(charges)}`;
+  const subSeuil = (_iv && _iv.kind==='semaine') ? `charges proratisées ${euro(charges)}` : `charges du mois ${euro(charges)}`;
   return aiSay(`${aiHero(heroSeuil, 'À vendre pour couvrir tes charges', {sub:subSeuil, color:'var(--bordeaux)'})}
-    ${aiSynth(`Au-delà de ${seuilPieces!=null?qty(seuilPieces):'?'} macarons vendus ce mois, chaque vente commence à te rémunérer.`,{icon:'🎯'})}
+    ${aiSynth(`Au-delà de ${seuilPieces!=null?qty(seuilPieces):'?'} macarons vendus ${(_iv&&_iv.kind==='semaine')?`sur la ${esc(_iv.label)}`:'ce mois'}, chaque vente commence à te rémunérer.`,{icon:'🎯'})}
+    ${_prorataNote}
     ${aiDetails(`
       <div class="sum-box"><span>Charges fixes du mois</span><b>${euro(charges)}</b></div>
       <div class="sum-box"><span>Marge par macaron (est.)</span><b>${euro(margeUnit)}</b></div>
@@ -41033,6 +41662,7 @@ function caMoisEncaisse(orders, ym, toLines, markets, moves){
     ecart:0
   };
   if(!ym) return res;
+  const _lblP = (typeof ym === 'string') ? ym : (ym.label || '');
 
   (orders || []).forEach(o => {
     if(!o || o.histo) return;   // même exclusion que caEncaisseParMois (la compta ignore les reprises)
@@ -41041,7 +41671,7 @@ function caMoisEncaisse(orders, ym, toLines, markets, moves){
     let enc = 0, nbP = 0;
     paiementsDe(o).forEach(p => {
       const m = +p.montant || 0;
-      if(m && monthKey(p.date || o.date || '') === ym){ enc += m; nbP++; }
+      if(m && _dansPeriode(p.date || o.date || '', ym)){ enc += m; nbP++; }   // [v1342]
     });
 
     if(enc > 0){
@@ -41064,7 +41694,7 @@ function caMoisEncaisse(orders, ym, toLines, markets, moves){
   // --- L'ANCIEN calcul, rejoué à l'identique (date de COMMANDE × montant TOTAL, commandes payées).
   (orders || []).forEach(o => {
     if(!o || o.paiement !== 'Payé') return;
-    if(((o.date || '').slice(0, 7)) !== ym) return;
+    if(!_dansPeriode(o.date || '', ym)) return;   // [v1342]
     res.ancienCa = money2(res.ancienCa + (+o.montant || 0));
     res.ancienNbCommandes++;
   });
@@ -41165,7 +41795,14 @@ async function aiQueryRevenue(params){
   // [v1330] MOIS NOMMÉ : « le CA de mai », « en mars 2025 ». La clé AAAA-MM arrive déjà résolue
   // par _aiMoisNomme (pure, testée) — ici on ne fait que l'afficher.
   else if(/^\d{4}-\d{2}$/.test(params.periode||'')){ cible=params.periode; libelleMois=monthLabel(cible); }
-  // Si une période précise est demandée, on répond ciblé sur ce mois.
+  // [v1342] SEMAINE ISO. `cible` devient un INTERVALLE au lieu d'une clé de mois : caMoisEncaisse
+  // sait désormais lire les deux (prédicat _dansPeriode). Aucune logique dupliquée pour la semaine —
+  // c'est le MÊME moteur d'encaissement, avec des bornes différentes.
+  if(!cible && params.intervalle && params.intervalle.kind === 'semaine'){
+    cible = params.intervalle;                    // objet {depuis, jusqu, label}
+    libelleMois = params.intervalle.label;
+  }
+  // Si une période précise est demandée, on répond ciblé sur cette période.
   if(cible){
     // [FIX v1331] On lit désormais la VÉRITÉ COMPTABLE (encaissement), plus computeStats
     // (qui datait sur la commande et comptait le montant total). Voir caMoisEncaisse.
@@ -41202,7 +41839,7 @@ async function aiQueryRevenue(params){
     }
     // Mois VIDE : on le dit franchement plutôt que de basculer en douce sur le total.
     return aiSay(`${aiHero(euro(0), `Chiffre d'affaires — ${libelleMois}`)}
-      ${aiSynth(`Aucun encaissement pour ${monthLabel(cible)}. Le mois existe, il est simplement vide — ce n'est pas une erreur de ma part.`, {icon:'📭'})}`);
+      ${aiSynth(`Aucun encaissement pour ${esc(libelleMois || _perLabel(cible))}. La période existe, elle est simplement vide — ce n'est pas une erreur de ma part.`, {icon:'📭'})}`);
   }
   // Sinon : vue globale. [v1339] Elle lit désormais LA MÊME série que la liste mensuelle : le total
   // EST la somme du détail. Un total qui n'est pas la somme de son détail n'est pas un total —
