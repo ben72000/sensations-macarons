@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1350';
+const APP_VERSION = 'v1351';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -15870,8 +15870,15 @@ function orderPayStatus(o){
 async function figerCoutMatiere(o){
   try{
     if(!o || o.coutMatFige != null) return o;              // déjà figé → on ne réécrit jamais
+    // [v1351] BUG CRITIQUE TROUVÉ EN RELISANT LE MODULE DU GÉNÉRATEUR : `db.lots` N'EXISTE PAS
+    // dans le schéma (la table réelle est `materialLots`, ligne 300 de db.version(1).stores).
+    // `db.lots.toArray()` levait une exception Dexie à CHAQUE appel depuis la v1342, avalée par
+    // le catch ci-dessous : AUCUN symptôme visible, AUCUNE commande n'a jamais été figée. Le
+    // principe gravé en v1342 (« on éteint la dette pour l'avenir ») n'a jamais été appliqué en
+    // pratique — deux vagues de silence, jusqu'à ce que la relecture du code du générateur (qui
+    // avait la MÊME faute de frappe) le révèle par ricochet.
     const [recipes, recipeItems, lots] = await Promise.all([
-      db.recipes.toArray(), db.recipeItems.toArray(), db.lots.toArray()
+      db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray()
     ]);
     const c = estimateOrderMaterialCost(o, recipes, recipeItems, lots);
     if(c == null || !isFinite(c)) return o;                // échec → on laisse VIDE, jamais 0
@@ -40587,22 +40594,52 @@ async function aiQueryGenererCoffret(params){
 
   const recipes = await db.recipes.toArray();
   const recipeItems = await db.recipeItems.toArray();
-  const lots = await db.lots.toArray().catch(()=>[]);
+  // [v1351] BUG TROUVÉ À LA RELECTURE, AVANT MÊME LE RETOUR DE BEN : `lots` doit venir de
+  // `materialLots` (la table réelle des lots matière), pas d'une table `db.lots` qui n'existe
+  // PAS dans le schéma (voir db.version(1).stores, ligne 300 : `materialLots`, jamais `lots`).
+  // db.lots.toArray() aurait levé une exception Dexie — probablement LA cause de l'échec de Ben.
+  const lots = await db.materialLots.toArray().catch(()=>[]);
   const mats = await db.materials.toArray().catch(()=>[]);
   const markets = await db.markets.toArray().catch(()=>[]);
   const marketMoves = await (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]);
   const productions = await db.productions.toArray().catch(()=>[]);
   const settings = getSettings();
-  let flavorRows = [], mesureParRec = null;
+
+  // [v1351] LE CRITÈRE PRODUCTION ÉTAIT STRUCTURELLEMENT MORT. `mesureParRec` était déclaré et
+  // JAMAIS assigné — même si `analyzeFlavorProfitability` l'avait calculé en interne, je ne le
+  // récupérais pas en sortie. Et je ne lui passais même pas `minParRecMesure` en entrée : la
+  // vraie source est `prodTempsParParfum(90)`, utilisée ailleurs (renderRecipes) SEULEMENT
+  // quand `settings.laborSource==='mesure'` est actif. Sans ce branchement, le critère
+  // production ne pouvait produire AUCUNE donnée, quelle que soit la demande de Ben.
+  let mesureMin = null, mesureParRec = null;
+  if(settings.laborSource==='mesure' && settings.laborEnabled){
+    try{ const tl = await prodTempsLissePerMacaron(90); if(tl && tl.fiable) mesureMin = tl.minParMacaron; }catch(e){ swallow(e,'aiQueryGenererCoffret tempsLisse'); }
+    try{ mesureParRec = await prodTempsParParfum(90); }catch(e){ swallow(e,'aiQueryGenererCoffret tempsParParfum'); }
+  }
+
+  let flavorRows = [];
   try{
-    const A = analyzeFlavorProfitability({recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings});
+    const A = analyzeFlavorProfitability({recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings, minParMacaronMesure:mesureMin, minParRecMesure:mesureParRec});
     flavorRows = A.rows || [];
   }catch(e){ swallow(e,'aiQueryGenererCoffret analyse'); }
+
+  // [v1351] SI LE MODE MESURÉ N'EST PAS ACTIF : le critère production n'a structurellement
+  // aucune donnée. Ce n'est pas une absence à cacher — Ben doit savoir POURQUOI, pas juste
+  // constater que ses coffrets "production" sortent toujours vides ou identiques aux autres.
+  const productionIndisponible = !(settings.laborSource==='mesure' && settings.laborEnabled);
 
   // Critères : par défaut les trois, à poids égal — mais Ben peut en isoler un ou deux.
   // params.criteres = {association, rentabilite, production} avec des poids ou null.
   const criteres = params.criteres || { association:1, rentabilite:1, production:1 };
   const taille = params.taille || 6;
+
+  // [v1351] Si Ben demande le critère PRODUCTION alors que le mode mesuré n'est pas actif,
+  // le dire AVANT de générer plutôt que de le laisser deviner pourquoi ses coffrets "production"
+  // ressemblent aux autres, ou pourquoi le critère semble ne rien changer. Un critère qui ne
+  // PEUT pas fonctionner doit le dire, pas se comporter comme s'il fonctionnait à vide.
+  if(productionIndisponible && criteres.production != null && +criteres.production > 0){
+    return aiSay(`${aiHero('—', 'Générateur de coffrets')}${aiSynth(`Le critère <b>production</b> a besoin du mode « temps mesuré » (réglages → main-d'œuvre), qui n'est pas actif. Je ne peux pas le calculer sans lui — active-le, ou lance la génération avec les deux autres critères.`, {icon:'⚠️', tone:'warn'})}`);
+  }
 
   const { propositions, erreur } = genererPropositionsCoffret({
     coOccurrence: co, flavorRows, mesureParRec, taille, criteres

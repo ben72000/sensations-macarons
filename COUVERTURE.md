@@ -1955,3 +1955,64 @@ La règle de reconnaissance est placée **avant** associations et R&D. « Propos
 rentable » contient « propose » (qui route vers la R&D en v1345) — sans cette priorité, la même
 capture qui a piégé Ben en v1343 se reproduisait, sous une forme nouvelle. Testé explicitement :
 12/12, dont la non-régression des deux autres intents.
+
+---
+
+## v1351 — VAGUE 66 : LE BUG QUE J'AI TROUVÉ EN ME RELISANT, ET CELUI QUE ÇA A RÉVÉLÉ EN CASCADE
+
+Ben : *« ça a échoué / erreur »* sur le générateur de coffrets. Avant même sa capture, en relisant
+mon propre module v1350 pour préparer le correctif, j'ai trouvé :
+
+```js
+const [recipes, recipeItems, lots] = await Promise.all([
+  db.recipes.toArray(), db.recipeItems.toArray(), db.lots.toArray()   // ← db.lots N'EXISTE PAS
+]);
+```
+
+**Il n'y a pas de table `lots` dans le schéma Dexie.** La vraie table s'appelle `materialLots`
+(ligne 300, `db.version(1).stores`). `db.lots.toArray()` lève une exception Dexie à chaque appel.
+
+### Le plus grave n'était pas dans le générateur
+En cherchant d'autres occurrences de la même faute, j'ai trouvé **`figerCoutMatiere`** (v1342) —
+la fonction censée figer le coût matière à chaque encaissement, dont le commentaire disait
+*« on éteint la dette pour l'avenir »*. Elle contenait **exactement la même erreur** :
+
+```js
+const [recipes, recipeItems, lots] = await Promise.all([
+  db.recipes.toArray(), db.recipeItems.toArray(), db.lots.toArray()   // même faute
+]);
+```
+
+Avalée par un `catch(e){ swallow(e,'figerCoutMatiere'); return o; }` — **aucun symptôme visible**.
+
+> **AUCUNE COMMANDE ENCAISSÉE DEPUIS LA v1342 N'A JAMAIS EU SON COÛT MATIÈRE FIGÉ.** Le principe
+> gravé deux vagues plus tôt n'a jamais été appliqué en pratique. Il a fallu que la MÊME faute de
+> frappe réapparaisse ailleurs, dans un contexte où elle était plus facile à repérer, pour que
+> celle-ci soit vue.
+
+### Le second bug, trouvé par relecture du même module
+`mesureParRec` était déclaré `let mesureParRec = null;` et **jamais réassigné**. Le critère
+PRODUCTION du générateur ne pouvait produire aucune donnée, quels que soient les poids choisis par
+Ben — pas à cause du garde-fou v1337 (mesure non fiable → exclue), mais parce que la source n'était
+jamais branchée. La vraie source, `prodTempsParParfum(90)`, n'est utilisée que si
+`settings.laborSource==='mesure'` est actif. Corrigé, avec un message explicite si ce mode n'est
+pas activé : *« Le critère production a besoin du mode "temps mesuré"… »* plutôt qu'un critère
+silencieusement vide.
+
+### Le garde-fou ajouté : un test de PLOMBERIE, pas de logique métier
+`tests/v1351-schema-dexie.test.js` extrait **toutes** les tables déclarées dans le schéma Dexie et
+**toutes** les tables référencées par `db.xxx.method()` dans le code, et vérifie que la seconde
+liste est un sous-ensemble de la première. Ce n'est pas un test qui vérifie un calcul — c'est un
+test qui vérifie que **le code peut seulement s'exécuter**. Réintroduit le bug pour preuve : il mord.
+
+> **LEÇON (v1351) : une faute de frappe sur un nom de table ne casse rien à la LECTURE du code —
+> seulement à l'EXÉCUTION, et souvent avalée par un catch bien intentionné. Ce genre d'erreur ne
+> se détecte pas en relisant la logique ; il se détecte en vérifiant la PLOMBERIE mécaniquement.**
+
+### Ce que ça dit sur la relecture
+Ce bug n'a pas été trouvé par Ben qui aurait cherché — il l'a signalé (« erreur ») sans savoir
+laquelle. Il n'a pas non plus été trouvé par un test — aucun test de la vague 65 ne couvrait le
+schéma. Il a été trouvé parce qu'écrire un nouveau module a forcé une relecture du code voisin, et
+que la même erreur, commise deux fois à deux semaines d'intervalle, a fini par être reconnue. Le
+test qui en résulte rend cette reconnaissance permanente au lieu de dépendre d'une coïncidence de
+relecture.
