@@ -10,6 +10,79 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-12 — Vague 56 : « DEPUIS » N'EST PAS « EN »  (v1334 → **v1335**)
+
+**Nature** : suite de la vague 55. Il restait **cinq** compétences qui avouaient. **Deux le
+méritaient** (top parfum, panier moyen) ; **trois ne le méritaient pas** — et c'est dit franchement.
+
+### Le bug de fond : le parseur ne savait dire que « DEPUIS »
+`_aiParsePeriode` renvoyait `{depuis, label}` — un intervalle **ouvert**. Il pouvait exprimer
+« depuis 3 mois », **jamais « EN mai »**.
+
+> **« En mai » n'est pas « depuis mai ».** Sans **borne haute**, « mon meilleur parfum en mai »
+> aurait renvoyé **mai + juin + juillet** : un chiffre parfaitement juste… pour une période que
+> Benjamin n'a jamais demandée.
+
+Même mal que la v1330 (bon routage, mauvais paramètre), **à un cran plus subtil** : ici, ce n'était
+pas le paramètre qui se perdait, c'était sa **borne**.
+
+*Correctif* : `jusqu` ajouté, et le **dernier jour du mois CALCULÉ** — pas supposé (avril finit le
+30 ; **février 2024 le 29**, test A9).
+
+### La collision de types, désamorcée
+`params.periode` était une **CHAÎNE** (`'AAAA-MM'`) pour les compétences câblées en v1333/34, mais
+un **OBJET** `{depuis, label}` pour le top parfum. **Deux types pour un même champ : une mine.**
+Corrigé à la **racine** — `_aiParsePeriode` comprend désormais le mois nommé lui-même.
+
+### La bonne base temporelle — et elle est ÉCRITE
+Un panier moyen et un classement de parfums décrivent un **COMPORTEMENT D'ACHAT** : la date de
+**COMMANDE** est la bonne règle. La date d'**encaissement** — la bonne pour le CA depuis la v1331 —
+serait ici **FAUSSE** : elle rangerait une commande de mai dans le mois où le chèque a été déposé.
+**Deux questions différentes, deux bases différentes**, et c'est écrit dans le code : sinon le
+prochain lecteur « corrigera » l'une vers l'autre en croyant bien faire.
+
+**Ajouté** (`depuis-nest-pas-en.test.js`, 32 assertions) :
+- **A** — la borne haute, les mois courts/longs, février bissextile. **A5b/A5c** : la `refDate` est
+  *réellement* honorée (sans cette assertion, le garde-fou anti-calendrier serait **décoratif** — il
+  passerait aujourd'hui par pure coïncidence).
+- **B** — non-régression : « depuis 3 mois » et « tout l'historique » gardent `jusqu: null`.
+- **C** — les faux positifs (« jaMAIs », « MAIson ») **re-prouvés sur ce chemin** : `_aiParsePeriode`
+  appelle maintenant `_aiMoisNomme`, donc un déclenchement à tort enverrait **toutes** les
+  compétences à période sur un mois fantaisiste.
+- **D** — la priorité : « du mois de **mai** » → mai ; « du mois » seul → ce mois-ci.
+- **E/F/G** — les justifications sont **dans le code** (voir ci-dessous).
+
+**`refDate` ajoutée à `_aiParsePeriode`** : un test qui dépend du calendrier est un **piège à
+retardement** — il passe aujourd'hui et casse en janvier. (Défaut repéré dans notre propre test,
+corrigé avant livraison.)
+
+### Ce qui avoue encore — et pourquoi ce n'est PAS de la paresse
+- **`query_rentabilite`** : croise commandes **ET** marchés **ET** mouvements, sur une base de coûts
+  **FIFO elle-même temporelle**. Ne filtrer que les commandes produirait un chiffre **PLAUSIBLE ET
+  FAUX** — *exactement ce que cette série traque*.
+- **`query_seuil_rentabilite`** et **`query_revenu_horaire`** : calculs sur **fenêtre glissante**
+  (90 j, moyennes pondérées). Les « filtrer par mois » n'a pas de sens tel quel : il faudrait
+  d'abord **repenser leur période de référence**. Ajouter un filtre par-dessus serait un **placage**.
+
+> **Livrer un chiffre faux vaut moins qu'avouer.** Le bloc G assert que ces justifications sont
+> écrites : sans elles, le prochain lecteur croira à un oubli et « corrigera » en fabriquant
+> précisément le chiffre plausible et faux.
+
+**CLIQUET** (E8/E9) : le nombre de compétences qui **savent** ne peut que croître (≥ 8), celui des
+**aveux** que décroître (≤ 3). Une régression vers l'aveu casse la suite.
+
+**Total couvert** : 1237 → **1271 assertions**.
+
+**Angles morts connus (déclarés)** :
+- Toujours **aucune plage** : « de mars à juin », « le 1er trimestre », « l'an dernier ».
+  Le socle existe pourtant maintenant (`depuis` + `jusqu`) — c'est devenu du travail de parseur,
+  plus d'architecture.
+- Le bilan marché d'un mois à plusieurs marchés montre le plus récent et signale les autres, mais
+  ne sait pas les **agréger**.
+- `_aiParsePeriode` ne gère qu'**un seul** mois : « compare mars et juin » n'en retient qu'un.
+
+---
+
 ## 2026-07-12 — Vague 55 : CELLES QUI AVOUAIENT SAVENT MAINTENANT  (v1333 → **v1334**)
 
 **Nature** : solde de l'angle mort déclaré en vague 54.

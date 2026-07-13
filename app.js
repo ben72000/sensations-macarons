@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1334';
-const APP_MAJ = 'CELLES QUI AVOUAIENT SAVENT MAINTENANT. En v1333, j’ai posé la règle : une compétence qui ne sait pas filtrer par mois te le DIT, au lieu d’ignorer ta demande en silence. C’était honnête… mais ce n’était PAS résolu, et je l’avais écrit noir sur blanc. L’AVEU N’EST QU’UNE ÉTAPE, PAS UNE DESTINATION. Les trois compétences qui avouaient savent désormais faire. TES CHARGES : le mois était codé EN DUR (le mois courant) — « mes charges de mai » te répondait juillet. TON GASPILLAGE : il agrégeait TOUS tes marchés depuis toujours, sans aucune notion de période. TON BILAN MARCHÉ : il prenait TOUJOURS le dernier marché, quel que soit le mois demandé. Les trois filtrent maintenant. TROIS PRINCIPES FIGÉS AU PASSAGE. (1) Un don ou une perte n’a pas de date propre : il est daté par le MARCHÉ où il a eu lieu. Dater autrement inventerait une chronologie. (2) LA DISTINCTION LA PLUS IMPORTANTE : « aucun marché ce mois-là » n’est PAS « aucun gaspillage ». Le premier est une ABSENCE DE DONNÉES, le second une PERFORMANCE. Les confondre reviendrait à te féliciter (« aucun gaspillage, bravo ! ») pour un mois où tu n’as simplement rien vendu. L’app compte donc les marchés tenus, et te dit franchement : « tu n’as tenu aucun marché en avril — ce n’est pas un bon score, c’est une absence de données. » (3) Un RETOUR n’est PAS du gaspillage : l’invendu est récupéré, il repart au stock. Seuls les dons et les pertes sortent définitivement. Enfin, si tu as tenu PLUSIEURS marchés dans le mois demandé, l’app te le signale au lieu de te montrer un bilan en laissant croire qu’il n’y avait rien d’autre — ne pas dire qu’on a choisi, c’est mentir par omission. Six compétences honorent désormais un mois nommé, contre trois. Suite : 1198 → 1237 assertions vertes.';
+const APP_VERSION = 'v1335';
+const APP_MAJ = '« DEPUIS » N’EST PAS « EN ». Le parseur de période de ton copilote ne savait dire que « depuis » : il pouvait exprimer « depuis 3 mois », jamais « EN mai ». Il n’avait AUCUNE BORNE HAUTE. Sans elle, « mon meilleur parfum en mai » t’aurait renvoyé mai + juin + juillet : un chiffre parfaitement juste… pour une période que tu n’as jamais demandée. C’est le même mal qu’en v1330 (bon routage, mauvais paramètre), à un cran plus subtil. Le parseur borne désormais les deux côtés, et calcule le dernier jour du mois au lieu de le supposer (avril finit le 30, février 2024 le 29). J’ai aussi désamorcé une mine : le champ « période » était une CHAÎNE pour certaines compétences et un OBJET pour d’autres — deux types pour un même champ. C’est corrigé à la racine. RÉSULTAT : TON TOP PARFUM et TON PANIER MOYEN savent maintenant filtrer par mois. Ils portent HUIT compétences qui honorent un mois nommé, contre trois il y a deux versions. LA BONNE BASE, ET ELLE EST ÉCRITE : un panier moyen et un classement de parfums décrivent un COMPORTEMENT D’ACHAT — la date de COMMANDE est la bonne règle. La date d’encaissement, qui est la bonne pour ton CA depuis la v1331, serait ici FAUSSE : elle rangerait une commande de mai dans le mois où le chèque a été déposé. Deux questions différentes, deux bases différentes — et c’est écrit dans le code, pour que personne ne « corrige » l’une vers l’autre en croyant bien faire. ENFIN, TROIS COMPÉTENCES AVOUENT ENCORE, ET CE N’EST PAS DE LA PARESSE. Ta rentabilité croise commandes, marchés et mouvements sur une base de coûts FIFO elle-même temporelle : ne filtrer que les commandes te donnerait un chiffre PLAUSIBLE ET FAUX — exactement ce que je traque depuis quinze versions. Ton seuil de rentabilité et ton revenu horaire sont des calculs sur FENÊTRE GLISSANTE : les « filtrer par mois » n’a pas de sens tel quel, il faudrait d’abord repenser leur période de référence. Ajouter un filtre par-dessus serait un placage. Livrer un chiffre faux vaut moins qu’avouer. Suite : 1237 → 1271 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -33010,9 +33010,24 @@ function aiCorrigeFautes(tNorm){
 }
 // [COCKPIT] Parse une période relative dans le texte → {depuis:ISO|null, label}. « depuis 6 mois »,
 // « ces 3 derniers mois », « ce mois », « cette année », « cette semaine ». null = tout l'historique.
-function _aiParsePeriode(t){
-  const now = new Date();
+// [v1335] Le parseur de période ne savait dire que « DEPUIS » — jamais « JUSQU'À ». Il ne pouvait
+// donc exprimer qu'un intervalle OUVERT (« depuis 3 mois »), et un mois nommé lui était impossible :
+// « en mai » n'est pas « depuis mai ». On lui ajoute une BORNE HAUTE (`jusqu`) et le mois nommé.
+// Les appelants qui n'utilisent que `depuis` ne changent pas de comportement : `jusqu` reste nul.
+// `refDate` fige « aujourd'hui » pour les tests : sans elle, un test écrit en juillet casserait en
+// janvier. Un test qui dépend du calendrier est un piège à retardement (leçon de la v1330).
+function _aiParsePeriode(t, refDate){
+  const now = refDate ? new Date(refDate) : new Date();
   const iso = d => ymdLocal(d);
+
+  // MOIS NOMMÉ D'ABORD (« en mai », « mars 2025 ») — même priorité qu'en v1330, et pour la même
+  // raison : « du mois de mai » contient « du mois », que la règle générique capterait à tort.
+  const _mn = (typeof _aiMoisNomme === 'function') ? _aiMoisNomme(t, refDate) : null;
+  if(_mn){
+    const [_y, _m] = _mn.cle.split('-').map(Number);
+    const dernier = new Date(_y, _m, 0);   // jour 0 du mois suivant = dernier jour du mois visé
+    return { depuis: _mn.cle + '-01', jusqu: iso(dernier), ym: _mn.cle, label: 'en ' + monthLabel(_mn.cle) };
+  }
   let m = t.match(/\b(\d+)\s*(mois|semaine|semaines|jour|jours|an|ans|annee|annees)\b/);
   if(m){
     const n = +m[1]; const u = m[2]; const d = new Date(now);
@@ -33020,12 +33035,12 @@ function _aiParsePeriode(t){
     else if(/semaine/.test(u)) d.setDate(d.getDate()-7*n);
     else if(/jour/.test(u)) d.setDate(d.getDate()-n);
     else d.setFullYear(d.getFullYear()-n);   // an(s)/annee(s)
-    return {depuis:iso(d), label:`depuis ${n} ${u}`};
+    return {depuis:iso(d), jusqu:null, label:`depuis ${n} ${u}`};
   }
   if(/\bce mois\b|\bce mois ci\b|\bdu mois\b/.test(t)){ const d=new Date(now.getFullYear(),now.getMonth(),1); return {depuis:iso(d), label:'ce mois-ci'}; }
   if(/\bcette annee\b|\bde l'?annee\b/.test(t)){ const d=new Date(now.getFullYear(),0,1); return {depuis:iso(d), label:'cette année'}; }
   if(/\bcette semaine\b/.test(t)){ const d=new Date(now); d.setDate(d.getDate()-now.getDay()); return {depuis:iso(d), label:'cette semaine'}; }
-  return {depuis:null, label:'sur tout ton historique'};
+  return {depuis:null, jusqu:null, label:'sur tout ton historique'};
 }
 // [V936 — PHRASES COMPOSÉES] Détecte deux demandes dans une même phrase (« stock chocolat ET recette
 // pistache »). Règle PRUDENTE : on ne découpe QUE si le découpage produit au moins deux intentions
@@ -37858,17 +37873,25 @@ try{ if(typeof window!=='undefined'){ window.smWhy=smWhy; window.smSkills=smSkil
 
 // Les compétences qui HONORENT un mois nommé (elles lisent params.periode = 'AAAA-MM').
 const AI_INTENTS_MOIS = new Set(['query_revenue', 'query_net_poche', 'query_urssaf',
-                                 'query_charges', 'query_gaspillage', 'query_bilan_marche']);   // [v1334]
+                                 'query_charges', 'query_gaspillage', 'query_bilan_marche',   // [v1334]
+                                 'query_top_parfum', 'query_panier_moyen']);                  // [v1335]
 
 // Les compétences où préciser un mois a du SENS, mais qu'on ne sait pas encore filtrer.
 // Liste EXPLICITE (et non « tout le reste ») : discipline conservatrice de la v1327 — on préfère
 // une alerte manquante à une alerte injustifiée. Le stock, par exemple, est une PHOTO du présent :
 // il n'y a rien à filtrer, et prétendre le contraire serait une autre forme de mensonge.
 // [v1334] charges, gaspillage et bilan marché en sont SORTIS : ils savent faire, désormais.
-// L'aveu n'était qu'une étape, pas une destination.
+// [v1335] top parfum et panier moyen aussi. L'aveu n'est qu'une étape, pas une destination.
+//
+// LES TROIS QUI RESTENT NE SONT PAS DE LA PARESSE — elles sont HONNÊTEMENT hors de portée :
+//  • query_rentabilite   : croise commandes ET marchés ET mouvements, sur une base de coûts FIFO
+//    elle-même temporelle. Ne filtrer que les commandes produirait un chiffre PLAUSIBLE ET FAUX —
+//    exactement ce que cette série traque. Le faire proprement, c'est un vrai chantier.
+//  • query_seuil_rentabilite et query_revenu_horaire : ce sont des calculs sur FENÊTRE GLISSANTE
+//    (90 jours, moyennes pondérées). Les « filtrer par mois » n'a pas de sens tel quel : il faudrait
+//    d'abord repenser leur période de référence. Ajouter un filtre par-dessus serait un placage.
 const AI_INTENTS_MOIS_ATTENDU = new Set([
-  'query_rentabilite', 'query_top_parfum', 'query_panier_moyen',
-  'query_seuil_rentabilite', 'query_revenu_horaire'
+  'query_rentabilite', 'query_seuil_rentabilite', 'query_revenu_horaire'
 ]);
 
 async function _aiDispatch(r, txt, _ctx){
@@ -39526,7 +39549,11 @@ async function aiQueryTopParfum(params){
   const periode = (params && params.periode) || {depuis:null, label:'sur tout ton historique'};
   let orders = await db.orders.toArray();
   const clients = await db.clients.toArray();
+  // [FIX v1335] La borne HAUTE était ignorée : le filtre n'avait qu'un « depuis ». Avec un mois
+  // nommé (« en mai »), l'app aurait donc renvoyé mai + juin + juillet — un chiffre juste pour une
+  // période que Benjamin n'a jamais demandée.
   if(periode.depuis){ orders = orders.filter(o=> (o.date||'') >= periode.depuis); }
+  if(periode.jusqu){  orders = orders.filter(o=> (o.date||'').slice(0,10) <= periode.jusqu); }
   const R = computeStats(orders, clients, orderToLines);
   const rank = Object.keys(R.parfums||{})
     .map(nom=>({nom, n:R.parfums[nom]}))
@@ -40337,12 +40364,23 @@ async function aiQueryPanierMoyen(params){
       ${aiSuite([{label:'👤 Voir sa fiche', ask:`parle-moi de ${params.client.nom||''}`}])}`);
   }
   // Global : moyenne sur toutes les commandes.
+  // [FIX v1335] Aucun filtre temporel : « mon panier moyen en mai » renvoyait la moyenne de TOUT
+  // l'historique. La v1334 l'avouait au moins ; ici, l'app sait faire.
+  // BASE : la date de COMMANDE. Un panier moyen décrit un COMPORTEMENT D'ACHAT — quand le client a
+  // commandé — et non une trésorerie. La date d'encaissement serait ici la mauvaise règle : elle
+  // rangerait une commande de mai dans le mois où le chèque a été déposé.
   const orders=await db.orders.toArray();
-  const valides=orders.filter(o=>!o.histo && (+o.montant||0)>0);
+  let _pmYm = null, _pmLbl = '';
+  if(/^\d{4}-\d{2}$/.test(params.periode||'')){ _pmYm = params.periode; _pmLbl = ' — ' + monthLabel(_pmYm); }
+  const valides=orders.filter(o=>!o.histo && (+o.montant||0)>0
+                                 && (!_pmYm || (o.date||'').slice(0,7) === _pmYm));
+  if(_pmYm && !valides.length){
+    return aiSay(`${aiHero('—', `Panier moyen${_pmLbl}`)}${aiSynth(`Aucune commande passée en ${esc(monthLabel(_pmYm))}. Le mois existe, il est simplement vide.`, {icon:'📭'})}`);
+  }
   if(!valides.length) return aiSay(`${aiHero('—', 'Panier moyen')}${aiSynth('Pas encore de commandes chiffrées.', {icon:'📭'})}`);
   const total=valides.reduce((s,o)=>s+(+o.montant||0),0);
   const moy=total/valides.length;
-  return aiSay(`${aiHero(euro(moy), 'Panier moyen', {sub:`sur ${valides.length} commandes`})}
+  return aiSay(`${aiHero(euro(moy), `Panier moyen${_pmLbl}`, {sub:`sur ${valides.length} commandes`})}
     ${aiSynth('Montant moyen d\'une commande, tous clients confondus.', {icon:'🧺'})}
     ${aiCleLecture('Moyenne sur <b>toutes</b> tes commandes chiffrées (payées ou non), pas seulement les réglées.', {voisins:[{label:'📈 Mon CA', ask:'mon chiffre d\'affaires'},{label:'⭐ Meilleurs clients', ask:'mes meilleurs clients'}]})}
     ${aiSuite([{label:'⭐ Mes meilleurs clients', ask:'mes meilleurs clients'}])}`);

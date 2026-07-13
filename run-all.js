@@ -59,7 +59,12 @@ const SUITES = [
   'emballage-gratuit.test.js',   // vague 46 : l'emballage était gratuit (coutEmballages jamais calculé — prorata d'encaissement, mesuré vs estimé)
   'copilote-comprehension.test.js', // vague 47+48 : compréhension du copilote + désambiguïsation (cliquet anti-régression)
   'donnees-pas-code.test.js',     // vague 49 : un nom de client tuait le copilote (regex non échappée) — LES DONNÉES NE SONT PAS DU CODE
-  'apostrophe-boutons.test.js'    // vague 50 : l'apostrophe tuait les boutons (onclick + encodeURIComponent) — helper unique escJs
+  'apostrophe-boutons.test.js',   // vague 50 : l'apostrophe tuait les boutons (onclick + encodeURIComponent) — helper unique escJs
+  'mois-nomme.test.js',           // vague 51 : le copilote ne savait pas lire un mois nommé (« le ca de mai » → vue globale)
+  'ca-deux-verites.test.js',      // vague 52 : le CA d'un mois avait DEUX vérités (date de commande vs encaissement)
+  'une-seule-verite.test.js',     // vague 54 : les graphiques contredisaient le copilote + le mois nommé n'est plus perdu en silence
+  'mois-partout.test.js',         // vague 55 : charges, gaspillage et bilan marché savent enfin filtrer par mois (l'aveu n'est pas une destination)
+  'depuis-nest-pas-en.test.js'    // vague 56 : « depuis » n'est pas « en » — la borne HAUTE manquait au parseur de période
 ];
 
 let allOk = true;
