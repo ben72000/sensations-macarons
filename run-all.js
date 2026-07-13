@@ -64,7 +64,8 @@ const SUITES = [
   'ca-deux-verites.test.js',      // vague 52 : le CA d'un mois avait DEUX vérités (date de commande vs encaissement)
   'une-seule-verite.test.js',     // vague 54 : les graphiques contredisaient le copilote + le mois nommé n'est plus perdu en silence
   'mois-partout.test.js',         // vague 55 : charges, gaspillage et bilan marché savent enfin filtrer par mois (l'aveu n'est pas une destination)
-  'depuis-nest-pas-en.test.js'    // vague 56 : « depuis » n'est pas « en » — la borne HAUTE manquait au parseur de période
+  'depuis-nest-pas-en.test.js',   // vague 56 : « depuis » n'est pas « en » — la borne HAUTE manquait au parseur de période
+  'canal-oublie.test.js'          // vague 57 : le CA des MARCHÉS n'était compté nulle part + le fond de caisse comptait comme du CA
 ];
 
 let allOk = true;

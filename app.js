@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1335';
-const APP_MAJ = '« DEPUIS » N’EST PAS « EN ». Le parseur de période de ton copilote ne savait dire que « depuis » : il pouvait exprimer « depuis 3 mois », jamais « EN mai ». Il n’avait AUCUNE BORNE HAUTE. Sans elle, « mon meilleur parfum en mai » t’aurait renvoyé mai + juin + juillet : un chiffre parfaitement juste… pour une période que tu n’as jamais demandée. C’est le même mal qu’en v1330 (bon routage, mauvais paramètre), à un cran plus subtil. Le parseur borne désormais les deux côtés, et calcule le dernier jour du mois au lieu de le supposer (avril finit le 30, février 2024 le 29). J’ai aussi désamorcé une mine : le champ « période » était une CHAÎNE pour certaines compétences et un OBJET pour d’autres — deux types pour un même champ. C’est corrigé à la racine. RÉSULTAT : TON TOP PARFUM et TON PANIER MOYEN savent maintenant filtrer par mois. Ils portent HUIT compétences qui honorent un mois nommé, contre trois il y a deux versions. LA BONNE BASE, ET ELLE EST ÉCRITE : un panier moyen et un classement de parfums décrivent un COMPORTEMENT D’ACHAT — la date de COMMANDE est la bonne règle. La date d’encaissement, qui est la bonne pour ton CA depuis la v1331, serait ici FAUSSE : elle rangerait une commande de mai dans le mois où le chèque a été déposé. Deux questions différentes, deux bases différentes — et c’est écrit dans le code, pour que personne ne « corrige » l’une vers l’autre en croyant bien faire. ENFIN, TROIS COMPÉTENCES AVOUENT ENCORE, ET CE N’EST PAS DE LA PARESSE. Ta rentabilité croise commandes, marchés et mouvements sur une base de coûts FIFO elle-même temporelle : ne filtrer que les commandes te donnerait un chiffre PLAUSIBLE ET FAUX — exactement ce que je traque depuis quinze versions. Ton seuil de rentabilité et ton revenu horaire sont des calculs sur FENÊTRE GLISSANTE : les « filtrer par mois » n’a pas de sens tel quel, il faudrait d’abord repenser leur période de référence. Ajouter un filtre par-dessus serait un placage. Livrer un chiffre faux vaut moins qu’avouer. Suite : 1237 → 1271 assertions vertes.';
+const APP_VERSION = 'v1336';
+const APP_MAJ = 'LE CANAL OUBLIÉ : TOUT TON CA MARCHÉ MANQUAIT. Tu m’as montré le copilote annonçant 552 € pour juin, et ta compta 1 068 € — MÊME MOIS, MÊME PÉRIODE. Or la v1331 devait précisément éliminer ce genre d’écart. Ma correction était donc INCOMPLÈTE, et c’est le pire des aveuglements : celui qui se croit guéri. BUG 1 — LES MARCHÉS N’ÉTAIENT COMPTÉS NULLE PART. La fonction qui ventile ton CA par mois n’itérait que sur les COMMANDES. Or tes ventes de marché ne passent JAMAIS par cette table : elles sont encaissées en direct, à la caisse. Tout un canal de vente manquait donc — les 516 € d’écart, c’était exactement ça. Et le graphe « Coûts & prix » lisait la même fonction : ta marge brute y était sous-estimée d’autant. LA LEÇON, et elle est rude : j’avais fondé ma « vérité unique » sur une fonction qui oubliait elle-même un canal. UNE SOURCE UNIQUE QUI EST INCOMPLÈTE RESTE UNE SOURCE UNIQUE — ET RESTE FAUSSE. Unifier n’est pas vérifier. BUG 2 — TON FOND DE CAISSE ÉTAIT COMPTÉ COMME DU CHIFFRE D’AFFAIRES. Ta compta retire depuis toujours le fond de caisse des espèces : c’est l’argent que tu mets TOI-MÊME dans la caisse le matin pour rendre la monnaie. Ce n’est pas une vente. Mais le calcul de ton revenu horaire sommait les espèces BRUTES — il comptait ta propre monnaie comme du CA, et surestimait ton revenu de l’heure. La règle du CA d’un marché n’est plus écrite qu’À UN SEUL ENDROIT : (espèces − fond de caisse, borné à 0) + carte + autre, et seulement pour les marchés CLOS. Une règle écrite à deux endroits finit toujours par diverger — c’est exactement ce qui s’est passé. ENFIN, LE TEST QUI AURAIT DÛ EXISTER. La v1331 comparait déjà le copilote à la compta… mais son jeu de données NE CONTENAIT AUCUN MARCHÉ. Elle validait donc une égalité partielle, et c’est pour ça qu’elle n’a rien vu. Un test qui ne contient pas le cas ne le protège pas : il donne seulement l’illusion qu’il le fait. Désormais, l’égalité copilote = compta = courbes est vérifiée MARCHÉS COMPRIS, au centime. Un mois sans commande mais avec un marché EXISTE enfin (avant, il disparaissait). Suite : 1271 → 1301 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -4139,7 +4139,67 @@ function paiementsDe(o){
   }
   return [];
 }
-function caEncaisseParMois(orders){
+// ============================================================================
+//  [v1336] LE CA DES MARCHÉS AVAIT DISPARU — et le fond de caisse était compté comme du CA.
+// ----------------------------------------------------------------------------
+//  Benjamin : le copilote annonce 552 € pour juin, sa compta 1068 € — MÊME MOIS, MÊME PÉRIODE.
+//  Or la v1331 devait précisément éliminer ce genre d'écart. Ma correction était donc INCOMPLÈTE.
+//
+//  BUG 1 — LES MARCHÉS N'ÉTAIENT PAS COMPTÉS DU TOUT.
+//  `caEncaisseParMois(orders)` n'itère que sur les COMMANDES. Or les ventes de marché ne passent
+//  JAMAIS par la table orders (elles sont encaissées en direct, à la caisse). Tout un canal de
+//  vente manquait donc au CA du copilote — et aussi au graphe « Coûts & prix », qui lit la même
+//  fonction. J'avais fondé ma « vérité unique » sur une fonction qui oubliait elle-même un canal.
+//  Une source unique qui est incomplète reste une source unique — et reste fausse.
+//
+//  BUG 2 — LE FOND DE CAISSE ÉTAIT COMPTÉ COMME DU CHIFFRE D'AFFAIRES.
+//  `computeAccounting` (la compta) retire le fond de caisse des espèces : c'est l'argent que
+//  Benjamin met LUI-MÊME dans la caisse le matin pour rendre la monnaie. Ce n'est pas une vente.
+//  Mais `revenuHoraireData` (le revenu horaire) l'oubliait et sommait les espèces BRUTES : il
+//  comptait donc la monnaie de Benjamin comme du CA, et surestimait son revenu de l'heure.
+//
+//  Une règle écrite à deux endroits finit toujours par diverger. Elle n'est plus écrite qu'ICI.
+// ============================================================================
+
+// PURE. Le CA réellement encaissé sur UN marché. Règle identique à computeAccounting :
+//   • seuls les marchés CLOS comptent (un marché en cours n'a pas de CA arrêté) ;
+//   • espèces MOINS le fond de caisse (borné à 0 : on ne crée pas de CA négatif si Benjamin
+//     repart avec moins que sa monnaie de départ — ça, c'est une perte, pas un CA négatif) ;
+//   • plus la carte et les autres moyens.
+function caMarcheEncaisse(mk){
+  if(!mk || mk.statut !== 'clos') return 0;
+  const ca = mk.ca || {};
+  const fond = money2(+mk.fondCaisse || 0);
+  const esp = money2(Math.max(0, (+ca.especes || 0) - fond));
+  return money2(esp + money2(+ca.cb || 0) + money2(+ca.autre || 0));
+}
+
+// PURE. Le CA marché d'un mois (clé AAAA-MM), avec les macarons écoulés.
+// Un marché est encaissé le JOUR MÊME : aucun prorata, contrairement aux commandes.
+function caMarchesDuMois(markets, moves, ym){
+  const res = { ca: 0, vendu: 0, nbMarches: 0, detail: [] };
+  (markets || []).forEach(mk => {
+    if(!mk || mk.statut !== 'clos') return;
+    if(ym && (marcheDate(mk) || '').slice(0, 7) !== ym) return;
+    const ca = caMarcheEncaisse(mk);
+    // Macarons réellement écoulés : embarqué − retours − dons − pertes.
+    let embarque = 0, sorties = 0;
+    (moves || []).forEach(mv => {
+      if(!mv || mv.marketId !== mk.id) return;
+      const q = +mv.qte || 0;
+      if(mv.type === 'embarque') embarque += q;
+      else if(mv.type === 'retour' || mv.type === 'don' || mv.type === 'perte') sorties += q;
+    });
+    const vendu = Math.max(0, round3(embarque - sorties));
+    res.ca = money2(res.ca + ca);
+    res.vendu = round3(res.vendu + vendu);
+    res.nbMarches++;
+    if(ca > 0 || vendu > 0) res.detail.push({ label: mk.nom || 'Marché', encaisse: ca, macarons: vendu });
+  });
+  return res;
+}
+
+function caEncaisseParMois(orders, markets){
   const parMois={}; let enAttente=0;
   (orders||[]).forEach(o=>{
     if(o.histo) return;
@@ -4155,6 +4215,18 @@ function caEncaisseParMois(orders){
     const reste=(+o.montant||0)-encaisse;
     if(reste>0.01) enAttente+=reste;
   });
+
+  // [FIX v1336] LES MARCHÉS. Ils ne passent JAMAIS par la table `orders` : ils sont encaissés en
+  // direct, à la caisse. Cette fonction les ignorait donc totalement — tout un canal de vente
+  // absent du CA. Le copilote annonçait 552 € là où la compta disait 1068 €.
+  // Un marché clos est encaissé le jour même : il compte au mois de sa clôture, sans prorata.
+  (markets || []).forEach(mk => {
+    const ca = caMarcheEncaisse(mk);
+    if(!(ca > 0)) return;
+    const k = monthKey(marcheDate(mk));
+    if(k) parMois[k] = money2((parMois[k] || 0) + ca);
+  });
+
   return { parMois, enAttente: money2(enAttente) };
 }
 const ymLabel = ym => { const [y,m]=ym.split('-'); return new Date(y,+m-1,1).toLocaleDateString('fr-FR',{month:'short',year:'2-digit'}); };
@@ -13824,7 +13896,10 @@ async function renderCosts(){
   });
   const moisCA={}, moisCout={};
   // CA = encaissements réels ventilés par mois de paiement (logique comptable micro-entreprise).
-  const _caEnc = caEncaisseParMois(orders);
+  // [FIX v1336] Cette courbe de CA oubliait elle aussi les MARCHÉS (caEncaisseParMois n'itérait que
+  // sur les commandes) : la marge brute affichée en dessous était donc sous-estimée d'autant.
+  const _mktsCP = await db.markets.toArray().catch(()=>[]);
+  const _caEnc = caEncaisseParMois(orders, _mktsCP);
   Object.assign(moisCA, _caEnc.parMois);
   productions.forEach(p=>{ const k=ymKey(p.date); moisCout[k]=(moisCout[k]||0)+(prodCost[p.id]||0); });
   const moisKeys=[...new Set([...Object.keys(moisCA),...Object.keys(moisCout)])].sort();
@@ -23816,7 +23891,7 @@ async function renderStats(){
   const G = R.global;
   // [v1333] Les courbes passent sur la VÉRITÉ COMPTABLE (mois d'encaissement) — la même que le
   // copilote et le tableau de bord. Avant, elles montraient un CA différent pour le même mois.
-  const _SE = serieMensuelleEncaisse(orders, orderToLines);
+  const _SE = await serieMensuelleEncaisseDb(orders, orderToLines);   // [v1336] marchés inclus
   const moisKeys = _SE.mois;
   const fmtMois = k => { const [y,m]=k.split('-'); return ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'][(+m||1)-1]+' '+(y||'').slice(2); };
 
@@ -32293,7 +32368,7 @@ async function renderAnalyse(){
      ${A.all.filter(c=>c.parfumFavori).length?A.all.filter(c=>c.parfumFavori).slice(0,10).map(prefLine).join(''):'<p class="note">—</p>'}</div>`;
 
   // --- ANOMALIES ---
-  const AN=analyzeAnomalies(R, serieMensuelleEncaisse(orders, orderToLines));   // [v1333] base encaissement
+  const AN=analyzeAnomalies(R, await serieMensuelleEncaisseDb(orders, orderToLines));   // [v1336] base encaissement, marchés inclus
   const anoBlock=`
    <div class="panel"><h2>Détection d'anomalies <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— CA mensuel</span></h2>
      <div class="sum-box"><span>CA mensuel moyen</span><b>${euro(AN.moyenneCA)}</b></div>
@@ -39452,7 +39527,7 @@ async function aiQueryCompareMois(){
   // [v1333] Comparaison mois vs mois sur l'ENCAISSEMENT : comparer deux mois sur la date de
   // commande alors que le CA affiché ailleurs est sur l'encaissement produirait deux verdicts
   // contradictoires pour la même question.
-  const _SEc = serieMensuelleEncaisse(orders, orderToLines);
+  const _SEc = await serieMensuelleEncaisseDb(orders, orderToLines);   // [v1336] marchés inclus
   const M0=_SEc.parMois[m0]||{ca:0,macaronsStd:0}, M1=_SEc.parMois[m1]||{ca:0,macaronsStd:0};
   // [FIX v1318] On compare le mois en cours à la MÊME AVANCÉE du mois précédent, pas à son total.
   const cmp = _basePeriodeComparable(M1.ca||0, d0);
@@ -40858,7 +40933,7 @@ function macaronsDeCommande(o, toLines){
 // PURE. Le CA RÉELLEMENT ENCAISSÉ sur un mois (clé AAAA-MM), avec sa traçabilité complète.
 // Renvoie aussi l'ANCIEN chiffre (base « date de commande × montant total ») afin de ne jamais
 // remplacer un nombre en silence — règle de la maison depuis v1324.
-function caMoisEncaisse(orders, ym, toLines){
+function caMoisEncaisse(orders, ym, toLines, markets, moves){
   const res = {
     ym, ca:0, macaronsStd:0, macaronsGf:0, nbPaiements:0,
     caPrestation:0,                    // part du CA qui ne vend AUCUN macaron
@@ -40903,6 +40978,16 @@ function caMoisEncaisse(orders, ym, toLines){
     res.ancienNbCommandes++;
   });
 
+  // [FIX v1336] LES MARCHÉS — le canal oublié. Ils n'existent pas dans la table `orders` : sans
+  // cette boucle, tout le CA de tes marchés disparaissait du chiffre du copilote.
+  const MK = caMarchesDuMois(markets, moves, ym);
+  res.ca = money2(res.ca + MK.ca);
+  res.macaronsStd += Math.round(MK.vendu);
+  res.nbPaiements += MK.nbMarches;        // un marché clos = un encaissement
+  res.caMarches = MK.ca;                  // exposé à part : traçabilité (commandes vs marchés)
+  res.nbMarches = MK.nbMarches;
+  MK.detail.forEach(d => res.detail.push({ label: '⛺ ' + d.label, encaisse: d.encaisse, part: 100, macarons: d.macarons }));
+
   res.ecart = money2(res.ca - res.ancienCa);
   res.detail.sort((a, b) => b.encaisse - a.encaisse);
   return res;
@@ -40920,14 +41005,23 @@ function caMoisEncaisse(orders, ym, toLines){
 //  UNE SEULE SOURCE : caMoisEncaisse (v1331, déjà testée, 38 assertions). On ne recrée surtout PAS
 //  une troisième vérité — on réutilise celle qui existe. C'est tout le principe.
 // ============================================================================
-function serieMensuelleEncaisse(orders, toLines){
-  // Les mois à afficher sont ceux où de l'argent est RÉELLEMENT RENTRÉ (registre des paiements),
-  // et non ceux où des commandes ont été passées. Un mois sans encaissement n'a pas de CA.
-  const encaisse = caEncaisseParMois(orders).parMois;
+// Wrapper base de données : charge les marchés et appelle la fonction PURE. Sans lui, les quatre
+// appelants devraient charger les marchés à la main — et il suffirait d'en oublier UN pour que la
+// divergence renaisse. C'est exactement comme ça que ce bug est né.
+async function serieMensuelleEncaisseDb(orders, toLines){
+  const mkts = await db.markets.toArray().catch(()=>[]);
+  const mvs  = await (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]);
+  return serieMensuelleEncaisse(orders, toLines, mkts, mvs);
+}
+
+function serieMensuelleEncaisse(orders, toLines, markets, moves){
+  // Les mois à afficher sont ceux où de l'argent est RÉELLEMENT RENTRÉ (registre des paiements
+  // ET caisses de marché), et non ceux où des commandes ont été passées.
+  const encaisse = caEncaisseParMois(orders, markets).parMois;
   const mois = Object.keys(encaisse).sort();
   const parMois = {};
   mois.forEach(ym => {
-    const E = caMoisEncaisse(orders, ym, toLines);
+    const E = caMoisEncaisse(orders, ym, toLines, markets, moves);
     parMois[ym] = {
       ca: E.ca,
       macaronsStd: E.macaronsStd,
@@ -40942,6 +41036,10 @@ function serieMensuelleEncaisse(orders, toLines){
 async function aiQueryRevenue(params){
   params = params || {};
   const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
+  // [v1336] Les MARCHÉS : ils ne passent jamais par la table `orders`. Sans eux, tout un canal de
+  // vente manquait au CA — 552 € annoncés là où la compta disait 1068 €.
+  const _mkts = await db.markets.toArray().catch(()=>[]);
+  const _mvs  = await (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]);
   const R=computeStats(orders,clients,orderToLines);
   const mois=Object.keys(R.global.parMois).sort();
   // [LOT 2] Résolution de période en clé AAAA-MM (date LOCALE, jamais UTC).
@@ -40956,7 +41054,7 @@ async function aiQueryRevenue(params){
   if(cible){
     // [FIX v1331] On lit désormais la VÉRITÉ COMPTABLE (encaissement), plus computeStats
     // (qui datait sur la commande et comptait le montant total). Voir caMoisEncaisse.
-    const E = caMoisEncaisse(orders, cible, orderToLines);
+    const E = caMoisEncaisse(orders, cible, orderToLines, _mkts, _mvs);
     if(E.ca > 0 || E.ancienCa > 0){
       const _ecartTxt = (Math.abs(E.ecart) >= 0.01 && E.ancienCa > 0)
         ? `<div style="margin-top:8px;padding:9px 12px;background:#fff6e5;border-radius:8px;font-size:.78rem;color:#6a5a52;line-height:1.55">
@@ -40992,7 +41090,7 @@ async function aiQueryRevenue(params){
     ${(()=>{ // [FIX v1331] La liste mensuelle utilisait la MÊME règle fausse (date de commande × montant
              // total). Elle affiche désormais l'ENCAISSEMENT RÉEL — sinon le total et le détail
              // racontaient deux histoires différentes, sur le même écran.
-      const _enc = caEncaisseParMois(orders).parMois;
+      const _enc = caEncaisseParMois(orders, _mkts).parMois;
       const _ms = Object.keys(_enc).sort();
       return _ms.length ? _ms.map(m=>`<div class="sum-box"><span>${monthLabel(m)}</span><b>${euro(_enc[m])}</b></div>`).join('') : '';
     })()}
@@ -41015,7 +41113,7 @@ async function aiQueryTrends(){
 async function aiQueryAnomalies(){
   const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
   const R=computeStats(orders,clients,orderToLines);
-  const AN=analyzeAnomalies(R, serieMensuelleEncaisse(orders, orderToLines));   // [v1333] base encaissement
+  const AN=analyzeAnomalies(R, await serieMensuelleEncaisseDb(orders, orderToLines));   // [v1336] base encaissement, marchés inclus
   if(!AN.outliers.length)
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Anomalies</h3><div class="sum-box"><span>CA mensuel moyen</span><b>${euro(AN.moyenneCA)}</b></div><p class="note">Aucune variation mensuelle inhabituelle détectée.</p>`);
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Anomalies détectées</h3>
@@ -51116,7 +51214,12 @@ async function revenuHoraireData(arg){
   const closIn = markets.filter(mk=>mk.statut==='clos' && inWin(mkDateFin(mk)));
   let caMarches = 0;
   const detailMarches = [];     // [v1077] {label, montant} par marché clos sur la fenêtre
-  closIn.forEach(mk=>{ const ca=mk.ca||{}; const m=money2((+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0));
+  // [FIX v1336] LE FOND DE CAISSE ÉTAIT COMPTÉ COMME DU CHIFFRE D'AFFAIRES.
+  // Les espèces étaient sommées BRUTES. Or le fond de caisse, c'est l'argent que Benjamin met
+  // LUI-MÊME dans la caisse le matin pour rendre la monnaie — ce n'est pas une vente. Sa compta le
+  // retire depuis toujours ; le revenu horaire l'oubliait, et surestimait donc son revenu de l'heure.
+  // Une règle écrite à deux endroits finit toujours par diverger : elle n'est plus écrite qu'une fois.
+  closIn.forEach(mk=>{ const m=caMarcheEncaisse(mk);
     caMarches += m; detailMarches.push({ label:(mk.nom||'Marché')+(mkDateFin(mk)?' · '+mkDateFin(mk).slice(0,10):''), montant:m }); });
   detailMarches.sort((a,b)=>b.montant-a.montant);
   const caEncaisse = money2(caCommandes + caMarches);

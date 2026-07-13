@@ -10,6 +10,72 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-13 — Vague 57 : LE CANAL OUBLIÉ  (v1335 → **v1336**)
+
+**Nature** : BUG DE PRODUCTION, remonté par Benjamin (deux captures).
+Copilote : **« CA de juin = 552,00 € »**. Compta, **même période** (01 → 30 juin) :
+**« CA encaissé = 1 068,00 € »**.
+
+**Deux chiffres pour le même mois.** Or **la v1331 devait précisément éliminer ça**. Ma correction
+était donc **incomplète** — et c'est le pire des aveuglements : *celui qui se croit guéri*.
+
+### Bug 1 — les marchés n'étaient comptés NULLE PART
+`caEncaisseParMois(orders)` n'itérait que sur les **commandes**. Or les ventes de marché ne passent
+**jamais** par la table `orders` : elles sont encaissées en direct, à la caisse.
+**Tout un canal de vente manquait** — les 516 € d'écart, c'était exactement ça. Et le graphe
+« Coûts & prix » lit la même fonction : sa **marge brute** était sous-estimée d'autant.
+
+> **LA LEÇON, et elle est rude** : j'avais fondé ma « vérité unique » (v1331) sur une fonction qui
+> **oubliait elle-même un canal**.
+> **Une source unique qui est incomplète reste une source unique — et reste fausse.**
+> **Unifier n'est pas vérifier.**
+
+### Bug 2 — le fond de caisse était compté comme du chiffre d'affaires
+`computeAccounting` retire depuis toujours le **fond de caisse** des espèces : c'est l'argent que
+Benjamin met **lui-même** dans la caisse le matin pour rendre la monnaie. **Ce n'est pas une vente.**
+Mais `revenuHoraireData` sommait les espèces **brutes** → il comptait la monnaie de Benjamin comme
+du CA, et **surestimait son revenu de l'heure**.
+
+*Correctif* : la règle du CA d'un marché n'est plus écrite qu'**à un seul endroit**
+(`caMarcheEncaisse`) : *(espèces − fond de caisse, borné à 0) + carte + autre*, marchés **CLOS**
+uniquement. **Une règle écrite à deux endroits finit toujours par diverger** — c'est très exactement
+ce qui s'est passé.
+
+**Ajouté** (`canal-oublie.test.js`, 30 assertions) :
+- **A** — le fond de caisse retiré ; GARDE-FOU : espèces < fond → CA de **0**, jamais négatif
+  (ça, c'est une perte, pas un CA négatif).
+- **B** — seuls les marchés **clos** comptent : un marché en cours n'a pas de caisse arrêtée.
+- **C** — **la reconstitution exacte du cas de Benjamin** : 552 (commandes) + 516 (marché) = **1 068 €**.
+  Sans les marchés, on retombe sur les **552 €** qu'il voyait. Les macarons du marché remontent aussi
+  (150 embarqués − 30 retours − 5 pertes = 115), sinon on recréerait le symptôme « CA sans macarons »
+  de la v1331.
+- **D — LE TEST QUI AURAIT DÛ EXISTER.** La vague 52 comparait déjà le copilote à la compta… **mais
+  son jeu de données ne contenait AUCUN marché**. Elle validait donc une **égalité partielle**, et
+  c'est pour ça qu'elle n'a rien vu.
+  > **Un test qui ne contient pas le cas ne le protège pas : il donne seulement l'illusion qu'il le fait.**
+  Désormais : copilote = compta = **courbes**, marchés compris, au centime.
+  **D5** : un mois **sans commande mais avec un marché** existe enfin (avant, il **disparaissait**
+  entièrement de la série).
+- **E** — **aucun prorata** sur un marché (encaissé le jour même), contrairement aux commandes.
+- **F** — non-régression : les anciens appelants qui ne passent pas `markets` ne cassent pas.
+
+**Wrapper `serieMensuelleEncaisseDb`** ajouté : les 4 appelants devaient charger les marchés à la
+main — *il suffisait d'en oublier UN pour que la divergence renaisse*. C'est exactement comme ça que
+ce bug est né.
+
+**Total couvert** : 1271 → **1301 assertions**.
+
+**Angles morts connus (déclarés)** :
+- `computeStats().global.ca` (le « CA total » de la vue globale du copilote) est **toujours** sur la
+  base « commandes uniquement, date de commande, montant total ». Le **total** affiché ne coïncide
+  donc pas avec la somme des mois. À trancher.
+- Les macarons vendus au marché sont recalculés ici (`embarqué − retours − dons − pertes`) alors que
+  `marketTotals` fait déjà ce calcul. **Duplication non prouvée** — exactement ce que la vague 52
+  s'interdisait (bloc E). À unifier, ou à assertir l'une contre l'autre.
+- Le fond de caisse n'est pas déduit dans `marketTotals` non plus : à vérifier.
+
+---
+
 ## 2026-07-12 — Vague 56 : « DEPUIS » N'EST PAS « EN »  (v1334 → **v1335**)
 
 **Nature** : suite de la vague 55. Il restait **cinq** compétences qui avouaient. **Deux le
