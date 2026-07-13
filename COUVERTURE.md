@@ -1684,3 +1684,84 @@ plus **ensemble** » partait vers le **classement** : un chiffre juste, à une *
 - **La saisonnalité reste hors de portée** : un seul Noël dans l'historique. Ça ne se code pas, ça s'attend.
 - La matrice volume × marge existe mais s'appuie sur les **lots d'aujourd'hui** (même limite temporelle qu'en v1342).
 - Les marchés ne contribuent pas aux associations (voir ci-dessus) — donc les paniers ne couvrent que les **commandes**.
+
+---
+
+## v1344 — Décision de Ben, gravée : les non-payées comptent
+
+**Question de Ben :** « le moteur prend-il les commandes non payées ou seulement les soldées ? »
+
+**Réponse mesurée :** toutes. Le seul filtre monétaire est `montant <= 0` (les dons).
+
+**Décision de Ben, et elle est plus juste que ma proposition :**
+> *« Ce sont deux notions bien distinctes qui ne doivent pas s'annuler l'une l'autre. »*
+
+Un **choix de parfum** et un **encaissement** mesurent deux réalités différentes. Le client qui a
+composé « Café + Praliné » a exprimé cette préférence, que sa facture soit réglée ou non. Filtrer sur
+le paiement laisserait la **comptabilité corrompre une mesure comportementale**.
+
+J'avais proposé d'« afficher la divergence » à l'écran. **Ben a eu raison de refuser** : signaler
+« attention, des impayés sont inclus » laisserait croire que le chiffre est **dégradé** par eux, alors
+qu'il n'a simplement **rien à voir** avec eux. *Une inquiétude injustifiée est aussi trompeuse qu'un
+chiffre faux.*
+
+> **RÈGLE GRAVÉE (v1344) — DEUX MESURES DE NATURES DIFFÉRENTES NE DOIVENT PAS S'ANNULER L'UNE
+> L'AUTRE.** Aligner par réflexe de cohérence, c'est détruire l'une au nom de l'autre.
+
+**Le test-garde mord** : ajouter `if(o.paiement !== 'Payé') return;` — une « correction » parfaitement
+plausible, qu'un futur relecteur (moi) ferait au nom de la cohérence avec le cash basis — fait
+**échouer 6 tests immédiatement**. Le commentaire explique ; le test protège.
+
+### ⚠️ ET LE HARNAIS LUI-MÊME ÉTAIT CASSÉ — la leçon la plus importante de la session
+En vérifiant ce test-garde, l'injection du bug faisait **crasher le fichier de tests** avant même
+d'atteindre l'assertion. Mon `grep` sur « ✗ » ne trouvait rien, et j'ai lu ce silence comme un succès.
+
+> **L'ABSENCE D'ÉCHEC SE LISAIT COMME UN SUCCÈS.**
+
+C'est la vague 59 dans sa forme la plus pure : **un audit qui ne détecte pas ce qu'il prétend
+protéger**. Pire qu'un test absent — un test absent n'endort personne.
+
+**Correctif :** chaque assertion est désormais **enveloppée** (évaluation paresseuse + `try/catch`).
+Une exception devient un **échec bruyant**, jamais un silence. Et le protocole de vérification ne se
+contente plus de chercher des échecs : il vérifie que le test a **terminé**.
+
+---
+
+## v1345 — LE BUG DE BEN : « quels parfums ensemble ? » → des idées de parfums pour l'été
+
+**Ce que Ben a tapé (v1343) :** *« Quels parfums sont souvent commandés ensemble »*
+**Ce que l'app a répondu :** Yuzu, Passion, Cassis… — des **suggestions R&D pour l'été**.
+
+Une **mesure du comportement client** transformée en **idées de création**. Deux sujets sans rapport,
+aucun avertissement. **Le bug canonique de cette série : UN CHIFFRE JUSTE, À UNE AUTRE QUESTION.**
+
+### La cause : j'ai vérifié l'ordre d'un seul côté
+Ma règle v1343 était placée juste avant `query_top_parfum` — j'avais vérifié ce qui venait **APRÈS**
+elle. Mais `query_suggestion_parfum` se trouve **250 lignes AVANT**, et sa toute première alternative
+est `\b(quels parfums)\b`. La phrase de Ben commence par « Quels parfums ». **Ma règle ne pouvait
+JAMAIS gagner.** Sa liste d'exclusions (`rapporte|rentable|se vend`…) n'avait jamais prévu « ensemble ».
+
+> **RÈGLE GRAVÉE (v1345) — VÉRIFIER L'ORDRE D'UNE RÈGLE, C'EST REGARDER DES DEUX CÔTÉS.**
+> Une cascade de 800 lignes n'a pas de « bon endroit » — elle n'a que des **amonts**.
+
+### Le trou que ma propre garde a creusé
+En excluant `propose|suggere|invente…` des associations, j'ai créé un **angle mort** : « propose-moi
+une **association** de parfums pour l'été » n'était plus attrapé par les associations (correct) **ni**
+par la R&D (dont la regex exigeait `parfum` collé à `propose`). La phrase tombait dans le vide.
+Comblé côté R&D — **on élargit la règle légitime, on n'affaiblit pas la garde**.
+
+### Trois questions, trois réponses (`tests/v1345-routage.test.js`, 12 verts)
+| Question | Intent |
+|---|---|
+| « quels parfums sont souvent commandés ensemble » | **MESURE** (associations) |
+| « quel parfum lancer pour l'été » | **CRÉATION** (R&D) |
+| « propose-moi une association de parfums » | **CRÉATION** — c'est une idée, pas une mesure |
+| « le parfum le plus vendu » | **CLASSEMENT** (top parfum) |
+
+### ⚠️ Et le test a d'abord menti — j'ai enfreint la règle que je venais d'écrire
+Premier jet : j'avais **recopié** les regex dans le test en les simplifiant. Il « échouait » sur deux
+phrases que le vrai code gère **parfaitement**. Je testais **ma paraphrase**, pas l'app de Ben.
+C'est exactement la règle de la v1337 — *un test qui recopie le code qu'il teste ne valide que sa
+propre cohérence* — enfreinte par celui qui l'a écrite. Le harnais **extrait** désormais les conditions
+réelles du fichier via `new Function()`. Et c'est seulement une fois fidèle qu'il a révélé le **vrai**
+trou ci-dessus.

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1343';
+const APP_VERSION = 'v1345';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -34110,10 +34110,31 @@ function parseIntent(texte, ctx){
     else if(/\b(coffret|coffrets|grand format|nouveau produit|nouvelle gamme|gamme)\b/.test(t)) theme='gamme';
     return {intent:'query_conseil_ouvert', params:{theme}, critical:false, label:'Un avis sur ton idée'};
   }
+  // [v1345] ASSOCIATIONS DE PARFUMS — CE QUE LES CLIENTS ONT DÉJÀ CHOISI (une MESURE).
+  //
+  // PLACÉE ICI, ET LA POSITION *EST* LE CORRECTIF. En v1343 je l'avais mise juste avant
+  // `query_top_parfum` — en vérifiant seulement ce qui venait APRÈS elle, jamais ce qui venait
+  // AVANT. Or « Quels parfums sont souvent commandés ensemble » matche `\b(quels parfums)\b`,
+  // le PREMIER motif de la suggestion R&D, 250 lignes plus haut. Elle ne pouvait JAMAIS gagner.
+  //
+  // Ben demandait une MESURE de ses clients ; l'app lui répondait des IDÉES DE NOUVEAUX PARFUMS
+  // pour l'été. Deux sujets sans rapport — et aucun avertissement. Le bug canonique de la série :
+  // UN CHIFFRE JUSTE, À UNE AUTRE QUESTION.
+  //
+  // La leçon dépasse ce cas : VÉRIFIER L'ORDRE D'UNE RÈGLE, C'EST REGARDER DES DEUX CÔTÉS.
+  // Une cascade de 800 lignes n'a pas de « bon endroit » — elle n'a que des AMONTS.
+  if(/(ensemble|associ|combinaison|combiner|duo|paire|se marient?|vont bien|s'?accordent|co ?occurrence|panier)/.test(t)
+     && /\b(parfum[s]?|macaron[s]?|saveur[s]?|gout[s]?|client[s]?)\b/.test(t)
+     // …sauf si Ben demande explicitement de CRÉER/INVENTER : là, c'est bien la R&D qu'il veut
+     // (« propose-moi une association de parfums pour l'été » = une idée, pas une mesure).
+     && !/\b(propose|suggere|invente|imagine|cree|creer|lancer|tester|nouveau|nouvelle|idee|idees)\b/.test(t)){
+    return {intent:'query_associations', params:{}, critical:false,
+      label:'Parfums souvent achetés ensemble'};
+  }
   // [v1072] SUGGESTION DE PARFUMS (force de proposition) : « quel parfum lancer pour cet automne »,
   // « propose-moi un nouveau parfum », « une idée de parfum pour l'été ». S'appuie sur la base R&D.
   // Placée AVANT query_rd (atelier création ouvert) car plus spécifique : gère la saison et propose concrètement.
-  if(/\b(quel parfum|quels parfums|quel nouveau parfum|une idee de parfum|des idees de parfum|propose[s]?( moi)? (un |des )?(nouveau[x]? )?parfum|suggere[s]?( moi)? (un |des )?parfum|nouveau parfum|nouveaux parfums|idee[s]? de (nouveau[x]? )?parfum|quel parfum (lancer|creer|tester|proposer|ajouter|sortir|pourrais)|parfum pour (cet |l'?|le |la )?(automne|hiver|ete|printemps|saison|noel|rentree)|quel parfum pour)\b/.test(t)
+  if(/\b(quel parfum|quels parfums|quel nouveau parfum|une idee de parfum|des idees de parfum|propose[s]?( moi)? (un |des )?(nouveau[x]? )?parfum|suggere[s]?( moi)? (un |des )?parfum|nouveau parfum|nouveaux parfums|idee[s]? de (nouveau[x]? )?parfum|quel parfum (lancer|creer|tester|proposer|ajouter|sortir|pourrais)|parfum pour (cet |l'?|le |la )?(automne|hiver|ete|printemps|saison|noel|rentree)|quel parfum pour|(propose|suggere|invente|imagine)[s]?( moi)? (un[e]? |des )?(nouvelle[s]? |nouveau[x]? )?(association|combinaison|accord|duo|mariage)[s]?)\b/.test(t)
      && !/\b(rapporte|rapportent|rentable|rentables|marche le mieux|se vend|vend le mieux|le plus vendu|gagne le plus|rapporte le plus|plus de marge|meilleure marge|le plus rentable|cartonne|plus populaire|prefere|preferes)\b/.test(t)){
     const saison = _saisonDepuisTexte(t);
     return {intent:'query_suggestion_parfum', params:{saison}, critical:false, label:'Idées de parfums'};
@@ -34360,16 +34381,6 @@ function parseIntent(texte, ctx){
   }
 
   // ---- ANALYSE AVANCÉE (consultations) ----
-  // [v1343] ASSOCIATIONS DE PARFUMS : « quels parfums vont ensemble », « souvent achetés ensemble ».
-  // PLACÉE AVANT le top parfum, et l'ORDRE *EST* LE CORRECTIF (comme en v1330 pour « du mois de mai ») :
-  // « quels parfums se vendent ensemble » contient « parfum » + « vend », que la règle du top parfum
-  // capterait, et Ben recevrait un CLASSEMENT là où il demandait des ASSOCIATIONS. Un chiffre juste,
-  // à une autre question — le bug canonique de cette série.
-  if(/(ensemble|associ|combinaison|combiner|duo|paire|se marient?|vont bien|s'?accordent|co ?occurrence|panier)/.test(t)
-     && /\b(parfum[s]?|macaron[s]?|saveur[s]?|gout[s]?|client[s]?)\b/.test(t)){
-    return {intent:'query_associations', params:{}, critical:false,
-      label:'Parfums souvent achetés ensemble'};
-  }
   // TOP PARFUM : « quel est le parfum le plus vendu », « mon meilleur parfum », « quel parfum se vend
   // le plus depuis 6 mois ». Placé AVANT les tendances : « parfum » + superlatif → classement, pas tendance.
   if((/\b(parfum[s]?|macaron[s]?|saveur[s]?)\b/.test(t) || /\b(numero un|numero 1|mon top) en vente/.test(t) || /en ventes?\b/.test(t) || /\b(qu'?est ce qui|ce qui) se vend le (mieux|plus)\b/.test(t) || /\bqui (se vend|cartonne) le (mieux|plus)\b/.test(t))
@@ -40184,6 +40195,27 @@ function paniersClients(orders, opts){
       // Un don (0 €) n'est pas un choix d'achat : le client n'a rien arbitré.
       const estDon = (+o.montant || 0) <= 0;
       if(estDon){ rejets.dons++; return; }
+
+      // ────────────────────────────────────────────────────────────────────────
+      // [v1344 — DÉCISION DE BEN, GRAVÉE] LES COMMANDES NON PAYÉES SONT COMPTÉES,
+      // ET **NE SONT PAS DISTINGUÉES** DES COMMANDES SOLDÉES.
+      //
+      // NE « CORRIGE » PAS CECI EN CROYANT ALIGNER LES ASSOCIATIONS SUR LA COMPTA.
+      // Tout le reste de l'app raisonne en ENCAISSÉ (cash basis, v1331). Ici, non — et ce
+      // n'est ni un oubli ni une incohérence : UN CHOIX DE PARFUM ET UN ENCAISSEMENT
+      // MESURENT DEUX RÉALITÉS DIFFÉRENTES. Le client qui a composé « Café + Praliné » a
+      // exprimé cette préférence, que sa facture soit réglée ou non. Filtrer sur le paiement
+      // laisserait la COMPTABILITÉ corrompre une mesure COMPORTEMENTALE : on perdrait des
+      // choix réels pour une raison qui n'a rien à voir avec le comportement mesuré.
+      //
+      // On ne l'affiche même pas comme une réserve à l'écran : signaler « attention, des
+      // impayés sont inclus » laisserait croire que le chiffre est DÉGRADÉ par eux, alors
+      // qu'il n'a simplement rien à voir avec eux. Une inquiétude injustifiée est aussi
+      // trompeuse qu'un chiffre faux.
+      //
+      // RÈGLE GRAVÉE (v1344) : DEUX MESURES DE NATURES DIFFÉRENTES NE DOIVENT PAS S'ANNULER
+      // L'UNE L'AUTRE. Aligner par réflexe de cohérence, c'est détruire l'une au nom de l'autre.
+      // ────────────────────────────────────────────────────────────────────────
 
       const nSansParfum = +ln.sansParfum || 0;
       if(nSansParfum > 0) rejets.sansParfum += nSansParfum;      // COMPTÉ, mais jamais utilisé
