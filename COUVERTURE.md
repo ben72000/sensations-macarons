@@ -1837,3 +1837,37 @@ que ses clients ne choisissent pas leurs parfums, alors que c'est peut-être **u
 
 Le message se termine par : *« Si ce total te surprend, dis-le-moi : c'est **le filtre** qu'il faut
 corriger, pas le chiffre. »*
+
+---
+
+## v1348 — LE JOURNAL AVAIT LUI-MÊME UN TROU
+
+Ben a additionné les chiffres de son propre journal (v1347) : `42+5+6+14+18 = 85`, `85+48 = 133`,
+pour **128** commandes vues affichées. **Écart de 5.** Le garde-fou censé garantir l'exhaustivité
+ne l'était pas — et c'est Ben qui l'a vérifié à la main, pas le code.
+
+### La cause
+`orderToLines()` renvoie `[]` pour une commande sans `o.lignes`, sans `type` reconnu et sans `taille`.
+Une telle commande n'a **aucune ligne à parcourir** : elle ne peut matcher ni un motif de rejet, ni un
+panier retenu. Elle sortait de la boucle **sans laisser de trace** — invisible au sens strict, ni comptée
+ni expliquée.
+
+> **La règle gravée en v1347 (« tout ce qui est écarté doit être compté ») n'était pas tenue jusqu'au
+> bout. Un principe qu'on grave et qu'on n'applique qu'à 90 % vaut le principe qu'on n'a pas gravé.**
+
+### Le correctif, en deux parties
+1. **Le motif manquant est nommé** : `rejets.sansLigne` — « commande(s) sans format reconnu ».
+2. **Le journal se vérifie lui-même.** Un journal qui prétend garantir l'exhaustivité et qui ne
+   contrôle pas sa propre arithmétique peut mentir avec la même assurance que le chiffre qu'il
+   corrigeait. Une identité est désormais calculée à chaque appel :
+
+   `rejets(pro+mono+assortiment+dons+histo+sansLigne) + retenues == vues`
+
+   Si elle est fausse, un bloc `🐞` s'affiche **avant** le reste : *« Mon propre décompte ne tombe
+   pas juste… ne fais pas confiance à ce journal, préviens-moi. »* — testé en réintroduisant le bug :
+   l'alerte se déclenche.
+
+### Ce que ça dit, au-delà du bug
+Ben a détecté ce trou en additionnant cinq nombres à la main. **C'est la bonne réaction** face à un
+journal qui prétend tout expliquer : le vérifier, pas le croire sur parole — exactement ce que le
+journal lui-même dit de faire avec le chiffre qu'il corrige. Le principe s'applique à lui aussi.

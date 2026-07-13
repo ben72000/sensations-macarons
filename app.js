@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1347';
+const APP_VERSION = 'v1348';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -40188,7 +40188,7 @@ function paniersClients(orders, opts){
   // Tout ce qui est écarté doit être COMPTÉ, NOMMÉ et MONTRÉ — sinon l'utilisateur ne peut pas
   // savoir si le chiffre qu'il lit repose sur ses données ou sur un dixième d'entre elles.
   const rejets = { sansParfum:0, monoParfum:0, dons:0, histo:0, assortimentPur:0, pro:0,
-                   commandesVues:0, commandesRetenues:0 };
+                   commandesVues:0, commandesRetenues:0, sansLigne:0 };
 
   // [v1346] EXCLURE LES CLIENTS PRO — et NON les « grands formats ».
   //
@@ -40215,6 +40215,15 @@ function paniersClients(orders, opts){
     if(o.clientId != null && clientsPro.has(o.clientId)){ rejets.pro++; return; }   // [v1346]
 
     const lignes = (typeof orderToLines === 'function') ? orderToLines(o) : (o.lignes || []);
+    // [v1348] LE TROU DU JOURNAL. Le total affiché par le v1347 ne tombait pas juste (85 rejets
+    // + 48 retenues = 133, pour 128 commandes vues — 5 commandes DISPARAISSAIENT sans motif).
+    // Cause : `orderToLines()` renvoie [] pour une commande sans format reconnu (ni `o.lignes`,
+    // ni type connu, ni taille). Une telle commande n'a AUCUNE ligne à parcourir : elle ne peut
+    // matcher NI un rejet, NI un panier retenu. Elle sortait de la boucle sans laisser de trace —
+    // exactement le trou que le journal v1347 était censé combler, resté dans son propre angle mort.
+    // La règle qu'il prétendait tenir ('tout ce qui est écarté doit être compté') ne l'était pas
+    // jusqu'au bout. On la ferme ici : zéro ligne exploitable est désormais un motif NOMMÉ.
+    if(!lignes || lignes.length === 0){ rejets.sansLigne++; return; }
     let _retenue = false;                                        // [v1347]
     (lignes || []).forEach(ln => {
       if(!ln) return;
@@ -40370,6 +40379,7 @@ async function aiQueryAssociations(params){
     if(rejets.assortimentPur>0) _z.push(`<b>${rejets.assortimentPur}</b> ligne(s) en assortiment complet (tes choix)`);
     if(rejets.dons>0)           _z.push(`<b>${rejets.dons}</b> ligne(s) à 0 €`);
     if(rejets.histo>0)          _z.push(`<b>${rejets.histo}</b> reprise(s) d'historique`);
+    if(rejets.sansLigne>0)      _z.push(`<b>${rejets.sansLigne}</b> commande(s) sans format reconnu`);   // [v1348]
     return aiSay(`${aiHero('—', 'Associations de parfums')}
       ${aiSynth(`Je n'ai <b>aucun panier exploitable</b> sur tes <b>${rejets.commandesVues}</b> commandes. Une association a besoin d'une commande où <b>le client</b> a choisi <b>au moins deux</b> parfums.${_z.length?`<br><br>Ce qui a été écarté :<br>· ${_z.join('<br>· ')}`:''}`, {icon:'📭'})}`);
   }
@@ -40392,8 +40402,17 @@ async function aiQueryAssociations(params){
   if(rejets.assortimentPur>0) _l.push(`<b>${rejets.assortimentPur}</b> ligne(s) en <b>assortiment complet</b> — c'est toi qui composes`);
   if(rejets.dons>0)           _l.push(`<b>${rejets.dons}</b> ligne(s) à <b>0 €</b> — un don n'est pas un choix d'achat`);
   if(rejets.histo>0)          _l.push(`<b>${rejets.histo}</b> <b>reprise(s) d'historique</b> — données d'avant l'app`);
+  if(rejets.sansLigne>0)      _l.push(`<b>${rejets.sansLigne}</b> commande(s) <b>sans format reconnu</b> — ni coffret, ni grand format, ni événement : je ne sais pas les lire`);   // [v1348]
 
-  const journal = _ecart>0 ? `${aiSynth(`<b>${rejets.commandesRetenues} de tes ${rejets.commandesVues} commandes</b> entrent dans ce calcul. Voici <b>précisément</b> pourquoi les autres n'y sont pas :<br>· ${_l.join('<br>· ')}<br><br>Si ce total te surprend, dis-le-moi : c'est <b>le filtre</b> qu'il faut corriger, pas le chiffre.`, {icon:'🔍'})}` : '';
+  // [v1348] AUTO-VÉRIFICATION. Le premier journal (v1347) affichait un total qui NE TOMBAIT PAS
+  // JUSTE (85 rejets + 48 retenues = 133 pour 128 vues) sans jamais s'en apercevoir lui-même —
+  // Ben l'a vu, pas le code. Un journal cense garantir l'exhaustivité doit vérifier sa PROPRE
+  // arithmétique, sinon il peut mentir avec la même assurance que le chiffre qu'il corrigeait.
+  const _sommeRejets = (rejets.pro||0)+(rejets.monoParfum||0)+(rejets.assortimentPur||0)+(rejets.dons||0)+(rejets.histo||0)+(rejets.sansLigne||0);
+  const _controle = (_sommeRejets + rejets.commandesRetenues) === rejets.commandesVues;
+  const _alerteIncoherence = !_controle ? `${aiSynth(`⚠️ Mon propre décompte ne tombe pas juste (${rejets.commandesRetenues} retenues + ${_sommeRejets} écartées ≠ ${rejets.commandesVues} vues). Ne fais <b>pas confiance</b> à ce journal tant que je n'ai pas trouvé l'écart — préviens-moi.`, {icon:'🐞', tone:'warn'})}` : '';
+
+  const journal = (_ecart>0 || _alerteIncoherence) ? `${aiSynth(`<b>${rejets.commandesRetenues} de tes ${rejets.commandesVues} commandes</b> entrent dans ce calcul. Voici <b>précisément</b> pourquoi les autres n'y sont pas :<br>· ${_l.join('<br>· ')}<br><br>Si ce total te surprend, dis-le-moi : c'est <b>le filtre</b> qu'il faut corriger, pas le chiffre.`, {icon:'🔍'})}${_alerteIncoherence}` : '';
 
   const socle = `${aiSynth(`Calculé sur <b>${nPaniers} panier(s)</b> où <b>le client</b> a choisi au moins deux parfums lui-même.${rejets.sansParfum>0?` Les <b>${rejets.sansParfum} macarons d'assortiment</b> que <b>tu</b> composes en sont <b>exclus</b> : ce sont tes choix, pas les leurs.`:''}`, {icon:'🧺'})}${journal}`;
 

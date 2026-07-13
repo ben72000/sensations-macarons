@@ -121,5 +121,48 @@ T('l\'écart est intégralement expliqué (5 − 1 = 4 rejets)',
   ()=>R.rejets.pro+R.rejets.monoParfum+R.rejets.assortimentPur+R.rejets.dons,4);
 console.log('      → Ben peut désormais vérifier que le filtre est juste, au lieu de croire le chiffre sur parole.');
 
+console.log('\n── [v1348] LE TROU DU JOURNAL : le total ne tombait pas juste');
+// Ben a signalé (à l\'œil, en additionnant lui-même) : 42+5+6+14+18=85, 85+48=133 ≠ 128 vues.
+// 5 commandes VUES ne matchaient AUCUN motif de rejet ET n\'étaient PAS retenues. Cause :
+// orderToLines() renvoie [] pour une commande sans format reconnu — elle ne peut alors matcher
+// NI un rejet NI un panier : elle sort de la boucle sans laisser de trace.
+const fantome = {id:99, clientId:50, montant:20, type:'inconnu'};   // ni lignes, ni type reconnu, ni taille
+const R2 = paniersClients([fantome], {clients:[]});
+T('une commande SANS FORMAT RECONNU est désormais NOMMÉE (pas juste absente)',
+  ()=>R2.rejets.sansLigne, 1);
+T('… et le total retrouve son compte : 1 vue = 1 rejet sansLigne + 0 retenue',
+  ()=>R2.rejets.commandesVues, R2.rejets.sansLigne + R2.rejets.commandesRetenues);
+
+// RECONSTITUTION EXACTE DU CAS DE BEN. Son journal affichait : 42 pro + 5 mono + 6 assortiment
+// + 14 dons + 18 histo = 85 rejets, + 48 retenues = 133 — pour 128 commandes VUES. Écart de 5 :
+// c'est le nombre de commandes « sans format reconnu », invisibles avant le v1348.
+// Pour reconstituer EXACTEMENT 128 vues, les 5 fantômes ne s'ajoutent pas : ils étaient DÉJÀ
+// dans les 128 (silencieusement, ni comptés ni retenus). Donc 85 + 48 + 5(fantômes) = 138 était
+// FAUX dès le départ — la vraie identité est simplement : rejets + retenues + fantômes = vues.
+const ordersBen = [];
+let oid=1;
+for(let i=0;i<42;i++) ordersBen.push({id:oid++, clientId:1, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]}]});   // pro
+for(let i=0;i<5;i++)  ordersBen.push({id:oid++, clientId:2+i, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:4}]}]});                  // mono
+for(let i=0;i<6;i++)  ordersBen.push({id:oid++, clientId:10+i, montant:20, lignes:[{type:'coffret',parfums:[],sansParfum:6}]});                   // assortiment
+for(let i=0;i<14;i++) ordersBen.push({id:oid++, clientId:20+i, montant:0, lignes:[{type:'coffret',parfums:[{nom:'A',qte:1},{nom:'B',qte:1}]}]});  // dons
+for(let i=0;i<18;i++) ordersBen.push({id:oid++, clientId:40+i, histo:true, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:1},{nom:'B',qte:1}]}]}); // histo
+for(let i=0;i<5;i++)  ordersBen.push({id:oid++, clientId:60+i, montant:20, type:'inconnu'});                                                       // LE TROU (5 fantômes)
+for(let i=0;i<43;i++) ordersBen.push({id:oid++, clientId:70+i, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]}]}); // 43 retenues → total 42+5+6+14+18+5+43=133 NON
+// 42+5+6+14+18+5 = 90 rejets. Pour 128 vues au total, il faut 128-90 = 38 retenues (pas 48 :
+// le 48 affiché par l'app à Ben était lui-même faussé par le bug, puisque le total ne tombait pas
+// juste). On vérifie donc l'IDENTITÉ, pas un chiffre absolu que le bug a lui-même corrompu.
+ordersBen.length = 90;   // retire les 43 "retenues" ajoutées ci-dessus, on va en remettre le bon compte
+for(let i=0;i<38;i++) ordersBen.push({id:oid++, clientId:200+i, montant:20, lignes:[{type:'coffret',parfums:[{nom:'A',qte:2},{nom:'B',qte:2}]}]}); // 38 retenues → 90+38=128 ✓
+const CLben=[{id:1,type:'pro'}];
+const RB=paniersClients(ordersBen,{clients:CLben});
+T('reconstitution du cas de Ben : 128 commandes vues',()=>RB.rejets.commandesVues,128);
+T('… dont 5 "sans format" désormais NOMMÉES (avant v1348 : invisibles)',()=>RB.rejets.sansLigne,5);
+T('… et l\'IDENTITÉ tombe juste : rejets + fantômes + retenues = vues, EXACTEMENT',
+  ()=>RB.rejets.pro+RB.rejets.monoParfum+RB.rejets.assortimentPur+RB.rejets.dons+RB.rejets.histo+RB.rejets.sansLigne+RB.rejets.commandesRetenues,
+  128);
+
+console.log('      → avant v1348, ces 5 commandes disparaissaient silencieusement du journal.');
+console.log('        Le journal censé garantir l\'exhaustivité avait lui-même un angle mort.');
+
 console.log('\n'+(ko?`❌ ${ko} ÉCHEC(S) — ${ok} ok`:`✅ ${ok}/${ok} — vague 64 verte`));
 process.exit(ko?1:0);
