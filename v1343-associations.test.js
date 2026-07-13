@@ -70,5 +70,36 @@ const f=coOccurrenceParfums(paniersClients([P(20,['A','B']),P(21,['A','B'])]).pa
 T('paire vue 2 fois sur seuil 5 → marquée NON significative',()=>f.rows[0].significatif,false);
 T('… mais PAS supprimée : cacher le faible, c\'est nier son existence (v1337)',f.rows.length,1);
 
+console.log('\n── [v1346] LE CAS RÉEL DE BEN : le salon de thé (lift ×4,58 — et pourtant vide de sens)');
+// Ben a repéré à l'œil ce que le moteur ne voyait pas : Myrtille+Chocolat+Mangue n'est PAS une
+// affinité de goût, c'est SON salon de thé qui recommande toujours la même chose. Le lift corrige
+// la POPULARITÉ D'UN PARFUM ; il est AVEUGLE à la CONCENTRATION SUR UN CLIENT.
+const CL=[{id:1,nom:'Salon de thé',type:'pro'},{id:2,nom:'Particulier A'},{id:3,nom:'Particulier B'},{id:4,nom:'Particulier C'}];
+const salon=[];
+for(let i=0;i<17;i++) salon.push({id:100+i,clientId:1,montant:80,
+  lignes:[{type:'coffret',parfums:[{nom:'Myrtille',qte:5},{nom:'Chocolat',qte:5},{nom:'Mangue',qte:5}]}]});
+T('les 17 commandes du salon de thé sont EXCLUES (client pro)',
+  ()=>paniersClients(salon,{clients:CL}).paniers.length,0);
+T('… et comptées comme rejets pro (traçable, pas escamoté)',
+  ()=>paniersClients(salon,{clients:CL}).rejets.pro,17);
+
+// SANS le filtre pro (client non typé), le 2e garde-fou doit AUSSI attraper le cas.
+// Deux mécanismes indépendants : ceinture ET bretelles. Si Ben oublie de typer un client pro,
+// la concentration mono-client le rattrape quand même.
+const salonNonType=salon.map(o=>({...o,clientId:9}));
+const co=coOccurrenceParfums(paniersClients(salonNonType,{clients:[]}).paniers,{minPaniers:5});
+T('même NON typé pro : 17 paniers mais UN SEUL client → détecté',()=>co.rows[0].nClients,1);
+T('… donc marqué monoClient (une habitude, pas une tendance)',()=>co.rows[0].monoClient,true);
+T('… et DÉCLASSÉ malgré 17 paniers et un lift écrasant',()=>co.rows[0].significatif,false);
+console.log('      → le lift seul aurait laissé passer ×4,58. Il faut compter les CLIENTS, pas les commandes.');
+
+// Une VRAIE tendance : même paire, mais chez 3 clients différents → elle PASSE.
+const vraie=[];
+[2,3,4].forEach(cid=>{ for(let i=0;i<2;i++) vraie.push({id:200+cid*10+i,clientId:cid,montant:20,
+  lignes:[{type:'coffret',parfums:[{nom:'Cafe',qte:3},{nom:'Coco',qte:3}]}]}); });
+const cv=coOccurrenceParfums(paniersClients(vraie,{clients:CL}).paniers,{minPaniers:5});
+T('6 paniers chez 3 clients distincts → VRAIE tendance, retenue',()=>cv.rows[0].significatif,true);
+T('… avec ses 3 clients affichés',()=>cv.rows[0].nClients,3);
+
 console.log('\n'+(ko?`❌ ${ko} ÉCHEC(S) — ${ok} ok`:`✅ ${ok}/${ok} — vague 64 verte`));
 process.exit(ko?1:0);

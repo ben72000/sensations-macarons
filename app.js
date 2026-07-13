@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1345';
+const APP_VERSION = 'v1346';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -40179,11 +40179,30 @@ async function aiQueryRentabilite(params){
 function paniersClients(orders, opts){
   opts = opts || {};
   const paniers = [];
-  const rejets = { sansParfum:0, monoParfum:0, dons:0, histo:0, assortimentPur:0 };
+  const rejets = { sansParfum:0, monoParfum:0, dons:0, histo:0, assortimentPur:0, pro:0 };
+
+  // [v1346] EXCLURE LES CLIENTS PRO — et NON les « grands formats ».
+  //
+  // Ben a signalé que Myrtille framboise + Chocolat + Mangue passion (lift ×4,58 !) n'était PAS
+  // une affinité de goût : c'est son salon de thé qui recommande toujours les mêmes grands formats.
+  // Il a d'abord dit « les grands formats sont à 98 % des commandes pro »… « mais ça va changer ».
+  //
+  // FILTRER SUR LE FORMAT AURAIT ÉTÉ LE PIÈGE : la règle serait devenue fausse le jour où un
+  // particulier commande un grand format — et fausse EN SILENCE, en jetant de vrais choix clients.
+  // Une règle vraie « à 98 % aujourd'hui » est une règle qui pourrira à une date inconnue.
+  // On filtre donc sur ce qui porte réellement le biais : LE CLIENT (client.type contient 'pro').
+  //
+  // RÈGLE GRAVÉE (v1346) : FILTRER SUR LA CAUSE, JAMAIS SUR SON SYMPTÔME DU MOMENT.
+  // Le symptôme (le format) change ; la cause (un acheteur pro qui répète sa commande) reste.
+  const clientsPro = new Set();
+  (opts.clients || []).forEach(c => {
+    if(c && c.type && String(c.type).toLowerCase().includes('pro')) clientsPro.add(c.id);
+  });
 
   (orders || []).forEach(o => {
     if(!o) return;
     if(o.histo){ rejets.histo++; return; }                       // reprise : pas une vente observée ici
+    if(o.clientId != null && clientsPro.has(o.clientId)){ rejets.pro++; return; }   // [v1346]
 
     const lignes = (typeof orderToLines === 'function') ? orderToLines(o) : (o.lignes || []);
     (lignes || []).forEach(ln => {
@@ -40255,6 +40274,7 @@ function coOccurrenceParfums(paniers, opts){
   const nPaniers = (paniers || []).length;
   const compte = {};        // nom -> nb de paniers le contenant
   const paires = {};        // 'A||B' (trié) -> nb de paniers contenant les deux
+  const clientsDe = {};     // 'A||B' -> Set des clients distincts  [v1346]
 
   (paniers || []).forEach(p => {
     const noms = [...new Set(p.parfums.map(x => x.nom))].sort();   // dédoublonné : un panier compte 1
@@ -40263,6 +40283,13 @@ function coOccurrenceParfums(paniers, opts){
       for(let j = i + 1; j < noms.length; j++){
         const k = noms[i] + '||' + noms[j];
         paires[k] = (paires[k] || 0) + 1;
+        // [v1346] COMBIEN DE CLIENTS DISTINCTS soutiennent cette paire ?
+        // Le lift corrige la POPULARITÉ D'UN PARFUM, mais il est AVEUGLE à la CONCENTRATION
+        // SUR UN CLIENT. Un acheteur unique qui répète 17 fois la même commande fabrique une
+        // paire au lift écrasant — statistiquement irréfutable, et humainement vide de sens :
+        // elle ne dit rien des GOÛTS, elle décrit une ROUTINE. C'est exactement ce que Ben a
+        // repéré à l'œil nu sur son salon de thé, et que le moteur n'avait aucun moyen de voir.
+        (clientsDe[k] ||= new Set()).add(p.clientId != null ? p.clientId : ('anon:' + p.orderId));
       }
     }
   });
@@ -40290,11 +40317,17 @@ function coOccurrenceParfums(paniers, opts){
     const pAB = nPaniers > 0 ? ab / nPaniers : 0;
     const lift = (pA > 0 && pB > 0) ? Math.round(pAB / (pA * pB) * 100) / 100 : null;
 
+    const nClients = (clientsDe[k] ? clientsDe[k].size : 0);   // [v1346]
     return {
-      a, b, paniers: ab, nA: na, nB: nb, confAB, confBA, lift,
+      a, b, paniers: ab, nA: na, nB: nb, confAB, confBA, lift, nClients,
+      // [v1346] UNE PAIRE PORTÉE PAR UN SEUL CLIENT N'EST PAS UNE TENDANCE — c'est une habitude.
+      // On ne la SUPPRIME pas (cacher le faible, c'est nier son existence — v1337) : on la
+      // DÉCLASSE, et on dit pourquoi. Ben doit pouvoir la voir ET savoir qu'elle ne vaut rien
+      // comme signal de gamme.
+      monoClient: nClients <= 1,
       // Un chiffre sous le seuil n'est pas SUPPRIMÉ : il est MARQUÉ. Cacher les données
       // faibles, c'est laisser croire qu'elles n'existent pas (v1337 : l'incertitude se propage).
-      significatif: ab >= minPaniers
+      significatif: ab >= minPaniers && nClients >= (opts.minClients != null ? +opts.minClients : 3)
     };
   });
 
@@ -40307,8 +40340,9 @@ function coOccurrenceParfums(paniers, opts){
 // ---------------------------------------------------------------------------
 async function aiQueryAssociations(params){
   params = params || {};
-  const orders = await db.orders.toArray();
-  const { paniers, rejets } = paniersClients(orders);
+  const orders  = await db.orders.toArray();
+  const clients = await db.clients.toArray().catch(()=>[]);       // [v1346] pour exclure les pros
+  const { paniers, rejets } = paniersClients(orders, { clients });
 
   // AVANT TOUT CHIFFRE : ai-je de quoi parler ? La v1337 a gravé que l'absence de mesure
   // n'est pas un zéro. Ici, l'absence de paniers n'est pas « aucune affinité » : c'est
@@ -40325,7 +40359,7 @@ async function aiQueryAssociations(params){
   // est le chiffre le PLUS important de l'écran — plus que n'importe quel pourcentage. Un
   // « 68 % » sur 4 paniers a l'air d'une loi et n'est qu'un hasard. Ben doit voir COMBIEN de
   // paniers soutiennent ce qu'il lit AVANT de lire quoi que ce soit.
-  const socle = `${aiSynth(`Calculé sur <b>${nPaniers} panier(s)</b> où tu as laissé le client choisir au moins deux parfums.${rejets.sansParfum>0?` Les <b>${rejets.sansParfum} macarons d'assortiment</b> que <b>tu</b> composes sont <b>exclus</b> : ce sont tes choix, pas les leurs — les compter te renverrait tes propres décisions déguisées en préférences clients.`:''}`, {icon:'🧺'})}`;
+  const socle = `${aiSynth(`Calculé sur <b>${nPaniers} panier(s)</b> où tu as laissé le client choisir au moins deux parfums.${rejets.pro>0?` Les <b>${rejets.pro} commande(s) pro</b> sont <b>exclues</b> : un client qui recommande toujours la même chose fabrique des paires en béton qui ne disent rien des <b>goûts</b> — elles décrivent une <b>routine</b>.`:''}${rejets.sansParfum>0?` Les <b>${rejets.sansParfum} macarons d'assortiment</b> que <b>tu</b> composes sont <b>exclus</b> : ce sont tes choix, pas les leurs.`:''}`, {icon:'🧺'})}`;
 
   if(!forts.length){
     return aiSay(`${aiHero(String(nPaniers), 'Paniers analysés')}${socle}
@@ -40340,14 +40374,14 @@ async function aiQueryAssociations(params){
     const conf = sensAB ? r.confAB : r.confBA;
     const nX = sensAB ? r.nA : r.nB;
     return `<div class="sum-box"><span><b>${esc(x)}</b> + <b>${esc(y)}</b><br>
-      <span style="font-size:.76rem;color:#9a8a82">${conf}% de ceux qui prennent ${esc(x)} prennent aussi ${esc(y)} — sur ${nX} panier(s)</span></span>
+      <span style="font-size:.76rem;color:#9a8a82">${conf}% de ceux qui prennent ${esc(x)} prennent aussi ${esc(y)} — sur ${nX} panier(s), <b>${r.nClients} client(s)</b></span></span>
       <b>×${r.lift}</b></div>`;
   }).join('');
 
   return aiSay(`${aiHero(String(forts.length), 'Association(s) qui se détachent', {sub:`sur ${nPaniers} paniers`, color:'var(--bordeaux)'})}
     ${socle}
     ${li}
-    ${aiSynth(`Le <b>×</b> est le <b>lift</b> : au-delà de 1, les deux parfums s'attirent <b>vraiment</b>. À 1, ils sont simplement <b>populaires chacun de leur côté</b> — sans lui, ton parfum le plus vendu apparaîtrait marié avec tout, et tu « découvrirais » sa propre popularité.`, {icon:'🎯'})}`);
+    ${aiSynth(`Le <b>×</b> est le <b>lift</b> : au-delà de 1, les deux parfums s'attirent <b>vraiment</b>. À 1, ils sont simplement <b>populaires chacun de leur côté</b>.<br><br>Le <b>nombre de clients</b> compte autant : une paire vue 17 fois mais chez <b>un seul</b> client n'est pas une tendance, c'est <b>son habitude</b>. Je ne retiens que celles portées par <b>au moins 3 clients différents</b>.`, {icon:'🎯'})}`);
 }
 
 

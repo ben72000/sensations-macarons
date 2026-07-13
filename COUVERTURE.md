@@ -1765,3 +1765,54 @@ C'est exactement la règle de la v1337 — *un test qui recopie le code qu'il te
 propre cohérence* — enfreinte par celui qui l'a écrite. Le harnais **extrait** désormais les conditions
 réelles du fichier via `new Function()`. Et c'est seulement une fois fidèle qu'il a révélé le **vrai**
 trou ci-dessus.
+
+---
+
+## v1346 — LE SALON DE THÉ : quand un lift ×4,58 ne veut rien dire
+
+**Ben, en lisant ses associations :** *« Myrtille framboise et mangue passion et chocolat ne comptent
+pas, ce sont les grands formats commandés exclusivement par le salon de thé. »*
+
+Il a repéré **à l'œil nu** ce que le moteur n'avait aucun moyen de voir. Ces trois paires trônaient en
+tête avec des lifts de ×4,58, ×4,44, ×4,41 — **statistiquement irréfutables, et humainement vides de
+sens**. Elles ne mesuraient pas une affinité de goût : elles mesuraient **la routine d'un client
+unique**, répétée 17 fois.
+
+### L'angle mort du lift
+Le lift corrige la **popularité d'un parfum** (v1343). Il est **totalement aveugle à la concentration
+sur un client**. Un acheteur fidèle qui répète sa commande fabrique des paires en béton — et plus il
+est fidèle, plus le faux signal est fort. *Le garde-fou de la vague précédente avait lui-même un angle
+mort, et il a fallu l'œil de Ben pour le voir.*
+
+### Le piège que Ben a failli me faire tomber (et qu'il a signalé lui-même)
+Il demande d'exclure les pros, puis précise : *« c'est à 98 % des commandes pro… **mais ça va changer
+prochainement** »*.
+
+**Filtrer sur le FORMAT (`grand`) aurait été le piège.** La règle serait devenue fausse le jour où un
+particulier commande un grand format — et fausse **en silence**, en jetant de vrais choix clients hors
+de l'analyse sans rien signaler. Une règle vraie « à 98 % aujourd'hui » est une règle qui **pourrira à
+une date inconnue**.
+
+> **RÈGLE GRAVÉE (v1346) — FILTRER SUR LA CAUSE, JAMAIS SUR SON SYMPTÔME DU MOMENT.**
+> Le symptôme (le grand format) change ; la cause (un acheteur pro qui répète sa commande) reste.
+
+On filtre donc sur **`client.type` contient 'pro'** — qui existait déjà (ligne 16007).
+*Encore une règle écrite à 90 %, jamais branchée.*
+
+### Deux garde-fous INDÉPENDANTS (ceinture et bretelles)
+| Mécanisme | Ce qu'il attrape |
+|---|---|
+| **Exclusion des clients pro** | Le salon de thé, nommément |
+| **Comptage des clients distincts** | Le rattrape **même si Ben oublie de le typer pro** — et attrape aussi le *particulier* fidèle qui répète |
+
+Une paire portée par **moins de 3 clients différents** est **déclassée** (jamais supprimée — v1337) et
+le nombre de clients est **affiché à côté du lift**. « 17 paniers, 1 client » se lit désormais d'un coup d'œil.
+
+**Test sur le cas réel de Ben (23 verts) :** 17 commandes du salon → 0 panier retenu. Même **non typé
+pro**, la paire est marquée `monoClient` et déclassée **malgré son lift écrasant**. Une paire vue chez
+**3 clients** passe.
+
+### Ce qui reste, et qui est vrai
+Une fois le salon écarté : **Café + Coco citron vert (×4,2)**, **Nocciolata + Cannelle noisette
+(×2,88)**, **Nocciolata + Chocolat passion (×2,26)**. Nocciolata revient deux fois — un **pivot** de
+gamme. C'est une information exploitable ; les trois premières ne l'étaient pas.
