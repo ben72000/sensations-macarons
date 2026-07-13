@@ -1914,3 +1914,44 @@ correction** et constaté que le motif ajouté n'apparaissait toujours nulle par
 la seule façon dont ce bug pouvait être trouvé : **aucun test que j'avais écrit ne le couvrait**, parce
 que je ne l'avais pas encore identifié comme un bug distinct. Le garde-fou le plus fiable de cette
 série reste, et restera, Ben qui relit ce que l'app lui affiche.
+
+---
+
+## v1350 — VAGUE 65 : LE GÉNÉRATEUR DE COFFRETS
+
+Trois briques déjà mesurées (associations v1343-1349, rentabilité par parfum, temps de production
+mesuré par recette) — combinées en un **outil de scoring**, jamais un algorithme qui décide seul.
+
+### Ce que Ben a demandé, tenu au mot
+> *« Les deux, avec confirmation avant création. »* *« Je dois être capable de choisir un critère ou
+> deux ou trois. Combinés ou séparés. »*
+
+- **Suggestion d'abord, création jamais automatique** : `aiQueryGenererCoffret` propose ;
+  `aiConfirmerCreationCoffret` demande confirmation ; `aiExecuterCreationCoffret` n'écrit dans le
+  catalogue qu'après un second clic explicite. Trois étapes, jamais une seule.
+- **Critères modulables** : `{association, rentabilite, production}`, chacun activable/désactivable.
+  Un critère à `null` n'entre ni dans le score ni dans le calcul — et son absence est nommée à l'écran
+  (`criteresUtilises`), jamais silencieuse.
+
+### Le principe qui rend les poids de Ben SIGNIFIANTS
+Un lift de ×4 et une marge de 0,80 € ne sont pas comparables en valeur brute. Chaque critère est
+**normalisé sur [0,1]** avant combinaison, et les poids fournis sont **renormalisés pour sommer à 1**
+— Ben peut donner `{1,1}` ou `{50,50}`, seul le **ratio** compte (testé : score identique).
+
+### Le piège que v1337 avait déjà nommé, retrouvé ici
+Un parfum sans mesure de temps **fiable** (`mesureParRec[id].fiable === false`) est **exclu** du
+critère production — jamais noté à 0 (ce qui l'aurait fait passer pour « ultra-rapide à produire »).
+Le score se recalcule sur les critères où une donnée existe réellement, et se renormalise sur la
+**couverture effective** plutôt que de pénaliser une absence de mesure comme une mauvaise mesure.
+
+### Les gardes héritées, jamais relâchées
+- Seules les paires **significatives** (v1346 : seuil paniers ET clients) entrent dans le générateur.
+  Zéro paire significative + critère association actif → **erreur explicite**, jamais une liste vide
+  qui laisserait croire à une absence de goût client plutôt qu'à un manque de données.
+- Tous critères à 0 → erreur immédiate (« choisis au moins un critère »), pas un résultat vide muet.
+
+### L'ordre, encore (v1330, v1345, maintenant v1350)
+La règle de reconnaissance est placée **avant** associations et R&D. « Propose-moi un coffret
+rentable » contient « propose » (qui route vers la R&D en v1345) — sans cette priorité, la même
+capture qui a piégé Ben en v1343 se reproduisait, sous une forme nouvelle. Testé explicitement :
+12/12, dont la non-régression des deux autres intents.

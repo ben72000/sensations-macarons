@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1349';
+const APP_VERSION = 'v1350';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -34110,7 +34110,18 @@ function parseIntent(texte, ctx){
     else if(/\b(coffret|coffrets|grand format|nouveau produit|nouvelle gamme|gamme)\b/.test(t)) theme='gamme';
     return {intent:'query_conseil_ouvert', params:{theme}, critical:false, label:'Un avis sur ton idée'};
   }
-  // [v1345] ASSOCIATIONS DE PARFUMS — CE QUE LES CLIENTS ONT DÉJÀ CHOISI (une MESURE).
+  // [v1350] GÉNÉRATEUR DE COFFRETS : « propose-moi un coffret », « génère un coffret rentable »,
+  // « crée-moi un assortiment ». PLACÉE AVANT associations ET R&D, et l'ordre EST le correctif —
+  // encore (v1330, v1345) : « propose-moi un coffret rentable » contient à la fois "propose" (qui
+  // route vers la R&D en v1345) et pourrait sembler une simple association. C'est ni l'un ni
+  // l'autre : Ben demande une PROPOSITION STRUCTURÉE, avec critères, pas une idée de parfum isolé
+  // ni une simple mesure de ce qui existe déjà.
+  if(/\b(genere|generer|propose|composer?|creer?|construire|assemble[r]?)[s]?\b.*\b(coffret|assortiment|box|panier)[s]?\b/.test(t)
+     || /\bcoffret (rentable|ideal|optimal|a creer|a lancer)\b/.test(t)){
+    return {intent:'query_generer_coffret', params:{}, critical:false,
+      label:'Générateur de coffrets'};
+  }
+    // [v1345] ASSOCIATIONS DE PARFUMS — CE QUE LES CLIENTS ONT DÉJÀ CHOISI (une MESURE).
   //
   // PLACÉE ICI, ET LA POSITION *EST* LE CORRECTIF. En v1343 je l'avais mise juste avant
   // `query_top_parfum` — en vérifiant seulement ce qui venait APRÈS elle, jamais ce qui venait
@@ -40390,6 +40401,269 @@ function coOccurrenceParfums(paniers, opts){
 // ---------------------------------------------------------------------------
 // LA COMPÉTENCE COPILOTE. « quels parfums vont ensemble », « co-occurrence », « associations ».
 // ---------------------------------------------------------------------------
+// ════════════════════════════════════════════════════════════════════════════
+//  [v1350 — VAGUE 65] LE GÉNÉRATEUR DE COFFRETS
+//
+//  Ben : « je dois être capable de choisir un critère ou deux ou trois. Combinés ou séparés. »
+//  Pas un algorithme qui décide à sa place — un OUTIL DE SCORING dont Ben choisit les poids.
+//
+//  TROIS CRITÈRES, TROIS SOURCES DÉJÀ MESURÉES — RIEN DE NOUVEAU N'EST INVENTÉ :
+//   • ASSOCIATION : coOccurrenceParfums() (v1343-v1346) — lift + nombre de CLIENTS distincts.
+//   • RENTABILITÉ : analyzeFlavorProfitability().rows — margeUnit, tauxMarge, RÉELS (coûts FIFO
+//     actuels — même limite temporelle qu'ailleurs, jamais cachée).
+//   • PRODUCTION : mesureParRec[recipeId].minParMac — temps RÉEL mesuré par macaron. Un parfum
+//     'fiable:false' n'a PAS de mesure exploitable : il est exclu du critère PRODUCTION plutôt
+//     que noté sur une estimation qu'on ferait passer pour une mesure (v1337).
+//
+//  CE QUE CE MODULE NE FAIT JAMAIS :
+//   • Il ne crée AUCUN produit dans le catalogue de lui-même. Il propose ; Ben confirme.
+//   • Il ne mélange pas des parfums dont l'association n'atteint pas le seuil de signifiance
+//     (v1346 : minPaniers ET minClients) — sauf si Ben choisit EXPLICITEMENT de désactiver le
+//     critère association (auquel cas la proposition est un ASSEMBLAGE, pas une « tendance »,
+//     et le texte le dit).
+// ════════════════════════════════════════════════════════════════════════════
+
+// ---------------------------------------------------------------------------
+// LE SCORE COMBINÉ. Chaque critère est normalisé sur [0,1] AVANT combinaison — sinon un lift
+// de ×4 et une marge de 0,80 € ne sont pas comparables, et le critère à la plus grande échelle
+// écraserait silencieusement les autres. Normaliser, c'est rendre les poids de Ben SIGNIFIANTS :
+// sans ça, « 50 % association + 50 % rentabilité » ne voudrait rien dire de fiable.
+// ---------------------------------------------------------------------------
+function _normalise(valeurs){
+  const v = valeurs.filter(x => x != null && isFinite(x));
+  if(!v.length) return () => null;
+  const min = Math.min(...v), max = Math.max(...v);
+  if(max === min) return (x) => (x == null) ? null : 0.5;   // toutes égales : ex æquo, pas de biais
+  return (x) => (x == null || !isFinite(x)) ? null : (x - min) / (max - min);
+}
+
+// ---------------------------------------------------------------------------
+// GÉNÈRE DES PROPOSITIONS DE COFFRET à partir des paires d'association significatives (v1346),
+// étendues à des groupes de `taille` parfums en cherchant, pour chaque paire de base, les
+// parfums qui s'accordent le mieux avec LES DEUX déjà retenus (moyenne du lift aux deux membres).
+// C'est un algorithme glouton — pas une recherche exhaustive : au-delà de 4-5 parfums, le nombre
+// de combinaisons explose, et Ben ne demande pas l'optimum théorique, il demande une PISTE.
+//
+// `criteres` : { association: 0..1|null, rentabilite: 0..1|null, production: 0..1|null }
+// Un critère à `null` est DÉSACTIVÉ (n'entre pas dans le score, et son absence est dite).
+// Les poids fournis sont RENORMALISÉS pour sommer à 1 — Ben peut donner 2, 5, 100 : seul le
+// RATIO entre eux compte, jamais leur échelle absolue.
+// ---------------------------------------------------------------------------
+function genererPropositionsCoffret(opts){
+  opts = opts || {};
+  const { coOccurrence, flavorRows, mesureParRec, taille } = opts;
+  const criteresIn = opts.criteres || { association: 1, rentabilite: 1, production: 1 };
+  const tailleCible = taille || 6;
+
+  const actifs = Object.keys(criteresIn).filter(k => criteresIn[k] != null && +criteresIn[k] > 0);
+  if(!actifs.length) return { propositions: [], erreur: 'Aucun critère actif : choisis au moins association, rentabilité ou production.' };
+  const sommePoids = actifs.reduce((s,k) => s + (+criteresIn[k]), 0);
+  const poids = {}; actifs.forEach(k => { poids[k] = (+criteresIn[k]) / sommePoids; });   // renormalisé à somme = 1
+
+  // Paires SIGNIFICATIVES uniquement (v1346 : seuil paniers ET clients). Une paire en dessous
+  // du seuil n'est pas une base fiable pour construire une offre — elle n'a même pas franchi
+  // la barre de « ce n'est pas du hasard ».
+  const paires = (coOccurrence && coOccurrence.rows || []).filter(r => r.significatif);
+  if(actifs.includes('association') && !paires.length){
+    return { propositions: [], erreur: 'Aucune association assez solide pour construire un coffret sur ce critère. Baisse le poids "association" ou attends plus de données.' };
+  }
+
+  // Index rentabilité et production par NOM de parfum (les deux sources utilisent le nom recette).
+  const rentaByNom = {}; (flavorRows || []).forEach(r => { rentaByNom[r.nom] = r; });
+  const prodByNom = {};
+  (flavorRows || []).forEach(r => {
+    const m = mesureParRec && r.recipeId != null ? mesureParRec[r.recipeId] : null;
+    if(m && m.fiable && m.minParMac > 0) prodByNom[r.nom] = m.minParMac;   // sinon : PAS de valeur, jamais estimée
+  });
+
+  // Normalisateurs, un par critère, construits sur les valeurs RÉELLEMENT disponibles.
+  const normLift = _normalise(paires.map(p => p.lift));
+  const normMarge = _normalise(Object.values(rentaByNom).map(r => r.margeUnit).filter(x => x != null));
+  // Production : MOINS de minutes = MIEUX. On inverse après normalisation (1 - x) pour que
+  // le score aille dans le même sens que les deux autres (plus haut = plus désirable).
+  const normTemps = _normalise(Object.values(prodByNom));
+
+  // Score d'une PAIRE (a,b) : combine les critères actifs. Un critère dont l'un des deux
+  // parfums n'a pas de donnée (ex. pas de mesure de temps fiable) ne s'applique PAS à cette
+  // paire — le score se recalcule sur les critères restants plutôt que de pénaliser une absence
+  // de mesure comme si c'était une mauvaise mesure (encore v1337 : l'absence n'est pas un zéro).
+  function scorerPaire(p){
+    const parts = {}; let poidsUtilise = 0, score = 0;
+    if(poids.association != null && actifs.includes('association')){
+      const s = normLift(p.lift);
+      if(s != null){ parts.association = s; score += s * poids.association; poidsUtilise += poids.association; }
+    }
+    if(actifs.includes('rentabilite')){
+      const ra = rentaByNom[p.a], rb = rentaByNom[p.b];
+      const ma = ra ? normMarge(ra.margeUnit) : null, mb = rb ? normMarge(rb.margeUnit) : null;
+      const vals = [ma, mb].filter(x => x != null);
+      if(vals.length){ const s = vals.reduce((x,y)=>x+y,0) / vals.length;
+        parts.rentabilite = s; score += s * poids.rentabilite; poidsUtilise += poids.rentabilite; }
+    }
+    if(actifs.includes('production')){
+      const ta = prodByNom[p.a], tb = prodByNom[p.b];
+      const na = ta != null ? normTemps(ta) : null, nb = tb != null ? normTemps(tb) : null;
+      const vals = [na, nb].filter(x => x != null);
+      if(vals.length){ const s = 1 - (vals.reduce((x,y)=>x+y,0) / vals.length);   // inversé : moins de temps = mieux
+        parts.production = s; score += s * poids.production; poidsUtilise += poids.production; }
+    }
+    // Score RENORMALISÉ sur le poids effectivement utilisé — sinon une paire où seul un
+    // critère sur trois a une donnée serait injustement défavorisée face à une paire complète.
+    return { score: poidsUtilise > 0 ? score / poidsUtilise : 0, parts, couverture: poidsUtilise };
+  }
+
+  // On part de la meilleure paire, puis on ÉTEND gloutonnement jusqu'à `tailleCible` parfums,
+  // en ajoutant à chaque étape le parfum qui maximise le score MOYEN avec le groupe déjà formé.
+  const scored = paires.map(p => ({ ...p, ...scorerPaire(p) })).sort((x,y) => y.score - x.score);
+  const propositions = [];
+  const parfumsDejaUtilises = new Set();   // on évite qu'un même parfum domine toutes les propositions
+
+  for(const base of scored){
+    if(propositions.length >= 3) break;               // 3 pistes, pas 30 : Ben demande une piste, pas un rapport
+    if(parfumsDejaUtilises.has(base.a) || parfumsDejaUtilises.has(base.b)) continue;
+
+    let groupe = [base.a, base.b];
+    let scoreGroupe = base.score;
+    const detailCriteres = [base.parts];
+
+    while(groupe.length < tailleCible){
+      // Candidats : tout parfum lié à AU MOINS UN membre du groupe par une paire significative.
+      const candidats = paires.filter(p =>
+        (groupe.includes(p.a) && !groupe.includes(p.b)) || (groupe.includes(p.b) && !groupe.includes(p.a))
+      );
+      if(!candidats.length) break;   // aucune extension possible : le groupe reste tel quel
+
+      let meilleur = null, meilleurScore = -1, meilleurParts = null;
+      candidats.forEach(c => {
+        const nouveau = groupe.includes(c.a) ? c.b : c.a;
+        const s = scorerPaire(c);
+        if(s.score > meilleurScore){ meilleurScore = s.score; meilleur = nouveau; meilleurParts = s.parts; }
+      });
+      if(meilleur == null) break;
+      groupe.push(meilleur);
+      scoreGroupe = (scoreGroupe * (groupe.length - 1) + meilleurScore) / groupe.length;   // moyenne courante
+      detailCriteres.push(meilleurParts);
+    }
+
+    groupe.forEach(n => parfumsDejaUtilises.add(n));
+
+    // Agrégats du groupe, pour l'affichage : marge totale estimée, temps total estimé, effectif
+    // client minimal (le maillon le plus faible du groupe — une seule paire fragile fragilise tout).
+    const margeTotale = groupe.reduce((s,n) => s + (rentaByNom[n] ? (rentaByNom[n].margeUnit||0) : 0), 0);
+    const clientsMin = Math.min(...groupe.map(n => {
+      const ps = paires.filter(p => p.a===n || p.b===n);
+      return ps.length ? Math.max(...ps.map(p=>p.nClients)) : 0;
+    }));
+
+    propositions.push({
+      parfums: groupe,
+      score: Math.round(scoreGroupe * 100) / 100,
+      margeUnitTotale: money2(margeTotale),
+      clientsAppui: clientsMin,
+      criteresUtilises: actifs,
+      poids
+    });
+  }
+
+  return { propositions, erreur: null };
+}
+
+
+// ---------------------------------------------------------------------------
+// [v1350] LA COMPÉTENCE COPILOTE. « propose-moi un coffret », « génère un coffret rentable ».
+// Ben choisit ses critères (association / rentabilité / production), seuls ou combinés.
+// Produit une SUGGESTION à lire — la création réelle en produit catalogue passe par une
+// CONFIRMATION explicite (aiConfirmerCreationCoffret), jamais automatique.
+// ---------------------------------------------------------------------------
+async function aiQueryGenererCoffret(params){
+  params = params || {};
+  const orders  = await db.orders.toArray();
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const { paniers } = paniersClients(orders, { clients });
+  if(!paniers.length){
+    return aiSay(`${aiHero('—', 'Générateur de coffrets')}${aiSynth(`Je n'ai pas assez de paniers exploitables pour proposer un coffret fondé sur tes données. Vérifie d'abord « quels parfums vont ensemble » pour voir où ça bloque.`, {icon:'📭'})}`);
+  }
+  const co = coOccurrenceParfums(paniers, {});
+
+  const recipes = await db.recipes.toArray();
+  const recipeItems = await db.recipeItems.toArray();
+  const lots = await db.lots.toArray().catch(()=>[]);
+  const mats = await db.materials.toArray().catch(()=>[]);
+  const markets = await db.markets.toArray().catch(()=>[]);
+  const marketMoves = await (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]);
+  const productions = await db.productions.toArray().catch(()=>[]);
+  const settings = getSettings();
+  let flavorRows = [], mesureParRec = null;
+  try{
+    const A = analyzeFlavorProfitability({recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings});
+    flavorRows = A.rows || [];
+  }catch(e){ swallow(e,'aiQueryGenererCoffret analyse'); }
+
+  // Critères : par défaut les trois, à poids égal — mais Ben peut en isoler un ou deux.
+  // params.criteres = {association, rentabilite, production} avec des poids ou null.
+  const criteres = params.criteres || { association:1, rentabilite:1, production:1 };
+  const taille = params.taille || 6;
+
+  const { propositions, erreur } = genererPropositionsCoffret({
+    coOccurrence: co, flavorRows, mesureParRec, taille, criteres
+  });
+
+  if(erreur){
+    return aiSay(`${aiHero('—', 'Générateur de coffrets')}${aiSynth(erreur, {icon:'⚠️', tone:'warn'})}`);
+  }
+
+  const _labelCriteres = { association:'associations mesurées', rentabilite:'rentabilité', production:'temps de production' };
+  const actifsLabel = Object.keys(criteres).filter(k=>criteres[k]!=null && +criteres[k]>0).map(k=>_labelCriteres[k]||k).join(' + ');
+
+  const blocs = propositions.map((p,i) => {
+    const idx = i+1;
+    return `<div class="sum-box" style="flex-direction:column;align-items:flex-start;gap:4px">
+      <div style="display:flex;justify-content:space-between;width:100%">
+        <b>Coffret ${idx} — ${esc(p.parfums.join(' + '))}</b>
+        <span style="color:#9a8a82;font-size:.78rem">score ${p.score}</span>
+      </div>
+      <span style="font-size:.82rem;color:#9a8a82">Marge estimée ${euro(p.margeUnitTotale)}/coffret · appuyé par ${p.clientsAppui} client(s) minimum</span>
+      <button onclick="aiConfirmerCreationCoffret(${idx-1})" style="margin-top:4px;padding:6px 14px;border-radius:8px;background:var(--bordeaux);color:#fff;border:none;font-size:.82rem">Créer ce coffret dans le catalogue</button>
+    </div>`;
+  }).join('');
+
+  window._propositionsCoffretEnCours = propositions;   // pour la confirmation
+
+  return aiSay(`${aiHero(String(propositions.length), 'Proposition(s) de coffret', {sub:`basé sur ${actifsLabel}`, color:'var(--bordeaux)'})}
+    ${aiSynth(`Calculé sur <b>${paniers.length} paniers</b> exploitables, uniquement des associations qui passent le seuil de signifiance (5 paniers, 3 clients).`, {icon:'🧺'})}
+    ${blocs}
+    ${aiSynth(`Rien n'est créé automatiquement. Touche <b>« Créer ce coffret »</b> pour l'ajouter au catalogue — je te demanderai confirmation une dernière fois.`, {icon:'🎯'})}`);
+}
+
+// [v1350] CONFIRMATION EXPLICITE avant toute création de produit. Ben a demandé « les deux,
+// avec confirmation avant création » — ce n'est pas négociable : le générateur SUGGÈRE, il ne
+// DÉCIDE jamais à la place de Ben.
+async function aiConfirmerCreationCoffret(index){
+  const props = window._propositionsCoffretEnCours || [];
+  const p = props[index];
+  if(!p) return aiSay(aiSynth(`Cette proposition n'est plus disponible — relance la génération.`, {icon:'⚠️'}));
+  return aiSay(`${aiSynth(`Créer le coffret <b>${esc(p.parfums.join(' + '))}</b> dans ton catalogue (taille ${p.parfums.length >= 6 ? 6 : p.parfums.length}) ?`, {icon:'❓'})}
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button onclick="aiExecuterCreationCoffret(${index})" style="padding:8px 16px;border-radius:8px;background:var(--bordeaux);color:#fff;border:none">Oui, créer</button>
+      <button onclick="aiSay(aiSynth('Annulé — rien n\'a été créé.', {icon:'✔️'}))" style="padding:8px 16px;border-radius:8px;background:#eee;border:none">Annuler</button>
+    </div>`);
+}
+
+async function aiExecuterCreationCoffret(index){
+  const props = window._propositionsCoffretEnCours || [];
+  const p = props[index];
+  if(!p) return aiSay(aiSynth(`Cette proposition n'est plus disponible.`, {icon:'⚠️'}));
+  try{
+    const taille = p.parfums.length >= 6 ? 6 : p.parfums.length;
+    await db.products.add({ taille, prix: BOX_PRICES && BOX_PRICES[taille] || 0, actif:true,
+      nomSuggere: p.parfums.join(' + '), origineCoffretGenere: true });
+    return aiSay(aiSynth(`Coffret <b>${esc(p.parfums.join(' + '))}</b> créé dans ton catalogue.`, {icon:'✅'}));
+  }catch(e){
+    swallow(e,'aiExecuterCreationCoffret');
+    return aiSay(aiSynth(`La création a échoué — rien n'a été ajouté.`, {icon:'⚠️'}));
+  }
+}
+
 async function aiQueryAssociations(params){
   params = params || {};
   const orders  = await db.orders.toArray();
