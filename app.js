@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1336';
-const APP_MAJ = 'LE CANAL OUBLIÉ : TOUT TON CA MARCHÉ MANQUAIT. Tu m’as montré le copilote annonçant 552 € pour juin, et ta compta 1 068 € — MÊME MOIS, MÊME PÉRIODE. Or la v1331 devait précisément éliminer ce genre d’écart. Ma correction était donc INCOMPLÈTE, et c’est le pire des aveuglements : celui qui se croit guéri. BUG 1 — LES MARCHÉS N’ÉTAIENT COMPTÉS NULLE PART. La fonction qui ventile ton CA par mois n’itérait que sur les COMMANDES. Or tes ventes de marché ne passent JAMAIS par cette table : elles sont encaissées en direct, à la caisse. Tout un canal de vente manquait donc — les 516 € d’écart, c’était exactement ça. Et le graphe « Coûts & prix » lisait la même fonction : ta marge brute y était sous-estimée d’autant. LA LEÇON, et elle est rude : j’avais fondé ma « vérité unique » sur une fonction qui oubliait elle-même un canal. UNE SOURCE UNIQUE QUI EST INCOMPLÈTE RESTE UNE SOURCE UNIQUE — ET RESTE FAUSSE. Unifier n’est pas vérifier. BUG 2 — TON FOND DE CAISSE ÉTAIT COMPTÉ COMME DU CHIFFRE D’AFFAIRES. Ta compta retire depuis toujours le fond de caisse des espèces : c’est l’argent que tu mets TOI-MÊME dans la caisse le matin pour rendre la monnaie. Ce n’est pas une vente. Mais le calcul de ton revenu horaire sommait les espèces BRUTES — il comptait ta propre monnaie comme du CA, et surestimait ton revenu de l’heure. La règle du CA d’un marché n’est plus écrite qu’À UN SEUL ENDROIT : (espèces − fond de caisse, borné à 0) + carte + autre, et seulement pour les marchés CLOS. Une règle écrite à deux endroits finit toujours par diverger — c’est exactement ce qui s’est passé. ENFIN, LE TEST QUI AURAIT DÛ EXISTER. La v1331 comparait déjà le copilote à la compta… mais son jeu de données NE CONTENAIT AUCUN MARCHÉ. Elle validait donc une égalité partielle, et c’est pour ça qu’elle n’a rien vu. Un test qui ne contient pas le cas ne le protège pas : il donne seulement l’illusion qu’il le fait. Désormais, l’égalité copilote = compta = courbes est vérifiée MARCHÉS COMPRIS, au centime. Un mois sans commande mais avec un marché EXISTE enfin (avant, il disparaissait). Suite : 1271 → 1301 assertions vertes.';
+const APP_VERSION = 'v1337';
+const APP_MAJ = 'TU AS VU JUSTE, ET AVANT MOI. « Si seul le CA est entré, on retourne une vente de macarons à zéro même avec un CA » — exactement. Et en creusant, c’était encore pire que ça. LA VRAIE CAUSE : en v1336, j’ai parsé les mouvements de marché moi-même et INVENTÉ un type « embarque »… qui n’existe nulle part dans ta base. Le type réellement stocké s’appelle « sortie ». Les macarons de tes marchés valaient donc TOUJOURS zéro — avec ou sans mouvements saisis. Et mon test partageait la même erreur, donc il passait au vert : UN TEST QUI PARTAGE L’ERREUR DU CODE NE VAUT RIEN, il ne valide que sa propre cohérence. C’était précisément la duplication non prouvée que je m’étais interdite, et que j’avais moi-même déclarée en angle mort à la version précédente. LA CORRECTION : je ne relis plus les mouvements dans mon coin. Une SEULE fonction sait lire un mouvement de marché — celle qui sert déjà ton écran marché. Les deux chemins ne peuvent plus diverger. ET TON CAS PRÉCIS : quand tu saisis le sorti et le rentré, le delta donne la vente au macaron près. Quand tu ne saisis que la caisse, l’app ne dit plus « 0 macaron ». ZÉRO N’EST PAS UNE MESURE — C’EST UNE AFFIRMATION. Dire « 0 macaron » quand tu as encaissé 516 €, ce n’est pas « je ne sais pas », c’est « tu n’as rien vendu ». C’est le même mensonge que le « 50 € / 0 macaron » de la v1331, réapparu dans l’autre canal. DÉSORMAIS l’app te dit franchement : « ce total de macarons est INCOMPLET — 1 marché a encaissé 516 € sans que tu aies saisi les quantités. Je connais l’argent, pas les macarons. Saisis le sorti et le rentré : le delta donne la vente au macaron près. » La quantité inconnue vaut désormais « null » dans les données, surtout pas 0 — et l’incertitude REMONTE jusqu’au chiffre affiché, au lieu de se perdre en route. Ton CA, lui, reste juste : l’argent est connu, ce sont les macarons qui ne le sont pas. Suite : 1301 → 1323 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -4176,25 +4176,58 @@ function caMarcheEncaisse(mk){
 
 // PURE. Le CA marché d'un mois (clé AAAA-MM), avec les macarons écoulés.
 // Un marché est encaissé le JOUR MÊME : aucun prorata, contrairement aux commandes.
+//
+// [v1337] ZÉRO N'EST PAS UNE MESURE — c'est une AFFIRMATION.
+// Benjamin l'a repéré avant moi : « si seul le CA est entré, on retourne une vente de macarons à
+// zéro même avec un CA ». Exact. Les quantités vendues sur un marché se déduisent du DELTA
+// (embarqué − retours − dons − pertes). Sans mouvements saisis, l'embarqué vaut 0… et la vente
+// aussi. L'app affichait donc « 516 € et 0 macaron » — ce qui n'est pas « je ne sais pas », mais
+// « tu n'as rien vendu ». C'est le MÊME mensonge que le « 50 € / 0 macaron » de la v1331, réapparu
+// dans l'autre canal. On ne dit plus 0 : on dit NON MESURÉ, et on le chiffre en euros.
+//
+// [v1337] On s'appuie désormais sur `marketTotals` — la fonction qui sert DÉJÀ l'écran marché —
+// au lieu de recalculer le delta dans notre coin. La vague 57 avait laissé cette duplication non
+// prouvée en angle mort déclaré : c'est exactement ainsi que naissent les divergences. Bonus :
+// marketTotals déduit déjà le fond de caisse, donc les deux chemins ne peuvent plus diverger.
 function caMarchesDuMois(markets, moves, ym){
-  const res = { ca: 0, vendu: 0, nbMarches: 0, detail: [] };
+  const res = {
+    ca: 0, vendu: 0, nbMarches: 0, detail: [],
+    // Ce qui n'est PAS mesuré, dit franchement plutôt que compté zéro :
+    nbNonMesures: 0,      // marchés avec du CA mais aucun mouvement saisi
+    caNonMesure: 0,       // … et le CA correspondant
+    macaronsComplets: true // false dès qu'un marché a du CA sans quantités
+  };
   (markets || []).forEach(mk => {
     if(!mk || mk.statut !== 'clos') return;
     if(ym && (marcheDate(mk) || '').slice(0, 7) !== ym) return;
-    const ca = caMarcheEncaisse(mk);
-    // Macarons réellement écoulés : embarqué − retours − dons − pertes.
-    let embarque = 0, sorties = 0;
-    (moves || []).forEach(mv => {
-      if(!mv || mv.marketId !== mk.id) return;
-      const q = +mv.qte || 0;
-      if(mv.type === 'embarque') embarque += q;
-      else if(mv.type === 'retour' || mv.type === 'don' || mv.type === 'perte') sorties += q;
-    });
-    const vendu = Math.max(0, round3(embarque - sorties));
+
+    const mvs = (moves || []).filter(mv => mv && mv.marketId === mk.id);
+    // On lit les mouvements avec `marketLineSummary` — LE MÊME résumeur que marketTotals utilise.
+    // C'est là qu'était mon erreur de v1336 : j'avais parsé les mouvements moi-même et INVENTÉ un
+    // type 'embarque' qui n'existe pas (le type stocké est 'sortie'). Les macarons des marchés
+    // valaient donc TOUJOURS zéro. Et mon test partageait la même erreur, donc il passait au vert.
+    // On ne re-parse plus rien : une seule fonction sait lire un mouvement de marché.
+    // (On n'appelle pas marketTotals directement : elle traîne toute la chaîne des coûts — FIFO,
+    // emballage, déplacement — dont on n'a aucun besoin ici, et qui rendrait ce calcul intestable.)
+    const lignes = marketLineSummary(mvs) || [];
+    const embarque = lignes.reduce((a, l) => a + (+l.sortie || 0), 0);
+    const vendu    = lignes.reduce((a, l) => a + (+l.vendu  || 0), 0);   // même formule que marketTotals
+    const ca = caMarcheEncaisse(mk);   // même règle que computeAccounting ET marketTotals
+
     res.ca = money2(res.ca + ca);
-    res.vendu = round3(res.vendu + vendu);
     res.nbMarches++;
-    if(ca > 0 || vendu > 0) res.detail.push({ label: mk.nom || 'Marché', encaisse: ca, macarons: vendu });
+
+    // RIEN D'EMBARQUÉ SAISI, MAIS DU CA ENCAISSÉ → la quantité est INCONNUE, pas nulle.
+    if(embarque <= 0 && ca > 0){
+      res.nbNonMesures++;
+      res.caNonMesure = money2(res.caNonMesure + ca);
+      res.macaronsComplets = false;
+      res.detail.push({ label: mk.nom || 'Marché', encaisse: ca, macarons: null, mesure: false });
+      return;   // on n'ajoute AUCUN macaron : on ne sait pas, et on ne l'invente pas
+    }
+
+    res.vendu = round3(res.vendu + vendu);
+    if(ca > 0 || vendu > 0) res.detail.push({ label: mk.nom || 'Marché', encaisse: ca, macarons: vendu, mesure: true });
   });
   return res;
 }
@@ -40986,7 +41019,14 @@ function caMoisEncaisse(orders, ym, toLines, markets, moves){
   res.nbPaiements += MK.nbMarches;        // un marché clos = un encaissement
   res.caMarches = MK.ca;                  // exposé à part : traçabilité (commandes vs marchés)
   res.nbMarches = MK.nbMarches;
-  MK.detail.forEach(d => res.detail.push({ label: '⛺ ' + d.label, encaisse: d.encaisse, part: 100, macarons: d.macarons }));
+  // [v1337] L'INCERTITUDE SE PROPAGE. Si un marché a du CA sans quantités saisies, le total de
+  // macarons du mois est INCOMPLET. Le taire reviendrait à présenter un chiffre partiel comme un
+  // chiffre complet — le plus discret des mensonges, et le plus tenace.
+  res.macaronsComplets = MK.macaronsComplets;
+  res.nbMarchesNonMesures = MK.nbNonMesures;
+  res.caMarcheNonMesure = MK.caNonMesure;
+  MK.detail.forEach(d => res.detail.push({ label: '⛺ ' + d.label, encaisse: d.encaisse, part: 100,
+                                           macarons: d.macarons, mesure: d.mesure }));
 
   res.ecart = money2(res.ca - res.ancienCa);
   res.detail.sort((a, b) => b.encaisse - a.encaisse);
@@ -41062,6 +41102,14 @@ async function aiQueryRevenue(params){
              <b>date de commande</b> et je comptais le <b>montant total</b>, même si l'argent n'était pas encore rentré.
              Je compte maintenant ce que tu as <b>réellement encaissé ce mois-là</b> — la même règle que ta compta et ton tableau de bord.
            </div>` : '';
+      // [v1337] Un marché encaissé SANS quantités saisies : on ne présente pas un total partiel
+      // comme un total complet. On dit ce qui manque, et ce que ça vaut en euros.
+      const _nonMesureTxt = (E.nbMarchesNonMesures > 0)
+        ? `<div style="margin-top:8px;padding:9px 12px;background:#fdecea;border-radius:8px;font-size:.78rem;color:#6a5a52;line-height:1.55">
+             ⚠️ <b>Ce total de macarons est INCOMPLET.</b> ${E.nbMarchesNonMesures} marché${E.nbMarchesNonMesures>1?'s ont':' a'} encaissé <b>${euro(E.caMarcheNonMesure)}</b> sans que tu aies saisi les quantités embarquées et rentrées.
+             Je connais l'argent, pas les macarons — et je préfère te le dire plutôt que d'afficher un zéro qui laisserait croire que tu n'as rien vendu.<br>
+             <span style="color:#9a8a82">Saisis le <b>sorti</b> et le <b>rentré</b> de ce marché : le delta donne la vente au macaron près.</span>
+           </div>` : '';
       const _prestaTxt = (E.caPrestation > 0)
         ? `<div style="margin-top:8px;font-size:.78rem;color:#6a5a52">💡 Dont <b>${euro(E.caPrestation)}</b> d'encaissements <b>sans macaron</b> (prestations, acomptes) — c'est normal, mais ça explique un CA avec peu ou pas de macarons.</div>` : '';
 
@@ -41070,8 +41118,9 @@ async function aiQueryRevenue(params){
           ${aiSynth(`Soit ${euro(E.ca)} réellement encaissés sur la période.`, {icon:'🍬'})}`);
       }
       return aiSay(`${aiHero(euro(E.ca), `Chiffre d'affaires — ${libelleMois}`, {color:'var(--vert,#3f7d52)'})}
-        ${aiSynth(`${qty(E.macaronsStd)} macarons écoulés${E.macaronsGf>0?` (+ ${qty(E.macaronsGf)} grand format${E.macaronsGf>1?'s':''})`:''}, sur ${E.nbPaiements} encaissement${E.nbPaiements>1?'s':''}.`, {icon:'💰'})}
+        ${aiSynth(`${qty(E.macaronsStd)} macarons écoulés${E.macaronsComplets===false?' <b>au moins</b>':''}${E.macaronsGf>0?` (+ ${qty(E.macaronsGf)} grand format${E.macaronsGf>1?'s':''})`:''}, sur ${E.nbPaiements} encaissement${E.nbPaiements>1?'s':''}.${E.macaronsComplets===false?' Ce compte est incomplet — voir ci-dessous.':''}`, {icon:'💰'})}
         ${_ecartTxt}
+        ${_nonMesureTxt}
         ${_prestaTxt}
         ${E.detail.length?aiDetails(E.detail.map(d=>`<div class="sum-box"><span>${esc(d.label)}${d.part<100?` <span style="color:#9a8a82">(${d.part}% encaissé)</span>`:''}</span><b>${euro(d.encaisse)}</b></div>`).join(''), 'Le détail des encaissements'):''}
         ${aiCleLecture('CA <b>réellement encaissé</b> sur le mois — pas ce qu\'il te reste après charges.', {calcul:'Chaque paiement est daté sur le mois où l\'argent est rentré (et non sur la date de commande). Les macarons suivent le même prorata : une commande encaissée à moitié n\'apporte que la moitié de ses macarons.', voisins:[{label:'💰 Net dans la poche', ask:'mon net en poche'},{label:'💸 Ce qu\'on me doit', ask:'qui me doit de l\'argent'}]})}`);

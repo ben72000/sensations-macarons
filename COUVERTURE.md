@@ -10,6 +10,78 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-13 — Vague 58 : ZÉRO N'EST PAS UNE MESURE  (v1336 → **v1337**)
+
+**Nature** : BUG signalé par **Benjamin**, et **il l'a vu avant nous** :
+
+> « Si seul le CA est entré, on retourne une vente de macarons à zéro même avec un CA. »
+
+Exact. Et en creusant, **c'était encore pire**.
+
+### La vraie cause : un type de mouvement INVENTÉ
+En v1336, `caMarchesDuMois` **parsait les mouvements elle-même** et testait `mv.type === 'embarque'`.
+**Ce type n'existe nulle part dans la base.** Le type réellement stocké est **`'sortie'`**.
+
+**Les macarons des marchés valaient donc TOUJOURS zéro** — avec ou sans mouvements saisis.
+Et **le test partageait la même erreur** (ses fixtures utilisaient `'embarque'`), donc **il passait
+au vert**.
+
+> **UN TEST QUI PARTAGE L'ERREUR DU CODE NE VAUT RIEN : il ne valide que sa propre cohérence.**
+
+C'était **précisément la duplication non prouvée** que la vague 52 s'interdisait (bloc E) — et que
+nous avions **nous-mêmes déclarée en angle mort** à la vague 57. Déclarer un angle mort ne le
+neutralise pas.
+
+*Correctif* : on ne re-parse plus rien. `caMarchesDuMois` passe par **`marketLineSummary`** — **le
+même résumeur que `marketTotals`**. Une seule fonction sait lire un mouvement de marché ; les deux
+chemins ne peuvent plus diverger.
+(On n'appelle pas `marketTotals` directement : elle traîne toute la chaîne des coûts — FIFO,
+emballage, déplacement — dont ce calcul n'a aucun besoin, et qui le rendrait intestable.)
+
+*Angle mort levé* : `marketTotals` **déduit bien** le fond de caisse — vérifié. Les trois chemins
+(compta, marketTotals, `caMarcheEncaisse`) appliquent désormais la même règle.
+
+### Le cas de Benjamin : zéro n'est pas « je ne sais pas »
+Les quantités vendues se déduisent du **delta** (sorti − retours − dons − pertes). Sans mouvements
+saisis, le sorti vaut 0… et la vente aussi.
+
+> **ZÉRO N'EST PAS UNE MESURE — C'EST UNE AFFIRMATION.** Dire « 0 macaron » quand 516 € ont été
+> encaissés ne dit pas *« je ne sais pas »*, mais *« tu n'as rien vendu »*.
+> C'est le **même mensonge** que le « 50 € / 0 macaron » de la v1331, réapparu dans **l'autre canal**.
+
+*Correctif* : un marché avec du CA mais **aucun mouvement** est marqué **NON MESURÉ**.
+- La quantité vaut **`null`** (inconnue), **jamais 0**.
+- `macaronsComplets: false`, `nbNonMesures`, `caNonMesure` : l'incertitude est **chiffrée en euros**.
+- **Elle REMONTE** jusqu'au chiffre du copilote (`caMoisEncaisse`) : taire l'incomplétude reviendrait
+  à présenter un total partiel comme un total complet — *le plus discret des mensonges, et le plus
+  tenace*.
+- L'écran le dit : « ce total est **incomplet** — 1 marché a encaissé 516 € sans quantités saisies.
+  Je connais l'argent, pas les macarons. Saisis le **sorti** et le **rentré** : le delta donne la
+  vente au macaron près. »
+
+Le **CA reste juste** : l'argent est connu, ce sont les macarons qui ne le sont pas.
+
+**Ajouté** (`canal-oublie.test.js` : 30 → **52 assertions**) :
+- **G** — le cas signalé : CA sans mouvements → 0 macaron ajouté, `null` dans le détail,
+  `macaronsComplets: false`, et l'incertitude **remonte** jusqu'à `caMoisEncaisse`.
+- **H — le vocabulaire des mouvements.** **H3** prouve que le type `'embarque'` inventé ne remonte
+  **rien** (les macarons valaient toujours 0). **H4/H5** : `caMarchesDuMois` passe par
+  `marketLineSummary` et **ne teste plus aucun type elle-même**.
+
+**Total couvert** : 1301 → **1323 assertions**.
+
+**Angles morts connus (déclarés)** :
+- `computeStats().global.ca` (le « CA total » de la vue globale) reste sur la base « commandes
+  uniquement, date de commande, montant total » : le **total** ne coïncide toujours pas avec la somme
+  des mois. **Non résolu depuis la vague 57.**
+- Aucune **estimation** des macarons non mesurés n'est proposée (on pourrait diviser le CA par un
+  prix moyen). Choix délibéré : un chiffre estimé présenté à côté d'un chiffre mesuré finit toujours
+  par être lu comme mesuré. Mieux vaut le vide que le plausible.
+- Le même bug de vocabulaire peut exister ailleurs : **aucun audit systématique** des `mv.type ===`
+  n'a été fait dans le reste du fichier.
+
+---
+
 ## 2026-07-13 — Vague 57 : LE CANAL OUBLIÉ  (v1335 → **v1336**)
 
 **Nature** : BUG DE PRODUCTION, remonté par Benjamin (deux captures).

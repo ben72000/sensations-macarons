@@ -48,6 +48,11 @@ function buildModule(){
     ${extractFunction('paiementsDe')}
     // [v1336] Les MARCHES entrent dans le CA : ils ne passent jamais par la table orders.
     ${extractConstLine('marcheDate')}
+    const swallow = () => {};
+    const addMoney = (...a) => Math.round(a.reduce((x,y)=>x+(+y||0),0)*100)/100;
+    ${extractConstLine('addQty')}
+    ${extractConstLine('subQty')}
+    ${extractFunction('marketLineSummary')}
     ${extractFunction('caMarcheEncaisse')}
     ${extractFunction('caMarchesDuMois')}
     ${extractFunction('caEncaisseParMois')}
