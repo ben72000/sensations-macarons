@@ -10,6 +10,130 @@ morts » — un angle mort déclaré est surveillable ; un angle mort tu est un 
 
 ---
 
+## 2026-07-12 — Vague 55 : CELLES QUI AVOUAIENT SAVENT MAINTENANT  (v1333 → **v1334**)
+
+**Nature** : solde de l'angle mort déclaré en vague 54.
+
+La v1333 a posé la règle : *« une compétence qui ne sait pas filtrer par mois le DIT, au lieu
+d'ignorer le paramètre en silence »*. C'était honnête — **mais ce n'était pas résolu**, et nous
+l'avions écrit noir sur blanc dans nos propres angles morts.
+
+> **L'AVEU N'EST QU'UNE ÉTAPE, PAS UNE DESTINATION.**
+
+Les trois compétences qui avouaient apprennent ici à faire :
+
+| Compétence | Le bug |
+|---|---|
+| `aiQueryCharges` | le mois était **codé en dur** (le mois courant) |
+| `aiQueryGaspillage` | agrégeait **tous** les marchés depuis toujours, sans notion de période |
+| `aiQueryBilanMarche` | prenait **toujours** le dernier marché, quel que soit le mois demandé |
+
+**Ajouté** (`mois-partout.test.js`, 39 assertions) :
+- `marcheDate` — la date d'un marché, **règle unique** (elle était recopiée à deux endroits).
+- `marchesDuMois` / `gaspillageMarches` — pures.
+
+**RÈGLES FIGÉES** :
+- **A — un mouvement de marché (don, perte, retour) n'a pas de date propre** : il est daté par le
+  **marché** auquel il appartient. Dater autrement inventerait une chronologie.
+- **B — LA DISTINCTION CAPITALE, cœur de la vague** : *« aucun marché ce mois-là » n'est PAS « aucun
+  gaspillage »*. Le premier est une **absence de données**, le second une **performance**. Les
+  confondre reviendrait à afficher « aucun gaspillage, bravo ! » pour un mois où Benjamin n'a
+  simplement **rien vendu**.
+  Le test D5 le prouve : les deux cas donnent le **même total (0)** — seul `nbMarches` les
+  distingue. **Sans ce compteur, ils seraient indiscernables.**
+- **C — un RETOUR n'est PAS du gaspillage** : l'invendu est récupéré, il repart au stock. Seuls les
+  dons et les pertes sortent définitivement.
+- **D — si plusieurs marchés ont eu lieu dans le mois demandé, on le DIT.** Ne pas signaler qu'on a
+  choisi, c'est laisser croire qu'il n'y avait rien d'autre : **un mensonge par omission.**
+
+**Autres vérifications** : le gros don de juin **ne fuit pas** dans le bilan de mai (C7 — c'est tout
+l'objet du filtrage) ; traçabilité mai + juin = l'historique complet (C11) ; sans mois, le
+comportement d'origine est **intact** (C9).
+
+**INVARIANT ÉTENDU** (la vague 54 le vérifiait sur 3 intentions, il porte maintenant sur **toutes**) :
+aucune compétence ne peut être à la fois dans `AI_INTENTS_MOIS` et dans `AI_INTENTS_MOIS_ATTENDU` —
+*elle sait, ou elle avoue. Pas les deux.*
+**Six** compétences honorent désormais un mois nommé, contre trois.
+
+**Total couvert** : 1198 → **1237 assertions**.
+
+**Angles morts connus (déclarés)** :
+- Il reste **cinq** compétences qui avouent : rentabilité, top parfum, panier moyen, seuil de
+  rentabilité, revenu horaire. Les trois dernières sont des **calculs sur fenêtre glissante** — les
+  filtrer par mois demanderait de repenser leur période de référence, pas juste d'ajouter un filtre.
+- Toujours **aucune plage** : « de mars à juin », « le 1er trimestre », « l'an dernier ».
+- Le bilan marché d'un mois à plusieurs marchés montre le **plus récent** et signale les autres,
+  mais ne sait pas encore les **agréger** (« mon bilan marché de mai » = les deux marchés cumulés).
+
+---
+
+## 2026-07-12 — Vague 54 : UNE SEULE VÉRITÉ, ET AUCUN PARAMÈTRE PERDU  (v1332 → **v1333**)
+
+**Nature** : deux dettes soldées — toutes deux **déclarées par nous-mêmes** aux vagues précédentes.
+Une dette qu'on s'inflige soi-même est la plus urgente à payer.
+
+### Dette 1 — les graphiques contredisaient le copilote  *(angle mort déclaré en vague 52)*
+La v1331 a basculé le copilote sur la **vérité comptable** (le mois où l'argent rentre). Mais les
+**courbes** des écrans stats sont restées sur l'ancienne base (mois de la **commande**, montant
+**total**). L'app affichait donc **deux CA différents pour le même mois, sur deux écrans**.
+On avait corrigé un écran et laissé l'autre le contredire — **exactement la maladie qu'on prétend
+soigner**.
+
+*Correctif* : `serieMensuelleEncaisse`, bâtie sur `caMoisEncaisse` (v1331, déjà testée).
+**On ne recrée SURTOUT PAS une troisième vérité — on réutilise celle qui existe.** C'est tout le
+principe, et le bloc B l'assert : la courbe doit coïncider **au centime** avec le copilote *et* avec
+la compta.
+Basculés : les **courbes** (CA + macarons), la **détection d'anomalies** (un mois « atypique »
+calculé sur la mauvaise base signalerait de fausses alertes et en raterait de vraies), et la
+**comparaison mois vs mois**.
+
+*Non basculé, mais ÉTIQUETÉ* : le graphe « macarons **par client** ». La date de **commande** y est
+la **bonne** base — c'est un comportement d'ACHAT, pas de la trésorerie. Il porte désormais son
+libellé explicite (« par date de commande ») : *un chiffre juste sur une base non dite finit
+toujours par ressembler à une erreur.*
+
+### Dette 2 — le paramètre perdu en silence  *(angle mort déclaré en vague 51)*
+La v1330 a appris le mois nommé au CA… **et à lui seul**. « Mon net en poche en mai » renvoyait
+**juillet** : `aiQueryNetPoche` codait `monthKey(today())` **en dur** et ignorait purement ses
+paramètres. Même bug, même gravité que la v1330 : l'intention est BONNE, le **paramètre** se perd,
+et l'app affiche un chiffre juste **à une autre question**.
+
+**DEUX RÈGLES FIGÉES** :
+1. Le mois nommé est **injecté** dans toutes les compétences qui savent le traiter
+   (`AI_INTENTS_MOIS` : CA, net en poche, URSSAF — les deux dernières câblées ici).
+2. Celles qui **ne savent pas** le traiter ne l'ignorent plus en silence : elles le **DISENT**
+   (`AI_INTENTS_MOIS_ATTENDU`). *Un paramètre donné par Benjamin et jeté sans un mot, c'est le pire
+   des deux mondes.*
+
+Le **stock** est délibérément absent des **deux** listes : c'est une **photo du présent**. Prétendre
+pouvoir le filtrer par mois — ou s'en excuser — serait une autre forme de mensonge.
+
+**Ajouté** (`une-seule-verite.test.js`, 26 assertions) :
+- **A** — la série mensuelle : les mois affichés sont ceux où l'**argent est rentré**. Macarons au
+  **même prorata** que les euros (sinon les deux courbes d'un même graphique raconteraient deux
+  histoires). Traçabilité : la somme des mois = tout l'encaissement, ni plus ni moins.
+- **B** — **une seule source** : la courbe = le copilote = la compta, au centime, mois par mois.
+- **C — GARDE-FOU STRUCTUREL** : interdit le **motif** — toute lecture d'un CA mensuel depuis
+  `computeStats` (base « date de commande ») dans du code d'affichage fait échouer la suite,
+  y compris celles pas encore écrites. Les **écritures** (`+=`, construction des tables) restent
+  légitimes : ce qu'on interdit, c'est de **lire** cette base pour afficher un CA.
+  *Éprouvé* : l'ancienne base réintroduite → le garde-fou mord, avec le numéro de ligne exact.
+- **D** — les deux tables de routage. **INVARIANT** : une compétence ne peut pas être dans les deux
+  (elle sait, ou elle avoue — pas les deux).
+- **E** — `aiQueryNetPoche` lit enfin `params.periode` ; `aiQueryUrssaf` affiche le mois demandé.
+
+**Total couvert** : 1172 → **1198 assertions**.
+
+**Angles morts connus (déclarés)** :
+- `AI_INTENTS_MOIS` ne compte que **3 compétences**. Les autres (charges, gaspillage, bilan marché,
+  rentabilité…) **avouent** ne pas savoir filtrer par mois — c'est honnête, mais ce n'est pas
+  résolu. Chacune demande un vrai travail de filtrage temporel.
+- Toujours **aucune plage** : « de mars à juin », « le 1er trimestre », « l'an dernier ».
+- La série mensuelle **recalcule** `caMoisEncaisse` pour chaque mois : correct, mais O(mois ×
+  commandes). Sans effet à cette échelle ; à surveiller si l'historique grossit beaucoup.
+
+---
+
 ## 2026-07-12 — Vague 53 : « PRÉSENT » N'EST PAS « PLAUSIBLE »  (v1331 → **v1332**)
 
 **Nature** : BUG DE PRODUCTION + bug de RÉDACTION, remontés par Benjamin :

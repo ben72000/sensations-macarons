@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1332';
-const APP_MAJ = 'TON POINT MORT ÉTAIT ILLISIBLE — ET SOUS-ESTIMÉ. Deux problèmes, et le second est le plus grave. (1) L’EXPLICATION ÉTAIT INCOMPRÉHENSIBLE, et c’est ma faute. J’affichais « 78 macarons » en haut, puis « l’app t’annonçait 31 macarons, le vrai chiffre est 47 macarons plus haut ». Les chiffres étaient justes (31 + 47 = 78) mais il fallait faire l’addition de tête, et « le vrai chiffre est 47 » se lit comme si 47 ÉTAIT le résultat. Une explication qui exige un calcul mental a raté sa mission. C’est réécrit : « Avant, l’app t’annonçait 31. La réalité, c’est 78 (soit 47 de plus). » (2) LE VRAI PROBLÈME : TON POINT MORT EST PROBABLEMENT BIEN PLUS HAUT QUE 78. Ton coût de structure ne compte que 40,60 € par mois de temps hors-atelier — soit environ 3 h 20 par mois. Pour TOUT ton administratif, tes courses, tes déplacements, ta prospection et ta prépa marché réunis, ça fait moins de 50 minutes par semaine. C’est manifestement sous-pointé. Or l’app déclarait ce calcul « fiable » dès qu’UNE SEULE session était pointée : elle te présentait un point mort « tout payé » qui reposait en réalité sur presque rien. UN CHIFFRE BÂTI SUR UNE MESURE DÉRISOIRE N’EST PAS FIABLE — IL EST JUSTE PRÉSENT. Confondre les deux, c’est fabriquer exactement la fausse confiance que cette série traque depuis le début. L’app distingue désormais « présent » de « plausible », et t’avertit franchement quand tu passes sous 8 h par mois. ET SURTOUT, ELLE TE DONNE LE TAUX QUI COMPTE : chaque heure hors-atelier que tu ne pointes pas escamote environ 12 macarons de ton point mort. Tu peux donc faire le calcul toi-même : si tu passes réellement 15 h par mois au lieu des 3 h 20 pointées, ton vrai point mort tourne autour de 220 macarons, pas 78. Je ne l’affiche pas comme un fait — je te donne le TAUX exact, l’estimation de tes heures n’appartient qu’à toi. C’est le contraire d’un chiffre inventé. Suite : 1158 → 1172 assertions vertes.';
+const APP_VERSION = 'v1334';
+const APP_MAJ = 'CELLES QUI AVOUAIENT SAVENT MAINTENANT. En v1333, j’ai posé la règle : une compétence qui ne sait pas filtrer par mois te le DIT, au lieu d’ignorer ta demande en silence. C’était honnête… mais ce n’était PAS résolu, et je l’avais écrit noir sur blanc. L’AVEU N’EST QU’UNE ÉTAPE, PAS UNE DESTINATION. Les trois compétences qui avouaient savent désormais faire. TES CHARGES : le mois était codé EN DUR (le mois courant) — « mes charges de mai » te répondait juillet. TON GASPILLAGE : il agrégeait TOUS tes marchés depuis toujours, sans aucune notion de période. TON BILAN MARCHÉ : il prenait TOUJOURS le dernier marché, quel que soit le mois demandé. Les trois filtrent maintenant. TROIS PRINCIPES FIGÉS AU PASSAGE. (1) Un don ou une perte n’a pas de date propre : il est daté par le MARCHÉ où il a eu lieu. Dater autrement inventerait une chronologie. (2) LA DISTINCTION LA PLUS IMPORTANTE : « aucun marché ce mois-là » n’est PAS « aucun gaspillage ». Le premier est une ABSENCE DE DONNÉES, le second une PERFORMANCE. Les confondre reviendrait à te féliciter (« aucun gaspillage, bravo ! ») pour un mois où tu n’as simplement rien vendu. L’app compte donc les marchés tenus, et te dit franchement : « tu n’as tenu aucun marché en avril — ce n’est pas un bon score, c’est une absence de données. » (3) Un RETOUR n’est PAS du gaspillage : l’invendu est récupéré, il repart au stock. Seuls les dons et les pertes sortent définitivement. Enfin, si tu as tenu PLUSIEURS marchés dans le mois demandé, l’app te le signale au lieu de te montrer un bilan en laissant croire qu’il n’y avait rien d’autre — ne pas dire qu’on a choisi, c’est mentir par omission. Six compétences honorent désormais un mois nommé, contre trois. Suite : 1198 → 1237 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -23079,10 +23079,15 @@ function analyzeClients(R, orders){
 // ---- ANALYSE D'ANOMALIES ----
 // 1) Mois de vente atypiques (z-score sur le CA mensuel)
 // 2) Incohérences production / ventes / stock
-function analyzeAnomalies(R){
-  const months=_monthsRange(Object.keys(R.global.parMois));
-  const caSerie=months.map(m=>(R.global.parMois[m]||{}).ca||0);
-  const mac=months.map(m=>(R.global.parMois[m]||{}).macarons||0);
+// [v1333] Les anomalies de CA mensuel se détectent sur l'ENCAISSEMENT (la vérité comptable), et
+// non sur la date de commande. Un mois « atypique » calculé sur la mauvaise base signalerait de
+// fausses alertes — et en raterait de vraies.
+// `serie` est optionnel : sans lui, on retombe sur l'ancienne base (aucun appelant ne casse).
+function analyzeAnomalies(R, serie){
+  const src = (serie && serie.parMois) ? serie.parMois : R.global.parMois;
+  const months=_monthsRange(Object.keys(src));
+  const caSerie=months.map(m=>(src[m]||{}).ca||0);
+  const mac=months.map(m=>(src[m]||{}).macarons||0);
   const m=_mean(caSerie), sd=_std(caSerie);
   const outliers=[];
   months.forEach((mo,i)=>{
@@ -23809,12 +23814,15 @@ async function renderStats(){
   // pour éviter toute logique parallèle — la compta reste la source de vérité.
   let bilan=[]; try{ const A=await computeAccounting(); bilan=(A.serie||[]).slice().sort((a,b)=>(b.mois||'').localeCompare(a.mois||'')); }catch(e){swallow(e,'renderStats')}
   const G = R.global;
-  const moisKeys = Object.keys(G.parMois).sort();
+  // [v1333] Les courbes passent sur la VÉRITÉ COMPTABLE (mois d'encaissement) — la même que le
+  // copilote et le tableau de bord. Avant, elles montraient un CA différent pour le même mois.
+  const _SE = serieMensuelleEncaisse(orders, orderToLines);
+  const moisKeys = _SE.mois;
   const fmtMois = k => { const [y,m]=k.split('-'); return ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'][(+m||1)-1]+' '+(y||'').slice(2); };
 
   // graphe CA mensuel
-  const caSerie={label:'CA', color:'#3f7d52', points:moisKeys.map(k=>({x:k,y:G.parMois[k].ca}))};
-  const macSerie={label:'Macarons', color:'#AA7C39', points:moisKeys.map(k=>({x:k,y:G.parMois[k].macarons}))};
+  const caSerie={label:'CA encaissé', color:'#3f7d52', points:moisKeys.map(k=>({x:k,y:_SE.parMois[k].ca}))};
+  const macSerie={label:'Macarons', color:'#AA7C39', points:moisKeys.map(k=>({x:k,y:_SE.parMois[k].macarons}))};
   const caChart = moisKeys.length ? lineChart([caSerie],{xlabel:fmtMois, ylabel:'€'}) : '<p class="note">Pas encore de données mensuelles.</p>';
   const macChart = moisKeys.length ? lineChart([macSerie],{xlabel:fmtMois}) : '';
 
@@ -23826,7 +23834,11 @@ async function renderStats(){
   if(statClientSel && R.parClient[statClientSel]){
     const C=R.parClient[statClientSel];
     const cMois=Object.keys(C.parMois).sort();
-    const cChart = cMois.length ? lineChart([{label:'Macarons', color:'#AA7C39', points:cMois.map(k=>({x:k,y:C.parMois[k].macarons}))}],{xlabel:fmtMois}) : '<p class="note">—</p>';
+    // [v1333] Ce graphe montre les macarons COMMANDÉS par ce client, mois par mois : c'est son
+    // comportement d'ACHAT, pas sa trésorerie. La date de COMMANDE est donc la bonne base ici —
+    // on ne la bascule PAS. Mais on l'ÉTIQUETTE, pour qu'elle ne contredise plus rien en silence :
+    // un chiffre juste sur une base non dite finit toujours par ressembler à une erreur.
+    const cChart = cMois.length ? lineChart([{label:'Macarons commandés (par date de commande)', color:'#AA7C39', points:cMois.map(k=>({x:k,y:C.parMois[k].macarons}))}],{xlabel:fmtMois}) : '<p class="note">—</p>';
     clientBlock=`
      <div class="panel"><h2>Consommation par parfum — ${esc(C.nom)}</h2>${statBars(C.parfums)}</div>
      <div class="panel"><h2>Préférences par produit — ${esc(C.nom)}</h2>${statBars(C.produits)}</div>
@@ -32281,7 +32293,7 @@ async function renderAnalyse(){
      ${A.all.filter(c=>c.parfumFavori).length?A.all.filter(c=>c.parfumFavori).slice(0,10).map(prefLine).join(''):'<p class="note">—</p>'}</div>`;
 
   // --- ANOMALIES ---
-  const AN=analyzeAnomalies(R);
+  const AN=analyzeAnomalies(R, serieMensuelleEncaisse(orders, orderToLines));   // [v1333] base encaissement
   const anoBlock=`
    <div class="panel"><h2>Détection d'anomalies <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— CA mensuel</span></h2>
      <div class="sum-box"><span>CA mensuel moyen</span><b>${euro(AN.moyenneCA)}</b></div>
@@ -37830,6 +37842,35 @@ function smSkills(filtre){
 }
 try{ if(typeof window!=='undefined'){ window.smWhy=smWhy; window.smSkills=smSkills; } }catch(_){}
 
+// ============================================================================
+//  [v1333] LE PARAMÈTRE PERDU EN SILENCE — la leçon de la v1330, généralisée.
+// ----------------------------------------------------------------------------
+//  La v1330 a appris le mois nommé au CA… et à lui seul. « Mon net en poche en mai » renvoyait
+//  donc juillet (aiQueryNetPoche codait le mois courant EN DUR et ignorait ses paramètres).
+//  Même bug, même gravité : l'intention est BONNE, le paramètre se perd, et l'app affiche un
+//  chiffre juste À UNE AUTRE QUESTION — sans jamais dire qu'elle n'a pas tenu compte du mois.
+//
+//  DEUX RÈGLES, désormais :
+//   1. Le mois nommé est injecté dans TOUTES les compétences qui savent le traiter.
+//   2. Celles qui NE savent PAS le traiter ne l'ignorent plus en silence : elles le DISENT.
+//      Un paramètre donné par Benjamin et jeté sans un mot, c'est le pire des deux mondes.
+// ============================================================================
+
+// Les compétences qui HONORENT un mois nommé (elles lisent params.periode = 'AAAA-MM').
+const AI_INTENTS_MOIS = new Set(['query_revenue', 'query_net_poche', 'query_urssaf',
+                                 'query_charges', 'query_gaspillage', 'query_bilan_marche']);   // [v1334]
+
+// Les compétences où préciser un mois a du SENS, mais qu'on ne sait pas encore filtrer.
+// Liste EXPLICITE (et non « tout le reste ») : discipline conservatrice de la v1327 — on préfère
+// une alerte manquante à une alerte injustifiée. Le stock, par exemple, est une PHOTO du présent :
+// il n'y a rien à filtrer, et prétendre le contraire serait une autre forme de mensonge.
+// [v1334] charges, gaspillage et bilan marché en sont SORTIS : ils savent faire, désormais.
+// L'aveu n'était qu'une étape, pas une destination.
+const AI_INTENTS_MOIS_ATTENDU = new Set([
+  'query_rentabilite', 'query_top_parfum', 'query_panier_moyen',
+  'query_seuil_rentabilite', 'query_revenu_horaire'
+]);
+
 async function _aiDispatch(r, txt, _ctx){
   // [ASSIST-PLUS] journal d'usage (habitudes) + fallback intelligent sur incompréhension.
   try{ if(r && r.intent) aiUsageLog(r.intent, txt); }catch(e){swallow(e,'_aiDispatch')}
@@ -37857,6 +37898,24 @@ async function _aiDispatch(r, txt, _ctx){
     }
   }catch(e){swallow(e,'_aiDispatch ambigu')}
   try{ if(!_ambigu) aiJournalAjoute(txt, r && r.intent, false); }catch(e){swallow(e,'_aiDispatch journal')}
+
+  // [v1333] LE MOIS NOMMÉ, POUR TOUTES LES COMPÉTENCES — et jamais jeté en silence.
+  try{
+    if(r && r.intent && r.intent !== 'unknown' && !r.critical){
+      const _mn = _aiMoisNomme(aiCorrigeFautes(aiNormalize(txt || '')));
+      if(_mn){
+        r.params = r.params || {};
+        if(AI_INTENTS_MOIS.has(r.intent)){
+          // La compétence sait faire : on lui passe le mois (sans écraser une période déjà résolue).
+          if(r.params.periode == null) r.params.periode = _mn.cle;
+        } else if(AI_INTENTS_MOIS_ATTENDU.has(r.intent)){
+          // La compétence NE sait PAS filtrer par mois. On le DIT, au lieu de répondre un chiffre
+          // juste à une autre question (c'était exactement le bug de la v1330).
+          aiSay(`${aiSynth(`Tu as précisé <b>${esc(monthLabel(_mn.cle))}</b>, mais je ne sais pas encore filtrer cette réponse par mois. Le chiffre ci-dessous porte donc sur ma période habituelle — j'aime mieux te le dire que de te laisser croire le contraire.`, {icon:'⚠️', tone:'warn'})}`);
+        }
+      }
+    }
+  }catch(e){ swallow(e,'_aiDispatch mois'); }
 
   if(r && r.intent==='unknown'){
     try{ if(aiRepondreSuggestions(txt)) return; }catch(e){swallow(e,'_aiDispatch')}
@@ -38947,8 +39006,11 @@ async function aiQueryUrssaf(params){
   params = params || {};
   const d = new Date();
   if(params.periode==='moisDernier') d.setMonth(d.getMonth()-1);
-  const ym = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
-  const libelle = params.periode==='moisDernier' ? 'le mois dernier' : 'ce mois-ci';
+  let ym = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  let libelle = params.periode==='moisDernier' ? 'le mois dernier' : 'ce mois-ci';
+  // [FIX v1333] Mois NOMMÉ (« mes cotisations de mai ») : l'URSSAF ne connaissait que « le mois
+  // dernier ». Le mois arrive déjà résolu en clé AAAA-MM par _aiMoisNomme (pure, testée).
+  if(/^\d{4}-\d{2}$/.test(params.periode||'')){ ym = params.periode; libelle = monthLabel(ym); }
   let B;
   try{ B = await computeMonthlyBilan(ym); }catch(e){ console.error('aiQueryUrssaf',e); return aiSay(`<p class="note">Impossible de calculer les cotisations (données comptables incomplètes).</p>`); }
   if(!B || B.caTotal<=0){
@@ -39364,7 +39426,11 @@ async function aiQueryCompareMois(){
   const cle=(d)=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
   const d0=new Date(); const d1=new Date(); d1.setMonth(d1.getMonth()-1);
   const m0=cle(d0), m1=cle(d1);
-  const M0=R.global.parMois[m0]||{ca:0,macaronsStd:0}, M1=R.global.parMois[m1]||{ca:0,macaronsStd:0};
+  // [v1333] Comparaison mois vs mois sur l'ENCAISSEMENT : comparer deux mois sur la date de
+  // commande alors que le CA affiché ailleurs est sur l'encaissement produirait deux verdicts
+  // contradictoires pour la même question.
+  const _SEc = serieMensuelleEncaisse(orders, orderToLines);
+  const M0=_SEc.parMois[m0]||{ca:0,macaronsStd:0}, M1=_SEc.parMois[m1]||{ca:0,macaronsStd:0};
   // [FIX v1318] On compare le mois en cours à la MÊME AVANCÉE du mois précédent, pas à son total.
   const cmp = _basePeriodeComparable(M1.ca||0, d0);
   const baseM1 = cmp.base;
@@ -39874,14 +39940,61 @@ async function aiQueryClient(params){
 // [V942] LA PROCHAINE LIVRAISON à venir, tous clients confondus. Réutilise les helpers de aiQueryDelivery
 // (_orderRefDate, normStatus, daysTo) pour rester cohérent. Réponse ciblée : la commande la plus proche.
 // [V944] CHARGES DU MOIS. Source : computeAccounting (charges de la période courante).
-async function aiQueryCharges(){
+// ============================================================================
+//  [v1334] TROIS COMPÉTENCES QUI AVOUAIENT — elles savent maintenant.
+// ----------------------------------------------------------------------------
+//  La v1333 a posé la règle : « une compétence qui ne sait pas filtrer par mois le DIT, au lieu
+//  d'ignorer le paramètre en silence ». C'était honnête, mais ce n'était pas résolu — et j'avais
+//  écrit noir sur blanc que ça ne l'était pas.
+//  Ici, les trois compétences qui avouaient apprennent à faire : les charges, le gaspillage et le
+//  bilan marché. L'aveu n'était qu'une étape, pas une destination.
+// ============================================================================
+
+// La date d'un marché — règle UNIQUE, extraite (elle était recopiée à deux endroits).
+const marcheDate = mk => ((mk && (mk.date || mk.dateCloture)) || '');
+
+// PURE. Les marchés d'un mois donné (clé AAAA-MM). `ym` nul → tous les marchés.
+function marchesDuMois(markets, ym){
+  const list = (markets || []).filter(Boolean);
+  if(!ym) return list;
+  return list.filter(mk => (marcheDate(mk) || '').slice(0, 7) === ym);
+}
+
+// PURE. Le gaspillage (dons + pertes) sur un mois, ou sur tout l'historique si `ym` est nul.
+// Les mouvements sont datés par le MARCHÉ auquel ils appartiennent : un don n'a pas de date propre,
+// il appartient au marché où il a eu lieu. Dater autrement inventerait une chronologie.
+function gaspillageMarches(markets, moves, ym){
+  const marches = marchesDuMois(markets, ym);
+  const ids = new Set(marches.map(m => m.id));
+  let don = 0, perte = 0, retour = 0;
+  (moves || []).forEach(mv => {
+    if(!mv || !ids.has(mv.marketId)) return;
+    const q = +mv.qte || 0;
+    if(mv.type === 'don') don += q;
+    else if(mv.type === 'perte') perte += q;
+    else if(mv.type === 'retour') retour += q;
+  });
+  return {
+    don: round3(don), perte: round3(perte), retour: round3(retour),
+    total: round3(don + perte),          // le GASPILLAGE = ce qui est perdu pour de bon
+    nbMarches: marches.length,           // 0 marché sur le mois → « aucun marché », pas « aucun gaspillage »
+    ym: ym || null
+  };
+}
+
+async function aiQueryCharges(params){
   let A=null; try{ A=await computeAccounting(); }catch(e){swallow(e,'aiQueryCharges')}
   let charges=[]; try{ charges=await (db.charges?db.charges.toArray():Promise.resolve([])).catch(()=>[]); }catch(e){swallow(e,'aiQueryCharges')}
-  const mk=monthKey(today());
+  // [FIX v1334] Le mois était CODÉ EN DUR (le mois courant). « Mes charges de mai » répondait
+  // juillet — et depuis la v1333, l'app l'AVOUAIT au moins. Elle sait faire, maintenant.
+  params = params || {};
+  let mk = monthKey(today()), _lblM = 'du mois';
+  if(/^\d{4}-\d{2}$/.test(params.periode||'')){ mk = params.periode; _lblM = 'de ' + monthLabel(mk); }
+  else if(params.periode==='moisDernier'){ const d=new Date(); d.setMonth(d.getMonth()-1); mk=monthKey(d); _lblM='du mois dernier'; }
   const duMois=charges.filter(c=>c.date && monthKey(c.date)===mk);
   const total=duMois.reduce((s,c)=>s+(+c.montant||0),0);
   if(!duMois.length){
-    return aiSay(`${aiHero(euro(0), 'Charges du mois')}${aiSynth('Aucune charge enregistrée ce mois-ci. Saisis tes dépenses (loyer, énergie, matériel…) dans Compta.',{icon:'🧾'})}`);
+    return aiSay(`${aiHero(euro(0), `Charges ${_lblM}`)}${aiSynth(`Aucune charge enregistrée ${_lblM==='du mois'?'ce mois-ci':_lblM}. Saisis tes dépenses (loyer, énergie, matériel…) dans Compta.`,{icon:'🧾'})}`);
   }
   // Regroupe par catégorie.
   const parCat={};
@@ -40088,12 +40201,29 @@ async function aiQueryStrategie(){
 }
 
 // [V943] BILAN DU DERNIER MARCHÉ CLÔTURÉ. Source : marketLineSummary (vendu/invendu/don/perte par parfum).
-async function aiQueryBilanMarche(){
+async function aiQueryBilanMarche(params){
+  params = params || {};
   const [markets, moves]=await Promise.all([db.markets.toArray(), (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[])]);
   if(!markets.length) return aiSay(`${aiSynth('Aucun marché enregistré pour le moment.',{icon:'🏪'})}`);
-  // Dernier marché ayant des mouvements, trié par date.
-  const avecMoves = markets.filter(m=>moves.some(mv=>mv.marketId===m.id)).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const mk = avecMoves[0] || markets.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0];
+
+  // [FIX v1334] Le bilan prenait TOUJOURS le dernier marché, quel que soit le mois demandé.
+  // « Le bilan de mon marché de juin » renvoyait donc celui de juillet — et depuis la v1333,
+  // l'app l'avouait. Elle sait viser, maintenant.
+  let _ymM = null;
+  if(/^\d{4}-\d{2}$/.test(params.periode||'')) _ymM = params.periode;
+  else if(params.periode==='moisDernier'){ const d=new Date(); d.setMonth(d.getMonth()-1); _ymM=monthKey(d); }
+  const _pool = _ymM ? marchesDuMois(markets, _ymM) : markets;
+
+  if(_ymM && !_pool.length){
+    return aiSay(`${aiSynth(`Tu n'as tenu <b>aucun marché</b> en ${esc(monthLabel(_ymM))}. Il n'y a donc pas de bilan à te montrer — ce n'est pas une erreur de ma part, c'est un mois sans marché.`, {icon:'📭'})}`);
+  }
+
+  // Dernier marché du périmètre visé, ayant des mouvements.
+  const avecMoves = _pool.filter(m=>moves.some(mv=>mv.marketId===m.id)).sort((a,b)=>(marcheDate(b)).localeCompare(marcheDate(a)));
+  const mk = avecMoves[0] || _pool.slice().sort((a,b)=>(marcheDate(b)).localeCompare(marcheDate(a)))[0];
+  // Si le mois en comptait PLUSIEURS, on le dit : ne pas signaler qu'on a choisi, c'est laisser
+  // croire qu'il n'y avait rien d'autre.
+  const _autres = _ymM ? Math.max(0, _pool.length - 1) : 0;
   const mvs = moves.filter(mv=>mv.marketId===mk.id);
   if(!mvs.length) return aiSay(`${aiHero('—', `Bilan — ${esc(mk.nom||'marché')}`)}${aiSynth(`Le marché du ${fmtDate(mk.date)} n'a pas encore de mouvements enregistrés.`,{icon:'🏪'})}`);
   const lignes = (typeof marketLineSummary==='function') ? marketLineSummary(mvs) : [];
@@ -40104,9 +40234,15 @@ async function aiQueryBilanMarche(){
   const tauxEcoul = sortie>0 ? Math.round(vendu/sortie*100) : 0;
   const tone = tauxEcoul>=80?'ok':tauxEcoul>=50?'':'warn';
   const top = lignes.filter(l=>l.vendu>0).sort((a,b)=>b.vendu-a.vendu).slice(0,6);
+  // [v1334] Plusieurs marchés ce mois-là ? On le DIT. Ne pas signaler qu'on a choisi, c'est laisser
+  // croire qu'il n'y avait rien d'autre — un mensonge par omission.
+  const _autresTxt = _autres > 0
+    ? `<div style="margin-top:8px;padding:8px 11px;background:#fff6e5;border-radius:8px;font-size:.78rem;color:#6a5a52">ℹ️ Tu as tenu <b>${_autres + 1} marchés</b> en ${esc(monthLabel(_ymM))}. Je te montre le plus récent — demande-moi les autres par leur nom.</div>`
+    : '';
   return aiSay(`${aiHero(`${euro(ca)}`, `Bilan — ${esc(mk.nom||'marché')}`, {sub:`${fmtDate(mk.date)} · ${qty(vendu)} vendus · écoulement ${tauxEcoul}%`, color: tauxEcoul>=80?'#2e7d32':tauxEcoul>=50?'var(--bordeaux)':'#b3261e'})}
     ${aiSynth(`Embarqué ${qty(sortie)} · vendu <b>${qty(vendu)}</b> · invendus ramenés ${qty(retour)}${(don+perte)>0?` · dons/pertes ${qty(don+perte)}`:''}.`, {icon: tauxEcoul>=80?'✅':'📊', tone})}
     ${top.length?aiDetails(top.map(l=>`<div class="sum-box"><span>${esc(l.parfum||'?')}</span><b>${qty(l.vendu)} vendus${(l.retour||0)>0?` · ${qty(l.retour)} invendus`:''}</b></div>`).join(''),'Détail par parfum'):''}
+    ${_autresTxt}
     ${aiSuite([{label:'🧺 Préparer le prochain marché', ask:'qu\'est-ce que j\'emmène au marché'}])}`);
 }
 
@@ -40213,16 +40349,41 @@ async function aiQueryPanierMoyen(params){
 }
 
 // [V943] DONS ET PERTES (gaspillage). Source : marketMoves type don/perte (+ retours = invendus ramenés).
-async function aiQueryGaspillage(){
-  const moves=await (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]);
-  if(!moves.length) return aiSay(`${aiSynth('Aucun mouvement de marché enregistré : pas de don ni de perte à signaler.',{icon:'♻️',tone:'ok'})}`);
-  let don=0, perte=0, retour=0;
-  moves.forEach(mv=>{ const q=+mv.qte||0; if(mv.type==='don')don+=q; else if(mv.type==='perte')perte+=q; else if(mv.type==='retour')retour+=q; });
-  const total=don+perte;
+async function aiQueryGaspillage(params){
+  params = params || {};
+  const [markets, moves] = await Promise.all([
+    db.markets.toArray().catch(()=>[]),
+    (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[])
+  ]);
+  // [FIX v1334] Le gaspillage agrégeait TOUS les marchés depuis toujours, sans aucune notion de
+  // période. « Mon gaspillage en mai » renvoyait donc le cumul de l'historique — et depuis la
+  // v1333, l'app l'avouait. Elle sait filtrer, maintenant.
+  let ym = null, lbl = 'sur tous tes marchés';
+  if(/^\d{4}-\d{2}$/.test(params.periode||'')){ ym = params.periode; lbl = 'en ' + monthLabel(ym); }
+  else if(params.periode==='moisCourant'){ ym = monthKey(today()); lbl = 'ce mois-ci'; }
+  else if(params.periode==='moisDernier'){ const d=new Date(); d.setMonth(d.getMonth()-1); ym=monthKey(d); lbl='le mois dernier'; }
+
+  const G = gaspillageMarches(markets, moves, ym);
+
+  // DISTINCTION CAPITALE : « aucun marché ce mois-là » n'est PAS « aucun gaspillage ». Le premier
+  // est une absence de données, le second une performance. Les confondre serait te féliciter pour
+  // un mois où tu n'as simplement rien vendu.
+  if(ym && G.nbMarches === 0){
+    return aiSay(`${aiSynth(`Tu n'as tenu <b>aucun marché</b> ${lbl}. Il n'y a donc rien à gaspiller — ce n'est pas un bon score, c'est une absence de données.`, {icon:'📭'})}`);
+  }
+  if(!ym && !moves.length){
+    return aiSay(`${aiSynth('Aucun mouvement de marché enregistré : pas de don ni de perte à signaler.',{icon:'♻️',tone:'ok'})}`);
+  }
+
+  const total = G.total;
   const tone = total===0?'ok':total<20?'':'warn';
-  return aiSay(`${aiHero(`${qty(total)}`, 'Macarons donnés ou perdus', {sub: total>0?`${qty(don)} dons · ${qty(perte)} pertes`:'aucun gaspillage', color: total===0?'#2e7d32':total<20?'var(--bordeaux)':'#b3261e'})}
-    ${aiSynth(total===0?'Aucun gaspillage enregistré, bravo.':`Sur tous tes marchés : ${qty(don)} donnés, ${qty(perte)} perdus${retour>0?`, ${qty(retour)} invendus ramenés (récupérables)`:''}.`,{icon: total===0?'✅':'♻️', tone})}
-    <p class="note">Les dons valorisent les invendus (associations) ; les pertes sont du gâchis sec à réduire.</p>`);
+  return aiSay(`${aiHero(`${qty(total)}`, `Macarons donnés ou perdus${ym?' — '+monthLabel(ym):''}`, {sub: total>0?`${qty(G.don)} dons · ${qty(G.perte)} pertes`:'aucun gaspillage', color: total===0?'#2e7d32':(total<20?'var(--bordeaux)':'#b3261e')})}
+    ${aiSynth(total===0?`Aucun gaspillage ${lbl}, bravo.`:`${lbl.charAt(0).toUpperCase()+lbl.slice(1)} : ${qty(G.don)} donnés, ${qty(G.perte)} perdus${G.retour>0?`, ${qty(G.retour)} récupérés`:''}.`, {icon:'♻️', tone})}
+    ${aiDetails(`<div class="sum-box"><span>Marchés concernés</span><b>${G.nbMarches}</b></div>
+      <div class="sum-box"><span>🎁 Dons</span><b>${qty(G.don)}</b></div>
+      <div class="sum-box"><span>🗑 Pertes</span><b>${qty(G.perte)}</b></div>
+      ${G.retour>0?`<div class="sum-box"><span>↩️ Récupérés</span><b>${qty(G.retour)}</b></div>`:''}`, 'Le détail')}
+    <p class="note">Les dons valorisent les invendus (associations) ; les pertes sont du gâchis sec à réduire. Les retours, eux, sont récupérés : ils ne sont PAS du gaspillage.</p>`);
 }
 
 async function aiQueryProchaineLivraison(){
@@ -40408,10 +40569,16 @@ async function aiQuerySeuils(params){
 }
 async function aiQueryNetPoche(params){
   params=params||{};
-  let R; try{ R=await computeNetPoche({type:'mois', ym:monthKey(today())}); }
+  // [FIX v1333] Le mois était CODÉ EN DUR (monthKey(today())) et `params` purement ignoré :
+  // « mon net en poche en mai » répondait juillet. Même bug que la v1330 sur le CA — l'intention
+  // était bonne, le paramètre se perdait, et l'app affichait un chiffre juste à une AUTRE question.
+  let _ym = monthKey(today()), _lbl = 'ce mois';
+  if(/^\d{4}-\d{2}$/.test(params.periode||'')){ _ym = params.periode; _lbl = monthLabel(_ym); }
+  else if(params.periode==='moisDernier'){ const d=new Date(); d.setMonth(d.getMonth()-1); _ym=monthKey(d); _lbl='le mois dernier'; }
+  let R; try{ R=await computeNetPoche({type:'mois', ym:_ym}); }
   catch(e){ return aiSay(`<p class="note">Je n'ai pas pu calculer ton net pour le moment.</p>`); }
   const couleur = R.netPoche>=0 ? 'var(--bordeaux)' : 'var(--red)';
-  return aiSay(`${aiHero(euro(R.netPoche), 'Net dans ta poche · ce mois', {color:couleur, sub:`${R.tauxNet}% de ton CA encaissé`})}
+  return aiSay(`${aiHero(euro(R.netPoche), `Net dans ta poche · ${_lbl}`, {color:couleur, sub:`${R.tauxNet}% de ton CA encaissé`})}
     ${aiSynth(`Sur <b>${euro(R.caTotal)}</b> encaissés ce mois, il te reste <b>${euro(R.netPoche)}</b> net — une fois retirés l'URSSAF (${euro(R.cotisTotal)}), l'impôt sur le revenu (${euro(R.impotRevenu)}${R.tranche>0?`, tranche ${R.tranche}%`:''})${R.chargesReelles>0?` et tes charges (${euro(R.chargesReelles)})`:''}.`, {icon:'💰'})}
     ${aiDetails(`<div class="sum-box"><span>CA encaissé</span><b>${euro(R.caTotal)}</b></div>
       <div class="sum-box"><span>− Cotisations URSSAF</span><b style="color:var(--red)">− ${euro(R.cotisTotal)}</b></div>
@@ -40703,6 +40870,37 @@ function caMoisEncaisse(orders, ym, toLines){
   return res;
 }
 
+// ============================================================================
+//  [v1333] LES GRAPHIQUES CONTREDISAIENT LE COPILOTE — et c'est nous qui l'avions cassé.
+// ----------------------------------------------------------------------------
+//  La v1331 a basculé le copilote sur la VÉRITÉ COMPTABLE (le mois où l'argent rentre). Mais les
+//  COURBES des écrans stats sont restées sur l'ancienne base (le mois de la COMMANDE, montant
+//  total). Résultat : l'app affichait deux CA différents pour le même mois, sur deux écrans.
+//  On a corrigé un écran et laissé l'autre le contredire — exactement la maladie qu'on prétend
+//  soigner. Cette vague finit le travail.
+//
+//  UNE SEULE SOURCE : caMoisEncaisse (v1331, déjà testée, 38 assertions). On ne recrée surtout PAS
+//  une troisième vérité — on réutilise celle qui existe. C'est tout le principe.
+// ============================================================================
+function serieMensuelleEncaisse(orders, toLines){
+  // Les mois à afficher sont ceux où de l'argent est RÉELLEMENT RENTRÉ (registre des paiements),
+  // et non ceux où des commandes ont été passées. Un mois sans encaissement n'a pas de CA.
+  const encaisse = caEncaisseParMois(orders).parMois;
+  const mois = Object.keys(encaisse).sort();
+  const parMois = {};
+  mois.forEach(ym => {
+    const E = caMoisEncaisse(orders, ym, toLines);
+    parMois[ym] = {
+      ca: E.ca,
+      macaronsStd: E.macaronsStd,
+      macaronsGf: E.macaronsGf,
+      macarons: E.macaronsStd + E.macaronsGf,
+      nbPaiements: E.nbPaiements
+    };
+  });
+  return { mois, parMois };
+}
+
 async function aiQueryRevenue(params){
   params = params || {};
   const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
@@ -40779,7 +40977,7 @@ async function aiQueryTrends(){
 async function aiQueryAnomalies(){
   const orders=await db.orders.toArray(); const clients=await db.clients.toArray();
   const R=computeStats(orders,clients,orderToLines);
-  const AN=analyzeAnomalies(R);
+  const AN=analyzeAnomalies(R, serieMensuelleEncaisse(orders, orderToLines));   // [v1333] base encaissement
   if(!AN.outliers.length)
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Anomalies</h3><div class="sum-box"><span>CA mensuel moyen</span><b>${euro(AN.moyenneCA)}</b></div><p class="note">Aucune variation mensuelle inhabituelle détectée.</p>`);
   aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Anomalies détectées</h3>
