@@ -2016,3 +2016,51 @@ schéma. Il a été trouvé parce qu'écrire un nouveau module a forcé une rele
 que la même erreur, commise deux fois à deux semaines d'intervalle, a fini par être reconnue. Le
 test qui en résulte rend cette reconnaissance permanente au lieu de dépendre d'une coïncidence de
 relecture.
+
+---
+
+## v1352 — LE `case` MANQUANT : trois heures dans la mauvaise direction
+
+Ben, deux fois de suite, sur deux versions différentes : *« Génère moi un coffret »* →
+**« Je n'ai pas bien compris »**. Même après avoir corrigé `db.lots` et `mesureParRec` en v1351.
+
+### Ce que j'ai cru, et qui était faux à chaque fois
+1. **« C'est la regex »** → testée en exécution réelle : elle retourne bien `query_generer_coffret`.
+2. **« C'est le cache PWA »** → vérifié : le cache est bien bumpé à chaque livraison.
+3. **« C'est la saisie / l'autocorrection »** → Ben confirme la phrase exacte.
+4. **« C'est un des bugs Dexie »** → non : une exception afficherait *« Une erreur est survenue »*.
+
+### La vraie cause
+`parseIntent` retournait **correctement** `query_generer_coffret`. Le bug était en **AVAL** :
+
+```js
+case 'query_associations': return aiQueryAssociations(r.params);
+// case 'query_generer_coffret'  ← AVAIT DISPARU
+default: /* « Je n'ai pas bien compris » */
+```
+
+Le `case` ajouté en v1350 avait été **écrasé par une de mes éditions Python en cascade**. L'intent
+était reconnu, mais **non câblé** — il tombait dans le `default:` du switch.
+
+> **LEÇON (v1352) : DEUX CAUSES TRÈS DIFFÉRENTES (intent non reconnu / intent non câblé)
+> PRODUISAIENT LE MÊME MESSAGE.** Un message de repli qui ne distingue pas ses causes envoie
+> l'utilisateur reformuler une phrase parfaitement valide — et celui qui débugge chercher un bug
+> de regex qui n'existe pas. **Il a l'air d'une réponse alors que c'est un symptôme.**
+
+### Les deux correctifs
+1. **Le `case` est remis** — et le test `v1352-cablage.test.js` vérifie désormais que **chaque**
+   intent produit par `parseIntent` (88 au total) possède un `case` dans le dispatch. Aucun autre
+   orphelin trouvé — mais il aurait pu y en avoir, et je ne l'aurais pas su.
+2. **Le message de repli distingue ses causes.** Si l'intent est reconnu mais non routé, l'app dit
+   maintenant : *« J'ai bien compris ta demande, mais elle n'est pas branchée de mon côté — c'est
+   un bug chez moi, pas une erreur de ta part. Inutile de reformuler : la phrase est bonne. »*
+
+### Ce que ça dit sur ma méthode
+J'ai passé quatre hypothèses avant de simplement **chercher d'où venait le texte affiché**
+(`grep "pas bien compris"`) — ce qui m'a donné la réponse en une commande. J'ai cherché la cause là
+où je pensais l'avoir mise, au lieu de partir du **symptôme observable**. Le message trompeur y est
+pour beaucoup ; ma méthode aussi.
+
+C'est le deuxième test de **plomberie** de la session (après le schéma Dexie). Les deux vérifient la
+même chose sous deux angles : *le code peut-il seulement s'exécuter comme prévu ?* — une question
+distincte de *le calcul est-il juste ?*, et qu'aucun test métier ne pose.

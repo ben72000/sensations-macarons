@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1351';
+const APP_VERSION = 'v1352';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -38570,6 +38570,7 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_top_clients': return aiQueryTopClients(r.params);
       case 'query_top_parfum': return aiQueryTopParfum(r.params);
       case 'query_associations': return aiQueryAssociations(r.params);   // [v1343]
+      case 'query_generer_coffret': return aiQueryGenererCoffret(r.params);   // [v1352] REMIS : le case avait disparu
       case 'query_recipe': return aiQueryRecipe(r.params);
       case 'query_ingredient_pour': return aiQueryIngredientPour(r.params);
       case 'query_temps_prod': return aiQueryTempsProd(r.params);
@@ -38654,6 +38655,19 @@ async function _aiDispatch(r, txt, _ctx){
         {
           const _filet = aiFiletThematique(txt, (typeof aiNormalize==='function'?aiNormalize(txt):txt.toLowerCase()));
           if(_filet) return _filet;
+        }
+        // [v1352] DEUX CAUSES TRÈS DIFFÉRENTES ARRIVAIENT ICI AVEC LE MÊME MESSAGE :
+        //  (a) aucune règle n'a matché → l'intention est réellement 'unknown' ;
+        //  (b) une règle A MATCHÉ, mais son `case` manque dans ce switch → BUG DE CÂBLAGE.
+        // Le cas (b) est un bug de MA part, pas une phrase mal formulée par Ben. Lui dire
+        // « je n'ai pas bien compris » l'envoie reformuler une phrase parfaitement valide — et
+        // m'a envoyé, moi, chercher un bug de regex pendant des heures alors que la regex
+        // marchait. Un message de repli qui ne distingue pas ses causes fait perdre du temps aux
+        // DEUX côtés, et il a l'air d'une réponse alors que c'est un symptôme.
+        if(r && r.intent && r.intent !== 'unknown'){
+          console.error('[BUG DE CÂBLAGE] intent reconnu mais non routé dans _aiDispatch :', r.intent);
+          return aiSay(`<p>J'ai bien compris ta demande (<b>${esc(r.label || r.intent)}</b>), mais elle n'est pas branchée de mon côté — c'est un bug chez moi, pas une erreur de ta part.</p>
+            <p class="note">Inutile de reformuler : la phrase est bonne. Signale-le, l'intention <code>${esc(r.intent)}</code> n'a pas de route.</p>`);
         }
         return aiSay(`<p>Je n'ai pas bien compris « ${esc(txt)} ».</p>
           <p class="note">Reformule, ou essaie : <i>Conseille-moi quoi faire</i> · <i>Quel est le stock de chocolat ?</i> · <i>Commandes à préparer demain</i>. Pour le mode d'emploi, demande <b>« comment ça marche »</b> ou tape <b>aide</b>.</p>`);
