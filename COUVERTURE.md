@@ -2105,3 +2105,48 @@ Cette session en a produit beaucoup (seuil de signifiance, exclusion des pros, m
 auto-vérification du journal…). Tous partagent le même risque : **être justes dans leur principe et
 faux dans leur portée**. Un garde-fou trop large ne protège plus, il empêche — et c'est d'autant plus
 insidieux qu'il a l'air d'un message sensé, pas d'un bug.
+
+---
+
+## v1354 — LES TENDANCES PAR PARFUM : ce que je ne montrais pas
+
+Ben : *« L'outil ne semble pas donner toutes les tendances par parfums. À côté des associations j'ai
+besoin de savoir ce qui se vend le mieux pour composer au mieux ma nouvelle offre. Oublie pas que
+j'ai 15 parfums en standard… »*
+
+**Il a raison, et c'est un manque grave.** Je lui donnais des associations sans jamais lui dire
+**quels parfums se vendent**. Un parfum peut avoir un lift magnifique et ne quasiment jamais partir :
+le mettre en gamme sur cette seule base serait une erreur commerciale.
+
+### Pire : les données existaient déjà
+`analyzeFlavorProfitability` calcule `piecesVendues`, `ca`, `margeUnit`, `tauxMarge` **par parfum**.
+Le générateur les utilisait **en interne pour scorer** — sans jamais les **montrer**. Ben devait faire
+confiance à un score de `0.38` sans voir ce qu'il y avait derrière.
+
+> **RÈGLE GRAVÉE (v1354) : UN SCORE QU'ON NE PEUT PAS DÉCOMPOSER EST UN SCORE QU'ON NE PEUT PAS
+> CONTESTER.** Montrer les composantes n'est pas un luxe d'affichage — c'est ce qui permet à Ben de
+> voir que je me trompe. Il l'a fait pour « Coco Rafaello en Fraîcheur » : il a corrigé une erreur
+> que mes chiffres seuls n'auraient jamais révélée.
+
+### Et `query_top_parfum` tronquait à 10
+Ben a **15 parfums**. Une gamme se compose sur **tous** ses parfums — et les 5 derniers sont
+précisément ceux qu'il faut décider de **garder ou de sortir**. Les cacher, c'est décider à sa place.
+
+### Ce que la nouvelle vue affiche
+Les 15 parfums, classés en **quatre quadrants** (seuils = médianes de sa propre gamme, jamais des
+valeurs absolues) :
+
+| Quadrant | Sens |
+|---|---|
+| **PILIERS** | fort volume + forte marge — le cœur de la gamme |
+| **LOCOMOTIVES** | fort volume, marge faible — ils attirent, ils n'enrichissent pas |
+| **PÉPITES** | faible volume, forte marge — à mettre en avant |
+| **À QUESTIONNER** | faible volume ET faible marge |
+| **JAMAIS VENDUS** | aucune vente — un candidat à la sortie **est une information de gamme** |
+
+Chaque ligne porte : volume + part % + marge unitaire + **meilleure association mesurée**.
+
+### Le routage : « quels parfums se vendent le mieux » n'est PAS un top-10
+Premier test : cette phrase — **celle que Ben a posée** — partait vers `query_top_parfum` (volume
+seul, tronqué à 10). C'est une question de **composition de gamme**, pas un classement. Règle élargie,
+sans voler `le parfum le plus vendu` ni `mon meilleur parfum` (non-régression vérifiée).

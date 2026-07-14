@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1353';
+const APP_VERSION = 'v1354';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -34128,7 +34128,20 @@ function parseIntent(texte, ctx){
     return {intent:'query_generer_coffret', params:{}, critical:false,
       label:'Générateur de coffrets'};
   }
-    // [v1345] ASSOCIATIONS DE PARFUMS — CE QUE LES CLIENTS ONT DÉJÀ CHOISI (une MESURE).
+    // [v1354] TABLEAU DE BORD PAR PARFUM : « tendances par parfum », « quels parfums se vendent le
+  // mieux », « tous mes parfums », « volume et marge par parfum ». PLACÉE AVANT `query_top_parfum`,
+  // qui ne donne QUE le volume et TRONQUE À 10 — or Ben a 15 parfums, et les 5 derniers sont
+  // précisément ceux qu'il doit décider de garder ou de sortir de sa gamme.
+  // « quels parfums se vendent le mieux » = une question de GAMME (volume + marge + associations),
+  // pas un classement top-10. Ben l'a posée exactement comme ça pour composer son offre.
+  if((/(tendance|tableau de bord|vue d ?ensemble|tous (mes |les )?parfums|chaque parfum|par parfum)/.test(t)
+      || /\bquels parfums se vendent\b/.test(t)
+      || /\b(composer|construire|batir)\b.*\b(gamme|offre|collection)\b/.test(t))
+     && /\b(parfum[s]?|macaron[s]?|saveur[s]?|gamme|offre|vente[s]?|volume|marge)\b/.test(t)){
+    return {intent:'query_tendances_parfums', params:{}, critical:false,
+      label:'Tendances par parfum'};
+  }
+  // [v1345] ASSOCIATIONS DE PARFUMS — CE QUE LES CLIENTS ONT DÉJÀ CHOISI (une MESURE).
   //
   // PLACÉE ICI, ET LA POSITION *EST* LE CORRECTIF. En v1343 je l'avais mise juste avant
   // `query_top_parfum` — en vérifiant seulement ce qui venait APRÈS elle, jamais ce qui venait
@@ -38571,6 +38584,7 @@ async function _aiDispatch(r, txt, _ctx){
       case 'query_top_parfum': return aiQueryTopParfum(r.params);
       case 'query_associations': return aiQueryAssociations(r.params);   // [v1343]
       case 'query_generer_coffret': return aiQueryGenererCoffret(r.params);   // [v1352] REMIS : le case avait disparu
+      case 'query_tendances_parfums': return aiQueryTendancesParfums(r.params);   // [v1354]
       case 'query_recipe': return aiQueryRecipe(r.params);
       case 'query_ingredient_pour': return aiQueryIngredientPour(r.params);
       case 'query_temps_prod': return aiQueryTempsProd(r.params);
@@ -40814,6 +40828,156 @@ async function aiQueryAssociations(params){
     ${socle}
     ${li}
     ${aiSynth(`Le <b>×</b> est le <b>lift</b> : au-delà de 1, les deux parfums s'attirent <b>vraiment</b>. À 1, ils sont simplement <b>populaires chacun de leur côté</b>.<br><br>Le <b>nombre de clients</b> compte autant : une paire vue 17 fois mais chez <b>un seul</b> client n'est pas une tendance, c'est <b>son habitude</b>. Je ne retiens que celles portées par <b>au moins 3 clients différents</b>.`, {icon:'🎯'})}`);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [v1354] LE TABLEAU DE BORD PAR PARFUM — ce qui manquait pour composer la gamme
+//
+//  Ben : « L'outil ne semble pas donner toutes les tendances par parfums. À côté des
+//  associations j'ai besoin de savoir ce qui se vend le mieux pour composer au mieux ma
+//  nouvelle offre. Oublie pas que j'ai 15 parfums en standard. »
+//
+//  IL A RAISON, ET C'EST UN MANQUE GRAVE. Je lui donnais des ASSOCIATIONS sans jamais lui dire
+//  QUELS PARFUMS SE VENDENT. Un parfum peut avoir un lift magnifique et ne quasiment jamais
+//  partir : le mettre en gamme sur cette seule base serait une erreur commerciale.
+//
+//  PIRE : toutes ces données EXISTAIENT DÉJÀ (`analyzeFlavorProfitability` calcule piecesVendues,
+//  ca, margeUnit, tauxMarge par parfum). Le générateur les utilisait EN INTERNE pour scorer — sans
+//  jamais les MONTRER à Ben. Il devait faire confiance à un score de 0.38 sans voir ce qu'il y avait
+//  derrière.
+//
+//  RÈGLE GRAVÉE (v1354) : UN SCORE QU'ON NE PEUT PAS DÉCOMPOSER EST UN SCORE QU'ON NE PEUT PAS
+//  CONTESTER. Montrer les composantes n'est pas un luxe d'affichage — c'est ce qui permet à Ben
+//  de voir que je me trompe (comme il l'a fait pour Coco Rafaello en "Fraîcheur").
+//
+//  ET : `aiQueryTopParfum` tronquait à 10. Ben a 15 parfums. Une gamme se compose sur TOUS ses
+//  parfums, pas sur les 10 premiers — les 5 derniers sont précisément ceux qu'il faut décider de
+//  garder ou de sortir.
+// ════════════════════════════════════════════════════════════════════════════
+
+async function aiQueryTendancesParfums(params){
+  params = params || {};
+
+  const orders  = await db.orders.toArray();
+  const clients = await db.clients.toArray().catch(()=>[]);
+
+  // ── 1. VOLUME : combien de pièces vendues par parfum (tous canaux)
+  const R = computeStats(orders, clients, orderToLines);
+  const volumes = R.parfums || {};
+
+  // ── 2. RENTABILITÉ : marge unitaire et taux, par parfum
+  const recipes      = await db.recipes.toArray();
+  const recipeItems  = await db.recipeItems.toArray();
+  const lots         = await db.materialLots.toArray().catch(()=>[]);
+  const mats         = await db.materials.toArray().catch(()=>[]);
+  const markets      = await db.markets.toArray().catch(()=>[]);
+  const marketMoves  = await db.marketMoves.toArray().catch(()=>[]);
+  const productions  = await db.productions.toArray().catch(()=>[]);
+  const settings     = getSettings();
+
+  let flavorRows = [];
+  try{
+    const A = analyzeFlavorProfitability({recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings});
+    flavorRows = A.rows || [];
+  }catch(e){ swallow(e,'aiQueryTendancesParfums analyse'); }
+  const renta = {}; flavorRows.forEach(r => { renta[r.nom] = r; });
+
+  // ── 3. ASSOCIATIONS : le meilleur partenaire de chaque parfum (significatif uniquement)
+  const { paniers } = paniersClients(orders, { clients });
+  const co = coOccurrenceParfums(paniers, {});
+  const meilleurPartenaire = {};
+  (co.rows || []).filter(r => r.significatif).forEach(r => {
+    [[r.a, r.b], [r.b, r.a]].forEach(([x, y]) => {
+      if(!meilleurPartenaire[x] || r.lift > meilleurPartenaire[x].lift){
+        meilleurPartenaire[x] = { avec: y, lift: r.lift, nClients: r.nClients };
+      }
+    });
+  });
+
+  // ── 4. TOUS les parfums du catalogue — y compris ceux à ZÉRO vente.
+  // Un parfum qui ne se vend PAS est une information de gamme aussi importante qu'un best-seller :
+  // c'est un candidat à la sortie. L'omettre du tableau reviendrait à le cacher (v1337 : l'absence
+  // de mesure n'est pas l'absence de fait).
+  const tous = (typeof FLAVORS !== 'undefined' && FLAVORS.length) ? FLAVORS.slice() : Object.keys(volumes);
+
+  const lignes = tous.map(nom => {
+    const vol = +volumes[nom] || 0;
+    const r   = renta[nom] || null;
+    const mp  = meilleurPartenaire[nom] || null;
+    return {
+      nom,
+      volume: vol,
+      ca:        r && r.ca != null ? r.ca : null,
+      margeUnit: r && r.margeUnit != null ? r.margeUnit : null,
+      tauxMarge: r && r.tauxMarge != null ? r.tauxMarge : null,
+      partenaire: mp
+    };
+  });
+
+  const totalVol = lignes.reduce((s,l) => s + l.volume, 0);
+
+  // Tri par VOLUME décroissant : Ben compose sa gamme, il veut voir ses locomotives en premier.
+  lignes.sort((a,b) => b.volume - a.volume);
+
+  // Médianes, pour situer chaque parfum (au-dessus / en-dessous) sans jargon statistique.
+  const volsNonNuls   = lignes.map(l=>l.volume).filter(v=>v>0).sort((a,b)=>a-b);
+  const margesNonNull = lignes.map(l=>l.margeUnit).filter(m=>m!=null).sort((a,b)=>a-b);
+  const medVol   = volsNonNuls.length   ? volsNonNuls[Math.floor(volsNonNuls.length/2)] : 0;
+  const medMarge = margesNonNull.length ? margesNonNull[Math.floor(margesNonNull.length/2)] : 0;
+
+  // ── 5. LES QUATRE QUADRANTS (volume × marge) — le vrai outil de décision de gamme.
+  // Ce n'est PAS une matrice BCG plaquée : c'est la seule façon de voir qu'un parfum qui se vend
+  // beaucoup peut te faire perdre de l'argent, et qu'un parfum discret peut être ta meilleure marge.
+  const quadrant = (l) => {
+    if(l.volume === 0) return 'dormant';
+    const hautVol   = l.volume >= medVol;
+    const hauteMarge = (l.margeUnit != null) && (l.margeUnit >= medMarge);
+    if(hautVol && hauteMarge)   return 'pilier';
+    if(hautVol && !hauteMarge)  return 'locomotive';
+    if(!hautVol && hauteMarge)  return 'pepite';
+    return 'poids_mort';
+  };
+  lignes.forEach(l => { l.quadrant = quadrant(l); });
+
+  const LIB = {
+    pilier:     { t:'PILIERS',      d:'fort volume + forte marge — le cœur de ta gamme' },
+    locomotive: { t:'LOCOMOTIVES',  d:'fort volume, marge faible — ils attirent, ils ne t\'enrichissent pas' },
+    pepite:     { t:'PÉPITES',      d:'faible volume, forte marge — à mettre en avant' },
+    poids_mort: { t:'À QUESTIONNER',d:'faible volume ET faible marge' },
+    dormant:    { t:'JAMAIS VENDUS',d:'aucune vente enregistrée' }
+  };
+
+  const ligneHtml = (l) => {
+    const pct = totalVol > 0 ? Math.round(l.volume / totalVol * 1000)/10 : 0;
+    const asso = l.partenaire
+      ? `<span style="color:#9a8a82">↔ ${esc(l.partenaire.avec)} <b>×${l.partenaire.lift}</b></span>`
+      : `<span style="color:#c4b8b0">aucune association mesurée</span>`;
+    const marge = l.margeUnit != null ? `${euro(l.margeUnit)}/pce` : '<span style="color:#c4b8b0">—</span>';
+    return `<div class="sum-box" style="flex-direction:column;align-items:flex-start;gap:2px;padding:8px 10px">
+      <div style="display:flex;justify-content:space-between;width:100%">
+        <b>${esc(l.nom)}</b>
+        <span><b>${qty(l.volume)}</b> <span style="color:#9a8a82;font-size:.78rem">pces · ${pct}%</span></span>
+      </div>
+      <div style="font-size:.78rem;display:flex;justify-content:space-between;width:100%">
+        <span>marge ${marge}</span>
+        ${asso}
+      </div>
+    </div>`;
+  };
+
+  const blocs = ['pilier','locomotive','pepite','poids_mort','dormant'].map(q => {
+    const grp = lignes.filter(l => l.quadrant === q);
+    if(!grp.length) return '';
+    return `<p style="margin:12px 0 4px;font-weight:700;font-size:.82rem;letter-spacing:.04em">${LIB[q].t}
+      <span style="font-weight:400;color:#9a8a82">— ${LIB[q].d}</span></p>
+      ${grp.map(ligneHtml).join('')}`;
+  }).join('');
+
+  return aiSay(`${aiHero(String(lignes.length), 'Parfums au catalogue', {sub:`${qty(totalVol)} pièces vendues au total`, color:'var(--bordeaux)'})}
+    ${aiSynth(`Chaque parfum, classé par <b>volume</b>, avec sa <b>marge</b> et sa <b>meilleure association</b> mesurée. Les seuils « fort/faible » sont les <b>médianes</b> de ta propre gamme — pas des valeurs absolues.`, {icon:'📊'})}
+    ${blocs}
+    ${aiSynth(`Un parfum à <b>fort lift</b> mais <b>faible volume</b> reste un pari : l'association est réelle, mais elle repose sur peu de ventes. Croise toujours les deux avant de composer ta gamme.`, {icon:'🎯'})}`);
 }
 
 
