@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1358';
+const APP_VERSION = 'v1360';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -519,6 +519,18 @@ db.version(29).stores({
 // prix réel du lot, motif. Migration additive, aucune table existante modifiée.
 db.version(30).stores({
   materialLosses: '++id, materialId, lotId, date, motif'
+});
+// v31 : [v1359] JOURNAL COMPTABLE INALTÉRABLE — exigence légale (art. 286-I-3° bis du CGI, NF525).
+//
+// POURQUOI UNE TABLE, ET PAS `logDeletion` : ce dernier écrit dans `localStorage`. Un journal légal
+// qui vit dans le stockage du navigateur est effacé en vidant le cache — il ne vaut RIEN devant un
+// contrôle. Les traces d'encaissement doivent survivre à tout, donc elles vivent en base, avec le
+// reste des données comptables, et partent dans les sauvegardes.
+//
+// AUCUNE FONCTION DE L'APP NE SUPPRIME DE LIGNE DE CETTE TABLE. C'est le point : on n'y écrit qu'en
+// ajout. Une écriture d'annulation ne remplace pas l'écriture d'origine — elle s'y AJOUTE.
+db.version(31).stores({
+  journalCompta: '++id, orderId, type, ts'
 });
 
 // --- Diagnostic de migration (non bloquant) -------------------------------------------------
@@ -19449,6 +19461,30 @@ async function cmdDeleteConfirm(id){
   const reason=val('f_delReason')||DELETE_REASONS_ORDER[0];
   const note=val('f_delNote')||'';
   const o=await db.orders.get(id);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // [v1359] VERROU LÉGAL — INALTÉRABILITÉ DES ENCAISSEMENTS (art. 286-I-3° bis CGI, NF525).
+  //
+  // C'ÉTAIT LE TROU. Cette fonction supprimait la commande AVEC ses paiements. `logDeletion`
+  // gardait une trace dans localStorage, mais L'ENCAISSEMENT DISPARAISSAIT DE LA COMPTABILITÉ :
+  // le CA du mois changeait rétroactivement, sans écriture inverse, sans piste d'audit.
+  //
+  // Une commande SANS encaissement reste librement supprimable (décision de Ben : rien n'a été
+  // encaissé, il n'y a rien à protéger). Le verrou ne se déclenche QUE s'il y a de l'argent.
+  //
+  // RÈGLE GRAVÉE (v1359) : ON NE SUPPRIME PAS UN ENCAISSEMENT. ON LE CONTREPASSE.
+  // ════════════════════════════════════════════════════════════════════════
+  const _blocage = blocageSuppressionEncaissement(o);
+  if(_blocage){
+    closeModal();
+    openModal(`<h3>🔒 Suppression impossible</h3>
+      <p class="note" style="color:#b3261e">${_blocage.message}</p>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="closeModal()">Fermer</button>
+        <button class="btn" onclick="closeModal(); corrigerEncaissementForm(${id})">Corriger un encaissement</button>
+      </div>`);
+    return;
+  }
   const items = await db.orderItems.where('orderId').equals(id).toArray();
   const evs = await db.events.where('refId').equals(id).toArray().catch(()=>[]);
   const totBatch = items.reduce((s,it)=>s+(+it.qte||0),0);
@@ -19512,6 +19548,702 @@ async function cmdDeleteConfirm(id){
   });
 }
 // Journal léger des suppressions (localStorage, pour mémoire/traçabilité interne).
+// ════════════════════════════════════════════════════════════════════════════
+//  [v1359] INALTÉRABILITÉ DES ENCAISSEMENTS — exigence légale
+//
+//  Ben : « Tu empêches toute suppression de montant encaissé. Et tu proposes une correction avec
+//  journal de suivi en cas d'erreur. On doit aussi pouvoir exporter facilement un historique
+//  reprenant tous les encaissements sur une période donnée. »
+//
+//  LE CADRE : article 286-I-3° bis du CGI (inaltérabilité, sécurisation, conservation, archivage
+//  des données de règlement) et norme NF525. UN ENCAISSEMENT ENREGISTRÉ NE PEUT PAS DISPARAÎTRE.
+//  Il ne peut qu'être ANNULÉ par une écriture INVERSE, elle-même tracée. C'est le principe de
+//  l'écriture comptable : on ne gomme pas, on contrepasse.
+//
+//  CE QUE J'AI TROUVÉ EN AUDITANT LE CODE (et qui est plus grave que ce que Ben soupçonnait) :
+//
+//   1. Il n'existe AUCUN bouton pour supprimer un paiement — bonne nouvelle, mais…
+//   2. `db.orders.delete()` est appelé à TROIS endroits. Supprimer une commande ENCAISSÉE
+//      efface ses paiements AVEC elle. L'argent encaissé disparaît de la comptabilité.
+//   3. Pire : ligne 8615 (« repasser en devis ») supprime la commande SANS AUCUN JOURNAL.
+//      Une commande payée repassée en devis = un encaissement évaporé, sans trace.
+//
+//  RÈGLE GRAVÉE (v1359) : ON NE SUPPRIME PAS UN ENCAISSEMENT. ON LE CONTREPASSE.
+//  Une donnée comptable effacée est une donnée qu'aucun contrôle ne peut reconstituer — et
+//  l'absence de trace ne prouve pas l'absence de fraude : elle EST le problème.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ---------------------------------------------------------------------------
+// LE VERROU. Toute commande portant au moins un encaissement est INSUPPRIMABLE.
+// Renvoie null si la suppression est permise, sinon le motif du refus.
+// ---------------------------------------------------------------------------
+function encaissementsDe(o){
+  if(!o || !Array.isArray(o.paiements)) return [];
+  return o.paiements.filter(p => p && (+p.montant) > 0);
+}
+
+function totalEncaisseDe(o){
+  return money2(encaissementsDe(o).reduce((s, p) => s + (+p.montant || 0), 0));
+}
+
+// [v1359] LE GARDE-FOU CENTRAL. Appelé AVANT tout db.orders.delete().
+// Un seul point de contrôle : si je le duplique, une des copies finira par diverger (règle v1358).
+function blocageSuppressionEncaissement(o){
+  const enc = encaissementsDe(o);
+  if(!enc.length) return null;   // aucun encaissement → suppression libre
+  const total = totalEncaisseDe(o);
+  return {
+    nb: enc.length,
+    total,
+    // Le message dit POURQUOI, et propose la SORTIE LÉGALE — un blocage sans échappatoire
+    // pousse à contourner l'outil (règle v1357).
+    message: `Cette commande porte <b>${enc.length} encaissement(s)</b> pour <b>${euro(total)}</b>.<br><br>
+      La loi (art. 286-I-3° bis du CGI) interdit de <b>supprimer</b> une donnée de règlement enregistrée.
+      Un encaissement ne s'efface pas : il se <b>contrepasse</b> par une écriture inverse, tracée et datée.<br><br>
+      Si tu as fait une erreur, utilise <b>« Corriger un encaissement »</b> : l'écriture d'origine reste,
+      une écriture d'annulation s'y ajoute, et le journal en garde la preuve.`
+  };
+}
+
+// ---------------------------------------------------------------------------
+// LA CORRECTION TRACÉE. On n'efface JAMAIS l'écriture d'origine : on ajoute une écriture
+// d'annulation (montant négatif) qui la neutralise, plus une écriture corrective si besoin.
+//
+// C'est EXACTEMENT le mécanisme de la contrepassation comptable. Le solde final est juste, et
+// l'historique complet reste lisible : on voit l'erreur ET sa correction. C'est ce que demande
+// un contrôle fiscal — pas un registre propre, un registre HONNÊTE.
+// ---------------------------------------------------------------------------
+async function corrigerEncaissement(orderId, index, nouveauMontant, motif){
+  const o = await db.orders.get(+orderId);
+  if(!o){ toast('Commande introuvable'); return false; }
+  const paiements = Array.isArray(o.paiements) ? o.paiements.slice() : [];
+  const orig = paiements[+index];
+  if(!orig){ toast('Encaissement introuvable'); return false; }
+  if(orig.annule){ toast('Cet encaissement est déjà annulé'); return false; }
+
+  const m = (motif || '').trim();
+  if(!m){ toast('Motif obligatoire'); return false; }   // sans motif, la trace ne vaut rien
+
+  const ancien = money2(+orig.montant || 0);
+  const neuf   = (nouveauMontant == null || nouveauMontant === '') ? 0 : money2(+nouveauMontant);
+  if(neuf < 0){ toast('Montant négatif impossible'); return false; }
+  if(neuf === ancien){ toast('Le montant est inchangé'); return false; }
+
+  const ts = new Date().toISOString();
+
+  // [v1359] L'ÉCRITURE D'ORIGINE EST CONSERVÉE À L'IDENTIQUE. On la MARQUE annulée — on ne la
+  // modifie pas, on ne la retire pas. Le montant reste celui qui a été saisi ce jour-là.
+  paiements[+index] = Object.assign({}, orig, { annule:true, annuleTs:ts, annuleMotif:m });
+
+  // L'écriture d'ANNULATION : montant négatif, égal et opposé. Le solde redevient exact.
+  paiements.push({
+    date: today(), montant: -ancien, moyen: orig.moyen || null,
+    correction: true, corrigeIndex: +index, motif: m, ts,
+    libelle: `Annulation de l'encaissement du ${fmtDate(orig.date || o.date)}`
+  });
+
+  // L'écriture CORRECTIVE, si Ben a saisi un nouveau montant (une correction, pas une annulation sèche).
+  if(neuf > 0){
+    paiements.push({
+      date: today(), montant: neuf, moyen: orig.moyen || null,
+      correction: true, corrigeIndex: +index, motif: m, ts,
+      libelle: `Correction : ${euro(ancien)} → ${euro(neuf)}`
+    });
+  }
+
+  const o2 = Object.assign({}, o, { paiements });
+  syncPaymentFields(o2);
+
+  await db.orders.update(+orderId, {
+    paiements: o2.paiements,
+    paiement: o2.paiement, statutPaiement: o2.statutPaiement,
+    soldeDu: o2.soldeDu, montantEncaisse: o2.montantEncaisse
+  });
+
+  // [v1359] LE JOURNAL COMPTABLE — en BASE, jamais en localStorage.
+  //
+  // `logDeletion` (qui existe déjà) écrit dans `localStorage`. Pour une trace LÉGALE, c'est
+  // inacceptable : vider le cache du navigateur effacerait la preuve. Une trace qu'un geste
+  // anodin peut détruire n'est pas une trace — c'est une illusion de trace.
+  //
+  // On écrit donc dans `db.journalCompta`, qui part dans les sauvegardes avec le reste des
+  // données comptables. AUCUNE fonction de l'app ne supprime de ligne de cette table.
+  try{
+    await db.journalCompta.add({
+      orderId: +orderId,
+      type: (neuf > 0 ? 'correction' : 'annulation'),
+      ts,
+      dateOrigine: orig.date || o.date || null,
+      montantAvant: ancien,
+      montantApres: neuf,
+      moyen: orig.moyen || null,
+      motif: m,
+      commandeRef: (typeof orderNumber === 'function') ? orderNumber(o) : ('#' + orderId)
+    });
+  }catch(e){
+    // [v1359] Si le journal échoue, on ANNULE TOUT. Une correction sans trace est exactement ce
+    // que la loi interdit — mieux vaut refuser la correction que de la faire sans preuve.
+    swallow(e, 'corrigerEncaissement journal');
+    await db.orders.update(+orderId, { paiements: o.paiements });   // restaure l'état d'origine
+    toast('Journal indisponible — correction annulée');
+    return false;
+  }
+
+  toast(`Encaissement corrigé ✓ (écriture d'annulation tracée)`);
+  return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ---------------------------------------------------------------------------
+// [v1359] L'UI DE CORRECTION. Liste les encaissements d'une commande et permet de corriger
+// celui qui est erroné — avec MOTIF OBLIGATOIRE (sans motif, la trace ne vaut rien).
+// ---------------------------------------------------------------------------
+async function corrigerEncaissementForm(orderId){
+  const o = await db.orders.get(+orderId);
+  if(!o){ toast('Commande introuvable'); return; }
+  const paiements = Array.isArray(o.paiements) ? o.paiements : [];
+  const reels = paiements.map((p, i) => ({ p, i })).filter(x => x.p && (+x.p.montant) > 0 && !x.p.correction);
+
+  if(!reels.length){ toast('Aucun encaissement à corriger'); return; }
+
+  const lignes = reels.map(({p, i}) => {
+    const annule = !!p.annule;
+    return `<div class="sum-box" style="flex-direction:column;align-items:flex-start;gap:2px;${annule?'opacity:.5':''}">
+      <div style="display:flex;justify-content:space-between;width:100%">
+        <span><b>${euro(+p.montant)}</b> · ${esc(p.moyen || '—')}</span>
+        <span style="font-size:.78rem;color:#9a8a82">${esc(fmtDate(p.date || o.date))}</span>
+      </div>
+      ${annule
+        ? `<span style="font-size:.74rem;color:#b3261e">ANNULÉ — ${esc(p.annuleMotif || '')}</span>`
+        : `<button class="btn ghost sm" style="font-size:.76rem;margin-top:4px" onclick="corrigerEncaissementSaisie(${orderId},${i})">Corriger</button>`}
+    </div>`;
+  }).join('');
+
+  openModal(`<h3>🧾 Corriger un encaissement</h3>
+    <p class="note">L'écriture d'origine <b>ne sera pas supprimée</b>. Une écriture d'annulation s'y ajoutera,
+    et le journal comptable en gardera la preuve — c'est ce qu'exige la loi.</p>
+    ${lignes}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+function corrigerEncaissementSaisie(orderId, index){
+  openModal(`<h3>🧾 Correction</h3>
+    <div class="field"><label>Nouveau montant (0 = annulation pure)</label>
+      <input type="number" step="0.01" min="0" id="ce_montant" placeholder="ex : 45.00"></div>
+    <div class="field"><label>Motif <b style="color:#b3261e">*</b></label>
+      <input id="ce_motif" placeholder="ex : erreur de saisie, chèque impayé…"></div>
+    <p class="note" style="font-size:.76rem">Le motif est <b>obligatoire</b> : une correction sans justification
+    n'a aucune valeur probante devant un contrôle.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="corrigerEncaissementValider(${orderId},${index})">Enregistrer la correction</button>
+    </div>`);
+}
+
+async function corrigerEncaissementValider(orderId, index){
+  const montant = val('ce_montant');
+  const motif = val('ce_motif');
+  const ok = await corrigerEncaissement(+orderId, +index, montant, motif);
+  if(ok){
+    closeModal();
+    if(typeof renderCmd === 'function') renderCmd();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ════════════════════════════════════════════════════════════════════════════
+//  [v1360] LE LIVRE DES RECETTES — complet, chaîné, vérifiable
+//
+//  Ben : « Je veux avoir quelque chose de très solide à montrer en cas de contrôle, sans
+//  contestation possible. »
+//
+//  ⚠️ CE QUE JE NE PEUX PAS PROMETTRE, ET QUE JE LUI AI DIT :
+//  « sans contestation possible » suppose une CERTIFICATION NF525, délivrée par un organisme
+//  accrédité (AFNOR, LNE) — pas par du code. Je ne peux pas la fabriquer.
+//
+//  CE QUE JE PEUX FAIRE, ET QUI EST FAIT ICI : un registre COMPLET, COHÉRENT et TECHNIQUEMENT
+//  INALTÉRABLE — au point qu'une contestation devrait porter sur la certification, jamais sur
+//  les données elles-mêmes.
+//
+//  ═══ LE DÉFAUT QUI INVALIDAIT TOUT (v1359) ═══
+//  Mon export ne lisait que `db.orders`. LES VENTES MARCHÉ N'Y ÉTAIENT PAS.
+//  Un livre des recettes qui omet un canal de vente entier n'est pas incomplet : il est FAUX.
+//  Et l'incomplétude est précisément ce qu'un contrôle cherche.
+//
+//  C'est la MÊME faute que la v1336 (les marchés oubliés du CA) et la v1355 (les marchés absents
+//  des volumes). Troisième fois. Le canal marché est mon angle mort structurel : il ne passe pas
+//  par `orders`, donc je l'oublie à chaque fois que je pars des commandes.
+//
+//  RÈGLE GRAVÉE (v1360) : QUAND JE PARS DE `db.orders`, JE DOIS ME DEMANDER OÙ SONT LES MARCHÉS.
+//  Ce n'est plus une erreur, c'est un réflexe manquant.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ---------------------------------------------------------------------------
+// LE CHAÎNAGE D'INTÉGRITÉ. Chaque écriture porte le hash de la précédente.
+//
+// CE QUE ÇA APPORTE : toute modification a posteriori d'une ligne CASSE la chaîne, et devient
+// DÉTECTABLE. On ne peut pas retirer discrètement une recette : le hash suivant ne correspondrait
+// plus. C'est le principe du registre chaîné (art. 286-I-3° bis : « inaltérabilité »).
+//
+// CE QUE ÇA N'APPORTE PAS, ET JE LE DIS : ce n'est PAS une certification NF525. Un tiers
+// malveillant ayant accès au code pourrait recalculer toute la chaîne. Ça rend l'altération
+// DÉTECTABLE, pas IMPOSSIBLE — et c'est déjà considérable pour un registre de micro-entreprise.
+// Prétendre le contraire serait le genre de mensonge que cette série entière traque.
+// ---------------------------------------------------------------------------
+function _lrHash(str){
+  // FNV-1a 32 bits, doublé sur deux graines pour réduire les collisions. Pas de dépendance
+  // externe (l'app est hors-ligne), pas de crypto-API (indisponible en contexte non sécurisé).
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for(let i = 0; i < str.length; i++){
+    const c = str.charCodeAt(i);
+    h1 ^= c; h1 = Math.imul(h1, 0x01000193);
+    h2 ^= c; h2 = Math.imul(h2, 0x85ebca6b);
+  }
+  const u = n => (n >>> 0).toString(16).padStart(8, '0');
+  return u(h1) + u(h2);
+}
+
+// Le hash d'une ligne = hash(contenu de la ligne + hash de la ligne précédente).
+// C'est ce lien qui rend la chaîne infalsifiable ligne à ligne.
+function _lrHashLigne(l, hashPrec){
+  const socle = [
+    l.date, l.piece, l.client, String(l.montant), l.moyen, l.nature, l.statut, l.motif || ''
+  ].join('|');
+  return _lrHash(socle + '|' + (hashPrec || 'GENESE'));
+}
+
+// ---------------------------------------------------------------------------
+// LE LIVRE DES RECETTES. Toutes les recettes, TOUS CANAUX, triées par date.
+//
+// MENTIONS OBLIGATOIRES (art. L102 B du LPF, art. 286-I-3° du CGI) :
+//   • date · montant · mode de règlement · identité du client
+//   • référence de la pièce justificative · nature de la prestation
+// ---------------------------------------------------------------------------
+async function livreDesRecettes(depuis, jusqu){
+  const lignes = [];
+
+  // ═══ CANAL 1 : LES COMMANDES ═══
+  const orders  = await db.orders.toArray().catch(() => []);
+  const clients = await db.clients.toArray().catch(() => []);
+  const nomClient = id => {
+    const c = clients.find(x => +x.id === +id);
+    return c ? (c.nom || '') : '';
+  };
+
+  (orders || []).forEach(o => {
+    if(!o || o.histo) return;   // les reprises d'historique ne sont pas des recettes de l'exercice
+    const paiements = Array.isArray(o.paiements) ? o.paiements : [];
+    paiements.forEach((p, i) => {
+      if(!p || !(+p.montant)) return;
+      const d = (p.date || o.date || '').slice(0, 10);
+      if(depuis && d < depuis) return;
+      if(jusqu  && d > jusqu)  return;
+
+      let statut = 'Encaissement';
+      if(p.annule)          statut = 'ANNULÉ';
+      else if(p.correction) statut = ((+p.montant) < 0) ? 'Annulation' : 'Correction';
+
+      lignes.push({
+        date: d,
+        // [v1360] LA PIÈCE JUSTIFICATIVE. La loi exige une RÉFÉRENCE — le n° de facture s'il existe,
+        // sinon le n° de commande, qui est la pièce réellement émise. On ne fabrique pas un numéro
+        // qui n'existe pas : on référence celui qui existe.
+        piece: o.factureNumero || ((typeof orderNumber === 'function') ? orderNumber(o) : ('CMD-' + o.id)),
+        client: o.clientNom || nomClient(o.clientId) || 'Client non identifié',
+        montant: money2(+p.montant || 0),
+        moyen: p.moyen || o.reglement || 'Non précisé',
+        nature: 'Vente de macarons — commande',
+        canal: 'Commande',
+        statut,
+        motif: p.motif || p.annuleMotif || ''
+      });
+    });
+  });
+
+  // ═══ CANAL 2 : LES MARCHÉS — CE QUI MANQUAIT, ET QUI INVALIDAIT TOUT ═══
+  //
+  // Un marché CLOS est une recette encaissée LE JOUR MÊME. Chaque mode de règlement (espèces,
+  // CB, autre) est une LIGNE DISTINCTE : la loi exige la ventilation par mode de règlement.
+  //
+  // LE FOND DE CAISSE EST DÉDUIT DES ESPÈCES — sinon on déclarerait comme recette de l'argent
+  // qui était déjà là le matin. C'est la règle qu'applique déjà `caMarcheEncaisse()`, et je
+  // passe par ELLE plutôt que de refaire le calcul (règle v1358 : un second chemin diverge).
+  const markets = await db.markets.toArray().catch(() => []);
+  (markets || []).forEach(mk => {
+    if(!mk || mk.statut !== 'clos') return;   // un marché non clos n'a pas de recette arrêtée
+    const d = (mk.date || '').slice(0, 10);
+    if(depuis && d < depuis) return;
+    if(jusqu  && d > jusqu)  return;
+
+    const ca = mk.ca || {};
+    const fond = money2(+mk.fondCaisse || 0);
+    const esp  = money2(Math.max(0, (+ca.especes || 0) - fond));   // fond de caisse déduit
+    const cb   = money2(+ca.cb || 0);
+    const autre= money2(+ca.autre || 0);
+
+    const base = {
+      date: d,
+      piece: `MARCHE-${mk.id}`,
+      client: 'Ventes au comptant (marché)',   // pas d'identité client : vente au détail
+      nature: `Vente de macarons — marché${mk.nom ? ' ' + mk.nom : ''}`,
+      canal: 'Marché',
+      statut: 'Encaissement',
+      motif: ''
+    };
+    if(esp   > 0) lignes.push(Object.assign({}, base, { montant: esp,   moyen: 'Espèces' }));
+    if(cb    > 0) lignes.push(Object.assign({}, base, { montant: cb,    moyen: 'Carte bancaire' }));
+    if(autre > 0) lignes.push(Object.assign({}, base, { montant: autre, moyen: 'Autre' }));
+  });
+
+  // Tri chronologique — l'ordre du livre EST l'ordre des recettes.
+  lignes.sort((a, b) =>
+    (a.date || '').localeCompare(b.date || '') ||
+    (a.piece || '').localeCompare(b.piece || '')
+  );
+
+  // ═══ LE CHAÎNAGE ═══ appliqué APRÈS le tri : la chaîne suit l'ordre du registre.
+  let prec = null;
+  lignes.forEach((l, i) => {
+    l.num = i + 1;
+    l.hash = _lrHashLigne(l, prec);
+    l.hashPrec = prec || 'GENESE';
+    prec = l.hash;
+  });
+
+  return lignes;
+}
+
+// ---------------------------------------------------------------------------
+// VÉRIFICATION DE LA CHAÎNE. Recalcule tous les hashes et signale la PREMIÈRE rupture.
+// C'est ce qu'on montre à un contrôleur : « voici la preuve que rien n'a bougé ».
+// ---------------------------------------------------------------------------
+function verifierChaine(lignes){
+  let prec = null;
+  for(let i = 0; i < lignes.length; i++){
+    const attendu = _lrHashLigne(lignes[i], prec);
+    if(lignes[i].hash !== attendu){
+      return { intacte: false, ligne: i + 1, piece: lignes[i].piece };
+    }
+    prec = lignes[i].hash;
+  }
+  return { intacte: true, ligne: null, piece: null };
+}
+
+// ---------------------------------------------------------------------------
+// [v1360] L'EXPORT CSV — pour le comptable.
+// ---------------------------------------------------------------------------
+function livreRecettesCsv(lignes, depuis, jusqu){
+  const q = v => {
+    const s = (v == null ? '' : String(v));
+    return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const num = n => String(money2(n)).replace('.', ',');
+
+  const head = ['N°', 'Date', 'Pièce', 'Client', 'Nature', 'Montant', 'Règlement', 'Canal', 'Statut', 'Motif', 'Empreinte'];
+  const body = lignes.map(l => [
+    l.num, l.date, l.piece, l.client, l.nature, num(l.montant), l.moyen, l.canal, l.statut, l.motif, l.hash
+  ].map(q).join(';'));
+
+  const total = money2(lignes.reduce((s, l) => s + (+l.montant || 0), 0));
+  const parCanal = {};
+  lignes.forEach(l => { parCanal[l.canal] = money2((parCanal[l.canal] || 0) + (+l.montant || 0)); });
+
+  const chaine = verifierChaine(lignes);
+
+  const pied = [''];
+  pied.push(['', '', '', '', 'TOTAL NET', num(total), '', '', '', '', ''].map(q).join(';'));
+  Object.keys(parCanal).forEach(c => {
+    pied.push(['', '', '', '', 'dont ' + c, num(parCanal[c]), '', '', '', '', ''].map(q).join(';'));
+  });
+  pied.push('');
+  pied.push(q(`Période : ${depuis || 'origine'} au ${jusqu || 'ce jour'}`));
+  pied.push(q(`Écritures : ${lignes.length}`));
+  pied.push(q(`Intégrité de la chaîne : ${chaine.intacte ? 'INTACTE — aucune altération détectée' : 'ROMPUE à la ligne ' + chaine.ligne}`));
+  pied.push(q(`Édité le ${fmtDate(today())}`));
+
+  return '\uFEFF' + [head.join(';')].concat(body).concat(pied).join('\r\n');
+}
+
+// ---------------------------------------------------------------------------
+// [v1360] L'ÉDITION PAPIER — c'est CE document qu'on présente à un contrôle.
+// Un CSV n'est pas un livre : c'est un fichier. Le livre se lit, se date, se signe.
+// ---------------------------------------------------------------------------
+async function imprimerLivreRecettes(depuis, jusqu){
+  const lignes = await livreDesRecettes(depuis, jusqu);
+  if(!lignes.length){ toast('Aucune recette sur cette période'); return; }
+
+  const total = money2(lignes.reduce((s, l) => s + (+l.montant || 0), 0));
+  const parCanal = {};
+  const parMoyen = {};
+  lignes.forEach(l => {
+    parCanal[l.canal] = money2((parCanal[l.canal] || 0) + (+l.montant || 0));
+    parMoyen[l.moyen] = money2((parMoyen[l.moyen] || 0) + (+l.montant || 0));
+  });
+  const chaine = verifierChaine(lignes);
+  const S = (typeof getSettings === 'function') ? getSettings() : {};
+
+  const rows = lignes.map(l => `<tr${l.statut === 'ANNULÉ' ? ' class="ann"' : ''}>
+    <td>${l.num}</td>
+    <td>${esc(fmtDate(l.date))}</td>
+    <td>${esc(l.piece)}</td>
+    <td>${esc(l.client)}</td>
+    <td>${esc(l.nature)}</td>
+    <td class="r"><b>${euro(l.montant)}</b></td>
+    <td>${esc(l.moyen)}</td>
+    <td>${esc(l.statut)}${l.motif ? `<br><span class="mot">${esc(l.motif)}</span>` : ''}</td>
+  </tr>`).join('');
+
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+  <title>Livre des recettes</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    body { font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #1a1a1a; }
+    h1 { font-size: 15pt; margin: 0 0 2mm; letter-spacing: .06em; }
+    .ent { border-bottom: 2px solid #000; padding-bottom: 3mm; margin-bottom: 5mm; }
+    .ent p { margin: 1mm 0; font-size: 8.5pt; }
+    table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+    th { background: #1a1a1a; color: #fff; padding: 2mm; text-align: left; font-size: 7.5pt; }
+    td { padding: 1.6mm 2mm; border-bottom: .4px solid #ccc; }
+    .r { text-align: right; }
+    .ann { color: #999; text-decoration: line-through; }
+    .ann .mot { text-decoration: none; }
+    .mot { font-size: 7pt; color: #666; font-style: italic; }
+    .tot { margin-top: 6mm; border-top: 2px solid #000; padding-top: 3mm; }
+    .tot table { font-size: 9pt; }
+    .tot td { border: none; padding: 1mm 3mm 1mm 0; }
+    .big { font-size: 13pt; font-weight: bold; }
+    .integ { margin-top: 6mm; padding: 3mm; border: 1px solid #000; font-size: 8pt; }
+    .ok { color: #0a6b2e; font-weight: bold; }
+    .ko { color: #b3261e; font-weight: bold; }
+    .sig { margin-top: 10mm; font-size: 8.5pt; }
+    .sig div { margin-top: 8mm; border-top: .5px solid #000; width: 60mm; padding-top: 1mm; }
+  </style></head><body>
+  <div class="ent">
+    <h1>LIVRE DES RECETTES</h1>
+    <p><b>${esc(S.entrepriseNom || 'Sensations Macarons')}</b>${S.siret ? ` — SIRET ${esc(S.siret)}` : ''}</p>
+    <p>Période du <b>${esc(fmtDate(depuis || lignes[0].date))}</b> au <b>${esc(fmtDate(jusqu || lignes[lignes.length-1].date))}</b>
+       · ${lignes.length} écriture(s)</p>
+    <p style="font-size:7.5pt;color:#555">Recettes enregistrées à la date d'encaissement, tous canaux confondus
+       (commandes et ventes au comptant sur marchés). Les écritures annulées et leurs corrections figurent
+       intégralement — conformément au principe d'inaltérabilité.</p>
+  </div>
+
+  <table>
+    <tr><th>N°</th><th>Date</th><th>Pièce</th><th>Client</th><th>Nature de la recette</th>
+        <th class="r">Montant</th><th>Règlement</th><th>Statut</th></tr>
+    ${rows}
+  </table>
+
+  <div class="tot">
+    <table>
+      <tr><td class="big">TOTAL NET DES RECETTES</td><td class="big r">${euro(total)}</td></tr>
+      ${Object.keys(parCanal).map(c => `<tr><td>dont ${esc(c)}</td><td class="r">${euro(parCanal[c])}</td></tr>`).join('')}
+      <tr><td colspan="2" style="padding-top:3mm"><b>Ventilation par mode de règlement</b></td></tr>
+      ${Object.keys(parMoyen).map(m => `<tr><td>${esc(m)}</td><td class="r">${euro(parMoyen[m])}</td></tr>`).join('')}
+    </table>
+  </div>
+
+  <div class="integ">
+    <b>CONTRÔLE D'INTÉGRITÉ</b><br>
+    Chaque écriture porte une empreinte calculée à partir de son contenu <i>et de l'empreinte de
+    l'écriture précédente</i>. Toute modification, suppression ou insertion rompt la chaîne et devient
+    détectable.<br><br>
+    État de la chaîne : <span class="${chaine.intacte ? 'ok' : 'ko'}">
+      ${chaine.intacte ? 'INTACTE — aucune altération détectée' : ('ROMPUE à l&rsquo;écriture n°' + chaine.ligne)}
+    </span><br>
+    Empreinte de clôture : <code>${esc(lignes[lignes.length - 1].hash)}</code>
+  </div>
+
+  <div class="sig">
+    <p>Édité le ${esc(fmtDate(today()))}</p>
+    <div>Signature</div>
+  </div>
+  </body></html>`;
+
+  try{
+    const w = window.open('', '_blank');
+    if(!w){ toast('Autorise les fenêtres pop-up pour imprimer'); return; }
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => { try{ w.print(); }catch(e){} }, 400);
+  }catch(e){
+    swallow(e, 'imprimerLivreRecettes');
+    toast('Impression impossible');
+  }
+}
+
+async function exporterLivreRecettesCsv(depuis, jusqu){
+  const lignes = await livreDesRecettes(depuis, jusqu);
+  if(!lignes.length){ toast('Aucune recette sur cette période'); return; }
+  const csv = livreRecettesCsv(lignes, depuis, jusqu);
+  try{
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `livre_recettes_${depuis || 'debut'}_${jusqu || 'fin'}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`${lignes.length} recette(s) exportée(s) ✓`);
+  }catch(e){ swallow(e, 'exporterLivreRecettesCsv'); toast('Export impossible'); }
+}
+
+
+// [v1359] L'UI D'EXPORT. Mois courant, mois précédent, ou bornes libres.
+// ---------------------------------------------------------------------------
+function exportEncaissementsForm(){
+  const now = new Date();
+  const ym  = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const prem = ym + '-01';
+  const dern = ymdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+
+  openModal(`<h3>📕 Livre des recettes</h3>
+    <p class="note">Toutes les recettes de la période, <b>tous canaux</b> : commandes <b>et</b> ventes
+    au comptant sur marchés. Les <b>annulations</b> et <b>corrections</b> y figurent intégralement —
+    la loi exige un registre <b>honnête</b>, pas un registre propre.</p>
+    <p class="note" style="font-size:.76rem">Chaque écriture porte une <b>empreinte chaînée</b> :
+    toute modification a posteriori rompt la chaîne et devient détectable.</p>
+    <div class="row2">
+      <div class="field"><label>Du</label><input type="date" id="ex_depuis" value="${prem}"></div>
+      <div class="field"><label>Au</label><input type="date" id="ex_jusqu" value="${dern}"></div>
+    </div>
+    <div style="margin:8px 0">
+      <button class="btn ghost sm" onclick="exportEncPreset('mois')">Ce mois</button>
+      <button class="btn ghost sm" onclick="exportEncPreset('moisPrec')">Mois dernier</button>
+      <button class="btn ghost sm" onclick="exportEncPreset('annee')">Cette année</button>
+    </div>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn ghost" onclick="livreCsvLancer()">⤓ CSV (comptable)</button>
+      <button class="btn gold" onclick="livreImprimerLancer()">🖨 Imprimer le livre</button>
+    </div>`);
+}
+
+async function livreImprimerLancer(){
+  const d = val('ex_depuis') || null, f = val('ex_jusqu') || null;
+  closeModal();
+  await imprimerLivreRecettes(d, f);
+}
+async function livreCsvLancer(){
+  const d = val('ex_depuis') || null, f = val('ex_jusqu') || null;
+  closeModal();
+  await exporterLivreRecettesCsv(d, f);
+}
+
+function exportEncPreset(quoi){
+  const now = new Date();
+  let d, f;
+  if(quoi === 'mois'){
+    d = ymdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+    f = ymdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  } else if(quoi === 'moisPrec'){
+    d = ymdLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+    f = ymdLocal(new Date(now.getFullYear(), now.getMonth(), 0));
+  } else {
+    d = ymdLocal(new Date(now.getFullYear(), 0, 1));
+    f = ymdLocal(new Date(now.getFullYear(), 11, 31));
+  }
+  const a = document.getElementById('ex_depuis'), b = document.getElementById('ex_jusqu');
+  if(a) a.value = d;
+  if(b) b.value = f;
+}
+
+async function exportEncLancer(){
+  const d = val('ex_depuis') || null;
+  const f = val('ex_jusqu')  || null;
+  await exporterEncaissementsCsv(d, f);
+  closeModal();
+}
+
+// [v1359] L'EXPORT DES ENCAISSEMENTS — par mois ou entre deux dates.
+//
+// Ben : « On doit aussi pouvoir exporter facilement un historique reprenant tous les encaissements
+// sur une période donnée (par mois ou entre deux périodes précises). »
+//
+// CE QUE L'EXPORT DOIT MONTRER, ET QUE BEAUCOUP D'OUTILS CACHENT :
+// les écritures ANNULÉES et les CORRECTIONS y figurent. Un export qui ne montrerait que le solde
+// net serait un export MAQUILLÉ — il donnerait un registre propre là où la loi exige un registre
+// HONNÊTE. Un contrôleur doit pouvoir voir l'erreur ET sa correction.
+//
+// On réutilise `_aiPeriodeCible` (v1342) : mois, semaine ISO, ou bornes explicites — le parseur
+// existe déjà, il n'y a rien à réécrire.
+// ════════════════════════════════════════════════════════════════════════════
+async function exporterEncaissements(depuis, jusqu){
+  const orders = await db.orders.toArray();
+  const lignes = [];
+
+  (orders || []).forEach(o => {
+    if(!o || !Array.isArray(o.paiements)) return;
+    o.paiements.forEach((p, i) => {
+      if(!p || !(+p.montant)) return;   // une écriture à 0 n'est pas un encaissement
+      const d = (p.date || o.date || '').slice(0, 10);
+      if(depuis && d < depuis) return;
+      if(jusqu  && d > jusqu)  return;
+
+      // [v1359] LE STATUT EST EXPLICITE. Un encaissement annulé reste dans l'export, MARQUÉ.
+      // Le masquer produirait un registre plus propre — et faux.
+      let statut = 'Encaissement';
+      if(p.annule)          statut = 'ANNULÉ';
+      else if(p.correction) statut = ((+p.montant) < 0) ? 'Annulation' : 'Correction';
+
+      lignes.push({
+        date: d,
+        commande: (typeof orderNumber === 'function') ? orderNumber(o) : ('#' + o.id),
+        client: o.clientNom || '',
+        montant: money2(+p.montant || 0),
+        moyen: p.moyen || o.reglement || '—',
+        statut,
+        motif: p.motif || p.annuleMotif || '',
+        libelle: p.libelle || ''
+      });
+    });
+  });
+
+  lignes.sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.commande.localeCompare(b.commande));
+  return lignes;
+}
+
+// Génère le CSV. Séparateur `;` (Excel FR), virgule décimale, BOM UTF-8 pour les accents.
+function encaissementsCsv(lignes){
+  const esc = v => {
+    const s = (v == null ? '' : String(v));
+    return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const num = n => String(money2(n)).replace('.', ',');   // Excel FR attend la virgule
+  const head = ['Date', 'Commande', 'Client', 'Montant', 'Moyen', 'Statut', 'Motif', 'Libellé'];
+  const body = lignes.map(l => [
+    l.date, l.commande, l.client, num(l.montant), l.moyen, l.statut, l.motif, l.libelle
+  ].map(esc).join(';'));
+
+  // Le TOTAL NET : la somme inclut les montants négatifs des annulations. C'est le montant
+  // réellement encaissé sur la période — et il est vérifiable ligne à ligne, ce qui est le point.
+  const total = money2(lignes.reduce((s, l) => s + (+l.montant || 0), 0));
+  body.push('');
+  body.push(['', '', 'TOTAL NET', num(total), '', '', '', ''].map(esc).join(';'));
+
+  return '\uFEFF' + [head.join(';')].concat(body).join('\r\n');
+}
+
+async function exporterEncaissementsCsv(depuis, jusqu){
+  const lignes = await exporterEncaissements(depuis, jusqu);
+  if(!lignes.length){ toast('Aucun encaissement sur cette période'); return; }
+  const csv = encaissementsCsv(lignes);
+  const nom = `encaissements_${depuis || 'debut'}_${jusqu || 'fin'}.csv`;
+  try{
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nom;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`${lignes.length} encaissement(s) exporté(s) ✓`);
+  }catch(e){
+    swallow(e, 'exporterEncaissementsCsv');
+    toast('Export impossible');
+  }
+}
+
+
 function logDeletion(type, id, reason, note, label){
   try{
     const key='sm_deletionLog';
@@ -25428,6 +26160,7 @@ async function renderCompta(){
    <div class="flex" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
      <button class="btn" onclick="view='rentabilite';setActiveView&&setActiveView('rentabilite');renderProfit()">📈 Analyse de rentabilité</button>
      <button class="btn ghost" onclick="exportComptaCSV()">⤓ Export comptable (.csv)</button>
+     <button class="btn ghost" onclick="exportEncaissementsForm()" title="Livre des recettes — commandes ET marchés, chaîné et vérifiable">📕 Livre des recettes</button>
      <button class="btn ghost" onclick="settingsForm()">⚙ Paramètres (taux, emballages)</button>
    </div>
 

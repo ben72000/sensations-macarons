@@ -2330,3 +2330,121 @@ Premier jet : `SRC.includes('window._lbProds = lots;')` — qui reste **vrai mê
 (`// window._lbProds = lots;`). **Le test validait sa propre existence, pas celle du code.**
 C'est la leçon v1352 (*« un test qui ne mord pas ne vaut rien »*), enfreinte par celui qui l'a écrite.
 Durci : les commentaires sont retirés avant recherche. **Vérifié : il mord.**
+
+---
+
+## v1359 — INALTÉRABILITÉ DES ENCAISSEMENTS (exigence légale)
+
+Ben : *« Tu empêches toute suppression de montant encaissé. Et tu proposes une correction avec journal
+de suivi en cas d'erreur. On doit aussi pouvoir exporter facilement un historique reprenant tous les
+encaissements sur une période donnée. »*
+
+**Cadre :** art. 286-I-3° bis du CGI (inaltérabilité, sécurisation, conservation, archivage des données
+de règlement) + norme NF525.
+
+> **RÈGLE GRAVÉE (v1359) : ON NE SUPPRIME PAS UN ENCAISSEMENT. ON LE CONTREPASSE.**
+> Une donnée comptable effacée est une donnée qu'aucun contrôle ne peut reconstituer — et l'absence
+> de trace ne prouve pas l'absence de fraude : **elle EST le problème**.
+
+### Ce que l'audit du code a trouvé
+| Point | État |
+|---|---|
+| Bouton pour supprimer un paiement | **N'existe pas** (bon) |
+| `cmdToDevisConfirm` (repasser en devis) | **Bloquait déjà** si un paiement existe (sain) |
+| **`cmdDeleteConfirm`** (supprimer une commande) | ⚠️ **LE TROU** — supprimait la commande **avec ses paiements** |
+
+`logDeletion` gardait bien une trace… mais **l'encaissement disparaissait de la comptabilité** : le CA
+du mois changeait **rétroactivement**, sans écriture inverse, sans piste d'audit.
+
+### La demande explicite de Ben, respectée
+> *« Une commande non payée doit pouvoir repasser en devis sans bloquer puisque pas de paiement d'effectué. »*
+
+Le verrou ne se déclenche **que s'il y a de l'argent**. Zéro encaissement → suppression libre.
+*(Testé : commande sans paiement, sans tableau `paiements`, ou avec un paiement à 0 € → toutes libres.)*
+
+### La contrepassation — le modèle la supportait déjà
+L'écriture d'origine **reste**, marquée `annule` avec son motif. Une écriture **négative** s'y ajoute,
+puis la corrective si besoin.
+
+**`orderPaid()` fait une somme brute** → les négatifs se soustraient **tout seuls**. Le solde redevient
+juste **sans aucune modification du moteur comptable**.
+
+### Le journal vit en BASE, pas en localStorage
+`logDeletion` écrit dans `localStorage`. **Vider le cache du navigateur effacerait la preuve.**
+
+> **Une trace qu'un geste anodin peut détruire n'est pas une trace — c'est une illusion de trace.**
+
+Nouvelle table `journalCompta` (schéma v31), qui part dans les sauvegardes. **Aucune fonction de l'app
+n'en supprime de ligne.** Et si le journal échoue à l'écriture, **la correction est annulée** — mieux
+vaut refuser une correction que la faire sans preuve.
+
+### L'export : un registre HONNÊTE, pas un registre PROPRE
+Le CSV contient **toutes** les écritures de la période — **y compris les annulations et les
+corrections**, explicitement marquées. Un export qui ne montrerait que le solde net serait **maquillé**.
+
+Un contrôleur doit pouvoir voir **l'erreur ET sa correction**.
+
+Format : `;` + virgule décimale + BOM UTF-8 (Excel FR), total net en pied de fichier, périodes
+pré-réglées (ce mois / mois dernier / cette année) ou bornes libres.
+
+### Motif obligatoire
+Sans motif, la correction est refusée. **Une correction sans justification n'a aucune valeur probante
+devant un contrôle.**
+
+---
+
+## v1360 — LE LIVRE DES RECETTES : complet, chaîné, vérifiable
+
+Ben : *« Je veux avoir quelque chose de très solide à montrer en cas de contrôle, sans contestation
+possible. »*
+
+### ⚠️ CE QUE JE LUI AI DIT AVANT DE CODER
+**« Sans contestation possible » suppose une certification NF525**, délivrée par un organisme accrédité
+(AFNOR, LNE) — **pas par du code**. Je ne peux pas la fabriquer, et prétendre le contraire serait
+exactement le mensonge que cette série entière traque.
+
+Ce que j'ai fait : un registre **complet, cohérent et techniquement inaltérable** — au point qu'une
+contestation devrait porter sur **la certification**, jamais sur **les données**.
+
+### LE DÉFAUT QUI INVALIDAIT TOUT LE v1359
+L'export ne lisait que `db.orders`. **LES VENTES MARCHÉ N'Y ÉTAIENT PAS.**
+
+> Un livre des recettes qui omet un canal de vente entier n'est pas **incomplet** : il est **FAUX**.
+> Et l'incomplétude est précisément ce qu'un contrôle cherche.
+
+**TROISIÈME FOIS que j'oublie les marchés :**
+
+| Vague | Ce qui les oubliait |
+|---|---|
+| v1336 | Le CA |
+| v1355 | Les volumes par parfum |
+| **v1359** | **Le livre des recettes** |
+
+> **RÈGLE GRAVÉE (v1360) : QUAND JE PARS DE `db.orders`, JE DOIS ME DEMANDER OÙ SONT LES MARCHÉS.**
+> Ce n'est plus une erreur ponctuelle — c'est un **réflexe manquant**. Le canal marché ne passe pas
+> par `orders`, donc je l'oublie **à chaque fois** que je pars des commandes.
+
+### Les marchés, correctement intégrés
+- Seuls les marchés **clos** (recette arrêtée)
+- **Le fond de caisse est déduit des espèces** — sinon on déclarerait comme recette l'argent qui
+  était déjà là le matin (on passe par `caMarcheEncaisse()`, qui applique déjà cette règle)
+- **Chaque mode de règlement est une ligne distincte** (espèces / CB / autre) — la loi exige la
+  ventilation
+
+### Le chaînage d'intégrité
+Chaque écriture porte une **empreinte** calculée depuis son contenu **et l'empreinte de la
+précédente**. Testé : **modifier** un montant, **supprimer** une recette ou **insérer** une fausse
+écriture **rompt la chaîne**, et la rupture est **localisée**.
+
+**Ce que ça n'apporte PAS, et je le dis dans le code :** ça rend l'altération **détectable**, pas
+**impossible**. Ce n'est pas une certification.
+
+### Les mentions obligatoires (art. L102 B LPF, art. 286-I-3° CGI)
+date · pièce justificative · client · **nature de la prestation** · montant · mode de règlement
+— toutes présentes, testées une par une.
+
+### Deux sorties
+- **CSV** pour le comptable (Excel FR, total net, ventilation par canal et par moyen)
+- **Édition papier** — c'est **ce document** qu'on présente à un contrôle. Un CSV n'est pas un livre :
+  c'est un fichier. Le livre se lit, se date, se signe. Il porte le **contrôle d'intégrité** et
+  l'**empreinte de clôture**.
