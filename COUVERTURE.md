@@ -2150,3 +2150,40 @@ Chaque ligne porte : volume + part % + marge unitaire + **meilleure association 
 Premier test : cette phrase — **celle que Ben a posée** — partait vers `query_top_parfum` (volume
 seul, tronqué à 10). C'est une question de **composition de gamme**, pas un classement. Règle élargie,
 sans voler `le parfum le plus vendu` ni `mon meilleur parfum` (non-régression vérifiée).
+
+---
+
+## v1355 — « 0 pièces vendues » sur 128 commandes
+
+Ben lance le tableau de bord v1354 : **« 0 pièces vendues au total »**, ses 15 parfums tous rangés
+dans **« JAMAIS VENDUS »**. Il a 128 commandes et 48 paniers exploitables.
+
+### Bug 1 — la mauvaise clé
+`computeStats()` retourne `{global, parClient, nbValides}`. Les volumes sont dans
+**`R.global.parfums`** — j'ai lu **`R.parfums`**. Toujours `undefined`, donc toujours 0.
+
+### Bug 2 — le filtre `paiement === 'Payé'`
+`computeStats` ne compte **que les commandes soldées**. Or Ben a tranché en v1344 :
+> *« Ce sont deux notions bien distinctes qui ne doivent pas s'annuler l'une l'autre. »*
+
+Un macaron **vendu** est vendu, réglé ou non : **le volume mesure ce qui SORT, pas ce qui RENTRE**.
+Les associations comptaient déjà les impayées — le tableau aurait donc affiché, **sur la même ligne**,
+un volume « payé uniquement » à côté d'une association « toutes commandes ». **Deux périmètres
+différents, présentés comme un tout cohérent.** On recompte donc les volumes nous-mêmes, sur
+exactement le même périmètre que les associations.
+
+### Ce qui rend le bug 1 pernicieux
+La **marge** (1,48 €/pce) et les **associations** (×2,24) s'affichaient **parfaitement** — elles
+viennent d'autres sources. **Seul le volume était faux.**
+
+> **RÈGLE GRAVÉE (v1355) : UN TABLEAU À MOITIÉ JUSTE EST PLUS DANGEREUX QU'UN TABLEAU VIDE.**
+> Un écran totalement cassé se voit. Un écran dont trois colonnes sur quatre sont correctes
+> **inspire confiance** — et Ben aurait pu sortir Vanille de sa gamme en la croyant invendue.
+
+### Le test qui manquait
+`tests/v1355-volumes.test.js` — 5 assertions, bloc de comptage **extrait du fichier réel** (jamais
+paraphrasé, leçon v1345) : volumes non nuls, impayées comptées comme les payées, grands formats
+(`items` et non `parfums`), reprises historiques exclues.
+
+**Ce bug n'aurait jamais existé si j'avais écrit ce test en v1354.** J'ai livré une vue analytique
+entière sans un seul test sur sa donnée centrale — le volume.

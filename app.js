@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1354';
+const APP_VERSION = 'v1355';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -40863,8 +40863,29 @@ async function aiQueryTendancesParfums(params){
   const clients = await db.clients.toArray().catch(()=>[]);
 
   // ── 1. VOLUME : combien de pièces vendues par parfum (tous canaux)
-  const R = computeStats(orders, clients, orderToLines);
-  const volumes = R.parfums || {};
+  // [v1355] BUG : `computeStats` retourne `{global, parClient, nbValides}` — les volumes par parfum
+  // sont dans `R.global.parfums`, PAS dans `R.parfums`. J'ai lu la mauvaise clé : `volumes` était
+  // TOUJOURS un objet vide, donc TOUS les parfums tombaient à 0 pièce et atterrissaient dans
+  // « JAMAIS VENDUS ». Ben avait 128 commandes sous les yeux et l'app lui affichait 0.
+  //
+  // Ce qui rend l'erreur pernicieuse : la marge et les associations s'affichaient CORRECTEMENT
+  // (elles viennent d'autres sources). Seul le volume était faux — un tableau à moitié juste est
+  // plus dangereux qu'un tableau vide : il inspire confiance.
+  //
+  // [v1355] Et un SECOND bug, plus grave : computeStats filtre `o.paiement==='Payé'`. Or Ben a
+  // tranché en v1344 : « ce sont deux notions bien distinctes qui ne doivent pas s'annuler l'une
+  // l'autre ». Un macaron VENDU est un macaron vendu, réglé ou non — le volume mesure ce qui SORT,
+  // pas ce qui RENTRE. On recompte donc les volumes NOUS-MÊMES, sur les mêmes commandes que les
+  // associations, pour que les deux colonnes du tableau parlent du MÊME périmètre.
+  const volumes = {};
+  (orders || []).forEach(o => {
+    if(!o || o.histo) return;
+    (orderToLines(o) || []).forEach(ln => {
+      if(!ln) return;
+      const src = (ln.type === 'grand') ? (ln.items || []) : (ln.parfums || []);
+      src.forEach(p => { if(p && p.nom && +p.qte > 0) volumes[p.nom] = (volumes[p.nom] || 0) + (+p.qte); });
+    });
+  });
 
   // ── 2. RENTABILITÉ : marge unitaire et taux, par parfum
   const recipes      = await db.recipes.toArray();
